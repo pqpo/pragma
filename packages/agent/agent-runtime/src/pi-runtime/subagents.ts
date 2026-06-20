@@ -12,11 +12,12 @@ import type {
 import type { SubAgentRuntimeLaunchRequest } from "@expertmesh/agent-core";
 import { emitRuntimeStreamEvent } from "@expertmesh/agent-core";
 
-import { readAssistantTextDelta } from "./session-events.ts";
+import { readAssistantTextDelta, readToolExecutionEvent } from "./session-events.ts";
 import {
   createChildRunId,
   createSequenceCounter,
   createStreamEvent,
+  createToolStreamEvents,
   summarizeText,
 } from "./stream.ts";
 import type { RuntimeStreamBridge } from "./types.ts";
@@ -111,6 +112,7 @@ export async function launchPiSubAgent(
   const outputTextParts: string[] = [];
   const unsubscribe = session.subscribe((event) => {
     const delta = readAssistantTextDelta(event);
+    const toolEvent = readToolExecutionEvent(event);
 
     if (delta !== undefined) {
       outputTextParts.push(delta);
@@ -129,6 +131,18 @@ export async function launchPiSubAgent(
           },
         }),
       );
+    }
+
+    if (toolEvent !== undefined) {
+      for (const streamEvent of createToolStreamEvents({
+        runId: childRunId,
+        parentRunId,
+        source: baseSource,
+        sequence: nextSequence,
+        toolEvent,
+      })) {
+        void emitRuntimeStreamEvent(onEvent, streamEvent);
+      }
     }
   });
 

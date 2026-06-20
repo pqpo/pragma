@@ -65,7 +65,7 @@ export function createSubAgentTool(
       ...subAgents.map((subAgent) => `- ${subAgent.agentType}: ${subAgent.whenToUse}`),
     ].join("\n"),
     inputSchema: subAgentInputSchema,
-    async call(args, signal) {
+    async call(args, signal, context) {
       const agentType = readStringParam(args, "agentType");
       const task = readStringParam(args, "task");
       const definition = subAgents.find((subAgent) => subAgent.agentType === agentType);
@@ -93,6 +93,7 @@ export function createSubAgentTool(
         definition,
         parentSystemPrompt: options.parentSystemPrompt,
         systemPrompt,
+        toolCallId: context?.toolCallId,
         signal,
       });
     },

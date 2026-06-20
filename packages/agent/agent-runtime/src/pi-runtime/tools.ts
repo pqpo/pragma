@@ -82,8 +82,8 @@ function createPiSubAgentTool(subAgentTool: SubAgentManagedTool): ToolDefinition
     ],
     parameters: normalizeInputSchema(subAgentTool.inputSchema),
     executionMode: "parallel",
-    async execute(_toolCallId, params, signal) {
-      const result = await subAgentTool.call(params, signal);
+    async execute(toolCallId, params, signal) {
+      const result = await subAgentTool.call(params, signal, { toolCallId });
 
       return {
         content: [

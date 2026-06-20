@@ -9,8 +9,13 @@ import type {
 } from "@expertmesh/agent-core";
 import { emitRuntimeStreamEvent } from "@expertmesh/agent-core";
 
-import { readAssistantTextDelta } from "./session-events.ts";
-import { createStreamEvent, summarizeInput, summarizeText } from "./stream.ts";
+import { readAssistantTextDelta, readToolExecutionEvent } from "./session-events.ts";
+import {
+  createStreamEvent,
+  createToolStreamEvents,
+  summarizeInput,
+  summarizeText,
+} from "./stream.ts";
 import type { RuntimeStreamBridge } from "./types.ts";
 
 export function createPiRuntimeSession<TInput, TOutput>(
@@ -33,6 +38,7 @@ export function createPiRuntimeSession<TInput, TOutput>(
         streamBridge.onEvent = request.onEvent;
         const unsubscribe = session.subscribe((event) => {
           const delta = readAssistantTextDelta(event);
+          const toolEvent = readToolExecutionEvent(event);
 
           if (delta !== undefined) {
             outputTextParts.push(delta);
@@ -50,6 +56,17 @@ export function createPiRuntimeSession<TInput, TOutput>(
                 },
               }),
             );
+          }
+
+          if (toolEvent !== undefined) {
+            for (const streamEvent of createToolStreamEvents({
+              runId: request.invocation.runId,
+              source,
+              sequence: streamBridge.nextSequence,
+              toolEvent,
+            })) {
+              void emitRuntimeStreamEvent(request.onEvent, streamEvent);
+            }
           }
         });
 
