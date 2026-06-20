@@ -7,7 +7,8 @@ const placeholderAgent = new ExpertAgent({
   description: "Placeholder ExpertAgent for the Phase 0 worker entrypoint.",
   tags: ["phase-0"],
   version: "0.0.0",
-  scope: "phase-0"
+  scope: "phase-0",
+  workspace: "."
 });
 
 void placeholderAgent;

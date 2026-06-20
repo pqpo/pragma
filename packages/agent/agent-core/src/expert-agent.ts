@@ -1,6 +1,21 @@
 import { ContextManager } from "./context-manager.ts";
+import type { ExpertAgentContext } from "./context-manager.ts";
 import { DocumentIndexer } from "./document-indexer.ts";
-import type { ExpertAgentDocumentStore } from "./document-indexer.ts";
+import type {
+  ExpertAgentDocument,
+  ExpertAgentDocumentCreateInput,
+  ExpertAgentDocumentDeleteInput,
+  ExpertAgentDocumentResult,
+  ExpertAgentDocumentStore,
+  ExpertAgentDocumentSummary,
+  ExpertAgentDocumentUpdateInput,
+  ExpertAgentDocumentReadInput
+} from "./document-indexer.ts";
+import { createDocumentTools } from "./document-tools.ts";
+import type {
+  CreateDocumentToolsOptions,
+  ExpertAgentDefaultTool
+} from "./document-tools.ts";
 import type { ExpertAgentRunContext } from "./run-context.ts";
 import type { SubAgentRegistry } from "./sub-agent.ts";
 
@@ -62,7 +77,6 @@ export interface IExpertAgent {
   readonly workspace: string;
   readonly mcp?: IExpertAgentMcpConfig | undefined;
   readonly skills?: IExpertAgentSkillsConfig | undefined;
-  readonly agentsMd?: string | undefined;
   readonly documents?: ExpertAgentDocumentStore | undefined;
   readonly subAgents?: SubAgentRegistry | undefined;
 }
@@ -79,12 +93,11 @@ export class ExpertAgent implements IExpertAgent {
   readonly scope: string;
   readonly mcp: IExpertAgentMcpConfig | undefined;
   readonly skills: IExpertAgentSkillsConfig | undefined;
-  readonly agentsMd: string | undefined;
   readonly documents: ExpertAgentDocumentStore | undefined;
   readonly workspace: string;
   readonly subAgents: SubAgentRegistry | undefined;
-  readonly documentIndexer: DocumentIndexer;
-  readonly contextManager: ContextManager;
+  private readonly documentIndexer: DocumentIndexer;
+  private readonly contextManager: ContextManager;
 
   constructor(options: ExpertAgentOptions) {
     this.schemaVersion = options.schemaVersion;
@@ -96,7 +109,6 @@ export class ExpertAgent implements IExpertAgent {
     this.scope = options.scope;
     this.mcp = options.mcp;
     this.skills = options.skills;
-    this.agentsMd = options.agentsMd;
     this.documents = options.documents;
     this.workspace = options.workspace;
     this.subAgents = options.subAgents;
@@ -107,5 +119,43 @@ export class ExpertAgent implements IExpertAgent {
       agent: this,
       documentIndexer: this.documentIndexer
     });
+  }
+
+  async buildContext(): Promise<ExpertAgentContext> {
+    return await this.contextManager.buildContext();
+  }
+
+  createDefaultTools(options: CreateDocumentToolsOptions = {}): readonly ExpertAgentDefaultTool[] {
+    return createDocumentTools(this, options);
+  }
+
+  async listDocuments(
+    context: ExpertAgentRunContext = {}
+  ): Promise<ExpertAgentDocumentResult<readonly ExpertAgentDocumentSummary[]>> {
+    return await this.documentIndexer.index(context);
+  }
+
+  async readDocument(
+    input: ExpertAgentDocumentReadInput
+  ): Promise<ExpertAgentDocumentResult<ExpertAgentDocument>> {
+    return await this.documentIndexer.read(input);
+  }
+
+  async createDocument(
+    input: ExpertAgentDocumentCreateInput
+  ): Promise<ExpertAgentDocumentResult<ExpertAgentDocument>> {
+    return await this.documentIndexer.create(input);
+  }
+
+  async updateDocument(
+    input: ExpertAgentDocumentUpdateInput
+  ): Promise<ExpertAgentDocumentResult<ExpertAgentDocument>> {
+    return await this.documentIndexer.update(input);
+  }
+
+  async deleteDocument(
+    input: ExpertAgentDocumentDeleteInput
+  ): Promise<ExpertAgentDocumentResult<{ readonly id: string }>> {
+    return await this.documentIndexer.delete(input);
   }
 }

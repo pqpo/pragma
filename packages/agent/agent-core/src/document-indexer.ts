@@ -1,4 +1,11 @@
+import { createRequire } from "node:module";
+
 import type { ExpertAgentRunContext } from "./run-context.ts";
+
+const require = createRequire(import.meta.url);
+const matter = require("gray-matter") as typeof import("gray-matter");
+
+export const AGENTS_DOCUMENT_ID = "AGENTS.md";
 
 export type DocumentTrigger = "always_on" | "model_decision" | "manual";
 
@@ -40,6 +47,14 @@ export interface ExpertAgentDocument extends ExpertAgentDocumentSummary {
   readonly content: string;
 }
 
+export interface ExpertAgentStoredDocumentSummary {
+  readonly id: string;
+}
+
+export interface ExpertAgentStoredDocument extends ExpertAgentStoredDocumentSummary {
+  readonly content: string;
+}
+
 export interface ExpertAgentDocumentCreateInput {
   readonly id: string;
   readonly content: string;
@@ -68,19 +83,31 @@ export interface ExpertAgentDocumentDeleteInput {
   readonly context?: ExpertAgentRunContext | undefined;
 }
 
+export interface ExpertAgentStoredDocumentCreateInput {
+  readonly id: string;
+  readonly content: string;
+  readonly context?: ExpertAgentRunContext | undefined;
+}
+
+export interface ExpertAgentStoredDocumentUpdateInput {
+  readonly id: string;
+  readonly content?: string | undefined;
+  readonly context?: ExpertAgentRunContext | undefined;
+}
+
 export interface ExpertAgentDocumentStore {
   readonly listDocuments: (
     input: ExpertAgentDocumentListInput
-  ) => Promise<ExpertAgentDocumentResult<readonly ExpertAgentDocumentSummary[]>>;
+  ) => Promise<ExpertAgentDocumentResult<readonly ExpertAgentStoredDocumentSummary[]>>;
   readonly readDocument: (
     input: ExpertAgentDocumentReadInput
-  ) => Promise<ExpertAgentDocumentResult<ExpertAgentDocument>>;
+  ) => Promise<ExpertAgentDocumentResult<ExpertAgentStoredDocument>>;
   readonly createDocument: (
-    input: ExpertAgentDocumentCreateInput
-  ) => Promise<ExpertAgentDocumentResult<ExpertAgentDocument>>;
+    input: ExpertAgentStoredDocumentCreateInput
+  ) => Promise<ExpertAgentDocumentResult<ExpertAgentStoredDocument>>;
   readonly updateDocument: (
-    input: ExpertAgentDocumentUpdateInput
-  ) => Promise<ExpertAgentDocumentResult<ExpertAgentDocument>>;
+    input: ExpertAgentStoredDocumentUpdateInput
+  ) => Promise<ExpertAgentDocumentResult<ExpertAgentStoredDocument>>;
   readonly deleteDocument: (
     input: ExpertAgentDocumentDeleteInput
   ) => Promise<ExpertAgentDocumentResult<{ readonly id: string }>>;
@@ -117,14 +144,28 @@ export class DocumentIndexer {
       return ok(this.#documents);
     }
 
-    const result = await this.store.listDocuments({ context });
+    const listResult = await this.store.listDocuments({ context });
 
-    if (!result.ok) {
-      this.#lastError = result.error;
-      return result;
+    if (!listResult.ok) {
+      this.#lastError = listResult.error;
+      return listResult;
     }
 
-    this.#documents = result.value
+    const readResults = await Promise.all(
+      listResult.value.map((document) => this.store?.readDocument({ id: document.id, context }))
+    );
+    const failedRead = readResults.find((result) => result !== undefined && !result.ok);
+
+    if (failedRead !== undefined && !failedRead.ok) {
+      this.#lastError = failedRead.error;
+      return failedRead;
+    }
+
+    this.#documents = readResults
+      .filter((result): result is { readonly ok: true; readonly value: ExpertAgentStoredDocument } => {
+        return result !== undefined && result.ok;
+      })
+      .map((result) => parseStoredDocument(result.value))
       .map((document) => normalizeDocumentSummary(document))
       .sort((left, right) => left.id.localeCompare(right.id));
     this.#lastError = undefined;
@@ -143,7 +184,7 @@ export class DocumentIndexer {
       return result;
     }
 
-    return ok(normalizeDocument(result.value));
+    return ok(normalizeDocument(parseStoredDocument(result.value)));
   }
 
   async create(
@@ -154,8 +195,13 @@ export class DocumentIndexer {
     }
 
     const result = await this.store.createDocument({
-      ...input,
-      metadata: normalizeCreateMetadata(input.metadata)
+      id: input.id,
+      content: serializeDocument({
+        id: input.id,
+        content: input.content,
+        metadata: normalizeCreateMetadata(input.metadata)
+      }),
+      context: input.context
     });
 
     if (!result.ok) {
@@ -164,7 +210,7 @@ export class DocumentIndexer {
 
     await this.index(input.context ?? {});
 
-    return ok(normalizeDocument(result.value));
+    return ok(normalizeDocument(parseStoredDocument(result.value)));
   }
 
   async update(
@@ -174,10 +220,26 @@ export class DocumentIndexer {
       return error("store_unavailable", "ExpertAgent document store is not configured.");
     }
 
+    const existing = await this.store.readDocument({
+      id: input.id,
+      context: input.context
+    });
+
+    if (!existing.ok) {
+      return existing;
+    }
+
+    const existingDocument = parseStoredDocument(existing.value);
+    const metadata = normalizeUpdateMetadata(input.id, existingDocument.metadata, input.metadata);
+    const document = normalizeDocument({
+      id: input.id,
+      content: input.content ?? existingDocument.content,
+      metadata
+    });
     const result = await this.store.updateDocument({
-      ...input,
-      metadata:
-        input.metadata === undefined ? undefined : normalizeUpdateMetadata(input.metadata)
+      id: input.id,
+      content: serializeDocument(document),
+      context: input.context
     });
 
     if (!result.ok) {
@@ -186,7 +248,7 @@ export class DocumentIndexer {
 
     await this.index(input.context ?? {});
 
-    return ok(normalizeDocument(result.value));
+    return ok(normalizeDocument(parseStoredDocument(result.value)));
   }
 
   async delete(
@@ -258,13 +320,18 @@ export function normalizeDocumentSummary(
 ): ExpertAgentDocumentSummary {
   return {
     id: document.id,
-    metadata: normalizeMetadata(document.metadata)
+    metadata: normalizeMetadata(document.id, document.metadata)
   };
 }
 
 export function normalizeMetadata(
+  id: string,
   metadata: ExpertAgentDocumentMetadata
 ): ExpertAgentDocumentMetadata {
+  if (isAgentsDocumentId(id)) {
+    return normalizeAgentsDocumentMetadata(metadata);
+  }
+
   return {
     ...(metadata.description === undefined ? {} : { description: metadata.description }),
     trigger: normalizeTrigger(metadata.trigger)
@@ -273,7 +340,7 @@ export function normalizeMetadata(
 
 function normalizeCreateMetadata(
   metadata: Partial<ExpertAgentDocumentMetadata> | undefined
-): Partial<ExpertAgentDocumentMetadata> {
+): ExpertAgentDocumentMetadata {
   if (metadata === undefined) {
     return {
       trigger: "model_decision"
@@ -287,11 +354,21 @@ function normalizeCreateMetadata(
 }
 
 function normalizeUpdateMetadata(
-  metadata: Partial<ExpertAgentDocumentMetadata>
-): Partial<ExpertAgentDocumentMetadata> {
+  id: string,
+  existingMetadata: ExpertAgentDocumentMetadata,
+  metadata: Partial<ExpertAgentDocumentMetadata> | undefined
+): ExpertAgentDocumentMetadata {
+  if (isAgentsDocumentId(id)) {
+    return existingMetadata;
+  }
+
   return {
-    ...(metadata.description === undefined ? {} : { description: metadata.description }),
-    ...(metadata.trigger === undefined ? {} : { trigger: normalizeTrigger(metadata.trigger) })
+    ...(metadata?.description === undefined
+      ? existingMetadata.description === undefined
+        ? {}
+        : { description: existingMetadata.description }
+      : { description: metadata.description }),
+    trigger: normalizeTrigger(metadata?.trigger ?? existingMetadata.trigger)
   };
 }
 
@@ -301,4 +378,76 @@ export function normalizeTrigger(trigger: DocumentTrigger | undefined): Document
   }
 
   return "model_decision";
+}
+
+export function isAgentsDocumentId(id: string): boolean {
+  return id === AGENTS_DOCUMENT_ID;
+}
+
+function normalizeAgentsDocumentMetadata(
+  metadata: ExpertAgentDocumentMetadata
+): ExpertAgentDocumentMetadata {
+  return {
+    ...(metadata.description === undefined ? {} : { description: metadata.description }),
+    trigger: "always_on"
+  };
+}
+
+function parseStoredDocument(document: ExpertAgentStoredDocument): ExpertAgentDocument {
+  const parsed = parseMarkdownDocument(document.content);
+
+  return normalizeDocument({
+    id: document.id,
+    content: parsed.content,
+    metadata: parsed.metadata
+  });
+}
+
+function parseMarkdownDocument(rawContent: string): {
+  readonly metadata: ExpertAgentDocumentMetadata;
+  readonly content: string;
+} {
+  const parsed = matter(rawContent);
+
+  return {
+    metadata: parseMatterMetadata(parsed.data),
+    content: parsed.content
+  };
+}
+
+function parseMatterMetadata(data: Record<string, unknown>): ExpertAgentDocumentMetadata {
+  const description = data.description;
+  const trigger = data.trigger;
+
+  return {
+    ...(typeof description === "string" ? { description } : {}),
+    trigger: normalizeTrigger(readMetadataTrigger(trigger))
+  };
+}
+
+function serializeDocument(document: ExpertAgentDocument): string {
+  if (isAgentsDocumentId(document.id)) {
+    return document.content;
+  }
+
+  const serialized = matter.stringify(document.content, {
+    ...(document.metadata.description === undefined
+      ? {}
+      : { description: document.metadata.description }),
+    trigger: document.metadata.trigger
+  });
+
+  if (!document.content.endsWith("\n") && serialized.endsWith("\n")) {
+    return serialized.slice(0, -1);
+  }
+
+  return serialized;
+}
+
+function readMetadataTrigger(value: unknown): DocumentTrigger | undefined {
+  if (value === "always_on" || value === "model_decision" || value === "manual") {
+    return value;
+  }
+
+  return undefined;
 }

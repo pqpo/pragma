@@ -1,10 +1,14 @@
 import type {
-  DocumentIndexer,
   DocumentTrigger,
   ExpertAgentDocument,
+  ExpertAgentDocumentCreateInput,
+  ExpertAgentDocumentDeleteInput,
   ExpertAgentDocumentError,
   ExpertAgentDocumentMetadata,
-  ExpertAgentDocumentSummary
+  ExpertAgentDocumentReadInput,
+  ExpertAgentDocumentResult,
+  ExpertAgentDocumentSummary,
+  ExpertAgentDocumentUpdateInput
 } from "./document-indexer.ts";
 import type { ExpertAgentRunContext } from "./run-context.ts";
 
@@ -29,8 +33,26 @@ export interface CreateDocumentToolsOptions {
   readonly getContext?: (() => ExpertAgentRunContext | undefined) | undefined;
 }
 
+export interface ExpertAgentDocumentOperations {
+  readonly listDocuments: (
+    context?: ExpertAgentRunContext
+  ) => Promise<ExpertAgentDocumentResult<readonly ExpertAgentDocumentSummary[]>>;
+  readonly readDocument: (
+    input: ExpertAgentDocumentReadInput
+  ) => Promise<ExpertAgentDocumentResult<ExpertAgentDocument>>;
+  readonly createDocument: (
+    input: ExpertAgentDocumentCreateInput
+  ) => Promise<ExpertAgentDocumentResult<ExpertAgentDocument>>;
+  readonly updateDocument: (
+    input: ExpertAgentDocumentUpdateInput
+  ) => Promise<ExpertAgentDocumentResult<ExpertAgentDocument>>;
+  readonly deleteDocument: (
+    input: ExpertAgentDocumentDeleteInput
+  ) => Promise<ExpertAgentDocumentResult<{ readonly id: string }>>;
+}
+
 export function createDocumentTools(
-  documentIndexer: DocumentIndexer,
+  documentOperations: ExpertAgentDocumentOperations,
   options: CreateDocumentToolsOptions = {}
 ): readonly ExpertAgentDefaultTool[] {
   return [
@@ -40,7 +62,7 @@ export function createDocumentTools(
       description: "List ExpertAgent documents by document id, description, and trigger.",
       inputSchema: withContextSchema({}),
       call: async (args) => {
-        const result = await documentIndexer.index(readDocumentContext(args, options));
+        const result = await documentOperations.listDocuments(readDocumentContext(args, options));
 
         if (!result.ok) {
           return errorResult(result.error);
@@ -63,7 +85,7 @@ export function createDocumentTools(
       }, ["id"]),
       call: async (args) => {
         const id = readStringParam(args, "id");
-        const result = await documentIndexer.read({
+        const result = await documentOperations.readDocument({
           id,
           context: readDocumentContext(args, options)
         });
@@ -94,7 +116,7 @@ export function createDocumentTools(
         ["id", "content"]
       ),
       call: async (args) => {
-        const result = await documentIndexer.create({
+        const result = await documentOperations.createDocument({
           id: readStringParam(args, "id"),
           content: readStringParam(args, "content"),
           metadata: readMetadataParams(args),
@@ -127,7 +149,7 @@ export function createDocumentTools(
         ["id"]
       ),
       call: async (args) => {
-        const result = await documentIndexer.update({
+        const result = await documentOperations.updateDocument({
           id: readStringParam(args, "id"),
           content: readOptionalStringParam(args, "content"),
           metadata: readMetadataParams(args),
@@ -155,7 +177,7 @@ export function createDocumentTools(
       }, ["id"]),
       call: async (args) => {
         const id = readStringParam(args, "id");
-        const result = await documentIndexer.delete({
+        const result = await documentOperations.deleteDocument({
           id,
           context: readDocumentContext(args, options)
         });

@@ -21,5 +21,8 @@
     "@types/node": "latest",
     "typescript": "latest",
     "vitest": "latest"
+  },
+  "dependencies": {
+    "gray-matter": "^4.0.3"
   }
 }

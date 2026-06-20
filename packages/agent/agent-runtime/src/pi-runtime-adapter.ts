@@ -25,7 +25,7 @@ import type {
   RuntimeRunRequest,
   RuntimeRunResult
 } from "@expertmesh/agent-core";
-import { createDocumentTools, createSingleRunAgentLifecycle } from "@expertmesh/agent-core";
+import { createSingleRunAgentLifecycle } from "@expertmesh/agent-core";
 import { dirname } from "node:path";
 
 import { createMcpToolRegistry } from "./mcp-tools.ts";
@@ -55,7 +55,7 @@ export function createCloudPiRuntimeAdapter<TInput = string, TOutput = string>(
       const authStorage = AuthStorage.create();
       const modelRegistry = ModelRegistry.create(authStorage);
       const cwd = agent.workspace;
-      const context = await agent.contextManager.buildContext();
+      const context = await agent.buildContext();
       const loader = createResourceLoader(agent, cwd, context.systemPrompt);
       await loader.reload();
       const mcpToolRegistry = await createMcpToolRegistry(agent.mcp);
@@ -161,7 +161,7 @@ function createCustomTools(options: {
         modelRegistry: options.modelRegistry
       })
   });
-  const documentTools = createDocumentTools(options.agent.documentIndexer, {
+  const documentTools = options.agent.createDefaultTools({
     getContext: () => options.lifecycle.currentContext
   });
 

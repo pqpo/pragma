@@ -1,5 +1,3 @@
-import { readFile } from "node:fs/promises";
-
 import type { IExpertAgent } from "./expert-agent.ts";
 import type {
   DocumentIndexer,
@@ -10,7 +8,6 @@ import type { SubAgentDefinition } from "./sub-agent.ts";
 
 export interface ExpertAgentContext {
   readonly systemPrompt: string;
-  readonly agentsMd?: string | undefined;
   readonly documents: readonly ExpertAgentDocumentSummary[];
 }
 
@@ -29,47 +26,21 @@ export class ContextManager {
   }
 
   async buildContext(): Promise<ExpertAgentContext> {
-    const [documents, agentsMd] = await Promise.all([
-      this.documentIndexer.index(),
-      this.loadAgentsMd()
-    ]);
+    const documents = await this.documentIndexer.index();
     const documentSummaries = documents.ok ? documents.value : [];
 
     const alwaysOnDocuments = await this.loadAlwaysOnDocuments(documentSummaries);
-    const context: ExpertAgentContext = {
+    return {
       systemPrompt: this.buildSystemPrompt({
-        agentsMd,
         alwaysOnDocuments,
         documentError: documents.ok ? undefined : documents.error.message,
         documents: documentSummaries
       }),
       documents: documentSummaries
     };
-
-    if (agentsMd !== undefined) {
-      return {
-        ...context,
-        agentsMd
-      };
-    }
-
-    return context;
-  }
-
-  private async loadAgentsMd(): Promise<string | undefined> {
-    if (this.agent.agentsMd === undefined || this.agent.agentsMd.length === 0) {
-      return undefined;
-    }
-
-    try {
-      return await readFile(this.agent.agentsMd, "utf8");
-    } catch {
-      return this.agent.agentsMd;
-    }
   }
 
   private buildSystemPrompt(context: {
-    readonly agentsMd?: string | undefined;
     readonly alwaysOnDocuments: readonly ExpertAgentDocument[];
     readonly documentError?: string | undefined;
     readonly documents: readonly ExpertAgentDocumentSummary[];
@@ -84,7 +55,6 @@ export class ContextManager {
       `Expert ID: ${this.agent.id}`,
       `Scope: ${this.agent.scope}`,
       `Tags: ${this.agent.tags.join(", ")}`,
-      formatAgentsMdSection(context.agentsMd),
       context.documentError === undefined
         ? undefined
         : `Document store issue: ${context.documentError}`,
@@ -155,14 +125,6 @@ function formatStringListLine(label: string, value: readonly string[] | undefine
   }
 
   return `  ${label}: ${value.join(", ")}`;
-}
-
-function formatAgentsMdSection(agentsMd: string | undefined): string | undefined {
-  if (agentsMd === undefined || agentsMd.length === 0) {
-    return undefined;
-  }
-
-  return ["AGENTS.md instructions:", agentsMd].join("\n\n");
 }
 
 function formatDocumentsSection(

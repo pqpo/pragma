@@ -172,16 +172,6 @@ skills:
       ref: docs://order/rules/state-machine.md
       enabledByDefault: true
 
-agentsMd:
-  mode: layered
-  files:
-    - path: ./AGENTS.md
-      scope: expert
-      required: true
-    - path: ./docs/order/AGENTS.md
-      scope: documents
-      required: false
-
 documents:
   roots:
     - id: order-docs
@@ -460,46 +450,30 @@ skills:
 - Skill 内容需要纳入版本和审计；
 - 来自文档的 Skill 应遵守 documents 的权限和加载规则。
 
-## 8. AGENTS.md 配置
+## 8. AGENTS.md 特殊文档
 
-`agentsMd` 声明运行时应加载哪些 AGENTS.md 指令，以及它们的作用域。
+`AGENTS.md` 不再作为独立 Manifest 字段声明。它是 documents 中的特殊文档：
 
-```yaml
-agentsMd:
-  mode: layered
-  files:
-    - path: ./AGENTS.md
-      scope: expert
-      required: true
-    - path: ./docs/order/AGENTS.md
-      scope: documents
-      required: false
-```
-
-字段规则：
-
-| 字段 | 必填 | 说明 |
-| --- | --- | --- |
-| `mode` | 是 | 当前只建议 `layered` |
-| `files[].path` | 是 | AGENTS.md 文件路径 |
-| `files[].scope` | 是 | `expert`、`documents`、`workspace`、`runtime` |
-| `files[].required` | 是 | 缺失时是否阻断发布或运行 |
+- 文档 ID 固定为 `AGENTS.md`；
+- 文件内容就是指令正文，不需要 frontmatter metadata；
+- 运行时自动把它视为 `always_on` 文档加载；
+- 文档工具可以通过 `readDocument` / `updateDocument` 读取或更新它；
+- 更新时仍保持纯 markdown 内容，不写入 metadata。
 
 加载顺序：
 
 1. 平台系统约束；
-2. 租户或组织级 AGENTS.md；
-3. 专家级 AGENTS.md；
-4. 文档级 AGENTS.md；
-5. workspace 级 AGENTS.md；
-6. 当前任务临时约束。
+2. 租户或组织级指令；
+3. `AGENTS.md` 特殊文档；
+4. 其他 `always_on` 文档；
+5. 当前任务临时约束。
 
 冲突规则：
 
 - 越靠前的系统和平台安全约束优先级越高；
-- 后加载的文件可以补充更具体的工程规范；
-- 后加载文件不能放宽前序安全规则、权限规则或 schema 规则；
-- 所有实际加载的 AGENTS.md 路径和内容摘要必须进入运行快照。
+- `AGENTS.md` 可以补充更具体的工程规范；
+- `AGENTS.md` 不能放宽前序安全规则、权限规则或 schema 规则；
+- 实际加载的 `AGENTS.md` 内容摘要必须进入运行快照。
 
 ## 9. 文档路径与渐进式加载
 
@@ -635,7 +609,6 @@ type ExpertManifest = {
   outputSchema: JsonObjectSchema;
   mcp?: ExpertMcpConfig;
   skills?: ExpertSkillsConfig;
-  agentsMd?: ExpertAgentsMdConfig;
   documents?: ExpertDocumentsConfig;
   workspace?: ExpertWorkspaceConfig;
 };
@@ -663,7 +636,7 @@ type ExpertManifest = {
 7. MCP、Skill、documents、workspace 的 ID 在各自作用域内唯一；
 8. 所有相对路径不能逃逸声明根目录；
 9. secret 不以明文出现在 Manifest；
-10. `AGENTS.md` required 文件存在；
+10. 如果 documents 根中存在 `AGENTS.md`，必须能作为 `always_on` 文档读取；
 11. `workspace.defaultRoot` 指向已声明 root；
 12. `documents.forbiddenLoad` 不被默认加载规则覆盖。
 
@@ -673,7 +646,7 @@ type ExpertManifest = {
 2. 调用方有权使用该专家版本；
 3. Playbook 有权启用声明的 MCP 和 Skills；
 4. Runtime 有可用 workspace；
-5. 文档和 AGENTS.md 加载结果生成 Context Snapshot。
+5. 文档加载结果生成 Context Snapshot。
 
 运行后必须校验：
 
@@ -704,7 +677,7 @@ Runtime Adapter 根据 Manifest 准备执行环境：
 
 1. 选择 Runtime；
 2. 创建 workspace；
-3. 加载 AGENTS.md；
+3. 加载 documents，其中 `AGENTS.md` 自动作为 `always_on` 文档；
 4. 加载必要文档；
 5. 注册允许的 MCP；
 6. 加载 Skills；
