@@ -18,7 +18,8 @@
   },
   "dependencies": {
     "@earendil-works/pi-coding-agent": "0.79.8",
-    "@expertmesh/agent-core": "workspace:*"
+    "@expertmesh/agent-core": "workspace:*",
+    "@modelcontextprotocol/client": "2.0.0-alpha.2"
   },
   "devDependencies": {
     "@expertmesh/tsconfig": "workspace:*",

@@ -1,5 +1,7 @@
 import { ContextManager } from "./context-manager.ts";
 import { DocumentIndexer } from "./document-indexer.ts";
+import type { ExpertAgentDocumentStore } from "./document-indexer.ts";
+import type { ExpertAgentRunContext } from "./run-context.ts";
 import type { SubAgentRegistry } from "./sub-agent.ts";
 
 export type ExpertAgentSchemaVersion = "expertmesh.expert/v1";
@@ -38,6 +40,7 @@ export interface IExpertAgentSkillsConfig {
 export interface IExpertAgentRunRequest<TInput = string> {
   readonly task: string;
   readonly input: TInput;
+  readonly context?: ExpertAgentRunContext | undefined;
 }
 
 export interface IExpertAgentRunResult<TOutput = string> {
@@ -56,11 +59,11 @@ export interface IExpertAgent {
   readonly tags: readonly string[];
   readonly version: string;
   readonly scope: string;
+  readonly workspace: string;
   readonly mcp?: IExpertAgentMcpConfig | undefined;
   readonly skills?: IExpertAgentSkillsConfig | undefined;
   readonly agentsMd?: string | undefined;
-  readonly documents?: string | undefined;
-  readonly workspace?: string | undefined;
+  readonly documents?: ExpertAgentDocumentStore | undefined;
   readonly subAgents?: SubAgentRegistry | undefined;
 }
 
@@ -77,8 +80,8 @@ export class ExpertAgent implements IExpertAgent {
   readonly mcp: IExpertAgentMcpConfig | undefined;
   readonly skills: IExpertAgentSkillsConfig | undefined;
   readonly agentsMd: string | undefined;
-  readonly documents: string | undefined;
-  readonly workspace: string | undefined;
+  readonly documents: ExpertAgentDocumentStore | undefined;
+  readonly workspace: string;
   readonly subAgents: SubAgentRegistry | undefined;
   readonly documentIndexer: DocumentIndexer;
   readonly contextManager: ContextManager;
@@ -98,7 +101,7 @@ export class ExpertAgent implements IExpertAgent {
     this.workspace = options.workspace;
     this.subAgents = options.subAgents;
     this.documentIndexer = new DocumentIndexer({
-      documentsDir: options.documents
+      store: options.documents
     });
     this.contextManager = new ContextManager({
       agent: this,

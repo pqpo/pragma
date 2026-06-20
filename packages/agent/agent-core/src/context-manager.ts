@@ -1,13 +1,17 @@
 import { readFile } from "node:fs/promises";
 
 import type { IExpertAgent } from "./expert-agent.ts";
-import type { DocumentIndexer, IndexedDocument } from "./document-indexer.ts";
+import type {
+  DocumentIndexer,
+  ExpertAgentDocument,
+  ExpertAgentDocumentSummary
+} from "./document-indexer.ts";
 import type { SubAgentDefinition } from "./sub-agent.ts";
 
 export interface ExpertAgentContext {
   readonly systemPrompt: string;
   readonly agentsMd?: string | undefined;
-  readonly documents: readonly IndexedDocument[];
+  readonly documents: readonly ExpertAgentDocumentSummary[];
 }
 
 export interface ContextManagerOptions {
@@ -29,10 +33,17 @@ export class ContextManager {
       this.documentIndexer.index(),
       this.loadAgentsMd()
     ]);
+    const documentSummaries = documents.ok ? documents.value : [];
 
+    const alwaysOnDocuments = await this.loadAlwaysOnDocuments(documentSummaries);
     const context: ExpertAgentContext = {
-      systemPrompt: this.buildSystemPrompt({ agentsMd, documents }),
-      documents
+      systemPrompt: this.buildSystemPrompt({
+        agentsMd,
+        alwaysOnDocuments,
+        documentError: documents.ok ? undefined : documents.error.message,
+        documents: documentSummaries
+      }),
+      documents: documentSummaries
     };
 
     if (agentsMd !== undefined) {
@@ -59,12 +70,10 @@ export class ContextManager {
 
   private buildSystemPrompt(context: {
     readonly agentsMd?: string | undefined;
-    readonly documents: readonly IndexedDocument[];
+    readonly alwaysOnDocuments: readonly ExpertAgentDocument[];
+    readonly documentError?: string | undefined;
+    readonly documents: readonly ExpertAgentDocumentSummary[];
   }): string {
-    const alwaysOnDocuments = context.documents.filter(
-      (document) => document.metadata.trigger === "always_on"
-    );
-
     const modelDecisionDocuments = context.documents.filter(
       (document) => document.metadata.trigger === "model_decision"
     );
@@ -76,12 +85,30 @@ export class ContextManager {
       `Scope: ${this.agent.scope}`,
       `Tags: ${this.agent.tags.join(", ")}`,
       formatAgentsMdSection(context.agentsMd),
-      formatDocumentsSection("Always-on documents", alwaysOnDocuments, true),
+      context.documentError === undefined
+        ? undefined
+        : `Document store issue: ${context.documentError}`,
+      formatDocumentsSection("Always-on documents", context.alwaysOnDocuments, true),
       formatDocumentsSection("Available documents", modelDecisionDocuments, false),
       formatSubAgentsSection(this.agent)
     ];
 
     return sections.filter((section) => section !== undefined && section.length > 0).join("\n\n");
+  }
+
+  private async loadAlwaysOnDocuments(
+    documents: readonly ExpertAgentDocumentSummary[]
+  ): Promise<readonly ExpertAgentDocument[]> {
+    const alwaysOnDocuments = documents.filter(
+      (document) => document.metadata.trigger === "always_on"
+    );
+    const loaded = await Promise.all(
+      alwaysOnDocuments.map((document) => this.documentIndexer.read({ id: document.id }))
+    );
+
+    return loaded
+      .filter((document) => document.ok)
+      .map((document) => document.value);
   }
 }
 
@@ -140,7 +167,7 @@ function formatAgentsMdSection(agentsMd: string | undefined): string | undefined
 
 function formatDocumentsSection(
   title: string,
-  documents: readonly IndexedDocument[],
+  documents: readonly (ExpertAgentDocument | ExpertAgentDocumentSummary)[],
   includeContent: boolean
 ): string | undefined {
   if (documents.length === 0) {
@@ -149,7 +176,7 @@ function formatDocumentsSection(
 
   const documentSections = documents.map((document) => {
     const headerLines = [
-      `- ${document.path}`,
+      `- ${document.id}`,
       document.metadata.description === undefined
         ? undefined
         : `  description: ${document.metadata.description}`,
@@ -162,7 +189,11 @@ function formatDocumentsSection(
       return headerLines;
     }
 
-    return [headerLines, "  content:", indent(document.content, "    ")].join("\n");
+    if ("content" in document) {
+      return [headerLines, "  content:", indent(document.content, "    ")].join("\n");
+    }
+
+    return headerLines;
   });
 
   return [title, ...documentSections].join("\n");

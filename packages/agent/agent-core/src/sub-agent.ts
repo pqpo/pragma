@@ -1,7 +1,5 @@
 export type SubAgentModel = "inherit" | (string & {});
 
-export type SubAgentThinkingLevel = "inherit" | "off" | "low" | "medium" | "high";
-
 export interface SubAgentPromptContext {
   readonly parentAgentId: string;
   readonly parentDisplayName: string;

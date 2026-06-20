@@ -3,6 +3,7 @@ import type {
   IExpertAgentRunRequest,
   IExpertAgentRunResult
 } from "./expert-agent.ts";
+import type { AgentLifecycleState } from "./agent-lifecycle.ts";
 
 export type RuntimeAdapterKind = "cloud-pi-agent";
 
@@ -31,8 +32,9 @@ export interface RuntimeRunResult<TOutput = unknown> {
 }
 
 export interface RuntimeAgentSession<TInput = unknown, TOutput = unknown> {
+  readonly state: () => AgentLifecycleState;
   readonly run: (request: RuntimeRunRequest<TInput>) => Promise<RuntimeRunResult<TOutput>>;
-  readonly dispose?: () => Promise<void>;
+  readonly abort: () => Promise<void>;
 }
 
 export interface RuntimeAdapter<TInput = unknown, TOutput = unknown> {
