@@ -1,0 +1,122 @@
+import { SessionManager } from "@earendil-works/pi-coding-agent";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+import { createPiSessionManager } from "./session-manager.ts";
+
+vi.mock("@earendil-works/pi-coding-agent", () => ({
+  AuthStorage: {
+    create: vi.fn(),
+  },
+  ModelRegistry: {
+    create: vi.fn(),
+  },
+  SessionManager: {
+    create: vi.fn((cwd: string, sessionDir: string | undefined, options: unknown) => ({
+      cwd,
+      options,
+      sessionDir,
+      type: "create",
+    })),
+    inMemory: vi.fn((cwd: string) => ({
+      cwd,
+      type: "inMemory",
+    })),
+    list: vi.fn(),
+    open: vi.fn((path: string) => ({
+      path,
+      type: "open",
+    })),
+  },
+  createAgentSession: vi.fn(),
+}));
+
+describe("createPiSessionManager", () => {
+  beforeEach(() => {
+    vi.mocked(SessionManager.create).mockClear();
+    vi.mocked(SessionManager.inMemory).mockClear();
+    vi.mocked(SessionManager.list).mockReset();
+    vi.mocked(SessionManager.open).mockClear();
+  });
+
+  it("creates a workspace-persisted session when no session id is provided", async () => {
+    const manager = await createPiSessionManager("/workspace", undefined);
+
+    expect(manager).toEqual({
+      cwd: "/workspace",
+      options: undefined,
+      sessionDir: "/workspace/.expertmesh/runtime-sessions/pi",
+      type: "create",
+    });
+    expect(SessionManager.create).toHaveBeenCalledWith(
+      "/workspace",
+      "/workspace/.expertmesh/runtime-sessions/pi",
+    );
+    expect(SessionManager.inMemory).not.toHaveBeenCalled();
+    expect(SessionManager.list).not.toHaveBeenCalled();
+  });
+
+  it("opens an existing local session with the requested session id", async () => {
+    vi.mocked(SessionManager.list).mockResolvedValue([
+      createSessionInfo({
+        id: "session-1",
+        path: "/sessions/session-1.jsonl",
+      }),
+      createSessionInfo({
+        id: "session-2",
+        path: "/sessions/session-2.jsonl",
+      }),
+    ]);
+
+    const manager = await createPiSessionManager("/workspace", "session-2");
+
+    expect(manager).toEqual({
+      path: "/sessions/session-2.jsonl",
+      type: "open",
+    });
+    expect(SessionManager.list).toHaveBeenCalledWith(
+      "/workspace",
+      "/workspace/.expertmesh/runtime-sessions/pi",
+    );
+    expect(SessionManager.open).toHaveBeenCalledWith(
+      "/sessions/session-2.jsonl",
+      "/workspace/.expertmesh/runtime-sessions/pi",
+    );
+    expect(SessionManager.create).not.toHaveBeenCalled();
+  });
+
+  it("creates a persistent session with the requested session id when none exists", async () => {
+    vi.mocked(SessionManager.list).mockResolvedValue([]);
+
+    const manager = await createPiSessionManager("/workspace", "session-3");
+
+    expect(manager).toEqual({
+      cwd: "/workspace",
+      options: {
+        id: "session-3",
+      },
+      sessionDir: "/workspace/.expertmesh/runtime-sessions/pi",
+      type: "create",
+    });
+    expect(SessionManager.create).toHaveBeenCalledWith(
+      "/workspace",
+      "/workspace/.expertmesh/runtime-sessions/pi",
+      {
+        id: "session-3",
+      },
+    );
+    expect(SessionManager.open).not.toHaveBeenCalled();
+  });
+});
+
+function createSessionInfo(options: { readonly id: string; readonly path: string }) {
+  return {
+    allMessagesText: "",
+    created: new Date("2026-01-01T00:00:00.000Z"),
+    cwd: "/workspace",
+    firstMessage: "",
+    id: options.id,
+    messageCount: 0,
+    modified: new Date("2026-01-01T00:00:00.000Z"),
+    path: options.path,
+  };
+}

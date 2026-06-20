@@ -27,6 +27,7 @@ export interface RuntimeSessionInfo {
 export interface RuntimeCreateSessionRequest {
   readonly agent: ExpertAgent;
   readonly context?: ExpertAgentRunContext | undefined;
+  readonly sessionId?: string | undefined;
 }
 
 export interface RuntimeSubmitRequest<TOutput = string> extends RuntimeStreamOptions {

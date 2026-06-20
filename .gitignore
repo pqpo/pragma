@@ -4,6 +4,7 @@ dist
 coverage
 .turbo
 tsconfig.tsbuildinfo
+.expertmesh/runtime-sessions/
 .env
 .env.*
 !.env.example

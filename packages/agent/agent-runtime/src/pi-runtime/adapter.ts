@@ -2,7 +2,6 @@ import {
   AuthStorage,
   createAgentSession,
   ModelRegistry,
-  SessionManager,
 } from "@earendil-works/pi-coding-agent";
 import type {
   AgentSession,
@@ -14,6 +13,7 @@ import { createQueuedAgentLifecycle } from "@expertmesh/agent-core";
 import { createMcpToolRegistry } from "../mcp-tools.ts";
 import { createResourceLoader } from "./resources.ts";
 import { createPiRuntimeSession } from "./session.ts";
+import { createPiSessionManager } from "./session-manager.ts";
 import { createRuntimeStreamBridge } from "./stream.ts";
 import { createCustomTools } from "./tools.ts";
 import type { CloudPiRuntimeAdapterOptions } from "./types.ts";
@@ -28,7 +28,7 @@ export function createCloudPiRuntimeAdapter<TOutput = string>(
       kind: "cloud-pi-agent",
       displayName: "Cloud PI Agent",
     },
-    async createSession({ agent, context: runContext }) {
+    async createSession({ agent, context: runContext, sessionId }) {
       const authStorage = AuthStorage.create();
       const modelRegistry = ModelRegistry.create(authStorage);
       const cwd = agent.workspace;
@@ -63,7 +63,7 @@ export function createCloudPiRuntimeAdapter<TOutput = string>(
         authStorage,
         modelRegistry,
         resourceLoader: loader,
-        sessionManager: SessionManager.inMemory(),
+        sessionManager: await createPiSessionManager(cwd, sessionId),
       };
 
       if (customTools.length > 0) {
