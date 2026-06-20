@@ -1,9 +1,10 @@
 import type {
   ExpertAgent,
   IExpertAgentRunRequest,
-  IExpertAgentRunResult
+  IExpertAgentRunResult,
 } from "../agent/expert-agent.ts";
 import type { AgentLifecycleState } from "./agent-lifecycle.ts";
+import type { RuntimeStreamOptions } from "./stream-events.ts";
 
 export type RuntimeAdapterKind = "cloud-pi-agent";
 
@@ -21,7 +22,7 @@ export interface RuntimePrepareRequest {
   readonly agent: ExpertAgent;
 }
 
-export interface RuntimeRunRequest<TInput = unknown> {
+export interface RuntimeRunRequest<TInput = unknown> extends RuntimeStreamOptions {
   readonly invocation: RuntimeInvocation;
   readonly request: IExpertAgentRunRequest<TInput>;
 }
@@ -40,6 +41,6 @@ export interface RuntimeAgentSession<TInput = unknown, TOutput = unknown> {
 export interface RuntimeAdapter<TInput = unknown, TOutput = unknown> {
   readonly descriptor: RuntimeAdapterDescriptor;
   readonly prepare: (
-    request: RuntimePrepareRequest
+    request: RuntimePrepareRequest,
   ) => Promise<RuntimeAgentSession<TInput, TOutput>>;
 }

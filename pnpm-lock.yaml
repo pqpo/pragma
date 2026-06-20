@@ -143,6 +143,9 @@ importers:
 
   packages/agent/agent-core:
     dependencies:
+      '@expertmesh/contracts':
+        specifier: workspace:*
+        version: link:../../shared/contracts
       gray-matter:
         specifier: ^4.0.3
         version: 4.0.3

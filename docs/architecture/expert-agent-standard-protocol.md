@@ -339,14 +339,14 @@ tags:
 
 建议保留通用输入字段：
 
-| 字段 | 说明 |
-| --- | --- |
-| `task` | 当前任务，通常必填 |
-| `businessContext` | 业务背景 |
-| `technicalContext` | 技术背景 |
-| `constraints` | 约束条件 |
-| `relatedFiles` | 相关文件路径 |
-| `upstreamOutputs` | 上游专家输出 |
+| 字段               | 说明               |
+| ------------------ | ------------------ |
+| `task`             | 当前任务，通常必填 |
+| `businessContext`  | 业务背景           |
+| `technicalContext` | 技术背景           |
+| `constraints`      | 约束条件           |
+| `relatedFiles`     | 相关文件路径       |
+| `upstreamOutputs`  | 上游专家输出       |
 
 ### 5.9 `outputSchema`
 
@@ -364,14 +364,14 @@ tags:
 
 建议保留通用输出字段：
 
-| 字段 | 说明 |
-| --- | --- |
-| `conclusion` | 专家结论 |
-| `confidence` | 置信度 |
-| `risks` | 风险点 |
-| `questions` | 需要澄清的问题 |
-| `actions` | 建议动作 |
-| `references` | 引用来源 |
+| 字段         | 说明           |
+| ------------ | -------------- |
+| `conclusion` | 专家结论       |
+| `confidence` | 置信度         |
+| `risks`      | 风险点         |
+| `questions`  | 需要澄清的问题 |
+| `actions`    | 建议动作       |
+| `references` | 引用来源       |
 
 ## 6. MCP 配置对象
 
@@ -394,16 +394,16 @@ mcp:
 
 字段规则：
 
-| 字段 | 必填 | 说明 |
-| --- | --- | --- |
-| `servers[].id` | 是 | 当前专家内唯一的 MCP Server ID |
-| `servers[].displayName` | 是 | 展示名称 |
-| `servers[].transport` | 是 | `stdio`、`http`、`websocket` 或后续扩展值 |
-| `packageRef` | 否 | stdio 类 MCP 的包引用 |
-| `endpointRef` | 否 | 远程 MCP 的端点引用，敏感值必须使用 secret 引用 |
-| `enabledByDefault` | 是 | 默认是否启用 |
-| `allowedTools` | 是 | 专家可使用的工具白名单 |
-| `config` | 否 | 非敏感配置 |
+| 字段                    | 必填 | 说明                                            |
+| ----------------------- | ---- | ----------------------------------------------- |
+| `servers[].id`          | 是   | 当前专家内唯一的 MCP Server ID                  |
+| `servers[].displayName` | 是   | 展示名称                                        |
+| `servers[].transport`   | 是   | `stdio`、`http`、`websocket` 或后续扩展值       |
+| `packageRef`            | 否   | stdio 类 MCP 的包引用                           |
+| `endpointRef`           | 否   | 远程 MCP 的端点引用，敏感值必须使用 secret 引用 |
+| `enabledByDefault`      | 是   | 默认是否启用                                    |
+| `allowedTools`          | 是   | 专家可使用的工具白名单                          |
+| `config`                | 否   | 非敏感配置                                      |
 
 安全约束：
 
@@ -434,14 +434,14 @@ skills:
 
 字段规则：
 
-| 字段 | 必填 | 说明 |
-| --- | --- | --- |
-| `entries[].id` | 是 | 当前专家内唯一的 Skill ID |
-| `entries[].displayName` | 是 | 展示名称 |
-| `entries[].source` | 是 | `registry`、`document`、`workspace` 或 `inline` |
-| `entries[].ref` | 是 | Skill 引用地址 |
-| `entries[].enabledByDefault` | 是 | 默认是否加载 |
-| `entries[].loadWhen` | 否 | 按任务条件延迟加载的规则 |
+| 字段                         | 必填 | 说明                                            |
+| ---------------------------- | ---- | ----------------------------------------------- |
+| `entries[].id`               | 是   | 当前专家内唯一的 Skill ID                       |
+| `entries[].displayName`      | 是   | 展示名称                                        |
+| `entries[].source`           | 是   | `registry`、`document`、`workspace` 或 `inline` |
+| `entries[].ref`              | 是   | Skill 引用地址                                  |
+| `entries[].enabledByDefault` | 是   | 默认是否加载                                    |
+| `entries[].loadWhen`         | 否   | 按任务条件延迟加载的规则                        |
 
 约束：
 
@@ -503,18 +503,18 @@ documents:
 
 字段规则：
 
-| 字段 | 必填 | 说明 |
-| --- | --- | --- |
-| `roots[].id` | 是 | 当前专家内唯一的文档根 ID |
-| `roots[].displayName` | 是 | 展示名称 |
-| `roots[].uri` | 否 | 平台内文档源 URI |
-| `roots[].path` | 否 | workspace 或仓库内相对路径 |
-| `roots[].access` | 是 | `read`、`readwrite` |
-| `roots[].index.strategy` | 是 | `summary`、`vector`、`keyword`、`hybrid` |
-| `roots[].index.summaryFile` | 否 | 文档目录摘要入口 |
-| `roots[].load.mustLoad` | 否 | 每次运行必须加载 |
-| `roots[].load.lazyLoad` | 否 | 可按任务检索加载 |
-| `roots[].load.forbiddenLoad` | 否 | 禁止加载路径 |
+| 字段                         | 必填 | 说明                                     |
+| ---------------------------- | ---- | ---------------------------------------- |
+| `roots[].id`                 | 是   | 当前专家内唯一的文档根 ID                |
+| `roots[].displayName`        | 是   | 展示名称                                 |
+| `roots[].uri`                | 否   | 平台内文档源 URI                         |
+| `roots[].path`               | 否   | workspace 或仓库内相对路径               |
+| `roots[].access`             | 是   | `read`、`readwrite`                      |
+| `roots[].index.strategy`     | 是   | `summary`、`vector`、`keyword`、`hybrid` |
+| `roots[].index.summaryFile`  | 否   | 文档目录摘要入口                         |
+| `roots[].load.mustLoad`      | 否   | 每次运行必须加载                         |
+| `roots[].load.lazyLoad`      | 否   | 可按任务检索加载                         |
+| `roots[].load.forbiddenLoad` | 否   | 禁止加载路径                             |
 
 渐进式加载流程：
 
@@ -574,15 +574,15 @@ workspace:
 
 字段规则：
 
-| 字段 | 必填 | 说明 |
-| --- | --- | --- |
-| `mode` | 是 | `cloud-sandbox`、`desktop-local` 或 `readonly` |
-| `roots[].id` | 是 | 当前专家内唯一的 workspace root ID |
-| `roots[].path` | 是 | 相对路径或平台映射路径 |
-| `roots[].access` | 是 | `read`、`readwrite`、`write-artifacts` |
-| `roots[].purpose` | 是 | 为什么需要这个目录 |
-| `defaultRoot` | 是 | 默认工作目录 ID |
-| `artifactPath` | 否 | 运行产物输出目录 |
+| 字段              | 必填 | 说明                                           |
+| ----------------- | ---- | ---------------------------------------------- |
+| `mode`            | 是   | `cloud-sandbox`、`desktop-local` 或 `readonly` |
+| `roots[].id`      | 是   | 当前专家内唯一的 workspace root ID             |
+| `roots[].path`    | 是   | 相对路径或平台映射路径                         |
+| `roots[].access`  | 是   | `read`、`readwrite`、`write-artifacts`         |
+| `roots[].purpose` | 是   | 为什么需要这个目录                             |
+| `defaultRoot`     | 是   | 默认工作目录 ID                                |
+| `artifactPath`    | 否   | 运行产物输出目录                               |
 
 约束：
 
@@ -688,7 +688,110 @@ Runtime Adapter 根据 Manifest 准备执行环境：
 
 Manifest 不绑定具体 Claude、Codex 或自研 Agent SDK。具体 Runtime 能力应由后续 `RuntimeAdapter` 协议声明。
 
-## 15. 示例：最小专家
+## 15. 流式输出协议
+
+专家 Agent 的运行结果仍然以 `IExpertAgentRunResult` 作为最终验收对象；流式输出用于 UI 实时展示、Trace 记录、运行审计、取消反馈和 subAgent 过程桥接。流式输出不替代最终 `outputSchema` 校验。
+
+统一事件对象定义在 `@expertmesh/contracts` 的 `ExpertAgentStreamEventSchema`，协议版本为：
+
+```text
+expertmesh.stream/v1
+```
+
+事件公共字段：
+
+| 字段            | 含义                                            |
+| --------------- | ----------------------------------------------- |
+| `schemaVersion` | 流式事件协议版本，当前为 `expertmesh.stream/v1` |
+| `eventId`       | 事件唯一 ID，用于幂等写入和客户端去重           |
+| `sequence`      | 同一个 `runId` 内单调递增的序号                 |
+| `runId`         | 当前事件所属运行                                |
+| `parentRunId`   | 可选；subAgent 事件指向父运行                   |
+| `emittedAt`     | Runtime 产生事件的 ISO 时间                     |
+| `source`        | 事件来源，包括 agent、subagent、runtime 或 tool |
+| `type`          | 事件类型                                        |
+| `payload`       | 事件负载，由 `type` 决定                        |
+
+首批标准事件类型：
+
+```text
+run.started
+run.completed
+run.failed
+run.aborted
+message.delta
+message.completed
+tool.started
+tool.completed
+tool.failed
+subagent.started
+subagent.completed
+subagent.failed
+```
+
+设计规则：
+
+1. `message.delta` 只表达增量片段，客户端按 `runId + sequence` 追加；
+2. `message.completed` 表示该消息已经结束，可以带完整 `text` 供校验或补偿；
+3. `run.completed` 只表示 Runtime 执行完成，不代表业务输出已经通过 `outputSchema`；
+4. `run.failed` 表示 Runtime 或 Adapter 执行失败，应保留可读 `message`；
+5. Tool 与 subAgent 的事件必须作为同一条运行 Trace 的一部分记录；
+6. 事件负载只放展示、审计、路由需要的摘要，不把大 artifact 或完整文件内容塞进事件。
+
+### 15.1 Runtime Adapter 接入方式
+
+`RuntimeRunRequest` 可以携带 `onEvent` sink：
+
+```ts
+await session.run({
+  invocation: { runId },
+  request,
+  onEvent: async (event) => {
+    // Server/Worker 可写入 Trace、推送 SSE/WebSocket 或转发给 Desktop Bridge。
+  },
+});
+```
+
+Adapter 必须遵守：
+
+1. 没有 `onEvent` 时仍能正常返回最终结果；
+2. 事件发送失败不应静默吞掉，Server/Worker 后续可决定是否中断运行；
+3. Runtime 原生事件必须先映射成 `ExpertAgentStreamEvent`，再向外暴露；
+4. 不把具体 SDK 的事件结构泄漏给上层。
+
+### 15.2 subAgent 流式桥接
+
+subAgent 有两个层次的事件：
+
+1. 父运行上的生命周期事件：`subagent.started`、`subagent.completed`、`subagent.failed`；
+2. 子运行自己的事件：例如 child `message.delta`、`message.completed`、`run.failed`。
+
+子运行事件必须带：
+
+```json
+{
+  "runId": "parent-run:subagent:child-id",
+  "parentRunId": "parent-run",
+  "source": {
+    "kind": "subagent",
+    "runId": "parent-run:subagent:child-id",
+    "parentRunId": "parent-run",
+    "agentType": "reviewer",
+    "path": [
+      { "runId": "parent-run" },
+      { "runId": "parent-run:subagent:child-id", "agentType": "reviewer" }
+    ]
+  }
+}
+```
+
+这样 UI 可以把子输出折叠在父运行下面，Trace 系统也能独立查询 child run。父 run 和 child run 各自维护自己的 `sequence`，排序时先按 `parentRunId` 建树，再按每个 run 内的 `sequence` 回放。
+
+### 15.3 传输边界
+
+事件协议不规定传输层。Server 可以把事件写入数据库 Trace、通过 SSE 或 WebSocket 推给 Web；未来 Desktop 本地桥接可以通过双向安全通道转发同一事件对象。传输层只负责可靠性、背压、鉴权和重放，不改变事件语义。
+
+## 16. 示例：最小专家
 
 ```yaml
 schemaVersion: expertmesh.expert/v1
@@ -741,7 +844,7 @@ outputSchema:
     - conclusion
 ```
 
-## 16. 后续实施建议
+## 17. 后续实施建议
 
 1. 在 `@expertmesh/contracts` 增加 `ExpertManifestSchema`；
 2. 在 `@expertmesh/agent-core` 定义 `ExpertAgent`、`ExpertInvocation`、`ExpertResult`、`RuntimeAdapter`；

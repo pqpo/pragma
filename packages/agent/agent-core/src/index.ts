@@ -6,6 +6,7 @@ export * from "./documents/file-system-document-store.ts";
 export * from "./runtime/agent-lifecycle.ts";
 export * from "./runtime/run-context.ts";
 export * from "./runtime/runtime-adapter.ts";
+export * from "./runtime/stream-events.ts";
 export * from "./subagents/sub-agent.ts";
 export * from "./subagents/subagent-tool.ts";
 export * from "./tools/managed-tool.ts";

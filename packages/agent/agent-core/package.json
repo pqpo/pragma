@@ -23,6 +23,7 @@
     "vitest": "latest"
   },
   "dependencies": {
+    "@expertmesh/contracts": "workspace:*",
     "gray-matter": "^4.0.3"
   }
 }
