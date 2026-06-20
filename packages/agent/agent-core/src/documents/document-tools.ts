@@ -12,7 +12,7 @@ import type {
   ExpertAgentDocumentSummary,
   ExpertAgentDocumentUpdateInput,
 } from "./document-indexer.ts";
-import type { ExpertAgentRunContext } from "./run-context.ts";
+import type { ExpertAgentRunContext } from "../runtime/run-context.ts";
 
 export interface ExpertAgentDefaultToolCallResult {
   readonly text: string;

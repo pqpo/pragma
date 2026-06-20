@@ -1,6 +1,6 @@
 import { createRequire } from "node:module";
 
-import type { ExpertAgentRunContext } from "./run-context.ts";
+import type { ExpertAgentRunContext } from "../runtime/run-context.ts";
 
 const require = createRequire(import.meta.url);
 const matter = require("gray-matter") as typeof import("gray-matter");

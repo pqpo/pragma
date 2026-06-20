@@ -4,20 +4,20 @@ import {
   StreamableHTTPClientTransport
 } from "@modelcontextprotocol/client";
 import type { AuthProvider, Transport } from "@modelcontextprotocol/client";
-import type { IExpertAgentMcpConfig, IExpertAgentMcpServer } from "@expertmesh/agent-core";
+import type {
+  ExpertAgentManagedTool,
+  IExpertAgentMcpConfig,
+  IExpertAgentMcpServer
+} from "@expertmesh/agent-core";
 
 export interface McpToolRegistry {
   readonly tools: readonly McpManagedTool[];
   readonly dispose: () => Promise<void>;
 }
 
-export interface McpManagedTool {
+export interface McpManagedTool extends ExpertAgentManagedTool<string, unknown> {
   readonly serverId: string;
   readonly serverName: string;
-  readonly name: string;
-  readonly description?: string;
-  readonly inputSchema?: unknown;
-  readonly call: (args: unknown) => Promise<unknown>;
 }
 
 interface McpToolInfo {
@@ -83,6 +83,8 @@ function createManagedMcpTool(
     serverId,
     serverName: server.name,
     name: mcpTool.name,
+    description: `Call MCP tool ${mcpTool.name}.`,
+    inputSchema: {},
     call: (args) => client.callTool(mcpTool.name, args)
   };
 

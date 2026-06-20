@@ -1,6 +1,6 @@
 import { ContextManager } from "./context-manager.ts";
 import type { ExpertAgentContext } from "./context-manager.ts";
-import { DocumentIndexer } from "./document-indexer.ts";
+import { DocumentIndexer } from "../documents/document-indexer.ts";
 import type {
   ExpertAgentDocument,
   ExpertAgentDocumentCreateInput,
@@ -12,11 +12,11 @@ import type {
   ExpertAgentDocumentSummary,
   ExpertAgentDocumentUpdateInput,
   ExpertAgentDocumentReadInput,
-} from "./document-indexer.ts";
-import { createDocumentTools } from "./document-tools.ts";
-import type { CreateDocumentToolsOptions, ExpertAgentDefaultTool } from "./document-tools.ts";
-import type { ExpertAgentRunContext } from "./run-context.ts";
-import type { SubAgentRegistry } from "./sub-agent.ts";
+} from "../documents/document-indexer.ts";
+import { createDocumentTools } from "../documents/document-tools.ts";
+import type { CreateDocumentToolsOptions, ExpertAgentDefaultTool } from "../documents/document-tools.ts";
+import type { ExpertAgentRunContext } from "../runtime/run-context.ts";
+import type { SubAgentRegistry } from "../subagents/sub-agent.ts";
 
 export type ExpertAgentSchemaVersion = "expertmesh.expert/v1";
 

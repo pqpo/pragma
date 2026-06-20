@@ -23,18 +23,15 @@ import type {
   RuntimeAdapter,
   RuntimeAgentSession,
   RuntimeRunRequest,
-  RuntimeRunResult
+  RuntimeRunResult,
+  SubAgentManagedTool,
+  SubAgentRuntimeLaunchRequest
 } from "@expertmesh/agent-core";
-import { createSingleRunAgentLifecycle } from "@expertmesh/agent-core";
+import { createSingleRunAgentLifecycle, createSubAgentTool } from "@expertmesh/agent-core";
 import { dirname } from "node:path";
 
 import { createMcpToolRegistry } from "./mcp-tools.ts";
 import type { McpManagedTool } from "./mcp-tools.ts";
-import { createSubAgentTool } from "./subagent-tool.ts";
-import type {
-  SubAgentManagedTool,
-  SubAgentRuntimeLaunchRequest
-} from "./subagent-tool.ts";
 
 export interface CloudPiRuntimeAdapterOptions {
   readonly outputParser?: <TOutput>(text: string) => TOutput;
@@ -335,7 +332,7 @@ function createPiMcpTools(mcpTools: readonly McpManagedTool[]): ToolDefinition[]
       parameters: normalizeInputSchema(mcpTool.inputSchema),
       executionMode: "parallel",
       async execute(_toolCallId, params) {
-        const result = await mcpTool.call(params);
+        const result = await mcpTool.call(params, undefined);
 
         return {
           content: [

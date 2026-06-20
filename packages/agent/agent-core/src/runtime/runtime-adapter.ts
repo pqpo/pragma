@@ -2,7 +2,7 @@ import type {
   ExpertAgent,
   IExpertAgentRunRequest,
   IExpertAgentRunResult
-} from "./expert-agent.ts";
+} from "../agent/expert-agent.ts";
 import type { AgentLifecycleState } from "./agent-lifecycle.ts";
 
 export type RuntimeAdapterKind = "cloud-pi-agent";

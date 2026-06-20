@@ -1,21 +1,17 @@
-import type { ExpertAgent, SubAgentDefinition } from "@expertmesh/agent-core";
-import { resolveSubAgentSystemPrompt } from "@expertmesh/agent-core";
+import type { ExpertAgent } from "../agent/expert-agent.ts";
+import type {
+  ExpertAgentManagedTool,
+  ExpertAgentToolCallResult
+} from "../tools/managed-tool.ts";
+import type { SubAgentDefinition } from "./sub-agent.ts";
+import { resolveSubAgentSystemPrompt } from "./sub-agent.ts";
 
-export interface SubAgentManagedTool {
-  readonly name: "launch_subagent";
-  readonly description: string;
-  readonly inputSchema: unknown;
-  readonly call: (
-    args: unknown,
-    signal: AbortSignal | undefined
-  ) => Promise<SubAgentToolCallResult>;
-}
+export type SubAgentManagedTool = ExpertAgentManagedTool<
+  "launch_subagent",
+  SubAgentToolCallResult
+>;
 
-export interface SubAgentToolCallResult {
-  readonly text: string;
-  readonly isError?: boolean;
-  readonly details?: unknown;
-}
+export type SubAgentToolCallResult = ExpertAgentToolCallResult;
 
 export interface SubAgentRuntimeLaunchRequest {
   readonly agentType: string;

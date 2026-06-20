@@ -3,8 +3,8 @@ import type {
   DocumentIndexer,
   ExpertAgentDocument,
   ExpertAgentDocumentSummary
-} from "./document-indexer.ts";
-import type { SubAgentDefinition } from "./sub-agent.ts";
+} from "../documents/document-indexer.ts";
+import type { SubAgentDefinition } from "../subagents/sub-agent.ts";
 
 export interface ExpertAgentContext {
   readonly systemPrompt: string;

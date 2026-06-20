@@ -22,7 +22,7 @@ import {
   ok,
   parseStoredDocument,
 } from "./document-indexer.ts";
-import { ExpertAgent } from "./expert-agent.ts";
+import { ExpertAgent } from "../agent/expert-agent.ts";
 import type { FileSystemDocumentStoreCommandRunner } from "./file-system-document-store.ts";
 import { FileSystemDocumentStore } from "./file-system-document-store.ts";
 
