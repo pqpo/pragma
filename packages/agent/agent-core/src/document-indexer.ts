@@ -80,6 +80,22 @@ export interface ExpertAgentDocumentDeleteInput {
   readonly context?: ExpertAgentRunContext | undefined;
 }
 
+export interface ExpertAgentDocumentSearchInput {
+  readonly query: string;
+  readonly maxResults?: number | undefined;
+  readonly contextLines?: number | undefined;
+  readonly caseSensitive?: boolean | undefined;
+  readonly context?: ExpertAgentRunContext | undefined;
+}
+
+export interface ExpertAgentDocumentSearchMatch {
+  readonly id: string;
+  readonly lineNumber: number;
+  readonly line: string;
+  readonly before?: readonly string[] | undefined;
+  readonly after?: readonly string[] | undefined;
+}
+
 export interface ExpertAgentStoredDocumentCreateInput {
   readonly id: string;
   readonly content: string;
@@ -94,20 +110,23 @@ export interface ExpertAgentStoredDocumentUpdateInput {
 
 export interface ExpertAgentDocumentStore {
   readonly listDocuments: (
-    input: ExpertAgentDocumentListInput
+    input: ExpertAgentDocumentListInput,
   ) => Promise<ExpertAgentDocumentResult<readonly ExpertAgentDocumentSummary[]>>;
   readonly readDocument: (
-    input: ExpertAgentDocumentReadInput
+    input: ExpertAgentDocumentReadInput,
   ) => Promise<ExpertAgentDocumentResult<ExpertAgentStoredDocument>>;
   readonly createDocument: (
-    input: ExpertAgentStoredDocumentCreateInput
+    input: ExpertAgentStoredDocumentCreateInput,
   ) => Promise<ExpertAgentDocumentResult<ExpertAgentStoredDocument>>;
   readonly updateDocument: (
-    input: ExpertAgentStoredDocumentUpdateInput
+    input: ExpertAgentStoredDocumentUpdateInput,
   ) => Promise<ExpertAgentDocumentResult<ExpertAgentStoredDocument>>;
   readonly deleteDocument: (
-    input: ExpertAgentDocumentDeleteInput
+    input: ExpertAgentDocumentDeleteInput,
   ) => Promise<ExpertAgentDocumentResult<{ readonly id: string }>>;
+  readonly searchDocuments: (
+    input: ExpertAgentDocumentSearchInput,
+  ) => Promise<ExpertAgentDocumentResult<readonly ExpertAgentDocumentSearchMatch[]>>;
 }
 
 export interface DocumentIndexerOptions {
@@ -122,7 +141,7 @@ export class DocumentIndexer {
   }
 
   async index(
-    context: ExpertAgentRunContext = {}
+    context: ExpertAgentRunContext = {},
   ): Promise<ExpertAgentDocumentResult<readonly ExpertAgentDocumentSummary[]>> {
     if (this.store === undefined) {
       return ok([]);
@@ -137,11 +156,13 @@ export class DocumentIndexer {
     return ok(
       listResult.value
         .map((document) => normalizeDocumentSummary(document))
-        .sort((left, right) => left.id.localeCompare(right.id))
+        .sort((left, right) => left.id.localeCompare(right.id)),
     );
   }
 
-  async read(input: ExpertAgentDocumentReadInput): Promise<ExpertAgentDocumentResult<ExpertAgentDocument>> {
+  async read(
+    input: ExpertAgentDocumentReadInput,
+  ): Promise<ExpertAgentDocumentResult<ExpertAgentDocument>> {
     if (this.store === undefined) {
       return error("store_unavailable", "ExpertAgent document store is not configured.");
     }
@@ -156,7 +177,7 @@ export class DocumentIndexer {
   }
 
   async create(
-    input: ExpertAgentDocumentCreateInput
+    input: ExpertAgentDocumentCreateInput,
   ): Promise<ExpertAgentDocumentResult<ExpertAgentDocument>> {
     if (this.store === undefined) {
       return error("store_unavailable", "ExpertAgent document store is not configured.");
@@ -167,9 +188,9 @@ export class DocumentIndexer {
       content: serializeDocument({
         id: input.id,
         content: input.content,
-        metadata: normalizeCreateMetadata(input.metadata)
+        metadata: normalizeCreateMetadata(input.metadata),
       }),
-      context: input.context
+      context: input.context,
     });
 
     if (!result.ok) {
@@ -180,7 +201,7 @@ export class DocumentIndexer {
   }
 
   async update(
-    input: ExpertAgentDocumentUpdateInput
+    input: ExpertAgentDocumentUpdateInput,
   ): Promise<ExpertAgentDocumentResult<ExpertAgentDocument>> {
     if (this.store === undefined) {
       return error("store_unavailable", "ExpertAgent document store is not configured.");
@@ -188,7 +209,7 @@ export class DocumentIndexer {
 
     const existing = await this.store.readDocument({
       id: input.id,
-      context: input.context
+      context: input.context,
     });
 
     if (!existing.ok) {
@@ -200,12 +221,12 @@ export class DocumentIndexer {
     const document = normalizeDocument({
       id: input.id,
       content: input.content ?? existingDocument.content,
-      metadata
+      metadata,
     });
     const result = await this.store.updateDocument({
       id: input.id,
       content: serializeDocument(document),
-      context: input.context
+      context: input.context,
     });
 
     if (!result.ok) {
@@ -216,7 +237,7 @@ export class DocumentIndexer {
   }
 
   async delete(
-    input: ExpertAgentDocumentDeleteInput
+    input: ExpertAgentDocumentDeleteInput,
   ): Promise<ExpertAgentDocumentResult<{ readonly id: string }>> {
     if (this.store === undefined) {
       return error("store_unavailable", "ExpertAgent document store is not configured.");
@@ -230,49 +251,81 @@ export class DocumentIndexer {
 
     return result;
   }
+
+  async search(
+    input: ExpertAgentDocumentSearchInput,
+  ): Promise<ExpertAgentDocumentResult<readonly ExpertAgentDocumentSearchMatch[]>> {
+    if (this.store === undefined) {
+      return error("store_unavailable", "ExpertAgent document store is not configured.");
+    }
+
+    const normalizedInput = normalizeSearchInput(input);
+
+    if (!normalizedInput.ok) {
+      return normalizedInput;
+    }
+
+    const result = await this.store.searchDocuments(normalizedInput.value);
+
+    if (!result.ok) {
+      return result;
+    }
+
+    return ok(
+      result.value.map(normalizeSearchMatch).sort((left, right) => {
+        const idComparison = left.id.localeCompare(right.id);
+
+        if (idComparison !== 0) {
+          return idComparison;
+        }
+
+        return left.lineNumber - right.lineNumber;
+      }),
+    );
+  }
 }
 
 export function ok<TValue>(value: TValue): ExpertAgentDocumentResult<TValue> {
   return {
     ok: true,
-    value
+    value,
   };
 }
 
 export function error<TValue = never>(
   code: ExpertAgentDocumentErrorCode,
   message: string,
-  details?: unknown
+  details?: unknown,
 ): ExpertAgentDocumentResult<TValue> {
   return {
     ok: false,
     error: {
       code,
       message,
-      ...(details === undefined ? {} : { details })
-    }
+      ...(details === undefined ? {} : { details }),
+    },
   };
 }
 
 export function normalizeDocument(document: ExpertAgentDocument): ExpertAgentDocument {
   return {
     ...normalizeDocumentSummary(document),
-    content: document.content
+    content: document.content,
   };
 }
 
 export function normalizeDocumentSummary(
-  document: ExpertAgentDocumentSummary
+  document: ExpertAgentDocumentSummary,
 ): ExpertAgentDocumentSummary {
   return {
     id: document.id,
-    metadata: normalizeMetadata(document.id, document.metadata)
+    metadata: normalizeMetadata(document.id, document.metadata),
   };
 }
 
 export function normalizeMetadata(
   id: string,
-  metadata: ExpertAgentDocumentMetadata
+  metadata: ExpertAgentDocumentMetadata,
 ): ExpertAgentDocumentMetadata {
   if (isAgentsDocumentId(id)) {
     return normalizeAgentsDocumentMetadata(metadata);
@@ -280,29 +333,29 @@ export function normalizeMetadata(
 
   return {
     ...(metadata.description === undefined ? {} : { description: metadata.description }),
-    trigger: normalizeTrigger(metadata.trigger)
+    trigger: normalizeTrigger(metadata.trigger),
   };
 }
 
 function normalizeCreateMetadata(
-  metadata: Partial<ExpertAgentDocumentMetadata> | undefined
+  metadata: Partial<ExpertAgentDocumentMetadata> | undefined,
 ): ExpertAgentDocumentMetadata {
   if (metadata === undefined) {
     return {
-      trigger: "model_decision"
+      trigger: "model_decision",
     };
   }
 
   return {
     ...(metadata.description === undefined ? {} : { description: metadata.description }),
-    trigger: normalizeTrigger(metadata.trigger)
+    trigger: normalizeTrigger(metadata.trigger),
   };
 }
 
 function normalizeUpdateMetadata(
   id: string,
   existingMetadata: ExpertAgentDocumentMetadata,
-  metadata: Partial<ExpertAgentDocumentMetadata> | undefined
+  metadata: Partial<ExpertAgentDocumentMetadata> | undefined,
 ): ExpertAgentDocumentMetadata {
   if (isAgentsDocumentId(id)) {
     return existingMetadata;
@@ -314,7 +367,7 @@ function normalizeUpdateMetadata(
         ? {}
         : { description: existingMetadata.description }
       : { description: metadata.description }),
-    trigger: normalizeTrigger(metadata?.trigger ?? existingMetadata.trigger)
+    trigger: normalizeTrigger(metadata?.trigger ?? existingMetadata.trigger),
   };
 }
 
@@ -326,16 +379,46 @@ export function normalizeTrigger(trigger: DocumentTrigger | undefined): Document
   return "model_decision";
 }
 
+export function normalizeSearchInput(
+  input: ExpertAgentDocumentSearchInput,
+): ExpertAgentDocumentResult<ExpertAgentDocumentSearchInput> {
+  const query = input.query.trim();
+
+  if (query.length === 0) {
+    return error("invalid_input", "Document search query must not be empty.");
+  }
+
+  return ok({
+    query,
+    maxResults: clampInteger(input.maxResults, 1, 50, 20),
+    contextLines: clampInteger(input.contextLines, 0, 5, 0),
+    caseSensitive: input.caseSensitive ?? false,
+    ...(input.context === undefined ? {} : { context: input.context }),
+  });
+}
+
+export function normalizeSearchMatch(
+  match: ExpertAgentDocumentSearchMatch,
+): ExpertAgentDocumentSearchMatch {
+  return {
+    id: match.id,
+    lineNumber: Math.max(1, Math.trunc(match.lineNumber)),
+    line: match.line,
+    ...(match.before === undefined ? {} : { before: [...match.before] }),
+    ...(match.after === undefined ? {} : { after: [...match.after] }),
+  };
+}
+
 export function isAgentsDocumentId(id: string): boolean {
   return id === AGENTS_DOCUMENT_ID;
 }
 
 function normalizeAgentsDocumentMetadata(
-  metadata: ExpertAgentDocumentMetadata
+  metadata: ExpertAgentDocumentMetadata,
 ): ExpertAgentDocumentMetadata {
   return {
     ...(metadata.description === undefined ? {} : { description: metadata.description }),
-    trigger: "always_on"
+    trigger: "always_on",
   };
 }
 
@@ -345,7 +428,7 @@ export function parseStoredDocument(document: ExpertAgentStoredDocument): Expert
   return normalizeDocument({
     id: document.id,
     content: parsed.content,
-    metadata: parsed.metadata
+    metadata: parsed.metadata,
   });
 }
 
@@ -357,7 +440,7 @@ function parseMarkdownDocument(rawContent: string): {
 
   return {
     metadata: parseMatterMetadata(parsed.data),
-    content: parsed.content
+    content: parsed.content,
   };
 }
 
@@ -367,7 +450,7 @@ function parseMatterMetadata(data: Record<string, unknown>): ExpertAgentDocument
 
   return {
     ...(typeof description === "string" ? { description } : {}),
-    trigger: normalizeTrigger(readMetadataTrigger(trigger))
+    trigger: normalizeTrigger(readMetadataTrigger(trigger)),
   };
 }
 
@@ -380,7 +463,7 @@ function serializeDocument(document: ExpertAgentDocument): string {
     ...(document.metadata.description === undefined
       ? {}
       : { description: document.metadata.description }),
-    trigger: document.metadata.trigger
+    trigger: document.metadata.trigger,
   });
 
   if (!document.content.endsWith("\n") && serialized.endsWith("\n")) {
@@ -396,4 +479,17 @@ function readMetadataTrigger(value: unknown): DocumentTrigger | undefined {
   }
 
   return undefined;
+}
+
+function clampInteger(
+  value: number | undefined,
+  min: number,
+  max: number,
+  fallback: number,
+): number {
+  if (!Number.isFinite(value)) {
+    return fallback;
+  }
+
+  return Math.min(max, Math.max(min, Math.trunc(value as number)));
 }

@@ -7,8 +7,10 @@ import type {
   ExpertAgentDocumentMetadata,
   ExpertAgentDocumentReadInput,
   ExpertAgentDocumentResult,
+  ExpertAgentDocumentSearchInput,
+  ExpertAgentDocumentSearchMatch,
   ExpertAgentDocumentSummary,
-  ExpertAgentDocumentUpdateInput
+  ExpertAgentDocumentUpdateInput,
 } from "./document-indexer.ts";
 import type { ExpertAgentRunContext } from "./run-context.ts";
 
@@ -25,7 +27,7 @@ export interface ExpertAgentDefaultTool {
   readonly inputSchema: unknown;
   readonly call: (
     args: unknown,
-    signal: AbortSignal | undefined
+    signal: AbortSignal | undefined,
   ) => Promise<ExpertAgentDefaultToolCallResult>;
 }
 
@@ -35,25 +37,28 @@ export interface CreateDocumentToolsOptions {
 
 export interface ExpertAgentDocumentOperations {
   readonly listDocuments: (
-    context?: ExpertAgentRunContext
+    context?: ExpertAgentRunContext,
   ) => Promise<ExpertAgentDocumentResult<readonly ExpertAgentDocumentSummary[]>>;
   readonly readDocument: (
-    input: ExpertAgentDocumentReadInput
+    input: ExpertAgentDocumentReadInput,
   ) => Promise<ExpertAgentDocumentResult<ExpertAgentDocument>>;
+  readonly searchDocuments: (
+    input: ExpertAgentDocumentSearchInput,
+  ) => Promise<ExpertAgentDocumentResult<readonly ExpertAgentDocumentSearchMatch[]>>;
   readonly createDocument: (
-    input: ExpertAgentDocumentCreateInput
+    input: ExpertAgentDocumentCreateInput,
   ) => Promise<ExpertAgentDocumentResult<ExpertAgentDocument>>;
   readonly updateDocument: (
-    input: ExpertAgentDocumentUpdateInput
+    input: ExpertAgentDocumentUpdateInput,
   ) => Promise<ExpertAgentDocumentResult<ExpertAgentDocument>>;
   readonly deleteDocument: (
-    input: ExpertAgentDocumentDeleteInput
+    input: ExpertAgentDocumentDeleteInput,
   ) => Promise<ExpertAgentDocumentResult<{ readonly id: string }>>;
 }
 
 export function createDocumentTools(
   documentOperations: ExpertAgentDocumentOperations,
-  options: CreateDocumentToolsOptions = {}
+  options: CreateDocumentToolsOptions = {},
 ): readonly ExpertAgentDefaultTool[] {
   return [
     {
@@ -71,23 +76,26 @@ export function createDocumentTools(
         return {
           text: formatDocumentSummaries(result.value),
           details: {
-            documents: result.value
-          }
+            documents: result.value,
+          },
         };
-      }
+      },
     },
     {
       name: "read_expert_document",
       label: "Read expert document",
       description: "Read an ExpertAgent document by document id.",
-      inputSchema: withContextSchema({
-        id: stringSchema("Document id.")
-      }, ["id"]),
+      inputSchema: withContextSchema(
+        {
+          id: stringSchema("Document id."),
+        },
+        ["id"],
+      ),
       call: async (args) => {
         const id = readStringParam(args, "id");
         const result = await documentOperations.readDocument({
           id,
-          context: readDocumentContext(args, options)
+          context: readDocumentContext(args, options),
         });
 
         if (!result.ok) {
@@ -97,10 +105,46 @@ export function createDocumentTools(
         return {
           text: formatDocument(result.value),
           details: {
-            document: result.value
-          }
+            document: result.value,
+          },
         };
-      }
+      },
+    },
+    {
+      name: "search_expert_documents",
+      label: "Search expert documents",
+      description: "Search ExpertAgent Markdown documents by literal text.",
+      inputSchema: withContextSchema(
+        {
+          query: stringSchema("Literal text to search for."),
+          maxResults: integerSchema("Maximum number of matches to return. Defaults to 20."),
+          contextLines: integerSchema("Number of context lines around each match. Defaults to 0."),
+          caseSensitive: booleanSchema(
+            "Whether search should be case-sensitive. Defaults to false.",
+          ),
+        },
+        ["query"],
+      ),
+      call: async (args) => {
+        const result = await documentOperations.searchDocuments({
+          query: readStringParam(args, "query"),
+          maxResults: readOptionalNumberParam(args, "maxResults"),
+          contextLines: readOptionalNumberParam(args, "contextLines"),
+          caseSensitive: readOptionalBooleanParam(args, "caseSensitive"),
+          context: readDocumentContext(args, options),
+        });
+
+        if (!result.ok) {
+          return errorResult(result.error);
+        }
+
+        return {
+          text: formatDocumentSearchMatches(result.value),
+          details: {
+            matches: result.value,
+          },
+        };
+      },
     },
     {
       name: "create_expert_document",
@@ -111,16 +155,16 @@ export function createDocumentTools(
           id: stringSchema("Document id."),
           content: stringSchema("Document content."),
           description: stringSchema("Optional document description."),
-          trigger: triggerSchema()
+          trigger: triggerSchema(),
         },
-        ["id", "content"]
+        ["id", "content"],
       ),
       call: async (args) => {
         const result = await documentOperations.createDocument({
           id: readStringParam(args, "id"),
           content: readStringParam(args, "content"),
           metadata: readMetadataParams(args),
-          context: readDocumentContext(args, options)
+          context: readDocumentContext(args, options),
         });
 
         if (!result.ok) {
@@ -130,10 +174,10 @@ export function createDocumentTools(
         return {
           text: `Created document: ${result.value.id}`,
           details: {
-            document: result.value
-          }
+            document: result.value,
+          },
         };
-      }
+      },
     },
     {
       name: "update_expert_document",
@@ -144,16 +188,16 @@ export function createDocumentTools(
           id: stringSchema("Document id."),
           content: stringSchema("Optional replacement document content."),
           description: stringSchema("Optional replacement document description."),
-          trigger: triggerSchema()
+          trigger: triggerSchema(),
         },
-        ["id"]
+        ["id"],
       ),
       call: async (args) => {
         const result = await documentOperations.updateDocument({
           id: readStringParam(args, "id"),
           content: readOptionalStringParam(args, "content"),
           metadata: readMetadataParams(args),
-          context: readDocumentContext(args, options)
+          context: readDocumentContext(args, options),
         });
 
         if (!result.ok) {
@@ -163,23 +207,26 @@ export function createDocumentTools(
         return {
           text: `Updated document: ${result.value.id}`,
           details: {
-            document: result.value
-          }
+            document: result.value,
+          },
         };
-      }
+      },
     },
     {
       name: "delete_expert_document",
       label: "Delete expert document",
       description: "Delete an ExpertAgent document by document id.",
-      inputSchema: withContextSchema({
-        id: stringSchema("Document id.")
-      }, ["id"]),
+      inputSchema: withContextSchema(
+        {
+          id: stringSchema("Document id."),
+        },
+        ["id"],
+      ),
       call: async (args) => {
         const id = readStringParam(args, "id");
         const result = await documentOperations.deleteDocument({
           id,
-          context: readDocumentContext(args, options)
+          context: readDocumentContext(args, options),
         });
 
         if (!result.ok) {
@@ -189,11 +236,11 @@ export function createDocumentTools(
         return {
           text: `Deleted document: ${id}`,
           details: {
-            id
-          }
+            id,
+          },
         };
-      }
-    }
+      },
+    },
   ];
 }
 
@@ -202,13 +249,13 @@ function objectSchema(properties: Record<string, unknown>, required: readonly st
     type: "object",
     properties,
     required,
-    additionalProperties: false
+    additionalProperties: false,
   };
 }
 
 function withContextSchema(
   properties: Record<string, unknown>,
-  required: readonly string[] = []
+  required: readonly string[] = [],
 ): unknown {
   return objectSchema(
     {
@@ -217,24 +264,38 @@ function withContextSchema(
         {
           type: stringSchema("Source type, such as user, system, workflow, or agent."),
           id: stringSchema("Optional source id."),
-          label: stringSchema("Optional source label.")
+          label: stringSchema("Optional source label."),
         },
-        ["type"]
+        ["type"],
       ),
       context: {
         type: "object",
         description: "Optional permission and request context attributes.",
-        additionalProperties: true
-      }
+        additionalProperties: true,
+      },
     },
-    required
+    required,
   );
 }
 
 function stringSchema(description: string): unknown {
   return {
     type: "string",
-    description
+    description,
+  };
+}
+
+function integerSchema(description: string): unknown {
+  return {
+    type: "integer",
+    description,
+  };
+}
+
+function booleanSchema(description: string): unknown {
+  return {
+    type: "boolean",
+    description,
   };
 }
 
@@ -242,7 +303,7 @@ function triggerSchema(): unknown {
   return {
     type: "string",
     enum: ["always_on", "model_decision", "manual"],
-    description: "Document trigger. Defaults to model_decision when omitted."
+    description: "Document trigger. Defaults to model_decision when omitted.",
   };
 }
 
@@ -270,13 +331,41 @@ function readOptionalStringParam(params: unknown, key: string): string | undefin
   throw new Error(`Document tool parameter "${key}" must be a string when provided.`);
 }
 
+function readOptionalNumberParam(params: unknown, key: string): number | undefined {
+  const value = readParam(params, key);
+
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value === "number") {
+    return value;
+  }
+
+  throw new Error(`Document tool parameter "${key}" must be a number when provided.`);
+}
+
+function readOptionalBooleanParam(params: unknown, key: string): boolean | undefined {
+  const value = readParam(params, key);
+
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value === "boolean") {
+    return value;
+  }
+
+  throw new Error(`Document tool parameter "${key}" must be a boolean when provided.`);
+}
+
 function readMetadataParams(params: unknown): Partial<ExpertAgentDocumentMetadata> {
   const description = readOptionalStringParam(params, "description");
   const trigger = readOptionalTriggerParam(params);
 
   return {
     ...(description === undefined ? {} : { description }),
-    ...(trigger === undefined ? {} : { trigger })
+    ...(trigger === undefined ? {} : { trigger }),
   };
 }
 
@@ -291,7 +380,9 @@ function readOptionalTriggerParam(params: unknown): DocumentTrigger | undefined 
     return value;
   }
 
-  throw new Error('Document tool parameter "trigger" must be always_on, model_decision, or manual.');
+  throw new Error(
+    'Document tool parameter "trigger" must be always_on, model_decision, or manual.',
+  );
 }
 
 function readParam(params: unknown, key: string): unknown {
@@ -304,14 +395,15 @@ function readParam(params: unknown, key: string): unknown {
 
 function readDocumentContext(
   params: unknown,
-  options: CreateDocumentToolsOptions
+  options: CreateDocumentToolsOptions,
 ): ExpertAgentRunContext {
   const baseContext = options.getContext?.();
   const source = readSourceParam(params) ?? baseContext?.source;
   const context = readParam(params, "context");
-  const attributes = typeof context === "object" && context !== null
-    ? (context as Record<string, unknown>)
-    : undefined;
+  const attributes =
+    typeof context === "object" && context !== null
+      ? (context as Record<string, unknown>)
+      : undefined;
 
   if (source === undefined) {
     throw new Error('Document tool requires "source" either in tool input or run context.');
@@ -322,8 +414,8 @@ function readDocumentContext(
     source,
     attributes: {
       ...(baseContext?.attributes ?? {}),
-      ...(attributes ?? {})
-    }
+      ...(attributes ?? {}),
+    },
   };
 }
 
@@ -349,7 +441,7 @@ function readSourceParam(params: unknown): ExpertAgentRunContext["source"] {
   return {
     type,
     ...(typeof id === "string" ? { id } : {}),
-    ...(typeof label === "string" ? { label } : {})
+    ...(typeof label === "string" ? { label } : {}),
   };
 }
 
@@ -367,7 +459,7 @@ function formatDocumentSummary(document: ExpertAgentDocumentSummary): string {
     document.metadata.description === undefined
       ? undefined
       : `  description: ${document.metadata.description}`,
-    `  trigger: ${document.metadata.trigger}`
+    `  trigger: ${document.metadata.trigger}`,
   ]
     .filter((line) => line !== undefined)
     .join("\n");
@@ -380,8 +472,36 @@ function formatDocument(document: ExpertAgentDocument): string {
     document.content
       .split("\n")
       .map((line) => `    ${line}`)
-      .join("\n")
+      .join("\n"),
   ].join("\n");
+}
+
+function formatDocumentSearchMatches(matches: readonly ExpertAgentDocumentSearchMatch[]): string {
+  if (matches.length === 0) {
+    return "No ExpertAgent document matches found.";
+  }
+
+  return matches.map(formatDocumentSearchMatch).join("\n");
+}
+
+function formatDocumentSearchMatch(match: ExpertAgentDocumentSearchMatch): string {
+  return [
+    `- ${match.id}:${match.lineNumber}`,
+    ...formatSearchContext(match.before, "before"),
+    `  match: ${match.line}`,
+    ...formatSearchContext(match.after, "after"),
+  ].join("\n");
+}
+
+function formatSearchContext(
+  lines: readonly string[] | undefined,
+  label: string,
+): readonly string[] {
+  if (lines === undefined || lines.length === 0) {
+    return [];
+  }
+
+  return lines.map((line) => `  ${label}: ${line}`);
 }
 
 function errorResult(error: ExpertAgentDocumentError): ExpertAgentDefaultToolCallResult {
@@ -389,7 +509,7 @@ function errorResult(error: ExpertAgentDocumentError): ExpertAgentDefaultToolCal
     text: `Document operation failed: ${error.message}`,
     isError: true,
     details: {
-      error
-    }
+      error,
+    },
   };
 }

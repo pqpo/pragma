@@ -6,16 +6,15 @@ import type {
   ExpertAgentDocumentCreateInput,
   ExpertAgentDocumentDeleteInput,
   ExpertAgentDocumentResult,
+  ExpertAgentDocumentSearchInput,
+  ExpertAgentDocumentSearchMatch,
   ExpertAgentDocumentStore,
   ExpertAgentDocumentSummary,
   ExpertAgentDocumentUpdateInput,
-  ExpertAgentDocumentReadInput
+  ExpertAgentDocumentReadInput,
 } from "./document-indexer.ts";
 import { createDocumentTools } from "./document-tools.ts";
-import type {
-  CreateDocumentToolsOptions,
-  ExpertAgentDefaultTool
-} from "./document-tools.ts";
+import type { CreateDocumentToolsOptions, ExpertAgentDefaultTool } from "./document-tools.ts";
 import type { ExpertAgentRunContext } from "./run-context.ts";
 import type { SubAgentRegistry } from "./sub-agent.ts";
 
@@ -63,7 +62,7 @@ export interface IExpertAgentRunResult<TOutput = string> {
 }
 
 export type ExpertAgentRunFunction<TInput = string, TOutput = string> = (
-  request: IExpertAgentRunRequest<TInput>
+  request: IExpertAgentRunRequest<TInput>,
 ) => Promise<IExpertAgentRunResult<TOutput>>;
 
 export interface IExpertAgent {
@@ -113,11 +112,11 @@ export class ExpertAgent implements IExpertAgent {
     this.workspace = options.workspace;
     this.subAgents = options.subAgents;
     this.documentIndexer = new DocumentIndexer({
-      store: options.documents
+      store: options.documents,
     });
     this.contextManager = new ContextManager({
       agent: this,
-      documentIndexer: this.documentIndexer
+      documentIndexer: this.documentIndexer,
     });
   }
 
@@ -130,31 +129,37 @@ export class ExpertAgent implements IExpertAgent {
   }
 
   async listDocuments(
-    context: ExpertAgentRunContext = {}
+    context: ExpertAgentRunContext = {},
   ): Promise<ExpertAgentDocumentResult<readonly ExpertAgentDocumentSummary[]>> {
     return await this.documentIndexer.index(context);
   }
 
   async readDocument(
-    input: ExpertAgentDocumentReadInput
+    input: ExpertAgentDocumentReadInput,
   ): Promise<ExpertAgentDocumentResult<ExpertAgentDocument>> {
     return await this.documentIndexer.read(input);
   }
 
+  async searchDocuments(
+    input: ExpertAgentDocumentSearchInput,
+  ): Promise<ExpertAgentDocumentResult<readonly ExpertAgentDocumentSearchMatch[]>> {
+    return await this.documentIndexer.search(input);
+  }
+
   async createDocument(
-    input: ExpertAgentDocumentCreateInput
+    input: ExpertAgentDocumentCreateInput,
   ): Promise<ExpertAgentDocumentResult<ExpertAgentDocument>> {
     return await this.documentIndexer.create(input);
   }
 
   async updateDocument(
-    input: ExpertAgentDocumentUpdateInput
+    input: ExpertAgentDocumentUpdateInput,
   ): Promise<ExpertAgentDocumentResult<ExpertAgentDocument>> {
     return await this.documentIndexer.update(input);
   }
 
   async deleteDocument(
-    input: ExpertAgentDocumentDeleteInput
+    input: ExpertAgentDocumentDeleteInput,
   ): Promise<ExpertAgentDocumentResult<{ readonly id: string }>> {
     return await this.documentIndexer.delete(input);
   }
