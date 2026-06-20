@@ -1,7 +1,5 @@
 export type SubAgentModel = "inherit" | (string & {});
 
-export type SubAgentContextBudget = number | false | "inherit";
-
 export type SubAgentThinkingLevel = "inherit" | "off" | "low" | "medium" | "high";
 
 export interface SubAgentPromptContext {
@@ -23,17 +21,6 @@ export interface SubAgentDefinition {
   readonly disallowedTools?: readonly string[];
   /** Model selection. Defaults to "inherit". */
   readonly model?: SubAgentModel;
-  /** Maximum execution turns, used by runtimes that support turn limits. */
-  readonly maxTurns?: number;
-  /** Temperature override. Negative values are treated as undefined by runtimes. */
-  readonly temperature?: number;
-  /** Thinking-level override. Defaults to provider/runtime behavior. */
-  readonly thinkingLevel?: SubAgentThinkingLevel;
-  /**
-   * Context budget for subAgent runs.
-   * "inherit" means inherit parent behavior; false disables compaction/budgeting.
-   */
-  readonly contextBudget?: SubAgentContextBudget;
 }
 
 export interface SubAgentRegistry {

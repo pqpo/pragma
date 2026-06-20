@@ -2,7 +2,6 @@ import { readFile } from "node:fs/promises";
 
 import type { IExpertAgent } from "./expert-agent.ts";
 import type { DocumentIndexer, IndexedDocument } from "./document-indexer.ts";
-import { resolveSubAgentSystemPrompt } from "./sub-agent.ts";
 import type { SubAgentDefinition } from "./sub-agent.ts";
 
 export interface ExpertAgentContext {
@@ -100,26 +99,11 @@ function formatSubAgentsSection(agent: IExpertAgent): string | undefined {
 }
 
 function formatSubAgent(agent: IExpertAgent, subAgent: SubAgentDefinition): string {
-  const prompt = resolveSubAgentSystemPrompt(subAgent, {
-    parentAgentId: agent.id,
-    parentDisplayName: agent.displayName,
-    subAgentType: subAgent.agentType
-  });
-
   const lines = [
     `- ${subAgent.agentType}`,
     `  whenToUse: ${subAgent.whenToUse}`,
-    `  model: ${subAgent.model ?? "inherit"}`,
     formatToolsLine("tools", subAgent.tools),
-    formatStringListLine("disallowedTools", subAgent.disallowedTools),
-    formatNumberLine("maxTurns", subAgent.maxTurns),
-    formatNumberLine("temperature", subAgent.temperature),
-    subAgent.thinkingLevel === undefined ? undefined : `  thinkingLevel: ${subAgent.thinkingLevel}`,
-    subAgent.contextBudget === undefined ? undefined : `  contextBudget: ${subAgent.contextBudget}`,
-    "  systemPrompt:",
-    indent(prompt, "    ")
   ];
-
   return lines.filter((line) => line !== undefined).join("\n");
 }
 
@@ -144,14 +128,6 @@ function formatStringListLine(label: string, value: readonly string[] | undefine
   }
 
   return `  ${label}: ${value.join(", ")}`;
-}
-
-function formatNumberLine(label: string, value: number | undefined): string | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-
-  return `  ${label}: ${value}`;
 }
 
 function formatAgentsMdSection(agentsMd: string | undefined): string | undefined {
