@@ -25,6 +25,7 @@
     "@expertmesh/tsconfig": "workspace:*",
     "@types/node": "latest",
     "typescript": "latest",
-    "vitest": "latest"
+    "vitest": "latest",
+    "zod": "latest"
   }
 }

@@ -740,12 +740,27 @@ subagent.failed
 
 ### 15.1 Runtime Adapter 接入方式
 
-`RuntimeRunRequest` 可以携带 `onEvent` sink：
+`adapter.createSession()` 在创建会话时绑定 agent 和 run context；会话创建后可多次
+`submit()`，提交会在 Runtime 内部串行执行。`RuntimeSubmitRequest` 可以携带
+可选 `runId`、`onEvent` sink，并可为单次提交指定 Zod output schema；未指定
+`runId` 时由 Runtime 内部生成，未指定 output 时默认为 string：
 
 ```ts
-await session.run({
-  invocation: { runId },
-  request,
+import { z } from "zod";
+
+const session = await adapter.createSession({
+  agent,
+  context,
+});
+
+const sessionInfo = session.info();
+
+await session.submit({
+  query: "Summarize the current workspace status.",
+  output: z.object({
+    summary: z.string(),
+    confidence: z.number(),
+  }),
   onEvent: async (event) => {
     // Server/Worker 可写入 Trace、推送 SSE/WebSocket 或转发给 Desktop Bridge。
   },

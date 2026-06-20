@@ -1,13 +1,13 @@
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import type {
   AgentLifecycle,
-  ExpertAgentRunContext,
-  IExpertAgentRunRequest,
   RuntimeAgentSession,
-  RuntimeRunRequest,
+  RuntimeOutputSchema,
   RuntimeRunResult,
+  RuntimeSessionInfo,
 } from "@expertmesh/agent-core";
 import { emitRuntimeStreamEvent } from "@expertmesh/agent-core";
+import { randomUUID } from "node:crypto";
 
 import { readAssistantTextDelta, readToolExecutionEvent } from "./session-events.ts";
 import {
@@ -18,24 +18,30 @@ import {
 } from "./stream.ts";
 import type { RuntimeStreamBridge } from "./types.ts";
 
-export function createPiRuntimeSession<TInput, TOutput>(
+export function createPiRuntimeSession<TOutput>(
   session: AgentSession,
+  info: Omit<RuntimeSessionInfo, "state">,
   outputParser: <TParsedOutput>(text: string) => TParsedOutput,
-  lifecycle: AgentLifecycle<ExpertAgentRunContext>,
+  lifecycle: AgentLifecycle,
   streamBridge: RuntimeStreamBridge,
-): RuntimeAgentSession<TInput, TOutput> {
+): RuntimeAgentSession<TOutput> {
   return {
+    info: () => ({
+      ...info,
+      state: lifecycle.state,
+    }),
     state: () => lifecycle.state,
-    async run(request) {
-      return lifecycle.runOnce(request.request.context, async () => {
+    async submit(submission) {
+      return await lifecycle.enqueue(async () => {
+        const runId = submission.runId ?? randomUUID();
         const outputTextParts: string[] = [];
         const source = {
           kind: "agent" as const,
-          runId: request.invocation.runId,
+          runId,
           path: [],
         };
-        streamBridge.runId = request.invocation.runId;
-        streamBridge.onEvent = request.onEvent;
+        streamBridge.runId = runId;
+        streamBridge.onEvent = submission.onEvent;
         const unsubscribe = session.subscribe((event) => {
           const delta = readAssistantTextDelta(event);
           const toolEvent = readToolExecutionEvent(event);
@@ -43,9 +49,9 @@ export function createPiRuntimeSession<TInput, TOutput>(
           if (delta !== undefined) {
             outputTextParts.push(delta);
             void emitRuntimeStreamEvent(
-              request.onEvent,
+              submission.onEvent,
               createStreamEvent({
-                runId: request.invocation.runId,
+                runId,
                 source,
                 sequence: streamBridge.nextSequence(),
                 type: "message.delta",
@@ -60,38 +66,38 @@ export function createPiRuntimeSession<TInput, TOutput>(
 
           if (toolEvent !== undefined) {
             for (const streamEvent of createToolStreamEvents({
-              runId: request.invocation.runId,
+              runId,
               source,
               sequence: streamBridge.nextSequence,
               toolEvent,
             })) {
-              void emitRuntimeStreamEvent(request.onEvent, streamEvent);
+              void emitRuntimeStreamEvent(submission.onEvent, streamEvent);
             }
           }
         });
 
         try {
           await emitRuntimeStreamEvent(
-            request.onEvent,
+            submission.onEvent,
             createStreamEvent({
-              runId: request.invocation.runId,
+              runId,
               source,
               sequence: streamBridge.nextSequence(),
               type: "run.started",
               payload: {
-                task: request.request.task,
-                inputSummary: summarizeInput(request.request.input),
+                task: submission.query,
+                inputSummary: summarizeInput(submission.query),
               },
             }),
           );
 
-          await session.prompt(formatExpertRunPrompt(request.request));
+          await session.prompt(submission.query);
           const outputText = outputTextParts.join("");
 
           await emitRuntimeStreamEvent(
-            request.onEvent,
+            submission.onEvent,
             createStreamEvent({
-              runId: request.invocation.runId,
+              runId,
               source,
               sequence: streamBridge.nextSequence(),
               type: "message.completed",
@@ -104,9 +110,9 @@ export function createPiRuntimeSession<TInput, TOutput>(
           );
 
           await emitRuntimeStreamEvent(
-            request.onEvent,
+            submission.onEvent,
             createStreamEvent({
-              runId: request.invocation.runId,
+              runId,
               source,
               sequence: streamBridge.nextSequence(),
               type: "run.completed",
@@ -116,12 +122,15 @@ export function createPiRuntimeSession<TInput, TOutput>(
             }),
           );
 
-          return createRuntimeRunResult(request, outputParser<TOutput>(outputText));
+          return createRuntimeRunResult(
+            runId,
+            parseRuntimeOutput(outputText, submission.output, outputParser),
+          );
         } catch (error) {
           await emitRuntimeStreamEvent(
-            request.onEvent,
+            submission.onEvent,
             createStreamEvent({
-              runId: request.invocation.runId,
+              runId,
               source,
               sequence: streamBridge.nextSequence(),
               type: "run.failed",
@@ -144,23 +153,41 @@ export function createPiRuntimeSession<TInput, TOutput>(
   };
 }
 
-function formatExpertRunPrompt<TInput>(request: IExpertAgentRunRequest<TInput>): string {
-  return [
-    request.task,
-    "",
-    "Input:",
-    typeof request.input === "string" ? request.input : JSON.stringify(request.input, null, 2),
-  ].join("\n");
-}
-
-function createRuntimeRunResult<TInput, TOutput>(
-  request: RuntimeRunRequest<TInput>,
+function createRuntimeRunResult<TOutput>(
+  runId: string,
   output: TOutput,
 ): RuntimeRunResult<TOutput> {
   return {
-    runId: request.invocation.runId,
+    runId,
     result: {
       output,
     },
   };
+}
+
+function parseRuntimeOutput<TOutput>(
+  text: string,
+  output: RuntimeOutputSchema<TOutput> | undefined,
+  defaultParser: <TParsedOutput>(text: string) => TParsedOutput,
+): TOutput {
+  if (output === undefined) {
+    return defaultParser<TOutput>(text);
+  }
+
+  const jsonParseResult = tryParseJson(text);
+  if (jsonParseResult.ok) {
+    return output.parse(jsonParseResult.value);
+  }
+
+  return output.parse(text);
+}
+
+function tryParseJson(text: string):
+  | { readonly ok: true; readonly value: unknown }
+  | { readonly ok: false } {
+  try {
+    return { ok: true, value: JSON.parse(text) as unknown };
+  } catch {
+    return { ok: false };
+  }
 }

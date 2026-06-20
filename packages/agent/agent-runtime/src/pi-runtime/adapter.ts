@@ -9,7 +9,7 @@ import type {
   CreateAgentSessionOptions,
 } from "@earendil-works/pi-coding-agent";
 import type { ExpertAgentRunContext, RuntimeAdapter } from "@expertmesh/agent-core";
-import { createSingleRunAgentLifecycle } from "@expertmesh/agent-core";
+import { createQueuedAgentLifecycle } from "@expertmesh/agent-core";
 
 import { createMcpToolRegistry } from "../mcp-tools.ts";
 import { createResourceLoader } from "./resources.ts";
@@ -19,16 +19,16 @@ import { createCustomTools } from "./tools.ts";
 import type { CloudPiRuntimeAdapterOptions } from "./types.ts";
 import { defaultOutputParser } from "./types.ts";
 
-export function createCloudPiRuntimeAdapter<TInput = string, TOutput = string>(
+export function createCloudPiRuntimeAdapter<TOutput = string>(
   options: CloudPiRuntimeAdapterOptions = {},
-): RuntimeAdapter<TInput, TOutput> {
+): RuntimeAdapter<TOutput> {
   return {
     descriptor: {
       id: "cloud-pi-agent",
       kind: "cloud-pi-agent",
       displayName: "Cloud PI Agent",
     },
-    async prepare({ agent }) {
+    async createSession({ agent, context: runContext }) {
       const authStorage = AuthStorage.create();
       const modelRegistry = ModelRegistry.create(authStorage);
       const cwd = agent.workspace;
@@ -38,7 +38,7 @@ export function createCloudPiRuntimeAdapter<TInput = string, TOutput = string>(
       const mcpToolRegistry = await createMcpToolRegistry(agent.mcp);
       let piSession: AgentSession | undefined;
       const streamBridge = createRuntimeStreamBridge();
-      const lifecycle = createSingleRunAgentLifecycle<ExpertAgentRunContext>({
+      const lifecycle = createQueuedAgentLifecycle<ExpertAgentRunContext>(runContext, {
         abort: () => {
           void piSession?.abort();
         },
@@ -74,8 +74,17 @@ export function createCloudPiRuntimeAdapter<TInput = string, TOutput = string>(
         const { session } = await createAgentSession(sessionOptions);
         piSession = session;
 
-        return createPiRuntimeSession<TInput, TOutput>(
+        return createPiRuntimeSession<TOutput>(
           session,
+          {
+            sessionId: session.sessionId,
+            agentId: agent.id,
+            runtime: {
+              id: "cloud-pi-agent",
+              kind: "cloud-pi-agent",
+              displayName: "Cloud PI Agent",
+            },
+          },
           options.outputParser ?? defaultOutputParser,
           lifecycle,
           streamBridge,

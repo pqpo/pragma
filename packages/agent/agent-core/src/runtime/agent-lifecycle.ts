@@ -15,19 +15,17 @@ export interface AgentLifecycleHooks {
 export interface AgentLifecycle<TContext = unknown> {
   readonly state: AgentLifecycleState;
   readonly currentContext: TContext | undefined;
-  readonly runOnce: <TResult>(
-    context: TContext | undefined,
-    work: () => Promise<TResult>
-  ) => Promise<TResult>;
+  readonly enqueue: <TResult>(work: () => Promise<TResult>) => Promise<TResult>;
   readonly abort: () => Promise<void>;
 }
 
-export function createSingleRunAgentLifecycle<TContext = unknown>(
-  hooks: AgentLifecycleHooks = {}
+export function createQueuedAgentLifecycle<TContext = unknown>(
+  context: TContext | undefined,
+  hooks: AgentLifecycleHooks = {},
 ): AgentLifecycle<TContext> {
   let state: AgentLifecycleState = "prepared";
-  let currentContext: TContext | undefined;
   let cleanupPromise: Promise<void> | undefined;
+  let queue: Promise<void> = Promise.resolve();
 
   const getState = (): AgentLifecycleState => state;
   const cleanupOnce = async (): Promise<void> => {
@@ -40,48 +38,50 @@ export function createSingleRunAgentLifecycle<TContext = unknown>(
       return state;
     },
     get currentContext() {
-      return currentContext;
+      return context;
     },
-    async runOnce(context, work) {
-      if (state !== "prepared") {
-        throw new Error(`Prepared agent session can only run once. Current state: ${state}.`);
-      }
-
-      state = "running";
-      currentContext = context;
-
-      try {
-        const result = await work();
-
+    async enqueue(work) {
+      const execute = async (): Promise<Awaited<ReturnType<typeof work>>> => {
         if (getState() === "aborted") {
-          throw new Error("Prepared agent session was aborted.");
+          throw new Error("Agent session was aborted.");
         }
 
-        state = "completed";
-        return result;
-      } catch (error) {
-        if (getState() !== "aborted") {
-          state = "failed";
-        }
+        state = "running";
 
-        throw error;
-      } finally {
-        currentContext = undefined;
-        await cleanupOnce();
-      }
+        try {
+          const result = await work();
+
+          if (getState() === "aborted") {
+            throw new Error("Agent session was aborted.");
+          }
+
+          state = "prepared";
+          return result;
+        } catch (error) {
+          if (getState() !== "aborted") {
+            state = "prepared";
+          }
+
+          throw error;
+        }
+      };
+
+      const result = queue.then(execute);
+      queue = result.then(
+        () => undefined,
+        () => undefined,
+      );
+      return await result;
     },
     async abort() {
-      if (
-        state === "completed" ||
-        state === "failed" ||
-        state === "aborted"
-      ) {
+      if (state === "aborted") {
         await cleanupOnce();
         return;
       }
 
       state = "aborted";
       await hooks.abort?.();
+      queue = Promise.resolve();
       await cleanupOnce();
     }
   };

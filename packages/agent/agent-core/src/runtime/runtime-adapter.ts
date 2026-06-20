@@ -1,9 +1,10 @@
 import type {
   ExpertAgent,
-  IExpertAgentRunRequest,
   IExpertAgentRunResult,
 } from "../agent/expert-agent.ts";
+import type { z } from "zod";
 import type { AgentLifecycleState } from "./agent-lifecycle.ts";
+import type { ExpertAgentRunContext } from "./run-context.ts";
 import type { RuntimeStreamOptions } from "./stream-events.ts";
 
 export type RuntimeAdapterKind = "cloud-pi-agent";
@@ -14,17 +15,24 @@ export interface RuntimeAdapterDescriptor {
   readonly displayName: string;
 }
 
-export interface RuntimeInvocation {
-  readonly runId: string;
+export type RuntimeOutputSchema<TOutput = unknown> = z.ZodType<TOutput>;
+
+export interface RuntimeSessionInfo {
+  readonly sessionId: string;
+  readonly agentId: string;
+  readonly runtime: RuntimeAdapterDescriptor;
+  readonly state: AgentLifecycleState;
 }
 
-export interface RuntimePrepareRequest {
+export interface RuntimeCreateSessionRequest {
   readonly agent: ExpertAgent;
+  readonly context?: ExpertAgentRunContext | undefined;
 }
 
-export interface RuntimeRunRequest<TInput = unknown> extends RuntimeStreamOptions {
-  readonly invocation: RuntimeInvocation;
-  readonly request: IExpertAgentRunRequest<TInput>;
+export interface RuntimeSubmitRequest<TOutput = string> extends RuntimeStreamOptions {
+  readonly runId?: string | undefined;
+  readonly query: string;
+  readonly output?: RuntimeOutputSchema<TOutput> | undefined;
 }
 
 export interface RuntimeRunResult<TOutput = unknown> {
@@ -32,15 +40,18 @@ export interface RuntimeRunResult<TOutput = unknown> {
   readonly result: IExpertAgentRunResult<TOutput>;
 }
 
-export interface RuntimeAgentSession<TInput = unknown, TOutput = unknown> {
+export interface RuntimeAgentSession<TOutput = unknown> {
+  readonly info: () => RuntimeSessionInfo;
   readonly state: () => AgentLifecycleState;
-  readonly run: (request: RuntimeRunRequest<TInput>) => Promise<RuntimeRunResult<TOutput>>;
+  readonly submit: <TSubmitOutput = TOutput>(
+    submission: RuntimeSubmitRequest<TSubmitOutput>,
+  ) => Promise<RuntimeRunResult<TSubmitOutput>>;
   readonly abort: () => Promise<void>;
 }
 
-export interface RuntimeAdapter<TInput = unknown, TOutput = unknown> {
+export interface RuntimeAdapter<TOutput = unknown> {
   readonly descriptor: RuntimeAdapterDescriptor;
-  readonly prepare: (
-    request: RuntimePrepareRequest,
-  ) => Promise<RuntimeAgentSession<TInput, TOutput>>;
+  readonly createSession: (
+    request: RuntimeCreateSessionRequest,
+  ) => Promise<RuntimeAgentSession<TOutput>>;
 }
