@@ -101,6 +101,7 @@ tsconfig.base.json
 @expertmesh/sdk
 @expertmesh/database
 @expertmesh/agent-core
+@expertmesh/agent-runtime
 @expertmesh/eslint-config
 @expertmesh/tsconfig
 ```
@@ -443,19 +444,41 @@ createDatabaseClient()
 
 职责：
 
-- 未来 Expert Agent 执行抽象。
-- 未来 Expert Manifest、Agent Invocation、Agent Result、RuntimeAdapter Interface。
-- 默认面向云端 Agent 和云端沙箱执行。
+- Expert Agent 声明、Run Request / Result 协议。
+- ExpertAgent 公共实现，包括文档索引、AGENTS.md 加载、subAgent 声明和系统提示词组装。
+- RuntimeAdapter 与 RuntimeAgentSession 核心接口。
+- 默认面向云端 Agent 和云端沙箱执行边界。
 - 未来本地 Claude Code、Codex、自研执行环境通过 Runtime Adapter 对接。
 
-当前只保留接口：
+当前保留：
 
 ```text
 ExpertAgent
+DocumentIndexer
+ContextManager
 RuntimeAdapter
 ```
 
 不要引入具体 Claude SDK、Codex SDK、MCP、Playbook、HTTP Controller、数据库实现或 Server 应用层实现。
+
+### `packages/agent/agent-runtime`
+
+职责：
+
+- RuntimeAdapter 的具体实现。
+- 当前第一版只提供 `cloud-pi-agent`，基于 PI agent SDK 适配 ExpertAgent。
+- 将 ExpertAgent 声明的 skills、AGENTS.md、documents、workspace 转换为 PI runtime 可理解的 session 配置。
+- 后续承载 Runtime 选择、云端 Runtime 和本地 Runtime 抽象。
+
+禁止：
+
+```text
+Server 应用层
+Client SDK
+React / Next / Web UI 包
+数据库实现
+Desktop 本地权限 UI
+```
 
 ## TypeScript 与导入规范
 
