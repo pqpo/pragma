@@ -63,7 +63,7 @@ export function createCloudPiRuntimeAdapter<TOutput = string>(
         authStorage,
         modelRegistry,
         resourceLoader: loader,
-        sessionManager: await createPiSessionManager(cwd, sessionId),
+        sessionManager: await createPiSessionManager(cwd, agent.id, sessionId),
       };
 
       if (customTools.length > 0) {

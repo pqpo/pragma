@@ -1,7 +1,7 @@
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { createPiSessionManager } from "./session-manager.ts";
+import { createPiSessionManager, getPiSessionDir } from "./session-manager.ts";
 
 vi.mock("@earendil-works/pi-coding-agent", () => ({
   AuthStorage: {
@@ -39,17 +39,17 @@ describe("createPiSessionManager", () => {
   });
 
   it("creates a workspace-persisted session when no session id is provided", async () => {
-    const manager = await createPiSessionManager("/workspace", undefined);
+    const manager = await createPiSessionManager("/workspace", "expert-1", undefined);
 
     expect(manager).toEqual({
       cwd: "/workspace",
       options: undefined,
-      sessionDir: "/workspace/.expertmesh/runtime-sessions/pi",
+      sessionDir: "/workspace/.expertmesh/runtime-sessions/pi/expert-1",
       type: "create",
     });
     expect(SessionManager.create).toHaveBeenCalledWith(
       "/workspace",
-      "/workspace/.expertmesh/runtime-sessions/pi",
+      "/workspace/.expertmesh/runtime-sessions/pi/expert-1",
     );
     expect(SessionManager.inMemory).not.toHaveBeenCalled();
     expect(SessionManager.list).not.toHaveBeenCalled();
@@ -67,7 +67,7 @@ describe("createPiSessionManager", () => {
       }),
     ]);
 
-    const manager = await createPiSessionManager("/workspace", "session-2");
+    const manager = await createPiSessionManager("/workspace", "expert-1", "session-2");
 
     expect(manager).toEqual({
       path: "/sessions/session-2.jsonl",
@@ -75,11 +75,11 @@ describe("createPiSessionManager", () => {
     });
     expect(SessionManager.list).toHaveBeenCalledWith(
       "/workspace",
-      "/workspace/.expertmesh/runtime-sessions/pi",
+      "/workspace/.expertmesh/runtime-sessions/pi/expert-1",
     );
     expect(SessionManager.open).toHaveBeenCalledWith(
       "/sessions/session-2.jsonl",
-      "/workspace/.expertmesh/runtime-sessions/pi",
+      "/workspace/.expertmesh/runtime-sessions/pi/expert-1",
     );
     expect(SessionManager.create).not.toHaveBeenCalled();
   });
@@ -87,24 +87,30 @@ describe("createPiSessionManager", () => {
   it("creates a persistent session with the requested session id when none exists", async () => {
     vi.mocked(SessionManager.list).mockResolvedValue([]);
 
-    const manager = await createPiSessionManager("/workspace", "session-3");
+    const manager = await createPiSessionManager("/workspace", "expert-1", "session-3");
 
     expect(manager).toEqual({
       cwd: "/workspace",
       options: {
         id: "session-3",
       },
-      sessionDir: "/workspace/.expertmesh/runtime-sessions/pi",
+      sessionDir: "/workspace/.expertmesh/runtime-sessions/pi/expert-1",
       type: "create",
     });
     expect(SessionManager.create).toHaveBeenCalledWith(
       "/workspace",
-      "/workspace/.expertmesh/runtime-sessions/pi",
+      "/workspace/.expertmesh/runtime-sessions/pi/expert-1",
       {
         id: "session-3",
       },
     );
     expect(SessionManager.open).not.toHaveBeenCalled();
+  });
+
+  it("encodes expert ids in the workspace session directory", () => {
+    expect(getPiSessionDir("/workspace", "team/reviewer")).toBe(
+      "/workspace/.expertmesh/runtime-sessions/pi/team%2Freviewer",
+    );
   });
 });
 

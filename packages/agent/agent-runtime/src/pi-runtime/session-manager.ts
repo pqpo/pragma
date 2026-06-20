@@ -6,9 +6,10 @@ const PI_SESSION_DIR = ".expertmesh/runtime-sessions/pi";
 
 export async function createPiSessionManager(
   cwd: string,
+  agentId: string,
   sessionId: string | undefined,
 ): Promise<SessionManager> {
-  const sessionDir = getPiSessionDir(cwd);
+  const sessionDir = getPiSessionDir(cwd, agentId);
 
   if (sessionId === undefined) {
     return SessionManager.create(cwd, sessionDir);
@@ -32,6 +33,6 @@ async function findLocalSessionByExactId(
   return sessions.find((session) => session.id === sessionId);
 }
 
-export function getPiSessionDir(cwd: string): string {
-  return join(cwd, PI_SESSION_DIR);
+export function getPiSessionDir(cwd: string, agentId: string): string {
+  return join(cwd, PI_SESSION_DIR, encodeURIComponent(agentId));
 }
