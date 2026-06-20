@@ -8,3 +8,4 @@ tsconfig.tsbuildinfo
 .env.*
 !.env.example
 pnpm-debug.log*
+.DS_Store

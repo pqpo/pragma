@@ -171,6 +171,12 @@ POST /agent-service/code-generation
 
 每个专家 Agent 都应该具备一个 Manifest 文件，用于声明专家身份、能力、输入输出、依赖、权限和版本信息。
 
+详细协议设计见：
+
+```text
+docs/architecture/expert-agent-standard-protocol.md
+```
+
 ### 5.1 Expert Manifest
 
 示例结构：

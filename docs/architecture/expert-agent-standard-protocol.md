@@ -1,0 +1,778 @@
+# 专家 Agent 标准协议详细设计
+
+## 1. 目标
+
+专家 Agent 标准协议用于把单个专家能力声明成可发现、可校验、可编排、可审计、可版本化的能力单元。
+
+该协议首先解决以下问题：
+
+1. Playbook 可以稳定识别和调用专家 Agent；
+2. 调度官可以基于结构化能力描述选择专家；
+3. Runtime 可以根据协议准备输入、上下文、MCP、Skills、AGENTS.md 和 workspace；
+4. 发布系统可以校验专家配置是否完整、安全、可回滚；
+5. 后续可以从协议直接生成管理页面、调用表单、评测用例和运行审计记录。
+
+本文只定义协议和边界，不实现运行时、数据库、MCP、Skills 或 Desktop 本地桥接。
+
+## 2. 设计原则
+
+### 2.1 Manifest 是专家能力的唯一入口
+
+每个专家 Agent 必须有一个 Expert Manifest。Manifest 是专家 Agent 的标准声明文件，描述专家身份、能力边界、输入输出协议、上下文加载策略和运行依赖。
+
+Manifest 不直接存放大段知识正文。长期知识应放在用户自定义文档路径中，并通过渐进式加载策略引用。
+
+### 2.2 协议优先于自然语言
+
+展示名称、描述、tags 和能力说明用于理解和检索；`inputSchema` 与 `outputSchema` 用于真正的运行前校验、编排连接和输出验收。
+
+Playbook 调用专家时，必须先根据 `inputSchema` 校验输入；专家返回结果后，必须根据 `outputSchema` 校验输出。
+
+### 2.3 配置只声明能力，不授予最终权限
+
+Manifest 可以声明专家希望使用的 MCP、Skills、AGENTS.md、文档和 workspace。实际运行时仍需要经过租户策略、用户权限、Playbook 权限、Runtime 权限和本地 Desktop 权限闸门共同裁决。
+
+### 2.4 文档渐进式加载
+
+专家文档不应一次性注入 Runtime。Manifest 只声明文档源、索引方式、初始加载入口和懒加载规则。运行时根据任务、schema、上下文预算和权限逐步加载。
+
+### 2.5 Workspace 明确收敛
+
+专家 Agent 只能在声明且被授权的 workspace scope 内读取、写入或生成 artifact。workspace 既可以是云端沙箱目录，也可以是未来 Desktop App 选择的本地目录映射。
+
+## 3. 协议文件
+
+建议 Manifest 文件命名为：
+
+```text
+expert.manifest.yaml
+```
+
+也可以支持 JSON 形式：
+
+```text
+expert.manifest.json
+```
+
+协议版本由 `schemaVersion` 表示。专家自身版本由 `version` 表示。
+
+```yaml
+schemaVersion: expertmesh.expert/v1
+id: com.examplemesh.order.domain-expert
+displayName: 订单业务专家
+description: 负责订单领域的业务规则、流程、异常场景和历史决策分析
+version: 1.3.0
+tags:
+  - order
+  - business
+  - domain-expert
+```
+
+## 4. 顶层结构
+
+```yaml
+schemaVersion: expertmesh.expert/v1
+id: com.examplemesh.order.domain-expert
+displayName: 订单业务专家
+description: 负责订单领域的业务规则、流程、异常场景和历史决策分析
+version: 1.3.0
+tags:
+  - order
+  - business
+  - domain-expert
+
+capability:
+  summary: 订单领域需求、规则、状态机和影响面分析
+  scopes:
+    - id: order-state-machine
+      name: 订单状态机分析
+      description: 解释订单状态流转、异常状态和业务约束
+    - id: requirement-impact
+      name: 需求影响面分析
+      description: 分析订单相关需求对业务流程、接口和数据的影响
+  limitations:
+    - 不直接修改代码
+    - 不做最终发布审批
+
+inputSchema:
+  type: object
+  additionalProperties: false
+  properties:
+    task:
+      type: string
+      minLength: 1
+      description: 当前需要专家处理的问题
+    businessContext:
+      type: string
+      description: 需求背景或业务上下文
+    relatedFiles:
+      type: array
+      items:
+        type: string
+      description: 相关代码文件或文档路径
+  required:
+    - task
+
+outputSchema:
+  type: object
+  additionalProperties: false
+  properties:
+    conclusion:
+      type: string
+      description: 专家结论
+    risks:
+      type: array
+      items:
+        type: string
+      description: 风险点
+    impactedModules:
+      type: array
+      items:
+        type: string
+      description: 影响模块
+    references:
+      type: array
+      items:
+        type: string
+      description: 引用的文档或代码路径
+  required:
+    - conclusion
+
+mcp:
+  servers:
+    - id: doc-search
+      displayName: 文档检索
+      transport: stdio
+      packageRef: "@company/doc-search-mcp"
+      enabledByDefault: true
+      allowedTools:
+        - searchDocuments
+        - readDocument
+      config:
+        index: order-docs
+    - id: code-search
+      displayName: 代码检索
+      transport: http
+      endpointRef: secret://mcp/code-search/url
+      enabledByDefault: false
+      allowedTools:
+        - searchCode
+        - readFile
+
+skills:
+  entries:
+    - id: business-impact-analysis
+      displayName: 业务影响面分析
+      source: registry
+      ref: skill://company/business-impact-analysis@1.2.0
+      enabledByDefault: true
+    - id: order-state-machine-analysis
+      displayName: 订单状态机分析
+      source: document
+      ref: docs://order/rules/state-machine.md
+      enabledByDefault: true
+
+agentsMd:
+  mode: layered
+  files:
+    - path: ./AGENTS.md
+      scope: expert
+      required: true
+    - path: ./docs/order/AGENTS.md
+      scope: documents
+      required: false
+
+documents:
+  roots:
+    - id: order-docs
+      displayName: 订单专家文档
+      uri: docs://order-domain-expert
+      path: ./documents/order-domain-expert
+      access: read
+      index:
+        strategy: hybrid
+        summaryFile: ./documents/order-domain-expert/index.md
+      load:
+        mustLoad:
+          - ./documents/order-domain-expert/profile.md
+          - ./documents/order-domain-expert/safety.md
+        lazyLoad:
+          - ./documents/order-domain-expert/business-rules/**
+          - ./documents/order-domain-expert/architecture/**
+        forbiddenLoad:
+          - ./documents/order-domain-expert/archive/**
+
+workspace:
+  mode: cloud-sandbox
+  roots:
+    - id: task-workspace
+      path: ./workspace
+      access: readwrite
+      purpose: 当前任务临时工作目录
+    - id: source-repo
+      path: ./repositories/order-service
+      access: read
+      purpose: 订单服务代码仓库
+  defaultRoot: task-workspace
+  artifactPath: ./workspace/artifacts
+```
+
+## 5. 字段定义
+
+### 5.1 `schemaVersion`
+
+Manifest 协议版本。
+
+规则：
+
+- 必填；
+- 当前建议值为 `expertmesh.expert/v1`；
+- 只表示协议结构版本，不表示专家能力版本；
+- 破坏性协议变更必须提升协议版本。
+
+### 5.2 `id`
+
+专家 Agent 的全局唯一名称 ID。
+
+规则：
+
+- 必填；
+- 全局唯一；
+- 发布后不可复用给另一个专家；
+- 建议使用反向域名 + 领域 + 专家类型格式；
+- 只能包含小写字母、数字、点号和短横线；
+- 不包含版本号，不包含展示名称。
+
+推荐格式：
+
+```text
+{reverseDns}.{domain}.{expertType}
+```
+
+示例：
+
+```text
+com.examplemesh.order.domain-expert
+com.examplemesh.frontend.code-reviewer
+com.examplemesh.requirement.dispatcher
+```
+
+ID 的唯一性由专家注册中心保证。Manifest 本地校验只能检查格式，不能单独保证全局唯一。
+
+### 5.3 `displayName`
+
+专家展示名称。
+
+规则：
+
+- 必填；
+- 面向用户、调度官和管理后台展示；
+- 可以使用中文；
+- 可以随版本调整；
+- 不参与唯一性判断。
+
+### 5.4 `description`
+
+专家描述。
+
+规则：
+
+- 必填；
+- 描述专家负责什么、不负责什么、典型输入和典型输出；
+- 调度官可以将它作为专家选择的语义信号；
+- 不替代 `capability.scopes` 和 schema。
+
+### 5.5 `tags`
+
+专家标签。
+
+规则：
+
+- 必填，允许为空数组；
+- 用于搜索、筛选、Playbook 推荐和权限分组；
+- tag 使用小写短横线命名；
+- tag 不表达权限，只表达分类。
+
+示例：
+
+```yaml
+tags:
+  - order
+  - business
+  - impact-analysis
+```
+
+### 5.6 `version`
+
+专家能力版本。
+
+规则：
+
+- 必填；
+- 使用 SemVer；
+- 同一个 `id` 可以发布多个 `version`；
+- Playbook 应绑定明确版本或版本范围；
+- 运行审计必须记录实际使用的专家版本。
+
+建议：
+
+- patch：文档修正、提示词细化、非破坏性评测补充；
+- minor：新增兼容能力、新增可选输入或输出字段；
+- major：input/output schema 破坏性变更、能力范围显著变化。
+
+### 5.7 `capability`
+
+能力范围声明。
+
+`capability.summary` 用一句话说明专家核心能力。`capability.scopes` 用结构化列表声明可被调度的能力单元。`capability.limitations` 明确专家不应该做的事。
+
+规则：
+
+- 必填；
+- `scopes[].id` 在当前专家内唯一；
+- 调度官可以按 scope 选择专家；
+- scope 不等于权限，具体工具和文件访问仍由后续配置控制。
+
+### 5.8 `inputSchema`
+
+专家输入协议。
+
+规则：
+
+- 必填；
+- 使用 JSON Schema 子集；
+- 顶层必须是 object；
+- 必须显式声明 `required`；
+- 推荐 `additionalProperties: false`；
+- 运行前必须校验；
+- TypeScript 类型应由 schema 推导，不手写重复 interface。
+
+建议保留通用输入字段：
+
+| 字段 | 说明 |
+| --- | --- |
+| `task` | 当前任务，通常必填 |
+| `businessContext` | 业务背景 |
+| `technicalContext` | 技术背景 |
+| `constraints` | 约束条件 |
+| `relatedFiles` | 相关文件路径 |
+| `upstreamOutputs` | 上游专家输出 |
+
+### 5.9 `outputSchema`
+
+专家输出协议。
+
+规则：
+
+- 必填；
+- 使用 JSON Schema 子集；
+- 顶层必须是 object；
+- 必须显式声明 `required`；
+- 推荐 `additionalProperties: false`；
+- 运行后必须校验；
+- 调度官、Playbook 和产物生成器只能依赖 schema 中声明的字段。
+
+建议保留通用输出字段：
+
+| 字段 | 说明 |
+| --- | --- |
+| `conclusion` | 专家结论 |
+| `confidence` | 置信度 |
+| `risks` | 风险点 |
+| `questions` | 需要澄清的问题 |
+| `actions` | 建议动作 |
+| `references` | 引用来源 |
+
+## 6. MCP 配置对象
+
+`mcp` 声明专家可请求使用的 MCP Server 和工具集合。
+
+```yaml
+mcp:
+  servers:
+    - id: doc-search
+      displayName: 文档检索
+      transport: stdio
+      packageRef: "@company/doc-search-mcp"
+      enabledByDefault: true
+      allowedTools:
+        - searchDocuments
+        - readDocument
+      config:
+        index: order-docs
+```
+
+字段规则：
+
+| 字段 | 必填 | 说明 |
+| --- | --- | --- |
+| `servers[].id` | 是 | 当前专家内唯一的 MCP Server ID |
+| `servers[].displayName` | 是 | 展示名称 |
+| `servers[].transport` | 是 | `stdio`、`http`、`websocket` 或后续扩展值 |
+| `packageRef` | 否 | stdio 类 MCP 的包引用 |
+| `endpointRef` | 否 | 远程 MCP 的端点引用，敏感值必须使用 secret 引用 |
+| `enabledByDefault` | 是 | 默认是否启用 |
+| `allowedTools` | 是 | 专家可使用的工具白名单 |
+| `config` | 否 | 非敏感配置 |
+
+安全约束：
+
+- Manifest 不直接写入明文 token；
+- 远程地址、token、租户凭证使用 `secret://`、`env://` 或平台托管引用；
+- `allowedTools` 必须是白名单，不允许默认全部工具；
+- Runtime 启动 MCP 前必须再次经过权限策略裁决；
+- MCP tool call 必须进入运行 Trace。
+
+## 7. Skills 配置对象
+
+`skills` 声明专家可以加载的技能。Skill 是可复用的能力说明、流程模板、提示词、脚本或工具使用规范。
+
+```yaml
+skills:
+  entries:
+    - id: business-impact-analysis
+      displayName: 业务影响面分析
+      source: registry
+      ref: skill://company/business-impact-analysis@1.2.0
+      enabledByDefault: true
+    - id: order-state-machine-analysis
+      displayName: 订单状态机分析
+      source: document
+      ref: docs://order/rules/state-machine.md
+      enabledByDefault: true
+```
+
+字段规则：
+
+| 字段 | 必填 | 说明 |
+| --- | --- | --- |
+| `entries[].id` | 是 | 当前专家内唯一的 Skill ID |
+| `entries[].displayName` | 是 | 展示名称 |
+| `entries[].source` | 是 | `registry`、`document`、`workspace` 或 `inline` |
+| `entries[].ref` | 是 | Skill 引用地址 |
+| `entries[].enabledByDefault` | 是 | 默认是否加载 |
+| `entries[].loadWhen` | 否 | 按任务条件延迟加载的规则 |
+
+约束：
+
+- Skill 不应绕过 `inputSchema` 和 `outputSchema`；
+- Skill 只能扩展专家行为，不能扩大权限；
+- Skill 内容需要纳入版本和审计；
+- 来自文档的 Skill 应遵守 documents 的权限和加载规则。
+
+## 8. AGENTS.md 配置
+
+`agentsMd` 声明运行时应加载哪些 AGENTS.md 指令，以及它们的作用域。
+
+```yaml
+agentsMd:
+  mode: layered
+  files:
+    - path: ./AGENTS.md
+      scope: expert
+      required: true
+    - path: ./docs/order/AGENTS.md
+      scope: documents
+      required: false
+```
+
+字段规则：
+
+| 字段 | 必填 | 说明 |
+| --- | --- | --- |
+| `mode` | 是 | 当前只建议 `layered` |
+| `files[].path` | 是 | AGENTS.md 文件路径 |
+| `files[].scope` | 是 | `expert`、`documents`、`workspace`、`runtime` |
+| `files[].required` | 是 | 缺失时是否阻断发布或运行 |
+
+加载顺序：
+
+1. 平台系统约束；
+2. 租户或组织级 AGENTS.md；
+3. 专家级 AGENTS.md；
+4. 文档级 AGENTS.md；
+5. workspace 级 AGENTS.md；
+6. 当前任务临时约束。
+
+冲突规则：
+
+- 越靠前的系统和平台安全约束优先级越高；
+- 后加载的文件可以补充更具体的工程规范；
+- 后加载文件不能放宽前序安全规则、权限规则或 schema 规则；
+- 所有实际加载的 AGENTS.md 路径和内容摘要必须进入运行快照。
+
+## 9. 文档路径与渐进式加载
+
+`documents` 声明用户自定义文档源。它是专家长期知识的入口，不是运行时一次性 prompt。
+
+```yaml
+documents:
+  roots:
+    - id: order-docs
+      displayName: 订单专家文档
+      uri: docs://order-domain-expert
+      path: ./documents/order-domain-expert
+      access: read
+      index:
+        strategy: hybrid
+        summaryFile: ./documents/order-domain-expert/index.md
+      load:
+        mustLoad:
+          - ./documents/order-domain-expert/profile.md
+          - ./documents/order-domain-expert/safety.md
+        lazyLoad:
+          - ./documents/order-domain-expert/business-rules/**
+          - ./documents/order-domain-expert/architecture/**
+        forbiddenLoad:
+          - ./documents/order-domain-expert/archive/**
+```
+
+字段规则：
+
+| 字段 | 必填 | 说明 |
+| --- | --- | --- |
+| `roots[].id` | 是 | 当前专家内唯一的文档根 ID |
+| `roots[].displayName` | 是 | 展示名称 |
+| `roots[].uri` | 否 | 平台内文档源 URI |
+| `roots[].path` | 否 | workspace 或仓库内相对路径 |
+| `roots[].access` | 是 | `read`、`readwrite` |
+| `roots[].index.strategy` | 是 | `summary`、`vector`、`keyword`、`hybrid` |
+| `roots[].index.summaryFile` | 否 | 文档目录摘要入口 |
+| `roots[].load.mustLoad` | 否 | 每次运行必须加载 |
+| `roots[].load.lazyLoad` | 否 | 可按任务检索加载 |
+| `roots[].load.forbiddenLoad` | 否 | 禁止加载路径 |
+
+渐进式加载流程：
+
+```text
+读取 Manifest
+→ 校验任务输入
+→ 加载专家身份、能力范围、schema 和必要 AGENTS.md
+→ 加载 documents.mustLoad 中的短文档
+→ 根据任务检索 summary/index
+→ 加载相关片段
+→ 必要时由 Runtime 申请读取原文
+→ 记录 Context Snapshot
+```
+
+文档元信息建议：
+
+```yaml
+title: 订单状态机规则
+owner: order-team
+source: human
+confidence: high
+trustLevel: team-trusted
+lastVerifiedAt: 2026-06-19
+writableByAgent: false
+tags:
+  - order
+  - state-machine
+```
+
+约束：
+
+- 文档路径必须位于声明的 documents root 或 workspace root 下；
+- `forbiddenLoad` 优先级高于 `mustLoad` 和 `lazyLoad`；
+- Agent 自进化只能写入被授权的文档路径；
+- 发布版本应锁定文档源版本、commit 或快照 ID；
+- 运行审计必须记录实际加载的文档列表和摘要。
+
+## 10. Workspace 目录
+
+`workspace` 声明专家运行时可见的工作目录。
+
+```yaml
+workspace:
+  mode: cloud-sandbox
+  roots:
+    - id: task-workspace
+      path: ./workspace
+      access: readwrite
+      purpose: 当前任务临时工作目录
+    - id: source-repo
+      path: ./repositories/order-service
+      access: read
+      purpose: 订单服务代码仓库
+  defaultRoot: task-workspace
+  artifactPath: ./workspace/artifacts
+```
+
+字段规则：
+
+| 字段 | 必填 | 说明 |
+| --- | --- | --- |
+| `mode` | 是 | `cloud-sandbox`、`desktop-local` 或 `readonly` |
+| `roots[].id` | 是 | 当前专家内唯一的 workspace root ID |
+| `roots[].path` | 是 | 相对路径或平台映射路径 |
+| `roots[].access` | 是 | `read`、`readwrite`、`write-artifacts` |
+| `roots[].purpose` | 是 | 为什么需要这个目录 |
+| `defaultRoot` | 是 | 默认工作目录 ID |
+| `artifactPath` | 否 | 运行产物输出目录 |
+
+约束：
+
+- 所有相对路径必须解析到声明的 workspace root 内；
+- `readwrite` 不代表自动允许任意写入，仍需运行权限裁决；
+- `desktop-local` 模式必须经过 Desktop App workspace scope 授权；
+- Artifact 输出必须记录路径、类型、大小、hash 和来源 run id；
+- Playbook 调用多个专家时，每个专家应获得隔离的临时 workspace，除非显式共享。
+
+## 11. 最小 JSON Schema 草案
+
+后续进入实现阶段时，建议在 `packages/shared/contracts` 中定义 Zod schema，并从 Zod 推导 TypeScript 类型。这里先给出字段形状，作为协议实现参考。
+
+```ts
+type ExpertManifest = {
+  schemaVersion: "expertmesh.expert/v1";
+  id: string;
+  displayName: string;
+  description: string;
+  version: string;
+  tags: string[];
+  capability: ExpertCapability;
+  inputSchema: JsonObjectSchema;
+  outputSchema: JsonObjectSchema;
+  mcp?: ExpertMcpConfig;
+  skills?: ExpertSkillsConfig;
+  agentsMd?: ExpertAgentsMdConfig;
+  documents?: ExpertDocumentsConfig;
+  workspace?: ExpertWorkspaceConfig;
+};
+```
+
+实现要求：
+
+- `inputSchema` 和 `outputSchema` 使用 JSON Schema 对象；
+- Manifest 自身 schema 使用 Zod 定义；
+- DTO 类型从 Zod 推导；
+- 协议类型放在 `@expertmesh/contracts`；
+- Runtime 执行抽象放在 `@expertmesh/agent-core`；
+- 不在 shared contracts 中引入 Node、Fastify、React 或具体 MCP SDK。
+
+## 12. 校验规则
+
+发布前必须校验：
+
+1. `schemaVersion` 支持；
+2. `id` 格式合法且全局唯一；
+3. `version` 为合法 SemVer；
+4. `displayName`、`description`、`capability.summary` 不为空；
+5. `capability.scopes[].id` 当前专家内唯一；
+6. `inputSchema` 与 `outputSchema` 是合法 object schema；
+7. MCP、Skill、documents、workspace 的 ID 在各自作用域内唯一；
+8. 所有相对路径不能逃逸声明根目录；
+9. secret 不以明文出现在 Manifest；
+10. `AGENTS.md` required 文件存在；
+11. `workspace.defaultRoot` 指向已声明 root；
+12. `documents.forbiddenLoad` 不被默认加载规则覆盖。
+
+运行前必须校验：
+
+1. 输入满足 `inputSchema`；
+2. 调用方有权使用该专家版本；
+3. Playbook 有权启用声明的 MCP 和 Skills；
+4. Runtime 有可用 workspace；
+5. 文档和 AGENTS.md 加载结果生成 Context Snapshot。
+
+运行后必须校验：
+
+1. 输出满足 `outputSchema`；
+2. 所有 tool call、文档加载、workspace 写入都有 Trace；
+3. artifact 位于授权输出目录；
+4. schema 校验失败时返回结构化错误，而不是自然语言成功结果。
+
+## 13. 与 Playbook 的关系
+
+Playbook 不应该复制专家内部配置。Playbook 只引用专家：
+
+```yaml
+experts:
+  - id: com.examplemesh.order.domain-expert
+    version: 1.3.0
+    alias: orderExpert
+    enabledScopes:
+      - order-state-machine
+      - requirement-impact
+```
+
+Playbook 可以收窄专家能力，例如禁用某个 MCP、只允许 read-only workspace 或只启用部分 scopes。Playbook 不应放宽专家 Manifest 中声明的限制。
+
+## 14. 与 Runtime 的关系
+
+Runtime Adapter 根据 Manifest 准备执行环境：
+
+1. 选择 Runtime；
+2. 创建 workspace；
+3. 加载 AGENTS.md；
+4. 加载必要文档；
+5. 注册允许的 MCP；
+6. 加载 Skills；
+7. 校验 input；
+8. 执行专家；
+9. 校验 output；
+10. 生成 Trace 和 Context Snapshot。
+
+Manifest 不绑定具体 Claude、Codex 或自研 Agent SDK。具体 Runtime 能力应由后续 `RuntimeAdapter` 协议声明。
+
+## 15. 示例：最小专家
+
+```yaml
+schemaVersion: expertmesh.expert/v1
+id: com.examplemesh.requirement.summary-expert
+displayName: 需求总结专家
+description: 将上游专家意见整理成结构化需求分析摘要
+version: 0.1.0
+tags:
+  - requirement
+  - summary
+
+capability:
+  summary: 汇总需求讨论结论、风险和待澄清问题
+  scopes:
+    - id: summarize-requirement
+      name: 需求总结
+      description: 汇总多专家输出并生成结构化摘要
+  limitations:
+    - 不直接做技术方案决策
+
+inputSchema:
+  type: object
+  additionalProperties: false
+  properties:
+    task:
+      type: string
+    upstreamOutputs:
+      type: array
+      items:
+        type: object
+  required:
+    - task
+    - upstreamOutputs
+
+outputSchema:
+  type: object
+  additionalProperties: false
+  properties:
+    conclusion:
+      type: string
+    openQuestions:
+      type: array
+      items:
+        type: string
+    references:
+      type: array
+      items:
+        type: string
+  required:
+    - conclusion
+```
+
+## 16. 后续实施建议
+
+1. 在 `@expertmesh/contracts` 增加 `ExpertManifestSchema`；
+2. 在 `@expertmesh/agent-core` 定义 `ExpertAgent`、`ExpertInvocation`、`ExpertResult`、`RuntimeAdapter`；
+3. 增加 Manifest fixture 和 schema 单元测试；
+4. 增加非法路径、非法 secret、非法 schema 的测试；
+5. 再设计 Playbook 对专家 Manifest 的引用协议；
+6. 最后再进入 Runtime、MCP、Skills、Document Repo 和 Desktop 本地桥接实现。
