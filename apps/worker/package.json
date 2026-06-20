@@ -1,0 +1,28 @@
+{
+  "name": "@expertmesh/worker",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc -p tsconfig.build.json",
+    "lint": "eslint src",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --passWithNoTests",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@expertmesh/agent-core": "workspace:*",
+    "@expertmesh/contracts": "workspace:*",
+    "@expertmesh/database": "workspace:*",
+    "@expertmesh/domain": "workspace:*",
+    "@expertmesh/utils": "workspace:*"
+  },
+  "devDependencies": {
+    "@expertmesh/tsconfig": "workspace:*",
+    "@types/node": "latest",
+    "tsx": "latest",
+    "typescript": "latest",
+    "vitest": "latest"
+  }
+}

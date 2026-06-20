@@ -1,0 +1,30 @@
+{
+  "name": "@expertmesh/web",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "next dev --port 3000",
+    "build": "next build",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --passWithNoTests",
+    "clean": "rm -rf .next dist"
+  },
+  "dependencies": {
+    "@expertmesh/contracts": "workspace:*",
+    "@expertmesh/domain": "workspace:*",
+    "@expertmesh/sdk": "workspace:*",
+    "@expertmesh/utils": "workspace:*",
+    "next": "latest",
+    "react": "latest",
+    "react-dom": "latest"
+  },
+  "devDependencies": {
+    "@expertmesh/tsconfig": "workspace:*",
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "typescript": "latest",
+    "vitest": "latest"
+  }
+}

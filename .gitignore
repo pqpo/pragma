@@ -1,0 +1,10 @@
+node_modules
+dist
+.next
+coverage
+.turbo
+tsconfig.tsbuildinfo
+.env
+.env.*
+!.env.example
+pnpm-debug.log*

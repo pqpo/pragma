@@ -1,0 +1,9 @@
+{
+  "extends": "@expertmesh/tsconfig/web.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist",
+    "noEmit": true
+  },
+  "include": ["src"]
+}
