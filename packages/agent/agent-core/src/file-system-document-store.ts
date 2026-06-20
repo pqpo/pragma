@@ -5,13 +5,13 @@ import type {
   ExpertAgentDocumentDeleteInput,
   ExpertAgentDocumentReadInput,
   ExpertAgentDocumentResult,
+  ExpertAgentDocumentSummary,
   ExpertAgentDocumentStore,
   ExpertAgentStoredDocument,
   ExpertAgentStoredDocumentCreateInput,
-  ExpertAgentStoredDocumentSummary,
   ExpertAgentStoredDocumentUpdateInput
 } from "./document-indexer.ts";
-import { error, ok } from "./document-indexer.ts";
+import { error, ok, parseStoredDocument } from "./document-indexer.ts";
 
 export interface FileSystemDocumentStoreOptions {
   readonly rootDir: string;
@@ -24,14 +24,23 @@ export class FileSystemDocumentStore implements ExpertAgentDocumentStore {
     this.rootDir = resolve(options.rootDir);
   }
 
-  async listDocuments(): Promise<
-    ExpertAgentDocumentResult<readonly ExpertAgentStoredDocumentSummary[]>
-  > {
+  async listDocuments(): Promise<ExpertAgentDocumentResult<readonly ExpertAgentDocumentSummary[]>> {
     try {
       const files = await collectMarkdownFiles(this.rootDir);
-      const documents = files.map((filePath) => ({
-        id: toDocumentId(this.rootDir, filePath)
-      }));
+      const documents = await Promise.all(
+        files.map(async (filePath) => {
+          const storedDocument = {
+            id: toDocumentId(this.rootDir, filePath),
+            content: await readFile(filePath, "utf8")
+          };
+          const document = parseStoredDocument(storedDocument);
+
+          return {
+            id: document.id,
+            metadata: document.metadata
+          };
+        })
+      );
 
       return ok(documents);
     } catch (caught) {

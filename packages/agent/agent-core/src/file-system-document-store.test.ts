@@ -8,13 +8,18 @@ import type {
   ExpertAgentDocumentDeleteInput,
   ExpertAgentDocumentReadInput,
   ExpertAgentDocumentResult,
+  ExpertAgentDocumentSummary,
   ExpertAgentDocumentStore,
   ExpertAgentStoredDocument,
   ExpertAgentStoredDocumentCreateInput,
-  ExpertAgentStoredDocumentSummary,
   ExpertAgentStoredDocumentUpdateInput
 } from "./document-indexer.ts";
-import { AGENTS_DOCUMENT_ID, DocumentIndexer, ok } from "./document-indexer.ts";
+import {
+  AGENTS_DOCUMENT_ID,
+  DocumentIndexer,
+  ok,
+  parseStoredDocument
+} from "./document-indexer.ts";
 import { ExpertAgent } from "./expert-agent.ts";
 import { FileSystemDocumentStore } from "./file-system-document-store.ts";
 
@@ -111,6 +116,28 @@ describe("DocumentIndexer", () => {
     );
   });
 
+  it("builds the index from store summaries without reading every document", async () => {
+    const store = new MemoryDocumentStore([
+      {
+        id: "indexed.md",
+        content: "---\ntrigger: manual\n---\nIndexed content."
+      }
+    ]);
+    const indexer = new DocumentIndexer({ store });
+
+    await expect(indexer.index()).resolves.toEqual(
+      ok([
+        {
+          id: "indexed.md",
+          metadata: {
+            trigger: "manual"
+          }
+        }
+      ])
+    );
+    expect(store.readCount).toBe(0);
+  });
+
   it("drops AGENTS.md update metadata before calling the document store", async () => {
     const store = new MemoryDocumentStore([
       {
@@ -187,6 +214,7 @@ async function createTempDir(): Promise<string> {
 
 class MemoryDocumentStore implements ExpertAgentDocumentStore {
   readonly documents = new Map<string, ExpertAgentStoredDocument>();
+  readCount = 0;
 
   constructor(documents: readonly ExpertAgentStoredDocument[]) {
     for (const document of documents) {
@@ -195,18 +223,24 @@ class MemoryDocumentStore implements ExpertAgentDocumentStore {
   }
 
   async listDocuments(): Promise<
-    ExpertAgentDocumentResult<readonly ExpertAgentStoredDocumentSummary[]>
+    ExpertAgentDocumentResult<readonly ExpertAgentDocumentSummary[]>
   > {
     return ok(
-      [...this.documents.values()].map((document) => ({
-        id: document.id
-      }))
+      [...this.documents.values()].map((storedDocument) => {
+        const document = parseStoredDocument(storedDocument);
+
+        return {
+          id: document.id,
+          metadata: document.metadata
+        };
+      })
     );
   }
 
   async readDocument(
     input: ExpertAgentDocumentReadInput
   ): Promise<ExpertAgentDocumentResult<ExpertAgentStoredDocument>> {
+    this.readCount += 1;
     return ok(this.documents.get(input.id) as ExpertAgentStoredDocument);
   }
 

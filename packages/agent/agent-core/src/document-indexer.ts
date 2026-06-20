@@ -47,11 +47,8 @@ export interface ExpertAgentDocument extends ExpertAgentDocumentSummary {
   readonly content: string;
 }
 
-export interface ExpertAgentStoredDocumentSummary {
+export interface ExpertAgentStoredDocument {
   readonly id: string;
-}
-
-export interface ExpertAgentStoredDocument extends ExpertAgentStoredDocumentSummary {
   readonly content: string;
 }
 
@@ -98,7 +95,7 @@ export interface ExpertAgentStoredDocumentUpdateInput {
 export interface ExpertAgentDocumentStore {
   readonly listDocuments: (
     input: ExpertAgentDocumentListInput
-  ) => Promise<ExpertAgentDocumentResult<readonly ExpertAgentStoredDocumentSummary[]>>;
+  ) => Promise<ExpertAgentDocumentResult<readonly ExpertAgentDocumentSummary[]>>;
   readonly readDocument: (
     input: ExpertAgentDocumentReadInput
   ) => Promise<ExpertAgentDocumentResult<ExpertAgentStoredDocument>>;
@@ -120,57 +117,28 @@ export interface DocumentIndexerOptions {
 export class DocumentIndexer {
   readonly store: ExpertAgentDocumentStore | undefined;
 
-  #documents: readonly ExpertAgentDocumentSummary[] = [];
-  #lastError: ExpertAgentDocumentError | undefined;
-
   constructor(options: DocumentIndexerOptions = {}) {
     this.store = options.store;
-  }
-
-  get documents(): readonly ExpertAgentDocumentSummary[] {
-    return this.#documents;
-  }
-
-  get lastError(): ExpertAgentDocumentError | undefined {
-    return this.#lastError;
   }
 
   async index(
     context: ExpertAgentRunContext = {}
   ): Promise<ExpertAgentDocumentResult<readonly ExpertAgentDocumentSummary[]>> {
     if (this.store === undefined) {
-      this.#documents = [];
-      this.#lastError = undefined;
-      return ok(this.#documents);
+      return ok([]);
     }
 
     const listResult = await this.store.listDocuments({ context });
 
     if (!listResult.ok) {
-      this.#lastError = listResult.error;
       return listResult;
     }
 
-    const readResults = await Promise.all(
-      listResult.value.map((document) => this.store?.readDocument({ id: document.id, context }))
+    return ok(
+      listResult.value
+        .map((document) => normalizeDocumentSummary(document))
+        .sort((left, right) => left.id.localeCompare(right.id))
     );
-    const failedRead = readResults.find((result) => result !== undefined && !result.ok);
-
-    if (failedRead !== undefined && !failedRead.ok) {
-      this.#lastError = failedRead.error;
-      return failedRead;
-    }
-
-    this.#documents = readResults
-      .filter((result): result is { readonly ok: true; readonly value: ExpertAgentStoredDocument } => {
-        return result !== undefined && result.ok;
-      })
-      .map((result) => parseStoredDocument(result.value))
-      .map((document) => normalizeDocumentSummary(document))
-      .sort((left, right) => left.id.localeCompare(right.id));
-    this.#lastError = undefined;
-
-    return ok(this.#documents);
   }
 
   async read(input: ExpertAgentDocumentReadInput): Promise<ExpertAgentDocumentResult<ExpertAgentDocument>> {
@@ -208,8 +176,6 @@ export class DocumentIndexer {
       return result;
     }
 
-    await this.index(input.context ?? {});
-
     return ok(normalizeDocument(parseStoredDocument(result.value)));
   }
 
@@ -246,8 +212,6 @@ export class DocumentIndexer {
       return result;
     }
 
-    await this.index(input.context ?? {});
-
     return ok(normalizeDocument(parseStoredDocument(result.value)));
   }
 
@@ -264,25 +228,7 @@ export class DocumentIndexer {
       return result;
     }
 
-    await this.index(input.context ?? {});
-
     return result;
-  }
-
-  getByTrigger(trigger: DocumentTrigger): readonly ExpertAgentDocumentSummary[] {
-    return this.#documents.filter((document) => document.metadata.trigger === trigger);
-  }
-
-  getAlwaysOnDocuments(): readonly ExpertAgentDocumentSummary[] {
-    return this.getByTrigger("always_on");
-  }
-
-  getManualDocuments(): readonly ExpertAgentDocumentSummary[] {
-    return this.getByTrigger("manual");
-  }
-
-  getModelDecisionDocuments(): readonly ExpertAgentDocumentSummary[] {
-    return this.getByTrigger("model_decision");
   }
 }
 
@@ -393,7 +339,7 @@ function normalizeAgentsDocumentMetadata(
   };
 }
 
-function parseStoredDocument(document: ExpertAgentStoredDocument): ExpertAgentDocument {
+export function parseStoredDocument(document: ExpertAgentStoredDocument): ExpertAgentDocument {
   const parsed = parseMarkdownDocument(document.content);
 
   return normalizeDocument({
