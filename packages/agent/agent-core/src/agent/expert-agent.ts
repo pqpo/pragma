@@ -15,8 +15,14 @@ import type {
 } from "../documents/document-indexer.ts";
 import { createDocumentTools } from "../documents/document-tools.ts";
 import type { CreateDocumentToolsOptions, ExpertAgentDefaultTool } from "../documents/document-tools.ts";
+import type {
+  ExpertAgentPluginEntry,
+  ExpertAgentPluginHooks,
+} from "../plugins/expert-agent-plugin.ts";
+import { resolveExpertAgentPlugins } from "../plugins/expert-agent-plugin.ts";
 import type { ExpertAgentRunContext } from "../runtime/run-context.ts";
 import type { SubAgentRegistry } from "../subagents/sub-agent.ts";
+import type { ExpertAgentManagedTool, ExpertAgentToolCallResult } from "../tools/managed-tool.ts";
 
 export type ExpertAgentSchemaVersion = "expertmesh.expert/v1";
 
@@ -98,6 +104,9 @@ export interface IExpertAgent {
   readonly models?: IExpertAgentModelsConfig | undefined;
   readonly documents?: ExpertAgentDocumentStore | undefined;
   readonly subAgents?: SubAgentRegistry | undefined;
+  readonly tools?: readonly ExpertAgentManagedTool<string, ExpertAgentToolCallResult>[] | undefined;
+  readonly hooks?: ExpertAgentPluginHooks | undefined;
+  readonly plugins?: readonly ExpertAgentPluginEntry[] | undefined;
 }
 
 export type ExpertAgentOptions = IExpertAgent;
@@ -116,10 +125,26 @@ export class ExpertAgent implements IExpertAgent {
   readonly documents: ExpertAgentDocumentStore | undefined;
   readonly workspace: string;
   readonly subAgents: SubAgentRegistry | undefined;
+  readonly tools: readonly ExpertAgentManagedTool<string, ExpertAgentToolCallResult>[] | undefined;
+  readonly hooks: ExpertAgentPluginHooks | undefined;
+  readonly plugins: readonly ExpertAgentPluginEntry[] | undefined;
   private readonly documentIndexer: DocumentIndexer;
   private readonly contextManager: ContextManager;
 
   constructor(options: ExpertAgentOptions) {
+    const resolved = resolveExpertAgentPlugins({
+      host: {
+        mcp: options.mcp,
+        skills: options.skills,
+        models: options.models,
+        documents: options.documents,
+        subAgents: options.subAgents,
+        tools: options.tools,
+        hooks: options.hooks,
+      },
+      plugins: options.plugins,
+    });
+
     this.schemaVersion = options.schemaVersion;
     this.id = options.id;
     this.displayName = options.displayName;
@@ -127,14 +152,17 @@ export class ExpertAgent implements IExpertAgent {
     this.tags = options.tags;
     this.version = options.version;
     this.scope = options.scope;
-    this.mcp = options.mcp;
-    this.skills = options.skills;
-    this.models = options.models;
-    this.documents = options.documents;
+    this.mcp = resolved.mcp;
+    this.skills = resolved.skills;
+    this.models = resolved.models;
+    this.documents = resolved.documents;
     this.workspace = options.workspace;
-    this.subAgents = options.subAgents;
+    this.subAgents = resolved.subAgents;
+    this.tools = resolved.tools;
+    this.hooks = resolved.hooks;
+    this.plugins = options.plugins;
     this.documentIndexer = new DocumentIndexer({
-      store: options.documents,
+      store: resolved.documents,
     });
     this.contextManager = new ContextManager({
       agent: this,
@@ -185,4 +213,5 @@ export class ExpertAgent implements IExpertAgent {
   ): Promise<ExpertAgentDocumentResult<{ readonly id: string }>> {
     return await this.documentIndexer.delete(input);
   }
+
 }

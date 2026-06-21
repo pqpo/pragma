@@ -8,7 +8,7 @@ import type {
   CreateAgentSessionOptions,
 } from "@earendil-works/pi-coding-agent";
 import type { ExpertAgentRunContext, RuntimeAdapter } from "@expertmesh/agent-core";
-import { createQueuedAgentLifecycle } from "@expertmesh/agent-core";
+import { createQueuedAgentLifecycle, dispatchExpertAgentHook } from "@expertmesh/agent-core";
 
 import { createMcpToolRegistry } from "../mcp-tools.ts";
 import {
@@ -35,6 +35,11 @@ export function createCloudPiRuntimeAdapter<TOutput = string>(
       displayName: "Cloud PI Agent",
     },
     async createSession({ agent, context: runContext, models, sessionId }) {
+      await dispatchExpertAgentHook(agent.hooks, "beforeSessionCreate", {
+        agent,
+        context: runContext,
+        sessionId,
+      });
       const authStorage = AuthStorage.create();
       const cwd = agent.workspace;
       const modelsJsonPath = await writePiModelConfig(
@@ -54,8 +59,26 @@ export function createCloudPiRuntimeAdapter<TOutput = string>(
           void piSession?.abort();
         },
         cleanup: async () => {
+          const sessionInfo = {
+            sessionId: piSession?.sessionId ?? sessionId ?? "",
+            agentId: agent.id,
+            runtime: {
+              id: "cloud-pi-agent",
+              kind: "cloud-pi-agent" as const,
+              displayName: "Cloud PI Agent",
+            },
+            state: lifecycle.state,
+          };
+          await dispatchExpertAgentHook(agent.hooks, "beforeSessionDestroy", {
+            agent,
+            session: sessionInfo,
+          });
           piSession?.dispose();
           await mcpToolRegistry.dispose();
+          await dispatchExpertAgentHook(agent.hooks, "afterSessionDestroy", {
+            agent,
+            session: sessionInfo,
+          });
         },
       });
       const customTools = createCustomTools({
@@ -93,18 +116,28 @@ export function createCloudPiRuntimeAdapter<TOutput = string>(
       try {
         const { session } = await createAgentSession(sessionOptions);
         piSession = session;
+        const sessionInfo = {
+          sessionId: session.sessionId,
+          agentId: agent.id,
+          runtime: {
+            id: "cloud-pi-agent",
+            kind: "cloud-pi-agent" as const,
+            displayName: "Cloud PI Agent",
+          },
+        };
+
+        await dispatchExpertAgentHook(agent.hooks, "afterSessionCreate", {
+          agent,
+          session: {
+            ...sessionInfo,
+            state: lifecycle.state,
+          },
+        });
 
         return createPiRuntimeSession<TOutput>(
+          agent,
           session,
-          {
-            sessionId: session.sessionId,
-            agentId: agent.id,
-            runtime: {
-              id: "cloud-pi-agent",
-              kind: "cloud-pi-agent",
-              displayName: "Cloud PI Agent",
-            },
-          },
+          sessionInfo,
           options.outputParser ?? defaultOutputParser,
           lifecycle,
           streamBridge,

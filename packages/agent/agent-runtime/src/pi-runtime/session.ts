@@ -1,12 +1,13 @@
 import type { AgentSession, ModelRegistry } from "@earendil-works/pi-coding-agent";
 import type {
   AgentLifecycle,
+  ExpertAgent,
   RuntimeAgentSession,
   RuntimeOutputSchema,
   RuntimeRunResult,
   RuntimeSessionInfo,
 } from "@expertmesh/agent-core";
-import { emitRuntimeStreamEvent } from "@expertmesh/agent-core";
+import { dispatchExpertAgentHook, emitRuntimeStreamEvent } from "@expertmesh/agent-core";
 import { randomUUID } from "node:crypto";
 
 import { readAssistantTextDelta, readToolExecutionEvent } from "./session-events.ts";
@@ -20,6 +21,7 @@ import { resolveRequiredRuntimeModel } from "./models.ts";
 import type { RuntimeStreamBridge } from "./types.ts";
 
 export function createPiRuntimeSession<TOutput>(
+  agent: ExpertAgent,
   session: AgentSession,
   info: Omit<RuntimeSessionInfo, "state">,
   outputParser: <TParsedOutput>(text: string) => TParsedOutput,
@@ -88,6 +90,16 @@ export function createPiRuntimeSession<TOutput>(
             submission.modelName ?? models.defaultModelName,
           );
 
+          await dispatchExpertAgentHook(agent.hooks, "beforeTaskSubmit", {
+            agent,
+            session: {
+              ...info,
+              state: lifecycle.state,
+            },
+            runId,
+            submission,
+          });
+
           await emitRuntimeStreamEvent(
             submission.onEvent,
             createStreamEvent({
@@ -133,10 +145,23 @@ export function createPiRuntimeSession<TOutput>(
             }),
           );
 
-          return createRuntimeRunResult(
+          const result = createRuntimeRunResult(
             runId,
             parseRuntimeOutput(outputText, submission.output, outputParser),
           );
+
+          await dispatchExpertAgentHook(agent.hooks, "afterTaskSubmit", {
+            agent,
+            session: {
+              ...info,
+              state: lifecycle.state,
+            },
+            runId,
+            submission,
+            result,
+          });
+
+          return result;
         } catch (error) {
           await emitRuntimeStreamEvent(
             submission.onEvent,
@@ -150,6 +175,16 @@ export function createPiRuntimeSession<TOutput>(
               },
             }),
           );
+          await dispatchExpertAgentHook(agent.hooks, "afterTaskSubmit", {
+            agent,
+            session: {
+              ...info,
+              state: lifecycle.state,
+            },
+            runId,
+            submission,
+            error,
+          });
           throw error;
         } finally {
           streamBridge.runId = undefined;

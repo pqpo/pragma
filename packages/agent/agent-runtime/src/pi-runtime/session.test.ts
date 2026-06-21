@@ -1,5 +1,5 @@
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
-import { createQueuedAgentLifecycle } from "@expertmesh/agent-core";
+import { createQueuedAgentLifecycle, ExpertAgent } from "@expertmesh/agent-core";
 import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
@@ -11,6 +11,7 @@ describe("createPiRuntimeSession", () => {
     const piSession = createFakeAgentSession('{"summary":"done","confidence":0.9}');
     const lifecycle = createQueuedAgentLifecycle(undefined);
     const runtimeSession = createPiRuntimeSession<string>(
+      createTestAgent(),
       piSession,
       {
         sessionId: "session-1",
@@ -53,6 +54,7 @@ describe("createPiRuntimeSession", () => {
       provider: "openai",
     };
     const runtimeSession = createPiRuntimeSession<string>(
+      createTestAgent(),
       piSession,
       {
         sessionId: "session-1",
@@ -79,6 +81,19 @@ describe("createPiRuntimeSession", () => {
     expect(piSession.setModel).toHaveBeenCalledWith(model);
   });
 });
+
+function createTestAgent(): ExpertAgent {
+  return new ExpertAgent({
+    schemaVersion: "expertmesh.expert/v1",
+    id: "agent-1",
+    displayName: "Test Agent",
+    description: "Test agent",
+    tags: [],
+    version: "0.0.0",
+    scope: "test",
+    workspace: "/tmp/expertmesh-test",
+  });
+}
 
 function createFakeAgentSession(text: string): AgentSession {
   let subscriber: ((event: unknown) => void) | undefined;

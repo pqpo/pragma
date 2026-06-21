@@ -3,10 +3,12 @@ import type {
   AgentLifecycle,
   ExpertAgent,
   ExpertAgentDefaultTool,
+  ExpertAgentManagedTool,
+  ExpertAgentToolCallResult,
   ExpertAgentRunContext,
   SubAgentManagedTool,
 } from "@expertmesh/agent-core";
-import { createSubAgentTool } from "@expertmesh/agent-core";
+import { createSubAgentTool, dispatchExpertAgentHook } from "@expertmesh/agent-core";
 
 import type { McpManagedTool } from "../mcp-tools.ts";
 import { launchPiSubAgent } from "./subagents.ts";
@@ -39,13 +41,17 @@ export function createCustomTools(options: {
   });
 
   return [
-    ...createPiDefaultTools(documentTools),
-    ...(subAgentTool === undefined ? [] : [createPiSubAgentTool(subAgentTool)]),
-    ...createPiMcpTools(options.mcpTools),
+    ...createPiDefaultTools(options.agent, documentTools),
+    ...createPiManagedTools(options.agent, options.agent.tools ?? []),
+    ...(subAgentTool === undefined ? [] : [createPiSubAgentTool(options.agent, subAgentTool)]),
+    ...createPiMcpTools(options.agent, options.mcpTools),
   ];
 }
 
-function createPiDefaultTools(tools: readonly ExpertAgentDefaultTool[]): ToolDefinition[] {
+function createPiDefaultTools(
+  agent: ExpertAgent,
+  tools: readonly ExpertAgentDefaultTool[],
+): ToolDefinition[] {
   return tools.map((tool) => ({
     name: tool.name,
     label: tool.label,
@@ -53,8 +59,14 @@ function createPiDefaultTools(tools: readonly ExpertAgentDefaultTool[]): ToolDef
     promptSnippet: `${tool.name}: ${tool.description}`,
     parameters: normalizeInputSchema(tool.inputSchema),
     executionMode: "parallel",
-    async execute(_toolCallId, params, signal) {
-      const result = await tool.call(params, signal);
+    async execute(toolCallId, params, signal) {
+      const result = await executeWithToolHooks(
+        agent,
+        tool.name,
+        toolCallId,
+        params,
+        async () => await tool.call(params, signal),
+      );
 
       return {
         content: [
@@ -70,7 +82,41 @@ function createPiDefaultTools(tools: readonly ExpertAgentDefaultTool[]): ToolDef
   }));
 }
 
-function createPiSubAgentTool(subAgentTool: SubAgentManagedTool): ToolDefinition {
+function createPiManagedTools(
+  agent: ExpertAgent,
+  tools: readonly ExpertAgentManagedTool<string, ExpertAgentToolCallResult>[],
+): ToolDefinition[] {
+  return tools.map((tool) => ({
+    name: tool.name,
+    label: tool.name,
+    description: tool.description,
+    promptSnippet: `${tool.name}: ${tool.description}`,
+    parameters: normalizeInputSchema(tool.inputSchema),
+    executionMode: "parallel",
+    async execute(toolCallId, params, signal) {
+      const result = await executeWithToolHooks(
+        agent,
+        tool.name,
+        toolCallId,
+        params,
+        async () => await tool.call(params, signal, { toolCallId }),
+      );
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: result.text,
+          },
+        ],
+        isError: result.isError ?? false,
+        details: result.details,
+      };
+    },
+  }));
+}
+
+function createPiSubAgentTool(agent: ExpertAgent, subAgentTool: SubAgentManagedTool): ToolDefinition {
   return {
     name: subAgentTool.name,
     label: "Launch subAgent",
@@ -83,7 +129,13 @@ function createPiSubAgentTool(subAgentTool: SubAgentManagedTool): ToolDefinition
     parameters: normalizeInputSchema(subAgentTool.inputSchema),
     executionMode: "parallel",
     async execute(toolCallId, params, signal) {
-      const result = await subAgentTool.call(params, signal, { toolCallId });
+      const result = await executeWithToolHooks(
+        agent,
+        subAgentTool.name,
+        toolCallId,
+        params,
+        async () => await subAgentTool.call(params, signal, { toolCallId }),
+      );
 
       return {
         content: [
@@ -99,7 +151,7 @@ function createPiSubAgentTool(subAgentTool: SubAgentManagedTool): ToolDefinition
   };
 }
 
-function createPiMcpTools(mcpTools: readonly McpManagedTool[]): ToolDefinition[] {
+function createPiMcpTools(agent: ExpertAgent, mcpTools: readonly McpManagedTool[]): ToolDefinition[] {
   return mcpTools.map((mcpTool) => {
     const toolName = `mcp_${sanitizeToolName(mcpTool.serverId)}_${sanitizeToolName(mcpTool.name)}`;
 
@@ -111,12 +163,18 @@ function createPiMcpTools(mcpTools: readonly McpManagedTool[]): ToolDefinition[]
         `Original MCP server: ${mcpTool.serverName}. Original tool: ${mcpTool.name}.`,
       ].join("\n"),
       promptSnippet: `${toolName}: call ${mcpTool.name} from MCP server ${mcpTool.serverName}`,
-      parameters: normalizeInputSchema(mcpTool.inputSchema),
-      executionMode: "parallel",
-      async execute(_toolCallId, params) {
-        const result = await mcpTool.call(params, undefined);
+    parameters: normalizeInputSchema(mcpTool.inputSchema),
+    executionMode: "parallel",
+    async execute(toolCallId, params) {
+      const result = await executeWithToolHooks(
+        agent,
+        toolName,
+        toolCallId,
+        params,
+        async () => await mcpTool.call(params, undefined, { toolCallId }),
+      );
 
-        return {
+      return {
           content: [
             {
               type: "text",
@@ -132,4 +190,46 @@ function createPiMcpTools(mcpTools: readonly McpManagedTool[]): ToolDefinition[]
       },
     };
   });
+}
+
+async function executeWithToolHooks<TResult>(
+  agent: ExpertAgent,
+  toolName: string,
+  toolCallId: string | undefined,
+  args: unknown,
+  execute: () => Promise<TResult>,
+): Promise<TResult> {
+  const startedAt = Date.now();
+
+  await dispatchExpertAgentHook(agent.hooks, "beforeToolCall", {
+    agent,
+    toolName,
+    toolCallId,
+    args,
+  });
+
+  try {
+    const result = await execute();
+
+    await dispatchExpertAgentHook(agent.hooks, "afterToolCall", {
+      agent,
+      toolName,
+      toolCallId,
+      args,
+      durationMs: Date.now() - startedAt,
+      result,
+    });
+
+    return result;
+  } catch (error) {
+    await dispatchExpertAgentHook(agent.hooks, "afterToolCall", {
+      agent,
+      toolName,
+      toolCallId,
+      args,
+      durationMs: Date.now() - startedAt,
+      error,
+    });
+    throw error;
+  }
 }

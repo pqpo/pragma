@@ -4,6 +4,7 @@ export * from "./documents/document-indexer.ts";
 export * from "./documents/document-tools.ts";
 export * from "./documents/file-system-document-store.ts";
 export * from "./documents/in-memory-document-store.ts";
+export * from "./plugins/expert-agent-plugin.ts";
 export * from "./runtime/agent-lifecycle.ts";
 export * from "./runtime/run-context.ts";
 export * from "./runtime/runtime-adapter.ts";
