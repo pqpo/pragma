@@ -11,6 +11,12 @@ import type { ExpertAgentRunContext, RuntimeAdapter } from "@expertmesh/agent-co
 import { createQueuedAgentLifecycle } from "@expertmesh/agent-core";
 
 import { createMcpToolRegistry } from "../mcp-tools.ts";
+import {
+  collectRuntimeModelProviders,
+  getRuntimeModelName,
+  resolveRequiredRuntimeModel,
+  writePiModelConfig,
+} from "./models.ts";
 import { createResourceLoader } from "./resources.ts";
 import { createPiRuntimeSession } from "./session.ts";
 import { createPiSessionManager } from "./session-manager.ts";
@@ -28,10 +34,15 @@ export function createCloudPiRuntimeAdapter<TOutput = string>(
       kind: "cloud-pi-agent",
       displayName: "Cloud PI Agent",
     },
-    async createSession({ agent, context: runContext, sessionId }) {
+    async createSession({ agent, context: runContext, models, sessionId }) {
       const authStorage = AuthStorage.create();
-      const modelRegistry = ModelRegistry.create(authStorage);
       const cwd = agent.workspace;
+      const modelsJsonPath = await writePiModelConfig(
+        cwd,
+        agent.id,
+        collectRuntimeModelProviders(agent, models),
+      );
+      const modelRegistry = ModelRegistry.create(authStorage, modelsJsonPath);
       const context = await agent.buildContext();
       const loader = createResourceLoader(agent, cwd, context.systemPrompt);
       await loader.reload();
@@ -65,6 +76,15 @@ export function createCloudPiRuntimeAdapter<TOutput = string>(
         resourceLoader: loader,
         sessionManager: await createPiSessionManager(cwd, agent.id, sessionId),
       };
+      const defaultModel = resolveRequiredRuntimeModel(
+        getRuntimeModelName(agent, undefined),
+        modelRegistry,
+        "agent default",
+      );
+
+      if (defaultModel !== undefined) {
+        sessionOptions.model = defaultModel;
+      }
 
       if (customTools.length > 0) {
         sessionOptions.customTools = customTools;
@@ -88,6 +108,10 @@ export function createCloudPiRuntimeAdapter<TOutput = string>(
           options.outputParser ?? defaultOutputParser,
           lifecycle,
           streamBridge,
+          {
+            defaultModelName: agent.models?.defaultModelName,
+            modelRegistry,
+          },
         );
       } catch (error) {
         await mcpToolRegistry.dispose();

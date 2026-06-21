@@ -1,5 +1,6 @@
 import type {
   ExpertAgent,
+  IExpertAgentModelProviderConfig,
   IExpertAgentRunResult,
 } from "../agent/expert-agent.ts";
 import type { z } from "zod";
@@ -27,11 +28,13 @@ export interface RuntimeSessionInfo {
 export interface RuntimeCreateSessionRequest {
   readonly agent: ExpertAgent;
   readonly context?: ExpertAgentRunContext | undefined;
+  readonly models?: readonly IExpertAgentModelProviderConfig[] | undefined;
   readonly sessionId?: string | undefined;
 }
 
 export interface RuntimeSubmitRequest<TOutput = string> extends RuntimeStreamOptions {
   readonly runId?: string | undefined;
+  readonly modelName?: string | undefined;
   readonly query: string;
   readonly output?: RuntimeOutputSchema<TOutput> | undefined;
 }

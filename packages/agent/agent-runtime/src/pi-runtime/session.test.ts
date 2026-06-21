@@ -1,6 +1,6 @@
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import { createQueuedAgentLifecycle } from "@expertmesh/agent-core";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
 import { createPiRuntimeSession } from "./session.ts";
@@ -24,6 +24,9 @@ describe("createPiRuntimeSession", () => {
       <TParsedOutput>(text: string) => text as TParsedOutput,
       lifecycle,
       createTestStreamBridge(),
+      {
+        modelRegistry: createFakeModelRegistry([]),
+      },
     );
 
     const result = await runtimeSession.submit({
@@ -39,6 +42,41 @@ describe("createPiRuntimeSession", () => {
       confidence: 0.9,
     });
     expect(result.runId).toHaveLength(36);
+  });
+
+  it("switches to the submitted model when modelName is provided", async () => {
+    const piSession = createFakeAgentSession("done");
+    const lifecycle = createQueuedAgentLifecycle(undefined);
+    const model = {
+      id: "gpt-4o",
+      name: "GPT-4o",
+      provider: "openai",
+    };
+    const runtimeSession = createPiRuntimeSession<string>(
+      piSession,
+      {
+        sessionId: "session-1",
+        agentId: "agent-1",
+        runtime: {
+          id: "cloud-pi-agent",
+          kind: "cloud-pi-agent",
+          displayName: "Cloud PI Agent",
+        },
+      },
+      <TParsedOutput>(text: string) => text as TParsedOutput,
+      lifecycle,
+      createTestStreamBridge(),
+      {
+        modelRegistry: createFakeModelRegistry([model]),
+      },
+    );
+
+    await runtimeSession.submit({
+      query: "Summarize input",
+      modelName: "openai/gpt-4o",
+    });
+
+    expect(piSession.setModel).toHaveBeenCalledWith(model);
   });
 });
 
@@ -63,7 +101,14 @@ function createFakeAgentSession(text: string): AgentSession {
         },
       });
     },
+    setModel: vi.fn(),
   } as unknown as AgentSession;
+}
+
+function createFakeModelRegistry(models: readonly unknown[]) {
+  return {
+    getAll: () => [...models],
+  } as never;
 }
 
 function createTestStreamBridge(): RuntimeStreamBridge {

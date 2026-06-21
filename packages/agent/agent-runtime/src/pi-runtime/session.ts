@@ -1,4 +1,4 @@
-import type { AgentSession } from "@earendil-works/pi-coding-agent";
+import type { AgentSession, ModelRegistry } from "@earendil-works/pi-coding-agent";
 import type {
   AgentLifecycle,
   RuntimeAgentSession,
@@ -16,6 +16,7 @@ import {
   summarizeInput,
   summarizeText,
 } from "./stream.ts";
+import { resolveRequiredRuntimeModel } from "./models.ts";
 import type { RuntimeStreamBridge } from "./types.ts";
 
 export function createPiRuntimeSession<TOutput>(
@@ -24,6 +25,10 @@ export function createPiRuntimeSession<TOutput>(
   outputParser: <TParsedOutput>(text: string) => TParsedOutput,
   lifecycle: AgentLifecycle,
   streamBridge: RuntimeStreamBridge,
+  models: {
+    readonly defaultModelName?: string | undefined;
+    readonly modelRegistry: ModelRegistry;
+  },
 ): RuntimeAgentSession<TOutput> {
   return {
     info: () => ({
@@ -77,6 +82,12 @@ export function createPiRuntimeSession<TOutput>(
         });
 
         try {
+          await applySubmissionModel(
+            session,
+            models.modelRegistry,
+            submission.modelName ?? models.defaultModelName,
+          );
+
           await emitRuntimeStreamEvent(
             submission.onEvent,
             createStreamEvent({
@@ -151,6 +162,23 @@ export function createPiRuntimeSession<TOutput>(
       await lifecycle.abort();
     },
   };
+}
+
+async function applySubmissionModel(
+  session: AgentSession,
+  modelRegistry: ModelRegistry,
+  modelName: string | undefined,
+): Promise<void> {
+  const model = resolveRequiredRuntimeModel(modelName, modelRegistry, "submission");
+
+  if (
+    model === undefined ||
+    (session.model?.provider === model.provider && session.model.id === model.id)
+  ) {
+    return;
+  }
+
+  await session.setModel(model);
 }
 
 function createRuntimeRunResult<TOutput>(

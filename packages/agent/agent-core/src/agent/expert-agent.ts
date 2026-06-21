@@ -51,6 +51,25 @@ export interface IExpertAgentSkillsConfig {
   readonly skills: readonly IExpertAgentSkill[];
 }
 
+export type ExpertAgentModelApi =
+  | "anthropic-messages"
+  | "google-generative-ai"
+  | "openai-completions"
+  | "openai-responses";
+
+export interface IExpertAgentModelProviderConfig {
+  readonly provider: string;
+  readonly modelNames: readonly string[];
+  readonly baseApi: string;
+  readonly key: string;
+  readonly api?: ExpertAgentModelApi | undefined;
+}
+
+export interface IExpertAgentModelsConfig {
+  readonly defaultModelName?: string | undefined;
+  readonly providers: readonly IExpertAgentModelProviderConfig[];
+}
+
 export interface IExpertAgentRunRequest<TInput = string> {
   readonly task: string;
   readonly input: TInput;
@@ -76,6 +95,7 @@ export interface IExpertAgent {
   readonly workspace: string;
   readonly mcp?: IExpertAgentMcpConfig | undefined;
   readonly skills?: IExpertAgentSkillsConfig | undefined;
+  readonly models?: IExpertAgentModelsConfig | undefined;
   readonly documents?: ExpertAgentDocumentStore | undefined;
   readonly subAgents?: SubAgentRegistry | undefined;
 }
@@ -92,6 +112,7 @@ export class ExpertAgent implements IExpertAgent {
   readonly scope: string;
   readonly mcp: IExpertAgentMcpConfig | undefined;
   readonly skills: IExpertAgentSkillsConfig | undefined;
+  readonly models: IExpertAgentModelsConfig | undefined;
   readonly documents: ExpertAgentDocumentStore | undefined;
   readonly workspace: string;
   readonly subAgents: SubAgentRegistry | undefined;
@@ -108,6 +129,7 @@ export class ExpertAgent implements IExpertAgent {
     this.scope = options.scope;
     this.mcp = options.mcp;
     this.skills = options.skills;
+    this.models = options.models;
     this.documents = options.documents;
     this.workspace = options.workspace;
     this.subAgents = options.subAgents;
