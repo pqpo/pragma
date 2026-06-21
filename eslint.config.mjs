@@ -59,7 +59,7 @@ const config = tseslint.config(
     }
   },
   {
-    files: ["apps/server/**/*.{ts,tsx}", "apps/worker/**/*.{ts,tsx}", "packages/server/**/*.{ts,tsx}", "packages/agent/**/*.{ts,tsx}"],
+    files: ["apps/server/**/*.{ts,tsx}", "apps/worker/**/*.{ts,tsx}", "packages/server/**/*.{ts,tsx}", "packages/agent/**/*.{ts,tsx}", "test_script/**/*.{ts,tsx}"],
     languageOptions: {
       globals: {
         ...globals.node,
