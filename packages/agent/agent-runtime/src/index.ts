@@ -1,1 +1,1 @@
-export * from "./pi-runtime-adapter.ts";
+export * from "./pi-runtime/index.ts";

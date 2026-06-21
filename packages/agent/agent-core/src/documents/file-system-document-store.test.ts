@@ -5,26 +5,13 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import type {
-  ExpertAgentDocumentDeleteInput,
   ExpertAgentDocumentReadInput,
-  ExpertAgentDocumentResult,
-  ExpertAgentDocumentSearchInput,
-  ExpertAgentDocumentSearchMatch,
-  ExpertAgentDocumentSummary,
-  ExpertAgentDocumentStore,
-  ExpertAgentStoredDocument,
-  ExpertAgentStoredDocumentCreateInput,
-  ExpertAgentStoredDocumentUpdateInput,
 } from "./document-indexer.ts";
-import {
-  AGENTS_DOCUMENT_ID,
-  DocumentIndexer,
-  ok,
-  parseStoredDocument,
-} from "./document-indexer.ts";
+import { AGENTS_DOCUMENT_ID, DocumentIndexer, ok } from "./document-indexer.ts";
 import { ExpertAgent } from "../agent/expert-agent.ts";
 import type { FileSystemDocumentStoreCommandRunner } from "./file-system-document-store.ts";
 import { FileSystemDocumentStore } from "./file-system-document-store.ts";
+import { createInMemoryDocumentStore, InMemoryDocumentStore } from "./in-memory-document-store.ts";
 
 const tempDirs: string[] = [];
 
@@ -151,18 +138,62 @@ describe("FileSystemDocumentStore", () => {
 });
 
 describe("DocumentIndexer", () => {
-  it("normalizes AGENTS.md as always-on for any document store", async () => {
-    const store = new MemoryDocumentStore([
-      {
-        id: AGENTS_DOCUMENT_ID,
-        content:
-          "---\n" +
-          'description: "Store metadata should be preserved."\n' +
-          "trigger: manual\n" +
-          "---\n" +
-          "Shared instructions.",
+  it("creates an in-memory document store from document settings", async () => {
+    const store = createInMemoryDocumentStore({
+      documents: {
+        "alpha.md": "---\ndescription: Alpha\ntrigger: manual\n---\nAlpha content.",
+        "beta.md": "Beta needle.",
       },
-    ]);
+    });
+
+    await expect(store.listDocuments()).resolves.toEqual(
+      ok([
+        {
+          id: "alpha.md",
+          metadata: {
+            description: "Alpha",
+            trigger: "manual",
+          },
+        },
+        {
+          id: "beta.md",
+          metadata: {
+            trigger: "model_decision",
+          },
+        },
+      ]),
+    );
+    await expect(
+      store.searchDocuments({
+        query: "needle",
+        contextLines: 1,
+        maxResults: 5,
+      }),
+    ).resolves.toEqual(
+      ok([
+        {
+          id: "beta.md",
+          lineNumber: 1,
+          line: "Beta needle.",
+        },
+      ]),
+    );
+  });
+
+  it("normalizes AGENTS.md as always-on for any document store", async () => {
+    const store = new CountingDocumentStore({
+      documents: [
+        {
+          id: AGENTS_DOCUMENT_ID,
+          content:
+            "---\n" +
+            'description: "Store metadata should be preserved."\n' +
+            "trigger: manual\n" +
+            "---\n" +
+            "Shared instructions.",
+        },
+      ],
+    });
     const indexer = new DocumentIndexer({ store });
 
     await expect(indexer.index()).resolves.toEqual(
@@ -190,12 +221,14 @@ describe("DocumentIndexer", () => {
   });
 
   it("builds the index from store summaries without reading every document", async () => {
-    const store = new MemoryDocumentStore([
-      {
-        id: "indexed.md",
-        content: "---\ntrigger: manual\n---\nIndexed content.",
-      },
-    ]);
+    const store = new CountingDocumentStore({
+      documents: [
+        {
+          id: "indexed.md",
+          content: "---\ntrigger: manual\n---\nIndexed content.",
+        },
+      ],
+    });
     const indexer = new DocumentIndexer({ store });
 
     await expect(indexer.index()).resolves.toEqual(
@@ -212,12 +245,14 @@ describe("DocumentIndexer", () => {
   });
 
   it("drops AGENTS.md update metadata before calling the document store", async () => {
-    const store = new MemoryDocumentStore([
-      {
-        id: AGENTS_DOCUMENT_ID,
-        content: "---\ntrigger: manual\n---\nOld instructions.",
-      },
-    ]);
+    const store = new InMemoryDocumentStore({
+      documents: [
+        {
+          id: AGENTS_DOCUMENT_ID,
+          content: "---\ntrigger: manual\n---\nOld instructions.",
+        },
+      ],
+    });
     const indexer = new DocumentIndexer({ store });
 
     await expect(
@@ -245,12 +280,14 @@ describe("DocumentIndexer", () => {
   });
 
   it("updates markdown frontmatter outside the document store", async () => {
-    const store = new MemoryDocumentStore([
-      {
-        id: "guide.md",
-        content: "---\ndescription: Old guide\ntrigger: manual\n---\nOld content.",
-      },
-    ]);
+    const store = new InMemoryDocumentStore({
+      documents: [
+        {
+          id: "guide.md",
+          content: "---\ndescription: Old guide\ntrigger: manual\n---\nOld content.",
+        },
+      ],
+    });
     const indexer = new DocumentIndexer({ store });
 
     await expect(
@@ -279,16 +316,18 @@ describe("DocumentIndexer", () => {
   });
 
   it("searches documents through the store and normalizes result ordering", async () => {
-    const store = new MemoryDocumentStore([
-      {
-        id: "zeta.md",
-        content: "Find the Search Term here.",
-      },
-      {
-        id: "alpha.md",
-        content: "Another search term here.",
-      },
-    ]);
+    const store = new InMemoryDocumentStore({
+      documents: [
+        {
+          id: "zeta.md",
+          content: "Find the Search Term here.",
+        },
+        {
+          id: "alpha.md",
+          content: "Another search term here.",
+        },
+      ],
+    });
     const indexer = new DocumentIndexer({ store });
 
     await expect(
@@ -319,90 +358,11 @@ async function createTempDir(): Promise<string> {
   return dir;
 }
 
-class MemoryDocumentStore implements ExpertAgentDocumentStore {
-  readonly documents = new Map<string, ExpertAgentStoredDocument>();
+class CountingDocumentStore extends InMemoryDocumentStore {
   readCount = 0;
 
-  constructor(documents: readonly ExpertAgentStoredDocument[]) {
-    for (const document of documents) {
-      this.documents.set(document.id, document);
-    }
-  }
-
-  async listDocuments(): Promise<ExpertAgentDocumentResult<readonly ExpertAgentDocumentSummary[]>> {
-    return ok(
-      [...this.documents.values()].map((storedDocument) => {
-        const document = parseStoredDocument(storedDocument);
-
-        return {
-          id: document.id,
-          metadata: document.metadata,
-        };
-      }),
-    );
-  }
-
-  async readDocument(
-    input: ExpertAgentDocumentReadInput,
-  ): Promise<ExpertAgentDocumentResult<ExpertAgentStoredDocument>> {
+  override async readDocument(input: ExpertAgentDocumentReadInput) {
     this.readCount += 1;
-    return ok(this.documents.get(input.id) as ExpertAgentStoredDocument);
-  }
-
-  async createDocument(
-    input: ExpertAgentStoredDocumentCreateInput,
-  ): Promise<ExpertAgentDocumentResult<ExpertAgentStoredDocument>> {
-    const document = {
-      id: input.id,
-      content: input.content,
-    } satisfies ExpertAgentStoredDocument;
-    this.documents.set(input.id, document);
-    return ok(document);
-  }
-
-  async updateDocument(
-    input: ExpertAgentStoredDocumentUpdateInput,
-  ): Promise<ExpertAgentDocumentResult<ExpertAgentStoredDocument>> {
-    const existing = this.documents.get(input.id) as ExpertAgentStoredDocument;
-    const document = {
-      id: input.id,
-      content: input.content ?? existing.content,
-    } satisfies ExpertAgentStoredDocument;
-    this.documents.set(input.id, document);
-    return ok(document);
-  }
-
-  async deleteDocument(
-    input: ExpertAgentDocumentDeleteInput,
-  ): Promise<ExpertAgentDocumentResult<{ readonly id: string }>> {
-    this.documents.delete(input.id);
-    return ok({ id: input.id });
-  }
-
-  async searchDocuments(
-    input: ExpertAgentDocumentSearchInput,
-  ): Promise<ExpertAgentDocumentResult<readonly ExpertAgentDocumentSearchMatch[]>> {
-    const query = input.caseSensitive === true ? input.query : input.query.toLocaleLowerCase();
-    const matches: ExpertAgentDocumentSearchMatch[] = [];
-
-    for (const document of this.documents.values()) {
-      const lines = document.content.split("\n");
-
-      for (const [index, line] of lines.entries()) {
-        const searchedLine = input.caseSensitive === true ? line : line.toLocaleLowerCase();
-
-        if (!searchedLine.includes(query)) {
-          continue;
-        }
-
-        matches.push({
-          id: document.id,
-          lineNumber: index + 1,
-          line,
-        });
-      }
-    }
-
-    return ok(matches.slice(0, input.maxResults ?? 20));
+    return await super.readDocument(input);
   }
 }
