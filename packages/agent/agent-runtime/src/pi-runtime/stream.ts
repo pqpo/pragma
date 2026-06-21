@@ -23,7 +23,9 @@ export function createChildRunId(parentRunId: string | undefined): string {
 }
 
 export function createStreamEvent(
-  event: Omit<RuntimeStreamEvent, "schemaVersion" | "eventId" | "emittedAt">,
+  event:
+    | Omit<RuntimeStreamEvent, "schemaVersion" | "eventId" | "emittedAt">
+    | Omit<RuntimeStreamEvent, "schemaVersion" | "eventId" | "emittedAt" | "sequence">,
 ): RuntimeStreamEvent {
   return {
     schemaVersion: "expertmesh.stream/v1",

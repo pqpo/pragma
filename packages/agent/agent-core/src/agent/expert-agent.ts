@@ -1,5 +1,5 @@
 import { ContextManager } from "./context-manager.ts";
-import type { ExpertAgentContext } from "./context-manager.ts";
+import type { ContextAssemblerOptions, ExpertAgentContext } from "./context-manager.ts";
 import { DocumentIndexer } from "../documents/document-indexer.ts";
 import type {
   ExpertAgentDocument,
@@ -170,8 +170,11 @@ export class ExpertAgent implements IExpertAgent {
     });
   }
 
-  async buildContext(): Promise<ExpertAgentContext> {
-    return await this.contextManager.buildContext();
+  async buildContext(
+    context: ExpertAgentRunContext = {},
+    options: ContextAssemblerOptions = {},
+  ): Promise<ExpertAgentContext> {
+    return await this.contextManager.buildContext(context, options);
   }
 
   createDefaultTools(options: CreateDocumentToolsOptions = {}): readonly ExpertAgentDefaultTool[] {

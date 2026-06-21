@@ -38,15 +38,19 @@ describe("FileSystemDocumentStore", () => {
 
     const context = await agent.buildContext();
 
-    expect(context.documents).toContainEqual({
+    expect(context.documents).toContainEqual(expect.objectContaining({
       id: AGENTS_DOCUMENT_ID,
       metadata: {
         trigger: "always_on",
       },
-    });
-    expect(context.systemPrompt).toContain("Always-on documents");
+    }));
+    expect(context.systemPrompt).toContain("Always-on reference documents");
     expect(context.systemPrompt).toContain(AGENTS_DOCUMENT_ID);
     expect(context.systemPrompt).toContain("Use direct instructions.");
+    expect(context.systemPrompt).toContain("Reference material only");
+    expect(context.snapshot.documentRevisions[0]).toMatchObject({
+      id: AGENTS_DOCUMENT_ID,
+    });
     expect(context.systemPrompt).not.toContain("AGENTS.md instructions:");
   });
 
@@ -57,7 +61,7 @@ describe("FileSystemDocumentStore", () => {
 
     const result = await store.readDocument({ id: AGENTS_DOCUMENT_ID });
 
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       ok: true,
       value: {
         id: AGENTS_DOCUMENT_ID,
@@ -208,7 +212,7 @@ describe("DocumentIndexer", () => {
       ]),
     );
 
-    await expect(indexer.read({ id: AGENTS_DOCUMENT_ID })).resolves.toEqual(
+    await expect(indexer.read({ id: AGENTS_DOCUMENT_ID })).resolves.toMatchObject(
       ok({
         id: AGENTS_DOCUMENT_ID,
         content: "Shared instructions.",
@@ -244,6 +248,58 @@ describe("DocumentIndexer", () => {
     expect(store.readCount).toBe(0);
   });
 
+  it("passes run context into context assembly and snapshots truncated always-on documents", async () => {
+    const store = new CountingDocumentStore({
+      documents: [
+        {
+          id: "instructions.md",
+          content: "---\ntrigger: always_on\n---\nAlpha Beta Gamma",
+        },
+      ],
+    });
+    const agent = new ExpertAgent({
+      schemaVersion: "expertmesh.expert/v1",
+      id: "context-agent",
+      displayName: "Context Agent",
+      description: "Tests context assembly.",
+      tags: [],
+      version: "1.2.3",
+      scope: "test",
+      workspace: "/tmp/expertmesh-context-test",
+      documents: store,
+    });
+    const runContext = {
+      source: {
+        type: "user",
+        id: "user-1",
+      },
+      attributes: {
+        tenantId: "tenant-1",
+      },
+    };
+
+    const context = await agent.buildContext(runContext, {
+      characterBudget: 5,
+    });
+
+    expect(store.lastListContext).toEqual(runContext);
+    expect(store.lastReadContext).toEqual(runContext);
+    expect(context.systemPrompt).toContain("Alpha");
+    expect(context.systemPrompt).not.toContain("Beta");
+    expect(context.snapshot).toMatchObject({
+      releaseDigest: "context-agent@1.2.3",
+      truncationReason: "always_on_document_budget_exceeded",
+      retrievedChunks: [
+        {
+          documentId: "instructions.md",
+          startOffset: 0,
+          endOffset: 5,
+          truncated: true,
+        },
+      ],
+    });
+  });
+
   it("drops AGENTS.md update metadata before calling the document store", async () => {
     const store = new InMemoryDocumentStore({
       documents: [
@@ -264,7 +320,7 @@ describe("DocumentIndexer", () => {
           trigger: "manual",
         },
       }),
-    ).resolves.toEqual(
+    ).resolves.toMatchObject(
       ok({
         id: AGENTS_DOCUMENT_ID,
         content: "New instructions.",
@@ -273,7 +329,7 @@ describe("DocumentIndexer", () => {
         },
       }),
     );
-    expect(store.documents.get(AGENTS_DOCUMENT_ID)).toEqual({
+    expect(store.documents.get(AGENTS_DOCUMENT_ID)).toMatchObject({
       id: AGENTS_DOCUMENT_ID,
       content: "New instructions.",
     });
@@ -299,7 +355,7 @@ describe("DocumentIndexer", () => {
           trigger: "always_on",
         },
       }),
-    ).resolves.toEqual(
+    ).resolves.toMatchObject(
       ok({
         id: "guide.md",
         content: "New content.",
@@ -309,9 +365,50 @@ describe("DocumentIndexer", () => {
         },
       }),
     );
-    expect(store.documents.get("guide.md")).toEqual({
+    expect(store.documents.get("guide.md")).toMatchObject({
       id: "guide.md",
       content: "---\ndescription: New guide\ntrigger: always_on\n---\nNew content.",
+    });
+  });
+
+  it("rejects stale document updates with optimistic locking", async () => {
+    const store = new InMemoryDocumentStore({
+      documents: {
+        "guide.md": "Original content.",
+      },
+    });
+    const indexer = new DocumentIndexer({ store });
+
+    await expect(
+      indexer.update({
+        id: "guide.md",
+        content: "Changed content.",
+        expectedRevision: "stale",
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: {
+        code: "document_conflict",
+      },
+    });
+  });
+
+  it("rejects documents that exceed the configured size limit", async () => {
+    const store = new InMemoryDocumentStore({
+      maxDocumentBytes: 4,
+    });
+    const indexer = new DocumentIndexer({ store });
+
+    await expect(
+      indexer.create({
+        id: "large.md",
+        content: "large",
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: {
+        code: "document_too_large",
+      },
     });
   });
 
@@ -360,9 +457,17 @@ async function createTempDir(): Promise<string> {
 
 class CountingDocumentStore extends InMemoryDocumentStore {
   readCount = 0;
+  lastListContext: unknown;
+  lastReadContext: unknown;
+
+  override async listDocuments(input = {}) {
+    this.lastListContext = "context" in input ? input.context : undefined;
+    return await super.listDocuments(input);
+  }
 
   override async readDocument(input: ExpertAgentDocumentReadInput) {
     this.readCount += 1;
+    this.lastReadContext = input.context;
     return await super.readDocument(input);
   }
 }

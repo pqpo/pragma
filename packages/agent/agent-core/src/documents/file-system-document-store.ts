@@ -5,6 +5,7 @@ import { promisify } from "node:util";
 
 import type {
   ExpertAgentDocumentDeleteInput,
+  ExpertAgentDocumentListInput,
   ExpertAgentDocumentReadInput,
   ExpertAgentDocumentResult,
   ExpertAgentDocumentSearchInput,
@@ -31,25 +32,37 @@ export type FileSystemDocumentStoreCommandRunner = (
 export interface FileSystemDocumentStoreOptions {
   readonly rootDir: string;
   readonly commandRunner?: FileSystemDocumentStoreCommandRunner | undefined;
+  readonly maxDocumentBytes?: number | undefined;
 }
 
 export class FileSystemDocumentStore implements ExpertAgentDocumentStore {
   readonly rootDir: string;
+  readonly maxDocumentBytes: number;
   private readonly commandRunner: FileSystemDocumentStoreCommandRunner;
 
   constructor(options: FileSystemDocumentStoreOptions) {
     this.rootDir = resolve(options.rootDir);
+    this.maxDocumentBytes = options.maxDocumentBytes ?? 1_000_000;
     this.commandRunner = options.commandRunner ?? runSearchCommand;
   }
 
-  async listDocuments(): Promise<ExpertAgentDocumentResult<readonly ExpertAgentDocumentSummary[]>> {
+  async listDocuments(
+    input: ExpertAgentDocumentListInput = {},
+  ): Promise<ExpertAgentDocumentResult<readonly ExpertAgentDocumentSummary[]>> {
+    void input;
+
     try {
       const files = await collectMarkdownFiles(this.rootDir);
       const documents = await Promise.all(
         files.map(async (filePath) => {
+          const stats = await stat(filePath);
+          const content = await readFile(filePath, "utf8");
           const storedDocument = {
             id: toDocumentId(this.rootDir, filePath),
-            content: await readFile(filePath, "utf8"),
+            content,
+            revision: createFileRevision(stats.mtimeMs, content),
+            etag: createFileRevision(stats.mtimeMs, content),
+            sizeBytes: Buffer.byteLength(content, "utf8"),
           };
           const document = parseStoredDocument(storedDocument);
 
@@ -76,9 +89,15 @@ export class FileSystemDocumentStore implements ExpertAgentDocumentStore {
         return error("document_not_found", `Document not found: ${input.id}`, { id: input.id });
       }
 
+      const stats = await stat(filePath);
+      const content = await readFile(filePath, "utf8");
+
       return ok({
         id: input.id,
-        content: await readFile(filePath, "utf8"),
+        content,
+        revision: createFileRevision(stats.mtimeMs, content),
+        etag: createFileRevision(stats.mtimeMs, content),
+        sizeBytes: Buffer.byteLength(content, "utf8"),
       });
     } catch (caught) {
       return error("store_error", `Failed to read document: ${input.id}`, toErrorDetails(caught));
@@ -89,6 +108,12 @@ export class FileSystemDocumentStore implements ExpertAgentDocumentStore {
     input: ExpertAgentStoredDocumentCreateInput,
   ): Promise<ExpertAgentDocumentResult<ExpertAgentStoredDocument>> {
     try {
+      const sizeError = validateDocumentSize(input.content, this.maxDocumentBytes);
+
+      if (sizeError !== undefined) {
+        return sizeError;
+      }
+
       const filePath = this.resolveDocumentPath(input.id);
 
       if (await exists(filePath)) {
@@ -97,10 +122,10 @@ export class FileSystemDocumentStore implements ExpertAgentDocumentStore {
         });
       }
 
-      const document = {
+      const document = withFileDocumentRevision({
         id: input.id,
         content: input.content,
-      };
+      });
 
       await mkdir(dirname(filePath), { recursive: true });
       await writeFile(filePath, document.content, "utf8");
@@ -124,10 +149,23 @@ export class FileSystemDocumentStore implements ExpertAgentDocumentStore {
         return existing;
       }
 
-      const document = {
+      const conflict = validateExpectedRevision(existing.value, input);
+
+      if (conflict !== undefined) {
+        return conflict;
+      }
+
+      const content = input.content ?? existing.value.content;
+      const sizeError = validateDocumentSize(content, this.maxDocumentBytes);
+
+      if (sizeError !== undefined) {
+        return sizeError;
+      }
+
+      const document = withFileDocumentRevision({
         id: input.id,
-        content: input.content ?? existing.value.content,
-      };
+        content,
+      });
       const filePath = this.resolveDocumentPath(input.id);
       await writeFile(filePath, document.content, "utf8");
 
@@ -195,6 +233,61 @@ export class FileSystemDocumentStore implements ExpertAgentDocumentStore {
 
     return filePath;
   }
+}
+
+function validateExpectedRevision(
+  existing: ExpertAgentStoredDocument,
+  input: ExpertAgentStoredDocumentUpdateInput,
+): ExpertAgentDocumentResult<never> | undefined {
+  if (input.expectedRevision !== undefined && existing.revision !== input.expectedRevision) {
+    return error("document_conflict", `Document revision conflict: ${input.id}`, {
+      id: input.id,
+      expectedRevision: input.expectedRevision,
+      actualRevision: existing.revision,
+    });
+  }
+
+  if (input.expectedEtag !== undefined && existing.etag !== input.expectedEtag) {
+    return error("document_conflict", `Document etag conflict: ${input.id}`, {
+      id: input.id,
+      expectedEtag: input.expectedEtag,
+      actualEtag: existing.etag,
+    });
+  }
+
+  return undefined;
+}
+
+function validateDocumentSize(
+  content: string,
+  maxDocumentBytes: number,
+): ExpertAgentDocumentResult<never> | undefined {
+  const sizeBytes = Buffer.byteLength(content, "utf8");
+
+  if (sizeBytes <= maxDocumentBytes) {
+    return undefined;
+  }
+
+  return error("document_too_large", "Document exceeds the configured size limit.", {
+    sizeBytes,
+    maxDocumentBytes,
+  });
+}
+
+function withFileDocumentRevision(document: ExpertAgentStoredDocument): ExpertAgentStoredDocument {
+  const sizeBytes = Buffer.byteLength(document.content, "utf8");
+  const revision = createFileRevision(Date.now(), document.content);
+
+  return {
+    ...document,
+    revision,
+    etag: revision,
+    sizeBytes,
+  };
+}
+
+function createFileRevision(mtimeMs: number, content: string): string {
+  return `${Math.trunc(mtimeMs)}:${Buffer.byteLength(content, "utf8")}`;
 }
 
 async function searchDocumentsWithRipgrep(

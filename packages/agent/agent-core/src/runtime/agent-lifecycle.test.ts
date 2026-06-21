@@ -26,7 +26,8 @@ describe("createQueuedAgentLifecycle", () => {
     await Promise.resolve();
 
     expect(lifecycle.currentContext).toBe(context);
-    expect(lifecycle.state).toBe("running");
+    expect(lifecycle.sessionState).toBe("active");
+    expect(lifecycle.runState).toBe("running");
     expect(events).toEqual(["first:start"]);
 
     releaseFirst?.();
@@ -34,7 +35,7 @@ describe("createQueuedAgentLifecycle", () => {
     await expect(first).resolves.toBe(1);
     await expect(second).resolves.toBe(2);
     expect(events).toEqual(["first:start", "first:end", "second:start"]);
-    expect(lifecycle.state).toBe("prepared");
+    expect(lifecycle.runState).toBe("succeeded");
   });
 
   it("cleans up and rejects queued work after abort", async () => {
@@ -44,6 +45,7 @@ describe("createQueuedAgentLifecycle", () => {
       cleanup: () => {
         events.push("cleanup");
       },
+      forceCleanupTimeoutMs: 10,
     });
 
     const first = lifecycle.enqueue(async () => {
@@ -58,12 +60,15 @@ describe("createQueuedAgentLifecycle", () => {
     });
 
     await Promise.resolve();
-    await lifecycle.abort();
+    const abort = lifecycle.abort();
+    await Promise.resolve();
     releaseFirst?.();
+    await abort;
 
-    await expect(first).rejects.toThrow("Agent session was aborted.");
-    await expect(second).rejects.toThrow("Agent session was aborted.");
+    await expect(first).rejects.toThrow("Agent run was cancelled.");
+    await expect(second).rejects.toThrow("Agent session is closing.");
     expect(events).toEqual(["first:start", "cleanup"]);
-    expect(lifecycle.state).toBe("aborted");
+    expect(lifecycle.sessionState).toBe("closed");
+    expect(lifecycle.runState).toBe("cancelled");
   });
 });

@@ -6,16 +6,22 @@ import type {
   ExpertAgentManagedTool,
   ExpertAgentToolCallResult,
   ExpertAgentRunContext,
+  ResolvedTool,
+  ResolvedToolSet,
   SubAgentManagedTool,
 } from "@expertmesh/agent-core";
-import { createSubAgentTool, dispatchExpertAgentHook } from "@expertmesh/agent-core";
+import {
+  createSubAgentTool,
+  dispatchExpertAgentHook,
+  resolveToolPolicy,
+} from "@expertmesh/agent-core";
 
 import type { McpManagedTool } from "../mcp-tools.ts";
 import { launchPiSubAgent } from "./subagents.ts";
 import { formatMcpToolResult, normalizeInputSchema, sanitizeToolName } from "./tool-schema.ts";
 import type { RuntimeStreamBridge } from "./types.ts";
 
-export function createCustomTools(options: {
+export function createResolvedPiTools(options: {
   readonly agent: ExpertAgent;
   readonly authStorage: AuthStorage;
   readonly cwd: string;
@@ -24,7 +30,8 @@ export function createCustomTools(options: {
   readonly parentSystemPrompt: string;
   readonly streamBridge: RuntimeStreamBridge;
   readonly lifecycle: AgentLifecycle<ExpertAgentRunContext>;
-}): ToolDefinition[] {
+  readonly context?: ExpertAgentRunContext | undefined;
+}): ResolvedToolSet<ToolDefinition> {
   const subAgentTool = createSubAgentTool({
     agent: options.agent,
     parentSystemPrompt: options.parentSystemPrompt,
@@ -33,6 +40,7 @@ export function createCustomTools(options: {
         authStorage: options.authStorage,
         cwd: options.cwd,
         modelRegistry: options.modelRegistry,
+        resolvedTools: parentResolvedTools,
         streamBridge: options.streamBridge,
       }),
   });
@@ -40,12 +48,40 @@ export function createCustomTools(options: {
     getContext: () => options.lifecycle.currentContext,
   });
 
-  return [
-    ...createPiDefaultTools(options.agent, documentTools),
-    ...createPiManagedTools(options.agent, options.agent.tools ?? []),
-    ...(subAgentTool === undefined ? [] : [createPiSubAgentTool(options.agent, subAgentTool)]),
-    ...createPiMcpTools(options.agent, options.mcpTools),
-  ];
+  const parentResolvedTools = resolveToolPolicy({
+    context: options.context,
+    tools: [
+      ...createPiDefaultTools(options.agent, documentTools).map((tool) =>
+        createResolvedTool("default", tool),
+      ),
+      ...createPiManagedTools(options.agent, options.agent.tools ?? []).map((tool) =>
+        createResolvedTool("managed", tool),
+      ),
+      ...(subAgentTool === undefined
+        ? []
+        : [createResolvedTool("subagent", createPiSubAgentTool(options.agent, subAgentTool))]),
+      ...createPiMcpTools(options.agent, options.mcpTools).map((tool) =>
+        createResolvedTool("mcp", tool),
+      ),
+    ],
+  });
+
+  return parentResolvedTools;
+}
+
+export function createCustomTools(options: Parameters<typeof createResolvedPiTools>[0]): ToolDefinition[] {
+  return createResolvedPiTools(options).tools.map((resolvedTool) => resolvedTool.tool);
+}
+
+function createResolvedTool(
+  source: ResolvedTool<ToolDefinition>["source"],
+  tool: ToolDefinition,
+): ResolvedTool<ToolDefinition> {
+  return {
+    name: tool.name,
+    source,
+    tool,
+  };
 }
 
 function createPiDefaultTools(

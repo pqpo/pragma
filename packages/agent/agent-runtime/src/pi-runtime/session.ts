@@ -7,7 +7,10 @@ import type {
   RuntimeRunResult,
   RuntimeSessionInfo,
 } from "@expertmesh/agent-core";
-import { dispatchExpertAgentHook, emitRuntimeStreamEvent } from "@expertmesh/agent-core";
+import {
+  createRuntimeEventDispatcher,
+  dispatchExpertAgentHook,
+} from "@expertmesh/agent-core";
 import { randomUUID } from "node:crypto";
 
 import { readAssistantTextDelta, readToolExecutionEvent } from "./session-events.ts";
@@ -39,7 +42,7 @@ export function createPiRuntimeSession<TOutput>(
     }),
     state: () => lifecycle.state,
     async submit(submission) {
-      return await lifecycle.enqueue(async () => {
+      return await lifecycle.enqueue(async ({ signal }) => {
         const runId = submission.runId ?? randomUUID();
         const outputTextParts: string[] = [];
         const source = {
@@ -49,18 +52,19 @@ export function createPiRuntimeSession<TOutput>(
         };
         streamBridge.runId = runId;
         streamBridge.onEvent = submission.onEvent;
+        const dispatcher = createRuntimeEventDispatcher({
+          sink: submission.onEvent,
+        });
         const unsubscribe = session.subscribe((event) => {
           const delta = readAssistantTextDelta(event);
           const toolEvent = readToolExecutionEvent(event);
 
           if (delta !== undefined) {
             outputTextParts.push(delta);
-            void emitRuntimeStreamEvent(
-              submission.onEvent,
+            dispatcher.dispatch(
               createStreamEvent({
                 runId,
                 source,
-                sequence: streamBridge.nextSequence(),
                 type: "message.delta",
                 payload: {
                   role: "assistant",
@@ -75,10 +79,10 @@ export function createPiRuntimeSession<TOutput>(
             for (const streamEvent of createToolStreamEvents({
               runId,
               source,
-              sequence: streamBridge.nextSequence,
+              sequence: dispatcher.nextSequence,
               toolEvent,
             })) {
-              void emitRuntimeStreamEvent(submission.onEvent, streamEvent);
+              dispatcher.dispatch(streamEvent);
             }
           }
         });
@@ -100,12 +104,10 @@ export function createPiRuntimeSession<TOutput>(
             submission,
           });
 
-          await emitRuntimeStreamEvent(
-            submission.onEvent,
+          await dispatcher.emit(
             createStreamEvent({
               runId,
               source,
-              sequence: streamBridge.nextSequence(),
               type: "run.started",
               payload: {
                 task: submission.query,
@@ -115,14 +117,13 @@ export function createPiRuntimeSession<TOutput>(
           );
 
           await session.prompt(submission.query);
+          await dispatcher.drain();
           const outputText = outputTextParts.join("");
 
-          await emitRuntimeStreamEvent(
-            submission.onEvent,
+          await dispatcher.emit(
             createStreamEvent({
               runId,
               source,
-              sequence: streamBridge.nextSequence(),
               type: "message.completed",
               payload: {
                 role: "assistant",
@@ -132,12 +133,10 @@ export function createPiRuntimeSession<TOutput>(
             }),
           );
 
-          await emitRuntimeStreamEvent(
-            submission.onEvent,
+          await dispatcher.emit(
             createStreamEvent({
               runId,
               source,
-              sequence: streamBridge.nextSequence(),
               type: "run.completed",
               payload: {
                 outputSummary: summarizeText(outputText),
@@ -163,16 +162,20 @@ export function createPiRuntimeSession<TOutput>(
 
           return result;
         } catch (error) {
-          await emitRuntimeStreamEvent(
-            submission.onEvent,
+          const wasCancelled = signal.aborted;
+
+          await dispatcher.emit(
             createStreamEvent({
               runId,
               source,
-              sequence: streamBridge.nextSequence(),
-              type: "run.failed",
-              payload: {
-                message: error instanceof Error ? error.message : "Runtime run failed",
-              },
+              type: wasCancelled ? "run.aborted" : "run.failed",
+              payload: wasCancelled
+                ? {
+                    reason: "cancelled",
+                  }
+                : {
+                    message: error instanceof Error ? error.message : "Runtime run failed",
+                  },
             }),
           );
           await dispatchExpertAgentHook(agent.hooks, "afterTaskSubmit", {
@@ -187,6 +190,7 @@ export function createPiRuntimeSession<TOutput>(
           });
           throw error;
         } finally {
+          await dispatcher.drain();
           streamBridge.runId = undefined;
           streamBridge.onEvent = undefined;
           unsubscribe();

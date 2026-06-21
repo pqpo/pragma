@@ -8,14 +8,19 @@ import type {
   AuthStorage,
   CreateAgentSessionOptions,
   ModelRegistry,
+  ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import type { SubAgentRuntimeLaunchRequest } from "@expertmesh/agent-core";
-import { emitRuntimeStreamEvent } from "@expertmesh/agent-core";
+import type { ResolvedToolSet, SubAgentRuntimeLaunchRequest } from "@expertmesh/agent-core";
+import {
+  createRuntimeEventDispatcher,
+  createToolPolicy,
+  emitRuntimeStreamEvent,
+  selectResolvedTools,
+} from "@expertmesh/agent-core";
 
 import { readAssistantTextDelta, readToolExecutionEvent } from "./session-events.ts";
 import {
   createChildRunId,
-  createSequenceCounter,
   createStreamEvent,
   createToolStreamEvents,
   summarizeText,
@@ -28,13 +33,13 @@ export async function launchPiSubAgent(
     readonly authStorage: AuthStorage;
     readonly cwd: string;
     readonly modelRegistry: ModelRegistry;
+    readonly resolvedTools?: ResolvedToolSet<ToolDefinition> | undefined;
     readonly streamBridge: RuntimeStreamBridge;
   },
 ) {
   const parentRunId = request.parentRunId ?? options.streamBridge.runId;
   const childRunId = request.childRunId ?? createChildRunId(parentRunId);
   const onEvent = request.onEvent ?? options.streamBridge.onEvent;
-  const nextSequence = createSequenceCounter();
   const baseSource = {
     kind: "subagent" as const,
     runId: childRunId,
@@ -100,29 +105,37 @@ export async function launchPiSubAgent(
     sessionOptions.model = model;
   }
 
-  if (request.definition.tools !== undefined && request.definition.tools !== "*") {
-    sessionOptions.tools = [...request.definition.tools];
-  }
+  const resolvedTools =
+    options.resolvedTools === undefined
+      ? undefined
+      : selectResolvedTools(
+          options.resolvedTools,
+          createToolPolicy({
+            tools: request.definition.tools,
+            disallowedTools: request.definition.disallowedTools,
+          }),
+        );
 
-  if (request.definition.disallowedTools !== undefined) {
-    sessionOptions.excludeTools = [...request.definition.disallowedTools];
+  if (resolvedTools !== undefined && resolvedTools.tools.length > 0) {
+    sessionOptions.customTools = resolvedTools.tools.map((tool) => tool.tool);
   }
 
   const { session } = await createAgentSession(sessionOptions);
   const outputTextParts: string[] = [];
+  const dispatcher = createRuntimeEventDispatcher({
+    sink: onEvent,
+  });
   const unsubscribe = session.subscribe((event) => {
     const delta = readAssistantTextDelta(event);
     const toolEvent = readToolExecutionEvent(event);
 
     if (delta !== undefined) {
       outputTextParts.push(delta);
-      void emitRuntimeStreamEvent(
-        onEvent,
+      dispatcher.dispatch(
         createStreamEvent({
           runId: childRunId,
           ...(parentRunId === undefined ? {} : { parentRunId }),
           source: baseSource,
-          sequence: nextSequence(),
           type: "message.delta",
           payload: {
             role: "assistant",
@@ -138,10 +151,10 @@ export async function launchPiSubAgent(
         runId: childRunId,
         parentRunId,
         source: baseSource,
-        sequence: nextSequence,
+        sequence: dispatcher.nextSequence,
         toolEvent,
       })) {
-        void emitRuntimeStreamEvent(onEvent, streamEvent);
+        dispatcher.dispatch(streamEvent);
       }
     }
   });
@@ -154,13 +167,11 @@ export async function launchPiSubAgent(
 
   try {
     try {
-      await emitRuntimeStreamEvent(
-        onEvent,
+      await dispatcher.emit(
         createStreamEvent({
           runId: childRunId,
           ...(parentRunId === undefined ? {} : { parentRunId }),
           source: baseSource,
-          sequence: nextSequence(),
           type: "run.started",
           payload: {
             task: request.task,
@@ -169,15 +180,14 @@ export async function launchPiSubAgent(
       );
 
       await session.prompt(request.task);
+      await dispatcher.drain();
       const output = outputTextParts.join("");
 
-      await emitRuntimeStreamEvent(
-        onEvent,
+      await dispatcher.emit(
         createStreamEvent({
           runId: childRunId,
           ...(parentRunId === undefined ? {} : { parentRunId }),
           source: baseSource,
-          sequence: nextSequence(),
           type: "message.completed",
           payload: {
             role: "assistant",
@@ -187,13 +197,11 @@ export async function launchPiSubAgent(
         }),
       );
 
-      await emitRuntimeStreamEvent(
-        onEvent,
+      await dispatcher.emit(
         createStreamEvent({
           runId: childRunId,
           ...(parentRunId === undefined ? {} : { parentRunId }),
           source: baseSource,
-          sequence: nextSequence(),
           type: "run.completed",
           payload: {
             outputSummary: summarizeText(output),
@@ -233,17 +241,21 @@ export async function launchPiSubAgent(
     } catch (error) {
       const message = error instanceof Error ? error.message : "SubAgent run failed";
 
-      await emitRuntimeStreamEvent(
-        onEvent,
+      const wasCancelled = request.signal?.aborted === true;
+
+      await dispatcher.emit(
         createStreamEvent({
           runId: childRunId,
           ...(parentRunId === undefined ? {} : { parentRunId }),
           source: baseSource,
-          sequence: nextSequence(),
-          type: "run.failed",
-          payload: {
-            message,
-          },
+          type: wasCancelled ? "run.aborted" : "run.failed",
+          payload: wasCancelled
+            ? {
+                reason: "cancelled",
+              }
+            : {
+                message,
+              },
         }),
       );
 
@@ -271,6 +283,7 @@ export async function launchPiSubAgent(
       throw error;
     }
   } finally {
+    await dispatcher.drain();
     request.signal?.removeEventListener("abort", abort);
     unsubscribe();
     session.dispose();

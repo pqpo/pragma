@@ -21,7 +21,7 @@ import { createResourceLoader } from "./resources.ts";
 import { createPiRuntimeSession } from "./session.ts";
 import { createPiSessionManager } from "./session-manager.ts";
 import { createRuntimeStreamBridge } from "./stream.ts";
-import { createCustomTools } from "./tools.ts";
+import { createResolvedPiTools } from "./tools.ts";
 import type { CloudPiRuntimeAdapterOptions } from "./types.ts";
 import { defaultOutputParser } from "./types.ts";
 
@@ -48,15 +48,15 @@ export function createCloudPiRuntimeAdapter<TOutput = string>(
         collectRuntimeModelProviders(agent, models),
       );
       const modelRegistry = ModelRegistry.create(authStorage, modelsJsonPath);
-      const context = await agent.buildContext();
+      const context = await agent.buildContext(runContext);
       const loader = createResourceLoader(agent, cwd, context.systemPrompt);
       await loader.reload();
       const mcpToolRegistry = await createMcpToolRegistry(agent.mcp);
       let piSession: AgentSession | undefined;
       const streamBridge = createRuntimeStreamBridge();
       const lifecycle = createQueuedAgentLifecycle<ExpertAgentRunContext>(runContext, {
-        abort: () => {
-          void piSession?.abort();
+        abort: async () => {
+          await piSession?.abort();
         },
         cleanup: async () => {
           const sessionInfo = {
@@ -81,7 +81,7 @@ export function createCloudPiRuntimeAdapter<TOutput = string>(
           });
         },
       });
-      const customTools = createCustomTools({
+      const resolvedTools = createResolvedPiTools({
         agent,
         authStorage,
         cwd,
@@ -90,6 +90,7 @@ export function createCloudPiRuntimeAdapter<TOutput = string>(
         parentSystemPrompt: context.systemPrompt,
         streamBridge,
         lifecycle,
+        context: runContext,
       });
 
       const sessionOptions: CreateAgentSessionOptions = {
@@ -109,8 +110,8 @@ export function createCloudPiRuntimeAdapter<TOutput = string>(
         sessionOptions.model = defaultModel;
       }
 
-      if (customTools.length > 0) {
-        sessionOptions.customTools = customTools;
+      if (resolvedTools.tools.length > 0) {
+        sessionOptions.customTools = resolvedTools.tools.map((tool) => tool.tool);
       }
 
       try {

@@ -1,21 +1,45 @@
+export type SessionState = "active" | "closing" | "closed";
+export type RunState =
+  | "queued"
+  | "running"
+  | "waiting_approval"
+  | "succeeded"
+  | "failed"
+  | "cancelled";
+export type TaskState = "pending" | "leased" | "retrying" | "dead_letter";
+
+/** @deprecated Use SessionState and RunState instead. */
 export type AgentLifecycleState =
   | "prepared"
   | "running"
   | "completed"
   | "aborted"
-  | "failed";
+  | "failed"
+  | SessionState
+  | RunState;
 
 type MaybePromise<TValue> = TValue | Promise<TValue>;
 
 export interface AgentLifecycleHooks {
-  readonly abort?: (() => MaybePromise<void>) | undefined;
+  readonly abort?: ((signal: AbortSignal) => MaybePromise<void>) | undefined;
   readonly cleanup?: (() => MaybePromise<void>) | undefined;
+  readonly forceCleanupTimeoutMs?: number | undefined;
+}
+
+export interface AgentRunExecutionContext {
+  readonly signal: AbortSignal;
 }
 
 export interface AgentLifecycle<TContext = unknown> {
+  /** @deprecated Use sessionState and runState instead. */
   readonly state: AgentLifecycleState;
+  readonly sessionState: SessionState;
+  readonly runState: RunState | undefined;
   readonly currentContext: TContext | undefined;
-  readonly enqueue: <TResult>(work: () => Promise<TResult>) => Promise<TResult>;
+  readonly currentSignal: AbortSignal | undefined;
+  readonly enqueue: <TResult>(
+    work: (context: AgentRunExecutionContext) => Promise<TResult>,
+  ) => Promise<TResult>;
   readonly abort: () => Promise<void>;
 }
 
@@ -23,49 +47,101 @@ export function createQueuedAgentLifecycle<TContext = unknown>(
   context: TContext | undefined,
   hooks: AgentLifecycleHooks = {},
 ): AgentLifecycle<TContext> {
-  let state: AgentLifecycleState = "prepared";
+  const sessionAbortController = new AbortController();
+  const cleanupTimeoutMs = hooks.forceCleanupTimeoutMs ?? 5_000;
+  let sessionState: SessionState = "active";
+  let runState: RunState | undefined;
+  let currentRunController: AbortController | undefined;
   let cleanupPromise: Promise<void> | undefined;
   let queue: Promise<void> = Promise.resolve();
 
-  const getState = (): AgentLifecycleState => state;
   const cleanupOnce = async (): Promise<void> => {
     cleanupPromise ??= Promise.resolve(hooks.cleanup?.()).then(() => undefined);
     await cleanupPromise;
   };
 
+  const waitForQueueOrTimeout = async (): Promise<void> => {
+    await Promise.race([
+      queue,
+      new Promise<void>((resolve) => {
+        setTimeout(resolve, cleanupTimeoutMs);
+      }),
+    ]);
+  };
+
+  const abortCurrentRun = (): void => {
+    if (currentRunController !== undefined && !currentRunController.signal.aborted) {
+      currentRunController.abort(sessionAbortController.signal.reason);
+    }
+  };
+
   return {
     get state() {
-      return state;
+      if (sessionState === "closed") {
+        return "closed";
+      }
+
+      if (sessionState === "closing") {
+        return "closing";
+      }
+
+      return runState ?? "prepared";
+    },
+    get sessionState() {
+      return sessionState;
+    },
+    get runState() {
+      return runState;
     },
     get currentContext() {
       return context;
     },
+    get currentSignal() {
+      return currentRunController?.signal;
+    },
     async enqueue(work) {
       const execute = async (): Promise<Awaited<ReturnType<typeof work>>> => {
-        if (getState() === "aborted") {
-          throw new Error("Agent session was aborted.");
+        if (sessionState !== "active" || sessionAbortController.signal.aborted) {
+          runState = "cancelled";
+          throw new Error("Agent session is closing.");
         }
 
-        state = "running";
+        const runController = new AbortController();
+        currentRunController = runController;
+        const propagateAbort = (): void => {
+          if (!runController.signal.aborted) {
+            runController.abort(sessionAbortController.signal.reason);
+          }
+        };
+        sessionAbortController.signal.addEventListener("abort", propagateAbort, { once: true });
+        runState = "running";
 
         try {
-          const result = await work();
+          const result = await work({ signal: runController.signal });
 
-          if (getState() === "aborted") {
-            throw new Error("Agent session was aborted.");
+          if (runController.signal.aborted || sessionAbortController.signal.aborted) {
+            runState = "cancelled";
+            throw new Error("Agent run was cancelled.");
           }
 
-          state = "prepared";
+          runState = "succeeded";
           return result;
         } catch (error) {
-          if (getState() !== "aborted") {
-            state = "prepared";
-          }
-
+          runState =
+            runController.signal.aborted || sessionAbortController.signal.aborted
+              ? "cancelled"
+              : "failed";
           throw error;
+        } finally {
+          sessionAbortController.signal.removeEventListener("abort", propagateAbort);
+
+          if (currentRunController === runController) {
+            currentRunController = undefined;
+          }
         }
       };
 
+      runState = "queued";
       const result = queue.then(execute);
       queue = result.then(
         () => undefined,
@@ -74,15 +150,21 @@ export function createQueuedAgentLifecycle<TContext = unknown>(
       return await result;
     },
     async abort() {
-      if (state === "aborted") {
+      if (sessionState === "closed") {
         await cleanupOnce();
         return;
       }
 
-      state = "aborted";
-      await hooks.abort?.();
-      queue = Promise.resolve();
+      if (sessionState === "active") {
+        sessionState = "closing";
+        sessionAbortController.abort(new Error("Agent session was aborted."));
+        abortCurrentRun();
+        await hooks.abort?.(sessionAbortController.signal);
+      }
+
+      await waitForQueueOrTimeout();
       await cleanupOnce();
-    }
+      sessionState = "closed";
+    },
   };
 }

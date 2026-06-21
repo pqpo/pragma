@@ -8,10 +8,14 @@ const matter = require("gray-matter") as typeof import("gray-matter");
 export const AGENTS_DOCUMENT_ID = "AGENTS.md";
 
 export type DocumentTrigger = "always_on" | "model_decision" | "manual";
+export type DocumentTrustLevel = "system" | "workspace" | "user" | "external";
+export type DocumentSensitivity = "public" | "internal" | "confidential" | "restricted";
 
 export type ExpertAgentDocumentErrorCode =
   | "document_not_found"
   | "document_already_exists"
+  | "document_conflict"
+  | "document_too_large"
   | "permission_denied"
   | "invalid_input"
   | "store_unavailable"
@@ -36,11 +40,16 @@ export type ExpertAgentDocumentResult<TValue> =
 export interface ExpertAgentDocumentMetadata {
   readonly description?: string;
   readonly trigger: DocumentTrigger;
+  readonly trustLevel?: DocumentTrustLevel | undefined;
+  readonly sensitivity?: DocumentSensitivity | undefined;
 }
 
 export interface ExpertAgentDocumentSummary {
   readonly id: string;
   readonly metadata: ExpertAgentDocumentMetadata;
+  readonly revision?: string | undefined;
+  readonly etag?: string | undefined;
+  readonly sizeBytes?: number | undefined;
 }
 
 export interface ExpertAgentDocument extends ExpertAgentDocumentSummary {
@@ -50,6 +59,9 @@ export interface ExpertAgentDocument extends ExpertAgentDocumentSummary {
 export interface ExpertAgentStoredDocument {
   readonly id: string;
   readonly content: string;
+  readonly revision?: string | undefined;
+  readonly etag?: string | undefined;
+  readonly sizeBytes?: number | undefined;
 }
 
 export interface ExpertAgentDocumentCreateInput {
@@ -72,6 +84,8 @@ export interface ExpertAgentDocumentUpdateInput {
   readonly id: string;
   readonly content?: string | undefined;
   readonly metadata?: Partial<ExpertAgentDocumentMetadata> | undefined;
+  readonly expectedRevision?: string | undefined;
+  readonly expectedEtag?: string | undefined;
   readonly context?: ExpertAgentRunContext | undefined;
 }
 
@@ -105,6 +119,8 @@ export interface ExpertAgentStoredDocumentCreateInput {
 export interface ExpertAgentStoredDocumentUpdateInput {
   readonly id: string;
   readonly content?: string | undefined;
+  readonly expectedRevision?: string | undefined;
+  readonly expectedEtag?: string | undefined;
   readonly context?: ExpertAgentRunContext | undefined;
 }
 
@@ -226,6 +242,8 @@ export class DocumentIndexer {
     const result = await this.store.updateDocument({
       id: input.id,
       content: serializeDocument(document),
+      expectedRevision: input.expectedRevision,
+      expectedEtag: input.expectedEtag,
       context: input.context,
     });
 
@@ -320,6 +338,9 @@ export function normalizeDocumentSummary(
   return {
     id: document.id,
     metadata: normalizeMetadata(document.id, document.metadata),
+    ...(document.revision === undefined ? {} : { revision: document.revision }),
+    ...(document.etag === undefined ? {} : { etag: document.etag }),
+    ...(document.sizeBytes === undefined ? {} : { sizeBytes: document.sizeBytes }),
   };
 }
 
@@ -334,6 +355,10 @@ export function normalizeMetadata(
   return {
     ...(metadata.description === undefined ? {} : { description: metadata.description }),
     trigger: normalizeTrigger(metadata.trigger),
+    ...(metadata.trustLevel === undefined ? {} : { trustLevel: normalizeTrustLevel(metadata.trustLevel) }),
+    ...(metadata.sensitivity === undefined
+      ? {}
+      : { sensitivity: normalizeSensitivity(metadata.sensitivity) }),
   };
 }
 
@@ -349,6 +374,10 @@ function normalizeCreateMetadata(
   return {
     ...(metadata.description === undefined ? {} : { description: metadata.description }),
     trigger: normalizeTrigger(metadata.trigger),
+    ...(metadata.trustLevel === undefined ? {} : { trustLevel: normalizeTrustLevel(metadata.trustLevel) }),
+    ...(metadata.sensitivity === undefined
+      ? {}
+      : { sensitivity: normalizeSensitivity(metadata.sensitivity) }),
   };
 }
 
@@ -368,6 +397,16 @@ function normalizeUpdateMetadata(
         : { description: existingMetadata.description }
       : { description: metadata.description }),
     trigger: normalizeTrigger(metadata?.trigger ?? existingMetadata.trigger),
+    ...(metadata?.trustLevel === undefined
+      ? existingMetadata.trustLevel === undefined
+        ? {}
+        : { trustLevel: existingMetadata.trustLevel }
+      : { trustLevel: normalizeTrustLevel(metadata.trustLevel) }),
+    ...(metadata?.sensitivity === undefined
+      ? existingMetadata.sensitivity === undefined
+        ? {}
+        : { sensitivity: existingMetadata.sensitivity }
+      : { sensitivity: normalizeSensitivity(metadata.sensitivity) }),
   };
 }
 
@@ -429,6 +468,9 @@ export function parseStoredDocument(document: ExpertAgentStoredDocument): Expert
     id: document.id,
     content: parsed.content,
     metadata: parsed.metadata,
+    ...(document.revision === undefined ? {} : { revision: document.revision }),
+    ...(document.etag === undefined ? {} : { etag: document.etag }),
+    ...(document.sizeBytes === undefined ? {} : { sizeBytes: document.sizeBytes }),
   });
 }
 
@@ -447,10 +489,14 @@ function parseMarkdownDocument(rawContent: string): {
 function parseMatterMetadata(data: Record<string, unknown>): ExpertAgentDocumentMetadata {
   const description = data.description;
   const trigger = data.trigger;
+  const trustLevel = data.trustLevel;
+  const sensitivity = data.sensitivity;
 
   return {
     ...(typeof description === "string" ? { description } : {}),
     trigger: normalizeTrigger(readMetadataTrigger(trigger)),
+    ...(typeof trustLevel === "string" ? { trustLevel: normalizeTrustLevel(trustLevel) } : {}),
+    ...(typeof sensitivity === "string" ? { sensitivity: normalizeSensitivity(sensitivity) } : {}),
   };
 }
 
@@ -464,6 +510,8 @@ function serializeDocument(document: ExpertAgentDocument): string {
       ? {}
       : { description: document.metadata.description }),
     trigger: document.metadata.trigger,
+    ...(document.metadata.trustLevel === undefined ? {} : { trustLevel: document.metadata.trustLevel }),
+    ...(document.metadata.sensitivity === undefined ? {} : { sensitivity: document.metadata.sensitivity }),
   });
 
   if (!document.content.endsWith("\n") && serialized.endsWith("\n")) {
@@ -471,6 +519,27 @@ function serializeDocument(document: ExpertAgentDocument): string {
   }
 
   return serialized;
+}
+
+function normalizeTrustLevel(value: string | undefined): DocumentTrustLevel {
+  if (value === "system" || value === "workspace" || value === "user" || value === "external") {
+    return value;
+  }
+
+  return "workspace";
+}
+
+function normalizeSensitivity(value: string | undefined): DocumentSensitivity {
+  if (
+    value === "public" ||
+    value === "internal" ||
+    value === "confidential" ||
+    value === "restricted"
+  ) {
+    return value;
+  }
+
+  return "internal";
 }
 
 function readMetadataTrigger(value: unknown): DocumentTrigger | undefined {
