@@ -2,9 +2,50 @@ import { describe, expect, it } from "vitest";
 
 import { ExpertAgent } from "../agent/expert-agent.ts";
 import { createInMemoryDocumentStore } from "../documents/in-memory-document-store.ts";
-import { definePluginEntry, dispatchExpertAgentHook } from "./expert-agent-plugin.ts";
+import {
+  events,
+  extensibilityPlugin,
+} from "./fixtures/extensibility-plugin/src/plugin.ts";
+import { documentPlugin } from "./fixtures/document-plugin/src/plugin.ts";
+import { createInvalidPlugin } from "./fixtures/invalid-plugin/src/plugin.ts";
+import { createMissingManifestPlugin } from "./fixtures/missing-manifest-plugin/src/plugin.ts";
+import { otherDocumentPlugin } from "./fixtures/other-document-plugin/src/plugin.ts";
+import { dispatchExpertAgentHook } from "./expert-agent-plugin.ts";
 
 describe("ExpertAgent plugins", () => {
+  it("loads immutable plugin metadata and manifest fields from plugin.json", () => {
+    expect(extensibilityPlugin).toMatchObject({
+      id: "plugin.extensibility",
+      name: "Extensibility",
+      description: "Contributes every plugin surface",
+      version: "0.0.0",
+      tags: ["fixture", "extensibility"],
+      manifest: {
+        schemaVersion: "expertmesh.plugin/v1",
+        capabilities: [
+          {
+            type: "managed-tool",
+            name: "plugin_tool",
+            description: "Plugin tool",
+          },
+        ],
+        permissions: {
+          network: ["models.example.test"],
+        },
+      },
+    });
+    expect(Object.isFrozen(extensibilityPlugin.manifest)).toBe(true);
+    expect(Object.isFrozen(extensibilityPlugin.manifest.capabilities)).toBe(true);
+  });
+
+  it("rejects plugins without a plugin.json manifest", () => {
+    expect(() => createMissingManifestPlugin()).toThrow(/plugin\.json was not found/);
+  });
+
+  it("rejects plugins with an invalid plugin.json manifest", () => {
+    expect(() => createInvalidPlugin()).toThrow();
+  });
+
   it("merges plugin documents with host documents", async () => {
     const agent = new ExpertAgent({
       schemaVersion: "expertmesh.expert/v1",
@@ -27,42 +68,7 @@ describe("ExpertAgent plugins", () => {
           },
         ],
       }),
-      plugins: [
-        definePluginEntry({
-          id: "plugin.docs",
-          name: "Plugin docs",
-          description: "Adds documents",
-          setup: () => ({
-            documents: [
-              {
-                id: "plugin.md",
-                content: "Plugin content",
-                metadata: {
-                  description: "Plugin doc",
-                  trigger: "model_decision",
-                },
-              },
-            ],
-          }),
-        }),
-        definePluginEntry({
-          id: "plugin.other-docs",
-          name: "Other plugin docs",
-          description: "Adds documents with colliding local ids",
-          setup: () => ({
-            documents: [
-              {
-                id: "plugin.md",
-                content: "Other plugin content",
-                metadata: {
-                  description: "Other plugin doc",
-                  trigger: "model_decision",
-                },
-              },
-            ],
-          }),
-        }),
-      ],
+      plugins: [documentPlugin, otherDocumentPlugin],
     });
 
     await expect(agent.listDocuments()).resolves.toMatchObject({
@@ -108,64 +114,7 @@ describe("ExpertAgent plugins", () => {
   });
 
   it("merges plugin mcp, skills, models, subagents, tools, and hooks", async () => {
-    const events: string[] = [];
-    const plugin = definePluginEntry({
-      id: "plugin.extensibility",
-      name: "Extensibility",
-      description: "Contributes every plugin surface",
-      setup: () => ({
-        mcp: {
-          mcpServers: {
-            pluginMcp: {
-              name: "Plugin MCP",
-              command: "plugin-mcp",
-            },
-          },
-        },
-        skills: {
-          skills: [
-            {
-              type: "local",
-              name: "plugin-skill",
-              description: "Plugin skill",
-            },
-          ],
-        },
-        models: {
-          defaultModelName: "plugin-model",
-          providers: [
-            {
-              provider: "plugin-provider",
-              modelNames: ["plugin-model"],
-              baseApi: "https://models.example.test",
-              key: "test-key",
-            },
-          ],
-        },
-        subAgents: {
-          agents: [
-            {
-              agentType: "critic",
-              whenToUse: "Review an answer",
-              systemPrompt: "Be precise.",
-            },
-          ],
-        },
-        tools: [
-          {
-            name: "plugin_tool",
-            description: "Plugin tool",
-            inputSchema: {},
-            call: async () => ({ text: "ok" }),
-          },
-        ],
-        hooks: {
-          beforeSessionCreate: () => {
-            events.push("plugin");
-          },
-        },
-      }),
-    });
+    events.length = 0;
 
     const agent = new ExpertAgent({
       schemaVersion: "expertmesh.expert/v1",
@@ -181,7 +130,7 @@ describe("ExpertAgent plugins", () => {
           events.push("host");
         },
       },
-      plugins: [plugin],
+      plugins: [extensibilityPlugin],
     });
 
     expect(agent.mcp?.mcpServers.pluginMcp?.name).toBe("Plugin MCP");

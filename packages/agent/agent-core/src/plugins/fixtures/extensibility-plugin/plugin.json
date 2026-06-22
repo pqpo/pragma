@@ -1,0 +1,22 @@
+{
+  "schemaVersion": "expertmesh.plugin/v1",
+  "id": "plugin.extensibility",
+  "name": "Extensibility",
+  "description": "Contributes every plugin surface",
+  "version": "0.0.0",
+  "tags": ["fixture", "extensibility"],
+  "runtime": {
+    "type": "expert-agent-plugin",
+    "entry": "./src/plugin.ts"
+  },
+  "capabilities": [
+    {
+      "type": "managed-tool",
+      "name": "plugin_tool",
+      "description": "Plugin tool"
+    }
+  ],
+  "permissions": {
+    "network": ["models.example.test"]
+  }
+}

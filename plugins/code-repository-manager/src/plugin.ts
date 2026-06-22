@@ -28,12 +28,6 @@ export function createCodeRepositoryManagerPlugin(
   };
 
   return definePluginEntry({
-    id: "code-repository-manager",
-    name: "Code Repository Manager",
-    description:
-      "Injects configured Git repositories as Agent documents and exposes tools for preparing Git and cloning repositories into the workspace.",
-    version: "0.0.0",
-    tags: ["git", "repository", "workspace"],
     setup: () => ({
       documents: [createCodeRepositoryDocumentSeed(config)],
       tools: createCodeRepositoryTools(config, options),

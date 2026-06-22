@@ -1,0 +1,17 @@
+{
+  "schemaVersion": "expertmesh.plugin/v1",
+  "id": "plugin.docs",
+  "name": "Plugin docs",
+  "description": "Adds documents",
+  "runtime": {
+    "type": "expert-agent-plugin",
+    "entry": "./src/plugin.ts"
+  },
+  "capabilities": [
+    {
+      "type": "document",
+      "name": "plugin.md",
+      "description": "Fixture document"
+    }
+  ]
+}

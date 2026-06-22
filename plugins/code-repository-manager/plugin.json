@@ -1,0 +1,35 @@
+{
+  "schemaVersion": "expertmesh.plugin/v1",
+  "id": "code-repository-manager",
+  "name": "Code Repository Manager",
+  "description": "Injects configured Git repositories as Agent documents and exposes tools for preparing Git and cloning repositories into the workspace.",
+  "version": "0.0.0",
+  "tags": ["git", "repository", "workspace"],
+  "runtime": {
+    "type": "expert-agent-plugin",
+    "entry": "./src/index.ts"
+  },
+  "capabilities": [
+    {
+      "type": "document",
+      "name": "code-repositories.md",
+      "description": "Exposes configured repository metadata to the Agent document index."
+    },
+    {
+      "type": "managed-tool",
+      "name": "code_repository_manager_prepare_git",
+      "description": "Checks that Git CLI and configured repository credentials are available."
+    },
+    {
+      "type": "managed-tool",
+      "name": "code_repository_manager_ensure_repository",
+      "description": "Clones or fetches a configured repository into the Agent workspace."
+    }
+  ],
+  "permissions": {
+    "filesystem": ["workspace:read", "workspace:write"],
+    "shell": ["git"],
+    "network": ["configured git remotes"],
+    "environment": ["configured credential variables"]
+  }
+}

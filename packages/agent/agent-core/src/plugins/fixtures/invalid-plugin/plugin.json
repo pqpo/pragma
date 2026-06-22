@@ -1,0 +1,8 @@
+{
+  "schemaVersion": "expertmesh.plugin/v1",
+  "id": "plugin.invalid",
+  "runtime": {
+    "type": "expert-agent-plugin",
+    "entry": "./src/plugin.ts"
+  }
+}

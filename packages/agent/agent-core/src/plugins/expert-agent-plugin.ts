@@ -1,3 +1,9 @@
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, isAbsolute, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+import { z } from "zod";
+
 import type {
   ExpertAgent,
   ExpertAgentModelApi,
@@ -25,14 +31,48 @@ import type { SubAgentRegistry } from "../subagents/sub-agent.ts";
 import type { ExpertAgentManagedTool, ExpertAgentToolCallResult } from "../tools/managed-tool.ts";
 
 type MaybePromise<TValue> = TValue | Promise<TValue>;
+type DeepReadonly<TValue> = TValue extends (...args: never[]) => unknown
+  ? TValue
+  : TValue extends readonly (infer TItem)[]
+    ? readonly DeepReadonly<TItem>[]
+    : TValue extends object
+      ? { readonly [TKey in keyof TValue]: DeepReadonly<TValue[TKey]> }
+      : TValue;
 
-export interface ExpertAgentPluginMetadata {
-  readonly id: string;
-  readonly name: string;
-  readonly description: string;
-  readonly version?: string | undefined;
-  readonly tags?: readonly string[] | undefined;
-}
+const ExpertAgentPluginCapabilitySchema = z
+  .object({
+    type: z.string().min(1),
+    name: z.string().min(1),
+    description: z.string().min(1).optional(),
+  })
+  .passthrough();
+
+const ExpertAgentPluginManifestSchema = z
+  .object({
+    schemaVersion: z.literal("expertmesh.plugin/v1"),
+    id: z.string().min(1),
+    name: z.string().min(1),
+    description: z.string().min(1),
+    version: z.string().min(1).optional(),
+    tags: z.array(z.string().min(1)).optional(),
+    runtime: z
+      .object({
+        type: z.string().min(1),
+        entry: z.string().min(1),
+      })
+      .passthrough(),
+    capabilities: z.array(ExpertAgentPluginCapabilitySchema).default([]),
+  })
+  .passthrough();
+
+export type ExpertAgentPluginManifest = DeepReadonly<
+  z.infer<typeof ExpertAgentPluginManifestSchema> & Record<string, unknown>
+>;
+
+export type ExpertAgentPluginMetadata = Pick<
+  ExpertAgentPluginManifest,
+  "id" | "name" | "description" | "version" | "tags"
+>;
 
 export type ExpertAgentPluginDocumentContribution =
   | ExpertAgentDocumentStore
@@ -120,10 +160,11 @@ export interface ExpertAgentPluginContributions {
 }
 
 export interface ExpertAgentPluginEntry extends ExpertAgentPluginMetadata {
+  readonly manifest: ExpertAgentPluginManifest;
   readonly setup: () => ExpertAgentPluginContributions;
 }
 
-export interface DefineExpertAgentPluginEntryOptions extends ExpertAgentPluginMetadata {
+export interface DefineExpertAgentPluginEntryOptions {
   readonly setup: () => ExpertAgentPluginContributions;
 }
 
@@ -150,14 +191,32 @@ interface ExpertAgentDocumentStoreSource {
 export function definePluginEntry(
   options: DefineExpertAgentPluginEntryOptions,
 ): ExpertAgentPluginEntry {
+  const manifest = readExpertAgentPluginManifestFromCaller();
+
   return {
-    id: options.id,
-    name: options.name,
-    description: options.description,
-    ...(options.version === undefined ? {} : { version: options.version }),
-    ...(options.tags === undefined ? {} : { tags: [...options.tags] }),
+    id: manifest.id,
+    name: manifest.name,
+    description: manifest.description,
+    ...(manifest.version === undefined ? {} : { version: manifest.version }),
+    ...(manifest.tags === undefined ? {} : { tags: manifest.tags }),
+    manifest,
     setup: options.setup,
   };
+}
+
+export function readExpertAgentPluginManifest(
+  manifestPath: string | URL,
+): ExpertAgentPluginManifest {
+  const path =
+    manifestPath instanceof URL
+      ? fileURLToPath(manifestPath)
+      : isAbsolute(manifestPath)
+        ? manifestPath
+        : resolve(manifestPath);
+
+  const manifest = JSON.parse(readFileSync(path, "utf8")) as unknown;
+
+  return deepFreeze(ExpertAgentPluginManifestSchema.parse(manifest));
 }
 
 export function resolveExpertAgentPlugins(
@@ -684,4 +743,78 @@ function assertUniquePluginIds(plugins: readonly ExpertAgentPluginEntry[]): void
 
     seen.add(plugin.id);
   }
+}
+
+function readExpertAgentPluginManifestFromCaller(): ExpertAgentPluginManifest {
+  const callerFile = findDefinePluginEntryCallerFile();
+
+  if (callerFile === undefined) {
+    throw new Error("Unable to locate plugin.json: definePluginEntry caller could not be resolved.");
+  }
+
+  const manifestPath = findNearestPluginManifest(callerFile);
+
+  if (manifestPath === undefined) {
+    throw new Error(`Unable to load ExpertAgent plugin: plugin.json was not found for ${callerFile}.`);
+  }
+
+  return readExpertAgentPluginManifest(manifestPath);
+}
+
+function findDefinePluginEntryCallerFile(): string | undefined {
+  const stack = new Error().stack?.split("\n").slice(1) ?? [];
+  const currentFile = fileURLToPath(import.meta.url);
+
+  for (const line of stack) {
+    const file = parseStackFrameFile(line);
+
+    if (file !== undefined && file !== currentFile) {
+      return file;
+    }
+  }
+
+  return undefined;
+}
+
+function parseStackFrameFile(line: string): string | undefined {
+  const match = /(?:\(|\s)(file:\/\/[^:)]+|\/[^:)]+):\d+:\d+\)?$/.exec(line.trim());
+  const value = match?.[1];
+
+  if (value === undefined) {
+    return undefined;
+  }
+
+  return value.startsWith("file://") ? fileURLToPath(value) : value;
+}
+
+function findNearestPluginManifest(fromFile: string): string | undefined {
+  let directory = dirname(fromFile);
+
+  while (true) {
+    const candidate = resolve(directory, "plugin.json");
+
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+
+    const parent = dirname(directory);
+
+    if (parent === directory) {
+      return undefined;
+    }
+
+    directory = parent;
+  }
+}
+
+function deepFreeze<TValue>(value: TValue): TValue {
+  if (typeof value !== "object" || value === null) {
+    return value;
+  }
+
+  for (const nestedValue of Object.values(value)) {
+    deepFreeze(nestedValue);
+  }
+
+  return Object.freeze(value);
 }
