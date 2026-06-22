@@ -6,6 +6,7 @@ import {
 import type { AuthProvider, Transport } from "@modelcontextprotocol/client";
 import type {
   ExpertAgentManagedTool,
+  IExpertAgentInProcessMcpServer,
   IExpertAgentMcpConfig,
   IExpertAgentMcpServer
 } from "@expertmesh/agent-core";
@@ -107,6 +108,10 @@ function createManagedMcpTool(
 }
 
 async function createOfficialMcpClient(server: IExpertAgentMcpServer): Promise<McpClient> {
+  if (server.inProcess !== undefined) {
+    return createInProcessMcpClient(server);
+  }
+
   const sdkClient = new Client(
     {
       name: "expertmesh-mcp-client",
@@ -145,6 +150,28 @@ async function createOfficialMcpClient(server: IExpertAgentMcpServer): Promise<M
     },
     async dispose() {
       await sdkClient.close();
+    }
+  };
+}
+
+function createInProcessMcpClient(server: IExpertAgentMcpServer): McpClient {
+  const inProcessServer = server.inProcess as IExpertAgentInProcessMcpServer;
+
+  return {
+    listTools: () =>
+      withTimeout(
+        inProcessServer.listTools(),
+        server.timeout,
+        `list MCP tools from "${server.name}"`
+      ),
+    callTool: (name, args) =>
+      withTimeout(
+        inProcessServer.callTool(name, args),
+        server.timeout,
+        `call MCP tool "${server.name}.${name}"`
+      ),
+    async dispose() {
+      await inProcessServer.dispose?.();
     }
   };
 }

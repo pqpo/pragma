@@ -17,10 +17,11 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@earendil-works/pi-coding-agent": "0.79.8",
     "@cfworker/json-schema": "^4.1.1",
+    "@earendil-works/pi-coding-agent": "0.79.8",
     "@expertmesh/agent-core": "workspace:*",
-    "@modelcontextprotocol/client": "2.0.0-alpha.2"
+    "@modelcontextprotocol/client": "2.0.0-alpha.2",
+    "@modelcontextprotocol/server": "2.0.0-alpha.2"
   },
   "devDependencies": {
     "@expertmesh/tsconfig": "workspace:*",

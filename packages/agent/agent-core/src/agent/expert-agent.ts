@@ -28,6 +28,18 @@ export type ExpertAgentSchemaVersion = "expertmesh.expert/v1";
 
 export type ExpertAgentSkillPackageType = "builtin" | "registry" | "local";
 
+export interface IExpertAgentMcpToolInfo {
+  readonly name: string;
+  readonly description?: string | undefined;
+  readonly inputSchema?: unknown;
+}
+
+export interface IExpertAgentInProcessMcpServer {
+  readonly listTools: () => Promise<readonly IExpertAgentMcpToolInfo[]>;
+  readonly callTool: (name: string, args: unknown) => Promise<unknown>;
+  readonly dispose?: (() => Promise<void>) | undefined;
+}
+
 export interface IExpertAgentMcpServer {
   readonly name: string;
   readonly command?: string;
@@ -38,6 +50,7 @@ export interface IExpertAgentMcpServer {
   readonly token?: string;
   readonly allowTools?: readonly string[];
   readonly disallowTools?: readonly string[];
+  readonly inProcess?: IExpertAgentInProcessMcpServer | undefined;
 }
 
 export interface IExpertAgentMcpConfig {
