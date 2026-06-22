@@ -3,6 +3,7 @@ import type { ExpertAgentDocumentSeed } from "@expertmesh/agent-core";
 import type { CodeRepository, CodeRepositoryManagerConfig } from "./schema.ts";
 
 export const CODE_REPOSITORY_DOCUMENT_ID = "code-repositories.md";
+export const CODE_REPOSITORIES_SOURCE_DOCUMENT_ID = "repositories.json";
 
 export function createCodeRepositoryDocumentSeed(
   config: CodeRepositoryManagerConfig,
@@ -43,7 +44,7 @@ function renderRepository(repository: CodeRepository): readonly string[] {
     cloneUrl: repository.cloneUrl,
     defaultBranch: repository.defaultBranch,
     provider: repository.provider,
-    workspacePath: repository.workspacePath ?? defaultRepositoryWorkspacePath(repository),
+    workspaceRelativePath: defaultRepositoryWorkspacePath(repository),
     shallowClone: repository.shallowClone,
     ...(repository.description === undefined ? {} : { description: repository.description }),
     ...(repository.allowedBranches === undefined ? {} : { allowedBranches: repository.allowedBranches }),
@@ -60,5 +61,5 @@ function renderRepository(repository: CodeRepository): readonly string[] {
 }
 
 export function defaultRepositoryWorkspacePath(repository: Pick<CodeRepository, "id">): string {
-  return `.workspace/repos/${repository.id}`;
+  return `repos/${repository.id}`;
 }

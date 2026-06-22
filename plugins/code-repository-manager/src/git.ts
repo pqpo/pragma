@@ -106,13 +106,10 @@ export async function ensureRepository(
 
 export function resolveRepositoryWorkspacePath(
   workspaceRoot: string,
-  repository: Pick<CodeRepository, "id" | "workspacePath">,
+  repository: Pick<CodeRepository, "id">,
 ): string {
   const workspace = resolve(workspaceRoot);
-  const configuredPath = repository.workspacePath ?? defaultRepositoryWorkspacePath(repository);
-  const target = isAbsolute(configuredPath)
-    ? resolve(configuredPath)
-    : resolve(workspace, configuredPath);
+  const target = resolve(workspace, defaultRepositoryWorkspacePath(repository));
   const relativePath = relative(workspace, target);
 
   if (
@@ -120,7 +117,7 @@ export function resolveRepositoryWorkspacePath(
     relativePath.startsWith("..") ||
     isAbsolute(relativePath)
   ) {
-    throw new Error(`Repository workspacePath must stay inside workspace: ${repository.id}`);
+    throw new Error(`Repository path must stay inside workspace: ${repository.id}`);
   }
 
   return target;

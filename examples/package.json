@@ -17,7 +17,6 @@
   "dependencies": {
     "@expertmesh/agent-core": "workspace:*",
     "@expertmesh/agent-runtime": "workspace:*",
-    "@expertmesh/plugin-code-repository-manager": "workspace:*",
     "cac": "^7.0.0",
     "dotenv": "latest"
   },

@@ -1,42 +1,12 @@
-import { ExpertAgent } from "@expertmesh/agent-core";
-import { createCodeRepositoryManagerPlugin } from "@expertmesh/plugin-code-repository-manager";
+import { ExpertAgent, createInMemoryDocumentStore } from "@expertmesh/agent-core";
 
-import { defaultWorkspaceRoot, ensureWorkspaceDir } from "../harness/paths.ts";
+import { defaultWorkspaceRoot, ensureWorkspaceDir, resolveExamplePath } from "../harness/paths.ts";
 
 const workspace = defaultWorkspaceRoot;
 
 await ensureWorkspaceDir(workspace);
 
-const codeRepositoryManagerPlugin = createCodeRepositoryManagerPlugin(
-  {
-    documentInjection: {
-      mode: "model_decision",
-    },
-    auth: {
-      strategy: "none",
-    },
-    repositories: [
-      {
-        id: "expert-mesh",
-        name: "ExpertMesh",
-        cloneUrl: "https://github.com/example/expert-mesh.git",
-        defaultBranch: "main",
-        provider: "github",
-        description:
-          "Example repository entry showing how repository metadata is exposed to ExpertAgent documents.",
-        workspacePath: ".workspace/repos/expert-mesh",
-        allowedBranches: ["main"],
-        shallowClone: true,
-      },
-    ],
-  },
-  {
-    workspaceRoot: workspace,
-    prepareOnSessionCreate: false,
-  },
-);
-
-const agent = new ExpertAgent({
+const agent = await ExpertAgent.create({
   schemaVersion: "expertmesh.expert/v1",
   id: "code-repository-plugin-example-agent",
   displayName: "Code Repository Plugin Example Agent",
@@ -45,7 +15,39 @@ const agent = new ExpertAgent({
   version: "0.0.0",
   scope: "local-test",
   workspace,
-  plugins: [codeRepositoryManagerPlugin],
+  documents: createInMemoryDocumentStore({
+    documents: [
+      {
+        id: "repositories.json",
+        content: JSON.stringify(
+          {
+            repositories: [
+              {
+                id: "expert-mesh",
+                name: "ExpertMesh",
+                cloneUrl: "https://github.com/example/expert-mesh.git",
+                defaultBranch: "main",
+                provider: "github",
+                description:
+                  "Example repository entry showing how repository metadata is exposed to ExpertAgent documents.",
+                allowedBranches: ["main"],
+                shallowClone: true,
+              },
+            ],
+          },
+          null,
+          2,
+        ),
+        metadata: {
+          description: "Repositories available to the code repository manager plugin.",
+          trigger: "manual",
+          trustLevel: "workspace",
+          sensitivity: "internal",
+        },
+      },
+    ],
+  }),
+  plugins: [resolveExamplePath("plugins/code-repository-manager")],
 });
 
 const documents = await agent.listDocuments();

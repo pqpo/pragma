@@ -16,11 +16,13 @@ import type {
 } from "../documents/document-indexer.ts";
 import { createDocumentTools } from "../documents/document-tools.ts";
 import type { CreateDocumentToolsOptions, ExpertAgentDefaultTool } from "../documents/document-tools.ts";
-import type {
-  ExpertAgentPluginEntry,
-  ExpertAgentPluginHooks,
-} from "../plugins/expert-agent-plugin.ts";
+import type { ExpertAgentPluginEntry, ExpertAgentPluginHooks } from "../plugins/expert-agent-plugin.ts";
 import { resolveExpertAgentPlugins } from "../plugins/expert-agent-plugin.ts";
+import type {
+  ExpertAgentPluginLoadIssue,
+  ExpertAgentPluginSource,
+} from "../plugins/plugin-loader.ts";
+import { loadExpertAgentPlugins } from "../plugins/plugin-loader.ts";
 import type { ExpertAgentRunContext } from "../runtime/run-context.ts";
 import type { SubAgentRegistry } from "../subagents/sub-agent.ts";
 import type { ExpertAgentManagedTool, ExpertAgentToolCallResult } from "../tools/managed-tool.ts";
@@ -121,10 +123,15 @@ export interface IExpertAgent {
   readonly subAgents?: SubAgentRegistry | undefined;
   readonly tools?: readonly ExpertAgentManagedTool<string, ExpertAgentToolCallResult>[] | undefined;
   readonly hooks?: ExpertAgentPluginHooks | undefined;
-  readonly plugins?: readonly ExpertAgentPluginEntry[] | undefined;
+  readonly plugins?: readonly ExpertAgentPluginSource[] | undefined;
+  readonly pluginLoadIssues?: readonly ExpertAgentPluginLoadIssue[] | undefined;
 }
 
-export type ExpertAgentOptions = IExpertAgent;
+export type ExpertAgentOptions = Omit<IExpertAgent, "pluginLoadIssues">;
+
+export interface CreateExpertAgentOptions extends ExpertAgentOptions {
+  readonly env?: NodeJS.ProcessEnv | undefined;
+}
 
 export class ExpertAgent implements IExpertAgent {
   readonly schemaVersion: ExpertAgentSchemaVersion;
@@ -142,11 +149,30 @@ export class ExpertAgent implements IExpertAgent {
   readonly subAgents: SubAgentRegistry | undefined;
   readonly tools: readonly ExpertAgentManagedTool<string, ExpertAgentToolCallResult>[] | undefined;
   readonly hooks: ExpertAgentPluginHooks | undefined;
-  readonly plugins: readonly ExpertAgentPluginEntry[] | undefined;
+  readonly plugins: readonly ExpertAgentPluginSource[] | undefined;
+  readonly pluginLoadIssues: readonly ExpertAgentPluginLoadIssue[] | undefined;
   private readonly documentIndexer: DocumentIndexer;
   private readonly contextManager: ContextManager;
 
-  constructor(options: ExpertAgentOptions) {
+  static async create(options: CreateExpertAgentOptions): Promise<ExpertAgent> {
+    const loaded = await loadExpertAgentPlugins({
+      workspaceRoot: options.workspace,
+      sources: options.plugins ?? [],
+      env: options.env,
+    });
+
+    return new ExpertAgent({
+      ...options,
+      installedPluginEntries: loaded.pluginEntries,
+      pluginLoadIssues: loaded.issues,
+    });
+  }
+
+  constructor(options: ExpertAgentOptions & {
+    readonly installedPluginEntries?: readonly ExpertAgentPluginEntry[] | undefined;
+    readonly pluginLoadIssues?: readonly ExpertAgentPluginLoadIssue[] | undefined;
+    readonly env?: NodeJS.ProcessEnv | undefined;
+  }) {
     const resolved = resolveExpertAgentPlugins({
       host: {
         mcp: options.mcp,
@@ -157,7 +183,9 @@ export class ExpertAgent implements IExpertAgent {
         tools: options.tools,
         hooks: options.hooks,
       },
-      plugins: options.plugins,
+      pluginEntries: options.installedPluginEntries,
+      workspaceRoot: options.workspace,
+      env: options.env,
     });
 
     this.schemaVersion = options.schemaVersion;
@@ -176,6 +204,7 @@ export class ExpertAgent implements IExpertAgent {
     this.tools = resolved.tools;
     this.hooks = resolved.hooks;
     this.plugins = options.plugins;
+    this.pluginLoadIssues = options.pluginLoadIssues;
     this.documentIndexer = new DocumentIndexer({
       store: resolved.documents,
     });

@@ -4,17 +4,26 @@ This ExpertMesh plugin exposes a configured list of Git repositories as Agent do
 
 The plugin never injects secrets into documents. Token and SSH material are read from environment variables only when Git commands run.
 
-Repository preparation is lazy by default. Set `prepareOnSessionCreate: true` only when session creation should fail fast if Git or credentials are unavailable.
+## Plugin Package Usage
 
-## Minimal Usage
+The production plugin shape is a Node package or directory containing:
+
+```text
+package.json
+plugin.json
+dist/index.js
+```
+
+Install or load the plugin by passing its directory or zip path to `ExpertAgent.create`.
+The loader copies or extracts the plugin into the Agent workspace before importing the
+manifest entry.
 
 ```ts
-import { ExpertAgent } from "@expertmesh/agent-core";
-import { createCodeRepositoryManagerPlugin } from "@expertmesh/plugin-code-repository-manager";
+import { ExpertAgent, createInMemoryDocumentStore } from "@expertmesh/agent-core";
 
 const workspace = "/path/to/workspace";
 
-const agent = new ExpertAgent({
+const agent = await ExpertAgent.create({
   schemaVersion: "expertmesh.expert/v1",
   id: "repo-aware-agent",
   displayName: "Repo Aware Agent",
@@ -23,31 +32,46 @@ const agent = new ExpertAgent({
   version: "0.0.0",
   scope: "local-test",
   workspace,
-  plugins: [
-    createCodeRepositoryManagerPlugin(
+  documents: createInMemoryDocumentStore({
+    documents: [
       {
-        documentInjection: {
-          mode: "model_decision",
+        id: "repositories.json",
+        content: JSON.stringify({
+          repositories: [
+            {
+              id: "expert-mesh",
+              name: "ExpertMesh",
+              cloneUrl: "https://github.com/example/expert-mesh.git",
+              defaultBranch: "main",
+            },
+          ],
+        }),
+        metadata: {
+          trigger: "manual",
         },
-        auth: {
-          strategy: "none",
-        },
-        repositories: [
-          {
-            id: "expert-mesh",
-            name: "ExpertMesh",
-            cloneUrl: "https://github.com/example/expert-mesh.git",
-            defaultBranch: "main",
-          },
-        ],
       },
-      {
-        workspaceRoot: workspace,
-      },
-    ),
-  ],
+    ],
+  }),
+  pluginSources: ["/path/to/code-repository-manager"],
 });
 ```
+
+If `plugin.json` declares required `requires_env` entries and the host environment is
+missing them, the loader records a `pluginLoadIssues` entry and skips the plugin.
+Secret values should be marked with `"secret": true`.
+
+This plugin reserves the following environment variable namespace:
+
+```text
+EXPERTMESH_PLUGIN_CODE_REPOSITORY_MANAGER_GIT_TOKEN
+EXPERTMESH_PLUGIN_CODE_REPOSITORY_MANAGER_GIT_USERNAME
+EXPERTMESH_PLUGIN_CODE_REPOSITORY_MANAGER_SSH_PRIVATE_KEY
+EXPERTMESH_PLUGIN_CODE_REPOSITORY_MANAGER_SSH_KNOWN_HOSTS
+```
+
+Repository lists are dynamic Agent data. Put them in the host Agent document
+`repositories.json`; if the document is missing, the plugin skips repository document
+injection. Repositories are cloned to `workspace/repos/<repository id>`.
 
 Run the repository example from the monorepo root:
 

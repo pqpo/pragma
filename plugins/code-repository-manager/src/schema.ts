@@ -32,7 +32,6 @@ export const CodeRepositorySchema = z.object({
   }),
   provider: z.enum(["github", "gitlab", "bitbucket", "generic"]).default("generic"),
   description: z.string().min(1).optional(),
-  workspacePath: z.string().min(1).optional(),
   allowedBranches: z.array(z.string().min(1).refine(isSafeBranchName)).optional(),
   shallowClone: z.boolean().default(true),
 });
@@ -45,7 +44,7 @@ export const CodeRepositoryManagerConfigSchema = z
       })
       .default({ mode: "model_decision" }),
     auth: CodeRepositoryAuthSchema.default({ strategy: "none" }),
-    repositories: z.array(CodeRepositorySchema).min(1),
+    repositories: z.array(CodeRepositorySchema).default([]),
   })
   .superRefine((config, context) => {
     const seenIds = new Set<string>();
@@ -82,10 +81,27 @@ export type CodeRepository = z.infer<typeof CodeRepositorySchema>;
 export type CodeRepositoryManagerConfig = z.infer<typeof CodeRepositoryManagerConfigSchema>;
 export type CodeRepositoryManagerConfigInput = z.input<typeof CodeRepositoryManagerConfigSchema>;
 
+export const CodeRepositoryManagerRepositoriesDocumentSchema = z.union([
+  z.array(CodeRepositorySchema),
+  z.object({
+    repositories: z.array(CodeRepositorySchema),
+  }),
+]);
+
+export type CodeRepositoryManagerRepositoriesDocument = z.infer<
+  typeof CodeRepositoryManagerRepositoriesDocumentSchema
+>;
+
 export function parseCodeRepositoryManagerConfig(
   input: CodeRepositoryManagerConfigInput,
 ): CodeRepositoryManagerConfig {
   return CodeRepositoryManagerConfigSchema.parse(input);
+}
+
+export function parseCodeRepositoryManagerRepositoriesDocument(input: unknown): readonly CodeRepository[] {
+  const document = CodeRepositoryManagerRepositoriesDocumentSchema.parse(input);
+
+  return Array.isArray(document) ? document : document.repositories;
 }
 
 function isSafeCloneUrl(value: string): boolean {

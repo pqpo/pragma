@@ -27,16 +27,7 @@ describe("Git workspace path resolution", () => {
       resolveRepositoryWorkspacePath("/tmp/expertmesh", {
         id: "repo",
       }),
-    ).toBe("/tmp/expertmesh/.workspace/repos/repo");
-  });
-
-  it("rejects repository paths outside workspace", () => {
-    expect(() =>
-      resolveRepositoryWorkspacePath("/tmp/expertmesh", {
-        id: "repo",
-        workspacePath: "../outside",
-      }),
-    ).toThrow("must stay inside workspace");
+    ).toBe("/tmp/expertmesh/repos/repo");
   });
 
   it("rejects existing repository paths that resolve outside workspace", async () => {
@@ -56,7 +47,6 @@ describe("Git workspace path resolution", () => {
           name: "Repo",
           cloneUrl: "https://github.com/example/repo.git",
           defaultBranch: "main",
-          workspacePath: "repos/repo",
         },
       ],
     });
@@ -84,7 +74,6 @@ describe("Git workspace path resolution", () => {
           name: "Repo",
           cloneUrl: "https://github.com/example/repo.git",
           defaultBranch: "main",
-          workspacePath: "repos/repo",
         },
       ],
     });
@@ -116,7 +105,6 @@ describe("Git workspace path resolution", () => {
           name: "Repo",
           cloneUrl: "https://github.com/example/repo.git",
           defaultBranch: "main",
-          workspacePath: "repos/repo",
         },
       ],
     });

@@ -5,6 +5,7 @@ export * from "./documents/document-tools.ts";
 export * from "./documents/file-system-document-store.ts";
 export * from "./documents/in-memory-document-store.ts";
 export * from "./plugins/expert-agent-plugin.ts";
+export * from "./plugins/plugin-loader.ts";
 export * from "./runtime/agent-lifecycle.ts";
 export * from "./runtime/async-push-queue.ts";
 export * from "./runtime/run-context.ts";

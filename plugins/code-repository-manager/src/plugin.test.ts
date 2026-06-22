@@ -1,43 +1,24 @@
 import { describe, expect, it } from "vitest";
 
-import { ExpertAgent } from "@expertmesh/agent-core";
+import { ExpertAgent, createInMemoryDocumentStore } from "@expertmesh/agent-core";
 import { readExpertAgentPluginManifest } from "@expertmesh/agent-core";
 
 import { CODE_REPOSITORY_DOCUMENT_ID } from "./document.ts";
-import { createCodeRepositoryManagerPlugin } from "./plugin.ts";
+import codeRepositoryManagerPlugin from "./plugin.ts";
 import { parseCodeRepositoryManagerConfig } from "./schema.ts";
 
 describe("Code Repository Manager plugin", () => {
   it("reads plugin metadata from plugin.json at runtime", () => {
     const manifest = readExpertAgentPluginManifest(new URL("../plugin.json", import.meta.url));
-    const plugin = createCodeRepositoryManagerPlugin(
-      {
-        auth: {
-          strategy: "none",
-        },
-        repositories: [
-          {
-            id: "expert-mesh",
-            name: "ExpertMesh",
-            cloneUrl: "https://github.com/example/expert-mesh.git",
-            defaultBranch: "main",
-          },
-        ],
-      },
-      {
-        workspaceRoot: "/tmp/expertmesh",
-        prepareOnSessionCreate: false,
-      },
-    );
 
-    expect(plugin).toMatchObject({
+    expect(codeRepositoryManagerPlugin).toMatchObject({
       id: manifest.id,
       name: manifest.name,
       description: manifest.description,
       version: manifest.version,
       tags: manifest.tags,
     });
-    expect(plugin.manifest).toEqual(manifest);
+    expect(codeRepositoryManagerPlugin.manifest).toEqual(manifest);
   });
 
   it("injects repository metadata as a model-decision document by default", async () => {
@@ -50,41 +31,41 @@ describe("Code Repository Manager plugin", () => {
       version: "0.0.0",
       scope: "test",
       workspace: "/tmp/expertmesh",
-      plugins: [
-        createCodeRepositoryManagerPlugin(
+      documents: createInMemoryDocumentStore({
+        documents: [
           {
-            auth: {
-              strategy: "none",
+            id: "repositories.json",
+            content: JSON.stringify({
+              repositories: [
+                {
+                  id: "expert-mesh",
+                  name: "ExpertMesh",
+                  cloneUrl: "https://github.com/example/expert-mesh.git",
+                  defaultBranch: "main",
+                },
+              ],
+            }),
+            metadata: {
+              trigger: "manual",
             },
-            repositories: [
-              {
-                id: "expert-mesh",
-                name: "ExpertMesh",
-                cloneUrl: "https://github.com/example/expert-mesh.git",
-                defaultBranch: "main",
-              },
-            ],
           },
-          {
-            workspaceRoot: "/tmp/expertmesh",
-            prepareOnSessionCreate: false,
-          },
-        ),
-      ],
+        ],
+      }),
+      installedPluginEntries: [codeRepositoryManagerPlugin],
     });
 
     await expect(agent.listDocuments()).resolves.toMatchObject({
       ok: true,
-      value: [
-        {
+      value: expect.arrayContaining([
+        expect.objectContaining({
           id: `code-repository-manager/${CODE_REPOSITORY_DOCUMENT_ID}`,
-          metadata: {
+          metadata: expect.objectContaining({
             trigger: "model_decision",
             trustLevel: "external",
             sensitivity: "internal",
-          },
-        },
-      ],
+          }),
+        }),
+      ]),
     });
 
     await expect(
@@ -99,28 +80,31 @@ describe("Code Repository Manager plugin", () => {
     });
   });
 
-  it("exposes prepare and ensure repository tools", () => {
-    const plugin = createCodeRepositoryManagerPlugin(
-      {
-        auth: {
-          strategy: "none",
-        },
-        repositories: [
-          {
-            id: "expert-mesh",
-            name: "ExpertMesh",
-            cloneUrl: "https://github.com/example/expert-mesh.git",
-            defaultBranch: "main",
-          },
-        ],
-      },
-      {
-        workspaceRoot: "/tmp/expertmesh",
-        prepareOnSessionCreate: false,
-      },
-    );
+  it("skips repository documents when repositories.json is not configured", async () => {
+    const agent = new ExpertAgent({
+      schemaVersion: "expertmesh.expert/v1",
+      id: "repo-agent",
+      displayName: "Repo Agent",
+      description: "Test agent",
+      tags: ["test"],
+      version: "0.0.0",
+      scope: "test",
+      workspace: "/tmp/expertmesh",
+      installedPluginEntries: [codeRepositoryManagerPlugin],
+    });
 
-    const contributions = plugin.setup();
+    await expect(agent.listDocuments()).resolves.toMatchObject({
+      ok: true,
+      value: [],
+    });
+  });
+
+  it("exposes prepare and ensure repository tools", () => {
+    const contributions = codeRepositoryManagerPlugin.setup({
+      host: {},
+      workspaceRoot: "/tmp/expertmesh",
+      env: process.env,
+    });
 
     expect(contributions.tools?.map((tool) => tool.name)).toEqual([
       "code_repository_manager_prepare_git",

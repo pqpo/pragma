@@ -47,6 +47,15 @@ const ExpertAgentPluginCapabilitySchema = z
   })
   .passthrough();
 
+const ExpertAgentPluginRequiredEnvironmentSchema = z
+  .object({
+    name: z.string().min(1),
+    description: z.string().min(1).optional(),
+    required: z.boolean().default(true),
+    secret: z.boolean().default(false),
+  })
+  .passthrough();
+
 const ExpertAgentPluginManifestSchema = z
   .object({
     schemaVersion: z.literal("expertmesh.plugin/v1"),
@@ -62,6 +71,7 @@ const ExpertAgentPluginManifestSchema = z
       })
       .passthrough(),
     capabilities: z.array(ExpertAgentPluginCapabilitySchema).default([]),
+    requires_env: z.array(ExpertAgentPluginRequiredEnvironmentSchema).default([]),
   })
   .passthrough();
 
@@ -118,6 +128,13 @@ export interface ExpertAgentPluginToolCalledContext extends ExpertAgentPluginToo
   readonly error?: unknown;
 }
 
+export interface ExpertAgentPluginSetupContext {
+  readonly host: ExpertAgentPluginContributions;
+  readonly hostDocuments?: ExpertAgentDocumentStore | undefined;
+  readonly workspaceRoot: string;
+  readonly env: NodeJS.ProcessEnv;
+}
+
 export interface ExpertAgentPluginHooks {
   readonly beforeSessionCreate?:
     | ((context: ExpertAgentPluginSessionCreateContext) => MaybePromise<void>)
@@ -161,11 +178,11 @@ export interface ExpertAgentPluginContributions {
 
 export interface ExpertAgentPluginEntry extends ExpertAgentPluginMetadata {
   readonly manifest: ExpertAgentPluginManifest;
-  readonly setup: () => ExpertAgentPluginContributions;
+  readonly setup: (context: ExpertAgentPluginSetupContext) => ExpertAgentPluginContributions;
 }
 
 export interface DefineExpertAgentPluginEntryOptions {
-  readonly setup: () => ExpertAgentPluginContributions;
+  readonly setup: (context: ExpertAgentPluginSetupContext) => ExpertAgentPluginContributions;
 }
 
 export interface ResolvedExpertAgentPluginContributions {
@@ -180,7 +197,9 @@ export interface ResolvedExpertAgentPluginContributions {
 
 export interface ResolveExpertAgentPluginsOptions {
   readonly host?: ExpertAgentPluginContributions | undefined;
-  readonly plugins?: readonly ExpertAgentPluginEntry[] | undefined;
+  readonly pluginEntries?: readonly ExpertAgentPluginEntry[] | undefined;
+  readonly workspaceRoot?: string | undefined;
+  readonly env?: NodeJS.ProcessEnv | undefined;
 }
 
 interface ExpertAgentDocumentStoreSource {
@@ -200,7 +219,7 @@ export function definePluginEntry(
     ...(manifest.version === undefined ? {} : { version: manifest.version }),
     ...(manifest.tags === undefined ? {} : { tags: manifest.tags }),
     manifest,
-    setup: options.setup,
+    setup: (context) => options.setup(context),
   };
 }
 
@@ -222,12 +241,19 @@ export function readExpertAgentPluginManifest(
 export function resolveExpertAgentPlugins(
   options: ResolveExpertAgentPluginsOptions,
 ): ResolvedExpertAgentPluginContributions {
-  assertUniquePluginIds(options.plugins ?? []);
-  const plugins = (options.plugins ?? []).map((plugin) => ({
+  assertUniquePluginIds(options.pluginEntries ?? []);
+  const host = options.host ?? {};
+  const context: ExpertAgentPluginSetupContext = {
+    host,
+    hostDocuments: host.documents === undefined ? undefined : toDocumentStore(host.documents),
+    workspaceRoot: options.workspaceRoot ?? "",
+    env: options.env ?? process.env,
+  };
+  const pluginEntries = (options.pluginEntries ?? []).map((plugin) => ({
     plugin,
-    contributions: plugin.setup(),
+    contributions: plugin.setup(context),
   }));
-  const contributions = [options.host, ...plugins.map((plugin) => plugin.contributions)].filter(
+  const contributions = [options.host, ...pluginEntries.map((plugin) => plugin.contributions)].filter(
     (contribution): contribution is ExpertAgentPluginContributions => contribution !== undefined,
   );
 
@@ -235,7 +261,7 @@ export function resolveExpertAgentPlugins(
     mcp: mergeMcpConfigs(contributions.map((contribution) => contribution.mcp)),
     skills: mergeSkillsConfigs(contributions.map((contribution) => contribution.skills)),
     models: mergeModelsConfigs(contributions.map((contribution) => contribution.models)),
-    documents: mergeDocumentContributions(options.host?.documents, plugins),
+    documents: mergeDocumentContributions(options.host?.documents, pluginEntries),
     subAgents: mergeSubAgentRegistries(contributions.map((contribution) => contribution.subAgents)),
     tools: mergeManagedTools(contributions.map((contribution) => contribution.tools)),
     hooks: mergePluginHooks(contributions.map((contribution) => contribution.hooks)),
@@ -305,14 +331,14 @@ function mergeModelsConfigs(
 
 function mergeDocumentContributions(
   hostDocuments: ExpertAgentPluginDocumentContribution | undefined,
-  plugins: readonly {
+  pluginEntries: readonly {
     readonly plugin: ExpertAgentPluginEntry;
     readonly contributions: ExpertAgentPluginContributions;
   }[],
 ): ExpertAgentDocumentStore | undefined {
   const sources: ExpertAgentDocumentStoreSource[] = [
     ...(hostDocuments === undefined ? [] : [{ store: toDocumentStore(hostDocuments) }]),
-    ...plugins.flatMap(({ plugin, contributions }) =>
+    ...pluginEntries.flatMap(({ plugin, contributions }) =>
       contributions.documents === undefined
         ? []
         : [
@@ -727,10 +753,10 @@ function dedupeStrings(values: readonly string[]): readonly string[] {
   return [...new Set(values)];
 }
 
-function assertUniquePluginIds(plugins: readonly ExpertAgentPluginEntry[]): void {
+function assertUniquePluginIds(pluginEntries: readonly ExpertAgentPluginEntry[]): void {
   const seen = new Set<string>();
 
-  for (const plugin of plugins) {
+  for (const plugin of pluginEntries) {
     if (plugin.id.length === 0 || plugin.id.includes("/")) {
       throw new Error(
         `ExpertAgent plugin id must be non-empty and must not contain "/": ${plugin.id}`,

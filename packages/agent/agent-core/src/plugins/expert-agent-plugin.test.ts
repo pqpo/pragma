@@ -68,7 +68,7 @@ describe("ExpertAgent plugins", () => {
           },
         ],
       }),
-      plugins: [documentPlugin, otherDocumentPlugin],
+      installedPluginEntries: [documentPlugin, otherDocumentPlugin],
     });
 
     await expect(agent.listDocuments()).resolves.toMatchObject({
@@ -130,7 +130,7 @@ describe("ExpertAgent plugins", () => {
           events.push("host");
         },
       },
-      plugins: [extensibilityPlugin],
+      installedPluginEntries: [extensibilityPlugin],
     });
 
     expect(agent.mcp?.mcpServers.pluginMcp?.name).toBe("Plugin MCP");
