@@ -60,6 +60,7 @@ const config = tseslint.config(
       "apps/worker/**/*.{ts,tsx}",
       "packages/server/**/*.{ts,tsx}",
       "packages/agent/**/*.{ts,tsx}",
+      "plugins/**/*.{ts,tsx}",
       "examples/**/*.{ts,tsx}",
     ],
     languageOptions: {

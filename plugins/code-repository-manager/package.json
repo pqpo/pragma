@@ -1,13 +1,15 @@
 {
-  "name": "@expertmesh/examples",
+  "name": "@expertmesh/plugin-code-repository-manager",
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
   "scripts": {
-    "start": "pnpm start:basic",
-    "start:basic": "tsx src/run-expert-agent.ts",
-    "start:code-repositories": "tsx src/plugins/run-code-repository-manager-plugin.ts",
-    "start:workspace-documents": "tsx src/run-workspace-document-agent.ts",
     "build": "tsc -p tsconfig.build.json",
     "lint": "eslint src",
     "typecheck": "tsc --noEmit",
@@ -16,15 +18,11 @@
   },
   "dependencies": {
     "@expertmesh/agent-core": "workspace:*",
-    "@expertmesh/agent-runtime": "workspace:*",
-    "@expertmesh/plugin-code-repository-manager": "workspace:*",
-    "cac": "^7.0.0",
-    "dotenv": "latest"
+    "zod": "latest"
   },
   "devDependencies": {
     "@expertmesh/tsconfig": "workspace:*",
     "@types/node": "latest",
-    "tsx": "latest",
     "typescript": "latest",
     "vitest": "latest"
   }
