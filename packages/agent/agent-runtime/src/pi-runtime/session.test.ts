@@ -152,6 +152,86 @@ describe("createPiRuntimeSession", () => {
 
     expect(piSession.setModel).toHaveBeenCalledWith(model);
   });
+
+  it("exposes runtime-independent message history as a readonly snapshot", () => {
+    const piSession = createFakeAgentSession(["done"]);
+    const messages = [
+      {
+        role: "user",
+        content: "Summarize input",
+        timestamp: 1,
+      },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "done" }],
+        api: "openai-responses",
+        provider: "openai",
+        model: "gpt-4o",
+        usage: {
+          input: 1,
+          output: 1,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens: 2,
+          cost: {
+            input: 0,
+            output: 0,
+            cacheRead: 0,
+            cacheWrite: 0,
+            total: 0,
+          },
+        },
+        stopReason: "stop",
+        timestamp: 2,
+      },
+      {
+        role: "toolResult",
+        toolCallId: "tool-call-1",
+        toolName: "read",
+        content: [{ type: "text", text: "file contents" }],
+        details: { path: "README.md" },
+        isError: false,
+        timestamp: 3,
+      },
+      {
+        role: "custom",
+        customType: "notice",
+        content: "Queued context",
+        display: true,
+        details: { source: "test" },
+        timestamp: 4,
+      },
+    ];
+    setFakeAgentSessionMessages(piSession, messages);
+    const runtimeSession = createTestRuntimeSession(piSession);
+
+    const firstRead = runtimeSession.messages();
+    const secondRead = runtimeSession.messages();
+
+    expect(firstRead).toEqual(messages);
+    expect(firstRead).not.toBe(secondRead);
+  });
+
+  it("preserves unsupported runtime messages as hidden platform custom messages", () => {
+    const piSession = createFakeAgentSession(["done"]);
+    const runtimeOnlyMessage = {
+      role: "runtimeTrace",
+      traceId: "trace-1",
+      timestamp: 1,
+    };
+    setFakeAgentSessionMessages(piSession, [runtimeOnlyMessage]);
+    const runtimeSession = createTestRuntimeSession(piSession);
+
+    expect(runtimeSession.messages()).toEqual([
+      expect.objectContaining({
+        role: "custom",
+        customType: "pi.runtimeTrace",
+        content: "Unsupported PI runtime message role: runtimeTrace",
+        display: false,
+        details: runtimeOnlyMessage,
+      }),
+    ]);
+  });
 });
 
 function createTestRuntimeSession(
@@ -202,10 +282,17 @@ function createTestAgent(): ExpertAgent {
 function createFakeAgentSession(texts: readonly string[]): AgentSession {
   let subscriber: ((event: unknown) => void) | undefined;
   let promptCount = 0;
+  let messages: unknown[] = [];
 
   return {
     sessionId: "pi-session-1",
     sessionFile: undefined,
+    get messages() {
+      return messages;
+    },
+    set messages(nextMessages: unknown[]) {
+      messages = nextMessages;
+    },
     subscribe(callback: (event: unknown) => void) {
       subscriber = callback;
       return () => {
@@ -225,6 +312,10 @@ function createFakeAgentSession(texts: readonly string[]): AgentSession {
     }),
     setModel: vi.fn(),
   } as unknown as AgentSession;
+}
+
+function setFakeAgentSessionMessages(piSession: AgentSession, messages: readonly unknown[]): void {
+  (piSession as { messages: unknown[] }).messages = [...messages];
 }
 
 function createFakeModelRegistry(models: readonly unknown[]) {

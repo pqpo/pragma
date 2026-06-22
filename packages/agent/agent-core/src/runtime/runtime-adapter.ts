@@ -3,6 +3,7 @@ import type {
   IExpertAgentModelProviderConfig,
   IExpertAgentRunResult,
 } from "../agent/expert-agent.ts";
+import type { AgentMessage } from "@expertmesh/contracts";
 import type { z } from "zod";
 import type { RunState, SessionState } from "./agent-lifecycle.ts";
 import type { ExpertAgentRunContext } from "./run-context.ts";
@@ -66,6 +67,7 @@ export interface RuntimeRunResult<TOutput = unknown> {
 
 export interface RuntimeAgentSession {
   readonly info: () => RuntimeSessionInfo;
+  readonly messages: () => readonly AgentMessage[];
   readonly submit: <TSubmitOutput = string>(
     submission: RuntimeSubmitRequest<TSubmitOutput>,
   ) => Promise<RuntimeRunResult<TSubmitOutput>>;

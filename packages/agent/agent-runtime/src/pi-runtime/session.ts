@@ -8,13 +8,11 @@ import type {
   RuntimeSessionInfo,
   RuntimeSubmitRequest,
 } from "@expertmesh/agent-core";
-import {
-  createRuntimeEventDispatcher,
-  dispatchExpertAgentHook,
-} from "@expertmesh/agent-core";
+import { createRuntimeEventDispatcher, dispatchExpertAgentHook } from "@expertmesh/agent-core";
 import { randomUUID } from "node:crypto";
 
 import { readAssistantTextDelta, readToolExecutionEvent } from "./session-events.ts";
+import { convertPiAgentMessages } from "./session-messages.ts";
 import {
   createStreamEvent,
   createToolStreamEvents,
@@ -43,6 +41,7 @@ export function createPiRuntimeSession(
 ): RuntimeAgentSession {
   return {
     info: () => createSessionInfo(info, lifecycle),
+    messages: () => convertPiAgentMessages(session.messages),
     async submit<TSubmitOutput = string>(submission: RuntimeSubmitRequest<TSubmitOutput>) {
       return await lifecycle.enqueue(async ({ signal }) => {
         const runId = submission.runId ?? randomUUID();
@@ -302,7 +301,9 @@ function createInitialPrompt(
 Return the final answer as valid JSON only. Do not include Markdown fences, prose, comments, or any characters before or after the JSON value. The JSON value must satisfy the requested output schema.`;
 }
 
-function createOutputRetryPrompt(parseResult: ParseRuntimeOutputResult<unknown> | undefined): string {
+function createOutputRetryPrompt(
+  parseResult: ParseRuntimeOutputResult<unknown> | undefined,
+): string {
   const message =
     parseResult !== undefined && !parseResult.ok
       ? parseResult.error.message
@@ -336,9 +337,9 @@ function toRuntimeOutputParseError(error: unknown, text: string): Error {
   });
 }
 
-function tryParseJsonLike(text: string):
-  | { readonly ok: true; readonly value: unknown }
-  | { readonly ok: false } {
+function tryParseJsonLike(
+  text: string,
+): { readonly ok: true; readonly value: unknown } | { readonly ok: false } {
   const candidates = createJsonCandidates(text);
 
   for (const candidate of candidates) {
@@ -437,10 +438,7 @@ function readBalancedJsonFrom(text: string, start: number): string | undefined {
     }
 
     const opening = stack.pop();
-    if (
-      (char === "}" && opening !== "{") ||
-      (char === "]" && opening !== "[")
-    ) {
+    if ((char === "}" && opening !== "{") || (char === "]" && opening !== "[")) {
       return undefined;
     }
 

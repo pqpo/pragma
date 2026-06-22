@@ -20,6 +20,7 @@
     "@cfworker/json-schema": "^4.1.1",
     "@earendil-works/pi-coding-agent": "0.79.8",
     "@expertmesh/agent-core": "workspace:*",
+    "@expertmesh/contracts": "workspace:*",
     "@modelcontextprotocol/client": "2.0.0-alpha.2",
     "@modelcontextprotocol/server": "2.0.0-alpha.2"
   },

@@ -211,6 +211,9 @@ importers:
       '@expertmesh/agent-core':
         specifier: workspace:*
         version: link:../agent-core
+      '@expertmesh/contracts':
+        specifier: workspace:*
+        version: link:../../shared/contracts
       '@modelcontextprotocol/client':
         specifier: 2.0.0-alpha.2
         version: 2.0.0-alpha.2(@cfworker/json-schema@4.1.1)
