@@ -19,7 +19,11 @@ describe("ExpertAgent plugins", () => {
         documents: [
           {
             id: "host.md",
-            content: "---\ndescription: Host doc\ntrigger: always_on\n---\nHost content",
+            content: "Host content",
+            metadata: {
+              description: "Host doc",
+              trigger: "always_on",
+            },
           },
         ],
       }),
@@ -32,8 +36,11 @@ describe("ExpertAgent plugins", () => {
             documents: [
               {
                 id: "plugin.md",
-                content:
-                  "---\ndescription: Plugin doc\ntrigger: model_decision\n---\nPlugin content",
+                content: "Plugin content",
+                metadata: {
+                  description: "Plugin doc",
+                  trigger: "model_decision",
+                },
               },
             ],
           }),
@@ -46,8 +53,11 @@ describe("ExpertAgent plugins", () => {
             documents: [
               {
                 id: "plugin.md",
-                content:
-                  "---\ndescription: Other plugin doc\ntrigger: model_decision\n---\nOther plugin content",
+                content: "Other plugin content",
+                metadata: {
+                  description: "Other plugin doc",
+                  trigger: "model_decision",
+                },
               },
             ],
           }),
@@ -55,7 +65,7 @@ describe("ExpertAgent plugins", () => {
       ],
     });
 
-    await expect(agent.listDocuments()).resolves.toEqual({
+    await expect(agent.listDocuments()).resolves.toMatchObject({
       ok: true,
       value: [
         {

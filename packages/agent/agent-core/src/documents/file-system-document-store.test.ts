@@ -1,12 +1,10 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import type {
-  ExpertAgentDocumentReadInput,
-} from "./document-indexer.ts";
+import type { ExpertAgentDocumentReadInput } from "./document-indexer.ts";
 import { AGENTS_DOCUMENT_ID, DocumentIndexer, ok } from "./document-indexer.ts";
 import { ExpertAgent } from "../agent/expert-agent.ts";
 import type { FileSystemDocumentStoreCommandRunner } from "./file-system-document-store.ts";
@@ -38,12 +36,14 @@ describe("FileSystemDocumentStore", () => {
 
     const context = await agent.buildContext();
 
-    expect(context.documents).toContainEqual(expect.objectContaining({
-      id: AGENTS_DOCUMENT_ID,
-      metadata: {
-        trigger: "always_on",
-      },
-    }));
+    expect(context.documents).toContainEqual(
+      expect.objectContaining({
+        id: AGENTS_DOCUMENT_ID,
+        metadata: {
+          trigger: "always_on",
+        },
+      }),
+    );
     expect(context.systemPrompt).toContain("Always-on reference documents");
     expect(context.systemPrompt).toContain(AGENTS_DOCUMENT_ID);
     expect(context.systemPrompt).toContain("Use direct instructions.");
@@ -68,6 +68,91 @@ describe("FileSystemDocumentStore", () => {
         content: "Plain instructions.",
       },
     });
+  });
+
+  it("reads markdown metadata in the file store and applies ranges to content only", async () => {
+    const rootDir = await createTempDir();
+    const store = new FileSystemDocumentStore({ rootDir });
+    await writeFile(
+      join(rootDir, "guide.md"),
+      "---\ndescription: Guide\ntrigger: always_on\n---\nAlpha Beta Gamma",
+      "utf8",
+    );
+
+    await expect(
+      store.readDocument({
+        id: "guide.md",
+        start: 6,
+        offset: 4,
+      }),
+    ).resolves.toMatchObject(
+      ok({
+        id: "guide.md",
+        content: "Beta",
+        metadata: {
+          description: "Guide",
+          trigger: "always_on",
+        },
+        contentRange: {
+          requestedStartOffset: 6,
+          startOffset: 6,
+          endOffset: 10,
+          truncated: true,
+          sizeBytes: 16,
+          maxBytes: 4,
+        },
+      }),
+    );
+  });
+
+  it("writes markdown metadata in the file store", async () => {
+    const rootDir = await createTempDir();
+    const store = new FileSystemDocumentStore({ rootDir });
+
+    const created = await store.createDocument({
+      id: "guide.md",
+      content: "Guide content.",
+      metadata: {
+        description: "Guide",
+        trigger: "manual",
+      },
+    });
+
+    expect(created).toMatchObject(
+      ok({
+        id: "guide.md",
+        content: "Guide content.",
+        metadata: {
+          description: "Guide",
+          trigger: "manual",
+        },
+      }),
+    );
+    await expect(readFile(join(rootDir, "guide.md"), "utf8")).resolves.toBe(
+      "---\ndescription: Guide\ntrigger: manual\n---\nGuide content.",
+    );
+    expect(created.ok).toBe(true);
+
+    if (!created.ok) {
+      return;
+    }
+
+    await expect(
+      store.updateDocument({
+        id: "guide.md",
+        content: "Updated guide content.",
+        expectedRevision: created.value.revision,
+      }),
+    ).resolves.toMatchObject(
+      ok({
+        id: "guide.md",
+        content: "Updated guide content.",
+        metadata: {
+          description: "Guide",
+          trigger: "manual",
+        },
+      }),
+    );
   });
 
   it("searches markdown documents with context lines", async () => {
@@ -144,13 +229,23 @@ describe("FileSystemDocumentStore", () => {
 describe("DocumentIndexer", () => {
   it("creates an in-memory document store from document settings", async () => {
     const store = createInMemoryDocumentStore({
-      documents: {
-        "alpha.md": "---\ndescription: Alpha\ntrigger: manual\n---\nAlpha content.",
-        "beta.md": "Beta needle.",
-      },
+      documents: [
+        {
+          id: "alpha.md",
+          content: "Alpha content.",
+          metadata: {
+            description: "Alpha",
+            trigger: "manual",
+          },
+        },
+        {
+          id: "beta.md",
+          content: "Beta needle.",
+        },
+      ],
     });
 
-    await expect(store.listDocuments()).resolves.toEqual(
+    await expect(store.listDocuments()).resolves.toMatchObject(
       ok([
         {
           id: "alpha.md",
@@ -189,18 +284,17 @@ describe("DocumentIndexer", () => {
       documents: [
         {
           id: AGENTS_DOCUMENT_ID,
-          content:
-            "---\n" +
-            'description: "Store metadata should be preserved."\n' +
-            "trigger: manual\n" +
-            "---\n" +
-            "Shared instructions.",
+          content: "Shared instructions.",
+          metadata: {
+            description: "Store metadata should be preserved.",
+            trigger: "manual",
+          },
         },
       ],
     });
     const indexer = new DocumentIndexer({ store });
 
-    await expect(indexer.index()).resolves.toEqual(
+    await expect(indexer.index()).resolves.toMatchObject(
       ok([
         {
           id: AGENTS_DOCUMENT_ID,
@@ -229,13 +323,16 @@ describe("DocumentIndexer", () => {
       documents: [
         {
           id: "indexed.md",
-          content: "---\ntrigger: manual\n---\nIndexed content.",
+          content: "Indexed content.",
+          metadata: {
+            trigger: "manual",
+          },
         },
       ],
     });
     const indexer = new DocumentIndexer({ store });
 
-    await expect(indexer.index()).resolves.toEqual(
+    await expect(indexer.index()).resolves.toMatchObject(
       ok([
         {
           id: "indexed.md",
@@ -253,7 +350,10 @@ describe("DocumentIndexer", () => {
       documents: [
         {
           id: "instructions.md",
-          content: "---\ntrigger: always_on\n---\nAlpha Beta Gamma",
+          content: "Alpha " + "Gamma ".repeat(20),
+          metadata: {
+            trigger: "always_on",
+          },
         },
       ],
     });
@@ -279,13 +379,21 @@ describe("DocumentIndexer", () => {
     };
 
     const context = await agent.buildContext(runContext, {
-      characterBudget: 5,
+      characterBudget: 1_000,
+      documentReadByteBudget: 32,
     });
 
     expect(store.lastListContext).toEqual(runContext);
     expect(store.lastReadContext).toEqual(runContext);
+    expect(store.lastReadInput).toMatchObject({
+      id: "instructions.md",
+      offset: 32,
+    });
     expect(context.systemPrompt).toContain("Alpha");
-    expect(context.systemPrompt).not.toContain("Beta");
+    expect(context.systemPrompt).toContain("Document truncated");
+    expect(context.systemPrompt).toContain("lines 1-1");
+    expect(context.systemPrompt).toContain("Continue with read_expert_document start=32");
+    expect(context.systemPrompt).toContain("offset<=32 bytes");
     expect(context.snapshot).toMatchObject({
       releaseDigest: "context-agent@1.2.3",
       truncationReason: "always_on_document_budget_exceeded",
@@ -293,10 +401,61 @@ describe("DocumentIndexer", () => {
         {
           documentId: "instructions.md",
           startOffset: 0,
-          endOffset: 5,
+          endOffset: 32,
           truncated: true,
         },
       ],
+    });
+  });
+
+  it("downgrades always-on documents to model decision until context fits", async () => {
+    const store = new CountingDocumentStore({
+      documents: [
+        {
+          id: "small.md",
+          content: "Keep",
+          metadata: {
+            trigger: "always_on",
+          },
+        },
+        {
+          id: "large.md",
+          content: "Drop this large always-on content. ".repeat(80),
+          metadata: {
+            trigger: "always_on",
+          },
+        },
+      ],
+    });
+    const agent = new ExpertAgent({
+      schemaVersion: "expertmesh.expert/v1",
+      id: "budget-agent",
+      displayName: "Budget Agent",
+      description: "Tests context budget downgrades.",
+      tags: [],
+      version: "1.0.0",
+      scope: "test",
+      workspace: "/tmp/expertmesh-budget-test",
+      documents: store,
+    });
+
+    const context = await agent.buildContext(undefined, {
+      characterBudget: 1_000,
+    });
+
+    expect(context.systemPrompt).toContain("Keep");
+    expect(context.systemPrompt).not.toContain("Drop this large always-on content.");
+    expect(context.documents).toContainEqual(
+      expect.objectContaining({
+        id: "large.md",
+        metadata: expect.objectContaining({
+          trigger: "model_decision",
+        }),
+      }),
+    );
+    expect(context.snapshot).toMatchObject({
+      downgradedAlwaysOnDocuments: ["large.md"],
+      truncationReason: "always_on_document_budget_exceeded",
     });
   });
 
@@ -305,7 +464,10 @@ describe("DocumentIndexer", () => {
       documents: [
         {
           id: AGENTS_DOCUMENT_ID,
-          content: "---\ntrigger: manual\n---\nOld instructions.",
+          content: "Old instructions.",
+          metadata: {
+            trigger: "manual",
+          },
         },
       ],
     });
@@ -335,12 +497,16 @@ describe("DocumentIndexer", () => {
     });
   });
 
-  it("updates markdown frontmatter outside the document store", async () => {
+  it("updates in-memory metadata without serializing frontmatter", async () => {
     const store = new InMemoryDocumentStore({
       documents: [
         {
           id: "guide.md",
-          content: "---\ndescription: Old guide\ntrigger: manual\n---\nOld content.",
+          content: "Old content.",
+          metadata: {
+            description: "Old guide",
+            trigger: "manual",
+          },
         },
       ],
     });
@@ -367,7 +533,11 @@ describe("DocumentIndexer", () => {
     );
     expect(store.documents.get("guide.md")).toMatchObject({
       id: "guide.md",
-      content: "---\ndescription: New guide\ntrigger: always_on\n---\nNew content.",
+      content: "New content.",
+      metadata: {
+        description: "New guide",
+        trigger: "always_on",
+      },
     });
   });
 
@@ -410,6 +580,172 @@ describe("DocumentIndexer", () => {
         code: "document_too_large",
       },
     });
+  });
+
+  it("does not enforce a framework document size limit when the store has no limit", async () => {
+    const store = new InMemoryDocumentStore();
+    const indexer = new DocumentIndexer({ store });
+
+    await expect(
+      indexer.create({
+        id: "large.md",
+        content: "large",
+      }),
+    ).resolves.toMatchObject(
+      ok({
+        id: "large.md",
+        content: "large",
+      }),
+    );
+  });
+
+  it("reads document byte ranges", async () => {
+    const store = new InMemoryDocumentStore({
+      documents: {
+        "guide.md": "Alpha Beta Gamma",
+      },
+    });
+    const indexer = new DocumentIndexer({ store });
+
+    await expect(
+      indexer.read({
+        id: "guide.md",
+        start: 6,
+        offset: 4,
+      }),
+    ).resolves.toMatchObject(
+      ok({
+        id: "guide.md",
+        content: "Beta",
+        contentRange: {
+          startOffset: 6,
+          endOffset: 10,
+          truncated: true,
+          sizeBytes: 16,
+          maxBytes: 4,
+          startLine: 1,
+          endLine: 1,
+          totalLines: 1,
+        },
+      }),
+    );
+  });
+
+  it("keeps ranged reads on valid UTF-8 boundaries", async () => {
+    const store = new InMemoryDocumentStore({
+      documents: {
+        "guide.md": "Alpha 你好 Gamma",
+      },
+    });
+    const indexer = new DocumentIndexer({ store });
+
+    await expect(
+      indexer.read({
+        id: "guide.md",
+        start: 6,
+        offset: 5,
+      }),
+    ).resolves.toMatchObject(
+      ok({
+        id: "guide.md",
+        content: "你",
+        contentRange: {
+          requestedStartOffset: 6,
+          startOffset: 6,
+          endOffset: 9,
+          nextStartOffset: 9,
+          truncated: true,
+        },
+      }),
+    );
+  });
+
+  it("preserves document metadata for partial reads", async () => {
+    const store = new InMemoryDocumentStore({
+      documents: [
+        {
+          id: "guide.md",
+          content: "Alpha Beta Gamma",
+          metadata: {
+            description: "Guide",
+            trigger: "always_on",
+          },
+        },
+      ],
+    });
+    const indexer = new DocumentIndexer({ store });
+
+    await expect(
+      indexer.read({
+        id: "guide.md",
+        start: 8,
+        offset: 5,
+      }),
+    ).resolves.toMatchObject(
+      ok({
+        id: "guide.md",
+        metadata: {
+          description: "Guide",
+          trigger: "always_on",
+        },
+      }),
+    );
+  });
+
+  it("limits read tool output by default", async () => {
+    const agent = new ExpertAgent({
+      schemaVersion: "expertmesh.expert/v1",
+      id: "tool-agent",
+      displayName: "Tool Agent",
+      description: "Tests document tools.",
+      tags: [],
+      version: "1.0.0",
+      scope: "test",
+      workspace: "/tmp/expertmesh-tool-test",
+      documents: new InMemoryDocumentStore({
+        documents: {
+          "guide.md": "Alpha Beta Gamma",
+        },
+      }),
+    });
+    const readTool = agent
+      .createDefaultTools({
+        readByteBudget: 5,
+        getContext: () => ({
+          source: {
+            type: "test",
+          },
+        }),
+      })
+      .find((tool) => tool.name === "read_expert_document");
+
+    const result = await readTool?.call(
+      {
+        id: "guide.md",
+      },
+      undefined,
+    );
+
+    expect(result).toMatchObject({
+      text: expect.stringContaining("Alpha"),
+      details: {
+        document: {
+          content: "Alpha",
+          contentRange: {
+            endOffset: 5,
+            truncated: true,
+            maxBytes: 5,
+            startLine: 1,
+            endLine: 1,
+            totalLines: 1,
+          },
+        },
+      },
+    });
+    expect(result?.text).toContain("truncationNotice");
+    expect(result?.text).toContain("16 total bytes");
+    expect(result?.text).toContain("lines 1-1");
+    expect(result?.text).toContain("Continue with start=5 and offset<=5 bytes");
   });
 
   it("searches documents through the store and normalizes result ordering", async () => {
@@ -459,6 +795,7 @@ class CountingDocumentStore extends InMemoryDocumentStore {
   readCount = 0;
   lastListContext: unknown;
   lastReadContext: unknown;
+  lastReadInput: ExpertAgentDocumentReadInput | undefined;
 
   override async listDocuments(input = {}) {
     this.lastListContext = "context" in input ? input.context : undefined;
@@ -468,6 +805,7 @@ class CountingDocumentStore extends InMemoryDocumentStore {
   override async readDocument(input: ExpertAgentDocumentReadInput) {
     this.readCount += 1;
     this.lastReadContext = input.context;
+    this.lastReadInput = input;
     return await super.readDocument(input);
   }
 }

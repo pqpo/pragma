@@ -33,6 +33,7 @@ export interface ExpertAgentDefaultTool {
 
 export interface CreateDocumentToolsOptions {
   readonly getContext?: (() => ExpertAgentRunContext | undefined) | undefined;
+  readonly readByteBudget?: number | undefined;
 }
 
 export interface ExpertAgentDocumentOperations {
@@ -84,17 +85,22 @@ export function createDocumentTools(
     {
       name: "read_expert_document",
       label: "Read expert document",
-      description: "Read an ExpertAgent document by document id.",
+      description: "Read an ExpertAgent document by document id, optionally as a byte range.",
       inputSchema: withContextSchema(
         {
           id: stringSchema("Document id."),
+          start: integerSchema("Zero-based UTF-8 byte offset to start reading from."),
+          offset: integerSchema("Maximum UTF-8 bytes to read from start."),
         },
         ["id"],
       ),
       call: async (args) => {
         const id = readStringParam(args, "id");
+        const requestedOffset = readOptionalNumberParam(args, "offset");
         const result = await documentOperations.readDocument({
           id,
+          start: readOptionalNumberParam(args, "start"),
+          offset: normalizeToolReadOffset(requestedOffset, options),
           context: readDocumentContext(args, options),
         });
 
@@ -359,6 +365,19 @@ function readOptionalBooleanParam(params: unknown, key: string): boolean | undef
   throw new Error(`Document tool parameter "${key}" must be a boolean when provided.`);
 }
 
+function normalizeToolReadOffset(
+  requestedOffset: number | undefined,
+  options: CreateDocumentToolsOptions,
+): number {
+  const budget = Math.max(1, Math.trunc(options.readByteBudget ?? 8_000));
+
+  if (requestedOffset === undefined) {
+    return budget;
+  }
+
+  return Math.min(Math.max(1, Math.trunc(requestedOffset)), budget);
+}
+
 function readMetadataParams(params: unknown): Partial<ExpertAgentDocumentMetadata> {
   const description = readOptionalStringParam(params, "description");
   const trigger = readOptionalTriggerParam(params);
@@ -468,12 +487,49 @@ function formatDocumentSummary(document: ExpertAgentDocumentSummary): string {
 function formatDocument(document: ExpertAgentDocument): string {
   return [
     formatDocumentSummary(document),
+    ...formatContentRange(document),
     "  content:",
     document.content
       .split("\n")
       .map((line) => `    ${line}`)
       .join("\n"),
   ].join("\n");
+}
+
+function formatContentRange(document: ExpertAgentDocument): readonly string[] {
+  if (document.contentRange === undefined) {
+    return [];
+  }
+
+  const byteTotal =
+    document.contentRange.sizeBytes === undefined
+      ? "unknown total bytes"
+      : `${document.contentRange.sizeBytes} total bytes`;
+  const lineTotal =
+    document.contentRange.totalLines === undefined
+      ? "unknown total lines"
+      : `${document.contentRange.totalLines} total lines`;
+  const lineRange =
+    document.contentRange.startLine === undefined || document.contentRange.endLine === undefined
+      ? "unknown lines"
+      : `lines ${document.contentRange.startLine}-${document.contentRange.endLine}`;
+  const lines = [
+    `  contentRange: requestedStart=${document.contentRange.requestedStartOffset}; bytes ${document.contentRange.startOffset}-${document.contentRange.endOffset}; nextStart=${document.contentRange.nextStartOffset}; ${lineRange}; ${byteTotal}; ${lineTotal}`,
+  ];
+
+  if (!document.contentRange.truncated) {
+    return lines;
+  }
+
+  const maxBytes =
+    document.contentRange.maxBytes === undefined
+      ? "the configured read budget"
+      : `${document.contentRange.maxBytes} bytes`;
+
+  return [
+    ...lines,
+    `  truncationNotice: This document output is truncated. Continue with start=${document.contentRange.nextStartOffset} and offset<=${maxBytes}.`,
+  ];
 }
 
 function formatDocumentSearchMatches(matches: readonly ExpertAgentDocumentSearchMatch[]): string {

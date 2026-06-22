@@ -8,9 +8,9 @@ import type {
 } from "../agent/expert-agent.ts";
 import type {
   ExpertAgentDocumentSearchMatch,
+  ExpertAgentDocumentSeed,
   ExpertAgentDocumentStore,
   ExpertAgentDocumentSummary,
-  ExpertAgentStoredDocument,
 } from "../documents/document-indexer.ts";
 import { error, ok } from "../documents/document-indexer.ts";
 import { createInMemoryDocumentStore } from "../documents/in-memory-document-store.ts";
@@ -36,7 +36,7 @@ export interface ExpertAgentPluginMetadata {
 
 export type ExpertAgentPluginDocumentContribution =
   | ExpertAgentDocumentStore
-  | readonly ExpertAgentStoredDocument[];
+  | readonly ExpertAgentDocumentSeed[];
 
 export interface ExpertAgentPluginSessionCreateContext {
   readonly agent: ExpertAgent;
@@ -572,10 +572,10 @@ function prefixDocumentSummary(
   };
 }
 
-function prefixStoredDocument(
+function prefixStoredDocument<TDocument extends { readonly id: string }>(
   namespace: string | undefined,
-  document: ExpertAgentStoredDocument,
-): ExpertAgentStoredDocument {
+  document: TDocument,
+): TDocument {
   return {
     ...document,
     id: prefixDocumentId(namespace, document.id),
@@ -594,7 +594,7 @@ function prefixDocumentSearchMatch(
 
 function isStoredDocumentArray(
   contribution: ExpertAgentPluginDocumentContribution,
-): contribution is readonly ExpertAgentStoredDocument[] {
+): contribution is readonly ExpertAgentDocumentSeed[] {
   return Array.isArray(contribution);
 }
 

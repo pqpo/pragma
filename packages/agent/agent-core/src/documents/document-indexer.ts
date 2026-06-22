@@ -1,9 +1,4 @@
-import { createRequire } from "node:module";
-
 import type { ExpertAgentRunContext } from "../runtime/run-context.ts";
-
-const require = createRequire(import.meta.url);
-const matter = require("gray-matter") as typeof import("gray-matter");
 
 export const AGENTS_DOCUMENT_ID = "AGENTS.md";
 
@@ -52,16 +47,44 @@ export interface ExpertAgentDocumentSummary {
   readonly sizeBytes?: number | undefined;
 }
 
+export interface ExpertAgentDocumentContentRange {
+  readonly requestedStartOffset: number;
+  readonly startOffset: number;
+  readonly endOffset: number;
+  readonly nextStartOffset: number;
+  readonly truncated: boolean;
+  readonly sizeBytes?: number | undefined;
+  readonly maxBytes?: number | undefined;
+  readonly startLine?: number | undefined;
+  readonly endLine?: number | undefined;
+  readonly totalLines?: number | undefined;
+}
+
 export interface ExpertAgentDocument extends ExpertAgentDocumentSummary {
   readonly content: string;
+  readonly contentRange?: ExpertAgentDocumentContentRange | undefined;
 }
 
 export interface ExpertAgentStoredDocument {
   readonly id: string;
   readonly content: string;
+  readonly metadata: ExpertAgentDocumentMetadata;
   readonly revision?: string | undefined;
   readonly etag?: string | undefined;
   readonly sizeBytes?: number | undefined;
+}
+
+export interface ExpertAgentDocumentSeed {
+  readonly id: string;
+  readonly content: string;
+  readonly metadata?: Partial<ExpertAgentDocumentMetadata> | undefined;
+  readonly revision?: string | undefined;
+  readonly etag?: string | undefined;
+  readonly sizeBytes?: number | undefined;
+}
+
+export interface ExpertAgentStoredDocumentReadResult extends ExpertAgentStoredDocument {
+  readonly contentRange: ExpertAgentDocumentContentRange;
 }
 
 export interface ExpertAgentDocumentCreateInput {
@@ -73,6 +96,8 @@ export interface ExpertAgentDocumentCreateInput {
 
 export interface ExpertAgentDocumentReadInput {
   readonly id: string;
+  readonly start?: number | undefined;
+  readonly offset?: number | undefined;
   readonly context?: ExpertAgentRunContext | undefined;
 }
 
@@ -113,12 +138,14 @@ export interface ExpertAgentDocumentSearchMatch {
 export interface ExpertAgentStoredDocumentCreateInput {
   readonly id: string;
   readonly content: string;
+  readonly metadata?: Partial<ExpertAgentDocumentMetadata> | undefined;
   readonly context?: ExpertAgentRunContext | undefined;
 }
 
 export interface ExpertAgentStoredDocumentUpdateInput {
   readonly id: string;
   readonly content?: string | undefined;
+  readonly metadata?: Partial<ExpertAgentDocumentMetadata> | undefined;
   readonly expectedRevision?: string | undefined;
   readonly expectedEtag?: string | undefined;
   readonly context?: ExpertAgentRunContext | undefined;
@@ -130,7 +157,7 @@ export interface ExpertAgentDocumentStore {
   ) => Promise<ExpertAgentDocumentResult<readonly ExpertAgentDocumentSummary[]>>;
   readonly readDocument: (
     input: ExpertAgentDocumentReadInput,
-  ) => Promise<ExpertAgentDocumentResult<ExpertAgentStoredDocument>>;
+  ) => Promise<ExpertAgentDocumentResult<ExpertAgentStoredDocumentReadResult>>;
   readonly createDocument: (
     input: ExpertAgentStoredDocumentCreateInput,
   ) => Promise<ExpertAgentDocumentResult<ExpertAgentStoredDocument>>;
@@ -183,13 +210,19 @@ export class DocumentIndexer {
       return error("store_unavailable", "ExpertAgent document store is not configured.");
     }
 
-    const result = await this.store.readDocument(input);
+    const normalizedInput = normalizeReadInput(input);
+
+    if (!normalizedInput.ok) {
+      return normalizedInput;
+    }
+
+    const result = await this.store.readDocument(normalizedInput.value);
 
     if (!result.ok) {
       return result;
     }
 
-    return ok(normalizeDocument(parseStoredDocument(result.value)));
+    return ok(normalizeDocument(result.value));
   }
 
   async create(
@@ -201,11 +234,8 @@ export class DocumentIndexer {
 
     const result = await this.store.createDocument({
       id: input.id,
-      content: serializeDocument({
-        id: input.id,
-        content: input.content,
-        metadata: normalizeCreateMetadata(input.metadata),
-      }),
+      content: input.content,
+      metadata: normalizeCreateMetadata(input.metadata),
       context: input.context,
     });
 
@@ -213,7 +243,7 @@ export class DocumentIndexer {
       return result;
     }
 
-    return ok(normalizeDocument(parseStoredDocument(result.value)));
+    return ok(normalizeDocument(result.value));
   }
 
   async update(
@@ -232,16 +262,11 @@ export class DocumentIndexer {
       return existing;
     }
 
-    const existingDocument = parseStoredDocument(existing.value);
-    const metadata = normalizeUpdateMetadata(input.id, existingDocument.metadata, input.metadata);
-    const document = normalizeDocument({
-      id: input.id,
-      content: input.content ?? existingDocument.content,
-      metadata,
-    });
+    const metadata = normalizeUpdateMetadata(input.id, existing.value.metadata, input.metadata);
     const result = await this.store.updateDocument({
       id: input.id,
-      content: serializeDocument(document),
+      content: input.content,
+      metadata,
       expectedRevision: input.expectedRevision,
       expectedEtag: input.expectedEtag,
       context: input.context,
@@ -251,7 +276,7 @@ export class DocumentIndexer {
       return result;
     }
 
-    return ok(normalizeDocument(parseStoredDocument(result.value)));
+    return ok(normalizeDocument(result.value));
   }
 
   async delete(
@@ -329,6 +354,9 @@ export function normalizeDocument(document: ExpertAgentDocument): ExpertAgentDoc
   return {
     ...normalizeDocumentSummary(document),
     content: document.content,
+    ...(document.contentRange === undefined
+      ? {}
+      : { contentRange: normalizeContentRange(document.contentRange) }),
   };
 }
 
@@ -448,6 +476,29 @@ export function normalizeSearchMatch(
   };
 }
 
+export function normalizeReadInput(
+  input: ExpertAgentDocumentReadInput,
+): ExpertAgentDocumentResult<ExpertAgentDocumentReadInput> {
+  const start = normalizeOptionalNonNegativeInteger(input.start, "start");
+
+  if (!start.ok) {
+    return start;
+  }
+
+  const offset = normalizeOptionalPositiveInteger(input.offset, "offset");
+
+  if (!offset.ok) {
+    return offset;
+  }
+
+  return ok({
+    id: input.id,
+    ...(start.value === undefined ? {} : { start: start.value }),
+    ...(offset.value === undefined ? {} : { offset: offset.value }),
+    ...(input.context === undefined ? {} : { context: input.context }),
+  });
+}
+
 export function isAgentsDocumentId(id: string): boolean {
   return id === AGENTS_DOCUMENT_ID;
 }
@@ -461,64 +512,55 @@ function normalizeAgentsDocumentMetadata(
   };
 }
 
-export function parseStoredDocument(document: ExpertAgentStoredDocument): ExpertAgentDocument {
-  const parsed = parseMarkdownDocument(document.content);
-
-  return normalizeDocument({
-    id: document.id,
-    content: parsed.content,
-    metadata: parsed.metadata,
-    ...(document.revision === undefined ? {} : { revision: document.revision }),
-    ...(document.etag === undefined ? {} : { etag: document.etag }),
-    ...(document.sizeBytes === undefined ? {} : { sizeBytes: document.sizeBytes }),
-  });
-}
-
-function parseMarkdownDocument(rawContent: string): {
-  readonly metadata: ExpertAgentDocumentMetadata;
-  readonly content: string;
-} {
-  const parsed = matter(rawContent);
+function normalizeContentRange(
+  range: ExpertAgentDocumentContentRange,
+): ExpertAgentDocumentContentRange {
+  const startOffset = Math.max(0, Math.trunc(range.startOffset));
+  const endOffset = Math.max(startOffset, Math.trunc(range.endOffset));
+  const nextStartOffset = Math.max(endOffset, Math.trunc(range.nextStartOffset));
 
   return {
-    metadata: parseMatterMetadata(parsed.data),
-    content: parsed.content,
+    requestedStartOffset: Math.max(0, Math.trunc(range.requestedStartOffset)),
+    startOffset,
+    endOffset,
+    nextStartOffset,
+    truncated: range.truncated,
+    ...(range.sizeBytes === undefined ? {} : { sizeBytes: Math.max(0, Math.trunc(range.sizeBytes)) }),
+    ...(range.maxBytes === undefined ? {} : { maxBytes: Math.max(0, Math.trunc(range.maxBytes)) }),
+    ...(range.startLine === undefined ? {} : { startLine: Math.max(1, Math.trunc(range.startLine)) }),
+    ...(range.endLine === undefined ? {} : { endLine: Math.max(1, Math.trunc(range.endLine)) }),
+    ...(range.totalLines === undefined ? {} : { totalLines: Math.max(1, Math.trunc(range.totalLines)) }),
   };
 }
 
-function parseMatterMetadata(data: Record<string, unknown>): ExpertAgentDocumentMetadata {
-  const description = data.description;
-  const trigger = data.trigger;
-  const trustLevel = data.trustLevel;
-  const sensitivity = data.sensitivity;
+function normalizeOptionalNonNegativeInteger(
+  value: number | undefined,
+  key: string,
+): ExpertAgentDocumentResult<number | undefined> {
+  if (value === undefined) {
+    return ok(undefined);
+  }
 
-  return {
-    ...(typeof description === "string" ? { description } : {}),
-    trigger: normalizeTrigger(readMetadataTrigger(trigger)),
-    ...(typeof trustLevel === "string" ? { trustLevel: normalizeTrustLevel(trustLevel) } : {}),
-    ...(typeof sensitivity === "string" ? { sensitivity: normalizeSensitivity(sensitivity) } : {}),
-  };
+  if (!Number.isFinite(value) || value < 0) {
+    return error("invalid_input", `Document read parameter "${key}" must be a non-negative number.`);
+  }
+
+  return ok(Math.trunc(value));
 }
 
-function serializeDocument(document: ExpertAgentDocument): string {
-  if (isAgentsDocumentId(document.id)) {
-    return document.content;
+function normalizeOptionalPositiveInteger(
+  value: number | undefined,
+  key: string,
+): ExpertAgentDocumentResult<number | undefined> {
+  if (value === undefined) {
+    return ok(undefined);
   }
 
-  const serialized = matter.stringify(document.content, {
-    ...(document.metadata.description === undefined
-      ? {}
-      : { description: document.metadata.description }),
-    trigger: document.metadata.trigger,
-    ...(document.metadata.trustLevel === undefined ? {} : { trustLevel: document.metadata.trustLevel }),
-    ...(document.metadata.sensitivity === undefined ? {} : { sensitivity: document.metadata.sensitivity }),
-  });
-
-  if (!document.content.endsWith("\n") && serialized.endsWith("\n")) {
-    return serialized.slice(0, -1);
+  if (!Number.isFinite(value) || value <= 0) {
+    return error("invalid_input", `Document read parameter "${key}" must be a positive number.`);
   }
 
-  return serialized;
+  return ok(Math.trunc(value));
 }
 
 function normalizeTrustLevel(value: string | undefined): DocumentTrustLevel {
@@ -540,14 +582,6 @@ function normalizeSensitivity(value: string | undefined): DocumentSensitivity {
   }
 
   return "internal";
-}
-
-function readMetadataTrigger(value: unknown): DocumentTrigger | undefined {
-  if (value === "always_on" || value === "model_decision" || value === "manual") {
-    return value;
-  }
-
-  return undefined;
 }
 
 function clampInteger(

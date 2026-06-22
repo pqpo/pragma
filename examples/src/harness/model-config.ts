@@ -7,7 +7,7 @@ const MODEL_API_VALUES = new Set<ExpertAgentModelApi>([
   "openai-responses",
 ]);
 
-export interface TestModelConfig {
+export interface ExampleModelConfig {
   readonly provider: string;
   readonly modelName: string;
   readonly baseApi: string;
@@ -15,7 +15,7 @@ export interface TestModelConfig {
   readonly api: ExpertAgentModelApi;
 }
 
-export function readTestModelConfig(): TestModelConfig {
+export function readExampleModelConfig(): ExampleModelConfig {
   const provider = process.env.EXPERTMESH_MODEL_PROVIDER ?? "openai";
   const modelName = process.env.EXPERTMESH_MODEL_NAME ?? "gpt-4o-mini";
   const baseApi = process.env.EXPERTMESH_MODEL_BASE_API ?? "https://api.openai.com/v1";
@@ -37,7 +37,9 @@ export function readTestModelConfig(): TestModelConfig {
   };
 }
 
-export function createExpertAgentModelsConfig(config: TestModelConfig): IExpertAgentModelsConfig {
+export function createExpertAgentModelsConfig(
+  config: ExampleModelConfig,
+): IExpertAgentModelsConfig {
   return {
     defaultModelName: `${config.provider}/${config.modelName}`,
     providers: [
@@ -52,7 +54,7 @@ export function createExpertAgentModelsConfig(config: TestModelConfig): IExpertA
   };
 }
 
-export function formatModelConfig(config: TestModelConfig): string {
+export function formatModelConfig(config: ExampleModelConfig): string {
   return `${config.provider}/${config.modelName}`;
 }
 

@@ -8,13 +8,13 @@ const packageRelativeImportMessage =
 const commonRestrictedPatterns = [
   {
     group: ["../**/packages/**", "../../**/packages/**", "../../../**/packages/**"],
-    message: packageRelativeImportMessage
-  }
+    message: packageRelativeImportMessage,
+  },
 ];
 
 const config = tseslint.config(
   {
-    ignores: ["**/dist/**", "**/.next/**", "**/coverage/**", "node_modules/**"]
+    ignores: ["**/dist/**", "**/.next/**", "**/coverage/**", "node_modules/**"],
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,
@@ -22,50 +22,52 @@ const config = tseslint.config(
     files: ["**/*.{js,mjs,ts,tsx}"],
     languageOptions: {
       ecmaVersion: 2023,
-      sourceType: "module"
+      sourceType: "module",
     },
     rules: {
       "no-restricted-imports": [
         "error",
         {
-          patterns: commonRestrictedPatterns
-        }
-      ]
-    }
+          patterns: commonRestrictedPatterns,
+        },
+      ],
+    },
   },
   {
     files: ["apps/web/**/*.{ts,tsx}"],
     languageOptions: {
       globals: {
         ...globals.browser,
-        ...globals.es2023
-      }
+        ...globals.es2023,
+      },
     },
     rules: {
       "no-restricted-imports": [
         "error",
         {
-          paths: [
-            "@expertmesh/database",
-            "@expertmesh/agent-core",
-            "@prisma/client"
-          ],
+          paths: ["@expertmesh/database", "@expertmesh/agent-core", "@prisma/client"],
           patterns: [
             ...commonRestrictedPatterns,
-            { group: ["@expertmesh/server-*", "node:*"], message: "Web must stay browser-safe." }
-          ]
-        }
-      ]
-    }
+            { group: ["@expertmesh/server-*", "node:*"], message: "Web must stay browser-safe." },
+          ],
+        },
+      ],
+    },
   },
   {
-    files: ["apps/server/**/*.{ts,tsx}", "apps/worker/**/*.{ts,tsx}", "packages/server/**/*.{ts,tsx}", "packages/agent/**/*.{ts,tsx}", "test_script/**/*.{ts,tsx}"],
+    files: [
+      "apps/server/**/*.{ts,tsx}",
+      "apps/worker/**/*.{ts,tsx}",
+      "packages/server/**/*.{ts,tsx}",
+      "packages/agent/**/*.{ts,tsx}",
+      "examples/**/*.{ts,tsx}",
+    ],
     languageOptions: {
       globals: {
         ...globals.node,
-        ...globals.es2023
-      }
-    }
+        ...globals.es2023,
+      },
+    },
   },
   {
     files: ["packages/shared/**/*.{ts,tsx}"],
@@ -78,20 +80,20 @@ const config = tseslint.config(
             ...commonRestrictedPatterns,
             {
               group: ["@expertmesh/agent-*", "node:*", "next", "next/*"],
-              message: "Shared packages must remain runtime-neutral."
-            }
-          ]
-        }
-      ]
-    }
+              message: "Shared packages must remain runtime-neutral.",
+            },
+          ],
+        },
+      ],
+    },
   },
   {
     files: ["packages/client/**/*.{ts,tsx}"],
     languageOptions: {
       globals: {
         ...globals.browser,
-        ...globals.es2023
-      }
+        ...globals.es2023,
+      },
     },
     rules: {
       "no-restricted-imports": [
@@ -102,12 +104,12 @@ const config = tseslint.config(
             ...commonRestrictedPatterns,
             {
               group: ["@expertmesh/agent-*", "@expertmesh/server-*", "node:*"],
-              message: "Client packages must stay browser-safe."
-            }
-          ]
-        }
-      ]
-    }
+              message: "Client packages must stay browser-safe.",
+            },
+          ],
+        },
+      ],
+    },
   },
   {
     files: ["packages/server/**/*.{ts,tsx}"],
@@ -120,12 +122,12 @@ const config = tseslint.config(
             ...commonRestrictedPatterns,
             {
               group: ["@expertmesh/ui-*", "@expertmesh/playbook-canvas", "next", "next/*"],
-              message: "Server packages must not depend on client UI."
-            }
-          ]
-        }
-      ]
-    }
+              message: "Server packages must not depend on client UI.",
+            },
+          ],
+        },
+      ],
+    },
   },
   {
     files: ["packages/agent/**/*.{ts,tsx}"],
@@ -142,15 +144,15 @@ const config = tseslint.config(
                 "@expertmesh/ui-*",
                 "@expertmesh/playbook-canvas",
                 "next",
-                "next/*"
+                "next/*",
               ],
-              message: "Agent packages must not depend on server internals or client UI."
-            }
-          ]
-        }
-      ]
-    }
-  }
+              message: "Agent packages must not depend on server internals or client UI.",
+            },
+          ],
+        },
+      ],
+    },
+  },
 );
 
 export default config;

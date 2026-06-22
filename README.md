@@ -39,6 +39,7 @@ packages/
   agent/     专家 Agent 抽象、协议与运行时边界
   tooling/   共享 ESLint 与 TypeScript 配置
 
+examples/    ExpertAgent 最小使用示例
 docs/        架构说明、ADR、编码约定和设计文档
 infra/       后续基础设施编排目录
 ```
@@ -139,6 +140,20 @@ ExpertMesh Worker Ready
 ```bash
 pnpm dev
 ```
+
+## 运行 ExpertAgent 示例
+
+示例代码在 `examples/`，用于展示如何直接创建 `ExpertAgent`、注入模型配置、创建 runtime session、提交任务并处理流式输出。
+
+```bash
+cp examples/.env.example examples/.env
+pnpm --filter @expertmesh/examples start:basic
+pnpm --filter @expertmesh/examples start:workspace-documents
+```
+
+示例默认使用仓库根目录下的 `workspace/` 作为 agent workspace。文档示例支持通过 `--workspace` 指定外部 workspace，通过 `--documents` 指定 markdown 文档目录。
+
+详细说明见 `examples/README.md`。
 
 ## 常用脚本
 

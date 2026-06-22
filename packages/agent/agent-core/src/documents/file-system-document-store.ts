@@ -1,11 +1,13 @@
 import { execFile } from "node:child_process";
 import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { dirname, extname, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 
 import type {
   ExpertAgentDocumentDeleteInput,
   ExpertAgentDocumentListInput,
+  ExpertAgentDocumentMetadata,
   ExpertAgentDocumentReadInput,
   ExpertAgentDocumentResult,
   ExpertAgentDocumentSearchInput,
@@ -13,12 +15,21 @@ import type {
   ExpertAgentDocumentSummary,
   ExpertAgentDocumentStore,
   ExpertAgentStoredDocument,
+  ExpertAgentStoredDocumentReadResult,
   ExpertAgentStoredDocumentCreateInput,
   ExpertAgentStoredDocumentUpdateInput,
 } from "./document-indexer.ts";
-import { error, ok, parseStoredDocument } from "./document-indexer.ts";
+import {
+  error,
+  isAgentsDocumentId,
+  normalizeMetadata,
+  normalizeTrigger,
+  ok,
+} from "./document-indexer.ts";
 
 const execFileAsync = promisify(execFile);
+const require = createRequire(import.meta.url);
+const matter = require("gray-matter") as typeof import("gray-matter");
 
 export interface FileSystemDocumentStoreCommandResult {
   readonly stdout: string;
@@ -37,12 +48,12 @@ export interface FileSystemDocumentStoreOptions {
 
 export class FileSystemDocumentStore implements ExpertAgentDocumentStore {
   readonly rootDir: string;
-  readonly maxDocumentBytes: number;
+  readonly maxDocumentBytes: number | undefined;
   private readonly commandRunner: FileSystemDocumentStoreCommandRunner;
 
   constructor(options: FileSystemDocumentStoreOptions) {
     this.rootDir = resolve(options.rootDir);
-    this.maxDocumentBytes = options.maxDocumentBytes ?? 1_000_000;
+    this.maxDocumentBytes = options.maxDocumentBytes;
     this.commandRunner = options.commandRunner ?? runSearchCommand;
   }
 
@@ -55,20 +66,14 @@ export class FileSystemDocumentStore implements ExpertAgentDocumentStore {
       const files = await collectMarkdownFiles(this.rootDir);
       const documents = await Promise.all(
         files.map(async (filePath) => {
-          const stats = await stat(filePath);
-          const content = await readFile(filePath, "utf8");
-          const storedDocument = {
-            id: toDocumentId(this.rootDir, filePath),
-            content,
-            revision: createFileRevision(stats.mtimeMs, content),
-            etag: createFileRevision(stats.mtimeMs, content),
-            sizeBytes: Buffer.byteLength(content, "utf8"),
-          };
-          const document = parseStoredDocument(storedDocument);
+          const document = await readMarkdownFileDocument(this.rootDir, filePath);
 
           return {
             id: document.id,
             metadata: document.metadata,
+            revision: document.revision,
+            etag: document.etag,
+            sizeBytes: document.sizeBytes,
           };
         }),
       );
@@ -81,7 +86,7 @@ export class FileSystemDocumentStore implements ExpertAgentDocumentStore {
 
   async readDocument(
     input: ExpertAgentDocumentReadInput,
-  ): Promise<ExpertAgentDocumentResult<ExpertAgentStoredDocument>> {
+  ): Promise<ExpertAgentDocumentResult<ExpertAgentStoredDocumentReadResult>> {
     try {
       const filePath = this.resolveDocumentPath(input.id);
 
@@ -89,15 +94,37 @@ export class FileSystemDocumentStore implements ExpertAgentDocumentStore {
         return error("document_not_found", `Document not found: ${input.id}`, { id: input.id });
       }
 
-      const stats = await stat(filePath);
-      const content = await readFile(filePath, "utf8");
+      const document = await readMarkdownFileDocument(this.rootDir, filePath);
+      const read = readContentRange(document.content, {
+        start: input.start ?? 0,
+        offset: input.offset,
+      });
+      const lineRange = calculateLineRange(document.content, {
+        startOffset: read.startOffset,
+        endOffset: read.endOffset,
+      });
 
       return ok({
         id: input.id,
-        content,
-        revision: createFileRevision(stats.mtimeMs, content),
-        etag: createFileRevision(stats.mtimeMs, content),
-        sizeBytes: Buffer.byteLength(content, "utf8"),
+        content: read.content,
+        metadata: document.metadata,
+        revision: document.revision,
+        etag: document.etag,
+        sizeBytes: document.sizeBytes,
+        contentRange: {
+          requestedStartOffset: read.requestedStartOffset,
+          startOffset: read.startOffset,
+          endOffset: read.endOffset,
+          nextStartOffset: read.nextStartOffset,
+          truncated: read.truncated,
+          sizeBytes: document.sizeBytes,
+          ...(input.offset === undefined
+            ? {}
+            : { maxBytes: Math.max(1, Math.trunc(input.offset)) }),
+          startLine: lineRange.startLine,
+          endLine: lineRange.endLine,
+          totalLines: lineRange.totalLines,
+        },
       });
     } catch (caught) {
       return error("store_error", `Failed to read document: ${input.id}`, toErrorDetails(caught));
@@ -108,6 +135,7 @@ export class FileSystemDocumentStore implements ExpertAgentDocumentStore {
     input: ExpertAgentStoredDocumentCreateInput,
   ): Promise<ExpertAgentDocumentResult<ExpertAgentStoredDocument>> {
     try {
+      const metadata = normalizeMetadata(input.id, normalizeInputMetadata(input.metadata));
       const sizeError = validateDocumentSize(input.content, this.maxDocumentBytes);
 
       if (sizeError !== undefined) {
@@ -122,15 +150,16 @@ export class FileSystemDocumentStore implements ExpertAgentDocumentStore {
         });
       }
 
-      const document = withFileDocumentRevision({
+      const document = {
         id: input.id,
         content: input.content,
-      });
+        metadata,
+      };
 
       await mkdir(dirname(filePath), { recursive: true });
-      await writeFile(filePath, document.content, "utf8");
+      await writeFile(filePath, serializeMarkdownDocument(document), "utf8");
 
-      return ok(document);
+      return ok(await readMarkdownFileDocument(this.rootDir, filePath));
     } catch (caught) {
       return error("store_error", `Failed to create document: ${input.id}`, toErrorDetails(caught));
     }
@@ -156,20 +185,25 @@ export class FileSystemDocumentStore implements ExpertAgentDocumentStore {
       }
 
       const content = input.content ?? existing.value.content;
+      const metadata =
+        input.metadata === undefined
+          ? existing.value.metadata
+          : normalizeMetadata(input.id, normalizeInputMetadata(input.metadata));
       const sizeError = validateDocumentSize(content, this.maxDocumentBytes);
 
       if (sizeError !== undefined) {
         return sizeError;
       }
 
-      const document = withFileDocumentRevision({
+      const document = {
         id: input.id,
         content,
-      });
+        metadata,
+      };
       const filePath = this.resolveDocumentPath(input.id);
-      await writeFile(filePath, document.content, "utf8");
+      await writeFile(filePath, serializeMarkdownDocument(document), "utf8");
 
-      return ok(document);
+      return ok(await readMarkdownFileDocument(this.rootDir, filePath));
     } catch (caught) {
       return error("store_error", `Failed to update document: ${input.id}`, toErrorDetails(caught));
     }
@@ -235,6 +269,37 @@ export class FileSystemDocumentStore implements ExpertAgentDocumentStore {
   }
 }
 
+function calculateLineRange(
+  content: string,
+  options: {
+    readonly startOffset: number;
+    readonly endOffset: number;
+  },
+): {
+  readonly startLine: number;
+  readonly endLine: number;
+  readonly totalLines: number;
+} {
+  const fullBuffer = Buffer.from(content, "utf8");
+  const prefix = fullBuffer.subarray(0, options.startOffset).toString("utf8");
+  const range = fullBuffer.subarray(options.startOffset, options.endOffset).toString("utf8");
+  const startLine = countLines(prefix);
+
+  return {
+    startLine,
+    endLine: range.length === 0 ? startLine : startLine + countNewlines(range),
+    totalLines: countLines(content),
+  };
+}
+
+function countLines(content: string): number {
+  return countNewlines(content) + 1;
+}
+
+function countNewlines(content: string): number {
+  return content.split("\n").length - 1;
+}
+
 function validateExpectedRevision(
   existing: ExpertAgentStoredDocument,
   input: ExpertAgentStoredDocumentUpdateInput,
@@ -260,8 +325,12 @@ function validateExpectedRevision(
 
 function validateDocumentSize(
   content: string,
-  maxDocumentBytes: number,
+  maxDocumentBytes: number | undefined,
 ): ExpertAgentDocumentResult<never> | undefined {
+  if (maxDocumentBytes === undefined) {
+    return undefined;
+  }
+
   const sizeBytes = Buffer.byteLength(content, "utf8");
 
   if (sizeBytes <= maxDocumentBytes) {
@@ -274,20 +343,218 @@ function validateDocumentSize(
   });
 }
 
-function withFileDocumentRevision(document: ExpertAgentStoredDocument): ExpertAgentStoredDocument {
-  const sizeBytes = Buffer.byteLength(document.content, "utf8");
-  const revision = createFileRevision(Date.now(), document.content);
+function createFileRevision(mtimeMs: number, sizeBytes: number): string {
+  return `${Math.trunc(mtimeMs)}:${Math.max(0, Math.trunc(sizeBytes))}`;
+}
+
+async function readMarkdownFileDocument(
+  rootDir: string,
+  filePath: string,
+): Promise<ExpertAgentStoredDocument> {
+  const [stats, rawContent] = await Promise.all([stat(filePath), readFile(filePath, "utf8")]);
+  const id = toDocumentId(rootDir, filePath);
+  const parsed = parseMarkdownDocument(id, rawContent);
+  const sizeBytes = Buffer.byteLength(parsed.content, "utf8");
+  const revision = createFileRevision(stats.mtimeMs, stats.size);
 
   return {
-    ...document,
+    id,
+    content: parsed.content,
+    metadata: parsed.metadata,
     revision,
     etag: revision,
     sizeBytes,
   };
 }
 
-function createFileRevision(mtimeMs: number, content: string): string {
-  return `${Math.trunc(mtimeMs)}:${Buffer.byteLength(content, "utf8")}`;
+function readContentRange(
+  content: string,
+  options: {
+    readonly start: number;
+    readonly offset?: number | undefined;
+  },
+): {
+  readonly content: string;
+  readonly requestedStartOffset: number;
+  readonly startOffset: number;
+  readonly endOffset: number;
+  readonly nextStartOffset: number;
+  readonly truncated: boolean;
+} {
+  const buffer = Buffer.from(content, "utf8");
+  const sizeBytes = buffer.byteLength;
+  const requestedStartOffset = Math.min(sizeBytes, Math.max(0, Math.trunc(options.start)));
+  const availableBytes = Math.max(0, sizeBytes - requestedStartOffset);
+  const bytesToRead =
+    options.offset === undefined
+      ? availableBytes
+      : Math.min(availableBytes, Math.max(0, Math.trunc(options.offset)));
+
+  if (bytesToRead === 0) {
+    return {
+      content: "",
+      requestedStartOffset,
+      startOffset: requestedStartOffset,
+      endOffset: requestedStartOffset,
+      nextStartOffset: requestedStartOffset,
+      truncated: requestedStartOffset < sizeBytes,
+    };
+  }
+
+  const decoded = decodeUtf8Range(
+    buffer.subarray(requestedStartOffset, requestedStartOffset + bytesToRead),
+  );
+  const startOffset = requestedStartOffset + decoded.startIndex;
+  const endOffset = requestedStartOffset + decoded.endIndex;
+
+  return {
+    content: decoded.content,
+    requestedStartOffset,
+    startOffset,
+    endOffset,
+    nextStartOffset: endOffset,
+    truncated: endOffset < sizeBytes,
+  };
+}
+
+function parseMarkdownDocument(
+  id: string,
+  rawContent: string,
+): {
+  readonly metadata: ExpertAgentDocumentMetadata;
+  readonly content: string;
+} {
+  if (isAgentsDocumentId(id)) {
+    return {
+      metadata: normalizeMetadata(id, { trigger: "always_on" }),
+      content: rawContent,
+    };
+  }
+
+  const parsed = matter(rawContent);
+
+  return {
+    metadata: normalizeMetadata(id, parseMatterMetadata(parsed.data)),
+    content: parsed.content,
+  };
+}
+
+function parseMatterMetadata(data: Record<string, unknown>): ExpertAgentDocumentMetadata {
+  const description = data.description;
+  const trigger = data.trigger;
+  const trustLevel = data.trustLevel;
+  const sensitivity = data.sensitivity;
+
+  return {
+    ...(typeof description === "string" ? { description } : {}),
+    trigger: normalizeTrigger(readMetadataTrigger(trigger)),
+    ...(typeof trustLevel === "string" ? { trustLevel: normalizeTrustLevel(trustLevel) } : {}),
+    ...(typeof sensitivity === "string" ? { sensitivity: normalizeSensitivity(sensitivity) } : {}),
+  };
+}
+
+function serializeMarkdownDocument(document: ExpertAgentStoredDocument): string {
+  if (isAgentsDocumentId(document.id)) {
+    return document.content;
+  }
+
+  const serialized = matter.stringify(document.content, {
+    ...(document.metadata.description === undefined
+      ? {}
+      : { description: document.metadata.description }),
+    trigger: document.metadata.trigger,
+    ...(document.metadata.trustLevel === undefined
+      ? {}
+      : { trustLevel: document.metadata.trustLevel }),
+    ...(document.metadata.sensitivity === undefined
+      ? {}
+      : { sensitivity: document.metadata.sensitivity }),
+  });
+
+  if (!document.content.endsWith("\n") && serialized.endsWith("\n")) {
+    return serialized.slice(0, -1);
+  }
+
+  return serialized;
+}
+
+function normalizeInputMetadata(
+  metadata: Partial<ExpertAgentDocumentMetadata> | undefined,
+): ExpertAgentDocumentMetadata {
+  return {
+    ...(metadata?.description === undefined ? {} : { description: metadata.description }),
+    trigger: metadata?.trigger ?? "model_decision",
+    ...(metadata?.trustLevel === undefined ? {} : { trustLevel: metadata.trustLevel }),
+    ...(metadata?.sensitivity === undefined ? {} : { sensitivity: metadata.sensitivity }),
+  };
+}
+
+function normalizeTrustLevel(value: string | undefined): ExpertAgentDocumentMetadata["trustLevel"] {
+  if (value === "system" || value === "workspace" || value === "user" || value === "external") {
+    return value;
+  }
+
+  return "workspace";
+}
+
+function normalizeSensitivity(
+  value: string | undefined,
+): ExpertAgentDocumentMetadata["sensitivity"] {
+  if (
+    value === "public" ||
+    value === "internal" ||
+    value === "confidential" ||
+    value === "restricted"
+  ) {
+    return value;
+  }
+
+  return "internal";
+}
+
+function readMetadataTrigger(value: unknown): ExpertAgentDocumentMetadata["trigger"] | undefined {
+  if (value === "always_on" || value === "model_decision" || value === "manual") {
+    return value;
+  }
+
+  return undefined;
+}
+
+function decodeUtf8Range(buffer: Buffer): {
+  readonly content: string;
+  readonly startIndex: number;
+  readonly endIndex: number;
+} {
+  let startIndex = 0;
+  let endIndex = buffer.length;
+
+  while (startIndex < endIndex && isUtf8ContinuationByte(buffer[startIndex] ?? 0)) {
+    startIndex += 1;
+  }
+
+  while (endIndex > startIndex) {
+    try {
+      return {
+        content: new TextDecoder("utf-8", { fatal: true }).decode(
+          buffer.subarray(startIndex, endIndex),
+        ),
+        startIndex,
+        endIndex,
+      };
+    } catch {
+      endIndex -= 1;
+    }
+  }
+
+  return {
+    content: "",
+    startIndex,
+    endIndex: startIndex,
+  };
+}
+
+function isUtf8ContinuationByte(byte: number): boolean {
+  return (byte & 0xc0) === 0x80;
 }
 
 async function searchDocumentsWithRipgrep(

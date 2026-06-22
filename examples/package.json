@@ -1,10 +1,10 @@
 {
-  "name": "@expertmesh/test-script",
+  "name": "@expertmesh/examples",
   "version": "0.0.0",
   "private": true,
   "type": "module",
   "scripts": {
-    "start": "tsx src/run-expert-agent.ts",
+    "start": "pnpm start:basic",
     "start:basic": "tsx src/run-expert-agent.ts",
     "start:workspace-documents": "tsx src/run-workspace-document-agent.ts",
     "build": "tsc -p tsconfig.build.json",
@@ -16,6 +16,7 @@
   "dependencies": {
     "@expertmesh/agent-core": "workspace:*",
     "@expertmesh/agent-runtime": "workspace:*",
+    "cac": "^7.0.0",
     "dotenv": "latest"
   },
   "devDependencies": {
