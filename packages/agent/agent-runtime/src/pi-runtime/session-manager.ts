@@ -1,5 +1,6 @@
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import type { SessionInfo } from "@earendil-works/pi-coding-agent";
+import type { RuntimeAdapterKind, RuntimeSessionRef } from "@expertmesh/agent-core";
 import { join } from "node:path";
 
 const PI_SESSION_DIR = ".expertmesh/runtime-sessions/pi";
@@ -7,14 +8,16 @@ const PI_SESSION_DIR = ".expertmesh/runtime-sessions/pi";
 export async function createPiSessionManager(
   cwd: string,
   agentId: string,
-  sessionId: string | undefined,
+  runtimeSession: RuntimeSessionRef | undefined,
+  expectedRuntimeSessionType: RuntimeAdapterKind,
 ): Promise<SessionManager> {
   const sessionDir = getPiSessionDir(cwd, agentId);
 
-  if (sessionId === undefined) {
+  if (runtimeSession === undefined || runtimeSession.type !== expectedRuntimeSessionType) {
     return SessionManager.create(cwd, sessionDir);
   }
 
+  const sessionId = runtimeSession.id;
   const existingSession = await findLocalSessionByExactId(sessionId, cwd, sessionDir);
 
   if (existingSession !== undefined) {

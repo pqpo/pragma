@@ -15,7 +15,12 @@ import type {
 import { error, ok } from "../documents/document-indexer.ts";
 import { createInMemoryDocumentStore } from "../documents/in-memory-document-store.ts";
 import type { ExpertAgentRunContext } from "../runtime/run-context.ts";
-import type { RuntimeSubmitRequest, RuntimeRunResult, RuntimeSessionInfo } from "../runtime/runtime-adapter.ts";
+import type {
+  RuntimeSubmitRequest,
+  RuntimeRunResult,
+  RuntimeSessionInfo,
+  RuntimeSessionRef,
+} from "../runtime/runtime-adapter.ts";
 import type { SubAgentRegistry } from "../subagents/sub-agent.ts";
 import type { ExpertAgentManagedTool, ExpertAgentToolCallResult } from "../tools/managed-tool.ts";
 
@@ -36,7 +41,8 @@ export type ExpertAgentPluginDocumentContribution =
 export interface ExpertAgentPluginSessionCreateContext {
   readonly agent: ExpertAgent;
   readonly context?: ExpertAgentRunContext | undefined;
-  readonly sessionId?: string | undefined;
+  readonly systemSessionId: string;
+  readonly runtimeSession?: RuntimeSessionRef | undefined;
 }
 
 export interface ExpertAgentPluginSessionContext {
@@ -51,8 +57,9 @@ export interface ExpertAgentPluginTaskSubmitContext<TOutput = unknown> {
   readonly submission: RuntimeSubmitRequest<TOutput>;
 }
 
-export interface ExpertAgentPluginTaskSubmittedContext<TOutput = unknown>
-  extends ExpertAgentPluginTaskSubmitContext<TOutput> {
+export interface ExpertAgentPluginTaskSubmittedContext<
+  TOutput = unknown,
+> extends ExpertAgentPluginTaskSubmitContext<TOutput> {
   readonly result?: RuntimeRunResult<TOutput> | undefined;
   readonly error?: unknown;
 }
@@ -79,10 +86,14 @@ export interface ExpertAgentPluginHooks {
     | ((context: ExpertAgentPluginSessionContext) => MaybePromise<void>)
     | undefined;
   readonly beforeTaskSubmit?:
-    | (<TOutput = unknown>(context: ExpertAgentPluginTaskSubmitContext<TOutput>) => MaybePromise<void>)
+    | (<TOutput = unknown>(
+        context: ExpertAgentPluginTaskSubmitContext<TOutput>,
+      ) => MaybePromise<void>)
     | undefined;
   readonly afterTaskSubmit?:
-    | (<TOutput = unknown>(context: ExpertAgentPluginTaskSubmittedContext<TOutput>) => MaybePromise<void>)
+    | (<TOutput = unknown>(
+        context: ExpertAgentPluginTaskSubmittedContext<TOutput>,
+      ) => MaybePromise<void>)
     | undefined;
   readonly beforeSessionDestroy?:
     | ((context: ExpertAgentPluginSessionContext) => MaybePromise<void>)
@@ -465,7 +476,9 @@ function createCompositeDocumentStore(
   };
 }
 
-function toDocumentStore(contribution: ExpertAgentPluginDocumentContribution): ExpertAgentDocumentStore {
+function toDocumentStore(
+  contribution: ExpertAgentPluginDocumentContribution,
+): ExpertAgentDocumentStore {
   if (isStoredDocumentArray(contribution)) {
     return createInMemoryDocumentStore({ documents: contribution });
   }
@@ -610,7 +623,9 @@ function mergeModelProviders(
   return [...merged.values()];
 }
 
-function mergeModelApi(api: ExpertAgentModelApi | undefined): { readonly api?: ExpertAgentModelApi } {
+function mergeModelApi(api: ExpertAgentModelApi | undefined): {
+  readonly api?: ExpertAgentModelApi;
+} {
   return api === undefined ? {} : { api };
 }
 
@@ -658,7 +673,9 @@ function assertUniquePluginIds(plugins: readonly ExpertAgentPluginEntry[]): void
 
   for (const plugin of plugins) {
     if (plugin.id.length === 0 || plugin.id.includes("/")) {
-      throw new Error(`ExpertAgent plugin id must be non-empty and must not contain "/": ${plugin.id}`);
+      throw new Error(
+        `ExpertAgent plugin id must be non-empty and must not contain "/": ${plugin.id}`,
+      );
     }
 
     if (seen.has(plugin.id)) {

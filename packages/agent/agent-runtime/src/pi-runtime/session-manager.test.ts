@@ -39,7 +39,12 @@ describe("createPiSessionManager", () => {
   });
 
   it("creates a workspace-persisted session when no session id is provided", async () => {
-    const manager = await createPiSessionManager("/workspace", "expert-1", undefined);
+    const manager = await createPiSessionManager(
+      "/workspace",
+      "expert-1",
+      undefined,
+      "cloud-pi-agent",
+    );
 
     expect(manager).toEqual({
       cwd: "/workspace",
@@ -55,6 +60,31 @@ describe("createPiSessionManager", () => {
     expect(SessionManager.list).not.toHaveBeenCalled();
   });
 
+  it("creates a new session when the requested runtime session type does not match", async () => {
+    const manager = await createPiSessionManager(
+      "/workspace",
+      "expert-1",
+      {
+        type: "other-runtime",
+        id: "session-2",
+      },
+      "cloud-pi-agent",
+    );
+
+    expect(manager).toEqual({
+      cwd: "/workspace",
+      options: undefined,
+      sessionDir: "/workspace/.expertmesh/runtime-sessions/pi/expert-1",
+      type: "create",
+    });
+    expect(SessionManager.create).toHaveBeenCalledWith(
+      "/workspace",
+      "/workspace/.expertmesh/runtime-sessions/pi/expert-1",
+    );
+    expect(SessionManager.list).not.toHaveBeenCalled();
+    expect(SessionManager.open).not.toHaveBeenCalled();
+  });
+
   it("opens an existing local session with the requested session id", async () => {
     vi.mocked(SessionManager.list).mockResolvedValue([
       createSessionInfo({
@@ -67,7 +97,15 @@ describe("createPiSessionManager", () => {
       }),
     ]);
 
-    const manager = await createPiSessionManager("/workspace", "expert-1", "session-2");
+    const manager = await createPiSessionManager(
+      "/workspace",
+      "expert-1",
+      {
+        type: "cloud-pi-agent",
+        id: "session-2",
+      },
+      "cloud-pi-agent",
+    );
 
     expect(manager).toEqual({
       path: "/sessions/session-2.jsonl",
@@ -87,7 +125,15 @@ describe("createPiSessionManager", () => {
   it("creates a persistent session with the requested session id when none exists", async () => {
     vi.mocked(SessionManager.list).mockResolvedValue([]);
 
-    const manager = await createPiSessionManager("/workspace", "expert-1", "session-3");
+    const manager = await createPiSessionManager(
+      "/workspace",
+      "expert-1",
+      {
+        type: "cloud-pi-agent",
+        id: "session-3",
+      },
+      "cloud-pi-agent",
+    );
 
     expect(manager).toEqual({
       cwd: "/workspace",

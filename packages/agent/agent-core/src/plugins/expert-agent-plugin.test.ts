@@ -186,6 +186,7 @@ describe("ExpertAgent plugins", () => {
     await dispatchExpertAgentHook(agent.hooks, "beforeSessionCreate", {
       agent,
       context: {},
+      systemSessionId: "system-session-1",
     });
 
     expect(events).toEqual(["host", "plugin"]);

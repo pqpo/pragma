@@ -743,7 +743,15 @@ subagent.failed
 `adapter.createSession()` 在创建会话时绑定 agent 和 run context；会话创建后可多次
 `submit()`，提交会在 Runtime 内部串行执行。`RuntimeSubmitRequest` 可以携带
 可选 `runId`、`onEvent` sink，并可为单次提交指定 Zod output schema；未指定
-`runId` 时由 Runtime 内部生成，未指定 output 时默认为 string：
+`runId` 时在 `submit()` 阶段生成，未指定 output 时默认为 string。
+
+Session 标识分为三层：
+
+- `systemSessionId` 是 ExpertMesh 系统级会话标识，用于系统任务关联、审计和跨 runtime
+  追踪；`createSession()` 未传入时由系统自动生成。
+- `runtimeSession` 是 runtime 返回的会话引用，结构为 `{ type, id }`；Adapter 只在
+  `type` 与当前 runtime 匹配时复用该会话，否则必须新建 runtime session。
+- `runId` 是单次提交的运行标识，仍由 `submit()` 阶段生成或使用调用方传入值。
 
 ```ts
 import { z } from "zod";
@@ -751,6 +759,11 @@ import { z } from "zod";
 const session = await adapter.createSession({
   agent,
   context,
+  systemSessionId: "system-session-1",
+  runtimeSession: {
+    type: "cloud-pi-agent",
+    id: "runtime-session-1",
+  },
 });
 
 const sessionInfo = session.info();

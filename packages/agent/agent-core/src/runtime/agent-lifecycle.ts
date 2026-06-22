@@ -8,16 +8,6 @@ export type RunState =
   | "cancelled";
 export type TaskState = "pending" | "leased" | "retrying" | "dead_letter";
 
-/** @deprecated Use SessionState and RunState instead. */
-export type AgentLifecycleState =
-  | "prepared"
-  | "running"
-  | "completed"
-  | "aborted"
-  | "failed"
-  | SessionState
-  | RunState;
-
 type MaybePromise<TValue> = TValue | Promise<TValue>;
 
 export interface AgentLifecycleHooks {
@@ -31,8 +21,6 @@ export interface AgentRunExecutionContext {
 }
 
 export interface AgentLifecycle<TContext = unknown> {
-  /** @deprecated Use sessionState and runState instead. */
-  readonly state: AgentLifecycleState;
   readonly sessionState: SessionState;
   readonly runState: RunState | undefined;
   readonly currentContext: TContext | undefined;
@@ -76,17 +64,6 @@ export function createQueuedAgentLifecycle<TContext = unknown>(
   };
 
   return {
-    get state() {
-      if (sessionState === "closed") {
-        return "closed";
-      }
-
-      if (sessionState === "closing") {
-        return "closing";
-      }
-
-      return runState ?? "prepared";
-    },
     get sessionState() {
       return sessionState;
     },

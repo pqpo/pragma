@@ -27,8 +27,7 @@ const baseApi = process.env.EXPERTMESH_MODEL_BASE_API ?? "https://api.openai.com
 const key = process.env.EXPERTMESH_MODEL_API_KEY ?? process.env.OPENAI_API_KEY;
 const api = readModelApi(process.env.EXPERTMESH_MODEL_API ?? "openai-responses");
 const query =
-  process.argv.slice(2).join(" ").trim() ||
-  "用一句话介绍 ExpertMesh 的 Phase 0 Harness 是什么。";
+  process.argv.slice(2).join(" ").trim() || "用一句话介绍 ExpertMesh 的 Phase 0 Harness 是什么。";
 
 if (key === undefined || key.trim().length === 0) {
   throw new Error(
@@ -59,7 +58,7 @@ const agent = new ExpertAgent({
   },
 });
 
-const runtime = createCloudPiRuntimeAdapter<string>();
+const runtime = createCloudPiRuntimeAdapter();
 const session = await runtime.createSession({ agent });
 
 try {

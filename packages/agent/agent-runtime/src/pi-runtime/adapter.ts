@@ -1,14 +1,8 @@
-import {
-  AuthStorage,
-  createAgentSession,
-  ModelRegistry,
-} from "@earendil-works/pi-coding-agent";
-import type {
-  AgentSession,
-  CreateAgentSessionOptions,
-} from "@earendil-works/pi-coding-agent";
+import { AuthStorage, createAgentSession, ModelRegistry } from "@earendil-works/pi-coding-agent";
+import type { AgentSession, CreateAgentSessionOptions } from "@earendil-works/pi-coding-agent";
 import type { ExpertAgentRunContext, RuntimeAdapter } from "@expertmesh/agent-core";
 import { createQueuedAgentLifecycle, dispatchExpertAgentHook } from "@expertmesh/agent-core";
+import { randomUUID } from "node:crypto";
 
 import { createMcpToolRegistry } from "../mcp-tools.ts";
 import {
@@ -25,20 +19,37 @@ import { createResolvedPiTools } from "./tools.ts";
 import type { CloudPiRuntimeAdapterOptions } from "./types.ts";
 import { defaultOutputParser } from "./types.ts";
 
-export function createCloudPiRuntimeAdapter<TOutput = string>(
+const CLOUD_PI_RUNTIME_DESCRIPTOR = {
+  id: "cloud-pi-agent",
+  kind: "cloud-pi-agent" as const,
+  displayName: "Cloud PI Agent",
+  capabilities: {
+    executionLocations: ["cloud"],
+    supportsAbort: true,
+    supportsMcp: true,
+    supportsStreaming: true,
+    supportsSubAgents: true,
+  },
+};
+
+export function createCloudPiRuntimeAdapter(
   options: CloudPiRuntimeAdapterOptions = {},
-): RuntimeAdapter<TOutput> {
+): RuntimeAdapter {
   return {
-    descriptor: {
-      id: "cloud-pi-agent",
-      kind: "cloud-pi-agent",
-      displayName: "Cloud PI Agent",
-    },
-    async createSession({ agent, context: runContext, models, sessionId }) {
+    descriptor: CLOUD_PI_RUNTIME_DESCRIPTOR,
+    async createSession({
+      agent,
+      context: runContext,
+      models,
+      runtimeSession,
+      systemSessionId: requestedSystemSessionId,
+    }) {
+      const systemSessionId = requestedSystemSessionId ?? randomUUID();
       await dispatchExpertAgentHook(agent.hooks, "beforeSessionCreate", {
         agent,
         context: runContext,
-        sessionId,
+        systemSessionId,
+        runtimeSession,
       });
       const authStorage = AuthStorage.create();
       const cwd = agent.workspace;
@@ -60,14 +71,19 @@ export function createCloudPiRuntimeAdapter<TOutput = string>(
         },
         cleanup: async () => {
           const sessionInfo = {
-            sessionId: piSession?.sessionId ?? sessionId ?? "",
-            agentId: agent.id,
-            runtime: {
-              id: "cloud-pi-agent",
-              kind: "cloud-pi-agent" as const,
-              displayName: "Cloud PI Agent",
+            systemSessionId,
+            runtimeSession: {
+              type: CLOUD_PI_RUNTIME_DESCRIPTOR.kind,
+              id:
+                piSession?.sessionId ??
+                (runtimeSession?.type === CLOUD_PI_RUNTIME_DESCRIPTOR.kind
+                  ? runtimeSession.id
+                  : ""),
             },
-            state: lifecycle.state,
+            agentId: agent.id,
+            runtime: CLOUD_PI_RUNTIME_DESCRIPTOR,
+            sessionState: lifecycle.sessionState,
+            runState: lifecycle.runState,
           };
           await dispatchExpertAgentHook(agent.hooks, "beforeSessionDestroy", {
             agent,
@@ -98,7 +114,12 @@ export function createCloudPiRuntimeAdapter<TOutput = string>(
         authStorage,
         modelRegistry,
         resourceLoader: loader,
-        sessionManager: await createPiSessionManager(cwd, agent.id, sessionId),
+        sessionManager: await createPiSessionManager(
+          cwd,
+          agent.id,
+          runtimeSession,
+          CLOUD_PI_RUNTIME_DESCRIPTOR.kind,
+        ),
       };
       const defaultModel = resolveRequiredRuntimeModel(
         getRuntimeModelName(agent, undefined),
@@ -118,24 +139,25 @@ export function createCloudPiRuntimeAdapter<TOutput = string>(
         const { session } = await createAgentSession(sessionOptions);
         piSession = session;
         const sessionInfo = {
-          sessionId: session.sessionId,
-          agentId: agent.id,
-          runtime: {
-            id: "cloud-pi-agent",
-            kind: "cloud-pi-agent" as const,
-            displayName: "Cloud PI Agent",
+          systemSessionId,
+          runtimeSession: {
+            type: CLOUD_PI_RUNTIME_DESCRIPTOR.kind,
+            id: session.sessionId,
           },
+          agentId: agent.id,
+          runtime: CLOUD_PI_RUNTIME_DESCRIPTOR,
         };
 
         await dispatchExpertAgentHook(agent.hooks, "afterSessionCreate", {
           agent,
           session: {
             ...sessionInfo,
-            state: lifecycle.state,
+            sessionState: lifecycle.sessionState,
+            runState: lifecycle.runState,
           },
         });
 
-        return createPiRuntimeSession<TOutput>(
+        return createPiRuntimeSession(
           agent,
           session,
           sessionInfo,
@@ -145,6 +167,9 @@ export function createCloudPiRuntimeAdapter<TOutput = string>(
           {
             defaultModelName: agent.models?.defaultModelName,
             modelRegistry,
+          },
+          {
+            outputRetryLimit: options.outputRetryLimit,
           },
         );
       } catch (error) {
