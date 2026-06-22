@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
 import { createPiRuntimeSession } from "./session.ts";
-import type { RuntimeStreamBridge } from "./types.ts";
+import type { PiRuntimeStreamState } from "./types.ts";
 
 describe("createPiRuntimeSession", () => {
   it("validates structured output with a Zod schema", async () => {
@@ -29,19 +29,20 @@ describe("createPiRuntimeSession", () => {
       },
       <TParsedOutput>(text: string) => text as TParsedOutput,
       lifecycle,
-      createTestStreamBridge(),
+      createTestStreamState(),
       {
         modelRegistry: createFakeModelRegistry([]),
       },
     );
 
-    const result = await runtimeSession.submit({
+    const handle = runtimeSession.submit({
       query: "Summarize input",
       output: z.object({
         summary: z.string(),
         confidence: z.number(),
       }),
     });
+    const result = await handle.result;
 
     expect(result.result.output).toEqual({
       summary: "done",
@@ -50,6 +51,7 @@ describe("createPiRuntimeSession", () => {
     expect(result.runId).toHaveLength(36);
     expect(piSession.prompt).toHaveBeenCalledWith(
       expect.stringContaining("Return the final answer as valid JSON only."),
+      expect.any(Object),
     );
   });
 
@@ -65,7 +67,7 @@ describe("createPiRuntimeSession", () => {
         summary: z.string(),
         confidence: z.number(),
       }),
-    });
+    }).result;
 
     expect(result.result.output).toEqual({
       summary: "done",
@@ -85,14 +87,17 @@ describe("createPiRuntimeSession", () => {
         summary: z.string(),
         confidence: z.number(),
       }),
-    });
+    }).result;
 
     expect(result.result.output).toEqual({
       summary: "done",
       confidence: 0.9,
     });
     expect(piSession.prompt).toHaveBeenCalledTimes(2);
-    expect(piSession.prompt).toHaveBeenLastCalledWith(expect.stringContaining("Parser error:"));
+    expect(piSession.prompt).toHaveBeenLastCalledWith(
+      expect.stringContaining("Parser error:"),
+      expect.any(Object),
+    );
   });
 
   it("returns usage for the current submit including structured output retries", async () => {
@@ -113,18 +118,16 @@ describe("createPiRuntimeSession", () => {
     const runtimeSession = createTestRuntimeSession(piSession, {
       outputRetryLimit: 1,
     });
-    const events: unknown[] = [];
-
-    const result = await runtimeSession.submit({
+    const handle = runtimeSession.submit({
       query: "Summarize input",
       output: z.object({
         summary: z.string(),
         confidence: z.number(),
       }),
-      onEvent: (event) => {
-        events.push(event);
-      },
     });
+    const eventsPromise = collectEvents(handle.events);
+    const result = await handle.result;
+    const events = await eventsPromise;
 
     const expectedUsage = createUsage({
       input: 24,
@@ -159,7 +162,7 @@ describe("createPiRuntimeSession", () => {
           summary: z.string(),
           confidence: z.number(),
         }),
-      }),
+      }).result,
     ).rejects.toThrow("Raw output:");
 
     expect(piSession.prompt).toHaveBeenCalledTimes(1);
@@ -191,7 +194,7 @@ describe("createPiRuntimeSession", () => {
       },
       <TParsedOutput>(text: string) => text as TParsedOutput,
       lifecycle,
-      createTestStreamBridge(),
+      createTestStreamState(),
       {
         modelRegistry: createFakeModelRegistry([model]),
       },
@@ -200,9 +203,63 @@ describe("createPiRuntimeSession", () => {
     await runtimeSession.submit({
       query: "Summarize input",
       modelName: "openai/gpt-4o",
-    });
+    }).result;
 
     expect(piSession.setModel).toHaveBeenCalledWith(model);
+  });
+
+  it("returns a submit handle immediately and streams ordered events", async () => {
+    const piSession = createFakeAgentSession(["done"]);
+    const runtimeSession = createTestRuntimeSession(piSession);
+
+    const handle = runtimeSession.submit({
+      query: "Summarize input",
+    });
+    const eventsPromise = collectEvents(handle.events);
+
+    expect(handle.runId).toHaveLength(36);
+
+    const result = await handle.result;
+    const events = await eventsPromise;
+
+    expect(result.result.output).toBe("done");
+    expect(events.map((event) => event.sequence)).toEqual(events.map((_, index) => index));
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "message.delta",
+        payload: expect.objectContaining({
+          delta: "done",
+        }),
+      }),
+    );
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "message.completed",
+        payload: expect.objectContaining({
+          text: "done",
+        }),
+      }),
+    );
+  });
+
+  it("emits run.failed and rejects result when prompt fails", async () => {
+    const piSession = createFakeAgentSession(["done"], [], new Error("prompt failed"));
+    const runtimeSession = createTestRuntimeSession(piSession);
+    const handle = runtimeSession.submit({
+      query: "Summarize input",
+    });
+    const eventsPromise = collectEvents(handle.events);
+
+    await expect(handle.result).rejects.toThrow("prompt failed");
+
+    expect(await eventsPromise).toContainEqual(
+      expect.objectContaining({
+        type: "run.failed",
+        payload: expect.objectContaining({
+          message: "prompt failed",
+        }),
+      }),
+    );
   });
 
   it("exposes runtime-independent message history as a readonly snapshot", () => {
@@ -310,7 +367,7 @@ function createTestRuntimeSession(
     },
     <TParsedOutput>(text: string) => text as TParsedOutput,
     createQueuedAgentLifecycle(undefined),
-    createTestStreamBridge(),
+    createTestStreamState(),
     {
       modelRegistry: createFakeModelRegistry([]),
     },
@@ -334,6 +391,7 @@ function createTestAgent(): ExpertAgent {
 function createFakeAgentSession(
   texts: readonly string[],
   usages: readonly AgentMessageUsage[] = [],
+  error?: Error | undefined,
 ): AgentSession {
   let subscriber: ((event: unknown) => void) | undefined;
   let promptCount = 0;
@@ -355,6 +413,10 @@ function createFakeAgentSession(
       };
     },
     prompt: vi.fn(async () => {
+      if (error !== undefined) {
+        throw error;
+      }
+
       const text = texts[promptCount] ?? texts.at(-1) ?? "";
       const usage = usages[promptCount];
       promptCount += 1;
@@ -365,18 +427,21 @@ function createFakeAgentSession(
           delta: text,
         },
       });
-      if (usage !== undefined) {
-        messages.push({
-          role: "assistant",
-          content: [{ type: "text", text }],
-          api: "openai-responses",
-          provider: "openai",
-          model: "gpt-4o",
-          usage,
-          stopReason: "stop",
-          timestamp: promptCount,
-        });
-      }
+      const assistantMessage = {
+        role: "assistant",
+        content: [{ type: "text", text }],
+        api: "openai-responses",
+        provider: "openai",
+        model: "gpt-4o",
+        ...(usage === undefined ? {} : { usage }),
+        stopReason: "stop",
+        timestamp: promptCount,
+      };
+      messages.push(assistantMessage);
+      subscriber?.({
+        type: "message_end",
+        message: assistantMessage,
+      });
     }),
     setModel: vi.fn(),
   } as unknown as AgentSession;
@@ -420,10 +485,14 @@ function createFakeModelRegistry(models: readonly unknown[]) {
   } as never;
 }
 
-function createTestStreamBridge(): RuntimeStreamBridge {
-  let sequence = 0;
+function createTestStreamState(): PiRuntimeStreamState {
+  return {};
+}
 
-  return {
-    nextSequence: () => sequence++,
-  };
+async function collectEvents<TEvent>(events: AsyncIterable<TEvent>): Promise<TEvent[]> {
+  const collected: TEvent[] = [];
+  for await (const event of events) {
+    collected.push(event);
+  }
+  return collected;
 }

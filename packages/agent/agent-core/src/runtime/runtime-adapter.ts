@@ -7,7 +7,7 @@ import type { AgentMessage } from "@expertmesh/contracts";
 import type { z } from "zod";
 import type { RunState, SessionState } from "./agent-lifecycle.ts";
 import type { ExpertAgentRunContext } from "./run-context.ts";
-import type { RuntimeStreamOptions } from "./stream-events.ts";
+import type { RuntimeStreamEvent } from "./stream-events.ts";
 
 export type RuntimeAdapterKind = "cloud-pi-agent" | (string & {});
 
@@ -52,7 +52,7 @@ export interface RuntimeCreateSessionRequest {
   readonly runtimeSession?: RuntimeSessionRef | undefined;
 }
 
-export interface RuntimeSubmitRequest<TOutput = string> extends RuntimeStreamOptions {
+export interface RuntimeSubmitRequest<TOutput = string> {
   readonly runId?: string | undefined;
   readonly modelName?: string | undefined;
   readonly query: string;
@@ -65,12 +65,19 @@ export interface RuntimeRunResult<TOutput = unknown> {
   readonly result: IExpertAgentRunResult<TOutput>;
 }
 
+export interface RuntimeSubmitHandle<TOutput = unknown> {
+  readonly runId: string;
+  readonly events: AsyncIterable<RuntimeStreamEvent>;
+  readonly result: Promise<RuntimeRunResult<TOutput>>;
+  readonly cancel: () => Promise<void>;
+}
+
 export interface RuntimeAgentSession {
   readonly info: () => RuntimeSessionInfo;
   readonly messages: () => readonly AgentMessage[];
   readonly submit: <TSubmitOutput = string>(
     submission: RuntimeSubmitRequest<TSubmitOutput>,
-  ) => Promise<RuntimeRunResult<TSubmitOutput>>;
+  ) => RuntimeSubmitHandle<TSubmitOutput>;
   readonly abort: () => Promise<void>;
 }
 

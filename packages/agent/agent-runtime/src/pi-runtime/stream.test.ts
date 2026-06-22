@@ -11,7 +11,6 @@ describe("createToolStreamEvents", () => {
         runId: "run-1",
         path: [],
       },
-      sequence: createTestSequence(),
       toolEvent: {
         type: "completed",
         toolCallId: "tool-1",
@@ -25,7 +24,6 @@ describe("createToolStreamEvents", () => {
 
     expect(events).toMatchObject([
       {
-        sequence: 0,
         runId: "run-1",
         source: {
           kind: "tool",
@@ -35,23 +33,9 @@ describe("createToolStreamEvents", () => {
         },
         type: "tool.completed",
         payload: {
-          toolName: "read",
-        },
-      },
-      {
-        sequence: 1,
-        runId: "run-1",
-        source: {
-          kind: "tool",
-          runId: "run-1",
           toolCallId: "tool-1",
-          path: [],
-        },
-        type: "message.completed",
-        payload: {
-          role: "tool",
-          contentType: "text",
-          text: "file content",
+          toolName: "read",
+          kind: "tool",
         },
       },
     ]);
@@ -67,6 +51,7 @@ describe("createToolStreamEvents", () => {
         parentRunId: "parent-1",
         agentType: "reviewer",
         toolCallId: "launch-1",
+        toolKind: "subagent",
         path: [
           {
             runId: "parent-1",
@@ -77,7 +62,6 @@ describe("createToolStreamEvents", () => {
           },
         ],
       },
-      sequence: createTestSequence(),
       toolEvent: {
         type: "started",
         toolCallId: "tool-2",
@@ -98,6 +82,7 @@ describe("createToolStreamEvents", () => {
         parentRunId: "parent-1",
         agentType: "reviewer",
         toolCallId: "tool-2",
+        toolKind: "subagent",
         path: [
           {
             runId: "parent-1",
@@ -110,17 +95,43 @@ describe("createToolStreamEvents", () => {
       },
       type: "tool.started",
       payload: {
+        toolCallId: "tool-2",
         toolName: "grep",
+        kind: "subagent",
         inputPreview: {
           pattern: "Runtime",
         },
       },
     });
   });
+
+  it("maps tool updates to tool.delta instead of message.delta", () => {
+    const events = createToolStreamEvents({
+      runId: "run-1",
+      source: {
+        kind: "agent",
+        runId: "run-1",
+        path: [],
+      },
+      toolEvent: {
+        type: "updated",
+        toolCallId: "tool-1",
+        toolName: "bash",
+        args: {},
+        partialResult: "hello",
+      },
+    });
+
+    expect(events).toMatchObject([
+      {
+        type: "tool.delta",
+        payload: {
+          toolCallId: "tool-1",
+          toolName: "bash",
+          channel: "message",
+          delta: "hello",
+        },
+      },
+    ]);
+  });
 });
-
-function createTestSequence(): () => number {
-  let sequence = 0;
-
-  return () => sequence++;
-}

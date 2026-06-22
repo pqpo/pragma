@@ -1,5 +1,4 @@
 import type { ExpertAgent } from "../agent/expert-agent.ts";
-import type { RuntimeStreamOptions } from "../runtime/stream-events.ts";
 import type { ExpertAgentManagedTool, ExpertAgentToolCallResult } from "../tools/managed-tool.ts";
 import type { SubAgentDefinition } from "./sub-agent.ts";
 import { resolveSubAgentSystemPrompt } from "./sub-agent.ts";
@@ -8,7 +7,7 @@ export type SubAgentManagedTool = ExpertAgentManagedTool<"launch_subagent", SubA
 
 export type SubAgentToolCallResult = ExpertAgentToolCallResult;
 
-export interface SubAgentRuntimeLaunchRequest extends RuntimeStreamOptions {
+export interface SubAgentRuntimeLaunchRequest {
   readonly agentType: string;
   readonly task: string;
   readonly definition: SubAgentDefinition;

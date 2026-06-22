@@ -11,21 +11,18 @@ import type {
   ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import type { ResolvedToolSet, SubAgentRuntimeLaunchRequest } from "@expertmesh/agent-core";
-import {
-  createRuntimeEventDispatcher,
-  createToolPolicy,
-  emitRuntimeStreamEvent,
-  selectResolvedTools,
-} from "@expertmesh/agent-core";
+import { createToolPolicy, selectResolvedTools } from "@expertmesh/agent-core";
+import { randomUUID } from "node:crypto";
 
-import { readAssistantTextDelta, readToolExecutionEvent } from "./session-events.ts";
 import {
-  createChildRunId,
-  createStreamEvent,
-  createToolStreamEvents,
-  summarizeText,
-} from "./stream.ts";
-import type { RuntimeStreamBridge } from "./types.ts";
+  readAssistantMessageText,
+  readAssistantTextDelta,
+  readAssistantThinkingDelta,
+  readProgressEvent,
+  readToolExecutionEvent,
+} from "./session-events.ts";
+import { createToolStreamEvents } from "./stream.ts";
+import type { PiRuntimeStreamState } from "./types.ts";
 
 export async function launchPiSubAgent(
   request: SubAgentRuntimeLaunchRequest,
@@ -34,18 +31,19 @@ export async function launchPiSubAgent(
     readonly cwd: string;
     readonly modelRegistry: ModelRegistry;
     readonly resolvedTools?: ResolvedToolSet<ToolDefinition> | undefined;
-    readonly streamBridge: RuntimeStreamBridge;
+    readonly streamState: PiRuntimeStreamState;
   },
 ) {
-  const parentRunId = request.parentRunId ?? options.streamBridge.runId;
+  const parentRunId = request.parentRunId ?? options.streamState.runId;
   const childRunId = request.childRunId ?? createChildRunId(parentRunId);
-  const onEvent = request.onEvent ?? options.streamBridge.onEvent;
+  const emitter = options.streamState.emitter;
   const baseSource = {
-    kind: "subagent" as const,
-    runId: childRunId,
+    kind: "tool" as const,
+    runId: parentRunId ?? childRunId,
     ...(parentRunId === undefined ? {} : { parentRunId }),
     agentType: request.agentType,
     ...(request.toolCallId === undefined ? {} : { toolCallId: request.toolCallId }),
+    toolKind: "subagent" as const,
     path:
       parentRunId === undefined
         ? []
@@ -59,27 +57,6 @@ export async function launchPiSubAgent(
             },
           ],
   };
-
-  if (parentRunId !== undefined) {
-    await emitRuntimeStreamEvent(
-      onEvent,
-      createStreamEvent({
-        runId: parentRunId,
-        source: {
-          kind: "agent",
-          runId: parentRunId,
-          path: [],
-        },
-        sequence: options.streamBridge.nextSequence(),
-        type: "subagent.started",
-        payload: {
-          agentType: request.agentType,
-          task: request.task,
-          childRunId,
-        },
-      }),
-    );
-  }
 
   const loader = new DefaultResourceLoader({
     cwd: options.cwd,
@@ -121,40 +98,65 @@ export async function launchPiSubAgent(
   }
 
   const { session } = await createAgentSession(sessionOptions);
-  const outputTextParts: string[] = [];
-  const dispatcher = createRuntimeEventDispatcher({
-    sink: onEvent,
-  });
+  let output = "";
   const unsubscribe = session.subscribe((event) => {
     const delta = readAssistantTextDelta(event);
+    const thinkingDelta = readAssistantThinkingDelta(event);
+    const completedMessageText = readAssistantMessageText(event);
+    const progressEvent = readProgressEvent(event);
     const toolEvent = readToolExecutionEvent(event);
 
     if (delta !== undefined) {
-      outputTextParts.push(delta);
-      dispatcher.dispatch(
-        createStreamEvent({
-          runId: childRunId,
-          ...(parentRunId === undefined ? {} : { parentRunId }),
-          source: baseSource,
-          type: "message.delta",
-          payload: {
-            role: "assistant",
-            contentType: "text",
-            delta,
-          },
-        }),
-      );
+      emitter?.emit({
+        runId: parentRunId ?? childRunId,
+        source: baseSource,
+        type: "tool.delta",
+        payload: {
+          toolCallId: request.toolCallId ?? childRunId,
+          toolName: "launch_subagent",
+          kind: "subagent",
+          channel: "message",
+          delta,
+        },
+      });
+    }
+
+    if (thinkingDelta !== undefined) {
+      emitter?.emit({
+        runId: parentRunId ?? childRunId,
+        source: baseSource,
+        type: "tool.delta",
+        payload: {
+          toolCallId: request.toolCallId ?? childRunId,
+          toolName: "launch_subagent",
+          kind: "subagent",
+          channel: "message",
+          delta: thinkingDelta,
+        },
+      });
+    }
+
+    if (completedMessageText !== undefined) {
+      output = completedMessageText;
+    }
+
+    if (progressEvent !== undefined) {
+      emitter?.emit({
+        runId: parentRunId ?? childRunId,
+        source: baseSource,
+        type: "progress",
+        payload: progressEvent,
+      });
     }
 
     if (toolEvent !== undefined) {
       for (const streamEvent of createToolStreamEvents({
-        runId: childRunId,
+        runId: parentRunId ?? childRunId,
         parentRunId,
         source: baseSource,
-        sequence: dispatcher.nextSequence,
         toolEvent,
       })) {
-        dispatcher.dispatch(streamEvent);
+        emitter?.emit(streamEvent);
       }
     }
   });
@@ -166,124 +168,17 @@ export async function launchPiSubAgent(
   request.signal?.addEventListener("abort", abort, { once: true });
 
   try {
-    try {
-      await dispatcher.emit(
-        createStreamEvent({
-          runId: childRunId,
-          ...(parentRunId === undefined ? {} : { parentRunId }),
-          source: baseSource,
-          type: "run.started",
-          payload: {
-            task: request.task,
-          },
-        }),
-      );
+    await session.prompt(request.task);
 
-      await session.prompt(request.task);
-      await dispatcher.drain();
-      const output = outputTextParts.join("");
-
-      await dispatcher.emit(
-        createStreamEvent({
-          runId: childRunId,
-          ...(parentRunId === undefined ? {} : { parentRunId }),
-          source: baseSource,
-          type: "message.completed",
-          payload: {
-            role: "assistant",
-            contentType: "text",
-            text: output,
-          },
-        }),
-      );
-
-      await dispatcher.emit(
-        createStreamEvent({
-          runId: childRunId,
-          ...(parentRunId === undefined ? {} : { parentRunId }),
-          source: baseSource,
-          type: "run.completed",
-          payload: {
-            outputSummary: summarizeText(output),
-          },
-        }),
-      );
-
-      if (parentRunId !== undefined) {
-        await emitRuntimeStreamEvent(
-          onEvent,
-          createStreamEvent({
-            runId: parentRunId,
-            source: {
-              kind: "agent",
-              runId: parentRunId,
-              path: [],
-            },
-            sequence: options.streamBridge.nextSequence(),
-            type: "subagent.completed",
-            payload: {
-              agentType: request.agentType,
-              childRunId,
-              outputSummary: summarizeText(output),
-            },
-          }),
-        );
-      }
-
-      return {
-        text: output,
-        details: {
-          agentType: request.agentType,
-          task: request.task,
-          model: request.definition.model ?? "inherit",
-        },
-      };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "SubAgent run failed";
-
-      const wasCancelled = request.signal?.aborted === true;
-
-      await dispatcher.emit(
-        createStreamEvent({
-          runId: childRunId,
-          ...(parentRunId === undefined ? {} : { parentRunId }),
-          source: baseSource,
-          type: wasCancelled ? "run.aborted" : "run.failed",
-          payload: wasCancelled
-            ? {
-                reason: "cancelled",
-              }
-            : {
-                message,
-              },
-        }),
-      );
-
-      if (parentRunId !== undefined) {
-        await emitRuntimeStreamEvent(
-          onEvent,
-          createStreamEvent({
-            runId: parentRunId,
-            source: {
-              kind: "agent",
-              runId: parentRunId,
-              path: [],
-            },
-            sequence: options.streamBridge.nextSequence(),
-            type: "subagent.failed",
-            payload: {
-              agentType: request.agentType,
-              childRunId,
-              message,
-            },
-          }),
-        );
-      }
-
-      throw error;
-    }
+    return {
+      text: output,
+      details: {
+        agentType: request.agentType,
+        task: request.task,
+        model: request.definition.model ?? "inherit",
+      },
+    };
   } finally {
-    await dispatcher.drain();
     request.signal?.removeEventListener("abort", abort);
     unsubscribe();
     session.dispose();
@@ -308,4 +203,10 @@ function resolveSubAgentModel(
         candidate.name === model ||
         `${candidate.provider}/${candidate.id}` === model,
     );
+}
+
+function createChildRunId(parentRunId: string | undefined): string {
+  return parentRunId === undefined
+    ? `subagent-${randomUUID()}`
+    : `${parentRunId}:subagent:${randomUUID()}`;
 }

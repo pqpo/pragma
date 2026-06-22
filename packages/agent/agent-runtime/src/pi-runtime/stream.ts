@@ -1,39 +1,6 @@
-import type { RuntimeStreamEvent } from "@expertmesh/agent-core";
-import { randomUUID } from "node:crypto";
+import type { RuntimeStreamEvent, RuntimeStreamEventInput } from "@expertmesh/agent-core";
 
 import type { PiToolExecutionEvent } from "./session-events.ts";
-import type { RuntimeStreamBridge } from "./types.ts";
-
-export function createRuntimeStreamBridge(): RuntimeStreamBridge {
-  return {
-    nextSequence: createSequenceCounter(),
-  };
-}
-
-export function createSequenceCounter(): () => number {
-  let sequence = 0;
-
-  return () => sequence++;
-}
-
-export function createChildRunId(parentRunId: string | undefined): string {
-  return parentRunId === undefined
-    ? `subagent-${randomUUID()}`
-    : `${parentRunId}:subagent:${randomUUID()}`;
-}
-
-export function createStreamEvent(
-  event:
-    | Omit<RuntimeStreamEvent, "schemaVersion" | "eventId" | "emittedAt">
-    | Omit<RuntimeStreamEvent, "schemaVersion" | "eventId" | "emittedAt" | "sequence">,
-): RuntimeStreamEvent {
-  return {
-    schemaVersion: "expertmesh.stream/v1",
-    eventId: randomUUID(),
-    emittedAt: new Date().toISOString(),
-    ...event,
-  } as RuntimeStreamEvent;
-}
 
 export function summarizeInput(input: unknown): string {
   return summarizeText(
@@ -49,24 +16,25 @@ export function createToolStreamEvents(options: {
   readonly runId: string;
   readonly parentRunId?: string | undefined;
   readonly source: RuntimeStreamEvent["source"];
-  readonly sequence: () => number;
   readonly toolEvent: PiToolExecutionEvent;
-}): readonly RuntimeStreamEvent[] {
+}): readonly RuntimeStreamEventInput[] {
   const toolSource = createToolSource(options.source, options.toolEvent.toolCallId);
+  const toolKind = readToolKind(toolSource, options.toolEvent.toolName);
 
   if (options.toolEvent.type === "started") {
     return [
-      createStreamEvent({
+      {
         runId: options.runId,
         ...(options.parentRunId === undefined ? {} : { parentRunId: options.parentRunId }),
         source: toolSource,
-        sequence: options.sequence(),
         type: "tool.started",
         payload: {
+          toolCallId: options.toolEvent.toolCallId,
           toolName: options.toolEvent.toolName,
+          kind: toolKind,
           inputPreview: options.toolEvent.args,
         },
-      }),
+      },
     ];
   }
 
@@ -76,56 +44,44 @@ export function createToolStreamEvents(options: {
     return text === undefined
       ? []
       : [
-          createStreamEvent({
+          {
             runId: options.runId,
             ...(options.parentRunId === undefined ? {} : { parentRunId: options.parentRunId }),
             source: toolSource,
-            sequence: options.sequence(),
-            type: "message.delta",
+            type: "tool.delta",
             payload: {
-              role: "tool",
-              contentType: "text",
+              toolCallId: options.toolEvent.toolCallId,
+              toolName: options.toolEvent.toolName,
+              kind: toolKind,
+              channel: "message",
               delta: text,
             },
-          }),
+          },
         ];
   }
 
   const outputText = stringifyToolOutput(options.toolEvent.result);
 
   return [
-    createStreamEvent({
+    {
       runId: options.runId,
       ...(options.parentRunId === undefined ? {} : { parentRunId: options.parentRunId }),
       source: toolSource,
-      sequence: options.sequence(),
       type: options.toolEvent.isError ? "tool.failed" : "tool.completed",
       payload: options.toolEvent.isError
         ? {
+            toolCallId: options.toolEvent.toolCallId,
             toolName: options.toolEvent.toolName,
+            kind: toolKind,
             message: outputText ?? "Tool execution failed",
           }
         : {
+            toolCallId: options.toolEvent.toolCallId,
             toolName: options.toolEvent.toolName,
+            kind: toolKind,
             outputPreview: options.toolEvent.result,
           },
-    }),
-    ...(outputText === undefined
-      ? []
-      : [
-          createStreamEvent({
-            runId: options.runId,
-            ...(options.parentRunId === undefined ? {} : { parentRunId: options.parentRunId }),
-            source: toolSource,
-            sequence: options.sequence(),
-            type: "message.completed",
-            payload: {
-              role: "tool",
-              contentType: "text",
-              text: outputText,
-            },
-          }),
-        ]),
+    },
   ];
 }
 
@@ -138,6 +94,13 @@ function createToolSource(
     kind: "tool",
     toolCallId,
   };
+}
+
+function readToolKind(
+  source: RuntimeStreamEvent["source"],
+  toolName: string,
+): "tool" | "subagent" {
+  return source.toolKind === "subagent" || toolName === "launch_subagent" ? "subagent" : "tool";
 }
 
 function stringifyToolOutput(output: unknown): string | undefined {

@@ -17,6 +17,7 @@ export const ExpertAgentStreamSourceSchema = z.object({
   agentId: z.string().min(1).optional(),
   agentType: z.string().min(1).optional(),
   toolCallId: z.string().min(1).optional(),
+  toolKind: z.enum(["tool", "subagent"]).optional(),
   path: z.array(ExpertAgentStreamSourceFrameSchema).default([]),
 });
 
@@ -55,8 +56,8 @@ export const ExpertAgentRunFailedEventSchema = ExpertAgentStreamEventBaseSchema.
   }),
 });
 
-export const ExpertAgentRunAbortedEventSchema = ExpertAgentStreamEventBaseSchema.extend({
-  type: z.literal("run.aborted"),
+export const ExpertAgentRunCancelledEventSchema = ExpertAgentStreamEventBaseSchema.extend({
+  type: z.literal("run.cancelled"),
   payload: z.object({
     reason: z.string().optional(),
   }),
@@ -65,7 +66,7 @@ export const ExpertAgentRunAbortedEventSchema = ExpertAgentStreamEventBaseSchema
 export const ExpertAgentMessageDeltaEventSchema = ExpertAgentStreamEventBaseSchema.extend({
   type: z.literal("message.delta"),
   payload: z.object({
-    role: z.enum(["assistant", "tool", "system"]),
+    role: z.enum(["assistant", "system"]),
     contentType: z.enum(["text", "json"]),
     delta: z.string(),
   }),
@@ -74,16 +75,58 @@ export const ExpertAgentMessageDeltaEventSchema = ExpertAgentStreamEventBaseSche
 export const ExpertAgentMessageCompletedEventSchema = ExpertAgentStreamEventBaseSchema.extend({
   type: z.literal("message.completed"),
   payload: z.object({
-    role: z.enum(["assistant", "tool", "system"]),
+    role: z.enum(["assistant", "system"]),
     contentType: z.enum(["text", "json"]),
     text: z.string().optional(),
+  }),
+});
+
+export const ExpertAgentThoughtDeltaEventSchema = ExpertAgentStreamEventBaseSchema.extend({
+  type: z.literal("thought.delta"),
+  payload: z.object({
+    contentType: z.literal("text"),
+    delta: z.string(),
+  }),
+});
+
+export const ExpertAgentProgressEventSchema = ExpertAgentStreamEventBaseSchema.extend({
+  type: z.literal("progress"),
+  payload: z.object({
+    stage: z.string().min(1),
+    message: z.string().min(1).optional(),
+    data: z.unknown().optional(),
   }),
 });
 
 export const ExpertAgentToolStartedEventSchema = ExpertAgentStreamEventBaseSchema.extend({
   type: z.literal("tool.started"),
   payload: z.object({
+    toolCallId: z.string().min(1),
     toolName: z.string().min(1),
+    kind: z.enum(["tool", "subagent"]).default("tool"),
+    inputPreview: z.unknown().optional(),
+  }),
+});
+
+export const ExpertAgentToolDeltaEventSchema = ExpertAgentStreamEventBaseSchema.extend({
+  type: z.literal("tool.delta"),
+  payload: z.object({
+    toolCallId: z.string().min(1),
+    toolName: z.string().min(1),
+    kind: z.enum(["tool", "subagent"]).default("tool"),
+    channel: z.enum(["stdout", "stderr", "message", "data"]),
+    delta: z.string(),
+  }),
+});
+
+export const ExpertAgentToolApprovalRequestedEventSchema = ExpertAgentStreamEventBaseSchema.extend({
+  type: z.literal("tool.approval_requested"),
+  payload: z.object({
+    approvalId: z.string().min(1),
+    toolCallId: z.string().min(1),
+    toolName: z.string().min(1),
+    kind: z.enum(["tool", "subagent"]).default("tool"),
+    reason: z.string().min(1).optional(),
     inputPreview: z.unknown().optional(),
   }),
 });
@@ -91,7 +134,9 @@ export const ExpertAgentToolStartedEventSchema = ExpertAgentStreamEventBaseSchem
 export const ExpertAgentToolCompletedEventSchema = ExpertAgentStreamEventBaseSchema.extend({
   type: z.literal("tool.completed"),
   payload: z.object({
+    toolCallId: z.string().min(1),
     toolName: z.string().min(1),
+    kind: z.enum(["tool", "subagent"]).default("tool"),
     outputPreview: z.unknown().optional(),
   }),
 });
@@ -99,35 +144,21 @@ export const ExpertAgentToolCompletedEventSchema = ExpertAgentStreamEventBaseSch
 export const ExpertAgentToolFailedEventSchema = ExpertAgentStreamEventBaseSchema.extend({
   type: z.literal("tool.failed"),
   payload: z.object({
+    toolCallId: z.string().min(1),
     toolName: z.string().min(1),
+    kind: z.enum(["tool", "subagent"]).default("tool"),
     message: z.string().min(1),
   }),
 });
 
-export const ExpertAgentSubAgentStartedEventSchema = ExpertAgentStreamEventBaseSchema.extend({
-  type: z.literal("subagent.started"),
+export const ExpertAgentArtifactCreatedEventSchema = ExpertAgentStreamEventBaseSchema.extend({
+  type: z.literal("artifact.created"),
   payload: z.object({
-    agentType: z.string().min(1),
-    task: z.string().min(1),
-    childRunId: z.string().min(1),
-  }),
-});
-
-export const ExpertAgentSubAgentCompletedEventSchema = ExpertAgentStreamEventBaseSchema.extend({
-  type: z.literal("subagent.completed"),
-  payload: z.object({
-    agentType: z.string().min(1),
-    childRunId: z.string().min(1),
-    outputSummary: z.string().optional(),
-  }),
-});
-
-export const ExpertAgentSubAgentFailedEventSchema = ExpertAgentStreamEventBaseSchema.extend({
-  type: z.literal("subagent.failed"),
-  payload: z.object({
-    agentType: z.string().min(1),
-    childRunId: z.string().min(1),
-    message: z.string().min(1),
+    artifactId: z.string().min(1),
+    kind: z.string().min(1),
+    title: z.string().min(1).optional(),
+    uri: z.string().min(1).optional(),
+    metadata: z.record(z.string(), z.unknown()).optional(),
   }),
 });
 
@@ -135,15 +166,17 @@ export const ExpertAgentStreamEventSchema = z.discriminatedUnion("type", [
   ExpertAgentRunStartedEventSchema,
   ExpertAgentRunCompletedEventSchema,
   ExpertAgentRunFailedEventSchema,
-  ExpertAgentRunAbortedEventSchema,
+  ExpertAgentRunCancelledEventSchema,
   ExpertAgentMessageDeltaEventSchema,
   ExpertAgentMessageCompletedEventSchema,
+  ExpertAgentThoughtDeltaEventSchema,
+  ExpertAgentProgressEventSchema,
   ExpertAgentToolStartedEventSchema,
+  ExpertAgentToolDeltaEventSchema,
+  ExpertAgentToolApprovalRequestedEventSchema,
   ExpertAgentToolCompletedEventSchema,
   ExpertAgentToolFailedEventSchema,
-  ExpertAgentSubAgentStartedEventSchema,
-  ExpertAgentSubAgentCompletedEventSchema,
-  ExpertAgentSubAgentFailedEventSchema,
+  ExpertAgentArtifactCreatedEventSchema,
 ]);
 
 export type ExpertAgentStreamSchemaVersion = z.infer<typeof ExpertAgentStreamSchemaVersionSchema>;

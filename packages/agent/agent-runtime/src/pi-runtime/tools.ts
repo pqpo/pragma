@@ -19,7 +19,7 @@ import {
 import type { McpManagedTool } from "../mcp-tools.ts";
 import { launchPiSubAgent } from "./subagents.ts";
 import { formatMcpToolResult, normalizeInputSchema, sanitizeToolName } from "./tool-schema.ts";
-import type { RuntimeStreamBridge } from "./types.ts";
+import type { PiRuntimeStreamState } from "./types.ts";
 
 export function createResolvedPiTools(options: {
   readonly agent: ExpertAgent;
@@ -28,7 +28,7 @@ export function createResolvedPiTools(options: {
   readonly mcpTools: readonly McpManagedTool[];
   readonly modelRegistry: ModelRegistry;
   readonly parentSystemPrompt: string;
-  readonly streamBridge: RuntimeStreamBridge;
+  readonly streamState: PiRuntimeStreamState;
   readonly lifecycle: AgentLifecycle<ExpertAgentRunContext>;
   readonly context?: ExpertAgentRunContext | undefined;
 }): ResolvedToolSet<ToolDefinition> {
@@ -41,7 +41,7 @@ export function createResolvedPiTools(options: {
         cwd: options.cwd,
         modelRegistry: options.modelRegistry,
         resolvedTools: parentResolvedTools,
-        streamBridge: options.streamBridge,
+        streamState: options.streamState,
       }),
   });
   const documentTools = options.agent.createDefaultTools({

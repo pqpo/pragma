@@ -706,9 +706,9 @@ expertmesh.stream/v1
 | `eventId`       | 事件唯一 ID，用于幂等写入和客户端去重           |
 | `sequence`      | 同一个 `runId` 内单调递增的序号                 |
 | `runId`         | 当前事件所属运行                                |
-| `parentRunId`   | 可选；subAgent 事件指向父运行                   |
+| `parentRunId`   | 可选；嵌套运行或工具事件指向父运行             |
 | `emittedAt`     | Runtime 产生事件的 ISO 时间                     |
-| `source`        | 事件来源，包括 agent、subagent、runtime 或 tool |
+| `source`        | 事件来源，包括 agent、runtime 或 tool           |
 | `type`          | 事件类型                                        |
 | `payload`       | 事件负载，由 `type` 决定                        |
 
@@ -718,15 +718,17 @@ expertmesh.stream/v1
 run.started
 run.completed
 run.failed
-run.aborted
+run.cancelled
 message.delta
 message.completed
+thought.delta
+progress
 tool.started
+tool.delta
+tool.approval_requested
 tool.completed
 tool.failed
-subagent.started
-subagent.completed
-subagent.failed
+artifact.created
 ```
 
 设计规则：
@@ -735,15 +737,17 @@ subagent.failed
 2. `message.completed` 表示该消息已经结束，可以带完整 `text` 供校验或补偿；
 3. `run.completed` 只表示 Runtime 执行完成，不代表业务输出已经通过 `outputSchema`；
 4. `run.failed` 表示 Runtime 或 Adapter 执行失败，应保留可读 `message`；
-5. Tool 与 subAgent 的事件必须作为同一条运行 Trace 的一部分记录；
-6. 事件负载只放展示、审计、路由需要的摘要，不把大 artifact 或完整文件内容塞进事件。
+5. `run.cancelled` 表示用户或系统主动取消，不与失败混用；
+6. `tool.delta` 是工具执行过程输出，subAgent 输出也通过该事件表达；
+7. subAgent 是 `tool.kind = "subagent"` 的特殊工具，不定义独立 `subagent.*` 事件族；
+8. 事件负载只放展示、审计、路由需要的摘要，不把大 artifact 或完整文件内容塞进事件。
 
 ### 15.1 Runtime Adapter 接入方式
 
 `adapter.createSession()` 在创建会话时绑定 agent 和 run context；会话创建后可多次
 `submit()`，提交会在 Runtime 内部串行执行。`RuntimeSubmitRequest` 可以携带
-可选 `runId`、`onEvent` sink，并可为单次提交指定 Zod output schema；未指定
-`runId` 时在 `submit()` 阶段生成，未指定 output 时默认为 string。
+可选 `runId`，并可为单次提交指定 Zod output schema；未指定 `runId` 时在
+`submit()` 阶段生成，未指定 output 时默认为 string。
 
 Session 标识分为三层：
 
@@ -768,52 +772,58 @@ const session = await adapter.createSession({
 
 const sessionInfo = session.info();
 
-await session.submit({
+const run = session.submit({
   query: "Summarize the current workspace status.",
   output: z.object({
     summary: z.string(),
     confidence: z.number(),
   }),
-  onEvent: async (event) => {
-    // Server/Worker 可写入 Trace、推送 SSE/WebSocket 或转发给 Desktop Bridge。
-  },
 });
+
+for await (const event of run.events) {
+  // Server/Worker 可写入 Trace、推送 SSE/WebSocket 或转发给 Desktop Bridge。
+}
+
+const result = await run.result;
 ```
 
 Adapter 必须遵守：
 
-1. 没有 `onEvent` 时仍能正常返回最终结果；
-2. 事件发送失败不应静默吞掉，Server/Worker 后续可决定是否中断运行；
-3. Runtime 原生事件必须先映射成 `ExpertAgentStreamEvent`，再向外暴露；
-4. 不把具体 SDK 的事件结构泄漏给上层。
+1. `submit()` 必须立即返回 `{ runId, events, result, cancel }`；
+2. `events` 必须是 `AsyncIterable<ExpertAgentStreamEvent>`，可用 `for await` 消费；
+3. `result` 必须返回最终结构化结果，流式事件不替代 output schema 校验；
+4. Runtime 原生事件必须先映射成 `ExpertAgentStreamEvent`，再向外暴露；
+5. 不把具体 SDK 的事件结构泄漏给上层。
 
 ### 15.2 subAgent 流式桥接
 
-subAgent 有两个层次的事件：
-
-1. 父运行上的生命周期事件：`subagent.started`、`subagent.completed`、`subagent.failed`；
-2. 子运行自己的事件：例如 child `message.delta`、`message.completed`、`run.failed`。
-
-子运行事件必须带：
+subAgent 不再定义独立事件族。父运行发起 subAgent 时，Runtime 应将它视为特殊工具调用：
 
 ```json
 {
-  "runId": "parent-run:subagent:child-id",
-  "parentRunId": "parent-run",
+  "type": "tool.started",
+  "runId": "parent-run",
   "source": {
+    "kind": "tool",
+    "runId": "parent-run",
+    "toolCallId": "tool-call-1",
+    "toolKind": "subagent"
+  },
+  "payload": {
+    "toolCallId": "tool-call-1",
+    "toolName": "launch_subagent",
     "kind": "subagent",
-    "runId": "parent-run:subagent:child-id",
-    "parentRunId": "parent-run",
-    "agentType": "reviewer",
-    "path": [
-      { "runId": "parent-run" },
-      { "runId": "parent-run:subagent:child-id", "agentType": "reviewer" }
-    ]
+    "inputPreview": {
+      "agentType": "reviewer",
+      "task": "Review this change"
+    }
   }
 }
 ```
 
-这样 UI 可以把子输出折叠在父运行下面，Trace 系统也能独立查询 child run。父 run 和 child run 各自维护自己的 `sequence`，排序时先按 `parentRunId` 建树，再按每个 run 内的 `sequence` 回放。
+subAgent 的过程输出使用 `tool.delta`，最终成功或失败使用 `tool.completed` /
+`tool.failed`。如果后续需要独立查询 child run，可以在 `payload` 或 artifact metadata
+中记录 child run id，但首版协议不要求客户端处理 `subagent.*`。
 
 ### 15.3 传输边界
 

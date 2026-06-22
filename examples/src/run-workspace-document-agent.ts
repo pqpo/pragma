@@ -66,14 +66,17 @@ const session = await runtime.createSession({ agent });
 
 try {
   printRunHeader(agent, formatModelConfig(modelConfig), cli.query);
-  const result = await session.submit({
+  const run = session.submit({
     query: cli.query,
-    onEvent(event) {
-      if (event.type === "message.delta") {
-        process.stdout.write(event.payload.delta);
-      }
-    },
   });
+
+  for await (const event of run.events) {
+    if (event.type === "message.delta") {
+      process.stdout.write(event.payload.delta);
+    }
+  }
+
+  const result = await run.result;
   printRunResult(result.runId);
 } finally {
   await session.abort();

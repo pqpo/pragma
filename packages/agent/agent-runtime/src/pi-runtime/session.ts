@@ -7,21 +7,31 @@ import type {
   RuntimeOutputSchema,
   RuntimeRunResult,
   RuntimeSessionInfo,
+  RuntimeStreamEvent,
   RuntimeSubmitRequest,
 } from "@expertmesh/agent-core";
-import { createRuntimeEventDispatcher, dispatchExpertAgentHook } from "@expertmesh/agent-core";
+import {
+  AsyncPushQueue,
+  createRuntimeEventEmitter,
+  dispatchExpertAgentHook,
+} from "@expertmesh/agent-core";
 import { randomUUID } from "node:crypto";
 
-import { readAssistantTextDelta, readToolExecutionEvent } from "./session-events.ts";
+import {
+  readAssistantMessageText,
+  readAssistantTextDelta,
+  readAssistantThinkingDelta,
+  readProgressEvent,
+  readToolExecutionEvent,
+} from "./session-events.ts";
 import { convertPiAgentMessages } from "./session-messages.ts";
 import {
-  createStreamEvent,
   createToolStreamEvents,
   summarizeInput,
   summarizeText,
 } from "./stream.ts";
 import { resolveRequiredRuntimeModel } from "./models.ts";
-import type { RuntimeStreamBridge } from "./types.ts";
+import type { PiRuntimeStreamState } from "./types.ts";
 
 const DEFAULT_OUTPUT_RETRY_LIMIT = 3;
 
@@ -31,7 +41,7 @@ export function createPiRuntimeSession(
   info: Omit<RuntimeSessionInfo, "sessionState" | "runState">,
   outputParser: <TParsedOutput>(text: string) => TParsedOutput,
   lifecycle: AgentLifecycle,
-  streamBridge: RuntimeStreamBridge,
+  streamState: PiRuntimeStreamState,
   models: {
     readonly defaultModelName?: string | undefined;
     readonly modelRegistry: ModelRegistry;
@@ -43,48 +53,84 @@ export function createPiRuntimeSession(
   return {
     info: () => createSessionInfo(info, lifecycle),
     messages: () => convertPiAgentMessages(session.messages),
-    async submit<TSubmitOutput = string>(submission: RuntimeSubmitRequest<TSubmitOutput>) {
-      return await lifecycle.enqueue(async ({ signal }) => {
-        const runId = submission.runId ?? randomUUID();
-        let outputTextParts: string[] = [];
+    submit<TSubmitOutput = string>(submission: RuntimeSubmitRequest<TSubmitOutput>) {
+      const runId = submission.runId ?? randomUUID();
+      const queue = new AsyncPushQueue<RuntimeStreamEvent>();
+      const emitter = createRuntimeEventEmitter(queue);
+      let cancelled = false;
+      let preflightRejected = false;
+
+      const result = lifecycle.enqueue(async ({ signal }) => {
+        let outputText = "";
         const source = {
           kind: "agent" as const,
           runId,
           path: [],
         };
-        streamBridge.runId = runId;
-        streamBridge.onEvent = submission.onEvent;
-        const dispatcher = createRuntimeEventDispatcher({
-          sink: submission.onEvent,
-        });
+        streamState.runId = runId;
+        streamState.emitter = emitter;
         const unsubscribe = session.subscribe((event) => {
           const delta = readAssistantTextDelta(event);
+          const thinkingDelta = readAssistantThinkingDelta(event);
+          const completedMessageText = readAssistantMessageText(event);
+          const progressEvent = readProgressEvent(event);
           const toolEvent = readToolExecutionEvent(event);
 
           if (delta !== undefined) {
-            outputTextParts.push(delta);
-            dispatcher.dispatch(
-              createStreamEvent({
-                runId,
-                source,
-                type: "message.delta",
-                payload: {
-                  role: "assistant",
-                  contentType: "text",
-                  delta,
-                },
-              }),
-            );
+            emitter.emit({
+              runId,
+              source,
+              type: "message.delta",
+              payload: {
+                role: "assistant",
+                contentType: "text",
+                delta,
+              },
+            });
+          }
+
+          if (thinkingDelta !== undefined) {
+            emitter.emit({
+              runId,
+              source,
+              type: "thought.delta",
+              payload: {
+                contentType: "text",
+                delta: thinkingDelta,
+              },
+            });
+          }
+
+          if (completedMessageText !== undefined) {
+            outputText = completedMessageText;
+            emitter.emit({
+              runId,
+              source,
+              type: "message.completed",
+              payload: {
+                role: "assistant",
+                contentType: "text",
+                text: completedMessageText,
+              },
+            });
+          }
+
+          if (progressEvent !== undefined) {
+            emitter.emit({
+              runId,
+              source,
+              type: "progress",
+              payload: progressEvent,
+            });
           }
 
           if (toolEvent !== undefined) {
             for (const streamEvent of createToolStreamEvents({
               runId,
               source,
-              sequence: dispatcher.nextSequence,
               toolEvent,
             })) {
-              dispatcher.dispatch(streamEvent);
+              emitter.emit(streamEvent);
             }
           }
         });
@@ -103,17 +149,15 @@ export function createPiRuntimeSession(
             submission,
           });
 
-          await dispatcher.emit(
-            createStreamEvent({
-              runId,
-              source,
-              type: "run.started",
-              payload: {
-                task: submission.query,
-                inputSummary: summarizeInput(submission.query),
-              },
-            }),
-          );
+          emitter.emit({
+            runId,
+            source,
+            type: "run.started",
+            payload: {
+              task: submission.query,
+              inputSummary: summarizeInput(submission.query),
+            },
+          });
 
           const messageCountBeforeRun = session.messages.length;
           const outputRetryLimit = normalizeOutputRetryLimit(
@@ -121,29 +165,20 @@ export function createPiRuntimeSession(
           );
           const maxAttempts = submission.output === undefined ? 1 : outputRetryLimit + 1;
           let parseResult: ParseRuntimeOutputResult<TSubmitOutput> | undefined;
-          let outputText = "";
 
           for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-            outputTextParts = [];
+            outputText = "";
             await session.prompt(
               attempt === 1
                 ? createInitialPrompt(submission.query, submission.output)
                 : createOutputRetryPrompt(parseResult),
-            );
-            await dispatcher.drain();
-            outputText = outputTextParts.join("");
-
-            await dispatcher.emit(
-              createStreamEvent({
-                runId,
-                source,
-                type: "message.completed",
-                payload: {
-                  role: "assistant",
-                  contentType: "text",
-                  text: outputText,
+              {
+                preflightResult: (success) => {
+                  if (!success) {
+                    preflightRejected = true;
+                  }
                 },
-              }),
+              },
             );
 
             parseResult = parseRuntimeOutput(outputText, submission.output, outputParser);
@@ -164,17 +199,15 @@ export function createPiRuntimeSession(
           const usage = aggregateAssistantUsage(session.messages.slice(messageCountBeforeRun));
           const result = createRuntimeRunResult(runId, parseResult.value, usage);
 
-          await dispatcher.emit(
-            createStreamEvent({
-              runId,
-              source,
-              type: "run.completed",
-              payload: {
-                outputSummary: summarizeText(outputText),
-                ...(usage === undefined ? {} : { usage }),
-              },
-            }),
-          );
+          emitter.emit({
+            runId,
+            source,
+            type: "run.completed",
+            payload: {
+              outputSummary: summarizeText(outputText),
+              ...(usage === undefined ? {} : { usage }),
+            },
+          });
 
           await dispatchExpertAgentHook(agent.hooks, "afterTaskSubmit", {
             agent,
@@ -186,22 +219,24 @@ export function createPiRuntimeSession(
 
           return result;
         } catch (error) {
-          const wasCancelled = signal.aborted;
+          const wasCancelled = signal.aborted || cancelled;
 
-          await dispatcher.emit(
-            createStreamEvent({
-              runId,
-              source,
-              type: wasCancelled ? "run.aborted" : "run.failed",
-              payload: wasCancelled
-                ? {
-                    reason: "cancelled",
-                  }
-                : {
-                    message: error instanceof Error ? error.message : "Runtime run failed",
-                  },
-            }),
-          );
+          emitter.emit({
+            runId,
+            source,
+            type: wasCancelled ? "run.cancelled" : "run.failed",
+            payload: wasCancelled
+              ? {
+                  reason: "cancelled",
+                }
+              : {
+                  message: preflightRejected
+                    ? "Runtime prompt preflight rejected the submission."
+                    : error instanceof Error
+                      ? error.message
+                      : "Runtime run failed",
+                },
+          });
           await dispatchExpertAgentHook(agent.hooks, "afterTaskSubmit", {
             agent,
             session: createSessionInfo(info, lifecycle),
@@ -211,12 +246,22 @@ export function createPiRuntimeSession(
           });
           throw error;
         } finally {
-          await dispatcher.drain();
-          streamBridge.runId = undefined;
-          streamBridge.onEvent = undefined;
+          streamState.runId = undefined;
+          streamState.emitter = undefined;
           unsubscribe();
+          emitter.complete();
         }
       });
+
+      return {
+        runId,
+        events: queue,
+        result,
+        async cancel() {
+          cancelled = true;
+          await lifecycle.abort();
+        },
+      };
     },
     async abort() {
       await lifecycle.abort();

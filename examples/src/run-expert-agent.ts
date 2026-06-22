@@ -52,14 +52,17 @@ try {
   for (const [index, query] of cli.turns.entries()) {
     console.log(`Turn ${index + 1}/${cli.turns.length}`);
     printRunHeader(agent, formatModelConfig(modelConfig), query);
-    const result = await session.submit({
+    const run = session.submit({
       query,
-      onEvent(event) {
-        if (event.type === "message.delta") {
-          process.stdout.write(event.payload.delta);
-        }
-      },
     });
+
+    for await (const event of run.events) {
+      if (event.type === "message.delta") {
+        process.stdout.write(event.payload.delta);
+      }
+    }
+
+    const result = await run.result;
     printRunResult(result.runId);
     console.log("");
   }

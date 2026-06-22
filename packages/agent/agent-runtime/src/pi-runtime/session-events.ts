@@ -12,6 +12,96 @@ export function readAssistantTextDelta(event: AgentSessionEvent): string | undef
   return undefined;
 }
 
+export function readAssistantThinkingDelta(event: AgentSessionEvent): string | undefined {
+  if (event.type !== "message_update") {
+    return undefined;
+  }
+
+  if (event.assistantMessageEvent.type === "thinking_delta") {
+    return event.assistantMessageEvent.delta;
+  }
+
+  return undefined;
+}
+
+export function readAssistantMessageText(event: AgentSessionEvent): string | undefined {
+  if (event.type !== "message_end" || !isRecord(event.message) || event.message["role"] !== "assistant") {
+    return undefined;
+  }
+
+  return readMessageText(event.message);
+}
+
+export function readProgressEvent(
+  event: AgentSessionEvent,
+): { readonly stage: string; readonly message?: string | undefined; readonly data?: unknown } | undefined {
+  if (event.type === "turn_start") {
+    return { stage: "turn.start", message: "Turn started" };
+  }
+
+  if (event.type === "turn_end") {
+    return { stage: "turn.end", message: "Turn completed" };
+  }
+
+  if (event.type === "queue_update") {
+    return {
+      stage: "queue.update",
+      message: "Prompt queue updated",
+      data: {
+        steering: event.steering,
+        followUp: event.followUp,
+      },
+    };
+  }
+
+  if (event.type === "compaction_start") {
+    return {
+      stage: "compaction.start",
+      message: "Compaction started",
+      data: { reason: event.reason },
+    };
+  }
+
+  if (event.type === "compaction_end") {
+    return {
+      stage: "compaction.end",
+      message: "Compaction completed",
+      data: {
+        reason: event.reason,
+        aborted: event.aborted,
+        willRetry: event.willRetry,
+        errorMessage: event.errorMessage,
+      },
+    };
+  }
+
+  if (event.type === "auto_retry_start") {
+    return {
+      stage: "auto_retry.start",
+      message: event.errorMessage,
+      data: {
+        attempt: event.attempt,
+        maxAttempts: event.maxAttempts,
+        delayMs: event.delayMs,
+      },
+    };
+  }
+
+  if (event.type === "auto_retry_end") {
+    return {
+      stage: "auto_retry.end",
+      message: event.success ? "Auto retry succeeded" : "Auto retry failed",
+      data: {
+        success: event.success,
+        attempt: event.attempt,
+        finalError: event.finalError,
+      },
+    };
+  }
+
+  return undefined;
+}
+
 export type PiToolExecutionEvent =
   | {
       readonly type: "started";
@@ -65,4 +155,31 @@ export function readToolExecutionEvent(event: AgentSessionEvent): PiToolExecutio
   }
 
   return undefined;
+}
+
+function readMessageText(message: unknown): string | undefined {
+  if (!isRecord(message)) {
+    return undefined;
+  }
+
+  const content = message["content"];
+
+  if (typeof content === "string") {
+    return content;
+  }
+
+  if (Array.isArray(content)) {
+    const text = content
+      .map((item) => (isRecord(item) && typeof item["text"] === "string" ? item["text"] : undefined))
+      .filter((item): item is string => item !== undefined)
+      .join("");
+
+    return text.length === 0 ? undefined : text;
+  }
+
+  return undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
 }

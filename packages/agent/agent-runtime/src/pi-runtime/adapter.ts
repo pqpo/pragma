@@ -14,9 +14,8 @@ import {
 import { createResourceLoader } from "./resources.ts";
 import { createPiRuntimeSession } from "./session.ts";
 import { createPiSessionManager } from "./session-manager.ts";
-import { createRuntimeStreamBridge } from "./stream.ts";
 import { createResolvedPiTools } from "./tools.ts";
-import type { CloudPiRuntimeAdapterOptions } from "./types.ts";
+import type { CloudPiRuntimeAdapterOptions, PiRuntimeStreamState } from "./types.ts";
 import { defaultOutputParser } from "./types.ts";
 
 const CLOUD_PI_RUNTIME_DESCRIPTOR = {
@@ -64,7 +63,7 @@ export function createCloudPiRuntimeAdapter(
       await loader.reload();
       const mcpToolRegistry = await createMcpToolRegistry(agent.mcp);
       let piSession: AgentSession | undefined;
-      const streamBridge = createRuntimeStreamBridge();
+      const streamState: PiRuntimeStreamState = {};
       const lifecycle = createQueuedAgentLifecycle<ExpertAgentRunContext>(runContext, {
         abort: async () => {
           await piSession?.abort();
@@ -104,7 +103,7 @@ export function createCloudPiRuntimeAdapter(
         mcpTools: mcpToolRegistry.tools,
         modelRegistry,
         parentSystemPrompt: context.systemPrompt,
-        streamBridge,
+        streamState,
         lifecycle,
         context: runContext,
       });
@@ -163,7 +162,7 @@ export function createCloudPiRuntimeAdapter(
           sessionInfo,
           options.outputParser ?? defaultOutputParser,
           lifecycle,
-          streamBridge,
+          streamState,
           {
             defaultModelName: agent.models?.defaultModelName,
             modelRegistry,
