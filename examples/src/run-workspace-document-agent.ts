@@ -8,11 +8,9 @@ import type { ExpertAgentDocumentStore } from "@expertmesh/agent-core";
 import { createCloudPiRuntimeAdapter } from "@expertmesh/agent-runtime";
 
 import {
-  createAgentWithModels,
   printAgentContextSummary,
   printRunHeader,
   printRunResult,
-  submitAndStream,
 } from "./harness/expert-agent-example-utils.ts";
 import {
   createExpertAgentModelsConfig,
@@ -44,6 +42,7 @@ const documentStore = createExampleDocumentStore(documentsDir);
 
 await ensureWorkspaceDir(workspace);
 
+const modelConfig = readExampleModelConfig();
 const agent = new ExpertAgent({
   schemaVersion: "expertmesh.expert/v1",
   id: "workspace-document-test-expert",
@@ -55,20 +54,26 @@ const agent = new ExpertAgent({
   scope: "local-test",
   workspace,
   documents: documentStore,
+  models: createExpertAgentModelsConfig(modelConfig),
 });
 
-const modelConfig = readExampleModelConfig();
-const agentWithModels = createAgentWithModels(agent, createExpertAgentModelsConfig(modelConfig));
 const runtime = createCloudPiRuntimeAdapter();
 
 printExampleConfig(workspace, documentsDir);
-await printAgentContextSummary(agentWithModels);
+await printAgentContextSummary(agent);
 
-const session = await runtime.createSession({ agent: agentWithModels });
+const session = await runtime.createSession({ agent });
 
 try {
-  printRunHeader(agentWithModels, formatModelConfig(modelConfig), cli.query);
-  const result = await submitAndStream(session, cli.query);
+  printRunHeader(agent, formatModelConfig(modelConfig), cli.query);
+  const result = await session.submit({
+    query: cli.query,
+    onEvent(event) {
+      if (event.type === "message.delta") {
+        process.stdout.write(event.payload.delta);
+      }
+    },
+  });
   printRunResult(result.runId);
 } finally {
   await session.abort();

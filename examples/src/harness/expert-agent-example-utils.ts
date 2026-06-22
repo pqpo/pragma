@@ -1,43 +1,4 @@
 import { ExpertAgent } from "@expertmesh/agent-core";
-import type { ExpertAgentOptions, RuntimeAgentSession } from "@expertmesh/agent-core";
-
-export function createAgentWithModels(
-  agent: ExpertAgent,
-  models: ExpertAgentOptions["models"],
-): ExpertAgent {
-  return new ExpertAgent({
-    schemaVersion: agent.schemaVersion,
-    id: agent.id,
-    displayName: agent.displayName,
-    description: agent.description,
-    tags: agent.tags,
-    version: agent.version,
-    scope: agent.scope,
-    workspace: agent.workspace,
-    models,
-    ...(agent.mcp === undefined ? {} : { mcp: agent.mcp }),
-    ...(agent.skills === undefined ? {} : { skills: agent.skills }),
-    ...(agent.documents === undefined ? {} : { documents: agent.documents }),
-    ...(agent.subAgents === undefined ? {} : { subAgents: agent.subAgents }),
-    ...(agent.tools === undefined ? {} : { tools: agent.tools }),
-    ...(agent.hooks === undefined ? {} : { hooks: agent.hooks }),
-    ...(agent.plugins === undefined ? {} : { plugins: agent.plugins }),
-  });
-}
-
-export async function submitAndStream(
-  session: RuntimeAgentSession,
-  query: string,
-): Promise<Awaited<ReturnType<RuntimeAgentSession["submit"]>>> {
-  return await session.submit({
-    query,
-    onEvent(event) {
-      if (event.type === "message.delta") {
-        process.stdout.write(event.payload.delta);
-      }
-    },
-  });
-}
 
 export async function printAgentContextSummary(agent: ExpertAgent): Promise<void> {
   const context = await agent.buildContext();

@@ -2,12 +2,7 @@ import { ExpertAgent } from "@expertmesh/agent-core";
 import type { RuntimeSessionRef } from "@expertmesh/agent-core";
 import { createCloudPiRuntimeAdapter } from "@expertmesh/agent-runtime";
 
-import {
-  createAgentWithModels,
-  printRunHeader,
-  printRunResult,
-  submitAndStream,
-} from "./harness/expert-agent-example-utils.ts";
+import { printRunHeader, printRunResult } from "./harness/expert-agent-example-utils.ts";
 import {
   createExpertAgentModelsConfig,
   formatModelConfig,
@@ -25,6 +20,7 @@ const workspace = defaultWorkspaceRoot;
 
 await ensureWorkspaceDir(workspace);
 
+const modelConfig = readExampleModelConfig();
 const agent = new ExpertAgent({
   schemaVersion: "expertmesh.expert/v1",
   id: "basic-example-expert",
@@ -34,14 +30,13 @@ const agent = new ExpertAgent({
   version: "0.0.0",
   scope: "local-test",
   workspace,
+  models: createExpertAgentModelsConfig(modelConfig),
 });
 
-const modelConfig = readExampleModelConfig();
-const agentWithModels = createAgentWithModels(agent, createExpertAgentModelsConfig(modelConfig));
 const runtime = createCloudPiRuntimeAdapter();
 const runtimeSession = createRuntimeSessionRef(cli.runtimeSessionId);
 const session = await runtime.createSession({
-  agent: agentWithModels,
+  agent,
   ...(cli.systemSessionId === undefined ? {} : { systemSessionId: cli.systemSessionId }),
   ...(runtimeSession === undefined ? {} : { runtimeSession }),
 });
@@ -56,8 +51,15 @@ try {
 
   for (const [index, query] of cli.turns.entries()) {
     console.log(`Turn ${index + 1}/${cli.turns.length}`);
-    printRunHeader(agentWithModels, formatModelConfig(modelConfig), query);
-    const result = await submitAndStream(session, query);
+    printRunHeader(agent, formatModelConfig(modelConfig), query);
+    const result = await session.submit({
+      query,
+      onEvent(event) {
+        if (event.type === "message.delta") {
+          process.stdout.write(event.payload.delta);
+        }
+      },
+    });
     printRunResult(result.runId);
     console.log("");
   }
