@@ -1,5 +1,6 @@
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import { createQueuedAgentLifecycle, ExpertAgent } from "@expertmesh/agent-core";
+import type { AgentMessageUsage } from "@expertmesh/contracts";
 import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
@@ -92,6 +93,57 @@ describe("createPiRuntimeSession", () => {
     });
     expect(piSession.prompt).toHaveBeenCalledTimes(2);
     expect(piSession.prompt).toHaveBeenLastCalledWith(expect.stringContaining("Parser error:"));
+  });
+
+  it("returns usage for the current submit including structured output retries", async () => {
+    const piSession = createFakeAgentSession(
+      ["not json", '{"summary":"done","confidence":0.9}'],
+      [
+        createUsage({ input: 11, output: 3, cacheRead: 5, cacheWrite: 7, costTotal: 1 }),
+        createUsage({
+          input: 13,
+          output: 17,
+          cacheRead: 19,
+          cacheWrite: 23,
+          cacheWrite1h: 29,
+          costTotal: 2,
+        }),
+      ],
+    );
+    const runtimeSession = createTestRuntimeSession(piSession, {
+      outputRetryLimit: 1,
+    });
+    const events: unknown[] = [];
+
+    const result = await runtimeSession.submit({
+      query: "Summarize input",
+      output: z.object({
+        summary: z.string(),
+        confidence: z.number(),
+      }),
+      onEvent: (event) => {
+        events.push(event);
+      },
+    });
+
+    const expectedUsage = createUsage({
+      input: 24,
+      output: 20,
+      cacheRead: 24,
+      cacheWrite: 30,
+      cacheWrite1h: 29,
+      totalTokens: 98,
+      costTotal: 3,
+    });
+    expect(result.result.usage).toEqual(expectedUsage);
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "run.completed",
+        payload: expect.objectContaining({
+          usage: expectedUsage,
+        }),
+      }),
+    );
   });
 
   it("fails after the configured structured output retry limit", async () => {
@@ -279,7 +331,10 @@ function createTestAgent(): ExpertAgent {
   });
 }
 
-function createFakeAgentSession(texts: readonly string[]): AgentSession {
+function createFakeAgentSession(
+  texts: readonly string[],
+  usages: readonly AgentMessageUsage[] = [],
+): AgentSession {
   let subscriber: ((event: unknown) => void) | undefined;
   let promptCount = 0;
   let messages: unknown[] = [];
@@ -301,6 +356,7 @@ function createFakeAgentSession(texts: readonly string[]): AgentSession {
     },
     prompt: vi.fn(async () => {
       const text = texts[promptCount] ?? texts.at(-1) ?? "";
+      const usage = usages[promptCount];
       promptCount += 1;
       subscriber?.({
         type: "message_update",
@@ -309,9 +365,49 @@ function createFakeAgentSession(texts: readonly string[]): AgentSession {
           delta: text,
         },
       });
+      if (usage !== undefined) {
+        messages.push({
+          role: "assistant",
+          content: [{ type: "text", text }],
+          api: "openai-responses",
+          provider: "openai",
+          model: "gpt-4o",
+          usage,
+          stopReason: "stop",
+          timestamp: promptCount,
+        });
+      }
     }),
     setModel: vi.fn(),
   } as unknown as AgentSession;
+}
+
+function createUsage(options: {
+  readonly input: number;
+  readonly output: number;
+  readonly cacheRead: number;
+  readonly cacheWrite: number;
+  readonly cacheWrite1h?: number | undefined;
+  readonly totalTokens?: number | undefined;
+  readonly costTotal: number;
+}): AgentMessageUsage {
+  return {
+    input: options.input,
+    output: options.output,
+    cacheRead: options.cacheRead,
+    cacheWrite: options.cacheWrite,
+    ...(options.cacheWrite1h === undefined ? {} : { cacheWrite1h: options.cacheWrite1h }),
+    totalTokens:
+      options.totalTokens ??
+      options.input + options.output + options.cacheRead + options.cacheWrite,
+    cost: {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      total: options.costTotal,
+    },
+  };
 }
 
 function setFakeAgentSessionMessages(piSession: AgentSession, messages: readonly unknown[]): void {

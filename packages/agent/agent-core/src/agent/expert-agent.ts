@@ -1,5 +1,6 @@
 import { ContextManager } from "./context-manager.ts";
 import type { ContextAssemblerOptions, ExpertAgentContext } from "./context-manager.ts";
+import type { AgentMessageUsage } from "@expertmesh/contracts";
 import { DocumentIndexer } from "../documents/document-indexer.ts";
 import type {
   ExpertAgentDocument,
@@ -97,6 +98,7 @@ export interface IExpertAgentRunRequest<TInput = string> {
 
 export interface IExpertAgentRunResult<TOutput = string> {
   readonly output: TOutput;
+  readonly usage?: AgentMessageUsage | undefined;
 }
 
 export type ExpertAgentRunFunction<TInput = string, TOutput = string> = (

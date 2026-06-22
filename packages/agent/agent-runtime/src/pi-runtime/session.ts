@@ -1,4 +1,5 @@
 import type { AgentSession, ModelRegistry } from "@earendil-works/pi-coding-agent";
+import { AgentMessageUsageSchema, type AgentMessageUsage } from "@expertmesh/contracts";
 import type {
   AgentLifecycle,
   ExpertAgent,
@@ -114,6 +115,7 @@ export function createPiRuntimeSession(
             }),
           );
 
+          const messageCountBeforeRun = session.messages.length;
           const outputRetryLimit = normalizeOutputRetryLimit(
             submission.outputRetryLimit ?? options.outputRetryLimit,
           );
@@ -159,7 +161,8 @@ export function createPiRuntimeSession(
             throw new Error("Runtime output parsing did not complete");
           }
 
-          const result = createRuntimeRunResult(runId, parseResult.value);
+          const usage = aggregateAssistantUsage(session.messages.slice(messageCountBeforeRun));
+          const result = createRuntimeRunResult(runId, parseResult.value, usage);
 
           await dispatcher.emit(
             createStreamEvent({
@@ -168,6 +171,7 @@ export function createPiRuntimeSession(
               type: "run.completed",
               payload: {
                 outputSummary: summarizeText(outputText),
+                ...(usage === undefined ? {} : { usage }),
               },
             }),
           );
@@ -251,11 +255,70 @@ async function applySubmissionModel(
 function createRuntimeRunResult<TOutput>(
   runId: string,
   output: TOutput,
+  usage: AgentMessageUsage | undefined,
 ): RuntimeRunResult<TOutput> {
   return {
     runId,
     result: {
       output,
+      ...(usage === undefined ? {} : { usage }),
+    },
+  };
+}
+
+function aggregateAssistantUsage(messages: readonly unknown[]): AgentMessageUsage | undefined {
+  const usages = messages
+    .map((message) => readAssistantUsage(message))
+    .filter((usage): usage is AgentMessageUsage => usage !== undefined);
+
+  if (usages.length === 0) {
+    return undefined;
+  }
+
+  return usages.reduce<AgentMessageUsage>(
+    (total, usage) => ({
+      input: total.input + usage.input,
+      output: total.output + usage.output,
+      cacheRead: total.cacheRead + usage.cacheRead,
+      cacheWrite: total.cacheWrite + usage.cacheWrite,
+      ...(total.cacheWrite1h === undefined && usage.cacheWrite1h === undefined
+        ? {}
+        : { cacheWrite1h: (total.cacheWrite1h ?? 0) + (usage.cacheWrite1h ?? 0) }),
+      totalTokens: total.totalTokens + usage.totalTokens,
+      cost: {
+        input: total.cost.input + usage.cost.input,
+        output: total.cost.output + usage.cost.output,
+        cacheRead: total.cost.cacheRead + usage.cost.cacheRead,
+        cacheWrite: total.cost.cacheWrite + usage.cost.cacheWrite,
+        total: total.cost.total + usage.cost.total,
+      },
+    }),
+    createEmptyUsage(),
+  );
+}
+
+function readAssistantUsage(message: unknown): AgentMessageUsage | undefined {
+  if (!isRecord(message) || message["role"] !== "assistant") {
+    return undefined;
+  }
+
+  const result = AgentMessageUsageSchema.safeParse(message["usage"]);
+  return result.success ? result.data : undefined;
+}
+
+function createEmptyUsage(): AgentMessageUsage {
+  return {
+    input: 0,
+    output: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+    totalTokens: 0,
+    cost: {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      total: 0,
     },
   };
 }
@@ -448,4 +511,8 @@ function readBalancedJsonFrom(text: string, start: number): string | undefined {
   }
 
   return undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
 }

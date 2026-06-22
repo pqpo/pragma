@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { AgentMessageUsageSchema } from "./agent-message.schema.ts";
 
 export const ExpertAgentStreamSchemaVersionSchema = z.literal("expertmesh.stream/v1");
 
@@ -41,6 +42,7 @@ export const ExpertAgentRunCompletedEventSchema = ExpertAgentStreamEventBaseSche
   type: z.literal("run.completed"),
   payload: z.object({
     outputSummary: z.string().optional(),
+    usage: AgentMessageUsageSchema.optional(),
   }),
 });
 
