@@ -1,10 +1,10 @@
 import {
-  AGENTS_DOCUMENT_ID,
+  AGENTS_CONTEXT_ID,
   ExpertAgent,
-  FileSystemDocumentStore,
-  createInMemoryDocumentStore,
+  FileSystemContextStore,
+  createInMemoryContextStore,
 } from "@expertmesh/agent-core";
-import type { ExpertAgentDocumentStore } from "@expertmesh/agent-core";
+import type { ExpertAgentContextStore } from "@expertmesh/agent-core";
 import { createCloudPiRuntimeAdapter } from "@expertmesh/agent-runtime";
 
 import {
@@ -17,7 +17,7 @@ import {
   formatModelConfig,
   readExampleModelConfig,
 } from "./harness/model-config.ts";
-import { readWorkspaceDocumentsExampleCli } from "./harness/cli.ts";
+import { readWorkspaceContextsExampleCli } from "./harness/cli.ts";
 import {
   defaultWorkspaceRoot,
   ensureWorkspaceDir,
@@ -26,40 +26,40 @@ import {
 } from "./harness/paths.ts";
 
 const defaultQuery = [
-  "测试 ExpertMesh workspace + document 能力：",
+  "测试 ExpertMesh workspace + context 能力：",
   "1. 先基于 always-on AGENTS.md 说明本仓库最重要的边界约束。",
-  "2. 再使用 document 工具查找 workspace-overview.md，确认 Phase 0 的当前入口。",
+  "2. 再使用 context 工具查找 workspace-overview.md，确认 Phase 0 的当前入口。",
   "3. 最后结合 workspace 中的 package.json 或 examples/package.json，给出后续示例应该如何运行。",
 ].join("\n");
 
 loadExamplesEnv();
 
-const cli = readWorkspaceDocumentsExampleCli(defaultQuery);
+const cli = readWorkspaceContextsExampleCli(defaultQuery);
 const workspace =
   cli.workspace === undefined ? defaultWorkspaceRoot : resolveExamplePath(cli.workspace);
-const documentsDir = cli.documents === undefined ? undefined : resolveExamplePath(cli.documents);
-const documentStore = createExampleDocumentStore(documentsDir);
+const contextDir = cli.context === undefined ? undefined : resolveExamplePath(cli.context);
+const contextStore = createExampleContextStore(contextDir);
 
 await ensureWorkspaceDir(workspace);
 
 const modelConfig = readExampleModelConfig();
 const agent = await ExpertAgent.create({
   schemaVersion: "expertmesh.expert/v1",
-  id: "workspace-document-test-expert",
-  displayName: "Workspace Document Test Expert",
+  id: "workspace-context-test-expert",
+  displayName: "Workspace Context Test Expert",
   description:
-    "A test ExpertAgent that exercises workspace access, always-on AGENTS.md context, and memory-backed document tools.",
-  tags: ["example", "workspace", "documents"],
+    "A test ExpertAgent that exercises workspace access, always-on AGENTS.md context, and memory-backed context tools.",
+  tags: ["example", "workspace", "context"],
   version: "0.0.0",
   scope: "local-test",
   workspace,
-  documents: documentStore,
+  context: contextStore,
   models: createExpertAgentModelsConfig(modelConfig),
 });
 
 const runtime = createCloudPiRuntimeAdapter();
 
-printExampleConfig(workspace, documentsDir);
+printExampleConfig(workspace, contextDir);
 await printAgentContextSummary(agent);
 
 const session = await runtime.createSession({ agent });
@@ -82,20 +82,20 @@ try {
   await session.abort();
 }
 
-function createExampleDocumentStore(documentsDir: string | undefined): ExpertAgentDocumentStore {
-  if (documentsDir !== undefined) {
-    return new FileSystemDocumentStore({ rootDir: documentsDir });
+function createExampleContextStore(contextDir: string | undefined): ExpertAgentContextStore {
+  if (contextDir !== undefined) {
+    return new FileSystemContextStore({ rootDir: contextDir });
   }
 
-  return createInMemoryDocumentStore({
-    documents: [
+  return createInMemoryContextStore({
+    context: [
       {
-        id: AGENTS_DOCUMENT_ID,
+        id: AGENTS_CONTEXT_ID,
         content: [
           "# Example AGENTS.md",
           "",
-          "This always-on mock document is used when --documents is not provided.",
-          "It keeps the example runnable without requiring a prepared document directory.",
+          "This always-on mock context is used when --context is not provided.",
+          "It keeps the example runnable without requiring a prepared context directory.",
         ].join("\n"),
       },
       {
@@ -106,12 +106,11 @@ function createExampleDocumentStore(documentsDir: string | undefined): ExpertAge
           "ExpertMesh is currently in Phase 0 Harness.",
           "The active app entry points are apps/web, apps/server, and apps/worker.",
           "The examples workspace package shows how to instantiate and run ExpertAgent.",
-          "Agent documents should be exposed through the ExpertAgent document store.",
+          "Agent context should be exposed through the ExpertAgent context store.",
           "Cross-package code must use @expertmesh/* package imports instead of relative paths.",
         ].join("\n"),
         metadata: {
-          description:
-            "ExpertMesh Phase 0 workspace overview for runtime document retrieval tests.",
+          description: "ExpertMesh Phase 0 workspace overview for runtime context retrieval tests.",
           trigger: "model_decision",
           trustLevel: "workspace",
           sensitivity: "internal",
@@ -121,9 +120,9 @@ function createExampleDocumentStore(documentsDir: string | undefined): ExpertAge
   });
 }
 
-function printExampleConfig(workspace: string, documentsDir: string | undefined): void {
+function printExampleConfig(workspace: string, contextDir: string | undefined): void {
   console.log("Example config:");
   console.log(`- workspace: ${workspace}`);
-  console.log(`- documents: ${documentsDir ?? "in-memory mock"}`);
+  console.log(`- context: ${contextDir ?? "in-memory mock"}`);
   console.log("");
 }

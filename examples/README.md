@@ -62,38 +62,38 @@ pnpm --filter @expertmesh/examples start:basic --system-session-id local-debug-s
 6. 对每个 turn 调用 `session.submit()` 并处理流式事件。
 7. 在 `finally` 中关闭 session。
 
-## 运行文档示例
+## 运行上下文示例
 
 ```bash
-pnpm --filter @expertmesh/examples start:workspace-documents
+pnpm --filter @expertmesh/examples start:workspace-context
 ```
 
-默认情况下，文档示例也使用仓库根目录下的 `workspace/`，并使用内存 mock 文档库。
+默认情况下，上下文示例也使用仓库根目录下的 `workspace/`，并使用内存 mock 上下文库。
 
 传入外部 workspace 目录：
 
 ```bash
-pnpm --filter @expertmesh/examples start:workspace-documents --workspace ./workspace
+pnpm --filter @expertmesh/examples start:workspace-context --workspace ./workspace
 ```
 
-传入 markdown 文档目录后，示例会改用 `FileSystemDocumentStore`：
+传入 markdown 上下文目录后，示例会改用 `FileSystemContextStore`：
 
 ```bash
-pnpm --filter @expertmesh/examples start:workspace-documents --documents ./docs
+pnpm --filter @expertmesh/examples start:workspace-context --context ./docs
 ```
 
-也可以同时传入 workspace、documents 和自定义 query：
+也可以同时传入 workspace、context 和自定义 query：
 
 ```bash
-pnpm --filter @expertmesh/examples start:workspace-documents --workspace ./workspace --documents ./docs "总结这些文档里的关键约束"
+pnpm --filter @expertmesh/examples start:workspace-context --workspace ./workspace --context ./docs "总结这些上下文里的关键约束"
 ```
 
-这个示例对应 `src/run-workspace-document-agent.ts`，额外展示：
+这个示例对应 `src/run-workspace-context-agent.ts`，额外展示：
 
-- 用 `cac` 读取 `--workspace`、`--documents` 和 query。
-- 未传 `--documents` 时，用 `createInMemoryDocumentStore()` 注册 always-on 和 model-decision mock 文档。
-- 传入 `--documents` 时，用 `FileSystemDocumentStore` 从外部 markdown 目录读取文档。
-- 调用 `agent.buildContext()` 预检文档上下文。
+- 用 `cac` 读取 `--workspace`、`--context` 和 query。
+- 未传 `--context` 时，用 `createInMemoryContextStore()` 注册 always-on 和 model-decision mock 上下文。
+- 传入 `--context` 时，用 `FileSystemContextStore` 从外部 markdown 目录读取上下文条目。
+- 调用 `agent.buildContext()` 预检上下文。
 - 通过同一套 runtime session 流程运行 agent。
 
 ## Harness 边界

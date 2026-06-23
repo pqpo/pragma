@@ -44,14 +44,14 @@ export function createResolvedPiTools(options: {
         streamState: options.streamState,
       }),
   });
-  const documentTools = options.agent.createDefaultTools({
+  const contextTools = options.agent.createDefaultTools({
     getContext: () => options.lifecycle.currentContext,
   });
 
   const parentResolvedTools = resolveToolPolicy({
     context: options.context,
     tools: [
-      ...createPiDefaultTools(options.agent, documentTools).map((tool) =>
+      ...createPiDefaultTools(options.agent, contextTools).map((tool) =>
         createResolvedTool("default", tool),
       ),
       ...createPiManagedTools(options.agent, options.agent.tools ?? []).map((tool) =>
@@ -69,7 +69,9 @@ export function createResolvedPiTools(options: {
   return parentResolvedTools;
 }
 
-export function createCustomTools(options: Parameters<typeof createResolvedPiTools>[0]): ToolDefinition[] {
+export function createCustomTools(
+  options: Parameters<typeof createResolvedPiTools>[0],
+): ToolDefinition[] {
   return createResolvedPiTools(options).tools.map((resolvedTool) => resolvedTool.tool);
 }
 
@@ -152,7 +154,10 @@ function createPiManagedTools(
   }));
 }
 
-function createPiSubAgentTool(agent: ExpertAgent, subAgentTool: SubAgentManagedTool): ToolDefinition {
+function createPiSubAgentTool(
+  agent: ExpertAgent,
+  subAgentTool: SubAgentManagedTool,
+): ToolDefinition {
   return {
     name: subAgentTool.name,
     label: "Launch subAgent",
@@ -187,7 +192,10 @@ function createPiSubAgentTool(agent: ExpertAgent, subAgentTool: SubAgentManagedT
   };
 }
 
-function createPiMcpTools(agent: ExpertAgent, mcpTools: readonly McpManagedTool[]): ToolDefinition[] {
+function createPiMcpTools(
+  agent: ExpertAgent,
+  mcpTools: readonly McpManagedTool[],
+): ToolDefinition[] {
   return mcpTools.map((mcpTool) => {
     const toolName = `mcp_${sanitizeToolName(mcpTool.serverId)}_${sanitizeToolName(mcpTool.name)}`;
 
@@ -199,18 +207,18 @@ function createPiMcpTools(agent: ExpertAgent, mcpTools: readonly McpManagedTool[
         `Original MCP server: ${mcpTool.serverName}. Original tool: ${mcpTool.name}.`,
       ].join("\n"),
       promptSnippet: `${toolName}: call ${mcpTool.name} from MCP server ${mcpTool.serverName}`,
-    parameters: normalizeInputSchema(mcpTool.inputSchema),
-    executionMode: "parallel",
-    async execute(toolCallId, params) {
-      const result = await executeWithToolHooks(
-        agent,
-        toolName,
-        toolCallId,
-        params,
-        async () => await mcpTool.call(params, undefined, { toolCallId }),
-      );
+      parameters: normalizeInputSchema(mcpTool.inputSchema),
+      executionMode: "parallel",
+      async execute(toolCallId, params) {
+        const result = await executeWithToolHooks(
+          agent,
+          toolName,
+          toolCallId,
+          params,
+          async () => await mcpTool.call(params, undefined, { toolCallId }),
+        );
 
-      return {
+        return {
           content: [
             {
               type: "text",

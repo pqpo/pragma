@@ -1,7 +1,4 @@
-import {
-  ExpertAgent,
-  createInMemoryDocumentStore,
-} from "@expertmesh/agent-core";
+import { ExpertAgent, createInMemoryContextStore } from "@expertmesh/agent-core";
 
 import { defaultWorkspaceRoot, ensureWorkspaceDir, resolveExamplePath } from "../harness/paths.ts";
 
@@ -18,8 +15,8 @@ const agent = await ExpertAgent.create({
   version: "0.0.0",
   scope: "local-test",
   workspace,
-  documents: createInMemoryDocumentStore({
-    documents: [
+  context: createInMemoryContextStore({
+    context: [
       {
         id: "repositories.json",
         content: JSON.stringify(
@@ -32,7 +29,7 @@ const agent = await ExpertAgent.create({
                 defaultBranch: "main",
                 provider: "github",
                 description:
-                  "Example repository entry showing how repository metadata is exposed to ExpertAgent documents.",
+                  "Example repository entry showing how repository metadata is exposed to ExpertAgent context.",
                 allowedBranches: ["main"],
                 shallowClone: true,
               },
@@ -53,27 +50,27 @@ const agent = await ExpertAgent.create({
   plugins: [resolveExamplePath("plugins/code-repository-manager")],
 });
 
-const documents = await agent.listDocuments();
+const contextItems = await agent.listContext();
 
-console.log("Plugin documents:");
-if (documents.ok) {
-  for (const document of documents.value) {
-    console.log(`- ${document.id} (${document.metadata.trigger})`);
+console.log("Plugin context:");
+if (contextItems.ok) {
+  for (const item of contextItems.value) {
+    console.log(`- ${item.id} (${item.metadata.trigger})`);
   }
 } else {
-  console.log(`- error: ${documents.error.message}`);
+  console.log(`- error: ${contextItems.error.message}`);
 }
 
-const repositoryDocument = await agent.readDocument({
+const repositoryContext = await agent.readContext({
   id: "code-repository-manager/code-repositories.md",
 });
 
 console.log("");
-console.log("Repository document preview:");
-if (repositoryDocument.ok) {
-  console.log(repositoryDocument.value.content);
+console.log("Repository context preview:");
+if (repositoryContext.ok) {
+  console.log(repositoryContext.value.content);
 } else {
-  console.log(`error: ${repositoryDocument.error.message}`);
+  console.log(`error: ${repositoryContext.error.message}`);
 }
 
 console.log("");

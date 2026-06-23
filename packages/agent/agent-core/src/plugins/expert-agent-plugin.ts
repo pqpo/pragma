@@ -13,13 +13,13 @@ import type {
   IExpertAgentModelProviderConfig,
 } from "../agent/expert-agent.ts";
 import type {
-  ExpertAgentDocumentSearchMatch,
-  ExpertAgentDocumentSeed,
-  ExpertAgentDocumentStore,
-  ExpertAgentDocumentSummary,
-} from "../documents/document-indexer.ts";
-import { error, ok } from "../documents/document-indexer.ts";
-import { createInMemoryDocumentStore } from "../documents/in-memory-document-store.ts";
+  ExpertAgentContextItemSearchMatch,
+  ExpertAgentContextItemSeed,
+  ExpertAgentContextStore,
+  ExpertAgentContextItemSummary,
+} from "../context-system/context-system.ts";
+import { error, ok } from "../context-system/context-system.ts";
+import { createInMemoryContextStore } from "../context-system/in-memory-context-store.ts";
 import type { ExpertAgentRunContext } from "../runtime/run-context.ts";
 import type {
   RuntimeSubmitRequest,
@@ -84,9 +84,9 @@ export type ExpertAgentPluginMetadata = Pick<
   "id" | "name" | "description" | "version" | "tags"
 >;
 
-export type ExpertAgentPluginDocumentContribution =
-  | ExpertAgentDocumentStore
-  | readonly ExpertAgentDocumentSeed[];
+export type ExpertAgentPluginContextContribution =
+  | ExpertAgentContextStore
+  | readonly ExpertAgentContextItemSeed[];
 
 export interface ExpertAgentPluginSessionCreateContext {
   readonly agent: ExpertAgent;
@@ -130,7 +130,7 @@ export interface ExpertAgentPluginToolCalledContext extends ExpertAgentPluginToo
 
 export interface ExpertAgentPluginSetupContext {
   readonly host: ExpertAgentPluginContributions;
-  readonly hostDocuments?: ExpertAgentDocumentStore | undefined;
+  readonly hostContexts?: ExpertAgentContextStore | undefined;
   readonly workspaceRoot: string;
   readonly env: NodeJS.ProcessEnv;
 }
@@ -170,7 +170,7 @@ export interface ExpertAgentPluginContributions {
   readonly mcp?: IExpertAgentMcpConfig | undefined;
   readonly skills?: IExpertAgentSkillsConfig | undefined;
   readonly models?: IExpertAgentModelsConfig | undefined;
-  readonly documents?: ExpertAgentPluginDocumentContribution | undefined;
+  readonly context?: ExpertAgentPluginContextContribution | undefined;
   readonly subAgents?: SubAgentRegistry | undefined;
   readonly tools?: readonly ExpertAgentManagedTool<string, ExpertAgentToolCallResult>[] | undefined;
   readonly hooks?: ExpertAgentPluginHooks | undefined;
@@ -189,7 +189,7 @@ export interface ResolvedExpertAgentPluginContributions {
   readonly mcp?: IExpertAgentMcpConfig | undefined;
   readonly skills?: IExpertAgentSkillsConfig | undefined;
   readonly models?: IExpertAgentModelsConfig | undefined;
-  readonly documents?: ExpertAgentDocumentStore | undefined;
+  readonly context?: ExpertAgentContextStore | undefined;
   readonly subAgents?: SubAgentRegistry | undefined;
   readonly tools?: readonly ExpertAgentManagedTool<string, ExpertAgentToolCallResult>[] | undefined;
   readonly hooks?: ExpertAgentPluginHooks | undefined;
@@ -202,9 +202,9 @@ export interface ResolveExpertAgentPluginsOptions {
   readonly env?: NodeJS.ProcessEnv | undefined;
 }
 
-interface ExpertAgentDocumentStoreSource {
+interface ExpertAgentContextStoreSource {
   readonly namespace?: string | undefined;
-  readonly store: ExpertAgentDocumentStore;
+  readonly store: ExpertAgentContextStore;
 }
 
 export function definePluginEntry(
@@ -245,7 +245,7 @@ export function resolveExpertAgentPlugins(
   const host = options.host ?? {};
   const context: ExpertAgentPluginSetupContext = {
     host,
-    hostDocuments: host.documents === undefined ? undefined : toDocumentStore(host.documents),
+    hostContexts: host.context === undefined ? undefined : toContextStore(host.context),
     workspaceRoot: options.workspaceRoot ?? "",
     env: options.env ?? process.env,
   };
@@ -253,7 +253,10 @@ export function resolveExpertAgentPlugins(
     plugin,
     contributions: plugin.setup(context),
   }));
-  const contributions = [options.host, ...pluginEntries.map((plugin) => plugin.contributions)].filter(
+  const contributions = [
+    options.host,
+    ...pluginEntries.map((plugin) => plugin.contributions),
+  ].filter(
     (contribution): contribution is ExpertAgentPluginContributions => contribution !== undefined,
   );
 
@@ -261,7 +264,7 @@ export function resolveExpertAgentPlugins(
     mcp: mergeMcpConfigs(contributions.map((contribution) => contribution.mcp)),
     skills: mergeSkillsConfigs(contributions.map((contribution) => contribution.skills)),
     models: mergeModelsConfigs(contributions.map((contribution) => contribution.models)),
-    documents: mergeDocumentContributions(options.host?.documents, pluginEntries),
+    context: mergeContextContributions(options.host?.context, pluginEntries),
     subAgents: mergeSubAgentRegistries(contributions.map((contribution) => contribution.subAgents)),
     tools: mergeManagedTools(contributions.map((contribution) => contribution.tools)),
     hooks: mergePluginHooks(contributions.map((contribution) => contribution.hooks)),
@@ -329,22 +332,22 @@ function mergeModelsConfigs(
   };
 }
 
-function mergeDocumentContributions(
-  hostDocuments: ExpertAgentPluginDocumentContribution | undefined,
+function mergeContextContributions(
+  hostContexts: ExpertAgentPluginContextContribution | undefined,
   pluginEntries: readonly {
     readonly plugin: ExpertAgentPluginEntry;
     readonly contributions: ExpertAgentPluginContributions;
   }[],
-): ExpertAgentDocumentStore | undefined {
-  const sources: ExpertAgentDocumentStoreSource[] = [
-    ...(hostDocuments === undefined ? [] : [{ store: toDocumentStore(hostDocuments) }]),
+): ExpertAgentContextStore | undefined {
+  const sources: ExpertAgentContextStoreSource[] = [
+    ...(hostContexts === undefined ? [] : [{ store: toContextStore(hostContexts) }]),
     ...pluginEntries.flatMap(({ plugin, contributions }) =>
-      contributions.documents === undefined
+      contributions.context === undefined
         ? []
         : [
             {
               namespace: plugin.id,
-              store: toDocumentStore(contributions.documents),
+              store: toContextStore(contributions.context),
             },
           ],
     ),
@@ -354,7 +357,7 @@ function mergeDocumentContributions(
     return undefined;
   }
 
-  return createCompositeDocumentStore(sources);
+  return createCompositeContextStore(sources);
 }
 
 function mergeSubAgentRegistries(
@@ -425,9 +428,9 @@ function mergePluginHooks(
   };
 }
 
-function createCompositeDocumentStore(
-  sources: readonly ExpertAgentDocumentStoreSource[],
-): ExpertAgentDocumentStore {
+function createCompositeContextStore(
+  sources: readonly ExpertAgentContextStoreSource[],
+): ExpertAgentContextStore {
   const hostSource = sources.find((source) => source.namespace === undefined);
   const pluginSources = new Map(
     sources.flatMap((source) =>
@@ -436,39 +439,39 @@ function createCompositeDocumentStore(
   );
 
   return {
-    async listDocuments(input) {
-      const summaries: ExpertAgentDocumentSummary[] = [];
+    async listContext(input) {
+      const summaries: ExpertAgentContextItemSummary[] = [];
       const seen = new Set<string>();
 
       for (const source of sources) {
-        const result = await source.store.listDocuments(input);
+        const result = await source.store.listContext(input);
 
         if (!result.ok) {
           return result;
         }
 
-        for (const document of result.value.map((summary) =>
-          prefixDocumentSummary(source.namespace, summary),
+        for (const context of result.value.map((summary) =>
+          prefixContextSummary(source.namespace, summary),
         )) {
-          if (seen.has(document.id)) {
+          if (seen.has(context.id)) {
             continue;
           }
 
-          seen.add(document.id);
-          summaries.push(document);
+          seen.add(context.id);
+          summaries.push(context);
         }
       }
 
       return ok(summaries);
     },
-    async readDocument(input) {
-      const route = resolveDocumentRoute(pluginSources, hostSource, input.id);
+    async readContext(input) {
+      const route = resolveContextRoute(pluginSources, hostSource, input.id);
 
       if (route === undefined) {
-        return error("document_not_found", `Document not found: ${input.id}`, { id: input.id });
+        return error("context_not_found", `Context not found: ${input.id}`, { id: input.id });
       }
 
-      const result = await route.source.store.readDocument({
+      const result = await route.source.store.readContext({
         ...input,
         id: route.localId,
       });
@@ -477,16 +480,16 @@ function createCompositeDocumentStore(
         return result;
       }
 
-      return ok(prefixStoredDocument(route.source.namespace, result.value));
+      return ok(prefixStoredContext(route.source.namespace, result.value));
     },
-    async createDocument(input) {
-      const route = resolveWritableDocumentRoute(pluginSources, hostSource, input.id);
+    async registerContext(input) {
+      const route = resolveWritableContextRoute(pluginSources, hostSource, input.id);
 
       if (route === undefined) {
-        return error("store_unavailable", "ExpertAgent document store is not configured.");
+        return error("store_unavailable", "ExpertAgent context store is not configured.");
       }
 
-      const result = await route.source.store.createDocument({
+      const result = await route.source.store.registerContext({
         ...input,
         id: route.localId,
       });
@@ -495,16 +498,16 @@ function createCompositeDocumentStore(
         return result;
       }
 
-      return ok(prefixStoredDocument(route.source.namespace, result.value));
+      return ok(prefixStoredContext(route.source.namespace, result.value));
     },
-    async updateDocument(input) {
-      const route = resolveDocumentRoute(pluginSources, hostSource, input.id);
+    async updateContext(input) {
+      const route = resolveContextRoute(pluginSources, hostSource, input.id);
 
       if (route === undefined) {
-        return error("document_not_found", `Document not found: ${input.id}`, { id: input.id });
+        return error("context_not_found", `Context not found: ${input.id}`, { id: input.id });
       }
 
-      const result = await route.source.store.updateDocument({
+      const result = await route.source.store.updateContext({
         ...input,
         id: route.localId,
       });
@@ -513,16 +516,16 @@ function createCompositeDocumentStore(
         return result;
       }
 
-      return ok(prefixStoredDocument(route.source.namespace, result.value));
+      return ok(prefixStoredContext(route.source.namespace, result.value));
     },
-    async deleteDocument(input) {
-      const route = resolveDocumentRoute(pluginSources, hostSource, input.id);
+    async deleteContext(input) {
+      const route = resolveContextRoute(pluginSources, hostSource, input.id);
 
       if (route === undefined) {
-        return error("document_not_found", `Document not found: ${input.id}`, { id: input.id });
+        return error("context_not_found", `Context not found: ${input.id}`, { id: input.id });
       }
 
-      const result = await route.source.store.deleteDocument({
+      const result = await route.source.store.deleteContext({
         ...input,
         id: route.localId,
       });
@@ -533,12 +536,12 @@ function createCompositeDocumentStore(
 
       return ok({ id: input.id });
     },
-    async searchDocuments(input) {
-      const matches: ExpertAgentDocumentSearchMatch[] = [];
+    async searchContext(input) {
+      const matches: ExpertAgentContextItemSearchMatch[] = [];
       const maxResults = input.maxResults ?? 20;
 
       for (const source of sources) {
-        const result = await source.store.searchDocuments({
+        const result = await source.store.searchContext({
           ...input,
           maxResults: maxResults - matches.length,
         });
@@ -548,7 +551,7 @@ function createCompositeDocumentStore(
         }
 
         matches.push(
-          ...result.value.map((match) => prefixDocumentSearchMatch(source.namespace, match)),
+          ...result.value.map((match) => prefixContextSearchMatch(source.namespace, match)),
         );
 
         if (matches.length >= maxResults) {
@@ -561,27 +564,27 @@ function createCompositeDocumentStore(
   };
 }
 
-function toDocumentStore(
-  contribution: ExpertAgentPluginDocumentContribution,
-): ExpertAgentDocumentStore {
-  if (isStoredDocumentArray(contribution)) {
-    return createInMemoryDocumentStore({ documents: contribution });
+function toContextStore(
+  contribution: ExpertAgentPluginContextContribution,
+): ExpertAgentContextStore {
+  if (isStoredContextArray(contribution)) {
+    return createInMemoryContextStore({ context: contribution });
   }
 
   return contribution;
 }
 
-function resolveDocumentRoute(
-  pluginSources: ReadonlyMap<string, ExpertAgentDocumentStoreSource>,
-  hostSource: ExpertAgentDocumentStoreSource | undefined,
+function resolveContextRoute(
+  pluginSources: ReadonlyMap<string, ExpertAgentContextStoreSource>,
+  hostSource: ExpertAgentContextStoreSource | undefined,
   id: string,
 ):
   | {
-      readonly source: ExpertAgentDocumentStoreSource;
+      readonly source: ExpertAgentContextStoreSource;
       readonly localId: string;
     }
   | undefined {
-  const parsed = parseNamespacedDocumentId(id);
+  const parsed = parseNamespacedContextId(id);
 
   if (parsed !== undefined) {
     const source = pluginSources.get(parsed.namespace);
@@ -604,17 +607,17 @@ function resolveDocumentRoute(
   };
 }
 
-function resolveWritableDocumentRoute(
-  pluginSources: ReadonlyMap<string, ExpertAgentDocumentStoreSource>,
-  hostSource: ExpertAgentDocumentStoreSource | undefined,
+function resolveWritableContextRoute(
+  pluginSources: ReadonlyMap<string, ExpertAgentContextStoreSource>,
+  hostSource: ExpertAgentContextStoreSource | undefined,
   id: string,
 ):
   | {
-      readonly source: ExpertAgentDocumentStoreSource;
+      readonly source: ExpertAgentContextStoreSource;
       readonly localId: string;
     }
   | undefined {
-  const route = resolveDocumentRoute(pluginSources, hostSource, id);
+  const route = resolveContextRoute(pluginSources, hostSource, id);
 
   if (route !== undefined) {
     return route;
@@ -628,7 +631,7 @@ function resolveWritableDocumentRoute(
       };
 }
 
-function parseNamespacedDocumentId(
+function parseNamespacedContextId(
   id: string,
 ): { readonly namespace: string; readonly localId: string } | undefined {
   const separatorIndex = id.indexOf("/");
@@ -643,43 +646,43 @@ function parseNamespacedDocumentId(
   };
 }
 
-function prefixDocumentId(namespace: string | undefined, id: string): string {
+function prefixContextId(namespace: string | undefined, id: string): string {
   return namespace === undefined ? id : `${namespace}/${id}`;
 }
 
-function prefixDocumentSummary(
+function prefixContextSummary(
   namespace: string | undefined,
-  summary: ExpertAgentDocumentSummary,
-): ExpertAgentDocumentSummary {
+  summary: ExpertAgentContextItemSummary,
+): ExpertAgentContextItemSummary {
   return {
     ...summary,
-    id: prefixDocumentId(namespace, summary.id),
+    id: prefixContextId(namespace, summary.id),
   };
 }
 
-function prefixStoredDocument<TDocument extends { readonly id: string }>(
+function prefixStoredContext<TContext extends { readonly id: string }>(
   namespace: string | undefined,
-  document: TDocument,
-): TDocument {
+  context: TContext,
+): TContext {
   return {
-    ...document,
-    id: prefixDocumentId(namespace, document.id),
+    ...context,
+    id: prefixContextId(namespace, context.id),
   };
 }
 
-function prefixDocumentSearchMatch(
+function prefixContextSearchMatch(
   namespace: string | undefined,
-  match: ExpertAgentDocumentSearchMatch,
-): ExpertAgentDocumentSearchMatch {
+  match: ExpertAgentContextItemSearchMatch,
+): ExpertAgentContextItemSearchMatch {
   return {
     ...match,
-    id: prefixDocumentId(namespace, match.id),
+    id: prefixContextId(namespace, match.id),
   };
 }
 
-function isStoredDocumentArray(
-  contribution: ExpertAgentPluginDocumentContribution,
-): contribution is readonly ExpertAgentDocumentSeed[] {
+function isStoredContextArray(
+  contribution: ExpertAgentPluginContextContribution,
+): contribution is readonly ExpertAgentContextItemSeed[] {
   return Array.isArray(contribution);
 }
 
@@ -775,13 +778,17 @@ function readExpertAgentPluginManifestFromCaller(): ExpertAgentPluginManifest {
   const callerFile = findDefinePluginEntryCallerFile();
 
   if (callerFile === undefined) {
-    throw new Error("Unable to locate plugin.json: definePluginEntry caller could not be resolved.");
+    throw new Error(
+      "Unable to locate plugin.json: definePluginEntry caller could not be resolved.",
+    );
   }
 
   const manifestPath = findNearestPluginManifest(callerFile);
 
   if (manifestPath === undefined) {
-    throw new Error(`Unable to load ExpertAgent plugin: plugin.json was not found for ${callerFile}.`);
+    throw new Error(
+      `Unable to load ExpertAgent plugin: plugin.json was not found for ${callerFile}.`,
+    );
   }
 
   return readExpertAgentPluginManifest(manifestPath);

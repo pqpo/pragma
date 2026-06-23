@@ -12,7 +12,7 @@ ExpertMesh 是一个面向企业复杂流程的多专家 Agent 编排与发布�
 
 专家 Agent 是面向特定领域或能力的智能执行单元，可以是业务领域专家、前端专家、服务端专家、测试专家、代码评审专家、需求讨论调度官等。
 
-一个专家 Agent 不是简单的模型调用，而是一组可治理的能力封装，包括专家配置、文档、技能、工具、上下文加载策略、运行时适配、权限策略、评测集和发布版本。
+一个专家 Agent 不是简单的模型调用，而是一组可治理的能力封装，包括专家配置、context、技能、工具、上下文加载策略、运行时适配、权限策略、评测集和发布版本。
 
 ### Playbook 剧本
 
@@ -148,10 +148,10 @@ pnpm dev
 ```bash
 cp examples/.env.example examples/.env
 pnpm --filter @expertmesh/examples start:basic
-pnpm --filter @expertmesh/examples start:workspace-documents
+pnpm --filter @expertmesh/examples start:workspace-context
 ```
 
-示例默认使用仓库根目录下的 `workspace/` 作为 agent workspace。文档示例支持通过 `--workspace` 指定外部 workspace，通过 `--documents` 指定 markdown 文档目录。
+示例默认使用仓库根目录下的 `workspace/` 作为 agent workspace。上下文示例支持通过 `--workspace` 指定外部 workspace，通过 `--context` 指定 markdown 上下文目录。
 
 详细说明见 `examples/README.md`。
 

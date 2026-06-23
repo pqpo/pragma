@@ -2,7 +2,7 @@
   "schemaVersion": "expertmesh.plugin/v1",
   "id": "code-repository-manager",
   "name": "Code Repository Manager",
-  "description": "Injects configured Git repositories as Agent documents and prepares Git authentication before runtime sessions start.",
+  "description": "Registers configured Git repositories as Agent context and prepares Git authentication before runtime sessions start.",
   "version": "0.0.0",
   "tags": ["git", "repository", "workspace"],
   "runtime": {
@@ -43,9 +43,9 @@
   ],
   "capabilities": [
     {
-      "type": "document",
+      "type": "context",
       "name": "code-repositories.md",
-      "description": "Exposes configured repository metadata to the Agent document index."
+      "description": "Exposes configured repository metadata to the Agent context system."
     },
     {
       "type": "hook",

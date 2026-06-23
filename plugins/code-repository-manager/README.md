@@ -1,8 +1,8 @@
 # Code Repository Manager Plugin
 
-This ExpertMesh plugin exposes a configured list of Git repositories as Agent documents and prepares Git authentication before each Agent runtime session starts.
+This ExpertMesh plugin exposes a configured list of Git repositories through the Agent context system and prepares Git authentication before each Agent runtime session starts.
 
-The plugin never injects secrets into documents. Token and SSH material are read from environment variables only when the session Git environment is prepared.
+The plugin never injects secrets into context. Token and SSH material are read from environment variables only when the session Git environment is prepared.
 
 ## Plugin Package Usage
 
@@ -19,7 +19,7 @@ the plugin, copies or extracts it into the Agent workspace, and constructs the
 Agent with resolved plugin entries.
 
 ```ts
-import { ExpertAgent, createInMemoryDocumentStore } from "@expertmesh/agent-core";
+import { ExpertAgent, createInMemoryContextStore } from "@expertmesh/agent-core";
 
 const workspace = "/path/to/workspace";
 
@@ -32,8 +32,8 @@ const agent = await ExpertAgent.create({
   version: "0.0.0",
   scope: "local-test",
   workspace,
-  documents: createInMemoryDocumentStore({
-    documents: [
+  context: createInMemoryContextStore({
+    context: [
       {
         id: "repositories.json",
         content: JSON.stringify({
@@ -75,9 +75,9 @@ Set `EXPERTMESH_PLUGIN_CODE_REPOSITORY_MANAGER_GIT_CREDENTIAL_HELPER` to a
 or a custom helper command. During each session, the plugin writes that value to an
 isolated temporary Git config and removes it during cleanup.
 
-Repository lists are dynamic Agent data. Put them in the host Agent document
-`repositories.json`; if the document is missing, the plugin skips repository document
-injection. Agents should use bash `git` directly and clone repositories to
+Repository lists are dynamic Agent data. Register them in the host Agent context
+as `repositories.json`; if that context item is missing, the plugin skips repository
+context registration. Agents should use bash `git` directly and clone repositories to
 `workspace/repos/<repository id>`.
 
 Run the repository example from the monorepo root:

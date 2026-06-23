@@ -1,21 +1,21 @@
 import { definePluginEntry } from "@expertmesh/agent-core";
 import type {
-  ExpertAgentDocumentMetadata,
-  ExpertAgentDocumentStore,
+  ExpertAgentContextItemMetadata,
+  ExpertAgentContextStore,
   ExpertAgentPluginSetupContext,
 } from "@expertmesh/agent-core";
 import { error, ok } from "@expertmesh/agent-core";
 
 import {
-  CODE_REPOSITORIES_SOURCE_DOCUMENT_ID,
-  CODE_REPOSITORY_DOCUMENT_ID,
-  createCodeRepositoryDocumentSeed,
-} from "./document.ts";
+  CODE_REPOSITORIES_SOURCE_CONTEXT_ID,
+  CODE_REPOSITORY_CONTEXT_ID,
+  createCodeRepositoryContextSeed,
+} from "./context.ts";
 import { prepareGitSessionEnvironment } from "./git.ts";
 import type { CodeRepository } from "./schema.ts";
 import {
   parseCodeRepositoryManagerConfig,
-  parseCodeRepositoryManagerRepositoriesDocument,
+  parseCodeRepositoryManagerRepositoriesContext,
 } from "./schema.ts";
 
 const TOKEN_ENV = "EXPERTMESH_PLUGIN_CODE_REPOSITORY_MANAGER_GIT_TOKEN";
@@ -31,7 +31,7 @@ export default definePluginEntry({
     const cleanupGitSessionEnvironments = new Map<string, () => Promise<void>>();
 
     return {
-      documents: createCodeRepositoryDocumentStore(baseConfig, context),
+      context: createCodeRepositoryContextStore(baseConfig, context),
       hooks: {
         beforeSessionCreate: async (sessionContext) => {
           await cleanupGitSessionEnvironments.get(sessionContext.systemSessionId)?.();
@@ -51,45 +51,45 @@ export default definePluginEntry({
   },
 });
 
-function createCodeRepositoryDocumentStore(
+function createCodeRepositoryContextStore(
   config: ReturnType<typeof parseCodeRepositoryManagerConfig>,
   context: ExpertAgentPluginSetupContext,
-): ExpertAgentDocumentStore {
+): ExpertAgentContextStore {
   return {
-    async listDocuments() {
+    async listContext() {
       const resolvedConfig = await resolveConfig(config, context);
 
       if (resolvedConfig.repositories.length === 0) {
         return ok([]);
       }
 
-      const seed = createCodeRepositoryDocumentSeed(resolvedConfig);
+      const seed = createCodeRepositoryContextSeed(resolvedConfig);
 
       return ok([
         {
           id: seed.id,
-          metadata: createDocumentMetadata(seed.metadata),
+          metadata: registerContextMetadata(seed.metadata),
           sizeBytes: Buffer.byteLength(seed.content, "utf8"),
         },
       ]);
     },
-    async readDocument(input) {
+    async readContext(input) {
       const resolvedConfig = await resolveConfig(config, context);
 
       if (resolvedConfig.repositories.length === 0) {
-        return error("document_not_found", "Code repository document is not configured.");
+        return error("context_not_found", "Code repository context is not configured.");
       }
 
-      const seed = createCodeRepositoryDocumentSeed(resolvedConfig);
+      const seed = createCodeRepositoryContextSeed(resolvedConfig);
 
       if (input.id !== seed.id) {
-        return error("document_not_found", `Document not found: ${input.id}`);
+        return error("context_not_found", `Context not found: ${input.id}`);
       }
 
       return ok({
         id: seed.id,
         content: seed.content,
-        metadata: createDocumentMetadata(seed.metadata),
+        metadata: registerContextMetadata(seed.metadata),
         contentRange: {
           requestedStartOffset: 0,
           startOffset: 0,
@@ -101,33 +101,33 @@ function createCodeRepositoryDocumentStore(
         sizeBytes: Buffer.byteLength(seed.content, "utf8"),
       });
     },
-    async createDocument() {
-      return error("permission_denied", "Code repository plugin documents are read-only.");
+    async registerContext() {
+      return error("permission_denied", "Code repository plugin context is read-only.");
     },
-    async updateDocument() {
-      return error("permission_denied", "Code repository plugin documents are read-only.");
+    async updateContext() {
+      return error("permission_denied", "Code repository plugin context is read-only.");
     },
-    async deleteDocument() {
-      return error("permission_denied", "Code repository plugin documents are read-only.");
+    async deleteContext() {
+      return error("permission_denied", "Code repository plugin context is read-only.");
     },
-    async searchDocuments(input) {
-      const document = await this.readDocument({
-        id: CODE_REPOSITORY_DOCUMENT_ID,
+    async searchContext(input) {
+      const context = await this.readContext({
+        id: CODE_REPOSITORY_CONTEXT_ID,
         context: input.context,
       });
 
-      if (!document.ok) {
+      if (!context.ok) {
         return ok([]);
       }
 
       return ok(
-        document.value.content
+        context.value.content
           .split("\n")
           .map((line, index) => ({ line, lineNumber: index + 1 }))
           .filter((line) => line.line.includes(input.query))
           .slice(0, input.maxResults ?? 20)
           .map((match) => ({
-            id: CODE_REPOSITORY_DOCUMENT_ID,
+            id: CODE_REPOSITORY_CONTEXT_ID,
             lineNumber: match.lineNumber,
             line: match.line,
           })),
@@ -152,15 +152,15 @@ async function resolveConfig(
 async function readHostRepositories(
   context: ExpertAgentPluginSetupContext,
 ): Promise<readonly CodeRepository[]> {
-  const result = await context.hostDocuments?.readDocument({
-    id: CODE_REPOSITORIES_SOURCE_DOCUMENT_ID,
+  const result = await context.hostContexts?.readContext({
+    id: CODE_REPOSITORIES_SOURCE_CONTEXT_ID,
   });
 
   if (result === undefined || !result.ok) {
     return [];
   }
 
-  return parseCodeRepositoryManagerRepositoriesDocument(JSON.parse(result.value.content));
+  return parseCodeRepositoryManagerRepositoriesContext(JSON.parse(result.value.content));
 }
 
 function resolveAuth(
@@ -195,9 +195,9 @@ function resolveAuth(
   return { strategy: "none" };
 }
 
-function createDocumentMetadata(
-  metadata: Partial<ExpertAgentDocumentMetadata> | undefined,
-): ExpertAgentDocumentMetadata {
+function registerContextMetadata(
+  metadata: Partial<ExpertAgentContextItemMetadata> | undefined,
+): ExpertAgentContextItemMetadata {
   return {
     trigger: metadata?.trigger ?? "model_decision",
     ...(metadata?.description === undefined ? {} : { description: metadata.description }),

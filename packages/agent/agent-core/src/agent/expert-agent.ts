@@ -1,22 +1,28 @@
 import { ContextManager } from "./context-manager.ts";
 import type { ContextAssemblerOptions, ExpertAgentContext } from "./context-manager.ts";
 import type { AgentMessageUsage } from "@expertmesh/contracts";
-import { DocumentIndexer } from "../documents/document-indexer.ts";
+import { ContextSystem } from "../context-system/context-system.ts";
 import type {
-  ExpertAgentDocument,
-  ExpertAgentDocumentCreateInput,
-  ExpertAgentDocumentDeleteInput,
-  ExpertAgentDocumentResult,
-  ExpertAgentDocumentSearchInput,
-  ExpertAgentDocumentSearchMatch,
-  ExpertAgentDocumentStore,
-  ExpertAgentDocumentSummary,
-  ExpertAgentDocumentUpdateInput,
-  ExpertAgentDocumentReadInput,
-} from "../documents/document-indexer.ts";
-import { createDocumentTools } from "../documents/document-tools.ts";
-import type { CreateDocumentToolsOptions, ExpertAgentDefaultTool } from "../documents/document-tools.ts";
-import type { ExpertAgentPluginEntry, ExpertAgentPluginHooks } from "../plugins/expert-agent-plugin.ts";
+  ExpertAgentContextItem,
+  ExpertAgentContextRegisterInput,
+  ExpertAgentContextItemDeleteInput,
+  ExpertAgentContextResult,
+  ExpertAgentContextItemSearchInput,
+  ExpertAgentContextItemSearchMatch,
+  ExpertAgentContextStore,
+  ExpertAgentContextItemSummary,
+  ExpertAgentContextItemUpdateInput,
+  ExpertAgentContextItemReadInput,
+} from "../context-system/context-system.ts";
+import { createContextTools } from "../context-system/context-tools.ts";
+import type {
+  CreateContextToolsOptions,
+  ExpertAgentDefaultTool,
+} from "../context-system/context-tools.ts";
+import type {
+  ExpertAgentPluginEntry,
+  ExpertAgentPluginHooks,
+} from "../plugins/expert-agent-plugin.ts";
 import { resolveExpertAgentPlugins } from "../plugins/expert-agent-plugin.ts";
 import type {
   ExpertAgentPluginLoadIssue,
@@ -119,7 +125,7 @@ export interface IExpertAgent {
   readonly mcp?: IExpertAgentMcpConfig | undefined;
   readonly skills?: IExpertAgentSkillsConfig | undefined;
   readonly models?: IExpertAgentModelsConfig | undefined;
-  readonly documents?: ExpertAgentDocumentStore | undefined;
+  readonly context?: ExpertAgentContextStore | undefined;
   readonly subAgents?: SubAgentRegistry | undefined;
   readonly tools?: readonly ExpertAgentManagedTool<string, ExpertAgentToolCallResult>[] | undefined;
   readonly hooks?: ExpertAgentPluginHooks | undefined;
@@ -150,13 +156,13 @@ export class ExpertAgent implements IExpertAgent {
   readonly mcp: IExpertAgentMcpConfig | undefined;
   readonly skills: IExpertAgentSkillsConfig | undefined;
   readonly models: IExpertAgentModelsConfig | undefined;
-  readonly documents: ExpertAgentDocumentStore | undefined;
+  readonly context: ExpertAgentContextStore | undefined;
   readonly workspace: string;
   readonly subAgents: SubAgentRegistry | undefined;
   readonly tools: readonly ExpertAgentManagedTool<string, ExpertAgentToolCallResult>[] | undefined;
   readonly hooks: ExpertAgentPluginHooks | undefined;
   readonly pluginLoadIssues: readonly ExpertAgentPluginLoadIssue[] | undefined;
-  private readonly documentIndexer: DocumentIndexer;
+  private readonly contextSystem: ContextSystem;
   private readonly contextManager: ContextManager;
 
   static async create(options: ExpertAgentCreateOptions): Promise<ExpertAgent> {
@@ -179,7 +185,7 @@ export class ExpertAgent implements IExpertAgent {
         mcp: options.mcp,
         skills: options.skills,
         models: options.models,
-        documents: options.documents,
+        context: options.context,
         subAgents: options.subAgents,
         tools: options.tools,
         hooks: options.hooks,
@@ -199,18 +205,18 @@ export class ExpertAgent implements IExpertAgent {
     this.mcp = resolved.mcp;
     this.skills = resolved.skills;
     this.models = resolved.models;
-    this.documents = resolved.documents;
+    this.context = resolved.context;
     this.workspace = options.workspace;
     this.subAgents = resolved.subAgents;
     this.tools = resolved.tools;
     this.hooks = resolved.hooks;
     this.pluginLoadIssues = options.pluginLoadIssues;
-    this.documentIndexer = new DocumentIndexer({
-      store: resolved.documents,
+    this.contextSystem = new ContextSystem({
+      store: resolved.context,
     });
     this.contextManager = new ContextManager({
       agent: this,
-      documentIndexer: this.documentIndexer,
+      contextSystem: this.contextSystem,
     });
   }
 
@@ -221,44 +227,43 @@ export class ExpertAgent implements IExpertAgent {
     return await this.contextManager.buildContext(context, options);
   }
 
-  createDefaultTools(options: CreateDocumentToolsOptions = {}): readonly ExpertAgentDefaultTool[] {
-    return createDocumentTools(this, options);
+  createDefaultTools(options: CreateContextToolsOptions = {}): readonly ExpertAgentDefaultTool[] {
+    return createContextTools(this, options);
   }
 
-  async listDocuments(
+  async listContext(
     context: ExpertAgentRunContext = {},
-  ): Promise<ExpertAgentDocumentResult<readonly ExpertAgentDocumentSummary[]>> {
-    return await this.documentIndexer.index(context);
+  ): Promise<ExpertAgentContextResult<readonly ExpertAgentContextItemSummary[]>> {
+    return await this.contextSystem.index(context);
   }
 
-  async readDocument(
-    input: ExpertAgentDocumentReadInput,
-  ): Promise<ExpertAgentDocumentResult<ExpertAgentDocument>> {
-    return await this.documentIndexer.read(input);
+  async readContext(
+    input: ExpertAgentContextItemReadInput,
+  ): Promise<ExpertAgentContextResult<ExpertAgentContextItem>> {
+    return await this.contextSystem.read(input);
   }
 
-  async searchDocuments(
-    input: ExpertAgentDocumentSearchInput,
-  ): Promise<ExpertAgentDocumentResult<readonly ExpertAgentDocumentSearchMatch[]>> {
-    return await this.documentIndexer.search(input);
+  async searchContext(
+    input: ExpertAgentContextItemSearchInput,
+  ): Promise<ExpertAgentContextResult<readonly ExpertAgentContextItemSearchMatch[]>> {
+    return await this.contextSystem.search(input);
   }
 
-  async createDocument(
-    input: ExpertAgentDocumentCreateInput,
-  ): Promise<ExpertAgentDocumentResult<ExpertAgentDocument>> {
-    return await this.documentIndexer.create(input);
+  async registerContext(
+    input: ExpertAgentContextRegisterInput,
+  ): Promise<ExpertAgentContextResult<ExpertAgentContextItem>> {
+    return await this.contextSystem.register(input);
   }
 
-  async updateDocument(
-    input: ExpertAgentDocumentUpdateInput,
-  ): Promise<ExpertAgentDocumentResult<ExpertAgentDocument>> {
-    return await this.documentIndexer.update(input);
+  async updateContext(
+    input: ExpertAgentContextItemUpdateInput,
+  ): Promise<ExpertAgentContextResult<ExpertAgentContextItem>> {
+    return await this.contextSystem.update(input);
   }
 
-  async deleteDocument(
-    input: ExpertAgentDocumentDeleteInput,
-  ): Promise<ExpertAgentDocumentResult<{ readonly id: string }>> {
-    return await this.documentIndexer.delete(input);
+  async deleteContext(
+    input: ExpertAgentContextItemDeleteInput,
+  ): Promise<ExpertAgentContextResult<{ readonly id: string }>> {
+    return await this.contextSystem.delete(input);
   }
-
 }

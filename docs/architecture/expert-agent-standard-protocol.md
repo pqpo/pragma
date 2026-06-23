@@ -20,7 +20,7 @@
 
 每个专家 Agent 必须有一个 Expert Manifest。Manifest 是专家 Agent 的标准声明文件，描述专家身份、能力边界、输入输出协议、上下文加载策略和运行依赖。
 
-Manifest 不直接存放大段知识正文。长期知识应放在用户自定义文档路径中，并通过渐进式加载策略引用。
+Manifest 不直接存放大段知识正文。长期知识应放在用户自定义上下文路径中，并通过渐进式加载策略引用。
 
 ### 2.2 协议优先于自然语言
 
@@ -30,11 +30,11 @@ Playbook 调用专家时，必须先根据 `inputSchema` 校验输入；专家�
 
 ### 2.3 配置只声明能力，不授予最终权限
 
-Manifest 可以声明专家希望使用的 MCP、Skills、AGENTS.md、文档和 workspace。实际运行时仍需要经过租户策略、用户权限、Playbook 权限、Runtime 权限和本地 Desktop 权限闸门共同裁决。
+Manifest 可以声明专家希望使用的 MCP、Skills、AGENTS.md、context 和 workspace。实际运行时仍需要经过租户策略、用户权限、Playbook 权限、Runtime 权限和本地 Desktop 权限闸门共同裁决。
 
-### 2.4 文档渐进式加载
+### 2.4 上下文渐进式加载
 
-专家文档不应一次性注入 Runtime。Manifest 只声明文档源、索引方式、初始加载入口和懒加载规则。运行时根据任务、schema、上下文预算和权限逐步加载。
+专家上下文不应一次性注入 Runtime。Manifest 只声明上下文源、索引方式、初始加载入口和懒加载规则。运行时根据任务、schema、上下文预算和权限逐步加载。
 
 ### 2.5 Workspace 明确收敛
 
@@ -109,7 +109,7 @@ inputSchema:
       type: array
       items:
         type: string
-      description: 相关代码文件或文档路径
+      description: 相关代码文件或上下文路径
   required:
     - task
 
@@ -134,20 +134,20 @@ outputSchema:
       type: array
       items:
         type: string
-      description: 引用的文档或代码路径
+      description: 引用的上下文或代码路径
   required:
     - conclusion
 
 mcp:
   servers:
     - id: doc-search
-      displayName: 文档检索
+      displayName: 上下文检索
       transport: stdio
       packageRef: "@company/doc-search-mcp"
       enabledByDefault: true
       allowedTools:
-        - searchDocuments
-        - readDocument
+        - searchContext
+        - readContext
       config:
         index: order-docs
     - id: code-search
@@ -168,29 +168,29 @@ skills:
       enabledByDefault: true
     - id: order-state-machine-analysis
       displayName: 订单状态机分析
-      source: document
+      source: context
       ref: docs://order/rules/state-machine.md
       enabledByDefault: true
 
-documents:
+context:
   roots:
     - id: order-docs
-      displayName: 订单专家文档
+      displayName: 订单专家上下文
       uri: docs://order-domain-expert
-      path: ./documents/order-domain-expert
+      path: ./context/order-domain-expert
       access: read
       index:
         strategy: hybrid
-        summaryFile: ./documents/order-domain-expert/index.md
+        summaryFile: ./context/order-domain-expert/index.md
       load:
         mustLoad:
-          - ./documents/order-domain-expert/profile.md
-          - ./documents/order-domain-expert/safety.md
+          - ./context/order-domain-expert/profile.md
+          - ./context/order-domain-expert/safety.md
         lazyLoad:
-          - ./documents/order-domain-expert/business-rules/**
-          - ./documents/order-domain-expert/architecture/**
+          - ./context/order-domain-expert/business-rules/**
+          - ./context/order-domain-expert/architecture/**
         forbiddenLoad:
-          - ./documents/order-domain-expert/archive/**
+          - ./context/order-domain-expert/archive/**
 
 workspace:
   mode: cloud-sandbox
@@ -306,7 +306,7 @@ tags:
 
 建议：
 
-- patch：文档修正、提示词细化、非破坏性评测补充；
+- patch：上下文修正、提示词细化、非破坏性评测补充；
 - minor：新增兼容能力、新增可选输入或输出字段；
 - major：input/output schema 破坏性变更、能力范围显著变化。
 
@@ -381,13 +381,13 @@ tags:
 mcp:
   servers:
     - id: doc-search
-      displayName: 文档检索
+      displayName: 上下文检索
       transport: stdio
       packageRef: "@company/doc-search-mcp"
       enabledByDefault: true
       allowedTools:
-        - searchDocuments
-        - readDocument
+        - searchContext
+        - readContext
       config:
         index: order-docs
 ```
@@ -427,45 +427,45 @@ skills:
       enabledByDefault: true
     - id: order-state-machine-analysis
       displayName: 订单状态机分析
-      source: document
+      source: context
       ref: docs://order/rules/state-machine.md
       enabledByDefault: true
 ```
 
 字段规则：
 
-| 字段                         | 必填 | 说明                                            |
-| ---------------------------- | ---- | ----------------------------------------------- |
-| `entries[].id`               | 是   | 当前专家内唯一的 Skill ID                       |
-| `entries[].displayName`      | 是   | 展示名称                                        |
-| `entries[].source`           | 是   | `registry`、`document`、`workspace` 或 `inline` |
-| `entries[].ref`              | 是   | Skill 引用地址                                  |
-| `entries[].enabledByDefault` | 是   | 默认是否加载                                    |
-| `entries[].loadWhen`         | 否   | 按任务条件延迟加载的规则                        |
+| 字段                         | 必填 | 说明                                           |
+| ---------------------------- | ---- | ---------------------------------------------- |
+| `entries[].id`               | 是   | 当前专家内唯一的 Skill ID                      |
+| `entries[].displayName`      | 是   | 展示名称                                       |
+| `entries[].source`           | 是   | `registry`、`context`、`workspace` 或 `inline` |
+| `entries[].ref`              | 是   | Skill 引用地址                                 |
+| `entries[].enabledByDefault` | 是   | 默认是否加载                                   |
+| `entries[].loadWhen`         | 否   | 按任务条件延迟加载的规则                       |
 
 约束：
 
 - Skill 不应绕过 `inputSchema` 和 `outputSchema`；
 - Skill 只能扩展专家行为，不能扩大权限；
 - Skill 内容需要纳入版本和审计；
-- 来自文档的 Skill 应遵守 documents 的权限和加载规则。
+- 来自上下文系统的 Skill 应遵守 context 的权限和加载规则。
 
-## 8. AGENTS.md 特殊文档
+## 8. AGENTS.md 特殊上下文
 
-`AGENTS.md` 不再作为独立 Manifest 字段声明。它是 documents 中的特殊文档：
+`AGENTS.md` 不再作为独立 Manifest 字段声明。它是 context 中的特殊上下文：
 
-- 文档 ID 固定为 `AGENTS.md`；
+- 上下文 ID 固定为 `AGENTS.md`；
 - 文件内容就是指令正文，不需要 frontmatter metadata；
-- 运行时自动把它视为 `always_on` 文档加载；
-- 文档工具可以通过 `readDocument` / `updateDocument` 读取或更新它；
+- 运行时自动把它视为 `always_on` 上下文加载；
+- 上下文工具可以通过 `readContext` / `updateContext` 读取或更新它；
 - 更新时仍保持纯 markdown 内容，不写入 metadata。
 
 加载顺序：
 
 1. 平台系统约束；
 2. 租户或组织级指令；
-3. `AGENTS.md` 特殊文档；
-4. 其他 `always_on` 文档；
+3. `AGENTS.md` 特殊上下文；
+4. 其他 `always_on` 上下文；
 5. 当前任务临时约束。
 
 冲突规则：
@@ -475,43 +475,43 @@ skills:
 - `AGENTS.md` 不能放宽前序安全规则、权限规则或 schema 规则；
 - 实际加载的 `AGENTS.md` 内容摘要必须进入运行快照。
 
-## 9. 文档路径与渐进式加载
+## 9. 上下文路径与渐进式加载
 
-`documents` 声明用户自定义文档源。它是专家长期知识的入口，不是运行时一次性 prompt。
+`context` 声明用户自定义上下文源。它是专家长期知识的入口，不是运行时一次性 prompt。
 
 ```yaml
-documents:
+context:
   roots:
     - id: order-docs
-      displayName: 订单专家文档
+      displayName: 订单专家上下文
       uri: docs://order-domain-expert
-      path: ./documents/order-domain-expert
+      path: ./context/order-domain-expert
       access: read
       index:
         strategy: hybrid
-        summaryFile: ./documents/order-domain-expert/index.md
+        summaryFile: ./context/order-domain-expert/index.md
       load:
         mustLoad:
-          - ./documents/order-domain-expert/profile.md
-          - ./documents/order-domain-expert/safety.md
+          - ./context/order-domain-expert/profile.md
+          - ./context/order-domain-expert/safety.md
         lazyLoad:
-          - ./documents/order-domain-expert/business-rules/**
-          - ./documents/order-domain-expert/architecture/**
+          - ./context/order-domain-expert/business-rules/**
+          - ./context/order-domain-expert/architecture/**
         forbiddenLoad:
-          - ./documents/order-domain-expert/archive/**
+          - ./context/order-domain-expert/archive/**
 ```
 
 字段规则：
 
 | 字段                         | 必填 | 说明                                     |
 | ---------------------------- | ---- | ---------------------------------------- |
-| `roots[].id`                 | 是   | 当前专家内唯一的文档根 ID                |
+| `roots[].id`                 | 是   | 当前专家内唯一的上下文根 ID              |
 | `roots[].displayName`        | 是   | 展示名称                                 |
-| `roots[].uri`                | 否   | 平台内文档源 URI                         |
+| `roots[].uri`                | 否   | 平台内上下文源 URI                       |
 | `roots[].path`               | 否   | workspace 或仓库内相对路径               |
 | `roots[].access`             | 是   | `read`、`readwrite`                      |
 | `roots[].index.strategy`     | 是   | `summary`、`vector`、`keyword`、`hybrid` |
-| `roots[].index.summaryFile`  | 否   | 文档目录摘要入口                         |
+| `roots[].index.summaryFile`  | 否   | 上下文目录摘要入口                       |
 | `roots[].load.mustLoad`      | 否   | 每次运行必须加载                         |
 | `roots[].load.lazyLoad`      | 否   | 可按任务检索加载                         |
 | `roots[].load.forbiddenLoad` | 否   | 禁止加载路径                             |
@@ -522,14 +522,14 @@ documents:
 读取 Manifest
 → 校验任务输入
 → 加载专家身份、能力范围、schema 和必要 AGENTS.md
-→ 加载 documents.mustLoad 中的短文档
+→ 加载 context.mustLoad 中的短上下文
 → 根据任务检索 summary/index
 → 加载相关片段
 → 必要时由 Runtime 申请读取原文
 → 记录 Context Snapshot
 ```
 
-文档元信息建议：
+上下文元信息建议：
 
 ```yaml
 title: 订单状态机规则
@@ -546,11 +546,11 @@ tags:
 
 约束：
 
-- 文档路径必须位于声明的 documents root 或 workspace root 下；
+- 上下文路径必须位于声明的 context root 或 workspace root 下；
 - `forbiddenLoad` 优先级高于 `mustLoad` 和 `lazyLoad`；
-- Agent 自进化只能写入被授权的文档路径；
-- 发布版本应锁定文档源版本、commit 或快照 ID；
-- 运行审计必须记录实际加载的文档列表和摘要。
+- Agent 自进化只能写入被授权的上下文路径；
+- 发布版本应锁定上下文源版本、commit 或快照 ID；
+- 运行审计必须记录实际加载的上下文列表和摘要。
 
 ## 10. Workspace 目录
 
@@ -609,7 +609,7 @@ type ExpertManifest = {
   outputSchema: JsonObjectSchema;
   mcp?: ExpertMcpConfig;
   skills?: ExpertSkillsConfig;
-  documents?: ExpertDocumentsConfig;
+  context?: ExpertContextConfig;
   workspace?: ExpertWorkspaceConfig;
 };
 ```
@@ -633,12 +633,12 @@ type ExpertManifest = {
 4. `displayName`、`description`、`capability.summary` 不为空；
 5. `capability.scopes[].id` 当前专家内唯一；
 6. `inputSchema` 与 `outputSchema` 是合法 object schema；
-7. MCP、Skill、documents、workspace 的 ID 在各自作用域内唯一；
+7. MCP、Skill、context、workspace 的 ID 在各自作用域内唯一；
 8. 所有相对路径不能逃逸声明根目录；
 9. secret 不以明文出现在 Manifest；
-10. 如果 documents 根中存在 `AGENTS.md`，必须能作为 `always_on` 文档读取；
+10. 如果 context 根中存在 `AGENTS.md`，必须能作为 `always_on` 上下文读取；
 11. `workspace.defaultRoot` 指向已声明 root；
-12. `documents.forbiddenLoad` 不被默认加载规则覆盖。
+12. `context.forbiddenLoad` 不被默认加载规则覆盖。
 
 运行前必须校验：
 
@@ -646,12 +646,12 @@ type ExpertManifest = {
 2. 调用方有权使用该专家版本；
 3. Playbook 有权启用声明的 MCP 和 Skills；
 4. Runtime 有可用 workspace；
-5. 文档加载结果生成 Context Snapshot。
+5. 上下文加载结果生成 Context Snapshot。
 
 运行后必须校验：
 
 1. 输出满足 `outputSchema`；
-2. 所有 tool call、文档加载、workspace 写入都有 Trace；
+2. 所有 tool call、上下文加载、workspace 写入都有 Trace；
 3. artifact 位于授权输出目录；
 4. schema 校验失败时返回结构化错误，而不是自然语言成功结果。
 
@@ -677,8 +677,8 @@ Runtime Adapter 根据 Manifest 准备执行环境：
 
 1. 选择 Runtime；
 2. 创建 workspace；
-3. 加载 documents，其中 `AGENTS.md` 自动作为 `always_on` 文档；
-4. 加载必要文档；
+3. 加载 context，其中 `AGENTS.md` 自动作为 `always_on` 上下文；
+4. 加载必要上下文；
 5. 注册允许的 MCP；
 6. 加载 Skills；
 7. 校验 input；
@@ -706,7 +706,7 @@ expertmesh.stream/v1
 | `eventId`       | 事件唯一 ID，用于幂等写入和客户端去重           |
 | `sequence`      | 同一个 `runId` 内单调递增的序号                 |
 | `runId`         | 当前事件所属运行                                |
-| `parentRunId`   | 可选；嵌套运行或工具事件指向父运行             |
+| `parentRunId`   | 可选；嵌套运行或工具事件指向父运行              |
 | `emittedAt`     | Runtime 产生事件的 ISO 时间                     |
 | `source`        | 事件来源，包括 agent、runtime 或 tool           |
 | `type`          | 事件类型                                        |
@@ -889,4 +889,4 @@ outputSchema:
 3. 增加 Manifest fixture 和 schema 单元测试；
 4. 增加非法路径、非法 secret、非法 schema 的测试；
 5. 再设计 Playbook 对专家 Manifest 的引用协议；
-6. 最后再进入 Runtime、MCP、Skills、Document Repo 和 Desktop 本地桥接实现。
+6. 最后再进入 Runtime、MCP、Skills、Context Store 和 Desktop 本地桥接实现。

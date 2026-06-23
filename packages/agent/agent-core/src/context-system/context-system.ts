@@ -1,53 +1,53 @@
 import type { ExpertAgentRunContext } from "../runtime/run-context.ts";
 
-export const AGENTS_DOCUMENT_ID = "AGENTS.md";
+export const AGENTS_CONTEXT_ID = "AGENTS.md";
 
-export type DocumentTrigger = "always_on" | "model_decision" | "manual";
-export type DocumentTrustLevel = "system" | "workspace" | "user" | "external";
-export type DocumentSensitivity = "public" | "internal" | "confidential" | "restricted";
+export type ContextTrigger = "always_on" | "model_decision" | "manual";
+export type ContextTrustLevel = "system" | "workspace" | "user" | "external";
+export type ContextSensitivity = "public" | "internal" | "confidential" | "restricted";
 
-export type ExpertAgentDocumentErrorCode =
-  | "document_not_found"
-  | "document_already_exists"
-  | "document_conflict"
-  | "document_too_large"
+export type ExpertAgentContextErrorCode =
+  | "context_not_found"
+  | "context_already_exists"
+  | "context_conflict"
+  | "context_too_large"
   | "permission_denied"
   | "invalid_input"
   | "store_unavailable"
   | "store_error";
 
-export interface ExpertAgentDocumentError {
-  readonly code: ExpertAgentDocumentErrorCode;
+export interface ExpertAgentContextError {
+  readonly code: ExpertAgentContextErrorCode;
   readonly message: string;
   readonly details?: unknown;
 }
 
-export type ExpertAgentDocumentResult<TValue> =
+export type ExpertAgentContextResult<TValue> =
   | {
       readonly ok: true;
       readonly value: TValue;
     }
   | {
       readonly ok: false;
-      readonly error: ExpertAgentDocumentError;
+      readonly error: ExpertAgentContextError;
     };
 
-export interface ExpertAgentDocumentMetadata {
+export interface ExpertAgentContextItemMetadata {
   readonly description?: string;
-  readonly trigger: DocumentTrigger;
-  readonly trustLevel?: DocumentTrustLevel | undefined;
-  readonly sensitivity?: DocumentSensitivity | undefined;
+  readonly trigger: ContextTrigger;
+  readonly trustLevel?: ContextTrustLevel | undefined;
+  readonly sensitivity?: ContextSensitivity | undefined;
 }
 
-export interface ExpertAgentDocumentSummary {
+export interface ExpertAgentContextItemSummary {
   readonly id: string;
-  readonly metadata: ExpertAgentDocumentMetadata;
+  readonly metadata: ExpertAgentContextItemMetadata;
   readonly revision?: string | undefined;
   readonly etag?: string | undefined;
   readonly sizeBytes?: number | undefined;
 }
 
-export interface ExpertAgentDocumentContentRange {
+export interface ExpertAgentContextItemContentRange {
   readonly requestedStartOffset: number;
   readonly startOffset: number;
   readonly endOffset: number;
@@ -60,66 +60,66 @@ export interface ExpertAgentDocumentContentRange {
   readonly totalLines?: number | undefined;
 }
 
-export interface ExpertAgentDocument extends ExpertAgentDocumentSummary {
+export interface ExpertAgentContextItem extends ExpertAgentContextItemSummary {
   readonly content: string;
-  readonly contentRange?: ExpertAgentDocumentContentRange | undefined;
+  readonly contentRange?: ExpertAgentContextItemContentRange | undefined;
 }
 
-export interface ExpertAgentStoredDocument {
+export interface ExpertAgentStoredContextItem {
   readonly id: string;
   readonly content: string;
-  readonly metadata: ExpertAgentDocumentMetadata;
+  readonly metadata: ExpertAgentContextItemMetadata;
   readonly revision?: string | undefined;
   readonly etag?: string | undefined;
   readonly sizeBytes?: number | undefined;
 }
 
-export interface ExpertAgentDocumentSeed {
+export interface ExpertAgentContextItemSeed {
   readonly id: string;
   readonly content: string;
-  readonly metadata?: Partial<ExpertAgentDocumentMetadata> | undefined;
+  readonly metadata?: Partial<ExpertAgentContextItemMetadata> | undefined;
   readonly revision?: string | undefined;
   readonly etag?: string | undefined;
   readonly sizeBytes?: number | undefined;
 }
 
-export interface ExpertAgentStoredDocumentReadResult extends ExpertAgentStoredDocument {
-  readonly contentRange: ExpertAgentDocumentContentRange;
+export interface ExpertAgentStoredContextItemReadResult extends ExpertAgentStoredContextItem {
+  readonly contentRange: ExpertAgentContextItemContentRange;
 }
 
-export interface ExpertAgentDocumentCreateInput {
+export interface ExpertAgentContextRegisterInput {
   readonly id: string;
   readonly content: string;
-  readonly metadata?: Partial<ExpertAgentDocumentMetadata> | undefined;
+  readonly metadata?: Partial<ExpertAgentContextItemMetadata> | undefined;
   readonly context?: ExpertAgentRunContext | undefined;
 }
 
-export interface ExpertAgentDocumentReadInput {
+export interface ExpertAgentContextItemReadInput {
   readonly id: string;
   readonly start?: number | undefined;
   readonly offset?: number | undefined;
   readonly context?: ExpertAgentRunContext | undefined;
 }
 
-export interface ExpertAgentDocumentListInput {
+export interface ExpertAgentContextItemListInput {
   readonly context?: ExpertAgentRunContext | undefined;
 }
 
-export interface ExpertAgentDocumentUpdateInput {
+export interface ExpertAgentContextItemUpdateInput {
   readonly id: string;
   readonly content?: string | undefined;
-  readonly metadata?: Partial<ExpertAgentDocumentMetadata> | undefined;
+  readonly metadata?: Partial<ExpertAgentContextItemMetadata> | undefined;
   readonly expectedRevision?: string | undefined;
   readonly expectedEtag?: string | undefined;
   readonly context?: ExpertAgentRunContext | undefined;
 }
 
-export interface ExpertAgentDocumentDeleteInput {
+export interface ExpertAgentContextItemDeleteInput {
   readonly id: string;
   readonly context?: ExpertAgentRunContext | undefined;
 }
 
-export interface ExpertAgentDocumentSearchInput {
+export interface ExpertAgentContextItemSearchInput {
   readonly query: string;
   readonly maxResults?: number | undefined;
   readonly contextLines?: number | undefined;
@@ -127,7 +127,7 @@ export interface ExpertAgentDocumentSearchInput {
   readonly context?: ExpertAgentRunContext | undefined;
 }
 
-export interface ExpertAgentDocumentSearchMatch {
+export interface ExpertAgentContextItemSearchMatch {
   readonly id: string;
   readonly lineNumber: number;
   readonly line: string;
@@ -135,62 +135,62 @@ export interface ExpertAgentDocumentSearchMatch {
   readonly after?: readonly string[] | undefined;
 }
 
-export interface ExpertAgentStoredDocumentCreateInput {
+export interface ExpertAgentStoredContextRegisterInput {
   readonly id: string;
   readonly content: string;
-  readonly metadata?: Partial<ExpertAgentDocumentMetadata> | undefined;
+  readonly metadata?: Partial<ExpertAgentContextItemMetadata> | undefined;
   readonly context?: ExpertAgentRunContext | undefined;
 }
 
-export interface ExpertAgentStoredDocumentUpdateInput {
+export interface ExpertAgentStoredContextItemUpdateInput {
   readonly id: string;
   readonly content?: string | undefined;
-  readonly metadata?: Partial<ExpertAgentDocumentMetadata> | undefined;
+  readonly metadata?: Partial<ExpertAgentContextItemMetadata> | undefined;
   readonly expectedRevision?: string | undefined;
   readonly expectedEtag?: string | undefined;
   readonly context?: ExpertAgentRunContext | undefined;
 }
 
-export interface ExpertAgentDocumentStore {
-  readonly listDocuments: (
-    input: ExpertAgentDocumentListInput,
-  ) => Promise<ExpertAgentDocumentResult<readonly ExpertAgentDocumentSummary[]>>;
-  readonly readDocument: (
-    input: ExpertAgentDocumentReadInput,
-  ) => Promise<ExpertAgentDocumentResult<ExpertAgentStoredDocumentReadResult>>;
-  readonly createDocument: (
-    input: ExpertAgentStoredDocumentCreateInput,
-  ) => Promise<ExpertAgentDocumentResult<ExpertAgentStoredDocument>>;
-  readonly updateDocument: (
-    input: ExpertAgentStoredDocumentUpdateInput,
-  ) => Promise<ExpertAgentDocumentResult<ExpertAgentStoredDocument>>;
-  readonly deleteDocument: (
-    input: ExpertAgentDocumentDeleteInput,
-  ) => Promise<ExpertAgentDocumentResult<{ readonly id: string }>>;
-  readonly searchDocuments: (
-    input: ExpertAgentDocumentSearchInput,
-  ) => Promise<ExpertAgentDocumentResult<readonly ExpertAgentDocumentSearchMatch[]>>;
+export interface ExpertAgentContextStore {
+  readonly listContext: (
+    input: ExpertAgentContextItemListInput,
+  ) => Promise<ExpertAgentContextResult<readonly ExpertAgentContextItemSummary[]>>;
+  readonly readContext: (
+    input: ExpertAgentContextItemReadInput,
+  ) => Promise<ExpertAgentContextResult<ExpertAgentStoredContextItemReadResult>>;
+  readonly registerContext: (
+    input: ExpertAgentStoredContextRegisterInput,
+  ) => Promise<ExpertAgentContextResult<ExpertAgentStoredContextItem>>;
+  readonly updateContext: (
+    input: ExpertAgentStoredContextItemUpdateInput,
+  ) => Promise<ExpertAgentContextResult<ExpertAgentStoredContextItem>>;
+  readonly deleteContext: (
+    input: ExpertAgentContextItemDeleteInput,
+  ) => Promise<ExpertAgentContextResult<{ readonly id: string }>>;
+  readonly searchContext: (
+    input: ExpertAgentContextItemSearchInput,
+  ) => Promise<ExpertAgentContextResult<readonly ExpertAgentContextItemSearchMatch[]>>;
 }
 
-export interface DocumentIndexerOptions {
-  readonly store?: ExpertAgentDocumentStore | undefined;
+export interface ContextSystemOptions {
+  readonly store?: ExpertAgentContextStore | undefined;
 }
 
-export class DocumentIndexer {
-  readonly store: ExpertAgentDocumentStore | undefined;
+export class ContextSystem {
+  readonly store: ExpertAgentContextStore | undefined;
 
-  constructor(options: DocumentIndexerOptions = {}) {
+  constructor(options: ContextSystemOptions = {}) {
     this.store = options.store;
   }
 
   async index(
     context: ExpertAgentRunContext = {},
-  ): Promise<ExpertAgentDocumentResult<readonly ExpertAgentDocumentSummary[]>> {
+  ): Promise<ExpertAgentContextResult<readonly ExpertAgentContextItemSummary[]>> {
     if (this.store === undefined) {
       return ok([]);
     }
 
-    const listResult = await this.store.listDocuments({ context });
+    const listResult = await this.store.listContext({ context });
 
     if (!listResult.ok) {
       return listResult;
@@ -198,16 +198,16 @@ export class DocumentIndexer {
 
     return ok(
       listResult.value
-        .map((document) => normalizeDocumentSummary(document))
+        .map((context) => normalizeContextSummary(context))
         .sort((left, right) => left.id.localeCompare(right.id)),
     );
   }
 
   async read(
-    input: ExpertAgentDocumentReadInput,
-  ): Promise<ExpertAgentDocumentResult<ExpertAgentDocument>> {
+    input: ExpertAgentContextItemReadInput,
+  ): Promise<ExpertAgentContextResult<ExpertAgentContextItem>> {
     if (this.store === undefined) {
-      return error("store_unavailable", "ExpertAgent document store is not configured.");
+      return error("store_unavailable", "ExpertAgent context store is not configured.");
     }
 
     const normalizedInput = normalizeReadInput(input);
@@ -216,23 +216,23 @@ export class DocumentIndexer {
       return normalizedInput;
     }
 
-    const result = await this.store.readDocument(normalizedInput.value);
+    const result = await this.store.readContext(normalizedInput.value);
 
     if (!result.ok) {
       return result;
     }
 
-    return ok(normalizeDocument(result.value));
+    return ok(normalizeContext(result.value));
   }
 
-  async create(
-    input: ExpertAgentDocumentCreateInput,
-  ): Promise<ExpertAgentDocumentResult<ExpertAgentDocument>> {
+  async register(
+    input: ExpertAgentContextRegisterInput,
+  ): Promise<ExpertAgentContextResult<ExpertAgentContextItem>> {
     if (this.store === undefined) {
-      return error("store_unavailable", "ExpertAgent document store is not configured.");
+      return error("store_unavailable", "ExpertAgent context store is not configured.");
     }
 
-    const result = await this.store.createDocument({
+    const result = await this.store.registerContext({
       id: input.id,
       content: input.content,
       metadata: normalizeCreateMetadata(input.metadata),
@@ -243,17 +243,17 @@ export class DocumentIndexer {
       return result;
     }
 
-    return ok(normalizeDocument(result.value));
+    return ok(normalizeContext(result.value));
   }
 
   async update(
-    input: ExpertAgentDocumentUpdateInput,
-  ): Promise<ExpertAgentDocumentResult<ExpertAgentDocument>> {
+    input: ExpertAgentContextItemUpdateInput,
+  ): Promise<ExpertAgentContextResult<ExpertAgentContextItem>> {
     if (this.store === undefined) {
-      return error("store_unavailable", "ExpertAgent document store is not configured.");
+      return error("store_unavailable", "ExpertAgent context store is not configured.");
     }
 
-    const existing = await this.store.readDocument({
+    const existing = await this.store.readContext({
       id: input.id,
       context: input.context,
     });
@@ -263,7 +263,7 @@ export class DocumentIndexer {
     }
 
     const metadata = normalizeUpdateMetadata(input.id, existing.value.metadata, input.metadata);
-    const result = await this.store.updateDocument({
+    const result = await this.store.updateContext({
       id: input.id,
       content: input.content,
       metadata,
@@ -276,17 +276,17 @@ export class DocumentIndexer {
       return result;
     }
 
-    return ok(normalizeDocument(result.value));
+    return ok(normalizeContext(result.value));
   }
 
   async delete(
-    input: ExpertAgentDocumentDeleteInput,
-  ): Promise<ExpertAgentDocumentResult<{ readonly id: string }>> {
+    input: ExpertAgentContextItemDeleteInput,
+  ): Promise<ExpertAgentContextResult<{ readonly id: string }>> {
     if (this.store === undefined) {
-      return error("store_unavailable", "ExpertAgent document store is not configured.");
+      return error("store_unavailable", "ExpertAgent context store is not configured.");
     }
 
-    const result = await this.store.deleteDocument(input);
+    const result = await this.store.deleteContext(input);
 
     if (!result.ok) {
       return result;
@@ -296,10 +296,10 @@ export class DocumentIndexer {
   }
 
   async search(
-    input: ExpertAgentDocumentSearchInput,
-  ): Promise<ExpertAgentDocumentResult<readonly ExpertAgentDocumentSearchMatch[]>> {
+    input: ExpertAgentContextItemSearchInput,
+  ): Promise<ExpertAgentContextResult<readonly ExpertAgentContextItemSearchMatch[]>> {
     if (this.store === undefined) {
-      return error("store_unavailable", "ExpertAgent document store is not configured.");
+      return error("store_unavailable", "ExpertAgent context store is not configured.");
     }
 
     const normalizedInput = normalizeSearchInput(input);
@@ -308,7 +308,7 @@ export class DocumentIndexer {
       return normalizedInput;
     }
 
-    const result = await this.store.searchDocuments(normalizedInput.value);
+    const result = await this.store.searchContext(normalizedInput.value);
 
     if (!result.ok) {
       return result;
@@ -328,7 +328,7 @@ export class DocumentIndexer {
   }
 }
 
-export function ok<TValue>(value: TValue): ExpertAgentDocumentResult<TValue> {
+export function ok<TValue>(value: TValue): ExpertAgentContextResult<TValue> {
   return {
     ok: true,
     value,
@@ -336,10 +336,10 @@ export function ok<TValue>(value: TValue): ExpertAgentDocumentResult<TValue> {
 }
 
 export function error<TValue = never>(
-  code: ExpertAgentDocumentErrorCode,
+  code: ExpertAgentContextErrorCode,
   message: string,
   details?: unknown,
-): ExpertAgentDocumentResult<TValue> {
+): ExpertAgentContextResult<TValue> {
   return {
     ok: false,
     error: {
@@ -350,40 +350,42 @@ export function error<TValue = never>(
   };
 }
 
-export function normalizeDocument(document: ExpertAgentDocument): ExpertAgentDocument {
+export function normalizeContext(context: ExpertAgentContextItem): ExpertAgentContextItem {
   return {
-    ...normalizeDocumentSummary(document),
-    content: document.content,
-    ...(document.contentRange === undefined
+    ...normalizeContextSummary(context),
+    content: context.content,
+    ...(context.contentRange === undefined
       ? {}
-      : { contentRange: normalizeContentRange(document.contentRange) }),
+      : { contentRange: normalizeContentRange(context.contentRange) }),
   };
 }
 
-export function normalizeDocumentSummary(
-  document: ExpertAgentDocumentSummary,
-): ExpertAgentDocumentSummary {
+export function normalizeContextSummary(
+  context: ExpertAgentContextItemSummary,
+): ExpertAgentContextItemSummary {
   return {
-    id: document.id,
-    metadata: normalizeMetadata(document.id, document.metadata),
-    ...(document.revision === undefined ? {} : { revision: document.revision }),
-    ...(document.etag === undefined ? {} : { etag: document.etag }),
-    ...(document.sizeBytes === undefined ? {} : { sizeBytes: document.sizeBytes }),
+    id: context.id,
+    metadata: normalizeMetadata(context.id, context.metadata),
+    ...(context.revision === undefined ? {} : { revision: context.revision }),
+    ...(context.etag === undefined ? {} : { etag: context.etag }),
+    ...(context.sizeBytes === undefined ? {} : { sizeBytes: context.sizeBytes }),
   };
 }
 
 export function normalizeMetadata(
   id: string,
-  metadata: ExpertAgentDocumentMetadata,
-): ExpertAgentDocumentMetadata {
-  if (isAgentsDocumentId(id)) {
-    return normalizeAgentsDocumentMetadata(metadata);
+  metadata: ExpertAgentContextItemMetadata,
+): ExpertAgentContextItemMetadata {
+  if (isAgentsContextId(id)) {
+    return normalizeAgentsContextMetadata(metadata);
   }
 
   return {
     ...(metadata.description === undefined ? {} : { description: metadata.description }),
     trigger: normalizeTrigger(metadata.trigger),
-    ...(metadata.trustLevel === undefined ? {} : { trustLevel: normalizeTrustLevel(metadata.trustLevel) }),
+    ...(metadata.trustLevel === undefined
+      ? {}
+      : { trustLevel: normalizeTrustLevel(metadata.trustLevel) }),
     ...(metadata.sensitivity === undefined
       ? {}
       : { sensitivity: normalizeSensitivity(metadata.sensitivity) }),
@@ -391,8 +393,8 @@ export function normalizeMetadata(
 }
 
 function normalizeCreateMetadata(
-  metadata: Partial<ExpertAgentDocumentMetadata> | undefined,
-): ExpertAgentDocumentMetadata {
+  metadata: Partial<ExpertAgentContextItemMetadata> | undefined,
+): ExpertAgentContextItemMetadata {
   if (metadata === undefined) {
     return {
       trigger: "model_decision",
@@ -402,7 +404,9 @@ function normalizeCreateMetadata(
   return {
     ...(metadata.description === undefined ? {} : { description: metadata.description }),
     trigger: normalizeTrigger(metadata.trigger),
-    ...(metadata.trustLevel === undefined ? {} : { trustLevel: normalizeTrustLevel(metadata.trustLevel) }),
+    ...(metadata.trustLevel === undefined
+      ? {}
+      : { trustLevel: normalizeTrustLevel(metadata.trustLevel) }),
     ...(metadata.sensitivity === undefined
       ? {}
       : { sensitivity: normalizeSensitivity(metadata.sensitivity) }),
@@ -411,10 +415,10 @@ function normalizeCreateMetadata(
 
 function normalizeUpdateMetadata(
   id: string,
-  existingMetadata: ExpertAgentDocumentMetadata,
-  metadata: Partial<ExpertAgentDocumentMetadata> | undefined,
-): ExpertAgentDocumentMetadata {
-  if (isAgentsDocumentId(id)) {
+  existingMetadata: ExpertAgentContextItemMetadata,
+  metadata: Partial<ExpertAgentContextItemMetadata> | undefined,
+): ExpertAgentContextItemMetadata {
+  if (isAgentsContextId(id)) {
     return existingMetadata;
   }
 
@@ -438,7 +442,7 @@ function normalizeUpdateMetadata(
   };
 }
 
-export function normalizeTrigger(trigger: DocumentTrigger | undefined): DocumentTrigger {
+export function normalizeTrigger(trigger: ContextTrigger | undefined): ContextTrigger {
   if (trigger === "always_on" || trigger === "model_decision" || trigger === "manual") {
     return trigger;
   }
@@ -447,12 +451,12 @@ export function normalizeTrigger(trigger: DocumentTrigger | undefined): Document
 }
 
 export function normalizeSearchInput(
-  input: ExpertAgentDocumentSearchInput,
-): ExpertAgentDocumentResult<ExpertAgentDocumentSearchInput> {
+  input: ExpertAgentContextItemSearchInput,
+): ExpertAgentContextResult<ExpertAgentContextItemSearchInput> {
   const query = input.query.trim();
 
   if (query.length === 0) {
-    return error("invalid_input", "Document search query must not be empty.");
+    return error("invalid_input", "Context search query must not be empty.");
   }
 
   return ok({
@@ -465,8 +469,8 @@ export function normalizeSearchInput(
 }
 
 export function normalizeSearchMatch(
-  match: ExpertAgentDocumentSearchMatch,
-): ExpertAgentDocumentSearchMatch {
+  match: ExpertAgentContextItemSearchMatch,
+): ExpertAgentContextItemSearchMatch {
   return {
     id: match.id,
     lineNumber: Math.max(1, Math.trunc(match.lineNumber)),
@@ -477,8 +481,8 @@ export function normalizeSearchMatch(
 }
 
 export function normalizeReadInput(
-  input: ExpertAgentDocumentReadInput,
-): ExpertAgentDocumentResult<ExpertAgentDocumentReadInput> {
+  input: ExpertAgentContextItemReadInput,
+): ExpertAgentContextResult<ExpertAgentContextItemReadInput> {
   const start = normalizeOptionalNonNegativeInteger(input.start, "start");
 
   if (!start.ok) {
@@ -499,13 +503,13 @@ export function normalizeReadInput(
   });
 }
 
-export function isAgentsDocumentId(id: string): boolean {
-  return id === AGENTS_DOCUMENT_ID;
+export function isAgentsContextId(id: string): boolean {
+  return id === AGENTS_CONTEXT_ID;
 }
 
-function normalizeAgentsDocumentMetadata(
-  metadata: ExpertAgentDocumentMetadata,
-): ExpertAgentDocumentMetadata {
+function normalizeAgentsContextMetadata(
+  metadata: ExpertAgentContextItemMetadata,
+): ExpertAgentContextItemMetadata {
   return {
     ...(metadata.description === undefined ? {} : { description: metadata.description }),
     trigger: "always_on",
@@ -513,8 +517,8 @@ function normalizeAgentsDocumentMetadata(
 }
 
 function normalizeContentRange(
-  range: ExpertAgentDocumentContentRange,
-): ExpertAgentDocumentContentRange {
+  range: ExpertAgentContextItemContentRange,
+): ExpertAgentContextItemContentRange {
   const startOffset = Math.max(0, Math.trunc(range.startOffset));
   const endOffset = Math.max(startOffset, Math.trunc(range.endOffset));
   const nextStartOffset = Math.max(endOffset, Math.trunc(range.nextStartOffset));
@@ -525,24 +529,30 @@ function normalizeContentRange(
     endOffset,
     nextStartOffset,
     truncated: range.truncated,
-    ...(range.sizeBytes === undefined ? {} : { sizeBytes: Math.max(0, Math.trunc(range.sizeBytes)) }),
+    ...(range.sizeBytes === undefined
+      ? {}
+      : { sizeBytes: Math.max(0, Math.trunc(range.sizeBytes)) }),
     ...(range.maxBytes === undefined ? {} : { maxBytes: Math.max(0, Math.trunc(range.maxBytes)) }),
-    ...(range.startLine === undefined ? {} : { startLine: Math.max(1, Math.trunc(range.startLine)) }),
+    ...(range.startLine === undefined
+      ? {}
+      : { startLine: Math.max(1, Math.trunc(range.startLine)) }),
     ...(range.endLine === undefined ? {} : { endLine: Math.max(1, Math.trunc(range.endLine)) }),
-    ...(range.totalLines === undefined ? {} : { totalLines: Math.max(1, Math.trunc(range.totalLines)) }),
+    ...(range.totalLines === undefined
+      ? {}
+      : { totalLines: Math.max(1, Math.trunc(range.totalLines)) }),
   };
 }
 
 function normalizeOptionalNonNegativeInteger(
   value: number | undefined,
   key: string,
-): ExpertAgentDocumentResult<number | undefined> {
+): ExpertAgentContextResult<number | undefined> {
   if (value === undefined) {
     return ok(undefined);
   }
 
   if (!Number.isFinite(value) || value < 0) {
-    return error("invalid_input", `Document read parameter "${key}" must be a non-negative number.`);
+    return error("invalid_input", `Context read parameter "${key}" must be a non-negative number.`);
   }
 
   return ok(Math.trunc(value));
@@ -551,19 +561,19 @@ function normalizeOptionalNonNegativeInteger(
 function normalizeOptionalPositiveInteger(
   value: number | undefined,
   key: string,
-): ExpertAgentDocumentResult<number | undefined> {
+): ExpertAgentContextResult<number | undefined> {
   if (value === undefined) {
     return ok(undefined);
   }
 
   if (!Number.isFinite(value) || value <= 0) {
-    return error("invalid_input", `Document read parameter "${key}" must be a positive number.`);
+    return error("invalid_input", `Context read parameter "${key}" must be a positive number.`);
   }
 
   return ok(Math.trunc(value));
 }
 
-function normalizeTrustLevel(value: string | undefined): DocumentTrustLevel {
+function normalizeTrustLevel(value: string | undefined): ContextTrustLevel {
   if (value === "system" || value === "workspace" || value === "user" || value === "external") {
     return value;
   }
@@ -571,7 +581,7 @@ function normalizeTrustLevel(value: string | undefined): DocumentTrustLevel {
   return "workspace";
 }
 
-function normalizeSensitivity(value: string | undefined): DocumentSensitivity {
+function normalizeSensitivity(value: string | undefined): ContextSensitivity {
   if (
     value === "public" ||
     value === "internal" ||

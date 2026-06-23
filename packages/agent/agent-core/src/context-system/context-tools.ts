@@ -1,17 +1,17 @@
 import type {
-  DocumentTrigger,
-  ExpertAgentDocument,
-  ExpertAgentDocumentCreateInput,
-  ExpertAgentDocumentDeleteInput,
-  ExpertAgentDocumentError,
-  ExpertAgentDocumentMetadata,
-  ExpertAgentDocumentReadInput,
-  ExpertAgentDocumentResult,
-  ExpertAgentDocumentSearchInput,
-  ExpertAgentDocumentSearchMatch,
-  ExpertAgentDocumentSummary,
-  ExpertAgentDocumentUpdateInput,
-} from "./document-indexer.ts";
+  ContextTrigger,
+  ExpertAgentContextItem,
+  ExpertAgentContextRegisterInput,
+  ExpertAgentContextItemDeleteInput,
+  ExpertAgentContextError,
+  ExpertAgentContextItemMetadata,
+  ExpertAgentContextItemReadInput,
+  ExpertAgentContextResult,
+  ExpertAgentContextItemSearchInput,
+  ExpertAgentContextItemSearchMatch,
+  ExpertAgentContextItemSummary,
+  ExpertAgentContextItemUpdateInput,
+} from "./context-system.ts";
 import type { ExpertAgentRunContext } from "../runtime/run-context.ts";
 
 export interface ExpertAgentDefaultToolCallResult {
@@ -31,64 +31,64 @@ export interface ExpertAgentDefaultTool {
   ) => Promise<ExpertAgentDefaultToolCallResult>;
 }
 
-export interface CreateDocumentToolsOptions {
+export interface CreateContextToolsOptions {
   readonly getContext?: (() => ExpertAgentRunContext | undefined) | undefined;
   readonly readByteBudget?: number | undefined;
 }
 
-export interface ExpertAgentDocumentOperations {
-  readonly listDocuments: (
+export interface ExpertAgentContextItemOperations {
+  readonly listContext: (
     context?: ExpertAgentRunContext,
-  ) => Promise<ExpertAgentDocumentResult<readonly ExpertAgentDocumentSummary[]>>;
-  readonly readDocument: (
-    input: ExpertAgentDocumentReadInput,
-  ) => Promise<ExpertAgentDocumentResult<ExpertAgentDocument>>;
-  readonly searchDocuments: (
-    input: ExpertAgentDocumentSearchInput,
-  ) => Promise<ExpertAgentDocumentResult<readonly ExpertAgentDocumentSearchMatch[]>>;
-  readonly createDocument: (
-    input: ExpertAgentDocumentCreateInput,
-  ) => Promise<ExpertAgentDocumentResult<ExpertAgentDocument>>;
-  readonly updateDocument: (
-    input: ExpertAgentDocumentUpdateInput,
-  ) => Promise<ExpertAgentDocumentResult<ExpertAgentDocument>>;
-  readonly deleteDocument: (
-    input: ExpertAgentDocumentDeleteInput,
-  ) => Promise<ExpertAgentDocumentResult<{ readonly id: string }>>;
+  ) => Promise<ExpertAgentContextResult<readonly ExpertAgentContextItemSummary[]>>;
+  readonly readContext: (
+    input: ExpertAgentContextItemReadInput,
+  ) => Promise<ExpertAgentContextResult<ExpertAgentContextItem>>;
+  readonly searchContext: (
+    input: ExpertAgentContextItemSearchInput,
+  ) => Promise<ExpertAgentContextResult<readonly ExpertAgentContextItemSearchMatch[]>>;
+  readonly registerContext: (
+    input: ExpertAgentContextRegisterInput,
+  ) => Promise<ExpertAgentContextResult<ExpertAgentContextItem>>;
+  readonly updateContext: (
+    input: ExpertAgentContextItemUpdateInput,
+  ) => Promise<ExpertAgentContextResult<ExpertAgentContextItem>>;
+  readonly deleteContext: (
+    input: ExpertAgentContextItemDeleteInput,
+  ) => Promise<ExpertAgentContextResult<{ readonly id: string }>>;
 }
 
-export function createDocumentTools(
-  documentOperations: ExpertAgentDocumentOperations,
-  options: CreateDocumentToolsOptions = {},
+export function createContextTools(
+  contextOperations: ExpertAgentContextItemOperations,
+  options: CreateContextToolsOptions = {},
 ): readonly ExpertAgentDefaultTool[] {
   return [
     {
-      name: "list_expert_documents",
-      label: "List expert documents",
-      description: "List ExpertAgent documents by document id, description, and trigger.",
+      name: "list_expert_context",
+      label: "List expert context",
+      description: "List ExpertAgent context by context id, description, and trigger.",
       inputSchema: withContextSchema({}),
       call: async (args) => {
-        const result = await documentOperations.listDocuments(readDocumentContext(args, options));
+        const result = await contextOperations.listContext(readRunContext(args, options));
 
         if (!result.ok) {
           return errorResult(result.error);
         }
 
         return {
-          text: formatDocumentSummaries(result.value),
+          text: formatContextSummaries(result.value),
           details: {
-            documents: result.value,
+            context: result.value,
           },
         };
       },
     },
     {
-      name: "read_expert_document",
-      label: "Read expert document",
-      description: "Read an ExpertAgent document by document id, optionally as a byte range.",
+      name: "read_expert_context",
+      label: "Read expert context",
+      description: "Read an ExpertAgent context by context id, optionally as a byte range.",
       inputSchema: withContextSchema(
         {
-          id: stringSchema("Document id."),
+          id: stringSchema("Context id."),
           start: integerSchema("Zero-based UTF-8 byte offset to start reading from."),
           offset: integerSchema("Maximum UTF-8 bytes to read from start."),
         },
@@ -97,11 +97,11 @@ export function createDocumentTools(
       call: async (args) => {
         const id = readStringParam(args, "id");
         const requestedOffset = readOptionalNumberParam(args, "offset");
-        const result = await documentOperations.readDocument({
+        const result = await contextOperations.readContext({
           id,
           start: readOptionalNumberParam(args, "start"),
           offset: normalizeToolReadOffset(requestedOffset, options),
-          context: readDocumentContext(args, options),
+          context: readRunContext(args, options),
         });
 
         if (!result.ok) {
@@ -109,17 +109,17 @@ export function createDocumentTools(
         }
 
         return {
-          text: formatDocument(result.value),
+          text: formatContext(result.value),
           details: {
-            document: result.value,
+            context: result.value,
           },
         };
       },
     },
     {
-      name: "search_expert_documents",
-      label: "Search expert documents",
-      description: "Search ExpertAgent Markdown documents by literal text.",
+      name: "search_expert_context",
+      label: "Search expert context",
+      description: "Search ExpertAgent context by literal text.",
       inputSchema: withContextSchema(
         {
           query: stringSchema("Literal text to search for."),
@@ -132,12 +132,12 @@ export function createDocumentTools(
         ["query"],
       ),
       call: async (args) => {
-        const result = await documentOperations.searchDocuments({
+        const result = await contextOperations.searchContext({
           query: readStringParam(args, "query"),
           maxResults: readOptionalNumberParam(args, "maxResults"),
           contextLines: readOptionalNumberParam(args, "contextLines"),
           caseSensitive: readOptionalBooleanParam(args, "caseSensitive"),
-          context: readDocumentContext(args, options),
+          context: readRunContext(args, options),
         });
 
         if (!result.ok) {
@@ -145,7 +145,7 @@ export function createDocumentTools(
         }
 
         return {
-          text: formatDocumentSearchMatches(result.value),
+          text: formatContextSearchMatches(result.value),
           details: {
             matches: result.value,
           },
@@ -153,24 +153,24 @@ export function createDocumentTools(
       },
     },
     {
-      name: "create_expert_document",
-      label: "Create expert document",
-      description: "Create an ExpertAgent document by document id.",
+      name: "register_expert_context",
+      label: "Register expert context",
+      description: "Register an ExpertAgent context item by context id.",
       inputSchema: withContextSchema(
         {
-          id: stringSchema("Document id."),
-          content: stringSchema("Document content."),
-          description: stringSchema("Optional document description."),
+          id: stringSchema("Context id."),
+          content: stringSchema("Context content."),
+          description: stringSchema("Optional context description."),
           trigger: triggerSchema(),
         },
         ["id", "content"],
       ),
       call: async (args) => {
-        const result = await documentOperations.createDocument({
+        const result = await contextOperations.registerContext({
           id: readStringParam(args, "id"),
           content: readStringParam(args, "content"),
           metadata: readMetadataParams(args),
-          context: readDocumentContext(args, options),
+          context: readRunContext(args, options),
         });
 
         if (!result.ok) {
@@ -178,32 +178,32 @@ export function createDocumentTools(
         }
 
         return {
-          text: `Created document: ${result.value.id}`,
+          text: `Registered context: ${result.value.id}`,
           details: {
-            document: result.value,
+            context: result.value,
           },
         };
       },
     },
     {
-      name: "update_expert_document",
-      label: "Update expert document",
-      description: "Update an ExpertAgent document's content or metadata by document id.",
+      name: "update_expert_context",
+      label: "Update expert context",
+      description: "Update an ExpertAgent context's content or metadata by context id.",
       inputSchema: withContextSchema(
         {
-          id: stringSchema("Document id."),
-          content: stringSchema("Optional replacement document content."),
-          description: stringSchema("Optional replacement document description."),
+          id: stringSchema("Context id."),
+          content: stringSchema("Optional replacement context content."),
+          description: stringSchema("Optional replacement context description."),
           trigger: triggerSchema(),
         },
         ["id"],
       ),
       call: async (args) => {
-        const result = await documentOperations.updateDocument({
+        const result = await contextOperations.updateContext({
           id: readStringParam(args, "id"),
           content: readOptionalStringParam(args, "content"),
           metadata: readMetadataParams(args),
-          context: readDocumentContext(args, options),
+          context: readRunContext(args, options),
         });
 
         if (!result.ok) {
@@ -211,28 +211,28 @@ export function createDocumentTools(
         }
 
         return {
-          text: `Updated document: ${result.value.id}`,
+          text: `Updated context: ${result.value.id}`,
           details: {
-            document: result.value,
+            context: result.value,
           },
         };
       },
     },
     {
-      name: "delete_expert_document",
-      label: "Delete expert document",
-      description: "Delete an ExpertAgent document by document id.",
+      name: "delete_expert_context",
+      label: "Delete expert context",
+      description: "Delete an ExpertAgent context by context id.",
       inputSchema: withContextSchema(
         {
-          id: stringSchema("Document id."),
+          id: stringSchema("Context id."),
         },
         ["id"],
       ),
       call: async (args) => {
         const id = readStringParam(args, "id");
-        const result = await documentOperations.deleteDocument({
+        const result = await contextOperations.deleteContext({
           id,
-          context: readDocumentContext(args, options),
+          context: readRunContext(args, options),
         });
 
         if (!result.ok) {
@@ -240,7 +240,7 @@ export function createDocumentTools(
         }
 
         return {
-          text: `Deleted document: ${id}`,
+          text: `Deleted context: ${id}`,
           details: {
             id,
           },
@@ -309,7 +309,7 @@ function triggerSchema(): unknown {
   return {
     type: "string",
     enum: ["always_on", "model_decision", "manual"],
-    description: "Document trigger. Defaults to model_decision when omitted.",
+    description: "Context trigger. Defaults to model_decision when omitted.",
   };
 }
 
@@ -320,7 +320,7 @@ function readStringParam(params: unknown, key: string): string {
     return value;
   }
 
-  throw new Error(`Document tool requires string parameter "${key}".`);
+  throw new Error(`Context tool requires string parameter "${key}".`);
 }
 
 function readOptionalStringParam(params: unknown, key: string): string | undefined {
@@ -334,7 +334,7 @@ function readOptionalStringParam(params: unknown, key: string): string | undefin
     return value;
   }
 
-  throw new Error(`Document tool parameter "${key}" must be a string when provided.`);
+  throw new Error(`Context tool parameter "${key}" must be a string when provided.`);
 }
 
 function readOptionalNumberParam(params: unknown, key: string): number | undefined {
@@ -348,7 +348,7 @@ function readOptionalNumberParam(params: unknown, key: string): number | undefin
     return value;
   }
 
-  throw new Error(`Document tool parameter "${key}" must be a number when provided.`);
+  throw new Error(`Context tool parameter "${key}" must be a number when provided.`);
 }
 
 function readOptionalBooleanParam(params: unknown, key: string): boolean | undefined {
@@ -362,12 +362,12 @@ function readOptionalBooleanParam(params: unknown, key: string): boolean | undef
     return value;
   }
 
-  throw new Error(`Document tool parameter "${key}" must be a boolean when provided.`);
+  throw new Error(`Context tool parameter "${key}" must be a boolean when provided.`);
 }
 
 function normalizeToolReadOffset(
   requestedOffset: number | undefined,
-  options: CreateDocumentToolsOptions,
+  options: CreateContextToolsOptions,
 ): number {
   const budget = Math.max(1, Math.trunc(options.readByteBudget ?? 8_000));
 
@@ -378,7 +378,7 @@ function normalizeToolReadOffset(
   return Math.min(Math.max(1, Math.trunc(requestedOffset)), budget);
 }
 
-function readMetadataParams(params: unknown): Partial<ExpertAgentDocumentMetadata> {
+function readMetadataParams(params: unknown): Partial<ExpertAgentContextItemMetadata> {
   const description = readOptionalStringParam(params, "description");
   const trigger = readOptionalTriggerParam(params);
 
@@ -388,7 +388,7 @@ function readMetadataParams(params: unknown): Partial<ExpertAgentDocumentMetadat
   };
 }
 
-function readOptionalTriggerParam(params: unknown): DocumentTrigger | undefined {
+function readOptionalTriggerParam(params: unknown): ContextTrigger | undefined {
   const value = readParam(params, "trigger");
 
   if (value === undefined) {
@@ -399,9 +399,7 @@ function readOptionalTriggerParam(params: unknown): DocumentTrigger | undefined 
     return value;
   }
 
-  throw new Error(
-    'Document tool parameter "trigger" must be always_on, model_decision, or manual.',
-  );
+  throw new Error('Context tool parameter "trigger" must be always_on, model_decision, or manual.');
 }
 
 function readParam(params: unknown, key: string): unknown {
@@ -412,9 +410,9 @@ function readParam(params: unknown, key: string): unknown {
   return undefined;
 }
 
-function readDocumentContext(
+function readRunContext(
   params: unknown,
-  options: CreateDocumentToolsOptions,
+  options: CreateContextToolsOptions,
 ): ExpertAgentRunContext {
   const baseContext = options.getContext?.();
   const source = readSourceParam(params) ?? baseContext?.source;
@@ -425,7 +423,7 @@ function readDocumentContext(
       : undefined;
 
   if (source === undefined) {
-    throw new Error('Document tool requires "source" either in tool input or run context.');
+    throw new Error('Context tool requires "source" either in tool input or run context.');
   }
 
   return {
@@ -446,7 +444,7 @@ function readSourceParam(params: unknown): ExpertAgentRunContext["source"] {
   }
 
   if (typeof source !== "object" || source === null) {
-    throw new Error('Document tool requires object parameter "source".');
+    throw new Error('Context tool requires object parameter "source".');
   }
 
   const type = (source as Record<string, unknown>).type;
@@ -454,7 +452,7 @@ function readSourceParam(params: unknown): ExpertAgentRunContext["source"] {
   const label = (source as Record<string, unknown>).label;
 
   if (typeof type !== "string") {
-    throw new Error('Document tool requires string parameter "source.type".');
+    throw new Error('Context tool requires string parameter "source.type".');
   }
 
   return {
@@ -464,83 +462,83 @@ function readSourceParam(params: unknown): ExpertAgentRunContext["source"] {
   };
 }
 
-function formatDocumentSummaries(documents: readonly ExpertAgentDocumentSummary[]): string {
-  if (documents.length === 0) {
-    return "No ExpertAgent documents are available.";
+function formatContextSummaries(context: readonly ExpertAgentContextItemSummary[]): string {
+  if (context.length === 0) {
+    return "No ExpertAgent context items are available.";
   }
 
-  return documents.map(formatDocumentSummary).join("\n");
+  return context.map(formatContextSummary).join("\n");
 }
 
-function formatDocumentSummary(document: ExpertAgentDocumentSummary): string {
+function formatContextSummary(context: ExpertAgentContextItemSummary): string {
   return [
-    `- ${document.id}`,
-    document.metadata.description === undefined
+    `- ${context.id}`,
+    context.metadata.description === undefined
       ? undefined
-      : `  description: ${document.metadata.description}`,
-    `  trigger: ${document.metadata.trigger}`,
+      : `  description: ${context.metadata.description}`,
+    `  trigger: ${context.metadata.trigger}`,
   ]
     .filter((line) => line !== undefined)
     .join("\n");
 }
 
-function formatDocument(document: ExpertAgentDocument): string {
+function formatContext(context: ExpertAgentContextItem): string {
   return [
-    formatDocumentSummary(document),
-    ...formatContentRange(document),
+    formatContextSummary(context),
+    ...formatContentRange(context),
     "  content:",
-    document.content
+    context.content
       .split("\n")
       .map((line) => `    ${line}`)
       .join("\n"),
   ].join("\n");
 }
 
-function formatContentRange(document: ExpertAgentDocument): readonly string[] {
-  if (document.contentRange === undefined) {
+function formatContentRange(context: ExpertAgentContextItem): readonly string[] {
+  if (context.contentRange === undefined) {
     return [];
   }
 
   const byteTotal =
-    document.contentRange.sizeBytes === undefined
+    context.contentRange.sizeBytes === undefined
       ? "unknown total bytes"
-      : `${document.contentRange.sizeBytes} total bytes`;
+      : `${context.contentRange.sizeBytes} total bytes`;
   const lineTotal =
-    document.contentRange.totalLines === undefined
+    context.contentRange.totalLines === undefined
       ? "unknown total lines"
-      : `${document.contentRange.totalLines} total lines`;
+      : `${context.contentRange.totalLines} total lines`;
   const lineRange =
-    document.contentRange.startLine === undefined || document.contentRange.endLine === undefined
+    context.contentRange.startLine === undefined || context.contentRange.endLine === undefined
       ? "unknown lines"
-      : `lines ${document.contentRange.startLine}-${document.contentRange.endLine}`;
+      : `lines ${context.contentRange.startLine}-${context.contentRange.endLine}`;
   const lines = [
-    `  contentRange: requestedStart=${document.contentRange.requestedStartOffset}; bytes ${document.contentRange.startOffset}-${document.contentRange.endOffset}; nextStart=${document.contentRange.nextStartOffset}; ${lineRange}; ${byteTotal}; ${lineTotal}`,
+    `  contentRange: requestedStart=${context.contentRange.requestedStartOffset}; bytes ${context.contentRange.startOffset}-${context.contentRange.endOffset}; nextStart=${context.contentRange.nextStartOffset}; ${lineRange}; ${byteTotal}; ${lineTotal}`,
   ];
 
-  if (!document.contentRange.truncated) {
+  if (!context.contentRange.truncated) {
     return lines;
   }
 
   const maxBytes =
-    document.contentRange.maxBytes === undefined
+    context.contentRange.maxBytes === undefined
       ? "the configured read budget"
-      : `${document.contentRange.maxBytes} bytes`;
+      : `${context.contentRange.maxBytes} bytes`;
 
   return [
     ...lines,
-    `  truncationNotice: This document output is truncated. Continue with start=${document.contentRange.nextStartOffset} and offset<=${maxBytes}.`,
+    `  truncationNotice: This context output is truncated. Continue with start=${context.contentRange.nextStartOffset} and offset<=${maxBytes}.`,
   ];
 }
 
-function formatDocumentSearchMatches(matches: readonly ExpertAgentDocumentSearchMatch[]): string {
+function formatContextSearchMatches(matches: readonly ExpertAgentContextItemSearchMatch[]): string {
   if (matches.length === 0) {
-    return "No ExpertAgent document matches found.";
+    return "No ExpertAgent context matches found.";
   }
 
-  return matches.map(formatDocumentSearchMatch).join("\n");
+  return matches.map(formatContextSearchMatch).join("\n");
 }
 
-function formatDocumentSearchMatch(match: ExpertAgentDocumentSearchMatch): string {
+function formatContextSearchMatch(match: ExpertAgentContextItemSearchMatch): string {
   return [
     `- ${match.id}:${match.lineNumber}`,
     ...formatSearchContext(match.before, "before"),
@@ -560,9 +558,9 @@ function formatSearchContext(
   return lines.map((line) => `  ${label}: ${line}`);
 }
 
-function errorResult(error: ExpertAgentDocumentError): ExpertAgentDefaultToolCallResult {
+function errorResult(error: ExpertAgentContextError): ExpertAgentDefaultToolCallResult {
   return {
-    text: `Document operation failed: ${error.message}`,
+    text: `Context operation failed: ${error.message}`,
     isError: true,
     details: {
       error,

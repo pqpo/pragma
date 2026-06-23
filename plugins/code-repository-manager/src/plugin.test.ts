@@ -4,10 +4,10 @@ import { fileURLToPath } from "node:url";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { ExpertAgent, createInMemoryDocumentStore } from "@expertmesh/agent-core";
+import { ExpertAgent, createInMemoryContextStore } from "@expertmesh/agent-core";
 import { readExpertAgentPluginManifest } from "@expertmesh/agent-core";
 
-import { CODE_REPOSITORY_DOCUMENT_ID } from "./document.ts";
+import { CODE_REPOSITORY_CONTEXT_ID } from "./context.ts";
 import codeRepositoryManagerPlugin from "./index.ts";
 import { parseCodeRepositoryManagerConfig } from "./schema.ts";
 
@@ -33,7 +33,7 @@ describe("Code Repository Manager plugin", () => {
     expect(codeRepositoryManagerPlugin.manifest).toEqual(manifest);
   });
 
-  it("injects repository metadata as a model-decision document by default", async () => {
+  it("injects repository metadata as a model-decision context by default", async () => {
     const pluginSource = await createLoadablePluginSource();
     const agent = await ExpertAgent.create({
       schemaVersion: "expertmesh.expert/v1",
@@ -44,8 +44,8 @@ describe("Code Repository Manager plugin", () => {
       version: "0.0.0",
       scope: "test",
       workspace: await createWorkspaceDir(),
-      documents: createInMemoryDocumentStore({
-        documents: [
+      context: createInMemoryContextStore({
+        context: [
           {
             id: "repositories.json",
             content: JSON.stringify({
@@ -67,11 +67,11 @@ describe("Code Repository Manager plugin", () => {
       plugins: [pluginSource],
     });
 
-    await expect(agent.listDocuments()).resolves.toMatchObject({
+    await expect(agent.listContext()).resolves.toMatchObject({
       ok: true,
       value: expect.arrayContaining([
         expect.objectContaining({
-          id: `code-repository-manager/${CODE_REPOSITORY_DOCUMENT_ID}`,
+          id: `code-repository-manager/${CODE_REPOSITORY_CONTEXT_ID}`,
           metadata: expect.objectContaining({
             trigger: "model_decision",
             trustLevel: "external",
@@ -82,8 +82,8 @@ describe("Code Repository Manager plugin", () => {
     });
 
     await expect(
-      agent.readDocument({
-        id: `code-repository-manager/${CODE_REPOSITORY_DOCUMENT_ID}`,
+      agent.readContext({
+        id: `code-repository-manager/${CODE_REPOSITORY_CONTEXT_ID}`,
       }),
     ).resolves.toMatchObject({
       ok: true,
@@ -93,7 +93,7 @@ describe("Code Repository Manager plugin", () => {
     });
   });
 
-  it("skips repository documents when repositories.json is not configured", async () => {
+  it("skips repository context when repositories.json is not configured", async () => {
     const pluginSource = await createLoadablePluginSource();
     const agent = await ExpertAgent.create({
       schemaVersion: "expertmesh.expert/v1",
@@ -107,7 +107,7 @@ describe("Code Repository Manager plugin", () => {
       plugins: [pluginSource],
     });
 
-    await expect(agent.listDocuments()).resolves.toMatchObject({
+    await expect(agent.listContext()).resolves.toMatchObject({
       ok: true,
       value: [],
     });

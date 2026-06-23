@@ -1,13 +1,13 @@
 import { definePluginEntry } from "@expertmesh/agent-core";
 
-export const otherDocumentPlugin = definePluginEntry({
+export const otherContextPlugin = definePluginEntry({
   setup: () => ({
-    documents: [
+    context: [
       {
         id: "plugin.md",
         content: "Other plugin content",
         metadata: {
-          description: "Other plugin doc",
+          description: "Other plugin context",
           trigger: "model_decision",
         },
       },
@@ -15,4 +15,4 @@ export const otherDocumentPlugin = definePluginEntry({
   }),
 });
 
-export default otherDocumentPlugin;
+export default otherContextPlugin;

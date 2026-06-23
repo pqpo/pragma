@@ -5,20 +5,18 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { ExpertAgent } from "../agent/expert-agent.ts";
-import { createInMemoryDocumentStore } from "../documents/in-memory-document-store.ts";
-import {
-  extensibilityPlugin,
-} from "./fixtures/extensibility-plugin/src/plugin.ts";
+import { createInMemoryContextStore } from "../context-system/in-memory-context-store.ts";
+import { extensibilityPlugin } from "./fixtures/extensibility-plugin/src/plugin.ts";
 import { createInvalidPlugin } from "./fixtures/invalid-plugin/src/plugin.ts";
 import { createMissingManifestPlugin } from "./fixtures/missing-manifest-plugin/src/plugin.ts";
 import { dispatchExpertAgentHook } from "./expert-agent-plugin.ts";
 
-const documentPluginPath = fileURLToPath(new URL("./fixtures/document-plugin", import.meta.url));
+const contextPluginPath = fileURLToPath(new URL("./fixtures/context-plugin", import.meta.url));
 const extensibilityPluginPath = fileURLToPath(
   new URL("./fixtures/extensibility-plugin", import.meta.url),
 );
-const otherDocumentPluginPath = fileURLToPath(
-  new URL("./fixtures/other-document-plugin", import.meta.url),
+const otherContextPluginPath = fileURLToPath(
+  new URL("./fixtures/other-context-plugin", import.meta.url),
 );
 const tempWorkspaces: string[] = [];
 
@@ -62,7 +60,7 @@ describe("ExpertAgent plugins", () => {
     expect(() => createInvalidPlugin()).toThrow();
   });
 
-  it("merges plugin documents with host documents", async () => {
+  it("merges plugin context with host context", async () => {
     const workspace = await createPluginTestWorkspace();
     const agent = await ExpertAgent.create({
       schemaVersion: "expertmesh.expert/v1",
@@ -73,58 +71,60 @@ describe("ExpertAgent plugins", () => {
       version: "0.0.0",
       scope: "workspace",
       workspace,
-      documents: createInMemoryDocumentStore({
-        documents: [
+      context: createInMemoryContextStore({
+        context: [
           {
             id: "host.md",
             content: "Host content",
             metadata: {
-              description: "Host doc",
+              description: "Host context",
               trigger: "always_on",
             },
           },
         ],
       }),
-      plugins: [documentPluginPath, otherDocumentPluginPath],
+      plugins: [contextPluginPath, otherContextPluginPath],
     });
 
-    await expect(agent.listDocuments()).resolves.toMatchObject({
+    await expect(agent.listContext()).resolves.toMatchObject({
       ok: true,
       value: [
         {
           id: "host.md",
           metadata: {
-            description: "Host doc",
+            description: "Host context",
             trigger: "always_on",
           },
         },
         {
-          id: "plugin.docs/plugin.md",
+          id: "plugin.context/plugin.md",
           metadata: {
-            description: "Plugin doc",
+            description: "Plugin context",
             trigger: "model_decision",
           },
         },
         {
-          id: "plugin.other-docs/plugin.md",
+          id: "plugin.other-context/plugin.md",
           metadata: {
-            description: "Other plugin doc",
+            description: "Other plugin context",
             trigger: "model_decision",
           },
         },
       ],
     });
-    await expect(agent.readDocument({ id: "plugin.docs/plugin.md" })).resolves.toMatchObject({
+    await expect(agent.readContext({ id: "plugin.context/plugin.md" })).resolves.toMatchObject({
       ok: true,
       value: {
-        id: "plugin.docs/plugin.md",
+        id: "plugin.context/plugin.md",
         content: "Plugin content",
       },
     });
-    await expect(agent.readDocument({ id: "plugin.other-docs/plugin.md" })).resolves.toMatchObject({
+    await expect(
+      agent.readContext({ id: "plugin.other-context/plugin.md" }),
+    ).resolves.toMatchObject({
       ok: true,
       value: {
-        id: "plugin.other-docs/plugin.md",
+        id: "plugin.other-context/plugin.md",
         content: "Other plugin content",
       },
     });

@@ -5,101 +5,101 @@ import { dirname, extname, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 
 import type {
-  ExpertAgentDocumentDeleteInput,
-  ExpertAgentDocumentListInput,
-  ExpertAgentDocumentMetadata,
-  ExpertAgentDocumentReadInput,
-  ExpertAgentDocumentResult,
-  ExpertAgentDocumentSearchInput,
-  ExpertAgentDocumentSearchMatch,
-  ExpertAgentDocumentSummary,
-  ExpertAgentDocumentStore,
-  ExpertAgentStoredDocument,
-  ExpertAgentStoredDocumentReadResult,
-  ExpertAgentStoredDocumentCreateInput,
-  ExpertAgentStoredDocumentUpdateInput,
-} from "./document-indexer.ts";
+  ExpertAgentContextItemDeleteInput,
+  ExpertAgentContextItemListInput,
+  ExpertAgentContextItemMetadata,
+  ExpertAgentContextItemReadInput,
+  ExpertAgentContextResult,
+  ExpertAgentContextItemSearchInput,
+  ExpertAgentContextItemSearchMatch,
+  ExpertAgentContextItemSummary,
+  ExpertAgentContextStore,
+  ExpertAgentStoredContextItem,
+  ExpertAgentStoredContextItemReadResult,
+  ExpertAgentStoredContextRegisterInput,
+  ExpertAgentStoredContextItemUpdateInput,
+} from "./context-system.ts";
 import {
   error,
-  isAgentsDocumentId,
+  isAgentsContextId,
   normalizeMetadata,
   normalizeTrigger,
   ok,
-} from "./document-indexer.ts";
+} from "./context-system.ts";
 
 const execFileAsync = promisify(execFile);
 const require = createRequire(import.meta.url);
 const matter = require("gray-matter") as typeof import("gray-matter");
 
-export interface FileSystemDocumentStoreCommandResult {
+export interface FileSystemContextStoreCommandResult {
   readonly stdout: string;
 }
 
-export type FileSystemDocumentStoreCommandRunner = (
+export type FileSystemContextStoreCommandRunner = (
   command: string,
   args: readonly string[],
-) => Promise<FileSystemDocumentStoreCommandResult>;
+) => Promise<FileSystemContextStoreCommandResult>;
 
-export interface FileSystemDocumentStoreOptions {
+export interface FileSystemContextStoreOptions {
   readonly rootDir: string;
-  readonly commandRunner?: FileSystemDocumentStoreCommandRunner | undefined;
-  readonly maxDocumentBytes?: number | undefined;
+  readonly commandRunner?: FileSystemContextStoreCommandRunner | undefined;
+  readonly maxContextBytes?: number | undefined;
 }
 
-export class FileSystemDocumentStore implements ExpertAgentDocumentStore {
+export class FileSystemContextStore implements ExpertAgentContextStore {
   readonly rootDir: string;
-  readonly maxDocumentBytes: number | undefined;
-  private readonly commandRunner: FileSystemDocumentStoreCommandRunner;
+  readonly maxContextBytes: number | undefined;
+  private readonly commandRunner: FileSystemContextStoreCommandRunner;
 
-  constructor(options: FileSystemDocumentStoreOptions) {
+  constructor(options: FileSystemContextStoreOptions) {
     this.rootDir = resolve(options.rootDir);
-    this.maxDocumentBytes = options.maxDocumentBytes;
+    this.maxContextBytes = options.maxContextBytes;
     this.commandRunner = options.commandRunner ?? runSearchCommand;
   }
 
-  async listDocuments(
-    input: ExpertAgentDocumentListInput = {},
-  ): Promise<ExpertAgentDocumentResult<readonly ExpertAgentDocumentSummary[]>> {
+  async listContext(
+    input: ExpertAgentContextItemListInput = {},
+  ): Promise<ExpertAgentContextResult<readonly ExpertAgentContextItemSummary[]>> {
     void input;
 
     try {
       const files = await collectMarkdownFiles(this.rootDir);
-      const documents = await Promise.all(
+      const context = await Promise.all(
         files.map(async (filePath) => {
-          const document = await readMarkdownFileDocument(this.rootDir, filePath);
+          const context = await readMarkdownFileContext(this.rootDir, filePath);
 
           return {
-            id: document.id,
-            metadata: document.metadata,
-            revision: document.revision,
-            etag: document.etag,
-            sizeBytes: document.sizeBytes,
+            id: context.id,
+            metadata: context.metadata,
+            revision: context.revision,
+            etag: context.etag,
+            sizeBytes: context.sizeBytes,
           };
         }),
       );
 
-      return ok(documents);
+      return ok(context);
     } catch (caught) {
-      return error("store_error", "Failed to list file system documents.", toErrorDetails(caught));
+      return error("store_error", "Failed to list file system context.", toErrorDetails(caught));
     }
   }
 
-  async readDocument(
-    input: ExpertAgentDocumentReadInput,
-  ): Promise<ExpertAgentDocumentResult<ExpertAgentStoredDocumentReadResult>> {
+  async readContext(
+    input: ExpertAgentContextItemReadInput,
+  ): Promise<ExpertAgentContextResult<ExpertAgentStoredContextItemReadResult>> {
     try {
-      const filePath = this.resolveDocumentPath(input.id);
+      const filePath = this.resolveContextPath(input.id);
 
       if (!(await exists(filePath))) {
-        return error("document_not_found", `Document not found: ${input.id}`, { id: input.id });
+        return error("context_not_found", `Context not found: ${input.id}`, { id: input.id });
       }
 
-      const document = await readMarkdownFileDocument(this.rootDir, filePath);
-      const read = readContentRange(document.content, {
+      const context = await readMarkdownFileContext(this.rootDir, filePath);
+      const read = readContentRange(context.content, {
         start: input.start ?? 0,
         offset: input.offset,
       });
-      const lineRange = calculateLineRange(document.content, {
+      const lineRange = calculateLineRange(context.content, {
         startOffset: read.startOffset,
         endOffset: read.endOffset,
       });
@@ -107,17 +107,17 @@ export class FileSystemDocumentStore implements ExpertAgentDocumentStore {
       return ok({
         id: input.id,
         content: read.content,
-        metadata: document.metadata,
-        revision: document.revision,
-        etag: document.etag,
-        sizeBytes: document.sizeBytes,
+        metadata: context.metadata,
+        revision: context.revision,
+        etag: context.etag,
+        sizeBytes: context.sizeBytes,
         contentRange: {
           requestedStartOffset: read.requestedStartOffset,
           startOffset: read.startOffset,
           endOffset: read.endOffset,
           nextStartOffset: read.nextStartOffset,
           truncated: read.truncated,
-          sizeBytes: document.sizeBytes,
+          sizeBytes: context.sizeBytes,
           ...(input.offset === undefined
             ? {}
             : { maxBytes: Math.max(1, Math.trunc(input.offset)) }),
@@ -127,49 +127,53 @@ export class FileSystemDocumentStore implements ExpertAgentDocumentStore {
         },
       });
     } catch (caught) {
-      return error("store_error", `Failed to read document: ${input.id}`, toErrorDetails(caught));
+      return error("store_error", `Failed to read context: ${input.id}`, toErrorDetails(caught));
     }
   }
 
-  async createDocument(
-    input: ExpertAgentStoredDocumentCreateInput,
-  ): Promise<ExpertAgentDocumentResult<ExpertAgentStoredDocument>> {
+  async registerContext(
+    input: ExpertAgentStoredContextRegisterInput,
+  ): Promise<ExpertAgentContextResult<ExpertAgentStoredContextItem>> {
     try {
       const metadata = normalizeMetadata(input.id, normalizeInputMetadata(input.metadata));
-      const sizeError = validateDocumentSize(input.content, this.maxDocumentBytes);
+      const sizeError = validateContextSize(input.content, this.maxContextBytes);
 
       if (sizeError !== undefined) {
         return sizeError;
       }
 
-      const filePath = this.resolveDocumentPath(input.id);
+      const filePath = this.resolveContextPath(input.id);
 
       if (await exists(filePath)) {
-        return error("document_already_exists", `Document already exists: ${input.id}`, {
+        return error("context_already_exists", `Context already exists: ${input.id}`, {
           id: input.id,
         });
       }
 
-      const document = {
+      const context = {
         id: input.id,
         content: input.content,
         metadata,
       };
 
       await mkdir(dirname(filePath), { recursive: true });
-      await writeFile(filePath, serializeMarkdownDocument(document), "utf8");
+      await writeFile(filePath, serializeMarkdownContext(context), "utf8");
 
-      return ok(await readMarkdownFileDocument(this.rootDir, filePath));
+      return ok(await readMarkdownFileContext(this.rootDir, filePath));
     } catch (caught) {
-      return error("store_error", `Failed to create document: ${input.id}`, toErrorDetails(caught));
+      return error(
+        "store_error",
+        `Failed to register context: ${input.id}`,
+        toErrorDetails(caught),
+      );
     }
   }
 
-  async updateDocument(
-    input: ExpertAgentStoredDocumentUpdateInput,
-  ): Promise<ExpertAgentDocumentResult<ExpertAgentStoredDocument>> {
+  async updateContext(
+    input: ExpertAgentStoredContextItemUpdateInput,
+  ): Promise<ExpertAgentContextResult<ExpertAgentStoredContextItem>> {
     try {
-      const existing = await this.readDocument({
+      const existing = await this.readContext({
         id: input.id,
         context: input.context,
       });
@@ -189,80 +193,72 @@ export class FileSystemDocumentStore implements ExpertAgentDocumentStore {
         input.metadata === undefined
           ? existing.value.metadata
           : normalizeMetadata(input.id, normalizeInputMetadata(input.metadata));
-      const sizeError = validateDocumentSize(content, this.maxDocumentBytes);
+      const sizeError = validateContextSize(content, this.maxContextBytes);
 
       if (sizeError !== undefined) {
         return sizeError;
       }
 
-      const document = {
+      const context = {
         id: input.id,
         content,
         metadata,
       };
-      const filePath = this.resolveDocumentPath(input.id);
-      await writeFile(filePath, serializeMarkdownDocument(document), "utf8");
+      const filePath = this.resolveContextPath(input.id);
+      await writeFile(filePath, serializeMarkdownContext(context), "utf8");
 
-      return ok(await readMarkdownFileDocument(this.rootDir, filePath));
+      return ok(await readMarkdownFileContext(this.rootDir, filePath));
     } catch (caught) {
-      return error("store_error", `Failed to update document: ${input.id}`, toErrorDetails(caught));
+      return error("store_error", `Failed to update context: ${input.id}`, toErrorDetails(caught));
     }
   }
 
-  async deleteDocument(
-    input: ExpertAgentDocumentDeleteInput,
-  ): Promise<ExpertAgentDocumentResult<{ readonly id: string }>> {
+  async deleteContext(
+    input: ExpertAgentContextItemDeleteInput,
+  ): Promise<ExpertAgentContextResult<{ readonly id: string }>> {
     try {
-      const filePath = this.resolveDocumentPath(input.id);
+      const filePath = this.resolveContextPath(input.id);
 
       if (!(await exists(filePath))) {
-        return error("document_not_found", `Document not found: ${input.id}`, { id: input.id });
+        return error("context_not_found", `Context not found: ${input.id}`, { id: input.id });
       }
 
       await rm(filePath);
 
       return ok({ id: input.id });
     } catch (caught) {
-      return error("store_error", `Failed to delete document: ${input.id}`, toErrorDetails(caught));
+      return error("store_error", `Failed to delete context: ${input.id}`, toErrorDetails(caught));
     }
   }
 
-  async searchDocuments(
-    input: ExpertAgentDocumentSearchInput,
-  ): Promise<ExpertAgentDocumentResult<readonly ExpertAgentDocumentSearchMatch[]>> {
+  async searchContext(
+    input: ExpertAgentContextItemSearchInput,
+  ): Promise<ExpertAgentContextResult<readonly ExpertAgentContextItemSearchMatch[]>> {
     try {
-      const ripgrepResult = await searchDocumentsWithRipgrep(
-        this.rootDir,
-        input,
-        this.commandRunner,
-      );
+      const ripgrepResult = await searchContextWithRipgrep(this.rootDir, input, this.commandRunner);
 
       if (ripgrepResult.ok) {
         return ok(ripgrepResult.matches);
       }
 
-      const grepResult = await searchDocumentsWithGrep(this.rootDir, input, this.commandRunner);
+      const grepResult = await searchContextWithGrep(this.rootDir, input, this.commandRunner);
 
       if (grepResult.ok) {
         return ok(grepResult.matches);
       }
 
-      return ok(await searchDocumentsWithFileReads(this.rootDir, input));
+      return ok(await searchContextWithFileReads(this.rootDir, input));
     } catch (caught) {
-      return error(
-        "store_error",
-        "Failed to search file system documents.",
-        toErrorDetails(caught),
-      );
+      return error("store_error", "Failed to search file system context.", toErrorDetails(caught));
     }
   }
 
-  private resolveDocumentPath(id: string): string {
+  private resolveContextPath(id: string): string {
     const filePath = resolve(this.rootDir, id);
     const relativePath = relative(this.rootDir, filePath);
 
     if (relativePath.startsWith("..") || relativePath === "" || relativePath.startsWith(sep)) {
-      throw new Error(`Invalid document id: ${id}`);
+      throw new Error(`Invalid context id: ${id}`);
     }
 
     return filePath;
@@ -301,11 +297,11 @@ function countNewlines(content: string): number {
 }
 
 function validateExpectedRevision(
-  existing: ExpertAgentStoredDocument,
-  input: ExpertAgentStoredDocumentUpdateInput,
-): ExpertAgentDocumentResult<never> | undefined {
+  existing: ExpertAgentStoredContextItem,
+  input: ExpertAgentStoredContextItemUpdateInput,
+): ExpertAgentContextResult<never> | undefined {
   if (input.expectedRevision !== undefined && existing.revision !== input.expectedRevision) {
-    return error("document_conflict", `Document revision conflict: ${input.id}`, {
+    return error("context_conflict", `Context revision conflict: ${input.id}`, {
       id: input.id,
       expectedRevision: input.expectedRevision,
       actualRevision: existing.revision,
@@ -313,7 +309,7 @@ function validateExpectedRevision(
   }
 
   if (input.expectedEtag !== undefined && existing.etag !== input.expectedEtag) {
-    return error("document_conflict", `Document etag conflict: ${input.id}`, {
+    return error("context_conflict", `Context etag conflict: ${input.id}`, {
       id: input.id,
       expectedEtag: input.expectedEtag,
       actualEtag: existing.etag,
@@ -323,23 +319,23 @@ function validateExpectedRevision(
   return undefined;
 }
 
-function validateDocumentSize(
+function validateContextSize(
   content: string,
-  maxDocumentBytes: number | undefined,
-): ExpertAgentDocumentResult<never> | undefined {
-  if (maxDocumentBytes === undefined) {
+  maxContextBytes: number | undefined,
+): ExpertAgentContextResult<never> | undefined {
+  if (maxContextBytes === undefined) {
     return undefined;
   }
 
   const sizeBytes = Buffer.byteLength(content, "utf8");
 
-  if (sizeBytes <= maxDocumentBytes) {
+  if (sizeBytes <= maxContextBytes) {
     return undefined;
   }
 
-  return error("document_too_large", "Document exceeds the configured size limit.", {
+  return error("context_too_large", "Context exceeds the configured size limit.", {
     sizeBytes,
-    maxDocumentBytes,
+    maxContextBytes,
   });
 }
 
@@ -347,13 +343,13 @@ function createFileRevision(mtimeMs: number, sizeBytes: number): string {
   return `${Math.trunc(mtimeMs)}:${Math.max(0, Math.trunc(sizeBytes))}`;
 }
 
-async function readMarkdownFileDocument(
+async function readMarkdownFileContext(
   rootDir: string,
   filePath: string,
-): Promise<ExpertAgentStoredDocument> {
+): Promise<ExpertAgentStoredContextItem> {
   const [stats, rawContent] = await Promise.all([stat(filePath), readFile(filePath, "utf8")]);
-  const id = toDocumentId(rootDir, filePath);
-  const parsed = parseMarkdownDocument(id, rawContent);
+  const id = toContextId(rootDir, filePath);
+  const parsed = parseMarkdownContext(id, rawContent);
   const sizeBytes = Buffer.byteLength(parsed.content, "utf8");
   const revision = createFileRevision(stats.mtimeMs, stats.size);
 
@@ -417,14 +413,14 @@ function readContentRange(
   };
 }
 
-function parseMarkdownDocument(
+function parseMarkdownContext(
   id: string,
   rawContent: string,
 ): {
-  readonly metadata: ExpertAgentDocumentMetadata;
+  readonly metadata: ExpertAgentContextItemMetadata;
   readonly content: string;
 } {
-  if (isAgentsDocumentId(id)) {
+  if (isAgentsContextId(id)) {
     return {
       metadata: normalizeMetadata(id, { trigger: "always_on" }),
       content: rawContent,
@@ -439,7 +435,7 @@ function parseMarkdownDocument(
   };
 }
 
-function parseMatterMetadata(data: Record<string, unknown>): ExpertAgentDocumentMetadata {
+function parseMatterMetadata(data: Record<string, unknown>): ExpertAgentContextItemMetadata {
   const description = data.description;
   const trigger = data.trigger;
   const trustLevel = data.trustLevel;
@@ -453,25 +449,25 @@ function parseMatterMetadata(data: Record<string, unknown>): ExpertAgentDocument
   };
 }
 
-function serializeMarkdownDocument(document: ExpertAgentStoredDocument): string {
-  if (isAgentsDocumentId(document.id)) {
-    return document.content;
+function serializeMarkdownContext(context: ExpertAgentStoredContextItem): string {
+  if (isAgentsContextId(context.id)) {
+    return context.content;
   }
 
-  const serialized = matter.stringify(document.content, {
-    ...(document.metadata.description === undefined
+  const serialized = matter.stringify(context.content, {
+    ...(context.metadata.description === undefined
       ? {}
-      : { description: document.metadata.description }),
-    trigger: document.metadata.trigger,
-    ...(document.metadata.trustLevel === undefined
+      : { description: context.metadata.description }),
+    trigger: context.metadata.trigger,
+    ...(context.metadata.trustLevel === undefined
       ? {}
-      : { trustLevel: document.metadata.trustLevel }),
-    ...(document.metadata.sensitivity === undefined
+      : { trustLevel: context.metadata.trustLevel }),
+    ...(context.metadata.sensitivity === undefined
       ? {}
-      : { sensitivity: document.metadata.sensitivity }),
+      : { sensitivity: context.metadata.sensitivity }),
   });
 
-  if (!document.content.endsWith("\n") && serialized.endsWith("\n")) {
+  if (!context.content.endsWith("\n") && serialized.endsWith("\n")) {
     return serialized.slice(0, -1);
   }
 
@@ -479,8 +475,8 @@ function serializeMarkdownDocument(document: ExpertAgentStoredDocument): string 
 }
 
 function normalizeInputMetadata(
-  metadata: Partial<ExpertAgentDocumentMetadata> | undefined,
-): ExpertAgentDocumentMetadata {
+  metadata: Partial<ExpertAgentContextItemMetadata> | undefined,
+): ExpertAgentContextItemMetadata {
   return {
     ...(metadata?.description === undefined ? {} : { description: metadata.description }),
     trigger: metadata?.trigger ?? "model_decision",
@@ -489,7 +485,9 @@ function normalizeInputMetadata(
   };
 }
 
-function normalizeTrustLevel(value: string | undefined): ExpertAgentDocumentMetadata["trustLevel"] {
+function normalizeTrustLevel(
+  value: string | undefined,
+): ExpertAgentContextItemMetadata["trustLevel"] {
   if (value === "system" || value === "workspace" || value === "user" || value === "external") {
     return value;
   }
@@ -499,7 +497,7 @@ function normalizeTrustLevel(value: string | undefined): ExpertAgentDocumentMeta
 
 function normalizeSensitivity(
   value: string | undefined,
-): ExpertAgentDocumentMetadata["sensitivity"] {
+): ExpertAgentContextItemMetadata["sensitivity"] {
   if (
     value === "public" ||
     value === "internal" ||
@@ -512,7 +510,9 @@ function normalizeSensitivity(
   return "internal";
 }
 
-function readMetadataTrigger(value: unknown): ExpertAgentDocumentMetadata["trigger"] | undefined {
+function readMetadataTrigger(
+  value: unknown,
+): ExpertAgentContextItemMetadata["trigger"] | undefined {
   if (value === "always_on" || value === "model_decision" || value === "manual") {
     return value;
   }
@@ -557,14 +557,14 @@ function isUtf8ContinuationByte(byte: number): boolean {
   return (byte & 0xc0) === 0x80;
 }
 
-async function searchDocumentsWithRipgrep(
+async function searchContextWithRipgrep(
   rootDir: string,
-  input: ExpertAgentDocumentSearchInput,
-  commandRunner: FileSystemDocumentStoreCommandRunner,
+  input: ExpertAgentContextItemSearchInput,
+  commandRunner: FileSystemContextStoreCommandRunner,
 ): Promise<
   | {
       readonly ok: true;
-      readonly matches: readonly ExpertAgentDocumentSearchMatch[];
+      readonly matches: readonly ExpertAgentContextItemSearchMatch[];
     }
   | {
       readonly ok: false;
@@ -607,14 +607,14 @@ async function searchDocumentsWithRipgrep(
   }
 }
 
-async function searchDocumentsWithGrep(
+async function searchContextWithGrep(
   rootDir: string,
-  input: ExpertAgentDocumentSearchInput,
-  commandRunner: FileSystemDocumentStoreCommandRunner,
+  input: ExpertAgentContextItemSearchInput,
+  commandRunner: FileSystemContextStoreCommandRunner,
 ): Promise<
   | {
       readonly ok: true;
-      readonly matches: readonly ExpertAgentDocumentSearchMatch[];
+      readonly matches: readonly ExpertAgentContextItemSearchMatch[];
     }
   | {
       readonly ok: false;
@@ -657,10 +657,10 @@ function parseRipgrepJsonLines(
   rootDir: string,
   stdout: string,
   maxResults: number,
-): readonly ExpertAgentDocumentSearchMatch[] {
-  const matches: ExpertAgentDocumentSearchMatch[] = [];
+): readonly ExpertAgentContextItemSearchMatch[] {
+  const matches: ExpertAgentContextItemSearchMatch[] = [];
   const beforeByPath = new Map<string, string[]>();
-  let currentMatch: ExpertAgentDocumentSearchMatch | undefined;
+  let currentMatch: ExpertAgentContextItemSearchMatch | undefined;
 
   for (const line of stdout.split("\n")) {
     if (line.length === 0) {
@@ -672,7 +672,7 @@ function parseRipgrepJsonLines(
     if (event.type === "context") {
       const contextLine = readRipgrepText(event.data.lines);
       const path = readRipgrepText(event.data.path);
-      const id = toDocumentId(rootDir, path);
+      const id = toContextId(rootDir, path);
 
       if (currentMatch !== undefined && id === currentMatch.id) {
         currentMatch = appendSearchMatchAfter(currentMatch, contextLine);
@@ -689,13 +689,13 @@ function parseRipgrepJsonLines(
     }
 
     const filePath = readRipgrepText(event.data.path);
-    const id = toDocumentId(rootDir, filePath);
+    const id = toContextId(rootDir, filePath);
     const match = {
       id,
       lineNumber: event.data.line_number,
       line: trimLineEnd(readRipgrepText(event.data.lines)),
       before: beforeByPath.get(filePath)?.map(trimLineEnd),
-    } satisfies ExpertAgentDocumentSearchMatch;
+    } satisfies ExpertAgentContextItemSearchMatch;
 
     matches.push(match);
     currentMatch = match;
@@ -708,9 +708,9 @@ function parseRipgrepJsonLines(
 async function parseGrepLines(
   rootDir: string,
   stdout: string,
-  input: ExpertAgentDocumentSearchInput,
-): Promise<readonly ExpertAgentDocumentSearchMatch[]> {
-  const matches: ExpertAgentDocumentSearchMatch[] = [];
+  input: ExpertAgentContextItemSearchInput,
+): Promise<readonly ExpertAgentContextItemSearchMatch[]> {
+  const matches: ExpertAgentContextItemSearchMatch[] = [];
   const linesByPath = new Map<string, readonly string[]>();
 
   for (const line of stdout.split("\n")) {
@@ -728,22 +728,22 @@ async function parseGrepLines(
       continue;
     }
 
-    let documentLines = linesByPath.get(parsed.filePath);
+    let contextLines = linesByPath.get(parsed.filePath);
 
-    if (documentLines === undefined) {
-      documentLines = (await readFile(parsed.filePath, "utf8")).split("\n");
-      linesByPath.set(parsed.filePath, documentLines);
+    if (contextLines === undefined) {
+      contextLines = (await readFile(parsed.filePath, "utf8")).split("\n");
+      linesByPath.set(parsed.filePath, contextLines);
     }
 
     const lineIndex = parsed.lineNumber - 1;
 
     matches.push({
-      id: toDocumentId(rootDir, parsed.filePath),
+      id: toContextId(rootDir, parsed.filePath),
       lineNumber: parsed.lineNumber,
-      line: trimLineEnd(documentLines[lineIndex] ?? parsed.line),
-      before: readContextLines(documentLines, lineIndex - (input.contextLines ?? 0), lineIndex),
+      line: trimLineEnd(contextLines[lineIndex] ?? parsed.line),
+      before: readContextLines(contextLines, lineIndex - (input.contextLines ?? 0), lineIndex),
       after: readContextLines(
-        documentLines,
+        contextLines,
         lineIndex + 1,
         lineIndex + 1 + (input.contextLines ?? 0),
       ),
@@ -779,12 +779,12 @@ function parseGrepLine(
   };
 }
 
-async function searchDocumentsWithFileReads(
+async function searchContextWithFileReads(
   rootDir: string,
-  input: ExpertAgentDocumentSearchInput,
-): Promise<readonly ExpertAgentDocumentSearchMatch[]> {
+  input: ExpertAgentContextItemSearchInput,
+): Promise<readonly ExpertAgentContextItemSearchMatch[]> {
   const files = await collectMarkdownFiles(rootDir);
-  const matches: ExpertAgentDocumentSearchMatch[] = [];
+  const matches: ExpertAgentContextItemSearchMatch[] = [];
   const query = input.caseSensitive === true ? input.query : input.query.toLocaleLowerCase();
 
   for (const filePath of files) {
@@ -799,7 +799,7 @@ async function searchDocumentsWithFileReads(
       }
 
       matches.push({
-        id: toDocumentId(rootDir, filePath),
+        id: toContextId(rootDir, filePath),
         lineNumber: index + 1,
         line: trimLineEnd(line),
         before: readContextLines(lines, index - (input.contextLines ?? 0), index),
@@ -826,9 +826,9 @@ function readContextLines(
 }
 
 function appendSearchMatchAfter(
-  match: ExpertAgentDocumentSearchMatch,
+  match: ExpertAgentContextItemSearchMatch,
   line: string,
-): ExpertAgentDocumentSearchMatch {
+): ExpertAgentContextItemSearchMatch {
   return {
     ...match,
     after: [...(match.after ?? []), trimLineEnd(line)],
@@ -868,7 +868,7 @@ function trimLineEnd(line: string): string {
 async function runSearchCommand(
   command: string,
   args: readonly string[],
-): Promise<FileSystemDocumentStoreCommandResult> {
+): Promise<FileSystemContextStoreCommandResult> {
   const result = await execFileAsync(command, [...args], {
     maxBuffer: 10 * 1024 * 1024,
   });
@@ -914,7 +914,7 @@ async function exists(filePath: string): Promise<boolean> {
   }
 }
 
-function toDocumentId(rootDir: string, filePath: string): string {
+function toContextId(rootDir: string, filePath: string): string {
   return relative(rootDir, filePath).split(sep).join("/");
 }
 

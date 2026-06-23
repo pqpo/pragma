@@ -144,16 +144,16 @@ apps/desktop    -> agent -> shared
 
 更具体地说：
 
-| 来源 | 允许依赖 |
-| --- | --- |
-| `apps/web` | `shared/*`、`client/*` |
-| `apps/server` | `shared/*`、`server/*`、`agent/*` |
-| `apps/worker` | `shared/*`、`server/*`、`agent/*` |
-| `apps/desktop` | `shared/*`、`agent/*`；未来可依赖 Desktop App 专属本地桥接包 |
-| `packages/shared/*` | 仅 `shared/*` |
-| `packages/client/*` | `shared/*`、`client/*` |
+| 来源                | 允许依赖                                                            |
+| ------------------- | ------------------------------------------------------------------- |
+| `apps/web`          | `shared/*`、`client/*`                                              |
+| `apps/server`       | `shared/*`、`server/*`、`agent/*`                                   |
+| `apps/worker`       | `shared/*`、`server/*`、`agent/*`                                   |
+| `apps/desktop`      | `shared/*`、`agent/*`；未来可依赖 Desktop App 专属本地桥接包        |
+| `packages/shared/*` | 仅 `shared/*`                                                       |
+| `packages/client/*` | `shared/*`、`client/*`                                              |
 | `packages/server/*` | `shared/*`、`server/*`；编排/调度类 server package 可依赖 `agent/*` |
-| `packages/agent/*` | `shared/*`、`agent/*` |
+| `packages/agent/*`  | `shared/*`、`agent/*`                                               |
 
 明确禁止：
 
@@ -447,7 +447,7 @@ createDatabaseClient()
 职责：
 
 - Expert Agent 声明、Run Request / Result 协议。
-- ExpertAgent 公共实现，包括文档索引、AGENTS.md 加载、subAgent 声明和系统提示词组装。
+- ExpertAgent 公共实现，包括上下文系统、AGENTS.md 加载、subAgent 声明和系统提示词组装。
 - RuntimeAdapter 与 RuntimeAgentSession 核心接口。
 - 默认面向云端 Agent 和云端沙箱执行边界。
 - 未来本地 Claude Code、Codex、自研执行环境通过 Runtime Adapter 对接。
@@ -456,7 +456,7 @@ createDatabaseClient()
 
 ```text
 ExpertAgent
-DocumentIndexer
+ContextSystem
 ContextManager
 RuntimeAdapter
 ```
@@ -475,7 +475,7 @@ ExpertAgent API 设计要求：
 
 - RuntimeAdapter 的具体实现。
 - 当前第一版只提供 `cloud-pi-agent`，基于 PI agent SDK 适配 ExpertAgent。
-- 将 ExpertAgent 声明的 skills、AGENTS.md、documents、workspace 转换为 PI runtime 可理解的 session 配置。
+- 将 ExpertAgent 声明的 skills、AGENTS.md、context、workspace 转换为 PI runtime 可理解的 session 配置。
 - 后续承载 Runtime 选择、云端 Runtime 和本地 Runtime 抽象。
 
 禁止：

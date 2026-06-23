@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const CodeRepositoryDocumentInjectionModeSchema = z
+export const CodeRepositoryContextInjectionModeSchema = z
   .enum(["model_decision", "always_on"])
   .default("model_decision");
 
@@ -25,7 +25,10 @@ export const CodeRepositoryAuthSchema = z.discriminatedUnion("strategy", [
 ]);
 
 export const CodeRepositorySchema = z.object({
-  id: z.string().min(1).regex(/^[a-zA-Z0-9._-]+$/),
+  id: z
+    .string()
+    .min(1)
+    .regex(/^[a-zA-Z0-9._-]+$/),
   name: z.string().min(1),
   cloneUrl: z.string().min(1).refine(isSafeCloneUrl, {
     message:
@@ -42,9 +45,9 @@ export const CodeRepositorySchema = z.object({
 
 export const CodeRepositoryManagerConfigSchema = z
   .object({
-    documentInjection: z
+    contextInjection: z
       .object({
-        mode: CodeRepositoryDocumentInjectionModeSchema,
+        mode: CodeRepositoryContextInjectionModeSchema,
       })
       .default({ mode: "model_decision" }),
     auth: CodeRepositoryAuthSchema.default({ strategy: "none" }),
@@ -77,23 +80,23 @@ export const CodeRepositoryManagerConfigSchema = z
     }
   });
 
-export type CodeRepositoryDocumentInjectionMode = z.infer<
-  typeof CodeRepositoryDocumentInjectionModeSchema
+export type CodeRepositoryContextInjectionMode = z.infer<
+  typeof CodeRepositoryContextInjectionModeSchema
 >;
 export type CodeRepositoryAuth = z.infer<typeof CodeRepositoryAuthSchema>;
 export type CodeRepository = z.infer<typeof CodeRepositorySchema>;
 export type CodeRepositoryManagerConfig = z.infer<typeof CodeRepositoryManagerConfigSchema>;
 export type CodeRepositoryManagerConfigInput = z.input<typeof CodeRepositoryManagerConfigSchema>;
 
-export const CodeRepositoryManagerRepositoriesDocumentSchema = z.union([
+export const CodeRepositoryManagerRepositoriesContextSchema = z.union([
   z.array(CodeRepositorySchema),
   z.object({
     repositories: z.array(CodeRepositorySchema),
   }),
 ]);
 
-export type CodeRepositoryManagerRepositoriesDocument = z.infer<
-  typeof CodeRepositoryManagerRepositoriesDocumentSchema
+export type CodeRepositoryManagerRepositoriesContext = z.infer<
+  typeof CodeRepositoryManagerRepositoriesContextSchema
 >;
 
 export function parseCodeRepositoryManagerConfig(
@@ -102,10 +105,12 @@ export function parseCodeRepositoryManagerConfig(
   return CodeRepositoryManagerConfigSchema.parse(input);
 }
 
-export function parseCodeRepositoryManagerRepositoriesDocument(input: unknown): readonly CodeRepository[] {
-  const document = CodeRepositoryManagerRepositoriesDocumentSchema.parse(input);
+export function parseCodeRepositoryManagerRepositoriesContext(
+  input: unknown,
+): readonly CodeRepository[] {
+  const context = CodeRepositoryManagerRepositoriesContextSchema.parse(input);
 
-  return Array.isArray(document) ? document : document.repositories;
+  return Array.isArray(context) ? context : context.repositories;
 }
 
 function isSafeCloneUrl(value: string): boolean {
@@ -149,10 +154,7 @@ function isSafeBranchName(value: string): boolean {
 
   return value.split("/").every((part) => {
     return (
-      part.length > 0 &&
-      !part.startsWith(".") &&
-      !part.endsWith(".") &&
-      !part.endsWith(".lock")
+      part.length > 0 && !part.startsWith(".") && !part.endsWith(".") && !part.endsWith(".lock")
     );
   });
 }

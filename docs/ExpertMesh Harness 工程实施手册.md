@@ -13,19 +13,19 @@
 5. ESLint 依赖限制；
 6. Turborepo 统一执行 lint、typecheck、test、build；
 7. 基础 CI 校验；
-8. 可作为后续专家 Agent、Playbook、Runtime、Document Repo 的长期 Harness。
+8. 可作为后续专家 Agent、Playbook、Runtime、Context Store 的长期 Harness。
 
 本阶段明确不做：
 
-* 专家 Agent 实现；
-* Playbook 编排器；
-* Runtime Adapter；
-* 数据库模型；
-* 用户认证；
-* 队列；
-* MCP、Skill、Hook、Plugin；
-* Git Document Repo；
-* 真实业务 API。
+- 专家 Agent 实现；
+- Playbook 编排器；
+- Runtime Adapter；
+- 数据库模型；
+- 用户认证；
+- 队列；
+- MCP、Skill、Hook、Plugin；
+- Git Context Store；
+- 真实业务 API。
 
 ---
 
@@ -164,26 +164,26 @@ apps
 
 说明：
 
-| 层级     | 定位                   |
-| ------ | -------------------- |
-| shared | 跨端、纯逻辑、无运行环境依赖       |
-| client | 浏览器或客户端能力            |
-| server | Node 服务端基础设施能力       |
+| 层级   | 定位                         |
+| ------ | ---------------------------- |
+| shared | 跨端、纯逻辑、无运行环境依赖 |
+| client | 浏览器或客户端能力           |
+| server | Node 服务端基础设施能力      |
 | agent  | Agent 执行能力，仅 Node 环境 |
-| apps   | 应用组合层与启动入口           |
+| apps   | 应用组合层与启动入口         |
 
 ---
 
 ## 5.2 依赖矩阵
 
-| 来源模块          | 允许依赖                            |
-| ------------- | ------------------------------- |
-| `apps/web`    | `shared/*`、`client/*`           |
-| `apps/server` | `shared/*`、`server/*`           |
+| 来源模块      | 允许依赖                          |
+| ------------- | --------------------------------- |
+| `apps/web`    | `shared/*`、`client/*`            |
+| `apps/server` | `shared/*`、`server/*`            |
 | `apps/worker` | `shared/*`、`server/*`、`agent/*` |
-| `shared/*`    | 仅 `shared/*`                    |
-| `client/*`    | `shared/*`、`client/*`           |
-| `server/*`    | `shared/*`、`server/*`           |
+| `shared/*`    | 仅 `shared/*`                     |
+| `client/*`    | `shared/*`、`client/*`            |
+| `server/*`    | `shared/*`、`server/*`            |
 | `agent/*`     | `shared/*`、`server/*`、`agent/*` |
 
 明确禁止：
@@ -561,17 +561,17 @@ HTTP Controller
 
 # 7. 运行环境限制
 
-| Package    | Browser | Node |
-| ---------- | ------: | ---: |
-| contracts  |      支持 |   支持 |
-| domain     |      支持 |   支持 |
-| utils      |      支持 |   支持 |
-| sdk        |      支持 |   支持 |
-| database   |     不支持 |   支持 |
-| agent-core |     不支持 |   支持 |
-| web        |      支持 |  不支持 |
-| server     |     不支持 |   支持 |
-| worker     |     不支持 |   支持 |
+| Package    | Browser |   Node |
+| ---------- | ------: | -----: |
+| contracts  |    支持 |   支持 |
+| domain     |    支持 |   支持 |
+| utils      |    支持 |   支持 |
+| sdk        |    支持 |   支持 |
+| database   |  不支持 |   支持 |
+| agent-core |  不支持 |   支持 |
+| web        |    支持 | 不支持 |
+| server     |  不支持 |   支持 |
+| worker     |  不支持 |   支持 |
 
 在 `packages/shared/*` 中禁止导入：
 
@@ -1132,37 +1132,37 @@ GitHub Actions 成功。
 
 ## 工程
 
-* [ ] pnpm workspace 正常工作
-* [ ] Turborepo 可执行 dev、build、lint、typecheck、test
-* [ ] 根目录存在统一 TypeScript、ESLint、Prettier 配置
-* [ ] 所有 package 使用 ESM
-* [ ] 所有内部依赖使用 `workspace:*`
+- [ ] pnpm workspace 正常工作
+- [ ] Turborepo 可执行 dev、build、lint、typecheck、test
+- [ ] 根目录存在统一 TypeScript、ESLint、Prettier 配置
+- [ ] 所有 package 使用 ESM
+- [ ] 所有内部依赖使用 `workspace:*`
 
 ## 应用
 
-* [ ] Web 可启动
-* [ ] Server 可启动并提供 `/health`
-* [ ] Worker 可启动
-* [ ] Web 可调用 Server `/health`
+- [ ] Web 可启动
+- [ ] Server 可启动并提供 `/health`
+- [ ] Worker 可启动
+- [ ] Web 可调用 Server `/health`
 
 ## 包边界
 
-* [ ] shared 仅依赖 shared
-* [ ] client 不依赖 server / agent
-* [ ] server 不依赖 client
-* [ ] agent 不依赖 client
-* [ ] web 不依赖 database / agent
-* [ ] 跨 package 不使用相对路径
-* [ ] shared 不导入 Node、React、Prisma、Fastify
+- [ ] shared 仅依赖 shared
+- [ ] client 不依赖 server / agent
+- [ ] server 不依赖 client
+- [ ] agent 不依赖 client
+- [ ] web 不依赖 database / agent
+- [ ] 跨 package 不使用相对路径
+- [ ] shared 不导入 Node、React、Prisma、Fastify
 
 ## 质量
 
-* [ ] `pnpm lint` 通过
-* [ ] `pnpm typecheck` 通过
-* [ ] `pnpm test` 通过
-* [ ] `pnpm build` 通过
-* [ ] CI 通过
-* [ ] 非法 import 可被 ESLint 拦截
+- [ ] `pnpm lint` 通过
+- [ ] `pnpm typecheck` 通过
+- [ ] `pnpm test` 通过
+- [ ] `pnpm build` 通过
+- [ ] CI 通过
+- [ ] 非法 import 可被 ESLint 拦截
 
 ---
 

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { isAbsolute, relative, resolve } from "node:path";
 import { promisify } from "node:util";
 
-import { defaultRepositoryWorkspacePath } from "./document.ts";
+import { defaultRepositoryWorkspacePath } from "./context.ts";
 import type { CodeRepository, CodeRepositoryAuth, CodeRepositoryManagerConfig } from "./schema.ts";
 
 const execFileAsync = promisify(execFile);
@@ -289,7 +289,9 @@ function shellQuote(value: string): string {
 
 function assertSafeCredentialHelperValue(value: string, envName: string): void {
   if (hasControlCharacter(value)) {
-    throw new Error(`Git credential.helper environment variable contains control characters: ${envName}`);
+    throw new Error(
+      `Git credential.helper environment variable contains control characters: ${envName}`,
+    );
   }
 }
 

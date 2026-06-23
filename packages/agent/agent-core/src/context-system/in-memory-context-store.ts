@@ -1,66 +1,66 @@
 import type {
-  ExpertAgentDocumentDeleteInput,
-  ExpertAgentDocumentListInput,
-  ExpertAgentDocumentMetadata,
-  ExpertAgentDocumentReadInput,
-  ExpertAgentDocumentResult,
-  ExpertAgentDocumentSearchInput,
-  ExpertAgentDocumentSearchMatch,
-  ExpertAgentDocumentSeed,
-  ExpertAgentDocumentStore,
-  ExpertAgentDocumentSummary,
-  ExpertAgentStoredDocument,
-  ExpertAgentStoredDocumentCreateInput,
-  ExpertAgentStoredDocumentReadResult,
-  ExpertAgentStoredDocumentUpdateInput,
-} from "./document-indexer.ts";
-import { error, normalizeMetadata, ok } from "./document-indexer.ts";
+  ExpertAgentContextItemDeleteInput,
+  ExpertAgentContextItemListInput,
+  ExpertAgentContextItemMetadata,
+  ExpertAgentContextItemReadInput,
+  ExpertAgentContextResult,
+  ExpertAgentContextItemSearchInput,
+  ExpertAgentContextItemSearchMatch,
+  ExpertAgentContextItemSeed,
+  ExpertAgentContextStore,
+  ExpertAgentContextItemSummary,
+  ExpertAgentStoredContextItem,
+  ExpertAgentStoredContextRegisterInput,
+  ExpertAgentStoredContextItemReadResult,
+  ExpertAgentStoredContextItemUpdateInput,
+} from "./context-system.ts";
+import { error, normalizeMetadata, ok } from "./context-system.ts";
 
-export type InMemoryDocumentStoreDocumentMap = Readonly<Record<string, string>>;
+export type InMemoryContextStoreContextMap = Readonly<Record<string, string>>;
 
-export interface InMemoryDocumentStoreOptions {
-  readonly documents?:
-    | readonly ExpertAgentDocumentSeed[]
-    | InMemoryDocumentStoreDocumentMap
+export interface InMemoryContextStoreOptions {
+  readonly context?:
+    | readonly ExpertAgentContextItemSeed[]
+    | InMemoryContextStoreContextMap
     | undefined;
-  readonly maxDocumentBytes?: number | undefined;
+  readonly maxContextBytes?: number | undefined;
 }
 
-export class InMemoryDocumentStore implements ExpertAgentDocumentStore {
-  readonly documents = new Map<string, ExpertAgentStoredDocument>();
-  readonly maxDocumentBytes: number | undefined;
+export class InMemoryContextStore implements ExpertAgentContextStore {
+  readonly context = new Map<string, ExpertAgentStoredContextItem>();
+  readonly maxContextBytes: number | undefined;
 
-  constructor(options: InMemoryDocumentStoreOptions = {}) {
-    this.maxDocumentBytes = options.maxDocumentBytes;
+  constructor(options: InMemoryContextStoreOptions = {}) {
+    this.maxContextBytes = options.maxContextBytes;
 
-    for (const document of normalizeSeedDocuments(options.documents)) {
-      this.documents.set(document.id, withDocumentRevision(document));
+    for (const context of normalizeSeedContexts(options.context)) {
+      this.context.set(context.id, withContextRevision(context));
     }
   }
 
-  async listDocuments(
-    input: ExpertAgentDocumentListInput = {},
-  ): Promise<ExpertAgentDocumentResult<readonly ExpertAgentDocumentSummary[]>> {
+  async listContext(
+    input: ExpertAgentContextItemListInput = {},
+  ): Promise<ExpertAgentContextResult<readonly ExpertAgentContextItemSummary[]>> {
     void input;
 
     return ok(
-      [...this.documents.values()].map((storedDocument) => ({
-        id: storedDocument.id,
-        metadata: storedDocument.metadata,
-        ...(storedDocument.revision === undefined ? {} : { revision: storedDocument.revision }),
-        ...(storedDocument.etag === undefined ? {} : { etag: storedDocument.etag }),
-        ...(storedDocument.sizeBytes === undefined ? {} : { sizeBytes: storedDocument.sizeBytes }),
+      [...this.context.values()].map((storedContext) => ({
+        id: storedContext.id,
+        metadata: storedContext.metadata,
+        ...(storedContext.revision === undefined ? {} : { revision: storedContext.revision }),
+        ...(storedContext.etag === undefined ? {} : { etag: storedContext.etag }),
+        ...(storedContext.sizeBytes === undefined ? {} : { sizeBytes: storedContext.sizeBytes }),
       })),
     );
   }
 
-  async readDocument(
-    input: ExpertAgentDocumentReadInput,
-  ): Promise<ExpertAgentDocumentResult<ExpertAgentStoredDocumentReadResult>> {
-    const existing = this.documents.get(input.id);
+  async readContext(
+    input: ExpertAgentContextItemReadInput,
+  ): Promise<ExpertAgentContextResult<ExpertAgentStoredContextItemReadResult>> {
+    const existing = this.context.get(input.id);
 
     if (existing === undefined) {
-      return error("document_not_found", `Document not found: ${input.id}`, { id: input.id });
+      return error("context_not_found", `Context not found: ${input.id}`, { id: input.id });
     }
 
     const content = existing.content;
@@ -94,38 +94,38 @@ export class InMemoryDocumentStore implements ExpertAgentDocumentStore {
     });
   }
 
-  async createDocument(
-    input: ExpertAgentStoredDocumentCreateInput,
-  ): Promise<ExpertAgentDocumentResult<ExpertAgentStoredDocument>> {
-    const sizeError = validateDocumentSize(input.content, this.maxDocumentBytes);
+  async registerContext(
+    input: ExpertAgentStoredContextRegisterInput,
+  ): Promise<ExpertAgentContextResult<ExpertAgentStoredContextItem>> {
+    const sizeError = validateContextSize(input.content, this.maxContextBytes);
 
     if (sizeError !== undefined) {
       return sizeError;
     }
 
-    if (this.documents.has(input.id)) {
-      return error("document_already_exists", `Document already exists: ${input.id}`, {
+    if (this.context.has(input.id)) {
+      return error("context_already_exists", `Context already exists: ${input.id}`, {
         id: input.id,
       });
     }
 
-    const document = withDocumentRevision({
+    const context = withContextRevision({
       id: input.id,
       content: input.content,
       metadata: normalizeMetadata(input.id, normalizeInputMetadata(input.metadata)),
-    } satisfies ExpertAgentStoredDocument);
-    this.documents.set(input.id, document);
+    } satisfies ExpertAgentStoredContextItem);
+    this.context.set(input.id, context);
 
-    return ok(document);
+    return ok(context);
   }
 
-  async updateDocument(
-    input: ExpertAgentStoredDocumentUpdateInput,
-  ): Promise<ExpertAgentDocumentResult<ExpertAgentStoredDocument>> {
-    const existing = this.documents.get(input.id);
+  async updateContext(
+    input: ExpertAgentStoredContextItemUpdateInput,
+  ): Promise<ExpertAgentContextResult<ExpertAgentStoredContextItem>> {
+    const existing = this.context.get(input.id);
 
     if (existing === undefined) {
-      return error("document_not_found", `Document not found: ${input.id}`, { id: input.id });
+      return error("context_not_found", `Context not found: ${input.id}`, { id: input.id });
     }
 
     const conflict = validateExpectedRevision(existing, input);
@@ -135,47 +135,47 @@ export class InMemoryDocumentStore implements ExpertAgentDocumentStore {
     }
 
     const content = input.content ?? existing.content;
-    const sizeError = validateDocumentSize(content, this.maxDocumentBytes);
+    const sizeError = validateContextSize(content, this.maxContextBytes);
 
     if (sizeError !== undefined) {
       return sizeError;
     }
 
-    const document = withDocumentRevision({
+    const context = withContextRevision({
       id: input.id,
       content,
       metadata:
         input.metadata === undefined
           ? existing.metadata
           : normalizeMetadata(input.id, normalizeInputMetadata(input.metadata)),
-    } satisfies ExpertAgentStoredDocument);
-    this.documents.set(input.id, document);
+    } satisfies ExpertAgentStoredContextItem);
+    this.context.set(input.id, context);
 
-    return ok(document);
+    return ok(context);
   }
 
-  async deleteDocument(
-    input: ExpertAgentDocumentDeleteInput,
-  ): Promise<ExpertAgentDocumentResult<{ readonly id: string }>> {
-    if (!this.documents.has(input.id)) {
-      return error("document_not_found", `Document not found: ${input.id}`, { id: input.id });
+  async deleteContext(
+    input: ExpertAgentContextItemDeleteInput,
+  ): Promise<ExpertAgentContextResult<{ readonly id: string }>> {
+    if (!this.context.has(input.id)) {
+      return error("context_not_found", `Context not found: ${input.id}`, { id: input.id });
     }
 
-    this.documents.delete(input.id);
+    this.context.delete(input.id);
 
     return ok({ id: input.id });
   }
 
-  async searchDocuments(
-    input: ExpertAgentDocumentSearchInput,
-  ): Promise<ExpertAgentDocumentResult<readonly ExpertAgentDocumentSearchMatch[]>> {
+  async searchContext(
+    input: ExpertAgentContextItemSearchInput,
+  ): Promise<ExpertAgentContextResult<readonly ExpertAgentContextItemSearchMatch[]>> {
     const query = input.caseSensitive === true ? input.query : input.query.toLocaleLowerCase();
-    const matches: ExpertAgentDocumentSearchMatch[] = [];
+    const matches: ExpertAgentContextItemSearchMatch[] = [];
     const maxResults = input.maxResults ?? 20;
     const contextLines = input.contextLines ?? 0;
 
-    for (const document of this.documents.values()) {
-      const lines = document.content.split("\n");
+    for (const context of this.context.values()) {
+      const lines = context.content.split("\n");
 
       for (const [index, line] of lines.entries()) {
         const searchedLine = input.caseSensitive === true ? line : line.toLocaleLowerCase();
@@ -185,7 +185,7 @@ export class InMemoryDocumentStore implements ExpertAgentDocumentStore {
         }
 
         matches.push({
-          id: document.id,
+          id: context.id,
           lineNumber: index + 1,
           line: trimLineEnd(line),
           before: readContextLines(lines, index - contextLines, index),
@@ -203,11 +203,11 @@ export class InMemoryDocumentStore implements ExpertAgentDocumentStore {
 }
 
 function validateExpectedRevision(
-  existing: ExpertAgentStoredDocument,
-  input: ExpertAgentStoredDocumentUpdateInput,
-): ExpertAgentDocumentResult<never> | undefined {
+  existing: ExpertAgentStoredContextItem,
+  input: ExpertAgentStoredContextItemUpdateInput,
+): ExpertAgentContextResult<never> | undefined {
   if (input.expectedRevision !== undefined && existing.revision !== input.expectedRevision) {
-    return error("document_conflict", `Document revision conflict: ${input.id}`, {
+    return error("context_conflict", `Context revision conflict: ${input.id}`, {
       id: input.id,
       expectedRevision: input.expectedRevision,
       actualRevision: existing.revision,
@@ -215,7 +215,7 @@ function validateExpectedRevision(
   }
 
   if (input.expectedEtag !== undefined && existing.etag !== input.expectedEtag) {
-    return error("document_conflict", `Document etag conflict: ${input.id}`, {
+    return error("context_conflict", `Context etag conflict: ${input.id}`, {
       id: input.id,
       expectedEtag: input.expectedEtag,
       actualEtag: existing.etag,
@@ -225,57 +225,61 @@ function validateExpectedRevision(
   return undefined;
 }
 
-function validateDocumentSize(
+function validateContextSize(
   content: string,
-  maxDocumentBytes: number | undefined,
-): ExpertAgentDocumentResult<never> | undefined {
-  if (maxDocumentBytes === undefined) {
+  maxContextBytes: number | undefined,
+): ExpertAgentContextResult<never> | undefined {
+  if (maxContextBytes === undefined) {
     return undefined;
   }
 
   const sizeBytes = Buffer.byteLength(content, "utf8");
 
-  if (sizeBytes <= maxDocumentBytes) {
+  if (sizeBytes <= maxContextBytes) {
     return undefined;
   }
 
-  return error("document_too_large", "Document exceeds the configured size limit.", {
+  return error("context_too_large", "Context exceeds the configured size limit.", {
     sizeBytes,
-    maxDocumentBytes,
+    maxContextBytes,
   });
 }
 
-export function createInMemoryDocumentStore(
-  options: InMemoryDocumentStoreOptions = {},
-): InMemoryDocumentStore {
-  return new InMemoryDocumentStore(options);
+export function createInMemoryContextStore(
+  options: InMemoryContextStoreOptions = {},
+): InMemoryContextStore {
+  return new InMemoryContextStore(options);
 }
 
-function normalizeSeedDocuments(
-  documents: InMemoryDocumentStoreOptions["documents"],
-): readonly ExpertAgentStoredDocument[] {
-  if (documents === undefined) {
+function normalizeSeedContexts(
+  context: InMemoryContextStoreOptions["context"],
+): readonly ExpertAgentStoredContextItem[] {
+  if (context === undefined) {
     return [];
   }
 
-  if (Array.isArray(documents)) {
-    return documents.map((document) => withDocumentRevision({
-      id: document.id,
-      content: document.content,
-      metadata: normalizeMetadata(document.id, normalizeInputMetadata(document.metadata)),
-    }));
+  if (Array.isArray(context)) {
+    return context.map((context) =>
+      withContextRevision({
+        id: context.id,
+        content: context.content,
+        metadata: normalizeMetadata(context.id, normalizeInputMetadata(context.metadata)),
+      }),
+    );
   }
 
-  return Object.entries(documents).map(([id, content]) => withDocumentRevision({
-    id,
-    content,
-    metadata: normalizeMetadata(id, { trigger: "model_decision" }),
-  }));
+  return Object.entries(context).map(([id, content]) =>
+    withContextRevision({
+      id,
+      content,
+      metadata: normalizeMetadata(id, { trigger: "model_decision" }),
+    }),
+  );
 }
 
 function normalizeInputMetadata(
-  metadata: Partial<ExpertAgentDocumentMetadata> | undefined,
-): ExpertAgentDocumentMetadata {
+  metadata: Partial<ExpertAgentContextItemMetadata> | undefined,
+): ExpertAgentContextItemMetadata {
   return {
     ...(metadata?.description === undefined ? {} : { description: metadata.description }),
     trigger: metadata?.trigger ?? "model_decision",
@@ -284,12 +288,12 @@ function normalizeInputMetadata(
   };
 }
 
-function withDocumentRevision(document: ExpertAgentStoredDocument): ExpertAgentStoredDocument {
-  const sizeBytes = Buffer.byteLength(document.content, "utf8");
-  const revision = `${sizeBytes}:${hashString(document.content)}`;
+function withContextRevision(context: ExpertAgentStoredContextItem): ExpertAgentStoredContextItem {
+  const sizeBytes = Buffer.byteLength(context.content, "utf8");
+  const revision = `${sizeBytes}:${hashString(context.content)}`;
 
   return {
-    ...document,
+    ...context,
     revision,
     etag: revision,
     sizeBytes,

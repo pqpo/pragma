@@ -1,17 +1,17 @@
 {
   "schemaVersion": "expertmesh.plugin/v1",
-  "id": "plugin.other-docs",
-  "name": "Other plugin docs",
-  "description": "Adds documents with colliding local ids",
+  "id": "plugin.context",
+  "name": "Plugin context",
+  "description": "Adds context",
   "runtime": {
     "type": "expert-agent-plugin",
     "entry": "./src/plugin.ts"
   },
   "capabilities": [
     {
-      "type": "document",
+      "type": "context",
       "name": "plugin.md",
-      "description": "Other fixture document"
+      "description": "Fixture context"
     }
   ]
 }

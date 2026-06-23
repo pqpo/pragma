@@ -6,10 +6,10 @@ export interface BasicExampleCliOptions {
   readonly systemSessionId: string | undefined;
 }
 
-export interface WorkspaceDocumentsExampleCliOptions {
+export interface WorkspaceContextsExampleCliOptions {
   readonly query: string;
   readonly workspace: string | undefined;
-  readonly documents: string | undefined;
+  readonly context: string | undefined;
 }
 
 export function readBasicExampleCli(defaultQuery: string): BasicExampleCliOptions {
@@ -32,15 +32,15 @@ export function readBasicExampleCli(defaultQuery: string): BasicExampleCliOption
   };
 }
 
-export function readWorkspaceDocumentsExampleCli(
+export function readWorkspaceContextsExampleCli(
   defaultQuery: string,
-): WorkspaceDocumentsExampleCliOptions {
-  const cli = cac("expertmesh-example-workspace-documents");
+): WorkspaceContextsExampleCliOptions {
+  const cli = cac("expertmesh-example-workspace-context");
 
   cli
     .command("[query...]", "Task query to send to the ExpertAgent.")
     .option("--workspace <dir>", "Workspace directory available to the ExpertAgent.")
-    .option("--documents <dir>", "Markdown document directory for FileSystemDocumentStore.");
+    .option("--context <dir>", "Markdown context directory for FileSystemContextStore.");
   cli.help();
 
   const parsed = cli.parse();
@@ -49,7 +49,7 @@ export function readWorkspaceDocumentsExampleCli(
   return {
     query: readQueryArgument(parsed.args, defaultQuery),
     workspace: readStringOption(parsed.options.workspace),
-    documents: readStringOption(parsed.options.documents),
+    context: readStringOption(parsed.options.context),
   };
 }
 
