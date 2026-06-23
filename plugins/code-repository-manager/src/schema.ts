@@ -18,6 +18,10 @@ export const CodeRepositoryAuthSchema = z.discriminatedUnion("strategy", [
     privateKeyEnv: z.string().min(1),
     knownHostsEnv: z.string().min(1).optional(),
   }),
+  z.object({
+    strategy: z.literal("credential_helper"),
+    helperEnv: z.string().min(1),
+  }),
 ]);
 
 export const CodeRepositorySchema = z.object({

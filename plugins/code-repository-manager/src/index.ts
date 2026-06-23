@@ -20,6 +20,7 @@ import {
 
 const TOKEN_ENV = "EXPERTMESH_PLUGIN_CODE_REPOSITORY_MANAGER_GIT_TOKEN";
 const TOKEN_USERNAME_ENV = "EXPERTMESH_PLUGIN_CODE_REPOSITORY_MANAGER_GIT_USERNAME";
+const CREDENTIAL_HELPER_ENV = "EXPERTMESH_PLUGIN_CODE_REPOSITORY_MANAGER_GIT_CREDENTIAL_HELPER";
 const SSH_PRIVATE_KEY_ENV = "EXPERTMESH_PLUGIN_CODE_REPOSITORY_MANAGER_SSH_PRIVATE_KEY";
 const SSH_KNOWN_HOSTS_ENV = "EXPERTMESH_PLUGIN_CODE_REPOSITORY_MANAGER_SSH_KNOWN_HOSTS";
 
@@ -170,6 +171,13 @@ function resolveAuth(
       strategy: "token",
       tokenEnv: TOKEN_ENV,
       username: readEnv(env, TOKEN_USERNAME_ENV) ?? "x-access-token",
+    };
+  }
+
+  if (readEnv(env, CREDENTIAL_HELPER_ENV) !== undefined) {
+    return {
+      strategy: "credential_helper",
+      helperEnv: CREDENTIAL_HELPER_ENV,
     };
   }
 

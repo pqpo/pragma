@@ -65,9 +65,15 @@ This plugin reserves the following environment variable namespace:
 ```text
 EXPERTMESH_PLUGIN_CODE_REPOSITORY_MANAGER_GIT_TOKEN
 EXPERTMESH_PLUGIN_CODE_REPOSITORY_MANAGER_GIT_USERNAME
+EXPERTMESH_PLUGIN_CODE_REPOSITORY_MANAGER_GIT_CREDENTIAL_HELPER
 EXPERTMESH_PLUGIN_CODE_REPOSITORY_MANAGER_SSH_PRIVATE_KEY
 EXPERTMESH_PLUGIN_CODE_REPOSITORY_MANAGER_SSH_KNOWN_HOSTS
 ```
+
+Set `EXPERTMESH_PLUGIN_CODE_REPOSITORY_MANAGER_GIT_CREDENTIAL_HELPER` to a
+`credential.helper` value when Git credentials should come from an existing helper
+or a custom helper command. During each session, the plugin writes that value to an
+isolated temporary Git config and removes it during cleanup.
 
 Repository lists are dynamic Agent data. Put them in the host Agent document
 `repositories.json`; if the document is missing, the plugin skips repository document

@@ -127,6 +127,29 @@ async function createGitSessionEnvironment(
     };
   }
 
+  if (auth.strategy === "credential_helper") {
+    const gitConfigPath = resolve(tempDir, "gitconfig");
+    const credentialHelper = readRequiredEnv(baseEnv, auth.helperEnv);
+    assertSafeCredentialHelperValue(credentialHelper, auth.helperEnv);
+    await writeFile(
+      gitConfigPath,
+      ["[credential]", `\thelper = ${escapeGitConfigValue(credentialHelper)}`, ""].join("\n"),
+      { mode: 0o600 },
+    );
+
+    return {
+      env: {
+        ...sharedEnv,
+        GIT_CONFIG_GLOBAL: gitConfigPath,
+        HOME: tempDir,
+        XDG_CONFIG_HOME: tempDir,
+      },
+      cleanup: async () => {
+        await rm(tempDir, { recursive: true, force: true });
+      },
+    };
+  }
+
   const privateKeyPath = resolve(tempDir, "identity");
   const knownHostsEnv = auth.knownHostsEnv;
   const knownHostsPath = knownHostsEnv === undefined ? undefined : resolve(tempDir, "known_hosts");
@@ -234,6 +257,10 @@ function assertAuthEnvironment(auth: CodeRepositoryAuth, env: NodeJS.ProcessEnv)
   ) {
     throw new Error(`Missing Git known_hosts environment variable: ${auth.knownHostsEnv}`);
   }
+
+  if (auth.strategy === "credential_helper" && readEnv(env, auth.helperEnv) === undefined) {
+    throw new Error(`Missing Git credential.helper environment variable: ${auth.helperEnv}`);
+  }
 }
 
 function readRequiredEnv(env: NodeJS.ProcessEnv, name: string): string {
@@ -258,4 +285,25 @@ function readEnv(env: NodeJS.ProcessEnv, name: string): string | undefined {
 
 function shellQuote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`;
+}
+
+function assertSafeCredentialHelperValue(value: string, envName: string): void {
+  if (hasControlCharacter(value)) {
+    throw new Error(`Git credential.helper environment variable contains control characters: ${envName}`);
+  }
+}
+
+function escapeGitConfigValue(value: string): string {
+  return `"${value
+    .replaceAll("\\", "\\\\")
+    .replaceAll('"', '\\"')
+    .replaceAll("\n", "\\n")
+    .replaceAll("\t", "\\t")}"`;
+}
+
+function hasControlCharacter(value: string): boolean {
+  return [...value].some((character) => {
+    const code = character.charCodeAt(0);
+    return code <= 0x1f || code === 0x7f;
+  });
 }

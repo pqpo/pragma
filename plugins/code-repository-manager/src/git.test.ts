@@ -108,6 +108,64 @@ describe("Git session environment", () => {
     expect(env.XDG_CONFIG_HOME).toBeUndefined();
   });
 
+  it("writes credential.helper to an isolated temporary Git config", async () => {
+    const root = await createTempDir();
+    const env: NodeJS.ProcessEnv = {
+      PATH: process.env.PATH,
+      TEST_CREDENTIAL_HELPER: "!test-git-credential-helper",
+    };
+    const config = parseCodeRepositoryManagerConfig({
+      auth: {
+        strategy: "credential_helper",
+        helperEnv: "TEST_CREDENTIAL_HELPER",
+      },
+    });
+
+    const prepared = await prepareGitSessionEnvironment(config, {
+      gitCommand: await createFakeGit(root),
+      env,
+    });
+
+    expect(prepared.authStrategy).toBe("credential_helper");
+    expect(env.GIT_CONFIG_GLOBAL).toBeDefined();
+    expect(env.GIT_CONFIG_GLOBAL).not.toBe("/dev/null");
+    expect(env.GIT_TERMINAL_PROMPT).toBe("0");
+    expect(env.HOME).toBeDefined();
+    expect(env.XDG_CONFIG_HOME).toBe(env.HOME);
+    await expect(readFile(env.GIT_CONFIG_GLOBAL ?? "", "utf8")).resolves.toContain(
+      'helper = "!test-git-credential-helper"',
+    );
+
+    const homePath = env.HOME;
+    await prepared.cleanup();
+
+    expect(env.GIT_CONFIG_GLOBAL).toBeUndefined();
+    expect(env.HOME).toBeUndefined();
+    expect(env.XDG_CONFIG_HOME).toBeUndefined();
+    await expect(stat(homePath ?? "")).rejects.toThrow();
+  });
+
+  it("rejects credential.helper values with control characters", async () => {
+    const root = await createTempDir();
+    const env: NodeJS.ProcessEnv = {
+      PATH: process.env.PATH,
+      TEST_CREDENTIAL_HELPER: "!helper\nextra-command",
+    };
+    const config = parseCodeRepositoryManagerConfig({
+      auth: {
+        strategy: "credential_helper",
+        helperEnv: "TEST_CREDENTIAL_HELPER",
+      },
+    });
+
+    await expect(
+      prepareGitSessionEnvironment(config, {
+        gitCommand: await createFakeGit(root),
+        env,
+      }),
+    ).rejects.toThrow(/control characters/);
+  });
+
   it("isolates Git config for unauthenticated sessions", async () => {
     const root = await createTempDir();
     const env: NodeJS.ProcessEnv = {

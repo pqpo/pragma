@@ -23,6 +23,12 @@
       "secret": false
     },
     {
+      "name": "EXPERTMESH_PLUGIN_CODE_REPOSITORY_MANAGER_GIT_CREDENTIAL_HELPER",
+      "description": "Optional git credential.helper value used for session Git authentication.",
+      "required": false,
+      "secret": true
+    },
+    {
       "name": "EXPERTMESH_PLUGIN_CODE_REPOSITORY_MANAGER_SSH_PRIVATE_KEY",
       "description": "Optional SSH private key used by the code repository manager for SSH Git remotes.",
       "required": false,
