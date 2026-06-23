@@ -1,8 +1,8 @@
 # Code Repository Manager Plugin
 
-This ExpertMesh plugin exposes a configured list of Git repositories as Agent documents and provides managed tools for preparing Git and cloning repositories into the Agent workspace.
+This ExpertMesh plugin exposes a configured list of Git repositories as Agent documents and prepares Git authentication before each Agent runtime session starts.
 
-The plugin never injects secrets into documents. Token and SSH material are read from environment variables only when Git commands run.
+The plugin never injects secrets into documents. Token and SSH material are read from environment variables only when the session Git environment is prepared.
 
 ## Plugin Package Usage
 
@@ -14,9 +14,9 @@ plugin.json
 dist/index.js
 ```
 
-Install or load the plugin by passing its directory or zip path to `ExpertAgent.create`.
-The loader copies or extracts the plugin into the Agent workspace before importing the
-manifest entry.
+Pass the plugin directory or zip path to `ExpertAgent.create`. The factory loads
+the plugin, copies or extracts it into the Agent workspace, and constructs the
+Agent with resolved plugin entries.
 
 ```ts
 import { ExpertAgent, createInMemoryDocumentStore } from "@expertmesh/agent-core";
@@ -52,7 +52,7 @@ const agent = await ExpertAgent.create({
       },
     ],
   }),
-  pluginSources: ["/path/to/code-repository-manager"],
+  plugins: ["/path/to/code-repository-manager"],
 });
 ```
 
@@ -71,7 +71,8 @@ EXPERTMESH_PLUGIN_CODE_REPOSITORY_MANAGER_SSH_KNOWN_HOSTS
 
 Repository lists are dynamic Agent data. Put them in the host Agent document
 `repositories.json`; if the document is missing, the plugin skips repository document
-injection. Repositories are cloned to `workspace/repos/<repository id>`.
+injection. Agents should use bash `git` directly and clone repositories to
+`workspace/repos/<repository id>`.
 
 Run the repository example from the monorepo root:
 

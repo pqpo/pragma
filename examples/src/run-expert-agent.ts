@@ -21,7 +21,7 @@ const workspace = defaultWorkspaceRoot;
 await ensureWorkspaceDir(workspace);
 
 const modelConfig = readExampleModelConfig();
-const agent = new ExpertAgent({
+const agent = await ExpertAgent.create({
   schemaVersion: "expertmesh.expert/v1",
   id: "basic-example-expert",
   displayName: "Basic Example Expert",

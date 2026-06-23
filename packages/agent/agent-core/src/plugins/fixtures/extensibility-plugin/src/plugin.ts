@@ -1,4 +1,4 @@
-import { definePluginEntry } from "../../../expert-agent-plugin.ts";
+import { definePluginEntry } from "@expertmesh/agent-core";
 
 export const events: string[] = [];
 
@@ -56,3 +56,5 @@ export const extensibilityPlugin = definePluginEntry({
     },
   }),
 });
+
+export default extensibilityPlugin;

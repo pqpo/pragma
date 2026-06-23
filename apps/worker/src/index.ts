@@ -1,6 +1,6 @@
 import { ExpertAgent } from "@expertmesh/agent-core";
 
-const placeholderAgent = new ExpertAgent({
+const placeholderAgent = await ExpertAgent.create({
   schemaVersion: "expertmesh.expert/v1",
   id: "phase-0-placeholder",
   displayName: "Phase 0 Placeholder",

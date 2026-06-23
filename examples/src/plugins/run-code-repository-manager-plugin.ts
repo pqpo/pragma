@@ -1,4 +1,7 @@
-import { ExpertAgent, createInMemoryDocumentStore } from "@expertmesh/agent-core";
+import {
+  ExpertAgent,
+  createInMemoryDocumentStore,
+} from "@expertmesh/agent-core";
 
 import { defaultWorkspaceRoot, ensureWorkspaceDir, resolveExamplePath } from "../harness/paths.ts";
 
@@ -74,7 +77,7 @@ if (repositoryDocument.ok) {
 }
 
 console.log("");
-console.log("Plugin tools:");
-for (const tool of agent.tools ?? []) {
-  console.log(`- ${tool.name}: ${tool.description}`);
-}
+console.log("Plugin Git environment hook:");
+console.log(
+  agent.hooks?.beforeSessionCreate === undefined ? "- not configured" : "- beforeSessionCreate",
+);

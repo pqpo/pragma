@@ -1,11 +1,23 @@
-import { describe, expect, it } from "vitest";
+import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+import { afterEach, describe, expect, it } from "vitest";
 
 import { ExpertAgent, createInMemoryDocumentStore } from "@expertmesh/agent-core";
 import { readExpertAgentPluginManifest } from "@expertmesh/agent-core";
 
 import { CODE_REPOSITORY_DOCUMENT_ID } from "./document.ts";
-import codeRepositoryManagerPlugin from "./plugin.ts";
+import codeRepositoryManagerPlugin from "./index.ts";
 import { parseCodeRepositoryManagerConfig } from "./schema.ts";
+
+const packageRoot = fileURLToPath(new URL("../", import.meta.url));
+const repoRoot = fileURLToPath(new URL("../../../", import.meta.url));
+const tempDirs: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+});
 
 describe("Code Repository Manager plugin", () => {
   it("reads plugin metadata from plugin.json at runtime", () => {
@@ -22,7 +34,8 @@ describe("Code Repository Manager plugin", () => {
   });
 
   it("injects repository metadata as a model-decision document by default", async () => {
-    const agent = new ExpertAgent({
+    const pluginSource = await createLoadablePluginSource();
+    const agent = await ExpertAgent.create({
       schemaVersion: "expertmesh.expert/v1",
       id: "repo-agent",
       displayName: "Repo Agent",
@@ -30,7 +43,7 @@ describe("Code Repository Manager plugin", () => {
       tags: ["test"],
       version: "0.0.0",
       scope: "test",
-      workspace: "/tmp/expertmesh",
+      workspace: await createWorkspaceDir(),
       documents: createInMemoryDocumentStore({
         documents: [
           {
@@ -51,7 +64,7 @@ describe("Code Repository Manager plugin", () => {
           },
         ],
       }),
-      installedPluginEntries: [codeRepositoryManagerPlugin],
+      plugins: [pluginSource],
     });
 
     await expect(agent.listDocuments()).resolves.toMatchObject({
@@ -81,7 +94,8 @@ describe("Code Repository Manager plugin", () => {
   });
 
   it("skips repository documents when repositories.json is not configured", async () => {
-    const agent = new ExpertAgent({
+    const pluginSource = await createLoadablePluginSource();
+    const agent = await ExpertAgent.create({
       schemaVersion: "expertmesh.expert/v1",
       id: "repo-agent",
       displayName: "Repo Agent",
@@ -89,8 +103,8 @@ describe("Code Repository Manager plugin", () => {
       tags: ["test"],
       version: "0.0.0",
       scope: "test",
-      workspace: "/tmp/expertmesh",
-      installedPluginEntries: [codeRepositoryManagerPlugin],
+      workspace: await createWorkspaceDir(),
+      plugins: [pluginSource],
     });
 
     await expect(agent.listDocuments()).resolves.toMatchObject({
@@ -99,17 +113,16 @@ describe("Code Repository Manager plugin", () => {
     });
   });
 
-  it("exposes prepare and ensure repository tools", () => {
+  it("prepares Git through session hooks instead of exposing Git operation tools", () => {
     const contributions = codeRepositoryManagerPlugin.setup({
       host: {},
       workspaceRoot: "/tmp/expertmesh",
       env: process.env,
     });
 
-    expect(contributions.tools?.map((tool) => tool.name)).toEqual([
-      "code_repository_manager_prepare_git",
-      "code_repository_manager_ensure_repository",
-    ]);
+    expect(contributions.tools).toBeUndefined();
+    expect(contributions.hooks?.beforeSessionCreate).toBeDefined();
+    expect(contributions.hooks?.afterSessionDestroy).toBeDefined();
   });
 
   it("rejects repository clone URLs and branch names that could be interpreted as Git options", () => {
@@ -155,3 +168,35 @@ describe("Code Repository Manager plugin", () => {
     ).toThrow();
   });
 });
+
+async function createLoadablePluginSource(): Promise<string> {
+  const sourceDir = await createTempDir(repoRoot, "source");
+  await cp(packageRoot, sourceDir, {
+    recursive: true,
+    filter: (source) =>
+      !source.includes("/node_modules/") &&
+      !source.includes("/dist/") &&
+      !source.includes("/.turbo/"),
+  });
+
+  const manifestPath = resolve(sourceDir, "plugin.json");
+  const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as {
+    runtime: {
+      entry: string;
+    };
+  };
+  manifest.runtime.entry = "./src/index.ts";
+  await writeFile(manifestPath, JSON.stringify(manifest, null, 2), "utf8");
+
+  return sourceDir;
+}
+
+async function createWorkspaceDir(): Promise<string> {
+  return await createTempDir(packageRoot, "workspace");
+}
+
+async function createTempDir(baseDir: string, kind: string): Promise<string> {
+  const dir = await mkdtemp(resolve(baseDir, `.expertmesh-code-repository-${kind}-`));
+  tempDirs.push(dir);
+  return dir;
+}

@@ -12,7 +12,7 @@ describe("createPiRuntimeSession", () => {
     const piSession = createFakeAgentSession(['{"summary":"done","confidence":0.9}']);
     const lifecycle = createQueuedAgentLifecycle(undefined);
     const runtimeSession = createPiRuntimeSession(
-      createTestAgent(),
+      await createTestAgent(),
       piSession,
       {
         systemSessionId: "system-session-1",
@@ -59,7 +59,7 @@ describe("createPiRuntimeSession", () => {
     const piSession = createFakeAgentSession([
       'Here is the result:\n```json\n{"summary":"done","confidence":0.9}\n```',
     ]);
-    const runtimeSession = createTestRuntimeSession(piSession);
+    const runtimeSession = await createTestRuntimeSession(piSession);
 
     const result = await runtimeSession.submit({
       query: "Summarize input",
@@ -77,7 +77,7 @@ describe("createPiRuntimeSession", () => {
 
   it("retries structured output parsing failures with parser context", async () => {
     const piSession = createFakeAgentSession(["not json", '{"summary":"done","confidence":0.9}']);
-    const runtimeSession = createTestRuntimeSession(piSession, {
+    const runtimeSession = await createTestRuntimeSession(piSession, {
       outputRetryLimit: 1,
     });
 
@@ -115,7 +115,7 @@ describe("createPiRuntimeSession", () => {
         }),
       ],
     );
-    const runtimeSession = createTestRuntimeSession(piSession, {
+    const runtimeSession = await createTestRuntimeSession(piSession, {
       outputRetryLimit: 1,
     });
     const handle = runtimeSession.submit({
@@ -151,7 +151,7 @@ describe("createPiRuntimeSession", () => {
 
   it("fails after the configured structured output retry limit", async () => {
     const piSession = createFakeAgentSession(["not json"]);
-    const runtimeSession = createTestRuntimeSession(piSession, {
+    const runtimeSession = await createTestRuntimeSession(piSession, {
       outputRetryLimit: 0,
     });
 
@@ -177,7 +177,7 @@ describe("createPiRuntimeSession", () => {
       provider: "openai",
     };
     const runtimeSession = createPiRuntimeSession(
-      createTestAgent(),
+      await createTestAgent(),
       piSession,
       {
         systemSessionId: "system-session-1",
@@ -210,7 +210,7 @@ describe("createPiRuntimeSession", () => {
 
   it("returns a submit handle immediately and streams ordered events", async () => {
     const piSession = createFakeAgentSession(["done"]);
-    const runtimeSession = createTestRuntimeSession(piSession);
+    const runtimeSession = await createTestRuntimeSession(piSession);
 
     const handle = runtimeSession.submit({
       query: "Summarize input",
@@ -244,7 +244,7 @@ describe("createPiRuntimeSession", () => {
 
   it("emits run.failed and rejects result when prompt fails", async () => {
     const piSession = createFakeAgentSession(["done"], [], new Error("prompt failed"));
-    const runtimeSession = createTestRuntimeSession(piSession);
+    const runtimeSession = await createTestRuntimeSession(piSession);
     const handle = runtimeSession.submit({
       query: "Summarize input",
     });
@@ -262,7 +262,7 @@ describe("createPiRuntimeSession", () => {
     );
   });
 
-  it("exposes runtime-independent message history as a readonly snapshot", () => {
+  it("exposes runtime-independent message history as a readonly snapshot", async () => {
     const piSession = createFakeAgentSession(["done"]);
     const messages = [
       {
@@ -312,7 +312,7 @@ describe("createPiRuntimeSession", () => {
       },
     ];
     setFakeAgentSessionMessages(piSession, messages);
-    const runtimeSession = createTestRuntimeSession(piSession);
+    const runtimeSession = await createTestRuntimeSession(piSession);
 
     const firstRead = runtimeSession.messages();
     const secondRead = runtimeSession.messages();
@@ -321,7 +321,7 @@ describe("createPiRuntimeSession", () => {
     expect(firstRead).not.toBe(secondRead);
   });
 
-  it("preserves unsupported runtime messages as hidden platform custom messages", () => {
+  it("preserves unsupported runtime messages as hidden platform custom messages", async () => {
     const piSession = createFakeAgentSession(["done"]);
     const runtimeOnlyMessage = {
       role: "runtimeTrace",
@@ -329,7 +329,7 @@ describe("createPiRuntimeSession", () => {
       timestamp: 1,
     };
     setFakeAgentSessionMessages(piSession, [runtimeOnlyMessage]);
-    const runtimeSession = createTestRuntimeSession(piSession);
+    const runtimeSession = await createTestRuntimeSession(piSession);
 
     expect(runtimeSession.messages()).toEqual([
       expect.objectContaining({
@@ -343,14 +343,14 @@ describe("createPiRuntimeSession", () => {
   });
 });
 
-function createTestRuntimeSession(
+async function createTestRuntimeSession(
   piSession: AgentSession,
   options: {
     readonly outputRetryLimit?: number | undefined;
   } = {},
 ) {
   return createPiRuntimeSession(
-    createTestAgent(),
+    await createTestAgent(),
     piSession,
     {
       systemSessionId: "system-session-1",
@@ -375,8 +375,8 @@ function createTestRuntimeSession(
   );
 }
 
-function createTestAgent(): ExpertAgent {
-  return new ExpertAgent({
+async function createTestAgent(): Promise<ExpertAgent> {
+  return await ExpertAgent.create({
     schemaVersion: "expertmesh.expert/v1",
     id: "agent-1",
     displayName: "Test Agent",

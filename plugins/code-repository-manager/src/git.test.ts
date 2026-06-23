@@ -1,18 +1,11 @@
-import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { ensureRepository, resolveRepositoryWorkspacePath } from "./git.ts";
+import { prepareGitSessionEnvironment, resolveRepositoryWorkspacePath } from "./git.ts";
 import { parseCodeRepositoryManagerConfig } from "./schema.ts";
-
-interface GitLogEntry {
-  readonly command: string | undefined;
-  readonly args: readonly string[];
-  readonly token: string | undefined;
-  readonly unrelatedSecret: string | undefined;
-}
 
 const tempDirs: string[] = [];
 
@@ -29,106 +22,123 @@ describe("Git workspace path resolution", () => {
       }),
     ).toBe("/tmp/expertmesh/repos/repo");
   });
+});
 
-  it("rejects existing repository paths that resolve outside workspace", async () => {
+describe("Git session environment", () => {
+  it("prepares token auth for direct bash git and restores env on cleanup", async () => {
     const root = await createTempDir();
-    const workspace = resolve(root, "workspace");
-    const outside = resolve(root, "outside");
-    const link = resolve(workspace, "repos", "repo");
-    await mkdir(resolve(workspace, "repos"), { recursive: true });
-    await mkdir(outside, { recursive: true });
-    await symlink(outside, link);
-
-    const config = parseCodeRepositoryManagerConfig({
-      auth: { strategy: "none" },
-      repositories: [
-        {
-          id: "repo",
-          name: "Repo",
-          cloneUrl: "https://github.com/example/repo.git",
-          defaultBranch: "main",
-        },
-      ],
-    });
-
-    await expect(
-      ensureRepository(config, {
-        repoId: "repo",
-        workspaceRoot: workspace,
-        gitCommand: await createFakeGit(root, "https://github.com/example/repo.git"),
-      }),
-    ).rejects.toThrow("must resolve inside workspace");
-  });
-
-  it("rejects existing repositories whose origin does not match the configured cloneUrl", async () => {
-    const root = await createTempDir();
-    const workspace = resolve(root, "workspace");
-    const target = resolve(workspace, "repos", "repo");
-    await mkdir(target, { recursive: true });
-
-    const config = parseCodeRepositoryManagerConfig({
-      auth: { strategy: "none" },
-      repositories: [
-        {
-          id: "repo",
-          name: "Repo",
-          cloneUrl: "https://github.com/example/repo.git",
-          defaultBranch: "main",
-        },
-      ],
-    });
-
-    await expect(
-      ensureRepository(config, {
-        repoId: "repo",
-        workspaceRoot: workspace,
-        gitCommand: await createFakeGit(root, "https://github.com/other/repo.git"),
-      }),
-    ).rejects.toThrow("origin does not match");
-  });
-
-  it("uses token auth only for network fetch and keeps unrelated secrets out of git env", async () => {
-    const root = await createTempDir();
-    const workspace = resolve(root, "workspace");
-    const target = resolve(workspace, "repos", "repo");
-    const logPath = resolve(root, "git-log.jsonl");
-    await mkdir(target, { recursive: true });
-
+    const env: NodeJS.ProcessEnv = {
+      PATH: process.env.PATH,
+      TEST_GIT_TOKEN: "secret-token",
+      UNRELATED_SECRET: "do-not-pass",
+    };
     const config = parseCodeRepositoryManagerConfig({
       auth: {
         strategy: "token",
         tokenEnv: "TEST_GIT_TOKEN",
-      },
-      repositories: [
-        {
-          id: "repo",
-          name: "Repo",
-          cloneUrl: "https://github.com/example/repo.git",
-          defaultBranch: "main",
-        },
-      ],
-    });
-
-    await ensureRepository(config, {
-      repoId: "repo",
-      workspaceRoot: workspace,
-      gitCommand: await createFakeGit(root, "https://github.com/example/repo.git", logPath),
-      env: {
-        PATH: process.env.PATH,
-        TEST_GIT_TOKEN: "secret-token",
-        UNRELATED_SECRET: "do-not-pass",
+        username: "oauth2",
       },
     });
 
-    const entries = await readGitLog(logPath);
-    const byCommand = new Map(entries.map((entry) => [entry.command, entry]));
+    const prepared = await prepareGitSessionEnvironment(config, {
+      gitCommand: await createFakeGit(root),
+      env,
+    });
 
-    expect(byCommand.get("fetch")?.token).toBe("secret-token");
-    expect(byCommand.get("fetch")).not.toHaveProperty("unrelatedSecret");
-    expect(byCommand.get("checkout")).not.toHaveProperty("token");
-    expect(byCommand.get("checkout")).not.toHaveProperty("unrelatedSecret");
-    expect(byCommand.get("merge")).not.toHaveProperty("token");
-    expect(byCommand.get("merge")).not.toHaveProperty("unrelatedSecret");
+    expect(prepared.authStrategy).toBe("token");
+    expect(env.GIT_ASKPASS).toBeDefined();
+    expect(env.GIT_TERMINAL_PROMPT).toBe("0");
+    expect(env.GIT_CONFIG_NOSYSTEM).toBe("1");
+    expect(env.GIT_CONFIG_GLOBAL).toBe("/dev/null");
+    expect(env.EXPERTMESH_GIT_USERNAME).toBe("oauth2");
+    expect(env.EXPERTMESH_GIT_TOKEN).toBe("secret-token");
+    expect(env.HOME).toBeDefined();
+    expect(env.XDG_CONFIG_HOME).toBe(env.HOME);
+    expect(env.UNRELATED_SECRET).toBe("do-not-pass");
+
+    const homePath = env.HOME;
+    expect((await stat(homePath ?? "")).isDirectory()).toBe(true);
+
+    await prepared.cleanup();
+
+    expect(env.GIT_ASKPASS).toBeUndefined();
+    expect(env.GIT_TERMINAL_PROMPT).toBeUndefined();
+    expect(env.GIT_CONFIG_NOSYSTEM).toBeUndefined();
+    expect(env.GIT_CONFIG_GLOBAL).toBeUndefined();
+    expect(env.EXPERTMESH_GIT_USERNAME).toBeUndefined();
+    expect(env.EXPERTMESH_GIT_TOKEN).toBeUndefined();
+    expect(env.HOME).toBeUndefined();
+    expect(env.XDG_CONFIG_HOME).toBeUndefined();
+    expect(env.UNRELATED_SECRET).toBe("do-not-pass");
+    await expect(stat(homePath ?? "")).rejects.toThrow();
+  });
+
+  it("writes SSH identity to a temporary session file and removes it on cleanup", async () => {
+    const root = await createTempDir();
+    const env: NodeJS.ProcessEnv = {
+      PATH: process.env.PATH,
+      TEST_SSH_KEY: "test-private-key",
+      TEST_KNOWN_HOSTS: "github.com ssh-ed25519 AAAA",
+    };
+    const config = parseCodeRepositoryManagerConfig({
+      auth: {
+        strategy: "ssh",
+        privateKeyEnv: "TEST_SSH_KEY",
+        knownHostsEnv: "TEST_KNOWN_HOSTS",
+      },
+    });
+
+    const prepared = await prepareGitSessionEnvironment(config, {
+      gitCommand: await createFakeGit(root),
+      env,
+    });
+    const identityPath = env.GIT_SSH_COMMAND?.match(/-i '([^']+)'/)?.[1];
+
+    expect(prepared.authStrategy).toBe("ssh");
+    expect(identityPath).toBeDefined();
+    expect(env.HOME).toBeDefined();
+    expect(env.XDG_CONFIG_HOME).toBe(env.HOME);
+    await expect(readFile(identityPath ?? "", "utf8")).resolves.toBe("test-private-key");
+
+    await prepared.cleanup();
+
+    await expect(readFile(identityPath ?? "", "utf8")).rejects.toThrow();
+    expect(env.GIT_SSH_COMMAND).toBeUndefined();
+    expect(env.HOME).toBeUndefined();
+    expect(env.XDG_CONFIG_HOME).toBeUndefined();
+  });
+
+  it("isolates Git config for unauthenticated sessions", async () => {
+    const root = await createTempDir();
+    const env: NodeJS.ProcessEnv = {
+      PATH: process.env.PATH,
+    };
+    const config = parseCodeRepositoryManagerConfig({
+      auth: { strategy: "none" },
+    });
+
+    const prepared = await prepareGitSessionEnvironment(config, {
+      gitCommand: await createFakeGit(root),
+      env,
+    });
+
+    expect(prepared.authStrategy).toBe("none");
+    expect(env.GIT_TERMINAL_PROMPT).toBe("0");
+    expect(env.GIT_CONFIG_NOSYSTEM).toBe("1");
+    expect(env.GIT_CONFIG_GLOBAL).toBe("/dev/null");
+    expect(env.HOME).toBeDefined();
+    expect(env.XDG_CONFIG_HOME).toBe(env.HOME);
+
+    const homePath = env.HOME;
+    expect((await stat(homePath ?? "")).isDirectory()).toBe(true);
+    await prepared.cleanup();
+
+    expect(env.GIT_TERMINAL_PROMPT).toBeUndefined();
+    expect(env.GIT_CONFIG_NOSYSTEM).toBeUndefined();
+    expect(env.GIT_CONFIG_GLOBAL).toBeUndefined();
+    expect(env.HOME).toBeUndefined();
+    expect(env.XDG_CONFIG_HOME).toBeUndefined();
+    await expect(stat(homePath ?? "")).rejects.toThrow();
   });
 });
 
@@ -138,47 +148,18 @@ async function createTempDir(): Promise<string> {
   return path;
 }
 
-async function createFakeGit(root: string, origin: string, logPath?: string): Promise<string> {
+async function createFakeGit(root: string): Promise<string> {
   const scriptPath = resolve(root, "fake-git.cjs");
   await writeFile(
     scriptPath,
     [
       "#!/usr/bin/env node",
-      "const { appendFileSync } = require('node:fs');",
-      `const origin = ${JSON.stringify(origin)};`,
-      `const logPath = ${JSON.stringify(logPath)};`,
-      "const args = process.argv.slice(2);",
-      "let index = 0;",
-      "while (args[index] === '-c') index += 2;",
-      "while (args[index] === '-C') index += 2;",
-      "const command = args[index];",
-      "if (logPath !== undefined) {",
-      "  appendFileSync(logPath, JSON.stringify({",
-      "    command,",
-      "    args,",
-      "    token: process.env.EXPERTMESH_GIT_TOKEN,",
-      "    unrelatedSecret: process.env.UNRELATED_SECRET,",
-      "  }) + '\\n');",
-      "}",
-      "if (args.includes('--version')) {",
+      "if (process.argv.includes('--version')) {",
       "  process.stdout.write('git version fake\\n');",
-      "} else if (command === 'rev-parse') {",
-      "  process.stdout.write('true\\n');",
-      "} else if (command === 'remote') {",
-      "  process.stdout.write(origin + '\\n');",
       "}",
     ].join("\n"),
     "utf8",
   );
   await chmod(scriptPath, 0o700);
   return scriptPath;
-}
-
-async function readGitLog(path: string): Promise<readonly GitLogEntry[]> {
-  const content = await readFile(path, "utf8");
-  return content
-    .trim()
-    .split("\n")
-    .filter((line) => line.length > 0)
-    .map((line) => JSON.parse(line) as GitLogEntry);
 }

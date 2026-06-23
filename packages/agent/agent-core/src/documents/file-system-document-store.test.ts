@@ -22,7 +22,7 @@ describe("FileSystemDocumentStore", () => {
     const rootDir = await createTempDir();
     await writeFile(join(rootDir, AGENTS_DOCUMENT_ID), "Use direct instructions.", "utf8");
 
-    const agent = new ExpertAgent({
+    const agent = await ExpertAgent.create({
       schemaVersion: "expertmesh.expert/v1",
       id: "test-agent",
       displayName: "Test Agent",
@@ -357,7 +357,7 @@ describe("DocumentIndexer", () => {
         },
       ],
     });
-    const agent = new ExpertAgent({
+    const agent = await ExpertAgent.create({
       schemaVersion: "expertmesh.expert/v1",
       id: "context-agent",
       displayName: "Context Agent",
@@ -427,7 +427,7 @@ describe("DocumentIndexer", () => {
         },
       ],
     });
-    const agent = new ExpertAgent({
+    const agent = await ExpertAgent.create({
       schemaVersion: "expertmesh.expert/v1",
       id: "budget-agent",
       displayName: "Budget Agent",
@@ -693,7 +693,7 @@ describe("DocumentIndexer", () => {
   });
 
   it("limits read tool output by default", async () => {
-    const agent = new ExpertAgent({
+    const agent = await ExpertAgent.create({
       schemaVersion: "expertmesh.expert/v1",
       id: "tool-agent",
       displayName: "Tool Agent",

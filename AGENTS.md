@@ -461,6 +461,12 @@ ContextManager
 RuntimeAdapter
 ```
 
+ExpertAgent API 设计要求：
+
+- 优先用构造函数表达必需依赖、配置和不变量，不要额外提供与构造函数等价的 `create()` 静态工厂。
+- 只有在确实需要异步初始化、实例缓存复用、复杂命名构造语义或隐藏具体实现类型时，才允许引入工厂方法；不能为了“以后可能变化”或向前兼容保留一层空包装。
+- 如果发现已有 `create()` 只是转调构造函数，应删除该工厂并同步更新调用方、类型和文档。
+
 不要引入具体 Claude SDK、Codex SDK、MCP、Playbook、HTTP Controller、数据库实现或 Server 应用层实现。
 
 ### `packages/agent/agent-runtime`

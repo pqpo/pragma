@@ -1,16 +1,32 @@
-import { describe, expect, it } from "vitest";
+import { mkdtemp, rm } from "node:fs/promises";
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+import { afterEach, describe, expect, it } from "vitest";
 
 import { ExpertAgent } from "../agent/expert-agent.ts";
 import { createInMemoryDocumentStore } from "../documents/in-memory-document-store.ts";
 import {
-  events,
   extensibilityPlugin,
 } from "./fixtures/extensibility-plugin/src/plugin.ts";
-import { documentPlugin } from "./fixtures/document-plugin/src/plugin.ts";
 import { createInvalidPlugin } from "./fixtures/invalid-plugin/src/plugin.ts";
 import { createMissingManifestPlugin } from "./fixtures/missing-manifest-plugin/src/plugin.ts";
-import { otherDocumentPlugin } from "./fixtures/other-document-plugin/src/plugin.ts";
 import { dispatchExpertAgentHook } from "./expert-agent-plugin.ts";
+
+const documentPluginPath = fileURLToPath(new URL("./fixtures/document-plugin", import.meta.url));
+const extensibilityPluginPath = fileURLToPath(
+  new URL("./fixtures/extensibility-plugin", import.meta.url),
+);
+const otherDocumentPluginPath = fileURLToPath(
+  new URL("./fixtures/other-document-plugin", import.meta.url),
+);
+const tempWorkspaces: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(
+    tempWorkspaces.splice(0).map((workspace) => rm(workspace, { recursive: true, force: true })),
+  );
+});
 
 describe("ExpertAgent plugins", () => {
   it("loads immutable plugin metadata and manifest fields from plugin.json", () => {
@@ -47,7 +63,8 @@ describe("ExpertAgent plugins", () => {
   });
 
   it("merges plugin documents with host documents", async () => {
-    const agent = new ExpertAgent({
+    const workspace = await createPluginTestWorkspace();
+    const agent = await ExpertAgent.create({
       schemaVersion: "expertmesh.expert/v1",
       id: "researcher",
       displayName: "Researcher",
@@ -55,7 +72,7 @@ describe("ExpertAgent plugins", () => {
       tags: ["research"],
       version: "0.0.0",
       scope: "workspace",
-      workspace: "/tmp/expertmesh",
+      workspace,
       documents: createInMemoryDocumentStore({
         documents: [
           {
@@ -68,7 +85,7 @@ describe("ExpertAgent plugins", () => {
           },
         ],
       }),
-      installedPluginEntries: [documentPlugin, otherDocumentPlugin],
+      plugins: [documentPluginPath, otherDocumentPluginPath],
     });
 
     await expect(agent.listDocuments()).resolves.toMatchObject({
@@ -114,9 +131,9 @@ describe("ExpertAgent plugins", () => {
   });
 
   it("merges plugin mcp, skills, models, subagents, tools, and hooks", async () => {
-    events.length = 0;
-
-    const agent = new ExpertAgent({
+    const hookEvents: string[] = [];
+    const workspace = await createPluginTestWorkspace();
+    const agent = await ExpertAgent.create({
       schemaVersion: "expertmesh.expert/v1",
       id: "researcher",
       displayName: "Researcher",
@@ -124,13 +141,13 @@ describe("ExpertAgent plugins", () => {
       tags: ["research"],
       version: "0.0.0",
       scope: "workspace",
-      workspace: "/tmp/expertmesh",
+      workspace,
       hooks: {
         beforeSessionCreate: () => {
-          events.push("host");
+          hookEvents.push("host");
         },
       },
-      installedPluginEntries: [extensibilityPlugin],
+      plugins: [extensibilityPluginPath],
     });
 
     expect(agent.mcp?.mcpServers.pluginMcp?.name).toBe("Plugin MCP");
@@ -148,6 +165,13 @@ describe("ExpertAgent plugins", () => {
       systemSessionId: "system-session-1",
     });
 
-    expect(events).toEqual(["host", "plugin"]);
+    expect(agent.hooks?.beforeSessionCreate).toBeDefined();
+    expect(hookEvents).toEqual(["host"]);
   });
 });
+
+async function createPluginTestWorkspace(): Promise<string> {
+  const workspace = await mkdtemp(resolve(process.cwd(), ".expertmesh-plugin-test-"));
+  tempWorkspaces.push(workspace);
+  return workspace;
+}

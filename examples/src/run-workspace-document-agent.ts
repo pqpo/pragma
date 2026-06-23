@@ -43,7 +43,7 @@ const documentStore = createExampleDocumentStore(documentsDir);
 await ensureWorkspaceDir(workspace);
 
 const modelConfig = readExampleModelConfig();
-const agent = new ExpertAgent({
+const agent = await ExpertAgent.create({
   schemaVersion: "expertmesh.expert/v1",
   id: "workspace-document-test-expert",
   displayName: "Workspace Document Test Expert",

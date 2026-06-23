@@ -1,11 +1,11 @@
 import { execFile } from "node:child_process";
-import { mkdtemp, mkdir, rm, writeFile, chmod, access, realpath } from "node:fs/promises";
+import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, isAbsolute, relative, resolve } from "node:path";
+import { isAbsolute, relative, resolve } from "node:path";
 import { promisify } from "node:util";
 
-import type { CodeRepository, CodeRepositoryAuth, CodeRepositoryManagerConfig } from "./schema.ts";
 import { defaultRepositoryWorkspacePath } from "./document.ts";
+import type { CodeRepository, CodeRepositoryAuth, CodeRepositoryManagerConfig } from "./schema.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -15,35 +15,31 @@ export interface GitCommandOptions {
   readonly signal?: AbortSignal | undefined;
 }
 
-export interface GitPrepareResult {
+export interface GitSessionEnvironment {
   readonly gitVersion: string;
   readonly authStrategy: CodeRepositoryAuth["strategy"];
-  readonly repositoryCount: number;
+  readonly env: Readonly<Record<string, string>>;
+  readonly cleanup: () => Promise<void>;
 }
 
-export interface EnsureRepositoryOptions extends GitCommandOptions {
-  readonly repoId: string;
-  readonly workspaceRoot: string;
-}
-
-export interface EnsureRepositoryResult {
-  readonly repoId: string;
-  readonly path: string;
-  readonly action: "cloned" | "fetched";
-  readonly branch: string;
-}
-
-export async function prepareGitEnvironment(
+export async function prepareGitSessionEnvironment(
   config: CodeRepositoryManagerConfig,
   options: GitCommandOptions = {},
-): Promise<GitPrepareResult> {
+): Promise<GitSessionEnvironment> {
+  const env = options.env ?? process.env;
   const gitVersion = await checkGitCli(options);
-  assertAuthEnvironment(config.auth, options.env ?? process.env);
+  assertAuthEnvironment(config.auth, env);
+  const prepared = await createGitSessionEnvironment(config.auth, env);
+  const restore = applyGitEnvironment(env, prepared.env);
 
   return {
     gitVersion,
     authStrategy: config.auth.strategy,
-    repositoryCount: config.repositories.length,
+    env: prepared.env,
+    cleanup: async () => {
+      restore();
+      await prepared.cleanup();
+    },
   };
 }
 
@@ -55,55 +51,6 @@ export async function checkGitCli(options: GitCommandOptions = {}): Promise<stri
   return result.stdout.trim();
 }
 
-export async function ensureRepository(
-  config: CodeRepositoryManagerConfig,
-  options: EnsureRepositoryOptions,
-): Promise<EnsureRepositoryResult> {
-  const repository = findRepository(config, options.repoId);
-  const targetPath = resolveRepositoryWorkspacePath(options.workspaceRoot, repository);
-  const branch = repository.defaultBranch;
-  const baseEnv = options.env ?? process.env;
-  const safeOptions = {
-    ...options,
-    env: createGitProcessEnv(baseEnv),
-  };
-
-  assertAuthEnvironment(config.auth, baseEnv);
-  await mkdir(options.workspaceRoot, { recursive: true });
-
-  if (await pathExists(targetPath)) {
-    await assertRealPathInsideWorkspace(options.workspaceRoot, targetPath, repository.id);
-    await assertExistingRepository(targetPath, safeOptions);
-    await assertRepositoryOrigin(targetPath, repository, safeOptions);
-
-    await withGitAuthEnvironment(config.auth, baseEnv, async (env) => {
-      await execGit(["-C", targetPath, "fetch", "origin", branch], { ...options, env });
-    });
-    await execGit(["-C", targetPath, "checkout", branch], safeOptions);
-    await execGit(["-C", targetPath, "merge", "--ff-only", `origin/${branch}`], safeOptions);
-
-    return {
-      repoId: repository.id,
-      path: targetPath,
-      action: "fetched",
-      branch,
-    };
-  }
-
-  await mkdir(dirname(targetPath), { recursive: true });
-  await assertRealPathInsideWorkspace(options.workspaceRoot, dirname(targetPath), repository.id);
-  await withGitAuthEnvironment(config.auth, baseEnv, async (env) => {
-    await execGit(createCloneArgs(repository, targetPath), { ...options, env });
-  });
-
-  return {
-    repoId: repository.id,
-    path: targetPath,
-    action: "cloned",
-    branch,
-  };
-}
-
 export function resolveRepositoryWorkspacePath(
   workspaceRoot: string,
   repository: Pick<CodeRepository, "id">,
@@ -112,155 +59,89 @@ export function resolveRepositoryWorkspacePath(
   const target = resolve(workspace, defaultRepositoryWorkspacePath(repository));
   const relativePath = relative(workspace, target);
 
-  if (
-    relativePath === "" ||
-    relativePath.startsWith("..") ||
-    isAbsolute(relativePath)
-  ) {
+  if (relativePath === "" || relativePath.startsWith("..") || isAbsolute(relativePath)) {
     throw new Error(`Repository path must stay inside workspace: ${repository.id}`);
   }
 
   return target;
 }
 
-async function assertRealPathInsideWorkspace(
-  workspaceRoot: string,
-  path: string,
-  repoId: string,
-): Promise<void> {
-  const workspace = await realpath(workspaceRoot);
-  const target = await realpath(path);
-  const relativePath = relative(workspace, target);
-
-  if (relativePath === "" || relativePath.startsWith("..") || isAbsolute(relativePath)) {
-    throw new Error(`Repository path must resolve inside workspace: ${repoId}`);
-  }
-}
-
-function findRepository(config: CodeRepositoryManagerConfig, repoId: string): CodeRepository {
-  const repository = config.repositories.find((candidate) => candidate.id === repoId);
-
-  if (repository === undefined) {
-    throw new Error(`Unknown repository id: ${repoId}`);
-  }
-
-  return repository;
-}
-
-function createCloneArgs(repository: CodeRepository, targetPath: string): readonly string[] {
-  return [
-    "clone",
-    ...(repository.shallowClone ? ["--depth", "1"] : []),
-    "--branch",
-    repository.defaultBranch,
-    "--",
-    repository.cloneUrl,
-    targetPath,
-  ];
-}
-
-async function assertExistingRepository(
-  targetPath: string,
-  options: GitCommandOptions,
-): Promise<void> {
-  try {
-    await execGit(["-C", targetPath, "rev-parse", "--is-inside-work-tree"], options);
-  } catch (error) {
-    throw new Error(`Target path exists but is not a Git repository: ${targetPath}`, {
-      cause: error,
-    });
-  }
-}
-
-async function assertRepositoryOrigin(
-  targetPath: string,
-  repository: CodeRepository,
-  options: GitCommandOptions,
-): Promise<void> {
-  const result = await execGit(["-C", targetPath, "remote", "get-url", "origin"], options);
-  const origin = result.stdout.trim();
-
-  if (origin !== repository.cloneUrl) {
-    throw new Error(`Existing repository origin does not match configured cloneUrl: ${repository.id}`);
-  }
-}
-
-function assertAuthEnvironment(auth: CodeRepositoryAuth, env: NodeJS.ProcessEnv): void {
-  if (auth.strategy === "token" && readEnv(env, auth.tokenEnv) === undefined) {
-    throw new Error(`Missing Git token environment variable: ${auth.tokenEnv}`);
-  }
-
-  if (auth.strategy === "ssh" && readEnv(env, auth.privateKeyEnv) === undefined) {
-    throw new Error(`Missing Git SSH private key environment variable: ${auth.privateKeyEnv}`);
-  }
-
-  if (
-    auth.strategy === "ssh" &&
-    auth.knownHostsEnv !== undefined &&
-    readEnv(env, auth.knownHostsEnv) === undefined
-  ) {
-    throw new Error(`Missing Git known_hosts environment variable: ${auth.knownHostsEnv}`);
-  }
-}
-
-async function withGitAuthEnvironment<TValue>(
+async function createGitSessionEnvironment(
   auth: CodeRepositoryAuth,
   baseEnv: NodeJS.ProcessEnv,
-  run: (env: NodeJS.ProcessEnv) => Promise<TValue>,
-): Promise<TValue> {
+): Promise<{
+  readonly env: Readonly<Record<string, string>>;
+  readonly cleanup: () => Promise<void>;
+}> {
+  const sharedEnv = {
+    ...createGitProcessEnv(baseEnv),
+    GIT_TERMINAL_PROMPT: "0",
+  };
+
   if (auth.strategy === "none") {
-    return await run({
-      ...createGitProcessEnv(baseEnv),
-      GIT_TERMINAL_PROMPT: "0",
-    });
+    const tempDir = await mkdtemp(resolve(tmpdir(), "expertmesh-git-session-"));
+
+    return {
+      env: {
+        ...sharedEnv,
+        HOME: tempDir,
+        XDG_CONFIG_HOME: tempDir,
+      },
+      cleanup: async () => {
+        await rm(tempDir, { recursive: true, force: true });
+      },
+    };
   }
 
-  const tempDir = await mkdtemp(resolve(tmpdir(), "expertmesh-git-"));
+  const tempDir = await mkdtemp(resolve(tmpdir(), "expertmesh-git-session-"));
 
-  try {
-    if (auth.strategy === "token") {
-      const askPassPath = resolve(tempDir, "askpass.sh");
-      await writeFile(
-        askPassPath,
-        [
-          "#!/bin/sh",
-          "case \"$1\" in",
-          "*Username*) printf '%s\\n' \"$EXPERTMESH_GIT_USERNAME\" ;;",
-          "*Password*) printf '%s\\n' \"$EXPERTMESH_GIT_TOKEN\" ;;",
-          "*) printf '\\n' ;;",
-          "esac",
-          "",
-        ].join("\n"),
-        { mode: 0o700 },
-      );
-      await chmod(askPassPath, 0o700);
+  if (auth.strategy === "token") {
+    const askPassPath = resolve(tempDir, "askpass.sh");
+    await writeFile(
+      askPassPath,
+      [
+        "#!/bin/sh",
+        'case "$1" in',
+        "*Username*) printf '%s\\n' \"$EXPERTMESH_GIT_USERNAME\" ;;",
+        "*Password*) printf '%s\\n' \"$EXPERTMESH_GIT_TOKEN\" ;;",
+        "*) printf '\\n' ;;",
+        "esac",
+        "",
+      ].join("\n"),
+      { mode: 0o700 },
+    );
+    await chmod(askPassPath, 0o700);
 
-      return await run({
-        ...createGitProcessEnv(baseEnv),
+    return {
+      env: {
+        ...sharedEnv,
         GIT_ASKPASS: askPassPath,
-        GIT_TERMINAL_PROMPT: "0",
         EXPERTMESH_GIT_USERNAME: auth.username,
         EXPERTMESH_GIT_TOKEN: readRequiredEnv(baseEnv, auth.tokenEnv),
         HOME: tempDir,
         XDG_CONFIG_HOME: tempDir,
-      });
-    }
+      },
+      cleanup: async () => {
+        await rm(tempDir, { recursive: true, force: true });
+      },
+    };
+  }
 
-    const privateKeyPath = resolve(tempDir, "identity");
-    const knownHostsEnv = auth.knownHostsEnv;
-    const knownHostsPath = knownHostsEnv === undefined ? undefined : resolve(tempDir, "known_hosts");
-    await writeFile(privateKeyPath, readRequiredEnv(baseEnv, auth.privateKeyEnv), { mode: 0o600 });
-    await chmod(privateKeyPath, 0o600);
+  const privateKeyPath = resolve(tempDir, "identity");
+  const knownHostsEnv = auth.knownHostsEnv;
+  const knownHostsPath = knownHostsEnv === undefined ? undefined : resolve(tempDir, "known_hosts");
+  await writeFile(privateKeyPath, readRequiredEnv(baseEnv, auth.privateKeyEnv), { mode: 0o600 });
+  await chmod(privateKeyPath, 0o600);
 
-    if (knownHostsPath !== undefined && knownHostsEnv !== undefined) {
-      await writeFile(knownHostsPath, readRequiredEnv(baseEnv, knownHostsEnv), {
-        mode: 0o600,
-      });
-    }
+  if (knownHostsPath !== undefined && knownHostsEnv !== undefined) {
+    await writeFile(knownHostsPath, readRequiredEnv(baseEnv, knownHostsEnv), {
+      mode: 0o600,
+    });
+  }
 
-    return await run({
-      ...createGitProcessEnv(baseEnv),
-      GIT_TERMINAL_PROMPT: "0",
+  return {
+    env: {
+      ...sharedEnv,
       GIT_SSH_COMMAND: [
         "ssh",
         "-i",
@@ -275,10 +156,33 @@ async function withGitAuthEnvironment<TValue>(
       ].join(" "),
       HOME: tempDir,
       XDG_CONFIG_HOME: tempDir,
-    });
-  } finally {
-    await rm(tempDir, { recursive: true, force: true });
+    },
+    cleanup: async () => {
+      await rm(tempDir, { recursive: true, force: true });
+    },
+  };
+}
+
+function applyGitEnvironment(
+  env: NodeJS.ProcessEnv,
+  values: Readonly<Record<string, string>>,
+): () => void {
+  const previousValues = new Map<string, string | undefined>();
+
+  for (const [name, value] of Object.entries(values)) {
+    previousValues.set(name, env[name]);
+    env[name] = value;
   }
+
+  return () => {
+    for (const [name, value] of previousValues) {
+      if (value === undefined) {
+        delete env[name];
+      } else {
+        env[name] = value;
+      }
+    }
+  };
 }
 
 async function execGit(
@@ -299,16 +203,10 @@ async function execGit(
 }
 
 function createSafeGitArgs(args: readonly string[]): readonly string[] {
-  return [
-    "-c",
-    "core.hooksPath=/dev/null",
-    "-c",
-    "protocol.file.allow=never",
-    ...args,
-  ];
+  return ["-c", "core.hooksPath=/dev/null", "-c", "protocol.file.allow=never", ...args];
 }
 
-function createGitProcessEnv(baseEnv: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+function createGitProcessEnv(baseEnv: NodeJS.ProcessEnv): Record<string, string> {
   return {
     ...(baseEnv.PATH === undefined ? {} : { PATH: baseEnv.PATH }),
     ...(baseEnv.LANG === undefined ? {} : { LANG: baseEnv.LANG }),
@@ -320,12 +218,21 @@ function createGitProcessEnv(baseEnv: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   };
 }
 
-async function pathExists(path: string): Promise<boolean> {
-  try {
-    await access(path);
-    return true;
-  } catch {
-    return false;
+function assertAuthEnvironment(auth: CodeRepositoryAuth, env: NodeJS.ProcessEnv): void {
+  if (auth.strategy === "token" && readEnv(env, auth.tokenEnv) === undefined) {
+    throw new Error(`Missing Git token environment variable: ${auth.tokenEnv}`);
+  }
+
+  if (auth.strategy === "ssh" && readEnv(env, auth.privateKeyEnv) === undefined) {
+    throw new Error(`Missing Git SSH private key environment variable: ${auth.privateKeyEnv}`);
+  }
+
+  if (
+    auth.strategy === "ssh" &&
+    auth.knownHostsEnv !== undefined &&
+    readEnv(env, auth.knownHostsEnv) === undefined
+  ) {
+    throw new Error(`Missing Git known_hosts environment variable: ${auth.knownHostsEnv}`);
   }
 }
 

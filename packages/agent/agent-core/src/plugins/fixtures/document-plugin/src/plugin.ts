@@ -1,4 +1,4 @@
-import { definePluginEntry } from "../../../expert-agent-plugin.ts";
+import { definePluginEntry } from "@expertmesh/agent-core";
 
 export const documentPlugin = definePluginEntry({
   setup: () => ({
@@ -14,3 +14,5 @@ export const documentPlugin = definePluginEntry({
     ],
   }),
 });
+
+export default documentPlugin;
