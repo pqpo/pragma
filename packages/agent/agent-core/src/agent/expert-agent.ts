@@ -10,7 +10,6 @@ import type {
   ExpertAgentContextResult,
   ExpertAgentContextItemSearchInput,
   ExpertAgentContextItemSearchMatch,
-  ExpertAgentContextStore,
   ExpertAgentContextItemSummary,
   ExpertAgentContextItemUpdateInput,
   ExpertAgentContextItemReadInput,
@@ -126,14 +125,16 @@ export interface IExpertAgent {
   readonly mcp?: IExpertAgentMcpConfig | undefined;
   readonly skills?: IExpertAgentSkillsConfig | undefined;
   readonly models?: IExpertAgentModelsConfig | undefined;
-  readonly context?: ExpertAgentContextStore | undefined;
+  readonly contextSystem: ContextSystem;
   readonly subAgents?: SubAgentRegistry | undefined;
   readonly tools?: readonly ExpertAgentManagedTool<string, ExpertAgentToolCallResult>[] | undefined;
   readonly hooks?: ExpertAgentPluginHooks | undefined;
   readonly pluginLoadIssues?: readonly ExpertAgentPluginLoadIssue[] | undefined;
 }
 
-export type ExpertAgentOptions = Omit<IExpertAgent, "pluginLoadIssues">;
+export type ExpertAgentOptions = Omit<IExpertAgent, "contextSystem" | "pluginLoadIssues"> & {
+  readonly contextSystem?: ContextSystem | undefined;
+};
 
 export interface ExpertAgentCreateOptions extends ExpertAgentOptions {
   readonly plugins?: readonly ExpertAgentPluginSource[] | undefined;
@@ -157,13 +158,12 @@ export class ExpertAgent implements IExpertAgent {
   readonly mcp: IExpertAgentMcpConfig | undefined;
   readonly skills: IExpertAgentSkillsConfig | undefined;
   readonly models: IExpertAgentModelsConfig | undefined;
-  readonly context: ExpertAgentContextStore | undefined;
+  readonly contextSystem: ContextSystem;
   readonly workspace: string;
   readonly subAgents: SubAgentRegistry | undefined;
   readonly tools: readonly ExpertAgentManagedTool<string, ExpertAgentToolCallResult>[] | undefined;
   readonly hooks: ExpertAgentPluginHooks | undefined;
   readonly pluginLoadIssues: readonly ExpertAgentPluginLoadIssue[] | undefined;
-  private readonly contextSystem: ContextSystem;
   private readonly contextManager: ContextManager;
 
   static async create(options: ExpertAgentCreateOptions): Promise<ExpertAgent> {
@@ -181,16 +181,17 @@ export class ExpertAgent implements IExpertAgent {
   }
 
   private constructor(options: ExpertAgentRuntimeOptions) {
+    const contextSystem = options.contextSystem ?? new ContextSystem();
     const resolved = resolveExpertAgentPlugins({
       host: {
         mcp: options.mcp,
         skills: options.skills,
         models: options.models,
-        context: options.context,
         subAgents: options.subAgents,
         tools: options.tools,
         hooks: options.hooks,
       },
+      contextSystem,
       pluginEntries: options.pluginEntries,
       workspaceRoot: options.workspace,
       env: options.env,
@@ -206,15 +207,12 @@ export class ExpertAgent implements IExpertAgent {
     this.mcp = resolved.mcp;
     this.skills = resolved.skills;
     this.models = resolved.models;
-    this.context = options.context;
+    this.contextSystem = contextSystem;
     this.workspace = options.workspace;
     this.subAgents = resolved.subAgents;
     this.tools = resolved.tools;
     this.hooks = resolved.hooks;
     this.pluginLoadIssues = options.pluginLoadIssues;
-    this.contextSystem = new ContextSystem({
-      stores: resolved.context,
-    });
     this.contextManager = new ContextManager({
       agent: this,
       contextSystem: this.contextSystem,

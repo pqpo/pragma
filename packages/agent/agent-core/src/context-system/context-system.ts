@@ -481,22 +481,22 @@ export class ContextSystem {
     namespace: string | undefined,
   ): ExpertAgentContextResult<readonly (readonly [string, ExpertAgentContextStore])[]> {
     if (namespace !== undefined) {
-      const storeResult = this.getStore(namespace);
+      const namespaceResult = normalizeNamespace(namespace);
+
+      if (!namespaceResult.ok) {
+        return namespaceResult;
+      }
+
+      const storeResult = this.getStore(namespaceResult.value);
 
       if (!storeResult.ok) {
         return storeResult;
       }
 
-      return ok([[namespace, storeResult.value]]);
+      return ok([[namespaceResult.value, storeResult.value]]);
     }
 
-    const stores = [...this.stores.entries()];
-
-    if (stores.length === 0) {
-      return error("store_unavailable", "ExpertAgent context store is not configured.");
-    }
-
-    return ok(stores);
+    return ok([...this.stores.entries()]);
   }
 }
 

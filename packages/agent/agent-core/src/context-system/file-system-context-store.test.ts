@@ -4,7 +4,10 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import type { ExpertAgentStoredContextItemReadInput } from "./context-system.ts";
+import type {
+  ExpertAgentContextStore,
+  ExpertAgentStoredContextItemReadInput,
+} from "./context-system.ts";
 import { AGENTS_CONTEXT_ID, ContextSystem, HOST_CONTEXT_NAMESPACE, ok } from "./context-system.ts";
 import { ExpertAgent } from "../agent/expert-agent.ts";
 import type { FileSystemContextStoreCommandRunner } from "./file-system-context-store.ts";
@@ -16,6 +19,20 @@ const tempDirs: string[] = [];
 afterEach(async () => {
   await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
+
+function createHostContextSystem(store: ExpertAgentContextStore): ContextSystem {
+  const contextSystem = new ContextSystem();
+  const result = contextSystem.register({
+    namespace: HOST_CONTEXT_NAMESPACE,
+    store,
+  });
+
+  if (!result.ok) {
+    throw new Error(result.error.message);
+  }
+
+  return contextSystem;
+}
 
 describe("FileSystemContextStore", () => {
   it("loads AGENTS.md as an always-on context", async () => {
@@ -31,7 +48,7 @@ describe("FileSystemContextStore", () => {
       version: "0.0.0",
       scope: "test",
       workspace: rootDir,
-      context: new FileSystemContextStore({ rootDir }),
+      contextSystem: createHostContextSystem(new FileSystemContextStore({ rootDir })),
     });
 
     const context = await agent.buildContext();
@@ -371,7 +388,7 @@ describe("ContextSystem", () => {
       version: "1.2.3",
       scope: "test",
       workspace: "/tmp/expertmesh-context-test",
-      context: store,
+      contextSystem: createHostContextSystem(store),
     });
     const runContext = {
       source: {
@@ -442,7 +459,7 @@ describe("ContextSystem", () => {
       version: "1.0.0",
       scope: "test",
       workspace: "/tmp/expertmesh-budget-test",
-      context: store,
+      contextSystem: createHostContextSystem(store),
     });
 
     const context = await agent.buildContext(undefined, {
@@ -491,7 +508,7 @@ describe("ContextSystem", () => {
       version: "1.0.0",
       scope: "test",
       workspace: "/tmp/expertmesh-tiny-budget-test",
-      context: store,
+      contextSystem: createHostContextSystem(store),
     });
 
     const context = await agent.buildContext(undefined, {
@@ -776,11 +793,13 @@ describe("ContextSystem", () => {
       version: "1.0.0",
       scope: "test",
       workspace: "/tmp/expertmesh-tool-test",
-      context: new InMemoryContextStore({
-        context: {
-          "guide.md": "Alpha Beta Gamma",
-        },
-      }),
+      contextSystem: createHostContextSystem(
+        new InMemoryContextStore({
+          context: {
+            "guide.md": "Alpha Beta Gamma",
+          },
+        }),
+      ),
     });
     const readTool = agent
       .createDefaultTools({
@@ -907,6 +926,47 @@ describe("ContextSystem", () => {
           id: "omega.md",
           lineNumber: 1,
           line: "Needle in omega.",
+        },
+      ]),
+    );
+  });
+
+  it("returns no matches when searching all stores on an empty context system", async () => {
+    const contextSystem = new ContextSystem();
+
+    await expect(
+      contextSystem.search({
+        query: "Needle",
+      }),
+    ).resolves.toEqual(ok([]));
+  });
+
+  it("normalizes an explicit search namespace before returning matches", async () => {
+    const contextSystem = new ContextSystem({
+      stores: [
+        [
+          "docs",
+          new InMemoryContextStore({
+            context: {
+              "guide.md": "Needle in guide.",
+            },
+          }),
+        ],
+      ],
+    });
+
+    await expect(
+      contextSystem.search({
+        namespace: " docs ",
+        query: "Needle",
+      }),
+    ).resolves.toEqual(
+      ok([
+        {
+          namespace: "docs",
+          id: "guide.md",
+          lineNumber: 1,
+          line: "Needle in guide.",
         },
       ]),
     );

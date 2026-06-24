@@ -12,12 +12,7 @@ import type {
   IExpertAgentSkillsConfig,
   IExpertAgentModelProviderConfig,
 } from "../agent/expert-agent.ts";
-import type {
-  ExpertAgentContextItemSeed,
-  ExpertAgentContextStore,
-} from "../context-system/context-system.ts";
-import { HOST_CONTEXT_NAMESPACE } from "../context-system/context-system.ts";
-import { createInMemoryContextStore } from "../context-system/in-memory-context-store.ts";
+import { ContextSystem, HOST_CONTEXT_NAMESPACE } from "../context-system/context-system.ts";
 import type { ExpertAgentRunContext } from "../runtime/run-context.ts";
 import type {
   RuntimeSubmitRequest,
@@ -82,10 +77,6 @@ export type ExpertAgentPluginMetadata = Pick<
   "id" | "name" | "description" | "version" | "tags"
 >;
 
-export type ExpertAgentPluginContextContribution =
-  | ExpertAgentContextStore
-  | readonly ExpertAgentContextItemSeed[];
-
 export interface ExpertAgentPluginSessionCreateContext {
   readonly agent: ExpertAgent;
   readonly context?: ExpertAgentRunContext | undefined;
@@ -128,7 +119,7 @@ export interface ExpertAgentPluginToolCalledContext extends ExpertAgentPluginToo
 
 export interface ExpertAgentPluginSetupContext {
   readonly host: ExpertAgentPluginContributions;
-  readonly hostContexts?: ExpertAgentContextStore | undefined;
+  readonly contextSystem: ContextSystem;
   readonly workspaceRoot: string;
   readonly env: NodeJS.ProcessEnv;
 }
@@ -168,7 +159,6 @@ export interface ExpertAgentPluginContributions {
   readonly mcp?: IExpertAgentMcpConfig | undefined;
   readonly skills?: IExpertAgentSkillsConfig | undefined;
   readonly models?: IExpertAgentModelsConfig | undefined;
-  readonly context?: ExpertAgentPluginContextContribution | undefined;
   readonly subAgents?: SubAgentRegistry | undefined;
   readonly tools?: readonly ExpertAgentManagedTool<string, ExpertAgentToolCallResult>[] | undefined;
   readonly hooks?: ExpertAgentPluginHooks | undefined;
@@ -187,7 +177,6 @@ export interface ResolvedExpertAgentPluginContributions {
   readonly mcp?: IExpertAgentMcpConfig | undefined;
   readonly skills?: IExpertAgentSkillsConfig | undefined;
   readonly models?: IExpertAgentModelsConfig | undefined;
-  readonly context?: ReadonlyMap<string, ExpertAgentContextStore> | undefined;
   readonly subAgents?: SubAgentRegistry | undefined;
   readonly tools?: readonly ExpertAgentManagedTool<string, ExpertAgentToolCallResult>[] | undefined;
   readonly hooks?: ExpertAgentPluginHooks | undefined;
@@ -195,6 +184,7 @@ export interface ResolvedExpertAgentPluginContributions {
 
 export interface ResolveExpertAgentPluginsOptions {
   readonly host?: ExpertAgentPluginContributions | undefined;
+  readonly contextSystem?: ContextSystem | undefined;
   readonly pluginEntries?: readonly ExpertAgentPluginEntry[] | undefined;
   readonly workspaceRoot?: string | undefined;
   readonly env?: NodeJS.ProcessEnv | undefined;
@@ -238,7 +228,7 @@ export function resolveExpertAgentPlugins(
   const host = options.host ?? {};
   const context: ExpertAgentPluginSetupContext = {
     host,
-    hostContexts: host.context === undefined ? undefined : toContextStore(host.context),
+    contextSystem: options.contextSystem ?? new ContextSystem(),
     workspaceRoot: options.workspaceRoot ?? "",
     env: options.env ?? process.env,
   };
@@ -257,7 +247,6 @@ export function resolveExpertAgentPlugins(
     mcp: mergeMcpConfigs(contributions.map((contribution) => contribution.mcp)),
     skills: mergeSkillsConfigs(contributions.map((contribution) => contribution.skills)),
     models: mergeModelsConfigs(contributions.map((contribution) => contribution.models)),
-    context: mergeContextContributions(options.host?.context, pluginEntries),
     subAgents: mergeSubAgentRegistries(contributions.map((contribution) => contribution.subAgents)),
     tools: mergeManagedTools(contributions.map((contribution) => contribution.tools)),
     hooks: mergePluginHooks(contributions.map((contribution) => contribution.hooks)),
@@ -323,34 +312,6 @@ function mergeModelsConfigs(
     ...(defaultModelName === undefined ? {} : { defaultModelName }),
     providers,
   };
-}
-
-function mergeContextContributions(
-  hostContexts: ExpertAgentPluginContextContribution | undefined,
-  pluginEntries: readonly {
-    readonly plugin: ExpertAgentPluginEntry;
-    readonly contributions: ExpertAgentPluginContributions;
-  }[],
-): ReadonlyMap<string, ExpertAgentContextStore> | undefined {
-  const stores = new Map<string, ExpertAgentContextStore>();
-
-  if (hostContexts !== undefined) {
-    stores.set(HOST_CONTEXT_NAMESPACE, toContextStore(hostContexts));
-  }
-
-  for (const { plugin, contributions } of pluginEntries) {
-    if (contributions.context === undefined) {
-      continue;
-    }
-
-    stores.set(plugin.id, toContextStore(contributions.context));
-  }
-
-  if (stores.size === 0) {
-    return undefined;
-  }
-
-  return stores;
 }
 
 function mergeSubAgentRegistries(
@@ -419,22 +380,6 @@ function mergePluginHooks(
       await callHooks(hooks, "afterToolCall", context);
     },
   };
-}
-
-function toContextStore(
-  contribution: ExpertAgentPluginContextContribution,
-): ExpertAgentContextStore {
-  if (isStoredContextArray(contribution)) {
-    return createInMemoryContextStore({ context: contribution });
-  }
-
-  return contribution;
-}
-
-function isStoredContextArray(
-  contribution: ExpertAgentPluginContextContribution,
-): contribution is readonly ExpertAgentContextItemSeed[] {
-  return Array.isArray(contribution);
 }
 
 function mergeModelProviders(

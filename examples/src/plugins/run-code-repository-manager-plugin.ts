@@ -1,4 +1,9 @@
-import { ExpertAgent, createInMemoryContextStore } from "@expertmesh/agent-core";
+import {
+  ContextSystem,
+  ExpertAgent,
+  HOST_CONTEXT_NAMESPACE,
+  createInMemoryContextStore,
+} from "@expertmesh/agent-core";
 
 import { defaultWorkspaceRoot, ensureWorkspaceDir, resolveExamplePath } from "../harness/paths.ts";
 
@@ -6,16 +11,10 @@ const workspace = defaultWorkspaceRoot;
 
 await ensureWorkspaceDir(workspace);
 
-const agent = await ExpertAgent.create({
-  schemaVersion: "expertmesh.expert/v1",
-  id: "code-repository-plugin-example-agent",
-  displayName: "Code Repository Plugin Example Agent",
-  description: "Demonstrates how to attach the code repository manager plugin to ExpertAgent.",
-  tags: ["example", "plugin", "repository"],
-  version: "0.0.0",
-  scope: "local-test",
-  workspace,
-  context: createInMemoryContextStore({
+const contextSystem = new ContextSystem();
+contextSystem.register({
+  namespace: HOST_CONTEXT_NAMESPACE,
+  store: createInMemoryContextStore({
     context: [
       {
         id: "repositories.json",
@@ -47,6 +46,18 @@ const agent = await ExpertAgent.create({
       },
     ],
   }),
+});
+
+const agent = await ExpertAgent.create({
+  schemaVersion: "expertmesh.expert/v1",
+  id: "code-repository-plugin-example-agent",
+  displayName: "Code Repository Plugin Example Agent",
+  description: "Demonstrates how to attach the code repository manager plugin to ExpertAgent.",
+  tags: ["example", "plugin", "repository"],
+  version: "0.0.0",
+  scope: "local-test",
+  workspace,
+  contextSystem,
   plugins: [resolveExamplePath("plugins/code-repository-manager")],
 });
 

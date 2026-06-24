@@ -1,7 +1,9 @@
 import {
   AGENTS_CONTEXT_ID,
+  ContextSystem,
   ExpertAgent,
   FileSystemContextStore,
+  HOST_CONTEXT_NAMESPACE,
   createInMemoryContextStore,
 } from "@expertmesh/agent-core";
 import type { ExpertAgentContextStore } from "@expertmesh/agent-core";
@@ -39,6 +41,11 @@ const workspace =
   cli.workspace === undefined ? defaultWorkspaceRoot : resolveExamplePath(cli.workspace);
 const contextDir = cli.context === undefined ? undefined : resolveExamplePath(cli.context);
 const contextStore = createExampleContextStore(contextDir);
+const contextSystem = new ContextSystem();
+contextSystem.register({
+  namespace: HOST_CONTEXT_NAMESPACE,
+  store: contextStore,
+});
 
 await ensureWorkspaceDir(workspace);
 
@@ -53,7 +60,7 @@ const agent = await ExpertAgent.create({
   version: "0.0.0",
   scope: "local-test",
   workspace,
-  context: contextStore,
+  contextSystem,
   models: createExpertAgentModelsConfig(modelConfig),
 });
 

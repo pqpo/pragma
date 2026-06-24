@@ -4,7 +4,7 @@ import type {
   ExpertAgentContextStore,
   ExpertAgentPluginSetupContext,
 } from "@expertmesh/agent-core";
-import { error, ok } from "@expertmesh/agent-core";
+import { HOST_CONTEXT_NAMESPACE, error, ok } from "@expertmesh/agent-core";
 
 import {
   CODE_REPOSITORIES_SOURCE_CONTEXT_ID,
@@ -29,9 +29,12 @@ const baseConfig = parseCodeRepositoryManagerConfig({});
 export default definePluginEntry({
   setup: (context) => {
     const cleanupGitSessionEnvironments = new Map<string, () => Promise<void>>();
+    context.contextSystem.register({
+      namespace: "code-repository-manager",
+      store: createCodeRepositoryContextStore(baseConfig, context),
+    });
 
     return {
-      context: createCodeRepositoryContextStore(baseConfig, context),
       hooks: {
         beforeSessionCreate: async (sessionContext) => {
           await cleanupGitSessionEnvironments.get(sessionContext.systemSessionId)?.();
@@ -152,11 +155,12 @@ async function resolveConfig(
 async function readHostRepositories(
   context: ExpertAgentPluginSetupContext,
 ): Promise<readonly CodeRepository[]> {
-  const result = await context.hostContexts?.readContext({
+  const result = await context.contextSystem.read({
+    namespace: HOST_CONTEXT_NAMESPACE,
     id: CODE_REPOSITORIES_SOURCE_CONTEXT_ID,
   });
 
-  if (result === undefined || !result.ok) {
+  if (!result.ok) {
     return [];
   }
 

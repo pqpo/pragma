@@ -4,7 +4,12 @@ import { fileURLToPath } from "node:url";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { ExpertAgent, createInMemoryContextStore } from "@expertmesh/agent-core";
+import {
+  ContextSystem,
+  ExpertAgent,
+  HOST_CONTEXT_NAMESPACE,
+  createInMemoryContextStore,
+} from "@expertmesh/agent-core";
 import { readExpertAgentPluginManifest } from "@expertmesh/agent-core";
 
 import { CODE_REPOSITORY_CONTEXT_ID } from "./context.ts";
@@ -35,16 +40,10 @@ describe("Code Repository Manager plugin", () => {
 
   it("injects repository metadata as a model-decision context by default", async () => {
     const pluginSource = await createLoadablePluginSource();
-    const agent = await ExpertAgent.create({
-      schemaVersion: "expertmesh.expert/v1",
-      id: "repo-agent",
-      displayName: "Repo Agent",
-      description: "Test agent",
-      tags: ["test"],
-      version: "0.0.0",
-      scope: "test",
-      workspace: await createWorkspaceDir(),
-      context: createInMemoryContextStore({
+    const contextSystem = new ContextSystem();
+    contextSystem.register({
+      namespace: HOST_CONTEXT_NAMESPACE,
+      store: createInMemoryContextStore({
         context: [
           {
             id: "repositories.json",
@@ -64,6 +63,17 @@ describe("Code Repository Manager plugin", () => {
           },
         ],
       }),
+    });
+    const agent = await ExpertAgent.create({
+      schemaVersion: "expertmesh.expert/v1",
+      id: "repo-agent",
+      displayName: "Repo Agent",
+      description: "Test agent",
+      tags: ["test"],
+      version: "0.0.0",
+      scope: "test",
+      workspace: await createWorkspaceDir(),
+      contextSystem,
       plugins: [pluginSource],
     });
 
@@ -118,6 +128,7 @@ describe("Code Repository Manager plugin", () => {
   it("prepares Git through session hooks instead of exposing Git operation tools", () => {
     const contributions = codeRepositoryManagerPlugin.setup({
       host: {},
+      contextSystem: new ContextSystem(),
       workspaceRoot: "/tmp/expertmesh",
       env: process.env,
     });
