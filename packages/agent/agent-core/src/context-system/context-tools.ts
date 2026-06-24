@@ -14,6 +14,7 @@ import type {
   ExpertAgentContextItemUpdateInput,
 } from "./context-system.ts";
 import type { ExpertAgentRunContext } from "../runtime/run-context.ts";
+import { createExpertAgentRunContext } from "../runtime/run-context.ts";
 
 export interface ExpertAgentDefaultToolCallResult {
   readonly text: string;
@@ -67,9 +68,9 @@ export function createContextTools(
       name: "list_expert_context",
       label: "List expert context",
       description: "List ExpertAgent context by context id, description, and trigger.",
-      inputSchema: withContextSchema({}),
-      call: async (args) => {
-        const result = await contextOperations.listContext(readRunContext(args, options));
+      inputSchema: objectSchema({}),
+      call: async () => {
+        const result = await contextOperations.listContext(readRunContext(options));
 
         if (!result.ok) {
           return errorResult(result.error);
@@ -87,7 +88,7 @@ export function createContextTools(
       name: "read_expert_context",
       label: "Read expert context",
       description: "Read an ExpertAgent context by context id, optionally as a byte range.",
-      inputSchema: withContextSchema(
+      inputSchema: objectSchema(
         {
           id: stringSchema("Context id."),
           namespace: stringSchema("Context namespace."),
@@ -104,7 +105,7 @@ export function createContextTools(
           id,
           start: readOptionalNumberParam(args, "start"),
           offset: normalizeToolReadOffset(requestedOffset, options),
-          context: readRunContext(args, options),
+          context: readRunContext(options),
         });
 
         if (!result.ok) {
@@ -123,7 +124,7 @@ export function createContextTools(
       name: "search_expert_context",
       label: "Search expert context",
       description: "Search ExpertAgent context by literal text.",
-      inputSchema: withContextSchema(
+      inputSchema: objectSchema(
         {
           namespace: stringSchema("Optional context namespace. Omit to search every namespace."),
           query: stringSchema("Literal text to search for."),
@@ -142,7 +143,7 @@ export function createContextTools(
           maxResults: readOptionalNumberParam(args, "maxResults"),
           contextLines: readOptionalNumberParam(args, "contextLines"),
           caseSensitive: readOptionalBooleanParam(args, "caseSensitive"),
-          context: readRunContext(args, options),
+          context: readRunContext(options),
         });
 
         if (!result.ok) {
@@ -161,7 +162,7 @@ export function createContextTools(
       name: "add_expert_context",
       label: "Add expert context",
       description: "Add an ExpertAgent context item to a context namespace by context id.",
-      inputSchema: withContextSchema(
+      inputSchema: objectSchema(
         {
           namespace: stringSchema("Context namespace."),
           id: stringSchema("Context id."),
@@ -177,7 +178,7 @@ export function createContextTools(
           id: readStringParam(args, "id"),
           content: readStringParam(args, "content"),
           metadata: readMetadataParams(args),
-          context: readRunContext(args, options),
+          context: readRunContext(options),
         });
 
         if (!result.ok) {
@@ -196,7 +197,7 @@ export function createContextTools(
       name: "update_expert_context",
       label: "Update expert context",
       description: "Update an ExpertAgent context's content or metadata by context id.",
-      inputSchema: withContextSchema(
+      inputSchema: objectSchema(
         {
           namespace: stringSchema("Context namespace."),
           id: stringSchema("Context id."),
@@ -212,7 +213,7 @@ export function createContextTools(
           id: readStringParam(args, "id"),
           content: readOptionalStringParam(args, "content"),
           metadata: readMetadataParams(args),
-          context: readRunContext(args, options),
+          context: readRunContext(options),
         });
 
         if (!result.ok) {
@@ -231,7 +232,7 @@ export function createContextTools(
       name: "delete_expert_context",
       label: "Delete expert context",
       description: "Delete an ExpertAgent context by context id.",
-      inputSchema: withContextSchema(
+      inputSchema: objectSchema(
         {
           namespace: stringSchema("Context namespace."),
           id: stringSchema("Context id."),
@@ -244,7 +245,7 @@ export function createContextTools(
         const result = await contextOperations.deleteContext({
           namespace,
           id,
-          context: readRunContext(args, options),
+          context: readRunContext(options),
         });
 
         if (!result.ok) {
@@ -263,38 +264,16 @@ export function createContextTools(
   ];
 }
 
-function objectSchema(properties: Record<string, unknown>, required: readonly string[]): unknown {
+function objectSchema(
+  properties: Record<string, unknown>,
+  required: readonly string[] = [],
+): unknown {
   return {
     type: "object",
     properties,
     required,
     additionalProperties: false,
   };
-}
-
-function withContextSchema(
-  properties: Record<string, unknown>,
-  required: readonly string[] = [],
-): unknown {
-  return objectSchema(
-    {
-      ...properties,
-      source: objectSchema(
-        {
-          type: stringSchema("Source type, such as user, system, workflow, or agent."),
-          id: stringSchema("Optional source id."),
-          label: stringSchema("Optional source label."),
-        },
-        ["type"],
-      ),
-      context: {
-        type: "object",
-        description: "Optional permission and request context attributes.",
-        additionalProperties: true,
-      },
-    },
-    required,
-  );
 }
 
 function stringSchema(description: string): unknown {
@@ -423,56 +402,10 @@ function readParam(params: unknown, key: string): unknown {
   return undefined;
 }
 
-function readRunContext(
-  params: unknown,
-  options: CreateContextToolsOptions,
-): ExpertAgentRunContext {
+function readRunContext(options: CreateContextToolsOptions): ExpertAgentRunContext {
   const baseContext = options.getContext?.();
-  const source = readSourceParam(params) ?? baseContext?.source;
-  const context = readParam(params, "context");
-  const attributes =
-    typeof context === "object" && context !== null
-      ? (context as Record<string, unknown>)
-      : undefined;
 
-  if (source === undefined) {
-    throw new Error('Context tool requires "source" either in tool input or run context.');
-  }
-
-  return {
-    ...baseContext,
-    source,
-    attributes: {
-      ...(baseContext?.attributes ?? {}),
-      ...(attributes ?? {}),
-    },
-  };
-}
-
-function readSourceParam(params: unknown): ExpertAgentRunContext["source"] {
-  const source = readParam(params, "source");
-
-  if (source === undefined) {
-    return undefined;
-  }
-
-  if (typeof source !== "object" || source === null) {
-    throw new Error('Context tool requires object parameter "source".');
-  }
-
-  const type = (source as Record<string, unknown>).type;
-  const id = (source as Record<string, unknown>).id;
-  const label = (source as Record<string, unknown>).label;
-
-  if (typeof type !== "string") {
-    throw new Error('Context tool requires string parameter "source.type".');
-  }
-
-  return {
-    type,
-    ...(typeof id === "string" ? { id } : {}),
-    ...(typeof label === "string" ? { label } : {}),
-  };
+  return createExpertAgentRunContext(baseContext);
 }
 
 function formatContextSummaries(context: readonly ExpertAgentContextItemSummary[]): string {

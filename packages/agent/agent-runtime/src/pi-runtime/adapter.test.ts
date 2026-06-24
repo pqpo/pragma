@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 
 import { createAgentSession } from "@earendil-works/pi-coding-agent";
 import { ExpertAgent } from "@expertmesh/agent-core";
+import type { ExpertAgentRunContext } from "@expertmesh/agent-core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createCloudPiRuntimeAdapter } from "./adapter.ts";
@@ -46,6 +47,7 @@ describe("createCloudPiRuntimeAdapter", () => {
 
   it("runs session destroy hooks when PI session creation fails", async () => {
     const events: string[] = [];
+    let sessionContext: ExpertAgentRunContext | undefined;
     const workspace = await createTempDir();
     const agent = await ExpertAgent.create({
       schemaVersion: "expertmesh.expert/v1",
@@ -57,7 +59,8 @@ describe("createCloudPiRuntimeAdapter", () => {
       scope: "test",
       workspace,
       hooks: {
-        beforeSessionCreate: () => {
+        beforeSessionCreate: ({ context }) => {
+          sessionContext = context;
           events.push("beforeSessionCreate");
         },
         beforeSessionDestroy: () => {
@@ -79,6 +82,58 @@ describe("createCloudPiRuntimeAdapter", () => {
       "beforeSessionDestroy",
       "afterSessionDestroy",
     ]);
+    expect(sessionContext).toEqual({
+      source: {
+        type: "system",
+      },
+      attributes: {},
+    });
+  });
+
+  it("merges supplied run context before creating the lifecycle", async () => {
+    let sessionContext: ExpertAgentRunContext | undefined;
+    const workspace = await createTempDir();
+    const agent = await ExpertAgent.create({
+      schemaVersion: "expertmesh.expert/v1",
+      id: "agent-1",
+      displayName: "Test Agent",
+      description: "Agent for runtime adapter tests.",
+      tags: ["test"],
+      version: "0.0.0",
+      scope: "test",
+      workspace,
+      hooks: {
+        beforeSessionCreate: ({ context }) => {
+          sessionContext = context;
+        },
+      },
+    });
+    vi.mocked(createAgentSession).mockRejectedValue(new Error("PI session failed"));
+
+    await expect(
+      createCloudPiRuntimeAdapter().createSession({
+        agent,
+        context: {
+          source: {
+            type: "user",
+            id: "user-1",
+          },
+          attributes: {
+            tenantId: "tenant-1",
+          },
+        },
+      }),
+    ).rejects.toThrow("PI session failed");
+
+    expect(sessionContext).toEqual({
+      source: {
+        type: "user",
+        id: "user-1",
+      },
+      attributes: {
+        tenantId: "tenant-1",
+      },
+    });
   });
 });
 

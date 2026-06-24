@@ -30,6 +30,7 @@ import type {
 } from "../plugins/plugin-loader.ts";
 import { loadExpertAgentPlugins } from "../plugins/plugin-loader.ts";
 import type { ExpertAgentRunContext } from "../runtime/run-context.ts";
+import { createExpertAgentRunContext } from "../runtime/run-context.ts";
 import type { SubAgentRegistry } from "../subagents/sub-agent.ts";
 import type { ExpertAgentManagedTool, ExpertAgentToolCallResult } from "../tools/managed-tool.ts";
 
@@ -220,10 +221,10 @@ export class ExpertAgent implements IExpertAgent {
   }
 
   async buildContext(
-    context: ExpertAgentRunContext = {},
+    context: ExpertAgentRunContext = createExpertAgentRunContext(),
     options: ContextAssemblerOptions = {},
   ): Promise<ExpertAgentContext> {
-    return await this.contextManager.buildContext(context, options);
+    return await this.contextManager.buildContext(createExpertAgentRunContext(context), options);
   }
 
   createDefaultTools(options: CreateContextToolsOptions = {}): readonly ExpertAgentDefaultTool[] {
@@ -231,9 +232,9 @@ export class ExpertAgent implements IExpertAgent {
   }
 
   async listContext(
-    context: ExpertAgentRunContext = {},
+    context: ExpertAgentRunContext = createExpertAgentRunContext(),
   ): Promise<ExpertAgentContextResult<readonly ExpertAgentContextItemSummary[]>> {
-    return await this.contextSystem.index(context);
+    return await this.contextSystem.index(createExpertAgentRunContext(context));
   }
 
   async readContext(

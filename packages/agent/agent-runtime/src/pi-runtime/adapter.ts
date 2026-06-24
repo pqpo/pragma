@@ -1,7 +1,11 @@
 import { AuthStorage, createAgentSession, ModelRegistry } from "@earendil-works/pi-coding-agent";
 import type { AgentSession, CreateAgentSessionOptions } from "@earendil-works/pi-coding-agent";
 import type { ExpertAgentRunContext, RuntimeAdapter } from "@expertmesh/agent-core";
-import { createQueuedAgentLifecycle, dispatchExpertAgentHook } from "@expertmesh/agent-core";
+import {
+  createExpertAgentRunContext,
+  createQueuedAgentLifecycle,
+  dispatchExpertAgentHook,
+} from "@expertmesh/agent-core";
 import { randomUUID } from "node:crypto";
 
 import { createMcpToolRegistry } from "../mcp-tools.ts";
@@ -39,12 +43,13 @@ export function createCloudPiRuntimeAdapter(
     descriptor: CLOUD_PI_RUNTIME_DESCRIPTOR,
     async createSession({
       agent,
-      context: runContext,
+      context: requestedRunContext,
       models,
       runtimeSession,
       systemSessionId: requestedSystemSessionId,
     }) {
       const systemSessionId = requestedSystemSessionId ?? randomUUID();
+      const runContext = createExpertAgentRunContext(requestedRunContext);
       await dispatchExpertAgentHook(agent.hooks, "beforeSessionCreate", {
         agent,
         context: runContext,
