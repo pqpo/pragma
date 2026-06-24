@@ -5,18 +5,18 @@ import { dirname, extname, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 
 import type {
-  ExpertAgentContextItemDeleteInput,
   ExpertAgentContextItemListInput,
   ExpertAgentContextItemMetadata,
-  ExpertAgentContextItemReadInput,
   ExpertAgentContextResult,
-  ExpertAgentContextItemSearchInput,
   ExpertAgentContextItemSearchMatch,
   ExpertAgentContextItemSummary,
   ExpertAgentContextStore,
   ExpertAgentStoredContextItem,
   ExpertAgentStoredContextItemReadResult,
   ExpertAgentStoredContextRegisterInput,
+  ExpertAgentStoredContextItemDeleteInput,
+  ExpertAgentStoredContextItemReadInput,
+  ExpertAgentStoredContextItemSearchInput,
   ExpertAgentStoredContextItemUpdateInput,
 } from "./context-system.ts";
 import {
@@ -85,7 +85,7 @@ export class FileSystemContextStore implements ExpertAgentContextStore {
   }
 
   async readContext(
-    input: ExpertAgentContextItemReadInput,
+    input: ExpertAgentStoredContextItemReadInput,
   ): Promise<ExpertAgentContextResult<ExpertAgentStoredContextItemReadResult>> {
     try {
       const filePath = this.resolveContextPath(input.id);
@@ -131,7 +131,7 @@ export class FileSystemContextStore implements ExpertAgentContextStore {
     }
   }
 
-  async registerContext(
+  async addContext(
     input: ExpertAgentStoredContextRegisterInput,
   ): Promise<ExpertAgentContextResult<ExpertAgentStoredContextItem>> {
     try {
@@ -214,7 +214,7 @@ export class FileSystemContextStore implements ExpertAgentContextStore {
   }
 
   async deleteContext(
-    input: ExpertAgentContextItemDeleteInput,
+    input: ExpertAgentStoredContextItemDeleteInput,
   ): Promise<ExpertAgentContextResult<{ readonly id: string }>> {
     try {
       const filePath = this.resolveContextPath(input.id);
@@ -232,7 +232,7 @@ export class FileSystemContextStore implements ExpertAgentContextStore {
   }
 
   async searchContext(
-    input: ExpertAgentContextItemSearchInput,
+    input: ExpertAgentStoredContextItemSearchInput,
   ): Promise<ExpertAgentContextResult<readonly ExpertAgentContextItemSearchMatch[]>> {
     try {
       const ripgrepResult = await searchContextWithRipgrep(this.rootDir, input, this.commandRunner);
@@ -559,7 +559,7 @@ function isUtf8ContinuationByte(byte: number): boolean {
 
 async function searchContextWithRipgrep(
   rootDir: string,
-  input: ExpertAgentContextItemSearchInput,
+  input: ExpertAgentStoredContextItemSearchInput,
   commandRunner: FileSystemContextStoreCommandRunner,
 ): Promise<
   | {
@@ -609,7 +609,7 @@ async function searchContextWithRipgrep(
 
 async function searchContextWithGrep(
   rootDir: string,
-  input: ExpertAgentContextItemSearchInput,
+  input: ExpertAgentStoredContextItemSearchInput,
   commandRunner: FileSystemContextStoreCommandRunner,
 ): Promise<
   | {
@@ -708,7 +708,7 @@ function parseRipgrepJsonLines(
 async function parseGrepLines(
   rootDir: string,
   stdout: string,
-  input: ExpertAgentContextItemSearchInput,
+  input: ExpertAgentStoredContextItemSearchInput,
 ): Promise<readonly ExpertAgentContextItemSearchMatch[]> {
   const matches: ExpertAgentContextItemSearchMatch[] = [];
   const linesByPath = new Map<string, readonly string[]>();
@@ -781,7 +781,7 @@ function parseGrepLine(
 
 async function searchContextWithFileReads(
   rootDir: string,
-  input: ExpertAgentContextItemSearchInput,
+  input: ExpertAgentStoredContextItemSearchInput,
 ): Promise<readonly ExpertAgentContextItemSearchMatch[]> {
   const files = await collectMarkdownFiles(rootDir);
   const matches: ExpertAgentContextItemSearchMatch[] = [];

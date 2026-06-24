@@ -68,7 +68,7 @@ function createCodeRepositoryContextStore(
       return ok([
         {
           id: seed.id,
-          metadata: registerContextMetadata(seed.metadata),
+          metadata: normalizeContextMetadata(seed.metadata),
           sizeBytes: Buffer.byteLength(seed.content, "utf8"),
         },
       ]);
@@ -89,7 +89,7 @@ function createCodeRepositoryContextStore(
       return ok({
         id: seed.id,
         content: seed.content,
-        metadata: registerContextMetadata(seed.metadata),
+        metadata: normalizeContextMetadata(seed.metadata),
         contentRange: {
           requestedStartOffset: 0,
           startOffset: 0,
@@ -101,7 +101,7 @@ function createCodeRepositoryContextStore(
         sizeBytes: Buffer.byteLength(seed.content, "utf8"),
       });
     },
-    async registerContext() {
+    async addContext() {
       return error("permission_denied", "Code repository plugin context is read-only.");
     },
     async updateContext() {
@@ -195,7 +195,7 @@ function resolveAuth(
   return { strategy: "none" };
 }
 
-function registerContextMetadata(
+function normalizeContextMetadata(
   metadata: Partial<ExpertAgentContextItemMetadata> | undefined,
 ): ExpertAgentContextItemMetadata {
   return {

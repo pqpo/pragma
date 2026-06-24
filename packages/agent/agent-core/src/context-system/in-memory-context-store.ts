@@ -1,17 +1,17 @@
 import type {
-  ExpertAgentContextItemDeleteInput,
   ExpertAgentContextItemListInput,
   ExpertAgentContextItemMetadata,
-  ExpertAgentContextItemReadInput,
   ExpertAgentContextResult,
-  ExpertAgentContextItemSearchInput,
   ExpertAgentContextItemSearchMatch,
   ExpertAgentContextItemSeed,
   ExpertAgentContextStore,
   ExpertAgentContextItemSummary,
   ExpertAgentStoredContextItem,
   ExpertAgentStoredContextRegisterInput,
+  ExpertAgentStoredContextItemDeleteInput,
+  ExpertAgentStoredContextItemReadInput,
   ExpertAgentStoredContextItemReadResult,
+  ExpertAgentStoredContextItemSearchInput,
   ExpertAgentStoredContextItemUpdateInput,
 } from "./context-system.ts";
 import { error, normalizeMetadata, ok } from "./context-system.ts";
@@ -55,7 +55,7 @@ export class InMemoryContextStore implements ExpertAgentContextStore {
   }
 
   async readContext(
-    input: ExpertAgentContextItemReadInput,
+    input: ExpertAgentStoredContextItemReadInput,
   ): Promise<ExpertAgentContextResult<ExpertAgentStoredContextItemReadResult>> {
     const existing = this.context.get(input.id);
 
@@ -94,7 +94,7 @@ export class InMemoryContextStore implements ExpertAgentContextStore {
     });
   }
 
-  async registerContext(
+  async addContext(
     input: ExpertAgentStoredContextRegisterInput,
   ): Promise<ExpertAgentContextResult<ExpertAgentStoredContextItem>> {
     const sizeError = validateContextSize(input.content, this.maxContextBytes);
@@ -155,7 +155,7 @@ export class InMemoryContextStore implements ExpertAgentContextStore {
   }
 
   async deleteContext(
-    input: ExpertAgentContextItemDeleteInput,
+    input: ExpertAgentStoredContextItemDeleteInput,
   ): Promise<ExpertAgentContextResult<{ readonly id: string }>> {
     if (!this.context.has(input.id)) {
       return error("context_not_found", `Context not found: ${input.id}`, { id: input.id });
@@ -167,7 +167,7 @@ export class InMemoryContextStore implements ExpertAgentContextStore {
   }
 
   async searchContext(
-    input: ExpertAgentContextItemSearchInput,
+    input: ExpertAgentStoredContextItemSearchInput,
   ): Promise<ExpertAgentContextResult<readonly ExpertAgentContextItemSearchMatch[]>> {
     const query = input.caseSensitive === true ? input.query : input.query.toLocaleLowerCase();
     const matches: ExpertAgentContextItemSearchMatch[] = [];

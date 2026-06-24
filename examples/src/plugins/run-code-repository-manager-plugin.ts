@@ -55,14 +55,17 @@ const contextItems = await agent.listContext();
 console.log("Plugin context:");
 if (contextItems.ok) {
   for (const item of contextItems.value) {
-    console.log(`- ${item.id} (${item.metadata.trigger})`);
+    console.log(
+      `- namespace=${item.namespace ?? "<none>"} id=${item.id} trigger=${item.metadata.trigger}`,
+    );
   }
 } else {
   console.log(`- error: ${contextItems.error.message}`);
 }
 
 const repositoryContext = await agent.readContext({
-  id: "code-repository-manager/code-repositories.md",
+  namespace: "code-repository-manager",
+  id: "code-repositories.md",
 });
 
 console.log("");

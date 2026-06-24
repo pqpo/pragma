@@ -3,8 +3,9 @@ import type { ContextAssemblerOptions, ExpertAgentContext } from "./context-mana
 import type { AgentMessageUsage } from "@expertmesh/contracts";
 import { ContextSystem } from "../context-system/context-system.ts";
 import type {
+  ExpertAgentContextAddInput,
+  ExpertAgentContextItemDeleteResult,
   ExpertAgentContextItem,
-  ExpertAgentContextRegisterInput,
   ExpertAgentContextItemDeleteInput,
   ExpertAgentContextResult,
   ExpertAgentContextItemSearchInput,
@@ -205,14 +206,14 @@ export class ExpertAgent implements IExpertAgent {
     this.mcp = resolved.mcp;
     this.skills = resolved.skills;
     this.models = resolved.models;
-    this.context = resolved.context;
+    this.context = options.context;
     this.workspace = options.workspace;
     this.subAgents = resolved.subAgents;
     this.tools = resolved.tools;
     this.hooks = resolved.hooks;
     this.pluginLoadIssues = options.pluginLoadIssues;
     this.contextSystem = new ContextSystem({
-      store: resolved.context,
+      stores: resolved.context,
     });
     this.contextManager = new ContextManager({
       agent: this,
@@ -249,10 +250,10 @@ export class ExpertAgent implements IExpertAgent {
     return await this.contextSystem.search(input);
   }
 
-  async registerContext(
-    input: ExpertAgentContextRegisterInput,
+  async addContext(
+    input: ExpertAgentContextAddInput,
   ): Promise<ExpertAgentContextResult<ExpertAgentContextItem>> {
-    return await this.contextSystem.register(input);
+    return await this.contextSystem.add(input);
   }
 
   async updateContext(
@@ -263,7 +264,7 @@ export class ExpertAgent implements IExpertAgent {
 
   async deleteContext(
     input: ExpertAgentContextItemDeleteInput,
-  ): Promise<ExpertAgentContextResult<{ readonly id: string }>> {
+  ): Promise<ExpertAgentContextResult<ExpertAgentContextItemDeleteResult>> {
     return await this.contextSystem.delete(input);
   }
 }

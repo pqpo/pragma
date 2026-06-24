@@ -13,12 +13,10 @@ import type {
   IExpertAgentModelProviderConfig,
 } from "../agent/expert-agent.ts";
 import type {
-  ExpertAgentContextItemSearchMatch,
   ExpertAgentContextItemSeed,
   ExpertAgentContextStore,
-  ExpertAgentContextItemSummary,
 } from "../context-system/context-system.ts";
-import { error, ok } from "../context-system/context-system.ts";
+import { HOST_CONTEXT_NAMESPACE } from "../context-system/context-system.ts";
 import { createInMemoryContextStore } from "../context-system/in-memory-context-store.ts";
 import type { ExpertAgentRunContext } from "../runtime/run-context.ts";
 import type {
@@ -189,7 +187,7 @@ export interface ResolvedExpertAgentPluginContributions {
   readonly mcp?: IExpertAgentMcpConfig | undefined;
   readonly skills?: IExpertAgentSkillsConfig | undefined;
   readonly models?: IExpertAgentModelsConfig | undefined;
-  readonly context?: ExpertAgentContextStore | undefined;
+  readonly context?: ReadonlyMap<string, ExpertAgentContextStore> | undefined;
   readonly subAgents?: SubAgentRegistry | undefined;
   readonly tools?: readonly ExpertAgentManagedTool<string, ExpertAgentToolCallResult>[] | undefined;
   readonly hooks?: ExpertAgentPluginHooks | undefined;
@@ -200,11 +198,6 @@ export interface ResolveExpertAgentPluginsOptions {
   readonly pluginEntries?: readonly ExpertAgentPluginEntry[] | undefined;
   readonly workspaceRoot?: string | undefined;
   readonly env?: NodeJS.ProcessEnv | undefined;
-}
-
-interface ExpertAgentContextStoreSource {
-  readonly namespace?: string | undefined;
-  readonly store: ExpertAgentContextStore;
 }
 
 export function definePluginEntry(
@@ -338,26 +331,26 @@ function mergeContextContributions(
     readonly plugin: ExpertAgentPluginEntry;
     readonly contributions: ExpertAgentPluginContributions;
   }[],
-): ExpertAgentContextStore | undefined {
-  const sources: ExpertAgentContextStoreSource[] = [
-    ...(hostContexts === undefined ? [] : [{ store: toContextStore(hostContexts) }]),
-    ...pluginEntries.flatMap(({ plugin, contributions }) =>
-      contributions.context === undefined
-        ? []
-        : [
-            {
-              namespace: plugin.id,
-              store: toContextStore(contributions.context),
-            },
-          ],
-    ),
-  ];
+): ReadonlyMap<string, ExpertAgentContextStore> | undefined {
+  const stores = new Map<string, ExpertAgentContextStore>();
 
-  if (sources.length === 0) {
+  if (hostContexts !== undefined) {
+    stores.set(HOST_CONTEXT_NAMESPACE, toContextStore(hostContexts));
+  }
+
+  for (const { plugin, contributions } of pluginEntries) {
+    if (contributions.context === undefined) {
+      continue;
+    }
+
+    stores.set(plugin.id, toContextStore(contributions.context));
+  }
+
+  if (stores.size === 0) {
     return undefined;
   }
 
-  return createCompositeContextStore(sources);
+  return stores;
 }
 
 function mergeSubAgentRegistries(
@@ -428,142 +421,6 @@ function mergePluginHooks(
   };
 }
 
-function createCompositeContextStore(
-  sources: readonly ExpertAgentContextStoreSource[],
-): ExpertAgentContextStore {
-  const hostSource = sources.find((source) => source.namespace === undefined);
-  const pluginSources = new Map(
-    sources.flatMap((source) =>
-      source.namespace === undefined ? [] : [[source.namespace, source] as const],
-    ),
-  );
-
-  return {
-    async listContext(input) {
-      const summaries: ExpertAgentContextItemSummary[] = [];
-      const seen = new Set<string>();
-
-      for (const source of sources) {
-        const result = await source.store.listContext(input);
-
-        if (!result.ok) {
-          return result;
-        }
-
-        for (const context of result.value.map((summary) =>
-          prefixContextSummary(source.namespace, summary),
-        )) {
-          if (seen.has(context.id)) {
-            continue;
-          }
-
-          seen.add(context.id);
-          summaries.push(context);
-        }
-      }
-
-      return ok(summaries);
-    },
-    async readContext(input) {
-      const route = resolveContextRoute(pluginSources, hostSource, input.id);
-
-      if (route === undefined) {
-        return error("context_not_found", `Context not found: ${input.id}`, { id: input.id });
-      }
-
-      const result = await route.source.store.readContext({
-        ...input,
-        id: route.localId,
-      });
-
-      if (!result.ok) {
-        return result;
-      }
-
-      return ok(prefixStoredContext(route.source.namespace, result.value));
-    },
-    async registerContext(input) {
-      const route = resolveWritableContextRoute(pluginSources, hostSource, input.id);
-
-      if (route === undefined) {
-        return error("store_unavailable", "ExpertAgent context store is not configured.");
-      }
-
-      const result = await route.source.store.registerContext({
-        ...input,
-        id: route.localId,
-      });
-
-      if (!result.ok) {
-        return result;
-      }
-
-      return ok(prefixStoredContext(route.source.namespace, result.value));
-    },
-    async updateContext(input) {
-      const route = resolveContextRoute(pluginSources, hostSource, input.id);
-
-      if (route === undefined) {
-        return error("context_not_found", `Context not found: ${input.id}`, { id: input.id });
-      }
-
-      const result = await route.source.store.updateContext({
-        ...input,
-        id: route.localId,
-      });
-
-      if (!result.ok) {
-        return result;
-      }
-
-      return ok(prefixStoredContext(route.source.namespace, result.value));
-    },
-    async deleteContext(input) {
-      const route = resolveContextRoute(pluginSources, hostSource, input.id);
-
-      if (route === undefined) {
-        return error("context_not_found", `Context not found: ${input.id}`, { id: input.id });
-      }
-
-      const result = await route.source.store.deleteContext({
-        ...input,
-        id: route.localId,
-      });
-
-      if (!result.ok) {
-        return result;
-      }
-
-      return ok({ id: input.id });
-    },
-    async searchContext(input) {
-      const matches: ExpertAgentContextItemSearchMatch[] = [];
-      const maxResults = input.maxResults ?? 20;
-
-      for (const source of sources) {
-        const result = await source.store.searchContext({
-          ...input,
-          maxResults: maxResults - matches.length,
-        });
-
-        if (!result.ok) {
-          return result;
-        }
-
-        matches.push(
-          ...result.value.map((match) => prefixContextSearchMatch(source.namespace, match)),
-        );
-
-        if (matches.length >= maxResults) {
-          return ok(matches.slice(0, maxResults));
-        }
-      }
-
-      return ok(matches);
-    },
-  };
-}
-
 function toContextStore(
   contribution: ExpertAgentPluginContextContribution,
 ): ExpertAgentContextStore {
@@ -572,112 +429,6 @@ function toContextStore(
   }
 
   return contribution;
-}
-
-function resolveContextRoute(
-  pluginSources: ReadonlyMap<string, ExpertAgentContextStoreSource>,
-  hostSource: ExpertAgentContextStoreSource | undefined,
-  id: string,
-):
-  | {
-      readonly source: ExpertAgentContextStoreSource;
-      readonly localId: string;
-    }
-  | undefined {
-  const parsed = parseNamespacedContextId(id);
-
-  if (parsed !== undefined) {
-    const source = pluginSources.get(parsed.namespace);
-
-    if (source !== undefined) {
-      return {
-        source,
-        localId: parsed.localId,
-      };
-    }
-  }
-
-  if (hostSource === undefined) {
-    return undefined;
-  }
-
-  return {
-    source: hostSource,
-    localId: id,
-  };
-}
-
-function resolveWritableContextRoute(
-  pluginSources: ReadonlyMap<string, ExpertAgentContextStoreSource>,
-  hostSource: ExpertAgentContextStoreSource | undefined,
-  id: string,
-):
-  | {
-      readonly source: ExpertAgentContextStoreSource;
-      readonly localId: string;
-    }
-  | undefined {
-  const route = resolveContextRoute(pluginSources, hostSource, id);
-
-  if (route !== undefined) {
-    return route;
-  }
-
-  return hostSource === undefined
-    ? undefined
-    : {
-        source: hostSource,
-        localId: id,
-      };
-}
-
-function parseNamespacedContextId(
-  id: string,
-): { readonly namespace: string; readonly localId: string } | undefined {
-  const separatorIndex = id.indexOf("/");
-
-  if (separatorIndex <= 0 || separatorIndex === id.length - 1) {
-    return undefined;
-  }
-
-  return {
-    namespace: id.slice(0, separatorIndex),
-    localId: id.slice(separatorIndex + 1),
-  };
-}
-
-function prefixContextId(namespace: string | undefined, id: string): string {
-  return namespace === undefined ? id : `${namespace}/${id}`;
-}
-
-function prefixContextSummary(
-  namespace: string | undefined,
-  summary: ExpertAgentContextItemSummary,
-): ExpertAgentContextItemSummary {
-  return {
-    ...summary,
-    id: prefixContextId(namespace, summary.id),
-  };
-}
-
-function prefixStoredContext<TContext extends { readonly id: string }>(
-  namespace: string | undefined,
-  context: TContext,
-): TContext {
-  return {
-    ...context,
-    id: prefixContextId(namespace, context.id),
-  };
-}
-
-function prefixContextSearchMatch(
-  namespace: string | undefined,
-  match: ExpertAgentContextItemSearchMatch,
-): ExpertAgentContextItemSearchMatch {
-  return {
-    ...match,
-    id: prefixContextId(namespace, match.id),
-  };
 }
 
 function isStoredContextArray(
@@ -764,6 +515,10 @@ function assertUniquePluginIds(pluginEntries: readonly ExpertAgentPluginEntry[])
       throw new Error(
         `ExpertAgent plugin id must be non-empty and must not contain "/": ${plugin.id}`,
       );
+    }
+
+    if (plugin.id === HOST_CONTEXT_NAMESPACE) {
+      throw new Error(`ExpertAgent plugin id is reserved: ${plugin.id}`);
     }
 
     if (seen.has(plugin.id)) {

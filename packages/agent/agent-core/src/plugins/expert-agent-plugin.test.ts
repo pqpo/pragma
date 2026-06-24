@@ -9,7 +9,7 @@ import { createInMemoryContextStore } from "../context-system/in-memory-context-
 import { extensibilityPlugin } from "./fixtures/extensibility-plugin/src/plugin.ts";
 import { createInvalidPlugin } from "./fixtures/invalid-plugin/src/plugin.ts";
 import { createMissingManifestPlugin } from "./fixtures/missing-manifest-plugin/src/plugin.ts";
-import { dispatchExpertAgentHook } from "./expert-agent-plugin.ts";
+import { dispatchExpertAgentHook, resolveExpertAgentPlugins } from "./expert-agent-plugin.ts";
 
 const contextPluginPath = fileURLToPath(new URL("./fixtures/context-plugin", import.meta.url));
 const extensibilityPluginPath = fileURLToPath(
@@ -60,6 +60,33 @@ describe("ExpertAgent plugins", () => {
     expect(() => createInvalidPlugin()).toThrow();
   });
 
+  it("rejects plugin ids that collide with reserved context namespaces", () => {
+    expect(() =>
+      resolveExpertAgentPlugins({
+        pluginEntries: [
+          {
+            id: "host",
+            name: "Reserved Host",
+            description: "Attempts to collide with host context namespace.",
+            manifest: {
+              schemaVersion: "expertmesh.plugin/v1",
+              id: "host",
+              name: "Reserved Host",
+              description: "Attempts to collide with host context namespace.",
+              runtime: {
+                type: "node",
+                entry: "./plugin.ts",
+              },
+              capabilities: [],
+              requires_env: [],
+            },
+            setup: () => ({}),
+          },
+        ],
+      }),
+    ).toThrow(/reserved/);
+  });
+
   it("merges plugin context with host context", async () => {
     const workspace = await createPluginTestWorkspace();
     const agent = await ExpertAgent.create({
@@ -90,6 +117,7 @@ describe("ExpertAgent plugins", () => {
       ok: true,
       value: [
         {
+          namespace: "host",
           id: "host.md",
           metadata: {
             description: "Host context",
@@ -97,14 +125,16 @@ describe("ExpertAgent plugins", () => {
           },
         },
         {
-          id: "plugin.context/plugin.md",
+          namespace: "plugin.context",
+          id: "plugin.md",
           metadata: {
             description: "Plugin context",
             trigger: "model_decision",
           },
         },
         {
-          id: "plugin.other-context/plugin.md",
+          namespace: "plugin.other-context",
+          id: "plugin.md",
           metadata: {
             description: "Other plugin context",
             trigger: "model_decision",
@@ -112,19 +142,23 @@ describe("ExpertAgent plugins", () => {
         },
       ],
     });
-    await expect(agent.readContext({ id: "plugin.context/plugin.md" })).resolves.toMatchObject({
+    await expect(
+      agent.readContext({ namespace: "plugin.context", id: "plugin.md" }),
+    ).resolves.toMatchObject({
       ok: true,
       value: {
-        id: "plugin.context/plugin.md",
+        namespace: "plugin.context",
+        id: "plugin.md",
         content: "Plugin content",
       },
     });
     await expect(
-      agent.readContext({ id: "plugin.other-context/plugin.md" }),
+      agent.readContext({ namespace: "plugin.other-context", id: "plugin.md" }),
     ).resolves.toMatchObject({
       ok: true,
       value: {
-        id: "plugin.other-context/plugin.md",
+        namespace: "plugin.other-context",
+        id: "plugin.md",
         content: "Other plugin content",
       },
     });

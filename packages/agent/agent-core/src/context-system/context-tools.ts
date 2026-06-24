@@ -1,7 +1,8 @@
 import type {
   ContextTrigger,
   ExpertAgentContextItem,
-  ExpertAgentContextRegisterInput,
+  ExpertAgentContextAddInput,
+  ExpertAgentContextItemDeleteResult,
   ExpertAgentContextItemDeleteInput,
   ExpertAgentContextError,
   ExpertAgentContextItemMetadata,
@@ -46,15 +47,15 @@ export interface ExpertAgentContextItemOperations {
   readonly searchContext: (
     input: ExpertAgentContextItemSearchInput,
   ) => Promise<ExpertAgentContextResult<readonly ExpertAgentContextItemSearchMatch[]>>;
-  readonly registerContext: (
-    input: ExpertAgentContextRegisterInput,
+  readonly addContext: (
+    input: ExpertAgentContextAddInput,
   ) => Promise<ExpertAgentContextResult<ExpertAgentContextItem>>;
   readonly updateContext: (
     input: ExpertAgentContextItemUpdateInput,
   ) => Promise<ExpertAgentContextResult<ExpertAgentContextItem>>;
   readonly deleteContext: (
     input: ExpertAgentContextItemDeleteInput,
-  ) => Promise<ExpertAgentContextResult<{ readonly id: string }>>;
+  ) => Promise<ExpertAgentContextResult<ExpertAgentContextItemDeleteResult>>;
 }
 
 export function createContextTools(
@@ -89,15 +90,17 @@ export function createContextTools(
       inputSchema: withContextSchema(
         {
           id: stringSchema("Context id."),
+          namespace: stringSchema("Context namespace."),
           start: integerSchema("Zero-based UTF-8 byte offset to start reading from."),
           offset: integerSchema("Maximum UTF-8 bytes to read from start."),
         },
-        ["id"],
+        ["namespace", "id"],
       ),
       call: async (args) => {
         const id = readStringParam(args, "id");
         const requestedOffset = readOptionalNumberParam(args, "offset");
         const result = await contextOperations.readContext({
+          namespace: readStringParam(args, "namespace"),
           id,
           start: readOptionalNumberParam(args, "start"),
           offset: normalizeToolReadOffset(requestedOffset, options),
@@ -122,6 +125,7 @@ export function createContextTools(
       description: "Search ExpertAgent context by literal text.",
       inputSchema: withContextSchema(
         {
+          namespace: stringSchema("Optional context namespace. Omit to search every namespace."),
           query: stringSchema("Literal text to search for."),
           maxResults: integerSchema("Maximum number of matches to return. Defaults to 20."),
           contextLines: integerSchema("Number of context lines around each match. Defaults to 0."),
@@ -133,6 +137,7 @@ export function createContextTools(
       ),
       call: async (args) => {
         const result = await contextOperations.searchContext({
+          namespace: readOptionalStringParam(args, "namespace"),
           query: readStringParam(args, "query"),
           maxResults: readOptionalNumberParam(args, "maxResults"),
           contextLines: readOptionalNumberParam(args, "contextLines"),
@@ -153,20 +158,22 @@ export function createContextTools(
       },
     },
     {
-      name: "register_expert_context",
-      label: "Register expert context",
-      description: "Register an ExpertAgent context item by context id.",
+      name: "add_expert_context",
+      label: "Add expert context",
+      description: "Add an ExpertAgent context item to a context namespace by context id.",
       inputSchema: withContextSchema(
         {
+          namespace: stringSchema("Context namespace."),
           id: stringSchema("Context id."),
           content: stringSchema("Context content."),
           description: stringSchema("Optional context description."),
           trigger: triggerSchema(),
         },
-        ["id", "content"],
+        ["namespace", "id", "content"],
       ),
       call: async (args) => {
-        const result = await contextOperations.registerContext({
+        const result = await contextOperations.addContext({
+          namespace: readStringParam(args, "namespace"),
           id: readStringParam(args, "id"),
           content: readStringParam(args, "content"),
           metadata: readMetadataParams(args),
@@ -178,7 +185,7 @@ export function createContextTools(
         }
 
         return {
-          text: `Registered context: ${result.value.id}`,
+          text: `Added context: ${result.value.namespace}/${result.value.id}`,
           details: {
             context: result.value,
           },
@@ -191,15 +198,17 @@ export function createContextTools(
       description: "Update an ExpertAgent context's content or metadata by context id.",
       inputSchema: withContextSchema(
         {
+          namespace: stringSchema("Context namespace."),
           id: stringSchema("Context id."),
           content: stringSchema("Optional replacement context content."),
           description: stringSchema("Optional replacement context description."),
           trigger: triggerSchema(),
         },
-        ["id"],
+        ["namespace", "id"],
       ),
       call: async (args) => {
         const result = await contextOperations.updateContext({
+          namespace: readStringParam(args, "namespace"),
           id: readStringParam(args, "id"),
           content: readOptionalStringParam(args, "content"),
           metadata: readMetadataParams(args),
@@ -211,7 +220,7 @@ export function createContextTools(
         }
 
         return {
-          text: `Updated context: ${result.value.id}`,
+          text: `Updated context: ${result.value.namespace}/${result.value.id}`,
           details: {
             context: result.value,
           },
@@ -224,13 +233,16 @@ export function createContextTools(
       description: "Delete an ExpertAgent context by context id.",
       inputSchema: withContextSchema(
         {
+          namespace: stringSchema("Context namespace."),
           id: stringSchema("Context id."),
         },
-        ["id"],
+        ["namespace", "id"],
       ),
       call: async (args) => {
+        const namespace = readStringParam(args, "namespace");
         const id = readStringParam(args, "id");
         const result = await contextOperations.deleteContext({
+          namespace,
           id,
           context: readRunContext(args, options),
         });
@@ -240,8 +252,9 @@ export function createContextTools(
         }
 
         return {
-          text: `Deleted context: ${id}`,
+          text: `Deleted context: ${namespace}/${id}`,
           details: {
+            namespace,
             id,
           },
         };
@@ -472,7 +485,8 @@ function formatContextSummaries(context: readonly ExpertAgentContextItemSummary[
 
 function formatContextSummary(context: ExpertAgentContextItemSummary): string {
   return [
-    `- ${context.id}`,
+    `- id: ${context.id}`,
+    context.namespace === undefined ? undefined : `  namespace: ${context.namespace}`,
     context.metadata.description === undefined
       ? undefined
       : `  description: ${context.metadata.description}`,
@@ -540,11 +554,15 @@ function formatContextSearchMatches(matches: readonly ExpertAgentContextItemSear
 
 function formatContextSearchMatch(match: ExpertAgentContextItemSearchMatch): string {
   return [
-    `- ${match.id}:${match.lineNumber}`,
+    `- id: ${match.id}`,
+    match.namespace === undefined ? undefined : `  namespace: ${match.namespace}`,
+    `  lineNumber: ${match.lineNumber}`,
     ...formatSearchContext(match.before, "before"),
     `  match: ${match.line}`,
     ...formatSearchContext(match.after, "after"),
-  ].join("\n");
+  ]
+    .filter((line) => line !== undefined)
+    .join("\n");
 }
 
 function formatSearchContext(

@@ -1,10 +1,16 @@
 import type { ExpertAgentRunContext } from "../runtime/run-context.ts";
 
 export const AGENTS_CONTEXT_ID = "AGENTS.md";
+export const HOST_CONTEXT_NAMESPACE = "host";
 
 export type ContextTrigger = "always_on" | "model_decision" | "manual";
 export type ContextTrustLevel = "system" | "workspace" | "user" | "external";
 export type ContextSensitivity = "public" | "internal" | "confidential" | "restricted";
+
+export interface ExpertAgentContextItemReference {
+  readonly namespace?: string | undefined;
+  readonly id: string;
+}
 
 export type ExpertAgentContextErrorCode =
   | "context_not_found"
@@ -40,6 +46,7 @@ export interface ExpertAgentContextItemMetadata {
 }
 
 export interface ExpertAgentContextItemSummary {
+  readonly namespace?: string | undefined;
   readonly id: string;
   readonly metadata: ExpertAgentContextItemMetadata;
   readonly revision?: string | undefined;
@@ -87,7 +94,17 @@ export interface ExpertAgentStoredContextItemReadResult extends ExpertAgentStore
   readonly contentRange: ExpertAgentContextItemContentRange;
 }
 
-export interface ExpertAgentContextRegisterInput {
+export interface ExpertAgentContextStoreRegistrationInput {
+  readonly namespace: string;
+  readonly store: ExpertAgentContextStore;
+}
+
+export interface ExpertAgentContextStoreRegistration {
+  readonly namespace: string;
+}
+
+export interface ExpertAgentContextAddInput {
+  readonly namespace: string;
   readonly id: string;
   readonly content: string;
   readonly metadata?: Partial<ExpertAgentContextItemMetadata> | undefined;
@@ -95,6 +112,14 @@ export interface ExpertAgentContextRegisterInput {
 }
 
 export interface ExpertAgentContextItemReadInput {
+  readonly namespace: string;
+  readonly id: string;
+  readonly start?: number | undefined;
+  readonly offset?: number | undefined;
+  readonly context?: ExpertAgentRunContext | undefined;
+}
+
+export interface ExpertAgentStoredContextItemReadInput {
   readonly id: string;
   readonly start?: number | undefined;
   readonly offset?: number | undefined;
@@ -106,6 +131,7 @@ export interface ExpertAgentContextItemListInput {
 }
 
 export interface ExpertAgentContextItemUpdateInput {
+  readonly namespace: string;
   readonly id: string;
   readonly content?: string | undefined;
   readonly metadata?: Partial<ExpertAgentContextItemMetadata> | undefined;
@@ -115,11 +141,23 @@ export interface ExpertAgentContextItemUpdateInput {
 }
 
 export interface ExpertAgentContextItemDeleteInput {
+  readonly namespace: string;
   readonly id: string;
   readonly context?: ExpertAgentRunContext | undefined;
 }
 
+export interface ExpertAgentStoredContextItemDeleteInput {
+  readonly id: string;
+  readonly context?: ExpertAgentRunContext | undefined;
+}
+
+export interface ExpertAgentContextItemDeleteResult {
+  readonly namespace?: string | undefined;
+  readonly id: string;
+}
+
 export interface ExpertAgentContextItemSearchInput {
+  readonly namespace?: string | undefined;
   readonly query: string;
   readonly maxResults?: number | undefined;
   readonly contextLines?: number | undefined;
@@ -128,11 +166,20 @@ export interface ExpertAgentContextItemSearchInput {
 }
 
 export interface ExpertAgentContextItemSearchMatch {
+  readonly namespace?: string | undefined;
   readonly id: string;
   readonly lineNumber: number;
   readonly line: string;
   readonly before?: readonly string[] | undefined;
   readonly after?: readonly string[] | undefined;
+}
+
+export interface ExpertAgentStoredContextItemSearchInput {
+  readonly query: string;
+  readonly maxResults?: number | undefined;
+  readonly contextLines?: number | undefined;
+  readonly caseSensitive?: boolean | undefined;
+  readonly context?: ExpertAgentRunContext | undefined;
 }
 
 export interface ExpertAgentStoredContextRegisterInput {
@@ -156,83 +203,138 @@ export interface ExpertAgentContextStore {
     input: ExpertAgentContextItemListInput,
   ) => Promise<ExpertAgentContextResult<readonly ExpertAgentContextItemSummary[]>>;
   readonly readContext: (
-    input: ExpertAgentContextItemReadInput,
+    input: ExpertAgentStoredContextItemReadInput,
   ) => Promise<ExpertAgentContextResult<ExpertAgentStoredContextItemReadResult>>;
-  readonly registerContext: (
+  readonly addContext: (
     input: ExpertAgentStoredContextRegisterInput,
   ) => Promise<ExpertAgentContextResult<ExpertAgentStoredContextItem>>;
   readonly updateContext: (
     input: ExpertAgentStoredContextItemUpdateInput,
   ) => Promise<ExpertAgentContextResult<ExpertAgentStoredContextItem>>;
   readonly deleteContext: (
-    input: ExpertAgentContextItemDeleteInput,
+    input: ExpertAgentStoredContextItemDeleteInput,
   ) => Promise<ExpertAgentContextResult<{ readonly id: string }>>;
   readonly searchContext: (
-    input: ExpertAgentContextItemSearchInput,
+    input: ExpertAgentStoredContextItemSearchInput,
   ) => Promise<ExpertAgentContextResult<readonly ExpertAgentContextItemSearchMatch[]>>;
 }
 
 export interface ContextSystemOptions {
   readonly store?: ExpertAgentContextStore | undefined;
+  readonly stores?:
+    | ReadonlyMap<string, ExpertAgentContextStore>
+    | Readonly<Record<string, ExpertAgentContextStore>>
+    | readonly (readonly [string, ExpertAgentContextStore])[]
+    | undefined;
 }
 
 export class ContextSystem {
-  readonly store: ExpertAgentContextStore | undefined;
+  readonly stores = new Map<string, ExpertAgentContextStore>();
 
   constructor(options: ContextSystemOptions = {}) {
-    this.store = options.store;
+    if (options.store !== undefined) {
+      this.stores.set(HOST_CONTEXT_NAMESPACE, options.store);
+    }
+
+    for (const [namespace, store] of normalizeStoreEntries(options.stores)) {
+      this.stores.set(namespace, store);
+    }
+  }
+
+  register(
+    input: ExpertAgentContextStoreRegistrationInput,
+  ): ExpertAgentContextResult<ExpertAgentContextStoreRegistration> {
+    const namespaceResult = normalizeNamespace(input.namespace);
+
+    if (!namespaceResult.ok) {
+      return namespaceResult;
+    }
+
+    if (this.stores.has(namespaceResult.value)) {
+      return error("context_already_exists", `Context store already exists: ${namespaceResult.value}`, {
+        namespace: namespaceResult.value,
+      });
+    }
+
+    this.stores.set(namespaceResult.value, input.store);
+
+    return ok({ namespace: namespaceResult.value });
   }
 
   async index(
     context: ExpertAgentRunContext = {},
   ): Promise<ExpertAgentContextResult<readonly ExpertAgentContextItemSummary[]>> {
-    if (this.store === undefined) {
+    if (this.stores.size === 0) {
       return ok([]);
     }
 
-    const listResult = await this.store.listContext({ context });
+    const summaries: ExpertAgentContextItemSummary[] = [];
 
-    if (!listResult.ok) {
-      return listResult;
+    for (const [namespace, store] of this.stores) {
+      const listResult = await store.listContext({ context });
+
+      if (!listResult.ok) {
+        return listResult;
+      }
+
+      summaries.push(
+        ...listResult.value.map((context) => normalizeContextSummary(context, namespace)),
+      );
     }
 
     return ok(
-      listResult.value
-        .map((context) => normalizeContextSummary(context))
-        .sort((left, right) => left.id.localeCompare(right.id)),
+      summaries.sort((left, right) => {
+        const namespaceComparison = (left.namespace ?? "").localeCompare(right.namespace ?? "");
+
+        if (namespaceComparison !== 0) {
+          return namespaceComparison;
+        }
+
+        return left.id.localeCompare(right.id);
+      }),
     );
   }
 
   async read(
     input: ExpertAgentContextItemReadInput,
   ): Promise<ExpertAgentContextResult<ExpertAgentContextItem>> {
-    if (this.store === undefined) {
-      return error("store_unavailable", "ExpertAgent context store is not configured.");
-    }
-
     const normalizedInput = normalizeReadInput(input);
 
     if (!normalizedInput.ok) {
       return normalizedInput;
     }
 
-    const result = await this.store.readContext(normalizedInput.value);
+    const storeResult = this.getStore(normalizedInput.value.namespace);
+
+    if (!storeResult.ok) {
+      return storeResult;
+    }
+
+    const result = await storeResult.value.readContext(stripNamespace(normalizedInput.value));
 
     if (!result.ok) {
       return result;
     }
 
-    return ok(normalizeContext(result.value));
+    return ok(normalizeContext(result.value, normalizedInput.value.namespace));
   }
 
-  async register(
-    input: ExpertAgentContextRegisterInput,
+  async add(
+    input: ExpertAgentContextAddInput,
   ): Promise<ExpertAgentContextResult<ExpertAgentContextItem>> {
-    if (this.store === undefined) {
-      return error("store_unavailable", "ExpertAgent context store is not configured.");
+    const namespaceResult = normalizeNamespace(input.namespace);
+
+    if (!namespaceResult.ok) {
+      return namespaceResult;
     }
 
-    const result = await this.store.registerContext({
+    const storeResult = this.getStore(namespaceResult.value);
+
+    if (!storeResult.ok) {
+      return storeResult;
+    }
+
+    const result = await storeResult.value.addContext({
       id: input.id,
       content: input.content,
       metadata: normalizeCreateMetadata(input.metadata),
@@ -243,17 +345,25 @@ export class ContextSystem {
       return result;
     }
 
-    return ok(normalizeContext(result.value));
+    return ok(normalizeContext(result.value, namespaceResult.value));
   }
 
   async update(
     input: ExpertAgentContextItemUpdateInput,
   ): Promise<ExpertAgentContextResult<ExpertAgentContextItem>> {
-    if (this.store === undefined) {
-      return error("store_unavailable", "ExpertAgent context store is not configured.");
+    const namespaceResult = normalizeNamespace(input.namespace);
+
+    if (!namespaceResult.ok) {
+      return namespaceResult;
     }
 
-    const existing = await this.store.readContext({
+    const storeResult = this.getStore(namespaceResult.value);
+
+    if (!storeResult.ok) {
+      return storeResult;
+    }
+
+    const existing = await storeResult.value.readContext({
       id: input.id,
       context: input.context,
     });
@@ -263,7 +373,7 @@ export class ContextSystem {
     }
 
     const metadata = normalizeUpdateMetadata(input.id, existing.value.metadata, input.metadata);
-    const result = await this.store.updateContext({
+    const result = await storeResult.value.updateContext({
       id: input.id,
       content: input.content,
       metadata,
@@ -276,46 +386,68 @@ export class ContextSystem {
       return result;
     }
 
-    return ok(normalizeContext(result.value));
+    return ok(normalizeContext(result.value, namespaceResult.value));
   }
 
   async delete(
     input: ExpertAgentContextItemDeleteInput,
-  ): Promise<ExpertAgentContextResult<{ readonly id: string }>> {
-    if (this.store === undefined) {
-      return error("store_unavailable", "ExpertAgent context store is not configured.");
+  ): Promise<ExpertAgentContextResult<ExpertAgentContextItemDeleteResult>> {
+    const namespaceResult = normalizeNamespace(input.namespace);
+
+    if (!namespaceResult.ok) {
+      return namespaceResult;
     }
 
-    const result = await this.store.deleteContext(input);
+    const storeResult = this.getStore(namespaceResult.value);
+
+    if (!storeResult.ok) {
+      return storeResult;
+    }
+
+    const result = await storeResult.value.deleteContext(stripNamespace(input));
 
     if (!result.ok) {
       return result;
     }
 
-    return result;
+    return ok({ namespace: namespaceResult.value, id: result.value.id });
   }
 
   async search(
     input: ExpertAgentContextItemSearchInput,
   ): Promise<ExpertAgentContextResult<readonly ExpertAgentContextItemSearchMatch[]>> {
-    if (this.store === undefined) {
-      return error("store_unavailable", "ExpertAgent context store is not configured.");
-    }
-
     const normalizedInput = normalizeSearchInput(input);
 
     if (!normalizedInput.ok) {
       return normalizedInput;
     }
 
-    const result = await this.store.searchContext(normalizedInput.value);
+    const matches: ExpertAgentContextItemSearchMatch[] = [];
+    const storesResult = this.getSearchStores(normalizedInput.value.namespace);
 
-    if (!result.ok) {
-      return result;
+    if (!storesResult.ok) {
+      return storesResult;
+    }
+
+    for (const [namespace, store] of storesResult.value) {
+      const result = await store.searchContext(stripNamespace(normalizedInput.value));
+
+      if (!result.ok) {
+        return result;
+      }
+
+      matches.push(...result.value.map((match) => normalizeSearchMatch(match, namespace)));
+
     }
 
     return ok(
-      result.value.map(normalizeSearchMatch).sort((left, right) => {
+      matches.sort((left, right) => {
+        const namespaceComparison = (left.namespace ?? "").localeCompare(right.namespace ?? "");
+
+        if (namespaceComparison !== 0) {
+          return namespaceComparison;
+        }
+
         const idComparison = left.id.localeCompare(right.id);
 
         if (idComparison !== 0) {
@@ -323,8 +455,48 @@ export class ContextSystem {
         }
 
         return left.lineNumber - right.lineNumber;
-      }),
+      }).slice(0, normalizedInput.value.maxResults ?? 20),
     );
+  }
+
+  private getStore(namespace: string | undefined): ExpertAgentContextResult<ExpertAgentContextStore> {
+    const namespaceResult = normalizeNamespace(namespace);
+
+    if (!namespaceResult.ok) {
+      return namespaceResult;
+    }
+
+    const store = this.stores.get(namespaceResult.value);
+
+    if (store === undefined) {
+      return error("store_unavailable", `ExpertAgent context store is not configured: ${namespaceResult.value}`, {
+        namespace: namespaceResult.value,
+      });
+    }
+
+    return ok(store);
+  }
+
+  private getSearchStores(
+    namespace: string | undefined,
+  ): ExpertAgentContextResult<readonly (readonly [string, ExpertAgentContextStore])[]> {
+    if (namespace !== undefined) {
+      const storeResult = this.getStore(namespace);
+
+      if (!storeResult.ok) {
+        return storeResult;
+      }
+
+      return ok([[namespace, storeResult.value]]);
+    }
+
+    const stores = [...this.stores.entries()];
+
+    if (stores.length === 0) {
+      return error("store_unavailable", "ExpertAgent context store is not configured.");
+    }
+
+    return ok(stores);
   }
 }
 
@@ -350,9 +522,12 @@ export function error<TValue = never>(
   };
 }
 
-export function normalizeContext(context: ExpertAgentContextItem): ExpertAgentContextItem {
+export function normalizeContext(
+  context: ExpertAgentContextItem,
+  namespace: string | undefined = context.namespace,
+): ExpertAgentContextItem {
   return {
-    ...normalizeContextSummary(context),
+    ...normalizeContextSummary(context, namespace),
     content: context.content,
     ...(context.contentRange === undefined
       ? {}
@@ -362,8 +537,10 @@ export function normalizeContext(context: ExpertAgentContextItem): ExpertAgentCo
 
 export function normalizeContextSummary(
   context: ExpertAgentContextItemSummary,
+  namespace: string | undefined = context.namespace,
 ): ExpertAgentContextItemSummary {
   return {
+    ...(namespace === undefined ? {} : { namespace }),
     id: context.id,
     metadata: normalizeMetadata(context.id, context.metadata),
     ...(context.revision === undefined ? {} : { revision: context.revision }),
@@ -460,6 +637,7 @@ export function normalizeSearchInput(
   }
 
   return ok({
+    ...(input.namespace === undefined ? {} : { namespace: input.namespace }),
     query,
     maxResults: clampInteger(input.maxResults, 1, 50, 20),
     contextLines: clampInteger(input.contextLines, 0, 5, 0),
@@ -470,8 +648,10 @@ export function normalizeSearchInput(
 
 export function normalizeSearchMatch(
   match: ExpertAgentContextItemSearchMatch,
+  namespace: string | undefined = match.namespace,
 ): ExpertAgentContextItemSearchMatch {
   return {
+    ...(namespace === undefined ? {} : { namespace }),
     id: match.id,
     lineNumber: Math.max(1, Math.trunc(match.lineNumber)),
     line: match.line,
@@ -483,6 +663,12 @@ export function normalizeSearchMatch(
 export function normalizeReadInput(
   input: ExpertAgentContextItemReadInput,
 ): ExpertAgentContextResult<ExpertAgentContextItemReadInput> {
+  const namespace = normalizeNamespace(input.namespace);
+
+  if (!namespace.ok) {
+    return namespace;
+  }
+
   const start = normalizeOptionalNonNegativeInteger(input.start, "start");
 
   if (!start.ok) {
@@ -496,11 +682,62 @@ export function normalizeReadInput(
   }
 
   return ok({
+    namespace: namespace.value,
     id: input.id,
     ...(start.value === undefined ? {} : { start: start.value }),
     ...(offset.value === undefined ? {} : { offset: offset.value }),
     ...(input.context === undefined ? {} : { context: input.context }),
   });
+}
+
+export function isSameContextItemReference(
+  left: ExpertAgentContextItemReference,
+  right: ExpertAgentContextItemReference,
+): boolean {
+  return left.namespace === right.namespace && left.id === right.id;
+}
+
+function normalizeNamespace(namespace: string | undefined): ExpertAgentContextResult<string> {
+  if (typeof namespace !== "string" || namespace.trim().length === 0) {
+    return error("invalid_input", "Context namespace must be a non-empty string.");
+  }
+
+  const normalized = namespace.trim();
+
+  if (normalized.includes("/")) {
+    return error("invalid_input", `Context namespace must not contain "/": ${normalized}`, {
+      namespace: normalized,
+    });
+  }
+
+  return ok(normalized);
+}
+
+function normalizeStoreEntries(
+  stores: ContextSystemOptions["stores"],
+): readonly (readonly [string, ExpertAgentContextStore])[] {
+  if (stores === undefined) {
+    return [];
+  }
+
+  if (stores instanceof Map) {
+    return [...stores.entries()];
+  }
+
+  if (Array.isArray(stores)) {
+    return stores;
+  }
+
+  return Object.entries(stores);
+}
+
+function stripNamespace<TInput extends { readonly namespace?: string | undefined }>(
+  input: TInput,
+): Omit<TInput, "namespace"> {
+  const { namespace, ...rest } = input;
+  void namespace;
+
+  return rest;
 }
 
 export function isAgentsContextId(id: string): boolean {

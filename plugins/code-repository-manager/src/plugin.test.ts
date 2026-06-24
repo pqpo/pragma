@@ -71,7 +71,8 @@ describe("Code Repository Manager plugin", () => {
       ok: true,
       value: expect.arrayContaining([
         expect.objectContaining({
-          id: `code-repository-manager/${CODE_REPOSITORY_CONTEXT_ID}`,
+          namespace: "code-repository-manager",
+          id: CODE_REPOSITORY_CONTEXT_ID,
           metadata: expect.objectContaining({
             trigger: "model_decision",
             trustLevel: "external",
@@ -83,7 +84,8 @@ describe("Code Repository Manager plugin", () => {
 
     await expect(
       agent.readContext({
-        id: `code-repository-manager/${CODE_REPOSITORY_CONTEXT_ID}`,
+        namespace: "code-repository-manager",
+        id: CODE_REPOSITORY_CONTEXT_ID,
       }),
     ).resolves.toMatchObject({
       ok: true,

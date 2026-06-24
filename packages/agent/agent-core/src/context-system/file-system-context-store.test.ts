@@ -4,8 +4,8 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import type { ExpertAgentContextItemReadInput } from "./context-system.ts";
-import { AGENTS_CONTEXT_ID, ContextSystem, ok } from "./context-system.ts";
+import type { ExpertAgentStoredContextItemReadInput } from "./context-system.ts";
+import { AGENTS_CONTEXT_ID, ContextSystem, HOST_CONTEXT_NAMESPACE, ok } from "./context-system.ts";
 import { ExpertAgent } from "../agent/expert-agent.ts";
 import type { FileSystemContextStoreCommandRunner } from "./file-system-context-store.ts";
 import { FileSystemContextStore } from "./file-system-context-store.ts";
@@ -109,7 +109,7 @@ describe("FileSystemContextStore", () => {
     const rootDir = await createTempDir();
     const store = new FileSystemContextStore({ rootDir });
 
-    const created = await store.registerContext({
+    const created = await store.addContext({
       id: "guide.md",
       content: "Guide content.",
       metadata: {
@@ -297,6 +297,7 @@ describe("ContextSystem", () => {
     await expect(contextSystem.index()).resolves.toMatchObject(
       ok([
         {
+          namespace: HOST_CONTEXT_NAMESPACE,
           id: AGENTS_CONTEXT_ID,
           metadata: {
             description: "Store metadata should be preserved.",
@@ -306,8 +307,11 @@ describe("ContextSystem", () => {
       ]),
     );
 
-    await expect(contextSystem.read({ id: AGENTS_CONTEXT_ID })).resolves.toMatchObject(
+    await expect(
+      contextSystem.read({ namespace: HOST_CONTEXT_NAMESPACE, id: AGENTS_CONTEXT_ID }),
+    ).resolves.toMatchObject(
       ok({
+        namespace: HOST_CONTEXT_NAMESPACE,
         id: AGENTS_CONTEXT_ID,
         content: "Shared instructions.",
         metadata: {
@@ -335,6 +339,7 @@ describe("ContextSystem", () => {
     await expect(contextSystem.index()).resolves.toMatchObject(
       ok([
         {
+          namespace: HOST_CONTEXT_NAMESPACE,
           id: "indexed.md",
           metadata: {
             trigger: "manual",
@@ -399,6 +404,7 @@ describe("ContextSystem", () => {
       truncationReason: "always_on_context_budget_exceeded",
       retrievedChunks: [
         {
+          namespace: HOST_CONTEXT_NAMESPACE,
           contextId: "instructions.md",
           startOffset: 0,
           endOffset: 32,
@@ -454,8 +460,62 @@ describe("ContextSystem", () => {
       }),
     );
     expect(context.snapshot).toMatchObject({
-      downgradedAlwaysOnContexts: ["large.md"],
+      downgradedAlwaysOnContexts: [
+        {
+          namespace: HOST_CONTEXT_NAMESPACE,
+          id: "large.md",
+        },
+      ],
       truncationReason: "always_on_context_budget_exceeded",
+    });
+  });
+
+  it("downgrades namespaced always-on context when prompt overhead exceeds the budget", async () => {
+    const store = new CountingContextStore({
+      context: [
+        {
+          id: "brief.md",
+          content: "A",
+          metadata: {
+            trigger: "always_on",
+          },
+        },
+      ],
+    });
+    const agent = await ExpertAgent.create({
+      schemaVersion: "expertmesh.expert/v1",
+      id: "tiny-budget-agent",
+      displayName: "Tiny Budget Agent",
+      description: "Tests namespaced context budget downgrades.",
+      tags: [],
+      version: "1.0.0",
+      scope: "test",
+      workspace: "/tmp/expertmesh-tiny-budget-test",
+      context: store,
+    });
+
+    const context = await agent.buildContext(undefined, {
+      characterBudget: 10,
+    });
+
+    expect(context.systemPrompt).not.toContain("content:");
+    expect(context.context).toContainEqual(
+      expect.objectContaining({
+        namespace: HOST_CONTEXT_NAMESPACE,
+        id: "brief.md",
+        metadata: expect.objectContaining({
+          trigger: "model_decision",
+        }),
+      }),
+    );
+    expect(context.snapshot).toMatchObject({
+      downgradedAlwaysOnContexts: [
+        {
+          namespace: HOST_CONTEXT_NAMESPACE,
+          id: "brief.md",
+        },
+      ],
+      truncationReason: "context_budget_exceeded",
     });
   });
 
@@ -475,6 +535,7 @@ describe("ContextSystem", () => {
 
     await expect(
       contextSystem.update({
+        namespace: HOST_CONTEXT_NAMESPACE,
         id: AGENTS_CONTEXT_ID,
         content: "New instructions.",
         metadata: {
@@ -484,6 +545,7 @@ describe("ContextSystem", () => {
       }),
     ).resolves.toMatchObject(
       ok({
+        namespace: HOST_CONTEXT_NAMESPACE,
         id: AGENTS_CONTEXT_ID,
         content: "New instructions.",
         metadata: {
@@ -514,6 +576,7 @@ describe("ContextSystem", () => {
 
     await expect(
       contextSystem.update({
+        namespace: HOST_CONTEXT_NAMESPACE,
         id: "guide.md",
         content: "New content.",
         metadata: {
@@ -523,6 +586,7 @@ describe("ContextSystem", () => {
       }),
     ).resolves.toMatchObject(
       ok({
+        namespace: HOST_CONTEXT_NAMESPACE,
         id: "guide.md",
         content: "New content.",
         metadata: {
@@ -551,6 +615,7 @@ describe("ContextSystem", () => {
 
     await expect(
       contextSystem.update({
+        namespace: HOST_CONTEXT_NAMESPACE,
         id: "guide.md",
         content: "Changed content.",
         expectedRevision: "stale",
@@ -570,7 +635,8 @@ describe("ContextSystem", () => {
     const contextSystem = new ContextSystem({ store });
 
     await expect(
-      contextSystem.register({
+      contextSystem.add({
+        namespace: HOST_CONTEXT_NAMESPACE,
         id: "large.md",
         content: "large",
       }),
@@ -587,12 +653,14 @@ describe("ContextSystem", () => {
     const contextSystem = new ContextSystem({ store });
 
     await expect(
-      contextSystem.register({
+      contextSystem.add({
+        namespace: HOST_CONTEXT_NAMESPACE,
         id: "large.md",
         content: "large",
       }),
     ).resolves.toMatchObject(
       ok({
+        namespace: HOST_CONTEXT_NAMESPACE,
         id: "large.md",
         content: "large",
       }),
@@ -609,12 +677,14 @@ describe("ContextSystem", () => {
 
     await expect(
       contextSystem.read({
+        namespace: HOST_CONTEXT_NAMESPACE,
         id: "guide.md",
         start: 6,
         offset: 4,
       }),
     ).resolves.toMatchObject(
       ok({
+        namespace: HOST_CONTEXT_NAMESPACE,
         id: "guide.md",
         content: "Beta",
         contentRange: {
@@ -641,12 +711,14 @@ describe("ContextSystem", () => {
 
     await expect(
       contextSystem.read({
+        namespace: HOST_CONTEXT_NAMESPACE,
         id: "guide.md",
         start: 6,
         offset: 5,
       }),
     ).resolves.toMatchObject(
       ok({
+        namespace: HOST_CONTEXT_NAMESPACE,
         id: "guide.md",
         content: "你",
         contentRange: {
@@ -677,12 +749,14 @@ describe("ContextSystem", () => {
 
     await expect(
       contextSystem.read({
+        namespace: HOST_CONTEXT_NAMESPACE,
         id: "guide.md",
         start: 8,
         offset: 5,
       }),
     ).resolves.toMatchObject(
       ok({
+        namespace: HOST_CONTEXT_NAMESPACE,
         id: "guide.md",
         metadata: {
           description: "Guide",
@@ -721,6 +795,7 @@ describe("ContextSystem", () => {
 
     const result = await readTool?.call(
       {
+        namespace: HOST_CONTEXT_NAMESPACE,
         id: "guide.md",
       },
       undefined,
@@ -771,16 +846,127 @@ describe("ContextSystem", () => {
     ).resolves.toEqual(
       ok([
         {
+          namespace: HOST_CONTEXT_NAMESPACE,
           id: "alpha.md",
           lineNumber: 1,
           line: "Another search term here.",
         },
         {
+          namespace: HOST_CONTEXT_NAMESPACE,
           id: "zeta.md",
           lineNumber: 1,
           line: "Find the Search Term here.",
         },
       ]),
+    );
+  });
+
+  it("searches all stores before sorting and applying maxResults", async () => {
+    const firstStore = new InMemoryContextStore({
+      context: [
+        {
+          id: "zeta.md",
+          content: "Needle in zeta.",
+        },
+        {
+          id: "omega.md",
+          content: "Needle in omega.",
+        },
+      ],
+    });
+    const secondStore = new InMemoryContextStore({
+      context: [
+        {
+          id: "alpha.md",
+          content: "Needle in alpha.",
+        },
+      ],
+    });
+    const contextSystem = new ContextSystem({
+      stores: [
+        ["zzz", firstStore],
+        ["aaa", secondStore],
+      ],
+    });
+
+    await expect(
+      contextSystem.search({
+        query: "Needle",
+        maxResults: 2,
+      }),
+    ).resolves.toEqual(
+      ok([
+        {
+          namespace: "aaa",
+          id: "alpha.md",
+          lineNumber: 1,
+          line: "Needle in alpha.",
+        },
+        {
+          namespace: "zzz",
+          id: "omega.md",
+          lineNumber: 1,
+          line: "Needle in omega.",
+        },
+      ]),
+    );
+  });
+
+  it("registers context stores by namespace and rejects invalid registrations", async () => {
+    const contextSystem = new ContextSystem();
+    const store = new InMemoryContextStore({
+      context: {
+        "guide.md": "Guide content.",
+      },
+    });
+
+    expect(contextSystem.register({ namespace: "plugin.docs", store })).toEqual(
+      ok({ namespace: "plugin.docs" }),
+    );
+    await expect(
+      contextSystem.read({
+        namespace: "plugin.docs",
+        id: "guide.md",
+      }),
+    ).resolves.toMatchObject(
+      ok({
+        namespace: "plugin.docs",
+        id: "guide.md",
+        content: "Guide content.",
+      }),
+    );
+    expect(contextSystem.register({ namespace: "plugin.docs", store })).toMatchObject({
+      ok: false,
+      error: {
+        code: "context_already_exists",
+      },
+    });
+    expect(contextSystem.register({ namespace: "bad/namespace", store })).toMatchObject({
+      ok: false,
+      error: {
+        code: "invalid_input",
+      },
+    });
+  });
+
+  it("returns namespace when deleting context through ContextSystem", async () => {
+    const store = new InMemoryContextStore({
+      context: {
+        "guide.md": "Guide content.",
+      },
+    });
+    const contextSystem = new ContextSystem({ store });
+
+    await expect(
+      contextSystem.delete({
+        namespace: HOST_CONTEXT_NAMESPACE,
+        id: "guide.md",
+      }),
+    ).resolves.toEqual(
+      ok({
+        namespace: HOST_CONTEXT_NAMESPACE,
+        id: "guide.md",
+      }),
     );
   });
 });
@@ -795,14 +981,14 @@ class CountingContextStore extends InMemoryContextStore {
   readCount = 0;
   lastListContext: unknown;
   lastReadContext: unknown;
-  lastReadInput: ExpertAgentContextItemReadInput | undefined;
+  lastReadInput: ExpertAgentStoredContextItemReadInput | undefined;
 
   override async listContext(input = {}) {
     this.lastListContext = "context" in input ? input.context : undefined;
     return await super.listContext(input);
   }
 
-  override async readContext(input: ExpertAgentContextItemReadInput) {
+  override async readContext(input: ExpertAgentStoredContextItemReadInput) {
     this.readCount += 1;
     this.lastReadContext = input.context;
     this.lastReadInput = input;

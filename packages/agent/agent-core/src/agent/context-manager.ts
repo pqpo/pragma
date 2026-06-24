@@ -1,8 +1,13 @@
 import type { IExpertAgent } from "./expert-agent.ts";
+import {
+  HOST_CONTEXT_NAMESPACE,
+  isSameContextItemReference,
+} from "../context-system/context-system.ts";
 import type {
   ContextTrustLevel,
   ContextSystem,
   ExpertAgentContextItem,
+  ExpertAgentContextItemReference,
   ExpertAgentContextItemSummary,
 } from "../context-system/context-system.ts";
 import type { ExpertAgentRunContext } from "../runtime/run-context.ts";
@@ -27,17 +32,19 @@ export interface ContextSnapshot {
   readonly retrievedChunks: readonly ContextRetrievedChunk[];
   readonly trustLevel: ContextTrustLevel;
   readonly tokenBudget: number;
-  readonly downgradedAlwaysOnContexts?: readonly string[] | undefined;
+  readonly downgradedAlwaysOnContexts?: readonly ExpertAgentContextItemReference[] | undefined;
   readonly truncationReason?: string | undefined;
 }
 
 export interface ContextRevision {
+  readonly namespace?: string | undefined;
   readonly id: string;
   readonly revision?: string | undefined;
   readonly etag?: string | undefined;
 }
 
 export interface ContextRetrievedChunk {
+  readonly namespace?: string | undefined;
   readonly contextId: string;
   readonly revision?: string | undefined;
   readonly startOffset: number;
@@ -79,7 +86,7 @@ export class ContextManager {
       budget,
       contextError: indexResult.ok ? undefined : indexResult.error.message,
       contextSummaries,
-      downgradedContextIds: assembled.downgradedContextIds,
+      downgradedContexts: assembled.downgradedContexts,
     });
     const truncationReason =
       assembled.truncationReason ??
@@ -87,6 +94,7 @@ export class ContextManager {
     const snapshot: ContextSnapshot = {
       releaseDigest: `${this.agent.id}@${this.agent.version}`,
       contextRevisions: contextSummaries.map((context) => ({
+        ...(context.namespace === undefined ? {} : { namespace: context.namespace }),
         id: context.id,
         ...(context.revision === undefined ? {} : { revision: context.revision }),
         ...(context.etag === undefined ? {} : { etag: context.etag }),
@@ -94,9 +102,9 @@ export class ContextManager {
       retrievedChunks: createRetrievedChunks(fitted.alwaysOnContexts),
       trustLevel: options.trustLevel ?? "workspace",
       tokenBudget: options.tokenBudget ?? budget,
-      ...(fitted.downgradedContextIds.length === 0
+      ...(fitted.downgradedContexts.length === 0
         ? {}
-        : { downgradedAlwaysOnContexts: fitted.downgradedContextIds }),
+        : { downgradedAlwaysOnContexts: fitted.downgradedContexts }),
       ...(truncationReason === undefined ? {} : { truncationReason }),
     };
 
@@ -112,19 +120,19 @@ export class ContextManager {
     readonly budget: number;
     readonly contextError?: string | undefined;
     readonly contextSummaries: readonly ExpertAgentContextItemSummary[];
-    readonly downgradedContextIds: readonly string[];
+    readonly downgradedContexts: readonly ExpertAgentContextItemReference[];
   }): {
     readonly alwaysOnContexts: readonly ExpertAgentContextItem[];
     readonly contextSummaries: readonly ExpertAgentContextItemSummary[];
-    readonly downgradedContextIds: readonly string[];
+    readonly downgradedContexts: readonly ExpertAgentContextItemReference[];
     readonly promptWasOverBudget: boolean;
     readonly systemPrompt: string;
   } {
     let alwaysOnContexts = [...context.alwaysOnContexts];
-    const downgradedContextIds = [...context.downgradedContextIds];
+    const downgradedContexts = [...context.downgradedContexts];
     let contextSummaries = downgradeAlwaysOnSummaries(
       context.contextSummaries,
-      downgradedContextIds,
+      downgradedContexts,
     );
     let systemPrompt = this.buildSystemPrompt({
       alwaysOnContexts,
@@ -134,18 +142,15 @@ export class ContextManager {
     const promptWasOverBudget = systemPrompt.length > context.budget;
 
     while (systemPrompt.length > context.budget && alwaysOnContexts.length > 0) {
-      const candidate = chooseDowngradeCandidate(
-        alwaysOnContexts,
-        new Set(alwaysOnContexts.map((context) => context.id)),
-      );
+      const candidate = chooseDowngradeCandidate(alwaysOnContexts, new Set(alwaysOnContexts));
 
       if (candidate === undefined) {
         break;
       }
 
-      alwaysOnContexts = alwaysOnContexts.filter((context) => context.id !== candidate.id);
-      downgradedContextIds.push(candidate.id);
-      contextSummaries = downgradeAlwaysOnSummaries(context.contextSummaries, downgradedContextIds);
+      alwaysOnContexts = alwaysOnContexts.filter((context) => context !== candidate);
+      downgradedContexts.push(toContextItemReference(candidate));
+      contextSummaries = downgradeAlwaysOnSummaries(context.contextSummaries, downgradedContexts);
       systemPrompt = this.buildSystemPrompt({
         alwaysOnContexts,
         contextError: context.contextError,
@@ -156,7 +161,7 @@ export class ContextManager {
     return {
       alwaysOnContexts,
       contextSummaries,
-      downgradedContextIds,
+      downgradedContexts,
       promptWasOverBudget,
       systemPrompt,
     };
@@ -199,6 +204,7 @@ export class ContextManager {
     const loaded = await Promise.all(
       alwaysOnContexts.map((item) =>
         this.contextSystem.read({
+          namespace: item.namespace ?? HOST_CONTEXT_NAMESPACE,
           id: item.id,
           offset: Math.max(1, Math.trunc(options.contextReadByteBudget)),
           context: runContext,
@@ -218,12 +224,12 @@ function assembleAlwaysOnContexts(
 ): {
   readonly context: readonly ExpertAgentContextItem[];
   readonly chunks: readonly ContextRetrievedChunk[];
-  readonly downgradedContextIds: readonly string[];
+  readonly downgradedContexts: readonly ExpertAgentContextItemReference[];
   readonly truncationReason?: string | undefined;
 } {
   const budget = Math.max(0, Math.trunc(options.characterBudget));
-  const selected = new Set(items.map((item) => item.id));
-  const downgradedContextIds: string[] = [];
+  const selected = new Set(items);
+  const downgradedContexts: ExpertAgentContextItemReference[] = [];
 
   while (sumContextContentLength(items, selected) > budget && selected.size > 0) {
     const item = chooseDowngradeCandidate(items, selected);
@@ -232,19 +238,19 @@ function assembleAlwaysOnContexts(
       break;
     }
 
-    selected.delete(item.id);
-    downgradedContextIds.push(item.id);
+    selected.delete(item);
+    downgradedContexts.push(toContextItemReference(item));
   }
 
-  const assembled = items.filter((item) => selected.has(item.id));
+  const assembled = items.filter((item) => selected.has(item));
   const chunks = createRetrievedChunks(assembled);
   const truncated = assembled.some((context) => context.contentRange?.truncated === true);
 
   return {
     context: assembled,
     chunks,
-    downgradedContextIds,
-    ...(truncated || downgradedContextIds.length > 0
+    downgradedContexts,
+    ...(truncated || downgradedContexts.length > 0
       ? { truncationReason: "always_on_context_budget_exceeded" }
       : {}),
   };
@@ -295,12 +301,10 @@ function createRetrievedChunks(
 
 function downgradeAlwaysOnSummaries(
   summaries: readonly ExpertAgentContextItemSummary[],
-  downgradedContextIds: readonly string[],
+  downgradedContexts: readonly ExpertAgentContextItemReference[],
 ): readonly ExpertAgentContextItemSummary[] {
-  const downgraded = new Set(downgradedContextIds);
-
   return summaries.map((summary) => {
-    if (!downgraded.has(summary.id)) {
+    if (!downgradedContexts.some((context) => isSameContextItemReference(context, summary))) {
       return summary;
     }
 
@@ -316,17 +320,20 @@ function downgradeAlwaysOnSummaries(
 
 function sumContextContentLength(
   items: readonly ExpertAgentContextItem[],
-  selected: ReadonlySet<string>,
+  selected: ReadonlySet<ExpertAgentContextItem>,
 ): number {
-  return items.reduce((sum, item) => sum + (selected.has(item.id) ? item.content.length : 0), 0);
+  return items.reduce(
+    (sum, item) => sum + (selected.has(item) ? item.content.length : 0),
+    0,
+  );
 }
 
 function chooseDowngradeCandidate(
   items: readonly ExpertAgentContextItem[],
-  selected: ReadonlySet<string>,
+  selected: ReadonlySet<ExpertAgentContextItem>,
 ): ExpertAgentContextItem | undefined {
   return items
-    .filter((item) => selected.has(item.id))
+    .filter((item) => selected.has(item))
     .sort((left, right) => {
       const agentsPriority = Number(left.id === "AGENTS.md") - Number(right.id === "AGENTS.md");
 
@@ -351,6 +358,7 @@ function createRetrievedChunk(
   truncated: boolean,
 ): ContextRetrievedChunk {
   return {
+    ...(context.namespace === undefined ? {} : { namespace: context.namespace }),
     contextId: context.id,
     ...(context.revision === undefined ? {} : { revision: context.revision }),
     startOffset,
@@ -418,7 +426,8 @@ function formatContextsSection(
 
   const contextSections = items.map((item) => {
     const headerLines = [
-      `- ${item.id}`,
+      `- id: ${item.id}`,
+      item.namespace === undefined ? undefined : `  namespace: ${item.namespace}`,
       item.metadata.description === undefined
         ? undefined
         : `  description: ${item.metadata.description}`,
@@ -451,6 +460,15 @@ function formatContextsSection(
   });
 
   return [title, ...contextSections].join("\n");
+}
+
+function toContextItemReference(
+  context: ExpertAgentContextItemReference,
+): ExpertAgentContextItemReference {
+  return {
+    ...(context.namespace === undefined ? {} : { namespace: context.namespace }),
+    id: context.id,
+  };
 }
 
 function indent(value: string, prefix: string): string {
