@@ -1,0 +1,19 @@
+{
+  "schemaVersion": "expertmesh.plugin/v1",
+  "id": "plugin.tool-approval-policy",
+  "name": "Tool approval policy",
+  "description": "Marks selected tools as requiring approval.",
+  "version": "0.0.0",
+  "tags": ["example", "approval", "policy"],
+  "runtime": {
+    "type": "expert-agent-plugin",
+    "entry": "./src/plugin.ts"
+  },
+  "capabilities": [
+    {
+      "type": "tool-approvals",
+      "name": "delete_workspace_note",
+      "description": "Requires confirmation before deleting workspace notes."
+    }
+  ]
+}

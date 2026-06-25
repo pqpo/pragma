@@ -226,6 +226,69 @@ describe("ExpertAgent plugins", () => {
     expect(agent.hooks?.beforeSessionCreate).toBeDefined();
     expect(hookEvents).toEqual(["host"]);
   });
+
+  it("rejects conflicting tool approval policies", () => {
+    expect(() =>
+      resolveExpertAgentPlugins({
+        pluginEntries: [
+          {
+            id: "plugin.approval-a",
+            name: "Approval A",
+            description: "Approval policy A.",
+            manifest: {
+              schemaVersion: "expertmesh.plugin/v1",
+              id: "plugin.approval-a",
+              name: "Approval A",
+              description: "Approval policy A.",
+              runtime: {
+                type: "node",
+                entry: "./plugin.ts",
+              },
+              capabilities: [],
+              requires_env: [],
+            },
+            setup: () => ({
+              toolApprovals: [
+                {
+                  toolName: "delete_note",
+                  approval: {
+                    mode: "ask",
+                  },
+                },
+              ],
+            }),
+          },
+          {
+            id: "plugin.approval-b",
+            name: "Approval B",
+            description: "Approval policy B.",
+            manifest: {
+              schemaVersion: "expertmesh.plugin/v1",
+              id: "plugin.approval-b",
+              name: "Approval B",
+              description: "Approval policy B.",
+              runtime: {
+                type: "node",
+                entry: "./plugin.ts",
+              },
+              capabilities: [],
+              requires_env: [],
+            },
+            setup: () => ({
+              toolApprovals: [
+                {
+                  toolName: "delete_note",
+                  approval: {
+                    mode: "required",
+                  },
+                },
+              ],
+            }),
+          },
+        ],
+      }),
+    ).toThrow(/Conflicting tool approval policy for delete_note/);
+  });
 });
 
 async function createPluginTestWorkspace(): Promise<string> {

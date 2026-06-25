@@ -21,7 +21,11 @@ import type {
   RuntimeSessionRef,
 } from "../runtime/runtime-adapter.ts";
 import type { SubAgentRegistry } from "../subagents/sub-agent.ts";
-import type { ExpertAgentManagedTool, ExpertAgentToolCallResult } from "../tools/managed-tool.ts";
+import type {
+  ExpertAgentManagedTool,
+  ExpertAgentToolApproval,
+  ExpertAgentToolCallResult,
+} from "../tools/managed-tool.ts";
 
 type MaybePromise<TValue> = TValue | Promise<TValue>;
 type DeepReadonly<TValue> = TValue extends (...args: never[]) => unknown
@@ -161,6 +165,12 @@ export interface ExpertAgentPluginContributions {
   readonly models?: IExpertAgentModelsConfig | undefined;
   readonly subAgents?: SubAgentRegistry | undefined;
   readonly tools?: readonly ExpertAgentManagedTool<string, ExpertAgentToolCallResult>[] | undefined;
+  readonly toolApprovals?:
+    | readonly {
+        readonly toolName: string;
+        readonly approval: ExpertAgentToolApproval;
+      }[]
+    | undefined;
   readonly hooks?: ExpertAgentPluginHooks | undefined;
 }
 
@@ -179,6 +189,12 @@ export interface ResolvedExpertAgentPluginContributions {
   readonly models?: IExpertAgentModelsConfig | undefined;
   readonly subAgents?: SubAgentRegistry | undefined;
   readonly tools?: readonly ExpertAgentManagedTool<string, ExpertAgentToolCallResult>[] | undefined;
+  readonly toolApprovals?:
+    | readonly {
+        readonly toolName: string;
+        readonly approval: ExpertAgentToolApproval;
+      }[]
+    | undefined;
   readonly hooks?: ExpertAgentPluginHooks | undefined;
 }
 
@@ -249,6 +265,9 @@ export function resolveExpertAgentPlugins(
     models: mergeModelsConfigs(contributions.map((contribution) => contribution.models)),
     subAgents: mergeSubAgentRegistries(contributions.map((contribution) => contribution.subAgents)),
     tools: mergeManagedTools(contributions.map((contribution) => contribution.tools)),
+    toolApprovals: mergeToolApprovals(
+      contributions.map((contribution) => contribution.toolApprovals),
+    ),
     hooks: mergePluginHooks(contributions.map((contribution) => contribution.hooks)),
   };
 }
@@ -341,6 +360,46 @@ function mergeManagedTools(
   );
 
   return tools.length === 0 ? undefined : tools;
+}
+
+function mergeToolApprovals(
+  approvalGroups: readonly
+    (readonly {
+      readonly toolName: string;
+      readonly approval: ExpertAgentToolApproval;
+    }[] | undefined)[],
+): readonly {
+  readonly toolName: string;
+  readonly approval: ExpertAgentToolApproval;
+}[] | undefined {
+  const approvalByTool = new Map<string, ExpertAgentToolApproval>();
+  const approvals: {
+    readonly toolName: string;
+    readonly approval: ExpertAgentToolApproval;
+  }[] = [];
+
+  for (const contribution of approvalGroups.flatMap((group) => group ?? [])) {
+    const existing = approvalByTool.get(contribution.toolName);
+
+    if (existing === undefined) {
+      approvalByTool.set(contribution.toolName, contribution.approval);
+      approvals.push(contribution);
+      continue;
+    }
+
+    if (!isSameToolApproval(existing, contribution.approval)) {
+      throw new Error(`Conflicting tool approval policy for ${contribution.toolName}.`);
+    }
+  }
+
+  return approvals.length === 0 ? undefined : approvals;
+}
+
+function isSameToolApproval(
+  left: ExpertAgentToolApproval,
+  right: ExpertAgentToolApproval,
+): boolean {
+  return left.mode === right.mode && left.reason === right.reason;
 }
 
 function mergePluginHooks(

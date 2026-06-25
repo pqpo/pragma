@@ -15,6 +15,10 @@ import type {
 } from "./context-system.ts";
 import type { ExpertAgentRunContext } from "../runtime/run-context.ts";
 import { createExpertAgentRunContext } from "../runtime/run-context.ts";
+import type {
+  ExpertAgentToolApproval,
+  ExpertAgentToolApprovalHandler,
+} from "../tools/managed-tool.ts";
 
 export interface ExpertAgentDefaultToolCallResult {
   readonly text: string;
@@ -27,9 +31,14 @@ export interface ExpertAgentDefaultTool {
   readonly label: string;
   readonly description: string;
   readonly inputSchema: unknown;
+  readonly approval?: ExpertAgentToolApproval | undefined;
   readonly call: (
     args: unknown,
     signal: AbortSignal | undefined,
+    context?: {
+      readonly approval?: ExpertAgentToolApprovalHandler | undefined;
+      readonly toolCallId?: string | undefined;
+    },
   ) => Promise<ExpertAgentDefaultToolCallResult>;
 }
 
@@ -64,6 +73,7 @@ export function createContextTools(
   options: CreateContextToolsOptions = {},
 ): readonly ExpertAgentDefaultTool[] {
   return [
+    createAskUserQuestionTool(),
     {
       name: "list_expert_context",
       label: "List expert context",
@@ -264,6 +274,108 @@ export function createContextTools(
   ];
 }
 
+function createAskUserQuestionTool(): ExpertAgentDefaultTool {
+  return {
+    name: "askUserQuestion",
+    label: "Ask user question",
+    description: "Ask the user structured questions and return the selected answers.",
+    approval: {
+      mode: "none",
+    },
+    inputSchema: objectSchema(
+      {
+        questions: {
+          type: "array",
+          items: objectSchema(
+            {
+              question: stringSchema("Complete question text."),
+              header: stringSchema("Short label shown to the user."),
+              options: {
+                type: "array",
+                items: objectSchema(
+                  {
+                    label: stringSchema("Answer option label."),
+                    description: stringSchema("Short option description."),
+                  },
+                  ["label"],
+                ),
+              },
+            },
+            ["question", "header", "options"],
+          ),
+        },
+      },
+      ["questions"],
+    ),
+    call: async (args, _signal, context) => {
+      const questions = readAskUserQuestions(args);
+      if (questions.length === 0) {
+        return {
+          text: "Invalid askUserQuestion input: questions array is empty or missing.",
+          isError: true,
+        };
+      }
+
+      const approval = context?.approval;
+
+      if (approval === undefined) {
+        return {
+          text: questions.map((question) => `${question.header}: ${question.question}`).join("\n"),
+        };
+      }
+
+      const response = await approval({
+        toolName: "askUserQuestion",
+        toolCallId: context?.toolCallId,
+        input: { questions },
+      });
+
+      if (!response.approved) {
+        return {
+          text: response.reason ?? "User declined to answer the question.",
+          isError: true,
+        };
+      }
+
+      return {
+        text:
+          response.updatedInput === undefined
+            ? "User answered the question."
+            : JSON.stringify(response.updatedInput, null, 2),
+        details: response.updatedInput,
+      };
+    },
+  };
+}
+
+function readAskUserQuestions(
+  args: unknown,
+): readonly {
+  readonly question: string;
+  readonly header: string;
+  readonly options: readonly { readonly label: string; readonly description: string }[];
+}[] {
+  if (!isRecord(args) || !Array.isArray(args.questions)) {
+    return [];
+  }
+
+  return args.questions
+    .filter(isRecord)
+    .map((question: Record<string, unknown>) => ({
+      question: typeof question.question === "string" ? question.question : "",
+      header: typeof question.header === "string" ? question.header : "",
+      options: Array.isArray(question.options)
+        ? question.options
+            .filter(isRecord)
+            .map((option: Record<string, unknown>) => ({
+              label: typeof option.label === "string" ? option.label : "",
+              description: typeof option.description === "string" ? option.description : "",
+            }))
+        : [],
+    }))
+    .filter((question) => question.question.length > 0 && question.header.length > 0);
+}
+
 function objectSchema(
   properties: Record<string, unknown>,
   required: readonly string[] = [],
@@ -400,6 +512,10 @@ function readParam(params: unknown, key: string): unknown {
   }
 
   return undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
 }
 
 function readRunContext(options: CreateContextToolsOptions): ExpertAgentRunContext {

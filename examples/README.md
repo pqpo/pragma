@@ -62,6 +62,19 @@ pnpm --filter @expertmesh/examples start:basic --system-session-id local-debug-s
 6. 对每个 turn 调用 `session.submit()` 并处理流式事件。
 7. 在 `finally` 中关闭 session。
 
+## 运行审批示例
+
+```bash
+pnpm --filter @expertmesh/examples start:approval
+```
+
+这个示例展示两件事：
+
+- 内置 `askUserQuestion` 会通过运行时注入的 approval handler 读取用户回答。
+- 普通工具可以通过 `approval: { mode: "required" }` 声明为需要确认，运行时会先发出 `tool.approval_requested` 事件，再交给用户决定是否继续。
+
+示例入口是 `src/run-tool-approval-example.ts`，它直接把审批 handler 放进 `runtime.createSession({ context })` 的 `attributes.toolApprovalHandler`，以便在 CLI 中交互式确认。
+
 ## 运行上下文示例
 
 ```bash

@@ -69,6 +69,7 @@ export function createPiRuntimeSession(
         };
         streamState.runId = runId;
         streamState.emitter = emitter;
+        streamState.source = source;
         const unsubscribe = session.subscribe((event) => {
           const delta = readAssistantTextDelta(event);
           const thinkingDelta = readAssistantThinkingDelta(event);
@@ -248,6 +249,7 @@ export function createPiRuntimeSession(
         } finally {
           streamState.runId = undefined;
           streamState.emitter = undefined;
+          streamState.source = undefined;
           unsubscribe();
           emitter.complete();
         }

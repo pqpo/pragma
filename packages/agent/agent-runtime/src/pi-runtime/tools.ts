@@ -4,6 +4,8 @@ import type {
   ExpertAgent,
   ExpertAgentDefaultTool,
   ExpertAgentManagedTool,
+  ExpertAgentToolApproval,
+  ExpertAgentToolApprovalHandler,
   ExpertAgentToolCallResult,
   ExpertAgentRunContext,
   ResolvedTool,
@@ -15,6 +17,7 @@ import {
   dispatchExpertAgentHook,
   resolveToolPolicy,
 } from "@expertmesh/agent-core";
+import { randomUUID } from "node:crypto";
 
 import type { McpManagedTool } from "../mcp-tools.ts";
 import { launchPiSubAgent } from "./subagents.ts";
@@ -47,20 +50,32 @@ export function createResolvedPiTools(options: {
   const contextTools = options.agent.createDefaultTools({
     getContext: () => options.lifecycle.currentContext,
   });
+  const approvalHandler = readToolApprovalHandler(options.context);
 
   const parentResolvedTools = resolveToolPolicy({
     context: options.context,
     tools: [
-      ...createPiDefaultTools(options.agent, contextTools).map((tool) =>
-        createResolvedTool("default", tool),
-      ),
-      ...createPiManagedTools(options.agent, options.agent.tools ?? []).map((tool) =>
-        createResolvedTool("managed", tool),
-      ),
+      ...createPiDefaultTools(
+        options.agent,
+        contextTools,
+        options.streamState,
+        approvalHandler,
+      ).map((tool) => createResolvedTool("default", tool)),
+      ...createPiManagedTools(
+        options.agent,
+        options.agent.tools ?? [],
+        options.streamState,
+        approvalHandler,
+      ).map((tool) => createResolvedTool("managed", tool)),
       ...(subAgentTool === undefined
         ? []
-        : [createResolvedTool("subagent", createPiSubAgentTool(options.agent, subAgentTool))]),
-      ...createPiMcpTools(options.agent, options.mcpTools).map((tool) =>
+        : [
+            createResolvedTool(
+              "subagent",
+              createPiSubAgentTool(options.agent, subAgentTool, options.streamState),
+            ),
+          ]),
+      ...createPiMcpTools(options.agent, options.mcpTools, options.streamState).map((tool) =>
         createResolvedTool("mcp", tool),
       ),
     ],
@@ -89,6 +104,8 @@ function createResolvedTool(
 function createPiDefaultTools(
   agent: ExpertAgent,
   tools: readonly ExpertAgentDefaultTool[],
+  streamState: PiRuntimeStreamState,
+  approvalHandler: ExpertAgentToolApprovalHandler | undefined,
 ): ToolDefinition[] {
   return tools.map((tool) => ({
     name: tool.name,
@@ -103,7 +120,11 @@ function createPiDefaultTools(
         tool.name,
         toolCallId,
         params,
-        async () => await tool.call(params, signal),
+        tool.approval,
+        approvalHandler,
+        streamState,
+        async (resolvedParams) =>
+          await tool.call(resolvedParams, signal, { toolCallId, approval: approvalHandler }),
       );
 
       return {
@@ -123,6 +144,8 @@ function createPiDefaultTools(
 function createPiManagedTools(
   agent: ExpertAgent,
   tools: readonly ExpertAgentManagedTool<string, ExpertAgentToolCallResult>[],
+  streamState: PiRuntimeStreamState,
+  approvalHandler: ExpertAgentToolApprovalHandler | undefined,
 ): ToolDefinition[] {
   return tools.map((tool) => ({
     name: tool.name,
@@ -137,7 +160,11 @@ function createPiManagedTools(
         tool.name,
         toolCallId,
         params,
-        async () => await tool.call(params, signal, { toolCallId }),
+        tool.approval,
+        approvalHandler,
+        streamState,
+        async (resolvedParams) =>
+          await tool.call(resolvedParams, signal, { toolCallId, approval: approvalHandler }),
       );
 
       return {
@@ -157,6 +184,7 @@ function createPiManagedTools(
 function createPiSubAgentTool(
   agent: ExpertAgent,
   subAgentTool: SubAgentManagedTool,
+  streamState: PiRuntimeStreamState,
 ): ToolDefinition {
   return {
     name: subAgentTool.name,
@@ -175,7 +203,10 @@ function createPiSubAgentTool(
         subAgentTool.name,
         toolCallId,
         params,
-        async () => await subAgentTool.call(params, signal, { toolCallId }),
+        undefined,
+        undefined,
+        streamState,
+        async (resolvedParams) => await subAgentTool.call(resolvedParams, signal, { toolCallId }),
       );
 
       return {
@@ -195,6 +226,7 @@ function createPiSubAgentTool(
 function createPiMcpTools(
   agent: ExpertAgent,
   mcpTools: readonly McpManagedTool[],
+  streamState: PiRuntimeStreamState,
 ): ToolDefinition[] {
   return mcpTools.map((mcpTool) => {
     const toolName = `mcp_${sanitizeToolName(mcpTool.serverId)}_${sanitizeToolName(mcpTool.name)}`;
@@ -215,14 +247,21 @@ function createPiMcpTools(
           toolName,
           toolCallId,
           params,
-          async () => await mcpTool.call(params, undefined, { toolCallId }),
+          undefined,
+          undefined,
+          streamState,
+          async (resolvedParams) => ({
+            text: formatMcpToolResult(
+              await mcpTool.call(resolvedParams, undefined, { toolCallId }),
+            ),
+          }),
         );
 
         return {
           content: [
             {
               type: "text",
-              text: formatMcpToolResult(result),
+              text: result.text,
             },
           ],
           details: {
@@ -236,12 +275,15 @@ function createPiMcpTools(
   });
 }
 
-async function executeWithToolHooks<TResult>(
+async function executeWithToolHooks<TResult extends { text: string; isError?: boolean; details?: unknown }>(
   agent: ExpertAgent,
   toolName: string,
   toolCallId: string | undefined,
   args: unknown,
-  execute: () => Promise<TResult>,
+  approval: ExpertAgentToolApproval | undefined,
+  approvalHandler: ExpertAgentToolApprovalHandler | undefined,
+  streamState: PiRuntimeStreamState,
+  execute: (args: unknown) => Promise<TResult>,
 ): Promise<TResult> {
   const startedAt = Date.now();
 
@@ -253,13 +295,38 @@ async function executeWithToolHooks<TResult>(
   });
 
   try {
-    const result = await execute();
+    const resolvedArgs = await maybeRequestToolApproval<TResult>({
+      approval,
+      approvalHandler,
+      toolName,
+      toolCallId,
+      runId: streamState.runId,
+      source: streamState.source,
+      args,
+      emitApprovalRequested: (request) => {
+        streamState.emitter?.emit(request);
+      },
+    });
+    if (resolvedArgs.approved === false) {
+      await dispatchExpertAgentHook(agent.hooks, "afterToolCall", {
+        agent,
+        toolName,
+        toolCallId,
+        args,
+        durationMs: Date.now() - startedAt,
+        result: resolvedArgs.result,
+      });
+      return resolvedArgs.result;
+    }
+
+    const executeArgs = resolvedArgs.updatedInput ?? args;
+    const result = await execute(executeArgs);
 
     await dispatchExpertAgentHook(agent.hooks, "afterToolCall", {
       agent,
       toolName,
       toolCallId,
-      args,
+      args: executeArgs,
       durationMs: Date.now() - startedAt,
       result,
     });
@@ -276,4 +343,99 @@ async function executeWithToolHooks<TResult>(
     });
     throw error;
   }
+}
+
+async function maybeRequestToolApproval<TResult extends { text: string; isError?: boolean; details?: unknown }>(options: {
+  readonly approval: ExpertAgentToolApproval | undefined;
+  readonly approvalHandler: ExpertAgentToolApprovalHandler | undefined;
+  readonly toolName: string;
+  readonly toolCallId: string | undefined;
+  readonly runId: string | undefined;
+  readonly source: PiRuntimeStreamState["source"];
+  readonly args: unknown;
+  readonly emitApprovalRequested: (event: {
+    readonly runId: string;
+    readonly source: NonNullable<PiRuntimeStreamState["source"]>;
+    readonly type: "tool.approval_requested";
+    readonly payload: {
+      readonly approvalId: string;
+      readonly toolCallId: string;
+      readonly toolName: string;
+      readonly kind: "tool" | "subagent";
+      readonly reason?: string | undefined;
+      readonly inputPreview?: unknown;
+    };
+  }) => void;
+}): Promise<
+  | { readonly approved: true; readonly updatedInput: unknown | undefined }
+  | {
+      readonly approved: false;
+      readonly result: TResult;
+    }
+> {
+  if (options.approval === undefined || options.approval.mode === "none") {
+    return { approved: true, updatedInput: undefined };
+  }
+
+  const approvalId = `approval-${randomUUID()}`;
+  const runId = options.runId ?? approvalId;
+  const toolCallId = options.toolCallId ?? approvalId;
+  options.emitApprovalRequested({
+    runId,
+    source: {
+      ...(options.source ?? {
+        kind: "tool",
+        runId,
+        path: [],
+      }),
+      kind: "tool",
+      runId,
+      toolCallId,
+    },
+    type: "tool.approval_requested",
+    payload: {
+      approvalId,
+      toolCallId,
+      toolName: options.toolName,
+      kind: "tool",
+      ...(options.approval.reason === undefined ? {} : { reason: options.approval.reason }),
+      inputPreview: options.args,
+    },
+  });
+
+  if (options.approvalHandler === undefined) {
+    return {
+      approved: false,
+      result: {
+        text: options.approval.reason ?? `Tool approval required for ${options.toolName}.`,
+        isError: true,
+      } as TResult,
+    };
+  }
+
+  const response = await options.approvalHandler({
+    toolName: options.toolName,
+    toolCallId: options.toolCallId,
+    reason: options.approval.reason,
+    input: options.args,
+  });
+
+  if (!response.approved) {
+    return {
+      approved: false,
+      result: {
+        text: response.reason ?? `User declined ${options.toolName}.`,
+        isError: true,
+      } as TResult,
+    };
+  }
+
+  return { approved: true, updatedInput: response.updatedInput };
+}
+
+function readToolApprovalHandler(
+  context: ExpertAgentRunContext | undefined,
+): ExpertAgentToolApprovalHandler | undefined {
+  const handler = context?.attributes?.["toolApprovalHandler"];
+  return typeof handler === "function" ? (handler as ExpertAgentToolApprovalHandler) : undefined;
 }

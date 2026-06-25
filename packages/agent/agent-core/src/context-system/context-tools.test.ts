@@ -4,6 +4,24 @@ import { createContextTools } from "./context-tools.ts";
 import type { ExpertAgentContextItemOperations } from "./context-tools.ts";
 
 describe("createContextTools", () => {
+  it("returns an error for malformed askUserQuestion input", async () => {
+    const askTool = createContextTools({
+      listContext: notCalledListOperation,
+      readContext: notCalledOperation,
+      searchContext: notCalledOperation,
+      addContext: notCalledOperation,
+      updateContext: notCalledOperation,
+      deleteContext: notCalledOperation,
+    }).find((tool) => tool.name === "askUserQuestion");
+
+    const result = await askTool?.call({ questions: [] }, undefined);
+
+    expect(result).toEqual({
+      text: "Invalid askUserQuestion input: questions array is empty or missing.",
+      isError: true,
+    });
+  });
+
   it("passes run context from the session instead of tool input", async () => {
     const sessionContext = {
       source: {

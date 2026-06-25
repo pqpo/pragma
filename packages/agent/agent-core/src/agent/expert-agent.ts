@@ -32,7 +32,11 @@ import { loadExpertAgentPlugins } from "../plugins/plugin-loader.ts";
 import type { ExpertAgentRunContext } from "../runtime/run-context.ts";
 import { createExpertAgentRunContext } from "../runtime/run-context.ts";
 import type { SubAgentRegistry } from "../subagents/sub-agent.ts";
-import type { ExpertAgentManagedTool, ExpertAgentToolCallResult } from "../tools/managed-tool.ts";
+import type {
+  ExpertAgentManagedTool,
+  ExpertAgentToolApproval,
+  ExpertAgentToolCallResult,
+} from "../tools/managed-tool.ts";
 
 export type ExpertAgentSchemaVersion = "expertmesh.expert/v1";
 
@@ -211,7 +215,7 @@ export class ExpertAgent implements IExpertAgent {
     this.contextSystem = contextSystem;
     this.workspace = options.workspace;
     this.subAgents = resolved.subAgents;
-    this.tools = resolved.tools;
+    this.tools = applyToolApprovals(resolved.tools, resolved.toolApprovals);
     this.hooks = resolved.hooks;
     this.pluginLoadIssues = options.pluginLoadIssues;
     this.contextManager = new ContextManager({
@@ -266,4 +270,33 @@ export class ExpertAgent implements IExpertAgent {
   ): Promise<ExpertAgentContextResult<ExpertAgentContextItemDeleteResult>> {
     return await this.contextSystem.delete(input);
   }
+}
+
+function applyToolApprovals(
+  tools: readonly ExpertAgentManagedTool<string, ExpertAgentToolCallResult>[] | undefined,
+  approvals:
+    | readonly {
+        readonly toolName: string;
+        readonly approval: ExpertAgentToolApproval;
+      }[]
+    | undefined,
+): readonly ExpertAgentManagedTool<string, ExpertAgentToolCallResult>[] | undefined {
+  if (tools === undefined) {
+    return undefined;
+  }
+
+  if (approvals === undefined || approvals.length === 0) {
+    return tools;
+  }
+
+  const approvalByTool = new Map(approvals.map((approval) => [approval.toolName, approval.approval]));
+
+  return tools.map((tool) => {
+    const approval = approvalByTool.get(tool.name);
+
+    return {
+      ...tool,
+      ...(approval === undefined ? {} : { approval }),
+    };
+  });
 }
