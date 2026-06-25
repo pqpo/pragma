@@ -169,7 +169,7 @@ export class InMemoryContextStore implements ExpertAgentContextStore {
   async searchContext(
     input: ExpertAgentStoredContextItemSearchInput,
   ): Promise<ExpertAgentContextResult<readonly ExpertAgentContextItemSearchMatch[]>> {
-    const query = input.caseSensitive === true ? input.query : input.query.toLocaleLowerCase();
+    const query = input.caseSensitive === true ? input.query : input.query.toLowerCase();
     const matches: ExpertAgentContextItemSearchMatch[] = [];
     const maxResults = input.maxResults ?? 20;
     const contextLines = input.contextLines ?? 0;
@@ -178,7 +178,7 @@ export class InMemoryContextStore implements ExpertAgentContextStore {
       const lines = context.content.split("\n");
 
       for (const [index, line] of lines.entries()) {
-        const searchedLine = input.caseSensitive === true ? line : line.toLocaleLowerCase();
+        const searchedLine = input.caseSensitive === true ? line : line.toLowerCase();
 
         if (!searchedLine.includes(query)) {
           continue;

@@ -188,6 +188,11 @@ export class ExpertAgent implements IExpertAgent {
   private constructor(options: ExpertAgentRuntimeOptions) {
     const contextSystem = options.contextSystem ?? new ContextSystem();
     const resolved = resolveExpertAgentPlugins({
+      agent: {
+        id: options.id,
+        displayName: options.displayName,
+        version: options.version,
+      },
       host: {
         mcp: options.mcp,
         skills: options.skills,

@@ -3,6 +3,7 @@ import { AgentMessageUsageSchema, type AgentMessageUsage } from "@expertmesh/con
 import type {
   AgentLifecycle,
   ExpertAgent,
+  ExpertAgentRunContext,
   RuntimeAgentSession,
   RuntimeOutputSchema,
   RuntimeRunResult,
@@ -40,7 +41,7 @@ export function createPiRuntimeSession(
   session: AgentSession,
   info: Omit<RuntimeSessionInfo, "sessionState" | "runState">,
   outputParser: <TParsedOutput>(text: string) => TParsedOutput,
-  lifecycle: AgentLifecycle,
+  lifecycle: AgentLifecycle<ExpertAgentRunContext | undefined>,
   streamState: PiRuntimeStreamState,
   models: {
     readonly defaultModelName?: string | undefined;
@@ -148,6 +149,7 @@ export function createPiRuntimeSession(
             session: createSessionInfo(info, lifecycle),
             runId,
             submission,
+            context: lifecycle.currentContext,
           });
 
           emitter.emit({
@@ -215,6 +217,7 @@ export function createPiRuntimeSession(
             runId,
             submission,
             result,
+            context: lifecycle.currentContext,
           });
 
           return result;
@@ -243,6 +246,7 @@ export function createPiRuntimeSession(
             runId,
             submission,
             error,
+            context: lifecycle.currentContext,
           });
           throw error;
         } finally {

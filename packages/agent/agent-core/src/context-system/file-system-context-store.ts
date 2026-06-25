@@ -785,14 +785,14 @@ async function searchContextWithFileReads(
 ): Promise<readonly ExpertAgentContextItemSearchMatch[]> {
   const files = await collectMarkdownFiles(rootDir);
   const matches: ExpertAgentContextItemSearchMatch[] = [];
-  const query = input.caseSensitive === true ? input.query : input.query.toLocaleLowerCase();
+  const query = input.caseSensitive === true ? input.query : input.query.toLowerCase();
 
   for (const filePath of files) {
     const content = await readFile(filePath, "utf8");
     const lines = content.split("\n");
 
     for (const [index, line] of lines.entries()) {
-      const searchedLine = input.caseSensitive === true ? line : line.toLocaleLowerCase();
+      const searchedLine = input.caseSensitive === true ? line : line.toLowerCase();
 
       if (!searchedLine.includes(query)) {
         continue;

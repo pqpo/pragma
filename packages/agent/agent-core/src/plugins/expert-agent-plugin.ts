@@ -98,6 +98,7 @@ export interface ExpertAgentPluginTaskSubmitContext<TOutput = unknown> {
   readonly session: RuntimeSessionInfo;
   readonly runId: string;
   readonly submission: RuntimeSubmitRequest<TOutput>;
+  readonly context?: ExpertAgentRunContext | undefined;
 }
 
 export interface ExpertAgentPluginTaskSubmittedContext<
@@ -122,6 +123,13 @@ export interface ExpertAgentPluginToolCalledContext extends ExpertAgentPluginToo
 }
 
 export interface ExpertAgentPluginSetupContext {
+  readonly agent?:
+    | {
+        readonly id: string;
+        readonly displayName: string;
+        readonly version: string;
+      }
+    | undefined;
   readonly host: ExpertAgentPluginContributions;
   readonly contextSystem: ContextSystem;
   readonly workspaceRoot: string;
@@ -199,6 +207,13 @@ export interface ResolvedExpertAgentPluginContributions {
 }
 
 export interface ResolveExpertAgentPluginsOptions {
+  readonly agent?:
+    | {
+        readonly id: string;
+        readonly displayName: string;
+        readonly version: string;
+      }
+    | undefined;
   readonly host?: ExpertAgentPluginContributions | undefined;
   readonly contextSystem?: ContextSystem | undefined;
   readonly pluginEntries?: readonly ExpertAgentPluginEntry[] | undefined;
@@ -243,6 +258,7 @@ export function resolveExpertAgentPlugins(
   assertUniquePluginIds(options.pluginEntries ?? []);
   const host = options.host ?? {};
   const context: ExpertAgentPluginSetupContext = {
+    ...(options.agent === undefined ? {} : { agent: options.agent }),
     host,
     contextSystem: options.contextSystem ?? new ContextSystem(),
     workspaceRoot: options.workspaceRoot ?? "",

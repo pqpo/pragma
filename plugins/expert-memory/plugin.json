@@ -1,0 +1,28 @@
+{
+  "schemaVersion": "expertmesh.plugin/v1",
+  "id": "expert-memory",
+  "name": "Expert Memory",
+  "description": "Registers long-term ExpertAgent memory as auditable context and records run-level memory candidates.",
+  "version": "0.0.0",
+  "tags": ["memory", "context", "audit"],
+  "runtime": {
+    "type": "expert-agent-plugin",
+    "entry": "./dist/index.js"
+  },
+  "capabilities": [
+    {
+      "type": "context",
+      "name": "expert-memory",
+      "description": "Exposes summary.md, memory.md, tasks, and pending memory files through the Agent context system."
+    },
+    {
+      "type": "hook",
+      "name": "afterTaskSubmit",
+      "description": "Creates pending run-level memory candidates after eligible task submissions."
+    }
+  ],
+  "permissions": {
+    "memory": ["memory:read", "memory:write"],
+    "filesystem": ["workspace:read", "workspace:write"]
+  }
+}
