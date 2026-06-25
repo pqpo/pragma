@@ -20,6 +20,8 @@ import type {
   RuntimeSessionInfo,
   RuntimeSessionRef,
 } from "../runtime/runtime-adapter.ts";
+import type { ExpertAgentLogger, ExpertAgentLoggerProvider } from "../logging/logger.ts";
+import { createExpertAgentLogger, defaultExpertAgentLoggerProvider } from "../logging/logger.ts";
 import type { SubAgentRegistry } from "../subagents/sub-agent.ts";
 import type {
   ExpertAgentManagedTool,
@@ -86,11 +88,13 @@ export interface ExpertAgentPluginSessionCreateContext {
   readonly context?: ExpertAgentRunContext | undefined;
   readonly systemSessionId: string;
   readonly runtimeSession?: RuntimeSessionRef | undefined;
+  readonly logger?: ExpertAgentLogger | undefined;
 }
 
 export interface ExpertAgentPluginSessionContext {
   readonly agent: ExpertAgent;
   readonly session: RuntimeSessionInfo;
+  readonly logger?: ExpertAgentLogger | undefined;
 }
 
 export interface ExpertAgentPluginTaskSubmitContext<TOutput = unknown> {
@@ -99,6 +103,7 @@ export interface ExpertAgentPluginTaskSubmitContext<TOutput = unknown> {
   readonly runId: string;
   readonly submission: RuntimeSubmitRequest<TOutput>;
   readonly context?: ExpertAgentRunContext | undefined;
+  readonly logger?: ExpertAgentLogger | undefined;
 }
 
 export interface ExpertAgentPluginTaskSubmittedContext<
@@ -114,6 +119,7 @@ export interface ExpertAgentPluginToolCallContext {
   readonly toolCallId?: string | undefined;
   readonly args: unknown;
   readonly runId?: string | undefined;
+  readonly logger?: ExpertAgentLogger | undefined;
 }
 
 export interface ExpertAgentPluginToolCalledContext extends ExpertAgentPluginToolCallContext {
@@ -134,6 +140,7 @@ export interface ExpertAgentPluginSetupContext {
   readonly contextSystem: ContextSystem;
   readonly workspaceRoot: string;
   readonly env: NodeJS.ProcessEnv;
+  readonly logger: ExpertAgentLogger;
 }
 
 export interface ExpertAgentPluginHooks {
@@ -219,6 +226,8 @@ export interface ResolveExpertAgentPluginsOptions {
   readonly pluginEntries?: readonly ExpertAgentPluginEntry[] | undefined;
   readonly workspaceRoot?: string | undefined;
   readonly env?: NodeJS.ProcessEnv | undefined;
+  readonly loggerProvider?: ExpertAgentLoggerProvider | undefined;
+  readonly agentId?: string | undefined;
 }
 
 export function definePluginEntry(
@@ -257,7 +266,8 @@ export function resolveExpertAgentPlugins(
 ): ResolvedExpertAgentPluginContributions {
   assertUniquePluginIds(options.pluginEntries ?? []);
   const host = options.host ?? {};
-  const context: ExpertAgentPluginSetupContext = {
+  const loggerProvider = options.loggerProvider ?? defaultExpertAgentLoggerProvider;
+  const baseContext = {
     ...(options.agent === undefined ? {} : { agent: options.agent }),
     host,
     contextSystem: options.contextSystem ?? new ContextSystem(),
@@ -266,7 +276,14 @@ export function resolveExpertAgentPlugins(
   };
   const pluginEntries = (options.pluginEntries ?? []).map((plugin) => ({
     plugin,
-    contributions: plugin.setup(context),
+    contributions: plugin.setup({
+      ...baseContext,
+      logger: createExpertAgentLogger(loggerProvider, {
+        component: "plugin",
+        agentId: options.agentId,
+        pluginId: plugin.id,
+      }),
+    }),
   }));
   const contributions = [
     options.host,
@@ -379,15 +396,19 @@ function mergeManagedTools(
 }
 
 function mergeToolApprovals(
-  approvalGroups: readonly
-    (readonly {
+  approvalGroups: readonly (
+    | readonly {
+        readonly toolName: string;
+        readonly approval: ExpertAgentToolApproval;
+      }[]
+    | undefined
+  )[],
+):
+  | readonly {
       readonly toolName: string;
       readonly approval: ExpertAgentToolApproval;
-    }[] | undefined)[],
-): readonly {
-  readonly toolName: string;
-  readonly approval: ExpertAgentToolApproval;
-}[] | undefined {
+    }[]
+  | undefined {
   const approvalByTool = new Map<string, ExpertAgentToolApproval>();
   const approvals: {
     readonly toolName: string;

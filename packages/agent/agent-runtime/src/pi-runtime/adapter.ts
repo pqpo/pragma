@@ -2,6 +2,7 @@ import { AuthStorage, createAgentSession, ModelRegistry } from "@earendil-works/
 import type { AgentSession, CreateAgentSessionOptions } from "@earendil-works/pi-coding-agent";
 import type { ExpertAgentRunContext, RuntimeAdapter } from "@expertmesh/agent-core";
 import {
+  createExpertAgentLogger,
   createExpertAgentRunContext,
   createQueuedAgentLifecycle,
   dispatchExpertAgentHook,
@@ -47,22 +48,38 @@ export function createCloudPiRuntimeAdapter(
       models,
       runtimeSession,
       systemSessionId: requestedSystemSessionId,
+      loggerProvider: requestedLoggerProvider,
     }) {
       const systemSessionId = requestedSystemSessionId ?? randomUUID();
       const runContext = createExpertAgentRunContext(requestedRunContext);
+      const loggerProvider =
+        requestedLoggerProvider ?? options.loggerProvider ?? agent.loggerProvider;
+      const logger = createExpertAgentLogger(loggerProvider, {
+        component: "runtime-adapter",
+        agentId: agent.id,
+        runtimeId: CLOUD_PI_RUNTIME_DESCRIPTOR.id,
+      });
+      logger.info("Creating runtime session", {
+        systemSessionId,
+        runtimeSessionId: runtimeSession?.id,
+      });
       await dispatchExpertAgentHook(agent.hooks, "beforeSessionCreate", {
         agent,
         context: runContext,
         systemSessionId,
         runtimeSession,
+        logger,
       });
       let piSession: AgentSession | undefined;
       let mcpToolRegistry: McpToolRegistry | undefined;
-      let lifecycle: ReturnType<typeof createQueuedAgentLifecycle<ExpertAgentRunContext>> | undefined;
+      let lifecycle:
+        | ReturnType<typeof createQueuedAgentLifecycle<ExpertAgentRunContext>>
+        | undefined;
 
       try {
         const authStorage = AuthStorage.create();
         const cwd = agent.workspace;
+        logger.debug("Writing runtime model configuration", { cwd });
         const modelsJsonPath = await writePiModelConfig(
           cwd,
           agent.id,
@@ -73,9 +90,10 @@ export function createCloudPiRuntimeAdapter(
         const loader = createResourceLoader(agent, cwd, context.systemPrompt);
         await loader.reload();
         mcpToolRegistry = await createMcpToolRegistry(agent.mcp);
-        const streamState: PiRuntimeStreamState = {};
+        const streamState: PiRuntimeStreamState = { logger };
         lifecycle = createQueuedAgentLifecycle<ExpertAgentRunContext>(runContext, {
           abort: async () => {
+            logger.warn("Aborting runtime session", { systemSessionId });
             await piSession?.abort();
           },
           cleanup: async () => {
@@ -89,12 +107,18 @@ export function createCloudPiRuntimeAdapter(
             await dispatchExpertAgentHook(agent.hooks, "beforeSessionDestroy", {
               agent,
               session: sessionInfo,
+              logger,
             });
             piSession?.dispose();
             await mcpToolRegistry?.dispose();
             await dispatchExpertAgentHook(agent.hooks, "afterSessionDestroy", {
               agent,
               session: sessionInfo,
+              logger,
+            });
+            logger.info("Runtime session destroyed", {
+              systemSessionId,
+              runtimeSessionId: sessionInfo.runtimeSession.id,
             });
           },
         });
@@ -155,6 +179,11 @@ export function createCloudPiRuntimeAdapter(
             sessionState: lifecycle.sessionState,
             runState: lifecycle.runState,
           },
+          logger,
+        });
+        logger.info("Runtime session created", {
+          systemSessionId,
+          runtimeSessionId: session.sessionId,
         });
 
         return createPiRuntimeSession(
@@ -173,6 +202,10 @@ export function createCloudPiRuntimeAdapter(
           },
         );
       } catch (error) {
+        logger.error("Runtime session creation failed", {
+          systemSessionId,
+          error,
+        });
         if (lifecycle === undefined) {
           await mcpToolRegistry?.dispose();
           await dispatchExpertAgentHook(agent.hooks, "afterSessionDestroy", {
@@ -184,6 +217,7 @@ export function createCloudPiRuntimeAdapter(
               piSession,
               lifecycle,
             }),
+            logger,
           });
         } else {
           await lifecycle.abort();

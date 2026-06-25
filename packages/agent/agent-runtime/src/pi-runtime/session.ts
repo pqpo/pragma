@@ -26,11 +26,7 @@ import {
   readToolExecutionEvent,
 } from "./session-events.ts";
 import { convertPiAgentMessages } from "./session-messages.ts";
-import {
-  createToolStreamEvents,
-  summarizeInput,
-  summarizeText,
-} from "./stream.ts";
+import { createToolStreamEvents, summarizeInput, summarizeText } from "./stream.ts";
 import { resolveRequiredRuntimeModel } from "./models.ts";
 import type { PiRuntimeStreamState } from "./types.ts";
 
@@ -58,6 +54,7 @@ export function createPiRuntimeSession(
       const runId = submission.runId ?? randomUUID();
       const queue = new AsyncPushQueue<RuntimeStreamEvent>();
       const emitter = createRuntimeEventEmitter(queue);
+      const logger = streamState.logger ?? agent.logger;
       let cancelled = false;
       let preflightRejected = false;
 
@@ -71,6 +68,11 @@ export function createPiRuntimeSession(
         streamState.runId = runId;
         streamState.emitter = emitter;
         streamState.source = source;
+        logger.info("Runtime run submitted", {
+          runId,
+          modelName: submission.modelName,
+          hasOutputSchema: submission.output !== undefined,
+        });
         const unsubscribe = session.subscribe((event) => {
           const delta = readAssistantTextDelta(event);
           const thinkingDelta = readAssistantThinkingDelta(event);
@@ -150,6 +152,7 @@ export function createPiRuntimeSession(
             runId,
             submission,
             context: lifecycle.currentContext,
+            logger,
           });
 
           emitter.emit({
@@ -218,11 +221,21 @@ export function createPiRuntimeSession(
             submission,
             result,
             context: lifecycle.currentContext,
+            logger,
+          });
+          logger.info("Runtime run completed", {
+            runId,
+            usage,
           });
 
           return result;
         } catch (error) {
           const wasCancelled = signal.aborted || cancelled;
+          const message = preflightRejected
+            ? "Runtime prompt preflight rejected the submission."
+            : error instanceof Error
+              ? error.message
+              : "Runtime run failed";
 
           emitter.emit({
             runId,
@@ -233,11 +246,7 @@ export function createPiRuntimeSession(
                   reason: "cancelled",
                 }
               : {
-                  message: preflightRejected
-                    ? "Runtime prompt preflight rejected the submission."
-                    : error instanceof Error
-                      ? error.message
-                      : "Runtime run failed",
+                  message,
                 },
           });
           await dispatchExpertAgentHook(agent.hooks, "afterTaskSubmit", {
@@ -247,7 +256,16 @@ export function createPiRuntimeSession(
             submission,
             error,
             context: lifecycle.currentContext,
+            logger,
           });
+          logger[wasCancelled ? "warn" : "error"](
+            wasCancelled ? "Runtime run cancelled" : "Runtime run failed",
+            {
+              runId,
+              message,
+              error,
+            },
+          );
           throw error;
         } finally {
           streamState.runId = undefined;

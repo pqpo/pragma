@@ -3,6 +3,7 @@ import type { RuntimeSessionRef } from "@expertmesh/agent-core";
 import { createCloudPiRuntimeAdapter } from "@expertmesh/agent-runtime";
 
 import { printRunHeader, printRunResult } from "./harness/expert-agent-example-utils.ts";
+import { createExampleLoggerProvider } from "./harness/logger.ts";
 import {
   createExpertAgentModelsConfig,
   formatModelConfig,
@@ -22,6 +23,7 @@ const workspace = defaultWorkspaceRoot;
 await ensureWorkspaceDir(workspace);
 
 const modelConfig = readExampleModelConfig();
+const loggerProvider = createExampleLoggerProvider();
 const agent = await ExpertAgent.create({
   schemaVersion: "expertmesh.expert/v1",
   id: "basic-example-expert",
@@ -31,10 +33,11 @@ const agent = await ExpertAgent.create({
   version: "0.0.0",
   scope: "local-test",
   workspace,
+  loggerProvider,
   models: createExpertAgentModelsConfig(modelConfig),
 });
 
-const runtime = createCloudPiRuntimeAdapter();
+const runtime = createCloudPiRuntimeAdapter({ loggerProvider });
 const runtimeSession = createRuntimeSessionRef(cli.runtimeSessionId);
 const session = await runtime.createSession({
   agent,

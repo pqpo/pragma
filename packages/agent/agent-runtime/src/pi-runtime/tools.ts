@@ -275,7 +275,9 @@ function createPiMcpTools(
   });
 }
 
-async function executeWithToolHooks<TResult extends { text: string; isError?: boolean; details?: unknown }>(
+async function executeWithToolHooks<
+  TResult extends { text: string; isError?: boolean; details?: unknown },
+>(
   agent: ExpertAgent,
   toolName: string,
   toolCallId: string | undefined,
@@ -286,12 +288,20 @@ async function executeWithToolHooks<TResult extends { text: string; isError?: bo
   execute: (args: unknown) => Promise<TResult>,
 ): Promise<TResult> {
   const startedAt = Date.now();
+  const logger = streamState.logger ?? agent.logger;
 
+  logger.info("Tool call started", {
+    runId: streamState.runId,
+    toolName,
+    toolCallId,
+  });
   await dispatchExpertAgentHook(agent.hooks, "beforeToolCall", {
     agent,
     toolName,
     toolCallId,
     args,
+    runId: streamState.runId,
+    logger,
   });
 
   try {
@@ -308,44 +318,75 @@ async function executeWithToolHooks<TResult extends { text: string; isError?: bo
       },
     });
     if (resolvedArgs.approved === false) {
+      const durationMs = Date.now() - startedAt;
       await dispatchExpertAgentHook(agent.hooks, "afterToolCall", {
         agent,
         toolName,
         toolCallId,
         args,
-        durationMs: Date.now() - startedAt,
+        runId: streamState.runId,
+        durationMs,
         result: resolvedArgs.result,
+        logger,
+      });
+      logger.warn("Tool call rejected by approval policy", {
+        runId: streamState.runId,
+        toolName,
+        toolCallId,
+        durationMs,
       });
       return resolvedArgs.result;
     }
 
     const executeArgs = resolvedArgs.updatedInput ?? args;
     const result = await execute(executeArgs);
+    const durationMs = Date.now() - startedAt;
 
     await dispatchExpertAgentHook(agent.hooks, "afterToolCall", {
       agent,
       toolName,
       toolCallId,
       args: executeArgs,
-      durationMs: Date.now() - startedAt,
+      runId: streamState.runId,
+      durationMs,
       result,
+      logger,
+    });
+    logger.info("Tool call completed", {
+      runId: streamState.runId,
+      toolName,
+      toolCallId,
+      durationMs,
+      isError: result.isError ?? false,
     });
 
     return result;
   } catch (error) {
+    const durationMs = Date.now() - startedAt;
     await dispatchExpertAgentHook(agent.hooks, "afterToolCall", {
       agent,
       toolName,
       toolCallId,
       args,
-      durationMs: Date.now() - startedAt,
+      runId: streamState.runId,
+      durationMs,
+      error,
+      logger,
+    });
+    logger.error("Tool call failed", {
+      runId: streamState.runId,
+      toolName,
+      toolCallId,
+      durationMs,
       error,
     });
     throw error;
   }
 }
 
-async function maybeRequestToolApproval<TResult extends { text: string; isError?: boolean; details?: unknown }>(options: {
+async function maybeRequestToolApproval<
+  TResult extends { text: string; isError?: boolean; details?: unknown },
+>(options: {
   readonly approval: ExpertAgentToolApproval | undefined;
   readonly approvalHandler: ExpertAgentToolApprovalHandler | undefined;
   readonly toolName: string;

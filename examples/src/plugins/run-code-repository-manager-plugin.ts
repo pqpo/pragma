@@ -11,6 +11,7 @@ import {
   printRunHeader,
   printRunResult,
 } from "../harness/expert-agent-example-utils.ts";
+import { createExampleLoggerProvider } from "../harness/logger.ts";
 import {
   createExpertAgentModelsConfig,
   formatModelConfig,
@@ -31,6 +32,7 @@ loadExamplesEnv();
 
 await ensureWorkspaceDir(workspace);
 const modelConfig = readExampleModelConfig();
+const loggerProvider = createExampleLoggerProvider();
 
 const contextSystem = new ContextSystem();
 contextSystem.register({
@@ -79,6 +81,7 @@ const agent = await ExpertAgent.create({
   scope: "local-test",
   workspace,
   contextSystem,
+  loggerProvider,
   models: createExpertAgentModelsConfig(modelConfig),
   plugins: [resolveExamplePath("plugins/code-repository-manager")],
 });
@@ -117,7 +120,7 @@ console.log(
   agent.hooks?.beforeSessionCreate === undefined ? "- not configured" : "- beforeSessionCreate",
 );
 
-const runtime = createCloudPiRuntimeAdapter();
+const runtime = createCloudPiRuntimeAdapter({ loggerProvider });
 const session = await runtime.createSession({ agent });
 
 try {

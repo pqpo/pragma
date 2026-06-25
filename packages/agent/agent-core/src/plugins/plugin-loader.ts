@@ -5,11 +5,10 @@ import { basename, extname, isAbsolute, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
-import type {
-  ExpertAgentPluginEntry,
-  ExpertAgentPluginManifest,
-} from "./expert-agent-plugin.ts";
+import type { ExpertAgentPluginEntry, ExpertAgentPluginManifest } from "./expert-agent-plugin.ts";
 import { readExpertAgentPluginManifest } from "./expert-agent-plugin.ts";
+import type { ExpertAgentLoggerProvider } from "../logging/logger.ts";
+import { createExpertAgentLogger, defaultExpertAgentLoggerProvider } from "../logging/logger.ts";
 
 const execFileAsync = promisify(execFile);
 const DEFAULT_PLUGIN_INSTALL_DIR = ".expertmesh/agent/plugins";
@@ -21,6 +20,7 @@ export interface LoadExpertAgentPluginsOptions {
   readonly sources: readonly ExpertAgentPluginSource[];
   readonly env?: NodeJS.ProcessEnv | undefined;
   readonly installDir?: string | undefined;
+  readonly loggerProvider?: ExpertAgentLoggerProvider | undefined;
 }
 
 export interface ExpertAgentPluginLoadIssue {
@@ -50,9 +50,15 @@ export async function loadExpertAgentPlugins(
 ): Promise<LoadExpertAgentPluginsResult> {
   const pluginEntries: ExpertAgentPluginEntry[] = [];
   const issues: ExpertAgentPluginLoadIssue[] = [];
+  const loggerProvider = options.loggerProvider ?? defaultExpertAgentLoggerProvider;
+  const logger = createExpertAgentLogger(loggerProvider, {
+    component: "plugin",
+    name: "plugin-loader",
+  });
 
   for (const source of options.sources) {
     try {
+      logger.info("Loading ExpertAgent plugin", { source });
       const pluginDir = await prepareExpertAgentPluginSource(source, options);
       const manifest = readExpertAgentPluginManifest(resolve(pluginDir, "plugin.json"));
       const missingEnv = findMissingRequiredEnv(manifest, options.env ?? process.env);
@@ -65,15 +71,30 @@ export async function loadExpertAgentPlugins(
           pluginId: manifest.id,
           missingEnv,
         });
+        logger.warn("Skipped ExpertAgent plugin with missing required environment", {
+          source,
+          pluginId: manifest.id,
+          missingEnv,
+        });
         continue;
       }
 
-      pluginEntries.push(await importExpertAgentPlugin(pluginDir));
+      const plugin = await importExpertAgentPlugin(pluginDir);
+      pluginEntries.push(plugin);
+      logger.info("Loaded ExpertAgent plugin", {
+        source,
+        pluginId: plugin.id,
+      });
     } catch (error) {
-      issues.push({
+      const issue = {
         source,
         code: readPluginLoadIssueCode(error),
         message: error instanceof Error ? error.message : String(error),
+      } satisfies ExpertAgentPluginLoadIssue;
+      issues.push(issue);
+      logger.warn("Failed to load ExpertAgent plugin", {
+        ...issue,
+        error,
       });
     }
   }
@@ -128,7 +149,9 @@ export async function prepareExpertAgentPluginSource(
     }
   }
 
-  throw new InvalidPluginSourceError(`Plugin source must be a directory or .zip file: ${sourcePath}`);
+  throw new InvalidPluginSourceError(
+    `Plugin source must be a directory or .zip file: ${sourcePath}`,
+  );
 }
 
 async function importExpertAgentPlugin(pluginDir: string): Promise<ExpertAgentPluginEntry> {
@@ -152,7 +175,9 @@ async function importExpertAgentPlugin(pluginDir: string): Promise<ExpertAgentPl
   }
 
   if (plugin.manifest.id !== manifest.id) {
-    throw new Error(`Plugin export id ${plugin.manifest.id} does not match manifest id ${manifest.id}.`);
+    throw new Error(
+      `Plugin export id ${plugin.manifest.id} does not match manifest id ${manifest.id}.`,
+    );
   }
 
   return plugin;
@@ -163,7 +188,10 @@ async function assertPluginManifestExists(pluginDir: string): Promise<void> {
   const manifestStats = await stat(manifestPath).catch(() => undefined);
 
   if (manifestStats?.isFile() !== true) {
-    throw new PluginLoadError("missing_manifest", `Plugin manifest does not exist: ${manifestPath}`);
+    throw new PluginLoadError(
+      "missing_manifest",
+      `Plugin manifest does not exist: ${manifestPath}`,
+    );
   }
 }
 
@@ -201,7 +229,10 @@ async function findUnpackedPluginRoot(tempDir: string): Promise<string> {
     }
   }
 
-  throw new PluginLoadError("missing_manifest", `Zip ${name} does not contain a plugin.json at its root.`);
+  throw new PluginLoadError(
+    "missing_manifest",
+    `Zip ${name} does not contain a plugin.json at its root.`,
+  );
 }
 
 class InvalidPluginSourceError extends Error {}
