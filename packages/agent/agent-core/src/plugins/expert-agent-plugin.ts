@@ -38,40 +38,32 @@ type DeepReadonly<TValue> = TValue extends (...args: never[]) => unknown
       ? { readonly [TKey in keyof TValue]: DeepReadonly<TValue[TKey]> }
       : TValue;
 
-const ExpertAgentPluginCapabilitySchema = z
-  .object({
+const ExpertAgentPluginCapabilitySchema = z.looseObject({
+  type: z.string().min(1),
+  name: z.string().min(1),
+  description: z.string().min(1).optional(),
+});
+
+const ExpertAgentPluginRequiredConfigSchema = z.looseObject({
+  name: z.string().min(1),
+  description: z.string().min(1).optional(),
+  secret: z.boolean().default(false),
+});
+
+const ExpertAgentPluginManifestSchema = z.looseObject({
+  schemaVersion: z.literal("expertmesh.plugin/v1"),
+  id: z.string().min(1),
+  name: z.string().min(1),
+  description: z.string().min(1),
+  version: z.string().min(1).optional(),
+  tags: z.array(z.string().min(1)).optional(),
+  runtime: z.looseObject({
     type: z.string().min(1),
-    name: z.string().min(1),
-    description: z.string().min(1).optional(),
-  })
-  .passthrough();
-
-const ExpertAgentPluginRequiredConfigSchema = z
-  .object({
-    name: z.string().min(1),
-    description: z.string().min(1).optional(),
-    secret: z.boolean().default(false),
-  })
-  .passthrough();
-
-const ExpertAgentPluginManifestSchema = z
-  .object({
-    schemaVersion: z.literal("expertmesh.plugin/v1"),
-    id: z.string().min(1),
-    name: z.string().min(1),
-    description: z.string().min(1),
-    version: z.string().min(1).optional(),
-    tags: z.array(z.string().min(1)).optional(),
-    runtime: z
-      .object({
-        type: z.string().min(1),
-        entry: z.string().min(1),
-      })
-      .passthrough(),
-    capabilities: z.array(ExpertAgentPluginCapabilitySchema).default([]),
-    required_config: z.array(ExpertAgentPluginRequiredConfigSchema).default([]),
-  })
-  .passthrough();
+    entry: z.string().min(1),
+  }),
+  capabilities: z.array(ExpertAgentPluginCapabilitySchema).default([]),
+  required_config: z.array(ExpertAgentPluginRequiredConfigSchema).default([]),
+});
 
 export type ExpertAgentPluginManifest = DeepReadonly<
   z.infer<typeof ExpertAgentPluginManifestSchema> & Record<string, unknown>
