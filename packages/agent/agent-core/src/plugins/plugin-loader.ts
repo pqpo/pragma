@@ -7,14 +7,26 @@ import { promisify } from "node:util";
 
 import type {
   ExpertAgentPluginEntry,
-  ExpertAgentPluginManifest,
+  ExpertAgentPluginRegistration,
 } from "./expert-agent-plugin.ts";
 import { readExpertAgentPluginManifest } from "./expert-agent-plugin.ts";
 
 const execFileAsync = promisify(execFile);
 const DEFAULT_PLUGIN_INSTALL_DIR = ".expertmesh/agent/plugins";
 
-export type ExpertAgentPluginSource = string;
+export type ExpertAgentPluginSource =
+  | string
+  | {
+      readonly source: string;
+      readonly config?: unknown | undefined;
+    };
+
+export type ExpertAgentPluginUse =
+  | ExpertAgentPluginSource
+  | {
+      readonly entry: ExpertAgentPluginEntry;
+      readonly config?: unknown | undefined;
+    };
 
 export interface LoadExpertAgentPluginsOptions {
   readonly workspaceRoot: string;
@@ -26,18 +38,18 @@ export interface LoadExpertAgentPluginsOptions {
 export interface ExpertAgentPluginLoadIssue {
   readonly source: string;
   readonly code:
-    | "missing_env"
+    | "missing_config"
     | "invalid_source"
     | "missing_manifest"
     | "missing_entry"
     | "load_error";
   readonly message: string;
   readonly pluginId?: string | undefined;
-  readonly missingEnv?: readonly string[] | undefined;
+  readonly missingConfig?: readonly string[] | undefined;
 }
 
 export interface LoadExpertAgentPluginsResult {
-  readonly pluginEntries: readonly ExpertAgentPluginEntry[];
+  readonly pluginEntries: readonly ExpertAgentPluginRegistration[];
   readonly issues: readonly ExpertAgentPluginLoadIssue[];
 }
 
@@ -48,30 +60,23 @@ export interface ExpertAgentPluginModule {
 export async function loadExpertAgentPlugins(
   options: LoadExpertAgentPluginsOptions,
 ): Promise<LoadExpertAgentPluginsResult> {
-  const pluginEntries: ExpertAgentPluginEntry[] = [];
+  const pluginEntries: ExpertAgentPluginRegistration[] = [];
   const issues: ExpertAgentPluginLoadIssue[] = [];
 
   for (const source of options.sources) {
+    const sourcePath = readPluginSourcePath(source);
+    const config = readPluginSourceConfig(source);
+
     try {
-      const pluginDir = await prepareExpertAgentPluginSource(source, options);
-      const manifest = readExpertAgentPluginManifest(resolve(pluginDir, "plugin.json"));
-      const missingEnv = findMissingRequiredEnv(manifest, options.env ?? process.env);
+      const pluginDir = await prepareExpertAgentPluginSource(sourcePath, options);
 
-      if (missingEnv.length > 0) {
-        issues.push({
-          source,
-          code: "missing_env",
-          message: `Plugin ${manifest.id} requires missing environment variables: ${missingEnv.join(", ")}`,
-          pluginId: manifest.id,
-          missingEnv,
-        });
-        continue;
-      }
-
-      pluginEntries.push(await importExpertAgentPlugin(pluginDir));
+      pluginEntries.push({
+        entry: await importExpertAgentPlugin(pluginDir),
+        ...(config === undefined ? {} : { config }),
+      });
     } catch (error) {
       issues.push({
-        source,
+        source: sourcePath,
         code: readPluginLoadIssueCode(error),
         message: error instanceof Error ? error.message : String(error),
       });
@@ -79,6 +84,20 @@ export async function loadExpertAgentPlugins(
   }
 
   return { pluginEntries, issues };
+}
+
+export function isExpertAgentPluginEntryUse(
+  plugin: ExpertAgentPluginUse,
+): plugin is { readonly entry: ExpertAgentPluginEntry; readonly config?: unknown | undefined } {
+  return typeof plugin === "object" && "entry" in plugin;
+}
+
+function readPluginSourcePath(source: ExpertAgentPluginSource): string {
+  return typeof source === "string" ? source : source.source;
+}
+
+function readPluginSourceConfig(source: ExpertAgentPluginSource): unknown | undefined {
+  return typeof source === "string" ? undefined : source.config;
 }
 
 export async function prepareExpertAgentPluginSource(
@@ -165,20 +184,6 @@ async function assertPluginManifestExists(pluginDir: string): Promise<void> {
   if (manifestStats?.isFile() !== true) {
     throw new PluginLoadError("missing_manifest", `Plugin manifest does not exist: ${manifestPath}`);
   }
-}
-
-function findMissingRequiredEnv(
-  manifest: ExpertAgentPluginManifest,
-  env: NodeJS.ProcessEnv,
-): readonly string[] {
-  return manifest.requires_env.flatMap((item) => {
-    if (item.required === false) {
-      return [];
-    }
-
-    const value = env[item.name];
-    return value === undefined || value.length === 0 ? [item.name] : [];
-  });
 }
 
 async function findUnpackedPluginRoot(tempDir: string): Promise<string> {

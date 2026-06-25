@@ -22,13 +22,15 @@ import type {
 import type {
   ExpertAgentPluginEntry,
   ExpertAgentPluginHooks,
+  ExpertAgentPluginRegistration,
 } from "../plugins/expert-agent-plugin.ts";
 import { resolveExpertAgentPlugins } from "../plugins/expert-agent-plugin.ts";
 import type {
   ExpertAgentPluginLoadIssue,
   ExpertAgentPluginSource,
+  ExpertAgentPluginUse,
 } from "../plugins/plugin-loader.ts";
-import { loadExpertAgentPlugins } from "../plugins/plugin-loader.ts";
+import { isExpertAgentPluginEntryUse, loadExpertAgentPlugins } from "../plugins/plugin-loader.ts";
 import type { ExpertAgentRunContext } from "../runtime/run-context.ts";
 import { createExpertAgentRunContext } from "../runtime/run-context.ts";
 import type { SubAgentRegistry } from "../subagents/sub-agent.ts";
@@ -142,12 +144,14 @@ export type ExpertAgentOptions = Omit<IExpertAgent, "contextSystem" | "pluginLoa
 };
 
 export interface ExpertAgentCreateOptions extends ExpertAgentOptions {
-  readonly plugins?: readonly ExpertAgentPluginSource[] | undefined;
+  readonly plugins?: readonly ExpertAgentPluginUse[] | undefined;
   readonly env?: NodeJS.ProcessEnv | undefined;
 }
 
 interface ExpertAgentRuntimeOptions extends ExpertAgentOptions {
-  readonly pluginEntries?: readonly ExpertAgentPluginEntry[] | undefined;
+  readonly pluginEntries?:
+    | readonly (ExpertAgentPluginEntry | ExpertAgentPluginRegistration)[]
+    | undefined;
   readonly pluginLoadIssues?: readonly ExpertAgentPluginLoadIssue[] | undefined;
   readonly env?: NodeJS.ProcessEnv | undefined;
 }
@@ -172,15 +176,36 @@ export class ExpertAgent implements IExpertAgent {
   private readonly contextManager: ContextManager;
 
   static async create(options: ExpertAgentCreateOptions): Promise<ExpertAgent> {
+    const pluginUses = options.plugins ?? [];
+    const pluginSources: ExpertAgentPluginSource[] = [];
+    const pluginEntryUses: Extract<
+      ExpertAgentPluginUse,
+      { readonly entry: ExpertAgentPluginEntry }
+    >[] = [];
+
+    for (const plugin of pluginUses) {
+      if (isExpertAgentPluginEntryUse(plugin)) {
+        pluginEntryUses.push(plugin);
+      } else {
+        pluginSources.push(plugin);
+      }
+    }
+
     const loaded = await loadExpertAgentPlugins({
       workspaceRoot: options.workspace,
-      sources: options.plugins ?? [],
+      sources: pluginSources,
       env: options.env,
     });
 
     return new ExpertAgent({
       ...options,
-      pluginEntries: loaded.pluginEntries,
+      pluginEntries: [
+        ...loaded.pluginEntries,
+        ...pluginEntryUses.map((plugin) => ({
+          entry: plugin.entry,
+          ...(plugin.config === undefined ? {} : { config: plugin.config }),
+        })),
+      ],
       pluginLoadIssues: loaded.issues,
     });
   }

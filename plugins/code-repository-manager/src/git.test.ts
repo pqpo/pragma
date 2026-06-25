@@ -73,6 +73,49 @@ describe("Git session environment", () => {
     await expect(stat(homePath ?? "")).rejects.toThrow();
   });
 
+  it("prepares token auth from direct config without requiring tokenEnv", async () => {
+    const root = await createTempDir();
+    const env: NodeJS.ProcessEnv = {
+      PATH: process.env.PATH,
+    };
+    const config = parseCodeRepositoryManagerConfig({
+      auth: {
+        strategy: "token",
+        token: "direct-token",
+      },
+    });
+
+    const prepared = await prepareGitSessionEnvironment(config, {
+      gitCommand: await createFakeGit(root),
+      env,
+    });
+
+    expect(prepared.authStrategy).toBe("token");
+    expect(env.EXPERTMESH_GIT_USERNAME).toBe("x-access-token");
+    expect(env.EXPERTMESH_GIT_TOKEN).toBe("direct-token");
+
+    await prepared.cleanup();
+  });
+
+  it("rejects token auth when tokenEnv is configured but missing", async () => {
+    const root = await createTempDir();
+    const config = parseCodeRepositoryManagerConfig({
+      auth: {
+        strategy: "token",
+        tokenEnv: "MISSING_GIT_TOKEN",
+      },
+    });
+
+    await expect(
+      prepareGitSessionEnvironment(config, {
+        gitCommand: await createFakeGit(root),
+        env: {
+          PATH: process.env.PATH,
+        },
+      }),
+    ).rejects.toThrow("Missing Git token environment variable: MISSING_GIT_TOKEN");
+  });
+
   it("writes SSH identity to a temporary session file and removes it on cleanup", async () => {
     const root = await createTempDir();
     const env: NodeJS.ProcessEnv = {
@@ -106,6 +149,31 @@ describe("Git session environment", () => {
     expect(env.GIT_SSH_COMMAND).toBeUndefined();
     expect(env.HOME).toBeUndefined();
     expect(env.XDG_CONFIG_HOME).toBeUndefined();
+  });
+
+  it("prepares SSH auth from direct config without requiring privateKeyEnv", async () => {
+    const root = await createTempDir();
+    const env: NodeJS.ProcessEnv = {
+      PATH: process.env.PATH,
+    };
+    const config = parseCodeRepositoryManagerConfig({
+      auth: {
+        strategy: "ssh",
+        privateKey: "direct-private-key",
+        knownHosts: "github.com ssh-ed25519 AAAA",
+      },
+    });
+
+    const prepared = await prepareGitSessionEnvironment(config, {
+      gitCommand: await createFakeGit(root),
+      env,
+    });
+    const identityPath = env.GIT_SSH_COMMAND?.match(/-i '([^']+)'/)?.[1];
+
+    expect(prepared.authStrategy).toBe("ssh");
+    await expect(readFile(identityPath ?? "", "utf8")).resolves.toBe("direct-private-key");
+
+    await prepared.cleanup();
   });
 
   it("writes credential.helper to an isolated temporary Git config", async () => {
@@ -143,6 +211,31 @@ describe("Git session environment", () => {
     expect(env.HOME).toBeUndefined();
     expect(env.XDG_CONFIG_HOME).toBeUndefined();
     await expect(stat(homePath ?? "")).rejects.toThrow();
+  });
+
+  it("prepares credential.helper auth from direct config without requiring helperEnv", async () => {
+    const root = await createTempDir();
+    const env: NodeJS.ProcessEnv = {
+      PATH: process.env.PATH,
+    };
+    const config = parseCodeRepositoryManagerConfig({
+      auth: {
+        strategy: "credential_helper",
+        helper: "!direct-helper",
+      },
+    });
+
+    const prepared = await prepareGitSessionEnvironment(config, {
+      gitCommand: await createFakeGit(root),
+      env,
+    });
+
+    expect(prepared.authStrategy).toBe("credential_helper");
+    await expect(readFile(env.GIT_CONFIG_GLOBAL ?? "", "utf8")).resolves.toContain(
+      'helper = "!direct-helper"',
+    );
+
+    await prepared.cleanup();
   });
 
   it("rejects credential.helper values with control characters", async () => {

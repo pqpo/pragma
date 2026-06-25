@@ -11,6 +11,7 @@ import {
   createInMemoryContextStore,
   readExpertAgentPluginManifest,
 } from "@expertmesh/agent-core";
+import type { ExpertAgentPluginUse } from "@expertmesh/agent-core";
 
 import expertMemoryPlugin, { parseMemoryPluginConfig } from "./index.ts";
 
@@ -170,6 +171,53 @@ describe("Expert Memory plugin", () => {
       workspace,
       contextSystem: createContextSystemWithMemoryConfig({ enabled: false }),
       plugins: [await createLoadablePluginSource()],
+    });
+
+    await expect(agent.listContext()).resolves.toMatchObject({
+      ok: true,
+      value: expect.not.arrayContaining([
+        expect.objectContaining({ namespace: "expert-memory" }),
+      ]),
+    });
+  });
+
+  it("can disable memory through source dependency plugin config", async () => {
+    const workspace = await createWorkspaceDir();
+    const agent = await createAgent({
+      workspace,
+      plugins: [
+        {
+          entry: expertMemoryPlugin,
+          config: {
+            enabled: false,
+          },
+        },
+      ],
+    });
+
+    await expect(agent.listContext()).resolves.toMatchObject({
+      ok: true,
+      value: expect.not.arrayContaining([
+        expect.objectContaining({ namespace: "expert-memory" }),
+      ]),
+    });
+  });
+
+  it("prefers explicit plugin config over environment config", async () => {
+    const workspace = await createWorkspaceDir();
+    const agent = await createAgent({
+      workspace,
+      plugins: [
+        {
+          entry: expertMemoryPlugin,
+          config: {
+            enabled: false,
+          },
+        },
+      ],
+      env: {
+        EXPERTMESH_PLUGIN_EXPERT_MEMORY_ENABLED: "true",
+      },
     });
 
     await expect(agent.listContext()).resolves.toMatchObject({
@@ -359,8 +407,9 @@ async function submitTaskHook(
 
 async function createAgent(options: {
   readonly workspace: string;
-  readonly plugins: readonly string[];
+  readonly plugins: readonly ExpertAgentPluginUse[];
   readonly contextSystem?: ContextSystem | undefined;
+  readonly env?: NodeJS.ProcessEnv | undefined;
 }): Promise<ExpertAgent> {
   return await ExpertAgent.create({
     schemaVersion: "expertmesh.expert/v1",
@@ -372,6 +421,7 @@ async function createAgent(options: {
     scope: "test",
     workspace: options.workspace,
     ...(options.contextSystem === undefined ? {} : { contextSystem: options.contextSystem }),
+    ...(options.env === undefined ? {} : { env: options.env }),
     plugins: options.plugins,
   });
 }

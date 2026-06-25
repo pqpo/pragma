@@ -9,38 +9,6 @@
     "type": "expert-agent-plugin",
     "entry": "./dist/index.js"
   },
-  "requires_env": [
-    {
-      "name": "EXPERTMESH_PLUGIN_CODE_REPOSITORY_MANAGER_GIT_TOKEN",
-      "description": "Optional HTTPS Git token used by the code repository manager when cloning private repositories.",
-      "required": false,
-      "secret": true
-    },
-    {
-      "name": "EXPERTMESH_PLUGIN_CODE_REPOSITORY_MANAGER_GIT_USERNAME",
-      "description": "Optional HTTPS Git username paired with the token. Defaults to x-access-token.",
-      "required": false,
-      "secret": false
-    },
-    {
-      "name": "EXPERTMESH_PLUGIN_CODE_REPOSITORY_MANAGER_GIT_CREDENTIAL_HELPER",
-      "description": "Optional git credential.helper value used for session Git authentication.",
-      "required": false,
-      "secret": true
-    },
-    {
-      "name": "EXPERTMESH_PLUGIN_CODE_REPOSITORY_MANAGER_SSH_PRIVATE_KEY",
-      "description": "Optional SSH private key used by the code repository manager for SSH Git remotes.",
-      "required": false,
-      "secret": true
-    },
-    {
-      "name": "EXPERTMESH_PLUGIN_CODE_REPOSITORY_MANAGER_SSH_KNOWN_HOSTS",
-      "description": "Optional known_hosts content used with the SSH private key.",
-      "required": false,
-      "secret": true
-    }
-  ],
   "capabilities": [
     {
       "type": "context",

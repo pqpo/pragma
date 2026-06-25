@@ -14,7 +14,7 @@ describe("ExpertAgent plugin loader", () => {
     try {
       await writeMinimalPlugin(pluginDir, {
         id: "plugin.loadable",
-        requiredEnv: [],
+        requiredConfig: [],
       });
 
       const result = await loadExpertAgentPlugins({
@@ -23,34 +23,43 @@ describe("ExpertAgent plugin loader", () => {
       });
 
       expect(result.issues).toEqual([]);
-      expect(result.pluginEntries.map((plugin) => plugin.id)).toEqual(["plugin.loadable"]);
+      expect(result.pluginEntries.map((plugin) => plugin.entry.id)).toEqual(["plugin.loadable"]);
     } finally {
       await rm(workspace, { recursive: true, force: true });
     }
   });
 
-  it("skips plugins with missing required environment variables", async () => {
+  it("keeps source plugin config with the loaded plugin registration", async () => {
     const workspace = await mkdtemp(resolve(tmpdir(), "expertmesh-plugin-loader-"));
-    const pluginDir = resolve(workspace, "env-plugin");
+    const pluginDir = resolve(workspace, "configured-plugin");
 
     try {
       await writeMinimalPlugin(pluginDir, {
-        id: "plugin.env-required",
-        requiredEnv: ["EXPERTMESH_PLUGIN_ENV_REQUIRED_TOKEN"],
+        id: "plugin.configured",
+        requiredConfig: [],
       });
 
       const result = await loadExpertAgentPlugins({
         workspaceRoot: workspace,
-        sources: [pluginDir],
-        env: {},
+        sources: [
+          {
+            source: pluginDir,
+            config: {
+              enabled: false,
+            },
+          },
+        ],
       });
 
-      expect(result.pluginEntries).toEqual([]);
-      expect(result.issues).toMatchObject([
+      expect(result.issues).toEqual([]);
+      expect(result.pluginEntries).toMatchObject([
         {
-          code: "missing_env",
-          pluginId: "plugin.env-required",
-          missingEnv: ["EXPERTMESH_PLUGIN_ENV_REQUIRED_TOKEN"],
+          entry: {
+            id: "plugin.configured",
+          },
+          config: {
+            enabled: false,
+          },
         },
       ]);
     } finally {
@@ -89,7 +98,7 @@ describe("ExpertAgent plugin loader", () => {
     try {
       await writeMinimalPlugin(pluginDir, {
         id: "plugin.missing-entry",
-        requiredEnv: [],
+        requiredConfig: [],
         writeEntry: false,
       });
 
@@ -115,7 +124,7 @@ async function writeMinimalPlugin(
   pluginDir: string,
   options: {
     readonly id: string;
-    readonly requiredEnv: readonly string[];
+    readonly requiredConfig: readonly string[];
     readonly writeEntry?: boolean | undefined;
   },
 ): Promise<void> {
@@ -133,7 +142,7 @@ async function writeMinimalPlugin(
           type: "expert-agent-plugin",
           entry: "./index.js",
         },
-        requires_env: options.requiredEnv.map((name) => ({
+        required_config: options.requiredConfig.map((name) => ({
           name,
           secret: true,
         })),
@@ -159,7 +168,7 @@ async function writeMinimalPlugin(
         "    description: \"Requires env\",",
         "    runtime: { type: \"expert-agent-plugin\", entry: \"./index.js\" },",
         "    capabilities: [],",
-        "    requires_env: [],",
+        "    required_config: [],",
         "  },",
         "  setup: () => ({}),",
         "};",

@@ -44,11 +44,10 @@ const ExpertAgentPluginCapabilitySchema = z
   })
   .passthrough();
 
-const ExpertAgentPluginRequiredEnvironmentSchema = z
+const ExpertAgentPluginRequiredConfigSchema = z
   .object({
     name: z.string().min(1),
     description: z.string().min(1).optional(),
-    required: z.boolean().default(true),
     secret: z.boolean().default(false),
   })
   .passthrough();
@@ -68,7 +67,7 @@ const ExpertAgentPluginManifestSchema = z
       })
       .passthrough(),
     capabilities: z.array(ExpertAgentPluginCapabilitySchema).default([]),
-    requires_env: z.array(ExpertAgentPluginRequiredEnvironmentSchema).default([]),
+    required_config: z.array(ExpertAgentPluginRequiredConfigSchema).default([]),
   })
   .passthrough();
 
@@ -134,6 +133,7 @@ export interface ExpertAgentPluginSetupContext {
   readonly contextSystem: ContextSystem;
   readonly workspaceRoot: string;
   readonly env: NodeJS.ProcessEnv;
+  readonly config?: unknown | undefined;
 }
 
 export interface ExpertAgentPluginHooks {
@@ -187,6 +187,11 @@ export interface ExpertAgentPluginEntry extends ExpertAgentPluginMetadata {
   readonly setup: (context: ExpertAgentPluginSetupContext) => ExpertAgentPluginContributions;
 }
 
+export interface ExpertAgentPluginRegistration {
+  readonly entry: ExpertAgentPluginEntry;
+  readonly config?: unknown | undefined;
+}
+
 export interface DefineExpertAgentPluginEntryOptions {
   readonly setup: (context: ExpertAgentPluginSetupContext) => ExpertAgentPluginContributions;
 }
@@ -216,7 +221,9 @@ export interface ResolveExpertAgentPluginsOptions {
     | undefined;
   readonly host?: ExpertAgentPluginContributions | undefined;
   readonly contextSystem?: ContextSystem | undefined;
-  readonly pluginEntries?: readonly ExpertAgentPluginEntry[] | undefined;
+  readonly pluginEntries?:
+    | readonly (ExpertAgentPluginEntry | ExpertAgentPluginRegistration)[]
+    | undefined;
   readonly workspaceRoot?: string | undefined;
   readonly env?: NodeJS.ProcessEnv | undefined;
 }
@@ -252,22 +259,37 @@ export function readExpertAgentPluginManifest(
   return deepFreeze(ExpertAgentPluginManifestSchema.parse(manifest));
 }
 
+export function createExpertAgentPluginConfigEnvName(options: {
+  readonly pluginId: string;
+  readonly name: string;
+}): string {
+  return `EXPERTMESH_PLUGIN_${toEnvSegment(options.pluginId)}_${toEnvSegment(options.name)}`;
+}
+
 export function resolveExpertAgentPlugins(
   options: ResolveExpertAgentPluginsOptions,
 ): ResolvedExpertAgentPluginContributions {
-  assertUniquePluginIds(options.pluginEntries ?? []);
+  const registrations = (options.pluginEntries ?? []).map(normalizePluginRegistration);
+  assertUniquePluginIds(registrations.map((registration) => registration.entry));
   const host = options.host ?? {};
-  const context: ExpertAgentPluginSetupContext = {
+  const baseContext = {
     ...(options.agent === undefined ? {} : { agent: options.agent }),
     host,
     contextSystem: options.contextSystem ?? new ContextSystem(),
     workspaceRoot: options.workspaceRoot ?? "",
     env: options.env ?? process.env,
   };
-  const pluginEntries = (options.pluginEntries ?? []).map((plugin) => ({
-    plugin,
-    contributions: plugin.setup(context),
-  }));
+  const pluginEntries = registrations.map((registration) => {
+    const config = resolvePluginConfig(registration, baseContext.env);
+
+    return {
+      plugin: registration.entry,
+      contributions: registration.entry.setup({
+        ...baseContext,
+        ...(config === undefined ? {} : { config }),
+      }),
+    };
+  });
   const contributions = [
     options.host,
     ...pluginEntries.map((plugin) => plugin.contributions),
@@ -286,6 +308,165 @@ export function resolveExpertAgentPlugins(
     ),
     hooks: mergePluginHooks(contributions.map((contribution) => contribution.hooks)),
   };
+}
+
+function normalizePluginRegistration(
+  plugin: ExpertAgentPluginEntry | ExpertAgentPluginRegistration,
+): ExpertAgentPluginRegistration {
+  if ("entry" in plugin) {
+    return plugin;
+  }
+
+  return { entry: plugin };
+}
+
+function resolvePluginConfig(
+  registration: ExpertAgentPluginRegistration,
+  env: NodeJS.ProcessEnv,
+): unknown | undefined {
+  const envConfig = readPluginEnvConfig(registration.entry.manifest, env);
+  const explicitConfig = readExplicitPluginConfig(registration);
+  const config = mergePlainObjects(envConfig, explicitConfig ?? {});
+  const missingConfig = findMissingRequiredConfig(registration.entry.manifest, config);
+
+  if (missingConfig.length > 0) {
+    const missing = missingConfig
+      .map(
+        (item) =>
+          `${item.name} (${createExpertAgentPluginConfigEnvName({
+            pluginId: registration.entry.manifest.id,
+            name: item.name,
+          })})`,
+      )
+      .join(", ");
+    throw new Error(`Plugin ${registration.entry.manifest.id} requires missing config: ${missing}`);
+  }
+
+  return Object.keys(config).length === 0 ? undefined : config;
+}
+
+function readPluginEnvConfig(
+  manifest: ExpertAgentPluginManifest,
+  env: NodeJS.ProcessEnv,
+): Record<string, unknown> {
+  const config: Record<string, unknown> = {};
+
+  for (const item of manifest.required_config) {
+    const envName = createExpertAgentPluginConfigEnvName({
+      pluginId: manifest.id,
+      name: item.name,
+    });
+    const value = readEnv(env, envName);
+
+    if (value !== undefined) {
+      setConfigPath(config, item.name, value);
+    }
+  }
+
+  return config;
+}
+
+function readExplicitPluginConfig(
+  registration: ExpertAgentPluginRegistration,
+): Record<string, unknown> | undefined {
+  if (registration.config === undefined) {
+    return undefined;
+  }
+
+  if (
+    registration.config !== null &&
+    typeof registration.config === "object" &&
+    !Array.isArray(registration.config)
+  ) {
+    return registration.config as Record<string, unknown>;
+  }
+
+  throw new Error(`Plugin ${registration.entry.manifest.id} config must be an object.`);
+}
+
+function findMissingRequiredConfig(
+  manifest: ExpertAgentPluginManifest,
+  config: Record<string, unknown>,
+): readonly { readonly name: string }[] {
+  return manifest.required_config.flatMap((item) => {
+    const value = readConfigPath(config, item.name);
+
+    if (value === undefined || (typeof value === "string" && value.length === 0)) {
+      return [{ name: item.name }];
+    }
+
+    return [];
+  });
+}
+
+function mergePlainObjects(
+  left: Record<string, unknown>,
+  right: Record<string, unknown>,
+): Record<string, unknown> {
+  const merged: Record<string, unknown> = { ...left };
+
+  for (const [key, value] of Object.entries(right)) {
+    const existing = merged[key];
+    merged[key] =
+      isPlainObject(existing) && isPlainObject(value)
+        ? mergePlainObjects(existing, value)
+        : value;
+  }
+
+  return merged;
+}
+
+function setConfigPath(config: Record<string, unknown>, path: string, value: string): void {
+  const parts = path.split(".").filter((part) => part.length > 0);
+  let cursor = config;
+
+  for (const part of parts.slice(0, -1)) {
+    const next = cursor[part];
+
+    if (!isPlainObject(next)) {
+      cursor[part] = {};
+    }
+
+    cursor = cursor[part] as Record<string, unknown>;
+  }
+
+  const leaf = parts.at(-1);
+
+  if (leaf !== undefined) {
+    cursor[leaf] = value;
+  }
+}
+
+function readConfigPath(config: Record<string, unknown>, path: string): unknown {
+  let cursor: unknown = config;
+
+  for (const part of path.split(".").filter((item) => item.length > 0)) {
+    if (!isPlainObject(cursor)) {
+      return undefined;
+    }
+
+    cursor = cursor[part];
+  }
+
+  return cursor;
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function readEnv(env: NodeJS.ProcessEnv, name: string): string | undefined {
+  const value = env[name];
+
+  return value === undefined || value.length === 0 ? undefined : value;
+}
+
+function toEnvSegment(value: string): string {
+  return value
+    .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
+    .replace(/[^A-Za-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .toUpperCase();
 }
 
 export async function dispatchExpertAgentHook<TName extends keyof ExpertAgentPluginHooks>(

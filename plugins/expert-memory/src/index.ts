@@ -3,6 +3,7 @@ import { dirname, isAbsolute, relative, resolve } from "node:path";
 
 import {
   HOST_CONTEXT_NAMESPACE,
+  createExpertAgentPluginConfigEnvName,
   definePluginEntry,
   error,
   normalizeMetadata,
@@ -40,6 +41,7 @@ export {
 } from "./schema.ts";
 
 const MEMORY_CONTEXT_NAMESPACE = "expert-memory";
+const PLUGIN_ID = "expert-memory";
 const MEMORY_CONFIG_CONTEXT_ID = "memory-config.json";
 const SUMMARY_CONTEXT_ID = "summary.md";
 const MEMORY_CONTEXT_ID = "memory.md";
@@ -369,11 +371,34 @@ class FileSystemMemoryStore implements ExpertAgentContextStore {
 async function resolveConfig(context: ExpertAgentPluginSetupContext): Promise<MemoryPluginConfig> {
   const hostConfig = await readHostConfig(context);
   const envConfig = readEnvConfig(context.env);
+  const explicitConfig =
+    context.config === undefined ? undefined : readConfigObject(context.config);
 
   return MemoryPluginConfigSchema.parse({
-    ...(hostConfig ?? {}),
     ...envConfig,
+    ...(hostConfig ?? {}),
+    ...(explicitConfig ?? {}),
   });
+}
+
+function readConfigObject(input: unknown): Record<string, unknown> {
+  if (input !== null && typeof input === "object" && !Array.isArray(input)) {
+    return input as Record<string, unknown>;
+  }
+
+  throw new Error(`Expert Memory plugin config must be an object, received ${describeConfigInput(input)}.`);
+}
+
+function describeConfigInput(input: unknown): string {
+  if (input === null) {
+    return "null";
+  }
+
+  if (Array.isArray(input)) {
+    return "array";
+  }
+
+  return typeof input;
 }
 
 async function readHostConfig(
@@ -393,15 +418,18 @@ async function readHostConfig(
 
 function readEnvConfig(env: NodeJS.ProcessEnv): Partial<MemoryPluginConfig> {
   return {
-    ...readBooleanEnv(env, "EXPERTMESH_PLUGIN_EXPERT_MEMORY_ENABLED", "enabled"),
-    ...readBooleanEnv(env, "EXPERTMESH_PLUGIN_EXPERT_MEMORY_USE_MEMORIES", "useMemories"),
-    ...readBooleanEnv(
-      env,
-      "EXPERTMESH_PLUGIN_EXPERT_MEMORY_GENERATE_MEMORIES",
-      "generateMemories",
-    ),
-    ...readStringEnv(env, "EXPERTMESH_PLUGIN_EXPERT_MEMORY_ROOT", "memoryRoot"),
+    ...readBooleanEnv(env, createPluginEnvName("enabled"), "enabled"),
+    ...readBooleanEnv(env, createPluginEnvName("useMemories"), "useMemories"),
+    ...readBooleanEnv(env, createPluginEnvName("generateMemories"), "generateMemories"),
+    ...readStringEnv(env, createPluginEnvName("memoryRoot"), "memoryRoot"),
   };
+}
+
+function createPluginEnvName(name: string): string {
+  return createExpertAgentPluginConfigEnvName({
+    pluginId: PLUGIN_ID,
+    name,
+  });
 }
 
 function readBooleanEnv<TKey extends keyof MemoryPluginConfig>(

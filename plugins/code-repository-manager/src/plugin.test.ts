@@ -11,6 +11,7 @@ import {
   createInMemoryContextStore,
 } from "@expertmesh/agent-core";
 import { readExpertAgentPluginManifest } from "@expertmesh/agent-core";
+import type { ExpertAgentPluginUse } from "@expertmesh/agent-core";
 
 import { CODE_REPOSITORY_CONTEXT_ID } from "./context.ts";
 import codeRepositoryManagerPlugin from "./index.ts";
@@ -125,6 +126,39 @@ describe("Code Repository Manager plugin", () => {
     });
   });
 
+  it("injects repository metadata from source dependency plugin config", async () => {
+    const agent = await createAgent({
+      workspace: await createWorkspaceDir(),
+      plugins: [
+        {
+          entry: codeRepositoryManagerPlugin,
+          config: {
+            repositories: [
+              {
+                id: "configured-repo",
+                name: "Configured Repo",
+                cloneUrl: "https://github.com/example/configured-repo.git",
+                defaultBranch: "main",
+              },
+            ],
+          },
+        },
+      ],
+    });
+
+    await expect(
+      agent.readContext({
+        namespace: "code-repository-manager",
+        id: CODE_REPOSITORY_CONTEXT_ID,
+      }),
+    ).resolves.toMatchObject({
+      ok: true,
+      value: {
+        content: expect.stringContaining('"id": "configured-repo"'),
+      },
+    });
+  });
+
   it("prepares Git through session hooks instead of exposing Git operation tools", () => {
     const contributions = codeRepositoryManagerPlugin.setup({
       host: {},
@@ -181,6 +215,25 @@ describe("Code Repository Manager plugin", () => {
     ).toThrow();
   });
 });
+
+async function createAgent(options: {
+  readonly workspace: string;
+  readonly plugins: readonly ExpertAgentPluginUse[];
+  readonly contextSystem?: ContextSystem | undefined;
+}): Promise<ExpertAgent> {
+  return await ExpertAgent.create({
+    schemaVersion: "expertmesh.expert/v1",
+    id: "repo-agent",
+    displayName: "Repo Agent",
+    description: "Test agent",
+    tags: ["test"],
+    version: "0.0.0",
+    scope: "test",
+    workspace: options.workspace,
+    ...(options.contextSystem === undefined ? {} : { contextSystem: options.contextSystem }),
+    plugins: options.plugins,
+  });
+}
 
 async function createLoadablePluginSource(): Promise<string> {
   const sourceDir = await createTempDir(repoRoot, "source");

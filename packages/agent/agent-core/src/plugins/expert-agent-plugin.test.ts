@@ -10,7 +10,11 @@ import { createInMemoryContextStore } from "../context-system/in-memory-context-
 import { extensibilityPlugin } from "./fixtures/extensibility-plugin/src/plugin.ts";
 import { createInvalidPlugin } from "./fixtures/invalid-plugin/src/plugin.ts";
 import { createMissingManifestPlugin } from "./fixtures/missing-manifest-plugin/src/plugin.ts";
-import { dispatchExpertAgentHook, resolveExpertAgentPlugins } from "./expert-agent-plugin.ts";
+import {
+  createExpertAgentPluginConfigEnvName,
+  dispatchExpertAgentHook,
+  resolveExpertAgentPlugins,
+} from "./expert-agent-plugin.ts";
 
 const contextPluginPath = fileURLToPath(new URL("./fixtures/context-plugin", import.meta.url));
 const extensibilityPluginPath = fileURLToPath(
@@ -79,7 +83,7 @@ describe("ExpertAgent plugins", () => {
                 entry: "./plugin.ts",
               },
               capabilities: [],
-              requires_env: [],
+              required_config: [],
             },
             setup: () => ({}),
           },
@@ -188,6 +192,138 @@ describe("ExpertAgent plugins", () => {
     });
   });
 
+  it("passes config to source dependency plugin entries", async () => {
+    const receivedConfigs: unknown[] = [];
+    const workspace = await createPluginTestWorkspace();
+    await ExpertAgent.create({
+      schemaVersion: "expertmesh.expert/v1",
+      id: "configured-agent",
+      displayName: "Configured Agent",
+      description: "Agent with configured plugin entries.",
+      tags: ["test"],
+      version: "0.0.0",
+      scope: "workspace",
+      workspace,
+      plugins: [
+        {
+          entry: {
+            id: "plugin.configured-entry",
+            name: "Configured Entry",
+            description: "Receives source dependency config.",
+            manifest: {
+              schemaVersion: "expertmesh.plugin/v1",
+              id: "plugin.configured-entry",
+              name: "Configured Entry",
+              description: "Receives source dependency config.",
+              runtime: {
+                type: "node",
+                entry: "./plugin.ts",
+              },
+              capabilities: [],
+              required_config: [],
+            },
+            setup: (context) => {
+              receivedConfigs.push(context.config);
+              return {};
+            },
+          },
+          config: {
+            enabled: false,
+          },
+        },
+      ],
+    });
+
+    expect(receivedConfigs).toEqual([{ enabled: false }]);
+  });
+
+  it("creates plugin config env names from plugin id and config name", () => {
+    expect(
+      createExpertAgentPluginConfigEnvName({
+        pluginId: "code-repository-manager",
+        name: "auth.token",
+      }),
+    ).toBe("EXPERTMESH_PLUGIN_CODE_REPOSITORY_MANAGER_AUTH_TOKEN");
+  });
+
+  it("merges required plugin config from env before explicit config", () => {
+    const receivedConfigs: unknown[] = [];
+    resolveExpertAgentPlugins({
+      env: {
+        EXPERTMESH_PLUGIN_CONFIGURED_ENTRY_API_TOKEN: "env-token",
+        EXPERTMESH_PLUGIN_CONFIGURED_ENTRY_NESTED_SECRET: "env-secret",
+      },
+      pluginEntries: [
+        {
+          entry: {
+            id: "configured-entry",
+            name: "Configured Entry",
+            description: "Receives merged config.",
+            manifest: {
+              schemaVersion: "expertmesh.plugin/v1",
+              id: "configured-entry",
+              name: "Configured Entry",
+              description: "Receives merged config.",
+              runtime: {
+                type: "node",
+                entry: "./plugin.ts",
+              },
+              capabilities: [],
+              required_config: [
+                { name: "apiToken", secret: false },
+                { name: "nested.secret", secret: false },
+              ],
+            },
+            setup: (context) => {
+              receivedConfigs.push(context.config);
+              return {};
+            },
+          },
+          config: {
+            apiToken: "explicit-token",
+          },
+        },
+      ],
+    });
+
+    expect(receivedConfigs).toEqual([
+      {
+        apiToken: "explicit-token",
+        nested: {
+          secret: "env-secret",
+        },
+      },
+    ]);
+  });
+
+  it("rejects plugins with missing required config", () => {
+    expect(() =>
+      resolveExpertAgentPlugins({
+        env: {},
+        pluginEntries: [
+          {
+            id: "missing-config",
+            name: "Missing Config",
+            description: "Requires config.",
+            manifest: {
+              schemaVersion: "expertmesh.plugin/v1",
+              id: "missing-config",
+              name: "Missing Config",
+              description: "Requires config.",
+              runtime: {
+                type: "node",
+                entry: "./plugin.ts",
+              },
+              capabilities: [],
+              required_config: [{ name: "apiToken", secret: false }],
+            },
+            setup: () => ({}),
+          },
+        ],
+      }),
+    ).toThrow(/apiToken \(EXPERTMESH_PLUGIN_MISSING_CONFIG_API_TOKEN\)/);
+  });
+
   it("merges plugin mcp, skills, models, subagents, tools, and hooks", async () => {
     const hookEvents: string[] = [];
     const workspace = await createPluginTestWorkspace();
@@ -245,7 +381,7 @@ describe("ExpertAgent plugins", () => {
                 entry: "./plugin.ts",
               },
               capabilities: [],
-              requires_env: [],
+              required_config: [],
             },
             setup: () => ({
               toolApprovals: [
@@ -272,7 +408,7 @@ describe("ExpertAgent plugins", () => {
                 entry: "./plugin.ts",
               },
               capabilities: [],
-              requires_env: [],
+              required_config: [],
             },
             setup: () => ({
               toolApprovals: [

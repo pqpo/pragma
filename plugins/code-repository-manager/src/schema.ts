@@ -8,20 +8,39 @@ export const CodeRepositoryAuthSchema = z.discriminatedUnion("strategy", [
   z.object({
     strategy: z.literal("none"),
   }),
-  z.object({
-    strategy: z.literal("token"),
-    tokenEnv: z.string().min(1),
-    username: z.string().min(1).default("x-access-token"),
-  }),
-  z.object({
-    strategy: z.literal("ssh"),
-    privateKeyEnv: z.string().min(1),
-    knownHostsEnv: z.string().min(1).optional(),
-  }),
-  z.object({
-    strategy: z.literal("credential_helper"),
-    helperEnv: z.string().min(1),
-  }),
+  z
+    .object({
+      strategy: z.literal("token"),
+      token: z.string().min(1).optional(),
+      tokenEnv: z.string().min(1).optional(),
+      username: z.string().min(1).default("x-access-token"),
+    })
+    .refine((auth) => auth.token !== undefined || auth.tokenEnv !== undefined, {
+      message: "Token auth requires token or tokenEnv.",
+      path: ["token"],
+    }),
+  z
+    .object({
+      strategy: z.literal("ssh"),
+      privateKey: z.string().min(1).optional(),
+      privateKeyEnv: z.string().min(1).optional(),
+      knownHosts: z.string().min(1).optional(),
+      knownHostsEnv: z.string().min(1).optional(),
+    })
+    .refine((auth) => auth.privateKey !== undefined || auth.privateKeyEnv !== undefined, {
+      message: "SSH auth requires privateKey or privateKeyEnv.",
+      path: ["privateKey"],
+    }),
+  z
+    .object({
+      strategy: z.literal("credential_helper"),
+      helper: z.string().min(1).optional(),
+      helperEnv: z.string().min(1).optional(),
+    })
+    .refine((auth) => auth.helper !== undefined || auth.helperEnv !== undefined, {
+      message: "Credential helper auth requires helper or helperEnv.",
+      path: ["helper"],
+    }),
 ]);
 
 export const CodeRepositorySchema = z.object({

@@ -1,4 +1,4 @@
-import { definePluginEntry } from "@expertmesh/agent-core";
+import { createExpertAgentPluginConfigEnvName, definePluginEntry } from "@expertmesh/agent-core";
 import type {
   ExpertAgentContextItemMetadata,
   ExpertAgentContextStore,
@@ -12,26 +12,25 @@ import {
   createCodeRepositoryContextSeed,
 } from "./context.ts";
 import { prepareGitSessionEnvironment } from "./git.ts";
-import type { CodeRepository } from "./schema.ts";
+import type { CodeRepository, CodeRepositoryManagerConfigInput } from "./schema.ts";
 import {
   parseCodeRepositoryManagerConfig,
   parseCodeRepositoryManagerRepositoriesContext,
 } from "./schema.ts";
 
-const TOKEN_ENV = "EXPERTMESH_PLUGIN_CODE_REPOSITORY_MANAGER_GIT_TOKEN";
-const TOKEN_USERNAME_ENV = "EXPERTMESH_PLUGIN_CODE_REPOSITORY_MANAGER_GIT_USERNAME";
-const CREDENTIAL_HELPER_ENV = "EXPERTMESH_PLUGIN_CODE_REPOSITORY_MANAGER_GIT_CREDENTIAL_HELPER";
-const SSH_PRIVATE_KEY_ENV = "EXPERTMESH_PLUGIN_CODE_REPOSITORY_MANAGER_SSH_PRIVATE_KEY";
-const SSH_KNOWN_HOSTS_ENV = "EXPERTMESH_PLUGIN_CODE_REPOSITORY_MANAGER_SSH_KNOWN_HOSTS";
-
-const baseConfig = parseCodeRepositoryManagerConfig({});
+const PLUGIN_ID = "code-repository-manager";
+const TOKEN_ENV = createPluginEnvName("auth.token");
+const TOKEN_USERNAME_ENV = createPluginEnvName("auth.username");
+const CREDENTIAL_HELPER_ENV = createPluginEnvName("auth.helper");
+const SSH_PRIVATE_KEY_ENV = createPluginEnvName("auth.privateKey");
+const SSH_KNOWN_HOSTS_ENV = createPluginEnvName("auth.knownHosts");
 
 export default definePluginEntry({
   setup: (context) => {
     const cleanupGitSessionEnvironments = new Map<string, () => Promise<void>>();
     context.contextSystem.register({
       namespace: "code-repository-manager",
-      store: createCodeRepositoryContextStore(baseConfig, context),
+      store: createCodeRepositoryContextStore(context),
     });
 
     return {
@@ -39,7 +38,7 @@ export default definePluginEntry({
         beforeSessionCreate: async (sessionContext) => {
           await cleanupGitSessionEnvironments.get(sessionContext.systemSessionId)?.();
 
-          const resolvedConfig = await resolveConfig(baseConfig, context);
+          const resolvedConfig = await resolveConfig(context);
           const prepared = await prepareGitSessionEnvironment(resolvedConfig, {
             env: context.env,
           });
@@ -55,12 +54,11 @@ export default definePluginEntry({
 });
 
 function createCodeRepositoryContextStore(
-  config: ReturnType<typeof parseCodeRepositoryManagerConfig>,
   context: ExpertAgentPluginSetupContext,
 ): ExpertAgentContextStore {
   return {
     async listContext() {
-      const resolvedConfig = await resolveConfig(config, context);
+      const resolvedConfig = await resolveConfig(context);
 
       if (resolvedConfig.repositories.length === 0) {
         return ok([]);
@@ -77,7 +75,7 @@ function createCodeRepositoryContextStore(
       ]);
     },
     async readContext(input) {
-      const resolvedConfig = await resolveConfig(config, context);
+      const resolvedConfig = await resolveConfig(context);
 
       if (resolvedConfig.repositories.length === 0) {
         return error("context_not_found", "Code repository context is not configured.");
@@ -140,16 +138,50 @@ function createCodeRepositoryContextStore(
 }
 
 async function resolveConfig(
-  config: ReturnType<typeof parseCodeRepositoryManagerConfig>,
   context: ExpertAgentPluginSetupContext,
 ): Promise<ReturnType<typeof parseCodeRepositoryManagerConfig>> {
+  const explicitConfig = readExplicitConfig(context.config);
   const repositories = await readHostRepositories(context);
+  const parsedConfig = parseCodeRepositoryManagerConfig({
+    ...explicitConfig,
+    auth: explicitConfig.auth ?? resolveAuth(context.env),
+  });
 
   return {
-    ...config,
-    auth: resolveAuth(context.env),
-    repositories: repositories.length > 0 ? [...repositories] : config.repositories,
+    ...parsedConfig,
+    repositories:
+      explicitConfig.repositories !== undefined
+        ? parsedConfig.repositories
+        : repositories.length > 0
+          ? [...repositories]
+          : parsedConfig.repositories,
   };
+}
+
+function readExplicitConfig(input: unknown): Partial<CodeRepositoryManagerConfigInput> {
+  if (input === undefined) {
+    return {};
+  }
+
+  if (input !== null && typeof input === "object" && !Array.isArray(input)) {
+    return input as Partial<CodeRepositoryManagerConfigInput>;
+  }
+
+  throw new Error(
+    `Code Repository Manager plugin config must be an object, received ${describeConfigInput(input)}.`,
+  );
+}
+
+function describeConfigInput(input: unknown): string {
+  if (input === null) {
+    return "null";
+  }
+
+  if (Array.isArray(input)) {
+    return "array";
+  }
+
+  return typeof input;
 }
 
 async function readHostRepositories(
@@ -170,29 +202,34 @@ async function readHostRepositories(
 function resolveAuth(
   env: NodeJS.ProcessEnv,
 ): ReturnType<typeof parseCodeRepositoryManagerConfig>["auth"] {
-  if (readEnv(env, TOKEN_ENV) !== undefined) {
+  const token = readEnv(env, TOKEN_ENV);
+
+  if (token !== undefined) {
     return {
       strategy: "token",
-      tokenEnv: TOKEN_ENV,
+      token,
       username: readEnv(env, TOKEN_USERNAME_ENV) ?? "x-access-token",
     };
   }
 
-  if (readEnv(env, CREDENTIAL_HELPER_ENV) !== undefined) {
+  const helper = readEnv(env, CREDENTIAL_HELPER_ENV);
+
+  if (helper !== undefined) {
     return {
       strategy: "credential_helper",
-      helperEnv: CREDENTIAL_HELPER_ENV,
+      helper,
     };
   }
 
-  if (readEnv(env, SSH_PRIVATE_KEY_ENV) !== undefined) {
-    const knownHostsEnv =
-      readEnv(env, SSH_KNOWN_HOSTS_ENV) === undefined ? {} : { knownHostsEnv: SSH_KNOWN_HOSTS_ENV };
+  const privateKey = readEnv(env, SSH_PRIVATE_KEY_ENV);
+
+  if (privateKey !== undefined) {
+    const knownHosts = readEnv(env, SSH_KNOWN_HOSTS_ENV);
 
     return {
       strategy: "ssh",
-      privateKeyEnv: SSH_PRIVATE_KEY_ENV,
-      ...knownHostsEnv,
+      privateKey,
+      ...(knownHosts === undefined ? {} : { knownHosts }),
     };
   }
 
@@ -213,4 +250,11 @@ function normalizeContextMetadata(
 function readEnv(env: NodeJS.ProcessEnv, name: string): string | undefined {
   const value = env[name];
   return value === undefined || value.length === 0 ? undefined : value;
+}
+
+function createPluginEnvName(name: string): string {
+  return createExpertAgentPluginConfigEnvName({
+    pluginId: PLUGIN_ID,
+    name,
+  });
 }

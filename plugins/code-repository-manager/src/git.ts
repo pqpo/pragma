@@ -117,7 +117,7 @@ async function createGitSessionEnvironment(
         ...sharedEnv,
         GIT_ASKPASS: askPassPath,
         EXPERTMESH_GIT_USERNAME: auth.username,
-        EXPERTMESH_GIT_TOKEN: readRequiredEnv(baseEnv, auth.tokenEnv),
+        EXPERTMESH_GIT_TOKEN: auth.token ?? readRequiredEnv(baseEnv, auth.tokenEnv),
         HOME: tempDir,
         XDG_CONFIG_HOME: tempDir,
       },
@@ -129,8 +129,8 @@ async function createGitSessionEnvironment(
 
   if (auth.strategy === "credential_helper") {
     const gitConfigPath = resolve(tempDir, "gitconfig");
-    const credentialHelper = readRequiredEnv(baseEnv, auth.helperEnv);
-    assertSafeCredentialHelperValue(credentialHelper, auth.helperEnv);
+    const credentialHelper = auth.helper ?? readRequiredEnv(baseEnv, auth.helperEnv);
+    assertSafeCredentialHelperValue(credentialHelper, auth.helperEnv ?? "configured helper");
     await writeFile(
       gitConfigPath,
       ["[credential]", `\thelper = ${escapeGitConfigValue(credentialHelper)}`, ""].join("\n"),
@@ -152,12 +152,15 @@ async function createGitSessionEnvironment(
 
   const privateKeyPath = resolve(tempDir, "identity");
   const knownHostsEnv = auth.knownHostsEnv;
-  const knownHostsPath = knownHostsEnv === undefined ? undefined : resolve(tempDir, "known_hosts");
-  await writeFile(privateKeyPath, readRequiredEnv(baseEnv, auth.privateKeyEnv), { mode: 0o600 });
+  const knownHosts = auth.knownHosts ?? readOptionalEnv(baseEnv, knownHostsEnv);
+  const knownHostsPath = knownHosts === undefined ? undefined : resolve(tempDir, "known_hosts");
+  await writeFile(privateKeyPath, auth.privateKey ?? readRequiredEnv(baseEnv, auth.privateKeyEnv), {
+    mode: 0o600,
+  });
   await chmod(privateKeyPath, 0o600);
 
-  if (knownHostsPath !== undefined && knownHostsEnv !== undefined) {
-    await writeFile(knownHostsPath, readRequiredEnv(baseEnv, knownHostsEnv), {
+  if (knownHostsPath !== undefined && knownHosts !== undefined) {
+    await writeFile(knownHostsPath, knownHosts, {
       mode: 0o600,
     });
   }
@@ -242,28 +245,48 @@ function createGitProcessEnv(baseEnv: NodeJS.ProcessEnv): Record<string, string>
 }
 
 function assertAuthEnvironment(auth: CodeRepositoryAuth, env: NodeJS.ProcessEnv): void {
-  if (auth.strategy === "token" && readEnv(env, auth.tokenEnv) === undefined) {
+  if (
+    auth.strategy === "token" &&
+    auth.token === undefined &&
+    auth.tokenEnv !== undefined &&
+    readEnv(env, auth.tokenEnv) === undefined
+  ) {
     throw new Error(`Missing Git token environment variable: ${auth.tokenEnv}`);
   }
 
-  if (auth.strategy === "ssh" && readEnv(env, auth.privateKeyEnv) === undefined) {
+  if (
+    auth.strategy === "ssh" &&
+    auth.privateKey === undefined &&
+    auth.privateKeyEnv !== undefined &&
+    readEnv(env, auth.privateKeyEnv) === undefined
+  ) {
     throw new Error(`Missing Git SSH private key environment variable: ${auth.privateKeyEnv}`);
   }
 
   if (
     auth.strategy === "ssh" &&
+    auth.knownHosts === undefined &&
     auth.knownHostsEnv !== undefined &&
     readEnv(env, auth.knownHostsEnv) === undefined
   ) {
     throw new Error(`Missing Git known_hosts environment variable: ${auth.knownHostsEnv}`);
   }
 
-  if (auth.strategy === "credential_helper" && readEnv(env, auth.helperEnv) === undefined) {
+  if (
+    auth.strategy === "credential_helper" &&
+    auth.helper === undefined &&
+    auth.helperEnv !== undefined &&
+    readEnv(env, auth.helperEnv) === undefined
+  ) {
     throw new Error(`Missing Git credential.helper environment variable: ${auth.helperEnv}`);
   }
 }
 
-function readRequiredEnv(env: NodeJS.ProcessEnv, name: string): string {
+function readRequiredEnv(env: NodeJS.ProcessEnv, name: string | undefined): string {
+  if (name === undefined) {
+    throw new Error("Missing environment variable name.");
+  }
+
   const value = readEnv(env, name);
 
   if (value === undefined) {
@@ -271,6 +294,10 @@ function readRequiredEnv(env: NodeJS.ProcessEnv, name: string): string {
   }
 
   return value;
+}
+
+function readOptionalEnv(env: NodeJS.ProcessEnv, name: string | undefined): string | undefined {
+  return name === undefined ? undefined : readEnv(env, name);
 }
 
 function readEnv(env: NodeJS.ProcessEnv, name: string): string | undefined {
