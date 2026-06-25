@@ -4,7 +4,11 @@ import { stdin as input, stdout as output } from "node:process";
 import { ExpertAgent } from "@expertmesh/agent-core";
 import { createCloudPiRuntimeAdapter } from "@expertmesh/agent-runtime";
 
-import { printRunHeader, printRunResult } from "./harness/expert-agent-example-utils.ts";
+import {
+  printPluginLoadIssues,
+  printRunHeader,
+  printRunResult,
+} from "./harness/expert-agent-example-utils.ts";
 import {
   createExpertAgentModelsConfig,
   formatModelConfig,
@@ -70,6 +74,8 @@ const session = await runtime.createSession({
 });
 
 try {
+  printPluginLoadIssues(agent);
+
   console.log("Approval example:");
   console.log(`- tools: ${agent.tools?.map((tool) => tool.name).join(", ") ?? "<none>"}`);
   console.log("");

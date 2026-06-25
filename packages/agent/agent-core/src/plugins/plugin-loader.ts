@@ -25,7 +25,12 @@ export interface LoadExpertAgentPluginsOptions {
 
 export interface ExpertAgentPluginLoadIssue {
   readonly source: string;
-  readonly code: "missing_env" | "invalid_source" | "load_error";
+  readonly code:
+    | "missing_env"
+    | "invalid_source"
+    | "missing_manifest"
+    | "missing_entry"
+    | "load_error";
   readonly message: string;
   readonly pluginId?: string | undefined;
   readonly missingEnv?: readonly string[] | undefined;
@@ -67,7 +72,7 @@ export async function loadExpertAgentPlugins(
     } catch (error) {
       issues.push({
         source,
-        code: error instanceof InvalidPluginSourceError ? "invalid_source" : "load_error",
+        code: readPluginLoadIssueCode(error),
         message: error instanceof Error ? error.message : String(error),
       });
     }
@@ -94,6 +99,7 @@ export async function prepareExpertAgentPluginSource(
   await mkdir(installRoot, { recursive: true });
 
   if (sourceStats.isDirectory()) {
+    await assertPluginManifestExists(absoluteSourcePath);
     const manifest = readExpertAgentPluginManifest(resolve(absoluteSourcePath, "plugin.json"));
     const targetDir = resolve(installRoot, manifest.id);
     await rm(targetDir, { recursive: true, force: true });
@@ -128,6 +134,16 @@ export async function prepareExpertAgentPluginSource(
 async function importExpertAgentPlugin(pluginDir: string): Promise<ExpertAgentPluginEntry> {
   const manifest = readExpertAgentPluginManifest(resolve(pluginDir, "plugin.json"));
   const entryPath = resolve(pluginDir, manifest.runtime.entry);
+
+  const entryStats = await stat(entryPath).catch(() => undefined);
+
+  if (entryStats?.isFile() !== true) {
+    throw new PluginLoadError(
+      "missing_entry",
+      `Plugin ${manifest.id} entry file does not exist: ${manifest.runtime.entry}`,
+    );
+  }
+
   const module = (await import(pathToFileURL(entryPath).href)) as ExpertAgentPluginModule;
   const plugin = module.default;
 
@@ -140,6 +156,15 @@ async function importExpertAgentPlugin(pluginDir: string): Promise<ExpertAgentPl
   }
 
   return plugin;
+}
+
+async function assertPluginManifestExists(pluginDir: string): Promise<void> {
+  const manifestPath = resolve(pluginDir, "plugin.json");
+  const manifestStats = await stat(manifestPath).catch(() => undefined);
+
+  if (manifestStats?.isFile() !== true) {
+    throw new PluginLoadError("missing_manifest", `Plugin manifest does not exist: ${manifestPath}`);
+  }
 }
 
 function findMissingRequiredEnv(
@@ -176,7 +201,28 @@ async function findUnpackedPluginRoot(tempDir: string): Promise<string> {
     }
   }
 
-  throw new InvalidPluginSourceError(`Zip ${name} does not contain a plugin.json at its root.`);
+  throw new PluginLoadError("missing_manifest", `Zip ${name} does not contain a plugin.json at its root.`);
 }
 
 class InvalidPluginSourceError extends Error {}
+
+class PluginLoadError extends Error {
+  constructor(
+    readonly code: ExpertAgentPluginLoadIssue["code"],
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
+function readPluginLoadIssueCode(error: unknown): ExpertAgentPluginLoadIssue["code"] {
+  if (error instanceof PluginLoadError) {
+    return error.code;
+  }
+
+  if (error instanceof InvalidPluginSourceError) {
+    return "invalid_source";
+  }
+
+  return "load_error";
+}

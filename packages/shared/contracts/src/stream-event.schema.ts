@@ -42,7 +42,6 @@ export const ExpertAgentRunStartedEventSchema = ExpertAgentStreamEventBaseSchema
 export const ExpertAgentRunCompletedEventSchema = ExpertAgentStreamEventBaseSchema.extend({
   type: z.literal("run.completed"),
   payload: z.object({
-    outputSummary: z.string().optional(),
     usage: AgentMessageUsageSchema.optional(),
   }),
 });

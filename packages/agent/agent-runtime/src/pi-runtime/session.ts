@@ -61,7 +61,7 @@ export function createPiRuntimeSession(
       let preflightRejected = false;
 
       const result = lifecycle.enqueue(async ({ signal }) => {
-        let outputText = "";
+        let outputText: string;
         const source = {
           kind: "agent" as const,
           runId,
@@ -205,7 +205,6 @@ export function createPiRuntimeSession(
             source,
             type: "run.completed",
             payload: {
-              outputSummary: summarizeText(outputText),
               ...(usage === undefined ? {} : { usage }),
             },
           });

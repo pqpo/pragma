@@ -26,6 +26,20 @@ export function printRunHeader(agent: ExpertAgent, model: string, query: string)
   console.log("");
 }
 
+export function printPluginLoadIssues(agent: ExpertAgent): void {
+  if (agent.pluginLoadIssues === undefined || agent.pluginLoadIssues.length === 0) {
+    return;
+  }
+
+  console.log("Plugin load issues:");
+  for (const issue of agent.pluginLoadIssues) {
+    const plugin = issue.pluginId === undefined ? "" : ` plugin=${issue.pluginId}`;
+    console.log(`- ${issue.code}${plugin} source=${issue.source}`);
+    console.log(`  ${issue.message}`);
+  }
+  console.log("");
+}
+
 export function printRunResult(runId: string): void {
   console.log("");
   console.log("");

@@ -6,7 +6,11 @@ import {
 } from "@expertmesh/agent-core";
 import { createCloudPiRuntimeAdapter } from "@expertmesh/agent-runtime";
 
-import { printRunHeader, printRunResult } from "../harness/expert-agent-example-utils.ts";
+import {
+  printPluginLoadIssues,
+  printRunHeader,
+  printRunResult,
+} from "../harness/expert-agent-example-utils.ts";
 import {
   createExpertAgentModelsConfig,
   formatModelConfig,
@@ -80,6 +84,8 @@ const agent = await ExpertAgent.create({
 });
 
 const contextItems = await agent.listContext();
+
+printPluginLoadIssues(agent);
 
 console.log("Plugin context:");
 if (contextItems.ok) {

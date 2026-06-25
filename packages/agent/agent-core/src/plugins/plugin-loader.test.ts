@@ -57,6 +57,58 @@ describe("ExpertAgent plugin loader", () => {
       await rm(workspace, { recursive: true, force: true });
     }
   });
+
+  it("reports plugins without plugin.json", async () => {
+    const workspace = await mkdtemp(resolve(tmpdir(), "expertmesh-plugin-loader-"));
+    const pluginDir = resolve(workspace, "missing-manifest-plugin");
+
+    try {
+      await mkdir(pluginDir, { recursive: true });
+
+      const result = await loadExpertAgentPlugins({
+        workspaceRoot: workspace,
+        sources: [pluginDir],
+      });
+
+      expect(result.pluginEntries).toEqual([]);
+      expect(result.issues).toMatchObject([
+        {
+          code: "missing_manifest",
+          source: pluginDir,
+        },
+      ]);
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("reports plugins without a compiled entry file", async () => {
+    const workspace = await mkdtemp(resolve(tmpdir(), "expertmesh-plugin-loader-"));
+    const pluginDir = resolve(workspace, "missing-entry-plugin");
+
+    try {
+      await writeMinimalPlugin(pluginDir, {
+        id: "plugin.missing-entry",
+        requiredEnv: [],
+        writeEntry: false,
+      });
+
+      const result = await loadExpertAgentPlugins({
+        workspaceRoot: workspace,
+        sources: [pluginDir],
+      });
+
+      expect(result.pluginEntries).toEqual([]);
+      expect(result.issues).toMatchObject([
+        {
+          code: "missing_entry",
+          source: pluginDir,
+        },
+      ]);
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
 });
 
 async function writeMinimalPlugin(
@@ -64,6 +116,7 @@ async function writeMinimalPlugin(
   options: {
     readonly id: string;
     readonly requiredEnv: readonly string[];
+    readonly writeEntry?: boolean | undefined;
   },
 ): Promise<void> {
   await mkdir(pluginDir, { recursive: true });
@@ -91,26 +144,28 @@ async function writeMinimalPlugin(
     "utf8",
   );
 
-  await writeFile(
-    resolve(pluginDir, "index.js"),
-    [
-      "export default {",
-      `  id: "${options.id}",`,
-      "  name: \"Env required\",",
-      "  description: \"Requires env\",",
-      "  manifest: {",
-      "    schemaVersion: \"expertmesh.plugin/v1\",",
-      `    id: "${options.id}",`,
-      "    name: \"Env required\",",
-      "    description: \"Requires env\",",
-      "    runtime: { type: \"expert-agent-plugin\", entry: \"./index.js\" },",
-      "    capabilities: [],",
-      "    requires_env: [],",
-      "  },",
-      "  setup: () => ({}),",
-      "};",
-      "",
-    ].join("\n"),
-    "utf8",
-  );
+  if (options.writeEntry !== false) {
+    await writeFile(
+      resolve(pluginDir, "index.js"),
+      [
+        "export default {",
+        `  id: "${options.id}",`,
+        "  name: \"Env required\",",
+        "  description: \"Requires env\",",
+        "  manifest: {",
+        "    schemaVersion: \"expertmesh.plugin/v1\",",
+        `    id: "${options.id}",`,
+        "    name: \"Env required\",",
+        "    description: \"Requires env\",",
+        "    runtime: { type: \"expert-agent-plugin\", entry: \"./index.js\" },",
+        "    capabilities: [],",
+        "    requires_env: [],",
+        "  },",
+        "  setup: () => ({}),",
+        "};",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+  }
 }
