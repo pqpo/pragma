@@ -5,6 +5,7 @@ import type {
 } from "../agent/expert-agent.ts";
 import type { AgentMessage } from "@expertmesh/contracts";
 import type { z } from "zod";
+import type { ExpertAgentLoggerProvider } from "../logging/logger.ts";
 import type { RunState, SessionState } from "./agent-lifecycle.ts";
 import type { ExpertAgentRunContext } from "./run-context.ts";
 import type { RuntimeStreamEvent } from "./stream-events.ts";
@@ -50,6 +51,7 @@ export interface RuntimeCreateSessionRequest {
   readonly models?: readonly IExpertAgentModelProviderConfig[] | undefined;
   readonly systemSessionId?: string | undefined;
   readonly runtimeSession?: RuntimeSessionRef | undefined;
+  readonly loggerProvider?: ExpertAgentLoggerProvider | undefined;
 }
 
 export interface RuntimeSubmitRequest<TOutput = string> {

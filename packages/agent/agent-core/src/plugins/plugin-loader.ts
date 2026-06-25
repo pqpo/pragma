@@ -10,6 +10,8 @@ import type {
   ExpertAgentPluginRegistration,
 } from "./expert-agent-plugin.ts";
 import { readExpertAgentPluginManifest } from "./expert-agent-plugin.ts";
+import type { ExpertAgentLoggerProvider } from "../logging/logger.ts";
+import { createExpertAgentLogger, defaultExpertAgentLoggerProvider } from "../logging/logger.ts";
 
 const execFileAsync = promisify(execFile);
 const DEFAULT_PLUGIN_INSTALL_DIR = ".expertmesh/agent/plugins";
@@ -33,6 +35,7 @@ export interface LoadExpertAgentPluginsOptions {
   readonly sources: readonly ExpertAgentPluginSource[];
   readonly env?: NodeJS.ProcessEnv | undefined;
   readonly installDir?: string | undefined;
+  readonly loggerProvider?: ExpertAgentLoggerProvider | undefined;
 }
 
 export interface ExpertAgentPluginLoadIssue {
@@ -62,6 +65,11 @@ export async function loadExpertAgentPlugins(
 ): Promise<LoadExpertAgentPluginsResult> {
   const pluginEntries: ExpertAgentPluginRegistration[] = [];
   const issues: ExpertAgentPluginLoadIssue[] = [];
+  const loggerProvider = options.loggerProvider ?? defaultExpertAgentLoggerProvider;
+  const logger = createExpertAgentLogger(loggerProvider, {
+    component: "plugin",
+    name: "plugin-loader",
+  });
 
   for (const source of options.sources) {
     const sourcePath = readPluginSourcePath(source);
@@ -75,10 +83,15 @@ export async function loadExpertAgentPlugins(
         ...(config === undefined ? {} : { config }),
       });
     } catch (error) {
-      issues.push({
+      const issue: ExpertAgentPluginLoadIssue = {
         source: sourcePath,
         code: readPluginLoadIssueCode(error),
         message: error instanceof Error ? error.message : String(error),
+      };
+      issues.push(issue);
+      logger.warn("Failed to load ExpertAgent plugin", {
+        ...issue,
+        error,
       });
     }
   }
@@ -147,7 +160,9 @@ export async function prepareExpertAgentPluginSource(
     }
   }
 
-  throw new InvalidPluginSourceError(`Plugin source must be a directory or .zip file: ${sourcePath}`);
+  throw new InvalidPluginSourceError(
+    `Plugin source must be a directory or .zip file: ${sourcePath}`,
+  );
 }
 
 async function importExpertAgentPlugin(pluginDir: string): Promise<ExpertAgentPluginEntry> {
@@ -171,7 +186,9 @@ async function importExpertAgentPlugin(pluginDir: string): Promise<ExpertAgentPl
   }
 
   if (plugin.manifest.id !== manifest.id) {
-    throw new Error(`Plugin export id ${plugin.manifest.id} does not match manifest id ${manifest.id}.`);
+    throw new Error(
+      `Plugin export id ${plugin.manifest.id} does not match manifest id ${manifest.id}.`,
+    );
   }
 
   return plugin;
@@ -182,7 +199,10 @@ async function assertPluginManifestExists(pluginDir: string): Promise<void> {
   const manifestStats = await stat(manifestPath).catch(() => undefined);
 
   if (manifestStats?.isFile() !== true) {
-    throw new PluginLoadError("missing_manifest", `Plugin manifest does not exist: ${manifestPath}`);
+    throw new PluginLoadError(
+      "missing_manifest",
+      `Plugin manifest does not exist: ${manifestPath}`,
+    );
   }
 }
 
@@ -206,7 +226,10 @@ async function findUnpackedPluginRoot(tempDir: string): Promise<string> {
     }
   }
 
-  throw new PluginLoadError("missing_manifest", `Zip ${name} does not contain a plugin.json at its root.`);
+  throw new PluginLoadError(
+    "missing_manifest",
+    `Zip ${name} does not contain a plugin.json at its root.`,
+  );
 }
 
 class InvalidPluginSourceError extends Error {}

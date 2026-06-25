@@ -1,4 +1,10 @@
-import { ExpertAgent } from "@expertmesh/agent-core";
+import {
+  ExpertAgent,
+  createConsoleLoggerProvider,
+  createExpertAgentLogger,
+} from "@expertmesh/agent-core";
+
+const loggerProvider = createConsoleLoggerProvider();
 
 const placeholderAgent = await ExpertAgent.create({
   schemaVersion: "expertmesh.expert/v1",
@@ -8,9 +14,14 @@ const placeholderAgent = await ExpertAgent.create({
   tags: ["phase-0"],
   version: "0.0.0",
   scope: "phase-0",
-  workspace: "."
+  workspace: ".",
+  loggerProvider,
 });
 
 void placeholderAgent;
 
-console.log("ExpertMesh Worker Ready");
+createExpertAgentLogger(loggerProvider, {
+  component: "expert-agent",
+  agentId: placeholderAgent.id,
+  name: "worker",
+}).info("ExpertMesh Worker Ready");

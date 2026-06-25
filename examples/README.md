@@ -56,7 +56,7 @@ pnpm --filter @expertmesh/examples start:basic --system-session-id local-debug-s
 
 1. 从 `.env` 读取模型配置。
 2. 创建带 `models` 配置的 `ExpertAgent`。
-3. 创建 `createCloudPiRuntimeAdapter()`。
+3. 创建自定义 logger provider，并同时传给 `ExpertAgent` 与 `createCloudPiRuntimeAdapter()`。
 4. 可选传入 `runtimeSession` 恢复 runtime session。
 5. 使用 runtime 创建 session。
 6. 对每个 turn 调用 `session.submit()` 并处理流式事件。
@@ -116,6 +116,7 @@ pnpm --filter @expertmesh/examples start:workspace-context --workspace ./workspa
 - `model-config.ts`：读取 `.env` 并生成 ExpertAgent models config。
 - `cli.ts`：用 `cac` 读取示例 CLI 参数。
 - `paths.ts`：定位 examples 目录、仓库根目录和默认 workspace。
+- `logger.ts`：演示自定义 logger provider，输出简短审计日志。
 - `expert-agent-example-utils.ts`：打印运行信息、预检上下文。
 
 不要把业务流程继续包进 harness。新增示例时，应在 `src/run-*.ts` 中显式写出 ExpertAgent 的创建、models 配置、runtime session、`session.submit()` 流式事件处理和清理步骤。

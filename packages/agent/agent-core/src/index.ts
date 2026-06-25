@@ -4,6 +4,7 @@ export * from "./context-system/context-system.ts";
 export * from "./context-system/context-tools.ts";
 export * from "./context-system/file-system-context-store.ts";
 export * from "./context-system/in-memory-context-store.ts";
+export * from "./logging/logger.ts";
 export * from "./plugins/expert-agent-plugin.ts";
 export * from "./plugins/plugin-loader.ts";
 export * from "./runtime/agent-lifecycle.ts";

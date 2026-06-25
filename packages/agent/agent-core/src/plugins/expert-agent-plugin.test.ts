@@ -7,6 +7,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import { ExpertAgent } from "../agent/expert-agent.ts";
 import { ContextSystem, HOST_CONTEXT_NAMESPACE } from "../context-system/context-system.ts";
 import { createInMemoryContextStore } from "../context-system/in-memory-context-store.ts";
+import { createLoggerProvider } from "../logging/logger.ts";
+import type { ExpertAgentLogRecord } from "../logging/logger.ts";
 import { extensibilityPlugin } from "./fixtures/extensibility-plugin/src/plugin.ts";
 import { createInvalidPlugin } from "./fixtures/invalid-plugin/src/plugin.ts";
 import { createMissingManifestPlugin } from "./fixtures/missing-manifest-plugin/src/plugin.ts";
@@ -90,6 +92,55 @@ describe("ExpertAgent plugins", () => {
         ],
       }),
     ).toThrow(/reserved/);
+  });
+
+  it("passes a plugin scoped logger into plugin setup", () => {
+    const records: ExpertAgentLogRecord[] = [];
+
+    resolveExpertAgentPlugins({
+      agentId: "agent-1",
+      loggerProvider: createLoggerProvider((record) => {
+        records.push(record);
+      }),
+      pluginEntries: [
+        {
+          id: "plugin.logger",
+          name: "Logger",
+          description: "Tests plugin logging.",
+          manifest: {
+            schemaVersion: "expertmesh.plugin/v1",
+            id: "plugin.logger",
+            name: "Logger",
+            description: "Tests plugin logging.",
+            runtime: {
+              type: "node",
+              entry: "./plugin.ts",
+            },
+            capabilities: [],
+            requires_env: [],
+          },
+          setup: ({ logger }) => {
+            logger.info("Plugin setup logged", { phase: "setup" });
+            return {};
+          },
+        },
+      ],
+    });
+
+    expect(records).toMatchObject([
+      {
+        level: "info",
+        message: "Plugin setup logged",
+        scope: {
+          component: "plugin",
+          agentId: "agent-1",
+          pluginId: "plugin.logger",
+        },
+        context: {
+          phase: "setup",
+        },
+      },
+    ]);
   });
 
   it("merges plugin context with host context", async () => {

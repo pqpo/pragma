@@ -9,6 +9,7 @@ import {
   ExpertAgent,
   HOST_CONTEXT_NAMESPACE,
   createInMemoryContextStore,
+  createNoopLoggerProvider,
 } from "@expertmesh/agent-core";
 import { readExpertAgentPluginManifest } from "@expertmesh/agent-core";
 import type { ExpertAgentPluginUse } from "@expertmesh/agent-core";
@@ -165,6 +166,10 @@ describe("Code Repository Manager plugin", () => {
       contextSystem: new ContextSystem(),
       workspaceRoot: "/tmp/expertmesh",
       env: process.env,
+      logger: createNoopLoggerProvider().createLogger({
+        component: "plugin",
+        pluginId: "plugin.code-repository-manager",
+      }),
     });
 
     expect(contributions.tools).toBeUndefined();

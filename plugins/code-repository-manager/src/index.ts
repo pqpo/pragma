@@ -28,6 +28,9 @@ const SSH_KNOWN_HOSTS_ENV = createPluginEnvName("auth.knownHosts");
 export default definePluginEntry({
   setup: (context) => {
     const cleanupGitSessionEnvironments = new Map<string, () => Promise<void>>();
+    context.logger.info("Registering code repository manager context store", {
+      namespace: "code-repository-manager",
+    });
     context.contextSystem.register({
       namespace: "code-repository-manager",
       store: createCodeRepositoryContextStore(context),
@@ -43,10 +46,17 @@ export default definePluginEntry({
             env: context.env,
           });
           cleanupGitSessionEnvironments.set(sessionContext.systemSessionId, prepared.cleanup);
+          sessionContext.logger?.info("Prepared code repository git session environment", {
+            systemSessionId: sessionContext.systemSessionId,
+            authStrategy: resolvedConfig.auth.strategy,
+          });
         },
         afterSessionDestroy: async (sessionContext) => {
           await cleanupGitSessionEnvironments.get(sessionContext.session.systemSessionId)?.();
           cleanupGitSessionEnvironments.delete(sessionContext.session.systemSessionId);
+          sessionContext.logger?.info("Cleaned up code repository git session environment", {
+            systemSessionId: sessionContext.session.systemSessionId,
+          });
         },
       },
     };

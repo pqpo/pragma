@@ -1,5 +1,11 @@
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
-import { createQueuedAgentLifecycle, ExpertAgent } from "@expertmesh/agent-core";
+import {
+  createExpertAgentLogger,
+  createLoggerProvider,
+  createQueuedAgentLifecycle,
+  ExpertAgent,
+} from "@expertmesh/agent-core";
+import type { ExpertAgentLogRecord, ExpertAgentLoggerProvider } from "@expertmesh/agent-core";
 import type { AgentMessageUsage } from "@expertmesh/contracts";
 import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
@@ -242,6 +248,45 @@ describe("createPiRuntimeSession", () => {
     );
   });
 
+  it("logs runtime submit lifecycle events", async () => {
+    const records: ExpertAgentLogRecord[] = [];
+    const piSession = createFakeAgentSession(["done"]);
+    const runtimeSession = await createTestRuntimeSession(piSession, {
+      loggerProvider: createLoggerProvider((record) => {
+        records.push(record);
+      }),
+    });
+
+    await runtimeSession.submit({
+      runId: "run-1",
+      query: "Summarize input",
+    }).result;
+
+    expect(records).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          level: "info",
+          message: "Runtime run submitted",
+          scope: expect.objectContaining({
+            component: "runtime-adapter",
+            agentId: "agent-1",
+            runtimeId: "cloud-pi-agent",
+          }),
+          context: expect.objectContaining({
+            runId: "run-1",
+          }),
+        }),
+        expect.objectContaining({
+          level: "info",
+          message: "Runtime run completed",
+          context: expect.objectContaining({
+            runId: "run-1",
+          }),
+        }),
+      ]),
+    );
+  });
+
   it("emits run.failed and rejects result when prompt fails", async () => {
     const piSession = createFakeAgentSession(["done"], [], new Error("prompt failed"));
     const runtimeSession = await createTestRuntimeSession(piSession);
@@ -347,6 +392,7 @@ async function createTestRuntimeSession(
   piSession: AgentSession,
   options: {
     readonly outputRetryLimit?: number | undefined;
+    readonly loggerProvider?: ExpertAgentLoggerProvider | undefined;
   } = {},
 ) {
   return createPiRuntimeSession(
@@ -367,7 +413,7 @@ async function createTestRuntimeSession(
     },
     <TParsedOutput>(text: string) => text as TParsedOutput,
     createQueuedAgentLifecycle(undefined),
-    createTestStreamState(),
+    createTestStreamState(options.loggerProvider),
     {
       modelRegistry: createFakeModelRegistry([]),
     },
@@ -485,8 +531,18 @@ function createFakeModelRegistry(models: readonly unknown[]) {
   } as never;
 }
 
-function createTestStreamState(): PiRuntimeStreamState {
-  return {};
+function createTestStreamState(
+  loggerProvider?: ExpertAgentLoggerProvider | undefined,
+): PiRuntimeStreamState {
+  return loggerProvider === undefined
+    ? {}
+    : {
+        logger: createExpertAgentLogger(loggerProvider, {
+          component: "runtime-adapter",
+          agentId: "agent-1",
+          runtimeId: "cloud-pi-agent",
+        }),
+      };
 }
 
 async function collectEvents<TEvent>(events: AsyncIterable<TEvent>): Promise<TEvent[]> {

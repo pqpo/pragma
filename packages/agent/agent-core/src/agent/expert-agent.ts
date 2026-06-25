@@ -25,6 +25,8 @@ import type {
   ExpertAgentPluginRegistration,
 } from "../plugins/expert-agent-plugin.ts";
 import { resolveExpertAgentPlugins } from "../plugins/expert-agent-plugin.ts";
+import type { ExpertAgentLogger, ExpertAgentLoggerProvider } from "../logging/logger.ts";
+import { createExpertAgentLogger, defaultExpertAgentLoggerProvider } from "../logging/logger.ts";
 import type {
   ExpertAgentPluginLoadIssue,
   ExpertAgentPluginSource,
@@ -137,9 +139,14 @@ export interface IExpertAgent {
   readonly tools?: readonly ExpertAgentManagedTool<string, ExpertAgentToolCallResult>[] | undefined;
   readonly hooks?: ExpertAgentPluginHooks | undefined;
   readonly pluginLoadIssues?: readonly ExpertAgentPluginLoadIssue[] | undefined;
+  readonly loggerProvider?: ExpertAgentLoggerProvider | undefined;
+  readonly logger: ExpertAgentLogger;
 }
 
-export type ExpertAgentOptions = Omit<IExpertAgent, "contextSystem" | "pluginLoadIssues"> & {
+export type ExpertAgentOptions = Omit<
+  IExpertAgent,
+  "contextSystem" | "pluginLoadIssues" | "logger"
+> & {
   readonly contextSystem?: ContextSystem | undefined;
 };
 
@@ -173,6 +180,8 @@ export class ExpertAgent implements IExpertAgent {
   readonly tools: readonly ExpertAgentManagedTool<string, ExpertAgentToolCallResult>[] | undefined;
   readonly hooks: ExpertAgentPluginHooks | undefined;
   readonly pluginLoadIssues: readonly ExpertAgentPluginLoadIssue[] | undefined;
+  readonly loggerProvider: ExpertAgentLoggerProvider;
+  readonly logger: ExpertAgentLogger;
   private readonly contextManager: ContextManager;
 
   static async create(options: ExpertAgentCreateOptions): Promise<ExpertAgent> {
@@ -190,14 +199,24 @@ export class ExpertAgent implements IExpertAgent {
         pluginSources.push(plugin);
       }
     }
+    const loggerProvider = options.loggerProvider ?? defaultExpertAgentLoggerProvider;
+    const logger = createExpertAgentLogger(loggerProvider, {
+      component: "expert-agent",
+      agentId: options.id,
+    });
+
+    logger.info("Loading ExpertAgent plugins", {
+      pluginCount: options.plugins?.length ?? 0,
+    });
 
     const loaded = await loadExpertAgentPlugins({
       workspaceRoot: options.workspace,
       sources: pluginSources,
       env: options.env,
+      loggerProvider,
     });
 
-    return new ExpertAgent({
+    const agent = new ExpertAgent({
       ...options,
       pluginEntries: [
         ...loaded.pluginEntries,
@@ -206,11 +225,24 @@ export class ExpertAgent implements IExpertAgent {
           ...(plugin.config === undefined ? {} : { config: plugin.config }),
         })),
       ],
+      loggerProvider,
       pluginLoadIssues: loaded.issues,
     });
+
+    agent.logger.info("ExpertAgent created", {
+      pluginCount: loaded.pluginEntries.length,
+      pluginLoadIssueCount: loaded.issues.length,
+    });
+
+    return agent;
   }
 
   private constructor(options: ExpertAgentRuntimeOptions) {
+    const loggerProvider = options.loggerProvider ?? defaultExpertAgentLoggerProvider;
+    const logger = createExpertAgentLogger(loggerProvider, {
+      component: "expert-agent",
+      agentId: options.id,
+    });
     const contextSystem = options.contextSystem ?? new ContextSystem();
     const resolved = resolveExpertAgentPlugins({
       agent: {
@@ -230,6 +262,8 @@ export class ExpertAgent implements IExpertAgent {
       pluginEntries: options.pluginEntries,
       workspaceRoot: options.workspace,
       env: options.env,
+      loggerProvider,
+      agentId: options.id,
     });
 
     this.schemaVersion = options.schemaVersion;
@@ -248,6 +282,8 @@ export class ExpertAgent implements IExpertAgent {
     this.tools = applyToolApprovals(resolved.tools, resolved.toolApprovals);
     this.hooks = resolved.hooks;
     this.pluginLoadIssues = options.pluginLoadIssues;
+    this.loggerProvider = loggerProvider;
+    this.logger = logger;
     this.contextManager = new ContextManager({
       agent: this,
       contextSystem: this.contextSystem,
@@ -319,7 +355,9 @@ function applyToolApprovals(
     return tools;
   }
 
-  const approvalByTool = new Map(approvals.map((approval) => [approval.toolName, approval.approval]));
+  const approvalByTool = new Map(
+    approvals.map((approval) => [approval.toolName, approval.approval]),
+  );
 
   return tools.map((tool) => {
     const approval = approvalByTool.get(tool.name);
