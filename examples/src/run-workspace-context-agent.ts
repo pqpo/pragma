@@ -26,6 +26,7 @@ import {
   loadExamplesEnv,
   resolveExamplePath,
 } from "./harness/paths.ts";
+import { printRunStream } from "./harness/stream-output.ts";
 
 const defaultQuery = [
   "测试 ExpertMesh workspace + context 能力：",
@@ -77,11 +78,7 @@ try {
     query: cli.query,
   });
 
-  for await (const event of run.events) {
-    if (event.type === "message.delta") {
-      process.stdout.write(event.payload.delta);
-    }
-  }
+  await printRunStream(run);
 
   const result = await run.result;
   printRunResult(result.runId);

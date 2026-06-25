@@ -76,7 +76,76 @@ describe("createContextTools", () => {
       attributes: {},
     });
   });
+
+  it("formats search matches grouped by context id with line text", async () => {
+    const matches = [
+      {
+        namespace: "workspace",
+        id: "guide.md",
+        lineNumber: 10,
+        line: "First needle match.",
+        before: ["Before first."],
+        after: ["After first."],
+      },
+      {
+        namespace: "workspace",
+        id: "guide.md",
+        lineNumber: 25,
+        line: "Second needle match.",
+      },
+      {
+        namespace: "host",
+        id: "AGENTS.md",
+        lineNumber: 2,
+        line: "Needle in instructions.",
+      },
+    ];
+    const searchContext = vi.fn(async () => ({
+      ok: true as const,
+      value: matches,
+    }));
+    const searchTool = createContextTools({
+      listContext: notCalledListOperation,
+      readContext: notCalledOperation,
+      searchContext,
+      addContext: notCalledOperation,
+      updateContext: notCalledOperation,
+      deleteContext: notCalledOperation,
+    }).find((tool) => tool.name === "search_expert_context");
+
+    const result = await searchTool?.call(
+      {
+        query: "needle",
+      },
+      undefined,
+    );
+
+    expect(result?.text).toBe(
+      [
+        "Found 3 matches in 2 context items.",
+        "",
+        "workspace/guide.md",
+        " 9 | Before first.",
+        ">10 | First needle match.",
+        " 11 | After first.",
+        "--",
+        ">25 | Second needle match.",
+        "",
+        "---",
+        "",
+        "host/AGENTS.md",
+        ">2 | Needle in instructions.",
+      ].join("\n"),
+    );
+    expect(result?.details).toEqual({
+      matches,
+    });
+  });
 });
+
+const notCalledListOperation = vi.fn(async () => {
+  throw new Error("Unexpected context operation call.");
+}) as unknown as ExpertAgentContextItemOperations["listContext"];
 
 const notCalledOperation = vi.fn(async () => {
   throw new Error("Unexpected context operation call.");

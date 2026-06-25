@@ -10,6 +10,7 @@ import {
 } from "./harness/model-config.ts";
 import { readBasicExampleCli } from "./harness/cli.ts";
 import { defaultWorkspaceRoot, ensureWorkspaceDir, loadExamplesEnv } from "./harness/paths.ts";
+import { printRunStream } from "./harness/stream-output.ts";
 
 const defaultQuery = "用一句话介绍 ExpertMesh 的 Phase 0 Harness 是什么。";
 
@@ -56,11 +57,7 @@ try {
       query,
     });
 
-    for await (const event of run.events) {
-      if (event.type === "message.delta") {
-        process.stdout.write(event.payload.delta);
-      }
-    }
+    await printRunStream(run);
 
     const result = await run.result;
     printRunResult(result.runId);

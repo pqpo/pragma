@@ -482,31 +482,77 @@ function formatContextSearchMatches(matches: readonly ExpertAgentContextItemSear
     return "No ExpertAgent context matches found.";
   }
 
-  return matches.map(formatContextSearchMatch).join("\n");
-}
+  const groups = groupContextSearchMatches(matches);
+  const itemLabel = groups.length === 1 ? "context item" : "context items";
 
-function formatContextSearchMatch(match: ExpertAgentContextItemSearchMatch): string {
   return [
-    `- id: ${match.id}`,
-    match.namespace === undefined ? undefined : `  namespace: ${match.namespace}`,
-    `  lineNumber: ${match.lineNumber}`,
-    ...formatSearchContext(match.before, "before"),
-    `  match: ${match.line}`,
-    ...formatSearchContext(match.after, "after"),
-  ]
-    .filter((line) => line !== undefined)
-    .join("\n");
+    `Found ${matches.length} ${matches.length === 1 ? "match" : "matches"} in ${groups.length} ${itemLabel}.`,
+    "",
+    groups.map(formatContextSearchMatchGroup).join("\n\n---\n\n"),
+  ].join("\n");
 }
 
-function formatSearchContext(
+interface ContextSearchMatchGroup {
+  readonly id: string;
+  readonly matches: ExpertAgentContextItemSearchMatch[];
+}
+
+function groupContextSearchMatches(
+  matches: readonly ExpertAgentContextItemSearchMatch[],
+): readonly ContextSearchMatchGroup[] {
+  const groups = new Map<string, ContextSearchMatchGroup>();
+
+  for (const match of matches) {
+    const id = formatContextSearchMatchId(match);
+    const group = groups.get(id);
+
+    if (group === undefined) {
+      groups.set(id, {
+        id,
+        matches: [match],
+      });
+      continue;
+    }
+
+    group.matches.push(match);
+  }
+
+  return [...groups.values()];
+}
+
+function formatContextSearchMatchId(match: ExpertAgentContextItemSearchMatch): string {
+  return match.namespace === undefined ? match.id : `${match.namespace}/${match.id}`;
+}
+
+function formatContextSearchMatchGroup(group: ContextSearchMatchGroup): string {
+  return [
+    group.id,
+    group.matches.map(formatContextSearchMatchLines).join("\n--\n"),
+  ].join("\n");
+}
+
+function formatContextSearchMatchLines(match: ExpertAgentContextItemSearchMatch): string {
+  return [
+    ...formatSearchContextLines(match.before, match.lineNumber - (match.before?.length ?? 0), " "),
+    formatSearchContextLine(match.lineNumber, match.line, ">"),
+    ...formatSearchContextLines(match.after, match.lineNumber + 1, " "),
+  ].join("\n");
+}
+
+function formatSearchContextLines(
   lines: readonly string[] | undefined,
-  label: string,
+  startLineNumber: number,
+  marker: string,
 ): readonly string[] {
   if (lines === undefined || lines.length === 0) {
     return [];
   }
 
-  return lines.map((line) => `  ${label}: ${line}`);
+  return lines.map((line, index) => formatSearchContextLine(startLineNumber + index, line, marker));
+}
+
+function formatSearchContextLine(lineNumber: number, line: string, marker: string): string {
+  return `${marker}${lineNumber} | ${line}`;
 }
 
 function errorResult(error: ExpertAgentContextError): ExpertAgentDefaultToolCallResult {

@@ -4,12 +4,29 @@ import {
   HOST_CONTEXT_NAMESPACE,
   createInMemoryContextStore,
 } from "@expertmesh/agent-core";
+import { createCloudPiRuntimeAdapter } from "@expertmesh/agent-runtime";
 
-import { defaultWorkspaceRoot, ensureWorkspaceDir, resolveExamplePath } from "../harness/paths.ts";
+import { printRunHeader, printRunResult } from "../harness/expert-agent-example-utils.ts";
+import {
+  createExpertAgentModelsConfig,
+  formatModelConfig,
+  readExampleModelConfig,
+} from "../harness/model-config.ts";
+import {
+  defaultWorkspaceRoot,
+  ensureWorkspaceDir,
+  loadExamplesEnv,
+  resolveExamplePath,
+} from "../harness/paths.ts";
+import { printRunStream } from "../harness/stream-output.ts";
 
 const workspace = defaultWorkspaceRoot;
+const defaultQuery = "Agent 管理了哪些仓库？";
+
+loadExamplesEnv();
 
 await ensureWorkspaceDir(workspace);
+const modelConfig = readExampleModelConfig();
 
 const contextSystem = new ContextSystem();
 contextSystem.register({
@@ -58,6 +75,7 @@ const agent = await ExpertAgent.create({
   scope: "local-test",
   workspace,
   contextSystem,
+  models: createExpertAgentModelsConfig(modelConfig),
   plugins: [resolveExamplePath("plugins/code-repository-manager")],
 });
 
@@ -92,3 +110,21 @@ console.log("Plugin Git environment hook:");
 console.log(
   agent.hooks?.beforeSessionCreate === undefined ? "- not configured" : "- beforeSessionCreate",
 );
+
+const runtime = createCloudPiRuntimeAdapter();
+const session = await runtime.createSession({ agent });
+
+try {
+  console.log("");
+  printRunHeader(agent, formatModelConfig(modelConfig), defaultQuery);
+  const run = session.submit({
+    query: defaultQuery,
+  });
+
+  await printRunStream(run);
+
+  const result = await run.result;
+  printRunResult(result.runId);
+} finally {
+  await session.abort();
+}
