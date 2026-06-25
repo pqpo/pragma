@@ -117,7 +117,7 @@ describe("ExpertAgent plugins", () => {
               entry: "./plugin.ts",
             },
             capabilities: [],
-            requires_env: [],
+            required_config: [],
           },
           setup: ({ logger }) => {
             logger.info("Plugin setup logged", { phase: "setup" });
