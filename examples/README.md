@@ -62,6 +62,24 @@ pnpm --filter @expertmesh/examples start:basic --system-session-id local-debug-s
 6. 对每个 turn 调用 `session.submit()` 并处理流式事件。
 7. 在 `finally` 中关闭 session。
 
+## 运行 Session 存储示例
+
+```bash
+pnpm --filter @expertmesh/examples start:session-storage
+```
+
+这个示例演示 runtime session 在沙盒或 workspace 生命周期外的同步与恢复：
+
+1. 使用 `workspace/session-storage-example/workspace-a` 创建会话。
+2. 发送第一轮聊天，让模型记住项目代号和目标。
+3. 通过 `sessionSyncCallback` 把 `.expertmesh/runtime-sessions/pi/<agent-id>` 同步到 `workspace/session-storage-example/long-term-session-storage`。
+4. 切换到 `workspace/session-storage-example/workspace-b`。
+5. 使用同一个 `runtimeSessionId` 创建新会话，并通过 `sessionRestoreHandler` 把长期存储恢复到新 workspace 的 session 目录。
+6. 再发送一轮聊天，让模型总结上轮会话。
+7. 关闭恢复后的会话时再次同步，模拟后续更新写回长期存储。
+
+示例入口是 `src/run-session-storage-example.ts`。它用本地目录模拟长期存储；真实服务接入时，`sessionSyncCallback` 和 `sessionRestoreHandler` 可以在相同参数里读取 `agentId`、`runtimeSession.id`、`systemSessionId`、`workspace` 和 `context.attributes`，用于鉴权、租户隔离和对象存储路径选择。
+
 ## 运行审批示例
 
 ```bash

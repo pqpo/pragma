@@ -45,6 +45,24 @@ export interface RuntimeSessionInfo {
   readonly runState: RunState | undefined;
 }
 
+export interface RuntimeSessionStorageContext {
+  readonly agentId: string;
+  readonly runtime: RuntimeAdapterDescriptor;
+  readonly runtimeSession: RuntimeSessionRef;
+  readonly workspace: string;
+  readonly sessionDir: string;
+  readonly systemSessionId?: string | undefined;
+  readonly context?: ExpertAgentRunContext | undefined;
+}
+
+export type RuntimeSessionSyncCallback = (
+  context: RuntimeSessionStorageContext,
+) => void | Promise<void>;
+
+export type RuntimeSessionRestoreHandler = (
+  context: RuntimeSessionStorageContext,
+) => void | Promise<void>;
+
 export interface RuntimeCreateSessionRequest {
   readonly agent: ExpertAgent;
   readonly context?: ExpertAgentRunContext | undefined;
@@ -86,4 +104,6 @@ export interface RuntimeAgentSession {
 export interface RuntimeAdapter {
   readonly descriptor: RuntimeAdapterDescriptor;
   readonly createSession: (request: RuntimeCreateSessionRequest) => Promise<RuntimeAgentSession>;
+  readonly setSessionSyncCallback?: (callback: RuntimeSessionSyncCallback | undefined) => void;
+  readonly setSessionRestoreHandler?: (handler: RuntimeSessionRestoreHandler | undefined) => void;
 }

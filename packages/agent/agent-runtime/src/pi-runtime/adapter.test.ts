@@ -135,10 +135,145 @@ describe("createCloudPiRuntimeAdapter", () => {
       },
     });
   });
+
+  it("restores requested runtime sessions and syncs the active session directory", async () => {
+    const workspace = await createTempDir();
+    const agent = await ExpertAgent.create({
+      schemaVersion: "expertmesh.expert/v1",
+      id: "agent-1",
+      displayName: "Test Agent",
+      description: "Agent for runtime adapter tests.",
+      tags: ["test"],
+      version: "0.0.0",
+      scope: "test",
+      workspace,
+    });
+    const restore = vi.fn();
+    const sync = vi.fn();
+    vi.mocked(createAgentSession).mockResolvedValue({
+      extensionsResult: {
+        errors: [],
+        extensions: [],
+        runtime: {} as never,
+      },
+      session: createFakePiSession("pi-session-1") as never,
+    });
+
+    const adapter = createCloudPiRuntimeAdapter({
+      sessionRestoreHandler: restore,
+      sessionSyncCallback: sync,
+    });
+    const runtimeSession = await adapter.createSession({
+      agent,
+      context: {
+        source: {
+          type: "user",
+          id: "user-1",
+        },
+        attributes: {
+          tenantId: "tenant-1",
+        },
+      },
+      runtimeSession: {
+        type: "cloud-pi-agent",
+        id: "pi-session-1",
+      },
+      systemSessionId: "system-session-1",
+    });
+
+    const expectedContext = {
+      agentId: "agent-1",
+      context: {
+        source: {
+          type: "user",
+          id: "user-1",
+        },
+        attributes: {
+          tenantId: "tenant-1",
+        },
+      },
+      runtime: {
+        capabilities: {
+          executionLocations: ["cloud"],
+          supportsAbort: true,
+          supportsMcp: true,
+          supportsStreaming: true,
+          supportsSubAgents: true,
+        },
+        displayName: "Cloud PI Agent",
+        id: "cloud-pi-agent",
+        kind: "cloud-pi-agent",
+      },
+      runtimeSession: {
+        type: "cloud-pi-agent",
+        id: "pi-session-1",
+      },
+      sessionDir: `${workspace}/.expertmesh/runtime-sessions/pi/agent-1`,
+      systemSessionId: "system-session-1",
+      workspace,
+    };
+    expect(restore).toHaveBeenCalledWith(expectedContext);
+    expect(sync).toHaveBeenCalledWith(expectedContext);
+
+    await runtimeSession.abort();
+    expect(sync).toHaveBeenCalledTimes(2);
+  });
+
+  it("allows session storage handlers to be replaced after adapter creation", async () => {
+    const workspace = await createTempDir();
+    const agent = await ExpertAgent.create({
+      schemaVersion: "expertmesh.expert/v1",
+      id: "agent-1",
+      displayName: "Test Agent",
+      description: "Agent for runtime adapter tests.",
+      tags: ["test"],
+      version: "0.0.0",
+      scope: "test",
+      workspace,
+    });
+    const restore = vi.fn();
+    const sync = vi.fn();
+    vi.mocked(createAgentSession).mockResolvedValue({
+      extensionsResult: {
+        errors: [],
+        extensions: [],
+        runtime: {} as never,
+      },
+      session: createFakePiSession("pi-session-2") as never,
+    });
+
+    const adapter = createCloudPiRuntimeAdapter();
+    adapter.setSessionRestoreHandler?.(restore);
+    adapter.setSessionSyncCallback?.(sync);
+    const runtimeSession = await adapter.createSession({
+      agent,
+      runtimeSession: {
+        type: "cloud-pi-agent",
+        id: "pi-session-2",
+      },
+    });
+
+    expect(restore).toHaveBeenCalledOnce();
+    expect(sync).toHaveBeenCalledOnce();
+
+    await runtimeSession.abort();
+  });
 });
 
 async function createTempDir(): Promise<string> {
   const dir = await mkdtemp(resolve(tmpdir(), "expertmesh-pi-adapter-"));
   tempDirs.push(dir);
   return dir;
+}
+
+function createFakePiSession(sessionId: string) {
+  return {
+    abort: vi.fn(async () => undefined),
+    dispose: vi.fn(),
+    messages: [],
+    prompt: vi.fn(async () => undefined),
+    sessionId,
+    setModel: vi.fn(async () => undefined),
+    subscribe: vi.fn(() => () => undefined),
+  };
 }

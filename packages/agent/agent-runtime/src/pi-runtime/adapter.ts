@@ -1,6 +1,13 @@
 import { AuthStorage, createAgentSession, ModelRegistry } from "@earendil-works/pi-coding-agent";
 import type { AgentSession, CreateAgentSessionOptions } from "@earendil-works/pi-coding-agent";
-import type { ExpertAgentRunContext, RuntimeAdapter } from "@expertmesh/agent-core";
+import type {
+  ExpertAgentLogger,
+  ExpertAgentRunContext,
+  RuntimeAdapter,
+  RuntimeSessionRestoreHandler,
+  RuntimeSessionStorageContext,
+  RuntimeSessionSyncCallback,
+} from "@expertmesh/agent-core";
 import {
   createExpertAgentLogger,
   createExpertAgentRunContext,
@@ -19,7 +26,13 @@ import {
 } from "./models.ts";
 import { createResourceLoader } from "./resources.ts";
 import { createPiRuntimeSession } from "./session.ts";
-import { createPiSessionManager } from "./session-manager.ts";
+import { createPiSessionManager, getPiSessionDir } from "./session-manager.ts";
+import {
+  ensureSessionDir,
+  sessionDirExists,
+  watchRuntimeSessionDir,
+} from "./session-storage.ts";
+import type { RuntimeSessionWatcher } from "./session-storage.ts";
 import { createResolvedPiTools } from "./tools.ts";
 import type { CloudPiRuntimeAdapterOptions, PiRuntimeStreamState } from "./types.ts";
 import { defaultOutputParser } from "./types.ts";
@@ -40,8 +53,17 @@ const CLOUD_PI_RUNTIME_DESCRIPTOR = {
 export function createCloudPiRuntimeAdapter(
   options: CloudPiRuntimeAdapterOptions = {},
 ): RuntimeAdapter {
+  let sessionSyncCallback = options.sessionSyncCallback;
+  let sessionRestoreHandler = options.sessionRestoreHandler;
+
   return {
     descriptor: CLOUD_PI_RUNTIME_DESCRIPTOR,
+    setSessionSyncCallback(callback) {
+      sessionSyncCallback = callback;
+    },
+    setSessionRestoreHandler(handler) {
+      sessionRestoreHandler = handler;
+    },
     async createSession({
       agent,
       context: requestedRunContext,
@@ -75,10 +97,24 @@ export function createCloudPiRuntimeAdapter(
       let lifecycle:
         | ReturnType<typeof createQueuedAgentLifecycle<ExpertAgentRunContext>>
         | undefined;
+      let sessionWatcher: RuntimeSessionWatcher | undefined;
+      let sessionStorageContext: RuntimeSessionStorageContext | undefined;
+      let activeSessionSyncCallback: RuntimeSessionSyncCallback | undefined;
 
       try {
         const authStorage = AuthStorage.create();
         const cwd = agent.workspace;
+        const sessionDir = getPiSessionDir(cwd, agent.id);
+        await ensureSessionDir(sessionDir);
+        await restoreRuntimeSession({
+          agentId: agent.id,
+          context: runContext,
+          handler: sessionRestoreHandler,
+          runtimeSession,
+          sessionDir,
+          systemSessionId,
+          workspace: cwd,
+        });
         logger.debug("Writing runtime model configuration", { cwd });
         const modelsJsonPath = await writePiModelConfig(
           cwd,
@@ -110,7 +146,11 @@ export function createCloudPiRuntimeAdapter(
               logger,
             });
             piSession?.dispose();
+            sessionWatcher?.close();
             await mcpToolRegistry?.dispose();
+            if (activeSessionSyncCallback !== undefined && sessionStorageContext !== undefined) {
+              await syncRuntimeSession(activeSessionSyncCallback, sessionStorageContext, logger);
+            }
             await dispatchExpertAgentHook(agent.hooks, "afterSessionDestroy", {
               agent,
               session: sessionInfo,
@@ -162,6 +202,24 @@ export function createCloudPiRuntimeAdapter(
 
         const { session } = await createAgentSession(sessionOptions);
         piSession = session;
+        sessionStorageContext = createSessionStorageContext({
+          agentId: agent.id,
+          context: runContext,
+          runtimeSessionId: session.sessionId,
+          sessionDir,
+          systemSessionId,
+          workspace: cwd,
+        });
+        activeSessionSyncCallback = sessionSyncCallback;
+        if (activeSessionSyncCallback !== undefined && (await sessionDirExists(sessionDir))) {
+          sessionWatcher = watchRuntimeSessionDir({
+            context: sessionStorageContext,
+            callback: activeSessionSyncCallback,
+            debounceMs: options.sessionSyncDebounceMs,
+            logger,
+          });
+          await syncRuntimeSession(activeSessionSyncCallback, sessionStorageContext, logger);
+        }
         const sessionInfo = {
           systemSessionId,
           runtimeSession: {
@@ -206,6 +264,7 @@ export function createCloudPiRuntimeAdapter(
           systemSessionId,
           error,
         });
+        sessionWatcher?.close();
         if (lifecycle === undefined) {
           await mcpToolRegistry?.dispose();
           await dispatchExpertAgentHook(agent.hooks, "afterSessionDestroy", {
@@ -225,6 +284,89 @@ export function createCloudPiRuntimeAdapter(
         throw error;
       }
     },
+  };
+}
+
+async function restoreRuntimeSession({
+  agentId,
+  context,
+  handler,
+  runtimeSession,
+  sessionDir,
+  systemSessionId,
+  workspace,
+}: {
+  readonly agentId: string;
+  readonly context: ExpertAgentRunContext;
+  readonly handler: RuntimeSessionRestoreHandler | undefined;
+  readonly runtimeSession?: { readonly type: string; readonly id: string } | undefined;
+  readonly sessionDir: string;
+  readonly systemSessionId: string;
+  readonly workspace: string;
+}): Promise<void> {
+  if (
+    handler === undefined ||
+    runtimeSession === undefined ||
+    runtimeSession.type !== CLOUD_PI_RUNTIME_DESCRIPTOR.kind
+  ) {
+    return;
+  }
+
+  const storageContext = createSessionStorageContext({
+    agentId,
+    context,
+    runtimeSessionId: runtimeSession.id,
+    sessionDir,
+    systemSessionId,
+    workspace,
+  });
+  await ensureSessionDir(sessionDir);
+  await handler(storageContext);
+}
+
+async function syncRuntimeSession(
+  callback: RuntimeSessionSyncCallback,
+  context: RuntimeSessionStorageContext,
+  logger: ExpertAgentLogger,
+): Promise<void> {
+  try {
+    await callback(context);
+  } catch (error) {
+    logger.error("Runtime session sync callback failed", {
+      agentId: context.agentId,
+      runtimeSessionId: context.runtimeSession.id,
+      sessionDir: context.sessionDir,
+      error,
+    });
+  }
+}
+
+function createSessionStorageContext({
+  agentId,
+  context,
+  runtimeSessionId,
+  sessionDir,
+  systemSessionId,
+  workspace,
+}: {
+  readonly agentId: string;
+  readonly context: ExpertAgentRunContext;
+  readonly runtimeSessionId: string;
+  readonly sessionDir: string;
+  readonly systemSessionId: string;
+  readonly workspace: string;
+}): RuntimeSessionStorageContext {
+  return {
+    agentId,
+    context,
+    runtime: CLOUD_PI_RUNTIME_DESCRIPTOR,
+    runtimeSession: {
+      type: CLOUD_PI_RUNTIME_DESCRIPTOR.kind,
+      id: runtimeSessionId,
+    },
+    sessionDir,
+    systemSessionId,
+    workspace,
   };
 }
 

@@ -1,6 +1,8 @@
 import type {
   ExpertAgentLogger,
   ExpertAgentLoggerProvider,
+  RuntimeSessionRestoreHandler,
+  RuntimeSessionSyncCallback,
   RuntimeEventEmitter,
   RuntimeStreamEvent,
 } from "@expertmesh/agent-core";
@@ -9,6 +11,9 @@ export interface CloudPiRuntimeAdapterOptions {
   readonly loggerProvider?: ExpertAgentLoggerProvider | undefined;
   readonly outputParser?: <TOutput>(text: string) => TOutput;
   readonly outputRetryLimit?: number | undefined;
+  readonly sessionRestoreHandler?: RuntimeSessionRestoreHandler | undefined;
+  readonly sessionSyncCallback?: RuntimeSessionSyncCallback | undefined;
+  readonly sessionSyncDebounceMs?: number | undefined;
 }
 
 export interface PiRuntimeStreamState {
