@@ -14,9 +14,9 @@ import {
 import { readExpertAgentPluginManifest } from "@expertmesh/agent-core";
 import type { ExpertAgentPluginUse } from "@expertmesh/agent-core";
 
-import { CODE_REPOSITORY_CONTEXT_ID } from "./context.ts";
-import codeRepositoryManagerPlugin from "./index.ts";
-import { parseCodeRepositoryManagerConfig } from "./schema.ts";
+import { CODE_REPOSITORY_CONTEXT_ID } from "../src/context.ts";
+import codeRepositoryManagerPlugin from "../src/index.ts";
+import { parseCodeRepositoryManagerConfig } from "../src/schema.ts";
 
 const packageRoot = fileURLToPath(new URL("../", import.meta.url));
 const repoRoot = fileURLToPath(new URL("../../../", import.meta.url));

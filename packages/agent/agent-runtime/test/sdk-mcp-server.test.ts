@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
-import { createMcpToolRegistry } from "./mcp-tools.ts";
-import { createSdkMcpServer } from "./sdk-mcp-server.ts";
+import { createMcpToolRegistry } from "../src/mcp-tools.ts";
+import { createSdkMcpServer } from "../src/sdk-mcp-server.ts";
 
 describe("createSdkMcpServer", () => {
   it("wraps local functions as in-process MCP tools", async () => {

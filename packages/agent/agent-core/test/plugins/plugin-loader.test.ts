@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { loadExpertAgentPlugins } from "./plugin-loader.ts";
+import { loadExpertAgentPlugins } from "../../src/plugins/plugin-loader.ts";
 
 describe("ExpertAgent plugin loader", () => {
   it("loads a plugin directory into the Agent workspace", async () => {

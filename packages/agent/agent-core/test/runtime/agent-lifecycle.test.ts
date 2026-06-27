@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { createQueuedAgentLifecycle } from "./agent-lifecycle.ts";
+import { createQueuedAgentLifecycle } from "../../src/runtime/agent-lifecycle.ts";
 
 describe("createQueuedAgentLifecycle", () => {
   it("keeps session context stable and serializes submitted work", async () => {

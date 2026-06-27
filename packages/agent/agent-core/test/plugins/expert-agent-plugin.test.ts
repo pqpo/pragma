@@ -4,26 +4,28 @@ import { fileURLToPath } from "node:url";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { ExpertAgent } from "../agent/expert-agent.ts";
-import { ContextSystem, HOST_CONTEXT_NAMESPACE } from "../context-system/context-system.ts";
-import { createInMemoryContextStore } from "../context-system/in-memory-context-store.ts";
-import { createLoggerProvider } from "../logging/logger.ts";
-import type { ExpertAgentLogRecord } from "../logging/logger.ts";
-import { extensibilityPlugin } from "./fixtures/extensibility-plugin/src/plugin.ts";
-import { createInvalidPlugin } from "./fixtures/invalid-plugin/src/plugin.ts";
-import { createMissingManifestPlugin } from "./fixtures/missing-manifest-plugin/src/plugin.ts";
+import { ExpertAgent } from "../../src/agent/expert-agent.ts";
+import { ContextSystem, HOST_CONTEXT_NAMESPACE } from "../../src/context-system/context-system.ts";
+import { createInMemoryContextStore } from "../../src/context-system/in-memory-context-store.ts";
+import { createLoggerProvider } from "../../src/logging/logger.ts";
+import type { ExpertAgentLogRecord } from "../../src/logging/logger.ts";
+import { extensibilityPlugin } from "../../src/plugins/fixtures/extensibility-plugin/src/plugin.ts";
+import { createInvalidPlugin } from "../../src/plugins/fixtures/invalid-plugin/src/plugin.ts";
+import { createMissingManifestPlugin } from "../../src/plugins/fixtures/missing-manifest-plugin/src/plugin.ts";
 import {
   createExpertAgentPluginConfigEnvName,
   dispatchExpertAgentHook,
   resolveExpertAgentPlugins,
-} from "./expert-agent-plugin.ts";
+} from "../../src/plugins/expert-agent-plugin.ts";
 
-const contextPluginPath = fileURLToPath(new URL("./fixtures/context-plugin", import.meta.url));
+const contextPluginPath = fileURLToPath(
+  new URL("../../src/plugins/fixtures/context-plugin", import.meta.url),
+);
 const extensibilityPluginPath = fileURLToPath(
-  new URL("./fixtures/extensibility-plugin", import.meta.url),
+  new URL("../../src/plugins/fixtures/extensibility-plugin", import.meta.url),
 );
 const otherContextPluginPath = fileURLToPath(
-  new URL("./fixtures/other-context-plugin", import.meta.url),
+  new URL("../../src/plugins/fixtures/other-context-plugin", import.meta.url),
 );
 const tempWorkspaces: string[] = [];
 

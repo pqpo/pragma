@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { writePiModelConfig } from "./models.ts";
+import { writePiModelConfig } from "../../src/pi-runtime/models.ts";
 
 describe("writePiModelConfig", () => {
   it("writes PI models.json from ExpertMesh provider config", async () => {

@@ -1,8 +1,8 @@
 import { ExpertAgent } from "@expertmesh/agent-core";
 import { describe, expect, it, vi } from "vitest";
 
-import { createCustomTools } from "./tools.ts";
-import type { PiRuntimeStreamState } from "./types.ts";
+import { createCustomTools } from "../../src/pi-runtime/tools.ts";
+import type { PiRuntimeStreamState } from "../../src/pi-runtime/types.ts";
 
 describe("createCustomTools approval handling", () => {
   it("dispatches afterToolCall when approval is denied", async () => {

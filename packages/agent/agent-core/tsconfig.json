@@ -1,8 +1,7 @@
 {
   "extends": "@expertmesh/tsconfig/node.json",
   "compilerOptions": {
-    "rootDir": "src",
     "outDir": "dist"
   },
-  "include": ["src"]
+  "include": ["src", "test"]
 }

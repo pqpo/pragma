@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { AsyncPushQueue } from "./async-push-queue.ts";
+import { AsyncPushQueue } from "../../src/runtime/async-push-queue.ts";
 
 describe("AsyncPushQueue", () => {
   it("delivers values pushed before and after consumers wait", async () => {

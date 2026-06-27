@@ -7,7 +7,7 @@ import { ExpertAgent } from "@expertmesh/agent-core";
 import type { ExpertAgentRunContext } from "@expertmesh/agent-core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { createCloudPiRuntimeAdapter } from "./adapter.ts";
+import { createCloudPiRuntimeAdapter } from "../../src/pi-runtime/adapter.ts";
 
 vi.mock("@earendil-works/pi-coding-agent", () => ({
   AuthStorage: {

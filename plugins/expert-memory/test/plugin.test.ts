@@ -13,7 +13,7 @@ import {
 } from "@expertmesh/agent-core";
 import type { ExpertAgentPluginUse } from "@expertmesh/agent-core";
 
-import expertMemoryPlugin, { parseMemoryPluginConfig } from "./index.ts";
+import expertMemoryPlugin, { parseMemoryPluginConfig } from "../src/index.ts";
 
 const packageRoot = fileURLToPath(new URL("../", import.meta.url));
 const repoRoot = fileURLToPath(new URL("../../../", import.meta.url));

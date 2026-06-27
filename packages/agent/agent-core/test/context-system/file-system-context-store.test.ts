@@ -7,12 +7,12 @@ import { afterEach, describe, expect, it } from "vitest";
 import type {
   ExpertAgentContextStore,
   ExpertAgentStoredContextItemReadInput,
-} from "./context-system.ts";
-import { AGENTS_CONTEXT_ID, ContextSystem, HOST_CONTEXT_NAMESPACE, ok } from "./context-system.ts";
-import { ExpertAgent } from "../agent/expert-agent.ts";
-import type { FileSystemContextStoreCommandRunner } from "./file-system-context-store.ts";
-import { FileSystemContextStore } from "./file-system-context-store.ts";
-import { createInMemoryContextStore, InMemoryContextStore } from "./in-memory-context-store.ts";
+} from "../../src/context-system/context-system.ts";
+import { AGENTS_CONTEXT_ID, ContextSystem, HOST_CONTEXT_NAMESPACE, ok } from "../../src/context-system/context-system.ts";
+import { ExpertAgent } from "../../src/agent/expert-agent.ts";
+import type { FileSystemContextStoreCommandRunner } from "../../src/context-system/file-system-context-store.ts";
+import { FileSystemContextStore } from "../../src/context-system/file-system-context-store.ts";
+import { createInMemoryContextStore, InMemoryContextStore } from "../../src/context-system/in-memory-context-store.ts";
 
 const tempDirs: string[] = [];
 

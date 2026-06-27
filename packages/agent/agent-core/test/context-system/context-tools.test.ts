@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { createContextTools } from "./context-tools.ts";
-import type { ExpertAgentContextItemOperations } from "./context-tools.ts";
+import { createContextTools } from "../../src/context-system/context-tools.ts";
+import type { ExpertAgentContextItemOperations } from "../../src/context-system/context-tools.ts";
 
 describe("createContextTools", () => {
   it("returns an error for malformed askUserQuestion input", async () => {

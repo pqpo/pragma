@@ -4,8 +4,8 @@ import { resolve } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { prepareGitSessionEnvironment, resolveRepositoryWorkspacePath } from "./git.ts";
-import { parseCodeRepositoryManagerConfig } from "./schema.ts";
+import { prepareGitSessionEnvironment, resolveRepositoryWorkspacePath } from "../src/git.ts";
+import { parseCodeRepositoryManagerConfig } from "../src/schema.ts";
 
 const tempDirs: string[] = [];
 

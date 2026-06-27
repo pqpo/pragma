@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import { AsyncPushQueue } from "./async-push-queue.ts";
-import { createRuntimeEventEmitter } from "./runtime-event-emitter.ts";
-import type { RuntimeStreamEvent } from "./stream-events.ts";
+import { AsyncPushQueue } from "../../src/runtime/async-push-queue.ts";
+import { createRuntimeEventEmitter } from "../../src/runtime/runtime-event-emitter.ts";
+import type { RuntimeStreamEvent } from "../../src/runtime/stream-events.ts";
 
 describe("RuntimeEventEmitter", () => {
   it("adds stream metadata and monotonically increasing sequence numbers", async () => {

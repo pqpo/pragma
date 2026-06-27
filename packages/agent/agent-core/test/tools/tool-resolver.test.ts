@@ -4,7 +4,7 @@ import {
   createToolPolicy,
   resolveToolPolicy,
   selectResolvedTools,
-} from "./tool-resolver.ts";
+} from "../../src/tools/tool-resolver.ts";
 
 describe("ToolPolicyResolver", () => {
   const tools = [
