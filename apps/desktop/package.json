@@ -1,0 +1,36 @@
+{
+  "name": "@expertmesh/desktop",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "productName": "ExpertMesh Desktop",
+  "description": "Desktop local Agent bridge for ExpertMesh.",
+  "main": "./out/main/index.js",
+  "scripts": {
+    "prepare:electron": "install-electron",
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "lint": "eslint .",
+    "typecheck": "pnpm run typecheck:node && pnpm run typecheck:web",
+    "typecheck:node": "tsc --noEmit -p tsconfig.node.json",
+    "typecheck:web": "tsc --noEmit -p tsconfig.web.json",
+    "test": "vitest run --passWithNoTests",
+    "clean": "rm -rf out dist"
+  },
+  "dependencies": {
+    "react": "latest",
+    "react-dom": "latest"
+  },
+  "devDependencies": {
+    "@expertmesh/tsconfig": "workspace:*",
+    "@types/node": "latest",
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "@vitejs/plugin-react": "^5.0.0",
+    "electron": "latest",
+    "electron-vite": "latest",
+    "typescript": "latest",
+    "vite": "^7.0.0",
+    "vitest": "latest"
+  }
+}

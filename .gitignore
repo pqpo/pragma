@@ -1,10 +1,12 @@
 node_modules
 .codex/
 dist
+out
 .next
 coverage
 .turbo
 tsconfig.tsbuildinfo
+*.tsbuildinfo
 .expertmesh/runtime-sessions/
 .env
 .env.*

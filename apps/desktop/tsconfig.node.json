@@ -1,0 +1,11 @@
+{
+  "extends": "@expertmesh/tsconfig/node.json",
+  "compilerOptions": {
+    "composite": true,
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "types": ["node", "electron-vite/node"],
+    "noEmit": true
+  },
+  "include": ["electron.vite.config.ts", "src/main/**/*", "src/preload/**/*", "src/shared/**/*"]
+}

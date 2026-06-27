@@ -183,3 +183,13 @@ apps/web -> packages/agent/*
 3. Phase 3：定义 Local Agent Bridge 协议和设备注册模型。
 4. Phase 4：实现 Desktop App 的连接、设备绑定、能力注册和权限闸门。
 5. Phase 5：接入 Claude Code / Codex 本地 Runtime Adapter。
+
+## 当前桌面端基础架构
+
+`apps/desktop` 已作为 Desktop App 产品入口建立第一版基础架构：
+
+- Electron main process：负责原生窗口、本地工作区选择和未来本地权限闸门。
+- preload：通过窄的类型化 IPC API 暴露桌面能力，Renderer 不直接访问 Node API。
+- renderer：React/Vite 控制台，用于展示设备会话、Runtime Gateway 配置、工作区范围和本地 Runtime 能力占位。
+
+当前实现刻意不包含云端连接、设备绑定、自动更新、daemon 管理或具体 Claude Code / Codex 调用。下一步应先补 `packages/agent/local-agent-bridge` 协议 package，再让 Desktop App 依赖该协议注册能力并连接 Runtime Gateway。

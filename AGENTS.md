@@ -578,6 +578,15 @@ ExpertMesh Web Ready
 Server health: ok
 ```
 
+启动 Desktop：
+
+```bash
+pnpm --filter @expertmesh/desktop run prepare:electron
+pnpm --filter @expertmesh/desktop dev
+```
+
+> **Electron 42 注意事项：** 从 Electron 42 开始，`postinstall` 不再自动下载 Electron 二进制文件，改为首次运行 Electron CLI 时才下载。`prepare:electron` 脚本调用 `install-electron` 手动触发下载，避免新成员或 CI 首次 `dev` 时遇到缺失二进制的错误。
+
 启动 Worker：
 
 ```bash

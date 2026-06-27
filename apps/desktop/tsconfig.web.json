@@ -1,0 +1,9 @@
+{
+  "extends": "@expertmesh/tsconfig/web.json",
+  "compilerOptions": {
+    "composite": true,
+    "jsx": "react-jsx",
+    "types": ["vite/client"]
+  },
+  "include": ["src/renderer/src/**/*", "src/preload/index.d.ts", "src/shared/**/*"]
+}

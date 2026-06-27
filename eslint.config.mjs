@@ -14,7 +14,7 @@ const commonRestrictedPatterns = [
 
 const config = tseslint.config(
   {
-    ignores: ["**/dist/**", "**/.next/**", "**/coverage/**", "node_modules/**"],
+    ignores: ["**/dist/**", "**/out/**", "**/.next/**", "**/coverage/**", "node_modules/**"],
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,
@@ -49,6 +49,73 @@ const config = tseslint.config(
           patterns: [
             ...commonRestrictedPatterns,
             { group: ["@expertmesh/server-*", "node:*"], message: "Web must stay browser-safe." },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    files: ["apps/desktop/src/main/**/*.{ts,tsx,d.ts}", "apps/desktop/src/preload/**/*.{ts,tsx,d.ts}"],
+    languageOptions: {
+      globals: {
+        ...globals.node,
+        ...globals.es2023,
+      },
+    },
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: ["@expertmesh/sdk", "@expertmesh/database", "@prisma/client"],
+          patterns: [
+            ...commonRestrictedPatterns,
+            {
+              group: ["@expertmesh/server-*", "next", "next/*"],
+              message: "Desktop local bridge must not depend on server internals or Web UI.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    files: ["apps/desktop/src/renderer/**/*.{ts,tsx,d.ts}"],
+    languageOptions: {
+      globals: {
+        ...globals.browser,
+        ...globals.es2023,
+      },
+    },
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: ["@expertmesh/sdk", "@expertmesh/database", "@prisma/client"],
+          patterns: [
+            ...commonRestrictedPatterns,
+            {
+              group: ["@expertmesh/server-*", "node:*", "next", "next/*"],
+              message: "Desktop renderer must stay behind the preload bridge.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    files: ["apps/desktop/src/shared/**/*.{ts,tsx,d.ts}"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: ["@expertmesh/sdk", "@expertmesh/database", "@prisma/client"],
+          patterns: [
+            ...commonRestrictedPatterns,
+            {
+              group: ["@expertmesh/server-*", "node:*", "next", "next/*"],
+              message:
+                "Desktop shared types must be safe for all layers (main, preload, renderer).",
+            },
           ],
         },
       ],
