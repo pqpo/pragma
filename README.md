@@ -4,7 +4,7 @@ ExpertMesh 是一个面向企业复杂流程的多专家 Agent 编排与发布�
 
 项目目标不是构建单个通用 Agent，而是把多个具备领域知识和专业能力的专家 Agent，通过 Playbook 剧本进行编排，形成可发布、可复用、可治理的统一服务。它面向需求分析、技术方案生成、代码编写、代码评审、测试分析、业务知识问答等企业协作场景。
 
-当前仓库仍处在工程底座搭建阶段：Web、Server 和 Worker 只有最小可启动入口，服务端 API 和前端产品能力尚未完整实现。
+当前仓库以长期可扩展的多专家 Agent 架构为核心：优先保证模块边界清晰、协议可治理、运行时可替换，并在每次演进中交付完整、可验证的功能闭环。
 
 ## 核心概念
 
@@ -121,7 +121,7 @@ pnpm --filter @expertmesh/web dev
 http://localhost:3000
 ```
 
-当前页面只展示最小状态页，并尝试读取 Server 的健康检查结果。
+Web 会展示当前服务状态，并通过 SDK 读取 Server 的健康检查结果。
 
 启动 Worker：
 
@@ -129,7 +129,7 @@ http://localhost:3000
 pnpm --filter @expertmesh/worker dev
 ```
 
-当前 Worker 只输出启动状态：
+Worker 启动后会初始化基础 Agent 运行上下文并输出启动状态：
 
 ```text
 ExpertMesh Worker Ready

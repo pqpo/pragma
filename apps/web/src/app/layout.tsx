@@ -4,7 +4,7 @@ import "./styles.css";
 
 export const metadata: Metadata = {
   title: "ExpertMesh",
-  description: "ExpertMesh Phase 0 harness"
+  description: "ExpertMesh multi-expert agent orchestration platform",
 };
 
 interface RootLayoutProps {

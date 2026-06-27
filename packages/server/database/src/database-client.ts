@@ -1,7 +1,7 @@
 export interface DatabaseClient {
-  readonly kind: "placeholder";
+  readonly kind: "database-client";
 }
 
 export const createDatabaseClient = (): DatabaseClient => ({
-  kind: "placeholder"
+  kind: "database-client",
 });

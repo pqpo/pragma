@@ -1,6 +1,6 @@
 # Module Boundaries
 
-ExpertMesh Phase 0 uses explicit package layers before adding business capabilities.
+ExpertMesh uses explicit package layers so product capabilities can grow without blurring runtime, client, server, and agent boundaries.
 
 In the diagrams below, `A -> B` means `A` may depend on `B`.
 
@@ -13,26 +13,26 @@ apps/desktop    -> agent -> shared
 
 ## Layers
 
-| Layer | Responsibility |
-| --- | --- |
-| `shared` | Runtime-neutral contracts, domain types, and pure utilities |
-| `client` | Browser/client SDKs and client-safe API access |
-| `server` | Node-only control plane and infrastructure boundaries |
-| `agent` | Cloud-first Expert Agent execution abstractions and Runtime Adapter contracts |
-| `apps` | Composition and process entry points, including future Desktop App local bridge |
+| Layer    | Responsibility                                                                  |
+| -------- | ------------------------------------------------------------------------------- |
+| `shared` | Runtime-neutral contracts, domain types, and pure utilities                     |
+| `client` | Browser/client SDKs and client-safe API access                                  |
+| `server` | Node-only control plane and infrastructure boundaries                           |
+| `agent`  | Cloud-first Expert Agent execution abstractions and Runtime Adapter contracts   |
+| `apps`   | Composition and process entry points, including future Desktop App local bridge |
 
 ## Dependency Matrix
 
-| Source | Allowed dependencies |
-| --- | --- |
-| `apps/web` | `shared/*`, `client/*` |
-| `apps/server` | `shared/*`, `server/*`, `agent/*` |
-| `apps/worker` | `shared/*`, `server/*`, `agent/*` |
-| `apps/desktop` | `shared/*`, `agent/*` |
-| `shared/*` | `shared/*` only |
-| `client/*` | `shared/*`, `client/*` |
-| `server/*` | `shared/*`, `server/*`; orchestration packages may depend on `agent/*` |
-| `agent/*` | `shared/*`, `agent/*` |
+| Source         | Allowed dependencies                                                   |
+| -------------- | ---------------------------------------------------------------------- |
+| `apps/web`     | `shared/*`, `client/*`                                                 |
+| `apps/server`  | `shared/*`, `server/*`, `agent/*`                                      |
+| `apps/worker`  | `shared/*`, `server/*`, `agent/*`                                      |
+| `apps/desktop` | `shared/*`, `agent/*`                                                  |
+| `shared/*`     | `shared/*` only                                                        |
+| `client/*`     | `shared/*`, `client/*`                                                 |
+| `server/*`     | `shared/*`, `server/*`; orchestration packages may depend on `agent/*` |
+| `agent/*`      | `shared/*`, `agent/*`                                                  |
 
 Cross-package imports must use `@expertmesh/*` names, not relative paths.
 

@@ -144,7 +144,7 @@ pnpm --filter @expertmesh/examples start:workspace-context --workspace ./workspa
 - 调用 `agent.buildContext()` 预检上下文。
 - 通过同一套 runtime session 流程运行 agent。
 
-## Harness 边界
+## 示例辅助边界
 
 `src/harness` 里的代码只做辅助：
 

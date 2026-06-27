@@ -1,6 +1,6 @@
 # 本地 Agent 桥接架构
 
-本文描述未来云端 ExpertMesh 如何通过 Desktop App 调度本地 Agent。当前 Phase 0 不实现该能力，只记录架构约束和目录规划。
+本文描述云端 ExpertMesh 如何通过 Desktop App 调度本地 Agent，并记录本地桥接的架构约束和目录规划。
 
 ## 结论
 

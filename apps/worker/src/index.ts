@@ -6,22 +6,22 @@ import {
 
 const loggerProvider = createConsoleLoggerProvider();
 
-const placeholderAgent = await ExpertAgent.create({
+const workerAgent = await ExpertAgent.create({
   schemaVersion: "expertmesh.expert/v1",
-  id: "phase-0-placeholder",
-  displayName: "Phase 0 Placeholder",
-  description: "Placeholder ExpertAgent for the Phase 0 worker entrypoint.",
-  tags: ["phase-0"],
+  id: "worker-orchestrator",
+  displayName: "Worker Orchestrator",
+  description: "ExpertAgent used by the worker entrypoint to initialize runtime context.",
+  tags: ["worker", "orchestration"],
   version: "0.0.0",
-  scope: "phase-0",
+  scope: "worker",
   workspace: ".",
   loggerProvider,
 });
 
-void placeholderAgent;
+void workerAgent;
 
 createExpertAgentLogger(loggerProvider, {
   component: "expert-agent",
-  agentId: placeholderAgent.id,
+  agentId: workerAgent.id,
   name: "worker",
 }).info("ExpertMesh Worker Ready");

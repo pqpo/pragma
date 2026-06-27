@@ -4,9 +4,9 @@
 
 ## 项目定位
 
-ExpertMesh 是一个多专家 Agent 编排系统的长期工程底座。当前阶段是 Phase 0 Harness，只搭建工程结构、模块边界、质量检查和最小可启动入口。
+ExpertMesh 是一个多专家 Agent 编排系统的长期工程底座，目标是沉淀可扩展、边界清晰、协议可治理、运行时可替换的 Agent 编排平台。
 
-项目仍处于早期阶段，优先保证架构边界、协议形态和长期可维护性。允许为了合理架构引入 breaking change；不要为了兼容旧代码保留无用适配层、废弃字段、空实现或迁移期分支。发现已经弃用且没有长期价值的代码，应直接删除并同步更新调用方、类型和文档。
+项目演进优先级是：架构合理性、功能完整性、实现清晰度、可验证质量。允许为了合理架构引入 breaking change；不要为了兼容旧代码保留无用适配层、废弃字段、空实现或迁移期分支。发现已经弃用且没有长期价值的代码，应直接删除并同步更新调用方、类型和文档。
 
 ## 技术基线
 
@@ -33,7 +33,7 @@ apps/
   web/       Next.js Web 应用，页面与浏览器交互入口
   server/    Fastify HTTP API 应用
   worker/    Node Worker 应用
-  desktop/   未来 Desktop App，本地 Agent 桥接入口；当前 Phase 0 不创建
+  desktop/   未来 Desktop App，本地 Agent 桥接入口
 
 packages/
   shared/
@@ -43,9 +43,9 @@ packages/
   client/
     sdk/        浏览器或客户端使用的 HTTP SDK
   server/
-    database/   Node 服务端数据库边界；当前只有占位接口
+    database/   Node 服务端数据库边界
   agent/
-    agent-core/ Agent 抽象边界；当前只有接口
+    agent-core/ Agent 抽象、上下文、工具、插件和 Runtime 会话核心协议
     agent-runtime/       未来 Runtime 选择、执行协议与云端运行抽象
     local-agent-bridge/  未来本地 Agent 桥接协议，不直接实现 Desktop UI
   tooling/
@@ -58,7 +58,7 @@ docs/
   conventions/ 编码约定
 
 infra/
-  compose/      后续基础设施编排目录，当前不接真实服务
+  compose/      基础设施编排目录
 ```
 
 未来 Desktop 本地 Agent 桥接目录规划：
@@ -284,7 +284,7 @@ Desktop App 自身未来放在：
 apps/desktop
 ```
 
-Phase 0 不创建这些目录；进入对应阶段前必须先补 ADR 和边界规则。
+新增这些目录前必须先补 ADR、边界规则和最小可验证实现方案。
 
 ## 各目录职责
 
@@ -364,7 +364,7 @@ GET /health
 - 异步任务进程入口。
 - 后续承载 Agent、Playbook、Runtime、评测执行。
 
-当前只输出：
+启动后输出：
 
 ```text
 ExpertMesh Worker Ready
@@ -418,7 +418,7 @@ ExpertMesh Worker Ready
 - 后续认证 Header 注入。
 - API 错误转换。
 
-当前只实现：
+已公开接口包括：
 
 ```text
 ServerClient.getHealth()
@@ -433,14 +433,14 @@ ServerClient.getHealth()
 - 数据库抽象入口。
 - 后续 Prisma Client、Repository、Migration 的边界。
 
-当前不接真实数据库，只保留：
+已公开数据库边界包括：
 
 ```text
 DatabaseClient
 createDatabaseClient()
 ```
 
-不要安装 Prisma，不要创建 `schema.prisma`，不要创建迁移。
+引入 Prisma、迁移或具体 Repository 前，必须先明确数据库职责边界、迁移策略和调用方验证路径。
 
 ### `packages/agent/agent-core`
 
@@ -674,8 +674,8 @@ printf 'import "@expertmesh/database";\n' \
 - 不要在 `shared` 中使用 Node API。
 - 不要在 Web 或 SDK 中使用数据库、Agent 或 Node 内置模块。
 - 不要在 Server 或 Agent 中引入 React、Next 页面或 UI 包。
-- 不要把当前占位接口扩展成真实业务实现。
-- 不要新增未来阶段 package，除非当前任务明确要求并更新边界文档。
+- 不要保留没有长期价值的空实现、废弃字段或迁移期分支。
+- 不要新增未来能力 package，除非当前任务明确要求并同步更新 ADR、边界文档和验证路径。
 - 不要提交 `node_modules`、`dist`、`.next`、`.turbo`、coverage 等构建产物。
 
 ## 文档位置
@@ -683,15 +683,14 @@ printf 'import "@expertmesh/database";\n' \
 更多背景见：
 
 ```text
-docs/ExpertMesh Harness 工程实施手册.md
 docs/architecture/module-boundaries.md
 docs/adr/001-monorepo-and-dependency-rules.md
 docs/conventions/coding-conventions.md
 ```
 
-如果本文件和实施手册冲突，以实施手册为准，并同步修正本文件。
+如果本文件和架构文档冲突，以更具体、更接近当前实现的文档为准，并同步修正另一处。
 
-## Phase 0 验收清单
+## 质量验收清单
 
 工程：
 

@@ -6,7 +6,7 @@ Accepted.
 
 ## Decision
 
-ExpertMesh uses `pnpm workspace` with Turborepo as the Phase 0 monorepo foundation.
+ExpertMesh uses `pnpm workspace` with Turborepo as the monorepo foundation.
 
 The repository is layered by package family:
 
@@ -30,7 +30,7 @@ Illegal imports fail during local lint and CI.
 
 ## Alternatives Considered
 
-Nx is not introduced in Phase 0. Turborepo is enough for workspace task orchestration at the current size.
+Nx is not introduced yet. Turborepo is enough for workspace task orchestration at the current size.
 
 ## Follow-Up
 

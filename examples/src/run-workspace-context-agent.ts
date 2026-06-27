@@ -31,7 +31,7 @@ import { printRunStream } from "./harness/stream-output.ts";
 const defaultQuery = [
   "测试 ExpertMesh workspace + context 能力：",
   "1. 先基于 always-on AGENTS.md 说明本仓库最重要的边界约束。",
-  "2. 再使用 context 工具查找 workspace-overview.md，确认 Phase 0 的当前入口。",
+  "2. 再使用 context 工具查找 workspace-overview.md，确认当前核心应用入口。",
   "3. 最后结合 workspace 中的 package.json 或 examples/package.json，给出后续示例应该如何运行。",
 ].join("\n");
 
@@ -107,14 +107,14 @@ function createExampleContextStore(contextDir: string | undefined): ExpertAgentC
         content: [
           "# ExpertMesh Workspace Overview",
           "",
-          "ExpertMesh is currently in Phase 0 Harness.",
+          "ExpertMesh is a multi-expert Agent orchestration platform.",
           "The active app entry points are apps/web, apps/server, and apps/worker.",
           "The examples workspace package shows how to instantiate and run ExpertAgent.",
           "Agent context should be exposed through the ExpertAgent context store.",
           "Cross-package code must use @expertmesh/* package imports instead of relative paths.",
         ].join("\n"),
         metadata: {
-          description: "ExpertMesh Phase 0 workspace overview for runtime context retrieval tests.",
+          description: "ExpertMesh workspace overview for runtime context retrieval tests.",
           trigger: "model_decision",
           trustLevel: "workspace",
           sensitivity: "internal",
