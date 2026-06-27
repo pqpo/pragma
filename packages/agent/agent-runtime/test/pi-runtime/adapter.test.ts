@@ -27,6 +27,7 @@ vi.mock("@earendil-works/pi-coding-agent", () => ({
     create: vi.fn(() => ({})),
     inMemory: vi.fn(() => ({})),
     list: vi.fn(async () => []),
+    listAll: vi.fn(async () => []),
     open: vi.fn(() => ({})),
   },
   createAgentSession: vi.fn(),

@@ -22,8 +22,11 @@ vi.mock("@earendil-works/pi-coding-agent", () => ({
       type: "inMemory",
     })),
     list: vi.fn(),
-    open: vi.fn((path: string) => ({
+    listAll: vi.fn(),
+    open: vi.fn((path: string, sessionDir: string | undefined, cwd: string | undefined) => ({
+      cwd,
       path,
+      sessionDir,
       type: "open",
     })),
   },
@@ -35,6 +38,7 @@ describe("createPiSessionManager", () => {
     vi.mocked(SessionManager.create).mockClear();
     vi.mocked(SessionManager.inMemory).mockClear();
     vi.mocked(SessionManager.list).mockReset();
+    vi.mocked(SessionManager.listAll).mockReset();
     vi.mocked(SessionManager.open).mockClear();
   });
 
@@ -86,7 +90,7 @@ describe("createPiSessionManager", () => {
   });
 
   it("opens an existing local session with the requested session id", async () => {
-    vi.mocked(SessionManager.list).mockResolvedValue([
+    vi.mocked(SessionManager.listAll).mockResolvedValue([
       createSessionInfo({
         id: "session-1",
         path: "/sessions/session-1.jsonl",
@@ -108,22 +112,25 @@ describe("createPiSessionManager", () => {
     );
 
     expect(manager).toEqual({
+      cwd: "/workspace",
       path: "/sessions/session-2.jsonl",
+      sessionDir: "/workspace/.expertmesh/runtime-sessions/pi/expert-1",
       type: "open",
     });
-    expect(SessionManager.list).toHaveBeenCalledWith(
-      "/workspace",
+    expect(SessionManager.list).not.toHaveBeenCalled();
+    expect(SessionManager.listAll).toHaveBeenCalledWith(
       "/workspace/.expertmesh/runtime-sessions/pi/expert-1",
     );
     expect(SessionManager.open).toHaveBeenCalledWith(
       "/sessions/session-2.jsonl",
       "/workspace/.expertmesh/runtime-sessions/pi/expert-1",
+      "/workspace",
     );
     expect(SessionManager.create).not.toHaveBeenCalled();
   });
 
   it("creates a persistent session with the requested session id when none exists", async () => {
-    vi.mocked(SessionManager.list).mockResolvedValue([]);
+    vi.mocked(SessionManager.listAll).mockResolvedValue([]);
 
     const manager = await createPiSessionManager(
       "/workspace",
@@ -149,6 +156,10 @@ describe("createPiSessionManager", () => {
       {
         id: "session-3",
       },
+    );
+    expect(SessionManager.list).not.toHaveBeenCalled();
+    expect(SessionManager.listAll).toHaveBeenCalledWith(
+      "/workspace/.expertmesh/runtime-sessions/pi/expert-1",
     );
     expect(SessionManager.open).not.toHaveBeenCalled();
   });

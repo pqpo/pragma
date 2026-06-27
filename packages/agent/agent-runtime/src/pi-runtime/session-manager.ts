@@ -18,10 +18,10 @@ export async function createPiSessionManager(
   }
 
   const sessionId = runtimeSession.id;
-  const existingSession = await findLocalSessionByExactId(sessionId, cwd, sessionDir);
+  const existingSession = await findLocalSessionByExactId(sessionId, sessionDir);
 
   if (existingSession !== undefined) {
-    return SessionManager.open(existingSession.path, sessionDir);
+    return SessionManager.open(existingSession.path, sessionDir, cwd);
   }
 
   return SessionManager.create(cwd, sessionDir, { id: sessionId });
@@ -29,10 +29,9 @@ export async function createPiSessionManager(
 
 async function findLocalSessionByExactId(
   sessionId: string,
-  cwd: string,
   sessionDir: string,
 ): Promise<SessionInfo | undefined> {
-  const sessions = await SessionManager.list(cwd, sessionDir);
+  const sessions = await SessionManager.listAll(sessionDir);
   return sessions.find((session) => session.id === sessionId);
 }
 

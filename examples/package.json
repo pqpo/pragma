@@ -4,7 +4,6 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "start": "pnpm start:basic",
     "start:basic": "tsx src/run-expert-agent.ts",
     "start:approval": "tsx src/run-tool-approval-example.ts",
     "start:code-repositories": "tsx src/plugins/run-code-repository-manager-plugin.ts",
