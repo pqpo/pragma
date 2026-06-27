@@ -8,6 +8,12 @@ export default definePluginEntry({
         approval: {
           mode: "required",
           reason: "Deleting workspace notes requires explicit approval.",
+          when: ({ input }) =>
+            typeof input === "object" &&
+            input !== null &&
+            "path" in input &&
+            typeof input.path === "string" &&
+            input.path.endsWith(".md"),
         },
       },
     ],

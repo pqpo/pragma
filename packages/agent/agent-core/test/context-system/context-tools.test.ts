@@ -22,6 +22,134 @@ describe("createContextTools", () => {
     });
   });
 
+  it("normalizes askUserQuestion modes before passing questions to approval", async () => {
+    const askTool = createContextTools({
+      listContext: notCalledListOperation,
+      readContext: notCalledOperation,
+      searchContext: notCalledOperation,
+      addContext: notCalledOperation,
+      updateContext: notCalledOperation,
+      deleteContext: notCalledOperation,
+    }).find((tool) => tool.name === "askUserQuestion");
+    const humanInteraction = vi.fn(async () => ({
+      kind: "user_question" as const,
+      answered: true,
+      answers: {
+        answers: [
+          { header: "Continue", kind: "single_choice", selected: "Yes" },
+          { header: "Scope", kind: "multiple_choice", selected: ["Docs", "Tests"] },
+          { header: "Notes", kind: "text", answer: "Ship it." },
+        ],
+      },
+    }));
+
+    const result = await askTool?.call(
+      {
+        questions: [
+          {
+            header: "Continue",
+            question: "Should I continue?",
+            options: [{ label: "Yes" }, { label: "No" }],
+          },
+          {
+            header: "Scope",
+            question: "Which areas should I update?",
+            kind: "multiple_choice",
+            options: [{ label: "Docs" }, { label: "Tests" }],
+          },
+          {
+            header: "Notes",
+            question: "Any extra notes?",
+            kind: "text",
+          },
+        ],
+      },
+      undefined,
+      { humanInteraction },
+    );
+
+    expect(humanInteraction).toHaveBeenCalledWith({
+      kind: "user_question",
+      toolName: "askUserQuestion",
+      toolCallId: undefined,
+      questions: [
+        {
+          header: "Continue",
+          question: "Should I continue?",
+          kind: "single_choice",
+          options: [
+            { label: "Yes", description: "" },
+            { label: "No", description: "" },
+          ],
+        },
+        {
+          header: "Scope",
+          question: "Which areas should I update?",
+          kind: "multiple_choice",
+          options: [
+            { label: "Docs", description: "" },
+            { label: "Tests", description: "" },
+          ],
+        },
+        {
+          header: "Notes",
+          question: "Any extra notes?",
+          kind: "text",
+          options: [],
+        },
+      ],
+    });
+    expect(result).toEqual({
+      text: JSON.stringify(
+        {
+          answers: [
+            { header: "Continue", kind: "single_choice", selected: "Yes" },
+            { header: "Scope", kind: "multiple_choice", selected: ["Docs", "Tests"] },
+            { header: "Notes", kind: "text", answer: "Ship it." },
+          ],
+        },
+        null,
+        2,
+      ),
+      details: {
+        answers: [
+          { header: "Continue", kind: "single_choice", selected: "Yes" },
+          { header: "Scope", kind: "multiple_choice", selected: ["Docs", "Tests"] },
+          { header: "Notes", kind: "text", answer: "Ship it." },
+        ],
+      },
+    });
+  });
+
+  it("filters choice questions without options", async () => {
+    const askTool = createContextTools({
+      listContext: notCalledListOperation,
+      readContext: notCalledOperation,
+      searchContext: notCalledOperation,
+      addContext: notCalledOperation,
+      updateContext: notCalledOperation,
+      deleteContext: notCalledOperation,
+    }).find((tool) => tool.name === "askUserQuestion");
+
+    const result = await askTool?.call(
+      {
+        questions: [
+          {
+            header: "Broken",
+            question: "Pick one?",
+            kind: "single_choice",
+          },
+        ],
+      },
+      undefined,
+    );
+
+    expect(result).toEqual({
+      text: "Invalid askUserQuestion input: questions array is empty or missing.",
+      isError: true,
+    });
+  });
+
   it("passes run context from the session instead of tool input", async () => {
     const sessionContext = {
       source: {

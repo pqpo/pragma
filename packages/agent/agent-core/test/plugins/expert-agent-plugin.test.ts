@@ -425,69 +425,102 @@ describe("ExpertAgent plugins", () => {
     expect(hookEvents).toEqual(["host"]);
   });
 
-  it("rejects conflicting tool approval policies", () => {
-    expect(() =>
-      resolveExpertAgentPlugins({
-        pluginEntries: [
-          {
+  it("merges repeated tool approval policies", async () => {
+    const requiresDangerousCommandApproval = ({ input }: { readonly input: unknown }) =>
+      typeof input === "object" &&
+      input !== null &&
+      "command" in input &&
+      typeof input.command === "string" &&
+      /\brm\b/.test(input.command);
+    const resolved = resolveExpertAgentPlugins({
+      pluginEntries: [
+        {
+          id: "plugin.approval-a",
+          name: "Approval A",
+          description: "Approval policy A.",
+          manifest: {
+            schemaVersion: "expertmesh.plugin/v1",
             id: "plugin.approval-a",
             name: "Approval A",
             description: "Approval policy A.",
-            manifest: {
-              schemaVersion: "expertmesh.plugin/v1",
-              id: "plugin.approval-a",
-              name: "Approval A",
-              description: "Approval policy A.",
-              runtime: {
-                type: "node",
-                entry: "./plugin.ts",
-              },
-              capabilities: [],
-              configuration: { properties: [] },
-              required_config: [],
+            runtime: {
+              type: "node",
+              entry: "./plugin.ts",
             },
-            setup: () => ({
-              toolApprovals: [
-                {
-                  toolName: "delete_note",
-                  approval: {
-                    mode: "ask",
-                  },
-                },
-              ],
-            }),
+            capabilities: [],
+            configuration: { properties: [] },
+            required_config: [],
           },
-          {
+          setup: () => ({
+            toolApprovals: [
+              {
+                toolName: "bash",
+                approval: {
+                  mode: "ask",
+                  reason: "Shell command needs review.",
+                },
+              },
+            ],
+          }),
+        },
+        {
+          id: "plugin.approval-b",
+          name: "Approval B",
+          description: "Approval policy B.",
+          manifest: {
+            schemaVersion: "expertmesh.plugin/v1",
             id: "plugin.approval-b",
             name: "Approval B",
             description: "Approval policy B.",
-            manifest: {
-              schemaVersion: "expertmesh.plugin/v1",
-              id: "plugin.approval-b",
-              name: "Approval B",
-              description: "Approval policy B.",
-              runtime: {
-                type: "node",
-                entry: "./plugin.ts",
-              },
-              capabilities: [],
-              configuration: { properties: [] },
-              required_config: [],
+            runtime: {
+              type: "node",
+              entry: "./plugin.ts",
             },
-            setup: () => ({
-              toolApprovals: [
-                {
-                  toolName: "delete_note",
-                  approval: {
-                    mode: "required",
-                  },
-                },
-              ],
-            }),
+            capabilities: [],
+            configuration: { properties: [] },
+            required_config: [],
           },
-        ],
-      }),
-    ).toThrow(/Conflicting tool approval policy for delete_note/);
+          setup: () => ({
+            toolApprovals: [
+              {
+                toolName: "bash",
+                approval: {
+                  mode: "required",
+                  reason: "Dangerous command needs approval.",
+                  when: requiresDangerousCommandApproval,
+                },
+              },
+            ],
+          }),
+        },
+      ],
+    });
+
+    expect(resolved.toolApprovals).toHaveLength(1);
+    expect(resolved.toolApprovals?.[0]?.approval.mode).toBe("required");
+    expect(resolved.toolApprovals?.[0]?.approval.reason).toBe(
+      "Shell command needs review.\nDangerous command needs approval.",
+    );
+    await expect(
+      Promise.resolve(
+        resolved.toolApprovals?.[0]?.approval.when?.({
+          kind: "tool_approval",
+          toolName: "bash",
+          input: { command: "rm -rf tmp" },
+          reason: resolved.toolApprovals[0]?.approval.reason,
+        }),
+      ),
+    ).resolves.toBe(true);
+    await expect(
+      Promise.resolve(
+        resolved.toolApprovals?.[0]?.approval.when?.({
+          kind: "tool_approval",
+          toolName: "bash",
+          input: { command: "ls -la" },
+          reason: resolved.toolApprovals[0]?.approval.reason,
+        }),
+      ),
+    ).resolves.toBe(false);
   });
 });
 

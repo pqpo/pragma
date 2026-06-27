@@ -4,6 +4,8 @@ type StreamSection = "none" | "thought" | "message" | "toolDelta";
 
 const maxPreviewLines = 10;
 const maxPreviewLineLength = 120;
+const frameWidth = 88;
+const logPrefix = "EM";
 
 const colorEnabled =
   process.env["NO_COLOR"] === undefined &&
@@ -35,6 +37,7 @@ export async function printRunStream(run: RuntimeSubmitHandle<unknown>): Promise
 class StreamEventPrinter {
   private section: StreamSection = "none";
   private activeToolDelta: string | undefined;
+  private streamLineStart = true;
 
   print(event: RuntimeStreamEvent): void {
     switch (event.type) {
@@ -45,12 +48,12 @@ class StreamEventPrinter {
         this.printProgress(event);
         break;
       case "thought.delta":
-        this.ensureStreamingSection("thought", color.gray("thinking"));
-        process.stdout.write(color.dim(event.payload.delta));
+        this.ensureStreamingSection("thought", color.gray("THINKING"));
+        this.writeStreamDelta(event.payload.delta, color.dim);
         break;
       case "tool.started":
         this.printToolLine(
-          color.blue("tool"),
+          color.blue("TOOL"),
           `${event.payload.toolName} ${color.dim(shortId(event.payload.toolCallId))}`,
           color.dim(event.payload.kind),
         );
@@ -58,11 +61,11 @@ class StreamEventPrinter {
         break;
       case "tool.delta":
         this.ensureToolDeltaSection(event);
-        process.stdout.write(event.payload.delta);
+        this.writeStreamDelta(event.payload.delta);
         break;
       case "tool.approval_requested":
         this.printToolLine(
-          color.yellow("ask"),
+          color.yellow("APPROVAL"),
           `${event.payload.toolName} ${color.dim(shortId(event.payload.approvalId))}`,
           event.payload.reason,
         );
@@ -70,7 +73,7 @@ class StreamEventPrinter {
         break;
       case "tool.completed":
         this.printToolLine(
-          color.green("done"),
+          color.green("TOOL DONE"),
           `${event.payload.toolName} ${color.dim(shortId(event.payload.toolCallId))}`,
           color.dim(event.payload.kind),
         );
@@ -78,14 +81,14 @@ class StreamEventPrinter {
         break;
       case "tool.failed":
         this.printToolLine(
-          color.red("fail"),
+          color.red("TOOL FAILED"),
           `${event.payload.toolName} ${color.dim(shortId(event.payload.toolCallId))}`,
           event.payload.message,
         );
         break;
       case "message.delta":
-        this.ensureStreamingSection("message", color.green("assistant"));
-        process.stdout.write(event.payload.delta);
+        this.ensureStreamingSection("message", color.green("ASSISTANT"));
+        this.writeStreamDelta(event.payload.delta);
         break;
       case "message.completed":
         this.endStreamingSection();
@@ -100,7 +103,7 @@ class StreamEventPrinter {
         this.printRunFailed(event);
         break;
       case "run.cancelled":
-        this.printStatusLine(color.yellow("cancel"), event.payload.reason ?? "Run cancelled");
+        this.printStatusLine(color.yellow("CANCELLED"), event.payload.reason ?? "Run cancelled");
         break;
     }
   }
@@ -115,8 +118,9 @@ class StreamEventPrinter {
     }
 
     this.endStreamingSection();
-    console.log(`${label} ${color.dim("...")}`);
+    this.printSectionHeader(label);
     this.section = section;
+    this.streamLineStart = true;
   }
 
   private ensureToolDeltaSection(
@@ -131,25 +135,28 @@ class StreamEventPrinter {
     this.endStreamingSection();
     this.activeToolDelta = key;
     this.section = "toolDelta";
-    console.log(
-      `${color.magenta("stream")} ${event.payload.toolName} ${color.dim(event.payload.channel)}`,
+    this.printSectionHeader(
+      `${color.magenta("TOOL STREAM")} ${event.payload.toolName} ${color.dim(event.payload.channel)}`,
     );
+    this.streamLineStart = true;
   }
 
   private endStreamingSection(): void {
-    if (this.section === "thought" || this.section === "message" || this.section === "toolDelta") {
+    if (
+      (this.section === "thought" || this.section === "message" || this.section === "toolDelta") &&
+      !this.streamLineStart
+    ) {
       console.log("");
     }
 
     this.section = "none";
     this.activeToolDelta = undefined;
+    this.streamLineStart = true;
   }
 
   private printRunStarted(event: Extract<RuntimeStreamEvent, { type: "run.started" }>): void {
     this.endStreamingSection();
-    console.log(
-      `${color.cyan(color.bold("run"))} ${color.dim(shortId(event.runId))} ${event.payload.task}`,
-    );
+    this.printFrame("RUN STREAM", `${shortId(event.runId)} | ${event.payload.task}`, color.cyan);
 
     if (event.payload.inputSummary !== undefined && event.payload.inputSummary !== event.payload.task) {
       this.printPreview("input", event.payload.inputSummary);
@@ -159,7 +166,7 @@ class StreamEventPrinter {
   private printProgress(event: Extract<RuntimeStreamEvent, { type: "progress" }>): void {
     this.endStreamingSection();
     const message = event.payload.message === undefined ? "" : ` ${event.payload.message}`;
-    this.printStatusLine(color.cyan("step"), `${event.payload.stage}${message}`);
+    this.printStatusLine(color.cyan(formatStage(event.payload.stage)), message.trimStart());
 
     if (event.payload.data !== undefined) {
       this.printPreview("data", event.payload.data);
@@ -168,7 +175,7 @@ class StreamEventPrinter {
 
   private printArtifact(event: Extract<RuntimeStreamEvent, { type: "artifact.created" }>): void {
     this.printStatusLine(
-      color.magenta("file"),
+      color.magenta("FILE"),
       [
         event.payload.title ?? event.payload.artifactId,
         color.dim(event.payload.kind),
@@ -180,7 +187,7 @@ class StreamEventPrinter {
   }
 
   private printRunCompleted(event: Extract<RuntimeStreamEvent, { type: "run.completed" }>): void {
-    this.printStatusLine(color.green("done"), "Run completed");
+    this.printStatusLine(color.green("DONE"), "Run completed");
 
     if (event.payload.usage !== undefined) {
       this.printPreview("usage", event.payload.usage);
@@ -197,7 +204,7 @@ class StreamEventPrinter {
     ];
 
     this.printStatusLine(
-      color.red("fail"),
+      color.red("FAIL"),
       details.filter((part): part is string => part !== undefined).join(" "),
     );
   }
@@ -209,7 +216,8 @@ class StreamEventPrinter {
 
   private printStatusLine(label: string, text: string): void {
     this.endStreamingSection();
-    console.log(`${color.dim(">")} ${label.padEnd(11)} ${text}`);
+    const suffix = text.length === 0 ? "" : ` ${text}`;
+    console.log(`${this.prefix()} ${label.padEnd(13)}${suffix}`);
   }
 
   private printOptionalPreview(label: string, value: unknown): void {
@@ -223,15 +231,45 @@ class StreamEventPrinter {
     const lines = preview.split("\n");
 
     if (lines.length === 1) {
-      console.log(`${color.dim("  " + label.padEnd(7))} ${lines[0]}`);
+      console.log(`${this.prefix()} ${color.dim(label.padEnd(13))} ${lines[0]}`);
       return;
     }
 
-    console.log(color.dim(`  ${label}`));
+    console.log(`${this.prefix()} ${color.dim(label)}`);
 
     for (const line of lines) {
-      console.log(`${color.dim("  |")} ${line}`);
+      console.log(`${this.prefix()} ${color.dim("|")} ${line}`);
     }
+  }
+
+  private printSectionHeader(label: string): void {
+    console.log(`${this.prefix()} ${color.bold(label)}`);
+  }
+
+  private writeStreamDelta(delta: string, decorate: (value: string) => string = identity): void {
+    for (const char of delta) {
+      if (this.streamLineStart) {
+        process.stdout.write(`${this.prefix()} ${color.dim("|")} `);
+        this.streamLineStart = false;
+      }
+
+      process.stdout.write(decorate(char));
+
+      if (char === "\n") {
+        this.streamLineStart = true;
+      }
+    }
+  }
+
+  private printFrame(title: string, subtitle: string, decorate: (value: string) => string): void {
+    const rule = "=".repeat(frameWidth);
+    console.log(`${this.prefix()} ${decorate(rule)}`);
+    console.log(`${this.prefix()} ${decorate(color.bold(title))} ${color.dim(subtitle)}`);
+    console.log(`${this.prefix()} ${decorate(rule)}`);
+  }
+
+  private prefix(): string {
+    return color.bold(color.cyan(logPrefix));
   }
 }
 
@@ -278,6 +316,18 @@ function clipLine(line: string): string {
 
 function shortId(value: string): string {
   return value.length <= 12 ? value : value.slice(0, 12);
+}
+
+function formatStage(stage: string): string {
+  return stage
+    .split(".")
+    .filter((part) => part.length > 0)
+    .join(" ")
+    .toUpperCase();
+}
+
+function identity(value: string): string {
+  return value;
 }
 
 function style(code: number): (value: string) => string {

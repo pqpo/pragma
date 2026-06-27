@@ -28,6 +28,7 @@ import type {
   ExpertAgentToolApproval,
   ExpertAgentToolCallResult,
 } from "../tools/managed-tool.ts";
+import { mergeExpertAgentToolApprovals } from "../tools/managed-tool.ts";
 
 type MaybePromise<TValue> = TValue | Promise<TValue>;
 type DeepReadonly<TValue> = TValue extends (...args: never[]) => unknown
@@ -430,9 +431,7 @@ function mergePlainObjects(
   for (const [key, value] of Object.entries(right)) {
     const existing = merged[key];
     merged[key] =
-      isPlainObject(existing) && isPlainObject(value)
-        ? mergePlainObjects(existing, value)
-        : value;
+      isPlainObject(existing) && isPlainObject(value) ? mergePlainObjects(existing, value) : value;
   }
 
   return merged;
@@ -602,27 +601,34 @@ function mergeToolApprovals(
   }[] = [];
 
   for (const contribution of approvalGroups.flatMap((group) => group ?? [])) {
-    const existing = approvalByTool.get(contribution.toolName);
+    const mergedApproval = mergeExpertAgentToolApprovals(
+      approvalByTool.get(contribution.toolName),
+      contribution.approval,
+    );
 
-    if (existing === undefined) {
-      approvalByTool.set(contribution.toolName, contribution.approval);
-      approvals.push(contribution);
+    if (mergedApproval === undefined) {
       continue;
     }
 
-    if (!isSameToolApproval(existing, contribution.approval)) {
-      throw new Error(`Conflicting tool approval policy for ${contribution.toolName}.`);
+    const existingIndex = approvals.findIndex(
+      (approval) => approval.toolName === contribution.toolName,
+    );
+    approvalByTool.set(contribution.toolName, mergedApproval);
+
+    if (existingIndex === -1) {
+      approvals.push({
+        toolName: contribution.toolName,
+        approval: mergedApproval,
+      });
+    } else {
+      approvals[existingIndex] = {
+        toolName: contribution.toolName,
+        approval: mergedApproval,
+      };
     }
   }
 
   return approvals.length === 0 ? undefined : approvals;
-}
-
-function isSameToolApproval(
-  left: ExpertAgentToolApproval,
-  right: ExpertAgentToolApproval,
-): boolean {
-  return left.mode === right.mode && left.reason === right.reason;
 }
 
 function mergePluginHooks(

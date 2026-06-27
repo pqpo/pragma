@@ -41,6 +41,7 @@ import type {
   ExpertAgentToolApproval,
   ExpertAgentToolCallResult,
 } from "../tools/managed-tool.ts";
+import { mergeExpertAgentToolApprovals } from "../tools/managed-tool.ts";
 
 export type ExpertAgentSchemaVersion = "expertmesh.expert/v1";
 
@@ -360,7 +361,7 @@ function applyToolApprovals(
   );
 
   return tools.map((tool) => {
-    const approval = approvalByTool.get(tool.name);
+    const approval = mergeExpertAgentToolApprovals(tool.approval, approvalByTool.get(tool.name));
 
     return {
       ...tool,

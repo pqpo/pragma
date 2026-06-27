@@ -10,7 +10,7 @@
     "start:session-storage": "tsx src/run-session-storage-example.ts",
     "start:workspace-context": "tsx src/run-workspace-context-agent.ts",
     "build": "tsc -p tsconfig.build.json",
-    "lint": "eslint src",
+    "lint": "eslint src plugins",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests",
     "clean": "rm -rf dist"

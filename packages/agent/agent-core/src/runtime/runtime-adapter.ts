@@ -9,6 +9,7 @@ import type { ExpertAgentLoggerProvider } from "../logging/logger.ts";
 import type { RunState, SessionState } from "./agent-lifecycle.ts";
 import type { ExpertAgentRunContext } from "./run-context.ts";
 import type { RuntimeStreamEvent } from "./stream-events.ts";
+import type { ExpertAgentHumanInteractionHandler } from "../tools/managed-tool.ts";
 
 export type RuntimeAdapterKind = "cloud-pi-agent" | (string & {});
 
@@ -66,6 +67,7 @@ export type RuntimeSessionRestoreHandler = (
 export interface RuntimeCreateSessionRequest {
   readonly agent: ExpertAgent;
   readonly context?: ExpertAgentRunContext | undefined;
+  readonly humanInteractionHandler?: ExpertAgentHumanInteractionHandler | undefined;
   readonly models?: readonly IExpertAgentModelProviderConfig[] | undefined;
   readonly systemSessionId?: string | undefined;
   readonly runtimeSession?: RuntimeSessionRef | undefined;

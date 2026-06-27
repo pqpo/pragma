@@ -27,11 +27,7 @@ import {
 import { createResourceLoader } from "./resources.ts";
 import { createPiRuntimeSession } from "./session.ts";
 import { createPiSessionManager, getPiSessionDir } from "./session-manager.ts";
-import {
-  ensureSessionDir,
-  sessionDirExists,
-  watchRuntimeSessionDir,
-} from "./session-storage.ts";
+import { ensureSessionDir, sessionDirExists, watchRuntimeSessionDir } from "./session-storage.ts";
 import type { RuntimeSessionWatcher } from "./session-storage.ts";
 import { createResolvedPiTools } from "./tools.ts";
 import type { CloudPiRuntimeAdapterOptions, PiRuntimeStreamState } from "./types.ts";
@@ -67,6 +63,7 @@ export function createCloudPiRuntimeAdapter(
     async createSession({
       agent,
       context: requestedRunContext,
+      humanInteractionHandler,
       models,
       runtimeSession,
       systemSessionId: requestedSystemSessionId,
@@ -172,6 +169,7 @@ export function createCloudPiRuntimeAdapter(
           streamState,
           lifecycle,
           context: runContext,
+          humanInteractionHandler,
         });
 
         const sessionOptions: CreateAgentSessionOptions = {

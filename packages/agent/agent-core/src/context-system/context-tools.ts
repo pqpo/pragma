@@ -16,8 +16,9 @@ import type {
 import type { ExpertAgentRunContext } from "../runtime/run-context.ts";
 import { createExpertAgentRunContext } from "../runtime/run-context.ts";
 import type {
+  ExpertAgentHumanInteractionHandler,
   ExpertAgentToolApproval,
-  ExpertAgentToolApprovalHandler,
+  ExpertAgentUserQuestion,
 } from "../tools/managed-tool.ts";
 
 export interface ExpertAgentDefaultToolCallResult {
@@ -36,7 +37,7 @@ export interface ExpertAgentDefaultTool {
     args: unknown,
     signal: AbortSignal | undefined,
     context?: {
-      readonly approval?: ExpertAgentToolApprovalHandler | undefined;
+      readonly humanInteraction?: ExpertAgentHumanInteractionHandler | undefined;
       readonly toolCallId?: string | undefined;
     },
   ) => Promise<ExpertAgentDefaultToolCallResult>;
@@ -278,7 +279,8 @@ function createAskUserQuestionTool(): ExpertAgentDefaultTool {
   return {
     name: "askUserQuestion",
     label: "Ask user question",
-    description: "Ask the user structured questions and return the selected answers.",
+    description:
+      "Ask the user structured questions and return answers. Supports single choice, multiple choice, and direct text answers.",
     approval: {
       mode: "none",
     },
@@ -290,6 +292,12 @@ function createAskUserQuestionTool(): ExpertAgentDefaultTool {
             {
               question: stringSchema("Complete question text."),
               header: stringSchema("Short label shown to the user."),
+              kind: {
+                type: "string",
+                enum: ["single_choice", "multiple_choice", "text"],
+                description:
+                  "Question type. Defaults to single_choice when options are present, otherwise text.",
+              },
               options: {
                 type: "array",
                 items: objectSchema(
@@ -316,45 +324,43 @@ function createAskUserQuestionTool(): ExpertAgentDefaultTool {
         };
       }
 
-      const approval = context?.approval;
+      const humanInteraction = context?.humanInteraction;
 
-      if (approval === undefined) {
+      if (humanInteraction === undefined) {
         return {
-          text: questions.map((question) => `${question.header}: ${question.question}`).join("\n"),
+          text: questions.map(formatAskUserQuestion).join("\n\n"),
         };
       }
 
-      const response = await approval({
+      const response = await humanInteraction({
+        kind: "user_question",
         toolName: "askUserQuestion",
         toolCallId: context?.toolCallId,
-        input: { questions },
+        questions,
       });
 
-      if (!response.approved) {
+      if (response.kind !== "user_question" || !response.answered) {
         return {
-          text: response.reason ?? "User declined to answer the question.",
+          text:
+            response.kind === "user_question" && response.reason !== undefined
+              ? response.reason
+              : "User declined to answer the question.",
           isError: true,
         };
       }
 
       return {
         text:
-          response.updatedInput === undefined
+          response.answers === undefined
             ? "User answered the question."
-            : JSON.stringify(response.updatedInput, null, 2),
-        details: response.updatedInput,
+            : JSON.stringify(response.answers, null, 2),
+        details: response.answers,
       };
     },
   };
 }
 
-function readAskUserQuestions(
-  args: unknown,
-): readonly {
-  readonly question: string;
-  readonly header: string;
-  readonly options: readonly { readonly label: string; readonly description: string }[];
-}[] {
+function readAskUserQuestions(args: unknown): readonly ExpertAgentUserQuestion[] {
   if (!isRecord(args) || !Array.isArray(args.questions)) {
     return [];
   }
@@ -364,6 +370,7 @@ function readAskUserQuestions(
     .map((question: Record<string, unknown>) => ({
       question: typeof question.question === "string" ? question.question : "",
       header: typeof question.header === "string" ? question.header : "",
+      kind: readAskUserQuestionKind(question),
       options: Array.isArray(question.options)
         ? question.options
             .filter(isRecord)
@@ -371,9 +378,52 @@ function readAskUserQuestions(
               label: typeof option.label === "string" ? option.label : "",
               description: typeof option.description === "string" ? option.description : "",
             }))
+            .filter((option) => option.label.length > 0)
         : [],
     }))
-    .filter((question) => question.question.length > 0 && question.header.length > 0);
+    .filter(
+      (question) =>
+        question.question.length > 0 &&
+        question.header.length > 0 &&
+        (question.kind === "text" || question.options.length > 0),
+    );
+}
+
+function readAskUserQuestionKind(
+  question: Record<string, unknown>,
+): "single_choice" | "multiple_choice" | "text" {
+  if (
+    question.kind === "single_choice" ||
+    question.kind === "multiple_choice" ||
+    question.kind === "text"
+  ) {
+    return question.kind;
+  }
+
+  return Array.isArray(question.options) && question.options.length > 0 ? "single_choice" : "text";
+}
+
+function formatAskUserQuestion(question: {
+  readonly question: string;
+  readonly header: string;
+  readonly kind: "single_choice" | "multiple_choice" | "text";
+  readonly options: readonly { readonly label: string; readonly description: string }[];
+}): string {
+  const lines = [`${question.header}: ${question.question}`, `type: ${question.kind}`];
+
+  if (question.options.length === 0) {
+    return lines.join("\n");
+  }
+
+  return [
+    ...lines,
+    "options:",
+    ...question.options.map((option) =>
+      option.description.length === 0
+        ? `- ${option.label}`
+        : `- ${option.label}: ${option.description}`,
+    ),
+  ].join("\n");
 }
 
 function objectSchema(
@@ -641,10 +691,7 @@ function formatContextSearchMatchId(match: ExpertAgentContextItemSearchMatch): s
 }
 
 function formatContextSearchMatchGroup(group: ContextSearchMatchGroup): string {
-  return [
-    group.id,
-    group.matches.map(formatContextSearchMatchLines).join("\n--\n"),
-  ].join("\n");
+  return [group.id, group.matches.map(formatContextSearchMatchLines).join("\n--\n")].join("\n");
 }
 
 function formatContextSearchMatchLines(match: ExpertAgentContextItemSearchMatch): string {

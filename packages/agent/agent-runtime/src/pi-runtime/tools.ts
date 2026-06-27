@@ -3,9 +3,9 @@ import type {
   AgentLifecycle,
   ExpertAgent,
   ExpertAgentDefaultTool,
+  ExpertAgentHumanInteractionHandler,
   ExpertAgentManagedTool,
   ExpertAgentToolApproval,
-  ExpertAgentToolApprovalHandler,
   ExpertAgentToolCallResult,
   ExpertAgentRunContext,
   ResolvedTool,
@@ -34,6 +34,7 @@ export function createResolvedPiTools(options: {
   readonly streamState: PiRuntimeStreamState;
   readonly lifecycle: AgentLifecycle<ExpertAgentRunContext>;
   readonly context?: ExpertAgentRunContext | undefined;
+  readonly humanInteractionHandler?: ExpertAgentHumanInteractionHandler | undefined;
 }): ResolvedToolSet<ToolDefinition> {
   const subAgentTool = createSubAgentTool({
     agent: options.agent,
@@ -50,7 +51,7 @@ export function createResolvedPiTools(options: {
   const contextTools = options.agent.createDefaultTools({
     getContext: () => options.lifecycle.currentContext,
   });
-  const approvalHandler = readToolApprovalHandler(options.context);
+  const humanInteractionHandler = options.humanInteractionHandler;
 
   const parentResolvedTools = resolveToolPolicy({
     context: options.context,
@@ -59,13 +60,13 @@ export function createResolvedPiTools(options: {
         options.agent,
         contextTools,
         options.streamState,
-        approvalHandler,
+        humanInteractionHandler,
       ).map((tool) => createResolvedTool("default", tool)),
       ...createPiManagedTools(
         options.agent,
         options.agent.tools ?? [],
         options.streamState,
-        approvalHandler,
+        humanInteractionHandler,
       ).map((tool) => createResolvedTool("managed", tool)),
       ...(subAgentTool === undefined
         ? []
@@ -105,7 +106,7 @@ function createPiDefaultTools(
   agent: ExpertAgent,
   tools: readonly ExpertAgentDefaultTool[],
   streamState: PiRuntimeStreamState,
-  approvalHandler: ExpertAgentToolApprovalHandler | undefined,
+  humanInteractionHandler: ExpertAgentHumanInteractionHandler | undefined,
 ): ToolDefinition[] {
   return tools.map((tool) => ({
     name: tool.name,
@@ -121,10 +122,13 @@ function createPiDefaultTools(
         toolCallId,
         params,
         tool.approval,
-        approvalHandler,
+        humanInteractionHandler,
         streamState,
         async (resolvedParams) =>
-          await tool.call(resolvedParams, signal, { toolCallId, approval: approvalHandler }),
+          await tool.call(resolvedParams, signal, {
+            toolCallId,
+            humanInteraction: humanInteractionHandler,
+          }),
       );
 
       return {
@@ -145,7 +149,7 @@ function createPiManagedTools(
   agent: ExpertAgent,
   tools: readonly ExpertAgentManagedTool<string, ExpertAgentToolCallResult>[],
   streamState: PiRuntimeStreamState,
-  approvalHandler: ExpertAgentToolApprovalHandler | undefined,
+  humanInteractionHandler: ExpertAgentHumanInteractionHandler | undefined,
 ): ToolDefinition[] {
   return tools.map((tool) => ({
     name: tool.name,
@@ -161,10 +165,13 @@ function createPiManagedTools(
         toolCallId,
         params,
         tool.approval,
-        approvalHandler,
+        humanInteractionHandler,
         streamState,
         async (resolvedParams) =>
-          await tool.call(resolvedParams, signal, { toolCallId, approval: approvalHandler }),
+          await tool.call(resolvedParams, signal, {
+            toolCallId,
+            humanInteraction: humanInteractionHandler,
+          }),
       );
 
       return {
@@ -283,7 +290,7 @@ async function executeWithToolHooks<
   toolCallId: string | undefined,
   args: unknown,
   approval: ExpertAgentToolApproval | undefined,
-  approvalHandler: ExpertAgentToolApprovalHandler | undefined,
+  humanInteractionHandler: ExpertAgentHumanInteractionHandler | undefined,
   streamState: PiRuntimeStreamState,
   execute: (args: unknown) => Promise<TResult>,
 ): Promise<TResult> {
@@ -307,7 +314,7 @@ async function executeWithToolHooks<
   try {
     const resolvedArgs = await maybeRequestToolApproval<TResult>({
       approval,
-      approvalHandler,
+      humanInteractionHandler,
       toolName,
       toolCallId,
       runId: streamState.runId,
@@ -388,7 +395,7 @@ async function maybeRequestToolApproval<
   TResult extends { text: string; isError?: boolean; details?: unknown },
 >(options: {
   readonly approval: ExpertAgentToolApproval | undefined;
-  readonly approvalHandler: ExpertAgentToolApprovalHandler | undefined;
+  readonly humanInteractionHandler: ExpertAgentHumanInteractionHandler | undefined;
   readonly toolName: string;
   readonly toolCallId: string | undefined;
   readonly runId: string | undefined;
@@ -418,6 +425,18 @@ async function maybeRequestToolApproval<
     return { approved: true, updatedInput: undefined };
   }
 
+  const approvalRequest = {
+    kind: "tool_approval" as const,
+    toolName: options.toolName,
+    toolCallId: options.toolCallId,
+    reason: options.approval.reason,
+    input: options.args,
+  };
+
+  if (options.approval.when !== undefined && !(await options.approval.when(approvalRequest))) {
+    return { approved: true, updatedInput: undefined };
+  }
+
   const approvalId = `approval-${randomUUID()}`;
   const runId = options.runId ?? approvalId;
   const toolCallId = options.toolCallId ?? approvalId;
@@ -444,7 +463,7 @@ async function maybeRequestToolApproval<
     },
   });
 
-  if (options.approvalHandler === undefined) {
+  if (options.humanInteractionHandler === undefined) {
     return {
       approved: false,
       result: {
@@ -454,29 +473,20 @@ async function maybeRequestToolApproval<
     };
   }
 
-  const response = await options.approvalHandler({
-    toolName: options.toolName,
-    toolCallId: options.toolCallId,
-    reason: options.approval.reason,
-    input: options.args,
-  });
+  const response = await options.humanInteractionHandler(approvalRequest);
 
-  if (!response.approved) {
+  if (response.kind !== "tool_approval" || !response.approved) {
     return {
       approved: false,
       result: {
-        text: response.reason ?? `User declined ${options.toolName}.`,
+        text:
+          response.kind === "tool_approval" && response.reason !== undefined
+            ? response.reason
+            : `User declined ${options.toolName}.`,
         isError: true,
       } as TResult,
     };
   }
 
   return { approved: true, updatedInput: response.updatedInput };
-}
-
-function readToolApprovalHandler(
-  context: ExpertAgentRunContext | undefined,
-): ExpertAgentToolApprovalHandler | undefined {
-  const handler = context?.attributes?.["toolApprovalHandler"];
-  return typeof handler === "function" ? (handler as ExpertAgentToolApprovalHandler) : undefined;
 }

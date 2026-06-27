@@ -88,10 +88,27 @@ pnpm --filter @expertmesh/examples start:approval
 
 这个示例展示两件事：
 
-- 内置 `askUserQuestion` 会通过运行时注入的 approval handler 读取用户回答。
+- 内置 `askUserQuestion` 会通过运行时注入的 human interaction handler 读取用户回答。
 - 普通工具可以通过 `approval: { mode: "required" }` 声明为需要确认，运行时会先发出 `tool.approval_requested` 事件，再交给用户决定是否继续。
 
-示例入口是 `src/run-tool-approval-example.ts`，它直接把审批 handler 放进 `runtime.createSession({ context })` 的 `attributes.toolApprovalHandler`，以便在 CLI 中交互式确认。
+示例入口是 `src/run-tool-approval-example.ts`，它通过 `runtime.createSession({ humanInteractionHandler })` 注入人类交互 handler。handler 根据 `request.kind` 区分 `user_question` 和 `tool_approval`：CLI 中 `[question] askUserQuestion` 表示输入给模型的问题回答，`[approval] <tool>` 表示是否批准工具执行。`askUserQuestion` 的每个问题支持 `kind: "single_choice"`、`kind: "multiple_choice"` 和 `kind: "text"`；旧格式只传 `options` 时会按单选处理。
+
+工具声明时可以直接要求审批：
+
+```ts
+approval: {
+  mode: "required",
+  reason: "Shell command may delete files.",
+  when: ({ input }) =>
+    typeof input === "object" &&
+    input !== null &&
+    "command" in input &&
+    typeof input.command === "string" &&
+    /\brm\b/.test(input.command),
+}
+```
+
+插件也可以通过 `toolApprovals` 给已有工具追加审批策略。工具自带策略和插件策略会合并；只要任一策略命中，就会触发审批。
 
 ## 运行上下文示例
 

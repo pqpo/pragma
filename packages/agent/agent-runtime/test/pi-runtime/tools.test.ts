@@ -64,14 +64,11 @@ describe("createCustomTools approval handling", () => {
           complete: () => {},
         },
       } satisfies PiRuntimeStreamState,
-      context: {
-        attributes: {
-          toolApprovalHandler: async () => ({
-            approved: false,
-            reason: "Denied.",
-          }),
-        },
-      },
+      humanInteractionHandler: async () => ({
+        kind: "tool_approval",
+        approved: false,
+        reason: "Denied.",
+      }),
     });
 
     const result = await tools
@@ -132,16 +129,13 @@ describe("createCustomTools approval handling", () => {
         currentContext: undefined,
       } as never,
       streamState: {},
-      context: {
-        attributes: {
-          toolApprovalHandler: async () => ({
-            approved: true,
-            updatedInput: {
-              path: "approved.md",
-            },
-          }),
+      humanInteractionHandler: async () => ({
+        kind: "tool_approval",
+        approved: true,
+        updatedInput: {
+          path: "approved.md",
         },
-      },
+      }),
     });
 
     await tools
@@ -161,9 +155,106 @@ describe("createCustomTools approval handling", () => {
       undefined,
       {
         toolCallId: "tool-call-1",
-        approval: expect.any(Function),
+        humanInteraction: expect.any(Function),
       },
     );
+  });
+
+  it("only requests approval when the tool approval condition matches", async () => {
+    const call = vi.fn(async () => ({
+      text: "ran",
+    }));
+    const humanInteractionHandler = vi.fn(async () => ({
+      kind: "tool_approval" as const,
+      approved: true,
+    }));
+    const agent = await ExpertAgent.create({
+      schemaVersion: "expertmesh.expert/v1",
+      id: "agent-1",
+      displayName: "Test Agent",
+      description: "Test agent",
+      tags: [],
+      version: "0.0.0",
+      scope: "test",
+      workspace: "/tmp/expertmesh-test",
+      tools: [
+        {
+          name: "bash",
+          description: "Run a shell command.",
+          inputSchema: { type: "object" },
+          approval: {
+            mode: "required",
+            reason: "Shell command may delete files.",
+            when: ({ input }) =>
+              typeof input === "object" &&
+              input !== null &&
+              "command" in input &&
+              typeof input.command === "string" &&
+              /\brm\b/.test(input.command),
+          },
+          call,
+        },
+      ],
+    });
+    const emitted: unknown[] = [];
+    const tools = createCustomTools({
+      agent,
+      authStorage: {} as never,
+      cwd: "/tmp/expertmesh-test",
+      mcpTools: [],
+      modelRegistry: { getAll: () => [] } as never,
+      parentSystemPrompt: "",
+      lifecycle: {
+        currentContext: undefined,
+      } as never,
+      streamState: {
+        runId: "run-1",
+        emitter: {
+          emit: (event) => {
+            emitted.push(event);
+          },
+          complete: () => {},
+        },
+      } satisfies PiRuntimeStreamState,
+      humanInteractionHandler,
+    });
+
+    await tools
+      .find((tool) => tool.name === "bash")
+      ?.execute(
+        "tool-call-1",
+        { command: "ls -la" },
+        undefined,
+        undefined,
+        createExtensionContext(),
+      );
+    await tools
+      .find((tool) => tool.name === "bash")
+      ?.execute(
+        "tool-call-2",
+        { command: "rm -rf tmp" },
+        undefined,
+        undefined,
+        createExtensionContext(),
+      );
+
+    expect(call).toHaveBeenCalledTimes(2);
+    expect(humanInteractionHandler).toHaveBeenCalledTimes(1);
+    expect(humanInteractionHandler).toHaveBeenCalledWith({
+      kind: "tool_approval",
+      toolName: "bash",
+      toolCallId: "tool-call-2",
+      reason: "Shell command may delete files.",
+      input: { command: "rm -rf tmp" },
+    });
+    expect(emitted).toHaveLength(1);
+    expect(emitted[0]).toMatchObject({
+      type: "tool.approval_requested",
+      payload: {
+        toolName: "bash",
+        toolCallId: "tool-call-2",
+      },
+    });
   });
 });
 
