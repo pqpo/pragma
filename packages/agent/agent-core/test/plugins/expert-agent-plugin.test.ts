@@ -52,6 +52,9 @@ describe("ExpertAgent plugins", () => {
             description: "Plugin tool",
           },
         ],
+        configuration: {
+          properties: [],
+        },
         permissions: {
           network: ["models.example.test"],
         },
@@ -59,6 +62,7 @@ describe("ExpertAgent plugins", () => {
     });
     expect(Object.isFrozen(extensibilityPlugin.manifest)).toBe(true);
     expect(Object.isFrozen(extensibilityPlugin.manifest.capabilities)).toBe(true);
+    expect(Object.isFrozen(extensibilityPlugin.manifest.configuration.properties)).toBe(true);
   });
 
   it("rejects plugins without a plugin.json manifest", () => {
@@ -87,6 +91,7 @@ describe("ExpertAgent plugins", () => {
                 entry: "./plugin.ts",
               },
               capabilities: [],
+              configuration: { properties: [] },
               required_config: [],
             },
             setup: () => ({}),
@@ -119,6 +124,7 @@ describe("ExpertAgent plugins", () => {
               entry: "./plugin.ts",
             },
             capabilities: [],
+            configuration: { properties: [] },
             required_config: [],
           },
           setup: ({ logger }) => {
@@ -273,6 +279,7 @@ describe("ExpertAgent plugins", () => {
                 entry: "./plugin.ts",
               },
               capabilities: [],
+              configuration: { properties: [] },
               required_config: [],
             },
             setup: (context) => {
@@ -322,6 +329,7 @@ describe("ExpertAgent plugins", () => {
                 entry: "./plugin.ts",
               },
               capabilities: [],
+              configuration: { properties: [] },
               required_config: [
                 { name: "apiToken", secret: false },
                 { name: "nested.secret", secret: false },
@@ -368,6 +376,7 @@ describe("ExpertAgent plugins", () => {
                 entry: "./plugin.ts",
               },
               capabilities: [],
+              configuration: { properties: [] },
               required_config: [{ name: "apiToken", secret: false }],
             },
             setup: () => ({}),
@@ -434,6 +443,7 @@ describe("ExpertAgent plugins", () => {
                 entry: "./plugin.ts",
               },
               capabilities: [],
+              configuration: { properties: [] },
               required_config: [],
             },
             setup: () => ({
@@ -461,6 +471,7 @@ describe("ExpertAgent plugins", () => {
                 entry: "./plugin.ts",
               },
               capabilities: [],
+              configuration: { properties: [] },
               required_config: [],
             },
             setup: () => ({

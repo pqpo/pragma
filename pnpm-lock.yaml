@@ -149,6 +149,9 @@ importers:
       '@expertmesh/agent-runtime':
         specifier: workspace:*
         version: link:../packages/agent/agent-runtime
+      '@expertmesh/plugin-code-repository-manager':
+        specifier: workspace:*
+        version: link:../plugins/code-repository-manager
       cac:
         specifier: ^7.0.0
         version: 7.0.0

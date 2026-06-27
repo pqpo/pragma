@@ -39,6 +39,11 @@ Config precedence is:
 3. Environment variables.
 4. Schema defaults.
 
+`plugin.json` declares `configuration.properties` so hosts can discover supported
+config keys, types, defaults, and descriptions without executing plugin code.
+`required_config` is reserved for startup gates; this plugin currently has no
+required startup config because every option has a schema default.
+
 Reserved environment variables:
 
 ```text

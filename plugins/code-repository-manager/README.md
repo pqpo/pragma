@@ -99,11 +99,13 @@ const agent = await ExpertAgent.create({
 });
 ```
 
-If `plugin.json` declares `required_config`, Agent startup builds plugin config from
-the reserved environment variable namespace first, then overlays explicit plugin
-`config`. Missing required config causes startup to fail with the generated
-environment variable name in the error message. Secret values should be marked with
-`"secret": true`.
+`plugin.json` declares `configuration.properties` so hosts can discover supported
+config keys, types, defaults, secret fields, and descriptions without executing
+plugin code. `required_config` is reserved for startup gates: Agent startup builds
+those required values from the reserved environment variable namespace first, then
+overlays explicit plugin `config`. Missing required config causes startup to fail
+with the generated environment variable name in the error message. Secret values
+should be marked with `"secret": true`.
 
 This plugin reserves the following environment variable namespace:
 

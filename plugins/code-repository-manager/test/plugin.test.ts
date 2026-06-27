@@ -1,4 +1,4 @@
-import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -19,7 +19,6 @@ import codeRepositoryManagerPlugin from "../src/index.ts";
 import { parseCodeRepositoryManagerConfig } from "../src/schema.ts";
 
 const packageRoot = fileURLToPath(new URL("../", import.meta.url));
-const repoRoot = fileURLToPath(new URL("../../../", import.meta.url));
 const tempDirs: string[] = [];
 
 afterEach(async () => {
@@ -37,6 +36,20 @@ describe("Code Repository Manager plugin", () => {
       version: manifest.version,
       tags: manifest.tags,
     });
+    expect(manifest.configuration.properties.map((property) => property.name)).toEqual([
+      "contextInjection.mode",
+      "repositories",
+      "auth.strategy",
+      "auth.token",
+      "auth.tokenEnv",
+      "auth.username",
+      "auth.privateKey",
+      "auth.privateKeyEnv",
+      "auth.knownHosts",
+      "auth.knownHostsEnv",
+      "auth.helper",
+      "auth.helperEnv",
+    ]);
     expect(codeRepositoryManagerPlugin.manifest).toEqual(manifest);
   });
 
@@ -240,26 +253,8 @@ async function createAgent(options: {
   });
 }
 
-async function createLoadablePluginSource(): Promise<string> {
-  const sourceDir = await createTempDir(repoRoot, "source");
-  await cp(packageRoot, sourceDir, {
-    recursive: true,
-    filter: (source) =>
-      !source.includes("/node_modules/") &&
-      !source.includes("/dist/") &&
-      !source.includes("/.turbo/"),
-  });
-
-  const manifestPath = resolve(sourceDir, "plugin.json");
-  const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as {
-    runtime: {
-      entry: string;
-    };
-  };
-  manifest.runtime.entry = "./src/index.ts";
-  await writeFile(manifestPath, JSON.stringify(manifest, null, 2), "utf8");
-
-  return sourceDir;
+async function createLoadablePluginSource(): Promise<ExpertAgentPluginUse> {
+  return { entry: codeRepositoryManagerPlugin };
 }
 
 async function createWorkspaceDir(): Promise<string> {

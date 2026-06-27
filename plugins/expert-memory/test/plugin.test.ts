@@ -1,4 +1,4 @@
-import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -16,7 +16,6 @@ import type { ExpertAgentPluginUse } from "@expertmesh/agent-core";
 import expertMemoryPlugin, { parseMemoryPluginConfig } from "../src/index.ts";
 
 const packageRoot = fileURLToPath(new URL("../", import.meta.url));
-const repoRoot = fileURLToPath(new URL("../../../", import.meta.url));
 const tempDirs: string[] = [];
 
 afterEach(async () => {
@@ -34,6 +33,15 @@ describe("Expert Memory plugin", () => {
       version: manifest.version,
       tags: manifest.tags,
     });
+    expect(manifest.configuration.properties.map((property) => property.name)).toEqual([
+      "enabled",
+      "useMemories",
+      "generateMemories",
+      "disableOnExternalContext",
+      "minRunOutputChars",
+      "summaryMaxBytes",
+      "memoryRoot",
+    ]);
     expect(expertMemoryPlugin.manifest).toEqual(manifest);
   });
 
@@ -426,26 +434,8 @@ async function createAgent(options: {
   });
 }
 
-async function createLoadablePluginSource(): Promise<string> {
-  const sourceDir = await createTempDir(repoRoot, "source");
-  await cp(packageRoot, sourceDir, {
-    recursive: true,
-    filter: (source) =>
-      !source.includes("/node_modules/") &&
-      !source.includes("/dist/") &&
-      !source.includes("/.turbo/"),
-  });
-
-  const manifestPath = resolve(sourceDir, "plugin.json");
-  const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as {
-    runtime: {
-      entry: string;
-    };
-  };
-  manifest.runtime.entry = "./src/index.ts";
-  await writeFile(manifestPath, JSON.stringify(manifest, null, 2), "utf8");
-
-  return sourceDir;
+async function createLoadablePluginSource(): Promise<ExpertAgentPluginUse> {
+  return { entry: expertMemoryPlugin };
 }
 
 async function createWorkspaceDir(): Promise<string> {

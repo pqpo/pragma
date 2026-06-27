@@ -50,6 +50,20 @@ const ExpertAgentPluginRequiredConfigSchema = z.looseObject({
   secret: z.boolean().default(false),
 });
 
+const ExpertAgentPluginConfigurationPropertySchema = z.looseObject({
+  name: z.string().min(1),
+  type: z.enum(["string", "number", "boolean", "object", "array"]),
+  description: z.string().min(1),
+  required: z.boolean().default(false),
+  secret: z.boolean().default(false),
+  default: z.unknown().optional(),
+  enum: z.array(z.union([z.string(), z.number(), z.boolean()])).optional(),
+});
+
+const ExpertAgentPluginConfigurationSchema = z.looseObject({
+  properties: z.array(ExpertAgentPluginConfigurationPropertySchema).default([]),
+});
+
 const ExpertAgentPluginManifestSchema = z.looseObject({
   schemaVersion: z.literal("expertmesh.plugin/v1"),
   id: z.string().min(1),
@@ -62,6 +76,7 @@ const ExpertAgentPluginManifestSchema = z.looseObject({
     entry: z.string().min(1),
   }),
   capabilities: z.array(ExpertAgentPluginCapabilitySchema).default([]),
+  configuration: ExpertAgentPluginConfigurationSchema.default({ properties: [] }),
   required_config: z.array(ExpertAgentPluginRequiredConfigSchema).default([]),
 });
 

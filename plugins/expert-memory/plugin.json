@@ -21,6 +21,59 @@
       "description": "Creates pending run-level memory candidates after eligible task submissions."
     }
   ],
+  "configuration": {
+    "properties": [
+      {
+        "name": "enabled",
+        "type": "boolean",
+        "description": "Enables or disables all Expert Memory plugin behavior.",
+        "required": false,
+        "default": true
+      },
+      {
+        "name": "useMemories",
+        "type": "boolean",
+        "description": "Exposes accepted memory context to the Agent when memory files exist.",
+        "required": false,
+        "default": true
+      },
+      {
+        "name": "generateMemories",
+        "type": "boolean",
+        "description": "Creates pending memory candidates after eligible task submissions.",
+        "required": false,
+        "default": true
+      },
+      {
+        "name": "disableOnExternalContext",
+        "type": "boolean",
+        "description": "Skips memory generation when task context marks externalContext=true.",
+        "required": false,
+        "default": true
+      },
+      {
+        "name": "minRunOutputChars",
+        "type": "number",
+        "description": "Minimum run output length required before creating a pending memory candidate.",
+        "required": false,
+        "default": 200
+      },
+      {
+        "name": "summaryMaxBytes",
+        "type": "number",
+        "description": "Maximum summary.md size read into Agent context.",
+        "required": false,
+        "default": 8192
+      },
+      {
+        "name": "memoryRoot",
+        "type": "string",
+        "description": "Workspace-relative directory used to store memory ledger, summary, tasks, and pending candidates.",
+        "required": false,
+        "default": ".expertmesh/agent/memories"
+      }
+    ]
+  },
   "permissions": {
     "memory": ["memory:read", "memory:write"],
     "filesystem": ["workspace:read", "workspace:write"]

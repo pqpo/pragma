@@ -5,25 +5,25 @@ import {
   createInMemoryContextStore,
 } from "@expertmesh/agent-core";
 import { createCloudPiRuntimeAdapter } from "@expertmesh/agent-runtime";
+import codeRepositoryManagerPlugin from "@expertmesh/plugin-code-repository-manager";
 
 import {
   printPluginLoadIssues,
   printRunHeader,
   printRunResult,
-} from "../harness/expert-agent-example-utils.ts";
-import { createExampleLoggerProvider } from "../harness/logger.ts";
+} from "./harness/expert-agent-example-utils.ts";
+import { createExampleLoggerProvider } from "./harness/logger.ts";
 import {
   createExpertAgentModelsConfig,
   formatModelConfig,
   readExampleModelConfig,
-} from "../harness/model-config.ts";
+} from "./harness/model-config.ts";
 import {
   defaultWorkspaceRoot,
   ensureWorkspaceDir,
   loadExamplesEnv,
-  resolveExamplePath,
-} from "../harness/paths.ts";
-import { printRunStream } from "../harness/stream-output.ts";
+} from "./harness/paths.ts";
+import { printRunStream } from "./harness/stream-output.ts";
 
 const workspace = defaultWorkspaceRoot;
 const defaultQuery = "Agent 管理了哪些仓库？";
@@ -83,7 +83,7 @@ const agent = await ExpertAgent.create({
   contextSystem,
   loggerProvider,
   models: createExpertAgentModelsConfig(modelConfig),
-  plugins: [resolveExamplePath("plugins/code-repository-manager")],
+  plugins: [{ entry: codeRepositoryManagerPlugin }],
 });
 
 const contextItems = await agent.listContext();
