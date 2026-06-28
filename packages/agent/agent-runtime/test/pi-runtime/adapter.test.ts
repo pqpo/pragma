@@ -1,9 +1,14 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 
 import { createAgentSession } from "@earendil-works/pi-coding-agent";
-import { ExpertAgent } from "@expertmesh/agent-core";
+import {
+  ContextSystem,
+  ExpertAgent,
+  FileSystemContextStore,
+  HOST_CONTEXT_NAMESPACE,
+} from "@expertmesh/agent-core";
 import type { ExpertAgentRunContext } from "@expertmesh/agent-core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -78,11 +83,7 @@ describe("createCloudPiRuntimeAdapter", () => {
       "PI session failed",
     );
 
-    expect(events).toEqual([
-      "beforeSessionCreate",
-      "beforeSessionDestroy",
-      "afterSessionDestroy",
-    ]);
+    expect(events).toEqual(["beforeSessionCreate", "beforeSessionDestroy", "afterSessionDestroy"]);
     expect(sessionContext).toEqual({
       source: {
         type: "system",
@@ -148,6 +149,7 @@ describe("createCloudPiRuntimeAdapter", () => {
       version: "0.0.0",
       scope: "test",
       workspace,
+      contextSystem: createHostContextSystem(new FileSystemContextStore({ rootDir: workspace })),
     });
     const restore = vi.fn();
     const sync = vi.fn();
@@ -260,12 +262,67 @@ describe("createCloudPiRuntimeAdapter", () => {
 
     await runtimeSession.abort();
   });
+
+  it("injects always-on context as a startup user message after PI session creation", async () => {
+    const workspace = await createTempDir();
+    await writeFile(`${workspace}/AGENTS.md`, "Follow the workspace playbook.", "utf8");
+    const agent = await ExpertAgent.create({
+      schemaVersion: "expertmesh.expert/v1",
+      id: "agent-1",
+      name: "Test Agent",
+      description: "Agent for runtime adapter tests.",
+      tags: ["test"],
+      version: "0.0.0",
+      scope: "test",
+      workspace,
+      contextSystem: createHostContextSystem(new FileSystemContextStore({ rootDir: workspace })),
+    });
+    const agentContext = await agent.buildContext();
+    expect(agentContext.startupMessages[0]?.content).toContain("Follow the workspace playbook.");
+    const piSession = createFakePiSession("pi-session-context");
+    vi.mocked(createAgentSession).mockResolvedValue({
+      extensionsResult: {
+        errors: [],
+        extensions: [],
+        runtime: {} as never,
+      },
+      session: piSession as never,
+    });
+
+    const runtimeSession = await createCloudPiRuntimeAdapter().createSession({ agent });
+
+    expect(piSession.messages).toEqual([
+      expect.objectContaining({
+        role: "user",
+        content: expect.stringContaining("Follow the workspace playbook."),
+      }),
+    ]);
+    expect((piSession.messages[0] as { readonly content?: string } | undefined)?.content).toContain(
+      "Always-on reference context",
+    );
+
+    await runtimeSession.abort();
+  });
 });
 
 async function createTempDir(): Promise<string> {
   const dir = await mkdtemp(resolve(tmpdir(), "expertmesh-pi-adapter-"));
   tempDirs.push(dir);
   return dir;
+}
+
+function createHostContextSystem(store: FileSystemContextStore): ContextSystem {
+  const contextSystem = new ContextSystem();
+  const result = contextSystem.register({
+    namespace: HOST_CONTEXT_NAMESPACE,
+    store,
+  });
+
+  if (!result.ok) {
+    throw new Error(result.error.message);
+  }
+
+  return contextSystem;
 }
 
 function createFakePiSession(sessionId: string) {

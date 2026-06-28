@@ -1,6 +1,7 @@
 import { AuthStorage, createAgentSession, ModelRegistry } from "@earendil-works/pi-coding-agent";
 import type { AgentSession, CreateAgentSessionOptions } from "@earendil-works/pi-coding-agent";
 import type {
+  ExpertAgentStartupMessage,
   ExpertAgentLogger,
   ExpertAgentRunContext,
   RuntimeAdapter,
@@ -102,8 +103,7 @@ export function createCloudPiRuntimeAdapter(
       let piSession: AgentSession | undefined;
       let mcpToolRegistry: McpToolRegistry | undefined;
       let lifecycle:
-        | ReturnType<typeof createQueuedAgentLifecycle<ExpertAgentRunContext>>
-        | undefined;
+        ReturnType<typeof createQueuedAgentLifecycle<ExpertAgentRunContext>> | undefined;
       let sessionWatcher: RuntimeSessionWatcher | undefined;
       let sessionStorageContext: RuntimeSessionStorageContext | undefined;
       let activeSessionSyncCallback: RuntimeSessionSyncCallback | undefined;
@@ -210,6 +210,7 @@ export function createCloudPiRuntimeAdapter(
 
         const { session } = await createAgentSession(sessionOptions);
         piSession = session;
+        appendStartupMessages(session, context.startupMessages);
         sessionStorageContext = createSessionStorageContext({
           agentId: agent.id,
           context: runContext,
@@ -293,6 +294,34 @@ export function createCloudPiRuntimeAdapter(
       }
     },
   };
+}
+
+function appendStartupMessages(
+  session: AgentSession,
+  messages: readonly ExpertAgentStartupMessage[],
+): void {
+  if (messages.length === 0) {
+    return;
+  }
+
+  const timestamp = Date.now();
+  const piMessages = messages.map((message, index) => ({
+    role: message.role,
+    content: message.content,
+    timestamp: timestamp + index,
+  }));
+  const mutableSession = session as unknown as {
+    readonly state?: { messages: unknown[] } | undefined;
+    messages: unknown[];
+  };
+  const nextMessages = [...mutableSession.messages, ...piMessages];
+
+  if (mutableSession.state !== undefined) {
+    mutableSession.state.messages = nextMessages;
+    return;
+  }
+
+  mutableSession.messages = nextMessages;
 }
 
 async function restoreRuntimeSession({
@@ -390,8 +419,7 @@ function createSessionInfo({
   readonly agentId: string;
   readonly piSession?: AgentSession | undefined;
   readonly lifecycle?:
-    | ReturnType<typeof createQueuedAgentLifecycle<ExpertAgentRunContext>>
-    | undefined;
+    ReturnType<typeof createQueuedAgentLifecycle<ExpertAgentRunContext>> | undefined;
 }) {
   return {
     systemSessionId,

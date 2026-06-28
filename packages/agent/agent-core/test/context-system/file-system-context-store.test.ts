@@ -8,11 +8,19 @@ import type {
   ExpertAgentContextStore,
   ExpertAgentStoredContextItemReadInput,
 } from "../../src/context-system/context-system.ts";
-import { AGENTS_CONTEXT_ID, ContextSystem, HOST_CONTEXT_NAMESPACE, ok } from "../../src/context-system/context-system.ts";
+import {
+  AGENTS_CONTEXT_ID,
+  ContextSystem,
+  HOST_CONTEXT_NAMESPACE,
+  ok,
+} from "../../src/context-system/context-system.ts";
 import { ExpertAgent } from "../../src/agent/expert-agent.ts";
 import type { FileSystemContextStoreCommandRunner } from "../../src/context-system/file-system-context-store.ts";
 import { FileSystemContextStore } from "../../src/context-system/file-system-context-store.ts";
-import { createInMemoryContextStore, InMemoryContextStore } from "../../src/context-system/in-memory-context-store.ts";
+import {
+  createInMemoryContextStore,
+  InMemoryContextStore,
+} from "../../src/context-system/in-memory-context-store.ts";
 
 const tempDirs: string[] = [];
 
@@ -61,10 +69,18 @@ describe("FileSystemContextStore", () => {
         },
       }),
     );
-    expect(context.systemPrompt).toContain("Always-on reference context");
+    expect(context.systemPrompt).toContain("Available context index");
     expect(context.systemPrompt).toContain(AGENTS_CONTEXT_ID);
-    expect(context.systemPrompt).toContain("Use direct instructions.");
-    expect(context.systemPrompt).toContain("Reference material only");
+    expect(context.systemPrompt).not.toContain("Use direct instructions.");
+    expect(context.systemPrompt).not.toContain("Reference material only");
+    expect(context.startupMessages).toEqual([
+      expect.objectContaining({
+        role: "user",
+        content: expect.stringContaining("Use direct instructions."),
+      }),
+    ]);
+    expect(context.startupMessages[0]?.content).toContain("Always-on reference context");
+    expect(context.startupMessages[0]?.content).toContain("Reference material only");
     expect(context.snapshot.contextRevisions[0]).toMatchObject({
       id: AGENTS_CONTEXT_ID,
     });
@@ -411,11 +427,16 @@ describe("ContextSystem", () => {
       id: "instructions.md",
       offset: 32,
     });
-    expect(context.systemPrompt).toContain("Alpha");
-    expect(context.systemPrompt).toContain("Context truncated");
-    expect(context.systemPrompt).toContain("lines 1-1");
-    expect(context.systemPrompt).toContain("Continue with read_expert_context start=32");
-    expect(context.systemPrompt).toContain("offset<=32 bytes");
+    expect(context.systemPrompt).toContain("instructions.md");
+    expect(context.systemPrompt).not.toContain("Alpha");
+    expect(context.systemPrompt).not.toContain("Context truncated");
+    expect(context.startupMessages[0]?.content).toContain("Alpha");
+    expect(context.startupMessages[0]?.content).toContain("Context truncated");
+    expect(context.startupMessages[0]?.content).toContain("lines 1-1");
+    expect(context.startupMessages[0]?.content).toContain(
+      "Continue with read_expert_context start=32",
+    );
+    expect(context.startupMessages[0]?.content).toContain("offset<=32 bytes");
     expect(context.snapshot).toMatchObject({
       releaseDigest: "context-agent@1.2.3",
       truncationReason: "always_on_context_budget_exceeded",
@@ -431,7 +452,7 @@ describe("ContextSystem", () => {
     });
   });
 
-  it("downgrades always-on context to model decision until context fits", async () => {
+  it("keeps always-on content out of system prompt and injects it as startup context", async () => {
     const store = new CountingContextStore({
       context: [
         {
@@ -466,28 +487,25 @@ describe("ContextSystem", () => {
       characterBudget: 1_000,
     });
 
-    expect(context.systemPrompt).toContain("Keep");
+    expect(context.systemPrompt).toContain("small.md");
+    expect(context.systemPrompt).toContain("large.md");
+    expect(context.systemPrompt).not.toContain("Keep");
     expect(context.systemPrompt).not.toContain("Drop this large always-on content.");
+    expect(context.startupMessages[0]?.content).toContain("Keep");
+    expect(context.startupMessages[0]?.content).toContain("Drop this large always-on content.");
     expect(context.context).toContainEqual(
       expect.objectContaining({
         id: "large.md",
         metadata: expect.objectContaining({
-          trigger: "model_decision",
+          trigger: "always_on",
         }),
       }),
     );
-    expect(context.snapshot).toMatchObject({
-      downgradedAlwaysOnContexts: [
-        {
-          namespace: HOST_CONTEXT_NAMESPACE,
-          id: "large.md",
-        },
-      ],
-      truncationReason: "always_on_context_budget_exceeded",
-    });
+    expect(context.snapshot.downgradedAlwaysOnContexts).toBeUndefined();
+    expect(context.snapshot.truncationReason).toBeUndefined();
   });
 
-  it("downgrades namespaced always-on context when prompt overhead exceeds the budget", async () => {
+  it("keeps namespaced always-on context indexed when prompt overhead exceeds the budget", async () => {
     const store = new CountingContextStore({
       context: [
         {
@@ -521,17 +539,13 @@ describe("ContextSystem", () => {
         namespace: HOST_CONTEXT_NAMESPACE,
         id: "brief.md",
         metadata: expect.objectContaining({
-          trigger: "model_decision",
+          trigger: "always_on",
         }),
       }),
     );
+    expect(context.startupMessages[0]?.content).toContain("A");
+    expect(context.snapshot.downgradedAlwaysOnContexts).toBeUndefined();
     expect(context.snapshot).toMatchObject({
-      downgradedAlwaysOnContexts: [
-        {
-          namespace: HOST_CONTEXT_NAMESPACE,
-          id: "brief.md",
-        },
-      ],
       truncationReason: "context_budget_exceeded",
     });
   });

@@ -1,8 +1,5 @@
 import type { IExpertAgent } from "./expert-agent.ts";
-import {
-  HOST_CONTEXT_NAMESPACE,
-  isSameContextItemReference,
-} from "../context-system/context-system.ts";
+import { HOST_CONTEXT_NAMESPACE } from "../context-system/context-system.ts";
 import type {
   ContextTrustLevel,
   ContextSystem,
@@ -15,8 +12,14 @@ import type { SubAgentDefinition } from "../subagents/sub-agent.ts";
 
 export interface ExpertAgentContext {
   readonly systemPrompt: string;
+  readonly startupMessages: readonly ExpertAgentStartupMessage[];
   readonly context: readonly ExpertAgentContextItemSummary[];
   readonly snapshot: ContextSnapshot;
+}
+
+export interface ExpertAgentStartupMessage {
+  readonly role: "user";
+  readonly content: string;
 }
 
 export interface ContextAssemblerOptions {
@@ -78,19 +81,15 @@ export class ContextManager {
     const alwaysOnContexts = await this.loadAlwaysOnContexts(contextSummaries, runContext, {
       contextReadByteBudget,
     });
-    const assembled = assembleAlwaysOnContexts(alwaysOnContexts, {
-      characterBudget: budget,
-    });
     const fitted = this.fitSystemPromptToBudget({
-      alwaysOnContexts: assembled.context,
       budget,
       contextError: indexResult.ok ? undefined : indexResult.error.message,
       contextSummaries,
-      downgradedContexts: assembled.downgradedContexts,
     });
     const truncationReason =
-      assembled.truncationReason ??
-      (fitted.promptWasOverBudget ? "context_budget_exceeded" : undefined);
+      (alwaysOnContexts.some((context) => context.contentRange?.truncated === true)
+        ? "always_on_context_budget_exceeded"
+        : undefined) ?? (fitted.promptWasOverBudget ? "context_budget_exceeded" : undefined);
     const snapshot: ContextSnapshot = {
       releaseDigest: `${this.agent.id}@${this.agent.version}`,
       contextRevisions: contextSummaries.map((context) => ({
@@ -99,83 +98,46 @@ export class ContextManager {
         ...(context.revision === undefined ? {} : { revision: context.revision }),
         ...(context.etag === undefined ? {} : { etag: context.etag }),
       })),
-      retrievedChunks: createRetrievedChunks(fitted.alwaysOnContexts),
+      retrievedChunks: createRetrievedChunks(alwaysOnContexts),
       trustLevel: options.trustLevel ?? "workspace",
       tokenBudget: options.tokenBudget ?? budget,
-      ...(fitted.downgradedContexts.length === 0
-        ? {}
-        : { downgradedAlwaysOnContexts: fitted.downgradedContexts }),
       ...(truncationReason === undefined ? {} : { truncationReason }),
     };
 
     return {
       systemPrompt: fitted.systemPrompt,
+      startupMessages: createAlwaysOnStartupMessages(alwaysOnContexts),
       context: fitted.contextSummaries,
       snapshot,
     };
   }
 
   private fitSystemPromptToBudget(context: {
-    readonly alwaysOnContexts: readonly ExpertAgentContextItem[];
     readonly budget: number;
     readonly contextError?: string | undefined;
     readonly contextSummaries: readonly ExpertAgentContextItemSummary[];
-    readonly downgradedContexts: readonly ExpertAgentContextItemReference[];
   }): {
-    readonly alwaysOnContexts: readonly ExpertAgentContextItem[];
     readonly contextSummaries: readonly ExpertAgentContextItemSummary[];
-    readonly downgradedContexts: readonly ExpertAgentContextItemReference[];
     readonly promptWasOverBudget: boolean;
     readonly systemPrompt: string;
   } {
-    let alwaysOnContexts = [...context.alwaysOnContexts];
-    const downgradedContexts = [...context.downgradedContexts];
-    let contextSummaries = downgradeAlwaysOnSummaries(
-      context.contextSummaries,
-      downgradedContexts,
-    );
-    let systemPrompt = this.buildSystemPrompt({
-      alwaysOnContexts,
+    const systemPrompt = this.buildSystemPrompt({
       contextError: context.contextError,
-      context: contextSummaries,
+      context: context.contextSummaries,
     });
     const promptWasOverBudget = systemPrompt.length > context.budget;
 
-    while (systemPrompt.length > context.budget && alwaysOnContexts.length > 0) {
-      const candidate = chooseDowngradeCandidate(alwaysOnContexts, new Set(alwaysOnContexts));
-
-      if (candidate === undefined) {
-        break;
-      }
-
-      alwaysOnContexts = alwaysOnContexts.filter((context) => context !== candidate);
-      downgradedContexts.push(toContextItemReference(candidate));
-      contextSummaries = downgradeAlwaysOnSummaries(context.contextSummaries, downgradedContexts);
-      systemPrompt = this.buildSystemPrompt({
-        alwaysOnContexts,
-        contextError: context.contextError,
-        context: contextSummaries,
-      });
-    }
-
     return {
-      alwaysOnContexts,
-      contextSummaries,
-      downgradedContexts,
+      contextSummaries: context.contextSummaries,
       promptWasOverBudget,
       systemPrompt,
     };
   }
 
   private buildSystemPrompt(context: {
-    readonly alwaysOnContexts: readonly ExpertAgentContextItem[];
     readonly contextError?: string | undefined;
     readonly context: readonly ExpertAgentContextItemSummary[];
   }): string {
-    const modelDecisionContexts = context.context.filter(
-      (context) => context.metadata.trigger === "model_decision",
-    );
-
     const sections = [
       `You are ${this.agent.name}.`,
       this.agent.description,
@@ -186,8 +148,7 @@ export class ContextManager {
       context.contextError === undefined
         ? undefined
         : `Context store issue: ${context.contextError}`,
-      formatContextsSection("Always-on reference context", context.alwaysOnContexts, true),
-      formatContextsSection("Available context", modelDecisionContexts, false),
+      formatContextsSection("Available context index", context.context, false),
       formatSubAgentsSection(this.agent),
     ];
 
@@ -215,46 +176,6 @@ export class ContextManager {
 
     return loaded.filter((result) => result.ok).map((result) => withTruncationNotice(result.value));
   }
-}
-
-function assembleAlwaysOnContexts(
-  items: readonly ExpertAgentContextItem[],
-  options: {
-    readonly characterBudget: number;
-  },
-): {
-  readonly context: readonly ExpertAgentContextItem[];
-  readonly chunks: readonly ContextRetrievedChunk[];
-  readonly downgradedContexts: readonly ExpertAgentContextItemReference[];
-  readonly truncationReason?: string | undefined;
-} {
-  const budget = Math.max(0, Math.trunc(options.characterBudget));
-  const selected = new Set(items);
-  const downgradedContexts: ExpertAgentContextItemReference[] = [];
-
-  while (sumContextContentLength(items, selected) > budget && selected.size > 0) {
-    const item = chooseDowngradeCandidate(items, selected);
-
-    if (item === undefined) {
-      break;
-    }
-
-    selected.delete(item);
-    downgradedContexts.push(toContextItemReference(item));
-  }
-
-  const assembled = items.filter((item) => selected.has(item));
-  const chunks = createRetrievedChunks(assembled);
-  const truncated = assembled.some((context) => context.contentRange?.truncated === true);
-
-  return {
-    context: assembled,
-    chunks,
-    downgradedContexts,
-    ...(truncated || downgradedContexts.length > 0
-      ? { truncationReason: "always_on_context_budget_exceeded" }
-      : {}),
-  };
 }
 
 function withTruncationNotice(context: ExpertAgentContextItem): ExpertAgentContextItem {
@@ -300,58 +221,6 @@ function createRetrievedChunks(
   });
 }
 
-function downgradeAlwaysOnSummaries(
-  summaries: readonly ExpertAgentContextItemSummary[],
-  downgradedContexts: readonly ExpertAgentContextItemReference[],
-): readonly ExpertAgentContextItemSummary[] {
-  return summaries.map((summary) => {
-    if (!downgradedContexts.some((context) => isSameContextItemReference(context, summary))) {
-      return summary;
-    }
-
-    return {
-      ...summary,
-      metadata: {
-        ...summary.metadata,
-        trigger: "model_decision",
-      },
-    };
-  });
-}
-
-function sumContextContentLength(
-  items: readonly ExpertAgentContextItem[],
-  selected: ReadonlySet<ExpertAgentContextItem>,
-): number {
-  return items.reduce(
-    (sum, item) => sum + (selected.has(item) ? item.content.length : 0),
-    0,
-  );
-}
-
-function chooseDowngradeCandidate(
-  items: readonly ExpertAgentContextItem[],
-  selected: ReadonlySet<ExpertAgentContextItem>,
-): ExpertAgentContextItem | undefined {
-  return items
-    .filter((item) => selected.has(item))
-    .sort((left, right) => {
-      const agentsPriority = Number(left.id === "AGENTS.md") - Number(right.id === "AGENTS.md");
-
-      if (agentsPriority !== 0) {
-        return agentsPriority;
-      }
-
-      const sizeComparison = right.content.length - left.content.length;
-
-      if (sizeComparison !== 0) {
-        return sizeComparison;
-      }
-
-      return right.id.localeCompare(left.id);
-    })[0];
-}
-
 function createRetrievedChunk(
   context: ExpertAgentContextItem,
   startOffset: number,
@@ -366,6 +235,23 @@ function createRetrievedChunk(
     endOffset,
     truncated,
   };
+}
+
+function createAlwaysOnStartupMessages(
+  contexts: readonly ExpertAgentContextItem[],
+): readonly ExpertAgentStartupMessage[] {
+  const content = formatContextsSection("Always-on reference context", contexts, true);
+
+  if (content === undefined) {
+    return [];
+  }
+
+  return [
+    {
+      role: "user",
+      content,
+    },
+  ];
 }
 
 function formatSubAgentsSection(agent: IExpertAgent): string | undefined {
@@ -461,15 +347,6 @@ function formatContextsSection(
   });
 
   return [title, ...contextSections].join("\n");
-}
-
-function toContextItemReference(
-  context: ExpertAgentContextItemReference,
-): ExpertAgentContextItemReference {
-  return {
-    ...(context.namespace === undefined ? {} : { namespace: context.namespace }),
-    id: context.id,
-  };
 }
 
 function indent(value: string, prefix: string): string {
