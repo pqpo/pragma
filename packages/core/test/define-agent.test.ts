@@ -1,6 +1,7 @@
 import type {
   RuntimeAdapter,
   RuntimeAgentSession,
+  RuntimeCreateSessionRequest,
   RuntimeSessionInfo,
   RuntimeSubmitHandle,
 } from "@expertmesh/core";
@@ -35,7 +36,7 @@ describe("defineAgent", () => {
     expect(context.systemPrompt).toContain("Prefer small, verified changes.");
   });
 
-  it("runs through the selected runtime registry", async () => {
+  it("creates sessions through the selected runtime registry", async () => {
     const runtime = createFakeRuntime({
       id: "test-runtime",
       output: {
@@ -54,20 +55,40 @@ describe("defineAgent", () => {
       workspace: "/tmp/expertmesh-loop-test",
     });
 
-    const result = await agent.run("Implement login", {
+    const session = await agent.createSession({
       runtime: "test-runtime",
       runtimes: createRuntimeRegistry({
         runtimes: [runtime],
         defaultRuntime: "test-runtime",
       }),
+      systemSessionId: "system-session-from-agent",
+      runtimeSession: {
+        type: "fake-runtime",
+        id: "runtime-session-from-agent",
+      },
+    });
+    const handle = session.submit({
+      query: "Implement login",
       output: z.object({
         summary: z.string(),
         changedFiles: z.array(z.string()),
         testsPassed: z.boolean(),
       }),
     });
+    const result = await handle.result;
 
-    expect(result.output).toEqual({
+    expect(handle.runId).toBe("run-1");
+    expect(runtime.requests).toEqual([
+      expect.objectContaining({
+        agent,
+        systemSessionId: "system-session-from-agent",
+        runtimeSession: {
+          type: "fake-runtime",
+          id: "runtime-session-from-agent",
+        },
+      }),
+    ]);
+    expect(result.result.output).toEqual({
       summary: "implemented",
       changedFiles: ["src/index.ts"],
       testsPassed: true,
@@ -78,8 +99,11 @@ describe("defineAgent", () => {
 function createFakeRuntime(options: {
   readonly id: string;
   readonly output: unknown;
-}): RuntimeAdapter {
+}): RuntimeAdapter & { readonly requests: RuntimeCreateSessionRequest[] } {
+  const requests: RuntimeCreateSessionRequest[] = [];
+
   return {
+    requests,
     descriptor: {
       id: options.id,
       kind: "fake-runtime",
@@ -88,7 +112,8 @@ function createFakeRuntime(options: {
         targets: ["agent"],
       },
     },
-    async createSession() {
+    async createSession(request) {
+      requests.push(request);
       return createFakeSession(options.output);
     },
   };

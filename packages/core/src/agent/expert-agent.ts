@@ -35,12 +35,14 @@ import type {
 import { isExpertAgentPluginEntryUse, loadExpertAgentPlugins } from "../plugins/plugin-loader.ts";
 import type { ExpertAgentRunContext } from "../runtime/run-context.ts";
 import { createExpertAgentRunContext } from "../runtime/run-context.ts";
-import type { RuntimeOutputSchema, RuntimeRunResult } from "../runtime/runtime-adapter.ts";
-import type { RuntimeStreamEvent } from "../runtime/stream-events.ts";
+import type {
+  RuntimeAdapter,
+  RuntimeAgentSession,
+  RuntimeCreateSessionRequest,
+} from "../runtime/runtime-adapter.ts";
 import type { SubAgentRegistry } from "../subagents/sub-agent.ts";
 import type {
   ExpertAgentManagedTool,
-  ExpertAgentHumanInteractionHandler,
   ExpertAgentToolApproval,
   ExpertAgentToolCallResult,
 } from "../tools/managed-tool.ts";
@@ -111,51 +113,19 @@ export interface IExpertAgentModelsConfig {
   readonly providers: readonly IExpertAgentModelProviderConfig[];
 }
 
-export interface IExpertAgentRunRequest<TInput = string> {
-  readonly task: string;
-  readonly input: TInput;
-  readonly context?: ExpertAgentRunContext | undefined;
-}
-
 export interface IExpertAgentRunResult<TOutput = string> {
   readonly output: TOutput;
   readonly usage?: AgentMessageUsage | undefined;
 }
 
-export type ExpertAgentRunFunction<TInput = string, TOutput = string> = (
-  request: IExpertAgentRunRequest<TInput>,
-) => Promise<IExpertAgentRunResult<TOutput>>;
-
 export interface ExpertAgentRuntimeRegistry {
-  readonly resolve: (runtimeId?: string | undefined) => {
-    readonly createSession: (request: {
-      readonly agent: ExpertAgent;
-      readonly context?: ExpertAgentRunContext | undefined;
-      readonly humanInteractionHandler?: ExpertAgentHumanInteractionHandler | undefined;
-    }) => Promise<{
-      readonly submit: <TSubmitOutput = string>(submission: {
-        readonly query: string;
-        readonly modelName?: string | undefined;
-        readonly output?: RuntimeOutputSchema<TSubmitOutput> | undefined;
-        readonly outputRetryLimit?: number | undefined;
-      }) => {
-        readonly events: AsyncIterable<RuntimeStreamEvent>;
-        readonly result: Promise<RuntimeRunResult<TSubmitOutput>>;
-      };
-      readonly abort: () => Promise<void>;
-    }>;
-  };
+  readonly resolve: (runtimeId?: string | undefined) => RuntimeAdapter;
 }
 
-export interface ExpertAgentRunOptions<TOutput = string> {
+export interface ExpertAgentCreateSessionOptions
+  extends Omit<RuntimeCreateSessionRequest, "agent"> {
   readonly runtime?: string | undefined;
   readonly runtimes?: ExpertAgentRuntimeRegistry | undefined;
-  readonly output?: RuntimeOutputSchema<TOutput> | undefined;
-  readonly outputRetryLimit?: number | undefined;
-  readonly modelName?: string | undefined;
-  readonly context?: ExpertAgentRunContext | undefined;
-  readonly humanInteractionHandler?: ExpertAgentHumanInteractionHandler | undefined;
-  readonly onEvent?: ((event: RuntimeStreamEvent) => void | Promise<void>) | undefined;
 }
 
 export type ExpertAgentRuntimeRegistryFactory = () => ExpertAgentRuntimeRegistry;
@@ -339,44 +309,19 @@ export class ExpertAgent implements IExpertAgent {
     });
   }
 
-  async run<TOutput = string>(
-    input: string,
-    options: ExpertAgentRunOptions<TOutput> = {},
-  ): Promise<IExpertAgentRunResult<TOutput>> {
+  async createSession(
+    options: ExpertAgentCreateSessionOptions = {},
+  ): Promise<RuntimeAgentSession> {
     const runtimes = options.runtimes ?? (await createDefaultRuntimeRegistry());
     const runtime = runtimes.resolve(options.runtime);
-    const session = await runtime.createSession({
+    const request = { ...options };
+    delete request.runtime;
+    delete request.runtimes;
+
+    return await runtime.createSession({
       agent: this,
-      ...(options.context === undefined ? {} : { context: options.context }),
-      ...(options.humanInteractionHandler === undefined
-        ? {}
-        : { humanInteractionHandler: options.humanInteractionHandler }),
+      ...request,
     });
-
-    try {
-      const run = session.submit({
-        query: input,
-        ...(options.modelName === undefined ? {} : { modelName: options.modelName }),
-        ...(options.output === undefined ? {} : { output: options.output }),
-        ...(options.outputRetryLimit === undefined
-          ? {}
-          : { outputRetryLimit: options.outputRetryLimit }),
-      });
-      const events = drainRuntimeEvents(run.events, options.onEvent);
-      let result: RuntimeRunResult<TOutput>;
-
-      try {
-        result = await run.result;
-        await events;
-      } catch (error) {
-        await events.catch(() => undefined);
-        throw error;
-      }
-
-      return result.result;
-    } finally {
-      await session.abort();
-    }
   }
 
   async buildContext(
@@ -430,20 +375,11 @@ export class ExpertAgent implements IExpertAgent {
 async function createDefaultRuntimeRegistry(): Promise<ExpertAgentRuntimeRegistry> {
   if (defaultRuntimeRegistryFactory === undefined) {
     throw new Error(
-      "No default runtime registry is configured. Import @expertmesh/core or pass runtimes to agent.run().",
+      "No default runtime registry is configured. Import @expertmesh/core or pass runtimes to agent.createSession().",
     );
   }
 
   return defaultRuntimeRegistryFactory();
-}
-
-async function drainRuntimeEvents(
-  events: AsyncIterable<RuntimeStreamEvent>,
-  onEvent: ((event: RuntimeStreamEvent) => void | Promise<void>) | undefined,
-): Promise<void> {
-  for await (const event of events) {
-    await onEvent?.(event);
-  }
 }
 
 function applyToolApprovals(
