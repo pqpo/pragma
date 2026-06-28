@@ -20,7 +20,7 @@ export async function printAgentContextSummary(agent: ExpertAgent): Promise<void
 }
 
 export function printRunHeader(agent: ExpertAgent, model: string, query: string): void {
-  console.log(`Running ${agent.displayName} with ${model}`);
+  console.log(`Running ${agent.name} with ${model}`);
   console.log(`Workspace: ${agent.workspace}`);
   console.log(`Task: ${query}`);
   console.log("");

@@ -38,6 +38,7 @@ const CLOUD_PI_RUNTIME_DESCRIPTOR = {
   kind: "cloud-pi-agent" as const,
   displayName: "Cloud PI Agent",
   capabilities: {
+    targets: ["agent"],
     executionLocations: ["cloud"],
     supportsAbort: true,
     supportsMcp: true,
@@ -51,9 +52,18 @@ export function createCloudPiRuntimeAdapter(
 ): RuntimeAdapter {
   let sessionSyncCallback = options.sessionSyncCallback;
   let sessionRestoreHandler = options.sessionRestoreHandler;
+  const descriptor = {
+    ...CLOUD_PI_RUNTIME_DESCRIPTOR,
+    ...options.descriptor,
+    kind: options.descriptor?.kind ?? CLOUD_PI_RUNTIME_DESCRIPTOR.kind,
+    capabilities: {
+      ...CLOUD_PI_RUNTIME_DESCRIPTOR.capabilities,
+      ...options.descriptor?.capabilities,
+    },
+  };
 
   return {
-    descriptor: CLOUD_PI_RUNTIME_DESCRIPTOR,
+    descriptor,
     setSessionSyncCallback(callback) {
       sessionSyncCallback = callback;
     },
@@ -76,7 +86,7 @@ export function createCloudPiRuntimeAdapter(
       const logger = createExpertAgentLogger(loggerProvider, {
         component: "runtime-adapter",
         agentId: agent.id,
-        runtimeId: CLOUD_PI_RUNTIME_DESCRIPTOR.id,
+        runtimeId: descriptor.id,
       });
       logger.info("Creating runtime session", {
         systemSessionId,
@@ -181,7 +191,7 @@ export function createCloudPiRuntimeAdapter(
             cwd,
             agent.id,
             runtimeSession,
-            CLOUD_PI_RUNTIME_DESCRIPTOR.kind,
+            descriptor.kind,
           ),
         };
         const defaultModel = resolveRequiredRuntimeModel(
@@ -221,11 +231,11 @@ export function createCloudPiRuntimeAdapter(
         const sessionInfo = {
           systemSessionId,
           runtimeSession: {
-            type: CLOUD_PI_RUNTIME_DESCRIPTOR.kind,
+            type: descriptor.kind,
             id: session.sessionId,
           },
           agentId: agent.id,
-          runtime: CLOUD_PI_RUNTIME_DESCRIPTOR,
+          runtime: descriptor,
         };
 
         await dispatchExpertAgentHook(agent.hooks, "afterSessionCreate", {

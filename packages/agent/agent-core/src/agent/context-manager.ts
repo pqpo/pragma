@@ -177,8 +177,9 @@ export class ContextManager {
     );
 
     const sections = [
-      `You are ${this.agent.displayName}.`,
+      `You are ${this.agent.name}.`,
       this.agent.description,
+      this.agent.instructions,
       `Expert ID: ${this.agent.id}`,
       `Scope: ${this.agent.scope}`,
       `Tags: ${this.agent.tags.join(", ")}`,

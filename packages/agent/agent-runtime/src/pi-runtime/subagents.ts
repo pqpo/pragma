@@ -63,7 +63,6 @@ export async function launchPiSubAgent(
     agentDir: getAgentDir(),
     appendSystemPromptOverride: (base) => [
       ...base,
-      request.parentSystemPrompt,
       request.systemPrompt,
     ],
   });

@@ -82,7 +82,7 @@ export function createSubAgentTool(
 
       const systemPrompt = resolveSubAgentSystemPrompt(definition, {
         parentAgentId: options.agent.id,
-        parentDisplayName: options.agent.displayName,
+        parentName: options.agent.name,
         subAgentType: definition.agentType,
       });
 

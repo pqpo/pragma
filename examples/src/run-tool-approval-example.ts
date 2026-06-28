@@ -33,7 +33,7 @@ const modelConfig = readExampleModelConfig();
 const agent = await ExpertAgent.create({
   schemaVersion: "expertmesh.expert/v1",
   id: "tool-approval-example-expert",
-  displayName: "Tool Approval Example Expert",
+  name: "Tool Approval Example Expert",
   description: "Demonstrates approval-required tools and askUserQuestion.",
   tags: ["example", "approval"],
   version: "0.0.0",

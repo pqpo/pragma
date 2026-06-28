@@ -53,7 +53,7 @@ describe("createCloudPiRuntimeAdapter", () => {
     const agent = await ExpertAgent.create({
       schemaVersion: "expertmesh.expert/v1",
       id: "agent-1",
-      displayName: "Test Agent",
+      name: "Test Agent",
       description: "Agent for runtime adapter tests.",
       tags: ["test"],
       version: "0.0.0",
@@ -97,7 +97,7 @@ describe("createCloudPiRuntimeAdapter", () => {
     const agent = await ExpertAgent.create({
       schemaVersion: "expertmesh.expert/v1",
       id: "agent-1",
-      displayName: "Test Agent",
+      name: "Test Agent",
       description: "Agent for runtime adapter tests.",
       tags: ["test"],
       version: "0.0.0",
@@ -142,7 +142,7 @@ describe("createCloudPiRuntimeAdapter", () => {
     const agent = await ExpertAgent.create({
       schemaVersion: "expertmesh.expert/v1",
       id: "agent-1",
-      displayName: "Test Agent",
+      name: "Test Agent",
       description: "Agent for runtime adapter tests.",
       tags: ["test"],
       version: "0.0.0",
@@ -200,6 +200,7 @@ describe("createCloudPiRuntimeAdapter", () => {
           supportsMcp: true,
           supportsStreaming: true,
           supportsSubAgents: true,
+          targets: ["agent"],
         },
         displayName: "Cloud PI Agent",
         id: "cloud-pi-agent",
@@ -225,7 +226,7 @@ describe("createCloudPiRuntimeAdapter", () => {
     const agent = await ExpertAgent.create({
       schemaVersion: "expertmesh.expert/v1",
       id: "agent-1",
-      displayName: "Test Agent",
+      name: "Test Agent",
       description: "Agent for runtime adapter tests.",
       tags: ["test"],
       version: "0.0.0",

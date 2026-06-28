@@ -145,9 +145,8 @@ async function createExampleAgent(workspace: string): Promise<ExpertAgent> {
   await ensureWorkspaceDir(workspace);
 
   return ExpertAgent.create({
-    schemaVersion: "expertmesh.expert/v1",
     id: agentId,
-    displayName: "Session Storage Example Expert",
+    name: "Session Storage Example Expert",
     description: "Demonstrates runtime session sync and restore across workspace changes.",
     tags: ["example", "session-storage"],
     version: "0.0.0",

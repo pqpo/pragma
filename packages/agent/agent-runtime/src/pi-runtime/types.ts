@@ -1,6 +1,7 @@
 import type {
   ExpertAgentLogger,
   ExpertAgentLoggerProvider,
+  RuntimeAdapterDescriptor,
   RuntimeSessionRestoreHandler,
   RuntimeSessionSyncCallback,
   RuntimeEventEmitter,
@@ -8,6 +9,7 @@ import type {
 } from "@expertmesh/agent-core";
 
 export interface CloudPiRuntimeAdapterOptions {
+  readonly descriptor?: Partial<RuntimeAdapterDescriptor> | undefined;
   readonly loggerProvider?: ExpertAgentLoggerProvider | undefined;
   readonly outputParser?: <TOutput>(text: string) => TOutput;
   readonly outputRetryLimit?: number | undefined;

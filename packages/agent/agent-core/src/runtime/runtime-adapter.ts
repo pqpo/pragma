@@ -16,12 +16,15 @@ export type RuntimeAdapterKind = "cloud-pi-agent" | (string & {});
 export type RuntimeExecutionLocation = "cloud" | "local" | "self_hosted" | (string & {});
 
 export interface RuntimeAdapterCapabilities {
+  readonly targets?: readonly RuntimeTarget[] | undefined;
   readonly executionLocations?: readonly RuntimeExecutionLocation[] | undefined;
   readonly supportsStreaming?: boolean | undefined;
   readonly supportsAbort?: boolean | undefined;
   readonly supportsSubAgents?: boolean | undefined;
   readonly supportsMcp?: boolean | undefined;
 }
+
+export type RuntimeTarget = "agent" | "code" | "subloop" | "operator" | (string & {});
 
 export interface RuntimeAdapterDescriptor {
   readonly id: string;

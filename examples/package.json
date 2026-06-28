@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "start:basic": "tsx src/run-expert-agent.ts",
+    "start:minimal-agent": "tsx src/run-minimal-agent-api.ts",
     "start:approval": "tsx src/run-tool-approval-example.ts",
     "start:code-repositories": "tsx src/run-code-repository-manager-plugin.ts",
     "start:session-storage": "tsx src/run-session-storage-example.ts",
@@ -17,10 +18,12 @@
   },
   "dependencies": {
     "@expertmesh/agent-core": "workspace:*",
+    "@expertmesh/loop": "workspace:*",
     "@expertmesh/agent-runtime": "workspace:*",
     "@expertmesh/plugin-code-repository-manager": "workspace:*",
     "cac": "^7.0.0",
-    "dotenv": "latest"
+    "dotenv": "latest",
+    "zod": "latest"
   },
   "devDependencies": {
     "@expertmesh/tsconfig": "workspace:*",

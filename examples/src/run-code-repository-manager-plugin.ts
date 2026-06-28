@@ -74,7 +74,7 @@ contextSystem.register({
 const agent = await ExpertAgent.create({
   schemaVersion: "expertmesh.expert/v1",
   id: "code-repository-plugin-example-agent",
-  displayName: "Code Repository Plugin Example Agent",
+  name: "Code Repository Plugin Example Agent",
   description: "Demonstrates how to attach the code repository manager plugin to ExpertAgent.",
   tags: ["example", "plugin", "repository"],
   version: "0.0.0",

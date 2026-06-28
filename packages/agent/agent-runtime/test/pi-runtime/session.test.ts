@@ -425,7 +425,7 @@ async function createTestAgent(): Promise<ExpertAgent> {
   return await ExpertAgent.create({
     schemaVersion: "expertmesh.expert/v1",
     id: "agent-1",
-    displayName: "Test Agent",
+    name: "Test Agent",
     description: "Test agent",
     tags: [],
     version: "0.0.0",

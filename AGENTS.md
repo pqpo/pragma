@@ -104,6 +104,7 @@ tsconfig.base.json
 @expertmesh/database
 @expertmesh/agent-core
 @expertmesh/agent-runtime
+@expertmesh/loop
 @expertmesh/eslint-config
 @expertmesh/tsconfig
 ```
@@ -463,9 +464,9 @@ RuntimeAdapter
 
 ExpertAgent API 设计要求：
 
-- 优先用构造函数表达必需依赖、配置和不变量，不要额外提供与构造函数等价的 `create()` 静态工厂。
-- 只有在确实需要异步初始化、实例缓存复用、复杂命名构造语义或隐藏具体实现类型时，才允许引入工厂方法；不能为了“以后可能变化”或向前兼容保留一层空包装。
-- 如果发现已有 `create()` 只是转调构造函数，应删除该工厂并同步更新调用方、类型和文档。
+- 保留 `ExpertAgent.create()` 作为标准创建入口，负责异步插件加载、inline plugin entry 合并、日志初始化和实例归一化。
+- Loop SDK 的 `defineAgent()` 只是 `ExpertAgent.create()` 的声明语法糖，负责把 `name` 映射为 `displayName` 并补齐 schemaVersion；不要在 `defineAgent()` 下再实现独立 Agent 包装层。
+- Agent 运行能力优先加到 `ExpertAgent`，不要只放在 Loop SDK 包装层中。
 
 不要引入具体 Claude SDK、Codex SDK、MCP、Playbook、HTTP Controller、数据库实现或 Server 应用层实现。
 

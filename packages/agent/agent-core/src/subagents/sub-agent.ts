@@ -2,7 +2,7 @@ export type SubAgentModel = "inherit" | (string & {});
 
 export interface SubAgentPromptContext {
   readonly parentAgentId: string;
-  readonly parentDisplayName: string;
+  readonly parentName: string;
   readonly subAgentType: string;
 }
 

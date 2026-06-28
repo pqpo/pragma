@@ -34,7 +34,7 @@ export async function printRunStream(run: RuntimeSubmitHandle<unknown>): Promise
   printer.finish();
 }
 
-class StreamEventPrinter {
+export class StreamEventPrinter {
   private section: StreamSection = "none";
   private activeToolDelta: string | undefined;
   private streamLineStart = true;

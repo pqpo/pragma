@@ -25,9 +25,8 @@ await ensureWorkspaceDir(workspace);
 const modelConfig = readExampleModelConfig();
 const loggerProvider = createExampleLoggerProvider();
 const agent = await ExpertAgent.create({
-  schemaVersion: "expertmesh.expert/v1",
   id: "basic-example-expert",
-  displayName: "Basic Example Expert",
+  name: "Basic Example Expert",
   description: "A minimal ExpertAgent instance used by the examples package.",
   tags: ["example"],
   version: "0.0.0",

@@ -422,7 +422,7 @@ async function createAgent(options: {
   return await ExpertAgent.create({
     schemaVersion: "expertmesh.expert/v1",
     id: "memory-agent",
-    displayName: "Memory Agent",
+    name: "Memory Agent",
     description: "Test agent",
     tags: ["test"],
     version: "0.0.0",

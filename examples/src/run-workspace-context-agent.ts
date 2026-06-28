@@ -54,7 +54,7 @@ const modelConfig = readExampleModelConfig();
 const agent = await ExpertAgent.create({
   schemaVersion: "expertmesh.expert/v1",
   id: "workspace-context-test-expert",
-  displayName: "Workspace Context Test Expert",
+  name: "Workspace Context Test Expert",
   description:
     "A test ExpertAgent that exercises workspace access, always-on AGENTS.md context, and memory-backed context tools.",
   tags: ["example", "workspace", "context"],
