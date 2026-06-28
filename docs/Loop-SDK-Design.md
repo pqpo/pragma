@@ -851,7 +851,564 @@ Desktop 本地权限与连接桥接      -> apps/desktop + packages/core/src/loc
 
 ------------------------------------------------------------------------
 
-# 8. Channel
+# 8. Loop 执行层技术方案
+
+Loop SDK 的用户侧 API 负责声明“要做什么”，实现层负责把 `CompiledLoop` 变成可恢复、可观测、可替换 Runtime 的执行过程。
+
+实现层需要避免把调度、状态、通信、执行细节混在一个对象里。推荐拆成三组核心事实边界：
+
+``` text
+Mailbox                传递“发生了什么”
+StateManager           保存“现在是什么”
+TaskManager            决定“接下来做什么”，以及“单个任务怎么执行”
+```
+
+`TaskManager` 同时负责 Loop run 编排和单个 task run 生命周期。内部可以拆私有模块，但公开接口和文档统一使用 `TaskManager`，避免把 workflow 调度和 task 执行拆成两个顶层概念。
+
+## 8.1 分层架构
+
+``` text
+createLoopApp()
+  -> TaskManager
+     -> StateManager
+     -> Mailbox
+     -> RuntimeRegistry
+```
+
+职责边界：
+
+| 模块 | 职责 | 不负责 |
+| --- | --- | --- |
+| `TaskManager` | 创建 run、读取 `CompiledLoop`、判断可执行节点、处理 transition、为节点创建 task run、租约、重试、取消、超时、把任务派发给 Runtime | 直接修改 Loop State |
+| `Mailbox` | 传递 task command、task event、workflow event、ack、heartbeat | 判断下一步该执行哪个节点 |
+| `StateManager` | 持久化 workflow run、task run、state snapshot、step output、revision、事件应用结果 | 做消息投递 |
+| `RuntimeAdapter` | 执行具体 agent/code/subloop/operator 并产生流式事件和结果 | 直接修改 Loop State |
+
+`TaskManager` 内部可以依赖一个执行环境接口，用于获取 workspace、session、权限和未来 sandbox，但它不作为 Loop 执行层之外的独立 manager 暴露。
+
+最小本机实现可以全部在一个进程内运行：
+
+``` text
+InMemoryMailbox
+InMemoryStateManager
+LocalTaskManager
+RuntimeRegistry
+```
+
+但协议必须按跨进程模型设计，不能假设执行方和调度方在同一个调用栈里。
+
+## 8.2 执行流程
+
+``` text
+app.run(compiledLoop, input)
+  -> TaskManager.startRun()
+  -> StateManager.createWorkflowRun()
+  -> TaskManager.dispatchReadyTasks()
+  -> Mailbox.publish(task.dispatch)
+  -> TaskWorker consume task.dispatch
+  -> TaskManager.startTask()
+  -> TaskExecutionEnvironment.resolve()
+  -> RuntimeAdapter.execute()
+  -> Mailbox.publish(task.started / task.progress / task.completed / task.failed)
+  -> TaskManager consume task.completed
+  -> StateManager.applyTaskResult()
+  -> TaskManager.evaluateTransitions()
+  -> dispatch next task or complete workflow
+```
+
+关键原则：
+
+- 每个 Loop 节点执行一次都生成一个独立 `taskRunId`，即使是同一个 `stepId` 因回边被多次访问，也必须是不同 task run。
+- Agent 任务、Code 任务、SubLoop 任务、Operator 任务都走同一套 task dispatch / task result 协议。
+- Runtime 不直接调用 `next()`；Runtime 只返回当前任务发生的事件和结果。
+- `reduce()` 只能由 `TaskManager` 协调 `StateManager` 在 task 完成后执行，不能由 Runtime 或 Agent 直接修改共享 State。
+- TaskManager 是否进入下一个节点，只由 `CompiledLoop`、当前 State、任务结果和 policy 决定。
+
+## 8.3 Mailbox 协议
+
+Mailbox 是传递事实和命令的协议层，不是状态数据库。它可以由本机内存队列、Redis Streams、WebSocket、MQ、NATS、Kafka 或云厂商队列实现。
+
+Mailbox 消息分为两类：
+
+- `command`：要求某个执行方做一件事，例如 `task.dispatch`、`task.cancel`。
+- `event`：声明已经发生的事实，例如 `task.started`、`task.completed`、`task.failed`。
+
+建议的 envelope：
+
+``` ts
+type MailboxMessage<TPayload = unknown> = {
+  id: string;
+  kind: "command" | "event";
+  type: string;
+  workflowRunId: string;
+  taskRunId?: string;
+  stepId?: string;
+  parentTaskRunId?: string;
+  causationId?: string;
+  correlationId?: string;
+  sequence?: number;
+  payload: TPayload;
+  occurredAt: string;
+  producer: {
+    id: string;
+    kind: "task-manager" | "task-worker" | "runtime" | "operator" | "external";
+  };
+};
+```
+
+核心消息类型：
+
+``` text
+workflow.started
+workflow.completed
+workflow.failed
+workflow.cancelled
+
+task.dispatch
+task.leased
+task.started
+task.progress
+task.output.delta
+task.completed
+task.failed
+task.cancelled
+task.heartbeat
+
+environment.attached
+environment.reused
+environment.released
+```
+
+`task.dispatch` payload 应包含执行所需的最小闭包，而不是整份可变对象引用：
+
+``` ts
+type TaskDispatchPayload = {
+  taskRunId: string;
+  workflowRunId: string;
+  loopId: string;
+  stepId: string;
+  visit: number;
+  target: RuntimeTarget;
+  input: unknown;
+  outputSchemaRef?: string;
+  stateSnapshot: LoopStateSnapshot;
+  runtime: {
+    requestedId?: string;
+    resolvedId: string;
+  };
+  environment: TaskEnvironmentRequest;
+  policy: TaskPolicy;
+};
+```
+
+`task.completed` payload：
+
+``` ts
+type TaskCompletedPayload = {
+  taskRunId: string;
+  workflowRunId: string;
+  stepId: string;
+  output: unknown;
+  usage?: RuntimeUsage;
+  artifacts?: readonly RuntimeArtifact[];
+  environment?: TaskEnvironmentRef;
+};
+```
+
+`task.failed` payload：
+
+``` ts
+type TaskFailedPayload = {
+  taskRunId: string;
+  workflowRunId: string;
+  stepId: string;
+  error: {
+    code: string;
+    message: string;
+    retryable: boolean;
+    details?: unknown;
+  };
+  environment?: TaskEnvironmentRef;
+};
+```
+
+Mailbox 接口：
+
+``` ts
+interface Mailbox {
+  publish<TPayload>(message: MailboxMessage<TPayload>): Promise<void>;
+
+  subscribe(
+    filter: MailboxSubscriptionFilter,
+    handler: MailboxMessageHandler,
+  ): Promise<MailboxSubscription>;
+
+  requestAck?: (messageId: string) => Promise<void>;
+}
+
+type MailboxSubscriptionFilter = {
+  workflowRunId?: string;
+  taskRunId?: string;
+  types?: readonly string[];
+  consumerGroup?: string;
+};
+
+type MailboxMessageHandler = (
+  message: MailboxMessage,
+  context: MailboxDeliveryContext,
+) => Promise<void>;
+```
+
+传输实现约束：
+
+- 至少保证 at-least-once delivery，因此所有 manager 必须幂等。
+- 消息必须有全局唯一 `id`，`StateManager` 需要记录已应用 message id。
+- 同一个 `workflowRunId` 内的状态应用必须有确定顺序；可用 `sequence`、state revision 或数据库事务保证。
+- Mailbox 可以丢弃已 ack 的传输消息，但不能作为长期审计日志唯一来源；审计事件应由 `StateManager` 或 Trace Store 落盘。
+- 本机实现可以用 `AsyncIterable` / `EventEmitter`，但公开接口不能泄露本机调用栈语义。
+
+## 8.4 StateManager
+
+`StateManager` 是 Loop State 的托管边界，也是 workflow 当前状态的唯一事实来源。它保存的 `state` 就是用户在 step `input` / `reduce` 中看到的那份 Loop State，而不是另一套内部状态。
+
+用户写的 reducer：
+
+``` ts
+reduce: ({ state, output }) => {
+  state.results.review = output;
+  state.flags.reviewApproved = output.decision === "approved";
+},
+```
+
+执行时应被理解为：
+
+``` text
+StateManager 读取当前 LoopStateSnapshot
+  -> 创建可变 draft state
+  -> TaskManager 调用 step.reduce({ state: draft, output })
+  -> StateManager 校验并提交 draft
+  -> 生成新的 LoopStateSnapshot 和 revision
+```
+
+也就是说，`reduce()` 是用户侧的状态变更声明；`StateManager` 负责把这次变更变成可持久化、可恢复、可审计、可并发保护的新状态版本。
+
+``` ts
+interface StateManager {
+  createWorkflowRun(request: CreateWorkflowRunRequest): Promise<WorkflowRunRecord>;
+  getWorkflowRun(workflowRunId: string): Promise<WorkflowRunRecord | undefined>;
+
+  createTaskRun(request: CreateTaskRunRequest): Promise<TaskRunRecord>;
+  getTaskRun(taskRunId: string): Promise<TaskRunRecord | undefined>;
+
+  applyTaskEvent(message: MailboxMessage): Promise<StateTransitionResult>;
+  applyWorkflowEvent(message: MailboxMessage): Promise<StateTransitionResult>;
+
+  applyStepReduction(request: ApplyStepReductionRequest): Promise<LoopStateSnapshot>;
+
+  listReadyTransitions(workflowRunId: string): Promise<readonly ReadyTransition[]>;
+}
+
+type ApplyStepReductionRequest = {
+  workflowRunId: string;
+  taskRunId: string;
+  stepId: string;
+  output: unknown;
+  expectedRevision: number;
+  reduce: (context: { state: LoopState; output: unknown }) => void | Promise<void>;
+};
+```
+
+建议保存的状态模型：
+
+``` ts
+type WorkflowRunRecord = {
+  id: string;
+  loopId: string;
+  status: "queued" | "running" | "waiting" | "succeeded" | "failed" | "cancelled";
+  input: unknown;
+  state: LoopStateSnapshot;
+  currentStepIds: readonly string[];
+  completedStepIds: readonly string[];
+  revision: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+type TaskRunRecord = {
+  id: string;
+  workflowRunId: string;
+  stepId: string;
+  visit: number;
+  status:
+    | "pending"
+    | "dispatched"
+    | "leased"
+    | "running"
+    | "succeeded"
+    | "failed"
+    | "cancelled"
+    | "dead_letter";
+  runtimeId: string;
+  environment?: TaskEnvironmentRef;
+  input: unknown;
+  output?: unknown;
+  error?: unknown;
+  attempt: number;
+  leaseOwner?: string;
+  leaseExpiresAt?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+```
+
+`StateManager` 应用 `task.completed` 时执行以下动作：
+
+1. 校验 message 尚未被应用。
+2. 校验 task 当前状态允许完成。
+3. 校验 output schema。
+4. 基于当前 `LoopStateSnapshot` 创建 reducer draft。
+5. 由 `TaskManager` 调用该 step 的 `reduce({ state: draft, output })`。
+6. `StateManager` 提交 draft，生成新的 `LoopStateSnapshot` 和 revision。
+7. 写入 task output、workflow state、revision 和审计事件。
+8. 返回需要 TaskManager 继续评估的 transition hints。
+
+`LoopStateSnapshot` 必须是序列化后的不可变快照。Runtime 拿到 snapshot 后可以读取，但不能持有可变引用。
+
+# 9. TaskManager
+
+TaskManager 负责从 `CompiledLoop` 和 State 中推导下一步，也负责单个 task run 的生命周期。
+
+``` ts
+interface TaskManager {
+  startRun<TInput>(
+    loop: CompiledLoop,
+    request: StartLoopRunRequest<TInput>,
+  ): Promise<WorkflowRunHandle>;
+
+  handleEvent(message: MailboxMessage): Promise<void>;
+  dispatchReadyTasks(workflowRunId: string): Promise<void>;
+  cancelRun(workflowRunId: string, reason?: string): Promise<void>;
+
+  leaseTask(message: MailboxMessage<TaskDispatchPayload>): Promise<TaskLease | undefined>;
+  executeTask(lease: TaskLease): Promise<void>;
+  cancelTask(taskRunId: string, reason?: string): Promise<void>;
+  recoverExpiredLeases(now: Date): Promise<readonly TaskRunRecord[]>;
+}
+```
+
+它在 Loop run 编排层需要处理：
+
+- start 节点派发；
+- 顺序 `.next()`；
+- schema route；
+- 函数 route；
+- parallel / merge；
+- retry 和 limit；
+- subloop 完成后回到父 task；
+- end / fail terminal；
+- 外部取消、超时和人工审批等待。
+
+TaskManager 不应该在 transition 判断阶段直接调用 Runtime，而是创建 task run 后通过 Mailbox 发送 `task.dispatch`。这样当前本机执行和未来远程 Worker / Desktop 执行使用同一模型。
+
+`TaskManager` 的构造依赖里注入执行环境接口：
+
+``` ts
+const taskManager = createLocalTaskManager({
+  mailbox,
+  stateManager,
+  runtimes,
+  environment: createLocalTaskExecutionEnvironment({
+    workspaceRoot: process.cwd(),
+  }),
+});
+```
+
+`executeTask()` 的内部流程：
+
+``` text
+task.dispatch
+  -> lease task
+  -> publish task.leased
+  -> resolve task execution environment
+  -> publish environment.attached / environment.reused
+  -> publish task.started
+  -> runtime.execute(invocation)
+  -> forward runtime stream as task.progress / task.output.delta
+  -> publish task.completed or task.failed
+  -> release or retain environment according to policy
+```
+
+`TaskManager` 的幂等要求：
+
+- 重复收到同一个 `task.dispatch` 时，只能有一个有效 lease。
+- `task.completed` 重复投递时，`StateManager` 只能应用一次。
+- lease 超时后可以重新派发，但旧 worker 迟到的 completed 事件必须被拒绝或标记 stale。
+- task attempt 必须写入 `TaskRunRecord`，retry 不能覆盖历史 attempt。
+
+# 10. Task 执行环境接口
+
+每个任务未来可能独立开启 sandbox，也可能复用已有 workspace/session。这个决策不应该写死在 RuntimeAdapter 中，也不需要独立暴露一个 Sandbox Manager；它应该作为 `TaskManager` 的可替换依赖，通过接口注入。
+
+``` ts
+type TaskEnvironmentStrategy =
+  | { mode: "local-workspace" }
+  | { mode: "ephemeral" }
+  | { mode: "reuse-workflow"; key?: string }
+  | { mode: "reuse-step"; key?: string }
+  | { mode: "attach"; environmentId: string };
+
+type TaskEnvironmentRequest = {
+  strategy: TaskEnvironmentStrategy;
+  workspace?: {
+    root?: string;
+    access: "readonly" | "readwrite";
+  };
+  capabilities?: {
+    filesystem?: boolean;
+    shell?: boolean;
+    network?: boolean;
+    humanApproval?: boolean;
+  };
+};
+
+interface TaskExecutionEnvironment {
+  resolve(request: ResolveTaskEnvironmentRequest): Promise<TaskEnvironmentLease>;
+  release(lease: TaskEnvironmentLease, result: TaskEnvironmentReleaseResult): Promise<void>;
+}
+```
+
+策略示例：
+
+``` ts
+loop.agent("coder", coderAgent, {
+  runtime: "claude-code-local",
+  environment: {
+    strategy: { mode: "local-workspace" },
+    capabilities: {
+      filesystem: true,
+      shell: true,
+      network: false,
+    },
+  },
+});
+
+loop.code("unit-test", runTests, {
+  runtime: "sandbox-node",
+  environment: {
+    strategy: { mode: "ephemeral" },
+  },
+});
+```
+
+执行环境策略与 Runtime 选择是两个维度：
+
+- Runtime 决定“用什么执行器执行”。
+- Task execution environment 决定“在哪里、带着什么权限和工作区执行”。
+
+当前本机版本可以提供 `LocalTaskExecutionEnvironment`，只解析本机 `workspace` / session ref。未来需要 sandbox 时，只替换或扩展这个接口实现，例如：
+
+``` text
+LocalTaskExecutionEnvironment       当前本机执行
+CloudSandboxTaskEnvironment         云端容器 / sandbox
+DesktopWorkspaceTaskEnvironment     Desktop 授权工作区
+RemoteRunnerTaskEnvironment         self-hosted runner
+```
+
+这样 `TaskManager` 的生命周期、租约、重试、Mailbox 协议都不需要改变。
+
+SubLoop 默认继承父 task 的 execution environment policy，但可以显式覆盖：
+
+``` ts
+loop.subloop("coding", codingLoop, {
+  environment: {
+    strategy: { mode: "reuse-workflow", key: "source-repo" },
+  },
+});
+```
+
+# 11. 本机实现与未来扩展
+
+第一阶段建议实现本机可验证闭环：
+
+``` text
+createLoopApp()
+  -> InMemoryMailbox
+  -> InMemoryStateManager
+  -> LocalTaskManager
+  -> RuntimeRegistry
+```
+
+目录建议：
+
+``` text
+packages/shared/src/loop/
+  mailbox.schema.ts        跨进程消息 envelope 和 payload schema
+  workflow-state.schema.ts workflow/task 状态 schema
+
+packages/core/src/loop/
+  loop-spec.ts
+  compiled-loop.ts
+  task-manager.ts
+  task-execution-environment.ts
+  state-manager.ts
+  mailbox.ts
+  in-memory-mailbox.ts
+  in-memory-state-manager.ts
+  local-task-execution-environment.ts
+```
+
+跨进程或基础设施实现以后再放到对应边界：
+
+``` text
+packages/server/src/runtime-gateway/
+  redis-mailbox-transport.ts
+  mq-mailbox-transport.ts
+  workflow-run-store.ts
+
+packages/core/src/local-agent-bridge/
+  desktop-mailbox-protocol.ts
+  local-runtime-capability.ts
+
+apps/desktop/
+  desktop-mailbox-client.ts
+  local-permission-guard.ts
+```
+
+不要在第一阶段引入 `apps/local-runner`。本地 Agent 未来仍通过 Desktop App 主动连接云端，由 Desktop 承载权限确认和本机执行桥接。
+
+扩展路径：
+
+| 阶段 | Mailbox | State | Worker | Execution Environment |
+| --- | --- | --- | --- | --- |
+| 本机 SDK | In-memory queue | In-memory store | 同进程 TaskManager | 本机 workspace/session |
+| 单机服务 | Redis Streams | 数据库 | apps/worker | Node sandbox/container |
+| 云端分布式 | MQ / NATS / Kafka | 数据库 + Trace Store | 多 worker consumer group | cloud sandbox |
+| 本地桥接 | WebSocket mailbox bridge | 云端 State + 本地 session cache | Desktop App | Desktop 授权 workspace |
+
+设计上 Mailbox、StateManager、TaskManager 都以接口依赖注入给 `createLoopApp()`：
+
+``` ts
+const app = createLoopApp({
+  mailbox,
+  stateManager,
+  taskManager,
+  runtimes,
+});
+```
+
+默认不传时创建本机实现：
+
+``` ts
+const app = createLoopApp();
+```
+
+这保证最小 API 仍然轻量，同时内部执行模型可以平滑迁移到 Server/Worker 或 Desktop bridge。
+
+# 12. Channel
+
+这里的 Channel 是用户侧或步骤侧看到的事件通道，可以构建在 Mailbox 之上，但不等同于实现层 Mailbox。
+
+Channel 面向业务语义，例如 `code.changed`、`review.failed`；Mailbox 面向执行协议，例如 `task.dispatch`、`task.completed`。Channel 消息可以被 TaskManager 转换成 workflow event，也可以只作为 trace / notification。
 
 ``` ts
 const channel = channel({
@@ -869,7 +1426,7 @@ ctx.channel.on("review.failed", async (msg) => {
 
 ------------------------------------------------------------------------
 
-# 9. State
+# 13. Loop State
 
 ``` ts
 type LoopState = {
@@ -888,14 +1445,15 @@ type LoopState = {
 
 ``` text
 Agent 不直接修改 State
-Step 负责 reduce
-Loop 托管 State
+Step 定义 reduce
+TaskManager 调用 reduce
+StateManager 托管并提交 Loop State
 Runtime 只接收 State Snapshot 并返回步骤结果
 ```
 
 ------------------------------------------------------------------------
 
-# 10. Pattern
+# 14. Pattern
 
 ``` ts
 Patterns.planActVerify()
@@ -908,7 +1466,7 @@ Patterns.supervisorWorkers()
 
 ------------------------------------------------------------------------
 
-# 11. 发布与调用
+# 15. 发布与调用
 
 ``` ts
 await app.publish(codingLoop);
@@ -926,7 +1484,7 @@ deliveryLoop.subloop("coding", client.loop("coding-loop"));
 
 ------------------------------------------------------------------------
 
-# 12. API 分层
+# 16. API 分层
 
 ``` text
 defineAgent()

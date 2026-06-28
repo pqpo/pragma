@@ -9,23 +9,18 @@ import { ContextSystem, HOST_CONTEXT_NAMESPACE } from "../../src/context-system/
 import { createInMemoryContextStore } from "../../src/context-system/in-memory-context-store.ts";
 import { createLoggerProvider } from "../../src/logging/logger.ts";
 import type { ExpertAgentLogRecord } from "../../src/logging/logger.ts";
-import { extensibilityPlugin } from "../../src/plugins/fixtures/extensibility-plugin/src/plugin.ts";
+import type { ExpertAgentPluginEntry } from "../../src/plugins/expert-agent-plugin.ts";
 import { createInvalidPlugin } from "../../src/plugins/fixtures/invalid-plugin/src/plugin.ts";
 import { createMissingManifestPlugin } from "../../src/plugins/fixtures/missing-manifest-plugin/src/plugin.ts";
 import {
   createExpertAgentPluginConfigEnvName,
   dispatchExpertAgentHook,
+  readExpertAgentPluginManifest,
   resolveExpertAgentPlugins,
 } from "../../src/plugins/expert-agent-plugin.ts";
 
-const contextPluginPath = fileURLToPath(
-  new URL("../../src/plugins/fixtures/context-plugin", import.meta.url),
-);
 const extensibilityPluginPath = fileURLToPath(
   new URL("../../src/plugins/fixtures/extensibility-plugin", import.meta.url),
-);
-const otherContextPluginPath = fileURLToPath(
-  new URL("../../src/plugins/fixtures/other-context-plugin", import.meta.url),
 );
 const tempWorkspaces: string[] = [];
 
@@ -37,32 +32,32 @@ afterEach(async () => {
 
 describe("ExpertAgent plugins", () => {
   it("loads immutable plugin metadata and manifest fields from plugin.json", () => {
-    expect(extensibilityPlugin).toMatchObject({
+    const manifest = readExpertAgentPluginManifest(resolve(extensibilityPluginPath, "plugin.json"));
+
+    expect(manifest).toMatchObject({
       id: "plugin.extensibility",
       name: "Extensibility",
       description: "Contributes every plugin surface",
       version: "0.0.0",
       tags: ["fixture", "extensibility"],
-      manifest: {
-        schemaVersion: "expertmesh.plugin/v1",
-        capabilities: [
-          {
-            type: "managed-tool",
-            name: "plugin_tool",
-            description: "Plugin tool",
-          },
-        ],
-        configuration: {
-          properties: [],
+      schemaVersion: "expertmesh.plugin/v1",
+      capabilities: [
+        {
+          type: "managed-tool",
+          name: "plugin_tool",
+          description: "Plugin tool",
         },
-        permissions: {
-          network: ["models.example.test"],
-        },
+      ],
+      configuration: {
+        properties: [],
+      },
+      permissions: {
+        network: ["models.example.test"],
       },
     });
-    expect(Object.isFrozen(extensibilityPlugin.manifest)).toBe(true);
-    expect(Object.isFrozen(extensibilityPlugin.manifest.capabilities)).toBe(true);
-    expect(Object.isFrozen(extensibilityPlugin.manifest.configuration.properties)).toBe(true);
+    expect(Object.isFrozen(manifest)).toBe(true);
+    expect(Object.isFrozen(manifest.capabilities)).toBe(true);
+    expect(Object.isFrozen(manifest.configuration.properties)).toBe(true);
   });
 
   it("rejects plugins without a plugin.json manifest", () => {
@@ -179,7 +174,10 @@ describe("ExpertAgent plugins", () => {
       scope: "workspace",
       workspace,
       contextSystem,
-      plugins: [contextPluginPath, otherContextPluginPath],
+      plugins: [
+        { entry: createContextPluginEntry() },
+        { entry: createOtherContextPluginEntry() },
+      ],
     });
 
     await expect(agent.listContext()).resolves.toMatchObject({
@@ -403,7 +401,7 @@ describe("ExpertAgent plugins", () => {
           hookEvents.push("host");
         },
       },
-      plugins: [extensibilityPluginPath],
+      plugins: [{ entry: createExtensibilityPluginEntry(hookEvents) }],
     });
 
     expect(agent.mcp?.mcpServers.pluginMcp?.name).toBe("Plugin MCP");
@@ -422,7 +420,7 @@ describe("ExpertAgent plugins", () => {
     });
 
     expect(agent.hooks?.beforeSessionCreate).toBeDefined();
-    expect(hookEvents).toEqual(["host"]);
+    expect(hookEvents).toEqual(["host", "plugin"]);
   });
 
   it("merges repeated tool approval policies", async () => {
@@ -528,4 +526,176 @@ async function createPluginTestWorkspace(): Promise<string> {
   const workspace = await mkdtemp(resolve(process.cwd(), ".expertmesh-plugin-test-"));
   tempWorkspaces.push(workspace);
   return workspace;
+}
+
+function createContextPluginEntry(): ExpertAgentPluginEntry {
+  return {
+    id: "plugin.context",
+    name: "Plugin context",
+    description: "Adds context",
+    manifest: {
+      schemaVersion: "expertmesh.plugin/v1",
+      id: "plugin.context",
+      name: "Plugin context",
+      description: "Adds context",
+      runtime: {
+        type: "expert-agent-plugin",
+        entry: "./src/plugin.ts",
+      },
+      capabilities: [],
+      configuration: { properties: [] },
+      required_config: [],
+    },
+    setup: ({ contextSystem }) => {
+      contextSystem.register({
+        namespace: "plugin.context",
+        store: createInMemoryContextStore({
+          context: [
+            {
+              id: "plugin.md",
+              content: "Plugin content",
+              metadata: {
+                description: "Plugin context",
+                trigger: "model_decision",
+              },
+            },
+          ],
+        }),
+      });
+      contextSystem.register({
+        namespace: "plugin.context.extra",
+        store: createInMemoryContextStore({
+          context: [
+            {
+              id: "extra.md",
+              content: "Extra plugin content",
+              metadata: {
+                description: "Extra plugin context",
+                trigger: "model_decision",
+              },
+            },
+          ],
+        }),
+      });
+
+      return {};
+    },
+  };
+}
+
+function createOtherContextPluginEntry(): ExpertAgentPluginEntry {
+  return {
+    id: "plugin.other-context",
+    name: "Other plugin context",
+    description: "Adds context with colliding local ids",
+    manifest: {
+      schemaVersion: "expertmesh.plugin/v1",
+      id: "plugin.other-context",
+      name: "Other plugin context",
+      description: "Adds context with colliding local ids",
+      runtime: {
+        type: "expert-agent-plugin",
+        entry: "./src/plugin.ts",
+      },
+      capabilities: [],
+      configuration: { properties: [] },
+      required_config: [],
+    },
+    setup: ({ contextSystem }) => {
+      contextSystem.register({
+        namespace: "plugin.other-context",
+        store: createInMemoryContextStore({
+          context: [
+            {
+              id: "plugin.md",
+              content: "Other plugin content",
+              metadata: {
+                description: "Other plugin context",
+                trigger: "model_decision",
+              },
+            },
+          ],
+        }),
+      });
+
+      return {};
+    },
+  };
+}
+
+function createExtensibilityPluginEntry(hookEvents: string[]): ExpertAgentPluginEntry {
+  return {
+    id: "plugin.extensibility",
+    name: "Extensibility",
+    description: "Contributes every plugin surface",
+    version: "0.0.0",
+    tags: ["fixture", "extensibility"],
+    manifest: {
+      schemaVersion: "expertmesh.plugin/v1",
+      id: "plugin.extensibility",
+      name: "Extensibility",
+      description: "Contributes every plugin surface",
+      version: "0.0.0",
+      tags: ["fixture", "extensibility"],
+      runtime: {
+        type: "expert-agent-plugin",
+        entry: "./src/plugin.ts",
+      },
+      capabilities: [],
+      configuration: { properties: [] },
+      required_config: [],
+    },
+    setup: () => ({
+      mcp: {
+        mcpServers: {
+          pluginMcp: {
+            name: "Plugin MCP",
+            command: "plugin-mcp",
+          },
+        },
+      },
+      skills: {
+        skills: [
+          {
+            type: "local",
+            name: "plugin-skill",
+            description: "Plugin skill",
+          },
+        ],
+      },
+      models: {
+        defaultModelName: "plugin-model",
+        providers: [
+          {
+            provider: "plugin-provider",
+            modelNames: ["plugin-model"],
+            baseApi: "https://models.example.test",
+            key: "test-key",
+          },
+        ],
+      },
+      subAgents: {
+        agents: [
+          {
+            agentType: "critic",
+            whenToUse: "Review an answer",
+            systemPrompt: "Be precise.",
+          },
+        ],
+      },
+      tools: [
+        {
+          name: "plugin_tool",
+          description: "Plugin tool",
+          inputSchema: {},
+          call: async () => ({ text: "ok" }),
+        },
+      ],
+      hooks: {
+        beforeSessionCreate: () => {
+          hookEvents.push("plugin");
+        },
+      },
+    }),
+  };
 }

@@ -144,6 +144,20 @@ pnpm --filter @expertmesh/examples start:workspace-context --workspace ./workspa
 - 调用 `agent.buildContext()` 预检上下文。
 - 通过同一套 runtime session 流程运行 agent。
 
+## 运行 Loop 示例
+
+Loop 示例不需要模型 key，全部使用本机 `code` step：
+
+```bash
+pnpm --filter @expertmesh/examples start:loop-code
+pnpm --filter @expertmesh/examples start:loop-route
+pnpm --filter @expertmesh/examples start:loop-subloop
+```
+
+- `run-loop-code.ts`：最小 `defineLoop()` + `loop.code()` + `reduce()`。
+- `run-loop-route.ts`：根据 step 结构化输出字段 `.route("status", ...)`。
+- `run-loop-subloop.ts`：把一个 Loop 作为另一个 Loop 的 subloop step。
+
 ## 示例辅助边界
 
 `src/harness` 里的代码只做辅助：

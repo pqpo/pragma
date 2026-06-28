@@ -1,0 +1,9 @@
+{
+  "name": "plugin.extensibility",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@expertmesh/core": "workspace:*"
+  }
+}

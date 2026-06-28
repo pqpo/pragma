@@ -18,7 +18,7 @@
     "@eslint/js": "latest",
     "eslint": "latest",
     "globals": "latest",
-    "prettier": "latest",
+    "prettier": "3.8.5",
     "turbo": "latest",
     "typescript": "latest",
     "typescript-eslint": "latest",

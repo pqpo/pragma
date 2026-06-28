@@ -133,6 +133,8 @@ export async function prepareExpertAgentPluginSource(
 
   if (sourceStats.isDirectory()) {
     await assertPluginManifestExists(absoluteSourcePath);
+    await assertPluginPackageJsonExists(absoluteSourcePath);
+
     const manifest = readExpertAgentPluginManifest(resolve(absoluteSourcePath, "plugin.json"));
     const targetDir = resolve(installRoot, manifest.id);
     await rm(targetDir, { recursive: true, force: true });
@@ -216,6 +218,18 @@ async function assertPluginManifestExists(pluginDir: string): Promise<void> {
     throw new PluginLoadError(
       "missing_manifest",
       `Plugin manifest does not exist: ${manifestPath}`,
+    );
+  }
+}
+
+async function assertPluginPackageJsonExists(pluginDir: string): Promise<void> {
+  const packageJsonPath = resolve(pluginDir, "package.json");
+  const packageJsonStats = await stat(packageJsonPath).catch(() => undefined);
+
+  if (packageJsonStats?.isFile() !== true) {
+    throw new PluginLoadError(
+      "invalid_source",
+      `Plugin package.json does not exist: ${packageJsonPath}`,
     );
   }
 }

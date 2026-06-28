@@ -211,6 +211,34 @@ describe("ExpertAgent plugin loader", () => {
     }
   });
 
+  it("reports source plugin directories without package.json", async () => {
+    const workspace = await mkdtemp(resolve(tmpdir(), "expertmesh-plugin-loader-"));
+    const pluginDir = resolve(workspace, "missing-package-json-plugin");
+
+    try {
+      await writeMinimalPlugin(pluginDir, {
+        id: "plugin.missing-package-json",
+        requiredConfig: [],
+        writePackage: false,
+      });
+
+      const result = await loadExpertAgentPlugins({
+        workspaceRoot: workspace,
+        sources: [pluginDir],
+      });
+
+      expect(result.pluginEntries).toEqual([]);
+      expect(result.issues).toMatchObject([
+        {
+          code: "invalid_source",
+          source: pluginDir,
+        },
+      ]);
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
   it("reports plugins without a compiled entry file", async () => {
     const workspace = await mkdtemp(resolve(tmpdir(), "expertmesh-plugin-loader-"));
     const pluginDir = resolve(workspace, "missing-entry-plugin");
@@ -246,6 +274,7 @@ async function writeMinimalPlugin(
     readonly id: string;
     readonly requiredConfig: readonly string[];
     readonly writeEntry?: boolean | undefined;
+    readonly writePackage?: boolean | undefined;
     readonly entryLines?: readonly string[] | undefined;
   },
 ): Promise<void> {
@@ -273,6 +302,14 @@ async function writeMinimalPlugin(
     ),
     "utf8",
   );
+
+  if (options.writePackage !== false) {
+    await writePackageJson(pluginDir, {
+      name: options.id,
+      version: "0.0.0",
+      type: "module",
+    });
+  }
 
   if (options.writeEntry !== false) {
     await writeFile(
