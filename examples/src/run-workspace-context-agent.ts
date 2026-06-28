@@ -5,9 +5,9 @@ import {
   FileSystemContextStore,
   HOST_CONTEXT_NAMESPACE,
   createInMemoryContextStore,
-} from "@expertmesh/agent-core";
-import type { ExpertAgentContextStore } from "@expertmesh/agent-core";
-import { createCloudPiRuntimeAdapter } from "@expertmesh/agent-runtime";
+} from "@expertmesh/core";
+import type { ExpertAgentContextStore } from "@expertmesh/core";
+import { createCloudPiRuntimeAdapter } from "@expertmesh/core";
 
 import {
   printAgentContextSummary,

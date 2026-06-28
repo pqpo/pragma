@@ -1,4 +1,4 @@
-import type { ExpertAgentModelApi, IExpertAgentModelsConfig } from "@expertmesh/agent-core";
+import type { ExpertAgentModelApi, IExpertAgentModelsConfig } from "@expertmesh/core";
 
 const MODEL_API_VALUES = new Set<ExpertAgentModelApi>([
   "anthropic-messages",

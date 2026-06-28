@@ -594,7 +594,7 @@ workspace:
 
 ## 11. 最小 JSON Schema 草案
 
-后续进入实现阶段时，建议在 `packages/shared/contracts` 中定义 Zod schema，并从 Zod 推导 TypeScript 类型。这里先给出字段形状，作为协议实现参考。
+后续进入实现阶段时，建议在 `packages/shared` 中定义 Zod schema，并从 Zod 推导 TypeScript 类型。这里先给出字段形状，作为协议实现参考。
 
 ```ts
 type ExpertManifest = {
@@ -619,8 +619,8 @@ type ExpertManifest = {
 - `inputSchema` 和 `outputSchema` 使用 JSON Schema 对象；
 - Manifest 自身 schema 使用 Zod 定义；
 - DTO 类型从 Zod 推导；
-- 协议类型放在 `@expertmesh/contracts`；
-- Runtime 执行抽象放在 `@expertmesh/agent-core`；
+- 协议类型放在 `@expertmesh/shared`；
+- Runtime 执行抽象放在 `@expertmesh/core`；
 - 不在 shared contracts 中引入 Node、Fastify、React 或具体 MCP SDK。
 
 ## 12. 校验规则
@@ -692,7 +692,7 @@ Manifest 不绑定具体 Claude、Codex 或自研 Agent SDK。具体 Runtime 能
 
 专家 Agent 的运行结果仍然以 `IExpertAgentRunResult` 作为最终验收对象；流式输出用于 UI 实时展示、Trace 记录、运行审计、取消反馈和 subAgent 过程桥接。流式输出不替代最终 `outputSchema` 校验。
 
-统一事件对象定义在 `@expertmesh/contracts` 的 `ExpertAgentStreamEventSchema`，协议版本为：
+统一事件对象定义在 `@expertmesh/shared` 的 `ExpertAgentStreamEventSchema`，协议版本为：
 
 ```text
 expertmesh.stream/v1
@@ -884,8 +884,8 @@ outputSchema:
 
 ## 17. 后续实施建议
 
-1. 在 `@expertmesh/contracts` 增加 `ExpertManifestSchema`；
-2. 在 `@expertmesh/agent-core` 定义 `ExpertAgent`、`ExpertInvocation`、`ExpertResult`、`RuntimeAdapter`；
+1. 在 `@expertmesh/shared` 增加 `ExpertManifestSchema`；
+2. 在 `@expertmesh/core` 定义 `ExpertAgent`、`ExpertInvocation`、`ExpertResult`、`RuntimeAdapter`；
 3. 增加 Manifest fixture 和 schema 单元测试；
 4. 增加非法路径、非法 secret、非法 schema 的测试；
 5. 再设计 Playbook 对专家 Manifest 的引用协议；

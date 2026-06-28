@@ -2,7 +2,9 @@
   "extends": "@expertmesh/tsconfig/node.json",
   "compilerOptions": {
     "rootDir": ".",
-    "outDir": "dist"
+    "outDir": "dist",
+    "allowImportingTsExtensions": true,
+    "rewriteRelativeImportExtensions": true
   },
   "include": ["src", "plugins"]
 }

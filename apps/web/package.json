@@ -12,10 +12,8 @@
     "clean": "rm -rf .next dist"
   },
   "dependencies": {
-    "@expertmesh/contracts": "workspace:*",
-    "@expertmesh/domain": "workspace:*",
-    "@expertmesh/sdk": "workspace:*",
-    "@expertmesh/utils": "workspace:*",
+    "@expertmesh/shared": "workspace:*",
+    "@expertmesh/client": "workspace:*",
     "next": "latest",
     "react": "latest",
     "react-dom": "latest"

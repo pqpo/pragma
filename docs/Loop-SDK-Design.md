@@ -29,7 +29,7 @@ Agent 只声明“专家能力”和输入输出协议，不绑定具体 Runtime
 最小声明使用 `defineAgent()`。它是 Loop SDK 面向用户的语法糖，底层可以归一化为当前项目里的 `ExpertAgent` 声明，但用户不需要直接调用 `ExpertAgent.create()`。
 
 ``` ts
-import { defineAgent } from "@expertmesh/loop";
+import { defineAgent } from "@expertmesh/core";
 
 const coder = defineAgent({
   id: "coder",
@@ -76,7 +76,7 @@ const result = await coder.run("实现 GitHub 登录", {
 这等价于显式使用默认 Runtime registry：
 
 ``` ts
-import { createRuntimeRegistry } from "@expertmesh/agent-runtime";
+import { createRuntimeRegistry } from "@expertmesh/core";
 
 const runtimes = createRuntimeRegistry();
 
@@ -96,7 +96,7 @@ const result = await coder.run("实现 GitHub 登录", {
 import {
   createDefaultRuntime,
   createRuntimeRegistry,
-} from "@expertmesh/agent-runtime";
+} from "@expertmesh/core";
 
 const runtimes = createRuntimeRegistry({
   runtimes: [
@@ -141,7 +141,7 @@ function createDefaultRuntime(options?: DefaultRuntimeOptions): RuntimeAdapter {
 import {
   createCodexLocalRuntimeAdapter,
   createRuntimeRegistry,
-} from "@expertmesh/agent-runtime";
+} from "@expertmesh/core";
 
 const runtimes = createRuntimeRegistry({
   runtimes: [
@@ -688,14 +688,14 @@ Runtime 是 Loop 步骤的通用执行环境，不只服务 Agent。
 Runtime 当前应分成“核心协议”和“具体实现”两层。
 
 ``` text
-packages/agent/agent-core
+packages/core
   RuntimeAdapter        通用 Runtime 接口
   RuntimeRegistry       通用 Runtime registry 接口
   RuntimeInvocation     通用步骤执行请求
   RuntimeExecution      通用步骤执行句柄
   RuntimeEvent          通用运行事件
 
-packages/agent/agent-runtime
+packages/core
   createRuntimeRegistry() 默认 Runtime registry 实现
   createDefaultRuntime() 默认 Runtime facade，当前底层调用 createCloudPiRuntimeAdapter()
   createCloudPiRuntimeAdapter()
@@ -778,7 +778,7 @@ type RuntimeDescriptor = {
 默认 Runtime registry：
 
 ``` ts
-import { createRuntimeRegistry } from "@expertmesh/agent-runtime";
+import { createRuntimeRegistry } from "@expertmesh/core";
 
 const runtimes = createRuntimeRegistry();
 
@@ -843,10 +843,10 @@ return await runtime.execute(invocation);
 
 ``` text
 LoopSpec / Pattern / Channel   -> 未来 Loop SDK 层
-RuntimeAdapter 通用接口         -> @expertmesh/agent-core
-RuntimeAdapter 具体实现         -> @expertmesh/agent-runtime
+RuntimeAdapter 通用接口         -> @expertmesh/core
+RuntimeAdapter 具体实现         -> @expertmesh/core
 Server / Worker 调度 Runtime    -> apps/server、apps/worker 或 server orchestration package
-Desktop 本地权限与连接桥接      -> apps/desktop + packages/agent/local-agent-bridge
+Desktop 本地权限与连接桥接      -> apps/desktop + packages/core/src/local-agent-bridge
 ```
 
 ------------------------------------------------------------------------

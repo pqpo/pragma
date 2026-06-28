@@ -10,9 +10,9 @@ import {
   HOST_CONTEXT_NAMESPACE,
   createInMemoryContextStore,
   createNoopLoggerProvider,
-} from "@expertmesh/agent-core";
-import { readExpertAgentPluginManifest } from "@expertmesh/agent-core";
-import type { ExpertAgentPluginUse } from "@expertmesh/agent-core";
+} from "@expertmesh/core";
+import { readExpertAgentPluginManifest } from "@expertmesh/core";
+import type { ExpertAgentPluginUse } from "@expertmesh/core";
 
 import { CODE_REPOSITORY_CONTEXT_ID } from "../src/context.ts";
 import codeRepositoryManagerPlugin from "../src/index.ts";
@@ -82,7 +82,7 @@ describe("Code Repository Manager plugin", () => {
     const agent = await ExpertAgent.create({
       schemaVersion: "expertmesh.expert/v1",
       id: "repo-agent",
-      displayName: "Repo Agent",
+      name: "Repo Agent",
       description: "Test agent",
       tags: ["test"],
       version: "0.0.0",
@@ -125,7 +125,7 @@ describe("Code Repository Manager plugin", () => {
     const agent = await ExpertAgent.create({
       schemaVersion: "expertmesh.expert/v1",
       id: "repo-agent",
-      displayName: "Repo Agent",
+      name: "Repo Agent",
       description: "Test agent",
       tags: ["test"],
       version: "0.0.0",
@@ -242,7 +242,7 @@ async function createAgent(options: {
   return await ExpertAgent.create({
     schemaVersion: "expertmesh.expert/v1",
     id: "repo-agent",
-    displayName: "Repo Agent",
+    name: "Repo Agent",
     description: "Test agent",
     tags: ["test"],
     version: "0.0.0",

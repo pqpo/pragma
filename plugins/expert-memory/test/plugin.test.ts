@@ -10,8 +10,8 @@ import {
   HOST_CONTEXT_NAMESPACE,
   createInMemoryContextStore,
   readExpertAgentPluginManifest,
-} from "@expertmesh/agent-core";
-import type { ExpertAgentPluginUse } from "@expertmesh/agent-core";
+} from "@expertmesh/core";
+import type { ExpertAgentPluginUse } from "@expertmesh/core";
 
 import expertMemoryPlugin, { parseMemoryPluginConfig } from "../src/index.ts";
 
@@ -90,10 +90,12 @@ describe("Expert Memory plugin", () => {
 
     const context = await agent.buildContext();
 
-    expect(context.systemPrompt).toContain("Expert Memory Summary");
-    expect(context.systemPrompt).toContain("Do not create apps/local-runner.");
     expect(context.systemPrompt).toContain("Available context");
-    expect(context.systemPrompt).toContain("expert-memory/memory.md");
+    expect(context.systemPrompt).toContain("namespace: expert-memory");
+    expect(context.systemPrompt).toContain("id: memory.md");
+    expect(context.systemPrompt).not.toContain("Do not create apps/local-runner.");
+    expect(context.startupMessages[0]?.content).toContain("Expert Memory Summary");
+    expect(context.startupMessages[0]?.content).toContain("Do not create apps/local-runner.");
   });
 
   it("rejects direct writes to generated summary.md", async () => {

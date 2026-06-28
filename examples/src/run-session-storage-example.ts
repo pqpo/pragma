@@ -1,13 +1,13 @@
 import { cp, mkdir, readdir, rm } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 
-import { ExpertAgent } from "@expertmesh/agent-core";
+import { ExpertAgent } from "@expertmesh/core";
 import type {
   RuntimeAgentSession,
   RuntimeSessionRestoreHandler,
   RuntimeSessionSyncCallback,
-} from "@expertmesh/agent-core";
-import { createCloudPiRuntimeAdapter } from "@expertmesh/agent-runtime";
+} from "@expertmesh/core";
+import { createCloudPiRuntimeAdapter } from "@expertmesh/core";
 
 import { printRunHeader, printRunResult } from "./harness/expert-agent-example-utils.ts";
 import { createExampleLoggerProvider } from "./harness/logger.ts";

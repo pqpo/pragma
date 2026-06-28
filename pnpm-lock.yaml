@@ -44,7 +44,7 @@ importers:
     devDependencies:
       '@expertmesh/tsconfig':
         specifier: workspace:*
-        version: link:../../packages/tooling/tsconfig
+        version: link:../../packages/tsconfig
       '@types/node':
         specifier: latest
         version: 26.0.1
@@ -75,25 +75,19 @@ importers:
 
   apps/server:
     dependencies:
-      '@expertmesh/contracts':
+      '@expertmesh/server':
         specifier: workspace:*
-        version: link:../../packages/shared/contracts
-      '@expertmesh/database':
+        version: link:../../packages/server
+      '@expertmesh/shared':
         specifier: workspace:*
-        version: link:../../packages/server/database
-      '@expertmesh/domain':
-        specifier: workspace:*
-        version: link:../../packages/shared/domain
-      '@expertmesh/utils':
-        specifier: workspace:*
-        version: link:../../packages/shared/utils
+        version: link:../../packages/shared
       fastify:
         specifier: latest
         version: 5.8.5
     devDependencies:
       '@expertmesh/tsconfig':
         specifier: workspace:*
-        version: link:../../packages/tooling/tsconfig
+        version: link:../../packages/tsconfig
       '@types/node':
         specifier: latest
         version: 26.0.1
@@ -109,18 +103,12 @@ importers:
 
   apps/web:
     dependencies:
-      '@expertmesh/contracts':
+      '@expertmesh/client':
         specifier: workspace:*
-        version: link:../../packages/shared/contracts
-      '@expertmesh/domain':
+        version: link:../../packages/client
+      '@expertmesh/shared':
         specifier: workspace:*
-        version: link:../../packages/shared/domain
-      '@expertmesh/sdk':
-        specifier: workspace:*
-        version: link:../../packages/client/sdk
-      '@expertmesh/utils':
-        specifier: workspace:*
-        version: link:../../packages/shared/utils
+        version: link:../../packages/shared
       next:
         specifier: latest
         version: 16.2.9(@opentelemetry/api@1.9.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
@@ -133,7 +121,7 @@ importers:
     devDependencies:
       '@expertmesh/tsconfig':
         specifier: workspace:*
-        version: link:../../packages/tooling/tsconfig
+        version: link:../../packages/tsconfig
       '@types/react':
         specifier: latest
         version: 19.2.17
@@ -149,25 +137,19 @@ importers:
 
   apps/worker:
     dependencies:
-      '@expertmesh/agent-core':
+      '@expertmesh/core':
         specifier: workspace:*
-        version: link:../../packages/agent/agent-core
-      '@expertmesh/contracts':
+        version: link:../../packages/core
+      '@expertmesh/server':
         specifier: workspace:*
-        version: link:../../packages/shared/contracts
-      '@expertmesh/database':
+        version: link:../../packages/server
+      '@expertmesh/shared':
         specifier: workspace:*
-        version: link:../../packages/server/database
-      '@expertmesh/domain':
-        specifier: workspace:*
-        version: link:../../packages/shared/domain
-      '@expertmesh/utils':
-        specifier: workspace:*
-        version: link:../../packages/shared/utils
+        version: link:../../packages/shared
     devDependencies:
       '@expertmesh/tsconfig':
         specifier: workspace:*
-        version: link:../../packages/tooling/tsconfig
+        version: link:../../packages/tsconfig
       '@types/node':
         specifier: latest
         version: 26.0.1
@@ -183,15 +165,9 @@ importers:
 
   examples:
     dependencies:
-      '@expertmesh/agent-core':
+      '@expertmesh/core':
         specifier: workspace:*
-        version: link:../packages/agent/agent-core
-      '@expertmesh/agent-runtime':
-        specifier: workspace:*
-        version: link:../packages/agent/agent-runtime
-      '@expertmesh/loop':
-        specifier: workspace:*
-        version: link:../packages/agent/loop
+        version: link:../packages/core
       '@expertmesh/plugin-code-repository-manager':
         specifier: workspace:*
         version: link:../plugins/code-repository-manager
@@ -207,7 +183,7 @@ importers:
     devDependencies:
       '@expertmesh/tsconfig':
         specifier: workspace:*
-        version: link:../packages/tooling/tsconfig
+        version: link:../packages/tsconfig
       '@types/node':
         specifier: latest
         version: 26.0.1
@@ -221,11 +197,39 @@ importers:
         specifier: latest
         version: 4.1.9(@opentelemetry/api@1.9.0)(@types/node@26.0.1)(vite@8.1.0(@types/node@26.0.1)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.9.0))
 
-  packages/agent/agent-core:
+  packages/client:
     dependencies:
-      '@expertmesh/contracts':
+      '@expertmesh/shared':
         specifier: workspace:*
-        version: link:../../shared/contracts
+        version: link:../shared
+    devDependencies:
+      '@expertmesh/tsconfig':
+        specifier: workspace:*
+        version: link:../tsconfig
+      typescript:
+        specifier: latest
+        version: 6.0.3
+      vitest:
+        specifier: latest
+        version: 4.1.9(@opentelemetry/api@1.9.0)(@types/node@26.0.1)(vite@8.1.0(@types/node@26.0.1)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.9.0))
+
+  packages/core:
+    dependencies:
+      '@cfworker/json-schema':
+        specifier: ^4.1.1
+        version: 4.1.1
+      '@earendil-works/pi-coding-agent':
+        specifier: 0.79.8
+        version: 0.79.8(ws@8.21.0)(zod@4.4.3)
+      '@expertmesh/shared':
+        specifier: workspace:*
+        version: link:../shared
+      '@modelcontextprotocol/client':
+        specifier: 2.0.0-alpha.2
+        version: 2.0.0-alpha.2(@cfworker/json-schema@4.1.1)
+      '@modelcontextprotocol/server':
+        specifier: 2.0.0-alpha.2
+        version: 2.0.0-alpha.2(@cfworker/json-schema@4.1.1)
       gray-matter:
         specifier: ^4.0.3
         version: 4.0.3
@@ -235,7 +239,7 @@ importers:
     devDependencies:
       '@expertmesh/tsconfig':
         specifier: workspace:*
-        version: link:../../tooling/tsconfig
+        version: link:../tsconfig
       '@types/node':
         specifier: latest
         version: 26.0.1
@@ -246,89 +250,17 @@ importers:
         specifier: latest
         version: 4.1.9(@opentelemetry/api@1.9.0)(@types/node@26.0.1)(vite@8.1.0(@types/node@26.0.1)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.9.0))
 
-  packages/agent/agent-runtime:
-    dependencies:
-      '@cfworker/json-schema':
-        specifier: ^4.1.1
-        version: 4.1.1
-      '@earendil-works/pi-coding-agent':
-        specifier: 0.79.8
-        version: 0.79.8(ws@8.21.0)(zod@4.4.3)
-      '@expertmesh/agent-core':
-        specifier: workspace:*
-        version: link:../agent-core
-      '@expertmesh/contracts':
-        specifier: workspace:*
-        version: link:../../shared/contracts
-      '@modelcontextprotocol/client':
-        specifier: 2.0.0-alpha.2
-        version: 2.0.0-alpha.2(@cfworker/json-schema@4.1.1)
-      '@modelcontextprotocol/server':
-        specifier: 2.0.0-alpha.2
-        version: 2.0.0-alpha.2(@cfworker/json-schema@4.1.1)
+  packages/eslint-config:
     devDependencies:
-      '@expertmesh/tsconfig':
-        specifier: workspace:*
-        version: link:../../tooling/tsconfig
-      '@types/node':
-        specifier: latest
-        version: 26.0.1
-      typescript:
-        specifier: latest
-        version: 6.0.3
-      vitest:
-        specifier: latest
-        version: 4.1.9(@opentelemetry/api@1.9.0)(@types/node@26.0.1)(vite@8.1.0(@types/node@26.0.1)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.9.0))
-      zod:
-        specifier: latest
-        version: 4.4.3
-
-  packages/agent/loop:
-    dependencies:
-      '@expertmesh/agent-core':
-        specifier: workspace:*
-        version: link:../agent-core
-      '@expertmesh/agent-runtime':
-        specifier: workspace:*
-        version: link:../agent-runtime
-    devDependencies:
-      '@expertmesh/tsconfig':
-        specifier: workspace:*
-        version: link:../../tooling/tsconfig
-      '@types/node':
-        specifier: latest
-        version: 26.0.1
-      typescript:
-        specifier: latest
-        version: 6.0.3
-      vitest:
-        specifier: latest
-        version: 4.1.9(@opentelemetry/api@1.9.0)(@types/node@26.0.1)(vite@8.1.0(@types/node@26.0.1)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.9.0))
-      zod:
-        specifier: latest
-        version: 4.4.3
-
-  packages/client/sdk:
-    dependencies:
-      '@expertmesh/contracts':
-        specifier: workspace:*
-        version: link:../../shared/contracts
-    devDependencies:
-      '@expertmesh/tsconfig':
-        specifier: workspace:*
-        version: link:../../tooling/tsconfig
-      typescript:
-        specifier: latest
-        version: 6.0.3
       vitest:
         specifier: latest
         version: 4.1.9(@opentelemetry/api@1.9.0)(@types/node@26.0.1)(vite@8.1.0(@types/node@26.0.1)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.9.0))
 
-  packages/server/database:
+  packages/server:
     devDependencies:
       '@expertmesh/tsconfig':
         specifier: workspace:*
-        version: link:../../tooling/tsconfig
+        version: link:../tsconfig
       '@types/node':
         specifier: latest
         version: 26.0.1
@@ -339,7 +271,7 @@ importers:
         specifier: latest
         version: 4.1.9(@opentelemetry/api@1.9.0)(@types/node@26.0.1)(vite@8.1.0(@types/node@26.0.1)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.9.0))
 
-  packages/shared/contracts:
+  packages/shared:
     dependencies:
       zod:
         specifier: latest
@@ -347,7 +279,7 @@ importers:
     devDependencies:
       '@expertmesh/tsconfig':
         specifier: workspace:*
-        version: link:../../tooling/tsconfig
+        version: link:../tsconfig
       typescript:
         specifier: latest
         version: 6.0.3
@@ -355,37 +287,7 @@ importers:
         specifier: latest
         version: 4.1.9(@opentelemetry/api@1.9.0)(@types/node@26.0.1)(vite@8.1.0(@types/node@26.0.1)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.9.0))
 
-  packages/shared/domain:
-    devDependencies:
-      '@expertmesh/tsconfig':
-        specifier: workspace:*
-        version: link:../../tooling/tsconfig
-      typescript:
-        specifier: latest
-        version: 6.0.3
-      vitest:
-        specifier: latest
-        version: 4.1.9(@opentelemetry/api@1.9.0)(@types/node@26.0.1)(vite@8.1.0(@types/node@26.0.1)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.9.0))
-
-  packages/shared/utils:
-    devDependencies:
-      '@expertmesh/tsconfig':
-        specifier: workspace:*
-        version: link:../../tooling/tsconfig
-      typescript:
-        specifier: latest
-        version: 6.0.3
-      vitest:
-        specifier: latest
-        version: 4.1.9(@opentelemetry/api@1.9.0)(@types/node@26.0.1)(vite@8.1.0(@types/node@26.0.1)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.9.0))
-
-  packages/tooling/eslint-config:
-    devDependencies:
-      vitest:
-        specifier: latest
-        version: 4.1.9(@opentelemetry/api@1.9.0)(@types/node@26.0.1)(vite@8.1.0(@types/node@26.0.1)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.9.0))
-
-  packages/tooling/tsconfig:
+  packages/tsconfig:
     devDependencies:
       vitest:
         specifier: latest
@@ -393,16 +295,16 @@ importers:
 
   plugins/code-repository-manager:
     dependencies:
-      '@expertmesh/agent-core':
+      '@expertmesh/core':
         specifier: workspace:*
-        version: link:../../packages/agent/agent-core
+        version: link:../../packages/core
       zod:
         specifier: latest
         version: 4.4.3
     devDependencies:
       '@expertmesh/tsconfig':
         specifier: workspace:*
-        version: link:../../packages/tooling/tsconfig
+        version: link:../../packages/tsconfig
       '@types/node':
         specifier: latest
         version: 26.0.1
@@ -415,16 +317,16 @@ importers:
 
   plugins/expert-memory:
     dependencies:
-      '@expertmesh/agent-core':
+      '@expertmesh/core':
         specifier: workspace:*
-        version: link:../../packages/agent/agent-core
+        version: link:../../packages/core
       zod:
         specifier: latest
         version: 4.4.3
     devDependencies:
       '@expertmesh/tsconfig':
         specifier: workspace:*
-        version: link:../../packages/tooling/tsconfig
+        version: link:../../packages/tsconfig
       '@types/node':
         specifier: latest
         version: 26.0.1
@@ -3091,7 +2993,7 @@ snapshots:
       '@aws-sdk/types': 3.973.13
       '@smithy/core': 3.25.1
       '@smithy/fetch-http-handler': 5.5.1
-      '@smithy/node-http-handler': 4.7.3
+      '@smithy/node-http-handler': 4.8.1
       '@smithy/types': 4.15.0
       tslib: 2.8.1
 

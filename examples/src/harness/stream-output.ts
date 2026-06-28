@@ -1,4 +1,4 @@
-import type { RuntimeStreamEvent, RuntimeSubmitHandle } from "@expertmesh/agent-core";
+import type { RuntimeStreamEvent, RuntimeSubmitHandle } from "@expertmesh/core";
 
 type StreamSection = "none" | "thought" | "message" | "toolDelta";
 

@@ -12,7 +12,7 @@ plugins because parameters can be supplied directly instead of routed through
 environment variables or host context.
 
 ```ts
-import { ExpertAgent } from "@expertmesh/agent-core";
+import { ExpertAgent } from "@expertmesh/core";
 import codeRepositoryManagerPlugin from "@expertmesh/plugin-code-repository-manager";
 
 const gitToken = "value loaded from your app secret store";
@@ -20,7 +20,7 @@ const gitToken = "value loaded from your app secret store";
 const agent = await ExpertAgent.create({
   schemaVersion: "expertmesh.expert/v1",
   id: "repo-aware-agent",
-  displayName: "Repo Aware Agent",
+  name: "Repo Aware Agent",
   description: "Agent with repository access.",
   tags: ["code"],
   version: "0.0.0",
@@ -68,14 +68,14 @@ Agent with resolved plugin entries. Directory and zip sources may also receive
 direct config:
 
 ```ts
-import { ExpertAgent } from "@expertmesh/agent-core";
+import { ExpertAgent } from "@expertmesh/core";
 
 const workspace = "/path/to/workspace";
 
 const agent = await ExpertAgent.create({
   schemaVersion: "expertmesh.expert/v1",
   id: "repo-aware-agent",
-  displayName: "Repo Aware Agent",
+  name: "Repo Aware Agent",
   description: "Agent with repository access.",
   tags: ["code"],
   version: "0.0.0",
@@ -117,7 +117,7 @@ EXPERTMESH_PLUGIN_CODE_REPOSITORY_MANAGER_AUTH_PRIVATE_KEY
 EXPERTMESH_PLUGIN_CODE_REPOSITORY_MANAGER_AUTH_KNOWN_HOSTS
 ```
 
-Use `createExpertAgentPluginConfigEnvName` from `@expertmesh/agent-core` to derive
+Use `createExpertAgentPluginConfigEnvName` from `@expertmesh/core` to derive
 these names from `pluginId` and config key. Set
 `EXPERTMESH_PLUGIN_CODE_REPOSITORY_MANAGER_AUTH_HELPER` to a
 `credential.helper` value when Git credentials should come from an existing helper

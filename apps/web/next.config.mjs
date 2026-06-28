@@ -1,6 +1,6 @@
 /** @type {import("next").NextConfig} */
 const nextConfig = {
-  transpilePackages: ["@expertmesh/contracts", "@expertmesh/domain", "@expertmesh/sdk", "@expertmesh/utils"]
+  transpilePackages: ["@expertmesh/shared", "@expertmesh/client"],
 };
 
 export default nextConfig;

@@ -36,21 +36,12 @@ apps/
   desktop/   未来 Desktop App，本地 Agent 桥接入口
 
 packages/
-  shared/
-    contracts/  跨进程、跨端协议；Zod schema 与由 schema 推导的类型
-    domain/     纯领域模型、枚举、值对象、状态定义
-    utils/      跨端纯函数工具
-  client/
-    sdk/        浏览器或客户端使用的 HTTP SDK
-  server/
-    database/   Node 服务端数据库边界
-  agent/
-    agent-core/ Agent 抽象、上下文、工具、插件和 Runtime 会话核心协议
-    agent-runtime/       未来 Runtime 选择、执行协议与云端运行抽象
-    local-agent-bridge/  未来本地 Agent 桥接协议，不直接实现 Desktop UI
-  tooling/
-    eslint-config/ 共享 ESLint 配置出口
-    tsconfig/      共享 TypeScript 配置
+  shared/         跨进程、跨端协议、领域模型和值对象、跨端纯函数工具
+  client/         浏览器或客户端使用的 HTTP SDK
+  server/         Node 服务端基础设施边界，例如数据库边界
+  core/           ExpertAgent、Context、工具、插件、Runtime Adapter 与默认 Runtime
+  eslint-config/ 共享 ESLint 配置出口
+  tsconfig/      共享 TypeScript 配置
 
 docs/
   architecture/ 架构说明
@@ -68,12 +59,8 @@ apps/
   desktop/             Desktop App，负责本地登录、设备绑定、权限确认、连接云端、本地 Agent 调用
 
 packages/
-  agent/
-    agent-core/         ExpertAgent、RuntimeAdapter、RuntimeEvent 等核心协议
-    agent-runtime/      Runtime 选择、云端沙箱 Runtime、本地 Runtime 抽象
-    local-agent-bridge/ 云端与 Desktop App 的桥接协议、消息类型、能力注册模型
-  server/
-    runtime-gateway/    云端 Runner/Device 注册、会话管理、Run 下发、事件接收
+  core/src/local-agent-bridge/     云端与 Desktop App 的桥接协议、消息类型、能力注册模型
+  server/src/runtime-gateway/      云端 Runner/Device 注册、会话管理、Run 下发、事件接收
 ```
 
 不要新增 `apps/local-runner`。本地 Agent 的产品入口是 Desktop App，而不是独立 CLI runner。
@@ -97,14 +84,10 @@ tsconfig.base.json
 当前 package：
 
 ```text
-@expertmesh/contracts
-@expertmesh/domain
-@expertmesh/utils
-@expertmesh/sdk
-@expertmesh/database
-@expertmesh/agent-core
-@expertmesh/agent-runtime
-@expertmesh/loop
+@expertmesh/shared
+@expertmesh/client
+@expertmesh/server
+@expertmesh/core
 @expertmesh/eslint-config
 @expertmesh/tsconfig
 ```
@@ -113,15 +96,13 @@ tsconfig.base.json
 
 ```text
 common
-core
 base
 shared-lib
 helpers
-platform
 lib
 ```
 
-新增 package 前，必须先明确它属于 `shared`、`client`、`server`、`agent` 还是 `tooling`。
+新增 package 前，必须先明确它属于 `shared`、`client`、`server`、`core` 还是配置工具。
 
 ## 模块依赖规范
 
@@ -131,54 +112,54 @@ lib
 
 - `shared` 是最底层协议、领域模型和纯工具，不依赖任何运行环境层。
 - `client` 是浏览器/客户端 SDK，只依赖 `shared`，不直接碰 Server 内部实现或 Agent。
-- `agent` 是专家 Agent 的云端优先执行抽象和 Runtime Adapter 边界，只依赖 `shared` 和 agent 内部包，不依赖 `client`。
-- `server` 是服务端控制面与基础设施层，可以依赖 `shared`、`server` 内部基础设施包，并在编排/调度场景依赖 `agent` 抽象。
+- `core` 是专家 Agent 的云端优先执行抽象和 Runtime Adapter 边界，只依赖 `shared` 和 core 内部模块，不依赖 `client`。
+- `server` 是服务端控制面与基础设施层，可以依赖 `shared` 和 `core` 抽象。
 - `apps/server` 和 `apps/worker` 是云端运行入口，未来由它们调度专家 Agent；不是 Agent 反过来依赖 Server。
 - `apps/desktop` 是未来本地 Agent 桥接入口，主动连接云端，承载本地权限闸门和本机 Agent 调用。
 
 ```text
 apps/web    -> client -> shared
-apps/server -> server -> agent -> shared
-apps/worker -> server -> agent -> shared
-apps/desktop    -> agent -> shared
+apps/server -> server -> core -> shared
+apps/worker -> server -> core -> shared
+apps/desktop    -> core -> shared
 ```
 
 更具体地说：
 
 | 来源                | 允许依赖                                                            |
 | ------------------- | ------------------------------------------------------------------- |
-| `apps/web`          | `shared/*`、`client/*`                                              |
-| `apps/server`       | `shared/*`、`server/*`、`agent/*`                                   |
-| `apps/worker`       | `shared/*`、`server/*`、`agent/*`                                   |
-| `apps/desktop`      | `shared/*`、`agent/*`；未来可依赖 Desktop App 专属本地桥接包        |
-| `packages/shared/*` | 仅 `shared/*`                                                       |
-| `packages/client/*` | `shared/*`、`client/*`                                              |
-| `packages/server/*` | `shared/*`、`server/*`；编排/调度类 server package 可依赖 `agent/*` |
-| `packages/agent/*`  | `shared/*`、`agent/*`                                               |
+| `apps/web`         | `@expertmesh/shared`、`@expertmesh/client`             |
+| `apps/server`      | `@expertmesh/shared`、`@expertmesh/server`、`@expertmesh/core` |
+| `apps/worker`      | `@expertmesh/shared`、`@expertmesh/server`、`@expertmesh/core` |
+| `apps/desktop`     | `@expertmesh/shared`、`@expertmesh/core`                |
+| `packages/shared`  | 无内部 package 依赖；只允许运行时中立依赖               |
+| `packages/client`  | `@expertmesh/shared`                                   |
+| `packages/server`  | `@expertmesh/shared`；需要编排时可依赖 `@expertmesh/core` |
+| `packages/core`    | `@expertmesh/shared`                                   |
 
 明确禁止：
 
 ```text
 web -> server
-web -> agent
+web -> core
 client -> server
-client -> agent
+client -> core
 shared -> client
 shared -> server
-shared -> agent
-agent -> client
-agent -> server
+shared -> core
+core -> client
+core -> server
 server -> client
 server -> web
-agent -> web
+core -> web
 ```
 
-这里的 `agent` 指专家 Agent 的执行抽象、Manifest、Invocation、Runtime Adapter 合约和云端沙箱运行边界。默认形态是云端 Agent，由 Server/Worker 调度执行。未来对接本地 Claude Code、Codex 或其他本地执行环境时，由 Desktop App 作为本地连接和权限入口，再通过 Runtime Adapter 接入 `agent` 层；不要让 `agent` 依赖 `client`、Web 或 Server 应用层。
+这里的 `core` 指专家 Agent 的执行抽象、Manifest、Invocation、Runtime Adapter 合约和云端沙箱运行边界。默认形态是云端 Agent，由 Server/Worker 调度执行。未来对接本地 Claude Code、Codex 或其他本地执行环境时，由 Desktop App 作为本地连接和权限入口，再通过 Runtime Adapter 接入 `core` 层；不要让 `core` 依赖 `client`、Web 或 Server 应用层。
 
 所有跨 package 依赖必须使用 package import：
 
 ```ts
-import { HealthResponseSchema } from "@expertmesh/contracts";
+import { HealthResponseSchema } from "@expertmesh/shared";
 ```
 
 禁止跨 package 使用相对路径：
@@ -191,7 +172,7 @@ import { HealthResponseSchema } from "../../../shared/contracts/src/index.ts";
 
 ```json
 {
-  "@expertmesh/contracts": "workspace:*"
+  "@expertmesh/shared": "workspace:*"
 }
 ```
 
@@ -201,7 +182,7 @@ import { HealthResponseSchema } from "../../../shared/contracts/src/index.ts";
 
 `shared` package 必须同时支持浏览器和 Node，不允许引入运行环境专属依赖。
 
-在 `packages/shared/*` 中禁止导入：
+在 `packages/shared` 中禁止导入：
 
 ```text
 node:fs
@@ -214,15 +195,15 @@ next
 fastify
 ```
 
-`apps/web` 与 `packages/client/*` 必须保持浏览器安全，不允许访问数据库、Agent、Node 内置模块。
+`apps/web` 与 `packages/client` 必须保持浏览器安全，不允许访问数据库、Agent、Node 内置模块。
 
-`packages/server/*` 和 `packages/agent/*` 是 Node-only，不允许依赖 React、Next 页面或 UI 包。
+`packages/server` 和 `packages/core` 是 Node-only，不允许依赖 React、Next 页面或 UI 包。
 
 Server 与 Agent 的关系：
 
 - Server/Worker 负责接收请求、创建运行、权限校验、调度 Playbook、记录 Trace、管理成本和治理流程。
-- Agent 负责定义专家能力、输入输出协议、Invocation、Runtime Adapter 合约，以及默认云端沙箱执行抽象。
-- Server/Worker 可以调用 Agent；Agent 不应该反向调用 Server 应用层。
+- Core 负责定义专家能力、输入输出协议、Invocation、Runtime Adapter 合约，以及默认云端沙箱执行抽象。
+- Server/Worker 可以调用 Core；Core 不应该反向调用 Server 应用层。
 - 本地 Claude Code、Codex、自研执行环境属于 Runtime Adapter 的实现目标，由 Desktop App 承载本地连接、授权和执行桥接，不改变 Server 调度 Agent 的依赖方向。
 
 ## 本地 Agent 桥接规范
@@ -270,13 +251,13 @@ Desktop App 职责：
 桥接协议应放在：
 
 ```text
-packages/agent/local-agent-bridge
+packages/core/src/local-agent-bridge
 ```
 
 云端会话和任务下发能力应放在：
 
 ```text
-packages/server/runtime-gateway
+packages/server/src/runtime-gateway
 ```
 
 Desktop App 自身未来放在：
@@ -295,23 +276,21 @@ apps/desktop
 
 - 页面与路由。
 - 浏览器状态。
-- 调用 `@expertmesh/sdk`。
+- 调用 `@expertmesh/client`。
 - 展示 API 数据。
 
 允许依赖：
 
 ```text
-@expertmesh/contracts
-@expertmesh/domain
-@expertmesh/utils
-@expertmesh/sdk
+@expertmesh/shared
+@expertmesh/client
 ```
 
 禁止依赖：
 
 ```text
-@expertmesh/database
-@expertmesh/agent-core
+@expertmesh/server
+@expertmesh/core
 node:*
 @prisma/client
 服务端 Repository
@@ -329,17 +308,15 @@ node:*
 允许依赖：
 
 ```text
-@expertmesh/contracts
-@expertmesh/domain
-@expertmesh/utils
-@expertmesh/database
-@expertmesh/agent-core
+@expertmesh/shared
+@expertmesh/server
+@expertmesh/core
 ```
 
 禁止依赖：
 
 ```text
-@expertmesh/sdk
+@expertmesh/client
 React / Next / Web UI 包
 ```
 
@@ -373,7 +350,7 @@ ExpertMesh Worker Ready
 
 暂不接队列。
 
-### `packages/shared/contracts`
+### `packages/shared`
 
 职责：
 
@@ -382,35 +359,23 @@ ExpertMesh Worker Ready
 - API Request / Response Schema。
 - 跨进程事件协议。
 - 未来 Expert Manifest、Playbook 协议。
-
-要求：
-
-- 必须使用 Zod 定义运行时 schema。
-- TypeScript type 必须从 schema 推导。
-- 不要只写 interface 而没有运行时校验。
-
-### `packages/shared/domain`
-
-职责：
-
 - 纯领域模型。
 - 纯状态机。
 - 枚举。
 - 值对象。
 - 业务规则。
-
-禁止数据库访问、HTTP、文件系统、Runtime SDK、React。
-
-### `packages/shared/utils`
-
-职责：
-
 - 跨端纯函数。
 - 字符串、时间、Result/Error、ID 等工具。
 
-禁止外部服务访问、Node 专属 API、client/server/agent 反向依赖。
+要求：
 
-### `packages/client/sdk`
+- 协议必须使用 Zod 定义运行时 schema。
+- TypeScript type 必须从 schema 推导。
+- 不要只写 interface 而没有运行时校验。
+
+禁止外部服务访问、Node 专属 API、client/server/core 反向依赖。
+
+### `packages/client`
 
 职责：
 
@@ -427,7 +392,7 @@ ServerClient.getHealth()
 
 禁止 React Hook、页面逻辑、数据库逻辑、Agent 执行逻辑。
 
-### `packages/server/database`
+### `packages/server`
 
 职责：
 
@@ -443,7 +408,7 @@ createDatabaseClient()
 
 引入 Prisma、迁移或具体 Repository 前，必须先明确数据库职责边界、迁移策略和调用方验证路径。
 
-### `packages/agent/agent-core`
+### `packages/core`
 
 职责：
 
@@ -452,6 +417,9 @@ createDatabaseClient()
 - RuntimeAdapter 与 RuntimeAgentSession 核心接口。
 - 默认面向云端 Agent 和云端沙箱执行边界。
 - 未来本地 Claude Code、Codex、自研执行环境通过 Runtime Adapter 对接。
+- RuntimeAdapter 的具体实现。
+- 当前第一版只提供 `cloud-pi-agent`，基于 PI agent SDK 适配 ExpertAgent。
+- 将 ExpertAgent 声明的 skills、AGENTS.md、context、workspace 转换为 PI runtime 可理解的 session 配置。
 
 当前保留：
 
@@ -465,29 +433,12 @@ RuntimeAdapter
 ExpertAgent API 设计要求：
 
 - 保留 `ExpertAgent.create()` 作为标准创建入口，负责异步插件加载、inline plugin entry 合并、日志初始化和实例归一化。
-- Loop SDK 的 `defineAgent()` 只是 `ExpertAgent.create()` 的声明语法糖，负责把 `name` 映射为 `displayName` 并补齐 schemaVersion；不要在 `defineAgent()` 下再实现独立 Agent 包装层。
+- `defineAgent()` 只是 `ExpertAgent.create()` 的声明语法糖；不要在 `defineAgent()` 下再实现独立 Agent 包装层。
 - Agent 运行能力优先加到 `ExpertAgent`，不要只放在 Loop SDK 包装层中。
 
 不要引入具体 Claude SDK、Codex SDK、MCP、Playbook、HTTP Controller、数据库实现或 Server 应用层实现。
 
-### `packages/agent/agent-runtime`
-
-职责：
-
-- RuntimeAdapter 的具体实现。
-- 当前第一版只提供 `cloud-pi-agent`，基于 PI agent SDK 适配 ExpertAgent。
-- 将 ExpertAgent 声明的 skills、AGENTS.md、context、workspace 转换为 PI runtime 可理解的 session 配置。
-- 后续承载 Runtime 选择、云端 Runtime 和本地 Runtime 抽象。
-
-禁止：
-
-```text
-Server 应用层
-Client SDK
-React / Next / Web UI 包
-数据库实现
-Desktop 本地权限 UI
-```
+禁止引入 Server 应用层、Client SDK、React / Next Web UI、数据库实现或 Desktop 本地权限 UI。
 
 ## TypeScript 与导入规范
 
@@ -504,7 +455,7 @@ export * from "./health.schema.ts";
 类型导入优先使用 `import type`：
 
 ```ts
-import type { ExpertAgent } from "@expertmesh/agent-core";
+import type { ExpertAgent } from "@expertmesh/core";
 ```
 
 ## Package 标准
@@ -551,7 +502,7 @@ pnpm -r list
 启动 Server：
 
 ```bash
-pnpm --filter @expertmesh/server dev
+pnpm --filter @expertmesh/server-app dev
 ```
 
 验证 Server：
@@ -650,19 +601,19 @@ eslint.config.mjs
 
 ```ts
 // apps/web 中禁止
-import "@expertmesh/database";
+import "@expertmesh/server";
 
-// packages/shared/* 中禁止
+// packages/shared 中禁止
 import "node:fs";
 
-// packages/agent/* 中禁止
-import "@expertmesh/sdk";
+// packages/core 中禁止
+import "@expertmesh/client";
 ```
 
 可以用 stdin 临时验证，不要提交非法测试文件：
 
 ```bash
-printf 'import "@expertmesh/database";\n' \
+printf 'import "@expertmesh/server";\n' \
   | pnpm exec eslint --stdin --stdin-filename apps/web/src/illegal.ts
 ```
 
@@ -682,8 +633,8 @@ printf 'import "@expertmesh/database";\n' \
 - 不要把共享逻辑放进 `apps`。
 - 不要为了绕过 ESLint 使用相对路径跨 package 导入。
 - 不要在 `shared` 中使用 Node API。
-- 不要在 Web 或 SDK 中使用数据库、Agent 或 Node 内置模块。
-- 不要在 Server 或 Agent 中引入 React、Next 页面或 UI 包。
+- 不要在 Web 或 SDK 中使用数据库、Core 或 Node 内置模块。
+- 不要在 Server 或 Core 中引入 React、Next 页面或 UI 包。
 - 不要保留没有长期价值的空实现、废弃字段或迁移期分支。
 - 不要新增未来能力 package，除非当前任务明确要求并同步更新 ADR、边界文档和验证路径。
 - 不要提交 `node_modules`、`dist`、`.next`、`.turbo`、coverage 等构建产物。
@@ -719,11 +670,11 @@ docs/conventions/coding-conventions.md
 
 边界：
 
-- `shared` 仅依赖 `shared`。
-- `client` 不依赖 `server` / `agent`。
-- `server` 不依赖 `client`，但可在调度场景依赖 `agent` 抽象。
-- `agent` 不依赖 `client` / `server` / Web。
-- `web` 不依赖 `database` / `agent`。
+- `shared` 不依赖内部运行环境包。
+- `client` 不依赖 `server` / `core`。
+- `server` 不依赖 `client`，但可在调度场景依赖 `core` 抽象。
+- `core` 不依赖 `client` / `server` / Web。
+- `web` 不依赖 `server` / `core`。
 - 跨 package 不使用相对路径。
 - `shared` 不导入 Node、React、Prisma、Fastify。
 

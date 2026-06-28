@@ -17,7 +17,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@expertmesh/agent-core": "workspace:*",
+    "@expertmesh/core": "workspace:*",
     "zod": "latest"
   },
   "devDependencies": {

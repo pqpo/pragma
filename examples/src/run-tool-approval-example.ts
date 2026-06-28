@@ -1,9 +1,9 @@
 import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 
-import { ExpertAgent } from "@expertmesh/agent-core";
-import type { ExpertAgentHumanInteractionHandler } from "@expertmesh/agent-core";
-import { createCloudPiRuntimeAdapter } from "@expertmesh/agent-runtime";
+import { ExpertAgent } from "@expertmesh/core";
+import type { ExpertAgentHumanInteractionHandler } from "@expertmesh/core";
+import { createCloudPiRuntimeAdapter } from "@expertmesh/core";
 
 import toolApprovalPolicyPlugin from "../plugins/tool-approval-policy/src/plugin.ts";
 import {

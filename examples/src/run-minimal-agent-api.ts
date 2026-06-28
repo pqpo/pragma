@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { defineAgent } from "@expertmesh/loop";
+import { defineAgent } from "@expertmesh/core";
 
 import { printRunResult } from "./harness/expert-agent-example-utils.ts";
 import {

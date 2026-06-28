@@ -12,11 +12,9 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@expertmesh/agent-core": "workspace:*",
-    "@expertmesh/contracts": "workspace:*",
-    "@expertmesh/database": "workspace:*",
-    "@expertmesh/domain": "workspace:*",
-    "@expertmesh/utils": "workspace:*"
+    "@expertmesh/core": "workspace:*",
+    "@expertmesh/shared": "workspace:*",
+    "@expertmesh/server": "workspace:*"
   },
   "devDependencies": {
     "@expertmesh/tsconfig": "workspace:*",

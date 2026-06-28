@@ -14,8 +14,8 @@ Desktop App 负责连接云端、注册本地能力、承载本地权限闸门�
 Cloud ExpertMesh
 ├── apps/server
 ├── apps/worker
-├── packages/server/runtime-gateway
-└── packages/agent/*
+├── packages/server/src/runtime-gateway
+└── packages/core
         │
         │ 双向安全连接，由 Desktop App 主动建立
         ↓
@@ -86,7 +86,7 @@ Desktop App -> Cloud Runtime Gateway
 后续协议应放在：
 
 ```text
-packages/agent/local-agent-bridge
+packages/core/src/local-agent-bridge
 ```
 
 建议包含：
@@ -142,9 +142,9 @@ packages/
 说明：
 
 - `apps/desktop` 是 Desktop App，不是 CLI runner。
-- `packages/agent/local-agent-bridge` 只放协议、schema、类型和桥接抽象。
-- `packages/server/runtime-gateway` 放云端会话管理、任务下发和事件接收。
-- `packages/agent/agent-runtime` 放 Runtime 选择、云端 Runtime 和本地 Runtime 抽象。
+- `packages/core/src/local-agent-bridge` 只放协议、schema、类型和桥接抽象。
+- `packages/server/src/runtime-gateway` 放云端会话管理、任务下发和事件接收。
+- `packages/core` 放 Runtime 选择、云端 Runtime 和本地 Runtime 抽象。
 - 具体 Claude Code / Codex 调用实现属于 Desktop App 的本地适配层。
 
 ## 安全规则
@@ -162,18 +162,18 @@ packages/
 `A -> B` 表示 `A` 可以依赖 `B`：
 
 ```text
-apps/server -> packages/server/runtime-gateway -> packages/agent/local-agent-bridge -> packages/agent/agent-core -> packages/shared/*
-apps/worker -> packages/agent/agent-runtime -> packages/agent/agent-core -> packages/shared/*
-apps/desktop    -> packages/agent/local-agent-bridge -> packages/agent/agent-core -> packages/shared/*
+apps/server -> packages/server/src/runtime-gateway -> packages/core/src/local-agent-bridge -> packages/core -> packages/shared
+apps/worker -> packages/core -> packages/shared
+apps/desktop    -> packages/core/src/local-agent-bridge -> packages/core -> packages/shared
 ```
 
 禁止：
 
 ```text
-packages/agent/* -> packages/server/*
-packages/agent/* -> packages/client/*
-packages/agent/* -> apps/*
-apps/web -> packages/agent/*
+packages/core -> packages/server
+packages/core -> packages/client
+packages/core -> apps/*
+apps/web -> packages/core
 ```
 
 ## 阶段建议
@@ -192,4 +192,4 @@ apps/web -> packages/agent/*
 - preload：通过窄的类型化 IPC API 暴露桌面能力，Renderer 不直接访问 Node API。
 - renderer：React/Vite 控制台，用于展示设备会话、Runtime Gateway 配置、工作区范围和本地 Runtime 能力占位。
 
-当前实现刻意不包含云端连接、设备绑定、自动更新、daemon 管理或具体 Claude Code / Codex 调用。下一步应先补 `packages/agent/local-agent-bridge` 协议 package，再让 Desktop App 依赖该协议注册能力并连接 Runtime Gateway。
+当前实现刻意不包含云端连接、设备绑定、自动更新、daemon 管理或具体 Claude Code / Codex 调用。下一步应先补 `packages/core/src/local-agent-bridge` 协议模块，再让 Desktop App 依赖该协议注册能力并连接 Runtime Gateway。

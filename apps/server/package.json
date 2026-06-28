@@ -1,5 +1,5 @@
 {
-  "name": "@expertmesh/server",
+  "name": "@expertmesh/server-app",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -12,10 +12,8 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@expertmesh/contracts": "workspace:*",
-    "@expertmesh/database": "workspace:*",
-    "@expertmesh/domain": "workspace:*",
-    "@expertmesh/utils": "workspace:*",
+    "@expertmesh/shared": "workspace:*",
+    "@expertmesh/server": "workspace:*",
     "fastify": "latest"
   },
   "devDependencies": {

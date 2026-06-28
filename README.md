@@ -36,8 +36,9 @@ packages/
   shared/    跨运行时协议、领域模型和纯工具
   client/    浏览器或客户端使用的 SDK
   server/    Node 服务端基础设施边界
-  agent/     专家 Agent 抽象、协议与运行时边界
-  tooling/   共享 ESLint 与 TypeScript 配置
+  core/      专家 Agent 抽象、协议与运行时边界
+  eslint-config/ 共享 ESLint 配置
+  tsconfig/      共享 TypeScript 配置
 
 examples/    ExpertAgent 最小使用示例
 docs/        架构说明、ADR、编码约定和设计文档
@@ -76,8 +77,8 @@ ExpertMesh 按层组织代码，跨 package 调用必须使用 `@expertmesh/*` p
 
 ```text
 apps/web    -> client -> shared
-apps/server -> server -> agent -> shared
-apps/worker -> server -> agent -> shared
+apps/server -> server -> core -> shared
+apps/worker -> server -> core -> shared
 ```
 
 基本规则：
@@ -85,8 +86,8 @@ apps/worker -> server -> agent -> shared
 - 不把共享逻辑直接放进 `apps`。
 - Web 和 SDK 不直接访问数据库、Agent 或 Node 专属能力。
 - `shared` 包必须保持浏览器和 Node 双端安全，不依赖 React、Fastify、数据库、Agent Runtime 或 Node 内置模块。
-- 跨 package 不使用相对路径导入，使用 `@expertmesh/contracts` 这类 package import。
-- 新增 package 前先明确它属于 `shared`、`client`、`server`、`agent` 还是 `tooling`。
+- 跨 package 不使用相对路径导入，使用 `@expertmesh/shared` 这类 package import。
+- 新增 package 前先明确它属于 `shared`、`client`、`server`、`core` 还是配置工具。
 
 ## 本地安装
 
@@ -100,7 +101,7 @@ pnpm -r list
 启动 Server：
 
 ```bash
-pnpm --filter @expertmesh/server dev
+pnpm --filter @expertmesh/server-app dev
 ```
 
 Server 当前提供 `GET /health`，默认端口为 `3001`：
@@ -189,13 +190,10 @@ pnpm clean
 当前主要 package：
 
 ```text
-@expertmesh/contracts
-@expertmesh/domain
-@expertmesh/utils
-@expertmesh/sdk
-@expertmesh/database
-@expertmesh/agent-core
-@expertmesh/agent-runtime
+@expertmesh/shared
+@expertmesh/client
+@expertmesh/server
+@expertmesh/core
 @expertmesh/eslint-config
 @expertmesh/tsconfig
 ```

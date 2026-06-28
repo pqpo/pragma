@@ -17,9 +17,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@expertmesh/agent-core": "workspace:*",
-    "@expertmesh/loop": "workspace:*",
-    "@expertmesh/agent-runtime": "workspace:*",
+    "@expertmesh/core": "workspace:*",
     "@expertmesh/plugin-code-repository-manager": "workspace:*",
     "cac": "^7.0.0",
     "dotenv": "latest",

@@ -1,4 +1,4 @@
-import { definePluginEntry } from "@expertmesh/agent-core";
+import { definePluginEntry } from "@expertmesh/core";
 
 export default definePluginEntry({
   setup: () => ({

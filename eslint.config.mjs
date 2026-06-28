@@ -45,7 +45,7 @@ const config = tseslint.config(
       "no-restricted-imports": [
         "error",
         {
-          paths: ["@expertmesh/database", "@expertmesh/agent-core", "@prisma/client"],
+          paths: ["@expertmesh/server", "@expertmesh/core", "@prisma/client"],
           patterns: [
             ...commonRestrictedPatterns,
             { group: ["@expertmesh/server-*", "node:*"], message: "Web must stay browser-safe." },
@@ -66,7 +66,7 @@ const config = tseslint.config(
       "no-restricted-imports": [
         "error",
         {
-          paths: ["@expertmesh/sdk", "@expertmesh/database", "@prisma/client"],
+          paths: ["@expertmesh/client", "@expertmesh/server", "@prisma/client"],
           patterns: [
             ...commonRestrictedPatterns,
             {
@@ -90,7 +90,7 @@ const config = tseslint.config(
       "no-restricted-imports": [
         "error",
         {
-          paths: ["@expertmesh/sdk", "@expertmesh/database", "@prisma/client"],
+          paths: ["@expertmesh/client", "@expertmesh/server", "@prisma/client"],
           patterns: [
             ...commonRestrictedPatterns,
             {
@@ -108,7 +108,7 @@ const config = tseslint.config(
       "no-restricted-imports": [
         "error",
         {
-          paths: ["@expertmesh/sdk", "@expertmesh/database", "@prisma/client"],
+          paths: ["@expertmesh/client", "@expertmesh/server", "@prisma/client"],
           patterns: [
             ...commonRestrictedPatterns,
             {
@@ -126,7 +126,7 @@ const config = tseslint.config(
       "apps/server/**/*.{ts,tsx}",
       "apps/worker/**/*.{ts,tsx}",
       "packages/server/**/*.{ts,tsx}",
-      "packages/agent/**/*.{ts,tsx}",
+      "packages/core/**/*.{ts,tsx}",
       "plugins/**/*.{ts,tsx}",
       "examples/**/*.{ts,tsx}",
     ],
@@ -143,11 +143,11 @@ const config = tseslint.config(
       "no-restricted-imports": [
         "error",
         {
-          paths: ["@expertmesh/sdk", "@expertmesh/database", "react", "fastify", "@prisma/client"],
+          paths: ["@expertmesh/client", "@expertmesh/server", "react", "fastify", "@prisma/client"],
           patterns: [
             ...commonRestrictedPatterns,
             {
-              group: ["@expertmesh/agent-*", "node:*", "next", "next/*"],
+              group: ["@expertmesh/core", "node:*", "next", "next/*"],
               message: "Shared packages must remain runtime-neutral.",
             },
           ],
@@ -167,11 +167,11 @@ const config = tseslint.config(
       "no-restricted-imports": [
         "error",
         {
-          paths: ["@expertmesh/database", "@prisma/client"],
+          paths: ["@expertmesh/server", "@prisma/client"],
           patterns: [
             ...commonRestrictedPatterns,
             {
-              group: ["@expertmesh/agent-*", "@expertmesh/server-*", "node:*"],
+              group: ["@expertmesh/core", "@expertmesh/server", "@expertmesh/server-*", "node:*"],
               message: "Client packages must stay browser-safe.",
             },
           ],
@@ -185,7 +185,7 @@ const config = tseslint.config(
       "no-restricted-imports": [
         "error",
         {
-          paths: ["@expertmesh/sdk", "react"],
+          paths: ["@expertmesh/client", "react"],
           patterns: [
             ...commonRestrictedPatterns,
             {
@@ -198,12 +198,12 @@ const config = tseslint.config(
     },
   },
   {
-    files: ["packages/agent/**/*.{ts,tsx}"],
+    files: ["packages/core/**/*.{ts,tsx}"],
     rules: {
       "no-restricted-imports": [
         "error",
         {
-          paths: ["@expertmesh/sdk", "@expertmesh/database", "react"],
+          paths: ["@expertmesh/client", "@expertmesh/server", "react"],
           patterns: [
             ...commonRestrictedPatterns,
             {
