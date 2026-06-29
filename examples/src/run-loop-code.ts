@@ -1,7 +1,7 @@
-import { createLoopApp, defineCodeLoop, defineLoop } from "@expertmesh/core";
+import { createLoopApp, defineTask, defineFlow } from "@expertmesh/core";
 import { z } from "zod";
 
-const loop = defineLoop({
+const flow = defineFlow({
   id: "hello-loop",
   input: z.object({
     name: z.string(),
@@ -14,9 +14,9 @@ const loop = defineLoop({
   }),
 });
 
-const greet = loop.use(
+const greet = flow.use(
   "greet",
-  defineCodeLoop({
+  defineTask({
     id: "greet-code",
     handler: ({ input }) => {
       const payload = z
@@ -35,11 +35,11 @@ const greet = loop.use(
   },
 );
 
-loop.flow(({ start, end }) => {
+flow.compose(({ start, end }) => {
   start(greet).next(end());
 });
 
-const result = await createLoopApp().run(loop, {
+const result = await createLoopApp().run(flow, {
   input: {
     name: "ExpertMesh",
   },

@@ -2,7 +2,7 @@
 
 ## 核心理念
 
-``` text
+```text
 Everything is a Loop.
 Agent is the smallest Loop.
 Workflow is a Composable Loop.
@@ -10,7 +10,7 @@ Runtime executes Steps.
 Channel connects Loops.
 ```
 
-------------------------------------------------------------------------
+---
 
 # 1. 最小 Agent API
 
@@ -28,7 +28,7 @@ Agent 只声明“专家能力”和输入输出协议，不绑定具体 Runtime
 
 最小声明使用 `defineAgent()`。它是 Loop SDK 面向用户的语法糖，底层可以归一化为当前项目里的 `ExpertAgent` 声明，但用户不需要直接调用 `ExpertAgent.create()`。
 
-``` ts
+```ts
 import { defineAgent } from "@expertmesh/core";
 
 const coder = defineAgent({
@@ -56,14 +56,14 @@ const coder = defineAgent({
 输出约束应该放在具体调用处：
 
 - Agent 自验证时：`agent.run(input, { output })`
-- Loop 步骤定义时：`loop.agent(..., { output })`
-- Loop 整体定义时：`new LoopSpec({ inputSchema, outputSchema })`
+- Loop 步骤定义时：`flow.agent(..., { output })`
+- Loop 整体定义时：`new FlowSpec({ inputSchema, outputSchema })`
 
 只有当某个 Agent 本身就是稳定协议组件，例如“只做 PR Review 且永远返回同一种 ReviewResult”时，才可以给 Agent 声明默认 `outputSchema`。
 
 Agent 可以自验证。运行概念上仍然通过 Runtime 执行，但 SDK 默认提供 Runtime registry，并自动注入 `createDefaultRuntime()`，所以最小调用不需要手动创建 Runtime。
 
-``` ts
+```ts
 const result = await coder.run("实现 GitHub 登录", {
   output: z.object({
     summary: z.string(),
@@ -75,7 +75,7 @@ const result = await coder.run("实现 GitHub 登录", {
 
 这等价于显式使用默认 Runtime registry：
 
-``` ts
+```ts
 import { createRuntimeRegistry } from "@expertmesh/core";
 
 const runtimes = createRuntimeRegistry();
@@ -92,23 +92,18 @@ const result = await coder.run("实现 GitHub 登录", {
 
 `createRuntimeRegistry()` 默认会注入 `createDefaultRuntime()`：
 
-``` ts
-import {
-  createDefaultRuntime,
-  createRuntimeRegistry,
-} from "@expertmesh/core";
+```ts
+import { createDefaultRuntime, createRuntimeRegistry } from "@expertmesh/core";
 
 const runtimes = createRuntimeRegistry({
-  runtimes: [
-    createDefaultRuntime(),
-  ],
+  runtimes: [createDefaultRuntime()],
   defaultRuntime: "default",
 });
 ```
 
 这里的 `"default"` 来自 Runtime adapter 的 descriptor：
 
-``` ts
+```ts
 const runtime = createDefaultRuntime();
 
 runtime.descriptor.id; // "default"
@@ -118,7 +113,7 @@ runtime.descriptor.capabilities.targets; // ["agent", ...]
 
 `createDefaultRuntime()` 是默认 Runtime facade，不是新的 Runtime 协议。当前实现等价于：
 
-``` ts
+```ts
 function createDefaultRuntime(options?: DefaultRuntimeOptions): RuntimeAdapter {
   return createCloudPiRuntimeAdapter({
     ...options,
@@ -137,16 +132,11 @@ function createDefaultRuntime(options?: DefaultRuntimeOptions): RuntimeAdapter {
 
 需要切换执行环境时，再显式指定 Runtime：
 
-``` ts
-import {
-  createCodexLocalRuntimeAdapter,
-  createRuntimeRegistry,
-} from "@expertmesh/core";
+```ts
+import { createCodexLocalRuntimeAdapter, createRuntimeRegistry } from "@expertmesh/core";
 
 const runtimes = createRuntimeRegistry({
-  runtimes: [
-    createCodexLocalRuntimeAdapter(),
-  ],
+  runtimes: [createCodexLocalRuntimeAdapter()],
 });
 
 await coder.run("实现 GitHub 登录", {
@@ -157,7 +147,7 @@ await coder.run("实现 GitHub 登录", {
 
 Loop 执行时同样默认拥有 Runtime registry：
 
-``` ts
+```ts
 const app = createLoopApp();
 ```
 
@@ -165,8 +155,8 @@ const app = createLoopApp();
 
 运行发生在 Loop 层时，Loop 负责选择 Runtime、托管 State、调度步骤。未指定 Runtime 时使用 `default`：
 
-``` ts
-const loop = new LoopSpec({
+```ts
+const loop = new FlowSpec({
   id: "coding-loop",
   inputSchema: z.object({
     requirement: z.string(),
@@ -174,7 +164,7 @@ const loop = new LoopSpec({
   }),
 });
 
-loop.agent("coder", coder, {
+flow.agent("coder", coder, {
   input: ({ state }) => `
 任务：${state.input.requirement}
 仓库：${state.input.repo}
@@ -197,23 +187,27 @@ const result = await app.run(loop, {
 
 步骤可以覆盖 Runtime：
 
-``` ts
-loop.agent("planner", plannerAgent);
+```ts
+flow.agent("planner", plannerAgent);
 
-loop.agent("coder", coderAgent, {
+flow.agent("coder", coderAgent, {
   runtime: "claude-code-local",
 });
 
-loop.code("verify-package", async ({ state, workspace }) => {
-  return await workspace.exec("pnpm test");
-}, {
-  runtime: "sandbox-node",
-});
+flow.code(
+  "verify-package",
+  async ({ state, workspace }) => {
+    return await workspace.exec("pnpm test");
+  },
+  {
+    runtime: "sandbox-node",
+  },
+);
 ```
 
 同一个 Agent 在不同执行中可以切换 Runtime：
 
-``` ts
+```ts
 await app.run(loop, {
   input,
 });
@@ -226,7 +220,7 @@ await app.run(loop, {
 
 也可以在一次运行内按步骤覆盖：
 
-``` ts
+```ts
 await app.run(loop, {
   input,
   runtimes: {
@@ -238,7 +232,7 @@ await app.run(loop, {
 
 设计原则：
 
-``` text
+```text
 Agent Declaration = defineAgent()
 Agent Protocol    = normalized to ExpertAgent-compatible declaration
 Agent Runtime     = not bound at declaration time
@@ -251,18 +245,18 @@ Agent Output      = string by default, schema at call/step/loop layer
 Runtime Target    = agent | code | subloop | operator
 ```
 
-`defineAgent()` 是主 API；`agent()` 可以作为更短的别名，但不建议在文档里主推，避免和 `loop.agent(...)` 这个“添加 Agent 步骤”的 API 混淆。
+`defineAgent()` 是主 API；`agent()` 可以作为更短的别名，但不建议在文档里主推，避免和 `flow.agent(...)` 这个“添加 Agent 步骤”的 API 混淆。
 
-------------------------------------------------------------------------
+---
 
-# 2. LoopSpec API：核心能力
+# 2. FlowSpec API：核心能力
 
-`LoopSpec` 是 Loop 的可执行规格。
+`FlowSpec` 是 Loop 的可执行规格。
 
 Loop 负责定义整体输入输出协议。Agent 可以是通用能力，步骤负责把 Loop State 映射成 Agent 输入并约束该步骤输出，Loop 则负责约束整个工作流的入口和最终结果。
 
-``` ts
-const loop = defineLoop({
+```ts
+const flow = defineFlow({
   id: "coding-loop",
 
   input: z.object({
@@ -279,14 +273,14 @@ const loop = defineLoop({
 });
 ```
 
-`defineLoop()` 是推荐的用户侧入口，返回可继续声明步骤和 flow 的 builder。底层可以归一化为 `LoopSpec` / `LoopGraph`，但用户不需要直接维护图结构。
+`defineFlow()` 是推荐的用户侧入口，返回可继续声明步骤和 flow 的 builder。底层可以归一化为 `FlowSpec` / `LoopGraph`，但用户不需要直接维护图结构。
 
-------------------------------------------------------------------------
+---
 
 # 3. 添加步骤
 
-``` ts
-const planner = loop.agent("planner", plannerAgent, {
+```ts
+const planner = flow.agent("planner", plannerAgent, {
   input: ({ state }) => `
 需求：${state.input.requirement}
 仓库：${state.input.repo}
@@ -299,7 +293,7 @@ const planner = loop.agent("planner", plannerAgent, {
   },
 });
 
-const coder = loop.agent("coder", coderAgent, {
+const coder = flow.agent("coder", coderAgent, {
   runtime: "claude-code-local",
 
   input: ({ state }) => `
@@ -315,7 +309,7 @@ const coder = loop.agent("coder", coderAgent, {
   },
 });
 
-const tester = loop.agent("tester", testerAgent, {
+const tester = flow.agent("tester", testerAgent, {
   output: z.object({
     status: z.enum(["passed", "failed"]),
     summary: z.string(),
@@ -333,7 +327,7 @@ ${JSON.stringify(state.artifacts.codeChange)}
   },
 });
 
-const reviewer = loop.agent("reviewer", reviewerAgent, {
+const reviewer = flow.agent("reviewer", reviewerAgent, {
   output: z.object({
     decision: z.enum(["approved", "rejected"]),
     comments: z.array(z.string()),
@@ -353,79 +347,82 @@ ${JSON.stringify(state.results.test)}
 
 步骤不一定是 Agent，也可以是一段代码、一个 Operator、一个 SubLoop 或一个外部任务。
 
-``` ts
-const install = loop.code("install", async ({ workspace }) => {
-  await workspace.exec("pnpm install");
+```ts
+const install = flow.code(
+  "install",
+  async ({ workspace }) => {
+    await workspace.exec("pnpm install");
 
-  return {
-    installed: true,
-  };
-}, {
-  runtime: "sandbox-node",
-});
+    return {
+      installed: true,
+    };
+  },
+  {
+    runtime: "sandbox-node",
+  },
+);
 
-const unitTest = loop.code("unit-test", async ({ workspace }) => {
-  const result = await workspace.exec("pnpm test");
+const unitTest = flow.code(
+  "unit-test",
+  async ({ workspace }) => {
+    const result = await workspace.exec("pnpm test");
 
-  return {
-    passed: result.exitCode === 0,
-    output: result.stdout,
-  };
-}, {
-  runtime: "sandbox-node",
-});
+    return {
+      passed: result.exitCode === 0,
+      output: result.stdout,
+    };
+  },
+  {
+    runtime: "sandbox-node",
+  },
+);
 
-loop.flow(({ start }) => {
-  start(coder)
-    .next(install)
-    .next(unitTest);
+flow.compose(({ start }) => {
+  start(coder).next(install).next(unitTest);
 });
 ```
 
 步骤 Runtime 选择规则：
 
-``` text
+```text
 app.run(...).runtimes[stepId]
   > step.runtime
   > app.run(...).runtime
   > app.defaultRuntime
 ```
 
-------------------------------------------------------------------------
+---
 
 # 4. 步骤流转 API
 
-``` ts
-const loop = defineLoop({
+```ts
+const flow = defineFlow({
   id: "coding-loop",
   input: CodingInputSchema,
   output: CodingOutputSchema,
 });
 
-const planner = loop.agent("planner", plannerAgent);
-const coder = loop.agent("coder", coderAgent);
-const tester = loop.agent("tester", testerAgent, {
+const planner = flow.agent("planner", plannerAgent);
+const coder = flow.agent("coder", coderAgent);
+const tester = flow.agent("tester", testerAgent, {
   output: z.object({
     status: z.enum(["passed", "failed"]),
     summary: z.string(),
   }),
 });
-const reviewer = loop.agent("reviewer", reviewerAgent, {
+const reviewer = flow.agent("reviewer", reviewerAgent, {
   output: z.object({
     decision: z.enum(["approved", "rejected"]),
     comments: z.array(z.string()),
   }),
 });
 
-const codingLoop = loop
-  .flow(({ start, step, end }) => {
-    start(planner)
-      .next(coder)
-      .next(tester)
-      .route("status", {
-        passed: reviewer,
-        failed: coder,
-      });
+const codingLoop = flow
+  .compose(({ start, step, end }) => {
+    start(planner).next(coder).next(tester).route("status", {
+      passed: reviewer,
+      failed: coder,
+    });
 
     step(reviewer).route("decision", {
       approved: end(),
@@ -446,7 +443,7 @@ const codingLoop = loop
 
 形成：
 
-``` text
+```text
 Planner -> Coder -> Tester
               ^       |
               | failed
@@ -460,21 +457,18 @@ Planner -> Coder -> Tester
 
 `route()` 的 key 必须来自上一步输出 schema 中指定字段的可枚举值。不要让 SDK 猜测路由字段。
 
-``` ts
-const tester = loop.agent("tester", testerAgent, {
+```ts
+const tester = flow.agent("tester", testerAgent, {
   output: z.object({
     status: z.enum(["passed", "failed"]),
     summary: z.string(),
   }),
 });
 
-start(planner)
-  .next(coder)
-  .next(tester)
-  .route("status", {
-    passed: reviewer,
-    failed: coder,
-  });
+start(planner).next(coder).next(tester).route("status", {
+  passed: reviewer,
+  failed: coder,
+});
 ```
 
 `compile()` 必须校验：
@@ -486,16 +480,19 @@ start(planner)
 
 复杂路由可以使用函数，但它属于高级能力，治理性弱于 schema route：
 
-``` ts
-step(reviewer).route((output) => {
-  if (output.score >= 0.9) return "approved";
-  if (output.needsFix) return "rejected";
-  return "manual-review";
-}, {
-  approved: end(),
-  rejected: coder,
-  "manual-review": humanReview,
-});
+```ts
+step(reviewer).route(
+  (output) => {
+    if (output.score >= 0.9) return "approved";
+    if (output.needsFix) return "rejected";
+    return "manual-review";
+  },
+  {
+    approved: end(),
+    rejected: coder,
+    "manual-review": humanReview,
+  },
+);
 ```
 
 ## 循环退出与中断
@@ -504,15 +501,12 @@ Loop 允许回边，但回边不能只靠图结构表达长期运行策略。循
 
 第一种方式是给步骤声明访问上限。适合“无论从哪里回到 coder，总次数都不能超过 N 次”的场景：
 
-``` ts
-loop.flow(({ start, step, end, fail }) => {
-  start(planner)
-    .next(coder)
-    .next(tester)
-    .route("status", {
-      passed: reviewer,
-      failed: coder,
-    });
+```ts
+flow.compose(({ start, step, end, fail }) => {
+  start(planner).next(coder).next(tester).route("status", {
+    passed: reviewer,
+    failed: coder,
+  });
 
   step(reviewer).route("decision", {
     approved: end(),
@@ -528,15 +522,12 @@ loop.flow(({ start, step, end, fail }) => {
 
 第二种方式是在特定回边上声明 retry 策略。适合“只有 reviewer rejected 这条边受次数限制”的场景：
 
-``` ts
-loop.flow(({ start, step, end, fail, retry }) => {
-  start(planner)
-    .next(coder)
-    .next(tester)
-    .route("status", {
-      passed: reviewer,
-      failed: coder,
-    });
+```ts
+flow.compose(({ start, step, end, fail, retry }) => {
+  start(planner).next(coder).next(tester).route("status", {
+    passed: reviewer,
+    failed: coder,
+  });
 
   step(reviewer).route("decision", {
     approved: end(),
@@ -559,8 +550,8 @@ loop.flow(({ start, step, end, fail, retry }) => {
 
 ## 编译
 
-``` text
-defineLoop(...)
+```text
+defineFlow(...)
   -> builder
   -> compile()
   -> CompiledLoop
@@ -579,39 +570,38 @@ defineLoop(...)
 - 循环必须有退出或中断策略。
 - 编译结果不可变，便于发布、缓存、可视化、恢复执行和审计。
 
-------------------------------------------------------------------------
+---
 
 # 5. 内置 Operators
 
-``` ts
-loop.parallel()
-loop.route()
-loop.handoff()
-loop.retry()
-loop.reflect()
-loop.vote()
-loop.merge()
-loop.guard()
-loop.approve()
-loop.checkpoint()
-loop.rollback()
-loop.subloop()
+```ts
+loop.parallel();
+loop.route();
+loop.handoff();
+loop.retry();
+loop.reflect();
+loop.vote();
+loop.merge();
+loop.guard();
+loop.approve();
+loop.checkpoint();
+loop.rollback();
+loop.subloop();
 ```
 
 ## 多模型并行
 
-``` ts
+```ts
 const plans = loop.parallel("multi-model-plan", [
-  loop.agent("claude", claudePlanner),
-  loop.agent("gpt", gptPlanner),
-  loop.agent("gemini", geminiPlanner),
+  flow.agent("claude", claudePlanner),
+  flow.agent("gpt", gptPlanner),
+  flow.agent("gemini", geminiPlanner),
 ]);
 
-const judge = loop.agent("judge", judgeAgent);
+const judge = flow.agent("judge", judgeAgent);
 
-loop.flow(({ start, step }) => {
-  start(plans)
-    .next(judge);
+flow.compose(({ start, step }) => {
+  start(plans).next(judge);
 
   step(judge).route("decision", {
     accepted: coder,
@@ -622,7 +612,7 @@ loop.flow(({ start, step }) => {
 
 ## 路由模式
 
-``` ts
+```ts
 loop.route("task-router", {
   by: ({ state }) => state.input.taskType,
 
@@ -637,7 +627,7 @@ loop.route("task-router", {
 
 ## 转交模式
 
-``` ts
+```ts
 loop.handoff("expert-handoff", {
   from: generalAgent,
   to: ({ state }) => state.requiredExpert,
@@ -646,25 +636,23 @@ loop.handoff("expert-handoff", {
 
 ## 人工审批
 
-``` ts
+```ts
 const approve = loop.approve("human-review");
 
-loop.flow(({ start }) => {
-  start(planner)
-    .next(approve)
-    .route("decision", {
-      approved: coder,
-      rejected: planner,
-    });
+flow.compose(({ start }) => {
+  start(planner).next(approve).route("decision", {
+    approved: coder,
+    rejected: planner,
+  });
 });
 ```
 
-------------------------------------------------------------------------
+---
 
 # 6. SubLoop
 
-``` ts
-const deliveryLoop = new LoopSpec({...});
+```ts
+const deliveryLoop = new FlowSpec({...});
 
 deliveryLoop.subloop("requirement", requirementLoop);
 deliveryLoop.subloop("design", designLoop);
@@ -672,7 +660,7 @@ deliveryLoop.subloop("coding", codingLoop);
 deliveryLoop.subloop("release", releaseLoop);
 ```
 
-------------------------------------------------------------------------
+---
 
 # 7. Runtime
 
@@ -687,7 +675,7 @@ Runtime 是 Loop 步骤的通用执行环境，不只服务 Agent。
 
 Runtime 当前应分成“核心协议”和“具体实现”两层。
 
-``` text
+```text
 packages/core
   RuntimeAdapter        通用 Runtime 接口
   RuntimeRegistry       通用 Runtime registry 接口
@@ -708,7 +696,7 @@ packages/core
 
 建议的通用 Runtime 接口：
 
-``` ts
+```ts
 type RuntimeTarget =
   | {
       type: "agent";
@@ -716,11 +704,11 @@ type RuntimeTarget =
     }
   | {
       type: "code";
-      handler: LoopCodeHandler;
+      handler: TaskHandler;
     }
   | {
       type: "subloop";
-      loop: LoopSpec;
+      loop: FlowSpec;
     }
   | {
       type: "operator";
@@ -757,7 +745,7 @@ interface RuntimeAdapter {
 
 Runtime descriptor 用来声明能力，而不是把能力写死在步骤里：
 
-``` ts
+```ts
 type RuntimeDescriptor = {
   id: string;
   kind: string;
@@ -777,7 +765,7 @@ type RuntimeDescriptor = {
 
 默认 Runtime registry：
 
-``` ts
+```ts
 import { createRuntimeRegistry } from "@expertmesh/core";
 
 const runtimes = createRuntimeRegistry();
@@ -787,7 +775,7 @@ const runtimes = createRuntimeRegistry();
 
 `createLoopApp()` 默认使用这个 registry：
 
-``` ts
+```ts
 const app = createLoopApp();
 
 await app.run("coding-loop", input);
@@ -795,23 +783,23 @@ await app.run("coding-loop", input);
 
 步骤级覆盖 Runtime：
 
-``` ts
-const loop = new LoopSpec({ id: "coding-loop" });
+```ts
+const loop = new FlowSpec({ id: "coding-loop" });
 
-loop.agent("planner", plannerAgent);
+flow.agent("planner", plannerAgent);
 
-loop.agent("coder", coderAgent, {
+flow.agent("coder", coderAgent, {
   runtime: "claude-code-local",
 });
 
-loop.code("test", runTests, {
+flow.code("test", runTests, {
   runtime: "sandbox-node",
 });
 ```
 
 运行级覆盖 Runtime：
 
-``` ts
+```ts
 await app.run(loop, {
   input,
   runtimes: {
@@ -823,7 +811,7 @@ await app.run(loop, {
 
 Runtime 选择过程：
 
-``` ts
+```ts
 const runtimeId =
   runOptions.runtimes?.[invocation.step.id] ??
   invocation.step.runtime ??
@@ -841,15 +829,15 @@ return await runtime.execute(invocation);
 
 分层原则：
 
-``` text
-LoopSpec / Pattern / Channel   -> 未来 Loop SDK 层
+```text
+FlowSpec / Pattern / Channel   -> 未来 Loop SDK 层
 RuntimeAdapter 通用接口         -> @expertmesh/core
 RuntimeAdapter 具体实现         -> @expertmesh/core
 Server / Worker 调度 Runtime    -> apps/server、apps/worker 或 server orchestration package
 Desktop 本地权限与连接桥接      -> apps/desktop + packages/core/src/local-agent-bridge
 ```
 
-------------------------------------------------------------------------
+---
 
 # 8. Loop 执行层技术方案
 
@@ -857,7 +845,7 @@ Loop SDK 的用户侧 API 负责声明“要做什么”，实现层负责把 `C
 
 实现层需要避免把调度、状态、通信、执行细节混在一个对象里。推荐拆成三组核心事实边界：
 
-``` text
+```text
 Mailbox                传递“发生了什么”
 StateManager           保存“现在是什么”
 TaskManager            决定“接下来做什么”，以及“单个任务怎么执行”
@@ -867,7 +855,7 @@ TaskManager            决定“接下来做什么”，以及“单个任务怎
 
 ## 8.1 分层架构
 
-``` text
+```text
 createLoopApp()
   -> TaskManager
      -> StateManager
@@ -877,18 +865,18 @@ createLoopApp()
 
 职责边界：
 
-| 模块 | 职责 | 不负责 |
-| --- | --- | --- |
-| `TaskManager` | 创建 run、读取 `CompiledLoop`、判断可执行节点、处理 transition、为节点创建 task run、租约、重试、取消、超时、把任务派发给 Runtime | 直接修改 Loop State |
-| `Mailbox` | 传递 task command、task event、workflow event、ack、heartbeat | 判断下一步该执行哪个节点 |
-| `StateManager` | 持久化 workflow run、task run、state snapshot、step output、revision、事件应用结果 | 做消息投递 |
-| `RuntimeAdapter` | 执行具体 agent/code/subloop/operator 并产生流式事件和结果 | 直接修改 Loop State |
+| 模块             | 职责                                                                                                                              | 不负责                   |
+| ---------------- | --------------------------------------------------------------------------------------------------------------------------------- | ------------------------ |
+| `TaskManager`    | 创建 run、读取 `CompiledLoop`、判断可执行节点、处理 transition、为节点创建 task run、租约、重试、取消、超时、把任务派发给 Runtime | 直接修改 Loop State      |
+| `Mailbox`        | 传递 task command、task event、workflow event、ack、heartbeat                                                                     | 判断下一步该执行哪个节点 |
+| `StateManager`   | 持久化 workflow run、task run、state snapshot、step output、revision、事件应用结果                                                | 做消息投递               |
+| `RuntimeAdapter` | 执行具体 agent/code/subloop/operator 并产生流式事件和结果                                                                         | 直接修改 Loop State      |
 
 `TaskManager` 内部可以依赖一个执行环境接口，用于获取 workspace、session、权限和未来 sandbox，但它不作为 Loop 执行层之外的独立 manager 暴露。
 
 最小本机实现可以全部在一个进程内运行：
 
-``` text
+```text
 InMemoryMailbox
 InMemoryStateManager
 InMemoryLoopDefinitionStore
@@ -901,7 +889,7 @@ RuntimeRegistry
 
 ## 8.2 执行流程
 
-``` text
+```text
 app.run(compiledLoop, input)
   -> TaskManager.startRun()
   -> SandboxManager.createWorkflowSandbox()
@@ -938,7 +926,7 @@ Mailbox 消息分为两类：
 
 建议的 envelope：
 
-``` ts
+```ts
 type MailboxMessage<TPayload = unknown> = {
   id: string;
   kind: "command" | "event";
@@ -961,7 +949,7 @@ type MailboxMessage<TPayload = unknown> = {
 
 核心消息类型：
 
-``` text
+```text
 workflow.started
 workflow.completed
 workflow.failed
@@ -985,7 +973,7 @@ sandbox.released
 
 `task.dispatch` payload 应包含执行所需的最小闭包，而不是整份可变对象引用：
 
-``` ts
+```ts
 type TaskDispatchPayload = {
   taskRunId: string;
   workflowRunId: string;
@@ -1007,7 +995,7 @@ type TaskDispatchPayload = {
 
 `task.completed` payload：
 
-``` ts
+```ts
 type TaskCompletedPayload = {
   taskRunId: string;
   workflowRunId: string;
@@ -1021,7 +1009,7 @@ type TaskCompletedPayload = {
 
 `task.failed` payload：
 
-``` ts
+```ts
 type TaskFailedPayload = {
   taskRunId: string;
   workflowRunId: string;
@@ -1038,7 +1026,7 @@ type TaskFailedPayload = {
 
 Mailbox 接口：
 
-``` ts
+```ts
 interface Mailbox {
   publish<TPayload>(message: MailboxMessage<TPayload>): Promise<void>;
 
@@ -1077,7 +1065,7 @@ type MailboxMessageHandler = (
 
 用户写的 reducer：
 
-``` ts
+```ts
 reduce: ({ state, output }) => {
   state.results.review = output;
   state.flags.reviewApproved = output.decision === "approved";
@@ -1086,7 +1074,7 @@ reduce: ({ state, output }) => {
 
 执行时应被理解为：
 
-``` text
+```text
 StateManager 读取当前 LoopStateSnapshot
   -> 创建可变 draft state
   -> TaskManager 调用 step.reduce({ state: draft, output })
@@ -1096,7 +1084,7 @@ StateManager 读取当前 LoopStateSnapshot
 
 也就是说，`reduce()` 是用户侧的状态变更声明；`StateManager` 负责把这次变更变成可持久化、可恢复、可审计、可并发保护的新状态版本。
 
-``` ts
+```ts
 interface StateManager {
   createWorkflowRun(request: CreateWorkflowRunRequest): Promise<WorkflowRunRecord>;
   getWorkflowRun(workflowRunId: string): Promise<WorkflowRunRecord | undefined>;
@@ -1124,7 +1112,7 @@ type ApplyStepReductionRequest = {
 
 建议保存的状态模型：
 
-``` ts
+```ts
 type WorkflowRunRecord = {
   id: string;
   loopId: string;
@@ -1183,7 +1171,7 @@ type TaskRunRecord = {
 
 TaskManager 负责从 `CompiledLoop` 和 State 中推导下一步，也负责单个 task run 的生命周期。
 
-``` ts
+```ts
 interface TaskManager {
   startRun<TInput>(
     loop: CompiledLoop,
@@ -1217,7 +1205,7 @@ TaskManager 不应该在 transition 判断阶段直接调用 Runtime，而是创
 
 `TaskManager` 的构造依赖里注入 sandbox 生命周期接口：
 
-``` ts
+```ts
 const taskManager = createLocalTaskManager({
   mailbox,
   stateManager,
@@ -1230,7 +1218,7 @@ const taskManager = createLocalTaskManager({
 
 `executeTask()` 的内部流程：
 
-``` text
+```text
 task.dispatch
   -> lease task
   -> publish task.leased
@@ -1255,7 +1243,7 @@ task.dispatch
 
 每个 root workflow 启动时创建默认 sandbox。后续任务默认复用 workflow sandbox，单个 step 可以显式要求新建 ephemeral sandbox，也可以 attach 到已有 sandbox。这个决策不应该写死在 RuntimeAdapter 中，而应该作为 `TaskManager` 的可替换依赖，通过 `SandboxManager` 注入。
 
-``` ts
+```ts
 type SandboxStrategy =
   | { mode: "reuse-workflow"; key?: string }
   | { mode: "ephemeral" }
@@ -1286,8 +1274,8 @@ interface SandboxManager {
 
 策略示例：
 
-``` ts
-loop.agent("coder", coderAgent, {
+```ts
+flow.agent("coder", coderAgent, {
   runtime: "claude-code-local",
   sandbox: {
     strategy: { mode: "reuse-workflow" },
@@ -1299,7 +1287,7 @@ loop.agent("coder", coderAgent, {
   },
 });
 
-loop.code("unit-test", runTests, {
+flow.code("unit-test", runTests, {
   runtime: "sandbox-node",
   sandbox: {
     strategy: { mode: "ephemeral" },
@@ -1314,7 +1302,7 @@ Sandbox 策略与 Runtime 选择是两个维度：
 
 当前本机版本提供 `LocalSandboxManager`，只解析本机 `workspace` / session ref。未来需要远程或容器 sandbox 时，只替换这个接口实现，例如：
 
-``` text
+```text
 LocalSandboxManager          当前本机执行
 CloudSandboxManager          云端容器 / sandbox
 DesktopSandboxManager        Desktop 授权工作区
@@ -1325,7 +1313,7 @@ RemoteRunnerSandboxManager   self-hosted runner
 
 SubLoop 默认继承父 task 的 sandbox，但可以显式覆盖：
 
-``` ts
+```ts
 loop.subloop("coding", codingLoop, {
   sandbox: {
     strategy: { mode: "reuse-workflow", key: "source-repo" },
@@ -1337,7 +1325,7 @@ loop.subloop("coding", codingLoop, {
 
 第一阶段建议实现本机可验证闭环：
 
-``` text
+```text
 createLoopApp()
   -> InMemoryMailbox
   -> InMemoryStateManager
@@ -1347,13 +1335,13 @@ createLoopApp()
 
 目录建议：
 
-``` text
+```text
 packages/shared/src/loop/
   mailbox.schema.ts        跨进程消息 envelope 和 payload schema
   workflow-state.schema.ts workflow/task 状态 schema
 
 packages/core/src/loop/
-  loop-spec.ts
+  flow-spec.ts
   compiled-loop.ts
   task-manager.ts
   task-execution-environment.ts
@@ -1366,7 +1354,7 @@ packages/core/src/loop/
 
 跨进程或基础设施实现以后再放到对应边界：
 
-``` text
+```text
 packages/server/src/runtime-gateway/
   redis-mailbox-transport.ts
   mq-mailbox-transport.ts
@@ -1385,16 +1373,16 @@ apps/desktop/
 
 扩展路径：
 
-| 阶段 | Mailbox | State | Worker | Execution Environment |
-| --- | --- | --- | --- | --- |
-| 本机 SDK | In-memory queue | In-memory store | 同进程 TaskManager | 本机 workspace/session |
-| 单机服务 | Redis Streams | 数据库 | apps/worker | Node sandbox/container |
-| 云端分布式 | MQ / NATS / Kafka | 数据库 + Trace Store | 多 worker consumer group | cloud sandbox |
-| 本地桥接 | WebSocket mailbox bridge | 云端 State + 本地 session cache | Desktop App | Desktop 授权 workspace |
+| 阶段       | Mailbox                  | State                           | Worker                   | Execution Environment  |
+| ---------- | ------------------------ | ------------------------------- | ------------------------ | ---------------------- |
+| 本机 SDK   | In-memory queue          | In-memory store                 | 同进程 TaskManager       | 本机 workspace/session |
+| 单机服务   | Redis Streams            | 数据库                          | apps/worker              | Node sandbox/container |
+| 云端分布式 | MQ / NATS / Kafka        | 数据库 + Trace Store            | 多 worker consumer group | cloud sandbox          |
+| 本地桥接   | WebSocket mailbox bridge | 云端 State + 本地 session cache | Desktop App              | Desktop 授权 workspace |
 
 设计上 Mailbox、StateManager、TaskManager 都以接口依赖注入给 `createLoopApp()`：
 
-``` ts
+```ts
 const app = createLoopApp({
   mailbox,
   stateManager,
@@ -1405,7 +1393,7 @@ const app = createLoopApp({
 
 默认不传时创建本机实现：
 
-``` ts
+```ts
 const app = createLoopApp();
 ```
 
@@ -1417,13 +1405,13 @@ const app = createLoopApp();
 
 Channel 面向业务语义，例如 `code.changed`、`review.failed`；Mailbox 面向执行协议，例如 `task.dispatch`、`task.completed`。Channel 消息可以被 TaskManager 转换成 workflow event，也可以只作为 trace / notification。
 
-``` ts
+```ts
 const channel = channel({
   type: "mailbox",
 });
 ```
 
-``` ts
+```ts
 await ctx.channel.send("code.changed", {...});
 
 ctx.channel.on("review.failed", async (msg) => {
@@ -1431,11 +1419,11 @@ ctx.channel.on("review.failed", async (msg) => {
 });
 ```
 
-------------------------------------------------------------------------
+---
 
 # 13. Loop State
 
-``` ts
+```ts
 type LoopState = {
   input: unknown;
   context: Record<string, any>;
@@ -1450,7 +1438,7 @@ type LoopState = {
 
 原则：
 
-``` text
+```text
 Agent 不直接修改 State
 Step 定义 reduce
 TaskManager 调用 reduce
@@ -1458,24 +1446,24 @@ StateManager 托管并提交 Loop State
 Runtime 只接收 State Snapshot 并返回步骤结果
 ```
 
-------------------------------------------------------------------------
+---
 
 # 14. Pattern
 
-``` ts
-Patterns.planActVerify()
-Patterns.clarifyThenConfirm()
-Patterns.multiAgentReview()
-Patterns.routerExperts()
-Patterns.generateJudgeRefine()
-Patterns.supervisorWorkers()
+```ts
+Patterns.planActVerify();
+Patterns.clarifyThenConfirm();
+Patterns.multiAgentReview();
+Patterns.routerExperts();
+Patterns.generateJudgeRefine();
+Patterns.supervisorWorkers();
 ```
 
-------------------------------------------------------------------------
+---
 
 # 15. 发布与调用
 
-``` ts
+```ts
 await app.publish(codingLoop);
 
 const result = await client.loop("coding-loop").run({
@@ -1485,18 +1473,18 @@ const result = await client.loop("coding-loop").run({
 
 Loop 也可以作为另一个 Loop 的步骤：
 
-``` ts
+```ts
 deliveryLoop.subloop("coding", client.loop("coding-loop"));
 ```
 
-------------------------------------------------------------------------
+---
 
 # 16. API 分层
 
-``` text
+```text
 defineAgent()
-defineLoop()
-LoopSpec
+defineFlow()
+FlowSpec
 CompiledLoop
 RuntimeAdapter
 channel()
@@ -1505,11 +1493,11 @@ createLoopApp()
 client.loop()
 ```
 
-------------------------------------------------------------------------
+---
 
 # 总结
 
-``` text
+```text
 Agent 使用文本协议。
 Loop 使用 Schema 协议。
 Route 使用步骤输出 Schema 的可枚举字段。

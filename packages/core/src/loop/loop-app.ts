@@ -1,4 +1,5 @@
 import { createRuntimeRegistry } from "../runtime-registry.ts";
+import { compileLoopDefinition } from "./flow-spec.ts";
 import { createInMemoryLoopDefinitionStore } from "./in-memory-loop-definition-store.ts";
 import { createInMemoryMailbox } from "./in-memory-mailbox.ts";
 import { createInMemoryStateManager } from "./in-memory-state-manager.ts";
@@ -9,7 +10,7 @@ import type {
   CreateLoopAppOptions,
   Loop,
   LoopApp,
-  LoopCompiler,
+  LoopDefinition,
   LoopRunResult,
   StartLoopRunRequest,
 } from "./types.ts";
@@ -25,7 +26,7 @@ export function createLoopApp(options: CreateLoopAppOptions = {}): LoopApp {
     });
   const sandboxManager = options.sandboxManager ?? createLocalSandboxManager();
   const runLoop = async <TInput, TOutput>(
-    loop: Loop<TInput, TOutput> | LoopCompiler<TInput, TOutput>,
+    loop: LoopDefinition<TInput, TOutput>,
     request: StartLoopRunRequest<TInput>,
   ): Promise<LoopRunResult<TOutput>> => {
     const compiledLoop = compileLoop(
@@ -56,10 +57,10 @@ export function createLoopApp(options: CreateLoopAppOptions = {}): LoopApp {
 }
 
 function compileLoop<TInput, TOutput>(
-  loop: Loop<TInput, TOutput> | LoopCompiler<TInput, TOutput>,
+  loop: LoopDefinition<TInput, TOutput>,
   output?: CompiledLoop<TInput, TOutput>["outputSchema"] | undefined,
 ): CompiledLoop<TInput, TOutput> {
-  const runnable = "compile" in loop ? loop.compile() : loop;
+  const runnable = compileLoopDefinition(loop);
 
   if (isCompiledLoop(runnable)) {
     return runnable;

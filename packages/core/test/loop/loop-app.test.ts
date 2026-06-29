@@ -5,8 +5,8 @@ import {
   createInMemoryMailbox,
   createLocalSandboxManager,
   createLoopApp,
-  defineCodeLoop,
-  defineLoop,
+  defineTask,
+  defineFlow,
   ExpertAgent,
   createRuntimeRegistry,
 } from "../../src/index.ts";
@@ -22,7 +22,7 @@ import type {
 
 describe("loop app", () => {
   it("runs code steps, reduces Loop State, and returns mapped output", async () => {
-    const loop = defineLoop({
+    const loop = defineFlow({
       id: "review-loop",
       input: z.object({
         decision: z.enum(["approved", "rejected"]),
@@ -37,7 +37,7 @@ describe("loop app", () => {
 
     const review = loop.use(
       "review",
-      defineCodeLoop({
+      defineTask({
         id: "review-code",
         output: z.object({
           decision: z.enum(["approved", "rejected"]),
@@ -62,7 +62,7 @@ describe("loop app", () => {
       },
     );
 
-    loop.flow(({ start, end }) => {
+    loop.compose(({ start, end }) => {
       start(review).next(end());
     });
 
@@ -81,7 +81,7 @@ describe("loop app", () => {
   });
 
   it("routes by structured step output", async () => {
-    const loop = defineLoop({
+    const loop = defineFlow({
       id: "route-loop",
       output: z.object({
         path: z.string(),
@@ -93,7 +93,7 @@ describe("loop app", () => {
 
     const router = loop.use(
       "router",
-      defineCodeLoop({
+      defineTask({
         id: "router-code",
         output: z.object({
           status: z.enum(["passed", "failed"]),
@@ -103,26 +103,18 @@ describe("loop app", () => {
         }),
       }),
     );
-    const passed = loop.use(
-      "passed",
-      defineCodeLoop({ id: "passed-code", handler: () => "passed" }),
-      {
-        reduce: ({ state, output }) => {
-          state.results["path"] = output;
-        },
+    const passed = loop.use("passed", defineTask({ id: "passed-code", handler: () => "passed" }), {
+      reduce: ({ state, output }) => {
+        state.results["path"] = output;
       },
-    );
-    const failed = loop.use(
-      "failed",
-      defineCodeLoop({ id: "failed-code", handler: () => "failed" }),
-      {
-        reduce: ({ state, output }) => {
-          state.results["path"] = output;
-        },
+    });
+    const failed = loop.use("failed", defineTask({ id: "failed-code", handler: () => "failed" }), {
+      reduce: ({ state, output }) => {
+        state.results["path"] = output;
       },
-    );
+    });
 
-    loop.flow(({ start, step, end }) => {
+    loop.compose(({ start, step, end }) => {
       start(router).route("status", {
         passed,
         failed,
@@ -141,13 +133,13 @@ describe("loop app", () => {
   });
 
   it("fails with a clear error when route output is missing the routed field", async () => {
-    const loop = defineLoop({
+    const loop = defineFlow({
       id: "missing-route-loop",
     });
-    const router = loop.use("router", defineCodeLoop({ id: "router-code", handler: () => ({}) }));
-    const target = loop.use("target", defineCodeLoop({ id: "target-code", handler: () => "done" }));
+    const router = loop.use("router", defineTask({ id: "router-code", handler: () => ({}) }));
+    const target = loop.use("target", defineTask({ id: "target-code", handler: () => "done" }));
 
-    loop.flow(({ start, step, end }) => {
+    loop.compose(({ start, step, end }) => {
       start(router).route("status", {
         done: target,
       });
@@ -168,11 +160,11 @@ describe("loop app", () => {
       seenTypes.push(message.type);
     });
 
-    const loop = defineLoop({
+    const loop = defineFlow({
       id: "events-loop",
     });
-    const task = loop.use("task", defineCodeLoop({ id: "task-code", handler: () => "done" }));
-    loop.flow(({ start, end }) => {
+    const task = loop.use("task", defineTask({ id: "task-code", handler: () => "done" }));
+    loop.compose(({ start, end }) => {
       start(task).next(end());
     });
 
@@ -199,12 +191,12 @@ describe("loop app", () => {
 
   it("reuses the workflow sandbox by default", async () => {
     const sandboxIds: string[] = [];
-    const loop = defineLoop({
+    const loop = defineFlow({
       id: "default-sandbox-loop",
     });
     const first = loop.use(
       "first",
-      defineCodeLoop({
+      defineTask({
         id: "first-code",
         handler: ({ sandbox }) => {
           sandboxIds.push(sandbox.id);
@@ -214,7 +206,7 @@ describe("loop app", () => {
     );
     const second = loop.use(
       "second",
-      defineCodeLoop({
+      defineTask({
         id: "second-code",
         handler: ({ sandbox }) => {
           sandboxIds.push(sandbox.id);
@@ -223,7 +215,7 @@ describe("loop app", () => {
       }),
     );
 
-    loop.flow(({ start, end }) => {
+    loop.compose(({ start, end }) => {
       start(first).next(second).next(end());
     });
 
@@ -237,12 +229,12 @@ describe("loop app", () => {
 
   it("creates a new sandbox for an ephemeral step", async () => {
     const sandboxIds: string[] = [];
-    const loop = defineLoop({
+    const loop = defineFlow({
       id: "ephemeral-sandbox-loop",
     });
     const first = loop.use(
       "first",
-      defineCodeLoop({
+      defineTask({
         id: "first-code",
         handler: ({ sandbox }) => {
           sandboxIds.push(sandbox.id);
@@ -252,7 +244,7 @@ describe("loop app", () => {
     );
     const second = loop.use(
       "second",
-      defineCodeLoop({
+      defineTask({
         id: "second-code",
         handler: ({ sandbox }) => {
           sandboxIds.push(sandbox.id);
@@ -268,7 +260,7 @@ describe("loop app", () => {
       },
     );
 
-    loop.flow(({ start, end }) => {
+    loop.compose(({ start, end }) => {
       start(first).next(second).next(end());
     });
 
@@ -282,12 +274,12 @@ describe("loop app", () => {
 
   it("inherits the parent sandbox for nested loops by default", async () => {
     const sandboxIds: string[] = [];
-    const childLoop = defineLoop({
+    const childLoop = defineFlow({
       id: "child-sandbox-loop",
     });
     const childTask = childLoop.use(
       "child-task",
-      defineCodeLoop({
+      defineTask({
         id: "child-code",
         handler: ({ sandbox }) => {
           sandboxIds.push(sandbox.id);
@@ -295,16 +287,16 @@ describe("loop app", () => {
         },
       }),
     );
-    childLoop.flow(({ start, end }) => {
+    childLoop.compose(({ start, end }) => {
       start(childTask).next(end());
     });
 
-    const parentLoop = defineLoop({
+    const parentLoop = defineFlow({
       id: "parent-sandbox-loop",
     });
     const parentTask = parentLoop.use(
       "parent-task",
-      defineCodeLoop({
+      defineTask({
         id: "parent-code",
         handler: ({ sandbox }) => {
           sandboxIds.push(sandbox.id);
@@ -312,9 +304,9 @@ describe("loop app", () => {
         },
       }),
     );
-    const child = parentLoop.use("child", childLoop.compile());
+    const child = parentLoop.use("child", childLoop);
 
-    parentLoop.flow(({ start, end }) => {
+    parentLoop.compose(({ start, end }) => {
       start(parentTask).next(child).next(end());
     });
 
@@ -420,7 +412,7 @@ describe("loop app", () => {
   });
 
   it("registers any Loop implementation as a step", async () => {
-    const loop = defineLoop({
+    const loop = defineFlow({
       id: "custom-loop-composition",
       output: z.object({
         value: z.string(),
@@ -453,7 +445,7 @@ describe("loop app", () => {
         state.results["custom"] = output;
       },
     });
-    loop.flow(({ start, end }) => {
+    loop.compose(({ start, end }) => {
       start(custom).next(end());
     });
 

@@ -1,7 +1,7 @@
-import { createLoopApp, defineCodeLoop, defineLoop } from "@expertmesh/core";
+import { createLoopApp, defineTask, defineFlow } from "@expertmesh/core";
 import { z } from "zod";
 
-const loop = defineLoop({
+const flow = defineFlow({
   id: "route-loop",
   input: z.object({
     testsPassed: z.boolean(),
@@ -14,9 +14,9 @@ const loop = defineLoop({
   }),
 });
 
-const tester = loop.use(
+const tester = flow.use(
   "tester",
-  defineCodeLoop({
+  defineTask({
     id: "tester-code",
     output: z.object({
       status: z.enum(["passed", "failed"]),
@@ -35,19 +35,19 @@ const tester = loop.use(
   }),
 );
 
-const ship = loop.use("ship", defineCodeLoop({ id: "ship-code", handler: () => "ship" }), {
+const ship = flow.use("ship", defineTask({ id: "ship-code", handler: () => "ship" }), {
   reduce: ({ state, output }) => {
     state.results["nextAction"] = output;
   },
 });
 
-const fix = loop.use("fix", defineCodeLoop({ id: "fix-code", handler: () => "fix" }), {
+const fix = flow.use("fix", defineTask({ id: "fix-code", handler: () => "fix" }), {
   reduce: ({ state, output }) => {
     state.results["nextAction"] = output;
   },
 });
 
-loop.flow(({ start, step, end }) => {
+flow.compose(({ start, step, end }) => {
   start(tester).route("status", {
     passed: ship,
     failed: fix,
@@ -56,7 +56,7 @@ loop.flow(({ start, step, end }) => {
   step(fix).next(end());
 });
 
-const result = await createLoopApp().run(loop, {
+const result = await createLoopApp().run(flow, {
   input: {
     testsPassed: false,
   },

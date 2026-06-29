@@ -154,7 +154,7 @@ pnpm --filter @expertmesh/examples start:loop-route
 pnpm --filter @expertmesh/examples start:loop-subloop
 ```
 
-- `run-loop-code.ts`：最小 `defineLoop()` + `loop.code()` + `reduce()`。
+- `run-loop-code.ts`：最小 `defineFlow()` + `defineTask()` + `reduce()`。
 - `run-loop-route.ts`：根据 step 结构化输出字段 `.route("status", ...)`。
 - `run-loop-subloop.ts`：把一个 Loop 作为另一个 Loop 的 subloop step。
 

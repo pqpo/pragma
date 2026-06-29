@@ -4,12 +4,12 @@ import { promisify } from "node:util";
 
 import type {
   CreateWorkflowSandboxRequest,
-  LoopCodeWorkspace,
-  LoopWorkspaceExecOptions,
-  LoopWorkspaceExecResult,
   ResolveTaskSandboxRequest,
   SandboxLease,
   SandboxManager,
+  TaskWorkspace,
+  TaskWorkspaceExecOptions,
+  TaskWorkspaceExecResult,
 } from "./types.ts";
 import { createId } from "./utils.ts";
 
@@ -141,13 +141,13 @@ export function createLocalSandboxManager(
   };
 }
 
-function createLocalWorkspace(root: string): LoopCodeWorkspace {
+function createLocalWorkspace(root: string): TaskWorkspace {
   return {
     root,
     async exec(
       command: string,
-      options: LoopWorkspaceExecOptions = {},
-    ): Promise<LoopWorkspaceExecResult> {
+      options: TaskWorkspaceExecOptions = {},
+    ): Promise<TaskWorkspaceExecResult> {
       try {
         const result = await exec(command, {
           cwd: options.cwd === undefined ? root : path.resolve(root, options.cwd),

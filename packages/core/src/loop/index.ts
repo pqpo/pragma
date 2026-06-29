@@ -3,6 +3,6 @@ export * from "./in-memory-loop-definition-store.ts";
 export * from "./in-memory-state-manager.ts";
 export * from "./local-sandbox-manager.ts";
 export * from "./loop-app.ts";
-export * from "./loop-spec.ts";
+export * from "./flow-spec.ts";
 export * from "./task-manager.ts";
 export * from "./types.ts";

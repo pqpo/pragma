@@ -1,7 +1,7 @@
-import { createLoopApp, defineCodeLoop, defineLoop } from "@expertmesh/core";
+import { createLoopApp, defineTask, defineFlow } from "@expertmesh/core";
 import { z } from "zod";
 
-const requirementLoop = defineLoop({
+const requirementLoop = defineFlow({
   id: "requirement-loop",
   input: z.object({
     requirement: z.string(),
@@ -16,7 +16,7 @@ const requirementLoop = defineLoop({
 
 const summarize = requirementLoop.use(
   "summarize",
-  defineCodeLoop({
+  defineTask({
     id: "summarize-code",
     handler: ({ input }) => {
       const payload = z
@@ -35,11 +35,11 @@ const summarize = requirementLoop.use(
   },
 );
 
-requirementLoop.flow(({ start, end }) => {
+requirementLoop.compose(({ start, end }) => {
   start(summarize).next(end());
 });
 
-const deliveryLoop = defineLoop({
+const deliveryLoop = defineFlow({
   id: "delivery-loop",
   input: z.object({
     requirement: z.string(),
@@ -54,7 +54,7 @@ const deliveryLoop = defineLoop({
   }),
 });
 
-const plan = deliveryLoop.use("plan", requirementLoop.compile(), {
+const plan = deliveryLoop.use("plan", requirementLoop, {
   reduce: ({ state, output }) => {
     state.results["plan"] = output.summary;
   },
@@ -62,7 +62,7 @@ const plan = deliveryLoop.use("plan", requirementLoop.compile(), {
 
 const verify = deliveryLoop.use(
   "verify",
-  defineCodeLoop({ id: "verify-code", handler: () => "ready" }),
+  defineTask({ id: "verify-code", handler: () => "ready" }),
   {
     reduce: ({ state, output }) => {
       state.results["verification"] = output;
@@ -70,7 +70,7 @@ const verify = deliveryLoop.use(
   },
 );
 
-deliveryLoop.flow(({ start, step, end }) => {
+deliveryLoop.compose(({ start, step, end }) => {
   start(plan).next(verify);
   step(verify).next(end());
 });

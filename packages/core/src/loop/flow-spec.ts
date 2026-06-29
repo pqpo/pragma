@@ -4,7 +4,7 @@ import type { LoopState } from "@expertmesh/shared";
 import type {
   CompiledLoop,
   Loop,
-  LoopCodeHandler,
+  LoopDefinition,
   LoopLimitPolicy,
   LoopNextTransition,
   LoopRouteTransition,
@@ -16,9 +16,10 @@ import type {
   LoopTransition,
   LoopTransitionTarget,
   SandboxRequest,
+  TaskHandler,
 } from "./types.ts";
 
-export interface DefineLoopOptions<TInput = unknown, TOutput = unknown> {
+export interface DefineFlowOptions<TInput = unknown, TOutput = unknown> {
   readonly id: string;
   readonly input?: z.ZodType<TInput> | undefined;
   readonly output?: z.ZodType<TOutput> | undefined;
@@ -33,11 +34,11 @@ export type LoopStepOptions<TInput = unknown, TOutput = unknown> = {
   readonly sandbox?: SandboxRequest | undefined;
 };
 
-export interface DefineCodeLoopOptions<TInput = unknown, TOutput = unknown> {
+export interface DefineTaskOptions<TInput = unknown, TOutput = unknown> {
   readonly id: string;
   readonly input?: z.ZodType<TInput> | undefined;
   readonly output?: z.ZodType<TOutput> | undefined;
-  readonly handler: LoopCodeHandler<TInput, TOutput>;
+  readonly handler: TaskHandler<TInput, TOutput>;
 }
 
 export type RouteCases = Readonly<Record<string, LoopTransitionTarget>>;
@@ -59,7 +60,7 @@ export interface FlowChain {
   readonly limit: (policy: LoopLimitPolicy) => FlowChain;
 }
 
-export class LoopSpec<TInput = unknown, TOutput = unknown> {
+export class FlowSpec<TInput = unknown, TOutput = unknown> {
   readonly id: string;
   readonly inputSchema: z.ZodType<TInput> | undefined;
   readonly outputSchema: z.ZodType<TOutput> | undefined;
@@ -70,7 +71,7 @@ export class LoopSpec<TInput = unknown, TOutput = unknown> {
   private readonly limits = new Map<string, LoopLimitPolicy>();
   private startStepId: string | undefined;
 
-  constructor(options: DefineLoopOptions<TInput, TOutput>) {
+  constructor(options: DefineFlowOptions<TInput, TOutput>) {
     this.id = options.id;
     this.inputSchema = options.input;
     this.outputSchema = options.output;
@@ -79,12 +80,13 @@ export class LoopSpec<TInput = unknown, TOutput = unknown> {
 
   use<TStepInput = unknown, TStepOutput = unknown>(
     id: string,
-    loop: Loop<TStepInput, TStepOutput>,
+    loop: LoopDefinition<TStepInput, TStepOutput>,
     options: LoopStepOptions<TStepInput, TStepOutput> = {},
   ): LoopStepRef<TStepOutput> {
+    const runnable = compileLoopDefinition(loop);
     const step: LoopStepDefinition<TStepInput, TStepOutput> = {
       id,
-      loop,
+      loop: runnable,
       input: options.input,
       output: options.output,
       reduce: options.reduce,
@@ -95,12 +97,12 @@ export class LoopSpec<TInput = unknown, TOutput = unknown> {
     return createStepRef(step as unknown as LoopStepDefinition<unknown, TStepOutput>);
   }
 
-  flow(declare: (builder: FlowBuilder) => void): this {
+  compose(declare: (builder: FlowBuilder) => void): this {
     const builder: FlowBuilder = {
       start: (step) => {
         this.assertKnownStep(step.id);
         if (this.startStepId !== undefined && this.startStepId !== step.id) {
-          throw new Error(`Loop ${this.id} already has a start step: ${this.startStepId}`);
+          throw new Error(`Flow ${this.id} already has a start step: ${this.startStepId}`);
         }
 
         this.startStepId = step.id;
@@ -120,7 +122,7 @@ export class LoopSpec<TInput = unknown, TOutput = unknown> {
 
   compile(): CompiledLoop<TInput, TOutput> {
     if (this.startStepId === undefined) {
-      throw new Error(`Loop ${this.id} does not declare a start step.`);
+      throw new Error(`Flow ${this.id} does not declare a start step.`);
     }
 
     for (const transition of this.transitions) {
@@ -174,7 +176,7 @@ export class LoopSpec<TInput = unknown, TOutput = unknown> {
 
   private addStep(step: LoopStepDefinition): void {
     if (this.steps.has(step.id)) {
-      throw new Error(`Duplicate loop step id: ${step.id}`);
+      throw new Error(`Duplicate flow step id: ${step.id}`);
     }
 
     this.steps.set(step.id, step);
@@ -182,7 +184,7 @@ export class LoopSpec<TInput = unknown, TOutput = unknown> {
 
   private assertKnownStep(stepId: string): void {
     if (!this.steps.has(stepId)) {
-      throw new Error(`Loop ${this.id} references unknown step: ${stepId}`);
+      throw new Error(`Flow ${this.id} references unknown step: ${stepId}`);
     }
   }
 
@@ -197,7 +199,7 @@ export class LoopSpec<TInput = unknown, TOutput = unknown> {
 
 class MutableFlowChain implements FlowChain {
   constructor(
-    private readonly spec: LoopSpec,
+    private readonly spec: FlowSpec,
     private readonly currentStepId: string,
   ) {}
 
@@ -241,14 +243,20 @@ function createStepRef<TOutput>(step: LoopStepDefinition<unknown, TOutput>): Loo
   };
 }
 
-export function defineLoop<TInput = unknown, TOutput = unknown>(
-  options: DefineLoopOptions<TInput, TOutput>,
-): LoopSpec<TInput, TOutput> {
-  return new LoopSpec(options);
+export function compileLoopDefinition<TInput, TOutput>(
+  loop: LoopDefinition<TInput, TOutput>,
+): Loop<TInput, TOutput> {
+  return "compile" in loop ? loop.compile() : loop;
 }
 
-export function defineCodeLoop<TInput = unknown, TOutput = unknown>(
-  options: DefineCodeLoopOptions<TInput, TOutput>,
+export function defineFlow<TInput = unknown, TOutput = unknown>(
+  options: DefineFlowOptions<TInput, TOutput>,
+): FlowSpec<TInput, TOutput> {
+  return new FlowSpec(options);
+}
+
+export function defineTask<TInput = unknown, TOutput = unknown>(
+  options: DefineTaskOptions<TInput, TOutput>,
 ): Loop<TInput, TOutput> {
   return {
     id: options.id,

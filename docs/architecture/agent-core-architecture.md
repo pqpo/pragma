@@ -7,7 +7,7 @@
 - 专家 Agent 的声明模型、创建入口和能力装配。
 - Agent 上下文、工具、插件、子 Agent 和模型配置管理。
 - Runtime Adapter 抽象，使 Agent 可以运行在不同执行环境中。
-- Loop 编排能力，把 Agent、代码步骤或子 Loop 组织成可执行流程。
+- Flow 编排能力，把 Agent、确定性任务或子 Flow 组织成可执行流程。
 - Workflow、Task、Mailbox、Sandbox 等运行期协议边界。
 
 Core 的定位是“可替换运行时 + 可治理编排协议”的中间层：
@@ -20,7 +20,7 @@ Server / Worker / Desktop
         |
         +--> Agent 能力装配
         +--> Runtime 执行适配
-        +--> Loop 工作流编排
+        +--> Flow 编排
         +--> Context / Tools / Plugins / SubAgents
         |
         v
@@ -65,7 +65,7 @@ ExpertAgent
 - 读写和搜索上下文。
 - 创建默认上下文工具。
 - 通过 Runtime Registry 创建运行会话。
-- 作为 `Loop` 被组合工作流调用。
+- 作为 `Loop` 被组合 Flow 调用。
 
 ### Context 与工具层
 
@@ -145,17 +145,31 @@ cloud-pi-agent
         +--> 转换事件流和最终结果
 ```
 
-### Loop 编排层
+### Flow 编排层
 
-Loop 编排层负责把多个可执行单元组织成工作流。这里的可执行单元不只包括 Agent，也包括本地代码 Loop 和编译后的组合 Loop。
+Flow 编排层负责把多个可执行单元组织成可执行流程。这里的可执行单元不只包括 Agent，也包括本地确定性任务、编译后的组合 Flow，以及任何实现 `Loop` 协议的对象。
+
+这里有一个刻意的命名分层：
+
+- `Loop` 是底层统一执行协议，表示“可以被运行”的最小接口。
+- `defineFlow()` 是用户侧组合入口，返回 `FlowSpec` builder。
+- `defineTask()` 把确定性 TypeScript handler 包装成一个 leaf `Loop`。
+- 编译归一化默认发生在 `flow.use()` 和 `createLoopApp().run()` 边界，用户日常不需要显式调用 `compile()`。
+- `CompiledLoop` 是内部执行形态，本身也是 `Loop`，所以组合 Flow 可以继续嵌套。
 
 ```text
 Loop
         |
         +--> ExpertAgent
-        +--> CodeLoop
+        +--> Task Loop
         +--> CompiledLoop
         +--> 任何实现 Loop 接口的对象
+
+FlowSpec
+        |
+        +--> use(id, loop, options)
+        +--> compose(builder)
+        +--> compile() for advanced validation / registration
 
 CompiledLoop
         |
@@ -165,7 +179,7 @@ CompiledLoop
         +--> result resolver
 ```
 
-Loop 的关键设计是：步骤只持有 `Loop`，不再按 agent、code、subloop 建立不同分支。
+Flow 的关键设计是：步骤只持有 `Loop`，不再按 agent、task、subflow 建立不同分支。
 
 ```text
 LoopStepDefinition
@@ -183,7 +197,10 @@ LoopStepDefinition
 
 - `Loop` 是统一执行接口。
 - `ExpertAgent` 本身实现 `Loop`。
-- `defineCodeLoop()` 把确定性 TypeScript handler 包装为 `Loop`。
+- `defineTask()` 把确定性 TypeScript handler 包装为 `Loop`。
+- `defineFlow()` 声明组合流程，`.compose()` 声明步骤之间的流转。
+- `flow.use()` 可以接收 Agent、Task、CompiledLoop、子 Flow 或任何 `Loop` 实现。
+- `createLoopApp().run()` 可以直接运行 Agent、Task、CompiledLoop 或 Flow。
 - `CompiledLoop` 也实现 `Loop`，所以可以继续嵌套。
 - `reduce()` 只做状态归并，不应执行外部副作用。
 
@@ -271,7 +288,7 @@ Concrete Runtime
   +--> final result
 ```
 
-Agent 会话是 Runtime 层概念。它适合单个专家任务，也可以由 Loop 的某个 step 间接触发。
+Agent 会话是 Runtime 层概念。它适合单个专家任务，也可以由 Flow 的某个 step 间接触发。
 
 ### Loop 执行流程
 
@@ -309,7 +326,7 @@ SandboxManager.resolveTaskSandbox()
 step.loop.run()
   |
   +--> Agent Runtime Session
-  +--> CodeLoop handler
+  +--> Task handler
   +--> nested CompiledLoop
   |
   v

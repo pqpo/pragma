@@ -5,7 +5,7 @@
 当前核心 API：
 
 ```ts
-import { createLoopApp, defineCodeLoop, defineLoop } from "@expertmesh/core";
+import { createLoopApp, defineTask, defineFlow } from "@expertmesh/core";
 ```
 
 ## 核心概念
@@ -21,12 +21,12 @@ interface Loop<TInput, TOutput> {
 }
 ```
 
-`defineLoop()` 创建组合 Loop；组合 Loop 通过 `use(id, loop, options)` 注册子 Loop，不区分 agent、code 或 subloop。`ExpertAgent` 已实现 `Loop`，`defineCodeLoop()` 是把本地 TypeScript handler 包成 Loop 的便利函数。
+`defineFlow()` 创建组合 Loop；组合 Loop 通过 `use(id, loop, options)` 注册子 Loop，不区分 agent、code 或 subloop。`ExpertAgent` 已实现 `Loop`，`defineTask()` 是把本地 TypeScript handler 包成 Loop 的便利函数。
 
 主要对象：
 
 - `Loop`：统一执行接口。
-- `LoopSpec`：组合 Loop 构建器。
+- `FlowSpec`：组合 Flow 构建器。
 - `CompiledLoop`：编译后的组合 Loop，同时也是 `Loop`。
 - `LoopApp`：运行入口，可运行任意 `Loop`。
 - `TaskManager`：任务分发与执行协调。
@@ -39,10 +39,10 @@ interface Loop<TInput, TOutput> {
 ## 最小组合 Loop
 
 ```ts
-import { createLoopApp, defineCodeLoop, defineLoop } from "@expertmesh/core";
+import { createLoopApp, defineTask, defineFlow } from "@expertmesh/core";
 import { z } from "zod";
 
-const greetLoop = defineCodeLoop({
+const greetLoop = defineTask({
   id: "greet",
   output: z.string(),
   handler: ({ input }) => {
@@ -51,7 +51,7 @@ const greetLoop = defineCodeLoop({
   },
 });
 
-const loop = defineLoop({
+const flow = defineFlow({
   id: "hello-loop",
   input: z.object({
     name: z.string(),
@@ -64,17 +64,17 @@ const loop = defineLoop({
   }),
 });
 
-const greet = loop.use("greet", greetLoop, {
+const greet = flow.use("greet", greetLoop, {
   reduce: ({ state, output }) => {
     state.results["message"] = output;
   },
 });
 
-loop.flow(({ start, end }) => {
+flow.compose(({ start, end }) => {
   start(greet).next(end());
 });
 
-const result = await createLoopApp().run(loop, {
+const result = await createLoopApp().run(flow, {
   input: {
     name: "ExpertMesh",
   },
@@ -90,7 +90,7 @@ console.log(result.output);
 - `result` 从 `LoopState` 里提取最终结果。
 - `use()` 注册任何实现了 `Loop` 的可执行单元。
 - `reduce()` 把步骤输出写回 `state`。
-- `flow()` 定义步骤转移。
+- `compose()` 定义步骤转移。
 
 ## 运行单个 Loop
 
@@ -109,7 +109,7 @@ const result = await createLoopApp().run(greetLoop, {
 `ExpertAgent` 已实现 `Loop`。在组合流程中注册 Agent 和注册任意其他 Loop 没有区别：
 
 ```ts
-import { defineAgent, defineLoop } from "@expertmesh/core";
+import { defineAgent, defineFlow } from "@expertmesh/core";
 import { z } from "zod";
 
 const planner = await defineAgent({
@@ -122,7 +122,7 @@ const planner = await defineAgent({
   workspace: process.cwd(),
 });
 
-const loop = defineLoop({
+const flow = defineFlow({
   id: "planning-loop",
   output: z.object({
     plan: z.unknown(),
@@ -132,7 +132,7 @@ const loop = defineLoop({
   }),
 });
 
-const plan = loop.use("plan", planner, {
+const plan = flow.use("plan", planner, {
   output: z.object({
     steps: z.array(z.string()),
   }),
@@ -141,24 +141,24 @@ const plan = loop.use("plan", planner, {
   },
 });
 
-loop.flow(({ start, end }) => {
+flow.compose(({ start, end }) => {
   start(plan).next(end());
 });
 ```
 
-## 嵌套组合 Loop
+## 嵌套组合 Flow
 
-编译后的组合 Loop 也是 `Loop`，所以嵌套流程仍然使用 `use()`：
+子 Flow 可以直接注册进父 Flow。`use()` 会在注册边界自动把子 Flow 归一化为可运行的 `Loop`，日常使用不需要显式调用 `compile()`：
 
 ```ts
-const requirementLoop = defineLoop({
+const requirementLoop = defineFlow({
   id: "requirement-loop",
   result: ({ state }) => state.results["summary"],
 });
 
 const summarize = requirementLoop.use(
   "summarize",
-  defineCodeLoop({
+  defineTask({
     id: "summarize",
     handler: ({ input }) => String(input),
   }),
@@ -169,24 +169,26 @@ const summarize = requirementLoop.use(
   },
 );
 
-requirementLoop.flow(({ start, end }) => {
+requirementLoop.compose(({ start, end }) => {
   start(summarize).next(end());
 });
 
-const deliveryLoop = defineLoop({
+const deliveryLoop = defineFlow({
   id: "delivery-loop",
 });
 
-const intake = deliveryLoop.use("intake", requirementLoop.compile(), {
+const intake = deliveryLoop.use("intake", requirementLoop, {
   reduce: ({ state, output }) => {
     state.results["requirement"] = output;
   },
 });
 
-deliveryLoop.flow(({ start, end }) => {
+deliveryLoop.compose(({ start, end }) => {
   start(intake).next(end());
 });
 ```
+
+`compile()` 是高级 API，主要用于预校验、调试或把 Flow 注册到分布式运行系统。普通执行路径由 `flow.use()` 和 `createLoopApp().run()` 自动完成编译归一化。
 
 ## LoopState 和 reduce
 
@@ -203,7 +205,7 @@ state.results["key"] = output;
 输出 schema 可以声明在被注册的 Loop 上，也可以在 `use()` 时覆盖：
 
 ```ts
-const classifyLoop = defineCodeLoop({
+const classifyLoop = defineTask({
   id: "classify",
   output: z.object({
     kind: z.enum(["bug", "feature"]),
@@ -216,7 +218,7 @@ const classifyLoop = defineCodeLoop({
   },
 });
 
-const classify = loop.use("classify", classifyLoop, {
+const classify = flow.use("classify", classifyLoop, {
   reduce: ({ state, output }) => {
     state.results["kind"] = output.kind;
   },
@@ -230,9 +232,9 @@ const classify = loop.use("classify", classifyLoop, {
 `route(field, cases, fallback?)` 根据步骤输出字段选择下一步：
 
 ```ts
-const tester = loop.use(
+const tester = flow.use(
   "tester",
-  defineCodeLoop({
+  defineTask({
     id: "tester",
     output: z.object({
       status: z.enum(["passed", "failed"]),
@@ -246,10 +248,10 @@ const tester = loop.use(
   }),
 );
 
-const ship = loop.use("ship", defineCodeLoop({ id: "ship", handler: () => "ship" }));
-const fix = loop.use("fix", defineCodeLoop({ id: "fix", handler: () => "fix" }));
+const ship = flow.use("ship", defineTask({ id: "ship", handler: () => "ship" }));
+const fix = flow.use("fix", defineTask({ id: "fix", handler: () => "fix" }));
 
-loop.flow(({ start, step, end }) => {
+flow.compose(({ start, step, end }) => {
   start(tester).route("status", {
     passed: ship,
     failed: fix,
@@ -265,7 +267,7 @@ loop.flow(({ start, step, end }) => {
 `limit()` 给某个 step 设置访问次数上限：
 
 ```ts
-loop.flow(({ start, step, fail }) => {
+flow.compose(({ start, step, fail }) => {
   start(retryStep)
     .limit({
       maxVisits: 3,
@@ -280,11 +282,11 @@ loop.flow(({ start, step, fail }) => {
 运行时仍然通过 `RuntimeRegistry` 解析。`runtime` 可以在 `use()` 上设置，也可以在运行请求中统一指定：
 
 ```ts
-const plan = loop.use("plan", planner, {
+const plan = flow.use("plan", planner, {
   runtime: "cloud-pi-agent",
 });
 
-await createLoopApp().run(loop, {
+await createLoopApp().run(flow, {
   input: {},
   runtime: "cloud-pi-agent",
   runtimes: {
