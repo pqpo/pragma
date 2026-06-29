@@ -243,6 +243,120 @@ Loop 的职责是把多个步骤组织成一个可运行工作流。它不是某
 - `StateManager`：工作流和任务状态存储。
 - `TaskExecutionEnvironment`：步骤运行环境。
 
+### TaskManager、StateManager、Mailbox
+
+Loop 运行时由三个核心协作接口组成：
+
+```text
+TaskManager   负责任务分发和执行编排
+StateManager 负责工作流与任务状态同步
+Mailbox      负责命令/事件通信协议
+```
+
+当前代码中没有单独命名为 `MailboxManager` 的接口，通信层接口名是 `Mailbox`。如果后续需要持久化消息队列或远程队列，可以在不改变 TaskManager 调用方式的前提下替换 `Mailbox` 实现。
+
+相关文件：
+
+```text
+packages/core/src/loop/types.ts
+packages/core/src/loop/task-manager.ts
+packages/core/src/loop/in-memory-state-manager.ts
+packages/core/src/loop/in-memory-mailbox.ts
+packages/core/src/loop/loop-app.ts
+```
+
+#### TaskManager
+
+`TaskManager` 是调度和执行协调器。它不直接保存最终事实状态，而是通过 `StateManager` 写入状态，通过 `Mailbox` 发布命令和事件。
+
+主要职责：
+
+- 启动 Loop run。
+- 找出当前可执行步骤。
+- 创建并派发 task run。
+- 租约任务，避免同一个任务被重复执行。
+- 解析步骤类型并执行 agent、code 或 subloop。
+- 把 Runtime 流式事件转成 `task.progress`。
+- 处理 `task.completed`、`task.failed`、`task.cancelled`。
+- 根据 transition 推进下一个 step 或结束 workflow。
+
+当前本地实现：
+
+```text
+createLocalTaskManager()
+```
+
+#### StateManager
+
+`StateManager` 是状态事实源。它负责维护 workflow run、task run、LoopState、revision 和幂等事件应用。
+
+主要职责：
+
+- 创建 `WorkflowRunRecord`。
+- 创建 `TaskRunRecord`。
+- 维护 task 状态流转：`pending -> dispatched -> leased -> running -> succeeded/failed/cancelled`。
+- 维护 workflow 状态流转：`running/waiting -> succeeded/failed/cancelled`。
+- 保存当前 step 集合 `currentStepIds`。
+- 保存已完成 step 集合 `completedStepIds`。
+- 应用 step reduce，更新 `LoopState`。
+- 使用 `revision` 防止并发状态覆盖。
+- 记录已应用 message id，避免重复事件造成重复状态推进。
+
+当前内存实现：
+
+```text
+createInMemoryStateManager()
+```
+
+后续云端化时，`StateManager` 应替换为数据库或事务性存储实现。TaskManager 不应该绕过它直接改状态。
+
+#### Mailbox
+
+`Mailbox` 是 Loop 内部的命令和事件通道。它承载的是通信协议，而不是业务状态。
+
+主要职责：
+
+- `publish()` 发布 command 或 event。
+- `subscribe()` 订阅指定 workflow、task 或 message type。
+- 用 `MailboxMessage` 统一承载 `workflow.started`、`task.dispatch`、`task.completed` 等消息。
+- 隔离 TaskManager 和具体消息系统，便于后续替换为队列、事件总线或分布式消息系统。
+
+当前内存实现：
+
+```text
+createInMemoryMailbox()
+```
+
+当前内存 Mailbox 是同步进程内发布/订阅模型，适合本地验证和单进程测试。后续云端 Worker 场景应替换为可持久化、可重试、可观测的消息实现。
+
+#### 三者协作关系
+
+一次任务推进的关系是：
+
+```text
+TaskManager
+  -> StateManager.createTaskRun()
+  -> StateManager.markTaskDispatched()
+  -> Mailbox.publish("task.dispatch")
+  -> TaskManager.leaseTask()
+  -> StateManager.markTaskLeased()
+  -> StateManager.markTaskRunning()
+  -> execute agent/code/subloop
+  -> StateManager.markTaskSucceeded() 或 markTaskFailed()
+  -> Mailbox.publish("task.completed" 或 "task.failed")
+  -> StateManager.applyTaskEvent()
+  -> StateManager.applyStepReduction()
+  -> StateManager.setCurrentStepIds() 或 completeWorkflowRun()
+```
+
+边界上可以这样理解：
+
+| 模块 | 负责 | 不负责 |
+| --- | --- | --- |
+| TaskManager | 任务分发、租约、执行协调、转移推进 | 保存权威状态、承载消息协议 |
+| StateManager | Workflow/Task 状态、LoopState、revision、幂等应用 | 运行具体 Agent、发布消息 |
+| Mailbox | command/event 发布订阅、消息过滤、通信协议承载 | 决定状态变化、执行任务 |
+
 ### 步骤类型
 
 Loop 当前支持三类步骤：
@@ -315,6 +429,336 @@ createLocalTaskManager()
 10. 如果还有后续步骤，继续派发；否则发布 `workflow.completed`。
 
 失败时会发布 `task.failed` 和 `workflow.failed`，取消时会发布 `workflow.cancelled`。
+
+## 文本架构图
+
+本节使用 Mermaid 文本图描述 Core 的架构、流程和时序。它们是文档图，不生成图片文件，后续在支持 Mermaid 的 Markdown 渲染器中可以直接预览。
+
+### Core 总体架构图
+
+```mermaid
+flowchart TB
+  Core["@expertmesh/core"]
+
+  Agent["agent/\nExpertAgent\nContextManager"]
+  Runtime["runtime/\nRuntimeAdapter\nRuntimeAgentSession"]
+  PiRuntime["pi-runtime/\ncloud-pi-agent"]
+  Loop["loop/\nLoopApp\nTaskManager\nStateManager\nMailbox"]
+  Context["context-system/\nContextSystem\nContextTools\nContextStore"]
+  Plugins["plugins/\nPluginLoader\nPlugin Hooks"]
+  Tools["tools/\nManagedTool\nToolResolver"]
+  SubAgents["subagents/\nSubAgentRegistry\nSubAgentTool"]
+  Registry["runtime-registry.ts\nRuntimeRegistry"]
+  Shared["@expertmesh/shared\nAgentMessage / LoopState\nTaskRun / WorkflowRun / MailboxMessage"]
+
+  Core --> Agent
+  Core --> Runtime
+  Core --> PiRuntime
+  Core --> Loop
+  Core --> Context
+  Core --> Plugins
+  Core --> Tools
+  Core --> SubAgents
+  Core --> Registry
+
+  Agent --> Context
+  Agent --> Plugins
+  Agent --> Tools
+  Agent --> SubAgents
+  Agent --> Registry
+  Registry --> Runtime
+  PiRuntime --> Runtime
+  Loop --> Runtime
+  Loop --> Shared
+  Runtime --> Shared
+  Agent --> Shared
+```
+
+这张图表达的是源码模块关系，不是部署拓扑。`pi-runtime` 是当前默认 Runtime 实现；`runtime/` 是抽象层。
+
+### Agent 子模块架构图
+
+```mermaid
+flowchart TB
+  Create["ExpertAgent.create(options)"]
+  Loader["loadExpertAgentPlugins()"]
+  Resolver["resolveExpertAgentPlugins()"]
+  Agent["ExpertAgent instance"]
+  ContextManager["ContextManager"]
+  ContextSystem["ContextSystem"]
+  ContextTools["createContextTools()"]
+  ManagedTools["Managed Tools\napproval merge"]
+  SubAgents["SubAgentRegistry"]
+  Hooks["Plugin Hooks"]
+  Logger["ExpertAgentLogger"]
+
+  Create --> Loader
+  Loader --> Resolver
+  Create --> Logger
+  Resolver --> Agent
+  Agent --> ContextManager
+  ContextManager --> ContextSystem
+  Agent --> ContextTools
+  Resolver --> ManagedTools
+  Resolver --> SubAgents
+  Resolver --> Hooks
+  Agent --> ManagedTools
+  Agent --> SubAgents
+  Agent --> Hooks
+```
+
+Agent 层的重点是能力装配。插件、上下文、工具、子 Agent、模型配置都在 `ExpertAgent` 创建时归一化，Runtime 只消费装配后的 Agent。
+
+### ExpertAgent 创建流程图
+
+```mermaid
+flowchart TD
+  A["调用 ExpertAgent.create(options)"]
+  B["拆分 plugins\ninline entry / external source"]
+  C["创建 logger"]
+  D["loadExpertAgentPlugins()\n加载外部插件"]
+  E["new ExpertAgent(runtime options)"]
+  F["resolveExpertAgentPlugins()\n合并 host 与 plugin 能力"]
+  G["应用 tool approval"]
+  H["创建 ContextManager"]
+  I["返回 ExpertAgent"]
+
+  A --> B --> C --> D --> E --> F --> G --> H --> I
+```
+
+对应代码入口：
+
+```text
+packages/core/src/agent/expert-agent.ts
+packages/core/src/plugins/plugin-loader.ts
+packages/core/src/plugins/expert-agent-plugin.ts
+```
+
+### Runtime 子模块架构图
+
+```mermaid
+flowchart TB
+  Agent["ExpertAgent"]
+  Registry["RuntimeRegistry"]
+  Adapter["RuntimeAdapter"]
+  Session["RuntimeAgentSession"]
+  Submit["RuntimeSubmitHandle"]
+  Events["AsyncIterable<RuntimeStreamEvent>"]
+  Result["Promise<RuntimeRunResult>"]
+  Pi["cloud-pi-agent\nPI Runtime Adapter"]
+
+  Agent -->|"createSession()"| Registry
+  Registry -->|"resolve(runtimeId)"| Adapter
+  Pi -.implements.-> Adapter
+  Adapter -->|"createSession()"| Session
+  Session -->|"submit(query, output schema)"| Submit
+  Submit --> Events
+  Submit --> Result
+```
+
+Runtime 层只承诺统一接口。`cloud-pi-agent` 是一个实现，后续本地 Runtime、云端沙箱 Runtime、自托管 Runtime 应以相同接口接入。
+
+### Runtime 会话时序图
+
+```mermaid
+sequenceDiagram
+  participant Caller as Caller
+  participant Agent as ExpertAgent
+  participant Registry as RuntimeRegistry
+  participant Adapter as RuntimeAdapter
+  participant Session as RuntimeAgentSession
+  participant Runtime as Concrete Runtime
+
+  Caller->>Agent: createSession({ runtime? })
+  Agent->>Registry: resolve(runtimeId)
+  Registry-->>Agent: RuntimeAdapter
+  Agent->>Adapter: createSession({ agent, context, models })
+  Adapter->>Runtime: initialize concrete session
+  Runtime-->>Adapter: runtime session ref
+  Adapter-->>Agent: RuntimeAgentSession
+  Agent-->>Caller: RuntimeAgentSession
+
+  Caller->>Session: submit({ runId, query, output })
+  Session->>Runtime: execute
+  Runtime-->>Session: stream events
+  Session-->>Caller: events + result promise
+  Runtime-->>Session: final result
+  Session-->>Caller: RuntimeRunResult
+```
+
+### Loop 子模块架构图
+
+```mermaid
+flowchart TB
+  LoopApp["LoopApp"]
+  Compiler["LoopCompiler / CompiledLoop"]
+  TaskManager["TaskManager\n任务分发与执行协调"]
+  StateManager["StateManager\n状态事实源"]
+  Mailbox["Mailbox\n命令/事件通道"]
+  Environment["TaskExecutionEnvironment\nworkspace / capability"]
+  RuntimeRegistry["RuntimeRegistry"]
+
+  LoopApp --> Compiler
+  LoopApp --> TaskManager
+  LoopApp --> StateManager
+  LoopApp --> Mailbox
+  LoopApp --> Environment
+  LoopApp --> RuntimeRegistry
+
+  TaskManager --> StateManager
+  TaskManager --> Mailbox
+  TaskManager --> Environment
+  TaskManager --> RuntimeRegistry
+```
+
+Loop 的核心不是某个单独 manager，而是 `TaskManager + StateManager + Mailbox` 三者协作：
+
+- `TaskManager` 负责推进。
+- `StateManager` 负责事实状态。
+- `Mailbox` 负责通信协议。
+
+### Loop 步骤执行流程图
+
+```mermaid
+flowchart TD
+  Start["LoopApp.run(loop, request)"]
+  Compile["compileLoop()"]
+  CreateWorkflow["StateManager.createWorkflowRun()"]
+  Started["Mailbox.publish(workflow.started)"]
+  DispatchReady["TaskManager.dispatchReadyTasks()"]
+  CreateTask["StateManager.createTaskRun()"]
+  DispatchTask["Mailbox.publish(task.dispatch)"]
+  Lease["TaskManager.leaseTask()"]
+  Running["StateManager.markTaskRunning()"]
+  Kind{"step.kind"}
+  AgentStep["agent step\nRuntimeAdapter -> Session.submit()"]
+  CodeStep["code step\nTaskExecutionEnvironment -> handler()"]
+  SubloopStep["subloop step\nTaskManager.startRun(child loop)"]
+  Succeeded["StateManager.markTaskSucceeded()"]
+  Completed["Mailbox.publish(task.completed)"]
+  Reduce["StateManager.applyStepReduction()"]
+  Transition{"next target?"}
+  Next["StateManager.setCurrentStepIds()\ncontinue dispatch"]
+  End["StateManager.completeWorkflowRun()\nworkflow.completed"]
+
+  Start --> Compile --> CreateWorkflow --> Started --> DispatchReady
+  DispatchReady --> CreateTask --> DispatchTask --> Lease --> Running --> Kind
+  Kind -->|"agent"| AgentStep
+  Kind -->|"code"| CodeStep
+  Kind -->|"subloop"| SubloopStep
+  AgentStep --> Succeeded
+  CodeStep --> Succeeded
+  SubloopStep --> Succeeded
+  Succeeded --> Completed --> Reduce --> Transition
+  Transition -->|"step"| Next --> DispatchReady
+  Transition -->|"end"| End
+```
+
+### TaskManager / StateManager / Mailbox 时序图
+
+```mermaid
+sequenceDiagram
+  participant App as LoopApp
+  participant TM as TaskManager
+  participant SM as StateManager
+  participant MB as Mailbox
+  participant ENV as TaskExecutionEnvironment
+  participant RT as RuntimeAdapter
+
+  App->>TM: startRun(compiledLoop, request)
+  TM->>SM: createWorkflowRun()
+  TM->>MB: publish(workflow.started)
+  TM->>SM: createTaskRun()
+  TM->>SM: markTaskDispatched()
+  TM->>MB: publish(task.dispatch)
+
+  MB-->>TM: task.dispatch
+  TM->>SM: markTaskLeased()
+  TM->>ENV: resolve(environment request)
+  ENV-->>TM: environment lease
+  TM->>SM: markTaskRunning()
+
+  alt agent step
+    TM->>RT: createSession({ agent })
+    RT-->>TM: RuntimeAgentSession
+    TM->>RT: submit(query, output schema)
+    RT-->>TM: RuntimeStreamEvent*
+    TM->>MB: publish(task.progress)*
+    RT-->>TM: RuntimeRunResult
+  else code step
+    TM->>ENV: execute handler with workspace
+    ENV-->>TM: output
+  else subloop step
+    TM->>TM: startRun(child loop)
+    TM-->>TM: child output
+  end
+
+  TM->>SM: markTaskSucceeded(output)
+  TM->>MB: publish(task.completed)
+  MB-->>TM: task.completed
+  TM->>SM: applyTaskEvent()
+  TM->>SM: applyStepReduction()
+  TM->>SM: setCurrentStepIds() or completeWorkflowRun()
+```
+
+### Agent 步骤时序图
+
+```mermaid
+sequenceDiagram
+  participant TM as TaskManager
+  participant Registry as RuntimeRegistry
+  participant Adapter as RuntimeAdapter
+  participant Session as RuntimeAgentSession
+  participant MB as Mailbox
+  participant SM as StateManager
+
+  TM->>Registry: resolve(runtimeId)
+  Registry-->>TM: RuntimeAdapter
+  TM->>Adapter: createSession({ agent })
+  Adapter-->>TM: RuntimeAgentSession
+  TM->>Session: submit({ runId, query, output })
+
+  loop stream runtime events
+    Session-->>TM: RuntimeStreamEvent
+    TM->>MB: publish(task.progress)
+  end
+
+  Session-->>TM: RuntimeRunResult
+  TM->>Session: abort()
+  TM->>SM: markTaskSucceeded(output)
+  TM->>MB: publish(task.completed)
+```
+
+Agent 步骤不会直接调用具体 Runtime SDK。它只通过 `RuntimeRegistry` 和 `RuntimeAdapter` 找到可用 Runtime。
+
+### Workflow / Task 状态流转图
+
+```mermaid
+stateDiagram-v2
+  [*] --> WorkflowRunning: createWorkflowRun
+  WorkflowRunning --> WorkflowSucceeded: completeWorkflowRun(succeeded)
+  WorkflowRunning --> WorkflowFailed: completeWorkflowRun(failed)
+  WorkflowRunning --> WorkflowCancelled: cancelRun
+  WorkflowSucceeded --> [*]
+  WorkflowFailed --> [*]
+  WorkflowCancelled --> [*]
+
+  state TaskRun {
+    [*] --> pending: createTaskRun
+    pending --> dispatched: markTaskDispatched
+    dispatched --> leased: markTaskLeased
+    pending --> leased: markTaskLeased
+    leased --> running: markTaskRunning
+    running --> succeeded: markTaskSucceeded
+    running --> failed: markTaskFailed
+    pending --> cancelled: markTaskCancelled
+    dispatched --> cancelled: markTaskCancelled
+    leased --> cancelled: markTaskCancelled
+    running --> cancelled: markTaskCancelled
+  }
+```
+
+状态权威来源是 `StateManager`。`Mailbox` 中的消息用于驱动状态变化，但消息本身不是状态事实源。
 
 ## Agent、Runtime、Loop 的关系
 
