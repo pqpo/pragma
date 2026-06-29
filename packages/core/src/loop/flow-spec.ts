@@ -276,6 +276,7 @@ export function defineTask<TInput = unknown, TOutput = unknown>(
         task: request.execution.task,
         workflow: request.execution.workflow,
         sandbox: request.execution.sandbox,
+        emitProgress: request.execution.emitProgress,
       });
       const parsedOutput = options.output?.parse(output) ?? output;
 

@@ -85,6 +85,8 @@ export function createInMemoryStateManager(): StateManager {
       const workflow: WorkflowRunRecord = {
         id: request.id,
         loopId: request.loopId,
+        parentWorkflowRunId: request.parentWorkflowRunId,
+        parentTaskRunId: request.parentTaskRunId,
         status: "running",
         input: cloneJson(request.input),
         state: LoopStateSchema.parse(cloneJson(request.state)),
@@ -102,6 +104,41 @@ export function createInMemoryStateManager(): StateManager {
     async getWorkflowRun(workflowRunId) {
       const workflow = workflows.get(workflowRunId);
       return workflow === undefined ? undefined : cloneJson(workflow);
+    },
+
+    async listWorkflowRuns(filter = {}) {
+      const statuses = filter.status === undefined
+        ? undefined
+        : Array.isArray(filter.status)
+          ? filter.status
+          : [filter.status];
+
+      return [...workflows.values()]
+        .filter((workflow) => {
+          if (filter.loopId !== undefined && workflow.loopId !== filter.loopId) {
+            return false;
+          }
+
+          if (statuses !== undefined && !statuses.includes(workflow.status)) {
+            return false;
+          }
+
+          if (filter.parentWorkflowRunId === null && workflow.parentWorkflowRunId !== undefined) {
+            return false;
+          }
+
+          if (
+            filter.parentWorkflowRunId !== undefined &&
+            filter.parentWorkflowRunId !== null &&
+            workflow.parentWorkflowRunId !== filter.parentWorkflowRunId
+          ) {
+            return false;
+          }
+
+          return true;
+        })
+        .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
+        .map((workflow) => cloneJson(workflow));
     },
 
     async createTaskRun(request: CreateTaskRunRequest) {

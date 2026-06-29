@@ -189,6 +189,108 @@ describe("loop app", () => {
     );
   });
 
+  it("starts a loop run without waiting for completion and exposes run snapshots", async () => {
+    const app = createLoopApp();
+    const slowLoop = defineTask({
+      id: "slow-loop",
+      handler: async () => {
+        await sleep(30);
+        return "done";
+      },
+    });
+
+    const handle = await app.start(slowLoop, {
+      input: {},
+    });
+    const running = await app.runs.get(handle.workflowRunId);
+
+    expect(running?.workflow.status).toBe("running");
+
+    await expect(handle.result).resolves.toMatchObject({
+      workflowRunId: handle.workflowRunId,
+      output: "done",
+    });
+
+    const completed = await app.runs.get(handle.workflowRunId);
+    expect(completed?.workflow.status).toBe("succeeded");
+    expect(completed?.taskStatusCounts).toMatchObject({
+      succeeded: 1,
+    });
+  });
+
+  it("watches nested loop events recursively and exposes a run tree", async () => {
+    const app = createLoopApp();
+    const childLoop = defineFlow({
+      id: "child-watch-loop",
+    });
+    const childTask = childLoop.use(
+      "child-task",
+      defineTask({
+        id: "child-watch-task",
+        handler: async ({ emitProgress }) => {
+          await emitProgress(createProgressEvent("child-progress"));
+          return "child";
+        },
+      }),
+    );
+    childLoop.compose(({ start, end }) => {
+      start(childTask).next(end());
+    });
+
+    const parentLoop = defineFlow({
+      id: "parent-watch-loop",
+    });
+    const gate = parentLoop.use(
+      "gate",
+      defineTask({
+        id: "gate-watch-task",
+        handler: async () => {
+          await sleep(30);
+          return "open";
+        },
+      }),
+    );
+    const child = parentLoop.use("child", childLoop);
+    parentLoop.compose(({ start, end }) => {
+      start(gate).next(child).next(end());
+    });
+
+    const handle = await app.start(parentLoop, {
+      input: {},
+    });
+    const eventsPromise = collectEvents(
+      app.runs.watch(handle.workflowRunId, {
+        recursive: true,
+      }),
+    );
+
+    await handle.result;
+    const events = await eventsPromise;
+    const childStarted = events.find(
+      (event) =>
+        event.type === "workflow.started" &&
+        readPayloadField(event.payload, "loopId") === "child-watch-loop",
+    );
+    const childCompleted = events.find(
+      (event) =>
+        event.type === "workflow.completed" && event.workflowRunId === childStarted?.workflowRunId,
+    );
+
+    expect(childStarted).toBeDefined();
+    expect(childStarted?.parentWorkflowRunId).toBe(handle.workflowRunId);
+    expect(childCompleted?.parentWorkflowRunId).toBe(handle.workflowRunId);
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "task.progress",
+        workflowRunId: childStarted?.workflowRunId,
+      }),
+    );
+
+    const tree = await app.runs.getTree(handle.workflowRunId);
+    expect(tree?.children).toHaveLength(1);
+    expect(tree?.children[0]?.workflow.id).toBe(childStarted?.workflowRunId);
+  });
+
   it("reuses the workflow sandbox by default", async () => {
     const sandboxIds: string[] = [];
     const loop = defineFlow({
@@ -589,4 +691,47 @@ function createEmptyEvents() {
       };
     },
   };
+}
+
+async function collectEvents<TEvent>(events: AsyncIterable<TEvent>): Promise<TEvent[]> {
+  const collected: TEvent[] = [];
+
+  for await (const event of events) {
+    collected.push(event);
+  }
+
+  return collected;
+}
+
+function createProgressEvent(stage: string) {
+  return {
+    schemaVersion: "expertmesh.stream/v1" as const,
+    eventId: `event-${stage}`,
+    sequence: 0,
+    runId: "run-1",
+    emittedAt: new Date().toISOString(),
+    source: {
+      kind: "runtime" as const,
+      runId: "run-1",
+      path: [],
+    },
+    type: "progress" as const,
+    payload: {
+      stage,
+    },
+  };
+}
+
+function readPayloadField(payload: unknown, field: string): unknown {
+  if (payload === null || typeof payload !== "object") {
+    return undefined;
+  }
+
+  return (payload as Record<string, unknown>)[field];
+}
+
+async function sleep(ms: number): Promise<void> {
+  await new Promise<void>((resolve) => {
+    setTimeout(resolve, ms);
+  });
 }

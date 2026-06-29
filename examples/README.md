@@ -152,11 +152,13 @@ Loop 示例不需要模型 key，全部使用本机 `code` step：
 pnpm --filter @expertmesh/examples start:loop-code
 pnpm --filter @expertmesh/examples start:loop-route
 pnpm --filter @expertmesh/examples start:loop-subloop
+pnpm --filter @expertmesh/examples start:loop-watch
 ```
 
 - `run-loop-code.ts`：最小 `defineFlow()` + `defineTask()` + `reduce()`。
 - `run-loop-route.ts`：根据 step 结构化输出字段 `.route("status", ...)`。
 - `run-loop-subloop.ts`：把一个 Loop 作为另一个 Loop 的 subloop step。
+- `run-loop-watch.ts`：用 `app.start()` 非阻塞启动 run，再用 `app.runs.get()`、`app.runs.list()`、`app.runs.getTree()`、`app.runs.watch()` 和 `app.runs.watchOutput()` 查询状态并递归订阅嵌套 Loop 事件。
 
 ## 示例辅助边界
 

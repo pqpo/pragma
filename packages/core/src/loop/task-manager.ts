@@ -126,6 +126,8 @@ export function createLocalTaskManager(options: TaskManagerOptions): TaskManager
       const workflow = await options.stateManager.createWorkflowRun({
         id: workflowRunId,
         loopId: loop.id,
+        parentWorkflowRunId: request.execution?.workflow.id,
+        parentTaskRunId: request.execution?.task.id,
         input,
         state,
         startStepId: loop.startStepId,
@@ -150,18 +152,28 @@ export function createLocalTaskManager(options: TaskManagerOptions): TaskManager
         kind: "event",
         type: "sandbox.created",
         workflowRunId: workflow.id,
+        parentWorkflowRunId: workflow.parentWorkflowRunId,
+        parentTaskRunId: workflow.parentTaskRunId,
         payload: workflowSandbox.ref,
       });
       await publish({
         kind: "event",
         type: "workflow.started",
         workflowRunId: workflow.id,
+        parentWorkflowRunId: workflow.parentWorkflowRunId,
+        parentTaskRunId: workflow.parentTaskRunId,
         payload: {
           loopId: loop.id,
+          parentWorkflowRunId: workflow.parentWorkflowRunId,
+          parentTaskRunId: workflow.parentTaskRunId,
         },
       });
 
-      await manager.dispatchReadyTasks(workflow.id);
+      void manager.dispatchReadyTasks(workflow.id).catch((error) => {
+        void failWorkflow(workflow.id, toError(error), {
+          message: error instanceof Error ? error.message : String(error),
+        });
+      });
 
       return {
         workflowRunId: workflow.id,
@@ -296,11 +308,13 @@ export function createLocalTaskManager(options: TaskManagerOptions): TaskManager
     },
 
     async cancelRun(workflowRunId, reason) {
-      await options.stateManager.completeWorkflowRun(workflowRunId, "cancelled");
+      const workflow = await options.stateManager.completeWorkflowRun(workflowRunId, "cancelled");
       await publish({
         kind: "event",
         type: "workflow.cancelled",
         workflowRunId,
+        parentWorkflowRunId: workflow.parentWorkflowRunId,
+        parentTaskRunId: workflow.parentTaskRunId,
         payload: {
           reason,
         },
@@ -652,39 +666,48 @@ export function createLocalTaskManager(options: TaskManagerOptions): TaskManager
 
     const errorPayload = readObjectField(message.payload, "error");
     const error = toError(errorPayload);
-    await options.stateManager.completeWorkflowRun(message.workflowRunId, "failed");
-    await publish({
-      kind: "event",
-      type: "workflow.failed",
-      workflowRunId: message.workflowRunId,
-      causationId: message.id,
-      payload: errorPayload ?? {
+    await failWorkflow(
+      message.workflowRunId,
+      error,
+      errorPayload ?? {
         message: error.message,
       },
-    });
-    const context = runContexts.get(message.workflowRunId);
-    context?.reject(error);
-    runContexts.delete(message.workflowRunId);
-    await options.loopStore.delete(message.workflowRunId);
-    await options.sandboxManager.cleanupWorkflowSandboxes(message.workflowRunId);
+      message.id,
+    );
   }
 
   async function failWorkflowFromEvent(message: MailboxMessage, error: Error): Promise<void> {
-    await options.stateManager.completeWorkflowRun(message.workflowRunId, "failed");
+    await failWorkflow(
+      message.workflowRunId,
+      error,
+      {
+        message: error.message,
+      },
+      message.id,
+    );
+  }
+
+  async function failWorkflow(
+    workflowRunId: string,
+    error: Error,
+    payload: unknown,
+    causationId?: string | undefined,
+  ): Promise<void> {
+    const workflow = await options.stateManager.completeWorkflowRun(workflowRunId, "failed");
     await publish({
       kind: "event",
       type: "workflow.failed",
-      workflowRunId: message.workflowRunId,
-      causationId: message.id,
-      payload: {
-        message: error.message,
-      },
+      workflowRunId,
+      parentWorkflowRunId: workflow.parentWorkflowRunId,
+      parentTaskRunId: workflow.parentTaskRunId,
+      causationId,
+      payload,
     });
-    const context = runContexts.get(message.workflowRunId);
+    const context = runContexts.get(workflowRunId);
     context?.reject(error);
-    runContexts.delete(message.workflowRunId);
-    await options.loopStore.delete(message.workflowRunId);
-    await options.sandboxManager.cleanupWorkflowSandboxes(message.workflowRunId);
+    runContexts.delete(workflowRunId);
+    await options.loopStore.delete(workflowRunId);
+    await options.sandboxManager.cleanupWorkflowSandboxes(workflowRunId);
   }
 
   async function completeWithTerminal(
@@ -693,12 +716,14 @@ export function createLocalTaskManager(options: TaskManagerOptions): TaskManager
     state?: LoopState,
   ): Promise<void> {
     if (target.type === "fail") {
-      await options.stateManager.completeWorkflowRun(workflowRunId, "failed");
+      const workflow = await options.stateManager.completeWorkflowRun(workflowRunId, "failed");
       const error = new Error(target.reason ?? "Loop run failed.");
       await publish({
         kind: "event",
         type: "workflow.failed",
         workflowRunId,
+        parentWorkflowRunId: workflow.parentWorkflowRunId,
+        parentTaskRunId: workflow.parentTaskRunId,
         payload: {
           message: error.message,
         },
@@ -727,12 +752,14 @@ export function createLocalTaskManager(options: TaskManagerOptions): TaskManager
   ): Promise<void> {
     const context = getRunContext(workflowRunId) as RunContext<TOutput>;
     const definition = await getLoopDefinition(workflowRunId);
-    await options.stateManager.completeWorkflowRun(workflowRunId, status);
+    const workflow = await options.stateManager.completeWorkflowRun(workflowRunId, status);
     const output = resolveLoopOutput(definition.loop as CompiledLoop<unknown, TOutput>, state);
     await publish({
       kind: "event",
       type: "workflow.completed",
       workflowRunId,
+      parentWorkflowRunId: workflow.parentWorkflowRunId,
+      parentTaskRunId: workflow.parentTaskRunId,
       payload: {
         output,
       },

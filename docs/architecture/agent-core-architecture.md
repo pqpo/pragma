@@ -12,19 +12,29 @@
 
 Core 的定位是“可替换运行时 + 可治理编排协议”的中间层：
 
+本文中的架构图、流程图、时序图统一使用 `text` 代码块和 ASCII/text 绘图，不使用 Mermaid、PlantUML、图片或外部绘图文件。
+
 ```text
-Server / Worker / Desktop
-        |
-        v
-@expertmesh/core
-        |
-        +--> Agent 能力装配
-        +--> Runtime 执行适配
-        +--> Flow 编排
-        +--> Context / Tools / Plugins / SubAgents
-        |
-        v
-@expertmesh/shared 协议对象和状态模型
++---------------------------+
+| Server / Worker / Desktop |
++-------------+-------------+
+              |
+              v
++-------------+-------------+
+|      @expertmesh/core      |
+|                             |
+|  - Agent 能力装配          |
+|  - Runtime 执行适配        |
+|  - Flow 编排               |
+|  - Context / Tools         |
+|  - Plugins / SubAgents     |
++-------------+-------------+
+              |
+              v
++-------------+-------------+
+|     @expertmesh/shared     |
+|  协议对象和状态模型        |
++---------------------------+
 ```
 
 ## 模块分类
@@ -36,20 +46,32 @@ Core 源码位于 `packages/core/src`。本文按职责分类说明模块，而�
 Agent 能力层负责把一个专家的身份、指令、上下文、工具、插件、子 Agent 和模型配置装配成标准 `ExpertAgent`。
 
 ```text
-ExpertAgent.create(options)
-        |
-        +--> Plugin Loader
-        |       +--> MCP / Skills / Models / Tools / Hooks
-        |
-        +--> ContextManager
-        |       +--> ContextSystem
-        |
-        +--> SubAgent Registry
-        |
-        +--> Managed Tools
-        |
-        v
-ExpertAgent
++-----------------------------+
+| ExpertAgent.create(options) |
++--------------+--------------+
+               |
+               v
++--------------+--------------+
+| Agent 创建期归一化           |
+|                              |
+|  +-- Plugin Loader           |
+|  |   +-- MCP                 |
+|  |   +-- Skills              |
+|  |   +-- Models              |
+|  |   +-- Tools               |
+|  |   +-- Hooks               |
+|  |                           |
+|  +-- ContextManager          |
+|  |   +-- ContextSystem       |
+|  |                           |
+|  +-- SubAgent Registry       |
+|  +-- Managed Tools           |
++--------------+--------------+
+               |
+               v
++--------------+--------------+
+|          ExpertAgent         |
++-----------------------------+
 ```
 
 核心边界：
@@ -72,23 +94,27 @@ ExpertAgent
 Context 与工具层负责把长期知识、项目上下文和受控能力暴露给 Agent。
 
 ```text
-ContextSystem
-        |
-        +--> namespace: host
-        |       +--> ContextStore
-        |
-        +--> namespace: plugin-a
-        |       +--> ContextStore
-        |
-        +--> namespace: plugin-b
-                +--> ContextStore
++-----------------------------+
+|        ContextSystem        |
++--------------+--------------+
+               |
+               +-- namespace: host
+               |   +-- ContextStore
+               |
+               +-- namespace: plugin-a
+               |   +-- ContextStore
+               |
+               +-- namespace: plugin-b
+                   +-- ContextStore
 
-Context Tools
-        |
-        +--> list_expert_context
-        +--> read_expert_context
-        +--> search_expert_context
-        +--> add / update / delete context
++-----------------------------+
+|        Context Tools        |
++--------------+--------------+
+               |
+               +-- list_expert_context
+               +-- read_expert_context
+               +-- search_expert_context
+               +-- add / update / delete context
 ```
 
 核心边界：
@@ -103,27 +129,37 @@ Context Tools
 Runtime 执行层负责屏蔽具体执行环境。Agent 只知道如何创建会话和提交任务，不知道底层是 PI agent SDK、云端沙箱、本地 Desktop 桥接，还是自托管执行器。
 
 ```text
-ExpertAgent
-        |
-        | createSession({ runtime, runtimes })
-        v
-RuntimeRegistry
-        |
-        | resolve(runtimeId)
-        v
-RuntimeAdapter
-        |
-        | createSession()
-        v
-RuntimeAgentSession
-        |
-        | submit({ query, output })
-        v
-RuntimeSubmitHandle
-        |
-        +--> events: AsyncIterable<RuntimeStreamEvent>
-        +--> result: Promise<RuntimeRunResult>
-        +--> cancel()
++-------------+       createSession({ runtime, runtimes })
+| ExpertAgent |-------------------------------------------+
++-------------+                                           |
+                                                            v
+                                                   +--------+---------+
+                                                   | RuntimeRegistry |
+                                                   +--------+---------+
+                                                            |
+                                                            | resolve(runtimeId)
+                                                            v
+                                                   +--------+---------+
+                                                   | RuntimeAdapter  |
+                                                   +--------+---------+
+                                                            |
+                                                            | createSession()
+                                                            v
+                                                   +--------+---------+
+                                                   | RuntimeAgent    |
+                                                   | Session         |
+                                                   +--------+---------+
+                                                            |
+                                                            | submit({ query, output })
+                                                            v
+                                                   +--------+---------+
+                                                   | RuntimeSubmit   |
+                                                   | Handle          |
+                                                   +--------+---------+
+                                                            |
+                                                            +-- events: AsyncIterable<RuntimeStreamEvent>
+                                                            +-- result: Promise<RuntimeRunResult>
+                                                            +-- cancel()
 ```
 
 核心边界：
@@ -137,12 +173,14 @@ RuntimeSubmitHandle
 当前默认 Runtime：
 
 ```text
-cloud-pi-agent
-        |
-        +--> 转换 ExpertAgent 声明
-        +--> 转换模型、工具、MCP、Skills、SubAgents
-        +--> 管理 PI Runtime Session
-        +--> 转换事件流和最终结果
++-----------------------------+
+|        cloud-pi-agent       |
++--------------+--------------+
+               |
+               +-- 转换 ExpertAgent 声明
+               +-- 转换模型、工具、MCP、Skills、SubAgents
+               +-- 管理 PI Runtime Session
+               +-- 转换事件流和最终结果
 ```
 
 ### Flow 编排层
@@ -158,39 +196,48 @@ Flow 编排层负责把多个可执行单元组织成可执行流程。这里的
 - `CompiledLoop` 是内部执行形态，本身也是 `Loop`，所以组合 Flow 可以继续嵌套。
 
 ```text
-Loop
-        |
-        +--> ExpertAgent
-        +--> Task Loop
-        +--> CompiledLoop
-        +--> 任何实现 Loop 接口的对象
++-----------------------------+
+|            Loop             |
++--------------+--------------+
+               |
+               +-- ExpertAgent
+               +-- Task Loop
+               +-- CompiledLoop
+               +-- 任何实现 Loop 接口的对象
 
-FlowSpec
-        |
-        +--> use(id, loop, options)
-        +--> compose(builder)
-        +--> compile() for advanced validation / registration
++-----------------------------+
+|          FlowSpec           |
++--------------+--------------+
+               |
+               +-- use(id, loop, options)
+               +-- compose(builder)
+               +-- compile()
+                   for advanced validation / registration
 
-CompiledLoop
-        |
-        +--> steps
-        +--> transitions
-        +--> limits
-        +--> result resolver
++-----------------------------+
+|         CompiledLoop        |
++--------------+--------------+
+               |
+               +-- steps
+               +-- transitions
+               +-- limits
+               +-- result resolver
 ```
 
 Flow 的关键设计是：步骤只持有 `Loop`，不再按 agent、task、subflow 建立不同分支。
 
 ```text
-LoopStepDefinition
-        |
-        +--> id
-        +--> loop
-        +--> input resolver
-        +--> output schema
-        +--> reduce
-        +--> sandbox request
-        +--> runtime override
++-----------------------------+
+|     LoopStepDefinition      |
++--------------+--------------+
+               |
+               +-- id
+               +-- loop
+               +-- input resolver
+               +-- output schema
+               +-- reduce
+               +-- sandbox request
+               +-- runtime override
 ```
 
 核心边界：
@@ -209,31 +256,33 @@ LoopStepDefinition
 运行协调层是 Loop 执行时最重要的边界。它由 `TaskManager`、`StateManager`、`Mailbox`、`SandboxManager` 和 `LoopDefinitionStore` 协作完成。
 
 ```text
-LoopApp
-        |
-        +--> TaskManager
-        |       +--> 分发 task
-        |       +--> 获取 lease
-        |       +--> 执行 step.loop.run()
-        |       +--> 推进 transition
-        |
-        +--> StateManager
-        |       +--> workflow / task 权威状态
-        |       +--> LoopState
-        |       +--> revision
-        |       +--> 幂等事件应用
-        |
-        +--> Mailbox
-        |       +--> command / event 发布订阅
-        |       +--> consumer group
-        |
-        +--> SandboxManager
-        |       +--> workflow sandbox
-        |       +--> task sandbox
-        |       +--> workspace capability
-        |
-        +--> LoopDefinitionStore
-                +--> workflowRunId 与 CompiledLoop 绑定
++-----------------------------+
+|           LoopApp           |
++--------------+--------------+
+               |
+               +-- TaskManager
+               |   +-- 分发 task
+               |   +-- 获取 lease
+               |   +-- 执行 step.loop.run()
+               |   +-- 推进 transition
+               |
+               +-- StateManager
+               |   +-- workflow / task 权威状态
+               |   +-- LoopState
+               |   +-- revision
+               |   +-- 幂等事件应用
+               |
+               +-- Mailbox
+               |   +-- command / event 发布订阅
+               |   +-- consumer group
+               |
+               +-- SandboxManager
+               |   +-- workflow sandbox
+               |   +-- task sandbox
+               |   +-- workspace capability
+               |
+               +-- LoopDefinitionStore
+                   +-- workflowRunId 与 CompiledLoop 绑定
 ```
 
 职责边界：
@@ -249,14 +298,16 @@ LoopApp
 默认本地组装：
 
 ```text
-createLoopApp()
-        |
-        +--> InMemoryMailbox
-        +--> InMemoryStateManager
-        +--> InMemoryLoopDefinitionStore
-        +--> LocalSandboxManager
-        +--> LocalTaskManager
-        +--> RuntimeRegistry
++-----------------------------+
+|       createLoopApp()       |
++--------------+--------------+
+               |
+               +-- InMemoryMailbox
+               +-- InMemoryStateManager
+               +-- InMemoryLoopDefinitionStore
+               +-- LocalSandboxManager
+               +-- LocalTaskManager
+               +-- RuntimeRegistry
 ```
 
 这个默认实现适合本地验证和单进程测试。生产或分布式部署时，应替换为持久化状态、可靠消息、远程沙箱和多 worker 任务执行。
@@ -266,26 +317,24 @@ createLoopApp()
 ### Agent 会话流程
 
 ```text
-Caller
-  |
-  | agent.createSession()
-  v
-ExpertAgent
-  |
-  | RuntimeRegistry.resolve(runtimeId)
-  v
-RuntimeAdapter
-  |
-  | createSession(agent config)
-  v
-RuntimeAgentSession
-  |
-  | submit(query, output schema)
-  v
-Concrete Runtime
-  |
-  +--> stream events
-  +--> final result
+Participants:
+  Caller
+  ExpertAgent
+  RuntimeRegistry
+  RuntimeAdapter
+  RuntimeAgentSession
+  Concrete Runtime
+
+Sequence:
+  Caller              -> ExpertAgent:         agent.createSession()
+  ExpertAgent         -> RuntimeRegistry:     resolve(runtimeId)
+  RuntimeRegistry     -> RuntimeAdapter:      return adapter
+  ExpertAgent         -> RuntimeAdapter:      createSession(agent config)
+  RuntimeAdapter      -> RuntimeAgentSession: create session
+  Caller              -> RuntimeAgentSession: submit(query, output schema)
+  RuntimeAgentSession -> Concrete Runtime:    execute
+  Concrete Runtime    -> Caller:              stream events
+  Concrete Runtime    -> Caller:              final result
 ```
 
 Agent 会话是 Runtime 层概念。它适合单个专家任务，也可以由 Flow 的某个 step 间接触发。
@@ -293,56 +342,91 @@ Agent 会话是 Runtime 层概念。它适合单个专家任务，也可以由 F
 ### Loop 执行流程
 
 ```text
-LoopApp.run(loop, request)
-  |
-  v
-compileLoop()
-  |
-  v
-SandboxManager.createWorkflowSandbox()
-  |
-  v
-StateManager.createWorkflowRun()
-  |
-  v
-Mailbox.publish(workflow.started)
-  |
-  v
-TaskManager.dispatchReadyTasks()
-  |
-  v
-StateManager.createTaskRun()
-  |
-  v
-Mailbox.publish(task.dispatch)
-  |
-  v
-TaskManager.leaseTask()
-  |
-  v
-SandboxManager.resolveTaskSandbox()
-  |
-  v
-step.loop.run()
-  |
-  +--> Agent Runtime Session
-  +--> Task handler
-  +--> nested CompiledLoop
-  |
-  v
-StateManager.markTaskSucceeded() / markTaskFailed()
-  |
-  v
-Mailbox.publish(task.completed / task.failed)
-  |
-  v
-StateManager.applyTaskEvent()
-  |
-  v
-StateManager.applyStepReduction()
-  |
-  v
-next step / workflow completed
++-----------------------------+
+| LoopApp.run(loop, request) |
++--------------+--------------+
+               |
+               v
++--------------+--------------+
+| compileLoop()               |
++--------------+--------------+
+               |
+               v
++--------------+--------------+
+| createWorkflowSandbox()     |
++--------------+--------------+
+               |
+               v
++--------------+--------------+
+| createWorkflowRun()         |
++--------------+--------------+
+               |
+               v
++--------------+--------------+
+| publish(workflow.started)   |
++--------------+--------------+
+               |
+               v
++--------------+--------------+
+| dispatchReadyTasks()        |
++--------------+--------------+
+               |
+               v
++--------------+--------------+
+| createTaskRun()             |
++--------------+--------------+
+               |
+               v
++--------------+--------------+
+| publish(task.dispatch)      |
++--------------+--------------+
+               |
+               v
++--------------+--------------+
+| leaseTask()                 |
++--------------+--------------+
+               |
+               v
++--------------+--------------+
+| resolveTaskSandbox()        |
++--------------+--------------+
+               |
+               v
++--------------+--------------+
+| step.loop.run()             |
+|                             |
+|  +-- Agent Runtime Session  |
+|  +-- Task handler           |
+|  +-- nested CompiledLoop    |
++--------------+--------------+
+               |
+               v
++--------------+--------------+
+| markTaskSucceeded()         |
+| or markTaskFailed()         |
++--------------+--------------+
+               |
+               v
++--------------+--------------+
+| publish(task completed      |
+| or task failed)             |
++--------------+--------------+
+               |
+               v
++--------------+--------------+
+| applyTaskEvent()            |
++--------------+--------------+
+               |
+               v
++--------------+--------------+
+| applyStepReduction()        |
++--------------+--------------+
+               |
+               v
++--------------+--------------+
+| next step                   |
+| or workflow completed       |
++-----------------------------+
 ```
 
 这个流程中，`TaskManager` 可以被替换为远程 worker 调度器，`StateManager` 可以被替换为数据库实现，`Mailbox` 可以被替换为队列或事件总线，`SandboxManager` 可以被替换为容器、VM、Kubernetes Job 或 Desktop 本地工作区。
@@ -352,28 +436,32 @@ next step / workflow completed
 Loop 运行状态来自 `@expertmesh/shared`，Core 只通过接口读写。
 
 ```text
-WorkflowRunRecord
-        |
-        +--> id
-        +--> loopId
-        +--> status
-        +--> currentStepIds
-        +--> completedStepIds
-        +--> state: LoopState
-        +--> defaultSandbox
-        +--> revision
++-----------------------------+
+|      WorkflowRunRecord      |
++--------------+--------------+
+               |
+               +-- id
+               +-- loopId
+               +-- status
+               +-- currentStepIds
+               +-- completedStepIds
+               +-- state: LoopState
+               +-- defaultSandbox
+               +-- revision
 
-TaskRunRecord
-        |
-        +--> id
-        +--> workflowRunId
-        +--> stepId
-        +--> visit
-        +--> status
-        +--> input / output / error
-        +--> runtimeId
-        +--> sandbox
-        +--> lease
++-----------------------------+
+|        TaskRunRecord        |
++--------------+--------------+
+               |
+               +-- id
+               +-- workflowRunId
+               +-- stepId
+               +-- visit
+               +-- status
+               +-- input / output / error
+               +-- runtimeId
+               +-- sandbox
+               +-- lease
 ```
 
 状态推进原则：
@@ -387,18 +475,22 @@ TaskRunRecord
 典型 task 状态流转：
 
 ```text
-pending
-  -> dispatched
-  -> leased
-  -> running
-  -> succeeded / failed / cancelled
++---------+     +------------+     +--------+     +---------+
+| pending | --> | dispatched | --> | leased | --> | running |
++---------+     +------------+     +--------+     +----+----+
+                                                        |
+                                                        v
+                                      +-----------------+-----------------+
+                                      | succeeded / failed / cancelled    |
+                                      +-----------------------------------+
 ```
 
 典型 workflow 状态流转：
 
 ```text
-running
-  -> succeeded / failed / cancelled
++---------+     +-----------------------------------+
+| running | --> | succeeded / failed / cancelled    |
++---------+     +-----------------------------------+
 ```
 
 ## Sandbox 模型
@@ -406,23 +498,25 @@ running
 Sandbox 是 Loop 执行时的工作区和能力边界。它不是固定实现，而是 `SandboxManager` 接口。
 
 ```text
-SandboxRequest
-        |
-        +--> strategy
-        |       +--> reuse-workflow
-        |       +--> ephemeral
-        |       +--> reuse-step
-        |       +--> attach
-        |
-        +--> workspace
-        |       +--> root
-        |       +--> access
-        |
-        +--> capabilities
-                +--> filesystem
-                +--> shell
-                +--> network
-                +--> humanApproval
++-----------------------------+
+|        SandboxRequest       |
++--------------+--------------+
+               |
+               +-- strategy
+               |   +-- reuse-workflow
+               |   +-- ephemeral
+               |   +-- reuse-step
+               |   +-- attach
+               |
+               +-- workspace
+               |   +-- root
+               |   +-- access
+               |
+               +-- capabilities
+                   +-- filesystem
+                   +-- shell
+                   +-- network
+                   +-- humanApproval
 ```
 
 当前默认 `LocalSandboxManager` 使用本机 workspace，不提供强安全隔离。它用于开发、测试和本地单进程运行。未来生产环境应根据部署形态替换为：
@@ -440,32 +534,40 @@ Sandbox 边界不应绕过 Tool approval、Runtime permission 或 Desktop 本地
 Core 当前默认本地实现可以平滑演进到分布式部署。推荐拆分如下：
 
 ```text
-API Server
-  |
-  +--> 创建 workflow run
-  +--> 校验用户、租户、预算和权限
-  +--> 写入 StateManager
-  +--> 发布 Mailbox command
-  |
-  v
-Reliable Mailbox / Queue
-  |
-  v
-Worker Pool
-  |
-  +--> lease task
-  +--> resolve sandbox
-  +--> execute step.loop.run()
-  +--> stream progress
-  +--> publish completion event
-  |
-  v
-State Store
-  |
-  +--> workflow/task state
-  +--> revision
-  +--> idempotency
-  +--> audit trail
++-----------------------------+
+|          API Server         |
+|                             |
+|  - 创建 workflow run        |
+|  - 校验用户、租户、预算权限 |
+|  - 写入 StateManager        |
+|  - 发布 Mailbox command     |
++--------------+--------------+
+               |
+               v
++--------------+--------------+
+|   Reliable Mailbox / Queue  |
++--------------+--------------+
+               |
+               v
++--------------+--------------+
+|          Worker Pool        |
+|                             |
+|  - lease task               |
+|  - resolve sandbox          |
+|  - execute step.loop.run()  |
+|  - stream progress          |
+|  - publish completion event |
++--------------+--------------+
+               |
+               v
++--------------+--------------+
+|          State Store        |
+|                             |
+|  - workflow/task state      |
+|  - revision                 |
+|  - idempotency              |
+|  - audit trail              |
++-----------------------------+
 ```
 
 可替换组件：
@@ -493,24 +595,32 @@ State Store
 未来本地 Agent 通过 Desktop App 接入云端，不新增 `apps/local-runner`。
 
 ```text
-Cloud Server / Worker
-  |
-  v
-Runtime Gateway
-  |
-  v
-双向安全连接
-  |
-  v
-Desktop App
-  |
-  +--> Local Permission Guard
-  +--> Local Sandbox / Workspace
-  +--> Local Agent Adapter
-          |
-          +--> Claude Code
-          +--> Codex
-          +--> 自研本地 Agent
++-----------------------------+
+|    Cloud Server / Worker    |
++--------------+--------------+
+               |
+               v
++--------------+--------------+
+|        Runtime Gateway      |
++--------------+--------------+
+               |
+               v
++--------------+--------------+
+|        双向安全连接         |
++--------------+--------------+
+               |
+               v
++--------------+--------------+
+|         Desktop App         |
+|                             |
+|  +-- Local Permission Guard |
+|  +-- Local Sandbox          |
+|  |   / Workspace            |
+|  +-- Local Agent Adapter    |
+|      +-- Claude Code        |
+|      +-- Codex              |
+|      +-- 自研本地 Agent     |
++-----------------------------+
 ```
 
 Core 中应承载桥接协议、消息类型和 Runtime Adapter 合约；Desktop App 承载登录、设备绑定、本地工作区选择和用户确认 UI；Server/Worker 承载调度、审计、预算和治理。

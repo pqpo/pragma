@@ -40,6 +40,8 @@ export const SandboxRefSchema = z.object({
 export const WorkflowRunRecordSchema = z.object({
   id: z.string().min(1),
   loopId: z.string().min(1),
+  parentWorkflowRunId: z.string().min(1).optional(),
+  parentTaskRunId: z.string().min(1).optional(),
   status: LoopRunStatusSchema,
   input: z.unknown(),
   state: LoopStateSchema,

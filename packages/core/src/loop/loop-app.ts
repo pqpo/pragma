@@ -4,6 +4,7 @@ import { createInMemoryLoopDefinitionStore } from "./in-memory-loop-definition-s
 import { createInMemoryMailbox } from "./in-memory-mailbox.ts";
 import { createInMemoryStateManager } from "./in-memory-state-manager.ts";
 import { createLocalSandboxManager } from "./local-sandbox-manager.ts";
+import { createLoopRunObserver } from "./loop-run-observer.ts";
 import { createLocalTaskManager } from "./task-manager.ts";
 import type {
   CompiledLoop,
@@ -25,15 +26,21 @@ export function createLoopApp(options: CreateLoopAppOptions = {}): LoopApp {
       defaultRuntime: options.defaultRuntime,
     });
   const sandboxManager = options.sandboxManager ?? createLocalSandboxManager();
-  const runLoop = async <TInput, TOutput>(
+  const startLoop = async <TInput, TOutput>(
     loop: LoopDefinition<TInput, TOutput>,
     request: StartLoopRunRequest<TInput>,
-  ): Promise<LoopRunResult<TOutput>> => {
+  ) => {
     const compiledLoop = compileLoop(
       loop,
       request.output as CompiledLoop<TInput, TOutput>["outputSchema"] | undefined,
     );
-    const handle = await taskManager.startRun(compiledLoop, request);
+    return await taskManager.startRun(compiledLoop, request);
+  };
+  const runLoop = async <TInput, TOutput>(
+    loop: LoopDefinition<TInput, TOutput>,
+    request: StartLoopRunRequest<TInput>,
+  ): Promise<LoopRunResult<TOutput>> => {
+    const handle = await startLoop(loop, request);
     return await handle.result;
   };
   const taskManager =
@@ -46,12 +53,18 @@ export function createLoopApp(options: CreateLoopAppOptions = {}): LoopApp {
       loopStore,
       runLoop,
     });
+  const runs = createLoopRunObserver({
+    mailbox,
+    stateManager,
+  });
 
   return {
     mailbox,
     stateManager,
     taskManager,
     runtimes,
+    runs,
+    start: startLoop,
     run: runLoop,
   };
 }

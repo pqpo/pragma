@@ -13,6 +13,7 @@
     "start:loop-code": "tsx src/run-loop-code.ts",
     "start:loop-route": "tsx src/run-loop-route.ts",
     "start:loop-subloop": "tsx src/run-loop-subloop.ts",
+    "start:loop-watch": "tsx src/run-loop-watch.ts",
     "build": "tsc -p tsconfig.build.json",
     "lint": "eslint src plugins",
     "typecheck": "tsc --noEmit",

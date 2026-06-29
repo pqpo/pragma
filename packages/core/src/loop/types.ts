@@ -1,9 +1,12 @@
 import type {
   LoopState,
   MailboxMessage,
+  MailboxMessageType,
   SandboxRef,
   TaskRunRecord,
+  TaskRunStatus,
   WorkflowRunRecord,
+  LoopRunStatus,
 } from "@expertmesh/shared";
 import type { z } from "zod";
 
@@ -96,6 +99,7 @@ export interface TaskContext<TInput = unknown> {
   readonly task: TaskRunRecord;
   readonly workflow: WorkflowRunRecord;
   readonly sandbox: SandboxRef;
+  readonly emitProgress: (event: RuntimeStreamEvent) => Promise<void>;
 }
 
 export type TaskHandler<TInput = unknown, TOutput = unknown> = (
@@ -235,6 +239,11 @@ export interface LoopApp {
   readonly stateManager: StateManager;
   readonly taskManager: TaskManager;
   readonly runtimes: RuntimeRegistry;
+  readonly runs: LoopRunObserver;
+  readonly start: <TInput, TOutput>(
+    loop: LoopDefinition<TInput, TOutput>,
+    request: StartLoopRunRequest<TInput>,
+  ) => Promise<WorkflowRunHandle<TOutput>>;
   readonly run: <TInput, TOutput>(
     loop: LoopDefinition<TInput, TOutput>,
     request: StartLoopRunRequest<TInput>,
@@ -280,6 +289,8 @@ export interface Mailbox {
 export interface CreateWorkflowRunRequest<TInput = unknown> {
   readonly id: string;
   readonly loopId: string;
+  readonly parentWorkflowRunId?: string | undefined;
+  readonly parentTaskRunId?: string | undefined;
   readonly input: TInput;
   readonly state: LoopState;
   readonly startStepId: string;
@@ -316,6 +327,9 @@ export interface ReadyTransition {
 export interface StateManager {
   readonly createWorkflowRun: (request: CreateWorkflowRunRequest) => Promise<WorkflowRunRecord>;
   readonly getWorkflowRun: (workflowRunId: string) => Promise<WorkflowRunRecord | undefined>;
+  readonly listWorkflowRuns: (
+    filter?: ListWorkflowRunsFilter | undefined,
+  ) => Promise<readonly WorkflowRunRecord[]>;
   readonly createTaskRun: (request: CreateTaskRunRequest) => Promise<TaskRunRecord>;
   readonly getTaskRun: (taskRunId: string) => Promise<TaskRunRecord | undefined>;
   readonly listTaskRuns: (workflowRunId: string) => Promise<readonly TaskRunRecord[]>;
@@ -352,6 +366,44 @@ export interface StateManager {
   ) => Promise<WorkflowRunRecord>;
   readonly listReadyTransitions: (workflowRunId: string) => Promise<readonly ReadyTransition[]>;
   readonly recoverExpiredLeases: (now: Date) => Promise<readonly TaskRunRecord[]>;
+}
+
+export interface ListWorkflowRunsFilter {
+  readonly loopId?: string | undefined;
+  readonly status?: LoopRunStatus | readonly LoopRunStatus[] | undefined;
+  readonly parentWorkflowRunId?: string | null | undefined;
+}
+
+export interface LoopRunSummary {
+  readonly workflow: WorkflowRunRecord;
+  readonly tasks: readonly TaskRunRecord[];
+  readonly taskStatusCounts: Readonly<Partial<Record<TaskRunStatus, number>>>;
+  readonly childWorkflowRunIds: readonly string[];
+}
+
+export interface LoopRunTree extends LoopRunSummary {
+  readonly children: readonly LoopRunTree[];
+}
+
+export interface LoopRunWatchOptions {
+  readonly recursive?: boolean | undefined;
+  readonly types?: readonly MailboxMessageType[] | undefined;
+  readonly closeOnTerminal?: boolean | undefined;
+  readonly signal?: AbortSignal | undefined;
+}
+
+export interface LoopRunObserver {
+  readonly list: (filter?: ListWorkflowRunsFilter | undefined) => Promise<readonly LoopRunSummary[]>;
+  readonly get: (workflowRunId: string) => Promise<LoopRunSummary | undefined>;
+  readonly getTree: (workflowRunId: string) => Promise<LoopRunTree | undefined>;
+  readonly watch: (
+    workflowRunId: string,
+    options?: LoopRunWatchOptions | undefined,
+  ) => AsyncIterable<MailboxMessage>;
+  readonly watchOutput: (
+    workflowRunId: string,
+    options?: Omit<LoopRunWatchOptions, "types"> | undefined,
+  ) => AsyncIterable<MailboxMessage>;
 }
 
 export interface CreateWorkflowSandboxRequest {

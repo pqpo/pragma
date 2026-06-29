@@ -104,6 +104,60 @@ const result = await createLoopApp().run(greetLoop, {
 });
 ```
 
+需要在运行过程中查询状态或订阅输出时，使用 `start()` 启动非阻塞运行，再通过 `runs` 查询和 watch：
+
+```ts
+const app = createLoopApp();
+
+const handle = await app.start(greetLoop, {
+  input: {
+    name: "ExpertMesh",
+  },
+});
+
+const snapshot = await app.runs.get(handle.workflowRunId);
+
+for await (const event of app.runs.watch(handle.workflowRunId)) {
+  console.log(event.type, event.payload);
+}
+
+const result = await handle.result;
+```
+
+`app.runs.list()` 返回当前可见的 workflow run 快照，可以按 `loopId`、`status` 或 `parentWorkflowRunId` 过滤。`app.runs.get(id)` 返回单个 run 的 workflow、tasks、task 状态计数和直接子 workflow id。
+
+嵌套 Loop 会创建独立的子 `workflowRunId`，并在子 workflow 上记录 `parentWorkflowRunId` 和 `parentTaskRunId`。需要一次性查看完整树时使用：
+
+```ts
+const tree = await app.runs.getTree(handle.workflowRunId);
+```
+
+需要递归订阅父 run 和所有子 run 的后续事件时使用：
+
+```ts
+for await (const event of app.runs.watch(handle.workflowRunId, { recursive: true })) {
+  console.log(event.workflowRunId, event.type);
+}
+```
+
+如果只关心运行输出、进度和完成结果，可以使用更窄的 watch：
+
+```ts
+for await (const event of app.runs.watchOutput(handle.workflowRunId, { recursive: true })) {
+  console.log(event.payload);
+}
+```
+
+`watch()` 只表示订阅后续事件，不回放历史事件；历史事实以 `StateManager` 中的 workflow/task 状态为准，应通过 `get()` 或 `getTree()` 读取。
+
+完整可运行示例见：
+
+```bash
+pnpm --filter @expertmesh/examples start:loop-watch
+```
+
+对应入口文件是 `examples/src/run-loop-watch.ts`，示例包含父 Loop、嵌套子 Loop、运行中快照、递归 watch、输出 watch 和最终 run tree。
+
 ## Agent 作为 Loop
 
 `ExpertAgent` 已实现 `Loop`。在组合流程中注册 Agent 和注册任意其他 Loop 没有区别：

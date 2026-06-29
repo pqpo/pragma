@@ -42,6 +42,7 @@ export const MailboxMessageSchema = z.object({
   workflowRunId: z.string().min(1),
   taskRunId: z.string().min(1).optional(),
   stepId: z.string().min(1).optional(),
+  parentWorkflowRunId: z.string().min(1).optional(),
   parentTaskRunId: z.string().min(1).optional(),
   causationId: z.string().min(1).optional(),
   correlationId: z.string().min(1).optional(),
