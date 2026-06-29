@@ -1,5 +1,9 @@
 import type {
   LoopState,
+  HumanInteractionOperator,
+  HumanInteractionRecord,
+  HumanInteractionRequest,
+  HumanInteractionResponse,
   MailboxMessage,
   MailboxMessageType,
   SandboxRef,
@@ -186,10 +190,17 @@ export interface LoopExecutionContext {
   readonly runtimeId: string;
   readonly runtimeRegistry: RuntimeRegistry;
   readonly emitProgress: (event: RuntimeStreamEvent) => Promise<void>;
+  readonly requestHumanInteraction: (
+    request: RequestHumanInteractionInput,
+  ) => Promise<HumanInteractionResponse>;
   readonly runLoop: <TInput, TOutput>(
     loop: Loop<TInput, TOutput>,
     request: StartLoopRunRequest<TInput>,
   ) => Promise<LoopRunResult<TOutput>>;
+}
+
+export interface RequestHumanInteractionInput {
+  readonly request: HumanInteractionRequest;
 }
 
 export interface WorkflowRunHandle<TOutput = unknown> {
@@ -297,6 +308,24 @@ export interface CreateWorkflowRunRequest<TInput = unknown> {
   readonly defaultSandbox: SandboxRef;
 }
 
+export interface CreateHumanInteractionRequest {
+  readonly workflowRunId: string;
+  readonly taskRunId?: string | undefined;
+  readonly stepId?: string | undefined;
+  readonly request: HumanInteractionRequest;
+}
+
+export interface RespondHumanInteractionRequest {
+  readonly interactionId: string;
+  readonly response: HumanInteractionResponse;
+  readonly operator?: HumanInteractionOperator | undefined;
+}
+
+export interface ResolveHumanInteractionResult {
+  readonly interaction: HumanInteractionRecord;
+  readonly duplicate: boolean;
+}
+
 export interface CreateTaskRunRequest {
   readonly workflowRunId: string;
   readonly stepId: string;
@@ -345,6 +374,8 @@ export interface StateManager {
     ttlMs: number,
   ) => Promise<TaskRunRecord>;
   readonly markTaskRunning: (taskRunId: string, sandbox: SandboxRef) => Promise<TaskRunRecord>;
+  readonly markTaskWaiting: (taskRunId: string) => Promise<TaskRunRecord>;
+  readonly markTaskResumed: (taskRunId: string) => Promise<TaskRunRecord>;
   readonly markTaskSucceeded: (taskRunId: string, output: unknown) => Promise<TaskRunRecord>;
   readonly markTaskFailed: (taskRunId: string, error: unknown) => Promise<TaskRunRecord>;
   readonly markTaskCancelled: (
@@ -356,6 +387,20 @@ export interface StateManager {
   readonly applyStepReduction: <TOutput>(
     request: ApplyStepReductionRequest<TOutput>,
   ) => Promise<LoopState>;
+  readonly createHumanInteraction: (
+    request: CreateHumanInteractionRequest,
+  ) => Promise<HumanInteractionRecord>;
+  readonly getHumanInteraction: (
+    interactionId: string,
+  ) => Promise<HumanInteractionRecord | undefined>;
+  readonly listHumanInteractions: (
+    workflowRunId: string,
+  ) => Promise<readonly HumanInteractionRecord[]>;
+  readonly resolveHumanInteraction: (
+    request: RespondHumanInteractionRequest,
+  ) => Promise<ResolveHumanInteractionResult>;
+  readonly markWorkflowWaiting: (workflowRunId: string) => Promise<WorkflowRunRecord>;
+  readonly markWorkflowRunning: (workflowRunId: string) => Promise<WorkflowRunRecord>;
   readonly completeWorkflowRun: (
     workflowRunId: string,
     status: "succeeded" | "failed" | "cancelled",
@@ -460,6 +505,9 @@ export interface TaskManager {
     message: MailboxMessage<TaskDispatchPayload>,
   ) => Promise<TaskLease | undefined>;
   readonly executeTask: (lease: TaskLease) => Promise<void>;
+  readonly respondToHumanInteraction: (
+    request: RespondHumanInteractionRequest,
+  ) => Promise<HumanInteractionRecord>;
   readonly cancelTask: (taskRunId: string, reason?: string) => Promise<void>;
   readonly recoverExpiredLeases: (now: Date) => Promise<readonly TaskRunRecord[]>;
 }

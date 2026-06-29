@@ -12,12 +12,16 @@ export const MailboxProducerKindSchema = z.enum([
 
 export const MailboxMessageTypeSchema = z.enum([
   "workflow.started",
+  "workflow.waiting",
+  "workflow.resumed",
   "workflow.completed",
   "workflow.failed",
   "workflow.cancelled",
   "task.dispatch",
   "task.leased",
   "task.started",
+  "task.waiting",
+  "task.resumed",
   "task.progress",
   "task.output.delta",
   "task.completed",
@@ -28,6 +32,8 @@ export const MailboxMessageTypeSchema = z.enum([
   "sandbox.attached",
   "sandbox.reused",
   "sandbox.released",
+  "human.requested",
+  "human.responded",
 ]);
 
 export const MailboxProducerSchema = z.object({

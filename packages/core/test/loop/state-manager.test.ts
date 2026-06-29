@@ -175,6 +175,52 @@ describe("in-memory StateManager", () => {
     await expect(stateManager.markTaskSucceeded(task.id, {})).rejects.toThrow("Cannot mark task");
   });
 
+  it("requires waiting tasks to resume before succeeding", async () => {
+    const stateManager = createInMemoryStateManager();
+    const workflow = await stateManager.createWorkflowRun({
+      id: "workflow-waiting-task",
+      loopId: "loop",
+      input: {},
+      state: {
+        input: {},
+        context: {},
+        artifacts: {},
+        results: {},
+        flags: {},
+        messages: [],
+        metrics: {},
+        private: {},
+      },
+      defaultSandbox: {
+        id: "sandbox-default",
+        kind: "local-workspace",
+      },
+      startStepId: "review",
+    });
+    const task = await stateManager.createTaskRun({
+      workflowRunId: workflow.id,
+      stepId: "review",
+      visit: 1,
+      runtimeId: "local",
+      input: {},
+    });
+
+    await stateManager.markTaskDispatched(task.id);
+    await stateManager.markTaskLeased(task.id, "worker-1", 10_000);
+    await stateManager.markTaskRunning(task.id, {
+      id: "sandbox-task",
+      kind: "local-workspace",
+    });
+    await stateManager.markTaskWaiting(task.id);
+
+    await expect(stateManager.markTaskSucceeded(task.id, {})).rejects.toThrow("Cannot mark task");
+
+    await stateManager.markTaskResumed(task.id);
+    const succeeded = await stateManager.markTaskSucceeded(task.id, {});
+
+    expect(succeeded.status).toBe("succeeded");
+  });
+
   it("renews and recovers task leases", async () => {
     const stateManager = createInMemoryStateManager();
     const workflow = await stateManager.createWorkflowRun({

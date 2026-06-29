@@ -1,4 +1,5 @@
 import type {
+  HumanInteractionResponse,
   LoopState,
   MailboxMessage,
   TaskRunRecord,
@@ -27,12 +28,19 @@ interface RunContext<TOutput = unknown> {
   readonly reject: (error: Error) => void;
 }
 
+interface HumanInteractionWaiter {
+  readonly taskRunId: string;
+  readonly workflowRunId: string;
+  readonly resolve: (response: HumanInteractionResponse) => void;
+}
+
 export function createLocalTaskManager(options: TaskManagerOptions): TaskManager {
   const workerId = options.workerId ?? createId("worker");
   const leaseTtlMs = options.leaseTtlMs ?? 60_000;
   const heartbeatIntervalMs =
     options.heartbeatIntervalMs ?? Math.max(1_000, Math.floor(leaseTtlMs / 3));
   const runContexts = new Map<string, RunContext>();
+  const humanInteractionWaiters = new Map<string, HumanInteractionWaiter>();
   let startPromise: Promise<void> | undefined;
 
   const publish = async <TPayload>(
@@ -229,7 +237,7 @@ export function createLocalTaskManager(options: TaskManagerOptions): TaskManager
         const activeTask = existingTasks.find(
           (task) =>
             task.stepId === stepId &&
-            ["pending", "dispatched", "leased", "running"].includes(task.status),
+            ["pending", "dispatched", "leased", "running", "waiting"].includes(task.status),
         );
 
         if (activeTask !== undefined) {
@@ -324,6 +332,56 @@ export function createLocalTaskManager(options: TaskManagerOptions): TaskManager
       runContexts.delete(workflowRunId);
       await options.loopStore.delete(workflowRunId);
       await options.sandboxManager.cleanupWorkflowSandboxes(workflowRunId);
+    },
+
+    async respondToHumanInteraction(request) {
+      const result = await options.stateManager.resolveHumanInteraction(request);
+      const interaction = result.interaction;
+
+      if (result.duplicate) {
+        return interaction;
+      }
+
+      await publish({
+        kind: "event",
+        type: "human.responded",
+        workflowRunId: interaction.workflowRunId,
+        ...(interaction.taskRunId === undefined ? {} : { taskRunId: interaction.taskRunId }),
+        ...(interaction.stepId === undefined ? {} : { stepId: interaction.stepId }),
+        payload: {
+          interaction,
+        },
+      });
+
+      if (interaction.taskRunId !== undefined) {
+        await options.stateManager.markTaskResumed(interaction.taskRunId);
+        await publish({
+          kind: "event",
+          type: "task.resumed",
+          workflowRunId: interaction.workflowRunId,
+          taskRunId: interaction.taskRunId,
+          ...(interaction.stepId === undefined ? {} : { stepId: interaction.stepId }),
+          payload: {
+            interactionId: interaction.id,
+          },
+        });
+      }
+
+      const workflow = await options.stateManager.markWorkflowRunning(interaction.workflowRunId);
+      await publish({
+        kind: "event",
+        type: "workflow.resumed",
+        workflowRunId: interaction.workflowRunId,
+        parentWorkflowRunId: workflow.parentWorkflowRunId,
+        parentTaskRunId: workflow.parentTaskRunId,
+        payload: {
+          interactionId: interaction.id,
+        },
+      });
+
+      humanInteractionWaiters.get(interaction.id)?.resolve(interaction.response ?? {});
+      humanInteractionWaiters.delete(interaction.id);
+      return interaction;
     },
 
     async leaseTask(message) {
@@ -590,6 +648,57 @@ export function createLocalTaskManager(options: TaskManagerOptions): TaskManager
             stepId: context.task.stepId,
             payload: event,
           });
+        },
+        requestHumanInteraction: async ({ request }) => {
+          const interaction = await options.stateManager.createHumanInteraction({
+            workflowRunId: context.task.workflowRunId,
+            taskRunId: context.task.id,
+            stepId: context.task.stepId,
+            request,
+          });
+          const responsePromise = new Promise<HumanInteractionResponse>((resolve) => {
+            humanInteractionWaiters.set(interaction.id, {
+              taskRunId: context.task.id,
+              workflowRunId: context.task.workflowRunId,
+              resolve,
+            });
+          });
+          await options.stateManager.markTaskWaiting(context.task.id);
+          const workflow = await options.stateManager.markWorkflowWaiting(
+            context.task.workflowRunId,
+          );
+          await publish({
+            kind: "event",
+            type: "task.waiting",
+            workflowRunId: context.task.workflowRunId,
+            taskRunId: context.task.id,
+            stepId: context.task.stepId,
+            payload: {
+              interactionId: interaction.id,
+            },
+          });
+          await publish({
+            kind: "event",
+            type: "workflow.waiting",
+            workflowRunId: context.task.workflowRunId,
+            parentWorkflowRunId: workflow.parentWorkflowRunId,
+            parentTaskRunId: workflow.parentTaskRunId,
+            payload: {
+              interactionId: interaction.id,
+            },
+          });
+          await publish({
+            kind: "event",
+            type: "human.requested",
+            workflowRunId: context.task.workflowRunId,
+            taskRunId: context.task.id,
+            stepId: context.task.stepId,
+            payload: {
+              interaction,
+            },
+          });
+
+          return await responsePromise;
         },
         runLoop:
           options.runLoop ??

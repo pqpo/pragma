@@ -1,11 +1,12 @@
 import type {
+  HumanInteractionRecord,
   LoopState,
   MailboxMessage,
   SandboxRef,
   TaskRunRecord,
   WorkflowRunRecord,
 } from "@expertmesh/shared";
-import { LoopStateSchema } from "@expertmesh/shared";
+import { HumanInteractionRecordSchema, LoopStateSchema } from "@expertmesh/shared";
 
 import type {
   ApplyStepReductionRequest,
@@ -17,13 +18,15 @@ import type {
 } from "./types.ts";
 import { cloneJson, createId, nowIso } from "./utils.ts";
 
-const activeTaskStatuses = new Set(["pending", "dispatched", "leased", "running"]);
+const activeTaskStatuses = new Set(["pending", "dispatched", "leased", "running", "waiting"]);
 const terminalTaskStatuses = new Set(["succeeded", "failed", "cancelled", "dead_letter"]);
 const completableWorkflowStatuses = new Set(["running", "waiting"]);
 
 export function createInMemoryStateManager(): StateManager {
   const workflows = new Map<string, WorkflowRunRecord>();
   const tasks = new Map<string, TaskRunRecord>();
+  const humanInteractions = new Map<string, HumanInteractionRecord>();
+  const humanInteractionIdsByWorkflowId = new Map<string, string[]>();
   const taskIdsByWorkflowId = new Map<string, string[]>();
   const appliedMessageIds = new Set<string>();
 
@@ -55,6 +58,13 @@ export function createInMemoryStateManager(): StateManager {
   const saveTask = (task: TaskRunRecord): TaskRunRecord => {
     tasks.set(task.id, task);
     return task;
+  };
+
+  const saveHumanInteraction = (
+    interaction: HumanInteractionRecord,
+  ): HumanInteractionRecord => {
+    humanInteractions.set(interaction.id, interaction);
+    return interaction;
   };
 
   const updateWorkflow = (
@@ -250,6 +260,34 @@ export function createInMemoryStateManager(): StateManager {
       );
     },
 
+    async markTaskWaiting(taskRunId) {
+      return cloneJson(
+        updateTask(taskRunId, (task) => {
+          assertTaskStatus(task, ["running"], "waiting");
+          return {
+            ...task,
+            status: "waiting",
+            leaseOwner: undefined,
+            leaseExpiresAt: undefined,
+            updatedAt: nowIso(),
+          };
+        }),
+      );
+    },
+
+    async markTaskResumed(taskRunId) {
+      return cloneJson(
+        updateTask(taskRunId, (task) => {
+          assertTaskStatus(task, ["waiting"], "running");
+          return {
+            ...task,
+            status: "running",
+            updatedAt: nowIso(),
+          };
+        }),
+      );
+    },
+
     async markTaskSucceeded(taskRunId, output) {
       return cloneJson(
         updateTask(taskRunId, (task) => {
@@ -368,6 +406,106 @@ export function createInMemoryStateManager(): StateManager {
       }));
 
       return cloneJson(updatedWorkflow.state);
+    },
+
+    async createHumanInteraction(request) {
+      const createdAt = nowIso();
+      const interaction = HumanInteractionRecordSchema.parse({
+        id: createId("human"),
+        workflowRunId: request.workflowRunId,
+        ...(request.taskRunId === undefined ? {} : { taskRunId: request.taskRunId }),
+        ...(request.stepId === undefined ? {} : { stepId: request.stepId }),
+        kind: request.request.kind,
+        status: "pending",
+        request: cloneJson(request.request),
+        createdAt,
+        updatedAt: createdAt,
+      });
+
+      saveHumanInteraction(interaction);
+      const interactionIds = humanInteractionIdsByWorkflowId.get(interaction.workflowRunId) ?? [];
+      humanInteractionIdsByWorkflowId.set(interaction.workflowRunId, [
+        ...interactionIds,
+        interaction.id,
+      ]);
+      return cloneJson(interaction);
+    },
+
+    async getHumanInteraction(interactionId) {
+      const interaction = humanInteractions.get(interactionId);
+      return interaction === undefined ? undefined : cloneJson(interaction);
+    },
+
+    async listHumanInteractions(workflowRunId) {
+      return (humanInteractionIdsByWorkflowId.get(workflowRunId) ?? [])
+        .map((interactionId) => humanInteractions.get(interactionId))
+        .filter((interaction): interaction is HumanInteractionRecord => interaction !== undefined)
+        .map((interaction) => cloneJson(interaction));
+    },
+
+    async resolveHumanInteraction(request) {
+      const interaction = humanInteractions.get(request.interactionId);
+
+      if (interaction === undefined) {
+        throw new Error(`Human interaction is not found: ${request.interactionId}`);
+      }
+
+      if (interaction.status !== "pending") {
+        return {
+          interaction: cloneJson(interaction),
+          duplicate: true,
+        };
+      }
+
+      const resolvedAt = nowIso();
+      const nextInteraction = HumanInteractionRecordSchema.parse({
+        ...interaction,
+        status: "responded",
+        response: cloneJson(request.response),
+        ...(request.operator === undefined ? {} : { operator: cloneJson(request.operator) }),
+        resolvedAt,
+        updatedAt: resolvedAt,
+      });
+
+      saveHumanInteraction(nextInteraction);
+      return {
+        interaction: cloneJson(nextInteraction),
+        duplicate: false,
+      };
+    },
+
+    async markWorkflowWaiting(workflowRunId) {
+      return cloneJson(
+        updateWorkflow(workflowRunId, (workflow) => {
+          if (workflow.status !== "running") {
+            return workflow;
+          }
+
+          return {
+            ...workflow,
+            status: "waiting",
+            revision: workflow.revision + 1,
+            updatedAt: nowIso(),
+          };
+        }),
+      );
+    },
+
+    async markWorkflowRunning(workflowRunId) {
+      return cloneJson(
+        updateWorkflow(workflowRunId, (workflow) => {
+          if (workflow.status !== "waiting") {
+            return workflow;
+          }
+
+          return {
+            ...workflow,
+            status: "running",
+            revision: workflow.revision + 1,
+            updatedAt: nowIso(),
+          };
+        }),
+      );
     },
 
     async completeWorkflowRun(workflowRunId, status) {

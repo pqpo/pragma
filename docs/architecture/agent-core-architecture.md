@@ -268,6 +268,7 @@ Flow 的关键设计是：步骤只持有 `Loop`，不再按 agent、task、subf
                |
                +-- StateManager
                |   +-- workflow / task 权威状态
+               |   +-- human interaction 权威状态
                |   +-- LoopState
                |   +-- revision
                |   +-- 幂等事件应用
@@ -289,8 +290,8 @@ Flow 的关键设计是：步骤只持有 `Loop`，不再按 agent、task、subf
 
 | 模块                  | 负责                                                | 不负责                        |
 | --------------------- | --------------------------------------------------- | ----------------------------- |
-| `TaskManager`         | 任务分发、租约、执行协调、transition 推进           | 保存权威状态、承载消息系统    |
-| `StateManager`        | Workflow/Task 状态、`LoopState`、revision、幂等应用 | 执行 Agent、发布消息          |
+| `TaskManager`         | 任务分发、租约、执行协调、等待恢复、transition 推进 | 保存权威状态、承载消息系统    |
+| `StateManager`        | Workflow/Task/Human Interaction 状态、`LoopState`、revision、幂等应用 | 执行 Agent、发布消息          |
 | `Mailbox`             | command/event 发布订阅、消息过滤、通信协议承载      | 决定状态变化、执行任务        |
 | `SandboxManager`      | sandbox 生命周期、workspace、capability             | 编排 transition、保存业务状态 |
 | `LoopDefinitionStore` | 保存运行所需的已编译 Loop 定义                      | 执行步骤、修改状态            |
@@ -398,6 +399,7 @@ Agent 会话是 Runtime 层概念。它适合单个专家任务，也可以由 F
 |  +-- Agent Runtime Session  |
 |  +-- Task handler           |
 |  +-- nested CompiledLoop    |
+|  +-- Human Operator Step    |
 +--------------+--------------+
                |
                v
@@ -431,6 +433,64 @@ Agent 会话是 Runtime 层概念。它适合单个专家任务，也可以由 F
 
 这个流程中，`TaskManager` 可以被替换为远程 worker 调度器，`StateManager` 可以被替换为数据库实现，`Mailbox` 可以被替换为队列或事件总线，`SandboxManager` 可以被替换为容器、VM、Kubernetes Job 或 Desktop 本地工作区。
 
+### Human-in-the-loop 执行流程
+
+Human-in-the-loop 是 Loop 层的一等能力，不是某个 Runtime 的私有回调。需求澄清、人工审批、编码 review gate 和手工介入都统一建模为 Human Interaction。
+
+```text
++-----------------------------+
+| Human Operator Step         |
++--------------+--------------+
+               |
+               v
++--------------+--------------+
+| createHumanInteraction()    |
++--------------+--------------+
+               |
+               v
++--------------+--------------+
+| mark task/workflow waiting  |
++--------------+--------------+
+               |
+               v
++--------------+--------------+
+| publish human.requested     |
+| publish task.waiting        |
+| publish workflow.waiting    |
++--------------+--------------+
+               |
+               v
++--------------+--------------+
+| UI / CLI / Desktop responds |
++--------------+--------------+
+               |
+               v
++--------------+--------------+
+| resolveHumanInteraction()   |
++--------------+--------------+
+               |
+               v
++--------------+--------------+
+| publish human.responded     |
+| publish task.resumed        |
+| publish workflow.resumed    |
++--------------+--------------+
+               |
+               v
++--------------+--------------+
+| Human step returns output   |
+| then normal reduce/route    |
++-----------------------------+
+```
+
+关键原则：
+
+- Human Interaction 的事实源是 `StateManager`，Mailbox 只发布 `human.requested`、`human.responded` 等事件。
+- 等待期间 workflow 和 task 进入 `waiting`；waiting task 不参与 lease 过期恢复。
+- 用户响应后，Human step 输出会像普通 task 输出一样进入 `reduce()` 和 `route()`。
+- `review_gate` 用于阶段性人工验收，例如编码后 approve、request changes 或 manual patch；单个工具调用的敏感权限仍由 tool approval 处理。
+- Agent 内部调用 `askUserQuestion` 时，也应通过 Loop 的 human interaction broker 转成同一套等待/恢复协议，而不是绕过 StateManager。
+
 ## 状态模型
 
 Loop 运行状态来自 `@expertmesh/shared`，Core 只通过接口读写。
@@ -462,6 +522,19 @@ Loop 运行状态来自 `@expertmesh/shared`，Core 只通过接口读写。
                +-- runtimeId
                +-- sandbox
                +-- lease
+
++-----------------------------+
+|   HumanInteractionRecord    |
++--------------+--------------+
+               |
+               +-- id
+               +-- workflowRunId
+               +-- taskRunId / stepId
+               +-- kind
+               +-- status
+               +-- request / response
+               +-- operator
+               +-- createdAt / resolvedAt
 ```
 
 状态推进原则：
@@ -471,6 +544,7 @@ Loop 运行状态来自 `@expertmesh/shared`，Core 只通过接口读写。
 - `revision` 用于防止并发覆盖。
 - message id 用于幂等事件应用。
 - `LoopState` 保存工作流输入、中间结果和步骤归并后的状态。
+- `HumanInteractionRecord` 保存人工等待点的请求、响应、操作者和审计时间。
 
 典型 task 状态流转：
 
@@ -478,6 +552,8 @@ Loop 运行状态来自 `@expertmesh/shared`，Core 只通过接口读写。
 +---------+     +------------+     +--------+     +---------+
 | pending | --> | dispatched | --> | leased | --> | running |
 +---------+     +------------+     +--------+     +----+----+
+                                                        |
+                                                        +--> waiting --> running
                                                         |
                                                         v
                                       +-----------------+-----------------+
@@ -488,9 +564,14 @@ Loop 运行状态来自 `@expertmesh/shared`，Core 只通过接口读写。
 典型 workflow 状态流转：
 
 ```text
-+---------+     +-----------------------------------+
-| running | --> | succeeded / failed / cancelled    |
-+---------+     +-----------------------------------+
++---------+     +---------+     +---------+
+| running | --> | waiting | --> | running |
++----+----+     +---------+     +----+----+
+     |                            |
+     v                            v
++-----------------------------------------+
+| succeeded / failed / cancelled          |
++-----------------------------------------+
 ```
 
 ## Sandbox 模型
@@ -584,6 +665,8 @@ Core 当前默认本地实现可以平滑演进到分布式部署。推荐拆分
 分布式实现必须保留以下语义：
 
 - task lease 必须可续租、可过期恢复。
+- waiting task 必须能被持久化，且不能被 lease recovery 重派发。
+- Human Interaction 响应必须幂等，重复响应不能覆盖首次有效响应。
 - task completion / failure / cancellation 必须幂等。
 - workflow state update 必须有并发保护。
 - message delivery 可以至少一次，但状态应用必须防重复。

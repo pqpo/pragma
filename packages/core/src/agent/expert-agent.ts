@@ -340,6 +340,50 @@ export class ExpertAgent implements IExpertAgent, Loop<unknown, unknown> {
     const runtime = runtimeRegistry.resolve(request.runtime ?? execution.runtimeId);
     const session = await runtime.createSession({
       agent: this,
+      humanInteractionHandler: async (humanRequest) => {
+        if (humanRequest.kind === "user_question") {
+          const response = await execution.requestHumanInteraction({
+            request: {
+              kind: "question",
+              title: "Agent question",
+              questions: humanRequest.questions.map((question) => ({
+                ...question,
+                options: [...question.options],
+              })),
+              data: {
+                toolName: humanRequest.toolName,
+                toolCallId: humanRequest.toolCallId,
+              },
+            },
+          });
+
+          return {
+            kind: "user_question",
+            answered: true,
+            answers: response.answers ?? response.data,
+          };
+        }
+
+        const response = await execution.requestHumanInteraction({
+          request: {
+            kind: "approval",
+            title: `Approve ${humanRequest.toolName}`,
+            ...(humanRequest.reason === undefined ? {} : { prompt: humanRequest.reason }),
+            data: {
+              toolName: humanRequest.toolName,
+              toolCallId: humanRequest.toolCallId,
+              input: humanRequest.input,
+            },
+          },
+        });
+
+        return {
+          kind: "tool_approval",
+          approved: response.approved ?? response.decision === "approved",
+          ...(response.notes === undefined ? {} : { reason: response.notes }),
+          ...(response.data === undefined ? {} : { updatedInput: response.data }),
+        };
+      },
     });
     const handle = session.submit<TOutput>({
       runId: execution.task.id,

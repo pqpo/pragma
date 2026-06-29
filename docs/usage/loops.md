@@ -5,7 +5,7 @@
 当前核心 API：
 
 ```ts
-import { createLoopApp, defineTask, defineFlow } from "@expertmesh/core";
+import { createLoopApp, defineTask, defineHumanTask, defineFlow } from "@expertmesh/core";
 ```
 
 ## 核心概念
@@ -21,7 +21,7 @@ interface Loop<TInput, TOutput> {
 }
 ```
 
-`defineFlow()` 创建组合 Loop；组合 Loop 通过 `use(id, loop, options)` 注册子 Loop，不区分 agent、code 或 subloop。`ExpertAgent` 已实现 `Loop`，`defineTask()` 是把本地 TypeScript handler 包成 Loop 的便利函数。
+`defineFlow()` 创建组合 Loop；组合 Loop 通过 `use(id, loop, options)` 注册子 Loop，不区分 agent、code、human operator 或 subloop。`ExpertAgent` 已实现 `Loop`，`defineTask()` 是把本地 TypeScript handler 包成 Loop 的便利函数，`defineHumanTask()` 是把人工等待点包成 Loop 的便利函数。
 
 主要对象：
 
@@ -33,6 +33,7 @@ interface Loop<TInput, TOutput> {
 - `StateManager`：工作流和任务状态事实源。
 - `Mailbox`：命令和事件通信通道。
 - `SandboxManager`：workflow 和 task 的沙箱生命周期边界。
+- `HumanInteraction`：需求澄清、人工审批、review gate 和手工介入的等待/恢复协议。
 
 每次 root workflow 启动时都会创建默认 sandbox。未声明 sandbox 策略的 step 默认复用 workflow sandbox；step 可以通过 `sandbox: { strategy: { mode: "ephemeral" } }` 显式请求新 sandbox。当前默认实现是本机 workspace，不提供安全隔离，但接口按未来远程或容器沙箱实现设计。
 
@@ -331,6 +332,136 @@ flow.compose(({ start, step, fail }) => {
 });
 ```
 
+## Human-in-the-loop
+
+`defineHumanTask()` 用于创建人工等待点。它返回普通 `Loop`，因此可以像 Agent、代码 task 或子 Flow 一样注册到 `flow.use()`，并通过 `reduce()` 和 `route()` 推进后续流程。
+
+Human task 执行时，`TaskManager` 会创建 `HumanInteractionRecord`，把 workflow/task 标记为 `waiting`，发布 `human.requested`、`task.waiting` 和 `workflow.waiting`。外部 UI、CLI 或 Desktop 通过 `taskManager.respondToHumanInteraction()` 提交响应后，workflow/task 恢复，Human step 返回响应对象，然后进入普通的 `reduce()` 和 `route()`。
+
+最小示例：
+
+```ts
+import { createLoopApp, defineFlow, defineHumanTask } from "@expertmesh/core";
+import { z } from "zod";
+
+const app = createLoopApp();
+
+const flow = defineFlow({
+  id: "approval-loop",
+  output: z.object({
+    approved: z.boolean(),
+  }),
+  result: ({ state }) => ({
+    approved: state.flags["approved"] ?? false,
+  }),
+});
+
+const approve = flow.use(
+  "approve",
+  defineHumanTask({
+    id: "human-approval",
+    output: z.object({
+      approved: z.boolean(),
+    }),
+    request: {
+      kind: "approval",
+      title: "Approve plan",
+      prompt: "Should the workflow continue?",
+    },
+  }),
+  {
+    reduce: ({ state, output }) => {
+      state.flags["approved"] = output.approved;
+    },
+  },
+);
+
+flow.compose(({ start, end }) => {
+  start(approve).next(end());
+});
+
+const handle = await app.start(flow, {
+  input: {},
+});
+
+const interaction = (await app.stateManager.listHumanInteractions(handle.workflowRunId))[0];
+
+if (interaction !== undefined) {
+  await app.taskManager.respondToHumanInteraction({
+    interactionId: interaction.id,
+    response: {
+      approved: true,
+    },
+    operator: {
+      id: "local-user",
+      kind: "user",
+    },
+  });
+}
+
+const result = await handle.result;
+console.log(result.output);
+```
+
+实际产品层不应轮询 `listHumanInteractions()`。推荐通过 `app.runs.watchOutput(workflowRunId)` 或自定义 Mailbox 订阅 `human.requested`，把请求展示给用户，再调用 `respondToHumanInteraction()`。
+
+### 需求澄清 Loop
+
+需求澄清适合建模为“Agent/Task 判断是否需要更多信息，Human task 收集答案，再回到澄清步骤”：
+
+```text
+clarifier -> human_question -> clarifier -> ready
+```
+
+推荐约束：
+
+- clarifier 输出结构化字段，例如 `{ status: "needs_input" | "ready", questions }`。
+- `human_question` 的 response 写入 `state.messages` 或 `state.context`。
+- clarifier 的回边必须配置 `limit()`，避免无限追问。
+
+可运行示例：
+
+```bash
+pnpm --filter @expertmesh/examples start:loop-human-clarification
+```
+
+### 编码 review gate
+
+编码阶段的人类介入不应使用 tool approval 表达。tool approval 只适合单个工具调用，例如删除文件、执行 shell、访问网络。阶段性验收、vibecoding 介入和“点击通过后进入下一步”应使用 `review_gate`：
+
+```text
+coder -> verify -> human_review_gate
+              |        |
+              |        +-- approved -> next
+              |        +-- request_changes -> coder
+              |        +-- manual_patch -> verify
+```
+
+推荐约束：
+
+- `coder` 和 `verify` 复用 workflow sandbox，使 Agent 修改、人工修改和验证看到同一份 workspace。
+- `manual_patch` 响应应记录到 `state.artifacts`，然后重新进入 verify。
+- `approved` 才能进入下一步；`request_changes` 回到 coder，并把 feedback 放进下一次 coder input。
+- `coder` 和 `review_gate` 都应配置访问上限。
+
+可运行示例：
+
+```bash
+pnpm --filter @expertmesh/examples start:loop-human-review-gate
+```
+
+### Agent 内部提问
+
+`ExpertAgent` 作为 Flow step 运行时，内置 `askUserQuestion` 会通过 Loop human interaction broker 创建 `question` interaction。也就是说，Agent 内部提问和显式 `defineHumanTask()` 走同一套 `human.requested` / `human.responded` 协议。
+
+这保证了：
+
+- 用户问题可以被 UI 统一展示。
+- workflow/task 会进入 `waiting`，不会被误判为失败或重派发。
+- 用户回答会被记录为 Human Interaction 审计事实。
+
+V1 不提供 Runtime durable suspend/resume。等待点发生在 Loop/Core 层；如果底层 Runtime 未来支持可持久化暂停，可以继续复用同一套 Human Interaction 协议。
+
 ## 运行时选择
 
 运行时仍然通过 `RuntimeRegistry` 解析。`runtime` 可以在 `use()` 上设置，也可以在运行请求中统一指定：
@@ -524,10 +655,15 @@ const customStateManager: StateManager = {
 实现要求：
 
 - task 状态流转必须是原子操作。
+- `markTaskWaiting()` 应清除 lease owner 和 lease 过期时间；waiting task 不应被 `recoverExpiredLeases()` 恢复。
+- `markTaskResumed()` 只能把 waiting task 恢复为 running。
+- `createHumanInteraction()`、`resolveHumanInteraction()` 和 `listHumanInteractions()` 必须持久化人工等待点。
+- `resolveHumanInteraction()` 必须幂等；重复响应不能覆盖首次有效响应。
+- `markWorkflowWaiting()` 和 `markWorkflowRunning()` 必须保留 revision 并可审计。
 - `applyTaskEvent()` 和 `applyWorkflowEvent()` 必须按 message id 幂等。
 - `applyStepReduction()` 必须使用 revision 或等价机制防止并发覆盖。
 - `recoverExpiredLeases(now)` 应找出 lease 过期且未完成的 task，允许 worker 重新派发或重试。
-- 状态库里的记录应保留审计所需的时间、错误、runtime、sandbox 和 lease 信息。
+- 状态库里的记录应保留审计所需的时间、错误、runtime、sandbox、lease 和 human interaction 信息。
 
 ## 自定义 Mailbox
 
@@ -620,6 +756,7 @@ const app = createLoopApp({
 - `leaseTask()` 必须避免多个 worker 同时执行同一个 task。
 - `executeTask()` 必须通过 `SandboxManager` 获取执行环境。
 - task 成功、失败和取消后必须通过 `StateManager` 和 `Mailbox` 推进状态。
+- Human task 等待时必须发布 `human.requested`、`task.waiting` 和 `workflow.waiting`，响应时必须发布 `human.responded`、`task.resumed` 和 `workflow.resumed`。
 - `recoverExpiredLeases()` 必须能恢复 worker 崩溃或心跳丢失后的任务。
 
 ## 面向未来的分布式部署
@@ -637,6 +774,7 @@ API Server
 State Store
   |
   +--> workflow/task 状态
+  +--> human interaction 状态
   +--> LoopState
   +--> revision
   +--> lease
@@ -649,6 +787,7 @@ Mailbox / Queue
   +--> task.completed
   +--> task.failed
   +--> workflow events
+  +--> human.requested / human.responded
   |
   v
 Worker Pool
@@ -675,6 +814,7 @@ Sandbox / Runtime Layer
 - `StateManager` 是最终事实源，Mailbox 只是通信通道。
 - Runtime event stream 用于进度、日志和 UI 展示，不作为最终状态事实源。
 - task lease 和幂等状态应用是分布式可靠性的核心。
+- Human Interaction 是产品层人工介入的事实源，UI 只提交 response，不直接修改 workflow state。
 - sandbox 和 runtime 可以按租户、区域、能力或成本策略选择。
 
 最小演进路径：

@@ -9,6 +9,7 @@ import {
   defineFlow,
   ExpertAgent,
   createRuntimeRegistry,
+  defineHumanTask,
 } from "../../src/index.ts";
 import type {
   Loop,
@@ -608,6 +609,267 @@ describe("loop app", () => {
       }),
     ]);
   });
+
+  it("waits for a human task response and resumes the workflow", async () => {
+    const app = createLoopApp();
+    const loop = defineFlow({
+      id: "human-review-loop",
+      output: z.object({
+        decision: z.string(),
+      }),
+      result: ({ state }) => ({
+        decision: String(state.results["decision"]),
+      }),
+    });
+    const review = loop.use(
+      "review",
+      defineHumanTask({
+        id: "human-review",
+        output: z.object({
+          decision: z.enum(["approved", "request_changes"]),
+        }),
+        request: {
+          kind: "review_gate",
+          title: "Review changes",
+          prompt: "Approve this implementation?",
+          options: [
+            { label: "approved", description: "Continue" },
+            { label: "request_changes", description: "Ask the coder to revise" },
+          ],
+        },
+      }),
+      {
+        reduce: ({ state, output }) => {
+          state.results["decision"] = output.decision;
+        },
+      },
+    );
+    loop.compose(({ start, end }) => {
+      start(review).next(end());
+    });
+
+    const handle = await app.start(loop, {
+      input: {},
+    });
+    const interaction = await waitForHumanInteraction(app, handle.workflowRunId);
+    const waiting = await app.runs.get(handle.workflowRunId);
+
+    expect(waiting?.workflow.status).toBe("waiting");
+    expect(waiting?.tasks[0]?.status).toBe("waiting");
+
+    await app.taskManager.respondToHumanInteraction({
+      interactionId: interaction.id,
+      response: {
+        decision: "approved",
+      },
+      operator: {
+        id: "user-1",
+        kind: "user",
+      },
+    });
+
+    await expect(handle.result).resolves.toMatchObject({
+      output: {
+        decision: "approved",
+      },
+    });
+
+    const completed = await app.runs.get(handle.workflowRunId);
+    expect(completed?.workflow.status).toBe("succeeded");
+    expect(completed?.tasks[0]?.status).toBe("succeeded");
+  });
+
+  it("routes human review gate decisions through normal loop transitions", async () => {
+    const app = createLoopApp();
+    const loop = defineFlow({
+      id: "human-review-route-loop",
+      output: z.object({
+        path: z.string(),
+      }),
+      result: ({ state }) => ({
+        path: String(state.results["path"]),
+      }),
+    });
+    const review = loop.use(
+      "review",
+      defineHumanTask({
+        id: "human-review-route",
+        output: z.object({
+          decision: z.enum(["approved", "request_changes"]),
+        }),
+        request: {
+          kind: "review_gate",
+          title: "Review",
+          options: [
+            { label: "approved", description: "Continue" },
+            { label: "request_changes", description: "Revise" },
+          ],
+        },
+      }),
+    );
+    const revise = loop.use("revise", defineTask({ id: "revise-code", handler: () => "revise" }), {
+      reduce: ({ state, output }) => {
+        state.results["path"] = output;
+      },
+    });
+    const ship = loop.use("ship", defineTask({ id: "ship-code", handler: () => "ship" }), {
+      reduce: ({ state, output }) => {
+        state.results["path"] = output;
+      },
+    });
+    loop.compose(({ start, step, end }) => {
+      start(review).route("decision", {
+        approved: ship,
+        request_changes: revise,
+      });
+      step(ship).next(end());
+      step(revise).next(end());
+    });
+
+    const handle = await app.start(loop, {
+      input: {},
+    });
+    const interaction = await waitForHumanInteraction(app, handle.workflowRunId);
+    await app.taskManager.respondToHumanInteraction({
+      interactionId: interaction.id,
+      response: {
+        decision: "request_changes",
+      },
+    });
+
+    await expect(handle.result).resolves.toMatchObject({
+      output: {
+        path: "revise",
+      },
+    });
+  });
+
+  it("does not recover waiting human task leases", async () => {
+    const app = createLoopApp();
+    const human = defineHumanTask({
+      id: "human-wait-recovery",
+      request: {
+        kind: "question",
+        title: "Need input",
+        questions: [
+          {
+            header: "Scope",
+            question: "What should change?",
+            kind: "text",
+            options: [],
+          },
+        ],
+      },
+    });
+
+    const handle = await app.start(human, {
+      input: {},
+    });
+    const interaction = await waitForHumanInteraction(app, handle.workflowRunId);
+    const recovered = await app.taskManager.recoverExpiredLeases(new Date(Date.now() + 20_000));
+
+    expect(recovered).toHaveLength(0);
+
+    await app.taskManager.respondToHumanInteraction({
+      interactionId: interaction.id,
+      response: {
+        answers: {
+          scope: "test",
+        },
+      },
+    });
+    await expect(handle.result).resolves.toMatchObject({
+      output: {
+        answers: {
+          scope: "test",
+        },
+      },
+    });
+  });
+
+  it("treats duplicate human responses as idempotent", async () => {
+    const app = createLoopApp();
+    const respondedEvents: string[] = [];
+    await app.mailbox.subscribe({ types: ["human.responded"] }, async (message) => {
+      respondedEvents.push(message.id);
+    });
+    const human = defineHumanTask({
+      id: "human-idempotency",
+      request: {
+        kind: "approval",
+        title: "Approve",
+      },
+    });
+
+    const handle = await app.start(human, {
+      input: {},
+    });
+    const interaction = await waitForHumanInteraction(app, handle.workflowRunId);
+    await app.taskManager.respondToHumanInteraction({
+      interactionId: interaction.id,
+      response: {
+        approved: true,
+      },
+    });
+    await app.taskManager.respondToHumanInteraction({
+      interactionId: interaction.id,
+      response: {
+        approved: false,
+      },
+    });
+    await handle.result;
+
+    expect(respondedEvents).toHaveLength(1);
+    const stored = await app.stateManager.getHumanInteraction(interaction.id);
+    expect(stored?.response).toEqual({
+      approved: true,
+    });
+  });
+
+  it("bridges Agent askUserQuestion requests through loop human interactions", async () => {
+    const agent = await ExpertAgent.create({
+      id: "agent-human-loop",
+      name: "Agent Human Loop",
+      description: "Agent that asks a user question.",
+      tags: [],
+      version: "0.0.0",
+      scope: "test",
+      workspace: "/tmp/expertmesh-agent-human-loop-test",
+    });
+    const runtime = createHumanAskingRuntime({
+      id: "fake-human-runtime",
+    });
+    const app = createLoopApp({
+      runtimes: createRuntimeRegistry({
+        defaultRuntime: "fake-human-runtime",
+        runtimes: [runtime],
+      }),
+    });
+
+    const handle = await app.start(agent, {
+      input: {
+        prompt: "clarify",
+      },
+      output: z.object({
+        answer: z.string(),
+      }),
+    });
+    const interaction = await waitForHumanInteraction(app, handle.workflowRunId);
+    await app.taskManager.respondToHumanInteraction({
+      interactionId: interaction.id,
+      response: {
+        answers: {
+          answer: "Use OAuth",
+        },
+      },
+    });
+
+    await expect(handle.result).resolves.toMatchObject({
+      output: {
+        answer: "Use OAuth",
+      },
+    });
+  });
 });
 
 function createFakeRuntime(options: {
@@ -665,6 +927,59 @@ function createFakeSession(
   };
 }
 
+function createHumanAskingRuntime(options: { readonly id: string }): RuntimeAdapter {
+  return {
+    descriptor: {
+      id: options.id,
+      kind: "fake-runtime",
+      displayName: "Fake Human Runtime",
+      capabilities: {
+        targets: ["agent"],
+      },
+    },
+    async createSession(request) {
+      return {
+        info: () => createFakeSessionInfo(),
+        messages: () => [],
+        submit<TSubmitOutput>(): RuntimeSubmitHandle<TSubmitOutput> {
+          return {
+            runId: "run-human",
+            events: createEmptyEvents(),
+            result: (async () => {
+              const response = await request.humanInteractionHandler?.({
+                kind: "user_question",
+                toolName: "askUserQuestion",
+                questions: [
+                  {
+                    header: "Requirement",
+                    question: "What auth provider should be used?",
+                    kind: "text",
+                    options: [],
+                  },
+                ],
+              });
+
+              return {
+                runId: "run-human",
+                result: {
+                  output: {
+                    answer:
+                      response?.kind === "user_question"
+                        ? readNestedAnswer(response.answers)
+                        : "missing",
+                  } as TSubmitOutput,
+                },
+              };
+            })(),
+            cancel: async () => undefined,
+          };
+        },
+        abort: async () => undefined,
+      };
+    },
+  };
+}
+
 function createFakeSessionInfo(): RuntimeSessionInfo {
   return {
     systemSessionId: "system-session-1",
@@ -701,6 +1016,35 @@ async function collectEvents<TEvent>(events: AsyncIterable<TEvent>): Promise<TEv
   }
 
   return collected;
+}
+
+async function waitForHumanInteraction(
+  app: ReturnType<typeof createLoopApp>,
+  workflowRunId: string,
+) {
+  const deadline = Date.now() + 2_000;
+
+  while (Date.now() < deadline) {
+    const interactions = await app.stateManager.listHumanInteractions(workflowRunId);
+    const interaction = interactions[0];
+
+    if (interaction !== undefined) {
+      return interaction;
+    }
+
+    await sleep(5);
+  }
+
+  throw new Error(`Timed out waiting for human interaction in ${workflowRunId}`);
+}
+
+function readNestedAnswer(value: unknown): string | undefined {
+  if (value === null || typeof value !== "object") {
+    return undefined;
+  }
+
+  const answer = (value as Record<string, unknown>)["answer"];
+  return typeof answer === "string" ? answer : undefined;
 }
 
 function createProgressEvent(stage: string) {

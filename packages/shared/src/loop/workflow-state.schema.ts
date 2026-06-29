@@ -25,6 +25,7 @@ export const TaskRunStatusSchema = z.enum([
   "dispatched",
   "leased",
   "running",
+  "waiting",
   "succeeded",
   "failed",
   "cancelled",

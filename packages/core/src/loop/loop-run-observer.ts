@@ -26,6 +26,8 @@ const outputEventTypes = [
   "task.output.delta",
   "task.completed",
   "workflow.completed",
+  "human.requested",
+  "human.responded",
 ] as const;
 
 export function createLoopRunObserver(options: CreateLoopRunObserverOptions): LoopRunObserver {

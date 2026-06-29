@@ -1,11 +1,17 @@
 import type { z } from "zod";
-import type { LoopState } from "@expertmesh/shared";
+import {
+  HumanInteractionResponseSchema,
+  type HumanInteractionRequest,
+  type HumanInteractionResponse,
+  type LoopState,
+} from "@expertmesh/shared";
 
 import type {
   CompiledLoop,
   Loop,
   LoopDefinition,
   LoopLimitPolicy,
+  MaybePromise,
   LoopNextTransition,
   LoopRouteTransition,
   LoopStepDefinition,
@@ -16,6 +22,7 @@ import type {
   LoopTransition,
   LoopTransitionTarget,
   SandboxRequest,
+  TaskContext,
   TaskHandler,
 } from "./types.ts";
 
@@ -39,6 +46,15 @@ export interface DefineTaskOptions<TInput = unknown, TOutput = unknown> {
   readonly input?: z.ZodType<TInput> | undefined;
   readonly output?: z.ZodType<TOutput> | undefined;
   readonly handler: TaskHandler<TInput, TOutput>;
+}
+
+export interface DefineHumanTaskOptions<TInput = unknown, TOutput = HumanInteractionResponse> {
+  readonly id: string;
+  readonly input?: z.ZodType<TInput> | undefined;
+  readonly output?: z.ZodType<TOutput> | undefined;
+  readonly request:
+    | HumanInteractionRequest
+    | ((context: TaskContext<TInput>) => MaybePromise<HumanInteractionRequest>);
 }
 
 export type RouteCases = Readonly<Record<string, LoopTransitionTarget>>;
@@ -279,6 +295,50 @@ export function defineTask<TInput = unknown, TOutput = unknown>(
         emitProgress: request.execution.emitProgress,
       });
       const parsedOutput = options.output?.parse(output) ?? output;
+
+      return {
+        workflowRunId: request.execution.workflow.id,
+        output: parsedOutput,
+        state: request.execution.state,
+      };
+    },
+  };
+}
+
+export function defineHumanTask<TInput = unknown, TOutput = HumanInteractionResponse>(
+  options: DefineHumanTaskOptions<TInput, TOutput>,
+): Loop<TInput, TOutput> {
+  const outputSchema =
+    options.output ?? (HumanInteractionResponseSchema as unknown as z.ZodType<TOutput>);
+
+  return {
+    id: options.id,
+    inputSchema: options.input,
+    outputSchema,
+    async run(request) {
+      if (request.execution === undefined) {
+        const { createLoopApp } = await import("./loop-app.ts");
+        return await createLoopApp().run(this, request);
+      }
+
+      const input = options.input?.parse(request.input) ?? request.input;
+      const taskContext: TaskContext<TInput> = {
+        input,
+        state: request.execution.state,
+        workspace: request.execution.workspace,
+        task: request.execution.task,
+        workflow: request.execution.workflow,
+        sandbox: request.execution.sandbox,
+        emitProgress: request.execution.emitProgress,
+      };
+      const interactionRequest =
+        typeof options.request === "function"
+          ? await options.request(taskContext)
+          : options.request;
+      const response = await request.execution.requestHumanInteraction({
+        request: interactionRequest,
+      });
+      const parsedOutput = outputSchema.parse(response);
 
       return {
         workflowRunId: request.execution.workflow.id,
