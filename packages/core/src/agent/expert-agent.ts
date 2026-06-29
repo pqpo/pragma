@@ -27,6 +27,8 @@ import type {
 import { resolveExpertAgentPlugins } from "../plugins/expert-agent-plugin.ts";
 import type { ExpertAgentLogger, ExpertAgentLoggerProvider } from "../logging/logger.ts";
 import { createExpertAgentLogger, defaultExpertAgentLoggerProvider } from "../logging/logger.ts";
+import type { Loop, LoopRunResult, StartLoopRunRequest } from "../loop/types.ts";
+import { stringifyInput } from "../loop/utils.ts";
 import type {
   ExpertAgentPluginLoadIssue,
   ExpertAgentPluginSource,
@@ -39,6 +41,7 @@ import type {
   RuntimeAdapter,
   RuntimeAgentSession,
   RuntimeCreateSessionRequest,
+  RuntimeOutputSchema,
 } from "../runtime/runtime-adapter.ts";
 import type { SubAgentRegistry } from "../subagents/sub-agent.ts";
 import type {
@@ -122,8 +125,10 @@ export interface ExpertAgentRuntimeRegistry {
   readonly resolve: (runtimeId?: string | undefined) => RuntimeAdapter;
 }
 
-export interface ExpertAgentCreateSessionOptions
-  extends Omit<RuntimeCreateSessionRequest, "agent"> {
+export interface ExpertAgentCreateSessionOptions extends Omit<
+  RuntimeCreateSessionRequest,
+  "agent"
+> {
   readonly runtime?: string | undefined;
   readonly runtimes?: ExpertAgentRuntimeRegistry | undefined;
 }
@@ -180,7 +185,7 @@ interface ExpertAgentRuntimeOptions extends ExpertAgentOptions {
   readonly env?: NodeJS.ProcessEnv | undefined;
 }
 
-export class ExpertAgent implements IExpertAgent {
+export class ExpertAgent implements IExpertAgent, Loop<unknown, unknown> {
   readonly schemaVersion?: ExpertAgentSchemaVersion;
   readonly id: string;
   readonly name: string;
@@ -309,9 +314,7 @@ export class ExpertAgent implements IExpertAgent {
     });
   }
 
-  async createSession(
-    options: ExpertAgentCreateSessionOptions = {},
-  ): Promise<RuntimeAgentSession> {
+  async createSession(options: ExpertAgentCreateSessionOptions = {}): Promise<RuntimeAgentSession> {
     const runtimes = options.runtimes ?? (await createDefaultRuntimeRegistry());
     const runtime = runtimes.resolve(options.runtime);
     const request = { ...options };
@@ -322,6 +325,41 @@ export class ExpertAgent implements IExpertAgent {
       agent: this,
       ...request,
     });
+  }
+
+  async run<TOutput = unknown>(
+    request: StartLoopRunRequest<unknown>,
+  ): Promise<LoopRunResult<TOutput>> {
+    if (request.execution === undefined) {
+      const { createLoopApp } = await import("../loop/loop-app.ts");
+      return (await createLoopApp().run(this, request)) as LoopRunResult<TOutput>;
+    }
+
+    const execution = request.execution;
+    const runtimeRegistry = execution.runtimeRegistry;
+    const runtime = runtimeRegistry.resolve(request.runtime ?? execution.runtimeId);
+    const session = await runtime.createSession({
+      agent: this,
+    });
+    const handle = session.submit<TOutput>({
+      runId: execution.task.id,
+      query: stringifyInput(request.input),
+      output: request.output as RuntimeOutputSchema<TOutput> | undefined,
+    });
+    const drainEvents = (async (): Promise<void> => {
+      for await (const event of handle.events) {
+        await execution.emitProgress(event);
+      }
+    })();
+    const result = await handle.result;
+    await drainEvents;
+    await session.abort();
+
+    return {
+      workflowRunId: execution.workflow.id,
+      output: result.result.output,
+      state: execution.state,
+    };
   }
 
   async buildContext(

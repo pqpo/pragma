@@ -43,10 +43,9 @@ ExpertAgent
   创建 RuntimeAgentSession 并提交任务
 
 Loop
-  编排 agent / code / subloop 三类步骤
-  对 agent 步骤调用 RuntimeAdapter
-  对 code 步骤调用本地执行环境
-  对 subloop 步骤递归启动另一个 Loop
+  编排实现 Loop 接口的可执行单元
+  ExpertAgent、本地代码 Loop、编译后的组合 Loop 都是 Loop
+  步骤只持有 Loop，不再区分 agent/code/subloop 分支
 
 RuntimeAdapter
   屏蔽具体执行环境
@@ -85,7 +84,7 @@ packages/core/src/agent/context-manager.ts
 标准创建入口是：
 
 ```ts
-ExpertAgent.create(options)
+ExpertAgent.create(options);
 ```
 
 `defineAgent()` 和 `agent()` 只是 `ExpertAgent.create()` 的声明语法糖，位于：
@@ -275,8 +274,8 @@ packages/core/src/loop/loop-app.ts
 - 找出当前可执行步骤。
 - 创建并派发 task run。
 - 租约任务，避免同一个任务被重复执行。
-- 解析步骤类型并执行 agent、code 或 subloop。
-- 把 Runtime 流式事件转成 `task.progress`。
+- 执行步骤持有的 `Loop`。
+- 通过 execution context 把 Runtime 流式事件转成 `task.progress`。
 - 处理 `task.completed`、`task.failed`、`task.cancelled`。
 - 根据 transition 推进下一个 step 或结束 workflow。
 
@@ -341,7 +340,7 @@ TaskManager
   -> TaskManager.leaseTask()
   -> StateManager.markTaskLeased()
   -> StateManager.markTaskRunning()
-  -> execute agent/code/subloop
+  -> execute step.loop.run()
   -> StateManager.markTaskSucceeded() 或 markTaskFailed()
   -> Mailbox.publish("task.completed" 或 "task.failed")
   -> StateManager.applyTaskEvent()
@@ -351,42 +350,23 @@ TaskManager
 
 边界上可以这样理解：
 
-| 模块 | 负责 | 不负责 |
-| --- | --- | --- |
-| TaskManager | 任务分发、租约、执行协调、转移推进 | 保存权威状态、承载消息协议 |
-| StateManager | Workflow/Task 状态、LoopState、revision、幂等应用 | 运行具体 Agent、发布消息 |
-| Mailbox | command/event 发布订阅、消息过滤、通信协议承载 | 决定状态变化、执行任务 |
+| 模块         | 负责                                              | 不负责                     |
+| ------------ | ------------------------------------------------- | -------------------------- |
+| TaskManager  | 任务分发、租约、执行协调、转移推进                | 保存权威状态、承载消息协议 |
+| StateManager | Workflow/Task 状态、LoopState、revision、幂等应用 | 运行具体 Agent、发布消息   |
+| Mailbox      | command/event 发布订阅、消息过滤、通信协议承载    | 决定状态变化、执行任务     |
 
-### 步骤类型
+### Loop 步骤
 
-Loop 当前支持三类步骤：
+Loop 步骤不再按 agent、code、subloop 建立不同定义。`LoopStepDefinition` 只保存步骤 id、输入解析、输出校验、状态归并、运行环境策略，以及一个实现 `Loop` 接口的可执行单元。
 
-```text
-agent
-code
-subloop
-```
+当前可注册的典型 Loop：
 
-`agent` 步骤：
+- `ExpertAgent`：通过 Runtime Registry 解析 Runtime，创建 Runtime Session，并提交任务。
+- `defineCodeLoop()` 创建的本地代码 Loop：通过 `TaskExecutionEnvironment` 获取 workspace，适合做确定性转换、校验、文件处理或轻量逻辑。
+- `CompiledLoop`：编译后的组合 Loop，本身也实现 `Loop`，可继续注册进更大的组合 Loop。
 
-- 持有一个 `ExpertAgent`。
-- 通过 Runtime Registry 解析 Runtime。
-- 创建 Runtime Session。
-- 调用 `session.submit()`。
-- 将 Runtime 事件转发成 `task.progress`。
-- 用最终输出推进 Loop 状态。
-
-`code` 步骤：
-
-- 调用本地 `handler`。
-- 通过 `TaskExecutionEnvironment` 获取 workspace。
-- 适合做确定性转换、校验、文件处理或轻量逻辑。
-
-`subloop` 步骤：
-
-- 持有另一个 `CompiledLoop`。
-- 递归启动子 Loop。
-- 子 Loop 输出作为当前步骤输出。
+因此 TaskManager 不需要理解具体执行类型，只调用 `step.loop.run()`，再用步骤输出推进 `LoopState` 和 transition。
 
 ### LoopApp
 
@@ -423,7 +403,7 @@ createLocalTaskManager()
 4. 为步骤创建 `TaskRunRecord`。
 5. 发布 `task.dispatch` 命令。
 6. `leaseTask()` 获取任务租约。
-7. `executeTask()` 根据步骤类型执行 agent、code 或 subloop。
+7. `executeTask()` 调用步骤持有的 `Loop`。
 8. 执行成功后发布 `task.completed`。
 9. `handleTaskCompleted()` 应用 reduce，解析 transition。
 10. 如果还有后续步骤，继续派发；否则发布 `workflow.completed`。
@@ -764,11 +744,11 @@ stateDiagram-v2
 
 三者的边界如下：
 
-| 模块 | 负责什么 | 不负责什么 |
-| --- | --- | --- |
-| Agent | 专家身份、能力声明、上下文、工具、插件、子 Agent、创建 Runtime Session | 任务队列、工作流状态机、HTTP Controller |
-| Runtime | 执行一个 Agent 会话，处理消息、事件流、工具调用和最终输出 | 决定业务流程、管理数据库、编排多个步骤 |
-| Loop | 编排多个步骤，管理工作流状态、任务派发和转移规则 | 具体模型 SDK 细节、专家上下文装配细节 |
+| 模块    | 负责什么                                                               | 不负责什么                              |
+| ------- | ---------------------------------------------------------------------- | --------------------------------------- |
+| Agent   | 专家身份、能力声明、上下文、工具、插件、子 Agent、创建 Runtime Session | 任务队列、工作流状态机、HTTP Controller |
+| Runtime | 执行一个 Agent 会话，处理消息、事件流、工具调用和最终输出              | 决定业务流程、管理数据库、编排多个步骤  |
+| Loop    | 编排多个步骤，管理工作流状态、任务派发和转移规则                       | 具体模型 SDK 细节、专家上下文装配细节   |
 
 关键调用关系：
 
@@ -842,7 +822,7 @@ Desktop 后续可以通过本地桥接协议接入 Runtime Adapter，但具体�
 - RuntimeRegistry 和默认 Runtime。
 - `cloud-pi-agent` Runtime 实现。
 - Loop 的内存版 Mailbox、StateManager、TaskManager 和本地执行环境。
-- agent/code/subloop 三类 Loop 步骤。
+- 统一 `Loop` 接口与 `use()` 编排模型。
 
 仍属于后续演进：
 

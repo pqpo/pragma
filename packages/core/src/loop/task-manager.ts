@@ -1,4 +1,9 @@
-import type { LoopState, MailboxMessage, TaskRunRecord, WorkflowRunRecord } from "@expertmesh/shared";
+import type {
+  LoopState,
+  MailboxMessage,
+  TaskRunRecord,
+  WorkflowRunRecord,
+} from "@expertmesh/shared";
 import { LoopStateSchema } from "@expertmesh/shared";
 
 import type {
@@ -15,7 +20,7 @@ import type {
   TaskManagerOptions,
   WorkflowRunHandle,
 } from "./types.ts";
-import { createId, nowIso, readObjectField, stringifyInput } from "./utils.ts";
+import { createId, nowIso, readObjectField } from "./utils.ts";
 
 interface RunContext<TInput = unknown, TOutput = unknown> {
   readonly loop: CompiledLoop<TInput, TOutput>;
@@ -336,7 +341,7 @@ export function createLocalTaskManager(options: TaskManagerOptions): TaskManager
           runtimeId: lease.message.payload.runtime.resolvedId,
           subloopRequest: context.request,
         });
-        const parsedOutput = step.output?.parse(output) ?? output;
+        const parsedOutput = (step.output ?? step.loop.outputSchema)?.parse(output) ?? output;
         await options.stateManager.markTaskSucceeded(lease.task.id, parsedOutput);
         await publish({
           kind: "event",
@@ -407,52 +412,37 @@ export function createLocalTaskManager(options: TaskManagerOptions): TaskManager
       throw new Error("Workflow run is not available for task execution.");
     }
 
-    if (step.kind === "code") {
-      return await step.handler({
-        input: context.task.input,
-        state: context.state,
-        workspace: context.environmentLease.workspace,
+    const result = await step.loop.run({
+      input: context.task.input,
+      output: step.output ?? step.loop.outputSchema,
+      runtime: context.runtimeId,
+      runtimes: context.subloopRequest.runtimes,
+      execution: {
         task: context.task,
         workflow: context.workflow,
+        state: context.state,
+        workspace: context.environmentLease.workspace,
         environment: context.environmentLease.ref,
-      });
-    }
-
-    if (step.kind === "subloop") {
-      const handle = await manager.startRun(step.loop, {
-        input: context.task.input,
-        runtime: context.subloopRequest.runtime,
-        runtimes: context.subloopRequest.runtimes,
-      });
-      const result = await handle.result;
-      return result.output;
-    }
-
-    const runtime = options.runtimes.resolve(context.runtimeId);
-    const session = await runtime.createSession({
-      agent: step.agent,
+        runtimeId: context.runtimeId,
+        runtimeRegistry: options.runtimes,
+        emitProgress: async (event) => {
+          await publish({
+            kind: "event",
+            type: "task.progress",
+            workflowRunId: context.task.workflowRunId,
+            taskRunId: context.task.id,
+            stepId: context.task.stepId,
+            payload: event,
+          });
+        },
+        runLoop:
+          options.runLoop ??
+          (async () => {
+            throw new Error("No loop runner is configured for nested loop execution.");
+          }),
+      },
     });
-    const handle = session.submit({
-      runId: context.task.id,
-      query: stringifyInput(context.task.input),
-      output: step.output,
-    });
-    const forwardEvents = (async (): Promise<void> => {
-      for await (const event of handle.events) {
-        await publish({
-          kind: "event",
-          type: "task.progress",
-          workflowRunId: context.task.workflowRunId,
-          taskRunId: context.task.id,
-          stepId: context.task.stepId,
-          payload: event,
-        });
-      }
-    })();
-    const result = await handle.result;
-    await forwardEvents;
-    await session.abort();
-    return result.result.output;
+    return result.output;
   }
 
   async function handleTaskCompleted(message: MailboxMessage): Promise<void> {
@@ -483,7 +473,11 @@ export function createLocalTaskManager(options: TaskManagerOptions): TaskManager
       expectedRevision: workflow.revision,
       reduce: step.reduce,
     });
-    const targets = resolveNextTargets(context.loop, transition.task.stepId, transition.task.output);
+    const targets = resolveNextTargets(
+      context.loop,
+      transition.task.stepId,
+      transition.task.output,
+    );
 
     if (targets.length === 0) {
       await completeRun(message.workflowRunId, "succeeded", nextState);
@@ -626,11 +620,7 @@ function resolveRuntimeId(
   return request.runtimes?.[step.id] ?? step.runtime ?? request.runtime ?? defaultRuntime;
 }
 
-function createSyntheticTask(
-  workflowRunId: string,
-  stepId: string,
-  visit: number,
-): TaskRunRecord {
+function createSyntheticTask(workflowRunId: string, stepId: string, visit: number): TaskRunRecord {
   const timestamp = nowIso();
   return {
     id: "pending",
@@ -666,8 +656,7 @@ function resolveNextTargets(
     }
 
     const routeValue = readObjectField(output, transition.field);
-    const target =
-      routeValue === undefined ? undefined : transition.cases.get(String(routeValue));
+    const target = routeValue === undefined ? undefined : transition.cases.get(String(routeValue));
 
     if (target === undefined) {
       if (transition.fallback === undefined) {
@@ -703,7 +692,10 @@ function isActiveTaskRunConflict(error: unknown): boolean {
   return error instanceof Error && error.message.startsWith("Active task run already exists ");
 }
 
-function resolveLoopOutput<TOutput>(loop: CompiledLoop<unknown, TOutput>, state: LoopState): TOutput {
+function resolveLoopOutput<TOutput>(
+  loop: CompiledLoop<unknown, TOutput>,
+  state: LoopState,
+): TOutput {
   const candidate =
     loop.resolveOutput?.({ state }) ??
     (state.results["final"] !== undefined

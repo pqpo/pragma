@@ -1,11 +1,9 @@
 import type { z } from "zod";
 import type { LoopState } from "@expertmesh/shared";
 
-import type { ExpertAgent } from "../agent/expert-agent.ts";
 import type {
-  AgentLoopStepDefinition,
-  CodeLoopStepDefinition,
   CompiledLoop,
+  Loop,
   LoopCodeHandler,
   LoopLimitPolicy,
   LoopNextTransition,
@@ -17,7 +15,6 @@ import type {
   LoopTerminalTarget,
   LoopTransition,
   LoopTransitionTarget,
-  SubloopStepDefinition,
   TaskEnvironmentRequest,
 } from "./types.ts";
 
@@ -35,6 +32,13 @@ export type LoopStepOptions<TInput = unknown, TOutput = unknown> = {
   readonly runtime?: string | undefined;
   readonly environment?: TaskEnvironmentRequest | undefined;
 };
+
+export interface DefineCodeLoopOptions<TInput = unknown, TOutput = unknown> {
+  readonly id: string;
+  readonly input?: z.ZodType<TInput> | undefined;
+  readonly output?: z.ZodType<TOutput> | undefined;
+  readonly handler: LoopCodeHandler<TInput, TOutput>;
+}
 
 export type RouteCases = Readonly<Record<string, LoopTransitionTarget>>;
 
@@ -73,54 +77,14 @@ export class LoopSpec<TInput = unknown, TOutput = unknown> {
     this.resolveOutput = options.result;
   }
 
-  agent<TStepInput = unknown, TStepOutput = unknown>(
+  use<TStepInput = unknown, TStepOutput = unknown>(
     id: string,
-    agent: ExpertAgent,
+    loop: Loop<TStepInput, TStepOutput>,
     options: LoopStepOptions<TStepInput, TStepOutput> = {},
   ): LoopStepRef<TStepOutput> {
-    const step: AgentLoopStepDefinition<TStepInput, TStepOutput> = {
+    const step: LoopStepDefinition<TStepInput, TStepOutput> = {
       id,
-      kind: "agent",
-      agent,
-      input: options.input,
-      output: options.output,
-      reduce: options.reduce,
-      runtime: options.runtime,
-      environment: options.environment,
-    };
-    this.addStep(step as unknown as LoopStepDefinition);
-    return createStepRef(step as unknown as LoopStepDefinition<unknown, TStepOutput>);
-  }
-
-  code<TStepInput = unknown, TStepOutput = unknown>(
-    id: string,
-    handler: LoopCodeHandler<TStepInput, TStepOutput>,
-    options: LoopStepOptions<TStepInput, TStepOutput> = {},
-  ): LoopStepRef<TStepOutput> {
-    const step: CodeLoopStepDefinition<TStepInput, TStepOutput> = {
-      id,
-      kind: "code",
-      handler,
-      input: options.input,
-      output: options.output,
-      reduce: options.reduce,
-      runtime: options.runtime,
-      environment: options.environment,
-    };
-    this.addStep(step as unknown as LoopStepDefinition);
-    return createStepRef(step as unknown as LoopStepDefinition<unknown, TStepOutput>);
-  }
-
-  subloop<TStepInput = unknown, TStepOutput = unknown>(
-    id: string,
-    loop: CompiledLoop<TStepInput, TStepOutput> | { compile: () => CompiledLoop<TStepInput, TStepOutput> },
-    options: LoopStepOptions<TStepInput, TStepOutput> = {},
-  ): LoopStepRef<TStepOutput> {
-    const compiledLoop = "compile" in loop ? loop.compile() : loop;
-    const step: SubloopStepDefinition<TStepInput, TStepOutput> = {
-      id,
-      kind: "subloop",
-      loop: compiledLoop,
+      loop,
       input: options.input,
       output: options.output,
       reduce: options.reduce,
@@ -175,7 +139,7 @@ export class LoopSpec<TInput = unknown, TOutput = unknown> {
       }
     }
 
-    return {
+    const compiled: CompiledLoop<TInput, TOutput> = {
       id: this.id,
       inputSchema: this.inputSchema,
       outputSchema: this.outputSchema,
@@ -184,7 +148,19 @@ export class LoopSpec<TInput = unknown, TOutput = unknown> {
       startStepId: this.startStepId,
       transitions: [...this.transitions],
       limits: new Map(this.limits),
+      async run(request) {
+        const runLoop = request.execution?.runLoop;
+
+        if (runLoop !== undefined) {
+          return await runLoop(compiled, request);
+        }
+
+        const { createLoopApp } = await import("./loop-app.ts");
+        return await createLoopApp().run(compiled, request);
+      },
     };
+
+    return compiled;
   }
 
   addTransition(transition: LoopTransition): void {
@@ -261,7 +237,7 @@ class MutableFlowChain implements FlowChain {
 function createStepRef<TOutput>(step: LoopStepDefinition<unknown, TOutput>): LoopStepRef<TOutput> {
   return {
     id: step.id,
-    output: step.output,
+    output: step.output ?? step.loop.outputSchema,
   };
 }
 
@@ -269,6 +245,39 @@ export function defineLoop<TInput = unknown, TOutput = unknown>(
   options: DefineLoopOptions<TInput, TOutput>,
 ): LoopSpec<TInput, TOutput> {
   return new LoopSpec(options);
+}
+
+export function defineCodeLoop<TInput = unknown, TOutput = unknown>(
+  options: DefineCodeLoopOptions<TInput, TOutput>,
+): Loop<TInput, TOutput> {
+  return {
+    id: options.id,
+    inputSchema: options.input,
+    outputSchema: options.output,
+    async run(request) {
+      if (request.execution === undefined) {
+        const { createLoopApp } = await import("./loop-app.ts");
+        return await createLoopApp().run(this, request);
+      }
+
+      const input = options.input?.parse(request.input) ?? request.input;
+      const output = await options.handler({
+        input,
+        state: request.execution.state,
+        workspace: request.execution.workspace,
+        task: request.execution.task,
+        workflow: request.execution.workflow,
+        environment: request.execution.environment,
+      });
+      const parsedOutput = options.output?.parse(output) ?? output;
+
+      return {
+        workflowRunId: request.execution.workflow.id,
+        output: parsedOutput,
+        state: request.execution.state,
+      };
+    },
+  };
 }
 
 function isTerminalTarget(target: LoopTransitionTarget): target is LoopTerminalTarget {

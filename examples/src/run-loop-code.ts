@@ -1,4 +1,4 @@
-import { createLoopApp, defineLoop } from "@expertmesh/core";
+import { createLoopApp, defineCodeLoop, defineLoop } from "@expertmesh/core";
 import { z } from "zod";
 
 const loop = defineLoop({
@@ -14,17 +14,20 @@ const loop = defineLoop({
   }),
 });
 
-const greet = loop.code(
+const greet = loop.use(
   "greet",
-  ({ input }) => {
-    const payload = z
-      .object({
-        name: z.string(),
-      })
-      .parse(input);
+  defineCodeLoop({
+    id: "greet-code",
+    handler: ({ input }) => {
+      const payload = z
+        .object({
+          name: z.string(),
+        })
+        .parse(input);
 
-    return `Hello, ${payload.name}.`;
-  },
+      return `Hello, ${payload.name}.`;
+    },
+  }),
   {
     reduce: ({ state, output }) => {
       state.results["message"] = output;

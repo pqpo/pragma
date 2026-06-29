@@ -1,46 +1,53 @@
 # Loop 使用指南
 
-本文说明如何使用 ExpertMesh 当前 Loop API 构建工作流，从最小 Loop 到复杂应用，以及如何嵌套 Loop。
+本文说明当前 ExpertMesh Loop API。核心原则是：`Agent` 本身是 `Loop`，编译后的组合工作流也是 `Loop`，任何对象只要实现 `Loop` 接口，就可以注册进另一个 Loop。
 
 当前核心 API：
 
 ```ts
-import { createLoopApp, defineLoop } from "@expertmesh/core";
-```
-
-Loop 模块源码：
-
-```text
-packages/core/src/loop
+import { createLoopApp, defineCodeLoop, defineLoop } from "@expertmesh/core";
 ```
 
 ## 核心概念
 
-Loop 是可执行工作流规格。它由步骤、状态、转移规则和运行环境组成。
+`Loop` 是统一的可执行单元：
+
+```ts
+interface Loop<TInput, TOutput> {
+  readonly id: string;
+  readonly inputSchema?: z.ZodType<TInput>;
+  readonly outputSchema?: z.ZodType<TOutput>;
+  run(request: StartLoopRunRequest<TInput>): Promise<LoopRunResult<TOutput>>;
+}
+```
+
+`defineLoop()` 创建组合 Loop；组合 Loop 通过 `use(id, loop, options)` 注册子 Loop，不区分 agent、code 或 subloop。`ExpertAgent` 已实现 `Loop`，`defineCodeLoop()` 是把本地 TypeScript handler 包成 Loop 的便利函数。
 
 主要对象：
 
-- `LoopSpec`：Loop 构建器。
-- `CompiledLoop`：编译后的 Loop。
-- `LoopApp`：运行入口。
+- `Loop`：统一执行接口。
+- `LoopSpec`：组合 Loop 构建器。
+- `CompiledLoop`：编译后的组合 Loop，同时也是 `Loop`。
+- `LoopApp`：运行入口，可运行任意 `Loop`。
 - `TaskManager`：任务分发与执行协调。
 - `StateManager`：工作流和任务状态事实源。
 - `Mailbox`：命令和事件通信通道。
 - `TaskExecutionEnvironment`：步骤执行环境。
 
-步骤类型：
-
-```text
-agent    调用 ExpertAgent，通过 RuntimeAdapter 执行
-code     调用本地 TypeScript handler
-subloop  调用另一个 Loop
-```
-
-## 最小 code Loop
+## 最小组合 Loop
 
 ```ts
-import { createLoopApp, defineLoop } from "@expertmesh/core";
+import { createLoopApp, defineCodeLoop, defineLoop } from "@expertmesh/core";
 import { z } from "zod";
+
+const greetLoop = defineCodeLoop({
+  id: "greet",
+  output: z.string(),
+  handler: ({ input }) => {
+    const payload = z.object({ name: z.string() }).parse(input);
+    return `Hello, ${payload.name}.`;
+  },
+});
 
 const loop = defineLoop({
   id: "hello-loop",
@@ -55,23 +62,11 @@ const loop = defineLoop({
   }),
 });
 
-const greet = loop.code(
-  "greet",
-  ({ input }) => {
-    const payload = z
-      .object({
-        name: z.string(),
-      })
-      .parse(input);
-
-    return `Hello, ${payload.name}.`;
+const greet = loop.use("greet", greetLoop, {
+  reduce: ({ state, output }) => {
+    state.results["message"] = output;
   },
-  {
-    reduce: ({ state, output }) => {
-      state.results["message"] = output;
-    },
-  },
-);
+});
 
 loop.flow(({ start, end }) => {
   start(greet).next(end());
@@ -88,12 +83,108 @@ console.log(result.output);
 
 关键点：
 
-- `input` 是 Loop 输入 schema。
+- `input` 是组合 Loop 的输入 schema。
 - `output` 是最终输出 schema。
 - `result` 从 `LoopState` 里提取最终结果。
-- `code()` 定义一个本地步骤。
+- `use()` 注册任何实现了 `Loop` 的可执行单元。
 - `reduce()` 把步骤输出写回 `state`。
 - `flow()` 定义步骤转移。
+
+## 运行单个 Loop
+
+单个 Agent 或代码 Loop 可以直接交给 `LoopApp` 运行。`LoopApp` 会把它包装成单步 workflow，因此仍然有 `workflowRunId`、`LoopState` 和 mailbox 事件。
+
+```ts
+const result = await createLoopApp().run(greetLoop, {
+  input: {
+    name: "ExpertMesh",
+  },
+});
+```
+
+## Agent 作为 Loop
+
+`ExpertAgent` 已实现 `Loop`。在组合流程中注册 Agent 和注册任意其他 Loop 没有区别：
+
+```ts
+import { defineAgent, defineLoop } from "@expertmesh/core";
+import { z } from "zod";
+
+const planner = await defineAgent({
+  id: "planner",
+  name: "Planner",
+  description: "Create an execution plan.",
+  tags: [],
+  version: "0.0.0",
+  scope: "project",
+  workspace: process.cwd(),
+});
+
+const loop = defineLoop({
+  id: "planning-loop",
+  output: z.object({
+    plan: z.unknown(),
+  }),
+  result: ({ state }) => ({
+    plan: state.results["plan"],
+  }),
+});
+
+const plan = loop.use("plan", planner, {
+  output: z.object({
+    steps: z.array(z.string()),
+  }),
+  reduce: ({ state, output }) => {
+    state.results["plan"] = output;
+  },
+});
+
+loop.flow(({ start, end }) => {
+  start(plan).next(end());
+});
+```
+
+## 嵌套组合 Loop
+
+编译后的组合 Loop 也是 `Loop`，所以嵌套流程仍然使用 `use()`：
+
+```ts
+const requirementLoop = defineLoop({
+  id: "requirement-loop",
+  result: ({ state }) => state.results["summary"],
+});
+
+const summarize = requirementLoop.use(
+  "summarize",
+  defineCodeLoop({
+    id: "summarize",
+    handler: ({ input }) => String(input),
+  }),
+  {
+    reduce: ({ state, output }) => {
+      state.results["summary"] = output;
+    },
+  },
+);
+
+requirementLoop.flow(({ start, end }) => {
+  start(summarize).next(end());
+});
+
+const deliveryLoop = defineLoop({
+  id: "delivery-loop",
+});
+
+const intake = deliveryLoop.use("intake", requirementLoop.compile(), {
+  reduce: ({ state, output }) => {
+    state.results["requirement"] = output;
+  },
+});
+
+deliveryLoop.flow(({ start, end }) => {
+  start(intake).next(end());
+});
+```
 
 ## LoopState 和 reduce
 
@@ -103,85 +194,58 @@ console.log(result.output);
 state.results["key"] = output;
 ```
 
-`reduce()` 只负责状态归并，不应该执行外部副作用。
+`reduce()` 只负责状态归并，不应该执行外部副作用。外部副作用应该放在代码 Loop handler 或 Agent/Runtime 的受控工具中。
 
-推荐：
+## 输出校验
 
-```ts
-reduce: ({ state, output }) => {
-  state.results["plan"] = output;
-}
-```
-
-避免：
+输出 schema 可以声明在被注册的 Loop 上，也可以在 `use()` 时覆盖：
 
 ```ts
-reduce: async ({ state, output }) => {
-  await writeFile("result.json", JSON.stringify(output));
-  state.results["plan"] = output;
-}
-```
-
-外部副作用应该放在 `code` step handler 或 Agent/Runtime 的受控工具中。
-
-## 带输出校验的步骤
-
-步骤可以声明自己的输出 schema：
-
-```ts
-const classify = loop.code(
-  "classify",
-  ({ input }) => {
+const classifyLoop = defineCodeLoop({
+  id: "classify",
+  output: z.object({
+    kind: z.enum(["bug", "feature"]),
+  }),
+  handler: ({ input }) => {
     const payload = z.object({ text: z.string() }).parse(input);
-
     return {
       kind: payload.text.includes("bug") ? "bug" : "feature",
     };
   },
-  {
-    output: z.object({
-      kind: z.enum(["bug", "feature"]),
-    }),
-    reduce: ({ state, output }) => {
-      state.results["kind"] = output.kind;
-    },
+});
+
+const classify = loop.use("classify", classifyLoop, {
+  reduce: ({ state, output }) => {
+    state.results["kind"] = output.kind;
   },
-);
+});
 ```
 
-`TaskManager` 会在步骤完成后用 `step.output` 校验结果。
+`TaskManager` 会在步骤完成后用 `use()` 的 `output` 或子 Loop 的 `outputSchema` 校验结果。
 
 ## route 分支
 
-使用 `route(field, cases, fallback?)` 根据步骤输出字段选择下一步：
+`route(field, cases, fallback?)` 根据步骤输出字段选择下一步：
 
 ```ts
-const tester = loop.code(
+const tester = loop.use(
   "tester",
-  ({ input }) => {
-    const payload = z.object({ testsPassed: z.boolean() }).parse(input);
-    return {
-      status: payload.testsPassed ? "passed" : "failed",
-    };
-  },
-  {
+  defineCodeLoop({
+    id: "tester",
     output: z.object({
       status: z.enum(["passed", "failed"]),
     }),
-  },
+    handler: ({ input }) => {
+      const payload = z.object({ testsPassed: z.boolean() }).parse(input);
+      return {
+        status: payload.testsPassed ? "passed" : "failed",
+      };
+    },
+  }),
 );
 
-const ship = loop.code("ship", () => "ship", {
-  reduce: ({ state, output }) => {
-    state.results["nextAction"] = output;
-  },
-});
-
-const fix = loop.code("fix", () => "fix", {
-  reduce: ({ state, output }) => {
-    state.results["nextAction"] = output;
-  },
-});
+const ship = loop.use("ship", defineCodeLoop({ id: "ship", handler: () => "ship" }));
+const fix = loop.use("fix", defineCodeLoop({ id: "fix", handler: () => "fix" }));
 
 loop.flow(({ start, step, end }) => {
   start(tester).route("status", {
@@ -194,21 +258,6 @@ loop.flow(({ start, step, end }) => {
 });
 ```
 
-如果可能出现未覆盖值，传入 fallback：
-
-```ts
-start(tester).route(
-  "status",
-  {
-    passed: ship,
-    failed: fix,
-  },
-  {
-    fallback: fix,
-  },
-);
-```
-
 ## limit 防止循环失控
 
 `limit()` 给某个 step 设置访问次数上限：
@@ -218,404 +267,28 @@ loop.flow(({ start, step, fail }) => {
   start(retryStep)
     .limit({
       maxVisits: 3,
-      onExceeded: fail("Retry limit exceeded."),
+      onExceeded: fail("Retry limit exceeded"),
     })
     .next(retryStep);
 });
 ```
 
-适用场景：
+## 运行时选择
 
-- 重试修复。
-- 多轮规划。
-- 反复检查直到满足条件。
-
-所有可能循环的流程都应设置 `maxVisits`。
-
-## Agent step
-
-Agent step 调用 `ExpertAgent`，通过 `RuntimeAdapter` 执行。
+运行时仍然通过 `RuntimeRegistry` 解析。`runtime` 可以在 `use()` 上设置，也可以在运行请求中统一指定：
 
 ```ts
-import { defineAgent, defineLoop } from "@expertmesh/core";
-import { z } from "zod";
-
-const planner = await defineAgent({
-  id: "planner",
-  name: "Planner",
-  description: "负责拆解任务。",
-  tags: ["planning"],
-  version: "0.0.0",
-  scope: "workspace",
-  workspace: "/path/to/workspace",
-  instructions: "把输入需求拆成可执行计划。",
+const plan = loop.use("plan", planner, {
+  runtime: "cloud-pi-agent",
 });
 
-const loop = defineLoop({
-  id: "planning-loop",
-  input: z.object({
-    requirement: z.string(),
-  }),
-  output: z.object({
-    plan: z.string(),
-  }),
-  result: ({ state }) => ({
-    plan: String(state.results["plan"]),
-  }),
-});
-
-const plan = loop.agent("plan", planner, {
-  input: ({ state }) => ({
-    requirement: state.input.requirement,
-  }),
-  output: z.object({
-    plan: z.string(),
-  }),
-  reduce: ({ state, output }) => {
-    state.results["plan"] = output.plan;
-  },
-});
-
-loop.flow(({ start, end }) => {
-  start(plan).next(end());
-});
-```
-
-Agent step 的输入会被 `stringifyInput()` 转成 query 传给 Runtime。为了减少歧义，建议输入保持结构化、字段命名明确。
-
-## Runtime 选择
-
-LoopApp 默认创建 Runtime Registry：
-
-```ts
-const app = createLoopApp();
-```
-
-需要自定义 Runtime：
-
-```ts
-const app = createLoopApp({
-  runtimes: createRuntimeRegistry({
-    runtimes: [customRuntime],
-    defaultRuntime: "custom",
-  }),
-});
-```
-
-可以在 step 上指定 runtime：
-
-```ts
-const plan = loop.agent("plan", planner, {
-  runtime: "cloud-planner",
-});
-
-const verify = loop.code("verify", verifyHandler, {
-  runtime: "sandbox-node",
-});
-```
-
-也可以在运行请求上指定默认 runtime：
-
-```ts
-await app.run(loop, {
-  input,
-  runtime: "cloud-planner",
-});
-```
-
-也可以在一次运行中按 step id 指定 runtime：
-
-```ts
-await app.run(loop, {
-  input,
+await createLoopApp().run(loop, {
+  input: {},
+  runtime: "cloud-pi-agent",
   runtimes: {
-    plan: "cloud-planner",
-    verify: "sandbox-node",
+    plan: "cloud-pi-agent",
   },
 });
 ```
 
-Runtime 解析优先级：
-
-```text
-request.runtimes[step.id]
-step.runtime
-request.runtime
-app.runtimes.defaultRuntime
-```
-
-## TaskExecutionEnvironment
-
-Code step 会拿到 workspace：
-
-```ts
-const test = loop.code("test", async ({ workspace }) => {
-  const result = await workspace.exec("pnpm test", {
-    timeoutMs: 120_000,
-  });
-
-  return {
-    passed: result.exitCode === 0,
-    stdout: result.stdout,
-    stderr: result.stderr,
-  };
-});
-```
-
-步骤可以声明环境需求：
-
-```ts
-const verify = loop.code("verify", verifyHandler, {
-  environment: {
-    strategy: {
-      mode: "local-workspace",
-    },
-    workspace: {
-      root: "/path/to/workspace",
-      access: "readwrite",
-    },
-    capabilities: {
-      filesystem: true,
-      shell: true,
-      network: false,
-      humanApproval: true,
-    },
-  },
-});
-```
-
-当前默认实现是 `createLocalTaskExecutionEnvironment()`，适合本地和测试。云端运行时应替换为受控沙箱环境。
-
-## subloop 嵌套 Loop
-
-子 Loop 适合把复杂流程拆成可复用模块。
-
-```ts
-const requirementLoop = defineLoop({
-  id: "requirement-loop",
-  input: z.object({
-    requirement: z.string(),
-  }),
-  output: z.object({
-    summary: z.string(),
-  }),
-  result: ({ state }) => ({
-    summary: String(state.results["summary"]),
-  }),
-});
-
-const summarize = requirementLoop.code("summarize", ({ input }) => {
-  const payload = z.object({ requirement: z.string() }).parse(input);
-  return `Plan for: ${payload.requirement}`;
-}, {
-  reduce: ({ state, output }) => {
-    state.results["summary"] = output;
-  },
-});
-
-requirementLoop.flow(({ start, end }) => {
-  start(summarize).next(end());
-});
-
-const deliveryLoop = defineLoop({
-  id: "delivery-loop",
-  input: z.object({
-    requirement: z.string(),
-  }),
-  output: z.object({
-    plan: z.string(),
-    verification: z.string(),
-  }),
-  result: ({ state }) => ({
-    plan: String(state.results["plan"]),
-    verification: String(state.results["verification"]),
-  }),
-});
-
-const plan = deliveryLoop.subloop("plan", requirementLoop, {
-  reduce: ({ state, output }) => {
-    state.results["plan"] = output.summary;
-  },
-});
-
-const verify = deliveryLoop.code("verify", () => "ready", {
-  reduce: ({ state, output }) => {
-    state.results["verification"] = output;
-  },
-});
-
-deliveryLoop.flow(({ start, step, end }) => {
-  start(plan).next(verify);
-  step(verify).next(end());
-});
-```
-
-嵌套规则：
-
-- 子 Loop 应有明确输入输出 schema。
-- 父 Loop 通过 `reduce()` 消费子 Loop 输出。
-- 子 Loop 不应隐式修改父 Loop 状态。
-- 子 Loop 可以继续包含 agent/code/subloop。
-
-## 从简单 Loop 到大型应用
-
-大型应用不要写成一个巨大 Loop。推荐拆成多个子 Loop：
-
-```text
-delivery-loop
-  ├── intake-loop
-  │   ├── normalize-request
-  │   └── classify-request
-  ├── planning-loop
-  │   ├── planner-agent
-  │   └── risk-review-agent
-  ├── implementation-loop
-  │   ├── coder-agent
-  │   ├── test-code
-  │   └── route pass/fail
-  └── report-loop
-      ├── summarize
-      └── produce-artifact
-```
-
-拆分原则：
-
-- 每个 Loop 负责一个稳定阶段。
-- 每个 Loop 有清晰输入输出。
-- 业务状态只通过 `LoopState` 和输出传递。
-- 重试、路由、人工确认等控制流放在父 Loop。
-- 可复用能力做成子 Loop。
-
-## 大型应用示例骨架
-
-```ts
-const intakeLoop = defineLoop({
-  id: "intake-loop",
-  input: IntakeInputSchema,
-  output: IntakeOutputSchema,
-  result: ({ state }) => IntakeOutputSchema.parse(state.results["intake"]),
-});
-
-const planningLoop = defineLoop({
-  id: "planning-loop",
-  input: PlanningInputSchema,
-  output: PlanningOutputSchema,
-  result: ({ state }) => PlanningOutputSchema.parse(state.results["plan"]),
-});
-
-const implementationLoop = defineLoop({
-  id: "implementation-loop",
-  input: ImplementationInputSchema,
-  output: ImplementationOutputSchema,
-  result: ({ state }) => ImplementationOutputSchema.parse(state.results["implementation"]),
-});
-
-const deliveryLoop = defineLoop({
-  id: "delivery-loop",
-  input: DeliveryInputSchema,
-  output: DeliveryOutputSchema,
-  result: ({ state }) => DeliveryOutputSchema.parse({
-    intake: state.results["intake"],
-    plan: state.results["plan"],
-    implementation: state.results["implementation"],
-  }),
-});
-
-const intake = deliveryLoop.subloop("intake", intakeLoop, {
-  reduce: ({ state, output }) => {
-    state.results["intake"] = output;
-  },
-});
-
-const plan = deliveryLoop.subloop("plan", planningLoop, {
-  input: ({ state }) => state.results["intake"],
-  reduce: ({ state, output }) => {
-    state.results["plan"] = output;
-  },
-});
-
-const implement = deliveryLoop.subloop("implement", implementationLoop, {
-  input: ({ state }) => state.results["plan"],
-  reduce: ({ state, output }) => {
-    state.results["implementation"] = output;
-  },
-});
-
-deliveryLoop.flow(({ start, step, end }) => {
-  start(intake).next(plan);
-  step(plan).next(implement);
-  step(implement).next(end());
-});
-```
-
-## 失败和取消
-
-流程可以显式失败：
-
-```ts
-loop.flow(({ start, fail }) => {
-  start(validate).next(fail("Input is invalid."));
-});
-```
-
-运行时可取消：
-
-```ts
-const handle = await app.taskManager.startRun(loop.compile(), { input });
-await handle.cancel("User cancelled.");
-```
-
-通常应用层使用：
-
-```ts
-await app.run(loop, { input });
-```
-
-如果需要取消、监听中间事件或管理 run handle，使用 `taskManager.startRun()`。
-
-## 替换 Mailbox 和 StateManager
-
-`createLoopApp()` 默认使用内存实现：
-
-```ts
-createInMemoryMailbox()
-createInMemoryStateManager()
-createLocalTaskManager()
-createLocalTaskExecutionEnvironment()
-```
-
-生产或云端应用应替换：
-
-```ts
-const app = createLoopApp({
-  mailbox: durableMailbox,
-  stateManager: databaseStateManager,
-  environment: sandboxEnvironment,
-  runtimes,
-});
-```
-
-替换原则：
-
-- `StateManager` 是状态事实源，必须处理并发和幂等。
-- `Mailbox` 是通信协议载体，必须支持重试和可观测性。
-- `TaskManager` 不应直接写数据库或消息队列实现细节。
-- `TaskExecutionEnvironment` 控制 workspace、shell、网络和权限。
-
-## 测试建议
-
-小型 Loop：
-
-- 用 `createLoopApp()` 默认内存实现测试。
-- 用 code step 验证状态归并和 route。
-
-Agent Loop：
-
-- 使用 fake RuntimeAdapter 测试 Loop 编排。
-- 不在单元测试里依赖真实模型。
-
-大型 Loop：
-
-- 每个子 Loop 独立测试。
-- 父 Loop 只测试输入输出连接和路由。
-- 对循环路径设置 `limit()` 并测试上限行为。
+`runtimes` 中的 step 级配置优先级最高，其次是 `use()` 的 `runtime`，最后是运行请求的 `runtime` 和 registry 默认 runtime。

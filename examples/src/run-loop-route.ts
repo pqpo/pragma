@@ -1,4 +1,4 @@
-import { createLoopApp, defineLoop } from "@expertmesh/core";
+import { createLoopApp, defineCodeLoop, defineLoop } from "@expertmesh/core";
 import { z } from "zod";
 
 const loop = defineLoop({
@@ -14,33 +14,34 @@ const loop = defineLoop({
   }),
 });
 
-const tester = loop.code(
+const tester = loop.use(
   "tester",
-  ({ input }) => {
-    const payload = z
-      .object({
-        testsPassed: z.boolean(),
-      })
-      .parse(input);
-
-    return {
-      status: payload.testsPassed ? "passed" : "failed",
-    };
-  },
-  {
+  defineCodeLoop({
+    id: "tester-code",
     output: z.object({
       status: z.enum(["passed", "failed"]),
     }),
-  },
+    handler: ({ input }) => {
+      const payload = z
+        .object({
+          testsPassed: z.boolean(),
+        })
+        .parse(input);
+
+      return {
+        status: payload.testsPassed ? "passed" : "failed",
+      };
+    },
+  }),
 );
 
-const ship = loop.code("ship", () => "ship", {
+const ship = loop.use("ship", defineCodeLoop({ id: "ship-code", handler: () => "ship" }), {
   reduce: ({ state, output }) => {
     state.results["nextAction"] = output;
   },
 });
 
-const fix = loop.code("fix", () => "fix", {
+const fix = loop.use("fix", defineCodeLoop({ id: "fix-code", handler: () => "fix" }), {
   reduce: ({ state, output }) => {
     state.results["nextAction"] = output;
   },

@@ -7,13 +7,18 @@ import type {
 } from "@expertmesh/shared";
 import type { z } from "zod";
 
-import type { ExpertAgent } from "../agent/expert-agent.ts";
 import type { RuntimeAdapter, RuntimeOutputSchema } from "../runtime/runtime-adapter.ts";
+import type { RuntimeStreamEvent } from "../runtime/stream-events.ts";
 import type { RuntimeRegistry } from "../runtime-registry.ts";
 
 export type MaybePromise<TValue> = TValue | Promise<TValue>;
 
-export type LoopStepKind = "agent" | "code" | "subloop";
+export interface Loop<TInput = unknown, TOutput = unknown> {
+  readonly id: string;
+  readonly inputSchema?: z.ZodType<TInput> | undefined;
+  readonly outputSchema?: RuntimeOutputSchema<TOutput> | undefined;
+  run(request: StartLoopRunRequest<TInput>): Promise<LoopRunResult<TOutput>>;
+}
 
 export interface LoopStepRef<TOutput = unknown> {
   readonly id: string;
@@ -69,7 +74,10 @@ export type LoopStepInputResolver<TInput = unknown> = (
 
 export interface LoopCodeWorkspace {
   readonly root: string;
-  readonly exec: (command: string, options?: LoopWorkspaceExecOptions) => Promise<LoopWorkspaceExecResult>;
+  readonly exec: (
+    command: string,
+    options?: LoopWorkspaceExecOptions,
+  ) => Promise<LoopWorkspaceExecResult>;
 }
 
 export interface LoopWorkspaceExecOptions {
@@ -97,38 +105,17 @@ export type LoopCodeHandler<TInput = unknown, TOutput = unknown> = (
   context: LoopCodeContext<TInput>,
 ) => MaybePromise<TOutput>;
 
-export interface BaseLoopStepDefinition<TInput = unknown, TOutput = unknown>
-  extends LoopRuntimeOverride {
+export interface LoopStepDefinition<
+  TInput = unknown,
+  TOutput = unknown,
+> extends LoopRuntimeOverride {
   readonly id: string;
-  readonly kind: LoopStepKind;
+  readonly loop: Loop<TInput, TOutput>;
   readonly input?: LoopStepInputResolver<TInput> | TInput | undefined;
   readonly output?: RuntimeOutputSchema<TOutput> | undefined;
   readonly reduce?: LoopStepReducer<TOutput> | undefined;
   readonly environment?: TaskEnvironmentRequest | undefined;
 }
-
-export interface AgentLoopStepDefinition<TInput = unknown, TOutput = unknown>
-  extends BaseLoopStepDefinition<TInput, TOutput> {
-  readonly kind: "agent";
-  readonly agent: ExpertAgent;
-}
-
-export interface CodeLoopStepDefinition<TInput = unknown, TOutput = unknown>
-  extends BaseLoopStepDefinition<TInput, TOutput> {
-  readonly kind: "code";
-  readonly handler: LoopCodeHandler<TInput, TOutput>;
-}
-
-export interface SubloopStepDefinition<TInput = unknown, TOutput = unknown>
-  extends BaseLoopStepDefinition<TInput, TOutput> {
-  readonly kind: "subloop";
-  readonly loop: CompiledLoop<TInput, TOutput>;
-}
-
-export type LoopStepDefinition<TInput = unknown, TOutput = unknown> =
-  | AgentLoopStepDefinition<TInput, TOutput>
-  | CodeLoopStepDefinition<TInput, TOutput>
-  | SubloopStepDefinition<TInput, TOutput>;
 
 export interface LoopTerminalTarget {
   readonly type: "end" | "fail";
@@ -158,7 +145,7 @@ export interface LoopLimitPolicy {
   readonly onExceeded?: LoopTerminalTarget | undefined;
 }
 
-export interface CompiledLoop<TInput = unknown, TOutput = unknown> {
+export interface CompiledLoop<TInput = unknown, TOutput = unknown> extends Loop<TInput, TOutput> {
   readonly id: string;
   readonly inputSchema?: z.ZodType<TInput> | undefined;
   readonly outputSchema?: z.ZodType<TOutput> | undefined;
@@ -171,13 +158,37 @@ export interface CompiledLoop<TInput = unknown, TOutput = unknown> {
 
 export interface StartLoopRunRequest<TInput = unknown> extends LoopRuntimeOverride {
   readonly input: TInput;
+  readonly output?: RuntimeOutputSchema<unknown> | undefined;
   readonly runtimes?: Readonly<Record<string, string>> | undefined;
+  readonly execution?: LoopExecutionContext | undefined;
 }
 
 export interface LoopRunResult<TOutput = unknown> {
   readonly workflowRunId: string;
   readonly output: TOutput;
+  /**
+   * State visible at the boundary of this loop run.
+   *
+   * Top-level compiled loop runs return the final workflow state after step reducers have applied.
+   * When a loop is executed as a step inside an existing workflow, the parent step reducer runs
+   * after the child loop returns, so this state may not include the parent reducer's changes.
+   */
   readonly state: LoopState;
+}
+
+export interface LoopExecutionContext {
+  readonly task: TaskRunRecord;
+  readonly workflow: WorkflowRunRecord;
+  readonly state: LoopState;
+  readonly workspace: LoopCodeWorkspace;
+  readonly environment: TaskEnvironmentRef;
+  readonly runtimeId: string;
+  readonly runtimeRegistry: RuntimeRegistry;
+  readonly emitProgress: (event: RuntimeStreamEvent) => Promise<void>;
+  readonly runLoop: <TInput, TOutput>(
+    loop: Loop<TInput, TOutput>,
+    request: StartLoopRunRequest<TInput>,
+  ) => Promise<LoopRunResult<TOutput>>;
 }
 
 export interface WorkflowRunHandle<TOutput = unknown> {
@@ -227,7 +238,7 @@ export interface LoopApp {
   readonly taskManager: TaskManager;
   readonly runtimes: RuntimeRegistry;
   readonly run: <TInput, TOutput>(
-    loop: CompiledLoop<TInput, TOutput> | LoopCompiler<TInput, TOutput>,
+    loop: Loop<TInput, TOutput> | LoopCompiler<TInput, TOutput>,
     request: StartLoopRunRequest<TInput>,
   ) => Promise<LoopRunResult<TOutput>>;
 }
@@ -299,9 +310,7 @@ export interface ReadyTransition {
 }
 
 export interface StateManager {
-  readonly createWorkflowRun: (
-    request: CreateWorkflowRunRequest,
-  ) => Promise<WorkflowRunRecord>;
+  readonly createWorkflowRun: (request: CreateWorkflowRunRequest) => Promise<WorkflowRunRecord>;
   readonly getWorkflowRun: (workflowRunId: string) => Promise<WorkflowRunRecord | undefined>;
   readonly createTaskRun: (request: CreateTaskRunRequest) => Promise<TaskRunRecord>;
   readonly getTaskRun: (taskRunId: string) => Promise<TaskRunRecord | undefined>;
@@ -314,7 +323,10 @@ export interface StateManager {
   ) => Promise<TaskRunRecord>;
   readonly markTaskSucceeded: (taskRunId: string, output: unknown) => Promise<TaskRunRecord>;
   readonly markTaskFailed: (taskRunId: string, error: unknown) => Promise<TaskRunRecord>;
-  readonly markTaskCancelled: (taskRunId: string, reason?: string | undefined) => Promise<TaskRunRecord>;
+  readonly markTaskCancelled: (
+    taskRunId: string,
+    reason?: string | undefined,
+  ) => Promise<TaskRunRecord>;
   readonly applyTaskEvent: (message: MailboxMessage) => Promise<StateTransitionResult>;
   readonly applyWorkflowEvent: (message: MailboxMessage) => Promise<StateTransitionResult>;
   readonly applyStepReduction: <TOutput>(
@@ -376,6 +388,7 @@ export interface TaskManagerOptions {
   readonly stateManager: StateManager;
   readonly runtimes: RuntimeRegistry;
   readonly environment: TaskExecutionEnvironment;
+  readonly runLoop?: LoopExecutionContext["runLoop"] | undefined;
   readonly workerId?: string | undefined;
 }
 

@@ -1,7 +1,23 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
-import { createInMemoryMailbox, createLoopApp, defineLoop } from "../../src/index.ts";
+import {
+  createInMemoryMailbox,
+  createLoopApp,
+  defineCodeLoop,
+  defineLoop,
+  ExpertAgent,
+  createRuntimeRegistry,
+} from "../../src/index.ts";
+import type {
+  Loop,
+  RuntimeAdapter,
+  RuntimeAgentSession,
+  RuntimeCreateSessionRequest,
+  RuntimeSessionInfo,
+  RuntimeSubmitHandle,
+  RuntimeSubmitRequest,
+} from "../../src/index.ts";
 
 describe("loop app", () => {
   it("runs code steps, reduces Loop State, and returns mapped output", async () => {
@@ -18,23 +34,26 @@ describe("loop app", () => {
       }),
     });
 
-    const review = loop.code(
+    const review = loop.use(
       "review",
-      ({ input }) => {
-        const payload = z
-          .object({
-            decision: z.enum(["approved", "rejected"]),
-          })
-          .parse(input);
-
-        return {
-          decision: payload.decision,
-        };
-      },
-      {
+      defineCodeLoop({
+        id: "review-code",
         output: z.object({
           decision: z.enum(["approved", "rejected"]),
         }),
+        handler: ({ input }) => {
+          const payload = z
+            .object({
+              decision: z.enum(["approved", "rejected"]),
+            })
+            .parse(input);
+
+          return {
+            decision: payload.decision,
+          };
+        },
+      }),
+      {
         reduce: ({ state, output }) => {
           state.results["review"] = output;
           state.flags["reviewApproved"] = output.decision === "approved";
@@ -71,27 +90,36 @@ describe("loop app", () => {
       }),
     });
 
-    const router = loop.code(
+    const router = loop.use(
       "router",
-      () => ({
-        status: "failed" as const,
-      }),
-      {
+      defineCodeLoop({
+        id: "router-code",
         output: z.object({
           status: z.enum(["passed", "failed"]),
         }),
+        handler: () => ({
+          status: "failed" as const,
+        }),
+      }),
+    );
+    const passed = loop.use(
+      "passed",
+      defineCodeLoop({ id: "passed-code", handler: () => "passed" }),
+      {
+        reduce: ({ state, output }) => {
+          state.results["path"] = output;
+        },
       },
     );
-    const passed = loop.code("passed", () => "passed", {
-      reduce: ({ state, output }) => {
-        state.results["path"] = output;
+    const failed = loop.use(
+      "failed",
+      defineCodeLoop({ id: "failed-code", handler: () => "failed" }),
+      {
+        reduce: ({ state, output }) => {
+          state.results["path"] = output;
+        },
       },
-    });
-    const failed = loop.code("failed", () => "failed", {
-      reduce: ({ state, output }) => {
-        state.results["path"] = output;
-      },
-    });
+    );
 
     loop.flow(({ start, step, end }) => {
       start(router).route("status", {
@@ -115,8 +143,8 @@ describe("loop app", () => {
     const loop = defineLoop({
       id: "missing-route-loop",
     });
-    const router = loop.code("router", () => ({}));
-    const target = loop.code("target", () => "done");
+    const router = loop.use("router", defineCodeLoop({ id: "router-code", handler: () => ({}) }));
+    const target = loop.use("target", defineCodeLoop({ id: "target-code", handler: () => "done" }));
 
     loop.flow(({ start, step, end }) => {
       start(router).route("status", {
@@ -142,7 +170,7 @@ describe("loop app", () => {
     const loop = defineLoop({
       id: "events-loop",
     });
-    const task = loop.code("task", () => "done");
+    const task = loop.use("task", defineCodeLoop({ id: "task-code", handler: () => "done" }));
     loop.flow(({ start, end }) => {
       start(task).next(end());
     });
@@ -165,4 +193,183 @@ describe("loop app", () => {
       ]),
     );
   });
+
+  it("registers any Loop implementation as a step", async () => {
+    const loop = defineLoop({
+      id: "custom-loop-composition",
+      output: z.object({
+        value: z.string(),
+      }),
+      result: ({ state }) => ({
+        value: String(state.results["custom"]),
+      }),
+    });
+    const customLoop: Loop<{ readonly value: string }, string> = {
+      id: "custom",
+      inputSchema: z.object({
+        value: z.string(),
+      }),
+      outputSchema: z.string(),
+      async run(request) {
+        if (request.execution === undefined) {
+          return await createLoopApp().run(this, request);
+        }
+
+        return {
+          workflowRunId: request.execution.workflow.id,
+          output: request.input.value.toUpperCase(),
+          state: request.execution.state,
+        };
+      },
+    };
+
+    const custom = loop.use("custom", customLoop, {
+      reduce: ({ state, output }) => {
+        state.results["custom"] = output;
+      },
+    });
+    loop.flow(({ start, end }) => {
+      start(custom).next(end());
+    });
+
+    const result = await createLoopApp().run(loop, {
+      input: {
+        value: "ok",
+      },
+    });
+
+    expect(result.output).toEqual({
+      value: "OK",
+    });
+  });
+
+  it("runs an ExpertAgent as a Loop", async () => {
+    const agent = await ExpertAgent.create({
+      id: "agent-loop",
+      name: "Agent Loop",
+      description: "Agent that implements the Loop interface.",
+      tags: [],
+      version: "0.0.0",
+      scope: "test",
+      workspace: "/tmp/expertmesh-agent-loop-test",
+    });
+    const runtime = createFakeRuntime({
+      id: "fake-runtime",
+      output: {
+        answer: "done",
+      },
+    });
+    const outputSchema = z.object({
+      answer: z.string(),
+    });
+
+    const result = await createLoopApp({
+      runtimes: createRuntimeRegistry({
+        defaultRuntime: "fake-runtime",
+        runtimes: [runtime],
+      }),
+    }).run(agent, {
+      input: {
+        prompt: "finish",
+      },
+      output: outputSchema,
+    });
+
+    expect(result.output).toEqual({
+      answer: "done",
+    });
+    expect(runtime.requests).toEqual([
+      expect.objectContaining({
+        agent,
+      }),
+    ]);
+    expect(runtime.submissions).toEqual([
+      expect.objectContaining({
+        output: outputSchema,
+      }),
+    ]);
+  });
 });
+
+function createFakeRuntime(options: {
+  readonly id: string;
+  readonly output: unknown;
+}): RuntimeAdapter & {
+  readonly requests: RuntimeCreateSessionRequest[];
+  readonly submissions: RuntimeSubmitRequest<unknown>[];
+} {
+  const requests: RuntimeCreateSessionRequest[] = [];
+  const submissions: RuntimeSubmitRequest<unknown>[] = [];
+
+  return {
+    requests,
+    submissions,
+    descriptor: {
+      id: options.id,
+      kind: "fake-runtime",
+      displayName: "Fake Runtime",
+      capabilities: {
+        targets: ["agent"],
+      },
+    },
+    async createSession(request) {
+      requests.push(request);
+      return createFakeSession(options.output, submissions);
+    },
+  };
+}
+
+function createFakeSession(
+  output: unknown,
+  submissions: RuntimeSubmitRequest<unknown>[],
+): RuntimeAgentSession {
+  return {
+    info: () => createFakeSessionInfo(),
+    messages: () => [],
+    submit<TSubmitOutput>(
+      submission: RuntimeSubmitRequest<TSubmitOutput>,
+    ): RuntimeSubmitHandle<TSubmitOutput> {
+      submissions.push(submission as RuntimeSubmitRequest<unknown>);
+      return {
+        runId: "run-1",
+        events: createEmptyEvents(),
+        result: Promise.resolve({
+          runId: "run-1",
+          result: {
+            output: output as TSubmitOutput,
+          },
+        }),
+        cancel: async () => undefined,
+      };
+    },
+    abort: async () => undefined,
+  };
+}
+
+function createFakeSessionInfo(): RuntimeSessionInfo {
+  return {
+    systemSessionId: "system-session-1",
+    runtimeSession: {
+      type: "fake-runtime",
+      id: "runtime-session-1",
+    },
+    agentId: "agent-loop",
+    runtime: {
+      id: "fake-runtime",
+      kind: "fake-runtime",
+      displayName: "Fake Runtime",
+    },
+    sessionState: "active",
+    runState: undefined,
+  };
+}
+
+function createEmptyEvents() {
+  return {
+    [Symbol.asyncIterator]() {
+      return {
+        next: async () => ({ value: undefined, done: true }) as const,
+      };
+    },
+  };
+}
