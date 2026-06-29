@@ -1,0 +1,69 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "node",
+      "request": "launch",
+      "name": "Debug workspace-context-agent",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "--import",
+        "tsx",
+        "--inspect-brk",
+        "${workspaceFolder}/examples/src/run-workspace-context-agent.ts"
+      ],
+      "cwd": "${workspaceFolder}/examples",
+      "envFile": "${workspaceFolder}/examples/.env",
+      "console": "integratedTerminal",
+      "skipFiles": [
+        "<node_internals>/**"
+      ],
+      "args": [
+        "帮我看看 AGENTS.md 里有什么重要约束"
+      ]
+    },
+    {
+      "type": "node",
+      "request": "launch",
+      "name": "Debug workspace-context-agent (no args)",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "--import",
+        "tsx",
+        "--inspect-brk",
+        "${workspaceFolder}/examples/src/run-workspace-context-agent.ts"
+      ],
+      "cwd": "${workspaceFolder}/examples",
+      "envFile": "${workspaceFolder}/examples/.env",
+      "console": "integratedTerminal",
+      "skipFiles": [
+        "<node_internals>/**"
+      ]
+    },
+    {
+      "type": "node",
+      "request": "launch",
+      "name": "Debug workspace-context-agent (custom args)",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "--import",
+        "tsx",
+        "--inspect-brk",
+        "${workspaceFolder}/examples/src/run-workspace-context-agent.ts"
+      ],
+      "cwd": "${workspaceFolder}/examples",
+      "envFile": "${workspaceFolder}/examples/.env",
+      "console": "integratedTerminal",
+      "skipFiles": [
+        "<node_internals>/**"
+      ],
+      "args": [
+        "--workspace",
+        "workspace",
+        "--context",
+        "my-context",
+        "自定义查询内容"
+      ]
+    }
+  ]
+}

@@ -1,4 +1,4 @@
-import { AuthStorage, createAgentSession, ModelRegistry } from "@earendil-works/pi-coding-agent";
+import { AuthStorage, createAgentSession } from "@earendil-works/pi-coding-agent";
 import type { AgentSession, CreateAgentSessionOptions } from "@earendil-works/pi-coding-agent";
 import type {
   ExpertAgentStartupMessage,
@@ -21,9 +21,9 @@ import { createMcpToolRegistry } from "../mcp-tools.ts";
 import type { McpToolRegistry } from "../mcp-tools.ts";
 import {
   collectRuntimeModelProviders,
+  createPiModelRegistry,
   getRuntimeModelName,
   resolveRequiredRuntimeModel,
-  writePiModelConfig,
 } from "./models.ts";
 import { createResourceLoader } from "./resources.ts";
 import { createPiRuntimeSession } from "./session.ts";
@@ -122,13 +122,11 @@ export function createCloudPiRuntimeAdapter(
           systemSessionId,
           workspace: cwd,
         });
-        logger.debug("Writing runtime model configuration", { cwd });
-        const modelsJsonPath = await writePiModelConfig(
-          cwd,
-          agent.id,
+        logger.debug("Creating runtime model registry", { cwd });
+        const modelRegistry = createPiModelRegistry(
+          authStorage,
           collectRuntimeModelProviders(agent, models),
         );
-        const modelRegistry = ModelRegistry.create(authStorage, modelsJsonPath);
         const context = await agent.buildContext(runContext);
         const loader = createResourceLoader(agent, cwd, context.systemPrompt);
         await loader.reload();

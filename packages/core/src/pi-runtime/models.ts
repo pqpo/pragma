@@ -1,60 +1,42 @@
-import type { CreateAgentSessionOptions, ModelRegistry } from "@earendil-works/pi-coding-agent";
+import type {
+  AuthStorage,
+  CreateAgentSessionOptions,
+  ModelRegistry,
+} from "@earendil-works/pi-coding-agent";
+import { ModelRegistry as PiModelRegistry } from "@earendil-works/pi-coding-agent";
 import type { ExpertAgent, IExpertAgentModelProviderConfig } from "@expertmesh/core";
-import { chmod, mkdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
 
-const PI_MODEL_CONFIG_DIR = ".expertmesh/runtime-sessions/pi/models";
 const DEFAULT_PI_MODEL_API = "openai-completions";
+const DEFAULT_PI_MODEL_CONTEXT_WINDOW = 128000;
+const DEFAULT_PI_MODEL_MAX_TOKENS = 16384;
 
-interface PiModelsJson {
-  readonly providers: Record<
-    string,
-    {
-      readonly baseUrl: string;
-      readonly api: string;
-      readonly apiKey: string;
-      readonly models: readonly { readonly id: string }[];
-    }
-  >;
-}
-
-export async function writePiModelConfig(
-  cwd: string,
-  agentId: string,
+export function createPiModelRegistry(
+  authStorage: AuthStorage,
   providers: readonly IExpertAgentModelProviderConfig[],
-): Promise<string | undefined> {
+): ModelRegistry {
+  const modelRegistry = PiModelRegistry.inMemory(authStorage);
   const normalizedProviders = providers
     .map(normalizeModelProviderConfig)
     .filter((provider): provider is IExpertAgentModelProviderConfig => provider !== undefined);
 
-  if (normalizedProviders.length === 0) {
-    return undefined;
+  for (const provider of normalizedProviders) {
+    modelRegistry.registerProvider(provider.provider, {
+      baseUrl: provider.baseApi,
+      api: provider.api ?? DEFAULT_PI_MODEL_API,
+      apiKey: provider.key,
+      models: provider.modelNames.map((modelName) => ({
+        id: modelName,
+        name: modelName,
+        reasoning: false,
+        input: ["text"],
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        contextWindow: DEFAULT_PI_MODEL_CONTEXT_WINDOW,
+        maxTokens: DEFAULT_PI_MODEL_MAX_TOKENS,
+      })),
+    });
   }
 
-  const config: PiModelsJson = {
-    providers: Object.fromEntries(
-      normalizedProviders.map((provider) => [
-        provider.provider,
-        {
-          baseUrl: provider.baseApi,
-          api: provider.api ?? DEFAULT_PI_MODEL_API,
-          apiKey: provider.key,
-          models: provider.modelNames.map((modelName) => ({ id: modelName })),
-        },
-      ]),
-    ),
-  };
-  const configDir = join(cwd, PI_MODEL_CONFIG_DIR);
-  const configPath = join(configDir, `${encodeURIComponent(agentId)}.models.json`);
-
-  await mkdir(configDir, { recursive: true, mode: 0o700 });
-  await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, {
-    encoding: "utf-8",
-    mode: 0o600,
-  });
-  await chmod(configPath, 0o600);
-
-  return configPath;
+  return modelRegistry;
 }
 
 export function resolveRuntimeModel(
