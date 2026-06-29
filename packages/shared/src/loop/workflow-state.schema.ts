@@ -31,7 +31,7 @@ export const TaskRunStatusSchema = z.enum([
   "dead_letter",
 ]);
 
-export const TaskEnvironmentRefSchema = z.object({
+export const SandboxRefSchema = z.object({
   id: z.string().min(1),
   kind: z.string().min(1),
   workspaceRoot: z.string().min(1).optional(),
@@ -43,6 +43,7 @@ export const WorkflowRunRecordSchema = z.object({
   status: LoopRunStatusSchema,
   input: z.unknown(),
   state: LoopStateSchema,
+  defaultSandbox: SandboxRefSchema,
   currentStepIds: z.array(z.string().min(1)),
   completedStepIds: z.array(z.string().min(1)),
   revision: z.number().int().nonnegative(),
@@ -57,7 +58,7 @@ export const TaskRunRecordSchema = z.object({
   visit: z.number().int().positive(),
   status: TaskRunStatusSchema,
   runtimeId: z.string().min(1),
-  environment: TaskEnvironmentRefSchema.optional(),
+  sandbox: SandboxRefSchema.optional(),
   input: z.unknown(),
   output: z.unknown().optional(),
   error: z.unknown().optional(),
@@ -71,6 +72,6 @@ export const TaskRunRecordSchema = z.object({
 export type LoopState = z.infer<typeof LoopStateSchema>;
 export type LoopRunStatus = z.infer<typeof LoopRunStatusSchema>;
 export type TaskRunStatus = z.infer<typeof TaskRunStatusSchema>;
-export type TaskEnvironmentRef = z.infer<typeof TaskEnvironmentRefSchema>;
+export type SandboxRef = z.infer<typeof SandboxRefSchema>;
 export type WorkflowRunRecord = z.infer<typeof WorkflowRunRecordSchema>;
 export type TaskRunRecord = z.infer<typeof TaskRunRecordSchema>;

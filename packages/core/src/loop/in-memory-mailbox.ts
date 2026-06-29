@@ -16,12 +16,15 @@ interface SubscriptionEntry {
 
 export function createInMemoryMailbox(): Mailbox {
   const subscriptions: SubscriptionEntry[] = [];
+  const consumerGroupOffsets = new Map<string, number>();
 
   return {
     async publish<TPayload>(message: MailboxMessage<TPayload>) {
-      const deliveries = subscriptions
-        .filter((subscription) => subscription.active && matchesFilter(subscription.filter, message))
-        .map(async (subscription) => {
+      const matchingSubscriptions = subscriptions.filter(
+        (subscription) => subscription.active && matchesFilter(subscription.filter, message),
+      );
+      const deliveries = selectDeliveries(matchingSubscriptions, consumerGroupOffsets).map(
+        async (subscription) => {
           let acknowledged = false;
           const context: MailboxDeliveryContext = {
             ack: async () => {
@@ -34,7 +37,8 @@ export function createInMemoryMailbox(): Mailbox {
           if (!acknowledged) {
             await context.ack();
           }
-        });
+        },
+      );
 
       await Promise.all(deliveries);
     },
@@ -54,6 +58,38 @@ export function createInMemoryMailbox(): Mailbox {
       };
     },
   };
+}
+
+function selectDeliveries(
+  subscriptions: readonly SubscriptionEntry[],
+  consumerGroupOffsets: Map<string, number>,
+): readonly SubscriptionEntry[] {
+  const deliveries: SubscriptionEntry[] = [];
+  const grouped = new Map<string, SubscriptionEntry[]>();
+
+  for (const subscription of subscriptions) {
+    const consumerGroup = subscription.filter.consumerGroup;
+
+    if (consumerGroup === undefined) {
+      deliveries.push(subscription);
+      continue;
+    }
+
+    grouped.set(consumerGroup, [...(grouped.get(consumerGroup) ?? []), subscription]);
+  }
+
+  for (const [consumerGroup, candidates] of grouped) {
+    const offset = consumerGroupOffsets.get(consumerGroup) ?? 0;
+    const selectedIndex = offset % candidates.length;
+    const selected = candidates[selectedIndex];
+
+    if (selected !== undefined) {
+      deliveries.push(selected);
+      consumerGroupOffsets.set(consumerGroup, offset + 1);
+    }
+  }
+
+  return deliveries;
 }
 
 function matchesFilter(filter: MailboxSubscriptionFilter, message: MailboxMessage): boolean {

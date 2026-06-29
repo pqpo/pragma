@@ -15,7 +15,7 @@ import type {
   LoopTerminalTarget,
   LoopTransition,
   LoopTransitionTarget,
-  TaskEnvironmentRequest,
+  SandboxRequest,
 } from "./types.ts";
 
 export interface DefineLoopOptions<TInput = unknown, TOutput = unknown> {
@@ -30,7 +30,7 @@ export type LoopStepOptions<TInput = unknown, TOutput = unknown> = {
   readonly output?: z.ZodType<TOutput> | undefined;
   readonly reduce?: LoopStepReducer<TOutput> | undefined;
   readonly runtime?: string | undefined;
-  readonly environment?: TaskEnvironmentRequest | undefined;
+  readonly sandbox?: SandboxRequest | undefined;
 };
 
 export interface DefineCodeLoopOptions<TInput = unknown, TOutput = unknown> {
@@ -89,7 +89,7 @@ export class LoopSpec<TInput = unknown, TOutput = unknown> {
       output: options.output,
       reduce: options.reduce,
       runtime: options.runtime,
-      environment: options.environment,
+      sandbox: options.sandbox,
     };
     this.addStep(step as unknown as LoopStepDefinition);
     return createStepRef(step as unknown as LoopStepDefinition<unknown, TStepOutput>);
@@ -267,7 +267,7 @@ export function defineCodeLoop<TInput = unknown, TOutput = unknown>(
         workspace: request.execution.workspace,
         task: request.execution.task,
         workflow: request.execution.workflow,
-        environment: request.execution.environment,
+        sandbox: request.execution.sandbox,
       });
       const parsedOutput = options.output?.parse(output) ?? output;
 

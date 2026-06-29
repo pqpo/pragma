@@ -1,7 +1,7 @@
 import type {
   LoopState,
   MailboxMessage,
-  TaskEnvironmentRef,
+  SandboxRef,
   TaskRunRecord,
   WorkflowRunRecord,
 } from "@expertmesh/shared";
@@ -83,11 +83,12 @@ export function createInMemoryStateManager(): StateManager {
     async createWorkflowRun(request: CreateWorkflowRunRequest) {
       const createdAt = nowIso();
       const workflow: WorkflowRunRecord = {
-        id: createId("workflow"),
+        id: request.id,
         loopId: request.loopId,
         status: "running",
         input: cloneJson(request.input),
         state: LoopStateSchema.parse(cloneJson(request.state)),
+        defaultSandbox: cloneJson(request.defaultSandbox),
         currentStepIds: [request.startStepId],
         completedStepIds: [],
         revision: 0,
@@ -163,7 +164,7 @@ export function createInMemoryStateManager(): StateManager {
       );
     },
 
-    async markTaskLeased(taskRunId, leaseOwner) {
+    async markTaskLeased(taskRunId, leaseOwner, ttlMs) {
       return cloneJson(
         updateTask(taskRunId, (task) => {
           assertTaskStatus(task, ["pending", "dispatched"], "leased");
@@ -171,21 +172,41 @@ export function createInMemoryStateManager(): StateManager {
             ...task,
             status: "leased",
             leaseOwner,
-            leaseExpiresAt: new Date(Date.now() + 60_000).toISOString(),
+            leaseExpiresAt: new Date(Date.now() + ttlMs).toISOString(),
             updatedAt: nowIso(),
           };
         }),
       );
     },
 
-    async markTaskRunning(taskRunId, environment: TaskEnvironmentRef) {
+    async renewTaskLease(taskRunId, leaseOwner, ttlMs) {
+      return cloneJson(
+        updateTask(taskRunId, (task) => {
+          if (task.leaseOwner !== leaseOwner) {
+            throw new Error(`Cannot renew task ${task.id} lease owned by another worker.`);
+          }
+
+          if (!["leased", "running"].includes(task.status)) {
+            throw new Error(`Cannot renew task ${task.id} lease from status ${task.status}.`);
+          }
+
+          return {
+            ...task,
+            leaseExpiresAt: new Date(Date.now() + ttlMs).toISOString(),
+            updatedAt: nowIso(),
+          };
+        }),
+      );
+    },
+
+    async markTaskRunning(taskRunId, sandbox: SandboxRef) {
       return cloneJson(
         updateTask(taskRunId, (task) => {
           assertTaskStatus(task, ["leased"], "running");
           return {
             ...task,
             status: "running",
-            environment,
+            sandbox,
             updatedAt: nowIso(),
           };
         }),
@@ -345,6 +366,32 @@ export function createInMemoryStateManager(): StateManager {
     async listReadyTransitions(workflowRunId) {
       const workflow = getRequiredWorkflow(workflowRunId);
       return workflow.currentStepIds.map((stepId): ReadyTransition => ({ stepId }));
+    },
+
+    async recoverExpiredLeases(now) {
+      const recovered: TaskRunRecord[] = [];
+
+      for (const task of tasks.values()) {
+        if (!["leased", "running"].includes(task.status) || task.leaseExpiresAt === undefined) {
+          continue;
+        }
+
+        if (new Date(task.leaseExpiresAt).getTime() > now.getTime()) {
+          continue;
+        }
+
+        const nextTask: TaskRunRecord = {
+          ...task,
+          status: "dispatched",
+          leaseOwner: undefined,
+          leaseExpiresAt: undefined,
+          updatedAt: nowIso(),
+        };
+        saveTask(nextTask);
+        recovered.push(cloneJson(nextTask));
+      }
+
+      return recovered;
     },
   };
 }

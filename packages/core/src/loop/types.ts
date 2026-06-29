@@ -1,7 +1,7 @@
 import type {
   LoopState,
   MailboxMessage,
-  TaskEnvironmentRef,
+  SandboxRef,
   TaskRunRecord,
   WorkflowRunRecord,
 } from "@expertmesh/shared";
@@ -29,14 +29,14 @@ export interface LoopRuntimeOverride {
   readonly runtime?: string | undefined;
 }
 
-export interface TaskEnvironmentStrategy {
-  readonly mode: "local-workspace" | "ephemeral" | "reuse-workflow" | "reuse-step" | "attach";
+export interface SandboxStrategy {
+  readonly mode: "reuse-workflow" | "ephemeral" | "reuse-step" | "attach";
   readonly key?: string | undefined;
-  readonly environmentId?: string | undefined;
+  readonly sandboxId?: string | undefined;
 }
 
-export interface TaskEnvironmentRequest {
-  readonly strategy?: TaskEnvironmentStrategy | undefined;
+export interface SandboxRequest {
+  readonly strategy?: SandboxStrategy | undefined;
   readonly workspace?:
     | {
         readonly root?: string | undefined;
@@ -98,7 +98,7 @@ export interface LoopCodeContext<TInput = unknown> {
   readonly workspace: LoopCodeWorkspace;
   readonly task: TaskRunRecord;
   readonly workflow: WorkflowRunRecord;
-  readonly environment: TaskEnvironmentRef;
+  readonly sandbox: SandboxRef;
 }
 
 export type LoopCodeHandler<TInput = unknown, TOutput = unknown> = (
@@ -114,7 +114,7 @@ export interface LoopStepDefinition<
   readonly input?: LoopStepInputResolver<TInput> | TInput | undefined;
   readonly output?: RuntimeOutputSchema<TOutput> | undefined;
   readonly reduce?: LoopStepReducer<TOutput> | undefined;
-  readonly environment?: TaskEnvironmentRequest | undefined;
+  readonly sandbox?: SandboxRequest | undefined;
 }
 
 export interface LoopTerminalTarget {
@@ -181,7 +181,7 @@ export interface LoopExecutionContext {
   readonly workflow: WorkflowRunRecord;
   readonly state: LoopState;
   readonly workspace: LoopCodeWorkspace;
-  readonly environment: TaskEnvironmentRef;
+  readonly sandbox: SandboxRef;
   readonly runtimeId: string;
   readonly runtimeRegistry: RuntimeRegistry;
   readonly emitProgress: (event: RuntimeStreamEvent) => Promise<void>;
@@ -215,7 +215,7 @@ export interface TaskDispatchPayload {
     readonly requestedId?: string | undefined;
     readonly resolvedId: string;
   };
-  readonly environment: TaskEnvironmentRequest;
+  readonly sandbox: SandboxRequest;
   readonly policy: TaskPolicy;
 }
 
@@ -227,7 +227,8 @@ export interface CreateLoopAppOptions {
   readonly mailbox?: Mailbox | undefined;
   readonly stateManager?: StateManager | undefined;
   readonly taskManager?: TaskManager | undefined;
-  readonly environment?: TaskExecutionEnvironment | undefined;
+  readonly sandboxManager?: SandboxManager | undefined;
+  readonly loopStore?: LoopDefinitionStore | undefined;
   readonly runtimes?: RuntimeRegistry | undefined;
   readonly defaultRuntime?: string | undefined;
 }
@@ -276,10 +277,12 @@ export interface Mailbox {
 }
 
 export interface CreateWorkflowRunRequest<TInput = unknown> {
+  readonly id: string;
   readonly loopId: string;
   readonly input: TInput;
   readonly state: LoopState;
   readonly startStepId: string;
+  readonly defaultSandbox: SandboxRef;
 }
 
 export interface CreateTaskRunRequest {
@@ -316,10 +319,19 @@ export interface StateManager {
   readonly getTaskRun: (taskRunId: string) => Promise<TaskRunRecord | undefined>;
   readonly listTaskRuns: (workflowRunId: string) => Promise<readonly TaskRunRecord[]>;
   readonly markTaskDispatched: (taskRunId: string) => Promise<TaskRunRecord>;
-  readonly markTaskLeased: (taskRunId: string, leaseOwner: string) => Promise<TaskRunRecord>;
+  readonly markTaskLeased: (
+    taskRunId: string,
+    leaseOwner: string,
+    ttlMs: number,
+  ) => Promise<TaskRunRecord>;
+  readonly renewTaskLease: (
+    taskRunId: string,
+    leaseOwner: string,
+    ttlMs: number,
+  ) => Promise<TaskRunRecord>;
   readonly markTaskRunning: (
     taskRunId: string,
-    environment: TaskEnvironmentRef,
+    sandbox: SandboxRef,
   ) => Promise<TaskRunRecord>;
   readonly markTaskSucceeded: (taskRunId: string, output: unknown) => Promise<TaskRunRecord>;
   readonly markTaskFailed: (taskRunId: string, error: unknown) => Promise<TaskRunRecord>;
@@ -341,29 +353,55 @@ export interface StateManager {
     stepIds: readonly string[],
   ) => Promise<WorkflowRunRecord>;
   readonly listReadyTransitions: (workflowRunId: string) => Promise<readonly ReadyTransition[]>;
+  readonly recoverExpiredLeases: (now: Date) => Promise<readonly TaskRunRecord[]>;
 }
 
-export interface ResolveTaskEnvironmentRequest {
+export interface CreateWorkflowSandboxRequest {
+  readonly workflowRunId: string;
+  readonly loopId: string;
+  readonly input: unknown;
+  readonly request?: SandboxRequest | undefined;
+}
+
+export interface ResolveTaskSandboxRequest {
   readonly workflow: WorkflowRunRecord;
   readonly task: TaskRunRecord;
-  readonly request: TaskEnvironmentRequest;
+  readonly request: SandboxRequest;
 }
 
-export interface TaskEnvironmentLease {
-  readonly ref: TaskEnvironmentRef;
+export interface SandboxLease {
+  readonly ref: SandboxRef;
   readonly workspace: LoopCodeWorkspace;
 }
 
-export interface TaskEnvironmentReleaseResult {
+export interface SandboxReleaseResult {
   readonly status: "succeeded" | "failed" | "cancelled";
 }
 
-export interface TaskExecutionEnvironment {
-  readonly resolve: (request: ResolveTaskEnvironmentRequest) => Promise<TaskEnvironmentLease>;
-  readonly release: (
-    lease: TaskEnvironmentLease,
-    result: TaskEnvironmentReleaseResult,
+export interface SandboxManager {
+  readonly createWorkflowSandbox: (
+    request: CreateWorkflowSandboxRequest,
+  ) => Promise<SandboxLease>;
+  readonly resolveTaskSandbox: (request: ResolveTaskSandboxRequest) => Promise<SandboxLease>;
+  readonly releaseTaskSandbox: (
+    lease: SandboxLease,
+    result: SandboxReleaseResult,
   ) => Promise<void>;
+  readonly cleanupWorkflowSandboxes: (workflowRunId: string) => Promise<void>;
+}
+
+export interface LoopDefinitionRecord<TInput = unknown, TOutput = unknown> {
+  readonly workflowRunId: string;
+  readonly loop: CompiledLoop<TInput, TOutput>;
+  readonly request: StartLoopRunRequest<TInput>;
+}
+
+export interface LoopDefinitionStore {
+  readonly save: <TInput, TOutput>(
+    record: LoopDefinitionRecord<TInput, TOutput>,
+  ) => Promise<void>;
+  readonly get: (workflowRunId: string) => Promise<LoopDefinitionRecord | undefined>;
+  readonly delete: (workflowRunId: string) => Promise<void>;
 }
 
 export interface TaskManager {
@@ -387,9 +425,12 @@ export interface TaskManagerOptions {
   readonly mailbox: Mailbox;
   readonly stateManager: StateManager;
   readonly runtimes: RuntimeRegistry;
-  readonly environment: TaskExecutionEnvironment;
+  readonly sandboxManager: SandboxManager;
+  readonly loopStore: LoopDefinitionStore;
   readonly runLoop?: LoopExecutionContext["runLoop"] | undefined;
   readonly workerId?: string | undefined;
+  readonly leaseTtlMs?: number | undefined;
+  readonly heartbeatIntervalMs?: number | undefined;
 }
 
 export type RuntimeLike = RuntimeAdapter;

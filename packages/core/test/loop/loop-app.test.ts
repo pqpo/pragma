@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import {
   createInMemoryMailbox,
+  createLocalSandboxManager,
   createLoopApp,
   defineCodeLoop,
   defineLoop,
@@ -186,12 +187,236 @@ describe("loop app", () => {
         "workflow.started",
         "task.dispatch",
         "task.leased",
-        "environment.attached",
+        "sandbox.created",
+        "sandbox.reused",
         "task.started",
+        "task.heartbeat",
         "task.completed",
         "workflow.completed",
       ]),
     );
+  });
+
+  it("reuses the workflow sandbox by default", async () => {
+    const sandboxIds: string[] = [];
+    const loop = defineLoop({
+      id: "default-sandbox-loop",
+    });
+    const first = loop.use(
+      "first",
+      defineCodeLoop({
+        id: "first-code",
+        handler: ({ sandbox }) => {
+          sandboxIds.push(sandbox.id);
+          return "first";
+        },
+      }),
+    );
+    const second = loop.use(
+      "second",
+      defineCodeLoop({
+        id: "second-code",
+        handler: ({ sandbox }) => {
+          sandboxIds.push(sandbox.id);
+          return "second";
+        },
+      }),
+    );
+
+    loop.flow(({ start, end }) => {
+      start(first).next(second).next(end());
+    });
+
+    await createLoopApp().run(loop, {
+      input: {},
+    });
+
+    expect(sandboxIds).toHaveLength(2);
+    expect(sandboxIds[1]).toBe(sandboxIds[0]);
+  });
+
+  it("creates a new sandbox for an ephemeral step", async () => {
+    const sandboxIds: string[] = [];
+    const loop = defineLoop({
+      id: "ephemeral-sandbox-loop",
+    });
+    const first = loop.use(
+      "first",
+      defineCodeLoop({
+        id: "first-code",
+        handler: ({ sandbox }) => {
+          sandboxIds.push(sandbox.id);
+          return "first";
+        },
+      }),
+    );
+    const second = loop.use(
+      "second",
+      defineCodeLoop({
+        id: "second-code",
+        handler: ({ sandbox }) => {
+          sandboxIds.push(sandbox.id);
+          return "second";
+        },
+      }),
+      {
+        sandbox: {
+          strategy: {
+            mode: "ephemeral",
+          },
+        },
+      },
+    );
+
+    loop.flow(({ start, end }) => {
+      start(first).next(second).next(end());
+    });
+
+    await createLoopApp().run(loop, {
+      input: {},
+    });
+
+    expect(sandboxIds).toHaveLength(2);
+    expect(sandboxIds[1]).not.toBe(sandboxIds[0]);
+  });
+
+  it("inherits the parent sandbox for nested loops by default", async () => {
+    const sandboxIds: string[] = [];
+    const childLoop = defineLoop({
+      id: "child-sandbox-loop",
+    });
+    const childTask = childLoop.use(
+      "child-task",
+      defineCodeLoop({
+        id: "child-code",
+        handler: ({ sandbox }) => {
+          sandboxIds.push(sandbox.id);
+          return "child";
+        },
+      }),
+    );
+    childLoop.flow(({ start, end }) => {
+      start(childTask).next(end());
+    });
+
+    const parentLoop = defineLoop({
+      id: "parent-sandbox-loop",
+    });
+    const parentTask = parentLoop.use(
+      "parent-task",
+      defineCodeLoop({
+        id: "parent-code",
+        handler: ({ sandbox }) => {
+          sandboxIds.push(sandbox.id);
+          return "parent";
+        },
+      }),
+    );
+    const child = parentLoop.use("child", childLoop.compile());
+
+    parentLoop.flow(({ start, end }) => {
+      start(parentTask).next(child).next(end());
+    });
+
+    await createLoopApp().run(parentLoop, {
+      input: {},
+    });
+
+    expect(sandboxIds).toHaveLength(2);
+    expect(sandboxIds[1]).toBe(sandboxIds[0]);
+  });
+
+  it("rotates mailbox deliveries within a consumer group", async () => {
+    const mailbox = createInMemoryMailbox();
+    const deliveries: string[] = [];
+
+    await mailbox.subscribe({ consumerGroup: "workers" }, async () => {
+      deliveries.push("worker-a");
+    });
+    await mailbox.subscribe({ consumerGroup: "workers" }, async () => {
+      deliveries.push("worker-b");
+    });
+
+    await mailbox.publish({
+      id: "message-1",
+      kind: "event",
+      type: "workflow.started",
+      workflowRunId: "workflow-1",
+      payload: {},
+      occurredAt: new Date().toISOString(),
+      producer: {
+        id: "test",
+        kind: "external",
+      },
+    });
+    await mailbox.publish({
+      id: "message-2",
+      kind: "event",
+      type: "workflow.started",
+      workflowRunId: "workflow-1",
+      payload: {},
+      occurredAt: new Date().toISOString(),
+      producer: {
+        id: "test",
+        kind: "external",
+      },
+    });
+
+    expect(deliveries).toEqual(["worker-a", "worker-b"]);
+  });
+
+  it("rejects workflow sandbox attach requests without a sandbox id", async () => {
+    const sandboxManager = createLocalSandboxManager();
+
+    await expect(
+      sandboxManager.createWorkflowSandbox({
+        workflowRunId: "workflow-missing-sandbox",
+        loopId: "loop",
+        input: {},
+        request: {
+          strategy: {
+            mode: "attach",
+          },
+        },
+      }),
+    ).rejects.toThrow("Workflow sandbox attach strategy requires sandboxId.");
+  });
+
+  it("skips recovered task leases when the loop definition was cleaned up", async () => {
+    const app = createLoopApp();
+    const workflow = await app.stateManager.createWorkflowRun({
+      id: "workflow-orphaned-task",
+      loopId: "loop",
+      input: {},
+      state: {
+        input: {},
+        context: {},
+        artifacts: {},
+        results: {},
+        flags: {},
+        messages: [],
+        metrics: {},
+        private: {},
+      },
+      defaultSandbox: {
+        id: "sandbox-default",
+        kind: "local-workspace",
+      },
+      startStepId: "review",
+    });
+    const task = await app.stateManager.createTaskRun({
+      workflowRunId: workflow.id,
+      stepId: "review",
+      visit: 1,
+      runtimeId: "local",
+      input: {},
+    });
+    await app.stateManager.markTaskLeased(task.id, "worker-1", 1);
+
+    const recovered = await app.taskManager.recoverExpiredLeases(new Date(Date.now() + 20_000));
+
+    expect(recovered).toHaveLength(1);
+    expect(recovered[0]?.status).toBe("dispatched");
   });
 
   it("registers any Loop implementation as a step", async () => {

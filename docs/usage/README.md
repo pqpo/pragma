@@ -8,6 +8,8 @@
 2. [Plugins 使用指南](./plugins.md)
 3. [Loop 使用指南](./loops.md)
 
+如果要接入未来分布式部署，优先阅读 [Loop 使用指南](./loops.md) 中的自定义 `LoopApp`、`SandboxManager`、`StateManager`、`Mailbox` 和 `TaskManager` 章节。
+
 相关架构文档：
 
 - [Agent Core 架构说明](../architecture/agent-core-architecture.md)

@@ -891,6 +891,8 @@ createLoopApp()
 ``` text
 InMemoryMailbox
 InMemoryStateManager
+InMemoryLoopDefinitionStore
+LocalSandboxManager
 LocalTaskManager
 RuntimeRegistry
 ```
@@ -902,12 +904,13 @@ RuntimeRegistry
 ``` text
 app.run(compiledLoop, input)
   -> TaskManager.startRun()
-  -> StateManager.createWorkflowRun()
+  -> SandboxManager.createWorkflowSandbox()
+  -> StateManager.createWorkflowRun(defaultSandbox)
   -> TaskManager.dispatchReadyTasks()
   -> Mailbox.publish(task.dispatch)
   -> TaskWorker consume task.dispatch
   -> TaskManager.startTask()
-  -> TaskExecutionEnvironment.resolve()
+  -> SandboxManager.resolveTaskSandbox()
   -> RuntimeAdapter.execute()
   -> Mailbox.publish(task.started / task.progress / task.completed / task.failed)
   -> TaskManager consume task.completed
@@ -974,9 +977,10 @@ task.failed
 task.cancelled
 task.heartbeat
 
-environment.attached
-environment.reused
-environment.released
+sandbox.created
+sandbox.attached
+sandbox.reused
+sandbox.released
 ```
 
 `task.dispatch` payload 应包含执行所需的最小闭包，而不是整份可变对象引用：
@@ -996,7 +1000,7 @@ type TaskDispatchPayload = {
     requestedId?: string;
     resolvedId: string;
   };
-  environment: TaskEnvironmentRequest;
+  sandbox: SandboxRequest;
   policy: TaskPolicy;
 };
 ```
@@ -1011,7 +1015,7 @@ type TaskCompletedPayload = {
   output: unknown;
   usage?: RuntimeUsage;
   artifacts?: readonly RuntimeArtifact[];
-  environment?: TaskEnvironmentRef;
+  sandbox?: SandboxRef;
 };
 ```
 
@@ -1028,7 +1032,7 @@ type TaskFailedPayload = {
     retryable: boolean;
     details?: unknown;
   };
-  environment?: TaskEnvironmentRef;
+  sandbox?: SandboxRef;
 };
 ```
 
@@ -1127,6 +1131,7 @@ type WorkflowRunRecord = {
   status: "queued" | "running" | "waiting" | "succeeded" | "failed" | "cancelled";
   input: unknown;
   state: LoopStateSnapshot;
+  defaultSandbox: SandboxRef;
   currentStepIds: readonly string[];
   completedStepIds: readonly string[];
   revision: number;
@@ -1149,7 +1154,7 @@ type TaskRunRecord = {
     | "cancelled"
     | "dead_letter";
   runtimeId: string;
-  environment?: TaskEnvironmentRef;
+  sandbox?: SandboxRef;
   input: unknown;
   output?: unknown;
   error?: unknown;
@@ -1210,14 +1215,14 @@ interface TaskManager {
 
 TaskManager 不应该在 transition 判断阶段直接调用 Runtime，而是创建 task run 后通过 Mailbox 发送 `task.dispatch`。这样当前本机执行和未来远程 Worker / Desktop 执行使用同一模型。
 
-`TaskManager` 的构造依赖里注入执行环境接口：
+`TaskManager` 的构造依赖里注入 sandbox 生命周期接口：
 
 ``` ts
 const taskManager = createLocalTaskManager({
   mailbox,
   stateManager,
   runtimes,
-  environment: createLocalTaskExecutionEnvironment({
+  sandboxManager: createLocalSandboxManager({
     workspaceRoot: process.cwd(),
   }),
 });
@@ -1229,13 +1234,14 @@ const taskManager = createLocalTaskManager({
 task.dispatch
   -> lease task
   -> publish task.leased
-  -> resolve task execution environment
-  -> publish environment.attached / environment.reused
+  -> resolve task sandbox
+  -> publish sandbox.attached / sandbox.reused
   -> publish task.started
+  -> renew lease and publish task.heartbeat
   -> runtime.execute(invocation)
   -> forward runtime stream as task.progress / task.output.delta
   -> publish task.completed or task.failed
-  -> release or retain environment according to policy
+  -> release or retain sandbox according to policy
 ```
 
 `TaskManager` 的幂等要求：
@@ -1245,20 +1251,19 @@ task.dispatch
 - lease 超时后可以重新派发，但旧 worker 迟到的 completed 事件必须被拒绝或标记 stale。
 - task attempt 必须写入 `TaskRunRecord`，retry 不能覆盖历史 attempt。
 
-# 10. Task 执行环境接口
+# 10. Sandbox 接口
 
-每个任务未来可能独立开启 sandbox，也可能复用已有 workspace/session。这个决策不应该写死在 RuntimeAdapter 中，也不需要独立暴露一个 Sandbox Manager；它应该作为 `TaskManager` 的可替换依赖，通过接口注入。
+每个 root workflow 启动时创建默认 sandbox。后续任务默认复用 workflow sandbox，单个 step 可以显式要求新建 ephemeral sandbox，也可以 attach 到已有 sandbox。这个决策不应该写死在 RuntimeAdapter 中，而应该作为 `TaskManager` 的可替换依赖，通过 `SandboxManager` 注入。
 
 ``` ts
-type TaskEnvironmentStrategy =
-  | { mode: "local-workspace" }
-  | { mode: "ephemeral" }
+type SandboxStrategy =
   | { mode: "reuse-workflow"; key?: string }
+  | { mode: "ephemeral" }
   | { mode: "reuse-step"; key?: string }
-  | { mode: "attach"; environmentId: string };
+  | { mode: "attach"; sandboxId: string };
 
-type TaskEnvironmentRequest = {
-  strategy: TaskEnvironmentStrategy;
+type SandboxRequest = {
+  strategy: SandboxStrategy;
   workspace?: {
     root?: string;
     access: "readonly" | "readwrite";
@@ -1271,9 +1276,11 @@ type TaskEnvironmentRequest = {
   };
 };
 
-interface TaskExecutionEnvironment {
-  resolve(request: ResolveTaskEnvironmentRequest): Promise<TaskEnvironmentLease>;
-  release(lease: TaskEnvironmentLease, result: TaskEnvironmentReleaseResult): Promise<void>;
+interface SandboxManager {
+  createWorkflowSandbox(request: CreateWorkflowSandboxRequest): Promise<SandboxLease>;
+  resolveTaskSandbox(request: ResolveTaskSandboxRequest): Promise<SandboxLease>;
+  releaseTaskSandbox(lease: SandboxLease, result: SandboxReleaseResult): Promise<void>;
+  cleanupWorkflowSandboxes(workflowRunId: string): Promise<void>;
 }
 ```
 
@@ -1282,8 +1289,8 @@ interface TaskExecutionEnvironment {
 ``` ts
 loop.agent("coder", coderAgent, {
   runtime: "claude-code-local",
-  environment: {
-    strategy: { mode: "local-workspace" },
+  sandbox: {
+    strategy: { mode: "reuse-workflow" },
     capabilities: {
       filesystem: true,
       shell: true,
@@ -1294,33 +1301,33 @@ loop.agent("coder", coderAgent, {
 
 loop.code("unit-test", runTests, {
   runtime: "sandbox-node",
-  environment: {
+  sandbox: {
     strategy: { mode: "ephemeral" },
   },
 });
 ```
 
-执行环境策略与 Runtime 选择是两个维度：
+Sandbox 策略与 Runtime 选择是两个维度：
 
 - Runtime 决定“用什么执行器执行”。
-- Task execution environment 决定“在哪里、带着什么权限和工作区执行”。
+- Sandbox 决定“在哪里、带着什么权限和工作区执行”。
 
-当前本机版本可以提供 `LocalTaskExecutionEnvironment`，只解析本机 `workspace` / session ref。未来需要 sandbox 时，只替换或扩展这个接口实现，例如：
+当前本机版本提供 `LocalSandboxManager`，只解析本机 `workspace` / session ref。未来需要远程或容器 sandbox 时，只替换这个接口实现，例如：
 
 ``` text
-LocalTaskExecutionEnvironment       当前本机执行
-CloudSandboxTaskEnvironment         云端容器 / sandbox
-DesktopWorkspaceTaskEnvironment     Desktop 授权工作区
-RemoteRunnerTaskEnvironment         self-hosted runner
+LocalSandboxManager          当前本机执行
+CloudSandboxManager          云端容器 / sandbox
+DesktopSandboxManager        Desktop 授权工作区
+RemoteRunnerSandboxManager   self-hosted runner
 ```
 
 这样 `TaskManager` 的生命周期、租约、重试、Mailbox 协议都不需要改变。
 
-SubLoop 默认继承父 task 的 execution environment policy，但可以显式覆盖：
+SubLoop 默认继承父 task 的 sandbox，但可以显式覆盖：
 
 ``` ts
 loop.subloop("coding", codingLoop, {
-  environment: {
+  sandbox: {
     strategy: { mode: "reuse-workflow", key: "source-repo" },
   },
 });

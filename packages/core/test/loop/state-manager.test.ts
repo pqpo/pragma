@@ -6,6 +6,7 @@ describe("in-memory StateManager", () => {
   it("applies step reducers to Loop State drafts and increments revisions", async () => {
     const stateManager = createInMemoryStateManager();
     const workflow = await stateManager.createWorkflowRun({
+      id: "workflow-state-reducer",
       loopId: "loop",
       input: {
         value: 1,
@@ -21,6 +22,10 @@ describe("in-memory StateManager", () => {
         messages: [],
         metrics: {},
         private: {},
+      },
+      defaultSandbox: {
+        id: "sandbox-default",
+        kind: "local-workspace",
       },
       startStepId: "review",
     });
@@ -58,6 +63,7 @@ describe("in-memory StateManager", () => {
   it("rejects duplicate active task runs for the same workflow step", async () => {
     const stateManager = createInMemoryStateManager();
     const workflow = await stateManager.createWorkflowRun({
+      id: "workflow-active-task",
       loopId: "loop",
       input: {},
       state: {
@@ -69,6 +75,10 @@ describe("in-memory StateManager", () => {
         messages: [],
         metrics: {},
         private: {},
+      },
+      defaultSandbox: {
+        id: "sandbox-default",
+        kind: "local-workspace",
       },
       startStepId: "review",
     });
@@ -95,6 +105,7 @@ describe("in-memory StateManager", () => {
   it("tracks task cancellation as a cancelled status", async () => {
     const stateManager = createInMemoryStateManager();
     const workflow = await stateManager.createWorkflowRun({
+      id: "workflow-cancel-task",
       loopId: "loop",
       input: {},
       state: {
@@ -106,6 +117,10 @@ describe("in-memory StateManager", () => {
         messages: [],
         metrics: {},
         private: {},
+      },
+      defaultSandbox: {
+        id: "sandbox-default",
+        kind: "local-workspace",
       },
       startStepId: "review",
     });
@@ -130,6 +145,7 @@ describe("in-memory StateManager", () => {
   it("rejects invalid task state transitions", async () => {
     const stateManager = createInMemoryStateManager();
     const workflow = await stateManager.createWorkflowRun({
+      id: "workflow-invalid-transition",
       loopId: "loop",
       input: {},
       state: {
@@ -142,6 +158,10 @@ describe("in-memory StateManager", () => {
         metrics: {},
         private: {},
       },
+      defaultSandbox: {
+        id: "sandbox-default",
+        kind: "local-workspace",
+      },
       startStepId: "review",
     });
     const task = await stateManager.createTaskRun({
@@ -152,8 +172,50 @@ describe("in-memory StateManager", () => {
       input: {},
     });
 
-    await expect(stateManager.markTaskSucceeded(task.id, {})).rejects.toThrow(
-      "Cannot mark task",
-    );
+    await expect(stateManager.markTaskSucceeded(task.id, {})).rejects.toThrow("Cannot mark task");
+  });
+
+  it("renews and recovers task leases", async () => {
+    const stateManager = createInMemoryStateManager();
+    const workflow = await stateManager.createWorkflowRun({
+      id: "workflow-lease-recovery",
+      loopId: "loop",
+      input: {},
+      state: {
+        input: {},
+        context: {},
+        artifacts: {},
+        results: {},
+        flags: {},
+        messages: [],
+        metrics: {},
+        private: {},
+      },
+      defaultSandbox: {
+        id: "sandbox-default",
+        kind: "local-workspace",
+      },
+      startStepId: "review",
+    });
+    const task = await stateManager.createTaskRun({
+      workflowRunId: workflow.id,
+      stepId: "review",
+      visit: 1,
+      runtimeId: "local",
+      input: {},
+    });
+    const leased = await stateManager.markTaskLeased(task.id, "worker-1", 100);
+    const renewed = await stateManager.renewTaskLease(task.id, "worker-1", 10_000);
+    const recoveredBeforeExpiry = await stateManager.recoverExpiredLeases(new Date());
+
+    expect(leased.leaseOwner).toBe("worker-1");
+    expect(renewed.leaseExpiresAt).toBeDefined();
+    expect(recoveredBeforeExpiry).toEqual([]);
+
+    const recovered = await stateManager.recoverExpiredLeases(new Date(Date.now() + 20_000));
+
+    expect(recovered).toHaveLength(1);
+    expect(recovered[0]?.status).toBe("dispatched");
+    expect(recovered[0]?.leaseOwner).toBeUndefined();
   });
 });

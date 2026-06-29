@@ -22,15 +22,16 @@ import type {
 } from "./types.ts";
 import { createId, nowIso, readObjectField } from "./utils.ts";
 
-interface RunContext<TInput = unknown, TOutput = unknown> {
-  readonly loop: CompiledLoop<TInput, TOutput>;
-  readonly request: StartLoopRunRequest<TInput>;
+interface RunContext<TOutput = unknown> {
   readonly resolve: (result: LoopRunResult<TOutput>) => void;
   readonly reject: (error: Error) => void;
 }
 
 export function createLocalTaskManager(options: TaskManagerOptions): TaskManager {
   const workerId = options.workerId ?? createId("worker");
+  const leaseTtlMs = options.leaseTtlMs ?? 60_000;
+  const heartbeatIntervalMs =
+    options.heartbeatIntervalMs ?? Math.max(1_000, Math.floor(leaseTtlMs / 3));
   const runContexts = new Map<string, RunContext>();
   let startPromise: Promise<void> | undefined;
 
@@ -56,6 +57,20 @@ export function createLocalTaskManager(options: TaskManagerOptions): TaskManager
     }
 
     return context;
+  };
+
+  const getLoopDefinition = async (workflowRunId: string) => {
+    const definition = await options.loopStore.get(workflowRunId);
+
+    if (definition === undefined) {
+      throw new Error(`Loop definition is not found: ${workflowRunId}`);
+    }
+
+    return definition;
+  };
+
+  const findLoopDefinition = async (workflowRunId: string) => {
+    return await options.loopStore.get(workflowRunId);
   };
 
   const manager: TaskManager = {
@@ -86,17 +101,44 @@ export function createLocalTaskManager(options: TaskManagerOptions): TaskManager
       const state = LoopStateSchema.parse({
         input,
       });
+      const workflowRunId = createId("workflow");
+      const inheritedSandboxRequest =
+        request.execution === undefined
+          ? undefined
+          : {
+              strategy: {
+                mode: "attach" as const,
+                sandboxId: request.execution.sandbox.id,
+              },
+              workspace:
+                request.execution.sandbox.workspaceRoot === undefined
+                  ? undefined
+                  : {
+                      root: request.execution.sandbox.workspaceRoot,
+                    },
+            };
+      const workflowSandbox = await options.sandboxManager.createWorkflowSandbox({
+        workflowRunId,
+        loopId: loop.id,
+        input,
+        request: inheritedSandboxRequest,
+      });
       const workflow = await options.stateManager.createWorkflowRun({
+        id: workflowRunId,
         loopId: loop.id,
         input,
         state,
         startStepId: loop.startStepId,
+        defaultSandbox: workflowSandbox.ref,
+      });
+      await options.loopStore.save({
+        workflowRunId: workflow.id,
+        loop,
+        request,
       });
 
       const result = new Promise<LoopRunResult<TOutput>>((resolve, reject) => {
         runContexts.set(workflow.id, {
-          loop,
-          request,
           resolve: (runResult) => {
             resolve(runResult as LoopRunResult<TOutput>);
           },
@@ -104,6 +146,12 @@ export function createLocalTaskManager(options: TaskManagerOptions): TaskManager
         });
       });
 
+      await publish({
+        kind: "event",
+        type: "sandbox.created",
+        workflowRunId: workflow.id,
+        payload: workflowSandbox.ref,
+      });
       await publish({
         kind: "event",
         type: "workflow.started",
@@ -151,7 +199,7 @@ export function createLocalTaskManager(options: TaskManagerOptions): TaskManager
     },
 
     async dispatchReadyTasks(workflowRunId) {
-      const context = getRunContext(workflowRunId);
+      const definition = await getLoopDefinition(workflowRunId);
       const workflow = await options.stateManager.getWorkflowRun(workflowRunId);
 
       if (workflow === undefined || workflow.status !== "running") {
@@ -159,10 +207,10 @@ export function createLocalTaskManager(options: TaskManagerOptions): TaskManager
       }
 
       for (const stepId of workflow.currentStepIds) {
-        const step = context.loop.steps.get(stepId);
+        const step = definition.loop.steps.get(stepId);
 
         if (step === undefined) {
-          throw new Error(`Loop ${context.loop.id} references unknown step: ${stepId}`);
+          throw new Error(`Loop ${definition.loop.id} references unknown step: ${stepId}`);
         }
 
         const existingTasks = await options.stateManager.listTaskRuns(workflowRunId);
@@ -177,7 +225,7 @@ export function createLocalTaskManager(options: TaskManagerOptions): TaskManager
         }
 
         const visit = existingTasks.filter((task) => task.stepId === stepId).length + 1;
-        const limit = context.loop.limits.get(stepId);
+        const limit = definition.loop.limits.get(stepId);
 
         if (limit?.maxVisits !== undefined && visit > limit.maxVisits) {
           await completeWithTerminal(workflowRunId, limit.onExceeded ?? { type: "fail" });
@@ -195,7 +243,11 @@ export function createLocalTaskManager(options: TaskManagerOptions): TaskManager
           workflow: latestWorkflow,
           state: latestWorkflow.state,
         });
-        const runtimeId = resolveRuntimeId(step, context.request, options.runtimes.defaultRuntime);
+        const runtimeId = resolveRuntimeId(
+          step,
+          definition.request,
+          options.runtimes.defaultRuntime,
+        );
         let task: TaskRunRecord;
 
         try {
@@ -224,17 +276,17 @@ export function createLocalTaskManager(options: TaskManagerOptions): TaskManager
           payload: {
             taskRunId: task.id,
             workflowRunId,
-            loopId: context.loop.id,
+            loopId: definition.loop.id,
             stepId,
             visit,
             input,
             runtime: {
-              requestedId: step.runtime ?? context.request.runtime,
+              requestedId: step.runtime ?? definition.request.runtime,
               resolvedId: runtimeId,
             },
-            environment: step.environment ?? {
+            sandbox: step.sandbox ?? {
               strategy: {
-                mode: "local-workspace",
+                mode: "reuse-workflow",
               },
             },
             policy: {},
@@ -256,6 +308,8 @@ export function createLocalTaskManager(options: TaskManagerOptions): TaskManager
       const context = runContexts.get(workflowRunId);
       context?.reject(new Error(reason ?? "Loop run was cancelled."));
       runContexts.delete(workflowRunId);
+      await options.loopStore.delete(workflowRunId);
+      await options.sandboxManager.cleanupWorkflowSandboxes(workflowRunId);
     },
 
     async leaseTask(message) {
@@ -270,7 +324,7 @@ export function createLocalTaskManager(options: TaskManagerOptions): TaskManager
         return undefined;
       }
 
-      const leasedTask = await options.stateManager.markTaskLeased(task.id, workerId);
+      const leasedTask = await options.stateManager.markTaskLeased(task.id, workerId, leaseTtlMs);
       await publish({
         kind: "event",
         type: "task.leased",
@@ -292,30 +346,38 @@ export function createLocalTaskManager(options: TaskManagerOptions): TaskManager
     },
 
     async executeTask(lease) {
-      const context = getRunContext(lease.workflow.id);
-      const step = context.loop.steps.get(lease.task.stepId);
+      const definition = await getLoopDefinition(lease.workflow.id);
+      const step = definition.loop.steps.get(lease.task.stepId);
 
       if (step === undefined) {
-        throw new Error(`Loop ${context.loop.id} references unknown step: ${lease.task.stepId}`);
+        throw new Error(`Loop ${definition.loop.id} references unknown step: ${lease.task.stepId}`);
       }
 
-      let environmentLease: Awaited<ReturnType<typeof options.environment.resolve>> | undefined;
+      let sandboxLease:
+        | Awaited<ReturnType<typeof options.sandboxManager.resolveTaskSandbox>>
+        | undefined;
+      let stopHeartbeat: (() => void) | undefined;
 
       try {
-        environmentLease = await options.environment.resolve({
+        sandboxLease = await options.sandboxManager.resolveTaskSandbox({
           workflow: lease.workflow,
           task: lease.task,
-          request: lease.message.payload.environment,
+          request: lease.message.payload.sandbox,
         });
-        await options.stateManager.markTaskRunning(lease.task.id, environmentLease.ref);
+        await options.stateManager.markTaskRunning(lease.task.id, sandboxLease.ref);
+        const sandboxEventType =
+          lease.message.payload.sandbox.strategy?.mode === "reuse-workflow" ||
+          lease.message.payload.sandbox.strategy?.mode === "reuse-step"
+            ? "sandbox.reused"
+            : "sandbox.attached";
         await publish({
           kind: "event",
-          type: "environment.attached",
+          type: sandboxEventType,
           workflowRunId: lease.workflow.id,
           taskRunId: lease.task.id,
           stepId: lease.task.stepId,
           causationId: lease.message.id,
-          payload: environmentLease.ref,
+          payload: sandboxLease.ref,
         });
         await publish({
           kind: "event",
@@ -326,6 +388,8 @@ export function createLocalTaskManager(options: TaskManagerOptions): TaskManager
           causationId: lease.message.id,
           payload: {},
         });
+        stopHeartbeat = startTaskHeartbeat(lease.task.id, lease.workflow.id, lease.task.stepId);
+        await sendTaskHeartbeat(lease.task.id, lease.workflow.id, lease.task.stepId);
 
         const latestWorkflow = await options.stateManager.getWorkflowRun(lease.workflow.id);
 
@@ -337,12 +401,14 @@ export function createLocalTaskManager(options: TaskManagerOptions): TaskManager
           task: lease.task,
           workflow: latestWorkflow,
           state: latestWorkflow.state,
-          environmentLease,
+          sandboxLease,
           runtimeId: lease.message.payload.runtime.resolvedId,
-          subloopRequest: context.request,
+          subloopRequest: definition.request,
         });
         const parsedOutput = (step.output ?? step.loop.outputSchema)?.parse(output) ?? output;
         await options.stateManager.markTaskSucceeded(lease.task.id, parsedOutput);
+        stopHeartbeat();
+        stopHeartbeat = undefined;
         await publish({
           kind: "event",
           type: "task.completed",
@@ -352,11 +418,12 @@ export function createLocalTaskManager(options: TaskManagerOptions): TaskManager
           causationId: lease.message.id,
           payload: {
             output: parsedOutput,
-            environment: environmentLease.ref,
+            sandbox: sandboxLease.ref,
           },
         });
-        await options.environment.release(environmentLease, { status: "succeeded" });
+        await options.sandboxManager.releaseTaskSandbox(sandboxLease, { status: "succeeded" });
       } catch (error) {
+        stopHeartbeat?.();
         const normalizedError = toErrorPayload(error);
         await options.stateManager.markTaskFailed(lease.task.id, normalizedError);
         await publish({
@@ -368,12 +435,12 @@ export function createLocalTaskManager(options: TaskManagerOptions): TaskManager
           causationId: lease.message.id,
           payload: {
             error: normalizedError,
-            environment: environmentLease?.ref,
+            sandbox: sandboxLease?.ref,
           },
         });
 
-        if (environmentLease !== undefined) {
-          await options.environment.release(environmentLease, { status: "failed" });
+        if (sandboxLease !== undefined) {
+          await options.sandboxManager.releaseTaskSandbox(sandboxLease, { status: "failed" });
         }
       }
     },
@@ -392,10 +459,85 @@ export function createLocalTaskManager(options: TaskManagerOptions): TaskManager
       });
     },
 
-    async recoverExpiredLeases() {
-      return [];
+    async recoverExpiredLeases(now) {
+      const recovered = await options.stateManager.recoverExpiredLeases(now);
+
+      for (const task of recovered) {
+        const definition = await findLoopDefinition(task.workflowRunId);
+
+        if (definition === undefined) {
+          continue;
+        }
+
+        const step = definition.loop.steps.get(task.stepId);
+
+        if (step === undefined) {
+          continue;
+        }
+
+        await publish<TaskDispatchPayload>({
+          kind: "command",
+          type: "task.dispatch",
+          workflowRunId: task.workflowRunId,
+          taskRunId: task.id,
+          stepId: task.stepId,
+          payload: {
+            taskRunId: task.id,
+            workflowRunId: task.workflowRunId,
+            loopId: definition.loop.id,
+            stepId: task.stepId,
+            visit: task.visit,
+            input: task.input,
+            runtime: {
+              requestedId: step.runtime ?? definition.request.runtime,
+              resolvedId: task.runtimeId,
+            },
+            sandbox: step.sandbox ?? {
+              strategy: {
+                mode: "reuse-workflow",
+              },
+            },
+            policy: {},
+          },
+        });
+      }
+
+      return recovered;
     },
   };
+
+  function startTaskHeartbeat(
+    taskRunId: string,
+    workflowRunId: string,
+    stepId: string,
+  ): () => void {
+    const interval = setInterval(() => {
+      void sendTaskHeartbeat(taskRunId, workflowRunId, stepId).catch(() => undefined);
+    }, heartbeatIntervalMs);
+
+    return () => {
+      clearInterval(interval);
+    };
+  }
+
+  async function sendTaskHeartbeat(
+    taskRunId: string,
+    workflowRunId: string,
+    stepId: string,
+  ): Promise<void> {
+    const task = await options.stateManager.renewTaskLease(taskRunId, workerId, leaseTtlMs);
+    await publish({
+      kind: "event",
+      type: "task.heartbeat",
+      workflowRunId,
+      taskRunId,
+      stepId,
+      payload: {
+        workerId,
+        leaseExpiresAt: task.leaseExpiresAt,
+      },
+    });
+  }
 
   async function executeStep(
     step: LoopStepDefinition,
@@ -403,7 +545,7 @@ export function createLocalTaskManager(options: TaskManagerOptions): TaskManager
       readonly task: TaskRunRecord;
       readonly workflow: WorkflowRunRecord | undefined;
       readonly state: LoopState;
-      readonly environmentLease: Awaited<ReturnType<typeof options.environment.resolve>>;
+      readonly sandboxLease: Awaited<ReturnType<typeof options.sandboxManager.resolveTaskSandbox>>;
       readonly runtimeId: string;
       readonly subloopRequest: StartLoopRunRequest;
     },
@@ -421,8 +563,8 @@ export function createLocalTaskManager(options: TaskManagerOptions): TaskManager
         task: context.task,
         workflow: context.workflow,
         state: context.state,
-        workspace: context.environmentLease.workspace,
-        environment: context.environmentLease.ref,
+        workspace: context.sandboxLease.workspace,
+        sandbox: context.sandboxLease.ref,
         runtimeId: context.runtimeId,
         runtimeRegistry: options.runtimes,
         emitProgress: async (event) => {
@@ -452,11 +594,13 @@ export function createLocalTaskManager(options: TaskManagerOptions): TaskManager
       return;
     }
 
-    const context = getRunContext(message.workflowRunId);
-    const step = context.loop.steps.get(transition.task.stepId);
+    const definition = await getLoopDefinition(message.workflowRunId);
+    const step = definition.loop.steps.get(transition.task.stepId);
 
     if (step === undefined) {
-      throw new Error(`Loop ${context.loop.id} references unknown step: ${transition.task.stepId}`);
+      throw new Error(
+        `Loop ${definition.loop.id} references unknown step: ${transition.task.stepId}`,
+      );
     }
 
     const workflow = await options.stateManager.getWorkflowRun(message.workflowRunId);
@@ -474,7 +618,7 @@ export function createLocalTaskManager(options: TaskManagerOptions): TaskManager
       reduce: step.reduce,
     });
     const targets = resolveNextTargets(
-      context.loop,
+      definition.loop,
       transition.task.stepId,
       transition.task.output,
     );
@@ -521,6 +665,8 @@ export function createLocalTaskManager(options: TaskManagerOptions): TaskManager
     const context = runContexts.get(message.workflowRunId);
     context?.reject(error);
     runContexts.delete(message.workflowRunId);
+    await options.loopStore.delete(message.workflowRunId);
+    await options.sandboxManager.cleanupWorkflowSandboxes(message.workflowRunId);
   }
 
   async function failWorkflowFromEvent(message: MailboxMessage, error: Error): Promise<void> {
@@ -537,6 +683,8 @@ export function createLocalTaskManager(options: TaskManagerOptions): TaskManager
     const context = runContexts.get(message.workflowRunId);
     context?.reject(error);
     runContexts.delete(message.workflowRunId);
+    await options.loopStore.delete(message.workflowRunId);
+    await options.sandboxManager.cleanupWorkflowSandboxes(message.workflowRunId);
   }
 
   async function completeWithTerminal(
@@ -558,6 +706,8 @@ export function createLocalTaskManager(options: TaskManagerOptions): TaskManager
       const context = runContexts.get(workflowRunId);
       context?.reject(error);
       runContexts.delete(workflowRunId);
+      await options.loopStore.delete(workflowRunId);
+      await options.sandboxManager.cleanupWorkflowSandboxes(workflowRunId);
       return;
     }
 
@@ -575,9 +725,10 @@ export function createLocalTaskManager(options: TaskManagerOptions): TaskManager
     status: "succeeded",
     state: LoopState,
   ): Promise<void> {
-    const context = getRunContext(workflowRunId) as RunContext<unknown, TOutput>;
+    const context = getRunContext(workflowRunId) as RunContext<TOutput>;
+    const definition = await getLoopDefinition(workflowRunId);
     await options.stateManager.completeWorkflowRun(workflowRunId, status);
-    const output = resolveLoopOutput(context.loop, state);
+    const output = resolveLoopOutput(definition.loop as CompiledLoop<unknown, TOutput>, state);
     await publish({
       kind: "event",
       type: "workflow.completed",
@@ -592,6 +743,8 @@ export function createLocalTaskManager(options: TaskManagerOptions): TaskManager
       state,
     });
     runContexts.delete(workflowRunId);
+    await options.loopStore.delete(workflowRunId);
+    await options.sandboxManager.cleanupWorkflowSandboxes(workflowRunId);
   }
 
   return manager;

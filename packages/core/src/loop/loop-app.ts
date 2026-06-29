@@ -1,7 +1,8 @@
 import { createRuntimeRegistry } from "../runtime-registry.ts";
+import { createInMemoryLoopDefinitionStore } from "./in-memory-loop-definition-store.ts";
 import { createInMemoryMailbox } from "./in-memory-mailbox.ts";
 import { createInMemoryStateManager } from "./in-memory-state-manager.ts";
-import { createLocalTaskExecutionEnvironment } from "./local-task-execution-environment.ts";
+import { createLocalSandboxManager } from "./local-sandbox-manager.ts";
 import { createLocalTaskManager } from "./task-manager.ts";
 import type {
   CompiledLoop,
@@ -16,12 +17,13 @@ import type {
 export function createLoopApp(options: CreateLoopAppOptions = {}): LoopApp {
   const mailbox = options.mailbox ?? createInMemoryMailbox();
   const stateManager = options.stateManager ?? createInMemoryStateManager();
+  const loopStore = options.loopStore ?? createInMemoryLoopDefinitionStore();
   const runtimes =
     options.runtimes ??
     createRuntimeRegistry({
       defaultRuntime: options.defaultRuntime,
     });
-  const environment = options.environment ?? createLocalTaskExecutionEnvironment();
+  const sandboxManager = options.sandboxManager ?? createLocalSandboxManager();
   const runLoop = async <TInput, TOutput>(
     loop: Loop<TInput, TOutput> | LoopCompiler<TInput, TOutput>,
     request: StartLoopRunRequest<TInput>,
@@ -39,7 +41,8 @@ export function createLoopApp(options: CreateLoopAppOptions = {}): LoopApp {
       mailbox,
       stateManager,
       runtimes,
-      environment,
+      sandboxManager,
+      loopStore,
       runLoop,
     });
 

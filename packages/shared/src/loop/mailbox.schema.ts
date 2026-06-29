@@ -24,9 +24,10 @@ export const MailboxMessageTypeSchema = z.enum([
   "task.failed",
   "task.cancelled",
   "task.heartbeat",
-  "environment.attached",
-  "environment.reused",
-  "environment.released",
+  "sandbox.created",
+  "sandbox.attached",
+  "sandbox.reused",
+  "sandbox.released",
 ]);
 
 export const MailboxProducerSchema = z.object({
