@@ -72,8 +72,8 @@ export const TaskRunRecordSchema = z.object({
   updatedAt: z.string().datetime(),
 });
 
-export type LoopState = z.infer<typeof LoopStateSchema>;
-export type LoopRunStatus = z.infer<typeof LoopRunStatusSchema>;
+export type RunState = z.infer<typeof LoopStateSchema>;
+export type RunStatus = z.infer<typeof LoopRunStatusSchema>;
 export type TaskRunStatus = z.infer<typeof TaskRunStatusSchema>;
 export type SandboxRef = z.infer<typeof SandboxRefSchema>;
 export type WorkflowRunRecord = z.infer<typeof WorkflowRunRecordSchema>;

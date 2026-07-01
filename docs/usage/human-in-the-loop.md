@@ -1,10 +1,10 @@
 # Human-in-the-loop
 
-本文说明 Loop 层的人类等待点。先阅读 [Loop 使用指南](./loops.md) 会更容易理解 `flow.use()`、`reduce()` 和 `route()`。
+本文说明 Directive 层的人类等待点。先阅读 [Directive 使用指南](./loops.md) 会更容易理解 `flow.use()`、`reduce()` 和 `route()`。
 
 ## 基本模型
 
-`defineHumanTask()` 用于创建人工等待点。它返回普通 `Loop`，因此可以像 Agent、代码 task 或子 Flow 一样注册到 `flow.use()`，并通过 `reduce()` 和 `route()` 推进后续流程。
+`defineHumanTask()` 用于创建人工等待点。它返回普通 `Directive`，因此可以像 Agent、代码 task 或子 Flow 一样注册到 `flow.use()`，并通过 `reduce()` 和 `route()` 推进后续流程。
 
 Human task 执行时，`TaskManager` 会创建 `HumanInteractionRecord`，把 workflow/task 标记为 `waiting`，发布 `human.requested`、`task.waiting` 和 `workflow.waiting`。外部 UI、CLI 或 Desktop 通过 `taskManager.respondToHumanInteraction()` 提交响应后，workflow/task 恢复，Human step 返回响应对象，然后进入普通的 `reduce()` 和 `route()`。
 
@@ -75,7 +75,7 @@ console.log(result.output);
 
 实际产品层不应轮询 `listHumanInteractions()`。推荐通过 `app.runs.watchOutput(workflowRunId)` 或自定义 Mailbox 订阅 `human.requested`，把请求展示给用户，再调用 `respondToHumanInteraction()`。
 
-## 需求澄清 Loop
+## 需求澄清 Directive
 
 需求澄清适合建模为“Agent/Task 判断是否需要更多信息，Human task 收集答案，再回到澄清步骤”：
 
@@ -122,7 +122,7 @@ pnpm --filter @pragma/examples start:loop-human-review-gate
 
 ## Agent 内部提问
 
-`ExpertAgent` 作为 Flow step 运行时，内置 `askUserQuestion` 会通过 Loop human interaction broker 创建 `question` interaction。也就是说，Agent 内部提问和显式 `defineHumanTask()` 走同一套 `human.requested` / `human.responded` 协议。
+`ExpertAgent` 作为 Flow step 运行时，内置 `askUserQuestion` 会通过 Directive human interaction broker 创建 `question` interaction。也就是说，Agent 内部提问和显式 `defineHumanTask()` 走同一套 `human.requested` / `human.responded` 协议。
 
 这保证了：
 
@@ -130,4 +130,4 @@ pnpm --filter @pragma/examples start:loop-human-review-gate
 - workflow/task 会进入 `waiting`，不会被误判为失败或重派发。
 - 用户回答会被记录为 Human Interaction 审计事实。
 
-V1 不提供 Runtime durable suspend/resume。等待点发生在 Loop/Core 层；如果底层 Runtime 未来支持可持久化暂停，可以继续复用同一套 Human Interaction 协议。
+V1 不提供 Runtime durable suspend/resume。等待点发生在 Directive/Core 层；如果底层 Runtime 未来支持可持久化暂停，可以继续复用同一套 Human Interaction 协议。

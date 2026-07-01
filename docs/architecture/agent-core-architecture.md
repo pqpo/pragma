@@ -64,7 +64,7 @@ flowchart TB
 - 读写和搜索上下文。
 - 创建默认上下文工具。
 - 通过 Runtime Registry 创建运行会话。
-- 作为 `Loop` 被组合 Flow 调用。
+- 作为 `Directive` 被组合 Flow 调用。
 
 ### Context 与工具层
 
@@ -143,37 +143,37 @@ flowchart TB
 
 ### Flow 编排层
 
-Flow 编排层负责把多个可执行单元组织成可执行流程。这里的可执行单元不只包括 Agent，也包括本地确定性任务、编译后的组合 Flow，以及任何实现 `Loop` 协议的对象。
+Flow 编排层负责把多个可执行单元组织成可执行流程。这里的可执行单元不只包括 Agent，也包括本地确定性任务、编译后的组合 Flow，以及任何实现 `Directive` 协议的对象。
 
 这里有一个刻意的命名分层：
 
-- `Loop` 是底层统一执行协议，表示“可以被运行”的最小接口。
+- `Directive` 是底层统一执行协议，表示“可以被运行”的最小接口。
 - `defineFlow()` 是用户侧组合入口，返回 `FlowSpec` builder。
-- `defineTask()` 把确定性 TypeScript handler 包装成一个 leaf `Loop`。
+- `defineTask()` 把确定性 TypeScript handler 包装成一个 leaf `Directive`。
 - 编译归一化默认发生在 `flow.use()` 和 `createPragma().run()` 边界，用户日常不需要显式调用 `compile()`。
-- `CompiledLoop` 是内部执行形态，本身也是 `Loop`，所以组合 Flow 可以继续嵌套。
+- `CompiledDirective` 是内部执行形态，本身也是 `Directive`，所以组合 Flow 可以继续嵌套。
 
 ```mermaid
 flowchart TB
-  loop["Loop"]
+  loop["Directive"]
   loop --> expertAgent["ExpertAgent"]
-  loop --> taskLoop["Task Loop"]
-  loop --> compiledLoopRef["CompiledLoop"]
-  loop --> customLoop["任何实现 Loop 接口的对象"]
+  loop --> taskLoop["Task Directive"]
+  loop --> compiledLoopRef["CompiledDirective"]
+  loop --> customLoop["任何实现 Directive 接口的对象"]
 
   flowSpec["FlowSpec"]
   flowSpec --> use["use(id, loop, options)"]
   flowSpec --> compose["compose(builder)"]
   flowSpec --> compile["compile()<br/>advanced validation / registration"]
 
-  compiledLoop["CompiledLoop"]
+  compiledLoop["CompiledDirective"]
   compiledLoop --> steps["steps"]
   compiledLoop --> transitions["transitions"]
   compiledLoop --> limits["limits"]
   compiledLoop --> resultResolver["result resolver"]
 ```
 
-Flow 的关键设计是：步骤只持有 `Loop`，不再按 agent、task、subflow 建立不同分支。
+Flow 的关键设计是：步骤只持有 `Directive`，不再按 agent、task、subflow 建立不同分支。
 
 ```mermaid
 flowchart TB
@@ -189,22 +189,22 @@ flowchart TB
 
 核心边界：
 
-- `Loop` 是统一执行接口。
-- `ExpertAgent` 本身实现 `Loop`。
-- `defineTask()` 把确定性 TypeScript handler 包装为 `Loop`。
+- `Directive` 是统一执行接口。
+- `ExpertAgent` 本身实现 `Directive`。
+- `defineTask()` 把确定性 TypeScript handler 包装为 `Directive`。
 - `defineFlow()` 声明组合流程，`.compose()` 声明步骤之间的流转。
-- `flow.use()` 可以接收 Agent、Task、CompiledLoop、子 Flow 或任何 `Loop` 实现。
-- `createPragma().run()` 可以直接运行 Agent、Task、CompiledLoop 或 Flow。
-- `CompiledLoop` 也实现 `Loop`，所以可以继续嵌套。
+- `flow.use()` 可以接收 Agent、Task、CompiledDirective、子 Flow 或任何 `Directive` 实现。
+- `createPragma().run()` 可以直接运行 Agent、Task、CompiledDirective 或 Flow。
+- `CompiledDirective` 也实现 `Directive`，所以可以继续嵌套。
 - `reduce()` 只做状态归并，不应执行外部副作用。
 
 ### 运行协调层
 
-运行协调层是 Loop 执行时最重要的边界。它由 `TaskManager`、`StateManager`、`Mailbox`、`SandboxManager` 和 `LoopDefinitionStore` 协作完成。
+运行协调层是 Directive 执行时最重要的边界。它由 `TaskManager`、`StateManager`、`Mailbox`、`SandboxManager` 和 `LoopDefinitionStore` 协作完成。
 
 ```mermaid
 flowchart TB
-  app["LoopApp"]
+  app["Pragma"]
 
   app --> taskManager["TaskManager"]
   taskManager --> dispatch["分发 task"]
@@ -215,7 +215,7 @@ flowchart TB
   app --> stateManager["StateManager"]
   stateManager --> workflowState["workflow / task 权威状态"]
   stateManager --> humanState["human interaction 权威状态"]
-  stateManager --> loopState["LoopState"]
+  stateManager --> loopState["RunState"]
   stateManager --> revision["revision"]
   stateManager --> idempotency["幂等事件应用"]
 
@@ -229,7 +229,7 @@ flowchart TB
   sandboxManager --> workspaceCapability["workspace capability"]
 
   app --> loopDefinitionStore["LoopDefinitionStore"]
-  loopDefinitionStore --> binding["workflowRunId 与 CompiledLoop 绑定"]
+  loopDefinitionStore --> binding["workflowRunId 与 CompiledDirective 绑定"]
 ```
 
 职责边界：
@@ -237,10 +237,10 @@ flowchart TB
 | 模块                  | 负责                                                | 不负责                        |
 | --------------------- | --------------------------------------------------- | ----------------------------- |
 | `TaskManager`         | 任务分发、租约、执行协调、等待恢复、transition 推进 | 保存权威状态、承载消息系统    |
-| `StateManager`        | Workflow/Task/Human Interaction 状态、`LoopState`、revision、幂等应用 | 执行 Agent、发布消息          |
+| `StateManager`        | Workflow/Task/Human Interaction 状态、`RunState`、revision、幂等应用 | 执行 Agent、发布消息          |
 | `Mailbox`             | command/event 发布订阅、消息过滤、通信协议承载      | 决定状态变化、执行任务        |
 | `SandboxManager`      | sandbox 生命周期、workspace、capability             | 编排 transition、保存业务状态 |
-| `LoopDefinitionStore` | 保存运行所需的已编译 Loop 定义                      | 执行步骤、修改状态            |
+| `LoopDefinitionStore` | 保存运行所需的已编译 Directive 定义                      | 执行步骤、修改状态            |
 
 默认本地组装：
 
@@ -283,11 +283,11 @@ sequenceDiagram
 
 Agent 会话是 Runtime 层概念。它适合单个专家任务，也可以由 Flow 的某个 step 间接触发。
 
-### Loop 执行流程
+### Directive 执行流程
 
 ```mermaid
 flowchart TB
-  run["LoopApp.run(loop, request)"]
+  run["Pragma.run(loop, request)"]
   compile["compileLoop()"]
   createSandbox["createWorkflowSandbox()"]
   createWorkflow["createWorkflowRun()"]
@@ -297,7 +297,7 @@ flowchart TB
   taskDispatch["publish(task.dispatch)"]
   lease["leaseTask()"]
   resolveSandbox["resolveTaskSandbox()"]
-  stepRun["step.loop.run()<br/>Agent Runtime Session<br/>Task handler<br/>nested CompiledLoop<br/>Human Operator Step"]
+  stepRun["step.loop.run()<br/>Agent Runtime Session<br/>Task handler<br/>nested CompiledDirective<br/>Human Operator Step"]
   taskResult["markTaskSucceeded()<br/>or markTaskFailed()"]
   taskEvent["publish(task completed<br/>or task failed)"]
   applyTaskEvent["applyTaskEvent()"]
@@ -313,7 +313,7 @@ flowchart TB
 
 ### Human-in-the-loop 执行流程
 
-Human-in-the-loop 是 Loop 层的一等能力，不是某个 Runtime 的私有回调。需求澄清、人工审批、编码 review gate 和手工介入都统一建模为 Human Interaction。
+Human-in-the-loop 是 Directive 层的一等能力，不是某个 Runtime 的私有回调。需求澄清、人工审批、编码 review gate 和手工介入都统一建模为 Human Interaction。
 
 ```mermaid
 flowchart TB
@@ -336,11 +336,11 @@ flowchart TB
 - 等待期间 workflow 和 task 进入 `waiting`；waiting task 不参与 lease 过期恢复。
 - 用户响应后，Human step 输出会像普通 task 输出一样进入 `reduce()` 和 `route()`。
 - `review_gate` 用于阶段性人工验收，例如编码后 approve、request changes 或 manual patch；单个工具调用的敏感权限仍由 tool approval 处理。
-- Agent 内部调用 `askUserQuestion` 时，也应通过 Loop 的 human interaction broker 转成同一套等待/恢复协议，而不是绕过 StateManager。
+- Agent 内部调用 `askUserQuestion` 时，也应通过 Directive 的 human interaction broker 转成同一套等待/恢复协议，而不是绕过 StateManager。
 
 ## 状态模型
 
-Loop 运行状态来自 `@pragma/shared`，Core 只通过接口读写。
+Directive 运行状态来自 `@pragma/shared`，Core 只通过接口读写。
 
 ```mermaid
 flowchart TB
@@ -350,7 +350,7 @@ flowchart TB
   workflow --> workflowStatus["status"]
   workflow --> currentStepIds["currentStepIds"]
   workflow --> completedStepIds["completedStepIds"]
-  workflow --> loopState["state: LoopState"]
+  workflow --> loopState["state: RunState"]
   workflow --> defaultSandbox["defaultSandbox"]
   workflow --> workflowRevision["revision"]
 
@@ -382,7 +382,7 @@ flowchart TB
 - 所有 task 状态流转必须经过 `StateManager`。
 - `revision` 用于防止并发覆盖。
 - message id 用于幂等事件应用。
-- `LoopState` 保存工作流输入、中间结果和步骤归并后的状态。
+- `RunState` 保存工作流输入、中间结果和步骤归并后的状态。
 - `HumanInteractionRecord` 保存人工等待点的请求、响应、操作者和审计时间。
 
 典型 task 状态流转：
@@ -420,7 +420,7 @@ stateDiagram-v2
 
 ## Sandbox 模型
 
-Sandbox 是 Loop 执行时的工作区和能力边界。它不是固定实现，而是 `SandboxManager` 接口。
+Sandbox 是 Directive 执行时的工作区和能力边界。它不是固定实现，而是 `SandboxManager` 接口。
 
 ```mermaid
 flowchart TB
@@ -523,5 +523,5 @@ Core 中应承载桥接协议、消息类型和 Runtime Adapter 合约；Desktop
 - Server/Worker 可以调度 Core，Core 不反向调用 Server Controller。
 - Agent 执行能力优先加到 `ExpertAgent` 和 Runtime Adapter 边界，不只放在某个 SDK 包装层里。
 - Runtime 实现可以替换，但必须把事件、结果、取消和错误转换成 Core 统一协议。
-- Loop 运行期组件可以替换，但必须保留 `TaskManager`、`StateManager`、`Mailbox`、`SandboxManager` 的职责边界。
+- Directive 运行期组件可以替换，但必须保留 `TaskManager`、`StateManager`、`Mailbox`、`SandboxManager` 的职责边界。
 - 文档和实现冲突时，以更接近当前代码的具体文档为准，并同步修正另一处。

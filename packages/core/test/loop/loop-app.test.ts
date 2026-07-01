@@ -12,7 +12,7 @@ import {
   defineHumanTask,
 } from "../../src/index.ts";
 import type {
-  Loop,
+  Directive,
   RuntimeAdapter,
   RuntimeAgentSession,
   RuntimeCreateSessionRequest,
@@ -22,7 +22,7 @@ import type {
 } from "../../src/index.ts";
 
 describe("loop app", () => {
-  it("runs code steps, reduces Loop State, and returns mapped output", async () => {
+  it("runs code steps, reduces Directive State, and returns mapped output", async () => {
     const loop = defineFlow({
       id: "review-loop",
       input: z.object({
@@ -514,7 +514,7 @@ describe("loop app", () => {
     expect(recovered[0]?.status).toBe("dispatched");
   });
 
-  it("registers any Loop implementation as a step", async () => {
+  it("registers any Directive implementation as a step", async () => {
     const loop = defineFlow({
       id: "custom-loop-composition",
       output: z.object({
@@ -524,7 +524,7 @@ describe("loop app", () => {
         value: String(state.results["custom"]),
       }),
     });
-    const customLoop: Loop<{ readonly value: string }, string> = {
+    const customLoop: Directive<{ readonly value: string }, string> = {
       id: "custom",
       inputSchema: z.object({
         value: z.string(),
@@ -563,11 +563,11 @@ describe("loop app", () => {
     });
   });
 
-  it("runs an ExpertAgent as a Loop", async () => {
+  it("runs an ExpertAgent as a Directive", async () => {
     const agent = await ExpertAgent.create({
       id: "agent-loop",
-      name: "Agent Loop",
-      description: "Agent that implements the Loop interface.",
+      name: "Agent Directive",
+      description: "Agent that implements the Directive interface.",
       tags: [],
       version: "0.0.0",
       scope: "test",
@@ -829,7 +829,7 @@ describe("loop app", () => {
   it("bridges Agent askUserQuestion requests through loop human interactions", async () => {
     const agent = await ExpertAgent.create({
       id: "agent-human-loop",
-      name: "Agent Human Loop",
+      name: "Agent Human Directive",
       description: "Agent that asks a user question.",
       tags: [],
       version: "0.0.0",

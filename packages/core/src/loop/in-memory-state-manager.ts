@@ -1,6 +1,6 @@
 import type {
   HumanInteractionRecord,
-  LoopState,
+  RunState,
   MailboxMessage,
   SandboxRef,
   TaskRunRecord,
@@ -394,7 +394,7 @@ export function createInMemoryStateManager(): StateManager {
         state: draft,
         output: request.output,
       });
-      const nextState: LoopState = LoopStateSchema.parse(draft);
+      const nextState: RunState = LoopStateSchema.parse(draft);
       const updatedWorkflow = updateWorkflow(request.workflowRunId, (current) => ({
         ...current,
         state: nextState,

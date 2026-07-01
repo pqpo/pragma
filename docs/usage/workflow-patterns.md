@@ -1,6 +1,6 @@
 # Workflow 范式快捷 API
 
-本文面向已经理解 [Loop 核心 API](./loops.md) 的开发者，说明 `patterns` 快捷 API。
+本文面向已经理解 [Directive 核心 API](./loops.md) 的开发者，说明 `patterns` 快捷 API。
 
 Anthropic 在 [Building effective agents](https://www.anthropic.com/engineering/building-effective-agents) 中把 Workflow 定义为“LLM 和工具沿着预定义代码路径编排”的模式，并总结了五类常用范式：
 
@@ -10,13 +10,13 @@ Anthropic 在 [Building effective agents](https://www.anthropic.com/engineering/
 - `orchestratorWorkers`：先由 orchestrator 动态拆分任务，再并行派发 worker，最后汇总。
 - `evaluatorOptimizer`：optimizer 生成候选结果，evaluator 评估，不通过则带反馈继续迭代。
 
-这些快捷 API 都返回普通 `Loop` 或 `FlowSpec`，可直接传给 `createPragma().run()`，也可以作为子 Loop 注册进另一个 `defineFlow()`。
+这些快捷 API 都返回普通 `Directive` 或 `FlowSpec`，可直接传给 `createPragma().run()`，也可以作为子 Directive 注册进另一个 `defineFlow()`。
 
 ```ts
 import { patterns } from "@pragma/core";
 ```
 
-最简单场景可以直接传入裸 `Loop`；需要覆盖 step id、输入、输出 schema、runtime 或 sandbox 时，再展开成 `{ loop, input, output, runtime, sandbox }`。
+最简单场景可以直接传入裸 `Directive`；需要覆盖 step id、输入、输出 schema、runtime 或 sandbox 时，再展开成 `{ loop, input, output, runtime, sandbox }`。
 
 可运行示例：
 
@@ -26,7 +26,7 @@ pnpm --filter @pragma/examples start:workflow-patterns
 
 ## Workflow 的作用
 
-Workflow 适合“控制流已知，但每个步骤可以由 Agent、代码 task、工具或人工节点完成”的场景。它把不确定性限制在单个 step 内，把整体执行路径、状态归并、分支和重试交给 Loop 层治理。
+Workflow 适合“控制流已知，但每个步骤可以由 Agent、代码 task、工具或人工节点完成”的场景。它把不确定性限制在单个 step 内，把整体执行路径、状态归并、分支和重试交给 Directive 层治理。
 
 ```mermaid
 flowchart LR
@@ -34,7 +34,7 @@ flowchart LR
   workflow --> stepA[Step: Agent]
   workflow --> stepB[Step: Code task]
   workflow --> stepC[Step: Human task]
-  stepA --> state[LoopState / Events / Trace]
+  stepA --> state[RunState / Events / Trace]
   stepB --> state
   stepC --> state
   state --> output[结构化输出]

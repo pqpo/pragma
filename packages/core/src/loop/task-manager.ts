@@ -1,6 +1,6 @@
 import type {
   HumanInteractionResponse,
-  LoopState,
+  RunState,
   MailboxMessage,
   TaskRunRecord,
   WorkflowRunRecord,
@@ -8,23 +8,23 @@ import type {
 import { LoopStateSchema } from "@pragma/shared";
 
 import type {
-  CompiledLoop,
-  LoopRunResult,
+  CompiledDirective,
+  RunResult,
   LoopStepDefinition,
   LoopStepInputContext,
   LoopStepRef,
   LoopTerminalTarget,
   LoopTransitionTarget,
-  StartLoopRunRequest,
+  StartRunRequest,
   TaskDispatchPayload,
   TaskManager,
   TaskManagerOptions,
-  WorkflowRunHandle,
+  RunHandle,
 } from "./types.ts";
 import { createId, nowIso, readObjectField } from "./utils.ts";
 
 interface RunContext<TOutput = unknown> {
-  readonly resolve: (result: LoopRunResult<TOutput>) => void;
+  readonly resolve: (result: RunResult<TOutput>) => void;
   readonly reject: (error: Error) => void;
 }
 
@@ -61,7 +61,7 @@ export function createLocalTaskManager(options: TaskManagerOptions): TaskManager
     const context = runContexts.get(workflowRunId);
 
     if (context === undefined) {
-      throw new Error(`Loop run context is not found: ${workflowRunId}`);
+      throw new Error(`Directive run context is not found: ${workflowRunId}`);
     }
 
     return context;
@@ -71,7 +71,7 @@ export function createLocalTaskManager(options: TaskManagerOptions): TaskManager
     const definition = await options.loopStore.get(workflowRunId);
 
     if (definition === undefined) {
-      throw new Error(`Loop definition is not found: ${workflowRunId}`);
+      throw new Error(`Directive definition is not found: ${workflowRunId}`);
     }
 
     return definition;
@@ -101,9 +101,9 @@ export function createLocalTaskManager(options: TaskManagerOptions): TaskManager
     },
 
     async startRun<TInput, TOutput>(
-      loop: CompiledLoop<TInput, TOutput>,
-      request: StartLoopRunRequest<TInput>,
-    ): Promise<WorkflowRunHandle<TOutput>> {
+      loop: CompiledDirective<TInput, TOutput>,
+      request: StartRunRequest<TInput>,
+    ): Promise<RunHandle<TOutput>> {
       await manager.start();
       const input = loop.inputSchema?.parse(request.input) ?? request.input;
       const state = LoopStateSchema.parse({
@@ -147,10 +147,10 @@ export function createLocalTaskManager(options: TaskManagerOptions): TaskManager
         request,
       });
 
-      const result = new Promise<LoopRunResult<TOutput>>((resolve, reject) => {
+      const result = new Promise<RunResult<TOutput>>((resolve, reject) => {
         runContexts.set(workflow.id, {
           resolve: (runResult) => {
-            resolve(runResult as LoopRunResult<TOutput>);
+            resolve(runResult as RunResult<TOutput>);
           },
           reject,
         });
@@ -230,7 +230,7 @@ export function createLocalTaskManager(options: TaskManagerOptions): TaskManager
         const step = definition.loop.steps.get(stepId);
 
         if (step === undefined) {
-          throw new Error(`Loop ${definition.loop.id} references unknown step: ${stepId}`);
+          throw new Error(`Directive ${definition.loop.id} references unknown step: ${stepId}`);
         }
 
         const existingTasks = await options.stateManager.listTaskRuns(workflowRunId);
@@ -328,7 +328,7 @@ export function createLocalTaskManager(options: TaskManagerOptions): TaskManager
         },
       });
       const context = runContexts.get(workflowRunId);
-      context?.reject(new Error(reason ?? "Loop run was cancelled."));
+      context?.reject(new Error(reason ?? "Directive run was cancelled."));
       runContexts.delete(workflowRunId);
       await options.loopStore.delete(workflowRunId);
       await options.sandboxManager.cleanupWorkflowSandboxes(workflowRunId);
@@ -422,7 +422,7 @@ export function createLocalTaskManager(options: TaskManagerOptions): TaskManager
       const step = definition.loop.steps.get(lease.task.stepId);
 
       if (step === undefined) {
-        throw new Error(`Loop ${definition.loop.id} references unknown step: ${lease.task.stepId}`);
+        throw new Error(`Directive ${definition.loop.id} references unknown step: ${lease.task.stepId}`);
       }
 
       let sandboxLease:
@@ -616,10 +616,10 @@ export function createLocalTaskManager(options: TaskManagerOptions): TaskManager
     context: {
       readonly task: TaskRunRecord;
       readonly workflow: WorkflowRunRecord | undefined;
-      readonly state: LoopState;
+      readonly state: RunState;
       readonly sandboxLease: Awaited<ReturnType<typeof options.sandboxManager.resolveTaskSandbox>>;
       readonly runtimeId: string;
-      readonly subloopRequest: StartLoopRunRequest;
+      readonly subloopRequest: StartRunRequest;
     },
   ): Promise<unknown> {
     if (context.workflow === undefined) {
@@ -722,7 +722,7 @@ export function createLocalTaskManager(options: TaskManagerOptions): TaskManager
 
     if (step === undefined) {
       throw new Error(
-        `Loop ${definition.loop.id} references unknown step: ${transition.task.stepId}`,
+        `Directive ${definition.loop.id} references unknown step: ${transition.task.stepId}`,
       );
     }
 
@@ -822,11 +822,11 @@ export function createLocalTaskManager(options: TaskManagerOptions): TaskManager
   async function completeWithTerminal(
     workflowRunId: string,
     target: LoopTerminalTarget,
-    state?: LoopState,
+    state?: RunState,
   ): Promise<void> {
     if (target.type === "fail") {
       const workflow = await options.stateManager.completeWorkflowRun(workflowRunId, "failed");
-      const error = new Error(target.reason ?? "Loop run failed.");
+      const error = new Error(target.reason ?? "Directive run failed.");
       await publish({
         kind: "event",
         type: "workflow.failed",
@@ -857,12 +857,12 @@ export function createLocalTaskManager(options: TaskManagerOptions): TaskManager
   async function completeRun<TOutput>(
     workflowRunId: string,
     status: "succeeded",
-    state: LoopState,
+    state: RunState,
   ): Promise<void> {
     const context = getRunContext(workflowRunId) as RunContext<TOutput>;
     const definition = await getLoopDefinition(workflowRunId);
     const workflow = await options.stateManager.completeWorkflowRun(workflowRunId, status);
-    const output = resolveLoopOutput(definition.loop as CompiledLoop<unknown, TOutput>, state);
+    const output = resolveLoopOutput(definition.loop as CompiledDirective<unknown, TOutput>, state);
     await publish({
       kind: "event",
       type: "workflow.completed",
@@ -903,7 +903,7 @@ async function resolveStepInput(
 
 function resolveRuntimeId(
   step: LoopStepDefinition,
-  request: StartLoopRunRequest,
+  request: StartRunRequest,
   defaultRuntime: string,
 ): string {
   return request.runtimes?.[step.id] ?? step.runtime ?? request.runtime ?? defaultRuntime;
@@ -926,7 +926,7 @@ function createSyntheticTask(workflowRunId: string, stepId: string, visit: numbe
 }
 
 function resolveNextTargets(
-  loop: CompiledLoop,
+  loop: CompiledDirective,
   stepId: string,
   output: unknown,
 ): LoopTransitionTarget[] {
@@ -982,8 +982,8 @@ function isActiveTaskRunConflict(error: unknown): boolean {
 }
 
 function resolveLoopOutput<TOutput>(
-  loop: CompiledLoop<unknown, TOutput>,
-  state: LoopState,
+  loop: CompiledDirective<unknown, TOutput>,
+  state: RunState,
 ): TOutput {
   const candidate =
     loop.resolveOutput?.({ state }) ??

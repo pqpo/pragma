@@ -144,9 +144,9 @@ pnpm --filter @pragma/examples start:workspace-context --workspace ./workspace -
 - 调用 `agent.buildContext()` 预检上下文。
 - 通过同一套 runtime session 流程运行 agent。
 
-## 运行 Loop 示例
+## 运行 Directive 示例
 
-Loop 示例不需要模型 key，全部使用本机 `code` step：
+Directive 示例不需要模型 key，全部使用本机 `code` step：
 
 ```bash
 pnpm --filter @pragma/examples start:loop-code
@@ -160,8 +160,8 @@ pnpm --filter @pragma/examples start:loop-human-review-gate
 
 - `run-loop-code.ts`：最小 `defineFlow()` + `defineTask()` + `reduce()`。
 - `run-loop-route.ts`：根据 step 结构化输出字段 `.route("status", ...)`。
-- `run-loop-subloop.ts`：把一个 Loop 作为另一个 Loop 的 subloop step。
-- `run-loop-watch.ts`：用 `app.start()` 非阻塞启动 run，再用 `app.runs.get()`、`app.runs.list()`、`app.runs.getTree()`、`app.runs.watch()` 和 `app.runs.watchOutput()` 查询状态并递归订阅嵌套 Loop 事件。
+- `run-loop-subloop.ts`：把一个 Directive 作为另一个 Directive 的 subloop step。
+- `run-loop-watch.ts`：用 `app.start()` 非阻塞启动 run，再用 `app.runs.get()`、`app.runs.list()`、`app.runs.getTree()`、`app.runs.watch()` 和 `app.runs.watchOutput()` 查询状态并递归订阅嵌套 Directive 事件。
 - `run-workflow-patterns.ts`：演示 `patterns.promptChain()`、`patterns.routing()`、`patterns.parallel()`、`patterns.orchestratorWorkers()` 和 `patterns.evaluatorOptimizer()` 五类快捷范式。
 - `run-loop-human-clarification.ts`：演示 `clarifier -> human question -> clarifier` 的多轮需求澄清，Human step 会让 workflow/task 进入 waiting，CLI 回答后恢复。
 - `run-loop-human-review-gate.ts`：演示 `coder -> verify -> human review gate`，CLI 可选择 approve、request changes 或 manual patch，并通过普通 `.route("decision", ...)` 推进或回环。

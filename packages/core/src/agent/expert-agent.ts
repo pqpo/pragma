@@ -27,7 +27,7 @@ import type {
 import { resolveExpertAgentPlugins } from "../plugins/expert-agent-plugin.ts";
 import type { ExpertAgentLogger, ExpertAgentLoggerProvider } from "../logging/logger.ts";
 import { createExpertAgentLogger, defaultExpertAgentLoggerProvider } from "../logging/logger.ts";
-import type { Loop, LoopRunResult, StartLoopRunRequest } from "../loop/types.ts";
+import type { Directive, RunResult, StartRunRequest } from "../loop/types.ts";
 import { stringifyInput } from "../loop/utils.ts";
 import type {
   ExpertAgentPluginLoadIssue,
@@ -185,7 +185,7 @@ interface ExpertAgentRuntimeOptions extends ExpertAgentOptions {
   readonly env?: NodeJS.ProcessEnv | undefined;
 }
 
-export class ExpertAgent implements IExpertAgent, Loop<unknown, unknown> {
+export class ExpertAgent implements IExpertAgent, Directive<unknown, unknown> {
   readonly schemaVersion?: ExpertAgentSchemaVersion;
   readonly id: string;
   readonly name: string;
@@ -328,11 +328,11 @@ export class ExpertAgent implements IExpertAgent, Loop<unknown, unknown> {
   }
 
   async run<TOutput = unknown>(
-    request: StartLoopRunRequest<unknown>,
-  ): Promise<LoopRunResult<TOutput>> {
+    request: StartRunRequest<unknown>,
+  ): Promise<RunResult<TOutput>> {
     if (request.execution === undefined) {
       const { createPragma } = await import("../loop/loop-app.ts");
-      return (await createPragma().run(this, request)) as LoopRunResult<TOutput>;
+      return (await createPragma().run(this, request)) as RunResult<TOutput>;
     }
 
     const execution = request.execution;

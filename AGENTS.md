@@ -434,7 +434,7 @@ ExpertAgent API 设计要求：
 
 - 保留 `ExpertAgent.create()` 作为标准创建入口，负责异步插件加载、inline plugin entry 合并、日志初始化和实例归一化。
 - `defineAgent()` 只是 `ExpertAgent.create()` 的声明语法糖；不要在 `defineAgent()` 下再实现独立 Agent 包装层。
-- Agent 运行能力优先加到 `ExpertAgent`，不要只放在 Loop SDK 包装层中。
+- Agent 运行能力优先加到 `ExpertAgent`，不要只放在 Directive SDK 包装层中。
 
 不要引入具体 Claude SDK、Codex SDK、MCP、Playbook、HTTP Controller、数据库实现或 Server 应用层实现。
 

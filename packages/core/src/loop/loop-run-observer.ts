@@ -3,9 +3,9 @@ import type { MailboxMessage, TaskRunStatus, WorkflowRunRecord } from "@pragma/s
 import { AsyncPushQueue } from "../runtime/async-push-queue.ts";
 import type {
   ListWorkflowRunsFilter,
-  LoopRunObserver,
-  LoopRunSummary,
-  LoopRunWatchOptions,
+  RunObserver,
+  RunSummary,
+  RunWatchOptions,
   Mailbox,
   StateManager,
 } from "./types.ts";
@@ -30,7 +30,7 @@ const outputEventTypes = [
   "human.responded",
 ] as const;
 
-export function createLoopRunObserver(options: CreateLoopRunObserverOptions): LoopRunObserver {
+export function createLoopRunObserver(options: CreateLoopRunObserverOptions): RunObserver {
   return {
     async list(filter?: ListWorkflowRunsFilter) {
       const workflows = await options.stateManager.listWorkflowRuns(filter);
@@ -91,7 +91,7 @@ export function createLoopRunObserver(options: CreateLoopRunObserverOptions): Lo
 async function buildSummary(
   stateManager: StateManager,
   workflow: WorkflowRunRecord,
-): Promise<LoopRunSummary> {
+): Promise<RunSummary> {
   const [tasks, children] = await Promise.all([
     stateManager.listTaskRuns(workflow.id),
     stateManager.listWorkflowRuns({
@@ -116,7 +116,7 @@ async function buildSummary(
 async function tryBuildSummary(
   stateManager: StateManager,
   workflowRunId: string,
-): Promise<LoopRunSummary | undefined> {
+): Promise<RunSummary | undefined> {
   const workflow = await stateManager.getWorkflowRun(workflowRunId);
 
   if (workflow === undefined) {
@@ -134,7 +134,7 @@ function watchRun(request: {
   readonly mailbox: Mailbox;
   readonly stateManager: StateManager;
   readonly workflowRunId: string;
-  readonly options: LoopRunWatchOptions;
+  readonly options: RunWatchOptions;
 }): AsyncIterable<MailboxMessage> {
   return {
     async *[Symbol.asyncIterator]() {

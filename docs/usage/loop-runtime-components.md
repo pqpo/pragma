@@ -1,6 +1,6 @@
-# Loop 运行组件与扩展
+# Directive 运行组件与扩展
 
-本文面向需要替换默认内存组件、接入远程 sandbox 或规划分布式部署的开发者。基础用法请先阅读 [Loop 使用指南](./loops.md)。
+本文面向需要替换默认内存组件、接入远程 sandbox 或规划分布式部署的开发者。基础用法请先阅读 [Directive 使用指南](./loops.md)。
 
 ## 默认组件
 
@@ -27,10 +27,10 @@ const app = createPragma({
 可替换组件：
 
 - `Mailbox`：命令和事件通道。
-- `StateManager`：workflow、task、`LoopState` 的权威状态源。
+- `StateManager`：workflow、task、`RunState` 的权威状态源。
 - `SandboxManager`：workflow 和 task 的运行环境边界。
 - `TaskManager`：任务派发、租约、执行和 transition 推进。
-- `LoopDefinitionStore`：保存 workflow run 对应的已编译 Loop 定义。
+- `LoopDefinitionStore`：保存 workflow run 对应的已编译 Directive 定义。
 - `RuntimeRegistry`：按 runtime id 解析具体 Runtime Adapter。
 
 通常不需要一次性全部替换。单机开发只需要默认实现；生产部署一般先替换 `StateManager` 和 `Mailbox`，再替换 `SandboxManager` 和 `TaskManager`。
@@ -295,7 +295,7 @@ State Store
   |
   +--> workflow/task 状态
   +--> human interaction 状态
-  +--> LoopState
+  +--> RunState
   +--> revision
   +--> lease
   +--> 幂等 message id

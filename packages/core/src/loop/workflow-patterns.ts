@@ -1,19 +1,19 @@
-import type { LoopState } from "@pragma/shared";
+import type { RunState } from "@pragma/shared";
 import type { z } from "zod";
 
 import { compileLoopDefinition, defineFlow, type LoopStepOptions } from "./flow-spec.ts";
 import type {
-  Loop,
-  LoopDefinition,
+  Directive,
+  DirectiveDefinition,
   LoopExecutionContext,
   LoopRuntimeOverride,
-  LoopRunResult,
+  RunResult,
   LoopStepInputContext,
   LoopStepInputResolver,
   LoopStepReducer,
   MaybePromise,
   SandboxRequest,
-  StartLoopRunRequest,
+  StartRunRequest,
 } from "./types.ts";
 import { readObjectField } from "./utils.ts";
 
@@ -22,7 +22,7 @@ const workflowPatternStateKey = "workflowPatterns";
 export interface WorkflowPatternStep<TInput = unknown, TOutput = unknown>
   extends LoopRuntimeOverride {
   readonly id?: string | undefined;
-  readonly loop: LoopDefinition<TInput, TOutput>;
+  readonly loop: DirectiveDefinition<TInput, TOutput>;
   readonly input?: LoopStepInputResolver<TInput> | TInput | undefined;
   readonly output?: z.ZodType<TOutput> | undefined;
   readonly reduce?: LoopStepReducer<TOutput> | undefined;
@@ -31,14 +31,14 @@ export interface WorkflowPatternStep<TInput = unknown, TOutput = unknown>
 
 export type WorkflowPatternStepLike<TInput = unknown, TOutput = unknown> =
   | WorkflowPatternStep<TInput, TOutput>
-  | LoopDefinition<TInput, TOutput>;
+  | DirectiveDefinition<TInput, TOutput>;
 
 export interface DefinePromptChainWorkflowOptions<TInput = unknown, TOutput = unknown> {
   readonly id: string;
   readonly input?: z.ZodType<TInput> | undefined;
   readonly output?: z.ZodType<TOutput> | undefined;
   readonly steps: readonly WorkflowPatternStepLike[];
-  readonly result?: ((context: { state: LoopState }) => TOutput) | undefined;
+  readonly result?: ((context: { state: RunState }) => TOutput) | undefined;
 }
 
 export interface DefineRoutingWorkflowOptions<TInput = unknown, TOutput = unknown> {
@@ -49,12 +49,12 @@ export interface DefineRoutingWorkflowOptions<TInput = unknown, TOutput = unknow
   readonly field: string;
   readonly routes: Readonly<Record<string, WorkflowPatternStepLike>>;
   readonly fallback?: WorkflowPatternStepLike | undefined;
-  readonly result?: ((context: { state: LoopState }) => TOutput) | undefined;
+  readonly result?: ((context: { state: RunState }) => TOutput) | undefined;
 }
 
 export interface WorkflowParallelBranch<TInput = unknown, TBranchInput = unknown, TOutput = unknown>
   extends LoopRuntimeOverride {
-  readonly loop: LoopDefinition<TBranchInput, TOutput>;
+  readonly loop: DirectiveDefinition<TBranchInput, TOutput>;
   readonly input?:
     | TBranchInput
     | ((context: WorkflowParallelBranchInputContext<TInput>) => MaybePromise<TBranchInput>)
@@ -65,20 +65,20 @@ export interface WorkflowParallelBranch<TInput = unknown, TBranchInput = unknown
 export interface WorkflowParallelBranchInputContext<TInput = unknown> {
   readonly input: TInput;
   readonly branchId: string;
-  readonly state: LoopState;
+  readonly state: RunState;
 }
 
 export interface WorkflowParallelMergeContext<TInput = unknown> {
   readonly input: TInput;
   readonly outputs: Readonly<Record<string, unknown>>;
-  readonly state: LoopState;
+  readonly state: RunState;
 }
 
 export interface DefineParallelWorkflowOptions<TInput = unknown, TOutput = unknown> {
   readonly id: string;
   readonly input?: z.ZodType<TInput> | undefined;
   readonly output?: z.ZodType<TOutput> | undefined;
-  readonly branches: Readonly<Record<string, WorkflowParallelBranch<TInput> | LoopDefinition>>;
+  readonly branches: Readonly<Record<string, WorkflowParallelBranch<TInput> | DirectiveDefinition>>;
   readonly merge?: ((context: WorkflowParallelMergeContext<TInput>) => MaybePromise<TOutput>);
 }
 
@@ -90,7 +90,7 @@ export interface WorkflowWorkerResult<TWorkerInput = unknown, TWorkerOutput = un
 export interface WorkflowWorkerSelectionContext<TInput = unknown, TPlan = unknown> {
   readonly input: TInput;
   readonly orchestration: TPlan;
-  readonly state: LoopState;
+  readonly state: RunState;
 }
 
 export interface WorkflowSynthesisInput<
@@ -130,7 +130,7 @@ export interface DefineOrchestratorWorkersWorkflowOptions<
   readonly synthesize?:
     | ((
         context: WorkflowSynthesisInput<TInput, TPlan, TWorkerInput, TWorkerOutput> & {
-          readonly state: LoopState;
+          readonly state: RunState;
         },
       ) => MaybePromise<TOutput>)
     | undefined;
@@ -145,14 +145,14 @@ export interface WorkflowOptimizerInputContext<
   readonly iteration: number;
   readonly previousAttempt?: TAttempt | undefined;
   readonly evaluation?: TEvaluation | undefined;
-  readonly state: LoopState;
+  readonly state: RunState;
 }
 
 export interface WorkflowEvaluatorInputContext<TInput = unknown, TAttempt = unknown> {
   readonly input: TInput;
   readonly attempt: TAttempt;
   readonly iteration: number;
-  readonly state: LoopState;
+  readonly state: RunState;
 }
 
 export interface WorkflowEvaluationDecisionContext<
@@ -164,7 +164,7 @@ export interface WorkflowEvaluationDecisionContext<
   readonly attempt: TAttempt;
   readonly evaluation: TEvaluation;
   readonly iteration: number;
-  readonly state: LoopState;
+  readonly state: RunState;
 }
 
 export interface WorkflowEvaluatorOptimizerResult<TAttempt = unknown, TEvaluation = unknown> {
@@ -203,7 +203,7 @@ export interface DefineEvaluatorOptimizerWorkflowOptions<
     | ((
         context: WorkflowEvaluatorOptimizerResult<TAttempt, TEvaluation> & {
           readonly input: TInput;
-          readonly state: LoopState;
+          readonly state: RunState;
         },
       ) => MaybePromise<TOutput>)
     | undefined;
@@ -353,7 +353,7 @@ export function defineRoutingWorkflow<TInput = unknown, TOutput = unknown>(
 
 export function defineParallelWorkflow<TInput = unknown, TOutput = unknown>(
   options: DefineParallelWorkflowOptions<TInput, TOutput>,
-): Loop<TInput, TOutput> {
+): Directive<TInput, TOutput> {
   const branchEntries = Object.entries(options.branches);
 
   if (branchEntries.length === 0) {
@@ -417,7 +417,7 @@ export function defineOrchestratorWorkersWorkflow<
     TWorkerOutput,
     TOutput
   >,
-): Loop<TInput, TOutput> {
+): Directive<TInput, TOutput> {
   const orchestrator = normalizePatternStep(options.orchestrator);
   const worker = normalizePatternStep(options.worker);
   const synthesizer =
@@ -511,7 +511,7 @@ export function defineEvaluatorOptimizerWorkflow<
     TEvaluation,
     TOutput
   >,
-): Loop<TInput, TOutput> {
+): Directive<TInput, TOutput> {
   const maxIterations = options.maxIterations ?? 3;
   const optimizer = normalizePatternStep(options.optimizer);
   const evaluator = normalizePatternStep(options.evaluator);
@@ -625,15 +625,15 @@ interface CreatePatternLoopOptions<TInput, TOutput> {
   readonly outputSchema?: z.ZodType<TOutput> | undefined;
   readonly execute: (context: {
     readonly input: TInput;
-    readonly request: StartLoopRunRequest<TInput>;
+    readonly request: StartRunRequest<TInput>;
     readonly execution: LoopExecutionContext;
   }) => MaybePromise<TOutput>;
 }
 
 function createPatternLoop<TInput, TOutput>(
   options: CreatePatternLoopOptions<TInput, TOutput>,
-): Loop<TInput, TOutput> {
-  const loop: Loop<TInput, TOutput> = {
+): Directive<TInput, TOutput> {
+  const loop: Directive<TInput, TOutput> = {
     id: options.id,
     inputSchema: options.inputSchema,
     outputSchema: options.outputSchema,
@@ -682,14 +682,14 @@ function createLoopStepOptions<TOutput>(
 }
 
 async function runNestedLoop<TInput, TOutput>(options: {
-  readonly loop: LoopDefinition<TInput, TOutput>;
+  readonly loop: DirectiveDefinition<TInput, TOutput>;
   readonly input: TInput;
   readonly output?: z.ZodType<TOutput> | undefined;
   readonly runtime?: string | undefined;
-  readonly request: StartLoopRunRequest<unknown>;
+  readonly request: StartRunRequest<unknown>;
   readonly execution: LoopExecutionContext;
 }): Promise<TOutput> {
-  let request: StartLoopRunRequest<TInput> = {
+  let request: StartRunRequest<TInput> = {
     input: options.input,
     execution: options.execution,
   };
@@ -715,7 +715,7 @@ async function runNestedLoop<TInput, TOutput>(options: {
     };
   }
 
-  const result: LoopRunResult<TOutput> = await options.execution.runLoop(
+  const result: RunResult<TOutput> = await options.execution.runLoop(
     compileLoopDefinition(options.loop),
     request,
   );
@@ -723,7 +723,7 @@ async function runNestedLoop<TInput, TOutput>(options: {
 }
 
 function normalizeParallelBranch<TInput>(
-  branch: WorkflowParallelBranch<TInput> | LoopDefinition,
+  branch: WorkflowParallelBranch<TInput> | DirectiveDefinition,
 ): WorkflowParallelBranch<TInput> {
   if (isParallelBranch(branch)) {
     return branch;
@@ -735,7 +735,7 @@ function normalizeParallelBranch<TInput>(
 }
 
 function isParallelBranch<TInput>(
-  branch: WorkflowParallelBranch<TInput> | LoopDefinition,
+  branch: WorkflowParallelBranch<TInput> | DirectiveDefinition,
 ): branch is WorkflowParallelBranch<TInput> {
   return isRecord(branch) && "loop" in branch;
 }
@@ -748,11 +748,11 @@ function normalizePatternStep<TInput, TOutput>(
   }
 
   return {
-    loop: step as LoopDefinition<TInput, TOutput>,
+    loop: step as DirectiveDefinition<TInput, TOutput>,
   };
 }
 
-function resolveLoopDefinitionId(loop: LoopDefinition): string | undefined {
+function resolveLoopDefinitionId(loop: DirectiveDefinition): string | undefined {
   if (isRecord(loop) && typeof loop["id"] === "string") {
     return loop["id"];
   }
@@ -760,7 +760,7 @@ function resolveLoopDefinitionId(loop: LoopDefinition): string | undefined {
   return undefined;
 }
 
-function getWorkflowPatternState(state: LoopState): Record<string, unknown> {
+function getWorkflowPatternState(state: RunState): Record<string, unknown> {
   const current = state.private[workflowPatternStateKey];
 
   if (isRecord(current)) {
@@ -772,7 +772,7 @@ function getWorkflowPatternState(state: LoopState): Record<string, unknown> {
   return created;
 }
 
-function getPatternState(state: LoopState, patternId: string): Record<string, unknown> {
+function getPatternState(state: RunState, patternId: string): Record<string, unknown> {
   const patterns = getWorkflowPatternState(state);
   const current = patterns[patternId];
 
@@ -786,7 +786,7 @@ function getPatternState(state: LoopState, patternId: string): Record<string, un
 }
 
 function setPatternStepOutput(
-  state: LoopState,
+  state: RunState,
   patternId: string,
   stepId: string,
   output: unknown,
@@ -799,7 +799,7 @@ function setPatternStepOutput(
 }
 
 function getRequiredPatternStepOutput(
-  state: LoopState,
+  state: RunState,
   patternId: string,
   stepId: string,
 ): unknown {

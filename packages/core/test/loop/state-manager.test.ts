@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { createInMemoryStateManager } from "../../src/index.ts";
 
 describe("in-memory StateManager", () => {
-  it("applies step reducers to Loop State drafts and increments revisions", async () => {
+  it("applies step reducers to Directive State drafts and increments revisions", async () => {
     const stateManager = createInMemoryStateManager();
     const workflow = await stateManager.createWorkflowRun({
       id: "workflow-state-reducer",

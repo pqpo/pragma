@@ -4,5 +4,8 @@ export * from "./loop/human-interaction.schema.ts";
 export * from "./loop/mailbox.schema.ts";
 export * from "./loop/workflow-state.schema.ts";
 export * from "./result.ts";
-export * from "./run-status.ts";
+export {
+  RunStatus as ExecutionRunStatus,
+  type RunStatus as ExecutionRunStatusValue,
+} from "./run-status.ts";
 export * from "./stream-event.schema.ts";

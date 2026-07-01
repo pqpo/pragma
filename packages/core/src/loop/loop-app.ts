@@ -7,16 +7,16 @@ import { createLocalSandboxManager } from "./local-sandbox-manager.ts";
 import { createLoopRunObserver } from "./loop-run-observer.ts";
 import { createLocalTaskManager } from "./task-manager.ts";
 import type {
-  CompiledLoop,
-  CreateLoopAppOptions,
-  Loop,
-  LoopApp,
-  LoopDefinition,
-  LoopRunResult,
-  StartLoopRunRequest,
+  CompiledDirective,
+  CreatePragmaOptions,
+  Directive,
+  Pragma,
+  DirectiveDefinition,
+  RunResult,
+  StartRunRequest,
 } from "./types.ts";
 
-export function createPragma(options: CreateLoopAppOptions = {}): LoopApp {
+export function createPragma(options: CreatePragmaOptions = {}): Pragma {
   const mailbox = options.mailbox ?? createInMemoryMailbox();
   const stateManager = options.stateManager ?? createInMemoryStateManager();
   const loopStore = options.loopStore ?? createInMemoryLoopDefinitionStore();
@@ -27,19 +27,19 @@ export function createPragma(options: CreateLoopAppOptions = {}): LoopApp {
     });
   const sandboxManager = options.sandboxManager ?? createLocalSandboxManager();
   const startLoop = async <TInput, TOutput>(
-    loop: LoopDefinition<TInput, TOutput>,
-    request: StartLoopRunRequest<TInput>,
+    loop: DirectiveDefinition<TInput, TOutput>,
+    request: StartRunRequest<TInput>,
   ) => {
     const compiledLoop = compileLoop(
       loop,
-      request.output as CompiledLoop<TInput, TOutput>["outputSchema"] | undefined,
+      request.output as CompiledDirective<TInput, TOutput>["outputSchema"] | undefined,
     );
     return await taskManager.startRun(compiledLoop, request);
   };
   const runLoop = async <TInput, TOutput>(
-    loop: LoopDefinition<TInput, TOutput>,
-    request: StartLoopRunRequest<TInput>,
-  ): Promise<LoopRunResult<TOutput>> => {
+    loop: DirectiveDefinition<TInput, TOutput>,
+    request: StartRunRequest<TInput>,
+  ): Promise<RunResult<TOutput>> => {
     const handle = await startLoop(loop, request);
     return await handle.result;
   };
@@ -70,9 +70,9 @@ export function createPragma(options: CreateLoopAppOptions = {}): LoopApp {
 }
 
 function compileLoop<TInput, TOutput>(
-  loop: LoopDefinition<TInput, TOutput>,
-  output?: CompiledLoop<TInput, TOutput>["outputSchema"] | undefined,
-): CompiledLoop<TInput, TOutput> {
+  loop: DirectiveDefinition<TInput, TOutput>,
+  output?: CompiledDirective<TInput, TOutput>["outputSchema"] | undefined,
+): CompiledDirective<TInput, TOutput> {
   const runnable = compileLoopDefinition(loop);
 
   if (isCompiledLoop(runnable)) {
@@ -83,18 +83,18 @@ function compileLoop<TInput, TOutput>(
 }
 
 function isCompiledLoop<TInput, TOutput>(
-  loop: Loop<TInput, TOutput>,
-): loop is CompiledLoop<TInput, TOutput> {
+  loop: Directive<TInput, TOutput>,
+): loop is CompiledDirective<TInput, TOutput> {
   return "steps" in loop && "startStepId" in loop && "transitions" in loop;
 }
 
 function compileSingleStepLoop<TInput, TOutput>(
-  loop: Loop<TInput, TOutput>,
-  output?: CompiledLoop<TInput, TOutput>["outputSchema"] | undefined,
-): CompiledLoop<TInput, TOutput> {
+  loop: Directive<TInput, TOutput>,
+  output?: CompiledDirective<TInput, TOutput>["outputSchema"] | undefined,
+): CompiledDirective<TInput, TOutput> {
   const stepId = loop.id;
   const outputSchema = output ?? loop.outputSchema;
-  const compiled: CompiledLoop<TInput, TOutput> = {
+  const compiled: CompiledDirective<TInput, TOutput> = {
     id: loop.id,
     inputSchema: loop.inputSchema,
     outputSchema,

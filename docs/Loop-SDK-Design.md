@@ -1,11 +1,11 @@
-# Loop SDK 核心设计（API 草案）
+# Directive SDK 核心设计（API 草案）
 
 ## 核心理念
 
 ```text
-Everything is a Loop.
-Agent is the smallest Loop.
-Workflow is a Composable Loop.
+Everything is a Directive.
+Agent is the smallest Directive.
+Workflow is a Composable Directive.
 Runtime executes Steps.
 Channel connects Loops.
 ```
@@ -24,9 +24,9 @@ Agent 只声明“专家能力”和输入输出协议，不绑定具体 Runtime
 - `sandbox-node`
 - `remote-container`
 
-定义 Agent 时不关心 Runtime；Agent 自验证或执行 Loop 时默认使用 `default` Runtime；单个步骤需要特殊执行环境时再覆盖 Runtime。
+定义 Agent 时不关心 Runtime；Agent 自验证或执行 Directive 时默认使用 `default` Runtime；单个步骤需要特殊执行环境时再覆盖 Runtime。
 
-最小声明使用 `defineAgent()`。它是 Loop SDK 面向用户的语法糖，底层可以归一化为当前项目里的 `ExpertAgent` 声明，但用户不需要直接调用 `ExpertAgent.create()`。
+最小声明使用 `defineAgent()`。它是 Directive SDK 面向用户的语法糖，底层可以归一化为当前项目里的 `ExpertAgent` 声明，但用户不需要直接调用 `ExpertAgent.create()`。
 
 ```ts
 import { defineAgent } from "@pragma/core";
@@ -47,7 +47,7 @@ const coder = defineAgent({
 });
 ```
 
-> 注：`defineAgent()` 是建议的 Loop SDK API；当前实现可映射到 `ExpertAgent` 的 `schemaVersion`、`id`、`displayName`、`description`、`tags`、`version`、`scope`、`workspace`、`models`、`skills`、`mcp`、`contextSystem`、`subAgents`、`tools`、`hooks` 等字段。这里的 `instructions` 可以映射到现有 system prompt 组装。
+> 注：`defineAgent()` 是建议的 Directive SDK API；当前实现可映射到 `ExpertAgent` 的 `schemaVersion`、`id`、`displayName`、`description`、`tags`、`version`、`scope`、`workspace`、`models`、`skills`、`mcp`、`contextSystem`、`subAgents`、`tools`、`hooks` 等字段。这里的 `instructions` 可以映射到现有 system prompt 组装。
 
 `defineAgent()` 不要求声明 `outputSchema`。
 
@@ -56,8 +56,8 @@ const coder = defineAgent({
 输出约束应该放在具体调用处：
 
 - Agent 自验证时：`agent.run(input, { output })`
-- Loop 步骤定义时：`flow.agent(..., { output })`
-- Loop 整体定义时：`new FlowSpec({ inputSchema, outputSchema })`
+- Directive 步骤定义时：`flow.agent(..., { output })`
+- Directive 整体定义时：`new FlowSpec({ inputSchema, outputSchema })`
 
 只有当某个 Agent 本身就是稳定协议组件，例如“只做 PR Review 且永远返回同一种 ReviewResult”时，才可以给 Agent 声明默认 `outputSchema`。
 
@@ -145,7 +145,7 @@ await coder.run("实现 GitHub 登录", {
 });
 ```
 
-Loop 执行时同样默认拥有 Runtime registry：
+Directive 执行时同样默认拥有 Runtime registry：
 
 ```ts
 const app = createPragma();
@@ -153,7 +153,7 @@ const app = createPragma();
 
 `createPragma()` 默认使用 `createRuntimeRegistry()`，因此也会自动注入 `createDefaultRuntime()`。
 
-运行发生在 Loop 层时，Loop 负责选择 Runtime、托管 State、调度步骤。未指定 Runtime 时使用 `default`：
+运行发生在 Directive 层时，Directive 负责选择 Runtime、托管 State、调度步骤。未指定 Runtime 时使用 `default`：
 
 ```ts
 const loop = new FlowSpec({
@@ -238,7 +238,7 @@ Agent Protocol    = normalized to ExpertAgent-compatible declaration
 Agent Runtime     = not bound at declaration time
 Agent Self Check  = agent.run(input, { runtime?, runtimes? })
 Default Runtime   = createRuntimeRegistry() injects createDefaultRuntime()
-Loop Default      = app.run(loop) uses default runtime unless overridden
+Directive Default      = app.run(loop) uses default runtime unless overridden
 Step Runtime      = step option runtime overrides loop default
 Agent Input       = string by default, schema at call/step/loop layer
 Agent Output      = string by default, schema at call/step/loop layer
@@ -251,9 +251,9 @@ Runtime Target    = agent | code | subloop | operator
 
 # 2. FlowSpec API：核心能力
 
-`FlowSpec` 是 Loop 的可执行规格。
+`FlowSpec` 是 Directive 的可执行规格。
 
-Loop 负责定义整体输入输出协议。Agent 可以是通用能力，步骤负责把 Loop State 映射成 Agent 输入并约束该步骤输出，Loop 则负责约束整个工作流的入口和最终结果。
+Directive 负责定义整体输入输出协议。Agent 可以是通用能力，步骤负责把 Directive State 映射成 Agent 输入并约束该步骤输出，Directive 则负责约束整个工作流的入口和最终结果。
 
 ```ts
 const flow = defineFlow({
@@ -438,8 +438,8 @@ const codingLoop = flow
 - `.next(step)` 声明普通顺序流转。
 - `.route(field, cases)` 基于当前链尾步骤的结构化输出字段路由。
 - `step(existingStep)` 显式切换到已经声明过的步骤，用于补充分支、回边和子流程出口。
-- `end()` 显式结束整个 Loop。
-- `compile()` 将 builder 归一化为不可变、可执行、可校验的 `CompiledLoop`。
+- `end()` 显式结束整个 Directive。
+- `compile()` 将 builder 归一化为不可变、可执行、可校验的 `CompiledDirective`。
 
 形成：
 
@@ -497,7 +497,7 @@ step(reviewer).route(
 
 ## 循环退出与中断
 
-Loop 允许回边，但回边不能只靠图结构表达长期运行策略。循环必须能声明退出、中断或失败策略。
+Directive 允许回边，但回边不能只靠图结构表达长期运行策略。循环必须能声明退出、中断或失败策略。
 
 第一种方式是给步骤声明访问上限。适合“无论从哪里回到 coder，总次数都不能超过 N 次”的场景：
 
@@ -554,11 +554,11 @@ flow.compose(({ start, step, end, fail, retry }) => {
 defineFlow(...)
   -> builder
   -> compile()
-  -> CompiledLoop
+  -> CompiledDirective
   -> app.run(compiledLoop, input)
 ```
 
-`compile()` 是 Loop DSL 的验证边界。它至少需要检查：
+`compile()` 是 Directive DSL 的验证边界。它至少需要检查：
 
 - 必须有且只有一个 start。
 - step id 唯一。
@@ -664,13 +664,13 @@ deliveryLoop.subloop("release", releaseLoop);
 
 # 7. Runtime
 
-Runtime 是 Loop 步骤的通用执行环境，不只服务 Agent。
+Runtime 是 Directive 步骤的通用执行环境，不只服务 Agent。
 
 一个 Runtime 可以执行：
 
 - Agent 步骤，例如 PI agent、Claude Code、Codex、自研 Agent。
 - Code 步骤，例如 Node sandbox、remote container、workflow runner。
-- SubLoop 步骤，例如把另一个 Loop 作为子任务执行。
+- SubLoop 步骤，例如把另一个 Directive 作为子任务执行。
 - Operator 步骤，例如 parallel、route、retry、guard、approve。
 
 Runtime 当前应分成“核心协议”和“具体实现”两层。
@@ -830,7 +830,7 @@ return await runtime.execute(invocation);
 分层原则：
 
 ```text
-FlowSpec / Pattern / Channel   -> 未来 Loop SDK 层
+FlowSpec / Pattern / Channel   -> 未来 Directive SDK 层
 RuntimeAdapter 通用接口         -> @pragma/core
 RuntimeAdapter 具体实现         -> @pragma/core
 Server / Worker 调度 Runtime    -> apps/server、apps/worker 或 server orchestration package
@@ -839,9 +839,9 @@ Desktop 本地权限与连接桥接      -> apps/desktop + packages/core/src/loc
 
 ---
 
-# 8. Loop 执行层技术方案
+# 8. Directive 执行层技术方案
 
-Loop SDK 的用户侧 API 负责声明“要做什么”，实现层负责把 `CompiledLoop` 变成可恢复、可观测、可替换 Runtime 的执行过程。
+Directive SDK 的用户侧 API 负责声明“要做什么”，实现层负责把 `CompiledDirective` 变成可恢复、可观测、可替换 Runtime 的执行过程。
 
 实现层需要避免把调度、状态、通信、执行细节混在一个对象里。推荐拆成三组核心事实边界：
 
@@ -851,7 +851,7 @@ StateManager           保存“现在是什么”
 TaskManager            决定“接下来做什么”，以及“单个任务怎么执行”
 ```
 
-`TaskManager` 同时负责 Loop run 编排和单个 task run 生命周期。内部可以拆私有模块，但公开接口和文档统一使用 `TaskManager`，避免把 workflow 调度和 task 执行拆成两个顶层概念。
+`TaskManager` 同时负责 Directive run 编排和单个 task run 生命周期。内部可以拆私有模块，但公开接口和文档统一使用 `TaskManager`，避免把 workflow 调度和 task 执行拆成两个顶层概念。
 
 ## 8.1 分层架构
 
@@ -867,12 +867,12 @@ createPragma()
 
 | 模块             | 职责                                                                                                                              | 不负责                   |
 | ---------------- | --------------------------------------------------------------------------------------------------------------------------------- | ------------------------ |
-| `TaskManager`    | 创建 run、读取 `CompiledLoop`、判断可执行节点、处理 transition、为节点创建 task run、租约、重试、取消、超时、把任务派发给 Runtime | 直接修改 Loop State      |
+| `TaskManager`    | 创建 run、读取 `CompiledDirective`、判断可执行节点、处理 transition、为节点创建 task run、租约、重试、取消、超时、把任务派发给 Runtime | 直接修改 Directive State      |
 | `Mailbox`        | 传递 task command、task event、workflow event、ack、heartbeat                                                                     | 判断下一步该执行哪个节点 |
 | `StateManager`   | 持久化 workflow run、task run、state snapshot、step output、revision、事件应用结果                                                | 做消息投递               |
-| `RuntimeAdapter` | 执行具体 agent/code/subloop/operator 并产生流式事件和结果                                                                         | 直接修改 Loop State      |
+| `RuntimeAdapter` | 执行具体 agent/code/subloop/operator 并产生流式事件和结果                                                                         | 直接修改 Directive State      |
 
-`TaskManager` 内部可以依赖一个执行环境接口，用于获取 workspace、session、权限和未来 sandbox，但它不作为 Loop 执行层之外的独立 manager 暴露。
+`TaskManager` 内部可以依赖一个执行环境接口，用于获取 workspace、session、权限和未来 sandbox，但它不作为 Directive 执行层之外的独立 manager 暴露。
 
 最小本机实现可以全部在一个进程内运行：
 
@@ -909,11 +909,11 @@ app.run(compiledLoop, input)
 
 关键原则：
 
-- 每个 Loop 节点执行一次都生成一个独立 `taskRunId`，即使是同一个 `stepId` 因回边被多次访问，也必须是不同 task run。
+- 每个 Directive 节点执行一次都生成一个独立 `taskRunId`，即使是同一个 `stepId` 因回边被多次访问，也必须是不同 task run。
 - Agent 任务、Code 任务、SubLoop 任务、Operator 任务都走同一套 task dispatch / task result 协议。
 - Runtime 不直接调用 `next()`；Runtime 只返回当前任务发生的事件和结果。
 - `reduce()` 只能由 `TaskManager` 协调 `StateManager` 在 task 完成后执行，不能由 Runtime 或 Agent 直接修改共享 State。
-- TaskManager 是否进入下一个节点，只由 `CompiledLoop`、当前 State、任务结果和 policy 决定。
+- TaskManager 是否进入下一个节点，只由 `CompiledDirective`、当前 State、任务结果和 policy 决定。
 
 ## 8.3 Mailbox 协议
 
@@ -1061,7 +1061,7 @@ type MailboxMessageHandler = (
 
 ## 8.4 StateManager
 
-`StateManager` 是 Loop State 的托管边界，也是 workflow 当前状态的唯一事实来源。它保存的 `state` 就是用户在 step `input` / `reduce` 中看到的那份 Loop State，而不是另一套内部状态。
+`StateManager` 是 Directive State 的托管边界，也是 workflow 当前状态的唯一事实来源。它保存的 `state` 就是用户在 step `input` / `reduce` 中看到的那份 Directive State，而不是另一套内部状态。
 
 用户写的 reducer：
 
@@ -1106,7 +1106,7 @@ type ApplyStepReductionRequest = {
   stepId: string;
   output: unknown;
   expectedRevision: number;
-  reduce: (context: { state: LoopState; output: unknown }) => void | Promise<void>;
+  reduce: (context: { state: RunState; output: unknown }) => void | Promise<void>;
 };
 ```
 
@@ -1169,14 +1169,14 @@ type TaskRunRecord = {
 
 # 9. TaskManager
 
-TaskManager 负责从 `CompiledLoop` 和 State 中推导下一步，也负责单个 task run 的生命周期。
+TaskManager 负责从 `CompiledDirective` 和 State 中推导下一步，也负责单个 task run 的生命周期。
 
 ```ts
 interface TaskManager {
   startRun<TInput>(
-    loop: CompiledLoop,
-    request: StartLoopRunRequest<TInput>,
-  ): Promise<WorkflowRunHandle>;
+    loop: CompiledDirective,
+    request: StartRunRequest<TInput>,
+  ): Promise<RunHandle>;
 
   handleEvent(message: MailboxMessage): Promise<void>;
   dispatchReadyTasks(workflowRunId: string): Promise<void>;
@@ -1189,7 +1189,7 @@ interface TaskManager {
 }
 ```
 
-它在 Loop run 编排层需要处理：
+它在 Directive run 编排层需要处理：
 
 - start 节点派发；
 - 顺序 `.next()`；
@@ -1421,10 +1421,10 @@ ctx.channel.on("review.failed", async (msg) => {
 
 ---
 
-# 13. Loop State
+# 13. Directive State
 
 ```ts
-type LoopState = {
+type RunState = {
   input: unknown;
   context: Record<string, any>;
   artifacts: Record<string, any>;
@@ -1442,7 +1442,7 @@ type LoopState = {
 Agent 不直接修改 State
 Step 定义 reduce
 TaskManager 调用 reduce
-StateManager 托管并提交 Loop State
+StateManager 托管并提交 Directive State
 Runtime 只接收 State Snapshot 并返回步骤结果
 ```
 
@@ -1471,7 +1471,7 @@ const result = await client.loop("coding-loop").run({
 });
 ```
 
-Loop 也可以作为另一个 Loop 的步骤：
+Directive 也可以作为另一个 Directive 的步骤：
 
 ```ts
 deliveryLoop.subloop("coding", client.loop("coding-loop"));
@@ -1485,7 +1485,7 @@ deliveryLoop.subloop("coding", client.loop("coding-loop"));
 defineAgent()
 defineFlow()
 FlowSpec
-CompiledLoop
+CompiledDirective
 RuntimeAdapter
 channel()
 Patterns.*
@@ -1499,14 +1499,14 @@ client.loop()
 
 ```text
 Agent 使用文本协议。
-Loop 使用 Schema 协议。
+Directive 使用 Schema 协议。
 Route 使用步骤输出 Schema 的可枚举字段。
-State 由 Loop 托管。
+State 由 Directive 托管。
 Runtime 执行步骤。
 Channel 负责通信。
 Operator 负责组合。
 Pattern 负责复用。
-Loop 可以组合 Loop。
+Directive 可以组合 Directive。
 compile() 负责把 DSL 校验并归一化为不可变执行图。
-Everything is a Loop.
+Everything is a Directive.
 ```

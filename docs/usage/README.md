@@ -6,11 +6,11 @@
 
 1. [Agent 使用指南](./agents.md)
 2. [Plugins 使用指南](./plugins.md)
-3. [Loop 使用指南](./loops.md)
+3. [Directive 使用指南](./loops.md)
 4. [Workflow 范式快捷 API](./workflow-patterns.md)
 5. [Human-in-the-loop](./human-in-the-loop.md)
 
-如果要接入未来分布式部署，阅读 [Loop 运行组件与扩展](./loop-runtime-components.md)，其中包含自定义 `LoopApp`、`SandboxManager`、`StateManager`、`Mailbox` 和 `TaskManager`。
+如果要接入未来分布式部署，阅读 [Directive 运行组件与扩展](./loop-runtime-components.md)，其中包含自定义 `Pragma`、`SandboxManager`、`StateManager`、`Mailbox` 和 `TaskManager`。
 
 相关架构文档：
 

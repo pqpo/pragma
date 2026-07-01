@@ -1,6 +1,6 @@
-# Loop 使用指南
+# Directive 使用指南
 
-本文说明 ExpertMesh Loop API 的核心使用方式。核心原则是：`Agent` 本身是 `Loop`，编译后的组合工作流也是 `Loop`，任何对象只要实现 `Loop` 接口，就可以注册进另一个 Loop。
+本文说明 ExpertMesh Directive API 的核心使用方式。核心原则是：`Agent` 本身是 `Directive`，编译后的组合工作流也是 `Directive`，任何对象只要实现 `Directive` 接口，就可以注册进另一个 Directive。
 
 当前核心 API：
 
@@ -10,36 +10,36 @@ import { createPragma, defineTask, defineFlow } from "@pragma/core";
 
 ## 阅读边界
 
-本文只覆盖 Loop 的基础执行、组合、状态归并和分支控制。更进阶的主题拆在独立文档中：
+本文只覆盖 Directive 的基础执行、组合、状态归并和分支控制。更进阶的主题拆在独立文档中：
 
 - [Workflow 范式快捷 API](./workflow-patterns.md)
 - [Human-in-the-loop](./human-in-the-loop.md)
-- [Loop 运行组件与扩展](./loop-runtime-components.md)
+- [Directive 运行组件与扩展](./loop-runtime-components.md)
 
 ## 核心概念
 
-`Loop` 是统一的可执行单元：
+`Directive` 是统一的可执行单元：
 
 ```ts
-interface Loop<TInput, TOutput> {
+interface Directive<TInput, TOutput> {
   readonly id: string;
   readonly inputSchema?: z.ZodType<TInput>;
   readonly outputSchema?: z.ZodType<TOutput>;
-  run(request: StartLoopRunRequest<TInput>): Promise<LoopRunResult<TOutput>>;
+  run(request: StartRunRequest<TInput>): Promise<RunResult<TOutput>>;
 }
 ```
 
-`defineFlow()` 创建组合 Loop；组合 Loop 通过 `use(id, loop, options)` 注册子 Loop，不区分 agent、code、human operator 或 subloop。`ExpertAgent` 已实现 `Loop`，`defineTask()` 是把本地 TypeScript handler 包成 Loop 的便利函数。
+`defineFlow()` 创建组合 Directive；组合 Directive 通过 `use(id, loop, options)` 注册子 Directive，不区分 agent、code、human operator 或 subloop。`ExpertAgent` 已实现 `Directive`，`defineTask()` 是把本地 TypeScript handler 包成 Directive 的便利函数。
 
 主要对象：
 
-- `Loop`：统一执行接口。
+- `Directive`：统一执行接口。
 - `FlowSpec`：组合 Flow 构建器。
-- `CompiledLoop`：编译后的组合 Loop，同时也是 `Loop`。
-- `LoopApp`：运行入口，可运行任意 `Loop`。
-- `LoopState`：workflow 运行中的状态容器。
+- `CompiledDirective`：编译后的组合 Directive，同时也是 `Directive`。
+- `Pragma`：运行入口，可运行任意 `Directive`。
+- `RunState`：workflow 运行中的状态容器。
 
-## 最小组合 Loop
+## 最小组合 Directive
 
 ```ts
 import { createPragma, defineTask, defineFlow } from "@pragma/core";
@@ -88,16 +88,16 @@ console.log(result.output);
 
 关键点：
 
-- `input` 是组合 Loop 的输入 schema。
+- `input` 是组合 Directive 的输入 schema。
 - `output` 是最终输出 schema。
-- `result` 从 `LoopState` 里提取最终结果。
-- `use()` 注册任何实现了 `Loop` 的可执行单元。
+- `result` 从 `RunState` 里提取最终结果。
+- `use()` 注册任何实现了 `Directive` 的可执行单元。
 - `reduce()` 把步骤输出写回 `state`。
 - `compose()` 定义步骤转移。
 
-## 运行单个 Loop
+## 运行单个 Directive
 
-单个 Agent 或代码 Loop 可以直接交给 `LoopApp` 运行。`LoopApp` 会把它包装成单步 workflow，因此仍然有 `workflowRunId`、`LoopState` 和 mailbox 事件。
+单个 Agent 或代码 Directive 可以直接交给 `Pragma` 运行。`Pragma` 会把它包装成单步 workflow，因此仍然有 `workflowRunId`、`RunState` 和 mailbox 事件。
 
 ```ts
 const result = await createPragma().run(greetLoop, {
@@ -129,7 +129,7 @@ const result = await handle.result;
 
 `app.runs.list()` 返回当前可见的 workflow run 快照，可以按 `loopId`、`status` 或 `parentWorkflowRunId` 过滤。`app.runs.get(id)` 返回单个 run 的 workflow、tasks、task 状态计数和直接子 workflow id。
 
-嵌套 Loop 会创建独立的子 `workflowRunId`，并在子 workflow 上记录 `parentWorkflowRunId` 和 `parentTaskRunId`。需要一次性查看完整树时使用：
+嵌套 Directive 会创建独立的子 `workflowRunId`，并在子 workflow 上记录 `parentWorkflowRunId` 和 `parentTaskRunId`。需要一次性查看完整树时使用：
 
 ```ts
 const tree = await app.runs.getTree(handle.workflowRunId);
@@ -159,9 +159,9 @@ for await (const event of app.runs.watchOutput(handle.workflowRunId, { recursive
 pnpm --filter @pragma/examples start:loop-watch
 ```
 
-## Agent 作为 Loop
+## Agent 作为 Directive
 
-`ExpertAgent` 已实现 `Loop`。在组合流程中注册 Agent 和注册任意其他 Loop 没有区别：
+`ExpertAgent` 已实现 `Directive`。在组合流程中注册 Agent 和注册任意其他 Directive 没有区别：
 
 ```ts
 import { defineAgent, defineFlow } from "@pragma/core";
@@ -203,7 +203,7 @@ flow.compose(({ start, end }) => {
 
 ## 嵌套组合 Flow
 
-子 Flow 可以直接注册进父 Flow。`use()` 会在注册边界自动把子 Flow 归一化为可运行的 `Loop`，日常使用不需要显式调用 `compile()`：
+子 Flow 可以直接注册进父 Flow。`use()` 会在注册边界自动把子 Flow 归一化为可运行的 `Directive`，日常使用不需要显式调用 `compile()`：
 
 ```ts
 const requirementLoop = defineFlow({
@@ -245,19 +245,19 @@ deliveryLoop.compose(({ start, end }) => {
 
 `compile()` 是高级 API，主要用于预校验、调试或把 Flow 注册到分布式运行系统。普通执行路径由 `flow.use()` 和 `createPragma().run()` 自动完成编译归一化。
 
-## LoopState 和 reduce
+## RunState 和 reduce
 
-每个 Loop run 都有一个 `LoopState`。当前典型用法是把中间结果写入：
+每个 Directive run 都有一个 `RunState`。当前典型用法是把中间结果写入：
 
 ```ts
 state.results["key"] = output;
 ```
 
-`reduce()` 只负责状态归并，不应该执行外部副作用。外部副作用应该放在代码 Loop handler 或 Agent/Runtime 的受控工具中。
+`reduce()` 只负责状态归并，不应该执行外部副作用。外部副作用应该放在代码 Directive handler 或 Agent/Runtime 的受控工具中。
 
 ## 输出校验
 
-输出 schema 可以声明在被注册的 Loop 上，也可以在 `use()` 时覆盖：
+输出 schema 可以声明在被注册的 Directive 上，也可以在 `use()` 时覆盖：
 
 ```ts
 const classifyLoop = defineTask({
@@ -280,7 +280,7 @@ const classify = flow.use("classify", classifyLoop, {
 });
 ```
 
-`TaskManager` 会在步骤完成后用 `use()` 的 `output` 或子 Loop 的 `outputSchema` 校验结果。
+`TaskManager` 会在步骤完成后用 `use()` 的 `output` 或子 Directive 的 `outputSchema` 校验结果。
 
 ## route 分支
 

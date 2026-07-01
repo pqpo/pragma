@@ -3,13 +3,13 @@ import {
   HumanInteractionResponseSchema,
   type HumanInteractionRequest,
   type HumanInteractionResponse,
-  type LoopState,
+  type RunState,
 } from "@pragma/shared";
 
 import type {
-  CompiledLoop,
-  Loop,
-  LoopDefinition,
+  CompiledDirective,
+  Directive,
+  DirectiveDefinition,
   LoopLimitPolicy,
   MaybePromise,
   LoopNextTransition,
@@ -30,7 +30,7 @@ export interface DefineFlowOptions<TInput = unknown, TOutput = unknown> {
   readonly id: string;
   readonly input?: z.ZodType<TInput> | undefined;
   readonly output?: z.ZodType<TOutput> | undefined;
-  readonly result?: ((context: { state: LoopState }) => TOutput) | undefined;
+  readonly result?: ((context: { state: RunState }) => TOutput) | undefined;
 }
 
 export type LoopStepOptions<TInput = unknown, TOutput = unknown> = {
@@ -80,7 +80,7 @@ export class FlowSpec<TInput = unknown, TOutput = unknown> {
   readonly id: string;
   readonly inputSchema: z.ZodType<TInput> | undefined;
   readonly outputSchema: z.ZodType<TOutput> | undefined;
-  readonly resolveOutput: ((context: { state: LoopState }) => TOutput) | undefined;
+  readonly resolveOutput: ((context: { state: RunState }) => TOutput) | undefined;
 
   private readonly steps = new Map<string, LoopStepDefinition>();
   private readonly transitions: LoopTransition[] = [];
@@ -96,7 +96,7 @@ export class FlowSpec<TInput = unknown, TOutput = unknown> {
 
   use<TStepInput = unknown, TStepOutput = unknown>(
     id: string,
-    loop: LoopDefinition<TStepInput, TStepOutput>,
+    loop: DirectiveDefinition<TStepInput, TStepOutput>,
     options: LoopStepOptions<TStepInput, TStepOutput> = {},
   ): LoopStepRef<TStepOutput> {
     const runnable = compileLoopDefinition(loop);
@@ -136,7 +136,7 @@ export class FlowSpec<TInput = unknown, TOutput = unknown> {
     return this;
   }
 
-  compile(): CompiledLoop<TInput, TOutput> {
+  compile(): CompiledDirective<TInput, TOutput> {
     if (this.startStepId === undefined) {
       throw new Error(`Flow ${this.id} does not declare a start step.`);
     }
@@ -157,7 +157,7 @@ export class FlowSpec<TInput = unknown, TOutput = unknown> {
       }
     }
 
-    const compiled: CompiledLoop<TInput, TOutput> = {
+    const compiled: CompiledDirective<TInput, TOutput> = {
       id: this.id,
       inputSchema: this.inputSchema,
       outputSchema: this.outputSchema,
@@ -260,8 +260,8 @@ function createStepRef<TOutput>(step: LoopStepDefinition<unknown, TOutput>): Loo
 }
 
 export function compileLoopDefinition<TInput, TOutput>(
-  loop: LoopDefinition<TInput, TOutput>,
-): Loop<TInput, TOutput> {
+  loop: DirectiveDefinition<TInput, TOutput>,
+): Directive<TInput, TOutput> {
   return "compile" in loop ? loop.compile() : loop;
 }
 
@@ -273,7 +273,7 @@ export function defineFlow<TInput = unknown, TOutput = unknown>(
 
 export function defineTask<TInput = unknown, TOutput = unknown>(
   options: DefineTaskOptions<TInput, TOutput>,
-): Loop<TInput, TOutput> {
+): Directive<TInput, TOutput> {
   return {
     id: options.id,
     inputSchema: options.input,
@@ -307,7 +307,7 @@ export function defineTask<TInput = unknown, TOutput = unknown>(
 
 export function defineHumanTask<TInput = unknown, TOutput = HumanInteractionResponse>(
   options: DefineHumanTaskOptions<TInput, TOutput>,
-): Loop<TInput, TOutput> {
+): Directive<TInput, TOutput> {
   const outputSchema =
     options.output ?? (HumanInteractionResponseSchema as unknown as z.ZodType<TOutput>);
 
