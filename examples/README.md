@@ -153,6 +153,7 @@ pnpm --filter @expertmesh/examples start:loop-code
 pnpm --filter @expertmesh/examples start:loop-route
 pnpm --filter @expertmesh/examples start:loop-subloop
 pnpm --filter @expertmesh/examples start:loop-watch
+pnpm --filter @expertmesh/examples start:workflow-patterns
 pnpm --filter @expertmesh/examples start:loop-human-clarification
 pnpm --filter @expertmesh/examples start:loop-human-review-gate
 ```
@@ -161,6 +162,7 @@ pnpm --filter @expertmesh/examples start:loop-human-review-gate
 - `run-loop-route.ts`：根据 step 结构化输出字段 `.route("status", ...)`。
 - `run-loop-subloop.ts`：把一个 Loop 作为另一个 Loop 的 subloop step。
 - `run-loop-watch.ts`：用 `app.start()` 非阻塞启动 run，再用 `app.runs.get()`、`app.runs.list()`、`app.runs.getTree()`、`app.runs.watch()` 和 `app.runs.watchOutput()` 查询状态并递归订阅嵌套 Loop 事件。
+- `run-workflow-patterns.ts`：演示 `workflow.promptChain()`、`workflow.routing()`、`workflow.parallel()`、`workflow.orchestratorWorkers()` 和 `workflow.evaluatorOptimizer()` 五类快捷范式。
 - `run-loop-human-clarification.ts`：演示 `clarifier -> human question -> clarifier` 的多轮需求澄清，Human step 会让 workflow/task 进入 waiting，CLI 回答后恢复。
 - `run-loop-human-review-gate.ts`：演示 `coder -> verify -> human review gate`，CLI 可选择 approve、request changes 或 manual patch，并通过普通 `.route("decision", ...)` 推进或回环。
 

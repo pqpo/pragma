@@ -12,29 +12,13 @@
 
 Core 的定位是“可替换运行时 + 可治理编排协议”的中间层：
 
-本文中的架构图、流程图、时序图统一使用 `text` 代码块和 ASCII/text 绘图，不使用 Mermaid、PlantUML、图片或外部绘图文件。
+```mermaid
+flowchart TB
+  app["Server / Worker / Desktop"]
+  core["@expertmesh/core<br/>Agent 能力装配<br/>Runtime 执行适配<br/>Flow 编排<br/>Context / Tools<br/>Plugins / SubAgents"]
+  shared["@expertmesh/shared<br/>协议对象和状态模型"]
 
-```text
-+---------------------------+
-| Server / Worker / Desktop |
-+-------------+-------------+
-              |
-              v
-+-------------+-------------+
-|      @expertmesh/core      |
-|                             |
-|  - Agent 能力装配          |
-|  - Runtime 执行适配        |
-|  - Flow 编排               |
-|  - Context / Tools         |
-|  - Plugins / SubAgents     |
-+-------------+-------------+
-              |
-              v
-+-------------+-------------+
-|     @expertmesh/shared     |
-|  协议对象和状态模型        |
-+---------------------------+
+  app --> core --> shared
 ```
 
 ## 模块分类
@@ -45,33 +29,26 @@ Core 源码位于 `packages/core/src`。本文按职责分类说明模块，而�
 
 Agent 能力层负责把一个专家的身份、指令、上下文、工具、插件、子 Agent 和模型配置装配成标准 `ExpertAgent`。
 
-```text
-+-----------------------------+
-| ExpertAgent.create(options) |
-+--------------+--------------+
-               |
-               v
-+--------------+--------------+
-| Agent 创建期归一化           |
-|                              |
-|  +-- Plugin Loader           |
-|  |   +-- MCP                 |
-|  |   +-- Skills              |
-|  |   +-- Models              |
-|  |   +-- Tools               |
-|  |   +-- Hooks               |
-|  |                           |
-|  +-- ContextManager          |
-|  |   +-- ContextSystem       |
-|  |                           |
-|  +-- SubAgent Registry       |
-|  +-- Managed Tools           |
-+--------------+--------------+
-               |
-               v
-+--------------+--------------+
-|          ExpertAgent         |
-+-----------------------------+
+```mermaid
+flowchart TB
+  create["ExpertAgent.create(options)"]
+  normalize["Agent 创建期归一化"]
+  agent["ExpertAgent"]
+
+  create --> normalize --> agent
+
+  normalize --> pluginLoader["Plugin Loader"]
+  pluginLoader --> mcp["MCP"]
+  pluginLoader --> skills["Skills"]
+  pluginLoader --> models["Models"]
+  pluginLoader --> tools["Tools"]
+  pluginLoader --> hooks["Hooks"]
+
+  normalize --> contextManager["ContextManager"]
+  contextManager --> contextSystem["ContextSystem"]
+
+  normalize --> subAgents["SubAgent Registry"]
+  normalize --> managedTools["Managed Tools"]
 ```
 
 核心边界：
@@ -93,28 +70,25 @@ Agent 能力层负责把一个专家的身份、指令、上下文、工具、�
 
 Context 与工具层负责把长期知识、项目上下文和受控能力暴露给 Agent。
 
-```text
-+-----------------------------+
-|        ContextSystem        |
-+--------------+--------------+
-               |
-               +-- namespace: host
-               |   +-- ContextStore
-               |
-               +-- namespace: plugin-a
-               |   +-- ContextStore
-               |
-               +-- namespace: plugin-b
-                   +-- ContextStore
+```mermaid
+flowchart TB
+  contextSystem["ContextSystem"]
+  host["namespace: host"]
+  pluginA["namespace: plugin-a"]
+  pluginB["namespace: plugin-b"]
+  hostStore["ContextStore"]
+  pluginAStore["ContextStore"]
+  pluginBStore["ContextStore"]
 
-+-----------------------------+
-|        Context Tools        |
-+--------------+--------------+
-               |
-               +-- list_expert_context
-               +-- read_expert_context
-               +-- search_expert_context
-               +-- add / update / delete context
+  contextSystem --> host --> hostStore
+  contextSystem --> pluginA --> pluginAStore
+  contextSystem --> pluginB --> pluginBStore
+
+  contextTools["Context Tools"]
+  contextTools --> list["list_expert_context"]
+  contextTools --> read["read_expert_context"]
+  contextTools --> search["search_expert_context"]
+  contextTools --> write["add / update / delete context"]
 ```
 
 核心边界：
@@ -128,38 +102,24 @@ Context 与工具层负责把长期知识、项目上下文和受控能力暴露
 
 Runtime 执行层负责屏蔽具体执行环境。Agent 只知道如何创建会话和提交任务，不知道底层是 PI agent SDK、云端沙箱、本地 Desktop 桥接，还是自托管执行器。
 
-```text
-+-------------+       createSession({ runtime, runtimes })
-| ExpertAgent |-------------------------------------------+
-+-------------+                                           |
-                                                            v
-                                                   +--------+---------+
-                                                   | RuntimeRegistry |
-                                                   +--------+---------+
-                                                            |
-                                                            | resolve(runtimeId)
-                                                            v
-                                                   +--------+---------+
-                                                   | RuntimeAdapter  |
-                                                   +--------+---------+
-                                                            |
-                                                            | createSession()
-                                                            v
-                                                   +--------+---------+
-                                                   | RuntimeAgent    |
-                                                   | Session         |
-                                                   +--------+---------+
-                                                            |
-                                                            | submit({ query, output })
-                                                            v
-                                                   +--------+---------+
-                                                   | RuntimeSubmit   |
-                                                   | Handle          |
-                                                   +--------+---------+
-                                                            |
-                                                            +-- events: AsyncIterable<RuntimeStreamEvent>
-                                                            +-- result: Promise<RuntimeRunResult>
-                                                            +-- cancel()
+```mermaid
+flowchart LR
+  agent["ExpertAgent"]
+  registry["RuntimeRegistry"]
+  adapter["RuntimeAdapter"]
+  session["RuntimeAgentSession"]
+  handle["RuntimeSubmitHandle"]
+  events["events: AsyncIterable<RuntimeStreamEvent>"]
+  result["result: Promise<RuntimeRunResult>"]
+  cancel["cancel()"]
+
+  agent -->|"createSession({ runtime, runtimes })"| registry
+  registry -->|"resolve(runtimeId)"| adapter
+  adapter -->|"createSession()"| session
+  session -->|"submit({ query, output })"| handle
+  handle --> events
+  handle --> result
+  handle --> cancel
 ```
 
 核心边界：
@@ -172,15 +132,13 @@ Runtime 执行层负责屏蔽具体执行环境。Agent 只知道如何创建会
 
 当前默认 Runtime：
 
-```text
-+-----------------------------+
-|        cloud-pi-agent       |
-+--------------+--------------+
-               |
-               +-- 转换 ExpertAgent 声明
-               +-- 转换模型、工具、MCP、Skills、SubAgents
-               +-- 管理 PI Runtime Session
-               +-- 转换事件流和最终结果
+```mermaid
+flowchart TB
+  runtime["cloud-pi-agent"]
+  runtime --> agentDeclaration["转换 ExpertAgent 声明"]
+  runtime --> capabilities["转换模型、工具、MCP、Skills、SubAgents"]
+  runtime --> session["管理 PI Runtime Session"]
+  runtime --> events["转换事件流和最终结果"]
 ```
 
 ### Flow 编排层
@@ -195,49 +153,38 @@ Flow 编排层负责把多个可执行单元组织成可执行流程。这里的
 - 编译归一化默认发生在 `flow.use()` 和 `createLoopApp().run()` 边界，用户日常不需要显式调用 `compile()`。
 - `CompiledLoop` 是内部执行形态，本身也是 `Loop`，所以组合 Flow 可以继续嵌套。
 
-```text
-+-----------------------------+
-|            Loop             |
-+--------------+--------------+
-               |
-               +-- ExpertAgent
-               +-- Task Loop
-               +-- CompiledLoop
-               +-- 任何实现 Loop 接口的对象
+```mermaid
+flowchart TB
+  loop["Loop"]
+  loop --> expertAgent["ExpertAgent"]
+  loop --> taskLoop["Task Loop"]
+  loop --> compiledLoopRef["CompiledLoop"]
+  loop --> customLoop["任何实现 Loop 接口的对象"]
 
-+-----------------------------+
-|          FlowSpec           |
-+--------------+--------------+
-               |
-               +-- use(id, loop, options)
-               +-- compose(builder)
-               +-- compile()
-                   for advanced validation / registration
+  flowSpec["FlowSpec"]
+  flowSpec --> use["use(id, loop, options)"]
+  flowSpec --> compose["compose(builder)"]
+  flowSpec --> compile["compile()<br/>advanced validation / registration"]
 
-+-----------------------------+
-|         CompiledLoop        |
-+--------------+--------------+
-               |
-               +-- steps
-               +-- transitions
-               +-- limits
-               +-- result resolver
+  compiledLoop["CompiledLoop"]
+  compiledLoop --> steps["steps"]
+  compiledLoop --> transitions["transitions"]
+  compiledLoop --> limits["limits"]
+  compiledLoop --> resultResolver["result resolver"]
 ```
 
 Flow 的关键设计是：步骤只持有 `Loop`，不再按 agent、task、subflow 建立不同分支。
 
-```text
-+-----------------------------+
-|     LoopStepDefinition      |
-+--------------+--------------+
-               |
-               +-- id
-               +-- loop
-               +-- input resolver
-               +-- output schema
-               +-- reduce
-               +-- sandbox request
-               +-- runtime override
+```mermaid
+flowchart TB
+  step["LoopStepDefinition"]
+  step --> id["id"]
+  step --> loop["loop"]
+  step --> input["input resolver"]
+  step --> output["output schema"]
+  step --> reduce["reduce"]
+  step --> sandbox["sandbox request"]
+  step --> runtime["runtime override"]
 ```
 
 核心边界：
@@ -255,35 +202,34 @@ Flow 的关键设计是：步骤只持有 `Loop`，不再按 agent、task、subf
 
 运行协调层是 Loop 执行时最重要的边界。它由 `TaskManager`、`StateManager`、`Mailbox`、`SandboxManager` 和 `LoopDefinitionStore` 协作完成。
 
-```text
-+-----------------------------+
-|           LoopApp           |
-+--------------+--------------+
-               |
-               +-- TaskManager
-               |   +-- 分发 task
-               |   +-- 获取 lease
-               |   +-- 执行 step.loop.run()
-               |   +-- 推进 transition
-               |
-               +-- StateManager
-               |   +-- workflow / task 权威状态
-               |   +-- human interaction 权威状态
-               |   +-- LoopState
-               |   +-- revision
-               |   +-- 幂等事件应用
-               |
-               +-- Mailbox
-               |   +-- command / event 发布订阅
-               |   +-- consumer group
-               |
-               +-- SandboxManager
-               |   +-- workflow sandbox
-               |   +-- task sandbox
-               |   +-- workspace capability
-               |
-               +-- LoopDefinitionStore
-                   +-- workflowRunId 与 CompiledLoop 绑定
+```mermaid
+flowchart TB
+  app["LoopApp"]
+
+  app --> taskManager["TaskManager"]
+  taskManager --> dispatch["分发 task"]
+  taskManager --> lease["获取 lease"]
+  taskManager --> execute["执行 step.loop.run()"]
+  taskManager --> transition["推进 transition"]
+
+  app --> stateManager["StateManager"]
+  stateManager --> workflowState["workflow / task 权威状态"]
+  stateManager --> humanState["human interaction 权威状态"]
+  stateManager --> loopState["LoopState"]
+  stateManager --> revision["revision"]
+  stateManager --> idempotency["幂等事件应用"]
+
+  app --> mailbox["Mailbox"]
+  mailbox --> pubsub["command / event 发布订阅"]
+  mailbox --> consumerGroup["consumer group"]
+
+  app --> sandboxManager["SandboxManager"]
+  sandboxManager --> workflowSandbox["workflow sandbox"]
+  sandboxManager --> taskSandbox["task sandbox"]
+  sandboxManager --> workspaceCapability["workspace capability"]
+
+  app --> loopDefinitionStore["LoopDefinitionStore"]
+  loopDefinitionStore --> binding["workflowRunId 与 CompiledLoop 绑定"]
 ```
 
 职责边界：
@@ -298,17 +244,15 @@ Flow 的关键设计是：步骤只持有 `Loop`，不再按 agent、task、subf
 
 默认本地组装：
 
-```text
-+-----------------------------+
-|       createLoopApp()       |
-+--------------+--------------+
-               |
-               +-- InMemoryMailbox
-               +-- InMemoryStateManager
-               +-- InMemoryLoopDefinitionStore
-               +-- LocalSandboxManager
-               +-- LocalTaskManager
-               +-- RuntimeRegistry
+```mermaid
+flowchart TB
+  create["createLoopApp()"]
+  create --> mailbox["InMemoryMailbox"]
+  create --> state["InMemoryStateManager"]
+  create --> store["InMemoryLoopDefinitionStore"]
+  create --> sandbox["LocalSandboxManager"]
+  create --> task["LocalTaskManager"]
+  create --> runtime["RuntimeRegistry"]
 ```
 
 这个默认实现适合本地验证和单进程测试。生产或分布式部署时，应替换为持久化状态、可靠消息、远程沙箱和多 worker 任务执行。
@@ -317,118 +261,52 @@ Flow 的关键设计是：步骤只持有 `Loop`，不再按 agent、task、subf
 
 ### Agent 会话流程
 
-```text
-Participants:
-  Caller
-  ExpertAgent
-  RuntimeRegistry
-  RuntimeAdapter
-  RuntimeAgentSession
-  Concrete Runtime
+```mermaid
+sequenceDiagram
+  participant Caller
+  participant ExpertAgent
+  participant RuntimeRegistry
+  participant RuntimeAdapter
+  participant RuntimeAgentSession
+  participant ConcreteRuntime as Concrete Runtime
 
-Sequence:
-  Caller              -> ExpertAgent:         agent.createSession()
-  ExpertAgent         -> RuntimeRegistry:     resolve(runtimeId)
-  RuntimeRegistry     -> RuntimeAdapter:      return adapter
-  ExpertAgent         -> RuntimeAdapter:      createSession(agent config)
-  RuntimeAdapter      -> RuntimeAgentSession: create session
-  Caller              -> RuntimeAgentSession: submit(query, output schema)
-  RuntimeAgentSession -> Concrete Runtime:    execute
-  Concrete Runtime    -> Caller:              stream events
-  Concrete Runtime    -> Caller:              final result
+  Caller->>ExpertAgent: agent.createSession()
+  ExpertAgent->>RuntimeRegistry: resolve(runtimeId)
+  RuntimeRegistry-->>ExpertAgent: adapter
+  ExpertAgent->>RuntimeAdapter: createSession(agent config)
+  RuntimeAdapter-->>RuntimeAgentSession: create session
+  Caller->>RuntimeAgentSession: submit(query, output schema)
+  RuntimeAgentSession->>ConcreteRuntime: execute
+  ConcreteRuntime-->>Caller: stream events
+  ConcreteRuntime-->>Caller: final result
 ```
 
 Agent 会话是 Runtime 层概念。它适合单个专家任务，也可以由 Flow 的某个 step 间接触发。
 
 ### Loop 执行流程
 
-```text
-+-----------------------------+
-| LoopApp.run(loop, request) |
-+--------------+--------------+
-               |
-               v
-+--------------+--------------+
-| compileLoop()               |
-+--------------+--------------+
-               |
-               v
-+--------------+--------------+
-| createWorkflowSandbox()     |
-+--------------+--------------+
-               |
-               v
-+--------------+--------------+
-| createWorkflowRun()         |
-+--------------+--------------+
-               |
-               v
-+--------------+--------------+
-| publish(workflow.started)   |
-+--------------+--------------+
-               |
-               v
-+--------------+--------------+
-| dispatchReadyTasks()        |
-+--------------+--------------+
-               |
-               v
-+--------------+--------------+
-| createTaskRun()             |
-+--------------+--------------+
-               |
-               v
-+--------------+--------------+
-| publish(task.dispatch)      |
-+--------------+--------------+
-               |
-               v
-+--------------+--------------+
-| leaseTask()                 |
-+--------------+--------------+
-               |
-               v
-+--------------+--------------+
-| resolveTaskSandbox()        |
-+--------------+--------------+
-               |
-               v
-+--------------+--------------+
-| step.loop.run()             |
-|                             |
-|  +-- Agent Runtime Session  |
-|  +-- Task handler           |
-|  +-- nested CompiledLoop    |
-|  +-- Human Operator Step    |
-+--------------+--------------+
-               |
-               v
-+--------------+--------------+
-| markTaskSucceeded()         |
-| or markTaskFailed()         |
-+--------------+--------------+
-               |
-               v
-+--------------+--------------+
-| publish(task completed      |
-| or task failed)             |
-+--------------+--------------+
-               |
-               v
-+--------------+--------------+
-| applyTaskEvent()            |
-+--------------+--------------+
-               |
-               v
-+--------------+--------------+
-| applyStepReduction()        |
-+--------------+--------------+
-               |
-               v
-+--------------+--------------+
-| next step                   |
-| or workflow completed       |
-+-----------------------------+
+```mermaid
+flowchart TB
+  run["LoopApp.run(loop, request)"]
+  compile["compileLoop()"]
+  createSandbox["createWorkflowSandbox()"]
+  createWorkflow["createWorkflowRun()"]
+  workflowStarted["publish(workflow.started)"]
+  dispatch["dispatchReadyTasks()"]
+  createTask["createTaskRun()"]
+  taskDispatch["publish(task.dispatch)"]
+  lease["leaseTask()"]
+  resolveSandbox["resolveTaskSandbox()"]
+  stepRun["step.loop.run()<br/>Agent Runtime Session<br/>Task handler<br/>nested CompiledLoop<br/>Human Operator Step"]
+  taskResult["markTaskSucceeded()<br/>or markTaskFailed()"]
+  taskEvent["publish(task completed<br/>or task failed)"]
+  applyTaskEvent["applyTaskEvent()"]
+  reduce["applyStepReduction()"]
+  next["next step<br/>or workflow completed"]
+
+  run --> compile --> createSandbox --> createWorkflow --> workflowStarted --> dispatch
+  dispatch --> createTask --> taskDispatch --> lease --> resolveSandbox --> stepRun
+  stepRun --> taskResult --> taskEvent --> applyTaskEvent --> reduce --> next
 ```
 
 这个流程中，`TaskManager` 可以被替换为远程 worker 调度器，`StateManager` 可以被替换为数据库实现，`Mailbox` 可以被替换为队列或事件总线，`SandboxManager` 可以被替换为容器、VM、Kubernetes Job 或 Desktop 本地工作区。
@@ -437,50 +315,19 @@ Agent 会话是 Runtime 层概念。它适合单个专家任务，也可以由 F
 
 Human-in-the-loop 是 Loop 层的一等能力，不是某个 Runtime 的私有回调。需求澄清、人工审批、编码 review gate 和手工介入都统一建模为 Human Interaction。
 
-```text
-+-----------------------------+
-| Human Operator Step         |
-+--------------+--------------+
-               |
-               v
-+--------------+--------------+
-| createHumanInteraction()    |
-+--------------+--------------+
-               |
-               v
-+--------------+--------------+
-| mark task/workflow waiting  |
-+--------------+--------------+
-               |
-               v
-+--------------+--------------+
-| publish human.requested     |
-| publish task.waiting        |
-| publish workflow.waiting    |
-+--------------+--------------+
-               |
-               v
-+--------------+--------------+
-| UI / CLI / Desktop responds |
-+--------------+--------------+
-               |
-               v
-+--------------+--------------+
-| resolveHumanInteraction()   |
-+--------------+--------------+
-               |
-               v
-+--------------+--------------+
-| publish human.responded     |
-| publish task.resumed        |
-| publish workflow.resumed    |
-+--------------+--------------+
-               |
-               v
-+--------------+--------------+
-| Human step returns output   |
-| then normal reduce/route    |
-+-----------------------------+
+```mermaid
+flowchart TB
+  humanStep["Human Operator Step"]
+  createInteraction["createHumanInteraction()"]
+  markWaiting["mark task/workflow waiting"]
+  publishRequested["publish human.requested<br/>publish task.waiting<br/>publish workflow.waiting"]
+  respond["UI / CLI / Desktop responds"]
+  resolve["resolveHumanInteraction()"]
+  publishResponded["publish human.responded<br/>publish task.resumed<br/>publish workflow.resumed"]
+  returnOutput["Human step returns output<br/>then normal reduce/route"]
+
+  humanStep --> createInteraction --> markWaiting --> publishRequested
+  publishRequested --> respond --> resolve --> publishResponded --> returnOutput
 ```
 
 关键原则：
@@ -495,46 +342,38 @@ Human-in-the-loop 是 Loop 层的一等能力，不是某个 Runtime 的私有�
 
 Loop 运行状态来自 `@expertmesh/shared`，Core 只通过接口读写。
 
-```text
-+-----------------------------+
-|      WorkflowRunRecord      |
-+--------------+--------------+
-               |
-               +-- id
-               +-- loopId
-               +-- status
-               +-- currentStepIds
-               +-- completedStepIds
-               +-- state: LoopState
-               +-- defaultSandbox
-               +-- revision
+```mermaid
+flowchart TB
+  workflow["WorkflowRunRecord"]
+  workflow --> workflowId["id"]
+  workflow --> workflowLoopId["loopId"]
+  workflow --> workflowStatus["status"]
+  workflow --> currentStepIds["currentStepIds"]
+  workflow --> completedStepIds["completedStepIds"]
+  workflow --> loopState["state: LoopState"]
+  workflow --> defaultSandbox["defaultSandbox"]
+  workflow --> workflowRevision["revision"]
 
-+-----------------------------+
-|        TaskRunRecord        |
-+--------------+--------------+
-               |
-               +-- id
-               +-- workflowRunId
-               +-- stepId
-               +-- visit
-               +-- status
-               +-- input / output / error
-               +-- runtimeId
-               +-- sandbox
-               +-- lease
+  task["TaskRunRecord"]
+  task --> taskId["id"]
+  task --> workflowRunId["workflowRunId"]
+  task --> stepId["stepId"]
+  task --> visit["visit"]
+  task --> taskStatus["status"]
+  task --> taskPayload["input / output / error"]
+  task --> runtimeId["runtimeId"]
+  task --> taskSandbox["sandbox"]
+  task --> lease["lease"]
 
-+-----------------------------+
-|   HumanInteractionRecord    |
-+--------------+--------------+
-               |
-               +-- id
-               +-- workflowRunId
-               +-- taskRunId / stepId
-               +-- kind
-               +-- status
-               +-- request / response
-               +-- operator
-               +-- createdAt / resolvedAt
+  human["HumanInteractionRecord"]
+  human --> interactionId["id"]
+  human --> interactionWorkflowRunId["workflowRunId"]
+  human --> interactionTask["taskRunId / stepId"]
+  human --> kind["kind"]
+  human --> interactionStatus["status"]
+  human --> interactionPayload["request / response"]
+  human --> operator["operator"]
+  human --> auditTime["createdAt / resolvedAt"]
 ```
 
 状态推进原则：
@@ -548,56 +387,60 @@ Loop 运行状态来自 `@expertmesh/shared`，Core 只通过接口读写。
 
 典型 task 状态流转：
 
-```text
-+---------+     +------------+     +--------+     +---------+
-| pending | --> | dispatched | --> | leased | --> | running |
-+---------+     +------------+     +--------+     +----+----+
-                                                        |
-                                                        +--> waiting --> running
-                                                        |
-                                                        v
-                                      +-----------------+-----------------+
-                                      | succeeded / failed / cancelled    |
-                                      +-----------------------------------+
+```mermaid
+stateDiagram-v2
+  [*] --> pending
+  pending --> dispatched
+  dispatched --> leased
+  leased --> running
+  running --> waiting
+  waiting --> running
+  running --> succeeded
+  running --> failed
+  running --> cancelled
+  succeeded --> [*]
+  failed --> [*]
+  cancelled --> [*]
 ```
 
 典型 workflow 状态流转：
 
-```text
-+---------+     +---------+     +---------+
-| running | --> | waiting | --> | running |
-+----+----+     +---------+     +----+----+
-     |                            |
-     v                            v
-+-----------------------------------------+
-| succeeded / failed / cancelled          |
-+-----------------------------------------+
+```mermaid
+stateDiagram-v2
+  [*] --> running
+  running --> waiting
+  waiting --> running
+  running --> succeeded
+  running --> failed
+  running --> cancelled
+  succeeded --> [*]
+  failed --> [*]
+  cancelled --> [*]
 ```
 
 ## Sandbox 模型
 
 Sandbox 是 Loop 执行时的工作区和能力边界。它不是固定实现，而是 `SandboxManager` 接口。
 
-```text
-+-----------------------------+
-|        SandboxRequest       |
-+--------------+--------------+
-               |
-               +-- strategy
-               |   +-- reuse-workflow
-               |   +-- ephemeral
-               |   +-- reuse-step
-               |   +-- attach
-               |
-               +-- workspace
-               |   +-- root
-               |   +-- access
-               |
-               +-- capabilities
-                   +-- filesystem
-                   +-- shell
-                   +-- network
-                   +-- humanApproval
+```mermaid
+flowchart TB
+  request["SandboxRequest"]
+
+  request --> strategy["strategy"]
+  strategy --> reuseWorkflow["reuse-workflow"]
+  strategy --> ephemeral["ephemeral"]
+  strategy --> reuseStep["reuse-step"]
+  strategy --> attach["attach"]
+
+  request --> workspace["workspace"]
+  workspace --> root["root"]
+  workspace --> access["access"]
+
+  request --> capabilities["capabilities"]
+  capabilities --> filesystem["filesystem"]
+  capabilities --> shell["shell"]
+  capabilities --> network["network"]
+  capabilities --> humanApproval["humanApproval"]
 ```
 
 当前默认 `LocalSandboxManager` 使用本机 workspace，不提供强安全隔离。它用于开发、测试和本地单进程运行。未来生产环境应根据部署形态替换为：
@@ -614,41 +457,14 @@ Sandbox 边界不应绕过 Tool approval、Runtime permission 或 Desktop 本地
 
 Core 当前默认本地实现可以平滑演进到分布式部署。推荐拆分如下：
 
-```text
-+-----------------------------+
-|          API Server         |
-|                             |
-|  - 创建 workflow run        |
-|  - 校验用户、租户、预算权限 |
-|  - 写入 StateManager        |
-|  - 发布 Mailbox command     |
-+--------------+--------------+
-               |
-               v
-+--------------+--------------+
-|   Reliable Mailbox / Queue  |
-+--------------+--------------+
-               |
-               v
-+--------------+--------------+
-|          Worker Pool        |
-|                             |
-|  - lease task               |
-|  - resolve sandbox          |
-|  - execute step.loop.run()  |
-|  - stream progress          |
-|  - publish completion event |
-+--------------+--------------+
-               |
-               v
-+--------------+--------------+
-|          State Store        |
-|                             |
-|  - workflow/task state      |
-|  - revision                 |
-|  - idempotency              |
-|  - audit trail              |
-+-----------------------------+
+```mermaid
+flowchart TB
+  api["API Server<br/>创建 workflow run<br/>校验用户、租户、预算权限<br/>写入 StateManager<br/>发布 Mailbox command"]
+  mailbox["Reliable Mailbox / Queue"]
+  worker["Worker Pool<br/>lease task<br/>resolve sandbox<br/>execute step.loop.run()<br/>stream progress<br/>publish completion event"]
+  state["State Store<br/>workflow/task state<br/>revision<br/>idempotency<br/>audit trail"]
+
+  api --> mailbox --> worker --> state
 ```
 
 可替换组件：
@@ -677,33 +493,26 @@ Core 当前默认本地实现可以平滑演进到分布式部署。推荐拆分
 
 未来本地 Agent 通过 Desktop App 接入云端，不新增 `apps/local-runner`。
 
-```text
-+-----------------------------+
-|    Cloud Server / Worker    |
-+--------------+--------------+
-               |
-               v
-+--------------+--------------+
-|        Runtime Gateway      |
-+--------------+--------------+
-               |
-               v
-+--------------+--------------+
-|        双向安全连接         |
-+--------------+--------------+
-               |
-               v
-+--------------+--------------+
-|         Desktop App         |
-|                             |
-|  +-- Local Permission Guard |
-|  +-- Local Sandbox          |
-|  |   / Workspace            |
-|  +-- Local Agent Adapter    |
-|      +-- Claude Code        |
-|      +-- Codex              |
-|      +-- 自研本地 Agent     |
-+-----------------------------+
+```mermaid
+flowchart TB
+  cloud["Cloud Server / Worker"]
+  gateway["Runtime Gateway"]
+  connection["双向安全连接"]
+  desktop["Desktop App"]
+  permission["Local Permission Guard"]
+  sandbox["Local Sandbox / Workspace"]
+  adapter["Local Agent Adapter"]
+  claude["Claude Code"]
+  codex["Codex"]
+  custom["自研本地 Agent"]
+
+  cloud --> gateway --> connection --> desktop
+  desktop --> permission
+  desktop --> sandbox
+  desktop --> adapter
+  adapter --> claude
+  adapter --> codex
+  adapter --> custom
 ```
 
 Core 中应承载桥接协议、消息类型和 Runtime Adapter 合约；Desktop App 承载登录、设备绑定、本地工作区选择和用户确认 UI；Server/Worker 承载调度、审计、预算和治理。

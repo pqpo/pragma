@@ -1,12 +1,20 @@
 # Loop 使用指南
 
-本文说明当前 ExpertMesh Loop API。核心原则是：`Agent` 本身是 `Loop`，编译后的组合工作流也是 `Loop`，任何对象只要实现 `Loop` 接口，就可以注册进另一个 Loop。
+本文说明 ExpertMesh Loop API 的核心使用方式。核心原则是：`Agent` 本身是 `Loop`，编译后的组合工作流也是 `Loop`，任何对象只要实现 `Loop` 接口，就可以注册进另一个 Loop。
 
 当前核心 API：
 
 ```ts
-import { createLoopApp, defineTask, defineHumanTask, defineFlow } from "@expertmesh/core";
+import { createLoopApp, defineTask, defineFlow } from "@expertmesh/core";
 ```
+
+## 阅读边界
+
+本文只覆盖 Loop 的基础执行、组合、状态归并和分支控制。更进阶的主题拆在独立文档中：
+
+- [Workflow 范式快捷 API](./workflow-patterns.md)
+- [Human-in-the-loop](./human-in-the-loop.md)
+- [Loop 运行组件与扩展](./loop-runtime-components.md)
 
 ## 核心概念
 
@@ -21,7 +29,7 @@ interface Loop<TInput, TOutput> {
 }
 ```
 
-`defineFlow()` 创建组合 Loop；组合 Loop 通过 `use(id, loop, options)` 注册子 Loop，不区分 agent、code、human operator 或 subloop。`ExpertAgent` 已实现 `Loop`，`defineTask()` 是把本地 TypeScript handler 包成 Loop 的便利函数，`defineHumanTask()` 是把人工等待点包成 Loop 的便利函数。
+`defineFlow()` 创建组合 Loop；组合 Loop 通过 `use(id, loop, options)` 注册子 Loop，不区分 agent、code、human operator 或 subloop。`ExpertAgent` 已实现 `Loop`，`defineTask()` 是把本地 TypeScript handler 包成 Loop 的便利函数。
 
 主要对象：
 
@@ -29,13 +37,7 @@ interface Loop<TInput, TOutput> {
 - `FlowSpec`：组合 Flow 构建器。
 - `CompiledLoop`：编译后的组合 Loop，同时也是 `Loop`。
 - `LoopApp`：运行入口，可运行任意 `Loop`。
-- `TaskManager`：任务分发与执行协调。
-- `StateManager`：工作流和任务状态事实源。
-- `Mailbox`：命令和事件通信通道。
-- `SandboxManager`：workflow 和 task 的沙箱生命周期边界。
-- `HumanInteraction`：需求澄清、人工审批、review gate 和手工介入的等待/恢复协议。
-
-每次 root workflow 启动时都会创建默认 sandbox。未声明 sandbox 策略的 step 默认复用 workflow sandbox；step 可以通过 `sandbox: { strategy: { mode: "ephemeral" } }` 显式请求新 sandbox。当前默认实现是本机 workspace，不提供安全隔离，但接口按未来远程或容器沙箱实现设计。
+- `LoopState`：workflow 运行中的状态容器。
 
 ## 最小组合 Loop
 
@@ -156,8 +158,6 @@ for await (const event of app.runs.watchOutput(handle.workflowRunId, { recursive
 ```bash
 pnpm --filter @expertmesh/examples start:loop-watch
 ```
-
-对应入口文件是 `examples/src/run-loop-watch.ts`，示例包含父 Loop、嵌套子 Loop、运行中快照、递归 watch、输出 watch 和最终 run tree。
 
 ## Agent 作为 Loop
 
@@ -317,6 +317,8 @@ flow.compose(({ start, step, end }) => {
 });
 ```
 
+更常见的分类路由也可以直接用 [Workflow routing](./workflow-patterns.md#routing) 快捷 API。
+
 ## limit 防止循环失控
 
 `limit()` 给某个 step 设置访问次数上限：
@@ -331,136 +333,6 @@ flow.compose(({ start, step, fail }) => {
     .next(retryStep);
 });
 ```
-
-## Human-in-the-loop
-
-`defineHumanTask()` 用于创建人工等待点。它返回普通 `Loop`，因此可以像 Agent、代码 task 或子 Flow 一样注册到 `flow.use()`，并通过 `reduce()` 和 `route()` 推进后续流程。
-
-Human task 执行时，`TaskManager` 会创建 `HumanInteractionRecord`，把 workflow/task 标记为 `waiting`，发布 `human.requested`、`task.waiting` 和 `workflow.waiting`。外部 UI、CLI 或 Desktop 通过 `taskManager.respondToHumanInteraction()` 提交响应后，workflow/task 恢复，Human step 返回响应对象，然后进入普通的 `reduce()` 和 `route()`。
-
-最小示例：
-
-```ts
-import { createLoopApp, defineFlow, defineHumanTask } from "@expertmesh/core";
-import { z } from "zod";
-
-const app = createLoopApp();
-
-const flow = defineFlow({
-  id: "approval-loop",
-  output: z.object({
-    approved: z.boolean(),
-  }),
-  result: ({ state }) => ({
-    approved: state.flags["approved"] ?? false,
-  }),
-});
-
-const approve = flow.use(
-  "approve",
-  defineHumanTask({
-    id: "human-approval",
-    output: z.object({
-      approved: z.boolean(),
-    }),
-    request: {
-      kind: "approval",
-      title: "Approve plan",
-      prompt: "Should the workflow continue?",
-    },
-  }),
-  {
-    reduce: ({ state, output }) => {
-      state.flags["approved"] = output.approved;
-    },
-  },
-);
-
-flow.compose(({ start, end }) => {
-  start(approve).next(end());
-});
-
-const handle = await app.start(flow, {
-  input: {},
-});
-
-const interaction = (await app.stateManager.listHumanInteractions(handle.workflowRunId))[0];
-
-if (interaction !== undefined) {
-  await app.taskManager.respondToHumanInteraction({
-    interactionId: interaction.id,
-    response: {
-      approved: true,
-    },
-    operator: {
-      id: "local-user",
-      kind: "user",
-    },
-  });
-}
-
-const result = await handle.result;
-console.log(result.output);
-```
-
-实际产品层不应轮询 `listHumanInteractions()`。推荐通过 `app.runs.watchOutput(workflowRunId)` 或自定义 Mailbox 订阅 `human.requested`，把请求展示给用户，再调用 `respondToHumanInteraction()`。
-
-### 需求澄清 Loop
-
-需求澄清适合建模为“Agent/Task 判断是否需要更多信息，Human task 收集答案，再回到澄清步骤”：
-
-```text
-clarifier -> human_question -> clarifier -> ready
-```
-
-推荐约束：
-
-- clarifier 输出结构化字段，例如 `{ status: "needs_input" | "ready", questions }`。
-- `human_question` 的 response 写入 `state.messages` 或 `state.context`。
-- clarifier 的回边必须配置 `limit()`，避免无限追问。
-
-可运行示例：
-
-```bash
-pnpm --filter @expertmesh/examples start:loop-human-clarification
-```
-
-### 编码 review gate
-
-编码阶段的人类介入不应使用 tool approval 表达。tool approval 只适合单个工具调用，例如删除文件、执行 shell、访问网络。阶段性验收、vibecoding 介入和“点击通过后进入下一步”应使用 `review_gate`：
-
-```text
-coder -> verify -> human_review_gate
-              |        |
-              |        +-- approved -> next
-              |        +-- request_changes -> coder
-              |        +-- manual_patch -> verify
-```
-
-推荐约束：
-
-- `coder` 和 `verify` 复用 workflow sandbox，使 Agent 修改、人工修改和验证看到同一份 workspace。
-- `manual_patch` 响应应记录到 `state.artifacts`，然后重新进入 verify。
-- `approved` 才能进入下一步；`request_changes` 回到 coder，并把 feedback 放进下一次 coder input。
-- `coder` 和 `review_gate` 都应配置访问上限。
-
-可运行示例：
-
-```bash
-pnpm --filter @expertmesh/examples start:loop-human-review-gate
-```
-
-### Agent 内部提问
-
-`ExpertAgent` 作为 Flow step 运行时，内置 `askUserQuestion` 会通过 Loop human interaction broker 创建 `question` interaction。也就是说，Agent 内部提问和显式 `defineHumanTask()` 走同一套 `human.requested` / `human.responded` 协议。
-
-这保证了：
-
-- 用户问题可以被 UI 统一展示。
-- workflow/task 会进入 `waiting`，不会被误判为失败或重派发。
-- 用户回答会被记录为 Human Interaction 审计事实。
-
-V1 不提供 Runtime durable suspend/resume。等待点发生在 Loop/Core 层；如果底层 Runtime 未来支持可持久化暂停，可以继续复用同一套 Human Interaction 协议。
 
 ## 运行时选择
 
@@ -481,347 +353,3 @@ await createLoopApp().run(flow, {
 ```
 
 `runtimes` 中的 step 级配置优先级最高，其次是 `use()` 的 `runtime`，最后是运行请求的 `runtime` 和 registry 默认 runtime。
-
-## 自定义 LoopApp 运行组件
-
-`createLoopApp()` 默认使用内存状态、内存消息、本地 sandbox 和本地 task manager。这个默认组合适合开发、测试和单进程验证。
-
-需要接入分布式部署或自定义执行环境时，可以替换这些组件：
-
-```ts
-import { createLoopApp, createRuntimeRegistry } from "@expertmesh/core";
-
-const app = createLoopApp({
-  mailbox: customMailbox,
-  stateManager: customStateManager,
-  sandboxManager: customSandboxManager,
-  taskManager: customTaskManager,
-  loopStore: customLoopDefinitionStore,
-  runtimes: createRuntimeRegistry({
-    runtimes: [customRuntime],
-    defaultRuntime: "custom-runtime",
-  }),
-});
-```
-
-可替换组件：
-
-- `Mailbox`：命令和事件通道。
-- `StateManager`：workflow、task、`LoopState` 的权威状态源。
-- `SandboxManager`：workflow 和 task 的运行环境边界。
-- `TaskManager`：任务派发、租约、执行和 transition 推进。
-- `LoopDefinitionStore`：保存 workflow run 对应的已编译 Loop 定义。
-- `RuntimeRegistry`：按 runtime id 解析具体 Runtime Adapter。
-
-通常不需要一次性全部替换。单机开发只需要默认实现；生产部署一般先替换 `StateManager` 和 `Mailbox`，再替换 `SandboxManager` 和 `TaskManager`。
-
-## 自定义 SandboxManager
-
-`SandboxManager` 控制 workflow sandbox 和 task sandbox 的创建、复用、释放和清理。
-
-```ts
-import type { SandboxManager } from "@expertmesh/core";
-
-const customSandboxManager: SandboxManager = {
-  async createWorkflowSandbox(request) {
-    const sandboxId = await sandboxService.create({
-      workflowRunId: request.workflowRunId,
-      loopId: request.loopId,
-      input: request.input,
-      requestedCapabilities: request.request?.capabilities,
-      workspace: request.request?.workspace,
-    });
-
-    return {
-      ref: {
-        id: sandboxId,
-        kind: "remote-container",
-        workspaceRoot: "/workspace",
-      },
-      workspace: {
-        root: "/workspace",
-        exec: async (command, options = {}) => {
-          return await sandboxService.exec(sandboxId, {
-            command,
-            cwd: options.cwd,
-            env: options.env,
-            timeoutMs: options.timeoutMs,
-          });
-        },
-      },
-    };
-  },
-
-  async resolveTaskSandbox(request) {
-    if (request.request.strategy?.mode === "reuse-workflow") {
-      return await sandboxService.attach(request.workflow.defaultSandbox.id);
-    }
-
-    return await sandboxService.createTaskSandbox({
-      workflowRunId: request.workflow.id,
-      taskRunId: request.task.id,
-      strategy: request.request.strategy,
-      workspace: request.request.workspace,
-      capabilities: request.request.capabilities,
-    });
-  },
-
-  async releaseTaskSandbox(lease, result) {
-    await sandboxService.releaseTask(lease.ref.id, result.status);
-  },
-
-  async cleanupWorkflowSandboxes(workflowRunId) {
-    await sandboxService.cleanupWorkflow(workflowRunId);
-  },
-};
-```
-
-Sandbox strategy 的语义：
-
-- `reuse-workflow`：复用 workflow 默认 sandbox。
-- `ephemeral`：为当前 task 创建一次性 sandbox。
-- `reuse-step`：同一个 workflow、step 和 key 复用 sandbox。
-- `attach`：挂载已有 sandbox id。
-
-生产实现需要注意：
-
-- `workspace.exec()` 应返回统一的 `exitCode`、`stdout`、`stderr`。
-- `releaseTaskSandbox()` 和 `cleanupWorkflowSandboxes()` 必须可重试。
-- sandbox capability 是运行环境能力声明，不应替代用户权限、工具审批或 Desktop 本地确认 UI。
-- 如果 sandbox 是远程容器或 VM，日志、artifact 和文件同步应由 sandbox 服务或 Runtime 事件流显式处理。
-
-## 自定义 StateManager
-
-`StateManager` 是 workflow 和 task 的状态事实源。分布式部署时应使用事务性存储实现，例如 PostgreSQL、CockroachDB、DynamoDB 或其他支持条件更新的状态库。
-
-```ts
-import type { StateManager } from "@expertmesh/core";
-
-const stateManagerMethods = createRepositoryBackedStateMethods({
-  workflowRepo,
-  taskRepo,
-  appliedMessageRepo,
-  transaction,
-});
-
-const customStateManager: StateManager = {
-  async createWorkflowRun(request) {
-    return await workflowRepo.insert({
-      id: request.id,
-      loopId: request.loopId,
-      input: request.input,
-      state: request.state,
-      currentStepIds: [request.startStepId],
-      completedStepIds: [],
-      defaultSandbox: request.defaultSandbox,
-      status: "running",
-      revision: 0,
-    });
-  },
-
-  async getWorkflowRun(workflowRunId) {
-    return await workflowRepo.findById(workflowRunId);
-  },
-
-  async applyStepReduction(request) {
-    return await transaction(async (tx) => {
-      const workflow = await tx.workflows.getForUpdate(request.workflowRunId);
-
-      if (workflow.revision !== request.expectedRevision) {
-        throw new Error("Workflow revision conflict.");
-      }
-
-      const nextState = structuredClone(workflow.state);
-      await request.reduce?.({
-        state: nextState,
-        output: request.output,
-      });
-
-      await tx.workflows.updateState({
-        workflowRunId: request.workflowRunId,
-        state: nextState,
-        revision: workflow.revision + 1,
-      });
-
-      return nextState;
-    });
-  },
-
-  // 其余方法应完整实现 TaskRun 状态流转、幂等事件应用和 lease 恢复。
-  ...stateManagerMethods,
-};
-```
-
-实现要求：
-
-- task 状态流转必须是原子操作。
-- `markTaskWaiting()` 应清除 lease owner 和 lease 过期时间；waiting task 不应被 `recoverExpiredLeases()` 恢复。
-- `markTaskResumed()` 只能把 waiting task 恢复为 running。
-- `createHumanInteraction()`、`resolveHumanInteraction()` 和 `listHumanInteractions()` 必须持久化人工等待点。
-- `resolveHumanInteraction()` 必须幂等；重复响应不能覆盖首次有效响应。
-- `markWorkflowWaiting()` 和 `markWorkflowRunning()` 必须保留 revision 并可审计。
-- `applyTaskEvent()` 和 `applyWorkflowEvent()` 必须按 message id 幂等。
-- `applyStepReduction()` 必须使用 revision 或等价机制防止并发覆盖。
-- `recoverExpiredLeases(now)` 应找出 lease 过期且未完成的 task，允许 worker 重新派发或重试。
-- 状态库里的记录应保留审计所需的时间、错误、runtime、sandbox、lease 和 human interaction 信息。
-
-## 自定义 Mailbox
-
-`Mailbox` 是命令和事件通道。它承载 `task.dispatch`、`task.completed`、`task.failed`、`workflow.started` 等消息，但不保存权威业务状态。
-
-```ts
-import type { Mailbox } from "@expertmesh/core";
-
-const customMailbox: Mailbox = {
-  async publish(message) {
-    await queue.publish({
-      id: message.id,
-      type: message.type,
-      kind: message.kind,
-      workflowRunId: message.workflowRunId,
-      taskRunId: message.taskRunId,
-      payload: message.payload,
-      occurredAt: message.occurredAt,
-      producer: message.producer,
-    });
-  },
-
-  async subscribe(filter, handler) {
-    const subscription = await queue.subscribe(
-      {
-        workflowRunId: filter.workflowRunId,
-        taskRunId: filter.taskRunId,
-        types: filter.types,
-        consumerGroup: filter.consumerGroup,
-      },
-      async (message) => {
-        await handler(message, {
-          ack: async () => {
-            await queue.ack(message.id);
-          },
-        });
-      },
-    );
-
-    return {
-      unsubscribe: async () => {
-        await subscription.close();
-      },
-    };
-  },
-};
-```
-
-生产实现建议：
-
-- 可以使用至少一次投递，但 `StateManager` 必须保证幂等。
-- consumer group 应支持多 worker 竞争消费。
-- ack 应在 handler 成功后执行。
-- 消息要保留足够的 trace 字段，便于审计和排障。
-
-## 自定义 TaskManager
-
-大多数情况下可以继续使用 `createLocalTaskManager()`，只替换它依赖的 `Mailbox`、`StateManager`、`SandboxManager` 和 `LoopDefinitionStore`。
-
-```ts
-import { createLocalTaskManager, createLoopApp } from "@expertmesh/core";
-
-const taskManager = createLocalTaskManager({
-  mailbox: customMailbox,
-  stateManager: customStateManager,
-  runtimes,
-  sandboxManager: customSandboxManager,
-  loopStore: customLoopDefinitionStore,
-  workerId: process.env.WORKER_ID,
-  leaseTtlMs: 60_000,
-  heartbeatIntervalMs: 20_000,
-});
-
-const app = createLoopApp({
-  mailbox: customMailbox,
-  stateManager: customStateManager,
-  sandboxManager: customSandboxManager,
-  loopStore: customLoopDefinitionStore,
-  runtimes,
-  taskManager,
-});
-```
-
-只有在需要把任务派发、worker 选择、远程执行、重试策略或配额治理放到专门调度系统里时，才需要完整实现 `TaskManager`。
-
-自定义 `TaskManager` 必须保留这些语义：
-
-- `startRun()` 创建 workflow run，并发布初始事件或触发首次派发。
-- `dispatchReadyTasks()` 只派发当前可运行 step，避免重复创建活跃 task。
-- `leaseTask()` 必须避免多个 worker 同时执行同一个 task。
-- `executeTask()` 必须通过 `SandboxManager` 获取执行环境。
-- task 成功、失败和取消后必须通过 `StateManager` 和 `Mailbox` 推进状态。
-- Human task 等待时必须发布 `human.requested`、`task.waiting` 和 `workflow.waiting`，响应时必须发布 `human.responded`、`task.resumed` 和 `workflow.resumed`。
-- `recoverExpiredLeases()` 必须能恢复 worker 崩溃或心跳丢失后的任务。
-
-## 面向未来的分布式部署
-
-分布式部署时，推荐把 Core 的本地默认组件替换为以下拓扑：
-
-```text
-API Server
-  |
-  +--> 接收用户请求
-  +--> 校验权限、预算、输入 schema
-  +--> 创建 workflow run
-  |
-  v
-State Store
-  |
-  +--> workflow/task 状态
-  +--> human interaction 状态
-  +--> LoopState
-  +--> revision
-  +--> lease
-  +--> 幂等 message id
-  |
-  v
-Mailbox / Queue
-  |
-  +--> task.dispatch
-  +--> task.completed
-  +--> task.failed
-  +--> workflow events
-  +--> human.requested / human.responded
-  |
-  v
-Worker Pool
-  |
-  +--> lease task
-  +--> resolve sandbox
-  +--> run step.loop
-  +--> publish progress and completion
-  |
-  v
-Sandbox / Runtime Layer
-  |
-  +--> cloud container
-  +--> VM
-  +--> Kubernetes job
-  +--> Desktop local runtime
-  +--> hosted model/runtime adapter
-```
-
-部署原则：
-
-- API Server 负责控制面，不直接长时间执行 task。
-- Worker Pool 负责执行面，可以水平扩缩容。
-- `StateManager` 是最终事实源，Mailbox 只是通信通道。
-- Runtime event stream 用于进度、日志和 UI 展示，不作为最终状态事实源。
-- task lease 和幂等状态应用是分布式可靠性的核心。
-- Human Interaction 是产品层人工介入的事实源，UI 只提交 response，不直接修改 workflow state。
-- sandbox 和 runtime 可以按租户、区域、能力或成本策略选择。
-
-最小演进路径：
-
-1. 使用默认 `createLoopApp()` 完成本地 workflow 验证。
-2. 替换 `StateManager` 为数据库实现。
-3. 替换 `Mailbox` 为可靠队列。
-4. 启动多个 worker，共享同一个状态库和消息通道。
-5. 替换 `SandboxManager` 为容器、远程执行服务或 Desktop bridge。
-6. 将 Runtime Registry 扩展为租户级、区域级或能力感知的解析策略。

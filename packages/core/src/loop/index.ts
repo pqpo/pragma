@@ -5,5 +5,6 @@ export * from "./local-sandbox-manager.ts";
 export * from "./loop-app.ts";
 export * from "./loop-run-observer.ts";
 export * from "./flow-spec.ts";
+export * from "./workflow-patterns.ts";
 export * from "./task-manager.ts";
 export * from "./types.ts";

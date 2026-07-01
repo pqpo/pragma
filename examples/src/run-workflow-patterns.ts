@@ -1,0 +1,303 @@
+import { createLoopApp, defineTask, workflow } from "@expertmesh/core";
+import { z } from "zod";
+
+const app = createLoopApp();
+
+const promptChain = workflow.promptChain({
+  id: "example-prompt-chain",
+  output: z.string(),
+  steps: [
+    defineTask({
+      id: "normalize-request",
+      output: z.object({
+        text: z.string(),
+      }),
+      handler: ({ input }) => {
+        const payload = z
+          .object({
+            text: z.string(),
+          })
+          .parse(input);
+
+        return {
+          text: payload.text.trim(),
+        };
+      },
+    }),
+    defineTask({
+      id: "draft-reply",
+      output: z.object({
+        draft: z.string(),
+      }),
+      handler: ({ input }) => {
+        const payload = z
+          .object({
+            text: z.string(),
+          })
+          .parse(input);
+
+        return {
+          draft: `Thanks for the request: ${payload.text}.`,
+        };
+      },
+    }),
+    defineTask({
+      id: "polish-reply",
+      output: z.string(),
+      handler: ({ input }) => {
+        const payload = z
+          .object({
+            draft: z.string(),
+          })
+          .parse(input);
+
+        return `${payload.draft} We will follow up with a concrete next step.`;
+      },
+    }),
+  ],
+});
+
+const routed = workflow.routing({
+  id: "example-routing",
+  output: z.string(),
+  field: "route",
+  router: {
+    loop: defineTask({
+      id: "classify-ticket",
+      output: z.object({
+        route: z.enum(["billing", "technical"]),
+      }),
+      handler: ({ input }) => {
+        const payload = z
+          .object({
+            text: z.string(),
+          })
+          .parse(input);
+
+        return {
+          route: payload.text.includes("invoice") ? "billing" : "technical",
+        };
+      },
+    }),
+  },
+  routes: {
+    billing: {
+      loop: defineTask({
+        id: "billing-handler",
+        handler: ({ input }) => {
+          const payload = z
+            .object({
+              text: z.string(),
+            })
+            .parse(input);
+
+          return `Billing team handles: ${payload.text}`;
+        },
+      }),
+    },
+    technical: {
+      loop: defineTask({
+        id: "technical-handler",
+        handler: ({ input }) => {
+          const payload = z
+            .object({
+              text: z.string(),
+            })
+            .parse(input);
+
+          return `Technical team handles: ${payload.text}`;
+        },
+      }),
+    },
+  },
+});
+
+const parallelReview = workflow.parallel({
+  id: "example-parallel",
+  output: z.object({
+    summary: z.string(),
+  }),
+  branches: {
+    correctness: defineTask({
+      id: "correctness-reviewer",
+      handler: ({ input }) => `Correctness: ${String(input)} is internally consistent.`,
+    }),
+    risk: defineTask({
+      id: "risk-reviewer",
+      handler: ({ input }) => `Risk: ${String(input)} needs rollout monitoring.`,
+    }),
+    userValue: defineTask({
+      id: "user-value-reviewer",
+      handler: ({ input }) => `User value: ${String(input)} has a clear target user.`,
+    }),
+  },
+  merge: ({ outputs }) => ({
+    summary: [
+      String(outputs["correctness"]),
+      String(outputs["risk"]),
+      String(outputs["userValue"]),
+    ].join("\n"),
+  }),
+});
+
+const reportBuilder = workflow.orchestratorWorkers({
+  id: "example-orchestrator-workers",
+  output: z.object({
+    markdown: z.string(),
+  }),
+  orchestrator: {
+    loop: defineTask({
+      id: "report-planner",
+      handler: () => ({
+        tasks: [
+          {
+            heading: "Context",
+            point: "Explain why the workflow exists.",
+          },
+          {
+            heading: "Plan",
+            point: "List the implementation steps.",
+          },
+        ],
+      }),
+    }),
+  },
+  worker: {
+    loop: defineTask({
+      id: "section-writer",
+      output: z.object({
+        heading: z.string(),
+        body: z.string(),
+      }),
+      handler: ({ input }) => {
+        const payload = z
+          .object({
+            heading: z.string(),
+            point: z.string(),
+          })
+          .parse(input);
+
+        return {
+          heading: payload.heading,
+          body: payload.point,
+        };
+      },
+    }),
+  },
+  synthesize: ({ workerOutputs }) => ({
+    markdown: workerOutputs
+      .map((item) => `## ${item.output.heading}\n${item.output.body}`)
+      .join("\n\n"),
+  }),
+});
+
+const refinedAnswer = workflow.evaluatorOptimizer({
+  id: "example-evaluator-optimizer",
+  output: z.object({
+    accepted: z.boolean(),
+    attempt: z.object({
+      revision: z.number(),
+      answer: z.string(),
+    }),
+    evaluation: z.object({
+      accepted: z.boolean(),
+      feedback: z.string(),
+    }),
+    iterations: z.number(),
+  }),
+  optimizer: {
+    loop: defineTask({
+      id: "answer-optimizer",
+      output: z.object({
+        revision: z.number(),
+        answer: z.string(),
+      }),
+      handler: ({ input }) => {
+        const iteration = readNumberField(input, "iteration") ?? 1;
+
+        return {
+          revision: iteration,
+          answer:
+            iteration === 1
+              ? "Use workflow patterns."
+              : "Use workflow patterns when the control flow is known, and use agents when the model must decide the next step.",
+        };
+      },
+    }),
+  },
+  evaluator: {
+    loop: defineTask({
+      id: "answer-evaluator",
+      output: z.object({
+        accepted: z.boolean(),
+        feedback: z.string(),
+      }),
+      handler: ({ input }) => {
+        const payload = z
+          .object({
+            answer: z.string(),
+          })
+          .parse(input);
+        const accepted = payload.answer.includes("control flow is known");
+
+        return {
+          accepted,
+          feedback: accepted ? "Specific enough." : "Explain when to use the pattern.",
+        };
+      },
+    }),
+  },
+  maxIterations: 3,
+});
+
+console.log("promptChain");
+console.log(
+  await app.run(promptChain, {
+    input: {
+      text: "  Add invoice export support  ",
+    },
+  }),
+);
+
+console.log("routing");
+console.log(
+  await app.run(routed, {
+    input: {
+      text: "I need help with an invoice.",
+    },
+  }),
+);
+
+console.log("parallel");
+console.log(
+  await app.run(parallelReview, {
+    input: "Add workspace-level approval gates",
+  }),
+);
+
+console.log("orchestratorWorkers");
+console.log(
+  await app.run(reportBuilder, {
+    input: {
+      topic: "Workflow examples",
+    },
+  }),
+);
+
+console.log("evaluatorOptimizer");
+console.log(
+  await app.run(refinedAnswer, {
+    input: {
+      goal: "Explain workflow pattern usage.",
+    },
+  }),
+);
+
+function readNumberField(value: unknown, field: string): number | undefined {
+  if (typeof value !== "object" || value === null) {
+    return undefined;
+  }
+
+  const candidate = (value as Record<string, unknown>)[field];
+  return typeof candidate === "number" ? candidate : undefined;
+}
