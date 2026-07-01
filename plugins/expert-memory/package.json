@@ -1,5 +1,5 @@
 {
-  "name": "@expertmesh/plugin-expert-memory",
+  "name": "@pragma/plugin-expert-memory",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -17,11 +17,11 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@expertmesh/core": "workspace:*",
+    "@pragma/core": "workspace:*",
     "zod": "latest"
   },
   "devDependencies": {
-    "@expertmesh/tsconfig": "workspace:*",
+    "@pragma/tsconfig": "workspace:*",
     "@types/node": "latest",
     "typescript": "latest",
     "vitest": "latest"

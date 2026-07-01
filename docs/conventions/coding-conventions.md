@@ -12,7 +12,7 @@
 - Every package is private and `type: "module"`.
 - Every package exposes `lint`, `typecheck`, `test`, `build`, and `clean`.
 - Internal dependencies use `workspace:*`.
-- Cross-package imports use `@expertmesh/*` package names.
+- Cross-package imports use `@pragma/*` package names.
 
 ## Boundaries
 

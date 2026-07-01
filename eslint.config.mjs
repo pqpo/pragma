@@ -3,7 +3,7 @@ import globals from "globals";
 import tseslint from "typescript-eslint";
 
 const packageRelativeImportMessage =
-  "Cross-package imports must use @expertmesh/* package names instead of relative paths.";
+  "Cross-package imports must use @pragma/* package names instead of relative paths.";
 
 const commonRestrictedPatterns = [
   {
@@ -45,10 +45,10 @@ const config = tseslint.config(
       "no-restricted-imports": [
         "error",
         {
-          paths: ["@expertmesh/server", "@expertmesh/core", "@prisma/client"],
+          paths: ["@pragma/server", "@pragma/core", "@prisma/client"],
           patterns: [
             ...commonRestrictedPatterns,
-            { group: ["@expertmesh/server-*", "node:*"], message: "Web must stay browser-safe." },
+            { group: ["@pragma/server-*", "node:*"], message: "Web must stay browser-safe." },
           ],
         },
       ],
@@ -66,11 +66,11 @@ const config = tseslint.config(
       "no-restricted-imports": [
         "error",
         {
-          paths: ["@expertmesh/client", "@expertmesh/server", "@prisma/client"],
+          paths: ["@pragma/client", "@pragma/server", "@prisma/client"],
           patterns: [
             ...commonRestrictedPatterns,
             {
-              group: ["@expertmesh/server-*", "next", "next/*"],
+              group: ["@pragma/server-*", "next", "next/*"],
               message: "Desktop local bridge must not depend on server internals or Web UI.",
             },
           ],
@@ -90,11 +90,11 @@ const config = tseslint.config(
       "no-restricted-imports": [
         "error",
         {
-          paths: ["@expertmesh/client", "@expertmesh/server", "@prisma/client"],
+          paths: ["@pragma/client", "@pragma/server", "@prisma/client"],
           patterns: [
             ...commonRestrictedPatterns,
             {
-              group: ["@expertmesh/server-*", "node:*", "next", "next/*"],
+              group: ["@pragma/server-*", "node:*", "next", "next/*"],
               message: "Desktop renderer must stay behind the preload bridge.",
             },
           ],
@@ -108,11 +108,11 @@ const config = tseslint.config(
       "no-restricted-imports": [
         "error",
         {
-          paths: ["@expertmesh/client", "@expertmesh/server", "@prisma/client"],
+          paths: ["@pragma/client", "@pragma/server", "@prisma/client"],
           patterns: [
             ...commonRestrictedPatterns,
             {
-              group: ["@expertmesh/server-*", "node:*", "next", "next/*"],
+              group: ["@pragma/server-*", "node:*", "next", "next/*"],
               message:
                 "Desktop shared types must be safe for all layers (main, preload, renderer).",
             },
@@ -143,11 +143,11 @@ const config = tseslint.config(
       "no-restricted-imports": [
         "error",
         {
-          paths: ["@expertmesh/client", "@expertmesh/server", "react", "fastify", "@prisma/client"],
+          paths: ["@pragma/client", "@pragma/server", "react", "fastify", "@prisma/client"],
           patterns: [
             ...commonRestrictedPatterns,
             {
-              group: ["@expertmesh/core", "node:*", "next", "next/*"],
+              group: ["@pragma/core", "node:*", "next", "next/*"],
               message: "Shared packages must remain runtime-neutral.",
             },
           ],
@@ -167,11 +167,11 @@ const config = tseslint.config(
       "no-restricted-imports": [
         "error",
         {
-          paths: ["@expertmesh/server", "@prisma/client"],
+          paths: ["@pragma/server", "@prisma/client"],
           patterns: [
             ...commonRestrictedPatterns,
             {
-              group: ["@expertmesh/core", "@expertmesh/server", "@expertmesh/server-*", "node:*"],
+              group: ["@pragma/core", "@pragma/server", "@pragma/server-*", "node:*"],
               message: "Client packages must stay browser-safe.",
             },
           ],
@@ -185,11 +185,11 @@ const config = tseslint.config(
       "no-restricted-imports": [
         "error",
         {
-          paths: ["@expertmesh/client", "react"],
+          paths: ["@pragma/client", "react"],
           patterns: [
             ...commonRestrictedPatterns,
             {
-              group: ["@expertmesh/ui-*", "@expertmesh/playbook-canvas", "next", "next/*"],
+              group: ["@pragma/ui-*", "@pragma/playbook-canvas", "next", "next/*"],
               message: "Server packages must not depend on client UI.",
             },
           ],
@@ -203,14 +203,14 @@ const config = tseslint.config(
       "no-restricted-imports": [
         "error",
         {
-          paths: ["@expertmesh/client", "@expertmesh/server", "react"],
+          paths: ["@pragma/client", "@pragma/server", "react"],
           patterns: [
             ...commonRestrictedPatterns,
             {
               group: [
-                "@expertmesh/server-*",
-                "@expertmesh/ui-*",
-                "@expertmesh/playbook-canvas",
+                "@pragma/server-*",
+                "@pragma/ui-*",
+                "@pragma/playbook-canvas",
                 "next",
                 "next/*",
               ],

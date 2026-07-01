@@ -1,2 +1,2 @@
 export * from "./server-client.ts";
-export type { HealthResponse } from "@expertmesh/shared";
+export type { HealthResponse } from "@pragma/shared";

@@ -4,9 +4,9 @@ import {
   createLoggerProvider,
   createQueuedAgentLifecycle,
   ExpertAgent,
-} from "@expertmesh/core";
-import type { ExpertAgentLogRecord, ExpertAgentLoggerProvider } from "@expertmesh/core";
-import type { AgentMessageUsage } from "@expertmesh/shared";
+} from "@pragma/core";
+import type { ExpertAgentLogRecord, ExpertAgentLoggerProvider } from "@pragma/core";
+import type { AgentMessageUsage } from "@pragma/shared";
 import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 

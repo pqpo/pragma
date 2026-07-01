@@ -4,6 +4,6 @@
   "private": true,
   "type": "module",
   "dependencies": {
-    "@expertmesh/core": "workspace:*"
+    "@pragma/core": "workspace:*"
   }
 }

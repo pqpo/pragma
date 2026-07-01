@@ -1,4 +1,4 @@
-import type { LoopState } from "@expertmesh/shared";
+import type { LoopState } from "@pragma/shared";
 import type { z } from "zod";
 
 import { compileLoopDefinition, defineFlow, type LoopStepOptions } from "./flow-spec.ts";
@@ -611,7 +611,7 @@ export function defineEvaluatorOptimizerWorkflow<
   });
 }
 
-export const workflow = {
+export const patterns = {
   promptChain: definePromptChainWorkflow,
   routing: defineRoutingWorkflow,
   parallel: defineParallelWorkflow,
@@ -639,8 +639,8 @@ function createPatternLoop<TInput, TOutput>(
     outputSchema: options.outputSchema,
     async run(request) {
       if (request.execution === undefined) {
-        const { createLoopApp } = await import("./loop-app.ts");
-        return await createLoopApp().run(loop, request);
+        const { createPragma } = await import("./loop-app.ts");
+        return await createPragma().run(loop, request);
       }
 
       const input = options.inputSchema?.parse(request.input) ?? request.input;

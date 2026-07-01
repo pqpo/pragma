@@ -4,7 +4,7 @@ import { z } from "zod";
 import {
   createInMemoryMailbox,
   createLocalSandboxManager,
-  createLoopApp,
+  createPragma,
   defineTask,
   defineFlow,
   ExpertAgent,
@@ -67,7 +67,7 @@ describe("loop app", () => {
       start(review).next(end());
     });
 
-    const result = await createLoopApp().run(loop, {
+    const result = await createPragma().run(loop, {
       input: {
         decision: "approved",
       },
@@ -124,7 +124,7 @@ describe("loop app", () => {
       step(failed).next(end());
     });
 
-    const result = await createLoopApp().run(loop, {
+    const result = await createPragma().run(loop, {
       input: {},
     });
 
@@ -148,7 +148,7 @@ describe("loop app", () => {
     });
 
     await expect(
-      createLoopApp().run(loop, {
+      createPragma().run(loop, {
         input: {},
       }),
     ).rejects.toThrow("Route router.status did not match because output field is missing.");
@@ -169,7 +169,7 @@ describe("loop app", () => {
       start(task).next(end());
     });
 
-    await createLoopApp({
+    await createPragma({
       mailbox,
     }).run(loop, {
       input: {},
@@ -191,7 +191,7 @@ describe("loop app", () => {
   });
 
   it("starts a loop run without waiting for completion and exposes run snapshots", async () => {
-    const app = createLoopApp();
+    const app = createPragma();
     const slowLoop = defineTask({
       id: "slow-loop",
       handler: async () => {
@@ -220,7 +220,7 @@ describe("loop app", () => {
   });
 
   it("watches nested loop events recursively and exposes a run tree", async () => {
-    const app = createLoopApp();
+    const app = createPragma();
     const childLoop = defineFlow({
       id: "child-watch-loop",
     });
@@ -322,7 +322,7 @@ describe("loop app", () => {
       start(first).next(second).next(end());
     });
 
-    await createLoopApp().run(loop, {
+    await createPragma().run(loop, {
       input: {},
     });
 
@@ -367,7 +367,7 @@ describe("loop app", () => {
       start(first).next(second).next(end());
     });
 
-    await createLoopApp().run(loop, {
+    await createPragma().run(loop, {
       input: {},
     });
 
@@ -413,7 +413,7 @@ describe("loop app", () => {
       start(parentTask).next(child).next(end());
     });
 
-    await createLoopApp().run(parentLoop, {
+    await createPragma().run(parentLoop, {
       input: {},
     });
 
@@ -478,7 +478,7 @@ describe("loop app", () => {
   });
 
   it("skips recovered task leases when the loop definition was cleaned up", async () => {
-    const app = createLoopApp();
+    const app = createPragma();
     const workflow = await app.stateManager.createWorkflowRun({
       id: "workflow-orphaned-task",
       loopId: "loop",
@@ -532,7 +532,7 @@ describe("loop app", () => {
       outputSchema: z.string(),
       async run(request) {
         if (request.execution === undefined) {
-          return await createLoopApp().run(this, request);
+          return await createPragma().run(this, request);
         }
 
         return {
@@ -552,7 +552,7 @@ describe("loop app", () => {
       start(custom).next(end());
     });
 
-    const result = await createLoopApp().run(loop, {
+    const result = await createPragma().run(loop, {
       input: {
         value: "ok",
       },
@@ -583,7 +583,7 @@ describe("loop app", () => {
       answer: z.string(),
     });
 
-    const result = await createLoopApp({
+    const result = await createPragma({
       runtimes: createRuntimeRegistry({
         defaultRuntime: "fake-runtime",
         runtimes: [runtime],
@@ -611,7 +611,7 @@ describe("loop app", () => {
   });
 
   it("waits for a human task response and resumes the workflow", async () => {
-    const app = createLoopApp();
+    const app = createPragma();
     const loop = defineFlow({
       id: "human-review-loop",
       output: z.object({
@@ -680,7 +680,7 @@ describe("loop app", () => {
   });
 
   it("routes human review gate decisions through normal loop transitions", async () => {
-    const app = createLoopApp();
+    const app = createPragma();
     const loop = defineFlow({
       id: "human-review-route-loop",
       output: z.object({
@@ -745,7 +745,7 @@ describe("loop app", () => {
   });
 
   it("does not recover waiting human task leases", async () => {
-    const app = createLoopApp();
+    const app = createPragma();
     const human = defineHumanTask({
       id: "human-wait-recovery",
       request: {
@@ -788,7 +788,7 @@ describe("loop app", () => {
   });
 
   it("treats duplicate human responses as idempotent", async () => {
-    const app = createLoopApp();
+    const app = createPragma();
     const respondedEvents: string[] = [];
     await app.mailbox.subscribe({ types: ["human.responded"] }, async (message) => {
       respondedEvents.push(message.id);
@@ -839,7 +839,7 @@ describe("loop app", () => {
     const runtime = createHumanAskingRuntime({
       id: "fake-human-runtime",
     });
-    const app = createLoopApp({
+    const app = createPragma({
       runtimes: createRuntimeRegistry({
         defaultRuntime: "fake-human-runtime",
         runtimes: [runtime],
@@ -1019,7 +1019,7 @@ async function collectEvents<TEvent>(events: AsyncIterable<TEvent>): Promise<TEv
 }
 
 async function waitForHumanInteraction(
-  app: ReturnType<typeof createLoopApp>,
+  app: ReturnType<typeof createPragma>,
   workflowRunId: string,
 ) {
   const deadline = Date.now() + 2_000;

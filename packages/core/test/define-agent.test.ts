@@ -4,9 +4,9 @@ import type {
   RuntimeCreateSessionRequest,
   RuntimeSessionInfo,
   RuntimeSubmitHandle,
-} from "@expertmesh/core";
-import { ContextSystem, ExpertAgent } from "@expertmesh/core";
-import { createRuntimeRegistry } from "@expertmesh/core";
+} from "@pragma/core";
+import { ContextSystem, ExpertAgent } from "@pragma/core";
+import { createRuntimeRegistry } from "@pragma/core";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 

@@ -1,4 +1,4 @@
-import type { RuntimeAdapter } from "@expertmesh/core";
+import type { RuntimeAdapter } from "@pragma/core";
 
 import { createCloudPiRuntimeAdapter } from "./pi-runtime/adapter.ts";
 import type { CloudPiRuntimeAdapterOptions } from "./pi-runtime/types.ts";

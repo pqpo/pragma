@@ -14,7 +14,7 @@ packages/core/src/plugins
 import {
   definePluginEntry,
   createExpertAgentPluginConfigEnvName,
-} from "@expertmesh/core";
+} from "@pragma/core";
 ```
 
 ## 插件能扩展什么
@@ -120,7 +120,7 @@ array
 import {
   definePluginEntry,
   createInMemoryContextStore,
-} from "@expertmesh/core";
+} from "@pragma/core";
 
 export default definePluginEntry({
   setup: (context) => {
@@ -165,7 +165,7 @@ export default definePluginEntry({
 
 ```ts
 import { z } from "zod";
-import { definePluginEntry } from "@expertmesh/core";
+import { definePluginEntry } from "@pragma/core";
 
 const ConfigSchema = z.object({
   enabled: z.boolean().default(true),
@@ -285,7 +285,7 @@ export default definePluginEntry({
 适合测试、开发和 monorepo 内直接引用：
 
 ```ts
-import { defineAgent } from "@expertmesh/core";
+import { defineAgent } from "@pragma/core";
 import myPlugin from "../plugins/my-plugin/src/index.ts";
 
 const agent = await defineAgent({

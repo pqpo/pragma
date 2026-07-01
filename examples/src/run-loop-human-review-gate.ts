@@ -1,10 +1,10 @@
 import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 
-import { createLoopApp, defineFlow, defineHumanTask, defineTask } from "@expertmesh/core";
+import { createPragma, defineFlow, defineHumanTask, defineTask } from "@pragma/core";
 import { z } from "zod";
 
-const app = createLoopApp();
+const app = createPragma();
 const rl = createInterface({ input, output });
 
 const ReviewDecisionSchema = z.object({

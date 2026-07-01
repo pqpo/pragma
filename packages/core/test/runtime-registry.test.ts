@@ -1,4 +1,4 @@
-import type { RuntimeAdapter } from "@expertmesh/core";
+import type { RuntimeAdapter } from "@pragma/core";
 import { describe, expect, it } from "vitest";
 
 import { createDefaultRuntime, createRuntimeRegistry } from "../src/runtime-registry.ts";

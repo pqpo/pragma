@@ -1,6 +1,6 @@
 # Workflow 范式快捷 API
 
-本文面向已经理解 [Loop 核心 API](./loops.md) 的开发者，说明 `workflow` 快捷 API。
+本文面向已经理解 [Loop 核心 API](./loops.md) 的开发者，说明 `patterns` 快捷 API。
 
 Anthropic 在 [Building effective agents](https://www.anthropic.com/engineering/building-effective-agents) 中把 Workflow 定义为“LLM 和工具沿着预定义代码路径编排”的模式，并总结了五类常用范式：
 
@@ -10,10 +10,10 @@ Anthropic 在 [Building effective agents](https://www.anthropic.com/engineering/
 - `orchestratorWorkers`：先由 orchestrator 动态拆分任务，再并行派发 worker，最后汇总。
 - `evaluatorOptimizer`：optimizer 生成候选结果，evaluator 评估，不通过则带反馈继续迭代。
 
-这些快捷 API 都返回普通 `Loop` 或 `FlowSpec`，可直接传给 `createLoopApp().run()`，也可以作为子 Loop 注册进另一个 `defineFlow()`。
+这些快捷 API 都返回普通 `Loop` 或 `FlowSpec`，可直接传给 `createPragma().run()`，也可以作为子 Loop 注册进另一个 `defineFlow()`。
 
 ```ts
-import { workflow } from "@expertmesh/core";
+import { patterns } from "@pragma/core";
 ```
 
 最简单场景可以直接传入裸 `Loop`；需要覆盖 step id、输入、输出 schema、runtime 或 sandbox 时，再展开成 `{ loop, input, output, runtime, sandbox }`。
@@ -21,7 +21,7 @@ import { workflow } from "@expertmesh/core";
 可运行示例：
 
 ```bash
-pnpm --filter @expertmesh/examples start:workflow-patterns
+pnpm --filter @pragma/examples start:workflow-patterns
 ```
 
 ## Workflow 的作用
@@ -57,7 +57,7 @@ flowchart LR
 ```
 
 ```ts
-const chain = workflow.promptChain({
+const chain = patterns.promptChain({
   id: "support-chain",
   output: z.string(),
   steps: [classifyRequest, draftReply, polishReply],
@@ -94,7 +94,7 @@ flowchart LR
 ```
 
 ```ts
-const routed = workflow.routing({
+const routed = patterns.routing({
   id: "ticket-router",
   field: "route",
   router: {
@@ -130,7 +130,7 @@ flowchart LR
 ```
 
 ```ts
-const review = workflow.parallel({
+const review = patterns.parallel({
   id: "parallel-review",
   output: z.object({
     summary: z.string(),
@@ -164,7 +164,7 @@ flowchart LR
 ```
 
 ```ts
-const report = workflow.orchestratorWorkers({
+const report = patterns.orchestratorWorkers({
   id: "report-builder",
   orchestrator: {
     loop: planner,
@@ -193,7 +193,7 @@ flowchart LR
 ```
 
 ```ts
-const refined = workflow.evaluatorOptimizer({
+const refined = patterns.evaluatorOptimizer({
   id: "refine-answer",
   optimizer: {
     loop: answerWriter,
@@ -216,7 +216,7 @@ const refined = workflow.evaluatorOptimizer({
 需要更强控制时可声明：
 
 ```ts
-workflow.evaluatorOptimizer({
+patterns.evaluatorOptimizer({
   id: "refine-with-custom-feedback",
   optimizer: {
     loop: answerWriter,

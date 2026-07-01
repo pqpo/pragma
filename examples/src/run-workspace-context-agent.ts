@@ -5,9 +5,9 @@ import {
   FileSystemContextStore,
   HOST_CONTEXT_NAMESPACE,
   createInMemoryContextStore,
-} from "@expertmesh/core";
-import type { ExpertAgentContextStore } from "@expertmesh/core";
-import { createCloudPiRuntimeAdapter } from "@expertmesh/core";
+} from "@pragma/core";
+import type { ExpertAgentContextStore } from "@pragma/core";
+import { createCloudPiRuntimeAdapter } from "@pragma/core";
 
 import {
   printAgentContextSummary,
@@ -111,7 +111,7 @@ function createExampleContextStore(contextDir: string | undefined): ExpertAgentC
           "The active app entry points are apps/web, apps/server, and apps/worker.",
           "The examples workspace package shows how to instantiate and run ExpertAgent.",
           "Agent context should be exposed through the ExpertAgent context store.",
-          "Cross-package code must use @expertmesh/* package imports instead of relative paths.",
+          "Cross-package code must use @pragma/* package imports instead of relative paths.",
         ].join("\n"),
         metadata: {
           description: "ExpertMesh workspace overview for runtime context retrieval tests.",

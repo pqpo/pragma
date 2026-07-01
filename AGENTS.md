@@ -79,17 +79,17 @@ tsconfig.base.json
 
 ## Package 命名
 
-统一使用 `@expertmesh/*` scope。
+统一使用 `@pragma/*` scope。
 
 当前 package：
 
 ```text
-@expertmesh/shared
-@expertmesh/client
-@expertmesh/server
-@expertmesh/core
-@expertmesh/eslint-config
-@expertmesh/tsconfig
+@pragma/shared
+@pragma/client
+@pragma/server
+@pragma/core
+@pragma/eslint-config
+@pragma/tsconfig
 ```
 
 不要新增模糊名称，例如：
@@ -128,14 +128,14 @@ apps/desktop    -> core -> shared
 
 | 来源                | 允许依赖                                                            |
 | ------------------- | ------------------------------------------------------------------- |
-| `apps/web`         | `@expertmesh/shared`、`@expertmesh/client`             |
-| `apps/server`      | `@expertmesh/shared`、`@expertmesh/server`、`@expertmesh/core` |
-| `apps/worker`      | `@expertmesh/shared`、`@expertmesh/server`、`@expertmesh/core` |
-| `apps/desktop`     | `@expertmesh/shared`、`@expertmesh/core`                |
+| `apps/web`         | `@pragma/shared`、`@pragma/client`             |
+| `apps/server`      | `@pragma/shared`、`@pragma/server`、`@pragma/core` |
+| `apps/worker`      | `@pragma/shared`、`@pragma/server`、`@pragma/core` |
+| `apps/desktop`     | `@pragma/shared`、`@pragma/core`                |
 | `packages/shared`  | 无内部 package 依赖；只允许运行时中立依赖               |
-| `packages/client`  | `@expertmesh/shared`                                   |
-| `packages/server`  | `@expertmesh/shared`；需要编排时可依赖 `@expertmesh/core` |
-| `packages/core`    | `@expertmesh/shared`                                   |
+| `packages/client`  | `@pragma/shared`                                   |
+| `packages/server`  | `@pragma/shared`；需要编排时可依赖 `@pragma/core` |
+| `packages/core`    | `@pragma/shared`                                   |
 
 明确禁止：
 
@@ -159,7 +159,7 @@ core -> web
 所有跨 package 依赖必须使用 package import：
 
 ```ts
-import { HealthResponseSchema } from "@expertmesh/shared";
+import { HealthResponseSchema } from "@pragma/shared";
 ```
 
 禁止跨 package 使用相对路径：
@@ -172,7 +172,7 @@ import { HealthResponseSchema } from "../../../shared/contracts/src/index.ts";
 
 ```json
 {
-  "@expertmesh/shared": "workspace:*"
+  "@pragma/shared": "workspace:*"
 }
 ```
 
@@ -276,21 +276,21 @@ apps/desktop
 
 - 页面与路由。
 - 浏览器状态。
-- 调用 `@expertmesh/client`。
+- 调用 `@pragma/client`。
 - 展示 API 数据。
 
 允许依赖：
 
 ```text
-@expertmesh/shared
-@expertmesh/client
+@pragma/shared
+@pragma/client
 ```
 
 禁止依赖：
 
 ```text
-@expertmesh/server
-@expertmesh/core
+@pragma/server
+@pragma/core
 node:*
 @prisma/client
 服务端 Repository
@@ -308,15 +308,15 @@ node:*
 允许依赖：
 
 ```text
-@expertmesh/shared
-@expertmesh/server
-@expertmesh/core
+@pragma/shared
+@pragma/server
+@pragma/core
 ```
 
 禁止依赖：
 
 ```text
-@expertmesh/client
+@pragma/client
 React / Next / Web UI 包
 ```
 
@@ -442,7 +442,7 @@ ExpertAgent API 设计要求：
 
 ## TypeScript 与导入规范
 
-根配置是 `tsconfig.base.json`，package 应继承 `@expertmesh/tsconfig/base.json`、`node.json` 或 `web.json`。
+根配置是 `tsconfig.base.json`，package 应继承 `@pragma/tsconfig/base.json`、`node.json` 或 `web.json`。
 
 源码内部相对导入使用 `.ts` 扩展名，TypeScript 构建时会重写为 `.js`：
 
@@ -455,7 +455,7 @@ export * from "./health.schema.ts";
 类型导入优先使用 `import type`：
 
 ```ts
-import type { ExpertAgent } from "@expertmesh/core";
+import type { ExpertAgent } from "@pragma/core";
 ```
 
 ## Package 标准
@@ -502,7 +502,7 @@ pnpm -r list
 启动 Server：
 
 ```bash
-pnpm --filter @expertmesh/server-app dev
+pnpm --filter @pragma/server-app dev
 ```
 
 验证 Server：
@@ -514,7 +514,7 @@ curl http://localhost:3001/health
 启动 Web：
 
 ```bash
-pnpm --filter @expertmesh/web dev
+pnpm --filter @pragma/web dev
 ```
 
 访问：
@@ -533,8 +533,8 @@ Server health: ok
 启动 Desktop：
 
 ```bash
-pnpm --filter @expertmesh/desktop run prepare:electron
-pnpm --filter @expertmesh/desktop dev
+pnpm --filter @pragma/desktop run prepare:electron
+pnpm --filter @pragma/desktop dev
 ```
 
 > **Electron 42 注意事项：** 从 Electron 42 开始，`postinstall` 不再自动下载 Electron 二进制文件，改为首次运行 Electron CLI 时才下载。`prepare:electron` 脚本调用 `install-electron` 手动触发下载，避免新成员或 CI 首次 `dev` 时遇到缺失二进制的错误。
@@ -542,7 +542,7 @@ pnpm --filter @expertmesh/desktop dev
 启动 Worker：
 
 ```bash
-pnpm --filter @expertmesh/worker dev
+pnpm --filter @pragma/worker dev
 ```
 
 应输出：
@@ -601,19 +601,19 @@ eslint.config.mjs
 
 ```ts
 // apps/web 中禁止
-import "@expertmesh/server";
+import "@pragma/server";
 
 // packages/shared 中禁止
 import "node:fs";
 
 // packages/core 中禁止
-import "@expertmesh/client";
+import "@pragma/client";
 ```
 
 可以用 stdin 临时验证，不要提交非法测试文件：
 
 ```bash
-printf 'import "@expertmesh/server";\n' \
+printf 'import "@pragma/server";\n' \
   | pnpm exec eslint --stdin --stdin-filename apps/web/src/illegal.ts
 ```
 
@@ -623,7 +623,7 @@ printf 'import "@expertmesh/server";\n' \
 2. 检查目标层是否允许依赖被引用的 package。
 3. 优先复用已有 package 和现有导出。
 4. 需要跨 package 调用时，先在被依赖 package 的 `src/index.ts` 中导出公共 API。
-5. 使用 `@expertmesh/*` package import。
+5. 使用 `@pragma/*` package import。
 6. 补充或调整类型、schema、最小测试或文档。
 7. 运行 `pnpm lint`、`pnpm typecheck`、`pnpm test`。
 8. 如果改动影响构建或应用入口，运行 `pnpm build`。

@@ -11,7 +11,7 @@ import type {
   TaskRunStatus,
   WorkflowRunRecord,
   LoopRunStatus,
-} from "@expertmesh/shared";
+} from "@pragma/shared";
 import type { z } from "zod";
 
 import type { RuntimeAdapter, RuntimeOutputSchema } from "../runtime/runtime-adapter.ts";

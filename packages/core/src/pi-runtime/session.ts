@@ -1,5 +1,5 @@
 import type { AgentSession, ModelRegistry } from "@earendil-works/pi-coding-agent";
-import { AgentMessageUsageSchema, type AgentMessageUsage } from "@expertmesh/shared";
+import { AgentMessageUsageSchema, type AgentMessageUsage } from "@pragma/shared";
 import type {
   AgentLifecycle,
   ExpertAgent,
@@ -10,12 +10,12 @@ import type {
   RuntimeSessionInfo,
   RuntimeStreamEvent,
   RuntimeSubmitRequest,
-} from "@expertmesh/core";
+} from "@pragma/core";
 import {
   AsyncPushQueue,
   createRuntimeEventEmitter,
   dispatchExpertAgentHook,
-} from "@expertmesh/core";
+} from "@pragma/core";
 import { randomUUID } from "node:crypto";
 
 import {

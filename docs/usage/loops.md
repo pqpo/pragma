@@ -5,7 +5,7 @@
 当前核心 API：
 
 ```ts
-import { createLoopApp, defineTask, defineFlow } from "@expertmesh/core";
+import { createPragma, defineTask, defineFlow } from "@pragma/core";
 ```
 
 ## 阅读边界
@@ -42,7 +42,7 @@ interface Loop<TInput, TOutput> {
 ## 最小组合 Loop
 
 ```ts
-import { createLoopApp, defineTask, defineFlow } from "@expertmesh/core";
+import { createPragma, defineTask, defineFlow } from "@pragma/core";
 import { z } from "zod";
 
 const greetLoop = defineTask({
@@ -77,7 +77,7 @@ flow.compose(({ start, end }) => {
   start(greet).next(end());
 });
 
-const result = await createLoopApp().run(flow, {
+const result = await createPragma().run(flow, {
   input: {
     name: "ExpertMesh",
   },
@@ -100,7 +100,7 @@ console.log(result.output);
 单个 Agent 或代码 Loop 可以直接交给 `LoopApp` 运行。`LoopApp` 会把它包装成单步 workflow，因此仍然有 `workflowRunId`、`LoopState` 和 mailbox 事件。
 
 ```ts
-const result = await createLoopApp().run(greetLoop, {
+const result = await createPragma().run(greetLoop, {
   input: {
     name: "ExpertMesh",
   },
@@ -110,7 +110,7 @@ const result = await createLoopApp().run(greetLoop, {
 需要在运行过程中查询状态或订阅输出时，使用 `start()` 启动非阻塞运行，再通过 `runs` 查询和 watch：
 
 ```ts
-const app = createLoopApp();
+const app = createPragma();
 
 const handle = await app.start(greetLoop, {
   input: {
@@ -156,7 +156,7 @@ for await (const event of app.runs.watchOutput(handle.workflowRunId, { recursive
 完整可运行示例见：
 
 ```bash
-pnpm --filter @expertmesh/examples start:loop-watch
+pnpm --filter @pragma/examples start:loop-watch
 ```
 
 ## Agent 作为 Loop
@@ -164,7 +164,7 @@ pnpm --filter @expertmesh/examples start:loop-watch
 `ExpertAgent` 已实现 `Loop`。在组合流程中注册 Agent 和注册任意其他 Loop 没有区别：
 
 ```ts
-import { defineAgent, defineFlow } from "@expertmesh/core";
+import { defineAgent, defineFlow } from "@pragma/core";
 import { z } from "zod";
 
 const planner = await defineAgent({
@@ -243,7 +243,7 @@ deliveryLoop.compose(({ start, end }) => {
 });
 ```
 
-`compile()` 是高级 API，主要用于预校验、调试或把 Flow 注册到分布式运行系统。普通执行路径由 `flow.use()` 和 `createLoopApp().run()` 自动完成编译归一化。
+`compile()` 是高级 API，主要用于预校验、调试或把 Flow 注册到分布式运行系统。普通执行路径由 `flow.use()` 和 `createPragma().run()` 自动完成编译归一化。
 
 ## LoopState 和 reduce
 
@@ -343,7 +343,7 @@ const plan = flow.use("plan", planner, {
   runtime: "cloud-pi-agent",
 });
 
-await createLoopApp().run(flow, {
+await createPragma().run(flow, {
   input: {},
   runtime: "cloud-pi-agent",
   runtimes: {

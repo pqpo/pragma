@@ -4,7 +4,7 @@ import type {
   ModelRegistry,
 } from "@earendil-works/pi-coding-agent";
 import { ModelRegistry as PiModelRegistry } from "@earendil-works/pi-coding-agent";
-import type { ExpertAgent, IExpertAgentModelProviderConfig } from "@expertmesh/core";
+import type { ExpertAgent, IExpertAgentModelProviderConfig } from "@pragma/core";
 
 const DEFAULT_PI_MODEL_API = "openai-completions";
 const DEFAULT_PI_MODEL_CONTEXT_WINDOW = 128000;

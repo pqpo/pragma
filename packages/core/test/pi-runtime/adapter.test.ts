@@ -8,8 +8,8 @@ import {
   ExpertAgent,
   FileSystemContextStore,
   HOST_CONTEXT_NAMESPACE,
-} from "@expertmesh/core";
-import type { ExpertAgentRunContext } from "@expertmesh/core";
+} from "@pragma/core";
+import type { ExpertAgentRunContext } from "@pragma/core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createCloudPiRuntimeAdapter } from "../../src/pi-runtime/adapter.ts";

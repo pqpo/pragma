@@ -1,10 +1,10 @@
-import { createExpertAgentPluginConfigEnvName, definePluginEntry } from "@expertmesh/core";
+import { createExpertAgentPluginConfigEnvName, definePluginEntry } from "@pragma/core";
 import type {
   ExpertAgentContextItemMetadata,
   ExpertAgentContextStore,
   ExpertAgentPluginSetupContext,
-} from "@expertmesh/core";
-import { HOST_CONTEXT_NAMESPACE, error, ok } from "@expertmesh/core";
+} from "@pragma/core";
+import { HOST_CONTEXT_NAMESPACE, error, ok } from "@pragma/core";
 
 import {
   CODE_REPOSITORIES_SOURCE_CONTEXT_ID,

@@ -26,15 +26,15 @@ apps/desktop    -> core -> shared
 | Source         | Allowed dependencies                                                   |
 | -------------- | ---------------------------------------------------------------------- |
 | `apps/web`     | `shared/*`, `client/*`                                                 |
-| `apps/server`  | `@expertmesh/shared`, `@expertmesh/server`, `@expertmesh/core`         |
-| `apps/worker`  | `@expertmesh/shared`, `@expertmesh/server`, `@expertmesh/core`         |
-| `apps/desktop` | `@expertmesh/shared`, `@expertmesh/core`                               |
+| `apps/server`  | `@pragma/shared`, `@pragma/server`, `@pragma/core`         |
+| `apps/worker`  | `@pragma/shared`, `@pragma/server`, `@pragma/core`         |
+| `apps/desktop` | `@pragma/shared`, `@pragma/core`                               |
 | `packages/shared` | Runtime-neutral dependencies only                                   |
-| `packages/client` | `@expertmesh/shared`                                                |
-| `packages/server` | `@expertmesh/shared`; orchestration code may depend on `@expertmesh/core` |
-| `packages/core`   | `@expertmesh/shared`                                                |
+| `packages/client` | `@pragma/shared`                                                |
+| `packages/server` | `@pragma/shared`; orchestration code may depend on `@pragma/core` |
+| `packages/core`   | `@pragma/shared`                                                |
 
-Cross-package imports must use `@expertmesh/*` names, not relative paths.
+Cross-package imports must use `@pragma/*` names, not relative paths.
 
 Expert Agents are cloud-first execution units scheduled by Server/Worker. Future local Claude Code, Codex, or self-hosted runtimes should be reached through the Desktop App local bridge. The Desktop App actively connects to the cloud Runtime Gateway, registers local capabilities, enforces local permissions, and invokes local Agent adapters. Do not add `apps/local-runner`; the product entry for local Agent bridging is `apps/desktop`.
 
@@ -44,7 +44,7 @@ Current core runtime implementation:
 packages/core/src/pi-runtime
 ```
 
-`@expertmesh/core` belongs to the core agent layer. It may depend on `@expertmesh/shared` and runtime SDKs such as PI agent, but must not depend on server internals, client SDKs, Web UI, or database packages. The first runtime kind is `cloud-pi-agent`.
+`@pragma/core` belongs to the core agent layer. It may depend on `@pragma/shared` and runtime SDKs such as PI agent, but must not depend on server internals, client SDKs, Web UI, or database packages. The first runtime kind is `cloud-pi-agent`.
 
 Future local bridge directories:
 

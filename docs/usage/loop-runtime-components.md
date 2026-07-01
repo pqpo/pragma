@@ -4,14 +4,14 @@
 
 ## 默认组件
 
-`createLoopApp()` 默认使用内存状态、内存消息、本地 sandbox 和本地 task manager。这个默认组合适合开发、测试和单进程验证。
+`createPragma()` 默认使用内存状态、内存消息、本地 sandbox 和本地 task manager。这个默认组合适合开发、测试和单进程验证。
 
 需要接入分布式部署或自定义执行环境时，可以替换这些组件：
 
 ```ts
-import { createLoopApp, createRuntimeRegistry } from "@expertmesh/core";
+import { createPragma, createRuntimeRegistry } from "@pragma/core";
 
-const app = createLoopApp({
+const app = createPragma({
   mailbox: customMailbox,
   stateManager: customStateManager,
   sandboxManager: customSandboxManager,
@@ -40,7 +40,7 @@ const app = createLoopApp({
 `SandboxManager` 控制 workflow sandbox 和 task sandbox 的创建、复用、释放和清理。
 
 ```ts
-import type { SandboxManager } from "@expertmesh/core";
+import type { SandboxManager } from "@pragma/core";
 
 const customSandboxManager: SandboxManager = {
   async createWorkflowSandbox(request) {
@@ -115,7 +115,7 @@ Sandbox strategy 的语义：
 `StateManager` 是 workflow 和 task 的状态事实源。分布式部署时应使用事务性存储实现，例如 PostgreSQL、CockroachDB、DynamoDB 或其他支持条件更新的状态库。
 
 ```ts
-import type { StateManager } from "@expertmesh/core";
+import type { StateManager } from "@pragma/core";
 
 const stateManagerMethods = createRepositoryBackedStateMethods({
   workflowRepo,
@@ -190,7 +190,7 @@ const customStateManager: StateManager = {
 `Mailbox` 是命令和事件通道。它承载 `task.dispatch`、`task.completed`、`task.failed`、`workflow.started` 等消息，但不保存权威业务状态。
 
 ```ts
-import type { Mailbox } from "@expertmesh/core";
+import type { Mailbox } from "@pragma/core";
 
 const customMailbox: Mailbox = {
   async publish(message) {
@@ -244,7 +244,7 @@ const customMailbox: Mailbox = {
 大多数情况下可以继续使用 `createLocalTaskManager()`，只替换它依赖的 `Mailbox`、`StateManager`、`SandboxManager` 和 `LoopDefinitionStore`。
 
 ```ts
-import { createLocalTaskManager, createLoopApp } from "@expertmesh/core";
+import { createLocalTaskManager, createPragma } from "@pragma/core";
 
 const taskManager = createLocalTaskManager({
   mailbox: customMailbox,
@@ -257,7 +257,7 @@ const taskManager = createLocalTaskManager({
   heartbeatIntervalMs: 20_000,
 });
 
-const app = createLoopApp({
+const app = createPragma({
   mailbox: customMailbox,
   stateManager: customStateManager,
   sandboxManager: customSandboxManager,
@@ -339,7 +339,7 @@ Sandbox / Runtime Layer
 
 最小演进路径：
 
-1. 使用默认 `createLoopApp()` 完成本地 workflow 验证。
+1. 使用默认 `createPragma()` 完成本地 workflow 验证。
 2. 替换 `StateManager` 为数据库实现。
 3. 替换 `Mailbox` 为可靠队列。
 4. 启动多个 worker，共享同一个状态库和消息通道。

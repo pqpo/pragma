@@ -1,5 +1,5 @@
 {
-  "extends": "@expertmesh/tsconfig/node.json",
+  "extends": "@pragma/tsconfig/node.json",
   "compilerOptions": {
     "rootDir": ".",
     "outDir": "dist",

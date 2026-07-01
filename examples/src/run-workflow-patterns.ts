@@ -1,9 +1,9 @@
-import { createLoopApp, defineTask, workflow } from "@expertmesh/core";
+import { createPragma, defineTask, patterns } from "@pragma/core";
 import { z } from "zod";
 
-const app = createLoopApp();
+const app = createPragma();
 
-const promptChain = workflow.promptChain({
+const promptChain = patterns.promptChain({
   id: "example-prompt-chain",
   output: z.string(),
   steps: [
@@ -57,7 +57,7 @@ const promptChain = workflow.promptChain({
   ],
 });
 
-const routed = workflow.routing({
+const routed = patterns.routing({
   id: "example-routing",
   output: z.string(),
   field: "route",
@@ -112,7 +112,7 @@ const routed = workflow.routing({
   },
 });
 
-const parallelReview = workflow.parallel({
+const parallelReview = patterns.parallel({
   id: "example-parallel",
   output: z.object({
     summary: z.string(),
@@ -140,7 +140,7 @@ const parallelReview = workflow.parallel({
   }),
 });
 
-const reportBuilder = workflow.orchestratorWorkers({
+const reportBuilder = patterns.orchestratorWorkers({
   id: "example-orchestrator-workers",
   output: z.object({
     markdown: z.string(),
@@ -191,7 +191,7 @@ const reportBuilder = workflow.orchestratorWorkers({
   }),
 });
 
-const refinedAnswer = workflow.evaluatorOptimizer({
+const refinedAnswer = patterns.evaluatorOptimizer({
   id: "example-evaluator-optimizer",
   output: z.object({
     accepted: z.boolean(),

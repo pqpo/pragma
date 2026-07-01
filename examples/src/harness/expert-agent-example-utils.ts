@@ -1,4 +1,4 @@
-import { ExpertAgent } from "@expertmesh/core";
+import { ExpertAgent } from "@pragma/core";
 
 export async function printAgentContextSummary(agent: ExpertAgent): Promise<void> {
   const context = await agent.buildContext();

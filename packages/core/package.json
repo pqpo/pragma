@@ -1,5 +1,5 @@
 {
-  "name": "@expertmesh/core",
+  "name": "@pragma/core",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -17,7 +17,7 @@
     "clean": "rm -rf dist"
   },
   "devDependencies": {
-    "@expertmesh/tsconfig": "workspace:*",
+    "@pragma/tsconfig": "workspace:*",
     "@types/node": "latest",
     "typescript": "latest",
     "vitest": "latest"
@@ -25,7 +25,7 @@
   "dependencies": {
     "@cfworker/json-schema": "^4.1.1",
     "@earendil-works/pi-coding-agent": "0.79.8",
-    "@expertmesh/shared": "workspace:*",
+    "@pragma/shared": "workspace:*",
     "@modelcontextprotocol/client": "2.0.0-alpha.2",
     "@modelcontextprotocol/server": "2.0.0-alpha.2",
     "gray-matter": "^4.0.3",

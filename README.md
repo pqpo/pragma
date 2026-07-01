@@ -71,7 +71,7 @@ Worker: Node.js + TypeScript
 
 ## 模块边界
 
-ExpertMesh 按层组织代码，跨 package 调用必须使用 `@expertmesh/*` package import。
+ExpertMesh 按层组织代码，跨 package 调用必须使用 `@pragma/*` package import。
 
 允许的依赖方向：
 
@@ -86,7 +86,7 @@ apps/worker -> server -> core -> shared
 - 不把共享逻辑直接放进 `apps`。
 - Web 和 SDK 不直接访问数据库、Agent 或 Node 专属能力。
 - `shared` 包必须保持浏览器和 Node 双端安全，不依赖 React、Fastify、数据库、Agent Runtime 或 Node 内置模块。
-- 跨 package 不使用相对路径导入，使用 `@expertmesh/shared` 这类 package import。
+- 跨 package 不使用相对路径导入，使用 `@pragma/shared` 这类 package import。
 - 新增 package 前先明确它属于 `shared`、`client`、`server`、`core` 还是配置工具。
 
 ## 本地安装
@@ -101,7 +101,7 @@ pnpm -r list
 启动 Server：
 
 ```bash
-pnpm --filter @expertmesh/server-app dev
+pnpm --filter @pragma/server-app dev
 ```
 
 Server 当前提供 `GET /health`，默认端口为 `3001`：
@@ -113,7 +113,7 @@ curl http://localhost:3001/health
 启动 Web：
 
 ```bash
-pnpm --filter @expertmesh/web dev
+pnpm --filter @pragma/web dev
 ```
 
 默认访问地址：
@@ -127,7 +127,7 @@ Web 会展示当前服务状态，并通过 SDK 读取 Server 的健康检查结
 启动 Worker：
 
 ```bash
-pnpm --filter @expertmesh/worker dev
+pnpm --filter @pragma/worker dev
 ```
 
 Worker 启动后会初始化基础 Agent 运行上下文并输出启动状态：
@@ -148,8 +148,8 @@ pnpm dev
 
 ```bash
 cp examples/.env.example examples/.env
-pnpm --filter @expertmesh/examples start:basic
-pnpm --filter @expertmesh/examples start:workspace-context
+pnpm --filter @pragma/examples start:basic
+pnpm --filter @pragma/examples start:workspace-context
 ```
 
 示例默认使用仓库根目录下的 `workspace/` 作为 agent workspace。上下文示例支持通过 `--workspace` 指定外部 workspace，通过 `--context` 指定 markdown 上下文目录。
@@ -178,7 +178,7 @@ pnpm clean
 
 ## Package 规范
 
-所有内部 package 使用 `@expertmesh/*` scope，并满足以下要求：
+所有内部 package 使用 `@pragma/*` scope，并满足以下要求：
 
 - `private: true`
 - `type: "module"`
@@ -190,10 +190,10 @@ pnpm clean
 当前主要 package：
 
 ```text
-@expertmesh/shared
-@expertmesh/client
-@expertmesh/server
-@expertmesh/core
-@expertmesh/eslint-config
-@expertmesh/tsconfig
+@pragma/shared
+@pragma/client
+@pragma/server
+@pragma/core
+@pragma/eslint-config
+@pragma/tsconfig
 ```

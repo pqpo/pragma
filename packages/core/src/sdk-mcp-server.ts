@@ -6,7 +6,7 @@ import type {
   StandardSchemaWithJSON,
   Transport,
 } from "@modelcontextprotocol/server";
-import type { IExpertAgentMcpConfig, IExpertAgentMcpServer } from "@expertmesh/core";
+import type { IExpertAgentMcpConfig, IExpertAgentMcpServer } from "@pragma/core";
 
 type MaybePromise<TValue> = TValue | Promise<TValue>;
 

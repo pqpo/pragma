@@ -1,4 +1,4 @@
-import type { MailboxMessage } from "@expertmesh/shared";
+import type { MailboxMessage } from "@pragma/shared";
 
 import type {
   Mailbox,

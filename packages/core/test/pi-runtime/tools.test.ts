@@ -1,4 +1,4 @@
-import { ExpertAgent } from "@expertmesh/core";
+import { ExpertAgent } from "@pragma/core";
 import { describe, expect, it, vi } from "vitest";
 
 import { createCustomTools } from "../../src/pi-runtime/tools.ts";

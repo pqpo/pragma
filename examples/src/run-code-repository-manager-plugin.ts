@@ -3,9 +3,9 @@ import {
   ExpertAgent,
   HOST_CONTEXT_NAMESPACE,
   createInMemoryContextStore,
-} from "@expertmesh/core";
-import { createCloudPiRuntimeAdapter } from "@expertmesh/core";
-import codeRepositoryManagerPlugin from "@expertmesh/plugin-code-repository-manager";
+} from "@pragma/core";
+import { createCloudPiRuntimeAdapter } from "@pragma/core";
+import codeRepositoryManagerPlugin from "@pragma/plugin-code-repository-manager";
 
 import {
   printPluginLoadIssues,

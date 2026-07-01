@@ -5,8 +5,8 @@ import type {
   SandboxRef,
   TaskRunRecord,
   WorkflowRunRecord,
-} from "@expertmesh/shared";
-import { HumanInteractionRecordSchema, LoopStateSchema } from "@expertmesh/shared";
+} from "@pragma/shared";
+import { HumanInteractionRecordSchema, LoopStateSchema } from "@pragma/shared";
 
 import type {
   ApplyStepReductionRequest,

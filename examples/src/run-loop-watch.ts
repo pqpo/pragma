@@ -1,7 +1,7 @@
-import { createLoopApp, defineFlow, defineTask } from "@expertmesh/core";
+import { createPragma, defineFlow, defineTask } from "@pragma/core";
 import { z } from "zod";
 
-const app = createLoopApp();
+const app = createPragma();
 
 const requirementLoop = defineFlow({
   id: "watch-requirement-loop",

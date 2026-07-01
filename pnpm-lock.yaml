@@ -42,7 +42,7 @@ importers:
         specifier: latest
         version: 19.2.7(react@19.2.7)
     devDependencies:
-      '@expertmesh/tsconfig':
+      '@pragma/tsconfig':
         specifier: workspace:*
         version: link:../../packages/tsconfig
       '@types/node':
@@ -75,17 +75,17 @@ importers:
 
   apps/server:
     dependencies:
-      '@expertmesh/server':
+      '@pragma/server':
         specifier: workspace:*
         version: link:../../packages/server
-      '@expertmesh/shared':
+      '@pragma/shared':
         specifier: workspace:*
         version: link:../../packages/shared
       fastify:
         specifier: latest
         version: 5.8.5
     devDependencies:
-      '@expertmesh/tsconfig':
+      '@pragma/tsconfig':
         specifier: workspace:*
         version: link:../../packages/tsconfig
       '@types/node':
@@ -103,10 +103,10 @@ importers:
 
   apps/web:
     dependencies:
-      '@expertmesh/client':
+      '@pragma/client':
         specifier: workspace:*
         version: link:../../packages/client
-      '@expertmesh/shared':
+      '@pragma/shared':
         specifier: workspace:*
         version: link:../../packages/shared
       next:
@@ -119,7 +119,7 @@ importers:
         specifier: latest
         version: 19.2.7(react@19.2.7)
     devDependencies:
-      '@expertmesh/tsconfig':
+      '@pragma/tsconfig':
         specifier: workspace:*
         version: link:../../packages/tsconfig
       '@types/react':
@@ -137,17 +137,17 @@ importers:
 
   apps/worker:
     dependencies:
-      '@expertmesh/core':
+      '@pragma/core':
         specifier: workspace:*
         version: link:../../packages/core
-      '@expertmesh/server':
+      '@pragma/server':
         specifier: workspace:*
         version: link:../../packages/server
-      '@expertmesh/shared':
+      '@pragma/shared':
         specifier: workspace:*
         version: link:../../packages/shared
     devDependencies:
-      '@expertmesh/tsconfig':
+      '@pragma/tsconfig':
         specifier: workspace:*
         version: link:../../packages/tsconfig
       '@types/node':
@@ -165,10 +165,10 @@ importers:
 
   examples:
     dependencies:
-      '@expertmesh/core':
+      '@pragma/core':
         specifier: workspace:*
         version: link:../packages/core
-      '@expertmesh/plugin-code-repository-manager':
+      '@pragma/plugin-code-repository-manager':
         specifier: workspace:*
         version: link:../plugins/code-repository-manager
       cac:
@@ -181,7 +181,7 @@ importers:
         specifier: latest
         version: 4.4.3
     devDependencies:
-      '@expertmesh/tsconfig':
+      '@pragma/tsconfig':
         specifier: workspace:*
         version: link:../packages/tsconfig
       '@types/node':
@@ -199,11 +199,11 @@ importers:
 
   packages/client:
     dependencies:
-      '@expertmesh/shared':
+      '@pragma/shared':
         specifier: workspace:*
         version: link:../shared
     devDependencies:
-      '@expertmesh/tsconfig':
+      '@pragma/tsconfig':
         specifier: workspace:*
         version: link:../tsconfig
       typescript:
@@ -221,15 +221,15 @@ importers:
       '@earendil-works/pi-coding-agent':
         specifier: 0.79.8
         version: 0.79.8(ws@8.21.0)(zod@4.4.3)
-      '@expertmesh/shared':
-        specifier: workspace:*
-        version: link:../shared
       '@modelcontextprotocol/client':
         specifier: 2.0.0-alpha.2
         version: 2.0.0-alpha.2(@cfworker/json-schema@4.1.1)
       '@modelcontextprotocol/server':
         specifier: 2.0.0-alpha.2
         version: 2.0.0-alpha.2(@cfworker/json-schema@4.1.1)
+      '@pragma/shared':
+        specifier: workspace:*
+        version: link:../shared
       gray-matter:
         specifier: ^4.0.3
         version: 4.0.3
@@ -237,7 +237,7 @@ importers:
         specifier: latest
         version: 4.4.3
     devDependencies:
-      '@expertmesh/tsconfig':
+      '@pragma/tsconfig':
         specifier: workspace:*
         version: link:../tsconfig
       '@types/node':
@@ -258,7 +258,7 @@ importers:
 
   packages/server:
     devDependencies:
-      '@expertmesh/tsconfig':
+      '@pragma/tsconfig':
         specifier: workspace:*
         version: link:../tsconfig
       '@types/node':
@@ -277,7 +277,7 @@ importers:
         specifier: latest
         version: 4.4.3
     devDependencies:
-      '@expertmesh/tsconfig':
+      '@pragma/tsconfig':
         specifier: workspace:*
         version: link:../tsconfig
       typescript:
@@ -295,14 +295,14 @@ importers:
 
   plugins/code-repository-manager:
     dependencies:
-      '@expertmesh/core':
+      '@pragma/core':
         specifier: workspace:*
         version: link:../../packages/core
       zod:
         specifier: latest
         version: 4.4.3
     devDependencies:
-      '@expertmesh/tsconfig':
+      '@pragma/tsconfig':
         specifier: workspace:*
         version: link:../../packages/tsconfig
       '@types/node':
@@ -317,14 +317,14 @@ importers:
 
   plugins/expert-memory:
     dependencies:
-      '@expertmesh/core':
+      '@pragma/core':
         specifier: workspace:*
         version: link:../../packages/core
       zod:
         specifier: latest
         version: 4.4.3
     devDependencies:
-      '@expertmesh/tsconfig':
+      '@pragma/tsconfig':
         specifier: workspace:*
         version: link:../../packages/tsconfig
       '@types/node':

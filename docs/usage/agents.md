@@ -5,7 +5,7 @@
 当前核心 API 来自：
 
 ```ts
-import { ExpertAgent, defineAgent } from "@expertmesh/core";
+import { ExpertAgent, defineAgent } from "@pragma/core";
 ```
 
 `defineAgent()` 是 `ExpertAgent.create()` 的语法糖，二者都会返回 `Promise<ExpertAgent>`。
@@ -13,7 +13,7 @@ import { ExpertAgent, defineAgent } from "@expertmesh/core";
 ## 最小 Agent
 
 ```ts
-import { defineAgent } from "@expertmesh/core";
+import { defineAgent } from "@pragma/core";
 
 const agent = await defineAgent({
   id: "coding-expert",
@@ -421,7 +421,7 @@ import {
   HOST_CONTEXT_NAMESPACE,
   createInMemoryContextStore,
   defineAgent,
-} from "@expertmesh/core";
+} from "@pragma/core";
 
 const contextSystem = new ContextSystem();
 
@@ -470,10 +470,10 @@ await agent.addContext({
 
 ## 显式 Runtime 配置
 
-默认情况下，导入 `@expertmesh/core` 会设置默认 Runtime Registry。需要自定义 Runtime 时：
+默认情况下，导入 `@pragma/core` 会设置默认 Runtime Registry。需要自定义 Runtime 时：
 
 ```ts
-import { createRuntimeRegistry } from "@expertmesh/core";
+import { createRuntimeRegistry } from "@pragma/core";
 
 const runtimes = createRuntimeRegistry({
   runtimes: [customRuntime],

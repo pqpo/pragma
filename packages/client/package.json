@@ -1,5 +1,5 @@
 {
-  "name": "@expertmesh/client",
+  "name": "@pragma/client",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -17,10 +17,10 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@expertmesh/shared": "workspace:*"
+    "@pragma/shared": "workspace:*"
   },
   "devDependencies": {
-    "@expertmesh/tsconfig": "workspace:*",
+    "@pragma/tsconfig": "workspace:*",
     "typescript": "latest",
     "vitest": "latest"
   }

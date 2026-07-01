@@ -4,8 +4,8 @@ import type {
   MailboxMessage,
   TaskRunRecord,
   WorkflowRunRecord,
-} from "@expertmesh/shared";
-import { LoopStateSchema } from "@expertmesh/shared";
+} from "@pragma/shared";
+import { LoopStateSchema } from "@pragma/shared";
 
 import type {
   CompiledLoop,

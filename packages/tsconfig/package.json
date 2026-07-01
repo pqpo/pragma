@@ -1,5 +1,5 @@
 {
-  "name": "@expertmesh/tsconfig",
+  "name": "@pragma/tsconfig",
   "version": "0.0.0",
   "private": true,
   "type": "module",

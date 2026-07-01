@@ -8,7 +8,7 @@ import {
   error,
   normalizeMetadata,
   ok,
-} from "@expertmesh/core";
+} from "@pragma/core";
 import type {
   ContextSensitivity,
   ExpertAgentContextItemMetadata,
@@ -24,7 +24,7 @@ import type {
   ExpertAgentStoredContextItemSearchInput,
   ExpertAgentStoredContextItemUpdateInput,
   ExpertAgentStoredContextRegisterInput,
-} from "@expertmesh/core";
+} from "@pragma/core";
 
 import {
   MemoryLedgerSchema,

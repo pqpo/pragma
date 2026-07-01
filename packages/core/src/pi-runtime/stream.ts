@@ -1,4 +1,4 @@
-import type { RuntimeStreamEvent, RuntimeStreamEventInput } from "@expertmesh/core";
+import type { RuntimeStreamEvent, RuntimeStreamEventInput } from "@pragma/core";
 
 import type { PiToolExecutionEvent } from "./session-events.ts";
 

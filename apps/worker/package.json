@@ -1,5 +1,5 @@
 {
-  "name": "@expertmesh/worker",
+  "name": "@pragma/worker",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -12,12 +12,12 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@expertmesh/core": "workspace:*",
-    "@expertmesh/shared": "workspace:*",
-    "@expertmesh/server": "workspace:*"
+    "@pragma/core": "workspace:*",
+    "@pragma/shared": "workspace:*",
+    "@pragma/server": "workspace:*"
   },
   "devDependencies": {
-    "@expertmesh/tsconfig": "workspace:*",
+    "@pragma/tsconfig": "workspace:*",
     "@types/node": "latest",
     "tsx": "latest",
     "typescript": "latest",

@@ -10,8 +10,8 @@ import type {
   ModelRegistry,
   ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import type { ResolvedToolSet, SubAgentRuntimeLaunchRequest } from "@expertmesh/core";
-import { createToolPolicy, selectResolvedTools } from "@expertmesh/core";
+import type { ResolvedToolSet, SubAgentRuntimeLaunchRequest } from "@pragma/core";
+import { createToolPolicy, selectResolvedTools } from "@pragma/core";
 import { randomUUID } from "node:crypto";
 
 import {

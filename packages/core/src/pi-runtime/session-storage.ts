@@ -5,7 +5,7 @@ import type {
   ExpertAgentLogger,
   RuntimeSessionStorageContext,
   RuntimeSessionSyncCallback,
-} from "@expertmesh/core";
+} from "@pragma/core";
 
 const DEFAULT_SESSION_SYNC_DEBOUNCE_MS = 250;
 

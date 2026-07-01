@@ -1,5 +1,5 @@
-import { createLoggerProvider } from "@expertmesh/core";
-import type { ExpertAgentLogContext, ExpertAgentLogRecord } from "@expertmesh/core";
+import { createLoggerProvider } from "@pragma/core";
+import type { ExpertAgentLogContext, ExpertAgentLogRecord } from "@pragma/core";
 
 export function createExampleLoggerProvider() {
   return createLoggerProvider((record) => {

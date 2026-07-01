@@ -10,9 +10,9 @@ import {
   HOST_CONTEXT_NAMESPACE,
   createInMemoryContextStore,
   createNoopLoggerProvider,
-} from "@expertmesh/core";
-import { readExpertAgentPluginManifest } from "@expertmesh/core";
-import type { ExpertAgentPluginUse } from "@expertmesh/core";
+} from "@pragma/core";
+import { readExpertAgentPluginManifest } from "@pragma/core";
+import type { ExpertAgentPluginUse } from "@pragma/core";
 
 import { CODE_REPOSITORY_CONTEXT_ID } from "../src/context.ts";
 import codeRepositoryManagerPlugin from "../src/index.ts";

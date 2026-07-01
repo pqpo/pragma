@@ -1,5 +1,5 @@
 {
-  "name": "@expertmesh/examples",
+  "name": "@pragma/examples",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -24,14 +24,14 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@expertmesh/core": "workspace:*",
-    "@expertmesh/plugin-code-repository-manager": "workspace:*",
+    "@pragma/core": "workspace:*",
+    "@pragma/plugin-code-repository-manager": "workspace:*",
     "cac": "^7.0.0",
     "dotenv": "latest",
     "zod": "latest"
   },
   "devDependencies": {
-    "@expertmesh/tsconfig": "workspace:*",
+    "@pragma/tsconfig": "workspace:*",
     "@types/node": "latest",
     "tsx": "latest",
     "typescript": "latest",

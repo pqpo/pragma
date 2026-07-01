@@ -1,6 +1,6 @@
-import { ExpertAgent } from "@expertmesh/core";
-import type { RuntimeSessionRef } from "@expertmesh/core";
-import { createCloudPiRuntimeAdapter } from "@expertmesh/core";
+import { ExpertAgent } from "@pragma/core";
+import type { RuntimeSessionRef } from "@pragma/core";
+import { createCloudPiRuntimeAdapter } from "@pragma/core";
 
 import { printRunHeader, printRunResult } from "./harness/expert-agent-example-utils.ts";
 import { createExampleLoggerProvider } from "./harness/logger.ts";

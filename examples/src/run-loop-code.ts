@@ -1,4 +1,4 @@
-import { createLoopApp, defineTask, defineFlow } from "@expertmesh/core";
+import { createPragma, defineTask, defineFlow } from "@pragma/core";
 import { z } from "zod";
 
 const flow = defineFlow({
@@ -39,7 +39,7 @@ flow.compose(({ start, end }) => {
   start(greet).next(end());
 });
 
-const result = await createLoopApp().run(flow, {
+const result = await createPragma().run(flow, {
   input: {
     name: "ExpertMesh",
   },

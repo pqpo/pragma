@@ -1,4 +1,4 @@
-import { HealthResponseSchema, type HealthResponse } from "@expertmesh/shared";
+import { HealthResponseSchema, type HealthResponse } from "@pragma/shared";
 
 export interface ExpertMeshClient {
   getHealth(): Promise<HealthResponse>;

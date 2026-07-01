@@ -1,5 +1,5 @@
 {
-  "name": "@expertmesh/server-app",
+  "name": "@pragma/server-app",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -12,12 +12,12 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@expertmesh/shared": "workspace:*",
-    "@expertmesh/server": "workspace:*",
+    "@pragma/shared": "workspace:*",
+    "@pragma/server": "workspace:*",
     "fastify": "latest"
   },
   "devDependencies": {
-    "@expertmesh/tsconfig": "workspace:*",
+    "@pragma/tsconfig": "workspace:*",
     "@types/node": "latest",
     "tsx": "latest",
     "typescript": "latest",

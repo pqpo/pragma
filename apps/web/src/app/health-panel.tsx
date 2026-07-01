@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ServerClient, type ExpertMeshClient, type HealthResponse } from "@expertmesh/client";
+import { ServerClient, type ExpertMeshClient, type HealthResponse } from "@pragma/client";
 
 const client: ExpertMeshClient = new ServerClient();
 

@@ -1,5 +1,5 @@
 {
-  "name": "@expertmesh/web",
+  "name": "@pragma/web",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -12,14 +12,14 @@
     "clean": "rm -rf .next dist"
   },
   "dependencies": {
-    "@expertmesh/shared": "workspace:*",
-    "@expertmesh/client": "workspace:*",
+    "@pragma/shared": "workspace:*",
+    "@pragma/client": "workspace:*",
     "next": "latest",
     "react": "latest",
     "react-dom": "latest"
   },
   "devDependencies": {
-    "@expertmesh/tsconfig": "workspace:*",
+    "@pragma/tsconfig": "workspace:*",
     "@types/react": "latest",
     "@types/react-dom": "latest",
     "typescript": "latest",

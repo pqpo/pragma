@@ -1,4 +1,4 @@
-import type { MailboxMessage, TaskRunStatus, WorkflowRunRecord } from "@expertmesh/shared";
+import type { MailboxMessage, TaskRunStatus, WorkflowRunRecord } from "@pragma/shared";
 
 import { AsyncPushQueue } from "../runtime/async-push-queue.ts";
 import type {

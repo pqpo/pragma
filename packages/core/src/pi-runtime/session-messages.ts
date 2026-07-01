@@ -1,4 +1,4 @@
-import { AgentMessageSchema, type AgentMessage } from "@expertmesh/shared";
+import { AgentMessageSchema, type AgentMessage } from "@pragma/shared";
 
 export function convertPiAgentMessages(messages: readonly unknown[]): readonly AgentMessage[] {
   return messages.map((message) => convertPiAgentMessage(message));

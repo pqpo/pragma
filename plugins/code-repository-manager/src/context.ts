@@ -1,4 +1,4 @@
-import type { ExpertAgentContextItemSeed } from "@expertmesh/core";
+import type { ExpertAgentContextItemSeed } from "@pragma/core";
 
 import type { CodeRepository, CodeRepositoryManagerConfig } from "./schema.ts";
 

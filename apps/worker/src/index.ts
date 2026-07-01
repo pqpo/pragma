@@ -2,7 +2,7 @@ import {
   ExpertAgent,
   createConsoleLoggerProvider,
   createExpertAgentLogger,
-} from "@expertmesh/core";
+} from "@pragma/core";
 
 const loggerProvider = createConsoleLoggerProvider();
 

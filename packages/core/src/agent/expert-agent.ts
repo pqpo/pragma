@@ -1,6 +1,6 @@
 import { ContextManager } from "./context-manager.ts";
 import type { ContextAssemblerOptions, ExpertAgentContext } from "./context-manager.ts";
-import type { AgentMessageUsage } from "@expertmesh/shared";
+import type { AgentMessageUsage } from "@pragma/shared";
 import { ContextSystem } from "../context-system/context-system.ts";
 import type {
   ExpertAgentContextAddInput,
@@ -331,8 +331,8 @@ export class ExpertAgent implements IExpertAgent, Loop<unknown, unknown> {
     request: StartLoopRunRequest<unknown>,
   ): Promise<LoopRunResult<TOutput>> {
     if (request.execution === undefined) {
-      const { createLoopApp } = await import("../loop/loop-app.ts");
-      return (await createLoopApp().run(this, request)) as LoopRunResult<TOutput>;
+      const { createPragma } = await import("../loop/loop-app.ts");
+      return (await createPragma().run(this, request)) as LoopRunResult<TOutput>;
     }
 
     const execution = request.execution;
@@ -457,7 +457,7 @@ export class ExpertAgent implements IExpertAgent, Loop<unknown, unknown> {
 async function createDefaultRuntimeRegistry(): Promise<ExpertAgentRuntimeRegistry> {
   if (defaultRuntimeRegistryFactory === undefined) {
     throw new Error(
-      "No default runtime registry is configured. Import @expertmesh/core or pass runtimes to agent.createSession().",
+      "No default runtime registry is configured. Import @pragma/core or pass runtimes to agent.createSession().",
     );
   }
 

@@ -8,13 +8,13 @@ import type {
   RuntimeSessionRestoreHandler,
   RuntimeSessionStorageContext,
   RuntimeSessionSyncCallback,
-} from "@expertmesh/core";
+} from "@pragma/core";
 import {
   createExpertAgentLogger,
   createExpertAgentRunContext,
   createQueuedAgentLifecycle,
   dispatchExpertAgentHook,
-} from "@expertmesh/core";
+} from "@pragma/core";
 import { randomUUID } from "node:crypto";
 
 import { createMcpToolRegistry } from "../mcp-tools.ts";

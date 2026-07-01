@@ -9,7 +9,7 @@ import type {
   IExpertAgentInProcessMcpServer,
   IExpertAgentMcpConfig,
   IExpertAgentMcpServer
-} from "@expertmesh/core";
+} from "@pragma/core";
 
 export interface McpToolRegistry {
   readonly tools: readonly McpManagedTool[];

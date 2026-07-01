@@ -7,8 +7,8 @@ For built-in usage, import the plugin entry as a source dependency and pass
 parameters through the Agent `plugins` array:
 
 ```ts
-import { ExpertAgent } from "@expertmesh/core";
-import expertMemoryPlugin from "@expertmesh/plugin-expert-memory";
+import { ExpertAgent } from "@pragma/core";
+import expertMemoryPlugin from "@pragma/plugin-expert-memory";
 
 const agent = await ExpertAgent.create({
   schemaVersion: "expertmesh.expert/v1",
@@ -53,5 +53,5 @@ EXPERTMESH_PLUGIN_EXPERT_MEMORY_GENERATE_MEMORIES
 EXPERTMESH_PLUGIN_EXPERT_MEMORY_MEMORY_ROOT
 ```
 
-Use `createExpertAgentPluginConfigEnvName` from `@expertmesh/core` to derive
+Use `createExpertAgentPluginConfigEnvName` from `@pragma/core` to derive
 these names from `pluginId` and config key.

@@ -16,7 +16,7 @@ import type {
   StartLoopRunRequest,
 } from "./types.ts";
 
-export function createLoopApp(options: CreateLoopAppOptions = {}): LoopApp {
+export function createPragma(options: CreateLoopAppOptions = {}): LoopApp {
   const mailbox = options.mailbox ?? createInMemoryMailbox();
   const stateManager = options.stateManager ?? createInMemoryStateManager();
   const loopStore = options.loopStore ?? createInMemoryLoopDefinitionStore();
@@ -124,7 +124,7 @@ function compileSingleStepLoop<TInput, TOutput>(
     ],
     limits: new Map(),
     async run(request) {
-      return await createLoopApp().run(compiled, request);
+      return await createPragma().run(compiled, request);
     },
   };
 

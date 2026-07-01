@@ -1,4 +1,4 @@
-import { createInMemoryContextStore, definePluginEntry } from "@expertmesh/core";
+import { createInMemoryContextStore, definePluginEntry } from "@pragma/core";
 
 export const otherContextPlugin = definePluginEntry({
   setup: ({ contextSystem }) => {

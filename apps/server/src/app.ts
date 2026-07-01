@@ -1,6 +1,6 @@
 import Fastify from "fastify";
-import { HealthResponseSchema } from "@expertmesh/shared";
-import { createDatabaseClient } from "@expertmesh/server";
+import { HealthResponseSchema } from "@pragma/shared";
+import { createDatabaseClient } from "@pragma/server";
 
 export const buildServer = () => {
   const app = Fastify({

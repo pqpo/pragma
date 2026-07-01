@@ -1,4 +1,4 @@
-import { createLoopApp, defineTask, defineFlow } from "@expertmesh/core";
+import { createPragma, defineTask, defineFlow } from "@pragma/core";
 import { z } from "zod";
 
 const requirementLoop = defineFlow({
@@ -75,7 +75,7 @@ deliveryLoop.compose(({ start, step, end }) => {
   step(verify).next(end());
 });
 
-const result = await createLoopApp().run(deliveryLoop, {
+const result = await createPragma().run(deliveryLoop, {
   input: {
     requirement: "Add GitHub login",
   },

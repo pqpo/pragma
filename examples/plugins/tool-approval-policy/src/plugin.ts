@@ -1,4 +1,4 @@
-import { definePluginEntry } from "@expertmesh/core";
+import { definePluginEntry } from "@pragma/core";
 
 export default definePluginEntry({
   setup: () => ({

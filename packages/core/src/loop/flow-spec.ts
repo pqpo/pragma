@@ -4,7 +4,7 @@ import {
   type HumanInteractionRequest,
   type HumanInteractionResponse,
   type LoopState,
-} from "@expertmesh/shared";
+} from "@pragma/shared";
 
 import type {
   CompiledLoop,
@@ -173,8 +173,8 @@ export class FlowSpec<TInput = unknown, TOutput = unknown> {
           return await runLoop(compiled, request);
         }
 
-        const { createLoopApp } = await import("./loop-app.ts");
-        return await createLoopApp().run(compiled, request);
+        const { createPragma } = await import("./loop-app.ts");
+        return await createPragma().run(compiled, request);
       },
     };
 
@@ -280,8 +280,8 @@ export function defineTask<TInput = unknown, TOutput = unknown>(
     outputSchema: options.output,
     async run(request) {
       if (request.execution === undefined) {
-        const { createLoopApp } = await import("./loop-app.ts");
-        return await createLoopApp().run(this, request);
+        const { createPragma } = await import("./loop-app.ts");
+        return await createPragma().run(this, request);
       }
 
       const input = options.input?.parse(request.input) ?? request.input;
@@ -317,8 +317,8 @@ export function defineHumanTask<TInput = unknown, TOutput = HumanInteractionResp
     outputSchema,
     async run(request) {
       if (request.execution === undefined) {
-        const { createLoopApp } = await import("./loop-app.ts");
-        return await createLoopApp().run(this, request);
+        const { createPragma } = await import("./loop-app.ts");
+        return await createPragma().run(this, request);
       }
 
       const input = options.input?.parse(request.input) ?? request.input;

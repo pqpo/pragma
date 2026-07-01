@@ -10,8 +10,8 @@ import {
   HOST_CONTEXT_NAMESPACE,
   createInMemoryContextStore,
   readExpertAgentPluginManifest,
-} from "@expertmesh/core";
-import type { ExpertAgentPluginUse } from "@expertmesh/core";
+} from "@pragma/core";
+import type { ExpertAgentPluginUse } from "@pragma/core";
 
 import expertMemoryPlugin, { parseMemoryPluginConfig } from "../src/index.ts";
 

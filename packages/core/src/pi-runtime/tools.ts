@@ -11,12 +11,12 @@ import type {
   ResolvedTool,
   ResolvedToolSet,
   SubAgentManagedTool,
-} from "@expertmesh/core";
+} from "@pragma/core";
 import {
   createSubAgentTool,
   dispatchExpertAgentHook,
   resolveToolPolicy,
-} from "@expertmesh/core";
+} from "@pragma/core";
 import { randomUUID } from "node:crypto";
 
 import type { McpManagedTool } from "../mcp-tools.ts";

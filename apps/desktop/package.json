@@ -1,5 +1,5 @@
 {
-  "name": "@expertmesh/desktop",
+  "name": "@pragma/desktop",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -22,7 +22,7 @@
     "react-dom": "latest"
   },
   "devDependencies": {
-    "@expertmesh/tsconfig": "workspace:*",
+    "@pragma/tsconfig": "workspace:*",
     "@types/node": "latest",
     "@types/react": "latest",
     "@types/react-dom": "latest",

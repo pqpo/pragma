@@ -1,4 +1,4 @@
-import type { RuntimeStreamEvent, RuntimeSubmitHandle } from "@expertmesh/core";
+import type { RuntimeStreamEvent, RuntimeSubmitHandle } from "@pragma/core";
 
 type StreamSection = "none" | "thought" | "message" | "toolDelta";
 

@@ -23,13 +23,13 @@ EXPERTMESH_MODEL_API_KEY=replace-with-your-api-key
 ## 运行基础示例
 
 ```bash
-pnpm --filter @expertmesh/examples start:basic
+pnpm --filter @pragma/examples start:basic
 ```
 
 传入自定义问题：
 
 ```bash
-pnpm --filter @expertmesh/examples start:basic "用三句话说明 ExpertAgent 的最小使用流程"
+pnpm --filter @pragma/examples start:basic "用三句话说明 ExpertAgent 的最小使用流程"
 ```
 
 基础示例默认使用仓库根目录下的 `workspace/` 作为 agent workspace，并会在启动时自动创建这个目录。
@@ -37,19 +37,19 @@ pnpm --filter @expertmesh/examples start:basic "用三句话说明 ExpertAgent �
 提交多轮任务，测试同一个 runtime session 内的连续对话：
 
 ```bash
-pnpm --filter @expertmesh/examples start:basic --turn "记住：我的项目代号是 mesh-alpha" --turn "我刚才说的项目代号是什么？"
+pnpm --filter @pragma/examples start:basic --turn "记住：我的项目代号是 mesh-alpha" --turn "我刚才说的项目代号是什么？"
 ```
 
 运行时会打印 `runtimeSessionId`。复制这个 id 后，可以在下一次运行中恢复 runtime session：
 
 ```bash
-pnpm --filter @expertmesh/examples start:basic --runtime-session-id <runtime-session-id> --turn "继续上一次会话，我刚才让你记住了什么？"
+pnpm --filter @pragma/examples start:basic --runtime-session-id <runtime-session-id> --turn "继续上一次会话，我刚才让你记住了什么？"
 ```
 
 需要固定 ExpertMesh 自己的 system session id 时，也可以传入：
 
 ```bash
-pnpm --filter @expertmesh/examples start:basic --system-session-id local-debug-session --turn "测试固定 system session id"
+pnpm --filter @pragma/examples start:basic --system-session-id local-debug-session --turn "测试固定 system session id"
 ```
 
 这个示例对应 `src/run-expert-agent.ts`。核心流程是：
@@ -65,7 +65,7 @@ pnpm --filter @expertmesh/examples start:basic --system-session-id local-debug-s
 ## 运行 Session 存储示例
 
 ```bash
-pnpm --filter @expertmesh/examples start:session-storage
+pnpm --filter @pragma/examples start:session-storage
 ```
 
 这个示例演示 runtime session 在沙盒或 workspace 生命周期外的同步与恢复：
@@ -83,7 +83,7 @@ pnpm --filter @expertmesh/examples start:session-storage
 ## 运行审批示例
 
 ```bash
-pnpm --filter @expertmesh/examples start:approval
+pnpm --filter @pragma/examples start:approval
 ```
 
 这个示例展示两件事：
@@ -113,7 +113,7 @@ approval: {
 ## 运行上下文示例
 
 ```bash
-pnpm --filter @expertmesh/examples start:workspace-context
+pnpm --filter @pragma/examples start:workspace-context
 ```
 
 默认情况下，上下文示例也使用仓库根目录下的 `workspace/`，并使用内存 mock 上下文库。
@@ -121,19 +121,19 @@ pnpm --filter @expertmesh/examples start:workspace-context
 传入外部 workspace 目录：
 
 ```bash
-pnpm --filter @expertmesh/examples start:workspace-context --workspace ./workspace
+pnpm --filter @pragma/examples start:workspace-context --workspace ./workspace
 ```
 
 传入 markdown 上下文目录后，示例会改用 `FileSystemContextStore`：
 
 ```bash
-pnpm --filter @expertmesh/examples start:workspace-context --context ./docs
+pnpm --filter @pragma/examples start:workspace-context --context ./docs
 ```
 
 也可以同时传入 workspace、context 和自定义 query：
 
 ```bash
-pnpm --filter @expertmesh/examples start:workspace-context --workspace ./workspace --context ./docs "总结这些上下文里的关键约束"
+pnpm --filter @pragma/examples start:workspace-context --workspace ./workspace --context ./docs "总结这些上下文里的关键约束"
 ```
 
 这个示例对应 `src/run-workspace-context-agent.ts`，额外展示：
@@ -149,20 +149,20 @@ pnpm --filter @expertmesh/examples start:workspace-context --workspace ./workspa
 Loop 示例不需要模型 key，全部使用本机 `code` step：
 
 ```bash
-pnpm --filter @expertmesh/examples start:loop-code
-pnpm --filter @expertmesh/examples start:loop-route
-pnpm --filter @expertmesh/examples start:loop-subloop
-pnpm --filter @expertmesh/examples start:loop-watch
-pnpm --filter @expertmesh/examples start:workflow-patterns
-pnpm --filter @expertmesh/examples start:loop-human-clarification
-pnpm --filter @expertmesh/examples start:loop-human-review-gate
+pnpm --filter @pragma/examples start:loop-code
+pnpm --filter @pragma/examples start:loop-route
+pnpm --filter @pragma/examples start:loop-subloop
+pnpm --filter @pragma/examples start:loop-watch
+pnpm --filter @pragma/examples start:workflow-patterns
+pnpm --filter @pragma/examples start:loop-human-clarification
+pnpm --filter @pragma/examples start:loop-human-review-gate
 ```
 
 - `run-loop-code.ts`：最小 `defineFlow()` + `defineTask()` + `reduce()`。
 - `run-loop-route.ts`：根据 step 结构化输出字段 `.route("status", ...)`。
 - `run-loop-subloop.ts`：把一个 Loop 作为另一个 Loop 的 subloop step。
 - `run-loop-watch.ts`：用 `app.start()` 非阻塞启动 run，再用 `app.runs.get()`、`app.runs.list()`、`app.runs.getTree()`、`app.runs.watch()` 和 `app.runs.watchOutput()` 查询状态并递归订阅嵌套 Loop 事件。
-- `run-workflow-patterns.ts`：演示 `workflow.promptChain()`、`workflow.routing()`、`workflow.parallel()`、`workflow.orchestratorWorkers()` 和 `workflow.evaluatorOptimizer()` 五类快捷范式。
+- `run-workflow-patterns.ts`：演示 `patterns.promptChain()`、`patterns.routing()`、`patterns.parallel()`、`patterns.orchestratorWorkers()` 和 `patterns.evaluatorOptimizer()` 五类快捷范式。
 - `run-loop-human-clarification.ts`：演示 `clarifier -> human question -> clarifier` 的多轮需求澄清，Human step 会让 workflow/task 进入 waiting，CLI 回答后恢复。
 - `run-loop-human-review-gate.ts`：演示 `coder -> verify -> human review gate`，CLI 可选择 approve、request changes 或 manual patch，并通过普通 `.route("decision", ...)` 推进或回环。
 

@@ -12,8 +12,8 @@ plugins because parameters can be supplied directly instead of routed through
 environment variables or host context.
 
 ```ts
-import { ExpertAgent } from "@expertmesh/core";
-import codeRepositoryManagerPlugin from "@expertmesh/plugin-code-repository-manager";
+import { ExpertAgent } from "@pragma/core";
+import codeRepositoryManagerPlugin from "@pragma/plugin-code-repository-manager";
 
 const gitToken = "value loaded from your app secret store";
 
@@ -68,7 +68,7 @@ Agent with resolved plugin entries. Directory and zip sources may also receive
 direct config:
 
 ```ts
-import { ExpertAgent } from "@expertmesh/core";
+import { ExpertAgent } from "@pragma/core";
 
 const workspace = "/path/to/workspace";
 
@@ -117,7 +117,7 @@ EXPERTMESH_PLUGIN_CODE_REPOSITORY_MANAGER_AUTH_PRIVATE_KEY
 EXPERTMESH_PLUGIN_CODE_REPOSITORY_MANAGER_AUTH_KNOWN_HOSTS
 ```
 
-Use `createExpertAgentPluginConfigEnvName` from `@expertmesh/core` to derive
+Use `createExpertAgentPluginConfigEnvName` from `@pragma/core` to derive
 these names from `pluginId` and config key. Set
 `EXPERTMESH_PLUGIN_CODE_REPOSITORY_MANAGER_AUTH_HELPER` to a
 `credential.helper` value when Git credentials should come from an existing helper
@@ -133,5 +133,5 @@ should use bash `git` directly and clone repositories to
 Run the repository example from the monorepo root:
 
 ```bash
-pnpm --filter @expertmesh/examples start:code-repositories
+pnpm --filter @pragma/examples start:code-repositories
 ```

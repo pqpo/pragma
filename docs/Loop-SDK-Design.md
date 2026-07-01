@@ -29,7 +29,7 @@ Agent 只声明“专家能力”和输入输出协议，不绑定具体 Runtime
 最小声明使用 `defineAgent()`。它是 Loop SDK 面向用户的语法糖，底层可以归一化为当前项目里的 `ExpertAgent` 声明，但用户不需要直接调用 `ExpertAgent.create()`。
 
 ```ts
-import { defineAgent } from "@expertmesh/core";
+import { defineAgent } from "@pragma/core";
 
 const coder = defineAgent({
   id: "coder",
@@ -76,7 +76,7 @@ const result = await coder.run("实现 GitHub 登录", {
 这等价于显式使用默认 Runtime registry：
 
 ```ts
-import { createRuntimeRegistry } from "@expertmesh/core";
+import { createRuntimeRegistry } from "@pragma/core";
 
 const runtimes = createRuntimeRegistry();
 
@@ -93,7 +93,7 @@ const result = await coder.run("实现 GitHub 登录", {
 `createRuntimeRegistry()` 默认会注入 `createDefaultRuntime()`：
 
 ```ts
-import { createDefaultRuntime, createRuntimeRegistry } from "@expertmesh/core";
+import { createDefaultRuntime, createRuntimeRegistry } from "@pragma/core";
 
 const runtimes = createRuntimeRegistry({
   runtimes: [createDefaultRuntime()],
@@ -126,14 +126,14 @@ function createDefaultRuntime(options?: DefaultRuntimeOptions): RuntimeAdapter {
 }
 ```
 
-未来如果默认 Runtime 从 PI agent 切换到其他实现，只需要修改 `createDefaultRuntime()` 的底层调用；上层 `coder.run(...)`、`createRuntimeRegistry()` 和 `createLoopApp()` 不需要改 API。
+未来如果默认 Runtime 从 PI agent 切换到其他实现，只需要修改 `createDefaultRuntime()` 的底层调用；上层 `coder.run(...)`、`createRuntimeRegistry()` 和 `createPragma()` 不需要改 API。
 
 因此 `await coder.run("实现 GitHub 登录")` 成立，但不是绕过 Runtime 直接执行；它使用默认 Runtime registry 解析到 `default` Runtime。
 
 需要切换执行环境时，再显式指定 Runtime：
 
 ```ts
-import { createCodexLocalRuntimeAdapter, createRuntimeRegistry } from "@expertmesh/core";
+import { createCodexLocalRuntimeAdapter, createRuntimeRegistry } from "@pragma/core";
 
 const runtimes = createRuntimeRegistry({
   runtimes: [createCodexLocalRuntimeAdapter()],
@@ -148,10 +148,10 @@ await coder.run("实现 GitHub 登录", {
 Loop 执行时同样默认拥有 Runtime registry：
 
 ```ts
-const app = createLoopApp();
+const app = createPragma();
 ```
 
-`createLoopApp()` 默认使用 `createRuntimeRegistry()`，因此也会自动注入 `createDefaultRuntime()`。
+`createPragma()` 默认使用 `createRuntimeRegistry()`，因此也会自动注入 `createDefaultRuntime()`。
 
 运行发生在 Loop 层时，Loop 负责选择 Runtime、托管 State、调度步骤。未指定 Runtime 时使用 `default`：
 
@@ -766,17 +766,17 @@ type RuntimeDescriptor = {
 默认 Runtime registry：
 
 ```ts
-import { createRuntimeRegistry } from "@expertmesh/core";
+import { createRuntimeRegistry } from "@pragma/core";
 
 const runtimes = createRuntimeRegistry();
 
 // 等价于注册 createDefaultRuntime()，并设置 defaultRuntime = "default"。
 ```
 
-`createLoopApp()` 默认使用这个 registry：
+`createPragma()` 默认使用这个 registry：
 
 ```ts
-const app = createLoopApp();
+const app = createPragma();
 
 await app.run("coding-loop", input);
 ```
@@ -831,8 +831,8 @@ return await runtime.execute(invocation);
 
 ```text
 FlowSpec / Pattern / Channel   -> 未来 Loop SDK 层
-RuntimeAdapter 通用接口         -> @expertmesh/core
-RuntimeAdapter 具体实现         -> @expertmesh/core
+RuntimeAdapter 通用接口         -> @pragma/core
+RuntimeAdapter 具体实现         -> @pragma/core
 Server / Worker 调度 Runtime    -> apps/server、apps/worker 或 server orchestration package
 Desktop 本地权限与连接桥接      -> apps/desktop + packages/core/src/local-agent-bridge
 ```
@@ -856,7 +856,7 @@ TaskManager            决定“接下来做什么”，以及“单个任务怎
 ## 8.1 分层架构
 
 ```text
-createLoopApp()
+createPragma()
   -> TaskManager
      -> StateManager
      -> Mailbox
@@ -1326,7 +1326,7 @@ loop.subloop("coding", codingLoop, {
 第一阶段建议实现本机可验证闭环：
 
 ```text
-createLoopApp()
+createPragma()
   -> InMemoryMailbox
   -> InMemoryStateManager
   -> LocalTaskManager
@@ -1380,10 +1380,10 @@ apps/desktop/
 | 云端分布式 | MQ / NATS / Kafka        | 数据库 + Trace Store            | 多 worker consumer group | cloud sandbox          |
 | 本地桥接   | WebSocket mailbox bridge | 云端 State + 本地 session cache | Desktop App              | Desktop 授权 workspace |
 
-设计上 Mailbox、StateManager、TaskManager 都以接口依赖注入给 `createLoopApp()`：
+设计上 Mailbox、StateManager、TaskManager 都以接口依赖注入给 `createPragma()`：
 
 ```ts
-const app = createLoopApp({
+const app = createPragma({
   mailbox,
   stateManager,
   taskManager,
@@ -1394,7 +1394,7 @@ const app = createLoopApp({
 默认不传时创建本机实现：
 
 ```ts
-const app = createLoopApp();
+const app = createPragma();
 ```
 
 这保证最小 API 仍然轻量，同时内部执行模型可以平滑迁移到 Server/Worker 或 Desktop bridge。
@@ -1489,7 +1489,7 @@ CompiledLoop
 RuntimeAdapter
 channel()
 Patterns.*
-createLoopApp()
+createPragma()
 client.loop()
 ```
 

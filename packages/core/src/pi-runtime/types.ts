@@ -6,7 +6,7 @@ import type {
   RuntimeSessionSyncCallback,
   RuntimeEventEmitter,
   RuntimeStreamEvent,
-} from "@expertmesh/core";
+} from "@pragma/core";
 
 export interface CloudPiRuntimeAdapterOptions {
   readonly descriptor?: Partial<RuntimeAdapterDescriptor> | undefined;

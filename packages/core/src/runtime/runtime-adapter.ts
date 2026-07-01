@@ -3,7 +3,7 @@ import type {
   IExpertAgentModelProviderConfig,
   IExpertAgentRunResult,
 } from "../agent/expert-agent.ts";
-import type { AgentMessage } from "@expertmesh/shared";
+import type { AgentMessage } from "@pragma/shared";
 import type { z } from "zod";
 import type { ExpertAgentLoggerProvider } from "../logging/logger.ts";
 import type { RunState, SessionState } from "./agent-lifecycle.ts";

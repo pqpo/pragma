@@ -11,10 +11,10 @@ Human task 执行时，`TaskManager` 会创建 `HumanInteractionRecord`，把 wo
 ## 最小示例
 
 ```ts
-import { createLoopApp, defineFlow, defineHumanTask } from "@expertmesh/core";
+import { createPragma, defineFlow, defineHumanTask } from "@pragma/core";
 import { z } from "zod";
 
-const app = createLoopApp();
+const app = createPragma();
 
 const flow = defineFlow({
   id: "approval-loop",
@@ -92,7 +92,7 @@ clarifier -> human_question -> clarifier -> ready
 可运行示例：
 
 ```bash
-pnpm --filter @expertmesh/examples start:loop-human-clarification
+pnpm --filter @pragma/examples start:loop-human-clarification
 ```
 
 ## 编码 review gate
@@ -117,7 +117,7 @@ coder -> verify -> human_review_gate
 可运行示例：
 
 ```bash
-pnpm --filter @expertmesh/examples start:loop-human-review-gate
+pnpm --filter @pragma/examples start:loop-human-review-gate
 ```
 
 ## Agent 内部提问

@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
-import { createLoopApp, defineTask, workflow } from "../../src/index.ts";
+import { createPragma, defineTask, patterns } from "../../src/index.ts";
 
-describe("workflow pattern loop api", () => {
+describe("patterns loop api", () => {
   it("builds prompt chains with previous output as the next default input", async () => {
-    const chain = workflow.promptChain({
+    const chain = patterns.promptChain({
       id: "prompt-chain",
       output: z.string(),
       steps: [
@@ -20,7 +20,7 @@ describe("workflow pattern loop api", () => {
       ],
     });
 
-    const result = await createLoopApp().run(chain, {
+    const result = await createPragma().run(chain, {
       input: "brief",
     });
 
@@ -28,7 +28,7 @@ describe("workflow pattern loop api", () => {
   });
 
   it("builds routing workflows around a classifier step", async () => {
-    const routed = workflow.routing({
+    const routed = patterns.routing({
       id: "routing-workflow",
       output: z.string(),
       router: {
@@ -59,7 +59,7 @@ describe("workflow pattern loop api", () => {
       },
     });
 
-    const result = await createLoopApp().run(routed, {
+    const result = await createPragma().run(routed, {
       input: "invoice question",
     });
 
@@ -68,7 +68,7 @@ describe("workflow pattern loop api", () => {
 
   it("rejects routing workflows without route targets", () => {
     expect(() =>
-      workflow.routing({
+      patterns.routing({
         id: "empty-routing-workflow",
         router: defineTask({
           id: "classify-empty-routing",
@@ -83,7 +83,7 @@ describe("workflow pattern loop api", () => {
   });
 
   it("runs parallel branches and merges branch outputs", async () => {
-    const parallel = workflow.parallel({
+    const parallel = patterns.parallel({
       id: "parallel-workflow",
       output: z.object({
         combined: z.string(),
@@ -103,7 +103,7 @@ describe("workflow pattern loop api", () => {
       }),
     });
 
-    const result = await createLoopApp().run(parallel, {
+    const result = await createPragma().run(parallel, {
       input: "doc",
     });
 
@@ -113,7 +113,7 @@ describe("workflow pattern loop api", () => {
   });
 
   it("runs orchestrator-workers with dynamic worker inputs and synthesis", async () => {
-    const orchestrated = workflow.orchestratorWorkers({
+    const orchestrated = patterns.orchestratorWorkers({
       id: "orchestrator-workers",
       output: z.object({
         report: z.string(),
@@ -137,7 +137,7 @@ describe("workflow pattern loop api", () => {
       }),
     });
 
-    const result = await createLoopApp().run(orchestrated, {
+    const result = await createPragma().run(orchestrated, {
       input: "write report",
     });
 
@@ -147,7 +147,7 @@ describe("workflow pattern loop api", () => {
   });
 
   it("runs evaluator-optimizer until the evaluator accepts an attempt", async () => {
-    const optimized = workflow.evaluatorOptimizer({
+    const optimized = patterns.evaluatorOptimizer({
       id: "evaluator-optimizer",
       output: z.object({
         accepted: z.boolean(),
@@ -190,7 +190,7 @@ describe("workflow pattern loop api", () => {
       maxIterations: 3,
     });
 
-    const result = await createLoopApp().run(optimized, {
+    const result = await createPragma().run(optimized, {
       input: {
         goal: "improve",
       },

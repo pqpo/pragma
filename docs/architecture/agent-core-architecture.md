@@ -1,8 +1,8 @@
 # Agent Core 架构说明
 
-本文说明 `@expertmesh/core` 的架构边界、模块分类、运行流程和未来分布式部署形态。
+本文说明 `@pragma/core` 的架构边界、模块分类、运行流程和未来分布式部署形态。
 
-`@expertmesh/core` 是 ExpertMesh 的专家 Agent 执行核心。它不负责 HTTP API、数据库 Controller、Web UI 或 Desktop 权限界面，而是提供：
+`@pragma/core` 是 ExpertMesh 的专家 Agent 执行核心。它不负责 HTTP API、数据库 Controller、Web UI 或 Desktop 权限界面，而是提供：
 
 - 专家 Agent 的声明模型、创建入口和能力装配。
 - Agent 上下文、工具、插件、子 Agent 和模型配置管理。
@@ -15,8 +15,8 @@ Core 的定位是“可替换运行时 + 可治理编排协议”的中间层：
 ```mermaid
 flowchart TB
   app["Server / Worker / Desktop"]
-  core["@expertmesh/core<br/>Agent 能力装配<br/>Runtime 执行适配<br/>Flow 编排<br/>Context / Tools<br/>Plugins / SubAgents"]
-  shared["@expertmesh/shared<br/>协议对象和状态模型"]
+  core["@pragma/core<br/>Agent 能力装配<br/>Runtime 执行适配<br/>Flow 编排<br/>Context / Tools<br/>Plugins / SubAgents"]
+  shared["@pragma/shared<br/>协议对象和状态模型"]
 
   app --> core --> shared
 ```
@@ -150,7 +150,7 @@ Flow 编排层负责把多个可执行单元组织成可执行流程。这里的
 - `Loop` 是底层统一执行协议，表示“可以被运行”的最小接口。
 - `defineFlow()` 是用户侧组合入口，返回 `FlowSpec` builder。
 - `defineTask()` 把确定性 TypeScript handler 包装成一个 leaf `Loop`。
-- 编译归一化默认发生在 `flow.use()` 和 `createLoopApp().run()` 边界，用户日常不需要显式调用 `compile()`。
+- 编译归一化默认发生在 `flow.use()` 和 `createPragma().run()` 边界，用户日常不需要显式调用 `compile()`。
 - `CompiledLoop` 是内部执行形态，本身也是 `Loop`，所以组合 Flow 可以继续嵌套。
 
 ```mermaid
@@ -194,7 +194,7 @@ flowchart TB
 - `defineTask()` 把确定性 TypeScript handler 包装为 `Loop`。
 - `defineFlow()` 声明组合流程，`.compose()` 声明步骤之间的流转。
 - `flow.use()` 可以接收 Agent、Task、CompiledLoop、子 Flow 或任何 `Loop` 实现。
-- `createLoopApp().run()` 可以直接运行 Agent、Task、CompiledLoop 或 Flow。
+- `createPragma().run()` 可以直接运行 Agent、Task、CompiledLoop 或 Flow。
 - `CompiledLoop` 也实现 `Loop`，所以可以继续嵌套。
 - `reduce()` 只做状态归并，不应执行外部副作用。
 
@@ -246,7 +246,7 @@ flowchart TB
 
 ```mermaid
 flowchart TB
-  create["createLoopApp()"]
+  create["createPragma()"]
   create --> mailbox["InMemoryMailbox"]
   create --> state["InMemoryStateManager"]
   create --> store["InMemoryLoopDefinitionStore"]
@@ -340,7 +340,7 @@ flowchart TB
 
 ## 状态模型
 
-Loop 运行状态来自 `@expertmesh/shared`，Core 只通过接口读写。
+Loop 运行状态来自 `@pragma/shared`，Core 只通过接口读写。
 
 ```mermaid
 flowchart TB
@@ -519,7 +519,7 @@ Core 中应承载桥接协议、消息类型和 Runtime Adapter 合约；Desktop
 
 ## 设计约束
 
-- Core 可以依赖 `@expertmesh/shared`，不依赖 `@expertmesh/client`、Web UI 或 Server 应用层。
+- Core 可以依赖 `@pragma/shared`，不依赖 `@pragma/client`、Web UI 或 Server 应用层。
 - Server/Worker 可以调度 Core，Core 不反向调用 Server Controller。
 - Agent 执行能力优先加到 `ExpertAgent` 和 Runtime Adapter 边界，不只放在某个 SDK 包装层里。
 - Runtime 实现可以替换，但必须把事件、结果、取消和错误转换成 Core 统一协议。
