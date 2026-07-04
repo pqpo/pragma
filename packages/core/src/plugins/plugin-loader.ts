@@ -14,7 +14,7 @@ import type { ExpertAgentLoggerProvider } from "../logging/logger.ts";
 import { createExpertAgentLogger, defaultExpertAgentLoggerProvider } from "../logging/logger.ts";
 
 const execFileAsync = promisify(execFile);
-const DEFAULT_PLUGIN_INSTALL_DIR = ".expertmesh/agent/plugins";
+const DEFAULT_PLUGIN_INSTALL_DIR = ".pragma/agent/plugins";
 
 export type ExpertAgentPluginSource =
   | string
@@ -147,7 +147,7 @@ export async function prepareExpertAgentPluginSource(
   }
 
   if (sourceStats.isFile() && extname(absoluteSourcePath) === ".zip") {
-    const tempDir = await mkdtemp(resolve(tmpdir(), "expertmesh-plugin-"));
+    const tempDir = await mkdtemp(resolve(tmpdir(), "pragma-plugin-"));
 
     try {
       await execFileAsync("unzip", ["-q", absoluteSourcePath, "-d", tempDir], {
@@ -450,7 +450,7 @@ const ignoredWorkspaceDirs = new Set([
   ".git",
   ".turbo",
   ".next",
-  ".expertmesh",
+  ".pragma",
   "coverage",
   "dist",
   "node_modules",

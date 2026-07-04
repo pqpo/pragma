@@ -79,7 +79,7 @@ async function createGitSessionEnvironment(
   };
 
   if (auth.strategy === "none") {
-    const tempDir = await mkdtemp(resolve(tmpdir(), "expertmesh-git-session-"));
+    const tempDir = await mkdtemp(resolve(tmpdir(), "pragma-git-session-"));
 
     return {
       env: {
@@ -93,7 +93,7 @@ async function createGitSessionEnvironment(
     };
   }
 
-  const tempDir = await mkdtemp(resolve(tmpdir(), "expertmesh-git-session-"));
+  const tempDir = await mkdtemp(resolve(tmpdir(), "pragma-git-session-"));
 
   if (auth.strategy === "token") {
     const askPassPath = resolve(tempDir, "askpass.sh");

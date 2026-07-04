@@ -1,6 +1,6 @@
 import { HealthResponseSchema, type HealthResponse } from "@pragma/shared";
 
-export interface ExpertMeshClient {
+export interface PragmaClient {
   getHealth(): Promise<HealthResponse>;
 }
 
@@ -8,7 +8,7 @@ export interface ServerClientOptions {
   baseUrl?: string;
 }
 
-export class ServerClient implements ExpertMeshClient {
+export class ServerClient implements PragmaClient {
   readonly #baseUrl: string;
 
   constructor(options: ServerClientOptions = {}) {

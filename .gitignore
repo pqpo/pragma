@@ -7,7 +7,7 @@ coverage
 .turbo
 tsconfig.tsbuildinfo
 *.tsbuildinfo
-.expertmesh/runtime-sessions/
+.pragma/runtime-sessions/
 .env
 .env.*
 !.env.example

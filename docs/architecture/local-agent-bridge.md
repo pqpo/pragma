@@ -1,6 +1,6 @@
 # 本地 Agent 桥接架构
 
-本文描述云端 ExpertMesh 如何通过 Desktop App 调度本地 Agent，并记录本地桥接的架构约束和目录规划。
+本文描述云端 Pragma 如何通过 Desktop App 调度本地 Agent，并记录本地桥接的架构约束和目录规划。
 
 ## 结论
 
@@ -11,7 +11,7 @@ Desktop App 负责连接云端、注册本地能力、承载本地权限闸门�
 ## 架构链路
 
 ```text
-Cloud ExpertMesh
+Cloud Pragma
 ├── apps/server
 ├── apps/worker
 ├── packages/server/src/runtime-gateway

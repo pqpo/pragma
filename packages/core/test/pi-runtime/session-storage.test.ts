@@ -67,7 +67,7 @@ describe("watchRuntimeSessionDir", () => {
 });
 
 async function createTempDir(): Promise<string> {
-  const dir = await mkdtemp(resolve(tmpdir(), "expertmesh-session-storage-"));
+  const dir = await mkdtemp(resolve(tmpdir(), "pragma-session-storage-"));
   tempDirs.push(dir);
   return dir;
 }

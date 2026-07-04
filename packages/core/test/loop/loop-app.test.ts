@@ -571,7 +571,7 @@ describe("loop app", () => {
       tags: [],
       version: "0.0.0",
       scope: "test",
-      workspace: "/tmp/expertmesh-agent-loop-test",
+      workspace: "/tmp/pragma-agent-loop-test",
     });
     const runtime = createFakeRuntime({
       id: "fake-runtime",
@@ -834,7 +834,7 @@ describe("loop app", () => {
       tags: [],
       version: "0.0.0",
       scope: "test",
-      workspace: "/tmp/expertmesh-agent-human-loop-test",
+      workspace: "/tmp/pragma-agent-human-loop-test",
     });
     const runtime = createHumanAskingRuntime({
       id: "fake-human-runtime",
@@ -1049,7 +1049,7 @@ function readNestedAnswer(value: unknown): string | undefined {
 
 function createProgressEvent(stage: string) {
   return {
-    schemaVersion: "expertmesh.stream/v1" as const,
+    schemaVersion: "pragma.stream/v1" as const,
     eventId: `event-${stage}`,
     sequence: 0,
     runId: "run-1",

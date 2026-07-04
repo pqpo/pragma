@@ -1,5 +1,5 @@
 export interface DesktopAppInfo {
-  name: "ExpertMesh Desktop";
+  name: "Pragma Desktop";
   version: string;
   os: "macos" | "windows" | "linux" | "unknown";
 }
@@ -44,7 +44,7 @@ export interface ValidateWorkspaceResult {
   error?: string;
 }
 
-export interface ExpertMeshDesktopAPI {
+export interface PragmaDesktopAPI {
   getBridgeSnapshot: () => Promise<DesktopBridgeSnapshot>;
   pickWorkspace: () => Promise<PickWorkspaceResult>;
   validateWorkspace: (path: string) => Promise<ValidateWorkspaceResult>;

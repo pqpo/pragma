@@ -31,7 +31,7 @@ await ensureWorkspaceDir(workspace);
 
 const modelConfig = readExampleModelConfig();
 const agent = await ExpertAgent.create({
-  schemaVersion: "expertmesh.expert/v1",
+  schemaVersion: "pragma.expert/v1",
   id: "tool-approval-example-expert",
   name: "Tool Approval Example Expert",
   description: "Demonstrates approval-required tools and askUserQuestion.",

@@ -3,8 +3,8 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "productName": "ExpertMesh Desktop",
-  "description": "Desktop local Agent bridge for ExpertMesh.",
+  "productName": "Pragma Desktop",
+  "description": "Desktop local Agent bridge for Pragma.",
   "main": "./out/main/index.js",
   "scripts": {
     "prepare:electron": "install-electron",

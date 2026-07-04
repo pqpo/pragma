@@ -48,7 +48,7 @@ describe("FileSystemContextStore", () => {
     await writeFile(join(rootDir, AGENTS_CONTEXT_ID), "Use direct instructions.", "utf8");
 
     const agent = await ExpertAgent.create({
-      schemaVersion: "expertmesh.expert/v1",
+      schemaVersion: "pragma.expert/v1",
       id: "test-agent",
       name: "Test Agent",
       description: "Tests context-backed instructions.",
@@ -396,14 +396,14 @@ describe("ContextSystem", () => {
       ],
     });
     const agent = await ExpertAgent.create({
-      schemaVersion: "expertmesh.expert/v1",
+      schemaVersion: "pragma.expert/v1",
       id: "context-agent",
       name: "Context Agent",
       description: "Tests context assembly.",
       tags: [],
       version: "1.2.3",
       scope: "test",
-      workspace: "/tmp/expertmesh-context-test",
+      workspace: "/tmp/pragma-context-test",
       contextSystem: createHostContextSystem(store),
     });
     const runContext = {
@@ -472,14 +472,14 @@ describe("ContextSystem", () => {
       ],
     });
     const agent = await ExpertAgent.create({
-      schemaVersion: "expertmesh.expert/v1",
+      schemaVersion: "pragma.expert/v1",
       id: "budget-agent",
       name: "Budget Agent",
       description: "Tests context budget downgrades.",
       tags: [],
       version: "1.0.0",
       scope: "test",
-      workspace: "/tmp/expertmesh-budget-test",
+      workspace: "/tmp/pragma-budget-test",
       contextSystem: createHostContextSystem(store),
     });
 
@@ -518,14 +518,14 @@ describe("ContextSystem", () => {
       ],
     });
     const agent = await ExpertAgent.create({
-      schemaVersion: "expertmesh.expert/v1",
+      schemaVersion: "pragma.expert/v1",
       id: "tiny-budget-agent",
       name: "Tiny Budget Agent",
       description: "Tests namespaced context budget downgrades.",
       tags: [],
       version: "1.0.0",
       scope: "test",
-      workspace: "/tmp/expertmesh-tiny-budget-test",
+      workspace: "/tmp/pragma-tiny-budget-test",
       contextSystem: createHostContextSystem(store),
     });
 
@@ -799,14 +799,14 @@ describe("ContextSystem", () => {
 
   it("limits read tool output by default", async () => {
     const agent = await ExpertAgent.create({
-      schemaVersion: "expertmesh.expert/v1",
+      schemaVersion: "pragma.expert/v1",
       id: "tool-agent",
       name: "Tool Agent",
       description: "Tests context tools.",
       tags: [],
       version: "1.0.0",
       scope: "test",
-      workspace: "/tmp/expertmesh-tool-test",
+      workspace: "/tmp/pragma-tool-test",
       contextSystem: createHostContextSystem(
         new InMemoryContextStore({
           context: {
@@ -1046,7 +1046,7 @@ describe("ContextSystem", () => {
 });
 
 async function createTempDir(): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), "expertmesh-agent-core-"));
+  const dir = await mkdtemp(join(tmpdir(), "pragma-agent-core-"));
   tempDirs.push(dir);
   return dir;
 }

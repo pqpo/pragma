@@ -423,14 +423,14 @@ async function createTestRuntimeSession(
 
 async function createTestAgent(): Promise<ExpertAgent> {
   return await ExpertAgent.create({
-    schemaVersion: "expertmesh.expert/v1",
+    schemaVersion: "pragma.expert/v1",
     id: "agent-1",
     name: "Test Agent",
     description: "Test agent",
     tags: [],
     version: "0.0.0",
     scope: "test",
-    workspace: "/tmp/expertmesh-test",
+    workspace: "/tmp/pragma-test",
   });
 }
 

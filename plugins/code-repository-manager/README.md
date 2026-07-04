@@ -1,6 +1,6 @@
 # Code Repository Manager Plugin
 
-This ExpertMesh plugin exposes a configured list of Git repositories through the Agent context system and prepares Git authentication before each Agent runtime session starts.
+This Pragma plugin exposes a configured list of Git repositories through the Agent context system and prepares Git authentication before each Agent runtime session starts.
 
 The plugin never injects secrets into context. Token and SSH material are read from environment variables only when the session Git environment is prepared.
 
@@ -18,7 +18,7 @@ import codeRepositoryManagerPlugin from "@pragma/plugin-code-repository-manager"
 const gitToken = "value loaded from your app secret store";
 
 const agent = await ExpertAgent.create({
-  schemaVersion: "expertmesh.expert/v1",
+  schemaVersion: "pragma.expert/v1",
   id: "repo-aware-agent",
   name: "Repo Aware Agent",
   description: "Agent with repository access.",
@@ -32,9 +32,9 @@ const agent = await ExpertAgent.create({
       config: {
         repositories: [
           {
-            id: "expert-mesh",
-            name: "ExpertMesh",
-            cloneUrl: "https://github.com/example/expert-mesh.git",
+            id: "pragma",
+            name: "Pragma",
+            cloneUrl: "https://github.com/example/pragma.git",
             defaultBranch: "main",
           },
         ],
@@ -73,7 +73,7 @@ import { ExpertAgent } from "@pragma/core";
 const workspace = "/path/to/workspace";
 
 const agent = await ExpertAgent.create({
-  schemaVersion: "expertmesh.expert/v1",
+  schemaVersion: "pragma.expert/v1",
   id: "repo-aware-agent",
   name: "Repo Aware Agent",
   description: "Agent with repository access.",
@@ -87,9 +87,9 @@ const agent = await ExpertAgent.create({
       config: {
         repositories: [
           {
-            id: "expert-mesh",
-            name: "ExpertMesh",
-            cloneUrl: "https://github.com/example/expert-mesh.git",
+            id: "pragma",
+            name: "Pragma",
+            cloneUrl: "https://github.com/example/pragma.git",
             defaultBranch: "main",
           },
         ],

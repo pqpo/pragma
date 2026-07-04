@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "expertmesh.plugin/v1",
+  "schemaVersion": "pragma.plugin/v1",
   "id": "plugin.other-context",
   "name": "Other plugin context",
   "description": "Adds context with colliding local ids",

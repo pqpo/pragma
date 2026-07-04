@@ -29,7 +29,7 @@ import {
 import { printRunStream } from "./harness/stream-output.ts";
 
 const defaultQuery = [
-  "测试 ExpertMesh workspace + context 能力：",
+  "测试 Pragma workspace + context 能力：",
   "1. 先基于 always-on AGENTS.md 说明本仓库最重要的边界约束。",
   "2. 再使用 context 工具查找 workspace-overview.md，确认当前核心应用入口。",
   "3. 最后结合 workspace 中的 package.json 或 examples/package.json，给出后续示例应该如何运行。",
@@ -52,7 +52,7 @@ await ensureWorkspaceDir(workspace);
 
 const modelConfig = readExampleModelConfig();
 const agent = await ExpertAgent.create({
-  schemaVersion: "expertmesh.expert/v1",
+  schemaVersion: "pragma.expert/v1",
   id: "workspace-context-test-expert",
   name: "Workspace Context Test Expert",
   description:
@@ -105,16 +105,16 @@ function createExampleContextStore(contextDir: string | undefined): ExpertAgentC
       {
         id: "workspace-overview.md",
         content: [
-          "# ExpertMesh Workspace Overview",
+          "# Pragma Workspace Overview",
           "",
-          "ExpertMesh is a multi-expert Agent orchestration platform.",
+          "Pragma is a multi-expert Agent orchestration platform.",
           "The active app entry points are apps/web, apps/server, and apps/worker.",
           "The examples workspace package shows how to instantiate and run ExpertAgent.",
           "Agent context should be exposed through the ExpertAgent context store.",
           "Cross-package code must use @pragma/* package imports instead of relative paths.",
         ].join("\n"),
         metadata: {
-          description: "ExpertMesh workspace overview for runtime context retrieval tests.",
+          description: "Pragma workspace overview for runtime context retrieval tests.",
           trigger: "model_decision",
           trustLevel: "workspace",
           sensitivity: "internal",

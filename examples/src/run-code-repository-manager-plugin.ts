@@ -45,9 +45,9 @@ contextSystem.register({
           {
             repositories: [
               {
-                id: "expert-mesh",
-                name: "ExpertMesh",
-                cloneUrl: "https://github.com/example/expert-mesh.git",
+                id: "pragma",
+                name: "Pragma",
+                cloneUrl: "https://github.com/example/pragma.git",
                 defaultBranch: "main",
                 provider: "github",
                 description:
@@ -72,7 +72,7 @@ contextSystem.register({
 });
 
 const agent = await ExpertAgent.create({
-  schemaVersion: "expertmesh.expert/v1",
+  schemaVersion: "pragma.expert/v1",
   id: "code-repository-plugin-example-agent",
   name: "Code Repository Plugin Example Agent",
   description: "Demonstrates how to attach the code repository manager plugin to ExpertAgent.",

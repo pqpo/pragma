@@ -1,6 +1,6 @@
 # Directive 使用指南
 
-本文说明 ExpertMesh Directive API 的核心使用方式。核心原则是：`Agent` 本身是 `Directive`，编译后的组合工作流也是 `Directive`，任何对象只要实现 `Directive` 接口，就可以注册进另一个 Directive。
+本文说明 Pragma Directive API 的核心使用方式。核心原则是：`Agent` 本身是 `Directive`，编译后的组合工作流也是 `Directive`，任何对象只要实现 `Directive` 接口，就可以注册进另一个 Directive。
 
 当前核心 API：
 
@@ -79,7 +79,7 @@ flow.compose(({ start, end }) => {
 
 const result = await createPragma().run(flow, {
   input: {
-    name: "ExpertMesh",
+    name: "Pragma",
   },
 });
 
@@ -102,7 +102,7 @@ console.log(result.output);
 ```ts
 const result = await createPragma().run(greetLoop, {
   input: {
-    name: "ExpertMesh",
+    name: "Pragma",
   },
 });
 ```
@@ -114,7 +114,7 @@ const app = createPragma();
 
 const handle = await app.start(greetLoop, {
   input: {
-    name: "ExpertMesh",
+    name: "Pragma",
   },
 });
 

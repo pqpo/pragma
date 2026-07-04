@@ -1,6 +1,6 @@
 # Expert Memory Plugin
 
-This ExpertMesh plugin registers long-term Agent memory as context and records
+This Pragma plugin registers long-term Agent memory as context and records
 eligible run outputs as pending memory candidates.
 
 For built-in usage, import the plugin entry as a source dependency and pass
@@ -11,7 +11,7 @@ import { ExpertAgent } from "@pragma/core";
 import expertMemoryPlugin from "@pragma/plugin-expert-memory";
 
 const agent = await ExpertAgent.create({
-  schemaVersion: "expertmesh.expert/v1",
+  schemaVersion: "pragma.expert/v1",
   id: "memory-agent",
   name: "Memory Agent",
   description: "Agent with long-term memory.",
@@ -24,7 +24,7 @@ const agent = await ExpertAgent.create({
       entry: expertMemoryPlugin,
       config: {
         enabled: true,
-        memoryRoot: ".expertmesh/agent/memories",
+        memoryRoot: ".pragma/agent/memories",
         generateMemories: true,
       },
     },

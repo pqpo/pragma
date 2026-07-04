@@ -1,6 +1,6 @@
 # Plugins 使用指南
 
-本文说明 ExpertMesh 插件的创建、加载和使用方式。插件用于给 `ExpertAgent` 扩展上下文、工具、模型配置、MCP、Skills、SubAgents 和生命周期 Hooks。
+本文说明 Pragma 插件的创建、加载和使用方式。插件用于给 `ExpertAgent` 扩展上下文、工具、模型配置、MCP、Skills、SubAgents 和生命周期 Hooks。
 
 当前插件能力在：
 
@@ -53,7 +53,7 @@ plugins/my-plugin/
 
 ```json
 {
-  "schemaVersion": "expertmesh.plugin/v1",
+  "schemaVersion": "pragma.plugin/v1",
   "id": "my-plugin",
   "name": "My Plugin",
   "description": "Adds custom context and tools.",
@@ -78,7 +78,7 @@ plugins/my-plugin/
 
 支持字段：
 
-- `schemaVersion`：当前为 `expertmesh.plugin/v1`。
+- `schemaVersion`：当前为 `pragma.plugin/v1`。
 - `id`：插件唯一 ID，也常作为 context namespace。
 - `name`
 - `description`
@@ -335,7 +335,7 @@ const agent = await defineAgent({
 
 1. 检查插件目录或 zip。
 2. 读取 `plugin.json`。
-3. 复制到 workspace 下的 `.expertmesh/agent/plugins/{pluginId}`。
+3. 复制到 workspace 下的 `.pragma/agent/plugins/{pluginId}`。
 4. 安装插件依赖。
 5. 如果插件有 `build` script，则执行 build。
 6. import `runtime.entry`。

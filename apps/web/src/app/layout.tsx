@@ -3,8 +3,8 @@ import type { ReactNode } from "react";
 import "./styles.css";
 
 export const metadata: Metadata = {
-  title: "ExpertMesh",
-  description: "ExpertMesh multi-expert agent orchestration platform",
+  title: "Pragma",
+  description: "Pragma multi-expert agent orchestration platform",
 };
 
 interface RootLayoutProps {

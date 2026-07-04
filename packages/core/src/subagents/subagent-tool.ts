@@ -57,7 +57,7 @@ export function createSubAgentTool(
   return {
     name: "launch_subagent",
     description: [
-      "Launch a specialized ExpertMesh subAgent.",
+      "Launch a specialized Pragma subAgent.",
       "Use this when a listed subAgent is better suited for a focused task.",
       "",
       "Available subAgents:",

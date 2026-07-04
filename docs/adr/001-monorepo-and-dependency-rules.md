@@ -6,7 +6,7 @@ Accepted.
 
 ## Decision
 
-ExpertMesh uses `pnpm workspace` with Turborepo as the monorepo foundation.
+Pragma uses `pnpm workspace` with Turborepo as the monorepo foundation.
 
 The repository is layered by package family:
 
@@ -34,4 +34,4 @@ Nx is not introduced yet. Turborepo is enough for workspace task orchestration a
 
 ## Follow-Up
 
-If the dependency graph grows significantly, ExpertMesh can introduce Nx for dependency graph visualization and stricter module-boundary tooling.
+If the dependency graph grows significantly, Pragma can introduce Nx for dependency graph visualization and stricter module-boundary tooling.

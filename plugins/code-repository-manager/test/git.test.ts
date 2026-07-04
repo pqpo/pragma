@@ -17,10 +17,10 @@ afterEach(async () => {
 describe("Git workspace path resolution", () => {
   it("resolves default repository paths inside workspace", () => {
     expect(
-      resolveRepositoryWorkspacePath("/tmp/expertmesh", {
+      resolveRepositoryWorkspacePath("/tmp/pragma", {
         id: "repo",
       }),
-    ).toBe("/tmp/expertmesh/repos/repo");
+    ).toBe("/tmp/pragma/repos/repo");
   });
 });
 
@@ -294,7 +294,7 @@ describe("Git session environment", () => {
 });
 
 async function createTempDir(): Promise<string> {
-  const path = await mkdtemp(resolve(tmpdir(), "expertmesh-git-test-"));
+  const path = await mkdtemp(resolve(tmpdir(), "pragma-git-test-"));
   tempDirs.push(path);
   return path;
 }

@@ -41,7 +41,7 @@ vi.mock("@earendil-works/pi-coding-agent", () => ({
   },
   createAgentSession: vi.fn(),
   createSyntheticSourceInfo: vi.fn(() => ({})),
-  getAgentDir: vi.fn(() => "/tmp/expertmesh-agent-dir"),
+  getAgentDir: vi.fn(() => "/tmp/pragma-agent-dir"),
 }));
 
 const tempDirs: string[] = [];
@@ -60,7 +60,7 @@ describe("createCloudPiRuntimeAdapter", () => {
     let sessionContext: ExpertAgentRunContext | undefined;
     const workspace = await createTempDir();
     const agent = await ExpertAgent.create({
-      schemaVersion: "expertmesh.expert/v1",
+      schemaVersion: "pragma.expert/v1",
       id: "agent-1",
       name: "Test Agent",
       description: "Agent for runtime adapter tests.",
@@ -100,7 +100,7 @@ describe("createCloudPiRuntimeAdapter", () => {
     let sessionContext: ExpertAgentRunContext | undefined;
     const workspace = await createTempDir();
     const agent = await ExpertAgent.create({
-      schemaVersion: "expertmesh.expert/v1",
+      schemaVersion: "pragma.expert/v1",
       id: "agent-1",
       name: "Test Agent",
       description: "Agent for runtime adapter tests.",
@@ -145,7 +145,7 @@ describe("createCloudPiRuntimeAdapter", () => {
   it("restores requested runtime sessions and syncs the active session directory", async () => {
     const workspace = await createTempDir();
     const agent = await ExpertAgent.create({
-      schemaVersion: "expertmesh.expert/v1",
+      schemaVersion: "pragma.expert/v1",
       id: "agent-1",
       name: "Test Agent",
       description: "Agent for runtime adapter tests.",
@@ -216,7 +216,7 @@ describe("createCloudPiRuntimeAdapter", () => {
         type: "cloud-pi-agent",
         id: "pi-session-1",
       },
-      sessionDir: `${workspace}/.expertmesh/runtime-sessions/pi/agent-1`,
+      sessionDir: `${workspace}/.pragma/runtime-sessions/pi/agent-1`,
       systemSessionId: "system-session-1",
       workspace,
     };
@@ -230,7 +230,7 @@ describe("createCloudPiRuntimeAdapter", () => {
   it("allows session storage handlers to be replaced after adapter creation", async () => {
     const workspace = await createTempDir();
     const agent = await ExpertAgent.create({
-      schemaVersion: "expertmesh.expert/v1",
+      schemaVersion: "pragma.expert/v1",
       id: "agent-1",
       name: "Test Agent",
       description: "Agent for runtime adapter tests.",
@@ -271,7 +271,7 @@ describe("createCloudPiRuntimeAdapter", () => {
     const workspace = await createTempDir();
     await writeFile(`${workspace}/AGENTS.md`, "Follow the workspace playbook.", "utf8");
     const agent = await ExpertAgent.create({
-      schemaVersion: "expertmesh.expert/v1",
+      schemaVersion: "pragma.expert/v1",
       id: "agent-1",
       name: "Test Agent",
       description: "Agent for runtime adapter tests.",
@@ -310,7 +310,7 @@ describe("createCloudPiRuntimeAdapter", () => {
 });
 
 async function createTempDir(): Promise<string> {
-  const dir = await mkdtemp(resolve(tmpdir(), "expertmesh-pi-adapter-"));
+  const dir = await mkdtemp(resolve(tmpdir(), "pragma-pi-adapter-"));
   tempDirs.push(dir);
   return dir;
 }

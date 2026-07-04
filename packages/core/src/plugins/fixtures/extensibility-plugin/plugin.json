@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "expertmesh.plugin/v1",
+  "schemaVersion": "pragma.plugin/v1",
   "id": "plugin.extensibility",
   "name": "Extensibility",
   "description": "Contributes every plugin surface",

@@ -16,7 +16,7 @@ async function createWindow(): Promise<void> {
     height: 760,
     minWidth: 900,
     minHeight: 620,
-    title: "ExpertMesh Desktop",
+    title: "Pragma Desktop",
     autoHideMenuBar: true,
     show: false,
     webPreferences: {

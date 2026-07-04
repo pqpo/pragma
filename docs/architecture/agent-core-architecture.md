@@ -2,7 +2,7 @@
 
 本文说明 `@pragma/core` 的架构边界、模块分类、运行流程和未来分布式部署形态。
 
-`@pragma/core` 是 ExpertMesh 的专家 Agent 执行核心。它不负责 HTTP API、数据库 Controller、Web UI 或 Desktop 权限界面，而是提供：
+`@pragma/core` 是 Pragma 的专家 Agent 执行核心。它不负责 HTTP API、数据库 Controller、Web UI 或 Desktop 权限界面，而是提供：
 
 - 专家 Agent 的声明模型、创建入口和能力装配。
 - Agent 上下文、工具、插件、子 Agent 和模型配置管理。

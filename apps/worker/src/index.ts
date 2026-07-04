@@ -7,7 +7,7 @@ import {
 const loggerProvider = createConsoleLoggerProvider();
 
 const workerAgent = await ExpertAgent.create({
-  schemaVersion: "expertmesh.expert/v1",
+  schemaVersion: "pragma.expert/v1",
   id: "worker-orchestrator",
   name: "Worker Orchestrator",
   description: "ExpertAgent used by the worker entrypoint to initialize runtime context.",
@@ -24,4 +24,4 @@ createExpertAgentLogger(loggerProvider, {
   component: "expert-agent",
   agentId: workerAgent.id,
   name: "worker",
-}).info("ExpertMesh Worker Ready");
+}).info("Pragma Worker Ready");

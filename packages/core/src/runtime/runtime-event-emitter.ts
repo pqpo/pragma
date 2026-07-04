@@ -40,7 +40,7 @@ function addRuntimeEventMetadata(
   }
 
   return {
-    schemaVersion: "expertmesh.stream/v1",
+    schemaVersion: "pragma.stream/v1",
     eventId: randomUUID(),
     emittedAt: new Date().toISOString(),
     sequence,

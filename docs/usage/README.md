@@ -1,6 +1,6 @@
-# ExpertMesh 使用文档
+# Pragma 使用文档
 
-本目录面向使用者说明当前 ExpertMesh Core API 的使用方式。
+本目录面向使用者说明当前 Pragma Core API 的使用方式。
 
 阅读顺序建议：
 

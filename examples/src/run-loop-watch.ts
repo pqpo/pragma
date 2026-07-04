@@ -178,7 +178,7 @@ function printRunTree(
 
 function createProgressEvent(stage: string, message: string) {
   return {
-    schemaVersion: "expertmesh.stream/v1" as const,
+    schemaVersion: "pragma.stream/v1" as const,
     eventId: `example-${stage}-${Date.now()}`,
     sequence: 0,
     runId: "loop-watch-example",

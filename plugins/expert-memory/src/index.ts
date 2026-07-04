@@ -580,7 +580,7 @@ async function regenerateSummary(
   await writeFile(
     resolveContextPath(rootDir, SUMMARY_CONTEXT_ID),
     serializeMarkdownWithFrontmatter(context, {
-      schemaVersion: "expertmesh.memory-summary/v1",
+      schemaVersion: "pragma.memory-summary/v1",
       agentId,
       updatedAt: new Date().toISOString(),
       audit: { createdBy: "expert-memory" },

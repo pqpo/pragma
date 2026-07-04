@@ -21,9 +21,9 @@ describe("RuntimeEventEmitter", () => {
 
     expect(events.map((event) => event.sequence)).toEqual([0, 1, 2]);
     expect(events.map((event) => event.schemaVersion)).toEqual([
-      "expertmesh.stream/v1",
-      "expertmesh.stream/v1",
-      "expertmesh.stream/v1",
+      "pragma.stream/v1",
+      "pragma.stream/v1",
+      "pragma.stream/v1",
     ]);
     expect(events.every((event) => event.eventId.length > 0)).toBe(true);
   });

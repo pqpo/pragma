@@ -13,13 +13,13 @@ export interface WorkspaceContextsExampleCliOptions {
 }
 
 export function readBasicExampleCli(defaultQuery: string): BasicExampleCliOptions {
-  const cli = cac("expertmesh-example-basic");
+  const cli = cac("pragma-example-basic");
 
   cli
     .command("[query...]", "Task query to send to the ExpertAgent.")
     .option("--turn <query>", "Task query to submit. Repeat this option for multi-turn tests.")
     .option("--runtime-session-id <id>", "Resume or create the runtime session with this id.")
-    .option("--system-session-id <id>", "Use a fixed ExpertMesh system session id.");
+    .option("--system-session-id <id>", "Use a fixed Pragma system session id.");
   cli.help();
 
   const parsed = cli.parse();
@@ -35,7 +35,7 @@ export function readBasicExampleCli(defaultQuery: string): BasicExampleCliOption
 export function readWorkspaceContextsExampleCli(
   defaultQuery: string,
 ): WorkspaceContextsExampleCliOptions {
-  const cli = cac("expertmesh-example-workspace-context");
+  const cli = cac("pragma-example-workspace-context");
 
   cli
     .command("[query...]", "Task query to send to the ExpertAgent.")

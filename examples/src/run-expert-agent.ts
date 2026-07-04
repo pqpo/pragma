@@ -13,7 +13,7 @@ import { readBasicExampleCli } from "./harness/cli.ts";
 import { defaultWorkspaceRoot, ensureWorkspaceDir, loadExamplesEnv } from "./harness/paths.ts";
 import { printRunStream } from "./harness/stream-output.ts";
 
-const defaultQuery = "用一句话介绍 ExpertMesh 的多专家 Agent 编排架构是什么。";
+const defaultQuery = "用一句话介绍 Pragma 的多专家 Agent 编排架构是什么。";
 
 loadExamplesEnv();
 

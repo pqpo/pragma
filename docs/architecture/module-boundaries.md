@@ -1,6 +1,6 @@
 # Module Boundaries
 
-ExpertMesh uses explicit package layers so product capabilities can grow without blurring runtime, client, server, and core agent boundaries.
+Pragma uses explicit package layers so product capabilities can grow without blurring runtime, client, server, and core agent boundaries.
 
 In the diagrams below, `A -> B` means `A` may depend on `B`.
 

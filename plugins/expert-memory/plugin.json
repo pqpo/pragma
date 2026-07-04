@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "expertmesh.plugin/v1",
+  "schemaVersion": "pragma.plugin/v1",
   "id": "expert-memory",
   "name": "Expert Memory",
   "description": "Registers long-term ExpertAgent memory as auditable context and records run-level memory candidates.",
@@ -70,7 +70,7 @@
         "type": "string",
         "description": "Workspace-relative directory used to store memory ledger, summary, tasks, and pending candidates.",
         "required": false,
-        "default": ".expertmesh/agent/memories"
+        "default": ".pragma/agent/memories"
       }
     ]
   },

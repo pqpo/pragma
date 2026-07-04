@@ -66,7 +66,7 @@ const ExpertAgentPluginConfigurationSchema = z.looseObject({
 });
 
 const ExpertAgentPluginManifestSchema = z.looseObject({
-  schemaVersion: z.literal("expertmesh.plugin/v1"),
+  schemaVersion: z.literal("pragma.plugin/v1"),
   id: z.string().min(1),
   name: z.string().min(1),
   description: z.string().min(1),

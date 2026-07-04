@@ -422,7 +422,7 @@ async function createAgent(options: {
   readonly env?: NodeJS.ProcessEnv | undefined;
 }): Promise<ExpertAgent> {
   return await ExpertAgent.create({
-    schemaVersion: "expertmesh.expert/v1",
+    schemaVersion: "pragma.expert/v1",
     id: "memory-agent",
     name: "Memory Agent",
     description: "Test agent",
@@ -445,7 +445,7 @@ async function createWorkspaceDir(): Promise<string> {
 }
 
 async function createTempDir(baseDir: string, kind: string): Promise<string> {
-  const dir = await mkdtemp(resolve(baseDir, `.expertmesh-memory-${kind}-`));
+  const dir = await mkdtemp(resolve(baseDir, `.pragma-memory-${kind}-`));
   tempDirs.push(dir);
   return dir;
 }

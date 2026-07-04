@@ -4,7 +4,7 @@ export function App() {
       <header className="topbar">
         <div>
           <p className="eyebrow">Local Agent Bridge</p>
-          <h1>ExpertMesh Desktop</h1>
+          <h1>Pragma Desktop</h1>
         </div>
       </header>
 

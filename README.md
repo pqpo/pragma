@@ -1,6 +1,6 @@
-# ExpertMesh
+# Pragma
 
-ExpertMesh 是一个面向企业复杂流程的多专家 Agent 编排与发布平台。
+Pragma 是一个面向企业复杂流程的多专家 Agent 编排与发布平台。
 
 项目目标不是构建单个通用 Agent，而是把多个具备领域知识和专业能力的专家 Agent，通过 Playbook 剧本进行编排，形成可发布、可复用、可治理的统一服务。它面向需求分析、技术方案生成、代码编写、代码评审、测试分析、业务知识问答等企业协作场景。
 
@@ -22,7 +22,7 @@ Playbook 用来描述多个专家 Agent 如何协作完成一个业务流程，�
 
 ### 运行治理
 
-ExpertMesh 后续会在统一服务层提供权限控制、运行调度、日志追踪、成本控制、灰度发布、回滚、租户隔离和审计等能力，让专家能力可以被稳定地发布和迭代。
+Pragma 后续会在统一服务层提供权限控制、运行调度、日志追踪、成本控制、灰度发布、回滚、租户隔离和审计等能力，让专家能力可以被稳定地发布和迭代。
 
 ## 目录结构
 
@@ -71,7 +71,7 @@ Worker: Node.js + TypeScript
 
 ## 模块边界
 
-ExpertMesh 按层组织代码，跨 package 调用必须使用 `@pragma/*` package import。
+Pragma 按层组织代码，跨 package 调用必须使用 `@pragma/*` package import。
 
 允许的依赖方向：
 
@@ -133,7 +133,7 @@ pnpm --filter @pragma/worker dev
 Worker 启动后会初始化基础 Agent 运行上下文并输出启动状态：
 
 ```text
-ExpertMesh Worker Ready
+Pragma Worker Ready
 ```
 
 也可以并行启动全部带 `dev` 脚本的 workspace：

@@ -114,7 +114,7 @@ async function createOfficialMcpClient(server: IExpertAgentMcpServer): Promise<M
 
   const sdkClient = new Client(
     {
-      name: "expertmesh-mcp-client",
+      name: "pragma-mcp-client",
       version: "0.0.0"
     },
     {

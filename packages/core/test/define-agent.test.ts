@@ -23,7 +23,7 @@ describe("defineAgent", () => {
       tags: ["coding"],
       version: "0.0.0",
       scope: "workspace",
-      workspace: "/tmp/expertmesh-loop-test",
+      workspace: "/tmp/pragma-loop-test",
       contextSystem,
     });
 
@@ -52,7 +52,7 @@ describe("defineAgent", () => {
       tags: ["coding"],
       version: "0.0.0",
       scope: "workspace",
-      workspace: "/tmp/expertmesh-loop-test",
+      workspace: "/tmp/pragma-loop-test",
     });
 
     const session = await agent.createSession({

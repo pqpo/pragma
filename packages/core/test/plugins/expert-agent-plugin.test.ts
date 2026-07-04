@@ -40,7 +40,7 @@ describe("ExpertAgent plugins", () => {
       description: "Contributes every plugin surface",
       version: "0.0.0",
       tags: ["fixture", "extensibility"],
-      schemaVersion: "expertmesh.plugin/v1",
+      schemaVersion: "pragma.plugin/v1",
       capabilities: [
         {
           type: "managed-tool",
@@ -77,7 +77,7 @@ describe("ExpertAgent plugins", () => {
             name: "Reserved Host",
             description: "Attempts to collide with host context namespace.",
             manifest: {
-              schemaVersion: "expertmesh.plugin/v1",
+              schemaVersion: "pragma.plugin/v1",
               id: "host",
               name: "Reserved Host",
               description: "Attempts to collide with host context namespace.",
@@ -110,7 +110,7 @@ describe("ExpertAgent plugins", () => {
           name: "Logger",
           description: "Tests plugin logging.",
           manifest: {
-            schemaVersion: "expertmesh.plugin/v1",
+            schemaVersion: "pragma.plugin/v1",
             id: "plugin.logger",
             name: "Logger",
             description: "Tests plugin logging.",
@@ -165,7 +165,7 @@ describe("ExpertAgent plugins", () => {
       }),
     });
     const agent = await ExpertAgent.create({
-      schemaVersion: "expertmesh.expert/v1",
+      schemaVersion: "pragma.expert/v1",
       id: "researcher",
       name: "Researcher",
       description: "Research expert",
@@ -253,7 +253,7 @@ describe("ExpertAgent plugins", () => {
     const receivedConfigs: unknown[] = [];
     const workspace = await createPluginTestWorkspace();
     await ExpertAgent.create({
-      schemaVersion: "expertmesh.expert/v1",
+      schemaVersion: "pragma.expert/v1",
       id: "configured-agent",
       name: "Configured Agent",
       description: "Agent with configured plugin entries.",
@@ -268,7 +268,7 @@ describe("ExpertAgent plugins", () => {
             name: "Configured Entry",
             description: "Receives source dependency config.",
             manifest: {
-              schemaVersion: "expertmesh.plugin/v1",
+              schemaVersion: "pragma.plugin/v1",
               id: "plugin.configured-entry",
               name: "Configured Entry",
               description: "Receives source dependency config.",
@@ -318,7 +318,7 @@ describe("ExpertAgent plugins", () => {
             name: "Configured Entry",
             description: "Receives merged config.",
             manifest: {
-              schemaVersion: "expertmesh.plugin/v1",
+              schemaVersion: "pragma.plugin/v1",
               id: "configured-entry",
               name: "Configured Entry",
               description: "Receives merged config.",
@@ -365,7 +365,7 @@ describe("ExpertAgent plugins", () => {
             name: "Missing Config",
             description: "Requires config.",
             manifest: {
-              schemaVersion: "expertmesh.plugin/v1",
+              schemaVersion: "pragma.plugin/v1",
               id: "missing-config",
               name: "Missing Config",
               description: "Requires config.",
@@ -388,7 +388,7 @@ describe("ExpertAgent plugins", () => {
     const hookEvents: string[] = [];
     const workspace = await createPluginTestWorkspace();
     const agent = await ExpertAgent.create({
-      schemaVersion: "expertmesh.expert/v1",
+      schemaVersion: "pragma.expert/v1",
       id: "researcher",
       name: "Researcher",
       description: "Research expert",
@@ -437,7 +437,7 @@ describe("ExpertAgent plugins", () => {
           name: "Approval A",
           description: "Approval policy A.",
           manifest: {
-            schemaVersion: "expertmesh.plugin/v1",
+            schemaVersion: "pragma.plugin/v1",
             id: "plugin.approval-a",
             name: "Approval A",
             description: "Approval policy A.",
@@ -466,7 +466,7 @@ describe("ExpertAgent plugins", () => {
           name: "Approval B",
           description: "Approval policy B.",
           manifest: {
-            schemaVersion: "expertmesh.plugin/v1",
+            schemaVersion: "pragma.plugin/v1",
             id: "plugin.approval-b",
             name: "Approval B",
             description: "Approval policy B.",
@@ -523,7 +523,7 @@ describe("ExpertAgent plugins", () => {
 });
 
 async function createPluginTestWorkspace(): Promise<string> {
-  const workspace = await mkdtemp(resolve(process.cwd(), ".expertmesh-plugin-test-"));
+  const workspace = await mkdtemp(resolve(process.cwd(), ".pragma-plugin-test-"));
   tempWorkspaces.push(workspace);
   return workspace;
 }
@@ -534,7 +534,7 @@ function createContextPluginEntry(): ExpertAgentPluginEntry {
     name: "Plugin context",
     description: "Adds context",
     manifest: {
-      schemaVersion: "expertmesh.plugin/v1",
+      schemaVersion: "pragma.plugin/v1",
       id: "plugin.context",
       name: "Plugin context",
       description: "Adds context",
@@ -589,7 +589,7 @@ function createOtherContextPluginEntry(): ExpertAgentPluginEntry {
     name: "Other plugin context",
     description: "Adds context with colliding local ids",
     manifest: {
-      schemaVersion: "expertmesh.plugin/v1",
+      schemaVersion: "pragma.plugin/v1",
       id: "plugin.other-context",
       name: "Other plugin context",
       description: "Adds context with colliding local ids",
@@ -631,7 +631,7 @@ function createExtensibilityPluginEntry(hookEvents: string[]): ExpertAgentPlugin
     version: "0.0.0",
     tags: ["fixture", "extensibility"],
     manifest: {
-      schemaVersion: "expertmesh.plugin/v1",
+      schemaVersion: "pragma.plugin/v1",
       id: "plugin.extensibility",
       name: "Extensibility",
       description: "Contributes every plugin surface",

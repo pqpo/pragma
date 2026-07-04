@@ -65,9 +65,9 @@ describe("Code Repository Manager plugin", () => {
             content: JSON.stringify({
               repositories: [
                 {
-                  id: "expert-mesh",
-                  name: "ExpertMesh",
-                  cloneUrl: "https://github.com/example/expert-mesh.git",
+                  id: "pragma",
+                  name: "Pragma",
+                  cloneUrl: "https://github.com/example/pragma.git",
                   defaultBranch: "main",
                 },
               ],
@@ -80,7 +80,7 @@ describe("Code Repository Manager plugin", () => {
       }),
     });
     const agent = await ExpertAgent.create({
-      schemaVersion: "expertmesh.expert/v1",
+      schemaVersion: "pragma.expert/v1",
       id: "repo-agent",
       name: "Repo Agent",
       description: "Test agent",
@@ -115,7 +115,7 @@ describe("Code Repository Manager plugin", () => {
     ).resolves.toMatchObject({
       ok: true,
       value: {
-        content: expect.stringContaining('"id": "expert-mesh"'),
+        content: expect.stringContaining('"id": "pragma"'),
       },
     });
   });
@@ -123,7 +123,7 @@ describe("Code Repository Manager plugin", () => {
   it("skips repository context when repositories.json is not configured", async () => {
     const pluginSource = await createLoadablePluginSource();
     const agent = await ExpertAgent.create({
-      schemaVersion: "expertmesh.expert/v1",
+      schemaVersion: "pragma.expert/v1",
       id: "repo-agent",
       name: "Repo Agent",
       description: "Test agent",
@@ -177,7 +177,7 @@ describe("Code Repository Manager plugin", () => {
     const contributions = codeRepositoryManagerPlugin.setup({
       host: {},
       contextSystem: new ContextSystem(),
-      workspaceRoot: "/tmp/expertmesh",
+      workspaceRoot: "/tmp/pragma",
       env: process.env,
       logger: createNoopLoggerProvider().createLogger({
         component: "plugin",
@@ -240,7 +240,7 @@ async function createAgent(options: {
   readonly contextSystem?: ContextSystem | undefined;
 }): Promise<ExpertAgent> {
   return await ExpertAgent.create({
-    schemaVersion: "expertmesh.expert/v1",
+    schemaVersion: "pragma.expert/v1",
     id: "repo-agent",
     name: "Repo Agent",
     description: "Test agent",
@@ -262,7 +262,7 @@ async function createWorkspaceDir(): Promise<string> {
 }
 
 async function createTempDir(baseDir: string, kind: string): Promise<string> {
-  const dir = await mkdtemp(resolve(baseDir, `.expertmesh-code-repository-${kind}-`));
+  const dir = await mkdtemp(resolve(baseDir, `.pragma-code-repository-${kind}-`));
   tempDirs.push(dir);
   return dir;
 }

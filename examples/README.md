@@ -46,7 +46,7 @@ pnpm --filter @pragma/examples start:basic --turn "记住：我的项目代号�
 pnpm --filter @pragma/examples start:basic --runtime-session-id <runtime-session-id> --turn "继续上一次会话，我刚才让你记住了什么？"
 ```
 
-需要固定 ExpertMesh 自己的 system session id 时，也可以传入：
+需要固定 Pragma 自己的 system session id 时，也可以传入：
 
 ```bash
 pnpm --filter @pragma/examples start:basic --system-session-id local-debug-session --turn "测试固定 system session id"
@@ -72,7 +72,7 @@ pnpm --filter @pragma/examples start:session-storage
 
 1. 使用 `workspace/session-storage-example/workspace-a` 创建会话。
 2. 发送第一轮聊天，让模型记住项目代号和目标。
-3. 通过 `sessionSyncCallback` 把 `.expertmesh/runtime-sessions/pi/<agent-id>` 同步到 `workspace/session-storage-example/long-term-session-storage`。
+3. 通过 `sessionSyncCallback` 把 `.pragma/runtime-sessions/pi/<agent-id>` 同步到 `workspace/session-storage-example/long-term-session-storage`。
 4. 切换到 `workspace/session-storage-example/workspace-b`。
 5. 使用同一个 `runtimeSessionId` 创建新会话，并通过 `sessionRestoreHandler` 把长期存储恢复到新 workspace 的 session 目录。
 6. 再发送一轮聊天，让模型总结上轮会话。

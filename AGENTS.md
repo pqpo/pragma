@@ -4,7 +4,7 @@
 
 ## 项目定位
 
-ExpertMesh 是一个多专家 Agent 编排系统的长期工程底座，目标是沉淀可扩展、边界清晰、协议可治理、运行时可替换的 Agent 编排平台。
+Pragma 是一个多专家 Agent 编排系统的长期工程底座，目标是沉淀可扩展、边界清晰、协议可治理、运行时可替换的 Agent 编排平台。
 
 项目演进优先级是：架构合理性、功能完整性、实现清晰度、可验证质量。允许为了合理架构引入 breaking change；不要为了兼容旧代码保留无用适配层、废弃字段、空实现或迁移期分支。发现已经弃用且没有长期价值的代码，应直接删除并同步更新调用方、类型和文档。
 
@@ -345,7 +345,7 @@ GET /health
 启动后输出：
 
 ```text
-ExpertMesh Worker Ready
+Pragma Worker Ready
 ```
 
 暂不接队列。
@@ -526,7 +526,7 @@ http://localhost:3000
 页面应显示：
 
 ```text
-ExpertMesh Web Ready
+Pragma Web Ready
 Server health: ok
 ```
 
@@ -548,7 +548,7 @@ pnpm --filter @pragma/worker dev
 应输出：
 
 ```text
-ExpertMesh Worker Ready
+Pragma Worker Ready
 ```
 
 常用质量命令：

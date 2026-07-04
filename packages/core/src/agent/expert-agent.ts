@@ -51,7 +51,7 @@ import type {
 } from "../tools/managed-tool.ts";
 import { mergeExpertAgentToolApprovals } from "../tools/managed-tool.ts";
 
-export type ExpertAgentSchemaVersion = "expertmesh.expert/v1" | undefined;
+export type ExpertAgentSchemaVersion = "pragma.expert/v1" | undefined;
 
 export type ExpertAgentSkillPackageType = "builtin" | "registry" | "local";
 

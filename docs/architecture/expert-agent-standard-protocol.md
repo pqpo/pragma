@@ -57,7 +57,7 @@ expert.manifest.json
 协议版本由 `schemaVersion` 表示。专家自身版本由 `version` 表示。
 
 ```yaml
-schemaVersion: expertmesh.expert/v1
+schemaVersion: pragma.expert/v1
 id: com.examplemesh.order.domain-expert
 displayName: 订单业务专家
 description: 负责订单领域的业务规则、流程、异常场景和历史决策分析
@@ -71,7 +71,7 @@ tags:
 ## 4. 顶层结构
 
 ```yaml
-schemaVersion: expertmesh.expert/v1
+schemaVersion: pragma.expert/v1
 id: com.examplemesh.order.domain-expert
 displayName: 订单业务专家
 description: 负责订单领域的业务规则、流程、异常场景和历史决策分析
@@ -216,7 +216,7 @@ Manifest 协议版本。
 规则：
 
 - 必填；
-- 当前建议值为 `expertmesh.expert/v1`；
+- 当前建议值为 `pragma.expert/v1`；
 - 只表示协议结构版本，不表示专家能力版本；
 - 破坏性协议变更必须提升协议版本。
 
@@ -598,7 +598,7 @@ workspace:
 
 ```ts
 type ExpertManifest = {
-  schemaVersion: "expertmesh.expert/v1";
+  schemaVersion: "pragma.expert/v1";
   id: string;
   displayName: string;
   description: string;
@@ -695,14 +695,14 @@ Manifest 不绑定具体 Claude、Codex 或自研 Agent SDK。具体 Runtime 能
 统一事件对象定义在 `@pragma/shared` 的 `ExpertAgentStreamEventSchema`，协议版本为：
 
 ```text
-expertmesh.stream/v1
+pragma.stream/v1
 ```
 
 事件公共字段：
 
 | 字段            | 含义                                            |
 | --------------- | ----------------------------------------------- |
-| `schemaVersion` | 流式事件协议版本，当前为 `expertmesh.stream/v1` |
+| `schemaVersion` | 流式事件协议版本，当前为 `pragma.stream/v1` |
 | `eventId`       | 事件唯一 ID，用于幂等写入和客户端去重           |
 | `sequence`      | 同一个 `runId` 内单调递增的序号                 |
 | `runId`         | 当前事件所属运行                                |
@@ -751,7 +751,7 @@ artifact.created
 
 Session 标识分为三层：
 
-- `systemSessionId` 是 ExpertMesh 系统级会话标识，用于系统任务关联、审计和跨 runtime
+- `systemSessionId` 是 Pragma 系统级会话标识，用于系统任务关联、审计和跨 runtime
   追踪；`createSession()` 未传入时由系统自动生成。
 - `runtimeSession` 是 runtime 返回的会话引用，结构为 `{ type, id }`；Adapter 只在
   `type` 与当前 runtime 匹配时复用该会话，否则必须新建 runtime session。
@@ -832,7 +832,7 @@ subAgent 的过程输出使用 `tool.delta`，最终成功或失败使用 `tool.
 ## 16. 示例：最小专家
 
 ```yaml
-schemaVersion: expertmesh.expert/v1
+schemaVersion: pragma.expert/v1
 id: com.examplemesh.requirement.summary-expert
 displayName: 需求总结专家
 description: 将上游专家意见整理成结构化需求分析摘要

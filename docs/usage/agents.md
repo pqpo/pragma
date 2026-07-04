@@ -1,6 +1,6 @@
 # Agent 使用指南
 
-本文说明如何在当前 ExpertMesh 代码中创建和使用 `ExpertAgent`，包括模型配置、MCP 配置、Skills 配置、Tool 配置、上下文配置和运行会话。
+本文说明如何在当前 Pragma 代码中创建和使用 `ExpertAgent`，包括模型配置、MCP 配置、Skills 配置、Tool 配置、上下文配置和运行会话。
 
 当前核心 API 来自：
 
@@ -431,7 +431,7 @@ contextSystem.register({
     context: [
       {
         id: "project.md",
-        content: "ExpertMesh 是多专家 Agent 编排系统。",
+        content: "Pragma 是多专家 Agent 编排系统。",
         metadata: {
           description: "项目背景",
           trigger: "always_on",

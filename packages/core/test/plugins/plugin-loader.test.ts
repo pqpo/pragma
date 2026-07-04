@@ -12,7 +12,7 @@ const execFileAsync = promisify(execFile);
 
 describe("ExpertAgent plugin loader", () => {
   it("loads a plugin directory into the Agent workspace", async () => {
-    const workspace = await mkdtemp(resolve(tmpdir(), "expertmesh-plugin-loader-"));
+    const workspace = await mkdtemp(resolve(tmpdir(), "pragma-plugin-loader-"));
     const pluginDir = resolve(workspace, "loadable-plugin");
 
     try {
@@ -34,7 +34,7 @@ describe("ExpertAgent plugin loader", () => {
   });
 
   it("keeps source plugin config with the loaded plugin registration", async () => {
-    const workspace = await mkdtemp(resolve(tmpdir(), "expertmesh-plugin-loader-"));
+    const workspace = await mkdtemp(resolve(tmpdir(), "pragma-plugin-loader-"));
     const pluginDir = resolve(workspace, "configured-plugin");
 
     try {
@@ -72,7 +72,7 @@ describe("ExpertAgent plugin loader", () => {
   });
 
   it("installs and loads copied plugin directory packages", async () => {
-    const workspace = await mkdtemp(resolve(tmpdir(), "expertmesh-plugin-loader-"));
+    const workspace = await mkdtemp(resolve(tmpdir(), "pragma-plugin-loader-"));
     const repoRoot = resolve(workspace, "repo");
     const pluginDir = resolve(repoRoot, "plugins", "dependency-plugin");
 
@@ -88,7 +88,7 @@ describe("ExpertAgent plugin loader", () => {
           '  name: "Dependency",',
           '  description: "Uses a development dependency",',
           "  manifest: {",
-          '    schemaVersion: "expertmesh.plugin/v1",',
+          '    schemaVersion: "pragma.plugin/v1",',
           '    id: "plugin.dependency",',
           '    name: "Dependency",',
           '    description: "Uses a development dependency",',
@@ -129,7 +129,7 @@ describe("ExpertAgent plugin loader", () => {
   });
 
   it("installs and loads zipped plugin packages", async () => {
-    const workspace = await mkdtemp(resolve(tmpdir(), "expertmesh-plugin-loader-"));
+    const workspace = await mkdtemp(resolve(tmpdir(), "pragma-plugin-loader-"));
     const packageRoot = resolve(workspace, "package-root");
     const dependencyDir = resolve(workspace, "plugin-test-dep");
     const archivePath = resolve(workspace, "archive-plugin.zip");
@@ -146,7 +146,7 @@ describe("ExpertAgent plugin loader", () => {
           '  name: "Archive",',
           '  description: "Uses an installed dependency",',
           "  manifest: {",
-          '    schemaVersion: "expertmesh.plugin/v1",',
+          '    schemaVersion: "pragma.plugin/v1",',
           '    id: "plugin.archive",',
           '    name: "Archive",',
           '    description: "Uses an installed dependency",',
@@ -188,7 +188,7 @@ describe("ExpertAgent plugin loader", () => {
   });
 
   it("reports plugins without plugin.json", async () => {
-    const workspace = await mkdtemp(resolve(tmpdir(), "expertmesh-plugin-loader-"));
+    const workspace = await mkdtemp(resolve(tmpdir(), "pragma-plugin-loader-"));
     const pluginDir = resolve(workspace, "missing-manifest-plugin");
 
     try {
@@ -212,7 +212,7 @@ describe("ExpertAgent plugin loader", () => {
   });
 
   it("reports source plugin directories without package.json", async () => {
-    const workspace = await mkdtemp(resolve(tmpdir(), "expertmesh-plugin-loader-"));
+    const workspace = await mkdtemp(resolve(tmpdir(), "pragma-plugin-loader-"));
     const pluginDir = resolve(workspace, "missing-package-json-plugin");
 
     try {
@@ -240,7 +240,7 @@ describe("ExpertAgent plugin loader", () => {
   });
 
   it("reports plugins without a compiled entry file", async () => {
-    const workspace = await mkdtemp(resolve(tmpdir(), "expertmesh-plugin-loader-"));
+    const workspace = await mkdtemp(resolve(tmpdir(), "pragma-plugin-loader-"));
     const pluginDir = resolve(workspace, "missing-entry-plugin");
 
     try {
@@ -284,7 +284,7 @@ async function writeMinimalPlugin(
     resolve(pluginDir, "plugin.json"),
     JSON.stringify(
       {
-        schemaVersion: "expertmesh.plugin/v1",
+        schemaVersion: "pragma.plugin/v1",
         id: options.id,
         name: "Env required",
         description: "Requires env",
@@ -320,7 +320,7 @@ async function writeMinimalPlugin(
         "  name: \"Env required\",",
         "  description: \"Requires env\",",
         "  manifest: {",
-        "    schemaVersion: \"expertmesh.plugin/v1\",",
+        "    schemaVersion: \"pragma.plugin/v1\",",
         `    id: "${options.id}",`,
         "    name: \"Env required\",",
         "    description: \"Requires env\",",

@@ -53,12 +53,12 @@ describe("createPiSessionManager", () => {
     expect(manager).toEqual({
       cwd: "/workspace",
       options: undefined,
-      sessionDir: "/workspace/.expertmesh/runtime-sessions/pi/expert-1",
+      sessionDir: "/workspace/.pragma/runtime-sessions/pi/expert-1",
       type: "create",
     });
     expect(SessionManager.create).toHaveBeenCalledWith(
       "/workspace",
-      "/workspace/.expertmesh/runtime-sessions/pi/expert-1",
+      "/workspace/.pragma/runtime-sessions/pi/expert-1",
     );
     expect(SessionManager.inMemory).not.toHaveBeenCalled();
     expect(SessionManager.list).not.toHaveBeenCalled();
@@ -78,12 +78,12 @@ describe("createPiSessionManager", () => {
     expect(manager).toEqual({
       cwd: "/workspace",
       options: undefined,
-      sessionDir: "/workspace/.expertmesh/runtime-sessions/pi/expert-1",
+      sessionDir: "/workspace/.pragma/runtime-sessions/pi/expert-1",
       type: "create",
     });
     expect(SessionManager.create).toHaveBeenCalledWith(
       "/workspace",
-      "/workspace/.expertmesh/runtime-sessions/pi/expert-1",
+      "/workspace/.pragma/runtime-sessions/pi/expert-1",
     );
     expect(SessionManager.list).not.toHaveBeenCalled();
     expect(SessionManager.open).not.toHaveBeenCalled();
@@ -114,16 +114,16 @@ describe("createPiSessionManager", () => {
     expect(manager).toEqual({
       cwd: "/workspace",
       path: "/sessions/session-2.jsonl",
-      sessionDir: "/workspace/.expertmesh/runtime-sessions/pi/expert-1",
+      sessionDir: "/workspace/.pragma/runtime-sessions/pi/expert-1",
       type: "open",
     });
     expect(SessionManager.list).not.toHaveBeenCalled();
     expect(SessionManager.listAll).toHaveBeenCalledWith(
-      "/workspace/.expertmesh/runtime-sessions/pi/expert-1",
+      "/workspace/.pragma/runtime-sessions/pi/expert-1",
     );
     expect(SessionManager.open).toHaveBeenCalledWith(
       "/sessions/session-2.jsonl",
-      "/workspace/.expertmesh/runtime-sessions/pi/expert-1",
+      "/workspace/.pragma/runtime-sessions/pi/expert-1",
       "/workspace",
     );
     expect(SessionManager.create).not.toHaveBeenCalled();
@@ -147,26 +147,26 @@ describe("createPiSessionManager", () => {
       options: {
         id: "session-3",
       },
-      sessionDir: "/workspace/.expertmesh/runtime-sessions/pi/expert-1",
+      sessionDir: "/workspace/.pragma/runtime-sessions/pi/expert-1",
       type: "create",
     });
     expect(SessionManager.create).toHaveBeenCalledWith(
       "/workspace",
-      "/workspace/.expertmesh/runtime-sessions/pi/expert-1",
+      "/workspace/.pragma/runtime-sessions/pi/expert-1",
       {
         id: "session-3",
       },
     );
     expect(SessionManager.list).not.toHaveBeenCalled();
     expect(SessionManager.listAll).toHaveBeenCalledWith(
-      "/workspace/.expertmesh/runtime-sessions/pi/expert-1",
+      "/workspace/.pragma/runtime-sessions/pi/expert-1",
     );
     expect(SessionManager.open).not.toHaveBeenCalled();
   });
 
   it("encodes expert ids in the workspace session directory", () => {
     expect(getPiSessionDir("/workspace", "team/reviewer")).toBe(
-      "/workspace/.expertmesh/runtime-sessions/pi/team%2Freviewer",
+      "/workspace/.pragma/runtime-sessions/pi/team%2Freviewer",
     );
   });
 });

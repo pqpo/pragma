@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { AgentMessageUsageSchema } from "./agent-message.schema.ts";
 
-export const ExpertAgentStreamSchemaVersionSchema = z.literal("expertmesh.stream/v1");
+export const ExpertAgentStreamSchemaVersionSchema = z.literal("pragma.stream/v1");
 
 export const ExpertAgentStreamSourceFrameSchema = z.object({
   runId: z.string().min(1),

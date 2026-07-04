@@ -3,7 +3,7 @@ import type { SessionInfo } from "@earendil-works/pi-coding-agent";
 import type { RuntimeAdapterKind, RuntimeSessionRef } from "@pragma/core";
 import { join } from "node:path";
 
-const PI_SESSION_DIR = ".expertmesh/runtime-sessions/pi";
+const PI_SESSION_DIR = ".pragma/runtime-sessions/pi";
 
 export async function createPiSessionManager(
   cwd: string,

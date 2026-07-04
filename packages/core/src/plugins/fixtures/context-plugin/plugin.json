@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "expertmesh.plugin/v1",
+  "schemaVersion": "pragma.plugin/v1",
   "id": "plugin.context",
   "name": "Plugin context",
   "description": "Adds context",

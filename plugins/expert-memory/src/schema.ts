@@ -8,7 +8,7 @@ export const MemoryPluginConfigSchema = z
     disableOnExternalContext: z.boolean().default(true),
     minRunOutputChars: z.number().int().positive().default(200),
     summaryMaxBytes: z.number().int().positive().default(8192),
-    memoryRoot: z.string().min(1).default(".expertmesh/agent/memories"),
+    memoryRoot: z.string().min(1).default(".pragma/agent/memories"),
   });
 
 export type MemoryPluginConfig = z.infer<typeof MemoryPluginConfigSchema>;
@@ -25,7 +25,7 @@ export const MemoryAuditSchema = z
 
 export const MemoryLedgerSchema = z
   .object({
-    schemaVersion: z.literal("expertmesh.memory-ledger/v1").default("expertmesh.memory-ledger/v1"),
+    schemaVersion: z.literal("pragma.memory-ledger/v1").default("pragma.memory-ledger/v1"),
     agentId: z.string().min(1),
     updatedAt: z.string().min(1),
     entryCount: z.number().int().nonnegative().default(0),
@@ -36,8 +36,8 @@ export const MemoryLedgerSchema = z
 export const MemoryTaskEvidenceSchema = z
   .object({
     schemaVersion: z
-      .literal("expertmesh.memory-task-evidence/v1")
-      .default("expertmesh.memory-task-evidence/v1"),
+      .literal("pragma.memory-task-evidence/v1")
+      .default("pragma.memory-task-evidence/v1"),
     agentId: z.string().min(1),
     runId: z.string().min(1),
     source: z

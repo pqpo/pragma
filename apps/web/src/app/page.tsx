@@ -5,7 +5,7 @@ export default function HomePage() {
     <main className="shell">
       <section className="status">
         <p className="eyebrow">Agent Orchestration Platform</p>
-        <h1>ExpertMesh Web Ready</h1>
+        <h1>Pragma Web Ready</h1>
         <HealthPanel />
       </section>
     </main>

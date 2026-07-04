@@ -8,14 +8,14 @@ describe("createCustomTools approval handling", () => {
   it("dispatches afterToolCall when approval is denied", async () => {
     const hookEvents: string[] = [];
     const agent = await ExpertAgent.create({
-      schemaVersion: "expertmesh.expert/v1",
+      schemaVersion: "pragma.expert/v1",
       id: "agent-1",
       name: "Test Agent",
       description: "Test agent",
       tags: [],
       version: "0.0.0",
       scope: "test",
-      workspace: "/tmp/expertmesh-test",
+      workspace: "/tmp/pragma-test",
       tools: [
         {
           name: "delete_note",
@@ -43,7 +43,7 @@ describe("createCustomTools approval handling", () => {
     const tools = createCustomTools({
       agent,
       authStorage: {} as never,
-      cwd: "/tmp/expertmesh-test",
+      cwd: "/tmp/pragma-test",
       mcpTools: [],
       modelRegistry: { getAll: () => [] } as never,
       parentSystemPrompt: "",
@@ -98,14 +98,14 @@ describe("createCustomTools approval handling", () => {
       text: JSON.stringify(args),
     }));
     const agent = await ExpertAgent.create({
-      schemaVersion: "expertmesh.expert/v1",
+      schemaVersion: "pragma.expert/v1",
       id: "agent-1",
       name: "Test Agent",
       description: "Test agent",
       tags: [],
       version: "0.0.0",
       scope: "test",
-      workspace: "/tmp/expertmesh-test",
+      workspace: "/tmp/pragma-test",
       tools: [
         {
           name: "write_note",
@@ -121,7 +121,7 @@ describe("createCustomTools approval handling", () => {
     const tools = createCustomTools({
       agent,
       authStorage: {} as never,
-      cwd: "/tmp/expertmesh-test",
+      cwd: "/tmp/pragma-test",
       mcpTools: [],
       modelRegistry: { getAll: () => [] } as never,
       parentSystemPrompt: "",
@@ -169,14 +169,14 @@ describe("createCustomTools approval handling", () => {
       approved: true,
     }));
     const agent = await ExpertAgent.create({
-      schemaVersion: "expertmesh.expert/v1",
+      schemaVersion: "pragma.expert/v1",
       id: "agent-1",
       name: "Test Agent",
       description: "Test agent",
       tags: [],
       version: "0.0.0",
       scope: "test",
-      workspace: "/tmp/expertmesh-test",
+      workspace: "/tmp/pragma-test",
       tools: [
         {
           name: "bash",
@@ -200,7 +200,7 @@ describe("createCustomTools approval handling", () => {
     const tools = createCustomTools({
       agent,
       authStorage: {} as never,
-      cwd: "/tmp/expertmesh-test",
+      cwd: "/tmp/pragma-test",
       mcpTools: [],
       modelRegistry: { getAll: () => [] } as never,
       parentSystemPrompt: "",

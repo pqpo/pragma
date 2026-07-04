@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ServerClient, type ExpertMeshClient, type HealthResponse } from "@pragma/client";
+import { ServerClient, type PragmaClient, type HealthResponse } from "@pragma/client";
 
-const client: ExpertMeshClient = new ServerClient();
+const client: PragmaClient = new ServerClient();
 
 export function HealthPanel() {
   const [health, setHealth] = useState<HealthResponse | null>(null);

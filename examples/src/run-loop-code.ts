@@ -41,7 +41,7 @@ flow.compose(({ start, end }) => {
 
 const result = await createPragma().run(flow, {
   input: {
-    name: "ExpertMesh",
+    name: "Pragma",
   },
 });
 
