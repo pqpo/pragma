@@ -11,14 +11,14 @@ cp examples/.env.example examples/.env
 然后在 `examples/.env` 中填写模型 key：
 
 ```text
-EXPERTMESH_MODEL_PROVIDER=openai
-EXPERTMESH_MODEL_NAME=gpt-4o-mini
-EXPERTMESH_MODEL_BASE_API=https://api.openai.com/v1
-EXPERTMESH_MODEL_API=openai-responses
-EXPERTMESH_MODEL_API_KEY=replace-with-your-api-key
+PRAGMA_MODEL_PROVIDER=openai
+PRAGMA_MODEL_NAME=gpt-4o-mini
+PRAGMA_MODEL_BASE_API=https://api.openai.com/v1
+PRAGMA_MODEL_API=openai-responses
+PRAGMA_MODEL_API_KEY=replace-with-your-api-key
 ```
 
-也可以不写 `EXPERTMESH_MODEL_API_KEY`，改用环境变量 `OPENAI_API_KEY`。
+也可以不写 `PRAGMA_MODEL_API_KEY`，改用环境变量 `OPENAI_API_KEY`。
 
 ## 运行基础示例
 

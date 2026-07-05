@@ -16,15 +16,15 @@ export interface ExampleModelConfig {
 }
 
 export function readExampleModelConfig(): ExampleModelConfig {
-  const provider = process.env.EXPERTMESH_MODEL_PROVIDER ?? "openai";
-  const modelName = process.env.EXPERTMESH_MODEL_NAME ?? "gpt-4o-mini";
-  const baseApi = process.env.EXPERTMESH_MODEL_BASE_API ?? "https://api.openai.com/v1";
-  const key = process.env.EXPERTMESH_MODEL_API_KEY ?? process.env.OPENAI_API_KEY;
-  const api = readModelApi(process.env.EXPERTMESH_MODEL_API ?? "openai-responses");
+  const provider = process.env.PRAGMA_MODEL_PROVIDER ?? "openai";
+  const modelName = process.env.PRAGMA_MODEL_NAME ?? "gpt-4o-mini";
+  const baseApi = process.env.PRAGMA_MODEL_BASE_API ?? "https://api.openai.com/v1";
+  const key = process.env.PRAGMA_MODEL_API_KEY ?? process.env.OPENAI_API_KEY;
+  const api = readModelApi(process.env.PRAGMA_MODEL_API ?? "openai-responses");
 
   if (key === undefined || key.trim().length === 0) {
     throw new Error(
-      "Missing model key. Set EXPERTMESH_MODEL_API_KEY or OPENAI_API_KEY before running this script.",
+      "Missing model key. Set PRAGMA_MODEL_API_KEY or OPENAI_API_KEY before running this script.",
     );
   }
 
@@ -64,7 +64,7 @@ function readModelApi(value: string): ExpertAgentModelApi {
   }
 
   throw new Error(
-    `Unsupported EXPERTMESH_MODEL_API "${value}". Expected one of: ${[...MODEL_API_VALUES].join(
+    `Unsupported PRAGMA_MODEL_API "${value}". Expected one of: ${[...MODEL_API_VALUES].join(
       ", ",
     )}.`,
   );

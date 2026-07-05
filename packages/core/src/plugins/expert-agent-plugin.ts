@@ -280,7 +280,7 @@ export function createExpertAgentPluginConfigEnvName(options: {
   readonly pluginId: string;
   readonly name: string;
 }): string {
-  return `EXPERTMESH_PLUGIN_${toEnvSegment(options.pluginId)}_${toEnvSegment(options.name)}`;
+  return `PRAGMA_PLUGIN_${toEnvSegment(options.pluginId)}_${toEnvSegment(options.name)}`;
 }
 
 export function resolveExpertAgentPlugins(

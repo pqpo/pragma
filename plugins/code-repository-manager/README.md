@@ -110,16 +110,16 @@ should be marked with `"secret": true`.
 This plugin reserves the following environment variable namespace:
 
 ```text
-EXPERTMESH_PLUGIN_CODE_REPOSITORY_MANAGER_AUTH_TOKEN
-EXPERTMESH_PLUGIN_CODE_REPOSITORY_MANAGER_AUTH_USERNAME
-EXPERTMESH_PLUGIN_CODE_REPOSITORY_MANAGER_AUTH_HELPER
-EXPERTMESH_PLUGIN_CODE_REPOSITORY_MANAGER_AUTH_PRIVATE_KEY
-EXPERTMESH_PLUGIN_CODE_REPOSITORY_MANAGER_AUTH_KNOWN_HOSTS
+PRAGMA_PLUGIN_CODE_REPOSITORY_MANAGER_AUTH_TOKEN
+PRAGMA_PLUGIN_CODE_REPOSITORY_MANAGER_AUTH_USERNAME
+PRAGMA_PLUGIN_CODE_REPOSITORY_MANAGER_AUTH_HELPER
+PRAGMA_PLUGIN_CODE_REPOSITORY_MANAGER_AUTH_PRIVATE_KEY
+PRAGMA_PLUGIN_CODE_REPOSITORY_MANAGER_AUTH_KNOWN_HOSTS
 ```
 
 Use `createExpertAgentPluginConfigEnvName` from `@pragma/core` to derive
 these names from `pluginId` and config key. Set
-`EXPERTMESH_PLUGIN_CODE_REPOSITORY_MANAGER_AUTH_HELPER` to a
+`PRAGMA_PLUGIN_CODE_REPOSITORY_MANAGER_AUTH_HELPER` to a
 `credential.helper` value when Git credentials should come from an existing helper
 or a custom helper command. During each session, the plugin writes that value to an
 isolated temporary Git config and removes it during cleanup.

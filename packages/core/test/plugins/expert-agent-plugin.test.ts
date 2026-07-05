@@ -301,15 +301,15 @@ describe("ExpertAgent plugins", () => {
         pluginId: "code-repository-manager",
         name: "auth.token",
       }),
-    ).toBe("EXPERTMESH_PLUGIN_CODE_REPOSITORY_MANAGER_AUTH_TOKEN");
+    ).toBe("PRAGMA_PLUGIN_CODE_REPOSITORY_MANAGER_AUTH_TOKEN");
   });
 
   it("merges required plugin config from env before explicit config", () => {
     const receivedConfigs: unknown[] = [];
     resolveExpertAgentPlugins({
       env: {
-        EXPERTMESH_PLUGIN_CONFIGURED_ENTRY_API_TOKEN: "env-token",
-        EXPERTMESH_PLUGIN_CONFIGURED_ENTRY_NESTED_SECRET: "env-secret",
+        PRAGMA_PLUGIN_CONFIGURED_ENTRY_API_TOKEN: "env-token",
+        PRAGMA_PLUGIN_CONFIGURED_ENTRY_NESTED_SECRET: "env-secret",
       },
       pluginEntries: [
         {
@@ -381,7 +381,7 @@ describe("ExpertAgent plugins", () => {
           },
         ],
       }),
-    ).toThrow(/apiToken \(EXPERTMESH_PLUGIN_MISSING_CONFIG_API_TOKEN\)/);
+    ).toThrow(/apiToken \(PRAGMA_PLUGIN_MISSING_CONFIG_API_TOKEN\)/);
   });
 
   it("merges plugin mcp, skills, models, subagents, tools, and hooks", async () => {

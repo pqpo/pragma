@@ -50,8 +50,8 @@ describe("Git session environment", () => {
     expect(env.GIT_TERMINAL_PROMPT).toBe("0");
     expect(env.GIT_CONFIG_NOSYSTEM).toBe("1");
     expect(env.GIT_CONFIG_GLOBAL).toBe("/dev/null");
-    expect(env.EXPERTMESH_GIT_USERNAME).toBe("oauth2");
-    expect(env.EXPERTMESH_GIT_TOKEN).toBe("secret-token");
+    expect(env.PRAGMA_GIT_USERNAME).toBe("oauth2");
+    expect(env.PRAGMA_GIT_TOKEN).toBe("secret-token");
     expect(env.HOME).toBeDefined();
     expect(env.XDG_CONFIG_HOME).toBe(env.HOME);
     expect(env.UNRELATED_SECRET).toBe("do-not-pass");
@@ -65,8 +65,8 @@ describe("Git session environment", () => {
     expect(env.GIT_TERMINAL_PROMPT).toBeUndefined();
     expect(env.GIT_CONFIG_NOSYSTEM).toBeUndefined();
     expect(env.GIT_CONFIG_GLOBAL).toBeUndefined();
-    expect(env.EXPERTMESH_GIT_USERNAME).toBeUndefined();
-    expect(env.EXPERTMESH_GIT_TOKEN).toBeUndefined();
+    expect(env.PRAGMA_GIT_USERNAME).toBeUndefined();
+    expect(env.PRAGMA_GIT_TOKEN).toBeUndefined();
     expect(env.HOME).toBeUndefined();
     expect(env.XDG_CONFIG_HOME).toBeUndefined();
     expect(env.UNRELATED_SECRET).toBe("do-not-pass");
@@ -91,8 +91,8 @@ describe("Git session environment", () => {
     });
 
     expect(prepared.authStrategy).toBe("token");
-    expect(env.EXPERTMESH_GIT_USERNAME).toBe("x-access-token");
-    expect(env.EXPERTMESH_GIT_TOKEN).toBe("direct-token");
+    expect(env.PRAGMA_GIT_USERNAME).toBe("x-access-token");
+    expect(env.PRAGMA_GIT_TOKEN).toBe("direct-token");
 
     await prepared.cleanup();
   });

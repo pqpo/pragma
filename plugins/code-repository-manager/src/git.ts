@@ -102,8 +102,8 @@ async function createGitSessionEnvironment(
       [
         "#!/bin/sh",
         'case "$1" in',
-        "*Username*) printf '%s\\n' \"$EXPERTMESH_GIT_USERNAME\" ;;",
-        "*Password*) printf '%s\\n' \"$EXPERTMESH_GIT_TOKEN\" ;;",
+        "*Username*) printf '%s\\n' \"$PRAGMA_GIT_USERNAME\" ;;",
+        "*Password*) printf '%s\\n' \"$PRAGMA_GIT_TOKEN\" ;;",
         "*) printf '\\n' ;;",
         "esac",
         "",
@@ -116,8 +116,8 @@ async function createGitSessionEnvironment(
       env: {
         ...sharedEnv,
         GIT_ASKPASS: askPassPath,
-        EXPERTMESH_GIT_USERNAME: auth.username,
-        EXPERTMESH_GIT_TOKEN: auth.token ?? readRequiredEnv(baseEnv, auth.tokenEnv),
+        PRAGMA_GIT_USERNAME: auth.username,
+        PRAGMA_GIT_TOKEN: auth.token ?? readRequiredEnv(baseEnv, auth.tokenEnv),
         HOME: tempDir,
         XDG_CONFIG_HOME: tempDir,
       },

@@ -226,7 +226,7 @@ describe("Expert Memory plugin", () => {
         },
       ],
       env: {
-        EXPERTMESH_PLUGIN_EXPERT_MEMORY_ENABLED: "true",
+        PRAGMA_PLUGIN_EXPERT_MEMORY_ENABLED: "true",
       },
     });
 

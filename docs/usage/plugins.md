@@ -358,7 +358,7 @@ const envName = createExpertAgentPluginConfigEnvName({
   name: "apiKey",
 });
 
-// EXPERTMESH_PLUGIN_MY_PLUGIN_API_KEY
+// PRAGMA_PLUGIN_MY_PLUGIN_API_KEY
 ```
 
 推荐规则：
@@ -397,4 +397,3 @@ plugins/code-repository-manager
 - Hooks 用于横切能力，例如审计、记忆、策略检查，不要把核心业务流程藏进 hook。
 - 插件应把长期数据放在 workspace 可审计目录中。
 - 插件加载失败不应该让 Agent 创建过程不可解释，错误应进入 `pluginLoadIssues`。
-

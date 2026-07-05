@@ -18,7 +18,7 @@ export function createBridgeSnapshot(): DesktopBridgeSnapshot {
     },
     gateway: {
       schemaVersion: 1,
-      endpoint: process.env.EXPERTMESH_RUNTIME_GATEWAY_URL || "ws://localhost:3001/runtime-gateway",
+      endpoint: process.env.PRAGMA_RUNTIME_GATEWAY_URL || "ws://localhost:3001/runtime-gateway",
       transport: "websocket",
     },
     device: {
