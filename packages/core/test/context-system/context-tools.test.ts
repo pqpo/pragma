@@ -10,6 +10,7 @@ describe("createContextTools", () => {
       readContext: notCalledOperation,
       searchContext: notCalledOperation,
       addContext: notCalledOperation,
+      editContext: notCalledOperation,
       updateContext: notCalledOperation,
       deleteContext: notCalledOperation,
     }).find((tool) => tool.name === "askUserQuestion");
@@ -28,6 +29,7 @@ describe("createContextTools", () => {
       readContext: notCalledOperation,
       searchContext: notCalledOperation,
       addContext: notCalledOperation,
+      editContext: notCalledOperation,
       updateContext: notCalledOperation,
       deleteContext: notCalledOperation,
     }).find((tool) => tool.name === "askUserQuestion");
@@ -127,6 +129,7 @@ describe("createContextTools", () => {
       readContext: notCalledOperation,
       searchContext: notCalledOperation,
       addContext: notCalledOperation,
+      editContext: notCalledOperation,
       updateContext: notCalledOperation,
       deleteContext: notCalledOperation,
     }).find((tool) => tool.name === "askUserQuestion");
@@ -170,6 +173,7 @@ describe("createContextTools", () => {
         readContext: notCalledOperation,
         searchContext: notCalledOperation,
         addContext: notCalledOperation,
+        editContext: notCalledOperation,
         updateContext: notCalledOperation,
         deleteContext: notCalledOperation,
       },
@@ -209,6 +213,7 @@ describe("createContextTools", () => {
       readContext: notCalledOperation,
       searchContext: notCalledOperation,
       addContext: notCalledOperation,
+      editContext: notCalledOperation,
       updateContext: notCalledOperation,
       deleteContext: notCalledOperation,
     }).find((tool) => tool.name === "list_expert_context");
@@ -255,6 +260,7 @@ describe("createContextTools", () => {
       readContext: notCalledOperation,
       searchContext,
       addContext: notCalledOperation,
+      editContext: notCalledOperation,
       updateContext: notCalledOperation,
       deleteContext: notCalledOperation,
     }).find((tool) => tool.name === "search_expert_context");
@@ -288,6 +294,97 @@ describe("createContextTools", () => {
     });
   });
 
+  it("calls edit_expert_context with search/replace arguments", async () => {
+    const editContext = vi.fn(async () => ({
+      ok: true as const,
+      value: {
+        namespace: "host",
+        id: "guide.md",
+        content: "updated",
+        metadata: {
+          trigger: "manual" as const,
+        },
+        replacementCount: 2,
+      },
+    }));
+    const editTool = createContextTools({
+      listContext: notCalledListOperation,
+      readContext: notCalledOperation,
+      searchContext: notCalledOperation,
+      addContext: notCalledOperation,
+      editContext,
+      updateContext: notCalledOperation,
+      deleteContext: notCalledOperation,
+    }).find((tool) => tool.name === "edit_expert_context");
+
+    const result = await editTool?.call(
+      {
+        namespace: "host",
+        id: "guide.md",
+        search: "old",
+        replace: "new",
+        replaceAll: true,
+      },
+      undefined,
+    );
+
+    expect(editContext).toHaveBeenCalledWith(
+      expect.objectContaining({
+        namespace: "host",
+        id: "guide.md",
+        search: "old",
+        replace: "new",
+        replaceAll: true,
+        context: expect.objectContaining({
+          source: {
+            type: "system",
+          },
+        }),
+      }),
+    );
+    expect(result).toMatchObject({
+      text: "Edited context: host/guide.md; replacements=2",
+      details: {
+        replacementCount: 2,
+      },
+    });
+  });
+
+  it("formats path search matches without line numbers", async () => {
+    const searchContext = vi.fn(async () => ({
+      ok: true as const,
+      value: [
+        {
+          namespace: "host",
+          id: "guides/guide.md",
+          matchType: "path" as const,
+          line: "guides/guide.md",
+        },
+      ],
+    }));
+    const searchTool = createContextTools({
+      listContext: notCalledListOperation,
+      readContext: notCalledOperation,
+      searchContext,
+      addContext: notCalledOperation,
+      editContext: notCalledOperation,
+      updateContext: notCalledOperation,
+      deleteContext: notCalledOperation,
+    }).find((tool) => tool.name === "search_expert_context");
+
+    const result = await searchTool?.call(
+      {
+        query: "guides/*.md",
+        scope: "path",
+      },
+      undefined,
+    );
+
+    expect(result?.text).toBe(
+      ["Found 1 match in 1 context item.", "", "host/guides/guide.md", "> path | guides/guide.md"].join("\n"),
+    );
+  });
+
 });
 
 const notCalledListOperation = vi.fn(async () => {
@@ -299,5 +396,6 @@ const notCalledOperation = vi.fn(async () => {
 }) as unknown as ExpertAgentContextItemOperations["readContext"] &
   ExpertAgentContextItemOperations["searchContext"] &
   ExpertAgentContextItemOperations["addContext"] &
+  ExpertAgentContextItemOperations["editContext"] &
   ExpertAgentContextItemOperations["updateContext"] &
   ExpertAgentContextItemOperations["deleteContext"];

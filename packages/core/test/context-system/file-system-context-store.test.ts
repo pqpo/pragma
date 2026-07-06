@@ -12,6 +12,7 @@ import {
   AGENTS_CONTEXT_ID,
   ContextSystem,
   HOST_CONTEXT_NAMESPACE,
+  matchContextPattern,
   ok,
 } from "../../src/context-system/context-system.ts";
 import { ExpertAgent } from "../../src/agent/expert-agent.ts";
@@ -210,6 +211,7 @@ describe("FileSystemContextStore", () => {
       value: [
         {
           id: "guides/search.md",
+          matchType: "content",
           lineNumber: 2,
           line: "Needle in a context.",
           before: ["Alpha line."],
@@ -248,6 +250,7 @@ describe("FileSystemContextStore", () => {
       value: [
         {
           id: "search.md",
+          matchType: "content",
           lineNumber: 2,
           line: "Needle in a context.",
         },
@@ -257,9 +260,90 @@ describe("FileSystemContextStore", () => {
     expect(commands[1]?.args).toContain("--recursive");
     expect(commands[1]?.args.at(-1)).toBe(rootDir);
   });
+
+  it("searches context paths when scope=path", async () => {
+    const rootDir = await createTempDir();
+    const store = new FileSystemContextStore({ rootDir });
+    await mkdir(join(rootDir, "guides"));
+    await writeFile(join(rootDir, "guides", "guide.md"), "Guide", "utf8");
+
+    await expect(
+      store.searchContext({
+        query: "guides/*.md",
+        scope: "path",
+      }),
+    ).resolves.toEqual(
+      ok([
+        {
+          id: "guides/guide.md",
+          matchType: "path",
+          line: "guides/guide.md",
+        },
+      ]),
+    );
+  });
+
+  it("searches context paths case-insensitively for glob queries", async () => {
+    const rootDir = await createTempDir();
+    const store = new FileSystemContextStore({ rootDir });
+    await mkdir(join(rootDir, "guides"));
+    await writeFile(join(rootDir, "guides", "guide.md"), "Guide", "utf8");
+
+    await expect(
+      store.searchContext({
+        query: "Guides/*.MD",
+        scope: "path",
+        caseSensitive: false,
+      }),
+    ).resolves.toEqual(
+      ok([
+        {
+          id: "guides/guide.md",
+          matchType: "path",
+          line: "guides/guide.md",
+        },
+      ]),
+    );
+  });
+
+  it("edits context content with search/replace", async () => {
+    const rootDir = await createTempDir();
+    const store = new FileSystemContextStore({ rootDir });
+    await writeFile(join(rootDir, "guide.md"), "Alpha old old", "utf8");
+
+    const created = await store.readContext({ id: "guide.md" });
+
+    expect(created.ok).toBe(true);
+
+    if (!created.ok) {
+      return;
+    }
+
+    await expect(
+      store.editContext({
+        id: "guide.md",
+        search: "old",
+        replace: "new",
+        replaceAll: true,
+        expectedRevision: created.value.revision,
+      }),
+    ).resolves.toMatchObject(
+      ok({
+        id: "guide.md",
+        content: "Alpha new new",
+        replacementCount: 2,
+      }),
+    );
+  });
 });
 
 describe("ContextSystem", () => {
+  it("matches glob patterns without letting ? cross path separators", () => {
+    expect(matchContextPattern("guides/a/guide.md", "guides/?/guide.md")).toBe(true);
+    expect(matchContextPattern("guides/ab/guide.md", "guides/?/guide.md")).toBe(false);
+    expect(matchContextPattern("guides/a/guide.md", "Guides/?/GUIDE.md", false)).toBe(true);
+  });
+
   it("creates an in-memory context store from context settings", async () => {
     const store = createInMemoryContextStore({
       context: [
@@ -301,10 +385,11 @@ describe("ContextSystem", () => {
         contextLines: 1,
         maxResults: 5,
       }),
-    ).resolves.toEqual(
+    ).resolves.toMatchObject(
       ok([
         {
           id: "beta.md",
+          matchType: "content",
           lineNumber: 1,
           line: "Beta needle.",
         },
@@ -881,12 +966,14 @@ describe("ContextSystem", () => {
         {
           namespace: HOST_CONTEXT_NAMESPACE,
           id: "alpha.md",
+          matchType: "content",
           lineNumber: 1,
           line: "Another search term here.",
         },
         {
           namespace: HOST_CONTEXT_NAMESPACE,
           id: "zeta.md",
+          matchType: "content",
           lineNumber: 1,
           line: "Find the Search Term here.",
         },
@@ -932,12 +1019,14 @@ describe("ContextSystem", () => {
         {
           namespace: "aaa",
           id: "alpha.md",
+          matchType: "content",
           lineNumber: 1,
           line: "Needle in alpha.",
         },
         {
           namespace: "zzz",
           id: "omega.md",
+          matchType: "content",
           lineNumber: 1,
           line: "Needle in omega.",
         },
@@ -979,11 +1068,165 @@ describe("ContextSystem", () => {
         {
           namespace: "docs",
           id: "guide.md",
+          matchType: "content",
           lineNumber: 1,
           line: "Needle in guide.",
         },
       ]),
     );
+  });
+
+  it("supports path search through ContextSystem without extra tools", async () => {
+    const contextSystem = new ContextSystem({
+      store: new InMemoryContextStore({
+        context: {
+          "guides/guide.md": "Guide content.",
+        },
+      }),
+    });
+
+    await expect(
+      contextSystem.search({
+        namespace: HOST_CONTEXT_NAMESPACE,
+        query: "guides/*.md",
+        scope: "path",
+      }),
+    ).resolves.toEqual(
+      ok([
+        {
+          namespace: HOST_CONTEXT_NAMESPACE,
+          id: "guides/guide.md",
+          matchType: "path",
+          line: "guides/guide.md",
+        },
+      ]),
+    );
+  });
+
+  it("loads preloadPaths context and excludes forbidden paths from assembly", async () => {
+    const store = new InMemoryContextStore({
+      context: [
+        {
+          id: "manuals/index.md",
+          content: "Summary",
+          metadata: {
+            trigger: "manual",
+          },
+        },
+        {
+          id: "manuals/profile.md",
+          content: "Profile details.",
+          metadata: {
+            trigger: "manual",
+          },
+        },
+        {
+          id: "manuals/archive/old.md",
+          content: "Archived",
+          metadata: {
+            trigger: "manual",
+          },
+        },
+      ],
+    });
+    const agent = await ExpertAgent.create({
+      schemaVersion: "pragma.expert/v1",
+      id: "root-agent",
+      name: "Root Agent",
+      description: "Tests root-based context assembly.",
+      tags: [],
+      version: "1.0.0",
+      scope: "test",
+      workspace: "/tmp/pragma-root-context-test",
+      contextSystem: new ContextSystem({
+        store,
+        roots: [
+          {
+            namespace: HOST_CONTEXT_NAMESPACE,
+            path: "manuals",
+            load: {
+              preloadPaths: ["manuals/profile.md"],
+              forbiddenLoad: ["manuals/archive/**"],
+            },
+          },
+        ],
+      }),
+    });
+
+    const context = await agent.buildContext(undefined, {
+      characterBudget: 2_000,
+    });
+
+    expect(context.context.map((item) => item.id)).toEqual(["manuals/index.md", "manuals/profile.md"]);
+    expect(context.startupMessages[0]?.content).toContain("Profile details.");
+    expect(context.snapshot.loadedContexts).toContainEqual({
+      namespace: HOST_CONTEXT_NAMESPACE,
+      id: "manuals/profile.md",
+      reasons: ["preload_path"],
+    });
+    expect(context.snapshot.excludedContexts).toContainEqual({
+      namespace: HOST_CONTEXT_NAMESPACE,
+      id: "manuals/archive/old.md",
+    });
+  });
+
+  it("tracks preload reasons from always_on and root preload paths", async () => {
+    const contextSystem = new ContextSystem({
+      store: new InMemoryContextStore({
+        context: [
+          {
+            id: "manuals/index.md",
+            content: "Summary",
+            metadata: {
+              trigger: "model_decision",
+            },
+          },
+          {
+            id: "manuals/profile.md",
+            content: "Profile",
+            metadata: {
+              trigger: "manual",
+            },
+          },
+        ],
+      }),
+      roots: [
+        {
+          namespace: HOST_CONTEXT_NAMESPACE,
+          path: "manuals",
+          load: {
+            preloadPaths: ["manuals/profile.md"],
+          },
+        },
+      ],
+    });
+
+    const indexed = await contextSystem.index();
+
+    expect(indexed.ok).toBe(true);
+
+    if (!indexed.ok) {
+      return;
+    }
+
+    const selection = contextSystem.selectContext(indexed.value);
+
+    expect(selection.context).toContainEqual(
+      expect.objectContaining({
+        namespace: HOST_CONTEXT_NAMESPACE,
+        id: "manuals/index.md",
+        metadata: expect.objectContaining({
+          trigger: "model_decision",
+        }),
+      }),
+    );
+    expect(selection.preload).toEqual([
+      {
+        namespace: HOST_CONTEXT_NAMESPACE,
+        id: "manuals/profile.md",
+        reasons: ["preload_path"],
+      },
+    ]);
   });
 
   it("registers context stores by namespace and rejects invalid registrations", async () => {

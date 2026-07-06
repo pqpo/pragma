@@ -2,6 +2,8 @@ import type {
   ContextTrigger,
   ExpertAgentContextItem,
   ExpertAgentContextAddInput,
+  ExpertAgentContextItemEditInput,
+  ExpertAgentContextItemEditResult,
   ExpertAgentContextItemDeleteResult,
   ExpertAgentContextItemDeleteInput,
   ExpertAgentContextError,
@@ -61,6 +63,9 @@ export interface ExpertAgentContextItemOperations {
   readonly addContext: (
     input: ExpertAgentContextAddInput,
   ) => Promise<ExpertAgentContextResult<ExpertAgentContextItem>>;
+  readonly editContext: (
+    input: ExpertAgentContextItemEditInput,
+  ) => Promise<ExpertAgentContextResult<ExpertAgentContextItemEditResult>>;
   readonly updateContext: (
     input: ExpertAgentContextItemUpdateInput,
   ) => Promise<ExpertAgentContextResult<ExpertAgentContextItem>>;
@@ -139,6 +144,11 @@ export function createContextTools(
         {
           namespace: stringSchema("Optional context namespace. Omit to search every namespace."),
           query: stringSchema("Literal text to search for."),
+          scope: {
+            type: "string",
+            enum: ["path", "content", "hybrid"],
+            description: "Search mode. Defaults to hybrid.",
+          },
           maxResults: integerSchema("Maximum number of matches to return. Defaults to 20."),
           contextLines: integerSchema("Number of context lines around each match. Defaults to 0."),
           caseSensitive: booleanSchema(
@@ -151,6 +161,7 @@ export function createContextTools(
         const result = await contextOperations.searchContext({
           namespace: readOptionalStringParam(args, "namespace"),
           query: readStringParam(args, "query"),
+          scope: readOptionalScopeParam(args),
           maxResults: readOptionalNumberParam(args, "maxResults"),
           contextLines: readOptionalNumberParam(args, "contextLines"),
           caseSensitive: readOptionalBooleanParam(args, "caseSensitive"),
@@ -200,6 +211,47 @@ export function createContextTools(
           text: `Added context: ${result.value.namespace}/${result.value.id}`,
           details: {
             context: result.value,
+          },
+        };
+      },
+    },
+    {
+      name: "edit_expert_context",
+      label: "Edit expert context",
+      description: "Apply a search/replace edit to an ExpertAgent context item.",
+      inputSchema: objectSchema(
+        {
+          namespace: stringSchema("Context namespace."),
+          id: stringSchema("Context id."),
+          search: stringSchema("The exact text to search for."),
+          replace: stringSchema("Replacement text."),
+          replaceAll: booleanSchema("Whether to replace every match. Defaults to false."),
+          expectedRevision: stringSchema("Optional expected context revision."),
+          expectedEtag: stringSchema("Optional expected context etag."),
+        },
+        ["namespace", "id", "search", "replace"],
+      ),
+      call: async (args) => {
+        const result = await contextOperations.editContext({
+          namespace: readStringParam(args, "namespace"),
+          id: readStringParam(args, "id"),
+          search: readStringParam(args, "search"),
+          replace: readStringParam(args, "replace"),
+          replaceAll: readOptionalBooleanParam(args, "replaceAll"),
+          expectedRevision: readOptionalStringParam(args, "expectedRevision"),
+          expectedEtag: readOptionalStringParam(args, "expectedEtag"),
+          context: readRunContext(options),
+        });
+
+        if (!result.ok) {
+          return errorResult(result.error);
+        }
+
+        return {
+          text: `Edited context: ${result.value.namespace}/${result.value.id}; replacements=${result.value.replacementCount}`,
+          details: {
+            context: result.value,
+            replacementCount: result.value.replacementCount,
           },
         };
       },
@@ -556,6 +608,20 @@ function readOptionalTriggerParam(params: unknown): ContextTrigger | undefined {
   throw new Error('Context tool parameter "trigger" must be always_on, model_decision, or manual.');
 }
 
+function readOptionalScopeParam(params: unknown): "path" | "content" | "hybrid" | undefined {
+  const value = readParam(params, "scope");
+
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (value === "path" || value === "content" || value === "hybrid") {
+    return value;
+  }
+
+  throw new Error('Context tool parameter "scope" must be path, content, or hybrid.');
+}
+
 function readParam(params: unknown, key: string): unknown {
   if (typeof params === "object" && params !== null && key in params) {
     return (params as Record<string, unknown>)[key];
@@ -695,10 +761,15 @@ function formatContextSearchMatchGroup(group: ContextSearchMatchGroup): string {
 }
 
 function formatContextSearchMatchLines(match: ExpertAgentContextItemSearchMatch): string {
+  if (match.matchType === "path") {
+    return `> path | ${match.line}`;
+  }
+
+  const lineNumber = match.lineNumber ?? 1;
   return [
-    ...formatSearchContextLines(match.before, match.lineNumber - (match.before?.length ?? 0), " "),
-    formatSearchContextLine(match.lineNumber, match.line, ">"),
-    ...formatSearchContextLines(match.after, match.lineNumber + 1, " "),
+    ...formatSearchContextLines(match.before, lineNumber - (match.before?.length ?? 0), " "),
+    formatSearchContextLine(lineNumber, match.line, ">"),
+    ...formatSearchContextLines(match.after, lineNumber + 1, " "),
   ].join("\n");
 }
 

@@ -5,11 +5,13 @@
 阅读顺序建议：
 
 1. [Agent 使用指南](./agents.md)
-2. [Memory System 使用指南](./memory.md)
-3. [Plugins 使用指南](./plugins.md)
-4. [Directive 使用指南](./loops.md)
-5. [Workflow 范式快捷 API](./workflow-patterns.md)
-6. [Human-in-the-loop](./human-in-the-loop.md)
+2. [Context 使用指南](./context.md)
+3. [Context 配置示例](./context-examples.md)
+4. [Memory System 使用指南](./memory.md)
+5. [Plugins 使用指南](./plugins.md)
+6. [Directive 使用指南](./loops.md)
+7. [Workflow 范式快捷 API](./workflow-patterns.md)
+8. [Human-in-the-loop](./human-in-the-loop.md)
 
 如果要接入未来分布式部署，阅读 [Directive 运行组件与扩展](./loop-runtime-components.md)，其中包含自定义 `Pragma`、`SandboxManager`、`StateManager`、`Mailbox` 和 `TaskManager`。
 

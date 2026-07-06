@@ -8,6 +8,8 @@ import type { AgentMessageUsage } from "@pragma/shared";
 import { ContextSystem } from "../context-system/context-system.ts";
 import type {
   ExpertAgentContextAddInput,
+  ExpertAgentContextItemEditInput,
+  ExpertAgentContextItemEditResult,
   ExpertAgentContextItemDeleteResult,
   ExpertAgentContextItem,
   ExpertAgentContextItemDeleteInput,
@@ -455,6 +457,12 @@ export class ExpertAgent implements IExpertAgent, Directive<unknown, unknown> {
     input: ExpertAgentContextItemSearchInput,
   ): Promise<ExpertAgentContextResult<readonly ExpertAgentContextItemSearchMatch[]>> {
     return await this.contextSystem.search(input);
+  }
+
+  async editContext(
+    input: ExpertAgentContextItemEditInput,
+  ): Promise<ExpertAgentContextResult<ExpertAgentContextItemEditResult>> {
+    return await this.contextSystem.edit(input);
   }
 
   async addContext(

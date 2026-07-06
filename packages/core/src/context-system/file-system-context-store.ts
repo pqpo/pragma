@@ -12,9 +12,11 @@ import type {
   ExpertAgentContextItemSummary,
   ExpertAgentContextStore,
   ExpertAgentStoredContextItem,
+  ExpertAgentStoredContextItemEditResult,
   ExpertAgentStoredContextItemReadResult,
   ExpertAgentStoredContextRegisterInput,
   ExpertAgentStoredContextItemDeleteInput,
+  ExpertAgentStoredContextItemEditInput,
   ExpertAgentStoredContextItemReadInput,
   ExpertAgentStoredContextItemSearchInput,
   ExpertAgentStoredContextItemUpdateInput,
@@ -22,6 +24,7 @@ import type {
 import {
   error,
   isAgentsContextId,
+  matchContextPattern,
   normalizeMetadata,
   normalizeTrigger,
   ok,
@@ -213,6 +216,70 @@ export class FileSystemContextStore implements ExpertAgentContextStore {
     }
   }
 
+  async editContext(
+    input: ExpertAgentStoredContextItemEditInput,
+  ): Promise<ExpertAgentContextResult<ExpertAgentStoredContextItemEditResult>> {
+    try {
+      const existing = await this.readContext({
+        id: input.id,
+        context: input.context,
+      });
+
+      if (!existing.ok) {
+        return existing;
+      }
+
+      const conflict = validateExpectedRevision(existing.value, input);
+
+      if (conflict !== undefined) {
+        return conflict;
+      }
+
+      const replacementCount = existing.value.content.split(input.search).length - 1;
+
+      if (replacementCount === 0) {
+        return error("invalid_input", `Context edit search did not match: ${input.id}`, {
+          id: input.id,
+          search: input.search,
+        });
+      }
+
+      if (replacementCount > 1 && input.replaceAll !== true) {
+        return error("invalid_input", `Context edit search matched multiple locations: ${input.id}`, {
+          id: input.id,
+          search: input.search,
+          replacementCount,
+        });
+      }
+
+      const content =
+        input.replaceAll === true
+          ? existing.value.content.split(input.search).join(input.replace)
+          : existing.value.content.replace(input.search, input.replace);
+      const sizeError = validateContextSize(content, this.maxContextBytes);
+
+      if (sizeError !== undefined) {
+        return sizeError;
+      }
+
+      const context = {
+        id: input.id,
+        content,
+        metadata: existing.value.metadata,
+      };
+      const filePath = this.resolveContextPath(input.id);
+      await writeFile(filePath, serializeMarkdownContext(context), "utf8");
+      const updated = await readMarkdownFileContext(this.rootDir, filePath);
+
+      return ok({
+        ...updated,
+        replacementCount: input.replaceAll === true ? replacementCount : 1,
+      });
+    } catch (caught) {
+      return error("store_error", `Failed to edit context: ${input.id}`, toErrorDetails(caught));
+    }
+  }
+
   async deleteContext(
     input: ExpertAgentStoredContextItemDeleteInput,
   ): Promise<ExpertAgentContextResult<{ readonly id: string }>> {
@@ -235,19 +302,47 @@ export class FileSystemContextStore implements ExpertAgentContextStore {
     input: ExpertAgentStoredContextItemSearchInput,
   ): Promise<ExpertAgentContextResult<readonly ExpertAgentContextItemSearchMatch[]>> {
     try {
+      if (input.scope === "path") {
+        return ok(await searchContextPaths(this.rootDir, input));
+      }
+
       const ripgrepResult = await searchContextWithRipgrep(this.rootDir, input, this.commandRunner);
 
       if (ripgrepResult.ok) {
-        return ok(ripgrepResult.matches);
+        if (input.scope !== "hybrid") {
+          return ok(withContentMatchType(ripgrepResult.matches));
+        }
+
+        return ok(
+          mergeSearchMatches(
+            withContentMatchType(ripgrepResult.matches),
+            await searchContextPaths(this.rootDir, input),
+          ),
+        );
       }
 
       const grepResult = await searchContextWithGrep(this.rootDir, input, this.commandRunner);
 
       if (grepResult.ok) {
-        return ok(grepResult.matches);
+        if (input.scope !== "hybrid") {
+          return ok(withContentMatchType(grepResult.matches));
+        }
+
+        return ok(
+          mergeSearchMatches(
+            withContentMatchType(grepResult.matches),
+            await searchContextPaths(this.rootDir, input),
+          ),
+        );
       }
 
-      return ok(await searchContextWithFileReads(this.rootDir, input));
+      const fallbackMatches = withContentMatchType(await searchContextWithFileReads(this.rootDir, input));
+
+      if (input.scope !== "hybrid") {
+        return ok(fallbackMatches);
+      }
+
+      return ok(mergeSearchMatches(fallbackMatches, await searchContextPaths(this.rootDir, input)));
     } catch (caught) {
       return error("store_error", "Failed to search file system context.", toErrorDetails(caught));
     }
@@ -263,6 +358,15 @@ export class FileSystemContextStore implements ExpertAgentContextStore {
 
     return filePath;
   }
+}
+
+function withContentMatchType(
+  matches: readonly ExpertAgentContextItemSearchMatch[],
+): readonly ExpertAgentContextItemSearchMatch[] {
+  return matches.map((match) => ({
+    ...match,
+    matchType: match.matchType ?? "content",
+  }));
 }
 
 function calculateLineRange(
@@ -298,7 +402,7 @@ function countNewlines(content: string): number {
 
 function validateExpectedRevision(
   existing: ExpertAgentStoredContextItem,
-  input: ExpertAgentStoredContextItemUpdateInput,
+  input: ExpertAgentStoredContextItemUpdateInput | ExpertAgentStoredContextItemEditInput,
 ): ExpertAgentContextResult<never> | undefined {
   if (input.expectedRevision !== undefined && existing.revision !== input.expectedRevision) {
     return error("context_conflict", `Context revision conflict: ${input.id}`, {
@@ -605,6 +709,58 @@ async function searchContextWithRipgrep(
       ok: false,
     };
   }
+}
+
+async function searchContextPaths(
+  rootDir: string,
+  input: ExpertAgentStoredContextItemSearchInput,
+): Promise<readonly ExpertAgentContextItemSearchMatch[]> {
+  const files = await collectMarkdownFiles(rootDir);
+  const matches: ExpertAgentContextItemSearchMatch[] = [];
+  const query = input.caseSensitive === true ? input.query : input.query.toLowerCase();
+  const maxResults = input.maxResults ?? 20;
+
+  for (const filePath of files) {
+    const id = toContextId(rootDir, filePath);
+    const candidate = input.caseSensitive === true ? id : id.toLowerCase();
+
+    if (!candidate.includes(query) && !matchContextPattern(id, input.query, input.caseSensitive)) {
+      continue;
+    }
+
+    matches.push({
+      id,
+      matchType: "path",
+      line: id,
+    });
+
+    if (matches.length >= maxResults) {
+      return matches;
+    }
+  }
+
+  return matches;
+}
+
+function mergeSearchMatches(
+  left: readonly ExpertAgentContextItemSearchMatch[],
+  right: readonly ExpertAgentContextItemSearchMatch[],
+): readonly ExpertAgentContextItemSearchMatch[] {
+  const merged: ExpertAgentContextItemSearchMatch[] = [...left];
+  const seen = new Set(left.map((match) => `${match.id}:${match.matchType ?? "content"}:${match.lineNumber ?? 0}:${match.line}`));
+
+  for (const match of right) {
+    const key = `${match.id}:${match.matchType ?? "content"}:${match.lineNumber ?? 0}:${match.line}`;
+
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    merged.push(match);
+  }
+
+  return merged;
 }
 
 async function searchContextWithGrep(

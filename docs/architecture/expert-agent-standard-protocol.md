@@ -181,14 +181,10 @@ context:
       access: read
       index:
         strategy: hybrid
-        summaryFile: ./context/order-domain-expert/index.md
       load:
-        mustLoad:
+        preloadPaths:
           - ./context/order-domain-expert/profile.md
           - ./context/order-domain-expert/safety.md
-        lazyLoad:
-          - ./context/order-domain-expert/business-rules/**
-          - ./context/order-domain-expert/architecture/**
         forbiddenLoad:
           - ./context/order-domain-expert/archive/**
 
@@ -489,14 +485,10 @@ context:
       access: read
       index:
         strategy: hybrid
-        summaryFile: ./context/order-domain-expert/index.md
       load:
-        mustLoad:
+        preloadPaths:
           - ./context/order-domain-expert/profile.md
           - ./context/order-domain-expert/safety.md
-        lazyLoad:
-          - ./context/order-domain-expert/business-rules/**
-          - ./context/order-domain-expert/architecture/**
         forbiddenLoad:
           - ./context/order-domain-expert/archive/**
 ```
@@ -511,9 +503,7 @@ context:
 | `roots[].path`               | 否   | workspace 或仓库内相对路径               |
 | `roots[].access`             | 是   | `read`、`readwrite`                      |
 | `roots[].index.strategy`     | 是   | `summary`、`vector`、`keyword`、`hybrid` |
-| `roots[].index.summaryFile`  | 否   | 上下文目录摘要入口                       |
-| `roots[].load.mustLoad`      | 否   | 每次运行必须加载                         |
-| `roots[].load.lazyLoad`      | 否   | 可按任务检索加载                         |
+| `roots[].load.preloadPaths`  | 否   | 每次运行预加载的路径                     |
 | `roots[].load.forbiddenLoad` | 否   | 禁止加载路径                             |
 
 渐进式加载流程：
@@ -522,7 +512,7 @@ context:
 读取 Manifest
 → 校验任务输入
 → 加载专家身份、能力范围、schema 和必要 AGENTS.md
-→ 加载 context.mustLoad 中的短上下文
+→ 加载 context.preloadPaths 中的短上下文
 → 根据任务检索 summary/index
 → 加载相关片段
 → 必要时由 Runtime 申请读取原文
@@ -547,7 +537,7 @@ tags:
 约束：
 
 - 上下文路径必须位于声明的 context root 或 workspace root 下；
-- `forbiddenLoad` 优先级高于 `mustLoad` 和 `lazyLoad`；
+- `forbiddenLoad` 优先级高于 `preloadPaths`；
 - Agent 自进化只能写入被授权的上下文路径；
 - 发布版本应锁定上下文源版本、commit 或快照 ID；
 - 运行审计必须记录实际加载的上下文列表和摘要。

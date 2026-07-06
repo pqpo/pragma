@@ -6,6 +6,9 @@ export const HOST_CONTEXT_NAMESPACE = "host";
 export type ContextTrigger = "always_on" | "model_decision" | "manual";
 export type ContextTrustLevel = "system" | "workspace" | "user" | "external";
 export type ContextSensitivity = "public" | "internal" | "confidential" | "restricted";
+export type ContextSearchScope = "path" | "content" | "hybrid";
+export type ContextSearchMatchType = "path" | "content";
+export type ContextPreloadReason = "always_on" | "preload_path";
 
 export interface ExpertAgentContextItemReference {
   readonly namespace?: string | undefined;
@@ -140,6 +143,35 @@ export interface ExpertAgentContextItemUpdateInput {
   readonly context?: ExpertAgentRunContext | undefined;
 }
 
+export interface ExpertAgentContextItemEditInput {
+  readonly namespace: string;
+  readonly id: string;
+  readonly search: string;
+  readonly replace: string;
+  readonly replaceAll?: boolean | undefined;
+  readonly expectedRevision?: string | undefined;
+  readonly expectedEtag?: string | undefined;
+  readonly context?: ExpertAgentRunContext | undefined;
+}
+
+export interface ExpertAgentStoredContextItemEditInput {
+  readonly id: string;
+  readonly search: string;
+  readonly replace: string;
+  readonly replaceAll?: boolean | undefined;
+  readonly expectedRevision?: string | undefined;
+  readonly expectedEtag?: string | undefined;
+  readonly context?: ExpertAgentRunContext | undefined;
+}
+
+export interface ExpertAgentContextItemEditResult extends ExpertAgentContextItem {
+  readonly replacementCount: number;
+}
+
+export interface ExpertAgentStoredContextItemEditResult extends ExpertAgentStoredContextItem {
+  readonly replacementCount: number;
+}
+
 export interface ExpertAgentContextItemDeleteInput {
   readonly namespace: string;
   readonly id: string;
@@ -159,6 +191,7 @@ export interface ExpertAgentContextItemDeleteResult {
 export interface ExpertAgentContextItemSearchInput {
   readonly namespace?: string | undefined;
   readonly query: string;
+  readonly scope?: ContextSearchScope | undefined;
   readonly maxResults?: number | undefined;
   readonly contextLines?: number | undefined;
   readonly caseSensitive?: boolean | undefined;
@@ -168,7 +201,8 @@ export interface ExpertAgentContextItemSearchInput {
 export interface ExpertAgentContextItemSearchMatch {
   readonly namespace?: string | undefined;
   readonly id: string;
-  readonly lineNumber: number;
+  readonly matchType?: ContextSearchMatchType | undefined;
+  readonly lineNumber?: number | undefined;
   readonly line: string;
   readonly before?: readonly string[] | undefined;
   readonly after?: readonly string[] | undefined;
@@ -176,6 +210,7 @@ export interface ExpertAgentContextItemSearchMatch {
 
 export interface ExpertAgentStoredContextItemSearchInput {
   readonly query: string;
+  readonly scope?: ContextSearchScope | undefined;
   readonly maxResults?: number | undefined;
   readonly contextLines?: number | undefined;
   readonly caseSensitive?: boolean | undefined;
@@ -198,6 +233,36 @@ export interface ExpertAgentStoredContextItemUpdateInput {
   readonly context?: ExpertAgentRunContext | undefined;
 }
 
+export interface ExpertAgentContextRootLoadRules {
+  readonly preloadPaths?: readonly string[] | undefined;
+  readonly forbiddenLoad?: readonly string[] | undefined;
+}
+
+export interface ExpertAgentContextRoot {
+  readonly namespace?: string | undefined;
+  readonly path?: string | undefined;
+  readonly load?: ExpertAgentContextRootLoadRules | undefined;
+}
+
+export interface NormalizedExpertAgentContextRoot {
+  readonly namespace: string;
+  readonly path?: string | undefined;
+  readonly load: {
+    readonly preloadPaths: readonly string[];
+    readonly forbiddenLoad: readonly string[];
+  };
+}
+
+export interface ContextAssemblySelection {
+  readonly context: readonly ExpertAgentContextItemSummary[];
+  readonly preload: readonly ContextPreloadSelection[];
+  readonly excluded: readonly ExpertAgentContextItemReference[];
+}
+
+export interface ContextPreloadSelection extends ExpertAgentContextItemReference {
+  readonly reasons: readonly ContextPreloadReason[];
+}
+
 export interface ExpertAgentContextStore {
   readonly listContext: (
     input: ExpertAgentContextItemListInput,
@@ -211,6 +276,9 @@ export interface ExpertAgentContextStore {
   readonly updateContext: (
     input: ExpertAgentStoredContextItemUpdateInput,
   ) => Promise<ExpertAgentContextResult<ExpertAgentStoredContextItem>>;
+  readonly editContext: (
+    input: ExpertAgentStoredContextItemEditInput,
+  ) => Promise<ExpertAgentContextResult<ExpertAgentStoredContextItemEditResult>>;
   readonly deleteContext: (
     input: ExpertAgentStoredContextItemDeleteInput,
   ) => Promise<ExpertAgentContextResult<{ readonly id: string }>>;
@@ -226,10 +294,12 @@ export interface ContextSystemOptions {
     | Readonly<Record<string, ExpertAgentContextStore>>
     | readonly (readonly [string, ExpertAgentContextStore])[]
     | undefined;
+  readonly roots?: readonly ExpertAgentContextRoot[] | undefined;
 }
 
 export class ContextSystem {
   readonly stores = new Map<string, ExpertAgentContextStore>();
+  readonly roots: readonly NormalizedExpertAgentContextRoot[];
 
   constructor(options: ContextSystemOptions = {}) {
     if (options.store !== undefined) {
@@ -239,6 +309,8 @@ export class ContextSystem {
     for (const [namespace, store] of normalizeStoreEntries(options.stores)) {
       this.stores.set(namespace, store);
     }
+
+    this.roots = normalizeContextRoots(options.roots);
   }
 
   register(
@@ -251,9 +323,13 @@ export class ContextSystem {
     }
 
     if (this.stores.has(namespaceResult.value)) {
-      return error("context_already_exists", `Context store already exists: ${namespaceResult.value}`, {
-        namespace: namespaceResult.value,
-      });
+      return error(
+        "context_already_exists",
+        `Context store already exists: ${namespaceResult.value}`,
+        {
+          namespace: namespaceResult.value,
+        },
+      );
     }
 
     this.stores.set(namespaceResult.value, input.store);
@@ -277,22 +353,62 @@ export class ContextSystem {
         return listResult;
       }
 
-      summaries.push(
-        ...listResult.value.map((context) => normalizeContextSummary(context, namespace)),
-      );
+      summaries.push(...listResult.value.map((item) => normalizeContextSummary(item, namespace)));
     }
 
-    return ok(
-      summaries.sort((left, right) => {
-        const namespaceComparison = (left.namespace ?? "").localeCompare(right.namespace ?? "");
+    return ok(sortContextSummaries(summaries));
+  }
 
-        if (namespaceComparison !== 0) {
-          return namespaceComparison;
+  selectContext(
+    summaries: readonly ExpertAgentContextItemSummary[],
+  ): ContextAssemblySelection {
+    if (this.roots.length === 0) {
+      return {
+        context: sortContextSummaries(summaries),
+        preload: createAlwaysOnPreloadSelections(summaries),
+        excluded: [],
+      };
+    }
+
+    const excluded = new Map<string, ExpertAgentContextItemReference>();
+    const preload = new Map<string, ContextPreloadReason[]>();
+    const allowed = new Map<string, ExpertAgentContextItemSummary>();
+
+    for (const summary of summaries) {
+      const key = createContextReferenceKey(summary);
+
+      for (const root of this.roots) {
+        if (!matchesContextRoot(summary, root)) {
+          continue;
         }
 
-        return left.id.localeCompare(right.id);
-      }),
-    );
+        if (matchesAnyPattern(summary.id, root.load.forbiddenLoad)) {
+          excluded.set(key, toContextReference(summary));
+          allowed.delete(key);
+          preload.delete(key);
+          break;
+        }
+
+        allowed.set(key, summary);
+
+        if (matchesAnyPattern(summary.id, root.load.preloadPaths)) {
+          addPreloadReason(preload, key, "preload_path");
+        }
+
+        if (summary.metadata.trigger === "always_on") {
+          addPreloadReason(preload, key, "always_on");
+        }
+      }
+    }
+
+    return {
+      context: sortContextSummaries([...allowed.values()]),
+      preload: [...preload.entries()]
+        .filter(([key]) => !excluded.has(key))
+        .map(([key, reasons]) => toPreloadSelection(allowed, key, reasons))
+        .filter((item): item is ContextPreloadSelection => item !== undefined),
+      excluded: [...excluded.values()],
+    };
   }
 
   async read(
@@ -389,6 +505,33 @@ export class ContextSystem {
     return ok(normalizeContext(result.value, namespaceResult.value));
   }
 
+  async edit(
+    input: ExpertAgentContextItemEditInput,
+  ): Promise<ExpertAgentContextResult<ExpertAgentContextItemEditResult>> {
+    const normalizedInput = normalizeEditInput(input);
+
+    if (!normalizedInput.ok) {
+      return normalizedInput;
+    }
+
+    const storeResult = this.getStore(normalizedInput.value.namespace);
+
+    if (!storeResult.ok) {
+      return storeResult;
+    }
+
+    const result = await storeResult.value.editContext(stripNamespace(normalizedInput.value));
+
+    if (!result.ok) {
+      return result;
+    }
+
+    return ok({
+      ...normalizeContext(result.value, normalizedInput.value.namespace),
+      replacementCount: result.value.replacementCount,
+    });
+  }
+
   async delete(
     input: ExpertAgentContextItemDeleteInput,
   ): Promise<ExpertAgentContextResult<ExpertAgentContextItemDeleteResult>> {
@@ -437,25 +580,33 @@ export class ContextSystem {
       }
 
       matches.push(...result.value.map((match) => normalizeSearchMatch(match, namespace)));
-
     }
 
     return ok(
-      matches.sort((left, right) => {
-        const namespaceComparison = (left.namespace ?? "").localeCompare(right.namespace ?? "");
+      matches
+        .sort((left, right) => {
+          const namespaceComparison = (left.namespace ?? "").localeCompare(right.namespace ?? "");
 
-        if (namespaceComparison !== 0) {
-          return namespaceComparison;
-        }
+          if (namespaceComparison !== 0) {
+            return namespaceComparison;
+          }
 
-        const idComparison = left.id.localeCompare(right.id);
+          const idComparison = left.id.localeCompare(right.id);
 
-        if (idComparison !== 0) {
-          return idComparison;
-        }
+          if (idComparison !== 0) {
+            return idComparison;
+          }
 
-        return left.lineNumber - right.lineNumber;
-      }).slice(0, normalizedInput.value.maxResults ?? 20),
+          const leftLine = left.lineNumber ?? 0;
+          const rightLine = right.lineNumber ?? 0;
+
+          if (leftLine !== rightLine) {
+            return leftLine - rightLine;
+          }
+
+          return (left.matchType ?? "content").localeCompare(right.matchType ?? "content");
+        })
+        .slice(0, normalizedInput.value.maxResults ?? 20),
     );
   }
 
@@ -469,9 +620,13 @@ export class ContextSystem {
     const store = this.stores.get(namespaceResult.value);
 
     if (store === undefined) {
-      return error("store_unavailable", `ExpertAgent context store is not configured: ${namespaceResult.value}`, {
-        namespace: namespaceResult.value,
-      });
+      return error(
+        "store_unavailable",
+        `ExpertAgent context store is not configured: ${namespaceResult.value}`,
+        {
+          namespace: namespaceResult.value,
+        },
+      );
     }
 
     return ok(store);
@@ -636,12 +791,44 @@ export function normalizeSearchInput(
     return error("invalid_input", "Context search query must not be empty.");
   }
 
+  const scope = normalizeSearchScope(input.scope);
+
+  if (!scope.ok) {
+    return scope;
+  }
+
   return ok({
     ...(input.namespace === undefined ? {} : { namespace: input.namespace }),
     query,
+    scope: scope.value,
     maxResults: clampInteger(input.maxResults, 1, 50, 20),
     contextLines: clampInteger(input.contextLines, 0, 5, 0),
     caseSensitive: input.caseSensitive ?? false,
+    ...(input.context === undefined ? {} : { context: input.context }),
+  });
+}
+
+export function normalizeEditInput(
+  input: ExpertAgentContextItemEditInput,
+): ExpertAgentContextResult<ExpertAgentContextItemEditInput> {
+  const namespace = normalizeNamespace(input.namespace);
+
+  if (!namespace.ok) {
+    return namespace;
+  }
+
+  if (input.search.trim().length === 0) {
+    return error("invalid_input", 'Context edit parameter "search" must not be empty.');
+  }
+
+  return ok({
+    namespace: namespace.value,
+    id: input.id,
+    search: input.search,
+    replace: input.replace,
+    replaceAll: input.replaceAll ?? false,
+    ...(input.expectedRevision === undefined ? {} : { expectedRevision: input.expectedRevision }),
+    ...(input.expectedEtag === undefined ? {} : { expectedEtag: input.expectedEtag }),
     ...(input.context === undefined ? {} : { context: input.context }),
   });
 }
@@ -653,7 +840,8 @@ export function normalizeSearchMatch(
   return {
     ...(namespace === undefined ? {} : { namespace }),
     id: match.id,
-    lineNumber: Math.max(1, Math.trunc(match.lineNumber)),
+    matchType: normalizeSearchMatchType(match.matchType ?? "content"),
+    ...(match.lineNumber === undefined ? {} : { lineNumber: Math.max(1, Math.trunc(match.lineNumber)) }),
     line: match.line,
     ...(match.before === undefined ? {} : { before: [...match.before] }),
     ...(match.after === undefined ? {} : { after: [...match.after] }),
@@ -697,6 +885,57 @@ export function isSameContextItemReference(
   return left.namespace === right.namespace && left.id === right.id;
 }
 
+export function matchesAnyPattern(id: string, patterns: readonly string[]): boolean {
+  return patterns.some((pattern) => matchContextPattern(id, pattern));
+}
+
+export function matchContextPattern(
+  id: string,
+  pattern: string,
+  caseSensitive = true,
+): boolean {
+  const normalizedPattern = pattern.trim();
+
+  if (normalizedPattern.length === 0) {
+    return false;
+  }
+
+  let source = "^";
+
+  for (let index = 0; index < normalizedPattern.length; index += 1) {
+    const character = normalizedPattern[index];
+
+    if (character === undefined) {
+      continue;
+    }
+
+    if (character === "*") {
+      const next = normalizedPattern[index + 1];
+
+      if (next === "*") {
+        source += ".*";
+        index += 1;
+      } else {
+        source += "[^/]*";
+      }
+
+      continue;
+    }
+
+    if (character === "?") {
+      source += "[^/]";
+      continue;
+    }
+
+    source += character.replace(/[.+^${}()|[\]\\]/g, "\\$&");
+  }
+
+  source += "$";
+  const regex = new RegExp(source, caseSensitive ? undefined : "i");
+
+  return regex.test(id);
+}
+
 function normalizeNamespace(namespace: string | undefined): ExpertAgentContextResult<string> {
   if (typeof namespace !== "string" || namespace.trim().length === 0) {
     return error("invalid_input", "Context namespace must be a non-empty string.");
@@ -729,6 +968,84 @@ function normalizeStoreEntries(
   }
 
   return Object.entries(stores);
+}
+
+function normalizeContextRoots(
+  roots: readonly ExpertAgentContextRoot[] | undefined,
+): readonly NormalizedExpertAgentContextRoot[] {
+  if (roots === undefined) {
+    return [];
+  }
+
+  return roots.map((root) => {
+    const namespaceResult = normalizeNamespace(root.namespace ?? HOST_CONTEXT_NAMESPACE);
+
+    return {
+      namespace: namespaceResult.ok ? namespaceResult.value : HOST_CONTEXT_NAMESPACE,
+      ...(root.path === undefined ? {} : { path: trimPattern(root.path) }),
+      load: {
+        preloadPaths: normalizePatterns(root.load?.preloadPaths),
+        forbiddenLoad: normalizePatterns(root.load?.forbiddenLoad),
+      },
+    };
+  });
+}
+
+function createAlwaysOnPreloadSelections(
+  summaries: readonly ExpertAgentContextItemSummary[],
+): readonly ContextPreloadSelection[] {
+  return summaries
+    .filter((summary) => summary.metadata.trigger === "always_on")
+    .map((summary) => ({
+      ...toContextReference(summary),
+      reasons: ["always_on"],
+    }));
+}
+
+function addPreloadReason(
+  preload: Map<string, ContextPreloadReason[]>,
+  key: string,
+  reason: ContextPreloadReason,
+): void {
+  const existing = preload.get(key);
+
+  if (existing === undefined) {
+    preload.set(key, [reason]);
+    return;
+  }
+
+  if (!existing.includes(reason)) {
+    existing.push(reason);
+  }
+}
+
+function toPreloadSelection(
+  allowed: ReadonlyMap<string, ExpertAgentContextItemSummary>,
+  key: string | undefined,
+  reasons: readonly ContextPreloadReason[],
+): ContextPreloadSelection | undefined {
+  if (key === undefined) {
+    return undefined;
+  }
+
+  const summary = allowed.get(key);
+
+  if (summary === undefined) {
+    return undefined;
+  }
+
+  return {
+    ...toContextReference(summary),
+    reasons: [...reasons],
+  };
+}
+
+function normalizePatterns(patterns: readonly string[] | undefined): readonly string[] {
+  return (patterns ?? []).map(trimPattern).filter((pattern) => pattern.length > 0);
+}
+
+function trimPattern(pattern: string): string {
+  return pattern.trim();
 }
 
 function stripNamespace<TInput extends { readonly namespace?: string | undefined }>(
@@ -831,6 +1148,20 @@ function normalizeSensitivity(value: string | undefined): ContextSensitivity {
   return "internal";
 }
 
+function normalizeSearchScope(
+  scope: ContextSearchScope | undefined,
+): ExpertAgentContextResult<ContextSearchScope> {
+  if (scope === undefined || scope === "hybrid" || scope === "content" || scope === "path") {
+    return ok(scope ?? "hybrid");
+  }
+
+  return error("invalid_input", "Context search scope must be path, content, or hybrid.");
+}
+
+function normalizeSearchMatchType(matchType: ContextSearchMatchType | undefined): ContextSearchMatchType {
+  return matchType === "path" ? "path" : "content";
+}
+
 function clampInteger(
   value: number | undefined,
   min: number,
@@ -842,4 +1173,44 @@ function clampInteger(
   }
 
   return Math.min(max, Math.max(min, Math.trunc(value as number)));
+}
+
+function createContextReferenceKey(reference: ExpertAgentContextItemReference): string {
+  return `${reference.namespace ?? ""}::${reference.id}`;
+}
+
+function toContextReference(context: ExpertAgentContextItemReference): ExpertAgentContextItemReference {
+  return {
+    ...(context.namespace === undefined ? {} : { namespace: context.namespace }),
+    id: context.id,
+  };
+}
+
+function sortContextSummaries(
+  summaries: readonly ExpertAgentContextItemSummary[],
+): readonly ExpertAgentContextItemSummary[] {
+  return [...summaries].sort((left, right) => {
+    const namespaceComparison = (left.namespace ?? "").localeCompare(right.namespace ?? "");
+
+    if (namespaceComparison !== 0) {
+      return namespaceComparison;
+    }
+
+    return left.id.localeCompare(right.id);
+  });
+}
+
+function matchesContextRoot(
+  summary: ExpertAgentContextItemSummary,
+  root: NormalizedExpertAgentContextRoot,
+): boolean {
+  if ((summary.namespace ?? HOST_CONTEXT_NAMESPACE) !== root.namespace) {
+    return false;
+  }
+
+  if (root.path === undefined) {
+    return true;
+  }
+
+  return summary.id === root.path || summary.id.startsWith(`${root.path.replace(/\/+$/, "")}/`);
 }

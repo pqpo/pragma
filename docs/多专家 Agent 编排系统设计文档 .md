@@ -494,17 +494,13 @@ Playbook 任务上下文
 可以定义 ContextPlan：
 
 ```yaml
-mustLoad:
+preloadPaths:
   - expert-profile.md
   - safety-policy.md
 
 shouldLoad:
   - related-business-rules
   - related-code-map
-
-lazyLoad:
-  - historical-decisions
-  - long-tail-faq
 
 forbiddenLoad:
   - archived-docs

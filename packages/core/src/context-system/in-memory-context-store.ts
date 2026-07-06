@@ -9,12 +9,14 @@ import type {
   ExpertAgentStoredContextItem,
   ExpertAgentStoredContextRegisterInput,
   ExpertAgentStoredContextItemDeleteInput,
+  ExpertAgentStoredContextItemEditResult,
+  ExpertAgentStoredContextItemEditInput,
   ExpertAgentStoredContextItemReadInput,
   ExpertAgentStoredContextItemReadResult,
   ExpertAgentStoredContextItemSearchInput,
   ExpertAgentStoredContextItemUpdateInput,
 } from "./context-system.ts";
-import { error, normalizeMetadata, ok } from "./context-system.ts";
+import { error, matchContextPattern, normalizeMetadata, ok } from "./context-system.ts";
 
 export type InMemoryContextStoreContextMap = Readonly<Record<string, string>>;
 
@@ -154,6 +156,60 @@ export class InMemoryContextStore implements ExpertAgentContextStore {
     return ok(context);
   }
 
+  async editContext(
+    input: ExpertAgentStoredContextItemEditInput,
+  ): Promise<ExpertAgentContextResult<ExpertAgentStoredContextItemEditResult>> {
+    const existing = this.context.get(input.id);
+
+    if (existing === undefined) {
+      return error("context_not_found", `Context not found: ${input.id}`, { id: input.id });
+    }
+
+    const conflict = validateExpectedRevision(existing, input);
+
+    if (conflict !== undefined) {
+      return conflict;
+    }
+
+    const replacementCount = existing.content.split(input.search).length - 1;
+
+    if (replacementCount === 0) {
+      return error("invalid_input", `Context edit search did not match: ${input.id}`, {
+        id: input.id,
+        search: input.search,
+      });
+    }
+
+    if (replacementCount > 1 && input.replaceAll !== true) {
+      return error("invalid_input", `Context edit search matched multiple locations: ${input.id}`, {
+        id: input.id,
+        search: input.search,
+        replacementCount,
+      });
+    }
+
+    const content =
+      input.replaceAll === true
+        ? existing.content.split(input.search).join(input.replace)
+        : existing.content.replace(input.search, input.replace);
+    const sizeError = validateContextSize(content, this.maxContextBytes);
+
+    if (sizeError !== undefined) {
+      return sizeError;
+    }
+
+    const context = withContextRevision({
+      ...existing,
+      content,
+    } satisfies ExpertAgentStoredContextItem);
+    this.context.set(input.id, context);
+
+    return ok({
+      ...context,
+      replacementCount: input.replaceAll === true ? replacementCount : 1,
+    });
+  }
+
   async deleteContext(
     input: ExpertAgentStoredContextItemDeleteInput,
   ): Promise<ExpertAgentContextResult<{ readonly id: string }>> {
@@ -169,6 +225,10 @@ export class InMemoryContextStore implements ExpertAgentContextStore {
   async searchContext(
     input: ExpertAgentStoredContextItemSearchInput,
   ): Promise<ExpertAgentContextResult<readonly ExpertAgentContextItemSearchMatch[]>> {
+    if (input.scope === "path") {
+      return ok(searchContextPaths([...this.context.values()], input));
+    }
+
     const query = input.caseSensitive === true ? input.query : input.query.toLowerCase();
     const matches: ExpertAgentContextItemSearchMatch[] = [];
     const maxResults = input.maxResults ?? 20;
@@ -186,6 +246,7 @@ export class InMemoryContextStore implements ExpertAgentContextStore {
 
         matches.push({
           id: context.id,
+          matchType: "content",
           lineNumber: index + 1,
           line: trimLineEnd(line),
           before: readContextLines(lines, index - contextLines, index),
@@ -198,13 +259,32 @@ export class InMemoryContextStore implements ExpertAgentContextStore {
       }
     }
 
+    if (input.scope === "hybrid") {
+      const pathMatches = searchContextPaths([...this.context.values()], input);
+      const seen = new Set(matches.map((match) => `${match.id}:${match.lineNumber ?? 0}:${match.line}`));
+
+      for (const match of pathMatches) {
+        const key = `${match.id}:${match.lineNumber ?? 0}:${match.line}`;
+
+        if (seen.has(key)) {
+          continue;
+        }
+
+        matches.push(match);
+
+        if (matches.length >= maxResults) {
+          break;
+        }
+      }
+    }
+
     return ok(matches);
   }
 }
 
 function validateExpectedRevision(
   existing: ExpertAgentStoredContextItem,
-  input: ExpertAgentStoredContextItemUpdateInput,
+  input: ExpertAgentStoredContextItemUpdateInput | ExpertAgentStoredContextItemEditInput,
 ): ExpertAgentContextResult<never> | undefined {
   if (input.expectedRevision !== undefined && existing.revision !== input.expectedRevision) {
     return error("context_conflict", `Context revision conflict: ${input.id}`, {
@@ -223,6 +303,38 @@ function validateExpectedRevision(
   }
 
   return undefined;
+}
+
+function searchContextPaths(
+  contexts: readonly ExpertAgentStoredContextItem[],
+  input: ExpertAgentStoredContextItemSearchInput,
+): readonly ExpertAgentContextItemSearchMatch[] {
+  const maxResults = input.maxResults ?? 20;
+  const pattern = input.caseSensitive === true ? input.query : input.query.toLowerCase();
+  const matches: ExpertAgentContextItemSearchMatch[] = [];
+
+  for (const context of contexts) {
+    const candidate = input.caseSensitive === true ? context.id : context.id.toLowerCase();
+
+    if (
+      !candidate.includes(pattern) &&
+      !matchContextPattern(context.id, input.query, input.caseSensitive)
+    ) {
+      continue;
+    }
+
+    matches.push({
+      id: context.id,
+      matchType: "path",
+      line: context.id,
+    });
+
+    if (matches.length >= maxResults) {
+      return matches;
+    }
+  }
+
+  return matches;
 }
 
 function validateContextSize(

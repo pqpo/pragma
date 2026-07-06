@@ -1,6 +1,8 @@
 import type { IExpertAgent } from "./expert-agent.ts";
 import { HOST_CONTEXT_NAMESPACE } from "../context-system/context-system.ts";
 import type {
+  ContextPreloadReason,
+  ContextPreloadSelection,
   ContextTrustLevel,
   ContextSystem,
   ExpertAgentContextItem,
@@ -33,6 +35,8 @@ export interface ContextSnapshot {
   readonly releaseDigest: string;
   readonly contextRevisions: readonly ContextRevision[];
   readonly retrievedChunks: readonly ContextRetrievedChunk[];
+  readonly loadedContexts?: readonly ContextLoadedSelection[] | undefined;
+  readonly excludedContexts?: readonly ExpertAgentContextItemReference[] | undefined;
   readonly trustLevel: ContextTrustLevel;
   readonly tokenBudget: number;
   readonly downgradedAlwaysOnContexts?: readonly ExpertAgentContextItemReference[] | undefined;
@@ -53,6 +57,12 @@ export interface ContextRetrievedChunk {
   readonly startOffset: number;
   readonly endOffset: number;
   readonly truncated: boolean;
+}
+
+export interface ContextLoadedSelection {
+  readonly namespace?: string | undefined;
+  readonly id: string;
+  readonly reasons: readonly ContextPreloadReason[];
 }
 
 export interface ContextManagerOptions {
@@ -76,28 +86,31 @@ export class ContextManager {
     const budget = options.characterBudget ?? options.tokenBudget ?? 12_000;
     const contextReadByteBudget = options.contextReadByteBudget ?? 8_000;
     const indexResult = await this.contextSystem.index(runContext);
-    const contextSummaries = indexResult.ok ? indexResult.value : [];
-    const alwaysOnContexts = await this.loadAlwaysOnContexts(contextSummaries, runContext, {
+    const indexedContext = indexResult.ok ? indexResult.value : [];
+    const selected = this.contextSystem.selectContext(indexedContext);
+    const preloadedContexts = await this.loadPreloadedContexts(selected.preload, runContext, {
       contextReadByteBudget,
     });
     const fitted = this.fitSystemPromptToBudget({
       budget,
       contextError: indexResult.ok ? undefined : indexResult.error.message,
-      contextSummaries,
+      contextSummaries: selected.context,
     });
     const truncationReason =
-      (alwaysOnContexts.some((context) => context.contentRange?.truncated === true)
+      (preloadedContexts.some((context) => context.contentRange?.truncated === true)
         ? "always_on_context_budget_exceeded"
         : undefined) ?? (fitted.promptWasOverBudget ? "context_budget_exceeded" : undefined);
     const snapshot: ContextSnapshot = {
       releaseDigest: `${this.agent.id}@${this.agent.version}`,
-      contextRevisions: contextSummaries.map((context) => ({
+      contextRevisions: selected.context.map((context) => ({
         ...(context.namespace === undefined ? {} : { namespace: context.namespace }),
         id: context.id,
         ...(context.revision === undefined ? {} : { revision: context.revision }),
         ...(context.etag === undefined ? {} : { etag: context.etag }),
       })),
-      retrievedChunks: createRetrievedChunks(alwaysOnContexts),
+      retrievedChunks: createRetrievedChunks(preloadedContexts),
+      loadedContexts: createLoadedSelections(preloadedContexts, selected.preload),
+      ...(selected.excluded.length === 0 ? {} : { excludedContexts: selected.excluded }),
       trustLevel: options.trustLevel ?? "workspace",
       tokenBudget: options.tokenBudget ?? budget,
       ...(truncationReason === undefined ? {} : { truncationReason }),
@@ -105,7 +118,7 @@ export class ContextManager {
 
     return {
       systemPrompt: fitted.systemPrompt,
-      startupMessages: createAlwaysOnStartupMessages(alwaysOnContexts),
+      startupMessages: createAlwaysOnStartupMessages(preloadedContexts),
       context: fitted.contextSummaries,
       snapshot,
     };
@@ -154,16 +167,15 @@ export class ContextManager {
     return sections.filter((section) => section !== undefined && section.length > 0).join("\n\n");
   }
 
-  private async loadAlwaysOnContexts(
-    summaries: readonly ExpertAgentContextItemSummary[],
+  private async loadPreloadedContexts(
+    preload: readonly ContextPreloadSelection[],
     runContext: ExpertAgentRunContext,
     options: {
       readonly contextReadByteBudget: number;
     },
   ): Promise<readonly ExpertAgentContextItem[]> {
-    const alwaysOnContexts = summaries.filter((item) => item.metadata.trigger === "always_on");
     const loaded = await Promise.all(
-      alwaysOnContexts.map((item) =>
+      preload.map((item) =>
         this.contextSystem.read({
           namespace: item.namespace ?? HOST_CONTEXT_NAMESPACE,
           id: item.id,
@@ -175,6 +187,21 @@ export class ContextManager {
 
     return loaded.filter((result) => result.ok).map((result) => withTruncationNotice(result.value));
   }
+}
+
+function createLoadedSelections(
+  contexts: readonly ExpertAgentContextItem[],
+  preload: readonly ContextPreloadSelection[],
+): readonly ContextLoadedSelection[] {
+  const reasonsByKey = new Map(
+    preload.map((item) => [createReferenceKey(item), [...item.reasons]] as const),
+  );
+
+  return contexts.map((context) => ({
+    ...(context.namespace === undefined ? {} : { namespace: context.namespace }),
+    id: context.id,
+    reasons: reasonsByKey.get(createReferenceKey(context)) ?? [],
+  }));
 }
 
 function withTruncationNotice(context: ExpertAgentContextItem): ExpertAgentContextItem {
@@ -234,6 +261,10 @@ function createRetrievedChunk(
     endOffset,
     truncated,
   };
+}
+
+function createReferenceKey(reference: ExpertAgentContextItemReference): string {
+  return `${reference.namespace ?? HOST_CONTEXT_NAMESPACE}::${reference.id}`;
 }
 
 function createAlwaysOnStartupMessages(

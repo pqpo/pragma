@@ -474,6 +474,11 @@ const contextTools = agent.createDefaultTools({
 
 `ContextSystem` 可以注册多个 namespace，每个 namespace 对应一个 store。
 
+更完整的字段语义和示例见：
+
+- [Context 使用指南](./context.md)
+- [Context 配置示例](./context-examples.md)
+
 ```ts
 import {
   ContextSystem,
