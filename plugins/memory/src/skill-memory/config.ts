@@ -1,8 +1,8 @@
-import { HOST_CONTEXT_NAMESPACE } from "../../context-system/context-system.ts";
 import {
+  HOST_CONTEXT_NAMESPACE,
   createExpertAgentPluginConfigEnvName,
   type ExpertAgentPluginSetupContext,
-} from "../../plugins/expert-agent-plugin.ts";
+} from "@pragma/core";
 
 import { SKILL_MEMORY_CONFIG_CONTEXT_ID, SKILL_MEMORY_ID } from "./constants.ts";
 import { SkillMemoryConfigSchema } from "./schema.ts";

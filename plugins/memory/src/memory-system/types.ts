@@ -1,4 +1,4 @@
-import type { ExpertAgentRunContext } from "../runtime/run-context.ts";
+import type { ExpertAgentRunContext } from "@pragma/core";
 
 export type MemoryType = "task" | "experience" | "fact" | "skill";
 

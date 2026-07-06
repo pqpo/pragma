@@ -1,3 +1,5 @@
+import type { ExpertAgentRunContext } from "../runtime/run-context.ts";
+
 export interface ExpertAgentToolCallResult {
   readonly text: string;
   readonly isError?: boolean;
@@ -70,6 +72,7 @@ export interface ExpertAgentToolApproval {
 export interface ExpertAgentManagedToolCallContext {
   readonly toolCallId?: string | undefined;
   readonly humanInteraction?: ExpertAgentHumanInteractionHandler | undefined;
+  readonly runContext?: ExpertAgentRunContext | undefined;
 }
 
 export interface ExpertAgentManagedTool<TName extends string = string, TResult = unknown> {

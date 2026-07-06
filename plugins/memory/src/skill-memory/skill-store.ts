@@ -1,17 +1,20 @@
 import { readFile, rm } from "node:fs/promises";
 
 import type {
-  MemoryResult,
-  RuntimeMemoryRetrieveInput,
-  SkillMemoryGetInput,
-  SkillMemoryListInput,
-  SkillMemoryRecord,
-  SkillMemoryStore,
-  SkillMemoryUpdateInput,
-  SkillMemoryWriteInput,
-} from "../types.ts";
-import { errorMemory, okMemory } from "../types.ts";
-import type { ExpertAgentPluginSetupContext } from "../../plugins/expert-agent-plugin.ts";
+  ExpertAgentPluginSetupContext,
+} from "@pragma/core";
+import {
+  errorMemory,
+  okMemory,
+  type MemoryResult,
+  type RuntimeMemoryRetrieveInput,
+  type SkillMemoryGetInput,
+  type SkillMemoryListInput,
+  type SkillMemoryRecord,
+  type SkillMemoryStore,
+  type SkillMemoryUpdateInput,
+  type SkillMemoryWriteInput,
+} from "../memory-system/index.ts";
 
 import { SKILLS_PREFIX } from "./constants.ts";
 import { resolveConfig } from "./config.ts";

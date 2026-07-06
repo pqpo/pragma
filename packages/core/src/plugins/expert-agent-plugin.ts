@@ -23,7 +23,6 @@ import type {
 import type { RuntimeStreamEvent } from "../runtime/stream-events.ts";
 import type { ExpertAgentLogger, ExpertAgentLoggerProvider } from "../logging/logger.ts";
 import { createExpertAgentLogger, defaultExpertAgentLoggerProvider } from "../logging/logger.ts";
-import { MemorySystem } from "../memory-system/memory-system.ts";
 import type { SubAgentRegistry } from "../subagents/sub-agent.ts";
 import type {
   ExpertAgentManagedTool,
@@ -156,7 +155,6 @@ export interface ExpertAgentPluginSetupContext {
     | undefined;
   readonly host: ExpertAgentPluginContributions;
   readonly contextSystem: ContextSystem;
-  readonly memorySystem: MemorySystem;
   readonly workspaceRoot: string;
   readonly env: NodeJS.ProcessEnv;
   readonly config?: unknown | undefined;
@@ -251,7 +249,6 @@ export interface ResolveExpertAgentPluginsOptions {
     | undefined;
   readonly host?: ExpertAgentPluginContributions | undefined;
   readonly contextSystem?: ContextSystem | undefined;
-  readonly memorySystem?: MemorySystem | undefined;
   readonly pluginEntries?:
     | readonly (ExpertAgentPluginEntry | ExpertAgentPluginRegistration)[]
     | undefined;
@@ -310,7 +307,6 @@ export function resolveExpertAgentPlugins(
     ...(options.agent === undefined ? {} : { agent: options.agent }),
     host,
     contextSystem: options.contextSystem ?? new ContextSystem(),
-    memorySystem: options.memorySystem ?? new MemorySystem(),
     workspaceRoot: options.workspaceRoot ?? "",
     env: options.env ?? process.env,
   };

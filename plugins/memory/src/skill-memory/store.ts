@@ -1,6 +1,5 @@
 import { rm } from "node:fs/promises";
 
-import { error, ok } from "../../context-system/context-system.ts";
 import type {
   ExpertAgentContextItemSearchMatch,
   ExpertAgentContextItemSummary,
@@ -13,8 +12,9 @@ import type {
   ExpertAgentStoredContextItemSearchInput,
   ExpertAgentStoredContextItemUpdateInput,
   ExpertAgentStoredContextRegisterInput,
-} from "../../context-system/context-system.ts";
-import type { ExpertAgentPluginSetupContext } from "../../plugins/expert-agent-plugin.ts";
+  ExpertAgentPluginSetupContext,
+} from "@pragma/core";
+import { error, ok } from "@pragma/core";
 
 import { SUMMARY_CONTEXT_ID } from "./constants.ts";
 import { resolveConfig } from "./config.ts";

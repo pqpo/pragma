@@ -1,10 +1,9 @@
 import type {
   ExpertAgentPluginContributions,
-  ExpertAgentPluginEntry,
-  ExpertAgentPluginRegistration,
   ExpertAgentPluginSetupContext,
-} from "../../plugins/expert-agent-plugin.ts";
+} from "@pragma/core";
 
+import { MemorySystem } from "../memory-system/index.ts";
 import { MEMORY_CONTEXT_NAMESPACE, SKILL_MEMORY_ID } from "./constants.ts";
 import { SkillMemoryManager } from "./manager.ts";
 import {
@@ -26,52 +25,12 @@ export {
 };
 export type { SkillMemoryConfig, SkillMemoryConfigInput };
 
-const BUILTIN_SKILL_MEMORY_ENTRY: ExpertAgentPluginEntry = {
-  id: SKILL_MEMORY_ID,
-  name: "Skill Memory",
-  description:
-    "Distills reusable skill cards from runtime evidence and exposes them through typed Skill Memory plus auditable context views.",
-  version: "0.0.0",
-  tags: ["memory", "skill", "audit"],
-  manifest: {
-    schemaVersion: "pragma.plugin/v1",
-    id: SKILL_MEMORY_ID,
-    name: "Skill Memory",
-    description:
-      "Distills reusable skill cards from runtime evidence and exposes them through typed Skill Memory plus auditable context views.",
-    version: "0.0.0",
-    tags: ["memory", "skill", "audit"],
-    runtime: {
-      type: "expert-agent-plugin",
-      entry: "builtin:skill-memory",
-    },
-    capabilities: [
-      {
-        type: "context",
-        name: MEMORY_CONTEXT_NAMESPACE,
-        description: "Exposes skill-memory audit files as agent context.",
-      },
-      {
-        type: "memory",
-        name: "skill-memory",
-        description: "Registers generated skill cards as typed Skill Memory.",
-      },
-      {
-        type: "hook",
-        name: "skill-memory-pipeline",
-        description: "Captures evidence and consolidates reusable skill cards.",
-      },
-    ],
-    configuration: {
-      properties: [],
-    },
-    required_config: [],
-  },
-  setup: (context) => createSkillMemoryContributions(context),
+type SkillMemoryPluginSetupContext = ExpertAgentPluginSetupContext & {
+  readonly memorySystem: MemorySystem;
 };
 
 export function createSkillMemoryContributions(
-  context: ExpertAgentPluginSetupContext,
+  context: SkillMemoryPluginSetupContext,
 ): ExpertAgentPluginContributions {
   const store = createSkillMemoryContextStore(context);
   const skillStore = createSkillMemoryStore(context);
@@ -107,12 +66,20 @@ export function createSkillMemoryContributions(
     },
   };
 }
-
-export function createBuiltInSkillMemoryRegistration(
-  config?: SkillMemoryConfigInput | undefined,
-): ExpertAgentPluginRegistration {
-  return {
-    entry: BUILTIN_SKILL_MEMORY_ENTRY,
-    ...(config === undefined ? {} : { config }),
-  };
-}
+export const skillMemoryCapabilities = [
+  {
+    type: "context",
+    name: MEMORY_CONTEXT_NAMESPACE,
+    description: "Exposes skill-memory audit files as agent context.",
+  },
+  {
+    type: "memory",
+    name: SKILL_MEMORY_ID,
+    description: "Registers generated skill cards as typed Skill Memory.",
+  },
+  {
+    type: "hook",
+    name: "skill-memory-pipeline",
+    description: "Captures evidence and consolidates reusable skill cards.",
+  },
+] as const;

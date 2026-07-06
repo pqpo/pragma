@@ -8,10 +8,10 @@ import {
   ContextSystem,
   ExpertAgent,
   HOST_CONTEXT_NAMESPACE,
-  MemorySystem,
   createInMemoryContextStore,
-} from "../../src/index.ts";
-import type { RuntimeStreamEvent } from "../../src/index.ts";
+  type RuntimeStreamEvent,
+} from "@pragma/core";
+import { MemorySystem, createMemoryPluginEntry } from "../src/index.ts";
 
 const tempDirs: string[] = [];
 
@@ -19,8 +19,8 @@ afterEach(async () => {
   await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
 
-describe("built-in skill memory", () => {
-  it("loads skill-memory by default and exposes skill contexts", async () => {
+describe("memory plugin skill-memory", () => {
+  it("registers skill-memory context when the plugin is enabled", async () => {
     const workspace = await createWorkspaceDir();
     const agent = await createAgent({ workspace });
 
@@ -46,11 +46,13 @@ describe("built-in skill memory", () => {
     });
   });
 
-  it("can disable built-in skill memory", async () => {
+  it("can disable skill-memory through plugin config", async () => {
     const workspace = await createWorkspaceDir();
+    const memorySystem = new MemorySystem();
     const agent = await createAgent({
       workspace,
-      memory: {
+      memorySystem,
+      pluginConfig: {
         skill: {
           enabled: false,
         },
@@ -65,7 +67,7 @@ describe("built-in skill memory", () => {
       ]),
     });
 
-    const retrieved = await agent.memorySystem.retrieveForRuntime({
+    const retrieved = await memorySystem.retrieveForRuntime({
       request: {
         agentId: agent.id,
         query: "plugin design",
@@ -81,9 +83,10 @@ describe("built-in skill memory", () => {
 
   it("writes summaries and registers derived skills into typed skill memory", async () => {
     const workspace = await createWorkspaceDir();
+    const memorySystem = new MemorySystem();
     const agent = await createAgent({
       workspace,
-      memorySystem: new MemorySystem(),
+      memorySystem,
     });
 
     await emitStreamEvent(agent, {
@@ -122,7 +125,7 @@ describe("built-in skill memory", () => {
       },
     });
 
-    const skills = await agent.memorySystem.listSkills({});
+    const skills = await memorySystem.listSkills({});
     expect(skills).toMatchObject({
       ok: true,
       value: expect.arrayContaining([
@@ -133,7 +136,7 @@ describe("built-in skill memory", () => {
       ]),
     });
 
-    const runtime = await agent.memorySystem.retrieveForRuntime({
+    const runtime = await memorySystem.retrieveForRuntime({
       request: {
         agentId: agent.id,
         query: "plugin memory design",
@@ -185,7 +188,7 @@ async function createAgent(options: {
   readonly workspace: string;
   readonly contextSystem?: ContextSystem | undefined;
   readonly memorySystem?: MemorySystem | undefined;
-  readonly memory?: {
+  readonly pluginConfig?: {
     readonly skill?: {
       readonly enabled?: boolean | undefined;
       readonly useMemories?: boolean | undefined;
@@ -203,9 +206,19 @@ async function createAgent(options: {
     version: "0.0.0",
     scope: "test",
     workspace: options.workspace,
+    plugins: [
+      {
+        entry: createMemoryPluginEntry(
+          options.memorySystem === undefined
+            ? {}
+            : {
+                memorySystem: options.memorySystem,
+              },
+        ),
+        ...(options.pluginConfig === undefined ? {} : { config: options.pluginConfig }),
+      },
+    ],
     ...(options.contextSystem === undefined ? {} : { contextSystem: options.contextSystem }),
-    ...(options.memorySystem === undefined ? {} : { memorySystem: options.memorySystem }),
-    ...(options.memory === undefined ? {} : { memory: options.memory }),
   });
 }
 

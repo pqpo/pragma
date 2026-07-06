@@ -369,19 +369,20 @@ const envName = createExpertAgentPluginConfigEnvName({
 
 ## 内置与示例能力
 
-当前仓库有一个默认内建记忆能力和一个插件示例：
+当前仓库有一个记忆插件和一个插件示例：
 
 ```text
-packages/core/src/memory-system/skill-memory
+plugins/memory
 plugins/code-repository-manager
 ```
 
-内建 `skill-memory`：
+`@pragma/plugin-memory`：
 
-- 默认随 `ExpertAgent` 加载，可通过 `memory.skill.enabled=false` 关闭。
-- 注册 `skill-memory` namespace 的审计上下文：`summary.md`、`skills/*.md`、`tasks/**`。
-- 使用 stream / task / session hooks 生成任务总结、session 总结和技能卡。
-- 将生成的技能卡注册为 typed `Skill Memory`，供运行时检索和 prompt 注入使用。
+- 入口是一个 memory plugin，内部注册 `task-memory` 和 `skill-memory` 两个子模块。
+- `task-memory` 负责在插件内部维护 `Task Memory` store，并通过插件注入 task memory 工具。
+- `task-memory` 默认使用 in-memory store，也支持在程序化 plugin config 中注入自定义 `TaskMemoryStore` 或 `storeFactory`，后续可平滑接 Redis 等持久化实现。
+- `skill-memory` 负责注册 `skill-memory` namespace 的审计上下文：`summary.md`、`skills/*.md`、`tasks/**`。
+- `skill-memory` 使用 stream / task / session hooks 生成任务总结、session 总结和技能卡，并注册到插件内部的 memory system 供后续检索使用。
 
 `code-repository-manager`：
 

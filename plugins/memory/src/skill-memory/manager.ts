@@ -5,7 +5,7 @@ import type {
   ExpertAgentPluginSetupContext,
   ExpertAgentPluginStreamEventContext,
   ExpertAgentPluginTaskSubmittedContext,
-} from "../../plugins/expert-agent-plugin.ts";
+} from "@pragma/core";
 
 import {
   JSON_EXTENSION,

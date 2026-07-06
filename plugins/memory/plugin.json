@@ -1,0 +1,74 @@
+{
+  "schemaVersion": "pragma.plugin/v1",
+  "id": "memory",
+  "name": "Memory",
+  "description": "Registers task-memory and skill-memory capabilities, including typed memory stores, auditable context, and memory tools.",
+  "version": "0.0.0",
+  "tags": ["memory", "context", "skill", "task"],
+  "runtime": {
+    "type": "expert-agent-plugin",
+    "entry": "./dist/index.js"
+  },
+  "capabilities": [
+    {
+      "type": "memory",
+      "name": "task-memory",
+      "description": "Registers the task memory store and task memory tools."
+    },
+    {
+      "type": "memory",
+      "name": "skill-memory",
+      "description": "Registers the skill memory store and skill distillation pipeline."
+    },
+    {
+      "type": "context",
+      "name": "skill-memory",
+      "description": "Exposes skill-memory audit files as agent context."
+    },
+    {
+      "type": "tool",
+      "name": "task-memory-tools",
+      "description": "Injects task memory tools into the agent tool set."
+    }
+  ],
+  "configuration": {
+    "properties": [
+      {
+        "name": "task.enabled",
+        "type": "boolean",
+        "description": "Whether task memory should register its store and tools.",
+        "required": false,
+        "default": true
+      },
+      {
+        "name": "skill.enabled",
+        "type": "boolean",
+        "description": "Whether skill memory should register its store and hooks.",
+        "required": false,
+        "default": true
+      },
+      {
+        "name": "skill.useMemories",
+        "type": "boolean",
+        "description": "Whether skill memory retrieval should be injected into runtime context.",
+        "required": false,
+        "default": true
+      },
+      {
+        "name": "skill.generateMemories",
+        "type": "boolean",
+        "description": "Whether runtime evidence should produce skill memory artifacts.",
+        "required": false,
+        "default": true
+      },
+      {
+        "name": "skill.memoryRoot",
+        "type": "string",
+        "description": "Filesystem root for skill memory artifacts.",
+        "required": false,
+        "default": ".pragma/agent/skill-memory"
+      }
+    ]
+  },
+  "required_config": []
+}

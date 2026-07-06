@@ -1,11 +1,4 @@
-import {
-  errorMemory,
-  okMemory,
-} from "./types.ts";
-import type {
-  TaskMemoryRecord,
-  TaskMemoryStore,
-} from "./types.ts";
+import { errorMemory, okMemory, type TaskMemoryRecord, type TaskMemoryStore } from "../memory-system/index.ts";
 
 export function createInMemoryTaskMemoryStore(): TaskMemoryStore {
   const records = new Map<string, TaskMemoryRecord>();

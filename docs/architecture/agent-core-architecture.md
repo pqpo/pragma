@@ -84,12 +84,6 @@ flowchart TB
   contextSystem --> pluginA --> pluginAStore
   contextSystem --> pluginB --> pluginBStore
 
-  memorySystem["MemorySystem"]
-  memorySystem --> taskMemory["Task Memory"]
-  memorySystem --> experienceMemory["Experience Memory"]
-  memorySystem --> factMemory["Fact Memory"]
-  memorySystem --> skillMemory["Skill Memory"]
-
   contextTools["Context Tools"]
   contextTools --> list["list_expert_context"]
   contextTools --> read["read_expert_context"]
@@ -100,9 +94,9 @@ flowchart TB
 核心边界：
 
 - 上下文通过 namespace 隔离来源。
-- `ContextSystem` 是通用 context substrate，不直接承担所有 memory 语义。
-- `MemorySystem` 是建立在 context 和 runtime evidence 之上的语义层，负责记忆检索与治理。
-- `ContextManager` 负责最终 prompt 装配，但可以消费 `MemorySystem` 的检索结果。
+- `ContextSystem` 是 Agent core 的通用 context substrate，不直接内建 memory 语义。
+- memory、task memory、skill memory 等能力属于插件系统，由插件通过 context、tools 和 hooks 扩展。
+- `ContextManager` 只负责最终 prompt 装配与 context 读取，不承担记忆聚合职责。
 - 上下文不会一次性塞进 Runtime，而是由 Agent 或工具按需读取。
 - Tool approval 是工具能力的一部分，但最终权限仍应由 Runtime、Desktop 权限闸门或上层策略共同裁决。
 - `packages/shared` 只保存跨端协议和值对象，不放 Node 专属上下文实现。

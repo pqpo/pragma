@@ -1,13 +1,13 @@
 import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 
-import { normalizeMetadata } from "../../context-system/context-system.ts";
 import type {
   ExpertAgentContextItemMetadata,
   ExpertAgentContextItemSummary,
   ExpertAgentStoredContextItem,
-} from "../../context-system/context-system.ts";
-import type { ExpertAgentPluginSetupContext } from "../../plugins/expert-agent-plugin.ts";
+  ExpertAgentPluginSetupContext,
+} from "@pragma/core";
+import { normalizeMetadata } from "@pragma/core";
 
 import {
   EVIDENCE_PREFIX,

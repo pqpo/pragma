@@ -27,18 +27,6 @@ import type {
 import { resolveExpertAgentPlugins } from "../plugins/expert-agent-plugin.ts";
 import type { ExpertAgentLogger, ExpertAgentLoggerProvider } from "../logging/logger.ts";
 import { createExpertAgentLogger, defaultExpertAgentLoggerProvider } from "../logging/logger.ts";
-import { MemorySystem } from "../memory-system/memory-system.ts";
-import type {
-  TaskMemoryAppendInput,
-  TaskMemoryArchiveInput,
-  TaskMemoryGetInput,
-  TaskMemoryListInput,
-  TaskMemoryPatchInput,
-} from "../memory-system/types.ts";
-import {
-  createBuiltInSkillMemoryRegistration,
-  type SkillMemoryConfigInput,
-} from "../memory-system/skill-memory/index.ts";
 import type { Directive, RunResult, StartRunRequest } from "../loop/types.ts";
 import { stringifyInput } from "../loop/utils.ts";
 import type {
@@ -48,7 +36,7 @@ import type {
 } from "../plugins/plugin-loader.ts";
 import { isExpertAgentPluginEntryUse, loadExpertAgentPlugins } from "../plugins/plugin-loader.ts";
 import type { ExpertAgentRunContext } from "../runtime/run-context.ts";
-import { createExpertAgentRunContext, withTaskMemoryRunScope } from "../runtime/run-context.ts";
+import { createExpertAgentRunContext, withExecutionRunScope } from "../runtime/run-context.ts";
 import type {
   RuntimeAdapter,
   RuntimeAgentSession,
@@ -145,10 +133,6 @@ export interface ExpertAgentCreateSessionOptions extends Omit<
   readonly runtimes?: ExpertAgentRuntimeRegistry | undefined;
 }
 
-export interface ExpertAgentMemoryOptions {
-  readonly skill?: SkillMemoryConfigInput | undefined;
-}
-
 export type ExpertAgentRuntimeRegistryFactory = () => ExpertAgentRuntimeRegistry;
 
 let defaultRuntimeRegistryFactory: ExpertAgentRuntimeRegistryFactory | undefined;
@@ -173,7 +157,6 @@ export interface IExpertAgent {
   readonly skills?: IExpertAgentSkillsConfig | undefined;
   readonly models?: IExpertAgentModelsConfig | undefined;
   readonly contextSystem: ContextSystem;
-  readonly memorySystem: MemorySystem;
   readonly subAgents?: SubAgentRegistry | undefined;
   readonly tools?: readonly ExpertAgentManagedTool<string, ExpertAgentToolCallResult>[] | undefined;
   readonly hooks?: ExpertAgentPluginHooks | undefined;
@@ -184,16 +167,14 @@ export interface IExpertAgent {
 
 export type ExpertAgentOptions = Omit<
   IExpertAgent,
-  "contextSystem" | "memorySystem" | "pluginLoadIssues" | "logger"
+  "contextSystem" | "pluginLoadIssues" | "logger"
 > & {
   readonly contextSystem?: ContextSystem | undefined;
-  readonly memorySystem?: MemorySystem | undefined;
 };
 
 export interface ExpertAgentCreateOptions extends ExpertAgentOptions {
   readonly plugins?: readonly ExpertAgentPluginUse[] | undefined;
   readonly env?: NodeJS.ProcessEnv | undefined;
-  readonly memory?: ExpertAgentMemoryOptions | undefined;
 }
 
 interface ExpertAgentRuntimeOptions extends ExpertAgentOptions {
@@ -202,7 +183,6 @@ interface ExpertAgentRuntimeOptions extends ExpertAgentOptions {
     | undefined;
   readonly pluginLoadIssues?: readonly ExpertAgentPluginLoadIssue[] | undefined;
   readonly env?: NodeJS.ProcessEnv | undefined;
-  readonly memory?: ExpertAgentMemoryOptions | undefined;
 }
 
 export class ExpertAgent implements IExpertAgent, Directive<unknown, unknown> {
@@ -218,7 +198,6 @@ export class ExpertAgent implements IExpertAgent, Directive<unknown, unknown> {
   readonly skills: IExpertAgentSkillsConfig | undefined;
   readonly models: IExpertAgentModelsConfig | undefined;
   readonly contextSystem: ContextSystem;
-  readonly memorySystem: MemorySystem;
   readonly workspace: string;
   readonly subAgents: SubAgentRegistry | undefined;
   readonly tools: readonly ExpertAgentManagedTool<string, ExpertAgentToolCallResult>[] | undefined;
@@ -263,9 +242,6 @@ export class ExpertAgent implements IExpertAgent, Directive<unknown, unknown> {
     const agent = new ExpertAgent({
       ...options,
       pluginEntries: [
-        ...(options.memory?.skill?.enabled === false
-          ? []
-          : [createBuiltInSkillMemoryRegistration(options.memory?.skill)]),
         ...loaded.pluginEntries,
         ...pluginEntryUses.map((plugin) => ({
           entry: plugin.entry,
@@ -291,7 +267,6 @@ export class ExpertAgent implements IExpertAgent, Directive<unknown, unknown> {
       agentId: options.id,
     });
     const contextSystem = options.contextSystem ?? new ContextSystem();
-    const memorySystem = options.memorySystem ?? new MemorySystem();
     const resolved = resolveExpertAgentPlugins({
       agent: {
         id: options.id,
@@ -307,7 +282,6 @@ export class ExpertAgent implements IExpertAgent, Directive<unknown, unknown> {
         hooks: options.hooks,
       },
       contextSystem,
-      memorySystem,
       pluginEntries: options.pluginEntries,
       workspaceRoot: options.workspace,
       env: options.env,
@@ -327,7 +301,6 @@ export class ExpertAgent implements IExpertAgent, Directive<unknown, unknown> {
     this.skills = resolved.skills;
     this.models = resolved.models;
     this.contextSystem = contextSystem;
-    this.memorySystem = memorySystem;
     this.workspace = options.workspace;
     this.subAgents = resolved.subAgents;
     this.tools = applyToolApprovals(resolved.tools, resolved.toolApprovals);
@@ -338,7 +311,6 @@ export class ExpertAgent implements IExpertAgent, Directive<unknown, unknown> {
     this.contextManager = new ContextManager({
       agent: this,
       contextSystem: this.contextSystem,
-      memorySystem,
     });
   }
 
@@ -368,7 +340,7 @@ export class ExpertAgent implements IExpertAgent, Directive<unknown, unknown> {
     const runtime = runtimeRegistry.resolve(request.runtime ?? execution.runtimeId);
     const session = await runtime.createSession({
       agent: this,
-      context: withTaskMemoryRunScope(undefined, {
+      context: withExecutionRunScope(undefined, {
         workflowRunId: execution.workflow.id,
         taskRunId: execution.task.id,
       }),
@@ -446,10 +418,7 @@ export class ExpertAgent implements IExpertAgent, Directive<unknown, unknown> {
   }
 
   createDefaultTools(options: CreateContextToolsOptions = {}): readonly ExpertAgentDefaultTool[] {
-    return createContextTools(this, {
-      ...options,
-      agentId: options.agentId ?? this.id,
-    });
+    return createContextTools(this, options);
   }
 
   async listContext(
@@ -486,26 +455,6 @@ export class ExpertAgent implements IExpertAgent, Directive<unknown, unknown> {
     input: ExpertAgentContextItemDeleteInput,
   ): Promise<ExpertAgentContextResult<ExpertAgentContextItemDeleteResult>> {
     return await this.contextSystem.delete(input);
-  }
-
-  async listTaskMemory(input: TaskMemoryListInput) {
-    return await this.memorySystem.listTaskMemory(input);
-  }
-
-  async getTaskMemory(input: TaskMemoryGetInput) {
-    return await this.memorySystem.getTaskMemory(input);
-  }
-
-  async appendTaskMemory(input: TaskMemoryAppendInput) {
-    return await this.memorySystem.appendTaskMemory(input);
-  }
-
-  async patchTaskMemory(input: TaskMemoryPatchInput) {
-    return await this.memorySystem.patchTaskMemory(input);
-  }
-
-  async archiveTaskMemory(input: TaskMemoryArchiveInput) {
-    return await this.memorySystem.archiveTaskMemory(input);
   }
 }
 

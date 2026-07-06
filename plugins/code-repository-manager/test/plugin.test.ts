@@ -8,7 +8,6 @@ import {
   ContextSystem,
   ExpertAgent,
   HOST_CONTEXT_NAMESPACE,
-  MemorySystem,
   createInMemoryContextStore,
   createNoopLoggerProvider,
 } from "@pragma/core";
@@ -178,7 +177,6 @@ describe("Code Repository Manager plugin", () => {
     const contributions = codeRepositoryManagerPlugin.setup({
       host: {},
       contextSystem: new ContextSystem(),
-      memorySystem: new MemorySystem(),
       workspaceRoot: "/tmp/pragma",
       env: process.env,
       logger: createNoopLoggerProvider().createLogger({

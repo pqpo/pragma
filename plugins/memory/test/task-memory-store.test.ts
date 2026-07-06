@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  MemorySystem,
-  createInMemoryTaskMemoryStore,
-} from "../../src/index.ts";
+import { MemorySystem, createInMemoryTaskMemoryStore } from "../src/index.ts";
 
 describe("in-memory TaskMemoryStore", () => {
   it("lists shared entries by workflow run", async () => {

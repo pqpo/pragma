@@ -4,8 +4,8 @@ import type {
   ExpertAgentContextResult,
   ExpertAgentStoredContextItem,
   ExpertAgentStoredContextItemUpdateInput,
-} from "../../context-system/context-system.ts";
-import { error, ok } from "../../context-system/context-system.ts";
+} from "@pragma/core";
+import { error, ok } from "@pragma/core";
 
 import {
   MARKDOWN_EXTENSION,

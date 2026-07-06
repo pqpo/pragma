@@ -67,13 +67,19 @@ export function createResolvedPiTools(options: {
         options.agent.tools ?? [],
         options.streamState,
         humanInteractionHandler,
+        options.lifecycle.currentContext,
       ).map((tool) => createResolvedTool("managed", tool)),
       ...(subAgentTool === undefined
         ? []
         : [
             createResolvedTool(
               "subagent",
-              createPiSubAgentTool(options.agent, subAgentTool, options.streamState),
+              createPiSubAgentTool(
+                options.agent,
+                subAgentTool,
+                options.streamState,
+                options.lifecycle.currentContext,
+              ),
             ),
           ]),
       ...createPiMcpTools(options.agent, options.mcpTools, options.streamState).map((tool) =>
@@ -150,6 +156,7 @@ function createPiManagedTools(
   tools: readonly ExpertAgentManagedTool<string, ExpertAgentToolCallResult>[],
   streamState: PiRuntimeStreamState,
   humanInteractionHandler: ExpertAgentHumanInteractionHandler | undefined,
+  runContext: ExpertAgentRunContext | undefined,
 ): ToolDefinition[] {
   return tools.map((tool) => ({
     name: tool.name,
@@ -171,6 +178,7 @@ function createPiManagedTools(
           await tool.call(resolvedParams, signal, {
             toolCallId,
             humanInteraction: humanInteractionHandler,
+            runContext,
           }),
       );
 
@@ -192,6 +200,7 @@ function createPiSubAgentTool(
   agent: ExpertAgent,
   subAgentTool: SubAgentManagedTool,
   streamState: PiRuntimeStreamState,
+  runContext: ExpertAgentRunContext | undefined,
 ): ToolDefinition {
   return {
     name: subAgentTool.name,
@@ -213,7 +222,11 @@ function createPiSubAgentTool(
         undefined,
         undefined,
         streamState,
-        async (resolvedParams) => await subAgentTool.call(resolvedParams, signal, { toolCallId }),
+        async (resolvedParams) =>
+          await subAgentTool.call(resolvedParams, signal, {
+            toolCallId,
+            runContext,
+          }),
       );
 
       return {
