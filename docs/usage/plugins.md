@@ -378,9 +378,9 @@ plugins/code-repository-manager
 
 `expert-memory`：
 
-- 注册长期记忆上下文。
-- 使用 `afterTaskSubmit` 生成 pending memory candidate。
-- 通过配置控制是否启用、是否生成 memory、memory root 等。
+- 注册三层记忆上下文：`summary.md`、`skills/*.md`、`tasks/**`。
+- 使用 stream / task / session hooks 生成任务总结、session 总结和技能卡。
+- 通过配置控制是否启用、是否生成 memory、memory root 和摘要模型名等。
 
 `code-repository-manager`：
 

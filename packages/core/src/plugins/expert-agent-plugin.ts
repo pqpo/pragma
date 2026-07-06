@@ -20,6 +20,7 @@ import type {
   RuntimeSessionInfo,
   RuntimeSessionRef,
 } from "../runtime/runtime-adapter.ts";
+import type { RuntimeStreamEvent } from "../runtime/stream-events.ts";
 import type { ExpertAgentLogger, ExpertAgentLoggerProvider } from "../logging/logger.ts";
 import { createExpertAgentLogger, defaultExpertAgentLoggerProvider } from "../logging/logger.ts";
 import type { SubAgentRegistry } from "../subagents/sub-agent.ts";
@@ -135,6 +136,15 @@ export interface ExpertAgentPluginToolCalledContext extends ExpertAgentPluginToo
   readonly error?: unknown;
 }
 
+export interface ExpertAgentPluginStreamEventContext {
+  readonly agent: ExpertAgent;
+  readonly session: RuntimeSessionInfo;
+  readonly runId: string;
+  readonly event: RuntimeStreamEvent;
+  readonly context?: ExpertAgentRunContext | undefined;
+  readonly logger?: ExpertAgentLogger | undefined;
+}
+
 export interface ExpertAgentPluginSetupContext {
   readonly agent?:
     | {
@@ -179,6 +189,9 @@ export interface ExpertAgentPluginHooks {
     | undefined;
   readonly afterToolCall?:
     | ((context: ExpertAgentPluginToolCalledContext) => MaybePromise<void>)
+    | undefined;
+  readonly onStreamEvent?:
+    | ((context: ExpertAgentPluginStreamEventContext) => MaybePromise<void>)
     | undefined;
 }
 
@@ -666,6 +679,9 @@ function mergePluginHooks(
     },
     afterToolCall: async (context) => {
       await callHooks(hooks, "afterToolCall", context);
+    },
+    onStreamEvent: async (context) => {
+      await callHooks(hooks, "onStreamEvent", context);
     },
   };
 }

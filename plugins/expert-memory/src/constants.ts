@@ -1,0 +1,11 @@
+export const MEMORY_CONTEXT_NAMESPACE = "expert-memory";
+export const PLUGIN_ID = "expert-memory";
+export const MEMORY_CONFIG_CONTEXT_ID = "memory-config.json";
+export const SUMMARY_CONTEXT_ID = "summary.md";
+export const SKILLS_PREFIX = "skills/";
+export const TASKS_PREFIX = "tasks/";
+export const EVIDENCE_PREFIX = "evidence/";
+export const RUNS_EVIDENCE_PREFIX = "evidence/runs/";
+export const SESSIONS_EVIDENCE_PREFIX = "evidence/sessions/";
+export const MARKDOWN_EXTENSION = ".md";
+export const JSON_EXTENSION = ".json";

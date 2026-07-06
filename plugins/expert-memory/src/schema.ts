@@ -1,15 +1,20 @@
 import { z } from "zod";
 
-export const MemoryPluginConfigSchema = z
-  .object({
-    enabled: z.boolean().default(true),
-    useMemories: z.boolean().default(true),
-    generateMemories: z.boolean().default(true),
-    disableOnExternalContext: z.boolean().default(true),
-    minRunOutputChars: z.number().int().positive().default(200),
-    summaryMaxBytes: z.number().int().positive().default(8192),
-    memoryRoot: z.string().min(1).default(".pragma/agent/memories"),
-  });
+export const MemoryPluginConfigSchema = z.object({
+  enabled: z.boolean().default(true),
+  useMemories: z.boolean().default(true),
+  generateMemories: z.boolean().default(true),
+  disableOnExternalContext: z.boolean().default(true),
+  minRunOutputChars: z.number().int().nonnegative().default(0),
+  summaryMaxBytes: z.number().int().positive().default(8192),
+  maxOutputExcerptChars: z.number().int().positive().default(1200),
+  maxToolExcerptChars: z.number().int().positive().default(400),
+  taskSummaryModel: z.string().min(1).optional(),
+  sessionSummaryModel: z.string().min(1).optional(),
+  skillMergeModel: z.string().min(1).optional(),
+  summaryModel: z.string().min(1).optional(),
+  memoryRoot: z.string().min(1).default(".pragma/agent/memories"),
+});
 
 export type MemoryPluginConfig = z.infer<typeof MemoryPluginConfigSchema>;
 export type MemoryPluginConfigInput = z.input<typeof MemoryPluginConfigSchema>;
@@ -23,40 +28,60 @@ export const MemoryAuditSchema = z
   })
   .passthrough();
 
-export const MemoryLedgerSchema = z
-  .object({
-    schemaVersion: z.literal("pragma.memory-ledger/v1").default("pragma.memory-ledger/v1"),
-    agentId: z.string().min(1),
-    updatedAt: z.string().min(1),
-    entryCount: z.number().int().nonnegative().default(0),
-    audit: MemoryAuditSchema.default({ createdBy: "expert-memory" }),
-  })
-  .passthrough();
+export const MemoryToolCallEvidenceSchema = z.object({
+  toolName: z.string().min(1),
+  status: z.enum(["started", "completed", "failed"]),
+  outputExcerpt: z.string().optional(),
+  errorMessage: z.string().optional(),
+});
 
-export const MemoryTaskEvidenceSchema = z
+export const MemoryRunEvidenceSchema = z
   .object({
-    schemaVersion: z
-      .literal("pragma.memory-task-evidence/v1")
-      .default("pragma.memory-task-evidence/v1"),
+    schemaVersion: z.literal("pragma.memory-run-evidence/v1").default("pragma.memory-run-evidence/v1"),
     agentId: z.string().min(1),
+    sessionId: z.string().min(1),
+    runtimeSessionId: z.string().min(1).optional(),
     runId: z.string().min(1),
+    query: z.string().min(1),
+    status: z.enum(["succeeded", "failed", "cancelled", "running"]).default("running"),
+    outputExcerpt: z.string().optional(),
+    errorMessage: z.string().optional(),
+    externalContext: z.boolean().default(false),
+    tools: z.array(MemoryToolCallEvidenceSchema).default([]),
+    lessons: z.array(z.string().min(1)).default([]),
     source: z
       .object({
-        type: z.string().min(1),
-        id: z.string().min(1).optional(),
-        label: z.string().min(1).optional(),
+        runtimeKind: z.string().min(1).optional(),
+        runtimeSessionId: z.string().min(1).optional(),
       })
-      .passthrough()
-      .optional(),
-    status: z.enum(["pending", "accepted", "rejected"]).default("pending"),
+      .default({}),
     createdAt: z.string().min(1),
     updatedAt: z.string().min(1),
     audit: MemoryAuditSchema.default({ createdBy: "expert-memory" }),
   })
   .passthrough();
 
-export type MemoryLedger = z.infer<typeof MemoryLedgerSchema>;
-export type MemoryTaskEvidence = z.infer<typeof MemoryTaskEvidenceSchema>;
+export const MemorySessionEvidenceSchema = z
+  .object({
+    schemaVersion: z
+      .literal("pragma.memory-session-evidence/v1")
+      .default("pragma.memory-session-evidence/v1"),
+    agentId: z.string().min(1),
+    sessionId: z.string().min(1),
+    runtimeSessionId: z.string().min(1).optional(),
+    runIds: z.array(z.string().min(1)).default([]),
+    externalContext: z.boolean().default(false),
+    consolidationState: z
+      .enum(["pending", "summarized", "skills_updated"])
+      .default("pending"),
+    createdAt: z.string().min(1),
+    updatedAt: z.string().min(1),
+    audit: MemoryAuditSchema.default({ createdBy: "expert-memory" }),
+  })
+  .passthrough();
+
+export type MemoryRunEvidence = z.infer<typeof MemoryRunEvidenceSchema>;
+export type MemorySessionEvidence = z.infer<typeof MemorySessionEvidenceSchema>;
 
 export function parseMemoryPluginConfig(
   input: MemoryPluginConfigInput = {},

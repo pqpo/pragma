@@ -11,9 +11,22 @@ import {
   createInMemoryContextStore,
   readExpertAgentPluginManifest,
 } from "@pragma/core";
-import type { ExpertAgentPluginUse } from "@pragma/core";
+import type {
+  ExpertAgentPluginSetupContext,
+  ExpertAgentPluginUse,
+  RuntimeStreamEvent,
+} from "@pragma/core";
 
 import expertMemoryPlugin, { parseMemoryPluginConfig } from "../src/index.ts";
+import { ExpertMemoryManager } from "../src/manager.ts";
+
+interface SerializedMutationHarness {
+  withSerializedMutation<T>(
+    lockMap: Map<string, Promise<void>>,
+    key: string,
+    operation: () => Promise<T>,
+  ): Promise<T>;
+}
 
 const packageRoot = fileURLToPath(new URL("../", import.meta.url));
 const tempDirs: string[] = [];
@@ -40,20 +53,26 @@ describe("Expert Memory plugin", () => {
       "disableOnExternalContext",
       "minRunOutputChars",
       "summaryMaxBytes",
+      "maxOutputExcerptChars",
+      "maxToolExcerptChars",
+      "taskSummaryModel",
+      "sessionSummaryModel",
+      "skillMergeModel",
+      "summaryModel",
       "memoryRoot",
     ]);
     expect(expertMemoryPlugin.manifest).toEqual(manifest);
   });
 
-  it("registers expert-memory by default and exposes memory.md as model-decision context", async () => {
+  it("registers expert-memory by default and exposes skills as model-decision context", async () => {
     const workspace = await createWorkspaceDir();
     const agent = await createAgent({ workspace, plugins: [await createLoadablePluginSource()] });
 
     await expect(
       agent.addContext({
         namespace: "expert-memory",
-        id: "memory.md",
-        content: "# Expert Memory\n\n## Preferences\n\n- Prefer pnpm for JavaScript tasks.\n",
+        id: "skills/plugin-design.md",
+        content: "# Skill Card\n\n## Skill Scope\n\nPlugin design\n",
       }),
     ).resolves.toMatchObject({
       ok: true,
@@ -72,30 +91,37 @@ describe("Expert Memory plugin", () => {
         }),
         expect.objectContaining({
           namespace: "expert-memory",
-          id: "memory.md",
+          id: "skills/plugin-design.md",
           metadata: expect.objectContaining({ trigger: "model_decision" }),
         }),
       ]),
     });
   });
 
-  it("injects summary.md as always-on without injecting full memory.md", async () => {
+  it("injects summary.md as always-on without injecting full skill content", async () => {
     const workspace = await createWorkspaceDir();
     const agent = await createAgent({ workspace, plugins: [await createLoadablePluginSource()] });
     await agent.addContext({
       namespace: "expert-memory",
-      id: "memory.md",
-      content: "# Expert Memory\n\n## Pitfalls\n\n- Do not create apps/local-runner.\n",
+      id: "skills/plugin-design.md",
+      content: [
+        "# Skill Card",
+        "",
+        "## Skill Scope",
+        "Plugin design",
+        "",
+        "## Common Failure Modes",
+        "- Do not create apps/local-runner.",
+        "",
+      ].join("\n"),
     });
 
     const context = await agent.buildContext();
 
-    expect(context.systemPrompt).toContain("Available context");
-    expect(context.systemPrompt).toContain("namespace: expert-memory");
-    expect(context.systemPrompt).toContain("id: memory.md");
+    expect(context.systemPrompt).toContain("id: skills/plugin-design.md");
     expect(context.systemPrompt).not.toContain("Do not create apps/local-runner.");
-    expect(context.startupMessages[0]?.content).toContain("Expert Memory Summary");
-    expect(context.startupMessages[0]?.content).toContain("Do not create apps/local-runner.");
+    expect(context.startupMessages[0]?.content).toContain("Memory Index");
+    expect(context.startupMessages[0]?.content).toContain("skills/plugin-design.md");
   });
 
   it("rejects direct writes to generated summary.md", async () => {
@@ -135,13 +161,13 @@ describe("Expert Memory plugin", () => {
     });
   });
 
-  it("keeps restricted memory out of generated summary.md", async () => {
+  it("keeps restricted skills out of generated summary.md", async () => {
     const workspace = await createWorkspaceDir();
     const agent = await createAgent({ workspace, plugins: [await createLoadablePluginSource()] });
     await agent.addContext({
       namespace: "expert-memory",
-      id: "memory.md",
-      content: "# Expert Memory\n\n- confidential detail\n",
+      id: "skills/restricted-skill.md",
+      content: "# Skill Card\n\n## Common Failure Modes\n\n- confidential detail\n",
       metadata: {
         sensitivity: "restricted",
       },
@@ -160,14 +186,14 @@ describe("Expert Memory plugin", () => {
     });
   });
 
-  it("returns context_not_found when deleting missing memory", async () => {
+  it("returns context_not_found when deleting missing skill", async () => {
     const workspace = await createWorkspaceDir();
     const agent = await createAgent({ workspace, plugins: [await createLoadablePluginSource()] });
 
     await expect(
       agent.deleteContext({
         namespace: "expert-memory",
-        id: "memory.md",
+        id: "skills/missing.md",
       }),
     ).resolves.toMatchObject({
       ok: false,
@@ -238,13 +264,13 @@ describe("Expert Memory plugin", () => {
     });
   });
 
-  it("searches memory case-insensitively by default", async () => {
+  it("searches skills case-insensitively by default", async () => {
     const workspace = await createWorkspaceDir();
     const agent = await createAgent({ workspace, plugins: [await createLoadablePluginSource()] });
     await agent.addContext({
       namespace: "expert-memory",
-      id: "memory.md",
-      content: "# Expert Memory\n\n- Prefer PNPM for JavaScript tasks.\n",
+      id: "skills/workspace-debugging.md",
+      content: "# Skill Card\n\n## Recommended Approach\n\n- Prefer PNPM for JavaScript tasks.\n",
     });
 
     await expect(
@@ -256,81 +282,233 @@ describe("Expert Memory plugin", () => {
       ok: true,
       value: expect.arrayContaining([
         expect.objectContaining({
-          id: "memory.md",
+          id: "skills/workspace-debugging.md",
           line: expect.stringContaining("PNPM"),
         }),
       ]),
     });
   });
 
-  it("creates pending run evidence from eligible afterTaskSubmit hooks", async () => {
+  it("creates task summary and evidence from task hooks", async () => {
     const workspace = await createWorkspaceDir();
     const agent = await createAgent({ workspace, plugins: [await createLoadablePluginSource()] });
-    const output = [
-      "The user prefers implementation plans that avoid duplicate memory tools.",
-      "Future work should use the expert-memory namespace through context tools.",
-      "This stable workflow preference is long enough to pass the default threshold.",
-      "It should be reviewed before merging into memory.md.",
-    ].join(" ");
+
+    await emitStreamEvent(agent, {
+      runId: "run-1",
+      event: {
+        schemaVersion: "pragma.stream/v1",
+        eventId: "event-1",
+        sequence: 0,
+        emittedAt: new Date().toISOString(),
+        runId: "run-1",
+        source: { kind: "agent", runId: "run-1", path: [] },
+        type: "tool.failed",
+        payload: {
+          toolCallId: "tool-1",
+          toolName: "read_context",
+          kind: "tool",
+          message: "wrong file path",
+        },
+      },
+    });
 
     await submitTaskHook(agent, {
       runId: "run-1",
-      output,
+      output: "Implemented the preferred path after fixing the file lookup problem.",
     });
 
     await expect(
       agent.readContext({
         namespace: "expert-memory",
-        id: "pending/run-1.md",
+        id: "tasks/session-1/run-1.md",
       }),
     ).resolves.toMatchObject({
       ok: true,
       value: {
         metadata: expect.objectContaining({ trigger: "manual" }),
-        content: expect.stringContaining("Pending Memory Candidate run-1"),
+        content: expect.stringContaining("## Recommended Fix Next Time"),
+      },
+    });
+
+    await expect(
+      agent.readContext({
+        namespace: "expert-memory",
+        id: "evidence/runs/run-1.json",
+      }),
+    ).resolves.toMatchObject({
+      ok: true,
+      value: {
+        content: expect.stringContaining("\"runId\": \"run-1\""),
       },
     });
   });
 
-  it("skips pending run evidence for ineligible afterTaskSubmit hooks", async () => {
+  it("builds session summary and skill card on session destroy", async () => {
     const workspace = await createWorkspaceDir();
     const agent = await createAgent({ workspace, plugins: [await createLoadablePluginSource()] });
-    const eligibleLengthOutput = [
-      "This output is intentionally long enough to pass the default memory threshold.",
-      "It describes a stable workflow preference that would otherwise become a candidate.",
-      "The hook should skip it when other eligibility checks fail before writing context.",
-      "This gives the test enough text to exceed the configured minimum output length.",
-    ].join(" ");
 
     await submitTaskHook(agent, {
-      runId: "failed-run",
-      error: new Error("failed"),
+      runId: "run-1",
+      query: "Debug plugin memory design for repeated session workflows.",
+      output: "Established a stable plugin memory design for repeated session workflows.",
     });
+    await submitTaskHook(agent, {
+      runId: "run-2",
+      query: "Debug plugin memory design for repeated session workflows.",
+      error: new Error("first attempt failed"),
+    });
+    await destroySessionHook(agent);
+
+    await expect(
+      agent.readContext({
+        namespace: "expert-memory",
+        id: "tasks/session-1/session.md",
+      }),
+    ).resolves.toMatchObject({
+      ok: true,
+      value: {
+        content: expect.stringContaining("## Candidate Skill Updates"),
+      },
+    });
+
+    const listed = await agent.listContext();
+    expect(listed).toMatchObject({
+      ok: true,
+      value: expect.arrayContaining([
+        expect.objectContaining({
+          namespace: "expert-memory",
+          id: expect.stringMatching(/^skills\/.+\.md$/),
+        }),
+      ]),
+    });
+  });
+
+  it("does not persist derived lessons for sensitive failure messages", async () => {
+    const workspace = await createWorkspaceDir();
+    const agent = await createAgent({ workspace, plugins: [await createLoadablePluginSource()] });
+
+    await submitTaskHook(agent, {
+      runId: "run-sensitive-error",
+      error: new Error("token: super-secret"),
+    });
+
+    await expect(
+      agent.readContext({
+        namespace: "expert-memory",
+        id: "evidence/runs/run-sensitive-error.json",
+      }),
+    ).resolves.toMatchObject({
+      ok: true,
+      value: {
+        content: expect.stringContaining("\"lessons\": []"),
+      },
+    });
+  });
+
+  it("serializes run mutations for the same key", async () => {
+    const manager = new ExpertMemoryManager({
+      agent: { id: "memory-agent" },
+    } as ExpertAgentPluginSetupContext);
+    const harness = manager as unknown as SerializedMutationHarness;
+    const lockMap = new Map<string, Promise<void>>();
+    const order: string[] = [];
+    let releaseFirst: (() => void) | undefined;
+    const firstBarrier = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+
+    const firstMutation = harness.withSerializedMutation(
+      lockMap,
+      "run-1",
+      async () => {
+        order.push("first:start");
+        await firstBarrier;
+        order.push("first:end");
+      },
+    );
+    const secondMutation = harness.withSerializedMutation(
+      lockMap,
+      "run-1",
+      async () => {
+        order.push("second");
+      },
+    );
+
+    await Promise.resolve();
+    expect(order).toEqual(["first:start"]);
+
+    releaseFirst?.();
+    await Promise.all([firstMutation, secondMutation]);
+
+    expect(order).toEqual(["first:start", "first:end", "second"]);
+  });
+
+  it("reuses the same skill card across sessions with the same theme", async () => {
+    const workspace = await createWorkspaceDir();
+    const agent = await createAgent({ workspace, plugins: [await createLoadablePluginSource()] });
+
+    await submitTaskHook(agent, {
+      runId: "run-1",
+      query: "Debug plugin memory design for repeated session workflows.",
+      output: "Established a stable plugin memory design for repeated session workflows.",
+    });
+    await destroySessionHook(agent);
+
+    const firstList = await agent.listContext();
+    const firstSkillId = firstList.ok
+      ? firstList.value.find((item) => item.id.startsWith("skills/"))?.id
+      : undefined;
+
+    await submitTaskHook(agent, {
+      runId: "run-2",
+      sessionId: "session-2",
+      runtimeSessionId: "runtime-session-2",
+      query: "Debug plugin memory design for repeated session workflows.",
+      output: "Reused the same plugin memory design after avoiding the old mistake.",
+    });
+    await destroySessionHook(agent, {
+      sessionId: "session-2",
+      runtimeSessionId: "runtime-session-2",
+    });
+
+    const secondList = await agent.listContext();
+    const skillIds =
+      secondList.ok === true ? secondList.value.filter((item) => item.id.startsWith("skills/")) : [];
+
+    expect(firstSkillId).toBeDefined();
+    expect(skillIds).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: firstSkillId })]),
+    );
+    expect(skillIds).toHaveLength(1);
+  });
+
+  it("keeps external-context tasks out of skill cards while still writing task summaries", async () => {
+    const workspace = await createWorkspaceDir();
+    const agent = await createAgent({ workspace, plugins: [await createLoadablePluginSource()] });
+
     await submitTaskHook(agent, {
       runId: "external-run",
-      output: eligibleLengthOutput,
       externalContext: true,
+      output: "Used external context and finished the task.",
     });
-    await submitTaskHook(agent, {
-      runId: "short-run",
-      output: "too short",
-    });
-    await submitTaskHook(agent, {
-      runId: "sensitive-run",
-      output: `${eligibleLengthOutput} token = abc123`,
+    await destroySessionHook(agent);
+
+    await expect(
+      agent.readContext({
+        namespace: "expert-memory",
+        id: "tasks/session-1/external-run.md",
+      }),
+    ).resolves.toMatchObject({
+      ok: true,
+      value: {
+        content: expect.stringContaining("Task Summary"),
+      },
     });
 
-    for (const runId of ["failed-run", "external-run", "short-run", "sensitive-run"]) {
-      await expect(
-        agent.readContext({
-          namespace: "expert-memory",
-          id: `pending/${runId}.md`,
-        }),
-      ).resolves.toMatchObject({
-        ok: false,
-        error: expect.objectContaining({ code: "context_not_found" }),
-      });
-    }
+    const listed = await agent.listContext();
+    const skillIds =
+      listed.ok === true ? listed.value.filter((item) => item.id.startsWith("skills/")) : [];
+    expect(skillIds).toHaveLength(0);
   });
 
   it("uses configured memory defaults", () => {
@@ -339,8 +517,10 @@ describe("Expert Memory plugin", () => {
       useMemories: true,
       generateMemories: true,
       disableOnExternalContext: true,
-      minRunOutputChars: 200,
+      minRunOutputChars: 0,
       summaryMaxBytes: 8192,
+      maxOutputExcerptChars: 1200,
+      maxToolExcerptChars: 400,
     });
   });
 });
@@ -363,10 +543,32 @@ function createContextSystemWithMemoryConfig(config: Record<string, unknown>): C
   return contextSystem;
 }
 
+async function emitStreamEvent(
+  agent: ExpertAgent,
+  options: {
+    readonly runId: string;
+    readonly event: RuntimeStreamEvent;
+  },
+): Promise<void> {
+  await agent.hooks?.onStreamEvent?.({
+    agent,
+    session: createSessionInfo({}),
+    runId: options.runId,
+    event: options.event,
+    context: {
+      source: { type: "test" },
+      attributes: {},
+    },
+  });
+}
+
 async function submitTaskHook(
   agent: ExpertAgent,
   options: {
     readonly runId: string;
+    readonly sessionId?: string | undefined;
+    readonly runtimeSessionId?: string | undefined;
+    readonly query?: string | undefined;
     readonly output?: string | undefined;
     readonly error?: unknown;
     readonly externalContext?: boolean | undefined;
@@ -374,24 +576,14 @@ async function submitTaskHook(
 ): Promise<void> {
   await agent.hooks?.afterTaskSubmit?.({
     agent,
-    session: {
-      systemSessionId: "session-1",
-      runtimeSession: {
-        type: "test-runtime",
-        id: "runtime-session-1",
-      },
-      agentId: agent.id,
-      runtime: {
-        id: "test-runtime",
-        kind: "test-runtime",
-        displayName: "Test Runtime",
-      },
-      sessionState: "active",
+    session: createSessionInfo({
+      sessionId: options.sessionId,
+      runtimeSessionId: options.runtimeSessionId,
       runState: options.error === undefined ? "succeeded" : "failed",
-    },
+    }),
     runId: options.runId,
     submission: {
-      query: "Remember the preferred memory design.",
+      query: options.query ?? "Remember the preferred memory design.",
     },
     ...(options.output === undefined
       ? {}
@@ -413,6 +605,45 @@ async function submitTaskHook(
       },
     },
   });
+}
+
+async function destroySessionHook(
+  agent: ExpertAgent,
+  options: {
+    readonly sessionId?: string | undefined;
+    readonly runtimeSessionId?: string | undefined;
+  } = {},
+): Promise<void> {
+  await agent.hooks?.afterSessionDestroy?.({
+    agent,
+    session: createSessionInfo({
+      sessionId: options.sessionId,
+      runtimeSessionId: options.runtimeSessionId,
+      runState: "succeeded",
+    }),
+  });
+}
+
+function createSessionInfo(options: {
+  readonly sessionId?: string | undefined;
+  readonly runtimeSessionId?: string | undefined;
+  readonly runState?: "succeeded" | "failed" | "cancelled" | undefined;
+}) {
+  return {
+    systemSessionId: options.sessionId ?? "session-1",
+    runtimeSession: {
+      type: "test-runtime",
+      id: options.runtimeSessionId ?? "runtime-session-1",
+    },
+    agentId: "memory-agent",
+    runtime: {
+      id: "test-runtime",
+      kind: "test-runtime",
+      displayName: "Test Runtime",
+    },
+    sessionState: "active" as const,
+    runState: options.runState,
+  };
 }
 
 async function createAgent(options: {

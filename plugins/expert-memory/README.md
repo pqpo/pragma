@@ -1,7 +1,13 @@
 # Expert Memory Plugin
 
-This Pragma plugin registers long-term Agent memory as context and records
-eligible run outputs as pending memory candidates.
+This Pragma plugin builds a three-layer Agent memory system:
+
+- `summary.md`: always-on memory index
+- `skills/*.md`: detailed skill cards exposed as model-decision context
+- `tasks/<sessionId>/<runId>.md`: per-task summaries
+
+It also stores lightweight supporting evidence under `evidence/` so summaries
+can be regenerated without copying full runtime transcripts.
 
 For built-in usage, import the plugin entry as a source dependency and pass
 parameters through the Agent `plugins` array:
@@ -51,6 +57,10 @@ PRAGMA_PLUGIN_EXPERT_MEMORY_ENABLED
 PRAGMA_PLUGIN_EXPERT_MEMORY_USE_MEMORIES
 PRAGMA_PLUGIN_EXPERT_MEMORY_GENERATE_MEMORIES
 PRAGMA_PLUGIN_EXPERT_MEMORY_MEMORY_ROOT
+PRAGMA_PLUGIN_EXPERT_MEMORY_TASK_SUMMARY_MODEL
+PRAGMA_PLUGIN_EXPERT_MEMORY_SESSION_SUMMARY_MODEL
+PRAGMA_PLUGIN_EXPERT_MEMORY_SKILL_MERGE_MODEL
+PRAGMA_PLUGIN_EXPERT_MEMORY_SUMMARY_MODEL
 ```
 
 Use `createExpertAgentPluginConfigEnvName` from `@pragma/core` to derive

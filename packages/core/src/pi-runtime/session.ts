@@ -8,7 +8,6 @@ import type {
   RuntimeOutputSchema,
   RuntimeRunResult,
   RuntimeSessionInfo,
-  RuntimeStreamEvent,
   RuntimeSubmitRequest,
 } from "@pragma/core";
 import {
@@ -17,6 +16,7 @@ import {
   dispatchExpertAgentHook,
 } from "@pragma/core";
 import { randomUUID } from "node:crypto";
+import type { RuntimeStreamEvent, RuntimeStreamEventInput } from "@pragma/core";
 
 import {
   readAssistantMessageText,
@@ -57,6 +57,8 @@ export function createPiRuntimeSession(
       const logger = streamState.logger ?? agent.logger;
       let cancelled = false;
       let preflightRejected = false;
+      const pendingHookCalls: Promise<void>[] = [];
+      let emittedSequence = 0;
 
       const result = lifecycle.enqueue(async ({ signal }) => {
         let outputText: string;
@@ -73,6 +75,26 @@ export function createPiRuntimeSession(
           modelName: submission.modelName,
           hasOutputSchema: submission.output !== undefined,
         });
+        const emitRuntimeEvent = (event: RuntimeStreamEventInput): void => {
+          const completeEvent = {
+            schemaVersion: "pragma.stream/v1",
+            eventId: randomUUID(),
+            emittedAt: new Date().toISOString(),
+            sequence: emittedSequence++,
+            ...event,
+          } as RuntimeStreamEvent;
+          emitter.emit(completeEvent);
+          pendingHookCalls.push(
+            dispatchExpertAgentHook(agent.hooks, "onStreamEvent", {
+              agent,
+              session: createSessionInfo(info, lifecycle),
+              runId,
+              event: completeEvent,
+              context: lifecycle.currentContext,
+              logger,
+            }),
+          );
+        };
         const unsubscribe = session.subscribe((event) => {
           const delta = readAssistantTextDelta(event);
           const thinkingDelta = readAssistantThinkingDelta(event);
@@ -81,7 +103,7 @@ export function createPiRuntimeSession(
           const toolEvent = readToolExecutionEvent(event);
 
           if (delta !== undefined) {
-            emitter.emit({
+            emitRuntimeEvent({
               runId,
               source,
               type: "message.delta",
@@ -94,7 +116,7 @@ export function createPiRuntimeSession(
           }
 
           if (thinkingDelta !== undefined) {
-            emitter.emit({
+            emitRuntimeEvent({
               runId,
               source,
               type: "thought.delta",
@@ -107,7 +129,7 @@ export function createPiRuntimeSession(
 
           if (completedMessageText !== undefined) {
             outputText = completedMessageText;
-            emitter.emit({
+            emitRuntimeEvent({
               runId,
               source,
               type: "message.completed",
@@ -120,7 +142,7 @@ export function createPiRuntimeSession(
           }
 
           if (progressEvent !== undefined) {
-            emitter.emit({
+            emitRuntimeEvent({
               runId,
               source,
               type: "progress",
@@ -134,7 +156,7 @@ export function createPiRuntimeSession(
               source,
               toolEvent,
             })) {
-              emitter.emit(streamEvent);
+              emitRuntimeEvent(streamEvent);
             }
           }
         });
@@ -155,7 +177,7 @@ export function createPiRuntimeSession(
             logger,
           });
 
-          emitter.emit({
+          emitRuntimeEvent({
             runId,
             source,
             type: "run.started",
@@ -205,7 +227,7 @@ export function createPiRuntimeSession(
           const usage = aggregateAssistantUsage(session.messages.slice(messageCountBeforeRun));
           const result = createRuntimeRunResult(runId, parseResult.value, usage);
 
-          emitter.emit({
+          emitRuntimeEvent({
             runId,
             source,
             type: "run.completed",
@@ -237,7 +259,7 @@ export function createPiRuntimeSession(
               ? error.message
               : "Runtime run failed";
 
-          emitter.emit({
+          emitRuntimeEvent({
             runId,
             source,
             type: wasCancelled ? "run.cancelled" : "run.failed",
@@ -268,6 +290,7 @@ export function createPiRuntimeSession(
           );
           throw error;
         } finally {
+          await Promise.allSettled(pendingHookCalls);
           streamState.runId = undefined;
           streamState.emitter = undefined;
           streamState.source = undefined;
