@@ -6,6 +6,17 @@ import {
 
 import { MemorySystem } from "./memory-system/index.ts";
 import {
+  createExperienceMemoryContributions,
+  experienceMemoryCapabilities,
+  type ExperienceMemoryPluginConfig,
+} from "./experience-memory/index.ts";
+import {
+  createFactMemoryContributions,
+  factMemoryCapabilities,
+  type FactMemoryPluginConfig,
+} from "./fact-memory/index.ts";
+import { createDefaultMemoryPromotionPipeline } from "./memory-system/index.ts";
+import {
   createSkillMemoryContributions,
   skillMemoryCapabilities,
   type SkillMemoryConfigInput,
@@ -17,17 +28,25 @@ import {
 } from "./task-memory/index.ts";
 
 export {
+  createExperienceMemoryContributions,
+  experienceMemoryCapabilities,
+  createFactMemoryContributions,
+  factMemoryCapabilities,
   createSkillMemoryContributions,
   skillMemoryCapabilities,
   createTaskMemoryContributions,
   taskMemoryCapabilities,
 };
 export * from "./memory-system/index.ts";
+export * from "./experience-memory/index.ts";
+export * from "./fact-memory/index.ts";
 export * from "./skill-memory/index.ts";
 export * from "./task-memory/index.ts";
 
 export interface MemoryPluginConfig {
   readonly task?: TaskMemoryPluginConfig | undefined;
+  readonly experience?: ExperienceMemoryPluginConfig | undefined;
+  readonly fact?: FactMemoryPluginConfig | undefined;
   readonly skill?: SkillMemoryConfigInput | undefined;
 }
 
@@ -40,10 +59,19 @@ export function createMemoryPluginEntry(
 ): ExpertAgentPluginEntry {
   return definePluginEntry({
     setup: (context) => {
-      const memorySystem = options.memorySystem ?? new MemorySystem();
+      const memorySystem =
+        options.memorySystem ?? new MemorySystem({ promotions: createDefaultMemoryPromotionPipeline() });
 
       return mergeContributions([
         createTaskMemoryContributions({
+          ...context,
+          memorySystem,
+        }),
+        createExperienceMemoryContributions({
+          ...context,
+          memorySystem,
+        }),
+        createFactMemoryContributions({
           ...context,
           memorySystem,
         }),
@@ -61,6 +89,8 @@ export default createMemoryPluginEntry();
 
 export const memoryPluginCapabilities = [
   ...taskMemoryCapabilities,
+  ...experienceMemoryCapabilities,
+  ...factMemoryCapabilities,
   ...skillMemoryCapabilities,
 ] as const;
 

@@ -2,9 +2,9 @@
   "schemaVersion": "pragma.plugin/v1",
   "id": "memory",
   "name": "Memory",
-  "description": "Registers task-memory and skill-memory capabilities, including typed memory stores, auditable context, and memory tools.",
+  "description": "Registers task, experience, fact, and skill memory capabilities, including typed memory stores, auditable context, and memory tools.",
   "version": "0.0.0",
-  "tags": ["memory", "context", "skill", "task"],
+  "tags": ["memory", "context", "skill", "task", "experience", "fact"],
   "runtime": {
     "type": "expert-agent-plugin",
     "entry": "./dist/index.js"
@@ -21,6 +21,16 @@
       "description": "Registers the skill memory store and skill distillation pipeline."
     },
     {
+      "type": "memory",
+      "name": "experience-memory",
+      "description": "Registers the experience memory store and experience memory tools."
+    },
+    {
+      "type": "memory",
+      "name": "fact-memory",
+      "description": "Registers the fact memory store and fact memory tools."
+    },
+    {
       "type": "context",
       "name": "skill-memory",
       "description": "Exposes skill-memory audit files as agent context."
@@ -29,6 +39,16 @@
       "type": "tool",
       "name": "task-memory-tools",
       "description": "Injects task memory tools into the agent tool set."
+    },
+    {
+      "type": "tool",
+      "name": "experience-memory-tools",
+      "description": "Injects experience memory tools into the agent tool set."
+    },
+    {
+      "type": "tool",
+      "name": "fact-memory-tools",
+      "description": "Injects fact memory tools into the agent tool set."
     }
   ],
   "configuration": {
@@ -44,6 +64,20 @@
         "name": "skill.enabled",
         "type": "boolean",
         "description": "Whether skill memory should register its store and hooks.",
+        "required": false,
+        "default": true
+      },
+      {
+        "name": "experience.enabled",
+        "type": "boolean",
+        "description": "Whether experience memory should register its store and tools.",
+        "required": false,
+        "default": true
+      },
+      {
+        "name": "fact.enabled",
+        "type": "boolean",
+        "description": "Whether fact memory should register its store and tools.",
         "required": false,
         "default": true
       },

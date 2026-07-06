@@ -421,6 +421,8 @@ export interface MemorySystemOptions {
   readonly experienceStore?: ExperienceMemoryStore | undefined;
   readonly factStore?: FactMemoryStore | undefined;
   readonly skillStore?: SkillMemoryStore | undefined;
+  readonly promotions?: MemoryPromotionPipeline | undefined;
+  readonly onPromotionError?: ((error: MemoryResultError) => void) | undefined;
 }
 
 export interface MemorySystemRuntimeRetrieveInput {
@@ -428,13 +430,17 @@ export interface MemorySystemRuntimeRetrieveInput {
   readonly options?: RuntimeMemoryRetrieveOptions | undefined;
 }
 
-export interface MemoryPromotionCandidate<TMemoryType extends "fact" | "skill", TRecord> {
+export interface MemoryPromotionCandidate<
+  TMemoryType extends "experience" | "fact" | "skill",
+  TRecord,
+> {
   readonly type: TMemoryType;
   readonly record: TRecord;
   readonly derivedFrom: readonly MemoryReference[];
 }
 
 export interface MemoryPromotionProposal {
+  readonly experiences: readonly MemoryPromotionCandidate<"experience", ExperienceMemoryRecord>[];
   readonly facts: readonly MemoryPromotionCandidate<"fact", FactMemoryRecord>[];
   readonly skills: readonly MemoryPromotionCandidate<"skill", SkillMemoryRecord>[];
 }

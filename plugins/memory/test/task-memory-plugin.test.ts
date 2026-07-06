@@ -69,6 +69,22 @@ describe("task-memory plugin", () => {
   });
 });
 
+describe("memory plugin entry stores", () => {
+  it("can register experience and fact stores explicitly", async () => {
+    const memorySystem = new MemorySystem();
+
+    const experienceResult = memorySystem.registerExperienceStore({
+      store: createStubExperienceMemoryStore(),
+    });
+    const factResult = memorySystem.registerFactStore({
+      store: createStubFactMemoryStore(),
+    });
+
+    expect(experienceResult).toEqual(okMemory({ type: "experience" }));
+    expect(factResult).toEqual(okMemory({ type: "fact" }));
+  });
+});
+
 function createStubTaskMemoryStore(): TaskMemoryStore {
   return {
     async list() {
@@ -92,6 +108,58 @@ function createStubTaskMemoryStore(): TaskMemoryStore {
         private: [],
         combined: [],
       });
+    },
+  };
+}
+
+function createStubExperienceMemoryStore() {
+  return {
+    async list() {
+      return okMemory([]);
+    },
+    async get() {
+      throw new Error("not implemented");
+    },
+    async write() {
+      throw new Error("not implemented");
+    },
+    async update() {
+      throw new Error("not implemented");
+    },
+    async delete() {
+      throw new Error("not implemented");
+    },
+    async search() {
+      return okMemory([]);
+    },
+    async retrieveForRuntime() {
+      return okMemory([]);
+    },
+  };
+}
+
+function createStubFactMemoryStore() {
+  return {
+    async list() {
+      return okMemory([]);
+    },
+    async get() {
+      throw new Error("not implemented");
+    },
+    async write() {
+      throw new Error("not implemented");
+    },
+    async update() {
+      throw new Error("not implemented");
+    },
+    async delete() {
+      throw new Error("not implemented");
+    },
+    async search() {
+      return okMemory([]);
+    },
+    async retrieveForRuntime() {
+      return okMemory([]);
     },
   };
 }

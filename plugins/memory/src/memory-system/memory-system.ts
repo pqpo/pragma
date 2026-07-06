@@ -13,6 +13,7 @@ import {
   type FactMemoryWriteInput,
   type MemoryPromotionPipeline,
   type MemoryResult,
+  type MemoryResultError,
   type MemoryStoreRegistration,
   type MemorySystemOptions,
   type MemorySystemRuntimeRetrieveInput,
@@ -36,13 +37,15 @@ export class MemorySystem {
   private factStore: FactMemoryStore | undefined;
   private skillStore: SkillMemoryStore | undefined;
   readonly promotions: MemoryPromotionPipeline | undefined;
+  readonly onPromotionError: ((error: MemoryResultError) => void) | undefined;
 
-  constructor(options: MemorySystemOptions & { readonly promotions?: MemoryPromotionPipeline | undefined } = {}) {
+  constructor(options: MemorySystemOptions = {}) {
     this.taskStore = options.taskStore;
     this.experienceStore = options.experienceStore;
     this.factStore = options.factStore;
     this.skillStore = options.skillStore;
     this.promotions = options.promotions;
+    this.onPromotionError = options.onPromotionError;
   }
 
   registerTaskStore(
@@ -130,12 +133,19 @@ export class MemorySystem {
   }
 
   async archiveTaskMemory(input: TaskMemoryArchiveInput) {
-    return await this.requireTaskStore().then((store) => {
+    return await this.requireTaskStore().then(async (store) => {
       if (!store.ok) {
         return store;
       }
 
-      return store.value.archive(input);
+      const archived = await store.value.archive(input);
+
+      if (!archived.ok) {
+        return archived;
+      }
+
+      await this.runPromotionSafely(() => this.promoteFromTaskRecords(archived.value));
+      return archived;
     });
   }
 
@@ -160,22 +170,36 @@ export class MemorySystem {
   }
 
   async writeExperience(input: ExperienceMemoryWriteInput) {
-    return await this.requireExperienceStore().then((store) => {
+    return await this.requireExperienceStore().then(async (store) => {
       if (!store.ok) {
         return store;
       }
 
-      return store.value.write(input);
+      const written = await store.value.write(input);
+
+      if (!written.ok) {
+        return written;
+      }
+
+      await this.runPromotionSafely(() => this.promoteFromExperienceRecords([written.value]));
+      return written;
     });
   }
 
   async updateExperience(input: ExperienceMemoryUpdateInput) {
-    return await this.requireExperienceStore().then((store) => {
+    return await this.requireExperienceStore().then(async (store) => {
       if (!store.ok) {
         return store;
       }
 
-      return store.value.update(input);
+      const updated = await store.value.update(input);
+
+      if (!updated.ok) {
+        return updated;
+      }
+
+      await this.runPromotionSafely(() => this.promoteFromExperienceRecords([updated.value]));
+      return updated;
     });
   }
 
@@ -355,5 +379,136 @@ export class MemorySystem {
     return this.skillStore === undefined
       ? errorMemory("store_unavailable", "Skill memory store is not registered.")
       : okMemory(this.skillStore);
+  }
+
+  private async promoteFromTaskRecords(
+    records: readonly import("./types.ts").TaskMemoryRecord[],
+  ): Promise<MemoryResult<void>> {
+    if (this.promotions?.proposeFromTask === undefined || records.length === 0) {
+      return okMemory(undefined);
+    }
+
+    const proposal = await this.promotions.proposeFromTask(records);
+
+    if (!proposal.ok) {
+      return proposal;
+    }
+
+    return await this.applyPromotionProposal(proposal.value);
+  }
+
+  private async promoteFromExperienceRecords(
+    records: readonly import("./types.ts").ExperienceMemoryRecord[],
+  ): Promise<MemoryResult<void>> {
+    if (this.promotions?.proposeFromExperience === undefined || records.length === 0) {
+      return okMemory(undefined);
+    }
+
+    const proposal = await this.promotions.proposeFromExperience(records);
+
+    if (!proposal.ok) {
+      return proposal;
+    }
+
+    return await this.applyPromotionProposal(proposal.value);
+  }
+
+  private async applyPromotionProposal(
+    proposal: import("./types.ts").MemoryPromotionProposal,
+  ): Promise<MemoryResult<void>> {
+    if (this.experienceStore !== undefined) {
+      for (const candidate of proposal.experiences) {
+        const existing = await this.experienceStore.get({ id: candidate.record.id });
+
+        if (existing.ok) {
+          const updated = await this.experienceStore.update({ record: candidate.record });
+
+          if (!updated.ok) {
+            return updated;
+          }
+          continue;
+        }
+
+        if (existing.error.code !== "memory_not_found") {
+          return existing;
+        }
+
+        const written = await this.experienceStore.write({ record: candidate.record });
+
+        if (!written.ok) {
+          return written;
+        }
+      }
+    }
+
+    if (this.factStore !== undefined) {
+      for (const candidate of proposal.facts) {
+        const existing = await this.factStore.get({ id: candidate.record.id });
+
+        if (existing.ok) {
+          const updated = await this.factStore.update({ record: candidate.record });
+
+          if (!updated.ok) {
+            return updated;
+          }
+          continue;
+        }
+
+        if (existing.error.code !== "memory_not_found") {
+          return existing;
+        }
+
+        const written = await this.factStore.write({ record: candidate.record });
+
+        if (!written.ok) {
+          return written;
+        }
+      }
+    }
+
+    if (this.skillStore !== undefined) {
+      for (const candidate of proposal.skills) {
+        const existing = await this.skillStore.get({ id: candidate.record.id });
+
+        if (existing.ok) {
+          const updated = await this.skillStore.update({ record: candidate.record });
+
+          if (!updated.ok) {
+            return updated;
+          }
+          continue;
+        }
+
+        if (existing.error.code !== "memory_not_found") {
+          return existing;
+        }
+
+        const written = await this.skillStore.write({ record: candidate.record });
+
+        if (!written.ok) {
+          return written;
+        }
+      }
+    }
+
+    return okMemory(undefined);
+  }
+
+  private async runPromotionSafely(operation: () => Promise<MemoryResult<void>>): Promise<void> {
+    try {
+      const result = await operation();
+
+      if (!result.ok) {
+        this.onPromotionError?.(result.error);
+      }
+    } catch (error) {
+      this.onPromotionError?.({
+        code: "store_error",
+        message: "Memory promotion failed unexpectedly.",
+        details: {
+          cause: error,
+        },
+      });
+    }
   }
 }
