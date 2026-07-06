@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { ContextSystem, ExpertAgent, MemorySystem, okMemory } from "../../src/index.ts";
+import {
+  ContextSystem,
+  ExpertAgent,
+  MemorySystem,
+  okMemory,
+} from "../../src/index.ts";
 import type {
   ExperienceMemoryRecord,
   ExperienceMemoryStore,
@@ -97,19 +102,24 @@ function createTaskStore(): TaskMemoryStore {
     async get() {
       return okMemory(createTaskMemory("shared-task-memory", "shared"));
     },
-    async write(input) {
-      return okMemory(input.record);
+    async append(input) {
+      return okMemory({
+        ...input.record,
+        id: input.record.id ?? "appended-task-memory",
+        revision: 0,
+        provenance: {
+          createdBy: input.actorAgentId,
+          updatedBy: input.actorAgentId,
+          createdAt: "2026-07-06T00:00:00.000Z",
+          updatedAt: "2026-07-06T00:00:00.000Z",
+          evidence: [],
+        },
+      });
     },
-    async update(input) {
-      return okMemory(input.record);
-    },
-    async delete(input) {
-      return okMemory({ id: input.id });
+    async patch() {
+      return okMemory(createTaskMemory("shared-task-memory", "shared"));
     },
     async archive() {
-      return okMemory([]);
-    },
-    async search() {
       return okMemory([]);
     },
     async retrieveForRuntime(input) {
@@ -217,12 +227,14 @@ function createTaskMemory(
     scope: "session",
     visibility,
     ownerAgentId,
+    workflowRunId: "workflow-memory",
     kind: visibility === "shared" ? "handoff" : "note",
     content:
       visibility === "shared"
         ? "Database migration is complete. API validation remains."
         : "Validate prompt assembly before publishing memory results.",
     status: "active",
+    revision: 0,
     title: id,
     provenance: {
       createdAt: "2026-07-06T00:00:00.000Z",
@@ -231,6 +243,7 @@ function createTaskMemory(
     },
   };
 }
+
 
 function createExperienceMemory(): ExperienceMemoryRecord {
   return {

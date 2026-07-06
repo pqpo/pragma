@@ -28,6 +28,13 @@ import { resolveExpertAgentPlugins } from "../plugins/expert-agent-plugin.ts";
 import type { ExpertAgentLogger, ExpertAgentLoggerProvider } from "../logging/logger.ts";
 import { createExpertAgentLogger, defaultExpertAgentLoggerProvider } from "../logging/logger.ts";
 import { MemorySystem } from "../memory-system/memory-system.ts";
+import type {
+  TaskMemoryAppendInput,
+  TaskMemoryArchiveInput,
+  TaskMemoryGetInput,
+  TaskMemoryListInput,
+  TaskMemoryPatchInput,
+} from "../memory-system/types.ts";
 import {
   createBuiltInSkillMemoryRegistration,
   type SkillMemoryConfigInput,
@@ -41,7 +48,7 @@ import type {
 } from "../plugins/plugin-loader.ts";
 import { isExpertAgentPluginEntryUse, loadExpertAgentPlugins } from "../plugins/plugin-loader.ts";
 import type { ExpertAgentRunContext } from "../runtime/run-context.ts";
-import { createExpertAgentRunContext } from "../runtime/run-context.ts";
+import { createExpertAgentRunContext, withTaskMemoryRunScope } from "../runtime/run-context.ts";
 import type {
   RuntimeAdapter,
   RuntimeAgentSession,
@@ -361,6 +368,10 @@ export class ExpertAgent implements IExpertAgent, Directive<unknown, unknown> {
     const runtime = runtimeRegistry.resolve(request.runtime ?? execution.runtimeId);
     const session = await runtime.createSession({
       agent: this,
+      context: withTaskMemoryRunScope(undefined, {
+        workflowRunId: execution.workflow.id,
+        taskRunId: execution.task.id,
+      }),
       humanInteractionHandler: async (humanRequest) => {
         if (humanRequest.kind === "user_question") {
           const response = await execution.requestHumanInteraction({
@@ -435,7 +446,10 @@ export class ExpertAgent implements IExpertAgent, Directive<unknown, unknown> {
   }
 
   createDefaultTools(options: CreateContextToolsOptions = {}): readonly ExpertAgentDefaultTool[] {
-    return createContextTools(this, options);
+    return createContextTools(this, {
+      ...options,
+      agentId: options.agentId ?? this.id,
+    });
   }
 
   async listContext(
@@ -472,6 +486,26 @@ export class ExpertAgent implements IExpertAgent, Directive<unknown, unknown> {
     input: ExpertAgentContextItemDeleteInput,
   ): Promise<ExpertAgentContextResult<ExpertAgentContextItemDeleteResult>> {
     return await this.contextSystem.delete(input);
+  }
+
+  async listTaskMemory(input: TaskMemoryListInput) {
+    return await this.memorySystem.listTaskMemory(input);
+  }
+
+  async getTaskMemory(input: TaskMemoryGetInput) {
+    return await this.memorySystem.getTaskMemory(input);
+  }
+
+  async appendTaskMemory(input: TaskMemoryAppendInput) {
+    return await this.memorySystem.appendTaskMemory(input);
+  }
+
+  async patchTaskMemory(input: TaskMemoryPatchInput) {
+    return await this.memorySystem.patchTaskMemory(input);
+  }
+
+  async archiveTaskMemory(input: TaskMemoryArchiveInput) {
+    return await this.memorySystem.archiveTaskMemory(input);
   }
 }
 

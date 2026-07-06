@@ -48,24 +48,33 @@ export interface BaseMemoryRecord {
 }
 
 export type TaskMemoryKind =
-  | "checkpoint"
   | "decision"
   | "handoff"
   | "note"
+  | "todo"
   | "progress"
   | "question";
+
+export interface TaskTodoItem {
+  readonly id: string;
+  readonly text: string;
+  readonly done: boolean;
+  readonly assigneeAgentId?: string | undefined;
+}
 
 export interface TaskMemoryRecord extends BaseMemoryRecord {
   readonly type: "task";
   readonly scope: "run" | "session";
   readonly visibility: MemoryVisibility;
   readonly ownerAgentId?: string | undefined;
-  readonly workflowRunId?: string | undefined;
+  readonly workflowRunId: string;
   readonly taskRunId?: string | undefined;
   readonly runtimeSessionId?: string | undefined;
   readonly kind: TaskMemoryKind;
   readonly content: string;
-  readonly status: "active" | "archived";
+  readonly items?: readonly TaskTodoItem[] | undefined;
+  readonly status: "active" | "resolved" | "archived";
+  readonly revision: number;
 }
 
 export type ExperienceMemoryKind = "conversation" | "recovery" | "run" | "session" | "tool";
@@ -183,34 +192,48 @@ export interface RuntimeMemoryRetrieval {
   readonly skills: readonly SkillMemoryRecord[];
 }
 
-export interface TaskMemoryWriteInput {
-  readonly record: TaskMemoryRecord;
+export interface TaskMemoryAppendInput {
+  readonly actorAgentId: string;
+  readonly record: Omit<TaskMemoryRecord, "id" | "provenance" | "revision"> & {
+    readonly id?: string | undefined;
+    readonly provenance?: Partial<MemoryProvenance> | undefined;
+    readonly revision?: never;
+  };
   readonly context?: ExpertAgentRunContext | undefined;
 }
 
-export interface TaskMemoryUpdateInput {
-  readonly record: TaskMemoryRecord;
+export interface TaskMemoryPatchInput {
+  readonly id: string;
+  readonly actorAgentId: string;
+  readonly expectedRevision: number;
+  readonly patch: {
+    readonly title?: string | undefined;
+    readonly content?: string | undefined;
+    readonly status?: TaskMemoryRecord["status"] | undefined;
+    readonly items?: readonly TaskTodoItem[] | undefined;
+  };
   readonly context?: ExpertAgentRunContext | undefined;
 }
 
 export interface TaskMemoryGetInput {
   readonly id: string;
-  readonly visibility?: MemoryVisibility | undefined;
-  readonly ownerAgentId?: string | undefined;
+  readonly actorAgentId: string;
   readonly context?: ExpertAgentRunContext | undefined;
 }
 
 export interface TaskMemoryListInput {
-  readonly workflowRunId?: string | undefined;
+  readonly workflowRunId: string;
+  readonly actorAgentId: string;
   readonly taskRunId?: string | undefined;
   readonly runtimeSessionId?: string | undefined;
   readonly visibility?: MemoryVisibility | undefined;
   readonly ownerAgentId?: string | undefined;
-  readonly status?: TaskMemoryRecord["status"] | undefined;
+  readonly status?: TaskMemoryRecord["status"] | readonly TaskMemoryRecord["status"][] | undefined;
   readonly context?: ExpertAgentRunContext | undefined;
 }
 
 export interface TaskMemoryArchiveInput {
+  readonly actorAgentId: string;
   readonly workflowRunId?: string | undefined;
   readonly taskRunId?: string | undefined;
   readonly runtimeSessionId?: string | undefined;
@@ -293,21 +316,15 @@ export interface TaskMemoryStore {
   readonly get: (
     input: TaskMemoryGetInput,
   ) => Promise<MemoryResult<TaskMemoryRecord>>;
-  readonly write: (
-    input: TaskMemoryWriteInput,
+  readonly append: (
+    input: TaskMemoryAppendInput,
   ) => Promise<MemoryResult<TaskMemoryRecord>>;
-  readonly update: (
-    input: TaskMemoryUpdateInput,
+  readonly patch: (
+    input: TaskMemoryPatchInput,
   ) => Promise<MemoryResult<TaskMemoryRecord>>;
-  readonly delete: (
-    input: TaskMemoryGetInput,
-  ) => Promise<MemoryResult<{ readonly id: string }>>;
   readonly archive: (
     input: TaskMemoryArchiveInput,
   ) => Promise<MemoryResult<readonly TaskMemoryRecord[]>>;
-  readonly search: (
-    input: MemorySearchInput,
-  ) => Promise<MemoryResult<readonly MemorySearchMatch<TaskMemoryRecord>[]>>;
   readonly retrieveForRuntime: (
     input: RuntimeMemoryRetrieveInput,
     options?: RuntimeMemoryRetrieveOptions["task"] | undefined,

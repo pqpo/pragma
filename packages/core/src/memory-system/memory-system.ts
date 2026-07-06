@@ -22,12 +22,12 @@ import {
   type SkillMemoryStore,
   type SkillMemoryUpdateInput,
   type SkillMemoryWriteInput,
+  type TaskMemoryAppendInput,
   type TaskMemoryArchiveInput,
   type TaskMemoryGetInput,
   type TaskMemoryListInput,
+  type TaskMemoryPatchInput,
   type TaskMemoryStore,
-  type TaskMemoryUpdateInput,
-  type TaskMemoryWriteInput,
 } from "./types.ts";
 
 export class MemorySystem {
@@ -109,33 +109,23 @@ export class MemorySystem {
     });
   }
 
-  async writeTaskMemory(input: TaskMemoryWriteInput) {
+  async appendTaskMemory(input: TaskMemoryAppendInput) {
     return await this.requireTaskStore().then((store) => {
       if (!store.ok) {
         return store;
       }
 
-      return store.value.write(input);
+      return store.value.append(input);
     });
   }
 
-  async updateTaskMemory(input: TaskMemoryUpdateInput) {
+  async patchTaskMemory(input: TaskMemoryPatchInput) {
     return await this.requireTaskStore().then((store) => {
       if (!store.ok) {
         return store;
       }
 
-      return store.value.update(input);
-    });
-  }
-
-  async deleteTaskMemory(input: TaskMemoryGetInput) {
-    return await this.requireTaskStore().then((store) => {
-      if (!store.ok) {
-        return store;
-      }
-
-      return store.value.delete(input);
+      return store.value.patch(input);
     });
   }
 
