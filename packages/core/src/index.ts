@@ -12,6 +12,7 @@ export * from "./context-system/context-tools.ts";
 export * from "./context-system/file-system-context-store.ts";
 export * from "./context-system/in-memory-context-store.ts";
 export * from "./logging/logger.ts";
+export * from "./memory-system/index.ts";
 export * from "./loop/index.ts";
 export * from "./plugins/expert-agent-plugin.ts";
 export * from "./plugins/plugin-loader.ts";

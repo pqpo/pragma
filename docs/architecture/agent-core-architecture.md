@@ -68,7 +68,7 @@ flowchart TB
 
 ### Context 与工具层
 
-Context 与工具层负责把长期知识、项目上下文和受控能力暴露给 Agent。
+Context 与工具层负责把长期知识、项目上下文、记忆检索结果和受控能力暴露给 Agent。
 
 ```mermaid
 flowchart TB
@@ -84,6 +84,12 @@ flowchart TB
   contextSystem --> pluginA --> pluginAStore
   contextSystem --> pluginB --> pluginBStore
 
+  memorySystem["MemorySystem"]
+  memorySystem --> taskMemory["Task Memory"]
+  memorySystem --> experienceMemory["Experience Memory"]
+  memorySystem --> factMemory["Fact Memory"]
+  memorySystem --> skillMemory["Skill Memory"]
+
   contextTools["Context Tools"]
   contextTools --> list["list_expert_context"]
   contextTools --> read["read_expert_context"]
@@ -94,6 +100,9 @@ flowchart TB
 核心边界：
 
 - 上下文通过 namespace 隔离来源。
+- `ContextSystem` 是通用 context substrate，不直接承担所有 memory 语义。
+- `MemorySystem` 是建立在 context 和 runtime evidence 之上的语义层，负责记忆检索与治理。
+- `ContextManager` 负责最终 prompt 装配，但可以消费 `MemorySystem` 的检索结果。
 - 上下文不会一次性塞进 Runtime，而是由 Agent 或工具按需读取。
 - Tool approval 是工具能力的一部分，但最终权限仍应由 Runtime、Desktop 权限闸门或上层策略共同裁决。
 - `packages/shared` 只保存跨端协议和值对象，不放 Node 专属上下文实现。
@@ -239,6 +248,7 @@ flowchart TB
 | `TaskManager`         | 任务分发、租约、执行协调、等待恢复、transition 推进 | 保存权威状态、承载消息系统    |
 | `StateManager`        | Workflow/Task/Human Interaction 状态、`RunState`、revision、幂等应用 | 执行 Agent、发布消息          |
 | `Mailbox`             | command/event 发布订阅、消息过滤、通信协议承载      | 决定状态变化、执行任务        |
+| `Task Memory`         | 共享/私有工作记忆、handoff、协作留言板              | 保存权威状态、替代消息总线    |
 | `SandboxManager`      | sandbox 生命周期、workspace、capability             | 编排 transition、保存业务状态 |
 | `LoopDefinitionStore` | 保存运行所需的已编译 Directive 定义                      | 执行步骤、修改状态            |
 

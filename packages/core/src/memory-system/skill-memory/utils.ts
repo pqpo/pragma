@@ -4,8 +4,8 @@ import type {
   ExpertAgentContextResult,
   ExpertAgentStoredContextItem,
   ExpertAgentStoredContextItemUpdateInput,
-} from "@pragma/core";
-import { error, ok } from "@pragma/core";
+} from "../../context-system/context-system.ts";
+import { error, ok } from "../../context-system/context-system.ts";
 
 import {
   MARKDOWN_EXTENSION,
@@ -113,11 +113,11 @@ export function validateExpectedRevision(
   input: ExpertAgentStoredContextItemUpdateInput,
 ): ExpertAgentContextResult<never> | undefined {
   if (input.expectedRevision !== undefined && input.expectedRevision !== existing.revision) {
-    return error("context_conflict", `Expert memory revision conflict: ${input.id}`);
+    return error("context_conflict", `Skill memory revision conflict: ${input.id}`);
   }
 
   if (input.expectedEtag !== undefined && input.expectedEtag !== existing.etag) {
-    return error("context_conflict", `Expert memory etag conflict: ${input.id}`);
+    return error("context_conflict", `Skill memory etag conflict: ${input.id}`);
   }
 
   return undefined;
@@ -320,7 +320,7 @@ export function normalizeMemoryContextId(id: string): ExpertAgentContextResult<s
     return ok(id);
   }
 
-  return error("invalid_input", `Invalid expert memory context id: ${id}`, { id });
+  return error("invalid_input", `Invalid skill memory context id: ${id}`, { id });
 }
 
 export function normalizeWritableMemoryContextId(id: string): ExpertAgentContextResult<string> {

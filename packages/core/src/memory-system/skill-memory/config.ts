@@ -1,23 +1,23 @@
+import { HOST_CONTEXT_NAMESPACE } from "../../context-system/context-system.ts";
 import {
-  HOST_CONTEXT_NAMESPACE,
   createExpertAgentPluginConfigEnvName,
-} from "@pragma/core";
-import type { ExpertAgentPluginSetupContext } from "@pragma/core";
+  type ExpertAgentPluginSetupContext,
+} from "../../plugins/expert-agent-plugin.ts";
 
-import { PLUGIN_ID } from "./constants.ts";
-import { MemoryPluginConfigSchema } from "./schema.ts";
-import type { MemoryPluginConfig } from "./schema.ts";
+import { SKILL_MEMORY_CONFIG_CONTEXT_ID, SKILL_MEMORY_ID } from "./constants.ts";
+import { SkillMemoryConfigSchema } from "./schema.ts";
+import type { SkillMemoryConfig } from "./schema.ts";
 import { describeConfigInput } from "./config-utils.ts";
 
 export async function resolveConfig(
   context: ExpertAgentPluginSetupContext,
-): Promise<MemoryPluginConfig> {
+): Promise<SkillMemoryConfig> {
   const hostConfig = await readHostConfig(context);
   const envConfig = readEnvConfig(context.env);
   const explicitConfig =
     context.config === undefined ? undefined : readConfigObject(context.config);
 
-  return MemoryPluginConfigSchema.parse({
+  return SkillMemoryConfigSchema.parse({
     ...envConfig,
     ...(hostConfig ?? {}),
     ...(explicitConfig ?? {}),
@@ -30,7 +30,7 @@ function readConfigObject(input: unknown): Record<string, unknown> {
   }
 
   throw new Error(
-    `Expert Memory plugin config must be an object, received ${describeConfigInput(input)}.`,
+    `Skill memory config must be an object, received ${describeConfigInput(input)}.`,
   );
 }
 
@@ -39,7 +39,7 @@ async function readHostConfig(
 ): Promise<Record<string, unknown> | undefined> {
   const result = await context.contextSystem.read({
     namespace: HOST_CONTEXT_NAMESPACE,
-    id: "memory-config.json",
+    id: SKILL_MEMORY_CONFIG_CONTEXT_ID,
   });
 
   if (!result.ok) {
@@ -49,7 +49,7 @@ async function readHostConfig(
   return JSON.parse(result.value.content) as Record<string, unknown>;
 }
 
-function readEnvConfig(env: NodeJS.ProcessEnv): Partial<MemoryPluginConfig> {
+function readEnvConfig(env: NodeJS.ProcessEnv): Partial<SkillMemoryConfig> {
   return {
     ...readBooleanEnv(env, createPluginEnvName("enabled"), "enabled"),
     ...readBooleanEnv(env, createPluginEnvName("useMemories"), "useMemories"),
@@ -64,16 +64,16 @@ function readEnvConfig(env: NodeJS.ProcessEnv): Partial<MemoryPluginConfig> {
 
 function createPluginEnvName(name: string): string {
   return createExpertAgentPluginConfigEnvName({
-    pluginId: PLUGIN_ID,
+    pluginId: SKILL_MEMORY_ID,
     name,
   });
 }
 
-function readBooleanEnv<TKey extends keyof MemoryPluginConfig>(
+function readBooleanEnv<TKey extends keyof SkillMemoryConfig>(
   env: NodeJS.ProcessEnv,
   name: string,
   key: TKey,
-): Partial<MemoryPluginConfig> {
+): Partial<SkillMemoryConfig> {
   const value = env[name];
 
   if (value === undefined) {
@@ -82,15 +82,15 @@ function readBooleanEnv<TKey extends keyof MemoryPluginConfig>(
 
   return {
     [key]: value === "1" || value.toLowerCase() === "true",
-  } as Partial<MemoryPluginConfig>;
+  } as Partial<SkillMemoryConfig>;
 }
 
-function readStringEnv<TKey extends keyof MemoryPluginConfig>(
+function readStringEnv<TKey extends keyof SkillMemoryConfig>(
   env: NodeJS.ProcessEnv,
   name: string,
   key: TKey,
-): Partial<MemoryPluginConfig> {
+): Partial<SkillMemoryConfig> {
   const value = env[name];
 
-  return value === undefined ? {} : ({ [key]: value } as Partial<MemoryPluginConfig>);
+  return value === undefined ? {} : ({ [key]: value } as Partial<SkillMemoryConfig>);
 }

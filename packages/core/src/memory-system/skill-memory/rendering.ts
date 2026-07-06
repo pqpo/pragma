@@ -1,4 +1,4 @@
-import type { ExpertAgentStoredContextItem } from "@pragma/core";
+import type { ExpertAgentStoredContextItem } from "../../context-system/context-system.ts";
 
 import {
   RUNS_EVIDENCE_PREFIX,

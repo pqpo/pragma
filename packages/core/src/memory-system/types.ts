@@ -1,0 +1,454 @@
+import type { ExpertAgentRunContext } from "../runtime/run-context.ts";
+
+export type MemoryType = "task" | "experience" | "fact" | "skill";
+
+export type MemoryScope = "run" | "session" | "agent" | "workspace" | "organization";
+
+export type MemoryVisibility = "shared" | "private";
+
+export type MemoryConfidence = "low" | "medium" | "high" | "verified";
+
+export interface MemoryReference {
+  readonly type: MemoryType;
+  readonly id: string;
+}
+
+export interface MemoryEvidenceReference {
+  readonly type: "context" | "event" | "message" | "run" | "session" | "task" | "tool" | "memory" | "external";
+  readonly id: string;
+  readonly label?: string | undefined;
+  readonly uri?: string | undefined;
+  readonly memory?: MemoryReference | undefined;
+}
+
+export interface MemoryProvenance {
+  readonly createdBy?: string | undefined;
+  readonly updatedBy?: string | undefined;
+  readonly source?: string | undefined;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly evidence: readonly MemoryEvidenceReference[];
+}
+
+export interface MemoryRuntimeControl {
+  readonly trigger: "always_on" | "model_decision" | "manual";
+  readonly priority?: number | undefined;
+  readonly maxBytes?: number | undefined;
+}
+
+export interface BaseMemoryRecord {
+  readonly id: string;
+  readonly type: MemoryType;
+  readonly scope: MemoryScope;
+  readonly title?: string | undefined;
+  readonly summary?: string | undefined;
+  readonly tags?: readonly string[] | undefined;
+  readonly runtime?: MemoryRuntimeControl | undefined;
+  readonly provenance: MemoryProvenance;
+}
+
+export type TaskMemoryKind =
+  | "checkpoint"
+  | "decision"
+  | "handoff"
+  | "note"
+  | "progress"
+  | "question";
+
+export interface TaskMemoryRecord extends BaseMemoryRecord {
+  readonly type: "task";
+  readonly scope: "run" | "session";
+  readonly visibility: MemoryVisibility;
+  readonly ownerAgentId?: string | undefined;
+  readonly workflowRunId?: string | undefined;
+  readonly taskRunId?: string | undefined;
+  readonly runtimeSessionId?: string | undefined;
+  readonly kind: TaskMemoryKind;
+  readonly content: string;
+  readonly status: "active" | "archived";
+}
+
+export type ExperienceMemoryKind = "conversation" | "recovery" | "run" | "session" | "tool";
+
+export interface ExperienceMemoryRecord extends BaseMemoryRecord {
+  readonly type: "experience";
+  readonly kind: ExperienceMemoryKind;
+  readonly content: string;
+  readonly workflowRunId?: string | undefined;
+  readonly taskRunId?: string | undefined;
+  readonly runtimeSessionId?: string | undefined;
+  readonly status: "recorded" | "summarized" | "promoted";
+}
+
+export interface FactMemoryRecord extends BaseMemoryRecord {
+  readonly type: "fact";
+  readonly statement: string;
+  readonly confidence: MemoryConfidence;
+  readonly observedAt: string;
+  readonly verifiedAt?: string | undefined;
+  readonly expiresAt?: string | undefined;
+  readonly reviewAt?: string | undefined;
+  readonly invalidatedAt?: string | undefined;
+  readonly supersededBy?: MemoryReference | undefined;
+  readonly conflictsWith?: readonly MemoryReference[] | undefined;
+}
+
+export interface SkillMemoryRecord extends BaseMemoryRecord {
+  readonly type: "skill";
+  readonly problemClass: string;
+  readonly recommendedApproach: readonly string[];
+  readonly goodPractices: readonly string[];
+  readonly antiPatterns: readonly string[];
+  readonly failureModes: readonly string[];
+  readonly recoveryPlaybook: readonly string[];
+  readonly confidence?: MemoryConfidence | undefined;
+}
+
+export interface MemoryResultError {
+  readonly code:
+    | "invalid_input"
+    | "memory_not_found"
+    | "memory_conflict"
+    | "permission_denied"
+    | "store_already_registered"
+    | "store_unavailable"
+    | "store_error";
+  readonly message: string;
+  readonly details?: unknown;
+}
+
+export type MemoryResult<TValue> =
+  | {
+      readonly ok: true;
+      readonly value: TValue;
+    }
+  | {
+      readonly ok: false;
+      readonly error: MemoryResultError;
+    };
+
+export interface MemoryPagination {
+  readonly limit?: number | undefined;
+  readonly cursor?: string | undefined;
+}
+
+export interface MemorySearchInput {
+  readonly query: string;
+  readonly scope?: MemoryScope | undefined;
+  readonly tags?: readonly string[] | undefined;
+  readonly pagination?: MemoryPagination | undefined;
+  readonly context?: ExpertAgentRunContext | undefined;
+}
+
+export interface MemorySearchMatch<TRecord extends BaseMemoryRecord> {
+  readonly record: TRecord;
+  readonly score?: number | undefined;
+  readonly excerpt?: string | undefined;
+}
+
+export interface RuntimeMemoryRetrieveInput {
+  readonly agentId: string;
+  readonly query?: string | undefined;
+  readonly workflowRunId?: string | undefined;
+  readonly taskRunId?: string | undefined;
+  readonly runtimeSessionId?: string | undefined;
+  readonly runContext?: ExpertAgentRunContext | undefined;
+}
+
+export interface RuntimeMemoryRetrieveOptions {
+  readonly task?: {
+    readonly includeShared?: boolean | undefined;
+    readonly includePrivate?: boolean | undefined;
+    readonly maxItems?: number | undefined;
+  } | undefined;
+  readonly experience?: {
+    readonly maxItems?: number | undefined;
+  } | undefined;
+  readonly fact?: {
+    readonly maxItems?: number | undefined;
+  } | undefined;
+  readonly skill?: {
+    readonly maxItems?: number | undefined;
+  } | undefined;
+}
+
+export interface RuntimeMemoryRetrieval {
+  readonly task: {
+    readonly shared: readonly TaskMemoryRecord[];
+    readonly private: readonly TaskMemoryRecord[];
+    readonly combined: readonly TaskMemoryRecord[];
+  };
+  readonly experiences: readonly ExperienceMemoryRecord[];
+  readonly facts: readonly FactMemoryRecord[];
+  readonly skills: readonly SkillMemoryRecord[];
+}
+
+export interface TaskMemoryWriteInput {
+  readonly record: TaskMemoryRecord;
+  readonly context?: ExpertAgentRunContext | undefined;
+}
+
+export interface TaskMemoryUpdateInput {
+  readonly record: TaskMemoryRecord;
+  readonly context?: ExpertAgentRunContext | undefined;
+}
+
+export interface TaskMemoryGetInput {
+  readonly id: string;
+  readonly visibility?: MemoryVisibility | undefined;
+  readonly ownerAgentId?: string | undefined;
+  readonly context?: ExpertAgentRunContext | undefined;
+}
+
+export interface TaskMemoryListInput {
+  readonly workflowRunId?: string | undefined;
+  readonly taskRunId?: string | undefined;
+  readonly runtimeSessionId?: string | undefined;
+  readonly visibility?: MemoryVisibility | undefined;
+  readonly ownerAgentId?: string | undefined;
+  readonly status?: TaskMemoryRecord["status"] | undefined;
+  readonly context?: ExpertAgentRunContext | undefined;
+}
+
+export interface TaskMemoryArchiveInput {
+  readonly workflowRunId?: string | undefined;
+  readonly taskRunId?: string | undefined;
+  readonly runtimeSessionId?: string | undefined;
+  readonly context?: ExpertAgentRunContext | undefined;
+}
+
+export interface ExperienceMemoryWriteInput {
+  readonly record: ExperienceMemoryRecord;
+  readonly context?: ExpertAgentRunContext | undefined;
+}
+
+export interface ExperienceMemoryUpdateInput {
+  readonly record: ExperienceMemoryRecord;
+  readonly context?: ExpertAgentRunContext | undefined;
+}
+
+export interface ExperienceMemoryGetInput {
+  readonly id: string;
+  readonly context?: ExpertAgentRunContext | undefined;
+}
+
+export interface ExperienceMemoryListInput {
+  readonly workflowRunId?: string | undefined;
+  readonly taskRunId?: string | undefined;
+  readonly runtimeSessionId?: string | undefined;
+  readonly status?: ExperienceMemoryRecord["status"] | undefined;
+  readonly kind?: ExperienceMemoryKind | undefined;
+  readonly context?: ExpertAgentRunContext | undefined;
+}
+
+export interface FactMemoryWriteInput {
+  readonly record: FactMemoryRecord;
+  readonly context?: ExpertAgentRunContext | undefined;
+}
+
+export interface FactMemoryUpdateInput {
+  readonly record: FactMemoryRecord;
+  readonly context?: ExpertAgentRunContext | undefined;
+}
+
+export interface FactMemoryGetInput {
+  readonly id: string;
+  readonly context?: ExpertAgentRunContext | undefined;
+}
+
+export interface FactMemoryListInput {
+  readonly scope?: MemoryScope | undefined;
+  readonly confidenceAtLeast?: MemoryConfidence | undefined;
+  readonly onlyActive?: boolean | undefined;
+  readonly tags?: readonly string[] | undefined;
+  readonly context?: ExpertAgentRunContext | undefined;
+}
+
+export interface SkillMemoryWriteInput {
+  readonly record: SkillMemoryRecord;
+  readonly context?: ExpertAgentRunContext | undefined;
+}
+
+export interface SkillMemoryUpdateInput {
+  readonly record: SkillMemoryRecord;
+  readonly context?: ExpertAgentRunContext | undefined;
+}
+
+export interface SkillMemoryGetInput {
+  readonly id: string;
+  readonly context?: ExpertAgentRunContext | undefined;
+}
+
+export interface SkillMemoryListInput {
+  readonly scope?: MemoryScope | undefined;
+  readonly problemClass?: string | undefined;
+  readonly tags?: readonly string[] | undefined;
+  readonly context?: ExpertAgentRunContext | undefined;
+}
+
+export interface TaskMemoryStore {
+  readonly list: (
+    input: TaskMemoryListInput,
+  ) => Promise<MemoryResult<readonly TaskMemoryRecord[]>>;
+  readonly get: (
+    input: TaskMemoryGetInput,
+  ) => Promise<MemoryResult<TaskMemoryRecord>>;
+  readonly write: (
+    input: TaskMemoryWriteInput,
+  ) => Promise<MemoryResult<TaskMemoryRecord>>;
+  readonly update: (
+    input: TaskMemoryUpdateInput,
+  ) => Promise<MemoryResult<TaskMemoryRecord>>;
+  readonly delete: (
+    input: TaskMemoryGetInput,
+  ) => Promise<MemoryResult<{ readonly id: string }>>;
+  readonly archive: (
+    input: TaskMemoryArchiveInput,
+  ) => Promise<MemoryResult<readonly TaskMemoryRecord[]>>;
+  readonly search: (
+    input: MemorySearchInput,
+  ) => Promise<MemoryResult<readonly MemorySearchMatch<TaskMemoryRecord>[]>>;
+  readonly retrieveForRuntime: (
+    input: RuntimeMemoryRetrieveInput,
+    options?: RuntimeMemoryRetrieveOptions["task"] | undefined,
+  ) => Promise<
+    MemoryResult<{
+      readonly shared: readonly TaskMemoryRecord[];
+      readonly private: readonly TaskMemoryRecord[];
+      readonly combined: readonly TaskMemoryRecord[];
+    }>
+  >;
+}
+
+export interface ExperienceMemoryStore {
+  readonly list: (
+    input: ExperienceMemoryListInput,
+  ) => Promise<MemoryResult<readonly ExperienceMemoryRecord[]>>;
+  readonly get: (
+    input: ExperienceMemoryGetInput,
+  ) => Promise<MemoryResult<ExperienceMemoryRecord>>;
+  readonly write: (
+    input: ExperienceMemoryWriteInput,
+  ) => Promise<MemoryResult<ExperienceMemoryRecord>>;
+  readonly update: (
+    input: ExperienceMemoryUpdateInput,
+  ) => Promise<MemoryResult<ExperienceMemoryRecord>>;
+  readonly delete: (
+    input: ExperienceMemoryGetInput,
+  ) => Promise<MemoryResult<{ readonly id: string }>>;
+  readonly search: (
+    input: MemorySearchInput,
+  ) => Promise<MemoryResult<readonly MemorySearchMatch<ExperienceMemoryRecord>[]>>;
+  readonly retrieveForRuntime: (
+    input: RuntimeMemoryRetrieveInput,
+    options?: RuntimeMemoryRetrieveOptions["experience"] | undefined,
+  ) => Promise<MemoryResult<readonly ExperienceMemoryRecord[]>>;
+}
+
+export interface FactMemoryStore {
+  readonly list: (
+    input: FactMemoryListInput,
+  ) => Promise<MemoryResult<readonly FactMemoryRecord[]>>;
+  readonly get: (
+    input: FactMemoryGetInput,
+  ) => Promise<MemoryResult<FactMemoryRecord>>;
+  readonly write: (
+    input: FactMemoryWriteInput,
+  ) => Promise<MemoryResult<FactMemoryRecord>>;
+  readonly update: (
+    input: FactMemoryUpdateInput,
+  ) => Promise<MemoryResult<FactMemoryRecord>>;
+  readonly delete: (
+    input: FactMemoryGetInput,
+  ) => Promise<MemoryResult<{ readonly id: string }>>;
+  readonly search: (
+    input: MemorySearchInput,
+  ) => Promise<MemoryResult<readonly MemorySearchMatch<FactMemoryRecord>[]>>;
+  readonly retrieveForRuntime: (
+    input: RuntimeMemoryRetrieveInput,
+    options?: RuntimeMemoryRetrieveOptions["fact"] | undefined,
+  ) => Promise<MemoryResult<readonly FactMemoryRecord[]>>;
+}
+
+export interface SkillMemoryStore {
+  readonly list: (
+    input: SkillMemoryListInput,
+  ) => Promise<MemoryResult<readonly SkillMemoryRecord[]>>;
+  readonly get: (
+    input: SkillMemoryGetInput,
+  ) => Promise<MemoryResult<SkillMemoryRecord>>;
+  readonly write: (
+    input: SkillMemoryWriteInput,
+  ) => Promise<MemoryResult<SkillMemoryRecord>>;
+  readonly update: (
+    input: SkillMemoryUpdateInput,
+  ) => Promise<MemoryResult<SkillMemoryRecord>>;
+  readonly delete: (
+    input: SkillMemoryGetInput,
+  ) => Promise<MemoryResult<{ readonly id: string }>>;
+  readonly search: (
+    input: MemorySearchInput,
+  ) => Promise<MemoryResult<readonly MemorySearchMatch<SkillMemoryRecord>[]>>;
+  readonly retrieveForRuntime: (
+    input: RuntimeMemoryRetrieveInput,
+    options?: RuntimeMemoryRetrieveOptions["skill"] | undefined,
+  ) => Promise<MemoryResult<readonly SkillMemoryRecord[]>>;
+}
+
+export interface MemoryStoreRegistration<TStore> {
+  readonly store: TStore;
+}
+
+export interface MemorySystemOptions {
+  readonly taskStore?: TaskMemoryStore | undefined;
+  readonly experienceStore?: ExperienceMemoryStore | undefined;
+  readonly factStore?: FactMemoryStore | undefined;
+  readonly skillStore?: SkillMemoryStore | undefined;
+}
+
+export interface MemorySystemRuntimeRetrieveInput {
+  readonly request: RuntimeMemoryRetrieveInput;
+  readonly options?: RuntimeMemoryRetrieveOptions | undefined;
+}
+
+export interface MemoryPromotionCandidate<TMemoryType extends "fact" | "skill", TRecord> {
+  readonly type: TMemoryType;
+  readonly record: TRecord;
+  readonly derivedFrom: readonly MemoryReference[];
+}
+
+export interface MemoryPromotionProposal {
+  readonly facts: readonly MemoryPromotionCandidate<"fact", FactMemoryRecord>[];
+  readonly skills: readonly MemoryPromotionCandidate<"skill", SkillMemoryRecord>[];
+}
+
+export interface MemoryPromotionPipeline {
+  readonly proposeFromTask?: (
+    records: readonly TaskMemoryRecord[],
+  ) => Promise<MemoryResult<MemoryPromotionProposal>> | MemoryResult<MemoryPromotionProposal>;
+  readonly proposeFromExperience?: (
+    records: readonly ExperienceMemoryRecord[],
+  ) => Promise<MemoryResult<MemoryPromotionProposal>> | MemoryResult<MemoryPromotionProposal>;
+}
+
+export function okMemory<TValue>(value: TValue): MemoryResult<TValue> {
+  return {
+    ok: true,
+    value,
+  };
+}
+
+export function errorMemory<TValue>(
+  code: MemoryResultError["code"],
+  message: string,
+  details?: unknown,
+): MemoryResult<TValue> {
+  return {
+    ok: false,
+    error: {
+      code,
+      message,
+      ...(details === undefined ? {} : { details }),
+    },
+  };
+}

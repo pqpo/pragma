@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const MemoryPluginConfigSchema = z.object({
+export const SkillMemoryConfigSchema = z.object({
   enabled: z.boolean().default(true),
   useMemories: z.boolean().default(true),
   generateMemories: z.boolean().default(true),
@@ -13,15 +13,15 @@ export const MemoryPluginConfigSchema = z.object({
   sessionSummaryModel: z.string().min(1).optional(),
   skillMergeModel: z.string().min(1).optional(),
   summaryModel: z.string().min(1).optional(),
-  memoryRoot: z.string().min(1).default(".pragma/agent/memories"),
+  memoryRoot: z.string().min(1).default(".pragma/agent/skill-memory"),
 });
 
-export type MemoryPluginConfig = z.infer<typeof MemoryPluginConfigSchema>;
-export type MemoryPluginConfigInput = z.input<typeof MemoryPluginConfigSchema>;
+export type SkillMemoryConfig = z.infer<typeof SkillMemoryConfigSchema>;
+export type SkillMemoryConfigInput = z.input<typeof SkillMemoryConfigSchema>;
 
 export const MemoryAuditSchema = z
   .object({
-    createdBy: z.string().min(1).default("expert-memory"),
+    createdBy: z.string().min(1).default("skill-memory"),
     createdFromRunId: z.string().min(1).optional(),
     updatedBy: z.string().min(1).optional(),
     reason: z.string().min(1).optional(),
@@ -57,7 +57,7 @@ export const MemoryRunEvidenceSchema = z
       .default({}),
     createdAt: z.string().min(1),
     updatedAt: z.string().min(1),
-    audit: MemoryAuditSchema.default({ createdBy: "expert-memory" }),
+    audit: MemoryAuditSchema.default({ createdBy: "skill-memory" }),
   })
   .passthrough();
 
@@ -76,15 +76,15 @@ export const MemorySessionEvidenceSchema = z
       .default("pending"),
     createdAt: z.string().min(1),
     updatedAt: z.string().min(1),
-    audit: MemoryAuditSchema.default({ createdBy: "expert-memory" }),
+    audit: MemoryAuditSchema.default({ createdBy: "skill-memory" }),
   })
   .passthrough();
 
 export type MemoryRunEvidence = z.infer<typeof MemoryRunEvidenceSchema>;
 export type MemorySessionEvidence = z.infer<typeof MemorySessionEvidenceSchema>;
 
-export function parseMemoryPluginConfig(
-  input: MemoryPluginConfigInput = {},
-): MemoryPluginConfig {
-  return MemoryPluginConfigSchema.parse(input);
+export function parseSkillMemoryConfig(
+  input: SkillMemoryConfigInput = {},
+): SkillMemoryConfig {
+  return SkillMemoryConfigSchema.parse(input);
 }

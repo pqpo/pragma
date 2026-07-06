@@ -367,20 +367,21 @@ const envName = createExpertAgentPluginConfigEnvName({
 - Secret 从 `env` 读取。
 - `plugin.json` 中把 secret 配置标记为 `"secret": true`。
 
-## 内置插件示例
+## 内置与示例能力
 
-当前仓库有两个插件示例：
+当前仓库有一个默认内建记忆能力和一个插件示例：
 
 ```text
-plugins/expert-memory
+packages/core/src/memory-system/skill-memory
 plugins/code-repository-manager
 ```
 
-`expert-memory`：
+内建 `skill-memory`：
 
-- 注册三层记忆上下文：`summary.md`、`skills/*.md`、`tasks/**`。
+- 默认随 `ExpertAgent` 加载，可通过 `memory.skill.enabled=false` 关闭。
+- 注册 `skill-memory` namespace 的审计上下文：`summary.md`、`skills/*.md`、`tasks/**`。
 - 使用 stream / task / session hooks 生成任务总结、session 总结和技能卡。
-- 通过配置控制是否启用、是否生成 memory、memory root 和摘要模型名等。
+- 将生成的技能卡注册为 typed `Skill Memory`，供运行时检索和 prompt 注入使用。
 
 `code-repository-manager`：
 
@@ -394,6 +395,6 @@ plugins/code-repository-manager
 - 插件不要绕过 `ContextSystem` 直接修改 Agent 内部状态。
 - 插件提供工具时必须明确 `inputSchema`。
 - 文件、网络、删除、shell 等敏感操作应提供 tool approval。
-- Hooks 用于横切能力，例如审计、记忆、策略检查，不要把核心业务流程藏进 hook。
+- Hooks 用于横切能力，例如审计、可选插件扩展、策略检查，不要把核心业务流程藏进 hook。
 - 插件应把长期数据放在 workspace 可审计目录中。
 - 插件加载失败不应该让 Agent 创建过程不可解释，错误应进入 `pluginLoadIssues`。

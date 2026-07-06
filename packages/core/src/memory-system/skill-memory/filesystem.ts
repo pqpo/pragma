@@ -1,13 +1,13 @@
 import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 
-import { normalizeMetadata } from "@pragma/core";
+import { normalizeMetadata } from "../../context-system/context-system.ts";
 import type {
   ExpertAgentContextItemMetadata,
   ExpertAgentContextItemSummary,
-  ExpertAgentPluginSetupContext,
   ExpertAgentStoredContextItem,
-} from "@pragma/core";
+} from "../../context-system/context-system.ts";
+import type { ExpertAgentPluginSetupContext } from "../../plugins/expert-agent-plugin.ts";
 
 import {
   EVIDENCE_PREFIX,
@@ -17,7 +17,7 @@ import {
   SUMMARY_CONTEXT_ID,
 } from "./constants.ts";
 import { resolveConfig } from "./config.ts";
-import type { MemoryPluginConfig } from "./schema.ts";
+import type { SkillMemoryConfig } from "./schema.ts";
 import { renderSummaryIndex } from "./rendering.ts";
 import {
   defaultTriggerForContextId,
@@ -29,13 +29,13 @@ import { sanitizeIdSegment } from "./utils.ts";
 
 export function resolveMemoryRoot(
   workspaceRoot: string,
-  config: MemoryPluginConfig,
+  config: SkillMemoryConfig,
   agentId: string,
 ): string {
   const workspacePath = resolve(workspaceRoot);
   const rootPath = resolve(workspacePath, config.memoryRoot, sanitizeIdSegment(agentId));
 
-  assertPathInside(rootPath, workspacePath, `Invalid expert memory root: ${config.memoryRoot}`);
+  assertPathInside(rootPath, workspacePath, `Invalid skill memory root: ${config.memoryRoot}`);
 
   return rootPath;
 }
@@ -177,7 +177,7 @@ export async function regenerateSummary(
       schemaVersion: "pragma.memory-summary/v2",
       agentId,
       updatedAt: new Date().toISOString(),
-      audit: { createdBy: "expert-memory" },
+      audit: { createdBy: "skill-memory" },
       model: "summaryModel",
     },
   );

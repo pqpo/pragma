@@ -5,7 +5,7 @@ import type {
   ExpertAgentPluginSetupContext,
   ExpertAgentPluginStreamEventContext,
   ExpertAgentPluginTaskSubmittedContext,
-} from "@pragma/core";
+} from "../../plugins/expert-agent-plugin.ts";
 
 import {
   JSON_EXTENSION,
@@ -44,7 +44,7 @@ import {
   trimCharacters,
 } from "./utils.ts";
 
-export class ExpertMemoryManager {
+export class SkillMemoryManager {
   private readonly context: ExpertAgentPluginSetupContext;
   private readonly agentId: string;
   private readonly runLocks = new Map<string, Promise<void>>();
@@ -267,7 +267,7 @@ export class ExpertMemoryManager {
       source: {
         runtimeSessionId: options.runtimeSessionId,
       },
-      audit: { createdBy: "expert-memory" },
+      audit: { createdBy: "skill-memory" },
     });
     await writeJson(path, evidence);
     return evidence;
@@ -298,7 +298,7 @@ export class ExpertMemoryManager {
       externalContext: options.externalContext,
       createdAt: options.now,
       updatedAt: options.now,
-      audit: { createdBy: "expert-memory" },
+      audit: { createdBy: "skill-memory" },
     });
     await writeJson(path, evidence);
     return evidence;
@@ -327,7 +327,7 @@ export class ExpertMemoryManager {
         sessionId,
         runId: evidence.runId,
         updatedAt: now,
-        audit: { createdBy: "expert-memory", createdFromRunId: evidence.runId },
+        audit: { createdBy: "skill-memory", createdFromRunId: evidence.runId },
         model: "taskSummaryModel",
       },
     );
@@ -355,7 +355,7 @@ export class ExpertMemoryManager {
         agentId: this.agentId,
         sessionId: sessionEvidence.sessionId,
         updatedAt: now,
-        audit: { createdBy: "expert-memory" },
+        audit: { createdBy: "skill-memory" },
         model: "sessionSummaryModel",
       },
     );
@@ -387,7 +387,7 @@ export class ExpertMemoryManager {
         agentId: this.agentId,
         skillId,
         updatedAt: now,
-        audit: { createdBy: "expert-memory" },
+        audit: { createdBy: "skill-memory" },
         model: "skillMergeModel",
         sessions: dedupeStrings([
           sessionEvidence.sessionId,

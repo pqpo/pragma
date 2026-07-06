@@ -1,12 +1,11 @@
 import { rm } from "node:fs/promises";
 
-import { error, ok } from "@pragma/core";
+import { error, ok } from "../../context-system/context-system.ts";
 import type {
   ExpertAgentContextItemSearchMatch,
   ExpertAgentContextItemSummary,
   ExpertAgentContextResult,
   ExpertAgentContextStore,
-  ExpertAgentPluginSetupContext,
   ExpertAgentStoredContextItem,
   ExpertAgentStoredContextItemDeleteInput,
   ExpertAgentStoredContextItemReadInput,
@@ -14,7 +13,8 @@ import type {
   ExpertAgentStoredContextItemSearchInput,
   ExpertAgentStoredContextItemUpdateInput,
   ExpertAgentStoredContextRegisterInput,
-} from "@pragma/core";
+} from "../../context-system/context-system.ts";
+import type { ExpertAgentPluginSetupContext } from "../../plugins/expert-agent-plugin.ts";
 
 import { SUMMARY_CONTEXT_ID } from "./constants.ts";
 import { resolveConfig } from "./config.ts";
@@ -40,7 +40,7 @@ import {
   validateExpectedRevision,
 } from "./utils.ts";
 
-export function createExpertMemoryStore(
+export function createSkillMemoryContextStore(
   context: ExpertAgentPluginSetupContext,
 ): ExpertAgentContextStore {
   return new FileSystemMemoryStore({
@@ -76,7 +76,7 @@ export class FileSystemMemoryStore implements ExpertAgentContextStore {
       );
       return ok(summaries);
     } catch (caught) {
-      return error("store_error", "Failed to list expert memory.", toErrorDetails(caught));
+      return error("store_error", "Failed to list skill memory.", toErrorDetails(caught));
     }
   }
 
@@ -87,7 +87,7 @@ export class FileSystemMemoryStore implements ExpertAgentContextStore {
       const config = await resolveConfig(this.context);
 
       if (!config.enabled || !config.useMemories) {
-        return error("store_unavailable", "Expert memory is disabled.");
+        return error("store_unavailable", "Skill memory is disabled.");
       }
 
       const rootDir = resolveMemoryRoot(this.context.workspaceRoot, config, this.agentId);
@@ -125,7 +125,7 @@ export class FileSystemMemoryStore implements ExpertAgentContextStore {
         },
       });
     } catch (caught) {
-      return error("context_not_found", `Expert memory context not found: ${input.id}`, {
+      return error("context_not_found", `Skill memory context not found: ${input.id}`, {
         id: input.id,
         ...toErrorDetails(caught),
       });
@@ -147,7 +147,7 @@ export class FileSystemMemoryStore implements ExpertAgentContextStore {
       const filePath = resolveContextPath(rootDir, id.value);
 
       if (await exists(filePath)) {
-        return error("context_already_exists", `Expert memory context already exists: ${id.value}`);
+        return error("context_already_exists", `Skill memory context already exists: ${id.value}`);
       }
 
       const stored = createStoredContext({
@@ -159,7 +159,7 @@ export class FileSystemMemoryStore implements ExpertAgentContextStore {
         schemaVersion: inferSchemaVersion(id.value),
         agentId: this.agentId,
         updatedAt: new Date().toISOString(),
-        audit: { createdBy: "expert-memory" },
+        audit: { createdBy: "skill-memory" },
       });
 
       if (id.value.startsWith("skills/")) {
@@ -168,7 +168,7 @@ export class FileSystemMemoryStore implements ExpertAgentContextStore {
 
       return ok(await readStoredContext(rootDir, id.value));
     } catch (caught) {
-      return error("store_error", `Failed to add expert memory context: ${input.id}`, {
+      return error("store_error", `Failed to add skill memory context: ${input.id}`, {
         id: input.id,
         ...toErrorDetails(caught),
       });
@@ -203,7 +203,7 @@ export class FileSystemMemoryStore implements ExpertAgentContextStore {
         schemaVersion: inferSchemaVersion(id.value),
         agentId: this.agentId,
         updatedAt: new Date().toISOString(),
-        audit: { createdBy: "expert-memory" },
+        audit: { createdBy: "skill-memory" },
       });
 
       if (id.value.startsWith("skills/")) {
@@ -212,7 +212,7 @@ export class FileSystemMemoryStore implements ExpertAgentContextStore {
 
       return ok(await readStoredContext(rootDir, id.value));
     } catch (caught) {
-      return error("store_error", `Failed to update expert memory context: ${input.id}`, {
+      return error("store_error", `Failed to update skill memory context: ${input.id}`, {
         id: input.id,
         ...toErrorDetails(caught),
       });
@@ -234,7 +234,7 @@ export class FileSystemMemoryStore implements ExpertAgentContextStore {
       const filePath = resolveContextPath(rootDir, id.value);
 
       if (!(await exists(filePath))) {
-        return error("context_not_found", `Expert memory context not found: ${id.value}`, {
+        return error("context_not_found", `Skill memory context not found: ${id.value}`, {
           id: id.value,
         });
       }
@@ -247,7 +247,7 @@ export class FileSystemMemoryStore implements ExpertAgentContextStore {
 
       return ok({ id: id.value });
     } catch (caught) {
-      return error("store_error", `Failed to delete expert memory context: ${input.id}`, {
+      return error("store_error", `Failed to delete skill memory context: ${input.id}`, {
         id: input.id,
         ...toErrorDetails(caught),
       });
@@ -298,7 +298,7 @@ export class FileSystemMemoryStore implements ExpertAgentContextStore {
 
       return ok(matches);
     } catch (caught) {
-      return error("store_error", "Failed to search expert memory.", toErrorDetails(caught));
+      return error("store_error", "Failed to search skill memory.", toErrorDetails(caught));
     }
   }
 }

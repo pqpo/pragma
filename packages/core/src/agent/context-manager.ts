@@ -7,6 +7,14 @@ import type {
   ExpertAgentContextItemReference,
   ExpertAgentContextItemSummary,
 } from "../context-system/context-system.ts";
+import type {
+  ExperienceMemoryRecord,
+  FactMemoryRecord,
+  MemorySystem,
+  RuntimeMemoryRetrieval,
+  SkillMemoryRecord,
+  TaskMemoryRecord,
+} from "../memory-system/index.ts";
 import type { ExpertAgentRunContext } from "../runtime/run-context.ts";
 import type { SubAgentDefinition } from "../subagents/sub-agent.ts";
 
@@ -14,6 +22,7 @@ export interface ExpertAgentContext {
   readonly systemPrompt: string;
   readonly startupMessages: readonly ExpertAgentStartupMessage[];
   readonly context: readonly ExpertAgentContextItemSummary[];
+  readonly memory: RuntimeMemoryRetrieval;
   readonly snapshot: ContextSnapshot;
 }
 
@@ -58,15 +67,18 @@ export interface ContextRetrievedChunk {
 export interface ContextManagerOptions {
   readonly agent: IExpertAgent;
   readonly contextSystem: ContextSystem;
+  readonly memorySystem?: MemorySystem | undefined;
 }
 
 export class ContextManager {
   readonly agent: IExpertAgent;
   readonly contextSystem: ContextSystem;
+  readonly memorySystem: MemorySystem | undefined;
 
   constructor(options: ContextManagerOptions) {
     this.agent = options.agent;
     this.contextSystem = options.contextSystem;
+    this.memorySystem = options.memorySystem;
   }
 
   async buildContext(
@@ -77,6 +89,23 @@ export class ContextManager {
     const contextReadByteBudget = options.contextReadByteBudget ?? 8_000;
     const indexResult = await this.contextSystem.index(runContext);
     const contextSummaries = indexResult.ok ? indexResult.value : [];
+    const memoryResult =
+      this.memorySystem === undefined
+        ? undefined
+        : await this.memorySystem.retrieveForRuntime({
+            request: {
+              agentId: this.agent.id,
+              runContext,
+            },
+          });
+    const memory = memoryResult?.ok
+      ? memoryResult.value
+      : {
+          task: { shared: [], private: [], combined: [] },
+          experiences: [],
+          facts: [],
+          skills: [],
+        };
 
     const alwaysOnContexts = await this.loadAlwaysOnContexts(contextSummaries, runContext, {
       contextReadByteBudget,
@@ -85,6 +114,9 @@ export class ContextManager {
       budget,
       contextError: indexResult.ok ? undefined : indexResult.error.message,
       contextSummaries,
+      memoryError:
+        memoryResult?.ok === false ? memoryResult.error.message : undefined,
+      memory,
     });
     const truncationReason =
       (alwaysOnContexts.some((context) => context.contentRange?.truncated === true)
@@ -107,6 +139,7 @@ export class ContextManager {
     return {
       systemPrompt: fitted.systemPrompt,
       startupMessages: createAlwaysOnStartupMessages(alwaysOnContexts),
+      memory,
       context: fitted.contextSummaries,
       snapshot,
     };
@@ -115,7 +148,9 @@ export class ContextManager {
   private fitSystemPromptToBudget(context: {
     readonly budget: number;
     readonly contextError?: string | undefined;
+    readonly memoryError?: string | undefined;
     readonly contextSummaries: readonly ExpertAgentContextItemSummary[];
+    readonly memory: RuntimeMemoryRetrieval;
   }): {
     readonly contextSummaries: readonly ExpertAgentContextItemSummary[];
     readonly promptWasOverBudget: boolean;
@@ -124,6 +159,8 @@ export class ContextManager {
     const systemPrompt = this.buildSystemPrompt({
       contextError: context.contextError,
       context: context.contextSummaries,
+      memoryError: context.memoryError,
+      memory: context.memory,
     });
     const promptWasOverBudget = systemPrompt.length > context.budget;
 
@@ -136,7 +173,9 @@ export class ContextManager {
 
   private buildSystemPrompt(context: {
     readonly contextError?: string | undefined;
+    readonly memoryError?: string | undefined;
     readonly context: readonly ExpertAgentContextItemSummary[];
+    readonly memory: RuntimeMemoryRetrieval;
   }): string {
     const sections = [
       `You are ${this.agent.name}.`,
@@ -148,7 +187,11 @@ export class ContextManager {
       context.contextError === undefined
         ? undefined
         : `Context store issue: ${context.contextError}`,
+      context.memoryError === undefined
+        ? undefined
+        : `Memory store issue: ${context.memoryError}`,
       formatContextsSection("Available context index", context.context, false),
+      formatMemorySection(context.memory),
       formatSubAgentsSection(this.agent),
     ];
 
@@ -347,6 +390,96 @@ function formatContextsSection(
   });
 
   return [title, ...contextSections].join("\n");
+}
+
+function formatMemorySection(memory: RuntimeMemoryRetrieval): string | undefined {
+  const sections = [
+    formatTaskMemorySection(memory.task.combined),
+    formatExperienceMemorySection(memory.experiences),
+    formatFactMemorySection(memory.facts),
+    formatSkillMemorySection(memory.skills),
+  ].filter((section) => section !== undefined);
+
+  if (sections.length === 0) {
+    return undefined;
+  }
+
+  return ["Memory retrieval", ...sections].join("\n\n");
+}
+
+function formatTaskMemorySection(items: readonly TaskMemoryRecord[]): string | undefined {
+  if (items.length === 0) {
+    return undefined;
+  }
+
+  return [
+    "Task memory",
+    ...items.map((item) =>
+      [
+        `- ${item.kind}: ${item.title ?? item.id}`,
+        `  visibility: ${item.visibility}`,
+        ...(item.ownerAgentId === undefined ? [] : [`  ownerAgentId: ${item.ownerAgentId}`]),
+        `  status: ${item.status}`,
+        "  content:",
+        indent(item.content, "    "),
+      ].join("\n"),
+    ),
+  ].join("\n");
+}
+
+function formatExperienceMemorySection(items: readonly ExperienceMemoryRecord[]): string | undefined {
+  if (items.length === 0) {
+    return undefined;
+  }
+
+  return [
+    "Experience memory",
+    ...items.map((item) =>
+      [
+        `- ${item.kind}: ${item.title ?? item.id}`,
+        `  status: ${item.status}`,
+        "  content:",
+        indent(item.content, "    "),
+      ].join("\n"),
+    ),
+  ].join("\n");
+}
+
+function formatFactMemorySection(items: readonly FactMemoryRecord[]): string | undefined {
+  if (items.length === 0) {
+    return undefined;
+  }
+
+  return [
+    "Fact memory",
+    ...items.map((item) =>
+      [
+        `- ${item.title ?? item.id}`,
+        `  confidence: ${item.confidence}`,
+        `  statement: ${item.statement}`,
+      ].join("\n"),
+    ),
+  ].join("\n");
+}
+
+function formatSkillMemorySection(items: readonly SkillMemoryRecord[]): string | undefined {
+  if (items.length === 0) {
+    return undefined;
+  }
+
+  return [
+    "Skill memory",
+    ...items.map((item) =>
+      [
+        `- ${item.problemClass}`,
+        ...(item.summary === undefined ? [] : [`  summary: ${item.summary}`]),
+        formatStringListLine("  recommendedApproach", item.recommendedApproach),
+        formatStringListLine("  antiPatterns", item.antiPatterns),
+      ]
+        .filter((line) => line !== undefined)
+        .join("\n"),
+    ),
+  ].join("\n");
 }
 
 function indent(value: string, prefix: string): string {
