@@ -401,6 +401,7 @@ describe("ExpertAgent plugins", () => {
           hookEvents.push("host");
         },
       },
+      memory: false,
       plugins: [{ entry: createExtensibilityPluginEntry(hookEvents) }],
     });
 

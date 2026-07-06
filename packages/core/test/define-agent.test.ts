@@ -1,3 +1,7 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import type {
   RuntimeAdapter,
   RuntimeAgentSession,
@@ -7,10 +11,16 @@ import type {
 } from "@pragma/core";
 import { ContextSystem, ExpertAgent } from "@pragma/core";
 import { createRuntimeRegistry } from "@pragma/core";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { z } from "zod";
 
 import { defineAgent } from "../src/index.ts";
+
+const tempDirs: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+});
 
 describe("defineAgent", () => {
   it("normalizes instructions into the ExpertAgent system prompt", async () => {
@@ -94,7 +104,107 @@ describe("defineAgent", () => {
       testsPassed: true,
     });
   });
+
+  it("loads all four memory categories by default", async () => {
+    const agent = await defineAgent({
+      id: "memory-defaults",
+      name: "Memory Defaults",
+      description: "Loads default memory categories.",
+      tags: ["memory"],
+      version: "0.0.0",
+      scope: "workspace",
+      workspace: await createTempWorkspace(),
+    });
+
+    expect(agent.tools?.map((tool) => tool.name)).toEqual(
+      expect.arrayContaining([
+        "list_task_memory",
+        "append_task_memory",
+        "list_experience_memory",
+        "append_experience_memory",
+        "list_fact_memory",
+        "write_fact_memory",
+      ]),
+    );
+
+    const skillWrite = await agent.addContext({
+      namespace: "skill-memory",
+      id: "skills/default-memory.md",
+      content: "# Skill Card\n\nDefault memory wiring works.\n",
+    });
+    expect(skillWrite).toMatchObject({
+      ok: true,
+    });
+  });
+
+  it("can disable all memory categories during agent creation", async () => {
+    const agent = await defineAgent({
+      id: "memory-disabled",
+      name: "Memory Disabled",
+      description: "Disables all default memory categories.",
+      tags: ["memory"],
+      version: "0.0.0",
+      scope: "workspace",
+      workspace: await createTempWorkspace(),
+      memory: false,
+    });
+
+    expect(agent.tools?.map((tool) => tool.name)).not.toEqual(
+      expect.arrayContaining([
+        "list_task_memory",
+        "list_experience_memory",
+        "list_fact_memory",
+      ]),
+    );
+
+    const skillWrite = await agent.addContext({
+      namespace: "skill-memory",
+      id: "skills/disabled-memory.md",
+      content: "# Skill Card\n\nThis should fail when memory is disabled.\n",
+    });
+    expect(skillWrite.ok).toBe(false);
+  });
+
+  it("can disable selected memory categories while keeping the others enabled", async () => {
+    const agent = await defineAgent({
+      id: "memory-selective",
+      name: "Memory Selective",
+      description: "Disables selected default memory categories.",
+      tags: ["memory"],
+      version: "0.0.0",
+      scope: "workspace",
+      workspace: await createTempWorkspace(),
+      memory: {
+        experience: false,
+        fact: false,
+      },
+    });
+
+    const toolNames = agent.tools?.map((tool) => tool.name) ?? [];
+
+    expect(toolNames).toEqual(
+      expect.arrayContaining(["list_task_memory", "append_task_memory"]),
+    );
+    expect(toolNames).not.toEqual(
+      expect.arrayContaining(["list_experience_memory", "list_fact_memory"]),
+    );
+
+    const skillWrite = await agent.addContext({
+      namespace: "skill-memory",
+      id: "skills/selective-memory.md",
+      content: "# Skill Card\n\nSkill memory should still be available.\n",
+    });
+    expect(skillWrite).toMatchObject({
+      ok: true,
+    });
+  });
 });
+
+async function createTempWorkspace(): Promise<string> {
+  const dir = await mkdtemp(join(tmpdir(), "pragma-core-memory-"));
+  tempDirs.push(dir);
+  return dir;
+}
 
 function createFakeRuntime(options: {
   readonly id: string;

@@ -378,11 +378,18 @@ plugins/code-repository-manager
 
 `@pragma/plugin-memory`：
 
-- 入口是一个 memory plugin，内部注册 `task-memory` 和 `skill-memory` 两个子模块。
+- 入口是一个 memory plugin，内部注册 `task-memory`、`experience-memory`、`fact-memory` 和 `skill-memory` 四个子模块。
+- `ExpertAgent` 默认会加载这四类记忆；只有在需要覆盖默认行为时，才需要显式传 memory 配置或自定义 plugin use。
 - `task-memory` 负责在插件内部维护 `Task Memory` store，并通过插件注入 task memory 工具。
+- `experience-memory` 负责记录历史经历、操作过程和带证据的执行总结，并注入 experience memory 工具。
+- `fact-memory` 负责维护稳定事实、置信度、冲突和失效信息，并注入 fact memory 工具。
 - `task-memory` 默认使用 in-memory store，也支持在程序化 plugin config 中注入自定义 `TaskMemoryStore` 或 `storeFactory`，后续可平滑接 Redis 等持久化实现。
+- `experience-memory` 和 `fact-memory` 当前也默认使用 in-memory store，接口同样保持可替换。
 - `skill-memory` 负责注册 `skill-memory` namespace 的审计上下文：`summary.md`、`skills/*.md`、`tasks/**`。
 - `skill-memory` 使用 stream / task / session hooks 生成任务总结、session 总结和技能卡，并注册到插件内部的 memory system 供后续检索使用。
+- memory plugin 默认包含一条 promotion pipeline：`task -> experience -> fact/skill`。
+
+如果只是使用默认 Agent 能力，建议先读 [Memory System 使用指南](./memory.md)。
 
 `code-repository-manager`：
 

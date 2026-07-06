@@ -44,6 +44,7 @@ const agent = await defineAgent({
 
 - `schemaVersion`
 - `instructions`
+- `memory`
 - `models`
 - `mcp`
 - `skills`
@@ -53,6 +54,64 @@ const agent = await defineAgent({
 - `hooks`
 - `plugins`
 - `loggerProvider`
+
+## 默认记忆系统
+
+当前 `ExpertAgent.create()` / `defineAgent()` 会默认加载四类记忆：
+
+- `task`
+- `experience`
+- `fact`
+- `skill`
+
+最小示例不需要额外声明插件：
+
+```ts
+const agent = await defineAgent({
+  id: "memory-enabled-agent",
+  name: "Memory Enabled Agent",
+  description: "Uses the default memory system.",
+  tags: ["memory"],
+  version: "0.0.0",
+  scope: "workspace",
+  workspace: "/path/to/workspace",
+});
+```
+
+如果要关闭全部记忆：
+
+```ts
+const agent = await defineAgent({
+  id: "stateless-agent",
+  name: "Stateless Agent",
+  description: "Runs without memory.",
+  tags: ["memory"],
+  version: "0.0.0",
+  scope: "workspace",
+  workspace: "/path/to/workspace",
+  memory: false,
+});
+```
+
+如果只关闭其中一部分：
+
+```ts
+const agent = await defineAgent({
+  id: "selective-memory-agent",
+  name: "Selective Memory Agent",
+  description: "Disables some memory categories.",
+  tags: ["memory"],
+  version: "0.0.0",
+  scope: "workspace",
+  workspace: "/path/to/workspace",
+  memory: {
+    experience: false,
+    fact: false,
+  },
+});
+```
+
+更多内容见 [Memory System 使用指南](./memory.md)。
 
 ## 创建会话并提交任务
 
@@ -499,4 +558,3 @@ Runtime 的稳定边界是 `RuntimeAdapter`。Agent 不应该直接依赖某个�
 5. 创建 Runtime Session。
 6. 调用 `session.submit()`，消费事件流和最终结果。
 7. 在 `finally` 中调用 `session.abort()` 释放会话。
-

@@ -62,6 +62,21 @@ pnpm --filter @pragma/examples start:basic --system-session-id local-debug-sessi
 6. 对每个 turn 调用 `session.submit()` 并处理流式事件。
 7. 在 `finally` 中关闭 session。
 
+## 运行 Memory System 示例
+
+```bash
+pnpm --filter @pragma/examples start:memory
+```
+
+这个示例不依赖模型 key，专门演示：
+
+1. `defineAgent()` 默认加载四类记忆。
+2. `task`、`experience`、`fact` 三类工具默认可用。
+3. `skill-memory` namespace 默认可写。
+4. 通过 `memory` 参数关闭 `experience` / `fact` 后，相关工具会消失，而其他类别仍保留。
+
+示例入口是 `src/run-memory-system-example.ts`。
+
 ## 运行 Session 存储示例
 
 ```bash
