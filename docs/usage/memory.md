@@ -54,6 +54,36 @@ const agent = await defineAgent({
 - 四类记忆默认都会持久化到用户目录下的 `~/.pragma/memories/`，不会直接写入 agent workspace。
 - `task-memory` 虽然语义上仍然是 task / run / session 内的短期工作记忆，但默认也会落盘，以支持 session 恢复和跨进程恢复。
 
+默认目录结构：
+
+```text
+~/.pragma/memories/
+  <agentId>/                         # Agent 级记忆根目录
+    summary.md
+    task-memory/
+      workflows/
+        <workflowRunId>/
+          records.json
+          <taskMemoryId>.md
+    experience-memory/
+      records.json
+      <experienceMemoryId>.md
+    fact-memory/
+      records.json
+      <factMemoryId>.md
+    skill-memory/
+      skills/
+        <skillId>.md
+    tasks/
+      workflows/
+        <workflowRunId>/
+          <runId>.md
+          workflow.md
+    evidence/runs/<runId>.json
+    evidence/workflows/<workflowRunId>.json
+    evidence/distill/<evidenceId>.json
+```
+
 ## 关闭全部记忆
 
 如果不希望默认加载任何记忆类型：
@@ -224,7 +254,7 @@ memory: {
 
 ## Always-On Summary
 
-`memory/summary.md` 现在由统一 `MemorySystem` 组装成一份给模型看的 memory guide，而不是把四类 memory 的 record 摘要平铺进上下文。
+`summary.md` 现在由统一 `MemorySystem` 组装成一份给模型看的 memory guide，而不是把四类 memory 的 record 摘要平铺进上下文。它的默认物理位置是 `~/.pragma/memories/<agentId>/summary.md`。
 
 当前 always-on 文档重点包括：
 
@@ -245,7 +275,7 @@ memory: {
 
 - runtime 检索
 - distillation pipeline
-- `memory/summary.md`
+- `memory` namespace 下的 `summary.md`
 
 ## 自动沉淀
 

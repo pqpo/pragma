@@ -11,7 +11,7 @@ import {
   createFileSystemFactMemoryStore,
   createFileSystemTaskMemoryStore,
 } from "../src/index.ts";
-import { createFileSystemMemoryEvidenceStore } from "../src/skill-memory/evidence-store.ts";
+import { createFileSystemMemoryEvidenceStore } from "../src/memory-context/evidence-store.ts";
 
 const tempDirs: string[] = [];
 
@@ -30,6 +30,7 @@ describe("memory distillation pipeline", () => {
         type: "task",
         scope: "session",
         workflowRunId: "workflow-1",
+        runtimeSessionId: "session-1",
         visibility: "shared",
         kind: "handoff",
         content: "Completed repository scan.",
@@ -49,24 +50,28 @@ describe("memory distillation pipeline", () => {
     });
     expect(experiences).toMatchObject({
       ok: true,
-      value: [expect.objectContaining({ type: "experience", content: "Completed repository scan." })],
+      value: [
+        expect.objectContaining({ type: "experience", content: "Completed repository scan." }),
+      ],
     });
   });
 
-  it("distills session evidence into facts when stable signals are present", async () => {
+  it("distills workflow evidence into facts when stable signals are present", async () => {
     const workspace = await createWorkspaceDir();
     const memorySystem = await createMemorySystem(workspace);
 
     await memorySystem.recordEvidence(
       {
         record: {
-          id: "session-1",
+          id: "workflow-1",
           type: "evidence",
-          kind: "session",
+          kind: "workflow",
           agentId: "agent-a",
           scope: "workspace",
+          workflowRunId: "workflow-1",
           payload: {
-            sessionId: "session-1",
+            workflowRunId: "workflow-1",
+            runtimeSessionIds: ["runtime-session-1"],
             runIds: ["run-1"],
             externalContext: false,
             runs: [
@@ -84,7 +89,7 @@ describe("memory distillation pipeline", () => {
           provenance: {
             createdAt: "2026-07-06T00:00:00.000Z",
             updatedAt: "2026-07-06T00:00:00.000Z",
-            evidence: [{ type: "session", id: "session-1" }],
+            evidence: [{ type: "workflow", id: "workflow-1" }],
           },
         },
       },
@@ -112,13 +117,15 @@ describe("memory distillation pipeline", () => {
     await memorySystem.recordEvidence(
       {
         record: {
-          id: "session-sensitive",
+          id: "workflow-sensitive",
           type: "evidence",
-          kind: "session",
+          kind: "workflow",
           agentId: "agent-a",
           scope: "workspace",
+          workflowRunId: "workflow-sensitive",
           payload: {
-            sessionId: "session-sensitive",
+            workflowRunId: "workflow-sensitive",
+            runtimeSessionIds: ["runtime-session-sensitive"],
             runIds: ["run-1"],
             externalContext: false,
             runs: [
@@ -136,7 +143,7 @@ describe("memory distillation pipeline", () => {
           provenance: {
             createdAt: "2026-07-06T00:00:00.000Z",
             updatedAt: "2026-07-06T00:00:00.000Z",
-            evidence: [{ type: "session", id: "session-sensitive" }],
+            evidence: [{ type: "workflow", id: "workflow-sensitive" }],
           },
         },
       },
@@ -170,6 +177,7 @@ describe("memory distillation pipeline", () => {
         type: "task",
         scope: "session",
         workflowRunId: "workflow-1",
+        runtimeSessionId: "session-1",
         visibility: "shared",
         kind: "handoff",
         content: "Completed repository scan.",
@@ -208,6 +216,7 @@ describe("memory distillation pipeline", () => {
         type: "task",
         scope: "session",
         workflowRunId: "workflow-1",
+        runtimeSessionId: "session-1",
         visibility: "shared",
         kind: "handoff",
         content: "Completed repository scan.",
@@ -243,13 +252,15 @@ describe("memory distillation pipeline", () => {
     const written = await memorySystem.recordEvidence(
       {
         record: {
-          id: "session-1",
+          id: "workflow-1",
           type: "evidence",
-          kind: "session",
+          kind: "workflow",
           agentId: "agent-a",
           scope: "workspace",
+          workflowRunId: "workflow-1",
           payload: {
-            sessionId: "session-1",
+            workflowRunId: "workflow-1",
+            runtimeSessionIds: ["runtime-session-1"],
             runIds: ["run-1"],
             externalContext: false,
             runs: [
@@ -267,7 +278,7 @@ describe("memory distillation pipeline", () => {
           provenance: {
             createdAt: "2026-07-06T00:00:00.000Z",
             updatedAt: "2026-07-06T00:00:00.000Z",
-            evidence: [{ type: "session", id: "session-1" }],
+            evidence: [{ type: "workflow", id: "workflow-1" }],
           },
         },
       },
@@ -292,7 +303,9 @@ async function createMemorySystem(
   workspace: string,
   options: {
     readonly distillation?: import("../src/index.ts").MemoryDistillationPipeline | undefined;
-    readonly onDistillationError?: ((error: import("../src/index.ts").MemoryResultError) => void) | undefined;
+    readonly onDistillationError?:
+      | ((error: import("../src/index.ts").MemoryResultError) => void)
+      | undefined;
     readonly factStoreOverride?: Partial<
       Awaited<ReturnType<typeof createFileSystemFactMemoryStore>>
     >;
@@ -313,10 +326,13 @@ async function createMemorySystem(
   const memorySystem = new MemorySystem({
     taskStore,
     experienceStore,
-    factStore: options.factStoreOverride === undefined ? factStore : {
-      ...factStore,
-      ...options.factStoreOverride,
-    },
+    factStore:
+      options.factStoreOverride === undefined
+        ? factStore
+        : {
+            ...factStore,
+            ...options.factStoreOverride,
+          },
     evidenceStore: createFileSystemMemoryEvidenceStore(createPluginContext(workspace)),
     distillation: options.distillation ?? createDefaultMemoryDistillationPipeline(),
     onDistillationError: options.onDistillationError,

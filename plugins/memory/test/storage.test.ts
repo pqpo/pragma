@@ -5,7 +5,10 @@ import { describe, expect, it } from "vitest";
 
 import { resolveMemoryDirectory } from "../src/storage.ts";
 import { SkillMemoryConfigSchema } from "../src/index.ts";
-import { resolveMemoryRoot } from "../src/skill-memory/filesystem.ts";
+import {
+  resolveMemoryContextRoot,
+  resolveSkillMemoryRoot,
+} from "../src/memory-context/filesystem.ts";
 
 describe("memory storage paths", () => {
   it("resolves default memory directories under the user home", () => {
@@ -14,17 +17,20 @@ describe("memory storage paths", () => {
       agentId: "agent/a",
     });
 
-    expect(path).toBe(
-      resolve(homedir(), ".pragma", "memories", "experience-memory", "agent-a"),
-    );
+    expect(path).toBe(resolve(homedir(), ".pragma", "memories", "agent-a", "experience-memory"));
   });
 
-  it("resolves unified memory roots under the user home instead of the workspace", () => {
+  it("resolves shared memory context roots under the user home instead of the workspace", () => {
     const config = SkillMemoryConfigSchema.parse({});
-    const path = resolveMemoryRoot("/tmp/workspace", config, "agent/a");
+    const path = resolveMemoryContextRoot("/tmp/workspace", config, "agent/a");
 
-    expect(path).toBe(
-      resolve(homedir(), ".pragma", "memories", "memory", "agent-a"),
-    );
+    expect(path).toBe(resolve(homedir(), ".pragma", "memories", "agent-a"));
+  });
+
+  it("resolves skill memory roots under the agent memory directory", () => {
+    const config = SkillMemoryConfigSchema.parse({});
+    const path = resolveSkillMemoryRoot("/tmp/workspace", config, "agent/a");
+
+    expect(path).toBe(resolve(homedir(), ".pragma", "memories", "agent-a", "skill-memory"));
   });
 });

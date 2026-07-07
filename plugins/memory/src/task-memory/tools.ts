@@ -23,8 +23,11 @@ export function createTaskMemoryTools(options: {
         "List task memory entries for the current workflow run. Uses workflow execution context by default.",
       inputSchema: objectSchema(
         {
-          workflowRunId: stringSchema("Workflow run id. Defaults to the current session workflow run."),
+          workflowRunId: stringSchema(
+            "Workflow run id. Defaults to the current session workflow run.",
+          ),
           taskRunId: stringSchema("Optional task run id filter."),
+          runtimeSessionId: stringSchema("Optional runtime session id filter."),
           visibility: enumSchema(["shared", "private"], "Optional visibility filter."),
           status: {
             oneOf: [
@@ -40,7 +43,9 @@ export function createTaskMemoryTools(options: {
         [],
       ),
       async call(args, _signal, context) {
-        const scope = resolveTaskMemoryScope(args, context?.runContext, options.defaultAgentId, true);
+        const scope = resolveTaskMemoryScope(args, context?.runContext, options.defaultAgentId, {
+          requireWorkflowRunId: true,
+        });
 
         if (!scope.ok) {
           return scope.result;
@@ -50,6 +55,7 @@ export function createTaskMemoryTools(options: {
           workflowRunId: scope.workflowRunId!,
           actorAgentId: scope.actorAgentId,
           taskRunId: readOptionalStringParam(args, "taskRunId"),
+          runtimeSessionId: readOptionalStringParam(args, "runtimeSessionId"),
           visibility: readOptionalVisibilityParam(args, "visibility"),
           status: readOptionalTaskMemoryStatusParam(args),
           context: scope.runContext,
@@ -90,12 +96,14 @@ export function createTaskMemoryTools(options: {
     {
       name: "append_task_memory",
       description:
-        "Append a task memory entry. Workflow run id defaults to the current session workflow run.",
+        "Append a task memory entry. Workflow run id defaults to the current execution context.",
       inputSchema: objectSchema(
         {
-          workflowRunId: stringSchema("Workflow run id. Defaults to the current session workflow run."),
+          workflowRunId: stringSchema(
+            "Workflow run id. Defaults to the current session workflow run.",
+          ),
           taskRunId: stringSchema("Optional task run id."),
-          runtimeSessionId: stringSchema("Optional runtime session id."),
+          runtimeSessionId: stringSchema("Optional runtime session id provenance."),
           visibility: enumSchema(["shared", "private"], "Entry visibility."),
           kind: enumSchema(
             ["decision", "handoff", "note", "todo", "progress", "question"],
@@ -121,7 +129,9 @@ export function createTaskMemoryTools(options: {
         ["visibility", "kind", "content"],
       ),
       async call(args, _signal, context) {
-        const scope = resolveTaskMemoryScope(args, context?.runContext, options.defaultAgentId, true);
+        const scope = resolveTaskMemoryScope(args, context?.runContext, options.defaultAgentId, {
+          requireWorkflowRunId: true,
+        });
 
         if (!scope.ok) {
           return scope.result;
@@ -136,8 +146,7 @@ export function createTaskMemoryTools(options: {
             scope: "session",
             workflowRunId: scope.workflowRunId!,
             taskRunId: readOptionalStringParam(args, "taskRunId") ?? scope.taskRunId,
-            runtimeSessionId:
-              readOptionalStringParam(args, "runtimeSessionId") ?? scope.runtimeSessionId,
+            runtimeSessionId: scope.runtimeSessionId,
             visibility,
             ownerAgentId: visibility === "private" ? actorAgentId : undefined,
             kind: readTaskMemoryKindParam(args, "kind"),
@@ -217,7 +226,9 @@ function resolveTaskMemoryScope(
   args: unknown,
   runContextInput: Parameters<typeof createExpertAgentRunContext>[0],
   defaultAgentId: string | undefined,
-  requireWorkflowRunId: boolean,
+  requirements: {
+    readonly requireWorkflowRunId: boolean;
+  },
 ):
   | {
       readonly ok: true;
@@ -234,13 +245,17 @@ function resolveTaskMemoryScope(
   const runContext = createExpertAgentRunContext(runContextInput);
   const runScope = readExecutionRunScope(runContext);
   const workflowRunId = readOptionalStringParam(args, "workflowRunId") ?? runScope.workflowRunId;
+  const runtimeSessionId =
+    readOptionalStringParam(args, "runtimeSessionId") ?? runScope.runtimeSessionId;
 
-  if (requireWorkflowRunId && (workflowRunId === undefined || workflowRunId.length === 0)) {
+  if (
+    requirements.requireWorkflowRunId &&
+    (workflowRunId === undefined || workflowRunId.length === 0)
+  ) {
     return {
       ok: false as const,
       result: {
-        text:
-          "Task memory operation requires workflowRunId. Provide it explicitly or run the agent inside a workflow execution context.",
+        text: "Task memory operation requires workflowRunId. Provide it explicitly or run the agent inside a workflow execution context.",
         isError: true,
       },
     };
@@ -251,7 +266,7 @@ function resolveTaskMemoryScope(
     workflowRunId,
     actorAgentId: resolveActorAgentId(runContext, defaultAgentId),
     taskRunId: runScope.taskRunId,
-    runtimeSessionId: runScope.runtimeSessionId,
+    runtimeSessionId,
     runContext,
   };
 }
@@ -304,7 +319,9 @@ function readVisibilityParam(params: unknown, key: string): "shared" | "private"
     return value;
   }
 
-  throw new Error(`Task memory tool requires visibility parameter "${key}" to be shared or private.`);
+  throw new Error(
+    `Task memory tool requires visibility parameter "${key}" to be shared or private.`,
+  );
 }
 
 function readOptionalVisibilityParam(
@@ -380,7 +397,9 @@ function readOptionalTaskMemoryStatusParam(
         return item;
       }
 
-      throw new Error('Task memory tool parameter "status" contains an invalid task memory status.');
+      throw new Error(
+        'Task memory tool parameter "status" contains an invalid task memory status.',
+      );
     });
   }
 
@@ -406,7 +425,11 @@ function readOptionalTaskTodoItems(
       throw new Error(`Task memory tool parameter "${key}" item ${index} must be an object.`);
     }
 
-    if (typeof item.id !== "string" || typeof item.text !== "string" || typeof item.done !== "boolean") {
+    if (
+      typeof item.id !== "string" ||
+      typeof item.text !== "string" ||
+      typeof item.done !== "boolean"
+    ) {
       throw new Error(
         `Task memory tool parameter "${key}" item ${index} requires string id, string text, and boolean done.`,
       );
@@ -422,8 +445,7 @@ function readOptionalTaskTodoItems(
       id: item.id,
       text: item.text,
       done: item.done,
-      assigneeAgentId:
-        item.assigneeAgentId === undefined ? undefined : item.assigneeAgentId,
+      assigneeAgentId: item.assigneeAgentId === undefined ? undefined : item.assigneeAgentId,
     };
   });
 }
@@ -465,10 +487,11 @@ function formatTaskMemoryRecord(entry: TaskMemoryRecord): string {
       ? []
       : [
           "  items:",
-          ...entry.items.map((item) =>
-            `    - [${item.done ? "x" : " "}] ${item.id}: ${item.text}${
-              item.assigneeAgentId === undefined ? "" : ` @${item.assigneeAgentId}`
-            }`,
+          ...entry.items.map(
+            (item) =>
+              `    - [${item.done ? "x" : " "}] ${item.id}: ${item.text}${
+                item.assigneeAgentId === undefined ? "" : ` @${item.assigneeAgentId}`
+              }`,
           ),
         ]),
   ];
@@ -476,10 +499,7 @@ function formatTaskMemoryRecord(entry: TaskMemoryRecord): string {
   return lines.filter((line) => line !== undefined).join("\n");
 }
 
-function taskMemoryErrorResult(
-  message: string,
-  error: unknown,
-): ExpertAgentToolCallResult {
+function taskMemoryErrorResult(message: string, error: unknown): ExpertAgentToolCallResult {
   return {
     text: `Task memory operation failed: ${message}`,
     isError: true,

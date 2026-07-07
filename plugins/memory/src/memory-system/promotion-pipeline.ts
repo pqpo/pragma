@@ -6,7 +6,7 @@ import {
   type MemoryDistillationPipeline,
   type MemoryEvidenceRecord,
   type MemoryRunEvidencePayload,
-  type MemorySessionEvidencePayload,
+  type MemoryWorkflowEvidencePayload,
   type MemoryReference,
   type SkillMemoryRecord,
   type TaskMemoryRecord,
@@ -48,12 +48,12 @@ function proposeExperiencesFromEvidence(
     ] satisfies readonly MemoryDistillationCandidate<"experience", ExperienceMemoryRecord>[];
   }
 
-  if (record.kind !== "session") {
+  if (record.kind !== "workflow") {
     return [];
   }
 
-  const payload = record.payload as MemorySessionEvidencePayload;
-  const content = toSessionExperienceContent(payload);
+  const payload = record.payload as MemoryWorkflowEvidencePayload;
+  const content = toWorkflowExperienceContent(payload);
   const now = record.updatedAt;
 
   return [
@@ -64,22 +64,22 @@ function proposeExperiencesFromEvidence(
         id: `experience-memory-${record.id}`,
         type: "experience" as const,
         scope: record.scope,
-        title: `Session evidence ${payload.sessionId}`,
+        title: `Workflow evidence ${payload.workflowRunId}`,
         summary: content,
         tags: mergeTags(undefined, [
-          "source:evidence-session",
+          "source:evidence-workflow",
           ...(payload.externalContext ? ["external-context"] : []),
         ]),
         workflowRunId: record.workflowRunId,
         taskRunId: record.taskRunId,
         runtimeSessionId: record.runtimeSessionId,
-        kind: "session",
+        kind: "workflow",
         content,
         status: "summarized",
         provenance: {
           createdBy: "memory-distillation",
           updatedBy: "memory-distillation",
-          source: "session-evidence",
+          source: "workflow-evidence",
           createdAt: now,
           updatedAt: now,
           evidence: [
@@ -132,7 +132,7 @@ function toExperienceFromTask(record: TaskMemoryRecord): ExperienceMemoryRecord 
   };
 }
 
-function toSessionExperienceContent(payload: MemorySessionEvidencePayload): string {
+function toWorkflowExperienceContent(payload: MemoryWorkflowEvidencePayload): string {
   const runLines = payload.runs.map((run, index) => {
     const prefix = `Run ${index + 1}: ${run.query}`;
     if (run.status === "succeeded") {
@@ -151,7 +151,7 @@ function toSessionExperienceContent(payload: MemorySessionEvidencePayload): stri
   const lessons = dedupeStrings(payload.runs.flatMap((run) => run.lessons)).slice(0, 6);
 
   return [
-    `Session ${payload.sessionId} completed ${payload.runs.length} run(s).`,
+    `Workflow ${payload.workflowRunId} completed ${payload.runs.length} run(s).`,
     ...runLines,
     ...(lessons.length === 0 ? [] : [`Reusable lessons: ${lessons.join(" ")}`]),
   ].join("\n");
@@ -242,11 +242,11 @@ function proposeFactsFromExperience(
 function proposeSkillsFromEvidence(
   record: MemoryEvidenceRecord,
 ): readonly MemoryDistillationCandidate<"skill", SkillMemoryRecord>[] {
-  if (record.kind !== "session") {
+  if (record.kind !== "workflow") {
     return [];
   }
 
-  const payload = record.payload as MemorySessionEvidencePayload;
+  const payload = record.payload as MemoryWorkflowEvidencePayload;
 
   if (payload.runs.length === 0) {
     return [];
@@ -293,9 +293,9 @@ function proposeSkillsFromEvidence(
         id: skillId,
         type: "skill" as const,
         scope: record.scope === "run" ? "workspace" : record.scope,
-        title: `Skill derived from session ${payload.sessionId}`,
+        title: `Skill derived from workflow ${payload.workflowRunId}`,
         summary: payload.runs[0]?.query,
-        tags: mergeTags(undefined, ["source:evidence-session"]),
+        tags: mergeTags(undefined, ["source:evidence-workflow"]),
         problemClass: skillId.replaceAll("-", " "),
         recommendedApproach,
         goodPractices,
@@ -306,7 +306,7 @@ function proposeSkillsFromEvidence(
         provenance: {
           createdBy: "memory-distillation",
           updatedBy: "memory-distillation",
-          source: "session-evidence",
+          source: "workflow-evidence",
           createdAt: record.updatedAt,
           updatedAt: record.updatedAt,
           evidence: [
@@ -331,7 +331,11 @@ function inferFactConfidence(record: ExperienceMemoryRecord): FactMemoryRecord["
     return "verified";
   }
 
-  if (record.provenance.evidence.some((evidence) => evidence.type === "run" || evidence.type === "session")) {
+  if (
+    record.provenance.evidence.some(
+      (evidence) => evidence.type === "run" || evidence.type === "workflow",
+    )
+  ) {
     return "high";
   }
 
@@ -352,7 +356,7 @@ function summarizeTaskRecord(record: TaskMemoryRecord): string {
 function chooseExperienceKind(record: TaskMemoryRecord): ExperienceMemoryRecord["kind"] {
   switch (record.kind) {
     case "handoff":
-      return "session";
+      return "workflow";
     case "question":
       return "conversation";
     case "todo":

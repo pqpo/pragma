@@ -20,7 +20,7 @@ import { error, ok } from "@pragma/core";
 import type { MemorySystem } from "../memory-system/index.ts";
 
 import { SUMMARY_CONTEXT_ID } from "./constants.ts";
-import { resolveConfig } from "./config.ts";
+import { resolveConfig } from "../skill-memory/config.ts";
 import {
   collectMemoryContextIds,
   createStoredContext,
@@ -28,7 +28,9 @@ import {
   readStoredContext,
   regenerateSummary,
   resolveContextPath,
-  resolveMemoryRoot,
+  type MemoryArtifactRoots,
+  resolveMemoryArtifactRoots,
+  resolveRootForMemoryContextId,
   toSummary,
   writeStoredMarkdown,
 } from "./filesystem.ts";
@@ -41,20 +43,20 @@ import {
   readContextLines,
   toErrorDetails,
   validateExpectedRevision,
-} from "./utils.ts";
+} from "../skill-memory/utils.ts";
 
-export function createSkillMemoryContextStore(
+export function createMemoryContextStore(
   context: ExpertAgentPluginSetupContext,
   memorySystem: MemorySystem,
 ): ExpertAgentContextStore {
-  return new FileSystemMemoryStore({
+  return new FileSystemMemoryContextStore({
     agentId: context.agent?.id ?? "unknown-agent",
     context,
     memorySystem,
   });
 }
 
-export class FileSystemMemoryStore implements ExpertAgentContextStore {
+export class FileSystemMemoryContextStore implements ExpertAgentContextStore {
   private readonly agentId: string;
   private readonly context: ExpertAgentPluginSetupContext;
   private readonly memorySystem: MemorySystem;
@@ -77,10 +79,12 @@ export class FileSystemMemoryStore implements ExpertAgentContextStore {
         return ok([]);
       }
 
-      const rootDir = resolveMemoryRoot(this.context.workspaceRoot, config, this.agentId);
-      const ids = await collectMemoryContextIds(rootDir);
+      const roots = resolveMemoryArtifactRoots(this.context.workspaceRoot, config, this.agentId);
+      const ids = await collectMemoryContextIds(roots);
       const summaries = await Promise.all(
-        ids.map(async (id) => toSummary(await readStoredContext(rootDir, id))),
+        ids.map(async (id) =>
+          toSummary(await readStoredContext(resolveRootForMemoryContextId(roots, id), id)),
+        ),
       );
       return ok(summaries);
     } catch (caught) {
@@ -98,7 +102,7 @@ export class FileSystemMemoryStore implements ExpertAgentContextStore {
         return error("store_unavailable", "Skill memory is disabled.");
       }
 
-      const rootDir = resolveMemoryRoot(this.context.workspaceRoot, config, this.agentId);
+      const roots = resolveMemoryArtifactRoots(this.context.workspaceRoot, config, this.agentId);
       const id = normalizeMemoryContextId(input.id);
 
       if (!id.ok) {
@@ -106,9 +110,10 @@ export class FileSystemMemoryStore implements ExpertAgentContextStore {
       }
 
       if (id.value === SUMMARY_CONTEXT_ID) {
-        await this.regenerateSummaryBestEffort(rootDir, "read");
+        await this.regenerateSummaryBestEffort(roots, "read");
       }
 
+      const rootDir = resolveRootForMemoryContextId(roots, id.value);
       const stored = await readStoredContext(rootDir, id.value);
       const range = readContentRange(stored.content, {
         start: input.start ?? 0,
@@ -145,13 +150,14 @@ export class FileSystemMemoryStore implements ExpertAgentContextStore {
   ): Promise<ExpertAgentContextResult<ExpertAgentStoredContextItem>> {
     try {
       const config = await resolveConfig(this.context);
-      const rootDir = resolveMemoryRoot(this.context.workspaceRoot, config, this.agentId);
+      const roots = resolveMemoryArtifactRoots(this.context.workspaceRoot, config, this.agentId);
       const id = normalizeWritableMemoryContextId(input.id);
 
       if (!id.ok) {
         return id;
       }
 
+      const rootDir = resolveRootForMemoryContextId(roots, id.value);
       const filePath = resolveContextPath(rootDir, id.value);
 
       if (await exists(filePath)) {
@@ -171,7 +177,7 @@ export class FileSystemMemoryStore implements ExpertAgentContextStore {
       });
 
       if (id.value.startsWith("skills/")) {
-        await this.regenerateSummaryBestEffort(rootDir, "add", id.value);
+        await this.regenerateSummaryBestEffort(roots, "add", id.value);
       }
 
       return ok(await readStoredContext(rootDir, id.value));
@@ -188,13 +194,14 @@ export class FileSystemMemoryStore implements ExpertAgentContextStore {
   ): Promise<ExpertAgentContextResult<ExpertAgentStoredContextItem>> {
     try {
       const config = await resolveConfig(this.context);
-      const rootDir = resolveMemoryRoot(this.context.workspaceRoot, config, this.agentId);
+      const roots = resolveMemoryArtifactRoots(this.context.workspaceRoot, config, this.agentId);
       const id = normalizeWritableMemoryContextId(input.id);
 
       if (!id.ok) {
         return id;
       }
 
+      const rootDir = resolveRootForMemoryContextId(roots, id.value);
       const existing = await readStoredContext(rootDir, id.value);
       const conflict = validateExpectedRevision(existing, input);
 
@@ -215,7 +222,7 @@ export class FileSystemMemoryStore implements ExpertAgentContextStore {
       });
 
       if (id.value.startsWith("skills/")) {
-        await this.regenerateSummaryBestEffort(rootDir, "update", id.value);
+        await this.regenerateSummaryBestEffort(roots, "update", id.value);
       }
 
       return ok(await readStoredContext(rootDir, id.value));
@@ -232,13 +239,14 @@ export class FileSystemMemoryStore implements ExpertAgentContextStore {
   ): Promise<ExpertAgentContextResult<ExpertAgentStoredContextItemEditResult>> {
     try {
       const config = await resolveConfig(this.context);
-      const rootDir = resolveMemoryRoot(this.context.workspaceRoot, config, this.agentId);
+      const roots = resolveMemoryArtifactRoots(this.context.workspaceRoot, config, this.agentId);
       const id = normalizeWritableMemoryContextId(input.id);
 
       if (!id.ok) {
         return id;
       }
 
+      const rootDir = resolveRootForMemoryContextId(roots, id.value);
       const existing = await readStoredContext(rootDir, id.value);
       const conflict = validateExpectedRevision(existing, input);
 
@@ -284,7 +292,7 @@ export class FileSystemMemoryStore implements ExpertAgentContextStore {
       });
 
       if (id.value.startsWith("skills/")) {
-        await this.regenerateSummaryBestEffort(rootDir, "edit", id.value);
+        await this.regenerateSummaryBestEffort(roots, "edit", id.value);
       }
 
       return ok({
@@ -304,13 +312,14 @@ export class FileSystemMemoryStore implements ExpertAgentContextStore {
   ): Promise<ExpertAgentContextResult<{ readonly id: string }>> {
     try {
       const config = await resolveConfig(this.context);
-      const rootDir = resolveMemoryRoot(this.context.workspaceRoot, config, this.agentId);
+      const roots = resolveMemoryArtifactRoots(this.context.workspaceRoot, config, this.agentId);
       const id = normalizeWritableMemoryContextId(input.id);
 
       if (!id.ok) {
         return id;
       }
 
+      const rootDir = resolveRootForMemoryContextId(roots, id.value);
       const filePath = resolveContextPath(rootDir, id.value);
 
       if (!(await exists(filePath))) {
@@ -322,7 +331,7 @@ export class FileSystemMemoryStore implements ExpertAgentContextStore {
       await rm(filePath);
 
       if (id.value.startsWith("skills/")) {
-        await this.regenerateSummaryBestEffort(rootDir, "delete", id.value);
+        await this.regenerateSummaryBestEffort(roots, "delete", id.value);
       }
 
       return ok({ id: id.value });
@@ -344,14 +353,15 @@ export class FileSystemMemoryStore implements ExpertAgentContextStore {
         return ok([]);
       }
 
-      const rootDir = resolveMemoryRoot(this.context.workspaceRoot, config, this.agentId);
-      const ids = await collectMemoryContextIds(rootDir);
+      const roots = resolveMemoryArtifactRoots(this.context.workspaceRoot, config, this.agentId);
+      const ids = await collectMemoryContextIds(roots);
       const query = input.caseSensitive === true ? input.query : input.query.toLowerCase();
       const maxResults = input.maxResults ?? 20;
       const contextLines = input.contextLines ?? 0;
       const matches: ExpertAgentContextItemSearchMatch[] = [];
 
       for (const id of ids) {
+        const rootDir = resolveRootForMemoryContextId(roots, id);
         const stored = await readStoredContext(rootDir, id);
         const lines = stored.content.split("\n");
 
@@ -383,12 +393,12 @@ export class FileSystemMemoryStore implements ExpertAgentContextStore {
   }
 
   private async regenerateSummaryBestEffort(
-    rootDir: string,
+    roots: MemoryArtifactRoots,
     operation: "add" | "delete" | "edit" | "read" | "update",
     contextId?: string,
   ): Promise<void> {
     try {
-      await regenerateSummary(rootDir, this.memorySystem, this.agentId);
+      await regenerateSummary(roots, this.memorySystem, this.agentId);
     } catch (caught) {
       this.context.logger.warn("Failed to regenerate memory summary.", {
         agentId: this.agentId,

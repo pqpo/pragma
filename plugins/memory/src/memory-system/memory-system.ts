@@ -46,8 +46,7 @@ export class MemorySystem {
   private factStore: FactMemoryStore | undefined;
   private skillStore: SkillMemoryStore | undefined;
   private readonly summaryConfig: MemorySummaryConfig;
-  private summaryArtifactRegenerator:
-    (() => Promise<void>) | undefined;
+  private summaryArtifactRegenerator: (() => Promise<void>) | undefined;
   private distillationChain = Promise.resolve();
   readonly distillation: MemoryDistillationPipeline | undefined;
   readonly onDistillationError: ((error: MemoryResultError) => void) | undefined;
@@ -82,7 +81,10 @@ export class MemorySystem {
     input: MemoryStoreRegistration<MemoryEvidenceStore>,
   ): MemoryResult<{ readonly type: "evidence" }> {
     if (this.evidenceStore !== undefined) {
-      return errorMemory("store_already_registered", "Memory evidence store is already registered.");
+      return errorMemory(
+        "store_already_registered",
+        "Memory evidence store is already registered.",
+      );
     }
 
     this.evidenceStore = input.store;
@@ -93,7 +95,10 @@ export class MemorySystem {
     input: MemoryStoreRegistration<ExperienceMemoryStore>,
   ): MemoryResult<{ readonly type: "experience" }> {
     if (this.experienceStore !== undefined) {
-      return errorMemory("store_already_registered", "Experience memory store is already registered.");
+      return errorMemory(
+        "store_already_registered",
+        "Experience memory store is already registered.",
+      );
     }
 
     this.experienceStore = input.store;
@@ -385,11 +390,10 @@ export class MemorySystem {
     });
   }
 
-  async buildAlwaysOnSummary(input: {
-    readonly agentId: string;
-  }): Promise<MemoryResult<string>> {
+  async buildAlwaysOnSummary(input: { readonly agentId: string }): Promise<MemoryResult<string>> {
     const [tasks, experiences, facts, skills] = await Promise.all([
-      this.taskStore?.listForSummary({ actorAgentId: input.agentId }) ?? Promise.resolve(okMemory([])),
+      this.taskStore?.listForSummary({ actorAgentId: input.agentId }) ??
+        Promise.resolve(okMemory([])),
       this.experienceStore?.list({}) ?? Promise.resolve(okMemory([])),
       this.factStore?.list({ onlyActive: true }) ?? Promise.resolve(okMemory([])),
       this.skillStore?.list({}) ?? Promise.resolve(okMemory([])),
@@ -422,9 +426,7 @@ export class MemorySystem {
     );
   }
 
-  async buildContextArtifacts(input: {
-    readonly agentId: string;
-  }): Promise<
+  async buildContextArtifacts(input: { readonly agentId: string }): Promise<
     MemoryResult<
       readonly {
         readonly id: string;
@@ -435,7 +437,8 @@ export class MemorySystem {
     >
   > {
     const [tasks, experiences, facts] = await Promise.all([
-      this.taskStore?.listForSummary({ actorAgentId: input.agentId }) ?? Promise.resolve(okMemory([])),
+      this.taskStore?.listForSummary({ actorAgentId: input.agentId }) ??
+        Promise.resolve(okMemory([])),
       this.experienceStore?.list({}) ?? Promise.resolve(okMemory([])),
       this.factStore?.list({ onlyActive: true }) ?? Promise.resolve(okMemory([])),
     ]);
@@ -454,7 +457,7 @@ export class MemorySystem {
 
     return okMemory([
       ...tasks.value.map((record) => ({
-        id: `task-memory/${record.id}.md`,
+        id: `task-memory/workflows/${sanitizeArtifactPathSegment(record.workflowRunId)}/${record.id}.md`,
         content: renderTaskMemoryArtifact(record),
         description: `Task memory projection for ${record.id}.`,
         trigger: "manual" as const,
@@ -608,7 +611,9 @@ function renderTaskMemoryArtifact(record: import("./types.ts").TaskMemoryRecord)
     `- status: ${record.status}`,
     `- workflowRunId: ${record.workflowRunId}`,
     ...(record.taskRunId === undefined ? [] : [`- taskRunId: ${record.taskRunId}`]),
-    ...(record.runtimeSessionId === undefined ? [] : [`- runtimeSessionId: ${record.runtimeSessionId}`]),
+    ...(record.runtimeSessionId === undefined
+      ? []
+      : [`- runtimeSessionId: ${record.runtimeSessionId}`]),
     ...(record.title === undefined ? [] : ["", "## Title", record.title]),
     "",
     "## Content",
@@ -619,13 +624,20 @@ function renderTaskMemoryArtifact(record: import("./types.ts").TaskMemoryRecord)
           "",
           "## Todo Items",
           ...record.items.map(
-            (item) => `- [${item.done ? "x" : " "}] ${item.text}${item.assigneeAgentId === undefined ? "" : ` (${item.assigneeAgentId})`}`,
+            (item) =>
+              `- [${item.done ? "x" : " "}] ${item.text}${item.assigneeAgentId === undefined ? "" : ` (${item.assigneeAgentId})`}`,
           ),
         ]),
   ].join("\n");
 }
 
-function renderExperienceMemoryArtifact(record: import("./types.ts").ExperienceMemoryRecord): string {
+function sanitizeArtifactPathSegment(value: string): string {
+  return value.replace(/[^a-zA-Z0-9._-]/g, "-");
+}
+
+function renderExperienceMemoryArtifact(
+  record: import("./types.ts").ExperienceMemoryRecord,
+): string {
   return [
     "# Experience Memory",
     "",

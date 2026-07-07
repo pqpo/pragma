@@ -1,29 +1,23 @@
-import type {
-  ExpertAgentPluginContributions,
-  ExpertAgentPluginSetupContext,
-} from "@pragma/core";
+import type { ExpertAgentPluginContributions, ExpertAgentPluginSetupContext } from "@pragma/core";
 
 import { MemorySystem } from "../memory-system/index.ts";
-import { MEMORY_CONTEXT_NAMESPACE, SKILL_MEMORY_ID } from "./constants.ts";
+import { MEMORY_CONTEXT_NAMESPACE } from "../memory-context/constants.ts";
+import { SKILL_MEMORY_ID } from "./constants.ts";
 import { resolveConfig } from "./config.ts";
-import { createFileSystemMemoryEvidenceStore } from "./evidence-store.ts";
-import { regenerateSummary, resolveMemoryRoot } from "./filesystem.ts";
+import { createFileSystemMemoryEvidenceStore } from "../memory-context/evidence-store.ts";
+import { regenerateSummary, resolveMemoryArtifactRoots } from "../memory-context/filesystem.ts";
 import { SkillMemoryManager } from "./manager.ts";
 import {
   SkillMemoryConfigSchema,
   type SkillMemoryConfig,
   type SkillMemoryConfigInput,
   MemoryRunEvidenceSchema as SkillMemoryRunEvidenceSchema,
-  MemorySessionEvidenceSchema as SkillMemorySessionEvidenceSchema,
+  MemoryWorkflowEvidenceSchema as SkillMemoryWorkflowEvidenceSchema,
 } from "./schema.ts";
 import { createSkillMemoryStore } from "./skill-store.ts";
-import { createSkillMemoryContextStore } from "./store.ts";
+import { createMemoryContextStore } from "../memory-context/store.ts";
 
-export {
-  SkillMemoryConfigSchema,
-  SkillMemoryRunEvidenceSchema,
-  SkillMemorySessionEvidenceSchema,
-};
+export { SkillMemoryConfigSchema, SkillMemoryRunEvidenceSchema, SkillMemoryWorkflowEvidenceSchema };
 export type { SkillMemoryConfig, SkillMemoryConfigInput };
 
 type SkillMemoryPluginSetupContext = ExpertAgentPluginSetupContext & {
@@ -33,7 +27,7 @@ type SkillMemoryPluginSetupContext = ExpertAgentPluginSetupContext & {
 export function createSkillMemoryContributions(
   context: SkillMemoryPluginSetupContext,
 ): ExpertAgentPluginContributions {
-  const store = createSkillMemoryContextStore(context, context.memorySystem);
+  const store = createMemoryContextStore(context, context.memorySystem);
   const skillStore = createSkillMemoryStore(context);
   const evidenceStore = createFileSystemMemoryEvidenceStore(context);
   const manager = new SkillMemoryManager(context);
@@ -70,7 +64,7 @@ export function createSkillMemoryContributions(
     }
 
     await regenerateSummary(
-      resolveMemoryRoot(context.workspaceRoot, config, context.agent?.id ?? "unknown-agent"),
+      resolveMemoryArtifactRoots(context.workspaceRoot, config, context.agent?.id ?? "unknown-agent"),
       context.memorySystem,
       context.agent?.id ?? "unknown-agent",
     );

@@ -6,32 +6,29 @@ import type {
   ExpertAgentPluginStreamEventContext,
   ExpertAgentPluginTaskSubmittedContext,
 } from "@pragma/core";
+import { readExecutionRunScope } from "@pragma/core";
 import type { MemorySystem } from "../memory-system/index.ts";
 
 import {
   JSON_EXTENSION,
   MARKDOWN_EXTENSION,
   RUNS_EVIDENCE_PREFIX,
-  SESSIONS_EVIDENCE_PREFIX,
   TASKS_PREFIX,
-} from "./constants.ts";
+  WORKFLOWS_EVIDENCE_PREFIX,
+} from "../memory-context/constants.ts";
 import { resolveConfig } from "./config.ts";
 import {
   createStoredContext,
   exists,
   regenerateSummary,
   resolveContextPath,
-  resolveMemoryRoot,
+  resolveMemoryArtifactRoots,
   writeJson,
   writeStoredMarkdown,
-} from "./filesystem.ts";
-import {
-  deriveLessonsFromEvidence,
-  renderSessionSummary,
-  renderTaskSummary,
-} from "./rendering.ts";
-import { MemoryRunEvidenceSchema, MemorySessionEvidenceSchema } from "./schema.ts";
-import type { MemoryRunEvidence, MemorySessionEvidence } from "./schema.ts";
+} from "../memory-context/filesystem.ts";
+import { deriveLessonsFromEvidence, renderTaskSummary, renderWorkflowSummary } from "./rendering.ts";
+import { MemoryRunEvidenceSchema, MemoryWorkflowEvidenceSchema } from "./schema.ts";
+import type { MemoryRunEvidence, MemoryWorkflowEvidence } from "./schema.ts";
 import {
   containsSensitiveContent,
   dedupeStrings,
@@ -47,7 +44,8 @@ export class SkillMemoryManager {
   };
   private readonly agentId: string;
   private readonly runLocks = new Map<string, Promise<void>>();
-  private readonly sessionLocks = new Map<string, Promise<void>>();
+  private readonly workflowLocks = new Map<string, Promise<void>>();
+  private readonly runtimeSessionWorkflowIds = new Map<string, Set<string>>();
 
   constructor(
     context: ExpertAgentPluginSetupContext & {
@@ -65,13 +63,19 @@ export class SkillMemoryManager {
       return;
     }
 
-    const rootDir = resolveMemoryRoot(this.context.workspaceRoot, config, this.agentId);
-    const sessionId = sanitizeIdSegment(streamContext.session.systemSessionId);
+    const roots = resolveMemoryArtifactRoots(this.context.workspaceRoot, config, this.agentId);
+    const rootDir = roots.contextRootDir;
+    const workflowRunId = readWorkflowRunId(streamContext.context);
+
+    if (workflowRunId === undefined) {
+      return;
+    }
+
     const runId = sanitizeIdSegment(streamContext.runId);
     const now = new Date().toISOString();
     await this.withSerializedMutation(this.runLocks, runId, async () => {
       const evidence = await this.readOrCreateRunEvidence(rootDir, {
-        sessionId,
+        workflowRunId,
         runId,
         query: "Task submitted",
         runtimeSessionId: streamContext.session.runtimeSession.id,
@@ -100,14 +104,20 @@ export class SkillMemoryManager {
       return;
     }
 
-    const rootDir = resolveMemoryRoot(this.context.workspaceRoot, config, this.agentId);
-    const sessionId = sanitizeIdSegment(taskContext.session.systemSessionId);
+    const roots = resolveMemoryArtifactRoots(this.context.workspaceRoot, config, this.agentId);
+    const rootDir = roots.contextRootDir;
+    const workflowRunId = readWorkflowRunId(taskContext.context);
+
+    if (workflowRunId === undefined) {
+      return;
+    }
+
     const runId = sanitizeIdSegment(taskContext.runId);
     const now = new Date().toISOString();
     const externalContext = taskContext.context?.attributes?.["externalContext"] === true;
     const evidence = await this.withSerializedMutation(this.runLocks, runId, async () => {
       const runEvidence = await this.readOrCreateRunEvidence(rootDir, {
-        sessionId,
+        workflowRunId,
         runId,
         query: taskContext.submission.query,
         runtimeSessionId: taskContext.session.runtimeSession.id,
@@ -135,8 +145,7 @@ export class SkillMemoryManager {
           readErrorMessage(taskContext.error),
           config.maxOutputExcerptChars,
         );
-        runEvidence.status =
-          taskContext.session.runState === "cancelled" ? "cancelled" : "failed";
+        runEvidence.status = taskContext.session.runState === "cancelled" ? "cancelled" : "failed";
         runEvidence.errorMessage = errorMessage;
         if (!containsSensitiveContent(errorMessage)) {
           runEvidence.lessons = [...deriveLessonsFromEvidence(runEvidence)];
@@ -152,24 +161,30 @@ export class SkillMemoryManager {
       return runEvidence;
     });
 
-    await this.withSerializedMutation(this.sessionLocks, sessionId, async () => {
-      const sessionEvidence = await this.readOrCreateSessionEvidence(rootDir, {
-        sessionId,
+    this.trackRuntimeSessionWorkflow(taskContext.session.systemSessionId, workflowRunId);
+
+    await this.withSerializedMutation(this.workflowLocks, workflowRunId, async () => {
+      const workflowEvidence = await this.readOrCreateWorkflowEvidence(rootDir, {
+        workflowRunId,
         runtimeSessionId: taskContext.session.runtimeSession.id,
         externalContext,
         now,
       });
-      sessionEvidence.runIds = dedupeStrings([...sessionEvidence.runIds, runId]);
-      sessionEvidence.externalContext = sessionEvidence.externalContext || externalContext;
-      sessionEvidence.updatedAt = now;
-      sessionEvidence.consolidationState = "pending";
+      workflowEvidence.runIds = dedupeStrings([...workflowEvidence.runIds, runId]);
+      workflowEvidence.runtimeSessionIds = dedupeStrings([
+        ...workflowEvidence.runtimeSessionIds,
+        taskContext.session.runtimeSession.id,
+      ]);
+      workflowEvidence.externalContext = workflowEvidence.externalContext || externalContext;
+      workflowEvidence.updatedAt = now;
+      workflowEvidence.consolidationState = "pending";
       await writeJson(
-        resolveContextPath(rootDir, `${SESSIONS_EVIDENCE_PREFIX}${sessionId}${JSON_EXTENSION}`),
-        sessionEvidence,
+        resolveContextPath(rootDir, `${WORKFLOWS_EVIDENCE_PREFIX}${workflowRunId}${JSON_EXTENSION}`),
+        workflowEvidence,
       );
     });
 
-    await this.writeTaskSummary(rootDir, sessionId, evidence, now);
+    await this.writeTaskSummary(rootDir, workflowRunId, evidence, now);
   }
 
   private async withSerializedMutation<T>(
@@ -182,7 +197,10 @@ export class SkillMemoryManager {
     const current = new Promise<void>((resolve) => {
       releaseCurrent = resolve;
     });
-    const next = previous.then(() => current, () => current);
+    const next = previous.then(
+      () => current,
+      () => current,
+    );
 
     lockMap.set(key, next);
 
@@ -205,47 +223,68 @@ export class SkillMemoryManager {
       return;
     }
 
-    const rootDir = resolveMemoryRoot(this.context.workspaceRoot, config, this.agentId);
-    const sessionId = sanitizeIdSegment(sessionContext.session.systemSessionId);
-    const sessionEvidencePath = resolveContextPath(
-      rootDir,
-      `${SESSIONS_EVIDENCE_PREFIX}${sessionId}${JSON_EXTENSION}`,
-    );
+    const roots = resolveMemoryArtifactRoots(this.context.workspaceRoot, config, this.agentId);
+    const systemSessionId = sanitizeIdSegment(sessionContext.session.systemSessionId);
+    const workflowRunIds = this.runtimeSessionWorkflowIds.get(systemSessionId);
 
-    if (!(await exists(sessionEvidencePath))) {
+    if (workflowRunIds === undefined) {
       return;
     }
 
-    const sessionEvidence = MemorySessionEvidenceSchema.parse(
-      JSON.parse(await readFile(sessionEvidencePath, "utf8")) as unknown,
+    for (const workflowRunId of workflowRunIds) {
+      await this.finalizeWorkflow(roots, config, workflowRunId);
+    }
+
+    this.runtimeSessionWorkflowIds.delete(systemSessionId);
+  }
+
+  private async finalizeWorkflow(
+    roots: ReturnType<typeof resolveMemoryArtifactRoots>,
+    config: Awaited<ReturnType<typeof resolveConfig>>,
+    workflowRunId: string,
+  ): Promise<void> {
+    const rootDir = roots.contextRootDir;
+    const workflowEvidencePath = resolveContextPath(
+      rootDir,
+      `${WORKFLOWS_EVIDENCE_PREFIX}${workflowRunId}${JSON_EXTENSION}`,
+    );
+
+    if (!(await exists(workflowEvidencePath))) {
+      return;
+    }
+
+    const workflowEvidence = MemoryWorkflowEvidenceSchema.parse(
+      JSON.parse(await readFile(workflowEvidencePath, "utf8")) as unknown,
     );
     const runEvidence = await Promise.all(
-      sessionEvidence.runIds.map(async (runId) => {
-        const path = resolveContextPath(rootDir, `${RUNS_EVIDENCE_PREFIX}${runId}${JSON_EXTENSION}`);
-        return MemoryRunEvidenceSchema.parse(
-          JSON.parse(await readFile(path, "utf8")) as unknown,
+      workflowEvidence.runIds.map(async (runId) => {
+        const path = resolveContextPath(
+          rootDir,
+          `${RUNS_EVIDENCE_PREFIX}${runId}${JSON_EXTENSION}`,
         );
+        return MemoryRunEvidenceSchema.parse(JSON.parse(await readFile(path, "utf8")) as unknown);
       }),
     );
     const now = new Date().toISOString();
 
-    await this.writeSessionSummary(rootDir, sessionEvidence, runEvidence, now);
+    await this.writeWorkflowSummary(rootDir, workflowEvidence, runEvidence, now);
 
-    if (!(config.disableOnExternalContext && sessionEvidence.externalContext)) {
+    if (!(config.disableOnExternalContext && workflowEvidence.externalContext)) {
       await this.context.memorySystem.recordEvidence(
         {
           record: {
-            id: `session-${sessionEvidence.sessionId}`,
+            id: `workflow-${workflowEvidence.workflowRunId}`,
             type: "evidence",
-            kind: "session",
+            kind: "workflow",
             agentId: this.agentId,
             scope: "session",
-            runtimeSessionId: sessionEvidence.runtimeSessionId,
+            workflowRunId: workflowEvidence.workflowRunId,
+            runtimeSessionId: workflowEvidence.runtimeSessionIds[0],
             payload: {
-              sessionId: sessionEvidence.sessionId,
-              runtimeSessionId: sessionEvidence.runtimeSessionId,
-              runIds: sessionEvidence.runIds,
-              externalContext: sessionEvidence.externalContext,
+              workflowRunId: workflowEvidence.workflowRunId,
+              runtimeSessionIds: workflowEvidence.runtimeSessionIds,
+              runIds: workflowEvidence.runIds,
+              externalContext: workflowEvidence.externalContext,
               runs: runEvidence.map((run) => ({
                 query: run.query,
                 status: run.status,
@@ -255,17 +294,17 @@ export class SkillMemoryManager {
                 tools: run.tools,
               })),
             },
-            createdAt: sessionEvidence.createdAt,
+            createdAt: workflowEvidence.createdAt,
             updatedAt: now,
             provenance: {
               createdBy: "skill-memory",
               updatedBy: "skill-memory",
-              source: "session-evidence",
-              createdAt: sessionEvidence.createdAt,
+              source: "workflow-evidence",
+              createdAt: workflowEvidence.createdAt,
               updatedAt: now,
               evidence: [
-                { type: "session", id: sessionEvidence.sessionId },
-                ...sessionEvidence.runIds.map((runId) => ({ type: "run" as const, id: runId })),
+                { type: "workflow", id: workflowEvidence.workflowRunId },
+                ...workflowEvidence.runIds.map((runId) => ({ type: "run" as const, id: runId })),
               ],
             },
           },
@@ -276,16 +315,16 @@ export class SkillMemoryManager {
       );
     }
 
-    sessionEvidence.consolidationState = "skills_updated";
-    sessionEvidence.updatedAt = now;
-    await writeJson(sessionEvidencePath, sessionEvidence);
-    await regenerateSummary(rootDir, this.context.memorySystem, this.agentId);
+    workflowEvidence.consolidationState = "skills_updated";
+    workflowEvidence.updatedAt = now;
+    await writeJson(workflowEvidencePath, workflowEvidence);
+    await regenerateSummary(roots, this.context.memorySystem, this.agentId);
   }
 
   private async readOrCreateRunEvidence(
     rootDir: string,
     options: {
-      readonly sessionId: string;
+      readonly workflowRunId: string;
       readonly runId: string;
       readonly query: string;
       readonly runtimeSessionId: string;
@@ -293,7 +332,10 @@ export class SkillMemoryManager {
       readonly now: string;
     },
   ): Promise<MemoryRunEvidence> {
-    const path = resolveContextPath(rootDir, `${RUNS_EVIDENCE_PREFIX}${options.runId}${JSON_EXTENSION}`);
+    const path = resolveContextPath(
+      rootDir,
+      `${RUNS_EVIDENCE_PREFIX}${options.runId}${JSON_EXTENSION}`,
+    );
 
     if (await exists(path)) {
       return MemoryRunEvidenceSchema.parse(JSON.parse(await readFile(path, "utf8")) as unknown);
@@ -301,7 +343,7 @@ export class SkillMemoryManager {
 
     const evidence = MemoryRunEvidenceSchema.parse({
       agentId: this.agentId,
-      sessionId: options.sessionId,
+      workflowRunId: options.workflowRunId,
       runtimeSessionId: options.runtimeSessionId,
       runId: options.runId,
       query: options.query,
@@ -318,28 +360,30 @@ export class SkillMemoryManager {
     return evidence;
   }
 
-  private async readOrCreateSessionEvidence(
+  private async readOrCreateWorkflowEvidence(
     rootDir: string,
     options: {
-      readonly sessionId: string;
+      readonly workflowRunId: string;
       readonly runtimeSessionId: string;
       readonly externalContext: boolean;
       readonly now: string;
     },
-  ): Promise<MemorySessionEvidence> {
+  ): Promise<MemoryWorkflowEvidence> {
     const path = resolveContextPath(
       rootDir,
-      `${SESSIONS_EVIDENCE_PREFIX}${options.sessionId}${JSON_EXTENSION}`,
+      `${WORKFLOWS_EVIDENCE_PREFIX}${options.workflowRunId}${JSON_EXTENSION}`,
     );
 
     if (await exists(path)) {
-      return MemorySessionEvidenceSchema.parse(JSON.parse(await readFile(path, "utf8")) as unknown);
+      return MemoryWorkflowEvidenceSchema.parse(
+        JSON.parse(await readFile(path, "utf8")) as unknown,
+      );
     }
 
-    const evidence = MemorySessionEvidenceSchema.parse({
+    const evidence = MemoryWorkflowEvidenceSchema.parse({
       agentId: this.agentId,
-      sessionId: options.sessionId,
-      runtimeSessionId: options.runtimeSessionId,
+      workflowRunId: options.workflowRunId,
+      runtimeSessionIds: [options.runtimeSessionId],
       externalContext: options.externalContext,
       createdAt: options.now,
       updatedAt: options.now,
@@ -351,11 +395,11 @@ export class SkillMemoryManager {
 
   private async writeTaskSummary(
     rootDir: string,
-    sessionId: string,
+    workflowRunId: string,
     evidence: MemoryRunEvidence,
     now: string,
   ): Promise<void> {
-    const id = `${TASKS_PREFIX}${sessionId}/${evidence.runId}${MARKDOWN_EXTENSION}`;
+    const id = `${TASKS_PREFIX}workflows/${workflowRunId}/${evidence.runId}${MARKDOWN_EXTENSION}`;
     await writeStoredMarkdown(
       rootDir,
       createStoredContext({
@@ -369,43 +413,52 @@ export class SkillMemoryManager {
       {
         schemaVersion: "pragma.memory-task-summary/v1",
         agentId: this.agentId,
-        sessionId,
+        workflowRunId,
         runId: evidence.runId,
         updatedAt: now,
         audit: { createdBy: "skill-memory", createdFromRunId: evidence.runId },
-        model: "taskSummaryModel",
       },
     );
   }
 
-  private async writeSessionSummary(
+  private async writeWorkflowSummary(
     rootDir: string,
-    sessionEvidence: MemorySessionEvidence,
+    workflowEvidence: MemoryWorkflowEvidence,
     runEvidence: readonly MemoryRunEvidence[],
     now: string,
   ): Promise<void> {
-    const id = `${TASKS_PREFIX}${sessionEvidence.sessionId}/session${MARKDOWN_EXTENSION}`;
+    const id = `${TASKS_PREFIX}workflows/${workflowEvidence.workflowRunId}/workflow${MARKDOWN_EXTENSION}`;
     await writeStoredMarkdown(
       rootDir,
       createStoredContext({
         id,
-        content: renderSessionSummary(sessionEvidence, runEvidence),
+        content: renderWorkflowSummary(workflowEvidence, runEvidence),
         metadata: {
-          description: `LLM-style session summary for ${sessionEvidence.sessionId}.`,
+          description: `LLM-style workflow summary for ${workflowEvidence.workflowRunId}.`,
           trigger: "manual",
         },
       }),
       {
-        schemaVersion: "pragma.memory-session-summary/v1",
+        schemaVersion: "pragma.memory-workflow-summary/v1",
         agentId: this.agentId,
-        sessionId: sessionEvidence.sessionId,
+        workflowRunId: workflowEvidence.workflowRunId,
         updatedAt: now,
         audit: { createdBy: "skill-memory" },
-        model: "sessionSummaryModel",
       },
     );
   }
 
+  private trackRuntimeSessionWorkflow(systemSessionId: string, workflowRunId: string): void {
+    const key = sanitizeIdSegment(systemSessionId);
+    const workflowRunIds = this.runtimeSessionWorkflowIds.get(key) ?? new Set<string>();
+    workflowRunIds.add(workflowRunId);
+    this.runtimeSessionWorkflowIds.set(key, workflowRunIds);
+  }
+}
+
+function readWorkflowRunId(context: ExpertAgentPluginTaskSubmittedContext["context"]): string | undefined {
+  const workflowRunId = readExecutionRunScope(context).workflowRunId;
+  return workflowRunId === undefined ? undefined : sanitizeIdSegment(workflowRunId);
 }
 
 function applyStreamEvent(

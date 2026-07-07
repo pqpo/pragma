@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
@@ -12,6 +12,101 @@ afterEach(async () => {
 });
 
 describe("file-system TaskMemoryStore", () => {
+  it("stores records under the workflow run directory by default", async () => {
+    const dir = await mkdtemp(join(process.cwd(), "tmp-task-memory-"));
+    tempDirs.push(dir);
+    const store = createFileSystemTaskMemoryStore({
+      agentId: "agent-a",
+      rootDir: dir,
+    });
+
+    const appended = await store.append({
+      actorAgentId: "agent-a",
+      record: {
+        type: "task",
+        scope: "session",
+        workflowRunId: "workflow-1",
+        visibility: "shared",
+        kind: "note",
+        content: "Workflow scoped note",
+        status: "active",
+      },
+    });
+
+    expect(appended.ok).toBe(true);
+
+    const raw = await readFile(
+      join(dir, "agent-a", "task-memory", "workflows", "workflow-1", "records.json"),
+      "utf8",
+    );
+    expect(JSON.parse(raw)).toEqual([
+      expect.objectContaining({
+        workflowRunId: "workflow-1",
+        content: "Workflow scoped note",
+      }),
+    ]);
+  });
+
+  it("removes stale workflow files when a record id moves to another workflow", async () => {
+    const dir = await mkdtemp(join(process.cwd(), "tmp-task-memory-"));
+    tempDirs.push(dir);
+    const store = createFileSystemTaskMemoryStore({
+      agentId: "agent-a",
+      rootDir: dir,
+    });
+
+    const first = await store.append({
+      actorAgentId: "agent-a",
+      record: {
+        id: "stable-task-id",
+        type: "task",
+        scope: "session",
+        workflowRunId: "workflow-1",
+        visibility: "shared",
+        kind: "note",
+        content: "Original workflow note",
+        status: "active",
+      },
+    });
+    const moved = await store.append({
+      actorAgentId: "agent-a",
+      record: {
+        id: "stable-task-id",
+        type: "task",
+        scope: "session",
+        workflowRunId: "workflow-2",
+        visibility: "shared",
+        kind: "note",
+        content: "Moved workflow note",
+        status: "active",
+      },
+    });
+
+    expect(first.ok).toBe(true);
+    expect(moved.ok).toBe(true);
+
+    const workflowOne = await store.list({
+      workflowRunId: "workflow-1",
+      actorAgentId: "agent-a",
+    });
+    const workflowTwo = await store.list({
+      workflowRunId: "workflow-2",
+      actorAgentId: "agent-a",
+    });
+
+    expect(workflowOne).toMatchObject({ ok: true, value: [] });
+    expect(workflowTwo).toMatchObject({
+      ok: true,
+      value: [
+        expect.objectContaining({
+          id: "stable-task-id",
+          workflowRunId: "workflow-2",
+          content: "Moved workflow note",
+        }),
+      ],
+    });
+  });
+
   it("lists shared entries by workflow run", async () => {
     const store = await createStore();
 
@@ -21,6 +116,7 @@ describe("file-system TaskMemoryStore", () => {
         type: "task",
         scope: "session",
         workflowRunId: "workflow-1",
+        runtimeSessionId: "session-1",
         visibility: "shared",
         kind: "handoff",
         content: "Schema migration complete. Validation remains.",
@@ -53,6 +149,7 @@ describe("file-system TaskMemoryStore", () => {
         type: "task",
         scope: "session",
         workflowRunId: "workflow-1",
+        runtimeSessionId: "session-1",
         visibility: "private",
         ownerAgentId: "agent-a",
         kind: "note",
@@ -88,6 +185,7 @@ describe("file-system TaskMemoryStore", () => {
         type: "task",
         scope: "session",
         workflowRunId: "workflow-1",
+        runtimeSessionId: "session-1",
         visibility: "private",
         ownerAgentId: "agent-b",
         kind: "note",
@@ -112,6 +210,7 @@ describe("file-system TaskMemoryStore", () => {
         type: "task",
         scope: "session",
         workflowRunId: "workflow-1",
+        runtimeSessionId: "session-1",
         visibility: "shared",
         kind: "todo",
         content: "Release checklist",
@@ -167,6 +266,7 @@ describe("file-system TaskMemoryStore", () => {
         type: "task",
         scope: "session",
         workflowRunId: "workflow-1",
+        runtimeSessionId: "session-1",
         visibility: "shared",
         kind: "todo",
         content: "Release checklist",
@@ -229,6 +329,7 @@ describe("file-system TaskMemoryStore", () => {
         type: "task",
         scope: "session",
         workflowRunId: "workflow-1",
+        runtimeSessionId: "session-1",
         visibility: "shared",
         kind: "handoff",
         content: "Shared coordination state",
@@ -241,6 +342,7 @@ describe("file-system TaskMemoryStore", () => {
         type: "task",
         scope: "session",
         workflowRunId: "workflow-1",
+        runtimeSessionId: "session-1",
         visibility: "private",
         ownerAgentId: "agent-a",
         kind: "note",
@@ -273,6 +375,7 @@ describe("file-system TaskMemoryStore", () => {
         type: "task",
         scope: "session",
         workflowRunId: "workflow-1",
+        runtimeSessionId: "session-1",
         taskRunId: "task-1",
         visibility: "private",
         ownerAgentId: "agent-a",
@@ -287,6 +390,7 @@ describe("file-system TaskMemoryStore", () => {
         type: "task",
         scope: "session",
         workflowRunId: "workflow-1",
+        runtimeSessionId: "session-1",
         taskRunId: "task-2",
         visibility: "private",
         ownerAgentId: "agent-a",
@@ -299,6 +403,7 @@ describe("file-system TaskMemoryStore", () => {
     const retrieved = await store.retrieveForRuntime({
       agentId: "agent-a",
       workflowRunId: "workflow-1",
+      runtimeSessionId: "session-1",
       taskRunId: "task-1",
     });
 
@@ -312,6 +417,40 @@ describe("file-system TaskMemoryStore", () => {
     expect(retrieved.value.combined).toHaveLength(1);
   });
 
+  it("does not isolate workflow task memory by runtime session during runtime retrieval", async () => {
+    const store = await createStore();
+
+    await store.append({
+      actorAgentId: "agent-a",
+      record: {
+        type: "task",
+        scope: "session",
+        workflowRunId: "workflow-1",
+        runtimeSessionId: "runtime-session-old",
+        visibility: "shared",
+        kind: "handoff",
+        content: "Workflow state survives runtime session changes",
+        status: "active",
+      },
+    });
+
+    const retrieved = await store.retrieveForRuntime({
+      agentId: "agent-a",
+      workflowRunId: "workflow-1",
+      runtimeSessionId: "runtime-session-new",
+    });
+
+    expect(retrieved).toEqual(expect.objectContaining({ ok: true }));
+    if (!retrieved.ok) {
+      return;
+    }
+
+    expect(retrieved.value.combined).toHaveLength(1);
+    expect(retrieved.value.combined[0]?.content).toBe(
+      "Workflow state survives runtime session changes",
+    );
+  });
+
   it("archives entries by task run and removes them from active retrieval", async () => {
     const store = await createStore();
 
@@ -321,6 +460,7 @@ describe("file-system TaskMemoryStore", () => {
         type: "task",
         scope: "session",
         workflowRunId: "workflow-1",
+        runtimeSessionId: "session-1",
         taskRunId: "task-1",
         visibility: "shared",
         kind: "progress",
@@ -331,6 +471,7 @@ describe("file-system TaskMemoryStore", () => {
 
     const archived = await store.archive({
       workflowRunId: "workflow-1",
+      runtimeSessionId: "session-1",
       taskRunId: "task-1",
       actorAgentId: "agent-a",
     });
@@ -362,6 +503,24 @@ describe("file-system TaskMemoryStore", () => {
     expect(retrieved.value.combined).toEqual([]);
   });
 
+  it("rejects runtime-session-only archive scope", async () => {
+    const store = await createStore();
+
+    const archived = await store.archive({
+      runtimeSessionId: "runtime-session-1",
+      actorAgentId: "agent-a",
+    });
+
+    expect(archived).toEqual(
+      expect.objectContaining({
+        ok: false,
+        error: expect.objectContaining({
+          code: "invalid_input",
+        }),
+      }),
+    );
+  });
+
   it("integrates with MemorySystem runtime retrieval", async () => {
     const system = new MemorySystem({
       taskStore: await createStore(),
@@ -373,6 +532,7 @@ describe("file-system TaskMemoryStore", () => {
         type: "task",
         scope: "session",
         workflowRunId: "workflow-1",
+        runtimeSessionId: "session-1",
         visibility: "shared",
         kind: "handoff",
         content: "Shared coordination state",
@@ -385,6 +545,7 @@ describe("file-system TaskMemoryStore", () => {
         type: "task",
         scope: "session",
         workflowRunId: "workflow-1",
+        runtimeSessionId: "session-1",
         visibility: "private",
         ownerAgentId: "agent-a",
         kind: "note",
@@ -415,7 +576,7 @@ describe("file-system TaskMemoryStore", () => {
     tempDirs.push(dir);
     const store = createFileSystemTaskMemoryStore({
       agentId: "agent-a",
-      filePath: join(dir, "task.json"),
+      rootDir: dir,
       summaryMaxChars: 40,
     });
 
@@ -425,10 +586,12 @@ describe("file-system TaskMemoryStore", () => {
         type: "task",
         scope: "session",
         workflowRunId: "workflow-1",
+        runtimeSessionId: "session-1",
         visibility: "shared",
         kind: "progress",
         title: "A very long summary should be truncated",
-        content: "This content is intentionally long enough to exceed the configured summary limit.",
+        content:
+          "This content is intentionally long enough to exceed the configured summary limit.",
         status: "active",
       },
     });
@@ -447,24 +610,29 @@ describe("file-system TaskMemoryStore", () => {
     const filePath = join(dir, "task.json");
     await writeFile(
       filePath,
-      `${JSON.stringify([
-        {
-          id: "legacy-task",
-          type: "task",
-          scope: "session",
-          workflowRunId: "workflow-1",
-          visibility: "shared",
-          kind: "progress",
-          content: "Legacy records did not persist summary fields.",
-          status: "active",
-          revision: 0,
-          provenance: {
-            createdAt: "2026-01-01T00:00:00.000Z",
-            updatedAt: "2026-01-01T00:00:00.000Z",
-            evidence: [],
+      `${JSON.stringify(
+        [
+          {
+            id: "legacy-task",
+            type: "task",
+            scope: "session",
+            workflowRunId: "workflow-1",
+            runtimeSessionId: "session-1",
+            visibility: "shared",
+            kind: "progress",
+            content: "Legacy records did not persist summary fields.",
+            status: "active",
+            revision: 0,
+            provenance: {
+              createdAt: "2026-01-01T00:00:00.000Z",
+              updatedAt: "2026-01-01T00:00:00.000Z",
+              evidence: [],
+            },
           },
-        },
-      ], null, 2)}\n`,
+        ],
+        null,
+        2,
+      )}\n`,
       "utf8",
     );
     const store = createFileSystemTaskMemoryStore({
@@ -491,6 +659,6 @@ async function createStore() {
 
   return createFileSystemTaskMemoryStore({
     agentId: "agent-a",
-    filePath: join(dir, "task.json"),
+    rootDir: dir,
   });
 }

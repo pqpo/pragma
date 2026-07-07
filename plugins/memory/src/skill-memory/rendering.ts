@@ -2,12 +2,12 @@ import type { ExpertAgentStoredContextItem } from "@pragma/core";
 
 import {
   RUNS_EVIDENCE_PREFIX,
-  SESSIONS_EVIDENCE_PREFIX,
   SKILLS_PREFIX,
   MARKDOWN_EXTENSION,
   JSON_EXTENSION,
-} from "./constants.ts";
-import type { MemoryRunEvidence, MemorySessionEvidence } from "./schema.ts";
+  WORKFLOWS_EVIDENCE_PREFIX,
+} from "../memory-context/constants.ts";
+import type { MemoryRunEvidence, MemoryWorkflowEvidence } from "./schema.ts";
 import {
   dedupeStrings,
   extractSectionBullets,
@@ -65,10 +65,16 @@ export function renderTaskSummary(evidence: MemoryRunEvidence): string {
     .map((tool) => `Used ${tool.toolName} successfully.`);
   const failedTools = evidence.tools
     .filter((tool) => tool.status === "failed")
-    .map((tool) => `${tool.toolName} failed${tool.errorMessage === undefined ? "." : `: ${tool.errorMessage}`}`);
+    .map(
+      (tool) =>
+        `${tool.toolName} failed${tool.errorMessage === undefined ? "." : `: ${tool.errorMessage}`}`,
+    );
   const recommendedFixes = evidence.tools
     .filter((tool) => tool.status === "failed")
-    .map((tool) => `When ${tool.toolName} fails, prefer the validated recovery path before retrying blindly.`);
+    .map(
+      (tool) =>
+        `When ${tool.toolName} fails, prefer the validated recovery path before retrying blindly.`,
+    );
 
   return [
     "# Task Summary",
@@ -81,7 +87,9 @@ export function renderTaskSummary(evidence: MemoryRunEvidence): string {
       [
         ...successTools,
         ...failedTools,
-        evidence.outputExcerpt === undefined ? undefined : "Captured the final output for future reuse.",
+        evidence.outputExcerpt === undefined
+          ? undefined
+          : "Captured the final output for future reuse.",
       ].filter((value): value is string => value !== undefined),
       "No significant actions were captured.",
     ),
@@ -128,7 +136,7 @@ export function renderTaskSummary(evidence: MemoryRunEvidence): string {
     ...renderBullets(
       [
         `${RUNS_EVIDENCE_PREFIX}${evidence.runId}${JSON_EXTENSION}`,
-        `session:${evidence.sessionId}`,
+        `workflow:${evidence.workflowRunId}`,
         ...(evidence.runtimeSessionId === undefined
           ? []
           : [`runtime-session:${evidence.runtimeSessionId}`]),
@@ -139,8 +147,8 @@ export function renderTaskSummary(evidence: MemoryRunEvidence): string {
   ].join("\n");
 }
 
-export function renderSessionSummary(
-  sessionEvidence: MemorySessionEvidence,
+export function renderWorkflowSummary(
+  workflowEvidence: MemoryWorkflowEvidence,
   runEvidence: readonly MemoryRunEvidence[],
 ): string {
   const successfulPatterns = dedupeStrings(
@@ -162,10 +170,10 @@ export function renderSessionSummary(
   );
 
   return [
-    "# Session Summary",
+    "# Workflow Summary",
     "",
-    "## Session Goal",
-    summarizeSessionGoal(runEvidence),
+    "## Workflow Goal",
+    summarizeWorkflowGoal(runEvidence),
     "",
     "## Tasks Completed",
     ...renderBullets(
@@ -182,7 +190,9 @@ export function renderSessionSummary(
     "## Important Failures And Recovery Paths",
     ...renderBullets(
       runEvidence
-        .filter((run) => run.status !== "succeeded" || run.tools.some((tool) => tool.status === "failed"))
+        .filter(
+          (run) => run.status !== "succeeded" || run.tools.some((tool) => tool.status === "failed"),
+        )
         .map((run) => formatFailureAndRecovery(run)),
       "No important failure or recovery path was captured.",
     ),
@@ -199,7 +209,7 @@ export function renderSessionSummary(
     "## Evidence References",
     ...renderBullets(
       [
-        `${SESSIONS_EVIDENCE_PREFIX}${sessionEvidence.sessionId}${JSON_EXTENSION}`,
+        `${WORKFLOWS_EVIDENCE_PREFIX}${workflowEvidence.workflowRunId}${JSON_EXTENSION}`,
         ...runEvidence.map((run) => `${RUNS_EVIDENCE_PREFIX}${run.runId}${JSON_EXTENSION}`),
       ],
       "No evidence references recorded.",
@@ -224,7 +234,7 @@ export function summarizeRunResult(evidence: MemoryRunEvidence): string {
     : `Failed. ${evidence.errorMessage}`;
 }
 
-export function summarizeSessionGoal(runEvidence: readonly MemoryRunEvidence[]): string {
+export function summarizeWorkflowGoal(runEvidence: readonly MemoryRunEvidence[]): string {
   const firstQuery = runEvidence[0]?.query ?? "No task goal was captured.";
   return trimCharacters(firstQuery, 180);
 }
@@ -298,7 +308,10 @@ export function deriveAntiPatterns(evidence: MemoryRunEvidence): readonly string
 }
 
 export function deriveSkillId(runEvidence: readonly MemoryRunEvidence[]): string {
-  const text = runEvidence.map((run) => run.query).join(" ").toLowerCase();
+  const text = runEvidence
+    .map((run) => run.query)
+    .join(" ")
+    .toLowerCase();
   const tokens = text
     .replace(/[^a-z0-9\s-]/g, " ")
     .split(/\s+/)

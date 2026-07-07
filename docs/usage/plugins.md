@@ -11,10 +11,7 @@ packages/core/src/plugins
 关键 API：
 
 ```ts
-import {
-  definePluginEntry,
-  createExpertAgentPluginConfigEnvName,
-} from "@pragma/core";
+import { definePluginEntry, createExpertAgentPluginConfigEnvName } from "@pragma/core";
 ```
 
 ## 插件能扩展什么
@@ -117,10 +114,7 @@ array
 插件入口必须 default export `definePluginEntry(...)`。
 
 ```ts
-import {
-  definePluginEntry,
-  createInMemoryContextStore,
-} from "@pragma/core";
+import { definePluginEntry, createInMemoryContextStore } from "@pragma/core";
 
 export default definePluginEntry({
   setup: (context) => {
@@ -215,6 +209,7 @@ export default definePluginEntry({
       },
       afterSessionCreate: async (context) => {
         context.logger?.info("After session create", {
+          // Runtime-level session id; do not use it as workflowRunId or memory lifecycle id.
           systemSessionId: context.session.systemSessionId,
         });
       },
@@ -343,7 +338,7 @@ const agent = await defineAgent({
 加载问题会记录到：
 
 ```ts
-agent.pluginLoadIssues
+agent.pluginLoadIssues;
 ```
 
 ## 插件配置和环境变量
@@ -384,8 +379,8 @@ plugins/code-repository-manager
 - `experience-memory` 负责记录历史经历、操作过程和带证据的执行总结，并注入 experience memory 工具。
 - `fact-memory` 负责维护稳定事实、置信度、冲突和失效信息，并注入 fact memory 工具。
 - `task-memory`、`experience-memory` 和 `fact-memory` 默认都会持久化到用户目录 `~/.pragma/memories/` 下，接口仍然保持可替换，也支持在程序化 plugin config 中注入自定义 store 或 `storeFactory`。
-- `skill-memory` 负责注册统一的 `memory` namespace 审计上下文：`summary.md`、`skills/*.md`、`tasks/**`。
-- `skill-memory` 使用 stream / task / session hooks 生成任务总结、session 总结和技能卡；`MemorySystem` 再把 task / fact / skill / experience 的摘要统一装配到 `memory/summary.md` 供 always-on 透出和后续检索使用。
+- 统一的 `memory` namespace 审计上下文暴露 `summary.md`、`skills/*.md`、`tasks/**`；默认所有产物都写到 `~/.pragma/memories/<agentId>/`，其中 skill card 写到 `<agentId>/skill-memory/skills/`。
+- `skill-memory` 使用 stream / task / session hooks 生成任务总结、workflow 总结和技能卡；`MemorySystem` 再把 task / fact / skill / experience 的摘要统一装配到 `memory` namespace 下的 `summary.md` 供 always-on 透出和后续检索使用。
 - memory plugin 默认包含一条 promotion pipeline：`task -> experience -> fact/skill`。
 
 如果只是使用默认 Agent 能力，建议先读 [Memory System 使用指南](./memory.md)。

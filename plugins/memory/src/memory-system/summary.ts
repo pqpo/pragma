@@ -657,8 +657,8 @@ function humanizeExperienceKind(kind: ExperienceMemoryKind): string {
       return "recovery path";
     case "run":
       return "task history";
-    case "session":
-      return "session history";
+    case "workflow":
+      return "workflow history";
     case "tool":
     default:
       return "tool usage";

@@ -5,13 +5,13 @@ import {
   type MemoryEvidenceStore,
 } from "../memory-system/index.ts";
 import { DISTILLATION_EVIDENCE_PREFIX, JSON_EXTENSION } from "./constants.ts";
-import { resolveConfig } from "./config.ts";
+import { resolveConfig } from "../skill-memory/config.ts";
 import {
   collectRecursiveIds,
   exists,
   readStoredContext,
   resolveContextPath,
-  resolveMemoryRoot,
+  resolveMemoryContextRoot,
   writeJson,
 } from "./filesystem.ts";
 import type { ExpertAgentPluginSetupContext } from "@pragma/core";
@@ -24,7 +24,9 @@ export function createFileSystemMemoryEvidenceStore(
   return {
     async list(input) {
       const rootDir = await resolveRootDir();
-      const ids = await collectRecursiveIds(rootDir, DISTILLATION_EVIDENCE_PREFIX, [JSON_EXTENSION]);
+      const ids = await collectRecursiveIds(rootDir, DISTILLATION_EVIDENCE_PREFIX, [
+        JSON_EXTENSION,
+      ]);
       const records = await Promise.all(
         ids.map(async (id) => parseEvidenceRecord(await readStoredContext(rootDir, id))),
       );
@@ -71,14 +73,17 @@ export function createFileSystemMemoryEvidenceStore(
     async write(input) {
       const rootDir = await resolveRootDir();
       const id = toContextId(input.record.id);
-      await writeJson(resolveContextPath(rootDir, id), input.record as unknown as Record<string, unknown>);
+      await writeJson(
+        resolveContextPath(rootDir, id),
+        input.record as unknown as Record<string, unknown>,
+      );
       return okMemory(input.record);
     },
   };
 
   async function resolveRootDir(): Promise<string> {
     const config = await resolveConfig(context);
-    return resolveMemoryRoot(context.workspaceRoot, config, agentId);
+    return resolveMemoryContextRoot(context.workspaceRoot, config, agentId);
   }
 }
 

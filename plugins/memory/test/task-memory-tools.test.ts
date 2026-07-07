@@ -33,6 +33,7 @@ describe("task-memory tools", () => {
         },
         attributes: {
           "execution.workflowRunId": "workflow-1",
+          "execution.runtimeSessionId": "session-1",
           "execution.taskRunId": "task-1",
         },
       },
@@ -72,6 +73,7 @@ describe("task-memory tools", () => {
           },
           attributes: {
             "execution.workflowRunId": "workflow-2",
+            "execution.runtimeSessionId": "session-1",
           },
         },
       },
@@ -96,6 +98,99 @@ describe("task-memory tools", () => {
     });
   });
 
+  it("appends task memory with workflow scope even without runtime session provenance", async () => {
+    const store = await createStore("specialist-agent");
+    const tools = createTaskMemoryTools({
+      memorySystem: new MemorySystem({
+        taskStore: store,
+      }),
+      defaultAgentId: "specialist-agent",
+    });
+    const appendTool = tools.find((tool) => tool.name === "append_task_memory");
+
+    const result = await appendTool?.call(
+      {
+        visibility: "shared",
+        kind: "note",
+        content: "Workflow scoped note",
+      },
+      undefined,
+      {
+        runContext: {
+          source: {
+            type: "workflow",
+          },
+          attributes: {
+            "execution.workflowRunId": "workflow-2",
+          },
+        },
+      },
+    );
+
+    expect(result?.text).toContain("Appended task memory:");
+
+    const listed = await store.list({
+      workflowRunId: "workflow-2",
+      actorAgentId: "specialist-agent",
+    });
+    expect(listed).toMatchObject({
+      ok: true,
+      value: [
+        expect.objectContaining({
+          content: "Workflow scoped note",
+        }),
+      ],
+    });
+    expect(listed.ok && "runtimeSessionId" in listed.value[0]!).toBe(false);
+  });
+
+  it("lets append task memory override runtime session provenance explicitly", async () => {
+    const store = await createStore("specialist-agent");
+    const tools = createTaskMemoryTools({
+      memorySystem: new MemorySystem({
+        taskStore: store,
+      }),
+      defaultAgentId: "specialist-agent",
+    });
+    const appendTool = tools.find((tool) => tool.name === "append_task_memory");
+
+    const result = await appendTool?.call(
+      {
+        visibility: "shared",
+        kind: "note",
+        content: "Explicit runtime session provenance",
+        runtimeSessionId: "session-explicit",
+      },
+      undefined,
+      {
+        runContext: {
+          source: {
+            type: "workflow",
+          },
+          attributes: {
+            "execution.workflowRunId": "workflow-2",
+            "execution.runtimeSessionId": "session-context",
+          },
+        },
+      },
+    );
+
+    expect(result?.text).toContain("Appended task memory:");
+
+    const listed = await store.list({
+      workflowRunId: "workflow-2",
+      actorAgentId: "specialist-agent",
+    });
+    expect(listed).toMatchObject({
+      ok: true,
+      value: [
+        expect.objectContaining({
+          runtimeSessionId: "session-explicit",
+        }),
+      ],
+    });
+  });
+
   it("reads task memory by id with the current agent id", async () => {
     const store = await createStore("specialist-agent");
     const appended = await store.append({
@@ -104,6 +199,7 @@ describe("task-memory tools", () => {
         type: "task",
         scope: "session",
         workflowRunId: "workflow-2",
+        runtimeSessionId: "session-1",
         visibility: "private",
         ownerAgentId: "specialist-agent",
         kind: "note",
@@ -135,6 +231,7 @@ describe("task-memory tools", () => {
         type: "task",
         scope: "session",
         workflowRunId: "workflow-2",
+        runtimeSessionId: "session-1",
         visibility: "shared",
         kind: "todo",
         content: "Existing content",
@@ -192,6 +289,7 @@ describe("task-memory tools", () => {
             },
             attributes: {
               "execution.workflowRunId": "workflow-2",
+              "execution.runtimeSessionId": "session-1",
             },
           },
         },
@@ -235,6 +333,7 @@ describe("task-memory tools", () => {
           },
           attributes: {
             "execution.workflowRunId": "workflow-1",
+            "execution.runtimeSessionId": "session-1",
           },
         },
       },
@@ -252,6 +351,7 @@ describe("task-memory tools", () => {
           },
           attributes: {
             "execution.workflowRunId": "workflow-1",
+            "execution.runtimeSessionId": "session-1",
           },
         },
       },
@@ -274,6 +374,6 @@ async function createStore(agentId: string) {
 
   return createFileSystemTaskMemoryStore({
     agentId,
-    filePath: join(dir, "task.json"),
+    rootDir: dir,
   });
 }

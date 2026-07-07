@@ -29,9 +29,7 @@ function readConfigObject(input: unknown): Record<string, unknown> {
     return input as Record<string, unknown>;
   }
 
-  throw new Error(
-    `Skill memory config must be an object, received ${describeConfigInput(input)}.`,
-  );
+  throw new Error(`Skill memory config must be an object, received ${describeConfigInput(input)}.`);
 }
 
 async function readHostConfig(
@@ -55,9 +53,6 @@ function readEnvConfig(env: NodeJS.ProcessEnv): Partial<SkillMemoryConfig> {
     ...readBooleanEnv(env, createPluginEnvName("useMemories"), "useMemories"),
     ...readBooleanEnv(env, createPluginEnvName("generateMemories"), "generateMemories"),
     ...readStringEnv(env, createPluginEnvName("memoryRoot"), "memoryRoot"),
-    ...readStringEnv(env, createPluginEnvName("taskSummaryModel"), "taskSummaryModel"),
-    ...readStringEnv(env, createPluginEnvName("sessionSummaryModel"), "sessionSummaryModel"),
-    ...readStringEnv(env, createPluginEnvName("summaryModel"), "summaryModel"),
   };
 }
 

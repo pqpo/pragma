@@ -1,9 +1,10 @@
-import type {
-  ExpertAgentPluginContributions,
-  ExpertAgentPluginSetupContext,
-} from "@pragma/core";
+import type { ExpertAgentPluginContributions, ExpertAgentPluginSetupContext } from "@pragma/core";
 
-import { MemorySystem, type MemorySummaryConfig, type TaskMemoryStore } from "../memory-system/index.ts";
+import {
+  MemorySystem,
+  type MemorySummaryConfig,
+  type TaskMemoryStore,
+} from "../memory-system/index.ts";
 import { createFileSystemTaskMemoryStore } from "./store.ts";
 import { createTaskMemoryTools } from "./tools.ts";
 
@@ -15,12 +16,11 @@ export interface TaskMemoryStoreFactoryContext {
   readonly summaryConfig?: Partial<MemorySummaryConfig> | undefined;
 }
 
-export type TaskMemoryStoreFactory = (
-  context: TaskMemoryStoreFactoryContext,
-) => TaskMemoryStore;
+export type TaskMemoryStoreFactory = (context: TaskMemoryStoreFactoryContext) => TaskMemoryStore;
 
 export interface TaskMemoryPluginConfig {
   readonly enabled?: boolean | undefined;
+  readonly rootDir?: string | undefined;
   readonly filePath?: string | undefined;
   readonly store?: TaskMemoryStore | undefined;
   readonly storeFactory?: TaskMemoryStoreFactory | undefined;
@@ -89,6 +89,7 @@ function readTaskMemoryConfig(input: unknown): TaskMemoryPluginConfig {
   }
 
   const enabled = (task as { enabled?: unknown }).enabled;
+  const rootDir = (task as { rootDir?: unknown }).rootDir;
   const filePath = (task as { filePath?: unknown }).filePath;
   const store = (task as { store?: unknown }).store;
   const storeFactory = (task as { storeFactory?: unknown }).storeFactory;
@@ -96,6 +97,7 @@ function readTaskMemoryConfig(input: unknown): TaskMemoryPluginConfig {
   if (enabled === undefined) {
     return {
       enabled: true,
+      ...(rootDir === undefined ? {} : { rootDir: assertOptionalString(rootDir, "rootDir") }),
       ...(filePath === undefined ? {} : { filePath: assertOptionalString(filePath, "filePath") }),
       ...(store === undefined ? {} : { store: assertTaskMemoryStore(store) }),
       ...(storeFactory === undefined
@@ -110,6 +112,7 @@ function readTaskMemoryConfig(input: unknown): TaskMemoryPluginConfig {
 
   return {
     enabled,
+    ...(rootDir === undefined ? {} : { rootDir: assertOptionalString(rootDir, "rootDir") }),
     ...(filePath === undefined ? {} : { filePath: assertOptionalString(filePath, "filePath") }),
     ...(store === undefined ? {} : { store: assertTaskMemoryStore(store) }),
     ...(storeFactory === undefined
@@ -135,6 +138,7 @@ function resolveTaskMemoryStore(
 
   return createFileSystemTaskMemoryStore({
     agentId: context.agent?.id ?? "unknown-agent",
+    rootDir: config.rootDir,
     filePath: config.filePath,
     summaryMaxChars: readMemorySummaryConfig(context.config)?.perRecordMaxChars,
   });

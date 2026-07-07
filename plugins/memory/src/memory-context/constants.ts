@@ -1,0 +1,13 @@
+export const MEMORY_CONTEXT_NAMESPACE = "memory";
+export const SUMMARY_CONTEXT_ID = "summary.md";
+export const SKILLS_PREFIX = "skills/";
+export const TASKS_PREFIX = "tasks/";
+export const TASK_MEMORY_PREFIX = "task-memory/";
+export const EXPERIENCE_MEMORY_PREFIX = "experience-memory/";
+export const FACT_MEMORY_PREFIX = "fact-memory/";
+export const EVIDENCE_PREFIX = "evidence/";
+export const DISTILLATION_EVIDENCE_PREFIX = "evidence/distill/";
+export const RUNS_EVIDENCE_PREFIX = "evidence/runs/";
+export const WORKFLOWS_EVIDENCE_PREFIX = "evidence/workflows/";
+export const MARKDOWN_EXTENSION = ".md";
+export const JSON_EXTENSION = ".json";

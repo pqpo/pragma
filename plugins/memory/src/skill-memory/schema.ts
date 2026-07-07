@@ -9,10 +9,7 @@ export const SkillMemoryConfigSchema = z.object({
   summaryMaxBytes: z.number().int().positive().default(8192),
   maxOutputExcerptChars: z.number().int().positive().default(1200),
   maxToolExcerptChars: z.number().int().positive().default(400),
-  taskSummaryModel: z.string().min(1).optional(),
-  sessionSummaryModel: z.string().min(1).optional(),
-  summaryModel: z.string().min(1).optional(),
-  memoryRoot: z.string().min(1).default("memory"),
+  memoryRoot: z.string().min(1).default("."),
 });
 
 export type SkillMemoryConfig = z.infer<typeof SkillMemoryConfigSchema>;
@@ -36,9 +33,11 @@ export const MemoryToolCallEvidenceSchema = z.object({
 
 export const MemoryRunEvidenceSchema = z
   .object({
-    schemaVersion: z.literal("pragma.memory-run-evidence/v1").default("pragma.memory-run-evidence/v1"),
+    schemaVersion: z
+      .literal("pragma.memory-run-evidence/v1")
+      .default("pragma.memory-run-evidence/v1"),
     agentId: z.string().min(1),
-    sessionId: z.string().min(1),
+    workflowRunId: z.string().min(1),
     runtimeSessionId: z.string().min(1).optional(),
     runId: z.string().min(1),
     query: z.string().min(1),
@@ -60,19 +59,17 @@ export const MemoryRunEvidenceSchema = z
   })
   .passthrough();
 
-export const MemorySessionEvidenceSchema = z
+export const MemoryWorkflowEvidenceSchema = z
   .object({
     schemaVersion: z
-      .literal("pragma.memory-session-evidence/v1")
-      .default("pragma.memory-session-evidence/v1"),
+      .literal("pragma.memory-workflow-evidence/v1")
+      .default("pragma.memory-workflow-evidence/v1"),
     agentId: z.string().min(1),
-    sessionId: z.string().min(1),
-    runtimeSessionId: z.string().min(1).optional(),
+    workflowRunId: z.string().min(1),
+    runtimeSessionIds: z.array(z.string().min(1)).default([]),
     runIds: z.array(z.string().min(1)).default([]),
     externalContext: z.boolean().default(false),
-    consolidationState: z
-      .enum(["pending", "summarized", "skills_updated"])
-      .default("pending"),
+    consolidationState: z.enum(["pending", "summarized", "skills_updated"]).default("pending"),
     createdAt: z.string().min(1),
     updatedAt: z.string().min(1),
     audit: MemoryAuditSchema.default({ createdBy: "skill-memory" }),
@@ -80,10 +77,8 @@ export const MemorySessionEvidenceSchema = z
   .passthrough();
 
 export type MemoryRunEvidence = z.infer<typeof MemoryRunEvidenceSchema>;
-export type MemorySessionEvidence = z.infer<typeof MemorySessionEvidenceSchema>;
+export type MemoryWorkflowEvidence = z.infer<typeof MemoryWorkflowEvidenceSchema>;
 
-export function parseSkillMemoryConfig(
-  input: SkillMemoryConfigInput = {},
-): SkillMemoryConfig {
+export function parseSkillMemoryConfig(input: SkillMemoryConfigInput = {}): SkillMemoryConfig {
   return SkillMemoryConfigSchema.parse(input);
 }

@@ -1,3 +1,6 @@
+import { readdir, rm } from "node:fs/promises";
+import { join } from "node:path";
+
 import {
   errorMemory,
   normalizeTaskRecord,
@@ -6,7 +9,13 @@ import {
   type TaskMemoryRecord,
   type TaskMemoryStore,
 } from "../memory-system/index.ts";
-import { readJsonFile, resolveMemoryFilePath, writeJsonFile } from "../storage.ts";
+import {
+  readJsonFile,
+  resolveMemoryDirectory,
+  resolveMemoryFilePath,
+  sanitizeMemoryPathSegment,
+  writeJsonFile,
+} from "../storage.ts";
 
 const TASK_MEMORY_CATEGORY = "task-memory";
 const TASK_MEMORY_FILE_NAME = "records.json";
@@ -15,8 +24,28 @@ const TASK_MEMORY_SUMMARY_MAX_CHARS = 220;
 export function createFileSystemTaskMemoryStore(options: {
   readonly agentId: string;
   readonly filePath?: string | undefined;
+  readonly rootDir?: string | undefined;
   readonly summaryMaxChars?: number | undefined;
 }): TaskMemoryStore {
+  const storage =
+    options.filePath === undefined
+      ? createWorkflowFileStorage({
+          agentId: options.agentId,
+          rootDir: options.rootDir,
+        })
+      : createSingleFileStorage({
+          agentId: options.agentId,
+          filePath: options.filePath,
+        });
+
+  return createTaskMemoryStore({
+    summaryMaxChars: options.summaryMaxChars,
+    readRecords: storage.readRecords,
+    writeRecords: storage.writeRecords,
+  });
+}
+
+function createSingleFileStorage(options: { readonly agentId: string; readonly filePath: string }) {
   const filePath = resolveMemoryFilePath({
     category: TASK_MEMORY_CATEGORY,
     agentId: options.agentId,
@@ -24,16 +53,100 @@ export function createFileSystemTaskMemoryStore(options: {
     filePath: options.filePath,
   });
 
-  return createTaskMemoryStore({
-    summaryMaxChars: options.summaryMaxChars,
+  return {
     readRecords: async () => {
       const stored = await readJsonFile<readonly TaskMemoryRecord[]>(filePath, []);
       return stored.map(cloneRecord);
     },
-    writeRecords: async (records) => {
+    writeRecords: async (records: readonly TaskMemoryRecord[]) => {
       await writeJsonFile(filePath, records.map(cloneRecord));
     },
+  };
+}
+
+function createWorkflowFileStorage(options: {
+  readonly agentId: string;
+  readonly rootDir?: string | undefined;
+}) {
+  const rootDir = resolveMemoryDirectory({
+    category: TASK_MEMORY_CATEGORY,
+    agentId: options.agentId,
+    rootDir: options.rootDir,
   });
+
+  return {
+    readRecords: async () => {
+      const workflowRunIds = await listWorkflowRunIds(rootDir);
+      const nestedRecords = await Promise.all(
+        workflowRunIds.map(async (workflowRunId) => {
+          const stored = await readJsonFile<readonly TaskMemoryRecord[]>(
+            resolveWorkflowRecordsPath(rootDir, workflowRunId),
+            [],
+          );
+          return stored.map(cloneRecord);
+        }),
+      );
+
+      return nestedRecords.flat();
+    },
+    writeRecords: async (records: readonly TaskMemoryRecord[]) => {
+      const recordsByWorkflow = new Map<string, TaskMemoryRecord[]>();
+
+      for (const record of records) {
+        const workflowStorageId = sanitizeMemoryPathSegment(record.workflowRunId);
+        const recordsForWorkflow = recordsByWorkflow.get(workflowStorageId) ?? [];
+        recordsForWorkflow.push(cloneRecord(record));
+        recordsByWorkflow.set(workflowStorageId, recordsForWorkflow);
+      }
+
+      await Promise.all(
+        [...recordsByWorkflow.entries()].map(async ([workflowStorageId, recordsForWorkflow]) => {
+          await writeJsonFile(
+            resolveWorkflowRecordsPath(rootDir, workflowStorageId),
+            recordsForWorkflow,
+          );
+        }),
+      );
+
+      const existingWorkflowIds = await listWorkflowRunIds(rootDir);
+      await Promise.all(
+        existingWorkflowIds
+          .filter((workflowStorageId) => !recordsByWorkflow.has(workflowStorageId))
+          .map(async (workflowStorageId) => {
+            await rm(resolveWorkflowDirectory(rootDir, workflowStorageId), {
+              recursive: true,
+              force: true,
+            });
+          }),
+      );
+    },
+  };
+}
+
+async function listWorkflowRunIds(rootDir: string): Promise<readonly string[]> {
+  const workflowsDir = join(rootDir, "workflows");
+
+  try {
+    const entries = await readdir(workflowsDir, { withFileTypes: true });
+    return entries
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+      .sort();
+  } catch (error) {
+    if (isNotFoundError(error)) {
+      return [];
+    }
+
+    throw error;
+  }
+}
+
+function resolveWorkflowRecordsPath(rootDir: string, workflowRunId: string): string {
+  return join(resolveWorkflowDirectory(rootDir, workflowRunId), TASK_MEMORY_FILE_NAME);
+}
+
+function resolveWorkflowDirectory(rootDir: string, workflowRunId: string): string {
+  return join(rootDir, "workflows", sanitizeMemoryPathSegment(workflowRunId));
 }
 
 function createTaskMemoryStore(options: {
@@ -215,10 +328,12 @@ function createTaskMemoryStore(options: {
     async archive(input) {
       if (
         input.workflowRunId === undefined &&
-        input.taskRunId === undefined &&
-        input.runtimeSessionId === undefined
+        input.taskRunId === undefined
       ) {
-        return errorMemory("invalid_input", "Archive requires at least one task memory scope.");
+        return errorMemory(
+          "invalid_input",
+          "Archive requires workflowRunId or taskRunId. runtimeSessionId may only be used as an additional filter.",
+        );
       }
 
       return await withMutationLock(async () => {
@@ -273,25 +388,28 @@ function createTaskMemoryStore(options: {
           record.workflowRunId === input.workflowRunId &&
           record.status === "active",
       );
-      const shared = runtimeOptions?.includeShared === false
-        ? []
-        : activeRecords
-            .filter((record) => record.visibility === "shared")
-            .filter((record) =>
-              input.taskRunId === undefined ||
-              record.taskRunId === undefined ||
-              record.taskRunId === input.taskRunId
+      const shared =
+        runtimeOptions?.includeShared === false
+          ? []
+          : activeRecords
+              .filter((record) => record.visibility === "shared")
+              .filter(
+                (record) =>
+                  input.taskRunId === undefined ||
+                  record.taskRunId === undefined ||
+                  record.taskRunId === input.taskRunId,
+              );
+      const privateItems =
+        runtimeOptions?.includePrivate === false
+          ? []
+          : activeRecords.filter(
+              (record) =>
+                record.visibility === "private" &&
+                record.ownerAgentId === input.agentId &&
+                (input.taskRunId === undefined ||
+                  record.taskRunId === undefined ||
+                  record.taskRunId === input.taskRunId),
             );
-      const privateItems = runtimeOptions?.includePrivate === false
-        ? []
-        : activeRecords.filter(
-            (record) =>
-              record.visibility === "private" &&
-              record.ownerAgentId === input.agentId &&
-              (input.taskRunId === undefined ||
-                record.taskRunId === undefined ||
-                record.taskRunId === input.taskRunId),
-          );
       const maxItems = Math.max(1, runtimeOptions?.maxItems ?? Number.MAX_SAFE_INTEGER);
 
       return okMemory({
@@ -306,7 +424,7 @@ function createTaskMemoryStore(options: {
         .map((record) =>
           record.summary === undefined
             ? normalizeTaskRecord(record, summaryMaxChars)
-            : cloneRecord(record)
+            : cloneRecord(record),
         )
         .filter((record) => canReadRecord(record, input.actorAgentId))
         .sort((left, right) => right.provenance.updatedAt.localeCompare(left.provenance.updatedAt));
@@ -316,10 +434,7 @@ function createTaskMemoryStore(options: {
   };
 }
 
-function validateRecordForAppend(
-  record: TaskMemoryRecord,
-  actorAgentId: string,
-) {
+function validateRecordForAppend(record: TaskMemoryRecord, actorAgentId: string) {
   if (record.visibility === "private" && record.ownerAgentId !== actorAgentId) {
     return errorMemory(
       "permission_denied",
@@ -368,4 +483,13 @@ function cloneRecord(record: TaskMemoryRecord): TaskMemoryRecord {
 
 function toReadonlyArray<TValue>(value: TValue | readonly TValue[]): readonly TValue[] {
   return Array.isArray(value) ? value : [value as TValue];
+}
+
+function isNotFoundError(error: unknown): boolean {
+  return (
+    error !== null &&
+    typeof error === "object" &&
+    "code" in error &&
+    (error as { code?: unknown }).code === "ENOENT"
+  );
 }

@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -9,6 +9,7 @@ import {
   ExpertAgent,
   HOST_CONTEXT_NAMESPACE,
   createInMemoryContextStore,
+  withExecutionRunScope,
   type RuntimeStreamEvent,
 } from "@pragma/core";
 import { MemorySystem, createMemoryPluginEntry, errorMemory } from "../src/index.ts";
@@ -37,6 +38,11 @@ describe("memory plugin unified memory context", () => {
     });
 
     const listed = await agent.listContext();
+    const summaryFile = await stat(join(memoryDir, "memory-agent", "summary.md"));
+    const skillFile = await stat(
+      join(memoryDir, "memory-agent", "skill-memory", "skills", "plugin-design.md"),
+    );
+
     expect(listed).toMatchObject({
       ok: true,
       value: expect.arrayContaining([
@@ -47,6 +53,8 @@ describe("memory plugin unified memory context", () => {
       ]),
     });
     expect(summary).toEqual(expect.objectContaining({ ok: true }));
+    expect(summaryFile.isFile()).toBe(true);
+    expect(skillFile.isFile()).toBe(true);
   });
 
   it("can disable memory context through plugin config", async () => {
@@ -67,9 +75,7 @@ describe("memory plugin unified memory context", () => {
     const listed = await agent.listContext();
     expect(listed).toMatchObject({
       ok: true,
-      value: expect.not.arrayContaining([
-        expect.objectContaining({ namespace: "memory" }),
-      ]),
+      value: expect.not.arrayContaining([expect.objectContaining({ namespace: "memory" })]),
     });
 
     const retrieved = await memorySystem.retrieveForRuntime({
@@ -123,7 +129,7 @@ describe("memory plugin unified memory context", () => {
 
     const contextResult = await agent.readContext({
       namespace: "memory",
-      id: "tasks/session-1/run-1.md",
+      id: "tasks/workflows/workflow-1/run-1.md",
     });
     expect(contextResult).toMatchObject({
       ok: true,
@@ -178,8 +184,10 @@ describe("memory plugin unified memory context", () => {
         scope: "session",
         visibility: "shared",
         workflowRunId: "wf-1",
+        runtimeSessionId: "session-1",
         kind: "progress",
-        content: "Implemented the unified summary assembler and still need to wire runtime refresh.",
+        content:
+          "Implemented the unified summary assembler and still need to wire runtime refresh.",
         status: "active",
         title: "Memory summary refactor",
       },
@@ -189,11 +197,13 @@ describe("memory plugin unified memory context", () => {
         record: {
           id: "summary-session",
           type: "evidence",
-          kind: "session",
+          kind: "workflow",
           agentId: agent.id,
           scope: "workspace",
+          workflowRunId: "summary-workflow",
           payload: {
-            sessionId: "summary-session",
+            workflowRunId: "summary-workflow",
+            runtimeSessionIds: ["runtime-session-1"],
             runIds: ["run-1"],
             externalContext: false,
             runs: [
@@ -217,7 +227,7 @@ describe("memory plugin unified memory context", () => {
           provenance: {
             createdAt: new Date().toISOString(),
             updatedAt: new Date().toISOString(),
-            evidence: [{ type: "session", id: "summary-session" }],
+            evidence: [{ type: "workflow", id: "summary-workflow" }],
           },
         },
       },
@@ -299,6 +309,7 @@ describe("memory plugin unified memory context", () => {
         scope: "session",
         visibility: "shared",
         workflowRunId: "wf-stale-summary",
+        runtimeSessionId: "session-1",
         kind: "progress",
         content: "Keep serving the previous summary when regeneration breaks.",
         status: "active",
@@ -384,9 +395,7 @@ describe("memory plugin unified memory context", () => {
     const listed = await agent.listContext();
     expect(listed).toMatchObject({
       ok: true,
-      value: expect.not.arrayContaining([
-        expect.objectContaining({ namespace: "memory" }),
-      ]),
+      value: expect.not.arrayContaining([expect.objectContaining({ namespace: "memory" })]),
     });
   });
 });
@@ -396,22 +405,37 @@ async function createAgent(options: {
   readonly memoryDir: string;
   readonly contextSystem?: ContextSystem | undefined;
   readonly memorySystem?: MemorySystem | undefined;
-  readonly pluginConfig?: {
-    readonly experience?: {
-      readonly enabled?: boolean | undefined;
-      readonly filePath?: string | undefined;
-    } | undefined;
-    readonly fact?: {
-      readonly enabled?: boolean | undefined;
-      readonly filePath?: string | undefined;
-    } | undefined;
-    readonly skill?: {
-      readonly enabled?: boolean | undefined;
-      readonly useMemories?: boolean | undefined;
-      readonly generateMemories?: boolean | undefined;
-      readonly memoryRoot?: string | undefined;
-    } | undefined;
-  } | undefined;
+  readonly pluginConfig?:
+    | {
+        readonly experience?:
+          | {
+              readonly enabled?: boolean | undefined;
+              readonly filePath?: string | undefined;
+            }
+          | undefined;
+        readonly task?:
+          | {
+              readonly enabled?: boolean | undefined;
+              readonly rootDir?: string | undefined;
+              readonly filePath?: string | undefined;
+            }
+          | undefined;
+        readonly fact?:
+          | {
+              readonly enabled?: boolean | undefined;
+              readonly filePath?: string | undefined;
+            }
+          | undefined;
+        readonly skill?:
+          | {
+              readonly enabled?: boolean | undefined;
+              readonly useMemories?: boolean | undefined;
+              readonly generateMemories?: boolean | undefined;
+              readonly memoryRoot?: string | undefined;
+            }
+          | undefined;
+      }
+    | undefined;
 }): Promise<ExpertAgent> {
   return await ExpertAgent.create({
     schemaVersion: "pragma.expert/v1",
@@ -432,16 +456,20 @@ async function createAgent(options: {
               },
         ),
         config: {
+          task: {
+            rootDir: options.memoryDir,
+            ...(options.pluginConfig?.task ?? {}),
+          },
           experience: {
-            filePath: join(options.memoryDir, "experience.json"),
+            filePath: join(options.memoryDir, "memory-agent", "experience-memory", "records.json"),
             ...(options.pluginConfig?.experience ?? {}),
           },
           fact: {
-            filePath: join(options.memoryDir, "fact.json"),
+            filePath: join(options.memoryDir, "memory-agent", "fact-memory", "records.json"),
             ...(options.pluginConfig?.fact ?? {}),
           },
           skill: {
-            memoryRoot: join(options.memoryDir, "memory"),
+            memoryRoot: options.memoryDir,
             ...(options.pluginConfig?.skill ?? {}),
           },
         },
@@ -456,6 +484,7 @@ async function emitStreamEvent(
   options: {
     readonly runId: string;
     readonly event: RuntimeStreamEvent;
+    readonly workflowRunId?: string | undefined;
   },
 ): Promise<void> {
   await agent.hooks?.onStreamEvent?.({
@@ -463,10 +492,13 @@ async function emitStreamEvent(
     session: createSessionInfo({}),
     runId: options.runId,
     event: options.event,
-    context: {
-      source: { type: "test" },
-      attributes: {},
-    },
+    context: withExecutionRunScope(
+      {
+        source: { type: "test" },
+        attributes: {},
+      },
+      { workflowRunId: options.workflowRunId ?? "workflow-1" },
+    ),
   });
 }
 
@@ -474,7 +506,8 @@ async function submitTaskHook(
   agent: ExpertAgent,
   options: {
     readonly runId: string;
-    readonly sessionId?: string | undefined;
+    readonly workflowRunId?: string | undefined;
+    readonly systemSessionId?: string | undefined;
     readonly runtimeSessionId?: string | undefined;
     readonly query?: string | undefined;
     readonly output?: string | undefined;
@@ -483,7 +516,7 @@ async function submitTaskHook(
   await agent.hooks?.afterTaskSubmit?.({
     agent,
     session: createSessionInfo({
-      sessionId: options.sessionId,
+      systemSessionId: options.systemSessionId,
       runtimeSessionId: options.runtimeSessionId,
       runState: "succeeded",
     }),
@@ -501,24 +534,27 @@ async function submitTaskHook(
             },
           },
         }),
-    context: {
-      source: { type: "test" },
-      attributes: {},
-    },
+    context: withExecutionRunScope(
+      {
+        source: { type: "test" },
+        attributes: {},
+      },
+      { workflowRunId: options.workflowRunId ?? "workflow-1" },
+    ),
   });
 }
 
 async function destroySessionHook(
   agent: ExpertAgent,
   options: {
-    readonly sessionId?: string | undefined;
+    readonly systemSessionId?: string | undefined;
     readonly runtimeSessionId?: string | undefined;
   } = {},
 ): Promise<void> {
   await agent.hooks?.afterSessionDestroy?.({
     agent,
     session: createSessionInfo({
-      sessionId: options.sessionId,
+      systemSessionId: options.systemSessionId,
       runtimeSessionId: options.runtimeSessionId,
       runState: "succeeded",
     }),
@@ -526,12 +562,12 @@ async function destroySessionHook(
 }
 
 function createSessionInfo(options: {
-  readonly sessionId?: string | undefined;
+  readonly systemSessionId?: string | undefined;
   readonly runtimeSessionId?: string | undefined;
   readonly runState?: "succeeded" | "failed" | "cancelled" | undefined;
 }) {
   return {
-    systemSessionId: options.sessionId ?? "session-1",
+    systemSessionId: options.systemSessionId ?? "system-session-1",
     runtimeSession: {
       type: "test-runtime",
       id: options.runtimeSessionId ?? "runtime-session-1",

@@ -30,15 +30,10 @@ export function resolveMemoryDirectory(options: {
   readonly rootDir?: string | undefined;
 }): string {
   const configuredRoot = options.rootDir;
-  const baseDir = configuredRoot === undefined
-    ? resolveUserMemoryHome()
-    : resolveConfiguredPath(configuredRoot);
+  const baseDir =
+    configuredRoot === undefined ? resolveUserMemoryHome() : resolveConfiguredPath(configuredRoot);
 
-  return resolve(
-    baseDir,
-    options.category,
-    sanitizeMemoryPathSegment(options.agentId),
-  );
+  return resolve(baseDir, sanitizeMemoryPathSegment(options.agentId), options.category);
 }
 
 export function resolveMemoryFilePath(options: {
@@ -60,10 +55,7 @@ export function resolveMemoryFilePath(options: {
   );
 }
 
-export async function readJsonFile<TValue>(
-  path: string,
-  defaultValue: TValue,
-): Promise<TValue> {
+export async function readJsonFile<TValue>(path: string, defaultValue: TValue): Promise<TValue> {
   try {
     const raw = await readFile(path, "utf8");
     return JSON.parse(raw) as TValue;

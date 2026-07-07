@@ -1,8 +1,6 @@
 import { readFile } from "node:fs/promises";
 
-import type {
-  ExpertAgentPluginSetupContext,
-} from "@pragma/core";
+import type { ExpertAgentPluginSetupContext } from "@pragma/core";
 import {
   errorMemory,
   okMemory,
@@ -14,7 +12,7 @@ import {
   type SkillMemoryStore,
 } from "../memory-system/index.ts";
 
-import { SKILLS_PREFIX } from "./constants.ts";
+import { SKILLS_PREFIX } from "../memory-context/constants.ts";
 import { resolveConfig } from "./config.ts";
 import {
   collectRecursiveIds,
@@ -22,9 +20,9 @@ import {
   exists,
   readStoredContext,
   resolveContextPath,
-  resolveMemoryRoot,
+  resolveSkillMemoryRoot,
   writeStoredMarkdown,
-} from "./filesystem.ts";
+} from "../memory-context/filesystem.ts";
 import {
   dedupeStrings,
   extractSectionBullets,
@@ -134,7 +132,15 @@ class FileSystemSkillMemoryStore implements SkillMemoryStore {
 
   async search(input: {
     readonly query: string;
-  }): Promise<MemoryResult<readonly { readonly record: SkillMemoryRecord; readonly score?: number; readonly excerpt?: string }[]>> {
+  }): Promise<
+    MemoryResult<
+      readonly {
+        readonly record: SkillMemoryRecord;
+        readonly score?: number;
+        readonly excerpt?: string;
+      }[]
+    >
+  > {
     try {
       if (!(await this.isEnabledForUsage())) {
         return okMemory([]);
@@ -178,7 +184,7 @@ class FileSystemSkillMemoryStore implements SkillMemoryStore {
   private async resolveRootDir(): Promise<string> {
     const config = await resolveConfig(this.context);
 
-    return resolveMemoryRoot(this.context.workspaceRoot, config, this.agentId);
+    return resolveSkillMemoryRoot(this.context.workspaceRoot, config, this.agentId);
   }
 
   private async isEnabledForUsage(): Promise<boolean> {
@@ -197,7 +203,9 @@ class FileSystemSkillMemoryStore implements SkillMemoryStore {
     return records.filter((record): record is SkillMemoryRecord => record !== undefined);
   }
 
-  private async readSkillRecordByContextId(contextId: string): Promise<SkillMemoryRecord | undefined> {
+  private async readSkillRecordByContextId(
+    contextId: string,
+  ): Promise<SkillMemoryRecord | undefined> {
     const rootDir = await this.resolveRootDir();
     const path = resolveContextPath(rootDir, contextId);
 
@@ -205,12 +213,17 @@ class FileSystemSkillMemoryStore implements SkillMemoryStore {
       return undefined;
     }
 
-    const [stored, raw] = await Promise.all([readStoredContext(rootDir, contextId), readFile(path, "utf8")]);
+    const [stored, raw] = await Promise.all([
+      readStoredContext(rootDir, contextId),
+      readFile(path, "utf8"),
+    ]);
     const parsed = parseMarkdown(raw);
-    const problemClass = readSectionBody(stored.content, "Skill Scope") ?? humanizeSkillId(contextId);
-    const title = typeof parsed.frontmatter["skillId"] === "string"
-      ? humanizeSkillId(skillIdToContextId(String(parsed.frontmatter["skillId"])))
-      : humanizeSkillId(contextId);
+    const problemClass =
+      readSectionBody(stored.content, "Skill Scope") ?? humanizeSkillId(contextId);
+    const title =
+      typeof parsed.frontmatter["skillId"] === "string"
+        ? humanizeSkillId(skillIdToContextId(String(parsed.frontmatter["skillId"])))
+        : humanizeSkillId(contextId);
 
     return {
       id: contextId,
@@ -219,7 +232,10 @@ class FileSystemSkillMemoryStore implements SkillMemoryStore {
       title,
       summary: stored.metadata.description,
       tags: dedupeStrings([
-        ...problemClass.toLowerCase().split(/\s+/).filter((token) => token.length >= 4),
+        ...problemClass
+          .toLowerCase()
+          .split(/\s+/)
+          .filter((token) => token.length >= 4),
       ]),
       runtime: {
         trigger: stored.metadata.trigger,
@@ -230,7 +246,7 @@ class FileSystemSkillMemoryStore implements SkillMemoryStore {
         source: "skill-memory",
         createdAt: readTimestamp(parsed.frontmatter["createdAt"], parsed.frontmatter["updatedAt"]),
         updatedAt: readTimestamp(parsed.frontmatter["updatedAt"], parsed.frontmatter["createdAt"]),
-        evidence: deriveEvidenceReferences(parsed.frontmatter["sessions"], contextId),
+        evidence: deriveEvidenceReferences(parsed.frontmatter["workflows"], contextId),
       },
       problemClass,
       recommendedApproach: extractSectionBullets(stored.content, "Recommended Approach"),
@@ -299,7 +315,9 @@ function scoreSkillRecords(records: readonly SkillMemoryRecord[], query: string)
       };
     })
     .filter((match) => match.score > 0)
-    .sort((left, right) => right.score - left.score || left.record.id.localeCompare(right.record.id));
+    .sort(
+      (left, right) => right.score - left.score || left.record.id.localeCompare(right.record.id),
+    );
 }
 
 function normalizeSkillContextId(id: string): string {
@@ -374,17 +392,17 @@ function readTimestamp(primary: unknown, fallback: unknown): string {
   return new Date(0).toISOString();
 }
 
-function deriveEvidenceReferences(sessions: unknown, contextId: string) {
-  const sessionIds = Array.isArray(sessions)
-    ? sessions.filter((value): value is string => typeof value === "string")
+function deriveEvidenceReferences(workflows: unknown, contextId: string) {
+  const workflowRunIds = Array.isArray(workflows)
+    ? workflows.filter((value): value is string => typeof value === "string")
     : [];
 
   return [
     { type: "context" as const, id: contextId, label: "skill-card" },
-    ...sessionIds.map((sessionId) => ({
-      type: "session" as const,
-      id: sessionId,
-      label: "source-session",
+    ...workflowRunIds.map((workflowRunId) => ({
+      type: "workflow" as const,
+      id: workflowRunId,
+      label: "source-workflow",
     })),
   ];
 }

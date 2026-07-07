@@ -14,10 +14,11 @@ import {
   EVIDENCE_PREFIX,
   JSON_EXTENSION,
   MARKDOWN_EXTENSION,
+  SKILLS_PREFIX,
   SUMMARY_CONTEXT_ID,
   TASK_MEMORY_PREFIX,
 } from "./constants.ts";
-import type { SkillMemoryConfig } from "./schema.ts";
+import type { SkillMemoryConfig } from "../skill-memory/schema.ts";
 import type { MemorySystem } from "../memory-system/index.ts";
 import { expandHomePath, resolveUserMemoryHome } from "../storage.ts";
 import {
@@ -26,27 +27,61 @@ import {
   isAllowedMemoryContextId,
   parseMarkdown,
   parseMetadata,
-} from "./utils.ts";
-import { sanitizeIdSegment } from "./utils.ts";
+} from "../skill-memory/utils.ts";
+import { sanitizeIdSegment } from "../skill-memory/utils.ts";
 
-export function resolveMemoryRoot(
+export interface MemoryArtifactRoots {
+  readonly contextRootDir: string;
+  readonly skillRootDir: string;
+}
+
+export function resolveMemoryArtifactRoots(
+  workspaceRoot: string,
+  config: SkillMemoryConfig,
+  agentId: string,
+): MemoryArtifactRoots {
+  return {
+    contextRootDir: resolveMemoryContextRoot(workspaceRoot, config, agentId),
+    skillRootDir: resolveSkillMemoryRoot(workspaceRoot, config, agentId),
+  };
+}
+
+export function resolveMemoryContextRoot(
   _workspaceRoot: string,
   config: SkillMemoryConfig,
   agentId: string,
 ): string {
-  const basePath = isAbsolute(expandHomePath(config.memoryRoot))
-    ? resolve(expandHomePath(config.memoryRoot))
-    : resolve(resolveUserMemoryHome(), config.memoryRoot);
-  const rootPath = resolve(basePath, sanitizeIdSegment(agentId));
-
-  return rootPath;
+  return resolveMemoryRootForConfig(config.memoryRoot, agentId);
 }
 
-export async function collectMemoryContextIds(rootDir: string): Promise<readonly string[]> {
-  const markdownIds = await collectRecursiveIds(rootDir, "", [MARKDOWN_EXTENSION]);
-  const jsonIds = await collectRecursiveIds(rootDir, EVIDENCE_PREFIX, [JSON_EXTENSION]);
+export function resolveSkillMemoryRoot(
+  workspaceRoot: string,
+  config: SkillMemoryConfig,
+  agentId: string,
+): string {
+  return resolve(resolveMemoryContextRoot(workspaceRoot, config, agentId), "skill-memory");
+}
 
-  return [...new Set([...markdownIds, ...jsonIds])].sort();
+export function resolveRootForMemoryContextId(roots: MemoryArtifactRoots, id: string): string {
+  if (id.startsWith(SKILLS_PREFIX)) {
+    return roots.skillRootDir;
+  }
+
+  return roots.contextRootDir;
+}
+
+export async function collectMemoryContextIds(
+  roots: MemoryArtifactRoots,
+): Promise<readonly string[]> {
+  const markdownIds = await collectRecursiveIds(roots.contextRootDir, "", [MARKDOWN_EXTENSION]);
+  const jsonIds = await collectRecursiveIds(roots.contextRootDir, EVIDENCE_PREFIX, [
+    JSON_EXTENSION,
+  ]);
+  const skillIds = await collectRecursiveIds(roots.skillRootDir, SKILLS_PREFIX, [
+    MARKDOWN_EXTENSION,
+  ]);
+
+  return [...new Set([...markdownIds, ...jsonIds, ...skillIds])].sort();
 }
 
 export async function collectRecursiveIds(
@@ -152,11 +187,11 @@ export function toSummary(context: ExpertAgentStoredContextItem): ExpertAgentCon
 }
 
 export async function regenerateSummary(
-  rootDir: string,
+  roots: MemoryArtifactRoots,
   memorySystem: MemorySystem,
   agentId: string,
 ): Promise<void> {
-  await mkdir(rootDir, { recursive: true });
+  await mkdir(roots.contextRootDir, { recursive: true });
   const artifacts = await memorySystem.buildContextArtifacts({ agentId });
 
   if (!artifacts.ok) {
@@ -170,7 +205,7 @@ export async function regenerateSummary(
   }
 
   await writeStoredMarkdown(
-    rootDir,
+    roots.contextRootDir,
     createStoredContext({
       id: SUMMARY_CONTEXT_ID,
       content: summary.value,
@@ -186,22 +221,27 @@ export async function regenerateSummary(
       agentId,
       updatedAt: new Date().toISOString(),
       audit: { createdBy: "skill-memory" },
-      model: "summaryModel",
     },
   );
 
-  await syncGeneratedContextPrefix(rootDir, TASK_MEMORY_PREFIX, artifacts.value.filter((item) =>
-    item.id.startsWith(TASK_MEMORY_PREFIX),
-  ), agentId);
   await syncGeneratedContextPrefix(
-    rootDir,
+    roots.contextRootDir,
+    TASK_MEMORY_PREFIX,
+    artifacts.value.filter((item) => item.id.startsWith(TASK_MEMORY_PREFIX)),
+    agentId,
+  );
+  await syncGeneratedContextPrefix(
+    roots.contextRootDir,
     EXPERIENCE_MEMORY_PREFIX,
     artifacts.value.filter((item) => item.id.startsWith(EXPERIENCE_MEMORY_PREFIX)),
     agentId,
   );
-  await syncGeneratedContextPrefix(rootDir, FACT_MEMORY_PREFIX, artifacts.value.filter((item) =>
-    item.id.startsWith(FACT_MEMORY_PREFIX),
-  ), agentId);
+  await syncGeneratedContextPrefix(
+    roots.contextRootDir,
+    FACT_MEMORY_PREFIX,
+    artifacts.value.filter((item) => item.id.startsWith(FACT_MEMORY_PREFIX)),
+    agentId,
+  );
 }
 
 export async function writeStoredMarkdown(
@@ -256,6 +296,15 @@ export function assertPathInside(path: string, rootDir: string, message: string)
   if (!isPathInside(path, rootDir)) {
     throw new Error(message);
   }
+}
+
+function resolveMemoryRootForConfig(configuredRoot: string, agentId: string): string {
+  const expandedRoot = expandHomePath(configuredRoot);
+  const basePath = isAbsolute(expandedRoot)
+    ? resolve(expandedRoot)
+    : resolve(resolveUserMemoryHome(), expandedRoot);
+
+  return resolve(basePath, sanitizeIdSegment(agentId));
 }
 
 export function isPathInside(path: string, rootDir: string): boolean {

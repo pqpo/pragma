@@ -108,16 +108,16 @@ export function createDefaultEvidence(scope: {
   readonly taskRunId?: string | undefined;
   readonly runtimeSessionId?: string | undefined;
 }): readonly MemoryEvidenceReference[] {
-  if (scope.runtimeSessionId !== undefined) {
-    return [{ type: "session", id: scope.runtimeSessionId }];
+  if (scope.workflowRunId !== undefined) {
+    return [{ type: "workflow", id: scope.workflowRunId }];
   }
 
   if (scope.taskRunId !== undefined) {
     return [{ type: "task", id: scope.taskRunId }];
   }
 
-  if (scope.workflowRunId !== undefined) {
-    return [{ type: "run", id: scope.workflowRunId }];
+  if (scope.runtimeSessionId !== undefined) {
+    return [{ type: "external", id: scope.runtimeSessionId, label: "runtime session" }];
   }
 
   return [];
