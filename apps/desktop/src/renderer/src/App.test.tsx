@@ -16,7 +16,7 @@ describe("App", () => {
     const html = renderToStaticMarkup(<App initialView="models" />);
 
     expect(html).toContain("模型管理");
-    expect(html).toContain("Provider 概览");
+    expect(html).toContain("Provider");
     expect(html).toContain("gpt-4.1-coder");
   });
 
@@ -33,7 +33,7 @@ describe("App", () => {
 
     expect(html).toContain("任务看板");
     expect(html).toContain("支付链路技术方案审阅");
-    expect(html).toContain("需要人工接入");
+    expect(html).toContain("人工接入");
     expect(html).toContain("触发人工节点");
   });
 

@@ -2,12 +2,17 @@ import type { PropsWithChildren, ReactNode } from "react";
 
 import type { DesktopViewKey } from "./mock-data.ts";
 
-const navItems: readonly { readonly id: DesktopViewKey; readonly label: string; readonly hint: string }[] = [
-  { id: "agents", label: "Agent 广场", hint: "创建专家" },
-  { id: "models", label: "模型管理", hint: "注册模型" },
-  { id: "plugins", label: "插件市场", hint: "导入插件" },
-  { id: "workflows", label: "工作流编排", hint: "低码画布" },
-  { id: "tasks", label: "任务看板", hint: "运行监控" },
+const navItems: readonly {
+  readonly id: DesktopViewKey;
+  readonly label: string;
+  readonly hint: string;
+  readonly short: string;
+}[] = [
+  { id: "agents", label: "Agent 广场", hint: "创建专家", short: "AG" },
+  { id: "models", label: "模型管理", hint: "注册模型", short: "MO" },
+  { id: "plugins", label: "插件市场", hint: "导入插件", short: "PL" },
+  { id: "workflows", label: "工作流编排", hint: "低码画布", short: "WF" },
+  { id: "tasks", label: "任务看板", hint: "运行监控", short: "TK" },
 ];
 
 export function Sidebar(props: {
@@ -21,38 +26,66 @@ export function Sidebar(props: {
 }) {
   return (
     <aside className="sidebar">
-      <div className="sidebar__brand">
-        <p className="eyebrow">Pragma Desktop</p>
-        <h1>Local Agent Workbench</h1>
-        <p>本地桥接、工作流编排和运行观察统一在一个桌面控制台里完成。</p>
+      <div className="sidebar__rail">
+        <button type="button" className="rail-mark">
+          P
+        </button>
+        <div className="rail-icons">
+          {navItems.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              className={item.id === props.activeView ? "rail-icon is-active" : "rail-icon"}
+              onClick={() => props.onSelectView(item.id)}
+              aria-label={item.label}
+            >
+              {item.short}
+            </button>
+          ))}
+        </div>
+        <div className="rail-footer">
+          <span className="rail-icon rail-icon--static">WS</span>
+          <span className="rail-icon rail-icon--static">ST</span>
+        </div>
       </div>
 
-      <nav className="sidebar__nav" aria-label="Desktop navigation">
-        {navItems.map((item) => (
-          <button
-            key={item.id}
-            type="button"
-            className={item.id === props.activeView ? "nav-item is-active" : "nav-item"}
-            onClick={() => props.onSelectView(item.id)}
-          >
-            <strong>{item.label}</strong>
-            <span>{item.hint}</span>
-          </button>
-        ))}
-      </nav>
+      <div className="sidebar__menu">
+        <div className="sidebar__brand">
+          <div>
+            <p className="eyebrow">Pragma</p>
+            <h1>任务工作台</h1>
+          </div>
+        </div>
 
-      <div className="sidebar__status">
-        <div>
-          <span className="sidebar__status-label">Device</span>
-          <strong>{props.status.deviceLabel}</strong>
-        </div>
-        <div>
-          <span className="sidebar__status-label">Workspace</span>
-          <strong>{props.status.workspaceLabel}</strong>
-        </div>
-        <div>
-          <span className="sidebar__status-label">Gateway</span>
-          <strong>{props.status.connectionLabel}</strong>
+        <nav className="sidebar__nav" aria-label="Desktop navigation">
+          {navItems.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              className={item.id === props.activeView ? "nav-item is-active" : "nav-item"}
+              onClick={() => props.onSelectView(item.id)}
+            >
+              <div className="nav-item__title">
+                <strong>{item.label}</strong>
+                <span>{item.hint}</span>
+              </div>
+            </button>
+          ))}
+        </nav>
+
+        <div className="sidebar__status">
+          <div>
+            <span className="sidebar__status-label">Device</span>
+            <strong>{props.status.deviceLabel}</strong>
+          </div>
+          <div>
+            <span className="sidebar__status-label">Workspace</span>
+            <strong>{props.status.workspaceLabel}</strong>
+          </div>
+          <div>
+            <span className="sidebar__status-label">Gateway</span>
+            <strong>{props.status.connectionLabel}</strong>
+          </div>
         </div>
       </div>
     </aside>
@@ -68,17 +101,17 @@ export function Topbar(props: {
 }) {
   return (
     <header className="topbar">
-      <div>
-        <p className="eyebrow">{props.eyebrow}</p>
+      <div className="topbar__title">
+        <span className="topbar__section">{props.eyebrow}</span>
         <h2>{props.title}</h2>
         <p className="topbar__description">{props.description}</p>
       </div>
 
       <div className="topbar__actions">
         <label className="search-shell">
-          <span>搜索 / 筛选</span>
           <input type="text" value="" readOnly placeholder="搜索 Agent、模型、工作流、任务..." />
         </label>
+        <span className="topbar__context">default / ws_local</span>
         <button type="button" className="primary-button" onClick={props.onAction}>
           {props.actionLabel}
         </button>

@@ -86,6 +86,7 @@ export function App(props: AppProps = {}) {
     taskBoardColumns
       .flatMap((column) => column.items)
       .find((task) => task.id === props.initialSelectedTaskId) ?? taskBoardColumns[1]?.items[0];
+  const allTasks = taskBoardColumns.flatMap((column) => column.items);
 
   const [activeView, setActiveView] = useState<DesktopViewKey>(props.initialView ?? "agents");
   const [selectedAgentCategory, setSelectedAgentCategory] = useState<AgentCategory>(
@@ -155,124 +156,123 @@ export function App(props: AppProps = {}) {
 
           <div className="page-scroll">
             {activeView === "agents" ? (
-              <section className="page-grid page-grid--agents">
-                <Panel>
-                  <SectionHeader
-                    title="创建入口"
-                    description="从模板启动新的专家 Agent，并预览其能力边界。"
-                    action={
-                      <div className="chip-row">
-                        {agentCategories.map((category) => (
-                          <button
-                            key={category.id}
-                            type="button"
-                            className={category.id === selectedAgentCategory ? "chip is-active" : "chip"}
-                            onClick={() => setSelectedAgentCategory(category.id)}
-                          >
-                            {category.label}
-                          </button>
-                        ))}
-                      </div>
-                    }
-                  />
-
-                  <div className="card-grid">
+              <section className="workspace-layout">
+                <aside className="workspace-sidepane">
+                  <div className="sidepane-header">
+                    <div>
+                      <h3>Agent 列表</h3>
+                      <p>{filteredAgents.length} 个可用模板</p>
+                    </div>
+                  </div>
+                  <div className="chip-row">
+                    {agentCategories.map((category) => (
+                      <button
+                        key={category.id}
+                        type="button"
+                        className={category.id === selectedAgentCategory ? "chip is-active" : "chip"}
+                        onClick={() => setSelectedAgentCategory(category.id)}
+                      >
+                        {category.label}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="list-stack">
                     {filteredAgents.map((agent) => (
                       <button
                         key={agent.id}
                         type="button"
-                        className={agent.id === selectedAgent.id ? "surface-card is-selected" : "surface-card"}
+                        className={agent.id === selectedAgent.id ? "list-item is-selected" : "list-item"}
                         onClick={() => setSelectedAgent(agent)}
                       >
-                        <div className="surface-card__topline">
-                          <StatusBadge tone={agent.badgeTone}>{agent.badge}</StatusBadge>
-                          {agent.updatedLabel === undefined ? null : (
-                            <span className="surface-card__meta">{agent.updatedLabel}</span>
-                          )}
+                        <div className="list-item__main">
+                          <strong>{agent.name}</strong>
+                          <p>{agent.summary}</p>
                         </div>
-                        <strong>{agent.name}</strong>
-                        <p>{agent.summary}</p>
-                        <div className="tag-row">
-                          {agent.tags.map((tag) => (
-                            <span key={tag} className="tag">
-                              {tag}
-                            </span>
-                          ))}
+                        <div className="list-item__meta">
+                          <StatusBadge tone={agent.badgeTone}>{agent.badge}</StatusBadge>
+                          <span>{agent.runtime}</span>
                         </div>
                       </button>
                     ))}
                   </div>
-                </Panel>
+                </aside>
 
-                <Panel>
-                  <SectionHeader
-                    title={selectedAgent.name}
-                    description={selectedAgent.summary}
-                    action={<StatusBadge tone={selectedAgent.badgeTone}>{selectedAgent.badge}</StatusBadge>}
-                  />
+                <section className="workspace-content">
+                  <Panel>
+                    <SectionHeader
+                      title={selectedAgent.name}
+                      description={selectedAgent.summary}
+                      action={<StatusBadge tone={selectedAgent.badgeTone}>{selectedAgent.badge}</StatusBadge>}
+                    />
+                    <div className="summary-strip">
+                      <article className="summary-chip">
+                        <span>默认模型</span>
+                        <strong>{selectedAgent.defaultModel}</strong>
+                      </article>
+                      <article className="summary-chip">
+                        <span>运行时</span>
+                        <strong>{selectedAgent.runtime}</strong>
+                      </article>
+                      <article className="summary-chip">
+                        <span>权限</span>
+                        <strong>{selectedAgent.permissionLevel}</strong>
+                      </article>
+                    </div>
+                  </Panel>
 
-                  <dl className="detail-list">
-                    <div>
-                      <dt>默认模型</dt>
-                      <dd>{selectedAgent.defaultModel}</dd>
-                    </div>
-                    <div>
-                      <dt>运行时</dt>
-                      <dd>{selectedAgent.runtime}</dd>
-                    </div>
-                    <div>
-                      <dt>插件组合</dt>
-                      <dd>{selectedAgent.plugins.join(" / ")}</dd>
-                    </div>
-                    <div>
-                      <dt>权限级别</dt>
-                      <dd>{selectedAgent.permissionLevel}</dd>
-                    </div>
-                  </dl>
-
-                  <div className="stack-list">
-                    <Panel inset>
-                      <h3>Manifest 预览</h3>
-                      <p>{selectedAgent.manifestPreview}</p>
+                  <div className="content-split">
+                    <Panel>
+                      <SectionHeader title="Manifest 预览" description="当前 Agent 的能力与输出边界。" />
+                      <p className="paragraph-block">{selectedAgent.manifestPreview}</p>
+                      <dl className="detail-list">
+                        <div>
+                          <dt>插件组合</dt>
+                          <dd>{selectedAgent.plugins.join(" / ")}</dd>
+                        </div>
+                        <div>
+                          <dt>技能标签</dt>
+                          <dd>{selectedAgent.tags.join(" / ")}</dd>
+                        </div>
+                      </dl>
                     </Panel>
-                    <Panel inset>
-                      <h3>技能与上下文</h3>
-                      <p>{selectedAgent.contextSummary}</p>
+
+                    <Panel>
+                      <SectionHeader title="上下文与预置" description="工作台中默认挂载的知识和模板。" />
+                      <p className="paragraph-block">{selectedAgent.contextSummary}</p>
                     </Panel>
                   </div>
-                </Panel>
+                </section>
               </section>
             ) : null}
 
             {activeView === "models" ? (
-              <section className="stack-layout">
-                <Panel>
-                  <SectionHeader
-                    title="Provider 概览"
-                    description="系统可以同时挂载多个模型来源，并为不同场景设定默认策略。"
-                  />
-
-                  <div className="provider-grid">
+              <section className="workspace-layout">
+                <aside className="workspace-sidepane">
+                  <div className="sidepane-header">
+                    <div>
+                      <h3>Provider</h3>
+                      <p>{modelProviders.length} 个接入源</p>
+                    </div>
+                  </div>
+                  <div className="list-stack">
                     {modelProviders.map((provider) => (
-                      <article key={provider.id} className="provider-card">
-                        <div className="provider-card__header">
+                      <article key={provider.id} className="list-item is-static">
+                        <div className="list-item__main">
                           <strong>{provider.name}</strong>
-                          <StatusBadge tone={provider.statusTone}>{provider.statusLabel}</StatusBadge>
+                          <p>{provider.summary}</p>
                         </div>
-                        <p>{provider.summary}</p>
-                        <div className="provider-card__metrics">
+                        <div className="list-item__meta">
+                          <StatusBadge tone={provider.statusTone}>{provider.statusLabel}</StatusBadge>
                           <span>{provider.modelsCount} models</span>
-                          <span>{provider.region}</span>
                         </div>
                       </article>
                     ))}
                   </div>
-                </Panel>
+                </aside>
 
-                <section className="page-grid page-grid--models">
+                <section className="workspace-content">
                   <Panel>
-                    <SectionHeader title="已注册模型" description="聚合查看名称、用途、成本等级与连通状态。" />
-
+                    <SectionHeader title="已注册模型" description="聚合查看名称、用途、上下文窗口与可用状态。" />
                     <div className="table-shell">
                       <table className="data-table">
                         <thead>
@@ -307,156 +307,192 @@ export function App(props: AppProps = {}) {
                     </div>
                   </Panel>
 
-                  <Panel>
-                    <SectionHeader title="默认执行模型" description="工作台会优先把默认模型暴露给 Agent 创建和流程运行。" />
-                    <article className="hero-card">
-                      <div className="hero-card__eyebrow">Primary Runtime</div>
-                      <h3>gpt-4.1-coder</h3>
-                      <p>默认用于编排调度、代码生成与高复杂度工作流节点。</p>
-                      <div className="tag-row">
-                        <span className="tag">OpenAI</span>
-                        <span className="tag">128K context</span>
-                        <span className="tag">Tool calling</span>
-                      </div>
-                    </article>
-                  </Panel>
+                  <div className="content-split content-split--narrow">
+                    <Panel>
+                      <SectionHeader title="默认执行模型" description="系统创建 Agent 和 workflow 时的首选模型。" />
+                      <article className="hero-card">
+                        <div className="hero-card__eyebrow">Primary Runtime</div>
+                        <h3>gpt-4.1-coder</h3>
+                        <p>默认用于编排调度、代码生成与高复杂度工作流节点。</p>
+                        <div className="tag-row">
+                          <span className="tag">OpenAI</span>
+                          <span className="tag">128K context</span>
+                          <span className="tag">Tool calling</span>
+                        </div>
+                      </article>
+                    </Panel>
+
+                    <Panel>
+                      <SectionHeader title="连接策略" description="用于表达未来的网关和默认 Provider 策略。" />
+                      <dl className="detail-list">
+                        <div>
+                          <dt>默认 Provider</dt>
+                          <dd>OpenAI</dd>
+                        </div>
+                        <div>
+                          <dt>回退顺序</dt>
+                          <dd>Anthropic / Custom Gateway</dd>
+                        </div>
+                        <div>
+                          <dt>健康检查</dt>
+                          <dd>每 10 分钟轮询一次</dd>
+                        </div>
+                      </dl>
+                    </Panel>
+                  </div>
                 </section>
               </section>
             ) : null}
 
             {activeView === "plugins" ? (
-              <section className="page-grid page-grid--plugins">
-                <Panel>
-                  <SectionHeader title="已安装插件" description="查看当前启用状态、兼容版本和权限敏感性。" />
+              <section className="workspace-layout">
+                <aside className="workspace-sidepane">
+                  <div className="sidepane-header">
+                    <div>
+                      <h3>已安装插件</h3>
+                      <p>{pluginCatalog.installed.length} 个插件</p>
+                    </div>
+                  </div>
 
-                  <div className="stack-list">
+                  <div className="list-stack">
                     {pluginCatalog.installed.map((plugin) => (
                       <button
                         key={plugin.id}
                         type="button"
-                        className={plugin.id === selectedPlugin.id ? "surface-card is-selected" : "surface-card"}
+                        className={plugin.id === selectedPlugin.id ? "list-item is-selected" : "list-item"}
                         onClick={() => setSelectedPlugin(plugin)}
                       >
-                        <div className="surface-card__topline">
+                        <div className="list-item__main">
                           <strong>{plugin.name}</strong>
-                          <StatusBadge tone={plugin.statusTone}>{plugin.statusLabel}</StatusBadge>
+                          <p>{plugin.summary}</p>
                         </div>
-                        <p>{plugin.summary}</p>
-                        <div className="tag-row">
-                          {plugin.tags.map((tag) => (
-                            <span key={tag} className="tag">
-                              {tag}
-                            </span>
-                          ))}
+                        <div className="list-item__meta">
+                          <StatusBadge tone={plugin.statusTone}>{plugin.statusLabel}</StatusBadge>
+                          <span>{plugin.tools}</span>
                         </div>
                       </button>
                     ))}
                   </div>
-                </Panel>
+                </aside>
 
-                <Panel>
-                  <SectionHeader title="插件清单预览" description="聚焦 manifest、权限声明与扩展能力。" />
-
-                  <dl className="detail-list">
-                    <div>
-                      <dt>Namespace</dt>
-                      <dd>{selectedPlugin.namespace}</dd>
-                    </div>
-                    <div>
-                      <dt>Tools</dt>
-                      <dd>{selectedPlugin.tools}</dd>
-                    </div>
-                    <div>
-                      <dt>Hooks</dt>
-                      <dd>{selectedPlugin.hooks}</dd>
-                    </div>
-                    <div>
-                      <dt>Permissions</dt>
-                      <dd>{selectedPlugin.permissions}</dd>
-                    </div>
-                  </dl>
-
-                  <Panel inset>
-                    <h3>导入入口</h3>
-                    <div className="option-grid">
-                      <article className="option-card">
-                        <strong>本地目录导入</strong>
-                        <p>选择本地插件目录，预览 manifest 与能力声明。</p>
-                      </article>
-                      <article className="option-card">
-                        <strong>压缩包导入</strong>
-                        <p>导入 zip 包并展示兼容性和权限风险。</p>
-                      </article>
-                      <article className="option-card">
-                        <strong>清单预审</strong>
-                        <p>先读取 plugin.json，确认 namespace 和导出能力。</p>
-                      </article>
-                    </div>
+                <section className="workspace-content">
+                  <Panel>
+                    <SectionHeader title={selectedPlugin.name} description={selectedPlugin.summary} />
+                    <dl className="detail-list">
+                      <div>
+                        <dt>Namespace</dt>
+                        <dd>{selectedPlugin.namespace}</dd>
+                      </div>
+                      <div>
+                        <dt>Tools</dt>
+                        <dd>{selectedPlugin.tools}</dd>
+                      </div>
+                      <div>
+                        <dt>Hooks</dt>
+                        <dd>{selectedPlugin.hooks}</dd>
+                      </div>
+                      <div>
+                        <dt>Permissions</dt>
+                        <dd>{selectedPlugin.permissions}</dd>
+                      </div>
+                    </dl>
                   </Panel>
-                </Panel>
 
-                <Panel>
-                  <SectionHeader title="市场推荐" description="未来可以从官方和团队市场安装能力包。" />
-                  <div className="card-grid">
-                    {pluginCatalog.market.map((plugin) => (
-                      <article key={plugin.id} className="surface-card is-readonly">
-                        <div className="surface-card__topline">
-                          <strong>{plugin.name}</strong>
-                          <StatusBadge tone={plugin.statusTone}>{plugin.statusLabel}</StatusBadge>
-                        </div>
-                        <p>{plugin.summary}</p>
-                        <div className="tag-row">
-                          {plugin.tags.map((tag) => (
-                            <span key={tag} className="tag">
-                              {tag}
-                            </span>
-                          ))}
-                        </div>
-                      </article>
-                    ))}
+                  <div className="content-split">
+                    <Panel>
+                      <SectionHeader title="导入入口" description="保留导入插件的交互骨架。" />
+                      <div className="option-grid">
+                        <article className="option-card">
+                          <strong>本地目录导入</strong>
+                          <p>选择本地插件目录，预览 manifest 与能力声明。</p>
+                        </article>
+                        <article className="option-card">
+                          <strong>压缩包导入</strong>
+                          <p>导入 zip 包并展示兼容性和权限风险。</p>
+                        </article>
+                        <article className="option-card">
+                          <strong>清单预审</strong>
+                          <p>先读取 plugin.json，确认 namespace 和导出能力。</p>
+                        </article>
+                      </div>
+                    </Panel>
+
+                    <Panel>
+                      <SectionHeader title="市场推荐" description="未来可从官方和团队市场快速安装。" />
+                      <div className="list-stack">
+                        {pluginCatalog.market.map((plugin) => (
+                          <article key={plugin.id} className="list-item is-static">
+                            <div className="list-item__main">
+                              <strong>{plugin.name}</strong>
+                              <p>{plugin.summary}</p>
+                            </div>
+                            <div className="list-item__meta">
+                              <StatusBadge tone={plugin.statusTone}>{plugin.statusLabel}</StatusBadge>
+                            </div>
+                          </article>
+                        ))}
+                      </div>
+                    </Panel>
                   </div>
-                </Panel>
+                </section>
               </section>
             ) : null}
 
             {activeView === "workflows" ? (
-              <section className="workflow-studio">
-                <div className="workflow-toolbar">
-                  <div className="workflow-toolbar__group">
-                    <button type="button" className="toolbar-button">
-                      新建
-                    </button>
-                    <button type="button" className="toolbar-button">
-                      保存草稿
-                    </button>
-                    <button type="button" className="toolbar-button toolbar-button--accent">
-                      测试运行
-                    </button>
-                    <button type="button" className="toolbar-button">
-                      发布
-                    </button>
-                  </div>
-                  <div className="workflow-toolbar__group">
-                    <span className="toolbar-pill">100%</span>
-                    <span className="toolbar-pill">Grid View</span>
-                  </div>
-                </div>
-
-                <div className="workflow-layout">
-                  <Panel>
-                    <SectionHeader title="节点库" description="当前版本先表达低码工作流的核心节点类型。" />
-                    <div className="node-library">
-                      {workflowBlueprint.library.map((nodeType) => (
-                        <button key={nodeType.id} type="button" className="node-library__item">
-                          <span className="node-chip">{nodeType.shortLabel}</span>
-                          <div>
-                            <strong>{nodeType.label}</strong>
-                            <p>{nodeType.description}</p>
-                          </div>
-                        </button>
-                      ))}
+              <section className="workspace-layout">
+                <aside className="workspace-sidepane">
+                  <div className="sidepane-header">
+                    <div>
+                      <h3>工作流</h3>
+                      <p>当前工作台草稿</p>
                     </div>
-                  </Panel>
+                  </div>
+                  <div className="list-stack">
+                    <article className="list-item is-selected">
+                      <div className="list-item__main">
+                        <strong>{workflowBlueprint.name}</strong>
+                        <p>{workflowBlueprint.summary}</p>
+                      </div>
+                      <div className="list-item__meta">
+                        <StatusBadge tone="accent">{workflowBlueprint.statusLabel}</StatusBadge>
+                      </div>
+                    </article>
+                  </div>
+                  <SectionHeader title="节点库" description="可插入节点" />
+                  <div className="node-library">
+                    {workflowBlueprint.library.map((nodeType) => (
+                      <button key={nodeType.id} type="button" className="node-library__item">
+                        <span className="node-chip">{nodeType.shortLabel}</span>
+                        <div>
+                          <strong>{nodeType.label}</strong>
+                          <p>{nodeType.description}</p>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </aside>
+
+                <section className="workspace-content">
+                  <div className="workflow-toolbar">
+                    <div className="workflow-toolbar__group">
+                      <button type="button" className="toolbar-button">
+                        新建
+                      </button>
+                      <button type="button" className="toolbar-button">
+                        保存草稿
+                      </button>
+                      <button type="button" className="toolbar-button toolbar-button--accent">
+                        测试运行
+                      </button>
+                      <button type="button" className="toolbar-button">
+                        发布
+                      </button>
+                    </div>
+                    <div className="workflow-toolbar__group">
+                      <span className="toolbar-pill">100%</span>
+                      <span className="toolbar-pill">Canvas</span>
+                    </div>
+                  </div>
 
                   <Panel>
                     <SectionHeader
@@ -500,89 +536,93 @@ export function App(props: AppProps = {}) {
                     </div>
                   </Panel>
 
-                  <Panel>
-                    <SectionHeader title="节点属性" description="当前选中节点的输入、输出与人工介入配置。" />
-
-                    <dl className="detail-list">
-                      <div>
-                        <dt>节点类型</dt>
-                        <dd>{selectedWorkflowNode.kindLabel}</dd>
-                      </div>
-                      <div>
-                        <dt>绑定对象</dt>
-                        <dd>{selectedWorkflowNode.binding}</dd>
-                      </div>
-                      <div>
-                        <dt>输入契约</dt>
-                        <dd>{selectedWorkflowNode.inputContract}</dd>
-                      </div>
-                      <div>
-                        <dt>失败策略</dt>
-                        <dd>{selectedWorkflowNode.failurePolicy}</dd>
-                      </div>
-                    </dl>
-
-                    <div className="stack-list">
-                      <Panel inset>
-                        <h3>输出结果</h3>
-                        <p>{selectedWorkflowNode.outputContract}</p>
-                      </Panel>
-                      <Panel inset>
-                        <h3>人工介入策略</h3>
-                        <p>{selectedWorkflowNode.humanIntervention}</p>
-                      </Panel>
-                    </div>
-                  </Panel>
-                </div>
+                  <div className="inspector-strip">
+                    <Panel inset>
+                      <SectionHeader title="节点属性" description="当前选中节点的输入、输出与失败策略。" />
+                      <dl className="detail-list">
+                        <div>
+                          <dt>节点类型</dt>
+                          <dd>{selectedWorkflowNode.kindLabel}</dd>
+                        </div>
+                        <div>
+                          <dt>绑定对象</dt>
+                          <dd>{selectedWorkflowNode.binding}</dd>
+                        </div>
+                        <div>
+                          <dt>输入契约</dt>
+                          <dd>{selectedWorkflowNode.inputContract}</dd>
+                        </div>
+                        <div>
+                          <dt>失败策略</dt>
+                          <dd>{selectedWorkflowNode.failurePolicy}</dd>
+                        </div>
+                      </dl>
+                    </Panel>
+                    <Panel inset>
+                      <SectionHeader title="输出与人工介入" description="低码编排中的 review gate 预留。" />
+                      <dl className="detail-list">
+                        <div>
+                          <dt>输出结果</dt>
+                          <dd>{selectedWorkflowNode.outputContract}</dd>
+                        </div>
+                        <div>
+                          <dt>人工策略</dt>
+                          <dd>{selectedWorkflowNode.humanIntervention}</dd>
+                        </div>
+                      </dl>
+                    </Panel>
+                  </div>
+                </section>
               </section>
             ) : null}
 
             {activeView === "tasks" ? (
-              <section className="stack-layout">
-                <div className="metric-grid">
-                  {workflowLibrary.metrics.map((metric) => (
-                    <Panel key={metric.label} inset>
-                      <div className="metric-card">
-                        <span>{metric.label}</span>
-                        <strong>{metric.value}</strong>
-                        <p>{metric.description}</p>
-                      </div>
-                    </Panel>
-                  ))}
-                </div>
-
-                <section className="page-grid page-grid--tasks">
-                  <div className="kanban-shell">
+              <section className="workspace-layout">
+                <aside className="workspace-sidepane">
+                  <div className="sidepane-header">
+                    <div>
+                      <h3>任务列表</h3>
+                      <p>{allTasks.length} 个任务</p>
+                    </div>
+                  </div>
+                  <div className="chip-row">
                     {taskBoardColumns.map((column) => (
-                      <Panel key={column.id}>
-                        <SectionHeader
-                          title={column.label}
-                          description={column.description}
-                          action={<StatusBadge tone={column.badgeTone}>{column.countLabel}</StatusBadge>}
-                        />
+                      <span key={column.id} className="chip chip--readonly">
+                        {column.label}
+                      </span>
+                    ))}
+                  </div>
+                  <div className="list-stack">
+                    {allTasks.map((task) => (
+                      <button
+                        key={task.id}
+                        type="button"
+                        className={task.id === selectedTask.id ? "task-list-item is-selected" : "task-list-item"}
+                        onClick={() => setSelectedTask(task)}
+                      >
+                        <div className="task-list-item__title">
+                          <strong>{task.title}</strong>
+                          <StatusBadge tone={task.statusTone}>{task.statusLabel}</StatusBadge>
+                        </div>
+                        <p>{task.workflowName}</p>
+                        <div className="task-list-item__meta">
+                          <span>{task.currentStep}</span>
+                          <span>{task.duration}</span>
+                          {task.requiresHuman ? <span>人工接入</span> : null}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </aside>
 
-                        <div className="kanban-column">
-                          {column.items.map((task) => (
-                            <button
-                              key={task.id}
-                              type="button"
-                              className={task.id === selectedTask.id ? "task-card is-selected" : "task-card"}
-                              onClick={() => setSelectedTask(task)}
-                            >
-                              <div className="surface-card__topline">
-                                <strong>{task.title}</strong>
-                                <StatusBadge tone={task.statusTone}>{task.statusLabel}</StatusBadge>
-                              </div>
-                              <p>{task.workflowName}</p>
-                              <div className="task-card__meta">
-                                <span>{task.currentStep}</span>
-                                <span>{task.duration}</span>
-                              </div>
-                              {task.requiresHuman ? (
-                                <span className="task-card__alert">需要人工接入</span>
-                              ) : null}
-                            </button>
-                          ))}
+                <section className="workspace-content workspace-content--tasks">
+                  <div className="metric-grid">
+                    {workflowLibrary.metrics.map((metric) => (
+                      <Panel key={metric.label} inset>
+                        <div className="metric-card">
+                          <span>{metric.label}</span>
+                          <strong>{metric.value}</strong>
+                          <p>{metric.description}</p>
                         </div>
                       </Panel>
                     ))}
@@ -594,36 +634,76 @@ export function App(props: AppProps = {}) {
                       description={selectedTask.workflowName}
                       action={<StatusBadge tone={selectedTask.statusTone}>{selectedTask.statusLabel}</StatusBadge>}
                     />
+                    <div className="summary-strip">
+                      <article className="summary-chip">
+                        <span>当前步骤</span>
+                        <strong>{selectedTask.currentStep}</strong>
+                      </article>
+                      <article className="summary-chip">
+                        <span>责任 Agent</span>
+                        <strong>{selectedTask.ownerAgent}</strong>
+                      </article>
+                      <article className="summary-chip">
+                        <span>耗时</span>
+                        <strong>{selectedTask.duration}</strong>
+                      </article>
+                      <article className="summary-chip">
+                        <span>人工接入</span>
+                        <strong>{selectedTask.requiresHuman ? "Required" : "Not needed"}</strong>
+                      </article>
+                    </div>
+                  </Panel>
 
-                    <dl className="detail-list">
-                      <div>
-                        <dt>当前步骤</dt>
-                        <dd>{selectedTask.currentStep}</dd>
-                      </div>
-                      <div>
-                        <dt>责任 Agent</dt>
-                        <dd>{selectedTask.ownerAgent}</dd>
-                      </div>
-                      <div>
-                        <dt>耗时</dt>
-                        <dd>{selectedTask.duration}</dd>
-                      </div>
-                      <div>
-                        <dt>人工接入</dt>
-                        <dd>{selectedTask.requiresHuman ? "Required" : "Not needed"}</dd>
-                      </div>
-                    </dl>
-
-                    <div className="timeline">
-                      {selectedTask.timeline.map((event) => (
-                        <article key={event.id} className="timeline__item">
-                          <span className="timeline__time">{event.time}</span>
-                          <div>
-                            <strong>{event.title}</strong>
-                            <p>{event.description}</p>
+                  <Panel>
+                    <SectionHeader title="运行泳道" description="按状态组织 workflow 运行中的任务。" />
+                    <div className="kanban-shell">
+                      {taskBoardColumns.map((column) => (
+                        <section key={column.id} className="kanban-lane">
+                          <div className="kanban-lane__header">
+                            <strong>{column.label}</strong>
+                            <StatusBadge tone={column.badgeTone}>{column.countLabel}</StatusBadge>
                           </div>
-                        </article>
+                          <div className="kanban-column">
+                            {column.items.map((task) => (
+                              <button
+                                key={task.id}
+                                type="button"
+                                className={task.id === selectedTask.id ? "task-card is-selected" : "task-card"}
+                                onClick={() => setSelectedTask(task)}
+                              >
+                                <strong>{task.title}</strong>
+                                <p>{task.workflowName}</p>
+                                <div className="task-card__meta">
+                                  <span>{task.currentStep}</span>
+                                  <span>{task.duration}</span>
+                                  {task.requiresHuman ? <span>需要人工接入</span> : null}
+                                </div>
+                              </button>
+                            ))}
+                          </div>
+                        </section>
                       ))}
+                    </div>
+                  </Panel>
+
+                  <Panel>
+                    <SectionHeader title="对话历史 / 事件流" description="更接近参考图中的下方面板。" />
+                    <div className="history-panel">
+                      <div className="history-panel__header">
+                        <strong>对话历史</strong>
+                        <span>{selectedTask.timeline.length} 条事件</span>
+                      </div>
+                      <div className="timeline">
+                        {selectedTask.timeline.map((event) => (
+                          <article key={event.id} className="timeline__item">
+                            <span className="timeline__time">{event.time}</span>
+                            <div>
+                              <strong>{event.title}</strong>
+                              <p>{event.description}</p>
+                            </div>
+                          </article>
+                        ))}
+                      </div>
                     </div>
 
                     <div className="action-row">
