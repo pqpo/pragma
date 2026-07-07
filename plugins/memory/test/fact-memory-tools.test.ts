@@ -1,15 +1,29 @@
-import { describe, expect, it } from "vitest";
+import { mkdtemp, rm } from "node:fs/promises";
+import { join } from "node:path";
+
+import { afterEach, describe, expect, it } from "vitest";
 
 import {
   MemorySystem,
   createFactMemoryTools,
-  createInMemoryFactMemoryStore,
+  createFileSystemFactMemoryStore,
 } from "../src/index.ts";
+
+const tempDirs: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+});
 
 describe("fact-memory tools", () => {
   it("writes and lists fact memory through tools", async () => {
+    const dir = await mkdtemp(join(process.cwd(), "tmp-fact-tool-memory-"));
+    tempDirs.push(dir);
     const memorySystem = new MemorySystem({
-      factStore: createInMemoryFactMemoryStore(),
+      factStore: createFileSystemFactMemoryStore({
+        agentId: "code-search-agent",
+        filePath: join(dir, "fact.json"),
+      }),
     });
     const tools = createFactMemoryTools({
       memorySystem,

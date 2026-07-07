@@ -1,66 +1,94 @@
 import { errorMemory, okMemory, type TaskMemoryRecord, type TaskMemoryStore } from "../memory-system/index.ts";
+import { readJsonFile, resolveMemoryFilePath, writeJsonFile } from "../storage.ts";
 
-export function createInMemoryTaskMemoryStore(): TaskMemoryStore {
-  const records = new Map<string, TaskMemoryRecord>();
-  const idsByWorkflowRunId = new Map<string, string[]>();
+const TASK_MEMORY_CATEGORY = "task-memory";
+const TASK_MEMORY_FILE_NAME = "records.json";
 
-  const listRecordsByWorkflowRunId = (workflowRunId: string): TaskMemoryRecord[] =>
-    (idsByWorkflowRunId.get(workflowRunId) ?? [])
-      .map((id) => records.get(id))
-      .filter((record): record is TaskMemoryRecord => record !== undefined);
+export function createFileSystemTaskMemoryStore(options: {
+  readonly agentId: string;
+  readonly filePath?: string | undefined;
+}): TaskMemoryStore {
+  const filePath = resolveMemoryFilePath({
+    category: TASK_MEMORY_CATEGORY,
+    agentId: options.agentId,
+    fileName: TASK_MEMORY_FILE_NAME,
+    filePath: options.filePath,
+  });
 
-  const saveRecord = (record: TaskMemoryRecord): TaskMemoryRecord => {
-    records.set(record.id, record);
-    const ids = idsByWorkflowRunId.get(record.workflowRunId) ?? [];
+  return createTaskMemoryStore({
+    readRecords: async () => {
+      const stored = await readJsonFile<readonly TaskMemoryRecord[]>(filePath, []);
+      return stored.map(cloneRecord);
+    },
+    writeRecords: async (records) => {
+      await writeJsonFile(filePath, records.map(cloneRecord));
+    },
+  });
+}
 
-    if (!ids.includes(record.id)) {
-      ids.push(record.id);
-      idsByWorkflowRunId.set(record.workflowRunId, ids);
+function createTaskMemoryStore(options: {
+  readonly readRecords: () => Promise<readonly TaskMemoryRecord[]>;
+  readonly writeRecords: (records: readonly TaskMemoryRecord[]) => Promise<void>;
+}): TaskMemoryStore {
+  let mutationLock = Promise.resolve();
+
+  const withMutationLock = async <TValue>(operation: () => Promise<TValue>): Promise<TValue> => {
+    const previous = mutationLock;
+    let releaseCurrent: (() => void) | undefined;
+    mutationLock = new Promise<void>((resolve) => {
+      releaseCurrent = resolve;
+    });
+    await previous;
+
+    try {
+      return await operation();
+    } finally {
+      releaseCurrent?.();
     }
-
-    return cloneRecord(record);
   };
 
   return {
     async list(input) {
       const statusFilter =
         input.status === undefined ? undefined : new Set(toReadonlyArray(input.status));
-      const filtered = listRecordsByWorkflowRunId(input.workflowRunId).filter((record) => {
-        if (!canReadRecord(record, input.actorAgentId)) {
-          return false;
-        }
+      const filtered = (await options.readRecords())
+        .filter((record) => record.workflowRunId === input.workflowRunId)
+        .filter((record) => {
+          if (!canReadRecord(record, input.actorAgentId)) {
+            return false;
+          }
 
-        if (input.taskRunId !== undefined && record.taskRunId !== input.taskRunId) {
-          return false;
-        }
+          if (input.taskRunId !== undefined && record.taskRunId !== input.taskRunId) {
+            return false;
+          }
 
-        if (
-          input.runtimeSessionId !== undefined &&
-          record.runtimeSessionId !== input.runtimeSessionId
-        ) {
-          return false;
-        }
+          if (
+            input.runtimeSessionId !== undefined &&
+            record.runtimeSessionId !== input.runtimeSessionId
+          ) {
+            return false;
+          }
 
-        if (input.visibility !== undefined && record.visibility !== input.visibility) {
-          return false;
-        }
+          if (input.visibility !== undefined && record.visibility !== input.visibility) {
+            return false;
+          }
 
-        if (input.ownerAgentId !== undefined && record.ownerAgentId !== input.ownerAgentId) {
-          return false;
-        }
+          if (input.ownerAgentId !== undefined && record.ownerAgentId !== input.ownerAgentId) {
+            return false;
+          }
 
-        if (statusFilter !== undefined && !statusFilter.has(record.status)) {
-          return false;
-        }
+          if (statusFilter !== undefined && !statusFilter.has(record.status)) {
+            return false;
+          }
 
-        return true;
-      });
+          return true;
+        });
 
       return okMemory(filtered.map(cloneRecord));
     },
 
     async get(input) {
-      const record = records.get(input.id);
+      const record = (await options.readRecords()).find((item) => item.id === input.id);
 
       if (record === undefined) {
         return errorMemory("memory_not_found", `Task memory not found: ${input.id}`, {
@@ -79,76 +107,88 @@ export function createInMemoryTaskMemoryStore(): TaskMemoryStore {
     },
 
     async append(input) {
-      const now = new Date().toISOString();
-      const record: TaskMemoryRecord = {
-        ...input.record,
-        id: input.record.id ?? createTaskMemoryId(),
-        revision: 0,
-        provenance: {
-          createdBy: input.record.provenance?.createdBy ?? input.actorAgentId,
-          updatedBy: input.record.provenance?.updatedBy ?? input.actorAgentId,
-          source: input.record.provenance?.source,
-          createdAt: input.record.provenance?.createdAt ?? now,
-          updatedAt: input.record.provenance?.updatedAt ?? now,
-          evidence: input.record.provenance?.evidence ?? [],
-        },
-      };
+      return await withMutationLock(async () => {
+        const now = new Date().toISOString();
+        const record: TaskMemoryRecord = {
+          ...input.record,
+          id: input.record.id ?? createTaskMemoryId(),
+          revision: 0,
+          provenance: {
+            createdBy: input.record.provenance?.createdBy ?? input.actorAgentId,
+            updatedBy: input.record.provenance?.updatedBy ?? input.actorAgentId,
+            source: input.record.provenance?.source,
+            createdAt: input.record.provenance?.createdAt ?? now,
+            updatedAt: input.record.provenance?.updatedAt ?? now,
+            evidence: input.record.provenance?.evidence ?? [],
+          },
+        };
 
-      const validation = validateRecordForAppend(record, input.actorAgentId);
+        const validation = validateRecordForAppend(record, input.actorAgentId);
 
-      if (!validation.ok) {
-        return validation;
-      }
+        if (!validation.ok) {
+          return validation;
+        }
 
-      return okMemory(saveRecord(record));
+        const records = await options.readRecords();
+        await options.writeRecords([record, ...records.filter((item) => item.id !== record.id)]);
+        return okMemory(cloneRecord(record));
+      });
     },
 
     async patch(input) {
-      const existing = records.get(input.id);
+      return await withMutationLock(async () => {
+        const records = await options.readRecords();
+        const existing = records.find((item) => item.id === input.id);
 
-      if (existing === undefined) {
-        return errorMemory("memory_not_found", `Task memory not found: ${input.id}`, {
-          id: input.id,
-        });
-      }
+        if (existing === undefined) {
+          return errorMemory("memory_not_found", `Task memory not found: ${input.id}`, {
+            id: input.id,
+          });
+        }
 
-      if (!canWriteRecord(existing, input.actorAgentId)) {
-        return errorMemory("permission_denied", `Task memory is not writable: ${input.id}`, {
-          id: input.id,
-          actorAgentId: input.actorAgentId,
-        });
-      }
+        if (!canWriteRecord(existing, input.actorAgentId)) {
+          return errorMemory("permission_denied", `Task memory is not writable: ${input.id}`, {
+            id: input.id,
+            actorAgentId: input.actorAgentId,
+          });
+        }
 
-      if (existing.revision !== input.expectedRevision) {
-        return errorMemory("memory_conflict", `Task memory revision conflict: ${input.id}`, {
-          id: input.id,
-          expectedRevision: input.expectedRevision,
-          actualRevision: existing.revision,
-        });
-      }
+        if (existing.revision !== input.expectedRevision) {
+          return errorMemory("memory_conflict", `Task memory revision conflict: ${input.id}`, {
+            id: input.id,
+            expectedRevision: input.expectedRevision,
+            actualRevision: existing.revision,
+          });
+        }
 
-      if (input.patch.items !== undefined && existing.kind !== "todo") {
-        return errorMemory("invalid_input", "Only todo task memory can update todo items.", {
-          id: input.id,
-          kind: existing.kind,
-        });
-      }
+        if (input.patch.items !== undefined && existing.kind !== "todo") {
+          return errorMemory("invalid_input", "Only todo task memory can update todo items.", {
+            id: input.id,
+            kind: existing.kind,
+          });
+        }
 
-      const updated: TaskMemoryRecord = {
-        ...existing,
-        ...(input.patch.title === undefined ? {} : { title: input.patch.title }),
-        ...(input.patch.content === undefined ? {} : { content: input.patch.content }),
-        ...(input.patch.status === undefined ? {} : { status: input.patch.status }),
-        ...(input.patch.items === undefined ? {} : { items: [...input.patch.items] }),
-        revision: existing.revision + 1,
-        provenance: {
-          ...existing.provenance,
-          updatedBy: input.actorAgentId,
-          updatedAt: new Date().toISOString(),
-        },
-      };
+        const updated: TaskMemoryRecord = {
+          ...existing,
+          ...(input.patch.title === undefined ? {} : { title: input.patch.title }),
+          ...(input.patch.content === undefined ? {} : { content: input.patch.content }),
+          ...(input.patch.status === undefined ? {} : { status: input.patch.status }),
+          ...(input.patch.items === undefined ? {} : { items: [...input.patch.items] }),
+          revision: existing.revision + 1,
+          provenance: {
+            ...existing.provenance,
+            updatedBy: input.actorAgentId,
+            updatedAt: new Date().toISOString(),
+          },
+        };
 
-      return okMemory(saveRecord(updated));
+        await options.writeRecords([
+          updated,
+          ...records.filter((item) => item.id !== updated.id),
+        ]);
+
+        return okMemory(cloneRecord(updated));
+      });
     },
 
     async archive(input) {
@@ -160,29 +200,27 @@ export function createInMemoryTaskMemoryStore(): TaskMemoryStore {
         return errorMemory("invalid_input", "Archive requires at least one task memory scope.");
       }
 
-      const workflowIds =
-        input.workflowRunId === undefined ? [...idsByWorkflowRunId.keys()] : [input.workflowRunId];
-      const archived: TaskMemoryRecord[] = [];
-
-      for (const workflowRunId of workflowIds) {
-        for (const record of listRecordsByWorkflowRunId(workflowRunId)) {
+      return await withMutationLock(async () => {
+        const records = await options.readRecords();
+        const archived: TaskMemoryRecord[] = [];
+        const nextRecords = records.map((record) => {
           if (!canWriteRecord(record, input.actorAgentId)) {
-            continue;
+            return record;
           }
 
           if (input.taskRunId !== undefined && record.taskRunId !== input.taskRunId) {
-            continue;
+            return record;
           }
 
           if (
             input.runtimeSessionId !== undefined &&
             record.runtimeSessionId !== input.runtimeSessionId
           ) {
-            continue;
+            return record;
           }
 
           if (input.workflowRunId !== undefined && record.workflowRunId !== input.workflowRunId) {
-            continue;
+            return record;
           }
 
           const nextRecord: TaskMemoryRecord =
@@ -199,25 +237,31 @@ export function createInMemoryTaskMemoryStore(): TaskMemoryStore {
                   },
                 };
 
-          archived.push(saveRecord(nextRecord));
-        }
-      }
+          archived.push(cloneRecord(nextRecord));
+          return nextRecord;
+        });
 
-      return okMemory(archived);
+        await options.writeRecords(nextRecords);
+        return okMemory(archived);
+      });
     },
 
-    async retrieveForRuntime(input, options) {
-      const activeRecords = input.workflowRunId === undefined
-        ? []
-        : listRecordsByWorkflowRunId(input.workflowRunId).filter((record) => record.status === "active");
-      const shared = options?.includeShared === false
+    async retrieveForRuntime(input, runtimeOptions) {
+      const activeRecords = (await options.readRecords()).filter(
+        (record) =>
+          record.workflowRunId === input.workflowRunId &&
+          record.status === "active",
+      );
+      const shared = runtimeOptions?.includeShared === false
         ? []
         : activeRecords
             .filter((record) => record.visibility === "shared")
             .filter((record) =>
-              input.taskRunId === undefined || record.taskRunId === undefined || record.taskRunId === input.taskRunId
+              input.taskRunId === undefined ||
+              record.taskRunId === undefined ||
+              record.taskRunId === input.taskRunId
             );
-      const privateItems = options?.includePrivate === false
+      const privateItems = runtimeOptions?.includePrivate === false
         ? []
         : activeRecords.filter(
             (record) =>
@@ -227,7 +271,7 @@ export function createInMemoryTaskMemoryStore(): TaskMemoryStore {
                 record.taskRunId === undefined ||
                 record.taskRunId === input.taskRunId),
           );
-      const maxItems = Math.max(1, options?.maxItems ?? Number.MAX_SAFE_INTEGER);
+      const maxItems = Math.max(1, runtimeOptions?.maxItems ?? Number.MAX_SAFE_INTEGER);
 
       return okMemory({
         shared: shared.slice(0, maxItems).map(cloneRecord),
@@ -279,8 +323,8 @@ function createTaskMemoryId(): string {
 function cloneRecord(record: TaskMemoryRecord): TaskMemoryRecord {
   return {
     ...record,
-    tags: record.tags === undefined ? undefined : [...record.tags],
     items: record.items === undefined ? undefined : record.items.map((item) => ({ ...item })),
+    tags: record.tags === undefined ? undefined : [...record.tags],
     provenance: {
       ...record.provenance,
       evidence: [...record.provenance.evidence],
@@ -289,5 +333,5 @@ function cloneRecord(record: TaskMemoryRecord): TaskMemoryRecord {
 }
 
 function toReadonlyArray<TValue>(value: TValue | readonly TValue[]): readonly TValue[] {
-  return Array.isArray(value) ? value : ([value] as readonly TValue[]);
+  return Array.isArray(value) ? value : [value as TValue];
 }

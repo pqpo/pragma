@@ -1,10 +1,19 @@
-import { describe, expect, it } from "vitest";
+import { mkdtemp, rm } from "node:fs/promises";
+import { join } from "node:path";
 
-import { createInMemoryFactMemoryStore } from "../src/index.ts";
+import { afterEach, describe, expect, it } from "vitest";
 
-describe("in-memory FactMemoryStore", () => {
+import { createFileSystemFactMemoryStore } from "../src/index.ts";
+
+const tempDirs: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+});
+
+describe("file-system FactMemoryStore", () => {
   it("lists facts by scope, confidence, tags, and active state", async () => {
-    const store = createInMemoryFactMemoryStore();
+    const store = await createStore();
 
     await store.write({
       record: {
@@ -54,7 +63,7 @@ describe("in-memory FactMemoryStore", () => {
   });
 
   it("excludes superseded or invalidated facts from runtime retrieval", async () => {
-    const store = createInMemoryFactMemoryStore();
+    const store = await createStore();
 
     await store.write({
       record: {
@@ -101,7 +110,7 @@ describe("in-memory FactMemoryStore", () => {
   });
 
   it("keeps conflicting facts addressable", async () => {
-    const store = createInMemoryFactMemoryStore();
+    const store = await createStore();
 
     await store.write({
       record: {
@@ -150,7 +159,7 @@ describe("in-memory FactMemoryStore", () => {
   });
 
   it("lists and searches facts in stable priority order", async () => {
-    const store = createInMemoryFactMemoryStore();
+    const store = await createStore();
 
     await store.write({
       record: {
@@ -201,4 +210,51 @@ describe("in-memory FactMemoryStore", () => {
       ],
     });
   });
+
+  it("persists fact entries to disk", async () => {
+    const dir = await mkdtemp(join(process.cwd(), "tmp-fact-memory-"));
+    tempDirs.push(dir);
+    const filePath = join(dir, "fact.json");
+    const firstStore = createFileSystemFactMemoryStore({
+      agentId: "agent-a",
+      filePath,
+    });
+
+    await firstStore.write({
+      record: {
+        id: "fact-1",
+        type: "fact",
+        scope: "workspace",
+        statement: "Persisted fact statement.",
+        confidence: "high",
+        observedAt: "2026-07-06T00:00:00.000Z",
+        provenance: {
+          createdAt: "2026-07-06T00:00:00.000Z",
+          updatedAt: "2026-07-06T00:00:00.000Z",
+          evidence: [{ type: "external", id: "search-1" }],
+        },
+      },
+    });
+
+    const secondStore = createFileSystemFactMemoryStore({
+      agentId: "agent-a",
+      filePath,
+    });
+    const listed = await secondStore.list({});
+
+    expect(listed).toMatchObject({
+      ok: true,
+      value: [expect.objectContaining({ id: "fact-1" })],
+    });
+  });
 });
+
+async function createStore() {
+  const dir = await mkdtemp(join(process.cwd(), "tmp-fact-memory-"));
+  tempDirs.push(dir);
+
+  return createFileSystemFactMemoryStore({
+    agentId: "agent-a",
+    filePath: join(dir, "fact.json"),
+  });
+}

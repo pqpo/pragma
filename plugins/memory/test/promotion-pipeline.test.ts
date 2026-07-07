@@ -1,19 +1,30 @@
-import { describe, expect, it, vi } from "vitest";
+import { mkdtemp, rm } from "node:fs/promises";
+import { join } from "node:path";
+
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   errorMemory,
   MemorySystem,
   createDefaultMemoryPromotionPipeline,
-  createInMemoryExperienceMemoryStore,
-  createInMemoryFactMemoryStore,
-  createInMemoryTaskMemoryStore,
+  createFileSystemExperienceMemoryStore,
+  createFileSystemFactMemoryStore,
+  createFileSystemTaskMemoryStore,
 } from "../src/index.ts";
+
+const tempDirs: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+});
 
 describe("memory promotion pipeline", () => {
   it("promotes archived task memory into experience memory", async () => {
+    const experienceStore = await createExperienceStore();
+    const taskStore = await createTaskStore();
     const memorySystem = new MemorySystem({
-      taskStore: createInMemoryTaskMemoryStore(),
-      experienceStore: createInMemoryExperienceMemoryStore(),
+      taskStore,
+      experienceStore,
       promotions: createDefaultMemoryPromotionPipeline(),
     });
 
@@ -49,9 +60,11 @@ describe("memory promotion pipeline", () => {
   });
 
   it("promotes stable experience summaries into facts", async () => {
+    const experienceStore = await createExperienceStore();
+    const factStore = await createFactStore();
     const memorySystem = new MemorySystem({
-      experienceStore: createInMemoryExperienceMemoryStore(),
-      factStore: createInMemoryFactMemoryStore(),
+      experienceStore,
+      factStore,
       promotions: createDefaultMemoryPromotionPipeline(),
     });
 
@@ -90,9 +103,11 @@ describe("memory promotion pipeline", () => {
   });
 
   it("does not promote time-sensitive experience summaries into facts", async () => {
+    const experienceStore = await createExperienceStore();
+    const factStore = await createFactStore();
     const memorySystem = new MemorySystem({
-      experienceStore: createInMemoryExperienceMemoryStore(),
-      factStore: createInMemoryFactMemoryStore(),
+      experienceStore,
+      factStore,
       promotions: createDefaultMemoryPromotionPipeline(),
     });
 
@@ -124,9 +139,11 @@ describe("memory promotion pipeline", () => {
 
   it("does not fail archiveTaskMemory when promotion throws", async () => {
     const onPromotionError = vi.fn();
+    const experienceStore = await createExperienceStore();
+    const taskStore = await createTaskStore();
     const memorySystem = new MemorySystem({
-      taskStore: createInMemoryTaskMemoryStore(),
-      experienceStore: createInMemoryExperienceMemoryStore(),
+      taskStore,
+      experienceStore,
       onPromotionError,
       promotions: {
         async proposeFromTask() {
@@ -163,10 +180,12 @@ describe("memory promotion pipeline", () => {
 
   it("reports promotion store write failures without failing experience writes", async () => {
     const onPromotionError = vi.fn();
+    const experienceStore = await createExperienceStore();
+    const factStore = await createFactStore();
     const memorySystem = new MemorySystem({
-      experienceStore: createInMemoryExperienceMemoryStore(),
+      experienceStore,
       factStore: {
-        ...createInMemoryFactMemoryStore(),
+        ...factStore,
         async write() {
           return errorMemory("store_error", "fact store write failed");
         },
@@ -200,3 +219,33 @@ describe("memory promotion pipeline", () => {
     });
   });
 });
+
+async function createTaskStore() {
+  const dir = await mkdtemp(join(process.cwd(), "tmp-promotion-task-"));
+  tempDirs.push(dir);
+
+  return createFileSystemTaskMemoryStore({
+    agentId: "promotion-agent",
+    filePath: join(dir, "task.json"),
+  });
+}
+
+async function createExperienceStore() {
+  const dir = await mkdtemp(join(process.cwd(), "tmp-promotion-experience-"));
+  tempDirs.push(dir);
+
+  return createFileSystemExperienceMemoryStore({
+    agentId: "promotion-agent",
+    filePath: join(dir, "experience.json"),
+  });
+}
+
+async function createFactStore() {
+  const dir = await mkdtemp(join(process.cwd(), "tmp-promotion-fact-"));
+  tempDirs.push(dir);
+
+  return createFileSystemFactMemoryStore({
+    agentId: "promotion-agent",
+    filePath: join(dir, "fact.json"),
+  });
+}

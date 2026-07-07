@@ -1,10 +1,19 @@
-import { describe, expect, it } from "vitest";
+import { mkdtemp, rm } from "node:fs/promises";
+import { join } from "node:path";
 
-import { MemorySystem, createInMemoryTaskMemoryStore } from "../src/index.ts";
+import { afterEach, describe, expect, it } from "vitest";
 
-describe("in-memory TaskMemoryStore", () => {
+import { MemorySystem, createFileSystemTaskMemoryStore } from "../src/index.ts";
+
+const tempDirs: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+});
+
+describe("file-system TaskMemoryStore", () => {
   it("lists shared entries by workflow run", async () => {
-    const store = createInMemoryTaskMemoryStore();
+    const store = await createStore();
 
     const appended = await store.append({
       actorAgentId: "agent-a",
@@ -27,11 +36,7 @@ describe("in-memory TaskMemoryStore", () => {
       visibility: "shared",
     });
 
-    expect(result).toEqual(
-      expect.objectContaining({
-        ok: true,
-      }),
-    );
+    expect(result).toEqual(expect.objectContaining({ ok: true }));
     if (!result.ok) {
       return;
     }
@@ -41,7 +46,7 @@ describe("in-memory TaskMemoryStore", () => {
   });
 
   it("hides private entries from other agents", async () => {
-    const store = createInMemoryTaskMemoryStore();
+    const store = await createStore();
     const appended = await store.append({
       actorAgentId: "agent-a",
       record: {
@@ -75,7 +80,7 @@ describe("in-memory TaskMemoryStore", () => {
   });
 
   it("rejects private writes owned by another agent", async () => {
-    const store = createInMemoryTaskMemoryStore();
+    const store = await createStore();
 
     const result = await store.append({
       actorAgentId: "agent-a",
@@ -100,7 +105,7 @@ describe("in-memory TaskMemoryStore", () => {
   });
 
   it("patches todo entries and increments revision", async () => {
-    const store = createInMemoryTaskMemoryStore();
+    const store = await createStore();
     const appended = await store.append({
       actorAgentId: "agent-a",
       record: {
@@ -155,7 +160,7 @@ describe("in-memory TaskMemoryStore", () => {
   });
 
   it("returns memory_conflict for stale revisions", async () => {
-    const store = createInMemoryTaskMemoryStore();
+    const store = await createStore();
     const appended = await store.append({
       actorAgentId: "agent-a",
       record: {
@@ -216,7 +221,7 @@ describe("in-memory TaskMemoryStore", () => {
   });
 
   it("excludes private entries from other agents during runtime retrieval", async () => {
-    const store = createInMemoryTaskMemoryStore();
+    const store = await createStore();
 
     await store.append({
       actorAgentId: "agent-a",
@@ -260,7 +265,7 @@ describe("in-memory TaskMemoryStore", () => {
   });
 
   it("scopes private runtime retrieval to the current task run", async () => {
-    const store = createInMemoryTaskMemoryStore();
+    const store = await createStore();
 
     await store.append({
       actorAgentId: "agent-a",
@@ -297,11 +302,7 @@ describe("in-memory TaskMemoryStore", () => {
       taskRunId: "task-1",
     });
 
-    expect(retrieved).toEqual(
-      expect.objectContaining({
-        ok: true,
-      }),
-    );
+    expect(retrieved).toEqual(expect.objectContaining({ ok: true }));
     if (!retrieved.ok) {
       return;
     }
@@ -312,7 +313,7 @@ describe("in-memory TaskMemoryStore", () => {
   });
 
   it("archives entries by task run and removes them from active retrieval", async () => {
-    const store = createInMemoryTaskMemoryStore();
+    const store = await createStore();
 
     await store.append({
       actorAgentId: "agent-a",
@@ -351,16 +352,8 @@ describe("in-memory TaskMemoryStore", () => {
       workflowRunId: "workflow-1",
     });
 
-    expect(listed).toEqual(
-      expect.objectContaining({
-        ok: true,
-      }),
-    );
-    expect(retrieved).toEqual(
-      expect.objectContaining({
-        ok: true,
-      }),
-    );
+    expect(listed).toEqual(expect.objectContaining({ ok: true }));
+    expect(retrieved).toEqual(expect.objectContaining({ ok: true }));
     if (!listed.ok || !retrieved.ok) {
       return;
     }
@@ -371,7 +364,7 @@ describe("in-memory TaskMemoryStore", () => {
 
   it("integrates with MemorySystem runtime retrieval", async () => {
     const system = new MemorySystem({
-      taskStore: createInMemoryTaskMemoryStore(),
+      taskStore: await createStore(),
     });
 
     await system.appendTaskMemory({
@@ -417,3 +410,13 @@ describe("in-memory TaskMemoryStore", () => {
     expect(retrieved.value.task.combined).toHaveLength(2);
   });
 });
+
+async function createStore() {
+  const dir = await mkdtemp(join(process.cwd(), "tmp-task-memory-"));
+  tempDirs.push(dir);
+
+  return createFileSystemTaskMemoryStore({
+    agentId: "agent-a",
+    filePath: join(dir, "task.json"),
+  });
+}

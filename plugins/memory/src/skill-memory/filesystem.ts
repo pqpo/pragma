@@ -19,6 +19,7 @@ import {
 import { resolveConfig } from "./config.ts";
 import type { SkillMemoryConfig } from "./schema.ts";
 import { renderSummaryIndex } from "./rendering.ts";
+import { expandHomePath, resolveUserMemoryHome } from "../storage.ts";
 import {
   defaultTriggerForContextId,
   isAllowedMemoryContextId,
@@ -28,14 +29,14 @@ import {
 import { sanitizeIdSegment } from "./utils.ts";
 
 export function resolveMemoryRoot(
-  workspaceRoot: string,
+  _workspaceRoot: string,
   config: SkillMemoryConfig,
   agentId: string,
 ): string {
-  const workspacePath = resolve(workspaceRoot);
-  const rootPath = resolve(workspacePath, config.memoryRoot, sanitizeIdSegment(agentId));
-
-  assertPathInside(rootPath, workspacePath, `Invalid skill memory root: ${config.memoryRoot}`);
+  const basePath = isAbsolute(expandHomePath(config.memoryRoot))
+    ? resolve(expandHomePath(config.memoryRoot))
+    : resolve(resolveUserMemoryHome(), config.memoryRoot);
+  const rootPath = resolve(basePath, sanitizeIdSegment(agentId));
 
   return rootPath;
 }

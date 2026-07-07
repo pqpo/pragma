@@ -1,10 +1,19 @@
-import { describe, expect, it } from "vitest";
+import { mkdtemp, rm } from "node:fs/promises";
+import { join } from "node:path";
 
-import { createInMemoryExperienceMemoryStore } from "../src/index.ts";
+import { afterEach, describe, expect, it } from "vitest";
 
-describe("in-memory ExperienceMemoryStore", () => {
+import { createFileSystemExperienceMemoryStore } from "../src/index.ts";
+
+const tempDirs: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+});
+
+describe("file-system ExperienceMemoryStore", () => {
   it("writes, lists, and filters experience entries", async () => {
-    const store = createInMemoryExperienceMemoryStore();
+    const store = await createStore();
 
     const written = await store.write({
       record: {
@@ -40,7 +49,7 @@ describe("in-memory ExperienceMemoryStore", () => {
   });
 
   it("retrieves relevant experiences for runtime and prioritizes summarized entries", async () => {
-    const store = createInMemoryExperienceMemoryStore();
+    const store = await createStore();
 
     await store.write({
       record: {
@@ -90,7 +99,7 @@ describe("in-memory ExperienceMemoryStore", () => {
   });
 
   it("matches runtime retrieval queries case-insensitively", async () => {
-    const store = createInMemoryExperienceMemoryStore();
+    const store = await createStore();
 
     await store.write({
       record: {
@@ -124,7 +133,7 @@ describe("in-memory ExperienceMemoryStore", () => {
   });
 
   it("updates and deletes entries", async () => {
-    const store = createInMemoryExperienceMemoryStore();
+    const store = await createStore();
 
     await store.write({
       record: {
@@ -172,4 +181,51 @@ describe("in-memory ExperienceMemoryStore", () => {
       value: { id: "experience-1" },
     });
   });
+
+  it("persists experience entries to disk", async () => {
+    const dir = await mkdtemp(join(process.cwd(), "tmp-experience-memory-"));
+    tempDirs.push(dir);
+    const filePath = join(dir, "experience.json");
+    const firstStore = createFileSystemExperienceMemoryStore({
+      agentId: "agent-a",
+      filePath,
+    });
+
+    await firstStore.write({
+      record: {
+        id: "experience-1",
+        type: "experience",
+        scope: "workspace",
+        kind: "tool",
+        content: "Persisted experience content.",
+        status: "summarized",
+        provenance: {
+          createdAt: "2026-07-06T00:00:00.000Z",
+          updatedAt: "2026-07-06T00:00:00.000Z",
+          evidence: [{ type: "run", id: "run-1" }],
+        },
+      },
+    });
+
+    const secondStore = createFileSystemExperienceMemoryStore({
+      agentId: "agent-a",
+      filePath,
+    });
+    const listed = await secondStore.list({});
+
+    expect(listed).toMatchObject({
+      ok: true,
+      value: [expect.objectContaining({ id: "experience-1" })],
+    });
+  });
 });
+
+async function createStore() {
+  const dir = await mkdtemp(join(process.cwd(), "tmp-experience-memory-"));
+  tempDirs.push(dir);
+
+  return createFileSystemExperienceMemoryStore({
+    agentId: "agent-a",
+    filePath: join(dir, "experience.json"),
+  });
+}

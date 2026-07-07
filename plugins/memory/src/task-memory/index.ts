@@ -4,10 +4,10 @@ import type {
 } from "@pragma/core";
 
 import { MemorySystem, type TaskMemoryStore } from "../memory-system/index.ts";
-import { createInMemoryTaskMemoryStore } from "./store.ts";
+import { createFileSystemTaskMemoryStore } from "./store.ts";
 import { createTaskMemoryTools } from "./tools.ts";
 
-export { createInMemoryTaskMemoryStore } from "./store.ts";
+export { createFileSystemTaskMemoryStore } from "./store.ts";
 export { createTaskMemoryTools } from "./tools.ts";
 
 export interface TaskMemoryStoreFactoryContext {
@@ -20,6 +20,7 @@ export type TaskMemoryStoreFactory = (
 
 export interface TaskMemoryPluginConfig {
   readonly enabled?: boolean | undefined;
+  readonly filePath?: string | undefined;
   readonly store?: TaskMemoryStore | undefined;
   readonly storeFactory?: TaskMemoryStoreFactory | undefined;
 }
@@ -87,12 +88,14 @@ function readTaskMemoryConfig(input: unknown): TaskMemoryPluginConfig {
   }
 
   const enabled = (task as { enabled?: unknown }).enabled;
+  const filePath = (task as { filePath?: unknown }).filePath;
   const store = (task as { store?: unknown }).store;
   const storeFactory = (task as { storeFactory?: unknown }).storeFactory;
 
   if (enabled === undefined) {
     return {
       enabled: true,
+      ...(filePath === undefined ? {} : { filePath: assertOptionalString(filePath, "filePath") }),
       ...(store === undefined ? {} : { store: assertTaskMemoryStore(store) }),
       ...(storeFactory === undefined
         ? {}
@@ -106,6 +109,7 @@ function readTaskMemoryConfig(input: unknown): TaskMemoryPluginConfig {
 
   return {
     enabled,
+    ...(filePath === undefined ? {} : { filePath: assertOptionalString(filePath, "filePath") }),
     ...(store === undefined ? {} : { store: assertTaskMemoryStore(store) }),
     ...(storeFactory === undefined
       ? {}
@@ -127,7 +131,10 @@ function resolveTaskMemoryStore(
     });
   }
 
-  return createInMemoryTaskMemoryStore();
+  return createFileSystemTaskMemoryStore({
+    agentId: context.agent?.id ?? "unknown-agent",
+    filePath: config.filePath,
+  });
 }
 
 function assertTaskMemoryStore(input: unknown): TaskMemoryStore {
@@ -144,6 +151,14 @@ function assertTaskMemoryStoreFactory(input: unknown): TaskMemoryStoreFactory {
   }
 
   throw new Error("Task memory config storeFactory must be a function.");
+}
+
+function assertOptionalString(input: unknown, fieldName: string): string {
+  if (typeof input === "string" && input.length > 0) {
+    return input;
+  }
+
+  throw new Error(`Task memory config ${fieldName} must be a non-empty string.`);
 }
 
 function isTaskMemoryStore(input: unknown): input is TaskMemoryStore {

@@ -1,15 +1,29 @@
-import { describe, expect, it } from "vitest";
+import { mkdtemp, rm } from "node:fs/promises";
+import { join } from "node:path";
+
+import { afterEach, describe, expect, it } from "vitest";
 
 import {
   MemorySystem,
   createExperienceMemoryTools,
-  createInMemoryExperienceMemoryStore,
+  createFileSystemExperienceMemoryStore,
 } from "../src/index.ts";
+
+const tempDirs: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+});
 
 describe("experience-memory tools", () => {
   it("appends experience memory using workflow defaults", async () => {
+    const dir = await mkdtemp(join(process.cwd(), "tmp-experience-tool-memory-"));
+    tempDirs.push(dir);
     const memorySystem = new MemorySystem({
-      experienceStore: createInMemoryExperienceMemoryStore(),
+      experienceStore: createFileSystemExperienceMemoryStore({
+        agentId: "code-search-agent",
+        filePath: join(dir, "experience.json"),
+      }),
     });
     const tools = createExperienceMemoryTools({
       memorySystem,

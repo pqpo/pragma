@@ -1,16 +1,26 @@
-import { describe, expect, it } from "vitest";
+import { mkdtemp, rm } from "node:fs/promises";
+import { join } from "node:path";
+
+import { afterEach, describe, expect, it } from "vitest";
 
 import {
   MemorySystem,
-  createInMemoryTaskMemoryStore,
+  createFileSystemTaskMemoryStore,
   createTaskMemoryTools,
 } from "../src/index.ts";
 
+const tempDirs: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+});
+
 describe("task-memory tools", () => {
   it("uses workflow run context and agent id defaults", async () => {
+    const store = await createStore("planner-agent");
     const tools = createTaskMemoryTools({
       memorySystem: new MemorySystem({
-        taskStore: createInMemoryTaskMemoryStore(),
+        taskStore: store,
       }),
       defaultAgentId: "planner-agent",
     });
@@ -37,8 +47,9 @@ describe("task-memory tools", () => {
   });
 
   it("appends private todo task memory with the current agent as owner", async () => {
+    const store = await createStore("specialist-agent");
     const memorySystem = new MemorySystem({
-      taskStore: createInMemoryTaskMemoryStore(),
+      taskStore: store,
     });
     const tools = createTaskMemoryTools({
       memorySystem,
@@ -86,7 +97,7 @@ describe("task-memory tools", () => {
   });
 
   it("reads task memory by id with the current agent id", async () => {
-    const store = createInMemoryTaskMemoryStore();
+    const store = await createStore("specialist-agent");
     const appended = await store.append({
       actorAgentId: "specialist-agent",
       record: {
@@ -117,7 +128,7 @@ describe("task-memory tools", () => {
   });
 
   it("patches task memory with optimistic concurrency", async () => {
-    const store = createInMemoryTaskMemoryStore();
+    const store = await createStore("planner-agent");
     const appended = await store.append({
       actorAgentId: "planner-agent",
       record: {
@@ -157,9 +168,10 @@ describe("task-memory tools", () => {
   });
 
   it("returns validation errors for invalid task memory append payloads", async () => {
+    const store = await createStore("specialist-agent");
     const tools = createTaskMemoryTools({
       memorySystem: new MemorySystem({
-        taskStore: createInMemoryTaskMemoryStore(),
+        taskStore: store,
       }),
       defaultAgentId: "specialist-agent",
     });
@@ -197,8 +209,9 @@ describe("task-memory tools", () => {
   });
 
   it("passes array status filters to list task memory", async () => {
+    const store = await createStore("planner-agent");
     const memorySystem = new MemorySystem({
-      taskStore: createInMemoryTaskMemoryStore(),
+      taskStore: store,
     });
     const tools = createTaskMemoryTools({
       memorySystem,
@@ -254,3 +267,13 @@ describe("task-memory tools", () => {
     });
   });
 });
+
+async function createStore(agentId: string) {
+  const dir = await mkdtemp(join(process.cwd(), "tmp-task-tool-memory-"));
+  tempDirs.push(dir);
+
+  return createFileSystemTaskMemoryStore({
+    agentId,
+    filePath: join(dir, "task.json"),
+  });
+}

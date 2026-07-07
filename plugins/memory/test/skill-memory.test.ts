@@ -1,5 +1,5 @@
 import { mkdtemp, rm } from "node:fs/promises";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { afterEach, describe, expect, it } from "vitest";
@@ -22,7 +22,8 @@ afterEach(async () => {
 describe("memory plugin skill-memory", () => {
   it("registers skill-memory context when the plugin is enabled", async () => {
     const workspace = await createWorkspaceDir();
-    const agent = await createAgent({ workspace });
+    const memoryDir = await createMemoryDir();
+    const agent = await createAgent({ workspace, memoryDir });
 
     await agent.addContext({
       namespace: "skill-memory",
@@ -48,9 +49,11 @@ describe("memory plugin skill-memory", () => {
 
   it("can disable skill-memory through plugin config", async () => {
     const workspace = await createWorkspaceDir();
+    const memoryDir = await createMemoryDir();
     const memorySystem = new MemorySystem();
     const agent = await createAgent({
       workspace,
+      memoryDir,
       memorySystem,
       pluginConfig: {
         skill: {
@@ -83,9 +86,11 @@ describe("memory plugin skill-memory", () => {
 
   it("writes summaries and registers derived skills into typed skill memory", async () => {
     const workspace = await createWorkspaceDir();
+    const memoryDir = await createMemoryDir();
     const memorySystem = new MemorySystem();
     const agent = await createAgent({
       workspace,
+      memoryDir,
       memorySystem,
     });
 
@@ -156,6 +161,7 @@ describe("memory plugin skill-memory", () => {
 
   it("reads host config from skill-memory-config.json", async () => {
     const workspace = await createWorkspaceDir();
+    const memoryDir = await createMemoryDir();
     const contextSystem = new ContextSystem();
     contextSystem.register({
       namespace: HOST_CONTEXT_NAMESPACE,
@@ -171,6 +177,7 @@ describe("memory plugin skill-memory", () => {
     });
     const agent = await createAgent({
       workspace,
+      memoryDir,
       contextSystem,
     });
 
@@ -186,9 +193,18 @@ describe("memory plugin skill-memory", () => {
 
 async function createAgent(options: {
   readonly workspace: string;
+  readonly memoryDir: string;
   readonly contextSystem?: ContextSystem | undefined;
   readonly memorySystem?: MemorySystem | undefined;
   readonly pluginConfig?: {
+    readonly experience?: {
+      readonly enabled?: boolean | undefined;
+      readonly filePath?: string | undefined;
+    } | undefined;
+    readonly fact?: {
+      readonly enabled?: boolean | undefined;
+      readonly filePath?: string | undefined;
+    } | undefined;
     readonly skill?: {
       readonly enabled?: boolean | undefined;
       readonly useMemories?: boolean | undefined;
@@ -215,7 +231,20 @@ async function createAgent(options: {
                 memorySystem: options.memorySystem,
               },
         ),
-        ...(options.pluginConfig === undefined ? {} : { config: options.pluginConfig }),
+        config: {
+          experience: {
+            filePath: join(options.memoryDir, "experience.json"),
+            ...(options.pluginConfig?.experience ?? {}),
+          },
+          fact: {
+            filePath: join(options.memoryDir, "fact.json"),
+            ...(options.pluginConfig?.fact ?? {}),
+          },
+          skill: {
+            memoryRoot: join(options.memoryDir, "skill-memory"),
+            ...(options.pluginConfig?.skill ?? {}),
+          },
+        },
       },
     ],
     ...(options.contextSystem === undefined ? {} : { contextSystem: options.contextSystem }),
@@ -321,6 +350,13 @@ function createSessionInfo(options: {
 async function createWorkspaceDir(): Promise<string> {
   const packageRoot = fileURLToPath(new URL("../../", import.meta.url));
   const dir = await mkdtemp(resolve(packageRoot, ".pragma-skill-memory-workspace-"));
+  tempDirs.push(dir);
+  return dir;
+}
+
+async function createMemoryDir(): Promise<string> {
+  const packageRoot = fileURLToPath(new URL("../../", import.meta.url));
+  const dir = await mkdtemp(resolve(packageRoot, ".pragma-memory-home-"));
   tempDirs.push(dir);
   return dir;
 }

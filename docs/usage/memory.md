@@ -51,6 +51,8 @@ const agent = await defineAgent({
 - `task-memory`、`experience-memory`、`fact-memory` 会注入工具。
 - `skill-memory` 会注册 `skill-memory` 上下文 namespace。
 - 任务归档和经历写入会触发默认晋升规则。
+- 四类记忆默认都会持久化到用户目录下的 `~/.pragma/memories/`，不会直接写入 agent workspace。
+- `task-memory` 虽然语义上仍然是 task / run / session 内的短期工作记忆，但默认也会落盘，以支持 session 恢复和跨进程恢复。
 
 ## 关闭全部记忆
 

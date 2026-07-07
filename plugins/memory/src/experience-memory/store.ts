@@ -5,14 +5,62 @@ import {
   type ExperienceMemoryStore,
   type MemorySearchInput,
 } from "../memory-system/index.ts";
+import { readJsonFile, resolveMemoryFilePath, writeJsonFile } from "../storage.ts";
 
-export function createInMemoryExperienceMemoryStore(): ExperienceMemoryStore {
-  const records = new Map<string, ExperienceMemoryRecord>();
+const EXPERIENCE_MEMORY_CATEGORY = "experience-memory";
+const EXPERIENCE_MEMORY_FILE_NAME = "records.json";
+
+export function createFileSystemExperienceMemoryStore(options: {
+  readonly agentId: string;
+  readonly filePath?: string | undefined;
+}): ExperienceMemoryStore {
+  const filePath = resolveMemoryFilePath({
+    category: EXPERIENCE_MEMORY_CATEGORY,
+    agentId: options.agentId,
+    fileName: EXPERIENCE_MEMORY_FILE_NAME,
+    filePath: options.filePath,
+  });
+
+  return createExperienceMemoryStore({
+    readRecords: async () => {
+      const stored = await readJsonFile<readonly ExperienceMemoryRecord[]>(filePath, []);
+      return stored.map(cloneExperienceRecord).sort((left, right) =>
+        right.provenance.updatedAt.localeCompare(left.provenance.updatedAt),
+      );
+    },
+    writeRecords: async (records) => {
+      await writeJsonFile(filePath, records.map(cloneExperienceRecord));
+    },
+  });
+}
+
+function createExperienceMemoryStore(options: {
+  readonly readRecords: () => Promise<readonly ExperienceMemoryRecord[]>;
+  readonly writeRecords: (records: readonly ExperienceMemoryRecord[]) => Promise<void>;
+}): ExperienceMemoryStore {
+  let mutationLock = Promise.resolve();
+
+  const withMutationLock = async <TValue>(operation: () => Promise<TValue>): Promise<TValue> => {
+    const previous = mutationLock;
+    let releaseCurrent: (() => void) | undefined;
+    mutationLock = new Promise<void>((resolve) => {
+      releaseCurrent = resolve;
+    });
+    await previous;
+
+    try {
+      return await operation();
+    } finally {
+      releaseCurrent?.();
+    }
+  };
 
   return {
     async list(input) {
+      const records = await options.readRecords();
+
       return okMemory(
-        listRecords(records).filter((record) => {
+        records.filter((record) => {
           if (input.workflowRunId !== undefined && record.workflowRunId !== input.workflowRunId) {
             return false;
           }
@@ -39,7 +87,7 @@ export function createInMemoryExperienceMemoryStore(): ExperienceMemoryStore {
     },
 
     async get(input) {
-      const record = records.get(input.id);
+      const record = (await options.readRecords()).find((item) => item.id === input.id);
 
       return record === undefined
         ? errorMemory("memory_not_found", `Experience memory not found: ${input.id}`, {
@@ -49,57 +97,75 @@ export function createInMemoryExperienceMemoryStore(): ExperienceMemoryStore {
     },
 
     async write(input) {
-      const validation = validateExperienceRecord(input.record);
+      return await withMutationLock(async () => {
+        const validation = validateExperienceRecord(input.record);
 
-      if (!validation.ok) {
-        return validation;
-      }
+        if (!validation.ok) {
+          return validation;
+        }
 
-      const record = withExperienceDefaults(input.record);
-      records.set(record.id, record);
-      return okMemory(cloneExperienceRecord(record));
+        const records = await options.readRecords();
+        const record = withExperienceDefaults(input.record);
+        await options.writeRecords([
+          record,
+          ...records.filter((existing) => existing.id !== record.id),
+        ]);
+
+        return okMemory(cloneExperienceRecord(record));
+      });
     },
 
     async update(input) {
-      const existing = records.get(input.record.id);
+      return await withMutationLock(async () => {
+        const records = await options.readRecords();
+        const existing = records.find((item) => item.id === input.record.id);
 
-      if (existing === undefined) {
-        return errorMemory("memory_not_found", `Experience memory not found: ${input.record.id}`, {
-          id: input.record.id,
+        if (existing === undefined) {
+          return errorMemory("memory_not_found", `Experience memory not found: ${input.record.id}`, {
+            id: input.record.id,
+          });
+        }
+
+        const merged: ExperienceMemoryRecord = withExperienceDefaults({
+          ...input.record,
+          provenance: {
+            ...input.record.provenance,
+            createdAt: existing.provenance.createdAt,
+            createdBy: existing.provenance.createdBy,
+          },
         });
-      }
+        const validation = validateExperienceRecord(merged);
 
-      const merged: ExperienceMemoryRecord = withExperienceDefaults({
-        ...input.record,
-        provenance: {
-          ...input.record.provenance,
-          createdAt: existing.provenance.createdAt,
-          createdBy: existing.provenance.createdBy,
-        },
+        if (!validation.ok) {
+          return validation;
+        }
+
+        await options.writeRecords([
+          merged,
+          ...records.filter((record) => record.id !== merged.id),
+        ]);
+
+        return okMemory(cloneExperienceRecord(merged));
       });
-      const validation = validateExperienceRecord(merged);
-
-      if (!validation.ok) {
-        return validation;
-      }
-
-      records.set(merged.id, merged);
-      return okMemory(cloneExperienceRecord(merged));
     },
 
     async delete(input) {
-      if (!records.has(input.id)) {
-        return errorMemory("memory_not_found", `Experience memory not found: ${input.id}`, {
-          id: input.id,
-        });
-      }
+      return await withMutationLock(async () => {
+        const records = await options.readRecords();
 
-      records.delete(input.id);
-      return okMemory({ id: input.id });
+        if (!records.some((record) => record.id === input.id)) {
+          return errorMemory("memory_not_found", `Experience memory not found: ${input.id}`, {
+            id: input.id,
+          });
+        }
+
+        await options.writeRecords(records.filter((record) => record.id !== input.id));
+        return okMemory({ id: input.id });
+      });
     },
 
     async search(input) {
-      const filtered = scoreExperienceMatches(listRecords(records), input).slice(
+      const filtered = scoreExperienceMatches(await options.readRecords(), input).slice(
         0,
         Math.max(1, input.pagination?.limit ?? Number.MAX_SAFE_INTEGER),
       );
@@ -107,9 +173,9 @@ export function createInMemoryExperienceMemoryStore(): ExperienceMemoryStore {
       return okMemory(filtered);
     },
 
-    async retrieveForRuntime(input, options) {
+    async retrieveForRuntime(input, optionsInput) {
       const query = input.query?.trim().toLowerCase() ?? "";
-      const matches = scoreExperienceMatches(listRecords(records), {
+      const matches = scoreExperienceMatches(await options.readRecords(), {
         query: input.query ?? "",
       });
       const relevant = matches
@@ -126,12 +192,15 @@ export function createInMemoryExperienceMemoryStore(): ExperienceMemoryStore {
             return true;
           }
 
-          return query.length > 0 && (record.content.toLowerCase().includes(query) ||
+          return query.length > 0 && (
+            record.content.toLowerCase().includes(query) ||
             record.summary?.toLowerCase().includes(query) === true ||
-            record.title?.toLowerCase().includes(query) === true);
+            record.title?.toLowerCase().includes(query) === true
+          );
         })
         .sort((left, right) => {
-          const statusDelta = experienceStatusWeight(right.record.status) - experienceStatusWeight(left.record.status);
+          const statusDelta =
+            experienceStatusWeight(right.record.status) - experienceStatusWeight(left.record.status);
 
           if (statusDelta !== 0) {
             return statusDelta;
@@ -143,18 +212,12 @@ export function createInMemoryExperienceMemoryStore(): ExperienceMemoryStore {
 
           return right.record.provenance.updatedAt.localeCompare(left.record.provenance.updatedAt);
         })
-        .slice(0, Math.max(1, options?.maxItems ?? Number.MAX_SAFE_INTEGER))
+        .slice(0, Math.max(1, optionsInput?.maxItems ?? Number.MAX_SAFE_INTEGER))
         .map(({ record }) => cloneExperienceRecord(record));
 
       return okMemory(relevant);
     },
   };
-}
-
-function listRecords(records: ReadonlyMap<string, ExperienceMemoryRecord>): ExperienceMemoryRecord[] {
-  return [...records.values()].sort((left, right) =>
-    right.provenance.updatedAt.localeCompare(left.provenance.updatedAt),
-  );
 }
 
 function scoreExperienceMatches(

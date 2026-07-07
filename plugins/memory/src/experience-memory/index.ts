@@ -4,10 +4,10 @@ import type {
 } from "@pragma/core";
 
 import { MemorySystem, type ExperienceMemoryStore } from "../memory-system/index.ts";
-import { createInMemoryExperienceMemoryStore } from "./store.ts";
+import { createFileSystemExperienceMemoryStore } from "./store.ts";
 import { createExperienceMemoryTools } from "./tools.ts";
 
-export { createInMemoryExperienceMemoryStore } from "./store.ts";
+export { createFileSystemExperienceMemoryStore } from "./store.ts";
 export { createExperienceMemoryTools } from "./tools.ts";
 
 export interface ExperienceMemoryStoreFactoryContext {
@@ -20,6 +20,7 @@ export type ExperienceMemoryStoreFactory = (
 
 export interface ExperienceMemoryPluginConfig {
   readonly enabled?: boolean | undefined;
+  readonly filePath?: string | undefined;
   readonly store?: ExperienceMemoryStore | undefined;
   readonly storeFactory?: ExperienceMemoryStoreFactory | undefined;
 }
@@ -87,6 +88,7 @@ function readExperienceMemoryConfig(input: unknown): ExperienceMemoryPluginConfi
   }
 
   const enabled = (experience as { enabled?: unknown }).enabled;
+  const filePath = (experience as { filePath?: unknown }).filePath;
   const store = (experience as { store?: unknown }).store;
   const storeFactory = (experience as { storeFactory?: unknown }).storeFactory;
 
@@ -96,6 +98,7 @@ function readExperienceMemoryConfig(input: unknown): ExperienceMemoryPluginConfi
 
   return {
     enabled: enabled ?? true,
+    ...(filePath === undefined ? {} : { filePath: assertOptionalString(filePath, "filePath") }),
     ...(store === undefined ? {} : { store: assertExperienceMemoryStore(store) }),
     ...(storeFactory === undefined
       ? {}
@@ -117,7 +120,10 @@ function resolveExperienceMemoryStore(
     });
   }
 
-  return createInMemoryExperienceMemoryStore();
+  return createFileSystemExperienceMemoryStore({
+    agentId: context.agent?.id ?? "unknown-agent",
+    filePath: config.filePath,
+  });
 }
 
 function assertExperienceMemoryStore(input: unknown): ExperienceMemoryStore {
@@ -134,6 +140,14 @@ function assertExperienceMemoryStoreFactory(input: unknown): ExperienceMemorySto
   }
 
   throw new Error("Experience memory config storeFactory must be a function.");
+}
+
+function assertOptionalString(input: unknown, fieldName: string): string {
+  if (typeof input === "string" && input.length > 0) {
+    return input;
+  }
+
+  throw new Error(`Experience memory config ${fieldName} must be a non-empty string.`);
 }
 
 function isExperienceMemoryStore(input: unknown): input is ExperienceMemoryStore {

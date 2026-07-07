@@ -383,8 +383,7 @@ plugins/code-repository-manager
 - `task-memory` 负责在插件内部维护 `Task Memory` store，并通过插件注入 task memory 工具。
 - `experience-memory` 负责记录历史经历、操作过程和带证据的执行总结，并注入 experience memory 工具。
 - `fact-memory` 负责维护稳定事实、置信度、冲突和失效信息，并注入 fact memory 工具。
-- `task-memory` 默认使用 in-memory store，也支持在程序化 plugin config 中注入自定义 `TaskMemoryStore` 或 `storeFactory`，后续可平滑接 Redis 等持久化实现。
-- `experience-memory` 和 `fact-memory` 当前也默认使用 in-memory store，接口同样保持可替换。
+- `task-memory`、`experience-memory` 和 `fact-memory` 默认都会持久化到用户目录 `~/.pragma/memories/` 下，接口仍然保持可替换，也支持在程序化 plugin config 中注入自定义 store 或 `storeFactory`。
 - `skill-memory` 负责注册 `skill-memory` namespace 的审计上下文：`summary.md`、`skills/*.md`、`tasks/**`。
 - `skill-memory` 使用 stream / task / session hooks 生成任务总结、session 总结和技能卡，并注册到插件内部的 memory system 供后续检索使用。
 - memory plugin 默认包含一条 promotion pipeline：`task -> experience -> fact/skill`。
@@ -404,5 +403,5 @@ plugins/code-repository-manager
 - 插件提供工具时必须明确 `inputSchema`。
 - 文件、网络、删除、shell 等敏感操作应提供 tool approval。
 - Hooks 用于横切能力，例如审计、可选插件扩展、策略检查，不要把核心业务流程藏进 hook。
-- 插件应把长期数据放在 workspace 可审计目录中。
+- 插件应明确长期数据和会话数据的落盘边界；当前 memory plugin 默认使用用户目录 `~/.pragma/memories/`，而不是 workspace。
 - 插件加载失败不应该让 Agent 创建过程不可解释，错误应进入 `pluginLoadIssues`。

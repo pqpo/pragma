@@ -4,10 +4,10 @@ import type {
 } from "@pragma/core";
 
 import { MemorySystem, type FactMemoryStore } from "../memory-system/index.ts";
-import { createInMemoryFactMemoryStore } from "./store.ts";
+import { createFileSystemFactMemoryStore } from "./store.ts";
 import { createFactMemoryTools } from "./tools.ts";
 
-export { createInMemoryFactMemoryStore } from "./store.ts";
+export { createFileSystemFactMemoryStore } from "./store.ts";
 export { createFactMemoryTools } from "./tools.ts";
 
 export interface FactMemoryStoreFactoryContext {
@@ -20,6 +20,7 @@ export type FactMemoryStoreFactory = (
 
 export interface FactMemoryPluginConfig {
   readonly enabled?: boolean | undefined;
+  readonly filePath?: string | undefined;
   readonly store?: FactMemoryStore | undefined;
   readonly storeFactory?: FactMemoryStoreFactory | undefined;
 }
@@ -87,6 +88,7 @@ function readFactMemoryConfig(input: unknown): FactMemoryPluginConfig {
   }
 
   const enabled = (fact as { enabled?: unknown }).enabled;
+  const filePath = (fact as { filePath?: unknown }).filePath;
   const store = (fact as { store?: unknown }).store;
   const storeFactory = (fact as { storeFactory?: unknown }).storeFactory;
 
@@ -96,6 +98,7 @@ function readFactMemoryConfig(input: unknown): FactMemoryPluginConfig {
 
   return {
     enabled: enabled ?? true,
+    ...(filePath === undefined ? {} : { filePath: assertOptionalString(filePath, "filePath") }),
     ...(store === undefined ? {} : { store: assertFactMemoryStore(store) }),
     ...(storeFactory === undefined ? {} : { storeFactory: assertFactMemoryStoreFactory(storeFactory) }),
   };
@@ -115,7 +118,10 @@ function resolveFactMemoryStore(
     });
   }
 
-  return createInMemoryFactMemoryStore();
+  return createFileSystemFactMemoryStore({
+    agentId: context.agent?.id ?? "unknown-agent",
+    filePath: config.filePath,
+  });
 }
 
 function assertFactMemoryStore(input: unknown): FactMemoryStore {
@@ -132,6 +138,14 @@ function assertFactMemoryStoreFactory(input: unknown): FactMemoryStoreFactory {
   }
 
   throw new Error("Fact memory config storeFactory must be a function.");
+}
+
+function assertOptionalString(input: unknown, fieldName: string): string {
+  if (typeof input === "string" && input.length > 0) {
+    return input;
+  }
+
+  throw new Error(`Fact memory config ${fieldName} must be a non-empty string.`);
 }
 
 function isFactMemoryStore(input: unknown): input is FactMemoryStore {
