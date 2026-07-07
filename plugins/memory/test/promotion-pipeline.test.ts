@@ -11,7 +11,7 @@ import {
   createFileSystemFactMemoryStore,
   createFileSystemTaskMemoryStore,
 } from "../src/index.ts";
-import { createFileSystemMemoryEvidenceStore } from "../src/memory-context/evidence-store.ts";
+import { createFileSystemMemoryEvidenceStore } from "../src/evidence/store.ts";
 
 const tempDirs: string[] = [];
 

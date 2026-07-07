@@ -1,6 +1,8 @@
 import {
   errorMemory,
   okMemory,
+  parseFactMemoryRecord,
+  parseFactMemoryRecords,
   type FactMemoryRecord,
   type FactMemoryStore,
   type MemoryConfidence,
@@ -23,8 +25,9 @@ export function createFileSystemFactMemoryStore(options: {
 
   return createFactMemoryStore({
     readRecords: async () => {
-      const stored = await readJsonFile<readonly FactMemoryRecord[]>(filePath, []);
-      return stored.map(cloneFactRecord).sort(compareFacts);
+      return parseFactMemoryRecords(await readJsonFile<unknown>(filePath, []))
+        .map(cloneFactRecord)
+        .sort(compareFacts);
     },
     writeRecords: async (records) => {
       await writeJsonFile(filePath, records.map(cloneFactRecord));
@@ -99,14 +102,16 @@ function createFactMemoryStore(options: {
         const records = await options.readRecords();
         const existing = records.find((item) => item.id === recordInput.id);
 
-        const merged = cloneFactRecord({
-          ...recordInput,
-          provenance: {
-            ...recordInput.provenance,
-            createdAt: existing?.provenance.createdAt ?? recordInput.provenance.createdAt,
-            createdBy: existing?.provenance.createdBy ?? recordInput.provenance.createdBy,
-          },
-        });
+        const merged = cloneFactRecord(
+          parseFactMemoryRecord({
+            ...recordInput,
+            provenance: {
+              ...recordInput.provenance,
+              createdAt: existing?.provenance.createdAt ?? recordInput.provenance.createdAt,
+              createdBy: existing?.provenance.createdBy ?? recordInput.provenance.createdBy,
+            },
+          }),
+        );
         const validation = validateFactRecord(merged);
 
         if (!validation.ok) {
@@ -142,7 +147,8 @@ function createFactMemoryStore(options: {
         })
         .map((record) => ({
           record: cloneFactRecord(record),
-          score: query.length === 0 ? confidenceWeight(record.confidence) : computeScore(record, query),
+          score:
+            query.length === 0 ? confidenceWeight(record.confidence) : computeScore(record, query),
           excerpt: record.statement,
         }))
         .sort((left, right) => {
@@ -224,7 +230,8 @@ function computeScore(record: FactMemoryRecord, query: string): number {
 }
 
 function compareFacts(left: FactMemoryRecord, right: FactMemoryRecord): number {
-  const verifiedDelta = Number(right.verifiedAt !== undefined) - Number(left.verifiedAt !== undefined);
+  const verifiedDelta =
+    Number(right.verifiedAt !== undefined) - Number(left.verifiedAt !== undefined);
 
   if (verifiedDelta !== 0) {
     return verifiedDelta;
@@ -254,12 +261,7 @@ function confidenceWeight(confidence: MemoryConfidence): number {
 }
 
 function toSearchText(record: FactMemoryRecord): string {
-  return [
-    record.statement,
-    record.title,
-    record.summary,
-    ...(record.tags ?? []),
-  ]
+  return [record.statement, record.title, record.summary, ...(record.tags ?? [])]
     .filter((value): value is string => typeof value === "string")
     .join("\n")
     .toLowerCase();
@@ -273,11 +275,13 @@ function cloneFactRecord(record: FactMemoryRecord): FactMemoryRecord {
       record.conflictsWith === undefined
         ? undefined
         : record.conflictsWith.map((reference) => ({ ...reference })),
-    supersededBy:
-      record.supersededBy === undefined ? undefined : { ...record.supersededBy },
+    supersededBy: record.supersededBy === undefined ? undefined : { ...record.supersededBy },
     provenance: {
       ...record.provenance,
-      evidence: [...record.provenance.evidence],
+      evidence: record.provenance.evidence.map((reference) => ({
+        ...reference,
+        ...(reference.memory === undefined ? {} : { memory: { ...reference.memory } }),
+      })),
     },
   };
 }

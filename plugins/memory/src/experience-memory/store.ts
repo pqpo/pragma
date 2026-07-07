@@ -1,6 +1,9 @@
 import {
+  EXPERIENCE_MEMORY_SCHEMA_VERSION,
   errorMemory,
   okMemory,
+  parseExperienceMemoryRecord,
+  parseExperienceMemoryRecords,
   type ExperienceMemoryRecord,
   type ExperienceMemoryStore,
   type MemorySearchInput,
@@ -23,10 +26,9 @@ export function createFileSystemExperienceMemoryStore(options: {
 
   return createExperienceMemoryStore({
     readRecords: async () => {
-      const stored = await readJsonFile<readonly ExperienceMemoryRecord[]>(filePath, []);
-      return stored.map(cloneExperienceRecord).sort((left, right) =>
-        right.provenance.updatedAt.localeCompare(left.provenance.updatedAt),
-      );
+      return parseExperienceMemoryRecords(await readJsonFile<unknown>(filePath, []))
+        .map(cloneExperienceRecord)
+        .sort((left, right) => right.provenance.updatedAt.localeCompare(left.provenance.updatedAt));
     },
     writeRecords: async (records) => {
       await writeJsonFile(filePath, records.map(cloneExperienceRecord));
@@ -69,7 +71,10 @@ function createExperienceMemoryStore(options: {
             return false;
           }
 
-          if (input.runtimeSessionId !== undefined && record.runtimeSessionId !== input.runtimeSessionId) {
+          if (
+            input.runtimeSessionId !== undefined &&
+            record.runtimeSessionId !== input.runtimeSessionId
+          ) {
             return false;
           }
 
@@ -101,14 +106,16 @@ function createExperienceMemoryStore(options: {
         const records = await options.readRecords();
         const existing = records.find((item) => item.id === recordInput.id);
 
-        const merged: ExperienceMemoryRecord = withExperienceDefaults({
-          ...recordInput,
-          provenance: {
-            ...recordInput.provenance,
-            createdAt: existing?.provenance.createdAt ?? recordInput.provenance.createdAt,
-            createdBy: existing?.provenance.createdBy ?? recordInput.provenance.createdBy,
-          },
-        });
+        const merged: ExperienceMemoryRecord = withExperienceDefaults(
+          parseExperienceMemoryRecord({
+            ...recordInput,
+            provenance: {
+              ...recordInput.provenance,
+              createdAt: existing?.provenance.createdAt ?? recordInput.provenance.createdAt,
+              createdBy: existing?.provenance.createdBy ?? recordInput.provenance.createdBy,
+            },
+          }),
+        );
         const validation = validateExperienceRecord(merged);
 
         if (!validation.ok) {
@@ -140,7 +147,10 @@ function createExperienceMemoryStore(options: {
       });
       const relevant = matches
         .filter(({ record }) => {
-          if (input.runtimeSessionId !== undefined && record.runtimeSessionId === input.runtimeSessionId) {
+          if (
+            input.runtimeSessionId !== undefined &&
+            record.runtimeSessionId === input.runtimeSessionId
+          ) {
             return true;
           }
 
@@ -152,15 +162,17 @@ function createExperienceMemoryStore(options: {
             return true;
           }
 
-          return query.length > 0 && (
-            record.content.toLowerCase().includes(query) ||
-            record.summary?.toLowerCase().includes(query) === true ||
-            record.title?.toLowerCase().includes(query) === true
+          return (
+            query.length > 0 &&
+            (record.content.toLowerCase().includes(query) ||
+              record.summary?.toLowerCase().includes(query) === true ||
+              record.title?.toLowerCase().includes(query) === true)
           );
         })
         .sort((left, right) => {
           const statusDelta =
-            experienceStatusWeight(right.record.status) - experienceStatusWeight(left.record.status);
+            experienceStatusWeight(right.record.status) -
+            experienceStatusWeight(left.record.status);
 
           if (statusDelta !== 0) {
             return statusDelta;
@@ -259,6 +271,7 @@ function withExperienceDefaults(record: ExperienceMemoryRecord): ExperienceMemor
 
   return {
     ...record,
+    schemaVersion: EXPERIENCE_MEMORY_SCHEMA_VERSION,
     provenance: {
       ...record.provenance,
       createdAt: record.provenance.createdAt,
@@ -302,7 +315,10 @@ function cloneExperienceRecord(record: ExperienceMemoryRecord): ExperienceMemory
     tags: record.tags === undefined ? undefined : [...record.tags],
     provenance: {
       ...record.provenance,
-      evidence: [...record.provenance.evidence],
+      evidence: record.provenance.evidence.map((reference) => ({
+        ...reference,
+        ...(reference.memory === undefined ? {} : { memory: { ...reference.memory } }),
+      })),
     },
   };
 }

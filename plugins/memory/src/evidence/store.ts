@@ -1,10 +1,11 @@
 import {
   errorMemory,
   okMemory,
+  parseMemoryEvidenceRecord,
   type MemoryEvidenceRecord,
   type MemoryEvidenceStore,
 } from "../memory-system/index.ts";
-import { DISTILLATION_EVIDENCE_PREFIX, JSON_EXTENSION } from "./constants.ts";
+import { DISTILLATION_EVIDENCE_PREFIX, JSON_EXTENSION } from "../context-projection/constants.ts";
 import { resolveConfig } from "../skill-memory/config.ts";
 import {
   collectRecursiveIds,
@@ -13,7 +14,7 @@ import {
   resolveContextPath,
   resolveMemoryContextRoot,
   writeJson,
-} from "./filesystem.ts";
+} from "../context-projection/filesystem.ts";
 import type { ExpertAgentPluginSetupContext } from "@pragma/core";
 
 export function createFileSystemMemoryEvidenceStore(
@@ -72,12 +73,10 @@ export function createFileSystemMemoryEvidenceStore(
 
     async write(input) {
       const rootDir = await resolveRootDir();
-      const id = toContextId(input.record.id);
-      await writeJson(
-        resolveContextPath(rootDir, id),
-        input.record as unknown as Record<string, unknown>,
-      );
-      return okMemory(input.record);
+      const record = parseMemoryEvidenceRecord(input.record);
+      const id = toContextId(record.id);
+      await writeJson(resolveContextPath(rootDir, id), record as unknown as Record<string, unknown>);
+      return okMemory(record);
     },
   };
 
@@ -94,5 +93,5 @@ function toContextId(id: string): string {
 function parseEvidenceRecord(
   stored: Awaited<ReturnType<typeof readStoredContext>>,
 ): MemoryEvidenceRecord {
-  return JSON.parse(stored.content) as MemoryEvidenceRecord;
+  return parseMemoryEvidenceRecord(JSON.parse(stored.content) as unknown);
 }

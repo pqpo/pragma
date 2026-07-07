@@ -7,6 +7,12 @@ import type {
   SkillMemoryRecord,
   TaskMemoryRecord,
 } from "./types.ts";
+import {
+  EXPERIENCE_MEMORY_SCHEMA_VERSION,
+  FACT_MEMORY_SCHEMA_VERSION,
+  SKILL_MEMORY_SCHEMA_VERSION,
+  TASK_MEMORY_SCHEMA_VERSION,
+} from "./schema.ts";
 
 export interface MemorySummaryConfig {
   readonly maxBytes: number;
@@ -108,6 +114,7 @@ export function normalizeTaskRecord(
 ): TaskMemoryRecord {
   return {
     ...record,
+    schemaVersion: TASK_MEMORY_SCHEMA_VERSION,
     summary: normalizeTaskMemorySummary(record, maxChars),
   };
 }
@@ -118,6 +125,7 @@ export function normalizeExperienceRecord(
 ): ExperienceMemoryRecord {
   return {
     ...record,
+    schemaVersion: EXPERIENCE_MEMORY_SCHEMA_VERSION,
     summary: normalizeExperienceMemorySummary(record, maxChars),
   };
 }
@@ -128,6 +136,7 @@ export function normalizeFactRecord(
 ): FactMemoryRecord {
   return {
     ...record,
+    schemaVersion: FACT_MEMORY_SCHEMA_VERSION,
     summary: normalizeFactMemorySummary(record, maxChars),
   };
 }
@@ -138,6 +147,7 @@ export function normalizeSkillRecord(
 ): SkillMemoryRecord {
   return {
     ...record,
+    schemaVersion: SKILL_MEMORY_SCHEMA_VERSION,
     summary: normalizeSkillMemorySummary(record, maxChars),
   };
 }

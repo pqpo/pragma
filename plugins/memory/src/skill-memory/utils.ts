@@ -18,7 +18,7 @@ import {
   TASK_MEMORY_PREFIX,
   TASKS_PREFIX,
   WORKFLOWS_EVIDENCE_PREFIX,
-} from "../memory-context/constants.ts";
+} from "../context-projection/constants.ts";
 
 export function parseMarkdown(raw: string): {
   readonly frontmatter: Record<string, unknown>;

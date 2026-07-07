@@ -4,6 +4,8 @@ import type { ExpertAgentPluginSetupContext } from "@pragma/core";
 import {
   errorMemory,
   okMemory,
+  parseSkillMemoryRecord,
+  type MemoryRecordWriteInput,
   type MemoryResult,
   type RuntimeMemoryRetrieveInput,
   type SkillMemoryGetInput,
@@ -12,7 +14,7 @@ import {
   type SkillMemoryStore,
 } from "../memory-system/index.ts";
 
-import { SKILLS_PREFIX } from "../memory-context/constants.ts";
+import { SKILLS_PREFIX } from "../context-projection/constants.ts";
 import { resolveConfig } from "./config.ts";
 import {
   collectRecursiveIds,
@@ -22,7 +24,7 @@ import {
   resolveContextPath,
   resolveSkillMemoryRoot,
   writeStoredMarkdown,
-} from "../memory-context/filesystem.ts";
+} from "../context-projection/filesystem.ts";
 import {
   dedupeStrings,
   extractSectionBullets,
@@ -85,22 +87,22 @@ class FileSystemSkillMemoryStore implements SkillMemoryStore {
     }
   }
 
-  async upsert(inputRecord: SkillMemoryRecord): Promise<MemoryResult<SkillMemoryRecord>> {
+  async upsert(
+    inputRecord: MemoryRecordWriteInput<SkillMemoryRecord>,
+  ): Promise<MemoryResult<SkillMemoryRecord>> {
     try {
       if (!(await this.isEnabledForUsage())) {
         return errorMemory("store_unavailable", "Skill memory is disabled.");
       }
 
-      const contextId = normalizeSkillContextId(inputRecord.id);
+      const record = parseSkillMemoryRecord(inputRecord);
+      const contextId = normalizeSkillContextId(record.id);
       const stored = createStoredContext({
         id: contextId,
-        content: renderSkillRecord(inputRecord),
+        content: renderSkillRecord(record),
         metadata: {
-          description:
-            inputRecord.summary ??
-            inputRecord.title ??
-            `Skill memory for ${inputRecord.problemClass}.`,
-          trigger: inputRecord.runtime?.trigger ?? "model_decision",
+          description: record.summary ?? record.title ?? `Skill memory for ${record.problemClass}.`,
+          trigger: record.runtime?.trigger ?? "model_decision",
           trustLevel: "workspace",
           sensitivity: "internal",
         },
@@ -109,19 +111,19 @@ class FileSystemSkillMemoryStore implements SkillMemoryStore {
       await writeStoredMarkdown(rootDir, stored, {
         schemaVersion: "pragma.memory-skill/v1",
         agentId: this.agentId,
-        skillId: sanitizeIdSegment(inputRecord.id),
-        updatedAt: inputRecord.provenance.updatedAt,
-        createdAt: inputRecord.provenance.createdAt,
+        skillId: sanitizeIdSegment(record.id),
+        updatedAt: record.provenance.updatedAt,
+        createdAt: record.provenance.createdAt,
         audit: {
-          createdBy: inputRecord.provenance.createdBy ?? "skill-memory",
-          updatedBy: inputRecord.provenance.updatedBy,
+          createdBy: record.provenance.createdBy ?? "skill-memory",
+          updatedBy: record.provenance.updatedBy,
         },
       });
 
       const written = await this.readSkillRecordByContextId(contextId);
 
       if (written === undefined) {
-        return errorMemory("store_error", `Failed to load written skill memory: ${inputRecord.id}`);
+        return errorMemory("store_error", `Failed to load written skill memory: ${record.id}`);
       }
 
       return okMemory(written);
@@ -225,7 +227,7 @@ class FileSystemSkillMemoryStore implements SkillMemoryStore {
         ? humanizeSkillId(skillIdToContextId(String(parsed.frontmatter["skillId"])))
         : humanizeSkillId(contextId);
 
-    return {
+    return parseSkillMemoryRecord({
       id: contextId,
       type: "skill",
       scope: "workspace",
@@ -255,7 +257,7 @@ class FileSystemSkillMemoryStore implements SkillMemoryStore {
       failureModes: extractSectionBullets(stored.content, "Common Failure Modes"),
       recoveryPlaybook: extractSectionBullets(stored.content, "Recovery Playbook"),
       confidence: "medium",
-    };
+    });
   }
 }
 

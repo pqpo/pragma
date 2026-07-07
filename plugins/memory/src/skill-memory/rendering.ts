@@ -6,7 +6,7 @@ import {
   MARKDOWN_EXTENSION,
   JSON_EXTENSION,
   WORKFLOWS_EVIDENCE_PREFIX,
-} from "../memory-context/constants.ts";
+} from "../context-projection/constants.ts";
 import type { MemoryRunEvidence, MemoryWorkflowEvidence } from "./schema.ts";
 import {
   dedupeStrings,

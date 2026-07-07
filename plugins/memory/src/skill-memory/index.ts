@@ -1,11 +1,11 @@
 import type { ExpertAgentPluginContributions, ExpertAgentPluginSetupContext } from "@pragma/core";
 
 import { MemorySystem } from "../memory-system/index.ts";
-import { MEMORY_CONTEXT_NAMESPACE } from "../memory-context/constants.ts";
+import { MEMORY_CONTEXT_NAMESPACE } from "../context-projection/constants.ts";
 import { SKILL_MEMORY_ID } from "./constants.ts";
 import { resolveConfig } from "./config.ts";
-import { createFileSystemMemoryEvidenceStore } from "../memory-context/evidence-store.ts";
-import { regenerateSummary, resolveMemoryArtifactRoots } from "../memory-context/filesystem.ts";
+import { createFileSystemMemoryEvidenceStore } from "../evidence/store.ts";
+import { regenerateSummary, resolveMemoryArtifactRoots } from "../context-projection/filesystem.ts";
 import { SkillMemoryManager } from "./manager.ts";
 import {
   SkillMemoryConfigSchema,
@@ -15,7 +15,7 @@ import {
   MemoryWorkflowEvidenceSchema as SkillMemoryWorkflowEvidenceSchema,
 } from "./schema.ts";
 import { createSkillMemoryStore } from "./skill-store.ts";
-import { createMemoryContextStore } from "../memory-context/store.ts";
+import { createMemoryContextStore } from "../context-projection/store.ts";
 
 export { SkillMemoryConfigSchema, SkillMemoryRunEvidenceSchema, SkillMemoryWorkflowEvidenceSchema };
 export type { SkillMemoryConfig, SkillMemoryConfigInput };

@@ -8,7 +8,7 @@ import { SkillMemoryConfigSchema } from "../src/index.ts";
 import {
   resolveMemoryContextRoot,
   resolveSkillMemoryRoot,
-} from "../src/memory-context/filesystem.ts";
+} from "../src/context-projection/filesystem.ts";
 
 describe("memory storage paths", () => {
   it("resolves default memory directories under the user home", () => {

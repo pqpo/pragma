@@ -2,6 +2,14 @@ import type { ExpertAgentRunContext } from "@pragma/core";
 
 export type MemoryType = "task" | "experience" | "fact" | "skill";
 
+export type MemoryRecordSchemaVersion =
+  | "pragma.memory-task/v1"
+  | "pragma.memory-experience/v1"
+  | "pragma.memory-fact/v1"
+  | "pragma.memory-skill/v1";
+
+export type MemoryEvidenceSchemaVersion = "pragma.memory-evidence/v1";
+
 export type MemoryScope = "run" | "session" | "agent" | "workspace" | "organization";
 
 export type MemoryVisibility = "shared" | "private";
@@ -46,6 +54,7 @@ export interface MemoryRuntimeControl {
 }
 
 export interface BaseMemoryRecord {
+  readonly schemaVersion: MemoryRecordSchemaVersion;
   readonly id: string;
   readonly type: MemoryType;
   readonly scope: MemoryScope;
@@ -55,6 +64,13 @@ export interface BaseMemoryRecord {
   readonly runtime?: MemoryRuntimeControl | undefined;
   readonly provenance: MemoryProvenance;
 }
+
+export type MemoryRecordWriteInput<TRecord extends BaseMemoryRecord> = Omit<
+  TRecord,
+  "schemaVersion"
+> & {
+  readonly schemaVersion?: TRecord["schemaVersion"] | undefined;
+};
 
 export type TaskMemoryKind = "decision" | "handoff" | "note" | "todo" | "progress" | "question";
 
@@ -237,6 +253,7 @@ export type MemoryEvidencePayload =
   | MemoryWorkflowEvidencePayload;
 
 export interface MemoryEvidenceRecord {
+  readonly schemaVersion: MemoryEvidenceSchemaVersion;
   readonly id: string;
   readonly type: "evidence";
   readonly kind: MemoryEvidenceKind;
@@ -251,9 +268,16 @@ export interface MemoryEvidenceRecord {
   readonly provenance: MemoryProvenance;
 }
 
+export type MemoryEvidenceRecordWriteInput = Omit<MemoryEvidenceRecord, "schemaVersion"> & {
+  readonly schemaVersion?: MemoryEvidenceSchemaVersion | undefined;
+};
+
 export interface TaskMemoryAppendInput {
   readonly actorAgentId: string;
-  readonly record: Omit<TaskMemoryRecord, "id" | "provenance" | "revision"> & {
+  readonly record: Omit<
+    MemoryRecordWriteInput<TaskMemoryRecord>,
+    "id" | "provenance" | "revision"
+  > & {
     readonly id?: string | undefined;
     readonly provenance?: Partial<MemoryProvenance> | undefined;
     readonly revision?: never;
@@ -300,7 +324,7 @@ export interface TaskMemoryArchiveInput {
 }
 
 export interface MemoryEvidenceWriteInput {
-  readonly record: MemoryEvidenceRecord;
+  readonly record: MemoryEvidenceRecordWriteInput;
   readonly context?: ExpertAgentRunContext | undefined;
 }
 
@@ -393,7 +417,7 @@ export interface ExperienceMemoryStore {
   ) => Promise<MemoryResult<readonly ExperienceMemoryRecord[]>>;
   readonly get: (input: ExperienceMemoryGetInput) => Promise<MemoryResult<ExperienceMemoryRecord>>;
   readonly upsert: (
-    record: ExperienceMemoryRecord,
+    record: MemoryRecordWriteInput<ExperienceMemoryRecord>,
   ) => Promise<MemoryResult<ExperienceMemoryRecord>>;
   readonly search: (
     input: MemorySearchInput,
@@ -407,7 +431,9 @@ export interface ExperienceMemoryStore {
 export interface FactMemoryStore {
   readonly list: (input: FactMemoryListInput) => Promise<MemoryResult<readonly FactMemoryRecord[]>>;
   readonly get: (input: FactMemoryGetInput) => Promise<MemoryResult<FactMemoryRecord>>;
-  readonly upsert: (record: FactMemoryRecord) => Promise<MemoryResult<FactMemoryRecord>>;
+  readonly upsert: (
+    record: MemoryRecordWriteInput<FactMemoryRecord>,
+  ) => Promise<MemoryResult<FactMemoryRecord>>;
   readonly search: (
     input: MemorySearchInput,
   ) => Promise<MemoryResult<readonly MemorySearchMatch<FactMemoryRecord>[]>>;
@@ -422,7 +448,9 @@ export interface SkillMemoryStore {
     input: SkillMemoryListInput,
   ) => Promise<MemoryResult<readonly SkillMemoryRecord[]>>;
   readonly get: (input: SkillMemoryGetInput) => Promise<MemoryResult<SkillMemoryRecord>>;
-  readonly upsert: (record: SkillMemoryRecord) => Promise<MemoryResult<SkillMemoryRecord>>;
+  readonly upsert: (
+    record: MemoryRecordWriteInput<SkillMemoryRecord>,
+  ) => Promise<MemoryResult<SkillMemoryRecord>>;
   readonly search: (
     input: MemorySearchInput,
   ) => Promise<MemoryResult<readonly MemorySearchMatch<SkillMemoryRecord>[]>>;

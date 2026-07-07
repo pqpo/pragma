@@ -4,8 +4,9 @@ import { join } from "node:path";
 import {
   errorMemory,
   normalizeTaskRecord,
-  normalizeTaskMemorySummary,
   okMemory,
+  parseTaskMemoryRecord,
+  parseTaskMemoryRecords,
   type TaskMemoryRecord,
   type TaskMemoryStore,
 } from "../memory-system/index.ts";
@@ -55,8 +56,7 @@ function createSingleFileStorage(options: { readonly agentId: string; readonly f
 
   return {
     readRecords: async () => {
-      const stored = await readJsonFile<readonly TaskMemoryRecord[]>(filePath, []);
-      return stored.map(cloneRecord);
+      return parseTaskMemoryRecords(await readJsonFile<unknown>(filePath, [])).map(cloneRecord);
     },
     writeRecords: async (records: readonly TaskMemoryRecord[]) => {
       await writeJsonFile(filePath, records.map(cloneRecord));
@@ -79,9 +79,8 @@ function createWorkflowFileStorage(options: {
       const workflowRunIds = await listWorkflowRunIds(rootDir);
       const nestedRecords = await Promise.all(
         workflowRunIds.map(async (workflowRunId) => {
-          const stored = await readJsonFile<readonly TaskMemoryRecord[]>(
-            resolveWorkflowRecordsPath(rootDir, workflowRunId),
-            [],
+          const stored = parseTaskMemoryRecords(
+            await readJsonFile<unknown>(resolveWorkflowRecordsPath(rootDir, workflowRunId), []),
           );
           return stored.map(cloneRecord);
         }),
@@ -103,7 +102,7 @@ function createWorkflowFileStorage(options: {
         [...recordsByWorkflow.entries()].map(async ([workflowStorageId, recordsForWorkflow]) => {
           await writeJsonFile(
             resolveWorkflowRecordsPath(rootDir, workflowStorageId),
-            recordsForWorkflow,
+            recordsForWorkflow.map(cloneRecord),
           );
         }),
       );
@@ -244,12 +243,12 @@ function createTaskMemoryStore(options: {
           evidence: input.record.provenance?.evidence ?? [],
         };
         const record: TaskMemoryRecord = normalizeTaskRecord(
-          {
+          parseTaskMemoryRecord({
             ...input.record,
             id: recordId,
             revision: 0,
             provenance,
-          },
+          }),
           summaryMaxChars,
         );
 
@@ -311,10 +310,7 @@ function createTaskMemoryStore(options: {
             updatedAt: new Date().toISOString(),
           },
         };
-        const normalizedUpdated: TaskMemoryRecord = {
-          ...updated,
-          summary: normalizeTaskMemorySummary(updated, summaryMaxChars),
-        };
+        const normalizedUpdated = normalizeTaskRecord(updated, summaryMaxChars);
 
         await options.writeRecords([
           normalizedUpdated,
@@ -326,10 +322,7 @@ function createTaskMemoryStore(options: {
     },
 
     async archive(input) {
-      if (
-        input.workflowRunId === undefined &&
-        input.taskRunId === undefined
-      ) {
+      if (input.workflowRunId === undefined && input.taskRunId === undefined) {
         return errorMemory(
           "invalid_input",
           "Archive requires workflowRunId or taskRunId. runtimeSessionId may only be used as an additional filter.",
@@ -384,9 +377,7 @@ function createTaskMemoryStore(options: {
 
     async retrieveForRuntime(input, runtimeOptions) {
       const activeRecords = (await options.readRecords()).filter(
-        (record) =>
-          record.workflowRunId === input.workflowRunId &&
-          record.status === "active",
+        (record) => record.workflowRunId === input.workflowRunId && record.status === "active",
       );
       const shared =
         runtimeOptions?.includeShared === false
@@ -476,7 +467,10 @@ function cloneRecord(record: TaskMemoryRecord): TaskMemoryRecord {
     tags: record.tags === undefined ? undefined : [...record.tags],
     provenance: {
       ...record.provenance,
-      evidence: [...record.provenance.evidence],
+      evidence: record.provenance.evidence.map((reference) => ({
+        ...reference,
+        ...(reference.memory === undefined ? {} : { memory: { ...reference.memory } }),
+      })),
     },
   };
 }

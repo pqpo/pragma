@@ -11,6 +11,11 @@ import {
   type SkillMemoryRecord,
   type TaskMemoryRecord,
 } from "./types.ts";
+import {
+  EXPERIENCE_MEMORY_SCHEMA_VERSION,
+  FACT_MEMORY_SCHEMA_VERSION,
+  SKILL_MEMORY_SCHEMA_VERSION,
+} from "./schema.ts";
 
 export function createDefaultMemoryDistillationPipeline(): MemoryDistillationPipeline {
   return {
@@ -61,6 +66,7 @@ function proposeExperiencesFromEvidence(
       type: "experience" as const,
       derivedFrom: [],
       record: {
+        schemaVersion: EXPERIENCE_MEMORY_SCHEMA_VERSION,
         id: `experience-memory-${record.id}`,
         type: "experience" as const,
         scope: record.scope,
@@ -99,6 +105,7 @@ function toExperienceFromTask(record: TaskMemoryRecord): ExperienceMemoryRecord 
   const now = new Date().toISOString();
 
   return {
+    schemaVersion: EXPERIENCE_MEMORY_SCHEMA_VERSION,
     id: `experience-memory-${record.id}`,
     type: "experience",
     scope: "session",
@@ -199,6 +206,7 @@ function proposeFactsFromExperience(
   const observedAt = record.provenance.updatedAt;
   const reference = createMemoryReference(record);
   const fact: FactMemoryRecord = {
+    schemaVersion: FACT_MEMORY_SCHEMA_VERSION,
     id: `fact-memory-${record.id}`,
     type: "fact",
     scope: inferFactScope(record),
@@ -290,6 +298,7 @@ function proposeSkillsFromEvidence(
       type: "skill" as const,
       derivedFrom: [],
       record: {
+        schemaVersion: SKILL_MEMORY_SCHEMA_VERSION,
         id: skillId,
         type: "skill" as const,
         scope: record.scope === "run" ? "workspace" : record.scope,

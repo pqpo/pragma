@@ -15,7 +15,7 @@ import {
   RUNS_EVIDENCE_PREFIX,
   TASKS_PREFIX,
   WORKFLOWS_EVIDENCE_PREFIX,
-} from "../memory-context/constants.ts";
+} from "../context-projection/constants.ts";
 import { resolveConfig } from "./config.ts";
 import {
   createStoredContext,
@@ -25,7 +25,7 @@ import {
   resolveMemoryArtifactRoots,
   writeJson,
   writeStoredMarkdown,
-} from "../memory-context/filesystem.ts";
+} from "../context-projection/filesystem.ts";
 import { deriveLessonsFromEvidence, renderTaskSummary, renderWorkflowSummary } from "./rendering.ts";
 import { MemoryRunEvidenceSchema, MemoryWorkflowEvidenceSchema } from "./schema.ts";
 import type { MemoryRunEvidence, MemoryWorkflowEvidence } from "./schema.ts";
