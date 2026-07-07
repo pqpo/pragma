@@ -17,6 +17,7 @@ import type {
   ExpertAgentPluginSetupContext,
 } from "@pragma/core";
 import { error, ok } from "@pragma/core";
+import type { MemorySystem } from "../memory-system/index.ts";
 
 import { SUMMARY_CONTEXT_ID } from "./constants.ts";
 import { resolveConfig } from "./config.ts";
@@ -44,23 +45,28 @@ import {
 
 export function createSkillMemoryContextStore(
   context: ExpertAgentPluginSetupContext,
+  memorySystem: MemorySystem,
 ): ExpertAgentContextStore {
   return new FileSystemMemoryStore({
     agentId: context.agent?.id ?? "unknown-agent",
     context,
+    memorySystem,
   });
 }
 
 export class FileSystemMemoryStore implements ExpertAgentContextStore {
   private readonly agentId: string;
   private readonly context: ExpertAgentPluginSetupContext;
+  private readonly memorySystem: MemorySystem;
 
   constructor(options: {
     readonly agentId: string;
     readonly context: ExpertAgentPluginSetupContext;
+    readonly memorySystem: MemorySystem;
   }) {
     this.agentId = options.agentId;
     this.context = options.context;
+    this.memorySystem = options.memorySystem;
   }
 
   async listContext(): Promise<ExpertAgentContextResult<readonly ExpertAgentContextItemSummary[]>> {
@@ -100,7 +106,7 @@ export class FileSystemMemoryStore implements ExpertAgentContextStore {
       }
 
       if (id.value === SUMMARY_CONTEXT_ID) {
-        await regenerateSummary(rootDir, this.context, this.agentId);
+        await this.regenerateSummaryBestEffort(rootDir, "read");
       }
 
       const stored = await readStoredContext(rootDir, id.value);
@@ -165,7 +171,7 @@ export class FileSystemMemoryStore implements ExpertAgentContextStore {
       });
 
       if (id.value.startsWith("skills/")) {
-        await regenerateSummary(rootDir, this.context, this.agentId);
+        await this.regenerateSummaryBestEffort(rootDir, "add", id.value);
       }
 
       return ok(await readStoredContext(rootDir, id.value));
@@ -209,7 +215,7 @@ export class FileSystemMemoryStore implements ExpertAgentContextStore {
       });
 
       if (id.value.startsWith("skills/")) {
-        await regenerateSummary(rootDir, this.context, this.agentId);
+        await this.regenerateSummaryBestEffort(rootDir, "update", id.value);
       }
 
       return ok(await readStoredContext(rootDir, id.value));
@@ -278,7 +284,7 @@ export class FileSystemMemoryStore implements ExpertAgentContextStore {
       });
 
       if (id.value.startsWith("skills/")) {
-        await regenerateSummary(rootDir, this.context, this.agentId);
+        await this.regenerateSummaryBestEffort(rootDir, "edit", id.value);
       }
 
       return ok({
@@ -316,7 +322,7 @@ export class FileSystemMemoryStore implements ExpertAgentContextStore {
       await rm(filePath);
 
       if (id.value.startsWith("skills/")) {
-        await regenerateSummary(rootDir, this.context, this.agentId);
+        await this.regenerateSummaryBestEffort(rootDir, "delete", id.value);
       }
 
       return ok({ id: id.value });
@@ -373,6 +379,23 @@ export class FileSystemMemoryStore implements ExpertAgentContextStore {
       return ok(matches);
     } catch (caught) {
       return error("store_error", "Failed to search skill memory.", toErrorDetails(caught));
+    }
+  }
+
+  private async regenerateSummaryBestEffort(
+    rootDir: string,
+    operation: "add" | "delete" | "edit" | "read" | "update",
+    contextId?: string,
+  ): Promise<void> {
+    try {
+      await regenerateSummary(rootDir, this.memorySystem, this.agentId);
+    } catch (caught) {
+      this.context.logger.warn("Failed to regenerate memory summary.", {
+        agentId: this.agentId,
+        operation,
+        ...(contextId === undefined ? {} : { contextId }),
+        error: caught instanceof Error ? caught.message : String(caught),
+      });
     }
   }
 }

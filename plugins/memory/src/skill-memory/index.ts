@@ -5,9 +5,10 @@ import type {
 
 import { MemorySystem } from "../memory-system/index.ts";
 import { MEMORY_CONTEXT_NAMESPACE, SKILL_MEMORY_ID } from "./constants.ts";
+import { resolveConfig } from "./config.ts";
+import { regenerateSummary, resolveMemoryRoot } from "./filesystem.ts";
 import { SkillMemoryManager } from "./manager.ts";
 import {
-  parseSkillMemoryConfig,
   SkillMemoryConfigSchema,
   type SkillMemoryConfig,
   type SkillMemoryConfigInput,
@@ -21,7 +22,6 @@ export {
   SkillMemoryConfigSchema,
   SkillMemoryRunEvidenceSchema,
   SkillMemorySessionEvidenceSchema,
-  parseSkillMemoryConfig,
 };
 export type { SkillMemoryConfig, SkillMemoryConfigInput };
 
@@ -32,8 +32,8 @@ type SkillMemoryPluginSetupContext = ExpertAgentPluginSetupContext & {
 export function createSkillMemoryContributions(
   context: SkillMemoryPluginSetupContext,
 ): ExpertAgentPluginContributions {
-  const store = createSkillMemoryContextStore(context);
-  const skillStore = createSkillMemoryStore(context);
+  const store = createSkillMemoryContextStore(context, context.memorySystem);
+  const skillStore = createSkillMemoryStore(context, context.memorySystem);
   const manager = new SkillMemoryManager(context);
   const registration = context.contextSystem.register({
     namespace: MEMORY_CONTEXT_NAMESPACE,
@@ -51,6 +51,20 @@ export function createSkillMemoryContributions(
   if (!memoryRegistration.ok && memoryRegistration.error.code !== "store_already_registered") {
     throw new Error(memoryRegistration.error.message);
   }
+
+  context.memorySystem.setSummaryArtifactRegenerator(async () => {
+    const config = await resolveConfig(context);
+
+    if (!config.enabled || !config.useMemories) {
+      return;
+    }
+
+    await regenerateSummary(
+      resolveMemoryRoot(context.workspaceRoot, config, context.agent?.id ?? "unknown-agent"),
+      context.memorySystem,
+      context.agent?.id ?? "unknown-agent",
+    );
+  });
 
   return {
     hooks: {
@@ -70,7 +84,7 @@ export const skillMemoryCapabilities = [
   {
     type: "context",
     name: MEMORY_CONTEXT_NAMESPACE,
-    description: "Exposes skill-memory audit files as agent context.",
+    description: "Exposes unified memory audit files as agent context.",
   },
   {
     type: "memory",

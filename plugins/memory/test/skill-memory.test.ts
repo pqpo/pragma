@@ -2,7 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   ContextSystem,
@@ -11,7 +11,7 @@ import {
   createInMemoryContextStore,
   type RuntimeStreamEvent,
 } from "@pragma/core";
-import { MemorySystem, createMemoryPluginEntry } from "../src/index.ts";
+import { MemorySystem, createMemoryPluginEntry, errorMemory } from "../src/index.ts";
 
 const tempDirs: string[] = [];
 
@@ -19,14 +19,14 @@ afterEach(async () => {
   await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
 
-describe("memory plugin skill-memory", () => {
-  it("registers skill-memory context when the plugin is enabled", async () => {
+describe("memory plugin unified memory context", () => {
+  it("registers memory context when the plugin is enabled", async () => {
     const workspace = await createWorkspaceDir();
     const memoryDir = await createMemoryDir();
     const agent = await createAgent({ workspace, memoryDir });
 
     await agent.addContext({
-      namespace: "skill-memory",
+      namespace: "memory",
       id: "skills/plugin-design.md",
       content: "# Skill Card\n\n## Skill Scope\nPlugin design\n",
     });
@@ -36,18 +36,18 @@ describe("memory plugin skill-memory", () => {
       ok: true,
       value: expect.arrayContaining([
         expect.objectContaining({
-          namespace: "skill-memory",
+          namespace: "memory",
           id: "summary.md",
         }),
         expect.objectContaining({
-          namespace: "skill-memory",
+          namespace: "memory",
           id: "skills/plugin-design.md",
         }),
       ]),
     });
   });
 
-  it("can disable skill-memory through plugin config", async () => {
+  it("can disable memory context through plugin config", async () => {
     const workspace = await createWorkspaceDir();
     const memoryDir = await createMemoryDir();
     const memorySystem = new MemorySystem();
@@ -66,7 +66,7 @@ describe("memory plugin skill-memory", () => {
     expect(listed).toMatchObject({
       ok: true,
       value: expect.not.arrayContaining([
-        expect.objectContaining({ namespace: "skill-memory" }),
+        expect.objectContaining({ namespace: "memory" }),
       ]),
     });
 
@@ -120,7 +120,7 @@ describe("memory plugin skill-memory", () => {
     await destroySessionHook(agent);
 
     const contextResult = await agent.readContext({
-      namespace: "skill-memory",
+      namespace: "memory",
       id: "tasks/session-1/run-1.md",
     });
     expect(contextResult).toMatchObject({
@@ -159,7 +159,212 @@ describe("memory plugin skill-memory", () => {
     });
   });
 
-  it("reads host config from skill-memory-config.json", async () => {
+  it("assembles a navigation-oriented always-on memory guide", async () => {
+    const workspace = await createWorkspaceDir();
+    const memoryDir = await createMemoryDir();
+    const memorySystem = new MemorySystem();
+    const agent = await createAgent({
+      workspace,
+      memoryDir,
+      memorySystem,
+    });
+
+    await memorySystem.appendTaskMemory({
+      actorAgentId: agent.id,
+      record: {
+        type: "task",
+        scope: "session",
+        visibility: "shared",
+        workflowRunId: "wf-1",
+        kind: "progress",
+        content: "Implemented the unified summary assembler and still need to wire runtime refresh.",
+        status: "active",
+        title: "Memory summary refactor",
+      },
+    });
+    await memorySystem.writeExperience({
+      record: {
+        id: "experience-1",
+        type: "experience",
+        scope: "session",
+        kind: "run",
+        content: "Tried a skill-only index first. It was too narrow, so the summary moved to MemorySystem.",
+        status: "summarized",
+        provenance: {
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          evidence: [{ type: "run", id: "run-1" }],
+        },
+      },
+    });
+    await memorySystem.writeFact({
+      record: {
+        id: "fact-1",
+        type: "fact",
+        scope: "workspace",
+        statement: "The user prefers compact always-on memory that includes current task progress.",
+        confidence: "verified",
+        observedAt: new Date().toISOString(),
+        tags: ["user preference"],
+        provenance: {
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          evidence: [{ type: "external", id: "user-request" }],
+        },
+      },
+    });
+    await memorySystem.writeSkill({
+      record: {
+        id: "summary-assembly",
+        type: "skill",
+        scope: "workspace",
+        problemClass: "memory summary assembly",
+        recommendedApproach: ["Assemble always-on memory from typed summaries instead of raw documents."],
+        goodPractices: ["Prioritize task and fact memory before experience."],
+        antiPatterns: [],
+        failureModes: ["Do not let skill-only indexes hide task or fact memory."],
+        recoveryPlaybook: ["Rebuild the summary after every relevant memory mutation."],
+        provenance: {
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          evidence: [{ type: "memory", id: "experience-1", memory: { type: "experience", id: "experience-1" } }],
+        },
+      },
+    });
+
+    const summary = await agent.readContext({
+      namespace: "memory",
+      id: "summary.md",
+    });
+    expect(summary).toMatchObject({
+      ok: true,
+      value: {
+        content: expect.stringContaining("Current Task State"),
+      },
+    });
+    expect(summary.ok && summary.value.content).toContain("Active Constraints And Preferences");
+    expect(summary.ok && summary.value.content).toContain("Skill Entry Points");
+    expect(summary.ok && summary.value.content).toContain("Memory Search Guide");
+    expect(summary.ok && summary.value.content).toContain("Searchable Domains");
+    expect(summary.ok && summary.value.content).toContain("Memory summary refactor");
+    expect(summary.ok && summary.value.content).toContain("user prefers compact always-on memory");
+    expect(summary.ok && summary.value.content).toContain("Searchable Skill Domains");
+    expect(summary.ok && summary.value.content).toContain("Recent Experience Entry Points");
+  });
+
+  it("refreshes the always-on summary only once for skill writes through MemorySystem", async () => {
+    const workspace = await createWorkspaceDir();
+    const memoryDir = await createMemoryDir();
+    const memorySystem = new MemorySystem();
+    await createAgent({
+      workspace,
+      memoryDir,
+      memorySystem,
+    });
+
+    const summarySpy = vi.spyOn(memorySystem, "buildAlwaysOnSummary");
+
+    const written = await memorySystem.writeSkill({
+      record: {
+        id: "single-refresh-skill",
+        type: "skill",
+        scope: "workspace",
+        problemClass: "single refresh validation",
+        recommendedApproach: ["Write the derived skill once and refresh the guide once."],
+        goodPractices: ["Keep summary regeneration centralized in MemorySystem."],
+        antiPatterns: [],
+        failureModes: ["Do not regenerate from both the store and the caller."],
+        recoveryPlaybook: ["Remove duplicate refresh paths."],
+        provenance: {
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          evidence: [],
+        },
+      },
+    });
+
+    expect(written).toEqual(expect.objectContaining({ ok: true }));
+    expect(summarySpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("serves the last written summary when regeneration fails during reads", async () => {
+    const workspace = await createWorkspaceDir();
+    const memoryDir = await createMemoryDir();
+    const memorySystem = new MemorySystem();
+    const agent = await createAgent({
+      workspace,
+      memoryDir,
+      memorySystem,
+    });
+
+    await memorySystem.appendTaskMemory({
+      actorAgentId: agent.id,
+      record: {
+        type: "task",
+        scope: "session",
+        visibility: "shared",
+        workflowRunId: "wf-stale-summary",
+        kind: "progress",
+        content: "Keep serving the previous summary when regeneration breaks.",
+        status: "active",
+        title: "Stale summary fallback",
+      },
+    });
+
+    const beforeFailure = await agent.readContext({
+      namespace: "memory",
+      id: "summary.md",
+    });
+    expect(beforeFailure).toEqual(expect.objectContaining({ ok: true }));
+
+    vi.spyOn(memorySystem, "buildAlwaysOnSummary").mockResolvedValueOnce(
+      errorMemory("store_error", "summary rebuild failed"),
+    );
+
+    const afterFailure = await agent.readContext({
+      namespace: "memory",
+      id: "summary.md",
+    });
+
+    expect(afterFailure).toEqual(expect.objectContaining({ ok: true }));
+    if (!beforeFailure.ok || !afterFailure.ok) {
+      return;
+    }
+
+    expect(afterFailure.value.content).toBe(beforeFailure.value.content);
+    expect(afterFailure.value.content).toContain("Stale summary fallback");
+  });
+
+  it("keeps skill context writes successful when summary regeneration fails", async () => {
+    const workspace = await createWorkspaceDir();
+    const memoryDir = await createMemoryDir();
+    const memorySystem = new MemorySystem();
+    const agent = await createAgent({
+      workspace,
+      memoryDir,
+      memorySystem,
+    });
+
+    vi.spyOn(memorySystem, "buildAlwaysOnSummary").mockResolvedValueOnce(
+      errorMemory("store_error", "summary rebuild failed"),
+    );
+
+    const added = await agent.addContext({
+      namespace: "memory",
+      id: "skills/summary-retry.md",
+      content: "# Skill Card\n\n## Skill Scope\nSummary retry\n",
+    });
+
+    expect(added).toEqual(expect.objectContaining({ ok: true }));
+
+    const written = await agent.readContext({
+      namespace: "memory",
+      id: "skills/summary-retry.md",
+    });
+    expect(written).toEqual(expect.objectContaining({ ok: true }));
+  });
+
+  it("reads host config from memory-config.json", async () => {
     const workspace = await createWorkspaceDir();
     const memoryDir = await createMemoryDir();
     const contextSystem = new ContextSystem();
@@ -168,7 +373,7 @@ describe("memory plugin skill-memory", () => {
       store: createInMemoryContextStore({
         context: [
           {
-            id: "skill-memory-config.json",
+            id: "memory-config.json",
             content: JSON.stringify({ enabled: false }),
             metadata: { trigger: "manual" },
           },
@@ -185,7 +390,7 @@ describe("memory plugin skill-memory", () => {
     expect(listed).toMatchObject({
       ok: true,
       value: expect.not.arrayContaining([
-        expect.objectContaining({ namespace: "skill-memory" }),
+        expect.objectContaining({ namespace: "memory" }),
       ]),
     });
   });
@@ -241,7 +446,7 @@ async function createAgent(options: {
             ...(options.pluginConfig?.fact ?? {}),
           },
           skill: {
-            memoryRoot: join(options.memoryDir, "skill-memory"),
+            memoryRoot: join(options.memoryDir, "memory"),
             ...(options.pluginConfig?.skill ?? {}),
           },
         },

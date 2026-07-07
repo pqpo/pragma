@@ -1,4 +1,12 @@
 import {
+  normalizeExperienceRecord,
+  normalizeFactRecord,
+  normalizeSkillRecord,
+  renderAlwaysOnMemorySummary,
+  resolveMemorySummaryConfig,
+  type MemorySummaryConfig,
+} from "./summary.ts";
+import {
   errorMemory,
   okMemory,
   type ExperienceMemoryGetInput,
@@ -36,6 +44,9 @@ export class MemorySystem {
   private experienceStore: ExperienceMemoryStore | undefined;
   private factStore: FactMemoryStore | undefined;
   private skillStore: SkillMemoryStore | undefined;
+  private readonly summaryConfig: MemorySummaryConfig;
+  private summaryArtifactRegenerator:
+    (() => Promise<void>) | undefined;
   readonly promotions: MemoryPromotionPipeline | undefined;
   readonly onPromotionError: ((error: MemoryResultError) => void) | undefined;
 
@@ -44,8 +55,13 @@ export class MemorySystem {
     this.experienceStore = options.experienceStore;
     this.factStore = options.factStore;
     this.skillStore = options.skillStore;
+    this.summaryConfig = resolveMemorySummaryConfig(options.summaryConfig);
     this.promotions = options.promotions;
     this.onPromotionError = options.onPromotionError;
+  }
+
+  setSummaryArtifactRegenerator(regenerator: () => Promise<void>): void {
+    this.summaryArtifactRegenerator = regenerator;
   }
 
   registerTaskStore(
@@ -113,22 +129,34 @@ export class MemorySystem {
   }
 
   async appendTaskMemory(input: TaskMemoryAppendInput) {
-    return await this.requireTaskStore().then((store) => {
+    return await this.requireTaskStore().then(async (store) => {
       if (!store.ok) {
         return store;
       }
 
-      return store.value.append(input);
+      const appended = await store.value.append(input);
+
+      if (appended.ok) {
+        await this.refreshSummaryArtifact();
+      }
+
+      return appended;
     });
   }
 
   async patchTaskMemory(input: TaskMemoryPatchInput) {
-    return await this.requireTaskStore().then((store) => {
+    return await this.requireTaskStore().then(async (store) => {
       if (!store.ok) {
         return store;
       }
 
-      return store.value.patch(input);
+      const patched = await store.value.patch(input);
+
+      if (patched.ok) {
+        await this.refreshSummaryArtifact();
+      }
+
+      return patched;
     });
   }
 
@@ -145,6 +173,7 @@ export class MemorySystem {
       }
 
       await this.runPromotionSafely(() => this.promoteFromTaskRecords(archived.value));
+      await this.refreshSummaryArtifact();
       return archived;
     });
   }
@@ -175,13 +204,17 @@ export class MemorySystem {
         return store;
       }
 
-      const written = await store.value.write(input);
+      const written = await store.value.write({
+        ...input,
+        record: normalizeExperienceRecord(input.record, this.summaryConfig.perRecordMaxChars),
+      });
 
       if (!written.ok) {
         return written;
       }
 
       await this.runPromotionSafely(() => this.promoteFromExperienceRecords([written.value]));
+      await this.refreshSummaryArtifact();
       return written;
     });
   }
@@ -192,24 +225,34 @@ export class MemorySystem {
         return store;
       }
 
-      const updated = await store.value.update(input);
+      const updated = await store.value.update({
+        ...input,
+        record: normalizeExperienceRecord(input.record, this.summaryConfig.perRecordMaxChars),
+      });
 
       if (!updated.ok) {
         return updated;
       }
 
       await this.runPromotionSafely(() => this.promoteFromExperienceRecords([updated.value]));
+      await this.refreshSummaryArtifact();
       return updated;
     });
   }
 
   async deleteExperience(input: ExperienceMemoryGetInput) {
-    return await this.requireExperienceStore().then((store) => {
+    return await this.requireExperienceStore().then(async (store) => {
       if (!store.ok) {
         return store;
       }
 
-      return store.value.delete(input);
+      const deleted = await store.value.delete(input);
+
+      if (deleted.ok) {
+        await this.refreshSummaryArtifact();
+      }
+
+      return deleted;
     });
   }
 
@@ -234,32 +277,56 @@ export class MemorySystem {
   }
 
   async writeFact(input: FactMemoryWriteInput) {
-    return await this.requireFactStore().then((store) => {
+    return await this.requireFactStore().then(async (store) => {
       if (!store.ok) {
         return store;
       }
 
-      return store.value.write(input);
+      const written = await store.value.write({
+        ...input,
+        record: normalizeFactRecord(input.record, this.summaryConfig.perRecordMaxChars),
+      });
+
+      if (written.ok) {
+        await this.refreshSummaryArtifact();
+      }
+
+      return written;
     });
   }
 
   async updateFact(input: FactMemoryUpdateInput) {
-    return await this.requireFactStore().then((store) => {
+    return await this.requireFactStore().then(async (store) => {
       if (!store.ok) {
         return store;
       }
 
-      return store.value.update(input);
+      const updated = await store.value.update({
+        ...input,
+        record: normalizeFactRecord(input.record, this.summaryConfig.perRecordMaxChars),
+      });
+
+      if (updated.ok) {
+        await this.refreshSummaryArtifact();
+      }
+
+      return updated;
     });
   }
 
   async deleteFact(input: FactMemoryGetInput) {
-    return await this.requireFactStore().then((store) => {
+    return await this.requireFactStore().then(async (store) => {
       if (!store.ok) {
         return store;
       }
 
-      return store.value.delete(input);
+      const deleted = await store.value.delete(input);
+
+      if (deleted.ok) {
+        await this.refreshSummaryArtifact();
+      }
+
+      return deleted;
     });
   }
 
@@ -284,32 +351,56 @@ export class MemorySystem {
   }
 
   async writeSkill(input: SkillMemoryWriteInput) {
-    return await this.requireSkillStore().then((store) => {
+    return await this.requireSkillStore().then(async (store) => {
       if (!store.ok) {
         return store;
       }
 
-      return store.value.write(input);
+      const written = await store.value.write({
+        ...input,
+        record: normalizeSkillRecord(input.record, this.summaryConfig.perRecordMaxChars),
+      });
+
+      if (written.ok) {
+        await this.refreshSummaryArtifact();
+      }
+
+      return written;
     });
   }
 
   async updateSkill(input: SkillMemoryUpdateInput) {
-    return await this.requireSkillStore().then((store) => {
+    return await this.requireSkillStore().then(async (store) => {
       if (!store.ok) {
         return store;
       }
 
-      return store.value.update(input);
+      const updated = await store.value.update({
+        ...input,
+        record: normalizeSkillRecord(input.record, this.summaryConfig.perRecordMaxChars),
+      });
+
+      if (updated.ok) {
+        await this.refreshSummaryArtifact();
+      }
+
+      return updated;
     });
   }
 
   async deleteSkill(input: SkillMemoryGetInput) {
-    return await this.requireSkillStore().then((store) => {
+    return await this.requireSkillStore().then(async (store) => {
       if (!store.ok) {
         return store;
       }
 
-      return store.value.delete(input);
+      const deleted = await store.value.delete(input);
+
+      if (deleted.ok) {
+        await this.refreshSummaryArtifact();
+      }
+
+      return deleted;
     });
   }
 
@@ -355,6 +446,43 @@ export class MemorySystem {
       facts: facts.value,
       skills: skills.value,
     });
+  }
+
+  async buildAlwaysOnSummary(input: {
+    readonly agentId: string;
+  }): Promise<MemoryResult<string>> {
+    const [tasks, experiences, facts, skills] = await Promise.all([
+      this.taskStore?.listForSummary({ actorAgentId: input.agentId }) ?? Promise.resolve(okMemory([])),
+      this.experienceStore?.list({}) ?? Promise.resolve(okMemory([])),
+      this.factStore?.list({ onlyActive: true }) ?? Promise.resolve(okMemory([])),
+      this.skillStore?.list({}) ?? Promise.resolve(okMemory([])),
+    ]);
+
+    if (!tasks.ok) {
+      return tasks;
+    }
+
+    if (!experiences.ok) {
+      return experiences;
+    }
+
+    if (!facts.ok) {
+      return facts;
+    }
+
+    if (!skills.ok) {
+      return skills;
+    }
+
+    return okMemory(
+      renderAlwaysOnMemorySummary({
+        tasks: tasks.value,
+        experiences: experiences.value,
+        facts: facts.value,
+        skills: skills.value,
+        config: this.summaryConfig,
+      }),
+    );
   }
 
   private async requireTaskStore(): Promise<MemoryResult<TaskMemoryStore>> {
@@ -421,7 +549,9 @@ export class MemorySystem {
         const existing = await this.experienceStore.get({ id: candidate.record.id });
 
         if (existing.ok) {
-          const updated = await this.experienceStore.update({ record: candidate.record });
+          const updated = await this.experienceStore.update({
+            record: normalizeExperienceRecord(candidate.record, this.summaryConfig.perRecordMaxChars),
+          });
 
           if (!updated.ok) {
             return updated;
@@ -433,7 +563,9 @@ export class MemorySystem {
           return existing;
         }
 
-        const written = await this.experienceStore.write({ record: candidate.record });
+        const written = await this.experienceStore.write({
+          record: normalizeExperienceRecord(candidate.record, this.summaryConfig.perRecordMaxChars),
+        });
 
         if (!written.ok) {
           return written;
@@ -446,7 +578,9 @@ export class MemorySystem {
         const existing = await this.factStore.get({ id: candidate.record.id });
 
         if (existing.ok) {
-          const updated = await this.factStore.update({ record: candidate.record });
+          const updated = await this.factStore.update({
+            record: normalizeFactRecord(candidate.record, this.summaryConfig.perRecordMaxChars),
+          });
 
           if (!updated.ok) {
             return updated;
@@ -458,7 +592,9 @@ export class MemorySystem {
           return existing;
         }
 
-        const written = await this.factStore.write({ record: candidate.record });
+        const written = await this.factStore.write({
+          record: normalizeFactRecord(candidate.record, this.summaryConfig.perRecordMaxChars),
+        });
 
         if (!written.ok) {
           return written;
@@ -471,7 +607,9 @@ export class MemorySystem {
         const existing = await this.skillStore.get({ id: candidate.record.id });
 
         if (existing.ok) {
-          const updated = await this.skillStore.update({ record: candidate.record });
+          const updated = await this.skillStore.update({
+            record: normalizeSkillRecord(candidate.record, this.summaryConfig.perRecordMaxChars),
+          });
 
           if (!updated.ok) {
             return updated;
@@ -483,7 +621,9 @@ export class MemorySystem {
           return existing;
         }
 
-        const written = await this.skillStore.write({ record: candidate.record });
+        const written = await this.skillStore.write({
+          record: normalizeSkillRecord(candidate.record, this.summaryConfig.perRecordMaxChars),
+        });
 
         if (!written.ok) {
           return written;
@@ -491,6 +631,7 @@ export class MemorySystem {
       }
     }
 
+    await this.refreshSummaryArtifact();
     return okMemory(undefined);
   }
 
@@ -510,5 +651,9 @@ export class MemorySystem {
         },
       });
     }
+  }
+
+  private async refreshSummaryArtifact(): Promise<void> {
+    await this.summaryArtifactRegenerator?.();
   }
 }

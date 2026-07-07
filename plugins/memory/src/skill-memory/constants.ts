@@ -1,6 +1,6 @@
-export const MEMORY_CONTEXT_NAMESPACE = "skill-memory";
+export const MEMORY_CONTEXT_NAMESPACE = "memory";
 export const SKILL_MEMORY_ID = "skill-memory";
-export const SKILL_MEMORY_CONFIG_CONTEXT_ID = "skill-memory-config.json";
+export const SKILL_MEMORY_CONFIG_CONTEXT_ID = "memory-config.json";
 export const SUMMARY_CONTEXT_ID = "summary.md";
 export const SKILLS_PREFIX = "skills/";
 export const TASKS_PREFIX = "tasks/";

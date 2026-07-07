@@ -19,12 +19,12 @@ describe("memory storage paths", () => {
     );
   });
 
-  it("resolves skill memory roots under the user home instead of the workspace", () => {
+  it("resolves unified memory roots under the user home instead of the workspace", () => {
     const config = SkillMemoryConfigSchema.parse({});
     const path = resolveMemoryRoot("/tmp/workspace", config, "agent/a");
 
     expect(path).toBe(
-      resolve(homedir(), ".pragma", "memories", "skill-memory", "agent-a"),
+      resolve(homedir(), ".pragma", "memories", "memory", "agent-a"),
     );
   });
 });

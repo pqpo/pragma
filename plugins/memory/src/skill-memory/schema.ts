@@ -13,7 +13,7 @@ export const SkillMemoryConfigSchema = z.object({
   sessionSummaryModel: z.string().min(1).optional(),
   skillMergeModel: z.string().min(1).optional(),
   summaryModel: z.string().min(1).optional(),
-  memoryRoot: z.string().min(1).default("skill-memory"),
+  memoryRoot: z.string().min(1).default("memory"),
 });
 
 export type SkillMemoryConfig = z.infer<typeof SkillMemoryConfigSchema>;

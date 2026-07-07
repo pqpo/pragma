@@ -3,7 +3,7 @@ import type {
   ExpertAgentPluginSetupContext,
 } from "@pragma/core";
 
-import { MemorySystem, type TaskMemoryStore } from "../memory-system/index.ts";
+import { MemorySystem, type MemorySummaryConfig, type TaskMemoryStore } from "../memory-system/index.ts";
 import { createFileSystemTaskMemoryStore } from "./store.ts";
 import { createTaskMemoryTools } from "./tools.ts";
 
@@ -12,6 +12,7 @@ export { createTaskMemoryTools } from "./tools.ts";
 
 export interface TaskMemoryStoreFactoryContext {
   readonly pluginContext: ExpertAgentPluginSetupContext;
+  readonly summaryConfig?: Partial<MemorySummaryConfig> | undefined;
 }
 
 export type TaskMemoryStoreFactory = (
@@ -128,12 +129,14 @@ function resolveTaskMemoryStore(
   if (config.storeFactory !== undefined) {
     return config.storeFactory({
       pluginContext: context,
+      summaryConfig: readMemorySummaryConfig(context.config),
     });
   }
 
   return createFileSystemTaskMemoryStore({
     agentId: context.agent?.id ?? "unknown-agent",
     filePath: config.filePath,
+    summaryMaxChars: readMemorySummaryConfig(context.config)?.perRecordMaxChars,
   });
 }
 
@@ -161,6 +164,24 @@ function assertOptionalString(input: unknown, fieldName: string): string {
   throw new Error(`Task memory config ${fieldName} must be a non-empty string.`);
 }
 
+function readMemorySummaryConfig(input: unknown): Partial<MemorySummaryConfig> | undefined {
+  if (input === undefined || input === null || typeof input !== "object" || Array.isArray(input)) {
+    return undefined;
+  }
+
+  const summary = (input as { summary?: unknown }).summary;
+
+  if (summary === undefined || summary === null) {
+    return undefined;
+  }
+
+  if (typeof summary !== "object" || Array.isArray(summary)) {
+    throw new Error("Memory plugin summary config must be an object.");
+  }
+
+  return summary as Partial<MemorySummaryConfig>;
+}
+
 function isTaskMemoryStore(input: unknown): input is TaskMemoryStore {
   if (input === null || typeof input !== "object") {
     return false;
@@ -174,6 +195,7 @@ function isTaskMemoryStore(input: unknown): input is TaskMemoryStore {
     typeof store.append === "function" &&
     typeof store.patch === "function" &&
     typeof store.archive === "function" &&
-    typeof store.retrieveForRuntime === "function"
+    typeof store.retrieveForRuntime === "function" &&
+    typeof store.listForSummary === "function"
   );
 }

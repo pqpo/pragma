@@ -109,6 +109,9 @@ function createStubTaskMemoryStore(): TaskMemoryStore {
         combined: [],
       });
     },
+    async listForSummary() {
+      return okMemory([]);
+    },
   };
 }
 

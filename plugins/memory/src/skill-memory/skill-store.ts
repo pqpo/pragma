@@ -6,6 +6,7 @@ import type {
 import {
   errorMemory,
   okMemory,
+  type MemorySystem,
   type MemoryResult,
   type RuntimeMemoryRetrieveInput,
   type SkillMemoryGetInput,
@@ -23,7 +24,6 @@ import {
   createStoredContext,
   exists,
   readStoredContext,
-  regenerateSummary,
   resolveContextPath,
   resolveMemoryRoot,
   writeStoredMarkdown,
@@ -39,23 +39,28 @@ import { skillIdToContextId } from "./rendering.ts";
 
 export function createSkillMemoryStore(
   context: ExpertAgentPluginSetupContext,
+  memorySystem: MemorySystem,
 ): SkillMemoryStore {
   return new FileSystemSkillMemoryStore({
     agentId: context.agent?.id ?? "unknown-agent",
     context,
+    memorySystem,
   });
 }
 
 class FileSystemSkillMemoryStore implements SkillMemoryStore {
   private readonly agentId: string;
   private readonly context: ExpertAgentPluginSetupContext;
+  private readonly memorySystem: MemorySystem;
 
   constructor(options: {
     readonly agentId: string;
     readonly context: ExpertAgentPluginSetupContext;
+    readonly memorySystem: MemorySystem;
   }) {
     this.agentId = options.agentId;
     this.context = options.context;
+    this.memorySystem = options.memorySystem;
   }
 
   async list(input: SkillMemoryListInput): Promise<MemoryResult<readonly SkillMemoryRecord[]>> {
@@ -103,7 +108,10 @@ class FileSystemSkillMemoryStore implements SkillMemoryStore {
         id: contextId,
         content: renderSkillRecord(input.record),
         metadata: {
-          description: input.record.title ?? `Skill memory for ${input.record.problemClass}.`,
+          description:
+            input.record.summary ??
+            input.record.title ??
+            `Skill memory for ${input.record.problemClass}.`,
           trigger: input.record.runtime?.trigger ?? "model_decision",
           trustLevel: "workspace",
           sensitivity: "internal",
@@ -121,7 +129,6 @@ class FileSystemSkillMemoryStore implements SkillMemoryStore {
           updatedBy: input.record.provenance.updatedBy,
         },
       });
-      await regenerateSummary(rootDir, this.context, this.agentId);
 
       const written = await this.readSkillRecordByContextId(contextId);
 
@@ -156,7 +163,6 @@ class FileSystemSkillMemoryStore implements SkillMemoryStore {
       }
 
       await rm(path);
-      await regenerateSummary(rootDir, this.context, this.agentId);
 
       return okMemory({ id: input.id });
     } catch (caught) {
@@ -242,7 +248,7 @@ class FileSystemSkillMemoryStore implements SkillMemoryStore {
     const problemClass = readSectionBody(stored.content, "Skill Scope") ?? humanizeSkillId(contextId);
     const title = typeof parsed.frontmatter["skillId"] === "string"
       ? humanizeSkillId(skillIdToContextId(String(parsed.frontmatter["skillId"])))
-      : stored.metadata.description;
+      : humanizeSkillId(contextId);
 
     return {
       id: contextId,

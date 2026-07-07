@@ -32,8 +32,8 @@
     },
     {
       "type": "context",
-      "name": "skill-memory",
-      "description": "Exposes skill-memory audit files as agent context."
+      "name": "memory",
+      "description": "Exposes unified memory audit files as agent context."
     },
     {
       "type": "tool",
@@ -98,9 +98,16 @@
       {
         "name": "skill.memoryRoot",
         "type": "string",
-        "description": "Filesystem root for skill memory artifacts.",
+        "description": "Filesystem root for unified memory artifacts.",
         "required": false,
-        "default": ".pragma/agent/skill-memory"
+        "default": ".pragma/agent/memory"
+      },
+      {
+        "name": "summary.maxBytes",
+        "type": "number",
+        "description": "Maximum size in bytes for the always-on memory summary document.",
+        "required": false,
+        "default": 8192
       }
     ]
   },

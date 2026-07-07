@@ -26,6 +26,7 @@ import {
   taskMemoryCapabilities,
   type TaskMemoryPluginConfig,
 } from "./task-memory/index.ts";
+import type { MemorySummaryConfig } from "./memory-system/index.ts";
 
 export {
   createExperienceMemoryContributions,
@@ -48,6 +49,7 @@ export interface MemoryPluginConfig {
   readonly experience?: ExperienceMemoryPluginConfig | undefined;
   readonly fact?: FactMemoryPluginConfig | undefined;
   readonly skill?: SkillMemoryConfigInput | undefined;
+  readonly summary?: Partial<MemorySummaryConfig> | undefined;
 }
 
 export interface CreateMemoryPluginEntryOptions {
@@ -60,7 +62,11 @@ export function createMemoryPluginEntry(
   return definePluginEntry({
     setup: (context) => {
       const memorySystem =
-        options.memorySystem ?? new MemorySystem({ promotions: createDefaultMemoryPromotionPipeline() });
+        options.memorySystem ??
+        new MemorySystem({
+          promotions: createDefaultMemoryPromotionPipeline(),
+          summaryConfig: readMemorySummaryConfig(context.config),
+        });
 
       return mergeContributions([
         createTaskMemoryContributions({
@@ -83,6 +89,24 @@ export function createMemoryPluginEntry(
       ]);
     },
   });
+}
+
+function readMemorySummaryConfig(input: unknown): Partial<MemorySummaryConfig> | undefined {
+  if (input === undefined || input === null || typeof input !== "object" || Array.isArray(input)) {
+    return undefined;
+  }
+
+  const summary = (input as { summary?: unknown }).summary;
+
+  if (summary === undefined || summary === null) {
+    return undefined;
+  }
+
+  if (typeof summary !== "object" || Array.isArray(summary)) {
+    throw new Error("Memory plugin summary config must be an object.");
+  }
+
+  return summary as Partial<MemorySummaryConfig>;
 }
 
 export default createMemoryPluginEntry();

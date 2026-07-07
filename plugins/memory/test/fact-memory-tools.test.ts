@@ -16,6 +16,30 @@ afterEach(async () => {
 });
 
 describe("fact-memory tools", () => {
+  it("does not expose summary as a writable tool input", () => {
+    const tools = createFactMemoryTools({
+      memorySystem: new MemorySystem(),
+      defaultAgentId: "code-search-agent",
+    });
+    const writeTool = tools.find((tool) => tool.name === "write_fact_memory");
+    const updateTool = tools.find((tool) => tool.name === "update_fact_memory");
+
+    expect(writeTool?.inputSchema).toEqual(
+      expect.not.objectContaining({
+        properties: expect.objectContaining({
+          summary: expect.anything(),
+        }),
+      }),
+    );
+    expect(updateTool?.inputSchema).toEqual(
+      expect.not.objectContaining({
+        properties: expect.objectContaining({
+          summary: expect.anything(),
+        }),
+      }),
+    );
+  });
+
   it("writes and lists fact memory through tools", async () => {
     const dir = await mkdtemp(join(process.cwd(), "tmp-fact-tool-memory-"));
     tempDirs.push(dir);

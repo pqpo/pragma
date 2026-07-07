@@ -1,12 +1,21 @@
-import { errorMemory, okMemory, type TaskMemoryRecord, type TaskMemoryStore } from "../memory-system/index.ts";
+import {
+  errorMemory,
+  normalizeTaskRecord,
+  normalizeTaskMemorySummary,
+  okMemory,
+  type TaskMemoryRecord,
+  type TaskMemoryStore,
+} from "../memory-system/index.ts";
 import { readJsonFile, resolveMemoryFilePath, writeJsonFile } from "../storage.ts";
 
 const TASK_MEMORY_CATEGORY = "task-memory";
 const TASK_MEMORY_FILE_NAME = "records.json";
+const TASK_MEMORY_SUMMARY_MAX_CHARS = 220;
 
 export function createFileSystemTaskMemoryStore(options: {
   readonly agentId: string;
   readonly filePath?: string | undefined;
+  readonly summaryMaxChars?: number | undefined;
 }): TaskMemoryStore {
   const filePath = resolveMemoryFilePath({
     category: TASK_MEMORY_CATEGORY,
@@ -16,6 +25,7 @@ export function createFileSystemTaskMemoryStore(options: {
   });
 
   return createTaskMemoryStore({
+    summaryMaxChars: options.summaryMaxChars,
     readRecords: async () => {
       const stored = await readJsonFile<readonly TaskMemoryRecord[]>(filePath, []);
       return stored.map(cloneRecord);
@@ -27,10 +37,12 @@ export function createFileSystemTaskMemoryStore(options: {
 }
 
 function createTaskMemoryStore(options: {
+  readonly summaryMaxChars?: number | undefined;
   readonly readRecords: () => Promise<readonly TaskMemoryRecord[]>;
   readonly writeRecords: (records: readonly TaskMemoryRecord[]) => Promise<void>;
 }): TaskMemoryStore {
   let mutationLock = Promise.resolve();
+  const summaryMaxChars = options.summaryMaxChars ?? TASK_MEMORY_SUMMARY_MAX_CHARS;
 
   const withMutationLock = async <TValue>(operation: () => Promise<TValue>): Promise<TValue> => {
     const previous = mutationLock;
@@ -109,19 +121,24 @@ function createTaskMemoryStore(options: {
     async append(input) {
       return await withMutationLock(async () => {
         const now = new Date().toISOString();
-        const record: TaskMemoryRecord = {
-          ...input.record,
-          id: input.record.id ?? createTaskMemoryId(),
-          revision: 0,
-          provenance: {
-            createdBy: input.record.provenance?.createdBy ?? input.actorAgentId,
-            updatedBy: input.record.provenance?.updatedBy ?? input.actorAgentId,
-            source: input.record.provenance?.source,
-            createdAt: input.record.provenance?.createdAt ?? now,
-            updatedAt: input.record.provenance?.updatedAt ?? now,
-            evidence: input.record.provenance?.evidence ?? [],
-          },
+        const recordId = input.record.id ?? createTaskMemoryId();
+        const provenance = {
+          createdBy: input.record.provenance?.createdBy ?? input.actorAgentId,
+          updatedBy: input.record.provenance?.updatedBy ?? input.actorAgentId,
+          source: input.record.provenance?.source,
+          createdAt: input.record.provenance?.createdAt ?? now,
+          updatedAt: input.record.provenance?.updatedAt ?? now,
+          evidence: input.record.provenance?.evidence ?? [],
         };
+        const record: TaskMemoryRecord = normalizeTaskRecord(
+          {
+            ...input.record,
+            id: recordId,
+            revision: 0,
+            provenance,
+          },
+          summaryMaxChars,
+        );
 
         const validation = validateRecordForAppend(record, input.actorAgentId);
 
@@ -181,13 +198,17 @@ function createTaskMemoryStore(options: {
             updatedAt: new Date().toISOString(),
           },
         };
+        const normalizedUpdated: TaskMemoryRecord = {
+          ...updated,
+          summary: normalizeTaskMemorySummary(updated, summaryMaxChars),
+        };
 
         await options.writeRecords([
-          updated,
-          ...records.filter((item) => item.id !== updated.id),
+          normalizedUpdated,
+          ...records.filter((item) => item.id !== normalizedUpdated.id),
         ]);
 
-        return okMemory(cloneRecord(updated));
+        return okMemory(cloneRecord(normalizedUpdated));
       });
     },
 
@@ -278,6 +299,19 @@ function createTaskMemoryStore(options: {
         private: privateItems.slice(0, maxItems).map(cloneRecord),
         combined: [...shared, ...privateItems].slice(0, maxItems).map(cloneRecord),
       });
+    },
+
+    async listForSummary(input) {
+      const records = (await options.readRecords())
+        .map((record) =>
+          record.summary === undefined
+            ? normalizeTaskRecord(record, summaryMaxChars)
+            : cloneRecord(record)
+        )
+        .filter((record) => canReadRecord(record, input.actorAgentId))
+        .sort((left, right) => right.provenance.updatedAt.localeCompare(left.provenance.updatedAt));
+
+      return okMemory(records.map(cloneRecord));
     },
   };
 }

@@ -335,6 +335,11 @@ export interface TaskMemoryStore {
       readonly combined: readonly TaskMemoryRecord[];
     }>
   >;
+  readonly listForSummary: (
+    input: {
+      readonly actorAgentId: string;
+    },
+  ) => Promise<MemoryResult<readonly TaskMemoryRecord[]>>;
 }
 
 export interface ExperienceMemoryStore {
@@ -423,6 +428,7 @@ export interface MemorySystemOptions {
   readonly skillStore?: SkillMemoryStore | undefined;
   readonly promotions?: MemoryPromotionPipeline | undefined;
   readonly onPromotionError?: ((error: MemoryResultError) => void) | undefined;
+  readonly summaryConfig?: Partial<import("./summary.ts").MemorySummaryConfig> | undefined;
 }
 
 export interface MemorySystemRuntimeRetrieveInput {

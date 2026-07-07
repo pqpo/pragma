@@ -49,7 +49,7 @@ const agent = await defineAgent({
 默认加载后：
 
 - `task-memory`、`experience-memory`、`fact-memory` 会注入工具。
-- `skill-memory` 会注册 `skill-memory` 上下文 namespace。
+- `skill-memory` 会注册统一的 `memory` 上下文 namespace。
 - 任务归档和经历写入会触发默认晋升规则。
 - 四类记忆默认都会持久化到用户目录下的 `~/.pragma/memories/`，不会直接写入 agent workspace。
 - `task-memory` 虽然语义上仍然是 task / run / session 内的短期工作记忆，但默认也会落盘，以支持 session 恢复和跨进程恢复。
@@ -71,7 +71,7 @@ const agent = await defineAgent({
 });
 ```
 
-这会关闭四类默认记忆，不注入相关工具，也不注册 `skill-memory` 上下文。
+这会关闭四类默认记忆，不注入相关工具，也不注册 `memory` 上下文。
 
 ## 按类别关闭
 
@@ -225,7 +225,32 @@ memory: {
 - `write_fact_memory`
 - `update_fact_memory`
 
-Skill Memory 当前主要通过 `skill-memory` namespace 上下文和 runtime hooks 体现，不以单独工具为主。
+Skill Memory 当前主要通过 `memory` namespace 上下文和 runtime hooks 体现，不以单独工具为主。
+
+## Always-On Summary
+
+`memory/summary.md` 现在由统一 `MemorySystem` 组装成一份给模型看的 memory guide，而不是把四类 memory 的 record 摘要平铺进上下文。
+
+当前 always-on 文档重点包括：
+
+1. `Current Task State`
+2. `Active Constraints And Preferences`
+3. `Skill Entry Points`
+4. `Memory Search Guide`
+5. `Searchable Domains`
+
+其中：
+
+- `Task Memory` 直接以内联状态快照方式暴露
+- `Fact Memory` 只内联当前最重要、当前生效的事实与偏好
+- `Skill Memory` 主要暴露 skill domain catalog 和少量高价值入口
+- `Experience Memory` 主要暴露检索指南和极少量 recent entry points
+
+`summary` 现在是 memory system 的内部派生字段，不再由外部 tool 调用方传入。系统会根据各类型的结构化字段 deterministic 生成它，并用于：
+
+- runtime 检索
+- promotion pipeline
+- `memory/summary.md`
 
 ## 自动晋升
 

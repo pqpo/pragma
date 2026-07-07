@@ -16,6 +16,22 @@ afterEach(async () => {
 });
 
 describe("experience-memory tools", () => {
+  it("does not expose summary as a writable tool input", () => {
+    const tools = createExperienceMemoryTools({
+      memorySystem: new MemorySystem(),
+      defaultAgentId: "code-search-agent",
+    });
+    const appendTool = tools.find((tool) => tool.name === "append_experience_memory");
+
+    expect(appendTool?.inputSchema).toEqual(
+      expect.not.objectContaining({
+        properties: expect.objectContaining({
+          summary: expect.anything(),
+        }),
+      }),
+    );
+  });
+
   it("appends experience memory using workflow defaults", async () => {
     const dir = await mkdtemp(join(process.cwd(), "tmp-experience-tool-memory-"));
     tempDirs.push(dir);

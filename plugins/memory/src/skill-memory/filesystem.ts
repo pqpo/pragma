@@ -5,7 +5,6 @@ import type {
   ExpertAgentContextItemMetadata,
   ExpertAgentContextItemSummary,
   ExpertAgentStoredContextItem,
-  ExpertAgentPluginSetupContext,
 } from "@pragma/core";
 import { normalizeMetadata } from "@pragma/core";
 
@@ -13,12 +12,10 @@ import {
   EVIDENCE_PREFIX,
   JSON_EXTENSION,
   MARKDOWN_EXTENSION,
-  SKILLS_PREFIX,
   SUMMARY_CONTEXT_ID,
 } from "./constants.ts";
-import { resolveConfig } from "./config.ts";
 import type { SkillMemoryConfig } from "./schema.ts";
-import { renderSummaryIndex } from "./rendering.ts";
+import type { MemorySystem } from "../memory-system/index.ts";
 import { expandHomePath, resolveUserMemoryHome } from "../storage.ts";
 import {
   defaultTriggerForContextId,
@@ -152,23 +149,23 @@ export function toSummary(context: ExpertAgentStoredContextItem): ExpertAgentCon
 
 export async function regenerateSummary(
   rootDir: string,
-  context: ExpertAgentPluginSetupContext,
+  memorySystem: MemorySystem,
   agentId: string,
 ): Promise<void> {
-  const config = await resolveConfig(context);
   await mkdir(rootDir, { recursive: true });
-  const skillIds = await collectRecursiveIds(rootDir, SKILLS_PREFIX, [MARKDOWN_EXTENSION]);
-  const skills = (await Promise.all(
-    skillIds.map(async (id) => await readStoredContext(rootDir, id)),
-  )).filter((skill) => skill.metadata.sensitivity !== "restricted");
-  const content = renderSummaryIndex(skills, config.summaryMaxBytes);
+  const summary = await memorySystem.buildAlwaysOnSummary({ agentId });
+
+  if (!summary.ok) {
+    throw new Error(summary.error.message);
+  }
+
   await writeStoredMarkdown(
     rootDir,
     createStoredContext({
       id: SUMMARY_CONTEXT_ID,
-      content,
+      content: summary.value,
       metadata: {
-        description: "Always-on index of long-term memory skills.",
+        description: "Always-on summary assembled from task, fact, skill, and experience memory.",
         trigger: "always_on",
         trustLevel: "workspace",
         sensitivity: "internal",

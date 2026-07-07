@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
@@ -408,6 +408,80 @@ describe("file-system TaskMemoryStore", () => {
     expect(retrieved.value.task.shared).toHaveLength(1);
     expect(retrieved.value.task.private).toHaveLength(1);
     expect(retrieved.value.task.combined).toHaveLength(2);
+  });
+
+  it("honors the configured task summary length", async () => {
+    const dir = await mkdtemp(join(process.cwd(), "tmp-task-memory-"));
+    tempDirs.push(dir);
+    const store = createFileSystemTaskMemoryStore({
+      agentId: "agent-a",
+      filePath: join(dir, "task.json"),
+      summaryMaxChars: 40,
+    });
+
+    const appended = await store.append({
+      actorAgentId: "agent-a",
+      record: {
+        type: "task",
+        scope: "session",
+        workflowRunId: "workflow-1",
+        visibility: "shared",
+        kind: "progress",
+        title: "A very long summary should be truncated",
+        content: "This content is intentionally long enough to exceed the configured summary limit.",
+        status: "active",
+      },
+    });
+
+    expect(appended).toEqual(expect.objectContaining({ ok: true }));
+    if (!appended.ok) {
+      return;
+    }
+
+    expect(appended.value.summary?.length ?? 0).toBeLessThanOrEqual(40);
+  });
+
+  it("backfills missing task summaries when listing records for the always-on summary", async () => {
+    const dir = await mkdtemp(join(process.cwd(), "tmp-task-memory-"));
+    tempDirs.push(dir);
+    const filePath = join(dir, "task.json");
+    await writeFile(
+      filePath,
+      `${JSON.stringify([
+        {
+          id: "legacy-task",
+          type: "task",
+          scope: "session",
+          workflowRunId: "workflow-1",
+          visibility: "shared",
+          kind: "progress",
+          content: "Legacy records did not persist summary fields.",
+          status: "active",
+          revision: 0,
+          provenance: {
+            createdAt: "2026-01-01T00:00:00.000Z",
+            updatedAt: "2026-01-01T00:00:00.000Z",
+            evidence: [],
+          },
+        },
+      ], null, 2)}\n`,
+      "utf8",
+    );
+    const store = createFileSystemTaskMemoryStore({
+      agentId: "agent-a",
+      filePath,
+    });
+
+    const listed = await store.listForSummary({
+      actorAgentId: "agent-a",
+    });
+
+    expect(listed).toEqual(expect.objectContaining({ ok: true }));
+    if (!listed.ok) {
+      return;
+    }
+
+    expect(listed.value[0]?.summary).toContain("Legacy records did not persist summary fields");
   });
 });
 

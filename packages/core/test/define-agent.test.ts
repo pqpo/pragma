@@ -107,7 +107,7 @@ describe("defineAgent", () => {
 
   it("loads all four memory categories by default", async () => {
     const agent = await defineAgent({
-      id: "memory-defaults",
+      id: `memory-defaults-${crypto.randomUUID()}`,
       name: "Memory Defaults",
       description: "Loads default memory categories.",
       tags: ["memory"],
@@ -128,7 +128,7 @@ describe("defineAgent", () => {
     );
 
     const skillWrite = await agent.addContext({
-      namespace: "skill-memory",
+      namespace: "memory",
       id: "skills/default-memory.md",
       content: "# Skill Card\n\nDefault memory wiring works.\n",
     });
@@ -158,7 +158,7 @@ describe("defineAgent", () => {
     );
 
     const skillWrite = await agent.addContext({
-      namespace: "skill-memory",
+      namespace: "memory",
       id: "skills/disabled-memory.md",
       content: "# Skill Card\n\nThis should fail when memory is disabled.\n",
     });
@@ -167,7 +167,7 @@ describe("defineAgent", () => {
 
   it("can disable selected memory categories while keeping the others enabled", async () => {
     const agent = await defineAgent({
-      id: "memory-selective",
+      id: `memory-selective-${crypto.randomUUID()}`,
       name: "Memory Selective",
       description: "Disables selected default memory categories.",
       tags: ["memory"],
@@ -190,7 +190,7 @@ describe("defineAgent", () => {
     );
 
     const skillWrite = await agent.addContext({
-      namespace: "skill-memory",
+      namespace: "memory",
       id: "skills/selective-memory.md",
       content: "# Skill Card\n\nSkill memory should still be available.\n",
     });

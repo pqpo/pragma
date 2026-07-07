@@ -173,6 +173,7 @@ describe("ExpertAgent plugins", () => {
       version: "0.0.0",
       scope: "workspace",
       workspace,
+      memory: false,
       contextSystem,
       plugins: [
         { entry: createContextPluginEntry() },

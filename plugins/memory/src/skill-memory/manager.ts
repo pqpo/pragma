@@ -6,6 +6,7 @@ import type {
   ExpertAgentPluginStreamEventContext,
   ExpertAgentPluginTaskSubmittedContext,
 } from "@pragma/core";
+import type { MemorySystem } from "../memory-system/index.ts";
 
 import {
   JSON_EXTENSION,
@@ -45,12 +46,18 @@ import {
 } from "./utils.ts";
 
 export class SkillMemoryManager {
-  private readonly context: ExpertAgentPluginSetupContext;
+  private readonly context: ExpertAgentPluginSetupContext & {
+    readonly memorySystem: MemorySystem;
+  };
   private readonly agentId: string;
   private readonly runLocks = new Map<string, Promise<void>>();
   private readonly sessionLocks = new Map<string, Promise<void>>();
 
-  constructor(context: ExpertAgentPluginSetupContext) {
+  constructor(
+    context: ExpertAgentPluginSetupContext & {
+      readonly memorySystem: MemorySystem;
+    },
+  ) {
     this.context = context;
     this.agentId = context.agent?.id ?? "unknown-agent";
   }
@@ -234,7 +241,7 @@ export class SkillMemoryManager {
     sessionEvidence.consolidationState = "skills_updated";
     sessionEvidence.updatedAt = now;
     await writeJson(sessionEvidencePath, sessionEvidence);
-    await regenerateSummary(rootDir, this.context, this.agentId);
+    await regenerateSummary(rootDir, this.context.memorySystem, this.agentId);
   }
 
   private async readOrCreateRunEvidence(
