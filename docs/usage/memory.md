@@ -48,9 +48,9 @@ const agent = await defineAgent({
 
 默认加载后：
 
-- `task-memory`、`experience-memory`、`fact-memory` 会注入工具。
-- `skill-memory` 会注册统一的 `memory` 上下文 namespace。
-- 任务归档和经历写入会触发默认晋升规则。
+- `task-memory` 会注入最小写工具。
+- `memory` 会注册统一的上下文 namespace，承载 summary、task 投影、experience 投影、fact 投影和 skill card。
+- task / runtime / session 证据会触发默认的异步 distillation 规则。
 - 四类记忆默认都会持久化到用户目录下的 `~/.pragma/memories/`，不会直接写入 agent workspace。
 - `task-memory` 虽然语义上仍然是 task / run / session 内的短期工作记忆，但默认也会落盘，以支持 session 恢复和跨进程恢复。
 
@@ -201,31 +201,26 @@ memory: {
 - 确认真相：`Fact`
 - 总结方法：`Skill`
 
-## 默认工具
+## 默认工具与读取方式
 
 默认启用时，当前工具层大致包括：
 
 ### Task Memory Tools
 
-- `list_task_memory`
-- `get_task_memory`
 - `append_task_memory`
 - `patch_task_memory`
 
-### Experience Memory Tools
+### Context Tools
 
-- `list_experience_memory`
-- `get_experience_memory`
-- `append_experience_memory`
+- `list_expert_context`
+- `read_expert_context`
+- `search_expert_context`
 
-### Fact Memory Tools
+其中：
 
-- `list_fact_memory`
-- `get_fact_memory`
-- `write_fact_memory`
-- `update_fact_memory`
-
-Skill Memory 当前主要通过 `memory` namespace 上下文和 runtime hooks 体现，不以单独工具为主。
+- `Task Memory` 默认仍保留显式写工具，因为它是运行期协作工作区。
+- `Experience Memory`、`Fact Memory`、`Skill Memory` 默认不再向 Agent 直出写工具。
+- `Experience` / `Fact` / `Skill` 主要通过统一 evidence 底座自动沉淀，再投影到 `memory` namespace 供 Agent 检索和读取。
 
 ## Always-On Summary
 
@@ -246,18 +241,19 @@ Skill Memory 当前主要通过 `memory` namespace 上下文和 runtime hooks �
 - `Skill Memory` 主要暴露 skill domain catalog 和少量高价值入口
 - `Experience Memory` 主要暴露检索指南和极少量 recent entry points
 
-`summary` 现在是 memory system 的内部派生字段，不再由外部 tool 调用方传入。系统会根据各类型的结构化字段 deterministic 生成它，并用于：
+`summary` 现在是 memory system 的内部派生字段，不再由外部 tool 调用方传入。系统会根据各类型的结构化字段和 evidence-distillation 结果 deterministic 生成它，并用于：
 
 - runtime 检索
-- promotion pipeline
+- distillation pipeline
 - `memory/summary.md`
 
-## 自动晋升
+## 自动沉淀
 
-当前默认有一条 deterministic promotion pipeline：
+当前默认有一条 deterministic distillation pipeline：
 
-1. 已归档或已解决的 `Task Memory` 会尝试晋升为 `Experience Memory`
-2. `Experience Memory` 会根据规则尝试晋升为 `Fact Memory` 或 `Skill Memory`
+1. 已归档或已解决的 `Task Memory` 会写入 evidence
+2. session / run 证据会汇总进入统一 evidence layer
+3. `Experience Memory`、`Fact Memory`、`Skill Memory` 会从 evidence 中异步沉淀出来
 
 当前规则重点是：
 

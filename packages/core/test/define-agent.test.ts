@@ -105,7 +105,7 @@ describe("defineAgent", () => {
     });
   });
 
-  it("loads all four memory categories by default", async () => {
+  it("loads task memory tools and unified memory context by default", async () => {
     const agent = await defineAgent({
       id: `memory-defaults-${crypto.randomUUID()}`,
       name: "Memory Defaults",
@@ -118,12 +118,8 @@ describe("defineAgent", () => {
 
     expect(agent.tools?.map((tool) => tool.name)).toEqual(
       expect.arrayContaining([
-        "list_task_memory",
         "append_task_memory",
-        "list_experience_memory",
-        "append_experience_memory",
-        "list_fact_memory",
-        "write_fact_memory",
+        "patch_task_memory",
       ]),
     );
 
@@ -151,9 +147,8 @@ describe("defineAgent", () => {
 
     expect(agent.tools?.map((tool) => tool.name)).not.toEqual(
       expect.arrayContaining([
-        "list_task_memory",
-        "list_experience_memory",
-        "list_fact_memory",
+        "append_task_memory",
+        "patch_task_memory",
       ]),
     );
 
@@ -183,10 +178,10 @@ describe("defineAgent", () => {
     const toolNames = agent.tools?.map((tool) => tool.name) ?? [];
 
     expect(toolNames).toEqual(
-      expect.arrayContaining(["list_task_memory", "append_task_memory"]),
+      expect.arrayContaining(["append_task_memory", "patch_task_memory"]),
     );
     expect(toolNames).not.toEqual(
-      expect.arrayContaining(["list_experience_memory", "list_fact_memory"]),
+      expect.arrayContaining(["append_experience_memory", "write_fact_memory"]),
     );
 
     const skillWrite = await agent.addContext({

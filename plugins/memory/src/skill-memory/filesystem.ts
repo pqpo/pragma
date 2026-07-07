@@ -1,4 +1,4 @@
-import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 
 import type {
@@ -9,16 +9,20 @@ import type {
 import { normalizeMetadata } from "@pragma/core";
 
 import {
+  EXPERIENCE_MEMORY_PREFIX,
+  FACT_MEMORY_PREFIX,
   EVIDENCE_PREFIX,
   JSON_EXTENSION,
   MARKDOWN_EXTENSION,
   SUMMARY_CONTEXT_ID,
+  TASK_MEMORY_PREFIX,
 } from "./constants.ts";
 import type { SkillMemoryConfig } from "./schema.ts";
 import type { MemorySystem } from "../memory-system/index.ts";
 import { expandHomePath, resolveUserMemoryHome } from "../storage.ts";
 import {
   defaultTriggerForContextId,
+  inferSchemaVersion,
   isAllowedMemoryContextId,
   parseMarkdown,
   parseMetadata,
@@ -153,6 +157,12 @@ export async function regenerateSummary(
   agentId: string,
 ): Promise<void> {
   await mkdir(rootDir, { recursive: true });
+  const artifacts = await memorySystem.buildContextArtifacts({ agentId });
+
+  if (!artifacts.ok) {
+    throw new Error(artifacts.error.message);
+  }
+
   const summary = await memorySystem.buildAlwaysOnSummary({ agentId });
 
   if (!summary.ok) {
@@ -179,6 +189,19 @@ export async function regenerateSummary(
       model: "summaryModel",
     },
   );
+
+  await syncGeneratedContextPrefix(rootDir, TASK_MEMORY_PREFIX, artifacts.value.filter((item) =>
+    item.id.startsWith(TASK_MEMORY_PREFIX),
+  ), agentId);
+  await syncGeneratedContextPrefix(
+    rootDir,
+    EXPERIENCE_MEMORY_PREFIX,
+    artifacts.value.filter((item) => item.id.startsWith(EXPERIENCE_MEMORY_PREFIX)),
+    agentId,
+  );
+  await syncGeneratedContextPrefix(rootDir, FACT_MEMORY_PREFIX, artifacts.value.filter((item) =>
+    item.id.startsWith(FACT_MEMORY_PREFIX),
+  ), agentId);
 }
 
 export async function writeStoredMarkdown(
@@ -243,4 +266,51 @@ export function isPathInside(path: string, rootDir: string): boolean {
 
 export async function exists(path: string): Promise<boolean> {
   return (await stat(path).catch(() => undefined)) !== undefined;
+}
+
+async function syncGeneratedContextPrefix(
+  rootDir: string,
+  prefix: string,
+  items: readonly {
+    readonly id: string;
+    readonly content: string;
+    readonly description: string;
+    readonly trigger: "always_on" | "model_decision" | "manual";
+  }[],
+  agentId: string,
+): Promise<void> {
+  const existingIds = new Set(await collectRecursiveIds(rootDir, prefix, [MARKDOWN_EXTENSION]));
+  const nextIds = new Set(items.map((item) => item.id));
+
+  for (const item of items) {
+    await writeStoredMarkdown(
+      rootDir,
+      createStoredContext({
+        id: item.id,
+        content: item.content,
+        metadata: {
+          description: item.description,
+          trigger: item.trigger,
+          trustLevel: "workspace",
+          sensitivity: "internal",
+        },
+      }),
+      {
+        schemaVersion: inferSchemaVersion(item.id),
+        agentId,
+        updatedAt: new Date().toISOString(),
+        audit: { createdBy: "memory-system" },
+      },
+    );
+  }
+
+  for (const existingId of existingIds) {
+    if (nextIds.has(existingId)) {
+      continue;
+    }
+
+    await rm(resolveContextPath(rootDir, existingId), {
+      force: true,
+    });
+  }
 }

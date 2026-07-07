@@ -57,7 +57,6 @@ function readEnvConfig(env: NodeJS.ProcessEnv): Partial<SkillMemoryConfig> {
     ...readStringEnv(env, createPluginEnvName("memoryRoot"), "memoryRoot"),
     ...readStringEnv(env, createPluginEnvName("taskSummaryModel"), "taskSummaryModel"),
     ...readStringEnv(env, createPluginEnvName("sessionSummaryModel"), "sessionSummaryModel"),
-    ...readStringEnv(env, createPluginEnvName("skillMergeModel"), "skillMergeModel"),
     ...readStringEnv(env, createPluginEnvName("summaryModel"), "summaryModel"),
   };
 }

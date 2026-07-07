@@ -6,6 +6,7 @@ import type {
 import { MemorySystem } from "../memory-system/index.ts";
 import { MEMORY_CONTEXT_NAMESPACE, SKILL_MEMORY_ID } from "./constants.ts";
 import { resolveConfig } from "./config.ts";
+import { createFileSystemMemoryEvidenceStore } from "./evidence-store.ts";
 import { regenerateSummary, resolveMemoryRoot } from "./filesystem.ts";
 import { SkillMemoryManager } from "./manager.ts";
 import {
@@ -33,7 +34,8 @@ export function createSkillMemoryContributions(
   context: SkillMemoryPluginSetupContext,
 ): ExpertAgentPluginContributions {
   const store = createSkillMemoryContextStore(context, context.memorySystem);
-  const skillStore = createSkillMemoryStore(context, context.memorySystem);
+  const skillStore = createSkillMemoryStore(context);
+  const evidenceStore = createFileSystemMemoryEvidenceStore(context);
   const manager = new SkillMemoryManager(context);
   const registration = context.contextSystem.register({
     namespace: MEMORY_CONTEXT_NAMESPACE,
@@ -50,6 +52,14 @@ export function createSkillMemoryContributions(
 
   if (!memoryRegistration.ok && memoryRegistration.error.code !== "store_already_registered") {
     throw new Error(memoryRegistration.error.message);
+  }
+
+  const evidenceRegistration = context.memorySystem.registerEvidenceStore({
+    store: evidenceStore,
+  });
+
+  if (!evidenceRegistration.ok && evidenceRegistration.error.code !== "store_already_registered") {
+    throw new Error(evidenceRegistration.error.message);
   }
 
   context.memorySystem.setSummaryArtifactRegenerator(async () => {

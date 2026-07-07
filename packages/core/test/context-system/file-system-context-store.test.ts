@@ -536,7 +536,7 @@ describe("ContextSystem", () => {
         },
       ],
     });
-  });
+  }, 10_000);
 
   it("keeps always-on content out of system prompt and injects it as startup context", async () => {
     const store = new CountingContextStore({

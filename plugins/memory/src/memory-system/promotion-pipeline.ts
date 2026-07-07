@@ -2,40 +2,97 @@ import {
   okMemory,
   type ExperienceMemoryRecord,
   type FactMemoryRecord,
-  type MemoryPromotionPipeline,
+  type MemoryDistillationCandidate,
+  type MemoryDistillationPipeline,
+  type MemoryEvidenceRecord,
+  type MemoryRunEvidencePayload,
+  type MemorySessionEvidencePayload,
   type MemoryReference,
   type SkillMemoryRecord,
   type TaskMemoryRecord,
 } from "./types.ts";
 
-export function createDefaultMemoryPromotionPipeline(): MemoryPromotionPipeline {
+export function createDefaultMemoryDistillationPipeline(): MemoryDistillationPipeline {
   return {
-    async proposeFromTask(records) {
-      const experiences = records
-        .filter((record) => record.status === "archived" || record.status === "resolved")
-        .map((record) => ({
-          type: "experience" as const,
-          derivedFrom: [{ type: "task" as const, id: record.id }],
-          record: toExperienceFromTask(record),
-        }));
+    async distill(input) {
+      const experiences = input.evidence.flatMap((record) => proposeExperiencesFromEvidence(record));
+      const facts = experiences.flatMap((candidate) => proposeFactsFromExperience(candidate.record));
+      const skills = input.evidence.flatMap((record) => proposeSkillsFromEvidence(record));
 
       return okMemory({
         experiences,
-        facts: [],
-        skills: [],
-      });
-    },
-    async proposeFromExperience(records) {
-      const facts = records.flatMap((record) => proposeFactsFromExperience(record));
-      const skills = records.flatMap((record) => proposeSkillsFromExperience(record));
-
-      return okMemory({
-        experiences: [],
         facts,
         skills,
       });
     },
   };
+}
+
+function proposeExperiencesFromEvidence(
+  record: MemoryEvidenceRecord,
+): readonly MemoryDistillationCandidate<"experience", ExperienceMemoryRecord>[] {
+  if (record.kind === "task_archive") {
+    const payload = record.payload as { readonly task: TaskMemoryRecord };
+    const task = payload.task;
+
+    if (task.status !== "archived" && task.status !== "resolved") {
+      return [];
+    }
+
+    return [
+      {
+        type: "experience" as const,
+        derivedFrom: [{ type: "task" as const, id: task.id }],
+        record: toExperienceFromTask(task),
+      },
+    ] satisfies readonly MemoryDistillationCandidate<"experience", ExperienceMemoryRecord>[];
+  }
+
+  if (record.kind !== "session") {
+    return [];
+  }
+
+  const payload = record.payload as MemorySessionEvidencePayload;
+  const content = toSessionExperienceContent(payload);
+  const now = record.updatedAt;
+
+  return [
+    {
+      type: "experience" as const,
+      derivedFrom: [],
+      record: {
+        id: `experience-memory-${record.id}`,
+        type: "experience" as const,
+        scope: record.scope,
+        title: `Session evidence ${payload.sessionId}`,
+        summary: content,
+        tags: mergeTags(undefined, [
+          "source:evidence-session",
+          ...(payload.externalContext ? ["external-context"] : []),
+        ]),
+        workflowRunId: record.workflowRunId,
+        taskRunId: record.taskRunId,
+        runtimeSessionId: record.runtimeSessionId,
+        kind: "session",
+        content,
+        status: "summarized",
+        provenance: {
+          createdBy: "memory-distillation",
+          updatedBy: "memory-distillation",
+          source: "session-evidence",
+          createdAt: now,
+          updatedAt: now,
+          evidence: [
+            {
+              type: "external",
+              id: record.id,
+              uri: `memory://${record.id}`,
+            },
+          ],
+        },
+      },
+    },
+  ] satisfies readonly MemoryDistillationCandidate<"experience", ExperienceMemoryRecord>[];
 }
 
 function toExperienceFromTask(record: TaskMemoryRecord): ExperienceMemoryRecord {
@@ -75,7 +132,34 @@ function toExperienceFromTask(record: TaskMemoryRecord): ExperienceMemoryRecord 
   };
 }
 
-function proposeFactsFromExperience(record: ExperienceMemoryRecord) {
+function toSessionExperienceContent(payload: MemorySessionEvidencePayload): string {
+  const runLines = payload.runs.map((run, index) => {
+    const prefix = `Run ${index + 1}: ${run.query}`;
+    if (run.status === "succeeded") {
+      return run.outputExcerpt === undefined ? `${prefix}. Succeeded.` : `${prefix}. ${run.outputExcerpt}`;
+    }
+
+    if (run.status === "cancelled") {
+      return `${prefix}. Cancelled.`;
+    }
+
+    return run.errorMessage === undefined
+      ? `${prefix}. Failed without a captured error message.`
+      : `${prefix}. Failed. ${run.errorMessage}`;
+  });
+
+  const lessons = dedupeStrings(payload.runs.flatMap((run) => run.lessons)).slice(0, 6);
+
+  return [
+    `Session ${payload.sessionId} completed ${payload.runs.length} run(s).`,
+    ...runLines,
+    ...(lessons.length === 0 ? [] : [`Reusable lessons: ${lessons.join(" ")}`]),
+  ].join("\n");
+}
+
+function proposeFactsFromExperience(
+  record: ExperienceMemoryRecord,
+): readonly MemoryDistillationCandidate<"fact", FactMemoryRecord>[] {
   if (record.provenance.evidence.length === 0) {
     return [];
   }
@@ -155,51 +239,87 @@ function proposeFactsFromExperience(record: ExperienceMemoryRecord) {
   ];
 }
 
-function proposeSkillsFromExperience(record: ExperienceMemoryRecord) {
-  const lowerContent = record.content.toLowerCase();
-
-  if (!lowerContent.includes("next time") && !lowerContent.includes("recommended")) {
+function proposeSkillsFromEvidence(
+  record: MemoryEvidenceRecord,
+): readonly MemoryDistillationCandidate<"skill", SkillMemoryRecord>[] {
+  if (record.kind !== "session") {
     return [];
   }
 
-  const reference = createMemoryReference(record);
-  const skill: SkillMemoryRecord = {
-    id: `skill-memory-${record.id}`,
-    type: "skill",
-    scope: inferFactScope(record),
-    title: record.title,
-    tags: mergeTags(record.tags, ["source:experience-memory", `experience-kind:${record.kind}`]),
-    problemClass: record.title ?? `experience-${record.kind}`,
-    recommendedApproach: splitLines(record.content),
-    goodPractices: splitLines(record.content),
-    antiPatterns: [],
-    failureModes: record.kind === "recovery" ? splitLines(record.content) : [],
-    recoveryPlaybook: splitLines(record.content),
-    confidence: inferFactConfidence(record),
-    provenance: {
-      createdBy: "memory-promotion",
-      updatedBy: "memory-promotion",
-      source: "experience-memory",
-      createdAt: record.provenance.updatedAt,
-      updatedAt: record.provenance.updatedAt,
-      evidence: [
-        ...record.provenance.evidence,
-        {
-          type: "memory",
-          id: record.id,
-          memory: reference,
-        },
-      ],
-    },
-  };
+  const payload = record.payload as MemorySessionEvidencePayload;
+
+  if (payload.runs.length === 0) {
+    return [];
+  }
+
+  const recommendedApproach = dedupeStrings(
+    payload.runs.flatMap((run) =>
+      run.tools
+        .filter((tool) => tool.status === "completed")
+        .map((tool) => `Prefer ${tool.toolName} when solving this class of problem.`),
+    ),
+  );
+  const failureModes = dedupeStrings(
+    payload.runs.flatMap((run) =>
+      run.tools
+        .filter((tool) => tool.status === "failed")
+        .map((tool) => `${tool.toolName} can fail if retried without a clearer path.`),
+    ),
+  );
+  const recoveryPlaybook = dedupeStrings(
+    payload.runs.flatMap((run) => deriveDefaultFixes(run)),
+  );
+  const goodPractices = dedupeStrings(
+    payload.runs.flatMap((run) => derivePositivePractices(run)),
+  );
+  const antiPatterns = dedupeStrings(
+    payload.runs.flatMap((run) => deriveAntiPatterns(run)),
+  );
+  const skillId = deriveSkillIdFromQueries(payload.runs.map((run) => run.query));
+
+  if (
+    recommendedApproach.length === 0 &&
+    failureModes.length === 0 &&
+    recoveryPlaybook.length === 0
+  ) {
+    return [];
+  }
 
   return [
     {
       type: "skill" as const,
-      record: skill,
-      derivedFrom: [reference],
+      derivedFrom: [],
+      record: {
+        id: skillId,
+        type: "skill" as const,
+        scope: record.scope === "run" ? "workspace" : record.scope,
+        title: `Skill derived from session ${payload.sessionId}`,
+        summary: payload.runs[0]?.query,
+        tags: mergeTags(undefined, ["source:evidence-session"]),
+        problemClass: skillId.replaceAll("-", " "),
+        recommendedApproach,
+        goodPractices,
+        antiPatterns,
+        failureModes,
+        recoveryPlaybook,
+        confidence: "high",
+        provenance: {
+          createdBy: "memory-distillation",
+          updatedBy: "memory-distillation",
+          source: "session-evidence",
+          createdAt: record.updatedAt,
+          updatedAt: record.updatedAt,
+          evidence: [
+            {
+              type: "external",
+              id: record.id,
+              uri: `memory://${record.id}`,
+            },
+          ],
+        },
+      },
     },
-  ];
+  ] satisfies readonly MemoryDistillationCandidate<"skill", SkillMemoryRecord>[];
 }
 
 function inferFactScope(record: ExperienceMemoryRecord): FactMemoryRecord["scope"] {
@@ -249,12 +369,73 @@ function isTimeSensitive(value: string): boolean {
   return value.includes("today") || value.includes("yesterday") || value.includes("current time");
 }
 
-function splitLines(value: string): readonly string[] {
-  return value
-    .split("\n")
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0);
+function deriveDefaultFixes(run: MemoryRunEvidencePayload): readonly string[] {
+  if (run.tools.some((tool) => tool.status === "failed")) {
+    return [
+      "Inspect the failed tool path first, then move to the successful path that produced a cleaner result.",
+    ];
+  }
+
+  if (run.status === "failed") {
+    return ["Tighten the approach and validate assumptions earlier in the task."];
+  }
+
+  return ["Start from the successful path recorded here before exploring alternatives."];
 }
+
+function derivePositivePractices(run: MemoryRunEvidencePayload): readonly string[] {
+  const practices = run.tools
+    .filter((tool) => tool.status === "completed")
+    .map((tool) => `Use ${tool.toolName} deliberately once the task direction is clear.`);
+
+  return practices.length === 0
+    ? ["Record the successful path when the task finishes well."]
+    : practices;
+}
+
+function deriveAntiPatterns(run: MemoryRunEvidencePayload): readonly string[] {
+  const patterns = run.tools
+    .filter((tool) => tool.status === "failed")
+    .map((tool) => `Do not keep retrying ${tool.toolName} without changing the approach.`);
+
+  return patterns.length === 0
+    ? ["Do not treat a one-off success as universal without evidence."]
+    : patterns;
+}
+
+function dedupeStrings(values: readonly string[]): string[] {
+  return [...new Set(values.map((value) => value.trim()).filter((value) => value.length > 0))];
+}
+
+function deriveSkillIdFromQueries(queries: readonly string[]): string {
+  const text = queries.join(" ").toLowerCase();
+  const tokens = text
+    .replace(/[^a-z0-9\s-]/g, " ")
+    .split(/\s+/)
+    .filter((token) => token.length >= 4 && !STOPWORDS.has(token));
+  const chosen = dedupeStrings(tokens).slice(0, 4);
+
+  return (chosen.length === 0 ? "general-memory-skill" : chosen.join("-")).toLowerCase();
+}
+
+const STOPWORDS = new Set([
+  "this",
+  "that",
+  "with",
+  "from",
+  "into",
+  "about",
+  "should",
+  "could",
+  "would",
+  "there",
+  "their",
+  "task",
+  "session",
+  "please",
+  "implement",
+  "continue",
+]);
 
 function mergeTags(
   current: readonly string[] | undefined,

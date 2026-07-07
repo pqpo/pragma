@@ -65,7 +65,7 @@ export function createTaskMemoryContributions(
     tools: createTaskMemoryTools({
       memorySystem: context.memorySystem,
       defaultAgentId: context.agent?.id,
-    }),
+    }).filter((tool) => tool.name === "append_task_memory" || tool.name === "patch_task_memory"),
   };
 }
 

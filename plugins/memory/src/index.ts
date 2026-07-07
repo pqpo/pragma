@@ -15,7 +15,7 @@ import {
   factMemoryCapabilities,
   type FactMemoryPluginConfig,
 } from "./fact-memory/index.ts";
-import { createDefaultMemoryPromotionPipeline } from "./memory-system/index.ts";
+import { createDefaultMemoryDistillationPipeline } from "./memory-system/index.ts";
 import {
   createSkillMemoryContributions,
   skillMemoryCapabilities,
@@ -64,7 +64,7 @@ export function createMemoryPluginEntry(
       const memorySystem =
         options.memorySystem ??
         new MemorySystem({
-          promotions: createDefaultMemoryPromotionPipeline(),
+          distillation: createDefaultMemoryDistillationPipeline(),
           summaryConfig: readMemorySummaryConfig(context.config),
         });
 

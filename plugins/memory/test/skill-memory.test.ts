@@ -31,20 +31,22 @@ describe("memory plugin unified memory context", () => {
       content: "# Skill Card\n\n## Skill Scope\nPlugin design\n",
     });
 
+    const summary = await agent.readContext({
+      namespace: "memory",
+      id: "summary.md",
+    });
+
     const listed = await agent.listContext();
     expect(listed).toMatchObject({
       ok: true,
       value: expect.arrayContaining([
         expect.objectContaining({
           namespace: "memory",
-          id: "summary.md",
-        }),
-        expect.objectContaining({
-          namespace: "memory",
           id: "skills/plugin-design.md",
         }),
       ]),
     });
+    expect(summary).toEqual(expect.objectContaining({ ok: true }));
   });
 
   it("can disable memory context through plugin config", async () => {
@@ -136,7 +138,7 @@ describe("memory plugin unified memory context", () => {
       value: expect.arrayContaining([
         expect.objectContaining({
           type: "skill",
-          problemClass: expect.stringContaining("plugin memory design"),
+          id: expect.stringContaining("plugin-memory-design"),
         }),
       ]),
     });
@@ -182,54 +184,57 @@ describe("memory plugin unified memory context", () => {
         title: "Memory summary refactor",
       },
     });
-    await memorySystem.writeExperience({
-      record: {
-        id: "experience-1",
-        type: "experience",
-        scope: "session",
-        kind: "run",
-        content: "Tried a skill-only index first. It was too narrow, so the summary moved to MemorySystem.",
-        status: "summarized",
-        provenance: {
+    await memorySystem.recordEvidence(
+      {
+        record: {
+          id: "summary-session",
+          type: "evidence",
+          kind: "session",
+          agentId: agent.id,
+          scope: "workspace",
+          payload: {
+            sessionId: "summary-session",
+            runIds: ["run-1"],
+            externalContext: false,
+            runs: [
+              {
+                query: "Assemble memory summary",
+                status: "succeeded",
+                outputExcerpt:
+                  "The user prefers compact always-on memory that includes current task progress. Recommended approach: rebuild the summary after every relevant memory mutation.",
+                lessons: ["Prefer compact always-on memory."],
+                tools: [
+                  {
+                    toolName: "read_context",
+                    status: "completed",
+                  },
+                ],
+              },
+            ],
+          },
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
-          evidence: [{ type: "run", id: "run-1" }],
+          provenance: {
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+            evidence: [{ type: "session", id: "summary-session" }],
+          },
         },
       },
-    });
-    await memorySystem.writeFact({
-      record: {
-        id: "fact-1",
-        type: "fact",
-        scope: "workspace",
-        statement: "The user prefers compact always-on memory that includes current task progress.",
-        confidence: "verified",
-        observedAt: new Date().toISOString(),
-        tags: ["user preference"],
-        provenance: {
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-          evidence: [{ type: "external", id: "user-request" }],
-        },
-      },
-    });
-    await memorySystem.writeSkill({
-      record: {
-        id: "summary-assembly",
-        type: "skill",
-        scope: "workspace",
-        problemClass: "memory summary assembly",
-        recommendedApproach: ["Assemble always-on memory from typed summaries instead of raw documents."],
-        goodPractices: ["Prioritize task and fact memory before experience."],
-        antiPatterns: [],
-        failureModes: ["Do not let skill-only indexes hide task or fact memory."],
-        recoveryPlaybook: ["Rebuild the summary after every relevant memory mutation."],
-        provenance: {
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-          evidence: [{ type: "memory", id: "experience-1", memory: { type: "experience", id: "experience-1" } }],
-        },
-      },
+      { waitUntilProcessed: true },
+    );
+    await agent.addContext({
+      namespace: "memory",
+      id: "skills/summary-assembly.md",
+      content: [
+        "# Skill Card",
+        "",
+        "## Skill Scope",
+        "memory summary assembly",
+        "",
+        "## Recommended Approach",
+        "- Assemble always-on memory from typed summaries instead of raw documents.",
+      ].join("\n"),
     });
 
     const summary = await agent.readContext({
@@ -252,11 +257,11 @@ describe("memory plugin unified memory context", () => {
     expect(summary.ok && summary.value.content).toContain("Recent Experience Entry Points");
   });
 
-  it("refreshes the always-on summary only once for skill writes through MemorySystem", async () => {
+  it("refreshes the always-on summary only once for skill context writes", async () => {
     const workspace = await createWorkspaceDir();
     const memoryDir = await createMemoryDir();
     const memorySystem = new MemorySystem();
-    await createAgent({
+    const agent = await createAgent({
       workspace,
       memoryDir,
       memorySystem,
@@ -264,26 +269,16 @@ describe("memory plugin unified memory context", () => {
 
     const summarySpy = vi.spyOn(memorySystem, "buildAlwaysOnSummary");
 
-    const written = await memorySystem.writeSkill({
-      record: {
-        id: "single-refresh-skill",
-        type: "skill",
-        scope: "workspace",
-        problemClass: "single refresh validation",
-        recommendedApproach: ["Write the derived skill once and refresh the guide once."],
-        goodPractices: ["Keep summary regeneration centralized in MemorySystem."],
-        antiPatterns: [],
-        failureModes: ["Do not regenerate from both the store and the caller."],
-        recoveryPlaybook: ["Remove duplicate refresh paths."],
-        provenance: {
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-          evidence: [],
-        },
-      },
+    const written = await memorySystem.buildAlwaysOnSummary({ agentId: "memory-test-agent" });
+    summarySpy.mockClear();
+    const contextWrite = await agent.addContext({
+      namespace: "memory",
+      id: "skills/single-refresh-skill.md",
+      content: "# Skill Card\n\n## Skill Scope\nsingle refresh validation\n",
     });
 
     expect(written).toEqual(expect.objectContaining({ ok: true }));
+    expect(contextWrite).toEqual(expect.objectContaining({ ok: true }));
     expect(summarySpy).toHaveBeenCalledTimes(1);
   });
 

@@ -11,7 +11,6 @@ export const SkillMemoryConfigSchema = z.object({
   maxToolExcerptChars: z.number().int().positive().default(400),
   taskSummaryModel: z.string().min(1).optional(),
   sessionSummaryModel: z.string().min(1).optional(),
-  skillMergeModel: z.string().min(1).optional(),
   summaryModel: z.string().min(1).optional(),
   memoryRoot: z.string().min(1).default("memory"),
 });

@@ -192,6 +192,54 @@ export interface RuntimeMemoryRetrieval {
   readonly skills: readonly SkillMemoryRecord[];
 }
 
+export type MemoryEvidenceKind = "task_archive" | "run" | "session";
+
+export interface MemoryTaskArchiveEvidencePayload {
+  readonly task: TaskMemoryRecord;
+}
+
+export interface MemoryRunEvidencePayload {
+  readonly query: string;
+  readonly status: "succeeded" | "failed" | "cancelled" | "running";
+  readonly outputExcerpt?: string | undefined;
+  readonly errorMessage?: string | undefined;
+  readonly lessons: readonly string[];
+  readonly tools: readonly {
+    readonly toolName: string;
+    readonly status: "started" | "completed" | "failed";
+    readonly outputExcerpt?: string | undefined;
+    readonly errorMessage?: string | undefined;
+  }[];
+}
+
+export interface MemorySessionEvidencePayload {
+  readonly sessionId: string;
+  readonly runtimeSessionId?: string | undefined;
+  readonly runIds: readonly string[];
+  readonly externalContext: boolean;
+  readonly runs: readonly MemoryRunEvidencePayload[];
+}
+
+export type MemoryEvidencePayload =
+  | MemoryTaskArchiveEvidencePayload
+  | MemoryRunEvidencePayload
+  | MemorySessionEvidencePayload;
+
+export interface MemoryEvidenceRecord {
+  readonly id: string;
+  readonly type: "evidence";
+  readonly kind: MemoryEvidenceKind;
+  readonly agentId: string;
+  readonly scope: MemoryScope;
+  readonly workflowRunId?: string | undefined;
+  readonly taskRunId?: string | undefined;
+  readonly runtimeSessionId?: string | undefined;
+  readonly payload: MemoryEvidencePayload;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly provenance: MemoryProvenance;
+}
+
 export interface TaskMemoryAppendInput {
   readonly actorAgentId: string;
   readonly record: Omit<TaskMemoryRecord, "id" | "provenance" | "revision"> & {
@@ -240,13 +288,21 @@ export interface TaskMemoryArchiveInput {
   readonly context?: ExpertAgentRunContext | undefined;
 }
 
-export interface ExperienceMemoryWriteInput {
-  readonly record: ExperienceMemoryRecord;
+export interface MemoryEvidenceWriteInput {
+  readonly record: MemoryEvidenceRecord;
   readonly context?: ExpertAgentRunContext | undefined;
 }
 
-export interface ExperienceMemoryUpdateInput {
-  readonly record: ExperienceMemoryRecord;
+export interface MemoryEvidenceGetInput {
+  readonly id: string;
+  readonly context?: ExpertAgentRunContext | undefined;
+}
+
+export interface MemoryEvidenceListInput {
+  readonly kind?: MemoryEvidenceKind | undefined;
+  readonly workflowRunId?: string | undefined;
+  readonly taskRunId?: string | undefined;
+  readonly runtimeSessionId?: string | undefined;
   readonly context?: ExpertAgentRunContext | undefined;
 }
 
@@ -264,16 +320,6 @@ export interface ExperienceMemoryListInput {
   readonly context?: ExpertAgentRunContext | undefined;
 }
 
-export interface FactMemoryWriteInput {
-  readonly record: FactMemoryRecord;
-  readonly context?: ExpertAgentRunContext | undefined;
-}
-
-export interface FactMemoryUpdateInput {
-  readonly record: FactMemoryRecord;
-  readonly context?: ExpertAgentRunContext | undefined;
-}
-
 export interface FactMemoryGetInput {
   readonly id: string;
   readonly context?: ExpertAgentRunContext | undefined;
@@ -284,16 +330,6 @@ export interface FactMemoryListInput {
   readonly confidenceAtLeast?: MemoryConfidence | undefined;
   readonly onlyActive?: boolean | undefined;
   readonly tags?: readonly string[] | undefined;
-  readonly context?: ExpertAgentRunContext | undefined;
-}
-
-export interface SkillMemoryWriteInput {
-  readonly record: SkillMemoryRecord;
-  readonly context?: ExpertAgentRunContext | undefined;
-}
-
-export interface SkillMemoryUpdateInput {
-  readonly record: SkillMemoryRecord;
   readonly context?: ExpertAgentRunContext | undefined;
 }
 
@@ -342,6 +378,18 @@ export interface TaskMemoryStore {
   ) => Promise<MemoryResult<readonly TaskMemoryRecord[]>>;
 }
 
+export interface MemoryEvidenceStore {
+  readonly list: (
+    input: MemoryEvidenceListInput,
+  ) => Promise<MemoryResult<readonly MemoryEvidenceRecord[]>>;
+  readonly get: (
+    input: MemoryEvidenceGetInput,
+  ) => Promise<MemoryResult<MemoryEvidenceRecord>>;
+  readonly write: (
+    input: MemoryEvidenceWriteInput,
+  ) => Promise<MemoryResult<MemoryEvidenceRecord>>;
+}
+
 export interface ExperienceMemoryStore {
   readonly list: (
     input: ExperienceMemoryListInput,
@@ -349,15 +397,9 @@ export interface ExperienceMemoryStore {
   readonly get: (
     input: ExperienceMemoryGetInput,
   ) => Promise<MemoryResult<ExperienceMemoryRecord>>;
-  readonly write: (
-    input: ExperienceMemoryWriteInput,
+  readonly upsert: (
+    record: ExperienceMemoryRecord,
   ) => Promise<MemoryResult<ExperienceMemoryRecord>>;
-  readonly update: (
-    input: ExperienceMemoryUpdateInput,
-  ) => Promise<MemoryResult<ExperienceMemoryRecord>>;
-  readonly delete: (
-    input: ExperienceMemoryGetInput,
-  ) => Promise<MemoryResult<{ readonly id: string }>>;
   readonly search: (
     input: MemorySearchInput,
   ) => Promise<MemoryResult<readonly MemorySearchMatch<ExperienceMemoryRecord>[]>>;
@@ -374,15 +416,9 @@ export interface FactMemoryStore {
   readonly get: (
     input: FactMemoryGetInput,
   ) => Promise<MemoryResult<FactMemoryRecord>>;
-  readonly write: (
-    input: FactMemoryWriteInput,
+  readonly upsert: (
+    record: FactMemoryRecord,
   ) => Promise<MemoryResult<FactMemoryRecord>>;
-  readonly update: (
-    input: FactMemoryUpdateInput,
-  ) => Promise<MemoryResult<FactMemoryRecord>>;
-  readonly delete: (
-    input: FactMemoryGetInput,
-  ) => Promise<MemoryResult<{ readonly id: string }>>;
   readonly search: (
     input: MemorySearchInput,
   ) => Promise<MemoryResult<readonly MemorySearchMatch<FactMemoryRecord>[]>>;
@@ -399,15 +435,9 @@ export interface SkillMemoryStore {
   readonly get: (
     input: SkillMemoryGetInput,
   ) => Promise<MemoryResult<SkillMemoryRecord>>;
-  readonly write: (
-    input: SkillMemoryWriteInput,
+  readonly upsert: (
+    record: SkillMemoryRecord,
   ) => Promise<MemoryResult<SkillMemoryRecord>>;
-  readonly update: (
-    input: SkillMemoryUpdateInput,
-  ) => Promise<MemoryResult<SkillMemoryRecord>>;
-  readonly delete: (
-    input: SkillMemoryGetInput,
-  ) => Promise<MemoryResult<{ readonly id: string }>>;
   readonly search: (
     input: MemorySearchInput,
   ) => Promise<MemoryResult<readonly MemorySearchMatch<SkillMemoryRecord>[]>>;
@@ -423,11 +453,12 @@ export interface MemoryStoreRegistration<TStore> {
 
 export interface MemorySystemOptions {
   readonly taskStore?: TaskMemoryStore | undefined;
+  readonly evidenceStore?: MemoryEvidenceStore | undefined;
   readonly experienceStore?: ExperienceMemoryStore | undefined;
   readonly factStore?: FactMemoryStore | undefined;
   readonly skillStore?: SkillMemoryStore | undefined;
-  readonly promotions?: MemoryPromotionPipeline | undefined;
-  readonly onPromotionError?: ((error: MemoryResultError) => void) | undefined;
+  readonly distillation?: MemoryDistillationPipeline | undefined;
+  readonly onDistillationError?: ((error: MemoryResultError) => void) | undefined;
   readonly summaryConfig?: Partial<import("./summary.ts").MemorySummaryConfig> | undefined;
 }
 
@@ -436,7 +467,7 @@ export interface MemorySystemRuntimeRetrieveInput {
   readonly options?: RuntimeMemoryRetrieveOptions | undefined;
 }
 
-export interface MemoryPromotionCandidate<
+export interface MemoryDistillationCandidate<
   TMemoryType extends "experience" | "fact" | "skill",
   TRecord,
 > {
@@ -445,19 +476,20 @@ export interface MemoryPromotionCandidate<
   readonly derivedFrom: readonly MemoryReference[];
 }
 
-export interface MemoryPromotionProposal {
-  readonly experiences: readonly MemoryPromotionCandidate<"experience", ExperienceMemoryRecord>[];
-  readonly facts: readonly MemoryPromotionCandidate<"fact", FactMemoryRecord>[];
-  readonly skills: readonly MemoryPromotionCandidate<"skill", SkillMemoryRecord>[];
+export interface MemoryDistillationInput {
+  readonly evidence: readonly MemoryEvidenceRecord[];
 }
 
-export interface MemoryPromotionPipeline {
-  readonly proposeFromTask?: (
-    records: readonly TaskMemoryRecord[],
-  ) => Promise<MemoryResult<MemoryPromotionProposal>> | MemoryResult<MemoryPromotionProposal>;
-  readonly proposeFromExperience?: (
-    records: readonly ExperienceMemoryRecord[],
-  ) => Promise<MemoryResult<MemoryPromotionProposal>> | MemoryResult<MemoryPromotionProposal>;
+export interface MemoryDistillationProposal {
+  readonly experiences: readonly MemoryDistillationCandidate<"experience", ExperienceMemoryRecord>[];
+  readonly facts: readonly MemoryDistillationCandidate<"fact", FactMemoryRecord>[];
+  readonly skills: readonly MemoryDistillationCandidate<"skill", SkillMemoryRecord>[];
+}
+
+export interface MemoryDistillationPipeline {
+  readonly distill: (
+    input: MemoryDistillationInput,
+  ) => Promise<MemoryResult<MemoryDistillationProposal>> | MemoryResult<MemoryDistillationProposal>;
 }
 
 export function okMemory<TValue>(value: TValue): MemoryResult<TValue> {

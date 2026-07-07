@@ -96,42 +96,17 @@ function createExperienceMemoryStore(options: {
         : okMemory(cloneExperienceRecord(record));
     },
 
-    async write(input) {
-      return await withMutationLock(async () => {
-        const validation = validateExperienceRecord(input.record);
-
-        if (!validation.ok) {
-          return validation;
-        }
-
-        const records = await options.readRecords();
-        const record = withExperienceDefaults(input.record);
-        await options.writeRecords([
-          record,
-          ...records.filter((existing) => existing.id !== record.id),
-        ]);
-
-        return okMemory(cloneExperienceRecord(record));
-      });
-    },
-
-    async update(input) {
+    async upsert(recordInput) {
       return await withMutationLock(async () => {
         const records = await options.readRecords();
-        const existing = records.find((item) => item.id === input.record.id);
-
-        if (existing === undefined) {
-          return errorMemory("memory_not_found", `Experience memory not found: ${input.record.id}`, {
-            id: input.record.id,
-          });
-        }
+        const existing = records.find((item) => item.id === recordInput.id);
 
         const merged: ExperienceMemoryRecord = withExperienceDefaults({
-          ...input.record,
+          ...recordInput,
           provenance: {
-            ...input.record.provenance,
-            createdAt: existing.provenance.createdAt,
-            createdBy: existing.provenance.createdBy,
+            ...recordInput.provenance,
+            createdAt: existing?.provenance.createdAt ?? recordInput.provenance.createdAt,
+            createdBy: existing?.provenance.createdBy ?? recordInput.provenance.createdBy,
           },
         });
         const validation = validateExperienceRecord(merged);
@@ -146,21 +121,6 @@ function createExperienceMemoryStore(options: {
         ]);
 
         return okMemory(cloneExperienceRecord(merged));
-      });
-    },
-
-    async delete(input) {
-      return await withMutationLock(async () => {
-        const records = await options.readRecords();
-
-        if (!records.some((record) => record.id === input.id)) {
-          return errorMemory("memory_not_found", `Experience memory not found: ${input.id}`, {
-            id: input.id,
-          });
-        }
-
-        await options.writeRecords(records.filter((record) => record.id !== input.id));
-        return okMemory({ id: input.id });
       });
     },
 

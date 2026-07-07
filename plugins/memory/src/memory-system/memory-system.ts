@@ -6,20 +6,22 @@ import {
   resolveMemorySummaryConfig,
   type MemorySummaryConfig,
 } from "./summary.ts";
+import { createDefaultMemoryDistillationPipeline } from "./promotion-pipeline.ts";
 import {
   errorMemory,
   okMemory,
+  type MemoryDistillationPipeline,
+  type MemoryEvidenceGetInput,
+  type MemoryEvidenceListInput,
+  type MemoryEvidenceRecord,
+  type MemoryEvidenceStore,
+  type MemoryEvidenceWriteInput,
   type ExperienceMemoryGetInput,
   type ExperienceMemoryListInput,
   type ExperienceMemoryStore,
-  type ExperienceMemoryUpdateInput,
-  type ExperienceMemoryWriteInput,
   type FactMemoryGetInput,
   type FactMemoryListInput,
   type FactMemoryStore,
-  type FactMemoryUpdateInput,
-  type FactMemoryWriteInput,
-  type MemoryPromotionPipeline,
   type MemoryResult,
   type MemoryResultError,
   type MemoryStoreRegistration,
@@ -29,8 +31,6 @@ import {
   type SkillMemoryGetInput,
   type SkillMemoryListInput,
   type SkillMemoryStore,
-  type SkillMemoryUpdateInput,
-  type SkillMemoryWriteInput,
   type TaskMemoryAppendInput,
   type TaskMemoryArchiveInput,
   type TaskMemoryGetInput,
@@ -41,23 +41,26 @@ import {
 
 export class MemorySystem {
   private taskStore: TaskMemoryStore | undefined;
+  private evidenceStore: MemoryEvidenceStore | undefined;
   private experienceStore: ExperienceMemoryStore | undefined;
   private factStore: FactMemoryStore | undefined;
   private skillStore: SkillMemoryStore | undefined;
   private readonly summaryConfig: MemorySummaryConfig;
   private summaryArtifactRegenerator:
     (() => Promise<void>) | undefined;
-  readonly promotions: MemoryPromotionPipeline | undefined;
-  readonly onPromotionError: ((error: MemoryResultError) => void) | undefined;
+  private distillationChain = Promise.resolve();
+  readonly distillation: MemoryDistillationPipeline | undefined;
+  readonly onDistillationError: ((error: MemoryResultError) => void) | undefined;
 
   constructor(options: MemorySystemOptions = {}) {
     this.taskStore = options.taskStore;
+    this.evidenceStore = options.evidenceStore;
     this.experienceStore = options.experienceStore;
     this.factStore = options.factStore;
     this.skillStore = options.skillStore;
     this.summaryConfig = resolveMemorySummaryConfig(options.summaryConfig);
-    this.promotions = options.promotions;
-    this.onPromotionError = options.onPromotionError;
+    this.distillation = options.distillation ?? createDefaultMemoryDistillationPipeline();
+    this.onDistillationError = options.onDistillationError;
   }
 
   setSummaryArtifactRegenerator(regenerator: () => Promise<void>): void {
@@ -73,6 +76,17 @@ export class MemorySystem {
 
     this.taskStore = input.store;
     return okMemory({ type: "task" });
+  }
+
+  registerEvidenceStore(
+    input: MemoryStoreRegistration<MemoryEvidenceStore>,
+  ): MemoryResult<{ readonly type: "evidence" }> {
+    if (this.evidenceStore !== undefined) {
+      return errorMemory("store_already_registered", "Memory evidence store is already registered.");
+    }
+
+    this.evidenceStore = input.store;
+    return okMemory({ type: "evidence" });
   }
 
   registerExperienceStore(
@@ -172,10 +186,99 @@ export class MemorySystem {
         return archived;
       }
 
-      await this.runPromotionSafely(() => this.promoteFromTaskRecords(archived.value));
       await this.refreshSummaryArtifact();
+      const evidenceWrites = await Promise.all(
+        archived.value.map(async (record) => {
+          return await this.recordEvidence({
+            record: {
+              id: `evidence-task-archive-${record.id}`,
+              type: "evidence",
+              kind: "task_archive",
+              agentId: input.actorAgentId,
+              scope: record.scope,
+              workflowRunId: record.workflowRunId,
+              taskRunId: record.taskRunId,
+              runtimeSessionId: record.runtimeSessionId,
+              payload: { task: record },
+              createdAt: record.provenance.updatedAt,
+              updatedAt: record.provenance.updatedAt,
+              provenance: {
+                createdBy: "task-memory",
+                updatedBy: "task-memory",
+                source: "task-memory",
+                createdAt: record.provenance.updatedAt,
+                updatedAt: record.provenance.updatedAt,
+                evidence: [
+                  {
+                    type: "memory",
+                    id: record.id,
+                    memory: { type: "task", id: record.id },
+                  },
+                ],
+              },
+            },
+          });
+        }),
+      );
+
+      for (const write of evidenceWrites) {
+        if (!write.ok) {
+          this.onDistillationError?.(write.error);
+        }
+      }
       return archived;
     });
+  }
+
+  async listEvidence(input: MemoryEvidenceListInput) {
+    return await this.requireEvidenceStore().then((store) => {
+      if (!store.ok) {
+        return store;
+      }
+
+      return store.value.list(input);
+    });
+  }
+
+  async getEvidence(input: MemoryEvidenceGetInput) {
+    return await this.requireEvidenceStore().then((store) => {
+      if (!store.ok) {
+        return store;
+      }
+
+      return store.value.get(input);
+    });
+  }
+
+  async recordEvidence(
+    input: MemoryEvidenceWriteInput,
+    options: {
+      readonly waitUntilProcessed?: boolean | undefined;
+    } = {},
+  ) {
+    return await this.requireEvidenceStore().then(async (store) => {
+      if (!store.ok) {
+        return store;
+      }
+
+      const written = await store.value.write(input);
+
+      if (!written.ok) {
+        return written;
+      }
+
+      this.enqueueDistillation([written.value]);
+
+      if (options.waitUntilProcessed === true) {
+        await this.awaitIdle();
+      }
+
+      return written;
+    });
+  }
+
+  async awaitIdle(): Promise<void> {
+    await this.distillationChain;
   }
 
   async listExperiences(input: ExperienceMemoryListInput) {
@@ -195,64 +298,6 @@ export class MemorySystem {
       }
 
       return store.value.get(input);
-    });
-  }
-
-  async writeExperience(input: ExperienceMemoryWriteInput) {
-    return await this.requireExperienceStore().then(async (store) => {
-      if (!store.ok) {
-        return store;
-      }
-
-      const written = await store.value.write({
-        ...input,
-        record: normalizeExperienceRecord(input.record, this.summaryConfig.perRecordMaxChars),
-      });
-
-      if (!written.ok) {
-        return written;
-      }
-
-      await this.runPromotionSafely(() => this.promoteFromExperienceRecords([written.value]));
-      await this.refreshSummaryArtifact();
-      return written;
-    });
-  }
-
-  async updateExperience(input: ExperienceMemoryUpdateInput) {
-    return await this.requireExperienceStore().then(async (store) => {
-      if (!store.ok) {
-        return store;
-      }
-
-      const updated = await store.value.update({
-        ...input,
-        record: normalizeExperienceRecord(input.record, this.summaryConfig.perRecordMaxChars),
-      });
-
-      if (!updated.ok) {
-        return updated;
-      }
-
-      await this.runPromotionSafely(() => this.promoteFromExperienceRecords([updated.value]));
-      await this.refreshSummaryArtifact();
-      return updated;
-    });
-  }
-
-  async deleteExperience(input: ExperienceMemoryGetInput) {
-    return await this.requireExperienceStore().then(async (store) => {
-      if (!store.ok) {
-        return store;
-      }
-
-      const deleted = await store.value.delete(input);
-
-      if (deleted.ok) {
-        await this.refreshSummaryArtifact();
-      }
-
-      return deleted;
     });
   }
 
@@ -276,60 +321,6 @@ export class MemorySystem {
     });
   }
 
-  async writeFact(input: FactMemoryWriteInput) {
-    return await this.requireFactStore().then(async (store) => {
-      if (!store.ok) {
-        return store;
-      }
-
-      const written = await store.value.write({
-        ...input,
-        record: normalizeFactRecord(input.record, this.summaryConfig.perRecordMaxChars),
-      });
-
-      if (written.ok) {
-        await this.refreshSummaryArtifact();
-      }
-
-      return written;
-    });
-  }
-
-  async updateFact(input: FactMemoryUpdateInput) {
-    return await this.requireFactStore().then(async (store) => {
-      if (!store.ok) {
-        return store;
-      }
-
-      const updated = await store.value.update({
-        ...input,
-        record: normalizeFactRecord(input.record, this.summaryConfig.perRecordMaxChars),
-      });
-
-      if (updated.ok) {
-        await this.refreshSummaryArtifact();
-      }
-
-      return updated;
-    });
-  }
-
-  async deleteFact(input: FactMemoryGetInput) {
-    return await this.requireFactStore().then(async (store) => {
-      if (!store.ok) {
-        return store;
-      }
-
-      const deleted = await store.value.delete(input);
-
-      if (deleted.ok) {
-        await this.refreshSummaryArtifact();
-      }
-
-      return deleted;
-    });
-  }
-
   async listSkills(input: SkillMemoryListInput) {
     return await this.requireSkillStore().then((store) => {
       if (!store.ok) {
@@ -347,60 +338,6 @@ export class MemorySystem {
       }
 
       return store.value.get(input);
-    });
-  }
-
-  async writeSkill(input: SkillMemoryWriteInput) {
-    return await this.requireSkillStore().then(async (store) => {
-      if (!store.ok) {
-        return store;
-      }
-
-      const written = await store.value.write({
-        ...input,
-        record: normalizeSkillRecord(input.record, this.summaryConfig.perRecordMaxChars),
-      });
-
-      if (written.ok) {
-        await this.refreshSummaryArtifact();
-      }
-
-      return written;
-    });
-  }
-
-  async updateSkill(input: SkillMemoryUpdateInput) {
-    return await this.requireSkillStore().then(async (store) => {
-      if (!store.ok) {
-        return store;
-      }
-
-      const updated = await store.value.update({
-        ...input,
-        record: normalizeSkillRecord(input.record, this.summaryConfig.perRecordMaxChars),
-      });
-
-      if (updated.ok) {
-        await this.refreshSummaryArtifact();
-      }
-
-      return updated;
-    });
-  }
-
-  async deleteSkill(input: SkillMemoryGetInput) {
-    return await this.requireSkillStore().then(async (store) => {
-      if (!store.ok) {
-        return store;
-      }
-
-      const deleted = await store.value.delete(input);
-
-      if (deleted.ok) {
-        await this.refreshSummaryArtifact();
-      }
-
-      return deleted;
     });
   }
 
@@ -485,10 +422,68 @@ export class MemorySystem {
     );
   }
 
+  async buildContextArtifacts(input: {
+    readonly agentId: string;
+  }): Promise<
+    MemoryResult<
+      readonly {
+        readonly id: string;
+        readonly content: string;
+        readonly description: string;
+        readonly trigger: "always_on" | "model_decision" | "manual";
+      }[]
+    >
+  > {
+    const [tasks, experiences, facts] = await Promise.all([
+      this.taskStore?.listForSummary({ actorAgentId: input.agentId }) ?? Promise.resolve(okMemory([])),
+      this.experienceStore?.list({}) ?? Promise.resolve(okMemory([])),
+      this.factStore?.list({ onlyActive: true }) ?? Promise.resolve(okMemory([])),
+    ]);
+
+    if (!tasks.ok) {
+      return tasks;
+    }
+
+    if (!experiences.ok) {
+      return experiences;
+    }
+
+    if (!facts.ok) {
+      return facts;
+    }
+
+    return okMemory([
+      ...tasks.value.map((record) => ({
+        id: `task-memory/${record.id}.md`,
+        content: renderTaskMemoryArtifact(record),
+        description: `Task memory projection for ${record.id}.`,
+        trigger: "manual" as const,
+      })),
+      ...experiences.value.map((record) => ({
+        id: `experience-memory/${record.id}.md`,
+        content: renderExperienceMemoryArtifact(record),
+        description: `Experience memory projection for ${record.id}.`,
+        trigger: "manual" as const,
+      })),
+      ...facts.value.map((record) => ({
+        id: `fact-memory/${record.id}.md`,
+        content: renderFactMemoryArtifact(record),
+        description: `Fact memory projection for ${record.id}.`,
+        trigger: "manual" as const,
+      })),
+    ]);
+  }
+
   private async requireTaskStore(): Promise<MemoryResult<TaskMemoryStore>> {
     return this.taskStore === undefined
       ? errorMemory("store_unavailable", "Task memory store is not registered.")
       : okMemory(this.taskStore);
+  }
+
+  private async requireEvidenceStore(): Promise<MemoryResult<MemoryEvidenceStore>> {
+    return this.evidenceStore === undefined
+      ? errorMemory("store_unavailable", "Memory evidence store is not registered.")
+      : okMemory(this.evidenceStore);
   }
 
   private async requireExperienceStore(): Promise<MemoryResult<ExperienceMemoryStore>> {
@@ -509,63 +504,42 @@ export class MemorySystem {
       : okMemory(this.skillStore);
   }
 
-  private async promoteFromTaskRecords(
-    records: readonly import("./types.ts").TaskMemoryRecord[],
+  private enqueueDistillation(records: readonly MemoryEvidenceRecord[]): void {
+    if (records.length === 0) {
+      return;
+    }
+
+    this.distillationChain = this.distillationChain.then(async () => {
+      await this.runDistillationSafely(() => this.distillEvidence(records));
+    });
+  }
+
+  private async distillEvidence(
+    records: readonly MemoryEvidenceRecord[],
   ): Promise<MemoryResult<void>> {
-    if (this.promotions?.proposeFromTask === undefined || records.length === 0) {
+    if (this.distillation === undefined || records.length === 0) {
       return okMemory(undefined);
     }
 
-    const proposal = await this.promotions.proposeFromTask(records);
+    const proposal = await this.distillation.distill({
+      evidence: records,
+    });
 
     if (!proposal.ok) {
       return proposal;
     }
 
-    return await this.applyPromotionProposal(proposal.value);
+    return await this.applyDistillationProposal(proposal.value);
   }
 
-  private async promoteFromExperienceRecords(
-    records: readonly import("./types.ts").ExperienceMemoryRecord[],
-  ): Promise<MemoryResult<void>> {
-    if (this.promotions?.proposeFromExperience === undefined || records.length === 0) {
-      return okMemory(undefined);
-    }
-
-    const proposal = await this.promotions.proposeFromExperience(records);
-
-    if (!proposal.ok) {
-      return proposal;
-    }
-
-    return await this.applyPromotionProposal(proposal.value);
-  }
-
-  private async applyPromotionProposal(
-    proposal: import("./types.ts").MemoryPromotionProposal,
+  private async applyDistillationProposal(
+    proposal: import("./types.ts").MemoryDistillationProposal,
   ): Promise<MemoryResult<void>> {
     if (this.experienceStore !== undefined) {
       for (const candidate of proposal.experiences) {
-        const existing = await this.experienceStore.get({ id: candidate.record.id });
-
-        if (existing.ok) {
-          const updated = await this.experienceStore.update({
-            record: normalizeExperienceRecord(candidate.record, this.summaryConfig.perRecordMaxChars),
-          });
-
-          if (!updated.ok) {
-            return updated;
-          }
-          continue;
-        }
-
-        if (existing.error.code !== "memory_not_found") {
-          return existing;
-        }
-
-        const written = await this.experienceStore.write({
-          record: normalizeExperienceRecord(candidate.record, this.summaryConfig.perRecordMaxChars),
-        });
+        const written = await this.experienceStore.upsert(
+          normalizeExperienceRecord(candidate.record, this.summaryConfig.perRecordMaxChars),
+        );
 
         if (!written.ok) {
           return written;
@@ -575,26 +549,9 @@ export class MemorySystem {
 
     if (this.factStore !== undefined) {
       for (const candidate of proposal.facts) {
-        const existing = await this.factStore.get({ id: candidate.record.id });
-
-        if (existing.ok) {
-          const updated = await this.factStore.update({
-            record: normalizeFactRecord(candidate.record, this.summaryConfig.perRecordMaxChars),
-          });
-
-          if (!updated.ok) {
-            return updated;
-          }
-          continue;
-        }
-
-        if (existing.error.code !== "memory_not_found") {
-          return existing;
-        }
-
-        const written = await this.factStore.write({
-          record: normalizeFactRecord(candidate.record, this.summaryConfig.perRecordMaxChars),
-        });
+        const written = await this.factStore.upsert(
+          normalizeFactRecord(candidate.record, this.summaryConfig.perRecordMaxChars),
+        );
 
         if (!written.ok) {
           return written;
@@ -604,26 +561,9 @@ export class MemorySystem {
 
     if (this.skillStore !== undefined) {
       for (const candidate of proposal.skills) {
-        const existing = await this.skillStore.get({ id: candidate.record.id });
-
-        if (existing.ok) {
-          const updated = await this.skillStore.update({
-            record: normalizeSkillRecord(candidate.record, this.summaryConfig.perRecordMaxChars),
-          });
-
-          if (!updated.ok) {
-            return updated;
-          }
-          continue;
-        }
-
-        if (existing.error.code !== "memory_not_found") {
-          return existing;
-        }
-
-        const written = await this.skillStore.write({
-          record: normalizeSkillRecord(candidate.record, this.summaryConfig.perRecordMaxChars),
-        });
+        const written = await this.skillStore.upsert(
+          normalizeSkillRecord(candidate.record, this.summaryConfig.perRecordMaxChars),
+        );
 
         if (!written.ok) {
           return written;
@@ -635,17 +575,17 @@ export class MemorySystem {
     return okMemory(undefined);
   }
 
-  private async runPromotionSafely(operation: () => Promise<MemoryResult<void>>): Promise<void> {
+  private async runDistillationSafely(operation: () => Promise<MemoryResult<void>>): Promise<void> {
     try {
       const result = await operation();
 
       if (!result.ok) {
-        this.onPromotionError?.(result.error);
+        this.onDistillationError?.(result.error);
       }
     } catch (error) {
-      this.onPromotionError?.({
+      this.onDistillationError?.({
         code: "store_error",
-        message: "Memory promotion failed unexpectedly.",
+        message: "Memory distillation failed unexpectedly.",
         details: {
           cause: error,
         },
@@ -656,4 +596,67 @@ export class MemorySystem {
   private async refreshSummaryArtifact(): Promise<void> {
     await this.summaryArtifactRegenerator?.();
   }
+}
+
+function renderTaskMemoryArtifact(record: import("./types.ts").TaskMemoryRecord): string {
+  return [
+    "# Task Memory",
+    "",
+    `- id: ${record.id}`,
+    `- kind: ${record.kind}`,
+    `- visibility: ${record.visibility}`,
+    `- status: ${record.status}`,
+    `- workflowRunId: ${record.workflowRunId}`,
+    ...(record.taskRunId === undefined ? [] : [`- taskRunId: ${record.taskRunId}`]),
+    ...(record.runtimeSessionId === undefined ? [] : [`- runtimeSessionId: ${record.runtimeSessionId}`]),
+    ...(record.title === undefined ? [] : ["", "## Title", record.title]),
+    "",
+    "## Content",
+    record.content,
+    ...(record.items === undefined || record.items.length === 0
+      ? []
+      : [
+          "",
+          "## Todo Items",
+          ...record.items.map(
+            (item) => `- [${item.done ? "x" : " "}] ${item.text}${item.assigneeAgentId === undefined ? "" : ` (${item.assigneeAgentId})`}`,
+          ),
+        ]),
+  ].join("\n");
+}
+
+function renderExperienceMemoryArtifact(record: import("./types.ts").ExperienceMemoryRecord): string {
+  return [
+    "# Experience Memory",
+    "",
+    `- id: ${record.id}`,
+    `- kind: ${record.kind}`,
+    `- status: ${record.status}`,
+    `- scope: ${record.scope}`,
+    ...(record.title === undefined ? [] : [`- title: ${record.title}`]),
+    "",
+    "## Summary",
+    record.summary ?? "No summary recorded.",
+    "",
+    "## Content",
+    record.content,
+  ].join("\n");
+}
+
+function renderFactMemoryArtifact(record: import("./types.ts").FactMemoryRecord): string {
+  return [
+    "# Fact Memory",
+    "",
+    `- id: ${record.id}`,
+    `- scope: ${record.scope}`,
+    `- confidence: ${record.confidence}`,
+    `- observedAt: ${record.observedAt}`,
+    ...(record.verifiedAt === undefined ? [] : [`- verifiedAt: ${record.verifiedAt}`]),
+    ...(record.reviewAt === undefined ? [] : [`- reviewAt: ${record.reviewAt}`]),
+    ...(record.expiresAt === undefined ? [] : [`- expiresAt: ${record.expiresAt}`]),
+    "",
+    "## Statement",
+    record.statement,
+    ...(record.summary === undefined ? [] : ["", "## Summary", record.summary]),
+  ].join("\n");
 }

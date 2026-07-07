@@ -1,4 +1,4 @@
-import { readFile, rm } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 
 import type {
   ExpertAgentPluginSetupContext,
@@ -6,15 +6,12 @@ import type {
 import {
   errorMemory,
   okMemory,
-  type MemorySystem,
   type MemoryResult,
   type RuntimeMemoryRetrieveInput,
   type SkillMemoryGetInput,
   type SkillMemoryListInput,
   type SkillMemoryRecord,
   type SkillMemoryStore,
-  type SkillMemoryUpdateInput,
-  type SkillMemoryWriteInput,
 } from "../memory-system/index.ts";
 
 import { SKILLS_PREFIX } from "./constants.ts";
@@ -37,30 +34,23 @@ import {
 } from "./utils.ts";
 import { skillIdToContextId } from "./rendering.ts";
 
-export function createSkillMemoryStore(
-  context: ExpertAgentPluginSetupContext,
-  memorySystem: MemorySystem,
-): SkillMemoryStore {
+export function createSkillMemoryStore(context: ExpertAgentPluginSetupContext): SkillMemoryStore {
   return new FileSystemSkillMemoryStore({
     agentId: context.agent?.id ?? "unknown-agent",
     context,
-    memorySystem,
   });
 }
 
 class FileSystemSkillMemoryStore implements SkillMemoryStore {
   private readonly agentId: string;
   private readonly context: ExpertAgentPluginSetupContext;
-  private readonly memorySystem: MemorySystem;
 
   constructor(options: {
     readonly agentId: string;
     readonly context: ExpertAgentPluginSetupContext;
-    readonly memorySystem: MemorySystem;
   }) {
     this.agentId = options.agentId;
     this.context = options.context;
-    this.memorySystem = options.memorySystem;
   }
 
   async list(input: SkillMemoryListInput): Promise<MemoryResult<readonly SkillMemoryRecord[]>> {
@@ -97,22 +87,22 @@ class FileSystemSkillMemoryStore implements SkillMemoryStore {
     }
   }
 
-  async write(input: SkillMemoryWriteInput): Promise<MemoryResult<SkillMemoryRecord>> {
+  async upsert(inputRecord: SkillMemoryRecord): Promise<MemoryResult<SkillMemoryRecord>> {
     try {
       if (!(await this.isEnabledForUsage())) {
         return errorMemory("store_unavailable", "Skill memory is disabled.");
       }
 
-      const contextId = normalizeSkillContextId(input.record.id);
+      const contextId = normalizeSkillContextId(inputRecord.id);
       const stored = createStoredContext({
         id: contextId,
-        content: renderSkillRecord(input.record),
+        content: renderSkillRecord(inputRecord),
         metadata: {
           description:
-            input.record.summary ??
-            input.record.title ??
-            `Skill memory for ${input.record.problemClass}.`,
-          trigger: input.record.runtime?.trigger ?? "model_decision",
+            inputRecord.summary ??
+            inputRecord.title ??
+            `Skill memory for ${inputRecord.problemClass}.`,
+          trigger: inputRecord.runtime?.trigger ?? "model_decision",
           trustLevel: "workspace",
           sensitivity: "internal",
         },
@@ -121,52 +111,24 @@ class FileSystemSkillMemoryStore implements SkillMemoryStore {
       await writeStoredMarkdown(rootDir, stored, {
         schemaVersion: "pragma.memory-skill/v1",
         agentId: this.agentId,
-        skillId: sanitizeIdSegment(input.record.id),
-        updatedAt: input.record.provenance.updatedAt,
-        createdAt: input.record.provenance.createdAt,
+        skillId: sanitizeIdSegment(inputRecord.id),
+        updatedAt: inputRecord.provenance.updatedAt,
+        createdAt: inputRecord.provenance.createdAt,
         audit: {
-          createdBy: input.record.provenance.createdBy ?? "skill-memory",
-          updatedBy: input.record.provenance.updatedBy,
+          createdBy: inputRecord.provenance.createdBy ?? "skill-memory",
+          updatedBy: inputRecord.provenance.updatedBy,
         },
       });
 
       const written = await this.readSkillRecordByContextId(contextId);
 
       if (written === undefined) {
-        return errorMemory("store_error", `Failed to load written skill memory: ${input.record.id}`);
+        return errorMemory("store_error", `Failed to load written skill memory: ${inputRecord.id}`);
       }
 
       return okMemory(written);
     } catch (caught) {
-      return toStoreError(`Failed to write skill memory: ${input.record.id}`, caught);
-    }
-  }
-
-  async update(input: SkillMemoryUpdateInput): Promise<MemoryResult<SkillMemoryRecord>> {
-    return await this.write({ record: input.record, context: input.context });
-  }
-
-  async delete(input: SkillMemoryGetInput): Promise<MemoryResult<{ readonly id: string }>> {
-    try {
-      if (!(await this.isEnabledForUsage())) {
-        return errorMemory("store_unavailable", "Skill memory is disabled.");
-      }
-
-      const contextId = normalizeSkillContextId(input.id);
-      const rootDir = await this.resolveRootDir();
-      const path = resolveContextPath(rootDir, contextId);
-
-      if (!(await exists(path))) {
-        return errorMemory("memory_not_found", `Skill memory not found: ${input.id}`, {
-          id: input.id,
-        });
-      }
-
-      await rm(path);
-
-      return okMemory({ id: input.id });
-    } catch (caught) {
-      return toStoreError(`Failed to delete skill memory: ${input.id}`, caught);
+      return toStoreError(`Failed to write skill memory: ${inputRecord.id}`, caught);
     }
   }
 

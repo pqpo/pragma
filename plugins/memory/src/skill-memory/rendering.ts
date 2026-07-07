@@ -10,7 +10,6 @@ import {
 import type { MemoryRunEvidence, MemorySessionEvidence } from "./schema.ts";
 import {
   dedupeStrings,
-  extractLastUpdatedSessions,
   extractSectionBullets,
   firstOrDefault,
   humanizeSkillId,
@@ -205,85 +204,6 @@ export function renderSessionSummary(
       ],
       "No evidence references recorded.",
     ),
-    "",
-  ].join("\n");
-}
-
-export function mergeSkillContent(
-  existingContent: string | undefined,
-  sessionEvidence: MemorySessionEvidence,
-  runEvidence: readonly MemoryRunEvidence[],
-): string {
-  const scope = humanizeSkillId(deriveSkillId(runEvidence));
-  const recommendedApproach = dedupeStrings([
-    ...extractSectionBullets(existingContent ?? "", "Recommended Approach"),
-    ...runEvidence.flatMap((run) =>
-      run.tools
-        .filter((tool) => tool.status === "completed")
-        .map((tool) => `Prefer ${tool.toolName} when solving this class of problem.`),
-    ),
-  ]);
-  const failureModes = dedupeStrings([
-    ...extractSectionBullets(existingContent ?? "", "Common Failure Modes"),
-    ...runEvidence.flatMap((run) =>
-      run.tools
-        .filter((tool) => tool.status === "failed")
-        .map((tool) => `${tool.toolName} can fail if retried without a clearer path.`),
-    ),
-  ]);
-  const recovery = dedupeStrings([
-    ...extractSectionBullets(existingContent ?? "", "Recovery Playbook"),
-    ...runEvidence.flatMap((run) => deriveDefaultFixes(run)),
-  ]);
-  const goodPractices = dedupeStrings([
-    ...extractSectionBullets(existingContent ?? "", "Good Practices"),
-    ...runEvidence.flatMap((run) => derivePositivePractices(run)),
-  ]);
-  const antiPatterns = dedupeStrings([
-    ...extractSectionBullets(existingContent ?? "", "Anti-Patterns"),
-    ...runEvidence.flatMap((run) => deriveAntiPatterns(run)),
-  ]);
-  const lessons = dedupeStrings([
-    ...extractSectionBullets(existingContent ?? "", "Lessons Confirmed By Past Tasks"),
-    ...runEvidence.flatMap((run) => deriveLessonsFromEvidence(run)),
-  ]);
-  const sessions = dedupeStrings([
-    sessionEvidence.sessionId,
-    ...extractLastUpdatedSessions(existingContent),
-  ]);
-
-  return [
-    "# Skill Card",
-    "",
-    "## Skill Scope",
-    scope,
-    "",
-    "## When To Use",
-    firstOrDefault(
-      extractSectionBullets(existingContent ?? "", "When To Use"),
-      `Use this skill when the task resembles: ${summarizeSessionGoal(runEvidence)}.`,
-    ),
-    "",
-    "## Recommended Approach",
-    ...renderBullets(recommendedApproach, "No recommended approach has been recorded yet."),
-    "",
-    "## Common Failure Modes",
-    ...renderBullets(failureModes, "No common failure mode has been recorded yet."),
-    "",
-    "## Recovery Playbook",
-    ...renderBullets(recovery, "No recovery playbook has been recorded yet."),
-    "",
-    "## Good Practices",
-    ...renderBullets(goodPractices, "No good practice has been recorded yet."),
-    "",
-    "## Anti-Patterns",
-    ...renderBullets(antiPatterns, "No anti-pattern has been recorded yet."),
-    "",
-    "## Lessons Confirmed By Past Tasks",
-    ...renderBullets(lessons, "No confirmed lesson has been recorded yet."),
-    "",
-    "## Last Updated From Sessions",
-    ...renderBullets(sessions, "No source session has been recorded yet."),
     "",
   ].join("\n");
 }

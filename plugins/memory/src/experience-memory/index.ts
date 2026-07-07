@@ -5,10 +5,8 @@ import type {
 
 import { MemorySystem, type ExperienceMemoryStore } from "../memory-system/index.ts";
 import { createFileSystemExperienceMemoryStore } from "./store.ts";
-import { createExperienceMemoryTools } from "./tools.ts";
 
 export { createFileSystemExperienceMemoryStore } from "./store.ts";
-export { createExperienceMemoryTools } from "./tools.ts";
 
 export interface ExperienceMemoryStoreFactoryContext {
   readonly pluginContext: ExpertAgentPluginSetupContext;
@@ -35,11 +33,6 @@ export const experienceMemoryCapabilities = [
     name: "experience-memory",
     description: "Registers the experience memory store.",
   },
-  {
-    type: "tool",
-    name: "experience-memory-tools",
-    description: "Injects experience memory tools into the agent tool set.",
-  },
 ] as const;
 
 export function createExperienceMemoryContributions(
@@ -60,12 +53,7 @@ export function createExperienceMemoryContributions(
     throw new Error(registration.error.message);
   }
 
-  return {
-    tools: createExperienceMemoryTools({
-      memorySystem: context.memorySystem,
-      defaultAgentId: context.agent?.id,
-    }),
-  };
+  return {};
 }
 
 function readExperienceMemoryConfig(input: unknown): ExperienceMemoryPluginConfig {
@@ -160,9 +148,7 @@ function isExperienceMemoryStore(input: unknown): input is ExperienceMemoryStore
   return (
     typeof store.list === "function" &&
     typeof store.get === "function" &&
-    typeof store.write === "function" &&
-    typeof store.update === "function" &&
-    typeof store.delete === "function" &&
+    typeof store.upsert === "function" &&
     typeof store.search === "function" &&
     typeof store.retrieveForRuntime === "function"
   );

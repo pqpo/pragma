@@ -15,8 +15,7 @@ describe("file-system ExperienceMemoryStore", () => {
   it("writes, lists, and filters experience entries", async () => {
     const store = await createStore();
 
-    const written = await store.write({
-      record: {
+    const written = await store.upsert({
         id: "experience-1",
         type: "experience",
         scope: "session",
@@ -31,7 +30,6 @@ describe("file-system ExperienceMemoryStore", () => {
           updatedAt: "2026-07-06T00:00:00.000Z",
           evidence: [{ type: "run", id: "workflow-1" }],
         },
-      },
     });
 
     expect(written.ok).toBe(true);
@@ -51,8 +49,7 @@ describe("file-system ExperienceMemoryStore", () => {
   it("retrieves relevant experiences for runtime and prioritizes summarized entries", async () => {
     const store = await createStore();
 
-    await store.write({
-      record: {
+    await store.upsert({
         id: "experience-1",
         type: "experience",
         scope: "session",
@@ -65,10 +62,8 @@ describe("file-system ExperienceMemoryStore", () => {
           updatedAt: "2026-07-06T00:00:00.000Z",
           evidence: [{ type: "run", id: "workflow-1" }],
         },
-      },
     });
-    await store.write({
-      record: {
+    await store.upsert({
         id: "experience-2",
         type: "experience",
         scope: "session",
@@ -81,7 +76,6 @@ describe("file-system ExperienceMemoryStore", () => {
           updatedAt: "2026-07-06T01:00:00.000Z",
           evidence: [{ type: "run", id: "workflow-1" }],
         },
-      },
     });
 
     const retrieved = await store.retrieveForRuntime({
@@ -101,8 +95,7 @@ describe("file-system ExperienceMemoryStore", () => {
   it("matches runtime retrieval queries case-insensitively", async () => {
     const store = await createStore();
 
-    await store.write({
-      record: {
+    await store.upsert({
         id: "experience-1",
         type: "experience",
         scope: "session",
@@ -117,7 +110,6 @@ describe("file-system ExperienceMemoryStore", () => {
           updatedAt: "2026-07-06T00:00:00.000Z",
           evidence: [{ type: "run", id: "workflow-1" }],
         },
-      },
     });
 
     const retrieved = await store.retrieveForRuntime({
@@ -132,11 +124,10 @@ describe("file-system ExperienceMemoryStore", () => {
     });
   });
 
-  it("updates and deletes entries", async () => {
+  it("upserts experience entries", async () => {
     const store = await createStore();
 
-    await store.write({
-      record: {
+    await store.upsert({
         id: "experience-1",
         type: "experience",
         scope: "session",
@@ -148,11 +139,9 @@ describe("file-system ExperienceMemoryStore", () => {
           updatedAt: "2026-07-06T00:00:00.000Z",
           evidence: [{ type: "message", id: "message-1" }],
         },
-      },
     });
 
-    const updated = await store.update({
-      record: {
+    const updated = await store.upsert({
         id: "experience-1",
         type: "experience",
         scope: "session",
@@ -164,7 +153,6 @@ describe("file-system ExperienceMemoryStore", () => {
           updatedAt: "2026-07-06T01:00:00.000Z",
           evidence: [{ type: "message", id: "message-1" }],
         },
-      },
     });
 
     expect(updated).toMatchObject({
@@ -175,10 +163,10 @@ describe("file-system ExperienceMemoryStore", () => {
       }),
     });
 
-    const deleted = await store.delete({ id: "experience-1" });
-    expect(deleted).toEqual({
+    const listed = await store.list({});
+    expect(listed).toMatchObject({
       ok: true,
-      value: { id: "experience-1" },
+      value: [expect.objectContaining({ id: "experience-1", content: "Updated content" })],
     });
   });
 
@@ -191,8 +179,7 @@ describe("file-system ExperienceMemoryStore", () => {
       filePath,
     });
 
-    await firstStore.write({
-      record: {
+    await firstStore.upsert({
         id: "experience-1",
         type: "experience",
         scope: "workspace",
@@ -204,7 +191,6 @@ describe("file-system ExperienceMemoryStore", () => {
           updatedAt: "2026-07-06T00:00:00.000Z",
           evidence: [{ type: "run", id: "run-1" }],
         },
-      },
     });
 
     const secondStore = createFileSystemExperienceMemoryStore({

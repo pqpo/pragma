@@ -8,11 +8,15 @@ import type {
 import { error, ok } from "@pragma/core";
 
 import {
+  DISTILLATION_EVIDENCE_PREFIX,
+  EXPERIENCE_MEMORY_PREFIX,
+  FACT_MEMORY_PREFIX,
   MARKDOWN_EXTENSION,
   RUNS_EVIDENCE_PREFIX,
   SESSIONS_EVIDENCE_PREFIX,
   SKILLS_PREFIX,
   SUMMARY_CONTEXT_ID,
+  TASK_MEMORY_PREFIX,
   TASKS_PREFIX,
 } from "./constants.ts";
 
@@ -103,6 +107,14 @@ export function defaultTriggerForContextId(
 
   if (id.startsWith(SKILLS_PREFIX)) {
     return "model_decision";
+  }
+
+  if (id.startsWith(FACT_MEMORY_PREFIX)) {
+    return "model_decision";
+  }
+
+  if (id.startsWith(EXPERIENCE_MEMORY_PREFIX) || id.startsWith(TASK_MEMORY_PREFIX)) {
+    return "manual";
   }
 
   return "manual";
@@ -300,6 +312,18 @@ export function inferSchemaVersion(id: string): string {
       : "pragma.memory-task-summary/v1";
   }
 
+  if (id.startsWith(TASK_MEMORY_PREFIX)) {
+    return "pragma.memory-task-view/v1";
+  }
+
+  if (id.startsWith(EXPERIENCE_MEMORY_PREFIX)) {
+    return "pragma.memory-experience-view/v1";
+  }
+
+  if (id.startsWith(FACT_MEMORY_PREFIX)) {
+    return "pragma.memory-fact-view/v1";
+  }
+
   if (id.startsWith(RUNS_EVIDENCE_PREFIX)) {
     return "pragma.memory-run-evidence/v1";
   }
@@ -308,11 +332,11 @@ export function inferSchemaVersion(id: string): string {
     return "pragma.memory-session-evidence/v1";
   }
 
-  return "pragma.memory-summary/v2";
-}
+  if (id.startsWith(DISTILLATION_EVIDENCE_PREFIX)) {
+    return "pragma.memory-distillation-evidence/v1";
+  }
 
-export function extractLastUpdatedSessions(content: string | undefined): readonly string[] {
-  return content === undefined ? [] : extractSectionBullets(content, "Last Updated From Sessions");
+  return "pragma.memory-summary/v2";
 }
 
 export function normalizeMemoryContextId(id: string): ExpertAgentContextResult<string> {
@@ -339,7 +363,12 @@ export function isAllowedMemoryContextId(id: string): boolean {
     id === SUMMARY_CONTEXT_ID ||
     (id.startsWith(SKILLS_PREFIX) && id.endsWith(MARKDOWN_EXTENSION)) ||
     (id.startsWith(TASKS_PREFIX) && id.endsWith(MARKDOWN_EXTENSION)) ||
-    ((id.startsWith(RUNS_EVIDENCE_PREFIX) || id.startsWith(SESSIONS_EVIDENCE_PREFIX)) &&
+    (id.startsWith(TASK_MEMORY_PREFIX) && id.endsWith(MARKDOWN_EXTENSION)) ||
+    (id.startsWith(EXPERIENCE_MEMORY_PREFIX) && id.endsWith(MARKDOWN_EXTENSION)) ||
+    (id.startsWith(FACT_MEMORY_PREFIX) && id.endsWith(MARKDOWN_EXTENSION)) ||
+    ((id.startsWith(RUNS_EVIDENCE_PREFIX) ||
+      id.startsWith(SESSIONS_EVIDENCE_PREFIX) ||
+      id.startsWith(DISTILLATION_EVIDENCE_PREFIX)) &&
       id.endsWith(".json"))
   );
 }

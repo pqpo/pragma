@@ -123,13 +123,7 @@ function createStubExperienceMemoryStore() {
     async get() {
       throw new Error("not implemented");
     },
-    async write() {
-      throw new Error("not implemented");
-    },
-    async update() {
-      throw new Error("not implemented");
-    },
-    async delete() {
+    async upsert() {
       throw new Error("not implemented");
     },
     async search() {
@@ -149,13 +143,7 @@ function createStubFactMemoryStore() {
     async get() {
       throw new Error("not implemented");
     },
-    async write() {
-      throw new Error("not implemented");
-    },
-    async update() {
-      throw new Error("not implemented");
-    },
-    async delete() {
+    async upsert() {
       throw new Error("not implemented");
     },
     async search() {

@@ -15,8 +15,7 @@ describe("file-system FactMemoryStore", () => {
   it("lists facts by scope, confidence, tags, and active state", async () => {
     const store = await createStore();
 
-    await store.write({
-      record: {
+    await store.upsert({
         id: "fact-1",
         type: "fact",
         scope: "workspace",
@@ -29,10 +28,8 @@ describe("file-system FactMemoryStore", () => {
           updatedAt: "2026-07-06T00:00:00.000Z",
           evidence: [{ type: "external", id: "search-1" }],
         },
-      },
     });
-    await store.write({
-      record: {
+    await store.upsert({
         id: "fact-2",
         type: "fact",
         scope: "workspace",
@@ -46,7 +43,6 @@ describe("file-system FactMemoryStore", () => {
           updatedAt: "2026-07-06T00:00:00.000Z",
           evidence: [{ type: "external", id: "search-2" }],
         },
-      },
     });
 
     const listed = await store.list({
@@ -65,8 +61,7 @@ describe("file-system FactMemoryStore", () => {
   it("excludes superseded or invalidated facts from runtime retrieval", async () => {
     const store = await createStore();
 
-    await store.write({
-      record: {
+    await store.upsert({
         id: "fact-1",
         type: "fact",
         scope: "workspace",
@@ -79,10 +74,8 @@ describe("file-system FactMemoryStore", () => {
           updatedAt: "2026-07-05T00:00:00.000Z",
           evidence: [{ type: "external", id: "search-1" }],
         },
-      },
     });
-    await store.write({
-      record: {
+    await store.upsert({
         id: "fact-2",
         type: "fact",
         scope: "workspace",
@@ -95,7 +88,6 @@ describe("file-system FactMemoryStore", () => {
           updatedAt: "2026-07-06T00:00:00.000Z",
           evidence: [{ type: "external", id: "search-2" }],
         },
-      },
     });
 
     const retrieved = await store.retrieveForRuntime({
@@ -112,8 +104,7 @@ describe("file-system FactMemoryStore", () => {
   it("keeps conflicting facts addressable", async () => {
     const store = await createStore();
 
-    await store.write({
-      record: {
+    await store.upsert({
         id: "fact-1",
         type: "fact",
         scope: "workspace",
@@ -126,10 +117,8 @@ describe("file-system FactMemoryStore", () => {
           updatedAt: "2026-07-06T00:00:00.000Z",
           evidence: [{ type: "external", id: "search-1" }],
         },
-      },
     });
-    await store.write({
-      record: {
+    await store.upsert({
         id: "fact-2",
         type: "fact",
         scope: "workspace",
@@ -142,7 +131,6 @@ describe("file-system FactMemoryStore", () => {
           updatedAt: "2026-07-06T01:00:00.000Z",
           evidence: [{ type: "external", id: "search-2" }],
         },
-      },
     });
 
     const first = await store.get({ id: "fact-1" });
@@ -161,8 +149,7 @@ describe("file-system FactMemoryStore", () => {
   it("lists and searches facts in stable priority order", async () => {
     const store = await createStore();
 
-    await store.write({
-      record: {
+    await store.upsert({
         id: "fact-1",
         type: "fact",
         scope: "workspace",
@@ -174,10 +161,8 @@ describe("file-system FactMemoryStore", () => {
           updatedAt: "2026-07-06T00:00:00.000Z",
           evidence: [{ type: "external", id: "search-1" }],
         },
-      },
     });
-    await store.write({
-      record: {
+    await store.upsert({
         id: "fact-2",
         type: "fact",
         scope: "workspace",
@@ -190,7 +175,6 @@ describe("file-system FactMemoryStore", () => {
           updatedAt: "2026-07-06T01:00:00.000Z",
           evidence: [{ type: "external", id: "search-2" }],
         },
-      },
     });
 
     const listed = await store.list({});
@@ -220,8 +204,7 @@ describe("file-system FactMemoryStore", () => {
       filePath,
     });
 
-    await firstStore.write({
-      record: {
+    await firstStore.upsert({
         id: "fact-1",
         type: "fact",
         scope: "workspace",
@@ -233,7 +216,6 @@ describe("file-system FactMemoryStore", () => {
           updatedAt: "2026-07-06T00:00:00.000Z",
           evidence: [{ type: "external", id: "search-1" }],
         },
-      },
     });
 
     const secondStore = createFileSystemFactMemoryStore({

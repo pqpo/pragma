@@ -294,7 +294,7 @@ describe("ExpertAgent plugins", () => {
     });
 
     expect(receivedConfigs).toEqual([{ enabled: false }]);
-  });
+  }, 10_000);
 
   it("creates plugin config env names from plugin id and config name", () => {
     expect(

@@ -71,9 +71,9 @@ pnpm --filter @pragma/examples start:memory
 这个示例不依赖模型 key，专门演示：
 
 1. `defineAgent()` 默认加载四类记忆。
-2. `task`、`experience`、`fact` 三类工具默认可用。
-3. `skill-memory` namespace 默认可写。
-4. 通过 `memory` 参数关闭 `experience` / `fact` 后，相关工具会消失，而其他类别仍保留。
+2. 默认只暴露 `task` 写工具，`experience` / `fact` 不再默认直出工具。
+3. `memory` namespace 默认可写，并承载 summary 与 skill card。
+4. 通过 `memory` 参数关闭 `experience` / `fact` 后，会关闭对应的自动沉淀与 context 投影，而 task 工具和其他类别仍可独立保留。
 
 示例入口是 `src/run-memory-system-example.ts`。
 

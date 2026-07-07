@@ -6,11 +6,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   errorMemory,
   MemorySystem,
-  createDefaultMemoryPromotionPipeline,
+  createDefaultMemoryDistillationPipeline,
   createFileSystemExperienceMemoryStore,
   createFileSystemFactMemoryStore,
   createFileSystemTaskMemoryStore,
 } from "../src/index.ts";
+import { createFileSystemMemoryEvidenceStore } from "../src/skill-memory/evidence-store.ts";
 
 const tempDirs: string[] = [];
 
@@ -18,15 +19,10 @@ afterEach(async () => {
   await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
 
-describe("memory promotion pipeline", () => {
-  it("promotes archived task memory into experience memory", async () => {
-    const experienceStore = await createExperienceStore();
-    const taskStore = await createTaskStore();
-    const memorySystem = new MemorySystem({
-      taskStore,
-      experienceStore,
-      promotions: createDefaultMemoryPromotionPipeline(),
-    });
+describe("memory distillation pipeline", () => {
+  it("distills archived task memory into experience memory through evidence", async () => {
+    const workspace = await createWorkspaceDir();
+    const memorySystem = await createMemorySystem(workspace);
 
     const appended = await memorySystem.appendTaskMemory({
       actorAgentId: "agent-a",
@@ -41,52 +37,59 @@ describe("memory promotion pipeline", () => {
       },
     });
     expect(appended.ok).toBe(true);
-    if (!appended.ok) {
-      return;
-    }
 
     await memorySystem.archiveTaskMemory({
       actorAgentId: "agent-a",
       workflowRunId: "workflow-1",
     });
+    await memorySystem.awaitIdle();
 
     const experiences = await memorySystem.listExperiences({
       workflowRunId: "workflow-1",
     });
     expect(experiences).toMatchObject({
       ok: true,
-      value: [expect.objectContaining({ type: "experience" })],
+      value: [expect.objectContaining({ type: "experience", content: "Completed repository scan." })],
     });
   });
 
-  it("promotes stable experience summaries into facts", async () => {
-    const experienceStore = await createExperienceStore();
-    const factStore = await createFactStore();
-    const memorySystem = new MemorySystem({
-      experienceStore,
-      factStore,
-      promotions: createDefaultMemoryPromotionPipeline(),
-    });
+  it("distills session evidence into facts when stable signals are present", async () => {
+    const workspace = await createWorkspaceDir();
+    const memorySystem = await createMemorySystem(workspace);
 
-    const written = await memorySystem.writeExperience({
-      record: {
-        id: "experience-1",
-        type: "experience",
-        scope: "workspace",
-        title: "Loop code ownership",
-        summary: "@pragma/core loop code is located at packages/core/src/loop.",
-        kind: "tool",
-        content: "@pragma/core loop code is located at packages/core/src/loop.",
-        status: "summarized",
-        provenance: {
+    await memorySystem.recordEvidence(
+      {
+        record: {
+          id: "session-1",
+          type: "evidence",
+          kind: "session",
+          agentId: "agent-a",
+          scope: "workspace",
+          payload: {
+            sessionId: "session-1",
+            runIds: ["run-1"],
+            externalContext: false,
+            runs: [
+              {
+                query: "Locate loop runtime code",
+                status: "succeeded",
+                outputExcerpt: "@pragma/core loop code is located at packages/core/src/loop.",
+                lessons: [],
+                tools: [],
+              },
+            ],
+          },
           createdAt: "2026-07-06T00:00:00.000Z",
           updatedAt: "2026-07-06T00:00:00.000Z",
-          evidence: [{ type: "external", id: "search-1" }],
+          provenance: {
+            createdAt: "2026-07-06T00:00:00.000Z",
+            updatedAt: "2026-07-06T00:00:00.000Z",
+            evidence: [{ type: "session", id: "session-1" }],
+          },
         },
       },
-    });
-
-    expect(written.ok).toBe(true);
+      { waitUntilProcessed: true },
+    );
 
     const facts = await memorySystem.listFacts({
       onlyActive: true,
@@ -95,38 +98,50 @@ describe("memory promotion pipeline", () => {
       ok: true,
       value: [
         expect.objectContaining({
-          statement: "@pragma/core loop code is located at packages/core/src/loop.",
           confidence: "verified",
+          statement: expect.stringContaining("packages/core/src/loop"),
         }),
       ],
     });
   });
 
-  it("does not promote time-sensitive experience summaries into facts", async () => {
-    const experienceStore = await createExperienceStore();
-    const factStore = await createFactStore();
-    const memorySystem = new MemorySystem({
-      experienceStore,
-      factStore,
-      promotions: createDefaultMemoryPromotionPipeline(),
-    });
+  it("does not distill time-sensitive experience summaries into facts", async () => {
+    const workspace = await createWorkspaceDir();
+    const memorySystem = await createMemorySystem(workspace);
 
-    await memorySystem.writeExperience({
-      record: {
-        id: "experience-1",
-        type: "experience",
-        scope: "workspace",
-        summary: "Today the temporary debug file was under tmp/runtime.",
-        kind: "tool",
-        content: "Today the temporary debug file was under tmp/runtime.",
-        status: "summarized",
-        provenance: {
+    await memorySystem.recordEvidence(
+      {
+        record: {
+          id: "session-sensitive",
+          type: "evidence",
+          kind: "session",
+          agentId: "agent-a",
+          scope: "workspace",
+          payload: {
+            sessionId: "session-sensitive",
+            runIds: ["run-1"],
+            externalContext: false,
+            runs: [
+              {
+                query: "Locate temporary debug file",
+                status: "succeeded",
+                outputExcerpt: "Today the temporary debug file was under tmp/runtime.",
+                lessons: [],
+                tools: [],
+              },
+            ],
+          },
           createdAt: "2026-07-06T00:00:00.000Z",
           updatedAt: "2026-07-06T00:00:00.000Z",
-          evidence: [{ type: "external", id: "search-1" }],
+          provenance: {
+            createdAt: "2026-07-06T00:00:00.000Z",
+            updatedAt: "2026-07-06T00:00:00.000Z",
+            evidence: [{ type: "session", id: "session-sensitive" }],
+          },
         },
       },
-    });
+      { waitUntilProcessed: true },
+    );
 
     const facts = await memorySystem.listFacts({
       onlyActive: true,
@@ -137,16 +152,13 @@ describe("memory promotion pipeline", () => {
     });
   });
 
-  it("does not fail archiveTaskMemory when promotion throws", async () => {
-    const onPromotionError = vi.fn();
-    const experienceStore = await createExperienceStore();
-    const taskStore = await createTaskStore();
-    const memorySystem = new MemorySystem({
-      taskStore,
-      experienceStore,
-      onPromotionError,
-      promotions: {
-        async proposeFromTask() {
+  it("does not fail archiveTaskMemory when distillation throws", async () => {
+    const workspace = await createWorkspaceDir();
+    const onDistillationError = vi.fn();
+    const memorySystem = await createMemorySystem(workspace, {
+      onDistillationError,
+      distillation: {
+        async distill() {
           throw new Error("boom");
         },
       },
@@ -169,83 +181,164 @@ describe("memory promotion pipeline", () => {
       actorAgentId: "agent-a",
       workflowRunId: "workflow-1",
     });
+    await memorySystem.awaitIdle();
 
     expect(archived.ok).toBe(true);
-    expect(onPromotionError).toHaveBeenCalledWith(
+    expect(onDistillationError).toHaveBeenCalledWith(
       expect.objectContaining({
         code: "store_error",
       }),
     );
   });
 
-  it("reports promotion store write failures without failing experience writes", async () => {
-    const onPromotionError = vi.fn();
-    const experienceStore = await createExperienceStore();
-    const factStore = await createFactStore();
+  it("reports archived task evidence write failures", async () => {
+    const workspace = await createWorkspaceDir();
+    const onDistillationError = vi.fn();
     const memorySystem = new MemorySystem({
-      experienceStore,
-      factStore: {
-        ...factStore,
-        async write() {
+      taskStore: createFileSystemTaskMemoryStore({
+        agentId: "agent-a",
+        filePath: join(workspace, "task.json"),
+      }),
+      onDistillationError,
+    });
+
+    await memorySystem.appendTaskMemory({
+      actorAgentId: "agent-a",
+      record: {
+        type: "task",
+        scope: "session",
+        workflowRunId: "workflow-1",
+        visibility: "shared",
+        kind: "handoff",
+        content: "Completed repository scan.",
+        status: "resolved",
+      },
+    });
+
+    const archived = await memorySystem.archiveTaskMemory({
+      actorAgentId: "agent-a",
+      workflowRunId: "workflow-1",
+    });
+
+    expect(archived.ok).toBe(true);
+    expect(onDistillationError).toHaveBeenCalledWith(
+      expect.objectContaining({
+        code: "store_unavailable",
+      }),
+    );
+  });
+
+  it("reports distillation store write failures without failing evidence writes", async () => {
+    const workspace = await createWorkspaceDir();
+    const onDistillationError = vi.fn();
+    const memorySystem = await createMemorySystem(workspace, {
+      onDistillationError,
+      factStoreOverride: {
+        async upsert() {
           return errorMemory("store_error", "fact store write failed");
         },
       },
-      onPromotionError,
-      promotions: createDefaultMemoryPromotionPipeline(),
     });
 
-    const written = await memorySystem.writeExperience({
-      record: {
-        id: "experience-1",
-        type: "experience",
-        scope: "workspace",
-        title: "Loop code ownership",
-        summary: "@pragma/core loop code is located at packages/core/src/loop.",
-        kind: "tool",
-        content: "@pragma/core loop code is located at packages/core/src/loop.",
-        status: "summarized",
-        provenance: {
+    const written = await memorySystem.recordEvidence(
+      {
+        record: {
+          id: "session-1",
+          type: "evidence",
+          kind: "session",
+          agentId: "agent-a",
+          scope: "workspace",
+          payload: {
+            sessionId: "session-1",
+            runIds: ["run-1"],
+            externalContext: false,
+            runs: [
+              {
+                query: "Locate loop runtime code",
+                status: "succeeded",
+                outputExcerpt: "@pragma/core loop code is located at packages/core/src/loop.",
+                lessons: [],
+                tools: [],
+              },
+            ],
+          },
           createdAt: "2026-07-06T00:00:00.000Z",
           updatedAt: "2026-07-06T00:00:00.000Z",
-          evidence: [{ type: "external", id: "search-1" }],
+          provenance: {
+            createdAt: "2026-07-06T00:00:00.000Z",
+            updatedAt: "2026-07-06T00:00:00.000Z",
+            evidence: [{ type: "session", id: "session-1" }],
+          },
         },
       },
-    });
+      { waitUntilProcessed: true },
+    );
 
     expect(written.ok).toBe(true);
-    expect(onPromotionError).toHaveBeenCalledWith({
+    expect(onDistillationError).toHaveBeenCalledWith({
       code: "store_error",
       message: "fact store write failed",
     });
   });
 });
 
-async function createTaskStore() {
-  const dir = await mkdtemp(join(process.cwd(), "tmp-promotion-task-"));
+async function createWorkspaceDir(): Promise<string> {
+  const dir = await mkdtemp(join(process.cwd(), "tmp-memory-distillation-"));
   tempDirs.push(dir);
-
-  return createFileSystemTaskMemoryStore({
-    agentId: "promotion-agent",
-    filePath: join(dir, "task.json"),
-  });
+  return dir;
 }
 
-async function createExperienceStore() {
-  const dir = await mkdtemp(join(process.cwd(), "tmp-promotion-experience-"));
-  tempDirs.push(dir);
-
-  return createFileSystemExperienceMemoryStore({
-    agentId: "promotion-agent",
-    filePath: join(dir, "experience.json"),
+async function createMemorySystem(
+  workspace: string,
+  options: {
+    readonly distillation?: import("../src/index.ts").MemoryDistillationPipeline | undefined;
+    readonly onDistillationError?: ((error: import("../src/index.ts").MemoryResultError) => void) | undefined;
+    readonly factStoreOverride?: Partial<
+      Awaited<ReturnType<typeof createFileSystemFactMemoryStore>>
+    >;
+  } = {},
+): Promise<MemorySystem> {
+  const taskStore = createFileSystemTaskMemoryStore({
+    agentId: "agent-a",
+    filePath: join(workspace, "task.json"),
   });
+  const experienceStore = createFileSystemExperienceMemoryStore({
+    agentId: "agent-a",
+    filePath: join(workspace, "experience.json"),
+  });
+  const factStore = createFileSystemFactMemoryStore({
+    agentId: "agent-a",
+    filePath: join(workspace, "fact.json"),
+  });
+  const memorySystem = new MemorySystem({
+    taskStore,
+    experienceStore,
+    factStore: options.factStoreOverride === undefined ? factStore : {
+      ...factStore,
+      ...options.factStoreOverride,
+    },
+    evidenceStore: createFileSystemMemoryEvidenceStore(createPluginContext(workspace)),
+    distillation: options.distillation ?? createDefaultMemoryDistillationPipeline(),
+    onDistillationError: options.onDistillationError,
+  });
+
+  return memorySystem;
 }
 
-async function createFactStore() {
-  const dir = await mkdtemp(join(process.cwd(), "tmp-promotion-fact-"));
-  tempDirs.push(dir);
-
-  return createFileSystemFactMemoryStore({
-    agentId: "promotion-agent",
-    filePath: join(dir, "fact.json"),
-  });
+function createPluginContext(workspace: string) {
+  return {
+    workspaceRoot: workspace,
+    agent: { id: "agent-a" },
+    contextSystem: {
+      async read() {
+        return { ok: false, error: { code: "context_not_found", message: "not found" } };
+      },
+    },
+    env: {},
+    config: {
+      skill: {
+        memoryRoot: workspace,
+      },
+    },
+  } as unknown as Parameters<typeof createFileSystemMemoryEvidenceStore>[0];
 }

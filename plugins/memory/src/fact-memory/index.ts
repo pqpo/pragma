@@ -5,10 +5,7 @@ import type {
 
 import { MemorySystem, type FactMemoryStore } from "../memory-system/index.ts";
 import { createFileSystemFactMemoryStore } from "./store.ts";
-import { createFactMemoryTools } from "./tools.ts";
-
 export { createFileSystemFactMemoryStore } from "./store.ts";
-export { createFactMemoryTools } from "./tools.ts";
 
 export interface FactMemoryStoreFactoryContext {
   readonly pluginContext: ExpertAgentPluginSetupContext;
@@ -35,11 +32,6 @@ export const factMemoryCapabilities = [
     name: "fact-memory",
     description: "Registers the fact memory store.",
   },
-  {
-    type: "tool",
-    name: "fact-memory-tools",
-    description: "Injects fact memory tools into the agent tool set.",
-  },
 ] as const;
 
 export function createFactMemoryContributions(
@@ -60,12 +52,7 @@ export function createFactMemoryContributions(
     throw new Error(registration.error.message);
   }
 
-  return {
-    tools: createFactMemoryTools({
-      memorySystem: context.memorySystem,
-      defaultAgentId: context.agent?.id,
-    }),
-  };
+  return {};
 }
 
 function readFactMemoryConfig(input: unknown): FactMemoryPluginConfig {
@@ -158,9 +145,7 @@ function isFactMemoryStore(input: unknown): input is FactMemoryStore {
   return (
     typeof store.list === "function" &&
     typeof store.get === "function" &&
-    typeof store.write === "function" &&
-    typeof store.update === "function" &&
-    typeof store.delete === "function" &&
+    typeof store.upsert === "function" &&
     typeof store.search === "function" &&
     typeof store.retrieveForRuntime === "function"
   );

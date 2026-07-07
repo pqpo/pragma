@@ -19,7 +19,6 @@ import { resolveConfig } from "./config.ts";
 import {
   createStoredContext,
   exists,
-  readStoredContext,
   regenerateSummary,
   resolveContextPath,
   resolveMemoryRoot,
@@ -28,8 +27,6 @@ import {
 } from "./filesystem.ts";
 import {
   deriveLessonsFromEvidence,
-  deriveSkillId,
-  mergeSkillContent,
   renderSessionSummary,
   renderTaskSummary,
 } from "./rendering.ts";
@@ -38,7 +35,6 @@ import type { MemoryRunEvidence, MemorySessionEvidence } from "./schema.ts";
 import {
   containsSensitiveContent,
   dedupeStrings,
-  extractLastUpdatedSessions,
   readErrorMessage,
   sanitizeIdSegment,
   stringifyOutput,
@@ -186,8 +182,9 @@ export class SkillMemoryManager {
     const current = new Promise<void>((resolve) => {
       releaseCurrent = resolve;
     });
+    const next = previous.then(() => current, () => current);
 
-    lockMap.set(key, previous.then(() => current, () => current));
+    lockMap.set(key, next);
 
     await previous;
 
@@ -195,7 +192,7 @@ export class SkillMemoryManager {
       return await operation();
     } finally {
       releaseCurrent?.();
-      if (lockMap.get(key) === current) {
+      if (lockMap.get(key) === next) {
         lockMap.delete(key);
       }
     }
@@ -235,7 +232,48 @@ export class SkillMemoryManager {
     await this.writeSessionSummary(rootDir, sessionEvidence, runEvidence, now);
 
     if (!(config.disableOnExternalContext && sessionEvidence.externalContext)) {
-      await this.mergeSkillCard(rootDir, sessionEvidence, runEvidence, now);
+      await this.context.memorySystem.recordEvidence(
+        {
+          record: {
+            id: `session-${sessionEvidence.sessionId}`,
+            type: "evidence",
+            kind: "session",
+            agentId: this.agentId,
+            scope: "session",
+            runtimeSessionId: sessionEvidence.runtimeSessionId,
+            payload: {
+              sessionId: sessionEvidence.sessionId,
+              runtimeSessionId: sessionEvidence.runtimeSessionId,
+              runIds: sessionEvidence.runIds,
+              externalContext: sessionEvidence.externalContext,
+              runs: runEvidence.map((run) => ({
+                query: run.query,
+                status: run.status,
+                outputExcerpt: run.outputExcerpt,
+                errorMessage: run.errorMessage,
+                lessons: run.lessons,
+                tools: run.tools,
+              })),
+            },
+            createdAt: sessionEvidence.createdAt,
+            updatedAt: now,
+            provenance: {
+              createdBy: "skill-memory",
+              updatedBy: "skill-memory",
+              source: "session-evidence",
+              createdAt: sessionEvidence.createdAt,
+              updatedAt: now,
+              evidence: [
+                { type: "session", id: sessionEvidence.sessionId },
+                ...sessionEvidence.runIds.map((runId) => ({ type: "run" as const, id: runId })),
+              ],
+            },
+          },
+        },
+        {
+          waitUntilProcessed: true,
+        },
+      );
     }
 
     sessionEvidence.consolidationState = "skills_updated";
@@ -368,41 +406,6 @@ export class SkillMemoryManager {
     );
   }
 
-  private async mergeSkillCard(
-    rootDir: string,
-    sessionEvidence: MemorySessionEvidence,
-    runEvidence: readonly MemoryRunEvidence[],
-    now: string,
-  ): Promise<void> {
-    const skillId = deriveSkillId(runEvidence);
-    const id = `skills/${skillId}.md`;
-    const existing = (await exists(resolveContextPath(rootDir, id)))
-      ? await readStoredContext(rootDir, id)
-      : undefined;
-    await writeStoredMarkdown(
-      rootDir,
-      createStoredContext({
-        id,
-        content: mergeSkillContent(existing?.content, sessionEvidence, runEvidence),
-        metadata: {
-          description: `Detailed skill card derived from session ${sessionEvidence.sessionId}.`,
-          trigger: "model_decision",
-        },
-      }),
-      {
-        schemaVersion: "pragma.memory-skill/v1",
-        agentId: this.agentId,
-        skillId,
-        updatedAt: now,
-        audit: { createdBy: "skill-memory" },
-        model: "skillMergeModel",
-        sessions: dedupeStrings([
-          sessionEvidence.sessionId,
-          ...extractLastUpdatedSessions(existing?.content),
-        ]),
-      },
-    );
-  }
 }
 
 function applyStreamEvent(
