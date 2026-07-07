@@ -7,6 +7,8 @@ import type {
   ExpertAgentContextStore,
   ExpertAgentStoredContextItem,
   ExpertAgentStoredContextItemDeleteInput,
+  ExpertAgentStoredContextItemEditInput,
+  ExpertAgentStoredContextItemEditResult,
   ExpertAgentStoredContextItemReadInput,
   ExpertAgentStoredContextItemReadResult,
   ExpertAgentStoredContextItemSearchInput,
@@ -213,6 +215,78 @@ export class FileSystemMemoryStore implements ExpertAgentContextStore {
       return ok(await readStoredContext(rootDir, id.value));
     } catch (caught) {
       return error("store_error", `Failed to update skill memory context: ${input.id}`, {
+        id: input.id,
+        ...toErrorDetails(caught),
+      });
+    }
+  }
+
+  async editContext(
+    input: ExpertAgentStoredContextItemEditInput,
+  ): Promise<ExpertAgentContextResult<ExpertAgentStoredContextItemEditResult>> {
+    try {
+      const config = await resolveConfig(this.context);
+      const rootDir = resolveMemoryRoot(this.context.workspaceRoot, config, this.agentId);
+      const id = normalizeWritableMemoryContextId(input.id);
+
+      if (!id.ok) {
+        return id;
+      }
+
+      const existing = await readStoredContext(rootDir, id.value);
+      const conflict = validateExpectedRevision(existing, input);
+
+      if (conflict !== undefined) {
+        return conflict;
+      }
+
+      const replacementCount = existing.content.split(input.search).length - 1;
+
+      if (replacementCount === 0) {
+        return error("invalid_input", `Skill memory edit search did not match: ${id.value}`, {
+          id: id.value,
+          search: input.search,
+        });
+      }
+
+      if (replacementCount > 1 && input.replaceAll !== true) {
+        return error(
+          "invalid_input",
+          `Skill memory edit search matched multiple locations: ${id.value}`,
+          {
+            id: id.value,
+            search: input.search,
+            replacementCount,
+          },
+        );
+      }
+
+      const content =
+        input.replaceAll === true
+          ? existing.content.split(input.search).join(input.replace)
+          : existing.content.replace(input.search, input.replace);
+      const stored = createStoredContext({
+        id: id.value,
+        content,
+        metadata: existing.metadata,
+      });
+      await writeStoredMarkdown(rootDir, stored, {
+        schemaVersion: inferSchemaVersion(id.value),
+        agentId: this.agentId,
+        updatedAt: new Date().toISOString(),
+        audit: { createdBy: "skill-memory" },
+      });
+
+      if (id.value.startsWith("skills/")) {
+        await regenerateSummary(rootDir, this.context, this.agentId);
+      }
+
+      return ok({
+        ...(await readStoredContext(rootDir, id.value)),
+        replacementCount: input.replaceAll === true ? replacementCount : 1,
+      });
+    } catch (caught) {
+      return error("store_error", `Failed to edit skill memory context: ${input.id}`, {
         id: input.id,
         ...toErrorDetails(caught),
       });
