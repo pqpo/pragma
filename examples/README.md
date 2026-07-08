@@ -62,6 +62,58 @@ pnpm --filter @pragma/examples start:basic --system-session-id local-debug-sessi
 6. 对每个 turn 调用 `session.submit()` 并处理流式事件。
 7. 在 `finally` 中关闭 session。
 
+## 运行 Codex Runtime 示例
+
+```bash
+pnpm --filter @pragma/examples start:codex-runtime
+```
+
+这个示例使用本机 `codex app-server --listen stdio://` 作为 runtime，不读取 `.env`
+里的 `PRAGMA_MODEL_*` 配置。运行前需要本机已安装并登录 Codex CLI：
+
+```bash
+codex login
+```
+
+传入 Codex 模型名：
+
+```bash
+pnpm --filter @pragma/examples start:codex-runtime --model gpt-5.5 "总结这个仓库的模块边界"
+```
+
+提交多轮任务并复用同一个 Codex thread：
+
+```bash
+pnpm --filter @pragma/examples start:codex-runtime \
+  --turn "记住：我在测试 Codex runtime" \
+  --turn "我刚才在测试什么？"
+```
+
+运行时会打印 `runtimeSessionId`，它对应 Codex thread id。下一次可以恢复：
+
+```bash
+pnpm --filter @pragma/examples start:codex-runtime \
+  --runtime-session-id <runtime-session-id> \
+  --turn "继续上一次 Codex runtime 会话"
+```
+
+也可以显式传入 Codex sandbox 和 approval policy：
+
+```bash
+pnpm --filter @pragma/examples start:codex-runtime \
+  --sandbox workspace-write \
+  --approval-policy on-request \
+  --turn "列出 workspace 目录"
+```
+
+示例入口是 `src/run-codex-runtime-agent.ts`。它展示：
+
+1. 创建普通 `ExpertAgent`。
+2. 用 `createCodexLocalRuntimeAdapter()` 创建本地 Codex runtime。
+3. 把 `--model` 映射为 `defaultModelName` 和单次 `submit({ modelName })`。
+4. 用 `runtimeSession: { type: "codex-local", id }` 恢复 Codex thread。
+5. 打印 Codex runtime 的流式 message/tool/progress 事件。
+
 ## 运行 Memory System 示例
 
 ```bash

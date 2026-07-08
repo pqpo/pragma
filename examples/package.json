@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "start:basic": "tsx src/run-expert-agent.ts",
+    "start:codex-runtime": "tsx src/run-codex-runtime-agent.ts",
     "start:minimal-agent": "tsx src/run-minimal-agent-api.ts",
     "start:memory": "tsx src/run-memory-system-example.ts",
     "start:approval": "tsx src/run-tool-approval-example.ts",

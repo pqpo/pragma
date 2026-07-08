@@ -7,6 +7,7 @@ setDefaultRuntimeRegistryFactory(createRuntimeRegistry);
 
 export * from "./agent/context-manager.ts";
 export * from "./agent/expert-agent.ts";
+export * from "./codex-runtime/index.ts";
 export * from "./context-system/context-system.ts";
 export * from "./context-system/context-tools.ts";
 export * from "./context-system/file-system-context-store.ts";
