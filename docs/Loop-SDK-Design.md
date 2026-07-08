@@ -47,7 +47,7 @@ const coder = defineAgent({
 });
 ```
 
-> 注：`defineAgent()` 是建议的 Directive SDK API；当前实现可映射到 `ExpertAgent` 的 `schemaVersion`、`id`、`displayName`、`description`、`tags`、`version`、`scope`、`workspace`、`models`、`skills`、`mcp`、`contextSystem`、`subAgents`、`tools`、`hooks` 等字段。这里的 `instructions` 可以映射到现有 system prompt 组装。
+> 注：`defineAgent()` 是建议的 Directive SDK API；当前实现可映射到 `ExpertAgent` 的 `schemaVersion`、`id`、`displayName`、`description`、`tags`、`version`、`scope`、`workspace`、`models`、`skills`、`mcp`、`contextSystem`、`tools`、`hooks` 等字段。这里的 `instructions` 可以映射到现有 system prompt 组装。
 
 `defineAgent()` 不要求声明 `outputSchema`。
 

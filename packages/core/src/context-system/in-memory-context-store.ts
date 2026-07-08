@@ -14,7 +14,6 @@ import type {
   ExpertAgentStoredContextItemReadInput,
   ExpertAgentStoredContextItemReadResult,
   ExpertAgentStoredContextItemSearchInput,
-  ExpertAgentStoredContextItemUpdateInput,
 } from "./context-system.ts";
 import { error, matchContextPattern, normalizeMetadata, ok } from "./context-system.ts";
 
@@ -121,41 +120,6 @@ export class InMemoryContextStore implements ExpertAgentContextStore {
     return ok(context);
   }
 
-  async updateContext(
-    input: ExpertAgentStoredContextItemUpdateInput,
-  ): Promise<ExpertAgentContextResult<ExpertAgentStoredContextItem>> {
-    const existing = this.context.get(input.id);
-
-    if (existing === undefined) {
-      return error("context_not_found", `Context not found: ${input.id}`, { id: input.id });
-    }
-
-    const conflict = validateExpectedRevision(existing, input);
-
-    if (conflict !== undefined) {
-      return conflict;
-    }
-
-    const content = input.content ?? existing.content;
-    const sizeError = validateContextSize(content, this.maxContextBytes);
-
-    if (sizeError !== undefined) {
-      return sizeError;
-    }
-
-    const context = withContextRevision({
-      id: input.id,
-      content,
-      metadata:
-        input.metadata === undefined
-          ? existing.metadata
-          : normalizeMetadata(input.id, normalizeInputMetadata(input.metadata)),
-    } satisfies ExpertAgentStoredContextItem);
-    this.context.set(input.id, context);
-
-    return ok(context);
-  }
-
   async editContext(
     input: ExpertAgentStoredContextItemEditInput,
   ): Promise<ExpertAgentContextResult<ExpertAgentStoredContextItemEditResult>> {
@@ -169,6 +133,30 @@ export class InMemoryContextStore implements ExpertAgentContextStore {
 
     if (conflict !== undefined) {
       return conflict;
+    }
+
+    if (input.mode === "replace") {
+      const content = input.content ?? existing.content;
+      const sizeError = validateContextSize(content, this.maxContextBytes);
+
+      if (sizeError !== undefined) {
+        return sizeError;
+      }
+
+      const context = withContextRevision({
+        id: input.id,
+        content,
+        metadata:
+          input.metadata === undefined
+            ? existing.metadata
+            : normalizeMetadata(input.id, normalizeInputMetadata(input.metadata)),
+      } satisfies ExpertAgentStoredContextItem);
+      this.context.set(input.id, context);
+
+      return ok({
+        ...context,
+        mode: "replace",
+      });
     }
 
     const replacementCount = existing.content.split(input.search).length - 1;
@@ -206,6 +194,7 @@ export class InMemoryContextStore implements ExpertAgentContextStore {
 
     return ok({
       ...context,
+      mode: "search_replace",
       replacementCount: input.replaceAll === true ? replacementCount : 1,
     });
   }
@@ -284,7 +273,7 @@ export class InMemoryContextStore implements ExpertAgentContextStore {
 
 function validateExpectedRevision(
   existing: ExpertAgentStoredContextItem,
-  input: ExpertAgentStoredContextItemUpdateInput | ExpertAgentStoredContextItemEditInput,
+  input: ExpertAgentStoredContextItemEditInput,
 ): ExpertAgentContextResult<never> | undefined {
   if (input.expectedRevision !== undefined && existing.revision !== input.expectedRevision) {
     return error("context_conflict", `Context revision conflict: ${input.id}`, {

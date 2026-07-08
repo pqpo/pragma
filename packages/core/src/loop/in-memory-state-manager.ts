@@ -288,7 +288,7 @@ export function createInMemoryStateManager(): StateManager {
       );
     },
 
-    async markTaskSucceeded(taskRunId, output) {
+    async markTaskSucceeded(taskRunId, output, metadata) {
       return cloneJson(
         updateTask(taskRunId, (task) => {
           assertTaskStatus(task, ["running"], "succeeded");
@@ -296,6 +296,9 @@ export function createInMemoryStateManager(): StateManager {
             ...task,
             status: "succeeded",
             output: cloneJson(output),
+            ...(metadata?.runtimeSession === undefined
+              ? {}
+              : { runtimeSession: metadata.runtimeSession }),
             updatedAt: nowIso(),
           };
         }),

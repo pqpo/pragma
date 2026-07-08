@@ -385,7 +385,7 @@ describe("ExpertAgent plugins", () => {
     ).toThrow(/apiToken \(PRAGMA_PLUGIN_MISSING_CONFIG_API_TOKEN\)/);
   });
 
-  it("merges plugin mcp, skills, models, subagents, tools, and hooks", async () => {
+  it("merges plugin mcp, skills, models, tools, and hooks", async () => {
     const hookEvents: string[] = [];
     const workspace = await createPluginTestWorkspace();
     const agent = await ExpertAgent.create({
@@ -412,7 +412,6 @@ describe("ExpertAgent plugins", () => {
     expect(agent.models?.providers.map((provider) => provider.provider)).toEqual([
       "plugin-provider",
     ]);
-    expect(agent.subAgents?.agents.map((subAgent) => subAgent.agentType)).toEqual(["critic"]);
     expect(agent.tools?.map((tool) => tool.name)).toEqual(["plugin_tool"]);
 
     await dispatchExpertAgentHook(agent.hooks, "beforeSessionCreate", {
@@ -673,15 +672,6 @@ function createExtensibilityPluginEntry(hookEvents: string[]): ExpertAgentPlugin
             modelNames: ["plugin-model"],
             baseApi: "https://models.example.test",
             key: "test-key",
-          },
-        ],
-      },
-      subAgents: {
-        agents: [
-          {
-            agentType: "critic",
-            whenToUse: "Review an answer",
-            systemPrompt: "Be precise.",
           },
         ],
       },

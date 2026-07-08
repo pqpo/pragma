@@ -11,13 +11,12 @@ export const ExpertAgentStreamSourceFrameSchema = z.object({
 });
 
 export const ExpertAgentStreamSourceSchema = z.object({
-  kind: z.enum(["agent", "subagent", "runtime", "tool"]),
+  kind: z.enum(["agent", "runtime", "tool"]),
   runId: z.string().min(1),
   parentRunId: z.string().min(1).optional(),
   agentId: z.string().min(1).optional(),
   agentType: z.string().min(1).optional(),
   toolCallId: z.string().min(1).optional(),
-  toolKind: z.enum(["tool", "subagent"]).optional(),
   path: z.array(ExpertAgentStreamSourceFrameSchema).default([]),
 });
 
@@ -102,7 +101,7 @@ export const ExpertAgentToolStartedEventSchema = ExpertAgentStreamEventBaseSchem
   payload: z.object({
     toolCallId: z.string().min(1),
     toolName: z.string().min(1),
-    kind: z.enum(["tool", "subagent"]).default("tool"),
+    kind: z.literal("tool").default("tool"),
     inputPreview: z.unknown().optional(),
   }),
 });
@@ -112,7 +111,7 @@ export const ExpertAgentToolDeltaEventSchema = ExpertAgentStreamEventBaseSchema.
   payload: z.object({
     toolCallId: z.string().min(1),
     toolName: z.string().min(1),
-    kind: z.enum(["tool", "subagent"]).default("tool"),
+    kind: z.literal("tool").default("tool"),
     channel: z.enum(["stdout", "stderr", "message", "data"]),
     delta: z.string(),
   }),
@@ -124,7 +123,7 @@ export const ExpertAgentToolApprovalRequestedEventSchema = ExpertAgentStreamEven
     approvalId: z.string().min(1),
     toolCallId: z.string().min(1),
     toolName: z.string().min(1),
-    kind: z.enum(["tool", "subagent"]).default("tool"),
+    kind: z.literal("tool").default("tool"),
     reason: z.string().min(1).optional(),
     inputPreview: z.unknown().optional(),
   }),
@@ -135,7 +134,7 @@ export const ExpertAgentToolCompletedEventSchema = ExpertAgentStreamEventBaseSch
   payload: z.object({
     toolCallId: z.string().min(1),
     toolName: z.string().min(1),
-    kind: z.enum(["tool", "subagent"]).default("tool"),
+    kind: z.literal("tool").default("tool"),
     outputPreview: z.unknown().optional(),
   }),
 });
@@ -145,7 +144,7 @@ export const ExpertAgentToolFailedEventSchema = ExpertAgentStreamEventBaseSchema
   payload: z.object({
     toolCallId: z.string().min(1),
     toolName: z.string().min(1),
-    kind: z.enum(["tool", "subagent"]).default("tool"),
+    kind: z.literal("tool").default("tool"),
     message: z.string().min(1),
   }),
 });

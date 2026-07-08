@@ -19,7 +19,6 @@ import type {
   ExpertAgentStoredContextItemEditInput,
   ExpertAgentStoredContextItemReadInput,
   ExpertAgentStoredContextItemSearchInput,
-  ExpertAgentStoredContextItemUpdateInput,
 } from "./context-system.ts";
 import {
   error,
@@ -172,50 +171,6 @@ export class FileSystemContextStore implements ExpertAgentContextStore {
     }
   }
 
-  async updateContext(
-    input: ExpertAgentStoredContextItemUpdateInput,
-  ): Promise<ExpertAgentContextResult<ExpertAgentStoredContextItem>> {
-    try {
-      const existing = await this.readContext({
-        id: input.id,
-        context: input.context,
-      });
-
-      if (!existing.ok) {
-        return existing;
-      }
-
-      const conflict = validateExpectedRevision(existing.value, input);
-
-      if (conflict !== undefined) {
-        return conflict;
-      }
-
-      const content = input.content ?? existing.value.content;
-      const metadata =
-        input.metadata === undefined
-          ? existing.value.metadata
-          : normalizeMetadata(input.id, normalizeInputMetadata(input.metadata));
-      const sizeError = validateContextSize(content, this.maxContextBytes);
-
-      if (sizeError !== undefined) {
-        return sizeError;
-      }
-
-      const context = {
-        id: input.id,
-        content,
-        metadata,
-      };
-      const filePath = this.resolveContextPath(input.id);
-      await writeFile(filePath, serializeMarkdownContext(context), "utf8");
-
-      return ok(await readMarkdownFileContext(this.rootDir, filePath));
-    } catch (caught) {
-      return error("store_error", `Failed to update context: ${input.id}`, toErrorDetails(caught));
-    }
-  }
-
   async editContext(
     input: ExpertAgentStoredContextItemEditInput,
   ): Promise<ExpertAgentContextResult<ExpertAgentStoredContextItemEditResult>> {
@@ -233,6 +188,32 @@ export class FileSystemContextStore implements ExpertAgentContextStore {
 
       if (conflict !== undefined) {
         return conflict;
+      }
+
+      if (input.mode === "replace") {
+        const content = input.content ?? existing.value.content;
+        const metadata =
+          input.metadata === undefined
+            ? existing.value.metadata
+            : normalizeMetadata(input.id, normalizeInputMetadata(input.metadata));
+        const sizeError = validateContextSize(content, this.maxContextBytes);
+
+        if (sizeError !== undefined) {
+          return sizeError;
+        }
+
+        const context = {
+          id: input.id,
+          content,
+          metadata,
+        };
+        const filePath = this.resolveContextPath(input.id);
+        await writeFile(filePath, serializeMarkdownContext(context), "utf8");
+
+        return ok({
+          ...(await readMarkdownFileContext(this.rootDir, filePath)),
+          mode: "replace",
+        });
       }
 
       const replacementCount = existing.value.content.split(input.search).length - 1;
@@ -273,6 +254,7 @@ export class FileSystemContextStore implements ExpertAgentContextStore {
 
       return ok({
         ...updated,
+        mode: "search_replace",
         replacementCount: input.replaceAll === true ? replacementCount : 1,
       });
     } catch (caught) {
@@ -402,7 +384,7 @@ function countNewlines(content: string): number {
 
 function validateExpectedRevision(
   existing: ExpertAgentStoredContextItem,
-  input: ExpertAgentStoredContextItemUpdateInput | ExpertAgentStoredContextItemEditInput,
+  input: ExpertAgentStoredContextItemEditInput,
 ): ExpertAgentContextResult<never> | undefined {
   if (input.expectedRevision !== undefined && existing.revision !== input.expectedRevision) {
     return error("context_conflict", `Context revision conflict: ${input.id}`, {

@@ -3,13 +3,14 @@ import type {
   IExpertAgentModelProviderConfig,
   IExpertAgentRunResult,
 } from "../agent/expert-agent.ts";
-import type { AgentMessage } from "@pragma/shared";
+import type { AgentMessage, RuntimeSessionRef as SharedRuntimeSessionRef } from "@pragma/shared";
 import type { z } from "zod";
 import type { ExpertAgentLoggerProvider } from "../logging/logger.ts";
 import type { RunState, SessionState } from "./agent-lifecycle.ts";
 import type { ExpertAgentRunContext } from "./run-context.ts";
 import type { RuntimeStreamEvent } from "./stream-events.ts";
 import type { ExpertAgentHumanInteractionHandler } from "../tools/managed-tool.ts";
+import type { LoopExecutionContext } from "../loop/types.ts";
 
 export type RuntimeAdapterKind = "cloud-pi-agent" | (string & {});
 
@@ -20,7 +21,6 @@ export interface RuntimeAdapterCapabilities {
   readonly executionLocations?: readonly RuntimeExecutionLocation[] | undefined;
   readonly supportsStreaming?: boolean | undefined;
   readonly supportsAbort?: boolean | undefined;
-  readonly supportsSubAgents?: boolean | undefined;
   readonly supportsMcp?: boolean | undefined;
 }
 
@@ -35,10 +35,7 @@ export interface RuntimeAdapterDescriptor {
 
 export type RuntimeOutputSchema<TOutput = unknown> = z.ZodType<TOutput>;
 
-export interface RuntimeSessionRef {
-  readonly type: RuntimeAdapterKind;
-  readonly id: string;
-}
+export type RuntimeSessionRef = SharedRuntimeSessionRef;
 
 export interface RuntimeSessionInfo {
   readonly systemSessionId: string;
@@ -70,6 +67,7 @@ export type RuntimeSessionRestoreHandler = (
 export interface RuntimeCreateSessionRequest {
   readonly agent: ExpertAgent;
   readonly context?: ExpertAgentRunContext | undefined;
+  readonly workflowExecution?: LoopExecutionContext | undefined;
   readonly humanInteractionHandler?: ExpertAgentHumanInteractionHandler | undefined;
   readonly models?: readonly IExpertAgentModelProviderConfig[] | undefined;
   readonly systemSessionId?: string | undefined;

@@ -1,6 +1,6 @@
 # Plugins 使用指南
 
-本文说明 Pragma 插件的创建、加载和使用方式。插件用于给 `ExpertAgent` 扩展上下文、工具、模型配置、MCP、Skills、SubAgents 和生命周期 Hooks。
+本文说明 Pragma 插件的创建、加载和使用方式。插件用于给 `ExpertAgent` 扩展上下文、工具、模型配置、MCP、Skills 和生命周期 Hooks。
 
 当前插件能力在：
 
@@ -21,7 +21,6 @@ import { definePluginEntry, createExpertAgentPluginConfigEnvName } from "@pragma
 - `mcp`
 - `skills`
 - `models`
-- `subAgents`
 - `tools`
 - `toolApprovals`
 - `hooks`

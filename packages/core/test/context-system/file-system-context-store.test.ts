@@ -178,8 +178,9 @@ describe("FileSystemContextStore", () => {
     }
 
     await expect(
-      store.updateContext({
+      store.editContext({
         id: "guide.md",
+        mode: "replace",
         content: "Updated guide content.",
         expectedRevision: created.value.revision,
       }),
@@ -328,6 +329,7 @@ describe("FileSystemContextStore", () => {
     await expect(
       store.editContext({
         id: "guide.md",
+        mode: "search_replace",
         search: "old",
         replace: "new",
         replaceAll: true,
@@ -641,7 +643,7 @@ describe("ContextSystem", () => {
     });
   });
 
-  it("drops AGENTS.md update metadata before calling the context store", async () => {
+  it("drops AGENTS.md replace edit metadata before calling the context store", async () => {
     const store = new InMemoryContextStore({
       context: [
         {
@@ -656,9 +658,10 @@ describe("ContextSystem", () => {
     const contextSystem = new ContextSystem({ store });
 
     await expect(
-      contextSystem.update({
+      contextSystem.edit({
         namespace: HOST_CONTEXT_NAMESPACE,
         id: AGENTS_CONTEXT_ID,
+        mode: "replace",
         content: "New instructions.",
         metadata: {
           description: "Ignored metadata",
@@ -681,7 +684,7 @@ describe("ContextSystem", () => {
     });
   });
 
-  it("updates in-memory metadata without serializing frontmatter", async () => {
+  it("edits in-memory metadata without serializing frontmatter", async () => {
     const store = new InMemoryContextStore({
       context: [
         {
@@ -697,9 +700,10 @@ describe("ContextSystem", () => {
     const contextSystem = new ContextSystem({ store });
 
     await expect(
-      contextSystem.update({
+      contextSystem.edit({
         namespace: HOST_CONTEXT_NAMESPACE,
         id: "guide.md",
+        mode: "replace",
         content: "New content.",
         metadata: {
           description: "New guide",
@@ -727,7 +731,7 @@ describe("ContextSystem", () => {
     });
   });
 
-  it("rejects stale context updates with optimistic locking", async () => {
+  it("rejects stale replace edits with optimistic locking", async () => {
     const store = new InMemoryContextStore({
       context: {
         "guide.md": "Original content.",
@@ -736,9 +740,10 @@ describe("ContextSystem", () => {
     const contextSystem = new ContextSystem({ store });
 
     await expect(
-      contextSystem.update({
+      contextSystem.edit({
         namespace: HOST_CONTEXT_NAMESPACE,
         id: "guide.md",
+        mode: "replace",
         content: "Changed content.",
         expectedRevision: "stale",
       }),

@@ -12,7 +12,7 @@ import type {
   ExpertAgentStoredContextItemReadInput,
   ExpertAgentStoredContextItemReadResult,
   ExpertAgentStoredContextItemSearchInput,
-  ExpertAgentStoredContextItemUpdateInput,
+  ExpertAgentStoredContextItemSearchReplaceEditInput,
   ExpertAgentStoredContextRegisterInput,
   ExpertAgentPluginSetupContext,
 } from "@pragma/core";
@@ -189,51 +189,6 @@ export class FileSystemMemoryContextStore implements ExpertAgentContextStore {
     }
   }
 
-  async updateContext(
-    input: ExpertAgentStoredContextItemUpdateInput,
-  ): Promise<ExpertAgentContextResult<ExpertAgentStoredContextItem>> {
-    try {
-      const config = await resolveConfig(this.context);
-      const roots = resolveMemoryArtifactRoots(this.context.workspaceRoot, config, this.agentId);
-      const id = normalizeWritableMemoryContextId(input.id);
-
-      if (!id.ok) {
-        return id;
-      }
-
-      const rootDir = resolveRootForMemoryContextId(roots, id.value);
-      const existing = await readStoredContext(rootDir, id.value);
-      const conflict = validateExpectedRevision(existing, input);
-
-      if (conflict !== undefined) {
-        return conflict;
-      }
-
-      const stored = createStoredContext({
-        id: id.value,
-        content: input.content ?? existing.content,
-        metadata: input.metadata ?? existing.metadata,
-      });
-      await writeStoredMarkdown(rootDir, stored, {
-        schemaVersion: inferSchemaVersion(id.value),
-        agentId: this.agentId,
-        updatedAt: new Date().toISOString(),
-        audit: { createdBy: "skill-memory" },
-      });
-
-      if (id.value.startsWith("skills/")) {
-        await this.regenerateSummaryBestEffort(roots, "update", id.value);
-      }
-
-      return ok(await readStoredContext(rootDir, id.value));
-    } catch (caught) {
-      return error("store_error", `Failed to update skill memory context: ${input.id}`, {
-        id: input.id,
-        ...toErrorDetails(caught),
-      });
-    }
-  }
-
   async editContext(
     input: ExpertAgentStoredContextItemEditInput,
   ): Promise<ExpertAgentContextResult<ExpertAgentStoredContextItemEditResult>> {
@@ -254,35 +209,14 @@ export class FileSystemMemoryContextStore implements ExpertAgentContextStore {
         return conflict;
       }
 
-      const replacementCount = existing.content.split(input.search).length - 1;
-
-      if (replacementCount === 0) {
-        return error("invalid_input", `Skill memory edit search did not match: ${id.value}`, {
-          id: id.value,
-          search: input.search,
-        });
+      if (input.mode !== "replace") {
+        return await this.searchReplaceContext(input, roots, id.value, existing);
       }
 
-      if (replacementCount > 1 && input.replaceAll !== true) {
-        return error(
-          "invalid_input",
-          `Skill memory edit search matched multiple locations: ${id.value}`,
-          {
-            id: id.value,
-            search: input.search,
-            replacementCount,
-          },
-        );
-      }
-
-      const content =
-        input.replaceAll === true
-          ? existing.content.split(input.search).join(input.replace)
-          : existing.content.replace(input.search, input.replace);
       const stored = createStoredContext({
         id: id.value,
-        content,
-        metadata: existing.metadata,
+        content: input.content ?? existing.content,
+        metadata: input.metadata ?? existing.metadata,
       });
       await writeStoredMarkdown(rootDir, stored, {
         schemaVersion: inferSchemaVersion(id.value),
@@ -297,6 +231,68 @@ export class FileSystemMemoryContextStore implements ExpertAgentContextStore {
 
       return ok({
         ...(await readStoredContext(rootDir, id.value)),
+        mode: "replace",
+      });
+    } catch (caught) {
+      return error("store_error", `Failed to edit skill memory context: ${input.id}`, {
+        id: input.id,
+        ...toErrorDetails(caught),
+      });
+    }
+  }
+
+  private async searchReplaceContext(
+    input: ExpertAgentStoredContextItemSearchReplaceEditInput,
+    roots: MemoryArtifactRoots,
+    id: string,
+    existing: ExpertAgentStoredContextItem,
+  ): Promise<ExpertAgentContextResult<ExpertAgentStoredContextItemEditResult>> {
+    try {
+      const replacementCount = existing.content.split(input.search).length - 1;
+
+      if (replacementCount === 0) {
+        return error("invalid_input", `Skill memory edit search did not match: ${id}`, {
+          id,
+          search: input.search,
+        });
+      }
+
+      if (replacementCount > 1 && input.replaceAll !== true) {
+        return error(
+          "invalid_input",
+          `Skill memory edit search matched multiple locations: ${id}`,
+          {
+            id,
+            search: input.search,
+            replacementCount,
+          },
+        );
+      }
+
+      const content =
+        input.replaceAll === true
+          ? existing.content.split(input.search).join(input.replace)
+          : existing.content.replace(input.search, input.replace);
+      const stored = createStoredContext({
+        id,
+        content,
+        metadata: existing.metadata,
+      });
+      const rootDir = resolveRootForMemoryContextId(roots, id);
+      await writeStoredMarkdown(rootDir, stored, {
+        schemaVersion: inferSchemaVersion(id),
+        agentId: this.agentId,
+        updatedAt: new Date().toISOString(),
+        audit: { createdBy: "skill-memory" },
+      });
+
+      if (id.startsWith("skills/")) {
+        await this.regenerateSummaryBestEffort(roots, "edit", id);
+      }
+
+      return ok({
+        ...(await readStoredContext(rootDir, id)),
+        mode: "search_replace",
         replacementCount: input.replaceAll === true ? replacementCount : 1,
       });
     } catch (caught) {
@@ -394,7 +390,7 @@ export class FileSystemMemoryContextStore implements ExpertAgentContextStore {
 
   private async regenerateSummaryBestEffort(
     roots: MemoryArtifactRoots,
-    operation: "add" | "delete" | "edit" | "read" | "update",
+    operation: "add" | "delete" | "edit" | "read",
     contextId?: string,
   ): Promise<void> {
     try {

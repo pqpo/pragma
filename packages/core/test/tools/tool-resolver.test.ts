@@ -29,7 +29,7 @@ describe("ToolPolicyResolver", () => {
     expect(resolved.tools.map((tool) => tool.name)).toEqual(["read"]);
   });
 
-  it("selects subagent tools only from the parent resolved tool set", () => {
+  it("selects requested tools only from the parent resolved tool set", () => {
     const parent = resolveToolPolicy({
       tools,
       policy: {
@@ -48,7 +48,7 @@ describe("ToolPolicyResolver", () => {
     ).toEqual(["mcp_search"]);
   });
 
-  it("treats undefined and wildcard subagent tools as inherited resolved tools", () => {
+  it("treats undefined and wildcard tool policies as inherited resolved tools", () => {
     const parent = resolveToolPolicy({ tools });
 
     expect(selectResolvedTools(parent, createToolPolicy({})).tools).toEqual(parent.tools);

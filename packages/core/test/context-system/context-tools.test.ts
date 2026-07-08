@@ -11,7 +11,6 @@ describe("createContextTools", () => {
       searchContext: notCalledOperation,
       addContext: notCalledOperation,
       editContext: notCalledOperation,
-      updateContext: notCalledOperation,
       deleteContext: notCalledOperation,
     }).find((tool) => tool.name === "askUserQuestion");
 
@@ -30,7 +29,6 @@ describe("createContextTools", () => {
       searchContext: notCalledOperation,
       addContext: notCalledOperation,
       editContext: notCalledOperation,
-      updateContext: notCalledOperation,
       deleteContext: notCalledOperation,
     }).find((tool) => tool.name === "askUserQuestion");
     const humanInteraction = vi.fn(async () => ({
@@ -130,7 +128,6 @@ describe("createContextTools", () => {
       searchContext: notCalledOperation,
       addContext: notCalledOperation,
       editContext: notCalledOperation,
-      updateContext: notCalledOperation,
       deleteContext: notCalledOperation,
     }).find((tool) => tool.name === "askUserQuestion");
 
@@ -174,7 +171,6 @@ describe("createContextTools", () => {
         searchContext: notCalledOperation,
         addContext: notCalledOperation,
         editContext: notCalledOperation,
-        updateContext: notCalledOperation,
         deleteContext: notCalledOperation,
       },
       {
@@ -214,7 +210,6 @@ describe("createContextTools", () => {
       searchContext: notCalledOperation,
       addContext: notCalledOperation,
       editContext: notCalledOperation,
-      updateContext: notCalledOperation,
       deleteContext: notCalledOperation,
     }).find((tool) => tool.name === "list_expert_context");
 
@@ -261,7 +256,6 @@ describe("createContextTools", () => {
       searchContext,
       addContext: notCalledOperation,
       editContext: notCalledOperation,
-      updateContext: notCalledOperation,
       deleteContext: notCalledOperation,
     }).find((tool) => tool.name === "search_expert_context");
 
@@ -304,6 +298,7 @@ describe("createContextTools", () => {
         metadata: {
           trigger: "manual" as const,
         },
+        mode: "search_replace" as const,
         replacementCount: 2,
       },
     }));
@@ -313,7 +308,6 @@ describe("createContextTools", () => {
       searchContext: notCalledOperation,
       addContext: notCalledOperation,
       editContext,
-      updateContext: notCalledOperation,
       deleteContext: notCalledOperation,
     }).find((tool) => tool.name === "edit_expert_context");
 
@@ -321,6 +315,7 @@ describe("createContextTools", () => {
       {
         namespace: "host",
         id: "guide.md",
+        mode: "search_replace",
         search: "old",
         replace: "new",
         replaceAll: true,
@@ -343,9 +338,67 @@ describe("createContextTools", () => {
       }),
     );
     expect(result).toMatchObject({
-      text: "Edited context: host/guide.md; replacements=2",
+      text: "Edited context: host/guide.md; mode=search_replace; replacements=2",
       details: {
+        mode: "search_replace",
         replacementCount: 2,
+      },
+    });
+  });
+
+  it("calls edit_expert_context with replace mode arguments", async () => {
+    const editContext = vi.fn(async () => ({
+      ok: true as const,
+      value: {
+        namespace: "host",
+        id: "guide.md",
+        content: "updated",
+        metadata: {
+          description: "Guide",
+          trigger: "always_on" as const,
+        },
+        mode: "replace" as const,
+      },
+    }));
+    const editTool = createContextTools({
+      listContext: notCalledListOperation,
+      readContext: notCalledOperation,
+      searchContext: notCalledOperation,
+      addContext: notCalledOperation,
+      editContext,
+      deleteContext: notCalledOperation,
+    }).find((tool) => tool.name === "edit_expert_context");
+
+    const result = await editTool?.call(
+      {
+        namespace: "host",
+        id: "guide.md",
+        mode: "replace",
+        content: "updated",
+        description: "Guide",
+        trigger: "always_on",
+        expectedRevision: "rev-1",
+      },
+      undefined,
+    );
+
+    expect(editContext).toHaveBeenCalledWith(
+      expect.objectContaining({
+        namespace: "host",
+        id: "guide.md",
+        mode: "replace",
+        content: "updated",
+        metadata: {
+          description: "Guide",
+          trigger: "always_on",
+        },
+        expectedRevision: "rev-1",
+      }),
+    );
+    expect(result).toMatchObject({
+      text: "Edited context: host/guide.md; mode=replace",
+      details: {
+        mode: "replace",
       },
     });
   });
@@ -368,7 +421,6 @@ describe("createContextTools", () => {
       searchContext,
       addContext: notCalledOperation,
       editContext: notCalledOperation,
-      updateContext: notCalledOperation,
       deleteContext: notCalledOperation,
     }).find((tool) => tool.name === "search_expert_context");
 
@@ -397,5 +449,4 @@ const notCalledOperation = vi.fn(async () => {
   ExpertAgentContextItemOperations["searchContext"] &
   ExpertAgentContextItemOperations["addContext"] &
   ExpertAgentContextItemOperations["editContext"] &
-  ExpertAgentContextItemOperations["updateContext"] &
   ExpertAgentContextItemOperations["deleteContext"];

@@ -11,7 +11,7 @@ export interface ToolPolicy {
 export interface ResolvedTool<TTool = unknown> {
   readonly name: string;
   readonly tool: TTool;
-  readonly source: "default" | "managed" | "mcp" | "subagent";
+  readonly source: "default" | "managed" | "mcp";
 }
 
 export interface ResolvedToolSet<TTool = unknown> {

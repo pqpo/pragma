@@ -220,6 +220,7 @@ pnpm --filter @pragma/examples start:loop-code
 pnpm --filter @pragma/examples start:loop-route
 pnpm --filter @pragma/examples start:loop-subloop
 pnpm --filter @pragma/examples start:loop-watch
+pnpm --filter @pragma/examples start:agent-delegation
 pnpm --filter @pragma/examples start:workflow-patterns
 pnpm --filter @pragma/examples start:loop-human-clarification
 pnpm --filter @pragma/examples start:loop-human-review-gate
@@ -229,11 +230,18 @@ pnpm --filter @pragma/examples start:loop-human-review-gate
 - `run-loop-route.ts`：根据 step 结构化输出字段 `.route("status", ...)`。
 - `run-loop-subloop.ts`：把一个 Directive 作为另一个 Directive 的 subloop step。
 - `run-loop-watch.ts`：用 `app.start()` 非阻塞启动 run，再用 `app.runs.get()`、`app.runs.list()`、`app.runs.getTree()`、`app.runs.watch()` 和 `app.runs.watchOutput()` 查询状态并递归订阅嵌套 Directive 事件。
+- `run-agent-delegation.ts`：演示父 `coding-agent` 通过 `launch_agent` 工具委派 `code-explorer-agent`，底层创建 child workflow run，并通过同一个 StateManager 出现在 run tree 中。
 - `run-workflow-patterns.ts`：演示 `patterns.promptChain()`、`patterns.routing()`、`patterns.parallel()`、`patterns.orchestratorWorkers()` 和 `patterns.evaluatorOptimizer()` 五类快捷范式。
 - `run-loop-human-clarification.ts`：演示 `clarifier -> human question -> clarifier` 的多轮需求澄清，Human step 会让 workflow/task 进入 waiting，CLI 回答后恢复。
 - `run-loop-human-review-gate.ts`：演示 `coder -> verify -> human review gate`，CLI 可选择 approve、request changes 或 manual patch，并通过普通 `.route("decision", ...)` 推进或回环。
 
 Human-in-the-loop 示例是平台协议的最小本地验证路径，不依赖模型 key。它们展示的是 `defineHumanTask()`、`human.requested` 事件和 `taskManager.respondToHumanInteraction()`，后续 Web、Server 或 Desktop UI 应接入同一套协议。
+
+Agent 委派示例需要模型 key。它展示的是 ExpertAgent 之间通过 `launch_agent` 互相委派任务，而不是 runtime 私有子会话。每次委派都会创建新的 child workflow run；`--session-policy reuse_by_agent` 只复用底层 runtime conversation/session ref，不复用 workflow run：
+
+```bash
+pnpm --filter @pragma/examples start:agent-delegation --session-policy reuse_by_agent
+```
 
 ## 示例辅助边界
 

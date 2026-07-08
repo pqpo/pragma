@@ -8,12 +8,11 @@ import type {
   ExpertAgentToolApproval,
   ExpertAgentToolCallResult,
   ExpertAgentRunContext,
+  LoopExecutionContext,
   ResolvedTool,
   ResolvedToolSet,
-  SubAgentManagedTool,
 } from "@pragma/core";
 import {
-  createSubAgentTool,
   dispatchExpertAgentHook,
   resolveExpertAgentToolApprovalRequirement,
   resolveToolPolicy,
@@ -21,7 +20,6 @@ import {
 import { randomUUID } from "node:crypto";
 
 import type { McpManagedTool } from "@pragma/core";
-import { launchPiSubAgent } from "./subagents.ts";
 import { formatMcpToolResult, normalizeInputSchema, sanitizeToolName } from "./tool-schema.ts";
 import type { PiRuntimeStreamState } from "./types.ts";
 
@@ -35,20 +33,9 @@ export function createResolvedPiTools(options: {
   readonly streamState: PiRuntimeStreamState;
   readonly lifecycle: AgentLifecycle<ExpertAgentRunContext>;
   readonly context?: ExpertAgentRunContext | undefined;
+  readonly workflowExecution?: LoopExecutionContext | undefined;
   readonly humanInteractionHandler?: ExpertAgentHumanInteractionHandler | undefined;
 }): ResolvedToolSet<ToolDefinition> {
-  const subAgentTool = createSubAgentTool({
-    agent: options.agent,
-    parentSystemPrompt: options.parentSystemPrompt,
-    launch: (request) =>
-      launchPiSubAgent(request, {
-        authStorage: options.authStorage,
-        cwd: options.cwd,
-        modelRegistry: options.modelRegistry,
-        resolvedTools: parentResolvedTools,
-        streamState: options.streamState,
-      }),
-  });
   const contextTools = options.agent.createDefaultTools({
     getContext: () => options.lifecycle.currentContext,
   });
@@ -69,20 +56,8 @@ export function createResolvedPiTools(options: {
         options.streamState,
         humanInteractionHandler,
         options.lifecycle.currentContext,
+        options.workflowExecution,
       ).map((tool) => createResolvedTool("managed", tool)),
-      ...(subAgentTool === undefined
-        ? []
-        : [
-            createResolvedTool(
-              "subagent",
-              createPiSubAgentTool(
-                options.agent,
-                subAgentTool,
-                options.streamState,
-                options.lifecycle.currentContext,
-              ),
-            ),
-          ]),
       ...createPiMcpTools(options.agent, options.mcpTools, options.streamState).map((tool) =>
         createResolvedTool("mcp", tool),
       ),
@@ -158,6 +133,7 @@ function createPiManagedTools(
   streamState: PiRuntimeStreamState,
   humanInteractionHandler: ExpertAgentHumanInteractionHandler | undefined,
   runContext: ExpertAgentRunContext | undefined,
+  workflowExecution: LoopExecutionContext | undefined,
 ): ToolDefinition[] {
   return tools.map((tool) => ({
     name: tool.name,
@@ -180,6 +156,7 @@ function createPiManagedTools(
             toolCallId,
             humanInteraction: humanInteractionHandler,
             runContext,
+            workflowExecution,
           }),
       );
 
@@ -195,53 +172,6 @@ function createPiManagedTools(
       };
     },
   }));
-}
-
-function createPiSubAgentTool(
-  agent: ExpertAgent,
-  subAgentTool: SubAgentManagedTool,
-  streamState: PiRuntimeStreamState,
-  runContext: ExpertAgentRunContext | undefined,
-): ToolDefinition {
-  return {
-    name: subAgentTool.name,
-    label: "Launch subAgent",
-    description: subAgentTool.description,
-    promptSnippet: "launch_subagent: delegate a focused task to a specialized subAgent",
-    promptGuidelines: [
-      "Use launch_subagent only when the subAgent's whenToUse matches the delegated task.",
-      "Pass a self-contained task. Include the concrete files, constraints, and expected output.",
-    ],
-    parameters: normalizeInputSchema(subAgentTool.inputSchema),
-    executionMode: "parallel",
-    async execute(toolCallId, params, signal) {
-      const result = await executeWithToolHooks(
-        agent,
-        subAgentTool.name,
-        toolCallId,
-        params,
-        undefined,
-        undefined,
-        streamState,
-        async (resolvedParams) =>
-          await subAgentTool.call(resolvedParams, signal, {
-            toolCallId,
-            runContext,
-          }),
-      );
-
-      return {
-        content: [
-          {
-            type: "text",
-            text: result.text,
-          },
-        ],
-        isError: result.isError ?? false,
-        details: result.details,
-      };
-    },
-  };
 }
 
 function createPiMcpTools(
@@ -423,7 +353,7 @@ async function maybeRequestToolApproval<
       readonly approvalId: string;
       readonly toolCallId: string;
       readonly toolName: string;
-      readonly kind: "tool" | "subagent";
+      readonly kind: "tool";
       readonly reason?: string | undefined;
       readonly inputPreview?: unknown;
     };

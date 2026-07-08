@@ -3,7 +3,7 @@ import type {
   ExpertAgentContextItemMetadata,
   ExpertAgentContextResult,
   ExpertAgentStoredContextItem,
-  ExpertAgentStoredContextItemUpdateInput,
+  ExpertAgentStoredContextItemEditInput,
 } from "@pragma/core";
 import { error, ok } from "@pragma/core";
 
@@ -117,7 +117,7 @@ export function defaultTriggerForContextId(id: string): ExpertAgentContextItemMe
 
 export function validateExpectedRevision(
   existing: ExpertAgentStoredContextItem,
-  input: ExpertAgentStoredContextItemUpdateInput,
+  input: ExpertAgentStoredContextItemEditInput,
 ): ExpertAgentContextResult<never> | undefined {
   if (input.expectedRevision !== undefined && input.expectedRevision !== existing.revision) {
     return error("context_conflict", `Skill memory revision conflict: ${input.id}`);

@@ -10,7 +10,6 @@ import type {
   ExpertAgentContextItemSummary,
 } from "../context-system/context-system.ts";
 import type { ExpertAgentRunContext } from "../runtime/run-context.ts";
-import type { SubAgentDefinition } from "../subagents/sub-agent.ts";
 
 export interface ExpertAgentContext {
   readonly systemPrompt: string;
@@ -162,7 +161,6 @@ export class ContextManager {
         : `Context store issue: ${context.contextError}`,
       formatContextAccessRulesSection(context.context),
       formatContextsSection("Available context index", context.context, false),
-      formatSubAgentsSection(this.agent),
     ];
 
     return sections.filter((section) => section !== undefined && section.length > 0).join("\n\n");
@@ -285,28 +283,6 @@ function createAlwaysOnStartupMessages(
   ];
 }
 
-function formatSubAgentsSection(agent: IExpertAgent): string | undefined {
-  const subAgents = agent.subAgents?.agents ?? [];
-
-  if (subAgents.length === 0) {
-    return undefined;
-  }
-
-  return [
-    "Available subAgents:",
-    ...subAgents.map((subAgent) => formatSubAgent(agent, subAgent)),
-  ].join("\n");
-}
-
-function formatSubAgent(agent: IExpertAgent, subAgent: SubAgentDefinition): string {
-  const lines = [
-    `- ${subAgent.agentType}`,
-    `  whenToUse: ${subAgent.whenToUse}`,
-    formatToolsLine("tools", subAgent.tools),
-  ];
-  return lines.filter((line) => line !== undefined).join("\n");
-}
-
 function formatContextAccessRulesSection(
   items: readonly ExpertAgentContextItemSummary[],
 ): string | undefined {
@@ -318,35 +294,9 @@ function formatContextAccessRulesSection(
     "Context access rules:",
     "- Treat context ids from the Available context index as Context System identifiers, not local filesystem paths.",
     "- Use list_expert_context, read_expert_context, and search_expert_context to discover and read Context System content.",
-    "- Use add_expert_context, edit_expert_context, update_expert_context, and delete_expert_context to write Context System content.",
+    '- Use add_expert_context, edit_expert_context, and delete_expert_context to write Context System content. Use edit_expert_context mode="replace" for full content or metadata replacement, and mode="search_replace" for exact text search/replace.',
     "- Do not use shell commands, local filesystem APIs, or runtime file tools to bypass the Context System for these context ids.",
   ].join("\n");
-}
-
-function formatToolsLine(
-  label: string,
-  value: readonly string[] | "*" | undefined,
-): string | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-
-  if (value === "*") {
-    return `  ${label}: *`;
-  }
-
-  return formatStringListLine(label, value);
-}
-
-function formatStringListLine(
-  label: string,
-  value: readonly string[] | undefined,
-): string | undefined {
-  if (value === undefined || value.length === 0) {
-    return undefined;
-  }
-
-  return `  ${label}: ${value.join(", ")}`;
 }
 
 function formatContextsSection(

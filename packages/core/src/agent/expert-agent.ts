@@ -17,7 +17,6 @@ import type {
   ExpertAgentContextItemSearchInput,
   ExpertAgentContextItemSearchMatch,
   ExpertAgentContextItemSummary,
-  ExpertAgentContextItemUpdateInput,
   ExpertAgentContextItemReadInput,
 } from "../context-system/context-system.ts";
 import { createContextTools } from "../context-system/context-tools.ts";
@@ -56,7 +55,6 @@ import type {
   ExpertAgentRuntimeRegistry,
   ExpertAgentRuntimeRegistryFactory,
 } from "../runtime/default-runtime-registry.ts";
-import type { SubAgentRegistry } from "../subagents/sub-agent.ts";
 import type {
   ExpertAgentManagedTool,
   ExpertAgentToolApproval,
@@ -162,7 +160,6 @@ export interface IExpertAgent {
   readonly skills?: IExpertAgentSkillsConfig | undefined;
   readonly models?: IExpertAgentModelsConfig | undefined;
   readonly contextSystem: ContextSystem;
-  readonly subAgents?: SubAgentRegistry | undefined;
   readonly tools?: readonly ExpertAgentManagedTool<string, ExpertAgentToolCallResult>[] | undefined;
   readonly hooks?: ExpertAgentPluginHooks | undefined;
   readonly pluginLoadIssues?: readonly ExpertAgentPluginLoadIssue[] | undefined;
@@ -217,7 +214,6 @@ export class ExpertAgent implements IExpertAgent, Directive<unknown, unknown> {
   readonly models: IExpertAgentModelsConfig | undefined;
   readonly contextSystem: ContextSystem;
   readonly workspace: string;
-  readonly subAgents: SubAgentRegistry | undefined;
   readonly tools: readonly ExpertAgentManagedTool<string, ExpertAgentToolCallResult>[] | undefined;
   readonly hooks: ExpertAgentPluginHooks | undefined;
   readonly pluginLoadIssues: readonly ExpertAgentPluginLoadIssue[] | undefined;
@@ -295,7 +291,6 @@ export class ExpertAgent implements IExpertAgent, Directive<unknown, unknown> {
         mcp: options.mcp,
         skills: options.skills,
         models: options.models,
-        subAgents: options.subAgents,
         tools: options.tools,
         hooks: options.hooks,
       },
@@ -320,7 +315,6 @@ export class ExpertAgent implements IExpertAgent, Directive<unknown, unknown> {
     this.models = resolved.models;
     this.contextSystem = contextSystem;
     this.workspace = options.workspace;
-    this.subAgents = resolved.subAgents;
     this.tools = applyToolApprovals(resolved.tools, resolved.toolApprovals);
     this.hooks = resolved.hooks;
     this.pluginLoadIssues = options.pluginLoadIssues;
@@ -362,6 +356,8 @@ export class ExpertAgent implements IExpertAgent, Directive<unknown, unknown> {
         workflowRunId: execution.workflow.id,
         taskRunId: execution.task.id,
       }),
+      runtimeSession: request.runtimeSession,
+      workflowExecution: execution,
       humanInteractionHandler: async (humanRequest) => {
         if (humanRequest.kind === "user_question") {
           const response = await execution.requestHumanInteraction({
@@ -409,6 +405,7 @@ export class ExpertAgent implements IExpertAgent, Directive<unknown, unknown> {
     });
     const handle = session.submit<TOutput>({
       runId: execution.task.id,
+      modelName: request.modelName,
       query: stringifyInput(request.input),
       output: request.output as RuntimeOutputSchema<TOutput> | undefined,
     });
@@ -419,12 +416,14 @@ export class ExpertAgent implements IExpertAgent, Directive<unknown, unknown> {
     })();
     const result = await handle.result;
     await drainEvents;
+    const runtimeSession = session.info().runtimeSession;
     await session.abort();
 
     return {
       workflowRunId: execution.workflow.id,
       output: result.result.output,
       state: execution.state,
+      runtimeSession,
     };
   }
 
@@ -467,12 +466,6 @@ export class ExpertAgent implements IExpertAgent, Directive<unknown, unknown> {
     input: ExpertAgentContextAddInput,
   ): Promise<ExpertAgentContextResult<ExpertAgentContextItem>> {
     return await this.contextSystem.add(input);
-  }
-
-  async updateContext(
-    input: ExpertAgentContextItemUpdateInput,
-  ): Promise<ExpertAgentContextResult<ExpertAgentContextItem>> {
-    return await this.contextSystem.update(input);
   }
 
   async deleteContext(

@@ -35,7 +35,6 @@ const CODEX_LOCAL_RUNTIME_DESCRIPTOR = {
     supportsAbort: true,
     supportsMcp: true,
     supportsStreaming: true,
-    supportsSubAgents: false,
   },
 };
 
@@ -74,6 +73,7 @@ export function createCodexLocalRuntimeAdapter(
       humanInteractionHandler,
       runtimeSession,
       systemSessionId: requestedSystemSessionId,
+      workflowExecution,
       loggerProvider: requestedLoggerProvider,
     }) {
       const systemSessionId = requestedSystemSessionId ?? randomUUID();
@@ -176,6 +176,7 @@ export function createCodexLocalRuntimeAdapter(
           logger,
           mcpTools: mcpToolRegistry.tools,
           state: toolRuntimeState,
+          workflowExecution,
         });
         client = await CodexAppServerClient.start({
           executablePath: options.executablePath ?? "codex",

@@ -2,6 +2,7 @@ import type { ExpertAgentCreateOptions } from "./agent/expert-agent.ts";
 import { ExpertAgent } from "./agent/expert-agent.ts";
 
 export * from "./agent/context-manager.ts";
+export * from "./agent/agent-launcher.ts";
 export * from "./agent/expert-agent.ts";
 export * from "./context-system/context-system.ts";
 export * from "./context-system/context-tools.ts";
@@ -20,8 +21,6 @@ export * from "./runtime/runtime-event-emitter.ts";
 export * from "./runtime/stream-events.ts";
 export * from "./runtime-registry.ts";
 export * from "./sdk-mcp-server.ts";
-export * from "./subagents/sub-agent.ts";
-export * from "./subagents/subagent-tool.ts";
 export * from "./tools/managed-tool.ts";
 export * from "./tools/tool-resolver.ts";
 

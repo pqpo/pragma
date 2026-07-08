@@ -133,43 +133,69 @@ export interface ExpertAgentContextItemListInput {
   readonly context?: ExpertAgentRunContext | undefined;
 }
 
-export interface ExpertAgentContextItemUpdateInput {
+export type ContextEditMode = "replace" | "search_replace";
+
+interface ExpertAgentContextItemEditBaseInput {
   readonly namespace: string;
   readonly id: string;
+  readonly expectedRevision?: string | undefined;
+  readonly expectedEtag?: string | undefined;
+  readonly context?: ExpertAgentRunContext | undefined;
+}
+
+export interface ExpertAgentContextItemReplaceEditInput
+  extends ExpertAgentContextItemEditBaseInput {
+  readonly mode: "replace";
   readonly content?: string | undefined;
   readonly metadata?: Partial<ExpertAgentContextItemMetadata> | undefined;
+}
+
+export interface ExpertAgentContextItemSearchReplaceEditInput
+  extends ExpertAgentContextItemEditBaseInput {
+  readonly mode?: "search_replace" | undefined;
+  readonly search: string;
+  readonly replace: string;
+  readonly replaceAll?: boolean | undefined;
+}
+
+export type ExpertAgentContextItemEditInput =
+  | ExpertAgentContextItemReplaceEditInput
+  | ExpertAgentContextItemSearchReplaceEditInput;
+
+interface ExpertAgentStoredContextItemEditBaseInput {
+  readonly id: string;
   readonly expectedRevision?: string | undefined;
   readonly expectedEtag?: string | undefined;
   readonly context?: ExpertAgentRunContext | undefined;
 }
 
-export interface ExpertAgentContextItemEditInput {
-  readonly namespace: string;
-  readonly id: string;
-  readonly search: string;
-  readonly replace: string;
-  readonly replaceAll?: boolean | undefined;
-  readonly expectedRevision?: string | undefined;
-  readonly expectedEtag?: string | undefined;
-  readonly context?: ExpertAgentRunContext | undefined;
+export interface ExpertAgentStoredContextItemReplaceEditInput
+  extends ExpertAgentStoredContextItemEditBaseInput {
+  readonly mode: "replace";
+  readonly content?: string | undefined;
+  readonly metadata?: Partial<ExpertAgentContextItemMetadata> | undefined;
 }
 
-export interface ExpertAgentStoredContextItemEditInput {
-  readonly id: string;
+export interface ExpertAgentStoredContextItemSearchReplaceEditInput
+  extends ExpertAgentStoredContextItemEditBaseInput {
+  readonly mode: "search_replace";
   readonly search: string;
   readonly replace: string;
   readonly replaceAll?: boolean | undefined;
-  readonly expectedRevision?: string | undefined;
-  readonly expectedEtag?: string | undefined;
-  readonly context?: ExpertAgentRunContext | undefined;
 }
+
+export type ExpertAgentStoredContextItemEditInput =
+  | ExpertAgentStoredContextItemReplaceEditInput
+  | ExpertAgentStoredContextItemSearchReplaceEditInput;
 
 export interface ExpertAgentContextItemEditResult extends ExpertAgentContextItem {
-  readonly replacementCount: number;
+  readonly mode: ContextEditMode;
+  readonly replacementCount?: number | undefined;
 }
 
 export interface ExpertAgentStoredContextItemEditResult extends ExpertAgentStoredContextItem {
-  readonly replacementCount: number;
+  readonly mode: ContextEditMode;
+  readonly replacementCount?: number | undefined;
 }
 
 export interface ExpertAgentContextItemDeleteInput {
@@ -224,15 +250,6 @@ export interface ExpertAgentStoredContextRegisterInput {
   readonly context?: ExpertAgentRunContext | undefined;
 }
 
-export interface ExpertAgentStoredContextItemUpdateInput {
-  readonly id: string;
-  readonly content?: string | undefined;
-  readonly metadata?: Partial<ExpertAgentContextItemMetadata> | undefined;
-  readonly expectedRevision?: string | undefined;
-  readonly expectedEtag?: string | undefined;
-  readonly context?: ExpertAgentRunContext | undefined;
-}
-
 export interface ExpertAgentContextRootLoadRules {
   readonly preloadPaths?: readonly string[] | undefined;
   readonly forbiddenLoad?: readonly string[] | undefined;
@@ -272,9 +289,6 @@ export interface ExpertAgentContextStore {
   ) => Promise<ExpertAgentContextResult<ExpertAgentStoredContextItemReadResult>>;
   readonly addContext: (
     input: ExpertAgentStoredContextRegisterInput,
-  ) => Promise<ExpertAgentContextResult<ExpertAgentStoredContextItem>>;
-  readonly updateContext: (
-    input: ExpertAgentStoredContextItemUpdateInput,
   ) => Promise<ExpertAgentContextResult<ExpertAgentStoredContextItem>>;
   readonly editContext: (
     input: ExpertAgentStoredContextItemEditInput,
@@ -464,47 +478,6 @@ export class ContextSystem {
     return ok(normalizeContext(result.value, namespaceResult.value));
   }
 
-  async update(
-    input: ExpertAgentContextItemUpdateInput,
-  ): Promise<ExpertAgentContextResult<ExpertAgentContextItem>> {
-    const namespaceResult = normalizeNamespace(input.namespace);
-
-    if (!namespaceResult.ok) {
-      return namespaceResult;
-    }
-
-    const storeResult = this.getStore(namespaceResult.value);
-
-    if (!storeResult.ok) {
-      return storeResult;
-    }
-
-    const existing = await storeResult.value.readContext({
-      id: input.id,
-      context: input.context,
-    });
-
-    if (!existing.ok) {
-      return existing;
-    }
-
-    const metadata = normalizeUpdateMetadata(input.id, existing.value.metadata, input.metadata);
-    const result = await storeResult.value.updateContext({
-      id: input.id,
-      content: input.content,
-      metadata,
-      expectedRevision: input.expectedRevision,
-      expectedEtag: input.expectedEtag,
-      context: input.context,
-    });
-
-    if (!result.ok) {
-      return result;
-    }
-
-    return ok(normalizeContext(result.value, namespaceResult.value));
-  }
-
   async edit(
     input: ExpertAgentContextItemEditInput,
   ): Promise<ExpertAgentContextResult<ExpertAgentContextItemEditResult>> {
@@ -520,7 +493,16 @@ export class ContextSystem {
       return storeResult;
     }
 
-    const result = await storeResult.value.editContext(stripNamespace(normalizedInput.value));
+    const storeInput = await this.prepareStoredEditInput(
+      storeResult.value,
+      normalizedInput.value,
+    );
+
+    if (!storeInput.ok) {
+      return storeInput;
+    }
+
+    const result = await storeResult.value.editContext(toStoredEditInput(storeInput.value));
 
     if (!result.ok) {
       return result;
@@ -528,7 +510,33 @@ export class ContextSystem {
 
     return ok({
       ...normalizeContext(result.value, normalizedInput.value.namespace),
-      replacementCount: result.value.replacementCount,
+      mode: result.value.mode,
+      ...(result.value.replacementCount === undefined
+        ? {}
+        : { replacementCount: result.value.replacementCount }),
+    });
+  }
+
+  private async prepareStoredEditInput(
+    store: ExpertAgentContextStore,
+    input: ExpertAgentContextItemEditInput,
+  ): Promise<ExpertAgentContextResult<ExpertAgentContextItemEditInput>> {
+    if (input.mode !== "replace") {
+      return ok(input);
+    }
+
+    const existing = await store.readContext({
+      id: input.id,
+      context: input.context,
+    });
+
+    if (!existing.ok) {
+      return existing;
+    }
+
+    return ok({
+      ...input,
+      metadata: normalizeUpdateMetadata(input.id, existing.value.metadata, input.metadata),
     });
   }
 
@@ -817,6 +825,19 @@ export function normalizeEditInput(
     return namespace;
   }
 
+  if (input.mode === "replace") {
+    return ok({
+      namespace: namespace.value,
+      id: input.id,
+      mode: "replace",
+      ...(input.content === undefined ? {} : { content: input.content }),
+      ...(input.metadata === undefined ? {} : { metadata: input.metadata }),
+      ...(input.expectedRevision === undefined ? {} : { expectedRevision: input.expectedRevision }),
+      ...(input.expectedEtag === undefined ? {} : { expectedEtag: input.expectedEtag }),
+      ...(input.context === undefined ? {} : { context: input.context }),
+    });
+  }
+
   if (input.search.trim().length === 0) {
     return error("invalid_input", 'Context edit parameter "search" must not be empty.');
   }
@@ -824,6 +845,7 @@ export function normalizeEditInput(
   return ok({
     namespace: namespace.value,
     id: input.id,
+    mode: "search_replace",
     search: input.search,
     replace: input.replace,
     replaceAll: input.replaceAll ?? false,
@@ -1055,6 +1077,33 @@ function stripNamespace<TInput extends { readonly namespace?: string | undefined
   void namespace;
 
   return rest;
+}
+
+function toStoredEditInput(
+  input: ExpertAgentContextItemEditInput,
+): ExpertAgentStoredContextItemEditInput {
+  if (input.mode === "replace") {
+    return {
+      id: input.id,
+      mode: "replace",
+      ...(input.content === undefined ? {} : { content: input.content }),
+      ...(input.metadata === undefined ? {} : { metadata: input.metadata }),
+      ...(input.expectedRevision === undefined ? {} : { expectedRevision: input.expectedRevision }),
+      ...(input.expectedEtag === undefined ? {} : { expectedEtag: input.expectedEtag }),
+      ...(input.context === undefined ? {} : { context: input.context }),
+    };
+  }
+
+  return {
+    id: input.id,
+    mode: "search_replace",
+    search: input.search,
+    replace: input.replace,
+    replaceAll: input.replaceAll,
+    ...(input.expectedRevision === undefined ? {} : { expectedRevision: input.expectedRevision }),
+    ...(input.expectedEtag === undefined ? {} : { expectedEtag: input.expectedEtag }),
+    ...(input.context === undefined ? {} : { context: input.context }),
+  };
 }
 
 export function isAgentsContextId(id: string): boolean {

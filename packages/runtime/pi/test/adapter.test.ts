@@ -207,7 +207,6 @@ describe("createCloudPiRuntimeAdapter", () => {
           supportsAbort: true,
           supportsMcp: true,
           supportsStreaming: true,
-          supportsSubAgents: true,
           targets: ["agent"],
         },
         displayName: "Cloud PI Agent",

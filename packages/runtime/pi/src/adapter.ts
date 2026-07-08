@@ -44,7 +44,6 @@ const CLOUD_PI_RUNTIME_DESCRIPTOR = {
     supportsAbort: true,
     supportsMcp: true,
     supportsStreaming: true,
-    supportsSubAgents: true,
   },
 };
 
@@ -78,6 +77,7 @@ export function createCloudPiRuntimeAdapter(
       models,
       runtimeSession,
       systemSessionId: requestedSystemSessionId,
+      workflowExecution,
       loggerProvider: requestedLoggerProvider,
     }) {
       const systemSessionId = requestedSystemSessionId ?? randomUUID();
@@ -177,6 +177,7 @@ export function createCloudPiRuntimeAdapter(
           streamState,
           lifecycle,
           context: runContext,
+          workflowExecution,
           humanInteractionHandler,
         });
 

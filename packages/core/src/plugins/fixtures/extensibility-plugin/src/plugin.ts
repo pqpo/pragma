@@ -32,15 +32,6 @@ export const extensibilityPlugin = definePluginEntry({
         },
       ],
     },
-    subAgents: {
-      agents: [
-        {
-          agentType: "critic",
-          whenToUse: "Review an answer",
-          systemPrompt: "Be precise.",
-        },
-      ],
-    },
     tools: [
       {
         name: "plugin_tool",

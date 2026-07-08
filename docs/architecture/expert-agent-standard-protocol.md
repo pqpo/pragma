@@ -453,7 +453,7 @@ skills:
 - 上下文 ID 固定为 `AGENTS.md`；
 - 文件内容就是指令正文，不需要 frontmatter metadata；
 - 运行时自动把它视为 `always_on` 上下文加载；
-- 上下文工具可以通过 `readContext` / `updateContext` 读取或更新它；
+- 上下文工具可以通过 `readContext` / `editContext` 读取或编辑它；
 - 更新时仍保持纯 markdown 内容，不写入 metadata。
 
 加载顺序：
@@ -728,8 +728,8 @@ artifact.created
 3. `run.completed` 只表示 Runtime 执行完成，不代表业务输出已经通过 `outputSchema`；
 4. `run.failed` 表示 Runtime 或 Adapter 执行失败，应保留可读 `message`；
 5. `run.cancelled` 表示用户或系统主动取消，不与失败混用；
-6. `tool.delta` 是工具执行过程输出，subAgent 输出也通过该事件表达；
-7. subAgent 是 `tool.kind = "subagent"` 的特殊工具，不定义独立 `subagent.*` 事件族；
+6. `tool.delta` 是工具执行过程输出，Agent 委派工具输出也通过该事件表达；
+7. Agent 委派使用普通工具事件，不定义独立的子 Agent 事件族；
 8. 事件负载只放展示、审计、路由需要的摘要，不把大 artifact 或完整文件内容塞进事件。
 
 ### 15.1 Runtime Adapter 接入方式
@@ -785,9 +785,9 @@ Adapter 必须遵守：
 4. Runtime 原生事件必须先映射成 `ExpertAgentStreamEvent`，再向外暴露；
 5. 不把具体 SDK 的事件结构泄漏给上层。
 
-### 15.2 subAgent 流式桥接
+### 15.2 Agent 委派流式桥接
 
-subAgent 不再定义独立事件族。父运行发起 subAgent 时，Runtime 应将它视为特殊工具调用：
+Agent 委派不定义独立事件族。父运行调用 `launch_agent` 时，Runtime 应将它视为普通工具调用；child Agent 的 workflow run 由编排层创建，并通过 `parentWorkflowRunId` / `parentTaskRunId` 关联到父运行：
 
 ```json
 {
@@ -796,24 +796,23 @@ subAgent 不再定义独立事件族。父运行发起 subAgent 时，Runtime �
   "source": {
     "kind": "tool",
     "runId": "parent-run",
-    "toolCallId": "tool-call-1",
-    "toolKind": "subagent"
+    "toolCallId": "tool-call-1"
   },
   "payload": {
     "toolCallId": "tool-call-1",
-    "toolName": "launch_subagent",
-    "kind": "subagent",
+    "toolName": "launch_agent",
+    "kind": "tool",
     "inputPreview": {
-      "agentType": "reviewer",
+      "agentId": "reviewer-agent",
       "task": "Review this change"
     }
   }
 }
 ```
 
-subAgent 的过程输出使用 `tool.delta`，最终成功或失败使用 `tool.completed` /
-`tool.failed`。如果后续需要独立查询 child run，可以在 `payload` 或 artifact metadata
-中记录 child run id，但首版协议不要求客户端处理 `subagent.*`。
+`launch_agent` 的过程输出使用 `tool.delta`，最终成功或失败使用 `tool.completed` /
+`tool.failed`。child run 的状态、任务、失败和取消由同一个 Workflow / StateManager
+协议管理，客户端可以通过递归 run tree 或 watch API 查询。
 
 ### 15.3 传输边界
 

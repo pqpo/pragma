@@ -115,9 +115,6 @@ function createCodeRepositoryContextStore(
     async addContext() {
       return error("permission_denied", "Code repository plugin context is read-only.");
     },
-    async updateContext() {
-      return error("permission_denied", "Code repository plugin context is read-only.");
-    },
     async editContext() {
       return error("permission_denied", "Code repository plugin context is read-only.");
     },

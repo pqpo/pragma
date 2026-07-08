@@ -49,7 +49,6 @@ const agent = await defineAgent({
 - `mcp`
 - `skills`
 - `contextSystem`
-- `subAgents`
 - `tools`
 - `hooks`
 - `plugins`
@@ -468,7 +467,7 @@ const contextTools = agent.createDefaultTools({
 - `read_expert_context`
 - `search_expert_context`
 - `add_expert_context`
-- `update_expert_context`
+- `edit_expert_context`
 - `delete_expert_context`
 
 是否把这些工具注入 Agent，取决于创建 Agent 时的 `tools` 或插件贡献方式。

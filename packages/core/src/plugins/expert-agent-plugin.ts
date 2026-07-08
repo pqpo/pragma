@@ -23,7 +23,6 @@ import type {
 import type { RuntimeStreamEvent } from "../runtime/stream-events.ts";
 import type { ExpertAgentLogger, ExpertAgentLoggerProvider } from "../logging/logger.ts";
 import { createExpertAgentLogger, defaultExpertAgentLoggerProvider } from "../logging/logger.ts";
-import type { SubAgentRegistry } from "../subagents/sub-agent.ts";
 import type {
   ExpertAgentManagedTool,
   ExpertAgentToolApproval,
@@ -199,7 +198,6 @@ export interface ExpertAgentPluginContributions {
   readonly mcp?: IExpertAgentMcpConfig | undefined;
   readonly skills?: IExpertAgentSkillsConfig | undefined;
   readonly models?: IExpertAgentModelsConfig | undefined;
-  readonly subAgents?: SubAgentRegistry | undefined;
   readonly tools?: readonly ExpertAgentManagedTool<string, ExpertAgentToolCallResult>[] | undefined;
   readonly toolApprovals?:
     | readonly {
@@ -228,7 +226,6 @@ export interface ResolvedExpertAgentPluginContributions {
   readonly mcp?: IExpertAgentMcpConfig | undefined;
   readonly skills?: IExpertAgentSkillsConfig | undefined;
   readonly models?: IExpertAgentModelsConfig | undefined;
-  readonly subAgents?: SubAgentRegistry | undefined;
   readonly tools?: readonly ExpertAgentManagedTool<string, ExpertAgentToolCallResult>[] | undefined;
   readonly toolApprovals?:
     | readonly {
@@ -337,7 +334,6 @@ export function resolveExpertAgentPlugins(
     mcp: mergeMcpConfigs(contributions.map((contribution) => contribution.mcp)),
     skills: mergeSkillsConfigs(contributions.map((contribution) => contribution.skills)),
     models: mergeModelsConfigs(contributions.map((contribution) => contribution.models)),
-    subAgents: mergeSubAgentRegistries(contributions.map((contribution) => contribution.subAgents)),
     tools: mergeManagedTools(contributions.map((contribution) => contribution.tools)),
     toolApprovals: mergeToolApprovals(
       contributions.map((contribution) => contribution.toolApprovals),
@@ -562,21 +558,6 @@ function mergeModelsConfigs(
     ...(defaultModelName === undefined ? {} : { defaultModelName }),
     providers,
   };
-}
-
-function mergeSubAgentRegistries(
-  registries: readonly (SubAgentRegistry | undefined)[],
-): SubAgentRegistry | undefined {
-  const agents = dedupeBy(
-    registries.flatMap((registry) => registry?.agents ?? []),
-    (subAgent) => subAgent.agentType,
-  );
-
-  if (agents.length === 0) {
-    return undefined;
-  }
-
-  return { agents };
 }
 
 function mergeManagedTools(

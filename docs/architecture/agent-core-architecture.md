@@ -5,7 +5,7 @@
 `@pragma/core` 是 Pragma 的专家 Agent 执行核心。它不负责 HTTP API、数据库 Controller、Web UI 或 Desktop 权限界面，而是提供：
 
 - 专家 Agent 的声明模型、创建入口和能力装配。
-- Agent 上下文、工具、插件、子 Agent 和模型配置管理。
+- Agent 上下文、工具、插件和模型配置管理。
 - Runtime Adapter 抽象，使 Agent 可以运行在不同执行环境中。
 - Flow 编排能力，把 Agent、确定性任务或子 Flow 组织成可执行流程。
 - Workflow、Task、Mailbox、Sandbox 等运行期协议边界。
@@ -15,7 +15,7 @@ Core 的定位是“可替换运行时 + 可治理编排协议”的中间层：
 ```mermaid
 flowchart TB
   app["Server / Worker / Desktop"]
-  core["@pragma/core<br/>Agent 能力装配<br/>Runtime 执行适配<br/>Flow 编排<br/>Context / Tools<br/>Plugins / SubAgents"]
+  core["@pragma/core<br/>Agent 能力装配<br/>Runtime 执行适配<br/>Flow 编排<br/>Context / Tools<br/>Plugins / Agent Delegation"]
   shared["@pragma/shared<br/>协议对象和状态模型"]
 
   app --> core --> shared
@@ -27,7 +27,7 @@ Core 源码位于 `packages/core/src`。本文按职责分类说明模块，而�
 
 ### Agent 能力层
 
-Agent 能力层负责把一个专家的身份、指令、上下文、工具、插件、子 Agent 和模型配置装配成标准 `ExpertAgent`。
+Agent 能力层负责把一个专家的身份、指令、上下文、工具、插件和模型配置装配成标准 `ExpertAgent`。
 
 ```mermaid
 flowchart TB
@@ -47,7 +47,6 @@ flowchart TB
   normalize --> contextManager["ContextManager"]
   contextManager --> contextSystem["ContextSystem"]
 
-  normalize --> subAgents["SubAgent Registry"]
   normalize --> managedTools["Managed Tools"]
 ```
 
@@ -55,7 +54,7 @@ flowchart TB
 
 - `ExpertAgent.create()` 是标准创建入口。
 - `defineAgent()` 和 `agent()` 只是声明语法糖，不应实现另一套 Agent 包装层。
-- 插件、工具、上下文和子 Agent 都在 Agent 创建阶段归一化。
+- 插件、工具和上下文都在 Agent 创建阶段归一化。
 - Agent 不直接依赖具体模型 SDK、本地执行器、Server Controller 或 Web UI。
 
 `ExpertAgent` 的主要能力包括：

@@ -14,7 +14,11 @@ import type {
 } from "@pragma/shared";
 import type { z } from "zod";
 
-import type { RuntimeAdapter, RuntimeOutputSchema } from "../runtime/runtime-adapter.ts";
+import type {
+  RuntimeAdapter,
+  RuntimeOutputSchema,
+  RuntimeSessionRef,
+} from "../runtime/runtime-adapter.ts";
 import type { RuntimeStreamEvent } from "../runtime/stream-events.ts";
 import type { RuntimeRegistry } from "../runtime-registry.ts";
 
@@ -163,7 +167,9 @@ export interface CompiledDirective<TInput = unknown, TOutput = unknown> extends 
 
 export interface StartRunRequest<TInput = unknown> extends LoopRuntimeOverride {
   readonly input: TInput;
+  readonly modelName?: string | undefined;
   readonly output?: RuntimeOutputSchema<unknown> | undefined;
+  readonly runtimeSession?: RuntimeSessionRef | undefined;
   readonly runtimes?: Readonly<Record<string, string>> | undefined;
   readonly execution?: LoopExecutionContext | undefined;
 }
@@ -171,6 +177,7 @@ export interface StartRunRequest<TInput = unknown> extends LoopRuntimeOverride {
 export interface RunResult<TOutput = unknown> {
   readonly workflowRunId: string;
   readonly output: TOutput;
+  readonly runtimeSession?: RuntimeSessionRef | undefined;
   /**
    * State visible at the boundary of this loop run.
    *
@@ -376,7 +383,11 @@ export interface StateManager {
   readonly markTaskRunning: (taskRunId: string, sandbox: SandboxRef) => Promise<TaskRunRecord>;
   readonly markTaskWaiting: (taskRunId: string) => Promise<TaskRunRecord>;
   readonly markTaskResumed: (taskRunId: string) => Promise<TaskRunRecord>;
-  readonly markTaskSucceeded: (taskRunId: string, output: unknown) => Promise<TaskRunRecord>;
+  readonly markTaskSucceeded: (
+    taskRunId: string,
+    output: unknown,
+    metadata?: { readonly runtimeSession?: RuntimeSessionRef | undefined } | undefined,
+  ) => Promise<TaskRunRecord>;
   readonly markTaskFailed: (taskRunId: string, error: unknown) => Promise<TaskRunRecord>;
   readonly markTaskCancelled: (
     taskRunId: string,

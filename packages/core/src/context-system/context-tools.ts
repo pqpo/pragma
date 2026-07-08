@@ -13,7 +13,6 @@ import type {
   ExpertAgentContextItemSearchInput,
   ExpertAgentContextItemSearchMatch,
   ExpertAgentContextItemSummary,
-  ExpertAgentContextItemUpdateInput,
 } from "./context-system.ts";
 import type { ExpertAgentRunContext } from "../runtime/run-context.ts";
 import { createExpertAgentRunContext } from "../runtime/run-context.ts";
@@ -66,9 +65,6 @@ export interface ExpertAgentContextItemOperations {
   readonly editContext: (
     input: ExpertAgentContextItemEditInput,
   ) => Promise<ExpertAgentContextResult<ExpertAgentContextItemEditResult>>;
-  readonly updateContext: (
-    input: ExpertAgentContextItemUpdateInput,
-  ) => Promise<ExpertAgentContextResult<ExpertAgentContextItem>>;
   readonly deleteContext: (
     input: ExpertAgentContextItemDeleteInput,
   ) => Promise<ExpertAgentContextResult<ExpertAgentContextItemDeleteResult>>;
@@ -218,75 +214,70 @@ export function createContextTools(
     {
       name: "edit_expert_context",
       label: "Edit expert context",
-      description: "Apply a search/replace edit to an ExpertAgent context item.",
+      description:
+        'Edit an ExpertAgent context item. Use mode="replace" for full content or metadata replacement, or mode="search_replace" for exact text search/replace.',
       inputSchema: objectSchema(
         {
           namespace: stringSchema("Context namespace."),
           id: stringSchema("Context id."),
-          search: stringSchema("The exact text to search for."),
-          replace: stringSchema("Replacement text."),
-          replaceAll: booleanSchema("Whether to replace every match. Defaults to false."),
+          mode: {
+            type: "string",
+            enum: ["replace", "search_replace"],
+            description: "Edit mode. Defaults to search_replace.",
+          },
+          content: stringSchema('Replacement context content for mode="replace".'),
+          description: stringSchema('Replacement context description for mode="replace".'),
+          trigger: triggerSchema(),
+          search: stringSchema('The exact text to search for in mode="search_replace".'),
+          replace: stringSchema('Replacement text for mode="search_replace".'),
+          replaceAll: booleanSchema(
+            'Whether to replace every match in mode="search_replace". Defaults to false.',
+          ),
           expectedRevision: stringSchema("Optional expected context revision."),
           expectedEtag: stringSchema("Optional expected context etag."),
-        },
-        ["namespace", "id", "search", "replace"],
-      ),
-      call: async (args) => {
-        const result = await contextOperations.editContext({
-          namespace: readStringParam(args, "namespace"),
-          id: readStringParam(args, "id"),
-          search: readStringParam(args, "search"),
-          replace: readStringParam(args, "replace"),
-          replaceAll: readOptionalBooleanParam(args, "replaceAll"),
-          expectedRevision: readOptionalStringParam(args, "expectedRevision"),
-          expectedEtag: readOptionalStringParam(args, "expectedEtag"),
-          context: readRunContext(options),
-        });
-
-        if (!result.ok) {
-          return errorResult(result.error);
-        }
-
-        return {
-          text: `Edited context: ${result.value.namespace}/${result.value.id}; replacements=${result.value.replacementCount}`,
-          details: {
-            context: result.value,
-            replacementCount: result.value.replacementCount,
-          },
-        };
-      },
-    },
-    {
-      name: "update_expert_context",
-      label: "Update expert context",
-      description: "Update an ExpertAgent context's content or metadata by context id.",
-      inputSchema: objectSchema(
-        {
-          namespace: stringSchema("Context namespace."),
-          id: stringSchema("Context id."),
-          content: stringSchema("Optional replacement context content."),
-          description: stringSchema("Optional replacement context description."),
-          trigger: triggerSchema(),
         },
         ["namespace", "id"],
       ),
       call: async (args) => {
-        const result = await contextOperations.updateContext({
-          namespace: readStringParam(args, "namespace"),
-          id: readStringParam(args, "id"),
-          content: readOptionalStringParam(args, "content"),
-          metadata: readMetadataParams(args),
-          context: readRunContext(options),
-        });
+        const mode = readOptionalEditModeParam(args);
+        const input =
+          mode === "replace"
+            ? {
+                namespace: readStringParam(args, "namespace"),
+                id: readStringParam(args, "id"),
+                mode,
+                content: readOptionalStringParam(args, "content"),
+                metadata: readMetadataParams(args),
+                expectedRevision: readOptionalStringParam(args, "expectedRevision"),
+                expectedEtag: readOptionalStringParam(args, "expectedEtag"),
+                context: readRunContext(options),
+              }
+            : {
+                namespace: readStringParam(args, "namespace"),
+                id: readStringParam(args, "id"),
+                mode: "search_replace" as const,
+                search: readStringParam(args, "search"),
+                replace: readStringParam(args, "replace"),
+                replaceAll: readOptionalBooleanParam(args, "replaceAll"),
+                expectedRevision: readOptionalStringParam(args, "expectedRevision"),
+                expectedEtag: readOptionalStringParam(args, "expectedEtag"),
+                context: readRunContext(options),
+              };
+        const result = await contextOperations.editContext(input);
 
         if (!result.ok) {
           return errorResult(result.error);
         }
 
         return {
-          text: `Updated context: ${result.value.namespace}/${result.value.id}`,
+          text:
+            result.value.mode === "search_replace"
+              ? `Edited context: ${result.value.namespace}/${result.value.id}; mode=${result.value.mode}; replacements=${result.value.replacementCount}`
+              : `Edited context: ${result.value.namespace}/${result.value.id}; mode=${result.value.mode}`,
           details: {
             context: result.value,
+            mode: result.value.mode,
+            replacementCount: result.value.replacementCount,
           },
         };
       },
@@ -606,6 +597,20 @@ function readOptionalTriggerParam(params: unknown): ContextTrigger | undefined {
   }
 
   throw new Error('Context tool parameter "trigger" must be always_on, model_decision, or manual.');
+}
+
+function readOptionalEditModeParam(params: unknown): "replace" | "search_replace" {
+  const value = readParam(params, "mode");
+
+  if (value === undefined) {
+    return "search_replace";
+  }
+
+  if (value === "replace" || value === "search_replace") {
+    return value;
+  }
+
+  throw new Error('Context tool parameter "mode" must be replace or search_replace.');
 }
 
 function readOptionalScopeParam(params: unknown): "path" | "content" | "hybrid" | undefined {

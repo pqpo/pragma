@@ -22,6 +22,7 @@ import { dispatchExpertAgentHook } from "@pragma/core";
 import type { RuntimeEventEmitter } from "@pragma/core";
 import type { RuntimeStreamEvent } from "@pragma/core";
 import type { ExpertAgentRunContext } from "@pragma/core";
+import type { LoopExecutionContext } from "@pragma/core";
 import { resolveToolPolicy, type ResolvedTool } from "@pragma/core";
 import type {
   ExpertAgentHumanInteractionHandler,
@@ -51,6 +52,7 @@ export interface CreateCodexWorkflowToolsMcpServerOptions {
   readonly logger: ExpertAgentLogger;
   readonly mcpTools?: readonly McpManagedTool[] | undefined;
   readonly state: CodexWorkflowToolRuntimeState;
+  readonly workflowExecution?: LoopExecutionContext | undefined;
 }
 
 type LocalTool = ExpertAgentManagedTool<string, ExpertAgentToolCallResult>;
@@ -226,6 +228,7 @@ function registerLocalTool(
           approval: tool.approval,
           humanInteractionHandler: options.humanInteractionHandler,
           runContext: options.getContext(),
+          workflowExecution: options.workflowExecution,
           logger: options.logger,
           state: options.state,
         });
@@ -250,6 +253,7 @@ async function executeWithToolHooks(options: {
   readonly approval: ExpertAgentToolApproval | undefined;
   readonly humanInteractionHandler: ExpertAgentHumanInteractionHandler | undefined;
   readonly runContext: ExpertAgentRunContext | undefined;
+  readonly workflowExecution: LoopExecutionContext | undefined;
   readonly logger: ExpertAgentLogger;
   readonly state: CodexWorkflowToolRuntimeState;
 }): Promise<ExpertAgentToolCallResult> {
@@ -300,6 +304,7 @@ async function executeWithToolHooks(options: {
       toolCallId: options.toolCallId,
       humanInteraction: options.humanInteractionHandler,
       runContext: options.runContext,
+      workflowExecution: options.workflowExecution,
     });
     const durationMs = Date.now() - startedAt;
 

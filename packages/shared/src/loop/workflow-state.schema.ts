@@ -38,6 +38,11 @@ export const SandboxRefSchema = z.object({
   workspaceRoot: z.string().min(1).optional(),
 });
 
+export const RuntimeSessionRefSchema = z.object({
+  type: z.string().min(1),
+  id: z.string().min(1),
+});
+
 export const WorkflowRunRecordSchema = z.object({
   id: z.string().min(1),
   loopId: z.string().min(1),
@@ -64,6 +69,7 @@ export const TaskRunRecordSchema = z.object({
   sandbox: SandboxRefSchema.optional(),
   input: z.unknown(),
   output: z.unknown().optional(),
+  runtimeSession: RuntimeSessionRefSchema.optional(),
   error: z.unknown().optional(),
   attempt: z.number().int().positive(),
   leaseOwner: z.string().min(1).optional(),
@@ -76,5 +82,6 @@ export type RunState = z.infer<typeof LoopStateSchema>;
 export type RunStatus = z.infer<typeof LoopRunStatusSchema>;
 export type TaskRunStatus = z.infer<typeof TaskRunStatusSchema>;
 export type SandboxRef = z.infer<typeof SandboxRefSchema>;
+export type RuntimeSessionRef = z.infer<typeof RuntimeSessionRefSchema>;
 export type WorkflowRunRecord = z.infer<typeof WorkflowRunRecordSchema>;
 export type TaskRunRecord = z.infer<typeof TaskRunRecordSchema>;

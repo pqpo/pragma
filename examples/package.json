@@ -16,6 +16,7 @@
     "start:loop-route": "tsx src/run-loop-route.ts",
     "start:loop-subloop": "tsx src/run-loop-subloop.ts",
     "start:loop-watch": "tsx src/run-loop-watch.ts",
+    "start:agent-delegation": "tsx src/run-agent-delegation.ts",
     "start:workflow-patterns": "tsx src/run-workflow-patterns.ts",
     "start:loop-human-clarification": "tsx src/run-loop-human-clarification.ts",
     "start:loop-human-review-gate": "tsx src/run-loop-human-review-gate.ts",

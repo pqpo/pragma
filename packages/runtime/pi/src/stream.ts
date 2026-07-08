@@ -19,7 +19,7 @@ export function createToolStreamEvents(options: {
   readonly toolEvent: PiToolExecutionEvent;
 }): readonly RuntimeStreamEventInput[] {
   const toolSource = createToolSource(options.source, options.toolEvent.toolCallId);
-  const toolKind = readToolKind(toolSource, options.toolEvent.toolName);
+  const kind = "tool" as const;
 
   if (options.toolEvent.type === "started") {
     return [
@@ -31,7 +31,7 @@ export function createToolStreamEvents(options: {
         payload: {
           toolCallId: options.toolEvent.toolCallId,
           toolName: options.toolEvent.toolName,
-          kind: toolKind,
+          kind,
           inputPreview: options.toolEvent.args,
         },
       },
@@ -52,7 +52,7 @@ export function createToolStreamEvents(options: {
             payload: {
               toolCallId: options.toolEvent.toolCallId,
               toolName: options.toolEvent.toolName,
-              kind: toolKind,
+              kind,
               channel: "message",
               delta: text,
             },
@@ -72,13 +72,13 @@ export function createToolStreamEvents(options: {
         ? {
             toolCallId: options.toolEvent.toolCallId,
             toolName: options.toolEvent.toolName,
-            kind: toolKind,
+            kind,
             message: outputText ?? "Tool execution failed",
           }
         : {
             toolCallId: options.toolEvent.toolCallId,
             toolName: options.toolEvent.toolName,
-            kind: toolKind,
+            kind,
             outputPreview: options.toolEvent.result,
           },
     },
@@ -94,13 +94,6 @@ function createToolSource(
     kind: "tool",
     toolCallId,
   };
-}
-
-function readToolKind(
-  source: RuntimeStreamEvent["source"],
-  toolName: string,
-): "tool" | "subagent" {
-  return source.toolKind === "subagent" || toolName === "launch_subagent" ? "subagent" : "tool";
 }
 
 function stringifyToolOutput(output: unknown): string | undefined {
