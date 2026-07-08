@@ -1,11 +1,11 @@
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { mkdirSync, writeFileSync } from "node:fs";
-import { mkdtemp } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough, Writable } from "node:stream";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   AGENTS_CONTEXT_ID,
@@ -14,12 +14,20 @@ import {
   ExpertAgent,
   HOST_CONTEXT_NAMESPACE,
 } from "@pragma/core";
-import type { IExpertAgentMcpConfig } from "@pragma/core";
+import type { IExpertAgentMcpConfig, IExpertAgentSkillsConfig } from "@pragma/core";
 import type { RuntimeSessionStorageContext } from "@pragma/core";
 import { createCodexLocalRuntimeAdapter } from "../src/adapter.ts";
 import type { CodexRuntimeSpawn } from "../src/types.ts";
 
 describe("createCodexLocalRuntimeAdapter", () => {
+  beforeEach(async () => {
+    vi.stubEnv("CODEX_HOME", await mkdtemp(join(tmpdir(), "pragma-codex-shared-home-")));
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   it("declares MCP support", () => {
     const adapter = createCodexLocalRuntimeAdapter();
 
@@ -42,6 +50,9 @@ describe("createCodexLocalRuntimeAdapter", () => {
     expect(fake.command).toBe("codex");
     expect(fake.args.slice(0, 3)).toEqual(["app-server", "--listen", "stdio://"]);
     expectCodexMcpArgs(fake.args);
+    expect(fake.env["CODEX_HOME"]).toEqual(
+      join(agent.workspace, ".pragma", "runtime-sessions", "codex", agent.id, "codex-home"),
+    );
     expect(fake.requests.map((request) => request.method)).toEqual([
       "initialize",
       "initialized",
@@ -196,7 +207,7 @@ describe("createCodexLocalRuntimeAdapter", () => {
     const fake = new FakeCodexAppServer({
       usageLocation: "none",
       onTurnStart: () => {
-        writeCodexSessionTokenCount(codexHome, {
+        writeCodexSessionTokenCount(readSpawnCodexHome(fake), {
           inputTokens: 11,
           outputTokens: 5,
           cachedInputTokens: 4,
@@ -230,7 +241,7 @@ describe("createCodexLocalRuntimeAdapter", () => {
     const codexHome = await mkdtemp(join(tmpdir(), "pragma-codex-home-"));
     const fake = new FakeCodexAppServer({
       onTurnStart: () => {
-        writeCodexSessionTokenCount(codexHome, {
+        writeCodexSessionTokenCount(readSpawnCodexHome(fake), {
           inputTokens: 100,
           outputTokens: 100,
           cachedInputTokens: 50,
@@ -256,6 +267,59 @@ describe("createCodexLocalRuntimeAdapter", () => {
         cacheWrite: 0,
       }),
     );
+
+    await session.abort();
+  });
+
+  it("materializes ExpertAgent skills into the managed Codex home", async () => {
+    const fake = new FakeCodexAppServer();
+    const sourceDir = await mkdtemp(join(tmpdir(), "pragma-codex-skill-source-"));
+    await writeFile(
+      join(sourceDir, "SKILL.md"),
+      "# Local Skill\n\nFollow the local skill instructions.\n",
+    );
+    await mkdir(join(sourceDir, "references"), { recursive: true });
+    await writeFile(join(sourceDir, "references", "guide.md"), "Reference content.");
+
+    const agent = await createTestAgent({
+      skills: {
+        skills: [
+          {
+            type: "local",
+            name: "Local Skill",
+            description: "Use for local skill runtime tests.",
+            path: join(sourceDir, "SKILL.md"),
+          },
+          {
+            type: "registry",
+            name: "Unresolved Registry Skill",
+            description: "This should be ignored until it has a path.",
+          },
+        ],
+      },
+    });
+    const adapter = createCodexLocalRuntimeAdapter({
+      spawn: fake.spawn,
+    });
+
+    const session = await adapter.createSession({ agent });
+    const codexHome = readSpawnCodexHome(fake);
+    const skillContent = await readFile(
+      join(codexHome, "skills", "local-skill", "SKILL.md"),
+      "utf8",
+    );
+    const referenceContent = await readFile(
+      join(codexHome, "skills", "local-skill", "references", "guide.md"),
+      "utf8",
+    );
+
+    expect(skillContent).toContain('name: "local-skill"');
+    expect(skillContent).toContain('description: "Use for local skill runtime tests."');
+    expect(skillContent).toContain("Follow the local skill instructions.");
+    expect(referenceContent).toBe("Reference content.");
+    await expect(
+      lstat(join(codexHome, "skills", "unresolved-registry-skill")),
+    ).rejects.toMatchObject({ code: "ENOENT" });
 
     await session.abort();
   });
@@ -499,6 +563,7 @@ async function createTestAgent(
   options: {
     readonly contextSystem?: ContextSystem | undefined;
     readonly mcp?: IExpertAgentMcpConfig | undefined;
+    readonly skills?: IExpertAgentSkillsConfig | undefined;
   } = {},
 ): Promise<ExpertAgent> {
   return await ExpertAgent.create({
@@ -512,6 +577,7 @@ async function createTestAgent(
     workspace: await mkdtemp(join(tmpdir(), "pragma-codex-runtime-test-")),
     ...(options.contextSystem === undefined ? {} : { contextSystem: options.contextSystem }),
     ...(options.mcp === undefined ? {} : { mcp: options.mcp }),
+    ...(options.skills === undefined ? {} : { skills: options.skills }),
   });
 }
 
@@ -554,11 +620,13 @@ class FakeCodexAppServer extends EventEmitter {
   readonly responses: FakeResponse[] = [];
   command = "";
   args: readonly string[] = [];
+  env: NodeJS.ProcessEnv = {};
   private turnStartCount = 0;
 
-  readonly spawn: CodexRuntimeSpawn = (command, args) => {
+  readonly spawn: CodexRuntimeSpawn = (command, args, options) => {
     this.command = command;
     this.args = args;
+    this.env = options.env;
     return this as unknown as ChildProcessWithoutNullStreams;
   };
 
@@ -746,6 +814,16 @@ function writeCodexSessionTokenCount(
   );
 }
 
+function readSpawnCodexHome(fake: FakeCodexAppServer): string {
+  const codexHome = fake.env["CODEX_HOME"];
+
+  if (codexHome === undefined) {
+    throw new Error("Expected fake Codex app-server to receive CODEX_HOME.");
+  }
+
+  return codexHome;
+}
+
 function createExpectedUsage(usage: {
   readonly input: number;
   readonly output: number;
@@ -781,7 +859,9 @@ function readRequestParams(request: FakeRequest | undefined): Record<string, unk
 }
 
 function expectCodexMcpArgs(args: readonly string[]): void {
-  const urlArg = args.find((arg) => /^mcp_servers\.pragma_tools_agent_codex_test_.*\.url=/.test(arg));
+  const urlArg = args.find((arg) =>
+    /^mcp_servers\.pragma_tools_agent_codex_test_.*\.url=/.test(arg),
+  );
 
   if (urlArg === undefined) {
     throw new Error("Expected Codex MCP server URL argument.");

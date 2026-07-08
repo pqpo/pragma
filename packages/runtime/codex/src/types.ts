@@ -30,6 +30,11 @@ export interface CodexRuntimeAdapterOptions {
   readonly descriptor?: Partial<RuntimeAdapterDescriptor> | undefined;
   readonly executablePath?: string | undefined;
   readonly appServerArgs?: readonly string[] | undefined;
+  /**
+   * Extra environment for Codex. CODEX_HOME is treated as the shared source home
+   * for auth/config/session state; the spawned Codex process receives a managed
+   * per-session CODEX_HOME instead.
+   */
   readonly env?: NodeJS.ProcessEnv | undefined;
   readonly clientInfo?: CodexRuntimeClientInfo | undefined;
   readonly loggerProvider?: ExpertAgentLoggerProvider | undefined;

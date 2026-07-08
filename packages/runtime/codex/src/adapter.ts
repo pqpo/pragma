@@ -16,6 +16,7 @@ import { createQueuedAgentLifecycle } from "@pragma/core";
 import { dispatchExpertAgentHook } from "@pragma/core";
 import { CodexAppServerClient } from "./app-server-client.ts";
 import type { CodexAppServerNotification } from "./app-server-client.ts";
+import { prepareManagedCodexHome } from "./codex-home.ts";
 import { createCodexRuntimeSession } from "./session.ts";
 import type { CodexNotificationSubscriber, CodexRuntimeSessionState } from "./session.ts";
 import type { CodexRuntimeAdapterOptions } from "./types.ts";
@@ -167,6 +168,12 @@ export function createCodexLocalRuntimeAdapter(
           systemSessionId,
           workspace: agent.workspace,
         });
+        const codexHome = await prepareManagedCodexHome({
+          agent,
+          sessionDir,
+          env: options.env,
+          logger,
+        });
         const context = await agent.buildContext(runContext);
         mcpToolRegistry = await createMcpToolRegistry(agent.mcp);
         workflowToolsMcpServer = await createCodexWorkflowToolsMcpServer({
@@ -185,7 +192,10 @@ export function createCodexLocalRuntimeAdapter(
             workflowToolsMcpServer,
           ),
           cwd: agent.workspace,
-          env: options.env ?? {},
+          env: {
+            ...(options.env ?? {}),
+            CODEX_HOME: codexHome,
+          },
           clientInfo: options.clientInfo ?? DEFAULT_CODEX_CLIENT_INFO,
           spawn: options.spawn,
           humanInteractionHandler,
@@ -250,7 +260,7 @@ export function createCodexLocalRuntimeAdapter(
           state,
           defaultModelName: options.defaultModelName ?? agent.models?.defaultModelName,
           outputRetryLimit: options.outputRetryLimit,
-          codexHome: options.env?.CODEX_HOME,
+          codexHome,
           toolRuntimeState,
           startupMessages: threadStartResult.startedFreshThread ? context.startupMessages : [],
         });
