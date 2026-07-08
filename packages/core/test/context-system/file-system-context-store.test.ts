@@ -73,6 +73,11 @@ describe("FileSystemContextStore", () => {
     );
     expect(context.systemPrompt).toContain("Available context index");
     expect(context.systemPrompt).toContain(AGENTS_CONTEXT_ID);
+    expect(context.systemPrompt).toContain("Context access rules:");
+    expect(context.systemPrompt).toContain("read_expert_context");
+    expect(context.systemPrompt).toContain("edit_expert_context");
+    expect(context.systemPrompt).toContain("not local filesystem paths");
+    expect(context.systemPrompt).toContain("Do not use shell commands");
     expect(context.systemPrompt).not.toContain("Use direct instructions.");
     expect(context.systemPrompt).not.toContain("Reference material only");
     expect(context.startupMessages).toEqual([

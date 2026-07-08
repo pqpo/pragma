@@ -160,6 +160,7 @@ export class ContextManager {
       context.contextError === undefined
         ? undefined
         : `Context store issue: ${context.contextError}`,
+      formatContextAccessRulesSection(context.context),
       formatContextsSection("Available context index", context.context, false),
       formatSubAgentsSection(this.agent),
     ];
@@ -304,6 +305,22 @@ function formatSubAgent(agent: IExpertAgent, subAgent: SubAgentDefinition): stri
     formatToolsLine("tools", subAgent.tools),
   ];
   return lines.filter((line) => line !== undefined).join("\n");
+}
+
+function formatContextAccessRulesSection(
+  items: readonly ExpertAgentContextItemSummary[],
+): string | undefined {
+  if (items.length === 0) {
+    return undefined;
+  }
+
+  return [
+    "Context access rules:",
+    "- Treat context ids from the Available context index as Context System identifiers, not local filesystem paths.",
+    "- Use list_expert_context, read_expert_context, and search_expert_context to discover and read Context System content.",
+    "- Use add_expert_context, edit_expert_context, update_expert_context, and delete_expert_context to write Context System content.",
+    "- Do not use shell commands, local filesystem APIs, or runtime file tools to bypass the Context System for these context ids.",
+  ].join("\n");
 }
 
 function formatToolsLine(
