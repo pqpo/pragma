@@ -19,6 +19,12 @@ import type { CodexRuntimeSpawn } from "../../src/codex-runtime/types.ts";
 import type { RuntimeSessionStorageContext } from "../../src/runtime/runtime-adapter.ts";
 
 describe("createCodexLocalRuntimeAdapter", () => {
+  it("declares MCP support", () => {
+    const adapter = createCodexLocalRuntimeAdapter();
+
+    expect(adapter.descriptor.capabilities?.supportsMcp).toBe(true);
+  });
+
   it("starts codex app-server and streams a turn result", async () => {
     const fake = new FakeCodexAppServer();
     const adapter = createCodexLocalRuntimeAdapter({
@@ -33,7 +39,8 @@ describe("createCodexLocalRuntimeAdapter", () => {
     const result = await handle.result;
 
     expect(fake.command).toBe("codex");
-    expect(fake.args).toEqual(["app-server", "--listen", "stdio://"]);
+    expect(fake.args.slice(0, 3)).toEqual(["app-server", "--listen", "stdio://"]);
+    expectCodexMcpArgs(fake.args);
     expect(fake.requests.map((request) => request.method)).toEqual([
       "initialize",
       "initialized",
@@ -575,4 +582,20 @@ function readRequestParams(request: FakeRequest | undefined): Record<string, unk
   }
 
   return request.params as Record<string, unknown>;
+}
+
+function expectCodexMcpArgs(args: readonly string[]): void {
+  const urlArg = args.find((arg) => /^mcp_servers\.pragma_tools_agent_codex_test_.*\.url=/.test(arg));
+
+  if (urlArg === undefined) {
+    throw new Error("Expected Codex MCP server URL argument.");
+  }
+
+  const serverKey = urlArg.slice(0, urlArg.indexOf(".url="));
+
+  expect(urlArg).toMatch(/\.url="http:\/\/127\.0\.0\.1:\d+\/mcp"$/);
+  expect(args).toContain("-c");
+  expect(args).toContain(`${serverKey}.enabled=true`);
+  expect(args).toContain(`${serverKey}.required=true`);
+  expect(args).toContain(`${serverKey}.default_tools_approval_mode="approve"`);
 }

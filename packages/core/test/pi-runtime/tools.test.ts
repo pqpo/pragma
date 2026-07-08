@@ -160,6 +160,66 @@ describe("createCustomTools approval handling", () => {
     );
   });
 
+  it("allows ask approval tools when no human handler is configured", async () => {
+    const call = vi.fn(async () => ({
+      text: "previewed",
+    }));
+    const agent = await ExpertAgent.create({
+      schemaVersion: "pragma.expert/v1",
+      id: "agent-1",
+      name: "Test Agent",
+      description: "Test agent",
+      tags: [],
+      version: "0.0.0",
+      scope: "test",
+      workspace: "/tmp/pragma-test",
+      tools: [
+        {
+          name: "preview_note",
+          description: "Preview a note.",
+          inputSchema: { type: "object" },
+          approval: {
+            mode: "ask",
+            reason: "Preview can be confirmed when an interactive UI is available.",
+          },
+          call,
+        },
+      ],
+    });
+    const emitted: unknown[] = [];
+    const tools = createCustomTools({
+      agent,
+      authStorage: {} as never,
+      cwd: "/tmp/pragma-test",
+      mcpTools: [],
+      modelRegistry: { getAll: () => [] } as never,
+      parentSystemPrompt: "",
+      lifecycle: {
+        currentContext: undefined,
+      } as never,
+      streamState: {
+        runId: "run-1",
+        emitter: {
+          emit: (event) => {
+            emitted.push(event);
+          },
+          complete: () => {},
+        },
+      } satisfies PiRuntimeStreamState,
+    });
+
+    const result = await tools
+      .find((tool) => tool.name === "preview_note")
+      ?.execute("tool-call-1", { path: "note.md" }, undefined, undefined, createExtensionContext());
+
+    expect(result).toMatchObject({
+      isError: false,
+      content: [{ type: "text", text: "previewed" }],
+    });
+    expect(call).toHaveBeenCalledTimes(1);
+    expect(emitted).toEqual([]);
+  });
+
   it("only requests approval when the tool approval condition matches", async () => {
     const call = vi.fn(async () => ({
       text: "ran",

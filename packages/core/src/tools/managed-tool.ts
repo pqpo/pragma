@@ -8,6 +8,8 @@ export interface ExpertAgentToolCallResult {
 
 export type ExpertAgentToolApprovalMode = "none" | "ask" | "required";
 
+export type ExpertAgentToolApprovalRequirement = "none" | "ask" | "required";
+
 export interface ExpertAgentToolApprovalRequest {
   readonly kind: "tool_approval";
   readonly toolName: string;
@@ -64,8 +66,18 @@ export type ExpertAgentToolApprovalCondition = (
 ) => boolean | Promise<boolean>;
 
 export interface ExpertAgentToolApproval {
+  /**
+   * `ask` is best-effort human confirmation: if the policy applies and an
+   * interaction handler exists, the runtime asks before execution. `required`
+   * is fail-closed: if the policy applies, execution requires an explicit
+   * approval response.
+   */
   readonly mode: ExpertAgentToolApprovalMode;
   readonly reason?: string | undefined;
+  /**
+   * Gates whether this approval policy applies to a specific tool call. When
+   * omitted, non-`none` policies apply to every call.
+   */
   readonly when?: ExpertAgentToolApprovalCondition | undefined;
 }
 
@@ -104,6 +116,21 @@ export function mergeExpertAgentToolApprovals(
     ...mergeApprovalReason(left.reason, right.reason),
     ...mergeApprovalCondition(left.when, right.when),
   };
+}
+
+export async function resolveExpertAgentToolApprovalRequirement(
+  approval: ExpertAgentToolApproval | undefined,
+  request: ExpertAgentToolApprovalRequest,
+): Promise<ExpertAgentToolApprovalRequirement> {
+  if (approval === undefined || approval.mode === "none") {
+    return "none";
+  }
+
+  if (approval.when !== undefined && !(await approval.when(request))) {
+    return "none";
+  }
+
+  return approval.mode;
 }
 
 function maxApprovalMode(

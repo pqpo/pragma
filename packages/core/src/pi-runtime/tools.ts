@@ -15,6 +15,7 @@ import type {
 import {
   createSubAgentTool,
   dispatchExpertAgentHook,
+  resolveExpertAgentToolApprovalRequirement,
   resolveToolPolicy,
 } from "@pragma/core";
 import { randomUUID } from "node:crypto";
@@ -434,7 +435,9 @@ async function maybeRequestToolApproval<
       readonly result: TResult;
     }
 > {
-  if (options.approval === undefined || options.approval.mode === "none") {
+  const approval = options.approval;
+
+  if (approval === undefined) {
     return { approved: true, updatedInput: undefined };
   }
 
@@ -442,11 +445,16 @@ async function maybeRequestToolApproval<
     kind: "tool_approval" as const,
     toolName: options.toolName,
     toolCallId: options.toolCallId,
-    reason: options.approval.reason,
+    reason: approval.reason,
     input: options.args,
   };
+  const requirement = await resolveExpertAgentToolApprovalRequirement(approval, approvalRequest);
 
-  if (options.approval.when !== undefined && !(await options.approval.when(approvalRequest))) {
+  if (requirement === "none") {
+    return { approved: true, updatedInput: undefined };
+  }
+
+  if (requirement === "ask" && options.humanInteractionHandler === undefined) {
     return { approved: true, updatedInput: undefined };
   }
 
@@ -471,7 +479,7 @@ async function maybeRequestToolApproval<
       toolCallId,
       toolName: options.toolName,
       kind: "tool",
-      ...(options.approval.reason === undefined ? {} : { reason: options.approval.reason }),
+      ...(approval.reason === undefined ? {} : { reason: approval.reason }),
       inputPreview: options.args,
     },
   });
@@ -480,7 +488,7 @@ async function maybeRequestToolApproval<
     return {
       approved: false,
       result: {
-        text: options.approval.reason ?? `Tool approval required for ${options.toolName}.`,
+        text: approval.reason ?? `Tool approval required for ${options.toolName}.`,
         isError: true,
       } as TResult,
     };

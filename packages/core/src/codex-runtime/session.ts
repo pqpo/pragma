@@ -22,6 +22,7 @@ import { AsyncPushQueue } from "../runtime/async-push-queue.ts";
 import { createRuntimeEventEmitter } from "../runtime/runtime-event-emitter.ts";
 import { dispatchExpertAgentHook } from "../plugins/expert-agent-plugin.ts";
 import type { CodexRuntimeMessage } from "./types.ts";
+import type { CodexWorkflowToolRuntimeState } from "./workflow-tools-mcp-server.ts";
 
 export type CodexNotificationSubscriber = (notification: CodexAppServerNotification) => void;
 
@@ -50,6 +51,7 @@ export function createCodexRuntimeSession({
   defaultModelName,
   outputRetryLimit,
   codexHome,
+  toolRuntimeState,
 }: {
   readonly agent: ExpertAgent;
   readonly client: CodexAppServerClient;
@@ -61,6 +63,7 @@ export function createCodexRuntimeSession({
   readonly defaultModelName?: string | undefined;
   readonly outputRetryLimit?: number | undefined;
   readonly codexHome?: string | undefined;
+  readonly toolRuntimeState?: CodexWorkflowToolRuntimeState | undefined;
 }): RuntimeAgentSession {
   const messages: CodexRuntimeMessage[] = [];
 
@@ -111,6 +114,11 @@ export function createCodexRuntimeSession({
             }),
           );
         };
+        if (toolRuntimeState !== undefined) {
+          toolRuntimeState.runId = runId;
+          toolRuntimeState.source = source;
+          toolRuntimeState.emitter = emitter;
+        }
 
         await dispatchExpertAgentHook(agent.hooks, "beforeTaskSubmit", {
           agent,
@@ -245,6 +253,11 @@ export function createCodexRuntimeSession({
           throw error;
         } finally {
           await Promise.allSettled(pendingHookCalls);
+          if (toolRuntimeState !== undefined) {
+            delete toolRuntimeState.runId;
+            delete toolRuntimeState.source;
+            delete toolRuntimeState.emitter;
+          }
           emitter.complete();
         }
       });

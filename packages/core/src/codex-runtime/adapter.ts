@@ -18,6 +18,11 @@ import type { CodexAppServerNotification } from "./app-server-client.ts";
 import { createCodexRuntimeSession } from "./session.ts";
 import type { CodexNotificationSubscriber, CodexRuntimeSessionState } from "./session.ts";
 import type { CodexRuntimeAdapterOptions } from "./types.ts";
+import {
+  createCodexWorkflowToolsMcpServer,
+  type CodexWorkflowToolsMcpServer,
+  type CodexWorkflowToolRuntimeState,
+} from "./workflow-tools-mcp-server.ts";
 
 const CODEX_LOCAL_RUNTIME_DESCRIPTOR = {
   id: "codex-local",
@@ -27,7 +32,7 @@ const CODEX_LOCAL_RUNTIME_DESCRIPTOR = {
     targets: ["agent"],
     executionLocations: ["local"],
     supportsAbort: true,
-    supportsMcp: false,
+    supportsMcp: true,
     supportsStreaming: true,
     supportsSubAgents: false,
   },
@@ -80,7 +85,9 @@ export function createCodexLocalRuntimeAdapter(
         runtimeId: descriptor.id,
       });
       const notificationBus = createNotificationBus();
+      const toolRuntimeState: CodexWorkflowToolRuntimeState = {};
       let client: CodexAppServerClient | undefined;
+      let workflowToolsMcpServer: CodexWorkflowToolsMcpServer | undefined;
       let activeSessionSyncCallback: RuntimeSessionSyncCallback | undefined;
       let sessionStorageContext: RuntimeSessionStorageContext | undefined;
       const state: CodexRuntimeSessionState = {
@@ -114,20 +121,36 @@ export function createCodexLocalRuntimeAdapter(
             sessionState: lifecycle.sessionState,
             runState: lifecycle.runState,
           };
+          const cleanupErrors: unknown[] = [];
+
           await dispatchExpertAgentHook(agent.hooks, "beforeSessionDestroy", {
             agent,
             session: sessionInfo,
             logger,
+          }).catch((error: unknown) => {
+            cleanupErrors.push(error);
           });
-          client?.close();
+          await disposeCodexRuntimeResources(client, workflowToolsMcpServer).catch(
+            (error: unknown) => {
+              cleanupErrors.push(error);
+            },
+          );
           if (activeSessionSyncCallback !== undefined && sessionStorageContext !== undefined) {
-            await syncRuntimeSession(activeSessionSyncCallback, sessionStorageContext, logger);
+            await syncRuntimeSession(activeSessionSyncCallback, sessionStorageContext, logger).catch(
+              (error: unknown) => {
+                cleanupErrors.push(error);
+              },
+            );
           }
           await dispatchExpertAgentHook(agent.hooks, "afterSessionDestroy", {
             agent,
             session: sessionInfo,
             logger,
+          }).catch((error: unknown) => {
+            cleanupErrors.push(error);
           });
+
+          throwIfCleanupFailed(cleanupErrors);
         },
       });
       try {
@@ -143,9 +166,19 @@ export function createCodexLocalRuntimeAdapter(
           workspace: agent.workspace,
         });
         const context = await agent.buildContext(runContext);
+        workflowToolsMcpServer = await createCodexWorkflowToolsMcpServer({
+          agent,
+          getContext: () => lifecycle.currentContext,
+          humanInteractionHandler,
+          logger,
+          state: toolRuntimeState,
+        });
         client = await CodexAppServerClient.start({
           executablePath: options.executablePath ?? "codex",
-          args: options.appServerArgs ?? ["app-server", "--listen", "stdio://"],
+          args: createCodexAppServerArgs(
+            options.appServerArgs ?? ["app-server", "--listen", "stdio://"],
+            workflowToolsMcpServer,
+          ),
           cwd: agent.workspace,
           env: options.env ?? {},
           clientInfo: options.clientInfo ?? DEFAULT_CODEX_CLIENT_INFO,
@@ -215,10 +248,15 @@ export function createCodexLocalRuntimeAdapter(
           defaultModelName: options.defaultModelName ?? agent.models?.defaultModelName,
           outputRetryLimit: options.outputRetryLimit,
           codexHome: options.env?.CODEX_HOME,
+          toolRuntimeState,
         });
       } catch (error) {
         logger.error("Codex runtime session creation failed", { error });
-        client?.close();
+        await disposeCodexRuntimeResources(client, workflowToolsMcpServer).catch(
+          (cleanupError: unknown) => {
+            logger.error("Codex runtime session creation cleanup failed", { error: cleanupError });
+          },
+        );
         await dispatchExpertAgentHook(agent.hooks, "afterSessionDestroy", {
           agent,
           session: {
@@ -233,11 +271,59 @@ export function createCodexLocalRuntimeAdapter(
             runState: lifecycle.runState,
           },
           logger,
+        }).catch((cleanupError: unknown) => {
+          logger.error("Codex runtime session failure hook failed", { error: cleanupError });
         });
         throw error;
       }
     },
   };
+}
+
+function createCodexAppServerArgs(
+  baseArgs: readonly string[],
+  workflowToolsMcpServer: CodexWorkflowToolsMcpServer,
+): readonly string[] {
+  const serverKey = `mcp_servers.${workflowToolsMcpServer.id}`;
+
+  return [
+    ...baseArgs,
+    "-c",
+    `${serverKey}.url=${JSON.stringify(workflowToolsMcpServer.url)}`,
+    "-c",
+    `${serverKey}.enabled=true`,
+    "-c",
+    `${serverKey}.required=true`,
+    "-c",
+    `${serverKey}.default_tools_approval_mode="approve"`,
+  ];
+}
+
+async function disposeCodexRuntimeResources(
+  client: CodexAppServerClient | undefined,
+  workflowToolsMcpServer: CodexWorkflowToolsMcpServer | undefined,
+): Promise<void> {
+  const results = await Promise.allSettled([
+    Promise.resolve().then(() => client?.close()),
+    workflowToolsMcpServer?.dispose() ?? Promise.resolve(),
+  ]);
+  const errors = results.flatMap((result) =>
+    result.status === "rejected" ? [result.reason as unknown] : [],
+  );
+
+  throwIfCleanupFailed(errors);
+}
+
+function throwIfCleanupFailed(errors: readonly unknown[]): void {
+  if (errors.length === 0) {
+    return;
+  }
+
+  if (errors.length === 1) {
+    throw errors[0];
+  }
+
+  throw new AggregateError(errors, "Codex runtime session cleanup failed.");
 }
 
 function createCodexDeveloperInstructions(

@@ -423,9 +423,12 @@ const agent = await defineAgent({
 
 ```text
 none      不要求审批
-ask       由策略决定是否询问
-required  必须审批
+ask       当审批策略适用时尽量询问；如果当前 Runtime 没有人类交互处理器，则继续执行
+required  当审批策略适用时必须拿到明确批准；如果当前 Runtime 没有人类交互处理器，则拒绝执行
 ```
+
+`approval.when` 用于判断审批策略是否适用于当前工具调用。未提供 `when` 时，`ask` 和
+`required` 策略默认适用于每次调用。
 
 创建 Runtime Session 时可以传入 `humanInteractionHandler`：
 
