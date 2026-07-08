@@ -2,7 +2,7 @@ import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { spawn as nodeSpawn } from "node:child_process";
 import { createInterface } from "node:readline";
 
-import type { ExpertAgentHumanInteractionHandler } from "../tools/managed-tool.ts";
+import type { ExpertAgentHumanInteractionHandler } from "@pragma/core";
 import type { CodexRuntimeClientInfo, CodexRuntimeSpawn } from "./types.ts";
 
 export interface CodexAppServerClientOptions {

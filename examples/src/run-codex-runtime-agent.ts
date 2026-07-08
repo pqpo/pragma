@@ -5,12 +5,14 @@ import {
   ContextSystem,
   ExpertAgent,
   HOST_CONTEXT_NAMESPACE,
-  createCodexLocalRuntimeAdapter,
   createInMemoryContextStore,
-  type CodexRuntimeApprovalPolicy,
-  type CodexRuntimeSandboxMode,
   type RuntimeSessionRef,
 } from "@pragma/core";
+import {
+  createCodexLocalRuntimeAdapter,
+  type CodexRuntimeApprovalPolicy,
+  type CodexRuntimeSandboxMode,
+} from "@pragma/runtime-codex";
 
 import {
   printAgentContextSummary,

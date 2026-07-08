@@ -1,8 +1,8 @@
 import { ExpertAgent } from "@pragma/core";
 import { describe, expect, it, vi } from "vitest";
 
-import { createCustomTools } from "../../src/pi-runtime/tools.ts";
-import type { PiRuntimeStreamState } from "../../src/pi-runtime/types.ts";
+import { createCustomTools } from "../src/tools.ts";
+import type { PiRuntimeStreamState } from "../src/types.ts";
 
 describe("createCustomTools approval handling", () => {
   it("dispatches afterToolCall when approval is denied", async () => {

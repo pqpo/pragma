@@ -17,8 +17,8 @@ import {
 } from "@pragma/core";
 import { randomUUID } from "node:crypto";
 
-import { createMcpToolRegistry } from "../mcp-tools.ts";
-import type { McpToolRegistry } from "../mcp-tools.ts";
+import { createMcpToolRegistry } from "@pragma/core";
+import type { McpToolRegistry } from "@pragma/core";
 import {
   collectRuntimeModelProviders,
   createPiModelRegistry,

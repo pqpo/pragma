@@ -4,7 +4,7 @@ import {
   HOST_CONTEXT_NAMESPACE,
   createInMemoryContextStore,
 } from "@pragma/core";
-import { createCloudPiRuntimeAdapter } from "@pragma/core";
+import { createCloudPiRuntimeAdapter } from "@pragma/runtime-pi";
 import codeRepositoryManagerPlugin from "@pragma/plugin-code-repository-manager";
 
 import {

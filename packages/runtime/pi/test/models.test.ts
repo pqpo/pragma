@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { createPiModelRegistry } from "../../src/pi-runtime/models.ts";
+import { createPiModelRegistry } from "../src/models.ts";
 
 describe("createPiModelRegistry", () => {
   it("registers Pragma provider config in memory", async () => {

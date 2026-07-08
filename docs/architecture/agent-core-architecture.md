@@ -130,18 +130,21 @@ flowchart LR
 - `RuntimeAdapter` 是稳定扩展点。
 - `RuntimeAgentSession` 表示一次 Agent 会话。
 - `submit()` 同时返回流式事件和最终结构化结果。
-- `cloud-pi-agent` 是当前默认 Runtime 实现，不是 Core 的唯一假设。
+- 具体 Runtime 实现位于独立 `@pragma/runtime-*` 包，不属于 `@pragma/core`。
+- Worker 当前装配 PI 和 Codex runtime，并以 PI 作为默认 runtime。
 - 未来 Runtime 可以接入云端容器沙箱、本地 Desktop Runtime、自托管 Runtime 或远程托管 Agent。
 
-当前默认 Runtime：
+当前 Runtime 包：
 
 ```mermaid
 flowchart TB
-  runtime["cloud-pi-agent"]
-  runtime --> agentDeclaration["转换 ExpertAgent 声明"]
-  runtime --> capabilities["转换模型、工具、MCP、Skills、SubAgents"]
-  runtime --> session["管理 PI Runtime Session"]
-  runtime --> events["转换事件流和最终结果"]
+  core["@pragma/core<br/>RuntimeAdapter / RuntimeRegistry"]
+  pi["@pragma/runtime-pi<br/>cloud-pi-agent"]
+  codex["@pragma/runtime-codex<br/>codex-local"]
+  app["Worker / Examples / Future Desktop"]
+
+  app --> pi --> core
+  app --> codex --> core
 ```
 
 ### Flow 编排层
@@ -519,11 +522,11 @@ flowchart TB
   adapter --> custom
 ```
 
-Core 中应承载桥接协议、消息类型和 Runtime Adapter 合约；Desktop App 承载登录、设备绑定、本地工作区选择和用户确认 UI；Server/Worker 承载调度、审计、预算和治理。
+Core 中应承载桥接协议、消息类型和 Runtime Adapter 合约；具体 Runtime Adapter 实现放在独立 `@pragma/runtime-*` 包；Desktop App 承载登录、设备绑定、本地工作区选择和用户确认 UI；Server/Worker 承载调度、审计、预算和治理。
 
 ## 设计约束
 
-- Core 可以依赖 `@pragma/shared`，不依赖 `@pragma/client`、Web UI 或 Server 应用层。
+- Core 可以依赖 `@pragma/shared`，不依赖具体 runtime、`@pragma/client`、Web UI 或 Server 应用层。
 - Server/Worker 可以调度 Core，Core 不反向调用 Server Controller。
 - Agent 执行能力优先加到 `ExpertAgent` 和 Runtime Adapter 边界，不只放在某个 SDK 包装层里。
 - Runtime 实现可以替换，但必须把事件、结果、取消和错误转换成 Core 统一协议。

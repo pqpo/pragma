@@ -1,4 +1,10 @@
-import { createRuntimeRegistry } from "../runtime-registry.ts";
+import {
+  createDefaultRuntimeRegistry,
+  createDefaultRuntimeRegistryIfConfigured,
+} from "../runtime/default-runtime-registry.ts";
+import type { ExpertAgentRuntimeRegistry } from "../runtime/default-runtime-registry.ts";
+import type { RuntimeAdapter } from "../runtime/runtime-adapter.ts";
+import type { RuntimeRegistry } from "../runtime-registry.ts";
 import { compileLoopDefinition } from "./flow-spec.ts";
 import { createInMemoryLoopDefinitionStore } from "./in-memory-loop-definition-store.ts";
 import { createInMemoryMailbox } from "./in-memory-mailbox.ts";
@@ -20,11 +26,7 @@ export function createPragma(options: CreatePragmaOptions = {}): Pragma {
   const mailbox = options.mailbox ?? createInMemoryMailbox();
   const stateManager = options.stateManager ?? createInMemoryStateManager();
   const loopStore = options.loopStore ?? createInMemoryLoopDefinitionStore();
-  const runtimes =
-    options.runtimes ??
-    createRuntimeRegistry({
-      defaultRuntime: options.defaultRuntime,
-    });
+  const runtimes = options.runtimes ?? createPragmaRuntimeRegistry(options.defaultRuntime);
   const sandboxManager = options.sandboxManager ?? createLocalSandboxManager();
   const startLoop = async <TInput, TOutput>(
     loop: DirectiveDefinition<TInput, TOutput>,
@@ -67,6 +69,67 @@ export function createPragma(options: CreatePragmaOptions = {}): Pragma {
     start: startLoop,
     run: runLoop,
   };
+}
+
+function createPragmaRuntimeRegistry(defaultRuntime?: string | undefined): RuntimeRegistry {
+  let configuredRegistry: ExpertAgentRuntimeRegistry | undefined;
+
+  const maybeResolveConfiguredRegistry = () => {
+    configuredRegistry ??= createDefaultRuntimeRegistryIfConfigured();
+    return configuredRegistry;
+  };
+  const resolveConfiguredRegistry = () => {
+    configuredRegistry ??= createDefaultRuntimeRegistry();
+    return configuredRegistry;
+  };
+  const resolveDefaultRuntime = () =>
+    defaultRuntime ?? maybeResolveConfiguredRegistry()?.defaultRuntime ?? "default";
+
+  return {
+    get defaultRuntime() {
+      return resolveDefaultRuntime();
+    },
+    list() {
+      const registry = maybeResolveConfiguredRegistry();
+
+      if (isFullRuntimeRegistry(registry)) {
+        return registry.list();
+      }
+
+      return [];
+    },
+    get(runtimeId: string) {
+      const registry = maybeResolveConfiguredRegistry();
+
+      if (isFullRuntimeRegistry(registry)) {
+        return registry.get(runtimeId);
+      }
+
+      try {
+        return registry?.resolve(runtimeId);
+      } catch {
+        return undefined;
+      }
+    },
+    resolve(runtimeId?: string | undefined) {
+      return resolveConfiguredRegistry().resolve(runtimeId ?? defaultRuntime);
+    },
+  };
+}
+
+function isFullRuntimeRegistry(
+  registry: ExpertAgentRuntimeRegistry | undefined,
+): registry is ExpertAgentRuntimeRegistry & {
+  readonly list: () => readonly RuntimeAdapter[];
+  readonly get: (runtimeId: string) => RuntimeAdapter | undefined;
+} {
+  return (
+    registry !== undefined &&
+    "list" in registry &&
+    typeof registry.list === "function" &&
+    "get" in registry &&
+    typeof registry.get === "function"
+  );
 }
 
 function compileLoop<TInput, TOutput>(

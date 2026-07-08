@@ -61,7 +61,7 @@ const coder = defineAgent({
 
 只有当某个 Agent 本身就是稳定协议组件，例如“只做 PR Review 且永远返回同一种 ReviewResult”时，才可以给 Agent 声明默认 `outputSchema`。
 
-Agent 可以自验证。运行概念上仍然通过 Runtime 执行，但 SDK 默认提供 Runtime registry，并自动注入 `createDefaultRuntime()`，所以最小调用不需要手动创建 Runtime。
+Agent 可以自验证。运行概念上仍然通过 Runtime 执行；具体 Runtime Adapter 由应用层或调用方显式装配，`@pragma/core` 只提供 Runtime registry 和公共协议。
 
 ```ts
 const result = await coder.run("实现 GitHub 登录", {
@@ -73,12 +73,23 @@ const result = await coder.run("实现 GitHub 登录", {
 });
 ```
 
-这等价于显式使用默认 Runtime registry：
+应用入口可以显式使用 Runtime registry，并把 PI runtime 设为默认：
 
 ```ts
 import { createRuntimeRegistry } from "@pragma/core";
+import { createCloudPiRuntimeAdapter } from "@pragma/runtime-pi";
 
-const runtimes = createRuntimeRegistry();
+const runtimes = createRuntimeRegistry({
+  defaultRuntime: "pi",
+  runtimes: [
+    createCloudPiRuntimeAdapter({
+      descriptor: {
+        id: "pi",
+        displayName: "PI Runtime",
+      },
+    }),
+  ],
+});
 
 const result = await coder.run("实现 GitHub 登录", {
   runtimes,
@@ -90,50 +101,28 @@ const result = await coder.run("实现 GitHub 登录", {
 });
 ```
 
-`createRuntimeRegistry()` 默认会注入 `createDefaultRuntime()`：
+这里的 `"pi"` 来自 Runtime adapter 的 descriptor：
 
 ```ts
-import { createDefaultRuntime, createRuntimeRegistry } from "@pragma/core";
-
-const runtimes = createRuntimeRegistry({
-  runtimes: [createDefaultRuntime()],
-  defaultRuntime: "default",
+const runtime = createCloudPiRuntimeAdapter({
+  descriptor: {
+    id: "pi",
+    displayName: "PI Runtime",
+  },
 });
-```
 
-这里的 `"default"` 来自 Runtime adapter 的 descriptor：
-
-```ts
-const runtime = createDefaultRuntime();
-
-runtime.descriptor.id; // "default"
+runtime.descriptor.id; // "pi"
 runtime.descriptor.kind; // "cloud-pi-agent"
 runtime.descriptor.capabilities.targets; // ["agent", ...]
 ```
 
-`createDefaultRuntime()` 是默认 Runtime facade，不是新的 Runtime 协议。当前实现等价于：
-
-```ts
-function createDefaultRuntime(options?: DefaultRuntimeOptions): RuntimeAdapter {
-  return createCloudPiRuntimeAdapter({
-    ...options,
-    descriptor: {
-      id: "default",
-      kind: "cloud-pi-agent",
-      displayName: "Default Runtime",
-    },
-  });
-}
-```
-
-未来如果默认 Runtime 从 PI agent 切换到其他实现，只需要修改 `createDefaultRuntime()` 的底层调用；上层 `coder.run(...)`、`createRuntimeRegistry()` 和 `createPragma()` 不需要改 API。
-
-因此 `await coder.run("实现 GitHub 登录")` 成立，但不是绕过 Runtime 直接执行；它使用默认 Runtime registry 解析到 `default` Runtime。
+未来如果默认 Runtime 从 PI agent 切换到其他实现，只需要修改应用层装配；`@pragma/core` 不依赖具体 Runtime SDK。
 
 需要切换执行环境时，再显式指定 Runtime：
 
 ```ts
-import { createCodexLocalRuntimeAdapter, createRuntimeRegistry } from "@pragma/core";
+import { createRuntimeRegistry } from "@pragma/core";
+import { createCodexLocalRuntimeAdapter } from "@pragma/runtime-codex";
 
 const runtimes = createRuntimeRegistry({
   runtimes: [createCodexLocalRuntimeAdapter()],
@@ -151,7 +140,7 @@ Directive 执行时同样默认拥有 Runtime registry：
 const app = createPragma();
 ```
 
-`createPragma()` 默认使用 `createRuntimeRegistry()`，因此也会自动注入 `createDefaultRuntime()`。
+`createPragma()` 默认只创建空 Runtime registry；执行 Agent 步骤前应由应用层传入已注册的 runtime registry。
 
 运行发生在 Directive 层时，Directive 负责选择 Runtime、托管 State、调度步骤。未指定 Runtime 时使用 `default`：
 
@@ -237,7 +226,7 @@ Agent Declaration = defineAgent()
 Agent Protocol    = normalized to ExpertAgent-compatible declaration
 Agent Runtime     = not bound at declaration time
 Agent Self Check  = agent.run(input, { runtime?, runtimes? })
-Default Runtime   = createRuntimeRegistry() injects createDefaultRuntime()
+Default Runtime   = application registry selects a concrete runtime
 Directive Default      = app.run(loop) uses default runtime unless overridden
 Step Runtime      = step option runtime overrides loop default
 Agent Input       = string by default, schema at call/step/loop layer
@@ -684,15 +673,17 @@ packages/core
   RuntimeEvent          通用运行事件
 
 packages/core
-  createRuntimeRegistry() 默认 Runtime registry 实现
-  createDefaultRuntime() 默认 Runtime facade，当前底层调用 createCloudPiRuntimeAdapter()
+  createRuntimeRegistry() Runtime registry 实现
+  RuntimeAdapter / RuntimeAgentSession 公共协议
+
+packages/runtime/pi
   createCloudPiRuntimeAdapter()
-  createNodeSandboxRuntimeAdapter()
+
+packages/runtime/codex
   createCodexLocalRuntimeAdapter()
-  RuntimeAdapter 具体实现
 ```
 
-也就是说，`RuntimeAdapter` 和 `RuntimeRegistry` 接口属于 `agent-core` 层；`createRuntimeRegistry()` 默认实现、`createDefaultRuntime()` facade 和具体 runtime adapter 属于 `agent-runtime` 层。
+也就是说，`RuntimeAdapter` 和 `RuntimeRegistry` 接口属于 `agent-core` 层；具体 runtime adapter 属于独立 `@pragma/runtime-*` 包。
 
 建议的通用 Runtime 接口：
 
@@ -770,7 +761,7 @@ import { createRuntimeRegistry } from "@pragma/core";
 
 const runtimes = createRuntimeRegistry();
 
-// 等价于注册 createDefaultRuntime()，并设置 defaultRuntime = "default"。
+// 空 registry 可以创建；真正 resolve 默认 runtime 时会因为未注册而报错。
 ```
 
 `createPragma()` 默认使用这个 registry：

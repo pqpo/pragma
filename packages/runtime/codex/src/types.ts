@@ -1,11 +1,11 @@
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 
-import type { ExpertAgentLoggerProvider } from "../logging/logger.ts";
+import type { ExpertAgentLoggerProvider } from "@pragma/core";
 import type {
   RuntimeAdapterDescriptor,
   RuntimeSessionRestoreHandler,
   RuntimeSessionSyncCallback,
-} from "../runtime/runtime-adapter.ts";
+} from "@pragma/core";
 
 export type CodexRuntimeSandboxMode = "read-only" | "workspace-write" | "danger-full-access";
 

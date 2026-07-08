@@ -7,7 +7,7 @@ import type {
   RuntimeSessionRestoreHandler,
   RuntimeSessionSyncCallback,
 } from "@pragma/core";
-import { createCloudPiRuntimeAdapter } from "@pragma/core";
+import { createCloudPiRuntimeAdapter } from "@pragma/runtime-pi";
 
 import { printRunHeader, printRunResult } from "./harness/expert-agent-example-utils.ts";
 import { createExampleLoggerProvider } from "./harness/logger.ts";

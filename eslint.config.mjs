@@ -127,6 +127,7 @@ const config = tseslint.config(
       "apps/worker/**/*.{ts,tsx}",
       "packages/server/**/*.{ts,tsx}",
       "packages/core/**/*.{ts,tsx}",
+      "packages/runtime/**/*.{ts,tsx}",
       "plugins/**/*.{ts,tsx}",
       "examples/**/*.{ts,tsx}",
     ],
@@ -208,13 +209,70 @@ const config = tseslint.config(
             ...commonRestrictedPatterns,
             {
               group: [
+                "@pragma/runtime-*",
+                "@pragma/server-*",
+                "@pragma/ui-*",
+                "@pragma/playbook-canvas",
+                "@earendil-works/pi-coding-agent",
+                "next",
+                "next/*",
+              ],
+              message:
+                "Core agent packages must not depend on concrete runtimes, server internals, or client UI.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    files: ["packages/runtime/pi/**/*.{ts,tsx}"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: ["@pragma/client", "@pragma/server", "@pragma/runtime-codex", "react"],
+          patterns: [
+            ...commonRestrictedPatterns,
+            {
+              group: [
                 "@pragma/server-*",
                 "@pragma/ui-*",
                 "@pragma/playbook-canvas",
                 "next",
                 "next/*",
               ],
-              message: "Agent packages must not depend on server internals or client UI.",
+              message: "PI runtime packages must not depend on other runtimes or app layers.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    files: ["packages/runtime/codex/**/*.{ts,tsx}"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: [
+            "@pragma/client",
+            "@pragma/server",
+            "@pragma/runtime-pi",
+            "@earendil-works/pi-coding-agent",
+            "react",
+          ],
+          patterns: [
+            ...commonRestrictedPatterns,
+            {
+              group: [
+                "@pragma/server-*",
+                "@pragma/ui-*",
+                "@pragma/playbook-canvas",
+                "next",
+                "next/*",
+              ],
+              message: "Codex runtime packages must not depend on other runtimes or app layers.",
             },
           ],
         },

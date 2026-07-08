@@ -14,21 +14,21 @@ import type {
   StandardSchemaWithJSON,
 } from "@modelcontextprotocol/server";
 
-import type { ExpertAgent } from "../agent/expert-agent.ts";
-import type { ExpertAgentDefaultTool } from "../context-system/context-tools.ts";
-import type { ExpertAgentLogger } from "../logging/logger.ts";
-import { dispatchExpertAgentHook } from "../plugins/expert-agent-plugin.ts";
-import type { RuntimeEventEmitter } from "../runtime/runtime-event-emitter.ts";
-import type { RuntimeStreamEvent } from "../runtime/stream-events.ts";
-import type { ExpertAgentRunContext } from "../runtime/run-context.ts";
-import { resolveToolPolicy, type ResolvedTool } from "../tools/tool-resolver.ts";
+import type { ExpertAgent } from "@pragma/core";
+import type { ExpertAgentDefaultTool } from "@pragma/core";
+import type { ExpertAgentLogger } from "@pragma/core";
+import { dispatchExpertAgentHook } from "@pragma/core";
+import type { RuntimeEventEmitter } from "@pragma/core";
+import type { RuntimeStreamEvent } from "@pragma/core";
+import type { ExpertAgentRunContext } from "@pragma/core";
+import { resolveToolPolicy, type ResolvedTool } from "@pragma/core";
 import type {
   ExpertAgentHumanInteractionHandler,
   ExpertAgentManagedTool,
   ExpertAgentToolApproval,
   ExpertAgentToolCallResult,
-} from "../tools/managed-tool.ts";
-import { resolveExpertAgentToolApprovalRequirement } from "../tools/managed-tool.ts";
+} from "@pragma/core";
+import { resolveExpertAgentToolApprovalRequirement } from "@pragma/core";
 
 export interface CodexWorkflowToolRuntimeState {
   runId?: string | undefined;

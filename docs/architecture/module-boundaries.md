@@ -7,7 +7,7 @@ In the diagrams below, `A -> B` means `A` may depend on `B`.
 ```text
 apps/web    -> client -> shared
 apps/server -> server -> core -> shared
-apps/worker -> server -> core -> shared
+apps/worker -> server -> runtime-* -> core -> shared
 apps/desktop    -> core -> shared
 ```
 
@@ -18,7 +18,8 @@ apps/desktop    -> core -> shared
 | `shared` | Runtime-neutral contracts, domain types, and pure utilities                     |
 | `client` | Browser/client SDKs and client-safe API access                                  |
 | `server` | Node-only control plane and infrastructure boundaries                           |
-| `core`   | Cloud-first Expert Agent execution abstractions and Runtime Adapter contracts   |
+| `core`   | Expert Agent execution abstractions and Runtime Adapter contracts               |
+| `runtime-*` | Concrete Runtime Adapter implementations                                    |
 | `apps`   | Composition and process entry points, including future Desktop App local bridge |
 
 ## Dependency Matrix
@@ -27,24 +28,26 @@ apps/desktop    -> core -> shared
 | -------------- | ---------------------------------------------------------------------- |
 | `apps/web`     | `shared/*`, `client/*`                                                 |
 | `apps/server`  | `@pragma/shared`, `@pragma/server`, `@pragma/core`         |
-| `apps/worker`  | `@pragma/shared`, `@pragma/server`, `@pragma/core`         |
+| `apps/worker`  | `@pragma/shared`, `@pragma/server`, `@pragma/core`, concrete `@pragma/runtime-*` packages |
 | `apps/desktop` | `@pragma/shared`, `@pragma/core`                               |
 | `packages/shared` | Runtime-neutral dependencies only                                   |
 | `packages/client` | `@pragma/shared`                                                |
 | `packages/server` | `@pragma/shared`; orchestration code may depend on `@pragma/core` |
 | `packages/core`   | `@pragma/shared`                                                |
+| `packages/runtime/*` | `@pragma/shared`, `@pragma/core`, and that runtime's own SDKs     |
 
 Cross-package imports must use `@pragma/*` names, not relative paths.
 
 Expert Agents are cloud-first execution units scheduled by Server/Worker. Future local Claude Code, Codex, or self-hosted runtimes should be reached through the Desktop App local bridge. The Desktop App actively connects to the cloud Runtime Gateway, registers local capabilities, enforces local permissions, and invokes local Agent adapters. Do not add `apps/local-runner`; the product entry for local Agent bridging is `apps/desktop`.
 
-Current core runtime implementation:
+Current runtime implementations:
 
 ```text
-packages/core/src/pi-runtime
+packages/runtime/pi
+packages/runtime/codex
 ```
 
-`@pragma/core` belongs to the core agent layer. It may depend on `@pragma/shared` and runtime SDKs such as PI agent, but must not depend on server internals, client SDKs, Web UI, or database packages. The first runtime kind is `cloud-pi-agent`.
+`@pragma/core` belongs to the core agent layer. It may depend on `@pragma/shared`, but must not depend on concrete runtime packages, runtime SDKs such as PI agent, server internals, client SDKs, Web UI, or database packages. Concrete runtime packages depend on `@pragma/core` and are assembled by application entry points such as Worker. The default runtime selection is an application-layer decision; Worker currently registers PI and Codex runtimes and uses PI by default.
 
 Future local bridge directories:
 

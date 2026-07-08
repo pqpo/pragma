@@ -3,7 +3,7 @@ import { stdin as input, stdout as output } from "node:process";
 
 import { ExpertAgent } from "@pragma/core";
 import type { ExpertAgentHumanInteractionHandler } from "@pragma/core";
-import { createCloudPiRuntimeAdapter } from "@pragma/core";
+import { createCloudPiRuntimeAdapter } from "@pragma/runtime-pi";
 
 import toolApprovalPolicyPlugin from "../plugins/tool-approval-policy/src/plugin.ts";
 import {

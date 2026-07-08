@@ -1,27 +1,15 @@
 import type { RuntimeAdapter } from "@pragma/core";
 import { describe, expect, it } from "vitest";
 
-import { createDefaultRuntime, createRuntimeRegistry } from "../src/runtime-registry.ts";
+import { createRuntimeRegistry } from "../src/runtime-registry.ts";
 
 describe("runtime registry", () => {
-  it("creates a default runtime facade backed by the cloud PI adapter", () => {
-    const runtime = createDefaultRuntime();
-
-    expect(runtime.descriptor).toMatchObject({
-      id: "default",
-      kind: "cloud-pi-agent",
-      displayName: "Default Runtime",
-      capabilities: {
-        targets: ["agent"],
-      },
-    });
-  });
-
-  it("injects the default runtime when no runtimes are supplied", () => {
+  it("allows an empty registry and reports missing runtimes on resolve", () => {
     const registry = createRuntimeRegistry();
 
     expect(registry.defaultRuntime).toBe("default");
-    expect(registry.resolve().descriptor.id).toBe("default");
+    expect(registry.list()).toEqual([]);
+    expect(() => registry.resolve()).toThrow("Runtime is not registered: default");
   });
 
   it("resolves explicit runtimes and rejects duplicates", () => {

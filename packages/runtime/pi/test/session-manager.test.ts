@@ -1,7 +1,7 @@
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { createPiSessionManager, getPiSessionDir } from "../../src/pi-runtime/session-manager.ts";
+import { createPiSessionManager, getPiSessionDir } from "../src/session-manager.ts";
 
 vi.mock("@earendil-works/pi-coding-agent", () => ({
   AuthStorage: {

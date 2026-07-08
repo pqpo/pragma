@@ -4,14 +4,14 @@ import { join } from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
-import { ExpertAgent } from "../../src/agent/expert-agent.ts";
-import { createMcpToolRegistry } from "../../src/mcp-tools.ts";
-import { createCodexWorkflowToolsMcpServer } from "../../src/codex-runtime/workflow-tools-mcp-server.ts";
-import type { ExpertAgentPluginHooks } from "../../src/plugins/expert-agent-plugin.ts";
+import { ExpertAgent } from "@pragma/core";
+import { createMcpToolRegistry } from "@pragma/core";
+import { createCodexWorkflowToolsMcpServer } from "../src/workflow-tools-mcp-server.ts";
+import type { ExpertAgentPluginHooks } from "@pragma/core";
 import type {
   ExpertAgentManagedTool,
   ExpertAgentToolCallResult,
-} from "../../src/tools/managed-tool.ts";
+} from "@pragma/core";
 
 describe("createCodexWorkflowToolsMcpServer", () => {
   it("exposes context and managed tools over HTTP MCP", async () => {

@@ -144,8 +144,8 @@ packages/
 - `apps/desktop` 是 Desktop App，不是 CLI runner。
 - `packages/core/src/local-agent-bridge` 只放协议、schema、类型和桥接抽象。
 - `packages/server/src/runtime-gateway` 放云端会话管理、任务下发和事件接收。
-- `packages/core` 放 Runtime 选择、云端 Runtime 和本地 Runtime 抽象。
-- 具体 Claude Code / Codex 调用实现属于 Desktop App 的本地适配层。
+- `packages/core` 放 Runtime Adapter 合约、Runtime 选择公共协议和本地桥接协议。
+- 具体 Runtime Adapter 实现属于独立 `@pragma/runtime-*` 包或 Desktop App 后面的本地适配层。
 
 ## 安全规则
 

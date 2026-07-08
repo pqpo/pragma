@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { createToolStreamEvents } from "../../src/pi-runtime/stream.ts";
+import { createToolStreamEvents } from "../src/stream.ts";
 
 describe("createToolStreamEvents", () => {
   it("maps tool completion events onto the active run source", () => {

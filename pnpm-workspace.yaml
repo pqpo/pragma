@@ -1,6 +1,7 @@
 packages:
   - "apps/*"
   - "packages/*"
+  - "packages/runtime/*"
   - "plugins/*"
   - "examples"
 allowBuilds:

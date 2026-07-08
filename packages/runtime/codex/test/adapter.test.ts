@@ -7,16 +7,16 @@ import { join } from "node:path";
 import { PassThrough, Writable } from "node:stream";
 import { describe, expect, it } from "vitest";
 
-import { ExpertAgent } from "../../src/agent/expert-agent.ts";
-import { createCodexLocalRuntimeAdapter } from "../../src/codex-runtime/adapter.ts";
+import { ExpertAgent } from "@pragma/core";
+import { createCodexLocalRuntimeAdapter } from "../src/adapter.ts";
 import {
   AGENTS_CONTEXT_ID,
   ContextSystem,
   HOST_CONTEXT_NAMESPACE,
-} from "../../src/context-system/context-system.ts";
-import { createInMemoryContextStore } from "../../src/context-system/in-memory-context-store.ts";
-import type { CodexRuntimeSpawn } from "../../src/codex-runtime/types.ts";
-import type { RuntimeSessionStorageContext } from "../../src/runtime/runtime-adapter.ts";
+} from "@pragma/core";
+import { createInMemoryContextStore } from "@pragma/core";
+import type { CodexRuntimeSpawn } from "../src/types.ts";
+import type { RuntimeSessionStorageContext } from "@pragma/core";
 
 describe("createCodexLocalRuntimeAdapter", () => {
   it("declares MCP support", () => {

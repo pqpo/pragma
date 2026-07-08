@@ -7,7 +7,7 @@ import {
   createInMemoryContextStore,
 } from "@pragma/core";
 import type { ExpertAgentContextStore } from "@pragma/core";
-import { createCloudPiRuntimeAdapter } from "@pragma/core";
+import { createCloudPiRuntimeAdapter } from "@pragma/runtime-pi";
 
 import {
   printAgentContextSummary,

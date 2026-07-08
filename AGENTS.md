@@ -88,6 +88,8 @@ tsconfig.base.json
 @pragma/client
 @pragma/server
 @pragma/core
+@pragma/runtime-pi
+@pragma/runtime-codex
 @pragma/eslint-config
 @pragma/tsconfig
 ```
@@ -102,7 +104,7 @@ helpers
 lib
 ```
 
-新增 package 前，必须先明确它属于 `shared`、`client`、`server`、`core` 还是配置工具。
+新增 package 前，必须先明确它属于 `shared`、`client`、`server`、`core`、`runtime-*` 还是配置工具。
 
 ## 模块依赖规范
 
@@ -112,7 +114,8 @@ lib
 
 - `shared` 是最底层协议、领域模型和纯工具，不依赖任何运行环境层。
 - `client` 是浏览器/客户端 SDK，只依赖 `shared`，不直接碰 Server 内部实现或 Agent。
-- `core` 是专家 Agent 的云端优先执行抽象和 Runtime Adapter 边界，只依赖 `shared` 和 core 内部模块，不依赖 `client`。
+- `core` 是专家 Agent 的执行抽象和 Runtime Adapter 边界，只依赖 `shared` 和 core 内部模块，不依赖具体 runtime、`client` 或 `server`。
+- `runtime-*` 是具体 Runtime Adapter 实现，依赖 `core`、`shared` 和该 runtime 自己的 SDK；不同 runtime 包相互独立。
 - `server` 是服务端控制面与基础设施层，可以依赖 `shared` 和 `core` 抽象。
 - `apps/server` 和 `apps/worker` 是云端运行入口，未来由它们调度专家 Agent；不是 Agent 反过来依赖 Server。
 - `apps/desktop` 是未来本地 Agent 桥接入口，主动连接云端，承载本地权限闸门和本机 Agent 调用。
@@ -120,7 +123,7 @@ lib
 ```text
 apps/web    -> client -> shared
 apps/server -> server -> core -> shared
-apps/worker -> server -> core -> shared
+apps/worker -> server -> runtime-* -> core -> shared
 apps/desktop    -> core -> shared
 ```
 
@@ -130,12 +133,13 @@ apps/desktop    -> core -> shared
 | ------------------- | ------------------------------------------------------------------- |
 | `apps/web`         | `@pragma/shared`、`@pragma/client`             |
 | `apps/server`      | `@pragma/shared`、`@pragma/server`、`@pragma/core` |
-| `apps/worker`      | `@pragma/shared`、`@pragma/server`、`@pragma/core` |
+| `apps/worker`      | `@pragma/shared`、`@pragma/server`、`@pragma/core`、具体 `@pragma/runtime-*` |
 | `apps/desktop`     | `@pragma/shared`、`@pragma/core`                |
 | `packages/shared`  | 无内部 package 依赖；只允许运行时中立依赖               |
 | `packages/client`  | `@pragma/shared`                                   |
 | `packages/server`  | `@pragma/shared`；需要编排时可依赖 `@pragma/core` |
 | `packages/core`    | `@pragma/shared`                                   |
+| `packages/runtime/*` | `@pragma/shared`、`@pragma/core`、该 runtime 自己的 SDK |
 
 明确禁止：
 
@@ -149,12 +153,15 @@ shared -> server
 shared -> core
 core -> client
 core -> server
+core -> runtime-*
+runtime-pi -> runtime-codex
+runtime-codex -> runtime-pi
 server -> client
 server -> web
 core -> web
 ```
 
-这里的 `core` 指专家 Agent 的执行抽象、Manifest、Invocation、Runtime Adapter 合约和云端沙箱运行边界。默认形态是云端 Agent，由 Server/Worker 调度执行。未来对接本地 Claude Code、Codex 或其他本地执行环境时，由 Desktop App 作为本地连接和权限入口，再通过 Runtime Adapter 接入 `core` 层；不要让 `core` 依赖 `client`、Web 或 Server 应用层。
+这里的 `core` 指专家 Agent 的执行抽象、Manifest、Invocation、Runtime Adapter 合约和公共运行协议。具体 runtime 实现放在独立 `@pragma/runtime-*` 包，由 Server/Worker/Desktop 等应用入口按需装配；不要让 `core` 依赖具体 runtime、`client`、Web 或 Server 应用层。
 
 所有跨 package 依赖必须使用 package import：
 
@@ -415,11 +422,8 @@ createDatabaseClient()
 - Expert Agent 声明、Run Request / Result 协议。
 - ExpertAgent 公共实现，包括上下文系统、AGENTS.md 加载、subAgent 声明和系统提示词组装。
 - RuntimeAdapter 与 RuntimeAgentSession 核心接口。
-- 默认面向云端 Agent 和云端沙箱执行边界。
-- 未来本地 Claude Code、Codex、自研执行环境通过 Runtime Adapter 对接。
-- RuntimeAdapter 的具体实现。
-- 当前第一版只提供 `cloud-pi-agent`，基于 PI agent SDK 适配 ExpertAgent。
-- 将 ExpertAgent 声明的 skills、AGENTS.md、context、workspace 转换为 PI runtime 可理解的 session 配置。
+- RuntimeRegistry、运行事件、会话、取消、错误等公共运行协议。
+- 未来本地 Claude Code、Codex、自研执行环境通过独立 Runtime Adapter 包对接。
 
 当前保留：
 
@@ -436,7 +440,7 @@ ExpertAgent API 设计要求：
 - `defineAgent()` 只是 `ExpertAgent.create()` 的声明语法糖；不要在 `defineAgent()` 下再实现独立 Agent 包装层。
 - Agent 运行能力优先加到 `ExpertAgent`，不要只放在 Directive SDK 包装层中。
 
-不要引入具体 Claude SDK、Codex SDK、MCP、Playbook、HTTP Controller、数据库实现或 Server 应用层实现。
+不要引入具体 Claude SDK、Codex SDK、PI SDK、具体 runtime 包、Playbook、HTTP Controller、数据库实现或 Server 应用层实现。
 
 禁止引入 Server 应用层、Client SDK、React / Next Web UI、数据库实现或 Desktop 本地权限 UI。
 
@@ -608,6 +612,9 @@ import "node:fs";
 
 // packages/core 中禁止
 import "@pragma/client";
+
+// packages/core 中禁止
+import "@pragma/runtime-pi";
 ```
 
 可以用 stdin 临时验证，不要提交非法测试文件：

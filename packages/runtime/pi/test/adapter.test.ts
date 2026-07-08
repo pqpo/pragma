@@ -12,7 +12,7 @@ import {
 import type { ExpertAgentRunContext } from "@pragma/core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { createCloudPiRuntimeAdapter } from "../../src/pi-runtime/adapter.ts";
+import { createCloudPiRuntimeAdapter } from "../src/adapter.ts";
 
 vi.mock("@earendil-works/pi-coding-agent", () => ({
   AuthStorage: {

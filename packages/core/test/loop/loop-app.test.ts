@@ -10,6 +10,7 @@ import {
   ExpertAgent,
   createRuntimeRegistry,
   defineHumanTask,
+  setDefaultRuntimeRegistryFactory,
 } from "../../src/index.ts";
 import type {
   Directive,
@@ -608,6 +609,59 @@ describe("loop app", () => {
         output: outputSchema,
       }),
     ]);
+  });
+
+  it("runs an ExpertAgent through the configured default runtime registry", async () => {
+    const agent = await ExpertAgent.create({
+      id: "agent-default-runtime-loop",
+      name: "Agent Default Runtime Directive",
+      description: "Agent that uses the process default runtime registry.",
+      tags: [],
+      version: "0.0.0",
+      scope: "test",
+      workspace: "/tmp/pragma-agent-default-runtime-loop-test",
+    });
+    const runtime = createFakeRuntime({
+      id: "configured-runtime",
+      output: {
+        answer: "done",
+      },
+    });
+    const outputSchema = z.object({
+      answer: z.string(),
+    });
+
+    setDefaultRuntimeRegistryFactory(() =>
+      createRuntimeRegistry({
+        defaultRuntime: "configured-runtime",
+        runtimes: [runtime],
+      }),
+    );
+
+    try {
+      const result = await agent.run({
+        input: {
+          prompt: "finish",
+        },
+        output: outputSchema,
+      });
+
+      expect(result.output).toEqual({
+        answer: "done",
+      });
+      expect(runtime.requests).toEqual([
+        expect.objectContaining({
+          agent,
+        }),
+      ]);
+      expect(runtime.submissions).toEqual([
+        expect.objectContaining({
+          output: outputSchema,
+        }),
+      ]);
+    } finally {
+      setDefaultRuntimeRegistryFactory(undefined);
+    }
   });
 
   it("waits for a human task response and resumes the workflow", async () => {

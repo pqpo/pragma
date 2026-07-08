@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { defineAgent } from "@pragma/core";
+import { createRuntimeRegistry, defineAgent } from "@pragma/core";
+import { createCloudPiRuntimeAdapter } from "@pragma/runtime-pi";
 
 import { printRunResult } from "./harness/expert-agent-example-utils.ts";
 import {
@@ -41,7 +42,19 @@ const output = z.object({
   testsPassed: z.boolean(),
 });
 
-const session = await coder.createSession();
+const session = await coder.createSession({
+  runtimes: createRuntimeRegistry({
+    defaultRuntime: "pi",
+    runtimes: [
+      createCloudPiRuntimeAdapter({
+        descriptor: {
+          id: "pi",
+          displayName: "PI Runtime",
+        },
+      }),
+    ],
+  }),
+});
 
 try {
   for (const [index, query] of cli.turns.entries()) {

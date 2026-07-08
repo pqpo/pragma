@@ -20,7 +20,7 @@ import {
 } from "@pragma/core";
 import { randomUUID } from "node:crypto";
 
-import type { McpManagedTool } from "../mcp-tools.ts";
+import type { McpManagedTool } from "@pragma/core";
 import { launchPiSubAgent } from "./subagents.ts";
 import { formatMcpToolResult, normalizeInputSchema, sanitizeToolName } from "./tool-schema.ts";
 import type { PiRuntimeStreamState } from "./types.ts";

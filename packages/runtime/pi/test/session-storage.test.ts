@@ -5,7 +5,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { watchRuntimeSessionDir } from "../../src/pi-runtime/session-storage.ts";
+import { watchRuntimeSessionDir } from "../src/session-storage.ts";
 
 const tempDirs: string[] = [];
 

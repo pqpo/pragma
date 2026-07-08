@@ -10,8 +10,8 @@ import type { AgentMessageUsage } from "@pragma/shared";
 import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
-import { createPiRuntimeSession } from "../../src/pi-runtime/session.ts";
-import type { PiRuntimeStreamState } from "../../src/pi-runtime/types.ts";
+import { createPiRuntimeSession } from "../src/session.ts";
+import type { PiRuntimeStreamState } from "../src/types.ts";
 
 describe("createPiRuntimeSession", () => {
   it("validates structured output with a Zod schema", async () => {

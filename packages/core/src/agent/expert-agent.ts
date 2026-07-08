@@ -44,11 +44,18 @@ import { isExpertAgentPluginEntryUse, loadExpertAgentPlugins } from "../plugins/
 import type { ExpertAgentRunContext } from "../runtime/run-context.ts";
 import { createExpertAgentRunContext, withExecutionRunScope } from "../runtime/run-context.ts";
 import type {
-  RuntimeAdapter,
   RuntimeAgentSession,
   RuntimeCreateSessionRequest,
   RuntimeOutputSchema,
 } from "../runtime/runtime-adapter.ts";
+import {
+  createDefaultRuntimeRegistry,
+  setDefaultRuntimeRegistryFactory,
+} from "../runtime/default-runtime-registry.ts";
+import type {
+  ExpertAgentRuntimeRegistry,
+  ExpertAgentRuntimeRegistryFactory,
+} from "../runtime/default-runtime-registry.ts";
 import type { SubAgentRegistry } from "../subagents/sub-agent.ts";
 import type {
   ExpertAgentManagedTool,
@@ -127,9 +134,7 @@ export interface IExpertAgentRunResult<TOutput = string> {
   readonly usage?: AgentMessageUsage | undefined;
 }
 
-export interface ExpertAgentRuntimeRegistry {
-  readonly resolve: (runtimeId?: string | undefined) => RuntimeAdapter;
-}
+export type { ExpertAgentRuntimeRegistry, ExpertAgentRuntimeRegistryFactory };
 
 export interface ExpertAgentCreateSessionOptions extends Omit<
   RuntimeCreateSessionRequest,
@@ -139,16 +144,9 @@ export interface ExpertAgentCreateSessionOptions extends Omit<
   readonly runtimes?: ExpertAgentRuntimeRegistry | undefined;
 }
 
-export type ExpertAgentRuntimeRegistryFactory = () => ExpertAgentRuntimeRegistry;
-
-let defaultRuntimeRegistryFactory: ExpertAgentRuntimeRegistryFactory | undefined;
 let defaultMemoryPluginEntryPromise: Promise<ExpertAgentPluginEntry | undefined> | undefined;
 
-export function setDefaultRuntimeRegistryFactory(
-  factory: ExpertAgentRuntimeRegistryFactory | undefined,
-): void {
-  defaultRuntimeRegistryFactory = factory;
-}
+export { setDefaultRuntimeRegistryFactory };
 
 export interface IExpertAgent {
   readonly schemaVersion?: ExpertAgentSchemaVersion;
@@ -613,16 +611,6 @@ function resolveDefaultMemoryPluginPath(): string | undefined {
 
     cursor = parent;
   }
-}
-
-async function createDefaultRuntimeRegistry(): Promise<ExpertAgentRuntimeRegistry> {
-  if (defaultRuntimeRegistryFactory === undefined) {
-    throw new Error(
-      "No default runtime registry is configured. Import @pragma/core or pass runtimes to agent.createSession().",
-    );
-  }
-
-  return defaultRuntimeRegistryFactory();
 }
 
 function applyToolApprovals(
