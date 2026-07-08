@@ -1,4 +1,4 @@
-# Code Repository Manager Plugin
+# Repo Manager Plugin
 
 This Pragma plugin exposes a configured list of Git repositories through the Agent context system and prepares Git authentication before each Agent runtime session starts.
 
@@ -13,7 +13,7 @@ environment variables or host context.
 
 ```ts
 import { ExpertAgent } from "@pragma/core";
-import codeRepositoryManagerPlugin from "@pragma/plugin-code-repository-manager";
+import repoManagerPlugin from "@pragma/plugin-repo-manager";
 
 const gitToken = "value loaded from your app secret store";
 
@@ -28,7 +28,7 @@ const agent = await ExpertAgent.create({
   workspace: "/path/to/workspace",
   plugins: [
     {
-      entry: codeRepositoryManagerPlugin,
+      entry: repoManagerPlugin,
       config: {
         repositories: [
           {
@@ -83,7 +83,7 @@ const agent = await ExpertAgent.create({
   workspace,
   plugins: [
     {
-      source: "/path/to/code-repository-manager",
+      source: "/path/to/repo-manager",
       config: {
         repositories: [
           {
@@ -110,16 +110,16 @@ should be marked with `"secret": true`.
 This plugin reserves the following environment variable namespace:
 
 ```text
-PRAGMA_PLUGIN_CODE_REPOSITORY_MANAGER_AUTH_TOKEN
-PRAGMA_PLUGIN_CODE_REPOSITORY_MANAGER_AUTH_USERNAME
-PRAGMA_PLUGIN_CODE_REPOSITORY_MANAGER_AUTH_HELPER
-PRAGMA_PLUGIN_CODE_REPOSITORY_MANAGER_AUTH_PRIVATE_KEY
-PRAGMA_PLUGIN_CODE_REPOSITORY_MANAGER_AUTH_KNOWN_HOSTS
+PRAGMA_PLUGIN_REPO_MANAGER_AUTH_TOKEN
+PRAGMA_PLUGIN_REPO_MANAGER_AUTH_USERNAME
+PRAGMA_PLUGIN_REPO_MANAGER_AUTH_HELPER
+PRAGMA_PLUGIN_REPO_MANAGER_AUTH_PRIVATE_KEY
+PRAGMA_PLUGIN_REPO_MANAGER_AUTH_KNOWN_HOSTS
 ```
 
 Use `createExpertAgentPluginConfigEnvName` from `@pragma/core` to derive
 these names from `pluginId` and config key. Set
-`PRAGMA_PLUGIN_CODE_REPOSITORY_MANAGER_AUTH_HELPER` to a
+`PRAGMA_PLUGIN_REPO_MANAGER_AUTH_HELPER` to a
 `credential.helper` value when Git credentials should come from an existing helper
 or a custom helper command. During each session, the plugin writes that value to an
 isolated temporary Git config and removes it during cleanup.
@@ -133,5 +133,5 @@ should use bash `git` directly and clone repositories to
 Run the repository example from the monorepo root:
 
 ```bash
-pnpm --filter @pragma/examples start:code-repositories
+pnpm --filter @pragma/examples start:repo-manager
 ```

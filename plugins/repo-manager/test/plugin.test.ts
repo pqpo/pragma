@@ -15,8 +15,8 @@ import { readExpertAgentPluginManifest } from "@pragma/core";
 import type { ExpertAgentPluginUse } from "@pragma/core";
 
 import { CODE_REPOSITORY_CONTEXT_ID } from "../src/context.ts";
-import codeRepositoryManagerPlugin from "../src/index.ts";
-import { parseCodeRepositoryManagerConfig } from "../src/schema.ts";
+import repoManagerPlugin from "../src/index.ts";
+import { parseRepoManagerConfig } from "../src/schema.ts";
 
 const packageRoot = fileURLToPath(new URL("../", import.meta.url));
 const tempDirs: string[] = [];
@@ -25,11 +25,11 @@ afterEach(async () => {
   await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
 
-describe("Code Repository Manager plugin", () => {
+describe("Repo Manager plugin", () => {
   it("reads plugin metadata from plugin.json at runtime", () => {
     const manifest = readExpertAgentPluginManifest(new URL("../plugin.json", import.meta.url));
 
-    expect(codeRepositoryManagerPlugin).toMatchObject({
+    expect(repoManagerPlugin).toMatchObject({
       id: manifest.id,
       name: manifest.name,
       description: manifest.description,
@@ -50,7 +50,7 @@ describe("Code Repository Manager plugin", () => {
       "auth.helper",
       "auth.helperEnv",
     ]);
-    expect(codeRepositoryManagerPlugin.manifest).toEqual(manifest);
+    expect(repoManagerPlugin.manifest).toEqual(manifest);
   });
 
   it("injects repository metadata as a model-decision context by default", async () => {
@@ -96,7 +96,7 @@ describe("Code Repository Manager plugin", () => {
       ok: true,
       value: expect.arrayContaining([
         expect.objectContaining({
-          namespace: "code-repository-manager",
+          namespace: "repo-manager",
           id: CODE_REPOSITORY_CONTEXT_ID,
           metadata: expect.objectContaining({
             trigger: "model_decision",
@@ -109,7 +109,7 @@ describe("Code Repository Manager plugin", () => {
 
     await expect(
       agent.readContext({
-        namespace: "code-repository-manager",
+        namespace: "repo-manager",
         id: CODE_REPOSITORY_CONTEXT_ID,
       }),
     ).resolves.toMatchObject({
@@ -145,7 +145,7 @@ describe("Code Repository Manager plugin", () => {
       workspace: await createWorkspaceDir(),
       plugins: [
         {
-          entry: codeRepositoryManagerPlugin,
+          entry: repoManagerPlugin,
           config: {
             repositories: [
               {
@@ -162,7 +162,7 @@ describe("Code Repository Manager plugin", () => {
 
     await expect(
       agent.readContext({
-        namespace: "code-repository-manager",
+        namespace: "repo-manager",
         id: CODE_REPOSITORY_CONTEXT_ID,
       }),
     ).resolves.toMatchObject({
@@ -174,14 +174,14 @@ describe("Code Repository Manager plugin", () => {
   });
 
   it("prepares Git through session hooks instead of exposing Git operation tools", () => {
-    const contributions = codeRepositoryManagerPlugin.setup({
+    const contributions = repoManagerPlugin.setup({
       host: {},
       contextSystem: new ContextSystem(),
       workspaceRoot: "/tmp/pragma",
       env: process.env,
       logger: createNoopLoggerProvider().createLogger({
         component: "plugin",
-        pluginId: "plugin.code-repository-manager",
+        pluginId: "plugin.repo-manager",
       }),
     });
 
@@ -192,7 +192,7 @@ describe("Code Repository Manager plugin", () => {
 
   it("rejects repository clone URLs and branch names that could be interpreted as Git options", () => {
     expect(() =>
-      parseCodeRepositoryManagerConfig({
+      parseRepoManagerConfig({
         repositories: [
           {
             id: "repo",
@@ -205,7 +205,7 @@ describe("Code Repository Manager plugin", () => {
     ).toThrow();
 
     expect(() =>
-      parseCodeRepositoryManagerConfig({
+      parseRepoManagerConfig({
         repositories: [
           {
             id: "repo",
@@ -220,7 +220,7 @@ describe("Code Repository Manager plugin", () => {
 
   it("rejects clone URLs with embedded credentials", () => {
     expect(() =>
-      parseCodeRepositoryManagerConfig({
+      parseRepoManagerConfig({
         repositories: [
           {
             id: "repo",
@@ -254,7 +254,7 @@ async function createAgent(options: {
 }
 
 async function createLoadablePluginSource(): Promise<ExpertAgentPluginUse> {
-  return { entry: codeRepositoryManagerPlugin };
+  return { entry: repoManagerPlugin };
 }
 
 async function createWorkspaceDir(): Promise<string> {

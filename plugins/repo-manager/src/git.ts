@@ -5,7 +5,7 @@ import { isAbsolute, relative, resolve } from "node:path";
 import { promisify } from "node:util";
 
 import { defaultRepositoryWorkspacePath } from "./context.ts";
-import type { CodeRepository, CodeRepositoryAuth, CodeRepositoryManagerConfig } from "./schema.ts";
+import type { CodeRepository, CodeRepositoryAuth, RepoManagerConfig } from "./schema.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -23,7 +23,7 @@ export interface GitSessionEnvironment {
 }
 
 export async function prepareGitSessionEnvironment(
-  config: CodeRepositoryManagerConfig,
+  config: RepoManagerConfig,
   options: GitCommandOptions = {},
 ): Promise<GitSessionEnvironment> {
   const env = options.env ?? process.env;

@@ -9,7 +9,7 @@
     "start:minimal-agent": "tsx src/run-minimal-agent-api.ts",
     "start:memory": "tsx src/run-memory-system-example.ts",
     "start:approval": "tsx src/run-tool-approval-example.ts",
-    "start:code-repositories": "tsx src/run-code-repository-manager-plugin.ts",
+    "start:repo-manager": "tsx src/run-repo-manager-plugin.ts",
     "start:session-storage": "tsx src/run-session-storage-example.ts",
     "start:workspace-context": "tsx src/run-workspace-context-agent.ts",
     "start:directive-code": "tsx src/run-directive-code.ts",
@@ -28,7 +28,7 @@
   },
   "dependencies": {
     "@pragma/core": "workspace:*",
-    "@pragma/plugin-code-repository-manager": "workspace:*",
+    "@pragma/plugin-repo-manager": "workspace:*",
     "@pragma/plugin-memory": "workspace:*",
     "@pragma/runtime-codex": "workspace:*",
     "@pragma/runtime-pi": "workspace:*",

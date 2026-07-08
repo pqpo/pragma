@@ -367,7 +367,7 @@ const envName = createExpertAgentPluginConfigEnvName({
 
 ```text
 plugins/memory
-plugins/code-repository-manager
+plugins/repo-manager
 ```
 
 `@pragma/plugin-memory`：
@@ -384,7 +384,7 @@ plugins/code-repository-manager
 
 如果要启用记忆能力，建议先读 [Memory System 使用指南](./memory.md)。
 
-`code-repository-manager`：
+`repo-manager`：
 
 - 暴露仓库元数据上下文。
 - 提供仓库管理相关能力。

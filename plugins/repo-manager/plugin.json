@@ -1,7 +1,7 @@
 {
   "schemaVersion": "pragma.plugin/v1",
-  "id": "code-repository-manager",
-  "name": "Code Repository Manager",
+  "id": "repo-manager",
+  "name": "Repo Manager",
   "description": "Registers configured Git repositories as Agent context and prepares Git authentication before runtime sessions start.",
   "version": "0.0.0",
   "tags": ["git", "repository", "workspace"],

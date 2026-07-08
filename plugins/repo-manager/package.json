@@ -1,5 +1,5 @@
 {
-  "name": "@pragma/plugin-code-repository-manager",
+  "name": "@pragma/plugin-repo-manager",
   "version": "0.0.0",
   "private": true,
   "type": "module",

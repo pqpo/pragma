@@ -5,7 +5,7 @@ import {
   createInMemoryContextStore,
 } from "@pragma/core";
 import { createCloudPiRuntimeAdapter } from "@pragma/runtime-pi";
-import codeRepositoryManagerPlugin from "@pragma/plugin-code-repository-manager";
+import repoManagerPlugin from "@pragma/plugin-repo-manager";
 
 import {
   printPluginLoadIssues,
@@ -61,7 +61,7 @@ contextSystem.register({
           2,
         ),
         metadata: {
-          description: "Repositories available to the code repository manager plugin.",
+          description: "Repositories available to the repo manager plugin.",
           trigger: "manual",
           trustLevel: "workspace",
           sensitivity: "internal",
@@ -73,9 +73,9 @@ contextSystem.register({
 
 const agent = await ExpertAgent.create({
   schemaVersion: "pragma.expert/v1",
-  id: "code-repository-plugin-example-agent",
-  name: "Code Repository Plugin Example Agent",
-  description: "Demonstrates how to attach the code repository manager plugin to ExpertAgent.",
+  id: "repo-manager-plugin-example-agent",
+  name: "Repo Manager Plugin Example Agent",
+  description: "Demonstrates how to attach the repo manager plugin to ExpertAgent.",
   tags: ["example", "plugin", "repository"],
   version: "0.0.0",
   scope: "local-test",
@@ -83,7 +83,7 @@ const agent = await ExpertAgent.create({
   contextSystem,
   loggerProvider,
   models: createExpertAgentModelsConfig(modelConfig),
-  plugins: [{ entry: codeRepositoryManagerPlugin }],
+  plugins: [{ entry: repoManagerPlugin }],
 });
 
 const contextItems = await agent.listContext();
@@ -102,7 +102,7 @@ if (contextItems.ok) {
 }
 
 const repositoryContext = await agent.readContext({
-  namespace: "code-repository-manager",
+  namespace: "repo-manager",
   id: "code-repositories.md",
 });
 

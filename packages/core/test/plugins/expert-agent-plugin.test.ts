@@ -298,10 +298,10 @@ describe("ExpertAgent plugins", () => {
   it("creates plugin config env names from plugin id and config name", () => {
     expect(
       createExpertAgentPluginConfigEnvName({
-        pluginId: "code-repository-manager",
+        pluginId: "repo-manager",
         name: "auth.token",
       }),
-    ).toBe("PRAGMA_PLUGIN_CODE_REPOSITORY_MANAGER_AUTH_TOKEN");
+    ).toBe("PRAGMA_PLUGIN_REPO_MANAGER_AUTH_TOKEN");
   });
 
   it("merges required plugin config from env before explicit config", () => {

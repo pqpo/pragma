@@ -1,12 +1,12 @@
 import type { ExpertAgentContextItemSeed } from "@pragma/core";
 
-import type { CodeRepository, CodeRepositoryManagerConfig } from "./schema.ts";
+import type { CodeRepository, RepoManagerConfig } from "./schema.ts";
 
 export const CODE_REPOSITORY_CONTEXT_ID = "code-repositories.md";
 export const CODE_REPOSITORIES_SOURCE_CONTEXT_ID = "repositories.json";
 
 export function createCodeRepositoryContextSeed(
-  config: CodeRepositoryManagerConfig,
+  config: RepoManagerConfig,
 ): ExpertAgentContextItemSeed {
   return {
     id: CODE_REPOSITORY_CONTEXT_ID,
@@ -21,7 +21,7 @@ export function createCodeRepositoryContextSeed(
   };
 }
 
-export function renderCodeRepositoryContext(config: CodeRepositoryManagerConfig): string {
+export function renderCodeRepositoryContext(config: RepoManagerConfig): string {
   return [
     "# Available Code Repositories",
     "",

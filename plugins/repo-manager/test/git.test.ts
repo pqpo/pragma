@@ -5,7 +5,7 @@ import { resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { prepareGitSessionEnvironment, resolveRepositoryWorkspacePath } from "../src/git.ts";
-import { parseCodeRepositoryManagerConfig } from "../src/schema.ts";
+import { parseRepoManagerConfig } from "../src/schema.ts";
 
 const tempDirs: string[] = [];
 
@@ -32,7 +32,7 @@ describe("Git session environment", () => {
       TEST_GIT_TOKEN: "secret-token",
       UNRELATED_SECRET: "do-not-pass",
     };
-    const config = parseCodeRepositoryManagerConfig({
+    const config = parseRepoManagerConfig({
       auth: {
         strategy: "token",
         tokenEnv: "TEST_GIT_TOKEN",
@@ -78,7 +78,7 @@ describe("Git session environment", () => {
     const env: NodeJS.ProcessEnv = {
       PATH: process.env.PATH,
     };
-    const config = parseCodeRepositoryManagerConfig({
+    const config = parseRepoManagerConfig({
       auth: {
         strategy: "token",
         token: "direct-token",
@@ -99,7 +99,7 @@ describe("Git session environment", () => {
 
   it("rejects token auth when tokenEnv is configured but missing", async () => {
     const root = await createTempDir();
-    const config = parseCodeRepositoryManagerConfig({
+    const config = parseRepoManagerConfig({
       auth: {
         strategy: "token",
         tokenEnv: "MISSING_GIT_TOKEN",
@@ -123,7 +123,7 @@ describe("Git session environment", () => {
       TEST_SSH_KEY: "test-private-key",
       TEST_KNOWN_HOSTS: "github.com ssh-ed25519 AAAA",
     };
-    const config = parseCodeRepositoryManagerConfig({
+    const config = parseRepoManagerConfig({
       auth: {
         strategy: "ssh",
         privateKeyEnv: "TEST_SSH_KEY",
@@ -156,7 +156,7 @@ describe("Git session environment", () => {
     const env: NodeJS.ProcessEnv = {
       PATH: process.env.PATH,
     };
-    const config = parseCodeRepositoryManagerConfig({
+    const config = parseRepoManagerConfig({
       auth: {
         strategy: "ssh",
         privateKey: "direct-private-key",
@@ -182,7 +182,7 @@ describe("Git session environment", () => {
       PATH: process.env.PATH,
       TEST_CREDENTIAL_HELPER: "!test-git-credential-helper",
     };
-    const config = parseCodeRepositoryManagerConfig({
+    const config = parseRepoManagerConfig({
       auth: {
         strategy: "credential_helper",
         helperEnv: "TEST_CREDENTIAL_HELPER",
@@ -218,7 +218,7 @@ describe("Git session environment", () => {
     const env: NodeJS.ProcessEnv = {
       PATH: process.env.PATH,
     };
-    const config = parseCodeRepositoryManagerConfig({
+    const config = parseRepoManagerConfig({
       auth: {
         strategy: "credential_helper",
         helper: "!direct-helper",
@@ -244,7 +244,7 @@ describe("Git session environment", () => {
       PATH: process.env.PATH,
       TEST_CREDENTIAL_HELPER: "!helper\nextra-command",
     };
-    const config = parseCodeRepositoryManagerConfig({
+    const config = parseRepoManagerConfig({
       auth: {
         strategy: "credential_helper",
         helperEnv: "TEST_CREDENTIAL_HELPER",
@@ -264,7 +264,7 @@ describe("Git session environment", () => {
     const env: NodeJS.ProcessEnv = {
       PATH: process.env.PATH,
     };
-    const config = parseCodeRepositoryManagerConfig({
+    const config = parseRepoManagerConfig({
       auth: { strategy: "none" },
     });
 

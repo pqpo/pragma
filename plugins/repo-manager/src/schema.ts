@@ -62,7 +62,7 @@ export const CodeRepositorySchema = z.object({
   shallowClone: z.boolean().default(true),
 });
 
-export const CodeRepositoryManagerConfigSchema = z
+export const RepoManagerConfigSchema = z
   .object({
     contextInjection: z
       .object({
@@ -104,30 +104,30 @@ export type CodeRepositoryContextInjectionMode = z.infer<
 >;
 export type CodeRepositoryAuth = z.infer<typeof CodeRepositoryAuthSchema>;
 export type CodeRepository = z.infer<typeof CodeRepositorySchema>;
-export type CodeRepositoryManagerConfig = z.infer<typeof CodeRepositoryManagerConfigSchema>;
-export type CodeRepositoryManagerConfigInput = z.input<typeof CodeRepositoryManagerConfigSchema>;
+export type RepoManagerConfig = z.infer<typeof RepoManagerConfigSchema>;
+export type RepoManagerConfigInput = z.input<typeof RepoManagerConfigSchema>;
 
-export const CodeRepositoryManagerRepositoriesContextSchema = z.union([
+export const RepoManagerRepositoriesContextSchema = z.union([
   z.array(CodeRepositorySchema),
   z.object({
     repositories: z.array(CodeRepositorySchema),
   }),
 ]);
 
-export type CodeRepositoryManagerRepositoriesContext = z.infer<
-  typeof CodeRepositoryManagerRepositoriesContextSchema
+export type RepoManagerRepositoriesContext = z.infer<
+  typeof RepoManagerRepositoriesContextSchema
 >;
 
-export function parseCodeRepositoryManagerConfig(
-  input: CodeRepositoryManagerConfigInput,
-): CodeRepositoryManagerConfig {
-  return CodeRepositoryManagerConfigSchema.parse(input);
+export function parseRepoManagerConfig(
+  input: RepoManagerConfigInput,
+): RepoManagerConfig {
+  return RepoManagerConfigSchema.parse(input);
 }
 
-export function parseCodeRepositoryManagerRepositoriesContext(
+export function parseRepoManagerRepositoriesContext(
   input: unknown,
 ): readonly CodeRepository[] {
-  const context = CodeRepositoryManagerRepositoriesContextSchema.parse(input);
+  const context = RepoManagerRepositoriesContextSchema.parse(input);
 
   return Array.isArray(context) ? context : context.repositories;
 }

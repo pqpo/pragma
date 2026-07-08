@@ -12,13 +12,13 @@ import {
   createCodeRepositoryContextSeed,
 } from "./context.ts";
 import { prepareGitSessionEnvironment } from "./git.ts";
-import type { CodeRepository, CodeRepositoryManagerConfigInput } from "./schema.ts";
+import type { CodeRepository, RepoManagerConfigInput } from "./schema.ts";
 import {
-  parseCodeRepositoryManagerConfig,
-  parseCodeRepositoryManagerRepositoriesContext,
+  parseRepoManagerConfig,
+  parseRepoManagerRepositoriesContext,
 } from "./schema.ts";
 
-const PLUGIN_ID = "code-repository-manager";
+const PLUGIN_ID = "repo-manager";
 const TOKEN_ENV = createPluginEnvName("auth.token");
 const TOKEN_USERNAME_ENV = createPluginEnvName("auth.username");
 const CREDENTIAL_HELPER_ENV = createPluginEnvName("auth.helper");
@@ -28,11 +28,11 @@ const SSH_KNOWN_HOSTS_ENV = createPluginEnvName("auth.knownHosts");
 export default definePluginEntry({
   setup: (context) => {
     const cleanupGitSessionEnvironments = new Map<string, () => Promise<void>>();
-    context.logger.info("Registering code repository manager context store", {
-      namespace: "code-repository-manager",
+    context.logger.info("Registering repo manager context store", {
+      namespace: "repo-manager",
     });
     context.contextSystem.register({
-      namespace: "code-repository-manager",
+      namespace: "repo-manager",
       store: createCodeRepositoryContextStore(context),
     });
 
@@ -149,10 +149,10 @@ function createCodeRepositoryContextStore(
 
 async function resolveConfig(
   context: ExpertAgentPluginSetupContext,
-): Promise<ReturnType<typeof parseCodeRepositoryManagerConfig>> {
+): Promise<ReturnType<typeof parseRepoManagerConfig>> {
   const explicitConfig = readExplicitConfig(context.config);
   const repositories = await readHostRepositories(context);
-  const parsedConfig = parseCodeRepositoryManagerConfig({
+  const parsedConfig = parseRepoManagerConfig({
     ...explicitConfig,
     auth: explicitConfig.auth ?? resolveAuth(context.env),
   });
@@ -168,17 +168,17 @@ async function resolveConfig(
   };
 }
 
-function readExplicitConfig(input: unknown): Partial<CodeRepositoryManagerConfigInput> {
+function readExplicitConfig(input: unknown): Partial<RepoManagerConfigInput> {
   if (input === undefined) {
     return {};
   }
 
   if (input !== null && typeof input === "object" && !Array.isArray(input)) {
-    return input as Partial<CodeRepositoryManagerConfigInput>;
+    return input as Partial<RepoManagerConfigInput>;
   }
 
   throw new Error(
-    `Code Repository Manager plugin config must be an object, received ${describeConfigInput(input)}.`,
+    `Repo Manager plugin config must be an object, received ${describeConfigInput(input)}.`,
   );
 }
 
@@ -206,12 +206,12 @@ async function readHostRepositories(
     return [];
   }
 
-  return parseCodeRepositoryManagerRepositoriesContext(JSON.parse(result.value.content));
+  return parseRepoManagerRepositoriesContext(JSON.parse(result.value.content));
 }
 
 function resolveAuth(
   env: NodeJS.ProcessEnv,
-): ReturnType<typeof parseCodeRepositoryManagerConfig>["auth"] {
+): ReturnType<typeof parseRepoManagerConfig>["auth"] {
   const token = readEnv(env, TOKEN_ENV);
 
   if (token !== undefined) {
