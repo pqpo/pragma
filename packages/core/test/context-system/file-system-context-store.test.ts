@@ -57,7 +57,6 @@ describe("FileSystemContextStore", () => {
       version: "0.0.0",
       scope: "test",
       workspace: rootDir,
-      memory: false,
       contextSystem: createHostContextSystem(new FileSystemContextStore({ rootDir })),
     });
 

@@ -1,7 +1,3 @@
-import { existsSync } from "node:fs";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
-
 import { ContextManager } from "./context-manager.ts";
 import type { ContextAssemblerOptions, ExpertAgentContext } from "./context-manager.ts";
 import type { AgentMessageUsage } from "@pragma/shared";
@@ -32,8 +28,8 @@ import type {
 import { resolveExpertAgentPlugins } from "../plugins/expert-agent-plugin.ts";
 import type { ExpertAgentLogger, ExpertAgentLoggerProvider } from "../logging/logger.ts";
 import { createExpertAgentLogger, defaultExpertAgentLoggerProvider } from "../logging/logger.ts";
-import type { Directive, RunResult, StartRunRequest } from "../loop/types.ts";
-import { stringifyInput } from "../loop/utils.ts";
+import type { Directive, RunResult, StartRunRequest } from "../directive/types.ts";
+import { stringifyInput } from "../directive/utils.ts";
 import type {
   ExpertAgentPluginLoadIssue,
   ExpertAgentPluginSource,
@@ -142,8 +138,6 @@ export interface ExpertAgentCreateSessionOptions extends Omit<
   readonly runtimes?: ExpertAgentRuntimeRegistry | undefined;
 }
 
-let defaultMemoryPluginEntryPromise: Promise<ExpertAgentPluginEntry | undefined> | undefined;
-
 export { setDefaultRuntimeRegistryFactory };
 
 export interface IExpertAgent {
@@ -177,19 +171,6 @@ export type ExpertAgentOptions = Omit<
 export interface ExpertAgentCreateOptions extends ExpertAgentOptions {
   readonly plugins?: readonly ExpertAgentPluginUse[] | undefined;
   readonly env?: NodeJS.ProcessEnv | undefined;
-  readonly memory?: ExpertAgentMemoryOptions | false | undefined;
-}
-
-export interface ExpertAgentMemoryCategoryOptions {
-  readonly enabled?: boolean | undefined;
-}
-
-export interface ExpertAgentMemoryOptions {
-  readonly enabled?: boolean | undefined;
-  readonly task?: boolean | ExpertAgentMemoryCategoryOptions | undefined;
-  readonly experience?: boolean | ExpertAgentMemoryCategoryOptions | undefined;
-  readonly fact?: boolean | ExpertAgentMemoryCategoryOptions | undefined;
-  readonly skill?: boolean | ExpertAgentMemoryCategoryOptions | undefined;
 }
 
 interface ExpertAgentRuntimeOptions extends ExpertAgentOptions {
@@ -222,7 +203,7 @@ export class ExpertAgent implements IExpertAgent, Directive<unknown, unknown> {
   private readonly contextManager: ContextManager;
 
   static async create(options: ExpertAgentCreateOptions): Promise<ExpertAgent> {
-    const pluginUses = await resolveDefaultPluginUses(options);
+    const pluginUses = [...(options.plugins ?? [])];
     const pluginSources: ExpertAgentPluginSource[] = [];
     const pluginEntryUses: Extract<
       ExpertAgentPluginUse,
@@ -343,7 +324,7 @@ export class ExpertAgent implements IExpertAgent, Directive<unknown, unknown> {
     request: StartRunRequest<unknown>,
   ): Promise<RunResult<TOutput>> {
     if (request.execution === undefined) {
-      const { createPragma } = await import("../loop/loop-app.ts");
+      const { createPragma } = await import("../directive/pragma-app.ts");
       return (await createPragma().run(this, request)) as RunResult<TOutput>;
     }
 
@@ -472,137 +453,6 @@ export class ExpertAgent implements IExpertAgent, Directive<unknown, unknown> {
     input: ExpertAgentContextItemDeleteInput,
   ): Promise<ExpertAgentContextResult<ExpertAgentContextItemDeleteResult>> {
     return await this.contextSystem.delete(input);
-  }
-}
-
-async function resolveDefaultPluginUses(
-  options: ExpertAgentCreateOptions,
-): Promise<readonly ExpertAgentPluginUse[]> {
-  const pluginUses = [...(options.plugins ?? [])];
-
-  if (
-    options.memory === false ||
-    options.memory?.enabled === false ||
-    allMemoryCategoriesDisabled(options.memory) ||
-    hasMemoryPluginUse(pluginUses)
-  ) {
-    return pluginUses;
-  }
-
-  const entry = await loadDefaultMemoryPluginEntry();
-
-  if (entry === undefined) {
-    return pluginUses;
-  }
-
-  return [
-    {
-      entry,
-      ...(options.memory === undefined ? {} : { config: normalizeMemoryPluginConfig(options.memory) }),
-    },
-    ...pluginUses,
-  ];
-}
-
-function hasMemoryPluginUse(pluginUses: readonly ExpertAgentPluginUse[]): boolean {
-  return pluginUses.some((plugin) => {
-    if (isExpertAgentPluginEntryUse(plugin)) {
-      return plugin.entry.manifest.id === "memory";
-    }
-
-    const source = typeof plugin === "string" ? plugin : plugin.source;
-    return (
-      source === "@pragma/plugin-memory" ||
-      source.endsWith("/plugins/memory") ||
-      source.endsWith("\\plugins\\memory") ||
-      source.endsWith("/memory") ||
-      source.endsWith("\\memory")
-    );
-  });
-}
-
-function allMemoryCategoriesDisabled(
-  options: ExpertAgentMemoryOptions | undefined,
-): boolean {
-  if (options === undefined) {
-    return false;
-  }
-
-  return ["task", "experience", "fact", "skill"].every((key) => {
-    const value = options[key as keyof ExpertAgentMemoryOptions];
-
-    if (typeof value === "boolean") {
-      return value === false;
-    }
-
-    return value?.enabled === false;
-  });
-}
-
-function normalizeMemoryPluginConfig(options: ExpertAgentMemoryOptions): {
-  readonly task?: { readonly enabled: boolean } | undefined;
-  readonly experience?: { readonly enabled: boolean } | undefined;
-  readonly fact?: { readonly enabled: boolean } | undefined;
-  readonly skill?: { readonly enabled: boolean } | undefined;
-} {
-  return {
-    ...(options.task === undefined ? {} : { task: { enabled: readMemoryCategoryEnabled(options.task) } }),
-    ...(options.experience === undefined
-      ? {}
-      : { experience: { enabled: readMemoryCategoryEnabled(options.experience) } }),
-    ...(options.fact === undefined ? {} : { fact: { enabled: readMemoryCategoryEnabled(options.fact) } }),
-    ...(options.skill === undefined ? {} : { skill: { enabled: readMemoryCategoryEnabled(options.skill) } }),
-  };
-}
-
-function readMemoryCategoryEnabled(
-  value: boolean | ExpertAgentMemoryCategoryOptions,
-): boolean {
-  return typeof value === "boolean" ? value : value.enabled ?? true;
-}
-
-async function loadDefaultMemoryPluginEntry(): Promise<ExpertAgentPluginEntry | undefined> {
-  defaultMemoryPluginEntryPromise ??= importDefaultMemoryPluginEntry();
-  return await defaultMemoryPluginEntryPromise;
-}
-
-async function importDefaultMemoryPluginEntry(): Promise<ExpertAgentPluginEntry | undefined> {
-  const pluginEntryPath = resolveDefaultMemoryPluginPath();
-
-  if (pluginEntryPath === undefined) {
-    return undefined;
-  }
-
-  const module = (await import(pathToFileURL(pluginEntryPath).href)) as {
-    readonly default?: ExpertAgentPluginEntry | undefined;
-  };
-
-  return module.default;
-}
-
-function resolveDefaultMemoryPluginPath(): string | undefined {
-  let cursor = dirname(fileURLToPath(import.meta.url));
-
-  while (true) {
-    const sourcePath = resolve(cursor, "plugins/memory/src/index.ts");
-
-    if (existsSync(sourcePath)) {
-      return sourcePath;
-    }
-
-    const distPath = resolve(cursor, "plugins/memory/dist/index.js");
-
-    if (existsSync(distPath)) {
-      return distPath;
-    }
-
-    const parent = dirname(cursor);
-
-    if (parent === cursor) {
-      return undefined;
-    }
-
-    cursor = parent;
   }
 }
 

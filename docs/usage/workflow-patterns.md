@@ -1,6 +1,6 @@
 # Workflow 范式快捷 API
 
-本文面向已经理解 [Directive 核心 API](./loops.md) 的开发者，说明 `patterns` 快捷 API。
+本文面向已经理解 [Directive 核心 API](./directives.md) 的开发者，说明 `patterns` 快捷 API。
 
 Anthropic 在 [Building effective agents](https://www.anthropic.com/engineering/building-effective-agents) 中把 Workflow 定义为“LLM 和工具沿着预定义代码路径编排”的模式，并总结了五类常用范式：
 
@@ -16,7 +16,7 @@ Anthropic 在 [Building effective agents](https://www.anthropic.com/engineering/
 import { patterns } from "@pragma/core";
 ```
 
-最简单场景可以直接传入裸 `Directive`；需要覆盖 step id、输入、输出 schema、runtime 或 sandbox 时，再展开成 `{ loop, input, output, runtime, sandbox }`。
+最简单场景可以直接传入裸 `Directive`；需要覆盖 step id、输入、输出 schema、runtime 或 sandbox 时，再展开成 `{ directive, input, output, runtime, sandbox }`。
 
 可运行示例：
 
@@ -44,7 +44,7 @@ flowchart LR
 
 - 控制流明确、需要可审计和可复现时，用 Workflow。
 - 每一步可以交给不同 Agent、代码 task 或人工节点。
-- 如果下一步该做什么本身需要模型持续自主判断，应该使用 Agent loop，而不是强行套 Workflow。
+- 如果下一步该做什么本身需要模型持续自主判断，应该使用 Agent directive，而不是强行套 Workflow。
 
 ## Prompt Chain
 
@@ -74,7 +74,7 @@ const chain = patterns.promptChain({
 
 ```ts
 {
-  loop: draftReply,
+  directive: draftReply,
   input: ({ state }) => ({
     originalRequest: state.input,
     classification: state.private,
@@ -98,17 +98,17 @@ const routed = patterns.routing({
   id: "ticket-router",
   field: "route",
   router: {
-    loop: classifyTicket,
+    directive: classifyTicket,
     output: z.object({
       route: z.enum(["billing", "technical"]),
     }),
   },
   routes: {
     billing: {
-      loop: billingAgent,
+      directive: billingAgent,
     },
     technical: {
-      loop: technicalAgent,
+      directive: technicalAgent,
     },
   },
 });
@@ -167,10 +167,10 @@ flowchart LR
 const report = patterns.orchestratorWorkers({
   id: "report-builder",
   orchestrator: {
-    loop: planner,
+    directive: planner,
   },
   worker: {
-    loop: sectionWriter,
+    directive: sectionWriter,
   },
   getWorkerInputs: ({ orchestration }) => orchestration.sections,
   synthesize: ({ workerOutputs }) => ({
@@ -196,10 +196,10 @@ flowchart LR
 const refined = patterns.evaluatorOptimizer({
   id: "refine-answer",
   optimizer: {
-    loop: answerWriter,
+    directive: answerWriter,
   },
   evaluator: {
-    loop: answerEvaluator,
+    directive: answerEvaluator,
   },
   maxIterations: 3,
 });
@@ -219,10 +219,10 @@ const refined = patterns.evaluatorOptimizer({
 patterns.evaluatorOptimizer({
   id: "refine-with-custom-feedback",
   optimizer: {
-    loop: answerWriter,
+    directive: answerWriter,
   },
   evaluator: {
-    loop: answerEvaluator,
+    directive: answerEvaluator,
   },
   buildOptimizerInput: ({ input, previousAttempt, evaluation }) => ({
     goal: input,

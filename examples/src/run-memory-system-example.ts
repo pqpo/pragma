@@ -1,4 +1,5 @@
 import { defineAgent } from "@pragma/core";
+import memoryPlugin from "@pragma/plugin-memory";
 
 import { defaultWorkspaceRoot, ensureWorkspaceDir } from "./harness/paths.ts";
 
@@ -9,14 +10,15 @@ await ensureWorkspaceDir(workspace);
 const defaultAgent = await defineAgent({
   id: "memory-default-agent",
   name: "Memory Default Agent",
-  description: "Demonstrates the default memory system wiring.",
+  description: "Demonstrates explicit memory plugin wiring.",
   tags: ["example", "memory"],
   version: "0.0.0",
   scope: "local-test",
   workspace,
+  plugins: [{ entry: memoryPlugin }],
 });
 
-console.log("Default memory agent:");
+console.log("Explicit memory agent:");
 console.log(`- workspace: ${workspace}`);
 console.log(`- tools: ${formatTools(defaultAgent.tools?.map((tool) => tool.name) ?? [])}`);
 
@@ -59,10 +61,15 @@ const selectiveAgent = await defineAgent({
   version: "0.0.0",
   scope: "local-test",
   workspace,
-  memory: {
-    experience: false,
-    fact: false,
-  },
+  plugins: [
+    {
+      entry: memoryPlugin,
+      config: {
+        experience: { enabled: false },
+        fact: { enabled: false },
+      },
+    },
+  ],
 });
 
 console.log("Selective memory agent:");

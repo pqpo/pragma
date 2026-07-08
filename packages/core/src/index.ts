@@ -9,7 +9,7 @@ export * from "./context-system/context-tools.ts";
 export * from "./context-system/file-system-context-store.ts";
 export * from "./context-system/in-memory-context-store.ts";
 export * from "./logging/logger.ts";
-export * from "./loop/index.ts";
+export * from "./directive/index.ts";
 export * from "./mcp-tools.ts";
 export * from "./plugins/expert-agent-plugin.ts";
 export * from "./plugins/plugin-loader.ts";

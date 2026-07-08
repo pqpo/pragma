@@ -1,16 +1,16 @@
 import type { RunState } from "@pragma/shared";
 import type { z } from "zod";
 
-import { compileLoopDefinition, defineFlow, type LoopStepOptions } from "./flow-spec.ts";
+import { compileDirectiveDefinition, defineFlow, type StepOptions } from "./flow-spec.ts";
 import type {
   Directive,
   DirectiveDefinition,
-  LoopExecutionContext,
-  LoopRuntimeOverride,
+  DirectiveExecutionContext,
+  RuntimeOverride,
   RunResult,
-  LoopStepInputContext,
-  LoopStepInputResolver,
-  LoopStepReducer,
+  StepInputContext,
+  StepInputResolver,
+  StepReducer,
   MaybePromise,
   SandboxRequest,
   StartRunRequest,
@@ -20,12 +20,12 @@ import { readObjectField } from "./utils.ts";
 const workflowPatternStateKey = "workflowPatterns";
 
 export interface WorkflowPatternStep<TInput = unknown, TOutput = unknown>
-  extends LoopRuntimeOverride {
+  extends RuntimeOverride {
   readonly id?: string | undefined;
-  readonly loop: DirectiveDefinition<TInput, TOutput>;
-  readonly input?: LoopStepInputResolver<TInput> | TInput | undefined;
+  readonly directive: DirectiveDefinition<TInput, TOutput>;
+  readonly input?: StepInputResolver<TInput> | TInput | undefined;
   readonly output?: z.ZodType<TOutput> | undefined;
-  readonly reduce?: LoopStepReducer<TOutput> | undefined;
+  readonly reduce?: StepReducer<TOutput> | undefined;
   readonly sandbox?: SandboxRequest | undefined;
 }
 
@@ -53,8 +53,8 @@ export interface DefineRoutingWorkflowOptions<TInput = unknown, TOutput = unknow
 }
 
 export interface WorkflowParallelBranch<TInput = unknown, TBranchInput = unknown, TOutput = unknown>
-  extends LoopRuntimeOverride {
-  readonly loop: DirectiveDefinition<TBranchInput, TOutput>;
+  extends RuntimeOverride {
+  readonly directive: DirectiveDefinition<TBranchInput, TOutput>;
   readonly input?:
     | TBranchInput
     | ((context: WorkflowParallelBranchInputContext<TInput>) => MaybePromise<TBranchInput>)
@@ -225,18 +225,18 @@ export function definePromptChainWorkflow<TInput = unknown, TOutput = unknown>(
   });
   const steps = options.steps.map((step) => normalizePatternStep(step));
   const stepRefs = steps.map((step, index) => {
-    const stepId = step.id ?? resolveLoopDefinitionId(step.loop) ?? `step-${index + 1}`;
+    const stepId = step.id ?? resolveDirectiveDefinitionId(step.directive) ?? `step-${index + 1}`;
     const previous = index === 0 ? undefined : steps[index - 1];
     const previousId =
       previous === undefined
         ? undefined
-        : previous.id ?? resolveLoopDefinitionId(previous.loop) ?? `step-${index}`;
-    const stepOptions = createLoopStepOptions(step, {
+        : previous.id ?? resolveDirectiveDefinitionId(previous.directive) ?? `step-${index}`;
+    const stepOptions = createStepOptions(step, {
       input:
         step.input ??
         (previousId === undefined
           ? undefined
-          : (context: LoopStepInputContext) =>
+          : (context: StepInputContext) =>
               getRequiredPatternStepOutput(context.state, options.id, previousId)),
       reduce: async (context) => {
         setPatternStepOutput(context.state, options.id, stepId, context.output);
@@ -249,7 +249,7 @@ export function definePromptChainWorkflow<TInput = unknown, TOutput = unknown>(
       },
     });
 
-    return flow.use(stepId, step.loop, stepOptions);
+    return flow.use(stepId, step.directive, stepOptions);
   });
 
   flow.compose(({ start, end }) => {
@@ -285,11 +285,11 @@ export function defineRoutingWorkflow<TInput = unknown, TOutput = unknown>(
     result: options.result ?? (({ state }) => state.results["final"] as TOutput),
   });
   const routerSpec = normalizePatternStep(options.router);
-  const routerId = routerSpec.id ?? resolveLoopDefinitionId(routerSpec.loop) ?? "router";
+  const routerId = routerSpec.id ?? resolveDirectiveDefinitionId(routerSpec.directive) ?? "router";
   const router = flow.use(
     routerId,
-    routerSpec.loop,
-    createLoopStepOptions(routerSpec, {
+    routerSpec.directive,
+    createStepOptions(routerSpec, {
       reduce: async (context) => {
         setPatternStepOutput(context.state, options.id, routerId, context.output);
         await routerSpec.reduce?.(context);
@@ -303,8 +303,8 @@ export function defineRoutingWorkflow<TInput = unknown, TOutput = unknown>(
     const branchId = routeSpec.id ?? `route-${caseId}`;
     routeTargets[caseId] = flow.use(
       branchId,
-      routeSpec.loop,
-      createLoopStepOptions(routeSpec, {
+      routeSpec.directive,
+      createStepOptions(routeSpec, {
         reduce: async (context) => {
           context.state.results["final"] = context.output;
           setPatternStepOutput(context.state, options.id, branchId, context.output);
@@ -321,8 +321,8 @@ export function defineRoutingWorkflow<TInput = unknown, TOutput = unknown>(
       ? undefined
       : flow.use(
           fallbackSpec.id ?? "fallback",
-          fallbackSpec.loop,
-          createLoopStepOptions(fallbackSpec, {
+          fallbackSpec.directive,
+          createStepOptions(fallbackSpec, {
             reduce: async (context) => {
               context.state.results["final"] = context.output;
               setPatternStepOutput(
@@ -360,7 +360,7 @@ export function defineParallelWorkflow<TInput = unknown, TOutput = unknown>(
     throw new Error(`Parallel workflow ${options.id} must declare at least one branch.`);
   }
 
-  return createPatternLoop({
+  return createPatternDirective({
     id: options.id,
     inputSchema: options.input,
     outputSchema: options.output,
@@ -378,8 +378,8 @@ export function defineParallelWorkflow<TInput = unknown, TOutput = unknown>(
               : normalized.input !== undefined
                 ? normalized.input
                 : input;
-          const output = await runNestedLoop({
-            loop: normalized.loop,
+          const output = await runNestedDirective({
+            directive: normalized.directive,
             input: branchInput,
             output: normalized.output,
             runtime: normalized.runtime,
@@ -423,13 +423,13 @@ export function defineOrchestratorWorkersWorkflow<
   const synthesizer =
     options.synthesizer === undefined ? undefined : normalizePatternStep(options.synthesizer);
 
-  return createPatternLoop({
+  return createPatternDirective({
     id: options.id,
     inputSchema: options.input,
     outputSchema: options.output,
     execute: async ({ input, request, execution }) => {
-      const orchestration = await runNestedLoop({
-        loop: orchestrator.loop,
+      const orchestration = await runNestedDirective({
+        directive: orchestrator.directive,
         input,
         output: orchestrator.output,
         runtime: orchestrator.runtime,
@@ -446,8 +446,8 @@ export function defineOrchestratorWorkersWorkflow<
             });
       const workerOutputs = await Promise.all(
         workerInputs.map(async (workerInput) => {
-          const output = await runNestedLoop({
-            loop: worker.loop,
+          const output = await runNestedDirective({
+            directive: worker.directive,
             input: workerInput,
             output: worker.output,
             runtime: worker.runtime,
@@ -473,8 +473,8 @@ export function defineOrchestratorWorkersWorkflow<
       };
 
       if (synthesizer !== undefined) {
-        return await runNestedLoop({
-          loop: synthesizer.loop,
+        return await runNestedDirective({
+          directive: synthesizer.directive,
           input: synthesisInput,
           output: synthesizer.output,
           runtime: synthesizer.runtime,
@@ -520,7 +520,7 @@ export function defineEvaluatorOptimizerWorkflow<
     throw new Error(`Evaluator optimizer workflow ${options.id} requires maxIterations >= 1.`);
   }
 
-  return createPatternLoop({
+  return createPatternDirective({
     id: options.id,
     inputSchema: options.input,
     outputSchema: options.output,
@@ -545,8 +545,8 @@ export function defineEvaluatorOptimizerWorkflow<
                 evaluation: previousEvaluation,
                 state: execution.state,
               });
-        const attempt = await runNestedLoop({
-          loop: optimizer.loop,
+        const attempt = await runNestedDirective({
+          directive: optimizer.directive,
           input: optimizerInput,
           output: optimizer.output,
           runtime: optimizer.runtime,
@@ -562,8 +562,8 @@ export function defineEvaluatorOptimizerWorkflow<
                 iteration,
                 state: execution.state,
               });
-        const evaluation = await runNestedLoop({
-          loop: evaluator.loop,
+        const evaluation = await runNestedDirective({
+          directive: evaluator.directive,
           input: evaluatorInput,
           output: evaluator.output,
           runtime: evaluator.runtime,
@@ -619,28 +619,28 @@ export const patterns = {
   evaluatorOptimizer: defineEvaluatorOptimizerWorkflow,
 };
 
-interface CreatePatternLoopOptions<TInput, TOutput> {
+interface CreatePatternDirectiveOptions<TInput, TOutput> {
   readonly id: string;
   readonly inputSchema?: z.ZodType<TInput> | undefined;
   readonly outputSchema?: z.ZodType<TOutput> | undefined;
   readonly execute: (context: {
     readonly input: TInput;
     readonly request: StartRunRequest<TInput>;
-    readonly execution: LoopExecutionContext;
+    readonly execution: DirectiveExecutionContext;
   }) => MaybePromise<TOutput>;
 }
 
-function createPatternLoop<TInput, TOutput>(
-  options: CreatePatternLoopOptions<TInput, TOutput>,
+function createPatternDirective<TInput, TOutput>(
+  options: CreatePatternDirectiveOptions<TInput, TOutput>,
 ): Directive<TInput, TOutput> {
-  const loop: Directive<TInput, TOutput> = {
+  const directive: Directive<TInput, TOutput> = {
     id: options.id,
     inputSchema: options.inputSchema,
     outputSchema: options.outputSchema,
     async run(request) {
       if (request.execution === undefined) {
-        const { createPragma } = await import("./loop-app.ts");
-        return await createPragma().run(loop, request);
+        const { createPragma } = await import("./pragma-app.ts");
+        return await createPragma().run(directive, request);
       }
 
       const input = options.inputSchema?.parse(request.input) ?? request.input;
@@ -659,16 +659,16 @@ function createPatternLoop<TInput, TOutput>(
     },
   };
 
-  return loop;
+  return directive;
 }
 
-function createLoopStepOptions<TOutput>(
+function createStepOptions<TOutput>(
   step: WorkflowPatternStep<unknown, TOutput>,
   overrides: {
-    readonly input?: LoopStepOptions["input"] | undefined;
-    readonly reduce?: LoopStepReducer<TOutput> | undefined;
+    readonly input?: StepOptions["input"] | undefined;
+    readonly reduce?: StepReducer<TOutput> | undefined;
   } = {},
-): LoopStepOptions<unknown, TOutput> {
+): StepOptions<unknown, TOutput> {
   const input = overrides.input ?? step.input;
   const reduce = overrides.reduce ?? step.reduce;
 
@@ -681,13 +681,13 @@ function createLoopStepOptions<TOutput>(
   };
 }
 
-async function runNestedLoop<TInput, TOutput>(options: {
-  readonly loop: DirectiveDefinition<TInput, TOutput>;
+async function runNestedDirective<TInput, TOutput>(options: {
+  readonly directive: DirectiveDefinition<TInput, TOutput>;
   readonly input: TInput;
   readonly output?: z.ZodType<TOutput> | undefined;
   readonly runtime?: string | undefined;
   readonly request: StartRunRequest<unknown>;
-  readonly execution: LoopExecutionContext;
+  readonly execution: DirectiveExecutionContext;
 }): Promise<TOutput> {
   let request: StartRunRequest<TInput> = {
     input: options.input,
@@ -715,8 +715,8 @@ async function runNestedLoop<TInput, TOutput>(options: {
     };
   }
 
-  const result: RunResult<TOutput> = await options.execution.runLoop(
-    compileLoopDefinition(options.loop),
+  const result: RunResult<TOutput> = await options.execution.runDirective(
+    compileDirectiveDefinition(options.directive),
     request,
   );
   return result.output;
@@ -730,31 +730,31 @@ function normalizeParallelBranch<TInput>(
   }
 
   return {
-    loop: branch,
+    directive: branch,
   };
 }
 
 function isParallelBranch<TInput>(
   branch: WorkflowParallelBranch<TInput> | DirectiveDefinition,
 ): branch is WorkflowParallelBranch<TInput> {
-  return isRecord(branch) && "loop" in branch;
+  return isRecord(branch) && "directive" in branch;
 }
 
 function normalizePatternStep<TInput, TOutput>(
   step: WorkflowPatternStepLike<TInput, TOutput>,
 ): WorkflowPatternStep<TInput, TOutput> {
-  if (isRecord(step) && "loop" in step) {
+  if (isRecord(step) && "directive" in step) {
     return step as WorkflowPatternStep<TInput, TOutput>;
   }
 
   return {
-    loop: step as DirectiveDefinition<TInput, TOutput>,
+    directive: step as DirectiveDefinition<TInput, TOutput>,
   };
 }
 
-function resolveLoopDefinitionId(loop: DirectiveDefinition): string | undefined {
-  if (isRecord(loop) && typeof loop["id"] === "string") {
-    return loop["id"];
+function resolveDirectiveDefinitionId(directive: DirectiveDefinition): string | undefined {
+  if (isRecord(directive) && typeof directive["id"] === "string") {
+    return directive["id"];
   }
 
   return undefined;

@@ -1,6 +1,6 @@
 # Directive 运行组件与扩展
 
-本文面向需要替换默认内存组件、接入远程 sandbox 或规划分布式部署的开发者。基础用法请先阅读 [Directive 使用指南](./loops.md)。
+本文面向需要替换默认内存组件、接入远程 sandbox 或规划分布式部署的开发者。基础用法请先阅读 [Directive 使用指南](./directives.md)。
 
 ## 默认组件
 
@@ -16,7 +16,7 @@ const app = createPragma({
   stateManager: customStateManager,
   sandboxManager: customSandboxManager,
   taskManager: customTaskManager,
-  loopStore: customLoopDefinitionStore,
+  directiveStore: customDirectiveDefinitionStore,
   runtimes: createRuntimeRegistry({
     runtimes: [customRuntime],
     defaultRuntime: "custom-runtime",
@@ -30,7 +30,7 @@ const app = createPragma({
 - `StateManager`：workflow、task、`RunState` 的权威状态源。
 - `SandboxManager`：workflow 和 task 的运行环境边界。
 - `TaskManager`：任务派发、租约、执行和 transition 推进。
-- `LoopDefinitionStore`：保存 workflow run 对应的已编译 Directive 定义。
+- `DirectiveDefinitionStore`：保存 workflow run 对应的已编译 Directive 定义。
 - `RuntimeRegistry`：按 runtime id 解析具体 Runtime Adapter。
 
 通常不需要一次性全部替换。单机开发只需要默认实现；生产部署一般先替换 `StateManager` 和 `Mailbox`，再替换 `SandboxManager` 和 `TaskManager`。
@@ -46,7 +46,7 @@ const customSandboxManager: SandboxManager = {
   async createWorkflowSandbox(request) {
     const sandboxId = await sandboxService.create({
       workflowRunId: request.workflowRunId,
-      loopId: request.loopId,
+      directiveId: request.directiveId,
       input: request.input,
       requestedCapabilities: request.request?.capabilities,
       workspace: request.request?.workspace,
@@ -128,7 +128,7 @@ const customStateManager: StateManager = {
   async createWorkflowRun(request) {
     return await workflowRepo.insert({
       id: request.id,
-      loopId: request.loopId,
+      directiveId: request.directiveId,
       input: request.input,
       state: request.state,
       currentStepIds: [request.startStepId],
@@ -241,7 +241,7 @@ const customMailbox: Mailbox = {
 
 ## 自定义 TaskManager
 
-大多数情况下可以继续使用 `createLocalTaskManager()`，只替换它依赖的 `Mailbox`、`StateManager`、`SandboxManager` 和 `LoopDefinitionStore`。
+大多数情况下可以继续使用 `createLocalTaskManager()`，只替换它依赖的 `Mailbox`、`StateManager`、`SandboxManager` 和 `DirectiveDefinitionStore`。
 
 ```ts
 import { createLocalTaskManager, createPragma } from "@pragma/core";
@@ -251,7 +251,7 @@ const taskManager = createLocalTaskManager({
   stateManager: customStateManager,
   runtimes,
   sandboxManager: customSandboxManager,
-  loopStore: customLoopDefinitionStore,
+  directiveStore: customDirectiveDefinitionStore,
   workerId: process.env.WORKER_ID,
   leaseTtlMs: 60_000,
   heartbeatIntervalMs: 20_000,
@@ -261,7 +261,7 @@ const app = createPragma({
   mailbox: customMailbox,
   stateManager: customStateManager,
   sandboxManager: customSandboxManager,
-  loopStore: customLoopDefinitionStore,
+  directiveStore: customDirectiveDefinitionStore,
   runtimes,
   taskManager,
 });
@@ -314,7 +314,7 @@ Worker Pool
   |
   +--> lease task
   +--> resolve sandbox
-  +--> run step.loop
+  +--> run step.directive
   +--> publish progress and completion
   |
   v

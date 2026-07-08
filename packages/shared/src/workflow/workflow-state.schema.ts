@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const LoopStateSchema = z.object({
+export const RunStateSchema = z.object({
   input: z.unknown(),
   context: z.record(z.string(), z.unknown()).default({}),
   artifacts: z.record(z.string(), z.unknown()).default({}),
@@ -11,7 +11,7 @@ export const LoopStateSchema = z.object({
   private: z.record(z.string(), z.unknown()).default({}),
 });
 
-export const LoopRunStatusSchema = z.enum([
+export const RunStatusSchema = z.enum([
   "queued",
   "running",
   "waiting",
@@ -45,12 +45,12 @@ export const RuntimeSessionRefSchema = z.object({
 
 export const WorkflowRunRecordSchema = z.object({
   id: z.string().min(1),
-  loopId: z.string().min(1),
+  directiveId: z.string().min(1),
   parentWorkflowRunId: z.string().min(1).optional(),
   parentTaskRunId: z.string().min(1).optional(),
-  status: LoopRunStatusSchema,
+  status: RunStatusSchema,
   input: z.unknown(),
-  state: LoopStateSchema,
+  state: RunStateSchema,
   defaultSandbox: SandboxRefSchema,
   currentStepIds: z.array(z.string().min(1)),
   completedStepIds: z.array(z.string().min(1)),
@@ -78,8 +78,8 @@ export const TaskRunRecordSchema = z.object({
   updatedAt: z.string().datetime(),
 });
 
-export type RunState = z.infer<typeof LoopStateSchema>;
-export type RunStatus = z.infer<typeof LoopRunStatusSchema>;
+export type RunState = z.infer<typeof RunStateSchema>;
+export type RunStatus = z.infer<typeof RunStatusSchema>;
 export type TaskRunStatus = z.infer<typeof TaskRunStatusSchema>;
 export type SandboxRef = z.infer<typeof SandboxRefSchema>;
 export type RuntimeSessionRef = z.infer<typeof RuntimeSessionRefSchema>;

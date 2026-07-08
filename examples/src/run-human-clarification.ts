@@ -32,7 +32,7 @@ const AnswerSchema = z.object({
 });
 
 const flow = defineFlow({
-  id: "human-clarification-loop",
+  id: "human-clarification-directive",
   input: z.object({
     requirement: z.string(),
   }),

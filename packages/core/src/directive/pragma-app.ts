@@ -5,12 +5,12 @@ import {
 import type { ExpertAgentRuntimeRegistry } from "../runtime/default-runtime-registry.ts";
 import type { RuntimeAdapter } from "../runtime/runtime-adapter.ts";
 import type { RuntimeRegistry } from "../runtime-registry.ts";
-import { compileLoopDefinition } from "./flow-spec.ts";
-import { createInMemoryLoopDefinitionStore } from "./in-memory-loop-definition-store.ts";
+import { compileDirectiveDefinition } from "./flow-spec.ts";
+import { createInMemoryDirectiveDefinitionStore } from "./in-memory-directive-definition-store.ts";
 import { createInMemoryMailbox } from "./in-memory-mailbox.ts";
 import { createInMemoryStateManager } from "./in-memory-state-manager.ts";
 import { createLocalSandboxManager } from "./local-sandbox-manager.ts";
-import { createLoopRunObserver } from "./loop-run-observer.ts";
+import { createRunObserver } from "./run-observer.ts";
 import { createLocalTaskManager } from "./task-manager.ts";
 import type {
   CompiledDirective,
@@ -25,24 +25,24 @@ import type {
 export function createPragma(options: CreatePragmaOptions = {}): Pragma {
   const mailbox = options.mailbox ?? createInMemoryMailbox();
   const stateManager = options.stateManager ?? createInMemoryStateManager();
-  const loopStore = options.loopStore ?? createInMemoryLoopDefinitionStore();
+  const directiveStore = options.directiveStore ?? createInMemoryDirectiveDefinitionStore();
   const runtimes = options.runtimes ?? createPragmaRuntimeRegistry(options.defaultRuntime);
   const sandboxManager = options.sandboxManager ?? createLocalSandboxManager();
-  const startLoop = async <TInput, TOutput>(
-    loop: DirectiveDefinition<TInput, TOutput>,
+  const startDirective = async <TInput, TOutput>(
+    directive: DirectiveDefinition<TInput, TOutput>,
     request: StartRunRequest<TInput>,
   ) => {
-    const compiledLoop = compileLoop(
-      loop,
+    const compiledDirective = compileDirective(
+      directive,
       request.output as CompiledDirective<TInput, TOutput>["outputSchema"] | undefined,
     );
-    return await taskManager.startRun(compiledLoop, request);
+    return await taskManager.startRun(compiledDirective, request);
   };
-  const runLoop = async <TInput, TOutput>(
-    loop: DirectiveDefinition<TInput, TOutput>,
+  const runDirective = async <TInput, TOutput>(
+    directive: DirectiveDefinition<TInput, TOutput>,
     request: StartRunRequest<TInput>,
   ): Promise<RunResult<TOutput>> => {
-    const handle = await startLoop(loop, request);
+    const handle = await startDirective(directive, request);
     return await handle.result;
   };
   const taskManager =
@@ -52,10 +52,10 @@ export function createPragma(options: CreatePragmaOptions = {}): Pragma {
       stateManager,
       runtimes,
       sandboxManager,
-      loopStore,
-      runLoop,
+      directiveStore,
+      runDirective,
     });
-  const runs = createLoopRunObserver({
+  const runs = createRunObserver({
     mailbox,
     stateManager,
   });
@@ -66,8 +66,8 @@ export function createPragma(options: CreatePragmaOptions = {}): Pragma {
     taskManager,
     runtimes,
     runs,
-    start: startLoop,
-    run: runLoop,
+    start: startDirective,
+    run: runDirective,
   };
 }
 
@@ -132,34 +132,34 @@ function isFullRuntimeRegistry(
   );
 }
 
-function compileLoop<TInput, TOutput>(
-  loop: DirectiveDefinition<TInput, TOutput>,
+function compileDirective<TInput, TOutput>(
+  directive: DirectiveDefinition<TInput, TOutput>,
   output?: CompiledDirective<TInput, TOutput>["outputSchema"] | undefined,
 ): CompiledDirective<TInput, TOutput> {
-  const runnable = compileLoopDefinition(loop);
+  const runnable = compileDirectiveDefinition(directive);
 
-  if (isCompiledLoop(runnable)) {
+  if (isCompiledDirective(runnable)) {
     return runnable;
   }
 
-  return compileSingleStepLoop(runnable, output);
+  return compileSingleStepDirective(runnable, output);
 }
 
-function isCompiledLoop<TInput, TOutput>(
-  loop: Directive<TInput, TOutput>,
-): loop is CompiledDirective<TInput, TOutput> {
-  return "steps" in loop && "startStepId" in loop && "transitions" in loop;
+function isCompiledDirective<TInput, TOutput>(
+  directive: Directive<TInput, TOutput>,
+): directive is CompiledDirective<TInput, TOutput> {
+  return "steps" in directive && "startStepId" in directive && "transitions" in directive;
 }
 
-function compileSingleStepLoop<TInput, TOutput>(
-  loop: Directive<TInput, TOutput>,
+function compileSingleStepDirective<TInput, TOutput>(
+  directive: Directive<TInput, TOutput>,
   output?: CompiledDirective<TInput, TOutput>["outputSchema"] | undefined,
 ): CompiledDirective<TInput, TOutput> {
-  const stepId = loop.id;
-  const outputSchema = output ?? loop.outputSchema;
+  const stepId = directive.id;
+  const outputSchema = output ?? directive.outputSchema;
   const compiled: CompiledDirective<TInput, TOutput> = {
-    id: loop.id,
-    inputSchema: loop.inputSchema,
+    id: directive.id,
+    inputSchema: directive.inputSchema,
     outputSchema,
     resolveOutput: ({ state }) => state.results["final"] as TOutput,
     steps: new Map([
@@ -167,7 +167,7 @@ function compileSingleStepLoop<TInput, TOutput>(
         stepId,
         {
           id: stepId,
-          loop,
+          directive,
           output: outputSchema,
           reduce: ({ state, output }) => {
             state.results["final"] = output;

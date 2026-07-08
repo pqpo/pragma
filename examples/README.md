@@ -122,10 +122,10 @@ pnpm --filter @pragma/examples start:memory
 
 这个示例不依赖模型 key，专门演示：
 
-1. `defineAgent()` 默认加载四类记忆。
+1. 通过 `plugins: [{ entry: memoryPlugin }]` 显式注入四类记忆。
 2. 默认只暴露 `task` 写工具，`experience` / `fact` 不再默认直出工具。
 3. `memory` namespace 默认可写，并承载 summary 与 skill card。
-4. 通过 `memory` 参数关闭 `experience` / `fact` 后，会关闭对应的自动沉淀与 context 投影，而 task 工具和其他类别仍可独立保留。
+4. 通过 memory plugin 的 `config` 关闭 `experience` / `fact` 后，会关闭对应的自动沉淀与 context 投影，而 task 工具和其他类别仍可独立保留。
 
 示例入口是 `src/run-memory-system-example.ts`。
 
@@ -216,26 +216,26 @@ pnpm --filter @pragma/examples start:workspace-context --workspace ./workspace -
 Directive 示例不需要模型 key，全部使用本机 `code` step：
 
 ```bash
-pnpm --filter @pragma/examples start:loop-code
-pnpm --filter @pragma/examples start:loop-route
-pnpm --filter @pragma/examples start:loop-subloop
-pnpm --filter @pragma/examples start:loop-watch
+pnpm --filter @pragma/examples start:directive-code
+pnpm --filter @pragma/examples start:directive-route
+pnpm --filter @pragma/examples start:directive-nested
+pnpm --filter @pragma/examples start:directive-watch
 pnpm --filter @pragma/examples start:agent-delegation
 pnpm --filter @pragma/examples start:workflow-patterns
-pnpm --filter @pragma/examples start:loop-human-clarification
-pnpm --filter @pragma/examples start:loop-human-review-gate
+pnpm --filter @pragma/examples start:human-clarification
+pnpm --filter @pragma/examples start:human-review-gate
 ```
 
-- `run-loop-code.ts`：最小 `defineFlow()` + `defineTask()` + `reduce()`。
-- `run-loop-route.ts`：根据 step 结构化输出字段 `.route("status", ...)`。
-- `run-loop-subloop.ts`：把一个 Directive 作为另一个 Directive 的 subloop step。
-- `run-loop-watch.ts`：用 `app.start()` 非阻塞启动 run，再用 `app.runs.get()`、`app.runs.list()`、`app.runs.getTree()`、`app.runs.watch()` 和 `app.runs.watchOutput()` 查询状态并递归订阅嵌套 Directive 事件。
+- `run-directive-code.ts`：最小 `defineFlow()` + `defineTask()` + `reduce()`。
+- `run-directive-route.ts`：根据 step 结构化输出字段 `.route("status", ...)`。
+- `run-directive-nested.ts`：把一个 Directive 作为另一个 Directive 的 nested directive step。
+- `run-directive-watch.ts`：用 `app.start()` 非阻塞启动 run，再用 `app.runs.get()`、`app.runs.list()`、`app.runs.getTree()`、`app.runs.watch()` 和 `app.runs.watchOutput()` 查询状态并递归订阅嵌套 Directive 事件。
 - `run-agent-delegation.ts`：演示父 `coding-agent` 通过 `launch_agent` 工具委派 `code-explorer-agent`，底层创建 child workflow run，并通过同一个 StateManager 出现在 run tree 中。
 - `run-workflow-patterns.ts`：演示 `patterns.promptChain()`、`patterns.routing()`、`patterns.parallel()`、`patterns.orchestratorWorkers()` 和 `patterns.evaluatorOptimizer()` 五类快捷范式。
-- `run-loop-human-clarification.ts`：演示 `clarifier -> human question -> clarifier` 的多轮需求澄清，Human step 会让 workflow/task 进入 waiting，CLI 回答后恢复。
-- `run-loop-human-review-gate.ts`：演示 `coder -> verify -> human review gate`，CLI 可选择 approve、request changes 或 manual patch，并通过普通 `.route("decision", ...)` 推进或回环。
+- `run-human-clarification.ts`：演示 `clarifier -> human question -> clarifier` 的多轮需求澄清，Human step 会让 workflow/task 进入 waiting，CLI 回答后恢复。
+- `run-human-review-gate.ts`：演示 `coder -> verify -> human review gate`，CLI 可选择 approve、request changes 或 manual patch，并通过普通 `.route("decision", ...)` 推进或回环。
 
-Human-in-the-loop 示例是平台协议的最小本地验证路径，不依赖模型 key。它们展示的是 `defineHumanTask()`、`human.requested` 事件和 `taskManager.respondToHumanInteraction()`，后续 Web、Server 或 Desktop UI 应接入同一套协议。
+Human Interaction 示例是平台协议的最小本地验证路径，不依赖模型 key。它们展示的是 `defineHumanTask()`、`human.requested` 事件和 `taskManager.respondToHumanInteraction()`，后续 Web、Server 或 Desktop UI 应接入同一套协议。
 
 Agent 委派示例需要模型 key。它展示的是 ExpertAgent 之间通过 `launch_agent` 互相委派任务，而不是 runtime 私有子会话。每次委派都会创建新的 child workflow run；`--session-policy reuse_by_agent` 只复用底层 runtime conversation/session ref，不复用 workflow run：
 

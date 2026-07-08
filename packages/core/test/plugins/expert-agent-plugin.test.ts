@@ -173,7 +173,6 @@ describe("ExpertAgent plugins", () => {
       version: "0.0.0",
       scope: "workspace",
       workspace,
-      memory: false,
       contextSystem,
       plugins: [
         { entry: createContextPluginEntry() },
@@ -402,7 +401,6 @@ describe("ExpertAgent plugins", () => {
           hookEvents.push("host");
         },
       },
-      memory: false,
       plugins: [{ entry: createExtensibilityPluginEntry(hookEvents) }],
     });
 

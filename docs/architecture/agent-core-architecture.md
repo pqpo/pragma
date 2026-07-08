@@ -160,31 +160,31 @@ Flow 编排层负责把多个可执行单元组织成可执行流程。这里的
 
 ```mermaid
 flowchart TB
-  loop["Directive"]
-  loop --> expertAgent["ExpertAgent"]
-  loop --> taskLoop["Task Directive"]
-  loop --> compiledLoopRef["CompiledDirective"]
-  loop --> customLoop["任何实现 Directive 接口的对象"]
+  directive["Directive"]
+  directive --> expertAgent["ExpertAgent"]
+  directive --> taskDirective["Task Directive"]
+  directive --> compiledDirectiveRef["CompiledDirective"]
+  directive --> customDirective["任何实现 Directive 接口的对象"]
 
   flowSpec["FlowSpec"]
-  flowSpec --> use["use(id, loop, options)"]
+  flowSpec --> use["use(id, directive, options)"]
   flowSpec --> compose["compose(builder)"]
   flowSpec --> compile["compile()<br/>advanced validation / registration"]
 
-  compiledLoop["CompiledDirective"]
-  compiledLoop --> steps["steps"]
-  compiledLoop --> transitions["transitions"]
-  compiledLoop --> limits["limits"]
-  compiledLoop --> resultResolver["result resolver"]
+  compiledDirective["CompiledDirective"]
+  compiledDirective --> steps["steps"]
+  compiledDirective --> transitions["transitions"]
+  compiledDirective --> limits["limits"]
+  compiledDirective --> resultResolver["result resolver"]
 ```
 
 Flow 的关键设计是：步骤只持有 `Directive`，不再按 agent、task、subflow 建立不同分支。
 
 ```mermaid
 flowchart TB
-  step["LoopStepDefinition"]
+  step["StepDefinition"]
   step --> id["id"]
-  step --> loop["loop"]
+  step --> directive["directive"]
   step --> input["input resolver"]
   step --> output["output schema"]
   step --> reduce["reduce"]
@@ -205,7 +205,7 @@ flowchart TB
 
 ### 运行协调层
 
-运行协调层是 Directive 执行时最重要的边界。它由 `TaskManager`、`StateManager`、`Mailbox`、`SandboxManager` 和 `LoopDefinitionStore` 协作完成。
+运行协调层是 Directive 执行时最重要的边界。它由 `TaskManager`、`StateManager`、`Mailbox`、`SandboxManager` 和 `DirectiveDefinitionStore` 协作完成。
 
 ```mermaid
 flowchart TB
@@ -214,13 +214,13 @@ flowchart TB
   app --> taskManager["TaskManager"]
   taskManager --> dispatch["分发 task"]
   taskManager --> lease["获取 lease"]
-  taskManager --> execute["执行 step.loop.run()"]
+  taskManager --> execute["执行 step.directive.run()"]
   taskManager --> transition["推进 transition"]
 
   app --> stateManager["StateManager"]
   stateManager --> workflowState["workflow / task 权威状态"]
   stateManager --> humanState["human interaction 权威状态"]
-  stateManager --> loopState["RunState"]
+  stateManager --> runState["RunState"]
   stateManager --> revision["revision"]
   stateManager --> idempotency["幂等事件应用"]
 
@@ -233,8 +233,8 @@ flowchart TB
   sandboxManager --> taskSandbox["task sandbox"]
   sandboxManager --> workspaceCapability["workspace capability"]
 
-  app --> loopDefinitionStore["LoopDefinitionStore"]
-  loopDefinitionStore --> binding["workflowRunId 与 CompiledDirective 绑定"]
+  app --> directiveDefinitionStore["DirectiveDefinitionStore"]
+  directiveDefinitionStore --> binding["workflowRunId 与 CompiledDirective 绑定"]
 ```
 
 职责边界：
@@ -246,7 +246,7 @@ flowchart TB
 | `Mailbox`             | command/event 发布订阅、消息过滤、通信协议承载      | 决定状态变化、执行任务        |
 | `Task Memory`         | 共享/私有工作记忆、handoff、协作留言板              | 保存权威状态、替代消息总线    |
 | `SandboxManager`      | sandbox 生命周期、workspace、capability             | 编排 transition、保存业务状态 |
-| `LoopDefinitionStore` | 保存运行所需的已编译 Directive 定义                      | 执行步骤、修改状态            |
+| `DirectiveDefinitionStore` | 保存运行所需的已编译 Directive 定义                      | 执行步骤、修改状态            |
 
 默认本地组装：
 
@@ -255,7 +255,7 @@ flowchart TB
   create["createPragma()"]
   create --> mailbox["InMemoryMailbox"]
   create --> state["InMemoryStateManager"]
-  create --> store["InMemoryLoopDefinitionStore"]
+  create --> store["InMemoryDirectiveDefinitionStore"]
   create --> sandbox["LocalSandboxManager"]
   create --> task["LocalTaskManager"]
   create --> runtime["RuntimeRegistry"]
@@ -293,8 +293,8 @@ Agent 会话是 Runtime 层概念。它适合单个专家任务，也可以由 F
 
 ```mermaid
 flowchart TB
-  run["Pragma.run(loop, request)"]
-  compile["compileLoop()"]
+  run["Pragma.run(directive, request)"]
+  compile["compileDirective()"]
   createSandbox["createWorkflowSandbox()"]
   createWorkflow["createWorkflowRun()"]
   workflowStarted["publish(workflow.started)"]
@@ -303,7 +303,7 @@ flowchart TB
   taskDispatch["publish(task.dispatch)"]
   lease["leaseTask()"]
   resolveSandbox["resolveTaskSandbox()"]
-  stepRun["step.loop.run()<br/>Agent Runtime Session<br/>Task handler<br/>nested CompiledDirective<br/>Human Operator Step"]
+  stepRun["step.directive.run()<br/>Agent Runtime Session<br/>Task handler<br/>nested CompiledDirective<br/>Human Operator Step"]
   taskResult["markTaskSucceeded()<br/>or markTaskFailed()"]
   taskEvent["publish(task completed<br/>or task failed)"]
   applyTaskEvent["applyTaskEvent()"]
@@ -317,9 +317,9 @@ flowchart TB
 
 这个流程中，`TaskManager` 可以被替换为远程 worker 调度器，`StateManager` 可以被替换为数据库实现，`Mailbox` 可以被替换为队列或事件总线，`SandboxManager` 可以被替换为容器、VM、Kubernetes Job 或 Desktop 本地工作区。
 
-### Human-in-the-loop 执行流程
+### Human Interaction 执行流程
 
-Human-in-the-loop 是 Directive 层的一等能力，不是某个 Runtime 的私有回调。需求澄清、人工审批、编码 review gate 和手工介入都统一建模为 Human Interaction。
+Human Interaction 是 Directive 层的一等能力，不是某个 Runtime 的私有回调。需求澄清、人工审批、编码 review gate 和手工介入都统一建模为 Human Interaction。
 
 ```mermaid
 flowchart TB
@@ -352,11 +352,11 @@ Directive 运行状态来自 `@pragma/shared`，Core 只通过接口读写。
 flowchart TB
   workflow["WorkflowRunRecord"]
   workflow --> workflowId["id"]
-  workflow --> workflowLoopId["loopId"]
+  workflow --> workflowDirectiveId["directiveId"]
   workflow --> workflowStatus["status"]
   workflow --> currentStepIds["currentStepIds"]
   workflow --> completedStepIds["completedStepIds"]
-  workflow --> loopState["state: RunState"]
+  workflow --> runState["state: RunState"]
   workflow --> defaultSandbox["defaultSandbox"]
   workflow --> workflowRevision["revision"]
 
@@ -467,7 +467,7 @@ Core 当前默认本地实现可以平滑演进到分布式部署。推荐拆分
 flowchart TB
   api["API Server<br/>创建 workflow run<br/>校验用户、租户、预算权限<br/>写入 StateManager<br/>发布 Mailbox command"]
   mailbox["Reliable Mailbox / Queue"]
-  worker["Worker Pool<br/>lease task<br/>resolve sandbox<br/>execute step.loop.run()<br/>stream progress<br/>publish completion event"]
+  worker["Worker Pool<br/>lease task<br/>resolve sandbox<br/>execute step.directive.run()<br/>stream progress<br/>publish completion event"]
   state["State Store<br/>workflow/task state<br/>revision<br/>idempotency<br/>audit trail"]
 
   api --> mailbox --> worker --> state
@@ -481,7 +481,7 @@ flowchart TB
 | `InMemoryMailbox`             | Redis Streams、SQS、Kafka、NATS、RabbitMQ 或内部事件总线           |
 | `LocalTaskManager`            | 多 worker 调度器、远程执行 worker、Kubernetes worker               |
 | `LocalSandboxManager`         | 容器、VM、Kubernetes、远程沙箱、Desktop bridge                     |
-| `InMemoryLoopDefinitionStore` | 数据库、对象存储、版本化 workflow definition store                 |
+| `InMemoryDirectiveDefinitionStore` | 数据库、对象存储、版本化 workflow definition store                 |
 | 默认 `RuntimeRegistry`        | 租户级、区域级或能力感知 Runtime Registry                          |
 
 分布式实现必须保留以下语义：

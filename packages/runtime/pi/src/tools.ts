@@ -8,7 +8,7 @@ import type {
   ExpertAgentToolApproval,
   ExpertAgentToolCallResult,
   ExpertAgentRunContext,
-  LoopExecutionContext,
+  DirectiveExecutionContext,
   ResolvedTool,
   ResolvedToolSet,
 } from "@pragma/core";
@@ -33,7 +33,7 @@ export function createResolvedPiTools(options: {
   readonly streamState: PiRuntimeStreamState;
   readonly lifecycle: AgentLifecycle<ExpertAgentRunContext>;
   readonly context?: ExpertAgentRunContext | undefined;
-  readonly workflowExecution?: LoopExecutionContext | undefined;
+  readonly workflowExecution?: DirectiveExecutionContext | undefined;
   readonly humanInteractionHandler?: ExpertAgentHumanInteractionHandler | undefined;
 }): ResolvedToolSet<ToolDefinition> {
   const contextTools = options.agent.createDefaultTools({
@@ -133,7 +133,7 @@ function createPiManagedTools(
   streamState: PiRuntimeStreamState,
   humanInteractionHandler: ExpertAgentHumanInteractionHandler | undefined,
   runContext: ExpertAgentRunContext | undefined,
-  workflowExecution: LoopExecutionContext | undefined,
+  workflowExecution: DirectiveExecutionContext | undefined,
 ): ToolDefinition[] {
   return tools.map((tool) => ({
     name: tool.name,

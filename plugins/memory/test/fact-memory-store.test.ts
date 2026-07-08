@@ -19,10 +19,10 @@ describe("file-system FactMemoryStore", () => {
         id: "fact-1",
         type: "fact",
         scope: "workspace",
-        statement: "@pragma/core loop code lives under packages/core/src/loop.",
+        statement: "@pragma/core directive code lives under packages/core/src/directive.",
         confidence: "high",
         observedAt: "2026-07-06T00:00:00.000Z",
-        tags: ["codebase", "loop"],
+        tags: ["codebase", "directive"],
         provenance: {
           createdAt: "2026-07-06T00:00:00.000Z",
           updatedAt: "2026-07-06T00:00:00.000Z",
@@ -65,7 +65,7 @@ describe("file-system FactMemoryStore", () => {
         id: "fact-1",
         type: "fact",
         scope: "workspace",
-        statement: "Old loop path.",
+        statement: "Old directive path.",
         confidence: "verified",
         observedAt: "2026-07-05T00:00:00.000Z",
         supersededBy: { type: "fact", id: "fact-2" },
@@ -79,7 +79,7 @@ describe("file-system FactMemoryStore", () => {
         id: "fact-2",
         type: "fact",
         scope: "workspace",
-        statement: "@pragma/core loop code lives under packages/core/src/loop.",
+        statement: "@pragma/core directive code lives under packages/core/src/directive.",
         confidence: "verified",
         observedAt: "2026-07-06T00:00:00.000Z",
         verifiedAt: "2026-07-06T00:00:00.000Z",
@@ -92,7 +92,7 @@ describe("file-system FactMemoryStore", () => {
 
     const retrieved = await store.retrieveForRuntime({
       agentId: "agent-a",
-      query: "packages/core/src/loop",
+      query: "packages/core/src/directive",
     });
 
     expect(retrieved).toMatchObject({
@@ -108,7 +108,7 @@ describe("file-system FactMemoryStore", () => {
         id: "fact-1",
         type: "fact",
         scope: "workspace",
-        statement: "Loop code path A",
+        statement: "Directive code path A",
         confidence: "high",
         observedAt: "2026-07-06T00:00:00.000Z",
         conflictsWith: [{ type: "fact", id: "fact-2" }],
@@ -122,7 +122,7 @@ describe("file-system FactMemoryStore", () => {
         id: "fact-2",
         type: "fact",
         scope: "workspace",
-        statement: "Loop code path B",
+        statement: "Directive code path B",
         confidence: "high",
         observedAt: "2026-07-06T01:00:00.000Z",
         conflictsWith: [{ type: "fact", id: "fact-1" }],
@@ -153,7 +153,7 @@ describe("file-system FactMemoryStore", () => {
         id: "fact-1",
         type: "fact",
         scope: "workspace",
-        statement: "packages/core/src/loop is a candidate path.",
+        statement: "packages/core/src/directive is a candidate path.",
         confidence: "high",
         observedAt: "2026-07-06T00:00:00.000Z",
         provenance: {
@@ -166,7 +166,7 @@ describe("file-system FactMemoryStore", () => {
         id: "fact-2",
         type: "fact",
         scope: "workspace",
-        statement: "packages/core/src/loop is the verified path.",
+        statement: "packages/core/src/directive is the verified path.",
         confidence: "verified",
         observedAt: "2026-07-06T01:00:00.000Z",
         verifiedAt: "2026-07-06T01:00:00.000Z",
@@ -179,7 +179,7 @@ describe("file-system FactMemoryStore", () => {
 
     const listed = await store.list({});
     const searched = await store.search({
-      query: "packages/core/src/loop",
+      query: "packages/core/src/directive",
     });
 
     expect(listed).toMatchObject({

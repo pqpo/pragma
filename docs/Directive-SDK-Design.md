@@ -7,7 +7,7 @@ Everything is a Directive.
 Agent is the smallest Directive.
 Workflow is a Composable Directive.
 Runtime executes Steps.
-Channel connects Loops.
+Channel connects Directives.
 ```
 
 ---
@@ -145,8 +145,8 @@ const app = createPragma();
 运行发生在 Directive 层时，Directive 负责选择 Runtime、托管 State、调度步骤。未指定 Runtime 时使用 `default`：
 
 ```ts
-const loop = new FlowSpec({
-  id: "coding-loop",
+const directive = new FlowSpec({
+  id: "coding-directive",
   inputSchema: z.object({
     requirement: z.string(),
     repo: z.string(),
@@ -166,7 +166,7 @@ flow.agent("coder", coder, {
   }),
 });
 
-const result = await app.run(loop, {
+const result = await app.run(directive, {
   input: {
     requirement: "实现 GitHub 登录",
     repo: "github.com/acme/app",
@@ -197,11 +197,11 @@ flow.code(
 同一个 Agent 在不同执行中可以切换 Runtime：
 
 ```ts
-await app.run(loop, {
+await app.run(directive, {
   input,
 });
 
-await app.run(loop, {
+await app.run(directive, {
   input,
   runtime: "codex-local",
 });
@@ -210,7 +210,7 @@ await app.run(loop, {
 也可以在一次运行内按步骤覆盖：
 
 ```ts
-await app.run(loop, {
+await app.run(directive, {
   input,
   runtimes: {
     coder: "claude-code-local",
@@ -227,11 +227,11 @@ Agent Protocol    = normalized to ExpertAgent-compatible declaration
 Agent Runtime     = not bound at declaration time
 Agent Self Check  = agent.run(input, { runtime?, runtimes? })
 Default Runtime   = application registry selects a concrete runtime
-Directive Default      = app.run(loop) uses default runtime unless overridden
-Step Runtime      = step option runtime overrides loop default
-Agent Input       = string by default, schema at call/step/loop layer
-Agent Output      = string by default, schema at call/step/loop layer
-Runtime Target    = agent | code | subloop | operator
+Directive Default      = app.run(directive) uses default runtime unless overridden
+Step Runtime      = step option runtime overrides directive default
+Agent Input       = string by default, schema at call/step/directive layer
+Agent Output      = string by default, schema at call/step/directive layer
+Runtime Target    = agent | code | nested directive | operator
 ```
 
 `defineAgent()` 是主 API；`agent()` 可以作为更短的别名，但不建议在文档里主推，避免和 `flow.agent(...)` 这个“添加 Agent 步骤”的 API 混淆。
@@ -246,7 +246,7 @@ Directive 负责定义整体输入输出协议。Agent 可以是通用能力，�
 
 ```ts
 const flow = defineFlow({
-  id: "coding-loop",
+  id: "coding-directive",
 
   input: z.object({
     requirement: z.string(),
@@ -262,7 +262,7 @@ const flow = defineFlow({
 });
 ```
 
-`defineFlow()` 是推荐的用户侧入口，返回可继续声明步骤和 flow 的 builder。底层可以归一化为 `FlowSpec` / `LoopGraph`，但用户不需要直接维护图结构。
+`defineFlow()` 是推荐的用户侧入口，返回可继续声明步骤和 flow 的 builder。底层可以归一化为 `FlowSpec` / `DirectiveGraph`，但用户不需要直接维护图结构。
 
 ---
 
@@ -334,7 +334,7 @@ ${JSON.stringify(state.results.test)}
 });
 ```
 
-步骤不一定是 Agent，也可以是一段代码、一个 Operator、一个 SubLoop 或一个外部任务。
+步骤不一定是 Agent，也可以是一段代码、一个 Operator、一个 Nested Directive 或一个外部任务。
 
 ```ts
 const install = flow.code(
@@ -386,7 +386,7 @@ app.run(...).runtimes[stepId]
 
 ```ts
 const flow = defineFlow({
-  id: "coding-loop",
+  id: "coding-directive",
   input: CodingInputSchema,
   output: CodingOutputSchema,
 });
@@ -406,7 +406,7 @@ const reviewer = flow.agent("reviewer", reviewerAgent, {
   }),
 });
 
-const codingLoop = flow
+const codingDirective = flow
   .compose(({ start, step, end }) => {
     start(planner).next(coder).next(tester).route("status", {
       passed: reviewer,
@@ -528,7 +528,7 @@ flow.compose(({ start, step, end, fail, retry }) => {
 });
 ```
 
-`limit()` 是节点级策略，`retry()` 是边级策略。两者都应被编译进 `LoopGraph` 的 policy，而不是隐藏在 Runtime 里。
+`limit()` 是节点级策略，`retry()` 是边级策略。两者都应被编译进 `DirectiveGraph` 的 policy，而不是隐藏在 Runtime 里。
 
 `compile()` 对循环还需要校验：
 
@@ -544,7 +544,7 @@ defineFlow(...)
   -> builder
   -> compile()
   -> CompiledDirective
-  -> app.run(compiledLoop, input)
+  -> app.run(compiledDirective, input)
 ```
 
 `compile()` 是 Directive DSL 的验证边界。它至少需要检查：
@@ -564,24 +564,24 @@ defineFlow(...)
 # 5. 内置 Operators
 
 ```ts
-loop.parallel();
-loop.route();
-loop.handoff();
-loop.retry();
-loop.reflect();
-loop.vote();
-loop.merge();
-loop.guard();
-loop.approve();
-loop.checkpoint();
-loop.rollback();
-loop.subloop();
+directive.parallel();
+directive.route();
+directive.handoff();
+directive.retry();
+directive.reflect();
+directive.vote();
+directive.merge();
+directive.guard();
+directive.approve();
+directive.checkpoint();
+directive.rollback();
+directive.nested directive();
 ```
 
 ## 多模型并行
 
 ```ts
-const plans = loop.parallel("multi-model-plan", [
+const plans = directive.parallel("multi-model-plan", [
   flow.agent("claude", claudePlanner),
   flow.agent("gpt", gptPlanner),
   flow.agent("gemini", geminiPlanner),
@@ -602,7 +602,7 @@ flow.compose(({ start, step }) => {
 ## 路由模式
 
 ```ts
-loop.route("task-router", {
+directive.route("task-router", {
   by: ({ state }) => state.input.taskType,
 
   routes: {
@@ -617,7 +617,7 @@ loop.route("task-router", {
 ## 转交模式
 
 ```ts
-loop.handoff("expert-handoff", {
+directive.handoff("expert-handoff", {
   from: generalAgent,
   to: ({ state }) => state.requiredExpert,
 });
@@ -626,7 +626,7 @@ loop.handoff("expert-handoff", {
 ## 人工审批
 
 ```ts
-const approve = loop.approve("human-review");
+const approve = directive.approve("human-review");
 
 flow.compose(({ start }) => {
   start(planner).next(approve).route("decision", {
@@ -638,15 +638,15 @@ flow.compose(({ start }) => {
 
 ---
 
-# 6. SubLoop
+# 6. Nested Directive
 
 ```ts
-const deliveryLoop = new FlowSpec({...});
+const deliveryDirective = new FlowSpec({...});
 
-deliveryLoop.subloop("requirement", requirementLoop);
-deliveryLoop.subloop("design", designLoop);
-deliveryLoop.subloop("coding", codingLoop);
-deliveryLoop.subloop("release", releaseLoop);
+deliveryDirective.nested directive("requirement", requirementDirective);
+deliveryDirective.nested directive("design", designDirective);
+deliveryDirective.nested directive("coding", codingDirective);
+deliveryDirective.nested directive("release", releaseDirective);
 ```
 
 ---
@@ -659,7 +659,7 @@ Runtime 是 Directive 步骤的通用执行环境，不只服务 Agent。
 
 - Agent 步骤，例如 PI agent、Claude Code、Codex、自研 Agent。
 - Code 步骤，例如 Node sandbox、remote container、workflow runner。
-- SubLoop 步骤，例如把另一个 Directive 作为子任务执行。
+- Nested Directive 步骤，例如把另一个 Directive 作为子任务执行。
 - Operator 步骤，例如 parallel、route、retry、guard、approve。
 
 Runtime 当前应分成“核心协议”和“具体实现”两层。
@@ -698,21 +698,21 @@ type RuntimeTarget =
       handler: TaskHandler;
     }
   | {
-      type: "subloop";
-      loop: FlowSpec;
+      type: "nested directive";
+      directive: FlowSpec;
     }
   | {
       type: "operator";
-      operator: LoopOperator;
+      operator: DirectiveOperator;
     };
 
 type RuntimeInvocation<TInput = unknown, TOutput = unknown> = {
   runId: string;
   stepId: string;
-  loopId: string;
+  directiveId: string;
   target: RuntimeTarget;
   input: TInput;
-  state: LoopStateSnapshot;
+  state: DirectiveStateSnapshot;
   context: RuntimeContext;
   outputSchema?: z.ZodType<TOutput>;
   signal?: AbortSignal;
@@ -769,13 +769,13 @@ const runtimes = createRuntimeRegistry();
 ```ts
 const app = createPragma();
 
-await app.run("coding-loop", input);
+await app.run("coding-directive", input);
 ```
 
 步骤级覆盖 Runtime：
 
 ```ts
-const loop = new FlowSpec({ id: "coding-loop" });
+const directive = new FlowSpec({ id: "coding-directive" });
 
 flow.agent("planner", plannerAgent);
 
@@ -791,7 +791,7 @@ flow.code("test", runTests, {
 运行级覆盖 Runtime：
 
 ```ts
-await app.run(loop, {
+await app.run(directive, {
   input,
   runtimes: {
     coder: "codex-local",
@@ -861,7 +861,7 @@ createPragma()
 | `TaskManager`    | 创建 run、读取 `CompiledDirective`、判断可执行节点、处理 transition、为节点创建 task run、租约、重试、取消、超时、把任务派发给 Runtime | 直接修改 Directive State      |
 | `Mailbox`        | 传递 task command、task event、workflow event、ack、heartbeat                                                                     | 判断下一步该执行哪个节点 |
 | `StateManager`   | 持久化 workflow run、task run、state snapshot、step output、revision、事件应用结果                                                | 做消息投递               |
-| `RuntimeAdapter` | 执行具体 agent/code/subloop/operator 并产生流式事件和结果                                                                         | 直接修改 Directive State      |
+| `RuntimeAdapter` | 执行具体 agent/code/nested directive/operator 并产生流式事件和结果                                                                         | 直接修改 Directive State      |
 
 `TaskManager` 内部可以依赖一个执行环境接口，用于获取 workspace、session、权限和未来 sandbox，但它不作为 Directive 执行层之外的独立 manager 暴露。
 
@@ -870,7 +870,7 @@ createPragma()
 ```text
 InMemoryMailbox
 InMemoryStateManager
-InMemoryLoopDefinitionStore
+InMemoryDirectiveDefinitionStore
 LocalSandboxManager
 LocalTaskManager
 RuntimeRegistry
@@ -881,7 +881,7 @@ RuntimeRegistry
 ## 8.2 执行流程
 
 ```text
-app.run(compiledLoop, input)
+app.run(compiledDirective, input)
   -> TaskManager.startRun()
   -> SandboxManager.createWorkflowSandbox()
   -> StateManager.createWorkflowRun(defaultSandbox)
@@ -901,7 +901,7 @@ app.run(compiledLoop, input)
 关键原则：
 
 - 每个 Directive 节点执行一次都生成一个独立 `taskRunId`，即使是同一个 `stepId` 因回边被多次访问，也必须是不同 task run。
-- Agent 任务、Code 任务、SubLoop 任务、Operator 任务都走同一套 task dispatch / task result 协议。
+- Agent 任务、Code 任务、Nested Directive 任务、Operator 任务都走同一套 task dispatch / task result 协议。
 - Runtime 不直接调用 `next()`；Runtime 只返回当前任务发生的事件和结果。
 - `reduce()` 只能由 `TaskManager` 协调 `StateManager` 在 task 完成后执行，不能由 Runtime 或 Agent 直接修改共享 State。
 - TaskManager 是否进入下一个节点，只由 `CompiledDirective`、当前 State、任务结果和 policy 决定。
@@ -968,13 +968,13 @@ sandbox.released
 type TaskDispatchPayload = {
   taskRunId: string;
   workflowRunId: string;
-  loopId: string;
+  directiveId: string;
   stepId: string;
   visit: number;
   target: RuntimeTarget;
   input: unknown;
   outputSchemaRef?: string;
-  stateSnapshot: LoopStateSnapshot;
+  stateSnapshot: DirectiveStateSnapshot;
   runtime: {
     requestedId?: string;
     resolvedId: string;
@@ -1066,11 +1066,11 @@ reduce: ({ state, output }) => {
 执行时应被理解为：
 
 ```text
-StateManager 读取当前 LoopStateSnapshot
+StateManager 读取当前 DirectiveStateSnapshot
   -> 创建可变 draft state
   -> TaskManager 调用 step.reduce({ state: draft, output })
   -> StateManager 校验并提交 draft
-  -> 生成新的 LoopStateSnapshot 和 revision
+  -> 生成新的 DirectiveStateSnapshot 和 revision
 ```
 
 也就是说，`reduce()` 是用户侧的状态变更声明；`StateManager` 负责把这次变更变成可持久化、可恢复、可审计、可并发保护的新状态版本。
@@ -1086,7 +1086,7 @@ interface StateManager {
   applyTaskEvent(message: MailboxMessage): Promise<StateTransitionResult>;
   applyWorkflowEvent(message: MailboxMessage): Promise<StateTransitionResult>;
 
-  applyStepReduction(request: ApplyStepReductionRequest): Promise<LoopStateSnapshot>;
+  applyStepReduction(request: ApplyStepReductionRequest): Promise<DirectiveStateSnapshot>;
 
   listReadyTransitions(workflowRunId: string): Promise<readonly ReadyTransition[]>;
 }
@@ -1106,10 +1106,10 @@ type ApplyStepReductionRequest = {
 ```ts
 type WorkflowRunRecord = {
   id: string;
-  loopId: string;
+  directiveId: string;
   status: "queued" | "running" | "waiting" | "succeeded" | "failed" | "cancelled";
   input: unknown;
-  state: LoopStateSnapshot;
+  state: DirectiveStateSnapshot;
   defaultSandbox: SandboxRef;
   currentStepIds: readonly string[];
   completedStepIds: readonly string[];
@@ -1150,13 +1150,13 @@ type TaskRunRecord = {
 1. 校验 message 尚未被应用。
 2. 校验 task 当前状态允许完成。
 3. 校验 output schema。
-4. 基于当前 `LoopStateSnapshot` 创建 reducer draft。
+4. 基于当前 `DirectiveStateSnapshot` 创建 reducer draft。
 5. 由 `TaskManager` 调用该 step 的 `reduce({ state: draft, output })`。
-6. `StateManager` 提交 draft，生成新的 `LoopStateSnapshot` 和 revision。
+6. `StateManager` 提交 draft，生成新的 `DirectiveStateSnapshot` 和 revision。
 7. 写入 task output、workflow state、revision 和审计事件。
 8. 返回需要 TaskManager 继续评估的 transition hints。
 
-`LoopStateSnapshot` 必须是序列化后的不可变快照。Runtime 拿到 snapshot 后可以读取，但不能持有可变引用。
+`DirectiveStateSnapshot` 必须是序列化后的不可变快照。Runtime 拿到 snapshot 后可以读取，但不能持有可变引用。
 
 # 9. TaskManager
 
@@ -1165,7 +1165,7 @@ TaskManager 负责从 `CompiledDirective` 和 State 中推导下一步，也负�
 ```ts
 interface TaskManager {
   startRun<TInput>(
-    loop: CompiledDirective,
+    directive: CompiledDirective,
     request: StartRunRequest<TInput>,
   ): Promise<RunHandle>;
 
@@ -1188,7 +1188,7 @@ interface TaskManager {
 - 函数 route；
 - parallel / merge；
 - retry 和 limit；
-- subloop 完成后回到父 task；
+- nested directive 完成后回到父 task；
 - end / fail terminal；
 - 外部取消、超时和人工审批等待。
 
@@ -1302,10 +1302,10 @@ RemoteRunnerSandboxManager   self-hosted runner
 
 这样 `TaskManager` 的生命周期、租约、重试、Mailbox 协议都不需要改变。
 
-SubLoop 默认继承父 task 的 sandbox，但可以显式覆盖：
+Nested Directive 默认继承父 task 的 sandbox，但可以显式覆盖：
 
 ```ts
-loop.subloop("coding", codingLoop, {
+directive.nested directive("coding", codingDirective, {
   sandbox: {
     strategy: { mode: "reuse-workflow", key: "source-repo" },
   },
@@ -1327,13 +1327,13 @@ createPragma()
 目录建议：
 
 ```text
-packages/shared/src/loop/
+packages/shared/src/workflow/
   mailbox.schema.ts        跨进程消息 envelope 和 payload schema
   workflow-state.schema.ts workflow/task 状态 schema
 
-packages/core/src/loop/
+packages/core/src/directive/
   flow-spec.ts
-  compiled-loop.ts
+  compiled-directive.ts
   task-manager.ts
   task-execution-environment.ts
   state-manager.ts
@@ -1455,9 +1455,9 @@ Patterns.supervisorWorkers();
 # 15. 发布与调用
 
 ```ts
-await app.publish(codingLoop);
+await app.publish(codingDirective);
 
-const result = await client.loop("coding-loop").run({
+const result = await client.directive("coding-directive").run({
   requirement: "...",
 });
 ```
@@ -1465,7 +1465,7 @@ const result = await client.loop("coding-loop").run({
 Directive 也可以作为另一个 Directive 的步骤：
 
 ```ts
-deliveryLoop.subloop("coding", client.loop("coding-loop"));
+deliveryDirective.nested directive("coding", client.directive("coding-directive"));
 ```
 
 ---
@@ -1481,7 +1481,7 @@ RuntimeAdapter
 channel()
 Patterns.*
 createPragma()
-client.loop()
+client.directive()
 ```
 
 ---

@@ -510,7 +510,6 @@ async function createTestAgent(
     version: "0.0.0",
     scope: "test",
     workspace: await mkdtemp(join(tmpdir(), "pragma-codex-runtime-test-")),
-    memory: false,
     ...(options.contextSystem === undefined ? {} : { contextSystem: options.contextSystem }),
     ...(options.mcp === undefined ? {} : { mcp: options.mcp }),
   });

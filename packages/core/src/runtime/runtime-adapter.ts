@@ -10,7 +10,7 @@ import type { RunState, SessionState } from "./agent-lifecycle.ts";
 import type { ExpertAgentRunContext } from "./run-context.ts";
 import type { RuntimeStreamEvent } from "./stream-events.ts";
 import type { ExpertAgentHumanInteractionHandler } from "../tools/managed-tool.ts";
-import type { LoopExecutionContext } from "../loop/types.ts";
+import type { DirectiveExecutionContext } from "../directive/types.ts";
 
 export type RuntimeAdapterKind = "cloud-pi-agent" | (string & {});
 
@@ -24,7 +24,7 @@ export interface RuntimeAdapterCapabilities {
   readonly supportsMcp?: boolean | undefined;
 }
 
-export type RuntimeTarget = "agent" | "code" | "subloop" | "operator" | (string & {});
+export type RuntimeTarget = "agent" | "code" | "directive" | "operator" | (string & {});
 
 export interface RuntimeAdapterDescriptor {
   readonly id: string;
@@ -67,7 +67,7 @@ export type RuntimeSessionRestoreHandler = (
 export interface RuntimeCreateSessionRequest {
   readonly agent: ExpertAgent;
   readonly context?: ExpertAgentRunContext | undefined;
-  readonly workflowExecution?: LoopExecutionContext | undefined;
+  readonly workflowExecution?: DirectiveExecutionContext | undefined;
   readonly humanInteractionHandler?: ExpertAgentHumanInteractionHandler | undefined;
   readonly models?: readonly IExpertAgentModelProviderConfig[] | undefined;
   readonly systemSessionId?: string | undefined;

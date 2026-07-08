@@ -3,8 +3,8 @@ import { z } from "zod";
 
 const app = createPragma();
 
-const requirementLoop = defineFlow({
-  id: "watch-requirement-loop",
+const requirementDirective = defineFlow({
+  id: "watch-requirement-directive",
   input: z.object({
     requirement: z.string(),
   }),
@@ -16,7 +16,7 @@ const requirementLoop = defineFlow({
   }),
 });
 
-const summarize = requirementLoop.use(
+const summarize = requirementDirective.use(
   "summarize",
   defineTask({
     id: "watch-summarize-code",
@@ -40,12 +40,12 @@ const summarize = requirementLoop.use(
   },
 );
 
-requirementLoop.compose(({ start, end }) => {
+requirementDirective.compose(({ start, end }) => {
   start(summarize).next(end());
 });
 
-const deliveryLoop = defineFlow({
-  id: "watch-delivery-loop",
+const deliveryDirective = defineFlow({
+  id: "watch-delivery-directive",
   input: z.object({
     requirement: z.string(),
   }),
@@ -59,25 +59,25 @@ const deliveryLoop = defineFlow({
   }),
 });
 
-const intake = deliveryLoop.use(
+const intake = deliveryDirective.use(
   "intake",
   defineTask({
     id: "watch-intake-code",
     handler: async ({ emitProgress }) => {
-      await emitProgress(createProgressEvent("intake", "Preparing nested loop."));
+      await emitProgress(createProgressEvent("intake", "Preparing nested directive."));
       await sleep(80);
       return "accepted";
     },
   }),
 );
 
-const plan = deliveryLoop.use("plan", requirementLoop, {
+const plan = deliveryDirective.use("plan", requirementDirective, {
   reduce: ({ state, output }) => {
     state.results["plan"] = output.summary;
   },
 });
 
-const verify = deliveryLoop.use(
+const verify = deliveryDirective.use(
   "verify",
   defineTask({
     id: "watch-verify-code",
@@ -94,14 +94,14 @@ const verify = deliveryLoop.use(
   },
 );
 
-deliveryLoop.compose(({ start, step, end }) => {
+deliveryDirective.compose(({ start, step, end }) => {
   start(intake).next(plan).next(verify);
   step(verify).next(end());
 });
 
-const handle = await app.start(deliveryLoop, {
+const handle = await app.start(deliveryDirective, {
   input: {
-    requirement: "Add loop run status and recursive watch APIs",
+    requirement: "Add directive run status and recursive watch APIs",
   },
 });
 
@@ -169,7 +169,7 @@ function printRunTree(
     .map(([status, count]) => `${status}=${count}`)
     .join(", ");
 
-  console.log(`${indent}- ${tree.workflow.loopId} ${tree.workflow.status} (${taskSummary})`);
+  console.log(`${indent}- ${tree.workflow.directiveId} ${tree.workflow.status} (${taskSummary})`);
 
   for (const child of tree.children) {
     printRunTree(child, depth + 1);
@@ -181,11 +181,11 @@ function createProgressEvent(stage: string, message: string) {
     schemaVersion: "pragma.stream/v1" as const,
     eventId: `example-${stage}-${Date.now()}`,
     sequence: 0,
-    runId: "loop-watch-example",
+    runId: "directive-watch-example",
     emittedAt: new Date().toISOString(),
     source: {
       kind: "runtime" as const,
-      runId: "loop-watch-example",
+      runId: "directive-watch-example",
       path: [],
     },
     type: "progress" as const,

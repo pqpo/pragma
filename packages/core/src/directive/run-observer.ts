@@ -10,7 +10,7 @@ import type {
   StateManager,
 } from "./types.ts";
 
-export interface CreateLoopRunObserverOptions {
+export interface CreateRunObserverOptions {
   readonly stateManager: StateManager;
   readonly mailbox: Mailbox;
 }
@@ -30,7 +30,7 @@ const outputEventTypes = [
   "human.responded",
 ] as const;
 
-export function createLoopRunObserver(options: CreateLoopRunObserverOptions): RunObserver {
+export function createRunObserver(options: CreateRunObserverOptions): RunObserver {
   return {
     async list(filter?: ListWorkflowRunsFilter) {
       const workflows = await options.stateManager.listWorkflowRuns(filter);

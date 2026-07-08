@@ -28,7 +28,7 @@ const defaultTurns = [
     "请以 coding-agent 身份用两三句话介绍你自己、你的职责，以及你何时会委派 code-explorer-agent。",
   ].join("\n"),
   [
-    "现在请调用 launch_agent 委派 code-explorer-agent 探索仓库中 Agent、Runtime、Loop 的关系。",
+    "现在请调用 launch_agent 委派 code-explorer-agent 探索仓库中 Agent、Runtime、Directive 的关系。",
     "委派任务要聚焦关键文件、当前实现事实和可验证证据。",
   ].join("\n"),
   [
@@ -68,7 +68,6 @@ const explorer = await defineAgent({
   scope: "local-test",
   workspace,
   models,
-  memory: false,
   instructions: [
     "你是专门做代码探索的 ExpertAgent。",
     "只做只读探索和事实归纳，不修改文件。",
@@ -90,7 +89,6 @@ const coder = await defineAgent({
   scope: "local-test",
   workspace,
   models,
-  memory: false,
   tools: [launcher.tool],
   instructions: [
     "你是负责方案整合的 Coding Agent。",
@@ -240,7 +238,7 @@ function printRunTree(tree: RunTree | undefined, depth = 0): void {
   }
 
   const indent = "  ".repeat(depth);
-  console.log(`${indent}- ${tree.workflow.loopId} ${tree.workflow.id} [${tree.workflow.status}]`);
+  console.log(`${indent}- ${tree.workflow.directiveId} ${tree.workflow.id} [${tree.workflow.status}]`);
 
   for (const child of tree.children) {
     printRunTree(child, depth + 1);

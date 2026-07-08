@@ -3,7 +3,7 @@ import { z } from "zod";
 
 import { createPragma, defineTask, patterns } from "../../src/index.ts";
 
-describe("patterns loop api", () => {
+describe("patterns directive api", () => {
   it("builds prompt chains with previous output as the next default input", async () => {
     const chain = patterns.promptChain({
       id: "prompt-chain",
@@ -32,7 +32,7 @@ describe("patterns loop api", () => {
       id: "routing-workflow",
       output: z.string(),
       router: {
-        loop: defineTask({
+        directive: defineTask({
           id: "classify",
           output: z.object({
             route: z.enum(["billing", "support"]),
@@ -45,13 +45,13 @@ describe("patterns loop api", () => {
       field: "route",
       routes: {
         billing: {
-          loop: defineTask({
+          directive: defineTask({
             id: "billing",
             handler: ({ input }) => `billing:${String(input)}`,
           }),
         },
         support: {
-          loop: defineTask({
+          directive: defineTask({
             id: "support",
             handler: ({ input }) => `support:${String(input)}`,
           }),
@@ -119,7 +119,7 @@ describe("patterns loop api", () => {
         report: z.string(),
       }),
       orchestrator: {
-        loop: defineTask({
+        directive: defineTask({
           id: "orchestrator",
           handler: () => ({
             tasks: ["intro", "details"],
@@ -127,7 +127,7 @@ describe("patterns loop api", () => {
         }),
       },
       worker: {
-        loop: defineTask({
+        directive: defineTask({
           id: "worker",
           handler: ({ input }) => `section:${String(input)}`,
         }),
@@ -160,7 +160,7 @@ describe("patterns loop api", () => {
         iterations: z.number(),
       }),
       optimizer: {
-        loop: defineTask({
+        directive: defineTask({
           id: "optimizer",
           handler: ({ input }) => {
             if (typeof input === "object" && input !== null && "iteration" in input) {
@@ -176,7 +176,7 @@ describe("patterns loop api", () => {
         }),
       },
       evaluator: {
-        loop: defineTask({
+        directive: defineTask({
           id: "evaluator",
           handler: ({ input }) => ({
             accepted:

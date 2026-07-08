@@ -313,7 +313,6 @@ async function createTestAgent(options: {
     version: "0.0.0",
     scope: "test",
     workspace: await mkdtemp(join(tmpdir(), "pragma-codex-tools-mcp-test-")),
-    memory: false,
     tools: options.tools,
     ...(options.hooks === undefined ? {} : { hooks: options.hooks }),
     ...(options.mcp === undefined ? {} : { mcp: options.mcp }),

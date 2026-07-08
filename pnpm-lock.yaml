@@ -177,6 +177,9 @@ importers:
       '@pragma/plugin-code-repository-manager':
         specifier: workspace:*
         version: link:../plugins/code-repository-manager
+      '@pragma/plugin-memory':
+        specifier: workspace:*
+        version: link:../plugins/memory
       '@pragma/runtime-codex':
         specifier: workspace:*
         version: link:../packages/runtime/codex

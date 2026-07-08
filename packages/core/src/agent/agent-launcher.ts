@@ -116,7 +116,7 @@ export function createAgentLauncher(options: CreateAgentLauncherOptions): AgentL
           input.sessionPolicy === "reuse_by_agent" ? sessionRefs.get(sessionKey) : undefined;
 
         try {
-          const result = await workflowExecution.runLoop(agent, {
+          const result = await workflowExecution.runDirective(agent, {
             input: input.task,
             modelName: input.modelName,
             runtime,

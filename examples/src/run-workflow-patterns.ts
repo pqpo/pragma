@@ -62,7 +62,7 @@ const routed = patterns.routing({
   output: z.string(),
   field: "route",
   router: {
-    loop: defineTask({
+    directive: defineTask({
       id: "classify-ticket",
       output: z.object({
         route: z.enum(["billing", "technical"]),
@@ -82,7 +82,7 @@ const routed = patterns.routing({
   },
   routes: {
     billing: {
-      loop: defineTask({
+      directive: defineTask({
         id: "billing-handler",
         handler: ({ input }) => {
           const payload = z
@@ -96,7 +96,7 @@ const routed = patterns.routing({
       }),
     },
     technical: {
-      loop: defineTask({
+      directive: defineTask({
         id: "technical-handler",
         handler: ({ input }) => {
           const payload = z
@@ -146,7 +146,7 @@ const reportBuilder = patterns.orchestratorWorkers({
     markdown: z.string(),
   }),
   orchestrator: {
-    loop: defineTask({
+    directive: defineTask({
       id: "report-planner",
       handler: () => ({
         tasks: [
@@ -163,7 +163,7 @@ const reportBuilder = patterns.orchestratorWorkers({
     }),
   },
   worker: {
-    loop: defineTask({
+    directive: defineTask({
       id: "section-writer",
       output: z.object({
         heading: z.string(),
@@ -206,7 +206,7 @@ const refinedAnswer = patterns.evaluatorOptimizer({
     iterations: z.number(),
   }),
   optimizer: {
-    loop: defineTask({
+    directive: defineTask({
       id: "answer-optimizer",
       output: z.object({
         revision: z.number(),
@@ -226,7 +226,7 @@ const refinedAnswer = patterns.evaluatorOptimizer({
     }),
   },
   evaluator: {
-    loop: defineTask({
+    directive: defineTask({
       id: "answer-evaluator",
       output: z.object({
         accepted: z.boolean(),

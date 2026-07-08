@@ -102,7 +102,7 @@ Pragma 当前已经有 `ContextSystem` 和内建 `skill-memory` 实现，但两�
 - `Memory System` 负责记忆检索、筛选和 runtime 注入候选。
 - `ContextManager` 消费 `Memory System` 的 retrieval 结果，而不是自己推断所有记忆策略。
 
-### 与 Loop Runtime 的边界
+### 与 Directive Runtime 的边界
 
 `Task Memory` 必须和现有协作运行时边界配合，但不吞并这些组件：
 

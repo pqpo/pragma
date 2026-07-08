@@ -1,5 +1,5 @@
 import type { ExpertAgentRunContext } from "../runtime/run-context.ts";
-import type { LoopExecutionContext } from "../loop/types.ts";
+import type { DirectiveExecutionContext } from "../directive/types.ts";
 
 export interface ExpertAgentToolCallResult {
   readonly text: string;
@@ -86,7 +86,7 @@ export interface ExpertAgentManagedToolCallContext {
   readonly toolCallId?: string | undefined;
   readonly humanInteraction?: ExpertAgentHumanInteractionHandler | undefined;
   readonly runContext?: ExpertAgentRunContext | undefined;
-  readonly workflowExecution?: LoopExecutionContext | undefined;
+  readonly workflowExecution?: DirectiveExecutionContext | undefined;
 }
 
 export interface ExpertAgentManagedTool<TName extends string = string, TResult = unknown> {

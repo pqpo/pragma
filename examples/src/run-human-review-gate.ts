@@ -14,7 +14,7 @@ const ReviewDecisionSchema = z.object({
 });
 
 const flow = defineFlow({
-  id: "human-review-gate-loop",
+  id: "human-review-gate-directive",
   input: z.object({
     requirement: z.string(),
   }),

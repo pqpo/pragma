@@ -23,7 +23,7 @@ describe("file-system ExperienceMemoryStore", () => {
         taskRunId: "task-1",
         runtimeSessionId: "session-1",
         kind: "tool",
-        content: "Searched packages/core/src/loop and confirmed runtime files.",
+        content: "Searched packages/core/src/directive and confirmed runtime files.",
         status: "summarized",
         provenance: {
           createdAt: "2026-07-06T00:00:00.000Z",
@@ -55,7 +55,7 @@ describe("file-system ExperienceMemoryStore", () => {
         scope: "session",
         workflowRunId: "workflow-1",
         kind: "tool",
-        content: "Located @pragma/core loop code under packages/core/src/loop.",
+        content: "Located @pragma/core directive code under packages/core/src/directive.",
         status: "recorded",
         provenance: {
           createdAt: "2026-07-06T00:00:00.000Z",
@@ -69,7 +69,7 @@ describe("file-system ExperienceMemoryStore", () => {
         scope: "session",
         workflowRunId: "workflow-1",
         kind: "tool",
-        content: "Located @pragma/core loop code under packages/core/src/loop.",
+        content: "Located @pragma/core directive code under packages/core/src/directive.",
         status: "summarized",
         provenance: {
           createdAt: "2026-07-06T01:00:00.000Z",
@@ -81,7 +81,7 @@ describe("file-system ExperienceMemoryStore", () => {
     const retrieved = await store.retrieveForRuntime({
       agentId: "agent-a",
       workflowRunId: "workflow-1",
-      query: "packages/core/src/loop",
+      query: "packages/core/src/directive",
     });
 
     expect(retrieved.ok).toBe(true);
@@ -101,9 +101,9 @@ describe("file-system ExperienceMemoryStore", () => {
         scope: "session",
         workflowRunId: "workflow-1",
         kind: "tool",
-        title: "Loop Ownership",
-        summary: "Packages/Core/Src/Loop is the canonical location.",
-        content: "Packages/Core/Src/Loop is the canonical location.",
+        title: "Directive Ownership",
+        summary: "Packages/Core/Src/Directive is the canonical location.",
+        content: "Packages/Core/Src/Directive is the canonical location.",
         status: "summarized",
         provenance: {
           createdAt: "2026-07-06T00:00:00.000Z",
@@ -115,7 +115,7 @@ describe("file-system ExperienceMemoryStore", () => {
     const retrieved = await store.retrieveForRuntime({
       agentId: "agent-a",
       workflowRunId: "workflow-1",
-      query: "packages/core/src/loop",
+      query: "packages/core/src/directive",
     });
 
     expect(retrieved).toMatchObject({

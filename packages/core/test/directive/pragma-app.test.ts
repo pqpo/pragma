@@ -22,10 +22,10 @@ import type {
   RuntimeSubmitRequest,
 } from "../../src/index.ts";
 
-describe("loop app", () => {
+describe("directive app", () => {
   it("runs code steps, reduces Directive State, and returns mapped output", async () => {
-    const loop = defineFlow({
-      id: "review-loop",
+    const directive = defineFlow({
+      id: "review-directive",
       input: z.object({
         decision: z.enum(["approved", "rejected"]),
       }),
@@ -37,7 +37,7 @@ describe("loop app", () => {
       }),
     });
 
-    const review = loop.use(
+    const review = directive.use(
       "review",
       defineTask({
         id: "review-code",
@@ -64,11 +64,11 @@ describe("loop app", () => {
       },
     );
 
-    loop.compose(({ start, end }) => {
+    directive.compose(({ start, end }) => {
       start(review).next(end());
     });
 
-    const result = await createPragma().run(loop, {
+    const result = await createPragma().run(directive, {
       input: {
         decision: "approved",
       },
@@ -83,8 +83,8 @@ describe("loop app", () => {
   });
 
   it("routes by structured step output", async () => {
-    const loop = defineFlow({
-      id: "route-loop",
+    const directive = defineFlow({
+      id: "route-directive",
       output: z.object({
         path: z.string(),
       }),
@@ -93,7 +93,7 @@ describe("loop app", () => {
       }),
     });
 
-    const router = loop.use(
+    const router = directive.use(
       "router",
       defineTask({
         id: "router-code",
@@ -105,18 +105,18 @@ describe("loop app", () => {
         }),
       }),
     );
-    const passed = loop.use("passed", defineTask({ id: "passed-code", handler: () => "passed" }), {
+    const passed = directive.use("passed", defineTask({ id: "passed-code", handler: () => "passed" }), {
       reduce: ({ state, output }) => {
         state.results["path"] = output;
       },
     });
-    const failed = loop.use("failed", defineTask({ id: "failed-code", handler: () => "failed" }), {
+    const failed = directive.use("failed", defineTask({ id: "failed-code", handler: () => "failed" }), {
       reduce: ({ state, output }) => {
         state.results["path"] = output;
       },
     });
 
-    loop.compose(({ start, step, end }) => {
+    directive.compose(({ start, step, end }) => {
       start(router).route("status", {
         passed,
         failed,
@@ -125,7 +125,7 @@ describe("loop app", () => {
       step(failed).next(end());
     });
 
-    const result = await createPragma().run(loop, {
+    const result = await createPragma().run(directive, {
       input: {},
     });
 
@@ -135,13 +135,13 @@ describe("loop app", () => {
   });
 
   it("fails with a clear error when route output is missing the routed field", async () => {
-    const loop = defineFlow({
-      id: "missing-route-loop",
+    const directive = defineFlow({
+      id: "missing-route-directive",
     });
-    const router = loop.use("router", defineTask({ id: "router-code", handler: () => ({}) }));
-    const target = loop.use("target", defineTask({ id: "target-code", handler: () => "done" }));
+    const router = directive.use("router", defineTask({ id: "router-code", handler: () => ({}) }));
+    const target = directive.use("target", defineTask({ id: "target-code", handler: () => "done" }));
 
-    loop.compose(({ start, step, end }) => {
+    directive.compose(({ start, step, end }) => {
       start(router).route("status", {
         done: target,
       });
@@ -149,7 +149,7 @@ describe("loop app", () => {
     });
 
     await expect(
-      createPragma().run(loop, {
+      createPragma().run(directive, {
         input: {},
       }),
     ).rejects.toThrow("Route router.status did not match because output field is missing.");
@@ -162,17 +162,17 @@ describe("loop app", () => {
       seenTypes.push(message.type);
     });
 
-    const loop = defineFlow({
-      id: "events-loop",
+    const directive = defineFlow({
+      id: "events-directive",
     });
-    const task = loop.use("task", defineTask({ id: "task-code", handler: () => "done" }));
-    loop.compose(({ start, end }) => {
+    const task = directive.use("task", defineTask({ id: "task-code", handler: () => "done" }));
+    directive.compose(({ start, end }) => {
       start(task).next(end());
     });
 
     await createPragma({
       mailbox,
-    }).run(loop, {
+    }).run(directive, {
       input: {},
     });
 
@@ -191,17 +191,17 @@ describe("loop app", () => {
     );
   });
 
-  it("starts a loop run without waiting for completion and exposes run snapshots", async () => {
+  it("starts a directive run without waiting for completion and exposes run snapshots", async () => {
     const app = createPragma();
-    const slowLoop = defineTask({
-      id: "slow-loop",
+    const slowDirective = defineTask({
+      id: "slow-directive",
       handler: async () => {
         await sleep(30);
         return "done";
       },
     });
 
-    const handle = await app.start(slowLoop, {
+    const handle = await app.start(slowDirective, {
       input: {},
     });
     const running = await app.runs.get(handle.workflowRunId);
@@ -220,12 +220,12 @@ describe("loop app", () => {
     });
   });
 
-  it("watches nested loop events recursively and exposes a run tree", async () => {
+  it("watches nested directive events recursively and exposes a run tree", async () => {
     const app = createPragma();
-    const childLoop = defineFlow({
-      id: "child-watch-loop",
+    const childDirective = defineFlow({
+      id: "child-watch-directive",
     });
-    const childTask = childLoop.use(
+    const childTask = childDirective.use(
       "child-task",
       defineTask({
         id: "child-watch-task",
@@ -235,14 +235,14 @@ describe("loop app", () => {
         },
       }),
     );
-    childLoop.compose(({ start, end }) => {
+    childDirective.compose(({ start, end }) => {
       start(childTask).next(end());
     });
 
-    const parentLoop = defineFlow({
-      id: "parent-watch-loop",
+    const parentDirective = defineFlow({
+      id: "parent-watch-directive",
     });
-    const gate = parentLoop.use(
+    const gate = parentDirective.use(
       "gate",
       defineTask({
         id: "gate-watch-task",
@@ -252,12 +252,12 @@ describe("loop app", () => {
         },
       }),
     );
-    const child = parentLoop.use("child", childLoop);
-    parentLoop.compose(({ start, end }) => {
+    const child = parentDirective.use("child", childDirective);
+    parentDirective.compose(({ start, end }) => {
       start(gate).next(child).next(end());
     });
 
-    const handle = await app.start(parentLoop, {
+    const handle = await app.start(parentDirective, {
       input: {},
     });
     const eventsPromise = collectEvents(
@@ -271,7 +271,7 @@ describe("loop app", () => {
     const childStarted = events.find(
       (event) =>
         event.type === "workflow.started" &&
-        readPayloadField(event.payload, "loopId") === "child-watch-loop",
+        readPayloadField(event.payload, "directiveId") === "child-watch-directive",
     );
     const childCompleted = events.find(
       (event) =>
@@ -295,10 +295,10 @@ describe("loop app", () => {
 
   it("reuses the workflow sandbox by default", async () => {
     const sandboxIds: string[] = [];
-    const loop = defineFlow({
-      id: "default-sandbox-loop",
+    const directive = defineFlow({
+      id: "default-sandbox-directive",
     });
-    const first = loop.use(
+    const first = directive.use(
       "first",
       defineTask({
         id: "first-code",
@@ -308,7 +308,7 @@ describe("loop app", () => {
         },
       }),
     );
-    const second = loop.use(
+    const second = directive.use(
       "second",
       defineTask({
         id: "second-code",
@@ -319,11 +319,11 @@ describe("loop app", () => {
       }),
     );
 
-    loop.compose(({ start, end }) => {
+    directive.compose(({ start, end }) => {
       start(first).next(second).next(end());
     });
 
-    await createPragma().run(loop, {
+    await createPragma().run(directive, {
       input: {},
     });
 
@@ -333,10 +333,10 @@ describe("loop app", () => {
 
   it("creates a new sandbox for an ephemeral step", async () => {
     const sandboxIds: string[] = [];
-    const loop = defineFlow({
-      id: "ephemeral-sandbox-loop",
+    const directive = defineFlow({
+      id: "ephemeral-sandbox-directive",
     });
-    const first = loop.use(
+    const first = directive.use(
       "first",
       defineTask({
         id: "first-code",
@@ -346,7 +346,7 @@ describe("loop app", () => {
         },
       }),
     );
-    const second = loop.use(
+    const second = directive.use(
       "second",
       defineTask({
         id: "second-code",
@@ -364,11 +364,11 @@ describe("loop app", () => {
       },
     );
 
-    loop.compose(({ start, end }) => {
+    directive.compose(({ start, end }) => {
       start(first).next(second).next(end());
     });
 
-    await createPragma().run(loop, {
+    await createPragma().run(directive, {
       input: {},
     });
 
@@ -378,10 +378,10 @@ describe("loop app", () => {
 
   it("inherits the parent sandbox for nested loops by default", async () => {
     const sandboxIds: string[] = [];
-    const childLoop = defineFlow({
-      id: "child-sandbox-loop",
+    const childDirective = defineFlow({
+      id: "child-sandbox-directive",
     });
-    const childTask = childLoop.use(
+    const childTask = childDirective.use(
       "child-task",
       defineTask({
         id: "child-code",
@@ -391,14 +391,14 @@ describe("loop app", () => {
         },
       }),
     );
-    childLoop.compose(({ start, end }) => {
+    childDirective.compose(({ start, end }) => {
       start(childTask).next(end());
     });
 
-    const parentLoop = defineFlow({
-      id: "parent-sandbox-loop",
+    const parentDirective = defineFlow({
+      id: "parent-sandbox-directive",
     });
-    const parentTask = parentLoop.use(
+    const parentTask = parentDirective.use(
       "parent-task",
       defineTask({
         id: "parent-code",
@@ -408,13 +408,13 @@ describe("loop app", () => {
         },
       }),
     );
-    const child = parentLoop.use("child", childLoop);
+    const child = parentDirective.use("child", childDirective);
 
-    parentLoop.compose(({ start, end }) => {
+    parentDirective.compose(({ start, end }) => {
       start(parentTask).next(child).next(end());
     });
 
-    await createPragma().run(parentLoop, {
+    await createPragma().run(parentDirective, {
       input: {},
     });
 
@@ -467,7 +467,7 @@ describe("loop app", () => {
     await expect(
       sandboxManager.createWorkflowSandbox({
         workflowRunId: "workflow-missing-sandbox",
-        loopId: "loop",
+        directiveId: "directive",
         input: {},
         request: {
           strategy: {
@@ -478,11 +478,11 @@ describe("loop app", () => {
     ).rejects.toThrow("Workflow sandbox attach strategy requires sandboxId.");
   });
 
-  it("skips recovered task leases when the loop definition was cleaned up", async () => {
+  it("skips recovered task leases when the directive definition was cleaned up", async () => {
     const app = createPragma();
     const workflow = await app.stateManager.createWorkflowRun({
       id: "workflow-orphaned-task",
-      loopId: "loop",
+      directiveId: "directive",
       input: {},
       state: {
         input: {},
@@ -516,8 +516,8 @@ describe("loop app", () => {
   });
 
   it("registers any Directive implementation as a step", async () => {
-    const loop = defineFlow({
-      id: "custom-loop-composition",
+    const directive = defineFlow({
+      id: "custom-directive-composition",
       output: z.object({
         value: z.string(),
       }),
@@ -525,7 +525,7 @@ describe("loop app", () => {
         value: String(state.results["custom"]),
       }),
     });
-    const customLoop: Directive<{ readonly value: string }, string> = {
+    const customDirective: Directive<{ readonly value: string }, string> = {
       id: "custom",
       inputSchema: z.object({
         value: z.string(),
@@ -544,16 +544,16 @@ describe("loop app", () => {
       },
     };
 
-    const custom = loop.use("custom", customLoop, {
+    const custom = directive.use("custom", customDirective, {
       reduce: ({ state, output }) => {
         state.results["custom"] = output;
       },
     });
-    loop.compose(({ start, end }) => {
+    directive.compose(({ start, end }) => {
       start(custom).next(end());
     });
 
-    const result = await createPragma().run(loop, {
+    const result = await createPragma().run(directive, {
       input: {
         value: "ok",
       },
@@ -566,13 +566,13 @@ describe("loop app", () => {
 
   it("runs an ExpertAgent as a Directive", async () => {
     const agent = await ExpertAgent.create({
-      id: "agent-loop",
+      id: "agent-directive",
       name: "Agent Directive",
       description: "Agent that implements the Directive interface.",
       tags: [],
       version: "0.0.0",
       scope: "test",
-      workspace: "/tmp/pragma-agent-loop-test",
+      workspace: "/tmp/pragma-agent-directive-test",
     });
     const runtime = createFakeRuntime({
       id: "fake-runtime",
@@ -613,13 +613,13 @@ describe("loop app", () => {
 
   it("runs an ExpertAgent through the configured default runtime registry", async () => {
     const agent = await ExpertAgent.create({
-      id: "agent-default-runtime-loop",
+      id: "agent-default-runtime-directive",
       name: "Agent Default Runtime Directive",
       description: "Agent that uses the process default runtime registry.",
       tags: [],
       version: "0.0.0",
       scope: "test",
-      workspace: "/tmp/pragma-agent-default-runtime-loop-test",
+      workspace: "/tmp/pragma-agent-default-runtime-directive-test",
     });
     const runtime = createFakeRuntime({
       id: "configured-runtime",
@@ -666,8 +666,8 @@ describe("loop app", () => {
 
   it("waits for a human task response and resumes the workflow", async () => {
     const app = createPragma();
-    const loop = defineFlow({
-      id: "human-review-loop",
+    const directive = defineFlow({
+      id: "human-review-directive",
       output: z.object({
         decision: z.string(),
       }),
@@ -675,7 +675,7 @@ describe("loop app", () => {
         decision: String(state.results["decision"]),
       }),
     });
-    const review = loop.use(
+    const review = directive.use(
       "review",
       defineHumanTask({
         id: "human-review",
@@ -698,11 +698,11 @@ describe("loop app", () => {
         },
       },
     );
-    loop.compose(({ start, end }) => {
+    directive.compose(({ start, end }) => {
       start(review).next(end());
     });
 
-    const handle = await app.start(loop, {
+    const handle = await app.start(directive, {
       input: {},
     });
     const interaction = await waitForHumanInteraction(app, handle.workflowRunId);
@@ -733,10 +733,10 @@ describe("loop app", () => {
     expect(completed?.tasks[0]?.status).toBe("succeeded");
   });
 
-  it("routes human review gate decisions through normal loop transitions", async () => {
+  it("routes human review gate decisions through normal directive transitions", async () => {
     const app = createPragma();
-    const loop = defineFlow({
-      id: "human-review-route-loop",
+    const directive = defineFlow({
+      id: "human-review-route-directive",
       output: z.object({
         path: z.string(),
       }),
@@ -744,7 +744,7 @@ describe("loop app", () => {
         path: String(state.results["path"]),
       }),
     });
-    const review = loop.use(
+    const review = directive.use(
       "review",
       defineHumanTask({
         id: "human-review-route",
@@ -761,17 +761,17 @@ describe("loop app", () => {
         },
       }),
     );
-    const revise = loop.use("revise", defineTask({ id: "revise-code", handler: () => "revise" }), {
+    const revise = directive.use("revise", defineTask({ id: "revise-code", handler: () => "revise" }), {
       reduce: ({ state, output }) => {
         state.results["path"] = output;
       },
     });
-    const ship = loop.use("ship", defineTask({ id: "ship-code", handler: () => "ship" }), {
+    const ship = directive.use("ship", defineTask({ id: "ship-code", handler: () => "ship" }), {
       reduce: ({ state, output }) => {
         state.results["path"] = output;
       },
     });
-    loop.compose(({ start, step, end }) => {
+    directive.compose(({ start, step, end }) => {
       start(review).route("decision", {
         approved: ship,
         request_changes: revise,
@@ -780,7 +780,7 @@ describe("loop app", () => {
       step(revise).next(end());
     });
 
-    const handle = await app.start(loop, {
+    const handle = await app.start(directive, {
       input: {},
     });
     const interaction = await waitForHumanInteraction(app, handle.workflowRunId);
@@ -880,15 +880,15 @@ describe("loop app", () => {
     });
   });
 
-  it("bridges Agent askUserQuestion requests through loop human interactions", async () => {
+  it("bridges Agent askUserQuestion requests through directive human interactions", async () => {
     const agent = await ExpertAgent.create({
-      id: "agent-human-loop",
+      id: "agent-human-directive",
       name: "Agent Human Directive",
       description: "Agent that asks a user question.",
       tags: [],
       version: "0.0.0",
       scope: "test",
-      workspace: "/tmp/pragma-agent-human-loop-test",
+      workspace: "/tmp/pragma-agent-human-directive-test",
     });
     const runtime = createHumanAskingRuntime({
       id: "fake-human-runtime",
@@ -1041,7 +1041,7 @@ function createFakeSessionInfo(): RuntimeSessionInfo {
       type: "fake-runtime",
       id: "runtime-session-1",
     },
-    agentId: "agent-loop",
+    agentId: "agent-directive",
     runtime: {
       id: "fake-runtime",
       kind: "fake-runtime",

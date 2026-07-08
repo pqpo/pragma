@@ -13,8 +13,8 @@ import { createPragma, defineTask, defineFlow } from "@pragma/core";
 本文只覆盖 Directive 的基础执行、组合、状态归并和分支控制。更进阶的主题拆在独立文档中：
 
 - [Workflow 范式快捷 API](./workflow-patterns.md)
-- [Human-in-the-loop](./human-in-the-loop.md)
-- [Directive 运行组件与扩展](./loop-runtime-components.md)
+- [Human Interaction](./human-interaction.md)
+- [Directive 运行组件与扩展](./directive-runtime-components.md)
 
 ## 核心概念
 
@@ -29,7 +29,7 @@ interface Directive<TInput, TOutput> {
 }
 ```
 
-`defineFlow()` 创建组合 Directive；组合 Directive 通过 `use(id, loop, options)` 注册子 Directive，不区分 agent、code、human operator 或 subloop。`ExpertAgent` 已实现 `Directive`，`defineTask()` 是把本地 TypeScript handler 包成 Directive 的便利函数。
+`defineFlow()` 创建组合 Directive；组合 Directive 通过 `use(id, directive, options)` 注册子 Directive，不区分 agent、code、human operator 或 nested directive。`ExpertAgent` 已实现 `Directive`，`defineTask()` 是把本地 TypeScript handler 包成 Directive 的便利函数。
 
 主要对象：
 
@@ -45,7 +45,7 @@ interface Directive<TInput, TOutput> {
 import { createPragma, defineTask, defineFlow } from "@pragma/core";
 import { z } from "zod";
 
-const greetLoop = defineTask({
+const greetDirective = defineTask({
   id: "greet",
   output: z.string(),
   handler: ({ input }) => {
@@ -55,7 +55,7 @@ const greetLoop = defineTask({
 });
 
 const flow = defineFlow({
-  id: "hello-loop",
+  id: "hello-directive",
   input: z.object({
     name: z.string(),
   }),
@@ -67,7 +67,7 @@ const flow = defineFlow({
   }),
 });
 
-const greet = flow.use("greet", greetLoop, {
+const greet = flow.use("greet", greetDirective, {
   reduce: ({ state, output }) => {
     state.results["message"] = output;
   },
@@ -100,7 +100,7 @@ console.log(result.output);
 单个 Agent 或代码 Directive 可以直接交给 `Pragma` 运行。`Pragma` 会把它包装成单步 workflow，因此仍然有 `workflowRunId`、`RunState` 和 mailbox 事件。
 
 ```ts
-const result = await createPragma().run(greetLoop, {
+const result = await createPragma().run(greetDirective, {
   input: {
     name: "Pragma",
   },
@@ -112,7 +112,7 @@ const result = await createPragma().run(greetLoop, {
 ```ts
 const app = createPragma();
 
-const handle = await app.start(greetLoop, {
+const handle = await app.start(greetDirective, {
   input: {
     name: "Pragma",
   },
@@ -127,7 +127,7 @@ for await (const event of app.runs.watch(handle.workflowRunId)) {
 const result = await handle.result;
 ```
 
-`app.runs.list()` 返回当前可见的 workflow run 快照，可以按 `loopId`、`status` 或 `parentWorkflowRunId` 过滤。`app.runs.get(id)` 返回单个 run 的 workflow、tasks、task 状态计数和直接子 workflow id。
+`app.runs.list()` 返回当前可见的 workflow run 快照，可以按 `directiveId`、`status` 或 `parentWorkflowRunId` 过滤。`app.runs.get(id)` 返回单个 run 的 workflow、tasks、task 状态计数和直接子 workflow id。
 
 嵌套 Directive 会创建独立的子 `workflowRunId`，并在子 workflow 上记录 `parentWorkflowRunId` 和 `parentTaskRunId`。需要一次性查看完整树时使用：
 
@@ -156,7 +156,7 @@ for await (const event of app.runs.watchOutput(handle.workflowRunId, { recursive
 完整可运行示例见：
 
 ```bash
-pnpm --filter @pragma/examples start:loop-watch
+pnpm --filter @pragma/examples start:directive-watch
 ```
 
 ## Agent 作为 Directive
@@ -178,7 +178,7 @@ const planner = await defineAgent({
 });
 
 const flow = defineFlow({
-  id: "planning-loop",
+  id: "planning-directive",
   output: z.object({
     plan: z.unknown(),
   }),
@@ -206,12 +206,12 @@ flow.compose(({ start, end }) => {
 子 Flow 可以直接注册进父 Flow。`use()` 会在注册边界自动把子 Flow 归一化为可运行的 `Directive`，日常使用不需要显式调用 `compile()`：
 
 ```ts
-const requirementLoop = defineFlow({
-  id: "requirement-loop",
+const requirementDirective = defineFlow({
+  id: "requirement-directive",
   result: ({ state }) => state.results["summary"],
 });
 
-const summarize = requirementLoop.use(
+const summarize = requirementDirective.use(
   "summarize",
   defineTask({
     id: "summarize",
@@ -224,21 +224,21 @@ const summarize = requirementLoop.use(
   },
 );
 
-requirementLoop.compose(({ start, end }) => {
+requirementDirective.compose(({ start, end }) => {
   start(summarize).next(end());
 });
 
-const deliveryLoop = defineFlow({
-  id: "delivery-loop",
+const deliveryDirective = defineFlow({
+  id: "delivery-directive",
 });
 
-const intake = deliveryLoop.use("intake", requirementLoop, {
+const intake = deliveryDirective.use("intake", requirementDirective, {
   reduce: ({ state, output }) => {
     state.results["requirement"] = output;
   },
 });
 
-deliveryLoop.compose(({ start, end }) => {
+deliveryDirective.compose(({ start, end }) => {
   start(intake).next(end());
 });
 ```
@@ -260,7 +260,7 @@ state.results["key"] = output;
 输出 schema 可以声明在被注册的 Directive 上，也可以在 `use()` 时覆盖：
 
 ```ts
-const classifyLoop = defineTask({
+const classifyDirective = defineTask({
   id: "classify",
   output: z.object({
     kind: z.enum(["bug", "feature"]),
@@ -273,7 +273,7 @@ const classifyLoop = defineTask({
   },
 });
 
-const classify = flow.use("classify", classifyLoop, {
+const classify = flow.use("classify", classifyDirective, {
   reduce: ({ state, output }) => {
     state.results["kind"] = output.kind;
   },

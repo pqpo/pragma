@@ -44,7 +44,6 @@ const agent = await defineAgent({
 
 - `schemaVersion`
 - `instructions`
-- `memory`
 - `models`
 - `mcp`
 - `skills`
@@ -54,47 +53,30 @@ const agent = await defineAgent({
 - `plugins`
 - `loggerProvider`
 
-## 默认记忆系统
+## 记忆系统插件
 
-当前 `ExpertAgent.create()` / `defineAgent()` 会默认加载四类记忆：
-
-- `task`
-- `experience`
-- `fact`
-- `skill`
-
-最小示例不需要额外声明插件：
+`ExpertAgent.create()` / `defineAgent()` 不会默认加载记忆系统。需要记忆能力时，由宿主显式注入 `@pragma/plugin-memory`：
 
 ```ts
+import memoryPlugin from "@pragma/plugin-memory";
+
 const agent = await defineAgent({
   id: "memory-enabled-agent",
   name: "Memory Enabled Agent",
-  description: "Uses the default memory system.",
+  description: "Uses the memory plugin.",
   tags: ["memory"],
   version: "0.0.0",
   scope: "workspace",
   workspace: "/path/to/workspace",
+  plugins: [{ entry: memoryPlugin }],
 });
 ```
 
-如果要关闭全部记忆：
+如果只关闭其中一部分，把配置放在 plugin use 的 `config` 中：
 
 ```ts
-const agent = await defineAgent({
-  id: "stateless-agent",
-  name: "Stateless Agent",
-  description: "Runs without memory.",
-  tags: ["memory"],
-  version: "0.0.0",
-  scope: "workspace",
-  workspace: "/path/to/workspace",
-  memory: false,
-});
-```
+import memoryPlugin from "@pragma/plugin-memory";
 
-如果只关闭其中一部分：
-
-```ts
 const agent = await defineAgent({
   id: "selective-memory-agent",
   name: "Selective Memory Agent",
@@ -103,10 +85,15 @@ const agent = await defineAgent({
   version: "0.0.0",
   scope: "workspace",
   workspace: "/path/to/workspace",
-  memory: {
-    experience: false,
-    fact: false,
-  },
+  plugins: [
+    {
+      entry: memoryPlugin,
+      config: {
+        experience: { enabled: false },
+        fact: { enabled: false },
+      },
+    },
+  ],
 });
 ```
 

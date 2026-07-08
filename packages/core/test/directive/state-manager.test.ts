@@ -7,7 +7,7 @@ describe("in-memory StateManager", () => {
     const stateManager = createInMemoryStateManager();
     const workflow = await stateManager.createWorkflowRun({
       id: "workflow-state-reducer",
-      loopId: "loop",
+      directiveId: "directive",
       input: {
         value: 1,
       },
@@ -64,7 +64,7 @@ describe("in-memory StateManager", () => {
     const stateManager = createInMemoryStateManager();
     const workflow = await stateManager.createWorkflowRun({
       id: "workflow-active-task",
-      loopId: "loop",
+      directiveId: "directive",
       input: {},
       state: {
         input: {},
@@ -106,7 +106,7 @@ describe("in-memory StateManager", () => {
     const stateManager = createInMemoryStateManager();
     const workflow = await stateManager.createWorkflowRun({
       id: "workflow-cancel-task",
-      loopId: "loop",
+      directiveId: "directive",
       input: {},
       state: {
         input: {},
@@ -146,7 +146,7 @@ describe("in-memory StateManager", () => {
     const stateManager = createInMemoryStateManager();
     const workflow = await stateManager.createWorkflowRun({
       id: "workflow-invalid-transition",
-      loopId: "loop",
+      directiveId: "directive",
       input: {},
       state: {
         input: {},
@@ -179,7 +179,7 @@ describe("in-memory StateManager", () => {
     const stateManager = createInMemoryStateManager();
     const workflow = await stateManager.createWorkflowRun({
       id: "workflow-waiting-task",
-      loopId: "loop",
+      directiveId: "directive",
       input: {},
       state: {
         input: {},
@@ -225,7 +225,7 @@ describe("in-memory StateManager", () => {
     const stateManager = createInMemoryStateManager();
     const workflow = await stateManager.createWorkflowRun({
       id: "workflow-lease-recovery",
-      loopId: "loop",
+      directiveId: "directive",
       input: {},
       state: {
         input: {},

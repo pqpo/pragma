@@ -1,6 +1,6 @@
-# Human-in-the-loop
+# Human Interaction
 
-本文说明 Directive 层的人类等待点。先阅读 [Directive 使用指南](./loops.md) 会更容易理解 `flow.use()`、`reduce()` 和 `route()`。
+本文说明 Directive 层的人类等待点。先阅读 [Directive 使用指南](./directives.md) 会更容易理解 `flow.use()`、`reduce()` 和 `route()`。
 
 ## 基本模型
 
@@ -17,7 +17,7 @@ import { z } from "zod";
 const app = createPragma();
 
 const flow = defineFlow({
-  id: "approval-loop",
+  id: "approval-directive",
   output: z.object({
     approved: z.boolean(),
   }),
@@ -92,7 +92,7 @@ clarifier -> human_question -> clarifier -> ready
 可运行示例：
 
 ```bash
-pnpm --filter @pragma/examples start:loop-human-clarification
+pnpm --filter @pragma/examples start:human-clarification
 ```
 
 ## 编码 review gate
@@ -117,7 +117,7 @@ coder -> verify -> human_review_gate
 可运行示例：
 
 ```bash
-pnpm --filter @pragma/examples start:loop-human-review-gate
+pnpm --filter @pragma/examples start:human-review-gate
 ```
 
 ## Agent 内部提问

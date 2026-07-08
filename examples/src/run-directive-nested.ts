@@ -1,8 +1,8 @@
 import { createPragma, defineTask, defineFlow } from "@pragma/core";
 import { z } from "zod";
 
-const requirementLoop = defineFlow({
-  id: "requirement-loop",
+const requirementDirective = defineFlow({
+  id: "requirement-directive",
   input: z.object({
     requirement: z.string(),
   }),
@@ -14,7 +14,7 @@ const requirementLoop = defineFlow({
   }),
 });
 
-const summarize = requirementLoop.use(
+const summarize = requirementDirective.use(
   "summarize",
   defineTask({
     id: "summarize-code",
@@ -35,12 +35,12 @@ const summarize = requirementLoop.use(
   },
 );
 
-requirementLoop.compose(({ start, end }) => {
+requirementDirective.compose(({ start, end }) => {
   start(summarize).next(end());
 });
 
-const deliveryLoop = defineFlow({
-  id: "delivery-loop",
+const deliveryDirective = defineFlow({
+  id: "delivery-directive",
   input: z.object({
     requirement: z.string(),
   }),
@@ -54,13 +54,13 @@ const deliveryLoop = defineFlow({
   }),
 });
 
-const plan = deliveryLoop.use("plan", requirementLoop, {
+const plan = deliveryDirective.use("plan", requirementDirective, {
   reduce: ({ state, output }) => {
     state.results["plan"] = output.summary;
   },
 });
 
-const verify = deliveryLoop.use(
+const verify = deliveryDirective.use(
   "verify",
   defineTask({ id: "verify-code", handler: () => "ready" }),
   {
@@ -70,12 +70,12 @@ const verify = deliveryLoop.use(
   },
 );
 
-deliveryLoop.compose(({ start, step, end }) => {
+deliveryDirective.compose(({ start, step, end }) => {
   start(plan).next(verify);
   step(verify).next(end());
 });
 
-const result = await createPragma().run(deliveryLoop, {
+const result = await createPragma().run(deliveryDirective, {
   input: {
     requirement: "Add GitHub login",
   },

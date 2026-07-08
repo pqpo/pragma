@@ -2,7 +2,7 @@ import { createPragma, defineTask, defineFlow } from "@pragma/core";
 import { z } from "zod";
 
 const flow = defineFlow({
-  id: "hello-loop",
+  id: "hello-directive",
   input: z.object({
     name: z.string(),
   }),

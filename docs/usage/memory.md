@@ -1,8 +1,8 @@
 # Memory System 使用指南
 
-本文专门说明 Pragma 当前的 Memory System：四类记忆的定义、默认加载方式、关闭方式、工具入口，以及它们之间的演化关系。
+本文专门说明 Pragma 当前的 Memory System：四类记忆的定义、显式加载方式、配置方式、工具入口，以及它们之间的演化关系。
 
-当前记忆系统由 `@pragma/plugin-memory` 提供具体实现，但对使用者来说，`ExpertAgent` / `defineAgent()` 已经会在初始化时默认加载这套能力。
+当前记忆系统由 `@pragma/plugin-memory` 提供具体实现。`ExpertAgent` / `defineAgent()` 不会默认加载记忆系统；需要记忆能力时，宿主必须显式注入 memory plugin。
 
 ## 四类记忆
 
@@ -26,27 +26,29 @@ Task Memory -> Experience Memory -> Fact Memory / Skill Memory
 - `Fact Memory`：当前确认什么是真的。
 - `Skill Memory`：下次遇到类似问题，推荐怎么做。
 
-## 默认加载
+## 显式加载
 
-现在 `ExpertAgent.create()` 和 `defineAgent()` 默认会加载四类记忆。
+`ExpertAgent.create()` 和 `defineAgent()` 只加载宿主传入的插件。要启用四类记忆，显式传入 `@pragma/plugin-memory`：
 
 最小示例：
 
 ```ts
 import { defineAgent } from "@pragma/core";
+import memoryPlugin from "@pragma/plugin-memory";
 
 const agent = await defineAgent({
   id: "memory-enabled-agent",
   name: "Memory Enabled Agent",
-  description: "Uses the default memory system.",
+  description: "Uses the memory plugin.",
   tags: ["memory"],
   version: "0.0.0",
   scope: "workspace",
   workspace: "/path/to/workspace",
+  plugins: [{ entry: memoryPlugin }],
 });
 ```
 
-默认加载后：
+加载后：
 
 - `task-memory` 会注入最小写工具。
 - `memory` 会注册统一的上下文 namespace，承载 summary、task 投影、experience 投影、fact 投影和 skill card。
@@ -84,30 +86,18 @@ const agent = await defineAgent({
     evidence/distill/<evidenceId>.json
 ```
 
-## 关闭全部记忆
+## 不启用记忆
 
-如果不希望默认加载任何记忆类型：
-
-```ts
-const agent = await defineAgent({
-  id: "stateless-agent",
-  name: "Stateless Agent",
-  description: "Runs without the default memory system.",
-  tags: ["memory"],
-  version: "0.0.0",
-  scope: "workspace",
-  workspace: "/path/to/workspace",
-  memory: false,
-});
-```
-
-这会关闭四类默认记忆，不注入相关工具，也不注册 `memory` 上下文。
+如果不传 `@pragma/plugin-memory`，Agent 就不会拥有 memory 工具，也不会注册 `memory` 上下文 namespace。
 
 ## 按类别关闭
 
 如果只想关闭其中一个或多个类别：
 
 ```ts
+import { defineAgent } from "@pragma/core";
+import memoryPlugin from "@pragma/plugin-memory";
+
 const agent = await defineAgent({
   id: "selective-memory-agent",
   name: "Selective Memory Agent",
@@ -116,36 +106,36 @@ const agent = await defineAgent({
   version: "0.0.0",
   scope: "workspace",
   workspace: "/path/to/workspace",
-  memory: {
-    experience: false,
-    fact: false,
-  },
+  plugins: [
+    {
+      entry: memoryPlugin,
+      config: {
+        experience: { enabled: false },
+        fact: { enabled: false },
+      },
+    },
+  ],
 });
 ```
 
 当前支持的字段：
 
-- `memory.task`
-- `memory.experience`
-- `memory.fact`
-- `memory.skill`
+- `task`
+- `experience`
+- `fact`
+- `skill`
 
 每项都可以写成：
 
 ```ts
-memory: {
-  fact: false,
-}
-```
-
-或：
-
-```ts
-memory: {
-  fact: {
-    enabled: false,
+plugins: [
+  {
+    entry: memoryPlugin,
+    config: {
+      fact: { enabled: false },
+    },
   },
-}
+]
 ```
 
 ## 四类记忆的边界
@@ -220,10 +210,10 @@ memory: {
 
 这是 Memory System 里最容易混淆的一类边界。
 
-- “我刚才搜索了 `packages/core/src/loop`”是 `Experience Memory`
+- “我刚才搜索了 `packages/core/src/directive`”是 `Experience Memory`
 - “搜索过程中试过这些路径，但其中两个是错的”是 `Experience Memory`
-- “`@pragma/core` 的 loop 代码当前位于 `packages/core/src/loop`”是 `Fact Memory`
-- “下次找 loop runtime，先看 `packages/core/src/loop`，再看 `docs/usage/loops.md`”是 `Skill Memory`
+- “`@pragma/core` 的 directive 代码当前位于 `packages/core/src/directive`”是 `Fact Memory`
+- “下次找 directive runtime，先看 `packages/core/src/directive`，再看 `docs/usage/directives.md`”是 `Skill Memory`
 
 判断标准不是“内容里有没有路径”，而是它在回答哪个问题：
 

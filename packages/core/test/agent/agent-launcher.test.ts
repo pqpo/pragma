@@ -157,7 +157,6 @@ async function createTestAgent(id: string): Promise<ExpertAgent> {
     version: "0.0.0",
     scope: "test",
     workspace: process.cwd(),
-    memory: false,
   });
 }
 

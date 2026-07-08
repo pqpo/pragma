@@ -6,7 +6,7 @@ import type {
   TaskRunRecord,
   WorkflowRunRecord,
 } from "@pragma/shared";
-import { HumanInteractionRecordSchema, LoopStateSchema } from "@pragma/shared";
+import { HumanInteractionRecordSchema, RunStateSchema } from "@pragma/shared";
 
 import type {
   ApplyStepReductionRequest,
@@ -94,12 +94,12 @@ export function createInMemoryStateManager(): StateManager {
       const createdAt = nowIso();
       const workflow: WorkflowRunRecord = {
         id: request.id,
-        loopId: request.loopId,
+        directiveId: request.directiveId,
         parentWorkflowRunId: request.parentWorkflowRunId,
         parentTaskRunId: request.parentTaskRunId,
         status: "running",
         input: cloneJson(request.input),
-        state: LoopStateSchema.parse(cloneJson(request.state)),
+        state: RunStateSchema.parse(cloneJson(request.state)),
         defaultSandbox: cloneJson(request.defaultSandbox),
         currentStepIds: [request.startStepId],
         completedStepIds: [],
@@ -125,7 +125,7 @@ export function createInMemoryStateManager(): StateManager {
 
       return [...workflows.values()]
         .filter((workflow) => {
-          if (filter.loopId !== undefined && workflow.loopId !== filter.loopId) {
+          if (filter.directiveId !== undefined && workflow.directiveId !== filter.directiveId) {
             return false;
           }
 
@@ -392,12 +392,12 @@ export function createInMemoryStateManager(): StateManager {
         );
       }
 
-      const draft = LoopStateSchema.parse(cloneJson(workflow.state));
+      const draft = RunStateSchema.parse(cloneJson(workflow.state));
       await request.reduce?.({
         state: draft,
         output: request.output,
       });
-      const nextState: RunState = LoopStateSchema.parse(draft);
+      const nextState: RunState = RunStateSchema.parse(draft);
       const updatedWorkflow = updateWorkflow(request.workflowRunId, (current) => ({
         ...current,
         state: nextState,

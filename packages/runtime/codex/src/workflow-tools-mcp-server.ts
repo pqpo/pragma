@@ -22,7 +22,7 @@ import { dispatchExpertAgentHook } from "@pragma/core";
 import type { RuntimeEventEmitter } from "@pragma/core";
 import type { RuntimeStreamEvent } from "@pragma/core";
 import type { ExpertAgentRunContext } from "@pragma/core";
-import type { LoopExecutionContext } from "@pragma/core";
+import type { DirectiveExecutionContext } from "@pragma/core";
 import { resolveToolPolicy, type ResolvedTool } from "@pragma/core";
 import type {
   ExpertAgentHumanInteractionHandler,
@@ -52,7 +52,7 @@ export interface CreateCodexWorkflowToolsMcpServerOptions {
   readonly logger: ExpertAgentLogger;
   readonly mcpTools?: readonly McpManagedTool[] | undefined;
   readonly state: CodexWorkflowToolRuntimeState;
-  readonly workflowExecution?: LoopExecutionContext | undefined;
+  readonly workflowExecution?: DirectiveExecutionContext | undefined;
 }
 
 type LocalTool = ExpertAgentManagedTool<string, ExpertAgentToolCallResult>;
@@ -253,7 +253,7 @@ async function executeWithToolHooks(options: {
   readonly approval: ExpertAgentToolApproval | undefined;
   readonly humanInteractionHandler: ExpertAgentHumanInteractionHandler | undefined;
   readonly runContext: ExpertAgentRunContext | undefined;
-  readonly workflowExecution: LoopExecutionContext | undefined;
+  readonly workflowExecution: DirectiveExecutionContext | undefined;
   readonly logger: ExpertAgentLogger;
   readonly state: CodexWorkflowToolRuntimeState;
 }): Promise<ExpertAgentToolCallResult> {

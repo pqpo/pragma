@@ -10,17 +10,17 @@ import type {
   CompiledDirective,
   Directive,
   DirectiveDefinition,
-  LoopLimitPolicy,
+  StepLimitPolicy,
   MaybePromise,
-  LoopNextTransition,
-  LoopRouteTransition,
-  LoopStepDefinition,
-  LoopStepInputResolver,
-  LoopStepReducer,
-  LoopStepRef,
-  LoopTerminalTarget,
-  LoopTransition,
-  LoopTransitionTarget,
+  NextTransition,
+  RouteTransition,
+  StepDefinition,
+  StepInputResolver,
+  StepReducer,
+  StepRef,
+  TerminalTarget,
+  Transition,
+  TransitionTarget,
   SandboxRequest,
   TaskContext,
   TaskHandler,
@@ -33,10 +33,10 @@ export interface DefineFlowOptions<TInput = unknown, TOutput = unknown> {
   readonly result?: ((context: { state: RunState }) => TOutput) | undefined;
 }
 
-export type LoopStepOptions<TInput = unknown, TOutput = unknown> = {
-  readonly input?: LoopStepInputResolver<TInput> | TInput | undefined;
+export type StepOptions<TInput = unknown, TOutput = unknown> = {
+  readonly input?: StepInputResolver<TInput> | TInput | undefined;
   readonly output?: z.ZodType<TOutput> | undefined;
-  readonly reduce?: LoopStepReducer<TOutput> | undefined;
+  readonly reduce?: StepReducer<TOutput> | undefined;
   readonly runtime?: string | undefined;
   readonly sandbox?: SandboxRequest | undefined;
 };
@@ -57,23 +57,23 @@ export interface DefineHumanTaskOptions<TInput = unknown, TOutput = HumanInterac
     | ((context: TaskContext<TInput>) => MaybePromise<HumanInteractionRequest>);
 }
 
-export type RouteCases = Readonly<Record<string, LoopTransitionTarget>>;
+export type RouteCases = Readonly<Record<string, TransitionTarget>>;
 
 export interface RouteOptions {
-  readonly fallback?: LoopTransitionTarget | undefined;
+  readonly fallback?: TransitionTarget | undefined;
 }
 
 export interface FlowBuilder {
-  readonly start: (step: LoopStepRef) => FlowChain;
-  readonly step: (step: LoopStepRef) => FlowChain;
-  readonly end: () => LoopTerminalTarget;
-  readonly fail: (reason?: string) => LoopTerminalTarget;
+  readonly start: (step: StepRef) => FlowChain;
+  readonly step: (step: StepRef) => FlowChain;
+  readonly end: () => TerminalTarget;
+  readonly fail: (reason?: string) => TerminalTarget;
 }
 
 export interface FlowChain {
-  readonly next: (step: LoopStepRef | LoopTerminalTarget) => FlowChain;
+  readonly next: (step: StepRef | TerminalTarget) => FlowChain;
   readonly route: (field: string, cases: RouteCases, options?: RouteOptions) => FlowChain;
-  readonly limit: (policy: LoopLimitPolicy) => FlowChain;
+  readonly limit: (policy: StepLimitPolicy) => FlowChain;
 }
 
 export class FlowSpec<TInput = unknown, TOutput = unknown> {
@@ -82,9 +82,9 @@ export class FlowSpec<TInput = unknown, TOutput = unknown> {
   readonly outputSchema: z.ZodType<TOutput> | undefined;
   readonly resolveOutput: ((context: { state: RunState }) => TOutput) | undefined;
 
-  private readonly steps = new Map<string, LoopStepDefinition>();
-  private readonly transitions: LoopTransition[] = [];
-  private readonly limits = new Map<string, LoopLimitPolicy>();
+  private readonly steps = new Map<string, StepDefinition>();
+  private readonly transitions: Transition[] = [];
+  private readonly limits = new Map<string, StepLimitPolicy>();
   private startStepId: string | undefined;
 
   constructor(options: DefineFlowOptions<TInput, TOutput>) {
@@ -96,21 +96,21 @@ export class FlowSpec<TInput = unknown, TOutput = unknown> {
 
   use<TStepInput = unknown, TStepOutput = unknown>(
     id: string,
-    loop: DirectiveDefinition<TStepInput, TStepOutput>,
-    options: LoopStepOptions<TStepInput, TStepOutput> = {},
-  ): LoopStepRef<TStepOutput> {
-    const runnable = compileLoopDefinition(loop);
-    const step: LoopStepDefinition<TStepInput, TStepOutput> = {
+    directive: DirectiveDefinition<TStepInput, TStepOutput>,
+    options: StepOptions<TStepInput, TStepOutput> = {},
+  ): StepRef<TStepOutput> {
+    const runnable = compileDirectiveDefinition(directive);
+    const step: StepDefinition<TStepInput, TStepOutput> = {
       id,
-      loop: runnable,
+      directive: runnable,
       input: options.input,
       output: options.output,
       reduce: options.reduce,
       runtime: options.runtime,
       sandbox: options.sandbox,
     };
-    this.addStep(step as unknown as LoopStepDefinition);
-    return createStepRef(step as unknown as LoopStepDefinition<unknown, TStepOutput>);
+    this.addStep(step as unknown as StepDefinition);
+    return createStepRef(step as unknown as StepDefinition<unknown, TStepOutput>);
   }
 
   compose(declare: (builder: FlowBuilder) => void): this {
@@ -167,13 +167,13 @@ export class FlowSpec<TInput = unknown, TOutput = unknown> {
       transitions: [...this.transitions],
       limits: new Map(this.limits),
       async run(request) {
-        const runLoop = request.execution?.runLoop;
+        const runDirective = request.execution?.runDirective;
 
-        if (runLoop !== undefined) {
-          return await runLoop(compiled, request);
+        if (runDirective !== undefined) {
+          return await runDirective(compiled, request);
         }
 
-        const { createPragma } = await import("./loop-app.ts");
+        const { createPragma } = await import("./pragma-app.ts");
         return await createPragma().run(compiled, request);
       },
     };
@@ -181,16 +181,16 @@ export class FlowSpec<TInput = unknown, TOutput = unknown> {
     return compiled;
   }
 
-  addTransition(transition: LoopTransition): void {
+  addTransition(transition: Transition): void {
     this.transitions.push(transition);
   }
 
-  setLimit(stepId: string, policy: LoopLimitPolicy): void {
+  setLimit(stepId: string, policy: StepLimitPolicy): void {
     this.assertKnownStep(stepId);
     this.limits.set(stepId, policy);
   }
 
-  private addStep(step: LoopStepDefinition): void {
+  private addStep(step: StepDefinition): void {
     if (this.steps.has(step.id)) {
       throw new Error(`Duplicate flow step id: ${step.id}`);
     }
@@ -204,7 +204,7 @@ export class FlowSpec<TInput = unknown, TOutput = unknown> {
     }
   }
 
-  private assertKnownTarget(target: LoopTransitionTarget): void {
+  private assertKnownTarget(target: TransitionTarget): void {
     if (isTerminalTarget(target)) {
       return;
     }
@@ -219,8 +219,8 @@ class MutableFlowChain implements FlowChain {
     private readonly currentStepId: string,
   ) {}
 
-  next(step: LoopStepRef | LoopTerminalTarget): FlowChain {
-    const transition: LoopNextTransition = {
+  next(step: StepRef | TerminalTarget): FlowChain {
+    const transition: NextTransition = {
       type: "next",
       from: this.currentStepId,
       to: step,
@@ -235,7 +235,7 @@ class MutableFlowChain implements FlowChain {
   }
 
   route(field: string, cases: RouteCases, options: RouteOptions = {}): FlowChain {
-    const transition: LoopRouteTransition = {
+    const transition: RouteTransition = {
       type: "route",
       from: this.currentStepId,
       field,
@@ -246,23 +246,23 @@ class MutableFlowChain implements FlowChain {
     return this;
   }
 
-  limit(policy: LoopLimitPolicy): FlowChain {
+  limit(policy: StepLimitPolicy): FlowChain {
     this.spec.setLimit(this.currentStepId, policy);
     return this;
   }
 }
 
-function createStepRef<TOutput>(step: LoopStepDefinition<unknown, TOutput>): LoopStepRef<TOutput> {
+function createStepRef<TOutput>(step: StepDefinition<unknown, TOutput>): StepRef<TOutput> {
   return {
     id: step.id,
-    output: step.output ?? step.loop.outputSchema,
+    output: step.output ?? step.directive.outputSchema,
   };
 }
 
-export function compileLoopDefinition<TInput, TOutput>(
-  loop: DirectiveDefinition<TInput, TOutput>,
+export function compileDirectiveDefinition<TInput, TOutput>(
+  directive: DirectiveDefinition<TInput, TOutput>,
 ): Directive<TInput, TOutput> {
-  return "compile" in loop ? loop.compile() : loop;
+  return "compile" in directive ? directive.compile() : directive;
 }
 
 export function defineFlow<TInput = unknown, TOutput = unknown>(
@@ -280,7 +280,7 @@ export function defineTask<TInput = unknown, TOutput = unknown>(
     outputSchema: options.output,
     async run(request) {
       if (request.execution === undefined) {
-        const { createPragma } = await import("./loop-app.ts");
+        const { createPragma } = await import("./pragma-app.ts");
         return await createPragma().run(this, request);
       }
 
@@ -317,7 +317,7 @@ export function defineHumanTask<TInput = unknown, TOutput = HumanInteractionResp
     outputSchema,
     async run(request) {
       if (request.execution === undefined) {
-        const { createPragma } = await import("./loop-app.ts");
+        const { createPragma } = await import("./pragma-app.ts");
         return await createPragma().run(this, request);
       }
 
@@ -349,6 +349,6 @@ export function defineHumanTask<TInput = unknown, TOutput = HumanInteractionResp
   };
 }
 
-function isTerminalTarget(target: LoopTransitionTarget): target is LoopTerminalTarget {
+function isTerminalTarget(target: TransitionTarget): target is TerminalTarget {
   return "type" in target && (target.type === "end" || target.type === "fail");
 }

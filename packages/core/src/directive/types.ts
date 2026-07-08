@@ -31,12 +31,12 @@ export interface Directive<TInput = unknown, TOutput = unknown> {
   run(request: StartRunRequest<TInput>): Promise<RunResult<TOutput>>;
 }
 
-export interface LoopStepRef<TOutput = unknown> {
+export interface StepRef<TOutput = unknown> {
   readonly id: string;
   readonly output?: z.ZodType<TOutput> | undefined;
 }
 
-export interface LoopRuntimeOverride {
+export interface RuntimeOverride {
   readonly runtime?: string | undefined;
 }
 
@@ -64,23 +64,23 @@ export interface SandboxRequest {
     | undefined;
 }
 
-export interface LoopStepReduceContext<TOutput = unknown> {
+export interface StepReduceContext<TOutput = unknown> {
   readonly state: RunState;
   readonly output: TOutput;
 }
 
-export type LoopStepReducer<TOutput = unknown> = (
-  context: LoopStepReduceContext<TOutput>,
+export type StepReducer<TOutput = unknown> = (
+  context: StepReduceContext<TOutput>,
 ) => MaybePromise<void>;
 
-export interface LoopStepInputContext {
+export interface StepInputContext {
   readonly state: RunState;
   readonly task: TaskRunRecord;
   readonly workflow: WorkflowRunRecord;
 }
 
-export type LoopStepInputResolver<TInput = unknown> = (
-  context: LoopStepInputContext,
+export type StepInputResolver<TInput = unknown> = (
+  context: StepInputContext,
 ) => MaybePromise<TInput>;
 
 export interface TaskWorkspace {
@@ -114,44 +114,44 @@ export type TaskHandler<TInput = unknown, TOutput = unknown> = (
   context: TaskContext<TInput>,
 ) => MaybePromise<TOutput>;
 
-export interface LoopStepDefinition<
+export interface StepDefinition<
   TInput = unknown,
   TOutput = unknown,
-> extends LoopRuntimeOverride {
+> extends RuntimeOverride {
   readonly id: string;
-  readonly loop: Directive<TInput, TOutput>;
-  readonly input?: LoopStepInputResolver<TInput> | TInput | undefined;
+  readonly directive: Directive<TInput, TOutput>;
+  readonly input?: StepInputResolver<TInput> | TInput | undefined;
   readonly output?: RuntimeOutputSchema<TOutput> | undefined;
-  readonly reduce?: LoopStepReducer<TOutput> | undefined;
+  readonly reduce?: StepReducer<TOutput> | undefined;
   readonly sandbox?: SandboxRequest | undefined;
 }
 
-export interface LoopTerminalTarget {
+export interface TerminalTarget {
   readonly type: "end" | "fail";
   readonly reason?: string | undefined;
 }
 
-export type LoopTransitionTarget = LoopStepRef | LoopTerminalTarget;
+export type TransitionTarget = StepRef | TerminalTarget;
 
-export interface LoopNextTransition {
+export interface NextTransition {
   readonly type: "next";
   readonly from: string;
-  readonly to: LoopTransitionTarget;
+  readonly to: TransitionTarget;
 }
 
-export interface LoopRouteTransition {
+export interface RouteTransition {
   readonly type: "route";
   readonly from: string;
   readonly field: string;
-  readonly cases: ReadonlyMap<string, LoopTransitionTarget>;
-  readonly fallback?: LoopTransitionTarget | undefined;
+  readonly cases: ReadonlyMap<string, TransitionTarget>;
+  readonly fallback?: TransitionTarget | undefined;
 }
 
-export type LoopTransition = LoopNextTransition | LoopRouteTransition;
+export type Transition = NextTransition | RouteTransition;
 
-export interface LoopLimitPolicy {
+export interface StepLimitPolicy {
   readonly maxVisits?: number | undefined;
-  readonly onExceeded?: LoopTerminalTarget | undefined;
+  readonly onExceeded?: TerminalTarget | undefined;
 }
 
 export interface CompiledDirective<TInput = unknown, TOutput = unknown> extends Directive<TInput, TOutput> {
@@ -159,19 +159,19 @@ export interface CompiledDirective<TInput = unknown, TOutput = unknown> extends 
   readonly inputSchema?: z.ZodType<TInput> | undefined;
   readonly outputSchema?: z.ZodType<TOutput> | undefined;
   readonly resolveOutput?: ((context: { state: RunState }) => TOutput) | undefined;
-  readonly steps: ReadonlyMap<string, LoopStepDefinition>;
+  readonly steps: ReadonlyMap<string, StepDefinition>;
   readonly startStepId: string;
-  readonly transitions: readonly LoopTransition[];
-  readonly limits: ReadonlyMap<string, LoopLimitPolicy>;
+  readonly transitions: readonly Transition[];
+  readonly limits: ReadonlyMap<string, StepLimitPolicy>;
 }
 
-export interface StartRunRequest<TInput = unknown> extends LoopRuntimeOverride {
+export interface StartRunRequest<TInput = unknown> extends RuntimeOverride {
   readonly input: TInput;
   readonly modelName?: string | undefined;
   readonly output?: RuntimeOutputSchema<unknown> | undefined;
   readonly runtimeSession?: RuntimeSessionRef | undefined;
   readonly runtimes?: Readonly<Record<string, string>> | undefined;
-  readonly execution?: LoopExecutionContext | undefined;
+  readonly execution?: DirectiveExecutionContext | undefined;
 }
 
 export interface RunResult<TOutput = unknown> {
@@ -179,16 +179,16 @@ export interface RunResult<TOutput = unknown> {
   readonly output: TOutput;
   readonly runtimeSession?: RuntimeSessionRef | undefined;
   /**
-   * State visible at the boundary of this loop run.
+   * State visible at the boundary of this directive run.
    *
-   * Top-level compiled loop runs return the final workflow state after step reducers have applied.
-   * When a loop is executed as a step inside an existing workflow, the parent step reducer runs
-   * after the child loop returns, so this state may not include the parent reducer's changes.
+   * Top-level compiled directive runs return the final workflow state after step reducers have applied.
+   * When a directive is executed as a step inside an existing workflow, the parent step reducer runs
+   * after the child directive returns, so this state may not include the parent reducer's changes.
    */
   readonly state: RunState;
 }
 
-export interface LoopExecutionContext {
+export interface DirectiveExecutionContext {
   readonly task: TaskRunRecord;
   readonly workflow: WorkflowRunRecord;
   readonly state: RunState;
@@ -200,8 +200,8 @@ export interface LoopExecutionContext {
   readonly requestHumanInteraction: (
     request: RequestHumanInteractionInput,
   ) => Promise<HumanInteractionResponse>;
-  readonly runLoop: <TInput, TOutput>(
-    loop: Directive<TInput, TOutput>,
+  readonly runDirective: <TInput, TOutput>(
+    directive: Directive<TInput, TOutput>,
     request: StartRunRequest<TInput>,
   ) => Promise<RunResult<TOutput>>;
 }
@@ -226,7 +226,7 @@ export interface TaskLease {
 export interface TaskDispatchPayload {
   readonly taskRunId: string;
   readonly workflowRunId: string;
-  readonly loopId: string;
+  readonly directiveId: string;
   readonly stepId: string;
   readonly visit: number;
   readonly input: unknown;
@@ -247,7 +247,7 @@ export interface CreatePragmaOptions {
   readonly stateManager?: StateManager | undefined;
   readonly taskManager?: TaskManager | undefined;
   readonly sandboxManager?: SandboxManager | undefined;
-  readonly loopStore?: LoopDefinitionStore | undefined;
+  readonly directiveStore?: DirectiveDefinitionStore | undefined;
   readonly runtimes?: RuntimeRegistry | undefined;
   readonly defaultRuntime?: string | undefined;
 }
@@ -259,11 +259,11 @@ export interface Pragma {
   readonly runtimes: RuntimeRegistry;
   readonly runs: RunObserver;
   readonly start: <TInput, TOutput>(
-    loop: DirectiveDefinition<TInput, TOutput>,
+    directive: DirectiveDefinition<TInput, TOutput>,
     request: StartRunRequest<TInput>,
   ) => Promise<RunHandle<TOutput>>;
   readonly run: <TInput, TOutput>(
-    loop: DirectiveDefinition<TInput, TOutput>,
+    directive: DirectiveDefinition<TInput, TOutput>,
     request: StartRunRequest<TInput>,
   ) => Promise<RunResult<TOutput>>;
 }
@@ -306,7 +306,7 @@ export interface Mailbox {
 
 export interface CreateWorkflowRunRequest<TInput = unknown> {
   readonly id: string;
-  readonly loopId: string;
+  readonly directiveId: string;
   readonly parentWorkflowRunId?: string | undefined;
   readonly parentTaskRunId?: string | undefined;
   readonly input: TInput;
@@ -347,7 +347,7 @@ export interface ApplyStepReductionRequest<TOutput = unknown> {
   readonly stepId: string;
   readonly output: TOutput;
   readonly expectedRevision: number;
-  readonly reduce?: LoopStepReducer<TOutput> | undefined;
+  readonly reduce?: StepReducer<TOutput> | undefined;
 }
 
 export interface StateTransitionResult {
@@ -425,7 +425,7 @@ export interface StateManager {
 }
 
 export interface ListWorkflowRunsFilter {
-  readonly loopId?: string | undefined;
+  readonly directiveId?: string | undefined;
   readonly status?: RunStatus | readonly RunStatus[] | undefined;
   readonly parentWorkflowRunId?: string | null | undefined;
 }
@@ -464,7 +464,7 @@ export interface RunObserver {
 
 export interface CreateWorkflowSandboxRequest {
   readonly workflowRunId: string;
-  readonly loopId: string;
+  readonly directiveId: string;
   readonly input: unknown;
   readonly request?: SandboxRequest | undefined;
 }
@@ -491,22 +491,22 @@ export interface SandboxManager {
   readonly cleanupWorkflowSandboxes: (workflowRunId: string) => Promise<void>;
 }
 
-export interface LoopDefinitionRecord<TInput = unknown, TOutput = unknown> {
+export interface DirectiveDefinitionRecord<TInput = unknown, TOutput = unknown> {
   readonly workflowRunId: string;
-  readonly loop: CompiledDirective<TInput, TOutput>;
+  readonly directive: CompiledDirective<TInput, TOutput>;
   readonly request: StartRunRequest<TInput>;
 }
 
-export interface LoopDefinitionStore {
-  readonly save: <TInput, TOutput>(record: LoopDefinitionRecord<TInput, TOutput>) => Promise<void>;
-  readonly get: (workflowRunId: string) => Promise<LoopDefinitionRecord | undefined>;
+export interface DirectiveDefinitionStore {
+  readonly save: <TInput, TOutput>(record: DirectiveDefinitionRecord<TInput, TOutput>) => Promise<void>;
+  readonly get: (workflowRunId: string) => Promise<DirectiveDefinitionRecord | undefined>;
   readonly delete: (workflowRunId: string) => Promise<void>;
 }
 
 export interface TaskManager {
   readonly start: () => Promise<void>;
   readonly startRun: <TInput, TOutput>(
-    loop: CompiledDirective<TInput, TOutput>,
+    directive: CompiledDirective<TInput, TOutput>,
     request: StartRunRequest<TInput>,
   ) => Promise<RunHandle<TOutput>>;
   readonly handleEvent: (message: MailboxMessage) => Promise<void>;
@@ -528,8 +528,8 @@ export interface TaskManagerOptions {
   readonly stateManager: StateManager;
   readonly runtimes: RuntimeRegistry;
   readonly sandboxManager: SandboxManager;
-  readonly loopStore: LoopDefinitionStore;
-  readonly runLoop?: LoopExecutionContext["runLoop"] | undefined;
+  readonly directiveStore: DirectiveDefinitionStore;
+  readonly runDirective?: DirectiveExecutionContext["runDirective"] | undefined;
   readonly workerId?: string | undefined;
   readonly leaseTtlMs?: number | undefined;
   readonly heartbeatIntervalMs?: number | undefined;

@@ -76,9 +76,9 @@ describe("memory distillation pipeline", () => {
             externalContext: false,
             runs: [
               {
-                query: "Locate loop runtime code",
+                query: "Locate directive runtime code",
                 status: "succeeded",
-                outputExcerpt: "@pragma/core loop code is located at packages/core/src/loop.",
+                outputExcerpt: "@pragma/core directive code is located at packages/core/src/directive.",
                 lessons: [],
                 tools: [],
               },
@@ -104,7 +104,7 @@ describe("memory distillation pipeline", () => {
       value: [
         expect.objectContaining({
           confidence: "verified",
-          statement: expect.stringContaining("packages/core/src/loop"),
+          statement: expect.stringContaining("packages/core/src/directive"),
         }),
       ],
     });
@@ -265,9 +265,9 @@ describe("memory distillation pipeline", () => {
             externalContext: false,
             runs: [
               {
-                query: "Locate loop runtime code",
+                query: "Locate directive runtime code",
                 status: "succeeded",
-                outputExcerpt: "@pragma/core loop code is located at packages/core/src/loop.",
+                outputExcerpt: "@pragma/core directive code is located at packages/core/src/directive.",
                 lessons: [],
                 tools: [],
               },
