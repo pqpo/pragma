@@ -5,26 +5,40 @@ import { join } from "node:path";
 
 const PI_SESSION_DIR = ".pragma/runtime-sessions/pi";
 
+export interface PiSessionManagerResult {
+  readonly sessionManager: SessionManager;
+  readonly resumedExistingSession: boolean;
+}
+
 export async function createPiSessionManager(
   cwd: string,
   agentId: string,
   runtimeSession: RuntimeSessionRef | undefined,
   expectedRuntimeSessionType: RuntimeAdapterKind,
-): Promise<SessionManager> {
+): Promise<PiSessionManagerResult> {
   const sessionDir = getPiSessionDir(cwd, agentId);
 
   if (runtimeSession === undefined || runtimeSession.type !== expectedRuntimeSessionType) {
-    return SessionManager.create(cwd, sessionDir);
+    return {
+      sessionManager: SessionManager.create(cwd, sessionDir),
+      resumedExistingSession: false,
+    };
   }
 
   const sessionId = runtimeSession.id;
   const existingSession = await findLocalSessionByExactId(sessionId, sessionDir);
 
   if (existingSession !== undefined) {
-    return SessionManager.open(existingSession.path, sessionDir, cwd);
+    return {
+      sessionManager: SessionManager.open(existingSession.path, sessionDir, cwd),
+      resumedExistingSession: true,
+    };
   }
 
-  return SessionManager.create(cwd, sessionDir, { id: sessionId });
+  return {
+    sessionManager: SessionManager.create(cwd, sessionDir, { id: sessionId }),
+    resumedExistingSession: false,
+  };
 }
 
 async function findLocalSessionByExactId(

@@ -2,7 +2,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 
-import { createAgentSession } from "@earendil-works/pi-coding-agent";
+import { createAgentSession, SessionManager } from "@earendil-works/pi-coding-agent";
 import {
   ContextSystem,
   ExpertAgent,
@@ -53,6 +53,8 @@ afterEach(async () => {
 describe("createCloudPiRuntimeAdapter", () => {
   beforeEach(() => {
     vi.mocked(createAgentSession).mockReset();
+    vi.mocked(SessionManager.listAll).mockResolvedValue([]);
+    vi.mocked(SessionManager.open).mockClear();
   });
 
   it("runs session destroy hooks when PI session creation fails", async () => {
@@ -304,6 +306,56 @@ describe("createCloudPiRuntimeAdapter", () => {
     expect((piSession.messages[0] as { readonly content?: string } | undefined)?.content).toContain(
       "Always-on reference context",
     );
+
+    await runtimeSession.abort();
+  });
+
+  it("does not inject startup user messages when resuming an existing PI session", async () => {
+    const workspace = await createTempDir();
+    await writeFile(`${workspace}/AGENTS.md`, "Follow the workspace playbook.", "utf8");
+    const agent = await ExpertAgent.create({
+      schemaVersion: "pragma.expert/v1",
+      id: "agent-1",
+      name: "Test Agent",
+      description: "Agent for runtime adapter tests.",
+      tags: ["test"],
+      version: "0.0.0",
+      scope: "test",
+      workspace,
+      contextSystem: createHostContextSystem(new FileSystemContextStore({ rootDir: workspace })),
+    });
+    const piSession = createFakePiSession("pi-session-existing");
+    vi.mocked(SessionManager.listAll).mockResolvedValue([
+      {
+        allMessagesText: "",
+        created: new Date("2026-01-01T00:00:00.000Z"),
+        cwd: workspace,
+        firstMessage: "",
+        id: "pi-session-existing",
+        messageCount: 1,
+        modified: new Date("2026-01-01T00:00:00.000Z"),
+        path: `${workspace}/.pragma/runtime-sessions/pi/agent-1/pi-session-existing.jsonl`,
+      },
+    ]);
+    vi.mocked(createAgentSession).mockResolvedValue({
+      extensionsResult: {
+        errors: [],
+        extensions: [],
+        runtime: {} as never,
+      },
+      session: piSession as never,
+    });
+
+    const runtimeSession = await createCloudPiRuntimeAdapter().createSession({
+      agent,
+      runtimeSession: {
+        type: "cloud-pi-agent",
+        id: "pi-session-existing",
+      },
+    });
+
+    expect(SessionManager.open).toHaveBeenCalledOnce();
+    expect(piSession.messages).toEqual([]);
 
     await runtimeSession.abort();
   });

@@ -22,7 +22,9 @@ import { AsyncPushQueue } from "@pragma/core";
 import { createRuntimeEventEmitter } from "@pragma/core";
 import { dispatchExpertAgentHook } from "@pragma/core";
 import type { CodexRuntimeMessage } from "./types.ts";
+import type { CodexUserInput } from "./types.ts";
 import type { CodexWorkflowToolRuntimeState } from "./workflow-tools-mcp-server.ts";
+import type { ExpertAgentStartupMessage } from "@pragma/core";
 
 export type CodexNotificationSubscriber = (notification: CodexAppServerNotification) => void;
 
@@ -52,6 +54,7 @@ export function createCodexRuntimeSession({
   outputRetryLimit,
   codexHome,
   toolRuntimeState,
+  startupMessages,
 }: {
   readonly agent: ExpertAgent;
   readonly client: CodexAppServerClient;
@@ -64,8 +67,10 @@ export function createCodexRuntimeSession({
   readonly outputRetryLimit?: number | undefined;
   readonly codexHome?: string | undefined;
   readonly toolRuntimeState?: CodexWorkflowToolRuntimeState | undefined;
+  readonly startupMessages?: readonly ExpertAgentStartupMessage[] | undefined;
 }): RuntimeAgentSession {
   const messages: CodexRuntimeMessage[] = [];
+  let pendingStartupMessages = [...(startupMessages ?? [])];
 
   return {
     info: () => ({
@@ -139,6 +144,19 @@ export function createCodexRuntimeSession({
           },
         });
 
+        const startupMessagesForRun = pendingStartupMessages;
+        pendingStartupMessages = [];
+        if (startupMessagesForRun.length > 0) {
+          const timestamp = Date.now();
+          messages.push(
+            ...startupMessagesForRun.map((message, index) => ({
+              role: message.role,
+              content: message.content,
+              timestamp: timestamp + index,
+            })),
+          );
+        }
+
         messages.push({
           role: "user",
           content: submission.query,
@@ -176,8 +194,12 @@ export function createCodexRuntimeSession({
                 model: submission.modelName,
                 input:
                   attempt === 1
-                    ? createInitialPrompt(submission.query, submission.output)
-                    : createOutputRetryPrompt(parseResult),
+                    ? createInitialTurnInput(
+                        submission.query,
+                        submission.output,
+                        startupMessagesForRun,
+                      )
+                    : createTextInputList(createOutputRetryPrompt(parseResult)),
               });
               await turn.completed;
             } finally {
@@ -855,6 +877,25 @@ Parser error:
 ${message}
 
 Reply again with valid JSON only. Do not include Markdown fences, prose, comments, or any characters before or after the JSON value.`;
+}
+
+function createInitialTurnInput(
+  query: string,
+  output: RuntimeOutputSchema<unknown> | undefined,
+  startupMessages: readonly ExpertAgentStartupMessage[],
+): readonly CodexUserInput[] {
+  return createTextInputList(
+    ...startupMessages.map((message) => message.content),
+    createInitialPrompt(query, output),
+  );
+}
+
+function createTextInputList(...texts: readonly string[]): readonly CodexUserInput[] {
+  return texts.map((text) => ({
+    type: "text",
+    text,
+    text_elements: [],
+  }));
 }
 
 function normalizeOutputRetryLimit(value: number | undefined): number {

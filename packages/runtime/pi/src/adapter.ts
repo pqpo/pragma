@@ -180,17 +180,18 @@ export function createCloudPiRuntimeAdapter(
           humanInteractionHandler,
         });
 
+        const piSessionManagerResult = await createPiSessionManager(
+          cwd,
+          agent.id,
+          runtimeSession,
+          descriptor.kind,
+        );
         const sessionOptions: CreateAgentSessionOptions = {
           cwd,
           authStorage,
           modelRegistry,
           resourceLoader: loader,
-          sessionManager: await createPiSessionManager(
-            cwd,
-            agent.id,
-            runtimeSession,
-            descriptor.kind,
-          ),
+          sessionManager: piSessionManagerResult.sessionManager,
         };
         const defaultModel = resolveRequiredRuntimeModel(
           getRuntimeModelName(agent, undefined),
@@ -208,7 +209,9 @@ export function createCloudPiRuntimeAdapter(
 
         const { session } = await createAgentSession(sessionOptions);
         piSession = session;
-        appendStartupMessages(session, context.startupMessages);
+        if (!piSessionManagerResult.resumedExistingSession) {
+          appendStartupMessages(session, context.startupMessages);
+        }
         sessionStorageContext = createSessionStorageContext({
           agentId: agent.id,
           context: runContext,

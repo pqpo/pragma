@@ -3,7 +3,7 @@ import { spawn as nodeSpawn } from "node:child_process";
 import { createInterface } from "node:readline";
 
 import type { ExpertAgentHumanInteractionHandler } from "@pragma/core";
-import type { CodexRuntimeClientInfo, CodexRuntimeSpawn } from "./types.ts";
+import type { CodexRuntimeClientInfo, CodexRuntimeSpawn, CodexUserInput } from "./types.ts";
 
 export interface CodexAppServerClientOptions {
   readonly executablePath: string;
@@ -32,7 +32,7 @@ export interface CodexThreadStartOptions {
 
 export interface CodexTurnStartOptions {
   readonly threadId: string;
-  readonly input: string;
+  readonly input: readonly CodexUserInput[];
   readonly model?: string | undefined;
 }
 
@@ -148,7 +148,7 @@ export class CodexAppServerClient {
   async startTurn(options: CodexTurnStartOptions): Promise<unknown> {
     return await this.request("turn/start", {
       threadId: options.threadId,
-      input: [{ type: "text", text: options.input }],
+      input: options.input,
       ...(options.model === undefined ? {} : { model: options.model }),
     });
   }

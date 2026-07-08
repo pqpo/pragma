@@ -7,7 +7,6 @@ import type {
   RuntimeSessionStorageContext,
   RuntimeSessionSyncCallback,
 } from "@pragma/core";
-import type { ExpertAgentStartupMessage } from "@pragma/core";
 import type { ExpertAgentRunContext } from "@pragma/core";
 import { createExpertAgentLogger, type ExpertAgentLogger } from "@pragma/core";
 import { createExpertAgentRunContext } from "@pragma/core";
@@ -189,20 +188,18 @@ export function createCodexLocalRuntimeAdapter(
             logger.debug("Codex app-server stderr", { chunk });
           },
         });
-        state.threadId = await startOrResumeThread({
+        const threadStartResult = await startOrResumeThread({
           client,
           runtimeSession,
           runtimeKind: descriptor.kind,
           cwd: agent.workspace,
           model: options.defaultModelName ?? agent.models?.defaultModelName,
-          developerInstructions: createCodexDeveloperInstructions(
-            context.systemPrompt,
-            context.startupMessages,
-          ),
+          developerInstructions: context.systemPrompt,
           sandboxMode: options.sandboxMode,
           approvalPolicy: options.approvalPolicy,
           logger,
         });
+        state.threadId = threadStartResult.threadId;
         sessionStorageContext = createSessionStorageContext({
           agentId: agent.id,
           context: runContext,
@@ -249,6 +246,7 @@ export function createCodexLocalRuntimeAdapter(
           outputRetryLimit: options.outputRetryLimit,
           codexHome: options.env?.CODEX_HOME,
           toolRuntimeState,
+          startupMessages: threadStartResult.startedFreshThread ? context.startupMessages : [],
         });
       } catch (error) {
         logger.error("Codex runtime session creation failed", { error });
@@ -326,21 +324,6 @@ function throwIfCleanupFailed(errors: readonly unknown[]): void {
   throw new AggregateError(errors, "Codex runtime session cleanup failed.");
 }
 
-function createCodexDeveloperInstructions(
-  systemPrompt: string,
-  startupMessages: readonly ExpertAgentStartupMessage[],
-): string {
-  if (startupMessages.length === 0) {
-    return systemPrompt;
-  }
-
-  return [
-    systemPrompt,
-    "Startup reference messages:",
-    ...startupMessages.map((message) => message.content),
-  ].join("\n\n");
-}
-
 function createNotificationBus(): {
   readonly publish: (notification: CodexAppServerNotification) => void;
   readonly subscribe: (subscriber: CodexNotificationSubscriber) => () => void;
@@ -382,14 +365,21 @@ async function startOrResumeThread({
   readonly sandboxMode?: string | undefined;
   readonly approvalPolicy?: string | undefined;
   readonly logger: Pick<ExpertAgentLogger, "warn">;
-}): Promise<string> {
+}): Promise<{
+  readonly threadId: string;
+  readonly startedFreshThread: boolean;
+}> {
   if (runtimeSession?.type === runtimeKind && runtimeSession.id !== "") {
     try {
-      return await client.resumeThread(runtimeSession.id, {
+      const threadId = await client.resumeThread(runtimeSession.id, {
         cwd,
         model,
         developerInstructions,
       });
+      return {
+        threadId,
+        startedFreshThread: false,
+      };
     } catch (error) {
       logger.warn("Codex thread resume failed; starting a fresh thread", {
         threadId: runtimeSession.id,
@@ -398,13 +388,17 @@ async function startOrResumeThread({
     }
   }
 
-  return await client.startThread({
+  const threadId = await client.startThread({
     cwd,
     model,
     developerInstructions,
     sandboxMode,
     approvalPolicy,
   });
+  return {
+    threadId,
+    startedFreshThread: true,
+  };
 }
 
 async function restoreRuntimeSession({

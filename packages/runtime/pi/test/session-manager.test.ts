@@ -43,18 +43,21 @@ describe("createPiSessionManager", () => {
   });
 
   it("creates a workspace-persisted session when no session id is provided", async () => {
-    const manager = await createPiSessionManager(
+    const result = await createPiSessionManager(
       "/workspace",
       "expert-1",
       undefined,
       "cloud-pi-agent",
     );
 
-    expect(manager).toEqual({
-      cwd: "/workspace",
-      options: undefined,
-      sessionDir: "/workspace/.pragma/runtime-sessions/pi/expert-1",
-      type: "create",
+    expect(result).toEqual({
+      sessionManager: {
+        cwd: "/workspace",
+        options: undefined,
+        sessionDir: "/workspace/.pragma/runtime-sessions/pi/expert-1",
+        type: "create",
+      },
+      resumedExistingSession: false,
     });
     expect(SessionManager.create).toHaveBeenCalledWith(
       "/workspace",
@@ -65,7 +68,7 @@ describe("createPiSessionManager", () => {
   });
 
   it("creates a new session when the requested runtime session type does not match", async () => {
-    const manager = await createPiSessionManager(
+    const result = await createPiSessionManager(
       "/workspace",
       "expert-1",
       {
@@ -75,11 +78,14 @@ describe("createPiSessionManager", () => {
       "cloud-pi-agent",
     );
 
-    expect(manager).toEqual({
-      cwd: "/workspace",
-      options: undefined,
-      sessionDir: "/workspace/.pragma/runtime-sessions/pi/expert-1",
-      type: "create",
+    expect(result).toEqual({
+      sessionManager: {
+        cwd: "/workspace",
+        options: undefined,
+        sessionDir: "/workspace/.pragma/runtime-sessions/pi/expert-1",
+        type: "create",
+      },
+      resumedExistingSession: false,
     });
     expect(SessionManager.create).toHaveBeenCalledWith(
       "/workspace",
@@ -101,7 +107,7 @@ describe("createPiSessionManager", () => {
       }),
     ]);
 
-    const manager = await createPiSessionManager(
+    const result = await createPiSessionManager(
       "/workspace",
       "expert-1",
       {
@@ -111,11 +117,14 @@ describe("createPiSessionManager", () => {
       "cloud-pi-agent",
     );
 
-    expect(manager).toEqual({
-      cwd: "/workspace",
-      path: "/sessions/session-2.jsonl",
-      sessionDir: "/workspace/.pragma/runtime-sessions/pi/expert-1",
-      type: "open",
+    expect(result).toEqual({
+      sessionManager: {
+        cwd: "/workspace",
+        path: "/sessions/session-2.jsonl",
+        sessionDir: "/workspace/.pragma/runtime-sessions/pi/expert-1",
+        type: "open",
+      },
+      resumedExistingSession: true,
     });
     expect(SessionManager.list).not.toHaveBeenCalled();
     expect(SessionManager.listAll).toHaveBeenCalledWith(
@@ -132,7 +141,7 @@ describe("createPiSessionManager", () => {
   it("creates a persistent session with the requested session id when none exists", async () => {
     vi.mocked(SessionManager.listAll).mockResolvedValue([]);
 
-    const manager = await createPiSessionManager(
+    const result = await createPiSessionManager(
       "/workspace",
       "expert-1",
       {
@@ -142,13 +151,16 @@ describe("createPiSessionManager", () => {
       "cloud-pi-agent",
     );
 
-    expect(manager).toEqual({
-      cwd: "/workspace",
-      options: {
-        id: "session-3",
+    expect(result).toEqual({
+      sessionManager: {
+        cwd: "/workspace",
+        options: {
+          id: "session-3",
+        },
+        sessionDir: "/workspace/.pragma/runtime-sessions/pi/expert-1",
+        type: "create",
       },
-      sessionDir: "/workspace/.pragma/runtime-sessions/pi/expert-1",
-      type: "create",
+      resumedExistingSession: false,
     });
     expect(SessionManager.create).toHaveBeenCalledWith(
       "/workspace",

@@ -214,7 +214,7 @@ describe("createCodexLocalRuntimeAdapter", () => {
     await session.abort();
   });
 
-  it("injects always-on context into codex developer instructions", async () => {
+  it("injects always-on context into the first codex turn input", async () => {
     const fake = new FakeCodexAppServer();
     const adapter = createCodexLocalRuntimeAdapter({
       spawn: fake.spawn,
@@ -236,9 +236,100 @@ describe("createCodexLocalRuntimeAdapter", () => {
     const session = await adapter.createSession({ agent });
     const threadStart = fake.requests.find((request) => request.method === "thread/start");
 
-    expect(readRequestParams(threadStart)?.["developerInstructions"]).toContain(
+    expect(readRequestParams(threadStart)?.["developerInstructions"]).not.toContain(
       "Codex runtime startup context marker.",
     );
+
+    const firstHandle = session.submit({ query: "Say hello" });
+    await firstHandle.result;
+    const firstTurnStart = fake.requests.filter((request) => request.method === "turn/start")[0];
+    const firstTurnInput = readRequestParams(firstTurnStart)?.["input"];
+
+    expect(firstTurnInput).toEqual([
+      expect.objectContaining({
+        type: "text",
+        text: expect.stringContaining("Codex runtime startup context marker."),
+        text_elements: [],
+      }),
+      expect.objectContaining({
+        type: "text",
+        text: "Say hello",
+        text_elements: [],
+      }),
+    ]);
+    expect(session.messages()[0]).toEqual(
+      expect.objectContaining({
+        role: "user",
+        content: expect.stringContaining("Codex runtime startup context marker."),
+      }),
+    );
+
+    const secondHandle = session.submit({ query: "Say again" });
+    await secondHandle.result;
+    const secondTurnStart = fake.requests.filter((request) => request.method === "turn/start")[1];
+
+    expect(readRequestParams(secondTurnStart)?.["input"]).toEqual([
+      expect.objectContaining({
+        type: "text",
+        text: "Say again",
+        text_elements: [],
+      }),
+    ]);
+
+    await session.abort();
+  });
+
+  it("does not inject startup context again after the first codex turn start fails", async () => {
+    const fake = new FakeCodexAppServer({ failFirstTurnStart: true });
+    const adapter = createCodexLocalRuntimeAdapter({
+      spawn: fake.spawn,
+    });
+    const contextSystem = new ContextSystem();
+    contextSystem.register({
+      namespace: HOST_CONTEXT_NAMESPACE,
+      store: createInMemoryContextStore({
+        context: [
+          {
+            id: AGENTS_CONTEXT_ID,
+            content: "Codex runtime startup context marker.",
+          },
+        ],
+      }),
+    });
+    const agent = await createTestAgent({ contextSystem });
+
+    const session = await adapter.createSession({ agent });
+    const failedHandle = session.submit({ query: "First attempt" });
+
+    await expect(failedHandle.result).rejects.toThrow("Injected turn start failure");
+
+    const retryHandle = session.submit({ query: "Retry attempt" });
+    await retryHandle.result;
+    const turnStarts = fake.requests.filter((request) => request.method === "turn/start");
+
+    expect(readRequestParams(turnStarts[0])?.["input"]).toEqual([
+      expect.objectContaining({
+        text: expect.stringContaining("Codex runtime startup context marker."),
+      }),
+      expect.objectContaining({
+        text: "First attempt",
+      }),
+    ]);
+    expect(readRequestParams(turnStarts[1])?.["input"]).toEqual([
+      expect.objectContaining({
+        text: "Retry attempt",
+      }),
+    ]);
+    expect(
+      session
+        .messages()
+        .filter(
+          (message) =>
+            "content" in message &&
+            typeof message.content === "string" &&
+            message.content.includes("Codex runtime startup context marker."),
+        ),
+    ).toHaveLength(1);
 
     await session.abort();
   });
@@ -261,6 +352,47 @@ describe("createCodexLocalRuntimeAdapter", () => {
     expect(fake.requests.map((request) => request.method)).toContain("thread/resume");
     expect(fake.requests.map((request) => request.method)).not.toContain("thread/start");
     expect(session.info().runtimeSession.id).toBe("thread-existing");
+
+    await session.abort();
+  });
+
+  it("does not inject startup context when resuming a codex runtime session", async () => {
+    const fake = new FakeCodexAppServer();
+    const adapter = createCodexLocalRuntimeAdapter({
+      spawn: fake.spawn,
+    });
+    const contextSystem = new ContextSystem();
+    contextSystem.register({
+      namespace: HOST_CONTEXT_NAMESPACE,
+      store: createInMemoryContextStore({
+        context: [
+          {
+            id: AGENTS_CONTEXT_ID,
+            content: "Codex runtime startup context marker.",
+          },
+        ],
+      }),
+    });
+    const agent = await createTestAgent({ contextSystem });
+
+    const session = await adapter.createSession({
+      agent,
+      runtimeSession: {
+        type: "codex-local",
+        id: "thread-existing",
+      },
+    });
+    const handle = session.submit({ query: "Say hello" });
+    await handle.result;
+    const turnStart = fake.requests.find((request) => request.method === "turn/start");
+
+    expect(readRequestParams(turnStart)?.["input"]).toEqual([
+      expect.objectContaining({
+        type: "text",
+        text: "Say hello",
+        text_elements: [],
+      }),
+    ]);
 
     await session.abort();
   });
@@ -362,6 +494,7 @@ interface FakeCodexAppServerOptions {
   readonly emitCommandExecutionItem?: boolean | undefined;
   readonly usageLocation?: "top-level" | "turn" | "none" | undefined;
   readonly onTurnStart?: (() => void) | undefined;
+  readonly failFirstTurnStart?: boolean | undefined;
 }
 
 class FakeCodexAppServer extends EventEmitter {
@@ -372,6 +505,7 @@ class FakeCodexAppServer extends EventEmitter {
   readonly responses: FakeResponse[] = [];
   command = "";
   args: readonly string[] = [];
+  private turnStartCount = 0;
 
   readonly spawn: CodexRuntimeSpawn = (command, args) => {
     this.command = command;
@@ -423,6 +557,11 @@ class FakeCodexAppServer extends EventEmitter {
         this.writeResponse(message.id, { thread: { id: "thread-existing" } });
         break;
       case "turn/start":
+        this.turnStartCount += 1;
+        if (this.options.failFirstTurnStart === true && this.turnStartCount === 1) {
+          this.writeErrorResponse(message.id, "Injected turn start failure");
+          break;
+        }
         this.writeResponse(message.id, { turn: { id: "turn-1" } });
         this.options.onTurnStart?.();
         if (this.options.requestApproval === true) {
@@ -477,6 +616,14 @@ class FakeCodexAppServer extends EventEmitter {
     }
 
     this.stdout.write(`${JSON.stringify({ id, result })}\n`);
+  }
+
+  private writeErrorResponse(id: number | undefined, message: string): void {
+    if (id === undefined) {
+      return;
+    }
+
+    this.stdout.write(`${JSON.stringify({ id, error: { code: -32000, message } })}\n`);
   }
 
   private writeNotification(method: string, params: unknown): void {
