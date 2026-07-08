@@ -7,20 +7,12 @@ import type {
   RuntimeSessionStorageContext,
   RuntimeSessionSyncCallback,
 } from "../runtime/runtime-adapter.ts";
+import type { ExpertAgentStartupMessage } from "../agent/context-manager.ts";
 import type { ExpertAgentRunContext } from "../runtime/run-context.ts";
-import {
-  createExpertAgentLogger,
-  type ExpertAgentLogger,
-} from "../logging/logger.ts";
-import {
-  createExpertAgentRunContext,
-} from "../runtime/run-context.ts";
-import {
-  createQueuedAgentLifecycle,
-} from "../runtime/agent-lifecycle.ts";
-import {
-  dispatchExpertAgentHook,
-} from "../plugins/expert-agent-plugin.ts";
+import { createExpertAgentLogger, type ExpertAgentLogger } from "../logging/logger.ts";
+import { createExpertAgentRunContext } from "../runtime/run-context.ts";
+import { createQueuedAgentLifecycle } from "../runtime/agent-lifecycle.ts";
+import { dispatchExpertAgentHook } from "../plugins/expert-agent-plugin.ts";
 import { CodexAppServerClient } from "./app-server-client.ts";
 import type { CodexAppServerNotification } from "./app-server-client.ts";
 import { createCodexRuntimeSession } from "./session.ts";
@@ -106,41 +98,38 @@ export function createCodexLocalRuntimeAdapter(
         logger,
       });
 
-      const lifecycle = createQueuedAgentLifecycle<ExpertAgentRunContext | undefined>(
-        runContext,
-        {
-          abort: async () => {
-            client?.close();
-          },
-          cleanup: async () => {
-            const sessionInfo = {
-              systemSessionId,
-              runtimeSession: {
-                type: descriptor.kind,
-                id: state.threadId,
-              },
-              agentId: agent.id,
-              runtime: descriptor,
-              sessionState: lifecycle.sessionState,
-              runState: lifecycle.runState,
-            };
-            await dispatchExpertAgentHook(agent.hooks, "beforeSessionDestroy", {
-              agent,
-              session: sessionInfo,
-              logger,
-            });
-            client?.close();
-            if (activeSessionSyncCallback !== undefined && sessionStorageContext !== undefined) {
-              await syncRuntimeSession(activeSessionSyncCallback, sessionStorageContext, logger);
-            }
-            await dispatchExpertAgentHook(agent.hooks, "afterSessionDestroy", {
-              agent,
-              session: sessionInfo,
-              logger,
-            });
-          },
+      const lifecycle = createQueuedAgentLifecycle<ExpertAgentRunContext | undefined>(runContext, {
+        abort: async () => {
+          client?.close();
         },
-      );
+        cleanup: async () => {
+          const sessionInfo = {
+            systemSessionId,
+            runtimeSession: {
+              type: descriptor.kind,
+              id: state.threadId,
+            },
+            agentId: agent.id,
+            runtime: descriptor,
+            sessionState: lifecycle.sessionState,
+            runState: lifecycle.runState,
+          };
+          await dispatchExpertAgentHook(agent.hooks, "beforeSessionDestroy", {
+            agent,
+            session: sessionInfo,
+            logger,
+          });
+          client?.close();
+          if (activeSessionSyncCallback !== undefined && sessionStorageContext !== undefined) {
+            await syncRuntimeSession(activeSessionSyncCallback, sessionStorageContext, logger);
+          }
+          await dispatchExpertAgentHook(agent.hooks, "afterSessionDestroy", {
+            agent,
+            session: sessionInfo,
+            logger,
+          });
+        },
+      });
       try {
         const sessionDir = getCodexSessionDir(agent.workspace, agent.id);
         await restoreRuntimeSession({
@@ -173,7 +162,10 @@ export function createCodexLocalRuntimeAdapter(
           runtimeKind: descriptor.kind,
           cwd: agent.workspace,
           model: options.defaultModelName ?? agent.models?.defaultModelName,
-          developerInstructions: context.systemPrompt,
+          developerInstructions: createCodexDeveloperInstructions(
+            context.systemPrompt,
+            context.startupMessages,
+          ),
           sandboxMode: options.sandboxMode,
           approvalPolicy: options.approvalPolicy,
           logger,
@@ -222,6 +214,7 @@ export function createCodexLocalRuntimeAdapter(
           state,
           defaultModelName: options.defaultModelName ?? agent.models?.defaultModelName,
           outputRetryLimit: options.outputRetryLimit,
+          codexHome: options.env?.CODEX_HOME,
         });
       } catch (error) {
         logger.error("Codex runtime session creation failed", { error });
@@ -245,6 +238,21 @@ export function createCodexLocalRuntimeAdapter(
       }
     },
   };
+}
+
+function createCodexDeveloperInstructions(
+  systemPrompt: string,
+  startupMessages: readonly ExpertAgentStartupMessage[],
+): string {
+  if (startupMessages.length === 0) {
+    return systemPrompt;
+  }
+
+  return [
+    systemPrompt,
+    "Startup reference messages:",
+    ...startupMessages.map((message) => message.content),
+  ].join("\n\n");
 }
 
 function createNotificationBus(): {

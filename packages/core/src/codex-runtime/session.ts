@@ -1,9 +1,8 @@
-import {
-  AgentMessageUsageSchema,
-  type AgentMessage,
-  type AgentMessageUsage,
-} from "@pragma/shared";
+import { AgentMessageUsageSchema, type AgentMessage, type AgentMessageUsage } from "@pragma/shared";
 import { randomUUID } from "node:crypto";
+import { readFile, readdir, stat } from "node:fs/promises";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
 import type { CodexAppServerClient, CodexAppServerNotification } from "./app-server-client.ts";
 import type {
@@ -19,16 +18,10 @@ import type { RuntimeStreamEvent } from "../runtime/stream-events.ts";
 import type { RuntimeStreamEventInput } from "../runtime/runtime-event-emitter.ts";
 import type { ExpertAgent } from "../agent/expert-agent.ts";
 import type { ExpertAgentLogger } from "../logging/logger.ts";
-import {
-  AsyncPushQueue,
-} from "../runtime/async-push-queue.ts";
-import {
-  createRuntimeEventEmitter,
-} from "../runtime/runtime-event-emitter.ts";
-import {
-  dispatchExpertAgentHook,
-} from "../plugins/expert-agent-plugin.ts";
-import type { CodexRuntimeMessage, CodexTokenUsage } from "./types.ts";
+import { AsyncPushQueue } from "../runtime/async-push-queue.ts";
+import { createRuntimeEventEmitter } from "../runtime/runtime-event-emitter.ts";
+import { dispatchExpertAgentHook } from "../plugins/expert-agent-plugin.ts";
+import type { CodexRuntimeMessage } from "./types.ts";
 
 export type CodexNotificationSubscriber = (notification: CodexAppServerNotification) => void;
 
@@ -40,6 +33,12 @@ export interface CodexRuntimeSessionState {
   threadId: string;
 }
 
+const CODEX_TOOL_ITEM_NAMES = {
+  commandExecution: "exec_command",
+  fileChange: "apply_patch",
+  mcpToolCall: "mcp_tool_call",
+} as const satisfies Record<string, string>;
+
 export function createCodexRuntimeSession({
   agent,
   client,
@@ -50,6 +49,7 @@ export function createCodexRuntimeSession({
   state,
   defaultModelName,
   outputRetryLimit,
+  codexHome,
 }: {
   readonly agent: ExpertAgent;
   readonly client: CodexAppServerClient;
@@ -60,6 +60,7 @@ export function createCodexRuntimeSession({
   readonly state: CodexRuntimeSessionState;
   readonly defaultModelName?: string | undefined;
   readonly outputRetryLimit?: number | undefined;
+  readonly codexHome?: string | undefined;
 }): RuntimeAgentSession {
   const messages: CodexRuntimeMessage[] = [];
 
@@ -144,6 +145,7 @@ export function createCodexRuntimeSession({
           let outputText = "";
           let usage: AgentMessageUsage | undefined;
           let parseResult: ParseRuntimeOutputResult<TSubmitOutput> | undefined;
+          const usageFallbackStartTime = new Date();
 
           for (let attempt = 1; attempt <= maxAttempts; attempt++) {
             outputText = "";
@@ -155,7 +157,7 @@ export function createCodexRuntimeSession({
                 outputText = text;
               },
               onUsage(nextUsage) {
-                usage = nextUsage;
+                usage = mergeUsage(usage, nextUsage);
               },
             });
             const unsubscribe = notificationBus.subscribe(turn.handleNotification);
@@ -187,6 +189,13 @@ export function createCodexRuntimeSession({
 
           if (parseResult === undefined || !parseResult.ok) {
             throw new Error("Codex runtime output parsing did not complete.");
+          }
+
+          if (!hasNonZeroUsage(usage)) {
+            usage = await scanCodexSessionUsage({
+              codexHome,
+              startTime: usageFallbackStartTime,
+            });
           }
 
           messages.push({
@@ -441,9 +450,14 @@ function readCompletedAssistantText(notification: CodexAppServerNotification): s
   return typeof text === "string" ? text : undefined;
 }
 
-function readToolEvent(
-  notification: CodexAppServerNotification,
-): { readonly id: string; readonly name: string; readonly preview: unknown; readonly completed: boolean } | undefined {
+function readToolEvent(notification: CodexAppServerNotification):
+  | {
+      readonly id: string;
+      readonly name: string;
+      readonly preview: unknown;
+      readonly completed: boolean;
+    }
+  | undefined {
   if (notification.method !== "item/started" && notification.method !== "item/completed") {
     return undefined;
   }
@@ -451,56 +465,110 @@ function readToolEvent(
   const item = readRecord(notification.params["item"]);
   const id = readString(item?.["id"]) ?? randomUUID();
   const type = readString(item?.["type"]);
+  const name = type === undefined ? undefined : codexItemTypeToToolName(type);
 
-  if (type === undefined || type === "agentMessage" || type === "reasoning") {
+  if (name === undefined) {
     return undefined;
   }
 
   return {
     id,
-    name: codexItemTypeToToolName(type),
+    name,
     preview: item,
     completed: notification.method === "item/completed",
   };
 }
 
-function codexItemTypeToToolName(type: string): string {
-  switch (type) {
-    case "commandExecution":
-      return "exec_command";
-    case "fileChange":
-      return "apply_patch";
-    case "mcpToolCall":
-      return "mcp_tool_call";
-    default:
-      return type;
-  }
+function codexItemTypeToToolName(type: string): string | undefined {
+  return CODEX_TOOL_ITEM_NAMES[type as keyof typeof CODEX_TOOL_ITEM_NAMES];
 }
 
 function readUsage(params: Record<string, unknown>): AgentMessageUsage | undefined {
-  const usage = readRecord(params["usage"]);
-  const input = readNumber(usage?.["input_tokens"]);
-  const output = readNumber(usage?.["output_tokens"]);
-  const cacheRead = readNumber(usage?.["cached_input_tokens"]);
+  const sources = [params, readRecord(params["turn"])].filter(
+    (source): source is Record<string, unknown> => source !== undefined,
+  );
 
-  if (input === undefined && output === undefined && cacheRead === undefined) {
+  for (const source of sources) {
+    const usage = readUsageFromRecord(source);
+
+    if (usage !== undefined) {
+      return usage;
+    }
+  }
+
+  return undefined;
+}
+
+function readUsageFromRecord(record: Record<string, unknown>): AgentMessageUsage | undefined {
+  for (const key of ["usage", "token_usage", "tokens"]) {
+    const usage = readRecord(record[key]);
+
+    if (usage === undefined) {
+      continue;
+    }
+
+    const parsed = createUsageFromCodexTokenRecord(usage);
+
+    if (parsed !== undefined) {
+      return parsed;
+    }
+  }
+
+  return undefined;
+}
+
+function createUsageFromCodexTokenRecord(
+  record: Record<string, unknown>,
+): AgentMessageUsage | undefined {
+  const inputTokens = readFirstTokenCount(record, ["input_tokens", "input", "prompt_tokens"]);
+  const cacheReadTokens = readFirstTokenCount(record, [
+    "cached_input_tokens",
+    "cache_read_tokens",
+    "cache_read_input_tokens",
+  ]);
+  const outputTokens = readFirstTokenCount(record, [
+    "output_tokens",
+    "output",
+    "completion_tokens",
+  ]);
+  const reasoningOutputTokens = readFirstTokenCount(record, ["reasoning_output_tokens"]);
+  const cacheWriteTokens = readFirstTokenCount(record, [
+    "cache_write_tokens",
+    "cache_creation_input_tokens",
+  ]);
+
+  if (
+    inputTokens === undefined &&
+    cacheReadTokens === undefined &&
+    outputTokens === undefined &&
+    reasoningOutputTokens === undefined &&
+    cacheWriteTokens === undefined
+  ) {
     return undefined;
   }
 
   return createUsage({
-    inputTokens: input ?? 0,
-    outputTokens: output ?? 0,
-    cachedInputTokens: cacheRead ?? 0,
+    inputTokens: normalizeTokenCount(inputTokens),
+    outputTokens: normalizeTokenCount(outputTokens) + normalizeTokenCount(reasoningOutputTokens),
+    cacheReadTokens: normalizeTokenCount(cacheReadTokens),
+    cacheWriteTokens: normalizeTokenCount(cacheWriteTokens),
   });
 }
 
-function createUsage(usage: CodexTokenUsage): AgentMessageUsage {
+function createUsage(usage: {
+  readonly inputTokens: number;
+  readonly outputTokens: number;
+  readonly cacheReadTokens: number;
+  readonly cacheWriteTokens: number;
+}): AgentMessageUsage {
+  const input = Math.max(usage.inputTokens - usage.cacheReadTokens, 0);
+
   return {
-    input: usage.inputTokens,
+    input,
     output: usage.outputTokens,
-    cacheRead: usage.cachedInputTokens,
-    cacheWrite: 0,
-    totalTokens: usage.inputTokens + usage.outputTokens,
+    cacheRead: usage.cacheReadTokens,
+    cacheWrite: usage.cacheWriteTokens,
+    totalTokens: input + usage.outputTokens + usage.cacheReadTokens + usage.cacheWriteTokens,
     cost: {
       input: 0,
       output: 0,
@@ -509,6 +577,192 @@ function createUsage(usage: CodexTokenUsage): AgentMessageUsage {
       total: 0,
     },
   };
+}
+
+function mergeUsage(
+  current: AgentMessageUsage | undefined,
+  next: AgentMessageUsage | undefined,
+): AgentMessageUsage | undefined {
+  if (next === undefined) {
+    return current;
+  }
+
+  if (current === undefined) {
+    return next;
+  }
+
+  return {
+    input: current.input + next.input,
+    output: current.output + next.output,
+    cacheRead: current.cacheRead + next.cacheRead,
+    cacheWrite: current.cacheWrite + next.cacheWrite,
+    ...(current.cacheWrite1h === undefined && next.cacheWrite1h === undefined
+      ? {}
+      : { cacheWrite1h: (current.cacheWrite1h ?? 0) + (next.cacheWrite1h ?? 0) }),
+    totalTokens: current.totalTokens + next.totalTokens,
+    cost: {
+      input: current.cost.input + next.cost.input,
+      output: current.cost.output + next.cost.output,
+      cacheRead: current.cost.cacheRead + next.cost.cacheRead,
+      cacheWrite: current.cost.cacheWrite + next.cost.cacheWrite,
+      total: current.cost.total + next.cost.total,
+    },
+  };
+}
+
+function hasNonZeroUsage(usage: AgentMessageUsage | undefined): boolean {
+  return (
+    usage !== undefined &&
+    (usage.input > 0 || usage.output > 0 || usage.cacheRead > 0 || usage.cacheWrite > 0)
+  );
+}
+
+async function scanCodexSessionUsage({
+  codexHome,
+  startTime,
+}: {
+  readonly codexHome?: string | undefined;
+  readonly startTime: Date;
+}): Promise<AgentMessageUsage | undefined> {
+  const root = await findCodexSessionRoot(codexHome);
+
+  if (root === undefined) {
+    return undefined;
+  }
+
+  const dateDir = join(
+    root,
+    String(startTime.getFullYear()).padStart(4, "0"),
+    String(startTime.getMonth() + 1).padStart(2, "0"),
+    String(startTime.getDate()).padStart(2, "0"),
+  );
+  const entries = await readdir(dateDir).catch(() => []);
+  const candidates = [];
+
+  for (const entry of entries) {
+    if (!entry.endsWith(".jsonl")) {
+      continue;
+    }
+
+    const path = join(dateDir, entry);
+    const info = await stat(path).catch(() => undefined);
+
+    if (info === undefined || info.mtime < startTime) {
+      continue;
+    }
+
+    candidates.push({ path, mtime: info.mtime.getTime() });
+  }
+
+  candidates.sort((left, right) => left.mtime - right.mtime || left.path.localeCompare(right.path));
+
+  let result: AgentMessageUsage | undefined;
+
+  for (const candidate of candidates) {
+    result = (await parseCodexSessionUsageFile(candidate.path)) ?? result;
+  }
+
+  return hasNonZeroUsage(result) ? result : undefined;
+}
+
+async function findCodexSessionRoot(codexHome: string | undefined): Promise<string | undefined> {
+  const roots = [
+    codexHome === undefined || codexHome.trim() === "" ? undefined : join(codexHome, "sessions"),
+    process.env.CODEX_HOME === undefined || process.env.CODEX_HOME.trim() === ""
+      ? undefined
+      : join(process.env.CODEX_HOME, "sessions"),
+    join(homedir(), ".codex", "sessions"),
+  ];
+
+  for (const root of roots) {
+    if (root === undefined) {
+      continue;
+    }
+
+    const info = await stat(root).catch(() => undefined);
+
+    if (info?.isDirectory() === true) {
+      return root;
+    }
+  }
+
+  return undefined;
+}
+
+async function parseCodexSessionUsageFile(path: string): Promise<AgentMessageUsage | undefined> {
+  const content = await readFile(path, "utf8").catch(() => undefined);
+
+  if (content === undefined) {
+    return undefined;
+  }
+
+  let result: AgentMessageUsage | undefined;
+
+  for (const line of content.split("\n")) {
+    if (!line.includes("token_count") && !line.includes("turn_context")) {
+      continue;
+    }
+
+    const event = parseJsonRecord(line);
+    const payload = readRecord(event?.["payload"]);
+
+    if (payload?.["type"] !== "token_count") {
+      continue;
+    }
+
+    const info = readRecord(payload["info"]);
+    const tokenUsage =
+      readRecord(info?.["total_token_usage"]) ?? readRecord(info?.["last_token_usage"]);
+    const usage =
+      tokenUsage === undefined ? undefined : createUsageFromCodexTokenRecord(tokenUsage);
+
+    if (usage !== undefined) {
+      result = usage;
+    }
+  }
+
+  return result;
+}
+
+function parseJsonRecord(text: string): Record<string, unknown> | undefined {
+  try {
+    return readRecord(JSON.parse(text));
+  } catch {
+    return undefined;
+  }
+}
+
+function readFirstTokenCount(
+  record: Record<string, unknown>,
+  keys: readonly string[],
+): number | undefined {
+  let zeroValue: number | undefined;
+
+  for (const key of keys) {
+    const value = readNumber(record[key]);
+
+    if (value === undefined) {
+      continue;
+    }
+
+    const normalized = normalizeTokenCount(value);
+
+    if (normalized > 0) {
+      return normalized;
+    }
+
+    zeroValue = 0;
+  }
+
+  return zeroValue;
+}
+
+function normalizeTokenCount(value: number | undefined): number {
+  if (value === undefined || !Number.isFinite(value) || value <= 0) {
+    return 0;
+  }
+
+  return Math.trunc(value);
 }
 
 function readFailureMessage(params: Record<string, unknown>): string {
@@ -687,7 +941,12 @@ function readAgentMessageUsage(value: unknown): AgentMessageUsage {
     return result.data;
   }
 
-  return createUsage({ inputTokens: 0, outputTokens: 0, cachedInputTokens: 0 });
+  return createUsage({
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0,
+  });
 }
 
 function summarizeInput(input: string): string {

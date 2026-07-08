@@ -1,14 +1,22 @@
 import { cac } from "cac";
 
 import {
+  AGENTS_CONTEXT_ID,
+  ContextSystem,
   ExpertAgent,
+  HOST_CONTEXT_NAMESPACE,
   createCodexLocalRuntimeAdapter,
+  createInMemoryContextStore,
   type CodexRuntimeApprovalPolicy,
   type CodexRuntimeSandboxMode,
   type RuntimeSessionRef,
 } from "@pragma/core";
 
-import { printRunHeader, printRunResult } from "./harness/expert-agent-example-utils.ts";
+import {
+  printAgentContextSummary,
+  printRunHeader,
+  printRunResult,
+} from "./harness/expert-agent-example-utils.ts";
 import { createExampleLoggerProvider } from "./harness/logger.ts";
 import { defaultWorkspaceRoot, ensureWorkspaceDir, loadExamplesEnv } from "./harness/paths.ts";
 import { printRunStream } from "./harness/stream-output.ts";
@@ -22,8 +30,12 @@ interface CodexRuntimeExampleCliOptions {
   readonly approvalPolicy: CodexRuntimeApprovalPolicy | undefined;
 }
 
-const defaultQuery =
-  "用两句话介绍 Pragma，并说明你当前是通过 Codex local runtime 运行的。";
+const defaultQuery = [
+  "执行一次 Codex local runtime 综合检查：",
+  "1. 先根据启动上下文说明 Pragma 的模块边界原则，并点名 codex-runtime-runbook.md。",
+  "2. 必须使用只读本地工具调用检查当前目录和仓库 package.json，例如运行 pwd 和 ls -la ../package.json。",
+  "3. 最后用三条项目符号总结：context 是否可见、工具调用是否发生、当前 runtime 类型是什么。",
+].join("\n");
 
 loadExamplesEnv();
 
@@ -33,18 +45,23 @@ const workspace = defaultWorkspaceRoot;
 await ensureWorkspaceDir(workspace);
 
 const loggerProvider = createExampleLoggerProvider();
+const contextSystem = createCodexRuntimeExampleContextSystem();
 const agent = await ExpertAgent.create({
   id: "codex-runtime-example-expert",
   name: "Codex Runtime Example Expert",
-  description: "Demonstrates running an ExpertAgent through the local Codex runtime.",
+  description:
+    "Demonstrates running an ExpertAgent through the local Codex runtime with context and Codex tool events.",
   instructions: [
     "You are an ExpertAgent running through Pragma's Codex local runtime adapter.",
     "Answer concisely and mention concrete files or commands only when useful.",
+    "When the task asks for a local check, use Codex's read-only local tools before answering.",
+    "Use the always-on context as reference material and cite context IDs when they are relevant.",
   ].join("\n"),
   tags: ["example", "codex-runtime"],
   version: "0.0.0",
   scope: "local-test",
   workspace,
+  contextSystem,
   loggerProvider,
 });
 
@@ -63,6 +80,8 @@ const session = await runtime.createSession({
 
 try {
   const sessionInfo = session.info();
+
+  await printAgentContextSummary(agent);
 
   console.log("Codex runtime session:");
   console.log(`- systemSessionId: ${sessionInfo.systemSessionId}`);
@@ -89,6 +108,55 @@ try {
   }
 } finally {
   await session.abort();
+}
+
+function createCodexRuntimeExampleContextSystem(): ContextSystem {
+  const contextSystem = new ContextSystem();
+
+  contextSystem.register({
+    namespace: HOST_CONTEXT_NAMESPACE,
+    store: createInMemoryContextStore({
+      context: [
+        {
+          id: AGENTS_CONTEXT_ID,
+          content: [
+            "# Codex Runtime Example Context",
+            "",
+            "Pragma is a multi-expert Agent orchestration platform.",
+            "The core module boundary is apps/server -> packages/server -> packages/core -> packages/shared.",
+            "apps/web must use @pragma/client and must not import @pragma/server or @pragma/core.",
+            "packages/shared must stay runtime-neutral and must not import Node APIs.",
+            "Codex local runtime should surface commandExecution and fileChange items as runtime tool stream events.",
+          ].join("\n"),
+          metadata: {
+            description: "Always-on Codex runtime example context.",
+            trigger: "always_on",
+            trustLevel: "workspace",
+            sensitivity: "internal",
+          },
+        },
+        {
+          id: "codex-runtime-runbook.md",
+          content: [
+            "# Codex Runtime Runbook",
+            "",
+            "Use sandbox=read-only for inspection tasks.",
+            "Use approvalPolicy=never for non-mutating example runs.",
+            "A healthy run should show message events, usage, and tool events when the task requires local inspection.",
+            "The expected visible tool event for shell inspection is commandExecution mapped to exec_command.",
+          ].join("\n"),
+          metadata: {
+            description: "Runbook for validating Codex runtime logs.",
+            trigger: "model_decision",
+            trustLevel: "workspace",
+            sensitivity: "internal",
+          },
+        },
+      ],
+    }),
+  });
+
+  return contextSystem;
 }
 
 function readCodexRuntimeExampleCli(): CodexRuntimeExampleCliOptions {
