@@ -5,18 +5,19 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough, Writable } from "node:stream";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-import { ExpertAgent } from "@pragma/core";
-import { createCodexLocalRuntimeAdapter } from "../src/adapter.ts";
 import {
   AGENTS_CONTEXT_ID,
   ContextSystem,
+  createInMemoryContextStore,
+  ExpertAgent,
   HOST_CONTEXT_NAMESPACE,
 } from "@pragma/core";
-import { createInMemoryContextStore } from "@pragma/core";
-import type { CodexRuntimeSpawn } from "../src/types.ts";
+import type { IExpertAgentMcpConfig } from "@pragma/core";
 import type { RuntimeSessionStorageContext } from "@pragma/core";
+import { createCodexLocalRuntimeAdapter } from "../src/adapter.ts";
+import type { CodexRuntimeSpawn } from "../src/types.ts";
 
 describe("createCodexLocalRuntimeAdapter", () => {
   it("declares MCP support", () => {
@@ -66,6 +67,51 @@ describe("createCodexLocalRuntimeAdapter", () => {
     expect(session.messages()).toHaveLength(2);
 
     await session.abort();
+  });
+
+  it("loads and disposes user MCP config for the workflow tools server", async () => {
+    const fake = new FakeCodexAppServer();
+    const dispose = vi.fn(async () => undefined);
+    const adapter = createCodexLocalRuntimeAdapter({
+      spawn: fake.spawn,
+    });
+    const agent = await createTestAgent({
+      mcp: {
+        mcpServers: {
+          docs: {
+            name: "Docs MCP",
+            inProcess: {
+              listTools: async () => [
+                {
+                  name: "lookup",
+                  description: "Lookup docs.",
+                  inputSchema: {
+                    type: "object",
+                    properties: {},
+                    additionalProperties: false,
+                  },
+                },
+              ],
+              callTool: async () => ({
+                content: [
+                  {
+                    type: "text",
+                    text: "docs",
+                  },
+                ],
+              }),
+              dispose,
+            },
+          },
+        },
+      },
+    });
+
+    const session = await adapter.createSession({ agent });
+
+    await session.abort();
+
+    expect(dispose).toHaveBeenCalledOnce();
   });
 
   it("does not treat codex userMessage items as tool events", async () => {
@@ -450,7 +496,10 @@ describe("createCodexLocalRuntimeAdapter", () => {
 });
 
 async function createTestAgent(
-  options: { readonly contextSystem?: ContextSystem | undefined } = {},
+  options: {
+    readonly contextSystem?: ContextSystem | undefined;
+    readonly mcp?: IExpertAgentMcpConfig | undefined;
+  } = {},
 ): Promise<ExpertAgent> {
   return await ExpertAgent.create({
     id: "agent-codex-test",
@@ -463,6 +512,7 @@ async function createTestAgent(
     workspace: await mkdtemp(join(tmpdir(), "pragma-codex-runtime-test-")),
     memory: false,
     ...(options.contextSystem === undefined ? {} : { contextSystem: options.contextSystem }),
+    ...(options.mcp === undefined ? {} : { mcp: options.mcp }),
   });
 }
 

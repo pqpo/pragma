@@ -359,6 +359,71 @@ describe("createCloudPiRuntimeAdapter", () => {
 
     await runtimeSession.abort();
   });
+
+  it("loads user MCP config into PI custom tools and disposes it on session cleanup", async () => {
+    const workspace = await createTempDir();
+    const dispose = vi.fn(async () => undefined);
+    const agent = await ExpertAgent.create({
+      schemaVersion: "pragma.expert/v1",
+      id: "agent-1",
+      name: "Test Agent",
+      description: "Agent for runtime adapter tests.",
+      tags: ["test"],
+      version: "0.0.0",
+      scope: "test",
+      workspace,
+      mcp: {
+        mcpServers: {
+          docs: {
+            name: "Docs MCP",
+            inProcess: {
+              listTools: async () => [
+                {
+                  name: "lookup",
+                  description: "Lookup docs.",
+                  inputSchema: {
+                    type: "object",
+                    properties: {},
+                    additionalProperties: false,
+                  },
+                },
+              ],
+              callTool: async () => ({
+                content: [
+                  {
+                    type: "text",
+                    text: "docs",
+                  },
+                ],
+              }),
+              dispose,
+            },
+          },
+        },
+      },
+    });
+    vi.mocked(createAgentSession).mockResolvedValue({
+      extensionsResult: {
+        errors: [],
+        extensions: [],
+        runtime: {} as never,
+      },
+      session: createFakePiSession("pi-session-mcp") as never,
+    });
+
+    const runtimeSession = await createCloudPiRuntimeAdapter().createSession({ agent });
+    const sessionOptions = vi.mocked(createAgentSession).mock.calls[0]?.[0] as
+      | { readonly customTools?: readonly { readonly name: string }[] }
+      | undefined;
+
+    expect(sessionOptions?.customTools?.map((tool) => tool.name)).toEqual(
+      expect.arrayContaining(["mcp_docs_lookup"]),
+    );
+
+    await runtimeSession.abort();
+
+    expect(dispose).toHaveBeenCalledOnce();
+  });
 });
 
 async function createTempDir(): Promise<string> {

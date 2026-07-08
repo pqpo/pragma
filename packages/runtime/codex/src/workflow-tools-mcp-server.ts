@@ -17,6 +17,7 @@ import type {
 import type { ExpertAgent } from "@pragma/core";
 import type { ExpertAgentDefaultTool } from "@pragma/core";
 import type { ExpertAgentLogger } from "@pragma/core";
+import type { McpManagedTool } from "@pragma/core";
 import { dispatchExpertAgentHook } from "@pragma/core";
 import type { RuntimeEventEmitter } from "@pragma/core";
 import type { RuntimeStreamEvent } from "@pragma/core";
@@ -48,6 +49,7 @@ export interface CreateCodexWorkflowToolsMcpServerOptions {
   readonly getContext: () => ExpertAgentRunContext | undefined;
   readonly humanInteractionHandler?: ExpertAgentHumanInteractionHandler | undefined;
   readonly logger: ExpertAgentLogger;
+  readonly mcpTools?: readonly McpManagedTool[] | undefined;
   readonly state: CodexWorkflowToolRuntimeState;
 }
 
@@ -134,10 +136,44 @@ function createCodexWorkflowLocalTools(
     tools: [
       ...defaultTools.map((tool) => createResolvedLocalTool("default", fromDefaultTool(tool))),
       ...(options.agent.tools ?? []).map((tool) => createResolvedLocalTool("managed", tool)),
+      ...createCodexMcpTools(options.mcpTools ?? []).map((tool) =>
+        createResolvedLocalTool("mcp", tool),
+      ),
     ],
   });
 
   return resolved.tools;
+}
+
+function createCodexMcpTools(
+  mcpTools: readonly McpManagedTool[],
+): readonly ExpertAgentManagedTool<string, ExpertAgentToolCallResult>[] {
+  return mcpTools.map((mcpTool) => {
+    const toolName = `mcp_${sanitizeToolName(mcpTool.serverId)}_${sanitizeToolName(mcpTool.name)}`;
+
+    return {
+      name: toolName,
+      description: [
+        mcpTool.description ?? `Call MCP tool ${mcpTool.name}.`,
+        `Original MCP server: ${mcpTool.serverName}. Original tool: ${mcpTool.name}.`,
+      ].join("\n"),
+      inputSchema: mcpTool.inputSchema,
+      async call(args, signal, context) {
+        const result = await mcpTool.call(args, signal, {
+          toolCallId: context?.toolCallId,
+        });
+
+        return {
+          text: formatMcpToolResult(result),
+          details: {
+            server: mcpTool.serverName,
+            tool: mcpTool.name,
+            result,
+          },
+        };
+      },
+    };
+  });
 }
 
 function createResolvedLocalTool(
@@ -526,6 +562,25 @@ function closeHttpServer(server: ReturnType<typeof createServer>): Promise<void>
 function sanitizeMcpConfigId(value: string): string {
   const sanitized = value.replace(/[^a-zA-Z0-9_]/g, "_").replace(/_+/g, "_");
   return sanitized.length === 0 ? "agent" : sanitized;
+}
+
+function sanitizeToolName(value: string): string {
+  const sanitized = value.replace(/[^a-zA-Z0-9_]/g, "_").replace(/_+/g, "_");
+  return sanitized.length === 0 ? "tool" : sanitized;
+}
+
+function formatMcpToolResult(result: unknown): string {
+  if (isRecord(result) && Array.isArray(result.content)) {
+    const textParts = result.content
+      .map((entry) => (isRecord(entry) && typeof entry.text === "string" ? entry.text : undefined))
+      .filter((entry): entry is string => entry !== undefined);
+
+    if (textParts.length > 0) {
+      return textParts.join("\n");
+    }
+  }
+
+  return typeof result === "string" ? result : JSON.stringify(result, null, 2);
 }
 
 function isAddressInfo(value: ReturnType<ReturnType<typeof createServer>["address"]>): value is AddressInfo {

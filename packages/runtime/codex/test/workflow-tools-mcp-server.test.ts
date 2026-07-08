@@ -10,12 +10,44 @@ import { createCodexWorkflowToolsMcpServer } from "../src/workflow-tools-mcp-ser
 import type { ExpertAgentPluginHooks } from "@pragma/core";
 import type {
   ExpertAgentManagedTool,
+  IExpertAgentMcpConfig,
   ExpertAgentToolCallResult,
 } from "@pragma/core";
 
 describe("createCodexWorkflowToolsMcpServer", () => {
-  it("exposes context and managed tools over HTTP MCP", async () => {
+  it("exposes context, managed, and user MCP tools over HTTP MCP", async () => {
     const agent = await createTestAgent({
+      mcp: {
+        mcpServers: {
+          docs: {
+            name: "Docs MCP",
+            inProcess: {
+              listTools: async () => [
+                {
+                  name: "lookup",
+                  description: "Lookup docs.",
+                  inputSchema: {
+                    type: "object",
+                    properties: {
+                      query: { type: "string" },
+                    },
+                    required: ["query"],
+                    additionalProperties: false,
+                  },
+                },
+              ],
+              callTool: async (_name, args) => ({
+                content: [
+                  {
+                    type: "text",
+                    text: isRecord(args) && typeof args.query === "string" ? args.query : "",
+                  },
+                ],
+              }),
+            },
+          },
+        },
+      },
       tools: [
         {
           name: "echo_note",
@@ -34,10 +66,12 @@ describe("createCodexWorkflowToolsMcpServer", () => {
         },
       ],
     });
+    const userMcpRegistry = await createMcpToolRegistry(agent.mcp);
     const server = await createCodexWorkflowToolsMcpServer({
       agent,
       getContext: () => undefined,
       logger: agent.logger,
+      mcpTools: userMcpRegistry.tools,
       state: {},
     });
     const registry = await createMcpToolRegistry({
@@ -51,17 +85,27 @@ describe("createCodexWorkflowToolsMcpServer", () => {
 
     try {
       expect(registry.tools.map((tool) => tool.name)).toEqual(
-        expect.arrayContaining(["askUserQuestion", "list_expert_context", "echo_note"]),
+        expect.arrayContaining([
+          "askUserQuestion",
+          "list_expert_context",
+          "echo_note",
+          "mcp_docs_lookup",
+        ]),
       );
 
       const result = await registry.tools
         .find((tool) => tool.name === "echo_note")
         ?.call({ text: "hello" }, undefined);
+      const mcpResult = await registry.tools
+        .find((tool) => tool.name === "mcp_docs_lookup")
+        ?.call({ query: "context" }, undefined);
 
       expect(readTextContent(result)).toBe("hello");
+      expect(readTextContent(mcpResult)).toBe("context");
     } finally {
       await registry.dispose();
       await server.dispose();
+      await userMcpRegistry.dispose();
     }
   });
 
@@ -259,6 +303,7 @@ describe("createCodexWorkflowToolsMcpServer", () => {
 async function createTestAgent(options: {
   readonly tools: readonly ExpertAgentManagedTool<string, ExpertAgentToolCallResult>[];
   readonly hooks?: ExpertAgentPluginHooks | undefined;
+  readonly mcp?: IExpertAgentMcpConfig | undefined;
 }): Promise<ExpertAgent> {
   return await ExpertAgent.create({
     id: "codex-workflow-tools-test",
@@ -271,6 +316,7 @@ async function createTestAgent(options: {
     memory: false,
     tools: options.tools,
     ...(options.hooks === undefined ? {} : { hooks: options.hooks }),
+    ...(options.mcp === undefined ? {} : { mcp: options.mcp }),
   });
 }
 

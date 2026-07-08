@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 
 import type {
+  McpToolRegistry,
   RuntimeAdapter,
   RuntimeSessionRestoreHandler,
   RuntimeSessionStorageContext,
@@ -10,6 +11,7 @@ import type {
 import type { ExpertAgentRunContext } from "@pragma/core";
 import { createExpertAgentLogger, type ExpertAgentLogger } from "@pragma/core";
 import { createExpertAgentRunContext } from "@pragma/core";
+import { createMcpToolRegistry } from "@pragma/core";
 import { createQueuedAgentLifecycle } from "@pragma/core";
 import { dispatchExpertAgentHook } from "@pragma/core";
 import { CodexAppServerClient } from "./app-server-client.ts";
@@ -86,6 +88,7 @@ export function createCodexLocalRuntimeAdapter(
       const notificationBus = createNotificationBus();
       const toolRuntimeState: CodexWorkflowToolRuntimeState = {};
       let client: CodexAppServerClient | undefined;
+      let mcpToolRegistry: McpToolRegistry | undefined;
       let workflowToolsMcpServer: CodexWorkflowToolsMcpServer | undefined;
       let activeSessionSyncCallback: RuntimeSessionSyncCallback | undefined;
       let sessionStorageContext: RuntimeSessionStorageContext | undefined;
@@ -129,7 +132,7 @@ export function createCodexLocalRuntimeAdapter(
           }).catch((error: unknown) => {
             cleanupErrors.push(error);
           });
-          await disposeCodexRuntimeResources(client, workflowToolsMcpServer).catch(
+          await disposeCodexRuntimeResources(client, workflowToolsMcpServer, mcpToolRegistry).catch(
             (error: unknown) => {
               cleanupErrors.push(error);
             },
@@ -165,11 +168,13 @@ export function createCodexLocalRuntimeAdapter(
           workspace: agent.workspace,
         });
         const context = await agent.buildContext(runContext);
+        mcpToolRegistry = await createMcpToolRegistry(agent.mcp);
         workflowToolsMcpServer = await createCodexWorkflowToolsMcpServer({
           agent,
           getContext: () => lifecycle.currentContext,
           humanInteractionHandler,
           logger,
+          mcpTools: mcpToolRegistry.tools,
           state: toolRuntimeState,
         });
         client = await CodexAppServerClient.start({
@@ -250,7 +255,7 @@ export function createCodexLocalRuntimeAdapter(
         });
       } catch (error) {
         logger.error("Codex runtime session creation failed", { error });
-        await disposeCodexRuntimeResources(client, workflowToolsMcpServer).catch(
+        await disposeCodexRuntimeResources(client, workflowToolsMcpServer, mcpToolRegistry).catch(
           (cleanupError: unknown) => {
             logger.error("Codex runtime session creation cleanup failed", { error: cleanupError });
           },
@@ -300,10 +305,12 @@ function createCodexAppServerArgs(
 async function disposeCodexRuntimeResources(
   client: CodexAppServerClient | undefined,
   workflowToolsMcpServer: CodexWorkflowToolsMcpServer | undefined,
+  mcpToolRegistry: McpToolRegistry | undefined,
 ): Promise<void> {
   const results = await Promise.allSettled([
     Promise.resolve().then(() => client?.close()),
     workflowToolsMcpServer?.dispose() ?? Promise.resolve(),
+    mcpToolRegistry?.dispose() ?? Promise.resolve(),
   ]);
   const errors = results.flatMap((result) =>
     result.status === "rejected" ? [result.reason as unknown] : [],
