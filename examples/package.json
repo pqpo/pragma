@@ -10,6 +10,7 @@
     "start:minimal-agent": "tsx src/run-minimal-agent-api.ts",
     "start:memory": "tsx src/run-memory-system-example.ts",
     "start:approval": "tsx src/run-tool-approval-example.ts",
+    "start:resumable-approval": "tsx src/run-resumable-tool-approval.ts",
     "start:repo-manager": "tsx src/run-repo-manager-plugin.ts",
     "start:session-storage": "tsx src/run-session-storage-example.ts",
     "start:workspace-context": "tsx src/run-workspace-context-agent.ts",

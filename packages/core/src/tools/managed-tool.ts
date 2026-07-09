@@ -1,5 +1,6 @@
 import type { ExpertAgentRunContext } from "../runtime/run-context.ts";
 import type { DirectiveExecutionContext } from "../directive/types.ts";
+import { z } from "zod";
 
 export interface ExpertAgentToolCallResult {
   readonly text: string;
@@ -57,6 +58,57 @@ export type ExpertAgentHumanRequest =
 export type ExpertAgentHumanResponse =
   | ExpertAgentToolApprovalResponse
   | ExpertAgentUserQuestionResponse;
+
+export const ExpertAgentToolApprovalRequestSchema = z.object({
+  kind: z.literal("tool_approval"),
+  toolName: z.string().min(1),
+  toolCallId: z.string().min(1).optional(),
+  reason: z.string().optional(),
+  input: z.unknown(),
+}) satisfies z.ZodType<ExpertAgentToolApprovalRequest>;
+
+export const ExpertAgentUserQuestionSchema = z.object({
+  question: z.string(),
+  header: z.string(),
+  kind: z.enum(["single_choice", "multiple_choice", "text"]),
+  options: z.array(
+    z.object({
+      label: z.string(),
+      description: z.string(),
+    }),
+  ),
+}) satisfies z.ZodType<ExpertAgentUserQuestion>;
+
+export const ExpertAgentUserQuestionRequestSchema = z.object({
+  kind: z.literal("user_question"),
+  toolName: z.literal("askUserQuestion"),
+  toolCallId: z.string().min(1).optional(),
+  questions: z.array(ExpertAgentUserQuestionSchema),
+}) satisfies z.ZodType<ExpertAgentUserQuestionRequest>;
+
+export const ExpertAgentHumanRequestSchema = z.discriminatedUnion("kind", [
+  ExpertAgentToolApprovalRequestSchema,
+  ExpertAgentUserQuestionRequestSchema,
+]) satisfies z.ZodType<ExpertAgentHumanRequest>;
+
+export const ExpertAgentToolApprovalResponseSchema = z.object({
+  kind: z.literal("tool_approval"),
+  approved: z.boolean(),
+  reason: z.string().optional(),
+  updatedInput: z.unknown().optional(),
+}) satisfies z.ZodType<ExpertAgentToolApprovalResponse>;
+
+export const ExpertAgentUserQuestionResponseSchema = z.object({
+  kind: z.literal("user_question"),
+  answered: z.boolean(),
+  reason: z.string().optional(),
+  answers: z.unknown().optional(),
+}) satisfies z.ZodType<ExpertAgentUserQuestionResponse>;
+
+export const ExpertAgentHumanResponseSchema = z.discriminatedUnion("kind", [
+  ExpertAgentToolApprovalResponseSchema,
+  ExpertAgentUserQuestionResponseSchema,
+]) satisfies z.ZodType<ExpertAgentHumanResponse>;
 
 export type ExpertAgentHumanInteractionHandler = (
   request: ExpertAgentHumanRequest,

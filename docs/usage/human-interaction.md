@@ -1,6 +1,6 @@
 # Human Interaction
 
-本文说明 Directive 层的人类等待点。先阅读 [Directive 使用指南](./directives.md) 会更容易理解 `flow.use()`、`reduce()` 和 `route()`。
+本文说明 Directive 层的人类等待点，以及 Agent Runtime 工具审批的可恢复交互处理。先阅读 [Directive 使用指南](./directives.md) 会更容易理解 `flow.use()`、`reduce()` 和 `route()`。
 
 ## 基本模型
 
@@ -130,4 +130,107 @@ pnpm --filter @pragma/examples start:human-review-gate
 - workflow/task 会进入 `waiting`，不会被误判为失败或重派发。
 - 用户回答会被记录为 Human Interaction 审计事实。
 
-V1 不提供 Runtime durable suspend/resume。等待点发生在 Directive/Core 层；如果底层 Runtime 未来支持可持久化暂停，可以继续复用同一套 Human Interaction 协议。
+## 可恢复工具审批
+
+Runtime 工具审批通过 `humanInteractionHandler` 进入人工交互。普通 handler 只在当前进程内等待用户响应；如果应用关闭，正在等待的 Promise 会消失。因此需要把 pending request 先持久化，再把请求交给 CLI/UI。
+
+Core 提供 `createDurableHumanInteractionHandler()` 和 `HumanInteractionStore` 处理这件事：
+
+```ts
+import {
+  createDurableHumanInteractionHandler,
+  createFileHumanInteractionStore,
+} from "@pragma/core";
+
+const store = createFileHumanInteractionStore({
+  rootDir: ".pragma/human-interactions",
+});
+
+const humanInteractionHandler = createDurableHumanInteractionHandler({
+  scope: {
+    workflowId,
+    runtimeSessionId,
+  },
+  store,
+  delegate: async (request) => {
+    if (request.kind === "tool_approval") {
+      const approved = await showApprovalDialog(request);
+
+      return {
+        kind: "tool_approval",
+        approved,
+      };
+    }
+
+    return {
+      kind: "user_question",
+      answered: false,
+      reason: "No question UI is configured.",
+    };
+  },
+});
+
+const session = await runtime.createSession({
+  agent,
+  runtimeSession: {
+    type: "example-runtime",
+    id: runtimeSessionId,
+  },
+  humanInteractionHandler,
+});
+```
+
+`createDurableHumanInteractionHandler()` 的行为：
+
+1. 收到 `tool_approval` 或 `user_question` 时，先写入 `store.savePending()`。
+2. 调用 `delegate` 展示 CLI/UI。
+3. `delegate` 返回响应后调用 `store.resolve()`，pending interaction 会被清理。
+4. 如果进程退出、Ctrl-C 或 `delegate` 抛错，pending interaction 会保留，供下次启动恢复。
+
+恢复时用同一个 scope 查询 pending interaction，然后恢复相同 runtime session：
+
+```ts
+const pending = await store.getPending({ workflowId });
+const runtimeSessionId = pending?.scope["runtimeSessionId"] ?? createNewSessionId();
+
+const session = await runtime.createSession({
+  agent,
+  runtimeSession: {
+    type: "example-runtime",
+    id: runtimeSessionId,
+  },
+  humanInteractionHandler: createDurableHumanInteractionHandler({
+    scope: {
+      workflowId,
+      runtimeSessionId,
+    },
+    store,
+    delegate: createCliHumanInteractionHandler(),
+  }),
+});
+
+if (pending !== undefined) {
+  printTranscript(session.messages());
+  // 重新 submit 原 run/query，或让 runtime 从自己的 checkpoint 恢复到等待点。
+}
+```
+
+注意：进程退出后不能恢复原来的 JavaScript Promise。这里恢复的是 durable human interaction record，并要求 runtime 能通过相同 `runtimeSessionId` 和自身 checkpoint/消息状态重新进入等待点。聊天记录、run/query、runtime checkpoint 仍由具体 runtime/session 负责持久化；human interaction store 只负责 pending request、response、scope 和审计事实。
+
+可运行示例：
+
+```bash
+pnpm --filter @pragma/examples start:resumable-approval --reset --workflow-id demo-approval
+```
+
+在 `Approve? [y/N]` 提示时按 `Ctrl-C`，然后恢复：
+
+```bash
+pnpm --filter @pragma/examples start:resumable-approval --workflow-id demo-approval
+```
+
+也可以使用示例输出的 session id：
+
+```bash
+pnpm --filter @pragma/examples start:resumable-approval --session-id <session-id>
+```

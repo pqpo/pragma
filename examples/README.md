@@ -229,6 +229,36 @@ approval: {
 
 插件也可以通过 `toolApprovals` 给已有工具追加审批策略。工具自带策略和插件策略会合并；只要任一策略命中，就会触发审批。
 
+### 恢复未完成审批
+
+```bash
+pnpm --filter @pragma/examples start:resumable-approval --reset --workflow-id demo-approval
+```
+
+这个示例展示如何用 `@pragma/core` 的 durable human interaction 能力恢复未完成的工具审批：
+
+1. 创建带 `approval: { mode: "required" }` 的 `deploy_preview` 工具。
+2. 用 `createFileHumanInteractionStore()` 保存 pending approval。
+3. 用 `createDurableHumanInteractionHandler()` 包装 CLI handler。
+4. Runtime 在触发审批前保存聊天记录和 active turn。
+5. 在 `Approve? [y/N]` 时按 `Ctrl-C` 模拟应用关闭。
+6. 第二次启动时按 `workflowId` 或 `sessionId` 找回 pending approval，打印原聊天记录，并重新展示审批请求。
+7. 输入 `y` 后继续执行工具并完成流程。
+
+按 `workflowId` 恢复：
+
+```bash
+pnpm --filter @pragma/examples start:resumable-approval --workflow-id demo-approval
+```
+
+按 `sessionId` 恢复：
+
+```bash
+pnpm --filter @pragma/examples start:resumable-approval --session-id <session-id>
+```
+
+示例入口是 `src/run-resumable-tool-approval.ts`。它只把 runtime transcript 保存在示例自己的 session state 中；pending approval 的持久化、去重、resolve 和 clear 由 `createDurableHumanInteractionHandler()` 与 `HumanInteractionStore` 负责。真实产品接入时，应把 `HumanInteractionStore` 换成数据库实现，并把 `scope` 绑定到租户、用户、workflow/run 和 runtime session。
+
 ## 运行上下文示例
 
 ```bash
