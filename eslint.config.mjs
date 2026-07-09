@@ -234,7 +234,13 @@ const config = tseslint.config(
       "no-restricted-imports": [
         "error",
         {
-          paths: ["@pragma/client", "@pragma/server", "@pragma/runtime-codex", "react"],
+          paths: [
+            "@pragma/client",
+            "@pragma/server",
+            "@pragma/runtime-codex",
+            "@pragma/runtime-claude-code",
+            "react",
+          ],
           patterns: [
             ...commonRestrictedPatterns,
             {
@@ -262,6 +268,7 @@ const config = tseslint.config(
             "@pragma/client",
             "@pragma/server",
             "@pragma/runtime-pi",
+            "@pragma/runtime-claude-code",
             "@earendil-works/pi-coding-agent",
             "react",
           ],
@@ -276,6 +283,38 @@ const config = tseslint.config(
                 "next/*",
               ],
               message: "Codex runtime packages must not depend on other runtimes or app layers.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    files: ["packages/runtime/claude-code/**/*.{ts,tsx}"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: [
+            "@pragma/client",
+            "@pragma/server",
+            "@pragma/runtime-pi",
+            "@pragma/runtime-codex",
+            "@earendil-works/pi-coding-agent",
+            "react",
+          ],
+          patterns: [
+            ...commonRestrictedPatterns,
+            {
+              group: [
+                "@pragma/server-*",
+                "@pragma/ui-*",
+                "@pragma/playbook-canvas",
+                "next",
+                "next/*",
+              ],
+              message:
+                "Claude Code runtime packages must not depend on other runtimes or app layers.",
             },
           ],
         },

@@ -1,5 +1,5 @@
 {
-  "name": "@pragma/runtime-codex",
+  "name": "@pragma/runtime-claude-code",
   "version": "0.0.0",
   "private": true,
   "type": "module",

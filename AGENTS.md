@@ -90,6 +90,7 @@ tsconfig.base.json
 @pragma/core
 @pragma/runtime-pi
 @pragma/runtime-codex
+@pragma/runtime-claude-code
 @pragma/desktop
 @pragma/examples
 @pragma/plugin-memory
@@ -163,7 +164,11 @@ core -> client
 core -> server
 core -> runtime-*
 runtime-pi -> runtime-codex
+runtime-pi -> runtime-claude-code
 runtime-codex -> runtime-pi
+runtime-codex -> runtime-claude-code
+runtime-claude-code -> runtime-pi
+runtime-claude-code -> runtime-codex
 server -> client
 server -> web
 core -> web

@@ -23,6 +23,7 @@ export * from "./runtime-registry.ts";
 export * from "./sdk-mcp-server.ts";
 export * from "./tools/managed-tool.ts";
 export * from "./tools/tool-resolver.ts";
+export * from "./workflow-tools-mcp-server.ts";
 
 export async function defineAgent(options: ExpertAgentCreateOptions): Promise<ExpertAgent> {
   return await ExpertAgent.create(options);

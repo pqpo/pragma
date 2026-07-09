@@ -87,6 +87,7 @@ describe("createCodexWorkflowToolsMcpServer", () => {
       expect(registry.tools.map((tool) => tool.name)).toEqual(
         expect.arrayContaining([
           "askUserQuestion",
+          "request_tool_approval",
           "list_expert_context",
           "echo_note",
           "mcp_docs_lookup",
@@ -106,6 +107,156 @@ describe("createCodexWorkflowToolsMcpServer", () => {
       await registry.dispose();
       await server.dispose();
       await userMcpRegistry.dispose();
+    }
+  });
+
+  it("bridges runtime permission prompt tools to the human interaction handler", async () => {
+    const requests: unknown[] = [];
+    const events: unknown[] = [];
+    const agent = await createTestAgent({
+      tools: [],
+    });
+    const server = await createCodexWorkflowToolsMcpServer({
+      agent,
+      getContext: () => undefined,
+      humanInteractionHandler: async (request) => {
+        requests.push(request);
+        return {
+          kind: "tool_approval",
+          approved: true,
+          updatedInput: {
+            command: "echo patched",
+          },
+        };
+      },
+      logger: agent.logger,
+      state: {
+        runId: "run-1",
+        emitter: {
+          emit: (event) => {
+            events.push(event);
+          },
+          complete: () => undefined,
+        },
+      },
+    });
+    const registry = await createMcpToolRegistry({
+      mcpServers: {
+        [server.id]: {
+          name: server.name,
+          url: server.url,
+        },
+      },
+    });
+
+    try {
+      const result = await registry.tools
+        .find((tool) => tool.name === "request_tool_approval")
+        ?.call(
+          {
+            toolName: "Bash",
+            toolCallId: "tool-1",
+            input: {
+              command: "echo hello",
+            },
+          },
+          undefined,
+        );
+
+      expect(requests).toEqual([
+        {
+          kind: "tool_approval",
+          toolName: "Bash",
+          toolCallId: "tool-1",
+          reason: "Runtime requested tool approval.",
+          input: {
+            command: "echo hello",
+          },
+        },
+      ]);
+      expect(events).toEqual([
+        expect.objectContaining({
+          runId: "run-1",
+          type: "tool.approval_requested",
+          payload: expect.objectContaining({
+            toolCallId: "tool-1",
+            toolName: "Bash",
+            kind: "tool",
+            reason: "Runtime requested tool approval.",
+            inputPreview: {
+              command: "echo hello",
+            },
+          }),
+        }),
+      ]);
+      expect(readTextContent(result)).toBe(
+        JSON.stringify({
+          behavior: "allow",
+          updatedInput: {
+            command: "echo patched",
+          },
+        }),
+      );
+      expect(isRecord(result) ? result.structuredContent : undefined).toEqual({
+        behavior: "allow",
+        updatedInput: {
+          command: "echo patched",
+        },
+      });
+    } finally {
+      await registry.dispose();
+      await server.dispose();
+    }
+  });
+
+  it("keeps runtime permission prompt tools available under tool allowlists", async () => {
+    const agent = await createTestAgent({
+      tools: [
+        {
+          name: "echo_note",
+          description: "Echo a note.",
+          inputSchema: {
+            type: "object",
+            properties: {},
+            additionalProperties: false,
+          },
+          call: async () => ({
+            text: "ok",
+          }),
+        },
+      ],
+    });
+    const server = await createCodexWorkflowToolsMcpServer({
+      agent,
+      getContext: () => ({
+        attributes: {
+          toolPolicy: {
+            mode: "allow",
+            allowedTools: ["echo_note"],
+          },
+        },
+      }),
+      logger: agent.logger,
+      state: {},
+    });
+    const registry = await createMcpToolRegistry({
+      mcpServers: {
+        [server.id]: {
+          name: server.name,
+          url: server.url,
+        },
+      },
+    });
+
+    try {
+      const toolNames = registry.tools.map((tool) => tool.name);
+
+      expect(toolNames).toContain("request_tool_approval");
+      expect(toolNames).toContain("echo_note");
+      expect(toolNames).not.toContain("askUserQuestion");
+    } finally {
+      await registry.dispose();
+      await server.dispose();
     }
   });
 
