@@ -31,7 +31,7 @@ export function createResolvedPiTools(options: {
   readonly modelRegistry: ModelRegistry;
   readonly parentSystemPrompt: string;
   readonly streamState: PiRuntimeStreamState;
-  readonly lifecycle: AgentLifecycle<ExpertAgentRunContext>;
+  readonly lifecycle: AgentLifecycle<ExpertAgentRunContext | undefined>;
   readonly context?: ExpertAgentRunContext | undefined;
   readonly workflowExecution?: DirectiveExecutionContext | undefined;
   readonly humanInteractionHandler?: ExpertAgentHumanInteractionHandler | undefined;

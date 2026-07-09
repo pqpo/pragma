@@ -1,25 +1,24 @@
-import { randomUUID } from "node:crypto";
-import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 
-import type {
-  McpToolRegistry,
-  RuntimeAdapter,
-  RuntimeSessionRestoreHandler,
-  RuntimeSessionStorageContext,
-  RuntimeSessionSyncCallback,
-  WorkflowToolRuntimeState,
-  WorkflowToolsMcpServer,
+import type { McpToolRegistry, RuntimeAdapter, WorkflowToolsMcpServer } from "@pragma/core";
+import {
+  createMcpToolRegistry,
+  createWorkflowToolsMcpServer,
+  defineRuntimeDriver,
+  type ExpertAgentLogger,
+  type RuntimeSessionPersistenceSpec,
+  type WorkflowToolRuntimeState,
 } from "@pragma/core";
-import type { ExpertAgentRunContext } from "@pragma/core";
-import { createExpertAgentLogger } from "@pragma/core";
-import { createExpertAgentRunContext } from "@pragma/core";
-import { createMcpToolRegistry } from "@pragma/core";
-import { createQueuedAgentLifecycle } from "@pragma/core";
-import { createWorkflowToolsMcpServer } from "@pragma/core";
-import { dispatchExpertAgentHook } from "@pragma/core";
 import { materializeClaudeCodePlugin } from "./skills.ts";
-import { createClaudeCodeRuntimeSession } from "./session.ts";
+import {
+  cancelClaudeCodeTurn,
+  consumeClaudeCodeStartupMessages,
+  createClaudeCodeNativeSession,
+  listClaudeCodeMessages,
+  mapClaudeCodeNativeEvent,
+  startClaudeCodeTurn,
+  type ClaudeCodeNativeSession,
+} from "./session.ts";
 import type { ClaudeCodeRuntimeAdapterOptions, ClaudeCodeRuntimeSessionState } from "./types.ts";
 
 const CLAUDE_CODE_LOCAL_RUNTIME_DESCRIPTOR = {
@@ -35,11 +34,14 @@ const CLAUDE_CODE_LOCAL_RUNTIME_DESCRIPTOR = {
   },
 };
 
+interface ClaudeCodeDriverSession extends ClaudeCodeNativeSession {
+  readonly mcpToolRegistry: McpToolRegistry;
+  readonly workflowToolsMcpServer: WorkflowToolsMcpServer;
+}
+
 export function createClaudeCodeLocalRuntimeAdapter(
   options: ClaudeCodeRuntimeAdapterOptions = {},
 ): RuntimeAdapter {
-  let sessionSyncCallback = options.sessionSyncCallback;
-  let sessionRestoreHandler = options.sessionRestoreHandler;
   const descriptor = {
     ...CLAUDE_CODE_LOCAL_RUNTIME_DESCRIPTOR,
     ...options.descriptor,
@@ -50,229 +52,106 @@ export function createClaudeCodeLocalRuntimeAdapter(
     },
   };
 
-  return {
-    descriptor,
-    setSessionSyncCallback(callback) {
-      sessionSyncCallback = callback;
-    },
-    setSessionRestoreHandler(handler) {
-      sessionRestoreHandler = handler;
-    },
-    async createSession({
-      agent,
-      context: requestedRunContext,
-      humanInteractionHandler,
-      runtimeSession,
-      systemSessionId: requestedSystemSessionId,
-      workflowExecution,
-      loggerProvider: requestedLoggerProvider,
-    }) {
-      const systemSessionId = requestedSystemSessionId ?? randomUUID();
-      const runContext = createExpertAgentRunContext(requestedRunContext);
-      const loggerProvider =
-        requestedLoggerProvider ?? options.loggerProvider ?? agent.loggerProvider;
-      const logger = createExpertAgentLogger(loggerProvider, {
-        component: "runtime-adapter",
-        agentId: agent.id,
-        runtimeId: descriptor.id,
-      });
-      const toolRuntimeState: WorkflowToolRuntimeState = {};
-      let mcpToolRegistry: McpToolRegistry | undefined;
-      let workflowToolsMcpServer: WorkflowToolsMcpServer | undefined;
-      let activeSessionSyncCallback: RuntimeSessionSyncCallback | undefined;
-      let sessionStorageContext: RuntimeSessionStorageContext | undefined;
-      let sessionDir: string | undefined;
-      const state: ClaudeCodeRuntimeSessionState = {
-        sessionId:
-          runtimeSession?.type === descriptor.kind && runtimeSession.id !== ""
-            ? runtimeSession.id
-            : "",
-      };
-
-      await dispatchExpertAgentHook(agent.hooks, "beforeSessionCreate", {
-        agent,
-        context: runContext,
-        systemSessionId,
-        runtimeSession,
-        logger,
-      });
-
-      const lifecycle = createQueuedAgentLifecycle<ExpertAgentRunContext | undefined>(runContext, {
-        abort: async () => undefined,
-        cleanup: async () => {
-          const sessionInfo = {
-            systemSessionId,
-            runtimeSession: {
-              type: descriptor.kind,
-              id: state.sessionId,
-            },
-            agentId: agent.id,
-            runtime: descriptor,
-            sessionState: lifecycle.sessionState,
-            runState: lifecycle.runState,
-          };
-          const cleanupErrors: unknown[] = [];
-
-          await dispatchExpertAgentHook(agent.hooks, "beforeSessionDestroy", {
-            agent,
-            session: sessionInfo,
-            logger,
-          }).catch((error: unknown) => {
-            cleanupErrors.push(error);
-          });
-          await disposeClaudeRuntimeResources(workflowToolsMcpServer, mcpToolRegistry).catch(
-            (error: unknown) => {
-              cleanupErrors.push(error);
-            },
-          );
-          if (activeSessionSyncCallback !== undefined && sessionDir !== undefined) {
-            await syncRuntimeSession(
-              activeSessionSyncCallback,
-              createSessionStorageContext({
-                agentId: agent.id,
-                context: runContext,
-                runtime: descriptor,
-                runtimeSessionId: state.sessionId,
-                sessionDir,
-                systemSessionId,
-                workspace: agent.workspace,
-              }),
-              logger,
-            ).catch((error: unknown) => {
-              cleanupErrors.push(error);
-            });
-          }
-          await dispatchExpertAgentHook(agent.hooks, "afterSessionDestroy", {
-            agent,
-            session: sessionInfo,
-            logger,
-          }).catch((error: unknown) => {
-            cleanupErrors.push(error);
-          });
-
-          throwIfCleanupFailed(cleanupErrors);
-        },
-      });
-
-      try {
-        sessionDir = getClaudeCodeSessionDir(agent.workspace, agent.id);
-        await mkdir(sessionDir, { recursive: true });
-        await restoreRuntimeSession({
-          agentId: agent.id,
-          context: runContext,
-          handler: sessionRestoreHandler,
-          runtime: descriptor,
-          runtimeSession,
+  return defineRuntimeDriver(
+    {
+      descriptor,
+      outputRetryLimit: options.outputRetryLimit,
+      resolvePersistence(ctx): RuntimeSessionPersistenceSpec {
+        return {
+          mode: "checkpoint",
+          sessionDir: getClaudeCodeSessionDir(ctx.workspace, ctx.agent.id),
+          watch: true,
+          checkpointOn: [
+            "session.created",
+            "runtimeSessionId.changed",
+            "turn.completed",
+            "session.destroyed",
+            "files.changed",
+          ],
+          metadata: {
+            format: "claude-code-session-dir",
+          },
+        };
+      },
+      async createSession(ctx): Promise<ClaudeCodeDriverSession> {
+        const sessionDir =
+          ctx.persistence.spec?.sessionDir ?? getClaudeCodeSessionDir(ctx.workspace, ctx.agent.id);
+        const state: ClaudeCodeRuntimeSessionState = {
+          sessionId:
+            ctx.persistence.restoredRuntimeSessionId ??
+            (ctx.request.runtimeSession?.type === descriptor.kind ? ctx.request.runtimeSession.id : "") ??
+            "",
+        };
+        const toolRuntimeState: WorkflowToolRuntimeState = {};
+        const pluginDir = await materializeClaudeCodePlugin({
+          agent: ctx.agent,
           sessionDir,
-          systemSessionId,
-          workspace: agent.workspace,
         });
-        const context = await agent.buildContext(runContext);
-        const pluginDir = await materializeClaudeCodePlugin({ agent, sessionDir });
-
-        mcpToolRegistry = await createMcpToolRegistry(agent.mcp);
-        workflowToolsMcpServer = await createWorkflowToolsMcpServer({
-          agent,
-          getContext: () => lifecycle.currentContext,
-          humanInteractionHandler,
-          logger,
+        const mcpToolRegistry = await createMcpToolRegistry(ctx.agent.mcp);
+        const workflowToolsMcpServer = await createWorkflowToolsMcpServer({
+          agent: ctx.agent,
+          getContext: () => ctx.lifecycle.currentContext,
+          humanInteractionHandler: ctx.request.humanInteractionHandler,
+          logger: ctx.logger,
           mcpTools: mcpToolRegistry.tools,
           state: toolRuntimeState,
-          workflowExecution,
+          workflowExecution: ctx.request.workflowExecution,
         });
-        sessionStorageContext = createSessionStorageContext({
-          agentId: agent.id,
-          context: runContext,
-          runtime: descriptor,
-          runtimeSessionId: state.sessionId,
-          sessionDir,
-          systemSessionId,
-          workspace: agent.workspace,
-        });
-        activeSessionSyncCallback = sessionSyncCallback;
 
-        if (activeSessionSyncCallback !== undefined) {
-          await syncRuntimeSession(activeSessionSyncCallback, sessionStorageContext, logger);
-        }
-
-        const sessionInfo = {
-          systemSessionId,
-          runtimeSession: {
-            type: descriptor.kind,
-            id: state.sessionId,
-          },
-          agentId: agent.id,
-          runtime: descriptor,
+        return {
+          ...createClaudeCodeNativeSession({
+            agent: ctx.agent,
+            executablePath: options.executablePath ?? "claude",
+            additionalArgs: options.additionalArgs ?? [],
+            defaultModelName: options.defaultModelName ?? ctx.agent.models?.defaultModelName,
+            env: options.env,
+            humanInteractionHandler: ctx.request.humanInteractionHandler,
+            isolationMode: options.isolationMode ?? "strict",
+            logger: ctx.logger,
+            mcpServerUrl: workflowToolsMcpServer.url,
+            permissionMode: options.permissionMode ?? "default",
+            pluginDir,
+            sessionDir,
+            spawn: options.spawn,
+            startupMessages: state.sessionId === "" ? ctx.agentContext.startupMessages : [],
+            state,
+          }),
+          mcpToolRegistry,
+          workflowToolsMcpServer,
         };
-
-        await dispatchExpertAgentHook(agent.hooks, "afterSessionCreate", {
-          agent,
-          session: {
-            ...sessionInfo,
-            sessionState: lifecycle.sessionState,
-            runState: lifecycle.runState,
-          },
-          logger,
-        });
-
-        return createClaudeCodeRuntimeSession({
-          agent,
-          executablePath: options.executablePath ?? "claude",
-          additionalArgs: options.additionalArgs ?? [],
-          defaultModelName: options.defaultModelName ?? agent.models?.defaultModelName,
-          env: options.env,
-          humanInteractionHandler,
-          info: sessionInfo,
-          isolationMode: options.isolationMode ?? "strict",
-          lifecycle,
-          logger,
-          mcpServerUrl: workflowToolsMcpServer.url,
-          outputRetryLimit: options.outputRetryLimit,
-          permissionMode: options.permissionMode ?? "default",
-          pluginDir,
-          sessionDir,
-          sessionStorageContext,
-          sessionSyncCallback: activeSessionSyncCallback,
-          spawn: options.spawn,
-          startupMessages: state.sessionId === "" ? context.startupMessages : [],
-          state,
-          toolRuntimeState,
-        });
-      } catch (error) {
-        logger.error("Claude Code runtime session creation failed", { error });
-        await disposeClaudeRuntimeResources(workflowToolsMcpServer, mcpToolRegistry).catch(
-          (cleanupError: unknown) => {
-            logger.error("Claude Code runtime session creation cleanup failed", {
-              error: cleanupError,
-            });
-          },
+      },
+      readSession(session) {
+        return {
+          runtimeSessionId: session.state.sessionId,
+        };
+      },
+      listMessages: listClaudeCodeMessages,
+      consumeStartupMessages: consumeClaudeCodeStartupMessages,
+      startTurn: startClaudeCodeTurn,
+      mapEvent: mapClaudeCodeNativeEvent,
+      cancelTurn(session) {
+        cancelClaudeCodeTurn(session);
+      },
+      async destroySession(session, ctx) {
+        cancelClaudeCodeTurn(session);
+        await disposeClaudeRuntimeResources(
+          session.workflowToolsMcpServer,
+          session.mcpToolRegistry,
+          ctx.logger,
         );
-        await dispatchExpertAgentHook(agent.hooks, "afterSessionDestroy", {
-          agent,
-          session: {
-            systemSessionId,
-            runtimeSession: {
-              type: descriptor.kind,
-              id: state.sessionId,
-            },
-            agentId: agent.id,
-            runtime: descriptor,
-            sessionState: lifecycle.sessionState,
-            runState: lifecycle.runState,
-          },
-          logger,
-        }).catch((cleanupError: unknown) => {
-          logger.error("Claude Code runtime session failure hook failed", { error: cleanupError });
-        });
-        throw error;
-      }
+      },
     },
-  };
+    {
+      sessionRestoreHandler: options.sessionRestoreHandler,
+      sessionSyncCallback: options.sessionSyncCallback,
+    },
+  );
 }
 
 async function disposeClaudeRuntimeResources(
   workflowToolsMcpServer: WorkflowToolsMcpServer | undefined,
   mcpToolRegistry: McpToolRegistry | undefined,
+  logger: ExpertAgentLogger,
 ): Promise<void> {
   const results = await Promise.allSettled([
     workflowToolsMcpServer?.dispose() ?? Promise.resolve(),
@@ -282,106 +161,17 @@ async function disposeClaudeRuntimeResources(
     result.status === "rejected" ? [result.reason as unknown] : [],
   );
 
-  throwIfCleanupFailed(errors);
-}
-
-function throwIfCleanupFailed(errors: readonly unknown[]): void {
   if (errors.length === 0) {
     return;
   }
+
+  logger.error("Claude Code runtime cleanup failed", { errors });
 
   if (errors.length === 1) {
     throw errors[0];
   }
 
   throw new AggregateError(errors, "Claude Code runtime session cleanup failed.");
-}
-
-async function restoreRuntimeSession({
-  agentId,
-  context,
-  handler,
-  runtime,
-  runtimeSession,
-  sessionDir,
-  systemSessionId,
-  workspace,
-}: {
-  readonly agentId: string;
-  readonly context: ExpertAgentRunContext;
-  readonly handler: RuntimeSessionRestoreHandler | undefined;
-  readonly runtime: RuntimeSessionStorageContext["runtime"];
-  readonly runtimeSession?: { readonly type: string; readonly id: string } | undefined;
-  readonly sessionDir: string;
-  readonly systemSessionId: string;
-  readonly workspace: string;
-}): Promise<void> {
-  if (
-    handler === undefined ||
-    runtimeSession === undefined ||
-    runtimeSession.type !== runtime.kind ||
-    runtimeSession.id === ""
-  ) {
-    return;
-  }
-
-  await handler(
-    createSessionStorageContext({
-      agentId,
-      context,
-      runtime,
-      runtimeSessionId: runtimeSession.id,
-      sessionDir,
-      systemSessionId,
-      workspace,
-    }),
-  );
-}
-
-async function syncRuntimeSession(
-  callback: RuntimeSessionSyncCallback,
-  context: RuntimeSessionStorageContext,
-  logger: { readonly error: (message: string, attributes?: Record<string, unknown>) => void },
-): Promise<void> {
-  try {
-    await callback(context);
-  } catch (error) {
-    logger.error("Claude Code runtime session sync callback failed", {
-      runtimeSessionId: context.runtimeSession.id,
-      error,
-    });
-  }
-}
-
-function createSessionStorageContext({
-  agentId,
-  context,
-  runtime,
-  runtimeSessionId,
-  sessionDir,
-  systemSessionId,
-  workspace,
-}: {
-  readonly agentId: string;
-  readonly context: ExpertAgentRunContext;
-  readonly runtime: RuntimeSessionStorageContext["runtime"];
-  readonly runtimeSessionId: string;
-  readonly sessionDir: string;
-  readonly systemSessionId: string;
-  readonly workspace: string;
-}): RuntimeSessionStorageContext {
-  return {
-    agentId,
-    context,
-    runtime,
-    runtimeSession: {
-      type: runtime.kind,
-      id: runtimeSessionId,
-    },
-    sessionDir,
-    systemSessionId,
-    workspace,
-  };
 }
 
 function getClaudeCodeSessionDir(workspace: string, agentId: string): string {

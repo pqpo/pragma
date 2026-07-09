@@ -6,34 +6,40 @@ import { join } from "node:path";
 
 import type { CodexAppServerClient, CodexAppServerNotification } from "./app-server-client.ts";
 import type {
-  RuntimeAgentSession,
-  RuntimeOutputSchema,
-  RuntimeRunResult,
-  RuntimeSessionInfo,
-  RuntimeSubmitRequest,
+  ExpertAgentStartupMessage,
+  RuntimeEventMappingContext,
+  RuntimeEventMappingResult,
+  RuntimeStreamEventInput,
+  RuntimeTurnContext,
+  RuntimeTurnResult,
 } from "@pragma/core";
-import type { AgentLifecycle } from "@pragma/core";
-import type { ExpertAgentRunContext } from "@pragma/core";
-import type { RuntimeStreamEvent } from "@pragma/core";
-import type { RuntimeStreamEventInput } from "@pragma/core";
-import type { ExpertAgent } from "@pragma/core";
-import type { ExpertAgentLogger } from "@pragma/core";
-import { AsyncPushQueue } from "@pragma/core";
-import { createRuntimeEventEmitter } from "@pragma/core";
-import { dispatchExpertAgentHook } from "@pragma/core";
+import {
+  createUsageFromTokenCounts,
+  hasNonZeroUsage,
+  readFirstTokenCount,
+} from "@pragma/core";
 import type { CodexRuntimeMessage } from "./types.ts";
 import type { CodexUserInput } from "./types.ts";
-import type { CodexWorkflowToolRuntimeState } from "./workflow-tools-mcp-server.ts";
-import type { ExpertAgentStartupMessage } from "@pragma/core";
 
 export type CodexNotificationSubscriber = (notification: CodexAppServerNotification) => void;
 
 export interface CodexNotificationBus {
+  readonly publish: (notification: CodexAppServerNotification) => void;
   readonly subscribe: (subscriber: CodexNotificationSubscriber) => () => void;
 }
 
 export interface CodexRuntimeSessionState {
   threadId: string;
+}
+
+export interface CodexNativeSession {
+  readonly client: CodexAppServerClient;
+  readonly notificationBus: CodexNotificationBus;
+  readonly state: CodexRuntimeSessionState;
+  readonly messages: CodexRuntimeMessage[];
+  readonly defaultModelName?: string | undefined;
+  readonly codexHome?: string | undefined;
+  pendingStartupMessages: readonly ExpertAgentStartupMessage[];
 }
 
 const CODEX_TOOL_ITEM_NAMES = {
@@ -42,291 +48,192 @@ const CODEX_TOOL_ITEM_NAMES = {
   mcpToolCall: "mcp_tool_call",
 } as const satisfies Record<string, string>;
 
-export function createCodexRuntimeSession({
-  agent,
-  client,
-  info,
-  lifecycle,
-  logger,
-  notificationBus,
-  state,
-  defaultModelName,
-  outputRetryLimit,
-  codexHome,
-  toolRuntimeState,
-  startupMessages,
-}: {
-  readonly agent: ExpertAgent;
+export function createCodexNotificationBus(): CodexNotificationBus {
+  const subscribers = new Set<CodexNotificationSubscriber>();
+
+  return {
+    publish(notification) {
+      for (const subscriber of subscribers) {
+        subscriber(notification);
+      }
+    },
+    subscribe(subscriber) {
+      subscribers.add(subscriber);
+      return () => {
+        subscribers.delete(subscriber);
+      };
+    },
+  };
+}
+
+export function createCodexNativeSession(options: {
   readonly client: CodexAppServerClient;
-  readonly info: Omit<RuntimeSessionInfo, "sessionState" | "runState">;
-  readonly lifecycle: AgentLifecycle<ExpertAgentRunContext | undefined>;
-  readonly logger: ExpertAgentLogger;
   readonly notificationBus: CodexNotificationBus;
   readonly state: CodexRuntimeSessionState;
   readonly defaultModelName?: string | undefined;
-  readonly outputRetryLimit?: number | undefined;
   readonly codexHome?: string | undefined;
-  readonly toolRuntimeState?: CodexWorkflowToolRuntimeState | undefined;
   readonly startupMessages?: readonly ExpertAgentStartupMessage[] | undefined;
-}): RuntimeAgentSession {
-  const messages: CodexRuntimeMessage[] = [];
-  let pendingStartupMessages = [...(startupMessages ?? [])];
-
+}): CodexNativeSession {
   return {
-    info: () => ({
-      ...info,
-      runtimeSession: {
-        type: info.runtimeSession.type,
-        id: state.threadId,
-      },
-      sessionState: lifecycle.sessionState,
-      runState: lifecycle.runState,
-    }),
-    messages: () => convertCodexMessages(messages, defaultModelName),
-    submit<TSubmitOutput = string>(submission: RuntimeSubmitRequest<TSubmitOutput>) {
-      const runId = submission.runId ?? randomUUID();
-      const queue = new AsyncPushQueue<RuntimeStreamEvent>();
-      const emitter = createRuntimeEventEmitter(queue);
-      const pendingHookCalls: Promise<void>[] = [];
-      let cancelled = false;
-
-      const result = lifecycle.enqueue(async ({ signal }) => {
-        const source = {
-          kind: "agent" as const,
-          runId,
-          agentId: agent.id,
-          displayName: agent.name,
-          path: [],
-        };
-        let emittedSequence = 0;
-        const emitRuntimeEvent = (event: RuntimeStreamEventInput): void => {
-          const completeEvent = {
-            schemaVersion: "pragma.stream/v1",
-            eventId: randomUUID(),
-            emittedAt: new Date().toISOString(),
-            sequence: emittedSequence++,
-            ...event,
-          } as RuntimeStreamEvent;
-          emitter.emit(completeEvent);
-          pendingHookCalls.push(
-            dispatchExpertAgentHook(agent.hooks, "onStreamEvent", {
-              agent,
-              session: createSessionInfo(info, lifecycle, state.threadId),
-              runId,
-              event: completeEvent,
-              context: lifecycle.currentContext,
-              logger,
-            }),
-          );
-        };
-        if (toolRuntimeState !== undefined) {
-          toolRuntimeState.runId = runId;
-          toolRuntimeState.source = source;
-          toolRuntimeState.emitter = emitter;
-        }
-
-        await dispatchExpertAgentHook(agent.hooks, "beforeTaskSubmit", {
-          agent,
-          session: createSessionInfo(info, lifecycle, state.threadId),
-          runId,
-          submission,
-          context: lifecycle.currentContext,
-          logger,
-        });
-
-        emitRuntimeEvent({
-          runId,
-          source,
-          type: "run.started",
-          payload: {
-            task: submission.query,
-            inputSummary: summarizeInput(submission.query),
-          },
-        });
-
-        const startupMessagesForRun = pendingStartupMessages;
-        pendingStartupMessages = [];
-        if (startupMessagesForRun.length > 0) {
-          const timestamp = Date.now();
-          messages.push(
-            ...startupMessagesForRun.map((message, index) => ({
-              role: message.role,
-              content: message.content,
-              timestamp: timestamp + index,
-            })),
-          );
-        }
-
-        messages.push({
-          role: "user",
-          content: submission.query,
-          timestamp: Date.now(),
-        });
-
-        try {
-          const maxAttempts =
-            submission.output === undefined
-              ? 1
-              : normalizeOutputRetryLimit(submission.outputRetryLimit ?? outputRetryLimit) + 1;
-          let outputText = "";
-          let usage: AgentMessageUsage | undefined;
-          let parseResult: ParseRuntimeOutputResult<TSubmitOutput> | undefined;
-          const usageFallbackStartTime = new Date();
-
-          for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-            outputText = "";
-            const turn = createTurnObserver({
-              runId,
-              source,
-              emitRuntimeEvent,
-              onOutputText(text) {
-                outputText = text;
-              },
-              onUsage(nextUsage) {
-                usage = mergeUsage(usage, nextUsage);
-              },
-            });
-            const unsubscribe = notificationBus.subscribe(turn.handleNotification);
-
-            try {
-              await client.startTurn({
-                threadId: state.threadId,
-                model: submission.modelName,
-                input:
-                  attempt === 1
-                    ? createInitialTurnInput(
-                        submission.query,
-                        submission.output,
-                        startupMessagesForRun,
-                      )
-                    : createTextInputList(createOutputRetryPrompt(parseResult)),
-              });
-              await turn.completed;
-            } finally {
-              unsubscribe();
-            }
-
-            parseResult = parseRuntimeOutput(outputText, submission.output);
-
-            if (parseResult.ok) {
-              break;
-            }
-
-            if (attempt === maxAttempts) {
-              throw parseResult.error;
-            }
-          }
-
-          if (parseResult === undefined || !parseResult.ok) {
-            throw new Error("Codex runtime output parsing did not complete.");
-          }
-
-          if (!hasNonZeroUsage(usage)) {
-            usage = await scanCodexSessionUsage({
-              codexHome,
-              startTime: usageFallbackStartTime,
-            });
-          }
-
-          messages.push({
-            role: "assistant",
-            content: outputText,
-            timestamp: Date.now(),
-            details: usage,
-          });
-          const runResult = createRuntimeRunResult(runId, parseResult.value, usage);
-
-          emitRuntimeEvent({
-            runId,
-            source,
-            type: "run.completed",
-            payload: usage === undefined ? {} : { usage },
-          });
-          await dispatchExpertAgentHook(agent.hooks, "afterTaskSubmit", {
-            agent,
-            session: createSessionInfo(info, lifecycle, state.threadId),
-            runId,
-            submission,
-            result: runResult,
-            context: lifecycle.currentContext,
-            logger,
-          });
-
-          return runResult;
-        } catch (error) {
-          const wasCancelled = signal.aborted || cancelled;
-          const message = error instanceof Error ? error.message : "Codex runtime run failed.";
-
-          emitRuntimeEvent({
-            runId,
-            source,
-            type: wasCancelled ? "run.cancelled" : "run.failed",
-            payload: wasCancelled ? { reason: "cancelled" } : { message },
-          });
-          await dispatchExpertAgentHook(agent.hooks, "afterTaskSubmit", {
-            agent,
-            session: createSessionInfo(info, lifecycle, state.threadId),
-            runId,
-            submission,
-            error,
-            context: lifecycle.currentContext,
-            logger,
-          });
-          throw error;
-        } finally {
-          await Promise.allSettled(pendingHookCalls);
-          if (toolRuntimeState !== undefined) {
-            delete toolRuntimeState.runId;
-            delete toolRuntimeState.source;
-            delete toolRuntimeState.emitter;
-          }
-          emitter.complete();
-        }
-      });
-
-      return {
-        runId,
-        events: queue,
-        result,
-        async cancel() {
-          cancelled = true;
-          await client.interruptTurn(state.threadId).catch(() => undefined);
-          await lifecycle.abort();
-        },
-      };
-    },
-    async abort() {
-      await lifecycle.abort();
-    },
+    client: options.client,
+    notificationBus: options.notificationBus,
+    state: options.state,
+    messages: [],
+    defaultModelName: options.defaultModelName,
+    codexHome: options.codexHome,
+    pendingStartupMessages: options.startupMessages ?? [],
   };
 }
 
-function createSessionInfo(
-  info: Omit<RuntimeSessionInfo, "sessionState" | "runState">,
-  lifecycle: AgentLifecycle,
-  threadId: string,
-): RuntimeSessionInfo {
-  return {
-    ...info,
-    runtimeSession: {
-      type: info.runtimeSession.type,
-      id: threadId,
+export function listCodexMessages(session: CodexNativeSession): readonly AgentMessage[] {
+  return convertCodexMessages(session.messages, session.defaultModelName);
+}
+
+export function consumeCodexStartupMessages(session: CodexNativeSession): readonly ExpertAgentStartupMessage[] {
+  const startupMessages = session.pendingStartupMessages;
+  session.pendingStartupMessages = [];
+
+  if (startupMessages.length > 0) {
+    const timestamp = Date.now();
+    session.messages.push(
+      ...startupMessages.map((message, index) => ({
+        role: message.role,
+        content: message.content,
+        timestamp: timestamp + index,
+      })),
+    );
+  }
+
+  return startupMessages;
+}
+
+export async function startCodexTurn(
+  session: CodexNativeSession,
+  turn: RuntimeTurnContext<CodexAppServerNotification>,
+): Promise<RuntimeTurnResult> {
+  let outputText = "";
+  let assistantUsage: AgentMessageUsage | undefined;
+  const observer = createTurnObserver({
+    onOutputText(text) {
+      outputText = text;
     },
-    sessionState: lifecycle.sessionState,
-    runState: lifecycle.runState,
+    onUsage(usage) {
+      assistantUsage = usage;
+    },
+    onNotification(notification) {
+      turn.stream.writeNative(notification);
+    },
+  });
+  const unsubscribe = session.notificationBus.subscribe(observer.handleNotification);
+
+  session.messages.push({
+    role: "user",
+    content: turn.rawQuery,
+    timestamp: Date.now(),
+  });
+
+  try {
+    await session.client.startTurn({
+      threadId: session.state.threadId,
+      model: turn.modelName,
+      input: createTextInputList(
+        ...turn.startupMessages.map((message) => message.content),
+        turn.prompt,
+      ),
+    });
+    await observer.completed;
+  } finally {
+    unsubscribe();
+  }
+
+  session.messages.push({
+    role: "assistant",
+    content: outputText,
+    timestamp: Date.now(),
+    details: assistantUsage,
+  });
+
+  return {
+    outputText,
+    runtimeSessionId: session.state.threadId,
   };
+}
+
+export function mapCodexNotificationToRuntimeEvent(
+  notification: CodexAppServerNotification,
+  context: RuntimeEventMappingContext,
+): RuntimeEventMappingResult {
+  const events: RuntimeStreamEventInput[] = [];
+  let outputDelta: string | undefined;
+  let completedText: string | undefined;
+  let usage: AgentMessageUsage | undefined;
+  const delta = readAssistantDelta(notification);
+
+  if (delta !== undefined) {
+    outputDelta = delta;
+    events.push(context.events.messageDelta(delta));
+  }
+
+  const completed = readCompletedAssistantText(notification);
+  if (completed !== undefined) {
+    completedText = completed;
+    events.push(context.events.messageCompleted(completed));
+  }
+
+  const toolEvent = readToolEvent(notification);
+  if (toolEvent !== undefined) {
+    events.push(
+      toolEvent.completed
+        ? context.events.toolCompleted({
+            toolCallId: toolEvent.id,
+            toolName: toolEvent.name,
+            outputPreview: toolEvent.preview,
+          })
+        : context.events.toolStarted({
+            toolCallId: toolEvent.id,
+            toolName: toolEvent.name,
+            inputPreview: toolEvent.preview,
+          }),
+    );
+  }
+
+  if (notification.method === "turn/started" || notification.method === "thread/started") {
+    events.push(context.events.progress(notification.method, notification.params));
+  }
+
+  if (notification.method === "turn/completed") {
+    usage = readUsage(notification.params);
+  }
+
+  return {
+    events,
+    ...(outputDelta === undefined ? {} : { outputDelta }),
+    ...(completedText === undefined ? {} : { completedText }),
+    ...(usage === undefined ? {} : { usage }),
+  };
+}
+
+export async function collectCodexUsage(
+  session: CodexNativeSession,
+  startedAt: Date,
+  currentUsage: AgentMessageUsage | undefined,
+): Promise<AgentMessageUsage | undefined> {
+  if (hasNonZeroUsage(currentUsage)) {
+    return currentUsage;
+  }
+
+  return await scanCodexSessionUsage({
+    codexHome: session.codexHome,
+    startTime: startedAt,
+  });
 }
 
 function createTurnObserver({
-  runId,
-  source,
-  emitRuntimeEvent,
+  onNotification,
   onOutputText,
   onUsage,
 }: {
-  readonly runId: string;
-  readonly source: RuntimeStreamEvent["source"];
-  readonly emitRuntimeEvent: (event: RuntimeStreamEventInput) => void;
+  readonly onNotification: (notification: CodexAppServerNotification) => void;
   readonly onOutputText: (text: string) => void;
   readonly onUsage: (usage: AgentMessageUsage | undefined) => void;
 }): {
@@ -349,11 +256,7 @@ function createTurnObserver({
         return;
       }
 
-      const event = mapCodexNotificationToRuntimeEvent(notification, runId, source);
-
-      if (event !== undefined) {
-        emitRuntimeEvent(event);
-      }
+      onNotification(notification);
 
       const delta = readAssistantDelta(notification);
       if (delta !== undefined) {
@@ -380,74 +283,6 @@ function createTurnObserver({
       }
     },
   };
-}
-
-function mapCodexNotificationToRuntimeEvent(
-  notification: CodexAppServerNotification,
-  runId: string,
-  source: RuntimeStreamEvent["source"],
-): RuntimeStreamEventInput | undefined {
-  const delta = readAssistantDelta(notification);
-
-  if (delta !== undefined) {
-    return {
-      runId,
-      source,
-      type: "message.delta",
-      payload: {
-        role: "assistant",
-        contentType: "text",
-        delta,
-      },
-    };
-  }
-
-  const completedText = readCompletedAssistantText(notification);
-
-  if (completedText !== undefined) {
-    return {
-      runId,
-      source,
-      type: "message.completed",
-      payload: {
-        role: "assistant",
-        contentType: "text",
-        text: completedText,
-      },
-    };
-  }
-
-  const toolEvent = readToolEvent(notification);
-
-  if (toolEvent !== undefined) {
-    return {
-      runId,
-      source,
-      type: toolEvent.completed ? "tool.completed" : "tool.started",
-      payload: {
-        toolCallId: toolEvent.id,
-        toolName: toolEvent.name,
-        kind: "tool",
-        ...(toolEvent.completed
-          ? { outputPreview: toolEvent.preview }
-          : { inputPreview: toolEvent.preview }),
-      },
-    };
-  }
-
-  if (notification.method === "turn/started" || notification.method === "thread/started") {
-    return {
-      runId,
-      source,
-      type: "progress",
-      payload: {
-        stage: notification.method,
-        data: notification.params,
-      },
-    };
-  }
-
-  return undefined;
 }
 
 function readAssistantDelta(notification: CodexAppServerNotification): string | undefined {
@@ -582,74 +417,12 @@ function createUsageFromCodexTokenRecord(
     return undefined;
   }
 
-  return createUsage({
-    inputTokens: normalizeTokenCount(inputTokens),
-    outputTokens: normalizeTokenCount(outputTokens) + normalizeTokenCount(reasoningOutputTokens),
-    cacheReadTokens: normalizeTokenCount(cacheReadTokens),
-    cacheWriteTokens: normalizeTokenCount(cacheWriteTokens),
+  return createUsageFromTokenCounts({
+    inputTokens: inputTokens ?? 0,
+    outputTokens: (outputTokens ?? 0) + (reasoningOutputTokens ?? 0),
+    cacheReadTokens: cacheReadTokens ?? 0,
+    cacheWriteTokens: cacheWriteTokens ?? 0,
   });
-}
-
-function createUsage(usage: {
-  readonly inputTokens: number;
-  readonly outputTokens: number;
-  readonly cacheReadTokens: number;
-  readonly cacheWriteTokens: number;
-}): AgentMessageUsage {
-  const input = Math.max(usage.inputTokens - usage.cacheReadTokens, 0);
-
-  return {
-    input,
-    output: usage.outputTokens,
-    cacheRead: usage.cacheReadTokens,
-    cacheWrite: usage.cacheWriteTokens,
-    totalTokens: input + usage.outputTokens + usage.cacheReadTokens + usage.cacheWriteTokens,
-    cost: {
-      input: 0,
-      output: 0,
-      cacheRead: 0,
-      cacheWrite: 0,
-      total: 0,
-    },
-  };
-}
-
-function mergeUsage(
-  current: AgentMessageUsage | undefined,
-  next: AgentMessageUsage | undefined,
-): AgentMessageUsage | undefined {
-  if (next === undefined) {
-    return current;
-  }
-
-  if (current === undefined) {
-    return next;
-  }
-
-  return {
-    input: current.input + next.input,
-    output: current.output + next.output,
-    cacheRead: current.cacheRead + next.cacheRead,
-    cacheWrite: current.cacheWrite + next.cacheWrite,
-    ...(current.cacheWrite1h === undefined && next.cacheWrite1h === undefined
-      ? {}
-      : { cacheWrite1h: (current.cacheWrite1h ?? 0) + (next.cacheWrite1h ?? 0) }),
-    totalTokens: current.totalTokens + next.totalTokens,
-    cost: {
-      input: current.cost.input + next.cost.input,
-      output: current.cost.output + next.cost.output,
-      cacheRead: current.cost.cacheRead + next.cost.cacheRead,
-      cacheWrite: current.cost.cacheWrite + next.cost.cacheWrite,
-      total: current.cost.total + next.cost.total,
-    },
-  };
-}
-
-function hasNonZeroUsage(usage: AgentMessageUsage | undefined): boolean {
-  return (
-    usage !== undefined &&
-    (usage.input > 0 || usage.output > 0 || usage.cacheRead > 0 || usage.cacheWrite > 0)
-  );
 }
 
 async function scanCodexSessionUsage({
@@ -759,198 +532,6 @@ async function parseCodexSessionUsageFile(path: string): Promise<AgentMessageUsa
   return result;
 }
 
-function parseJsonRecord(text: string): Record<string, unknown> | undefined {
-  try {
-    return readRecord(JSON.parse(text));
-  } catch {
-    return undefined;
-  }
-}
-
-function readFirstTokenCount(
-  record: Record<string, unknown>,
-  keys: readonly string[],
-): number | undefined {
-  let zeroValue: number | undefined;
-
-  for (const key of keys) {
-    const value = readNumber(record[key]);
-
-    if (value === undefined) {
-      continue;
-    }
-
-    const normalized = normalizeTokenCount(value);
-
-    if (normalized > 0) {
-      return normalized;
-    }
-
-    zeroValue = 0;
-  }
-
-  return zeroValue;
-}
-
-function normalizeTokenCount(value: number | undefined): number {
-  if (value === undefined || !Number.isFinite(value) || value <= 0) {
-    return 0;
-  }
-
-  return Math.trunc(value);
-}
-
-function readFailureMessage(params: Record<string, unknown>): string {
-  const error = readRecord(params["error"]);
-  const candidates = [params["message"], error?.["message"], params["reason"]];
-
-  for (const candidate of candidates) {
-    if (typeof candidate === "string" && candidate.trim() !== "") {
-      return candidate;
-    }
-  }
-
-  return "Codex turn failed.";
-}
-
-function createRuntimeRunResult<TOutput>(
-  runId: string,
-  output: TOutput,
-  usage: AgentMessageUsage | undefined,
-): RuntimeRunResult<TOutput> {
-  return {
-    runId,
-    result: {
-      output,
-      ...(usage === undefined ? {} : { usage }),
-    },
-  };
-}
-
-function parseRuntimeOutput<TOutput>(
-  text: string,
-  output: RuntimeOutputSchema<TOutput> | undefined,
-): ParseRuntimeOutputResult<TOutput> {
-  try {
-    if (output === undefined) {
-      return { ok: true, value: text as TOutput };
-    }
-
-    const json = tryParseJsonLike(text);
-    return { ok: true, value: output.parse(json.ok ? json.value : text) };
-  } catch (error) {
-    return {
-      ok: false,
-      error: error instanceof Error ? error : new Error(String(error)),
-    };
-  }
-}
-
-type ParseRuntimeOutputResult<TOutput> =
-  | { readonly ok: true; readonly value: TOutput }
-  | { readonly ok: false; readonly error: Error };
-
-function createInitialPrompt(
-  query: string,
-  output: RuntimeOutputSchema<unknown> | undefined,
-): string {
-  if (output === undefined) {
-    return query;
-  }
-
-  return `${query}
-
-Return the final answer as valid JSON only. Do not include Markdown fences, prose, comments, or any characters before or after the JSON value. The JSON value must satisfy the requested output schema.`;
-}
-
-function createOutputRetryPrompt(
-  parseResult: ParseRuntimeOutputResult<unknown> | undefined,
-): string {
-  const message =
-    parseResult !== undefined && !parseResult.ok
-      ? parseResult.error.message
-      : "The previous response could not be parsed.";
-
-  return `The previous response did not satisfy the required JSON output format.
-
-Parser error:
-${message}
-
-Reply again with valid JSON only. Do not include Markdown fences, prose, comments, or any characters before or after the JSON value.`;
-}
-
-function createInitialTurnInput(
-  query: string,
-  output: RuntimeOutputSchema<unknown> | undefined,
-  startupMessages: readonly ExpertAgentStartupMessage[],
-): readonly CodexUserInput[] {
-  return createTextInputList(
-    ...startupMessages.map((message) => message.content),
-    createInitialPrompt(query, output),
-  );
-}
-
-function createTextInputList(...texts: readonly string[]): readonly CodexUserInput[] {
-  return texts.map((text) => ({
-    type: "text",
-    text,
-    text_elements: [],
-  }));
-}
-
-function normalizeOutputRetryLimit(value: number | undefined): number {
-  if (value === undefined || !Number.isFinite(value) || value < 0) {
-    return 1;
-  }
-
-  return Math.trunc(value);
-}
-
-function tryParseJsonLike(
-  text: string,
-): { readonly ok: true; readonly value: unknown } | { readonly ok: false } {
-  const trimmed = text.trim();
-  const candidates = [trimmed, ...extractFencedCodeBlocks(trimmed)];
-  const balanced = extractBalancedJsonValue(trimmed);
-
-  if (balanced !== undefined) {
-    candidates.push(balanced);
-  }
-
-  for (const candidate of candidates) {
-    try {
-      return { ok: true, value: JSON.parse(candidate) as unknown };
-    } catch {
-      continue;
-    }
-  }
-
-  return { ok: false };
-}
-
-function extractFencedCodeBlocks(text: string): string[] {
-  const matches = text.matchAll(/```(?:json)?\s*([\s\S]*?)```/g);
-  return [...matches].map((match) => match[1] ?? "");
-}
-
-function extractBalancedJsonValue(text: string): string | undefined {
-  const start = [...text].findIndex((char) => char === "{" || char === "[");
-
-  if (start < 0) {
-    return undefined;
-  }
-
-  const open = text[start];
-  const close = open === "{" ? "}" : "]";
-  const end = text.lastIndexOf(close);
-
-  if (end <= start) {
-    return undefined;
-  }
-
-  return text.slice(start, end + 1);
-}
-
 function convertCodexMessages(
   messages: readonly CodexRuntimeMessage[],
   modelName: string | undefined,
@@ -995,7 +576,7 @@ function readAgentMessageUsage(value: unknown): AgentMessageUsage {
     return result.data;
   }
 
-  return createUsage({
+  return createUsageFromTokenCounts({
     inputTokens: 0,
     outputTokens: 0,
     cacheReadTokens: 0,
@@ -1003,9 +584,33 @@ function readAgentMessageUsage(value: unknown): AgentMessageUsage {
   });
 }
 
-function summarizeInput(input: string): string {
-  const compact = input.replace(/\s+/g, " ").trim();
-  return compact.length <= 160 ? compact : `${compact.slice(0, 157)}...`;
+function createTextInputList(...texts: readonly string[]): readonly CodexUserInput[] {
+  return texts.map((text) => ({
+    type: "text",
+    text,
+    text_elements: [],
+  }));
+}
+
+function readFailureMessage(params: Record<string, unknown>): string {
+  const error = readRecord(params["error"]);
+  const candidates = [params["message"], error?.["message"], params["reason"]];
+
+  for (const candidate of candidates) {
+    if (typeof candidate === "string" && candidate.trim() !== "") {
+      return candidate;
+    }
+  }
+
+  return "Codex turn failed.";
+}
+
+function parseJsonRecord(text: string): Record<string, unknown> | undefined {
+  try {
+    return readRecord(JSON.parse(text));
+  } catch {
+    return undefined;
+  }
 }
 
 function readRecord(value: unknown): Record<string, unknown> | undefined {
@@ -1018,8 +623,4 @@ function readRecord(value: unknown): Record<string, unknown> | undefined {
 
 function readString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() !== "" ? value : undefined;
-}
-
-function readNumber(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }

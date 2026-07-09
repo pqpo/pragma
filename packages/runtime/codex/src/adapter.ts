@@ -1,24 +1,25 @@
-import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 
-import type {
-  McpToolRegistry,
-  RuntimeAdapter,
-  RuntimeSessionRestoreHandler,
-  RuntimeSessionStorageContext,
-  RuntimeSessionSyncCallback,
+import type { McpToolRegistry, RuntimeAdapter } from "@pragma/core";
+import {
+  createMcpToolRegistry,
+  defineRuntimeDriver,
+  type ExpertAgentLogger,
+  type RuntimeSessionPersistenceSpec,
 } from "@pragma/core";
-import type { ExpertAgentRunContext } from "@pragma/core";
-import { createExpertAgentLogger, type ExpertAgentLogger } from "@pragma/core";
-import { createExpertAgentRunContext } from "@pragma/core";
-import { createMcpToolRegistry } from "@pragma/core";
-import { createQueuedAgentLifecycle } from "@pragma/core";
-import { dispatchExpertAgentHook } from "@pragma/core";
 import { CodexAppServerClient } from "./app-server-client.ts";
-import type { CodexAppServerNotification } from "./app-server-client.ts";
 import { prepareManagedCodexHome } from "./codex-home.ts";
-import { createCodexRuntimeSession } from "./session.ts";
-import type { CodexNotificationSubscriber, CodexRuntimeSessionState } from "./session.ts";
+import {
+  collectCodexUsage,
+  consumeCodexStartupMessages,
+  createCodexNativeSession,
+  createCodexNotificationBus,
+  listCodexMessages,
+  mapCodexNotificationToRuntimeEvent,
+  startCodexTurn,
+  type CodexNativeSession,
+  type CodexRuntimeSessionState,
+} from "./session.ts";
 import type { CodexRuntimeAdapterOptions } from "./types.ts";
 import {
   createCodexWorkflowToolsMcpServer,
@@ -45,11 +46,14 @@ const DEFAULT_CODEX_CLIENT_INFO = {
   version: "0.1.0",
 };
 
+interface CodexDriverSession extends CodexNativeSession {
+  readonly mcpToolRegistry: McpToolRegistry;
+  readonly workflowToolsMcpServer: CodexWorkflowToolsMcpServer;
+}
+
 export function createCodexLocalRuntimeAdapter(
   options: CodexRuntimeAdapterOptions = {},
 ): RuntimeAdapter {
-  let sessionSyncCallback = options.sessionSyncCallback;
-  let sessionRestoreHandler = options.sessionRestoreHandler;
   const descriptor = {
     ...CODEX_LOCAL_RUNTIME_DESCRIPTOR,
     ...options.descriptor,
@@ -60,238 +64,123 @@ export function createCodexLocalRuntimeAdapter(
     },
   };
 
-  return {
-    descriptor,
-    setSessionSyncCallback(callback) {
-      sessionSyncCallback = callback;
-    },
-    setSessionRestoreHandler(handler) {
-      sessionRestoreHandler = handler;
-    },
-    async createSession({
-      agent,
-      context: requestedRunContext,
-      humanInteractionHandler,
-      runtimeSession,
-      systemSessionId: requestedSystemSessionId,
-      workflowExecution,
-      loggerProvider: requestedLoggerProvider,
-    }) {
-      const systemSessionId = requestedSystemSessionId ?? randomUUID();
-      const runContext = createExpertAgentRunContext(requestedRunContext);
-      const loggerProvider =
-        requestedLoggerProvider ?? options.loggerProvider ?? agent.loggerProvider;
-      const logger = createExpertAgentLogger(loggerProvider, {
-        component: "runtime-adapter",
-        agentId: agent.id,
-        runtimeId: descriptor.id,
-      });
-      const notificationBus = createNotificationBus();
-      const toolRuntimeState: CodexWorkflowToolRuntimeState = {};
-      let client: CodexAppServerClient | undefined;
-      let mcpToolRegistry: McpToolRegistry | undefined;
-      let workflowToolsMcpServer: CodexWorkflowToolsMcpServer | undefined;
-      let activeSessionSyncCallback: RuntimeSessionSyncCallback | undefined;
-      let sessionStorageContext: RuntimeSessionStorageContext | undefined;
-      const state: CodexRuntimeSessionState = {
-        threadId:
-          runtimeSession?.type === descriptor.kind && runtimeSession.id !== ""
-            ? runtimeSession.id
-            : "",
-      };
-
-      await dispatchExpertAgentHook(agent.hooks, "beforeSessionCreate", {
-        agent,
-        context: runContext,
-        systemSessionId,
-        runtimeSession,
-        logger,
-      });
-
-      const lifecycle = createQueuedAgentLifecycle<ExpertAgentRunContext | undefined>(runContext, {
-        abort: async () => {
-          client?.close();
-        },
-        cleanup: async () => {
-          const sessionInfo = {
-            systemSessionId,
-            runtimeSession: {
-              type: descriptor.kind,
-              id: state.threadId,
-            },
-            agentId: agent.id,
-            runtime: descriptor,
-            sessionState: lifecycle.sessionState,
-            runState: lifecycle.runState,
-          };
-          const cleanupErrors: unknown[] = [];
-
-          await dispatchExpertAgentHook(agent.hooks, "beforeSessionDestroy", {
-            agent,
-            session: sessionInfo,
-            logger,
-          }).catch((error: unknown) => {
-            cleanupErrors.push(error);
-          });
-          await disposeCodexRuntimeResources(client, workflowToolsMcpServer, mcpToolRegistry).catch(
-            (error: unknown) => {
-              cleanupErrors.push(error);
-            },
-          );
-          if (activeSessionSyncCallback !== undefined && sessionStorageContext !== undefined) {
-            await syncRuntimeSession(activeSessionSyncCallback, sessionStorageContext, logger).catch(
-              (error: unknown) => {
-                cleanupErrors.push(error);
-              },
-            );
-          }
-          await dispatchExpertAgentHook(agent.hooks, "afterSessionDestroy", {
-            agent,
-            session: sessionInfo,
-            logger,
-          }).catch((error: unknown) => {
-            cleanupErrors.push(error);
-          });
-
-          throwIfCleanupFailed(cleanupErrors);
-        },
-      });
-      try {
-        const sessionDir = getCodexSessionDir(agent.workspace, agent.id);
-        await restoreRuntimeSession({
-          agentId: agent.id,
-          context: runContext,
-          handler: sessionRestoreHandler,
-          runtime: descriptor,
-          runtimeSession,
-          sessionDir,
-          systemSessionId,
-          workspace: agent.workspace,
-        });
+  return defineRuntimeDriver(
+    {
+      descriptor,
+      outputRetryLimit: options.outputRetryLimit,
+      resolvePersistence(ctx): RuntimeSessionPersistenceSpec {
+        return {
+          mode: "checkpoint",
+          sessionDir: getCodexSessionDir(ctx.workspace, ctx.agent.id),
+          checkpointOn: ["session.created", "turn.completed", "session.destroyed"],
+          metadata: {
+            format: "codex-managed-home",
+          },
+        };
+      },
+      async createSession(ctx): Promise<CodexDriverSession> {
+        const notificationBus = createCodexNotificationBus();
+        const toolRuntimeState: CodexWorkflowToolRuntimeState = {};
+        const state: CodexRuntimeSessionState = {
+          threadId:
+            ctx.persistence.restoredRuntimeSessionId ??
+            (ctx.request.runtimeSession?.type === descriptor.kind ? ctx.request.runtimeSession.id : "") ??
+            "",
+        };
+        const sessionDir = ctx.persistence.spec?.sessionDir ?? getCodexSessionDir(ctx.workspace, ctx.agent.id);
         const codexHome = await prepareManagedCodexHome({
-          agent,
+          agent: ctx.agent,
           sessionDir,
           env: options.env,
-          logger,
+          logger: ctx.logger,
         });
-        const context = await agent.buildContext(runContext);
-        mcpToolRegistry = await createMcpToolRegistry(agent.mcp);
-        workflowToolsMcpServer = await createCodexWorkflowToolsMcpServer({
-          agent,
-          getContext: () => lifecycle.currentContext,
-          humanInteractionHandler,
-          logger,
+        const mcpToolRegistry = await createMcpToolRegistry(ctx.agent.mcp);
+        const workflowToolsMcpServer = await createCodexWorkflowToolsMcpServer({
+          agent: ctx.agent,
+          getContext: () => ctx.lifecycle.currentContext,
+          humanInteractionHandler: ctx.request.humanInteractionHandler,
+          logger: ctx.logger,
           mcpTools: mcpToolRegistry.tools,
           state: toolRuntimeState,
-          workflowExecution,
+          workflowExecution: ctx.request.workflowExecution,
         });
-        client = await CodexAppServerClient.start({
+        const client = await CodexAppServerClient.start({
           executablePath: options.executablePath ?? "codex",
           args: createCodexAppServerArgs(
             options.appServerArgs ?? ["app-server", "--listen", "stdio://"],
             workflowToolsMcpServer,
           ),
-          cwd: agent.workspace,
+          cwd: ctx.workspace,
           env: {
             ...(options.env ?? {}),
             CODEX_HOME: codexHome,
           },
           clientInfo: options.clientInfo ?? DEFAULT_CODEX_CLIENT_INFO,
           spawn: options.spawn,
-          humanInteractionHandler,
+          humanInteractionHandler: ctx.request.humanInteractionHandler,
           onNotification: notificationBus.publish,
           onStderr: (chunk) => {
-            logger.debug("Codex app-server stderr", { chunk });
+            ctx.logger.debug("Codex app-server stderr", { chunk });
           },
         });
         const threadStartResult = await startOrResumeThread({
           client,
-          runtimeSession,
-          runtimeKind: descriptor.kind,
-          cwd: agent.workspace,
-          model: options.defaultModelName ?? agent.models?.defaultModelName,
-          developerInstructions: context.systemPrompt,
+          runtimeSessionId: state.threadId,
+          cwd: ctx.workspace,
+          model: options.defaultModelName ?? ctx.agent.models?.defaultModelName,
+          developerInstructions: ctx.agentContext.systemPrompt,
           sandboxMode: options.sandboxMode,
           approvalPolicy: options.approvalPolicy,
-          logger,
+          logger: ctx.logger,
         });
         state.threadId = threadStartResult.threadId;
-        sessionStorageContext = createSessionStorageContext({
-          agentId: agent.id,
-          context: runContext,
-          runtime: descriptor,
-          runtimeSessionId: state.threadId,
-          sessionDir,
-          systemSessionId,
-          workspace: agent.workspace,
-        });
-        activeSessionSyncCallback = sessionSyncCallback;
 
-        if (activeSessionSyncCallback !== undefined) {
-          await syncRuntimeSession(activeSessionSyncCallback, sessionStorageContext, logger);
-        }
-
-        const sessionInfo = {
-          systemSessionId,
-          runtimeSession: {
-            type: descriptor.kind,
-            id: state.threadId,
-          },
-          agentId: agent.id,
-          runtime: descriptor,
+        return {
+          ...createCodexNativeSession({
+            client,
+            notificationBus,
+            state,
+            defaultModelName: options.defaultModelName ?? ctx.agent.models?.defaultModelName,
+            codexHome,
+            startupMessages: threadStartResult.startedFreshThread
+              ? ctx.agentContext.startupMessages
+              : [],
+          }),
+          mcpToolRegistry,
+          workflowToolsMcpServer,
         };
-        await dispatchExpertAgentHook(agent.hooks, "afterSessionCreate", {
-          agent,
-          session: {
-            ...sessionInfo,
-            sessionState: lifecycle.sessionState,
-            runState: lifecycle.runState,
-          },
-          logger,
-        });
-
-        return createCodexRuntimeSession({
-          agent,
-          client,
-          info: sessionInfo,
-          lifecycle,
-          logger,
-          notificationBus,
-          state,
-          defaultModelName: options.defaultModelName ?? agent.models?.defaultModelName,
-          outputRetryLimit: options.outputRetryLimit,
-          codexHome,
-          toolRuntimeState,
-          startupMessages: threadStartResult.startedFreshThread ? context.startupMessages : [],
-        });
-      } catch (error) {
-        logger.error("Codex runtime session creation failed", { error });
-        await disposeCodexRuntimeResources(client, workflowToolsMcpServer, mcpToolRegistry).catch(
-          (cleanupError: unknown) => {
-            logger.error("Codex runtime session creation cleanup failed", { error: cleanupError });
-          },
+      },
+      readSession(session) {
+        return {
+          runtimeSessionId: session.state.threadId,
+        };
+      },
+      listMessages: listCodexMessages,
+      consumeStartupMessages: consumeCodexStartupMessages,
+      startTurn: startCodexTurn,
+      mapEvent: mapCodexNotificationToRuntimeEvent,
+      async collectUsage(session, ctx) {
+        return await collectCodexUsage(session, ctx.startedAt, ctx.usage);
+      },
+      async cancelTurn(session) {
+        if (session.state.threadId !== "") {
+          await session.client.interruptTurn(session.state.threadId).catch(() => undefined);
+        }
+      },
+      async destroySession(session, ctx) {
+        await disposeCodexRuntimeResources(
+          session.client,
+          session.workflowToolsMcpServer,
+          session.mcpToolRegistry,
+          ctx.logger,
         );
-        await dispatchExpertAgentHook(agent.hooks, "afterSessionDestroy", {
-          agent,
-          session: {
-            systemSessionId,
-            runtimeSession: {
-              type: descriptor.kind,
-              id: state.threadId,
-            },
-            agentId: agent.id,
-            runtime: descriptor,
-            sessionState: lifecycle.sessionState,
-            runState: lifecycle.runState,
-          },
-          logger,
-        }).catch((cleanupError: unknown) => {
-          logger.error("Codex runtime session failure hook failed", { error: cleanupError });
-        });
-        throw error;
-      }
+      },
     },
-  };
+    {
+      sessionRestoreHandler: options.sessionRestoreHandler,
+      sessionSyncCallback: options.sessionSyncCallback,
+    },
+  );
 }
 
 function createCodexAppServerArgs(
@@ -317,6 +206,7 @@ async function disposeCodexRuntimeResources(
   client: CodexAppServerClient | undefined,
   workflowToolsMcpServer: CodexWorkflowToolsMcpServer | undefined,
   mcpToolRegistry: McpToolRegistry | undefined,
+  logger: ExpertAgentLogger,
 ): Promise<void> {
   const results = await Promise.allSettled([
     Promise.resolve().then(() => client?.close()),
@@ -327,13 +217,11 @@ async function disposeCodexRuntimeResources(
     result.status === "rejected" ? [result.reason as unknown] : [],
   );
 
-  throwIfCleanupFailed(errors);
-}
-
-function throwIfCleanupFailed(errors: readonly unknown[]): void {
   if (errors.length === 0) {
     return;
   }
+
+  logger.error("Codex runtime cleanup failed", { errors });
 
   if (errors.length === 1) {
     throw errors[0];
@@ -342,31 +230,9 @@ function throwIfCleanupFailed(errors: readonly unknown[]): void {
   throw new AggregateError(errors, "Codex runtime session cleanup failed.");
 }
 
-function createNotificationBus(): {
-  readonly publish: (notification: CodexAppServerNotification) => void;
-  readonly subscribe: (subscriber: CodexNotificationSubscriber) => () => void;
-} {
-  const subscribers = new Set<CodexNotificationSubscriber>();
-
-  return {
-    publish(notification) {
-      for (const subscriber of subscribers) {
-        subscriber(notification);
-      }
-    },
-    subscribe(subscriber) {
-      subscribers.add(subscriber);
-      return () => {
-        subscribers.delete(subscriber);
-      };
-    },
-  };
-}
-
 async function startOrResumeThread({
   client,
-  runtimeSession,
-  runtimeKind,
+  runtimeSessionId,
   cwd,
   model,
   developerInstructions,
@@ -375,8 +241,7 @@ async function startOrResumeThread({
   logger,
 }: {
   readonly client: CodexAppServerClient;
-  readonly runtimeSession?: { readonly type: string; readonly id: string } | undefined;
-  readonly runtimeKind: string;
+  readonly runtimeSessionId: string;
   readonly cwd: string;
   readonly model?: string | undefined;
   readonly developerInstructions?: string | undefined;
@@ -387,9 +252,9 @@ async function startOrResumeThread({
   readonly threadId: string;
   readonly startedFreshThread: boolean;
 }> {
-  if (runtimeSession?.type === runtimeKind && runtimeSession.id !== "") {
+  if (runtimeSessionId !== "") {
     try {
-      const threadId = await client.resumeThread(runtimeSession.id, {
+      const threadId = await client.resumeThread(runtimeSessionId, {
         cwd,
         model,
         developerInstructions,
@@ -400,7 +265,7 @@ async function startOrResumeThread({
       };
     } catch (error) {
       logger.warn("Codex thread resume failed; starting a fresh thread", {
-        threadId: runtimeSession.id,
+        threadId: runtimeSessionId,
         error,
       });
     }
@@ -416,93 +281,6 @@ async function startOrResumeThread({
   return {
     threadId,
     startedFreshThread: true,
-  };
-}
-
-async function restoreRuntimeSession({
-  agentId,
-  context,
-  handler,
-  runtime,
-  runtimeSession,
-  sessionDir,
-  systemSessionId,
-  workspace,
-}: {
-  readonly agentId: string;
-  readonly context: ExpertAgentRunContext;
-  readonly handler: RuntimeSessionRestoreHandler | undefined;
-  readonly runtime: RuntimeSessionStorageContext["runtime"];
-  readonly runtimeSession?: { readonly type: string; readonly id: string } | undefined;
-  readonly sessionDir: string;
-  readonly systemSessionId: string;
-  readonly workspace: string;
-}): Promise<void> {
-  if (
-    handler === undefined ||
-    runtimeSession === undefined ||
-    runtimeSession.type !== runtime.kind ||
-    runtimeSession.id === ""
-  ) {
-    return;
-  }
-
-  await handler(
-    createSessionStorageContext({
-      agentId,
-      context,
-      runtime,
-      runtimeSessionId: runtimeSession.id,
-      sessionDir,
-      systemSessionId,
-      workspace,
-    }),
-  );
-}
-
-async function syncRuntimeSession(
-  callback: RuntimeSessionSyncCallback,
-  context: RuntimeSessionStorageContext,
-  logger: { readonly error: (message: string, attributes?: Record<string, unknown>) => void },
-): Promise<void> {
-  try {
-    await callback(context);
-  } catch (error) {
-    logger.error("Codex runtime session sync callback failed", {
-      runtimeSessionId: context.runtimeSession.id,
-      error,
-    });
-  }
-}
-
-function createSessionStorageContext({
-  agentId,
-  context,
-  runtime,
-  runtimeSessionId,
-  sessionDir,
-  systemSessionId,
-  workspace,
-}: {
-  readonly agentId: string;
-  readonly context: ExpertAgentRunContext;
-  readonly runtime: RuntimeSessionStorageContext["runtime"];
-  readonly runtimeSessionId: string;
-  readonly sessionDir: string;
-  readonly systemSessionId: string;
-  readonly workspace: string;
-}): RuntimeSessionStorageContext {
-  return {
-    agentId,
-    context,
-    runtime,
-    runtimeSession: {
-      type: runtime.kind,
-      id: runtimeSessionId,
-    },
-    sessionDir,
-    systemSessionId,
-    workspace,
   };
 }
 

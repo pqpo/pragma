@@ -8,19 +8,25 @@ export type RuntimeStreamEventInput = Omit<
 >;
 
 export interface RuntimeEventEmitter {
-  readonly emit: (event: RuntimeStreamEventInput | RuntimeStreamEvent) => void;
+  readonly emit: (event: RuntimeStreamEventInput | RuntimeStreamEvent) => RuntimeStreamEvent | void;
   readonly complete: () => void;
+}
+
+export interface RuntimeQueueEventEmitter extends RuntimeEventEmitter {
+  readonly emit: (event: RuntimeStreamEventInput | RuntimeStreamEvent) => RuntimeStreamEvent;
 }
 
 export function createRuntimeEventEmitter(queue: {
   readonly push: (event: RuntimeStreamEvent) => void;
   readonly close: () => void;
-}): RuntimeEventEmitter {
+}): RuntimeQueueEventEmitter {
   let sequence = 0;
 
   return {
     emit(event) {
-      queue.push(addRuntimeEventMetadata(event, sequence++));
+      const completeEvent = addRuntimeEventMetadata(event, sequence++);
+      queue.push(completeEvent);
+      return completeEvent;
     },
     complete() {
       queue.close();

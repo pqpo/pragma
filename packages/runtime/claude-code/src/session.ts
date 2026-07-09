@@ -6,24 +6,18 @@ import { join } from "node:path";
 import { createInterface } from "node:readline";
 
 import type {
-  AgentLifecycle,
   ExpertAgent,
   ExpertAgentHumanInteractionHandler,
   ExpertAgentLogger,
-  ExpertAgentRunContext,
   ExpertAgentStartupMessage,
-  RuntimeAgentSession,
-  RuntimeOutputSchema,
-  RuntimeRunResult,
-  RuntimeSessionInfo,
-  RuntimeSessionStorageContext,
-  RuntimeSessionSyncCallback,
+  RuntimeEventMappingContext,
+  RuntimeEventMappingResult,
   RuntimeStreamEvent,
   RuntimeStreamEventInput,
-  RuntimeSubmitRequest,
-  WorkflowToolRuntimeState,
+  RuntimeTurnContext,
+  RuntimeTurnResult,
 } from "@pragma/core";
-import { AsyncPushQueue, createRuntimeEventEmitter, dispatchExpertAgentHook } from "@pragma/core";
+import { readFirstTokenCount, createUsageFromTokenCounts } from "@pragma/core";
 
 import type {
   ClaudeCodeRuntimeIsolationMode,
@@ -35,7 +29,6 @@ import type {
 
 const MCP_SERVER_NAME = "pragma";
 const PERMISSION_TOOL_NAME = "mcp__pragma__request_tool_approval";
-const DEFAULT_OUTPUT_RETRY_LIMIT = 1;
 const STDERR_TAIL_LIMIT = 8_192;
 
 const PROTOCOL_FLAGS_WITH_VALUE = new Set([
@@ -64,313 +57,160 @@ const PROTOCOL_FLAGS = new Set([
   "--dangerously-skip-permissions",
 ]);
 
-export function createClaudeCodeRuntimeSession({
-  agent,
-  executablePath,
-  additionalArgs,
-  defaultModelName,
-  env,
-  humanInteractionHandler,
-  info,
-  isolationMode,
-  lifecycle,
-  logger,
-  mcpServerUrl,
-  outputRetryLimit,
-  permissionMode,
-  pluginDir,
-  sessionDir,
-  sessionStorageContext,
-  sessionSyncCallback,
-  spawn,
-  startupMessages,
-  state,
-  toolRuntimeState,
-}: {
+export interface ClaudeCodeNativeSession {
   readonly agent: ExpertAgent;
   readonly executablePath: string;
   readonly additionalArgs: readonly string[];
   readonly defaultModelName?: string | undefined;
   readonly env?: NodeJS.ProcessEnv | undefined;
   readonly humanInteractionHandler?: ExpertAgentHumanInteractionHandler | undefined;
-  readonly info: Omit<RuntimeSessionInfo, "sessionState" | "runState">;
   readonly isolationMode: ClaudeCodeRuntimeIsolationMode;
-  readonly lifecycle: AgentLifecycle<ExpertAgentRunContext | undefined>;
   readonly logger: ExpertAgentLogger;
   readonly mcpServerUrl: string;
-  readonly outputRetryLimit?: number | undefined;
   readonly permissionMode: ClaudeCodeRuntimePermissionMode;
   readonly pluginDir: string;
   readonly sessionDir: string;
-  readonly sessionStorageContext?: RuntimeSessionStorageContext | undefined;
-  readonly sessionSyncCallback?: RuntimeSessionSyncCallback | undefined;
+  readonly spawn?: ClaudeCodeRuntimeSpawn | undefined;
+  readonly state: ClaudeCodeRuntimeSessionState;
+  readonly messages: ClaudeCodeRuntimeMessage[];
+  pendingStartupMessages: readonly ExpertAgentStartupMessage[];
+  activeProcess?: ChildProcessWithoutNullStreams | undefined;
+  activeCancelled: boolean;
+}
+
+export function createClaudeCodeNativeSession(options: {
+  readonly agent: ExpertAgent;
+  readonly executablePath: string;
+  readonly additionalArgs: readonly string[];
+  readonly defaultModelName?: string | undefined;
+  readonly env?: NodeJS.ProcessEnv | undefined;
+  readonly humanInteractionHandler?: ExpertAgentHumanInteractionHandler | undefined;
+  readonly isolationMode: ClaudeCodeRuntimeIsolationMode;
+  readonly logger: ExpertAgentLogger;
+  readonly mcpServerUrl: string;
+  readonly permissionMode: ClaudeCodeRuntimePermissionMode;
+  readonly pluginDir: string;
+  readonly sessionDir: string;
   readonly spawn?: ClaudeCodeRuntimeSpawn | undefined;
   readonly startupMessages?: readonly ExpertAgentStartupMessage[] | undefined;
   readonly state: ClaudeCodeRuntimeSessionState;
-  readonly toolRuntimeState?: WorkflowToolRuntimeState | undefined;
-}): RuntimeAgentSession {
-  const messages: ClaudeCodeRuntimeMessage[] = [];
-  let pendingStartupMessages = [...(startupMessages ?? [])];
-  let activeProcess: ChildProcessWithoutNullStreams | undefined;
-  let activeCancelled = false;
-
-  const syncSession = async (): Promise<void> => {
-    if (sessionSyncCallback === undefined || sessionStorageContext === undefined) {
-      return;
-    }
-
-    await sessionSyncCallback({
-      ...sessionStorageContext,
-      runtimeSession: {
-        type: sessionStorageContext.runtimeSession.type,
-        id: state.sessionId,
-      },
-    });
+}): ClaudeCodeNativeSession {
+  return {
+    ...options,
+    messages: [],
+    pendingStartupMessages: options.startupMessages ?? [],
+    activeCancelled: false,
   };
+}
 
-  const killActiveProcess = (): void => {
-    activeCancelled = true;
-    activeProcess?.kill("SIGTERM");
-    setTimeout(() => {
-      activeProcess?.kill("SIGKILL");
-    }, 1_000).unref();
-  };
+export function listClaudeCodeMessages(session: ClaudeCodeNativeSession): readonly AgentMessage[] {
+  return convertClaudeMessages(session.messages, session.defaultModelName);
+}
+
+export function consumeClaudeCodeStartupMessages(
+  session: ClaudeCodeNativeSession,
+): readonly ExpertAgentStartupMessage[] {
+  const startupMessages = session.pendingStartupMessages;
+  session.pendingStartupMessages = [];
+
+  if (startupMessages.length > 0) {
+    const timestamp = Date.now();
+    session.messages.push(
+      ...startupMessages.map((message, index) => ({
+        role: "user" as const,
+        content: message.content,
+        timestamp: timestamp + index,
+      })),
+    );
+  }
+
+  return startupMessages;
+}
+
+export async function startClaudeCodeTurn(
+  session: ClaudeCodeNativeSession,
+  turn: RuntimeTurnContext<Record<string, unknown>>,
+): Promise<RuntimeTurnResult> {
+  session.messages.push({
+    role: "user",
+    content: turn.rawQuery,
+    timestamp: Date.now(),
+  });
+
+  const run = await runClaudeCodeProcess({
+    executablePath: session.executablePath,
+    args: await createClaudeCodeArgs({
+      additionalArgs: session.additionalArgs,
+      defaultModelName: session.defaultModelName,
+      mcpServerUrl: session.mcpServerUrl,
+      modelName: turn.modelName,
+      permissionMode: session.permissionMode,
+      pluginDir: session.pluginDir,
+      sessionDir: session.sessionDir,
+      state: session.state,
+      systemPrompt: createSystemPrompt(session.agent),
+    }),
+    cwd: session.agent.workspace,
+    env: await createClaudeCodeEnv({
+      env: session.env,
+      isolationMode: session.isolationMode,
+      sessionDir: session.sessionDir,
+    }),
+    humanInteractionHandler: session.humanInteractionHandler,
+    logger: session.logger,
+    prompt: [...turn.startupMessages.map((message) => message.content), turn.prompt].join("\n\n"),
+    runId: turn.runId,
+    source: {
+      kind: "agent",
+      runId: turn.runId,
+      agentId: session.agent.id,
+      path: [],
+    },
+    emitRuntimeEvent: turn.stream.write,
+    spawn: session.spawn,
+    onProcessStarted(process) {
+      session.activeCancelled = false;
+      session.activeProcess = process;
+    },
+    onProcessClosed(process) {
+      if (session.activeProcess === process) {
+        session.activeProcess = undefined;
+      }
+    },
+  });
+
+  if (run.sessionId !== undefined && run.sessionId !== session.state.sessionId) {
+    session.state.sessionId = run.sessionId;
+  }
+
+  session.messages.push({
+    role: "assistant",
+    content: run.outputText,
+    timestamp: Date.now(),
+    details: run.usage,
+  });
 
   return {
-    info: () => createSessionInfo(info, lifecycle, state.sessionId),
-    messages: () => convertClaudeMessages(messages, defaultModelName),
-    submit<TSubmitOutput = string>(submission: RuntimeSubmitRequest<TSubmitOutput>) {
-      const runId = submission.runId ?? randomUUID();
-      const queue = new AsyncPushQueue<RuntimeStreamEvent>();
-      const emitter = createRuntimeEventEmitter(queue);
-      const pendingHookCalls: Promise<void>[] = [];
-      let cancelled = false;
-
-      const result = lifecycle.enqueue(async ({ signal }) => {
-        const source = {
-          kind: "agent" as const,
-          runId,
-          agentId: agent.id,
-          displayName: agent.name,
-          path: [],
-        };
-        let emittedSequence = 0;
-        const emitRuntimeEvent = (event: RuntimeStreamEventInput): void => {
-          const completeEvent = {
-            schemaVersion: "pragma.stream/v1",
-            eventId: randomUUID(),
-            emittedAt: new Date().toISOString(),
-            sequence: emittedSequence++,
-            ...event,
-          } as RuntimeStreamEvent;
-          emitter.emit(completeEvent);
-          pendingHookCalls.push(
-            dispatchExpertAgentHook(agent.hooks, "onStreamEvent", {
-              agent,
-              session: createSessionInfo(info, lifecycle, state.sessionId),
-              runId,
-              event: completeEvent,
-              context: lifecycle.currentContext,
-              logger,
-            }),
-          );
-        };
-
-        if (toolRuntimeState !== undefined) {
-          toolRuntimeState.runId = runId;
-          toolRuntimeState.source = source;
-          toolRuntimeState.emitter = emitter;
-        }
-
-        const abortCurrentRun = (): void => {
-          cancelled = true;
-          killActiveProcess();
-        };
-        signal.addEventListener("abort", abortCurrentRun, { once: true });
-
-        await dispatchExpertAgentHook(agent.hooks, "beforeTaskSubmit", {
-          agent,
-          session: createSessionInfo(info, lifecycle, state.sessionId),
-          runId,
-          submission,
-          context: lifecycle.currentContext,
-          logger,
-        });
-
-        emitRuntimeEvent({
-          runId,
-          source,
-          type: "run.started",
-          payload: {
-            task: submission.query,
-            inputSummary: summarizeInput(submission.query),
-          },
-        });
-
-        const startupMessagesForRun = pendingStartupMessages;
-        pendingStartupMessages = [];
-        if (startupMessagesForRun.length > 0) {
-          const timestamp = Date.now();
-          messages.push(
-            ...startupMessagesForRun.map((message, index) => ({
-              role: "user" as const,
-              content: message.content,
-              timestamp: timestamp + index,
-            })),
-          );
-        }
-
-        messages.push({
-          role: "user",
-          content: submission.query,
-          timestamp: Date.now(),
-        });
-
-        try {
-          const maxAttempts =
-            submission.output === undefined
-              ? 1
-              : normalizeOutputRetryLimit(submission.outputRetryLimit ?? outputRetryLimit) + 1;
-          let outputText = "";
-          let usage: AgentMessageUsage | undefined;
-          let parseResult: ParseRuntimeOutputResult<TSubmitOutput> | undefined;
-
-          for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-            outputText = "";
-            const prompt =
-              attempt === 1
-                ? createInitialPrompt(submission.query, submission.output, startupMessagesForRun)
-                : createOutputRetryPrompt(parseResult);
-            const run = await runClaudeCodeProcess({
-              executablePath,
-              args: await createClaudeCodeArgs({
-                additionalArgs,
-                defaultModelName,
-                mcpServerUrl,
-                modelName: submission.modelName,
-                permissionMode,
-                pluginDir,
-                sessionDir,
-                state,
-                systemPrompt: createSystemPrompt(agent),
-              }),
-              cwd: agent.workspace,
-              env: await createClaudeCodeEnv({ env, isolationMode, sessionDir }),
-              humanInteractionHandler,
-              logger,
-              prompt,
-              runId,
-              source,
-              emitRuntimeEvent,
-              spawn,
-              onProcessStarted(process) {
-                activeCancelled = false;
-                activeProcess = process;
-              },
-              onProcessClosed(process) {
-                if (activeProcess === process) {
-                  activeProcess = undefined;
-                }
-              },
-            });
-
-            outputText = run.outputText;
-            usage = mergeUsage(usage, run.usage);
-
-            if (run.sessionId !== undefined && run.sessionId !== state.sessionId) {
-              state.sessionId = run.sessionId;
-              await syncSession();
-            }
-
-            parseResult = parseRuntimeOutput(outputText, submission.output);
-
-            if (parseResult.ok) {
-              break;
-            }
-
-            if (attempt === maxAttempts) {
-              throw parseResult.error;
-            }
-          }
-
-          if (parseResult === undefined || !parseResult.ok) {
-            throw new Error("Claude Code runtime output parsing did not complete.");
-          }
-
-          messages.push({
-            role: "assistant",
-            content: outputText,
-            timestamp: Date.now(),
-            details: usage,
-          });
-          const runResult = createRuntimeRunResult(runId, parseResult.value, usage);
-
-          emitRuntimeEvent({
-            runId,
-            source,
-            type: "run.completed",
-            payload: usage === undefined ? {} : { usage },
-          });
-          await dispatchExpertAgentHook(agent.hooks, "afterTaskSubmit", {
-            agent,
-            session: createSessionInfo(info, lifecycle, state.sessionId),
-            runId,
-            submission,
-            result: runResult,
-            context: lifecycle.currentContext,
-            logger,
-          });
-
-          return runResult;
-        } catch (error) {
-          const wasCancelled = signal.aborted || cancelled || activeCancelled;
-          const message =
-            error instanceof Error ? error.message : "Claude Code runtime run failed.";
-
-          emitRuntimeEvent({
-            runId,
-            source,
-            type: wasCancelled ? "run.cancelled" : "run.failed",
-            payload: wasCancelled ? { reason: "cancelled" } : { message },
-          });
-          await dispatchExpertAgentHook(agent.hooks, "afterTaskSubmit", {
-            agent,
-            session: createSessionInfo(info, lifecycle, state.sessionId),
-            runId,
-            submission,
-            error,
-            context: lifecycle.currentContext,
-            logger,
-          });
-          throw error;
-        } finally {
-          signal.removeEventListener("abort", abortCurrentRun);
-          await Promise.allSettled(pendingHookCalls);
-          if (toolRuntimeState !== undefined) {
-            delete toolRuntimeState.runId;
-            delete toolRuntimeState.source;
-            delete toolRuntimeState.emitter;
-          }
-          emitter.complete();
-        }
-      });
-
-      return {
-        runId,
-        events: queue,
-        result,
-        async cancel() {
-          cancelled = true;
-          killActiveProcess();
-          await lifecycle.abort();
-        },
-      };
-    },
-    async abort() {
-      killActiveProcess();
-      await lifecycle.abort();
-    },
+    outputText: run.outputText,
+    usage: run.usage,
+    runtimeSessionId: session.state.sessionId,
   };
+}
+
+export function mapClaudeCodeNativeEvent(
+  event: Record<string, unknown>,
+  context: RuntimeEventMappingContext,
+): RuntimeEventMappingResult {
+  return mapClaudeStreamEvent(event, context.runId, context.source);
+}
+
+export function cancelClaudeCodeTurn(session: ClaudeCodeNativeSession): void {
+  const process = session.activeProcess;
+  session.activeCancelled = true;
+  process?.kill("SIGTERM");
+  setTimeout(() => {
+    process?.kill("SIGKILL");
+  }, 1_000).unref();
 }
 
 interface ClaudeProcessRunResult {
@@ -641,22 +481,6 @@ function createSystemPrompt(agent: ExpertAgent): string {
   ]
     .filter((part): part is string => part !== undefined && part.trim() !== "")
     .join("\n\n");
-}
-
-function createSessionInfo(
-  info: Omit<RuntimeSessionInfo, "sessionState" | "runState">,
-  lifecycle: AgentLifecycle,
-  sessionId: string,
-): RuntimeSessionInfo {
-  return {
-    ...info,
-    runtimeSession: {
-      type: info.runtimeSession.type,
-      id: sessionId,
-    },
-    sessionState: lifecycle.sessionState,
-    runState: lifecycle.runState,
-  };
 }
 
 function mapClaudeStreamEvent(
@@ -983,133 +807,12 @@ function readUsage(record: Record<string, unknown>): AgentMessageUsage | undefin
     return undefined;
   }
 
-  return createUsage({
+  return createUsageFromTokenCounts({
     inputTokens: normalizeTokenCount(inputTokens),
     outputTokens: normalizeTokenCount(outputTokens),
     cacheReadTokens: normalizeTokenCount(cacheReadTokens),
     cacheWriteTokens: normalizeTokenCount(cacheWriteTokens),
   });
-}
-
-function createRuntimeRunResult<TOutput>(
-  runId: string,
-  output: TOutput,
-  usage: AgentMessageUsage | undefined,
-): RuntimeRunResult<TOutput> {
-  return {
-    runId,
-    result: {
-      output,
-      ...(usage === undefined ? {} : { usage }),
-    },
-  };
-}
-
-function parseRuntimeOutput<TOutput>(
-  text: string,
-  output: RuntimeOutputSchema<TOutput> | undefined,
-): ParseRuntimeOutputResult<TOutput> {
-  try {
-    if (output === undefined) {
-      return { ok: true, value: text as TOutput };
-    }
-
-    const json = tryParseJsonLike(text);
-    return { ok: true, value: output.parse(json.ok ? json.value : text) };
-  } catch (error) {
-    return {
-      ok: false,
-      error: error instanceof Error ? error : new Error(String(error)),
-    };
-  }
-}
-
-type ParseRuntimeOutputResult<TOutput> =
-  | { readonly ok: true; readonly value: TOutput }
-  | { readonly ok: false; readonly error: Error };
-
-function createInitialPrompt(
-  query: string,
-  output: RuntimeOutputSchema<unknown> | undefined,
-  startupMessages: readonly ExpertAgentStartupMessage[],
-): string {
-  const prompt =
-    output === undefined
-      ? query
-      : `${query}
-
-Return the final answer as valid JSON only. Do not include Markdown fences, prose, comments, or any characters before or after the JSON value. The JSON value must satisfy the requested output schema.`;
-
-  return [...startupMessages.map((message) => message.content), prompt].join("\n\n");
-}
-
-function createOutputRetryPrompt(
-  parseResult: ParseRuntimeOutputResult<unknown> | undefined,
-): string {
-  const message =
-    parseResult !== undefined && !parseResult.ok
-      ? parseResult.error.message
-      : "The previous response could not be parsed.";
-
-  return `The previous response did not satisfy the required JSON output format.
-
-Parser error:
-${message}
-
-Reply again with valid JSON only. Do not include Markdown fences, prose, comments, or any characters before or after the JSON value.`;
-}
-
-function normalizeOutputRetryLimit(value: number | undefined): number {
-  if (value === undefined || !Number.isFinite(value) || value < 0) {
-    return DEFAULT_OUTPUT_RETRY_LIMIT;
-  }
-
-  return Math.trunc(value);
-}
-
-function tryParseJsonLike(
-  text: string,
-): { readonly ok: true; readonly value: unknown } | { readonly ok: false } {
-  const trimmed = text.trim();
-  const candidates = [trimmed, ...extractFencedCodeBlocks(trimmed)];
-  const balanced = extractBalancedJsonValue(trimmed);
-
-  if (balanced !== undefined) {
-    candidates.push(balanced);
-  }
-
-  for (const candidate of candidates) {
-    try {
-      return { ok: true, value: JSON.parse(candidate) as unknown };
-    } catch {
-      continue;
-    }
-  }
-
-  return { ok: false };
-}
-
-function extractFencedCodeBlocks(text: string): string[] {
-  const matches = text.matchAll(/```(?:json)?\s*([\s\S]*?)```/g);
-  return [...matches].map((match) => match[1] ?? "");
-}
-
-function extractBalancedJsonValue(text: string): string | undefined {
-  const start = [...text].findIndex((char) => char === "{" || char === "[");
-
-  if (start < 0) {
-    return undefined;
-  }
-
-  const open = text[start];
-  const close = open === "{" ? "}" : "]";
-  const end = text.lastIndexOf(close);
-
-  if (end <= start) {
-    return undefined;
-  }
-
-  return text.slice(start, end + 1);
 }
 
 function convertClaudeMessages(
@@ -1156,36 +859,12 @@ function readAgentMessageUsage(value: unknown): AgentMessageUsage {
     return result.data;
   }
 
-  return createUsage({
+  return createUsageFromTokenCounts({
     inputTokens: 0,
     outputTokens: 0,
     cacheReadTokens: 0,
     cacheWriteTokens: 0,
   });
-}
-
-function createUsage(usage: {
-  readonly inputTokens: number;
-  readonly outputTokens: number;
-  readonly cacheReadTokens: number;
-  readonly cacheWriteTokens: number;
-}): AgentMessageUsage {
-  const input = Math.max(usage.inputTokens - usage.cacheReadTokens, 0);
-
-  return {
-    input,
-    output: usage.outputTokens,
-    cacheRead: usage.cacheReadTokens,
-    cacheWrite: usage.cacheWriteTokens,
-    totalTokens: input + usage.outputTokens + usage.cacheReadTokens + usage.cacheWriteTokens,
-    cost: {
-      input: 0,
-      output: 0,
-      cacheRead: 0,
-      cacheWrite: 0,
-      total: 0,
-    },
-  };
 }
 
 function mergeUsage(
@@ -1291,42 +970,12 @@ function parseJsonRecord(text: string): Record<string, unknown> | undefined {
   }
 }
 
-function readFirstTokenCount(
-  record: Record<string, unknown>,
-  keys: readonly string[],
-): number | undefined {
-  let zeroValue: number | undefined;
-
-  for (const key of keys) {
-    const value = readNumber(record[key]);
-
-    if (value === undefined) {
-      continue;
-    }
-
-    const normalized = normalizeTokenCount(value);
-
-    if (normalized > 0) {
-      return normalized;
-    }
-
-    zeroValue = 0;
-  }
-
-  return zeroValue;
-}
-
 function normalizeTokenCount(value: number | undefined): number {
   if (value === undefined || !Number.isFinite(value) || value <= 0) {
     return 0;
   }
 
   return Math.trunc(value);
-}
-
-function summarizeInput(input: string): string {
-  const compact = input.replace(/\s+/g, " ").trim();
-  return compact.length <= 160 ? compact : `${compact.slice(0, 157)}...`;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -1339,8 +988,4 @@ function readRecord(value: unknown): Record<string, unknown> | undefined {
 
 function readString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() !== "" ? value : undefined;
-}
-
-function readNumber(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
