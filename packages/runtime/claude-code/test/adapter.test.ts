@@ -6,7 +6,12 @@ import { join } from "node:path";
 import { PassThrough, Writable } from "node:stream";
 import { describe, expect, it } from "vitest";
 
-import { ExpertAgent } from "@pragma/core";
+import {
+  ContextSystem,
+  ExpertAgent,
+  HOST_CONTEXT_NAMESPACE,
+  createInMemoryContextStore,
+} from "@pragma/core";
 import type { ExpertAgentHumanRequest, RuntimeSessionStorageContext } from "@pragma/core";
 
 import { createClaudeCodeRuntime } from "../src/adapter.ts";
@@ -114,8 +119,12 @@ describe("createClaudeCodeRuntime", () => {
     expect(fake.args).toContain("--input-format");
     expect(fake.args).toContain("--bare");
     expect(fake.args).toContain("--strict-mcp-config");
+    expect(fake.args[fake.args.indexOf("--permission-mode") + 1]).toBe("auto");
     expect(fake.args).toContain("--permission-prompt-tool");
     expect(fake.args).toContain("mcp__pragma__request_tool_approval");
+    const systemPrompt = String(fake.args[fake.args.indexOf("--append-system-prompt") + 1]);
+    expect(systemPrompt).toContain("You are Claude Test Agent.");
+    expect(systemPrompt).toContain("Answer briefly.");
     expect(fake.args).toContain("--plugin-dir");
     expect(fake.args).toContain("--settings");
     expect(fake.args[fake.args.indexOf("--settings") + 1]).toBe(
@@ -185,6 +194,74 @@ describe("createClaudeCodeRuntime", () => {
       "run.completed",
     ]);
     expect(session.messages()).toHaveLength(2);
+    expect(fake.stdinEnded).toBe(true);
+
+    await session.abort();
+  });
+
+  it("honors an explicit Claude Code permission mode", async () => {
+    const fake = new FakeClaudeCodeCli([
+      [{ type: "system", session_id: "session-permission" }, { type: "result", result: "done" }],
+    ]);
+    const agent = await createTestAgent();
+    const adapter = createClaudeCodeRuntime({
+      permissionMode: "default",
+      spawn: fake.spawn,
+    });
+
+    const session = await adapter.createSession({ agent });
+    const handle = session.submit({ query: "Say hello" });
+    await handle.result;
+
+    expect(fake.args[fake.args.indexOf("--permission-mode") + 1]).toBe("default");
+
+    await session.abort();
+  });
+
+  it("passes the assembled context system prompt to Claude Code", async () => {
+    const fake = new FakeClaudeCodeCli([
+      [{ type: "system", session_id: "session-context" }, { type: "result", result: "done" }],
+    ]);
+    const contextSystem = new ContextSystem();
+    contextSystem.register({
+      namespace: HOST_CONTEXT_NAMESPACE,
+      store: createInMemoryContextStore({
+        context: [
+          {
+            id: "runtime-runbook.md",
+            content: "Use read_expert_context for exact context ids.",
+            metadata: {
+              description: "Claude runtime runbook.",
+              trigger: "always_on",
+            },
+          },
+        ],
+      }),
+    });
+    const agent = await createTestAgent({ contextSystem });
+    const adapter = createClaudeCodeRuntime({
+      spawn: fake.spawn,
+    });
+
+    const session = await adapter.createSession({ agent });
+    const handle = session.submit({ query: "Read runtime-runbook.md" });
+    await handle.result;
+    const systemPrompt = String(fake.args[fake.args.indexOf("--append-system-prompt") + 1]);
+
+    expect(systemPrompt).toContain("Context access rules:");
+    expect(systemPrompt).toContain("Available context index");
+    expect(systemPrompt).toContain("id: runtime-runbook.md");
+    expect(systemPrompt).toContain("Use list_expert_context, read_expert_context, and search_expert_context");
+    expect(readInputContentBlocks(fake.inputs[0])).toEqual([
+      expect.objectContaining({
+        type: "text",
+        text: expect.stringContaining("Always-on reference context"),
+      }),
+      expect.objectContaining({
+        type: "text",
+        text: "Read runtime-runbook.md",
+      }),
+    ]);
 
     await session.abort();
   });
@@ -394,6 +471,7 @@ describe("createClaudeCodeRuntime", () => {
 async function createTestAgent(
   options: {
     readonly skills?: Parameters<typeof ExpertAgent.create>[0]["skills"] | undefined;
+    readonly contextSystem?: ContextSystem | undefined;
   } = {},
 ): Promise<ExpertAgent> {
   return await ExpertAgent.create({
@@ -405,6 +483,7 @@ async function createTestAgent(
     version: "0.0.0",
     scope: "test",
     workspace: await mkdtemp(join(tmpdir(), "pragma-claude-runtime-test-")),
+    ...(options.contextSystem === undefined ? {} : { contextSystem: options.contextSystem }),
     ...(options.skills === undefined ? {} : { skills: options.skills }),
   });
 }
@@ -419,6 +498,23 @@ async function collectAsync<T>(iterable: AsyncIterable<T>): Promise<T[]> {
   return values;
 }
 
+function readInputContentBlocks(input: unknown): readonly unknown[] {
+  if (!isRecord(input)) {
+    return [];
+  }
+
+  const message = input["message"];
+  if (!isRecord(message) || !Array.isArray(message["content"])) {
+    return [];
+  }
+
+  return message["content"];
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
 class FakeClaudeCodeCli extends EventEmitter {
   readonly stdout = new PassThrough();
   readonly stderr = new PassThrough();
@@ -426,6 +522,7 @@ class FakeClaudeCodeCli extends EventEmitter {
   readonly inputs: unknown[] = [];
   readonly controlResponses: unknown[] = [];
   readonly killSignals: NodeJS.Signals[] = [];
+  stdinEnded = false;
   command = "";
   args: readonly string[] = [];
   env: NodeJS.ProcessEnv = {};
@@ -451,6 +548,10 @@ class FakeClaudeCodeCli extends EventEmitter {
             this.handleInputLine(line);
           }
         }
+        callback();
+      },
+      final: (callback) => {
+        this.stdinEnded = true;
         callback();
       },
     });

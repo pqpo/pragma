@@ -40,6 +40,7 @@ const CLAUDE_CODE_LOCAL_RUNTIME_DESCRIPTOR = {
     supportsStreaming: true,
   },
 };
+const DEFAULT_CLAUDE_CODE_PERMISSION_MODE = "auto" as const;
 
 interface ClaudeCodeDriverSession extends ClaudeCodeNativeSession {
   readonly mcpToolRegistry: McpToolRegistry;
@@ -127,12 +128,13 @@ export function createClaudeCodeRuntime(
             logger: ctx.logger,
             managedConfig,
             mcpServerUrl: workflowToolsMcpServer.url,
-            permissionMode: options.permissionMode ?? "default",
+            permissionMode: options.permissionMode ?? DEFAULT_CLAUDE_CODE_PERMISSION_MODE,
             pluginDir,
             sessionDir,
             spawn: options.spawn,
             startupMessages: state.sessionId === "" ? ctx.agentContext.startupMessages : [],
             state,
+            systemPrompt: ctx.agentContext.systemPrompt,
           }),
           mcpToolRegistry,
           workflowToolsMcpServer,

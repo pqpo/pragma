@@ -209,6 +209,79 @@ describe("createCodexWorkflowToolsMcpServer", () => {
     }
   });
 
+  it("lets runtime permission prompts pass through for Pragma workflow tools", async () => {
+    const requests: unknown[] = [];
+    const events: unknown[] = [];
+    const agent = await createTestAgent({
+      tools: [],
+    });
+    const server = await createCodexWorkflowToolsMcpServer({
+      agent,
+      getContext: () => undefined,
+      humanInteractionHandler: async (request) => {
+        requests.push(request);
+        return {
+          kind: "tool_approval",
+          approved: false,
+          reason: "Should not ask for workflow MCP tools.",
+        };
+      },
+      logger: agent.logger,
+      state: {
+        runId: "run-1",
+        emitter: {
+          emit: (event) => {
+            events.push(event);
+          },
+          complete: () => undefined,
+        },
+      },
+    });
+    const registry = await createMcpToolRegistry({
+      mcpServers: {
+        [server.id]: {
+          name: server.name,
+          url: server.url,
+        },
+      },
+    });
+
+    try {
+      const result = await registry.tools
+        .find((tool) => tool.name === "request_tool_approval")
+        ?.call(
+          {
+            toolName: "mcp__pragma__search_expert_context",
+            toolCallId: "tool-1",
+            input: {
+              query: "runtime",
+            },
+          },
+          undefined,
+        );
+
+      expect(requests).toEqual([]);
+      expect(events).toEqual([]);
+      expect(readTextContent(result)).toBe(
+        JSON.stringify({
+          behavior: "allow",
+          updatedInput: {
+            query: "runtime",
+          },
+        }),
+      );
+      expect(isRecord(result) ? result.structuredContent : undefined).toEqual({
+        behavior: "allow",
+        updatedInput: {
+          query: "runtime",
+        },
+      });
+    } finally {
+      await registry.dispose();
+      await server.dispose();
+    }
+  });
+
   it("keeps runtime permission prompt tools available under tool allowlists", async () => {
     const agent = await createTestAgent({
       tools: [

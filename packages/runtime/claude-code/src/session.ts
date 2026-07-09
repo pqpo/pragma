@@ -76,6 +76,7 @@ export interface ClaudeCodeNativeSession {
   readonly sessionDir: string;
   readonly spawn?: ClaudeCodeRuntimeSpawn | undefined;
   readonly state: ClaudeCodeRuntimeSessionState;
+  readonly systemPrompt: string;
   readonly messages: ClaudeCodeRuntimeMessage[];
   pendingStartupMessages: readonly ExpertAgentStartupMessage[];
   activeProcess?: ChildProcessWithoutNullStreams | undefined;
@@ -104,6 +105,7 @@ export function createClaudeCodeNativeSession(options: {
   readonly spawn?: ClaudeCodeRuntimeSpawn | undefined;
   readonly startupMessages?: readonly ExpertAgentStartupMessage[] | undefined;
   readonly state: ClaudeCodeRuntimeSessionState;
+  readonly systemPrompt: string;
 }): ClaudeCodeNativeSession {
   return {
     ...options,
@@ -159,7 +161,7 @@ export async function startClaudeCodeTurn(
       pluginDir: session.pluginDir,
       sessionDir: session.sessionDir,
       state: session.state,
-      systemPrompt: createSystemPrompt(session.agent),
+      systemPrompt: session.systemPrompt,
     }),
     cwd: session.agent.workspace,
     env: await createClaudeCodeEnv({
@@ -170,7 +172,7 @@ export async function startClaudeCodeTurn(
     }),
     humanInteractionHandler: session.humanInteractionHandler,
     logger: session.logger,
-    prompt: [...turn.startupMessages.map((message) => message.content), turn.prompt].join("\n\n"),
+    promptParts: [...turn.startupMessages.map((message) => message.content), turn.prompt],
     runId: turn.runId,
     source: {
       kind: "agent",
@@ -261,7 +263,7 @@ async function runClaudeCodeProcess({
   env,
   humanInteractionHandler,
   logger,
-  prompt,
+  promptParts,
   runId,
   source,
   emitRuntimeEvent,
@@ -275,7 +277,7 @@ async function runClaudeCodeProcess({
   readonly env: NodeJS.ProcessEnv;
   readonly humanInteractionHandler?: ExpertAgentHumanInteractionHandler | undefined;
   readonly logger: ExpertAgentLogger;
-  readonly prompt: string;
+  readonly promptParts: readonly string[];
   readonly runId: string;
   readonly source: RuntimeStreamEvent["source"];
   readonly emitRuntimeEvent: (event: RuntimeStreamEventInput) => void;
@@ -316,7 +318,7 @@ async function runClaudeCodeProcess({
     logger.debug("Claude Code stderr", { chunk });
   });
 
-  child.stdin.write(`${JSON.stringify(createClaudeCodeUserInput(prompt))}\n`);
+  child.stdin.write(`${JSON.stringify(createClaudeCodeUserInput(promptParts))}\n`);
 
   const lines = createInterface({
     input: child.stdout,
@@ -366,6 +368,7 @@ async function runClaudeCodeProcess({
         if (resultText !== undefined) {
           outputText = resultText;
         }
+        closeClaudeCodeInput(child);
         if (event["is_error"] === true) {
           throw createClaudeCodeRuntimeError(
             resultText ?? "Claude Code returned an error result.",
@@ -626,32 +629,19 @@ function defaultSpawn(
   });
 }
 
-function createClaudeCodeUserInput(prompt: string): Record<string, unknown> {
+function createClaudeCodeUserInput(promptParts: readonly string[]): Record<string, unknown> {
   return {
     type: "user",
     message: {
       role: "user",
-      content: [
-        {
+      content: promptParts
+        .filter((part) => part.trim() !== "")
+        .map((part) => ({
           type: "text",
-          text: prompt,
-        },
-      ],
+          text: part,
+        })),
     },
   };
-}
-
-function createSystemPrompt(agent: ExpertAgent): string {
-  return [
-    `You are ${agent.name}.`,
-    agent.description,
-    agent.instructions,
-    `Expert ID: ${agent.id}`,
-    `Scope: ${agent.scope}`,
-    `Tags: ${agent.tags.join(", ")}`,
-  ]
-    .filter((part): part is string => part !== undefined && part.trim() !== "")
-    .join("\n\n");
 }
 
 function mapClaudeStreamEvent(
@@ -1070,10 +1060,6 @@ function mergeUsage(
 }
 
 function normalizePermissionMode(mode: ClaudeCodeRuntimePermissionMode): string {
-  if (mode === "auto") {
-    return "acceptEdits";
-  }
-
   if (mode === "dontAsk") {
     return "bypassPermissions";
   }

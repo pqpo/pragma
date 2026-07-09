@@ -40,6 +40,7 @@ const defaultQuery = [
   "2. 使用只读本地工具检查当前目录和仓库 package.json。",
   "3. 最后用三条项目符号总结：context 是否可见、工具调用是否发生、当前 runtime 类型是什么。",
 ].join("\n");
+const defaultPermissionMode = "auto";
 
 loadExamplesEnv();
 
@@ -96,7 +97,7 @@ try {
   console.log(`- executable: ${cli.executablePath ?? "claude"}`);
   console.log(`- model: ${cli.model ?? "Claude Code config default"}`);
   console.log(`- isolationMode: ${cli.isolationMode ?? "strict"}`);
-  console.log(`- permissionMode: ${cli.permissionMode ?? "default"}`);
+  console.log(`- permissionMode: ${cli.permissionMode ?? defaultPermissionMode}`);
   console.log("");
 
   for (const [index, query] of cli.turns.entries()) {
@@ -146,7 +147,7 @@ function createClaudeCodeRuntimeExampleContextSystem(): ContextSystem {
           content: [
             "# Claude Code Runtime Runbook",
             "",
-            "Use permissionMode=default or plan for inspection tasks.",
+            "Use permissionMode=auto or plan for inspection tasks.",
             "A healthy run should show stream events, a runtime session id, and tool events when local inspection is required.",
             "Runtime availability is checked before session creation through runtime.canUse().",
           ].join("\n"),

@@ -134,7 +134,6 @@ function createWorkflowLocalTools(
   const defaultTools = options.agent.createDefaultTools({
     getContext: options.getContext,
   });
-  const permissionTool = createPermissionPromptTool(options);
   const resolved = resolveToolPolicy<LocalTool>({
     context: options.getContext(),
     tools: [
@@ -145,11 +144,18 @@ function createWorkflowLocalTools(
       ),
     ],
   });
+  const permissionTool = createPermissionPromptTool(
+    options,
+    new Set(resolved.tools.map((tool) => tool.name)),
+  );
 
   return [createResolvedLocalTool("default", permissionTool), ...resolved.tools];
 }
 
-function createPermissionPromptTool(options: CreateWorkflowToolsMcpServerOptions): LocalTool {
+function createPermissionPromptTool(
+  options: CreateWorkflowToolsMcpServerOptions,
+  runtimeManagedToolNames: ReadonlySet<string>,
+): LocalTool {
   return {
     name: "request_tool_approval",
     description:
@@ -172,6 +178,18 @@ function createPermissionPromptTool(options: CreateWorkflowToolsMcpServerOptions
     async call(args) {
       const request = normalizePermissionPromptInput(args);
       const handler = options.humanInteractionHandler;
+
+      if (isRuntimeManagedWorkflowTool(request.toolName, runtimeManagedToolNames)) {
+        const details = {
+          behavior: "allow",
+          updatedInput: request.input,
+        };
+
+        return {
+          text: JSON.stringify(details),
+          details,
+        };
+      }
 
       emitApprovalRequested({
         approval: {
@@ -236,6 +254,23 @@ function createPermissionPromptTool(options: CreateWorkflowToolsMcpServerOptions
       };
     },
   };
+}
+
+function isRuntimeManagedWorkflowTool(
+  toolName: string,
+  runtimeManagedToolNames: ReadonlySet<string>,
+): boolean {
+  return runtimeManagedToolNames.has(normalizeRuntimeManagedToolName(toolName));
+}
+
+function normalizeRuntimeManagedToolName(toolName: string): string {
+  if (!toolName.startsWith("mcp__")) {
+    return toolName;
+  }
+
+  const secondDelimiterIndex = toolName.indexOf("__", 5);
+
+  return secondDelimiterIndex < 0 ? toolName : toolName.slice(secondDelimiterIndex + 2);
 }
 
 function normalizePermissionPromptInput(args: unknown): {
