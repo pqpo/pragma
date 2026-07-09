@@ -1,7 +1,8 @@
 import { AgentMessageUsageSchema, type AgentMessage, type AgentMessageUsage } from "@pragma/shared";
 import { spawn as nodeSpawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
+import { readFile, readdir, stat, mkdir, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 
@@ -17,7 +18,7 @@ import type {
   RuntimeTurnContext,
   RuntimeTurnResult,
 } from "@pragma/core";
-import { readFirstTokenCount, createUsageFromTokenCounts } from "@pragma/core";
+import { createUsageFromTokenCounts, hasNonZeroUsage, readFirstTokenCount } from "@pragma/core";
 
 import type { ManagedClaudeCodeConfig } from "./claude-config.ts";
 import type {
@@ -33,6 +34,7 @@ const PERMISSION_TOOL_NAME = "mcp__pragma__request_tool_approval";
 const STDERR_TAIL_LIMIT = 8_192;
 const PROCESS_TERMINATION_GRACE_MS = 1_000;
 const MAX_TEXT_DELTA_LENGTH = 80;
+const CLAUDE_TRANSCRIPT_USAGE_MTIME_TOLERANCE_MS = 5_000;
 
 const PROTOCOL_FLAGS_WITH_VALUE = new Set([
   "--mcp-config",
@@ -241,6 +243,22 @@ export function cancelClaudeCodeTurn(session: ClaudeCodeNativeSession): void {
   });
 }
 
+export async function collectClaudeCodeUsage(
+  session: ClaudeCodeNativeSession,
+  startedAt: Date,
+  currentUsage: AgentMessageUsage | undefined,
+): Promise<AgentMessageUsage | undefined> {
+  if (hasNonZeroUsage(currentUsage)) {
+    return currentUsage;
+  }
+
+  return await scanClaudeTranscriptUsage({
+    configDir: resolveClaudeCodeConfigDir(session),
+    sessionId: session.state.sessionId,
+    startTime: startedAt,
+  });
+}
+
 interface ClaudeProcessRunResult {
   readonly outputText: string;
   readonly usage?: AgentMessageUsage | undefined;
@@ -392,7 +410,8 @@ async function runClaudeCodeProcess({
       if (mapped.completedText !== undefined) {
         outputText = mapped.completedText;
       }
-      usage = mergeUsage(usage, mapped.usage);
+      // See docs/conventions/runtime-usage-accounting.md: Claude Code usage is a snapshot.
+      usage = mapped.usage ?? usage;
       if (mapped.partialKind === "text") {
         hasSeenPartialTextDelta = true;
       }
@@ -1096,6 +1115,104 @@ function readToolResultText(block: Record<string, unknown>): string | undefined 
     .join("\n");
 }
 
+function resolveClaudeCodeConfigDir(session: ClaudeCodeNativeSession): string {
+  return (
+    session.managedConfig?.configDir ??
+    readString(session.env?.["CLAUDE_CONFIG_DIR"]) ??
+    readString(process.env["CLAUDE_CONFIG_DIR"]) ??
+    join(homedir(), ".claude")
+  );
+}
+
+async function scanClaudeTranscriptUsage({
+  configDir,
+  sessionId,
+  startTime,
+}: {
+  readonly configDir: string;
+  readonly sessionId: string;
+  readonly startTime: Date;
+}): Promise<AgentMessageUsage | undefined> {
+  const root = join(configDir, "projects");
+  const candidates = await listClaudeTranscriptCandidates(root, sessionId, startTime);
+
+  candidates.sort((left, right) => left.mtime - right.mtime || left.path.localeCompare(right.path));
+
+  let result: AgentMessageUsage | undefined;
+
+  for (const candidate of candidates) {
+    result = (await parseClaudeTranscriptUsageFile(candidate.path)) ?? result;
+  }
+
+  return hasNonZeroUsage(result) ? result : undefined;
+}
+
+async function listClaudeTranscriptCandidates(
+  root: string,
+  sessionId: string,
+  startTime: Date,
+): Promise<{ readonly path: string; readonly mtime: number }[]> {
+  const entries = await readdir(root, { withFileTypes: true }).catch(() => []);
+  const candidates: { readonly path: string; readonly mtime: number }[] = [];
+  const expectedFileName = sessionId === "" ? undefined : `${sessionId}.jsonl`;
+
+  for (const entry of entries) {
+    const path = join(root, entry.name);
+
+    if (entry.isDirectory()) {
+      candidates.push(...(await listClaudeTranscriptCandidates(path, sessionId, startTime)));
+      continue;
+    }
+
+    if (!entry.isFile() || !entry.name.endsWith(".jsonl")) {
+      continue;
+    }
+
+    if (expectedFileName !== undefined && entry.name !== expectedFileName) {
+      continue;
+    }
+
+    const info = await stat(path).catch(() => undefined);
+
+    if (
+      info === undefined ||
+      info.mtime.getTime() + CLAUDE_TRANSCRIPT_USAGE_MTIME_TOLERANCE_MS < startTime.getTime()
+    ) {
+      continue;
+    }
+
+    candidates.push({ path, mtime: info.mtime.getTime() });
+  }
+
+  return candidates;
+}
+
+async function parseClaudeTranscriptUsageFile(path: string): Promise<AgentMessageUsage | undefined> {
+  const content = await readFile(path, "utf8").catch(() => undefined);
+
+  if (content === undefined) {
+    return undefined;
+  }
+
+  let result: AgentMessageUsage | undefined;
+
+  for (const line of content.split("\n")) {
+    if (!line.includes("usage") && !line.includes("modelUsage")) {
+      continue;
+    }
+
+    const event = parseJsonRecord(line);
+    const message = readRecord(event?.["message"]);
+    const usage = readUsage(message ?? event ?? {});
+
+    if (usage !== undefined) {
+      result = usage;
+    }
+  }
+
+  return result;
+}
+
 function readUsage(record: Record<string, unknown>): AgentMessageUsage | undefined {
   const usage =
     readRecord(record["usage"]) ??
@@ -1203,37 +1320,6 @@ function readAgentMessageUsage(value: unknown): AgentMessageUsage {
     cacheReadTokens: 0,
     cacheWriteTokens: 0,
   });
-}
-
-function mergeUsage(
-  current: AgentMessageUsage | undefined,
-  next: AgentMessageUsage | undefined,
-): AgentMessageUsage | undefined {
-  if (next === undefined) {
-    return current;
-  }
-
-  if (current === undefined) {
-    return next;
-  }
-
-  return {
-    input: current.input + next.input,
-    output: current.output + next.output,
-    cacheRead: current.cacheRead + next.cacheRead,
-    cacheWrite: current.cacheWrite + next.cacheWrite,
-    ...(current.cacheWrite1h === undefined && next.cacheWrite1h === undefined
-      ? {}
-      : { cacheWrite1h: (current.cacheWrite1h ?? 0) + (next.cacheWrite1h ?? 0) }),
-    totalTokens: current.totalTokens + next.totalTokens,
-    cost: {
-      input: current.cost.input + next.cost.input,
-      output: current.cost.output + next.cost.output,
-      cacheRead: current.cost.cacheRead + next.cost.cacheRead,
-      cacheWrite: current.cost.cacheWrite + next.cost.cacheWrite,
-      total: current.cost.total + next.cost.total,
-    },
-  };
 }
 
 function normalizePermissionMode(mode: ClaudeCodeRuntimePermissionMode): string {

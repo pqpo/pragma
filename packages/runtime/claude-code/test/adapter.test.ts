@@ -1,6 +1,6 @@
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough, Writable } from "node:stream";
@@ -196,6 +196,115 @@ describe("createClaudeCodeRuntime", () => {
     ]);
     expect(session.messages()).toHaveLength(2);
     expect(fake.stdinEnded).toBe(true);
+
+    await session.abort();
+  });
+
+  it("keeps the final Claude Code usage snapshot instead of summing partial snapshots", async () => {
+    const fake = new FakeClaudeCodeCli([
+      [
+        {
+          type: "assistant",
+          message: {
+            role: "assistant",
+            content: [{ type: "thinking", thinking: "Thinking" }],
+            usage: {
+              input_tokens: 10,
+              cache_read_input_tokens: 2,
+              output_tokens: 0,
+            },
+          },
+        },
+        {
+          type: "assistant",
+          message: {
+            role: "assistant",
+            content: [{ type: "text", text: "Hello world" }],
+            usage: {
+              input_tokens: 10,
+              cache_read_input_tokens: 2,
+              output_tokens: 0,
+            },
+          },
+        },
+        {
+          type: "result",
+          session_id: "session-usage",
+          result: "Hello world",
+          usage: {
+            input_tokens: 10,
+            cache_read_input_tokens: 2,
+            output_tokens: 3,
+          },
+        },
+      ],
+    ]);
+    const adapter = createClaudeCodeRuntime({
+      spawn: fake.spawn,
+    });
+    const agent = await createTestAgent();
+
+    const session = await adapter.createSession({ agent });
+    const handle = session.submit({ query: "Say hello" });
+    const result = await handle.result;
+
+    expect(result.result.usage).toEqual({
+      input: 8,
+      output: 3,
+      cacheRead: 2,
+      cacheWrite: 0,
+      totalTokens: 13,
+      cost: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        total: 0,
+      },
+    });
+
+    await session.abort();
+  });
+
+  it("falls back to Claude Code transcript usage when stdout usage is missing", async () => {
+    const sharedClaudeConfigDir = await mkdtemp(join(tmpdir(), "pragma-claude-shared-config-"));
+    const fake = new FakeClaudeCodeCli(
+      [[{ type: "system", session_id: "session-transcript" }, { type: "result", result: "Hello" }]],
+      {
+        onInput: async (cli) => {
+          await writeClaudeTranscriptUsage(cli.env["CLAUDE_CONFIG_DIR"], "session-transcript", {
+            inputTokens: 10,
+            cacheReadInputTokens: 2,
+            outputTokens: 3,
+            cacheCreationInputTokens: 0,
+          });
+        },
+      },
+    );
+    const adapter = createClaudeCodeRuntime({
+      env: { CLAUDE_CONFIG_DIR: sharedClaudeConfigDir },
+      spawn: fake.spawn,
+    });
+    const agent = await createTestAgent();
+
+    const session = await adapter.createSession({ agent });
+    const handle = session.submit({ query: "Say hello" });
+    const result = await handle.result;
+
+    expect(result.result.usage).toEqual({
+      input: 8,
+      output: 3,
+      cacheRead: 2,
+      cacheWrite: 0,
+      totalTokens: 13,
+      cost: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        total: 0,
+      },
+    });
 
     await session.abort();
   });
@@ -674,6 +783,40 @@ function readInputContentBlocks(input: unknown): readonly unknown[] {
   return message["content"];
 }
 
+async function writeClaudeTranscriptUsage(
+  configDir: string | undefined,
+  sessionId: string,
+  usage: {
+    readonly inputTokens: number;
+    readonly cacheReadInputTokens: number;
+    readonly outputTokens: number;
+    readonly cacheCreationInputTokens: number;
+  },
+): Promise<void> {
+  if (configDir === undefined) {
+    throw new Error("Expected fake Claude Code CLI to receive CLAUDE_CONFIG_DIR.");
+  }
+
+  const projectDir = join(configDir, "projects", "-test-workspace");
+  await mkdir(projectDir, { recursive: true });
+  await writeFile(
+    join(projectDir, `${sessionId}.jsonl`),
+    `${JSON.stringify({
+      type: "assistant",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "Hello" }],
+        usage: {
+          input_tokens: usage.inputTokens,
+          cache_read_input_tokens: usage.cacheReadInputTokens,
+          output_tokens: usage.outputTokens,
+          cache_creation_input_tokens: usage.cacheCreationInputTokens,
+        },
+      },
+    })}\n`,
+  );
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
@@ -701,17 +844,22 @@ class FakeClaudeCodeCli extends EventEmitter {
 
   constructor(
     private readonly outputBySpawn: readonly (readonly Record<string, unknown>[])[],
-    private readonly options: { readonly exitAfterOutput?: boolean | undefined } = {},
+    private readonly options: {
+      readonly exitAfterOutput?: boolean | undefined;
+      readonly onInput?: ((cli: FakeClaudeCodeCli) => Promise<void> | void) | undefined;
+    } = {},
   ) {
     super();
     this.stdin = new Writable({
       write: (chunk, _encoding, callback) => {
-        for (const line of String(chunk).split("\n")) {
-          if (line.trim() !== "") {
-            this.handleInputLine(line);
-          }
-        }
-        callback();
+        void this.handleInputChunk(String(chunk)).then(
+          () => {
+            callback();
+          },
+          (error: unknown) => {
+            callback(error instanceof Error ? error : new Error(String(error)));
+          },
+        );
       },
       final: (callback) => {
         this.stdinEnded = true;
@@ -728,7 +876,15 @@ class FakeClaudeCodeCli extends EventEmitter {
     return true;
   }
 
-  private handleInputLine(line: string): void {
+  private async handleInputChunk(chunk: string): Promise<void> {
+    for (const line of chunk.split("\n")) {
+      if (line.trim() !== "") {
+        await this.handleInputLine(line);
+      }
+    }
+  }
+
+  private async handleInputLine(line: string): Promise<void> {
     const message = JSON.parse(line) as Record<string, unknown>;
 
     if (message["type"] === "control_response") {
@@ -737,6 +893,7 @@ class FakeClaudeCodeCli extends EventEmitter {
     }
 
     this.inputs.push(message);
+    await this.options.onInput?.(this);
     this.writeSpawnOutput();
   }
 

@@ -47,6 +47,7 @@ const CODEX_TOOL_ITEM_NAMES = {
   fileChange: "apply_patch",
   mcpToolCall: "mcp_tool_call",
 } as const satisfies Record<string, string>;
+const CODEX_SESSION_USAGE_MTIME_TOLERANCE_MS = 5_000;
 
 export function createCodexNotificationBus(): CodexNotificationBus {
   const subscribers = new Set<CodexNotificationSubscriber>();
@@ -201,7 +202,7 @@ export function mapCodexNotificationToRuntimeEvent(
     events.push(context.events.progress(notification.method, notification.params));
   }
 
-  if (notification.method === "turn/completed") {
+  if (notification.method === "thread/tokenUsage/updated" || notification.method === "turn/completed") {
     usage = readUsage(notification.params);
   }
 
@@ -270,9 +271,21 @@ function createTurnObserver({
         onOutputText(outputText);
       }
 
+      if (notification.method === "thread/tokenUsage/updated") {
+        const usage = readUsage(notification.params);
+
+        if (usage !== undefined) {
+          onUsage(usage);
+        }
+      }
+
       if (notification.method === "turn/completed") {
         resolved = true;
-        onUsage(readUsage(notification.params));
+        const usage = readUsage(notification.params);
+
+        if (usage !== undefined) {
+          onUsage(usage);
+        }
         resolveCompleted();
         return;
       }
@@ -370,14 +383,14 @@ function readUsage(params: Record<string, unknown>): AgentMessageUsage | undefin
 }
 
 function readUsageFromRecord(record: Record<string, unknown>): AgentMessageUsage | undefined {
-  for (const key of ["usage", "token_usage", "tokens"]) {
+  for (const key of ["usage", "token_usage", "tokenUsage", "tokens"]) {
     const usage = readRecord(record[key]);
 
     if (usage === undefined) {
       continue;
     }
 
-    const parsed = createUsageFromCodexTokenRecord(usage);
+    const parsed = createUsageFromCodexTokenUsageRecord(usage);
 
     if (parsed !== undefined) {
       return parsed;
@@ -387,23 +400,51 @@ function readUsageFromRecord(record: Record<string, unknown>): AgentMessageUsage
   return undefined;
 }
 
+function createUsageFromCodexTokenUsageRecord(
+  record: Record<string, unknown>,
+): AgentMessageUsage | undefined {
+  const lastUsage = readRecord(record["last"]) ?? readRecord(record["last_token_usage"]);
+  const totalUsage = readRecord(record["total"]) ?? readRecord(record["total_token_usage"]);
+
+  if (lastUsage !== undefined || totalUsage !== undefined) {
+    // See docs/conventions/runtime-usage-accounting.md: Codex total usage is thread-cumulative.
+    return createUsageFromCodexTokenRecord(lastUsage ?? totalUsage ?? {});
+  }
+
+  return createUsageFromCodexTokenRecord(record);
+}
+
 function createUsageFromCodexTokenRecord(
   record: Record<string, unknown>,
 ): AgentMessageUsage | undefined {
-  const inputTokens = readFirstTokenCount(record, ["input_tokens", "input", "prompt_tokens"]);
+  const inputTokens = readFirstTokenCount(record, [
+    "input_tokens",
+    "inputTokens",
+    "input",
+    "prompt_tokens",
+    "promptTokens",
+  ]);
   const cacheReadTokens = readFirstTokenCount(record, [
     "cached_input_tokens",
+    "cachedInputTokens",
     "cache_read_tokens",
+    "cacheReadTokens",
     "cache_read_input_tokens",
   ]);
   const outputTokens = readFirstTokenCount(record, [
     "output_tokens",
+    "outputTokens",
     "output",
     "completion_tokens",
+    "completionTokens",
   ]);
-  const reasoningOutputTokens = readFirstTokenCount(record, ["reasoning_output_tokens"]);
+  const reasoningOutputTokens = readFirstTokenCount(record, [
+    "reasoning_output_tokens",
+    "reasoningOutputTokens",
+  ]);
   const cacheWriteTokens = readFirstTokenCount(record, [
     "cache_write_tokens",
+    "cacheWriteTokens",
     "cache_creation_input_tokens",
   ]);
 
@@ -419,7 +460,7 @@ function createUsageFromCodexTokenRecord(
 
   return createUsageFromTokenCounts({
     inputTokens: inputTokens ?? 0,
-    outputTokens: (outputTokens ?? 0) + (reasoningOutputTokens ?? 0),
+    outputTokens: outputTokens ?? 0,
     cacheReadTokens: cacheReadTokens ?? 0,
     cacheWriteTokens: cacheWriteTokens ?? 0,
   });
@@ -455,7 +496,10 @@ async function scanCodexSessionUsage({
     const path = join(dateDir, entry);
     const info = await stat(path).catch(() => undefined);
 
-    if (info === undefined || info.mtime < startTime) {
+    if (
+      info === undefined ||
+      info.mtime.getTime() + CODEX_SESSION_USAGE_MTIME_TOLERANCE_MS < startTime.getTime()
+    ) {
       continue;
     }
 
@@ -519,10 +563,12 @@ async function parseCodexSessionUsageFile(path: string): Promise<AgentMessageUsa
     }
 
     const info = readRecord(payload["info"]);
+    // Prefer per-turn usage; total_token_usage is cumulative for resumed/multi-turn threads.
+    // See docs/conventions/runtime-usage-accounting.md.
     const tokenUsage =
-      readRecord(info?.["total_token_usage"]) ?? readRecord(info?.["last_token_usage"]);
+      readRecord(info?.["last_token_usage"]) ?? readRecord(info?.["total_token_usage"]);
     const usage =
-      tokenUsage === undefined ? undefined : createUsageFromCodexTokenRecord(tokenUsage);
+      tokenUsage === undefined ? undefined : createUsageFromCodexTokenUsageRecord(tokenUsage);
 
     if (usage !== undefined) {
       result = usage;

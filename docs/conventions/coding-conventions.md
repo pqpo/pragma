@@ -20,3 +20,8 @@
 - Do not let Web import database or Agent packages.
 - Do not let shared packages import Node, React, Fastify, Prisma, or Agent Runtime APIs.
 - Define the target layer before creating a new package.
+
+## Runtime Adapters
+
+- Runtime usage events are snapshots unless explicitly documented as deltas.
+- Follow [Runtime Usage Accounting](./runtime-usage-accounting.md) when parsing Claude Code, Codex, or local transcript/session usage.

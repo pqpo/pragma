@@ -19,6 +19,7 @@ import { canUseClaudeCodeRuntime } from "./availability.ts";
 import { materializeClaudeCodePlugin } from "./skills.ts";
 import {
   cancelClaudeCodeTurn,
+  collectClaudeCodeUsage,
   consumeClaudeCodeStartupMessages,
   createClaudeCodeNativeSession,
   listClaudeCodeMessages,
@@ -149,6 +150,9 @@ export function createClaudeCodeRuntime(
       consumeStartupMessages: consumeClaudeCodeStartupMessages,
       startTurn: startClaudeCodeTurn,
       mapEvent: mapClaudeCodeNativeEvent,
+      async collectUsage(session, ctx) {
+        return await collectClaudeCodeUsage(session, ctx.startedAt, ctx.usage);
+      },
       cancelTurn(session) {
         cancelClaudeCodeTurn(session);
       },

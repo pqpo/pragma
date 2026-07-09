@@ -1,6 +1,6 @@
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, utimesSync, writeFileSync } from "node:fs";
 import { lstat, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -256,6 +256,29 @@ describe("createCodexRuntime", () => {
     await session.abort();
   });
 
+  it("reads usage from codex token usage notifications", async () => {
+    const fake = new FakeCodexAppServer({ usageLocation: "thread-notification" });
+    const adapter = createCodexRuntime({
+      spawn: fake.spawn,
+    });
+    const agent = await createTestAgent();
+
+    const session = await adapter.createSession({ agent });
+    const handle = session.submit({ query: "Say hello" });
+    const result = await handle.result;
+
+    expect(result.result.usage).toEqual(
+      createExpectedUsage({
+        input: 4,
+        output: 2,
+        cacheRead: 1,
+        cacheWrite: 0,
+      }),
+    );
+
+    await session.abort();
+  });
+
   it("falls back to codex session jsonl usage when RPC usage is missing", async () => {
     const codexHome = await mkdtemp(join(tmpdir(), "pragma-codex-home-"));
     const fake = new FakeCodexAppServer({
@@ -266,6 +289,13 @@ describe("createCodexRuntime", () => {
           outputTokens: 5,
           cachedInputTokens: 4,
           reasoningOutputTokens: 2,
+          lastUsage: {
+            inputTokens: 9,
+            outputTokens: 3,
+            cachedInputTokens: 2,
+            reasoningOutputTokens: 1,
+          },
+          mtimeOffsetMs: -1_000,
         });
       },
     });
@@ -282,8 +312,8 @@ describe("createCodexRuntime", () => {
     expect(result.result.usage).toEqual(
       createExpectedUsage({
         input: 7,
-        output: 7,
-        cacheRead: 4,
+        output: 3,
+        cacheRead: 2,
         cacheWrite: 0,
       }),
     );
@@ -662,7 +692,7 @@ interface FakeCodexAppServerOptions {
   readonly requestApproval?: boolean | undefined;
   readonly emitUserMessageItem?: boolean | undefined;
   readonly emitCommandExecutionItem?: boolean | undefined;
-  readonly usageLocation?: "top-level" | "turn" | "none" | undefined;
+  readonly usageLocation?: "top-level" | "turn" | "thread-notification" | "none" | undefined;
   readonly onTurnStart?: (() => void) | undefined;
   readonly failFirstTurnStart?: boolean | undefined;
 }
@@ -774,6 +804,9 @@ class FakeCodexAppServer extends EventEmitter {
             text: "Hello world",
           },
         });
+        if (this.options.usageLocation === "thread-notification") {
+          this.writeNotification("thread/tokenUsage/updated", createThreadTokenUsageParams());
+        }
         this.writeNotification("turn/completed", createTurnCompletedParams(this.options));
         break;
       default:
@@ -858,6 +891,7 @@ function createTurnCompletedParams(options: FakeCodexAppServerOptions): unknown 
 
   switch (options.usageLocation ?? "top-level") {
     case "none":
+    case "thread-notification":
       return { turn: { id: "turn-1", status: "completed" } };
     case "turn":
       return {
@@ -872,6 +906,30 @@ function createTurnCompletedParams(options: FakeCodexAppServerOptions): unknown 
   }
 }
 
+function createThreadTokenUsageParams(): unknown {
+  return {
+    threadId: "thread-1",
+    turnId: "turn-1",
+    tokenUsage: {
+      total: {
+        totalTokens: 13,
+        inputTokens: 10,
+        cachedInputTokens: 2,
+        outputTokens: 3,
+        reasoningOutputTokens: 1,
+      },
+      last: {
+        totalTokens: 7,
+        inputTokens: 5,
+        cachedInputTokens: 1,
+        outputTokens: 2,
+        reasoningOutputTokens: 1,
+      },
+      modelContextWindow: 258400,
+    },
+  };
+}
+
 function writeCodexSessionTokenCount(
   codexHome: string,
   usage: {
@@ -879,6 +937,15 @@ function writeCodexSessionTokenCount(
     readonly outputTokens: number;
     readonly cachedInputTokens: number;
     readonly reasoningOutputTokens: number;
+    readonly lastUsage?:
+      | {
+          readonly inputTokens: number;
+          readonly outputTokens: number;
+          readonly cachedInputTokens: number;
+          readonly reasoningOutputTokens: number;
+        }
+      | undefined;
+    readonly mtimeOffsetMs?: number | undefined;
   },
 ): void {
   const now = new Date();
@@ -890,8 +957,9 @@ function writeCodexSessionTokenCount(
     String(now.getDate()).padStart(2, "0"),
   );
   mkdirSync(sessionDir, { recursive: true });
+  const sessionPath = join(sessionDir, `${now.getTime()}.jsonl`);
   writeFileSync(
-    join(sessionDir, `${now.getTime()}.jsonl`),
+    sessionPath,
     `${JSON.stringify({ type: "turn_context", payload: { model: "gpt-5-codex" } })}\n${JSON.stringify(
       {
         type: "event_msg",
@@ -904,11 +972,26 @@ function writeCodexSessionTokenCount(
               cached_input_tokens: usage.cachedInputTokens,
               reasoning_output_tokens: usage.reasoningOutputTokens,
             },
+            ...(usage.lastUsage === undefined
+              ? {}
+              : {
+                  last_token_usage: {
+                    input_tokens: usage.lastUsage.inputTokens,
+                    output_tokens: usage.lastUsage.outputTokens,
+                    cached_input_tokens: usage.lastUsage.cachedInputTokens,
+                    reasoning_output_tokens: usage.lastUsage.reasoningOutputTokens,
+                  },
+                }),
           },
         },
       },
     )}\n`,
   );
+
+  if (usage.mtimeOffsetMs !== undefined) {
+    const mtime = new Date(now.getTime() + usage.mtimeOffsetMs);
+    utimesSync(sessionPath, mtime, mtime);
+  }
 }
 
 function readSpawnCodexHome(fake: FakeCodexAppServer): string {
