@@ -19,6 +19,7 @@ import type {
 } from "@pragma/core";
 import { readFirstTokenCount, createUsageFromTokenCounts } from "@pragma/core";
 
+import type { ManagedClaudeCodeConfig } from "./claude-config.ts";
 import type {
   ClaudeCodeRuntimeIsolationMode,
   ClaudeCodeRuntimeMessage,
@@ -30,6 +31,7 @@ import type {
 const MCP_SERVER_NAME = "pragma";
 const PERMISSION_TOOL_NAME = "mcp__pragma__request_tool_approval";
 const STDERR_TAIL_LIMIT = 8_192;
+const PROCESS_TERMINATION_GRACE_MS = 1_000;
 
 const PROTOCOL_FLAGS_WITH_VALUE = new Set([
   "--mcp-config",
@@ -41,6 +43,7 @@ const PROTOCOL_FLAGS_WITH_VALUE = new Set([
   "--append-system-prompt",
   "--model",
   "--resume",
+  "--settings",
   "--allowedTools",
   "--disallowedTools",
   "--add-dir",
@@ -66,6 +69,7 @@ export interface ClaudeCodeNativeSession {
   readonly humanInteractionHandler?: ExpertAgentHumanInteractionHandler | undefined;
   readonly isolationMode: ClaudeCodeRuntimeIsolationMode;
   readonly logger: ExpertAgentLogger;
+  readonly managedConfig?: ManagedClaudeCodeConfig | undefined;
   readonly mcpServerUrl: string;
   readonly permissionMode: ClaudeCodeRuntimePermissionMode;
   readonly pluginDir: string;
@@ -75,6 +79,11 @@ export interface ClaudeCodeNativeSession {
   readonly messages: ClaudeCodeRuntimeMessage[];
   pendingStartupMessages: readonly ExpertAgentStartupMessage[];
   activeProcess?: ChildProcessWithoutNullStreams | undefined;
+  activeExitPromise?: Promise<{
+    readonly code: number | null;
+    readonly signal: NodeJS.Signals | null;
+  }> | undefined;
+  activeHasExited?: (() => boolean) | undefined;
   activeCancelled: boolean;
 }
 
@@ -87,6 +96,7 @@ export function createClaudeCodeNativeSession(options: {
   readonly humanInteractionHandler?: ExpertAgentHumanInteractionHandler | undefined;
   readonly isolationMode: ClaudeCodeRuntimeIsolationMode;
   readonly logger: ExpertAgentLogger;
+  readonly managedConfig?: ManagedClaudeCodeConfig | undefined;
   readonly mcpServerUrl: string;
   readonly permissionMode: ClaudeCodeRuntimePermissionMode;
   readonly pluginDir: string;
@@ -142,6 +152,7 @@ export async function startClaudeCodeTurn(
     args: await createClaudeCodeArgs({
       additionalArgs: session.additionalArgs,
       defaultModelName: session.defaultModelName,
+      managedConfig: session.managedConfig,
       mcpServerUrl: session.mcpServerUrl,
       modelName: turn.modelName,
       permissionMode: session.permissionMode,
@@ -154,6 +165,7 @@ export async function startClaudeCodeTurn(
     env: await createClaudeCodeEnv({
       env: session.env,
       isolationMode: session.isolationMode,
+      managedConfig: session.managedConfig,
       sessionDir: session.sessionDir,
     }),
     humanInteractionHandler: session.humanInteractionHandler,
@@ -168,13 +180,17 @@ export async function startClaudeCodeTurn(
     },
     emitRuntimeEvent: turn.stream.write,
     spawn: session.spawn,
-    onProcessStarted(process) {
+    onProcessStarted(process, exitPromise, hasExited) {
       session.activeCancelled = false;
       session.activeProcess = process;
+      session.activeExitPromise = exitPromise;
+      session.activeHasExited = hasExited;
     },
     onProcessClosed(process) {
       if (session.activeProcess === process) {
         session.activeProcess = undefined;
+        session.activeExitPromise = undefined;
+        session.activeHasExited = undefined;
       }
     },
   });
@@ -206,17 +222,36 @@ export function mapClaudeCodeNativeEvent(
 
 export function cancelClaudeCodeTurn(session: ClaudeCodeNativeSession): void {
   const process = session.activeProcess;
+  const exitPromise = session.activeExitPromise;
+  const hasExited = session.activeHasExited;
   session.activeCancelled = true;
-  process?.kill("SIGTERM");
-  setTimeout(() => {
-    process?.kill("SIGKILL");
-  }, 1_000).unref();
+  if (process === undefined || exitPromise === undefined || hasExited === undefined) {
+    return;
+  }
+
+  void terminateClaudeCodeProcess({
+    process,
+    exitPromise,
+    hasExited,
+    logger: session.logger,
+  });
 }
 
 interface ClaudeProcessRunResult {
   readonly outputText: string;
   readonly usage?: AgentMessageUsage | undefined;
   readonly sessionId?: string | undefined;
+}
+
+class ClaudeCodeRuntimeError extends Error {
+  constructor(
+    message: string,
+    readonly code: string,
+    readonly retryable: boolean,
+  ) {
+    super(message);
+    this.name = "ClaudeCodeRuntimeError";
+  }
 }
 
 async function runClaudeCodeProcess({
@@ -245,11 +280,29 @@ async function runClaudeCodeProcess({
   readonly source: RuntimeStreamEvent["source"];
   readonly emitRuntimeEvent: (event: RuntimeStreamEventInput) => void;
   readonly spawn?: ClaudeCodeRuntimeSpawn | undefined;
-  readonly onProcessStarted: (process: ChildProcessWithoutNullStreams) => void;
+  readonly onProcessStarted: (
+    process: ChildProcessWithoutNullStreams,
+    exitPromise: Promise<{
+      readonly code: number | null;
+      readonly signal: NodeJS.Signals | null;
+    }>,
+    hasExited: () => boolean,
+  ) => void;
   readonly onProcessClosed: (process: ChildProcessWithoutNullStreams) => void;
 }): Promise<ClaudeProcessRunResult> {
   const child = (spawn ?? defaultSpawn)(executablePath, args, { cwd, env });
-  onProcessStarted(child);
+  let exited = false;
+  const exitPromise = new Promise<{
+    readonly code: number | null;
+    readonly signal: NodeJS.Signals | null;
+  }>((resolve, reject) => {
+    child.once("error", reject);
+    child.once("exit", (code, signal) => {
+      exited = true;
+      resolve({ code, signal });
+    });
+  });
+  onProcessStarted(child, exitPromise, () => exited);
 
   let outputText = "";
   let usage: AgentMessageUsage | undefined;
@@ -292,6 +345,10 @@ async function runClaudeCodeProcess({
         continue;
       }
 
+      if (event["type"] === "result") {
+        finalResultSeen = true;
+      }
+
       const mapped = mapClaudeStreamEvent(event, runId, source);
       for (const runtimeEvent of mapped.events) {
         emitRuntimeEvent(runtimeEvent);
@@ -305,41 +362,46 @@ async function runClaudeCodeProcess({
       usage = mergeUsage(usage, mapped.usage);
 
       if (event["type"] === "result") {
-        finalResultSeen = true;
         const resultText = readString(event["result"]);
         if (resultText !== undefined) {
           outputText = resultText;
         }
         if (event["is_error"] === true) {
-          throw new Error(resultText ?? "Claude Code returned an error result.");
+          throw createClaudeCodeRuntimeError(
+            resultText ?? "Claude Code returned an error result.",
+            stderrTail,
+          );
         }
       }
     }
   })();
 
-  const exitPromise = new Promise<{
-    readonly code: number | null;
-    readonly signal: NodeJS.Signals | null;
-  }>((resolve, reject) => {
-    child.once("error", reject);
-    child.once("exit", (code, signal) => resolve({ code, signal }));
-  });
   let exit: { readonly code: number | null; readonly signal: NodeJS.Signals | null };
   try {
     [exit] = await Promise.all([exitPromise, readStdout]);
-    child.stdin.end();
+  } catch (error) {
+    closeClaudeCodeInput(child);
+    await terminateClaudeCodeProcess({
+      process: child,
+      exitPromise,
+      hasExited: () => exited,
+      logger,
+    });
+    throw normalizeClaudeCodeProcessError(error, stderrTail);
   } finally {
+    closeClaudeCodeInput(child);
     onProcessClosed(child);
   }
 
   if (exit.code !== 0) {
-    throw new Error(
-      `Claude Code exited with code ${exit.code ?? "null"}${exit.signal === null ? "" : ` and signal ${exit.signal}`}.${stderrTail.trim() === "" ? "" : `\n${stderrTail.trim()}`}`,
+    throw createClaudeCodeRuntimeError(
+      `Claude Code exited with code ${exit.code ?? "null"}${exit.signal === null ? "" : ` and signal ${exit.signal}`}.`,
+      stderrTail,
     );
   }
 
   if (!finalResultSeen && outputText.trim() === "") {
-    throw new Error("Claude Code completed without a result.");
+    throw createClaudeCodeRuntimeError("Claude Code completed without a result.", stderrTail);
   }
 
   return {
@@ -349,9 +411,112 @@ async function runClaudeCodeProcess({
   };
 }
 
+function closeClaudeCodeInput(child: ChildProcessWithoutNullStreams): void {
+  if (child.stdin.destroyed || child.stdin.writableEnded) {
+    return;
+  }
+
+  try {
+    child.stdin.end();
+  } catch {
+    child.stdin.destroy();
+  }
+}
+
+async function terminateClaudeCodeProcess({
+  process,
+  exitPromise,
+  hasExited,
+  logger,
+}: {
+  readonly process: ChildProcessWithoutNullStreams;
+  readonly exitPromise: Promise<{
+    readonly code: number | null;
+    readonly signal: NodeJS.Signals | null;
+  }>;
+  readonly hasExited: () => boolean;
+  readonly logger: ExpertAgentLogger;
+}): Promise<void> {
+  if (hasExited()) {
+    return;
+  }
+
+  process.kill("SIGTERM");
+  if (await waitForClaudeCodeExit(exitPromise)) {
+    return;
+  }
+
+  logger.warn("Claude Code did not exit after SIGTERM; sending SIGKILL.");
+  process.kill("SIGKILL");
+  await waitForClaudeCodeExit(exitPromise);
+}
+
+async function waitForClaudeCodeExit(
+  exitPromise: Promise<{
+    readonly code: number | null;
+    readonly signal: NodeJS.Signals | null;
+  }>,
+): Promise<boolean> {
+  return await Promise.race([
+    exitPromise.then(
+      () => true,
+      () => true,
+    ),
+    new Promise<boolean>((resolve) => {
+      setTimeout(() => resolve(false), PROCESS_TERMINATION_GRACE_MS);
+    }),
+  ]);
+}
+
+function normalizeClaudeCodeProcessError(error: unknown, stderrTail: string): Error {
+  if (error instanceof ClaudeCodeRuntimeError) {
+    return error;
+  }
+
+  if (error instanceof Error) {
+    return createClaudeCodeRuntimeError(error.message, stderrTail);
+  }
+
+  return createClaudeCodeRuntimeError("Claude Code process failed.", stderrTail);
+}
+
+function createClaudeCodeRuntimeError(message: string, stderrTail = ""): ClaudeCodeRuntimeError {
+  const trimmedStderr = stderrTail.trim();
+  const combinedMessage = trimmedStderr === "" ? message : `${message}\n${trimmedStderr}`;
+  const code = inferClaudeCodeRuntimeErrorCode(combinedMessage);
+
+  return new ClaudeCodeRuntimeError(combinedMessage, code, code !== "runtime.auth_invalid");
+}
+
+function inferClaudeCodeRuntimeErrorCode(message: string): string {
+  const normalized = message.toLowerCase();
+
+  if (
+    normalized.includes("429") ||
+    normalized.includes("rate limit") ||
+    normalized.includes("rate_limit") ||
+    normalized.includes("too many requests")
+  ) {
+    return "runtime.rate_limited";
+  }
+
+  if (
+    normalized.includes("invalid api key") ||
+    normalized.includes("invalid x-api-key") ||
+    normalized.includes("incorrect api key") ||
+    normalized.includes("authentication") ||
+    normalized.includes("unauthorized")
+  ) {
+    return "runtime.auth_invalid";
+  }
+
+  return "runtime.process_failed";
+}
+
 async function createClaudeCodeArgs({
   additionalArgs,
   defaultModelName,
+  managedConfig,
   mcpServerUrl,
   modelName,
   permissionMode,
@@ -362,6 +527,7 @@ async function createClaudeCodeArgs({
 }: {
   readonly additionalArgs: readonly string[];
   readonly defaultModelName?: string | undefined;
+  readonly managedConfig?: ManagedClaudeCodeConfig | undefined;
   readonly mcpServerUrl: string;
   readonly modelName?: string | undefined;
   readonly permissionMode: ClaudeCodeRuntimePermissionMode;
@@ -372,6 +538,8 @@ async function createClaudeCodeArgs({
 }): Promise<readonly string[]> {
   const mcpConfigPath = await writeMcpConfig(sessionDir, mcpServerUrl);
   const selectedModel = modelName ?? defaultModelName;
+  const settingsArgs =
+    managedConfig?.settingsPath === undefined ? [] : ["--settings", managedConfig.settingsPath];
   const args = [
     "-p",
     "--output-format",
@@ -383,6 +551,7 @@ async function createClaudeCodeArgs({
     "--strict-mcp-config",
     "--mcp-config",
     mcpConfigPath,
+    ...settingsArgs,
     "--plugin-dir",
     pluginDir,
     "--append-system-prompt",
@@ -424,10 +593,12 @@ async function writeMcpConfig(sessionDir: string, mcpServerUrl: string): Promise
 async function createClaudeCodeEnv({
   env,
   isolationMode,
+  managedConfig,
   sessionDir,
 }: {
   readonly env?: NodeJS.ProcessEnv | undefined;
   readonly isolationMode: ClaudeCodeRuntimeIsolationMode;
+  readonly managedConfig?: ManagedClaudeCodeConfig | undefined;
   readonly sessionDir: string;
 }): Promise<NodeJS.ProcessEnv> {
   const nextEnv = {
@@ -436,7 +607,7 @@ async function createClaudeCodeEnv({
   };
 
   if (isolationMode === "strict") {
-    const configDir = join(sessionDir, "claude-config");
+    const configDir = managedConfig?.configDir ?? join(sessionDir, "claude-config");
     await mkdir(configDir, { recursive: true });
     nextEnv["CLAUDE_CONFIG_DIR"] = configDir;
   }

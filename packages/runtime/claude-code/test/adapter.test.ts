@@ -88,8 +88,14 @@ describe("createClaudeCodeRuntime", () => {
     ]);
     const synced: RuntimeSessionStorageContext[] = [];
     const agent = await createTestAgent();
+    const sharedClaudeConfigDir = await mkdtemp(join(tmpdir(), "pragma-claude-shared-config-"));
+    await writeFile(
+      join(sharedClaudeConfigDir, "settings.json"),
+      '{"env":{"ANTHROPIC_BASE_URL":"https://example.invalid"}}\n',
+    );
     const adapter = createClaudeCodeRuntime({
       defaultModelName: "claude-sonnet-4-5",
+      env: { CLAUDE_CONFIG_DIR: sharedClaudeConfigDir },
       spawn: fake.spawn,
       sessionSyncCallback: (context) => {
         synced.push(context);
@@ -111,6 +117,18 @@ describe("createClaudeCodeRuntime", () => {
     expect(fake.args).toContain("--permission-prompt-tool");
     expect(fake.args).toContain("mcp__pragma__request_tool_approval");
     expect(fake.args).toContain("--plugin-dir");
+    expect(fake.args).toContain("--settings");
+    expect(fake.args[fake.args.indexOf("--settings") + 1]).toBe(
+      join(
+        agent.workspace,
+        ".pragma",
+        "runtime-sessions",
+        "claude-code",
+        agent.id,
+        "claude-config",
+        "settings.json",
+      ),
+    );
     expect(fake.args).toContain("--model");
     expect(fake.args).toContain("claude-sonnet-4-5");
     expect(fake.env["CLAUDE_CONFIG_DIR"]).toBe(
@@ -260,6 +278,74 @@ describe("createClaudeCodeRuntime", () => {
     await session.abort();
   });
 
+  it("fails the turn and terminates Claude Code when an error result does not exit", async () => {
+    const fake = new FakeClaudeCodeCli(
+      [[{ type: "result", is_error: true, result: "API error: 400 Invalid API Key" }]],
+      { exitAfterOutput: false },
+    );
+    const agent = await createTestAgent();
+    const adapter = createClaudeCodeRuntime({
+      spawn: fake.spawn,
+    });
+
+    const session = await adapter.createSession({ agent });
+    const handle = session.submit({ query: "Say hello" });
+    const eventsPromise = collectAsync(handle.events);
+
+    await expect(handle.result).rejects.toMatchObject({
+      code: "runtime.auth_invalid",
+      retryable: false,
+      message: expect.stringContaining("Invalid API Key"),
+    });
+    const events = await eventsPromise;
+    const failed = events.find((event) => event.type === "run.failed");
+
+    expect(fake.killSignals).toEqual(["SIGTERM"]);
+    expect(events.map((event) => event.type)).toEqual([
+      "run.started",
+      "message.completed",
+      "run.failed",
+    ]);
+    expect(failed?.payload).toEqual({
+      message: expect.stringContaining("Invalid API Key"),
+      code: "runtime.auth_invalid",
+      retryable: false,
+    });
+    expect(session.messages()).toHaveLength(1);
+
+    await session.abort();
+  });
+
+  it("classifies Claude Code rate limit failures as retryable", async () => {
+    const fake = new FakeClaudeCodeCli([
+      [{ type: "result", is_error: true, result: "API error: 429 Too many requests" }],
+    ]);
+    const agent = await createTestAgent();
+    const adapter = createClaudeCodeRuntime({
+      spawn: fake.spawn,
+    });
+
+    const session = await adapter.createSession({ agent });
+    const handle = session.submit({ query: "Say hello" });
+    const eventsPromise = collectAsync(handle.events);
+
+    await expect(handle.result).rejects.toMatchObject({
+      code: "runtime.rate_limited",
+      retryable: true,
+      message: expect.stringContaining("429"),
+    });
+    const events = await eventsPromise;
+    const failed = events.find((event) => event.type === "run.failed");
+
+    expect(failed?.payload).toEqual({
+      message: expect.stringContaining("429"),
+      code: "runtime.rate_limited",
+      retryable: true,
+    });
+
+    await session.abort();
+  });
+
   it("materializes ExpertAgent skills into a session-scoped Claude plugin", async () => {
     const fake = new FakeClaudeCodeCli([
       [{ type: "system", session_id: "session-skills" }, { type: "result", result: "done" }],
@@ -339,6 +425,7 @@ class FakeClaudeCodeCli extends EventEmitter {
   readonly stdin: Writable;
   readonly inputs: unknown[] = [];
   readonly controlResponses: unknown[] = [];
+  readonly killSignals: NodeJS.Signals[] = [];
   command = "";
   args: readonly string[] = [];
   env: NodeJS.ProcessEnv = {};
@@ -352,7 +439,10 @@ class FakeClaudeCodeCli extends EventEmitter {
     return this as unknown as ChildProcessWithoutNullStreams;
   };
 
-  constructor(private readonly outputBySpawn: readonly (readonly Record<string, unknown>[])[]) {
+  constructor(
+    private readonly outputBySpawn: readonly (readonly Record<string, unknown>[])[],
+    private readonly options: { readonly exitAfterOutput?: boolean | undefined } = {},
+  ) {
     super();
     this.stdin = new Writable({
       write: (chunk, _encoding, callback) => {
@@ -366,9 +456,10 @@ class FakeClaudeCodeCli extends EventEmitter {
     });
   }
 
-  kill(): boolean {
+  kill(signal: NodeJS.Signals = "SIGTERM"): boolean {
+    this.killSignals.push(signal);
     queueMicrotask(() => {
-      this.emit("exit", 0, null);
+      this.emit("exit", null, signal);
     });
     return true;
   }
@@ -391,6 +482,9 @@ class FakeClaudeCodeCli extends EventEmitter {
     queueMicrotask(() => {
       for (const event of output) {
         this.stdout.write(`${JSON.stringify(event)}\n`);
+      }
+      if (this.options.exitAfterOutput === false) {
+        return;
       }
       this.stdout.end();
       this.emit("exit", 0, null);

@@ -559,12 +559,21 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepared> {
       } catch (error) {
         const wasCancelled = signal.aborted || cancelled;
         const message = error instanceof Error ? error.message : "Runtime run failed.";
+        const errorMetadata = readRuntimeErrorMetadata(error);
 
         controller.writer.write({
           runId,
           source: controller.source,
           type: wasCancelled ? "run.cancelled" : "run.failed",
-          payload: wasCancelled ? { reason: "cancelled" } : { message },
+          payload: wasCancelled
+            ? { reason: "cancelled" }
+            : {
+                message,
+                ...(errorMetadata.code === undefined ? {} : { code: errorMetadata.code }),
+                ...(errorMetadata.retryable === undefined
+                  ? {}
+                  : { retryable: errorMetadata.retryable }),
+              },
         });
         await dispatchExpertAgentHook(this.options.agent.hooks, "afterTaskSubmit", {
           agent: this.options.agent,
@@ -713,4 +722,21 @@ function throwIfRuntimeCleanupFailed(errors: readonly unknown[]): void {
   }
 
   throw new AggregateError(errors, "Runtime session cleanup failed.");
+}
+
+function readRuntimeErrorMetadata(error: unknown): {
+  readonly code?: string | undefined;
+  readonly retryable?: boolean | undefined;
+} {
+  if (typeof error !== "object" || error === null) {
+    return {};
+  }
+
+  const record = error as { readonly code?: unknown; readonly retryable?: unknown };
+  return {
+    ...(typeof record.code === "string" && record.code.trim() !== ""
+      ? { code: record.code }
+      : {}),
+    ...(typeof record.retryable === "boolean" ? { retryable: record.retryable } : {}),
+  };
 }

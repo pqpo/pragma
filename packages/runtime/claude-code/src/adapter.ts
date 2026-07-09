@@ -14,6 +14,7 @@ import {
   type RuntimeSessionPersistenceSpec,
   type WorkflowToolRuntimeState,
 } from "@pragma/core";
+import { prepareManagedClaudeCodeConfig } from "./claude-config.ts";
 import { canUseClaudeCodeRuntime } from "./availability.ts";
 import { materializeClaudeCodePlugin } from "./skills.ts";
 import {
@@ -104,6 +105,15 @@ export function createClaudeCodeRuntime(
           state: toolRuntimeState,
           workflowExecution: ctx.request.workflowExecution,
         });
+        const isolationMode = options.isolationMode ?? "strict";
+        const managedConfig =
+          isolationMode === "strict"
+            ? await prepareManagedClaudeCodeConfig({
+                sessionDir,
+                env: options.env,
+                logger: ctx.logger,
+              })
+            : undefined;
 
         return {
           ...createClaudeCodeNativeSession({
@@ -113,8 +123,9 @@ export function createClaudeCodeRuntime(
             defaultModelName: options.defaultModelName ?? ctx.agent.models?.defaultModelName,
             env: options.env,
             humanInteractionHandler: ctx.request.humanInteractionHandler,
-            isolationMode: options.isolationMode ?? "strict",
+            isolationMode,
             logger: ctx.logger,
+            managedConfig,
             mcpServerUrl: workflowToolsMcpServer.url,
             permissionMode: options.permissionMode ?? "default",
             pluginDir,
