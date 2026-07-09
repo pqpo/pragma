@@ -1,144 +1,248 @@
 # Pragma
 
-Pragma 是一个面向企业复杂流程的多专家 Agent 编排与发布平台。
+<p align="center">
+  <strong>A multi-expert AI collaboration platform built for production-grade complex scenarios.</strong>
+</p>
 
-项目目标不是构建单个通用 Agent，而是把多个具备领域知识和专业能力的专家 Agent，通过 Playbook 剧本进行编排，形成可发布、可复用、可治理的统一服务。它面向需求分析、技术方案生成、代码编写、代码评审、测试分析、业务知识问答等企业协作场景。
+<p align="center">
+  <a href="./README.zh-CN.md">简体中文</a>
+</p>
 
-当前仓库以长期可扩展的多专家 Agent 架构为核心：优先保证模块边界清晰、协议可治理、运行时可替换，并在每次演进中交付完整、可验证的功能闭环。
+<p align="center">
+  <img alt="Node.js >= 22" src="https://img.shields.io/badge/Node.js-%3E%3D22-339933?logo=node.js&logoColor=white" />
+  <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white" />
+  <img alt="pnpm" src="https://img.shields.io/badge/pnpm-10.12.1-F69220?logo=pnpm&logoColor=white" />
+  <img alt="ESM" src="https://img.shields.io/badge/modules-ESM-4B5563" />
+  <img alt="Tests" src="https://img.shields.io/badge/tests-Vitest-6E9F18?logo=vitest&logoColor=white" />
+</p>
 
-## 目录结构
+Pragma helps teams build AI expert groups for production-grade work: requirements analysis, technical planning, code implementation, code review, testing analysis, and domain knowledge support.
 
-```text
-apps/
-  web/       Next.js Web 应用，页面与浏览器交互入口
-  server/    Fastify HTTP API 应用
-  worker/    Node Worker 应用
+It is not designed as a single general-purpose chatbot. Pragma focuses on reusable expert definitions, shared context, controlled tool access, runtime replacement, and governance boundaries that can grow with complex engineering and business workflows.
 
-packages/
-  shared/    跨运行时协议、领域模型和纯工具
-  client/    浏览器或客户端使用的 SDK
-  server/    Node 服务端基础设施边界
-  core/      专家 Agent 抽象、协议与运行时边界
-  eslint-config/ 共享 ESLint 配置
-  tsconfig/      共享 TypeScript 配置
+## Why Pragma?
 
-examples/    ExpertAgent 最小使用示例
-docs/        架构说明、ADR、编码约定和设计文档
-infra/       后续基础设施编排目录
+Production AI work usually needs more than one prompt and one model call. Real teams need specialists, review gates, shared project knowledge, tool permissions, traceable execution, and the ability to move work between cloud and local runtimes.
+
+Pragma is built around those constraints:
+
+- **Expert-first collaboration**: define specialized experts with roles, instructions, context, tools, and model configuration.
+- **Production boundaries**: keep protocols, runtime execution, client SDKs, server infrastructure, and apps separated.
+- **Shared context and memory**: expose long-lived project knowledge and memory through governed context namespaces.
+- **Tool and plugin foundation**: attach managed tools, MCP capabilities, skills, and domain plugins without hard-wiring them into app code.
+- **Runtime flexibility**: run experts through replaceable runtime adapters, including cloud and local runtime implementations.
+- **Human control points**: support approval, clarification, and review flows for actions that require human judgment.
+
+## Core Capabilities
+
+```mermaid
+flowchart LR
+  expert["Expert Agents"]
+  context["Context & Memory"]
+  tools["Tools & Plugins"]
+  runtime["Runtime Adapters"]
+  apps["Web / Server / Worker / Desktop"]
+
+  apps --> expert
+  expert --> context
+  expert --> tools
+  expert --> runtime
 ```
 
-更多背景可以查看：
+Pragma currently provides:
+
+- `ExpertAgent` creation APIs for defining reusable AI experts.
+- Context systems backed by in-memory or filesystem stores.
+- Managed tools, MCP tool integration, plugin loading, and approval policies.
+- Runtime adapter contracts and concrete PI / Codex runtime packages.
+- Directive and workflow primitives for composing expert work with deterministic TypeScript tasks.
+- Browser-safe shared schemas and DTOs built with Zod.
+- Web, server, worker, desktop, client SDK, and infrastructure package boundaries in a pnpm monorepo.
+
+## Quickstart
+
+### Requirements
 
 ```text
-docs/多专家 Agent 编排系统设计文档 .md
-docs/architecture/module-boundaries.md
-docs/architecture/expert-agent-standard-protocol.md
+Node.js >= 22
+pnpm 10.12.1
 ```
 
-## 技术栈
-
-```text
-Node.js: >= 22
-Package Manager: pnpm
-Monorepo: pnpm workspace + Turborepo
-Language: TypeScript
-Module System: ESM
-Lint: ESLint Flat Config
-Formatting: Prettier
-Test: Vitest
-Web: Next.js
-Server: Fastify
-Worker: Node.js + TypeScript
-```
-
-## 模块边界
-
-Pragma 按层组织代码，跨 package 调用必须使用 `@pragma/*` package import。
-
-允许的依赖方向：
-
-```text
-apps/web    -> client -> shared
-apps/server -> server -> core -> shared
-apps/worker -> server -> core -> shared
-```
-
-基本规则：
-
-- 不把共享逻辑直接放进 `apps`。
-- Web 和 SDK 不直接访问数据库、Agent 或 Node 专属能力。
-- `shared` 包必须保持浏览器和 Node 双端安全，不依赖 React、Fastify、数据库、Agent Runtime 或 Node 内置模块。
-- 跨 package 不使用相对路径导入，使用 `@pragma/shared` 这类 package import。
-- 新增 package 前先明确它属于 `shared`、`client`、`server`、`core` 还是配置工具。
-
-## 本地安装
+### Install
 
 ```bash
 pnpm install
 pnpm -r list
 ```
 
-## 启动应用
-
-启动 Server：
+### Start the Server
 
 ```bash
 pnpm --filter @pragma/server-app dev
 ```
 
-Server 当前提供 `GET /health`，默认端口为 `3001`：
+The server exposes `GET /health` on port `3001`:
 
 ```bash
 curl http://localhost:3001/health
 ```
 
-启动 Web：
+Expected response:
+
+```json
+{
+  "service": "server",
+  "status": "ok"
+}
+```
+
+### Start the Web App
 
 ```bash
 pnpm --filter @pragma/web dev
 ```
 
-默认访问地址：
+Open:
 
 ```text
 http://localhost:3000
 ```
 
-Web 会展示当前服务状态，并通过 SDK 读取 Server 的健康检查结果。
+The page should show the web app status and the server health result.
 
-启动 Worker：
+### Start the Worker
 
 ```bash
 pnpm --filter @pragma/worker dev
 ```
 
-Worker 启动后会初始化基础 Agent 运行上下文并输出启动状态：
+Expected output:
 
 ```text
 Pragma Worker Ready
 ```
 
-也可以并行启动全部带 `dev` 脚本的 workspace：
+### Start the Desktop App
 
 ```bash
-pnpm dev
+pnpm --filter @pragma/desktop run prepare:electron
+pnpm --filter @pragma/desktop dev
 ```
 
-## 运行 ExpertAgent 示例
+Electron 42 downloads its binary on first CLI usage. `prepare:electron` triggers that download explicitly so local development and CI fail less often on a missing binary.
 
-示例代码在 `examples/`，用于展示如何直接创建 `ExpertAgent`、注入模型配置、创建 runtime session、提交任务并处理流式输出。
+## Run Your First Expert
+
+The `examples/` workspace contains focused examples for creating experts, using context, testing memory behavior, running local Codex runtime sessions, and exercising human approval flows.
+
+Prepare model configuration:
 
 ```bash
 cp examples/.env.example examples/.env
-pnpm --filter @pragma/examples start:basic
-pnpm --filter @pragma/examples start:workspace-context
 ```
 
-示例默认使用仓库根目录下的 `workspace/` 作为 agent workspace。上下文示例支持通过 `--workspace` 指定外部 workspace，通过 `--context` 指定 markdown 上下文目录。
+Then edit `examples/.env`:
 
-详细说明见 `examples/README.md`。
+```text
+PRAGMA_MODEL_PROVIDER=openai
+PRAGMA_MODEL_NAME=gpt-4o-mini
+PRAGMA_MODEL_BASE_API=https://api.openai.com/v1
+PRAGMA_MODEL_API=openai-responses
+PRAGMA_MODEL_API_KEY=replace-with-your-api-key
+```
 
-## 常用脚本
+Run the basic expert example:
+
+```bash
+pnpm --filter @pragma/examples start:basic
+```
+
+Pass a custom prompt:
+
+```bash
+pnpm --filter @pragma/examples start:basic "Summarize the ExpertAgent lifecycle in three sentences."
+```
+
+More examples:
+
+```bash
+pnpm --filter @pragma/examples start:workspace-context
+pnpm --filter @pragma/examples start:memory
+pnpm --filter @pragma/examples start:approval
+pnpm --filter @pragma/examples start:codex-runtime
+```
+
+See [examples/README.md](./examples/README.md) for the full example guide.
+
+## Monorepo Layout
+
+```text
+apps/
+  web/       Next.js web application
+  server/    Fastify HTTP API application
+  worker/    Node.js worker application
+  desktop/   Desktop local agent bridge
+
+packages/
+  shared/         Cross-runtime schemas, DTOs, domain models, and pure utilities
+  client/         Browser/client HTTP SDK
+  server/         Server-side infrastructure boundary
+  core/           ExpertAgent, context, tools, plugins, and runtime contracts
+  runtime/pi/     PI runtime adapter
+  runtime/codex/  Codex local runtime adapter
+  eslint-config/  Shared ESLint config
+  tsconfig/       Shared TypeScript config
+
+plugins/
+  memory/         Memory plugin
+  repo-manager/   Repository management plugin
+
+examples/         Runnable ExpertAgent examples
+docs/             Architecture notes, ADRs, conventions, and usage guides
+infra/            Infrastructure composition directory
+```
+
+## Architecture Boundaries
+
+Pragma keeps package boundaries explicit so the platform can evolve without coupling browser code, server infrastructure, expert definitions, and runtime implementations.
+
+Allowed internal dependency direction:
+
+```text
+apps/web        -> client -> shared
+apps/server     -> server -> core -> shared
+apps/worker     -> server -> runtime-* -> core -> shared
+apps/desktop    -> core -> shared
+runtime-*       -> core -> shared
+```
+
+Important rules:
+
+- `shared` must remain browser-safe and runtime-neutral.
+- `client` must not depend on `server` or `core`.
+- `core` must not depend on concrete runtime packages, server apps, client SDKs, React, or Next.js.
+- Concrete runtime implementations live in independent `@pragma/runtime-*` packages.
+- Cross-package imports must use `@pragma/*` package imports, not relative paths.
+
+For deeper context:
+
+- [Module boundaries](./docs/architecture/module-boundaries.md)
+- [Agent core architecture](./docs/architecture/agent-core-architecture.md)
+- [Expert agent standard protocol](./docs/architecture/expert-agent-standard-protocol.md)
+- [Local agent bridge](./docs/architecture/local-agent-bridge.md)
+- [Monorepo and dependency rules ADR](./docs/adr/001-monorepo-and-dependency-rules.md)
+
+## Documentation
+
+- [Usage guide index](./docs/usage/README.md)
+- [Agents](./docs/usage/agents.md)
+- [Context](./docs/usage/context.md)
+- [Memory](./docs/usage/memory.md)
+- [Plugins](./docs/usage/plugins.md)
+- [Human interaction](./docs/usage/human-interaction.md)
+- [Coding conventions](./docs/conventions/coding-conventions.md)
+
+## Quality Commands
 
 ```bash
 pnpm lint
@@ -146,36 +250,22 @@ pnpm typecheck
 pnpm test
 pnpm build
 pnpm check
-pnpm clean
 ```
 
-说明：
+`pnpm check` runs lint, typecheck, and tests. CI also runs `pnpm build`.
 
-- `pnpm lint`：运行 ESLint。
-- `pnpm typecheck`：运行 TypeScript 类型检查。
-- `pnpm test`：运行 Vitest。
-- `pnpm build`：执行各 workspace 的构建任务。
-- `pnpm check`：依次执行 lint、typecheck 和 test。
-- `pnpm clean`：清理构建产物和根目录 `node_modules`。
+## Project Status
 
-## Package 规范
+Pragma is under active development. The current repository focuses on the long-term engineering foundation: strict module boundaries, runtime adapter contracts, expert definitions, context systems, plugin loading, human approval flows, and runnable examples.
 
-所有内部 package 使用 `@pragma/*` scope，并满足以下要求：
+Breaking changes are acceptable when they improve architecture, remove obsolete compatibility layers, or make the platform easier to verify.
 
-- `private: true`
-- `type: "module"`
-- 使用 `exports`
-- 内部依赖使用 `workspace:*`
-- 提供 `lint`、`typecheck`、`test`、`build`、`clean` 脚本
-- 继承共享 TypeScript 配置
+## Security Model
 
-当前主要 package：
+AI experts should not be trusted to self-police sensitive actions. File access, shell execution, network access, secrets, local runtime execution, and other privileged operations must be constrained by tools, runtime adapters, server-side policies, or the future Desktop permission guard.
 
-```text
-@pragma/shared
-@pragma/client
-@pragma/server
-@pragma/core
-@pragma/eslint-config
-@pragma/tsconfig
-```
+The local agent bridge is designed around outbound Desktop connections, explicit device/session registration, capability registration, and local user approval rather than exposing a local runner directly to the network.
+
+## Contributing
+
+Before changing code, read [AGENTS.md](./AGENTS.md) and the architecture boundary documents. Keep changes scoped to the right package, add or update tests where behavior changes, and run the relevant quality commands before opening a pull request.
