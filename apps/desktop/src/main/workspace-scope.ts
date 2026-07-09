@@ -4,7 +4,11 @@ import { basename, isAbsolute } from "node:path";
 
 import { BrowserWindow, dialog, ipcMain } from "electron";
 
-import type { PickWorkspaceResult, ValidateWorkspaceResult } from "../shared/desktop-api.ts";
+import {
+  ValidateWorkspacePathSchema,
+  type PickWorkspaceResult,
+  type ValidateWorkspaceResult,
+} from "../shared/desktop-api.ts";
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -75,7 +79,15 @@ export function installWorkspaceScopeHandlers(windowGetter: () => BrowserWindow 
     }
   });
 
-  ipcMain.handle("workspace:validate", (_event, path: string): Promise<ValidateWorkspaceResult> => {
-    return validateWorkspace(path);
-  });
+  ipcMain.handle(
+    "workspace:validate",
+    (_event, path: unknown): Promise<ValidateWorkspaceResult> => {
+      const parsed = ValidateWorkspacePathSchema.safeParse(path);
+      if (!parsed.success) {
+        return Promise.resolve({ ok: false, reason: "not_absolute" });
+      }
+
+      return validateWorkspace(parsed.data);
+    },
+  );
 }

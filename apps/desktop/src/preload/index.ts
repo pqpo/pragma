@@ -1,17 +1,22 @@
 import { contextBridge, ipcRenderer } from "electron";
 
-import type {
-  DesktopBridgeSnapshot,
-  PragmaDesktopAPI,
-  PickWorkspaceResult,
-  ValidateWorkspaceResult,
+import {
+  DesktopBridgeSnapshotSchema,
+  PickWorkspaceResultSchema,
+  ValidateWorkspacePathSchema,
+  ValidateWorkspaceResultSchema,
+  type PragmaDesktopAPI,
 } from "../shared/desktop-api.ts";
 
 const api: PragmaDesktopAPI = {
-  getBridgeSnapshot: () => ipcRenderer.invoke("bridge:snapshot") as Promise<DesktopBridgeSnapshot>,
-  pickWorkspace: () => ipcRenderer.invoke("workspace:pick") as Promise<PickWorkspaceResult>,
-  validateWorkspace: (path: string) =>
-    ipcRenderer.invoke("workspace:validate", path) as Promise<ValidateWorkspaceResult>,
+  getBridgeSnapshot: async () =>
+    DesktopBridgeSnapshotSchema.parse(await ipcRenderer.invoke("bridge:snapshot")),
+  pickWorkspace: async () =>
+    PickWorkspaceResultSchema.parse(await ipcRenderer.invoke("workspace:pick")),
+  validateWorkspace: async (path: string) =>
+    ValidateWorkspaceResultSchema.parse(
+      await ipcRenderer.invoke("workspace:validate", ValidateWorkspacePathSchema.parse(path)),
+    ),
 };
 
 contextBridge.exposeInMainWorld("pragmaDesktop", api);

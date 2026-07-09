@@ -105,16 +105,24 @@ describe("directive app", () => {
         }),
       }),
     );
-    const passed = directive.use("passed", defineTask({ id: "passed-code", handler: () => "passed" }), {
-      reduce: ({ state, output }) => {
-        state.results["path"] = output;
+    const passed = directive.use(
+      "passed",
+      defineTask({ id: "passed-code", handler: () => "passed" }),
+      {
+        reduce: ({ state, output }) => {
+          state.results["path"] = output;
+        },
       },
-    });
-    const failed = directive.use("failed", defineTask({ id: "failed-code", handler: () => "failed" }), {
-      reduce: ({ state, output }) => {
-        state.results["path"] = output;
+    );
+    const failed = directive.use(
+      "failed",
+      defineTask({ id: "failed-code", handler: () => "failed" }),
+      {
+        reduce: ({ state, output }) => {
+          state.results["path"] = output;
+        },
       },
-    });
+    );
 
     directive.compose(({ start, step, end }) => {
       start(router).route("status", {
@@ -139,7 +147,10 @@ describe("directive app", () => {
       id: "missing-route-directive",
     });
     const router = directive.use("router", defineTask({ id: "router-code", handler: () => ({}) }));
-    const target = directive.use("target", defineTask({ id: "target-code", handler: () => "done" }));
+    const target = directive.use(
+      "target",
+      defineTask({ id: "target-code", handler: () => "done" }),
+    );
 
     directive.compose(({ start, step, end }) => {
       start(router).route("status", {
@@ -664,6 +675,67 @@ describe("directive app", () => {
     }
   });
 
+  it("aborts an ExpertAgent runtime session when execution fails", async () => {
+    const agent = await ExpertAgent.create({
+      id: "agent-failing-runtime-directive",
+      name: "Agent Failing Runtime Directive",
+      description: "Agent that exercises runtime cleanup on failure.",
+      tags: [],
+      version: "0.0.0",
+      scope: "test",
+      workspace: "/tmp/pragma-agent-failing-runtime-directive-test",
+    });
+    let abortCount = 0;
+    const runtime: RuntimeAdapter = {
+      descriptor: {
+        id: "failing-runtime",
+        kind: "fake-runtime",
+        displayName: "Failing Runtime",
+        capabilities: {
+          targets: ["agent"],
+        },
+      },
+      async createSession() {
+        return {
+          info: () => createFakeSessionInfo(),
+          messages: () => [],
+          submit<TSubmitOutput>(): RuntimeSubmitHandle<TSubmitOutput> {
+            return {
+              runId: "run-failing",
+              events: createEmptyEvents(),
+              result: Promise.reject(new Error("runtime failed")),
+              cancel: async () => undefined,
+            };
+          },
+          abort: async () => {
+            abortCount += 1;
+            throw new Error("abort cleanup failed");
+          },
+        };
+      },
+    };
+
+    setDefaultRuntimeRegistryFactory(() =>
+      createRuntimeRegistry({
+        defaultRuntime: "failing-runtime",
+        runtimes: [runtime],
+      }),
+    );
+
+    try {
+      await expect(
+        agent.run({
+          input: {
+            prompt: "fail",
+          },
+        }),
+      ).rejects.toThrow("runtime failed");
+      expect(abortCount).toBe(1);
+    } finally {
+      setDefaultRuntimeRegistryFactory(undefined);
+    }
+  });
+
   it("waits for a human task response and resumes the workflow", async () => {
     const app = createPragma();
     const directive = defineFlow({
@@ -761,11 +833,15 @@ describe("directive app", () => {
         },
       }),
     );
-    const revise = directive.use("revise", defineTask({ id: "revise-code", handler: () => "revise" }), {
-      reduce: ({ state, output }) => {
-        state.results["path"] = output;
+    const revise = directive.use(
+      "revise",
+      defineTask({ id: "revise-code", handler: () => "revise" }),
+      {
+        reduce: ({ state, output }) => {
+          state.results["path"] = output;
+        },
       },
-    });
+    );
     const ship = directive.use("ship", defineTask({ id: "ship-code", handler: () => "ship" }), {
       reduce: ({ state, output }) => {
         state.results["path"] = output;

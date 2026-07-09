@@ -41,6 +41,9 @@ importers:
       react-dom:
         specifier: latest
         version: 19.2.7(react@19.2.7)
+      zod:
+        specifier: latest
+        version: 4.4.3
     devDependencies:
       '@pragma/tsconfig':
         specifier: workspace:*

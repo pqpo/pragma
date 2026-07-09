@@ -90,6 +90,10 @@ tsconfig.base.json
 @pragma/core
 @pragma/runtime-pi
 @pragma/runtime-codex
+@pragma/desktop
+@pragma/examples
+@pragma/plugin-memory
+@pragma/plugin-repo-manager
 @pragma/eslint-config
 @pragma/tsconfig
 ```
@@ -104,7 +108,7 @@ helpers
 lib
 ```
 
-新增 package 前，必须先明确它属于 `shared`、`client`、`server`、`core`、`runtime-*` 还是配置工具。
+新增 package 前，必须先明确它属于 `shared`、`client`、`server`、`core`、`runtime-*`、`plugins/*`、`examples`、`apps/*` 还是配置工具。
 
 ## 模块依赖规范
 
@@ -125,21 +129,25 @@ apps/web    -> client -> shared
 apps/server -> server -> core -> shared
 apps/worker -> server -> runtime-* -> core -> shared
 apps/desktop    -> core -> shared
+plugins/*   -> core -> shared
+examples    -> runtime-* / plugin-* / core -> shared
 ```
 
 更具体地说：
 
-| 来源                | 允许依赖                                                            |
-| ------------------- | ------------------------------------------------------------------- |
-| `apps/web`         | `@pragma/shared`、`@pragma/client`             |
-| `apps/server`      | `@pragma/shared`、`@pragma/server`、`@pragma/core` |
-| `apps/worker`      | `@pragma/shared`、`@pragma/server`、`@pragma/core`、具体 `@pragma/runtime-*` |
-| `apps/desktop`     | `@pragma/shared`、`@pragma/core`                |
-| `packages/shared`  | 无内部 package 依赖；只允许运行时中立依赖               |
-| `packages/client`  | `@pragma/shared`                                   |
-| `packages/server`  | `@pragma/shared`；需要编排时可依赖 `@pragma/core` |
-| `packages/core`    | `@pragma/shared`                                   |
-| `packages/runtime/*` | `@pragma/shared`、`@pragma/core`、该 runtime 自己的 SDK |
+| 来源                 | 允许依赖                                                                     |
+| -------------------- | ---------------------------------------------------------------------------- |
+| `apps/web`           | `@pragma/shared`、`@pragma/client`                                           |
+| `apps/server`        | `@pragma/shared`、`@pragma/server`、`@pragma/core`                           |
+| `apps/worker`        | `@pragma/shared`、`@pragma/server`、`@pragma/core`、具体 `@pragma/runtime-*` |
+| `apps/desktop`       | `@pragma/shared`、`@pragma/core`                                             |
+| `plugins/*`          | `@pragma/shared`、`@pragma/core`；不依赖 app、server、client 或具体 runtime  |
+| `examples`           | `@pragma/core`、具体 `@pragma/runtime-*`、具体 `@pragma/plugin-*`            |
+| `packages/shared`    | 无内部 package 依赖；只允许运行时中立依赖                                    |
+| `packages/client`    | `@pragma/shared`                                                             |
+| `packages/server`    | `@pragma/shared`；需要编排时可依赖 `@pragma/core`                            |
+| `packages/core`      | `@pragma/shared`                                                             |
+| `packages/runtime/*` | `@pragma/shared`、`@pragma/core`、该 runtime 自己的 SDK                      |
 
 明确禁止：
 
@@ -159,6 +167,9 @@ runtime-codex -> runtime-pi
 server -> client
 server -> web
 core -> web
+plugin-* -> server
+plugin-* -> client
+plugin-* -> runtime-*
 ```
 
 这里的 `core` 指专家 Agent 的执行抽象、Manifest、Invocation、Runtime Adapter 合约和公共运行协议。具体 runtime 实现放在独立 `@pragma/runtime-*` 包，由 Server/Worker/Desktop 等应用入口按需装配；不要让 `core` 依赖具体 runtime、`client`、Web 或 Server 应用层。

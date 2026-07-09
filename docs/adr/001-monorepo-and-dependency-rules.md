@@ -13,8 +13,11 @@ The repository is layered by package family:
 - `shared` for runtime-neutral contracts, domain logic, and utilities.
 - `client` for browser/client SDK capabilities.
 - `server` for Node service infrastructure boundaries.
-- `agent` for Node-only Agent execution boundaries.
+- `core` for Expert Agent declarations, runtime contracts, directives, tools, plugins, and shared execution abstractions.
+- `runtime-*` for concrete runtime adapter implementations.
+- `plugins/*` for ExpertAgent extensions built on the `core` plugin API.
 - `apps` for application composition and startup only.
+- `examples` for runnable demonstrations that may compose core, plugins, and concrete runtimes.
 
 All internal dependencies must use `workspace:*`.
 

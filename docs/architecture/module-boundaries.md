@@ -9,32 +9,38 @@ apps/web    -> client -> shared
 apps/server -> server -> core -> shared
 apps/worker -> server -> runtime-* -> core -> shared
 apps/desktop    -> core -> shared
+plugins/*   -> core -> shared
+examples    -> runtime-* / plugin-* / core -> shared
 ```
 
 ## Layers
 
-| Layer    | Responsibility                                                                  |
-| -------- | ------------------------------------------------------------------------------- |
-| `shared` | Runtime-neutral contracts, domain types, and pure utilities                     |
-| `client` | Browser/client SDKs and client-safe API access                                  |
-| `server` | Node-only control plane and infrastructure boundaries                           |
-| `core`   | Expert Agent execution abstractions and Runtime Adapter contracts               |
-| `runtime-*` | Concrete Runtime Adapter implementations                                    |
-| `apps`   | Composition and process entry points, including future Desktop App local bridge |
+| Layer       | Responsibility                                                                  |
+| ----------- | ------------------------------------------------------------------------------- |
+| `shared`    | Runtime-neutral contracts, domain types, and pure utilities                     |
+| `client`    | Browser/client SDKs and client-safe API access                                  |
+| `server`    | Node-only control plane and infrastructure boundaries                           |
+| `core`      | Expert Agent execution abstractions and Runtime Adapter contracts               |
+| `runtime-*` | Concrete Runtime Adapter implementations                                        |
+| `plugins/*` | ExpertAgent extensions built on the core plugin API                             |
+| `apps`      | Composition and process entry points, including future Desktop App local bridge |
+| `examples`  | Runnable demonstrations that may compose core, plugins, and concrete runtimes   |
 
 ## Dependency Matrix
 
-| Source         | Allowed dependencies                                                   |
-| -------------- | ---------------------------------------------------------------------- |
-| `apps/web`     | `shared/*`, `client/*`                                                 |
-| `apps/server`  | `@pragma/shared`, `@pragma/server`, `@pragma/core`         |
-| `apps/worker`  | `@pragma/shared`, `@pragma/server`, `@pragma/core`, concrete `@pragma/runtime-*` packages |
-| `apps/desktop` | `@pragma/shared`, `@pragma/core`                               |
-| `packages/shared` | Runtime-neutral dependencies only                                   |
-| `packages/client` | `@pragma/shared`                                                |
-| `packages/server` | `@pragma/shared`; orchestration code may depend on `@pragma/core` |
-| `packages/core`   | `@pragma/shared`                                                |
-| `packages/runtime/*` | `@pragma/shared`, `@pragma/core`, and that runtime's own SDKs     |
+| Source               | Allowed dependencies                                                                       |
+| -------------------- | ------------------------------------------------------------------------------------------ |
+| `apps/web`           | `shared/*`, `client/*`                                                                     |
+| `apps/server`        | `@pragma/shared`, `@pragma/server`, `@pragma/core`                                         |
+| `apps/worker`        | `@pragma/shared`, `@pragma/server`, `@pragma/core`, concrete `@pragma/runtime-*` packages  |
+| `apps/desktop`       | `@pragma/shared`, `@pragma/core`                                                           |
+| `plugins/*`          | `@pragma/shared`, `@pragma/core`; no app, server, client, or concrete runtime dependencies |
+| `examples`           | `@pragma/core`, concrete `@pragma/runtime-*`, and concrete `@pragma/plugin-*` packages     |
+| `packages/shared`    | Runtime-neutral dependencies only                                                          |
+| `packages/client`    | `@pragma/shared`                                                                           |
+| `packages/server`    | `@pragma/shared`; orchestration code may depend on `@pragma/core`                          |
+| `packages/core`      | `@pragma/shared`                                                                           |
+| `packages/runtime/*` | `@pragma/shared`, `@pragma/core`, and that runtime's own SDKs                              |
 
 Cross-package imports must use `@pragma/*` names, not relative paths.
 

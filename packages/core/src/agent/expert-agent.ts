@@ -320,9 +320,7 @@ export class ExpertAgent implements IExpertAgent, Directive<unknown, unknown> {
     });
   }
 
-  async run<TOutput = unknown>(
-    request: StartRunRequest<unknown>,
-  ): Promise<RunResult<TOutput>> {
+  async run<TOutput = unknown>(request: StartRunRequest<unknown>): Promise<RunResult<TOutput>> {
     if (request.execution === undefined) {
       const { createPragma } = await import("../directive/pragma-app.ts");
       return (await createPragma().run(this, request)) as RunResult<TOutput>;
@@ -384,28 +382,55 @@ export class ExpertAgent implements IExpertAgent, Directive<unknown, unknown> {
         };
       },
     });
-    const handle = session.submit<TOutput>({
-      runId: execution.task.id,
-      modelName: request.modelName,
-      query: stringifyInput(request.input),
-      output: request.output as RuntimeOutputSchema<TOutput> | undefined,
-    });
-    const drainEvents = (async (): Promise<void> => {
-      for await (const event of handle.events) {
-        await execution.emitProgress(event);
-      }
-    })();
-    const result = await handle.result;
-    await drainEvents;
-    const runtimeSession = session.info().runtimeSession;
-    await session.abort();
+    let drainEvents: Promise<void> | undefined;
+    let runResult: RunResult<TOutput> | undefined;
+    let runError: unknown;
 
-    return {
-      workflowRunId: execution.workflow.id,
-      output: result.result.output,
-      state: execution.state,
-      runtimeSession,
-    };
+    try {
+      const handle = session.submit<TOutput>({
+        runId: execution.task.id,
+        modelName: request.modelName,
+        query: stringifyInput(request.input),
+        output: request.output as RuntimeOutputSchema<TOutput> | undefined,
+      });
+      drainEvents = (async (): Promise<void> => {
+        for await (const event of handle.events) {
+          await execution.emitProgress(event);
+        }
+      })();
+      const result = await handle.result;
+      await drainEvents;
+      const runtimeSession = session.info().runtimeSession;
+
+      runResult = {
+        workflowRunId: execution.workflow.id,
+        output: result.result.output,
+        state: execution.state,
+        runtimeSession,
+      };
+    } catch (error) {
+      runError = error;
+    }
+
+    let abortError: unknown;
+    try {
+      await session.abort();
+    } catch (error) {
+      abortError = error;
+    }
+    await drainEvents?.catch(() => undefined);
+
+    if (runError !== undefined) {
+      throw runError;
+    }
+    if (abortError !== undefined) {
+      throw abortError;
+    }
+    if (runResult === undefined) {
+      throw new Error("Agent run completed without a result.");
+    }
+
+    return runResult;
   }
 
   async buildContext(

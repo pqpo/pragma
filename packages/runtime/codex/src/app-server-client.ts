@@ -249,7 +249,11 @@ export class CodexAppServerClient {
     pending.resolve(message.result);
   }
 
-  private async handleServerRequest(id: unknown, method: string, params: JsonObject): Promise<void> {
+  private async handleServerRequest(
+    id: unknown,
+    method: string,
+    params: JsonObject,
+  ): Promise<void> {
     const numericId = typeof id === "number" ? id : Number(id);
 
     if (!Number.isInteger(numericId)) {
@@ -297,7 +301,10 @@ export class CodexAppServerClient {
     });
   }
 
-  private async createServerRequestResponse(method: string, params: JsonObject): Promise<JsonObject> {
+  private async createServerRequestResponse(
+    method: string,
+    params: JsonObject,
+  ): Promise<JsonObject> {
     if (method === "mcpServer/elicitation/request") {
       return { action: "decline", content: null, _meta: null };
     }
@@ -305,7 +312,7 @@ export class CodexAppServerClient {
     const handler = this.options.humanInteractionHandler;
 
     if (handler === undefined) {
-      return createApprovedServerRequestResponse(method, params);
+      return { decision: "reject", reason: "No approval handler is configured." };
     }
 
     const response = await handler({
@@ -369,7 +376,12 @@ function readThreadId(result: unknown): string | undefined {
   const record = readRecord(result);
   const directThread = readRecord(record?.["thread"]);
   const nestedThread = readRecord(readRecord(record?.["result"])?.["thread"]);
-  const candidates = [record?.["threadId"], record?.["id"], directThread?.["id"], nestedThread?.["id"]];
+  const candidates = [
+    record?.["threadId"],
+    record?.["id"],
+    directThread?.["id"],
+    nestedThread?.["id"],
+  ];
 
   for (const candidate of candidates) {
     if (typeof candidate === "string" && candidate.trim() !== "") {
@@ -383,7 +395,9 @@ function readThreadId(result: unknown): string | undefined {
 function createRpcError(method: string, error: unknown): Error {
   const record = readRecord(error);
   const message =
-    typeof record?.["message"] === "string" ? record["message"] : "Codex app-server request failed.";
+    typeof record?.["message"] === "string"
+      ? record["message"]
+      : "Codex app-server request failed.";
   const code = record?.["code"];
   const suffix = typeof code === "number" || typeof code === "string" ? ` (code=${code})` : "";
   return new Error(`${method}: ${message}${suffix}`);

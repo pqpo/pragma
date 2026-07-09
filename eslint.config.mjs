@@ -55,7 +55,10 @@ const config = tseslint.config(
     },
   },
   {
-    files: ["apps/desktop/src/main/**/*.{ts,tsx,d.ts}", "apps/desktop/src/preload/**/*.{ts,tsx,d.ts}"],
+    files: [
+      "apps/desktop/src/main/**/*.{ts,tsx,d.ts}",
+      "apps/desktop/src/preload/**/*.{ts,tsx,d.ts}",
+    ],
     languageOptions: {
       globals: {
         ...globals.node,
@@ -70,7 +73,7 @@ const config = tseslint.config(
           patterns: [
             ...commonRestrictedPatterns,
             {
-              group: ["@pragma/server-*", "next", "next/*"],
+              group: ["@pragma/runtime-*", "@pragma/server-*", "next", "next/*"],
               message: "Desktop local bridge must not depend on server internals or Web UI.",
             },
           ],
@@ -90,11 +93,11 @@ const config = tseslint.config(
       "no-restricted-imports": [
         "error",
         {
-          paths: ["@pragma/client", "@pragma/server", "@prisma/client"],
+          paths: ["@pragma/client", "@pragma/core", "@pragma/server", "@prisma/client"],
           patterns: [
             ...commonRestrictedPatterns,
             {
-              group: ["@pragma/server-*", "node:*", "next", "next/*"],
+              group: ["@pragma/runtime-*", "@pragma/server-*", "node:*", "next", "next/*"],
               message: "Desktop renderer must stay behind the preload bridge.",
             },
           ],
@@ -112,7 +115,7 @@ const config = tseslint.config(
           patterns: [
             ...commonRestrictedPatterns,
             {
-              group: ["@pragma/server-*", "node:*", "next", "next/*"],
+              group: ["@pragma/runtime-*", "@pragma/server-*", "node:*", "next", "next/*"],
               message:
                 "Desktop shared types must be safe for all layers (main, preload, renderer).",
             },
@@ -273,6 +276,32 @@ const config = tseslint.config(
                 "next/*",
               ],
               message: "Codex runtime packages must not depend on other runtimes or app layers.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    files: ["plugins/**/*.{ts,tsx}"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: ["@pragma/client", "@pragma/server", "react"],
+          patterns: [
+            ...commonRestrictedPatterns,
+            {
+              group: [
+                "@pragma/runtime-*",
+                "@pragma/server-*",
+                "@pragma/ui-*",
+                "@pragma/playbook-canvas",
+                "next",
+                "next/*",
+              ],
+              message:
+                "Plugins must depend on core plugin APIs, not app, server, client, or runtime layers.",
             },
           ],
         },

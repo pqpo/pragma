@@ -1,48 +1,61 @@
-export interface DesktopAppInfo {
-  name: "Pragma Desktop";
-  version: string;
-  os: "macos" | "windows" | "linux" | "unknown";
-}
+import { z } from "zod";
 
-export interface RuntimeGatewayConfig {
-  schemaVersion: 1;
-  endpoint: string;
-  transport: "websocket";
-}
+export const DesktopAppInfoSchema = z.object({
+  name: z.literal("Pragma Desktop"),
+  version: z.string(),
+  os: z.enum(["macos", "windows", "linux", "unknown"]),
+});
 
-export interface LocalRuntimeCapability {
-  id: "codex" | "claude-code" | "self-hosted-agent";
-  label: string;
-  status: "available" | "not_configured";
-}
+export const RuntimeGatewayConfigSchema = z.object({
+  schemaVersion: z.literal(1),
+  endpoint: z.string(),
+  transport: z.literal("websocket"),
+});
 
-export interface DesktopBridgeSnapshot {
-  app: DesktopAppInfo;
-  gateway: RuntimeGatewayConfig;
-  device: {
-    status: "offline";
-    label: string;
-  };
-  workspace: {
-    path: string | null;
-    status: "unset" | "ready";
-  };
-  capabilities: LocalRuntimeCapability[];
-}
+export const LocalRuntimeCapabilitySchema = z.object({
+  id: z.enum(["codex", "claude-code", "self-hosted-agent"]),
+  label: z.string(),
+  status: z.enum(["available", "not_configured"]),
+});
 
-export interface PickWorkspaceResult {
-  ok: boolean;
-  path?: string;
-  basename?: string;
-  reason?: "cancelled" | "no_window" | "not_directory" | "not_accessible" | "error";
-  error?: string;
-}
+export const DesktopBridgeSnapshotSchema = z.object({
+  app: DesktopAppInfoSchema,
+  gateway: RuntimeGatewayConfigSchema,
+  device: z.object({
+    status: z.literal("offline"),
+    label: z.string(),
+  }),
+  workspace: z.object({
+    path: z.string().nullable(),
+    status: z.enum(["unset", "ready"]),
+  }),
+  capabilities: z.array(LocalRuntimeCapabilitySchema),
+});
 
-export interface ValidateWorkspaceResult {
-  ok: boolean;
-  reason?: "not_absolute" | "not_found" | "not_directory" | "not_readable" | "not_writable" | "error";
-  error?: string;
-}
+export const PickWorkspaceResultSchema = z.object({
+  ok: z.boolean(),
+  path: z.string().optional(),
+  basename: z.string().optional(),
+  reason: z.enum(["cancelled", "no_window", "not_directory", "not_accessible", "error"]).optional(),
+  error: z.string().optional(),
+});
+
+export const ValidateWorkspacePathSchema = z.string().min(1);
+
+export const ValidateWorkspaceResultSchema = z.object({
+  ok: z.boolean(),
+  reason: z
+    .enum(["not_absolute", "not_found", "not_directory", "not_readable", "not_writable", "error"])
+    .optional(),
+  error: z.string().optional(),
+});
+
+export type DesktopAppInfo = z.infer<typeof DesktopAppInfoSchema>;
+export type RuntimeGatewayConfig = z.infer<typeof RuntimeGatewayConfigSchema>;
+export type LocalRuntimeCapability = z.infer<typeof LocalRuntimeCapabilitySchema>;
+export type DesktopBridgeSnapshot = z.infer<typeof DesktopBridgeSnapshotSchema>;
+export type PickWorkspaceResult = z.infer<typeof PickWorkspaceResultSchema>;
+export type ValidateWorkspaceResult = z.infer<typeof ValidateWorkspaceResultSchema>;
 
 export interface PragmaDesktopAPI {
   getBridgeSnapshot: () => Promise<DesktopBridgeSnapshot>;

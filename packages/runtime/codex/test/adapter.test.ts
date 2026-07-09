@@ -537,7 +537,7 @@ describe("createCodexLocalRuntimeAdapter", () => {
     await session.abort();
   });
 
-  it("approves app-server approval requests when no human handler is configured", async () => {
+  it("rejects app-server approval requests when no human handler is configured", async () => {
     const fake = new FakeCodexAppServer({ requestApproval: true });
     const adapter = createCodexLocalRuntimeAdapter({
       spawn: fake.spawn,
@@ -551,7 +551,8 @@ describe("createCodexLocalRuntimeAdapter", () => {
     expect(fake.responses).toContainEqual({
       id: 100,
       result: {
-        decision: "accept",
+        decision: "reject",
+        reason: "No approval handler is configured.",
       },
     });
 

@@ -19,7 +19,8 @@
   },
   "dependencies": {
     "react": "latest",
-    "react-dom": "latest"
+    "react-dom": "latest",
+    "zod": "latest"
   },
   "devDependencies": {
     "@pragma/tsconfig": "workspace:*",
