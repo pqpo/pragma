@@ -1,0 +1,4 @@
+interface:
+  display_name: "Claude Code Review"
+  short_description: "Claude Code CR with verified fixes."
+  default_prompt: "Use $claude-code-review to review current uncommitted changes, verify each finding, and fix real issues."

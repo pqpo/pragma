@@ -1,0 +1,4 @@
+interface:
+  display_name: "Code Cleanup Audit"
+  short_description: "Find architectural decay before cleanup."
+  default_prompt: "Use $code-cleanup-audit to audit this repository for architectural issues, AI-generated code smells, dead compatibility paths, and cleanup candidates without modifying files."

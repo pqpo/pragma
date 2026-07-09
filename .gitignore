@@ -1,5 +1,7 @@
 node_modules
-.codex/
+.codex/plugins/
+.codex/cache/
+.codex/tmp/
 dist
 out
 .next
