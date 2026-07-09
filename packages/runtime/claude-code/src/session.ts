@@ -32,6 +32,7 @@ const MCP_SERVER_NAME = "pragma";
 const PERMISSION_TOOL_NAME = "mcp__pragma__request_tool_approval";
 const STDERR_TAIL_LIMIT = 8_192;
 const PROCESS_TERMINATION_GRACE_MS = 1_000;
+const MAX_TEXT_DELTA_LENGTH = 80;
 
 const PROTOCOL_FLAGS_WITH_VALUE = new Set([
   "--mcp-config",
@@ -58,6 +59,7 @@ const PROTOCOL_FLAGS = new Set([
   "--bare",
   "--continue",
   "--dangerously-skip-permissions",
+  "--include-partial-messages",
 ]);
 
 export interface ClaudeCodeNativeSession {
@@ -245,6 +247,15 @@ interface ClaudeProcessRunResult {
   readonly sessionId?: string | undefined;
 }
 
+interface ClaudeStreamMappingResult {
+  readonly events: readonly RuntimeStreamEventInput[];
+  readonly outputDelta?: string | undefined;
+  readonly thinkingDelta?: string | undefined;
+  readonly completedText?: string | undefined;
+  readonly partialKind?: "text" | "thinking" | undefined;
+  readonly usage?: AgentMessageUsage | undefined;
+}
+
 class ClaudeCodeRuntimeError extends Error {
   constructor(
     message: string,
@@ -311,6 +322,8 @@ async function runClaudeCodeProcess({
   let sessionId: string | undefined;
   let stderrTail = "";
   let finalResultSeen = false;
+  let hasSeenPartialTextDelta = false;
+  let partialThinkingText = "";
 
   child.stderr.setEncoding("utf8");
   child.stderr.on("data", (chunk: string) => {
@@ -351,17 +364,38 @@ async function runClaudeCodeProcess({
         finalResultSeen = true;
       }
 
-      const mapped = mapClaudeStreamEvent(event, runId, source);
-      for (const runtimeEvent of mapped.events) {
+      const message = readRecord(event["message"]);
+      const hadOutputDelta = outputText !== "";
+      const mapped: ClaudeStreamMappingResult =
+        event["type"] === "assistant" && message !== undefined
+          ? readAssistantMessageEvent(message, runId, source, {
+              textPrefix: hasSeenPartialTextDelta ? outputText : "",
+              thinkingPrefix: partialThinkingText,
+            })
+          : mapClaudeStreamEvent(event, runId, source);
+      const resultText = event["type"] === "result" ? readString(event["result"]) : undefined;
+      const shouldBackfillResultDeltas =
+        resultText !== undefined && event["is_error"] !== true && !hadOutputDelta;
+      const runtimeEvents = shouldBackfillResultDeltas
+        ? [...createMessageDeltaEvents(resultText, runId, source), ...mapped.events]
+        : mapped.events;
+
+      for (const runtimeEvent of runtimeEvents) {
         emitRuntimeEvent(runtimeEvent);
       }
       if (mapped.outputDelta !== undefined) {
         outputText += mapped.outputDelta;
       }
+      if (mapped.thinkingDelta !== undefined) {
+        partialThinkingText += mapped.thinkingDelta;
+      }
       if (mapped.completedText !== undefined) {
         outputText = mapped.completedText;
       }
       usage = mergeUsage(usage, mapped.usage);
+      if (mapped.partialKind === "text") {
+        hasSeenPartialTextDelta = true;
+      }
 
       if (event["type"] === "result") {
         const resultText = readString(event["result"]);
@@ -549,6 +583,7 @@ async function createClaudeCodeArgs({
     "stream-json",
     "--input-format",
     "stream-json",
+    "--include-partial-messages",
     "--verbose",
     "--bare",
     "--strict-mcp-config",
@@ -648,12 +683,7 @@ function mapClaudeStreamEvent(
   event: Record<string, unknown>,
   runId: string,
   source: RuntimeStreamEvent["source"],
-): {
-  readonly events: readonly RuntimeStreamEventInput[];
-  readonly outputDelta?: string | undefined;
-  readonly completedText?: string | undefined;
-  readonly usage?: AgentMessageUsage | undefined;
-} {
+): ClaudeStreamMappingResult {
   const type = readString(event["type"]);
   const message = readRecord(event["message"]);
 
@@ -704,6 +734,10 @@ function mapClaudeStreamEvent(
     };
   }
 
+  if (type === "stream_event") {
+    return readClaudeSdkStreamEvent(event, runId, source);
+  }
+
   return { events: [] };
 }
 
@@ -711,6 +745,10 @@ function readAssistantMessageEvent(
   message: Record<string, unknown>,
   runId: string,
   source: RuntimeStreamEvent["source"],
+  options: {
+    readonly textPrefix?: string | undefined;
+    readonly thinkingPrefix?: string | undefined;
+  } = {},
 ): {
   readonly events: readonly RuntimeStreamEventInput[];
   readonly outputDelta?: string | undefined;
@@ -718,6 +756,8 @@ function readAssistantMessageEvent(
 } {
   const runtimeEvents: RuntimeStreamEventInput[] = [];
   let outputDelta = "";
+  let textPrefix = options.textPrefix ?? "";
+  let thinkingPrefix = options.thinkingPrefix ?? "";
 
   for (const block of readContentBlocks(message)) {
     const blockType = readString(block["type"]);
@@ -725,17 +765,12 @@ function readAssistantMessageEvent(
     if (blockType === "text") {
       const text = readString(block["text"]);
       if (text !== undefined) {
-        outputDelta += text;
-        runtimeEvents.push({
-          runId,
-          source,
-          type: "message.delta",
-          payload: {
-            role: "assistant",
-            contentType: "text",
-            delta: text,
-          },
-        });
+        const delta = removeKnownTextPrefix(text, textPrefix);
+        textPrefix = removeConsumedTextPrefix(textPrefix, text);
+        if (delta !== "") {
+          outputDelta += delta;
+          runtimeEvents.push(...createMessageDeltaEvents(delta, runId, source));
+        }
       }
       continue;
     }
@@ -743,15 +778,11 @@ function readAssistantMessageEvent(
     if (blockType === "thinking") {
       const thinking = readString(block["thinking"]);
       if (thinking !== undefined) {
-        runtimeEvents.push({
-          runId,
-          source,
-          type: "thought.delta",
-          payload: {
-            contentType: "text",
-            delta: thinking,
-          },
-        });
+        const delta = removeKnownTextPrefix(thinking, thinkingPrefix);
+        thinkingPrefix = removeConsumedTextPrefix(thinkingPrefix, thinking);
+        if (delta !== "") {
+          runtimeEvents.push(createThoughtDeltaEvent(delta, runId, source));
+        }
       }
       continue;
     }
@@ -778,6 +809,108 @@ function readAssistantMessageEvent(
     ...(outputDelta === "" ? {} : { outputDelta }),
     ...(usage === undefined ? {} : { usage }),
   };
+}
+
+function readClaudeSdkStreamEvent(
+  event: Record<string, unknown>,
+  runId: string,
+  source: RuntimeStreamEvent["source"],
+): ClaudeStreamMappingResult {
+  const streamEvent = readClaudeSdkStreamPayload(event);
+  const type = readString(streamEvent?.["type"]);
+
+  if (streamEvent === undefined || type === undefined) {
+    return { events: [] };
+  }
+
+  if (type === "content_block_delta") {
+    const delta = readRecord(streamEvent["delta"]);
+    const deltaType = readString(delta?.["type"]);
+
+    if (deltaType === "text_delta") {
+      const text = readString(delta?.["text"]);
+      return text === undefined
+        ? { events: [] }
+        : {
+            events: createMessageDeltaEvents(text, runId, source),
+            outputDelta: text,
+            partialKind: "text",
+          };
+    }
+
+    if (deltaType === "thinking_delta") {
+      const thinking = readString(delta?.["thinking"]);
+      return thinking === undefined
+        ? { events: [] }
+        : {
+            events: [createThoughtDeltaEvent(thinking, runId, source)],
+            thinkingDelta: thinking,
+            partialKind: "thinking",
+          };
+    }
+  }
+
+  if (type === "content_block_start") {
+    const contentBlock = readRecord(streamEvent["content_block"]);
+    if (readString(contentBlock?.["type"]) === "tool_use") {
+      return {
+        events: [
+          {
+            runId,
+            source,
+            type: "tool.started",
+            payload: {
+              toolCallId: readString(contentBlock?.["id"]) ?? randomUUID(),
+              toolName: readString(contentBlock?.["name"]) ?? "claude_tool",
+              kind: "tool",
+              inputPreview: contentBlock?.["input"],
+            },
+          },
+        ],
+      };
+    }
+  }
+
+  return {
+    events: [],
+    usage: readUsage(streamEvent),
+  };
+}
+
+function readClaudeSdkStreamPayload(event: Record<string, unknown>): Record<string, unknown> | undefined {
+  return readRecord(event["event"]) ?? readRecord(event["stream_event"]) ?? readRecord(event["payload"]);
+}
+
+function removeKnownTextPrefix(text: string, prefix: string): string {
+  if (prefix === "") {
+    return text;
+  }
+
+  if (text.startsWith(prefix)) {
+    return text.slice(prefix.length);
+  }
+
+  if (prefix.startsWith(text)) {
+    return "";
+  }
+
+  return text;
+}
+
+function removeConsumedTextPrefix(prefix: string, text: string): string {
+  if (prefix === "") {
+    return "";
+  }
+
+  if (text.startsWith(prefix)) {
+    return "";
+  }
+
+  if (prefix.startsWith(text)) {
+    return prefix.slice(text.length);
+  }
+
+  return "";
 }
 
 function readUserMessageEvent(
@@ -817,6 +950,50 @@ function readUserMessageEvent(
   }
 
   return { events: runtimeEvents };
+}
+
+function createMessageDeltaEvents(
+  text: string,
+  runId: string,
+  source: RuntimeStreamEvent["source"],
+): RuntimeStreamEventInput[] {
+  return splitTextDeltas(text).map((delta) => ({
+    runId,
+    source,
+    type: "message.delta",
+    payload: {
+      role: "assistant",
+      contentType: "text",
+      delta,
+    },
+  }));
+}
+
+function createThoughtDeltaEvent(
+  delta: string,
+  runId: string,
+  source: RuntimeStreamEvent["source"],
+): RuntimeStreamEventInput {
+  return {
+    runId,
+    source,
+    type: "thought.delta",
+    payload: {
+      contentType: "text",
+      delta,
+    },
+  };
+}
+
+function splitTextDeltas(text: string): string[] {
+  const chars = Array.from(text);
+  const chunks: string[] = [];
+
+  for (let index = 0; index < chars.length; index += MAX_TEXT_DELTA_LENGTH) {
+    chunks.push(chars.slice(index, index + MAX_TEXT_DELTA_LENGTH).join(""));
+  }
+
+  return chunks;
 }
 
 async function respondToControlRequest(

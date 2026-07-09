@@ -117,6 +117,7 @@ describe("createClaudeCodeRuntime", () => {
     expect(fake.args).toContain("--output-format");
     expect(fake.args).toContain("stream-json");
     expect(fake.args).toContain("--input-format");
+    expect(fake.args).toContain("--include-partial-messages");
     expect(fake.args).toContain("--bare");
     expect(fake.args).toContain("--strict-mcp-config");
     expect(fake.args[fake.args.indexOf("--permission-mode") + 1]).toBe("auto");
@@ -195,6 +196,168 @@ describe("createClaudeCodeRuntime", () => {
     ]);
     expect(session.messages()).toHaveLength(2);
     expect(fake.stdinEnded).toBe(true);
+
+    await session.abort();
+  });
+
+  it("splits large Claude Code assistant text blocks into smaller deltas", async () => {
+    const longText = "0123456789".repeat(25);
+    const fake = new FakeClaudeCodeCli([
+      [
+        {
+          type: "assistant",
+          message: {
+            role: "assistant",
+            content: [{ type: "text", text: longText }],
+          },
+        },
+        { type: "result", result: longText },
+      ],
+    ]);
+    const agent = await createTestAgent();
+    const adapter = createClaudeCodeRuntime({
+      spawn: fake.spawn,
+    });
+
+    const session = await adapter.createSession({ agent });
+    const handle = session.submit({ query: "Write a long answer" });
+    const events = await collectAsync(handle.events);
+    const result = await handle.result;
+    const deltas = events
+      .filter((event) => event.type === "message.delta")
+      .map((event) => event.payload.delta);
+
+    expect(result.result.output).toBe(longText);
+    expect(deltas).toHaveLength(4);
+    expect(deltas.join("")).toBe(longText);
+    expect(deltas.every((delta) => Array.from(delta).length <= 80)).toBe(true);
+
+    await session.abort();
+  });
+
+  it("maps Claude Code partial stream events without duplicating the final assistant message", async () => {
+    const finalText = "streaming output arrived in pieces";
+    const fake = new FakeClaudeCodeCli([
+      [
+        {
+          type: "stream_event",
+          event: {
+            type: "content_block_delta",
+            delta: { type: "text_delta", text: "streaming " },
+          },
+        },
+        {
+          type: "stream_event",
+          event: {
+            type: "content_block_delta",
+            delta: { type: "text_delta", text: "output arrived " },
+          },
+        },
+        {
+          type: "stream_event",
+          event: {
+            type: "content_block_delta",
+            delta: { type: "text_delta", text: "in pieces" },
+          },
+        },
+        {
+          type: "assistant",
+          message: {
+            role: "assistant",
+            content: [{ type: "text", text: finalText }],
+          },
+        },
+        { type: "result", result: finalText },
+      ],
+    ]);
+    const agent = await createTestAgent();
+    const adapter = createClaudeCodeRuntime({
+      spawn: fake.spawn,
+    });
+
+    const session = await adapter.createSession({ agent });
+    const handle = session.submit({ query: "Write a streaming answer" });
+    const events = await collectAsync(handle.events);
+    const result = await handle.result;
+    const deltas = events
+      .filter((event) => event.type === "message.delta")
+      .map((event) => event.payload.delta);
+
+    expect(result.result.output).toBe(finalText);
+    expect(deltas).toEqual(["streaming ", "output arrived ", "in pieces"]);
+    expect(deltas.join("")).toBe(finalText);
+
+    await session.abort();
+  });
+
+  it("keeps final thinking content that was not emitted by partial stream events", async () => {
+    const fake = new FakeClaudeCodeCli([
+      [
+        {
+          type: "stream_event",
+          event: {
+            type: "content_block_delta",
+            delta: { type: "thinking_delta", thinking: "reasoned " },
+          },
+        },
+        {
+          type: "assistant",
+          message: {
+            role: "assistant",
+            content: [
+              { type: "thinking", thinking: "reasoned fully" },
+              { type: "text", text: "done" },
+            ],
+          },
+        },
+        { type: "result", result: "done" },
+      ],
+    ]);
+    const agent = await createTestAgent();
+    const adapter = createClaudeCodeRuntime({
+      spawn: fake.spawn,
+    });
+
+    const session = await adapter.createSession({ agent });
+    const handle = session.submit({ query: "Think and answer" });
+    const events = await collectAsync(handle.events);
+    const result = await handle.result;
+    const thoughts = events
+      .filter((event) => event.type === "thought.delta")
+      .map((event) => event.payload.delta);
+    const deltas = events
+      .filter((event) => event.type === "message.delta")
+      .map((event) => event.payload.delta);
+
+    expect(result.result.output).toBe("done");
+    expect(thoughts).toEqual(["reasoned ", "fully"]);
+    expect(deltas).toEqual(["done"]);
+
+    await session.abort();
+  });
+
+  it("backfills deltas before completion when Claude Code only emits a result", async () => {
+    const longText = "abcdefghij".repeat(21);
+    const fake = new FakeClaudeCodeCli([[{ type: "result", result: longText }]]);
+    const agent = await createTestAgent();
+    const adapter = createClaudeCodeRuntime({
+      spawn: fake.spawn,
+    });
+
+    const session = await adapter.createSession({ agent });
+    const handle = session.submit({ query: "Write a long answer" });
+    const events = await collectAsync(handle.events);
+    const result = await handle.result;
+    const deltas = events
+      .filter((event) => event.type === "message.delta")
+      .map((event) => event.payload.delta);
+    const completedIndex = events.findIndex((event) => event.type === "message.completed");
+    const lastDeltaIndex = events.findLastIndex((event) => event.type === "message.delta");
+
+    expect(result.result.output).toBe(longText);
+    expect(deltas).toHaveLength(3);
+    expect(deltas.join("")).toBe(longText);
+    expect(lastDeltaIndex).toBeLessThan(completedIndex);
 
     await session.abort();
   });
