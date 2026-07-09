@@ -1,6 +1,11 @@
 import { join } from "node:path";
 
-import type { McpToolRegistry, RuntimeAdapter, WorkflowToolsMcpServer } from "@pragma/core";
+import type {
+  McpToolRegistry,
+  RuntimeAdapter,
+  RuntimeCanUseResult,
+  WorkflowToolsMcpServer,
+} from "@pragma/core";
 import {
   createMcpToolRegistry,
   createWorkflowToolsMcpServer,
@@ -9,6 +14,7 @@ import {
   type RuntimeSessionPersistenceSpec,
   type WorkflowToolRuntimeState,
 } from "@pragma/core";
+import { canUseClaudeCodeRuntime } from "./availability.ts";
 import { materializeClaudeCodePlugin } from "./skills.ts";
 import {
   cancelClaudeCodeTurn,
@@ -39,7 +45,7 @@ interface ClaudeCodeDriverSession extends ClaudeCodeNativeSession {
   readonly workflowToolsMcpServer: WorkflowToolsMcpServer;
 }
 
-export function createClaudeCodeLocalRuntimeAdapter(
+export function createClaudeCodeRuntime(
   options: ClaudeCodeRuntimeAdapterOptions = {},
 ): RuntimeAdapter {
   const descriptor = {
@@ -55,6 +61,7 @@ export function createClaudeCodeLocalRuntimeAdapter(
   return defineRuntimeDriver(
     {
       descriptor,
+      canUse: createClaudeCodeRuntimeCanUse(options),
       outputRetryLimit: options.outputRetryLimit,
       resolvePersistence(ctx): RuntimeSessionPersistenceSpec {
         return {
@@ -146,6 +153,30 @@ export function createClaudeCodeLocalRuntimeAdapter(
       sessionSyncCallback: options.sessionSyncCallback,
     },
   );
+}
+
+function createClaudeCodeRuntimeCanUse(
+  options: ClaudeCodeRuntimeAdapterOptions,
+): () => Promise<RuntimeCanUseResult> | RuntimeCanUseResult {
+  if (options.canUse !== undefined) {
+    return options.canUse;
+  }
+
+  if (options.spawn !== undefined) {
+    return () => ({
+      usable: true,
+      details: {
+        probe: "skipped",
+        reason: "Custom Claude Code spawn was provided.",
+      },
+    });
+  }
+
+  return async () =>
+    await canUseClaudeCodeRuntime({
+      ...(options.executablePath === undefined ? {} : { executablePath: options.executablePath }),
+      ...(options.env === undefined ? {} : { env: options.env }),
+    });
 }
 
 async function disposeClaudeRuntimeResources(

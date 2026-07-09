@@ -9,10 +9,64 @@ import { describe, expect, it } from "vitest";
 import { ExpertAgent } from "@pragma/core";
 import type { ExpertAgentHumanRequest, RuntimeSessionStorageContext } from "@pragma/core";
 
-import { createClaudeCodeLocalRuntimeAdapter } from "../src/adapter.ts";
+import { createClaudeCodeRuntime } from "../src/adapter.ts";
+import { canUseClaudeCodeRuntime } from "../src/availability.ts";
 import type { ClaudeCodeRuntimeSpawn } from "../src/types.ts";
 
-describe("createClaudeCodeLocalRuntimeAdapter", () => {
+describe("createClaudeCodeRuntime", () => {
+  it("exposes runtime availability through the adapter", async () => {
+    const adapter = createClaudeCodeRuntime({
+      canUse: () => ({
+        usable: true,
+        details: {
+          source: "test",
+        },
+      }),
+    });
+
+    await expect(adapter.canUse()).resolves.toEqual({
+      usable: true,
+      details: {
+        source: "test",
+      },
+    });
+  });
+
+  it("probes Claude Code CLI availability", async () => {
+    const fake = new FakeProbeProcess({
+      exitCode: 0,
+      stdout: "claude-code 1.2.3\n",
+    });
+
+    const availability = await canUseClaudeCodeRuntime({
+      spawn: fake.spawn,
+    });
+
+    expect(fake.command).toBe("claude");
+    expect(fake.args).toEqual(["--version"]);
+    expect(availability).toEqual({
+      usable: true,
+      details: {
+        executablePath: "claude",
+        version: "claude-code 1.2.3",
+      },
+    });
+  });
+
+  it("rejects session creation when Claude Code is unavailable", async () => {
+    const adapter = createClaudeCodeRuntime({
+      canUse: () => ({
+        usable: false,
+        reason: "Claude Code test probe failed.",
+      }),
+    });
+    const agent = await createTestAgent();
+
+    await expect(adapter.createSession({ agent })).rejects.toThrow(
+      "Runtime is not available: Claude Code Local (claude-code-local). Claude Code test probe failed.",
+    );
+  });
+
   it("starts Claude Code in CLI mode, streams a result, and captures the runtime session id", async () => {
     const fake = new FakeClaudeCodeCli([
       [
@@ -34,7 +88,7 @@ describe("createClaudeCodeLocalRuntimeAdapter", () => {
     ]);
     const synced: RuntimeSessionStorageContext[] = [];
     const agent = await createTestAgent();
-    const adapter = createClaudeCodeLocalRuntimeAdapter({
+    const adapter = createClaudeCodeRuntime({
       defaultModelName: "claude-sonnet-4-5",
       spawn: fake.spawn,
       sessionSyncCallback: (context) => {
@@ -125,7 +179,7 @@ describe("createClaudeCodeLocalRuntimeAdapter", () => {
       ],
     ]);
     const agent = await createTestAgent();
-    const adapter = createClaudeCodeLocalRuntimeAdapter({
+    const adapter = createClaudeCodeRuntime({
       spawn: fake.spawn,
     });
 
@@ -162,7 +216,7 @@ describe("createClaudeCodeLocalRuntimeAdapter", () => {
     ]);
     const requests: ExpertAgentHumanRequest[] = [];
     const agent = await createTestAgent();
-    const adapter = createClaudeCodeLocalRuntimeAdapter({
+    const adapter = createClaudeCodeRuntime({
       spawn: fake.spawn,
     });
 
@@ -229,7 +283,7 @@ describe("createClaudeCodeLocalRuntimeAdapter", () => {
         ],
       },
     });
-    const adapter = createClaudeCodeLocalRuntimeAdapter({
+    const adapter = createClaudeCodeRuntime({
       spawn: fake.spawn,
     });
 
@@ -341,5 +395,47 @@ class FakeClaudeCodeCli extends EventEmitter {
       this.stdout.end();
       this.emit("exit", 0, null);
     });
+  }
+}
+
+class FakeProbeProcess extends EventEmitter {
+  readonly stdout = new PassThrough();
+  readonly stderr = new PassThrough();
+  readonly stdin = new Writable({
+    write(_chunk, _encoding, callback) {
+      callback();
+    },
+  });
+  command = "";
+  args: readonly string[] = [];
+  env: NodeJS.ProcessEnv = {};
+
+  readonly spawn: ClaudeCodeRuntimeSpawn = (command, args, options) => {
+    this.command = command;
+    this.args = args;
+    this.env = options.env;
+    queueMicrotask(() => {
+      this.stdout.write(this.result.stdout ?? "");
+      this.stderr.write(this.result.stderr ?? "");
+      this.stdout.end();
+      this.stderr.end();
+      this.emit("exit", this.result.exitCode, null);
+    });
+    return this as unknown as ChildProcessWithoutNullStreams;
+  };
+
+  constructor(
+    private readonly result: {
+      readonly exitCode: number;
+      readonly stdout?: string | undefined;
+      readonly stderr?: string | undefined;
+    },
+  ) {
+    super();
+  }
+
+  kill(): boolean {
+    this.emit("exit", null, "SIGTERM");
+    return true;
   }
 }

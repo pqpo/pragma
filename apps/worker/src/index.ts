@@ -5,8 +5,8 @@ import {
   createRuntimeRegistry,
   setDefaultRuntimeRegistryFactory,
 } from "@pragma/core";
-import { createCodexLocalRuntimeAdapter } from "@pragma/runtime-codex";
-import { createCloudPiRuntimeAdapter } from "@pragma/runtime-pi";
+import { createCodexRuntime } from "@pragma/runtime-codex";
+import { createPiRuntime } from "@pragma/runtime-pi";
 
 const loggerProvider = createConsoleLoggerProvider();
 
@@ -14,14 +14,14 @@ setDefaultRuntimeRegistryFactory(() =>
   createRuntimeRegistry({
     defaultRuntime: "pi",
     runtimes: [
-      createCloudPiRuntimeAdapter({
+      createPiRuntime({
         descriptor: {
           id: "pi",
           displayName: "PI Runtime",
         },
         loggerProvider,
       }),
-      createCodexLocalRuntimeAdapter({
+      createCodexRuntime({
         descriptor: {
           id: "codex",
           displayName: "Codex Runtime",

@@ -56,7 +56,7 @@ pnpm --filter @pragma/examples start:basic --system-session-id local-debug-sessi
 
 1. 从 `.env` 读取模型配置。
 2. 创建带 `models` 配置的 `ExpertAgent`。
-3. 创建自定义 logger provider，并同时传给 `ExpertAgent` 与 `createCloudPiRuntimeAdapter()`。
+3. 创建自定义 logger provider，并同时传给 `ExpertAgent` 与 `createPiRuntime()`。
 4. 可选传入 `runtimeSession` 恢复 runtime session。
 5. 使用 runtime 创建 session。
 6. 对每个 turn 调用 `session.submit()` 并处理流式事件。
@@ -109,10 +109,62 @@ pnpm --filter @pragma/examples start:codex-runtime \
 示例入口是 `src/run-codex-runtime-agent.ts`。它展示：
 
 1. 创建普通 `ExpertAgent`。
-2. 用 `createCodexLocalRuntimeAdapter()` 创建本地 Codex runtime。
+2. 用 `createCodexRuntime()` 创建本地 Codex runtime。
 3. 把 `--model` 映射为 `defaultModelName` 和单次 `submit({ modelName })`。
 4. 用 `runtimeSession: { type: "codex-local", id }` 恢复 Codex thread。
 5. 打印 Codex runtime 的流式 message/tool/progress 事件。
+
+## 运行 Claude Code Runtime 示例
+
+```bash
+pnpm --filter @pragma/examples start:claude-code-runtime
+```
+
+这个示例使用本机 `claude` CLI 作为 runtime，不读取 `.env` 里的
+`PRAGMA_MODEL_*` 配置。运行前需要本机已安装并登录 Claude Code：
+
+```bash
+claude --version
+```
+
+传入 Claude Code 模型名：
+
+```bash
+pnpm --filter @pragma/examples start:claude-code-runtime --model claude-sonnet-4-5 "总结这个仓库的 runtime 边界"
+```
+
+提交多轮任务并复用同一个 Claude Code session：
+
+```bash
+pnpm --filter @pragma/examples start:claude-code-runtime \
+  --turn "记住：我在测试 Claude Code runtime" \
+  --turn "我刚才在测试什么？"
+```
+
+运行时会打印 `runtimeSessionId`，下一次可以恢复：
+
+```bash
+pnpm --filter @pragma/examples start:claude-code-runtime \
+  --runtime-session-id <runtime-session-id> \
+  --turn "继续上一次 Claude Code runtime 会话"
+```
+
+也可以显式传入权限和隔离模式：
+
+```bash
+pnpm --filter @pragma/examples start:claude-code-runtime \
+  --permission-mode plan \
+  --isolation strict \
+  --turn "列出 workspace 目录"
+```
+
+示例入口是 `src/run-claude-code-runtime-agent.ts`。它展示：
+
+1. 用 `runtime.canUse()` 预检本机 Claude Code CLI。
+2. 用 `createClaudeCodeRuntime()` 创建本地 Claude Code runtime。
+3. 把 `--model` 映射为 `defaultModelName` 和单次 `submit({ modelName })`。
+4. 用 `runtimeSession: { type: "claude-code-local", id }` 恢复 Claude Code session。
+5. 打印 Claude Code runtime 的流式 message/tool/progress 事件。
 
 ## 运行 Memory System 示例
 

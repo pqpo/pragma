@@ -4,7 +4,7 @@ import {
   HOST_CONTEXT_NAMESPACE,
   createInMemoryContextStore,
 } from "@pragma/core";
-import { createCloudPiRuntimeAdapter } from "@pragma/runtime-pi";
+import { createPiRuntime } from "@pragma/runtime-pi";
 import repoManagerPlugin from "@pragma/plugin-repo-manager";
 
 import {
@@ -23,6 +23,7 @@ import {
   ensureWorkspaceDir,
   loadExamplesEnv,
 } from "./harness/paths.ts";
+import { exitIfRuntimeUnavailable } from "./harness/runtime-availability.ts";
 import { printRunStream } from "./harness/stream-output.ts";
 
 const workspace = defaultWorkspaceRoot;
@@ -120,7 +121,8 @@ console.log(
   agent.hooks?.beforeSessionCreate === undefined ? "- not configured" : "- beforeSessionCreate",
 );
 
-const runtime = createCloudPiRuntimeAdapter({ loggerProvider });
+const runtime = createPiRuntime({ loggerProvider });
+await exitIfRuntimeUnavailable(runtime);
 const session = await runtime.createSession({ agent });
 
 try {

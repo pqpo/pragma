@@ -44,7 +44,7 @@ interface PiDriverSession extends PiNativeSession {
   readonly mcpToolRegistry: McpToolRegistry;
 }
 
-export function createCloudPiRuntimeAdapter(
+export function createPiRuntime(
   options: CloudPiRuntimeAdapterOptions = {},
 ): RuntimeAdapter {
   const descriptor = {

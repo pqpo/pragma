@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { createRuntimeRegistry, defineAgent } from "@pragma/core";
-import { createCloudPiRuntimeAdapter } from "@pragma/runtime-pi";
+import { createPiRuntime } from "@pragma/runtime-pi";
 
 import { printRunResult } from "./harness/expert-agent-example-utils.ts";
 import {
@@ -9,6 +9,7 @@ import {
 } from "./harness/model-config.ts";
 import { readBasicExampleCli } from "./harness/cli.ts";
 import { defaultWorkspaceRoot, ensureWorkspaceDir, loadExamplesEnv } from "./harness/paths.ts";
+import { exitIfRuntimeUnavailable } from "./harness/runtime-availability.ts";
 import { StreamEventPrinter } from "./harness/stream-output.ts";
 
 const defaultQuery = "实现一个最小的 README 更新，并返回修改摘要。";
@@ -41,18 +42,19 @@ const output = z.object({
   changedFiles: z.array(z.string()),
   testsPassed: z.boolean(),
 });
+const runtime = createPiRuntime({
+  descriptor: {
+    id: "pi",
+    displayName: "PI Runtime",
+  },
+});
+
+await exitIfRuntimeUnavailable(runtime);
 
 const session = await coder.createSession({
   runtimes: createRuntimeRegistry({
     defaultRuntime: "pi",
-    runtimes: [
-      createCloudPiRuntimeAdapter({
-        descriptor: {
-          id: "pi",
-          displayName: "PI Runtime",
-        },
-      }),
-    ],
+    runtimes: [runtime],
   }),
 });
 

@@ -17,6 +17,7 @@ export * from "./runtime/agent-lifecycle.ts";
 export * from "./runtime/async-push-queue.ts";
 export * from "./runtime/driver.ts";
 export * from "./runtime/output.ts";
+export * from "./runtime/process-probe.ts";
 export * from "./runtime/run-context.ts";
 export * from "./runtime/runtime-adapter.ts";
 export * from "./runtime/runtime-event-emitter.ts";

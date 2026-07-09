@@ -7,7 +7,7 @@ import {
   createInMemoryContextStore,
 } from "@pragma/core";
 import type { ExpertAgentContextStore } from "@pragma/core";
-import { createCloudPiRuntimeAdapter } from "@pragma/runtime-pi";
+import { createPiRuntime } from "@pragma/runtime-pi";
 
 import {
   printAgentContextSummary,
@@ -26,6 +26,7 @@ import {
   loadExamplesEnv,
   resolveExamplePath,
 } from "./harness/paths.ts";
+import { exitIfRuntimeUnavailable } from "./harness/runtime-availability.ts";
 import { printRunStream } from "./harness/stream-output.ts";
 
 const defaultQuery = [
@@ -65,10 +66,11 @@ const agent = await ExpertAgent.create({
   models: createExpertAgentModelsConfig(modelConfig),
 });
 
-const runtime = createCloudPiRuntimeAdapter();
+const runtime = createPiRuntime();
 
 printExampleConfig(workspace, contextDir);
 await printAgentContextSummary(agent);
+await exitIfRuntimeUnavailable(runtime);
 
 const session = await runtime.createSession({ agent });
 

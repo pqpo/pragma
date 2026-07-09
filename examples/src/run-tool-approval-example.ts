@@ -3,7 +3,7 @@ import { stdin as input, stdout as output } from "node:process";
 
 import { ExpertAgent } from "@pragma/core";
 import type { ExpertAgentHumanInteractionHandler } from "@pragma/core";
-import { createCloudPiRuntimeAdapter } from "@pragma/runtime-pi";
+import { createPiRuntime } from "@pragma/runtime-pi";
 
 import toolApprovalPolicyPlugin from "../plugins/tool-approval-policy/src/plugin.ts";
 import {
@@ -18,6 +18,7 @@ import {
 } from "./harness/model-config.ts";
 import { readBasicExampleCli } from "./harness/cli.ts";
 import { defaultWorkspaceRoot, ensureWorkspaceDir, loadExamplesEnv } from "./harness/paths.ts";
+import { exitIfRuntimeUnavailable } from "./harness/runtime-availability.ts";
 import { printRunStream } from "./harness/stream-output.ts";
 
 const defaultQuery = "先调用 askUserQuestion 问我是否继续，然后再执行一个需要确认的工具。";
@@ -60,7 +61,8 @@ const agent = await ExpertAgent.create({
   plugins: [{ entry: toolApprovalPolicyPlugin }],
 });
 
-const runtime = createCloudPiRuntimeAdapter();
+const runtime = createPiRuntime();
+await exitIfRuntimeUnavailable(runtime);
 const session = await runtime.createSession({
   agent,
   humanInteractionHandler: createCliHumanInteractionHandler(),

@@ -1,6 +1,6 @@
 import { join } from "node:path";
 
-import type { McpToolRegistry, RuntimeAdapter } from "@pragma/core";
+import type { McpToolRegistry, RuntimeAdapter, RuntimeCanUseResult } from "@pragma/core";
 import {
   createMcpToolRegistry,
   defineRuntimeDriver,
@@ -21,6 +21,7 @@ import {
   type CodexRuntimeSessionState,
 } from "./session.ts";
 import type { CodexRuntimeAdapterOptions } from "./types.ts";
+import { canUseCodexRuntime } from "./availability.ts";
 import {
   createCodexWorkflowToolsMcpServer,
   type CodexWorkflowToolsMcpServer,
@@ -51,7 +52,7 @@ interface CodexDriverSession extends CodexNativeSession {
   readonly workflowToolsMcpServer: CodexWorkflowToolsMcpServer;
 }
 
-export function createCodexLocalRuntimeAdapter(
+export function createCodexRuntime(
   options: CodexRuntimeAdapterOptions = {},
 ): RuntimeAdapter {
   const descriptor = {
@@ -67,6 +68,7 @@ export function createCodexLocalRuntimeAdapter(
   return defineRuntimeDriver(
     {
       descriptor,
+      canUse: createCodexRuntimeCanUse(options),
       outputRetryLimit: options.outputRetryLimit,
       resolvePersistence(ctx): RuntimeSessionPersistenceSpec {
         return {
@@ -181,6 +183,30 @@ export function createCodexLocalRuntimeAdapter(
       sessionSyncCallback: options.sessionSyncCallback,
     },
   );
+}
+
+function createCodexRuntimeCanUse(
+  options: CodexRuntimeAdapterOptions,
+): () => Promise<RuntimeCanUseResult> | RuntimeCanUseResult {
+  if (options.canUse !== undefined) {
+    return options.canUse;
+  }
+
+  if (options.spawn !== undefined) {
+    return () => ({
+      usable: true,
+      details: {
+        probe: "skipped",
+        reason: "Custom Codex spawn was provided.",
+      },
+    });
+  }
+
+  return async () =>
+    await canUseCodexRuntime({
+      ...(options.executablePath === undefined ? {} : { executablePath: options.executablePath }),
+      ...(options.env === undefined ? {} : { env: options.env }),
+    });
 }
 
 function createCodexAppServerArgs(

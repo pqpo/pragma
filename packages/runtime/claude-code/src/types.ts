@@ -1,8 +1,8 @@
-import type { ChildProcessWithoutNullStreams } from "node:child_process";
-
 import type { ExpertAgentLoggerProvider } from "@pragma/core";
 import type {
+  RuntimeCanUseResult,
   RuntimeAdapterDescriptor,
+  RuntimeCommandSpawn,
   RuntimeSessionRestoreHandler,
   RuntimeSessionSyncCallback,
 } from "@pragma/core";
@@ -17,14 +17,7 @@ export type ClaudeCodeRuntimePermissionMode =
   | "dontAsk"
   | "bypassPermissions";
 
-export type ClaudeCodeRuntimeSpawn = (
-  command: string,
-  args: readonly string[],
-  options: {
-    readonly cwd: string;
-    readonly env: NodeJS.ProcessEnv;
-  },
-) => ChildProcessWithoutNullStreams;
+export type ClaudeCodeRuntimeSpawn = RuntimeCommandSpawn;
 
 export interface ClaudeCodeRuntimeAdapterOptions {
   readonly descriptor?: Partial<RuntimeAdapterDescriptor> | undefined;
@@ -36,6 +29,7 @@ export interface ClaudeCodeRuntimeAdapterOptions {
   readonly permissionMode?: ClaudeCodeRuntimePermissionMode | undefined;
   readonly additionalArgs?: readonly string[] | undefined;
   readonly spawn?: ClaudeCodeRuntimeSpawn | undefined;
+  readonly canUse?: (() => Promise<RuntimeCanUseResult> | RuntimeCanUseResult) | undefined;
   readonly outputRetryLimit?: number | undefined;
   readonly sessionRestoreHandler?: RuntimeSessionRestoreHandler | undefined;
   readonly sessionSyncCallback?: RuntimeSessionSyncCallback | undefined;

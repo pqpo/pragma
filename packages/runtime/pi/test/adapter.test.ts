@@ -12,7 +12,7 @@ import {
 import type { ExpertAgentRunContext } from "@pragma/core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { createCloudPiRuntimeAdapter } from "../src/adapter.ts";
+import { createPiRuntime } from "../src/adapter.ts";
 
 vi.mock("@earendil-works/pi-coding-agent", () => ({
   AuthStorage: {
@@ -50,11 +50,17 @@ afterEach(async () => {
   await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
 
-describe("createCloudPiRuntimeAdapter", () => {
+describe("createPiRuntime", () => {
   beforeEach(() => {
     vi.mocked(createAgentSession).mockReset();
     vi.mocked(SessionManager.listAll).mockResolvedValue([]);
     vi.mocked(SessionManager.open).mockClear();
+  });
+
+  it("exposes runtime availability through the adapter", async () => {
+    await expect(createPiRuntime().canUse()).resolves.toEqual({
+      usable: true,
+    });
   });
 
   it("runs session destroy hooks when PI session creation fails", async () => {
@@ -85,7 +91,7 @@ describe("createCloudPiRuntimeAdapter", () => {
     });
     vi.mocked(createAgentSession).mockRejectedValue(new Error("PI session failed"));
 
-    await expect(createCloudPiRuntimeAdapter().createSession({ agent })).rejects.toThrow(
+    await expect(createPiRuntime().createSession({ agent })).rejects.toThrow(
       "PI session failed",
     );
 
@@ -119,7 +125,7 @@ describe("createCloudPiRuntimeAdapter", () => {
     vi.mocked(createAgentSession).mockRejectedValue(new Error("PI session failed"));
 
     await expect(
-      createCloudPiRuntimeAdapter().createSession({
+      createPiRuntime().createSession({
         agent,
         context: {
           source: {
@@ -168,7 +174,7 @@ describe("createCloudPiRuntimeAdapter", () => {
       session: createFakePiSession("pi-session-1") as never,
     });
 
-    const adapter = createCloudPiRuntimeAdapter({
+    const adapter = createPiRuntime({
       sessionRestoreHandler: restore,
       sessionSyncCallback: sync,
     });
@@ -251,7 +257,7 @@ describe("createCloudPiRuntimeAdapter", () => {
       session: createFakePiSession("pi-session-2") as never,
     });
 
-    const adapter = createCloudPiRuntimeAdapter();
+    const adapter = createPiRuntime();
     adapter.setSessionRestoreHandler?.(restore);
     adapter.setSessionSyncCallback?.(sync);
     const runtimeSession = await adapter.createSession({
@@ -294,7 +300,7 @@ describe("createCloudPiRuntimeAdapter", () => {
       session: piSession as never,
     });
 
-    const runtimeSession = await createCloudPiRuntimeAdapter().createSession({ agent });
+    const runtimeSession = await createPiRuntime().createSession({ agent });
 
     expect(piSession.messages).toEqual([
       expect.objectContaining({
@@ -345,7 +351,7 @@ describe("createCloudPiRuntimeAdapter", () => {
       session: piSession as never,
     });
 
-    const runtimeSession = await createCloudPiRuntimeAdapter().createSession({
+    const runtimeSession = await createPiRuntime().createSession({
       agent,
       runtimeSession: {
         type: "cloud-pi-agent",
@@ -410,7 +416,7 @@ describe("createCloudPiRuntimeAdapter", () => {
       session: createFakePiSession("pi-session-mcp") as never,
     });
 
-    const runtimeSession = await createCloudPiRuntimeAdapter().createSession({ agent });
+    const runtimeSession = await createPiRuntime().createSession({ agent });
     const sessionOptions = vi.mocked(createAgentSession).mock.calls[0]?.[0] as
       | { readonly customTools?: readonly { readonly name: string }[] }
       | undefined;

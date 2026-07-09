@@ -265,6 +265,7 @@ function createRecordingRuntimeAdapter(): {
         targets: ["agent"],
       },
     },
+    canUse: () => ({ usable: true }),
     async createSession(request) {
       createSessionRequests.push(request);
       const runtimeSession = request.runtimeSession ?? {
@@ -294,6 +295,7 @@ function createPendingRuntimeAdapter(): {
         targets: ["agent"],
       },
     },
+    canUse: () => ({ usable: true }),
     async createSession(request) {
       return createPendingSession(request);
     },

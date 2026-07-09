@@ -695,6 +695,7 @@ describe("directive app", () => {
           targets: ["agent"],
         },
       },
+      canUse: () => ({ usable: true }),
       async createSession() {
         return {
           info: () => createFakeSessionInfo(),
@@ -1023,6 +1024,7 @@ function createFakeRuntime(options: {
         targets: ["agent"],
       },
     },
+    canUse: () => ({ usable: true }),
     async createSession(request) {
       requests.push(request);
       return createFakeSession(options.output, submissions);
@@ -1067,6 +1069,7 @@ function createHumanAskingRuntime(options: { readonly id: string }): RuntimeAdap
         targets: ["agent"],
       },
     },
+    canUse: () => ({ usable: true }),
     async createSession(request) {
       return {
         info: () => createFakeSessionInfo(),

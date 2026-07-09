@@ -170,6 +170,7 @@ pnpm --filter @pragma/examples start:workspace-context
 pnpm --filter @pragma/examples start:memory
 pnpm --filter @pragma/examples start:approval
 pnpm --filter @pragma/examples start:codex-runtime
+pnpm --filter @pragma/examples start:claude-code-runtime
 ```
 
 See [examples/README.md](./examples/README.md) for the full example guide.

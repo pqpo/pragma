@@ -33,6 +33,12 @@ export interface RuntimeAdapterDescriptor {
   readonly capabilities?: RuntimeAdapterCapabilities | undefined;
 }
 
+export interface RuntimeCanUseResult {
+  readonly usable: boolean;
+  readonly reason?: string | undefined;
+  readonly details?: Record<string, unknown> | undefined;
+}
+
 export type RuntimeOutputSchema<TOutput = unknown> = z.ZodType<TOutput>;
 
 export type RuntimeSessionRef = SharedRuntimeSessionRef;
@@ -106,6 +112,7 @@ export interface RuntimeAgentSession {
 
 export interface RuntimeAdapter {
   readonly descriptor: RuntimeAdapterDescriptor;
+  readonly canUse: () => Promise<RuntimeCanUseResult> | RuntimeCanUseResult;
   readonly createSession: (request: RuntimeCreateSessionRequest) => Promise<RuntimeAgentSession>;
   readonly setSessionSyncCallback?: (callback: RuntimeSessionSyncCallback | undefined) => void;
   readonly setSessionRestoreHandler?: (handler: RuntimeSessionRestoreHandler | undefined) => void;

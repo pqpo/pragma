@@ -184,6 +184,51 @@ describe("defineRuntimeDriver", () => {
 
     expect(result.result.output).toEqual({ ok: true });
   });
+
+  it("rejects session creation when the runtime cannot be used", async () => {
+    const runtime = defineRuntimeDriver<FakeEvent, FakeSession>({
+      descriptor: {
+        id: "fake-runtime",
+        kind: "fake-runtime",
+        displayName: "Fake Runtime",
+      },
+      canUse: () => ({
+        usable: false,
+        reason: "Fake runtime binary is missing.",
+      }),
+      createSession() {
+        throw new Error("Session creation should not be reached.");
+      },
+      startTurn() {
+        return {};
+      },
+      mapEvent(event, ctx) {
+        return event.type === "delta"
+          ? {
+              events: [ctx.events.messageDelta(event.text)],
+              outputDelta: event.text,
+            }
+          : {
+              events: [ctx.events.messageCompleted(event.text)],
+              completedText: event.text,
+            };
+      },
+    });
+    const agent = await ExpertAgent.create({
+      id: "coder",
+      name: "Coder",
+      description: "Responsible for code changes.",
+      tags: ["coding"],
+      version: "0.0.0",
+      scope: "workspace",
+      workspace: "/tmp/pragma-runtime-driver-can-use-test",
+      contextSystem: new ContextSystem(),
+    });
+
+    await expect(runtime.createSession({ agent })).rejects.toThrow(
+      "Runtime is not available: Fake Runtime (fake-runtime). Fake runtime binary is missing.",
+    );
+  });
 });
 
 type FakeEvent =

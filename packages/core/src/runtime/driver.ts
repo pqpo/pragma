@@ -45,6 +45,7 @@ import { createExpertAgentRunContext, type ExpertAgentRunContext } from "./run-c
 import type {
   RuntimeAdapter,
   RuntimeAdapterDescriptor,
+  RuntimeCanUseResult,
   RuntimeCreateSessionRequest,
   RuntimeOutputSchema,
   RuntimeRunResult,
@@ -145,6 +146,7 @@ export interface RuntimeDestroyContext {
 
 export interface RuntimeDriver<TNativeEvent, TNativeSession, TPrepared = RuntimePreparedContext> {
   readonly descriptor: RuntimeAdapterDescriptor;
+  readonly canUse?: (() => Promise<RuntimeCanUseResult> | RuntimeCanUseResult) | undefined;
   readonly defaultOutputParser?: RuntimeOutputParser | undefined;
   readonly outputRetryLimit?: number | undefined;
   readonly resolvePersistence?:
@@ -206,6 +208,7 @@ export function defineRuntimeDriver<TNativeEvent, TNativeSession, TPrepared = Ru
 
   return {
     descriptor: driver.descriptor,
+    canUse: async () => (await driver.canUse?.()) ?? { usable: true },
     setSessionRestoreHandler(handler) {
       sessionRestoreHandler = handler;
     },
@@ -245,6 +248,8 @@ async function createManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepar
     paths,
   };
   const persistenceSpec = driver.resolvePersistence?.(prepareContext);
+
+  await assertRuntimeCanUse(driver, descriptor);
 
   if (persistenceSpec?.sessionDir !== undefined) {
     await ensureRuntimeSessionDir(persistenceSpec.sessionDir);
@@ -431,6 +436,30 @@ async function createManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepar
     }
     throw error;
   }
+}
+
+async function assertRuntimeCanUse<TNativeEvent, TNativeSession, TPrepared>(
+  driver: RuntimeDriver<TNativeEvent, TNativeSession, TPrepared>,
+  descriptor: RuntimeAdapterDescriptor,
+): Promise<void> {
+  const availability = (await driver.canUse?.()) ?? { usable: true };
+
+  if (availability.usable) {
+    return;
+  }
+
+  throw new Error(createRuntimeUnavailableMessage(descriptor, availability));
+}
+
+function createRuntimeUnavailableMessage(
+  descriptor: RuntimeAdapterDescriptor,
+  availability: RuntimeCanUseResult,
+): string {
+  const reason = availability.reason?.trim();
+
+  return reason === undefined || reason === ""
+    ? `Runtime is not available: ${descriptor.displayName} (${descriptor.id}).`
+    : `Runtime is not available: ${descriptor.displayName} (${descriptor.id}). ${reason}`;
 }
 
 class ManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepared> {

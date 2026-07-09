@@ -12,7 +12,7 @@ import type {
   RuntimeSessionRef,
   RuntimeStreamEvent,
 } from "@pragma/core";
-import { createCloudPiRuntimeAdapter } from "@pragma/runtime-pi";
+import { createPiRuntime } from "@pragma/runtime-pi";
 
 import {
   createExpertAgentModelsConfig,
@@ -20,6 +20,7 @@ import {
   readExampleModelConfig,
 } from "./harness/model-config.ts";
 import { defaultWorkspaceRoot, ensureWorkspaceDir, loadExamplesEnv } from "./harness/paths.ts";
+import { exitIfRuntimeUnavailable } from "./harness/runtime-availability.ts";
 import { StreamEventPrinter } from "./harness/stream-output.ts";
 
 const defaultTurns = [
@@ -46,12 +47,13 @@ await ensureWorkspaceDir(workspace);
 
 const modelConfig = readExampleModelConfig();
 const models = createExpertAgentModelsConfig(modelConfig);
-const runtime = createCloudPiRuntimeAdapter({
+const runtime = createPiRuntime({
   descriptor: {
     id: "pi",
     displayName: "PI Runtime",
   },
 });
+await exitIfRuntimeUnavailable(runtime);
 const app = createPragma({
   runtimes: createRuntimeRegistry({
     defaultRuntime: "pi",

@@ -135,6 +135,7 @@ function createFakeRuntime(options: {
         targets: ["agent"],
       },
     },
+    canUse: () => ({ usable: true }),
     async createSession(request) {
       requests.push(request);
       return createFakeSession(options.output);

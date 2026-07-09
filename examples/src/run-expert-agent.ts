@@ -1,6 +1,6 @@
 import { ExpertAgent } from "@pragma/core";
 import type { RuntimeSessionRef } from "@pragma/core";
-import { createCloudPiRuntimeAdapter } from "@pragma/runtime-pi";
+import { createPiRuntime } from "@pragma/runtime-pi";
 
 import { printRunHeader, printRunResult } from "./harness/expert-agent-example-utils.ts";
 import { createExampleLoggerProvider } from "./harness/logger.ts";
@@ -11,6 +11,7 @@ import {
 } from "./harness/model-config.ts";
 import { readBasicExampleCli } from "./harness/cli.ts";
 import { defaultWorkspaceRoot, ensureWorkspaceDir, loadExamplesEnv } from "./harness/paths.ts";
+import { exitIfRuntimeUnavailable } from "./harness/runtime-availability.ts";
 import { printRunStream } from "./harness/stream-output.ts";
 
 const defaultQuery = "用一句话介绍 Pragma 的多专家 Agent 编排架构是什么。";
@@ -36,7 +37,8 @@ const agent = await ExpertAgent.create({
   models: createExpertAgentModelsConfig(modelConfig),
 });
 
-const runtime = createCloudPiRuntimeAdapter({ loggerProvider });
+const runtime = createPiRuntime({ loggerProvider });
+await exitIfRuntimeUnavailable(runtime);
 const runtimeSession = createRuntimeSessionRef(cli.runtimeSessionId);
 const session = await runtime.createSession({
   agent,

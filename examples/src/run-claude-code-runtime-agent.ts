@@ -9,10 +9,10 @@ import {
   type RuntimeSessionRef,
 } from "@pragma/core";
 import {
-  createCodexRuntime,
-  type CodexRuntimeApprovalPolicy,
-  type CodexRuntimeSandboxMode,
-} from "@pragma/runtime-codex";
+  createClaudeCodeRuntime,
+  type ClaudeCodeRuntimeIsolationMode,
+  type ClaudeCodeRuntimePermissionMode,
+} from "@pragma/runtime-claude-code";
 
 import {
   printAgentContextSummary,
@@ -24,43 +24,44 @@ import { defaultWorkspaceRoot, ensureWorkspaceDir, loadExamplesEnv } from "./har
 import { exitIfRuntimeUnavailable } from "./harness/runtime-availability.ts";
 import { printRunStream } from "./harness/stream-output.ts";
 
-interface CodexRuntimeExampleCliOptions {
+interface ClaudeCodeRuntimeExampleCliOptions {
   readonly turns: readonly string[];
+  readonly executablePath: string | undefined;
   readonly model: string | undefined;
   readonly runtimeSessionId: string | undefined;
   readonly systemSessionId: string | undefined;
-  readonly sandboxMode: CodexRuntimeSandboxMode | undefined;
-  readonly approvalPolicy: CodexRuntimeApprovalPolicy | undefined;
+  readonly isolationMode: ClaudeCodeRuntimeIsolationMode | undefined;
+  readonly permissionMode: ClaudeCodeRuntimePermissionMode | undefined;
 }
 
 const defaultQuery = [
-  "执行一次 Codex local runtime 综合检查：",
-  "1. 先根据启动上下文说明 Pragma 的模块边界原则，并点名 codex-runtime-runbook.md。",
-  "2. 必须使用只读本地工具调用检查当前目录和仓库 package.json，例如运行 pwd 和 ls -la ../package.json。",
+  "执行一次 Claude Code local runtime 综合检查：",
+  "1. 先根据启动上下文说明 Pragma 的 runtime adapter 边界。",
+  "2. 使用只读本地工具检查当前目录和仓库 package.json。",
   "3. 最后用三条项目符号总结：context 是否可见、工具调用是否发生、当前 runtime 类型是什么。",
 ].join("\n");
 
 loadExamplesEnv();
 
-const cli = readCodexRuntimeExampleCli();
+const cli = readClaudeCodeRuntimeExampleCli();
 const workspace = defaultWorkspaceRoot;
 
 await ensureWorkspaceDir(workspace);
 
 const loggerProvider = createExampleLoggerProvider();
-const contextSystem = createCodexRuntimeExampleContextSystem();
+const contextSystem = createClaudeCodeRuntimeExampleContextSystem();
 const agent = await ExpertAgent.create({
-  id: "codex-runtime-example-expert",
-  name: "Codex Runtime Example Expert",
+  id: "claude-code-runtime-example-expert",
+  name: "Claude Code Runtime Example Expert",
   description:
-    "Demonstrates running an ExpertAgent through the local Codex runtime with context and Codex tool events.",
+    "Demonstrates running an ExpertAgent through the local Claude Code runtime with context and tool events.",
   instructions: [
-    "You are an ExpertAgent running through Pragma's Codex local runtime adapter.",
+    "You are an ExpertAgent running through Pragma's Claude Code local runtime adapter.",
     "Answer concisely and mention concrete files or commands only when useful.",
-    "When the task asks for a local check, use Codex's read-only local tools before answering.",
+    "When the task asks for a local check, use Claude Code's read-only local tools before answering.",
     "Use the always-on context as reference material and cite context IDs when they are relevant.",
   ].join("\n"),
-  tags: ["example", "codex-runtime"],
+  tags: ["example", "claude-code-runtime"],
   version: "0.0.0",
   scope: "local-test",
   workspace,
@@ -68,11 +69,12 @@ const agent = await ExpertAgent.create({
   loggerProvider,
 });
 
-const runtime = createCodexRuntime({
+const runtime = createClaudeCodeRuntime({
   loggerProvider,
   defaultModelName: cli.model,
-  sandboxMode: cli.sandboxMode,
-  approvalPolicy: cli.approvalPolicy,
+  ...(cli.executablePath === undefined ? {} : { executablePath: cli.executablePath }),
+  ...(cli.isolationMode === undefined ? {} : { isolationMode: cli.isolationMode }),
+  ...(cli.permissionMode === undefined ? {} : { permissionMode: cli.permissionMode }),
 });
 await exitIfRuntimeUnavailable(runtime);
 const runtimeSession = createRuntimeSessionRef(cli.runtimeSessionId);
@@ -87,18 +89,19 @@ try {
 
   await printAgentContextSummary(agent);
 
-  console.log("Codex runtime session:");
+  console.log("Claude Code runtime session:");
   console.log(`- systemSessionId: ${sessionInfo.systemSessionId}`);
   console.log(`- runtimeSessionId: ${sessionInfo.runtimeSession.id}`);
   console.log(`- runtime: ${sessionInfo.runtime.displayName} (${sessionInfo.runtime.id})`);
-  console.log(`- model: ${cli.model ?? "Codex config default"}`);
-  console.log(`- sandbox: ${cli.sandboxMode ?? "Codex config default"}`);
-  console.log(`- approvalPolicy: ${cli.approvalPolicy ?? "Codex config default"}`);
+  console.log(`- executable: ${cli.executablePath ?? "claude"}`);
+  console.log(`- model: ${cli.model ?? "Claude Code config default"}`);
+  console.log(`- isolationMode: ${cli.isolationMode ?? "strict"}`);
+  console.log(`- permissionMode: ${cli.permissionMode ?? "default"}`);
   console.log("");
 
   for (const [index, query] of cli.turns.entries()) {
     console.log(`Turn ${index + 1}/${cli.turns.length}`);
-    printRunHeader(agent, cli.model ?? "Codex config default", query);
+    printRunHeader(agent, cli.model ?? "Claude Code config default", query);
     const run = session.submit({
       query,
       ...(cli.model === undefined ? {} : { modelName: cli.model }),
@@ -114,7 +117,7 @@ try {
   await session.abort();
 }
 
-function createCodexRuntimeExampleContextSystem(): ContextSystem {
+function createClaudeCodeRuntimeExampleContextSystem(): ContextSystem {
   const contextSystem = new ContextSystem();
 
   contextSystem.register({
@@ -124,33 +127,31 @@ function createCodexRuntimeExampleContextSystem(): ContextSystem {
         {
           id: AGENTS_CONTEXT_ID,
           content: [
-            "# Codex Runtime Example Context",
+            "# Claude Code Runtime Example Context",
             "",
             "Pragma is a multi-expert Agent orchestration platform.",
-            "The core module boundary is apps/server -> packages/server -> packages/core -> packages/shared.",
-            "apps/web must use @pragma/client and must not import @pragma/server or @pragma/core.",
-            "packages/shared must stay runtime-neutral and must not import Node APIs.",
-            "Codex local runtime should surface commandExecution and fileChange items as runtime tool stream events.",
+            "RuntimeAdapter is the boundary between ExpertAgent and concrete local or cloud runtimes.",
+            "packages/core defines runtime contracts; packages/runtime/claude-code implements Claude Code integration.",
+            "Concrete runtime packages must not depend on each other.",
           ].join("\n"),
           metadata: {
-            description: "Always-on Codex runtime example context.",
+            description: "Always-on Claude Code runtime example context.",
             trigger: "always_on",
             trustLevel: "workspace",
             sensitivity: "internal",
           },
         },
         {
-          id: "codex-runtime-runbook.md",
+          id: "claude-code-runtime-runbook.md",
           content: [
-            "# Codex Runtime Runbook",
+            "# Claude Code Runtime Runbook",
             "",
-            "Use sandbox=read-only for inspection tasks.",
-            "Use approvalPolicy=never for non-mutating example runs.",
-            "A healthy run should show message events, usage, and tool events when the task requires local inspection.",
-            "The expected visible tool event for shell inspection is commandExecution mapped to exec_command.",
+            "Use permissionMode=default or plan for inspection tasks.",
+            "A healthy run should show stream events, a runtime session id, and tool events when local inspection is required.",
+            "Runtime availability is checked before session creation through runtime.canUse().",
           ].join("\n"),
           metadata: {
-            description: "Runbook for validating Codex runtime logs.",
+            description: "Runbook for validating Claude Code runtime logs.",
             trigger: "model_decision",
             trustLevel: "workspace",
             sensitivity: "internal",
@@ -163,23 +164,18 @@ function createCodexRuntimeExampleContextSystem(): ContextSystem {
   return contextSystem;
 }
 
-function readCodexRuntimeExampleCli(): CodexRuntimeExampleCliOptions {
-  const cli = cac("pragma-example-codex-runtime");
+function readClaudeCodeRuntimeExampleCli(): ClaudeCodeRuntimeExampleCliOptions {
+  const cli = cac("pragma-example-claude-code-runtime");
 
   cli
-    .command("[query...]", "Task query to send to the Codex-backed ExpertAgent.")
+    .command("[query...]", "Task query to send to the Claude Code-backed ExpertAgent.")
     .option("--turn <query>", "Task query to submit. Repeat this option for multi-turn tests.")
-    .option("--model <model>", "Codex model name to pass to thread/start and turn/start.")
-    .option("--runtime-session-id <id>", "Resume an existing Codex runtime thread id.")
+    .option("--executable <path>", "Claude Code executable path. Defaults to claude.")
+    .option("--model <model>", "Claude Code model name to pass to the CLI.")
+    .option("--runtime-session-id <id>", "Resume an existing Claude Code runtime session id.")
     .option("--system-session-id <id>", "Use a fixed Pragma system session id.")
-    .option(
-      "--sandbox <mode>",
-      "Codex sandbox mode: read-only, workspace-write, or danger-full-access.",
-    )
-    .option(
-      "--approval-policy <policy>",
-      "Codex approval policy: untrusted, on-request, or never.",
-    );
+    .option("--isolation <mode>", "Claude Code isolation mode: strict or inherit.")
+    .option("--permission-mode <mode>", "Claude Code permission mode.");
   cli.help();
 
   const parsed = cli.parse();
@@ -190,11 +186,12 @@ function readCodexRuntimeExampleCli(): CodexRuntimeExampleCliOptions {
 
   return {
     turns: readTurns(parsed.args, parsed.options.turn),
+    executablePath: readStringOption(parsed.options.executable),
     model: readStringOption(parsed.options.model),
     runtimeSessionId: readStringOption(parsed.options.runtimeSessionId),
     systemSessionId: readStringOption(parsed.options.systemSessionId),
-    sandboxMode: readSandboxModeOption(parsed.options.sandbox),
-    approvalPolicy: readApprovalPolicyOption(parsed.options.approvalPolicy),
+    isolationMode: readIsolationModeOption(parsed.options.isolation),
+    permissionMode: readPermissionModeOption(parsed.options.permissionMode),
   };
 }
 
@@ -206,7 +203,7 @@ function createRuntimeSessionRef(
   }
 
   return {
-    type: "codex-local",
+    type: "claude-code-local",
     id: runtimeSessionId,
   };
 }
@@ -239,32 +236,43 @@ function readStringListOption(value: unknown): readonly string[] {
   return stringValue === undefined ? [] : [stringValue];
 }
 
-function readSandboxModeOption(value: unknown): CodexRuntimeSandboxMode | undefined {
+function readIsolationModeOption(
+  value: unknown,
+): ClaudeCodeRuntimeIsolationMode | undefined {
   const option = readStringOption(value);
 
   if (option === undefined) {
     return undefined;
   }
 
-  if (option === "read-only" || option === "workspace-write" || option === "danger-full-access") {
+  if (option === "strict" || option === "inherit") {
     return option;
   }
 
-  throw new Error(`Unsupported Codex sandbox mode: ${option}`);
+  throw new Error(`Unsupported Claude Code isolation mode: ${option}`);
 }
 
-function readApprovalPolicyOption(value: unknown): CodexRuntimeApprovalPolicy | undefined {
+function readPermissionModeOption(
+  value: unknown,
+): ClaudeCodeRuntimePermissionMode | undefined {
   const option = readStringOption(value);
 
   if (option === undefined) {
     return undefined;
   }
 
-  if (option === "untrusted" || option === "on-request" || option === "never") {
+  if (
+    option === "default" ||
+    option === "acceptEdits" ||
+    option === "plan" ||
+    option === "auto" ||
+    option === "dontAsk" ||
+    option === "bypassPermissions"
+  ) {
     return option;
   }
 
-  throw new Error(`Unsupported Codex approval policy: ${option}`);
+  throw new Error(`Unsupported Claude Code permission mode: ${option}`);
 }
 
 function readStringOption(value: unknown): string | undefined {

@@ -16,10 +16,11 @@ import {
 } from "@pragma/core";
 import type { IExpertAgentMcpConfig, IExpertAgentSkillsConfig } from "@pragma/core";
 import type { RuntimeSessionStorageContext } from "@pragma/core";
-import { createCodexLocalRuntimeAdapter } from "../src/adapter.ts";
+import { createCodexRuntime } from "../src/adapter.ts";
+import { canUseCodexRuntime } from "../src/availability.ts";
 import type { CodexRuntimeSpawn } from "../src/types.ts";
 
-describe("createCodexLocalRuntimeAdapter", () => {
+describe("createCodexRuntime", () => {
   beforeEach(async () => {
     vi.stubEnv("CODEX_HOME", await mkdtemp(join(tmpdir(), "pragma-codex-shared-home-")));
   });
@@ -29,14 +30,67 @@ describe("createCodexLocalRuntimeAdapter", () => {
   });
 
   it("declares MCP support", () => {
-    const adapter = createCodexLocalRuntimeAdapter();
+    const adapter = createCodexRuntime();
 
     expect(adapter.descriptor.capabilities?.supportsMcp).toBe(true);
   });
 
+  it("exposes runtime availability through the adapter", async () => {
+    const adapter = createCodexRuntime({
+      canUse: () => ({
+        usable: true,
+        details: {
+          source: "test",
+        },
+      }),
+    });
+
+    await expect(adapter.canUse()).resolves.toEqual({
+      usable: true,
+      details: {
+        source: "test",
+      },
+    });
+  });
+
+  it("probes Codex CLI availability", async () => {
+    const fake = new FakeProbeProcess({
+      exitCode: 0,
+      stdout: "codex-cli 1.2.3\n",
+    });
+
+    const availability = await canUseCodexRuntime({
+      spawn: fake.spawn,
+    });
+
+    expect(fake.command).toBe("codex");
+    expect(fake.args).toEqual(["--version"]);
+    expect(availability).toEqual({
+      usable: true,
+      details: {
+        executablePath: "codex",
+        version: "codex-cli 1.2.3",
+      },
+    });
+  });
+
+  it("rejects session creation when Codex is unavailable", async () => {
+    const adapter = createCodexRuntime({
+      canUse: () => ({
+        usable: false,
+        reason: "Codex test probe failed.",
+      }),
+    });
+    const agent = await createTestAgent();
+
+    await expect(adapter.createSession({ agent })).rejects.toThrow(
+      "Runtime is not available: Codex Local (codex-local). Codex test probe failed.",
+    );
+  });
+
   it("starts codex app-server and streams a turn result", async () => {
     const fake = new FakeCodexAppServer();
-    const adapter = createCodexLocalRuntimeAdapter({
+    const adapter = createCodexRuntime({
       spawn: fake.spawn,
       defaultModelName: "gpt-5-codex",
     });
@@ -83,7 +137,7 @@ describe("createCodexLocalRuntimeAdapter", () => {
   it("loads and disposes user MCP config for the workflow tools server", async () => {
     const fake = new FakeCodexAppServer();
     const dispose = vi.fn(async () => undefined);
-    const adapter = createCodexLocalRuntimeAdapter({
+    const adapter = createCodexRuntime({
       spawn: fake.spawn,
     });
     const agent = await createTestAgent({
@@ -127,7 +181,7 @@ describe("createCodexLocalRuntimeAdapter", () => {
 
   it("does not treat codex userMessage items as tool events", async () => {
     const fake = new FakeCodexAppServer({ emitUserMessageItem: true });
-    const adapter = createCodexLocalRuntimeAdapter({
+    const adapter = createCodexRuntime({
       spawn: fake.spawn,
     });
     const agent = await createTestAgent();
@@ -150,7 +204,7 @@ describe("createCodexLocalRuntimeAdapter", () => {
 
   it("still streams explicit codex tool items as tool events", async () => {
     const fake = new FakeCodexAppServer({ emitCommandExecutionItem: true });
-    const adapter = createCodexLocalRuntimeAdapter({
+    const adapter = createCodexRuntime({
       spawn: fake.spawn,
     });
     const agent = await createTestAgent();
@@ -181,7 +235,7 @@ describe("createCodexLocalRuntimeAdapter", () => {
 
   it("reads usage from nested codex turn payloads", async () => {
     const fake = new FakeCodexAppServer({ usageLocation: "turn" });
-    const adapter = createCodexLocalRuntimeAdapter({
+    const adapter = createCodexRuntime({
       spawn: fake.spawn,
     });
     const agent = await createTestAgent();
@@ -215,7 +269,7 @@ describe("createCodexLocalRuntimeAdapter", () => {
         });
       },
     });
-    const adapter = createCodexLocalRuntimeAdapter({
+    const adapter = createCodexRuntime({
       env: { CODEX_HOME: codexHome },
       spawn: fake.spawn,
     });
@@ -249,7 +303,7 @@ describe("createCodexLocalRuntimeAdapter", () => {
         });
       },
     });
-    const adapter = createCodexLocalRuntimeAdapter({
+    const adapter = createCodexRuntime({
       env: { CODEX_HOME: codexHome },
       spawn: fake.spawn,
     });
@@ -298,7 +352,7 @@ describe("createCodexLocalRuntimeAdapter", () => {
         ],
       },
     });
-    const adapter = createCodexLocalRuntimeAdapter({
+    const adapter = createCodexRuntime({
       spawn: fake.spawn,
     });
 
@@ -326,7 +380,7 @@ describe("createCodexLocalRuntimeAdapter", () => {
 
   it("injects always-on context into the first codex turn input", async () => {
     const fake = new FakeCodexAppServer();
-    const adapter = createCodexLocalRuntimeAdapter({
+    const adapter = createCodexRuntime({
       spawn: fake.spawn,
     });
     const contextSystem = new ContextSystem();
@@ -391,7 +445,7 @@ describe("createCodexLocalRuntimeAdapter", () => {
 
   it("does not inject startup context again after the first codex turn start fails", async () => {
     const fake = new FakeCodexAppServer({ failFirstTurnStart: true });
-    const adapter = createCodexLocalRuntimeAdapter({
+    const adapter = createCodexRuntime({
       spawn: fake.spawn,
     });
     const contextSystem = new ContextSystem();
@@ -446,7 +500,7 @@ describe("createCodexLocalRuntimeAdapter", () => {
 
   it("resumes a matching codex runtime session", async () => {
     const fake = new FakeCodexAppServer();
-    const adapter = createCodexLocalRuntimeAdapter({
+    const adapter = createCodexRuntime({
       spawn: fake.spawn,
     });
     const agent = await createTestAgent();
@@ -468,7 +522,7 @@ describe("createCodexLocalRuntimeAdapter", () => {
 
   it("does not inject startup context when resuming a codex runtime session", async () => {
     const fake = new FakeCodexAppServer();
-    const adapter = createCodexLocalRuntimeAdapter({
+    const adapter = createCodexRuntime({
       spawn: fake.spawn,
     });
     const contextSystem = new ContextSystem();
@@ -510,7 +564,7 @@ describe("createCodexLocalRuntimeAdapter", () => {
   it("restores a matching codex runtime session before resume", async () => {
     const fake = new FakeCodexAppServer();
     const restoredContexts: RuntimeSessionStorageContext[] = [];
-    const adapter = createCodexLocalRuntimeAdapter({
+    const adapter = createCodexRuntime({
       spawn: fake.spawn,
       sessionRestoreHandler: (context) => {
         restoredContexts.push(context);
@@ -539,7 +593,7 @@ describe("createCodexLocalRuntimeAdapter", () => {
 
   it("rejects app-server approval requests when no human handler is configured", async () => {
     const fake = new FakeCodexAppServer({ requestApproval: true });
-    const adapter = createCodexLocalRuntimeAdapter({
+    const adapter = createCodexRuntime({
       spawn: fake.spawn,
     });
     const agent = await createTestAgent();
@@ -750,6 +804,48 @@ class FakeCodexAppServer extends EventEmitter {
 
   private writeServerRequest(id: number, method: string, params: unknown): void {
     this.stdout.write(`${JSON.stringify({ id, method, params })}\n`);
+  }
+}
+
+class FakeProbeProcess extends EventEmitter {
+  readonly stdout = new PassThrough();
+  readonly stderr = new PassThrough();
+  readonly stdin = new Writable({
+    write(_chunk, _encoding, callback) {
+      callback();
+    },
+  });
+  command = "";
+  args: readonly string[] = [];
+  env: NodeJS.ProcessEnv = {};
+
+  readonly spawn: CodexRuntimeSpawn = (command, args, options) => {
+    this.command = command;
+    this.args = args;
+    this.env = options.env;
+    queueMicrotask(() => {
+      this.stdout.write(this.result.stdout ?? "");
+      this.stderr.write(this.result.stderr ?? "");
+      this.stdout.end();
+      this.stderr.end();
+      this.emit("exit", this.result.exitCode, null);
+    });
+    return this as unknown as ChildProcessWithoutNullStreams;
+  };
+
+  constructor(
+    private readonly result: {
+      readonly exitCode: number;
+      readonly stdout?: string | undefined;
+      readonly stderr?: string | undefined;
+    },
+  ) {
+    super();
+  }
+
+  kill(): boolean {
+    this.emit("exit", null, "SIGTERM");
+    return true;
   }
 }
 

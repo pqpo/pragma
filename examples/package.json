@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "start:basic": "tsx src/run-expert-agent.ts",
+    "start:claude-code-runtime": "tsx src/run-claude-code-runtime-agent.ts",
     "start:codex-runtime": "tsx src/run-codex-runtime-agent.ts",
     "start:minimal-agent": "tsx src/run-minimal-agent-api.ts",
     "start:memory": "tsx src/run-memory-system-example.ts",
@@ -30,6 +31,7 @@
     "@pragma/core": "workspace:*",
     "@pragma/plugin-repo-manager": "workspace:*",
     "@pragma/plugin-memory": "workspace:*",
+    "@pragma/runtime-claude-code": "workspace:*",
     "@pragma/runtime-codex": "workspace:*",
     "@pragma/runtime-pi": "workspace:*",
     "cac": "^7.0.0",

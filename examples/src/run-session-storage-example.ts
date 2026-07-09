@@ -7,7 +7,7 @@ import type {
   RuntimeSessionRestoreHandler,
   RuntimeSessionSyncCallback,
 } from "@pragma/core";
-import { createCloudPiRuntimeAdapter } from "@pragma/runtime-pi";
+import { createPiRuntime } from "@pragma/runtime-pi";
 
 import { printRunHeader, printRunResult } from "./harness/expert-agent-example-utils.ts";
 import { createExampleLoggerProvider } from "./harness/logger.ts";
@@ -17,6 +17,7 @@ import {
   readExampleModelConfig,
 } from "./harness/model-config.ts";
 import { defaultWorkspaceRoot, ensureWorkspaceDir, loadExamplesEnv } from "./harness/paths.ts";
+import { exitIfRuntimeUnavailable } from "./harness/runtime-availability.ts";
 import { printRunStream } from "./harness/stream-output.ts";
 
 const agentId = "session-storage-example-expert";
@@ -72,10 +73,11 @@ console.log(`- long-term storage: ${longTermStorage}`);
 console.log("");
 
 const firstAgent = await createExampleAgent(firstWorkspace);
-const firstRuntime = createCloudPiRuntimeAdapter({
+const firstRuntime = createPiRuntime({
   loggerProvider,
   sessionSyncCallback: syncSession,
 });
+await exitIfRuntimeUnavailable(firstRuntime);
 const firstSession = await firstRuntime.createSession({
   agent: firstAgent,
   context: {
@@ -107,11 +109,12 @@ for (const file of await readdir(getArchivedSessionDir(runtimeSessionId))) {
 console.log("");
 
 const secondAgent = await createExampleAgent(secondWorkspace);
-const secondRuntime = createCloudPiRuntimeAdapter({
+const secondRuntime = createPiRuntime({
   loggerProvider,
   sessionRestoreHandler: restoreSession,
   sessionSyncCallback: syncSession,
 });
+await exitIfRuntimeUnavailable(secondRuntime);
 const secondSession = await secondRuntime.createSession({
   agent: secondAgent,
   context: {

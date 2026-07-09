@@ -77,12 +77,12 @@ const result = await coder.run("实现 GitHub 登录", {
 
 ```ts
 import { createRuntimeRegistry } from "@pragma/core";
-import { createCloudPiRuntimeAdapter } from "@pragma/runtime-pi";
+import { createPiRuntime } from "@pragma/runtime-pi";
 
 const runtimes = createRuntimeRegistry({
   defaultRuntime: "pi",
   runtimes: [
-    createCloudPiRuntimeAdapter({
+    createPiRuntime({
       descriptor: {
         id: "pi",
         displayName: "PI Runtime",
@@ -104,7 +104,7 @@ const result = await coder.run("实现 GitHub 登录", {
 这里的 `"pi"` 来自 Runtime adapter 的 descriptor：
 
 ```ts
-const runtime = createCloudPiRuntimeAdapter({
+const runtime = createPiRuntime({
   descriptor: {
     id: "pi",
     displayName: "PI Runtime",
@@ -122,10 +122,10 @@ runtime.descriptor.capabilities.targets; // ["agent", ...]
 
 ```ts
 import { createRuntimeRegistry } from "@pragma/core";
-import { createCodexLocalRuntimeAdapter } from "@pragma/runtime-codex";
+import { createCodexRuntime } from "@pragma/runtime-codex";
 
 const runtimes = createRuntimeRegistry({
-  runtimes: [createCodexLocalRuntimeAdapter()],
+  runtimes: [createCodexRuntime()],
 });
 
 await coder.run("实现 GitHub 登录", {
@@ -677,10 +677,10 @@ packages/core
   RuntimeAdapter / RuntimeAgentSession 公共协议
 
 packages/runtime/pi
-  createCloudPiRuntimeAdapter()
+  createPiRuntime()
 
 packages/runtime/codex
-  createCodexLocalRuntimeAdapter()
+  createCodexRuntime()
 ```
 
 也就是说，`RuntimeAdapter` 和 `RuntimeRegistry` 接口属于 `agent-core` 层；具体 runtime adapter 属于独立 `@pragma/runtime-*` 包。

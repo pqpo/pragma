@@ -1,8 +1,8 @@
-import type { ChildProcessWithoutNullStreams } from "node:child_process";
-
 import type { ExpertAgentLoggerProvider } from "@pragma/core";
 import type {
+  RuntimeCanUseResult,
   RuntimeAdapterDescriptor,
+  RuntimeCommandSpawn,
   RuntimeSessionRestoreHandler,
   RuntimeSessionSyncCallback,
 } from "@pragma/core";
@@ -17,14 +17,7 @@ export interface CodexRuntimeClientInfo {
   readonly version: string;
 }
 
-export type CodexRuntimeSpawn = (
-  command: string,
-  args: readonly string[],
-  options: {
-    readonly cwd: string;
-    readonly env: NodeJS.ProcessEnv;
-  },
-) => ChildProcessWithoutNullStreams;
+export type CodexRuntimeSpawn = RuntimeCommandSpawn;
 
 export interface CodexRuntimeAdapterOptions {
   readonly descriptor?: Partial<RuntimeAdapterDescriptor> | undefined;
@@ -42,6 +35,7 @@ export interface CodexRuntimeAdapterOptions {
   readonly sandboxMode?: CodexRuntimeSandboxMode | undefined;
   readonly approvalPolicy?: CodexRuntimeApprovalPolicy | undefined;
   readonly spawn?: CodexRuntimeSpawn | undefined;
+  readonly canUse?: (() => Promise<RuntimeCanUseResult> | RuntimeCanUseResult) | undefined;
   readonly outputRetryLimit?: number | undefined;
   readonly sessionRestoreHandler?: RuntimeSessionRestoreHandler | undefined;
   readonly sessionSyncCallback?: RuntimeSessionSyncCallback | undefined;

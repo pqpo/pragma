@@ -183,6 +183,9 @@ importers:
       '@pragma/plugin-repo-manager':
         specifier: workspace:*
         version: link:../plugins/repo-manager
+      '@pragma/runtime-claude-code':
+        specifier: workspace:*
+        version: link:../packages/runtime/claude-code
       '@pragma/runtime-codex':
         specifier: workspace:*
         version: link:../packages/runtime/codex
