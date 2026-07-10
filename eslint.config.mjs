@@ -73,7 +73,7 @@ const config = tseslint.config(
           patterns: [
             ...commonRestrictedPatterns,
             {
-              group: ["@pragma/runtime-*", "@pragma/server-*", "next", "next/*"],
+              group: ["@pragma/server-*", "next", "next/*"],
               message: "Desktop local bridge must not depend on server internals or Web UI.",
             },
           ],

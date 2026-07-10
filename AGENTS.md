@@ -129,7 +129,7 @@ lib
 apps/web    -> client -> shared
 apps/server -> server -> core -> shared
 apps/worker -> server -> runtime-* -> core -> shared
-apps/desktop    -> core -> shared
+apps/desktop    -> runtime-* -> core -> shared
 plugins/*   -> core -> shared
 examples    -> runtime-* / plugin-* / core -> shared
 ```
@@ -141,7 +141,7 @@ examples    -> runtime-* / plugin-* / core -> shared
 | `apps/web`           | `@pragma/shared`、`@pragma/client`                                           |
 | `apps/server`        | `@pragma/shared`、`@pragma/server`、`@pragma/core`                           |
 | `apps/worker`        | `@pragma/shared`、`@pragma/server`、`@pragma/core`、具体 `@pragma/runtime-*` |
-| `apps/desktop`       | `@pragma/shared`、`@pragma/core`                                             |
+| `apps/desktop`       | `@pragma/shared`、`@pragma/core`、具体 `@pragma/runtime-*`                   |
 | `plugins/*`          | `@pragma/shared`、`@pragma/core`；不依赖 app、server、client 或具体 runtime  |
 | `examples`           | `@pragma/core`、具体 `@pragma/runtime-*`、具体 `@pragma/plugin-*`            |
 | `packages/shared`    | 无内部 package 依赖；只允许运行时中立依赖                                    |

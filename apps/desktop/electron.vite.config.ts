@@ -3,7 +3,16 @@ import { defineConfig, externalizeDepsPlugin } from "electron-vite";
 
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin()],
+    plugins: [
+      externalizeDepsPlugin({
+        exclude: [
+          "@pragma/runtime-claude-code",
+          "@pragma/runtime-codex",
+          "@pragma/core",
+          "@pragma/shared",
+        ],
+      }),
+    ],
   },
   preload: {
     plugins: [externalizeDepsPlugin()],

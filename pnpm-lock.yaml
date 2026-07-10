@@ -38,6 +38,12 @@ importers:
       '@phosphor-icons/react':
         specifier: latest
         version: 2.1.10(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@pragma/runtime-claude-code':
+        specifier: workspace:*
+        version: link:../../packages/runtime/claude-code
+      '@pragma/runtime-codex':
+        specifier: workspace:*
+        version: link:../../packages/runtime/codex
       react:
         specifier: latest
         version: 19.2.7

@@ -1,4 +1,5 @@
-import { canUseRuntimeBinary, type RuntimeCanUseResult } from "@pragma/core";
+import { canUseRuntimeBinary } from "@pragma/core/runtime/process-probe";
+import type { RuntimeCanUseResult } from "@pragma/core/runtime/runtime-adapter";
 import type { CodexRuntimeSpawn } from "./types.ts";
 
 export interface CodexRuntimeAvailabilityOptions {

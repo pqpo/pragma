@@ -9,9 +9,10 @@ describe("App", () => {
 
     expect(html).toContain("Settings");
     expect(html).toContain("Models &amp; Providers");
-    expect(html).toContain("OpenAI");
-    expect(html).toContain("Anthropic");
-    expect(html).toContain("Advanced Settings");
+    expect(html).toContain("Add provider");
+    expect(html).toContain("Loading providers…");
+    expect(html).not.toContain("Anthropic");
+    expect(html).not.toContain("Advanced Settings");
   });
 
   it("offers both requested settings sections", () => {
@@ -28,5 +29,11 @@ describe("App", () => {
     expect(html).toContain("Missions");
     expect(html).toContain("Studio");
     expect(html.match(/disabled=""/g)?.length).toBe(5);
+  });
+
+  it("includes an accessible sidebar collapse control", () => {
+    const html = renderToStaticMarkup(<App />);
+
+    expect(html).toContain('aria-label="Collapse navigation"');
   });
 });

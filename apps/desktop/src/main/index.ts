@@ -1,9 +1,12 @@
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { BrowserWindow, app, ipcMain, shell } from "electron";
+import { BrowserWindow, app, ipcMain, safeStorage, shell } from "electron";
 
 import { createBridgeSnapshot } from "./bridge-snapshot.ts";
+import { installModelProviderHandlers } from "./model-provider-ipc.ts";
+import { createModelProviderStore } from "./model-provider-store.ts";
+import { getRuntimeAvailability } from "./runtime-availability.ts";
 import { installWorkspaceScopeHandlers } from "./workspace-scope.ts";
 
 const currentDir = dirname(fileURLToPath(import.meta.url));
@@ -20,7 +23,7 @@ async function createWindow(): Promise<void> {
     autoHideMenuBar: true,
     show: false,
     webPreferences: {
-      preload: join(currentDir, "../preload/index.js"),
+      preload: join(currentDir, "../preload/index.mjs"),
       sandbox: false,
       contextIsolation: true,
       nodeIntegration: false,
@@ -54,9 +57,20 @@ async function createWindow(): Promise<void> {
 }
 
 ipcMain.handle("bridge:snapshot", () => createBridgeSnapshot());
+ipcMain.handle("runtimes:availability", () => getRuntimeAvailability());
 installWorkspaceScopeHandlers(() => mainWindow);
 
 void app.whenReady().then(async () => {
+  installModelProviderHandlers(
+    createModelProviderStore({
+      configPath: join(app.getPath("home"), ".pragma", "model-providers.json"),
+      encryption: {
+        isAvailable: () => safeStorage.isEncryptionAvailable(),
+        encrypt: (plainText) => safeStorage.encryptString(plainText),
+        decrypt: (encrypted) => safeStorage.decryptString(encrypted),
+      },
+    }),
+  );
   await createWindow();
 
   app.on("activate", () => {

@@ -2,18 +2,25 @@ import type { Icon } from "@phosphor-icons/react";
 import {
   ArchiveTrayIcon,
   CaretDown,
-  CaretRight,
-  Check,
+  CaretDoubleLeft,
+  CaretDoubleRight,
   GearSix,
   House,
   Key,
-  Monitor,
+  Plus,
   Robot,
   RocketLaunch,
   TerminalWindow,
+  Trash,
   UserCircle,
 } from "@phosphor-icons/react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+
+import type {
+  DesktopRuntimeAvailability,
+  ModelConnectionTestResult,
+  ModelProvider,
+} from "../../shared/desktop-api.ts";
 
 type SettingsView = "models" | "runtimes";
 
@@ -29,14 +36,29 @@ const navigationItems: readonly {
   { label: "Settings", icon: GearSix, active: true },
 ];
 
-function Sidebar() {
+function Sidebar(props: { readonly collapsed: boolean; readonly onToggle: () => void }) {
   return (
     <aside className="sidebar">
-      <div className="brand" aria-label="Pragma">
-        <span className="brand-mark" aria-hidden="true">
-          P
-        </span>
-        <span className="brand-name">Pragma</span>
+      <div className="sidebar-brand-row">
+        <div className="brand" aria-label="Pragma">
+          <span className="brand-mark" aria-hidden="true">
+            P
+          </span>
+          <span className="brand-name">Pragma</span>
+        </div>
+        <button
+          className="sidebar-collapse-toggle"
+          type="button"
+          aria-label={props.collapsed ? "Expand navigation" : "Collapse navigation"}
+          title={props.collapsed ? "Expand navigation" : "Collapse navigation"}
+          onClick={props.onToggle}
+        >
+          {props.collapsed ? (
+            <CaretDoubleRight size={18} weight="bold" aria-hidden="true" />
+          ) : (
+            <CaretDoubleLeft size={18} weight="bold" aria-hidden="true" />
+          )}
+        </button>
       </div>
 
       <nav className="navigation" aria-label="Main navigation">
@@ -49,6 +71,8 @@ function Sidebar() {
               className={item.active ? "navigation-item is-active" : "navigation-item"}
               type="button"
               aria-current={item.active ? "page" : undefined}
+              aria-label={item.label}
+              title={item.label}
               disabled
             >
               <NavigationIcon size={24} weight={item.active ? "fill" : "regular"} />
@@ -70,119 +94,418 @@ function Sidebar() {
   );
 }
 
-function StaticToggle(props: { readonly checked?: boolean; readonly label: string }) {
+type ProviderDraft = {
+  readonly id?: string;
+  readonly name: string;
+  readonly baseUrl: string;
+  readonly apiKey: string;
+  readonly models: readonly string[];
+};
+
+const emptyProviderDraft = (): ProviderDraft => ({
+  name: "",
+  baseUrl: "https://api.openai.com/v1",
+  apiKey: "",
+  models: [],
+});
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : "The change could not be saved.";
+}
+
+function ProviderEditor(props: {
+  readonly initialValue: ProviderDraft;
+  readonly onCancel: () => void;
+  readonly onSaved: (provider: ModelProvider) => void;
+}) {
+  const [draft, setDraft] = useState(props.initialValue);
+  const [modelId, setModelId] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const isEditing = draft.id !== undefined;
+
+  const addModel = () => {
+    const normalized = modelId.trim();
+    if (!normalized || draft.models.includes(normalized)) return;
+    setDraft({ ...draft, models: [...draft.models, normalized] });
+    setModelId("");
+  };
+
+  const save = async () => {
+    setError(null);
+    if (!isEditing && !draft.apiKey.trim()) {
+      setError("Enter an API key before saving the provider.");
+      return;
+    }
+    setSaving(true);
+    try {
+      const input = {
+        name: draft.name,
+        baseUrl: draft.baseUrl,
+        models: [...draft.models],
+      };
+      const provider = isEditing
+        ? await window.pragmaDesktop.updateModelProvider({
+            ...input,
+            id: draft.id,
+            ...(draft.apiKey.trim() ? { apiKey: draft.apiKey } : {}),
+          })
+        : await window.pragmaDesktop.createModelProvider({ ...input, apiKey: draft.apiKey });
+      props.onSaved(provider);
+    } catch (saveError) {
+      setError(errorMessage(saveError));
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
-    <span
-      className={props.checked ? "toggle is-checked" : "toggle"}
-      role="img"
-      aria-label={`${props.label}: ${props.checked ? "on" : "off"}`}
+    <form
+      className="provider-editor"
+      onSubmit={(event) => {
+        event.preventDefault();
+        void save();
+      }}
     >
-      <span className="toggle-thumb">
-        {props.checked ? <Check size={13} weight="bold" aria-hidden="true" /> : null}
-      </span>
-    </span>
+      <label className="static-field">
+        <span>Provider name</span>
+        <input
+          value={draft.name}
+          onChange={(event) => setDraft({ ...draft, name: event.target.value })}
+          placeholder="My OpenAI-compatible API"
+          autoFocus
+        />
+      </label>
+      <label className="static-field">
+        <span>API base URL</span>
+        <input
+          value={draft.baseUrl}
+          onChange={(event) => setDraft({ ...draft, baseUrl: event.target.value })}
+          placeholder="https://api.example.com/v1"
+          inputMode="url"
+        />
+      </label>
+      <label className="static-field">
+        <span>API key</span>
+        <span className="key-input-wrap">
+          <Key size={16} aria-hidden="true" />
+          <input
+            type="password"
+            value={draft.apiKey}
+            onChange={(event) => setDraft({ ...draft, apiKey: event.target.value })}
+            placeholder={isEditing ? "Saved securely — enter to replace" : "sk-..."}
+            autoComplete="off"
+          />
+        </span>
+      </label>
+      <div className="static-field">
+        <span>Models</span>
+        <div className="model-input-row">
+          <input
+            value={modelId}
+            onChange={(event) => setModelId(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                addModel();
+              }
+            }}
+            placeholder="e.g. gpt-4.1-mini"
+          />
+          <button className="secondary-button" type="button" onClick={addModel}>
+            <Plus size={16} aria-hidden="true" />
+            Add model
+          </button>
+        </div>
+        <div className="model-chip-list" aria-label="Configured models">
+          {draft.models.map((model) => (
+            <span className="model-chip" key={model}>
+              {model}
+              <button
+                type="button"
+                aria-label={`Remove ${model}`}
+                onClick={() =>
+                  setDraft({ ...draft, models: draft.models.filter((item) => item !== model) })
+                }
+              >
+                ×
+              </button>
+            </span>
+          ))}
+        </div>
+      </div>
+      {error ? (
+        <p className="form-error" role="alert">
+          {error}
+        </p>
+      ) : null}
+      <div className="provider-actions">
+        <button
+          className="secondary-button"
+          type="button"
+          onClick={props.onCancel}
+          disabled={saving}
+        >
+          Cancel
+        </button>
+        <button className="primary-button" type="submit" disabled={saving}>
+          {saving ? "Saving…" : "Save provider"}
+        </button>
+      </div>
+    </form>
   );
 }
 
 function ProviderCard(props: {
-  readonly name: string;
-  readonly model: string;
-  readonly active?: boolean;
-  readonly children?: React.ReactNode;
+  readonly provider: ModelProvider;
+  readonly onDelete: () => void;
+  readonly onEdit: () => void;
 }) {
+  const [testingModel, setTestingModel] = useState<string | null>(null);
+  const [results, setResults] = useState<Record<string, ModelConnectionTestResult>>({});
+  const [deleting, setDeleting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const testModel = async (modelId: string) => {
+    setTestingModel(modelId);
+    setError(null);
+    try {
+      const result = await window.pragmaDesktop.testModelConnection({
+        providerId: props.provider.id,
+        modelId,
+      });
+      setResults((current) => ({ ...current, [modelId]: result }));
+    } catch (testError) {
+      setError(errorMessage(testError));
+    } finally {
+      setTestingModel(null);
+    }
+  };
+
+  const remove = async () => {
+    if (!window.confirm(`Delete ${props.provider.name}? This removes its saved API key.`)) return;
+    setDeleting(true);
+    setError(null);
+    try {
+      await window.pragmaDesktop.deleteModelProvider({ id: props.provider.id });
+      props.onDelete();
+    } catch (deleteError) {
+      setError(errorMessage(deleteError));
+      setDeleting(false);
+    }
+  };
+
   return (
-    <article className={props.active ? "provider-card is-expanded" : "provider-card"}>
+    <article className="provider-card is-expanded">
       <header className="card-header">
         <span className="card-icon" aria-hidden="true">
           <Robot size={24} weight="duotone" />
         </span>
         <div className="card-title-group">
-          <h3>{props.name}</h3>
-          <p className={props.active ? "status-copy is-active" : "status-copy"}>
-            {props.active ? "Active" : "Inactive"}
-            {props.active ? <span aria-hidden="true">•</span> : null}
-            {props.active ? props.model : null}
+          <h3>{props.provider.name}</h3>
+          <p className="status-copy is-active">
+            {props.provider.models.length} {props.provider.models.length === 1 ? "model" : "models"}
+            <span aria-hidden="true">•</span>
+            OpenAI compatible
           </p>
         </div>
-        <StaticToggle checked={props.active === true} label={`${props.name} provider`} />
+        <button className="text-button" type="button" onClick={props.onEdit}>
+          Edit
+        </button>
       </header>
-      {props.children}
+      <div className="provider-fields">
+        <div className="static-field">
+          <span>API base URL</span>
+          <code className="configured-value">{props.provider.baseUrl}</code>
+        </div>
+        <div className="static-field">
+          <span>API key</span>
+          <span className="configured-value secret-value">
+            <Key size={16} aria-hidden="true" />
+            {props.provider.hasApiKey ? "Saved securely" : "Missing"}
+          </span>
+        </div>
+        <div className="static-field">
+          <span>Configured models</span>
+          <div className="configured-model-list">
+            {props.provider.models.map((model) => {
+              const result = results[model];
+              const isTesting = testingModel === model;
+              return (
+                <div className="configured-model" key={model}>
+                  <div>
+                    <strong>{model}</strong>
+                    {result ? (
+                      <p
+                        className={
+                          result.ok ? "connection-result is-success" : "connection-result is-error"
+                        }
+                      >
+                        {result.message}
+                        {result.latencyMs !== undefined ? ` (${result.latencyMs} ms)` : ""}
+                      </p>
+                    ) : null}
+                  </div>
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    onClick={() => void testModel(model)}
+                    disabled={testingModel !== null}
+                  >
+                    {isTesting ? "Testing…" : "Test connection"}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+      {error ? (
+        <p className="form-error" role="alert">
+          {error}
+        </p>
+      ) : null}
+      <div className="provider-danger-zone">
+        <button
+          className="danger-button"
+          type="button"
+          onClick={() => void remove()}
+          disabled={deleting}
+        >
+          <Trash size={16} aria-hidden="true" />
+          {deleting ? "Deleting…" : "Delete provider"}
+        </button>
+      </div>
     </article>
   );
 }
 
 function ModelsAndProviders() {
+  const [providers, setProviders] = useState<readonly ModelProvider[]>([]);
+  const [draft, setDraft] = useState<ProviderDraft | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const loadProviders = async () => {
+    setLoading(true);
+    try {
+      setProviders(await window.pragmaDesktop.listModelProviders());
+      setError(null);
+    } catch (loadError) {
+      setError(errorMessage(loadError));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadProviders();
+  }, []);
+
+  const saveProvider = (provider: ModelProvider) => {
+    setProviders((current) => {
+      const existing = current.some((item) => item.id === provider.id);
+      return existing
+        ? current.map((item) => (item.id === provider.id ? provider : item))
+        : [...current, provider];
+    });
+    setDraft(null);
+  };
+
   return (
     <div className="settings-panel" id="models-panel" role="tabpanel">
-      <header className="panel-heading">
-        <h2>Models &amp; Providers</h2>
-        <p>Configure primary and fallback AI models for orchestration tasks.</p>
+      <header className="panel-heading panel-heading-with-action">
+        <div>
+          <h2>Models &amp; Providers</h2>
+          <p>Add OpenAI-compatible APIs and test each configured model.</p>
+        </div>
+        {draft ? null : (
+          <button
+            className="primary-button"
+            type="button"
+            onClick={() => setDraft(emptyProviderDraft())}
+          >
+            <Plus size={17} aria-hidden="true" />
+            Add provider
+          </button>
+        )}
       </header>
 
       <div className="provider-list">
-        <ProviderCard name="OpenAI" model="gpt-5" active>
-          <div className="provider-fields">
-            <label className="static-field">
-              <span>API key</span>
-              <span className="input-shell secret-value">
-                <Key size={16} weight="regular" aria-hidden="true" />
-                ••••••••••••••••••••••••
-              </span>
-            </label>
-            <label className="static-field">
-              <span>Default model</span>
-              <span className="input-shell select-shell">
-                gpt-5
-                <CaretDown size={16} weight="bold" aria-hidden="true" />
-              </span>
-            </label>
+        {draft ? (
+          <article className="provider-card is-expanded">
+            <ProviderEditor
+              initialValue={draft}
+              onCancel={() => setDraft(null)}
+              onSaved={saveProvider}
+            />
+          </article>
+        ) : null}
+        {loading ? <p className="empty-state">Loading providers…</p> : null}
+        {!loading && !draft && providers.length === 0 ? (
+          <div className="empty-state">
+            <Robot size={28} aria-hidden="true" />
+            <h3>No providers configured</h3>
+            <p>Add an OpenAI-compatible API to configure models for this device.</p>
           </div>
-        </ProviderCard>
-
-        <ProviderCard name="Anthropic" model="Claude Sonnet" />
+        ) : null}
+        {providers.map((provider) => (
+          <ProviderCard
+            key={provider.id}
+            provider={provider}
+            onEdit={() =>
+              setDraft({
+                id: provider.id,
+                name: provider.name,
+                baseUrl: provider.baseUrl,
+                apiKey: "",
+                models: provider.models,
+              })
+            }
+            onDelete={() =>
+              setProviders((current) => current.filter((item) => item.id !== provider.id))
+            }
+          />
+        ))}
       </div>
-
-      <section className="advanced-section" aria-labelledby="advanced-heading">
-        <header className="section-copy">
-          <h3 id="advanced-heading">Advanced Settings</h3>
-          <p>Fine-tune global behavior for model inference.</p>
-        </header>
-
-        <div className="setting-row">
-          <div>
-            <h4>Streaming Responses</h4>
-            <p>Receive output token by token.</p>
-          </div>
-          <StaticToggle checked label="Streaming responses" />
-        </div>
-        <div className="setting-row">
-          <div>
-            <h4>Local Telemetry</h4>
-            <p>Save execution logs locally for debugging.</p>
-          </div>
-          <StaticToggle label="Local telemetry" />
-        </div>
-        <div className="temperature-setting">
-          <div className="temperature-heading">
-            <h4>Global Temperature</h4>
-            <span>0.7</span>
-          </div>
-          <div className="range-track" aria-label="Global temperature: 0.7">
-            <span className="range-fill" />
-            <span className="range-thumb" />
-          </div>
-        </div>
-      </section>
+      {error ? (
+        <p className="form-error" role="alert">
+          {error}
+        </p>
+      ) : null}
     </div>
   );
 }
 
-function RuntimeCard(props: {
-  readonly name: string;
-  readonly description: string;
-  readonly command: string;
-  readonly ready?: boolean;
-}) {
+const runtimeDetails = {
+  pi: {
+    name: "PI Runtime",
+    description: "Pragma's built-in runtime for managed agent execution.",
+    command: "Built in",
+  },
+  codex: {
+    name: "Codex",
+    description: "OpenAI's coding agent runtime for local workspaces and shell tasks.",
+    command: "codex",
+  },
+  "claude-code": {
+    name: "Claude Code",
+    description: "Anthropic's coding agent runtime for repository-aware development tasks.",
+    command: "claude",
+  },
+} satisfies Record<
+  DesktopRuntimeAvailability["id"],
+  {
+    readonly name: string;
+    readonly description: string;
+    readonly command: string;
+  }
+>;
+
+function RuntimeCard(props: { readonly runtime: DesktopRuntimeAvailability }) {
+  const details = runtimeDetails[props.runtime.id];
+  const available = props.runtime.status === "available";
+
   return (
     <article className="runtime-card">
       <header className="card-header runtime-card-header">
@@ -190,96 +513,103 @@ function RuntimeCard(props: {
           <TerminalWindow size={24} weight="duotone" />
         </span>
         <div className="card-title-group">
-          <h3>{props.name}</h3>
-          <p className={props.ready ? "status-copy is-active" : "status-copy"}>
+          <h3>{details.name}</h3>
+          <p className={available ? "status-copy is-active" : "status-copy"}>
             <span className="status-dot" aria-hidden="true" />
-            {props.ready ? "Detected" : "Not configured"}
+            {available ? "Available" : "Unavailable"}
           </p>
         </div>
-        <span className={props.ready ? "status-badge is-ready" : "status-badge"}>
-          {props.ready ? "Ready" : "Setup required"}
+        <span className={available ? "status-badge is-ready" : "status-badge"}>
+          {available ? "Ready" : "Not available"}
         </span>
       </header>
 
-      <p className="runtime-description">{props.description}</p>
+      <p className="runtime-description">{details.description}</p>
 
       <div className="runtime-command">
         <div>
-          <span>Executable</span>
-          <code>{props.command}</code>
+          <span>{props.runtime.id === "pi" ? "Runtime" : "Executable"}</span>
+          <code>{props.runtime.executablePath ?? details.command}</code>
         </div>
-        <CaretRight size={18} weight="bold" aria-hidden="true" />
+        {props.runtime.version ? (
+          <code className="runtime-version">{props.runtime.version}</code>
+        ) : null}
       </div>
+      {props.runtime.reason ? <p className="runtime-reason">{props.runtime.reason}</p> : null}
     </article>
   );
 }
 
 function RuntimeEnvironments() {
+  const [runtimes, setRuntimes] = useState<readonly DesktopRuntimeAvailability[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const loadRuntimes = async () => {
+    setLoading(true);
+    try {
+      setRuntimes(await window.pragmaDesktop.getRuntimeAvailability());
+      setError(null);
+    } catch (loadError) {
+      setError(errorMessage(loadError));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadRuntimes();
+  }, []);
+
   return (
     <div className="settings-panel" id="runtimes-panel" role="tabpanel">
-      <header className="panel-heading">
-        <h2>Runtime Environments</h2>
-        <p>Manage the local agent runtimes available to this device.</p>
-      </header>
-
-      <div className="device-summary">
-        <span className="device-icon" aria-hidden="true">
-          <Monitor size={24} weight="duotone" />
-        </span>
+      <header className="panel-heading panel-heading-with-action">
         <div>
-          <h3>This device</h3>
-          <p>Local runtime bridge is available for Pragma Desktop.</p>
+          <h2>Runtime Environments</h2>
+          <p>Check which runtimes are available on this device.</p>
         </div>
-        <span className="online-status">
-          <span className="online-dot" aria-hidden="true" />
-          Online
-        </span>
-      </div>
+        <button
+          className="secondary-button"
+          type="button"
+          onClick={() => void loadRuntimes()}
+          disabled={loading}
+        >
+          {loading ? "Checking…" : "Check again"}
+        </button>
+      </header>
 
       <section className="runtime-section" aria-labelledby="local-runtimes-heading">
         <header className="section-copy compact-section-copy">
-          <h3 id="local-runtimes-heading">Local runtimes</h3>
-          <p>Detected command-line agents that can execute work on this machine.</p>
+          <h3 id="local-runtimes-heading">Available runtimes</h3>
+          <p>PI is built in. Codex and Claude Code are checked from their local commands.</p>
         </header>
 
         <div className="runtime-list">
-          <RuntimeCard
-            name="Codex"
-            description="OpenAI's coding agent runtime for local workspaces and shell tasks."
-            command="/usr/local/bin/codex"
-            ready
-          />
-          <RuntimeCard
-            name="Claude Code"
-            description="Anthropic's coding agent runtime for repository-aware development tasks."
-            command="Not selected"
-          />
+          {loading ? <p className="empty-state">Checking runtime availability…</p> : null}
+          {runtimes.map((runtime) => (
+            <RuntimeCard key={runtime.id} runtime={runtime} />
+          ))}
         </div>
       </section>
-
-      <section className="runtime-defaults" aria-labelledby="runtime-defaults-heading">
-        <header className="section-copy compact-section-copy">
-          <h3 id="runtime-defaults-heading">Environment defaults</h3>
-          <p>Defaults applied when a mission starts in a local runtime.</p>
-        </header>
-        <div className="setting-row runtime-default-row">
-          <div>
-            <h4>Workspace access</h4>
-            <p>Ask before a runtime uses a folder outside the active workspace.</p>
-          </div>
-          <StaticToggle checked label="Ask before workspace access" />
-        </div>
-      </section>
+      {error ? (
+        <p className="form-error runtime-error" role="alert">
+          {error}
+        </p>
+      ) : null}
     </div>
   );
 }
 
 export function App() {
   const [activeView, setActiveView] = useState<SettingsView>("models");
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   return (
-    <main className="desktop-shell">
-      <Sidebar />
+    <main className={sidebarCollapsed ? "desktop-shell is-sidebar-collapsed" : "desktop-shell"}>
+      <Sidebar
+        collapsed={sidebarCollapsed}
+        onToggle={() => setSidebarCollapsed((collapsed) => !collapsed)}
+      />
 
       <section className="settings-page">
         <h1>Settings</h1>

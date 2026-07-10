@@ -8,7 +8,7 @@ In the diagrams below, `A -> B` means `A` may depend on `B`.
 apps/web    -> client -> shared
 apps/server -> server -> core -> shared
 apps/worker -> server -> runtime-* -> core -> shared
-apps/desktop    -> core -> shared
+apps/desktop    -> runtime-* -> core -> shared
 plugins/*   -> core -> shared
 examples    -> runtime-* / plugin-* / core -> shared
 ```
@@ -33,7 +33,7 @@ examples    -> runtime-* / plugin-* / core -> shared
 | `apps/web`           | `shared/*`, `client/*`                                                                     |
 | `apps/server`        | `@pragma/shared`, `@pragma/server`, `@pragma/core`                                         |
 | `apps/worker`        | `@pragma/shared`, `@pragma/server`, `@pragma/core`, concrete `@pragma/runtime-*` packages  |
-| `apps/desktop`       | `@pragma/shared`, `@pragma/core`                                                           |
+| `apps/desktop`       | `@pragma/shared`, `@pragma/core`, concrete `@pragma/runtime-*` packages                    |
 | `plugins/*`          | `@pragma/shared`, `@pragma/core`; no app, server, client, or concrete runtime dependencies |
 | `examples`           | `@pragma/core`, concrete `@pragma/runtime-*`, and concrete `@pragma/plugin-*` packages     |
 | `packages/shared`    | Runtime-neutral dependencies only                                                          |

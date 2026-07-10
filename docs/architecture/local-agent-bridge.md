@@ -164,7 +164,7 @@ packages/
 ```text
 apps/server -> packages/server/src/runtime-gateway -> packages/core/src/local-agent-bridge -> packages/core -> packages/shared
 apps/worker -> packages/core -> packages/shared
-apps/desktop    -> packages/core/src/local-agent-bridge -> packages/core -> packages/shared
+apps/desktop    -> runtime-* / packages/core/src/local-agent-bridge -> packages/core -> packages/shared
 ```
 
 禁止：

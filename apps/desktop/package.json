@@ -18,6 +18,8 @@
     "clean": "rm -rf out dist"
   },
   "dependencies": {
+    "@pragma/runtime-claude-code": "workspace:*",
+    "@pragma/runtime-codex": "workspace:*",
     "@phosphor-icons/react": "latest",
     "react": "latest",
     "react-dom": "latest",
