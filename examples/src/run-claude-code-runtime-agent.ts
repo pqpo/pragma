@@ -141,6 +141,7 @@ function createClaudeCodeRuntimeExampleContextSystem(): ContextSystem {
 
   contextSystem.register({
     namespace: HOST_CONTEXT_NAMESPACE,
+    required: true,
     store: createInMemoryContextStore({
       context: [
         {
@@ -158,6 +159,7 @@ function createClaudeCodeRuntimeExampleContextSystem(): ContextSystem {
             trigger: "always_on",
             trustLevel: "workspace",
             sensitivity: "internal",
+            priority: "critical",
           },
         },
         {
@@ -253,9 +255,7 @@ function readStringListOption(value: unknown): readonly string[] {
   return stringValue === undefined ? [] : [stringValue];
 }
 
-function readIsolationModeOption(
-  value: unknown,
-): ClaudeCodeRuntimeIsolationMode | undefined {
+function readIsolationModeOption(value: unknown): ClaudeCodeRuntimeIsolationMode | undefined {
   const option = readStringOption(value);
 
   if (option === undefined) {
@@ -269,9 +269,7 @@ function readIsolationModeOption(
   throw new Error(`Unsupported Claude Code isolation mode: ${option}`);
 }
 
-function readPermissionModeOption(
-  value: unknown,
-): ClaudeCodeRuntimePermissionMode | undefined {
+function readPermissionModeOption(value: unknown): ClaudeCodeRuntimePermissionMode | undefined {
   const option = readStringOption(value);
 
   if (option === undefined) {

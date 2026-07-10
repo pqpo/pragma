@@ -43,10 +43,21 @@ const workspace =
   cli.workspace === undefined ? defaultWorkspaceRoot : resolveExamplePath(cli.workspace);
 const contextDir = cli.context === undefined ? undefined : resolveExamplePath(cli.context);
 const contextStore = createExampleContextStore(contextDir);
-const contextSystem = new ContextSystem();
+const contextSystem = new ContextSystem({
+  roots: [
+    {
+      namespace: HOST_CONTEXT_NAMESPACE,
+      load: {
+        preloadPaths: [AGENTS_CONTEXT_ID],
+        priorityRules: [{ pattern: AGENTS_CONTEXT_ID, priority: "critical" }],
+      },
+    },
+  ],
+});
 contextSystem.register({
   namespace: HOST_CONTEXT_NAMESPACE,
   store: contextStore,
+  required: true,
 });
 
 await ensureWorkspaceDir(workspace);

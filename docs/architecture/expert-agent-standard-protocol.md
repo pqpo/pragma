@@ -174,19 +174,17 @@ skills:
 
 context:
   roots:
-    - id: order-docs
-      displayName: 订单专家上下文
-      uri: docs://order-domain-expert
-      path: ./context/order-domain-expert
-      access: read
-      index:
-        strategy: hybrid
+    - namespace: host
+      path: context/order-domain-expert
       load:
         preloadPaths:
-          - ./context/order-domain-expert/profile.md
-          - ./context/order-domain-expert/safety.md
+          - context/order-domain-expert/profile.md
+          - context/order-domain-expert/safety.md
         forbiddenLoad:
-          - ./context/order-domain-expert/archive/**
+          - context/order-domain-expert/archive/**
+        priorityRules:
+          - pattern: context/order-domain-expert/safety.md
+            priority: critical
 
 workspace:
   mode: cloud-sandbox
@@ -446,30 +444,28 @@ skills:
 - Skill 内容需要纳入版本和审计；
 - 来自上下文系统的 Skill 应遵守 context 的权限和加载规则。
 
-## 8. AGENTS.md 特殊上下文
+## 8. AGENTS.md 上下文约定
 
-`AGENTS.md` 不再作为独立 Manifest 字段声明。它是 context 中的特殊上下文：
+`AGENTS.md` 不作为独立 Manifest 字段，也不在 Core 中按 ID 特判。它和其他 context 使用相同的 trigger、root preload 和 priority 规则：
 
-- 上下文 ID 固定为 `AGENTS.md`；
-- 文件内容就是指令正文，不需要 frontmatter metadata；
-- 运行时自动把它视为 `always_on` 上下文加载；
-- 上下文工具可以通过 `readContext` / `editContext` 读取或编辑它；
-- 更新时仍保持纯 markdown 内容，不写入 metadata。
+- Context ID 是 Store 内的 opaque string，不要求扩展名；
+- 需要常驻加载时，由 metadata `trigger: always_on` 或 root `preloadPaths` 显式声明；
+- 需要靠前装配并在预算收缩时最后截断时，声明 `priority: critical` 或使用 root `priorityRules`；
+- 上下文工具通过标准 `readContext` / `editContext` 访问，权限由 Store 裁决。
 
 加载顺序：
 
 1. 平台系统约束；
 2. 租户或组织级指令；
-3. `AGENTS.md` 特殊上下文；
+3. 配置为 critical preload 的工程上下文（可以是 `AGENTS.md`）；
 4. 其他 `always_on` 上下文；
 5. 当前任务临时约束。
 
 冲突规则：
 
 - 越靠前的系统和平台安全约束优先级越高；
-- `AGENTS.md` 可以补充更具体的工程规范；
-- `AGENTS.md` 不能放宽前序安全规则、权限规则或 schema 规则；
-- 实际加载的 `AGENTS.md` 内容摘要必须进入运行快照。
+- 工程上下文可以补充更具体的工程规范，但不能放宽前序安全规则、权限规则或 schema 规则；
+- 实际加载、截断或省略的上下文必须进入运行快照。
 
 ## 9. 上下文路径与渐进式加载
 
@@ -497,21 +493,18 @@ context:
 
 | 字段                         | 必填 | 说明                                     |
 | ---------------------------- | ---- | ---------------------------------------- |
-| `roots[].id`                 | 是   | 当前专家内唯一的上下文根 ID              |
-| `roots[].displayName`        | 是   | 展示名称                                 |
-| `roots[].uri`                | 否   | 平台内上下文源 URI                       |
-| `roots[].path`               | 否   | workspace 或仓库内相对路径               |
-| `roots[].access`             | 是   | `read`、`readwrite`                      |
-| `roots[].index.strategy`     | 是   | `summary`、`vector`、`keyword`、`hybrid` |
-| `roots[].load.preloadPaths`  | 否   | 每次运行预加载的路径                     |
-| `roots[].load.forbiddenLoad` | 否   | 禁止加载路径                             |
+| `roots[].namespace`          | 否   | Store namespace，默认 `host`             |
+| `roots[].path`               | 否   | namespace 内的 Context ID 前缀           |
+| `roots[].load.preloadPaths`  | 否   | 每次运行预加载的 ID 或 pattern           |
+| `roots[].load.forbiddenLoad` | 否   | 不参与默认装配的 ID 或 pattern           |
+| `roots[].load.priorityRules` | 否   | 通用 critical/high/normal/low 路径优先级 |
 
 渐进式加载流程：
 
 ```text
 读取 Manifest
 → 校验任务输入
-→ 加载专家身份、能力范围、schema 和必要 AGENTS.md
+→ 加载专家身份、能力范围、schema 和配置为 preload 的工程上下文
 → 加载 context.preloadPaths 中的短上下文
 → 根据任务检索 summary/index
 → 加载相关片段
@@ -519,24 +512,19 @@ context:
 → 记录 Context Snapshot
 ```
 
-上下文元信息建议：
+当前上下文元信息：
 
 ```yaml
-title: 订单状态机规则
-owner: order-team
-source: human
-confidence: high
-trustLevel: team-trusted
-lastVerifiedAt: 2026-06-19
-writableByAgent: false
-tags:
-  - order
-  - state-machine
+description: 订单状态机规则
+trigger: model_decision
+trustLevel: workspace
+sensitivity: internal
+priority: high
 ```
 
 约束：
 
-- 上下文路径必须位于声明的 context root 或 workspace root 下；
+- Context ID 是 Store 内的 opaque string；文件 Store 负责 include/exclude 和 canonical root 边界；
 - `forbiddenLoad` 优先级高于 `preloadPaths`；
 - Agent 自进化只能写入被授权的上下文路径；
 - 发布版本应锁定上下文源版本、commit 或快照 ID；
@@ -626,7 +614,7 @@ type ExpertManifest = {
 7. MCP、Skill、context、workspace 的 ID 在各自作用域内唯一；
 8. 所有相对路径不能逃逸声明根目录；
 9. secret 不以明文出现在 Manifest；
-10. 如果 context 根中存在 `AGENTS.md`，必须能作为 `always_on` 上下文读取；
+10. 所有 preload 和 priority rule 必须指向合法的 Store Context ID 或 pattern；
 11. `workspace.defaultRoot` 指向已声明 root；
 12. `context.forbiddenLoad` 不被默认加载规则覆盖。
 
@@ -667,7 +655,7 @@ Runtime Adapter 根据 Manifest 准备执行环境：
 
 1. 选择 Runtime；
 2. 创建 workspace；
-3. 加载 context，其中 `AGENTS.md` 自动作为 `always_on` 上下文；
+3. 加载 context，并按通用 preload 和 priority 规则装配；
 4. 加载必要上下文；
 5. 注册允许的 MCP；
 6. 加载 Skills；
@@ -690,17 +678,17 @@ pragma.stream/v1
 
 事件公共字段：
 
-| 字段            | 含义                                            |
-| --------------- | ----------------------------------------------- |
+| 字段            | 含义                                        |
+| --------------- | ------------------------------------------- |
 | `schemaVersion` | 流式事件协议版本，当前为 `pragma.stream/v1` |
-| `eventId`       | 事件唯一 ID，用于幂等写入和客户端去重           |
-| `sequence`      | 同一个 `runId` 内单调递增的序号                 |
-| `runId`         | 当前事件所属运行                                |
-| `parentRunId`   | 可选；嵌套运行或工具事件指向父运行              |
-| `emittedAt`     | Runtime 产生事件的 ISO 时间                     |
-| `source`        | 事件来源，包括 agent、runtime 或 tool           |
-| `type`          | 事件类型                                        |
-| `payload`       | 事件负载，由 `type` 决定                        |
+| `eventId`       | 事件唯一 ID，用于幂等写入和客户端去重       |
+| `sequence`      | 同一个 `runId` 内单调递增的序号             |
+| `runId`         | 当前事件所属运行                            |
+| `parentRunId`   | 可选；嵌套运行或工具事件指向父运行          |
+| `emittedAt`     | Runtime 产生事件的 ISO 时间                 |
+| `source`        | 事件来源，包括 agent、runtime 或 tool       |
+| `type`          | 事件类型                                    |
+| `payload`       | 事件负载，由 `type` 决定                    |
 
 首批标准事件类型：
 

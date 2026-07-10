@@ -94,17 +94,19 @@ describe("Repo Manager plugin", () => {
 
     await expect(agent.listContext()).resolves.toMatchObject({
       ok: true,
-      value: expect.arrayContaining([
-        expect.objectContaining({
-          namespace: "repo-manager",
-          id: CODE_REPOSITORY_CONTEXT_ID,
-          metadata: expect.objectContaining({
-            trigger: "model_decision",
-            trustLevel: "external",
-            sensitivity: "internal",
+      value: {
+        items: expect.arrayContaining([
+          expect.objectContaining({
+            namespace: "repo-manager",
+            id: CODE_REPOSITORY_CONTEXT_ID,
+            metadata: expect.objectContaining({
+              trigger: "model_decision",
+              trustLevel: "external",
+              sensitivity: "internal",
+            }),
           }),
-        }),
-      ]),
+        ]),
+      },
     });
 
     await expect(
@@ -136,7 +138,7 @@ describe("Repo Manager plugin", () => {
 
     await expect(agent.listContext()).resolves.toMatchObject({
       ok: true,
-      value: [],
+      value: { items: [], issues: [] },
     });
   });
 

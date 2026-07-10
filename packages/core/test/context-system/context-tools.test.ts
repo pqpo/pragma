@@ -4,6 +4,23 @@ import { createContextTools } from "../../src/context-system/context-tools.ts";
 import type { ExpertAgentContextItemOperations } from "../../src/context-system/context-tools.ts";
 
 describe("createContextTools", () => {
+  it("requires explicit approval for every context write tool", () => {
+    const tools = createContextTools({
+      listContext: notCalledListOperation,
+      readContext: notCalledOperation,
+      searchContext: notCalledOperation,
+      addContext: notCalledOperation,
+      editContext: notCalledOperation,
+      deleteContext: notCalledOperation,
+    });
+
+    for (const name of ["add_expert_context", "edit_expert_context", "delete_expert_context"]) {
+      expect(tools.find((tool) => tool.name === name)?.approval).toMatchObject({
+        mode: "required",
+      });
+    }
+  });
+
   it("returns an error for malformed askUserQuestion input", async () => {
     const askTool = createContextTools({
       listContext: notCalledListOperation,
@@ -162,7 +179,7 @@ describe("createContextTools", () => {
     };
     const listContext = vi.fn(async () => ({
       ok: true as const,
-      value: [],
+      value: { items: [], issues: [] },
     }));
     const tools = createContextTools(
       {
@@ -202,7 +219,7 @@ describe("createContextTools", () => {
   it("creates a default run context when no session context provider is present", async () => {
     const listContext = vi.fn(async () => ({
       ok: true as const,
-      value: [],
+      value: { items: [], issues: [] },
     }));
     const listTool = createContextTools({
       listContext,
@@ -297,6 +314,7 @@ describe("createContextTools", () => {
         content: "updated",
         metadata: {
           trigger: "manual" as const,
+          priority: "normal" as const,
         },
         mode: "search_replace" as const,
         replacementCount: 2,
@@ -356,6 +374,7 @@ describe("createContextTools", () => {
         metadata: {
           description: "Guide",
           trigger: "always_on" as const,
+          priority: "normal" as const,
         },
         mode: "replace" as const,
       },
@@ -433,10 +452,14 @@ describe("createContextTools", () => {
     );
 
     expect(result?.text).toBe(
-      ["Found 1 match in 1 context item.", "", "host/guides/guide.md", "> path | guides/guide.md"].join("\n"),
+      [
+        "Found 1 match in 1 context item.",
+        "",
+        "host/guides/guide.md",
+        "> path | guides/guide.md",
+      ].join("\n"),
     );
   });
-
 });
 
 const notCalledListOperation = vi.fn(async () => {

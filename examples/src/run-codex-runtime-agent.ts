@@ -136,6 +136,7 @@ function createCodexRuntimeExampleContextSystem(): ContextSystem {
 
   contextSystem.register({
     namespace: HOST_CONTEXT_NAMESPACE,
+    required: true,
     store: createInMemoryContextStore({
       context: [
         {
@@ -154,6 +155,7 @@ function createCodexRuntimeExampleContextSystem(): ContextSystem {
             trigger: "always_on",
             trustLevel: "workspace",
             sensitivity: "internal",
+            priority: "critical",
           },
         },
         {

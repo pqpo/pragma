@@ -1,6 +1,6 @@
 # Context 使用指南
 
-本文说明当前 Pragma `ContextSystem` 的核心模型，以及 `trigger`、`preloadPaths` 和 `forbiddenLoad` 的区别。
+本文说明当前 Pragma `ContextSystem` 的核心模型，以及加载规则、通用优先级和 Store 边界。
 
 ## 核心原则
 
@@ -14,6 +14,7 @@
 - `trigger`：加载策略
 - `preloadPaths`：root 级强制预加载覆盖
 - `forbiddenLoad`：root 级禁止加载规则
+- `priority`：通用装配和预算保留优先级
 
 ## 文档 metadata
 
@@ -25,6 +26,7 @@ description: 订单领域概览
 trigger: model_decision
 trustLevel: workspace
 sensitivity: internal
+priority: normal
 ---
 ```
 
@@ -35,6 +37,7 @@ sensitivity: internal
 - `manual`：默认不自动加载，通常依赖人工或外部策略触发
 
 - `trigger` 回答“怎么加载”
+- `priority` 支持 `critical`、`high`、`normal`、`low`；高优先级先装配，预算不足时最后截断
 
 ## Root 装配规则
 
@@ -50,6 +53,7 @@ const contextSystem = new ContextSystem({
       load: {
         preloadPaths: ["manuals/profile.md", "manuals/safety.md"],
         forbiddenLoad: ["manuals/archive/**"],
+        priorityRules: [{ pattern: "manuals/safety.md", priority: "critical" }],
       },
     },
   ],
@@ -61,6 +65,7 @@ const contextSystem = new ContextSystem({
 - `path`：限制这个 root 只包含某个目录下的文档
 - `preloadPaths`：不看文档本身的 `trigger`，这些路径每次运行都要预加载
 - `forbiddenLoad`：这些路径禁止被默认装配规则选中
+- `priorityRules`：按路径覆盖文档的通用 priority
 
 优先级：
 
@@ -76,7 +81,6 @@ const contextSystem = new ContextSystem({
 
 典型场景：
 
-- `AGENTS.md`
 - 安全规则
 - 全局约束
 - 常驻专家画像
@@ -134,10 +138,15 @@ const contextSystem = new ContextSystem({
       path: "context/order-domain-expert",
       load: {
         preloadPaths: [
+          "context/order-domain-expert/AGENTS.md",
           "context/order-domain-expert/profile.md",
           "context/order-domain-expert/safety.md",
         ],
         forbiddenLoad: ["context/order-domain-expert/archive/**"],
+        priorityRules: [
+          { pattern: "context/order-domain-expert/AGENTS.md", priority: "critical" },
+          { pattern: "context/order-domain-expert/safety.md", priority: "critical" },
+        ],
       },
     },
   ],
@@ -146,7 +155,7 @@ const contextSystem = new ContextSystem({
 
 运行效果：
 
-- `AGENTS.md` 会按特殊规则视为 `always_on`
+- `AGENTS.md` 没有 ID 特判；这里因为 `preloadPaths` 和 `priorityRules` 被作为高优先级上下文装配
 - `index.md` 只是普通 `model_decision` 文档，不会自动预加载
 - `profile.md` 和 `safety.md` 会因为 `preloadPaths` 被预加载
 - `archive/**` 会被排除
@@ -156,6 +165,15 @@ const contextSystem = new ContextSystem({
 - 不要把“入口页”语义编码到 root 字段里
 - 不要把所有重要文档都标成 `always_on`
 - 优先让文档通过 `trigger` 表达默认行为，只有专家装配需要覆盖时才用 `preloadPaths`
+- `AGENTS.md`、安全规则等重要内容使用通用 preload 和 priority 配置，不依赖文件名隐式语义
+
+## Store、预算与失败语义
+
+- `ContextStore` 决定 ID 的实际含义和授权策略；数据库 Store 可以在查询或事务中使用 run context 做租户与权限裁决。
+- `FileSystemContextStore` 默认发现 Markdown，可通过 `include` / `exclude` 显式开放其他 UTF-8 文本，并拒绝 root 外真实路径和 symlink 逃逸。
+- `systemPromptCharacterBudget` 限制身份和索引字符总量；`preloadByteBudget` 限制全部 preload 正文的 UTF-8 字节总量。
+- required Store 索引失败或任何已选 preload 读取失败会终止 session 创建；optional Store 失败进入 Context Snapshot issues。
+- Context 写工具默认需要显式人工审批，Store 授权仍是独立且不可替代的边界。
 
 ## 相关文档
 

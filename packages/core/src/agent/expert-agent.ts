@@ -12,8 +12,8 @@ import type {
   ExpertAgentContextResult,
   ExpertAgentContextItemSearchInput,
   ExpertAgentContextItemSearchMatch,
-  ExpertAgentContextItemSummary,
   ExpertAgentContextItemReadInput,
+  ContextIndex,
 } from "../context-system/context-system.ts";
 import { createContextTools } from "../context-system/context-tools.ts";
 import type {
@@ -447,7 +447,7 @@ export class ExpertAgent implements IExpertAgent, Directive<unknown, unknown> {
 
   async listContext(
     context: ExpertAgentRunContext = createExpertAgentRunContext(),
-  ): Promise<ExpertAgentContextResult<readonly ExpertAgentContextItemSummary[]>> {
+  ): Promise<ExpertAgentContextResult<ContextIndex>> {
     return await this.contextSystem.index(createExpertAgentRunContext(context));
   }
 

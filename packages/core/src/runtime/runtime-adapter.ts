@@ -3,6 +3,7 @@ import type {
   IExpertAgentModelProviderConfig,
   IExpertAgentRunResult,
 } from "../agent/expert-agent.ts";
+import type { ContextAssemblerOptions } from "../agent/context-manager.ts";
 import type { AgentMessage, RuntimeSessionRef as SharedRuntimeSessionRef } from "@pragma/shared";
 import type { z } from "zod";
 import type { ExpertAgentLoggerProvider } from "../logging/logger.ts";
@@ -94,6 +95,7 @@ export type RuntimeSessionRestoreHandler = (
 export interface RuntimeCreateSessionRequest {
   readonly agent: ExpertAgent;
   readonly context?: ExpertAgentRunContext | undefined;
+  readonly contextAssembly?: ContextAssemblerOptions | undefined;
   readonly workflowExecution?: DirectiveExecutionContext | undefined;
   readonly humanInteractionHandler?: ExpertAgentHumanInteractionHandler | undefined;
   readonly models?: readonly IExpertAgentModelProviderConfig[] | undefined;

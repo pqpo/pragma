@@ -18,11 +18,7 @@ import {
   formatModelConfig,
   readExampleModelConfig,
 } from "./harness/model-config.ts";
-import {
-  defaultWorkspaceRoot,
-  ensureWorkspaceDir,
-  loadExamplesEnv,
-} from "./harness/paths.ts";
+import { defaultWorkspaceRoot, ensureWorkspaceDir, loadExamplesEnv } from "./harness/paths.ts";
 import { exitIfRuntimeUnavailable } from "./harness/runtime-availability.ts";
 import { printRunStream } from "./harness/stream-output.ts";
 
@@ -38,6 +34,7 @@ const loggerProvider = createExampleLoggerProvider();
 const contextSystem = new ContextSystem();
 contextSystem.register({
   namespace: HOST_CONTEXT_NAMESPACE,
+  required: true,
   store: createInMemoryContextStore({
     context: [
       {
@@ -93,7 +90,7 @@ printPluginLoadIssues(agent);
 
 console.log("Plugin context:");
 if (contextItems.ok) {
-  for (const item of contextItems.value) {
+  for (const item of contextItems.value.items) {
     console.log(
       `- namespace=${item.namespace ?? "<none>"} id=${item.id} trigger=${item.metadata.trigger}`,
     );

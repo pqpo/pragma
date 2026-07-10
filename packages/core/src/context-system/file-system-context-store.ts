@@ -1,7 +1,21 @@
 import { execFile } from "node:child_process";
-import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import {
+  chmod,
+  chown,
+  lstat,
+  mkdir,
+  open,
+  readdir,
+  readFile,
+  realpath,
+  rename,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { createRequire } from "node:module";
-import { dirname, extname, relative, resolve, sep } from "node:path";
+import { basename, dirname, extname, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 
 import type {
@@ -22,9 +36,9 @@ import type {
 } from "./context-system.ts";
 import {
   error,
-  isAgentsContextId,
   matchContextPattern,
   normalizeMetadata,
+  normalizePriority,
   normalizeTrigger,
   ok,
 } from "./context-system.ts";
@@ -46,38 +60,62 @@ export interface FileSystemContextStoreOptions {
   readonly rootDir: string;
   readonly commandRunner?: FileSystemContextStoreCommandRunner | undefined;
   readonly maxContextBytes?: number | undefined;
+  readonly include?: readonly string[] | undefined;
+  readonly exclude?: readonly string[] | undefined;
+  readonly maxFrontmatterBytes?: number | undefined;
+  readonly authorize?: FileSystemContextStoreAuthorizer | undefined;
 }
+
+export type FileSystemContextStoreOperation =
+  | "list"
+  | "read"
+  | "search"
+  | "add"
+  | "edit"
+  | "delete";
+
+export type FileSystemContextStoreAuthorizer = (input: {
+  readonly operation: FileSystemContextStoreOperation;
+  readonly ids: readonly string[];
+  readonly context?: ExpertAgentStoredContextItemReadInput["context"] | undefined;
+}) => readonly string[] | Promise<readonly string[]>;
 
 export class FileSystemContextStore implements ExpertAgentContextStore {
   readonly rootDir: string;
   readonly maxContextBytes: number | undefined;
+  readonly include: readonly string[];
+  readonly exclude: readonly string[];
+  readonly maxFrontmatterBytes: number;
   private readonly commandRunner: FileSystemContextStoreCommandRunner;
+  private readonly authorize: FileSystemContextStoreAuthorizer | undefined;
+  private readonly mutations = new Map<string, Promise<void>>();
 
   constructor(options: FileSystemContextStoreOptions) {
     this.rootDir = resolve(options.rootDir);
     this.maxContextBytes = options.maxContextBytes;
+    this.include = options.include ?? ["*.md", "**/*.md"];
+    this.exclude = options.exclude ?? [];
+    this.maxFrontmatterBytes = Math.max(1, Math.trunc(options.maxFrontmatterBytes ?? 64 * 1024));
     this.commandRunner = options.commandRunner ?? runSearchCommand;
+    this.authorize = options.authorize;
   }
 
   async listContext(
     input: ExpertAgentContextItemListInput = {},
   ): Promise<ExpertAgentContextResult<readonly ExpertAgentContextItemSummary[]>> {
-    void input;
-
     try {
-      const files = await collectMarkdownFiles(this.rootDir);
+      const files = await collectContextFiles(this.rootDir, (id) => this.isAllowedId(id));
+      const authorizedIds = await this.authorizeIds(
+        "list",
+        files.map((filePath) => toContextId(this.rootDir, filePath)),
+        input.context,
+      );
       const context = await Promise.all(
-        files.map(async (filePath) => {
-          const context = await readMarkdownFileContext(this.rootDir, filePath);
-
-          return {
-            id: context.id,
-            metadata: context.metadata,
-            revision: context.revision,
-            etag: context.etag,
-            sizeBytes: context.sizeBytes,
-          };
-        }),
+        files
+          .filter((filePath) => authorizedIds.has(toContextId(this.rootDir, filePath)))
+          .map(async (filePath) => {
+            return await readFileContextSummary(this.rootDir, filePath, this.maxFrontmatterBytes);
+          }),
       );
 
       return ok(context);
@@ -90,13 +128,19 @@ export class FileSystemContextStore implements ExpertAgentContextStore {
     input: ExpertAgentStoredContextItemReadInput,
   ): Promise<ExpertAgentContextResult<ExpertAgentStoredContextItemReadResult>> {
     try {
-      const filePath = this.resolveContextPath(input.id);
+      const denied = await this.checkAuthorization("read", input.id, input.context);
 
-      if (!(await exists(filePath))) {
+      if (denied !== undefined) {
+        return denied;
+      }
+
+      const filePath = await this.resolveExistingContextPath(input.id);
+
+      if (filePath === undefined) {
         return error("context_not_found", `Context not found: ${input.id}`, { id: input.id });
       }
 
-      const context = await readMarkdownFileContext(this.rootDir, filePath);
+      const context = await readFileContext(this.rootDir, filePath);
       const read = readContentRange(context.content, {
         start: input.start ?? 0,
         offset: input.offset,
@@ -137,31 +181,46 @@ export class FileSystemContextStore implements ExpertAgentContextStore {
     input: ExpertAgentStoredContextRegisterInput,
   ): Promise<ExpertAgentContextResult<ExpertAgentStoredContextItem>> {
     try {
-      const metadata = normalizeMetadata(input.id, normalizeInputMetadata(input.metadata));
-      const sizeError = validateContextSize(input.content, this.maxContextBytes);
+      const denied = await this.checkAuthorization("add", input.id, input.context);
 
-      if (sizeError !== undefined) {
-        return sizeError;
+      if (denied !== undefined) {
+        return denied;
       }
 
-      const filePath = this.resolveContextPath(input.id);
+      return await this.withMutationLock(input.id, async () => {
+        const metadata = normalizeMetadata(input.id, normalizeInputMetadata(input.metadata));
+        const metadataError = validateFileMetadata(input.id, metadata);
 
-      if (await exists(filePath)) {
-        return error("context_already_exists", `Context already exists: ${input.id}`, {
-          id: input.id,
-        });
-      }
+        if (metadataError !== undefined) {
+          return metadataError;
+        }
 
-      const context = {
-        id: input.id,
-        content: input.content,
-        metadata,
-      };
+        const sizeError = validateContextSize(input.content, this.maxContextBytes);
 
-      await mkdir(dirname(filePath), { recursive: true });
-      await writeFile(filePath, serializeMarkdownContext(context), "utf8");
+        if (sizeError !== undefined) {
+          return sizeError;
+        }
 
-      return ok(await readMarkdownFileContext(this.rootDir, filePath));
+        const filePath = await this.prepareNewContextPath(input.id);
+        const context = { id: input.id, content: input.content, metadata };
+
+        try {
+          await writeFile(filePath, serializeFileContext(context), {
+            encoding: "utf8",
+            flag: "wx",
+          });
+        } catch (caught) {
+          if (isNodeError(caught, "EEXIST")) {
+            return error("context_already_exists", `Context already exists: ${input.id}`, {
+              id: input.id,
+            });
+          }
+
+          throw caught;
+        }
+
+        return ok(await readFileContext(this.rootDir, filePath));
+      });
     } catch (caught) {
       return error(
         "store_error",
@@ -175,87 +234,96 @@ export class FileSystemContextStore implements ExpertAgentContextStore {
     input: ExpertAgentStoredContextItemEditInput,
   ): Promise<ExpertAgentContextResult<ExpertAgentStoredContextItemEditResult>> {
     try {
-      const existing = await this.readContext({
-        id: input.id,
-        context: input.context,
-      });
+      const denied = await this.checkAuthorization("edit", input.id, input.context);
 
-      if (!existing.ok) {
-        return existing;
+      if (denied !== undefined) {
+        return denied;
       }
 
-      const conflict = validateExpectedRevision(existing.value, input);
+      return await this.withMutationLock(input.id, async () => {
+        const filePath = await this.resolveExistingContextPath(input.id);
 
-      if (conflict !== undefined) {
-        return conflict;
-      }
+        if (filePath === undefined) {
+          return error("context_not_found", `Context not found: ${input.id}`, { id: input.id });
+        }
 
-      if (input.mode === "replace") {
-        const content = input.content ?? existing.value.content;
-        const metadata =
-          input.metadata === undefined
-            ? existing.value.metadata
-            : normalizeMetadata(input.id, normalizeInputMetadata(input.metadata));
+        const [existing, existingStats] = await Promise.all([
+          readFileContext(this.rootDir, filePath),
+          stat(filePath),
+        ]);
+        const conflict = validateExpectedRevision(existing, input);
+
+        if (conflict !== undefined) {
+          return conflict;
+        }
+
+        let content: string;
+        let metadata = existing.metadata;
+        let replacementCount: number | undefined;
+
+        if (input.mode === "replace") {
+          content = input.content ?? existing.content;
+          metadata =
+            input.metadata === undefined
+              ? existing.metadata
+              : normalizeMetadata(input.id, normalizeInputMetadata(input.metadata));
+        } else {
+          const matches = existing.content.split(input.search).length - 1;
+
+          if (matches === 0) {
+            return error("invalid_input", `Context edit search did not match: ${input.id}`, {
+              id: input.id,
+              search: input.search,
+            });
+          }
+
+          if (matches > 1 && input.replaceAll !== true) {
+            return error(
+              "invalid_input",
+              `Context edit search matched multiple locations: ${input.id}`,
+              {
+                id: input.id,
+                search: input.search,
+                replacementCount: matches,
+              },
+            );
+          }
+
+          content =
+            input.replaceAll === true
+              ? existing.content.split(input.search).join(input.replace)
+              : existing.content.replace(input.search, input.replace);
+          replacementCount = input.replaceAll === true ? matches : 1;
+        }
+
         const sizeError = validateContextSize(content, this.maxContextBytes);
 
         if (sizeError !== undefined) {
           return sizeError;
         }
 
-        const context = {
-          id: input.id,
-          content,
-          metadata,
-        };
-        const filePath = this.resolveContextPath(input.id);
-        await writeFile(filePath, serializeMarkdownContext(context), "utf8");
+        const metadataError = validateFileMetadata(input.id, metadata);
+
+        if (metadataError !== undefined) {
+          return metadataError;
+        }
+
+        await writeFileAtomically(
+          filePath,
+          serializeFileContext({ id: input.id, content, metadata }),
+          {
+            mode: existingStats.mode,
+            uid: existingStats.uid,
+            gid: existingStats.gid,
+          },
+        );
+        const updated = await readFileContext(this.rootDir, filePath);
 
         return ok({
-          ...(await readMarkdownFileContext(this.rootDir, filePath)),
-          mode: "replace",
+          ...updated,
+          mode: input.mode,
+          ...(replacementCount === undefined ? {} : { replacementCount }),
         });
-      }
-
-      const replacementCount = existing.value.content.split(input.search).length - 1;
-
-      if (replacementCount === 0) {
-        return error("invalid_input", `Context edit search did not match: ${input.id}`, {
-          id: input.id,
-          search: input.search,
-        });
-      }
-
-      if (replacementCount > 1 && input.replaceAll !== true) {
-        return error("invalid_input", `Context edit search matched multiple locations: ${input.id}`, {
-          id: input.id,
-          search: input.search,
-          replacementCount,
-        });
-      }
-
-      const content =
-        input.replaceAll === true
-          ? existing.value.content.split(input.search).join(input.replace)
-          : existing.value.content.replace(input.search, input.replace);
-      const sizeError = validateContextSize(content, this.maxContextBytes);
-
-      if (sizeError !== undefined) {
-        return sizeError;
-      }
-
-      const context = {
-        id: input.id,
-        content,
-        metadata: existing.value.metadata,
-      };
-      const filePath = this.resolveContextPath(input.id);
-      await writeFile(filePath, serializeMarkdownContext(context), "utf8");
-      const updated = await readMarkdownFileContext(this.rootDir, filePath);
-
-      return ok({
-        ...updated,
-        mode: "search_replace",
-        replacementCount: input.replaceAll === true ? replacementCount : 1,
       });
     } catch (caught) {
       return error("store_error", `Failed to edit context: ${input.id}`, toErrorDetails(caught));
@@ -266,15 +334,23 @@ export class FileSystemContextStore implements ExpertAgentContextStore {
     input: ExpertAgentStoredContextItemDeleteInput,
   ): Promise<ExpertAgentContextResult<{ readonly id: string }>> {
     try {
-      const filePath = this.resolveContextPath(input.id);
+      const denied = await this.checkAuthorization("delete", input.id, input.context);
 
-      if (!(await exists(filePath))) {
-        return error("context_not_found", `Context not found: ${input.id}`, { id: input.id });
+      if (denied !== undefined) {
+        return denied;
       }
 
-      await rm(filePath);
+      return await this.withMutationLock(input.id, async () => {
+        const filePath = await this.resolveExistingContextPath(input.id);
 
-      return ok({ id: input.id });
+        if (filePath === undefined) {
+          return error("context_not_found", `Context not found: ${input.id}`, { id: input.id });
+        }
+
+        await rm(filePath);
+
+        return ok({ id: input.id });
+      });
     } catch (caught) {
       return error("store_error", `Failed to delete context: ${input.id}`, toErrorDetails(caught));
     }
@@ -284,53 +360,92 @@ export class FileSystemContextStore implements ExpertAgentContextStore {
     input: ExpertAgentStoredContextItemSearchInput,
   ): Promise<ExpertAgentContextResult<readonly ExpertAgentContextItemSearchMatch[]>> {
     try {
-      if (input.scope === "path") {
-        return ok(await searchContextPaths(this.rootDir, input));
+      const files = await collectContextFiles(this.rootDir, (id) => this.isAllowedId(id));
+
+      if (files.length === 0) {
+        return ok([]);
       }
 
-      const ripgrepResult = await searchContextWithRipgrep(this.rootDir, input, this.commandRunner);
+      if (input.scope === "path") {
+        return ok(
+          await this.authorizeSearchMatches(
+            await searchContextPaths(this.rootDir, input, files),
+            input,
+          ),
+        );
+      }
+
+      let contentMatches: readonly ExpertAgentContextItemSearchMatch[];
+      const ripgrepResult = await searchContextWithRipgrep(
+        this.rootDir,
+        input,
+        this.commandRunner,
+        files,
+      );
 
       if (ripgrepResult.ok) {
-        if (input.scope !== "hybrid") {
-          return ok(withContentMatchType(ripgrepResult.matches));
-        }
-
-        return ok(
-          mergeSearchMatches(
-            withContentMatchType(ripgrepResult.matches),
-            await searchContextPaths(this.rootDir, input),
-          ),
+        contentMatches = withContentMatchType(
+          ripgrepResult.matches.filter((match) => this.isAllowedId(match.id)),
         );
-      }
-
-      const grepResult = await searchContextWithGrep(this.rootDir, input, this.commandRunner);
-
-      if (grepResult.ok) {
-        if (input.scope !== "hybrid") {
-          return ok(withContentMatchType(grepResult.matches));
-        }
-
-        return ok(
-          mergeSearchMatches(
-            withContentMatchType(grepResult.matches),
-            await searchContextPaths(this.rootDir, input),
-          ),
+      } else {
+        const grepResult = await searchContextWithGrep(
+          this.rootDir,
+          input,
+          this.commandRunner,
+          files,
         );
+
+        contentMatches = grepResult.ok
+          ? withContentMatchType(grepResult.matches.filter((match) => this.isAllowedId(match.id)))
+          : withContentMatchType(await searchContextWithFileReads(this.rootDir, input, files));
       }
 
-      const fallbackMatches = withContentMatchType(await searchContextWithFileReads(this.rootDir, input));
+      const matches =
+        input.scope === "hybrid"
+          ? mergeSearchMatches(contentMatches, await searchContextPaths(this.rootDir, input, files))
+          : contentMatches;
 
-      if (input.scope !== "hybrid") {
-        return ok(fallbackMatches);
-      }
-
-      return ok(mergeSearchMatches(fallbackMatches, await searchContextPaths(this.rootDir, input)));
+      return ok(await this.authorizeSearchMatches(matches, input));
     } catch (caught) {
       return error("store_error", "Failed to search file system context.", toErrorDetails(caught));
     }
   }
 
+  private async authorizeSearchMatches(
+    matches: readonly ExpertAgentContextItemSearchMatch[],
+    input: ExpertAgentStoredContextItemSearchInput,
+  ): Promise<readonly ExpertAgentContextItemSearchMatch[]> {
+    const authorizedIds = await this.authorizeIds(
+      "search",
+      matches.map((match) => match.id),
+      input.context,
+    );
+
+    return matches.filter((match) => authorizedIds.has(match.id)).slice(0, input.maxResults ?? 20);
+  }
+
+  private async authorizeIds(
+    operation: FileSystemContextStoreOperation,
+    ids: readonly string[],
+    context: ExpertAgentStoredContextItemReadInput["context"],
+  ): Promise<ReadonlySet<string>> {
+    const requestedIds = [...new Set(ids)];
+
+    if (this.authorize === undefined) {
+      return new Set(requestedIds);
+    }
+
+    const requestedIdSet = new Set(requestedIds);
+    const authorizedIds = await this.authorize({ operation, ids: requestedIds, context });
+
+    return new Set(authorizedIds.filter((id) => requestedIdSet.has(id)));
+  }
+
   private resolveContextPath(id: string): string {
+    if (!this.isAllowedId(id)) {
+      throw new Error(`Context id is not allowed by include/exclude rules: ${id}`);
+    }
+
     const filePath = resolve(this.rootDir, id);
     const relativePath = relative(this.rootDir, filePath);
 
@@ -339,6 +454,103 @@ export class FileSystemContextStore implements ExpertAgentContextStore {
     }
 
     return filePath;
+  }
+
+  private isAllowedId(id: string): boolean {
+    return (
+      this.include.some((pattern) => matchContextPattern(id, pattern)) &&
+      !this.exclude.some((pattern) => matchContextPattern(id, pattern))
+    );
+  }
+
+  private async resolveExistingContextPath(id: string): Promise<string | undefined> {
+    const filePath = this.resolveContextPath(id);
+
+    if (!(await exists(filePath))) {
+      return undefined;
+    }
+
+    const fileStats = await lstat(filePath);
+
+    if (fileStats.isSymbolicLink() || !fileStats.isFile()) {
+      throw new Error(`Context id must resolve to a regular file: ${id}`);
+    }
+
+    const [canonicalRoot, canonicalFile] = await Promise.all([
+      realpath(this.rootDir),
+      realpath(filePath),
+    ]);
+    assertContainedPath(canonicalRoot, canonicalFile, id);
+
+    return filePath;
+  }
+
+  private async prepareNewContextPath(id: string): Promise<string> {
+    const filePath = this.resolveContextPath(id);
+    const root = await realpath(this.rootDir);
+    const relativeParent = relative(this.rootDir, dirname(filePath));
+    let current = root;
+
+    for (const segment of relativeParent
+      .split(sep)
+      .filter((part) => part.length > 0 && part !== ".")) {
+      const next = resolve(current, segment);
+
+      if (await exists(next)) {
+        const nextStats = await lstat(next);
+
+        if (nextStats.isSymbolicLink() || !nextStats.isDirectory()) {
+          throw new Error(`Context parent must be a real directory: ${id}`);
+        }
+      } else {
+        await mkdir(next);
+      }
+
+      const canonicalNext = await realpath(next);
+      assertContainedPath(root, canonicalNext, id);
+      current = canonicalNext;
+    }
+
+    return filePath;
+  }
+
+  private async withMutationLock<TValue>(
+    id: string,
+    operation: () => Promise<TValue>,
+  ): Promise<TValue> {
+    const previous = this.mutations.get(id) ?? Promise.resolve();
+    let release: (() => void) | undefined;
+    const current = new Promise<void>((resolveLock) => {
+      release = resolveLock;
+    });
+    const queued = previous.then(() => current);
+    this.mutations.set(id, queued);
+    await previous;
+
+    try {
+      return await operation();
+    } finally {
+      release?.();
+
+      if (this.mutations.get(id) === queued) {
+        this.mutations.delete(id);
+      }
+    }
+  }
+
+  private async checkAuthorization(
+    operation: FileSystemContextStoreOperation,
+    id: string,
+    context: ExpertAgentStoredContextItemReadInput["context"],
+  ): Promise<ExpertAgentContextResult<never> | undefined> {
+    if ((await this.authorizeIds(operation, [id], context)).has(id)) {
+      return undefined;
+    }
+
+    return error("permission_denied", `Context operation is not authorized: ${operation}`, {
+      operation,
+      id,
+    });
   }
 }
 
@@ -425,19 +637,44 @@ function validateContextSize(
   });
 }
 
-function createFileRevision(mtimeMs: number, sizeBytes: number): string {
-  return `${Math.trunc(mtimeMs)}:${Math.max(0, Math.trunc(sizeBytes))}`;
+function validateFileMetadata(
+  id: string,
+  metadata: ExpertAgentContextItemMetadata,
+): ExpertAgentContextResult<never> | undefined {
+  if (
+    isMarkdownId(id) ||
+    (metadata.description === undefined &&
+      metadata.trigger === "model_decision" &&
+      metadata.trustLevel === undefined &&
+      metadata.sensitivity === undefined &&
+      metadata.priority === "normal")
+  ) {
+    return undefined;
+  }
+
+  return error(
+    "invalid_input",
+    "FileSystemContextStore metadata is only supported for Markdown context.",
+    { id },
+  );
 }
 
-async function readMarkdownFileContext(
+function createFileRevision(mtimeNs: bigint, sizeBytes: bigint): string {
+  return `${mtimeNs}:${sizeBytes}`;
+}
+
+async function readFileContext(
   rootDir: string,
   filePath: string,
 ): Promise<ExpertAgentStoredContextItem> {
-  const [stats, rawContent] = await Promise.all([stat(filePath), readFile(filePath, "utf8")]);
+  const [stats, rawContent] = await Promise.all([
+    stat(filePath, { bigint: true }),
+    readUtf8File(filePath),
+  ]);
   const id = toContextId(rootDir, filePath);
-  const parsed = parseMarkdownContext(id, rawContent);
+  const parsed = parseFileContext(id, rawContent);
   const sizeBytes = Buffer.byteLength(parsed.content, "utf8");
-  const revision = createFileRevision(stats.mtimeMs, stats.size);
+  const revision = createFileRevision(stats.mtimeNs, stats.size);
 
   return {
     id,
@@ -447,6 +684,75 @@ async function readMarkdownFileContext(
     etag: revision,
     sizeBytes,
   };
+}
+
+async function readFileContextSummary(
+  rootDir: string,
+  filePath: string,
+  maxFrontmatterBytes: number,
+): Promise<ExpertAgentContextItemSummary> {
+  const stats = await stat(filePath, { bigint: true });
+  const id = toContextId(rootDir, filePath);
+  const revision = createFileRevision(stats.mtimeNs, stats.size);
+  const fileSize = Number(stats.size);
+
+  if (!isMarkdownId(id)) {
+    return {
+      id,
+      metadata: normalizeMetadata(id, {}),
+      revision,
+      etag: revision,
+      sizeBytes: fileSize,
+    };
+  }
+
+  const frontmatter = await readFrontmatter(filePath, fileSize, maxFrontmatterBytes);
+
+  return {
+    id,
+    metadata: normalizeMetadata(id, frontmatter.metadata),
+    revision,
+    etag: revision,
+    sizeBytes: Math.max(0, fileSize - frontmatter.contentStartBytes),
+  };
+}
+
+async function readFrontmatter(
+  filePath: string,
+  fileSize: number,
+  maxBytes: number,
+): Promise<{
+  readonly metadata: Partial<ExpertAgentContextItemMetadata>;
+  readonly contentStartBytes: number;
+}> {
+  const handle = await open(filePath, "r");
+
+  try {
+    const openingBuffer = Buffer.alloc(Math.min(fileSize, 5));
+    const opening = await handle.read(openingBuffer, 0, openingBuffer.length, 0);
+    const openingText = openingBuffer.subarray(0, opening.bytesRead).toString("utf8");
+
+    if (!openingText.startsWith("---\n") && !openingText.startsWith("---\r\n")) {
+      return { metadata: {}, contentStartBytes: 0 };
+    }
+
+    const buffer = Buffer.alloc(Math.min(fileSize, maxBytes));
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+    const prefix = buffer.subarray(0, bytesRead).toString("utf8");
+
+    const match = /^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/.exec(prefix);
+
+    if (match === null) {
+      throw new Error(`Markdown frontmatter exceeds ${maxBytes} bytes or is not terminated.`);
+    }
+
+    return {
+      metadata: parseMatterMetadata(matter(match[0]).data),
+      contentStartBytes: Buffer.byteLength(match[0], "utf8"),
+    };
+  } finally {
+    await handle.close();
+  }
 }
 
 function readContentRange(
@@ -499,16 +805,16 @@ function readContentRange(
   };
 }
 
-function parseMarkdownContext(
+function parseFileContext(
   id: string,
   rawContent: string,
 ): {
   readonly metadata: ExpertAgentContextItemMetadata;
   readonly content: string;
 } {
-  if (isAgentsContextId(id)) {
+  if (!isMarkdownId(id)) {
     return {
-      metadata: normalizeMetadata(id, { trigger: "always_on" }),
+      metadata: normalizeMetadata(id, {}),
       content: rawContent,
     };
   }
@@ -526,17 +832,19 @@ function parseMatterMetadata(data: Record<string, unknown>): ExpertAgentContextI
   const trigger = data.trigger;
   const trustLevel = data.trustLevel;
   const sensitivity = data.sensitivity;
+  const priority = data.priority;
 
   return {
     ...(typeof description === "string" ? { description } : {}),
     trigger: normalizeTrigger(readMetadataTrigger(trigger)),
     ...(typeof trustLevel === "string" ? { trustLevel: normalizeTrustLevel(trustLevel) } : {}),
     ...(typeof sensitivity === "string" ? { sensitivity: normalizeSensitivity(sensitivity) } : {}),
+    priority: typeof priority === "string" ? normalizePriority(priority) : "normal",
   };
 }
 
-function serializeMarkdownContext(context: ExpertAgentStoredContextItem): string {
-  if (isAgentsContextId(context.id)) {
+function serializeFileContext(context: ExpertAgentStoredContextItem): string {
+  if (!isMarkdownId(context.id)) {
     return context.content;
   }
 
@@ -551,6 +859,7 @@ function serializeMarkdownContext(context: ExpertAgentStoredContextItem): string
     ...(context.metadata.sensitivity === undefined
       ? {}
       : { sensitivity: context.metadata.sensitivity }),
+    priority: context.metadata.priority,
   });
 
   if (!context.content.endsWith("\n") && serialized.endsWith("\n")) {
@@ -568,6 +877,7 @@ function normalizeInputMetadata(
     trigger: metadata?.trigger ?? "model_decision",
     ...(metadata?.trustLevel === undefined ? {} : { trustLevel: metadata.trustLevel }),
     ...(metadata?.sensitivity === undefined ? {} : { sensitivity: metadata.sensitivity }),
+    priority: metadata?.priority ?? "normal",
   };
 }
 
@@ -647,6 +957,7 @@ async function searchContextWithRipgrep(
   rootDir: string,
   input: ExpertAgentStoredContextItemSearchInput,
   commandRunner: FileSystemContextStoreCommandRunner,
+  files: readonly string[],
 ): Promise<
   | {
       readonly ok: true;
@@ -662,14 +973,12 @@ async function searchContextWithRipgrep(
     "--line-number",
     "--color",
     "never",
-    "--glob",
-    "*.md",
     "--context",
     String(input.contextLines ?? 0),
     ...(input.caseSensitive === true ? [] : ["--ignore-case"]),
     "--",
     input.query,
-    rootDir,
+    ...files,
   ];
 
   try {
@@ -677,7 +986,7 @@ async function searchContextWithRipgrep(
 
     return {
       ok: true,
-      matches: parseRipgrepJsonLines(rootDir, result.stdout, input.maxResults ?? 20),
+      matches: parseRipgrepJsonLines(rootDir, result.stdout),
     };
   } catch (caught) {
     if (isCommandExit(caught, 1)) {
@@ -696,11 +1005,10 @@ async function searchContextWithRipgrep(
 async function searchContextPaths(
   rootDir: string,
   input: ExpertAgentStoredContextItemSearchInput,
+  files: readonly string[],
 ): Promise<readonly ExpertAgentContextItemSearchMatch[]> {
-  const files = await collectMarkdownFiles(rootDir);
   const matches: ExpertAgentContextItemSearchMatch[] = [];
   const query = input.caseSensitive === true ? input.query : input.query.toLowerCase();
-  const maxResults = input.maxResults ?? 20;
 
   for (const filePath of files) {
     const id = toContextId(rootDir, filePath);
@@ -715,10 +1023,6 @@ async function searchContextPaths(
       matchType: "path",
       line: id,
     });
-
-    if (matches.length >= maxResults) {
-      return matches;
-    }
   }
 
   return matches;
@@ -729,7 +1033,12 @@ function mergeSearchMatches(
   right: readonly ExpertAgentContextItemSearchMatch[],
 ): readonly ExpertAgentContextItemSearchMatch[] {
   const merged: ExpertAgentContextItemSearchMatch[] = [...left];
-  const seen = new Set(left.map((match) => `${match.id}:${match.matchType ?? "content"}:${match.lineNumber ?? 0}:${match.line}`));
+  const seen = new Set(
+    left.map(
+      (match) =>
+        `${match.id}:${match.matchType ?? "content"}:${match.lineNumber ?? 0}:${match.line}`,
+    ),
+  );
 
   for (const match of right) {
     const key = `${match.id}:${match.matchType ?? "content"}:${match.lineNumber ?? 0}:${match.line}`;
@@ -749,6 +1058,7 @@ async function searchContextWithGrep(
   rootDir: string,
   input: ExpertAgentStoredContextItemSearchInput,
   commandRunner: FileSystemContextStoreCommandRunner,
+  files: readonly string[],
 ): Promise<
   | {
       readonly ok: true;
@@ -762,12 +1072,11 @@ async function searchContextWithGrep(
     "--line-number",
     "--fixed-strings",
     "--with-filename",
-    "--recursive",
     "-I",
     ...(input.caseSensitive === true ? [] : ["--ignore-case"]),
     "--",
     input.query,
-    rootDir,
+    ...files,
   ];
 
   try {
@@ -794,7 +1103,6 @@ async function searchContextWithGrep(
 function parseRipgrepJsonLines(
   rootDir: string,
   stdout: string,
-  maxResults: number,
 ): readonly ExpertAgentContextItemSearchMatch[] {
   const matches: ExpertAgentContextItemSearchMatch[] = [];
   const beforeByPath = new Map<string, string[]>();
@@ -840,7 +1148,7 @@ function parseRipgrepJsonLines(
     beforeByPath.delete(filePath);
   }
 
-  return matches.slice(0, maxResults);
+  return matches;
 }
 
 async function parseGrepLines(
@@ -862,14 +1170,10 @@ async function parseGrepLines(
       continue;
     }
 
-    if (extname(parsed.filePath).toLowerCase() !== ".md") {
-      continue;
-    }
-
     let contextLines = linesByPath.get(parsed.filePath);
 
     if (contextLines === undefined) {
-      contextLines = (await readFile(parsed.filePath, "utf8")).split("\n");
+      contextLines = (await readUtf8File(parsed.filePath)).split("\n");
       linesByPath.set(parsed.filePath, contextLines);
     }
 
@@ -886,10 +1190,6 @@ async function parseGrepLines(
         lineIndex + 1 + (input.contextLines ?? 0),
       ),
     });
-
-    if (matches.length >= (input.maxResults ?? 20)) {
-      return matches;
-    }
   }
 
   return matches;
@@ -920,13 +1220,13 @@ function parseGrepLine(
 async function searchContextWithFileReads(
   rootDir: string,
   input: ExpertAgentStoredContextItemSearchInput,
+  files: readonly string[],
 ): Promise<readonly ExpertAgentContextItemSearchMatch[]> {
-  const files = await collectMarkdownFiles(rootDir);
   const matches: ExpertAgentContextItemSearchMatch[] = [];
   const query = input.caseSensitive === true ? input.query : input.query.toLowerCase();
 
   for (const filePath of files) {
-    const content = await readFile(filePath, "utf8");
+    const content = await readUtf8File(filePath);
     const lines = content.split("\n");
 
     for (const [index, line] of lines.entries()) {
@@ -943,10 +1243,6 @@ async function searchContextWithFileReads(
         before: readContextLines(lines, index - (input.contextLines ?? 0), index),
         after: readContextLines(lines, index + 1, index + 1 + (input.contextLines ?? 0)),
       });
-
-      if (matches.length >= (input.maxResults ?? 20)) {
-        return matches;
-      }
     }
   }
 
@@ -1016,11 +1312,15 @@ async function runSearchCommand(
   };
 }
 
-async function collectMarkdownFiles(directory: string): Promise<string[]> {
+async function collectContextFiles(
+  directory: string,
+  isAllowed: (id: string) => boolean,
+  rootDir: string = directory,
+): Promise<string[]> {
   const directoryStat = await stat(directory);
 
   if (!directoryStat.isDirectory()) {
-    return extname(directory).toLowerCase() === ".md" ? [directory] : [];
+    return isAllowed(toContextId(rootDir, directory)) ? [directory] : [];
   }
 
   const entries = await readdir(directory, { withFileTypes: true });
@@ -1029,10 +1329,10 @@ async function collectMarkdownFiles(directory: string): Promise<string[]> {
       const entryPath = resolve(directory, entry.name);
 
       if (entry.isDirectory()) {
-        return collectMarkdownFiles(entryPath);
+        return collectContextFiles(entryPath, isAllowed, rootDir);
       }
 
-      if (entry.isFile() && extname(entry.name).toLowerCase() === ".md") {
+      if (entry.isFile() && isAllowed(toContextId(rootDir, entryPath))) {
         return [entryPath];
       }
 
@@ -1052,8 +1352,60 @@ async function exists(filePath: string): Promise<boolean> {
   }
 }
 
+async function readUtf8File(filePath: string): Promise<string> {
+  const content = await readFile(filePath);
+  return new TextDecoder("utf-8", { fatal: true }).decode(content);
+}
+
 function toContextId(rootDir: string, filePath: string): string {
   return relative(rootDir, filePath).split(sep).join("/");
+}
+
+function isMarkdownId(id: string): boolean {
+  return extname(id).toLowerCase() === ".md";
+}
+
+function assertContainedPath(rootDir: string, filePath: string, id: string): void {
+  const relativePath = relative(rootDir, filePath);
+
+  if (relativePath.startsWith("..") || relativePath === "" || relativePath.startsWith(sep)) {
+    throw new Error(`Context path escapes the configured root: ${id}`);
+  }
+}
+
+async function writeFileAtomically(
+  filePath: string,
+  content: string,
+  permissions: {
+    readonly mode: number;
+    readonly uid: number;
+    readonly gid: number;
+  },
+): Promise<void> {
+  const temporaryPath = resolve(dirname(filePath), `.${basename(filePath)}.${randomUUID()}.tmp`);
+
+  try {
+    await writeFile(temporaryPath, content, { encoding: "utf8", flag: "wx" });
+    await chmod(temporaryPath, permissions.mode & 0o7777);
+    const temporaryStats = await stat(temporaryPath);
+
+    if (temporaryStats.uid !== permissions.uid || temporaryStats.gid !== permissions.gid) {
+      await chown(temporaryPath, permissions.uid, permissions.gid);
+    }
+
+    await rename(temporaryPath, filePath);
+  } finally {
+    await rm(temporaryPath, { force: true });
+  }
+}
+
+function isNodeError(caught: unknown, code: string): boolean {
+  return (
+    typeof caught === "object" &&
+    caught !== null &&
+    "code" in caught &&
+    (caught as { readonly code?: unknown }).code === code
+  );
 }
 
 function toErrorDetails(caught: unknown): unknown {

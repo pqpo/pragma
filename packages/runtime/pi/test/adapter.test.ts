@@ -91,9 +91,7 @@ describe("createPiRuntime", () => {
     });
     vi.mocked(createAgentSession).mockRejectedValue(new Error("PI session failed"));
 
-    await expect(createPiRuntime().createSession({ agent })).rejects.toThrow(
-      "PI session failed",
-    );
+    await expect(createPiRuntime().createSession({ agent })).rejects.toThrow("PI session failed");
 
     expect(events).toEqual(["beforeSessionCreate", "beforeSessionDestroy", "afterSessionDestroy"]);
     expect(sessionContext).toEqual({
@@ -276,7 +274,11 @@ describe("createPiRuntime", () => {
 
   it("injects always-on context as a startup user message after PI session creation", async () => {
     const workspace = await createTempDir();
-    await writeFile(`${workspace}/AGENTS.md`, "Follow the workspace playbook.", "utf8");
+    await writeFile(
+      `${workspace}/startup.md`,
+      "---\ntrigger: always_on\n---\nFollow the workspace playbook.",
+      "utf8",
+    );
     const agent = await ExpertAgent.create({
       schemaVersion: "pragma.expert/v1",
       id: "agent-1",
@@ -317,7 +319,11 @@ describe("createPiRuntime", () => {
 
   it("does not inject startup user messages when resuming an existing PI session", async () => {
     const workspace = await createTempDir();
-    await writeFile(`${workspace}/AGENTS.md`, "Follow the workspace playbook.", "utf8");
+    await writeFile(
+      `${workspace}/startup.md`,
+      "---\ntrigger: always_on\n---\nFollow the workspace playbook.",
+      "utf8",
+    );
     const agent = await ExpertAgent.create({
       schemaVersion: "pragma.expert/v1",
       id: "agent-1",

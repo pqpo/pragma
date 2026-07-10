@@ -275,6 +275,7 @@ export function serializeMarkdownWithFrontmatter(
     ...(context.metadata.sensitivity === undefined
       ? {}
       : { sensitivity: context.metadata.sensitivity }),
+    priority: context.metadata.priority,
   };
 
   return `---\n${Object.entries(frontmatter)

@@ -174,48 +174,48 @@ describe("ExpertAgent plugins", () => {
       scope: "workspace",
       workspace,
       contextSystem,
-      plugins: [
-        { entry: createContextPluginEntry() },
-        { entry: createOtherContextPluginEntry() },
-      ],
+      plugins: [{ entry: createContextPluginEntry() }, { entry: createOtherContextPluginEntry() }],
     });
 
     await expect(agent.listContext()).resolves.toMatchObject({
       ok: true,
-      value: [
-        {
-          namespace: "host",
-          id: "host.md",
-          metadata: {
-            description: "Host context",
-            trigger: "always_on",
+      value: {
+        items: [
+          {
+            namespace: "host",
+            id: "host.md",
+            metadata: {
+              description: "Host context",
+              trigger: "always_on",
+            },
           },
-        },
-        {
-          namespace: "plugin.context",
-          id: "plugin.md",
-          metadata: {
-            description: "Plugin context",
-            trigger: "model_decision",
+          {
+            namespace: "plugin.context",
+            id: "plugin.md",
+            metadata: {
+              description: "Plugin context",
+              trigger: "model_decision",
+            },
           },
-        },
-        {
-          namespace: "plugin.context.extra",
-          id: "extra.md",
-          metadata: {
-            description: "Extra plugin context",
-            trigger: "model_decision",
+          {
+            namespace: "plugin.context.extra",
+            id: "extra.md",
+            metadata: {
+              description: "Extra plugin context",
+              trigger: "model_decision",
+            },
           },
-        },
-        {
-          namespace: "plugin.other-context",
-          id: "plugin.md",
-          metadata: {
-            description: "Other plugin context",
-            trigger: "model_decision",
+          {
+            namespace: "plugin.other-context",
+            id: "plugin.md",
+            metadata: {
+              description: "Other plugin context",
+              trigger: "model_decision",
+            },
           },
-        },
-      ],
+        ],
+        issues: [],
+      },
     });
     await expect(
       agent.readContext({ namespace: "plugin.context", id: "plugin.md" }),

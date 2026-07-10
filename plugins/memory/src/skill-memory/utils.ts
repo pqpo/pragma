@@ -80,6 +80,13 @@ export function parseMetadata(
     ...(isSensitivity(frontmatter["sensitivity"])
       ? { sensitivity: frontmatter["sensitivity"] }
       : {}),
+    priority:
+      frontmatter["priority"] === "critical" ||
+      frontmatter["priority"] === "high" ||
+      frontmatter["priority"] === "normal" ||
+      frontmatter["priority"] === "low"
+        ? frontmatter["priority"]
+        : "normal",
   };
 }
 

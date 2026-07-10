@@ -8,7 +8,6 @@ import { PassThrough, Writable } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
-  AGENTS_CONTEXT_ID,
   ContextSystem,
   createInMemoryContextStore,
   ExpertAgent,
@@ -440,8 +439,9 @@ describe("createCodexRuntime", () => {
       store: createInMemoryContextStore({
         context: [
           {
-            id: AGENTS_CONTEXT_ID,
+            id: "startup.md",
             content: "Codex runtime startup context marker.",
+            metadata: { trigger: "always_on" },
           },
         ],
       }),
@@ -505,8 +505,9 @@ describe("createCodexRuntime", () => {
       store: createInMemoryContextStore({
         context: [
           {
-            id: AGENTS_CONTEXT_ID,
+            id: "startup.md",
             content: "Codex runtime startup context marker.",
+            metadata: { trigger: "always_on" },
           },
         ],
       }),
@@ -582,8 +583,9 @@ describe("createCodexRuntime", () => {
       store: createInMemoryContextStore({
         context: [
           {
-            id: AGENTS_CONTEXT_ID,
+            id: "startup.md",
             content: "Codex runtime startup context marker.",
+            metadata: { trigger: "always_on" },
           },
         ],
       }),

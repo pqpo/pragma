@@ -45,12 +45,14 @@ describe("memory plugin unified memory context", () => {
 
     expect(listed).toMatchObject({
       ok: true,
-      value: expect.arrayContaining([
-        expect.objectContaining({
-          namespace: "memory",
-          id: "skills/plugin-design.md",
-        }),
-      ]),
+      value: {
+        items: expect.arrayContaining([
+          expect.objectContaining({
+            namespace: "memory",
+            id: "skills/plugin-design.md",
+          }),
+        ]),
+      },
     });
     expect(summary).toEqual(expect.objectContaining({ ok: true }));
     expect(summaryFile.isFile()).toBe(true);
@@ -75,7 +77,9 @@ describe("memory plugin unified memory context", () => {
     const listed = await agent.listContext();
     expect(listed).toMatchObject({
       ok: true,
-      value: expect.not.arrayContaining([expect.objectContaining({ namespace: "memory" })]),
+      value: {
+        items: expect.not.arrayContaining([expect.objectContaining({ namespace: "memory" })]),
+      },
     });
 
     const retrieved = await memorySystem.retrieveForRuntime({
@@ -395,7 +399,9 @@ describe("memory plugin unified memory context", () => {
     const listed = await agent.listContext();
     expect(listed).toMatchObject({
       ok: true,
-      value: expect.not.arrayContaining([expect.objectContaining({ namespace: "memory" })]),
+      value: {
+        items: expect.not.arrayContaining([expect.objectContaining({ namespace: "memory" })]),
+      },
     });
   });
 });

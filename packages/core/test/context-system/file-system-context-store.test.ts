@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -12,6 +12,7 @@ import {
   AGENTS_CONTEXT_ID,
   ContextSystem,
   HOST_CONTEXT_NAMESPACE,
+  error,
   matchContextPattern,
   ok,
 } from "../../src/context-system/context-system.ts";
@@ -34,6 +35,7 @@ function createHostContextSystem(store: ExpertAgentContextStore): ContextSystem 
   const result = contextSystem.register({
     namespace: HOST_CONTEXT_NAMESPACE,
     store,
+    required: true,
   });
 
   if (!result.ok) {
@@ -44,7 +46,7 @@ function createHostContextSystem(store: ExpertAgentContextStore): ContextSystem 
 }
 
 describe("FileSystemContextStore", () => {
-  it("loads AGENTS.md as an always-on context", async () => {
+  it("loads AGENTS.md through generic preload and priority rules", async () => {
     const rootDir = await createTempDir();
     await writeFile(join(rootDir, AGENTS_CONTEXT_ID), "Use direct instructions.", "utf8");
 
@@ -57,7 +59,18 @@ describe("FileSystemContextStore", () => {
       version: "0.0.0",
       scope: "test",
       workspace: rootDir,
-      contextSystem: createHostContextSystem(new FileSystemContextStore({ rootDir })),
+      contextSystem: new ContextSystem({
+        store: new FileSystemContextStore({ rootDir }),
+        roots: [
+          {
+            namespace: HOST_CONTEXT_NAMESPACE,
+            load: {
+              preloadPaths: [AGENTS_CONTEXT_ID],
+              priorityRules: [{ pattern: AGENTS_CONTEXT_ID, priority: "critical" }],
+            },
+          },
+        ],
+      }),
     });
 
     const context = await agent.buildContext();
@@ -66,7 +79,8 @@ describe("FileSystemContextStore", () => {
       expect.objectContaining({
         id: AGENTS_CONTEXT_ID,
         metadata: {
-          trigger: "always_on",
+          trigger: "model_decision",
+          priority: "critical",
         },
       }),
     );
@@ -168,7 +182,7 @@ describe("FileSystemContextStore", () => {
       }),
     );
     await expect(readFile(join(rootDir, "guide.md"), "utf8")).resolves.toBe(
-      "---\ndescription: Guide\ntrigger: manual\n---\nGuide content.",
+      "---\ndescription: Guide\ntrigger: manual\npriority: normal\n---\nGuide content.",
     );
     expect(created.ok).toBe(true);
 
@@ -263,8 +277,8 @@ describe("FileSystemContextStore", () => {
       ],
     });
     expect(commands.map((command) => command.command)).toEqual(["rg", "grep"]);
-    expect(commands[1]?.args).toContain("--recursive");
-    expect(commands[1]?.args.at(-1)).toBe(rootDir);
+    expect(commands[1]?.args).not.toContain("--recursive");
+    expect(commands[1]?.args.at(-1)).toBe(contextPath);
   });
 
   it("searches context paths when scope=path", async () => {
@@ -342,6 +356,148 @@ describe("FileSystemContextStore", () => {
       }),
     );
   });
+
+  it("discovers explicitly included non-Markdown text context", async () => {
+    const rootDir = await createTempDir();
+    await writeFile(join(rootDir, "notes.txt"), "Plain notes.", "utf8");
+
+    await expect(new FileSystemContextStore({ rootDir }).listContext()).resolves.toEqual(ok([]));
+
+    const store = new FileSystemContextStore({ rootDir, include: ["*.txt"] });
+    await expect(store.listContext()).resolves.toMatchObject(
+      ok([
+        {
+          id: "notes.txt",
+          metadata: { trigger: "model_decision", priority: "normal" },
+          sizeBytes: 12,
+        },
+      ]),
+    );
+    await expect(store.readContext({ id: "notes.txt" })).resolves.toMatchObject(
+      ok({ id: "notes.txt", content: "Plain notes." }),
+    );
+  });
+
+  it("rejects symlink escapes and excluded direct reads", async () => {
+    const rootDir = await createTempDir();
+    const outsideDir = await createTempDir();
+    await writeFile(join(outsideDir, "secret.md"), "secret", "utf8");
+    await symlink(join(outsideDir, "secret.md"), join(rootDir, "linked.md"));
+    await writeFile(join(rootDir, "hidden.md"), "hidden", "utf8");
+    const store = new FileSystemContextStore({ rootDir, exclude: ["hidden.md"] });
+
+    await expect(store.readContext({ id: "linked.md" })).resolves.toMatchObject({
+      ok: false,
+      error: { code: "store_error" },
+    });
+    await expect(store.readContext({ id: "hidden.md" })).resolves.toMatchObject({
+      ok: false,
+      error: { code: "store_error" },
+    });
+  });
+
+  it("enforces the store authorization callback", async () => {
+    const rootDir = await createTempDir();
+    await writeFile(join(rootDir, "guide.md"), "Guide", "utf8");
+    const store = new FileSystemContextStore({
+      rootDir,
+      authorize: ({ operation, ids }) => (operation === "list" ? ids : []),
+    });
+
+    await expect(store.listContext()).resolves.toMatchObject({ ok: true });
+    await expect(store.readContext({ id: "guide.md" })).resolves.toMatchObject({
+      ok: false,
+      error: { code: "permission_denied" },
+    });
+  });
+
+  it("batch-authorizes search matches after searching and before applying maxResults", async () => {
+    const rootDir = await createTempDir();
+    await writeFile(join(rootDir, "z-public.md"), "Needle public", "utf8");
+    await writeFile(join(rootDir, "a-private.md"), "Needle private", "utf8");
+    const privatePath = join(rootDir, "a-private.md");
+    const publicPath = join(rootDir, "z-public.md");
+    const authorizationCalls: Array<{
+      readonly operation: string;
+      readonly ids: readonly string[];
+    }> = [];
+    const store = new FileSystemContextStore({
+      rootDir,
+      commandRunner: async () => ({
+        stdout: [
+          JSON.stringify({
+            type: "match",
+            data: {
+              path: { text: privatePath },
+              lines: { text: "Needle private\n" },
+              line_number: 1,
+            },
+          }),
+          JSON.stringify({
+            type: "match",
+            data: {
+              path: { text: publicPath },
+              lines: { text: "Needle public\n" },
+              line_number: 1,
+            },
+          }),
+        ].join("\n"),
+      }),
+      authorize: ({ operation, ids }) => {
+        authorizationCalls.push({ operation, ids });
+        return ids.filter((id) => id === "z-public.md");
+      },
+    });
+
+    await expect(store.listContext()).resolves.toMatchObject(
+      ok([expect.objectContaining({ id: "z-public.md" })]),
+    );
+    await expect(store.searchContext({ query: "Needle", maxResults: 1 })).resolves.toEqual(
+      ok([
+        expect.objectContaining({
+          id: "z-public.md",
+          line: "Needle public",
+        }),
+      ]),
+    );
+    expect(authorizationCalls).toEqual([
+      {
+        operation: "list",
+        ids: ["a-private.md", "z-public.md"],
+      },
+      {
+        operation: "search",
+        ids: ["a-private.md", "z-public.md"],
+      },
+    ]);
+  });
+
+  it("preserves file permissions when atomically editing context", async () => {
+    const rootDir = await createTempDir();
+    const filePath = join(rootDir, "private.md");
+    await writeFile(filePath, "Private", "utf8");
+    await chmod(filePath, 0o600);
+    const store = new FileSystemContextStore({ rootDir });
+
+    await expect(
+      store.editContext({ id: "private.md", mode: "replace", content: "Updated" }),
+    ).resolves.toMatchObject({ ok: true });
+    expect((await stat(filePath)).mode & 0o777).toBe(0o600);
+  });
+
+  it("lists a plain Markdown summary without decoding its full body", async () => {
+    const rootDir = await createTempDir();
+    await writeFile(join(rootDir, "binary-tail.md"), Buffer.from([0x23, 0x20, 0x41, 0x0a, 0xff]));
+    const store = new FileSystemContextStore({ rootDir });
+
+    await expect(store.listContext()).resolves.toMatchObject(
+      ok([{ id: "binary-tail.md", sizeBytes: 5 }]),
+    );
+    await expect(store.readContext({ id: "binary-tail.md" })).resolves.toMatchObject({
+      ok: false,
+      error: { code: "store_error" },
+    });
+  });
 });
 
 describe("ContextSystem", () => {
@@ -404,7 +560,7 @@ describe("ContextSystem", () => {
     );
   });
 
-  it("normalizes AGENTS.md as always-on for any context store", async () => {
+  it("does not assign special metadata to AGENTS.md", async () => {
     const store = new CountingContextStore({
       context: [
         {
@@ -420,16 +576,20 @@ describe("ContextSystem", () => {
     const contextSystem = new ContextSystem({ store });
 
     await expect(contextSystem.index()).resolves.toMatchObject(
-      ok([
-        {
-          namespace: HOST_CONTEXT_NAMESPACE,
-          id: AGENTS_CONTEXT_ID,
-          metadata: {
-            description: "Store metadata should be preserved.",
-            trigger: "always_on",
+      ok({
+        items: [
+          {
+            namespace: HOST_CONTEXT_NAMESPACE,
+            id: AGENTS_CONTEXT_ID,
+            metadata: {
+              description: "Store metadata should be preserved.",
+              trigger: "manual",
+              priority: "normal",
+            },
           },
-        },
-      ]),
+        ],
+        issues: [],
+      }),
     );
 
     await expect(
@@ -441,7 +601,8 @@ describe("ContextSystem", () => {
         content: "Shared instructions.",
         metadata: {
           description: "Store metadata should be preserved.",
-          trigger: "always_on",
+          trigger: "manual",
+          priority: "normal",
         },
       }),
     );
@@ -462,15 +623,19 @@ describe("ContextSystem", () => {
     const contextSystem = new ContextSystem({ store });
 
     await expect(contextSystem.index()).resolves.toMatchObject(
-      ok([
-        {
-          namespace: HOST_CONTEXT_NAMESPACE,
-          id: "indexed.md",
-          metadata: {
-            trigger: "manual",
+      ok({
+        items: [
+          {
+            namespace: HOST_CONTEXT_NAMESPACE,
+            id: "indexed.md",
+            metadata: {
+              trigger: "manual",
+              priority: "normal",
+            },
           },
-        },
-      ]),
+        ],
+        issues: [],
+      }),
     );
     expect(store.readCount).toBe(0);
   });
@@ -483,6 +648,7 @@ describe("ContextSystem", () => {
           content: "Alpha " + "Gamma ".repeat(20),
           metadata: {
             trigger: "always_on",
+            priority: "critical",
           },
         },
       ],
@@ -509,8 +675,8 @@ describe("ContextSystem", () => {
     };
 
     const context = await agent.buildContext(runContext, {
-      characterBudget: 1_000,
-      contextReadByteBudget: 32,
+      systemPromptCharacterBudget: 1_000,
+      preloadByteBudget: 32,
     });
 
     expect(store.lastListContext).toEqual(runContext);
@@ -552,6 +718,7 @@ describe("ContextSystem", () => {
           content: "Keep",
           metadata: {
             trigger: "always_on",
+            priority: "critical",
           },
         },
         {
@@ -559,6 +726,7 @@ describe("ContextSystem", () => {
           content: "Drop this large always-on content. ".repeat(80),
           metadata: {
             trigger: "always_on",
+            priority: "low",
           },
         },
       ],
@@ -576,16 +744,16 @@ describe("ContextSystem", () => {
     });
 
     const context = await agent.buildContext(undefined, {
-      characterBudget: 1_000,
+      systemPromptCharacterBudget: 1_000,
     });
 
     expect(context.systemPrompt).toContain("small.md");
-    expect(context.systemPrompt).toContain("large.md");
+    expect(context.systemPrompt).not.toContain("large.md");
     expect(context.systemPrompt).not.toContain("Keep");
     expect(context.systemPrompt).not.toContain("Drop this large always-on content.");
     expect(context.startupMessages[0]?.content).toContain("Keep");
     expect(context.startupMessages[0]?.content).toContain("Drop this large always-on content.");
-    expect(context.context).toContainEqual(
+    expect(context.context).not.toContainEqual(
       expect.objectContaining({
         id: "large.md",
         metadata: expect.objectContaining({
@@ -593,8 +761,7 @@ describe("ContextSystem", () => {
         }),
       }),
     );
-    expect(context.snapshot.downgradedAlwaysOnContexts).toBeUndefined();
-    expect(context.snapshot.truncationReason).toBeUndefined();
+    expect(context.snapshot.truncationReason).toBe("context_budget_exceeded");
   });
 
   it("keeps namespaced always-on context indexed when prompt overhead exceeds the budget", async () => {
@@ -621,28 +788,16 @@ describe("ContextSystem", () => {
       contextSystem: createHostContextSystem(store),
     });
 
-    const context = await agent.buildContext(undefined, {
-      characterBudget: 10,
-    });
-
-    expect(context.systemPrompt).not.toContain("content:");
-    expect(context.context).toContainEqual(
-      expect.objectContaining({
-        namespace: HOST_CONTEXT_NAMESPACE,
-        id: "brief.md",
-        metadata: expect.objectContaining({
-          trigger: "always_on",
-        }),
+    await expect(
+      agent.buildContext(undefined, {
+        systemPromptCharacterBudget: 10,
       }),
-    );
-    expect(context.startupMessages[0]?.content).toContain("A");
-    expect(context.snapshot.downgradedAlwaysOnContexts).toBeUndefined();
-    expect(context.snapshot).toMatchObject({
-      truncationReason: "context_budget_exceeded",
+    ).rejects.toMatchObject({
+      code: "context_budget_exceeded",
     });
   });
 
-  it("drops AGENTS.md replace edit metadata before calling the context store", async () => {
+  it("edits AGENTS.md metadata like any other context", async () => {
     const store = new InMemoryContextStore({
       context: [
         {
@@ -663,7 +818,7 @@ describe("ContextSystem", () => {
         mode: "replace",
         content: "New instructions.",
         metadata: {
-          description: "Ignored metadata",
+          description: "Updated metadata",
           trigger: "manual",
         },
       }),
@@ -673,7 +828,9 @@ describe("ContextSystem", () => {
         id: AGENTS_CONTEXT_ID,
         content: "New instructions.",
         metadata: {
-          trigger: "always_on",
+          description: "Updated metadata",
+          trigger: "manual",
+          priority: "normal",
         },
       }),
     );
@@ -1164,10 +1321,13 @@ describe("ContextSystem", () => {
     });
 
     const context = await agent.buildContext(undefined, {
-      characterBudget: 2_000,
+      systemPromptCharacterBudget: 2_000,
     });
 
-    expect(context.context.map((item) => item.id)).toEqual(["manuals/index.md", "manuals/profile.md"]);
+    expect(context.context.map((item) => item.id)).toEqual([
+      "manuals/index.md",
+      "manuals/profile.md",
+    ]);
     expect(context.startupMessages[0]?.content).toContain("Profile details.");
     expect(context.snapshot.loadedContexts).toContainEqual({
       namespace: HOST_CONTEXT_NAMESPACE,
@@ -1219,7 +1379,7 @@ describe("ContextSystem", () => {
       return;
     }
 
-    const selection = contextSystem.selectContext(indexed.value);
+    const selection = contextSystem.selectContext(indexed.value.items);
 
     expect(selection.context).toContainEqual(
       expect.objectContaining({
@@ -1239,6 +1399,78 @@ describe("ContextSystem", () => {
     ]);
   });
 
+  it("orders preload selections after applying root priority rules", async () => {
+    const contextSystem = new ContextSystem({
+      store: new InMemoryContextStore({
+        context: {
+          "alpha.md": "Alpha",
+          "critical.md": "Critical",
+        },
+      }),
+      roots: [
+        {
+          namespace: HOST_CONTEXT_NAMESPACE,
+          load: {
+            preloadPaths: ["alpha.md", "critical.md"],
+            priorityRules: [{ pattern: "critical.md", priority: "critical" }],
+          },
+        },
+      ],
+    });
+    const indexed = await contextSystem.index();
+    expect(indexed.ok).toBe(true);
+
+    if (indexed.ok) {
+      expect(
+        contextSystem.selectContext(indexed.value.items).preload.map((item) => item.id),
+      ).toEqual(["critical.md", "alpha.md"]);
+    }
+  });
+
+  it("treats an empty root path as the namespace root", async () => {
+    const contextSystem = new ContextSystem({
+      store: new InMemoryContextStore({ context: { "guide.md": "Guide" } }),
+      roots: [{ namespace: HOST_CONTEXT_NAMESPACE, path: "" }],
+    });
+    const indexed = await contextSystem.index();
+    expect(indexed.ok).toBe(true);
+
+    if (indexed.ok) {
+      expect(contextSystem.selectContext(indexed.value.items).context).toContainEqual(
+        expect.objectContaining({ id: "guide.md" }),
+      );
+    }
+  });
+
+  it("keeps the strongest priority across overlapping roots", async () => {
+    const contextSystem = new ContextSystem({
+      store: new InMemoryContextStore({ context: { "docs/guide.md": "Guide" } }),
+      roots: [
+        {
+          namespace: HOST_CONTEXT_NAMESPACE,
+          path: "docs",
+          load: {
+            priorityRules: [{ pattern: "docs/*.md", priority: "critical" }],
+          },
+        },
+        {
+          namespace: HOST_CONTEXT_NAMESPACE,
+          load: {
+            priorityRules: [{ pattern: "**", priority: "low" }],
+          },
+        },
+      ],
+    });
+    const indexed = await contextSystem.index();
+    expect(indexed.ok).toBe(true);
+
+    if (indexed.ok) {
+      expect(contextSystem.selectContext(indexed.value.items).context[0]?.metadata.priority).toBe(
+        "critical",
+      );
+    }
+  });
+
   it("registers context stores by namespace and rejects invalid registrations", async () => {
     const contextSystem = new ContextSystem();
     const store = new InMemoryContextStore({
@@ -1248,7 +1480,7 @@ describe("ContextSystem", () => {
     });
 
     expect(contextSystem.register({ namespace: "plugin.docs", store })).toEqual(
-      ok({ namespace: "plugin.docs" }),
+      ok({ namespace: "plugin.docs", required: false }),
     );
     await expect(
       contextSystem.read({
@@ -1273,6 +1505,116 @@ describe("ContextSystem", () => {
       error: {
         code: "invalid_input",
       },
+    });
+  });
+
+  it("keeps optional store failures as index issues and fails required stores", async () => {
+    const available = new InMemoryContextStore({ context: { "guide.md": "Guide" } });
+    const unavailable = new FailingListContextStore();
+    const contextSystem = new ContextSystem();
+    contextSystem.register({ namespace: "available", store: available });
+    contextSystem.register({ namespace: "optional", store: unavailable });
+
+    await expect(contextSystem.index()).resolves.toMatchObject(
+      ok({
+        items: [{ namespace: "available", id: "guide.md" }],
+        issues: [
+          {
+            namespace: "optional",
+            operation: "list",
+            error: { code: "store_unavailable" },
+          },
+        ],
+      }),
+    );
+
+    const requiredSystem = new ContextSystem();
+    requiredSystem.register({ namespace: "required", store: unavailable, required: true });
+    await expect(requiredSystem.index()).resolves.toMatchObject({
+      ok: false,
+      error: { code: "store_unavailable" },
+    });
+  });
+
+  it("fails context assembly when a selected preload cannot be read", async () => {
+    const store = new FailingReadContextStore({
+      context: [
+        {
+          id: "required.md",
+          content: "Required",
+          metadata: { trigger: "always_on" },
+        },
+      ],
+    });
+    const agent = await ExpertAgent.create({
+      schemaVersion: "pragma.expert/v1",
+      id: "failing-context-agent",
+      name: "Failing Context Agent",
+      description: "Tests preload failure handling.",
+      tags: [],
+      version: "1.0.0",
+      scope: "test",
+      workspace: "/tmp/pragma-failing-context-test",
+      contextSystem: new ContextSystem({ store }),
+    });
+
+    await expect(agent.buildContext()).rejects.toMatchObject({
+      code: "context_preload_failed",
+    });
+  });
+
+  it("changes in-memory revisions for metadata-only edits", async () => {
+    const store = new InMemoryContextStore({ context: { "guide.md": "Guide" } });
+    const before = await store.readContext({ id: "guide.md" });
+    expect(before.ok).toBe(true);
+
+    if (!before.ok) {
+      return;
+    }
+
+    const edited = await store.editContext({
+      id: "guide.md",
+      mode: "replace",
+      metadata: { trigger: "manual", priority: "high" },
+      expectedRevision: before.value.revision,
+    });
+    expect(edited.ok).toBe(true);
+
+    if (edited.ok) {
+      expect(edited.value.revision).not.toBe(before.value.revision);
+    }
+  });
+
+  it("serializes concurrent file edits by expected revision", async () => {
+    const rootDir = await createTempDir();
+    const store = new FileSystemContextStore({ rootDir });
+    await writeFile(join(rootDir, "guide.md"), "Original", "utf8");
+    const before = await store.readContext({ id: "guide.md" });
+    expect(before.ok).toBe(true);
+
+    if (!before.ok) {
+      return;
+    }
+
+    const results = await Promise.all([
+      store.editContext({
+        id: "guide.md",
+        mode: "replace",
+        content: "First",
+        expectedRevision: before.value.revision,
+      }),
+      store.editContext({
+        id: "guide.md",
+        mode: "replace",
+        content: "Second",
+        expectedRevision: before.value.revision,
+      }),
+    ]);
+
+    expect(results.filter((result) => result.ok)).toHaveLength(1);
+    expect(results.filter((result) => !result.ok)[0]).toMatchObject({
+      ok: false,
+      error: { code: "context_conflict" },
     });
   });
 
@@ -1320,5 +1662,17 @@ class CountingContextStore extends InMemoryContextStore {
     this.lastReadContext = input.context;
     this.lastReadInput = input;
     return await super.readContext(input);
+  }
+}
+
+class FailingListContextStore extends InMemoryContextStore {
+  override async listContext() {
+    return error("store_unavailable", "Store is unavailable.");
+  }
+}
+
+class FailingReadContextStore extends InMemoryContextStore {
+  override async readContext() {
+    return error("store_unavailable", "Context cannot be read.");
   }
 }

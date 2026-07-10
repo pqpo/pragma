@@ -1,5 +1,7 @@
 import type {
   ContextTrigger,
+  ContextPriority,
+  ContextIndex,
   ExpertAgentContextItem,
   ExpertAgentContextAddInput,
   ExpertAgentContextItemEditInput,
@@ -52,7 +54,7 @@ export interface CreateContextToolsOptions {
 export interface ExpertAgentContextItemOperations {
   readonly listContext: (
     context?: ExpertAgentRunContext,
-  ) => Promise<ExpertAgentContextResult<readonly ExpertAgentContextItemSummary[]>>;
+  ) => Promise<ExpertAgentContextResult<ContextIndex>>;
   readonly readContext: (
     input: ExpertAgentContextItemReadInput,
   ) => Promise<ExpertAgentContextResult<ExpertAgentContextItem>>;
@@ -89,9 +91,10 @@ export function createContextTools(
         }
 
         return {
-          text: formatContextSummaries(result.value),
+          text: formatContextIndex(result.value),
           details: {
-            context: result.value,
+            context: result.value.items,
+            issues: result.value.issues,
           },
         };
       },
@@ -180,6 +183,10 @@ export function createContextTools(
       name: "add_expert_context",
       label: "Add expert context",
       description: "Add an ExpertAgent context item to a context namespace by context id.",
+      approval: {
+        mode: "required",
+        reason: "Writing ExpertAgent context requires explicit approval.",
+      },
       inputSchema: objectSchema(
         {
           namespace: stringSchema("Context namespace."),
@@ -187,6 +194,7 @@ export function createContextTools(
           content: stringSchema("Context content."),
           description: stringSchema("Optional context description."),
           trigger: triggerSchema(),
+          priority: prioritySchema(),
         },
         ["namespace", "id", "content"],
       ),
@@ -216,6 +224,10 @@ export function createContextTools(
       label: "Edit expert context",
       description:
         'Edit an ExpertAgent context item. Use mode="replace" for full content or metadata replacement, or mode="search_replace" for exact text search/replace.',
+      approval: {
+        mode: "required",
+        reason: "Writing ExpertAgent context requires explicit approval.",
+      },
       inputSchema: objectSchema(
         {
           namespace: stringSchema("Context namespace."),
@@ -228,6 +240,7 @@ export function createContextTools(
           content: stringSchema('Replacement context content for mode="replace".'),
           description: stringSchema('Replacement context description for mode="replace".'),
           trigger: triggerSchema(),
+          priority: prioritySchema(),
           search: stringSchema('The exact text to search for in mode="search_replace".'),
           replace: stringSchema('Replacement text for mode="search_replace".'),
           replaceAll: booleanSchema(
@@ -286,6 +299,10 @@ export function createContextTools(
       name: "delete_expert_context",
       label: "Delete expert context",
       description: "Delete an ExpertAgent context by context id.",
+      approval: {
+        mode: "required",
+        reason: "Deleting ExpertAgent context requires explicit approval.",
+      },
       inputSchema: objectSchema(
         {
           namespace: stringSchema("Context namespace."),
@@ -510,6 +527,14 @@ function triggerSchema(): unknown {
   };
 }
 
+function prioritySchema(): unknown {
+  return {
+    type: "string",
+    enum: ["critical", "high", "normal", "low"],
+    description: "Context assembly priority. Defaults to normal when omitted.",
+  };
+}
+
 function readStringParam(params: unknown, key: string): string {
   const value = readParam(params, key);
 
@@ -578,11 +603,27 @@ function normalizeToolReadOffset(
 function readMetadataParams(params: unknown): Partial<ExpertAgentContextItemMetadata> {
   const description = readOptionalStringParam(params, "description");
   const trigger = readOptionalTriggerParam(params);
+  const priority = readOptionalPriorityParam(params);
 
   return {
     ...(description === undefined ? {} : { description }),
     ...(trigger === undefined ? {} : { trigger }),
+    ...(priority === undefined ? {} : { priority }),
   };
+}
+
+function readOptionalPriorityParam(params: unknown): ContextPriority | undefined {
+  const value = readParam(params, "priority");
+
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (value === "critical" || value === "high" || value === "normal" || value === "low") {
+    return value;
+  }
+
+  throw new Error('Context tool parameter "priority" must be critical, high, normal, or low.');
 }
 
 function readOptionalTriggerParam(params: unknown): ContextTrigger | undefined {
@@ -653,6 +694,22 @@ function formatContextSummaries(context: readonly ExpertAgentContextItemSummary[
   return context.map(formatContextSummary).join("\n");
 }
 
+function formatContextIndex(index: ContextIndex): string {
+  const summaries = formatContextSummaries(index.items);
+
+  if (index.issues.length === 0) {
+    return summaries;
+  }
+
+  return [
+    summaries,
+    "Context store issues:",
+    ...index.issues.map(
+      (issue) => `- ${issue.namespace}: ${issue.error.code}: ${issue.error.message}`,
+    ),
+  ].join("\n");
+}
+
 function formatContextSummary(context: ExpertAgentContextItemSummary): string {
   return [
     `- id: ${context.id}`,
@@ -661,6 +718,7 @@ function formatContextSummary(context: ExpertAgentContextItemSummary): string {
       ? undefined
       : `  description: ${context.metadata.description}`,
     `  trigger: ${context.metadata.trigger}`,
+    `  priority: ${context.metadata.priority}`,
   ]
     .filter((line) => line !== undefined)
     .join("\n");

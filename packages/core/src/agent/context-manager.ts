@@ -3,8 +3,9 @@ import { HOST_CONTEXT_NAMESPACE } from "../context-system/context-system.ts";
 import type {
   ContextPreloadReason,
   ContextPreloadSelection,
-  ContextTrustLevel,
+  ContextStoreIssue,
   ContextSystem,
+  ExpertAgentContextError,
   ExpertAgentContextItem,
   ExpertAgentContextItemReference,
   ExpertAgentContextItemSummary,
@@ -24,10 +25,8 @@ export interface ExpertAgentStartupMessage {
 }
 
 export interface ContextAssemblerOptions {
-  readonly tokenBudget?: number | undefined;
-  readonly characterBudget?: number | undefined;
-  readonly contextReadByteBudget?: number | undefined;
-  readonly trustLevel?: ContextTrustLevel | undefined;
+  readonly systemPromptCharacterBudget?: number | undefined;
+  readonly preloadByteBudget?: number | undefined;
 }
 
 export interface ContextSnapshot {
@@ -36,10 +35,28 @@ export interface ContextSnapshot {
   readonly retrievedChunks: readonly ContextRetrievedChunk[];
   readonly loadedContexts?: readonly ContextLoadedSelection[] | undefined;
   readonly excludedContexts?: readonly ExpertAgentContextItemReference[] | undefined;
-  readonly trustLevel: ContextTrustLevel;
-  readonly tokenBudget: number;
-  readonly downgradedAlwaysOnContexts?: readonly ExpertAgentContextItemReference[] | undefined;
+  readonly omittedContextSummaries?: readonly ExpertAgentContextItemReference[] | undefined;
+  readonly omittedPreloadContexts?: readonly ExpertAgentContextItemReference[] | undefined;
+  readonly storeIssues?: readonly ContextStoreIssue[] | undefined;
+  readonly budget: {
+    readonly systemPromptCharacters: number;
+    readonly systemPromptCharacterBudget: number;
+    readonly preloadBytes: number;
+    readonly preloadByteBudget: number;
+  };
   readonly truncationReason?: string | undefined;
+}
+
+export class ContextAssemblyError extends Error {
+  readonly code: "context_budget_exceeded" | "context_preload_failed";
+  readonly details?: unknown;
+
+  constructor(code: ContextAssemblyError["code"], message: string, details?: unknown) {
+    super(message);
+    this.name = "ContextAssemblyError";
+    this.code = code;
+    this.details = details;
+  }
 }
 
 export interface ContextRevision {
@@ -82,23 +99,35 @@ export class ContextManager {
     runContext: ExpertAgentRunContext = {},
     options: ContextAssemblerOptions = {},
   ): Promise<ExpertAgentContext> {
-    const budget = options.characterBudget ?? options.tokenBudget ?? 12_000;
-    const contextReadByteBudget = options.contextReadByteBudget ?? 8_000;
+    const systemPromptCharacterBudget = normalizeBudget(
+      options.systemPromptCharacterBudget,
+      12_000,
+    );
+    const preloadByteBudget = normalizeBudget(options.preloadByteBudget, 8_000);
     const indexResult = await this.contextSystem.index(runContext);
-    const indexedContext = indexResult.ok ? indexResult.value : [];
-    const selected = this.contextSystem.selectContext(indexedContext);
-    const preloadedContexts = await this.loadPreloadedContexts(selected.preload, runContext, {
-      contextReadByteBudget,
-    });
+    if (!indexResult.ok) {
+      throw new ContextAssemblyError(
+        "context_preload_failed",
+        indexResult.error.message,
+        indexResult.error,
+      );
+    }
+
+    const selected = this.contextSystem.selectContext(indexResult.value.items);
+    const preloaded = await this.loadPreloadedContexts(
+      selected.preload,
+      runContext,
+      preloadByteBudget,
+    );
     const fitted = this.fitSystemPromptToBudget({
-      budget,
-      contextError: indexResult.ok ? undefined : indexResult.error.message,
+      budget: systemPromptCharacterBudget,
       contextSummaries: selected.context,
     });
     const truncationReason =
-      (preloadedContexts.some((context) => context.contentRange?.truncated === true)
+      (preloaded.contexts.some((context) => context.contentRange?.truncated === true) ||
+      preloaded.omitted.length > 0
         ? "always_on_context_budget_exceeded"
-        : undefined) ?? (fitted.promptWasOverBudget ? "context_budget_exceeded" : undefined);
+        : undefined) ?? (fitted.omitted.length > 0 ? "context_budget_exceeded" : undefined);
     const snapshot: ContextSnapshot = {
       releaseDigest: `${this.agent.id}@${this.agent.version}`,
       contextRevisions: selected.context.map((context) => ({
@@ -107,17 +136,24 @@ export class ContextManager {
         ...(context.revision === undefined ? {} : { revision: context.revision }),
         ...(context.etag === undefined ? {} : { etag: context.etag }),
       })),
-      retrievedChunks: createRetrievedChunks(preloadedContexts),
-      loadedContexts: createLoadedSelections(preloadedContexts, selected.preload),
+      retrievedChunks: createRetrievedChunks(preloaded.contexts),
+      loadedContexts: createLoadedSelections(preloaded.contexts, selected.preload),
       ...(selected.excluded.length === 0 ? {} : { excludedContexts: selected.excluded }),
-      trustLevel: options.trustLevel ?? "workspace",
-      tokenBudget: options.tokenBudget ?? budget,
+      ...(fitted.omitted.length === 0 ? {} : { omittedContextSummaries: fitted.omitted }),
+      ...(preloaded.omitted.length === 0 ? {} : { omittedPreloadContexts: preloaded.omitted }),
+      ...(indexResult.value.issues.length === 0 ? {} : { storeIssues: indexResult.value.issues }),
+      budget: {
+        systemPromptCharacters: fitted.systemPrompt.length,
+        systemPromptCharacterBudget,
+        preloadBytes: preloaded.bytes,
+        preloadByteBudget,
+      },
       ...(truncationReason === undefined ? {} : { truncationReason }),
     };
 
     return {
       systemPrompt: fitted.systemPrompt,
-      startupMessages: createAlwaysOnStartupMessages(preloadedContexts),
+      startupMessages: createAlwaysOnStartupMessages(preloaded.contexts),
       context: fitted.contextSummaries,
       snapshot,
     };
@@ -129,18 +165,50 @@ export class ContextManager {
     readonly contextSummaries: readonly ExpertAgentContextItemSummary[];
   }): {
     readonly contextSummaries: readonly ExpertAgentContextItemSummary[];
-    readonly promptWasOverBudget: boolean;
+    readonly omitted: readonly ExpertAgentContextItemReference[];
     readonly systemPrompt: string;
   } {
-    const systemPrompt = this.buildSystemPrompt({
+    const basePrompt = this.buildSystemPrompt({
       contextError: context.contextError,
-      context: context.contextSummaries,
+      context: [],
     });
-    const promptWasOverBudget = systemPrompt.length > context.budget;
+
+    if (basePrompt.length > context.budget) {
+      throw new ContextAssemblyError(
+        "context_budget_exceeded",
+        "Agent identity and instructions exceed the system prompt character budget.",
+        { size: basePrompt.length, budget: context.budget },
+      );
+    }
+
+    const included: ExpertAgentContextItemSummary[] = [];
+    const omitted: ExpertAgentContextItemReference[] = [];
+    let systemPrompt = basePrompt;
+    let budgetExhausted = false;
+
+    for (const summary of context.contextSummaries) {
+      if (budgetExhausted) {
+        omitted.push(toContextReference(summary));
+        continue;
+      }
+
+      const candidate = this.buildSystemPrompt({
+        contextError: context.contextError,
+        context: [...included, summary],
+      });
+
+      if (candidate.length <= context.budget) {
+        included.push(summary);
+        systemPrompt = candidate;
+      } else {
+        omitted.push(toContextReference(summary));
+        budgetExhausted = true;
+      }
+    }
 
     return {
-      contextSummaries: context.contextSummaries,
-      promptWasOverBudget,
+      contextSummaries: included,
+      omitted,
       systemPrompt,
     };
   }
@@ -169,22 +237,40 @@ export class ContextManager {
   private async loadPreloadedContexts(
     preload: readonly ContextPreloadSelection[],
     runContext: ExpertAgentRunContext,
-    options: {
-      readonly contextReadByteBudget: number;
-    },
-  ): Promise<readonly ExpertAgentContextItem[]> {
-    const loaded = await Promise.all(
-      preload.map((item) =>
-        this.contextSystem.read({
-          namespace: item.namespace ?? HOST_CONTEXT_NAMESPACE,
-          id: item.id,
-          offset: Math.max(1, Math.trunc(options.contextReadByteBudget)),
-          context: runContext,
-        }),
-      ),
-    );
+    byteBudget: number,
+  ): Promise<{
+    readonly contexts: readonly ExpertAgentContextItem[];
+    readonly omitted: readonly ExpertAgentContextItemReference[];
+    readonly bytes: number;
+  }> {
+    const contexts: ExpertAgentContextItem[] = [];
+    const omitted: ExpertAgentContextItemReference[] = [];
+    let remaining = byteBudget;
 
-    return loaded.filter((result) => result.ok).map((result) => withTruncationNotice(result.value));
+    for (const item of preload) {
+      if (remaining <= 0) {
+        omitted.push(toContextReference(item));
+        continue;
+      }
+
+      const result = await this.contextSystem.read({
+        namespace: item.namespace ?? HOST_CONTEXT_NAMESPACE,
+        id: item.id,
+        offset: remaining,
+        context: runContext,
+      });
+
+      if (!result.ok) {
+        throwPreloadError(item, result.error);
+      }
+
+      const normalized = withTruncationNotice(result.value);
+      contexts.push(normalized);
+      remaining -=
+        result.value.contentRange?.endOffset ?? Buffer.byteLength(result.value.content, "utf8");
+    }
+
+    return { contexts, omitted, bytes: byteBudget - remaining };
   }
 }
 
@@ -264,6 +350,42 @@ function createRetrievedChunk(
 
 function createReferenceKey(reference: ExpertAgentContextItemReference): string {
   return `${reference.namespace ?? HOST_CONTEXT_NAMESPACE}::${reference.id}`;
+}
+
+function toContextReference(
+  reference: ExpertAgentContextItemReference,
+): ExpertAgentContextItemReference {
+  return {
+    ...(reference.namespace === undefined ? {} : { namespace: reference.namespace }),
+    id: reference.id,
+  };
+}
+
+function normalizeBudget(value: number | undefined, fallback: number): number {
+  if (value === undefined) {
+    return fallback;
+  }
+
+  if (!Number.isFinite(value) || value < 0) {
+    throw new ContextAssemblyError(
+      "context_budget_exceeded",
+      "Context assembly budgets must be finite non-negative numbers.",
+      { value },
+    );
+  }
+
+  return Math.trunc(value);
+}
+
+function throwPreloadError(
+  reference: ExpertAgentContextItemReference,
+  error: ExpertAgentContextError,
+): never {
+  throw new ContextAssemblyError(
+    "context_preload_failed",
+    `Failed to load required context ${reference.namespace ?? HOST_CONTEXT_NAMESPACE}/${reference.id}: ${error.message}`,
+    { reference, error },
+  );
 }
 
 function createAlwaysOnStartupMessages(

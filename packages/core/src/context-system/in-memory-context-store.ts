@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import type {
   ExpertAgentContextItemListInput,
   ExpertAgentContextItemMetadata,
@@ -250,7 +252,9 @@ export class InMemoryContextStore implements ExpertAgentContextStore {
 
     if (input.scope === "hybrid") {
       const pathMatches = searchContextPaths([...this.context.values()], input);
-      const seen = new Set(matches.map((match) => `${match.id}:${match.lineNumber ?? 0}:${match.line}`));
+      const seen = new Set(
+        matches.map((match) => `${match.id}:${match.lineNumber ?? 0}:${match.line}`),
+      );
 
       for (const match of pathMatches) {
         const key = `${match.id}:${match.lineNumber ?? 0}:${match.line}`;
@@ -386,12 +390,26 @@ function normalizeInputMetadata(
     trigger: metadata?.trigger ?? "model_decision",
     ...(metadata?.trustLevel === undefined ? {} : { trustLevel: metadata.trustLevel }),
     ...(metadata?.sensitivity === undefined ? {} : { sensitivity: metadata.sensitivity }),
+    priority: metadata?.priority ?? "normal",
   };
 }
 
 function withContextRevision(context: ExpertAgentStoredContextItem): ExpertAgentStoredContextItem {
   const sizeBytes = Buffer.byteLength(context.content, "utf8");
-  const revision = `${sizeBytes}:${hashString(context.content)}`;
+  const revision = createHash("sha256")
+    .update(
+      JSON.stringify({
+        content: context.content,
+        metadata: {
+          description: context.metadata.description,
+          trigger: context.metadata.trigger,
+          trustLevel: context.metadata.trustLevel,
+          sensitivity: context.metadata.sensitivity,
+          priority: context.metadata.priority,
+        },
+      }),
+    )
+    .digest("hex");
 
   return {
     ...context,
@@ -399,16 +417,6 @@ function withContextRevision(context: ExpertAgentStoredContextItem): ExpertAgent
     etag: revision,
     sizeBytes,
   };
-}
-
-function hashString(value: string): string {
-  let hash = 0;
-
-  for (let index = 0; index < value.length; index += 1) {
-    hash = (hash * 31 + value.charCodeAt(index)) >>> 0;
-  }
-
-  return hash.toString(16);
 }
 
 function readContextLines(

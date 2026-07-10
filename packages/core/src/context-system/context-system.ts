@@ -4,6 +4,7 @@ export const AGENTS_CONTEXT_ID = "AGENTS.md";
 export const HOST_CONTEXT_NAMESPACE = "host";
 
 export type ContextTrigger = "always_on" | "model_decision" | "manual";
+export type ContextPriority = "critical" | "high" | "normal" | "low";
 export type ContextTrustLevel = "system" | "workspace" | "user" | "external";
 export type ContextSensitivity = "public" | "internal" | "confidential" | "restricted";
 export type ContextSearchScope = "path" | "content" | "hybrid";
@@ -20,6 +21,7 @@ export type ExpertAgentContextErrorCode =
   | "context_already_exists"
   | "context_conflict"
   | "context_too_large"
+  | "context_budget_exceeded"
   | "permission_denied"
   | "invalid_input"
   | "store_unavailable"
@@ -46,6 +48,7 @@ export interface ExpertAgentContextItemMetadata {
   readonly trigger: ContextTrigger;
   readonly trustLevel?: ContextTrustLevel | undefined;
   readonly sensitivity?: ContextSensitivity | undefined;
+  readonly priority: ContextPriority;
 }
 
 export interface ExpertAgentContextItemSummary {
@@ -100,10 +103,12 @@ export interface ExpertAgentStoredContextItemReadResult extends ExpertAgentStore
 export interface ExpertAgentContextStoreRegistrationInput {
   readonly namespace: string;
   readonly store: ExpertAgentContextStore;
+  readonly required?: boolean | undefined;
 }
 
 export interface ExpertAgentContextStoreRegistration {
   readonly namespace: string;
+  readonly required: boolean;
 }
 
 export interface ExpertAgentContextAddInput {
@@ -143,15 +148,13 @@ interface ExpertAgentContextItemEditBaseInput {
   readonly context?: ExpertAgentRunContext | undefined;
 }
 
-export interface ExpertAgentContextItemReplaceEditInput
-  extends ExpertAgentContextItemEditBaseInput {
+export interface ExpertAgentContextItemReplaceEditInput extends ExpertAgentContextItemEditBaseInput {
   readonly mode: "replace";
   readonly content?: string | undefined;
   readonly metadata?: Partial<ExpertAgentContextItemMetadata> | undefined;
 }
 
-export interface ExpertAgentContextItemSearchReplaceEditInput
-  extends ExpertAgentContextItemEditBaseInput {
+export interface ExpertAgentContextItemSearchReplaceEditInput extends ExpertAgentContextItemEditBaseInput {
   readonly mode?: "search_replace" | undefined;
   readonly search: string;
   readonly replace: string;
@@ -169,15 +172,13 @@ interface ExpertAgentStoredContextItemEditBaseInput {
   readonly context?: ExpertAgentRunContext | undefined;
 }
 
-export interface ExpertAgentStoredContextItemReplaceEditInput
-  extends ExpertAgentStoredContextItemEditBaseInput {
+export interface ExpertAgentStoredContextItemReplaceEditInput extends ExpertAgentStoredContextItemEditBaseInput {
   readonly mode: "replace";
   readonly content?: string | undefined;
   readonly metadata?: Partial<ExpertAgentContextItemMetadata> | undefined;
 }
 
-export interface ExpertAgentStoredContextItemSearchReplaceEditInput
-  extends ExpertAgentStoredContextItemEditBaseInput {
+export interface ExpertAgentStoredContextItemSearchReplaceEditInput extends ExpertAgentStoredContextItemEditBaseInput {
   readonly mode: "search_replace";
   readonly search: string;
   readonly replace: string;
@@ -253,6 +254,12 @@ export interface ExpertAgentStoredContextRegisterInput {
 export interface ExpertAgentContextRootLoadRules {
   readonly preloadPaths?: readonly string[] | undefined;
   readonly forbiddenLoad?: readonly string[] | undefined;
+  readonly priorityRules?: readonly ExpertAgentContextPriorityRule[] | undefined;
+}
+
+export interface ExpertAgentContextPriorityRule {
+  readonly pattern: string;
+  readonly priority: ContextPriority;
 }
 
 export interface ExpertAgentContextRoot {
@@ -267,6 +274,7 @@ export interface NormalizedExpertAgentContextRoot {
   readonly load: {
     readonly preloadPaths: readonly string[];
     readonly forbiddenLoad: readonly string[];
+    readonly priorityRules: readonly ExpertAgentContextPriorityRule[];
   };
 }
 
@@ -278,6 +286,17 @@ export interface ContextAssemblySelection {
 
 export interface ContextPreloadSelection extends ExpertAgentContextItemReference {
   readonly reasons: readonly ContextPreloadReason[];
+}
+
+export interface ContextStoreIssue {
+  readonly namespace: string;
+  readonly operation: "list";
+  readonly error: ExpertAgentContextError;
+}
+
+export interface ContextIndex {
+  readonly items: readonly ExpertAgentContextItemSummary[];
+  readonly issues: readonly ContextStoreIssue[];
 }
 
 export interface ExpertAgentContextStore {
@@ -312,16 +331,23 @@ export interface ContextSystemOptions {
 }
 
 export class ContextSystem {
-  readonly stores = new Map<string, ExpertAgentContextStore>();
+  private readonly stores = new Map<
+    string,
+    { readonly store: ExpertAgentContextStore; readonly required: boolean }
+  >();
   readonly roots: readonly NormalizedExpertAgentContextRoot[];
 
   constructor(options: ContextSystemOptions = {}) {
     if (options.store !== undefined) {
-      this.stores.set(HOST_CONTEXT_NAMESPACE, options.store);
+      this.registerOrThrow({
+        namespace: HOST_CONTEXT_NAMESPACE,
+        store: options.store,
+        required: true,
+      });
     }
 
     for (const [namespace, store] of normalizeStoreEntries(options.stores)) {
-      this.stores.set(namespace, store);
+      this.registerOrThrow({ namespace, store, required: false });
     }
 
     this.roots = normalizeContextRoots(options.roots);
@@ -346,36 +372,49 @@ export class ContextSystem {
       );
     }
 
-    this.stores.set(namespaceResult.value, input.store);
+    const required = input.required ?? false;
+    this.stores.set(namespaceResult.value, { store: input.store, required });
 
-    return ok({ namespace: namespaceResult.value });
+    return ok({ namespace: namespaceResult.value, required });
+  }
+
+  private registerOrThrow(input: ExpertAgentContextStoreRegistrationInput): void {
+    const result = this.register(input);
+
+    if (!result.ok) {
+      throw new TypeError(result.error.message);
+    }
   }
 
   async index(
     context: ExpertAgentRunContext = {},
-  ): Promise<ExpertAgentContextResult<readonly ExpertAgentContextItemSummary[]>> {
+  ): Promise<ExpertAgentContextResult<ContextIndex>> {
     if (this.stores.size === 0) {
-      return ok([]);
+      return ok({ items: [], issues: [] });
     }
 
     const summaries: ExpertAgentContextItemSummary[] = [];
+    const issues: ContextStoreIssue[] = [];
 
-    for (const [namespace, store] of this.stores) {
-      const listResult = await store.listContext({ context });
+    for (const [namespace, binding] of this.stores) {
+      const listResult = await binding.store.listContext({ context });
 
       if (!listResult.ok) {
-        return listResult;
+        if (binding.required) {
+          return listResult;
+        }
+
+        issues.push({ namespace, operation: "list", error: listResult.error });
+        continue;
       }
 
       summaries.push(...listResult.value.map((item) => normalizeContextSummary(item, namespace)));
     }
 
-    return ok(sortContextSummaries(summaries));
+    return ok({ items: sortContextSummaries(summaries), issues });
   }
 
-  selectContext(
-    summaries: readonly ExpertAgentContextItemSummary[],
-  ): ContextAssemblySelection {
+  selectContext(summaries: readonly ExpertAgentContextItemSummary[]): ContextAssemblySelection {
     if (this.roots.length === 0) {
       return {
         context: sortContextSummaries(summaries),
@@ -403,13 +442,17 @@ export class ContextSystem {
           break;
         }
 
-        allowed.set(key, summary);
+        const prioritized = applyPriorityRules(
+          allowed.get(key) ?? summary,
+          root.load.priorityRules,
+        );
+        allowed.set(key, prioritized);
 
         if (matchesAnyPattern(summary.id, root.load.preloadPaths)) {
           addPreloadReason(preload, key, "preload_path");
         }
 
-        if (summary.metadata.trigger === "always_on") {
+        if (prioritized.metadata.trigger === "always_on") {
           addPreloadReason(preload, key, "always_on");
         }
       }
@@ -417,9 +460,14 @@ export class ContextSystem {
 
     return {
       context: sortContextSummaries([...allowed.values()]),
-      preload: [...preload.entries()]
-        .filter(([key]) => !excluded.has(key))
-        .map(([key, reasons]) => toPreloadSelection(allowed, key, reasons))
+      preload: sortContextSummaries([...allowed.values()])
+        .map((summary) => {
+          const key = createContextReferenceKey(summary);
+          return excluded.has(key)
+            ? undefined
+            : toPreloadSelection(allowed, key, preload.get(key) ?? []);
+        })
+        .filter((item) => item?.reasons.length !== 0)
         .filter((item): item is ContextPreloadSelection => item !== undefined),
       excluded: [...excluded.values()],
     };
@@ -493,10 +541,7 @@ export class ContextSystem {
       return storeResult;
     }
 
-    const storeInput = await this.prepareStoredEditInput(
-      storeResult.value,
-      normalizedInput.value,
-    );
+    const storeInput = await this.prepareStoredEditInput(storeResult.value, normalizedInput.value);
 
     if (!storeInput.ok) {
       return storeInput;
@@ -618,16 +663,18 @@ export class ContextSystem {
     );
   }
 
-  private getStore(namespace: string | undefined): ExpertAgentContextResult<ExpertAgentContextStore> {
+  private getStore(
+    namespace: string | undefined,
+  ): ExpertAgentContextResult<ExpertAgentContextStore> {
     const namespaceResult = normalizeNamespace(namespace);
 
     if (!namespaceResult.ok) {
       return namespaceResult;
     }
 
-    const store = this.stores.get(namespaceResult.value);
+    const binding = this.stores.get(namespaceResult.value);
 
-    if (store === undefined) {
+    if (binding === undefined) {
       return error(
         "store_unavailable",
         `ExpertAgent context store is not configured: ${namespaceResult.value}`,
@@ -637,7 +684,7 @@ export class ContextSystem {
       );
     }
 
-    return ok(store);
+    return ok(binding.store);
   }
 
   private getSearchStores(
@@ -659,7 +706,7 @@ export class ContextSystem {
       return ok([[namespaceResult.value, storeResult.value]]);
     }
 
-    return ok([...this.stores.entries()]);
+    return ok([...this.stores.entries()].map(([namespace, binding]) => [namespace, binding.store]));
   }
 }
 
@@ -714,12 +761,9 @@ export function normalizeContextSummary(
 
 export function normalizeMetadata(
   id: string,
-  metadata: ExpertAgentContextItemMetadata,
+  metadata: Partial<ExpertAgentContextItemMetadata>,
 ): ExpertAgentContextItemMetadata {
-  if (isAgentsContextId(id)) {
-    return normalizeAgentsContextMetadata(metadata);
-  }
-
+  void id;
   return {
     ...(metadata.description === undefined ? {} : { description: metadata.description }),
     trigger: normalizeTrigger(metadata.trigger),
@@ -729,6 +773,7 @@ export function normalizeMetadata(
     ...(metadata.sensitivity === undefined
       ? {}
       : { sensitivity: normalizeSensitivity(metadata.sensitivity) }),
+    priority: normalizePriority(metadata.priority),
   };
 }
 
@@ -738,6 +783,7 @@ function normalizeCreateMetadata(
   if (metadata === undefined) {
     return {
       trigger: "model_decision",
+      priority: "normal",
     };
   }
 
@@ -750,6 +796,7 @@ function normalizeCreateMetadata(
     ...(metadata.sensitivity === undefined
       ? {}
       : { sensitivity: normalizeSensitivity(metadata.sensitivity) }),
+    priority: normalizePriority(metadata.priority),
   };
 }
 
@@ -758,10 +805,7 @@ function normalizeUpdateMetadata(
   existingMetadata: ExpertAgentContextItemMetadata,
   metadata: Partial<ExpertAgentContextItemMetadata> | undefined,
 ): ExpertAgentContextItemMetadata {
-  if (isAgentsContextId(id)) {
-    return existingMetadata;
-  }
-
+  void id;
   return {
     ...(metadata?.description === undefined
       ? existingMetadata.description === undefined
@@ -779,6 +823,7 @@ function normalizeUpdateMetadata(
         ? {}
         : { sensitivity: existingMetadata.sensitivity }
       : { sensitivity: normalizeSensitivity(metadata.sensitivity) }),
+    priority: normalizePriority(metadata?.priority ?? existingMetadata.priority),
   };
 }
 
@@ -863,7 +908,9 @@ export function normalizeSearchMatch(
     ...(namespace === undefined ? {} : { namespace }),
     id: match.id,
     matchType: normalizeSearchMatchType(match.matchType ?? "content"),
-    ...(match.lineNumber === undefined ? {} : { lineNumber: Math.max(1, Math.trunc(match.lineNumber)) }),
+    ...(match.lineNumber === undefined
+      ? {}
+      : { lineNumber: Math.max(1, Math.trunc(match.lineNumber)) }),
     line: match.line,
     ...(match.before === undefined ? {} : { before: [...match.before] }),
     ...(match.after === undefined ? {} : { after: [...match.after] }),
@@ -911,11 +958,7 @@ export function matchesAnyPattern(id: string, patterns: readonly string[]): bool
   return patterns.some((pattern) => matchContextPattern(id, pattern));
 }
 
-export function matchContextPattern(
-  id: string,
-  pattern: string,
-  caseSensitive = true,
-): boolean {
+export function matchContextPattern(id: string, pattern: string, caseSensitive = true): boolean {
   const normalizedPattern = pattern.trim();
 
   if (normalizedPattern.length === 0) {
@@ -1001,13 +1044,19 @@ function normalizeContextRoots(
 
   return roots.map((root) => {
     const namespaceResult = normalizeNamespace(root.namespace ?? HOST_CONTEXT_NAMESPACE);
+    const path = root.path === undefined ? undefined : trimPattern(root.path);
+
+    if (!namespaceResult.ok) {
+      throw new TypeError(namespaceResult.error.message);
+    }
 
     return {
-      namespace: namespaceResult.ok ? namespaceResult.value : HOST_CONTEXT_NAMESPACE,
-      ...(root.path === undefined ? {} : { path: trimPattern(root.path) }),
+      namespace: namespaceResult.value,
+      ...(path === undefined || path.length === 0 ? {} : { path }),
       load: {
         preloadPaths: normalizePatterns(root.load?.preloadPaths),
         forbiddenLoad: normalizePatterns(root.load?.forbiddenLoad),
+        priorityRules: normalizePriorityRules(root.load?.priorityRules),
       },
     };
   });
@@ -1106,19 +1155,6 @@ function toStoredEditInput(
   };
 }
 
-export function isAgentsContextId(id: string): boolean {
-  return id === AGENTS_CONTEXT_ID;
-}
-
-function normalizeAgentsContextMetadata(
-  metadata: ExpertAgentContextItemMetadata,
-): ExpertAgentContextItemMetadata {
-  return {
-    ...(metadata.description === undefined ? {} : { description: metadata.description }),
-    trigger: "always_on",
-  };
-}
-
 function normalizeContentRange(
   range: ExpertAgentContextItemContentRange,
 ): ExpertAgentContextItemContentRange {
@@ -1197,6 +1233,14 @@ function normalizeSensitivity(value: string | undefined): ContextSensitivity {
   return "internal";
 }
 
+export function normalizePriority(value: string | undefined): ContextPriority {
+  if (value === "critical" || value === "high" || value === "normal" || value === "low") {
+    return value;
+  }
+
+  return "normal";
+}
+
 function normalizeSearchScope(
   scope: ContextSearchScope | undefined,
 ): ExpertAgentContextResult<ContextSearchScope> {
@@ -1207,7 +1251,9 @@ function normalizeSearchScope(
   return error("invalid_input", "Context search scope must be path, content, or hybrid.");
 }
 
-function normalizeSearchMatchType(matchType: ContextSearchMatchType | undefined): ContextSearchMatchType {
+function normalizeSearchMatchType(
+  matchType: ContextSearchMatchType | undefined,
+): ContextSearchMatchType {
   return matchType === "path" ? "path" : "content";
 }
 
@@ -1228,7 +1274,9 @@ function createContextReferenceKey(reference: ExpertAgentContextItemReference): 
   return `${reference.namespace ?? ""}::${reference.id}`;
 }
 
-function toContextReference(context: ExpertAgentContextItemReference): ExpertAgentContextItemReference {
+function toContextReference(
+  context: ExpertAgentContextItemReference,
+): ExpertAgentContextItemReference {
   return {
     ...(context.namespace === undefined ? {} : { namespace: context.namespace }),
     id: context.id,
@@ -1239,6 +1287,15 @@ function sortContextSummaries(
   summaries: readonly ExpertAgentContextItemSummary[],
 ): readonly ExpertAgentContextItemSummary[] {
   return [...summaries].sort((left, right) => {
+    const priorityComparison = compareContextPriority(
+      left.metadata.priority,
+      right.metadata.priority,
+    );
+
+    if (priorityComparison !== 0) {
+      return priorityComparison;
+    }
+
     const namespaceComparison = (left.namespace ?? "").localeCompare(right.namespace ?? "");
 
     if (namespaceComparison !== 0) {
@@ -1247,6 +1304,51 @@ function sortContextSummaries(
 
     return left.id.localeCompare(right.id);
   });
+}
+
+function compareContextPriority(left: ContextPriority, right: ContextPriority): number {
+  const rank: Record<ContextPriority, number> = {
+    critical: 0,
+    high: 1,
+    normal: 2,
+    low: 3,
+  };
+
+  return rank[left] - rank[right];
+}
+
+function normalizePriorityRules(
+  rules: readonly ExpertAgentContextPriorityRule[] | undefined,
+): readonly ExpertAgentContextPriorityRule[] {
+  return (rules ?? [])
+    .map((rule) => ({ pattern: rule.pattern.trim(), priority: normalizePriority(rule.priority) }))
+    .filter((rule) => rule.pattern.length > 0);
+}
+
+function applyPriorityRules(
+  summary: ExpertAgentContextItemSummary,
+  rules: readonly ExpertAgentContextPriorityRule[],
+): ExpertAgentContextItemSummary {
+  const priority = rules
+    .filter((rule) => matchContextPattern(summary.id, rule.pattern))
+    .map((rule) => rule.priority)
+    .reduce(
+      (selected, candidate) =>
+        compareContextPriority(candidate, selected) < 0 ? candidate : selected,
+      summary.metadata.priority,
+    );
+
+  if (priority === summary.metadata.priority) {
+    return summary;
+  }
+
+  return {
+    ...summary,
+    metadata: {
+      ...summary.metadata,
+      priority,
+    },
+  };
 }
 
 function matchesContextRoot(

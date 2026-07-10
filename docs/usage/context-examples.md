@@ -5,11 +5,7 @@
 ## 最小 In-Memory ContextSystem
 
 ```ts
-import {
-  ContextSystem,
-  HOST_CONTEXT_NAMESPACE,
-  createInMemoryContextStore,
-} from "@pragma/core";
+import { ContextSystem, HOST_CONTEXT_NAMESPACE, createInMemoryContextStore } from "@pragma/core";
 
 const contextSystem = new ContextSystem({
   store: createInMemoryContextStore({
@@ -22,6 +18,7 @@ const contextSystem = new ContextSystem({
           trigger: "always_on",
           trustLevel: "workspace",
           sensitivity: "internal",
+          priority: "high",
         },
       },
     ],
@@ -32,11 +29,7 @@ const contextSystem = new ContextSystem({
 ## 目录总览 + 专家画像
 
 ```ts
-import {
-  ContextSystem,
-  HOST_CONTEXT_NAMESPACE,
-  createInMemoryContextStore,
-} from "@pragma/core";
+import { ContextSystem, HOST_CONTEXT_NAMESPACE, createInMemoryContextStore } from "@pragma/core";
 
 const contextSystem = new ContextSystem({
   store: createInMemoryContextStore({
@@ -70,6 +63,7 @@ const contextSystem = new ContextSystem({
       path: "manuals",
       load: {
         preloadPaths: ["manuals/profile.md", "manuals/safety.md"],
+        priorityRules: [{ pattern: "manuals/safety.md", priority: "critical" }],
       },
     },
   ],
@@ -122,15 +116,13 @@ trigger: manual
 代码：
 
 ```ts
-import {
-  ContextSystem,
-  FileSystemContextStore,
-  HOST_CONTEXT_NAMESPACE,
-} from "@pragma/core";
+import { ContextSystem, FileSystemContextStore, HOST_CONTEXT_NAMESPACE } from "@pragma/core";
 
 const contextSystem = new ContextSystem({
   store: new FileSystemContextStore({
     rootDir: "/path/to/workspace/context/order",
+    include: ["*.md", "**/*.md", "*.txt"],
+    exclude: ["archive/**"],
   }),
   roots: [
     {
@@ -139,6 +131,7 @@ const contextSystem = new ContextSystem({
       load: {
         preloadPaths: ["profile.md", "safety.md"],
         forbiddenLoad: ["archive/**"],
+        priorityRules: [{ pattern: "safety.md", priority: "critical" }],
       },
     },
   ],
@@ -148,10 +141,7 @@ const contextSystem = new ContextSystem({
 ## 插件注册独立 namespace
 
 ```ts
-import {
-  createInMemoryContextStore,
-  definePluginEntry,
-} from "@pragma/core";
+import { createInMemoryContextStore, definePluginEntry } from "@pragma/core";
 
 export default definePluginEntry({
   setup: (context) => {
@@ -202,3 +192,5 @@ await agent.searchContext({
 - 想表达“默认怎么加载”：用 `trigger`
 - 想表达“当前专家每次必须带上这些路径”：用 `preloadPaths`
 - 想表达“这些路径不该进入默认装配”：用 `forbiddenLoad`
+- 想表达“更靠前且更晚被预算截断”：用 `priority` 或 root `priorityRules`
+- Context ID 不要求 `.md`；FileSystem Store 只访问显式 include 且未 exclude 的 UTF-8 文本

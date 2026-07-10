@@ -13,10 +13,7 @@ import {
 } from "./context.ts";
 import { prepareGitSessionEnvironment } from "./git.ts";
 import type { CodeRepository, RepoManagerConfigInput } from "./schema.ts";
-import {
-  parseRepoManagerConfig,
-  parseRepoManagerRepositoriesContext,
-} from "./schema.ts";
+import { parseRepoManagerConfig, parseRepoManagerRepositoriesContext } from "./schema.ts";
 
 const PLUGIN_ID = "repo-manager";
 const TOKEN_ENV = createPluginEnvName("auth.token");
@@ -209,9 +206,7 @@ async function readHostRepositories(
   return parseRepoManagerRepositoriesContext(JSON.parse(result.value.content));
 }
 
-function resolveAuth(
-  env: NodeJS.ProcessEnv,
-): ReturnType<typeof parseRepoManagerConfig>["auth"] {
+function resolveAuth(env: NodeJS.ProcessEnv): ReturnType<typeof parseRepoManagerConfig>["auth"] {
   const token = readEnv(env, TOKEN_ENV);
 
   if (token !== undefined) {
@@ -254,6 +249,7 @@ function normalizeContextMetadata(
     ...(metadata?.description === undefined ? {} : { description: metadata.description }),
     ...(metadata?.trustLevel === undefined ? {} : { trustLevel: metadata.trustLevel }),
     ...(metadata?.sensitivity === undefined ? {} : { sensitivity: metadata.sensitivity }),
+    priority: metadata?.priority ?? "normal",
   };
 }
 

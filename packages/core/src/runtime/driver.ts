@@ -86,7 +86,9 @@ export interface RuntimePreparedContext {
   readonly metadata?: Record<string, unknown> | undefined;
 }
 
-export interface RuntimeDriverSessionContext<TPrepared = RuntimePreparedContext> extends RuntimePrepareContext {
+export interface RuntimeDriverSessionContext<
+  TPrepared = RuntimePreparedContext,
+> extends RuntimePrepareContext {
   readonly agentContext: ExpertAgentContext;
   readonly lifecycle: AgentLifecycle<ExpertAgentRunContext | undefined>;
   readonly persistence: {
@@ -155,7 +157,9 @@ export interface RuntimeDriver<TNativeEvent, TNativeSession, TPrepared = Runtime
   readonly resolvePersistence?:
     | ((context: RuntimePrepareContext) => RuntimeSessionPersistenceSpec | undefined)
     | undefined;
-  readonly prepare?: ((context: RuntimePrepareContext) => Promise<TPrepared> | TPrepared) | undefined;
+  readonly prepare?:
+    | ((context: RuntimePrepareContext) => Promise<TPrepared> | TPrepared)
+    | undefined;
   readonly createSession: (
     context: RuntimeDriverSessionContext<TPrepared>,
   ) => Promise<TNativeSession> | TNativeSession;
@@ -193,7 +197,11 @@ export interface RuntimeDriver<TNativeEvent, TNativeSession, TPrepared = Runtime
     | undefined;
 }
 
-export function defineRuntimeDriver<TNativeEvent, TNativeSession, TPrepared = RuntimePreparedContext>(
+export function defineRuntimeDriver<
+  TNativeEvent,
+  TNativeSession,
+  TPrepared = RuntimePreparedContext,
+>(
   driver: RuntimeDriver<TNativeEvent, TNativeSession, TPrepared>,
   options: DefineRuntimeDriverOptions = {},
 ): RuntimeAdapter {
@@ -286,7 +294,7 @@ async function createManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepar
     restoredRuntimeSessionId = restored.restoredRuntimeSessionId;
 
     const prepared = (await driver.prepare?.(prepareContext)) ?? ({} as TPrepared);
-    const agentContext = await agent.buildContext(runContext);
+    const agentContext = await agent.buildContext(runContext, request.contextAssembly);
     let currentRuntimeSessionId =
       restoredRuntimeSessionId ??
       (request.runtimeSession?.type === descriptor.kind ? request.runtimeSession.id : "") ??
@@ -503,7 +511,9 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepared> {
     );
   }
 
-  submit<TOutput = string>(submission: RuntimeSubmitRequest<TOutput>): RuntimeSubmitHandle<TOutput> {
+  submit<TOutput = string>(
+    submission: RuntimeSubmitRequest<TOutput>,
+  ): RuntimeSubmitHandle<TOutput> {
     const runId = submission.runId ?? randomUUID();
     const queue = new AsyncPushQueue<RuntimeStreamEvent>();
     let cancelled = false;
@@ -545,8 +555,7 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepared> {
           runId,
           source: controller.source,
           type: "run.completed",
-          payload:
-            runResult.result.usage === undefined ? {} : { usage: runResult.result.usage },
+          payload: runResult.result.usage === undefined ? {} : { usage: runResult.result.usage },
         });
         await dispatchExpertAgentHook(this.options.agent.hooks, "afterTaskSubmit", {
           agent: this.options.agent,
@@ -640,9 +649,8 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepared> {
     const maxAttempts =
       submission.output === undefined
         ? 1
-        : normalizeOutputRetryLimit(
-            submission.outputRetryLimit ?? this.options.outputRetryLimit,
-          ) + 1;
+        : normalizeOutputRetryLimit(submission.outputRetryLimit ?? this.options.outputRetryLimit) +
+          1;
     let parseResult: RuntimeOutputParseResult<TOutput> | undefined;
     let outputText = "";
     let usage: AgentMessageUsage | undefined;
@@ -739,9 +747,7 @@ function readRuntimeErrorMetadata(error: unknown): {
 
   const record = error as { readonly code?: unknown; readonly retryable?: unknown };
   return {
-    ...(typeof record.code === "string" && record.code.trim() !== ""
-      ? { code: record.code }
-      : {}),
+    ...(typeof record.code === "string" && record.code.trim() !== "" ? { code: record.code } : {}),
     ...(typeof record.retryable === "boolean" ? { retryable: record.retryable } : {}),
   };
 }
