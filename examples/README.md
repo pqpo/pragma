@@ -129,6 +129,11 @@ claude --version
 模型和思考深度只能交互式选择；选择 `0` 表示沿用本地 Claude Code 配置。脚本不接受
 外部 `--model` 或自由文本思考深度。
 
+如果 CC Switch 在 Claude Code 的 `settings.json` 中配置了第三方模型映射，菜单只展示
+可安全映射的 `sonnet`、`opus`、`haiku`（以及实际配置时的 `fable`）别名，并标注真实
+上游模型，例如 `Sonnet → deepseek-v4-pro`。这时不会展示完整 `claude-*` ID，也不会提供
+Claude 专属思考深度覆盖；模型和思考行为交给 CC Switch/上游 provider。
+
 提交多轮任务并复用同一个 Claude Code session：
 
 ```bash

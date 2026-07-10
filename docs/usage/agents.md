@@ -192,6 +192,10 @@ Codex 和 Claude Code 是本地 CLI Runtime，不接受 `models.providers` 中�
 它们使用本机 CLI 的登录和配置，并通过 `runtime.listModels()` 暴露当前允许选择的模型及逐模型
 思考深度。显式选择必须来自该目录；不传模型和思考深度时继续使用 CLI 默认配置：
 
+Claude Code runtime 会读取 `settings.json` 中由 CC Switch 等工具写入的
+`ANTHROPIC_DEFAULT_*_MODEL` 映射。检测到非 Claude 上游模型或 CC Switch 本地路由时，目录只
+暴露 `sonnet` / `opus` / `haiku` 等角色别名，显示其真实映射，并隐藏无法可靠验证的思考深度。
+
 ```ts
 const runtime = createCodexRuntime();
 const models = await runtime.listModels?.();

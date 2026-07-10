@@ -1,3 +1,7 @@
+import { readFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import { join } from "node:path";
+
 import type { RuntimeCreateSessionRequest, RuntimeModel, RuntimeThinkingLevel } from "@pragma/core";
 import { runRuntimeCommand } from "@pragma/core";
 
@@ -14,6 +18,16 @@ interface ClaudeModelDefinition {
   readonly default?: boolean | undefined;
   readonly allowedThinkingLevels?: ReadonlySet<string> | undefined;
 }
+
+interface ClaudeModelRoutingConfig {
+  readonly baseUrl?: string | undefined;
+  readonly defaultModel?: string | undefined;
+  readonly roleModels: Readonly<Record<ClaudeModelRole, string | undefined>>;
+  readonly mappedProvider: boolean;
+  readonly fingerprint: string;
+}
+
+type ClaudeModelRole = "sonnet" | "opus" | "haiku" | "fable";
 
 const DISCOVERY_TTL_MS = 10 * 60 * 1_000;
 const catalogCache = new Map<string, CatalogCacheEntry>();
@@ -65,6 +79,13 @@ const CLAUDE_MODELS: readonly ClaudeModelDefinition[] = [
   { id: "opus", displayName: "Latest Claude Opus" },
   { id: "haiku", displayName: "Latest Claude Haiku" },
 ];
+const CLAUDE_MODEL_ROLES: readonly ClaudeModelRole[] = ["sonnet", "opus", "haiku", "fable"];
+const ROLE_MODEL_ENV_KEYS = {
+  sonnet: "ANTHROPIC_DEFAULT_SONNET_MODEL",
+  opus: "ANTHROPIC_DEFAULT_OPUS_MODEL",
+  haiku: "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+  fable: "ANTHROPIC_DEFAULT_FABLE_MODEL",
+} as const satisfies Readonly<Record<ClaudeModelRole, string>>;
 
 export function createClaudeCodeModelDiscovery(
   options: ClaudeCodeRuntimeAdapterOptions,
@@ -82,25 +103,17 @@ export function createClaudeCodeModelDiscovery(
       spawn: options.spawn,
     }).catch(() => undefined);
     const version = firstNonEmptyLine(versionResult?.stdout ?? "") ?? "unknown";
-    const cacheKey = `${executablePath}\u0000${version}`;
+    const routing = await loadClaudeModelRoutingConfig(options.env);
+    const cacheKey = `${executablePath}\u0000${version}\u0000${routing.fingerprint}`;
     const cached = catalogCache.get(cacheKey);
 
     if (cached !== undefined && cached.expiresAt > Date.now()) {
       return cached.models;
     }
 
-    const helpResult = await runRuntimeCommand({
-      executablePath,
-      args: ["--help"],
-      cwd: process.cwd(),
-      env,
-      timeoutMs: 5_000,
-      outputLimit: 512 * 1024,
-      spawn: options.spawn,
-    }).catch(() => undefined);
-    const effortLevels =
-      helpResult?.exitCode === 0 ? parseClaudeEffortLevels(helpResult.stdout) : [];
-    const models = buildClaudeModels(effortLevels);
+    const models = routing.mappedProvider
+      ? buildClaudeMappedModels(routing)
+      : await discoverNativeClaudeModels(options, executablePath, env);
 
     catalogCache.set(cacheKey, {
       expiresAt: Date.now() + DISCOVERY_TTL_MS,
@@ -108,6 +121,35 @@ export function createClaudeCodeModelDiscovery(
     });
     return models;
   };
+}
+
+function buildClaudeMappedModels(
+  routing: Pick<ClaudeModelRoutingConfig, "baseUrl" | "defaultModel" | "roleModels">,
+): readonly RuntimeModel[] {
+  let assignedDefault = false;
+  const localRouting = isCcSwitchLocalRoutingUrl(routing.baseUrl);
+
+  return CLAUDE_MODEL_ROLES.flatMap((role) => {
+    const upstreamModel = routing.roleModels[role];
+    if (upstreamModel === undefined && (!localRouting || role === "fable")) {
+      return [];
+    }
+
+    const isDefault =
+      !assignedDefault && upstreamModel !== undefined && upstreamModel === routing.defaultModel;
+    assignedDefault ||= isDefault;
+    const roleLabel = `${role.charAt(0).toUpperCase()}${role.slice(1)}`;
+    const mappingLabel = upstreamModel ?? "CC Switch local route";
+
+    return [
+      {
+        id: role,
+        displayName: `${roleLabel} → ${mappingLabel}`,
+        provider: "anthropic-compatible",
+        ...(isDefault ? { default: true } : {}),
+      } satisfies RuntimeModel,
+    ];
+  });
 }
 
 export function parseClaudeEffortLevels(helpOutput: string): readonly string[] {
@@ -204,6 +246,117 @@ function firstNonEmptyLine(value: string): string | undefined {
     .split(/\r?\n/)
     .map((line) => line.trim())
     .find((line) => line !== "");
+}
+
+async function discoverNativeClaudeModels(
+  options: ClaudeCodeRuntimeAdapterOptions,
+  executablePath: string,
+  env: NodeJS.ProcessEnv,
+): Promise<readonly RuntimeModel[]> {
+  const helpResult = await runRuntimeCommand({
+    executablePath,
+    args: ["--help"],
+    cwd: process.cwd(),
+    env,
+    timeoutMs: 5_000,
+    outputLimit: 512 * 1024,
+    spawn: options.spawn,
+  }).catch(() => undefined);
+  const effortLevels = helpResult?.exitCode === 0 ? parseClaudeEffortLevels(helpResult.stdout) : [];
+  return buildClaudeModels(effortLevels);
+}
+
+async function loadClaudeModelRoutingConfig(
+  runtimeEnv: NodeJS.ProcessEnv | undefined,
+): Promise<ClaudeModelRoutingConfig> {
+  const configDir =
+    readNonEmptyString(runtimeEnv?.["CLAUDE_CONFIG_DIR"]) ??
+    readNonEmptyString(process.env["CLAUDE_CONFIG_DIR"]) ??
+    join(homedir(), ".claude");
+  const settingsEnv = await readClaudeSettingsEnv(join(configDir, "settings.json"));
+  const effectiveEnv = {
+    ...settingsEnv,
+    ...pickClaudeModelEnv(process.env),
+    ...pickClaudeModelEnv(runtimeEnv),
+  };
+  const baseUrl = readNonEmptyString(effectiveEnv["ANTHROPIC_BASE_URL"]);
+  const defaultModel = readNonEmptyString(effectiveEnv["ANTHROPIC_MODEL"]);
+  const roleModels = Object.fromEntries(
+    CLAUDE_MODEL_ROLES.map((role) => [
+      role,
+      readNonEmptyString(effectiveEnv[ROLE_MODEL_ENV_KEYS[role]]),
+    ]),
+  ) as Record<ClaudeModelRole, string | undefined>;
+  const mappedProvider =
+    isNonClaudeModel(defaultModel) ||
+    Object.values(roleModels).some(isNonClaudeModel) ||
+    isCcSwitchLocalRoutingUrl(baseUrl);
+  const fingerprint = JSON.stringify({ baseUrl, defaultModel, roleModels, mappedProvider });
+
+  return { baseUrl, defaultModel, roleModels, mappedProvider, fingerprint };
+}
+
+async function readClaudeSettingsEnv(path: string): Promise<NodeJS.ProcessEnv> {
+  const content = await readFile(path, "utf8").catch(() => undefined);
+  if (content === undefined) {
+    return {};
+  }
+
+  try {
+    const settings = JSON.parse(content) as unknown;
+    if (settings === null || typeof settings !== "object" || Array.isArray(settings)) {
+      return {};
+    }
+    const env = (settings as Record<string, unknown>)["env"];
+    return env === null || typeof env !== "object" || Array.isArray(env)
+      ? {}
+      : pickClaudeModelEnv(env as Record<string, unknown>);
+  } catch {
+    return {};
+  }
+}
+
+function pickClaudeModelEnv(env: Readonly<Record<string, unknown>> | undefined): NodeJS.ProcessEnv {
+  if (env === undefined) {
+    return {};
+  }
+
+  const keys = ["ANTHROPIC_BASE_URL", "ANTHROPIC_MODEL", ...Object.values(ROLE_MODEL_ENV_KEYS)];
+  return Object.fromEntries(
+    keys.flatMap((key) => {
+      const value = readNonEmptyString(env[key]);
+      return value === undefined ? [] : [[key, value]];
+    }),
+  );
+}
+
+function isNonClaudeModel(value: string | undefined): boolean {
+  return (
+    value !== undefined &&
+    !value.startsWith("claude-") &&
+    value !== "default" &&
+    !CLAUDE_MODEL_ROLES.includes(value as ClaudeModelRole)
+  );
+}
+
+function isCcSwitchLocalRoutingUrl(value: string | undefined): boolean {
+  if (value === undefined) {
+    return false;
+  }
+
+  try {
+    const url = new URL(value);
+    return (
+      (url.hostname === "127.0.0.1" || url.hostname === "localhost" || url.hostname === "::1") &&
+      url.port === "15721"
+    );
+  } catch {
+    return false;
+  }
+}
+
+function readNonEmptyString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() !== "" ? value.trim() : undefined;
 }
 
 function toDisplayLabel(value: string): string {

@@ -1,7 +1,10 @@
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { EventEmitter } from "node:events";
+import { mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { PassThrough, Writable } from "node:stream";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   assertClaudeCodeModelSelection,
@@ -12,6 +15,10 @@ import {
 } from "../src/models.ts";
 
 describe("Claude Code model discovery", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   it("parses runtime-native effort values from CLI help", () => {
     expect(
       parseClaudeEffortLevels(
@@ -83,6 +90,7 @@ describe("Claude Code model discovery", () => {
   });
 
   it("discovers effort values once per CLI version cache entry", async () => {
+    const configDir = await createClaudeConfigDir({});
     const spawn = createCommandSpawn([
       { stdout: "test-version\n" },
       { stdout: "--effort <level> Effort level (low, medium, high)\n" },
@@ -90,6 +98,7 @@ describe("Claude Code model discovery", () => {
     ]);
     const listModels = createClaudeCodeModelDiscovery({
       executablePath: "claude-test-cache",
+      env: { CLAUDE_CONFIG_DIR: configDir },
       spawn,
     });
 
@@ -110,7 +119,90 @@ describe("Claude Code model discovery", () => {
       ["--version"],
     ]);
   });
+
+  it("exposes only safe aliases for CC Switch model mappings and invalidates the cache", async () => {
+    stubClaudeModelEnvironment();
+    const configDir = await createClaudeConfigDir({
+      ANTHROPIC_BASE_URL: "https://api.deepseek.com/anthropic",
+      ANTHROPIC_MODEL: "deepseek-v4-pro",
+      ANTHROPIC_DEFAULT_SONNET_MODEL: "deepseek-v4-pro",
+      ANTHROPIC_DEFAULT_OPUS_MODEL: "deepseek-v4-pro",
+      ANTHROPIC_DEFAULT_HAIKU_MODEL: "deepseek-v4-flash",
+    });
+    const spawn = createCommandSpawn([
+      { stdout: "cc-switch-test-version\n" },
+      { stdout: "cc-switch-test-version\n" },
+    ]);
+    const listModels = createClaudeCodeModelDiscovery({
+      executablePath: "claude-cc-switch-test",
+      env: { CLAUDE_CONFIG_DIR: configDir },
+      spawn,
+    });
+
+    await expect(listModels()).resolves.toEqual([
+      {
+        id: "sonnet",
+        displayName: "Sonnet → deepseek-v4-pro",
+        provider: "anthropic-compatible",
+        default: true,
+      },
+      {
+        id: "opus",
+        displayName: "Opus → deepseek-v4-pro",
+        provider: "anthropic-compatible",
+      },
+      {
+        id: "haiku",
+        displayName: "Haiku → deepseek-v4-flash",
+        provider: "anthropic-compatible",
+      },
+    ]);
+
+    await writeClaudeSettings(configDir, {
+      ANTHROPIC_BASE_URL: "https://api.deepseek.com/anthropic",
+      ANTHROPIC_MODEL: "deepseek-v4-flash",
+      ANTHROPIC_DEFAULT_SONNET_MODEL: "deepseek-v4-flash",
+      ANTHROPIC_DEFAULT_OPUS_MODEL: "deepseek-v4-pro",
+      ANTHROPIC_DEFAULT_HAIKU_MODEL: "deepseek-v4-flash",
+    });
+
+    const refreshed = await listModels();
+    const refreshedSonnet = refreshed.find((model) => model.id === "sonnet");
+    expect(refreshedSonnet).toMatchObject({
+      displayName: "Sonnet → deepseek-v4-flash",
+      default: true,
+    });
+    expect(refreshedSonnet?.thinking).toBeUndefined();
+    expect(spawn.mock.calls.map((call) => call[1])).toEqual([["--version"], ["--version"]]);
+  });
 });
+
+async function createClaudeConfigDir(env: Readonly<Record<string, string>>): Promise<string> {
+  stubClaudeModelEnvironment();
+  const configDir = await mkdtemp(join(tmpdir(), "pragma-claude-model-discovery-"));
+  await writeClaudeSettings(configDir, env);
+  return configDir;
+}
+
+async function writeClaudeSettings(
+  configDir: string,
+  env: Readonly<Record<string, string>>,
+): Promise<void> {
+  await writeFile(join(configDir, "settings.json"), JSON.stringify({ env }), "utf8");
+}
+
+function stubClaudeModelEnvironment(): void {
+  for (const key of [
+    "ANTHROPIC_BASE_URL",
+    "ANTHROPIC_MODEL",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+    "ANTHROPIC_DEFAULT_FABLE_MODEL",
+  ]) {
+    vi.stubEnv(key, "");
+  }
+}
 
 function createCommandSpawn(responses: readonly { readonly stdout: string }[]) {
   let index = 0;
