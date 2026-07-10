@@ -18,6 +18,7 @@
     "clean": "rm -rf out dist"
   },
   "dependencies": {
+    "@phosphor-icons/react": "latest",
     "react": "latest",
     "react-dom": "latest",
     "zod": "latest"

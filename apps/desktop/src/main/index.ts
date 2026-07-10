@@ -12,10 +12,10 @@ let mainWindow: BrowserWindow | null = null;
 
 async function createWindow(): Promise<void> {
   mainWindow = new BrowserWindow({
-    width: 1180,
-    height: 760,
-    minWidth: 900,
-    minHeight: 620,
+    width: 1440,
+    height: 900,
+    minWidth: 1080,
+    minHeight: 700,
     title: "Pragma Desktop",
     autoHideMenuBar: true,
     show: false,

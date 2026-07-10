@@ -1,890 +1,235 @@
-import { useMemo, useState } from "react";
-import type { CSSProperties } from "react";
-
+import type { Icon } from "@phosphor-icons/react";
 import {
-  agentCategories,
-  agentTemplates,
-  desktopStatus,
-  modelProviders,
-  pluginCatalog,
-  registeredModels,
-  taskBoardColumns,
-  workflowBlueprint,
-  workflowLibrary,
-} from "./mock-data.ts";
-import type {
-  AgentCardViewModel,
-  AgentCategory,
-  DesktopViewKey,
-  PluginCardViewModel,
-  TaskBoardItemViewModel,
-  WorkflowNodeViewModel,
-} from "./mock-data.ts";
-import { Drawer, Panel, SectionHeader, Sidebar, StatusBadge, Topbar } from "./ui.tsx";
+  ArchiveTrayIcon,
+  At,
+  CaretDown,
+  ChartBar,
+  Code,
+  FileText,
+  GearSix,
+  House,
+  Plus,
+  QuestionMark,
+  RocketLaunch,
+  TerminalWindow,
+  UserCircle,
+} from "@phosphor-icons/react";
 
-const viewContent = {
-  agents: {
-    eyebrow: "Expert Agent Control",
-    title: "Agent 广场",
-    description: "创建、浏览并组合面向不同领域的专家 Agent 模板。",
-    actionLabel: "创建 Agent",
-  },
-  models: {
-    eyebrow: "Runtime Registry",
-    title: "模型管理",
-    description: "注册底层模型、设置 Provider 连接和默认执行策略。",
-    actionLabel: "注册模型",
-  },
-  plugins: {
-    eyebrow: "Extension Hub",
-    title: "插件市场",
-    description: "管理插件安装状态、权限声明与导入入口。",
-    actionLabel: "导入插件",
-  },
-  workflows: {
-    eyebrow: "Playbook Studio",
-    title: "工作流编排",
-    description: "以可视化画布方式组织专家、人工审核和产物节点。",
-    actionLabel: "新建工作流",
-  },
-  tasks: {
-    eyebrow: "Operations Board",
-    title: "任务看板",
-    description: "查看运行状态、等待人工介入的任务，并发起新的工作流任务。",
-    actionLabel: "发起任务",
-  },
-} satisfies Record<
-  DesktopViewKey,
+const navigationItems: readonly {
+  readonly label: string;
+  readonly icon: Icon;
+  readonly active?: boolean;
+}[] = [
+  { label: "Home", icon: House, active: true },
+  { label: "Missions", icon: RocketLaunch },
+  { label: "Studio", icon: TerminalWindow },
+  { label: "Inbox", icon: ArchiveTrayIcon },
+  { label: "Settings", icon: GearSix },
+];
+
+const missions = [
   {
-    readonly eyebrow: string;
-    readonly title: string;
-    readonly description: string;
-    readonly actionLabel: string;
-  }
->;
+    status: "Active",
+    statusTone: "active",
+    time: "10m ago",
+    title: "Compile Q3 Revenue Data Synthesis",
+    agent: "Data Agent",
+  },
+  {
+    status: "Awaiting Input",
+    statusTone: "waiting",
+    time: "1h ago",
+    title: "Refine Architecture Proposal Drafting",
+    agent: "Writing Agent",
+  },
+  {
+    status: "Idle",
+    statusTone: "idle",
+    time: "Yesterday",
+    title: "Audit Codebase Dependencies",
+    agent: "Dev Agent",
+  },
+] as const;
 
-type DrawerState =
-  | { readonly kind: "create-agent" }
-  | { readonly kind: "register-model" }
-  | { readonly kind: "import-plugin" }
-  | { readonly kind: "create-workflow" }
-  | { readonly kind: "launch-task" }
-  | null;
+const requests = [
+  {
+    icon: QuestionMark,
+    title: "Clarification requested on scope",
+    description: "The Writing Agent encountered ambiguous requirements in section 3.",
+    mission: "Refine Architecture Proposal",
+  },
+  {
+    icon: At,
+    title: "Approval needed to access external API",
+    description: "Data Agent is attempting to query 'api.example.com'.",
+    mission: "Compile Q3 Revenue Data",
+  },
+] as const;
 
-export interface AppProps {
-  readonly initialView?: DesktopViewKey;
-  readonly initialAgentCategory?: AgentCategory;
-  readonly initialSelectedAgentId?: string;
-  readonly initialSelectedPluginId?: string;
-  readonly initialSelectedWorkflowNodeId?: string;
-  readonly initialSelectedTaskId?: string;
-  readonly initialDrawerKind?: NonNullable<DrawerState>["kind"];
+const artifacts: readonly {
+  readonly icon: Icon;
+  readonly name: string;
+  readonly kind: string;
+}[] = [
+  { icon: FileText, name: "Architecture_Draft_v2.md", kind: "Document" },
+  { icon: ChartBar, name: "Q2_Revenue_Analysis.csv", kind: "Dataset" },
+  { icon: Code, name: "Dependency_Graph.json", kind: "Config" },
+];
+
+function Sidebar() {
+  return (
+    <aside className="sidebar">
+      <div className="brand" aria-label="Pragma">
+        <span className="brand-mark" aria-hidden="true">
+          P
+        </span>
+        <span className="brand-name">Pragma</span>
+      </div>
+
+      <button className="new-mission-button" type="button" disabled>
+        <Plus size={19} weight="bold" />
+        New Mission
+      </button>
+
+      <nav className="navigation" aria-label="Main navigation">
+        {navigationItems.map((item) => {
+          const NavigationIcon = item.icon;
+
+          return (
+            <button
+              key={item.label}
+              className={item.active ? "navigation-item is-active" : "navigation-item"}
+              type="button"
+              aria-current={item.active ? "page" : undefined}
+              disabled
+            >
+              <NavigationIcon size={25} weight={item.active ? "fill" : "regular"} />
+              <span>{item.label}</span>
+            </button>
+          );
+        })}
+      </nav>
+
+      <div className="account">
+        <UserCircle className="account-avatar" size={42} weight="thin" />
+        <div className="account-details">
+          <strong>Alex Chen</strong>
+          <span>Acme Corp</span>
+        </div>
+        <CaretDown className="account-caret" size={17} weight="bold" />
+      </div>
+    </aside>
+  );
 }
 
-export function App(props: AppProps = {}) {
-  const initialSelectedTask =
-    taskBoardColumns
-      .flatMap((column) => column.items)
-      .find((task) => task.id === props.initialSelectedTaskId) ?? taskBoardColumns[1]?.items[0];
-  const allTasks = taskBoardColumns.flatMap((column) => column.items);
-
-  const [activeView, setActiveView] = useState<DesktopViewKey>(props.initialView ?? "agents");
-  const [selectedAgentCategory, setSelectedAgentCategory] = useState<AgentCategory>(
-    props.initialAgentCategory ?? "all",
-  );
-  const [selectedAgent, setSelectedAgent] = useState<AgentCardViewModel>(
-    agentTemplates.find((agent) => agent.id === props.initialSelectedAgentId) ?? requireValue(agentTemplates[0]),
-  );
-  const [selectedPlugin, setSelectedPlugin] = useState<PluginCardViewModel>(
-    pluginCatalog.installed.find((plugin) => plugin.id === props.initialSelectedPluginId) ??
-      requireValue(pluginCatalog.installed[0]),
-  );
-  const [selectedWorkflowNode, setSelectedWorkflowNode] = useState<WorkflowNodeViewModel>(
-    workflowBlueprint.nodes.find((node) => node.id === props.initialSelectedWorkflowNodeId) ??
-      requireValue(workflowBlueprint.nodes[1]),
-  );
-  const [selectedTask, setSelectedTask] = useState<TaskBoardItemViewModel>(
-    requireValue(initialSelectedTask),
-  );
-  const [drawerState, setDrawerState] = useState<DrawerState>(
-    props.initialDrawerKind === undefined ? null : { kind: props.initialDrawerKind },
-  );
-
-  const activeMeta = viewContent[activeView];
-
-  const filteredAgents = useMemo(() => {
-    if (selectedAgentCategory === "all") {
-      return agentTemplates;
-    }
-
-    return agentTemplates.filter((agent) => agent.category === selectedAgentCategory);
-  }, [selectedAgentCategory]);
-
-  function openPrimaryAction(): void {
-    switch (activeView) {
-      case "agents":
-        setDrawerState({ kind: "create-agent" });
-        break;
-      case "models":
-        setDrawerState({ kind: "register-model" });
-        break;
-      case "plugins":
-        setDrawerState({ kind: "import-plugin" });
-        break;
-      case "workflows":
-        setDrawerState({ kind: "create-workflow" });
-        break;
-      case "tasks":
-        setDrawerState({ kind: "launch-task" });
-        break;
-    }
-  }
-
+function SectionHeading(props: {
+  readonly title: string;
+  readonly badge?: number;
+  readonly action?: string;
+}) {
   return (
-    <>
-      <main className="workbench-shell">
-        <Sidebar activeView={activeView} onSelectView={setActiveView} status={desktopStatus} />
+    <header className="section-heading">
+      <div className="section-title-row">
+        <h2>{props.title}</h2>
+        {props.badge === undefined ? null : <span className="count-badge">{props.badge}</span>}
+      </div>
+      {props.action === undefined ? null : (
+        <button className="text-action" type="button" disabled>
+          {props.action}
+        </button>
+      )}
+    </header>
+  );
+}
 
-        <section className="workbench-main">
-          <Topbar
-            eyebrow={activeMeta.eyebrow}
-            title={activeMeta.title}
-            description={activeMeta.description}
-            actionLabel={activeMeta.actionLabel}
-            onAction={openPrimaryAction}
-          />
+function MissionCard(props: { readonly mission: (typeof missions)[number] }) {
+  return (
+    <article className={`mission-card mission-card--${props.mission.statusTone}`}>
+      <div className="mission-meta">
+        <span className="mission-status">
+          <span className="status-dot" aria-hidden="true" />
+          {props.mission.status}
+        </span>
+        <span>{props.mission.time}</span>
+      </div>
+      <h3>{props.mission.title}</h3>
+      <span className="agent-tag">{props.mission.agent}</span>
+    </article>
+  );
+}
 
-          <div className="page-scroll">
-            {activeView === "agents" ? (
-              <section className="workspace-layout">
-                <aside className="workspace-sidepane">
-                  <div className="sidepane-header">
-                    <div>
-                      <h3>Agent 列表</h3>
-                      <p>{filteredAgents.length} 个可用模板</p>
-                    </div>
-                  </div>
-                  <div className="chip-row">
-                    {agentCategories.map((category) => (
-                      <button
-                        key={category.id}
-                        type="button"
-                        className={category.id === selectedAgentCategory ? "chip is-active" : "chip"}
-                        onClick={() => setSelectedAgentCategory(category.id)}
-                      >
-                        {category.label}
-                      </button>
-                    ))}
-                  </div>
-                  <div className="list-stack">
-                    {filteredAgents.map((agent) => (
-                      <button
-                        key={agent.id}
-                        type="button"
-                        className={agent.id === selectedAgent.id ? "list-item is-selected" : "list-item"}
-                        onClick={() => setSelectedAgent(agent)}
-                      >
-                        <div className="list-item__main">
-                          <strong>{agent.name}</strong>
-                          <p>{agent.summary}</p>
-                        </div>
-                        <div className="list-item__meta">
-                          <StatusBadge tone={agent.badgeTone}>{agent.badge}</StatusBadge>
-                          <span>{agent.runtime}</span>
-                        </div>
-                      </button>
-                    ))}
-                  </div>
-                </aside>
+function NeedsYou() {
+  return (
+    <section className="needs-you-section">
+      <SectionHeading title="Needs You" badge={2} />
+      <div className="request-list">
+        {requests.map((request) => {
+          const RequestIcon = request.icon;
 
-                <section className="workspace-content">
-                  <Panel>
-                    <SectionHeader
-                      title={selectedAgent.name}
-                      description={selectedAgent.summary}
-                      action={<StatusBadge tone={selectedAgent.badgeTone}>{selectedAgent.badge}</StatusBadge>}
-                    />
-                    <div className="summary-strip">
-                      <article className="summary-chip">
-                        <span>默认模型</span>
-                        <strong>{selectedAgent.defaultModel}</strong>
-                      </article>
-                      <article className="summary-chip">
-                        <span>运行时</span>
-                        <strong>{selectedAgent.runtime}</strong>
-                      </article>
-                      <article className="summary-chip">
-                        <span>权限</span>
-                        <strong>{selectedAgent.permissionLevel}</strong>
-                      </article>
-                    </div>
-                  </Panel>
+          return (
+            <article className="request-row" key={request.title}>
+              <span className="request-icon" aria-hidden="true">
+                <RequestIcon size={18} weight="regular" />
+              </span>
+              <div className="request-copy">
+                <h3>{request.title}</h3>
+                <p>{request.description}</p>
+                <span className="request-mission">Mission: {request.mission}</span>
+              </div>
+              <button className="review-button" type="button" disabled>
+                Review
+              </button>
+            </article>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
 
-                  <div className="content-split">
-                    <Panel>
-                      <SectionHeader title="Manifest 预览" description="当前 Agent 的能力与输出边界。" />
-                      <p className="paragraph-block">{selectedAgent.manifestPreview}</p>
-                      <dl className="detail-list">
-                        <div>
-                          <dt>插件组合</dt>
-                          <dd>{selectedAgent.plugins.join(" / ")}</dd>
-                        </div>
-                        <div>
-                          <dt>技能标签</dt>
-                          <dd>{selectedAgent.tags.join(" / ")}</dd>
-                        </div>
-                      </dl>
-                    </Panel>
+function RecentArtifacts() {
+  return (
+    <section className="artifacts-section">
+      <SectionHeading title="Recent Artifacts" action="View all" />
+      <div className="artifact-list">
+        {artifacts.map((artifact) => {
+          const ArtifactIcon = artifact.icon;
 
-                    <Panel>
-                      <SectionHeader title="上下文与预置" description="工作台中默认挂载的知识和模板。" />
-                      <p className="paragraph-block">{selectedAgent.contextSummary}</p>
-                    </Panel>
-                  </div>
-                </section>
-              </section>
-            ) : null}
+          return (
+            <article className="artifact-card" key={artifact.name}>
+              <ArtifactIcon className="artifact-icon" size={27} weight="regular" />
+              <div>
+                <h3>{artifact.name}</h3>
+                <span>{artifact.kind}</span>
+              </div>
+            </article>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
 
-            {activeView === "models" ? (
-              <section className="workspace-layout">
-                <aside className="workspace-sidepane">
-                  <div className="sidepane-header">
-                    <div>
-                      <h3>Provider</h3>
-                      <p>{modelProviders.length} 个接入源</p>
-                    </div>
-                  </div>
-                  <div className="list-stack">
-                    {modelProviders.map((provider) => (
-                      <article key={provider.id} className="list-item is-static">
-                        <div className="list-item__main">
-                          <strong>{provider.name}</strong>
-                          <p>{provider.summary}</p>
-                        </div>
-                        <div className="list-item__meta">
-                          <StatusBadge tone={provider.statusTone}>{provider.statusLabel}</StatusBadge>
-                          <span>{provider.modelsCount} models</span>
-                        </div>
-                      </article>
-                    ))}
-                  </div>
-                </aside>
+export function App() {
+  return (
+    <main className="desktop-shell">
+      <Sidebar />
 
-                <section className="workspace-content">
-                  <Panel>
-                    <SectionHeader title="已注册模型" description="聚合查看名称、用途、上下文窗口与可用状态。" />
-                    <div className="table-shell">
-                      <table className="data-table">
-                        <thead>
-                          <tr>
-                            <th>模型</th>
-                            <th>Provider</th>
-                            <th>用途</th>
-                            <th>上下文</th>
-                            <th>成本</th>
-                            <th>状态</th>
-                            <th>最后检查</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {registeredModels.map((model) => (
-                            <tr key={model.id}>
-                              <td>
-                                <strong>{model.name}</strong>
-                              </td>
-                              <td>{model.provider}</td>
-                              <td>{model.defaultUse}</td>
-                              <td>{model.contextWindow}</td>
-                              <td>{model.costTier}</td>
-                              <td>
-                                <StatusBadge tone={model.statusTone}>{model.statusLabel}</StatusBadge>
-                              </td>
-                              <td>{model.lastCheckedAt}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </Panel>
-
-                  <div className="content-split content-split--narrow">
-                    <Panel>
-                      <SectionHeader title="默认执行模型" description="系统创建 Agent 和 workflow 时的首选模型。" />
-                      <article className="hero-card">
-                        <div className="hero-card__eyebrow">Primary Runtime</div>
-                        <h3>gpt-4.1-coder</h3>
-                        <p>默认用于编排调度、代码生成与高复杂度工作流节点。</p>
-                        <div className="tag-row">
-                          <span className="tag">OpenAI</span>
-                          <span className="tag">128K context</span>
-                          <span className="tag">Tool calling</span>
-                        </div>
-                      </article>
-                    </Panel>
-
-                    <Panel>
-                      <SectionHeader title="连接策略" description="用于表达未来的网关和默认 Provider 策略。" />
-                      <dl className="detail-list">
-                        <div>
-                          <dt>默认 Provider</dt>
-                          <dd>OpenAI</dd>
-                        </div>
-                        <div>
-                          <dt>回退顺序</dt>
-                          <dd>Anthropic / Custom Gateway</dd>
-                        </div>
-                        <div>
-                          <dt>健康检查</dt>
-                          <dd>每 10 分钟轮询一次</dd>
-                        </div>
-                      </dl>
-                    </Panel>
-                  </div>
-                </section>
-              </section>
-            ) : null}
-
-            {activeView === "plugins" ? (
-              <section className="workspace-layout">
-                <aside className="workspace-sidepane">
-                  <div className="sidepane-header">
-                    <div>
-                      <h3>已安装插件</h3>
-                      <p>{pluginCatalog.installed.length} 个插件</p>
-                    </div>
-                  </div>
-
-                  <div className="list-stack">
-                    {pluginCatalog.installed.map((plugin) => (
-                      <button
-                        key={plugin.id}
-                        type="button"
-                        className={plugin.id === selectedPlugin.id ? "list-item is-selected" : "list-item"}
-                        onClick={() => setSelectedPlugin(plugin)}
-                      >
-                        <div className="list-item__main">
-                          <strong>{plugin.name}</strong>
-                          <p>{plugin.summary}</p>
-                        </div>
-                        <div className="list-item__meta">
-                          <StatusBadge tone={plugin.statusTone}>{plugin.statusLabel}</StatusBadge>
-                          <span>{plugin.tools}</span>
-                        </div>
-                      </button>
-                    ))}
-                  </div>
-                </aside>
-
-                <section className="workspace-content">
-                  <Panel>
-                    <SectionHeader title={selectedPlugin.name} description={selectedPlugin.summary} />
-                    <dl className="detail-list">
-                      <div>
-                        <dt>Namespace</dt>
-                        <dd>{selectedPlugin.namespace}</dd>
-                      </div>
-                      <div>
-                        <dt>Tools</dt>
-                        <dd>{selectedPlugin.tools}</dd>
-                      </div>
-                      <div>
-                        <dt>Hooks</dt>
-                        <dd>{selectedPlugin.hooks}</dd>
-                      </div>
-                      <div>
-                        <dt>Permissions</dt>
-                        <dd>{selectedPlugin.permissions}</dd>
-                      </div>
-                    </dl>
-                  </Panel>
-
-                  <div className="content-split">
-                    <Panel>
-                      <SectionHeader title="导入入口" description="保留导入插件的交互骨架。" />
-                      <div className="option-grid">
-                        <article className="option-card">
-                          <strong>本地目录导入</strong>
-                          <p>选择本地插件目录，预览 manifest 与能力声明。</p>
-                        </article>
-                        <article className="option-card">
-                          <strong>压缩包导入</strong>
-                          <p>导入 zip 包并展示兼容性和权限风险。</p>
-                        </article>
-                        <article className="option-card">
-                          <strong>清单预审</strong>
-                          <p>先读取 plugin.json，确认 namespace 和导出能力。</p>
-                        </article>
-                      </div>
-                    </Panel>
-
-                    <Panel>
-                      <SectionHeader title="市场推荐" description="未来可从官方和团队市场快速安装。" />
-                      <div className="list-stack">
-                        {pluginCatalog.market.map((plugin) => (
-                          <article key={plugin.id} className="list-item is-static">
-                            <div className="list-item__main">
-                              <strong>{plugin.name}</strong>
-                              <p>{plugin.summary}</p>
-                            </div>
-                            <div className="list-item__meta">
-                              <StatusBadge tone={plugin.statusTone}>{plugin.statusLabel}</StatusBadge>
-                            </div>
-                          </article>
-                        ))}
-                      </div>
-                    </Panel>
-                  </div>
-                </section>
-              </section>
-            ) : null}
-
-            {activeView === "workflows" ? (
-              <section className="workspace-layout">
-                <aside className="workspace-sidepane">
-                  <div className="sidepane-header">
-                    <div>
-                      <h3>工作流</h3>
-                      <p>当前工作台草稿</p>
-                    </div>
-                  </div>
-                  <div className="list-stack">
-                    <article className="list-item is-selected">
-                      <div className="list-item__main">
-                        <strong>{workflowBlueprint.name}</strong>
-                        <p>{workflowBlueprint.summary}</p>
-                      </div>
-                      <div className="list-item__meta">
-                        <StatusBadge tone="accent">{workflowBlueprint.statusLabel}</StatusBadge>
-                      </div>
-                    </article>
-                  </div>
-                  <SectionHeader title="节点库" description="可插入节点" />
-                  <div className="node-library">
-                    {workflowBlueprint.library.map((nodeType) => (
-                      <button key={nodeType.id} type="button" className="node-library__item">
-                        <span className="node-chip">{nodeType.shortLabel}</span>
-                        <div>
-                          <strong>{nodeType.label}</strong>
-                          <p>{nodeType.description}</p>
-                        </div>
-                      </button>
-                    ))}
-                  </div>
-                </aside>
-
-                <section className="workspace-content">
-                  <div className="workflow-toolbar">
-                    <div className="workflow-toolbar__group">
-                      <button type="button" className="toolbar-button">
-                        新建
-                      </button>
-                      <button type="button" className="toolbar-button">
-                        保存草稿
-                      </button>
-                      <button type="button" className="toolbar-button toolbar-button--accent">
-                        测试运行
-                      </button>
-                      <button type="button" className="toolbar-button">
-                        发布
-                      </button>
-                    </div>
-                    <div className="workflow-toolbar__group">
-                      <span className="toolbar-pill">100%</span>
-                      <span className="toolbar-pill">Canvas</span>
-                    </div>
-                  </div>
-
-                  <Panel>
-                    <SectionHeader
-                      title={workflowBlueprint.name}
-                      description={workflowBlueprint.summary}
-                      action={<StatusBadge tone="accent">{workflowBlueprint.statusLabel}</StatusBadge>}
-                    />
-
-                    <div className="canvas-shell" aria-label="workflow canvas">
-                      {workflowBlueprint.edges.map((edge) => (
-                        <span
-                          key={edge.id}
-                          className="canvas-edge"
-                          style={
-                            {
-                              "--edge-left": `${edge.left}%`,
-                              "--edge-top": `${edge.top}%`,
-                              "--edge-width": `${edge.width}%`,
-                            } as CSSProperties
-                          }
-                        />
-                      ))}
-
-                      {workflowBlueprint.nodes.map((node) => (
-                        <button
-                          key={node.id}
-                          type="button"
-                          className={node.id === selectedWorkflowNode.id ? "canvas-node is-selected" : "canvas-node"}
-                          style={{ left: `${node.left}%`, top: `${node.top}%` }}
-                          onClick={() => setSelectedWorkflowNode(node)}
-                        >
-                          <span className="canvas-node__type">{node.kindLabel}</span>
-                          <strong>{node.label}</strong>
-                          <p>{node.summary}</p>
-                        </button>
-                      ))}
-
-                      <button type="button" className="canvas-insert">
-                        + 插入节点
-                      </button>
-                    </div>
-                  </Panel>
-
-                  <div className="inspector-strip">
-                    <Panel inset>
-                      <SectionHeader title="节点属性" description="当前选中节点的输入、输出与失败策略。" />
-                      <dl className="detail-list">
-                        <div>
-                          <dt>节点类型</dt>
-                          <dd>{selectedWorkflowNode.kindLabel}</dd>
-                        </div>
-                        <div>
-                          <dt>绑定对象</dt>
-                          <dd>{selectedWorkflowNode.binding}</dd>
-                        </div>
-                        <div>
-                          <dt>输入契约</dt>
-                          <dd>{selectedWorkflowNode.inputContract}</dd>
-                        </div>
-                        <div>
-                          <dt>失败策略</dt>
-                          <dd>{selectedWorkflowNode.failurePolicy}</dd>
-                        </div>
-                      </dl>
-                    </Panel>
-                    <Panel inset>
-                      <SectionHeader title="输出与人工介入" description="低码编排中的 review gate 预留。" />
-                      <dl className="detail-list">
-                        <div>
-                          <dt>输出结果</dt>
-                          <dd>{selectedWorkflowNode.outputContract}</dd>
-                        </div>
-                        <div>
-                          <dt>人工策略</dt>
-                          <dd>{selectedWorkflowNode.humanIntervention}</dd>
-                        </div>
-                      </dl>
-                    </Panel>
-                  </div>
-                </section>
-              </section>
-            ) : null}
-
-            {activeView === "tasks" ? (
-              <section className="workspace-layout">
-                <aside className="workspace-sidepane">
-                  <div className="sidepane-header">
-                    <div>
-                      <h3>任务列表</h3>
-                      <p>{allTasks.length} 个任务</p>
-                    </div>
-                  </div>
-                  <div className="chip-row">
-                    {taskBoardColumns.map((column) => (
-                      <span key={column.id} className="chip chip--readonly">
-                        {column.label}
-                      </span>
-                    ))}
-                  </div>
-                  <div className="list-stack">
-                    {allTasks.map((task) => (
-                      <button
-                        key={task.id}
-                        type="button"
-                        className={task.id === selectedTask.id ? "task-list-item is-selected" : "task-list-item"}
-                        onClick={() => setSelectedTask(task)}
-                      >
-                        <div className="task-list-item__title">
-                          <strong>{task.title}</strong>
-                          <StatusBadge tone={task.statusTone}>{task.statusLabel}</StatusBadge>
-                        </div>
-                        <p>{task.workflowName}</p>
-                        <div className="task-list-item__meta">
-                          <span>{task.currentStep}</span>
-                          <span>{task.duration}</span>
-                          {task.requiresHuman ? <span>人工接入</span> : null}
-                        </div>
-                      </button>
-                    ))}
-                  </div>
-                </aside>
-
-                <section className="workspace-content workspace-content--tasks">
-                  <div className="metric-grid">
-                    {workflowLibrary.metrics.map((metric) => (
-                      <Panel key={metric.label} inset>
-                        <div className="metric-card">
-                          <span>{metric.label}</span>
-                          <strong>{metric.value}</strong>
-                          <p>{metric.description}</p>
-                        </div>
-                      </Panel>
-                    ))}
-                  </div>
-
-                  <Panel>
-                    <SectionHeader
-                      title={selectedTask.title}
-                      description={selectedTask.workflowName}
-                      action={<StatusBadge tone={selectedTask.statusTone}>{selectedTask.statusLabel}</StatusBadge>}
-                    />
-                    <div className="summary-strip">
-                      <article className="summary-chip">
-                        <span>当前步骤</span>
-                        <strong>{selectedTask.currentStep}</strong>
-                      </article>
-                      <article className="summary-chip">
-                        <span>责任 Agent</span>
-                        <strong>{selectedTask.ownerAgent}</strong>
-                      </article>
-                      <article className="summary-chip">
-                        <span>耗时</span>
-                        <strong>{selectedTask.duration}</strong>
-                      </article>
-                      <article className="summary-chip">
-                        <span>人工接入</span>
-                        <strong>{selectedTask.requiresHuman ? "Required" : "Not needed"}</strong>
-                      </article>
-                    </div>
-                  </Panel>
-
-                  <Panel>
-                    <SectionHeader title="运行泳道" description="按状态组织 workflow 运行中的任务。" />
-                    <div className="kanban-shell">
-                      {taskBoardColumns.map((column) => (
-                        <section key={column.id} className="kanban-lane">
-                          <div className="kanban-lane__header">
-                            <strong>{column.label}</strong>
-                            <StatusBadge tone={column.badgeTone}>{column.countLabel}</StatusBadge>
-                          </div>
-                          <div className="kanban-column">
-                            {column.items.map((task) => (
-                              <button
-                                key={task.id}
-                                type="button"
-                                className={task.id === selectedTask.id ? "task-card is-selected" : "task-card"}
-                                onClick={() => setSelectedTask(task)}
-                              >
-                                <strong>{task.title}</strong>
-                                <p>{task.workflowName}</p>
-                                <div className="task-card__meta">
-                                  <span>{task.currentStep}</span>
-                                  <span>{task.duration}</span>
-                                  {task.requiresHuman ? <span>需要人工接入</span> : null}
-                                </div>
-                              </button>
-                            ))}
-                          </div>
-                        </section>
-                      ))}
-                    </div>
-                  </Panel>
-
-                  <Panel>
-                    <SectionHeader title="对话历史 / 事件流" description="更接近参考图中的下方面板。" />
-                    <div className="history-panel">
-                      <div className="history-panel__header">
-                        <strong>对话历史</strong>
-                        <span>{selectedTask.timeline.length} 条事件</span>
-                      </div>
-                      <div className="timeline">
-                        {selectedTask.timeline.map((event) => (
-                          <article key={event.id} className="timeline__item">
-                            <span className="timeline__time">{event.time}</span>
-                            <div>
-                              <strong>{event.title}</strong>
-                              <p>{event.description}</p>
-                            </div>
-                          </article>
-                        ))}
-                      </div>
-                    </div>
-
-                    <div className="action-row">
-                      <button type="button" className="toolbar-button toolbar-button--accent">
-                        接管任务
-                      </button>
-                      <button type="button" className="toolbar-button">
-                        继续观察
-                      </button>
-                      <button type="button" className="toolbar-button">
-                        重新运行
-                      </button>
-                    </div>
-                  </Panel>
-                </section>
-              </section>
-            ) : null}
+      <section className="home-page">
+        <section className="continue-section">
+          <SectionHeading title="Continue Working" action="View all missions" />
+          <div className="mission-grid">
+            {missions.map((mission) => (
+              <MissionCard key={mission.title} mission={mission} />
+            ))}
           </div>
         </section>
-      </main>
 
-      <Drawer
-        open={drawerState !== null}
-        title={resolveDrawerTitle(drawerState)}
-        description={resolveDrawerDescription(drawerState)}
-        onClose={() => setDrawerState(null)}
-      >
-        {drawerState?.kind === "create-agent" ? (
-          <div className="form-layout">
-            <label>
-              Agent 名称
-              <input type="text" value="需求分析调度官" readOnly />
-            </label>
-            <label>
-              角色定位
-              <textarea readOnly value="负责拆解需求、调度业务专家并汇总关键结论。" />
-            </label>
-            <label>
-              默认模型
-              <input type="text" value="gpt-4.1-coder" readOnly />
-            </label>
-            <label>
-              运行时
-              <input type="text" value="cloud-pi-agent" readOnly />
-            </label>
-            <label>
-              插件组合
-              <input type="text" value="repo-inspector / context-memory / reviewer" readOnly />
-            </label>
-            <label>
-              权限级别
-              <input type="text" value="requires approval for shell + write" readOnly />
-            </label>
-          </div>
-        ) : null}
-
-        {drawerState?.kind === "register-model" ? (
-          <div className="form-layout">
-            <label>
-              Provider
-              <input type="text" value="OpenAI" readOnly />
-            </label>
-            <label>
-              Base URL
-              <input type="text" value="https://api.openai.com/v1" readOnly />
-            </label>
-            <label>
-              API Key
-              <input type="password" value="sk-********************************" readOnly />
-            </label>
-            <label>
-              模型 ID
-              <input type="text" value="gpt-4.1-coder" readOnly />
-            </label>
-            <label>
-              能力标签
-              <input type="text" value="tool-calling, long-context, code" readOnly />
-            </label>
-          </div>
-        ) : null}
-
-        {drawerState?.kind === "import-plugin" ? (
-          <div className="form-layout">
-            <label>
-              导入方式
-              <input type="text" value="本地目录 / 压缩包 / 清单预审" readOnly />
-            </label>
-            <label>
-              插件路径
-              <input type="text" value="/plugins/repo-inspector" readOnly />
-            </label>
-            <label>
-              Manifest 预览
-              <textarea
-                readOnly
-                value={`namespace: repo-inspector\nhooks: 2\ntools: 4\npermissions: workspace.read`}
-              />
-            </label>
-          </div>
-        ) : null}
-
-        {drawerState?.kind === "create-workflow" ? (
-          <div className="form-layout">
-            <label>
-              工作流名称
-              <input type="text" value="技术方案生成" readOnly />
-            </label>
-            <label>
-              流程类型
-              <input type="text" value="可视化画布 Playbook" readOnly />
-            </label>
-            <label>
-              发布策略
-              <input type="text" value="草稿 / 测试运行 / 发布" readOnly />
-            </label>
-            <label>
-              人工审核节点
-              <textarea readOnly value="架构评审后进入人工审核，再生成最终方案文档。" />
-            </label>
-          </div>
-        ) : null}
-
-        {drawerState?.kind === "launch-task" ? (
-          <div className="form-layout">
-            <label>
-              选择工作流
-              <input type="text" value="需求分析 Playbook" readOnly />
-            </label>
-            <label>
-              任务标题
-              <input type="text" value="订单系统改造需求分析" readOnly />
-            </label>
-            <label>
-              输入摘要
-              <textarea readOnly value="用户提交了改造目标、上下游系统与预期产物，等待执行。" />
-            </label>
-          </div>
-        ) : null}
-      </Drawer>
-    </>
+        <div className="dashboard-grid">
+          <NeedsYou />
+          <RecentArtifacts />
+        </div>
+      </section>
+    </main>
   );
-}
-
-function resolveDrawerTitle(drawerState: DrawerState): string {
-  switch (drawerState?.kind) {
-    case "create-agent":
-      return "创建 Agent";
-    case "register-model":
-      return "注册模型";
-    case "import-plugin":
-      return "导入插件";
-    case "create-workflow":
-      return "新建工作流";
-    case "launch-task":
-      return "发起任务";
-    default:
-      return "";
-  }
-}
-
-function resolveDrawerDescription(drawerState: DrawerState): string {
-  switch (drawerState?.kind) {
-    case "create-agent":
-      return "这里只展示 Agent 创建表单的工作台交互，不提交任何数据。";
-    case "register-model":
-      return "这里只展示模型注册面板，不执行真实 Provider 校验。";
-    case "import-plugin":
-      return "这里只展示插件导入和 manifest 预览交互，不做安装。";
-    case "create-workflow":
-      return "这里只展示工作流新建入口，不保存画布状态。";
-    case "launch-task":
-      return "这里只展示发起任务面板，不启动真实 workflow run。";
-    default:
-      return "";
-  }
-}
-
-function requireValue<T>(value: T | undefined): T {
-  if (value === undefined) {
-    throw new Error("Expected static desktop mock data to be present.");
-  }
-
-  return value;
 }
