@@ -48,6 +48,7 @@ import type {
   RuntimeCanUseResult,
   RuntimeCreateSessionRequest,
   RuntimeOutputSchema,
+  RuntimeModel,
   RuntimeRunResult,
   RuntimeSessionInfo,
   RuntimeSessionRef,
@@ -115,6 +116,7 @@ export interface RuntimeTurnContext<TNativeEvent> {
   readonly prompt: string;
   readonly startupMessages: readonly ExpertAgentStartupMessage[];
   readonly modelName?: string | undefined;
+  readonly thinkingLevel?: string | undefined;
   readonly output?: RuntimeOutputSchema | undefined;
   readonly signal: AbortSignal;
   readonly source: RuntimeStreamEvent["source"];
@@ -147,6 +149,7 @@ export interface RuntimeDestroyContext {
 export interface RuntimeDriver<TNativeEvent, TNativeSession, TPrepared = RuntimePreparedContext> {
   readonly descriptor: RuntimeAdapterDescriptor;
   readonly canUse?: (() => Promise<RuntimeCanUseResult> | RuntimeCanUseResult) | undefined;
+  readonly listModels?: (() => Promise<readonly RuntimeModel[]>) | undefined;
   readonly defaultOutputParser?: RuntimeOutputParser | undefined;
   readonly outputRetryLimit?: number | undefined;
   readonly resolvePersistence?:
@@ -209,6 +212,7 @@ export function defineRuntimeDriver<TNativeEvent, TNativeSession, TPrepared = Ru
   return {
     descriptor: driver.descriptor,
     canUse: async () => (await driver.canUse?.()) ?? { usable: true },
+    ...(driver.listModels === undefined ? {} : { listModels: driver.listModels }),
     setSessionRestoreHandler(handler) {
       sessionRestoreHandler = handler;
     },
@@ -658,6 +662,7 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepared> {
         prompt,
         startupMessages: attempt === 1 ? startupMessages : [],
         modelName: submission.modelName,
+        thinkingLevel: submission.thinkingLevel,
         output: submission.output,
         signal,
         source: controller.source,

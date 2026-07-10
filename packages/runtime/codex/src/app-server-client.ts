@@ -25,6 +25,7 @@ export interface CodexAppServerNotification {
 export interface CodexThreadStartOptions {
   readonly cwd: string;
   readonly model?: string | undefined;
+  readonly thinkingLevel?: string | undefined;
   readonly developerInstructions?: string | undefined;
   readonly sandboxMode?: string | undefined;
   readonly approvalPolicy?: string | undefined;
@@ -34,6 +35,7 @@ export interface CodexTurnStartOptions {
   readonly threadId: string;
   readonly input: readonly CodexUserInput[];
   readonly model?: string | undefined;
+  readonly thinkingLevel?: string | undefined;
 }
 
 export type JsonObject = Record<string, unknown>;
@@ -123,6 +125,7 @@ export class CodexAppServerClient {
       ...(options.sandboxMode === undefined ? {} : { sandbox: options.sandboxMode }),
       ...(options.approvalPolicy === undefined ? {} : { approvalPolicy: options.approvalPolicy }),
     };
+    applyThreadThinkingLevel(params, options.thinkingLevel);
     const result = await this.request("thread/start", params);
     const threadId = readThreadId(result);
 
@@ -134,14 +137,16 @@ export class CodexAppServerClient {
   }
 
   async resumeThread(threadId: string, options: CodexThreadStartOptions): Promise<string> {
-    const result = await this.request("thread/resume", {
+    const params: JsonObject = {
       threadId,
       cwd: options.cwd,
       ...(options.model === undefined ? {} : { model: options.model }),
       ...(options.developerInstructions === undefined
         ? {}
         : { developerInstructions: options.developerInstructions }),
-    });
+    };
+    applyThreadThinkingLevel(params, options.thinkingLevel);
+    const result = await this.request("thread/resume", params);
     return readThreadId(result) ?? threadId;
   }
 
@@ -150,6 +155,7 @@ export class CodexAppServerClient {
       threadId: options.threadId,
       input: options.input,
       ...(options.model === undefined ? {} : { model: options.model }),
+      ...(options.thinkingLevel === undefined ? {} : { effort: options.thinkingLevel }),
     });
   }
 
@@ -340,6 +346,19 @@ export class CodexAppServerClient {
 
     this.pending.clear();
   }
+}
+
+function applyThreadThinkingLevel(params: JsonObject, thinkingLevel: string | undefined): void {
+  if (thinkingLevel === undefined) {
+    return;
+  }
+
+  const config =
+    params["config"] !== null && typeof params["config"] === "object"
+      ? (params["config"] as JsonObject)
+      : {};
+  config["model_reasoning_effort"] = thinkingLevel;
+  params["config"] = config;
 }
 
 function createApprovedServerRequestResponse(method: string, params: JsonObject): JsonObject {

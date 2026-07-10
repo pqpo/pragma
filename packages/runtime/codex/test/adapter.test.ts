@@ -93,6 +93,19 @@ describe("createCodexRuntime", () => {
     const adapter = createCodexRuntime({
       spawn: fake.spawn,
       defaultModelName: "gpt-5-codex",
+      defaultThinkingLevel: "high",
+      listModels: async () => [
+        {
+          id: "gpt-5-codex",
+          displayName: "GPT-5 Codex",
+          provider: "openai",
+          default: true,
+          thinking: {
+            supportedLevels: [{ value: "high", label: "High" }],
+            defaultLevel: "high",
+          },
+        },
+      ],
     });
     const agent = await createTestAgent();
 
@@ -113,6 +126,14 @@ describe("createCodexRuntime", () => {
       "thread/start",
       "turn/start",
     ]);
+    expect(fake.requests.find((request) => request.method === "thread/start")?.params).toEqual(
+      expect.objectContaining({
+        config: { model_reasoning_effort: "high" },
+      }),
+    );
+    expect(fake.requests.find((request) => request.method === "turn/start")?.params).toEqual(
+      expect.objectContaining({ effort: "high" }),
+    );
     expect(session.info().runtimeSession.id).toBe("thread-1");
     expect(result.result.output).toBe("Hello world");
     expect(result.result.usage).toEqual(

@@ -742,6 +742,7 @@ export function createLocalTaskManager(options: TaskManagerOptions): TaskManager
     const result = await step.directive.run({
       input: context.task.input,
       modelName: context.runRequest.modelName,
+      thinkingLevel: context.runRequest.thinkingLevel,
       output: step.output ?? step.directive.outputSchema,
       runtime: context.runtimeId,
       runtimeSession: context.runRequest.runtimeSession,

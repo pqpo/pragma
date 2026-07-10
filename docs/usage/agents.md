@@ -184,8 +184,29 @@ openai-responses
 推荐做法：
 
 - `key` 从环境变量读取，不要写死到源码。
-- `defaultModelName` 使用 `{provider}/{modelName}` 格式。
+- `defaultModelName` 的格式由所选 Runtime 决定；PI 等 provider-based Runtime 通常使用
+  `{provider}/{modelName}`，Codex 和 Claude Code 使用各自 CLI 的原生模型 ID。
 - 一个 Agent 可以声明多个 provider，Runtime 根据具体适配实现选择使用。
+
+Codex 和 Claude Code 是本地 CLI Runtime，不接受 `models.providers` 中的自定义 provider。
+它们使用本机 CLI 的登录和配置，并通过 `runtime.listModels()` 暴露当前允许选择的模型及逐模型
+思考深度。显式选择必须来自该目录；不传模型和思考深度时继续使用 CLI 默认配置：
+
+```ts
+const runtime = createCodexRuntime();
+const models = await runtime.listModels?.();
+
+const session = await agent.createSession({
+  runtime: "codex-local",
+  runtimes: createRuntimeRegistry({ runtimes: [runtime] }),
+});
+
+const handle = session.submit({
+  query: "分析这个改动。",
+  modelName: models?.[0]?.id,
+  thinkingLevel: models?.[0]?.thinking?.supportedLevels[0]?.value,
+});
+```
 
 ## MCP 配置
 

@@ -114,6 +114,44 @@ describe("durable human interaction", () => {
     await expect(store.listPending(scope)).resolves.toEqual([]);
   });
 
+  it("reuses a pending tool approval when a restored runtime regenerates the tool call id", async () => {
+    const rootDir = await createTempDir();
+    const store = createFileHumanInteractionStore({ rootDir });
+    const scope = createScope();
+    const interrupted = createDurableHumanInteractionHandler({
+      scope,
+      store,
+      createInteractionId: () => "approval-1",
+      delegate: async () => {
+        throw new Error("interrupted");
+      },
+    });
+
+    await expect(interrupted(request)).rejects.toThrow("interrupted");
+
+    const regeneratedRequest = {
+      ...request,
+      toolCallId: "tool-call-after-restore",
+    } satisfies ExpertAgentHumanRequest;
+    const resumed = createDurableHumanInteractionHandler({
+      scope,
+      store,
+      delegate: async () => approved,
+    });
+
+    await expect(resumed(regeneratedRequest)).resolves.toEqual(approved);
+    await expect(store.listPending(scope)).resolves.toEqual([]);
+
+    const resolved = await readResolvedInteractions(rootDir);
+    expect(resolved).toMatchObject([
+      {
+        id: "approval-1",
+        attempts: 2,
+        request: regeneratedRequest,
+      },
+    ]);
+  });
+
   it("filters pending interactions by scope", async () => {
     const rootDir = await createTempDir();
     const store = createFileHumanInteractionStore({ rootDir });

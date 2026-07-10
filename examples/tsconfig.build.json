@@ -2,5 +2,7 @@
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "noEmit": false
-  }
+  },
+  "include": ["src", "plugins"],
+  "exclude": ["test", "src/**/*.test.ts", "vitest.config.ts"]
 }

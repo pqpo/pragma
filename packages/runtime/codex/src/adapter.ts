@@ -21,6 +21,11 @@ import {
   type CodexRuntimeSessionState,
 } from "./session.ts";
 import type { CodexRuntimeAdapterOptions } from "./types.ts";
+import {
+  assertCodexModelSelection,
+  assertCodexProviderConfig,
+  createCodexModelDiscovery,
+} from "./models.ts";
 import { canUseCodexRuntime } from "./availability.ts";
 import {
   createCodexWorkflowToolsMcpServer,
@@ -37,7 +42,9 @@ const CODEX_LOCAL_RUNTIME_DESCRIPTOR = {
     executionLocations: ["local"],
     supportsAbort: true,
     supportsMcp: true,
+    supportsModelDiscovery: true,
     supportsStreaming: true,
+    supportsThinkingLevel: true,
   },
 };
 
@@ -64,11 +71,13 @@ export function createCodexRuntime(
       ...options.descriptor?.capabilities,
     },
   };
+  const listModels = options.listModels ?? createCodexModelDiscovery(options);
 
   return defineRuntimeDriver(
     {
       descriptor,
       canUse: createCodexRuntimeCanUse(options),
+      listModels,
       outputRetryLimit: options.outputRetryLimit,
       resolvePersistence(ctx): RuntimeSessionPersistenceSpec {
         return {
@@ -81,6 +90,15 @@ export function createCodexRuntime(
         };
       },
       async createSession(ctx): Promise<CodexDriverSession> {
+        assertCodexProviderConfig(ctx.request);
+        const defaultModelName = options.defaultModelName ?? ctx.agent.models?.defaultModelName;
+        if (defaultModelName !== undefined || options.defaultThinkingLevel !== undefined) {
+          assertCodexModelSelection(
+            await listModels(),
+            defaultModelName,
+            options.defaultThinkingLevel,
+          );
+        }
         const notificationBus = createCodexNotificationBus();
         const toolRuntimeState: CodexWorkflowToolRuntimeState = {};
         const state: CodexRuntimeSessionState = {
@@ -129,7 +147,8 @@ export function createCodexRuntime(
           client,
           runtimeSessionId: state.threadId,
           cwd: ctx.workspace,
-          model: options.defaultModelName ?? ctx.agent.models?.defaultModelName,
+          model: defaultModelName,
+          thinkingLevel: options.defaultThinkingLevel,
           developerInstructions: ctx.agentContext.systemPrompt,
           sandboxMode: options.sandboxMode,
           approvalPolicy: options.approvalPolicy,
@@ -142,7 +161,8 @@ export function createCodexRuntime(
             client,
             notificationBus,
             state,
-            defaultModelName: options.defaultModelName ?? ctx.agent.models?.defaultModelName,
+            defaultModelName,
+            defaultThinkingLevel: options.defaultThinkingLevel,
             codexHome,
             startupMessages: threadStartResult.startedFreshThread
               ? ctx.agentContext.startupMessages
@@ -159,7 +179,14 @@ export function createCodexRuntime(
       },
       listMessages: listCodexMessages,
       consumeStartupMessages: consumeCodexStartupMessages,
-      startTurn: startCodexTurn,
+      async startTurn(session, turn) {
+        const modelName = turn.modelName ?? session.defaultModelName;
+        const thinkingLevel = turn.thinkingLevel ?? session.defaultThinkingLevel;
+        if (modelName !== undefined || thinkingLevel !== undefined) {
+          assertCodexModelSelection(await listModels(), modelName, thinkingLevel);
+        }
+        return await startCodexTurn(session, { ...turn, modelName, thinkingLevel });
+      },
       mapEvent: mapCodexNotificationToRuntimeEvent,
       async collectUsage(session, ctx) {
         return await collectCodexUsage(session, ctx.startedAt, ctx.usage);
@@ -261,6 +288,7 @@ async function startOrResumeThread({
   runtimeSessionId,
   cwd,
   model,
+  thinkingLevel,
   developerInstructions,
   sandboxMode,
   approvalPolicy,
@@ -270,6 +298,7 @@ async function startOrResumeThread({
   readonly runtimeSessionId: string;
   readonly cwd: string;
   readonly model?: string | undefined;
+  readonly thinkingLevel?: string | undefined;
   readonly developerInstructions?: string | undefined;
   readonly sandboxMode?: string | undefined;
   readonly approvalPolicy?: string | undefined;
@@ -283,6 +312,7 @@ async function startOrResumeThread({
       const threadId = await client.resumeThread(runtimeSessionId, {
         cwd,
         model,
+        thinkingLevel,
         developerInstructions,
       });
       return {
@@ -300,6 +330,7 @@ async function startOrResumeThread({
   const threadId = await client.startThread({
     cwd,
     model,
+    thinkingLevel,
     developerInstructions,
     sandboxMode,
     approvalPolicy,

@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "tsx",
     "build": "tsc -p tsconfig.build.json",
-    "lint": "eslint src plugins",
+    "lint": "eslint src plugins test vitest.config.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests",
     "clean": "rm -rf dist"

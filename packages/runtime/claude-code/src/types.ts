@@ -3,6 +3,7 @@ import type {
   RuntimeCanUseResult,
   RuntimeAdapterDescriptor,
   RuntimeCommandSpawn,
+  RuntimeModel,
   RuntimeSessionRestoreHandler,
   RuntimeSessionSyncCallback,
 } from "@pragma/core";
@@ -25,6 +26,8 @@ export interface ClaudeCodeRuntimeAdapterOptions {
   readonly env?: NodeJS.ProcessEnv | undefined;
   readonly loggerProvider?: ExpertAgentLoggerProvider | undefined;
   readonly defaultModelName?: string | undefined;
+  readonly defaultThinkingLevel?: string | undefined;
+  readonly listModels?: (() => Promise<readonly RuntimeModel[]>) | undefined;
   readonly isolationMode?: ClaudeCodeRuntimeIsolationMode | undefined;
   readonly permissionMode?: ClaudeCodeRuntimePermissionMode | undefined;
   readonly additionalArgs?: readonly string[] | undefined;

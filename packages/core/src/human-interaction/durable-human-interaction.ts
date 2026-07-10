@@ -236,7 +236,20 @@ function sameHumanRequest(
   left: ExpertAgentHumanRequest,
   right: ExpertAgentHumanRequest,
 ): boolean {
-  return stableStringify(left) === stableStringify(right);
+  return stableStringify(logicalHumanRequest(left)) === stableStringify(logicalHumanRequest(right));
+}
+
+function logicalHumanRequest(request: ExpertAgentHumanRequest): unknown {
+  if (request.kind !== "tool_approval") {
+    return request;
+  }
+
+  return {
+    kind: request.kind,
+    toolName: request.toolName,
+    reason: request.reason,
+    input: request.input,
+  };
 }
 
 function stableStringify(value: unknown): string {

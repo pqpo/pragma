@@ -21,12 +21,12 @@ import {
 } from "./harness/expert-agent-example-utils.ts";
 import { createExampleLoggerProvider } from "./harness/logger.ts";
 import { defaultWorkspaceRoot, ensureWorkspaceDir, loadExamplesEnv } from "./harness/paths.ts";
+import { selectRuntimeModel } from "./harness/runtime-model-selection.ts";
 import { exitIfRuntimeUnavailable } from "./harness/runtime-availability.ts";
 import { printRunStream } from "./harness/stream-output.ts";
 
 interface CodexRuntimeExampleCliOptions {
   readonly turns: readonly string[];
-  readonly model: string | undefined;
   readonly runtimeSessionId: string | undefined;
   readonly systemSessionId: string | undefined;
   readonly sandboxMode: CodexRuntimeSandboxMode | undefined;
@@ -68,13 +68,28 @@ const agent = await ExpertAgent.create({
   loggerProvider,
 });
 
-const runtime = createCodexRuntime({
+const runtimeProbe = createCodexRuntime({
   loggerProvider,
-  defaultModelName: cli.model,
   sandboxMode: cli.sandboxMode,
   approvalPolicy: cli.approvalPolicy,
 });
-await exitIfRuntimeUnavailable(runtime);
+await exitIfRuntimeUnavailable(runtimeProbe);
+const detectedModels = await runtimeProbe.listModels?.();
+if (detectedModels === undefined) {
+  throw new Error("Codex runtime does not expose model discovery.");
+}
+const selection = await selectRuntimeModel({
+  runtimeName: "Codex",
+  models: detectedModels,
+});
+const runtime = createCodexRuntime({
+  loggerProvider,
+  defaultModelName: selection.modelName,
+  defaultThinkingLevel: selection.thinkingLevel,
+  listModels: async () => detectedModels,
+  sandboxMode: cli.sandboxMode,
+  approvalPolicy: cli.approvalPolicy,
+});
 const runtimeSession = createRuntimeSessionRef(cli.runtimeSessionId);
 const session = await runtime.createSession({
   agent,
@@ -91,17 +106,19 @@ try {
   console.log(`- systemSessionId: ${sessionInfo.systemSessionId}`);
   console.log(`- runtimeSessionId: ${sessionInfo.runtimeSession.id}`);
   console.log(`- runtime: ${sessionInfo.runtime.displayName} (${sessionInfo.runtime.id})`);
-  console.log(`- model: ${cli.model ?? "Codex config default"}`);
+  console.log(`- model: ${selection.modelName ?? "Codex config default"}`);
+  console.log(`- thinkingLevel: ${selection.thinkingLevel ?? "Codex config default"}`);
   console.log(`- sandbox: ${cli.sandboxMode ?? "Codex config default"}`);
   console.log(`- approvalPolicy: ${cli.approvalPolicy ?? "Codex config default"}`);
   console.log("");
 
   for (const [index, query] of cli.turns.entries()) {
     console.log(`Turn ${index + 1}/${cli.turns.length}`);
-    printRunHeader(agent, cli.model ?? "Codex config default", query);
+    printRunHeader(agent, selection.modelName ?? "Codex config default", query);
     const run = session.submit({
       query,
-      ...(cli.model === undefined ? {} : { modelName: cli.model }),
+      ...(selection.modelName === undefined ? {} : { modelName: selection.modelName }),
+      ...(selection.thinkingLevel === undefined ? {} : { thinkingLevel: selection.thinkingLevel }),
     });
 
     await printRunStream(run);
@@ -169,7 +186,6 @@ function readCodexRuntimeExampleCli(): CodexRuntimeExampleCliOptions {
   cli
     .command("[query...]", "Task query to send to the Codex-backed ExpertAgent.")
     .option("--turn <query>", "Task query to submit. Repeat this option for multi-turn tests.")
-    .option("--model <model>", "Codex model name to pass to thread/start and turn/start.")
     .option("--runtime-session-id <id>", "Resume an existing Codex runtime thread id.")
     .option("--system-session-id <id>", "Use a fixed Pragma system session id.")
     .option(
@@ -190,7 +206,6 @@ function readCodexRuntimeExampleCli(): CodexRuntimeExampleCliOptions {
 
   return {
     turns: readTurns(parsed.args, parsed.options.turn),
-    model: readStringOption(parsed.options.model),
     runtimeSessionId: readStringOption(parsed.options.runtimeSessionId),
     systemSessionId: readStringOption(parsed.options.systemSessionId),
     sandboxMode: readSandboxModeOption(parsed.options.sandbox),

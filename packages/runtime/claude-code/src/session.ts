@@ -45,6 +45,7 @@ const PROTOCOL_FLAGS_WITH_VALUE = new Set([
   "--plugin-dir",
   "--append-system-prompt",
   "--model",
+  "--effort",
   "--resume",
   "--settings",
   "--allowedTools",
@@ -69,6 +70,7 @@ export interface ClaudeCodeNativeSession {
   readonly executablePath: string;
   readonly additionalArgs: readonly string[];
   readonly defaultModelName?: string | undefined;
+  readonly defaultThinkingLevel?: string | undefined;
   readonly env?: NodeJS.ProcessEnv | undefined;
   readonly humanInteractionHandler?: ExpertAgentHumanInteractionHandler | undefined;
   readonly isolationMode: ClaudeCodeRuntimeIsolationMode;
@@ -97,6 +99,7 @@ export function createClaudeCodeNativeSession(options: {
   readonly executablePath: string;
   readonly additionalArgs: readonly string[];
   readonly defaultModelName?: string | undefined;
+  readonly defaultThinkingLevel?: string | undefined;
   readonly env?: NodeJS.ProcessEnv | undefined;
   readonly humanInteractionHandler?: ExpertAgentHumanInteractionHandler | undefined;
   readonly isolationMode: ClaudeCodeRuntimeIsolationMode;
@@ -158,9 +161,11 @@ export async function startClaudeCodeTurn(
     args: await createClaudeCodeArgs({
       additionalArgs: session.additionalArgs,
       defaultModelName: session.defaultModelName,
+      defaultThinkingLevel: session.defaultThinkingLevel,
       managedConfig: session.managedConfig,
       mcpServerUrl: session.mcpServerUrl,
       modelName: turn.modelName,
+      thinkingLevel: turn.thinkingLevel,
       permissionMode: session.permissionMode,
       pluginDir: session.pluginDir,
       sessionDir: session.sessionDir,
@@ -572,9 +577,11 @@ function inferClaudeCodeRuntimeErrorCode(message: string): string {
 async function createClaudeCodeArgs({
   additionalArgs,
   defaultModelName,
+  defaultThinkingLevel,
   managedConfig,
   mcpServerUrl,
   modelName,
+  thinkingLevel,
   permissionMode,
   pluginDir,
   sessionDir,
@@ -583,9 +590,11 @@ async function createClaudeCodeArgs({
 }: {
   readonly additionalArgs: readonly string[];
   readonly defaultModelName?: string | undefined;
+  readonly defaultThinkingLevel?: string | undefined;
   readonly managedConfig?: ManagedClaudeCodeConfig | undefined;
   readonly mcpServerUrl: string;
   readonly modelName?: string | undefined;
+  readonly thinkingLevel?: string | undefined;
   readonly permissionMode: ClaudeCodeRuntimePermissionMode;
   readonly pluginDir: string;
   readonly sessionDir: string;
@@ -594,6 +603,7 @@ async function createClaudeCodeArgs({
 }): Promise<readonly string[]> {
   const mcpConfigPath = await writeMcpConfig(sessionDir, mcpServerUrl);
   const selectedModel = modelName ?? defaultModelName;
+  const selectedThinkingLevel = thinkingLevel ?? defaultThinkingLevel;
   const settingsArgs =
     managedConfig?.settingsPath === undefined ? [] : ["--settings", managedConfig.settingsPath];
   const args = [
@@ -620,6 +630,7 @@ async function createClaudeCodeArgs({
     "--disallowedTools",
     "AskUserQuestion",
     ...(selectedModel === undefined ? [] : ["--model", selectedModel]),
+    ...(selectedThinkingLevel === undefined ? [] : ["--effort", selectedThinkingLevel]),
     ...(state.sessionId === "" ? [] : ["--resume", state.sessionId]),
     ...filterAdditionalArgs(additionalArgs),
   ];

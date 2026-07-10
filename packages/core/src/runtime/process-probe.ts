@@ -22,16 +22,17 @@ export interface RuntimeBinaryProbeOptions {
   readonly spawn?: RuntimeCommandSpawn | undefined;
 }
 
-interface ProbeCommandOptions {
+export interface RuntimeCommandOptions {
   readonly executablePath: string;
   readonly args: readonly string[];
   readonly cwd: string;
   readonly env: NodeJS.ProcessEnv;
   readonly timeoutMs: number;
+  readonly outputLimit?: number | undefined;
   readonly spawn?: RuntimeCommandSpawn | undefined;
 }
 
-interface ProbeCommandResult {
+export interface RuntimeCommandResult {
   readonly exitCode: number | null;
   readonly signal: NodeJS.Signals | null;
   readonly stdout: string;
@@ -47,7 +48,7 @@ export async function canUseRuntimeBinary(
   const executablePath = options.executablePath ?? options.defaultExecutablePath;
 
   try {
-    const result = await probeCommand({
+    const result = await runRuntimeCommand({
       executablePath,
       args: options.args ?? ["--version"],
       cwd: options.cwd ?? process.cwd(),
@@ -95,10 +96,10 @@ export async function canUseRuntimeBinary(
   }
 }
 
-function probeCommand(options: ProbeCommandOptions): Promise<ProbeCommandResult> {
+export function runRuntimeCommand(options: RuntimeCommandOptions): Promise<RuntimeCommandResult> {
   const spawn = options.spawn ?? defaultSpawn;
 
-  return new Promise<ProbeCommandResult>((resolve, reject) => {
+  return new Promise<RuntimeCommandResult>((resolve, reject) => {
     let stdout = "";
     let stderr = "";
     let settled = false;
@@ -114,10 +115,10 @@ function probeCommand(options: ProbeCommandOptions): Promise<ProbeCommandResult>
     }, options.timeoutMs);
 
     child.stdout.on("data", (chunk: Buffer | string) => {
-      stdout = appendLimited(stdout, chunk);
+      stdout = appendLimited(stdout, chunk, options.outputLimit ?? OUTPUT_LIMIT);
     });
     child.stderr.on("data", (chunk: Buffer | string) => {
-      stderr = appendLimited(stderr, chunk);
+      stderr = appendLimited(stderr, chunk, options.outputLimit ?? OUTPUT_LIMIT);
     });
     child.on("error", (error) => {
       finish(() => {
@@ -158,12 +159,12 @@ function defaultSpawn(
   });
 }
 
-function appendLimited(current: string, chunk: Buffer | string): string {
-  if (current.length >= OUTPUT_LIMIT) {
+function appendLimited(current: string, chunk: Buffer | string, outputLimit: number): string {
+  if (current.length >= outputLimit) {
     return current;
   }
 
-  return (current + String(chunk)).slice(0, OUTPUT_LIMIT);
+  return (current + String(chunk)).slice(0, outputLimit);
 }
 
 function readFirstOutputLine(output: string): string | undefined {

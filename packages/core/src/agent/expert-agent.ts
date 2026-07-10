@@ -390,6 +390,7 @@ export class ExpertAgent implements IExpertAgent, Directive<unknown, unknown> {
       const handle = session.submit<TOutput>({
         runId: execution.task.id,
         modelName: request.modelName,
+        thinkingLevel: request.thinkingLevel,
         query: stringifyInput(request.input),
         output: request.output as RuntimeOutputSchema<TOutput> | undefined,
       });

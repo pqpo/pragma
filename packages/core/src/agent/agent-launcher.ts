@@ -20,6 +20,7 @@ interface LaunchAgentInput {
   readonly sessionPolicy?: AgentLaunchSessionPolicy | undefined;
   readonly runtime?: string | undefined;
   readonly modelName?: string | undefined;
+  readonly thinkingLevel?: string | undefined;
 }
 
 const launchAgentInputSchema = {
@@ -45,6 +46,10 @@ const launchAgentInputSchema = {
     modelName: {
       type: "string",
       description: "Optional model name for the delegated ExpertAgent run.",
+    },
+    thinkingLevel: {
+      type: "string",
+      description: "Optional runtime-native thinking level for the delegated ExpertAgent run.",
     },
   },
   required: ["agentId", "task"],
@@ -111,6 +116,7 @@ export function createAgentLauncher(options: CreateAgentLauncherOptions): AgentL
           agentId: agent.id,
           runtime,
           modelName: input.modelName,
+          thinkingLevel: input.thinkingLevel,
         });
         const runtimeSession =
           input.sessionPolicy === "reuse_by_agent" ? sessionRefs.get(sessionKey) : undefined;
@@ -119,6 +125,7 @@ export function createAgentLauncher(options: CreateAgentLauncherOptions): AgentL
           const result = await workflowExecution.runDirective(agent, {
             input: input.task,
             modelName: input.modelName,
+            thinkingLevel: input.thinkingLevel,
             runtime,
             runtimeSession,
             execution: workflowExecution,
@@ -166,6 +173,7 @@ function readLaunchAgentInput(args: unknown, defaultSessionPolicy: AgentLaunchSe
   const sessionPolicy = readSessionPolicy(record["sessionPolicy"], defaultSessionPolicy);
   const runtime = readOptionalString(record, "runtime");
   const modelName = readOptionalString(record, "modelName");
+  const thinkingLevel = readOptionalString(record, "thinkingLevel");
 
   return {
     agentId,
@@ -173,6 +181,7 @@ function readLaunchAgentInput(args: unknown, defaultSessionPolicy: AgentLaunchSe
     sessionPolicy,
     ...(runtime === undefined ? {} : { runtime }),
     ...(modelName === undefined ? {} : { modelName }),
+    ...(thinkingLevel === undefined ? {} : { thinkingLevel }),
   };
 }
 
@@ -215,8 +224,9 @@ function createSessionKey(input: {
   readonly agentId: string;
   readonly runtime: string;
   readonly modelName?: string | undefined;
+  readonly thinkingLevel?: string | undefined;
 }): string {
-  return [input.agentId, input.runtime, input.modelName ?? ""].join(":");
+  return [input.agentId, input.runtime, input.modelName ?? "", input.thinkingLevel ?? ""].join(":");
 }
 
 function formatAgentOutput(output: unknown): string {

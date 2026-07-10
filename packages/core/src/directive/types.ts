@@ -168,6 +168,7 @@ export interface CompiledDirective<TInput = unknown, TOutput = unknown> extends 
 export interface StartRunRequest<TInput = unknown> extends RuntimeOverride {
   readonly input: TInput;
   readonly modelName?: string | undefined;
+  readonly thinkingLevel?: string | undefined;
   readonly output?: RuntimeOutputSchema<unknown> | undefined;
   readonly runtimeSession?: RuntimeSessionRef | undefined;
   readonly runtimes?: Readonly<Record<string, string>> | undefined;

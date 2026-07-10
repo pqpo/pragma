@@ -100,6 +100,19 @@ describe("createClaudeCodeRuntime", () => {
     );
     const adapter = createClaudeCodeRuntime({
       defaultModelName: "claude-sonnet-4-5",
+      defaultThinkingLevel: "high",
+      listModels: async () => [
+        {
+          id: "claude-sonnet-4-5",
+          displayName: "Claude Sonnet 4.5",
+          provider: "anthropic",
+          default: true,
+          thinking: {
+            supportedLevels: [{ value: "high", label: "High" }],
+            defaultLevel: "high",
+          },
+        },
+      ],
       env: { CLAUDE_CONFIG_DIR: sharedClaudeConfigDir },
       spawn: fake.spawn,
       sessionSyncCallback: (context) => {
@@ -141,8 +154,16 @@ describe("createClaudeCodeRuntime", () => {
     );
     expect(fake.args).toContain("--model");
     expect(fake.args).toContain("claude-sonnet-4-5");
+    expect(fake.args[fake.args.indexOf("--effort") + 1]).toBe("high");
     expect(fake.env["CLAUDE_CONFIG_DIR"]).toBe(
-      join(agent.workspace, ".pragma", "runtime-sessions", "claude-code", agent.id, "claude-config"),
+      join(
+        agent.workspace,
+        ".pragma",
+        "runtime-sessions",
+        "claude-code",
+        agent.id,
+        "claude-config",
+      ),
     );
     expect(fake.inputs[0]).toEqual(
       expect.objectContaining({
@@ -269,7 +290,12 @@ describe("createClaudeCodeRuntime", () => {
   it("falls back to Claude Code transcript usage when stdout usage is missing", async () => {
     const sharedClaudeConfigDir = await mkdtemp(join(tmpdir(), "pragma-claude-shared-config-"));
     const fake = new FakeClaudeCodeCli(
-      [[{ type: "system", session_id: "session-transcript" }, { type: "result", result: "Hello" }]],
+      [
+        [
+          { type: "system", session_id: "session-transcript" },
+          { type: "result", result: "Hello" },
+        ],
+      ],
       {
         onInput: async (cli) => {
           await writeClaudeTranscriptUsage(cli.env["CLAUDE_CONFIG_DIR"], "session-transcript", {
@@ -473,7 +499,10 @@ describe("createClaudeCodeRuntime", () => {
 
   it("honors an explicit Claude Code permission mode", async () => {
     const fake = new FakeClaudeCodeCli([
-      [{ type: "system", session_id: "session-permission" }, { type: "result", result: "done" }],
+      [
+        { type: "system", session_id: "session-permission" },
+        { type: "result", result: "done" },
+      ],
     ]);
     const agent = await createTestAgent();
     const adapter = createClaudeCodeRuntime({
@@ -492,7 +521,10 @@ describe("createClaudeCodeRuntime", () => {
 
   it("passes the assembled context system prompt to Claude Code", async () => {
     const fake = new FakeClaudeCodeCli([
-      [{ type: "system", session_id: "session-context" }, { type: "result", result: "done" }],
+      [
+        { type: "system", session_id: "session-context" },
+        { type: "result", result: "done" },
+      ],
     ]);
     const contextSystem = new ContextSystem();
     contextSystem.register({
@@ -523,7 +555,9 @@ describe("createClaudeCodeRuntime", () => {
     expect(systemPrompt).toContain("Context access rules:");
     expect(systemPrompt).toContain("Available context index");
     expect(systemPrompt).toContain("id: runtime-runbook.md");
-    expect(systemPrompt).toContain("Use list_expert_context, read_expert_context, and search_expert_context");
+    expect(systemPrompt).toContain(
+      "Use list_expert_context, read_expert_context, and search_expert_context",
+    );
     expect(readInputContentBlocks(fake.inputs[0])).toEqual([
       expect.objectContaining({
         type: "text",
@@ -697,7 +731,10 @@ describe("createClaudeCodeRuntime", () => {
 
   it("materializes ExpertAgent skills into a session-scoped Claude plugin", async () => {
     const fake = new FakeClaudeCodeCli([
-      [{ type: "system", session_id: "session-skills" }, { type: "result", result: "done" }],
+      [
+        { type: "system", session_id: "session-skills" },
+        { type: "result", result: "done" },
+      ],
     ]);
     const skillDir = await mkdtemp(join(tmpdir(), "pragma-claude-skill-source-"));
     await writeFile(skillDir + "/SKILL.md", "# Local Skill\n\nUse local behavior.\n");

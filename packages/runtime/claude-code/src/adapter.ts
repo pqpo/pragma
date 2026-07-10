@@ -28,6 +28,11 @@ import {
   type ClaudeCodeNativeSession,
 } from "./session.ts";
 import type { ClaudeCodeRuntimeAdapterOptions, ClaudeCodeRuntimeSessionState } from "./types.ts";
+import {
+  assertClaudeCodeModelSelection,
+  assertClaudeCodeProviderConfig,
+  createClaudeCodeModelDiscovery,
+} from "./models.ts";
 
 const CLAUDE_CODE_LOCAL_RUNTIME_DESCRIPTOR = {
   id: "claude-code-local",
@@ -38,7 +43,9 @@ const CLAUDE_CODE_LOCAL_RUNTIME_DESCRIPTOR = {
     executionLocations: ["local"],
     supportsAbort: true,
     supportsMcp: true,
+    supportsModelDiscovery: true,
     supportsStreaming: true,
+    supportsThinkingLevel: true,
   },
 };
 const DEFAULT_CLAUDE_CODE_PERMISSION_MODE = "auto" as const;
@@ -60,11 +67,13 @@ export function createClaudeCodeRuntime(
       ...options.descriptor?.capabilities,
     },
   };
+  const listModels = options.listModels ?? createClaudeCodeModelDiscovery(options);
 
   return defineRuntimeDriver(
     {
       descriptor,
       canUse: createClaudeCodeRuntimeCanUse(options),
+      listModels,
       outputRetryLimit: options.outputRetryLimit,
       resolvePersistence(ctx): RuntimeSessionPersistenceSpec {
         return {
@@ -84,6 +93,15 @@ export function createClaudeCodeRuntime(
         };
       },
       async createSession(ctx): Promise<ClaudeCodeDriverSession> {
+        assertClaudeCodeProviderConfig(ctx.request);
+        const defaultModelName = options.defaultModelName ?? ctx.agent.models?.defaultModelName;
+        if (defaultModelName !== undefined || options.defaultThinkingLevel !== undefined) {
+          assertClaudeCodeModelSelection(
+            await listModels(),
+            defaultModelName,
+            options.defaultThinkingLevel,
+          );
+        }
         const sessionDir =
           ctx.persistence.spec?.sessionDir ?? getClaudeCodeSessionDir(ctx.workspace, ctx.agent.id);
         const state: ClaudeCodeRuntimeSessionState = {
@@ -122,7 +140,8 @@ export function createClaudeCodeRuntime(
             agent: ctx.agent,
             executablePath: options.executablePath ?? "claude",
             additionalArgs: options.additionalArgs ?? [],
-            defaultModelName: options.defaultModelName ?? ctx.agent.models?.defaultModelName,
+            defaultModelName,
+            defaultThinkingLevel: options.defaultThinkingLevel,
             env: options.env,
             humanInteractionHandler: ctx.request.humanInteractionHandler,
             isolationMode,
@@ -148,7 +167,14 @@ export function createClaudeCodeRuntime(
       },
       listMessages: listClaudeCodeMessages,
       consumeStartupMessages: consumeClaudeCodeStartupMessages,
-      startTurn: startClaudeCodeTurn,
+      async startTurn(session, turn) {
+        const modelName = turn.modelName ?? session.defaultModelName;
+        const thinkingLevel = turn.thinkingLevel ?? session.defaultThinkingLevel;
+        if (modelName !== undefined || thinkingLevel !== undefined) {
+          assertClaudeCodeModelSelection(await listModels(), modelName, thinkingLevel);
+        }
+        return await startClaudeCodeTurn(session, { ...turn, modelName, thinkingLevel });
+      },
       mapEvent: mapClaudeCodeNativeEvent,
       async collectUsage(session, ctx) {
         return await collectClaudeCodeUsage(session, ctx.startedAt, ctx.usage);

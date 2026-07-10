@@ -22,6 +22,8 @@ export interface RuntimeAdapterCapabilities {
   readonly supportsStreaming?: boolean | undefined;
   readonly supportsAbort?: boolean | undefined;
   readonly supportsMcp?: boolean | undefined;
+  readonly supportsModelDiscovery?: boolean | undefined;
+  readonly supportsThinkingLevel?: boolean | undefined;
 }
 
 export type RuntimeTarget = "agent" | "code" | "directive" | "operator" | (string & {});
@@ -37,6 +39,25 @@ export interface RuntimeCanUseResult {
   readonly usable: boolean;
   readonly reason?: string | undefined;
   readonly details?: Record<string, unknown> | undefined;
+}
+
+export interface RuntimeThinkingLevel {
+  readonly value: string;
+  readonly label: string;
+  readonly description?: string | undefined;
+}
+
+export interface RuntimeModelThinking {
+  readonly supportedLevels: readonly RuntimeThinkingLevel[];
+  readonly defaultLevel?: string | undefined;
+}
+
+export interface RuntimeModel {
+  readonly id: string;
+  readonly displayName: string;
+  readonly provider: string;
+  readonly default?: boolean | undefined;
+  readonly thinking?: RuntimeModelThinking | undefined;
 }
 
 export type RuntimeOutputSchema<TOutput = unknown> = z.ZodType<TOutput>;
@@ -84,6 +105,7 @@ export interface RuntimeCreateSessionRequest {
 export interface RuntimeSubmitRequest<TOutput = string> {
   readonly runId?: string | undefined;
   readonly modelName?: string | undefined;
+  readonly thinkingLevel?: string | undefined;
   readonly query: string;
   readonly output?: RuntimeOutputSchema<TOutput> | undefined;
   readonly outputRetryLimit?: number | undefined;
@@ -113,6 +135,7 @@ export interface RuntimeAgentSession {
 export interface RuntimeAdapter {
   readonly descriptor: RuntimeAdapterDescriptor;
   readonly canUse: () => Promise<RuntimeCanUseResult> | RuntimeCanUseResult;
+  readonly listModels?: (() => Promise<readonly RuntimeModel[]>) | undefined;
   readonly createSession: (request: RuntimeCreateSessionRequest) => Promise<RuntimeAgentSession>;
   readonly setSessionSyncCallback?: (callback: RuntimeSessionSyncCallback | undefined) => void;
   readonly setSessionRestoreHandler?: (handler: RuntimeSessionRestoreHandler | undefined) => void;

@@ -75,11 +75,9 @@ pnpm --filter @pragma/examples dev src/run-codex-runtime-agent.ts
 codex login
 ```
 
-传入 Codex 模型名：
-
-```bash
-pnpm --filter @pragma/examples dev src/run-codex-runtime-agent.ts --model gpt-5.5 "总结这个仓库的模块边界"
-```
+启动后，脚本会调用 `runtime.listModels()` 探测本机 Codex CLI 当前提供的模型和逐模型
+思考深度，并在终端中显示编号菜单。模型和思考深度只能从该菜单选择；选择 `0` 表示沿用
+本地 Codex 配置。脚本不接受外部 `--model` 或自由文本思考深度。
 
 提交多轮任务并复用同一个 Codex thread：
 
@@ -110,7 +108,7 @@ pnpm --filter @pragma/examples dev src/run-codex-runtime-agent.ts \
 
 1. 创建普通 `ExpertAgent`。
 2. 用 `createCodexRuntime()` 创建本地 Codex runtime。
-3. 把 `--model` 映射为 `defaultModelName` 和单次 `submit({ modelName })`。
+3. 交互式选择探测到的模型和思考深度，并传给 runtime 与单次 submit。
 4. 用 `runtimeSession: { type: "codex-local", id }` 恢复 Codex thread。
 5. 打印 Codex runtime 的流式 message/tool/progress 事件。
 
@@ -127,11 +125,9 @@ pnpm --filter @pragma/examples dev src/run-claude-code-runtime-agent.ts
 claude --version
 ```
 
-传入 Claude Code 模型名：
-
-```bash
-pnpm --filter @pragma/examples dev src/run-claude-code-runtime-agent.ts --model claude-sonnet-4-5 "总结这个仓库的 runtime 边界"
-```
+启动后，脚本会探测 Claude Code 模型目录和 `--effort` 能力，并在终端中显示编号菜单。
+模型和思考深度只能交互式选择；选择 `0` 表示沿用本地 Claude Code 配置。脚本不接受
+外部 `--model` 或自由文本思考深度。
 
 提交多轮任务并复用同一个 Claude Code session：
 
@@ -162,7 +158,7 @@ pnpm --filter @pragma/examples dev src/run-claude-code-runtime-agent.ts \
 
 1. 用 `runtime.canUse()` 预检本机 Claude Code CLI。
 2. 用 `createClaudeCodeRuntime()` 创建本地 Claude Code runtime。
-3. 把 `--model` 映射为 `defaultModelName` 和单次 `submit({ modelName })`。
+3. 交互式选择探测到的模型和思考深度，并传给 runtime 与单次 submit。
 4. 用 `runtimeSession: { type: "claude-code-local", id }` 恢复 Claude Code session。
 5. 打印 Claude Code runtime 的流式 message/tool/progress 事件。
 
@@ -235,15 +231,17 @@ approval: {
 pnpm --filter @pragma/examples dev src/run-resumable-tool-approval.ts --reset --workflow-id demo-approval
 ```
 
-这个示例展示如何用 `@pragma/core` 的 durable human interaction 能力恢复未完成的工具审批：
+这个示例展示如何用真实 PI runtime 和 `@pragma/core` 的 durable human interaction 能力恢复未完成的工具审批：
 
 1. 创建带 `approval: { mode: "required" }` 的 `deploy_preview` 工具。
-2. 用 `createFileHumanInteractionStore()` 保存 pending approval。
+2. 使用 `createPiRuntime()` 执行 Agent，并用 `createFileHumanInteractionStore()` 保存 pending approval。
 3. 用 `createDurableHumanInteractionHandler()` 包装 CLI handler。
-4. Runtime 在触发审批前保存聊天记录和 active turn。
-5. 在 `Approve? [y/N]` 时按 `Ctrl-C` 模拟应用关闭。
-6. 第二次启动时按 `workflowId` 或 `sessionId` 找回 pending approval，打印原聊天记录，并重新展示审批请求。
-7. 输入 `y` 后继续执行工具并完成流程。
+4. 未传 query 时用公共 `createConsoleChat()` harness 等待控制台输入，不会默认提交任务；输入 `/exit` 或 `/quit` 退出。
+5. PI runtime 保存聊天记录；示例保存 `workflowId` 到 PI session 的映射和当前 turn 状态。
+6. 手动要求 Agent 调用 `deploy_preview`，在 `Approve? [y/N]` 时按 `Ctrl-C` 模拟应用关闭。
+7. 第二次启动时按 `workflowId` 或 `sessionId` 找回 PI session。PI 重新生成同一逻辑工具调用时，即使 `toolCallId` 改变，也会命中原 pending approval。
+8. 输入 `y` 后继续执行工具；approval 会被 resolve 并从 pending store 清除，当前 turn 完成后 workflow 回到 ready。
+9. 再次用同一 `workflowId` 启动会恢复聊天记录并停在 `You>`，不会重新提交任务或再次要求审批。
 
 按 `workflowId` 恢复：
 
@@ -257,7 +255,7 @@ pnpm --filter @pragma/examples dev src/run-resumable-tool-approval.ts --workflow
 pnpm --filter @pragma/examples dev src/run-resumable-tool-approval.ts --session-id <session-id>
 ```
 
-示例入口是 `src/run-resumable-tool-approval.ts`。它只把 runtime transcript 保存在示例自己的 session state 中；pending approval 的持久化、去重、resolve 和 clear 由 `createDurableHumanInteractionHandler()` 与 `HumanInteractionStore` 负责。真实产品接入时，应把 `HumanInteractionStore` 换成数据库实现，并把 `scope` 绑定到租户、用户、workflow/run 和 runtime session。
+示例入口是 `src/run-resumable-tool-approval.ts`。runtime transcript 由 PI runtime 保存；示例另存一份轻量 workflow state，用于映射 PI session 和跟踪当前 turn。控制台 chat 循环封装在 `src/harness/console-chat.ts`，其他 example 可以复用。pending approval 的持久化、逻辑去重、resolve 和 clear 由 `createDurableHumanInteractionHandler()` 与 `HumanInteractionStore` 负责。真实产品接入时，应把 workflow state 和 `HumanInteractionStore` 换成数据库实现，并把 `scope` 绑定到租户、用户、workflow/run 和 runtime session。
 
 ## 运行上下文示例
 

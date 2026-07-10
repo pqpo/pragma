@@ -3,6 +3,7 @@ import type {
   RuntimeCanUseResult,
   RuntimeAdapterDescriptor,
   RuntimeCommandSpawn,
+  RuntimeModel,
   RuntimeSessionRestoreHandler,
   RuntimeSessionSyncCallback,
 } from "@pragma/core";
@@ -32,6 +33,8 @@ export interface CodexRuntimeAdapterOptions {
   readonly clientInfo?: CodexRuntimeClientInfo | undefined;
   readonly loggerProvider?: ExpertAgentLoggerProvider | undefined;
   readonly defaultModelName?: string | undefined;
+  readonly defaultThinkingLevel?: string | undefined;
+  readonly listModels?: (() => Promise<readonly RuntimeModel[]>) | undefined;
   readonly sandboxMode?: CodexRuntimeSandboxMode | undefined;
   readonly approvalPolicy?: CodexRuntimeApprovalPolicy | undefined;
   readonly spawn?: CodexRuntimeSpawn | undefined;

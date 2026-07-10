@@ -38,6 +38,7 @@ export interface CodexNativeSession {
   readonly state: CodexRuntimeSessionState;
   readonly messages: CodexRuntimeMessage[];
   readonly defaultModelName?: string | undefined;
+  readonly defaultThinkingLevel?: string | undefined;
   readonly codexHome?: string | undefined;
   pendingStartupMessages: readonly ExpertAgentStartupMessage[];
 }
@@ -72,6 +73,7 @@ export function createCodexNativeSession(options: {
   readonly notificationBus: CodexNotificationBus;
   readonly state: CodexRuntimeSessionState;
   readonly defaultModelName?: string | undefined;
+  readonly defaultThinkingLevel?: string | undefined;
   readonly codexHome?: string | undefined;
   readonly startupMessages?: readonly ExpertAgentStartupMessage[] | undefined;
 }): CodexNativeSession {
@@ -81,6 +83,7 @@ export function createCodexNativeSession(options: {
     state: options.state,
     messages: [],
     defaultModelName: options.defaultModelName,
+    defaultThinkingLevel: options.defaultThinkingLevel,
     codexHome: options.codexHome,
     pendingStartupMessages: options.startupMessages ?? [],
   };
@@ -137,6 +140,7 @@ export async function startCodexTurn(
     await session.client.startTurn({
       threadId: session.state.threadId,
       model: turn.modelName,
+      thinkingLevel: turn.thinkingLevel,
       input: createTextInputList(
         ...turn.startupMessages.map((message) => message.content),
         turn.prompt,

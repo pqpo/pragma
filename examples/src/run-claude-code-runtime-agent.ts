@@ -21,13 +21,13 @@ import {
 } from "./harness/expert-agent-example-utils.ts";
 import { createExampleLoggerProvider } from "./harness/logger.ts";
 import { defaultWorkspaceRoot, ensureWorkspaceDir, loadExamplesEnv } from "./harness/paths.ts";
+import { selectRuntimeModel } from "./harness/runtime-model-selection.ts";
 import { exitIfRuntimeUnavailable } from "./harness/runtime-availability.ts";
 import { printRunStream } from "./harness/stream-output.ts";
 
 interface ClaudeCodeRuntimeExampleCliOptions {
   readonly turns: readonly string[];
   readonly executablePath: string | undefined;
-  readonly model: string | undefined;
   readonly runtimeSessionId: string | undefined;
   readonly systemSessionId: string | undefined;
   readonly isolationMode: ClaudeCodeRuntimeIsolationMode | undefined;
@@ -70,14 +70,30 @@ const agent = await ExpertAgent.create({
   loggerProvider,
 });
 
-const runtime = createClaudeCodeRuntime({
+const runtimeProbe = createClaudeCodeRuntime({
   loggerProvider,
-  defaultModelName: cli.model,
   ...(cli.executablePath === undefined ? {} : { executablePath: cli.executablePath }),
   ...(cli.isolationMode === undefined ? {} : { isolationMode: cli.isolationMode }),
   ...(cli.permissionMode === undefined ? {} : { permissionMode: cli.permissionMode }),
 });
-await exitIfRuntimeUnavailable(runtime);
+await exitIfRuntimeUnavailable(runtimeProbe);
+const detectedModels = await runtimeProbe.listModels?.();
+if (detectedModels === undefined) {
+  throw new Error("Claude Code runtime does not expose model discovery.");
+}
+const selection = await selectRuntimeModel({
+  runtimeName: "Claude Code",
+  models: detectedModels,
+});
+const runtime = createClaudeCodeRuntime({
+  loggerProvider,
+  defaultModelName: selection.modelName,
+  defaultThinkingLevel: selection.thinkingLevel,
+  listModels: async () => detectedModels,
+  ...(cli.executablePath === undefined ? {} : { executablePath: cli.executablePath }),
+  ...(cli.isolationMode === undefined ? {} : { isolationMode: cli.isolationMode }),
+  ...(cli.permissionMode === undefined ? {} : { permissionMode: cli.permissionMode }),
+});
 const runtimeSession = createRuntimeSessionRef(cli.runtimeSessionId);
 const session = await runtime.createSession({
   agent,
@@ -95,17 +111,19 @@ try {
   console.log(`- runtimeSessionId: ${sessionInfo.runtimeSession.id}`);
   console.log(`- runtime: ${sessionInfo.runtime.displayName} (${sessionInfo.runtime.id})`);
   console.log(`- executable: ${cli.executablePath ?? "claude"}`);
-  console.log(`- model: ${cli.model ?? "Claude Code config default"}`);
+  console.log(`- model: ${selection.modelName ?? "Claude Code config default"}`);
+  console.log(`- thinkingLevel: ${selection.thinkingLevel ?? "Claude Code config default"}`);
   console.log(`- isolationMode: ${cli.isolationMode ?? "strict"}`);
   console.log(`- permissionMode: ${cli.permissionMode ?? defaultPermissionMode}`);
   console.log("");
 
   for (const [index, query] of cli.turns.entries()) {
     console.log(`Turn ${index + 1}/${cli.turns.length}`);
-    printRunHeader(agent, cli.model ?? "Claude Code config default", query);
+    printRunHeader(agent, selection.modelName ?? "Claude Code config default", query);
     const run = session.submit({
       query,
-      ...(cli.model === undefined ? {} : { modelName: cli.model }),
+      ...(selection.modelName === undefined ? {} : { modelName: selection.modelName }),
+      ...(selection.thinkingLevel === undefined ? {} : { thinkingLevel: selection.thinkingLevel }),
     });
 
     await printRunStream(run);
@@ -172,7 +190,6 @@ function readClaudeCodeRuntimeExampleCli(): ClaudeCodeRuntimeExampleCliOptions {
     .command("[query...]", "Task query to send to the Claude Code-backed ExpertAgent.")
     .option("--turn <query>", "Task query to submit. Repeat this option for multi-turn tests.")
     .option("--executable <path>", "Claude Code executable path. Defaults to claude.")
-    .option("--model <model>", "Claude Code model name to pass to the CLI.")
     .option("--runtime-session-id <id>", "Resume an existing Claude Code runtime session id.")
     .option("--system-session-id <id>", "Use a fixed Pragma system session id.")
     .option("--isolation <mode>", "Claude Code isolation mode: strict or inherit.")
@@ -188,7 +205,6 @@ function readClaudeCodeRuntimeExampleCli(): ClaudeCodeRuntimeExampleCliOptions {
   return {
     turns: readTurns(parsed.args, parsed.options.turn),
     executablePath: readStringOption(parsed.options.executable),
-    model: readStringOption(parsed.options.model),
     runtimeSessionId: readStringOption(parsed.options.runtimeSessionId),
     systemSessionId: readStringOption(parsed.options.systemSessionId),
     isolationMode: readIsolationModeOption(parsed.options.isolation),
