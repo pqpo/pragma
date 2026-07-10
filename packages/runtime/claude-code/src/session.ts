@@ -1264,6 +1264,7 @@ function readUsage(record: Record<string, unknown>): AgentMessageUsage | undefin
 
   return createUsageFromTokenCounts({
     inputTokens: normalizeTokenCount(inputTokens),
+    inputTokensIncludeCacheRead: false,
     outputTokens: normalizeTokenCount(outputTokens),
     cacheReadTokens: normalizeTokenCount(cacheReadTokens),
     cacheWriteTokens: normalizeTokenCount(cacheWriteTokens),
@@ -1316,6 +1317,7 @@ function readAgentMessageUsage(value: unknown): AgentMessageUsage {
 
   return createUsageFromTokenCounts({
     inputTokens: 0,
+    inputTokensIncludeCacheRead: false,
     outputTokens: 0,
     cacheReadTokens: 0,
     cacheWriteTokens: 0,

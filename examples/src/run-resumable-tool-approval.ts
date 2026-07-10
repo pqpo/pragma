@@ -492,10 +492,10 @@ function createCliHumanInteractionHandler(options: {
     console.log("");
     console.log("Press Ctrl-C now, then rerun with one of:");
     console.log(
-      `pnpm --filter @pragma/examples start:resumable-approval --workflow-id ${options.workflowId}`,
+      `pnpm --filter @pragma/examples dev src/run-resumable-tool-approval.ts --workflow-id ${options.workflowId}`,
     );
     console.log(
-      `pnpm --filter @pragma/examples start:resumable-approval --session-id ${options.runtimeSessionId}`,
+      `pnpm --filter @pragma/examples dev src/run-resumable-tool-approval.ts --session-id ${options.runtimeSessionId}`,
     );
     console.log("");
 

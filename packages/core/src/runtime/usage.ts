@@ -2,6 +2,7 @@ import type { AgentMessageUsage } from "@pragma/shared";
 
 export interface RuntimeTokenUsageInput {
   readonly inputTokens: number;
+  readonly inputTokensIncludeCacheRead: boolean;
   readonly outputTokens: number;
   readonly cacheReadTokens: number;
   readonly cacheWriteTokens: number;
@@ -29,7 +30,10 @@ export function createUsageFromTokenCounts(usage: RuntimeTokenUsageInput): Agent
   const cacheRead = normalizeTokenCount(usage.cacheReadTokens);
   const cacheWrite = normalizeTokenCount(usage.cacheWriteTokens);
   const output = normalizeTokenCount(usage.outputTokens);
-  const input = Math.max(normalizeTokenCount(usage.inputTokens) - cacheRead, 0);
+  const reportedInput = normalizeTokenCount(usage.inputTokens);
+  const input = usage.inputTokensIncludeCacheRead
+    ? Math.max(reportedInput - cacheRead, 0)
+    : reportedInput;
   const cacheWrite1h = normalizeTokenCount(usage.cacheWrite1hTokens);
 
   return {

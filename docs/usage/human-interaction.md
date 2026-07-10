@@ -92,7 +92,7 @@ clarifier -> human_question -> clarifier -> ready
 可运行示例：
 
 ```bash
-pnpm --filter @pragma/examples start:human-clarification
+pnpm --filter @pragma/examples dev src/run-human-clarification.ts
 ```
 
 ## 编码 review gate
@@ -117,7 +117,7 @@ coder -> verify -> human_review_gate
 可运行示例：
 
 ```bash
-pnpm --filter @pragma/examples start:human-review-gate
+pnpm --filter @pragma/examples dev src/run-human-review-gate.ts
 ```
 
 ## Agent 内部提问
@@ -220,17 +220,17 @@ if (pending !== undefined) {
 可运行示例：
 
 ```bash
-pnpm --filter @pragma/examples start:resumable-approval --reset --workflow-id demo-approval
+pnpm --filter @pragma/examples dev src/run-resumable-tool-approval.ts --reset --workflow-id demo-approval
 ```
 
 在 `Approve? [y/N]` 提示时按 `Ctrl-C`，然后恢复：
 
 ```bash
-pnpm --filter @pragma/examples start:resumable-approval --workflow-id demo-approval
+pnpm --filter @pragma/examples dev src/run-resumable-tool-approval.ts --workflow-id demo-approval
 ```
 
 也可以使用示例输出的 session id：
 
 ```bash
-pnpm --filter @pragma/examples start:resumable-approval --session-id <session-id>
+pnpm --filter @pragma/examples dev src/run-resumable-tool-approval.ts --session-id <session-id>
 ```

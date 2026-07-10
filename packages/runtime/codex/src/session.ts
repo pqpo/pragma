@@ -460,6 +460,7 @@ function createUsageFromCodexTokenRecord(
 
   return createUsageFromTokenCounts({
     inputTokens: inputTokens ?? 0,
+    inputTokensIncludeCacheRead: true,
     outputTokens: outputTokens ?? 0,
     cacheReadTokens: cacheReadTokens ?? 0,
     cacheWriteTokens: cacheWriteTokens ?? 0,
@@ -624,6 +625,7 @@ function readAgentMessageUsage(value: unknown): AgentMessageUsage {
 
   return createUsageFromTokenCounts({
     inputTokens: 0,
+    inputTokensIncludeCacheRead: true,
     outputTokens: 0,
     cacheReadTokens: 0,
     cacheWriteTokens: 0,

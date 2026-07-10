@@ -174,11 +174,11 @@ describe("createClaudeCodeRuntime", () => {
     });
     expect(result.result.output).toBe("Hello world");
     expect(result.result.usage).toEqual({
-      input: 8,
+      input: 10,
       output: 3,
       cacheRead: 2,
       cacheWrite: 0,
-      totalTokens: 13,
+      totalTokens: 15,
       cost: {
         input: 0,
         output: 0,
@@ -249,11 +249,11 @@ describe("createClaudeCodeRuntime", () => {
     const result = await handle.result;
 
     expect(result.result.usage).toEqual({
-      input: 8,
+      input: 10,
       output: 3,
       cacheRead: 2,
       cacheWrite: 0,
-      totalTokens: 13,
+      totalTokens: 15,
       cost: {
         input: 0,
         output: 0,
@@ -292,11 +292,11 @@ describe("createClaudeCodeRuntime", () => {
     const result = await handle.result;
 
     expect(result.result.usage).toEqual({
-      input: 8,
+      input: 10,
       output: 3,
       cacheRead: 2,
       cacheWrite: 0,
-      totalTokens: 13,
+      totalTokens: 15,
       cost: {
         input: 0,
         output: 0,

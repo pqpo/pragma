@@ -21,7 +21,7 @@ import { patterns } from "@pragma/core";
 可运行示例：
 
 ```bash
-pnpm --filter @pragma/examples start:workflow-patterns
+pnpm --filter @pragma/examples dev src/run-workflow-patterns.ts
 ```
 
 ## Workflow 的作用

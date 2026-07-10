@@ -23,13 +23,13 @@ PRAGMA_MODEL_API_KEY=replace-with-your-api-key
 ## 运行基础示例
 
 ```bash
-pnpm --filter @pragma/examples start:basic
+pnpm --filter @pragma/examples dev src/run-expert-agent.ts
 ```
 
 传入自定义问题：
 
 ```bash
-pnpm --filter @pragma/examples start:basic "用三句话说明 ExpertAgent 的最小使用流程"
+pnpm --filter @pragma/examples dev src/run-expert-agent.ts "用三句话说明 ExpertAgent 的最小使用流程"
 ```
 
 基础示例默认使用仓库根目录下的 `workspace/` 作为 agent workspace，并会在启动时自动创建这个目录。
@@ -37,19 +37,19 @@ pnpm --filter @pragma/examples start:basic "用三句话说明 ExpertAgent 的�
 提交多轮任务，测试同一个 runtime session 内的连续对话：
 
 ```bash
-pnpm --filter @pragma/examples start:basic --turn "记住：我的项目代号是 mesh-alpha" --turn "我刚才说的项目代号是什么？"
+pnpm --filter @pragma/examples dev src/run-expert-agent.ts --turn "记住：我的项目代号是 mesh-alpha" --turn "我刚才说的项目代号是什么？"
 ```
 
 运行时会打印 `runtimeSessionId`。复制这个 id 后，可以在下一次运行中恢复 runtime session：
 
 ```bash
-pnpm --filter @pragma/examples start:basic --runtime-session-id <runtime-session-id> --turn "继续上一次会话，我刚才让你记住了什么？"
+pnpm --filter @pragma/examples dev src/run-expert-agent.ts --runtime-session-id <runtime-session-id> --turn "继续上一次会话，我刚才让你记住了什么？"
 ```
 
 需要固定 Pragma 自己的 system session id 时，也可以传入：
 
 ```bash
-pnpm --filter @pragma/examples start:basic --system-session-id local-debug-session --turn "测试固定 system session id"
+pnpm --filter @pragma/examples dev src/run-expert-agent.ts --system-session-id local-debug-session --turn "测试固定 system session id"
 ```
 
 这个示例对应 `src/run-expert-agent.ts`。核心流程是：
@@ -65,7 +65,7 @@ pnpm --filter @pragma/examples start:basic --system-session-id local-debug-sessi
 ## 运行 Codex Runtime 示例
 
 ```bash
-pnpm --filter @pragma/examples start:codex-runtime
+pnpm --filter @pragma/examples dev src/run-codex-runtime-agent.ts
 ```
 
 这个示例使用本机 `codex app-server --listen stdio://` 作为 runtime，不读取 `.env`
@@ -78,13 +78,13 @@ codex login
 传入 Codex 模型名：
 
 ```bash
-pnpm --filter @pragma/examples start:codex-runtime --model gpt-5.5 "总结这个仓库的模块边界"
+pnpm --filter @pragma/examples dev src/run-codex-runtime-agent.ts --model gpt-5.5 "总结这个仓库的模块边界"
 ```
 
 提交多轮任务并复用同一个 Codex thread：
 
 ```bash
-pnpm --filter @pragma/examples start:codex-runtime \
+pnpm --filter @pragma/examples dev src/run-codex-runtime-agent.ts \
   --turn "记住：我在测试 Codex runtime" \
   --turn "我刚才在测试什么？"
 ```
@@ -92,7 +92,7 @@ pnpm --filter @pragma/examples start:codex-runtime \
 运行时会打印 `runtimeSessionId`，它对应 Codex thread id。下一次可以恢复：
 
 ```bash
-pnpm --filter @pragma/examples start:codex-runtime \
+pnpm --filter @pragma/examples dev src/run-codex-runtime-agent.ts \
   --runtime-session-id <runtime-session-id> \
   --turn "继续上一次 Codex runtime 会话"
 ```
@@ -100,7 +100,7 @@ pnpm --filter @pragma/examples start:codex-runtime \
 也可以显式传入 Codex sandbox 和 approval policy：
 
 ```bash
-pnpm --filter @pragma/examples start:codex-runtime \
+pnpm --filter @pragma/examples dev src/run-codex-runtime-agent.ts \
   --sandbox workspace-write \
   --approval-policy on-request \
   --turn "列出 workspace 目录"
@@ -117,7 +117,7 @@ pnpm --filter @pragma/examples start:codex-runtime \
 ## 运行 Claude Code Runtime 示例
 
 ```bash
-pnpm --filter @pragma/examples start:claude-code-runtime
+pnpm --filter @pragma/examples dev src/run-claude-code-runtime-agent.ts
 ```
 
 这个示例使用本机 `claude` CLI 作为 runtime，不读取 `.env` 里的
@@ -130,13 +130,13 @@ claude --version
 传入 Claude Code 模型名：
 
 ```bash
-pnpm --filter @pragma/examples start:claude-code-runtime --model claude-sonnet-4-5 "总结这个仓库的 runtime 边界"
+pnpm --filter @pragma/examples dev src/run-claude-code-runtime-agent.ts --model claude-sonnet-4-5 "总结这个仓库的 runtime 边界"
 ```
 
 提交多轮任务并复用同一个 Claude Code session：
 
 ```bash
-pnpm --filter @pragma/examples start:claude-code-runtime \
+pnpm --filter @pragma/examples dev src/run-claude-code-runtime-agent.ts \
   --turn "记住：我在测试 Claude Code runtime" \
   --turn "我刚才在测试什么？"
 ```
@@ -144,7 +144,7 @@ pnpm --filter @pragma/examples start:claude-code-runtime \
 运行时会打印 `runtimeSessionId`，下一次可以恢复：
 
 ```bash
-pnpm --filter @pragma/examples start:claude-code-runtime \
+pnpm --filter @pragma/examples dev src/run-claude-code-runtime-agent.ts \
   --runtime-session-id <runtime-session-id> \
   --turn "继续上一次 Claude Code runtime 会话"
 ```
@@ -152,7 +152,7 @@ pnpm --filter @pragma/examples start:claude-code-runtime \
 也可以显式传入权限和隔离模式：
 
 ```bash
-pnpm --filter @pragma/examples start:claude-code-runtime \
+pnpm --filter @pragma/examples dev src/run-claude-code-runtime-agent.ts \
   --permission-mode plan \
   --isolation strict \
   --turn "列出 workspace 目录"
@@ -169,7 +169,7 @@ pnpm --filter @pragma/examples start:claude-code-runtime \
 ## 运行 Memory System 示例
 
 ```bash
-pnpm --filter @pragma/examples start:memory
+pnpm --filter @pragma/examples dev src/run-memory-system-example.ts
 ```
 
 这个示例不依赖模型 key，专门演示：
@@ -184,7 +184,7 @@ pnpm --filter @pragma/examples start:memory
 ## 运行 Session 存储示例
 
 ```bash
-pnpm --filter @pragma/examples start:session-storage
+pnpm --filter @pragma/examples dev src/run-session-storage-example.ts
 ```
 
 这个示例演示 runtime session 在沙盒或 workspace 生命周期外的同步与恢复：
@@ -202,7 +202,7 @@ pnpm --filter @pragma/examples start:session-storage
 ## 运行审批示例
 
 ```bash
-pnpm --filter @pragma/examples start:approval
+pnpm --filter @pragma/examples dev src/run-tool-approval-example.ts
 ```
 
 这个示例展示两件事：
@@ -232,7 +232,7 @@ approval: {
 ### 恢复未完成审批
 
 ```bash
-pnpm --filter @pragma/examples start:resumable-approval --reset --workflow-id demo-approval
+pnpm --filter @pragma/examples dev src/run-resumable-tool-approval.ts --reset --workflow-id demo-approval
 ```
 
 这个示例展示如何用 `@pragma/core` 的 durable human interaction 能力恢复未完成的工具审批：
@@ -248,13 +248,13 @@ pnpm --filter @pragma/examples start:resumable-approval --reset --workflow-id de
 按 `workflowId` 恢复：
 
 ```bash
-pnpm --filter @pragma/examples start:resumable-approval --workflow-id demo-approval
+pnpm --filter @pragma/examples dev src/run-resumable-tool-approval.ts --workflow-id demo-approval
 ```
 
 按 `sessionId` 恢复：
 
 ```bash
-pnpm --filter @pragma/examples start:resumable-approval --session-id <session-id>
+pnpm --filter @pragma/examples dev src/run-resumable-tool-approval.ts --session-id <session-id>
 ```
 
 示例入口是 `src/run-resumable-tool-approval.ts`。它只把 runtime transcript 保存在示例自己的 session state 中；pending approval 的持久化、去重、resolve 和 clear 由 `createDurableHumanInteractionHandler()` 与 `HumanInteractionStore` 负责。真实产品接入时，应把 `HumanInteractionStore` 换成数据库实现，并把 `scope` 绑定到租户、用户、workflow/run 和 runtime session。
@@ -262,7 +262,7 @@ pnpm --filter @pragma/examples start:resumable-approval --session-id <session-id
 ## 运行上下文示例
 
 ```bash
-pnpm --filter @pragma/examples start:workspace-context
+pnpm --filter @pragma/examples dev src/run-workspace-context-agent.ts
 ```
 
 默认情况下，上下文示例也使用仓库根目录下的 `workspace/`，并使用内存 mock 上下文库。
@@ -270,19 +270,19 @@ pnpm --filter @pragma/examples start:workspace-context
 传入外部 workspace 目录：
 
 ```bash
-pnpm --filter @pragma/examples start:workspace-context --workspace ./workspace
+pnpm --filter @pragma/examples dev src/run-workspace-context-agent.ts --workspace ./workspace
 ```
 
 传入 markdown 上下文目录后，示例会改用 `FileSystemContextStore`：
 
 ```bash
-pnpm --filter @pragma/examples start:workspace-context --context ./docs
+pnpm --filter @pragma/examples dev src/run-workspace-context-agent.ts --context ./docs
 ```
 
 也可以同时传入 workspace、context 和自定义 query：
 
 ```bash
-pnpm --filter @pragma/examples start:workspace-context --workspace ./workspace --context ./docs "总结这些上下文里的关键约束"
+pnpm --filter @pragma/examples dev src/run-workspace-context-agent.ts --workspace ./workspace --context ./docs "总结这些上下文里的关键约束"
 ```
 
 这个示例对应 `src/run-workspace-context-agent.ts`，额外展示：
@@ -298,14 +298,14 @@ pnpm --filter @pragma/examples start:workspace-context --workspace ./workspace -
 Directive 示例不需要模型 key，全部使用本机 `code` step：
 
 ```bash
-pnpm --filter @pragma/examples start:directive-code
-pnpm --filter @pragma/examples start:directive-route
-pnpm --filter @pragma/examples start:directive-nested
-pnpm --filter @pragma/examples start:directive-watch
-pnpm --filter @pragma/examples start:agent-delegation
-pnpm --filter @pragma/examples start:workflow-patterns
-pnpm --filter @pragma/examples start:human-clarification
-pnpm --filter @pragma/examples start:human-review-gate
+pnpm --filter @pragma/examples dev src/run-directive-code.ts
+pnpm --filter @pragma/examples dev src/run-directive-route.ts
+pnpm --filter @pragma/examples dev src/run-directive-nested.ts
+pnpm --filter @pragma/examples dev src/run-directive-watch.ts
+pnpm --filter @pragma/examples dev src/run-agent-delegation.ts
+pnpm --filter @pragma/examples dev src/run-workflow-patterns.ts
+pnpm --filter @pragma/examples dev src/run-human-clarification.ts
+pnpm --filter @pragma/examples dev src/run-human-review-gate.ts
 ```
 
 - `run-directive-code.ts`：最小 `defineFlow()` + `defineTask()` + `reduce()`。
@@ -322,7 +322,7 @@ Human Interaction 示例是平台协议的最小本地验证路径，不依赖�
 Agent 委派示例需要模型 key。它展示的是 ExpertAgent 之间通过 `launch_agent` 互相委派任务，而不是 runtime 私有子会话。每次委派都会创建新的 child workflow run；`--session-policy reuse_by_agent` 只复用底层 runtime conversation/session ref，不复用 workflow run：
 
 ```bash
-pnpm --filter @pragma/examples start:agent-delegation --session-policy reuse_by_agent
+pnpm --filter @pragma/examples dev src/run-agent-delegation.ts --session-policy reuse_by_agent
 ```
 
 ## 示例辅助边界

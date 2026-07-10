@@ -133,5 +133,5 @@ should use bash `git` directly and clone repositories to
 Run the repository example from the monorepo root:
 
 ```bash
-pnpm --filter @pragma/examples start:repo-manager
+pnpm --filter @pragma/examples dev src/run-repo-manager-plugin.ts
 ```

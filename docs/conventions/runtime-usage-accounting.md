@@ -25,6 +25,11 @@ CLAUDE_CONFIG_DIR/projects/**/<sessionId>.jsonl
 
 Therefore the Claude Code adapter should keep the latest usage snapshot. It must not add intermediate assistant usage to final result usage.
 
+Claude/Anthropic reports uncached input, cache reads, and cache writes as separate token categories:
+
+- `input_tokens` is uncached input and must not have `cache_read_input_tokens` subtracted from it.
+- Total tokens are `input_tokens + cache_read_input_tokens + cache_creation_input_tokens + output_tokens`.
+
 ## Codex
 
 Verified against `codex-cli 0.142.5` using:
@@ -47,3 +52,5 @@ The semantics are:
 - `total` / `total_token_usage` is cumulative for the runtime thread.
 
 Therefore the Codex adapter should prefer `last` / `last_token_usage` for a Pragma run. It should use `total` only when no per-turn usage is available.
+
+Codex reports cached input as a subset of `input_tokens`. The adapter must subtract `cached_input_tokens` when mapping the mutually exclusive Pragma `input` and `cacheRead` categories.

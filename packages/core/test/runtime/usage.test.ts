@@ -7,6 +7,7 @@ describe("runtime usage helpers", () => {
     expect(
       createUsageFromTokenCounts({
         inputTokens: 10.8,
+        inputTokensIncludeCacheRead: true,
         outputTokens: 3.2,
         cacheReadTokens: 4,
         cacheWriteTokens: Number.NaN,
@@ -27,10 +28,29 @@ describe("runtime usage helpers", () => {
     });
   });
 
+  it("preserves input tokens when the runtime reports cache reads separately", () => {
+    expect(
+      createUsageFromTokenCounts({
+        inputTokens: 5,
+        inputTokensIncludeCacheRead: false,
+        outputTokens: 200,
+        cacheReadTokens: 3_217,
+        cacheWriteTokens: 3_515,
+      }),
+    ).toMatchObject({
+      input: 5,
+      output: 200,
+      cacheRead: 3_217,
+      cacheWrite: 3_515,
+      totalTokens: 6_937,
+    });
+  });
+
   it("merges optional usage records including one-hour cache writes", () => {
     const usage = mergeUsage(
       createUsageFromTokenCounts({
         inputTokens: 10,
+        inputTokensIncludeCacheRead: true,
         outputTokens: 2,
         cacheReadTokens: 1,
         cacheWriteTokens: 3,
@@ -38,6 +58,7 @@ describe("runtime usage helpers", () => {
       }),
       createUsageFromTokenCounts({
         inputTokens: 4,
+        inputTokensIncludeCacheRead: true,
         outputTokens: 6,
         cacheReadTokens: 0,
         cacheWriteTokens: 2,

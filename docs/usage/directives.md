@@ -156,7 +156,7 @@ for await (const event of app.runs.watchOutput(handle.workflowRunId, { recursive
 完整可运行示例见：
 
 ```bash
-pnpm --filter @pragma/examples start:directive-watch
+pnpm --filter @pragma/examples dev src/run-directive-watch.ts
 ```
 
 ## Agent 作为 Directive
