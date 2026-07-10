@@ -1,79 +1,32 @@
 import type { Icon } from "@phosphor-icons/react";
 import {
   ArchiveTrayIcon,
-  At,
   CaretDown,
-  ChartBar,
-  Code,
-  FileText,
+  CaretRight,
+  Check,
   GearSix,
   House,
-  Plus,
-  QuestionMark,
+  Key,
+  Monitor,
+  Robot,
   RocketLaunch,
   TerminalWindow,
   UserCircle,
 } from "@phosphor-icons/react";
+import { useState } from "react";
+
+type SettingsView = "models" | "runtimes";
 
 const navigationItems: readonly {
   readonly label: string;
   readonly icon: Icon;
   readonly active?: boolean;
 }[] = [
-  { label: "Home", icon: House, active: true },
+  { label: "Home", icon: House },
   { label: "Missions", icon: RocketLaunch },
   { label: "Studio", icon: TerminalWindow },
   { label: "Inbox", icon: ArchiveTrayIcon },
-  { label: "Settings", icon: GearSix },
-];
-
-const missions = [
-  {
-    status: "Active",
-    statusTone: "active",
-    time: "10m ago",
-    title: "Compile Q3 Revenue Data Synthesis",
-    agent: "Data Agent",
-  },
-  {
-    status: "Awaiting Input",
-    statusTone: "waiting",
-    time: "1h ago",
-    title: "Refine Architecture Proposal Drafting",
-    agent: "Writing Agent",
-  },
-  {
-    status: "Idle",
-    statusTone: "idle",
-    time: "Yesterday",
-    title: "Audit Codebase Dependencies",
-    agent: "Dev Agent",
-  },
-] as const;
-
-const requests = [
-  {
-    icon: QuestionMark,
-    title: "Clarification requested on scope",
-    description: "The Writing Agent encountered ambiguous requirements in section 3.",
-    mission: "Refine Architecture Proposal",
-  },
-  {
-    icon: At,
-    title: "Approval needed to access external API",
-    description: "Data Agent is attempting to query 'api.example.com'.",
-    mission: "Compile Q3 Revenue Data",
-  },
-] as const;
-
-const artifacts: readonly {
-  readonly icon: Icon;
-  readonly name: string;
-  readonly kind: string;
-}[] = [
-  { icon: FileText, name: "Architecture_Draft_v2.md", kind: "Document" },
-  { icon: ChartBar, name: "Q2_Revenue_Analysis.csv", kind: "Dataset" },
-  { icon: Code, name: "Dependency_Graph.json", kind: "Config" },
+  { label: "Settings", icon: GearSix, active: true },
 ];
 
 function Sidebar() {
@@ -85,11 +38,6 @@ function Sidebar() {
         </span>
         <span className="brand-name">Pragma</span>
       </div>
-
-      <button className="new-mission-button" type="button" disabled>
-        <Plus size={19} weight="bold" />
-        New Mission
-      </button>
 
       <nav className="navigation" aria-label="Main navigation">
         {navigationItems.map((item) => {
@@ -103,7 +51,7 @@ function Sidebar() {
               aria-current={item.active ? "page" : undefined}
               disabled
             >
-              <NavigationIcon size={25} weight={item.active ? "fill" : "regular"} />
+              <NavigationIcon size={24} weight={item.active ? "fill" : "regular"} />
               <span>{item.label}</span>
             </button>
           );
@@ -111,123 +59,257 @@ function Sidebar() {
       </nav>
 
       <div className="account">
-        <UserCircle className="account-avatar" size={42} weight="thin" />
+        <UserCircle className="account-avatar" size={40} weight="thin" />
         <div className="account-details">
           <strong>Alex Chen</strong>
           <span>Acme Corp</span>
         </div>
-        <CaretDown className="account-caret" size={17} weight="bold" />
+        <CaretDown className="account-caret" size={16} weight="bold" />
       </div>
     </aside>
   );
 }
 
-function SectionHeading(props: {
-  readonly title: string;
-  readonly badge?: number;
-  readonly action?: string;
-}) {
+function StaticToggle(props: { readonly checked?: boolean; readonly label: string }) {
   return (
-    <header className="section-heading">
-      <div className="section-title-row">
-        <h2>{props.title}</h2>
-        {props.badge === undefined ? null : <span className="count-badge">{props.badge}</span>}
-      </div>
-      {props.action === undefined ? null : (
-        <button className="text-action" type="button" disabled>
-          {props.action}
-        </button>
-      )}
-    </header>
+    <span
+      className={props.checked ? "toggle is-checked" : "toggle"}
+      role="img"
+      aria-label={`${props.label}: ${props.checked ? "on" : "off"}`}
+    >
+      <span className="toggle-thumb">
+        {props.checked ? <Check size={13} weight="bold" aria-hidden="true" /> : null}
+      </span>
+    </span>
   );
 }
 
-function MissionCard(props: { readonly mission: (typeof missions)[number] }) {
+function ProviderCard(props: {
+  readonly name: string;
+  readonly model: string;
+  readonly active?: boolean;
+  readonly children?: React.ReactNode;
+}) {
   return (
-    <article className={`mission-card mission-card--${props.mission.statusTone}`}>
-      <div className="mission-meta">
-        <span className="mission-status">
-          <span className="status-dot" aria-hidden="true" />
-          {props.mission.status}
+    <article className={props.active ? "provider-card is-expanded" : "provider-card"}>
+      <header className="card-header">
+        <span className="card-icon" aria-hidden="true">
+          <Robot size={24} weight="duotone" />
         </span>
-        <span>{props.mission.time}</span>
-      </div>
-      <h3>{props.mission.title}</h3>
-      <span className="agent-tag">{props.mission.agent}</span>
+        <div className="card-title-group">
+          <h3>{props.name}</h3>
+          <p className={props.active ? "status-copy is-active" : "status-copy"}>
+            {props.active ? "Active" : "Inactive"}
+            {props.active ? <span aria-hidden="true">•</span> : null}
+            {props.active ? props.model : null}
+          </p>
+        </div>
+        <StaticToggle checked={props.active === true} label={`${props.name} provider`} />
+      </header>
+      {props.children}
     </article>
   );
 }
 
-function NeedsYou() {
+function ModelsAndProviders() {
   return (
-    <section className="needs-you-section">
-      <SectionHeading title="Needs You" badge={2} />
-      <div className="request-list">
-        {requests.map((request) => {
-          const RequestIcon = request.icon;
+    <div className="settings-panel" id="models-panel" role="tabpanel">
+      <header className="panel-heading">
+        <h2>Models &amp; Providers</h2>
+        <p>Configure primary and fallback AI models for orchestration tasks.</p>
+      </header>
 
-          return (
-            <article className="request-row" key={request.title}>
-              <span className="request-icon" aria-hidden="true">
-                <RequestIcon size={18} weight="regular" />
+      <div className="provider-list">
+        <ProviderCard name="OpenAI" model="gpt-5" active>
+          <div className="provider-fields">
+            <label className="static-field">
+              <span>API key</span>
+              <span className="input-shell secret-value">
+                <Key size={16} weight="regular" aria-hidden="true" />
+                ••••••••••••••••••••••••
               </span>
-              <div className="request-copy">
-                <h3>{request.title}</h3>
-                <p>{request.description}</p>
-                <span className="request-mission">Mission: {request.mission}</span>
-              </div>
-              <button className="review-button" type="button" disabled>
-                Review
-              </button>
-            </article>
-          );
-        })}
+            </label>
+            <label className="static-field">
+              <span>Default model</span>
+              <span className="input-shell select-shell">
+                gpt-5
+                <CaretDown size={16} weight="bold" aria-hidden="true" />
+              </span>
+            </label>
+          </div>
+        </ProviderCard>
+
+        <ProviderCard name="Anthropic" model="Claude Sonnet" />
       </div>
-    </section>
+
+      <section className="advanced-section" aria-labelledby="advanced-heading">
+        <header className="section-copy">
+          <h3 id="advanced-heading">Advanced Settings</h3>
+          <p>Fine-tune global behavior for model inference.</p>
+        </header>
+
+        <div className="setting-row">
+          <div>
+            <h4>Streaming Responses</h4>
+            <p>Receive output token by token.</p>
+          </div>
+          <StaticToggle checked label="Streaming responses" />
+        </div>
+        <div className="setting-row">
+          <div>
+            <h4>Local Telemetry</h4>
+            <p>Save execution logs locally for debugging.</p>
+          </div>
+          <StaticToggle label="Local telemetry" />
+        </div>
+        <div className="temperature-setting">
+          <div className="temperature-heading">
+            <h4>Global Temperature</h4>
+            <span>0.7</span>
+          </div>
+          <div className="range-track" aria-label="Global temperature: 0.7">
+            <span className="range-fill" />
+            <span className="range-thumb" />
+          </div>
+        </div>
+      </section>
+    </div>
   );
 }
 
-function RecentArtifacts() {
+function RuntimeCard(props: {
+  readonly name: string;
+  readonly description: string;
+  readonly command: string;
+  readonly ready?: boolean;
+}) {
   return (
-    <section className="artifacts-section">
-      <SectionHeading title="Recent Artifacts" action="View all" />
-      <div className="artifact-list">
-        {artifacts.map((artifact) => {
-          const ArtifactIcon = artifact.icon;
+    <article className="runtime-card">
+      <header className="card-header runtime-card-header">
+        <span className="card-icon runtime-icon" aria-hidden="true">
+          <TerminalWindow size={24} weight="duotone" />
+        </span>
+        <div className="card-title-group">
+          <h3>{props.name}</h3>
+          <p className={props.ready ? "status-copy is-active" : "status-copy"}>
+            <span className="status-dot" aria-hidden="true" />
+            {props.ready ? "Detected" : "Not configured"}
+          </p>
+        </div>
+        <span className={props.ready ? "status-badge is-ready" : "status-badge"}>
+          {props.ready ? "Ready" : "Setup required"}
+        </span>
+      </header>
 
-          return (
-            <article className="artifact-card" key={artifact.name}>
-              <ArtifactIcon className="artifact-icon" size={27} weight="regular" />
-              <div>
-                <h3>{artifact.name}</h3>
-                <span>{artifact.kind}</span>
-              </div>
-            </article>
-          );
-        })}
+      <p className="runtime-description">{props.description}</p>
+
+      <div className="runtime-command">
+        <div>
+          <span>Executable</span>
+          <code>{props.command}</code>
+        </div>
+        <CaretRight size={18} weight="bold" aria-hidden="true" />
       </div>
-    </section>
+    </article>
+  );
+}
+
+function RuntimeEnvironments() {
+  return (
+    <div className="settings-panel" id="runtimes-panel" role="tabpanel">
+      <header className="panel-heading">
+        <h2>Runtime Environments</h2>
+        <p>Manage the local agent runtimes available to this device.</p>
+      </header>
+
+      <div className="device-summary">
+        <span className="device-icon" aria-hidden="true">
+          <Monitor size={24} weight="duotone" />
+        </span>
+        <div>
+          <h3>This device</h3>
+          <p>Local runtime bridge is available for Pragma Desktop.</p>
+        </div>
+        <span className="online-status">
+          <span className="online-dot" aria-hidden="true" />
+          Online
+        </span>
+      </div>
+
+      <section className="runtime-section" aria-labelledby="local-runtimes-heading">
+        <header className="section-copy compact-section-copy">
+          <h3 id="local-runtimes-heading">Local runtimes</h3>
+          <p>Detected command-line agents that can execute work on this machine.</p>
+        </header>
+
+        <div className="runtime-list">
+          <RuntimeCard
+            name="Codex"
+            description="OpenAI's coding agent runtime for local workspaces and shell tasks."
+            command="/usr/local/bin/codex"
+            ready
+          />
+          <RuntimeCard
+            name="Claude Code"
+            description="Anthropic's coding agent runtime for repository-aware development tasks."
+            command="Not selected"
+          />
+        </div>
+      </section>
+
+      <section className="runtime-defaults" aria-labelledby="runtime-defaults-heading">
+        <header className="section-copy compact-section-copy">
+          <h3 id="runtime-defaults-heading">Environment defaults</h3>
+          <p>Defaults applied when a mission starts in a local runtime.</p>
+        </header>
+        <div className="setting-row runtime-default-row">
+          <div>
+            <h4>Workspace access</h4>
+            <p>Ask before a runtime uses a folder outside the active workspace.</p>
+          </div>
+          <StaticToggle checked label="Ask before workspace access" />
+        </div>
+      </section>
+    </div>
   );
 }
 
 export function App() {
+  const [activeView, setActiveView] = useState<SettingsView>("models");
+
   return (
     <main className="desktop-shell">
       <Sidebar />
 
-      <section className="home-page">
-        <section className="continue-section">
-          <SectionHeading title="Continue Working" action="View all missions" />
-          <div className="mission-grid">
-            {missions.map((mission) => (
-              <MissionCard key={mission.title} mission={mission} />
-            ))}
-          </div>
-        </section>
+      <section className="settings-page">
+        <h1>Settings</h1>
+        <div className="settings-layout">
+          <nav className="settings-navigation" aria-label="Settings sections">
+            <button
+              className={
+                activeView === "models" ? "settings-nav-item is-active" : "settings-nav-item"
+              }
+              type="button"
+              aria-selected={activeView === "models"}
+              aria-controls="models-panel"
+              onClick={() => setActiveView("models")}
+            >
+              Models &amp; Providers
+            </button>
+            <button
+              className={
+                activeView === "runtimes" ? "settings-nav-item is-active" : "settings-nav-item"
+              }
+              type="button"
+              aria-selected={activeView === "runtimes"}
+              aria-controls="runtimes-panel"
+              onClick={() => setActiveView("runtimes")}
+            >
+              Runtime Environments
+            </button>
+          </nav>
 
-        <div className="dashboard-grid">
-          <NeedsYou />
-          <RecentArtifacts />
+          {activeView === "models" ? <ModelsAndProviders /> : <RuntimeEnvironments />}
         </div>
       </section>
     </main>

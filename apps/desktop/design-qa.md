@@ -1,48 +1,53 @@
-# Desktop Home Design QA
+# Design QA
 
-- Source visual truth: `/var/folders/7y/x39kntq56gvcfdymbtjb36280000gn/T/codex-clipboard-d94cce35-71ca-49c2-b73a-059269436276.png`
-- Implementation screenshot: `/Users/linminqiu/Workspace/expert-mesh/apps/desktop/design-implementation.png`
-- Viewport: 1440 × 900
-- State: Home, default static mock; all visible controls disabled
+- Source visual truth: `/var/folders/7y/x39kntq56gvcfdymbtjb36280000gn/T/codex-clipboard-1f66b58e-2ea9-4bfb-b8b5-49218bded728.png`
+- Models implementation screenshot: `/Users/linminqiu/Workspace/expert-mesh/apps/desktop/settings-models.png`
+- Runtime implementation screenshot: `/Users/linminqiu/Workspace/expert-mesh/apps/desktop/settings-runtimes.png`
+- Side-by-side comparison: `/Users/linminqiu/Workspace/expert-mesh/apps/desktop/design-comparison.png`
+- Viewport: 1440 × 900 desktop viewport. The 1600 px-wide reference was proportionally normalized and top-cropped to the same comparison height.
+- State: Settings / Models & Providers selected for source comparison; Settings / Runtime Environments selected for secondary-flow verification.
 
-**Full-view comparison evidence**
+## Full-view comparison evidence
 
-- The source and implementation were opened together at original resolution.
-- The implementation preserves the source composition: fixed left navigation, three mission cards, two-column lower dashboard, bottom-pinned account block, and generous unused workspace below the content.
-- The source's dotted canvas, title label, rounded frame, and outer margin are mockup-board chrome rather than Desktop app UI, so they are intentionally not implemented.
+The normalized side-by-side comparison confirms the implementation preserves the reference's two-column application shell, narrow settings navigation, content-column proportions, muted off-white palette, rounded provider cards, thin borders, compact monospace metadata, toggle treatment, and section rhythm. The global sidebar keeps the Desktop app's existing 290 px product shell rather than copying the framed mockup's outer canvas.
 
-**Focused region comparison evidence**
+The user requested only two settings destinations, so Workspaces, Connections, Notifications, and Account were intentionally omitted from the settings navigation. The Runtime Environments screen is a new screen derived from the same layout, tokens, typography, cards, and status language.
 
-- A separate crop was not needed because the source and implementation remain fully legible at original resolution. Typography, badges, status dots, card borders, icons, button states, and all app-specific copy were inspected in the full-view pair.
+## Focused-region comparison evidence
 
-**Findings**
+A separate crop was not needed: the 1440 × 900 source and implementation captures retain legible provider-card labels, field spacing, icons, status copy, toggles, borders, and heading hierarchy at full resolution. There are no photographic, illustrative, or custom brand-image assets requiring a crop-level fidelity check; all UI icons come from the existing Phosphor icon dependency.
 
-- No actionable P0, P1, or P2 differences remain.
-- Fonts and typography: the native SF/Segoe UI stack closely matches the reference's neutral sans-serif hierarchy; weights, line heights, truncation, and monospace mission metadata are consistent with the source.
-- Spacing and layout rhythm: sidebar width, main gutters, card heights, section offsets, lower-column proportions, radii, and bottom account alignment match the reference structure. The compact 1080 × 700 check has no horizontal overflow.
-- Colors and visual tokens: off-white surfaces, muted green, pale borders, lime active state, amber attention state, and gray idle state align with the reference palette and retain readable contrast.
-- Image quality and asset fidelity: the design contains no photographic or illustrative raster assets. UI icons use Phosphor rather than improvised glyphs or drawn SVGs. The simple `P` wordmark is rendered as UI typography because no standalone brand asset was supplied.
-- Copy and content: mission, request, artifact, user, and navigation copy matches the supplied mockup.
-- Interaction scope: browser verification found 10 buttons and all 10 are disabled, matching the requested non-interactive framework stage.
-- Console check: no browser warnings or errors were reported.
+## Required fidelity surfaces
 
-**Open Questions**
+- Fonts and typography: uses the existing Inter / SF Pro system stack, matching the reference's compact sans-serif hierarchy and monospace metadata. Weight, line height, and wrapping are consistent at the tested viewport.
+- Spacing and layout rhythm: sidebar, settings rail, content column, provider cards, form rows, and advanced-section divider align closely with the normalized reference. No clipping or unintended horizontal overflow was observed.
+- Colors and visual tokens: reuses the existing Pragma off-white, graphite, muted green, lime accent, and cool-gray border tokens. Provider and state colors remain readable and restrained.
+- Image quality and asset fidelity: no raster artwork is required. Existing Phosphor icons are sharp at the tested density and no custom SVG, CSS-art icon, emoji, or placeholder image was introduced.
+- Copy and content: Models & Providers copy follows the reference's purpose; Runtime Environments uses realistic Codex and Claude Code mock content. All visible values are intentionally static.
 
-- None.
+## Interaction and runtime checks
 
-**Implementation Checklist**
+- Tested switching from Models & Providers to Runtime Environments through the settings navigation.
+- Confirmed selected-state semantics update and the correct panel replaces the previous panel.
+- Confirmed all main application navigation remains non-interactive, matching the requested settings-only scope.
+- Checked in-app browser console after both final states: no application warnings or errors.
+- Confirmed lint, TypeScript, Vitest, and Electron production build pass for `@pragma/desktop`.
 
-- [x] Replace the previous multi-view renderer with a single Home mock.
-- [x] Keep non-Home navigation and all actions non-interactive.
-- [x] Remove obsolete renderer data and UI abstraction files.
-- [x] Verify lint, typecheck, tests, production build, browser rendering, disabled states, and compact desktop overflow.
+## Comparison history
 
-**Comparison History**
+### Pass 1
 
-- Pass 1: no P0/P1/P2 issues were found in the 1440 × 900 source-to-implementation comparison, so no visual-fix iteration was required.
+- [P2] Settings navigation included icons not present in the source visual.
+  - Fix: removed the two inner-rail icons while retaining Phosphor icons elsewhere in the established Desktop shell.
+  - Post-fix evidence: `design-comparison.png` shows the two text-only settings entries matching the reference treatment.
 
-**Follow-up Polish**
+### Pass 2
 
-- P3: replace the generic outlined account avatar and typographic `P` mark if final production brand assets become available.
+- No actionable P0, P1, or P2 findings remain.
+- Intentional differences are limited to the requested two-item settings scope, updated static mock values, and the new Runtime Environments content.
+
+## Follow-up polish
+
+- [P3] The mock reference uses a taller canvas, so the lower temperature row is below the fold at the Desktop app's actual 1440 × 900 window size. It remains available by scrolling and does not hide persistent navigation.
 
 final result: passed
