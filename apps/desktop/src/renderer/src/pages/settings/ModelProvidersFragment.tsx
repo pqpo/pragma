@@ -1,0 +1,384 @@
+import { Key, Plus, Robot, Trash } from "@phosphor-icons/react";
+import { useEffect, useState } from "react";
+
+import type { ModelConnectionTestResult, ModelProvider } from "../../../../shared/desktop-api.ts";
+import { errorMessage } from "../../lib/errors.ts";
+
+type ProviderDraft = {
+  readonly id?: string;
+  readonly name: string;
+  readonly baseUrl: string;
+  readonly apiKey: string;
+  readonly models: readonly string[];
+};
+
+const emptyProviderDraft = (): ProviderDraft => ({
+  name: "",
+  baseUrl: "https://api.openai.com/v1",
+  apiKey: "",
+  models: [],
+});
+
+function ProviderEditor(props: {
+  readonly initialValue: ProviderDraft;
+  readonly onCancel: () => void;
+  readonly onSaved: (provider: ModelProvider) => void;
+}) {
+  const [draft, setDraft] = useState(props.initialValue);
+  const [modelId, setModelId] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const isEditing = draft.id !== undefined;
+
+  const addModel = () => {
+    const normalized = modelId.trim();
+    if (!normalized || draft.models.includes(normalized)) return;
+    setDraft({ ...draft, models: [...draft.models, normalized] });
+    setModelId("");
+  };
+
+  const save = async () => {
+    setError(null);
+    if (!isEditing && !draft.apiKey.trim()) {
+      setError("Enter an API key before saving the provider.");
+      return;
+    }
+    setSaving(true);
+    try {
+      const input = {
+        name: draft.name,
+        baseUrl: draft.baseUrl,
+        models: [...draft.models],
+      };
+      const provider = isEditing
+        ? await window.pragmaDesktop.updateModelProvider({
+            ...input,
+            id: draft.id,
+            ...(draft.apiKey.trim() ? { apiKey: draft.apiKey } : {}),
+          })
+        : await window.pragmaDesktop.createModelProvider({ ...input, apiKey: draft.apiKey });
+      props.onSaved(provider);
+    } catch (saveError) {
+      setError(errorMessage(saveError));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <form
+      className="provider-editor"
+      onSubmit={(event) => {
+        event.preventDefault();
+        void save();
+      }}
+    >
+      <label className="static-field">
+        <span>Provider name</span>
+        <input
+          value={draft.name}
+          onChange={(event) => setDraft({ ...draft, name: event.target.value })}
+          placeholder="My OpenAI-compatible API"
+          autoFocus
+        />
+      </label>
+      <label className="static-field">
+        <span>API base URL</span>
+        <input
+          value={draft.baseUrl}
+          onChange={(event) => setDraft({ ...draft, baseUrl: event.target.value })}
+          placeholder="https://api.example.com/v1"
+          inputMode="url"
+        />
+      </label>
+      <label className="static-field">
+        <span>API key</span>
+        <span className="key-input-wrap">
+          <Key size={16} aria-hidden="true" />
+          <input
+            type="password"
+            value={draft.apiKey}
+            onChange={(event) => setDraft({ ...draft, apiKey: event.target.value })}
+            placeholder={isEditing ? "Saved securely — enter to replace" : "sk-..."}
+            autoComplete="off"
+          />
+        </span>
+      </label>
+      <div className="static-field">
+        <span>Models</span>
+        <div className="model-input-row">
+          <input
+            value={modelId}
+            onChange={(event) => setModelId(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                addModel();
+              }
+            }}
+            placeholder="e.g. gpt-4.1-mini"
+          />
+          <button className="secondary-button" type="button" onClick={addModel}>
+            <Plus size={16} aria-hidden="true" />
+            Add model
+          </button>
+        </div>
+        <div className="model-chip-list" aria-label="Configured models">
+          {draft.models.map((model) => (
+            <span className="model-chip" key={model}>
+              {model}
+              <button
+                type="button"
+                aria-label={`Remove ${model}`}
+                onClick={() =>
+                  setDraft({ ...draft, models: draft.models.filter((item) => item !== model) })
+                }
+              >
+                ×
+              </button>
+            </span>
+          ))}
+        </div>
+      </div>
+      {error ? (
+        <p className="form-error" role="alert">
+          {error}
+        </p>
+      ) : null}
+      <div className="provider-actions">
+        <button
+          className="secondary-button"
+          type="button"
+          onClick={props.onCancel}
+          disabled={saving}
+        >
+          Cancel
+        </button>
+        <button className="primary-button" type="submit" disabled={saving}>
+          {saving ? "Saving…" : "Save provider"}
+        </button>
+      </div>
+    </form>
+  );
+}
+
+function ProviderCard(props: {
+  readonly provider: ModelProvider;
+  readonly onDelete: () => void;
+  readonly onEdit: () => void;
+}) {
+  const [testingModel, setTestingModel] = useState<string | null>(null);
+  const [results, setResults] = useState<Record<string, ModelConnectionTestResult>>({});
+  const [deleting, setDeleting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const testModel = async (modelId: string) => {
+    setTestingModel(modelId);
+    setError(null);
+    try {
+      const result = await window.pragmaDesktop.testModelConnection({
+        providerId: props.provider.id,
+        modelId,
+      });
+      setResults((current) => ({ ...current, [modelId]: result }));
+    } catch (testError) {
+      setError(errorMessage(testError));
+    } finally {
+      setTestingModel(null);
+    }
+  };
+
+  const remove = async () => {
+    if (!window.confirm(`Delete ${props.provider.name}? This removes its saved API key.`)) return;
+    setDeleting(true);
+    setError(null);
+    try {
+      await window.pragmaDesktop.deleteModelProvider({ id: props.provider.id });
+      props.onDelete();
+    } catch (deleteError) {
+      setError(errorMessage(deleteError));
+      setDeleting(false);
+    }
+  };
+
+  return (
+    <article className="provider-card is-expanded">
+      <header className="card-header">
+        <span className="card-icon" aria-hidden="true">
+          <Robot size={24} weight="duotone" />
+        </span>
+        <div className="card-title-group">
+          <h3>{props.provider.name}</h3>
+          <p className="status-copy is-active">
+            {props.provider.models.length} {props.provider.models.length === 1 ? "model" : "models"}
+            <span aria-hidden="true">•</span>
+            OpenAI compatible
+          </p>
+        </div>
+        <button className="text-button" type="button" onClick={props.onEdit}>
+          Edit
+        </button>
+      </header>
+      <div className="provider-fields">
+        <div className="static-field">
+          <span>API base URL</span>
+          <code className="configured-value">{props.provider.baseUrl}</code>
+        </div>
+        <div className="static-field">
+          <span>API key</span>
+          <span className="configured-value secret-value">
+            <Key size={16} aria-hidden="true" />
+            {props.provider.hasApiKey ? "Saved securely" : "Missing"}
+          </span>
+        </div>
+        <div className="static-field">
+          <span>Configured models</span>
+          <div className="configured-model-list">
+            {props.provider.models.map((model) => {
+              const result = results[model];
+              const isTesting = testingModel === model;
+              return (
+                <div className="configured-model" key={model}>
+                  <div>
+                    <strong>{model}</strong>
+                    {result ? (
+                      <p
+                        className={
+                          result.ok ? "connection-result is-success" : "connection-result is-error"
+                        }
+                      >
+                        {result.message}
+                        {result.latencyMs !== undefined ? ` (${result.latencyMs} ms)` : ""}
+                      </p>
+                    ) : null}
+                  </div>
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    onClick={() => void testModel(model)}
+                    disabled={testingModel !== null}
+                  >
+                    {isTesting ? "Testing…" : "Test connection"}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+      {error ? (
+        <p className="form-error" role="alert">
+          {error}
+        </p>
+      ) : null}
+      <div className="provider-danger-zone">
+        <button
+          className="danger-button"
+          type="button"
+          onClick={() => void remove()}
+          disabled={deleting}
+        >
+          <Trash size={16} aria-hidden="true" />
+          {deleting ? "Deleting…" : "Delete provider"}
+        </button>
+      </div>
+    </article>
+  );
+}
+
+export function ModelProvidersFragment() {
+  const [providers, setProviders] = useState<readonly ModelProvider[]>([]);
+  const [draft, setDraft] = useState<ProviderDraft | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const loadProviders = async () => {
+    setLoading(true);
+    try {
+      setProviders(await window.pragmaDesktop.listModelProviders());
+      setError(null);
+    } catch (loadError) {
+      setError(errorMessage(loadError));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadProviders();
+  }, []);
+
+  const saveProvider = (provider: ModelProvider) => {
+    setProviders((current) => {
+      const existing = current.some((item) => item.id === provider.id);
+      return existing
+        ? current.map((item) => (item.id === provider.id ? provider : item))
+        : [...current, provider];
+    });
+    setDraft(null);
+  };
+
+  return (
+    <div className="settings-panel" id="models-panel" role="tabpanel">
+      <header className="panel-heading panel-heading-with-action">
+        <div>
+          <h2>Models &amp; Providers</h2>
+          <p>Add OpenAI-compatible APIs and test each configured model.</p>
+        </div>
+        {draft ? null : (
+          <button
+            className="primary-button"
+            type="button"
+            onClick={() => setDraft(emptyProviderDraft())}
+          >
+            <Plus size={17} aria-hidden="true" />
+            Add provider
+          </button>
+        )}
+      </header>
+
+      <div className="provider-list">
+        {draft ? (
+          <article className="provider-card is-expanded">
+            <ProviderEditor
+              initialValue={draft}
+              onCancel={() => setDraft(null)}
+              onSaved={saveProvider}
+            />
+          </article>
+        ) : null}
+        {loading ? <p className="empty-state">Loading providers…</p> : null}
+        {!loading && !draft && providers.length === 0 ? (
+          <div className="empty-state">
+            <Robot size={28} aria-hidden="true" />
+            <h3>No providers configured</h3>
+            <p>Add an OpenAI-compatible API to configure models for this device.</p>
+          </div>
+        ) : null}
+        {providers.map((provider) => (
+          <ProviderCard
+            key={provider.id}
+            provider={provider}
+            onEdit={() =>
+              setDraft({
+                id: provider.id,
+                name: provider.name,
+                baseUrl: provider.baseUrl,
+                apiKey: "",
+                models: provider.models,
+              })
+            }
+            onDelete={() =>
+              setProviders((current) => current.filter((item) => item.id !== provider.id))
+            }
+          />
+        ))}
+      </div>
+      {error ? (
+        <p className="form-error" role="alert">
+          {error}
+        </p>
+      ) : null}
+    </div>
+  );
+}

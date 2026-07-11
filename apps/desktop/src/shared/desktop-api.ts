@@ -113,6 +113,152 @@ export const ModelConnectionTestResultSchema = z.object({
   status: z.number().int().optional(),
 });
 
+export const ExpertIdSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(100)
+  .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "Use lowercase letters, numbers, and hyphens.");
+
+export const ExpertScopeSchema = z.enum(["personal", "organization"]);
+
+export const ExpertModelConfigSchema = z.object({
+  providerId: ModelProviderIdSchema.optional(),
+  modelName: ModelIdSchema,
+});
+
+export const ExpertSkillReferenceSchema = z.object({
+  type: z.enum(["builtin", "registry", "local"]),
+  name: z.string().trim().min(1).max(200),
+  description: z.string().trim().min(1).max(2_000),
+  path: z.string().trim().min(1).max(1_000).optional(),
+  baseDir: z.enum(["workspace", "user"]).optional(),
+  version: z.string().trim().min(1).max(100).nullable().optional(),
+});
+
+const ExpertMcpEnvironmentSchema = z
+  .record(z.string().max(200), z.string().max(2_000))
+  .superRefine((environment, context) => {
+    for (const key of Object.keys(environment)) {
+      if (/(key|token|secret|password|credential)/i.test(key)) {
+        context.addIssue({
+          code: "custom",
+          message: `Use secretRefs instead of env.${key} for secrets.`,
+          path: [key],
+        });
+      }
+    }
+  });
+
+export const ExpertMcpServerSchema = z
+  .object({
+    id: z.string().trim().min(1).max(100),
+    name: z.string().trim().min(1).max(200),
+    transport: z.enum(["stdio", "http"]),
+    command: z.string().trim().min(1).max(1_000).optional(),
+    args: z.array(z.string().max(2_000)).max(100).optional(),
+    url: z.string().url().optional(),
+    env: ExpertMcpEnvironmentSchema.optional(),
+    secretRefs: z.record(z.string().max(200), z.string().trim().min(1).max(200)).optional(),
+    allowTools: z.array(z.string().trim().min(1).max(200)).max(500).optional(),
+    disallowTools: z.array(z.string().trim().min(1).max(200)).max(500).optional(),
+    timeout: z.number().int().positive().max(120_000).optional(),
+  })
+  .superRefine((server, context) => {
+    if (server.transport === "stdio" && server.command === undefined) {
+      context.addIssue({
+        code: "custom",
+        message: "A stdio MCP server requires a command.",
+        path: ["command"],
+      });
+    }
+    if (server.transport === "http" && server.url === undefined) {
+      context.addIssue({
+        code: "custom",
+        message: "An HTTP MCP server requires a URL.",
+        path: ["url"],
+      });
+    }
+    if (server.transport === "stdio" && server.url !== undefined) {
+      context.addIssue({
+        code: "custom",
+        message: "A stdio MCP server cannot declare a URL.",
+        path: ["url"],
+      });
+    }
+    if (
+      server.transport === "http" &&
+      (server.command !== undefined || server.args !== undefined)
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "An HTTP MCP server cannot declare a command or arguments.",
+        path: [server.command === undefined ? "args" : "command"],
+      });
+    }
+  });
+
+export const ExpertToolApprovalModeSchema = z.enum(["none", "ask", "required"]);
+
+export const ExpertPluginReferenceSchema = z.object({
+  source: z.string().trim().min(1).max(2_000),
+  config: z.unknown().optional(),
+});
+
+export const ExpertDefinitionSchema = z.object({
+  schemaVersion: z.literal("pragma.expert/v1"),
+  id: ExpertIdSchema,
+  name: z.string().trim().min(1).max(120),
+  description: z.string().trim().min(1).max(2_000),
+  tags: z.array(z.string().trim().min(1).max(100)).max(30),
+  version: z.string().trim().min(1).max(100),
+  scope: ExpertScopeSchema,
+  instructions: z.string().max(100_000).optional(),
+  model: ExpertModelConfigSchema.nullable(),
+  skills: z.array(ExpertSkillReferenceSchema).max(200),
+  mcpServers: z.array(ExpertMcpServerSchema).max(100),
+  toolIds: z.array(z.string().trim().min(1).max(200)).max(500),
+  toolApprovals: z.record(z.string().max(200), ExpertToolApprovalModeSchema),
+  plugins: z.array(ExpertPluginReferenceSchema).max(100),
+  contextSources: z.array(z.string().trim().min(1).max(1_000)).max(200),
+  revision: z.number().int().positive(),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+});
+
+export const ExpertSummarySchema = ExpertDefinitionSchema.pick({
+  schemaVersion: true,
+  id: true,
+  name: true,
+  description: true,
+  tags: true,
+  version: true,
+  scope: true,
+  revision: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const CreateExpertDefinitionSchema = ExpertDefinitionSchema.omit({
+  schemaVersion: true,
+  revision: true,
+  createdAt: true,
+  updatedAt: true,
+}).extend({
+  instructions: z.string().max(100_000).optional(),
+  model: ExpertModelConfigSchema.nullable().optional(),
+  skills: z.array(ExpertSkillReferenceSchema).max(200).optional(),
+  mcpServers: z.array(ExpertMcpServerSchema).max(100).optional(),
+  toolIds: z.array(z.string().trim().min(1).max(200)).max(500).optional(),
+  toolApprovals: z.record(z.string().max(200), ExpertToolApprovalModeSchema).optional(),
+  plugins: z.array(ExpertPluginReferenceSchema).max(100).optional(),
+  contextSources: z.array(z.string().trim().min(1).max(1_000)).max(200).optional(),
+});
+
+export const UpdateExpertDefinitionSchema = CreateExpertDefinitionSchema.omit({ id: true });
+
+export const DeleteExpertDefinitionSchema = z.object({ id: ExpertIdSchema });
+
 export type DesktopAppInfo = z.infer<typeof DesktopAppInfoSchema>;
 export type RuntimeGatewayConfig = z.infer<typeof RuntimeGatewayConfigSchema>;
 export type LocalRuntimeCapability = z.infer<typeof LocalRuntimeCapabilitySchema>;
@@ -126,6 +272,10 @@ export type UpdateModelProvider = z.infer<typeof UpdateModelProviderSchema>;
 export type DeleteModelProvider = z.infer<typeof DeleteModelProviderSchema>;
 export type ModelConnectionTestRequest = z.infer<typeof ModelConnectionTestRequestSchema>;
 export type ModelConnectionTestResult = z.infer<typeof ModelConnectionTestResultSchema>;
+export type ExpertDefinition = z.infer<typeof ExpertDefinitionSchema>;
+export type ExpertSummary = z.infer<typeof ExpertSummarySchema>;
+export type CreateExpertDefinition = z.infer<typeof CreateExpertDefinitionSchema>;
+export type UpdateExpertDefinition = z.infer<typeof UpdateExpertDefinitionSchema>;
 
 export interface PragmaDesktopAPI {
   getBridgeSnapshot: () => Promise<DesktopBridgeSnapshot>;
@@ -136,5 +286,10 @@ export interface PragmaDesktopAPI {
   updateModelProvider: (input: UpdateModelProvider) => Promise<ModelProvider>;
   deleteModelProvider: (input: DeleteModelProvider) => Promise<void>;
   testModelConnection: (input: ModelConnectionTestRequest) => Promise<ModelConnectionTestResult>;
+  listExperts: () => Promise<ExpertSummary[]>;
+  getExpert: (id: string) => Promise<ExpertDefinition>;
+  createExpert: (input: CreateExpertDefinition) => Promise<ExpertDefinition>;
+  updateExpert: (id: string, input: UpdateExpertDefinition) => Promise<ExpertDefinition>;
+  deleteExpert: (id: string) => Promise<void>;
   getRuntimeAvailability: () => Promise<DesktopRuntimeAvailability[]>;
 }

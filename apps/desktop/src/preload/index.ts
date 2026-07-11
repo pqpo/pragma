@@ -3,6 +3,11 @@ import { contextBridge, ipcRenderer } from "electron";
 import {
   DesktopBridgeSnapshotSchema,
   DesktopRuntimeAvailabilitySchema,
+  CreateExpertDefinitionSchema,
+  DeleteExpertDefinitionSchema,
+  ExpertDefinitionSchema,
+  ExpertIdSchema,
+  ExpertSummarySchema,
   CreateModelProviderSchema,
   DeleteModelProviderSchema,
   ModelConnectionTestRequestSchema,
@@ -10,6 +15,7 @@ import {
   ModelProviderSchema,
   PickWorkspaceResultSchema,
   UpdateModelProviderSchema,
+  UpdateExpertDefinitionSchema,
   ValidateWorkspacePathSchema,
   ValidateWorkspaceResultSchema,
   type PragmaDesktopAPI,
@@ -44,6 +50,25 @@ const api: PragmaDesktopAPI = {
         ModelConnectionTestRequestSchema.parse(input),
       ),
     ),
+  listExperts: async () =>
+    ExpertSummarySchema.array().parse(await ipcRenderer.invoke("experts:list")),
+  getExpert: async (id) =>
+    ExpertDefinitionSchema.parse(await ipcRenderer.invoke("experts:get", ExpertIdSchema.parse(id))),
+  createExpert: async (input) =>
+    ExpertDefinitionSchema.parse(
+      await ipcRenderer.invoke("experts:create", CreateExpertDefinitionSchema.parse(input)),
+    ),
+  updateExpert: async (id, input) =>
+    ExpertDefinitionSchema.parse(
+      await ipcRenderer.invoke(
+        "experts:update",
+        ExpertIdSchema.parse(id),
+        UpdateExpertDefinitionSchema.parse(input),
+      ),
+    ),
+  deleteExpert: async (id) => {
+    await ipcRenderer.invoke("experts:delete", DeleteExpertDefinitionSchema.parse({ id }));
+  },
   getRuntimeAvailability: async () =>
     DesktopRuntimeAvailabilitySchema.array().parse(
       await ipcRenderer.invoke("runtimes:availability"),
