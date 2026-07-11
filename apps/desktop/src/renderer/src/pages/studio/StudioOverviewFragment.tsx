@@ -1,5 +1,6 @@
 import type { Icon } from "@phosphor-icons/react";
 import { CaretRight, Info, User, UsersThree, Wrench } from "@phosphor-icons/react";
+import type { Capability } from "../../../../shared/desktop-api.ts";
 
 import {
   collectionAssets,
@@ -35,12 +36,16 @@ function StudioAssetRows(props: {
 
 export function StudioOverviewFragment(props: {
   readonly experts: readonly ExpertRecord[];
+  readonly capabilities: readonly Capability[];
   readonly onNavigate: (view: StudioView) => void;
 }) {
   const studioAssets = {
     experts: props.experts.slice(0, 2),
     teams: collectionAssets.teams,
-    tools: collectionAssets.tools,
+    capabilities: props.capabilities.slice(0, 2).map((capability) => ({
+      name: capability.manifest.name,
+      description: capability.definition.description,
+    })),
   } satisfies Record<
     Exclude<StudioView, "overview" | "context-stores">,
     readonly { name: string; description: string }[]
@@ -49,7 +54,7 @@ export function StudioOverviewFragment(props: {
   return (
     <>
       <section className="studio-overview-grid" aria-label="Studio resources">
-        {(["experts", "teams", "tools"] as const).map((section) => {
+        {(["experts", "teams", "capabilities"] as const).map((section) => {
           const SectionIcon =
             section === "experts" ? User : section === "teams" ? UsersThree : Wrench;
 
@@ -77,8 +82,8 @@ export function StudioOverviewFragment(props: {
   );
 }
 
-export function StudioCollectionFragment(props: { readonly view: "teams" | "tools" }) {
-  const Icon = props.view === "teams" ? UsersThree : Wrench;
+export function StudioCollectionFragment(props: { readonly view: "teams" }) {
+  const Icon = UsersThree;
 
   return (
     <section className="studio-collection" aria-labelledby="studio-collection-heading">

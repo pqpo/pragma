@@ -1,11 +1,7 @@
 import type { ExpertAgentCreateOptions } from "./agent/expert-agent.ts";
 import { ExpertAgent } from "./agent/expert-agent.ts";
 
-export {
-  AgentMessageSchema,
-  type AgentMessage,
-  type AgentMessageUsage,
-} from "@pragma/shared";
+export { AgentMessageSchema, type AgentMessage, type AgentMessageUsage } from "@pragma/shared";
 export * from "./agent/context-manager.ts";
 export * from "./agent/agent-launcher.ts";
 export * from "./agent/expert-agent.ts";
@@ -17,6 +13,7 @@ export * from "./human-interaction/durable-human-interaction.ts";
 export * from "./logging/logger.ts";
 export * from "./directive/index.ts";
 export * from "./mcp-tools.ts";
+export * from "./http-service-mcp-server.ts";
 export * from "./plugins/expert-agent-plugin.ts";
 export * from "./plugins/plugin-loader.ts";
 export * from "./runtime/agent-lifecycle.ts";

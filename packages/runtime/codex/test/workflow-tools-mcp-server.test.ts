@@ -21,6 +21,7 @@ describe("createCodexWorkflowToolsMcpServer", () => {
         mcpServers: {
           docs: {
             name: "Docs MCP",
+            transport: "in-process",
             inProcess: {
               listTools: async () => [
                 {
@@ -78,6 +79,7 @@ describe("createCodexWorkflowToolsMcpServer", () => {
       mcpServers: {
         [server.id]: {
           name: server.name,
+          transport: "streamable-http",
           url: server.url,
         },
       },
@@ -144,6 +146,7 @@ describe("createCodexWorkflowToolsMcpServer", () => {
       mcpServers: {
         [server.id]: {
           name: server.name,
+          transport: "streamable-http",
           url: server.url,
         },
       },
@@ -241,6 +244,7 @@ describe("createCodexWorkflowToolsMcpServer", () => {
       mcpServers: {
         [server.id]: {
           name: server.name,
+          transport: "streamable-http",
           url: server.url,
         },
       },
@@ -316,6 +320,7 @@ describe("createCodexWorkflowToolsMcpServer", () => {
       mcpServers: {
         [server.id]: {
           name: server.name,
+          transport: "streamable-http",
           url: server.url,
         },
       },
@@ -382,6 +387,7 @@ describe("createCodexWorkflowToolsMcpServer", () => {
       mcpServers: {
         [server.id]: {
           name: server.name,
+          transport: "streamable-http",
           url: server.url,
         },
       },
@@ -443,6 +449,7 @@ describe("createCodexWorkflowToolsMcpServer", () => {
       mcpServers: {
         [server.id]: {
           name: server.name,
+          transport: "streamable-http",
           url: server.url,
         },
       },
@@ -504,6 +511,7 @@ describe("createCodexWorkflowToolsMcpServer", () => {
       mcpServers: {
         [server.id]: {
           name: server.name,
+          transport: "streamable-http",
           url: server.url,
         },
       },

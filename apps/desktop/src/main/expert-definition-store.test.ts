@@ -33,17 +33,14 @@ const createInput = {
   scope: "personal" as const,
   instructions: "Use evidence and state assumptions.",
   model: { runtimeId: "codex" as const, modelName: "gpt-4.1" },
-  skills: [],
-  mcpServers: [
+  capabilities: [
     {
-      id: "docs",
-      name: "docs",
-      transport: "http" as const,
-      url: "https://mcp.example.com",
-      secretRefs: { token: "mcp/docs-token" },
+      kind: "tools" as const,
+      capabilityId: "b4bda9e4-8f68-4f46-a4ef-fd4595512f22",
+      revision: 1,
+      toolNames: ["web-search"],
     },
   ],
-  toolIds: ["web-search"],
   toolApprovals: { "web-search": "ask" as const },
   plugins: [],
   contextStoreMounts: [],
@@ -60,7 +57,7 @@ describe("expert definition store", () => {
       scope: "personal",
       revision: 1,
       instructions: "Use evidence and state assumptions.",
-      mcpServers: [expect.objectContaining({ secretRefs: { token: "mcp/docs-token" } })],
+      capabilities: [expect.objectContaining({ toolNames: ["web-search"] })],
     });
     expect(await store.list()).toEqual([expect.objectContaining({ id: expert.id, revision: 1 })]);
     expect(await store.get(expert.id)).toEqual(expert);
@@ -69,8 +66,11 @@ describe("expert definition store", () => {
       "workspace",
     );
     expect(
-      await readFile(join(expertsPath, expert.id, "revisions", "000001", "mcp.json"), "utf8"),
-    ).toContain("mcp/docs-token");
+      await readFile(
+        join(expertsPath, expert.id, "revisions", "000001", "capabilities.json"),
+        "utf8",
+      ),
+    ).toContain("web-search");
   });
 
   it("creates a new revision for updates while keeping the expert ID stable", async () => {
@@ -155,38 +155,37 @@ describe("expert definition store", () => {
     } satisfies Partial<ExpertDefinitionStoreError>);
   });
 
-  it("requires MCP secrets to use secret references", async () => {
+  it("requires capability references to use valid IDs", async () => {
     const { store } = await createStore();
 
     await expect(
       store.create({
         ...createInput,
-        mcpServers: [
+        capabilities: [
           {
-            id: "docs",
-            name: "docs",
-            transport: "http",
-            url: "https://mcp.example.com",
-            env: { DOCS_TOKEN: "plaintext-secret" },
+            kind: "skill",
+            capabilityId: "not-a-uuid",
+            revision: 1,
           },
         ],
       }),
     ).rejects.toMatchObject({ name: "ZodError" });
   });
 
-  it("requires transport-specific MCP connection fields", async () => {
+  it("requires tool capability references to select at least one tool", async () => {
     const { store } = await createStore();
 
     await expect(
       store.create({
         ...createInput,
-        mcpServers: [{ id: "local", name: "local", transport: "stdio" }],
-      }),
-    ).rejects.toMatchObject({ name: "ZodError" });
-    await expect(
-      store.create({
-        ...createInput,
-        mcpServers: [{ id: "remote", name: "remote", transport: "http" }],
+        capabilities: [
+          {
+            kind: "tools",
+            capabilityId: "b4bda9e4-8f68-4f46-a4ef-fd4595512f22",
+            revision: 1,
+            toolNames: [],
+          },
+        ],
       }),
     ).rejects.toMatchObject({ name: "ZodError" });
   });

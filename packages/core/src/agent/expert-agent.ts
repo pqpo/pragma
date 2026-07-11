@@ -70,22 +70,34 @@ export interface IExpertAgentMcpToolInfo {
 
 export interface IExpertAgentInProcessMcpServer {
   readonly listTools: () => Promise<readonly IExpertAgentMcpToolInfo[]>;
-  readonly callTool: (name: string, args: unknown) => Promise<unknown>;
+  readonly callTool: (name: string, args: unknown, signal?: AbortSignal) => Promise<unknown>;
   readonly dispose?: (() => Promise<void>) | undefined;
 }
 
-export interface IExpertAgentMcpServer {
+interface IExpertAgentMcpServerBase {
   readonly name: string;
-  readonly command?: string;
-  readonly args?: readonly string[];
-  readonly env?: Record<string, string>;
-  readonly url?: string;
   readonly timeout?: number;
-  readonly token?: string;
   readonly allowTools?: readonly string[];
   readonly disallowTools?: readonly string[];
-  readonly inProcess?: IExpertAgentInProcessMcpServer | undefined;
+  readonly toolApprovals?: Readonly<Record<string, ExpertAgentToolApproval>>;
 }
+
+export type IExpertAgentMcpServer =
+  | (IExpertAgentMcpServerBase & {
+      readonly transport: "stdio";
+      readonly command: string;
+      readonly args?: readonly string[];
+      readonly env?: Record<string, string>;
+    })
+  | (IExpertAgentMcpServerBase & {
+      readonly transport: "streamable-http" | "sse";
+      readonly url: string;
+      readonly token?: string;
+    })
+  | (IExpertAgentMcpServerBase & {
+      readonly transport: "in-process";
+      readonly inProcess: IExpertAgentInProcessMcpServer;
+    });
 
 export interface IExpertAgentMcpConfig {
   readonly mcpServers: Record<string, IExpertAgentMcpServer>;

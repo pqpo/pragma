@@ -4,6 +4,7 @@ import { useState } from "react";
 import { errorMessage } from "../../lib/errors.ts";
 import {
   ExpertIdSchema,
+  type Capability,
   type ContextStore,
   type DesktopRuntimeAvailability,
   type ModelProvider,
@@ -17,6 +18,7 @@ export function ExpertEditorFragment(props: {
   readonly modelProviders: readonly ModelProvider[];
   readonly runtimes: readonly DesktopRuntimeAvailability[];
   readonly contextStores: readonly ContextStore[];
+  readonly capabilities: readonly Capability[];
   readonly onCancel: () => void;
   readonly onCreated: (expert: ExpertRecord) => Promise<void>;
 }) {
@@ -69,6 +71,17 @@ export function ExpertEditorFragment(props: {
     const tag = draft.tagInput.trim();
     if (!tag || draft.tags.includes(tag)) return;
     setDraft({ ...draft, tags: [...draft.tags, tag], tagInput: "" });
+  };
+  const setCapabilityReferences = (capabilities: ExpertDraft["capabilities"]) => {
+    setDraft({
+      ...draft,
+      capabilities,
+      skills: capabilities.filter((reference) => reference.kind === "skill").length,
+      tools: capabilities
+        .filter((reference) => reference.kind === "tools")
+        .reduce((total, reference) => total + reference.toolNames.length, 0),
+      mcpServers: capabilities.filter((reference) => reference.kind === "tools").length,
+    });
   };
   const submit = async () => {
     setError(null);
@@ -365,6 +378,144 @@ export function ExpertEditorFragment(props: {
                         </small>
                       </span>
                     </label>
+                  );
+                })}
+              </fieldset>
+              <fieldset className="expert-context-store-picker expert-capability-picker">
+                <legend>Skills</legend>
+                <small>Load reusable guidance packages into this Expert.</small>
+                {props.capabilities.filter((capability) => capability.definition.kind === "skill")
+                  .length === 0 ? (
+                  <p>No Skills have been imported.</p>
+                ) : null}
+                {props.capabilities
+                  .filter((capability) => capability.definition.kind === "skill")
+                  .map((capability) => {
+                    const selected = draft.capabilities.find(
+                      (reference) =>
+                        reference.kind === "skill" &&
+                        reference.capabilityId === capability.manifest.id,
+                    );
+                    const unavailable =
+                      capability.health.status !== "ready" && selected === undefined;
+                    return (
+                      <label
+                        key={capability.manifest.id}
+                        className={unavailable ? "is-disabled" : ""}
+                      >
+                        <input
+                          type="checkbox"
+                          disabled={unavailable}
+                          checked={selected !== undefined}
+                          onChange={() =>
+                            setCapabilityReferences(
+                              selected === undefined
+                                ? [
+                                    ...draft.capabilities,
+                                    {
+                                      kind: "skill",
+                                      capabilityId: capability.manifest.id,
+                                      revision: capability.manifest.latestRevision,
+                                    },
+                                  ]
+                                : draft.capabilities.filter((reference) => reference !== selected),
+                            )
+                          }
+                        />
+                        <span>
+                          <strong>{capability.manifest.name}</strong>
+                          <small>
+                            {capability.definition.description}
+                            {unavailable ? " · Needs attention" : ""}
+                          </small>
+                        </span>
+                      </label>
+                    );
+                  })}
+              </fieldset>
+              <fieldset className="expert-context-store-picker expert-capability-picker">
+                <legend>Tools</legend>
+                <small>Select only the MCP or HTTP tools this Expert needs.</small>
+                {props.capabilities.map((capability) => {
+                  const definition = capability.definition;
+                  if (definition.kind === "skill") return null;
+                  const foundReference = draft.capabilities.find(
+                    (reference) =>
+                      reference.kind === "tools" &&
+                      reference.capabilityId === capability.manifest.id,
+                  );
+                  const selected = foundReference?.kind === "tools" ? foundReference : undefined;
+                  const unavailable =
+                    capability.health.status !== "ready" && selected === undefined;
+                  const tools = definition.tools;
+                  return (
+                    <div className="expert-tool-capability" key={capability.manifest.id}>
+                      <header>
+                        <span>
+                          <strong>{capability.manifest.name}</strong>
+                          <small>
+                            {definition.kind === "mcp_server" ? "MCP server" : "HTTP service"}
+                            {unavailable ? " · Needs attention" : ""}
+                          </small>
+                        </span>
+                        {selected && selected.revision < capability.manifest.latestRevision ? (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setCapabilityReferences(
+                                draft.capabilities.map((reference) =>
+                                  reference === selected
+                                    ? { ...reference, revision: capability.manifest.latestRevision }
+                                    : reference,
+                                ),
+                              )
+                            }
+                          >
+                            Upgrade to r{capability.manifest.latestRevision}
+                          </button>
+                        ) : null}
+                      </header>
+                      {tools.map((tool) => {
+                        const checked =
+                          selected?.kind === "tools" && selected.toolNames.includes(tool.name);
+                        return (
+                          <label key={tool.name} className={unavailable ? "is-disabled" : ""}>
+                            <input
+                              type="checkbox"
+                              disabled={unavailable}
+                              checked={checked}
+                              onChange={() => {
+                                const nextNames = checked
+                                  ? (selected?.toolNames ?? []).filter((name) => name !== tool.name)
+                                  : [...(selected?.toolNames ?? []), tool.name];
+                                const without = draft.capabilities.filter(
+                                  (reference) => reference !== selected,
+                                );
+                                setCapabilityReferences(
+                                  nextNames.length === 0
+                                    ? without
+                                    : [
+                                        ...without,
+                                        {
+                                          kind: "tools",
+                                          capabilityId: capability.manifest.id,
+                                          revision:
+                                            selected?.revision ??
+                                            capability.manifest.latestRevision,
+                                          toolNames: nextNames,
+                                        },
+                                      ],
+                                );
+                              }}
+                            />
+                            <span>
+                              <strong>{tool.name}</strong>
+                              <small>{tool.description ?? "External tool"}</small>
+                            </span>
+                          </label>
+                        );
+                      })}
+                    </div>
                   );
                 })}
               </fieldset>

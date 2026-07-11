@@ -149,16 +149,7 @@ export const ExpertModelConfigSchema = z.discriminatedUnion("runtimeId", [
   }),
 ]);
 
-export const ExpertSkillReferenceSchema = z.object({
-  type: z.enum(["builtin", "registry", "local"]),
-  name: z.string().trim().min(1).max(200),
-  description: z.string().trim().min(1).max(2_000),
-  path: z.string().trim().min(1).max(1_000).optional(),
-  baseDir: z.enum(["workspace", "user"]).optional(),
-  version: z.string().trim().min(1).max(100).nullable().optional(),
-});
-
-const ExpertMcpEnvironmentSchema = z
+const CapabilityEnvironmentSchema = z
   .record(z.string().max(200), z.string().max(2_000))
   .superRefine((environment, context) => {
     for (const key of Object.keys(environment)) {
@@ -172,53 +163,220 @@ const ExpertMcpEnvironmentSchema = z
     }
   });
 
-export const ExpertMcpServerSchema = z
+export const CapabilityIdSchema = z.string().uuid();
+export const CapabilityRuntimeKeySchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(80)
+  .regex(/^[a-z0-9]+(?:_[a-z0-9]+)*$/, "Use lowercase letters, numbers, and underscores.");
+export const CapabilityToolNameSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(128)
+  .regex(/^[a-zA-Z0-9_-]+$/, "Use letters, numbers, underscores, and hyphens.");
+
+export const CapabilityToolSnapshotSchema = z.object({
+  name: CapabilityToolNameSchema,
+  description: z.string().trim().max(2_000).optional(),
+  inputSchema: z.unknown().optional(),
+  schemaHash: z.string().regex(/^[a-f0-9]{64}$/),
+});
+
+export const SkillCapabilityDefinitionSchema = z.object({
+  kind: z.literal("skill"),
+  name: z.string().trim().min(1).max(120),
+  description: z.string().trim().min(1).max(2_000),
+  entryPath: z.literal("SKILL.md"),
+  contentHash: z.string().regex(/^[a-f0-9]{64}$/),
+});
+
+export const McpConnectionSchema = z.discriminatedUnion("transport", [
+  z.object({
+    transport: z.literal("stdio"),
+    command: z.string().trim().min(1).max(1_000),
+    args: z.array(z.string().max(2_000)).max(100).default([]),
+    env: CapabilityEnvironmentSchema.default({}),
+    secretEnv: z.record(z.string().max(200), z.string().trim().min(1).max(200)).default({}),
+  }),
+  z.object({
+    transport: z.enum(["streamable-http", "sse"]),
+    url: z.string().trim().url(),
+    tokenCredentialRef: z.string().trim().min(1).max(200).optional(),
+  }),
+]);
+
+export const McpServerCapabilityDefinitionSchema = z
   .object({
-    id: z.string().trim().min(1).max(100),
-    name: z.string().trim().min(1).max(200),
-    transport: z.enum(["stdio", "http"]),
-    command: z.string().trim().min(1).max(1_000).optional(),
-    args: z.array(z.string().max(2_000)).max(100).optional(),
-    url: z.string().url().optional(),
-    env: ExpertMcpEnvironmentSchema.optional(),
-    secretRefs: z.record(z.string().max(200), z.string().trim().min(1).max(200)).optional(),
-    allowTools: z.array(z.string().trim().min(1).max(200)).max(500).optional(),
-    disallowTools: z.array(z.string().trim().min(1).max(200)).max(500).optional(),
-    timeout: z.number().int().positive().max(120_000).optional(),
+    kind: z.literal("mcp_server"),
+    name: z.string().trim().min(1).max(120),
+    description: z.string().trim().max(2_000),
+    connection: McpConnectionSchema,
+    timeoutMs: z.number().int().min(1_000).max(120_000).default(30_000),
+    tools: z.array(CapabilityToolSnapshotSchema).max(500),
   })
-  .superRefine((server, context) => {
-    if (server.transport === "stdio" && server.command === undefined) {
+  .superRefine((definition, context) => addDuplicateToolIssues(definition.tools, context));
+
+export const HttpServiceParameterSchema = z.object({
+  name: z.string().trim().min(1).max(100),
+  location: z.enum(["path", "query"]),
+  required: z.boolean(),
+  type: z.enum(["string", "number", "integer", "boolean"]),
+  description: z.string().trim().max(500).optional(),
+});
+
+export const HttpServiceToolSchema = z
+  .object({
+    name: CapabilityToolNameSchema,
+    description: z.string().trim().min(1).max(2_000),
+    method: z.enum(["GET", "POST"]),
+    path: z.string().trim().min(1).max(1_000).regex(/^\//, "Path must start with /"),
+    parameters: z.array(HttpServiceParameterSchema).max(100).default([]),
+    bodySchema: z.record(z.string(), z.unknown()).optional(),
+  })
+  .superRefine((tool, context) => {
+    if (tool.method === "GET" && tool.bodySchema !== undefined) {
       context.addIssue({
         code: "custom",
-        message: "A stdio MCP server requires a command.",
-        path: ["command"],
+        message: "GET tools cannot declare a body.",
+        path: ["bodySchema"],
       });
     }
-    if (server.transport === "http" && server.url === undefined) {
-      context.addIssue({
-        code: "custom",
-        message: "An HTTP MCP server requires a URL.",
-        path: ["url"],
-      });
-    }
-    if (server.transport === "stdio" && server.url !== undefined) {
-      context.addIssue({
-        code: "custom",
-        message: "A stdio MCP server cannot declare a URL.",
-        path: ["url"],
-      });
-    }
-    if (
-      server.transport === "http" &&
-      (server.command !== undefined || server.args !== undefined)
-    ) {
-      context.addIssue({
-        code: "custom",
-        message: "An HTTP MCP server cannot declare a command or arguments.",
-        path: [server.command === undefined ? "args" : "command"],
-      });
+    const declaredPathParameters = new Set(
+      tool.parameters
+        .filter((parameter) => parameter.location === "path")
+        .map((parameter) => parameter.name),
+    );
+    for (const match of tool.path.matchAll(/\{([^}]+)\}/g)) {
+      if (!declaredPathParameters.has(match[1] ?? "")) {
+        context.addIssue({
+          code: "custom",
+          message: `Path parameter ${match[1]} must be declared.`,
+          path: ["path"],
+        });
+      }
     }
   });
+
+export const HttpServiceAuthSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("none") }),
+  z.object({ type: z.literal("bearer"), credentialRef: z.string().trim().min(1).max(200) }),
+  z.object({
+    type: z.literal("api_key_header"),
+    headerName: z.string().trim().min(1).max(100),
+    credentialRef: z.string().trim().min(1).max(200),
+  }),
+]);
+
+export const HttpServiceCapabilityDefinitionSchema = z
+  .object({
+    kind: z.literal("http_service"),
+    name: z.string().trim().min(1).max(120),
+    description: z.string().trim().max(2_000),
+    baseUrl: z.string().trim().url(),
+    auth: HttpServiceAuthSchema,
+    timeoutMs: z.number().int().min(1_000).max(120_000).default(30_000),
+    tools: z.array(HttpServiceToolSchema).min(1).max(200),
+  })
+  .superRefine((definition, context) => addDuplicateToolIssues(definition.tools, context));
+
+function addDuplicateToolIssues(
+  tools: readonly { readonly name: string }[],
+  context: z.RefinementCtx,
+): void {
+  const seen = new Set<string>();
+  tools.forEach((tool, index) => {
+    if (seen.has(tool.name)) {
+      context.addIssue({
+        code: "custom",
+        message: `Tool name ${tool.name} must be unique.`,
+        path: ["tools", index, "name"],
+      });
+    }
+    seen.add(tool.name);
+  });
+}
+
+export const CapabilityDefinitionSchema = z.discriminatedUnion("kind", [
+  SkillCapabilityDefinitionSchema,
+  McpServerCapabilityDefinitionSchema,
+  HttpServiceCapabilityDefinitionSchema,
+]);
+
+export const CapabilityManifestSchema = z.object({
+  schemaVersion: z.literal("pragma.capability/v1"),
+  id: CapabilityIdSchema,
+  runtimeKey: CapabilityRuntimeKeySchema,
+  name: z.string().trim().min(1).max(120),
+  kind: z.enum(["skill", "mcp_server", "http_service"]),
+  latestRevision: z.number().int().positive(),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+});
+
+export const CapabilityHealthSchema = z.object({
+  revision: z.number().int().positive(),
+  status: z.enum(["ready", "needs_attention"]),
+  checkedAt: z.string().datetime(),
+  diagnostic: z
+    .object({
+      code: z.string().min(1).max(100),
+      message: z.string().min(1).max(2_000),
+      retryable: z.boolean(),
+    })
+    .optional(),
+});
+
+export const CapabilitySchema = z.object({
+  manifest: CapabilityManifestSchema,
+  health: CapabilityHealthSchema,
+  definition: CapabilityDefinitionSchema,
+});
+
+export const ExpertCapabilityReferenceSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("skill"),
+    capabilityId: CapabilityIdSchema,
+    revision: z.number().int().positive(),
+  }),
+  z.object({
+    kind: z.literal("tools"),
+    capabilityId: CapabilityIdSchema,
+    revision: z.number().int().positive(),
+    toolNames: z.array(CapabilityToolNameSchema).min(1).max(500),
+  }),
+]);
+
+export const ImportSkillCapabilitySchema = z.object({
+  sourcePath: z.string().trim().min(1).max(2_000),
+  name: z.string().trim().min(1).max(120).optional(),
+  description: z.string().trim().min(1).max(2_000).optional(),
+});
+
+export const CreateCapabilitySchema = z.object({
+  definition: z.union([McpServerCapabilityDefinitionSchema, HttpServiceCapabilityDefinitionSchema]),
+  credentials: z.record(z.string().max(200), z.string().min(1).max(10_000)).default({}),
+});
+
+export const UpdateCapabilitySchema = z.object({
+  id: CapabilityIdSchema,
+  definition: z.union([McpServerCapabilityDefinitionSchema, HttpServiceCapabilityDefinitionSchema]),
+  credentials: z.record(z.string().max(200), z.string().min(1).max(10_000)).default({}),
+});
+
+export const CapabilityActionSchema = z.object({ id: CapabilityIdSchema });
+export const CapabilityTestRequestSchema = z.object({
+  id: CapabilityIdSchema,
+  toolName: CapabilityToolNameSchema.optional(),
+  input: z.unknown().optional(),
+});
+export const CapabilityTestResultSchema = z.object({
+  ok: z.boolean(),
+  code: z.string().min(1).max(100),
+  message: z.string().min(1).max(2_000),
+  capability: CapabilitySchema,
+});
 
 export const ExpertToolApprovalModeSchema = z.enum(["none", "ask", "required"]);
 
@@ -302,7 +460,7 @@ export const ExpertContextStoreMountSchema = z.object({
 });
 
 export const ExpertDefinitionSchema = z.object({
-  schemaVersion: z.literal("pragma.expert/v1"),
+  schemaVersion: z.literal("pragma.expert/v2"),
   id: ExpertIdSchema,
   name: z.string().trim().min(1).max(120),
   description: z.string().trim().min(1).max(2_000),
@@ -311,9 +469,7 @@ export const ExpertDefinitionSchema = z.object({
   scope: ExpertScopeSchema,
   instructions: z.string().max(100_000).optional(),
   model: ExpertModelConfigSchema.nullable(),
-  skills: z.array(ExpertSkillReferenceSchema).max(200),
-  mcpServers: z.array(ExpertMcpServerSchema).max(100),
-  toolIds: z.array(z.string().trim().min(1).max(200)).max(500),
+  capabilities: z.array(ExpertCapabilityReferenceSchema).max(500),
   toolApprovals: z.record(z.string().max(200), ExpertToolApprovalModeSchema),
   plugins: z.array(ExpertPluginReferenceSchema).max(100),
   contextStoreMounts: z.array(ExpertContextStoreMountSchema).max(200),
@@ -343,9 +499,7 @@ export const CreateExpertDefinitionSchema = ExpertDefinitionSchema.omit({
 }).extend({
   instructions: z.string().max(100_000).optional(),
   model: ExpertModelConfigSchema.nullable().optional(),
-  skills: z.array(ExpertSkillReferenceSchema).max(200).optional(),
-  mcpServers: z.array(ExpertMcpServerSchema).max(100).optional(),
-  toolIds: z.array(z.string().trim().min(1).max(200)).max(500).optional(),
+  capabilities: z.array(ExpertCapabilityReferenceSchema).max(500).optional(),
   toolApprovals: z.record(z.string().max(200), ExpertToolApprovalModeSchema).optional(),
   plugins: z.array(ExpertPluginReferenceSchema).max(100).optional(),
   contextStoreMounts: z.array(ExpertContextStoreMountSchema).max(200).optional(),
@@ -377,6 +531,16 @@ export type ExpertDefinition = z.infer<typeof ExpertDefinitionSchema>;
 export type ExpertSummary = z.infer<typeof ExpertSummarySchema>;
 export type CreateExpertDefinition = z.infer<typeof CreateExpertDefinitionSchema>;
 export type UpdateExpertDefinition = z.infer<typeof UpdateExpertDefinitionSchema>;
+export type Capability = z.infer<typeof CapabilitySchema>;
+export type CapabilityManifest = z.infer<typeof CapabilityManifestSchema>;
+export type CapabilityHealth = z.infer<typeof CapabilityHealthSchema>;
+export type CapabilityDefinition = z.infer<typeof CapabilityDefinitionSchema>;
+export type ExpertCapabilityReference = z.infer<typeof ExpertCapabilityReferenceSchema>;
+export type ImportSkillCapability = z.infer<typeof ImportSkillCapabilitySchema>;
+export type CreateCapability = z.infer<typeof CreateCapabilitySchema>;
+export type UpdateCapability = z.infer<typeof UpdateCapabilitySchema>;
+export type CapabilityTestRequest = z.infer<typeof CapabilityTestRequestSchema>;
+export type CapabilityTestResult = z.infer<typeof CapabilityTestResultSchema>;
 
 export interface PragmaDesktopAPI {
   getBridgeSnapshot: () => Promise<DesktopBridgeSnapshot>;
@@ -396,5 +560,14 @@ export interface PragmaDesktopAPI {
   createExpert: (input: CreateExpertDefinition) => Promise<ExpertDefinition>;
   updateExpert: (id: string, input: UpdateExpertDefinition) => Promise<ExpertDefinition>;
   deleteExpert: (id: string) => Promise<void>;
+  listCapabilities: () => Promise<Capability[]>;
+  getCapability: (id: string, revision?: number) => Promise<Capability>;
+  importSkillCapability: (input: ImportSkillCapability) => Promise<Capability>;
+  createCapability: (input: CreateCapability) => Promise<Capability>;
+  updateCapability: (input: UpdateCapability) => Promise<Capability>;
+  retryCapability: (id: string) => Promise<Capability>;
+  testCapability: (input: CapabilityTestRequest) => Promise<CapabilityTestResult>;
+  deleteCapability: (id: string) => Promise<void>;
+  pickSkillSource: () => Promise<PickWorkspaceResult>;
   getRuntimeAvailability: () => Promise<DesktopRuntimeAvailability[]>;
 }

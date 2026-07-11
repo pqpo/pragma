@@ -21,9 +21,10 @@ describe("App", () => {
 
     expect(html).toContain("Experts");
     expect(html).toContain("Expert teams");
-    expect(html).toContain("Tools");
+    expect(html).toContain("Capabilities");
     expect(html).toContain(">4<");
-    expect(html.match(/>2</g)?.length).toBe(2);
+    expect(html.match(/>2</g)?.length).toBe(1);
+    expect(html.match(/>0</g)?.length).toBe(2);
   });
 
   it("keeps unavailable application navigation disabled", () => {

@@ -165,6 +165,7 @@ describe("createCodexRuntime", () => {
         mcpServers: {
           docs: {
             name: "Docs MCP",
+            transport: "in-process",
             inProcess: {
               listTools: async () => [
                 {

@@ -8,6 +8,7 @@ export const extensibilityPlugin = definePluginEntry({
       mcpServers: {
         pluginMcp: {
           name: "Plugin MCP",
+          transport: "stdio",
           command: "plugin-mcp",
         },
       },

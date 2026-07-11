@@ -16,7 +16,7 @@ import type {
 } from "../../../../shared/desktop-api.ts";
 
 export type ExpertModel = ExpertDefinition["model"];
-export type StudioView = "overview" | "experts" | "teams" | "tools" | "context-stores";
+export type StudioView = "overview" | "experts" | "teams" | "capabilities" | "context-stores";
 
 export type ExpertRecord = {
   readonly id: string;
@@ -27,6 +27,7 @@ export type ExpertRecord = {
   readonly scope: string;
   readonly instructions: string;
   readonly model: ExpertModel;
+  readonly capabilities: ExpertDefinition["capabilities"];
   readonly skills: number;
   readonly tools: number;
   readonly mcpServers: number;
@@ -49,9 +50,10 @@ export const initialExperts: readonly ExpertRecord[] = [
     instructions:
       "You are a Market Research Analyst. Turn market data and signals into clear, evidence-based insights and recommendations. Clarify the objective, audience, time horizon, and constraints before you begin.",
     model: null,
-    skills: 2,
-    tools: 3,
-    mcpServers: 1,
+    capabilities: [],
+    skills: 0,
+    tools: 0,
+    mcpServers: 0,
     contextStoreMounts: [],
     usesApproval: true,
     icon: User,
@@ -65,9 +67,10 @@ export const initialExperts: readonly ExpertRecord[] = [
     scope: "Data pipeline and platform engineering. Does not own product analytics definitions.",
     instructions: "Build reliable, observable data systems with clear ownership and verification.",
     model: null,
-    skills: 1,
-    tools: 2,
-    mcpServers: 1,
+    capabilities: [],
+    skills: 0,
+    tools: 0,
+    mcpServers: 0,
     contextStoreMounts: [],
     usesApproval: false,
     icon: TerminalWindow,
@@ -81,8 +84,9 @@ export const initialExperts: readonly ExpertRecord[] = [
     scope: "Customer issue resolution. Does not approve refunds or change account policy.",
     instructions: "Resolve customer issues clearly, accurately, and with empathy.",
     model: null,
-    skills: 1,
-    tools: 2,
+    capabilities: [],
+    skills: 0,
+    tools: 0,
     mcpServers: 0,
     contextStoreMounts: [],
     usesApproval: false,
@@ -97,9 +101,10 @@ export const initialExperts: readonly ExpertRecord[] = [
     scope: "Code quality and security review. Does not merge or deploy changes.",
     instructions: "Review changes for correctness, security, maintainability, and test coverage.",
     model: null,
-    skills: 2,
-    tools: 3,
-    mcpServers: 1,
+    capabilities: [],
+    skills: 0,
+    tools: 0,
+    mcpServers: 0,
     contextStoreMounts: [],
     usesApproval: true,
     icon: TerminalWindow,
@@ -115,6 +120,7 @@ export const emptyDraft = (): ExpertDraft => ({
   scope: "",
   instructions: "",
   model: null,
+  capabilities: [],
   skills: 0,
   tools: 0,
   mcpServers: 0,
@@ -133,9 +139,12 @@ export function toExpertRecord(definition: ExpertDefinition): ExpertRecord {
     scope: definition.scope,
     instructions: definition.instructions ?? "",
     model: definition.model,
-    skills: definition.skills.length,
-    tools: definition.toolIds.length,
-    mcpServers: definition.mcpServers.length,
+    capabilities: definition.capabilities,
+    skills: definition.capabilities.filter((reference) => reference.kind === "skill").length,
+    tools: definition.capabilities
+      .filter((reference) => reference.kind === "tools")
+      .reduce((total, reference) => total + reference.toolNames.length, 0),
+    mcpServers: definition.capabilities.filter((reference) => reference.kind === "tools").length,
     contextStoreMounts: definition.contextStoreMounts,
     usesApproval: Object.values(definition.toolApprovals).some((mode) => mode !== "none"),
     icon: User,
@@ -156,9 +165,7 @@ export function toPersistedInput(
     scope: expert.scope,
     instructions: expert.instructions || undefined,
     model: expert.model,
-    skills: existing?.skills ?? [],
-    mcpServers: existing?.mcpServers ?? [],
-    toolIds: existing?.toolIds ?? [],
+    capabilities: [...expert.capabilities],
     toolApprovals: existing?.toolApprovals ?? {},
     plugins: existing?.plugins ?? [],
     contextStoreMounts: [...expert.contextStoreMounts],
@@ -173,7 +180,7 @@ export const studioSections = [
   { id: "overview", label: "Overview", icon: SquaresFour },
   { id: "experts", label: "Experts", icon: User },
   { id: "teams", label: "Expert teams", icon: UsersThree },
-  { id: "tools", label: "Tools", icon: Wrench },
+  { id: "capabilities", label: "Capabilities", icon: Wrench },
   { id: "context-stores", label: "Context stores", icon: Database },
 ] as const satisfies readonly {
   readonly id: StudioView;
@@ -184,14 +191,14 @@ export const studioSections = [
 export const studioLabels = {
   experts: "Experts",
   teams: "Expert teams",
-  tools: "Tools",
+  capabilities: "Capabilities",
   "context-stores": "Context stores",
 } satisfies Record<Exclude<StudioView, "overview">, string>;
 
 export const studioDescriptions = {
   experts: "Individuals that perform specialized work in your missions.",
   teams: "Groups of experts that work together toward a mission.",
-  tools: "Reusable tools and capabilities used by experts and teams.",
+  capabilities: "Reusable skills and external tools selected by experts.",
   "context-stores": "Reusable knowledge sources mounted by experts.",
 } satisfies Record<Exclude<StudioView, "overview">, string>;
 
@@ -204,10 +211,7 @@ export const collectionAssets = {
     },
     { name: "Data Platform Team", description: "Designs and operates data systems and pipelines." },
   ],
-  tools: [
-    { name: "Web Search", description: "Search the web for real-time information." },
-    { name: "Data Warehouse", description: "Query and analyze structured data at scale." },
-  ],
+  capabilities: [],
   "context-stores": [],
 } satisfies Record<
   Exclude<StudioView, "overview">,

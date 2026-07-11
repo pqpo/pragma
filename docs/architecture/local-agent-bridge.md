@@ -193,3 +193,5 @@ apps/web -> packages/core
 - renderer：React/Vite 控制台，用于展示设备会话、Runtime Gateway 配置、工作区范围和本地 Runtime 能力占位。
 
 当前实现刻意不包含云端连接、设备绑定、自动更新、daemon 管理或具体 Claude Code / Codex 调用。下一步应先补 `packages/core/src/local-agent-bridge` 协议模块，再让 Desktop App 依赖该协议注册能力并连接 Runtime Gateway。
+
+Desktop Studio 已增加本机 Capability Library。Skill、MCP Server 与 HTTP Service 在 Desktop 中版本化保存，Expert 只引用固定 revision 和明确的 tool 白名单。HTTP Service 由 `@pragma/core` 的 in-process MCP adapter 转换为标准 MCP tools；Capability Library 不改变云端 Runtime Gateway 与 Desktop 主动连接的依赖方向。

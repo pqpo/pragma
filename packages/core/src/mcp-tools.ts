@@ -1,14 +1,14 @@
 import {
   Client,
+  SSEClientTransport,
   StdioClientTransport,
-  StreamableHTTPClientTransport
+  StreamableHTTPClientTransport,
 } from "@modelcontextprotocol/client";
 import type { AuthProvider, Transport } from "@modelcontextprotocol/client";
 import type {
   ExpertAgentManagedTool,
-  IExpertAgentInProcessMcpServer,
   IExpertAgentMcpConfig,
-  IExpertAgentMcpServer
+  IExpertAgentMcpServer,
 } from "@pragma/core";
 
 export interface McpToolRegistry {
@@ -29,12 +29,12 @@ interface McpToolInfo {
 
 interface McpClient {
   readonly listTools: () => Promise<readonly McpToolInfo[]>;
-  readonly callTool: (name: string, args: unknown) => Promise<unknown>;
+  readonly callTool: (name: string, args: unknown, signal?: AbortSignal) => Promise<unknown>;
   readonly dispose: () => Promise<void>;
 }
 
 export async function createMcpToolRegistry(
-  config: IExpertAgentMcpConfig | undefined
+  config: IExpertAgentMcpConfig | undefined,
 ): Promise<McpToolRegistry> {
   if (config === undefined) {
     return emptyMcpToolRegistry();
@@ -61,7 +61,7 @@ export async function createMcpToolRegistry(
 
   return {
     tools,
-    dispose: () => disposeMcpClients(clients)
+    dispose: () => disposeMcpClients(clients),
   };
 }
 
@@ -70,7 +70,7 @@ function emptyMcpToolRegistry(): McpToolRegistry {
     tools: [],
     async dispose() {
       return undefined;
-    }
+    },
   };
 }
 
@@ -78,7 +78,7 @@ function createManagedMcpTool(
   serverId: string,
   server: IExpertAgentMcpServer,
   client: McpClient,
-  mcpTool: McpToolInfo
+  mcpTool: McpToolInfo,
 ): McpManagedTool {
   const managedTool: McpManagedTool = {
     serverId,
@@ -86,21 +86,24 @@ function createManagedMcpTool(
     name: mcpTool.name,
     description: `Call MCP tool ${mcpTool.name}.`,
     inputSchema: {},
-    call: (args) => client.callTool(mcpTool.name, args)
+    ...(server.toolApprovals?.[mcpTool.name] === undefined
+      ? {}
+      : { approval: server.toolApprovals[mcpTool.name] }),
+    call: (args, signal) => client.callTool(mcpTool.name, args, signal),
   };
 
   if (mcpTool.description !== undefined) {
     return {
       ...managedTool,
       description: mcpTool.description,
-      ...(mcpTool.inputSchema === undefined ? {} : { inputSchema: mcpTool.inputSchema })
+      ...(mcpTool.inputSchema === undefined ? {} : { inputSchema: mcpTool.inputSchema }),
     };
   }
 
   if (mcpTool.inputSchema !== undefined) {
     return {
       ...managedTool,
-      inputSchema: mcpTool.inputSchema
+      inputSchema: mcpTool.inputSchema,
     };
   }
 
@@ -108,28 +111,32 @@ function createManagedMcpTool(
 }
 
 async function createOfficialMcpClient(server: IExpertAgentMcpServer): Promise<McpClient> {
-  if (server.inProcess !== undefined) {
+  if (server.transport === "in-process") {
     return createInProcessMcpClient(server);
   }
 
   const sdkClient = new Client(
     {
       name: "pragma-mcp-client",
-      version: "0.0.0"
+      version: "0.0.0",
     },
     {
-      capabilities: {}
-    }
+      capabilities: {},
+    },
   );
   const transport = await createOfficialMcpTransport(server);
-  await withTimeout(sdkClient.connect(transport), server.timeout, `connect MCP server "${server.name}"`);
+  await withTimeout(
+    sdkClient.connect(transport),
+    server.timeout,
+    `connect MCP server "${server.name}"`,
+  );
 
   return {
     async listTools() {
       const result = await withTimeout(
         sdkClient.listTools(),
         server.timeout,
-        `list MCP tools from "${server.name}"`
+        `list MCP tools from "${server.name}"`,
       );
 
       if (isRecord(result) && Array.isArray(result.tools)) {
@@ -138,62 +145,74 @@ async function createOfficialMcpClient(server: IExpertAgentMcpServer): Promise<M
 
       return [];
     },
-    async callTool(name, args) {
+    async callTool(name, args, signal) {
+      signal?.throwIfAborted();
       return withTimeout(
         sdkClient.callTool({
           name,
-          arguments: isRecord(args) ? args : {}
+          arguments: isRecord(args) ? args : {},
         }),
         server.timeout,
-        `call MCP tool "${server.name}.${name}"`
+        `call MCP tool "${server.name}.${name}"`,
       );
     },
     async dispose() {
       await sdkClient.close();
-    }
+    },
   };
 }
 
 function createInProcessMcpClient(server: IExpertAgentMcpServer): McpClient {
-  const inProcessServer = server.inProcess as IExpertAgentInProcessMcpServer;
+  if (server.transport !== "in-process") {
+    throw new Error(`MCP server "${server.name}" is not an in-process server.`);
+  }
+  const inProcessServer = server.inProcess;
 
   return {
     listTools: () =>
       withTimeout(
         inProcessServer.listTools(),
         server.timeout,
-        `list MCP tools from "${server.name}"`
+        `list MCP tools from "${server.name}"`,
       ),
-    callTool: (name, args) =>
+    callTool: (name, args, signal) =>
       withTimeout(
-        inProcessServer.callTool(name, args),
+        inProcessServer.callTool(name, args, signal),
         server.timeout,
-        `call MCP tool "${server.name}.${name}"`
+        `call MCP tool "${server.name}.${name}"`,
       ),
     async dispose() {
       await inProcessServer.dispose?.();
-    }
+    },
   };
 }
 
 async function createOfficialMcpTransport(server: IExpertAgentMcpServer): Promise<Transport> {
-  if (server.command !== undefined) {
+  if (server.transport === "stdio") {
     return new StdioClientTransport({
       command: server.command,
       args: [...(server.args ?? [])],
-      ...(server.env === undefined ? {} : { env: server.env })
+      ...(server.env === undefined ? {} : { env: server.env }),
     });
   }
 
-  if (server.url !== undefined) {
+  if (server.transport === "streamable-http") {
     const authProvider = createBearerTokenAuthProvider(server.token);
 
     return new StreamableHTTPClientTransport(new URL(server.url), {
-      ...(authProvider === undefined ? {} : { authProvider })
+      ...(authProvider === undefined ? {} : { authProvider }),
     });
   }
 
-  throw new Error(`MCP server "${server.name}" requires either command or url.`);
+  if (server.transport === "sse") {
+    const authProvider = createBearerTokenAuthProvider(server.token);
+
+    return new SSEClientTransport(new URL(server.url), {
+      ...(authProvider === undefined ? {} : { authProvider }),
+    });
+  }
+
+  throw new Error(`MCP server "${server.name}" cannot use an in-process transport here.`);
 }
 
 function createBearerTokenAuthProvider(token: string | undefined): AuthProvider | undefined {
@@ -202,13 +221,13 @@ function createBearerTokenAuthProvider(token: string | undefined): AuthProvider 
   }
 
   return {
-    token: async () => token
+    token: async () => token,
   };
 }
 
 function filterMcpTools(
   tools: readonly McpToolInfo[],
-  server: IExpertAgentMcpServer
+  server: IExpertAgentMcpServer,
 ): readonly McpToolInfo[] {
   return tools.filter((tool) => {
     if (server.allowTools !== undefined && !server.allowTools.includes(tool.name)) {
@@ -227,7 +246,7 @@ function normalizeMcpToolInfo(tool: McpToolInfo): McpToolInfo {
   return {
     name: tool.name,
     ...(tool.description === undefined ? {} : { description: tool.description }),
-    ...(tool.inputSchema === undefined ? {} : { inputSchema: tool.inputSchema })
+    ...(tool.inputSchema === undefined ? {} : { inputSchema: tool.inputSchema }),
   };
 }
 
@@ -238,7 +257,7 @@ async function disposeMcpClients(clients: readonly McpClient[]): Promise<void> {
 async function withTimeout<TResult>(
   promise: Promise<TResult>,
   timeout: number | undefined,
-  operation: string
+  operation: string,
 ): Promise<TResult> {
   if (timeout === undefined) {
     return promise;
@@ -253,7 +272,7 @@ async function withTimeout<TResult>(
         timeoutId = setTimeout(() => {
           reject(new Error(`Timed out while trying to ${operation}.`));
         }, timeout);
-      })
+      }),
     ]);
   } finally {
     if (timeoutId !== undefined) {

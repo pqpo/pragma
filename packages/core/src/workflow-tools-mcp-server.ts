@@ -319,6 +319,7 @@ function createWorkflowMcpTools(
 
         return {
           text: formatMcpToolResult(result),
+          ...(isRecord(result) && result["isError"] === true ? { isError: true } : {}),
           details: {
             server: mcpTool.serverName,
             tool: mcpTool.name,
@@ -740,7 +741,9 @@ function formatMcpToolResult(result: unknown): string {
   return typeof result === "string" ? result : JSON.stringify(result, null, 2);
 }
 
-function isAddressInfo(value: ReturnType<ReturnType<typeof createServer>["address"]>): value is AddressInfo {
+function isAddressInfo(
+  value: ReturnType<ReturnType<typeof createServer>["address"]>,
+): value is AddressInfo {
   return typeof value === "object" && value !== null && "port" in value;
 }
 

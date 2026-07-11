@@ -649,6 +649,7 @@ function createExtensibilityPluginEntry(hookEvents: string[]): ExpertAgentPlugin
         mcpServers: {
           pluginMcp: {
             name: "Plugin MCP",
+            transport: "stdio",
             command: "plugin-mcp",
           },
         },

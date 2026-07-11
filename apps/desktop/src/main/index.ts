@@ -4,6 +4,10 @@ import { fileURLToPath } from "node:url";
 import { BrowserWindow, app, ipcMain, safeStorage, shell } from "electron";
 
 import { createBridgeSnapshot } from "./bridge-snapshot.ts";
+import { installCapabilityHandlers } from "./capability-ipc.ts";
+import { createCapabilityCredentialStore } from "./capability-credential-store.ts";
+import { createCapabilityStore } from "./capability-store.ts";
+import { createCapabilityVerifier } from "./capability-verifier.ts";
 import { installContextStoreHandlers } from "./context-store-ipc.ts";
 import { createContextStoreStore } from "./context-store-store.ts";
 import { installExpertDefinitionHandlers } from "./expert-definition-ipc.ts";
@@ -65,25 +69,43 @@ ipcMain.handle("runtimes:availability", () => getRuntimeAvailability());
 installWorkspaceScopeHandlers(() => mainWindow);
 
 void app.whenReady().then(async () => {
+  const encryption = {
+    isAvailable: () => safeStorage.isEncryptionAvailable(),
+    encrypt: (plainText: string) => safeStorage.encryptString(plainText),
+    decrypt: (encrypted: Buffer) => safeStorage.decryptString(encrypted),
+  };
+  const expertStore = createExpertDefinitionStore({
+    expertsPath: join(app.getPath("home"), ".pragma", "experts"),
+  });
+  const capabilityCredentials = createCapabilityCredentialStore({
+    configPath: join(app.getPath("home"), ".pragma", "capability-credentials.json"),
+    encryption,
+  });
+  const capabilityStore = createCapabilityStore({
+    capabilitiesPath: join(app.getPath("home"), ".pragma", "capabilities"),
+    credentials: capabilityCredentials,
+    verify: createCapabilityVerifier(capabilityCredentials),
+    isReferenced: async (capabilityId) => {
+      const definitions = await Promise.all(
+        (await expertStore.list()).map((summary) => expertStore.get(summary.id)),
+      );
+      return definitions.some((expert) =>
+        expert.capabilities.some((reference) => reference.capabilityId === capabilityId),
+      );
+    },
+  });
+  installCapabilityHandlers(capabilityStore, () => mainWindow);
   installContextStoreHandlers(
     createContextStoreStore({
       storesPath: join(app.getPath("home"), ".pragma", "context-stores"),
     }),
     () => mainWindow,
   );
-  installExpertDefinitionHandlers(
-    createExpertDefinitionStore({
-      expertsPath: join(app.getPath("home"), ".pragma", "experts"),
-    }),
-  );
+  installExpertDefinitionHandlers(expertStore);
   installModelProviderHandlers(
     createModelProviderStore({
       configPath: join(app.getPath("home"), ".pragma", "model-providers.json"),
-      encryption: {
-        isAvailable: () => safeStorage.isEncryptionAvailable(),
-        encrypt: (plainText) => safeStorage.encryptString(plainText),
-        decrypt: (encrypted) => safeStorage.decryptString(encrypted),
-      },
+      encryption,
     }),
   );
   await createWindow();

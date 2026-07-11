@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 
 import type {
   ContextStore,
+  Capability,
   ContextNoteEntry,
   CreateContextStore,
   CreateExpertDefinition,
@@ -18,6 +19,7 @@ import {
 } from "./ContextStoreFragment.tsx";
 import { ExpertDetailFragment, ExpertDirectoryFragment } from "./ExpertDirectoryFragment.tsx";
 import { ExpertEditorFragment } from "./ExpertEditorFragment.tsx";
+import { CapabilityDirectoryFragment } from "./CapabilityDirectoryFragment.tsx";
 import { StudioCollectionFragment, StudioOverviewFragment } from "./StudioOverviewFragment.tsx";
 import {
   collectionAssets,
@@ -41,6 +43,7 @@ export function StudioPage() {
   const [modelProviders, setModelProviders] = useState<readonly ModelProvider[]>([]);
   const [runtimes, setRuntimes] = useState<readonly DesktopRuntimeAvailability[]>([]);
   const [contextStores, setContextStores] = useState<readonly ContextStore[]>([]);
+  const [capabilities, setCapabilities] = useState<readonly Capability[]>([]);
   const [contextDrawerOpen, setContextDrawerOpen] = useState(false);
   const [expertError, setExpertError] = useState<string | null>(null);
 
@@ -76,6 +79,14 @@ export function StudioPage() {
       .listContextStores()
       .then((stores) => {
         if (!cancelled) setContextStores(stores);
+      })
+      .catch((loadError: unknown) => {
+        if (!cancelled) setExpertError(errorMessage(loadError));
+      });
+    void api
+      .listCapabilities()
+      .then((items) => {
+        if (!cancelled) setCapabilities(items);
       })
       .catch((loadError: unknown) => {
         if (!cancelled) setExpertError(errorMessage(loadError));
@@ -184,7 +195,9 @@ export function StudioPage() {
                 ? contextStores.length
                 : section.id === "experts"
                   ? experts.length
-                  : collectionAssets[section.id].length;
+                  : section.id === "capabilities"
+                    ? capabilities.length
+                    : collectionAssets[section.id].length;
           return (
             <button
               key={section.id}
@@ -221,6 +234,7 @@ export function StudioPage() {
             modelProviders={modelProviders}
             runtimes={runtimes}
             contextStores={contextStores}
+            capabilities={capabilities}
             onCancel={openDirectory}
             onCreated={saveExpert}
           />
@@ -243,6 +257,27 @@ export function StudioPage() {
             onPickFolder={pickContextStoreFolder}
           />
         ) : null}
+        {screen === "directory" && activeView === "capabilities" ? (
+          <CapabilityDirectoryFragment
+            capabilities={capabilities}
+            onChanged={(capability, removedId) => {
+              if (removedId !== undefined) {
+                setCapabilities((current) =>
+                  current.filter((item) => item.manifest.id !== removedId),
+                );
+                return;
+              }
+              if (capability === undefined) return;
+              setCapabilities((current) =>
+                current.some((item) => item.manifest.id === capability.manifest.id)
+                  ? current.map((item) =>
+                      item.manifest.id === capability.manifest.id ? capability : item,
+                    )
+                  : [capability, ...current],
+              );
+            }}
+          />
+        ) : null}
         {expertError ? (
           <p className="form-error" role="alert">
             {expertError}
@@ -251,13 +286,14 @@ export function StudioPage() {
         {screen === "directory" && activeView === "overview" ? (
           <StudioOverviewFragment
             experts={experts}
+            capabilities={capabilities}
             onNavigate={(view) => {
               setActiveView(view);
               setScreen("directory");
             }}
           />
         ) : null}
-        {screen === "directory" && (activeView === "teams" || activeView === "tools") ? (
+        {screen === "directory" && activeView === "teams" ? (
           <StudioCollectionFragment view={activeView} />
         ) : null}
       </div>

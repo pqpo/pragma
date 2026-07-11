@@ -59,6 +59,7 @@ export function createSdkMcpServer(options: CreateSdkMcpServerOptions): SdkMcpSe
   const clients = new Set<Client>();
   const mcpServer: IExpertAgentMcpServer = {
     name: options.name,
+    transport: "in-process",
     ...(options.timeout === undefined ? {} : { timeout: options.timeout }),
     ...(options.allowTools === undefined ? {} : { allowTools: options.allowTools }),
     ...(options.disallowTools === undefined ? {} : { disallowTools: options.disallowTools }),
@@ -106,7 +107,9 @@ export function createSdkMcpServer(options: CreateSdkMcpServerOptions): SdkMcpSe
       },
     },
     dispose: async () => {
-      await mcpServer.inProcess?.dispose?.();
+      if (mcpServer.transport === "in-process") {
+        await mcpServer.inProcess.dispose?.();
+      }
     },
   };
 }
@@ -146,7 +149,11 @@ async function createInProcessClient(
     await Promise.all([server.connect(transports.server), client.connect(transports.client)]);
   } catch (error) {
     clients.delete(client);
-    await Promise.allSettled([client.close(), transports.client.close(), transports.server.close()]);
+    await Promise.allSettled([
+      client.close(),
+      transports.client.close(),
+      transports.server.close(),
+    ]);
     throw error;
   }
 

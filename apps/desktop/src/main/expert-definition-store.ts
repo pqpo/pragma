@@ -14,7 +14,7 @@ import {
   type UpdateExpertDefinition,
 } from "../shared/desktop-api.ts";
 
-const EXPERT_SCHEMA_VERSION = "pragma.expert/v1";
+const EXPERT_SCHEMA_VERSION = "pragma.expert/v2";
 const MODULE_SCHEMA_VERSION = 1;
 
 export interface ExpertDefinitionStore {
@@ -126,11 +126,10 @@ export function createExpertDefinitionStore(options: {
     const summary = await readSummary(id);
     const revisionPath = join(expertPath(id), "revisions", revisionDirectory(summary.revision));
     try {
-      const [instructions, model, skills, mcpServers, tools, plugins, context] = await Promise.all([
+      const [instructions, model, capabilities, tools, plugins, context] = await Promise.all([
         readFile(join(revisionPath, "instructions.md"), "utf8"),
         readFile(join(revisionPath, "model.json"), "utf8"),
-        readFile(join(revisionPath, "skills.json"), "utf8"),
-        readFile(join(revisionPath, "mcp.json"), "utf8"),
+        readFile(join(revisionPath, "capabilities.json"), "utf8"),
         readFile(join(revisionPath, "tools.json"), "utf8"),
         readFile(join(revisionPath, "plugins.json"), "utf8"),
         readFile(join(revisionPath, "context.json"), "utf8"),
@@ -146,9 +145,11 @@ export function createExpertDefinitionStore(options: {
         ...summary,
         instructions: instructions || undefined,
         model: parsedModel.model,
-        skills: parseModule<ExpertDefinition["skills"]>(skills, "skills.json", "skills"),
-        mcpServers: parseModule<ExpertDefinition["mcpServers"]>(mcpServers, "mcp.json", "servers"),
-        toolIds: parseModule<ExpertDefinition["toolIds"]>(tools, "tools.json", "toolIds"),
+        capabilities: parseModule<ExpertDefinition["capabilities"]>(
+          capabilities,
+          "capabilities.json",
+          "capabilities",
+        ),
         toolApprovals: parseModule<ExpertDefinition["toolApprovals"]>(
           tools,
           "tools.json",
@@ -186,17 +187,12 @@ export function createExpertDefinitionStore(options: {
           schemaVersion: MODULE_SCHEMA_VERSION,
           model: expert.model,
         }),
-        writeJson(join(temporaryPath, "skills.json"), {
+        writeJson(join(temporaryPath, "capabilities.json"), {
           schemaVersion: MODULE_SCHEMA_VERSION,
-          skills: expert.skills,
-        }),
-        writeJson(join(temporaryPath, "mcp.json"), {
-          schemaVersion: MODULE_SCHEMA_VERSION,
-          servers: expert.mcpServers,
+          capabilities: expert.capabilities,
         }),
         writeJson(join(temporaryPath, "tools.json"), {
           schemaVersion: MODULE_SCHEMA_VERSION,
-          toolIds: expert.toolIds,
           approvals: expert.toolApprovals,
         }),
         writeJson(join(temporaryPath, "plugins.json"), {
@@ -253,9 +249,7 @@ export function createExpertDefinitionStore(options: {
         ...parsed,
         instructions: parsed.instructions ?? undefined,
         model: parsed.model ?? null,
-        skills: parsed.skills ?? [],
-        mcpServers: parsed.mcpServers ?? [],
-        toolIds: parsed.toolIds ?? [],
+        capabilities: parsed.capabilities ?? [],
         toolApprovals: parsed.toolApprovals ?? {},
         plugins: parsed.plugins ?? [],
         contextStoreMounts: parsed.contextStoreMounts ?? [],

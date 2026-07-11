@@ -18,10 +18,12 @@
     "clean": "rm -rf out dist"
   },
   "dependencies": {
+    "@pragma/core": "workspace:*",
     "@pragma/runtime-claude-code": "workspace:*",
     "@pragma/runtime-codex": "workspace:*",
     "@pragma/shared": "workspace:*",
     "@phosphor-icons/react": "latest",
+    "fflate": "^0.8.2",
     "react": "latest",
     "react-dom": "latest",
     "zod": "latest"

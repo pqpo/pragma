@@ -3,6 +3,12 @@ import { contextBridge, ipcRenderer } from "electron";
 import {
   DesktopBridgeSnapshotSchema,
   AddContextNoteEntrySchema,
+  CapabilityActionSchema,
+  CapabilityIdSchema,
+  CapabilitySchema,
+  CapabilityTestRequestSchema,
+  CapabilityTestResultSchema,
+  CreateCapabilitySchema,
   DesktopRuntimeAvailabilitySchema,
   ContextStoreSchema,
   CreateExpertDefinitionSchema,
@@ -11,6 +17,7 @@ import {
   ExpertDefinitionSchema,
   ExpertIdSchema,
   ExpertSummarySchema,
+  ImportSkillCapabilitySchema,
   CreateModelProviderSchema,
   DeleteModelProviderSchema,
   ModelConnectionTestRequestSchema,
@@ -19,6 +26,7 @@ import {
   PickWorkspaceResultSchema,
   UpdateModelProviderSchema,
   UpdateExpertDefinitionSchema,
+  UpdateCapabilitySchema,
   ValidateWorkspacePathSchema,
   ValidateWorkspaceResultSchema,
   type PragmaDesktopAPI,
@@ -87,6 +95,40 @@ const api: PragmaDesktopAPI = {
   deleteExpert: async (id) => {
     await ipcRenderer.invoke("experts:delete", DeleteExpertDefinitionSchema.parse({ id }));
   },
+  listCapabilities: async () =>
+    CapabilitySchema.array().parse(await ipcRenderer.invoke("capabilities:list")),
+  getCapability: async (id, revision) =>
+    CapabilitySchema.parse(
+      await ipcRenderer.invoke("capabilities:get", CapabilityIdSchema.parse(id), revision),
+    ),
+  importSkillCapability: async (input) =>
+    CapabilitySchema.parse(
+      await ipcRenderer.invoke(
+        "capabilities:import-skill",
+        ImportSkillCapabilitySchema.parse(input),
+      ),
+    ),
+  createCapability: async (input) =>
+    CapabilitySchema.parse(
+      await ipcRenderer.invoke("capabilities:create", CreateCapabilitySchema.parse(input)),
+    ),
+  updateCapability: async (input) =>
+    CapabilitySchema.parse(
+      await ipcRenderer.invoke("capabilities:update", UpdateCapabilitySchema.parse(input)),
+    ),
+  retryCapability: async (id) =>
+    CapabilitySchema.parse(
+      await ipcRenderer.invoke("capabilities:retry", CapabilityActionSchema.parse({ id })),
+    ),
+  testCapability: async (input) =>
+    CapabilityTestResultSchema.parse(
+      await ipcRenderer.invoke("capabilities:test", CapabilityTestRequestSchema.parse(input)),
+    ),
+  deleteCapability: async (id) => {
+    await ipcRenderer.invoke("capabilities:delete", CapabilityActionSchema.parse({ id }));
+  },
+  pickSkillSource: async () =>
+    PickWorkspaceResultSchema.parse(await ipcRenderer.invoke("capabilities:pick-skill")),
   getRuntimeAvailability: async () =>
     DesktopRuntimeAvailabilitySchema.array().parse(
       await ipcRenderer.invoke("runtimes:availability"),

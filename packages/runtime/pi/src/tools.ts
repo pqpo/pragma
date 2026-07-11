@@ -201,11 +201,14 @@ function createPiMcpTools(
           undefined,
           undefined,
           streamState,
-          async (resolvedParams) => ({
-            text: formatMcpToolResult(
-              await mcpTool.call(resolvedParams, undefined, { toolCallId }),
-            ),
-          }),
+          async (resolvedParams) => {
+            const rawResult = await mcpTool.call(resolvedParams, undefined, { toolCallId });
+            return {
+              text: formatMcpToolResult(rawResult),
+              ...(isRecord(rawResult) && rawResult["isError"] === true ? { isError: true } : {}),
+              details: rawResult,
+            };
+          },
         );
 
         return {
@@ -215,6 +218,7 @@ function createPiMcpTools(
               text: result.text,
             },
           ],
+          isError: result.isError ?? false,
           details: {
             server: mcpTool.serverName,
             tool: mcpTool.name,
@@ -224,6 +228,10 @@ function createPiMcpTools(
       },
     };
   });
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
 }
 
 async function executeWithToolHooks<
