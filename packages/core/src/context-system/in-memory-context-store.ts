@@ -377,7 +377,7 @@ function normalizeSeedContexts(
     withContextRevision({
       id,
       content,
-      metadata: normalizeMetadata(id, { trigger: "model_decision" }),
+      metadata: normalizeMetadata(id, { trigger: "manual" }),
     }),
   );
 }
@@ -387,7 +387,7 @@ function normalizeInputMetadata(
 ): ExpertAgentContextItemMetadata {
   return {
     ...(metadata?.description === undefined ? {} : { description: metadata.description }),
-    trigger: metadata?.trigger ?? "model_decision",
+    trigger: metadata?.trigger ?? "manual",
     ...(metadata?.trustLevel === undefined ? {} : { trustLevel: metadata.trustLevel }),
     ...(metadata?.sensitivity === undefined ? {} : { sensitivity: metadata.sensitivity }),
     priority: metadata?.priority ?? "normal",

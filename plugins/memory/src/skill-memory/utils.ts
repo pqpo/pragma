@@ -64,7 +64,6 @@ export function parseFrontmatterValue(value: string): unknown {
 
 export function parseMetadata(
   frontmatter: Record<string, unknown>,
-  id: string,
 ): ExpertAgentContextItemMetadata {
   return {
     ...(typeof frontmatter["description"] === "string"
@@ -75,7 +74,7 @@ export function parseMetadata(
       frontmatter["trigger"] === "model_decision" ||
       frontmatter["trigger"] === "manual"
         ? frontmatter["trigger"]
-        : defaultTriggerForContextId(id),
+        : "manual",
     ...(isTrustLevel(frontmatter["trustLevel"]) ? { trustLevel: frontmatter["trustLevel"] } : {}),
     ...(isSensitivity(frontmatter["sensitivity"])
       ? { sensitivity: frontmatter["sensitivity"] }
@@ -100,26 +99,6 @@ export function isSensitivity(value: unknown): value is ContextSensitivity {
   return (
     value === "public" || value === "internal" || value === "confidential" || value === "restricted"
   );
-}
-
-export function defaultTriggerForContextId(id: string): ExpertAgentContextItemMetadata["trigger"] {
-  if (id === SUMMARY_CONTEXT_ID) {
-    return "always_on";
-  }
-
-  if (id.startsWith(SKILLS_PREFIX)) {
-    return "model_decision";
-  }
-
-  if (id.startsWith(FACT_MEMORY_PREFIX)) {
-    return "model_decision";
-  }
-
-  if (id.startsWith(EXPERIENCE_MEMORY_PREFIX) || id.startsWith(TASK_MEMORY_PREFIX)) {
-    return "manual";
-  }
-
-  return "manual";
 }
 
 export function validateExpectedRevision(

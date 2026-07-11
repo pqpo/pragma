@@ -4,6 +4,8 @@ import { fileURLToPath } from "node:url";
 import { BrowserWindow, app, ipcMain, safeStorage, shell } from "electron";
 
 import { createBridgeSnapshot } from "./bridge-snapshot.ts";
+import { installContextStoreHandlers } from "./context-store-ipc.ts";
+import { createContextStoreStore } from "./context-store-store.ts";
 import { installExpertDefinitionHandlers } from "./expert-definition-ipc.ts";
 import { createExpertDefinitionStore } from "./expert-definition-store.ts";
 import { installModelProviderHandlers } from "./model-provider-ipc.ts";
@@ -63,6 +65,12 @@ ipcMain.handle("runtimes:availability", () => getRuntimeAvailability());
 installWorkspaceScopeHandlers(() => mainWindow);
 
 void app.whenReady().then(async () => {
+  installContextStoreHandlers(
+    createContextStoreStore({
+      configPath: join(app.getPath("home"), ".pragma", "context-stores.json"),
+    }),
+    () => mainWindow,
+  );
   installExpertDefinitionHandlers(
     createExpertDefinitionStore({
       expertsPath: join(app.getPath("home"), ".pragma", "experts"),

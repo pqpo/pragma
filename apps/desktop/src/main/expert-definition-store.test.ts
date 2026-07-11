@@ -46,7 +46,7 @@ const createInput = {
   toolIds: ["web-search"],
   toolApprovals: { "web-search": "ask" as const },
   plugins: [],
-  contextSources: [],
+  contextStoreMounts: [],
 };
 
 describe("expert definition store", () => {

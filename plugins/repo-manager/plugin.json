@@ -28,8 +28,8 @@
         "type": "string",
         "description": "Controls when repository context is exposed to the model.",
         "required": false,
-        "default": "model_decision",
-        "enum": ["model_decision", "always_on"]
+        "default": "manual",
+        "enum": ["manual", "model_decision", "always_on"]
       },
       {
         "name": "repositories",

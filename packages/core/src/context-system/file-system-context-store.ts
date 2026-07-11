@@ -644,7 +644,7 @@ function validateFileMetadata(
   if (
     isMarkdownId(id) ||
     (metadata.description === undefined &&
-      metadata.trigger === "model_decision" &&
+      metadata.trigger === "manual" &&
       metadata.trustLevel === undefined &&
       metadata.sensitivity === undefined &&
       metadata.priority === "normal")
@@ -874,7 +874,7 @@ function normalizeInputMetadata(
 ): ExpertAgentContextItemMetadata {
   return {
     ...(metadata?.description === undefined ? {} : { description: metadata.description }),
-    trigger: metadata?.trigger ?? "model_decision",
+    trigger: metadata?.trigger ?? "manual",
     ...(metadata?.trustLevel === undefined ? {} : { trustLevel: metadata.trustLevel }),
     ...(metadata?.sensitivity === undefined ? {} : { sensitivity: metadata.sensitivity }),
     priority: metadata?.priority ?? "normal",

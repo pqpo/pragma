@@ -121,10 +121,10 @@ export function createExpertDefinitionStore(options: {
           "approvals",
         ),
         plugins: parseModule<ExpertDefinition["plugins"]>(plugins, "plugins.json", "plugins"),
-        contextSources: parseModule<ExpertDefinition["contextSources"]>(
+        contextStoreMounts: parseModule<ExpertDefinition["contextStoreMounts"]>(
           context,
           "context.json",
-          "sources",
+          "stores",
         ),
       });
     } catch (error) {
@@ -171,7 +171,7 @@ export function createExpertDefinitionStore(options: {
         }),
         writeJson(join(temporaryPath, "context.json"), {
           schemaVersion: MODULE_SCHEMA_VERSION,
-          sources: expert.contextSources,
+          stores: expert.contextStoreMounts,
         }),
       ]);
       await mkdir(revisionsPath, { recursive: true, mode: 0o700 });
@@ -224,7 +224,7 @@ export function createExpertDefinitionStore(options: {
         toolIds: parsed.toolIds ?? [],
         toolApprovals: parsed.toolApprovals ?? {},
         plugins: parsed.plugins ?? [],
-        contextSources: parsed.contextSources ?? [],
+        contextStoreMounts: parsed.contextStoreMounts ?? [],
         revision: 1,
         createdAt: timestamp,
         updatedAt: timestamp,

@@ -42,7 +42,7 @@ export function StudioOverviewFragment(props: {
     teams: collectionAssets.teams,
     tools: collectionAssets.tools,
   } satisfies Record<
-    Exclude<StudioView, "overview">,
+    Exclude<StudioView, "overview" | "context-stores">,
     readonly { name: string; description: string }[]
   >;
 

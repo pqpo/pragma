@@ -102,7 +102,7 @@ class FileSystemSkillMemoryStore implements SkillMemoryStore {
         content: renderSkillRecord(record),
         metadata: {
           description: record.summary ?? record.title ?? `Skill memory for ${record.problemClass}.`,
-          trigger: record.runtime?.trigger ?? "model_decision",
+          trigger: record.runtime?.trigger ?? "manual",
           trustLevel: "workspace",
           sensitivity: "internal",
         },

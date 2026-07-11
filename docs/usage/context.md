@@ -32,9 +32,14 @@ priority: normal
 
 当前支持的 `trigger`：
 
-- `always_on`：每次运行都预加载
-- `model_decision`：默认只进索引，是否读取正文由模型或后续显式读取决定
-- `manual`：默认不自动加载，通常依赖人工或外部策略触发
+- `always_on`：每次运行都预加载正文
+- `model_decision`：Expert 启动时把 context ID 和 description 加入可用索引，但不加载正文
+- `manual`：默认值；不向 system prompt 自动注入 ID、description 或正文
+
+所有 Store 在没有声明 `trigger` 时都必须归一化为 `manual`。模型可以把
+`list_expert_context` 当作 `ls` 发现 ID 和 description，也可以通过
+`search_expert_context` 按路径或正文搜索；知道 ID 后使用 `read_expert_context` 读取正文。
+`ContextSystem` 只为 `model_decision` context 注入 ID 和 description 索引。
 
 - `trigger` 回答“怎么加载”
 - `priority` 支持 `critical`、`high`、`normal`、`low`；高优先级先装配，预算不足时最后截断
@@ -156,7 +161,7 @@ const contextSystem = new ContextSystem({
 运行效果：
 
 - `AGENTS.md` 没有 ID 特判；这里因为 `preloadPaths` 和 `priorityRules` 被作为高优先级上下文装配
-- `index.md` 只是普通 `model_decision` 文档，不会自动预加载
+- `index.md` 是 `model_decision` 文档，启动时只暴露 ID 和 description，不自动预加载正文
 - `profile.md` 和 `safety.md` 会因为 `preloadPaths` 被预加载
 - `archive/**` 会被排除
 
@@ -171,7 +176,8 @@ const contextSystem = new ContextSystem({
 
 - `ContextStore` 决定 ID 的实际含义和授权策略；数据库 Store 可以在查询或事务中使用 run context 做租户与权限裁决。
 - `FileSystemContextStore` 默认发现 Markdown，可通过 `include` / `exclude` 显式开放其他 UTF-8 文本，并拒绝 root 外真实路径和 symlink 逃逸。
-- `systemPromptCharacterBudget` 限制身份和索引字符总量；`preloadByteBudget` 限制全部 preload 正文的 UTF-8 字节总量。
+- 只有 `model_decision` context 的 ID 和 description 自动进入 Agent prompt；其他 context 通过 list/search 发现，通过 read 按 ID 读取。
+- `systemPromptCharacterBudget` 限制身份和 Context System 使用规则；`preloadByteBudget` 限制全部 preload 正文的 UTF-8 字节总量。
 - required Store 索引失败或任何已选 preload 读取失败会终止 session 创建；optional Store 失败进入 Context Snapshot issues。
 - Context 写工具默认需要显式人工审批，Store 授权仍是独立且不可替代的边界。
 

@@ -1,5 +1,6 @@
 import type { Icon } from "@phosphor-icons/react";
 import {
+  Database,
   Robot,
   SquaresFour,
   TerminalWindow,
@@ -15,7 +16,7 @@ import type {
 } from "../../../../shared/desktop-api.ts";
 
 export type ExpertModel = ExpertDefinition["model"];
-export type StudioView = "overview" | "experts" | "teams" | "tools";
+export type StudioView = "overview" | "experts" | "teams" | "tools" | "context-stores";
 
 export type ExpertRecord = {
   readonly id: string;
@@ -29,6 +30,7 @@ export type ExpertRecord = {
   readonly skills: number;
   readonly tools: number;
   readonly mcpServers: number;
+  readonly contextStoreMounts: ExpertDefinition["contextStoreMounts"];
   readonly usesApproval: boolean;
   readonly icon: Icon;
   readonly persisted?: ExpertDefinition | undefined;
@@ -50,6 +52,7 @@ export const initialExperts: readonly ExpertRecord[] = [
     skills: 2,
     tools: 3,
     mcpServers: 1,
+    contextStoreMounts: [],
     usesApproval: true,
     icon: User,
   },
@@ -65,6 +68,7 @@ export const initialExperts: readonly ExpertRecord[] = [
     skills: 1,
     tools: 2,
     mcpServers: 1,
+    contextStoreMounts: [],
     usesApproval: false,
     icon: TerminalWindow,
   },
@@ -80,6 +84,7 @@ export const initialExperts: readonly ExpertRecord[] = [
     skills: 1,
     tools: 2,
     mcpServers: 0,
+    contextStoreMounts: [],
     usesApproval: false,
     icon: Robot,
   },
@@ -95,6 +100,7 @@ export const initialExperts: readonly ExpertRecord[] = [
     skills: 2,
     tools: 3,
     mcpServers: 1,
+    contextStoreMounts: [],
     usesApproval: true,
     icon: TerminalWindow,
   },
@@ -112,6 +118,7 @@ export const emptyDraft = (): ExpertDraft => ({
   skills: 0,
   tools: 0,
   mcpServers: 0,
+  contextStoreMounts: [],
   usesApproval: false,
   tagInput: "",
 });
@@ -129,6 +136,7 @@ export function toExpertRecord(definition: ExpertDefinition): ExpertRecord {
     skills: definition.skills.length,
     tools: definition.toolIds.length,
     mcpServers: definition.mcpServers.length,
+    contextStoreMounts: definition.contextStoreMounts,
     usesApproval: Object.values(definition.toolApprovals).some((mode) => mode !== "none"),
     icon: User,
     persisted: definition,
@@ -153,7 +161,7 @@ export function toPersistedInput(
     toolIds: existing?.toolIds ?? [],
     toolApprovals: existing?.toolApprovals ?? {},
     plugins: existing?.plugins ?? [],
-    contextSources: existing?.contextSources ?? [],
+    contextStoreMounts: [...expert.contextStoreMounts],
   };
 }
 
@@ -166,6 +174,7 @@ export const studioSections = [
   { id: "experts", label: "Experts", icon: User },
   { id: "teams", label: "Expert teams", icon: UsersThree },
   { id: "tools", label: "Tools", icon: Wrench },
+  { id: "context-stores", label: "Context stores", icon: Database },
 ] as const satisfies readonly {
   readonly id: StudioView;
   readonly label: string;
@@ -176,12 +185,14 @@ export const studioLabels = {
   experts: "Experts",
   teams: "Expert teams",
   tools: "Tools",
+  "context-stores": "Context stores",
 } satisfies Record<Exclude<StudioView, "overview">, string>;
 
 export const studioDescriptions = {
   experts: "Individuals that perform specialized work in your missions.",
   teams: "Groups of experts that work together toward a mission.",
   tools: "Reusable tools and capabilities used by experts and teams.",
+  "context-stores": "Reusable knowledge sources mounted by experts.",
 } satisfies Record<Exclude<StudioView, "overview">, string>;
 
 export const collectionAssets = {
@@ -197,6 +208,7 @@ export const collectionAssets = {
     { name: "Web Search", description: "Search the web for real-time information." },
     { name: "Data Warehouse", description: "Query and analyze structured data at scale." },
   ],
+  "context-stores": [],
 } satisfies Record<
   Exclude<StudioView, "overview">,
   readonly { name: string; description: string }[]

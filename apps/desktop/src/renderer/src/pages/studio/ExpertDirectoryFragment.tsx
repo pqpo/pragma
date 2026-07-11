@@ -1,8 +1,10 @@
 import {
   ArrowLeft,
+  BookOpenText,
   CaretDown,
   CaretRight,
   Info,
+  Folder,
   MagnifyingGlass,
   PencilSimple,
   Play,
@@ -10,6 +12,7 @@ import {
 } from "@phosphor-icons/react";
 import { useState } from "react";
 
+import type { ContextStore } from "../../../../shared/desktop-api.ts";
 import type { ExpertRecord } from "./studio-model.ts";
 
 export function ExpertDirectoryFragment(props: {
@@ -96,8 +99,10 @@ export function ExpertDirectoryFragment(props: {
 
 export function ExpertDetailFragment(props: {
   readonly expert: ExpertRecord;
+  readonly contextStores: readonly ContextStore[];
   readonly onBack: () => void;
   readonly onEdit: () => void;
+  readonly onConfigureContext: () => void;
 }) {
   const ExpertIcon = props.expert.icon;
   return (
@@ -163,6 +168,54 @@ export function ExpertDetailFragment(props: {
             {props.expert.mcpServers} MCP server{props.expert.mcpServers === 1 ? "" : "s"}
           </p>
         </div>
+      </section>
+      <section className="expert-context-section" aria-labelledby="expert-context-heading">
+        <header>
+          <div>
+            <h2 id="expert-context-heading">Context</h2>
+            <p>Reusable stores this expert can apply or retrieve at runtime.</p>
+          </div>
+          <button className="secondary-button" type="button" onClick={props.onConfigureContext}>
+            <Plus size={16} /> Configure context
+          </button>
+        </header>
+        {props.expert.contextStoreMounts.length === 0 ? (
+          <p className="expert-context-empty">No context stores mounted.</p>
+        ) : (
+          <div className="expert-context-list">
+            {props.expert.contextStoreMounts.map((mount) => {
+              const store = props.contextStores.find((item) => item.id === mount.storeId);
+              if (!store) return null;
+              const StoreIcon = store.type === "file" ? Folder : BookOpenText;
+              const loadingBehavior =
+                store.type === "file"
+                  ? "From file metadata"
+                  : store.entries.length === 1
+                    ? store.entries[0]!.trigger === "always_on"
+                      ? "Load immediately"
+                      : store.entries[0]!.trigger === "model_decision"
+                        ? "Model decides"
+                        : "On demand"
+                    : "Per note entry";
+              return (
+                <div key={mount.storeId}>
+                  <span className="store-icon">
+                    <StoreIcon size={20} />
+                  </span>
+                  <span>
+                    <strong>{store.name}</strong>
+                    <small>{store.type === "file" ? "File store" : "Context note"}</small>
+                  </span>
+                  <em>{loadingBehavior}</em>
+                  <span className="store-status">
+                    <i className="is-ready" />
+                    {mount.enabled ? "Enabled" : "Disabled"}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </section>
       {props.expert.usesApproval ? (
         <p className="approval-note">

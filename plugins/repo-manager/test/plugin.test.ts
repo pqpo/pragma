@@ -53,7 +53,7 @@ describe("Repo Manager plugin", () => {
     expect(repoManagerPlugin.manifest).toEqual(manifest);
   });
 
-  it("injects repository metadata as a model-decision context by default", async () => {
+  it("registers repository metadata as manual context by default", async () => {
     const pluginSource = await createLoadablePluginSource();
     const contextSystem = new ContextSystem();
     contextSystem.register({
@@ -100,7 +100,7 @@ describe("Repo Manager plugin", () => {
             namespace: "repo-manager",
             id: CODE_REPOSITORY_CONTEXT_ID,
             metadata: expect.objectContaining({
-              trigger: "model_decision",
+              trigger: "manual",
               trustLevel: "external",
               sensitivity: "internal",
             }),
@@ -120,6 +120,14 @@ describe("Repo Manager plugin", () => {
         content: expect.stringContaining('"id": "pragma"'),
       },
     });
+  });
+
+  it("defaults context injection to manual while preserving explicit model-decision mode", () => {
+    expect(parseRepoManagerConfig({}).contextInjection.mode).toBe("manual");
+    expect(
+      parseRepoManagerConfig({ contextInjection: { mode: "model_decision" } }).contextInjection
+        .mode,
+    ).toBe("model_decision");
   });
 
   it("skips repository context when repositories.json is not configured", async () => {

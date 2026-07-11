@@ -1,8 +1,8 @@
 import { z } from "zod";
 
 export const CodeRepositoryContextInjectionModeSchema = z
-  .enum(["model_decision", "always_on"])
-  .default("model_decision");
+  .enum(["manual", "model_decision", "always_on"])
+  .default("manual");
 
 export const CodeRepositoryAuthSchema = z.discriminatedUnion("strategy", [
   z.object({
@@ -68,7 +68,7 @@ export const RepoManagerConfigSchema = z
       .object({
         mode: CodeRepositoryContextInjectionModeSchema,
       })
-      .default({ mode: "model_decision" }),
+      .default({ mode: "manual" }),
     auth: CodeRepositoryAuthSchema.default({ strategy: "none" }),
     repositories: z.array(CodeRepositorySchema).default([]),
   })

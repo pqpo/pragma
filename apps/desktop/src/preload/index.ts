@@ -3,7 +3,9 @@ import { contextBridge, ipcRenderer } from "electron";
 import {
   DesktopBridgeSnapshotSchema,
   DesktopRuntimeAvailabilitySchema,
+  ContextStoreSchema,
   CreateExpertDefinitionSchema,
+  CreateContextStoreSchema,
   DeleteExpertDefinitionSchema,
   ExpertDefinitionSchema,
   ExpertIdSchema,
@@ -50,6 +52,14 @@ const api: PragmaDesktopAPI = {
         ModelConnectionTestRequestSchema.parse(input),
       ),
     ),
+  listContextStores: async () =>
+    ContextStoreSchema.array().parse(await ipcRenderer.invoke("context-stores:list")),
+  createContextStore: async (input) =>
+    ContextStoreSchema.parse(
+      await ipcRenderer.invoke("context-stores:create", CreateContextStoreSchema.parse(input)),
+    ),
+  pickContextStoreFolder: async () =>
+    PickWorkspaceResultSchema.parse(await ipcRenderer.invoke("context-stores:pick-folder")),
   listExperts: async () =>
     ExpertSummarySchema.array().parse(await ipcRenderer.invoke("experts:list")),
   getExpert: async (id) =>

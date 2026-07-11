@@ -523,7 +523,7 @@ function triggerSchema(): unknown {
   return {
     type: "string",
     enum: ["always_on", "model_decision", "manual"],
-    description: "Context trigger. Defaults to model_decision when omitted.",
+    description: "Context trigger. Defaults to manual when omitted.",
   };
 }
 

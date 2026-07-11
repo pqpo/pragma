@@ -245,7 +245,7 @@ function normalizeContextMetadata(
   metadata: Partial<ExpertAgentContextItemMetadata> | undefined,
 ): ExpertAgentContextItemMetadata {
   return {
-    trigger: metadata?.trigger ?? "model_decision",
+    trigger: metadata?.trigger ?? "manual",
     ...(metadata?.description === undefined ? {} : { description: metadata.description }),
     ...(metadata?.trustLevel === undefined ? {} : { trustLevel: metadata.trustLevel }),
     ...(metadata?.sensitivity === undefined ? {} : { sensitivity: metadata.sensitivity }),

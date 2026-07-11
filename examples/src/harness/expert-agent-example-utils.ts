@@ -2,18 +2,12 @@ import { ExpertAgent } from "@pragma/core";
 
 export async function printAgentContextSummary(agent: ExpertAgent): Promise<void> {
   const context = await agent.buildContext();
-  const alwaysOnContexts = context.context.filter(
-    (context) => context.metadata.trigger === "always_on",
-  );
-  const modelDecisionContexts = context.context.filter(
-    (context) => context.metadata.trigger === "model_decision",
-  );
+  const available = await agent.listContext();
 
   console.log("Context preflight:");
-  console.log(`- context: ${context.context.length}`);
-  console.log(`- always_on: ${alwaysOnContexts.map((context) => context.id).join(", ") || "none"}`);
+  console.log(`- available: ${available.ok ? available.value.items.length : "unavailable"}`);
   console.log(
-    `- model_decision: ${modelDecisionContexts.map((context) => context.id).join(", ") || "none"}`,
+    `- preloaded: ${context.snapshot.loadedContexts?.map((item) => item.id).join(", ") || "none"}`,
   );
   console.log(`- retrievedChunks: ${context.snapshot.retrievedChunks.length}`);
   console.log("");

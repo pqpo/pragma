@@ -1,11 +1,19 @@
 import { useEffect, useState } from "react";
 
 import type {
+  ContextStore,
+  CreateContextStore,
   CreateExpertDefinition,
+  ExpertContextStoreMount,
   ModelProvider,
   UpdateExpertDefinition,
 } from "../../../../shared/desktop-api.ts";
+import { ContextStoreSchema } from "../../../../shared/desktop-api.ts";
 import { errorMessage } from "../../lib/errors.ts";
+import {
+  ContextStoreDirectoryFragment,
+  ExpertContextMountDrawer,
+} from "./ContextStoreFragment.tsx";
 import { ExpertDetailFragment, ExpertDirectoryFragment } from "./ExpertDirectoryFragment.tsx";
 import { ExpertEditorFragment } from "./ExpertEditorFragment.tsx";
 import { StudioCollectionFragment, StudioOverviewFragment } from "./StudioOverviewFragment.tsx";
@@ -29,6 +37,8 @@ export function StudioPage() {
   const [selectedExpert, setSelectedExpert] = useState<ExpertRecord>(initialExperts[0]!);
   const [draft, setDraft] = useState<ExpertDraft>(emptyDraft());
   const [modelProviders, setModelProviders] = useState<readonly ModelProvider[]>([]);
+  const [contextStores, setContextStores] = useState<readonly ContextStore[]>([]);
+  const [contextDrawerOpen, setContextDrawerOpen] = useState(false);
   const [expertError, setExpertError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -55,6 +65,14 @@ export function StudioPage() {
       .listModelProviders()
       .then((providers) => {
         if (!cancelled) setModelProviders(providers);
+      })
+      .catch((loadError: unknown) => {
+        if (!cancelled) setExpertError(errorMessage(loadError));
+      });
+    void api
+      .listContextStores()
+      .then((stores) => {
+        if (!cancelled) setContextStores(stores);
       })
       .catch((loadError: unknown) => {
         if (!cancelled) setExpertError(errorMessage(loadError));
@@ -91,6 +109,37 @@ export function StudioPage() {
     setExpertError(null);
     setScreen("detail");
   };
+  const createContextStore = async (input: CreateContextStore): Promise<ContextStore> => {
+    const api = desktopApi();
+    const timestamp = new Date().toISOString();
+    const store =
+      api === undefined
+        ? ContextStoreSchema.parse({
+            schemaVersion: "pragma.context-store/v1",
+            id: crypto.randomUUID(),
+            ...input,
+            status: input.type === "file" ? "configured" : "ready",
+            createdAt: timestamp,
+            updatedAt: timestamp,
+          })
+        : await api.createContextStore(input);
+    setContextStores((current) => [store, ...current]);
+    return store;
+  };
+  const pickContextStoreFolder = async (): Promise<string | undefined> => {
+    const api = desktopApi();
+    if (api === undefined) return undefined;
+    const result = await api.pickContextStoreFolder();
+    if (!result.ok && result.reason !== "cancelled") {
+      throw new Error(result.error ?? "The selected folder is not readable.");
+    }
+    return result.path;
+  };
+  const saveContextMounts = async (mounts: readonly ExpertContextStoreMount[]) => {
+    const updated = { ...selectedExpert, contextStoreMounts: [...mounts] };
+    await saveExpert(updated);
+    setContextDrawerOpen(false);
+  };
 
   return (
     <section className="studio-page">
@@ -101,9 +150,11 @@ export function StudioPage() {
           const count =
             section.id === "overview"
               ? undefined
-              : section.id === "experts"
-                ? experts.length
-                : collectionAssets[section.id].length;
+              : section.id === "context-stores"
+                ? contextStores.length
+                : section.id === "experts"
+                  ? experts.length
+                  : collectionAssets[section.id].length;
           return (
             <button
               key={section.id}
@@ -113,6 +164,7 @@ export function StudioPage() {
               onClick={() => {
                 setActiveView(section.id);
                 setScreen("directory");
+                setContextDrawerOpen(false);
               }}
             >
               <SectionIcon size={20} weight={isActive ? "fill" : "regular"} aria-hidden="true" />
@@ -127,8 +179,10 @@ export function StudioPage() {
         {screen === "detail" ? (
           <ExpertDetailFragment
             expert={selectedExpert}
+            contextStores={contextStores}
             onBack={openDirectory}
             onEdit={() => openCreate(selectedExpert)}
+            onConfigureContext={() => setContextDrawerOpen(true)}
           />
         ) : null}
         {screen === "create" ? (
@@ -149,6 +203,13 @@ export function StudioPage() {
             }}
           />
         ) : null}
+        {screen === "directory" && activeView === "context-stores" ? (
+          <ContextStoreDirectoryFragment
+            stores={contextStores}
+            onCreate={createContextStore}
+            onPickFolder={pickContextStoreFolder}
+          />
+        ) : null}
         {expertError ? (
           <p className="form-error" role="alert">
             {expertError}
@@ -167,6 +228,22 @@ export function StudioPage() {
           <StudioCollectionFragment view={activeView} />
         ) : null}
       </div>
+      {contextDrawerOpen ? (
+        <ExpertContextMountDrawer
+          expertName={selectedExpert.name}
+          stores={contextStores}
+          mounts={selectedExpert.contextStoreMounts}
+          onClose={() => setContextDrawerOpen(false)}
+          onSave={saveContextMounts}
+          onCreateStore={createContextStore}
+          onStoreCreated={(store) =>
+            setContextStores((current) =>
+              current.some((item) => item.id === store.id) ? current : [store, ...current],
+            )
+          }
+          onPickFolder={pickContextStoreFolder}
+        />
+      ) : null}
     </section>
   );
 }

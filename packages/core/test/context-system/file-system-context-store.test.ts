@@ -75,22 +75,10 @@ describe("FileSystemContextStore", () => {
 
     const context = await agent.buildContext();
 
-    expect(context.context).toContainEqual(
-      expect.objectContaining({
-        id: AGENTS_CONTEXT_ID,
-        metadata: {
-          trigger: "model_decision",
-          priority: "critical",
-        },
-      }),
-    );
-    expect(context.systemPrompt).toContain("Available context index");
-    expect(context.systemPrompt).toContain(AGENTS_CONTEXT_ID);
+    expect(context.systemPrompt).not.toContain("Available context index");
+    expect(context.systemPrompt).not.toContain(AGENTS_CONTEXT_ID);
     expect(context.systemPrompt).toContain("Context access rules:");
-    expect(context.systemPrompt).toContain("read_expert_context");
-    expect(context.systemPrompt).toContain("edit_expert_context");
-    expect(context.systemPrompt).toContain("not local filesystem paths");
-    expect(context.systemPrompt).toContain("Do not use shell commands");
+    expect(context.systemPrompt).toContain("Use list_expert_context like a directory listing");
     expect(context.systemPrompt).not.toContain("Use direct instructions.");
     expect(context.systemPrompt).not.toContain("Reference material only");
     expect(context.startupMessages).toEqual([
@@ -101,8 +89,10 @@ describe("FileSystemContextStore", () => {
     ]);
     expect(context.startupMessages[0]?.content).toContain("Always-on reference context");
     expect(context.startupMessages[0]?.content).toContain("Reference material only");
-    expect(context.snapshot.contextRevisions[0]).toMatchObject({
+    expect(context.snapshot.loadedContexts).toContainEqual({
+      namespace: HOST_CONTEXT_NAMESPACE,
       id: AGENTS_CONTEXT_ID,
+      reasons: ["preload_path"],
     });
     expect(context.systemPrompt).not.toContain("AGENTS.md instructions:");
   });
@@ -119,6 +109,10 @@ describe("FileSystemContextStore", () => {
       value: {
         id: AGENTS_CONTEXT_ID,
         content: "Plain instructions.",
+        metadata: {
+          trigger: "manual",
+          priority: "normal",
+        },
       },
     });
   });
@@ -368,7 +362,7 @@ describe("FileSystemContextStore", () => {
       ok([
         {
           id: "notes.txt",
-          metadata: { trigger: "model_decision", priority: "normal" },
+          metadata: { trigger: "manual", priority: "normal" },
           sizeBytes: 12,
         },
       ]),
@@ -501,6 +495,106 @@ describe("FileSystemContextStore", () => {
 });
 
 describe("ContextSystem", () => {
+  it("does not add context access rules when no context is available", async () => {
+    const agent = await ExpertAgent.create({
+      schemaVersion: "pragma.expert/v1",
+      id: "no-context-agent",
+      name: "No Context Agent",
+      description: "Has no context stores.",
+      tags: [],
+      version: "1.0.0",
+      scope: "test",
+      workspace: "/tmp/pragma-no-context-test",
+      contextSystem: new ContextSystem(),
+    });
+
+    const context = await agent.buildContext();
+
+    expect(context.systemPrompt).not.toContain("Context access rules:");
+    expect(context.systemPrompt).not.toContain("Available context index");
+  });
+
+  it("exposes model-decision summaries while keeping manual context tool-discoverable", async () => {
+    const contextSystem = new ContextSystem({
+      store: new InMemoryContextStore({
+        context: [
+          {
+            id: "routing.md",
+            content: "For the archived policy, read context ID policies/archive.md.",
+            metadata: {
+              description: "Routes policy questions to specific context IDs.",
+              trigger: "model_decision",
+            },
+          },
+          {
+            id: "policies/archive.md",
+            content: "Archived policy details.",
+            metadata: {
+              description: "This description must not be exposed automatically.",
+              trigger: "manual",
+            },
+          },
+        ],
+      }),
+    });
+    const agent = await ExpertAgent.create({
+      schemaVersion: "pragma.expert/v1",
+      id: "manual-context-agent",
+      name: "Manual Context Agent",
+      description: "Tests manual context references.",
+      tags: [],
+      version: "1.0.0",
+      scope: "test",
+      workspace: "/tmp/pragma-manual-context-test",
+      contextSystem,
+    });
+
+    const context = await agent.buildContext();
+
+    expect(context.systemPrompt).toContain("routing.md");
+    expect(context.systemPrompt).toContain("Routes policy questions to specific context IDs.");
+    expect(context.systemPrompt).not.toContain(
+      "For the archived policy, read context ID policies/archive.md.",
+    );
+    expect(context.systemPrompt).not.toContain("policies/archive.md");
+    expect(context.startupMessages).toEqual([]);
+    expect(context.systemPrompt).not.toContain(
+      "This description must not be exposed automatically.",
+    );
+    await expect(agent.listContext()).resolves.toMatchObject(
+      ok({
+        items: expect.arrayContaining([
+          expect.objectContaining({
+            id: "policies/archive.md",
+            metadata: expect.objectContaining({
+              description: "This description must not be exposed automatically.",
+            }),
+          }),
+        ]),
+      }),
+    );
+    await expect(
+      contextSystem.search({ query: "Archived policy", scope: "content" }),
+    ).resolves.toMatchObject(
+      ok(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: "policies/archive.md",
+          }),
+        ]),
+      ),
+    );
+    await expect(
+      contextSystem.read({ namespace: HOST_CONTEXT_NAMESPACE, id: "policies/archive.md" }),
+    ).resolves.toMatchObject(
+      ok({
+        id: "policies/archive.md",
+        content: "Archived policy details.",
+        metadata: { trigger: "manual" },
+      }),
+    );
+  });
+
   it("matches glob patterns without letting ? cross path separators", () => {
     expect(matchContextPattern("guides/a/guide.md", "guides/?/guide.md")).toBe(true);
     expect(matchContextPattern("guides/ab/guide.md", "guides/?/guide.md")).toBe(false);
@@ -537,7 +631,7 @@ describe("ContextSystem", () => {
         {
           id: "beta.md",
           metadata: {
-            trigger: "model_decision",
+            trigger: "manual",
           },
         },
       ]),
@@ -685,7 +779,7 @@ describe("ContextSystem", () => {
       id: "instructions.md",
       offset: 32,
     });
-    expect(context.systemPrompt).toContain("instructions.md");
+    expect(context.systemPrompt).not.toContain("instructions.md");
     expect(context.systemPrompt).not.toContain("Alpha");
     expect(context.systemPrompt).not.toContain("Context truncated");
     expect(context.startupMessages[0]?.content).toContain("Alpha");
@@ -710,7 +804,7 @@ describe("ContextSystem", () => {
     });
   }, 10_000);
 
-  it("keeps always-on content out of system prompt and injects it as startup context", async () => {
+  it("keeps always-on ids and content out of the system prompt", async () => {
     const store = new CountingContextStore({
       context: [
         {
@@ -747,24 +841,17 @@ describe("ContextSystem", () => {
       systemPromptCharacterBudget: 1_000,
     });
 
-    expect(context.systemPrompt).toContain("small.md");
+    expect(context.systemPrompt).not.toContain("small.md");
     expect(context.systemPrompt).not.toContain("large.md");
     expect(context.systemPrompt).not.toContain("Keep");
     expect(context.systemPrompt).not.toContain("Drop this large always-on content.");
     expect(context.startupMessages[0]?.content).toContain("Keep");
     expect(context.startupMessages[0]?.content).toContain("Drop this large always-on content.");
-    expect(context.context).not.toContainEqual(
-      expect.objectContaining({
-        id: "large.md",
-        metadata: expect.objectContaining({
-          trigger: "always_on",
-        }),
-      }),
-    );
-    expect(context.snapshot.truncationReason).toBe("context_budget_exceeded");
+    expect(context.snapshot.loadedContexts).toHaveLength(2);
+    expect(context.snapshot.truncationReason).toBeUndefined();
   });
 
-  it("keeps namespaced always-on context indexed when prompt overhead exceeds the budget", async () => {
+  it("rejects prompt budgets smaller than the base prompt with always-on context", async () => {
     const store = new CountingContextStore({
       context: [
         {
@@ -946,6 +1033,10 @@ describe("ContextSystem", () => {
         namespace: HOST_CONTEXT_NAMESPACE,
         id: "large.md",
         content: "large",
+        metadata: {
+          trigger: "manual",
+          priority: "normal",
+        },
       }),
     );
   });
@@ -1277,6 +1368,7 @@ describe("ContextSystem", () => {
           id: "manuals/index.md",
           content: "Summary",
           metadata: {
+            description: "A manual index that must stay hidden.",
             trigger: "manual",
           },
         },
@@ -1324,10 +1416,8 @@ describe("ContextSystem", () => {
       systemPromptCharacterBudget: 2_000,
     });
 
-    expect(context.context.map((item) => item.id)).toEqual([
-      "manuals/index.md",
-      "manuals/profile.md",
-    ]);
+    expect(context.systemPrompt).not.toContain("manuals/index.md");
+    expect(context.systemPrompt).not.toContain("A manual index that must stay hidden.");
     expect(context.startupMessages[0]?.content).toContain("Profile details.");
     expect(context.snapshot.loadedContexts).toContainEqual({
       namespace: HOST_CONTEXT_NAMESPACE,
@@ -1340,7 +1430,7 @@ describe("ContextSystem", () => {
     });
   });
 
-  it("tracks preload reasons from always_on and root preload paths", async () => {
+  it("selects model-decision summaries and explicit preload paths independently", async () => {
     const contextSystem = new ContextSystem({
       store: new InMemoryContextStore({
         context: [
@@ -1385,9 +1475,7 @@ describe("ContextSystem", () => {
       expect.objectContaining({
         namespace: HOST_CONTEXT_NAMESPACE,
         id: "manuals/index.md",
-        metadata: expect.objectContaining({
-          trigger: "model_decision",
-        }),
+        metadata: expect.objectContaining({ trigger: "model_decision" }),
       }),
     );
     expect(selection.preload).toEqual([
@@ -1430,21 +1518,40 @@ describe("ContextSystem", () => {
   it("treats an empty root path as the namespace root", async () => {
     const contextSystem = new ContextSystem({
       store: new InMemoryContextStore({ context: { "guide.md": "Guide" } }),
-      roots: [{ namespace: HOST_CONTEXT_NAMESPACE, path: "" }],
+      roots: [
+        {
+          namespace: HOST_CONTEXT_NAMESPACE,
+          path: "",
+          load: { preloadPaths: ["guide.md"] },
+        },
+      ],
     });
     const indexed = await contextSystem.index();
     expect(indexed.ok).toBe(true);
 
     if (indexed.ok) {
-      expect(contextSystem.selectContext(indexed.value.items).context).toContainEqual(
-        expect.objectContaining({ id: "guide.md" }),
+      expect(contextSystem.selectContext(indexed.value.items).preload).toContainEqual(
+        expect.objectContaining({ id: "guide.md", reasons: ["preload_path"] }),
       );
     }
   });
 
   it("keeps the strongest priority across overlapping roots", async () => {
     const contextSystem = new ContextSystem({
-      store: new InMemoryContextStore({ context: { "docs/guide.md": "Guide" } }),
+      store: new InMemoryContextStore({
+        context: [
+          {
+            id: "docs/guide.md",
+            content: "Guide",
+            metadata: { trigger: "always_on" },
+          },
+          {
+            id: "docs/other.md",
+            content: "Other",
+            metadata: { trigger: "always_on" },
+          },
+        ],
+      }),
       roots: [
         {
           namespace: HOST_CONTEXT_NAMESPACE,
@@ -1465,9 +1572,9 @@ describe("ContextSystem", () => {
     expect(indexed.ok).toBe(true);
 
     if (indexed.ok) {
-      expect(contextSystem.selectContext(indexed.value.items).context[0]?.metadata.priority).toBe(
-        "critical",
-      );
+      expect(
+        contextSystem.selectContext(indexed.value.items).preload.map((item) => item.id),
+      ).toEqual(["docs/guide.md", "docs/other.md"]);
     }
   });
 

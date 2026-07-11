@@ -553,11 +553,9 @@ describe("createClaudeCodeRuntime", () => {
     const systemPrompt = String(fake.args[fake.args.indexOf("--append-system-prompt") + 1]);
 
     expect(systemPrompt).toContain("Context access rules:");
-    expect(systemPrompt).toContain("Available context index");
-    expect(systemPrompt).toContain("id: runtime-runbook.md");
-    expect(systemPrompt).toContain(
-      "Use list_expert_context, read_expert_context, and search_expert_context",
-    );
+    expect(systemPrompt).not.toContain("Available context index");
+    expect(systemPrompt).not.toContain("id: runtime-runbook.md");
+    expect(systemPrompt).toContain("Use list_expert_context like a directory listing");
     expect(readInputContentBlocks(fake.inputs[0])).toEqual([
       expect.objectContaining({
         type: "text",

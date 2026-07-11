@@ -1,3 +1,4 @@
+import { ContextTriggerSchema } from "@pragma/shared";
 import { z } from "zod";
 
 export const DesktopAppInfoSchema = z.object({
@@ -205,6 +206,71 @@ export const ExpertPluginReferenceSchema = z.object({
   config: z.unknown().optional(),
 });
 
+export const ContextStoreIdSchema = z.string().uuid();
+
+export const ContextStoreScopeSchema = z.enum(["personal", "organization"]);
+
+export const ContextNoteEntrySchema = z.object({
+  id: z.string().uuid(),
+  title: z.string().trim().min(1).max(200),
+  description: z.string().trim().min(1).max(2_000),
+  content: z.string().trim().min(1).max(100_000),
+  trigger: ContextTriggerSchema,
+});
+
+const ContextStoreBaseSchema = z.object({
+  schemaVersion: z.literal("pragma.context-store/v1"),
+  id: ContextStoreIdSchema,
+  name: z.string().trim().min(1).max(120),
+  description: z.string().trim().max(2_000),
+  scope: ContextStoreScopeSchema,
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+});
+
+export const FileContextStoreSchema = ContextStoreBaseSchema.extend({
+  type: z.literal("file"),
+  status: z.enum(["configured", "device_offline", "needs_attention"]),
+  source: z.object({
+    path: z.string().trim().min(1).max(2_000),
+    updateBehavior: z.enum(["watch", "manual"]),
+  }),
+});
+
+export const NoteContextStoreSchema = ContextStoreBaseSchema.extend({
+  type: z.literal("note"),
+  status: z.literal("ready"),
+  entries: z.array(ContextNoteEntrySchema).min(1).max(200),
+});
+
+export const ContextStoreSchema = z.discriminatedUnion("type", [
+  FileContextStoreSchema,
+  NoteContextStoreSchema,
+]);
+
+export const CreateContextStoreSchema = z.discriminatedUnion("type", [
+  FileContextStoreSchema.omit({
+    schemaVersion: true,
+    id: true,
+    status: true,
+    createdAt: true,
+    updatedAt: true,
+  }),
+  NoteContextStoreSchema.omit({
+    schemaVersion: true,
+    id: true,
+    status: true,
+    createdAt: true,
+    updatedAt: true,
+  }),
+]);
+
+export const ExpertContextStoreMountSchema = z.object({
+  storeId: ContextStoreIdSchema,
+  enabled: z.boolean(),
+  priority: z.number().int().nonnegative(),
+});
+
 export const ExpertDefinitionSchema = z.object({
   schemaVersion: z.literal("pragma.expert/v1"),
   id: ExpertIdSchema,
@@ -220,7 +286,7 @@ export const ExpertDefinitionSchema = z.object({
   toolIds: z.array(z.string().trim().min(1).max(200)).max(500),
   toolApprovals: z.record(z.string().max(200), ExpertToolApprovalModeSchema),
   plugins: z.array(ExpertPluginReferenceSchema).max(100),
-  contextSources: z.array(z.string().trim().min(1).max(1_000)).max(200),
+  contextStoreMounts: z.array(ExpertContextStoreMountSchema).max(200),
   revision: z.number().int().positive(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
@@ -252,7 +318,7 @@ export const CreateExpertDefinitionSchema = ExpertDefinitionSchema.omit({
   toolIds: z.array(z.string().trim().min(1).max(200)).max(500).optional(),
   toolApprovals: z.record(z.string().max(200), ExpertToolApprovalModeSchema).optional(),
   plugins: z.array(ExpertPluginReferenceSchema).max(100).optional(),
-  contextSources: z.array(z.string().trim().min(1).max(1_000)).max(200).optional(),
+  contextStoreMounts: z.array(ExpertContextStoreMountSchema).max(200).optional(),
 });
 
 export const UpdateExpertDefinitionSchema = CreateExpertDefinitionSchema.omit({ id: true });
@@ -272,6 +338,10 @@ export type UpdateModelProvider = z.infer<typeof UpdateModelProviderSchema>;
 export type DeleteModelProvider = z.infer<typeof DeleteModelProviderSchema>;
 export type ModelConnectionTestRequest = z.infer<typeof ModelConnectionTestRequestSchema>;
 export type ModelConnectionTestResult = z.infer<typeof ModelConnectionTestResultSchema>;
+export type ContextStore = z.infer<typeof ContextStoreSchema>;
+export type CreateContextStore = z.infer<typeof CreateContextStoreSchema>;
+export type ContextNoteEntry = z.infer<typeof ContextNoteEntrySchema>;
+export type ExpertContextStoreMount = z.infer<typeof ExpertContextStoreMountSchema>;
 export type ExpertDefinition = z.infer<typeof ExpertDefinitionSchema>;
 export type ExpertSummary = z.infer<typeof ExpertSummarySchema>;
 export type CreateExpertDefinition = z.infer<typeof CreateExpertDefinitionSchema>;
@@ -286,6 +356,9 @@ export interface PragmaDesktopAPI {
   updateModelProvider: (input: UpdateModelProvider) => Promise<ModelProvider>;
   deleteModelProvider: (input: DeleteModelProvider) => Promise<void>;
   testModelConnection: (input: ModelConnectionTestRequest) => Promise<ModelConnectionTestResult>;
+  listContextStores: () => Promise<ContextStore[]>;
+  createContextStore: (input: CreateContextStore) => Promise<ContextStore>;
+  pickContextStoreFolder: () => Promise<PickWorkspaceResult>;
   listExperts: () => Promise<ExpertSummary[]>;
   getExpert: (id: string) => Promise<ExpertDefinition>;
   createExpert: (input: CreateExpertDefinition) => Promise<ExpertDefinition>;

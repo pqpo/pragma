@@ -22,7 +22,6 @@ import type { SkillMemoryConfig } from "../skill-memory/schema.ts";
 import type { MemorySystem } from "../memory-system/index.ts";
 import { expandHomePath, resolveUserMemoryHome } from "../storage.ts";
 import {
-  defaultTriggerForContextId,
   inferSchemaVersion,
   isAllowedMemoryContextId,
   parseMarkdown,
@@ -140,7 +139,7 @@ export async function readStoredContext(
   const parsed = path.endsWith(JSON_EXTENSION)
     ? { frontmatter: {}, content: raw }
     : parseMarkdown(raw);
-  const metadata = normalizeMetadata(id, parseMetadata(parsed.frontmatter, id));
+  const metadata = normalizeMetadata(id, parseMetadata(parsed.frontmatter));
   const sizeBytes = Buffer.byteLength(parsed.content, "utf8");
   const revision = `${Math.trunc(stats.mtimeMs)}:${stats.size}`;
 
@@ -160,7 +159,7 @@ export function createStoredContext(options: {
   readonly metadata?: Partial<ExpertAgentContextItemMetadata> | undefined;
 }): ExpertAgentStoredContextItem {
   const metadata = normalizeMetadata(options.id, {
-    trigger: defaultTriggerForContextId(options.id),
+    trigger: "manual",
     trustLevel: "workspace",
     sensitivity: "internal",
     ...options.metadata,

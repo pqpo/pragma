@@ -1,9 +1,11 @@
+import type { ContextTrigger as SharedContextTrigger } from "@pragma/shared";
+
 import type { ExpertAgentRunContext } from "../runtime/run-context.ts";
 
 export const AGENTS_CONTEXT_ID = "AGENTS.md";
 export const HOST_CONTEXT_NAMESPACE = "host";
 
-export type ContextTrigger = "always_on" | "model_decision" | "manual";
+export type ContextTrigger = SharedContextTrigger;
 export type ContextPriority = "critical" | "high" | "normal" | "low";
 export type ContextTrustLevel = "system" | "workspace" | "user" | "external";
 export type ContextSensitivity = "public" | "internal" | "confidential" | "restricted";
@@ -417,7 +419,9 @@ export class ContextSystem {
   selectContext(summaries: readonly ExpertAgentContextItemSummary[]): ContextAssemblySelection {
     if (this.roots.length === 0) {
       return {
-        context: sortContextSummaries(summaries),
+        context: sortContextSummaries(
+          summaries.filter((summary) => summary.metadata.trigger === "model_decision"),
+        ),
         preload: createAlwaysOnPreloadSelections(summaries),
         excluded: [],
       };
@@ -459,7 +463,9 @@ export class ContextSystem {
     }
 
     return {
-      context: sortContextSummaries([...allowed.values()]),
+      context: sortContextSummaries(
+        [...allowed.values()].filter((summary) => summary.metadata.trigger === "model_decision"),
+      ),
       preload: sortContextSummaries([...allowed.values()])
         .map((summary) => {
           const key = createContextReferenceKey(summary);
@@ -782,7 +788,7 @@ function normalizeCreateMetadata(
 ): ExpertAgentContextItemMetadata {
   if (metadata === undefined) {
     return {
-      trigger: "model_decision",
+      trigger: "manual",
       priority: "normal",
     };
   }
@@ -832,7 +838,7 @@ export function normalizeTrigger(trigger: ContextTrigger | undefined): ContextTr
     return trigger;
   }
 
-  return "model_decision";
+  return "manual";
 }
 
 export function normalizeSearchInput(

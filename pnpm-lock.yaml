@@ -44,6 +44,9 @@ importers:
       '@pragma/runtime-codex':
         specifier: workspace:*
         version: link:../../packages/runtime/codex
+      '@pragma/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
       react:
         specifier: latest
         version: 19.2.7
