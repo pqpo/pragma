@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { RuntimeSessionRefSchema } from "@pragma/core";
 
 import type {
   ExperienceMemoryRecord,
@@ -9,11 +10,11 @@ import type {
   TaskMemoryRecord,
 } from "./types.ts";
 
-export const TASK_MEMORY_SCHEMA_VERSION = "pragma.memory-task/v1" as const;
-export const EXPERIENCE_MEMORY_SCHEMA_VERSION = "pragma.memory-experience/v1" as const;
+export const TASK_MEMORY_SCHEMA_VERSION = "pragma.memory-task/v2" as const;
+export const EXPERIENCE_MEMORY_SCHEMA_VERSION = "pragma.memory-experience/v2" as const;
 export const FACT_MEMORY_SCHEMA_VERSION = "pragma.memory-fact/v1" as const;
 export const SKILL_MEMORY_SCHEMA_VERSION = "pragma.memory-skill/v1" as const;
-export const MEMORY_EVIDENCE_SCHEMA_VERSION = "pragma.memory-evidence/v1" as const;
+export const MEMORY_EVIDENCE_SCHEMA_VERSION = "pragma.memory-evidence/v2" as const;
 
 const MemoryTypeSchema = z.enum(["task", "experience", "fact", "skill"]);
 const MemoryScopeSchema = z.enum(["run", "session", "agent", "workspace", "organization"]);
@@ -94,7 +95,7 @@ export const TaskMemoryRecordSchema = BaseMemoryRecordSchema.extend({
   ownerAgentId: z.string().min(1).optional(),
   workflowRunId: z.string().min(1),
   taskRunId: z.string().min(1).optional(),
-  runtimeSessionId: z.string().min(1).optional(),
+  runtimeSession: RuntimeSessionRefSchema.optional(),
   kind: z.enum(["decision", "handoff", "note", "todo", "progress", "question"]),
   content: z.string(),
   items: z.array(TaskTodoItemSchema).optional(),
@@ -111,7 +112,7 @@ export const ExperienceMemoryRecordSchema = BaseMemoryRecordSchema.extend({
   content: z.string(),
   workflowRunId: z.string().min(1).optional(),
   taskRunId: z.string().min(1).optional(),
-  runtimeSessionId: z.string().min(1).optional(),
+  runtimeSession: RuntimeSessionRefSchema.optional(),
   status: z.enum(["recorded", "summarized", "promoted"]),
 }).passthrough() satisfies z.ZodType<ExperienceMemoryRecord>;
 
@@ -166,7 +167,7 @@ const MemoryRunEvidencePayloadSchema = z
 const MemoryWorkflowEvidencePayloadSchema = z
   .object({
     workflowRunId: z.string().min(1),
-    runtimeSessionIds: z.array(z.string().min(1)).default([]),
+    runtimeSessions: z.array(RuntimeSessionRefSchema).default([]),
     runIds: z.array(z.string().min(1)).default([]),
     externalContext: z.boolean().default(false),
     runs: z.array(MemoryRunEvidencePayloadSchema).default([]),
@@ -191,7 +192,7 @@ export const MemoryEvidenceRecordSchema = z
     scope: MemoryScopeSchema,
     workflowRunId: z.string().min(1).optional(),
     taskRunId: z.string().min(1).optional(),
-    runtimeSessionId: z.string().min(1).optional(),
+    runtimeSession: RuntimeSessionRefSchema.optional(),
     payload: z.union([
       MemoryTaskArchiveEvidencePayloadSchema,
       MemoryRunEvidencePayloadSchema,

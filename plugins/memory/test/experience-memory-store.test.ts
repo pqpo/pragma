@@ -21,7 +21,7 @@ describe("file-system ExperienceMemoryStore", () => {
         scope: "session",
         workflowRunId: "workflow-1",
         taskRunId: "task-1",
-        runtimeSessionId: "session-1",
+        runtimeSession: { type: "cloud-pi-agent", id: "session-1" },
         kind: "tool",
         content: "Searched packages/core/src/directive and confirmed runtime files.",
         status: "summarized",

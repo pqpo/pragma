@@ -116,7 +116,7 @@ describe("file-system TaskMemoryStore", () => {
         type: "task",
         scope: "session",
         workflowRunId: "workflow-1",
-        runtimeSessionId: "session-1",
+        runtimeSession: { type: "cloud-pi-agent", id: "session-1" },
         visibility: "shared",
         kind: "handoff",
         content: "Schema migration complete. Validation remains.",
@@ -149,7 +149,7 @@ describe("file-system TaskMemoryStore", () => {
         type: "task",
         scope: "session",
         workflowRunId: "workflow-1",
-        runtimeSessionId: "session-1",
+        runtimeSession: { type: "cloud-pi-agent", id: "session-1" },
         visibility: "private",
         ownerAgentId: "agent-a",
         kind: "note",
@@ -185,7 +185,7 @@ describe("file-system TaskMemoryStore", () => {
         type: "task",
         scope: "session",
         workflowRunId: "workflow-1",
-        runtimeSessionId: "session-1",
+        runtimeSession: { type: "cloud-pi-agent", id: "session-1" },
         visibility: "private",
         ownerAgentId: "agent-b",
         kind: "note",
@@ -210,7 +210,7 @@ describe("file-system TaskMemoryStore", () => {
         type: "task",
         scope: "session",
         workflowRunId: "workflow-1",
-        runtimeSessionId: "session-1",
+        runtimeSession: { type: "cloud-pi-agent", id: "session-1" },
         visibility: "shared",
         kind: "todo",
         content: "Release checklist",
@@ -266,7 +266,7 @@ describe("file-system TaskMemoryStore", () => {
         type: "task",
         scope: "session",
         workflowRunId: "workflow-1",
-        runtimeSessionId: "session-1",
+        runtimeSession: { type: "cloud-pi-agent", id: "session-1" },
         visibility: "shared",
         kind: "todo",
         content: "Release checklist",
@@ -329,7 +329,7 @@ describe("file-system TaskMemoryStore", () => {
         type: "task",
         scope: "session",
         workflowRunId: "workflow-1",
-        runtimeSessionId: "session-1",
+        runtimeSession: { type: "cloud-pi-agent", id: "session-1" },
         visibility: "shared",
         kind: "handoff",
         content: "Shared coordination state",
@@ -342,7 +342,7 @@ describe("file-system TaskMemoryStore", () => {
         type: "task",
         scope: "session",
         workflowRunId: "workflow-1",
-        runtimeSessionId: "session-1",
+        runtimeSession: { type: "cloud-pi-agent", id: "session-1" },
         visibility: "private",
         ownerAgentId: "agent-a",
         kind: "note",
@@ -375,7 +375,7 @@ describe("file-system TaskMemoryStore", () => {
         type: "task",
         scope: "session",
         workflowRunId: "workflow-1",
-        runtimeSessionId: "session-1",
+        runtimeSession: { type: "cloud-pi-agent", id: "session-1" },
         taskRunId: "task-1",
         visibility: "private",
         ownerAgentId: "agent-a",
@@ -390,7 +390,7 @@ describe("file-system TaskMemoryStore", () => {
         type: "task",
         scope: "session",
         workflowRunId: "workflow-1",
-        runtimeSessionId: "session-1",
+        runtimeSession: { type: "cloud-pi-agent", id: "session-1" },
         taskRunId: "task-2",
         visibility: "private",
         ownerAgentId: "agent-a",
@@ -403,7 +403,7 @@ describe("file-system TaskMemoryStore", () => {
     const retrieved = await store.retrieveForRuntime({
       agentId: "agent-a",
       workflowRunId: "workflow-1",
-      runtimeSessionId: "session-1",
+      runtimeSession: { type: "cloud-pi-agent", id: "session-1" },
       taskRunId: "task-1",
     });
 
@@ -426,7 +426,7 @@ describe("file-system TaskMemoryStore", () => {
         type: "task",
         scope: "session",
         workflowRunId: "workflow-1",
-        runtimeSessionId: "runtime-session-old",
+        runtimeSession: { type: "cloud-pi-agent", id: "runtime-session-old" },
         visibility: "shared",
         kind: "handoff",
         content: "Workflow state survives runtime session changes",
@@ -437,7 +437,7 @@ describe("file-system TaskMemoryStore", () => {
     const retrieved = await store.retrieveForRuntime({
       agentId: "agent-a",
       workflowRunId: "workflow-1",
-      runtimeSessionId: "runtime-session-new",
+      runtimeSession: { type: "cloud-pi-agent", id: "runtime-session-new" },
     });
 
     expect(retrieved).toEqual(expect.objectContaining({ ok: true }));
@@ -451,6 +451,36 @@ describe("file-system TaskMemoryStore", () => {
     );
   });
 
+  it("distinguishes equal native session ids from different runtime kinds", async () => {
+    const store = await createStore();
+    for (const runtimeType of ["cloud-pi-agent", "codex-local"] as const) {
+      await store.append({
+        actorAgentId: "agent-a",
+        record: {
+          type: "task",
+          scope: "session",
+          workflowRunId: "workflow-1",
+          runtimeSession: { type: runtimeType, id: "session-1" },
+          visibility: "shared",
+          kind: "note",
+          content: runtimeType,
+          status: "active",
+        },
+      });
+    }
+
+    const listed = await store.list({
+      workflowRunId: "workflow-1",
+      actorAgentId: "agent-a",
+      runtimeSession: { type: "codex-local", id: "session-1" },
+    });
+
+    expect(listed).toEqual(expect.objectContaining({ ok: true }));
+    if (listed.ok) {
+      expect(listed.value.map((record) => record.content)).toEqual(["codex-local"]);
+    }
+  });
+
   it("archives entries by task run and removes them from active retrieval", async () => {
     const store = await createStore();
 
@@ -460,7 +490,7 @@ describe("file-system TaskMemoryStore", () => {
         type: "task",
         scope: "session",
         workflowRunId: "workflow-1",
-        runtimeSessionId: "session-1",
+        runtimeSession: { type: "cloud-pi-agent", id: "session-1" },
         taskRunId: "task-1",
         visibility: "shared",
         kind: "progress",
@@ -471,7 +501,7 @@ describe("file-system TaskMemoryStore", () => {
 
     const archived = await store.archive({
       workflowRunId: "workflow-1",
-      runtimeSessionId: "session-1",
+      runtimeSession: { type: "cloud-pi-agent", id: "session-1" },
       taskRunId: "task-1",
       actorAgentId: "agent-a",
     });
@@ -507,7 +537,7 @@ describe("file-system TaskMemoryStore", () => {
     const store = await createStore();
 
     const archived = await store.archive({
-      runtimeSessionId: "runtime-session-1",
+      runtimeSession: { type: "cloud-pi-agent", id: "runtime-session-1" },
       actorAgentId: "agent-a",
     });
 
@@ -532,7 +562,7 @@ describe("file-system TaskMemoryStore", () => {
         type: "task",
         scope: "session",
         workflowRunId: "workflow-1",
-        runtimeSessionId: "session-1",
+        runtimeSession: { type: "cloud-pi-agent", id: "session-1" },
         visibility: "shared",
         kind: "handoff",
         content: "Shared coordination state",
@@ -545,7 +575,7 @@ describe("file-system TaskMemoryStore", () => {
         type: "task",
         scope: "session",
         workflowRunId: "workflow-1",
-        runtimeSessionId: "session-1",
+        runtimeSession: { type: "cloud-pi-agent", id: "session-1" },
         visibility: "private",
         ownerAgentId: "agent-a",
         kind: "note",
@@ -586,7 +616,7 @@ describe("file-system TaskMemoryStore", () => {
         type: "task",
         scope: "session",
         workflowRunId: "workflow-1",
-        runtimeSessionId: "session-1",
+        runtimeSession: { type: "cloud-pi-agent", id: "session-1" },
         visibility: "shared",
         kind: "progress",
         title: "A very long summary should be truncated",
@@ -617,7 +647,7 @@ describe("file-system TaskMemoryStore", () => {
             type: "task",
             scope: "session",
             workflowRunId: "workflow-1",
-            runtimeSessionId: "session-1",
+            runtimeSession: { type: "cloud-pi-agent", id: "session-1" },
             visibility: "shared",
             kind: "progress",
             content: "Legacy records did not persist summary fields.",

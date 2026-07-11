@@ -137,9 +137,9 @@ export function renderTaskSummary(evidence: MemoryRunEvidence): string {
       [
         `${RUNS_EVIDENCE_PREFIX}${evidence.runId}${JSON_EXTENSION}`,
         `workflow:${evidence.workflowRunId}`,
-        ...(evidence.runtimeSessionId === undefined
+        ...(evidence.runtimeSession === undefined
           ? []
-          : [`runtime-session:${evidence.runtimeSessionId}`]),
+          : [`runtime-session:${evidence.runtimeSession.type}:${evidence.runtimeSession.id}`]),
       ],
       "No evidence references recorded.",
     ),

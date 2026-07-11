@@ -106,9 +106,7 @@ export function createClaudeCodeRuntime(
           ctx.persistence.spec?.sessionDir ?? getClaudeCodeSessionDir(ctx.workspace, ctx.agent.id);
         const state: ClaudeCodeRuntimeSessionState = {
           sessionId:
-            ctx.persistence.restoredRuntimeSessionId ??
-            (ctx.request.runtimeSession?.type === descriptor.kind ? ctx.request.runtimeSession.id : "") ??
-            "",
+            ctx.persistence.restoredRuntimeSessionId ?? ctx.request.runtimeSession?.id ?? "",
         };
         const toolRuntimeState: WorkflowToolRuntimeState = {};
         const pluginDir = await materializeClaudeCodePlugin({

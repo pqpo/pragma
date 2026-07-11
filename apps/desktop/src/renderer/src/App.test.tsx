@@ -28,7 +28,7 @@ describe("App", () => {
 
     expect(html).toContain("Missions");
     expect(html).toContain("Studio");
-    expect(html.match(/disabled=""/g)?.length).toBe(3);
+    expect(html.match(/disabled=""/g)?.length).toBe(2);
   });
 
   it("includes an accessible sidebar collapse control", () => {

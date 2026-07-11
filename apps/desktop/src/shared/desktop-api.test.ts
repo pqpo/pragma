@@ -6,6 +6,8 @@ import {
   EXPERT_NAME_MAX_LENGTH,
   EXPERT_TAG_MAX_LENGTH,
   CreateExpertDefinitionSchema,
+  CreateMissionSchema,
+  MissionSchema,
 } from "./desktop-api.ts";
 
 const validInput = {
@@ -37,5 +39,44 @@ describe("expert input limits", () => {
     expect(CreateExpertDefinitionSchema.safeParse({ ...validInput, ...override }).success).toBe(
       false,
     );
+  });
+});
+
+describe("mission contracts", () => {
+  it("accepts single-expert creation and rejects team creation", () => {
+    const input = {
+      workspace: "/workspace/repo",
+      executor: { kind: "expert" as const, id: "expert_01" },
+      goal: "Review the repository",
+    };
+    expect(CreateMissionSchema.safeParse(input).success).toBe(true);
+    expect(
+      CreateMissionSchema.safeParse({
+        ...input,
+        executor: { kind: "expert_team", id: "team_01" },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("keeps expert-team as a readable executor variant", () => {
+    expect(
+      MissionSchema.safeParse({
+        schemaVersion: "pragma.mission/v1",
+        id: "00000000-0000-4000-8000-000000000000",
+        title: "Deliver the feature",
+        goal: "Deliver the feature",
+        workspace: { path: "/workspace/repo", basename: "repo" },
+        executor: {
+          kind: "expert_team",
+          id: "delivery_team",
+          name: "Delivery Team",
+          version: "0.1.0",
+          revision: 1,
+        },
+        lifecycleStatus: "active",
+        createdAt: "2026-07-11T00:00:00.000Z",
+        updatedAt: "2026-07-11T00:00:00.000Z",
+      }).success,
+    ).toBe(true);
   });
 });

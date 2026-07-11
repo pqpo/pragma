@@ -60,9 +60,7 @@ interface CodexDriverSession extends CodexNativeSession {
   readonly workflowToolsMcpServer: CodexWorkflowToolsMcpServer;
 }
 
-export function createCodexRuntime(
-  options: CodexRuntimeAdapterOptions = {},
-): RuntimeAdapter {
+export function createCodexRuntime(options: CodexRuntimeAdapterOptions = {}): RuntimeAdapter {
   const executablePath =
     options.executablePath ??
     (options.spawn === undefined ? resolveCodexExecutablePath(options) : "codex");
@@ -107,74 +105,94 @@ export function createCodexRuntime(
         const toolRuntimeState: CodexWorkflowToolRuntimeState = {};
         const state: CodexRuntimeSessionState = {
           threadId:
-            ctx.persistence.restoredRuntimeSessionId ??
-            (ctx.request.runtimeSession?.type === descriptor.kind ? ctx.request.runtimeSession.id : "") ??
-            "",
+            ctx.persistence.restoredRuntimeSessionId ?? ctx.request.runtimeSession?.id ?? "",
         };
-        const sessionDir = ctx.persistence.spec?.sessionDir ?? getCodexSessionDir(ctx.workspace, ctx.agent.id);
+        const sessionDir =
+          ctx.persistence.spec?.sessionDir ?? getCodexSessionDir(ctx.workspace, ctx.agent.id);
         const codexHome = await prepareManagedCodexHome({
           agent: ctx.agent,
           sessionDir,
           env: options.env,
           logger: ctx.logger,
         });
-        const mcpToolRegistry = await createMcpToolRegistry(ctx.agent.mcp);
-        const workflowToolsMcpServer = await createCodexWorkflowToolsMcpServer({
-          agent: ctx.agent,
-          getContext: () => ctx.lifecycle.currentContext,
-          humanInteractionHandler: ctx.request.humanInteractionHandler,
-          logger: ctx.logger,
-          mcpTools: mcpToolRegistry.tools,
-          state: toolRuntimeState,
-          workflowExecution: ctx.request.workflowExecution,
-        });
-        const client = await CodexAppServerClient.start({
-          executablePath,
-          args: createCodexAppServerArgs(
-            options.appServerArgs ?? ["app-server", "--listen", "stdio://"],
-            workflowToolsMcpServer,
-          ),
-          cwd: ctx.workspace,
-          env: {
-            ...(options.env ?? {}),
-            CODEX_HOME: codexHome,
-          },
-          clientInfo: options.clientInfo ?? DEFAULT_CODEX_CLIENT_INFO,
-          spawn: options.spawn,
-          humanInteractionHandler: ctx.request.humanInteractionHandler,
-          onNotification: notificationBus.publish,
-          onStderr: (chunk) => {
-            ctx.logger.debug("Codex app-server stderr", { chunk });
-          },
-        });
-        const threadStartResult = await startOrResumeThread({
-          client,
-          runtimeSessionId: state.threadId,
-          cwd: ctx.workspace,
-          model: defaultModelName,
-          thinkingLevel: options.defaultThinkingLevel,
-          developerInstructions: ctx.agentContext.systemPrompt,
-          sandboxMode: options.sandboxMode,
-          approvalPolicy: options.approvalPolicy,
-          logger: ctx.logger,
-        });
-        state.threadId = threadStartResult.threadId;
+        let mcpToolRegistry: McpToolRegistry | undefined;
+        let workflowToolsMcpServer: CodexWorkflowToolsMcpServer | undefined;
+        let client: CodexAppServerClient | undefined;
 
-        return {
-          ...createCodexNativeSession({
+        try {
+          mcpToolRegistry = await createMcpToolRegistry(ctx.agent.mcp);
+          workflowToolsMcpServer = await createCodexWorkflowToolsMcpServer({
+            agent: ctx.agent,
+            getContext: () => ctx.lifecycle.currentContext,
+            humanInteractionHandler: ctx.request.humanInteractionHandler,
+            logger: ctx.logger,
+            mcpTools: mcpToolRegistry.tools,
+            state: toolRuntimeState,
+            workflowExecution: ctx.request.workflowExecution,
+          });
+          client = await CodexAppServerClient.start({
+            executablePath,
+            args: createCodexAppServerArgs(
+              options.appServerArgs ?? ["app-server", "--listen", "stdio://"],
+              workflowToolsMcpServer,
+            ),
+            cwd: ctx.workspace,
+            env: {
+              ...(options.env ?? {}),
+              CODEX_HOME: codexHome,
+            },
+            clientInfo: options.clientInfo ?? DEFAULT_CODEX_CLIENT_INFO,
+            spawn: options.spawn,
+            humanInteractionHandler: ctx.request.humanInteractionHandler,
+            onNotification: notificationBus.publish,
+            onStderr: (chunk) => {
+              ctx.logger.debug("Codex app-server stderr", { chunk });
+            },
+          });
+          const threadStartResult = await startOrResumeThread({
             client,
-            notificationBus,
-            state,
-            defaultModelName,
-            defaultThinkingLevel: options.defaultThinkingLevel,
-            codexHome,
-            startupMessages: threadStartResult.startedFreshThread
-              ? ctx.agentContext.startupMessages
-              : [],
-          }),
-          mcpToolRegistry,
-          workflowToolsMcpServer,
-        };
+            runtimeSessionId: state.threadId,
+            cwd: ctx.workspace,
+            model: defaultModelName,
+            thinkingLevel: options.defaultThinkingLevel,
+            developerInstructions: ctx.agentContext.systemPrompt,
+            sandboxMode: options.sandboxMode,
+            approvalPolicy: options.approvalPolicy,
+          });
+          state.threadId = threadStartResult.threadId;
+
+          return {
+            ...createCodexNativeSession({
+              client,
+              notificationBus,
+              state,
+              defaultModelName,
+              defaultThinkingLevel: options.defaultThinkingLevel,
+              codexHome,
+              startupMessages: threadStartResult.startedFreshThread
+                ? ctx.agentContext.startupMessages
+                : [],
+            }),
+            mcpToolRegistry,
+            workflowToolsMcpServer,
+          };
+        } catch (error) {
+          try {
+            await disposeCodexRuntimeResources(
+              client,
+              workflowToolsMcpServer,
+              mcpToolRegistry,
+              ctx.logger,
+            );
+          } catch (cleanupError) {
+            throw new AggregateError(
+              [error, cleanupError],
+              "Codex runtime initialization and cleanup failed.",
+              { cause: cleanupError },
+            );
+          }
+          throw error;
+        }
       },
       readSession(session) {
         return {
@@ -296,7 +314,6 @@ async function startOrResumeThread({
   developerInstructions,
   sandboxMode,
   approvalPolicy,
-  logger,
 }: {
   readonly client: CodexAppServerClient;
   readonly runtimeSessionId: string;
@@ -306,29 +323,21 @@ async function startOrResumeThread({
   readonly developerInstructions?: string | undefined;
   readonly sandboxMode?: string | undefined;
   readonly approvalPolicy?: string | undefined;
-  readonly logger: Pick<ExpertAgentLogger, "warn">;
 }): Promise<{
   readonly threadId: string;
   readonly startedFreshThread: boolean;
 }> {
   if (runtimeSessionId !== "") {
-    try {
-      const threadId = await client.resumeThread(runtimeSessionId, {
-        cwd,
-        model,
-        thinkingLevel,
-        developerInstructions,
-      });
-      return {
-        threadId,
-        startedFreshThread: false,
-      };
-    } catch (error) {
-      logger.warn("Codex thread resume failed; starting a fresh thread", {
-        threadId: runtimeSessionId,
-        error,
-      });
-    }
+    const threadId = await client.resumeThread(runtimeSessionId, {
+      cwd,
+      model,
+      thinkingLevel,
+      developerInstructions,
+    });
+    return {
+      threadId,
+      startedFreshThread: false,
+    };
   }
 
   const threadId = await client.startThread({

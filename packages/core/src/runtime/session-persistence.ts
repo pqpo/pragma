@@ -51,9 +51,11 @@ export interface RuntimeSessionCheckpoint {
   readonly runtimeSession: RuntimeSessionRef;
   readonly workspace: string;
   readonly context?: ExpertAgentRunContext | undefined;
-  readonly local?: {
-    readonly sessionDir?: string | undefined;
-  } | undefined;
+  readonly local?:
+    | {
+        readonly sessionDir?: string | undefined;
+      }
+    | undefined;
   readonly trigger: RuntimeCheckpointTrigger;
   readonly metadata?: Record<string, unknown> | undefined;
 }
@@ -85,10 +87,18 @@ export function createCallbackRuntimeSessionPersistenceProvider(options: {
   return {
     async restore(request) {
       if (
+        request.requestedRuntimeSession !== undefined &&
+        request.requestedRuntimeSession.type !== request.runtime.kind
+      ) {
+        throw new Error(
+          `Runtime session type mismatch: cannot restore ${request.requestedRuntimeSession.type}:${request.requestedRuntimeSession.id} for runtime ${request.runtime.kind}.`,
+        );
+      }
+
+      if (
         options.restoreHandler === undefined ||
         request.requestedRuntimeSession === undefined ||
         request.targetSessionDir === undefined ||
-        request.requestedRuntimeSession.type !== request.runtime.kind ||
         request.requestedRuntimeSession.id === ""
       ) {
         return {};
@@ -109,10 +119,7 @@ export function createCallbackRuntimeSessionPersistenceProvider(options: {
       return { restoredRuntimeSessionId: request.requestedRuntimeSession.id };
     },
     async checkpoint(checkpoint) {
-      if (
-        options.syncCallback === undefined ||
-        checkpoint.local?.sessionDir === undefined
-      ) {
+      if (options.syncCallback === undefined || checkpoint.local?.sessionDir === undefined) {
         return;
       }
 

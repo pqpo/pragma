@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 
-import type { AgentMessage, AgentMessageUsage } from "@pragma/shared";
+import { RuntimeSessionRefSchema, type AgentMessage, type AgentMessageUsage } from "@pragma/shared";
 
 import type { ExpertAgent } from "../agent/expert-agent.ts";
 import type { ExpertAgentContext, ExpertAgentStartupMessage } from "../agent/context-manager.ts";
@@ -262,6 +262,7 @@ async function createManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepar
   const persistenceSpec = driver.resolvePersistence?.(prepareContext);
 
   await assertRuntimeCanUse(driver, descriptor);
+  assertRequestedRuntimeSessionMatches(request.runtimeSession, descriptor);
 
   if (persistenceSpec?.sessionDir !== undefined) {
     await ensureRuntimeSessionDir(persistenceSpec.sessionDir);
@@ -295,10 +296,7 @@ async function createManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepar
 
     const prepared = (await driver.prepare?.(prepareContext)) ?? ({} as TPrepared);
     const agentContext = await agent.buildContext(runContext, request.contextAssembly);
-    let currentRuntimeSessionId =
-      restoredRuntimeSessionId ??
-      (request.runtimeSession?.type === descriptor.kind ? request.runtimeSession.id : "") ??
-      "";
+    let currentRuntimeSessionId = restoredRuntimeSessionId ?? request.runtimeSession?.id ?? "";
 
     const readSessionInfo = (): RuntimeSessionInfo => ({
       systemSessionId,
@@ -436,7 +434,7 @@ async function createManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepar
           systemSessionId,
           runtimeSession: {
             type: descriptor.kind,
-            id: restoredRuntimeSessionId ?? "",
+            id: restoredRuntimeSessionId ?? request.runtimeSession?.id ?? "",
           },
           agentId: agent.id,
           runtime: descriptor,
@@ -448,6 +446,22 @@ async function createManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepar
     }
     throw error;
   }
+}
+
+function assertRequestedRuntimeSessionMatches(
+  runtimeSession: RuntimeSessionRef | undefined,
+  descriptor: RuntimeAdapterDescriptor,
+): void {
+  if (runtimeSession === undefined || runtimeSession.type === descriptor.kind) {
+    if (runtimeSession !== undefined) {
+      RuntimeSessionRefSchema.parse(runtimeSession);
+    }
+    return;
+  }
+
+  throw new Error(
+    `Runtime session type mismatch: cannot resume ${runtimeSession.type}:${runtimeSession.id} with runtime ${descriptor.kind}.`,
+  );
 }
 
 async function assertRuntimeCanUse<TNativeEvent, TNativeSession, TPrepared>(

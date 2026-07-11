@@ -2,6 +2,7 @@ import { useState } from "react";
 
 import { Sidebar, type AppView } from "./components/Sidebar.tsx";
 import { SettingsPage } from "./pages/settings/SettingsPage.tsx";
+import { MissionsPage } from "./pages/missions/MissionsPage.tsx";
 import { StudioPage } from "./pages/studio/StudioPage.tsx";
 
 export function App() {
@@ -17,7 +18,13 @@ export function App() {
         onToggle={() => setSidebarCollapsed((collapsed) => !collapsed)}
       />
 
-      {activeView === "studio" ? <StudioPage /> : <SettingsPage />}
+      {activeView === "missions" ? (
+        <MissionsPage />
+      ) : activeView === "studio" ? (
+        <StudioPage />
+      ) : (
+        <SettingsPage />
+      )}
     </main>
   );
 }

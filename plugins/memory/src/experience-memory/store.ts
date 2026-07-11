@@ -9,6 +9,7 @@ import {
   type MemorySearchInput,
 } from "../memory-system/index.ts";
 import { readJsonFile, resolveMemoryFilePath, writeJsonFile } from "../storage.ts";
+import { sameRuntimeSession } from "../memory-system/runtime-session.ts";
 
 const EXPERIENCE_MEMORY_CATEGORY = "experience-memory";
 const EXPERIENCE_MEMORY_FILE_NAME = "records.json";
@@ -72,8 +73,8 @@ function createExperienceMemoryStore(options: {
           }
 
           if (
-            input.runtimeSessionId !== undefined &&
-            record.runtimeSessionId !== input.runtimeSessionId
+            input.runtimeSession !== undefined &&
+            !sameRuntimeSession(record.runtimeSession, input.runtimeSession)
           ) {
             return false;
           }
@@ -148,8 +149,8 @@ function createExperienceMemoryStore(options: {
       const relevant = matches
         .filter(({ record }) => {
           if (
-            input.runtimeSessionId !== undefined &&
-            record.runtimeSessionId === input.runtimeSessionId
+            input.runtimeSession !== undefined &&
+            sameRuntimeSession(record.runtimeSession, input.runtimeSession)
           ) {
             return true;
           }
@@ -290,7 +291,8 @@ function toExperienceSearchText(record: ExperienceMemoryRecord): string {
     record.kind,
     record.workflowRunId,
     record.taskRunId,
-    record.runtimeSessionId,
+    record.runtimeSession?.type,
+    record.runtimeSession?.id,
   ]
     .filter((value): value is string => typeof value === "string")
     .join("\n")

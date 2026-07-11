@@ -5,6 +5,7 @@ import type {
 } from "../agent/expert-agent.ts";
 import type { ContextAssemblerOptions } from "../agent/context-manager.ts";
 import type { AgentMessage, RuntimeSessionRef as SharedRuntimeSessionRef } from "@pragma/shared";
+export { RuntimeSessionRefSchema } from "@pragma/shared";
 import type { z } from "zod";
 import type { ExpertAgentLoggerProvider } from "../logging/logger.ts";
 import type { RunState, SessionState } from "./agent-lifecycle.ts";
@@ -100,6 +101,7 @@ export interface RuntimeCreateSessionRequest {
   readonly humanInteractionHandler?: ExpertAgentHumanInteractionHandler | undefined;
   readonly models?: readonly IExpertAgentModelProviderConfig[] | undefined;
   readonly systemSessionId?: string | undefined;
+  /** Omit to create a fresh runtime session. When provided, the referenced session must resume. */
   readonly runtimeSession?: RuntimeSessionRef | undefined;
   readonly loggerProvider?: ExpertAgentLoggerProvider | undefined;
 }

@@ -33,7 +33,7 @@ describe("task-memory tools", () => {
         },
         attributes: {
           "execution.workflowRunId": "workflow-1",
-          "execution.runtimeSessionId": "session-1",
+          "execution.runtimeSession": { type: "cloud-pi-agent", id: "session-1" },
           "execution.taskRunId": "task-1",
         },
       },
@@ -73,7 +73,7 @@ describe("task-memory tools", () => {
           },
           attributes: {
             "execution.workflowRunId": "workflow-2",
-            "execution.runtimeSessionId": "session-1",
+            "execution.runtimeSession": { type: "cloud-pi-agent", id: "session-1" },
           },
         },
       },
@@ -141,7 +141,7 @@ describe("task-memory tools", () => {
         }),
       ],
     });
-    expect(listed.ok && "runtimeSessionId" in listed.value[0]!).toBe(false);
+    expect(listed.ok && "runtimeSession" in listed.value[0]!).toBe(false);
   });
 
   it("lets append task memory override runtime session provenance explicitly", async () => {
@@ -159,7 +159,7 @@ describe("task-memory tools", () => {
         visibility: "shared",
         kind: "note",
         content: "Explicit runtime session provenance",
-        runtimeSessionId: "session-explicit",
+        runtimeSession: { type: "cloud-pi-agent", id: "session-explicit" },
       },
       undefined,
       {
@@ -169,7 +169,7 @@ describe("task-memory tools", () => {
           },
           attributes: {
             "execution.workflowRunId": "workflow-2",
-            "execution.runtimeSessionId": "session-context",
+            "execution.runtimeSession": { type: "cloud-pi-agent", id: "session-context" },
           },
         },
       },
@@ -185,7 +185,7 @@ describe("task-memory tools", () => {
       ok: true,
       value: [
         expect.objectContaining({
-          runtimeSessionId: "session-explicit",
+          runtimeSession: { type: "cloud-pi-agent", id: "session-explicit" },
         }),
       ],
     });
@@ -199,7 +199,7 @@ describe("task-memory tools", () => {
         type: "task",
         scope: "session",
         workflowRunId: "workflow-2",
-        runtimeSessionId: "session-1",
+        runtimeSession: { type: "cloud-pi-agent", id: "session-1" },
         visibility: "private",
         ownerAgentId: "specialist-agent",
         kind: "note",
@@ -231,7 +231,7 @@ describe("task-memory tools", () => {
         type: "task",
         scope: "session",
         workflowRunId: "workflow-2",
-        runtimeSessionId: "session-1",
+        runtimeSession: { type: "cloud-pi-agent", id: "session-1" },
         visibility: "shared",
         kind: "todo",
         content: "Existing content",
@@ -289,7 +289,7 @@ describe("task-memory tools", () => {
             },
             attributes: {
               "execution.workflowRunId": "workflow-2",
-              "execution.runtimeSessionId": "session-1",
+              "execution.runtimeSession": { type: "cloud-pi-agent", id: "session-1" },
             },
           },
         },
@@ -333,7 +333,7 @@ describe("task-memory tools", () => {
           },
           attributes: {
             "execution.workflowRunId": "workflow-1",
-            "execution.runtimeSessionId": "session-1",
+            "execution.runtimeSession": { type: "cloud-pi-agent", id: "session-1" },
           },
         },
       },
@@ -351,7 +351,7 @@ describe("task-memory tools", () => {
           },
           attributes: {
             "execution.workflowRunId": "workflow-1",
-            "execution.runtimeSessionId": "session-1",
+            "execution.runtimeSession": { type: "cloud-pi-agent", id: "session-1" },
           },
         },
       },

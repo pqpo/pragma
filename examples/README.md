@@ -40,7 +40,7 @@ pnpm --filter @pragma/examples dev src/run-expert-agent.ts "用三句话说明 E
 pnpm --filter @pragma/examples dev src/run-expert-agent.ts --turn "记住：我的项目代号是 mesh-alpha" --turn "我刚才说的项目代号是什么？"
 ```
 
-运行时会打印 `runtimeSessionId`。复制这个 id 后，可以在下一次运行中恢复 runtime session：
+运行时会打印 `runtimeSessionId`。这个 PI 专用 CLI 会把输入的 id 包装成 `{ type: "cloud-pi-agent", id }`；跨进程持久化应保存完整的 `RuntimeSessionRef`：
 
 ```bash
 pnpm --filter @pragma/examples dev src/run-expert-agent.ts --runtime-session-id <runtime-session-id> --turn "继续上一次会话，我刚才让你记住了什么？"
@@ -87,7 +87,7 @@ pnpm --filter @pragma/examples dev src/run-codex-runtime-agent.ts \
   --turn "我刚才在测试什么？"
 ```
 
-运行时会打印 `runtimeSessionId`，它对应 Codex thread id。下一次可以恢复：
+运行时会打印 `runtimeSessionId`，它对应 Codex thread id。这个 Codex 专用 CLI 会把输入包装成 `{ type: "codex-local", id }`；持久化时应保存完整 Ref。下一次可以恢复：
 
 ```bash
 pnpm --filter @pragma/examples dev src/run-codex-runtime-agent.ts \
@@ -142,7 +142,7 @@ pnpm --filter @pragma/examples dev src/run-claude-code-runtime-agent.ts \
   --turn "我刚才在测试什么？"
 ```
 
-运行时会打印 `runtimeSessionId`，下一次可以恢复：
+运行时会打印 `runtimeSessionId`。这个 Claude Code 专用 CLI 会把输入包装成 `{ type: "claude-code-local", id }`；持久化时应保存完整 Ref。下一次可以恢复：
 
 ```bash
 pnpm --filter @pragma/examples dev src/run-claude-code-runtime-agent.ts \
@@ -194,7 +194,7 @@ pnpm --filter @pragma/examples dev src/run-session-storage-example.ts
 2. 发送第一轮聊天，让模型记住项目代号和目标。
 3. 通过 `sessionSyncCallback` 把 `.pragma/runtime-sessions/pi/<agent-id>` 同步到 `workspace/session-storage-example/long-term-session-storage`。
 4. 切换到 `workspace/session-storage-example/workspace-b`。
-5. 使用同一个 `runtimeSessionId` 创建新会话，并通过 `sessionRestoreHandler` 把长期存储恢复到新 workspace 的 session 目录。
+5. 使用同一个 `RuntimeSessionRef` 恢复会话，并通过 `sessionRestoreHandler` 把长期存储恢复到新 workspace 的 session 目录。
 6. 再发送一轮聊天，让模型总结上轮会话。
 7. 关闭恢复后的会话时再次同步，模拟后续更新写回长期存储。
 
@@ -242,7 +242,7 @@ pnpm --filter @pragma/examples dev src/run-resumable-tool-approval.ts --reset --
 2. 使用 `createPiRuntime()` 执行 Agent，并用 `createFileHumanInteractionStore()` 保存 pending approval。
 3. 用 `createDurableHumanInteractionHandler()` 包装 CLI handler。
 4. 未传 query 时用公共 `createConsoleChat()` harness 等待控制台输入，不会默认提交任务；输入 `/exit` 或 `/quit` 退出。
-5. PI runtime 保存聊天记录；示例保存 `workflowId` 到 PI session 的映射和当前 turn 状态。
+5. PI runtime 保存聊天记录；示例保存 `workflowId` 到完整 `RuntimeSessionRef` 的映射和当前 turn 状态。
 6. 手动要求 Agent 调用 `deploy_preview`，在 `Approve? [y/N]` 时按 `Ctrl-C` 模拟应用关闭。
 7. 第二次启动时按 `workflowId` 或 `sessionId` 找回 PI session。PI 重新生成同一逻辑工具调用时，即使 `toolCallId` 改变，也会命中原 pending approval。
 8. 输入 `y` 后继续执行工具；approval 会被 resolve 并从 pending store 清除，当前 turn 完成后 workflow 回到 ready。
@@ -260,7 +260,7 @@ pnpm --filter @pragma/examples dev src/run-resumable-tool-approval.ts --workflow
 pnpm --filter @pragma/examples dev src/run-resumable-tool-approval.ts --session-id <session-id>
 ```
 
-示例入口是 `src/run-resumable-tool-approval.ts`。runtime transcript 由 PI runtime 保存；示例另存一份轻量 workflow state，用于映射 PI session 和跟踪当前 turn。控制台 chat 循环封装在 `src/harness/console-chat.ts`，其他 example 可以复用。pending approval 的持久化、逻辑去重、resolve 和 clear 由 `createDurableHumanInteractionHandler()` 与 `HumanInteractionStore` 负责。真实产品接入时，应把 workflow state 和 `HumanInteractionStore` 换成数据库实现，并把 `scope` 绑定到租户、用户、workflow/run 和 runtime session。
+示例入口是 `src/run-resumable-tool-approval.ts`。runtime transcript 由 PI runtime 保存；示例另存一份轻量 workflow state，用于映射完整的 PI `RuntimeSessionRef` 和跟踪当前 turn。首次启动不传 `runtimeSession`，创建成功后才保存 Ref；恢复时传入保存的 Ref，恢复失败会直接报错。控制台 chat 循环封装在 `src/harness/console-chat.ts`，其他 example 可以复用。pending approval 的持久化、逻辑去重、resolve 和 clear 由 `createDurableHumanInteractionHandler()` 与 `HumanInteractionStore` 负责。真实产品接入时，应把 workflow state 和 `HumanInteractionStore` 换成数据库实现，并把 `scope` 绑定到租户、用户、workflow/run 和 runtime session 类型。
 
 ## 运行上下文示例
 

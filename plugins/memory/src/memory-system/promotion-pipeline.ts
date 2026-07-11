@@ -20,8 +20,12 @@ import {
 export function createDefaultMemoryDistillationPipeline(): MemoryDistillationPipeline {
   return {
     async distill(input) {
-      const experiences = input.evidence.flatMap((record) => proposeExperiencesFromEvidence(record));
-      const facts = experiences.flatMap((candidate) => proposeFactsFromExperience(candidate.record));
+      const experiences = input.evidence.flatMap((record) =>
+        proposeExperiencesFromEvidence(record),
+      );
+      const facts = experiences.flatMap((candidate) =>
+        proposeFactsFromExperience(candidate.record),
+      );
       const skills = input.evidence.flatMap((record) => proposeSkillsFromEvidence(record));
 
       return okMemory({
@@ -78,7 +82,7 @@ function proposeExperiencesFromEvidence(
         ]),
         workflowRunId: record.workflowRunId,
         taskRunId: record.taskRunId,
-        runtimeSessionId: record.runtimeSessionId,
+        runtimeSession: record.runtimeSession,
         kind: "workflow",
         content,
         status: "summarized",
@@ -118,7 +122,7 @@ function toExperienceFromTask(record: TaskMemoryRecord): ExperienceMemoryRecord 
     ]),
     workflowRunId: record.workflowRunId,
     taskRunId: record.taskRunId,
-    runtimeSessionId: record.runtimeSessionId,
+    runtimeSession: record.runtimeSession,
     kind: chooseExperienceKind(record),
     content: record.content,
     status: "summarized",
@@ -143,7 +147,9 @@ function toWorkflowExperienceContent(payload: MemoryWorkflowEvidencePayload): st
   const runLines = payload.runs.map((run, index) => {
     const prefix = `Run ${index + 1}: ${run.query}`;
     if (run.status === "succeeded") {
-      return run.outputExcerpt === undefined ? `${prefix}. Succeeded.` : `${prefix}. ${run.outputExcerpt}`;
+      return run.outputExcerpt === undefined
+        ? `${prefix}. Succeeded.`
+        : `${prefix}. ${run.outputExcerpt}`;
     }
 
     if (run.status === "cancelled") {
@@ -199,7 +205,9 @@ function proposeFactsFromExperience(
     "belongs to",
   ];
 
-  if (!stableSignals.some((signal) => lowerContent.includes(signal) || lowerSummary.includes(signal))) {
+  if (
+    !stableSignals.some((signal) => lowerContent.includes(signal) || lowerSummary.includes(signal))
+  ) {
     return [];
   }
 
@@ -274,15 +282,9 @@ function proposeSkillsFromEvidence(
         .map((tool) => `${tool.toolName} can fail if retried without a clearer path.`),
     ),
   );
-  const recoveryPlaybook = dedupeStrings(
-    payload.runs.flatMap((run) => deriveDefaultFixes(run)),
-  );
-  const goodPractices = dedupeStrings(
-    payload.runs.flatMap((run) => derivePositivePractices(run)),
-  );
-  const antiPatterns = dedupeStrings(
-    payload.runs.flatMap((run) => deriveAntiPatterns(run)),
-  );
+  const recoveryPlaybook = dedupeStrings(payload.runs.flatMap((run) => deriveDefaultFixes(run)));
+  const goodPractices = dedupeStrings(payload.runs.flatMap((run) => derivePositivePractices(run)));
+  const antiPatterns = dedupeStrings(payload.runs.flatMap((run) => deriveAntiPatterns(run)));
   const skillId = deriveSkillIdFromQueries(payload.runs.map((run) => run.query));
 
   if (
@@ -336,7 +338,11 @@ function inferFactScope(record: ExperienceMemoryRecord): FactMemoryRecord["scope
 }
 
 function inferFactConfidence(record: ExperienceMemoryRecord): FactMemoryRecord["confidence"] {
-  if (record.provenance.evidence.some((evidence) => evidence.type === "external" || evidence.type === "context")) {
+  if (
+    record.provenance.evidence.some(
+      (evidence) => evidence.type === "external" || evidence.type === "context",
+    )
+  ) {
     return "verified";
   }
 

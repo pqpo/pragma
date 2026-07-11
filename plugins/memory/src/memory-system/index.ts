@@ -3,3 +3,4 @@ export * from "./schema.ts";
 export * from "./memory-system.ts";
 export * from "./promotion-pipeline.ts";
 export * from "./summary.ts";
+export * from "./runtime-session.ts";

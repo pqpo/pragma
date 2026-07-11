@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { RuntimeSessionRefSchema } from "@pragma/core";
 
 export const SkillMemoryConfigSchema = z.object({
   enabled: z.boolean().default(true),
@@ -34,11 +35,11 @@ export const MemoryToolCallEvidenceSchema = z.object({
 export const MemoryRunEvidenceSchema = z
   .object({
     schemaVersion: z
-      .literal("pragma.memory-run-evidence/v1")
-      .default("pragma.memory-run-evidence/v1"),
+      .literal("pragma.memory-run-evidence/v2")
+      .default("pragma.memory-run-evidence/v2"),
     agentId: z.string().min(1),
     workflowRunId: z.string().min(1),
-    runtimeSessionId: z.string().min(1).optional(),
+    runtimeSession: RuntimeSessionRefSchema.optional(),
     runId: z.string().min(1),
     query: z.string().min(1),
     status: z.enum(["succeeded", "failed", "cancelled", "running"]).default("running"),
@@ -49,8 +50,7 @@ export const MemoryRunEvidenceSchema = z
     lessons: z.array(z.string().min(1)).default([]),
     source: z
       .object({
-        runtimeKind: z.string().min(1).optional(),
-        runtimeSessionId: z.string().min(1).optional(),
+        runtimeSession: RuntimeSessionRefSchema.optional(),
       })
       .default({}),
     createdAt: z.string().min(1),
@@ -62,11 +62,11 @@ export const MemoryRunEvidenceSchema = z
 export const MemoryWorkflowEvidenceSchema = z
   .object({
     schemaVersion: z
-      .literal("pragma.memory-workflow-evidence/v1")
-      .default("pragma.memory-workflow-evidence/v1"),
+      .literal("pragma.memory-workflow-evidence/v2")
+      .default("pragma.memory-workflow-evidence/v2"),
     agentId: z.string().min(1),
     workflowRunId: z.string().min(1),
-    runtimeSessionIds: z.array(z.string().min(1)).default([]),
+    runtimeSessions: z.array(RuntimeSessionRefSchema).default([]),
     runIds: z.array(z.string().min(1)).default([]),
     externalContext: z.boolean().default(false),
     consolidationState: z.enum(["pending", "summarized", "skills_updated"]).default("pending"),

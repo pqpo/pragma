@@ -5,6 +5,7 @@ import {
   type MemoryEvidenceRecord,
   type MemoryEvidenceStore,
 } from "../memory-system/index.ts";
+import { sameRuntimeSession } from "../memory-system/runtime-session.ts";
 import { DISTILLATION_EVIDENCE_PREFIX, JSON_EXTENSION } from "../context-projection/constants.ts";
 import { resolveConfig } from "../skill-memory/config.ts";
 import {
@@ -47,8 +48,8 @@ export function createFileSystemMemoryEvidenceStore(
           }
 
           if (
-            input.runtimeSessionId !== undefined &&
-            record.runtimeSessionId !== input.runtimeSessionId
+            input.runtimeSession !== undefined &&
+            !sameRuntimeSession(record.runtimeSession, input.runtimeSession)
           ) {
             return false;
           }
@@ -75,7 +76,10 @@ export function createFileSystemMemoryEvidenceStore(
       const rootDir = await resolveRootDir();
       const record = parseMemoryEvidenceRecord(input.record);
       const id = toContextId(record.id);
-      await writeJson(resolveContextPath(rootDir, id), record as unknown as Record<string, unknown>);
+      await writeJson(
+        resolveContextPath(rootDir, id),
+        record as unknown as Record<string, unknown>,
+      );
       return okMemory(record);
     },
   };

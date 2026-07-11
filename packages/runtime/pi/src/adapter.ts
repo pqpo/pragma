@@ -44,9 +44,7 @@ interface PiDriverSession extends PiNativeSession {
   readonly mcpToolRegistry: McpToolRegistry;
 }
 
-export function createPiRuntime(
-  options: CloudPiRuntimeAdapterOptions = {},
-): RuntimeAdapter {
+export function createPiRuntime(options: CloudPiRuntimeAdapterOptions = {}): RuntimeAdapter {
   const descriptor = {
     ...CLOUD_PI_RUNTIME_DESCRIPTOR,
     ...options.descriptor,
@@ -68,12 +66,7 @@ export function createPiRuntime(
           sessionDir: getPiSessionDir(ctx.workspace, ctx.agent.id),
           watch: true,
           debounceMs: options.sessionSyncDebounceMs,
-          checkpointOn: [
-            "session.created",
-            "turn.completed",
-            "session.destroyed",
-            "files.changed",
-          ],
+          checkpointOn: ["session.created", "turn.completed", "session.destroyed", "files.changed"],
           metadata: {
             format: "pi-agent-session-dir",
           },
@@ -106,8 +99,7 @@ export function createPiRuntime(
         const piSessionManagerResult = await createPiSessionManager(
           cwd,
           ctx.agent.id,
-          ctx.request.runtimeSession,
-          descriptor.kind,
+          ctx.request.runtimeSession?.id,
         );
         const sessionOptions: CreateAgentSessionOptions = {
           cwd,

@@ -1,6 +1,5 @@
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import type { SessionInfo } from "@earendil-works/pi-coding-agent";
-import type { RuntimeAdapterKind, RuntimeSessionRef } from "@pragma/core";
 import { join } from "node:path";
 
 const PI_SESSION_DIR = ".pragma/runtime-sessions/pi";
@@ -13,20 +12,18 @@ export interface PiSessionManagerResult {
 export async function createPiSessionManager(
   cwd: string,
   agentId: string,
-  runtimeSession: RuntimeSessionRef | undefined,
-  expectedRuntimeSessionType: RuntimeAdapterKind,
+  runtimeSessionId: string | undefined,
 ): Promise<PiSessionManagerResult> {
   const sessionDir = getPiSessionDir(cwd, agentId);
 
-  if (runtimeSession === undefined || runtimeSession.type !== expectedRuntimeSessionType) {
+  if (runtimeSessionId === undefined) {
     return {
       sessionManager: SessionManager.create(cwd, sessionDir),
       resumedExistingSession: false,
     };
   }
 
-  const sessionId = runtimeSession.id;
-  const existingSession = await findLocalSessionByExactId(sessionId, sessionDir);
+  const existingSession = await findLocalSessionByExactId(runtimeSessionId, sessionDir);
 
   if (existingSession !== undefined) {
     return {
@@ -35,10 +32,7 @@ export async function createPiSessionManager(
     };
   }
 
-  return {
-    sessionManager: SessionManager.create(cwd, sessionDir, { id: sessionId }),
-    resumedExistingSession: false,
-  };
+  throw new Error(`PI runtime session was not found: ${runtimeSessionId}.`);
 }
 
 async function findLocalSessionByExactId(

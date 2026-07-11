@@ -203,7 +203,7 @@ export class MemorySystem {
               scope: record.scope,
               workflowRunId: record.workflowRunId,
               taskRunId: record.taskRunId,
-              runtimeSessionId: record.runtimeSessionId,
+              runtimeSession: record.runtimeSession,
               payload: { task: record },
               createdAt: record.provenance.updatedAt,
               updatedAt: record.provenance.updatedAt,
@@ -611,9 +611,9 @@ function renderTaskMemoryArtifact(record: import("./types.ts").TaskMemoryRecord)
     `- status: ${record.status}`,
     `- workflowRunId: ${record.workflowRunId}`,
     ...(record.taskRunId === undefined ? [] : [`- taskRunId: ${record.taskRunId}`]),
-    ...(record.runtimeSessionId === undefined
+    ...(record.runtimeSession === undefined
       ? []
-      : [`- runtimeSessionId: ${record.runtimeSessionId}`]),
+      : [`- runtimeSession: ${record.runtimeSession.type}:${record.runtimeSession.id}`]),
     ...(record.title === undefined ? [] : ["", "## Title", record.title]),
     "",
     "## Content",

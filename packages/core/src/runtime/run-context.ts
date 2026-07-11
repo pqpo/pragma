@@ -1,3 +1,5 @@
+import { RuntimeSessionRefSchema, type RuntimeSessionRef } from "@pragma/shared";
+
 export interface ExpertAgentRunSource {
   readonly type: string;
   readonly id?: string | undefined;
@@ -6,7 +8,7 @@ export interface ExpertAgentRunSource {
 
 export const EXECUTION_WORKFLOW_RUN_ID_ATTR = "execution.workflowRunId";
 export const EXECUTION_TASK_RUN_ID_ATTR = "execution.taskRunId";
-export const EXECUTION_RUNTIME_SESSION_ID_ATTR = "execution.runtimeSessionId";
+export const EXECUTION_RUNTIME_SESSION_ATTR = "execution.runtimeSession";
 
 export interface ExpertAgentRunContext {
   readonly source?: ExpertAgentRunSource | undefined;
@@ -16,7 +18,7 @@ export interface ExpertAgentRunContext {
 export interface ExecutionRunScope {
   readonly workflowRunId?: string | undefined;
   readonly taskRunId?: string | undefined;
-  readonly runtimeSessionId?: string | undefined;
+  readonly runtimeSession?: RuntimeSessionRef | undefined;
 }
 
 export function createExpertAgentRunContext(
@@ -46,12 +48,12 @@ export function withExecutionRunScope(
       ...(scope.workflowRunId === undefined
         ? {}
         : { [EXECUTION_WORKFLOW_RUN_ID_ATTR]: scope.workflowRunId }),
-      ...(scope.taskRunId === undefined
+      ...(scope.taskRunId === undefined ? {} : { [EXECUTION_TASK_RUN_ID_ATTR]: scope.taskRunId }),
+      ...(scope.runtimeSession === undefined
         ? {}
-        : { [EXECUTION_TASK_RUN_ID_ATTR]: scope.taskRunId }),
-      ...(scope.runtimeSessionId === undefined
-        ? {}
-        : { [EXECUTION_RUNTIME_SESSION_ID_ATTR]: scope.runtimeSessionId }),
+        : {
+            [EXECUTION_RUNTIME_SESSION_ATTR]: RuntimeSessionRefSchema.parse(scope.runtimeSession),
+          }),
     },
   };
 }
@@ -62,8 +64,17 @@ export function readExecutionRunScope(
   return {
     workflowRunId: readContextAttribute(context, EXECUTION_WORKFLOW_RUN_ID_ATTR),
     taskRunId: readContextAttribute(context, EXECUTION_TASK_RUN_ID_ATTR),
-    runtimeSessionId: readContextAttribute(context, EXECUTION_RUNTIME_SESSION_ID_ATTR),
+    runtimeSession: readRuntimeSessionAttribute(context),
   };
+}
+
+function readRuntimeSessionAttribute(
+  context: ExpertAgentRunContext | undefined,
+): RuntimeSessionRef | undefined {
+  const value = context?.attributes?.[EXECUTION_RUNTIME_SESSION_ATTR];
+  const parsed = RuntimeSessionRefSchema.safeParse(value);
+
+  return parsed.success ? parsed.data : undefined;
 }
 
 function readContextAttribute(

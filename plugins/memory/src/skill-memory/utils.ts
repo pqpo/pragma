@@ -313,11 +313,11 @@ export function inferSchemaVersion(id: string): string {
   }
 
   if (id.startsWith(RUNS_EVIDENCE_PREFIX)) {
-    return "pragma.memory-run-evidence/v1";
+    return "pragma.memory-run-evidence/v2";
   }
 
   if (id.startsWith(WORKFLOWS_EVIDENCE_PREFIX)) {
-    return "pragma.memory-workflow-evidence/v1";
+    return "pragma.memory-workflow-evidence/v2";
   }
 
   if (id.startsWith(DISTILLATION_EVIDENCE_PREFIX)) {

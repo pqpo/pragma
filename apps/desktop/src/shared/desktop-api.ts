@@ -525,6 +525,51 @@ export const UpdateExpertDefinitionSchema = CreateExpertDefinitionSchema.omit({ 
 
 export const DeleteExpertDefinitionSchema = z.object({ id: ExpertIdSchema });
 
+export const MissionIdSchema = z.string().uuid();
+
+export const MissionWorkspaceSchema = z.object({
+  path: z.string().trim().min(1).max(2_000),
+  basename: z.string().trim().min(1).max(255),
+});
+
+const MissionExecutorBaseSchema = z.object({
+  id: z.string().trim().min(1).max(100),
+  name: z.string().trim().min(1).max(120),
+  version: z.string().trim().min(1).max(100),
+  revision: z.number().int().positive(),
+});
+
+export const MissionExecutorSchema = z.discriminatedUnion("kind", [
+  MissionExecutorBaseSchema.extend({ kind: z.literal("expert") }),
+  MissionExecutorBaseSchema.extend({ kind: z.literal("expert_team") }),
+]);
+
+export const MissionLifecycleStatusSchema = z.enum(["active", "completed"]);
+
+export const MissionSchema = z.object({
+  schemaVersion: z.literal("pragma.mission/v1"),
+  id: MissionIdSchema,
+  title: z.string().trim().min(1).max(120),
+  goal: z.string().trim().min(1).max(100_000),
+  workspace: MissionWorkspaceSchema,
+  executor: MissionExecutorSchema,
+  lifecycleStatus: MissionLifecycleStatusSchema,
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+  completedAt: z.string().datetime().optional(),
+});
+
+export const CreateMissionSchema = z.object({
+  workspace: z.string().trim().min(1).max(2_000),
+  executor: z.object({
+    kind: z.literal("expert"),
+    id: ExpertIdSchema,
+  }),
+  goal: z.string().trim().min(1).max(100_000),
+});
+
+export const MissionActionSchema = z.object({ id: MissionIdSchema });
+
 export type DesktopAppInfo = z.infer<typeof DesktopAppInfoSchema>;
 export type RuntimeGatewayConfig = z.infer<typeof RuntimeGatewayConfigSchema>;
 export type LocalRuntimeCapability = z.infer<typeof LocalRuntimeCapabilitySchema>;
@@ -547,6 +592,10 @@ export type ExpertDefinition = z.infer<typeof ExpertDefinitionSchema>;
 export type ExpertSummary = z.infer<typeof ExpertSummarySchema>;
 export type CreateExpertDefinition = z.infer<typeof CreateExpertDefinitionSchema>;
 export type UpdateExpertDefinition = z.infer<typeof UpdateExpertDefinitionSchema>;
+export type Mission = z.infer<typeof MissionSchema>;
+export type MissionExecutor = z.infer<typeof MissionExecutorSchema>;
+export type MissionLifecycleStatus = z.infer<typeof MissionLifecycleStatusSchema>;
+export type CreateMission = z.infer<typeof CreateMissionSchema>;
 export type Capability = z.infer<typeof CapabilitySchema>;
 export type CapabilityManifest = z.infer<typeof CapabilityManifestSchema>;
 export type CapabilityHealth = z.infer<typeof CapabilityHealthSchema>;
@@ -576,6 +625,11 @@ export interface PragmaDesktopAPI {
   createExpert: (input: CreateExpertDefinition) => Promise<ExpertDefinition>;
   updateExpert: (id: string, input: UpdateExpertDefinition) => Promise<ExpertDefinition>;
   deleteExpert: (id: string) => Promise<void>;
+  listMissions: () => Promise<Mission[]>;
+  getMission: (id: string) => Promise<Mission>;
+  createMission: (input: CreateMission) => Promise<Mission>;
+  markMissionComplete: (id: string) => Promise<Mission>;
+  reopenMission: (id: string) => Promise<Mission>;
   listCapabilities: () => Promise<Capability[]>;
   getCapability: (id: string, revision?: number) => Promise<Capability>;
   importSkillCapability: (input: ImportSkillCapability) => Promise<Capability>;

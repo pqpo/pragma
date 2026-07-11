@@ -17,6 +17,7 @@ import {
   sanitizeMemoryPathSegment,
   writeJsonFile,
 } from "../storage.ts";
+import { sameRuntimeSession } from "../memory-system/runtime-session.ts";
 
 const TASK_MEMORY_CATEGORY = "task-memory";
 const TASK_MEMORY_FILE_NAME = "records.json";
@@ -187,8 +188,8 @@ function createTaskMemoryStore(options: {
           }
 
           if (
-            input.runtimeSessionId !== undefined &&
-            record.runtimeSessionId !== input.runtimeSessionId
+            input.runtimeSession !== undefined &&
+            !sameRuntimeSession(record.runtimeSession, input.runtimeSession)
           ) {
             return false;
           }
@@ -325,7 +326,7 @@ function createTaskMemoryStore(options: {
       if (input.workflowRunId === undefined && input.taskRunId === undefined) {
         return errorMemory(
           "invalid_input",
-          "Archive requires workflowRunId or taskRunId. runtimeSessionId may only be used as an additional filter.",
+          "Archive requires workflowRunId or taskRunId. runtimeSession may only be used as an additional filter.",
         );
       }
 
@@ -342,8 +343,8 @@ function createTaskMemoryStore(options: {
           }
 
           if (
-            input.runtimeSessionId !== undefined &&
-            record.runtimeSessionId !== input.runtimeSessionId
+            input.runtimeSession !== undefined &&
+            !sameRuntimeSession(record.runtimeSession, input.runtimeSession)
           ) {
             return record;
           }

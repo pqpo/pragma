@@ -14,6 +14,8 @@ import { installExpertDefinitionHandlers } from "./expert-definition-ipc.ts";
 import { createExpertDefinitionStore } from "./expert-definition-store.ts";
 import { installModelProviderHandlers } from "./model-provider-ipc.ts";
 import { createModelProviderStore } from "./model-provider-store.ts";
+import { installMissionHandlers } from "./mission-ipc.ts";
+import { createMissionStore } from "./mission-store.ts";
 import { getRuntimeAvailability } from "./runtime-availability.ts";
 import { installWorkspaceScopeHandlers } from "./workspace-scope.ts";
 
@@ -77,6 +79,9 @@ void app.whenReady().then(async () => {
   const expertStore = createExpertDefinitionStore({
     expertsPath: join(app.getPath("home"), ".pragma", "experts"),
   });
+  const missionStore = createMissionStore({
+    missionsPath: join(app.getPath("home"), ".pragma", "missions"),
+  });
   const capabilityCredentials = createCapabilityCredentialStore({
     configPath: join(app.getPath("home"), ".pragma", "capability-credentials.json"),
     encryption,
@@ -102,6 +107,7 @@ void app.whenReady().then(async () => {
     () => mainWindow,
   );
   installExpertDefinitionHandlers(expertStore);
+  installMissionHandlers({ missions: missionStore, experts: expertStore });
   installModelProviderHandlers(
     createModelProviderStore({
       configPath: join(app.getPath("home"), ".pragma", "model-providers.json"),

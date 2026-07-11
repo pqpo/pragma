@@ -1,4 +1,4 @@
-import { type ExpertAgentToolCallResult } from "@pragma/core";
+import { type ExpertAgentToolCallResult, type RuntimeSessionRef } from "@pragma/core";
 
 import type { MemoryEvidenceReference } from "./types.ts";
 
@@ -91,7 +91,9 @@ export function readOptionalEvidenceParam(
 
   return value.map((item, index) => {
     if (!isRecord(item) || typeof item.type !== "string" || typeof item.id !== "string") {
-      throw new Error(`${subject} parameter "${key}" item ${index} requires string type and string id.`);
+      throw new Error(
+        `${subject} parameter "${key}" item ${index} requires string type and string id.`,
+      );
     }
 
     return {
@@ -106,7 +108,7 @@ export function readOptionalEvidenceParam(
 export function createDefaultEvidence(scope: {
   readonly workflowRunId?: string | undefined;
   readonly taskRunId?: string | undefined;
-  readonly runtimeSessionId?: string | undefined;
+  readonly runtimeSession?: RuntimeSessionRef | undefined;
 }): readonly MemoryEvidenceReference[] {
   if (scope.workflowRunId !== undefined) {
     return [{ type: "workflow", id: scope.workflowRunId }];
@@ -116,8 +118,14 @@ export function createDefaultEvidence(scope: {
     return [{ type: "task", id: scope.taskRunId }];
   }
 
-  if (scope.runtimeSessionId !== undefined) {
-    return [{ type: "external", id: scope.runtimeSessionId, label: "runtime session" }];
+  if (scope.runtimeSession !== undefined) {
+    return [
+      {
+        type: "external",
+        id: `${scope.runtimeSession.type}:${scope.runtimeSession.id}`,
+        label: "runtime session",
+      },
+    ];
   }
 
   return [];
@@ -175,7 +183,10 @@ export function evidenceArraySchema(): Record<string, unknown> {
   };
 }
 
-export function enumSchema(values: readonly string[], description?: string): Record<string, unknown> {
+export function enumSchema(
+  values: readonly string[],
+  description?: string,
+): Record<string, unknown> {
   return {
     type: "string",
     enum: [...values],

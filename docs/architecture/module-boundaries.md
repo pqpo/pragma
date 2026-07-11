@@ -53,6 +53,12 @@ packages/runtime/pi
 packages/runtime/codex
 ```
 
+Runtime sessions are identified across package, process, and persistence boundaries by the complete
+`RuntimeSessionRef { type, id }`. A native session id alone is only meaningful inside a concrete
+runtime adapter. Omitting `runtimeSession` from `createSession()` creates a fresh session; providing a
+ref is an explicit resume request and must fail when its type does not match the selected runtime or
+the referenced session cannot be restored.
+
 `@pragma/core` belongs to the core agent layer. It may depend on `@pragma/shared`, but must not depend on concrete runtime packages, runtime SDKs such as PI agent, server internals, client SDKs, Web UI, or database packages. Concrete runtime packages depend on `@pragma/core` and are assembled by application entry points such as Worker. The default runtime selection is an application-layer decision; Worker currently registers PI and Codex runtimes and uses PI by default.
 
 Future local bridge directories:

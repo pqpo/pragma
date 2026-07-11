@@ -5,14 +5,17 @@ import { dirname, join, resolve } from "node:path";
 
 import {
   ExpertAgent,
+  RuntimeSessionRefSchema,
   createDurableHumanInteractionHandler,
   createFileHumanInteractionStore,
 } from "@pragma/core";
 import type {
   AgentMessage,
   ExpertAgentHumanInteractionHandler,
+  HumanInteractionScope,
   HumanInteractionStore,
   PendingHumanInteraction,
+  RuntimeSessionRef,
 } from "@pragma/core";
 import { createPiRuntime } from "@pragma/runtime-pi";
 import { cac } from "cac";
@@ -36,9 +39,9 @@ const workflowsDir = join(exampleRoot, "workflows");
 const humanInteractionsDir = join(exampleRoot, "human-interactions");
 
 const WorkflowStateSchema = z.object({
-  schemaVersion: z.literal("pragma.example.resumable-approval/v3"),
+  schemaVersion: z.literal("pragma.example.resumable-approval/v4"),
   workflowId: z.string().min(1),
-  runtimeSessionId: z.string().min(1),
+  runtimeSession: RuntimeSessionRefSchema,
   status: z.enum(["ready", "waiting_approval", "running"]),
   activeQuery: z.string().min(1).optional(),
   lastOutput: z.string().optional(),
@@ -67,18 +70,17 @@ if (cli.reset) {
 
 const existingState = await findWorkflowState(cli);
 const workflowId = existingState?.workflowId ?? cli.workflowId ?? newId("workflow");
-const runtimeSessionId =
-  existingState?.runtimeSessionId ?? cli.runtimeSessionId ?? newId("pi-session");
-let workflowState = existingState ?? createWorkflowState(workflowId, runtimeSessionId);
-await saveWorkflowState(workflowState);
+const requestedRuntimeSession =
+  existingState?.runtimeSession ??
+  (cli.runtimeSessionId === undefined ? undefined : createRuntimeSessionRef(cli.runtimeSessionId));
+let runtimeSession: RuntimeSessionRef | undefined = requestedRuntimeSession;
+let workflowState: WorkflowState | undefined = existingState;
+const interactionScope: HumanInteractionScope = {
+  workflowId,
+  runtimeSessionType: runtimeKind,
+};
 
-console.log("Resumable approval example (PI runtime)");
-console.log(`- workflowId: ${workflowId}`);
-console.log(`- sessionId: ${runtimeSessionId}`);
-console.log(`- workflow state: ${workflowStatePath(workflowId)}`);
-console.log("");
-
-const pendingBeforeRun = await interactionStore.getPending({ workflowId, runtimeSessionId });
+const pendingBeforeRun = await interactionStore.getPending(interactionScope);
 const modelConfig = readExampleModelConfig();
 const agent = await createExampleAgent(modelConfig, workflowId);
 const runtime = createPiRuntime();
@@ -86,24 +88,41 @@ await exitIfRuntimeUnavailable(runtime);
 const chat = createConsoleChat();
 const session = await runtime.createSession({
   agent,
-  runtimeSession: {
-    type: runtimeKind,
-    id: runtimeSessionId,
-  },
+  ...(requestedRuntimeSession === undefined ? {} : { runtimeSession: requestedRuntimeSession }),
   humanInteractionHandler: createDurableHumanInteractionHandler({
-    scope: { workflowId, runtimeSessionId },
+    scope: interactionScope,
     store: interactionStore,
     delegate: createCliHumanInteractionHandler({
       workflowId,
-      runtimeSessionId,
+      getRuntimeSession: () => {
+        if (runtimeSession === undefined) {
+          throw new Error("Runtime session is not initialized.");
+        }
+        return runtimeSession;
+      },
       chat,
       onStatus: async (status) => {
+        if (workflowState === undefined) {
+          throw new Error("Workflow state is not initialized.");
+        }
         workflowState = { ...workflowState, status };
         await saveWorkflowState(workflowState);
       },
     }),
   }),
 });
+runtimeSession = session.info().runtimeSession;
+workflowState = {
+  ...(existingState ?? createWorkflowState(workflowId, runtimeSession)),
+  runtimeSession,
+};
+await saveWorkflowState(workflowState);
+
+console.log("Resumable approval example (PI runtime)");
+console.log(`- workflowId: ${workflowId}`);
+console.log(`- session: ${runtimeSession.type}:${runtimeSession.id}`);
+console.log(`- workflow state: ${workflowStatePath(workflowId)}`);
+console.log("");
 
 console.log(`- model: ${formatModelConfig(modelConfig)}`);
 const existingMessages = session.messages();
@@ -129,23 +148,25 @@ try {
   await chat.run({
     initialMessage,
     onMessage: async (query) => {
+      const currentState = requireWorkflowState(workflowState);
       workflowState = {
-        ...workflowState,
+        ...currentState,
         status: "running",
         activeQuery: query,
       };
-      await saveWorkflowState(workflowState);
+      await saveWorkflowState(requireWorkflowState(workflowState));
 
       const run = session.submit({ query });
       await printRunStream(run);
       const result = await run.result;
+      const completedState = requireWorkflowState(workflowState);
       workflowState = {
-        ...workflowState,
+        ...completedState,
         status: "ready",
         activeQuery: undefined,
         lastOutput: result.result.output,
       };
-      await saveWorkflowState(workflowState);
+      await saveWorkflowState(requireWorkflowState(workflowState));
       console.log("");
     },
   });
@@ -248,7 +269,7 @@ async function createExampleAgent(
 
 function createCliHumanInteractionHandler(options: {
   readonly workflowId: string;
-  readonly runtimeSessionId: string;
+  readonly getRuntimeSession: () => RuntimeSessionRef;
   readonly chat: ConsoleChat;
   readonly onStatus: (status: "waiting_approval" | "running") => Promise<void>;
 }): ExpertAgentHumanInteractionHandler {
@@ -265,7 +286,8 @@ function createCliHumanInteractionHandler(options: {
     console.log("");
     console.log("Approval request");
     console.log(`- workflowId: ${options.workflowId}`);
-    console.log(`- sessionId: ${options.runtimeSessionId}`);
+    const runtimeSession = options.getRuntimeSession();
+    console.log(`- session: ${runtimeSession.type}:${runtimeSession.id}`);
     console.log(`- tool: ${request.toolName}`);
     if (request.reason !== undefined) {
       console.log(`- reason: ${request.reason}`);
@@ -321,10 +343,14 @@ async function findWorkflowState(cli: CliOptions): Promise<WorkflowState | undef
     if (!entry.endsWith(".json")) {
       continue;
     }
-    const state = WorkflowStateSchema.parse(
+    const parsedState = WorkflowStateSchema.safeParse(
       JSON.parse(await readFile(join(workflowsDir, entry), "utf8")),
     );
-    if (state.runtimeSessionId === cli.runtimeSessionId) {
+    if (!parsedState.success) {
+      continue;
+    }
+    const state = parsedState.data;
+    if (state.runtimeSession.id === cli.runtimeSessionId) {
       return state;
     }
   }
@@ -341,11 +367,11 @@ async function readWorkflowState(workflowId: string): Promise<WorkflowState | un
   return WorkflowStateSchema.parse(JSON.parse(await readFile(path, "utf8")));
 }
 
-function createWorkflowState(workflowId: string, runtimeSessionId: string): WorkflowState {
+function createWorkflowState(workflowId: string, runtimeSession: RuntimeSessionRef): WorkflowState {
   return {
-    schemaVersion: "pragma.example.resumable-approval/v3",
+    schemaVersion: "pragma.example.resumable-approval/v4",
     workflowId,
-    runtimeSessionId,
+    runtimeSession,
     status: "ready",
     updatedAt: new Date().toISOString(),
   };
@@ -365,21 +391,21 @@ async function saveWorkflowState(state: WorkflowState): Promise<void> {
 }
 
 async function resetRequestedState(cli: CliOptions, store: HumanInteractionStore): Promise<void> {
+  if (cli.workflowId !== undefined) {
+    for (const interaction of await store.listPending({ workflowId: cli.workflowId })) {
+      await store.clear(interaction.id);
+    }
+    await rm(workflowStatePath(cli.workflowId), { force: true });
+    return;
+  }
+
   const state = await findWorkflowState(cli);
   const workflowId = state?.workflowId ?? cli.workflowId;
-  const runtimeSessionId = state?.runtimeSessionId ?? cli.runtimeSessionId;
-
   if (workflowId !== undefined) {
     for (const interaction of await store.listPending({ workflowId })) {
       await store.clear(interaction.id);
     }
     await rm(workflowStatePath(workflowId), { force: true });
-  }
-
-  if (runtimeSessionId !== undefined) {
-    for (const interaction of await store.listPending({ runtimeSessionId })) {
-      await store.clear(interaction.id);
-    }
   }
 }
 
@@ -416,6 +442,20 @@ function readStringOption(value: unknown): string | undefined {
 
 function newId(prefix: string): string {
   return `${prefix}-${randomUUID()}`;
+}
+
+function createRuntimeSessionRef(runtimeSessionId: string): RuntimeSessionRef {
+  return {
+    type: runtimeKind,
+    id: runtimeSessionId,
+  };
+}
+
+function requireWorkflowState(state: WorkflowState | undefined): WorkflowState {
+  if (state === undefined) {
+    throw new Error("Workflow state is not initialized.");
+  }
+  return state;
 }
 
 function isAbortError(error: unknown): boolean {

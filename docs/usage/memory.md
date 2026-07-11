@@ -135,7 +135,7 @@ plugins: [
       fact: { enabled: false },
     },
   },
-]
+];
 ```
 
 ## 四类记忆的边界
@@ -266,6 +266,14 @@ plugins: [
 - runtime 检索
 - distillation pipeline
 - `memory` namespace 下的 `summary.md`
+
+## 存储格式版本
+
+Task、Experience、Evidence、Run Evidence 和 Workflow Evidence 当前使用 v2 schema，并用完整的
+`RuntimeSessionRef { type, id }` 记录 runtime session 身份。v1 中只保存
+`runtimeSessionId`，无法区分不同 runtime，因此不会被 v2 读取，也不保留运行期兼容分支。
+
+升级前如需保留历史数据，应先自行备份或离线转换 `~/.pragma/memories/<agentId>/`；不需要保留时，删除对应 Agent 的旧 memory 目录后重新生成。
 
 ## 自动沉淀
 

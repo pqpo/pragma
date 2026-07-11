@@ -161,7 +161,11 @@ describe("createPiRuntime", () => {
       workspace,
       contextSystem: createHostContextSystem(new FileSystemContextStore({ rootDir: workspace })),
     });
-    const restore = vi.fn();
+    const restore = vi.fn(() => {
+      vi.mocked(SessionManager.listAll).mockResolvedValue([
+        { id: "pi-session-1", path: `${workspace}/pi-session-1.jsonl` } as never,
+      ]);
+    });
     const sync = vi.fn();
     vi.mocked(createAgentSession).mockResolvedValue({
       extensionsResult: {
@@ -232,6 +236,41 @@ describe("createPiRuntime", () => {
     expect(sync).toHaveBeenCalledTimes(2);
   });
 
+  it("rejects resume when restore completes without materializing the PI session", async () => {
+    const workspace = await createTempDir();
+    let destroyedRuntimeSessionId: string | undefined;
+    const agent = await ExpertAgent.create({
+      schemaVersion: "pragma.expert/v1",
+      id: "agent-1",
+      name: "Test Agent",
+      description: "Agent for runtime adapter tests.",
+      tags: ["test"],
+      version: "0.0.0",
+      scope: "test",
+      workspace,
+      hooks: {
+        afterSessionDestroy: ({ session }) => {
+          destroyedRuntimeSessionId = session.runtimeSession.id;
+        },
+      },
+    });
+    const restore = vi.fn();
+
+    await expect(
+      createPiRuntime({ sessionRestoreHandler: restore }).createSession({
+        agent,
+        runtimeSession: {
+          type: "cloud-pi-agent",
+          id: "pi-session-missing",
+        },
+      }),
+    ).rejects.toThrow("PI runtime session was not found: pi-session-missing.");
+
+    expect(restore).toHaveBeenCalledOnce();
+    expect(createAgentSession).not.toHaveBeenCalled();
+    expect(destroyedRuntimeSessionId).toBe("pi-session-missing");
+  });
+
   it("allows session storage handlers to be replaced after adapter creation", async () => {
     const workspace = await createTempDir();
     const agent = await ExpertAgent.create({
@@ -244,7 +283,11 @@ describe("createPiRuntime", () => {
       scope: "test",
       workspace,
     });
-    const restore = vi.fn();
+    const restore = vi.fn(() => {
+      vi.mocked(SessionManager.listAll).mockResolvedValue([
+        { id: "pi-session-2", path: `${workspace}/pi-session-2.jsonl` } as never,
+      ]);
+    });
     const sync = vi.fn();
     vi.mocked(createAgentSession).mockResolvedValue({
       extensionsResult: {

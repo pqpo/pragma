@@ -11,7 +11,7 @@ import {
   UserCircle,
 } from "@phosphor-icons/react";
 
-export type AppView = "studio" | "settings";
+export type AppView = "missions" | "studio" | "settings";
 
 const navigationItems: readonly {
   readonly label: string;
@@ -58,7 +58,13 @@ export function Sidebar(props: {
         {navigationItems.map((item) => {
           const NavigationIcon = item.icon;
           const targetView: AppView | null =
-            item.label === "Studio" ? "studio" : item.label === "Settings" ? "settings" : null;
+            item.label === "Missions"
+              ? "missions"
+              : item.label === "Studio"
+                ? "studio"
+                : item.label === "Settings"
+                  ? "settings"
+                  : null;
           const isActive = targetView !== null && props.activeView === targetView;
           const isAvailable = targetView !== null;
 

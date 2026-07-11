@@ -1,14 +1,14 @@
-import type { ExpertAgentRunContext } from "@pragma/core";
+import type { ExpertAgentRunContext, RuntimeSessionRef } from "@pragma/core";
 
 export type MemoryType = "task" | "experience" | "fact" | "skill";
 
 export type MemoryRecordSchemaVersion =
-  | "pragma.memory-task/v1"
-  | "pragma.memory-experience/v1"
+  | "pragma.memory-task/v2"
+  | "pragma.memory-experience/v2"
   | "pragma.memory-fact/v1"
   | "pragma.memory-skill/v1";
 
-export type MemoryEvidenceSchemaVersion = "pragma.memory-evidence/v1";
+export type MemoryEvidenceSchemaVersion = "pragma.memory-evidence/v2";
 
 export type MemoryScope = "run" | "session" | "agent" | "workspace" | "organization";
 
@@ -88,7 +88,7 @@ export interface TaskMemoryRecord extends BaseMemoryRecord {
   readonly ownerAgentId?: string | undefined;
   readonly workflowRunId: string;
   readonly taskRunId?: string | undefined;
-  readonly runtimeSessionId?: string | undefined;
+  readonly runtimeSession?: RuntimeSessionRef | undefined;
   readonly kind: TaskMemoryKind;
   readonly content: string;
   readonly items?: readonly TaskTodoItem[] | undefined;
@@ -104,7 +104,7 @@ export interface ExperienceMemoryRecord extends BaseMemoryRecord {
   readonly content: string;
   readonly workflowRunId?: string | undefined;
   readonly taskRunId?: string | undefined;
-  readonly runtimeSessionId?: string | undefined;
+  readonly runtimeSession?: RuntimeSessionRef | undefined;
   readonly status: "recorded" | "summarized" | "promoted";
 }
 
@@ -179,7 +179,7 @@ export interface RuntimeMemoryRetrieveInput {
   readonly query?: string | undefined;
   readonly workflowRunId?: string | undefined;
   readonly taskRunId?: string | undefined;
-  readonly runtimeSessionId?: string | undefined;
+  readonly runtimeSession?: RuntimeSessionRef | undefined;
   readonly runContext?: ExpertAgentRunContext | undefined;
 }
 
@@ -241,7 +241,7 @@ export interface MemoryRunEvidencePayload {
 
 export interface MemoryWorkflowEvidencePayload {
   readonly workflowRunId: string;
-  readonly runtimeSessionIds: readonly string[];
+  readonly runtimeSessions: readonly RuntimeSessionRef[];
   readonly runIds: readonly string[];
   readonly externalContext: boolean;
   readonly runs: readonly MemoryRunEvidencePayload[];
@@ -261,7 +261,7 @@ export interface MemoryEvidenceRecord {
   readonly scope: MemoryScope;
   readonly workflowRunId?: string | undefined;
   readonly taskRunId?: string | undefined;
-  readonly runtimeSessionId?: string | undefined;
+  readonly runtimeSession?: RuntimeSessionRef | undefined;
   readonly payload: MemoryEvidencePayload;
   readonly createdAt: string;
   readonly updatedAt: string;
@@ -308,7 +308,7 @@ export interface TaskMemoryListInput {
   readonly workflowRunId: string;
   readonly actorAgentId: string;
   readonly taskRunId?: string | undefined;
-  readonly runtimeSessionId?: string | undefined;
+  readonly runtimeSession?: RuntimeSessionRef | undefined;
   readonly visibility?: MemoryVisibility | undefined;
   readonly ownerAgentId?: string | undefined;
   readonly status?: TaskMemoryRecord["status"] | readonly TaskMemoryRecord["status"][] | undefined;
@@ -319,7 +319,7 @@ export interface TaskMemoryArchiveInput {
   readonly actorAgentId: string;
   readonly workflowRunId?: string | undefined;
   readonly taskRunId?: string | undefined;
-  readonly runtimeSessionId?: string | undefined;
+  readonly runtimeSession?: RuntimeSessionRef | undefined;
   readonly context?: ExpertAgentRunContext | undefined;
 }
 
@@ -337,7 +337,7 @@ export interface MemoryEvidenceListInput {
   readonly kind?: MemoryEvidenceKind | undefined;
   readonly workflowRunId?: string | undefined;
   readonly taskRunId?: string | undefined;
-  readonly runtimeSessionId?: string | undefined;
+  readonly runtimeSession?: RuntimeSessionRef | undefined;
   readonly context?: ExpertAgentRunContext | undefined;
 }
 
@@ -349,7 +349,7 @@ export interface ExperienceMemoryGetInput {
 export interface ExperienceMemoryListInput {
   readonly workflowRunId?: string | undefined;
   readonly taskRunId?: string | undefined;
-  readonly runtimeSessionId?: string | undefined;
+  readonly runtimeSession?: RuntimeSessionRef | undefined;
   readonly status?: ExperienceMemoryRecord["status"] | undefined;
   readonly kind?: ExperienceMemoryKind | undefined;
   readonly context?: ExpertAgentRunContext | undefined;

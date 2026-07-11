@@ -30,7 +30,7 @@ describe("memory distillation pipeline", () => {
         type: "task",
         scope: "session",
         workflowRunId: "workflow-1",
-        runtimeSessionId: "session-1",
+        runtimeSession: { type: "cloud-pi-agent", id: "session-1" },
         visibility: "shared",
         kind: "handoff",
         content: "Completed repository scan.",
@@ -71,14 +71,15 @@ describe("memory distillation pipeline", () => {
           workflowRunId: "workflow-1",
           payload: {
             workflowRunId: "workflow-1",
-            runtimeSessionIds: ["runtime-session-1"],
+            runtimeSessions: [{ type: "cloud-pi-agent", id: "runtime-session-1" }],
             runIds: ["run-1"],
             externalContext: false,
             runs: [
               {
                 query: "Locate directive runtime code",
                 status: "succeeded",
-                outputExcerpt: "@pragma/core directive code is located at packages/core/src/directive.",
+                outputExcerpt:
+                  "@pragma/core directive code is located at packages/core/src/directive.",
                 lessons: [],
                 tools: [],
               },
@@ -125,7 +126,7 @@ describe("memory distillation pipeline", () => {
           workflowRunId: "workflow-sensitive",
           payload: {
             workflowRunId: "workflow-sensitive",
-            runtimeSessionIds: ["runtime-session-sensitive"],
+            runtimeSessions: [{ type: "cloud-pi-agent", id: "runtime-session-sensitive" }],
             runIds: ["run-1"],
             externalContext: false,
             runs: [
@@ -177,7 +178,7 @@ describe("memory distillation pipeline", () => {
         type: "task",
         scope: "session",
         workflowRunId: "workflow-1",
-        runtimeSessionId: "session-1",
+        runtimeSession: { type: "cloud-pi-agent", id: "session-1" },
         visibility: "shared",
         kind: "handoff",
         content: "Completed repository scan.",
@@ -216,7 +217,7 @@ describe("memory distillation pipeline", () => {
         type: "task",
         scope: "session",
         workflowRunId: "workflow-1",
-        runtimeSessionId: "session-1",
+        runtimeSession: { type: "cloud-pi-agent", id: "session-1" },
         visibility: "shared",
         kind: "handoff",
         content: "Completed repository scan.",
@@ -260,14 +261,15 @@ describe("memory distillation pipeline", () => {
           workflowRunId: "workflow-1",
           payload: {
             workflowRunId: "workflow-1",
-            runtimeSessionIds: ["runtime-session-1"],
+            runtimeSessions: [{ type: "cloud-pi-agent", id: "runtime-session-1" }],
             runIds: ["run-1"],
             externalContext: false,
             runs: [
               {
                 query: "Locate directive runtime code",
                 status: "succeeded",
-                outputExcerpt: "@pragma/core directive code is located at packages/core/src/directive.",
+                outputExcerpt:
+                  "@pragma/core directive code is located at packages/core/src/directive.",
                 lessons: [],
                 tools: [],
               },

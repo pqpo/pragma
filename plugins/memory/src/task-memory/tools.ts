@@ -3,6 +3,7 @@ import {
   readExecutionRunScope,
   type ExpertAgentManagedTool,
   type ExpertAgentToolCallResult,
+  type RuntimeSessionRef,
 } from "@pragma/core";
 import type {
   MemorySystem,
@@ -27,7 +28,7 @@ export function createTaskMemoryTools(options: {
             "Workflow run id. Defaults to the current session workflow run.",
           ),
           taskRunId: stringSchema("Optional task run id filter."),
-          runtimeSessionId: stringSchema("Optional runtime session id filter."),
+          runtimeSession: runtimeSessionSchema("Optional runtime session filter."),
           visibility: enumSchema(["shared", "private"], "Optional visibility filter."),
           status: {
             oneOf: [
@@ -55,7 +56,7 @@ export function createTaskMemoryTools(options: {
           workflowRunId: scope.workflowRunId!,
           actorAgentId: scope.actorAgentId,
           taskRunId: readOptionalStringParam(args, "taskRunId"),
-          runtimeSessionId: readOptionalStringParam(args, "runtimeSessionId"),
+          runtimeSession: readOptionalRuntimeSessionParam(args, "runtimeSession"),
           visibility: readOptionalVisibilityParam(args, "visibility"),
           status: readOptionalTaskMemoryStatusParam(args),
           context: scope.runContext,
@@ -103,7 +104,7 @@ export function createTaskMemoryTools(options: {
             "Workflow run id. Defaults to the current session workflow run.",
           ),
           taskRunId: stringSchema("Optional task run id."),
-          runtimeSessionId: stringSchema("Optional runtime session id provenance."),
+          runtimeSession: runtimeSessionSchema("Optional runtime session provenance."),
           visibility: enumSchema(["shared", "private"], "Entry visibility."),
           kind: enumSchema(
             ["decision", "handoff", "note", "todo", "progress", "question"],
@@ -146,7 +147,7 @@ export function createTaskMemoryTools(options: {
             scope: "session",
             workflowRunId: scope.workflowRunId!,
             taskRunId: readOptionalStringParam(args, "taskRunId") ?? scope.taskRunId,
-            runtimeSessionId: scope.runtimeSessionId,
+            runtimeSession: scope.runtimeSession,
             visibility,
             ownerAgentId: visibility === "private" ? actorAgentId : undefined,
             kind: readTaskMemoryKindParam(args, "kind"),
@@ -235,7 +236,7 @@ function resolveTaskMemoryScope(
       readonly workflowRunId?: string | undefined;
       readonly actorAgentId: string;
       readonly taskRunId?: string | undefined;
-      readonly runtimeSessionId?: string | undefined;
+      readonly runtimeSession?: RuntimeSessionRef | undefined;
       readonly runContext: ReturnType<typeof createExpertAgentRunContext>;
     }
   | {
@@ -245,8 +246,8 @@ function resolveTaskMemoryScope(
   const runContext = createExpertAgentRunContext(runContextInput);
   const runScope = readExecutionRunScope(runContext);
   const workflowRunId = readOptionalStringParam(args, "workflowRunId") ?? runScope.workflowRunId;
-  const runtimeSessionId =
-    readOptionalStringParam(args, "runtimeSessionId") ?? runScope.runtimeSessionId;
+  const runtimeSession =
+    readOptionalRuntimeSessionParam(args, "runtimeSession") ?? runScope.runtimeSession;
 
   if (
     requirements.requireWorkflowRunId &&
@@ -266,7 +267,7 @@ function resolveTaskMemoryScope(
     workflowRunId,
     actorAgentId: resolveActorAgentId(runContext, defaultAgentId),
     taskRunId: runScope.taskRunId,
-    runtimeSessionId,
+    runtimeSession,
     runContext,
   };
 }
@@ -300,6 +301,31 @@ function readOptionalStringParam(params: unknown, key: string): string | undefin
   }
 
   throw new Error(`Task memory tool parameter "${key}" must be a string when provided.`);
+}
+
+function readOptionalRuntimeSessionParam(
+  params: unknown,
+  key: string,
+): RuntimeSessionRef | undefined {
+  const value = readParam(params, key);
+
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (
+    isRecord(value) &&
+    typeof value.type === "string" &&
+    value.type.length > 0 &&
+    typeof value.id === "string" &&
+    value.id.length > 0
+  ) {
+    return { type: value.type, id: value.id };
+  }
+
+  throw new Error(
+    `Task memory tool parameter "${key}" must contain non-empty string type and id fields.`,
+  );
 }
 
 function readNumberParam(params: unknown, key: string): number {
@@ -522,6 +548,19 @@ function objectSchema(
 function stringSchema(description: string): Record<string, unknown> {
   return {
     type: "string",
+    description,
+  };
+}
+
+function runtimeSessionSchema(description: string): Record<string, unknown> {
+  return {
+    ...objectSchema(
+      {
+        type: stringSchema("Runtime adapter kind."),
+        id: stringSchema("Runtime-native session id."),
+      },
+      ["type", "id"],
+    ),
     description,
   };
 }

@@ -145,11 +145,12 @@ import {
 const store = createFileHumanInteractionStore({
   rootDir: ".pragma/human-interactions",
 });
+const savedRuntimeSession = await loadWorkflowRuntimeSession(workflowId);
 
 const humanInteractionHandler = createDurableHumanInteractionHandler({
   scope: {
     workflowId,
-    runtimeSessionId,
+    runtimeSessionType: runtime.descriptor.kind,
   },
   store,
   delegate: async (request) => {
@@ -172,12 +173,11 @@ const humanInteractionHandler = createDurableHumanInteractionHandler({
 
 const session = await runtime.createSession({
   agent,
-  runtimeSession: {
-    type: "example-runtime",
-    id: runtimeSessionId,
-  },
+  ...(savedRuntimeSession === undefined ? {} : { runtimeSession: savedRuntimeSession }),
   humanInteractionHandler,
 });
+
+await saveWorkflowRuntimeSession(workflowId, session.info().runtimeSession);
 ```
 
 `createDurableHumanInteractionHandler()` 的行为：
@@ -191,18 +191,15 @@ const session = await runtime.createSession({
 
 ```ts
 const pending = await store.getPending({ workflowId });
-const runtimeSessionId = pending?.scope["runtimeSessionId"] ?? createNewSessionId();
+const runtimeSession = await loadWorkflowRuntimeSession(workflowId);
 
 const session = await runtime.createSession({
   agent,
-  runtimeSession: {
-    type: "example-runtime",
-    id: runtimeSessionId,
-  },
+  runtimeSession,
   humanInteractionHandler: createDurableHumanInteractionHandler({
     scope: {
       workflowId,
-      runtimeSessionId,
+      runtimeSessionType: runtimeSession.type,
     },
     store,
     delegate: createCliHumanInteractionHandler(),
@@ -215,7 +212,7 @@ if (pending !== undefined) {
 }
 ```
 
-注意：进程退出后不能恢复原来的 JavaScript Promise。这里恢复的是 durable human interaction record，并要求 runtime 能通过相同 `runtimeSessionId` 和自身 checkpoint/消息状态重新进入等待点。聊天记录、run/query、runtime checkpoint 仍由具体 runtime/session 负责持久化；human interaction store 只负责 pending request、response、scope 和审计事实。
+注意：进程退出后不能恢复原来的 JavaScript Promise。这里恢复的是 durable human interaction record，并要求 runtime 能通过完整的 `RuntimeSessionRef { type, id }` 和自身 checkpoint/消息状态重新进入等待点。未传 `runtimeSession` 表示创建新会话；一旦传入则表示必须恢复，类型不匹配或目标会话不存在都会报错，不会静默创建新会话。聊天记录、run/query、runtime checkpoint 仍由具体 runtime/session 负责持久化；human interaction store 只负责 pending request、response、scope 和审计事实。
 
 可运行示例：
 

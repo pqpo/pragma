@@ -9,6 +9,74 @@ import type {
 } from "../../src/runtime/session-persistence.ts";
 
 describe("defineRuntimeDriver", () => {
+  it("rejects a runtime session ref with an empty native id", async () => {
+    let createSessionCalled = false;
+    const runtime = defineRuntimeDriver<FakeEvent, FakeSession>({
+      descriptor: {
+        id: "fake-runtime",
+        kind: "fake-runtime",
+        displayName: "Fake Runtime",
+      },
+      createSession() {
+        createSessionCalled = true;
+        return { id: "native-session-1", attempts: 0 };
+      },
+      startTurn() {
+        return { outputText: "ok" };
+      },
+      mapEvent() {
+        return { events: [] };
+      },
+    });
+    const agent = await createTestAgent("invalid-ref");
+
+    await expect(
+      runtime.createSession({
+        agent,
+        runtimeSession: { type: "fake-runtime", id: "" },
+      }),
+    ).rejects.toThrow();
+    expect(createSessionCalled).toBe(false);
+  });
+
+  it("rejects a runtime session ref for a different runtime kind", async () => {
+    const runtime = defineRuntimeDriver<FakeEvent, FakeSession>({
+      descriptor: {
+        id: "fake-runtime",
+        kind: "fake-runtime",
+        displayName: "Fake Runtime",
+      },
+      createSession() {
+        return { id: "native-session-1", attempts: 0 };
+      },
+      startTurn() {
+        return { outputText: "ok" };
+      },
+      mapEvent() {
+        return { events: [] };
+      },
+    });
+    const agent = await ExpertAgent.create({
+      id: "coder",
+      name: "Coder",
+      description: "Responsible for code changes.",
+      tags: ["coding"],
+      version: "0.0.0",
+      scope: "workspace",
+      workspace: "/tmp/pragma-runtime-driver-mismatch-test",
+      contextSystem: new ContextSystem(),
+    });
+
+    await expect(
+      runtime.createSession({
+        agent,
+        runtimeSession: { type: "other-runtime", id: "session-1" },
+      }),
+    ).rejects.toThrow(
+      "Runtime session type mismatch: cannot resume other-runtime:session-1 with runtime fake-runtime.",
+    );
+  });
+
   it("runs a native driver through core stream, retry, and checkpoint workflows", async () => {
     const checkpoints: RuntimeSessionCheckpoint[] = [];
     const restoreRequests: RuntimeSessionRestoreRequest[] = [];
@@ -51,10 +119,10 @@ describe("defineRuntimeDriver", () => {
           }
 
           session.id = "native-session-2";
-          turn.stream.writeNative({ type: "delta", text: "{\"ok\":true}" });
-          turn.stream.writeNative({ type: "completed", text: "{\"ok\":true}" });
+          turn.stream.writeNative({ type: "delta", text: '{"ok":true}' });
+          turn.stream.writeNative({ type: "completed", text: '{"ok":true}' });
           return {
-            outputText: "{\"ok\":true}",
+            outputText: '{"ok":true}',
             runtimeSessionId: session.id,
           };
         },
@@ -128,6 +196,59 @@ describe("defineRuntimeDriver", () => {
     ]);
   });
 
+  it("preserves the requested runtime session ref when restore fails before lifecycle creation", async () => {
+    let destroyedRuntimeSessionId: string | undefined;
+    const runtime = defineRuntimeDriver<FakeEvent, FakeSession>(
+      {
+        descriptor: {
+          id: "fake-runtime",
+          kind: "fake-runtime",
+          displayName: "Fake Runtime",
+        },
+        createSession() {
+          throw new Error("Native session creation should not be reached.");
+        },
+        startTurn() {
+          return {};
+        },
+        mapEvent() {
+          return { events: [] };
+        },
+      },
+      {
+        persistenceProvider: {
+          restore() {
+            throw new Error("Restore failed");
+          },
+          checkpoint() {},
+        },
+      },
+    );
+    const agent = await ExpertAgent.create({
+      id: "coder-restore-failure",
+      name: "Coder",
+      description: "Responsible for code changes.",
+      tags: ["coding"],
+      version: "0.0.0",
+      scope: "workspace",
+      workspace: "/tmp/pragma-runtime-driver-restore-failure-test",
+      contextSystem: new ContextSystem(),
+      hooks: {
+        afterSessionDestroy: ({ session }) => {
+          destroyedRuntimeSessionId = session.runtimeSession.id;
+        },
+      },
+    });
+
+    await expect(
+      runtime.createSession({
+        agent,
+        runtimeSession: { type: "fake-runtime", id: "session-requested" },
+      }),
+    ).rejects.toThrow("Restore failed");
+    expect(destroyedRuntimeSessionId).toBe("session-requested");
+  });
+
   it("does not carry captured output text across structured output retries", async () => {
     const runtime = defineRuntimeDriver<FakeEvent, FakeSession>({
       descriptor: {
@@ -149,7 +270,7 @@ describe("defineRuntimeDriver", () => {
           return {};
         }
 
-        turn.stream.writeNative({ type: "delta", text: "{\"ok\":true}" });
+        turn.stream.writeNative({ type: "delta", text: '{"ok":true}' });
         return {};
       },
       mapEvent(event, ctx) {
@@ -230,6 +351,19 @@ describe("defineRuntimeDriver", () => {
     );
   });
 });
+
+async function createTestAgent(suffix: string): Promise<ExpertAgent> {
+  return await ExpertAgent.create({
+    id: `coder-${suffix}`,
+    name: "Coder",
+    description: "Responsible for code changes.",
+    tags: ["coding"],
+    version: "0.0.0",
+    scope: "workspace",
+    workspace: `/tmp/pragma-runtime-driver-${suffix}-test`,
+    contextSystem: new ContextSystem(),
+  });
+}
 
 type FakeEvent =
   | { readonly type: "delta"; readonly text: string }

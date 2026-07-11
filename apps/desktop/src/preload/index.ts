@@ -23,6 +23,10 @@ import {
   ModelConnectionTestRequestSchema,
   ModelConnectionTestResultSchema,
   ModelProviderSchema,
+  CreateMissionSchema,
+  MissionActionSchema,
+  MissionIdSchema,
+  MissionSchema,
   PickWorkspaceResultSchema,
   UpdateModelProviderSchema,
   UpdateExpertDefinitionSchema,
@@ -95,6 +99,21 @@ const api: PragmaDesktopAPI = {
   deleteExpert: async (id) => {
     await ipcRenderer.invoke("experts:delete", DeleteExpertDefinitionSchema.parse({ id }));
   },
+  listMissions: async () => MissionSchema.array().parse(await ipcRenderer.invoke("missions:list")),
+  getMission: async (id) =>
+    MissionSchema.parse(await ipcRenderer.invoke("missions:get", MissionIdSchema.parse(id))),
+  createMission: async (input) =>
+    MissionSchema.parse(
+      await ipcRenderer.invoke("missions:create", CreateMissionSchema.parse(input)),
+    ),
+  markMissionComplete: async (id) =>
+    MissionSchema.parse(
+      await ipcRenderer.invoke("missions:complete", MissionActionSchema.parse({ id })),
+    ),
+  reopenMission: async (id) =>
+    MissionSchema.parse(
+      await ipcRenderer.invoke("missions:reopen", MissionActionSchema.parse({ id })),
+    ),
   listCapabilities: async () =>
     CapabilitySchema.array().parse(await ipcRenderer.invoke("capabilities:list")),
   getCapability: async (id, revision) =>

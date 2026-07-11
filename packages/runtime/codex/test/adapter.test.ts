@@ -573,6 +573,22 @@ describe("createCodexRuntime", () => {
     await session.abort();
   });
 
+  it("rejects the session creation when the requested Codex thread cannot be resumed", async () => {
+    const fake = new FakeCodexAppServer({ failThreadResume: true });
+    const adapter = createCodexRuntime({ spawn: fake.spawn });
+    const agent = await createTestAgent();
+
+    await expect(
+      adapter.createSession({
+        agent,
+        runtimeSession: { type: "codex-local", id: "thread-missing" },
+      }),
+    ).rejects.toThrow("Injected thread resume failure");
+    expect(fake.requests.map((request) => request.method)).toContain("thread/resume");
+    expect(fake.requests.map((request) => request.method)).not.toContain("thread/start");
+    expect(fake.killed).toBe(true);
+  });
+
   it("does not inject startup context when resuming a codex runtime session", async () => {
     const fake = new FakeCodexAppServer();
     const adapter = createCodexRuntime({
@@ -719,6 +735,7 @@ interface FakeCodexAppServerOptions {
   readonly usageLocation?: "top-level" | "turn" | "thread-notification" | "none" | undefined;
   readonly onTurnStart?: (() => void) | undefined;
   readonly failFirstTurnStart?: boolean | undefined;
+  readonly failThreadResume?: boolean | undefined;
 }
 
 class FakeCodexAppServer extends EventEmitter {
@@ -730,6 +747,7 @@ class FakeCodexAppServer extends EventEmitter {
   command = "";
   args: readonly string[] = [];
   env: NodeJS.ProcessEnv = {};
+  killed = false;
   private turnStartCount = 0;
 
   readonly spawn: CodexRuntimeSpawn = (command, args, options) => {
@@ -754,6 +772,7 @@ class FakeCodexAppServer extends EventEmitter {
   }
 
   kill(): boolean {
+    this.killed = true;
     queueMicrotask(() => {
       this.emit("exit", 0, null);
     });
@@ -780,7 +799,11 @@ class FakeCodexAppServer extends EventEmitter {
         this.writeResponse(message.id, { thread: { id: "thread-1" } });
         break;
       case "thread/resume":
-        this.writeResponse(message.id, { thread: { id: "thread-existing" } });
+        if (this.options.failThreadResume === true) {
+          this.writeErrorResponse(message.id, "Injected thread resume failure");
+        } else {
+          this.writeResponse(message.id, { thread: { id: "thread-existing" } });
+        }
         break;
       case "turn/start":
         this.turnStartCount += 1;

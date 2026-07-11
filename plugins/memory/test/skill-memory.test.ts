@@ -188,7 +188,7 @@ describe("memory plugin unified memory context", () => {
         scope: "session",
         visibility: "shared",
         workflowRunId: "wf-1",
-        runtimeSessionId: "session-1",
+        runtimeSession: { type: "cloud-pi-agent", id: "session-1" },
         kind: "progress",
         content:
           "Implemented the unified summary assembler and still need to wire runtime refresh.",
@@ -207,7 +207,7 @@ describe("memory plugin unified memory context", () => {
           workflowRunId: "summary-workflow",
           payload: {
             workflowRunId: "summary-workflow",
-            runtimeSessionIds: ["runtime-session-1"],
+            runtimeSessions: [{ type: "cloud-pi-agent", id: "runtime-session-1" }],
             runIds: ["run-1"],
             externalContext: false,
             runs: [
@@ -313,7 +313,7 @@ describe("memory plugin unified memory context", () => {
         scope: "session",
         visibility: "shared",
         workflowRunId: "wf-stale-summary",
-        runtimeSessionId: "session-1",
+        runtimeSession: { type: "cloud-pi-agent", id: "session-1" },
         kind: "progress",
         content: "Keep serving the previous summary when regeneration breaks.",
         status: "active",
