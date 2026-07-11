@@ -24,9 +24,48 @@ async function createStore() {
   };
 }
 
+async function downgradeExpertToV1(
+  expertsPath: string,
+  id: string,
+  revisions: readonly number[],
+  options: { readonly skills?: readonly unknown[] } = {},
+): Promise<void> {
+  const manifestPath = join(expertsPath, id, "expert.json");
+  const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as Record<string, unknown>;
+  await writeFile(
+    manifestPath,
+    `${JSON.stringify({ ...manifest, schemaVersion: "pragma.expert/v1" }, null, 2)}\n`,
+    "utf8",
+  );
+
+  await Promise.all(
+    revisions.flatMap((revision) => {
+      const revisionPath = join(expertsPath, id, "revisions", revision.toString().padStart(6, "0"));
+      return [
+        rm(join(revisionPath, "capabilities.json"), { force: true }),
+        writeFile(
+          join(revisionPath, "skills.json"),
+          `${JSON.stringify({ schemaVersion: 1, skills: options.skills ?? [] }, null, 2)}\n`,
+          "utf8",
+        ),
+        writeFile(
+          join(revisionPath, "mcp.json"),
+          `${JSON.stringify({ schemaVersion: 1, servers: [] }, null, 2)}\n`,
+          "utf8",
+        ),
+        writeFile(
+          join(revisionPath, "tools.json"),
+          `${JSON.stringify({ schemaVersion: 1, toolIds: [], approvals: createInput.toolApprovals }, null, 2)}\n`,
+          "utf8",
+        ),
+      ];
+    }),
+  );
+}
+
 const createInput = {
-  id: "market-research-analyst",
-  name: "Market Research Analyst",
+  id: "market_analyst",
+  name: "Market Analyst",
   description: "Analyzes market trends and consumer insights.",
   tags: ["research", "strategy"],
   version: "1.0.0",
@@ -53,7 +92,7 @@ describe("expert definition store", () => {
     const expert = await store.create(createInput);
 
     expect(expert).toMatchObject({
-      id: "market-research-analyst",
+      id: "market_analyst",
       scope: "personal",
       revision: 1,
       instructions: "Use evidence and state assumptions.",
@@ -79,7 +118,7 @@ describe("expert definition store", () => {
 
     const updated = await store.update(created.id, {
       ...createInput,
-      name: "Market Intelligence Analyst",
+      name: "Intel Analyst",
       description: "Builds evidence-based market intelligence.",
       version: "1.1.0",
       instructions: "Prioritize traceable sources.",
@@ -88,7 +127,7 @@ describe("expert definition store", () => {
     expect(updated).toMatchObject({
       id: created.id,
       revision: 2,
-      name: "Market Intelligence Analyst",
+      name: "Intel Analyst",
     });
     expect(
       await readFile(
@@ -114,6 +153,58 @@ describe("expert definition store", () => {
       model: { runtimeId: "pi", providerId, modelName: "deepseek-v4-flash" },
     });
     await expect(readFile(modelPath, "utf8")).resolves.toContain('"runtimeId": "pi"');
+  });
+
+  it("migrates every v1 revision to v2 before exposing stored experts", async () => {
+    const { expertsPath, store } = await createStore();
+    const created = await store.create(createInput);
+    await store.update(created.id, {
+      ...createInput,
+      name: "Intel Analyst",
+      version: "1.1.0",
+    });
+    await downgradeExpertToV1(expertsPath, created.id, [1, 2]);
+    const migratedStore = createExpertDefinitionStore({ expertsPath });
+
+    await expect(migratedStore.list()).resolves.toEqual([
+      expect.objectContaining({
+        schemaVersion: "pragma.expert/v2",
+        id: created.id,
+        revision: 2,
+      }),
+    ]);
+    await expect(migratedStore.get(created.id)).resolves.toMatchObject({
+      schemaVersion: "pragma.expert/v2",
+      capabilities: [],
+      toolApprovals: createInput.toolApprovals,
+    });
+    await expect(migratedStore.list()).resolves.toHaveLength(1);
+
+    await expect(readFile(join(expertsPath, created.id, "expert.json"), "utf8")).resolves.toContain(
+      '"schemaVersion": "pragma.expert/v2"',
+    );
+    for (const revision of ["000001", "000002"]) {
+      await expect(
+        readFile(join(expertsPath, created.id, "revisions", revision, "capabilities.json"), "utf8"),
+      ).resolves.toContain('"capabilities": []');
+    }
+  });
+
+  it("stops a v1 migration without changing the manifest when data needs manual conversion", async () => {
+    const { expertsPath, store } = await createStore();
+    const created = await store.create(createInput);
+    await downgradeExpertToV1(expertsPath, created.id, [1], {
+      skills: [{ type: "local", name: "legacy-skill" }],
+    });
+    const migratedStore = createExpertDefinitionStore({ expertsPath });
+
+    await expect(migratedStore.list()).rejects.toMatchObject({
+      code: "config_invalid",
+      message: expect.stringContaining("legacy skills"),
+    } satisfies Partial<ExpertDefinitionStoreError>);
+    await expect(readFile(join(expertsPath, created.id, "expert.json"), "utf8")).resolves.toContain(
+      '"schemaVersion": "pragma.expert/v1"',
+    );
   });
 
   it("rejects updates for experts that do not exist", async () => {
@@ -150,9 +241,13 @@ describe("expert definition store", () => {
     const { store } = await createStore();
     await store.create(createInput);
 
-    await expect(store.create(createInput)).rejects.toMatchObject({
-      code: "expert_exists",
-    } satisfies Partial<ExpertDefinitionStoreError>);
+    await Promise.all(
+      [createInput, { ...createInput, id: createInput.id.toUpperCase() }].map(async (input) => {
+        await expect(store.create(input)).rejects.toMatchObject({
+          code: "expert_exists",
+        } satisfies Partial<ExpertDefinitionStoreError>);
+      }),
+    );
   });
 
   it("requires capability references to use valid IDs", async () => {

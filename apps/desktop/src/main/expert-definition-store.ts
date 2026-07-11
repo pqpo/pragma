@@ -14,7 +14,9 @@ import {
   type UpdateExpertDefinition,
 } from "../shared/desktop-api.ts";
 
-const EXPERT_SCHEMA_VERSION = "pragma.expert/v2";
+const EXPERT_SCHEMA_VERSION_V1 = "pragma.expert/v1";
+const EXPERT_SCHEMA_VERSION_V2 = "pragma.expert/v2";
+const CURRENT_EXPERT_SCHEMA_VERSION = EXPERT_SCHEMA_VERSION_V2;
 const MODULE_SCHEMA_VERSION = 1;
 
 export interface ExpertDefinitionStore {
@@ -104,6 +106,147 @@ export function createExpertDefinitionStore(options: {
 }): ExpertDefinitionStore {
   const expertPath = (id: string) => join(options.expertsPath, id);
   const manifestPath = (id: string) => join(expertPath(id), "expert.json");
+
+  const migrateV1Revision = async (id: string, revision: string): Promise<void> => {
+    const revisionPath = join(expertPath(id), "revisions", revision);
+    const [skills, mcpServers, tools, migratedCapabilities] = await Promise.all([
+      readFile(join(revisionPath, "skills.json"), "utf8"),
+      readFile(join(revisionPath, "mcp.json"), "utf8"),
+      readFile(join(revisionPath, "tools.json"), "utf8"),
+      readFile(join(revisionPath, "capabilities.json"), "utf8").catch((error: unknown) => {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+        throw error;
+      }),
+    ]);
+    const legacySkills = parseModule<unknown>(skills, "skills.json", "skills");
+    const legacyMcpServers = parseModule<unknown>(mcpServers, "mcp.json", "servers");
+    const storedLegacyToolIds = parseModule<unknown>(tools, "tools.json", "toolIds");
+    const alreadyMigratedCapabilities = migratedCapabilities
+      ? parseModule<unknown>(migratedCapabilities, "capabilities.json", "capabilities")
+      : undefined;
+    const legacyToolIds =
+      storedLegacyToolIds === undefined &&
+      Array.isArray(alreadyMigratedCapabilities) &&
+      alreadyMigratedCapabilities.length === 0
+        ? []
+        : storedLegacyToolIds;
+    const approvals = parseModule<unknown>(tools, "tools.json", "approvals");
+
+    const unsupported = [
+      ["skills", legacySkills],
+      ["MCP servers", legacyMcpServers],
+      ["tools", legacyToolIds],
+    ].filter(
+      (entry): entry is [string, unknown[]] => Array.isArray(entry[1]) && entry[1].length > 0,
+    );
+    if (unsupported.length > 0) {
+      throw new ExpertDefinitionStoreError(
+        "config_invalid",
+        `Expert ${id} revision ${Number(revision)} cannot be migrated to ${EXPERT_SCHEMA_VERSION_V2} because it contains legacy ${unsupported.map(([label]) => label).join(", ")}. Import them into the capability library first.`,
+      );
+    }
+    if (
+      !Array.isArray(legacySkills) ||
+      !Array.isArray(legacyMcpServers) ||
+      !Array.isArray(legacyToolIds)
+    ) {
+      throw new ExpertDefinitionStoreError(
+        "config_invalid",
+        `Expert ${id} revision ${Number(revision)} has invalid legacy capability modules.`,
+      );
+    }
+
+    await writeJson(join(revisionPath, "capabilities.json"), {
+      schemaVersion: MODULE_SCHEMA_VERSION,
+      capabilities: [],
+    });
+    await writeJson(join(revisionPath, "tools.json"), {
+      schemaVersion: MODULE_SCHEMA_VERSION,
+      approvals,
+    });
+  };
+
+  const migrateV1Expert = async (
+    id: string,
+    manifest: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> => {
+    const migratedSummary = ExpertSummarySchema.safeParse({
+      ...manifest,
+      schemaVersion: EXPERT_SCHEMA_VERSION_V2,
+    });
+    if (!migratedSummary.success) {
+      throw new ExpertDefinitionStoreError(
+        "config_invalid",
+        `Expert ${id} has an invalid ${EXPERT_SCHEMA_VERSION_V1} manifest.`,
+      );
+    }
+
+    const revisionsPath = join(expertPath(id), "revisions");
+    const revisions = (await readdir(revisionsPath, { withFileTypes: true }))
+      .filter((entry) => entry.isDirectory() && /^\d{6}$/.test(entry.name))
+      .map((entry) => entry.name)
+      .sort();
+    if (revisions.length === 0) {
+      throw new ExpertDefinitionStoreError(
+        "config_invalid",
+        `Expert ${id} has no revisions to migrate.`,
+      );
+    }
+
+    for (const revision of revisions) {
+      await migrateV1Revision(id, revision);
+    }
+
+    // The manifest is the commit marker. Keeping it on v1 until every revision is
+    // converted makes an interrupted migration safe to retry.
+    await writeJson(manifestPath(id), migratedSummary.data);
+    return migratedSummary.data;
+  };
+
+  const migrateStoredExperts = async (): Promise<void> => {
+    let entries;
+    try {
+      entries = await readdir(options.expertsPath, { withFileTypes: true });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+      throw error;
+    }
+
+    for (const entry of entries.filter((candidate) => candidate.isDirectory())) {
+      const rawManifest = parseJson(
+        await readFile(manifestPath(entry.name), "utf8"),
+        "expert.json",
+      );
+      if (!rawManifest || typeof rawManifest !== "object") {
+        throw new ExpertDefinitionStoreError(
+          "config_invalid",
+          `Expert ${entry.name} has an invalid manifest.`,
+        );
+      }
+      let manifest = rawManifest as Record<string, unknown>;
+      while (manifest.schemaVersion !== CURRENT_EXPERT_SCHEMA_VERSION) {
+        if (manifest.schemaVersion === EXPERT_SCHEMA_VERSION_V1) {
+          manifest = await migrateV1Expert(entry.name, manifest);
+          continue;
+        }
+        throw new ExpertDefinitionStoreError(
+          "config_invalid",
+          `Expert ${entry.name} uses unsupported schema version ${String(manifest.schemaVersion)}.`,
+        );
+      }
+    }
+  };
+
+  let migrationPromise: Promise<void> | undefined;
+  const ensureMigrations = async (): Promise<void> => {
+    migrationPromise ??= migrateStoredExperts();
+    try {
+      await migrationPromise;
+    } catch (error) {
+      migrationPromise = undefined;
+      throw error;
+    }
+  };
 
   const readSummary = async (id: string): Promise<ExpertSummary> => {
     try {
@@ -215,6 +358,7 @@ export function createExpertDefinitionStore(options: {
 
   return {
     async list(): Promise<ExpertSummary[]> {
+      await ensureMigrations();
       try {
         const entries = await readdir(options.expertsPath, { withFileTypes: true });
         const summaries = await Promise.all(
@@ -228,24 +372,32 @@ export function createExpertDefinitionStore(options: {
     },
 
     async get(id: string): Promise<ExpertDefinition> {
+      await ensureMigrations();
       return await readDefinition(id);
     },
 
     async create(input: CreateExpertDefinition): Promise<ExpertDefinition> {
+      await ensureMigrations();
       const parsed = CreateExpertDefinitionSchema.parse(input);
-      try {
-        await readSummary(parsed.id);
+      const existingIds = await readdir(options.expertsPath, { withFileTypes: true }).catch(
+        (error: unknown) => {
+          if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+          throw error;
+        },
+      );
+      if (
+        existingIds.some(
+          (entry) => entry.isDirectory() && entry.name.toLowerCase() === parsed.id.toLowerCase(),
+        )
+      ) {
         throw new ExpertDefinitionStoreError(
           "expert_exists",
           "An expert with this ID already exists.",
         );
-      } catch (error) {
-        if (!(error instanceof ExpertDefinitionStoreError) || error.code !== "expert_not_found")
-          throw error;
       }
       const timestamp = new Date().toISOString();
       const expert = ExpertDefinitionSchema.parse({
-        schemaVersion: EXPERT_SCHEMA_VERSION,
+        schemaVersion: CURRENT_EXPERT_SCHEMA_VERSION,
         ...parsed,
         instructions: parsed.instructions ?? undefined,
         model: parsed.model ?? null,
@@ -262,6 +414,7 @@ export function createExpertDefinitionStore(options: {
     },
 
     async update(id: string, input: UpdateExpertDefinition): Promise<ExpertDefinition> {
+      await ensureMigrations();
       const current = await readDefinition(id);
       const parsed = UpdateExpertDefinitionSchema.parse(input);
       const expert = ExpertDefinitionSchema.parse({
@@ -276,6 +429,7 @@ export function createExpertDefinitionStore(options: {
     },
 
     async remove(id: string): Promise<void> {
+      await ensureMigrations();
       await readSummary(id);
       await rm(expertPath(id), { recursive: true, force: true });
     },

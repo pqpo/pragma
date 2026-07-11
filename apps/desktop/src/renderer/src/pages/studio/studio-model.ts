@@ -1,13 +1,5 @@
 import type { Icon } from "@phosphor-icons/react";
-import {
-  Database,
-  Robot,
-  SquaresFour,
-  TerminalWindow,
-  User,
-  UsersThree,
-  Wrench,
-} from "@phosphor-icons/react";
+import { Database, SquaresFour, User, UsersThree, Wrench } from "@phosphor-icons/react";
 
 import type {
   CreateExpertDefinition,
@@ -38,78 +30,6 @@ export type ExpertRecord = {
 };
 
 export type ExpertDraft = Omit<ExpertRecord, "icon"> & { readonly tagInput: string };
-
-export const initialExperts: readonly ExpertRecord[] = [
-  {
-    id: "market-research-analyst",
-    name: "Market Research Analyst",
-    description: "Analyzes market trends and consumer insights.",
-    tags: ["research", "strategy"],
-    version: "1.2.0",
-    scope: "Market and consumer research. Does not make final pricing or investment decisions.",
-    instructions:
-      "You are a Market Research Analyst. Turn market data and signals into clear, evidence-based insights and recommendations. Clarify the objective, audience, time horizon, and constraints before you begin.",
-    model: null,
-    capabilities: [],
-    skills: 0,
-    tools: 0,
-    mcpServers: 0,
-    contextStoreMounts: [],
-    usesApproval: true,
-    icon: User,
-  },
-  {
-    id: "data-engineer",
-    name: "Data Engineer",
-    description: "Builds and maintains data pipelines and infrastructure.",
-    tags: ["data", "engineering"],
-    version: "1.0.0",
-    scope: "Data pipeline and platform engineering. Does not own product analytics definitions.",
-    instructions: "Build reliable, observable data systems with clear ownership and verification.",
-    model: null,
-    capabilities: [],
-    skills: 0,
-    tools: 0,
-    mcpServers: 0,
-    contextStoreMounts: [],
-    usesApproval: false,
-    icon: TerminalWindow,
-  },
-  {
-    id: "customer-support-expert",
-    name: "Customer Support Expert",
-    description: "Provides customer support and resolves issues.",
-    tags: ["support", "customer experience"],
-    version: "1.0.0",
-    scope: "Customer issue resolution. Does not approve refunds or change account policy.",
-    instructions: "Resolve customer issues clearly, accurately, and with empathy.",
-    model: null,
-    capabilities: [],
-    skills: 0,
-    tools: 0,
-    mcpServers: 0,
-    contextStoreMounts: [],
-    usesApproval: false,
-    icon: Robot,
-  },
-  {
-    id: "code-reviewer",
-    name: "Code Reviewer",
-    description: "Reviews code for quality, security, and best practices.",
-    tags: ["engineering", "quality"],
-    version: "1.1.0",
-    scope: "Code quality and security review. Does not merge or deploy changes.",
-    instructions: "Review changes for correctness, security, maintainability, and test coverage.",
-    model: null,
-    capabilities: [],
-    skills: 0,
-    tools: 0,
-    mcpServers: 0,
-    contextStoreMounts: [],
-    usesApproval: true,
-    icon: TerminalWindow,
-  },
-];
 
 export const emptyDraft = (): ExpertDraft => ({
   id: "",
@@ -201,19 +121,3 @@ export const studioDescriptions = {
   capabilities: "Reusable skills and external tools selected by experts.",
   "context-stores": "Reusable knowledge sources mounted by experts.",
 } satisfies Record<Exclude<StudioView, "overview">, string>;
-
-export const collectionAssets = {
-  experts: initialExperts,
-  teams: [
-    {
-      name: "Growth Intelligence Team",
-      description: "Researches growth opportunities and market signals.",
-    },
-    { name: "Data Platform Team", description: "Designs and operates data systems and pipelines." },
-  ],
-  capabilities: [],
-  "context-stores": [],
-} satisfies Record<
-  Exclude<StudioView, "overview">,
-  readonly { name: string; description: string }[]
->;

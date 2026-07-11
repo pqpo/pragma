@@ -11,9 +11,7 @@ describe("App", () => {
     expect(html).toContain("Reusable specialists available to your missions.");
     expect(html).toContain("Create expert");
     expect(html).toContain("Search experts");
-    expect(html).toContain("Market Research Analyst");
-    expect(html).toContain("Data Engineer");
-    expect(html).toContain("Customer Support Expert");
+    expect(html).toContain("0 experts");
   });
 
   it("offers the Studio collections with their counts", () => {
@@ -22,9 +20,7 @@ describe("App", () => {
     expect(html).toContain("Experts");
     expect(html).toContain("Expert teams");
     expect(html).toContain("Capabilities");
-    expect(html).toContain(">4<");
-    expect(html.match(/>2</g)?.length).toBe(1);
-    expect(html.match(/>0</g)?.length).toBe(2);
+    expect(html.match(/>0</g)?.length).toBe(4);
   });
 
   it("keeps unavailable application navigation disabled", () => {

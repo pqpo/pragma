@@ -14,9 +14,10 @@ import {
   stat,
   writeFile,
 } from "node:fs/promises";
-import { createRequire } from "node:module";
 import { basename, dirname, extname, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
+
+import matter from "gray-matter";
 
 import type {
   ExpertAgentContextItemListInput,
@@ -44,8 +45,6 @@ import {
 } from "./context-system.ts";
 
 const execFileAsync = promisify(execFile);
-const require = createRequire(import.meta.url);
-const matter = require("gray-matter") as typeof import("gray-matter");
 
 export interface FileSystemContextStoreCommandResult {
   readonly stdout: string;

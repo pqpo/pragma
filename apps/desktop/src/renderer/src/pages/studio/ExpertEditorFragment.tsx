@@ -3,7 +3,11 @@ import { useState } from "react";
 
 import { errorMessage } from "../../lib/errors.ts";
 import {
-  ExpertIdSchema,
+  EXPERT_DESCRIPTION_MAX_LENGTH,
+  EXPERT_ID_MAX_LENGTH,
+  EXPERT_NAME_MAX_LENGTH,
+  EXPERT_TAG_MAX_LENGTH,
+  CreateExpertIdSchema,
   type Capability,
   type ContextStore,
   type DesktopRuntimeAvailability,
@@ -19,6 +23,7 @@ export function ExpertEditorFragment(props: {
   readonly runtimes: readonly DesktopRuntimeAvailability[];
   readonly contextStores: readonly ContextStore[];
   readonly capabilities: readonly Capability[];
+  readonly existingExpertIds: readonly string[];
   readonly onCancel: () => void;
   readonly onCreated: (expert: ExpertRecord) => Promise<void>;
 }) {
@@ -48,17 +53,30 @@ export function ExpertEditorFragment(props: {
   const index = steps.findIndex((item) => item.id === step);
   const advance = () => {
     if (step === "identity") {
-      const idResult = ExpertIdSchema.safeParse(draft.id);
+      const idResult = CreateExpertIdSchema.safeParse(draft.id);
+      const idAlreadyExists =
+        !isEditing &&
+        props.existingExpertIds.some((id) => id.toLowerCase() === draft.id.trim().toLowerCase());
+      const hasInvalidLength =
+        draft.name.trim().length > EXPERT_NAME_MAX_LENGTH ||
+        draft.description.trim().length > EXPERT_DESCRIPTION_MAX_LENGTH ||
+        draft.tags.some((tag) => tag.trim().length > EXPERT_TAG_MAX_LENGTH);
       if (
         !draft.name.trim() ||
         !draft.description.trim() ||
         !draft.scope.trim() ||
-        !idResult.success
+        !idResult.success ||
+        idAlreadyExists ||
+        hasInvalidLength
       ) {
         setError(
-          idResult.success
-            ? "Name, ID, description, and scope are required to define an expert."
-            : (idResult.error.issues[0]?.message ?? "The expert ID is invalid."),
+          idAlreadyExists
+            ? "This expert ID is already in use. Choose a unique ID."
+            : hasInvalidLength
+              ? "Name, description, or tags exceed their character limits."
+              : idResult.success
+                ? "Name, ID, description, and scope are required to define an expert."
+                : (idResult.error.issues[0]?.message ?? "The expert ID is invalid."),
         );
         return;
       }
@@ -69,7 +87,7 @@ export function ExpertEditorFragment(props: {
   const retreat = () => (index === 0 ? props.onCancel() : setStep(steps[index - 1]!.id));
   const addTag = () => {
     const tag = draft.tagInput.trim();
-    if (!tag || draft.tags.includes(tag)) return;
+    if (!tag || draft.tags.some((item) => item.toLowerCase() === tag.toLowerCase())) return;
     setDraft({ ...draft, tags: [...draft.tags, tag], tagInput: "" });
   };
   const setCapabilityReferences = (capabilities: ExpertDraft["capabilities"]) => {
@@ -86,7 +104,7 @@ export function ExpertEditorFragment(props: {
   const submit = async () => {
     setError(null);
     const name = draft.name.trim();
-    const idResult = ExpertIdSchema.safeParse(draft.id);
+    const idResult = CreateExpertIdSchema.safeParse(draft.id);
     const description = draft.description.trim();
     if (!name || !description || !draft.scope.trim() || !idResult.success) {
       setError(
@@ -162,36 +180,75 @@ export function ExpertEditorFragment(props: {
                 Name
                 <input
                   value={draft.name}
-                  onChange={(event) => setDraft({ ...draft, name: event.target.value })}
-                  placeholder="Market Research Analyst"
+                  onChange={(event) =>
+                    setDraft({
+                      ...draft,
+                      name: event.target.value.slice(0, EXPERT_NAME_MAX_LENGTH),
+                    })
+                  }
+                  placeholder="Expert name"
+                  maxLength={EXPERT_NAME_MAX_LENGTH}
                   autoFocus
                 />
+                <small className="field-hint">
+                  <span>Choose a short, recognizable name.</span>
+                  <span>
+                    {draft.name.length}/{EXPERT_NAME_MAX_LENGTH}
+                  </span>
+                </small>
               </label>
               <label>
                 ID
                 <input
                   value={draft.id}
-                  onChange={(event) => setDraft({ ...draft, id: event.target.value })}
-                  placeholder="market-research-analyst"
+                  onChange={(event) =>
+                    setDraft({
+                      ...draft,
+                      id: event.target.value.slice(0, EXPERT_ID_MAX_LENGTH),
+                    })
+                  }
+                  placeholder="market_research"
+                  maxLength={EXPERT_ID_MAX_LENGTH}
                   disabled={isEditing}
                 />
-                <small>
-                  Stable programmatic identifier. Use lowercase letters, numbers, and hyphens.
+                <small className="field-hint">
+                  <span>Unique identifier. Use only letters, numbers, and underscores.</span>
+                  <span>
+                    {draft.id.length}/{EXPERT_ID_MAX_LENGTH}
+                  </span>
                 </small>
               </label>
               <label>
                 Description
                 <textarea
                   value={draft.description}
-                  onChange={(event) => setDraft({ ...draft, description: event.target.value })}
+                  onChange={(event) =>
+                    setDraft({
+                      ...draft,
+                      description: event.target.value.slice(0, EXPERT_DESCRIPTION_MAX_LENGTH),
+                    })
+                  }
                   placeholder="What does this expert do?"
+                  maxLength={EXPERT_DESCRIPTION_MAX_LENGTH}
                 />
+                <small className="field-hint">
+                  <span>Summarize the expert's purpose in one or two sentences.</span>
+                  <span>
+                    {draft.description.length}/{EXPERT_DESCRIPTION_MAX_LENGTH}
+                  </span>
+                </small>
               </label>
               <label>
                 Tags
                 <input
                   value={draft.tagInput}
-                  onChange={(event) => setDraft({ ...draft, tagInput: event.target.value })}
+                  onChange={(event) =>
+                    setDraft({
+                      ...draft,
+                      tagInput: event.target.value.slice(0, EXPERT_TAG_MAX_LENGTH),
+                    })
+                  }
+                  maxLength={EXPERT_TAG_MAX_LENGTH}
                   onKeyDown={(event) => {
                     if (event.key === "Enter") {
                       event.preventDefault();
@@ -200,6 +257,12 @@ export function ExpertEditorFragment(props: {
                   }}
                   placeholder="Add a tag and press Enter"
                 />
+                <small className="field-hint">
+                  <span>Each tag can contain up to {EXPERT_TAG_MAX_LENGTH} characters.</span>
+                  <span>
+                    {draft.tagInput.length}/{EXPERT_TAG_MAX_LENGTH}
+                  </span>
+                </small>
                 <span className="draft-tags">
                   {draft.tags.map((tag) => (
                     <button

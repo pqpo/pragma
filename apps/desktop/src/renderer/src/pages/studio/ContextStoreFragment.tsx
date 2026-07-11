@@ -1,4 +1,5 @@
 import {
+  ArrowLeft,
   BookOpenText,
   CaretRight,
   Check,
@@ -32,12 +33,11 @@ function triggerLabel(trigger: ContextTrigger): string {
 export function ContextStoreDirectoryFragment(props: {
   readonly stores: readonly ContextStore[];
   readonly onCreate: (input: CreateContextStore) => Promise<ContextStore>;
-  readonly onAddNoteEntry: (storeId: string, entry: ContextNoteEntry) => Promise<ContextStore>;
   readonly onPickFolder: () => Promise<string | undefined>;
+  readonly onOpen: (store: ContextStore) => void;
 }) {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<StoreFilter>("all");
-  const [selectedId, setSelectedId] = useState<string | null>(props.stores[0]?.id ?? null);
   const [creating, setCreating] = useState(false);
   const stores = useMemo(
     () =>
@@ -50,8 +50,6 @@ export function ContextStoreDirectoryFragment(props: {
       }),
     [filter, props.stores, query],
   );
-  const selected = stores.find((store) => store.id === selectedId) ?? stores[0];
-
   return (
     <section className="context-store-directory" aria-labelledby="context-stores-heading">
       <header className="studio-heading expert-directory-heading">
@@ -105,51 +103,44 @@ export function ContextStoreDirectoryFragment(props: {
           ) : null}
         </div>
       ) : (
-        <div className="store-directory-layout">
-          <div className="store-table" role="list" aria-label="Context stores">
-            <div className="store-table-heading" aria-hidden="true">
-              <span>Store</span>
-              <span>Type</span>
-              <span>Source</span>
-              <span>Status</span>
-            </div>
-            {stores.map((store) => {
-              const StoreIcon = store.type === "file" ? Folder : BookOpenText;
-              return (
-                <button
-                  className={
-                    store.id === selected?.id ? "store-list-row is-selected" : "store-list-row"
-                  }
-                  key={store.id}
-                  type="button"
-                  onClick={() => setSelectedId(store.id)}
-                >
-                  <span className="store-list-name">
-                    <span className="store-icon" aria-hidden="true">
-                      <StoreIcon size={22} />
-                    </span>
-                    <span>
-                      <strong>{store.name}</strong>
-                      <small>{store.description || "No description"}</small>
-                    </span>
-                  </span>
-                  <span>{store.type === "file" ? "File store" : "Context note"}</span>
-                  <span className="store-source">
-                    {store.type === "file" ? store.source.path : `${store.entries.length} entries`}
-                  </span>
-                  <span className="store-status">
-                    <i className={store.status === "ready" ? "is-ready" : ""} />
-                    {store.status === "ready" ? "Ready" : "Configured"}
-                  </span>
-                  <CaretRight size={17} aria-hidden="true" />
-                </button>
-              );
-            })}
-            <p className="directory-count">{stores.length} stores</p>
+        <div className="store-table" role="list" aria-label="Context stores">
+          <div className="store-table-heading" aria-hidden="true">
+            <span>Store</span>
+            <span>Type</span>
+            <span>Source</span>
+            <span>Status</span>
           </div>
-          {selected ? (
-            <ContextStoreDetail store={selected} onAddNoteEntry={props.onAddNoteEntry} />
-          ) : null}
+          {stores.map((store) => {
+            const StoreIcon = store.type === "file" ? Folder : BookOpenText;
+            return (
+              <button
+                className="store-list-row"
+                key={store.id}
+                type="button"
+                onClick={() => props.onOpen(store)}
+              >
+                <span className="store-list-name">
+                  <span className="store-icon" aria-hidden="true">
+                    <StoreIcon size={22} />
+                  </span>
+                  <span>
+                    <strong>{store.name}</strong>
+                    <small>{store.description || "No description"}</small>
+                  </span>
+                </span>
+                <span>{store.type === "file" ? "File store" : "Context note"}</span>
+                <span className="store-source">
+                  {store.type === "file" ? store.source.path : `${store.entries.length} entries`}
+                </span>
+                <span className="store-status">
+                  <i className={store.status === "ready" ? "is-ready" : ""} />
+                  {store.status === "ready" ? "Ready" : "Configured"}
+                </span>
+                <CaretRight size={17} aria-hidden="true" />
+              </button>
+            );
+          })}
+          <p className="directory-count">{stores.length} stores</p>
         </div>
       )}
 
@@ -157,10 +148,7 @@ export function ContextStoreDirectoryFragment(props: {
         <ContextStoreCreatorDrawer
           onClose={() => setCreating(false)}
           onCreate={props.onCreate}
-          onCreated={(store) => {
-            setSelectedId(store.id);
-            setCreating(false);
-          }}
+          onCreated={() => setCreating(false)}
           onPickFolder={props.onPickFolder}
         />
       ) : null}
@@ -168,20 +156,25 @@ export function ContextStoreDirectoryFragment(props: {
   );
 }
 
-function ContextStoreDetail(props: {
+export function ContextStoreDetailFragment(props: {
   readonly store: ContextStore;
+  readonly onBack: () => void;
   readonly onAddNoteEntry: (storeId: string, entry: ContextNoteEntry) => Promise<ContextStore>;
 }) {
   const [addingEntity, setAddingEntity] = useState(false);
   const StoreIcon = props.store.type === "file" ? Folder : BookOpenText;
   return (
-    <aside className="store-detail" aria-label={`${props.store.name} details`}>
+    <section className="store-detail" aria-labelledby="context-store-name">
+      <button className="back-link" type="button" onClick={props.onBack}>
+        <ArrowLeft size={18} aria-hidden="true" />
+        Back to Context stores
+      </button>
       <div className="store-detail-title">
         <span className="store-icon" aria-hidden="true">
           <StoreIcon size={24} />
         </span>
         <div>
-          <h2>{props.store.name}</h2>
+          <h1 id="context-store-name">{props.store.name}</h1>
           <p>{props.store.description || "No description"}</p>
         </div>
       </div>
@@ -248,7 +241,7 @@ function ContextStoreDetail(props: {
           ) : null}
         </>
       ) : null}
-    </aside>
+    </section>
   );
 }
 

@@ -14,6 +14,7 @@ import type {
 import { ContextStoreSchema } from "../../../../shared/desktop-api.ts";
 import { errorMessage } from "../../lib/errors.ts";
 import {
+  ContextStoreDetailFragment,
   ContextStoreDirectoryFragment,
   ExpertContextMountDrawer,
 } from "./ContextStoreFragment.tsx";
@@ -22,10 +23,8 @@ import { ExpertEditorFragment } from "./ExpertEditorFragment.tsx";
 import { CapabilityDirectoryFragment } from "./CapabilityDirectoryFragment.tsx";
 import { StudioCollectionFragment, StudioOverviewFragment } from "./StudioOverviewFragment.tsx";
 import {
-  collectionAssets,
   desktopApi,
   emptyDraft,
-  initialExperts,
   studioSections,
   toExpertRecord,
   toPersistedInput,
@@ -36,13 +35,16 @@ import {
 
 export function StudioPage() {
   const [activeView, setActiveView] = useState<StudioView>("experts");
-  const [screen, setScreen] = useState<"directory" | "detail" | "create">("directory");
-  const [experts, setExperts] = useState<readonly ExpertRecord[]>(initialExperts);
-  const [selectedExpert, setSelectedExpert] = useState<ExpertRecord>(initialExperts[0]!);
+  const [screen, setScreen] = useState<
+    "directory" | "expert-detail" | "context-store-detail" | "create"
+  >("directory");
+  const [experts, setExperts] = useState<readonly ExpertRecord[]>([]);
+  const [selectedExpert, setSelectedExpert] = useState<ExpertRecord | null>(null);
   const [draft, setDraft] = useState<ExpertDraft>(emptyDraft());
   const [modelProviders, setModelProviders] = useState<readonly ModelProvider[]>([]);
   const [runtimes, setRuntimes] = useState<readonly DesktopRuntimeAvailability[]>([]);
   const [contextStores, setContextStores] = useState<readonly ContextStore[]>([]);
+  const [selectedContextStoreId, setSelectedContextStoreId] = useState<string | null>(null);
   const [capabilities, setCapabilities] = useState<readonly Capability[]>([]);
   const [contextDrawerOpen, setContextDrawerOpen] = useState(false);
   const [expertError, setExpertError] = useState<string | null>(null);
@@ -60,7 +62,7 @@ export function StudioPage() {
         const storedExperts = definitions.map(toExpertRecord);
         if (cancelled) return;
         setExperts(storedExperts);
-        if (storedExperts[0] !== undefined) setSelectedExpert(storedExperts[0]);
+        setSelectedExpert(storedExperts[0] ?? null);
         setExpertError(null);
       } catch (loadError) {
         if (cancelled) return;
@@ -103,7 +105,7 @@ export function StudioPage() {
       cancelled = true;
     };
   }, []);
-  const openDirectory = () => {
+  const openExpertDirectory = () => {
     setActiveView("experts");
     setScreen("directory");
   };
@@ -129,7 +131,7 @@ export function StudioPage() {
     );
     setSelectedExpert(saved);
     setExpertError(null);
-    setScreen("detail");
+    setScreen("expert-detail");
   };
   const createContextStore = async (input: CreateContextStore): Promise<ContextStore> => {
     const api = desktopApi();
@@ -177,10 +179,13 @@ export function StudioPage() {
     return updated;
   };
   const saveContextMounts = async (mounts: readonly ExpertContextStoreMount[]) => {
+    if (selectedExpert === null) return;
     const updated = { ...selectedExpert, contextStoreMounts: [...mounts] };
     await saveExpert(updated);
     setContextDrawerOpen(false);
   };
+  const selectedContextStore =
+    contextStores.find((store) => store.id === selectedContextStoreId) ?? null;
 
   return (
     <section className="studio-page">
@@ -197,7 +202,7 @@ export function StudioPage() {
                   ? experts.length
                   : section.id === "capabilities"
                     ? capabilities.length
-                    : collectionAssets[section.id].length;
+                    : 0;
           return (
             <button
               key={section.id}
@@ -219,11 +224,11 @@ export function StudioPage() {
       </nav>
 
       <div className="studio-content">
-        {screen === "detail" ? (
+        {screen === "expert-detail" && selectedExpert !== null ? (
           <ExpertDetailFragment
             expert={selectedExpert}
             contextStores={contextStores}
-            onBack={openDirectory}
+            onBack={openExpertDirectory}
             onEdit={() => openCreate(selectedExpert)}
             onConfigureContext={() => setContextDrawerOpen(true)}
           />
@@ -235,7 +240,8 @@ export function StudioPage() {
             runtimes={runtimes}
             contextStores={contextStores}
             capabilities={capabilities}
-            onCancel={openDirectory}
+            existingExpertIds={experts.map((expert) => expert.id)}
+            onCancel={openExpertDirectory}
             onCreated={saveExpert}
           />
         ) : null}
@@ -245,7 +251,7 @@ export function StudioPage() {
             onCreate={() => openCreate()}
             onOpen={(expert) => {
               setSelectedExpert(expert);
-              setScreen("detail");
+              setScreen("expert-detail");
             }}
           />
         ) : null}
@@ -253,8 +259,18 @@ export function StudioPage() {
           <ContextStoreDirectoryFragment
             stores={contextStores}
             onCreate={createContextStore}
-            onAddNoteEntry={addContextNoteEntry}
             onPickFolder={pickContextStoreFolder}
+            onOpen={(store) => {
+              setSelectedContextStoreId(store.id);
+              setScreen("context-store-detail");
+            }}
+          />
+        ) : null}
+        {screen === "context-store-detail" && selectedContextStore !== null ? (
+          <ContextStoreDetailFragment
+            store={selectedContextStore}
+            onBack={() => setScreen("directory")}
+            onAddNoteEntry={addContextNoteEntry}
           />
         ) : null}
         {screen === "directory" && activeView === "capabilities" ? (
@@ -287,6 +303,7 @@ export function StudioPage() {
           <StudioOverviewFragment
             experts={experts}
             capabilities={capabilities}
+            contextStores={contextStores}
             onNavigate={(view) => {
               setActiveView(view);
               setScreen("directory");
@@ -297,7 +314,7 @@ export function StudioPage() {
           <StudioCollectionFragment view={activeView} />
         ) : null}
       </div>
-      {contextDrawerOpen ? (
+      {contextDrawerOpen && selectedExpert !== null ? (
         <ExpertContextMountDrawer
           expertName={selectedExpert.name}
           stores={contextStores}

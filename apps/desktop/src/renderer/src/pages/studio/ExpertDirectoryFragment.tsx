@@ -15,6 +15,16 @@ import { useState } from "react";
 import type { ContextStore } from "../../../../shared/desktop-api.ts";
 import type { ExpertRecord } from "./studio-model.ts";
 
+const DESCRIPTION_PREVIEW_LENGTH = 200;
+const INSTRUCTIONS_PREVIEW_LENGTH = 420;
+
+function truncateText(value: string, maximumLength: number): string {
+  const normalized = value.trim();
+  return normalized.length > maximumLength
+    ? `${normalized.slice(0, maximumLength).trimEnd()}…`
+    : normalized;
+}
+
 export function ExpertDirectoryFragment(props: {
   readonly experts: readonly ExpertRecord[];
   readonly onCreate: () => void;
@@ -105,6 +115,12 @@ export function ExpertDetailFragment(props: {
   readonly onConfigureContext: () => void;
 }) {
   const ExpertIcon = props.expert.icon;
+  const [instructionsExpanded, setInstructionsExpanded] = useState(false);
+  const hasLongInstructions = props.expert.instructions.trim().length > INSTRUCTIONS_PREVIEW_LENGTH;
+  const displayedInstructions =
+    hasLongInstructions && !instructionsExpanded
+      ? truncateText(props.expert.instructions, INSTRUCTIONS_PREVIEW_LENGTH)
+      : props.expert.instructions.trim();
   return (
     <section className="expert-detail" aria-labelledby="expert-name">
       <button className="back-link" type="button" onClick={props.onBack}>
@@ -119,8 +135,9 @@ export function ExpertDetailFragment(props: {
           <div>
             <h1 id="expert-name">{props.expert.name}</h1>
             <span className="version-label">v{props.expert.version}</span>
+            <span className="expert-id-label">ID: {props.expert.id}</span>
           </div>
-          <p>{props.expert.description}</p>
+          <p>{truncateText(props.expert.description, DESCRIPTION_PREVIEW_LENGTH)}</p>
           <div className="expert-tag-list">
             {props.expert.tags.map((tag) => (
               <em key={tag}>{tag}</em>
@@ -138,23 +155,23 @@ export function ExpertDetailFragment(props: {
           </button>
         </div>
       </header>
-      <dl className="expert-meta">
-        <div>
-          <dt>Scope</dt>
-          <dd>{props.expert.scope}</dd>
-        </div>
-        <div>
-          <dt>Availability</dt>
-          <dd>Any authorized workspace</dd>
-        </div>
-        <div>
-          <dt>ID</dt>
-          <dd>{props.expert.id}</dd>
-        </div>
-      </dl>
+      <section className="expert-scope" aria-labelledby="expert-scope-heading">
+        <h2 id="expert-scope-heading">Scope</h2>
+        <p>{props.expert.scope}</p>
+      </section>
       <section className="instructions-preview">
         <h2>Instructions</h2>
-        <p>{props.expert.instructions}</p>
+        <p>{displayedInstructions || "No instructions provided."}</p>
+        {hasLongInstructions ? (
+          <button
+            className="text-button instructions-toggle"
+            type="button"
+            aria-expanded={instructionsExpanded}
+            onClick={() => setInstructionsExpanded((expanded) => !expanded)}
+          >
+            {instructionsExpanded ? "Show less" : "Show more"}
+          </button>
+        ) : null}
       </section>
       <section className="expert-capabilities" aria-label="Expert capabilities">
         <div>

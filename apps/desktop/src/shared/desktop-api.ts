@@ -124,12 +124,24 @@ export const ModelConnectionTestResultSchema = z.object({
   status: z.number().int().optional(),
 });
 
+export const EXPERT_NAME_MAX_LENGTH = 20;
+export const EXPERT_ID_MAX_LENGTH = 20;
+export const EXPERT_DESCRIPTION_MAX_LENGTH = 200;
+export const EXPERT_TAG_MAX_LENGTH = 20;
+
 export const ExpertIdSchema = z
   .string()
   .trim()
   .min(1)
   .max(100)
-  .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "Use lowercase letters, numbers, and hyphens.");
+  .regex(/^[A-Za-z0-9_-]+$/, "Use only letters, numbers, underscores, and hyphens.");
+
+export const CreateExpertIdSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(EXPERT_ID_MAX_LENGTH)
+  .regex(/^[A-Za-z0-9_]+$/, "Use only letters, numbers, and underscores.");
 
 export const ExpertScopeSchema = z.string().trim().min(1).max(4_000);
 
@@ -497,6 +509,10 @@ export const CreateExpertDefinitionSchema = ExpertDefinitionSchema.omit({
   createdAt: true,
   updatedAt: true,
 }).extend({
+  id: CreateExpertIdSchema,
+  name: z.string().trim().min(1).max(EXPERT_NAME_MAX_LENGTH),
+  description: z.string().trim().min(1).max(EXPERT_DESCRIPTION_MAX_LENGTH),
+  tags: z.array(z.string().trim().min(1).max(EXPERT_TAG_MAX_LENGTH)).max(30),
   instructions: z.string().max(100_000).optional(),
   model: ExpertModelConfigSchema.nullable().optional(),
   capabilities: z.array(ExpertCapabilityReferenceSchema).max(500).optional(),
