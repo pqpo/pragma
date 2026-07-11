@@ -27,6 +27,7 @@ import {
   createCodexModelDiscovery,
 } from "./models.ts";
 import { canUseCodexRuntime } from "./availability.ts";
+import { resolveCodexExecutablePath } from "./executable.ts";
 import {
   createCodexWorkflowToolsMcpServer,
   type CodexWorkflowToolsMcpServer,
@@ -62,6 +63,9 @@ interface CodexDriverSession extends CodexNativeSession {
 export function createCodexRuntime(
   options: CodexRuntimeAdapterOptions = {},
 ): RuntimeAdapter {
+  const executablePath =
+    options.executablePath ??
+    (options.spawn === undefined ? resolveCodexExecutablePath(options) : "codex");
   const descriptor = {
     ...CODEX_LOCAL_RUNTIME_DESCRIPTOR,
     ...options.descriptor,
@@ -125,7 +129,7 @@ export function createCodexRuntime(
           workflowExecution: ctx.request.workflowExecution,
         });
         const client = await CodexAppServerClient.start({
-          executablePath: options.executablePath ?? "codex",
+          executablePath,
           args: createCodexAppServerArgs(
             options.appServerArgs ?? ["app-server", "--listen", "stdio://"],
             workflowToolsMcpServer,

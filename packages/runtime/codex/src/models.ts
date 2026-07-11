@@ -1,6 +1,7 @@
 import type { RuntimeCreateSessionRequest, RuntimeModel, RuntimeThinkingLevel } from "@pragma/core";
 import { runRuntimeCommand } from "@pragma/core";
 
+import { resolveCodexExecutablePath } from "./executable.ts";
 import type { CodexRuntimeAdapterOptions } from "./types.ts";
 
 interface CodexDebugModelsResponse {
@@ -45,7 +46,9 @@ export function createCodexModelDiscovery(
   options: CodexRuntimeAdapterOptions,
 ): () => Promise<readonly RuntimeModel[]> {
   return async () => {
-    const executablePath = options.executablePath ?? "codex";
+    const executablePath =
+      options.executablePath ??
+      (options.spawn === undefined ? resolveCodexExecutablePath(options) : "codex");
     const env = { ...process.env, ...(options.env ?? {}) };
     const versionResult = await runRuntimeCommand({
       executablePath,
