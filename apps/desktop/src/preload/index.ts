@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from "electron";
 
 import {
   DesktopBridgeSnapshotSchema,
+  AddContextNoteEntrySchema,
   DesktopRuntimeAvailabilitySchema,
   ContextStoreSchema,
   CreateExpertDefinitionSchema,
@@ -57,6 +58,13 @@ const api: PragmaDesktopAPI = {
   createContextStore: async (input) =>
     ContextStoreSchema.parse(
       await ipcRenderer.invoke("context-stores:create", CreateContextStoreSchema.parse(input)),
+    ),
+  addContextNoteEntry: async (input) =>
+    ContextStoreSchema.parse(
+      await ipcRenderer.invoke(
+        "context-stores:add-note-entry",
+        AddContextNoteEntrySchema.parse(input),
+      ),
     ),
   pickContextStoreFolder: async () =>
     PickWorkspaceResultSchema.parse(await ipcRenderer.invoke("context-stores:pick-folder")),

@@ -2,8 +2,12 @@ import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-import type { RuntimeCreateSessionRequest, RuntimeModel, RuntimeThinkingLevel } from "@pragma/core";
-import { runRuntimeCommand } from "@pragma/core";
+import { runRuntimeCommand } from "@pragma/core/runtime/process-probe";
+import type {
+  RuntimeCreateSessionRequest,
+  RuntimeModel,
+  RuntimeThinkingLevel,
+} from "@pragma/core/runtime/runtime-adapter";
 
 import type { ClaudeCodeRuntimeAdapterOptions } from "./types.ts";
 

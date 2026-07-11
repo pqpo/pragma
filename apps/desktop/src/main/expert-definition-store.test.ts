@@ -32,7 +32,7 @@ const createInput = {
   version: "1.0.0",
   scope: "personal" as const,
   instructions: "Use evidence and state assumptions.",
-  model: { modelName: "gpt-4.1" },
+  model: { runtimeId: "codex" as const, modelName: "gpt-4.1" },
   skills: [],
   mcpServers: [
     {
@@ -97,6 +97,23 @@ describe("expert definition store", () => {
       ),
     ).toBe("Prioritize traceable sources.");
     expect((await store.get(created.id)).revision).toBe(2);
+  });
+
+  it("migrates legacy provider models to the PI runtime when reading an expert", async () => {
+    const { expertsPath, store } = await createStore();
+    const created = await store.create(createInput);
+    const modelPath = join(expertsPath, created.id, "revisions", "000001", "model.json");
+    const providerId = "5dbb6061-b5f2-4894-baaf-358af70651dc";
+    await writeFile(
+      modelPath,
+      `${JSON.stringify({ schemaVersion: 1, model: { providerId, modelName: "deepseek-v4-flash" } }, null, 2)}\n`,
+      "utf8",
+    );
+
+    await expect(store.get(created.id)).resolves.toMatchObject({
+      model: { runtimeId: "pi", providerId, modelName: "deepseek-v4-flash" },
+    });
+    await expect(readFile(modelPath, "utf8")).resolves.toContain('"runtimeId": "pi"');
   });
 
   it("rejects updates for experts that do not exist", async () => {

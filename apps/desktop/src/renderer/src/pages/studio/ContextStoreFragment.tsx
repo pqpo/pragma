@@ -13,6 +13,7 @@ import type { ContextTrigger } from "@pragma/shared";
 import { useMemo, useState } from "react";
 
 import type {
+  ContextNoteEntry,
   ContextStore,
   CreateContextStore,
   ExpertContextStoreMount,
@@ -31,6 +32,7 @@ function triggerLabel(trigger: ContextTrigger): string {
 export function ContextStoreDirectoryFragment(props: {
   readonly stores: readonly ContextStore[];
   readonly onCreate: (input: CreateContextStore) => Promise<ContextStore>;
+  readonly onAddNoteEntry: (storeId: string, entry: ContextNoteEntry) => Promise<ContextStore>;
   readonly onPickFolder: () => Promise<string | undefined>;
 }) {
   const [query, setQuery] = useState("");
@@ -145,7 +147,9 @@ export function ContextStoreDirectoryFragment(props: {
             })}
             <p className="directory-count">{stores.length} stores</p>
           </div>
-          {selected ? <ContextStoreDetail store={selected} /> : null}
+          {selected ? (
+            <ContextStoreDetail store={selected} onAddNoteEntry={props.onAddNoteEntry} />
+          ) : null}
         </div>
       )}
 
@@ -164,7 +168,11 @@ export function ContextStoreDirectoryFragment(props: {
   );
 }
 
-function ContextStoreDetail(props: { readonly store: ContextStore }) {
+function ContextStoreDetail(props: {
+  readonly store: ContextStore;
+  readonly onAddNoteEntry: (storeId: string, entry: ContextNoteEntry) => Promise<ContextStore>;
+}) {
+  const [addingEntity, setAddingEntity] = useState(false);
   const StoreIcon = props.store.type === "file" ? Folder : BookOpenText;
   return (
     <aside className="store-detail" aria-label={`${props.store.name} details`}>
@@ -181,10 +189,6 @@ function ContextStoreDetail(props: { readonly store: ContextStore }) {
         <div>
           <dt>Type</dt>
           <dd>{props.store.type === "file" ? "File store" : "Context note"}</dd>
-        </div>
-        <div>
-          <dt>Scope</dt>
-          <dd>{props.store.scope}</dd>
         </div>
         <div>
           <dt>Access</dt>
@@ -213,6 +217,37 @@ function ContextStoreDetail(props: { readonly store: ContextStore }) {
           </dd>
         </div>
       </dl>
+      {props.store.type === "note" ? (
+        <>
+          <div className="context-entity-heading">
+            <h3>Entities</h3>
+            <button
+              className="secondary-button"
+              type="button"
+              onClick={() => setAddingEntity(true)}
+            >
+              <Plus size={16} /> Add entity
+            </button>
+          </div>
+          <div className="context-entity-list">
+            {props.store.entries.length === 0 ? <p>No entities yet.</p> : null}
+            {props.store.entries.map((entry) => (
+              <article key={entry.id}>
+                <strong>{entry.id}</strong>
+                <p>{entry.description}</p>
+                <small>{triggerLabel(entry.trigger)}</small>
+              </article>
+            ))}
+          </div>
+          {addingEntity ? (
+            <ContextEntityCreatorDrawer
+              store={props.store}
+              onClose={() => setAddingEntity(false)}
+              onCreate={props.onAddNoteEntry}
+            />
+          ) : null}
+        </>
+      ) : null}
     </aside>
   );
 }
@@ -228,27 +263,15 @@ export function ContextStoreCreatorDrawer(props: {
   const [type, setType] = useState<ContextStore["type"]>("file");
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
-  const [scope, setScope] = useState<"personal" | "organization">("personal");
   const [path, setPath] = useState("");
   const [updateBehavior, setUpdateBehavior] = useState<"watch" | "manual">("watch");
-  const [entryTitle, setEntryTitle] = useState("Rules");
-  const [entryDescription, setEntryDescription] = useState("");
-  const [entryContent, setEntryContent] = useState("");
-  const [noteTrigger, setNoteTrigger] = useState<ContextTrigger>("manual");
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
   const continueFromConfigure = () => {
-    if (
-      !name.trim() ||
-      (type === "file"
-        ? !path
-        : !entryTitle.trim() || !entryDescription.trim() || !entryContent.trim())
-    ) {
+    if (!name.trim() || (type === "file" && !path)) {
       setError(
-        type === "file"
-          ? "Name and source folder are required."
-          : "Name, entry title, description, content, and loading behavior are required.",
+        type === "file" ? "Name and source folder are required." : "Store name is required.",
       );
       return;
     }
@@ -259,23 +282,11 @@ export function ContextStoreCreatorDrawer(props: {
     setSaving(true);
     setError(null);
     try {
-      const common = { name: name.trim(), description: description.trim(), scope };
+      const common = { name: name.trim(), description: description.trim() };
       const input: CreateContextStore =
         type === "file"
           ? { type, ...common, source: { path, updateBehavior } }
-          : {
-              type,
-              ...common,
-              entries: [
-                {
-                  id: crypto.randomUUID(),
-                  title: entryTitle.trim(),
-                  description: entryDescription.trim(),
-                  content: entryContent.trim(),
-                  trigger: noteTrigger,
-                },
-              ],
-            };
+          : { type, ...common };
       props.onCreated(await props.onCreate(input));
     } catch (submitError) {
       setSaving(false);
@@ -375,16 +386,6 @@ export function ContextStoreCreatorDrawer(props: {
                     onChange={(event) => setDescription(event.target.value)}
                   />
                 </label>
-                <label>
-                  Scope
-                  <select
-                    value={scope}
-                    onChange={(event) => setScope(event.target.value as typeof scope)}
-                  >
-                    <option value="personal">Personal</option>
-                    <option value="organization">Organization</option>
-                  </select>
-                </label>
                 {type === "file" ? (
                   <>
                     <label>
@@ -422,64 +423,10 @@ export function ContextStoreCreatorDrawer(props: {
                     ) : null}
                   </>
                 ) : (
-                  <>
-                    <label>
-                      Entry title
-                      <input
-                        value={entryTitle}
-                        onChange={(event) => setEntryTitle(event.target.value)}
-                      />
-                    </label>
-                    <label>
-                      Context description
-                      <input
-                        value={entryDescription}
-                        onChange={(event) => setEntryDescription(event.target.value)}
-                        placeholder="Tell the model when this context is relevant"
-                      />
-                    </label>
-                    <label>
-                      Content
-                      <textarea
-                        className="note-content-input"
-                        value={entryContent}
-                        onChange={(event) => setEntryContent(event.target.value)}
-                        placeholder="Write rules, conventions, preferences, or durable context…"
-                      />
-                    </label>
-                    <fieldset className="trigger-options">
-                      <legend>Loading behavior</legend>
-                      {(
-                        [
-                          ["always_on", "Load immediately", "Inject content into every run."],
-                          [
-                            "model_decision",
-                            "Model decides",
-                            "Expose the context ID and description at Expert startup without loading content.",
-                          ],
-                          [
-                            "manual",
-                            "On demand",
-                            "Discover with list or search, then load by context ID.",
-                          ],
-                        ] as const
-                      ).map(([value, label, help]) => (
-                        <label className={noteTrigger === value ? "is-selected" : ""} key={value}>
-                          <input
-                            type="radio"
-                            name="context-trigger"
-                            value={value}
-                            checked={noteTrigger === value}
-                            onChange={() => setNoteTrigger(value)}
-                          />
-                          <span>
-                            <strong>{label}</strong>
-                            <small>{help}</small>
-                          </span>
-                        </label>
-                      ))}
-                    </fieldset>
-                  </>
+                  <p className="store-availability-note">
+                    Create the store first, then add one or more context entities from its detail
+                    page.
+                  </p>
                 )}
               </div>
             </>
@@ -501,21 +448,13 @@ export function ContextStoreCreatorDrawer(props: {
                   <dd>{type === "file" ? "File store" : "Context note"}</dd>
                 </div>
                 <div>
-                  <dt>Scope</dt>
-                  <dd>{scope}</dd>
-                </div>
-                <div>
                   <dt>Access</dt>
                   <dd>Read only</dd>
                 </div>
-                <div>
-                  <dt>{type === "file" ? "Source" : "Entry"}</dt>
-                  <dd>{type === "file" ? path : entryTitle}</dd>
-                </div>
-                {type === "note" && noteTrigger ? (
+                {type === "file" ? (
                   <div>
-                    <dt>Loading behavior</dt>
-                    <dd>{triggerLabel(noteTrigger)}</dd>
+                    <dt>Source</dt>
+                    <dd>{path}</dd>
                   </div>
                 ) : null}
               </dl>
@@ -568,6 +507,142 @@ export function ContextStoreCreatorDrawer(props: {
                 : step === "configure"
                   ? "Continue to review"
                   : "Continue"}
+          </button>
+        </footer>
+      </aside>
+    </div>
+  );
+}
+
+function ContextEntityCreatorDrawer(props: {
+  readonly store: Extract<ContextStore, { type: "note" }>;
+  readonly onClose: () => void;
+  readonly onCreate: (storeId: string, entry: ContextNoteEntry) => Promise<ContextStore>;
+}) {
+  const [id, setId] = useState("");
+  const [description, setDescription] = useState("");
+  const [content, setContent] = useState("");
+  const [trigger, setTrigger] = useState<ContextTrigger>("manual");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const submit = async () => {
+    if (!id.trim() || !description.trim() || !content.trim()) {
+      setError("ID, description, content, and loading behavior are required.");
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      await props.onCreate(props.store.id, {
+        id: id.trim(),
+        description: description.trim(),
+        content: content.trim(),
+        trigger,
+      });
+      props.onClose();
+    } catch (createError) {
+      setSaving(false);
+      setError(errorMessage(createError));
+    }
+  };
+
+  return (
+    <div className="drawer-layer" role="presentation">
+      <button
+        className="drawer-scrim"
+        type="button"
+        aria-label="Close add entity"
+        onClick={props.onClose}
+      />
+      <aside className="store-creator-drawer" aria-labelledby="add-context-entity-heading">
+        <header className="drawer-heading">
+          <div>
+            <h2 id="add-context-entity-heading">Add context entity</h2>
+            <p>{props.store.name}</p>
+          </div>
+          <button type="button" aria-label="Close" onClick={props.onClose}>
+            <X size={22} />
+          </button>
+        </header>
+        <div className="drawer-body store-config-form">
+          <label>
+            Entity ID
+            <input
+              value={id}
+              onChange={(event) => setId(event.target.value)}
+              placeholder="review-rules"
+              autoFocus
+            />
+            <small>
+              Use lowercase letters, numbers, and hyphens. The ID becomes the JSON filename.
+            </small>
+          </label>
+          <label>
+            Description
+            <input
+              value={description}
+              onChange={(event) => setDescription(event.target.value)}
+              placeholder="When this context is relevant"
+            />
+          </label>
+          <label>
+            Content
+            <textarea
+              className="note-content-input"
+              value={content}
+              onChange={(event) => setContent(event.target.value)}
+            />
+          </label>
+          <fieldset className="trigger-options">
+            <legend>Loading behavior</legend>
+            {(
+              [
+                ["always_on", "Load immediately", "Inject content into every run."],
+                [
+                  "model_decision",
+                  "Model decides",
+                  "Expose ID and description, then let the model load it.",
+                ],
+                ["manual", "On demand", "Load explicitly by context ID."],
+              ] as const
+            ).map(([value, label, help]) => (
+              <label className={trigger === value ? "is-selected" : ""} key={value}>
+                <input
+                  type="radio"
+                  name="entity-trigger"
+                  checked={trigger === value}
+                  onChange={() => setTrigger(value)}
+                />
+                <span>
+                  <strong>{label}</strong>
+                  <small>{help}</small>
+                </span>
+              </label>
+            ))}
+          </fieldset>
+          {error ? (
+            <p className="form-error" role="alert">
+              {error}
+            </p>
+          ) : null}
+        </div>
+        <footer className="drawer-actions">
+          <button
+            className="secondary-button"
+            type="button"
+            onClick={props.onClose}
+            disabled={saving}
+          >
+            Cancel
+          </button>
+          <button
+            className="primary-button"
+            type="button"
+            onClick={() => void submit()}
+            disabled={saving}
+          >
+            {saving ? "Adding…" : "Add entity"}
           </button>
         </footer>
       </aside>

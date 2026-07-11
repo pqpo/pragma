@@ -10,7 +10,7 @@ const persistedExpert: ExpertDefinition = {
   description: "Reviews changes.",
   tags: [],
   version: "1.0.0",
-  scope: "personal",
+  scope: "Reviews code quality. Does not merge changes.",
   model: null,
   skills: [],
   mcpServers: [],

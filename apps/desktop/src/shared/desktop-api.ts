@@ -27,6 +27,16 @@ export const DesktopRuntimeAvailabilitySchema = z.object({
   executablePath: z.string().optional(),
   version: z.string().optional(),
   reason: z.string().optional(),
+  models: z
+    .array(
+      z.object({
+        id: z.string().trim().min(1).max(200),
+        displayName: z.string().trim().min(1).max(200),
+        default: z.boolean().optional(),
+      }),
+    )
+    .optional(),
+  modelDiscoveryError: z.string().optional(),
 });
 
 export const DesktopBridgeSnapshotSchema = z.object({
@@ -121,12 +131,23 @@ export const ExpertIdSchema = z
   .max(100)
   .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "Use lowercase letters, numbers, and hyphens.");
 
-export const ExpertScopeSchema = z.enum(["personal", "organization"]);
+export const ExpertScopeSchema = z.string().trim().min(1).max(4_000);
 
-export const ExpertModelConfigSchema = z.object({
-  providerId: ModelProviderIdSchema.optional(),
-  modelName: ModelIdSchema,
-});
+export const ExpertModelConfigSchema = z.discriminatedUnion("runtimeId", [
+  z.object({
+    runtimeId: z.literal("pi"),
+    providerId: ModelProviderIdSchema,
+    modelName: ModelIdSchema,
+  }),
+  z.object({
+    runtimeId: z.literal("codex"),
+    modelName: ModelIdSchema,
+  }),
+  z.object({
+    runtimeId: z.literal("claude-code"),
+    modelName: ModelIdSchema,
+  }),
+]);
 
 export const ExpertSkillReferenceSchema = z.object({
   type: z.enum(["builtin", "registry", "local"]),
@@ -208,11 +229,13 @@ export const ExpertPluginReferenceSchema = z.object({
 
 export const ContextStoreIdSchema = z.string().uuid();
 
-export const ContextStoreScopeSchema = z.enum(["personal", "organization"]);
-
 export const ContextNoteEntrySchema = z.object({
-  id: z.string().uuid(),
-  title: z.string().trim().min(1).max(200),
+  id: z
+    .string()
+    .trim()
+    .min(1)
+    .max(100)
+    .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "Use lowercase letters, numbers, and hyphens."),
   description: z.string().trim().min(1).max(2_000),
   content: z.string().trim().min(1).max(100_000),
   trigger: ContextTriggerSchema,
@@ -223,7 +246,6 @@ const ContextStoreBaseSchema = z.object({
   id: ContextStoreIdSchema,
   name: z.string().trim().min(1).max(120),
   description: z.string().trim().max(2_000),
-  scope: ContextStoreScopeSchema,
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
 });
@@ -240,7 +262,7 @@ export const FileContextStoreSchema = ContextStoreBaseSchema.extend({
 export const NoteContextStoreSchema = ContextStoreBaseSchema.extend({
   type: z.literal("note"),
   status: z.literal("ready"),
-  entries: z.array(ContextNoteEntrySchema).min(1).max(200),
+  entries: z.array(ContextNoteEntrySchema).max(200).default([]),
 });
 
 export const ContextStoreSchema = z.discriminatedUnion("type", [
@@ -248,22 +270,30 @@ export const ContextStoreSchema = z.discriminatedUnion("type", [
   NoteContextStoreSchema,
 ]);
 
+const CreateContextStoreBaseShape = {
+  name: z.string().trim().min(1).max(120),
+  description: z.string().trim().max(2_000),
+};
+
 export const CreateContextStoreSchema = z.discriminatedUnion("type", [
-  FileContextStoreSchema.omit({
-    schemaVersion: true,
-    id: true,
-    status: true,
-    createdAt: true,
-    updatedAt: true,
+  z.object({
+    type: z.literal("file"),
+    ...CreateContextStoreBaseShape,
+    source: z.object({
+      path: z.string().trim().min(1).max(2_000),
+      updateBehavior: z.enum(["watch", "manual"]),
+    }),
   }),
-  NoteContextStoreSchema.omit({
-    schemaVersion: true,
-    id: true,
-    status: true,
-    createdAt: true,
-    updatedAt: true,
+  z.object({
+    type: z.literal("note"),
+    ...CreateContextStoreBaseShape,
   }),
 ]);
+
+export const AddContextNoteEntrySchema = z.object({
+  storeId: ContextStoreIdSchema,
+  entry: ContextNoteEntrySchema,
+});
 
 export const ExpertContextStoreMountSchema = z.object({
   storeId: ContextStoreIdSchema,
@@ -341,6 +371,7 @@ export type ModelConnectionTestResult = z.infer<typeof ModelConnectionTestResult
 export type ContextStore = z.infer<typeof ContextStoreSchema>;
 export type CreateContextStore = z.infer<typeof CreateContextStoreSchema>;
 export type ContextNoteEntry = z.infer<typeof ContextNoteEntrySchema>;
+export type AddContextNoteEntry = z.infer<typeof AddContextNoteEntrySchema>;
 export type ExpertContextStoreMount = z.infer<typeof ExpertContextStoreMountSchema>;
 export type ExpertDefinition = z.infer<typeof ExpertDefinitionSchema>;
 export type ExpertSummary = z.infer<typeof ExpertSummarySchema>;
@@ -358,6 +389,7 @@ export interface PragmaDesktopAPI {
   testModelConnection: (input: ModelConnectionTestRequest) => Promise<ModelConnectionTestResult>;
   listContextStores: () => Promise<ContextStore[]>;
   createContextStore: (input: CreateContextStore) => Promise<ContextStore>;
+  addContextNoteEntry: (input: AddContextNoteEntry) => Promise<ContextStore>;
   pickContextStoreFolder: () => Promise<PickWorkspaceResult>;
   listExperts: () => Promise<ExpertSummary[]>;
   getExpert: (id: string) => Promise<ExpertDefinition>;

@@ -1,5 +1,7 @@
 import { canUseClaudeCodeRuntime } from "@pragma/runtime-claude-code/availability";
 import { canUseCodexRuntime } from "@pragma/runtime-codex/availability";
+import { createClaudeCodeModelDiscovery } from "@pragma/runtime-claude-code/models";
+import { createCodexModelDiscovery } from "@pragma/runtime-codex/models";
 
 import type { DesktopRuntimeAvailability } from "../shared/desktop-api.ts";
 
@@ -10,11 +12,20 @@ type RuntimeCheckResult = {
 };
 
 type RuntimeChecker = () => Promise<RuntimeCheckResult>;
+type ModelDiscovery = (executablePath?: string) => Promise<readonly RuntimeModelSummary[]>;
+
+type RuntimeModelSummary = {
+  readonly id: string;
+  readonly displayName: string;
+  readonly default?: boolean | undefined;
+};
 
 export async function getRuntimeAvailability(
   options: {
     readonly canUseCodexRuntime?: RuntimeChecker | undefined;
     readonly canUseClaudeCodeRuntime?: RuntimeChecker | undefined;
+    readonly listCodexModels?: ModelDiscovery | undefined;
+    readonly listClaudeCodeModels?: ModelDiscovery | undefined;
   } = {},
 ): Promise<DesktopRuntimeAvailability[]> {
   const [codex, claudeCode] = await Promise.all([
@@ -22,11 +33,45 @@ export async function getRuntimeAvailability(
     (options.canUseClaudeCodeRuntime ?? canUseClaudeCodeRuntime)(),
   ]);
 
-  return [
+  const runtimes: DesktopRuntimeAvailability[] = [
     { id: "pi", status: "available" },
     toDesktopRuntimeAvailability("codex", codex),
     toDesktopRuntimeAvailability("claude-code", claudeCode),
   ];
+
+  await Promise.all(
+    runtimes.map(async (runtime) => {
+      if (runtime.id === "pi" || runtime.status !== "available") return;
+      const listModels =
+        runtime.id === "codex"
+          ? (options.listCodexModels ?? defaultCodexModelDiscovery)
+          : (options.listClaudeCodeModels ?? defaultClaudeCodeModelDiscovery);
+      try {
+        runtime.models = (await listModels(runtime.executablePath)).map((model) => ({
+          id: model.id,
+          displayName: model.displayName,
+          ...(model.default === undefined ? {} : { default: model.default }),
+        }));
+      } catch (error) {
+        runtime.modelDiscoveryError =
+          error instanceof Error ? error.message : "Model discovery failed.";
+      }
+    }),
+  );
+
+  return runtimes;
+}
+
+async function defaultCodexModelDiscovery(
+  executablePath?: string,
+): Promise<readonly RuntimeModelSummary[]> {
+  return await createCodexModelDiscovery({ executablePath })();
+}
+
+async function defaultClaudeCodeModelDiscovery(
+  executablePath?: string,
+): Promise<readonly RuntimeModelSummary[]> {
+  return await createClaudeCodeModelDiscovery({ executablePath })();
 }
 
 function toDesktopRuntimeAvailability(

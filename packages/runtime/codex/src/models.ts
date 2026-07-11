@@ -1,5 +1,9 @@
-import type { RuntimeCreateSessionRequest, RuntimeModel, RuntimeThinkingLevel } from "@pragma/core";
-import { runRuntimeCommand } from "@pragma/core";
+import { runRuntimeCommand } from "@pragma/core/runtime/process-probe";
+import type {
+  RuntimeCreateSessionRequest,
+  RuntimeModel,
+  RuntimeThinkingLevel,
+} from "@pragma/core/runtime/runtime-adapter";
 
 import { resolveCodexExecutablePath } from "./executable.ts";
 import type { CodexRuntimeAdapterOptions } from "./types.ts";
@@ -136,9 +140,7 @@ export function parseCodexModels(output: string): readonly RuntimeModel[] {
         } satisfies RuntimeThinkingLevel,
       ];
     });
-    const defaultLevel = levels.some(
-      (level) => level.value === model.default_reasoning_level,
-    )
+    const defaultLevel = levels.some((level) => level.value === model.default_reasoning_level)
       ? model.default_reasoning_level
       : undefined;
 

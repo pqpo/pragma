@@ -14,6 +14,9 @@ describe("getRuntimeAvailability", () => {
         reason: "Claude Code CLI is not installed.",
         details: { executablePath: "claude" },
       }),
+      listCodexModels: async () => [
+        { id: "gpt-5.3-codex", displayName: "GPT-5.3 Codex", default: true },
+      ],
     });
 
     expect(runtimes).toEqual([
@@ -23,6 +26,7 @@ describe("getRuntimeAvailability", () => {
         status: "available",
         executablePath: "/opt/homebrew/bin/codex",
         version: "codex 1.2.3",
+        models: [{ id: "gpt-5.3-codex", displayName: "GPT-5.3 Codex", default: true }],
       },
       {
         id: "claude-code",

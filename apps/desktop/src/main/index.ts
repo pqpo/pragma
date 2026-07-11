@@ -67,7 +67,7 @@ installWorkspaceScopeHandlers(() => mainWindow);
 void app.whenReady().then(async () => {
   installContextStoreHandlers(
     createContextStoreStore({
-      configPath: join(app.getPath("home"), ".pragma", "context-stores.json"),
+      storesPath: join(app.getPath("home"), ".pragma", "context-stores"),
     }),
     () => mainWindow,
   );

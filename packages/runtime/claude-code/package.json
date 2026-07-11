@@ -11,6 +11,10 @@
     "./availability": {
       "types": "./src/availability.ts",
       "default": "./src/availability.ts"
+    },
+    "./models": {
+      "types": "./src/models.ts",
+      "default": "./src/models.ts"
     }
   },
   "scripts": {

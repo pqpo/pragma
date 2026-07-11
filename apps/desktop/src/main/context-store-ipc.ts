@@ -5,6 +5,7 @@ import { basename } from "node:path";
 import { BrowserWindow, dialog, ipcMain } from "electron";
 
 import {
+  AddContextNoteEntrySchema,
   CreateContextStoreSchema,
   type PickWorkspaceResult,
 } from "../shared/desktop-api.ts";
@@ -22,6 +23,10 @@ export function installContextStoreHandlers(
   ipcMain.handle("context-stores:create", (_event, input: unknown) =>
     store.create(CreateContextStoreSchema.parse(input)),
   );
+  ipcMain.handle("context-stores:add-note-entry", (_event, input: unknown) => {
+    const parsed = AddContextNoteEntrySchema.parse(input);
+    return store.addNoteEntry(parsed.storeId, parsed.entry);
+  });
   ipcMain.handle("context-stores:pick-folder", async (): Promise<PickWorkspaceResult> => {
     const window = windowGetter();
     if (!window) return { ok: false, reason: "no_window" };

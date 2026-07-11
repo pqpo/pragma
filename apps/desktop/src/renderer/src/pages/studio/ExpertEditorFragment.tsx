@@ -2,14 +2,21 @@ import { User } from "@phosphor-icons/react";
 import { useState } from "react";
 
 import { errorMessage } from "../../lib/errors.ts";
-import { ExpertIdSchema, type ModelProvider } from "../../../../shared/desktop-api.ts";
-import type { ExpertDraft, ExpertModel, ExpertRecord } from "./studio-model.ts";
+import {
+  ExpertIdSchema,
+  type ContextStore,
+  type DesktopRuntimeAvailability,
+  type ModelProvider,
+} from "../../../../shared/desktop-api.ts";
+import type { ExpertDraft, ExpertRecord } from "./studio-model.ts";
 
 type CreateStep = "identity" | "instructions" | "capabilities" | "review";
 
 export function ExpertEditorFragment(props: {
   readonly initialValue: ExpertDraft;
   readonly modelProviders: readonly ModelProvider[];
+  readonly runtimes: readonly DesktopRuntimeAvailability[];
+  readonly contextStores: readonly ContextStore[];
   readonly onCancel: () => void;
   readonly onCreated: (expert: ExpertRecord) => Promise<void>;
 }) {
@@ -17,13 +24,19 @@ export function ExpertEditorFragment(props: {
   const [step, setStep] = useState<CreateStep>("identity");
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [selectedRuntime, setSelectedRuntime] = useState(props.initialValue.model?.runtimeId ?? "");
+  const [selectedProviderId, setSelectedProviderId] = useState(
+    props.initialValue.model?.runtimeId === "pi" ? props.initialValue.model.providerId : "",
+  );
   const isEditing = props.initialValue.persisted !== undefined;
-  const configuredModelExists =
-    draft.model !== null &&
-    props.modelProviders.some(
-      (provider) =>
-        provider.id === draft.model?.providerId && provider.models.includes(draft.model.modelName),
-    );
+  const selectedProvider = props.modelProviders.find(
+    (provider) => provider.id === selectedProviderId,
+  );
+  const selectedRuntimeInfo = props.runtimes.find((runtime) => runtime.id === selectedRuntime);
+  const modelOptions =
+    selectedRuntime === "pi"
+      ? (selectedProvider?.models ?? [])
+      : (selectedRuntimeInfo?.models ?? []);
   const steps: readonly { readonly id: CreateStep; readonly label: string }[] = [
     { id: "identity", label: "Identity" },
     { id: "instructions", label: "Instructions" },
@@ -34,10 +47,15 @@ export function ExpertEditorFragment(props: {
   const advance = () => {
     if (step === "identity") {
       const idResult = ExpertIdSchema.safeParse(draft.id);
-      if (!draft.name.trim() || !draft.description.trim() || !idResult.success) {
+      if (
+        !draft.name.trim() ||
+        !draft.description.trim() ||
+        !draft.scope.trim() ||
+        !idResult.success
+      ) {
         setError(
           idResult.success
-            ? "Name, ID, and description are required to define an expert."
+            ? "Name, ID, description, and scope are required to define an expert."
             : (idResult.error.issues[0]?.message ?? "The expert ID is invalid."),
         );
         return;
@@ -57,10 +75,10 @@ export function ExpertEditorFragment(props: {
     const name = draft.name.trim();
     const idResult = ExpertIdSchema.safeParse(draft.id);
     const description = draft.description.trim();
-    if (!name || !description || !idResult.success) {
+    if (!name || !description || !draft.scope.trim() || !idResult.success) {
       setError(
         idResult.success
-          ? "Name, ID, and description are required to define an expert."
+          ? "Name, ID, description, and scope are required to define an expert."
           : (idResult.error.issues[0]?.message ?? "The expert ID is invalid."),
       );
       return;
@@ -183,25 +201,25 @@ export function ExpertEditorFragment(props: {
                   ))}
                 </span>
               </label>
-              <div className="creator-field-row">
-                <label>
-                  Version
-                  <input
-                    value={draft.version}
-                    onChange={(event) => setDraft({ ...draft, version: event.target.value })}
-                  />
-                </label>
-                <label>
-                  Scope
-                  <select
-                    value={draft.scope}
-                    onChange={(event) => setDraft({ ...draft, scope: event.target.value })}
-                  >
-                    <option value="personal">Personal</option>
-                    <option value="organization">Organization</option>
-                  </select>
-                </label>
-              </div>
+              <label>
+                Scope
+                <textarea
+                  value={draft.scope}
+                  onChange={(event) => setDraft({ ...draft, scope: event.target.value })}
+                  placeholder="What is this expert responsible for, and what is explicitly outside its responsibility?"
+                />
+                <small>
+                  A responsibility boundary shown to callers and included in the expert context.
+                  This is not an access level.
+                </small>
+              </label>
+              <label>
+                Version
+                <input
+                  value={draft.version}
+                  onChange={(event) => setDraft({ ...draft, version: event.target.value })}
+                />
+              </label>
             </>
           ) : null}
           {step === "instructions" ? (
@@ -221,43 +239,135 @@ export function ExpertEditorFragment(props: {
             <div className="capability-editor">
               <h2>Add capabilities</h2>
               <p>
-                Choose a model now. Skills, tools, MCP servers, and plugins are managed as named
-                references after creation.
+                Choose the execution runtime first, then select one of the models available to that
+                runtime.
               </p>
               <label>
-                Model
+                Runtime
                 <select
-                  value={draft.model === null ? "" : JSON.stringify(draft.model)}
-                  onChange={(event) =>
-                    setDraft({
-                      ...draft,
-                      model:
-                        event.target.value === ""
-                          ? null
-                          : (JSON.parse(event.target.value) as ExpertModel),
-                    })
-                  }
+                  value={selectedRuntime}
+                  onChange={(event) => {
+                    setSelectedRuntime(event.target.value);
+                    setSelectedProviderId("");
+                    setDraft({ ...draft, model: null });
+                  }}
                 >
                   <option value="">Not configured</option>
-                  {draft.model !== null && !configuredModelExists ? (
-                    <option value={JSON.stringify(draft.model)}>
-                      {draft.model.modelName} (saved configuration)
+                  {props.runtimes.map((runtime) => (
+                    <option
+                      key={runtime.id}
+                      value={runtime.id}
+                      disabled={runtime.status !== "available"}
+                    >
+                      {runtime.id === "pi"
+                        ? "PI"
+                        : runtime.id === "codex"
+                          ? "Codex"
+                          : "Claude Code"}
+                      {runtime.status === "available" ? "" : " (unavailable)"}
                     </option>
-                  ) : null}
-                  {props.modelProviders.map((provider) => (
-                    <optgroup label={provider.name} key={provider.id}>
-                      {provider.models.map((modelName) => {
-                        const model = { providerId: provider.id, modelName };
-                        return (
-                          <option value={JSON.stringify(model)} key={modelName}>
-                            {modelName}
-                          </option>
-                        );
-                      })}
-                    </optgroup>
                   ))}
                 </select>
               </label>
+              {selectedRuntime === "pi" ? (
+                <label>
+                  Model provider
+                  <select
+                    value={selectedProviderId}
+                    onChange={(event) => {
+                      setSelectedProviderId(event.target.value);
+                      setDraft({ ...draft, model: null });
+                    }}
+                  >
+                    <option value="">Select a configured provider</option>
+                    {props.modelProviders.map((provider) => (
+                      <option key={provider.id} value={provider.id}>
+                        {provider.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ) : null}
+              {selectedRuntime ? (
+                <label>
+                  Model
+                  <select
+                    value={draft.model?.modelName ?? ""}
+                    disabled={selectedRuntime === "pi" && !selectedProviderId}
+                    onChange={(event) => {
+                      const modelName = event.target.value;
+                      setDraft({
+                        ...draft,
+                        model: !modelName
+                          ? null
+                          : selectedRuntime === "pi"
+                            ? { runtimeId: "pi", providerId: selectedProviderId, modelName }
+                            : selectedRuntime === "codex"
+                              ? { runtimeId: "codex", modelName }
+                              : { runtimeId: "claude-code", modelName },
+                      });
+                    }}
+                  >
+                    <option value="">Select a model</option>
+                    {modelOptions.map((model) => {
+                      const id = typeof model === "string" ? model : model.id;
+                      const label = typeof model === "string" ? model : model.displayName;
+                      return (
+                        <option key={id} value={id}>
+                          {label}
+                        </option>
+                      );
+                    })}
+                  </select>
+                  {selectedRuntime !== "pi" && selectedRuntimeInfo?.modelDiscoveryError ? (
+                    <small className="form-error">{selectedRuntimeInfo.modelDiscoveryError}</small>
+                  ) : null}
+                </label>
+              ) : null}
+              <fieldset className="expert-context-store-picker">
+                <legend>Context stores</legend>
+                <small>An expert can mount multiple stores.</small>
+                {props.contextStores.length === 0 ? <p>No context stores available.</p> : null}
+                {props.contextStores.map((store) => {
+                  const mounted = draft.contextStoreMounts.some(
+                    (mount) => mount.storeId === store.id,
+                  );
+                  return (
+                    <label key={store.id}>
+                      <input
+                        type="checkbox"
+                        checked={mounted}
+                        onChange={() => {
+                          const mounts = mounted
+                            ? draft.contextStoreMounts.filter((mount) => mount.storeId !== store.id)
+                            : [
+                                ...draft.contextStoreMounts,
+                                {
+                                  storeId: store.id,
+                                  enabled: true,
+                                  priority: draft.contextStoreMounts.length,
+                                },
+                              ];
+                          setDraft({
+                            ...draft,
+                            contextStoreMounts: mounts.map((mount, priority) => ({
+                              ...mount,
+                              priority,
+                            })),
+                          });
+                        }}
+                      />
+                      <span>
+                        <strong>{store.name}</strong>
+                        <small>
+                          {store.description ||
+                            (store.type === "file" ? "File store" : "Context note")}
+                        </small>
+                      </span>
+                    </label>
+                  );
+                })}
+              </fieldset>
             </div>
           ) : null}
           {step === "review" ? (
@@ -280,8 +390,11 @@ export function ExpertEditorFragment(props: {
                 <div>
                   <dt>Capabilities</dt>
                   <dd>
-                    {draft.model?.modelName ?? "No model"} · {draft.skills} skills · {draft.tools}{" "}
-                    tools · {draft.mcpServers} MCP server
+                    {draft.model === null
+                      ? "No runtime/model"
+                      : `${draft.model.runtimeId} / ${draft.model.modelName}`}{" "}
+                    · {draft.contextStoreMounts.length} context stores · {draft.skills} skills ·{" "}
+                    {draft.tools} tools · {draft.mcpServers} MCP server
                   </dd>
                 </div>
               </dl>

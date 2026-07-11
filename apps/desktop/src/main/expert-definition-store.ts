@@ -5,6 +5,7 @@ import { join } from "node:path";
 import {
   CreateExpertDefinitionSchema,
   ExpertDefinitionSchema,
+  ExpertModelConfigSchema,
   ExpertSummarySchema,
   UpdateExpertDefinitionSchema,
   type CreateExpertDefinition,
@@ -72,6 +73,32 @@ function parseModule<T>(raw: string, label: string, key: string): T {
   return (value as Record<string, unknown>)[key] as T;
 }
 
+const LegacyPiModelConfigSchema = ExpertModelConfigSchema.options[0].omit({ runtimeId: true });
+
+function parseModelModule(raw: string): {
+  readonly model: ExpertDefinition["model"];
+  readonly migrated: boolean;
+} {
+  const stored = parseModule<unknown>(raw, "model.json", "model");
+  if (stored === null) return { model: null, migrated: false };
+
+  const current = ExpertModelConfigSchema.safeParse(stored);
+  if (current.success) return { model: current.data, migrated: false };
+
+  const legacyPi = LegacyPiModelConfigSchema.safeParse(stored);
+  if (legacyPi.success) {
+    return {
+      model: { runtimeId: "pi", ...legacyPi.data },
+      migrated: true,
+    };
+  }
+
+  throw new ExpertDefinitionStoreError(
+    "config_invalid",
+    "model.json has an invalid model configuration.",
+  );
+}
+
 export function createExpertDefinitionStore(options: {
   readonly expertsPath: string;
 }): ExpertDefinitionStore {
@@ -108,10 +135,17 @@ export function createExpertDefinitionStore(options: {
         readFile(join(revisionPath, "plugins.json"), "utf8"),
         readFile(join(revisionPath, "context.json"), "utf8"),
       ]);
+      const parsedModel = parseModelModule(model);
+      if (parsedModel.migrated) {
+        await writeJson(join(revisionPath, "model.json"), {
+          schemaVersion: MODULE_SCHEMA_VERSION,
+          model: parsedModel.model,
+        });
+      }
       return ExpertDefinitionSchema.parse({
         ...summary,
         instructions: instructions || undefined,
-        model: parseModule<ExpertDefinition["model"]>(model, "model.json", "model"),
+        model: parsedModel.model,
         skills: parseModule<ExpertDefinition["skills"]>(skills, "skills.json", "skills"),
         mcpServers: parseModule<ExpertDefinition["mcpServers"]>(mcpServers, "mcp.json", "servers"),
         toolIds: parseModule<ExpertDefinition["toolIds"]>(tools, "tools.json", "toolIds"),

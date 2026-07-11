@@ -2,9 +2,11 @@ import { useEffect, useState } from "react";
 
 import type {
   ContextStore,
+  ContextNoteEntry,
   CreateContextStore,
   CreateExpertDefinition,
   ExpertContextStoreMount,
+  DesktopRuntimeAvailability,
   ModelProvider,
   UpdateExpertDefinition,
 } from "../../../../shared/desktop-api.ts";
@@ -37,6 +39,7 @@ export function StudioPage() {
   const [selectedExpert, setSelectedExpert] = useState<ExpertRecord>(initialExperts[0]!);
   const [draft, setDraft] = useState<ExpertDraft>(emptyDraft());
   const [modelProviders, setModelProviders] = useState<readonly ModelProvider[]>([]);
+  const [runtimes, setRuntimes] = useState<readonly DesktopRuntimeAvailability[]>([]);
   const [contextStores, setContextStores] = useState<readonly ContextStore[]>([]);
   const [contextDrawerOpen, setContextDrawerOpen] = useState(false);
   const [expertError, setExpertError] = useState<string | null>(null);
@@ -73,6 +76,14 @@ export function StudioPage() {
       .listContextStores()
       .then((stores) => {
         if (!cancelled) setContextStores(stores);
+      })
+      .catch((loadError: unknown) => {
+        if (!cancelled) setExpertError(errorMessage(loadError));
+      });
+    void api
+      .getRuntimeAvailability()
+      .then((availability) => {
+        if (!cancelled) setRuntimes(availability);
       })
       .catch((loadError: unknown) => {
         if (!cancelled) setExpertError(errorMessage(loadError));
@@ -118,6 +129,7 @@ export function StudioPage() {
             schemaVersion: "pragma.context-store/v1",
             id: crypto.randomUUID(),
             ...input,
+            ...(input.type === "note" ? { entries: [] } : {}),
             status: input.type === "file" ? "configured" : "ready",
             createdAt: timestamp,
             updatedAt: timestamp,
@@ -134,6 +146,24 @@ export function StudioPage() {
       throw new Error(result.error ?? "The selected folder is not readable.");
     }
     return result.path;
+  };
+  const addContextNoteEntry = async (
+    storeId: string,
+    entry: ContextNoteEntry,
+  ): Promise<ContextStore> => {
+    const api = desktopApi();
+    const current = contextStores.find((store) => store.id === storeId);
+    if (current?.type !== "note") throw new Error("Context note store not found.");
+    const updated =
+      api === undefined
+        ? ContextStoreSchema.parse({
+            ...current,
+            entries: [...current.entries, entry],
+            updatedAt: new Date().toISOString(),
+          })
+        : await api.addContextNoteEntry({ storeId, entry });
+    setContextStores((stores) => stores.map((store) => (store.id === storeId ? updated : store)));
+    return updated;
   };
   const saveContextMounts = async (mounts: readonly ExpertContextStoreMount[]) => {
     const updated = { ...selectedExpert, contextStoreMounts: [...mounts] };
@@ -189,6 +219,8 @@ export function StudioPage() {
           <ExpertEditorFragment
             initialValue={draft}
             modelProviders={modelProviders}
+            runtimes={runtimes}
+            contextStores={contextStores}
             onCancel={openDirectory}
             onCreated={saveExpert}
           />
@@ -207,6 +239,7 @@ export function StudioPage() {
           <ContextStoreDirectoryFragment
             stores={contextStores}
             onCreate={createContextStore}
+            onAddNoteEntry={addContextNoteEntry}
             onPickFolder={pickContextStoreFolder}
           />
         ) : null}

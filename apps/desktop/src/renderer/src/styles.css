@@ -2589,3 +2589,63 @@ p {
     animation: none;
   }
 }
+
+.expert-context-store-picker {
+  display: grid;
+  gap: 10px;
+  margin: 8px 0 0;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.expert-context-store-picker > label {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
+  padding: 10px 0;
+  border-top: 1px solid var(--border);
+}
+
+.expert-context-store-picker > label > span {
+  display: grid;
+  gap: 3px;
+}
+
+.context-entity-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 24px;
+  padding-top: 20px;
+  border-top: 1px solid var(--border);
+}
+
+.context-entity-heading h3 {
+  margin: 0;
+}
+
+.context-entity-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.context-entity-list article {
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: #fafbf8;
+}
+
+.context-entity-list article p {
+  margin: 5px 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.context-entity-list article small {
+  color: var(--green-dark);
+}
