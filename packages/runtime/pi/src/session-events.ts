@@ -36,6 +36,29 @@ export function readAssistantMessageText(event: AgentSessionEvent): string | und
   return readMessageText(event.message);
 }
 
+export function assertAssistantTurnCompleted(messages: readonly unknown[]): void {
+  const assistant = messages.findLast(
+    (message) => isRecord(message) && message["role"] === "assistant",
+  );
+  if (!isRecord(assistant)) {
+    throw new Error("PI Runtime completed without an assistant response.");
+  }
+
+  const stopReason = assistant["stopReason"];
+  if (stopReason === "error" || stopReason === "aborted") {
+    const errorMessage = assistant["errorMessage"];
+    throw new Error(
+      typeof errorMessage === "string" && errorMessage.trim() !== ""
+        ? errorMessage
+        : `PI Runtime assistant stopped with reason: ${stopReason}.`,
+    );
+  }
+
+  if (readMessageText(assistant) === undefined) {
+    throw new Error("PI Runtime completed with an empty assistant response.");
+  }
+}
+
 export function readProgressEvent(
   event: AgentSessionEvent,
 ):

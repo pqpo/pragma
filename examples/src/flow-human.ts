@@ -11,7 +11,7 @@ flow.compose(({ start, end }) => {
   start(approval).next(end());
 });
 const execution = await createExampleApp().flows.start(flow, { input: {} });
-for await (const event of execution.replayEvents()) {
+for await (const event of execution.events()) {
   if (event.type === "human.requested") {
     const id = (event.payload as { interactionId: string }).interactionId;
     await execution.respondToHumanInteraction(id, { approved: true }, { requestId: "approval" });

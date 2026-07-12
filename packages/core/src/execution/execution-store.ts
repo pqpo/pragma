@@ -198,10 +198,20 @@ export function createFileExecutionStore(
       );
     },
     watchEvents(executionId, after) {
-      return createWatch(executionId, after, (cursor) => this.readEvents(executionId, cursor));
+      return createWatch(
+        executionId,
+        after,
+        (cursor) => this.readEvents(executionId, cursor),
+        async () => isTerminal((await this.get(executionId))?.status),
+      );
     },
     watchOutputs(executionId, after) {
-      return createWatch(executionId, after, (cursor) => this.readOutputs(executionId, cursor));
+      return createWatch(
+        executionId,
+        after,
+        (cursor) => this.readOutputs(executionId, cursor),
+        async () => isTerminal((await this.get(executionId))?.status),
+      );
     },
   };
 }
@@ -291,6 +301,7 @@ function createWatch<T extends { readonly cursor: ExecutionCursor }>(
   executionId: string,
   after: ExecutionCursor | undefined,
   readAfter: (cursor: ExecutionCursor | undefined) => Promise<readonly T[]>,
+  isComplete: () => Promise<boolean>,
 ): AsyncIterable<T> {
   return (async function* () {
     let lastSequence = after?.sequence ?? 0;
@@ -302,9 +313,19 @@ function createWatch<T extends { readonly cursor: ExecutionCursor }>(
           yield event;
         }
       }
+      if (await isComplete()) return;
       await new Promise<void>((resolve) => setTimeout(resolve, 25));
     }
   })();
+}
+
+function isTerminal(status: string | undefined): boolean {
+  return (
+    status === "succeeded" ||
+    status === "failed" ||
+    status === "cancelled" ||
+    status === "interrupted"
+  );
 }
 
 function buildTree(rootId: string, invocations: readonly Invocation[]): InvocationTree {

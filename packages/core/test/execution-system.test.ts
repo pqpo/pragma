@@ -85,6 +85,38 @@ async function fixture(delayMs?: number) {
 }
 
 describe("ExpertSession", () => {
+  it("streams only future events until terminal and exposes durable message history", async () => {
+    const { app, expert } = await fixture(100);
+    const session = await app.experts.createSession(expert);
+    const turn = await session.prompt("hello", { requestId: "history" });
+    await waitUntil(async () => (await turn.getState()).lastAppliedSequence > 0);
+
+    const streamed = (async () => {
+      const events = [];
+      for await (const event of turn.events()) events.push(event);
+      return events;
+    })();
+    const invocationStreamed = (async () => {
+      const events = [];
+      for await (const event of turn.watchInvocation(turn.executionId)) events.push(event);
+      return events;
+    })();
+
+    await expect(turn.result).resolves.toBe("solo:hello");
+    const events = await streamed;
+    expect(events.some((event) => event.type === "runtime.message.delta")).toBe(true);
+    expect(events.some((event) => event.type === "invocation.started")).toBe(false);
+    expect((await invocationStreamed).some((event) => event.type === "invocation.succeeded")).toBe(
+      true,
+    );
+    expect("replayEvents" in turn).toBe(false);
+    expect(await session.getMessageHistory()).toMatchObject([
+      { role: "user", requestId: "history", content: "hello" },
+      { role: "assistant", content: "solo:hello" },
+    ]);
+    await session.close();
+  });
+
   it("uses defineExpert as the only creation entry and makes requestId durable/idempotent", async () => {
     const { app, expert } = await fixture();
     expect("create" in expert).toBe(false);
@@ -289,7 +321,13 @@ describe("FlowExecution", () => {
       start(task).next(end());
     });
     const execution = await app.flows.start(flow, { input: 21 });
+    const streamed = (async () => {
+      const events = [];
+      for await (const event of execution.events()) events.push(event);
+      return events;
+    })();
     await expect(execution.result).resolves.toBe(42);
+    expect((await streamed).at(-1)?.type).toBe("execution.succeeded");
     const opened = await app.flows.open({ executionId: execution.executionId });
     expect((await opened.getState()).status).toBe("succeeded");
     expect("cancel" in opened).toBe(false);

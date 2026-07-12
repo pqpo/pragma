@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx",
-    "example:context-authorization": "tsx src/run-context-authorization.ts",
+    "example:expert-chat": "tsx src/experts/getting-started/console-chat.ts",
     "build": "tsc -p tsconfig.build.json",
     "lint": "eslint src plugins test vitest.config.ts",
     "typecheck": "tsc --noEmit",

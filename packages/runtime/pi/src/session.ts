@@ -14,6 +14,7 @@ import type {
 import type { RuntimeStreamEventInput } from "@pragma/core";
 
 import {
+  assertAssistantTurnCompleted,
   readAssistantMessageText,
   readAssistantTextDelta,
   readAssistantThinkingDelta,
@@ -84,6 +85,9 @@ export async function startPiTurn(
       turn.modelName ?? nativeSession.models.defaultModelName,
     );
     await nativeSession.session.prompt(turn.prompt);
+    assertAssistantTurnCompleted(
+      nativeSession.session.messages.slice(nativeSession.messageCountBeforeRun),
+    );
   } finally {
     unsubscribe();
     nativeSession.streamState.runId = undefined;

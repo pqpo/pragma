@@ -52,7 +52,32 @@ export const ExpertSessionRecordSchema = z.object({
   updatedAt: z.string().datetime(),
 });
 
+const ExpertSessionMessageBaseSchema = z.object({
+  sessionId: z.string().min(1),
+  executionId: z.string().min(1),
+  createdAt: z.string().datetime(),
+});
+
+export const ExpertSessionUserMessageSchema = ExpertSessionMessageBaseSchema.extend({
+  role: z.literal("user"),
+  requestId: z.string().min(1),
+  content: z.string(),
+});
+
+export const ExpertSessionAssistantMessageSchema = ExpertSessionMessageBaseSchema.extend({
+  role: z.literal("assistant"),
+  content: z.unknown(),
+});
+
+export const ExpertSessionMessageSchema = z.discriminatedUnion("role", [
+  ExpertSessionUserMessageSchema,
+  ExpertSessionAssistantMessageSchema,
+]);
+
 export type PromptMode = z.infer<typeof PromptModeSchema>;
 export type PromptStatus = z.infer<typeof PromptStatusSchema>;
 export type PromptRequest = z.infer<typeof PromptRequestSchema>;
 export type ExpertSessionRecord = z.infer<typeof ExpertSessionRecordSchema>;
+export type ExpertSessionUserMessage = z.infer<typeof ExpertSessionUserMessageSchema>;
+export type ExpertSessionAssistantMessage = z.infer<typeof ExpertSessionAssistantMessageSchema>;
+export type ExpertSessionMessage = z.infer<typeof ExpertSessionMessageSchema>;

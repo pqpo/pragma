@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import type {
   ExecutionRecord,
   ExpertSessionRecord,
+  ExpertSessionMessage,
   PromptMode,
   PromptRequest,
 } from "@pragma/shared";
@@ -38,6 +39,7 @@ export interface ExpertSession {
   close(reason?: string): Promise<void>;
   getState(): Promise<ExpertSessionRecord>;
   listTurns(): Promise<readonly ExpertTurn[]>;
+  getMessageHistory(): Promise<readonly ExpertSessionMessage[]>;
   getPromptQueue(): Promise<readonly PromptRequest[]>;
 }
 
@@ -268,6 +270,41 @@ class ExpertSessionImpl implements ExpertSession {
 
   async listTurns(): Promise<readonly ExpertTurn[]> {
     return (await this.getState()).executionIds.map((id) => this.createTurn(id));
+  }
+
+  async getMessageHistory(): Promise<readonly ExpertSessionMessage[]> {
+    const prompts = await this.getPromptQueue();
+    const session = await this.getState();
+    const executions = await Promise.all(
+      session.executionIds.map(
+        async (executionId) => await this.dependencies.executions.get(executionId),
+      ),
+    );
+    const messages: ExpertSessionMessage[] = prompts.map((prompt) => ({
+      role: "user",
+      sessionId: this.sessionId,
+      executionId: prompt.executionId,
+      requestId: prompt.requestId,
+      content: prompt.content,
+      createdAt: prompt.createdAt,
+    }));
+
+    for (const execution of executions) {
+      if (execution?.status !== "succeeded") continue;
+      messages.push({
+        role: "assistant",
+        sessionId: this.sessionId,
+        executionId: execution.executionId,
+        content: execution.output,
+        createdAt: execution.updatedAt,
+      });
+    }
+
+    return messages.sort((left, right) => {
+      const timestamp = left.createdAt.localeCompare(right.createdAt);
+      if (timestamp !== 0) return timestamp;
+      return left.role === right.role ? 0 : left.role === "user" ? -1 : 1;
+    });
   }
 
   async getPromptQueue(): Promise<readonly PromptRequest[]> {

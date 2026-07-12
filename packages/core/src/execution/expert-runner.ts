@@ -113,7 +113,6 @@ export class ExecutionController {
     );
     const record = await this.store.get(this.executionId);
     if (record !== undefined && !isTerminal(record.status)) {
-      await this.store.update(this.executionId, { status: "cancelled", error: reason });
       for (const invocation of await this.store.listInvocations(this.executionId)) {
         if (!isTerminal(invocation.status)) {
           await this.store.putInvocation(this.executionId, {
@@ -130,6 +129,7 @@ export class ExecutionController {
         "execution.cancelled",
         { reason },
       );
+      await this.store.update(this.executionId, { status: "cancelled", error: reason });
     }
   }
 
@@ -284,10 +284,6 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
     const result = await handle.result;
     await drain;
     const output = result.result.output;
-    await updateInvocation(options.store, options.executionId, invocation, {
-      status: "succeeded",
-      output,
-    });
     await options.store.appendOutput(options.executionId, options.invocationId, {
       channel: "result",
       value: output,
@@ -300,6 +296,10 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
         output,
       },
     );
+    await updateInvocation(options.store, options.executionId, invocation, {
+      status: "succeeded",
+      output,
+    });
     const info = session.info();
     await options.onRuntimeContext?.(options.contextId, {
       expertId: nativeExpert.id,
@@ -311,10 +311,6 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
   } catch (error) {
     await drain.catch(() => undefined);
     const status = options.controller.isCancelled() ? "cancelled" : "failed";
-    await updateInvocation(options.store, options.executionId, invocation, {
-      status,
-      error: serializeError(error),
-    });
     await options.store.appendEvent(
       options.executionId,
       options.invocationId,
@@ -323,6 +319,10 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
         message: error instanceof Error ? error.message : String(error),
       },
     );
+    await updateInvocation(options.store, options.executionId, invocation, {
+      status,
+      error: serializeError(error),
+    });
     throw error;
   }
 }

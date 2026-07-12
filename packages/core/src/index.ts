@@ -4,6 +4,12 @@ export {
   type HumanInteractionRecord,
   type HumanInteractionResponse,
 } from "@pragma/shared";
+export {
+  ExpertSessionMessageSchema,
+  type ExpertSessionMessage,
+  type ExpertSessionUserMessage,
+  type ExpertSessionAssistantMessage,
+} from "@pragma/shared";
 export * from "./agent/context-manager.ts";
 export * from "./agent/agent-launcher.ts";
 export * from "./agent/expert-agent.ts";

@@ -171,7 +171,6 @@ export class FlowExecutionManager {
         runtime,
       });
       await putStatus(this.executions, executionId, root, "succeeded", output);
-      await this.executions.update(executionId, { status: "succeeded", output });
       await this.executions.appendOutput(executionId, executionId, {
         channel: "result",
         value: output,
@@ -179,14 +178,15 @@ export class FlowExecutionManager {
       await this.executions.appendEvent(executionId, executionId, "execution.succeeded", {
         output,
       });
+      await this.executions.update(executionId, { status: "succeeded", output });
     } catch (error) {
       const status = controller.isCancelled() ? "cancelled" : "failed";
       const storedError = serializeError(error);
       await putStatus(this.executions, executionId, root, status, undefined, storedError);
-      await this.executions.update(executionId, { status, error: storedError });
       await this.executions.appendEvent(executionId, executionId, `execution.${status}`, {
         message: error instanceof Error ? error.message : String(error),
       });
+      await this.executions.update(executionId, { status, error: storedError });
     } finally {
       await controller.closeRuntimes();
     }
@@ -470,6 +470,7 @@ async function putStatus(
   output?: unknown,
   error?: unknown,
 ): Promise<void> {
+  await store.appendEvent(executionId, invocation.invocationId, `invocation.${status}`, {});
   await store.putInvocation(executionId, {
     ...invocation,
     status,
@@ -477,7 +478,6 @@ async function putStatus(
     ...(error === undefined ? {} : { error }),
     updatedAt: new Date().toISOString(),
   });
-  await store.appendEvent(executionId, invocation.invocationId, `invocation.${status}`, {});
 }
 
 function readField(value: unknown, field: string): unknown {

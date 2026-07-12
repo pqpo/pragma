@@ -154,24 +154,11 @@ PRAGMA_MODEL_API_KEY=replace-with-your-api-key
 运行基础专家示例：
 
 ```bash
-pnpm --filter @pragma/examples dev src/run-expert-agent.ts
+pnpm --filter @pragma/examples example:expert-chat
 ```
 
-传入自定义问题：
-
-```bash
-pnpm --filter @pragma/examples dev src/run-expert-agent.ts "用三句话总结 ExpertAgent 的生命周期。"
-```
-
-更多示例：
-
-```bash
-pnpm --filter @pragma/examples dev src/run-workspace-context-agent.ts
-pnpm --filter @pragma/examples dev src/run-memory-system-example.ts
-pnpm --filter @pragma/examples dev src/run-tool-approval-example.ts
-pnpm --filter @pragma/examples dev src/run-codex-runtime-agent.ts
-pnpm --filter @pragma/examples dev src/run-claude-code-runtime-agent.ts
-```
+启动后可在同一个 `ExpertSession` 中持续输入问题；输入 `/exit` 退出。建议先让 Expert
+记住一个随机验证码，再在下一轮追问，以验证多轮上下文。
 
 完整示例说明见 [examples/README.md](./examples/README.md)。
 

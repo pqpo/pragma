@@ -154,24 +154,12 @@ PRAGMA_MODEL_API_KEY=replace-with-your-api-key
 Run the basic expert example:
 
 ```bash
-pnpm --filter @pragma/examples dev src/run-expert-agent.ts
+pnpm --filter @pragma/examples example:expert-chat
 ```
 
-Pass a custom prompt:
-
-```bash
-pnpm --filter @pragma/examples dev src/run-expert-agent.ts "Summarize the Expert lifecycle in three sentences."
-```
-
-More examples:
-
-```bash
-pnpm --filter @pragma/examples dev src/run-workspace-context-agent.ts
-pnpm --filter @pragma/examples dev src/run-memory-system-example.ts
-pnpm --filter @pragma/examples dev src/run-tool-approval-example.ts
-pnpm --filter @pragma/examples dev src/run-codex-runtime-agent.ts
-pnpm --filter @pragma/examples dev src/run-claude-code-runtime-agent.ts
-```
+Continue entering prompts in the same `ExpertSession`; enter `/exit` to quit. As a first
+multi-turn check, ask the Expert to remember a random verification code and ask for it again in
+the next turn.
 
 See [examples/README.md](./examples/README.md) for the full example guide.
 
