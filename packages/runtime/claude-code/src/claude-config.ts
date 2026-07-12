@@ -1,6 +1,6 @@
-import { copyFile, lstat, mkdir, rm, symlink } from "node:fs/promises";
+import { copyFile, mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 
 import type { ExpertAgentLogger } from "@pragma/core";
 
@@ -27,11 +27,11 @@ export async function prepareManagedClaudeCodeConfig({
   env,
   logger,
 }: PrepareManagedClaudeCodeConfigOptions): Promise<ManagedClaudeCodeConfig> {
-  const configDir = join(sessionDir, "claude-config");
+  const configDir = join(sessionDir, "config");
   const sharedConfigDir = resolveSharedClaudeConfigDir(env);
 
   await mkdir(configDir, { recursive: true });
-  await exposeSharedStateDirs(sharedConfigDir, configDir, logger);
+  await createPrivateStateDirs(configDir);
   const settingsPath = await copySharedSettingsFiles(sharedConfigDir, configDir, logger);
 
   return {
@@ -53,25 +53,9 @@ function resolveSharedClaudeConfigDir(env: NodeJS.ProcessEnv | undefined): strin
   return readNonEmptyEnvValue(process.env["CLAUDE_CONFIG_DIR"]) ?? join(homedir(), ".claude");
 }
 
-async function exposeSharedStateDirs(
-  sharedConfigDir: string,
-  configDir: string,
-  logger: Pick<ExpertAgentLogger, "warn">,
-): Promise<void> {
+async function createPrivateStateDirs(configDir: string): Promise<void> {
   for (const dir of CLAUDE_LINKED_STATE_DIRS) {
-    const source = join(sharedConfigDir, dir);
-    const target = join(configDir, dir);
-
-    try {
-      await mkdir(source, { recursive: true });
-      await replaceSymlink(source, target, "dir");
-    } catch (error) {
-      logger.warn("Claude Code managed config could not expose shared state directory", {
-        dir,
-        error,
-      });
-      await mkdir(target, { recursive: true });
-    }
+    await mkdir(join(configDir, dir), { recursive: true });
   }
 }
 
@@ -102,28 +86,6 @@ async function copySharedSettingsFiles(
   }
 
   return primarySettingsPath;
-}
-
-async function replaceSymlink(source: string, target: string, type: "dir" | "file"): Promise<void> {
-  await mkdir(dirname(target), { recursive: true });
-  await removeExistingSymlinkTarget(target);
-  await symlink(source, target, type);
-}
-
-async function removeExistingSymlinkTarget(target: string): Promise<void> {
-  try {
-    const stat = await lstat(target);
-    if (stat.isDirectory() && !stat.isSymbolicLink()) {
-      await rm(target, { recursive: true, force: true });
-      return;
-    }
-
-    await rm(target, { force: true });
-  } catch (error) {
-    if (!isNotFoundError(error)) {
-      throw error;
-    }
-  }
 }
 
 function readNonEmptyEnvValue(value: string | undefined): string | undefined {

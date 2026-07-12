@@ -8,8 +8,6 @@ import type {
   RuntimeSessionSyncCallback,
 } from "@pragma/core";
 
-export type ClaudeCodeRuntimeIsolationMode = "strict" | "inherit";
-
 export type ClaudeCodeRuntimePermissionMode =
   | "default"
   | "acceptEdits"
@@ -28,7 +26,6 @@ export interface ClaudeCodeRuntimeAdapterOptions {
   readonly defaultModelName?: string | undefined;
   readonly defaultThinkingLevel?: string | undefined;
   readonly listModels?: (() => Promise<readonly RuntimeModel[]>) | undefined;
-  readonly isolationMode?: ClaudeCodeRuntimeIsolationMode | undefined;
   readonly permissionMode?: ClaudeCodeRuntimePermissionMode | undefined;
   readonly additionalArgs?: readonly string[] | undefined;
   readonly spawn?: ClaudeCodeRuntimeSpawn | undefined;

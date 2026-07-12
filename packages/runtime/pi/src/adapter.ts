@@ -14,7 +14,7 @@ import {
   resolveRequiredRuntimeModel,
 } from "./models.ts";
 import { createResourceLoader } from "./resources.ts";
-import { createPiSessionManager, getPiSessionDir } from "./session-manager.ts";
+import { createPiSessionManager } from "./session-manager.ts";
 import {
   collectPiUsage,
   createPiNativeSession,
@@ -63,7 +63,7 @@ export function createPiRuntime(options: CloudPiRuntimeAdapterOptions = {}): Run
       resolvePersistence(ctx): RuntimeSessionPersistenceSpec {
         return {
           mode: "checkpoint",
-          sessionDir: getPiSessionDir(ctx.workspace, ctx.agent.id),
+          sessionDir: ctx.paths.runtimeSessionDir("pi"),
           watch: true,
           debounceMs: options.sessionSyncDebounceMs,
           checkpointOn: ["session.created", "turn.completed", "session.destroyed", "files.changed"],
@@ -98,7 +98,7 @@ export function createPiRuntime(options: CloudPiRuntimeAdapterOptions = {}): Run
         });
         const piSessionManagerResult = await createPiSessionManager(
           cwd,
-          ctx.agent.id,
+          ctx.persistence.spec?.sessionDir ?? ctx.paths.runtimeSessionDir("pi"),
           ctx.request.runtimeSession?.id,
         );
         const sessionOptions: CreateAgentSessionOptions = {

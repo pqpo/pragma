@@ -56,6 +56,7 @@ describe("defineAgent", () => {
     });
 
     const session = await agent.createSession({
+      owner: { workflowRunId: "workflow-from-agent", taskRunId: "task-from-agent" },
       runtime: "test-runtime",
       runtimes: createRuntimeRegistry({
         runtimes: [runtime],

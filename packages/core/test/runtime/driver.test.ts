@@ -1,14 +1,25 @@
-import { describe, expect, it } from "vitest";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import { afterEach, describe, expect, it } from "vitest";
 import { z } from "zod";
 
-import { ContextSystem, ExpertAgent } from "../../src/index.ts";
+import { ContextSystem, ExpertAgent, PragmaPaths } from "../../src/index.ts";
 import { defineRuntimeDriver } from "../../src/runtime/driver.ts";
 import type {
   RuntimeSessionCheckpoint,
   RuntimeSessionRestoreRequest,
 } from "../../src/runtime/session-persistence.ts";
 
+const tempDirs: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+});
+
 describe("defineRuntimeDriver", () => {
+  const owner = { workflowRunId: "workflow-runtime-driver", taskRunId: "task-runtime-driver" };
   it("rejects a runtime session ref with an empty native id", async () => {
     let createSessionCalled = false;
     const runtime = defineRuntimeDriver<FakeEvent, FakeSession>({
@@ -33,6 +44,8 @@ describe("defineRuntimeDriver", () => {
     await expect(
       runtime.createSession({
         agent,
+        owner,
+        systemSessionId: "invalid-ref-session",
         runtimeSession: { type: "fake-runtime", id: "" },
       }),
     ).rejects.toThrow();
@@ -64,12 +77,15 @@ describe("defineRuntimeDriver", () => {
       version: "0.0.0",
       scope: "workspace",
       workspace: "/tmp/pragma-runtime-driver-mismatch-test",
+      pragmaHome: await createTestPragmaHome("mismatch"),
       contextSystem: new ContextSystem(),
     });
 
     await expect(
       runtime.createSession({
         agent,
+        owner,
+        systemSessionId: "mismatched-ref-session",
         runtimeSession: { type: "other-runtime", id: "session-1" },
       }),
     ).rejects.toThrow(
@@ -160,10 +176,12 @@ describe("defineRuntimeDriver", () => {
       version: "0.0.0",
       scope: "workspace",
       workspace: "/tmp/pragma-runtime-driver-test",
+      pragmaHome: await createTestPragmaHome("workflow"),
       contextSystem: new ContextSystem(),
     });
     const session = await runtime.createSession({
       agent,
+      owner,
       systemSessionId: "system-session-1",
     });
     const handle = session.submit({
@@ -188,6 +206,26 @@ describe("defineRuntimeDriver", () => {
       "run.completed",
     ]);
     expect(session.info().runtimeSession.id).toBe("native-session-2");
+    const sessionRecord = JSON.parse(
+      await readFile(
+        new PragmaPaths({ pragmaHome: agent.pragmaHome }).systemSessionManifest(
+          owner.workflowRunId,
+          "system-session-1",
+        ),
+        "utf8",
+      ),
+    ) as Record<string, unknown>;
+    expect(sessionRecord).toMatchObject({
+      schemaVersion: 1,
+      workflowRunId: owner.workflowRunId,
+      systemSessionId: "system-session-1",
+      agentId: agent.id,
+      taskRunId: owner.taskRunId,
+      runtimeSessionRef: { type: "fake-runtime", id: "native-session-2" },
+      currentWorkspace: agent.workspace,
+      workspaceHistory: [agent.workspace],
+      status: "active",
+    });
     expect(restoreRequests).toHaveLength(1);
     expect(checkpoints.map((checkpoint) => checkpoint.trigger)).toEqual([
       "session.created",
@@ -196,7 +234,7 @@ describe("defineRuntimeDriver", () => {
     ]);
   });
 
-  it("preserves the requested runtime session ref when restore fails before lifecycle creation", async () => {
+  it("rejects restore when the workflow-owned system session record is missing", async () => {
     let destroyedRuntimeSessionId: string | undefined;
     const runtime = defineRuntimeDriver<FakeEvent, FakeSession>(
       {
@@ -232,6 +270,7 @@ describe("defineRuntimeDriver", () => {
       version: "0.0.0",
       scope: "workspace",
       workspace: "/tmp/pragma-runtime-driver-restore-failure-test",
+      pragmaHome: await createTestPragmaHome("restore-failure"),
       contextSystem: new ContextSystem(),
       hooks: {
         afterSessionDestroy: ({ session }) => {
@@ -243,10 +282,68 @@ describe("defineRuntimeDriver", () => {
     await expect(
       runtime.createSession({
         agent,
+        owner,
+        systemSessionId: "restore-failure-session",
         runtimeSession: { type: "fake-runtime", id: "session-requested" },
       }),
-    ).rejects.toThrow("Restore failed");
-    expect(destroyedRuntimeSessionId).toBe("session-requested");
+    ).rejects.toThrow(
+      "Runtime system session was not found: restore-failure-session in workflow workflow-runtime-driver.",
+    );
+    expect(destroyedRuntimeSessionId).toBeUndefined();
+  });
+
+  it("marks the session record failed when beforeSessionCreate rejects", async () => {
+    const runtime = defineRuntimeDriver<FakeEvent, FakeSession>({
+      descriptor: {
+        id: "fake-runtime",
+        kind: "fake-runtime",
+        displayName: "Fake Runtime",
+      },
+      createSession() {
+        throw new Error("Native session creation should not be reached.");
+      },
+      startTurn() {
+        return {};
+      },
+      mapEvent() {
+        return { events: [] };
+      },
+    });
+    const pragmaHome = await createTestPragmaHome("before-hook-failure");
+    const agent = await ExpertAgent.create({
+      id: "coder-before-hook-failure",
+      name: "Coder",
+      description: "Responsible for code changes.",
+      tags: ["coding"],
+      version: "0.0.0",
+      scope: "workspace",
+      workspace: "/tmp/pragma-runtime-driver-before-hook-failure-test",
+      pragmaHome,
+      contextSystem: new ContextSystem(),
+      hooks: {
+        beforeSessionCreate: () => {
+          throw new Error("beforeSessionCreate failed");
+        },
+      },
+    });
+
+    await expect(
+      runtime.createSession({
+        agent,
+        owner,
+        systemSessionId: "before-hook-failure-session",
+      }),
+    ).rejects.toThrow("beforeSessionCreate failed");
+    const record = JSON.parse(
+      await readFile(
+        new PragmaPaths({ pragmaHome }).systemSessionManifest(
+          owner.workflowRunId,
+          "before-hook-failure-session",
+        ),
+        "utf8",
+      ),
+    ) as { readonly status: string };
+    expect(record.status).toBe("failed");
   });
 
   it("does not carry captured output text across structured output retries", async () => {
@@ -261,6 +358,9 @@ describe("defineRuntimeDriver", () => {
           id: "native-session-1",
           attempts: 0,
         };
+      },
+      readSession(session) {
+        return { runtimeSessionId: session.id };
       },
       startTurn(session, turn) {
         session.attempts += 1;
@@ -293,9 +393,10 @@ describe("defineRuntimeDriver", () => {
       version: "0.0.0",
       scope: "workspace",
       workspace: "/tmp/pragma-runtime-driver-retry-test",
+      pragmaHome: await createTestPragmaHome("retry"),
       contextSystem: new ContextSystem(),
     });
-    const session = await runtime.createSession({ agent });
+    const session = await runtime.createSession({ agent, owner });
 
     const result = await session.submit({
       query: "Return JSON",
@@ -343,10 +444,11 @@ describe("defineRuntimeDriver", () => {
       version: "0.0.0",
       scope: "workspace",
       workspace: "/tmp/pragma-runtime-driver-can-use-test",
+      pragmaHome: await createTestPragmaHome("can-use"),
       contextSystem: new ContextSystem(),
     });
 
-    await expect(runtime.createSession({ agent })).rejects.toThrow(
+    await expect(runtime.createSession({ agent, owner })).rejects.toThrow(
       "Runtime is not available: Fake Runtime (fake-runtime). Fake runtime binary is missing.",
     );
   });
@@ -361,8 +463,15 @@ async function createTestAgent(suffix: string): Promise<ExpertAgent> {
     version: "0.0.0",
     scope: "workspace",
     workspace: `/tmp/pragma-runtime-driver-${suffix}-test`,
+    pragmaHome: await createTestPragmaHome(suffix),
     contextSystem: new ContextSystem(),
   });
+}
+
+async function createTestPragmaHome(suffix: string): Promise<string> {
+  const dir = await mkdtemp(join(tmpdir(), `pragma-runtime-driver-${suffix}-`));
+  tempDirs.push(dir);
+  return dir;
 }
 
 type FakeEvent =

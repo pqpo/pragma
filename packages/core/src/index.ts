@@ -25,6 +25,7 @@ export * from "./runtime/run-context.ts";
 export * from "./runtime/runtime-adapter.ts";
 export * from "./runtime/runtime-event-emitter.ts";
 export * from "./runtime/session-persistence.ts";
+export * from "./runtime/session-record.ts";
 export * from "./runtime/stream-events.ts";
 export * from "./runtime/stream-controller.ts";
 export * from "./runtime/usage.ts";
@@ -32,6 +33,7 @@ export * from "./runtime-registry.ts";
 export * from "./sdk-mcp-server.ts";
 export * from "./tools/managed-tool.ts";
 export * from "./tools/tool-resolver.ts";
+export * from "./storage/pragma-paths.ts";
 export * from "./workflow-tools-mcp-server.ts";
 
 export async function defineAgent(options: ExpertAgentCreateOptions): Promise<ExpertAgent> {

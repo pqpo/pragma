@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { promisify } from "node:util";
@@ -7,11 +7,12 @@ import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 
 import { loadExpertAgentPlugins } from "../../src/plugins/plugin-loader.ts";
+import { PragmaPaths } from "../../src/storage/pragma-paths.ts";
 
 const execFileAsync = promisify(execFile);
 
 describe("ExpertAgent plugin loader", () => {
-  it("loads a plugin directory into the Agent workspace", async () => {
+  it("loads a plugin directory into the Agent cache", async () => {
     const workspace = await mkdtemp(resolve(tmpdir(), "pragma-plugin-loader-"));
     const pluginDir = resolve(workspace, "loadable-plugin");
 
@@ -22,12 +23,22 @@ describe("ExpertAgent plugin loader", () => {
       });
 
       const result = await loadExpertAgentPlugins({
-        workspaceRoot: workspace,
+        agentId: "plugin-loader-agent",
+        pragmaHome: workspace,
         sources: [pluginDir],
       });
 
       expect(result.issues).toEqual([]);
       expect(result.pluginEntries.map((plugin) => plugin.entry.id)).toEqual(["plugin.loadable"]);
+      await expect(
+        stat(
+          new PragmaPaths({ pragmaHome: workspace }).agentPluginRoot(
+            "plugin-loader-agent",
+            "plugin.loadable",
+          ),
+        ),
+      ).resolves.toMatchObject({});
+      await expect(stat(resolve(workspace, ".pragma"))).rejects.toMatchObject({ code: "ENOENT" });
     } finally {
       await rm(workspace, { recursive: true, force: true });
     }
@@ -44,7 +55,8 @@ describe("ExpertAgent plugin loader", () => {
       });
 
       const result = await loadExpertAgentPlugins({
-        workspaceRoot: workspace,
+        agentId: "plugin-loader-agent",
+        pragmaHome: workspace,
         sources: [
           {
             source: pluginDir,
@@ -115,7 +127,8 @@ describe("ExpertAgent plugin loader", () => {
       });
 
       const result = await loadExpertAgentPlugins({
-        workspaceRoot: workspace,
+        agentId: "plugin-loader-agent",
+        pragmaHome: workspace,
         sources: [pluginDir],
       });
 
@@ -174,7 +187,8 @@ describe("ExpertAgent plugin loader", () => {
       await execFileAsync("zip", ["-qr", archivePath, "."], { cwd: packageRoot });
 
       const result = await loadExpertAgentPlugins({
-        workspaceRoot: workspace,
+        agentId: "plugin-loader-agent",
+        pragmaHome: workspace,
         sources: [archivePath],
       });
 
@@ -195,7 +209,8 @@ describe("ExpertAgent plugin loader", () => {
       await mkdir(pluginDir, { recursive: true });
 
       const result = await loadExpertAgentPlugins({
-        workspaceRoot: workspace,
+        agentId: "plugin-loader-agent",
+        pragmaHome: workspace,
         sources: [pluginDir],
       });
 
@@ -223,7 +238,8 @@ describe("ExpertAgent plugin loader", () => {
       });
 
       const result = await loadExpertAgentPlugins({
-        workspaceRoot: workspace,
+        agentId: "plugin-loader-agent",
+        pragmaHome: workspace,
         sources: [pluginDir],
       });
 
@@ -251,7 +267,8 @@ describe("ExpertAgent plugin loader", () => {
       });
 
       const result = await loadExpertAgentPlugins({
-        workspaceRoot: workspace,
+        agentId: "plugin-loader-agent",
+        pragmaHome: workspace,
         sources: [pluginDir],
       });
 
@@ -314,24 +331,26 @@ async function writeMinimalPlugin(
   if (options.writeEntry !== false) {
     await writeFile(
       resolve(pluginDir, "index.js"),
-      (options.entryLines ?? [
-        "export default {",
-        `  id: "${options.id}",`,
-        "  name: \"Env required\",",
-        "  description: \"Requires env\",",
-        "  manifest: {",
-        "    schemaVersion: \"pragma.plugin/v1\",",
-        `    id: "${options.id}",`,
-        "    name: \"Env required\",",
-        "    description: \"Requires env\",",
-        "    runtime: { type: \"expert-agent-plugin\", entry: \"./index.js\" },",
-        "    capabilities: [],",
-        "    required_config: [],",
-        "  },",
-        "  setup: () => ({}),",
-        "};",
-        "",
-      ]).join("\n"),
+      (
+        options.entryLines ?? [
+          "export default {",
+          `  id: "${options.id}",`,
+          '  name: "Env required",',
+          '  description: "Requires env",',
+          "  manifest: {",
+          '    schemaVersion: "pragma.plugin/v1",',
+          `    id: "${options.id}",`,
+          '    name: "Env required",',
+          '    description: "Requires env",',
+          '    runtime: { type: "expert-agent-plugin", entry: "./index.js" },',
+          "    capabilities: [],",
+          "    required_config: [],",
+          "  },",
+          "  setup: () => ({}),",
+          "};",
+          "",
+        ]
+      ).join("\n"),
       "utf8",
     );
   }
@@ -360,5 +379,9 @@ async function writeFileDependencyPackage(dependencyDir: string, name: string): 
 
 async function writePackageJson(dir: string, packageJson: Record<string, unknown>): Promise<void> {
   await mkdir(dir, { recursive: true });
-  await writeFile(resolve(dir, "package.json"), `${JSON.stringify(packageJson, null, 2)}\n`, "utf8");
+  await writeFile(
+    resolve(dir, "package.json"),
+    `${JSON.stringify(packageJson, null, 2)}\n`,
+    "utf8",
+  );
 }

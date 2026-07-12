@@ -613,6 +613,10 @@ describe("directive app", () => {
     expect(runtime.requests).toEqual([
       expect.objectContaining({
         agent,
+        owner: {
+          workflowRunId: result.workflowRunId,
+          taskRunId: expect.any(String),
+        },
       }),
     ]);
     expect(runtime.submissions).toEqual([

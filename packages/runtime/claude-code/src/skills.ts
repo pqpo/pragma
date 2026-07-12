@@ -15,7 +15,7 @@ export async function materializeClaudeCodePlugin({
   agent,
   sessionDir,
 }: MaterializeClaudeCodePluginOptions): Promise<string> {
-  const pluginDir = join(sessionDir, "claude-plugin");
+  const pluginDir = join(sessionDir, "plugin");
   const skillsDir = join(pluginDir, "skills");
 
   await rm(pluginDir, { recursive: true, force: true });

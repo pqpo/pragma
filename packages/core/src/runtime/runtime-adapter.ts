@@ -66,6 +66,11 @@ export type RuntimeOutputSchema<TOutput = unknown> = z.ZodType<TOutput>;
 
 export type RuntimeSessionRef = SharedRuntimeSessionRef;
 
+export interface RuntimeSessionOwner {
+  readonly workflowRunId: string;
+  readonly taskRunId?: string | undefined;
+}
+
 export interface RuntimeSessionInfo {
   readonly systemSessionId: string;
   readonly runtimeSession: RuntimeSessionRef;
@@ -76,12 +81,14 @@ export interface RuntimeSessionInfo {
 }
 
 export interface RuntimeSessionStorageContext {
+  readonly workflowRunId: string;
+  readonly taskRunId?: string | undefined;
   readonly agentId: string;
   readonly runtime: RuntimeAdapterDescriptor;
   readonly runtimeSession: RuntimeSessionRef;
   readonly workspace: string;
   readonly sessionDir: string;
-  readonly systemSessionId?: string | undefined;
+  readonly systemSessionId: string;
   readonly context?: ExpertAgentRunContext | undefined;
 }
 
@@ -95,6 +102,8 @@ export type RuntimeSessionRestoreHandler = (
 
 export interface RuntimeCreateSessionRequest {
   readonly agent: ExpertAgent;
+  readonly owner: RuntimeSessionOwner;
+  readonly pragmaHome?: string | undefined;
   readonly context?: ExpertAgentRunContext | undefined;
   readonly contextAssembly?: ContextAssemblerOptions | undefined;
   readonly workflowExecution?: DirectiveExecutionContext | undefined;

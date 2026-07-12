@@ -93,6 +93,7 @@ const runtime = createCodexRuntime({
 const runtimeSession = createRuntimeSessionRef(cli.runtimeSessionId);
 const session = await runtime.createSession({
   agent,
+  owner: { workflowRunId: "codex-runtime-example" },
   ...(cli.systemSessionId === undefined ? {} : { systemSessionId: cli.systemSessionId }),
   ...(runtimeSession === undefined ? {} : { runtimeSession }),
 });

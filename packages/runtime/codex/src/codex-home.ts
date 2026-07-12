@@ -21,11 +21,11 @@ export async function prepareManagedCodexHome({
   env,
   logger,
 }: PrepareManagedCodexHomeOptions): Promise<string> {
-  const codexHome = join(sessionDir, "codex-home");
+  const codexHome = join(sessionDir, "home");
   const sharedCodexHome = resolveSharedCodexHome(env);
 
   await mkdir(codexHome, { recursive: true });
-  await exposeSharedSessions(sharedCodexHome, codexHome, logger);
+  await mkdir(join(codexHome, "sessions"), { recursive: true });
   await exposeSharedAuth(sharedCodexHome, codexHome, logger);
   await copySharedConfigFiles(sharedCodexHome, codexHome, logger);
   await materializeCodexSkills({ agent, codexHome });
@@ -35,23 +35,6 @@ export async function prepareManagedCodexHome({
 
 function resolveSharedCodexHome(env: NodeJS.ProcessEnv | undefined): string {
   return env?.CODEX_HOME ?? process.env["CODEX_HOME"] ?? join(homedir(), ".codex");
-}
-
-async function exposeSharedSessions(
-  sharedCodexHome: string,
-  codexHome: string,
-  logger: Pick<ExpertAgentLogger, "warn">,
-): Promise<void> {
-  const source = join(sharedCodexHome, "sessions");
-  const target = join(codexHome, "sessions");
-
-  try {
-    await mkdir(source, { recursive: true });
-    await replaceSymlink(source, target, "dir");
-  } catch (error) {
-    logger.warn("Codex managed home could not expose shared sessions", { error });
-    await mkdir(target, { recursive: true });
-  }
 }
 
 async function exposeSharedAuth(

@@ -1,7 +1,17 @@
 import { execFile } from "node:child_process";
-import { cp, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import {
+  cp,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rename,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, dirname, extname, isAbsolute, resolve } from "node:path";
+import { basename, dirname, extname, isAbsolute, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
@@ -12,9 +22,9 @@ import type {
 import { readExpertAgentPluginManifest } from "./expert-agent-plugin.ts";
 import type { ExpertAgentLoggerProvider } from "../logging/logger.ts";
 import { createExpertAgentLogger, defaultExpertAgentLoggerProvider } from "../logging/logger.ts";
+import { encodePragmaPathSegment, PragmaPaths } from "../storage/pragma-paths.ts";
 
 const execFileAsync = promisify(execFile);
-const DEFAULT_PLUGIN_INSTALL_DIR = ".pragma/agent/plugins";
 
 export type ExpertAgentPluginSource =
   | string
@@ -31,10 +41,10 @@ export type ExpertAgentPluginUse =
     };
 
 export interface LoadExpertAgentPluginsOptions {
-  readonly workspaceRoot: string;
+  readonly agentId: string;
+  readonly pragmaHome?: string | undefined;
   readonly sources: readonly ExpertAgentPluginSource[];
   readonly env?: NodeJS.ProcessEnv | undefined;
-  readonly installDir?: string | undefined;
   readonly loggerProvider?: ExpertAgentLoggerProvider | undefined;
 }
 
@@ -116,7 +126,7 @@ function readPluginSourceConfig(source: ExpertAgentPluginSource): unknown | unde
 
 export async function prepareExpertAgentPluginSource(
   sourcePath: string,
-  options: Pick<LoadExpertAgentPluginsOptions, "workspaceRoot" | "installDir">,
+  options: Pick<LoadExpertAgentPluginsOptions, "agentId" | "pragmaHome" | "env">,
 ): Promise<string> {
   const absoluteSourcePath = isAbsolute(sourcePath) ? sourcePath : resolve(sourcePath);
   const sourceStats = await stat(absoluteSourcePath).catch(() => undefined);
@@ -125,10 +135,10 @@ export async function prepareExpertAgentPluginSource(
     throw new InvalidPluginSourceError(`Plugin source does not exist: ${sourcePath}`);
   }
 
-  const installRoot = resolve(
-    options.workspaceRoot,
-    options.installDir ?? DEFAULT_PLUGIN_INSTALL_DIR,
-  );
+  const installRoot = new PragmaPaths({
+    pragmaHome: options.pragmaHome,
+    env: options.env,
+  }).agentPluginsRoot(options.agentId);
   await mkdir(installRoot, { recursive: true });
 
   if (sourceStats.isDirectory()) {
@@ -136,14 +146,11 @@ export async function prepareExpertAgentPluginSource(
     await assertPluginPackageJsonExists(absoluteSourcePath);
 
     const manifest = readExpertAgentPluginManifest(resolve(absoluteSourcePath, "plugin.json"));
-    const targetDir = resolve(installRoot, manifest.id);
-    await rm(targetDir, { recursive: true, force: true });
-    await cp(absoluteSourcePath, targetDir, {
-      recursive: true,
-      filter: shouldCopyPluginPackageFile,
+    return await installExpertAgentPluginSource({
+      installRoot,
+      pluginId: manifest.id,
+      sourceDir: absoluteSourcePath,
     });
-    await installExpertAgentPluginPackage(targetDir, { sourceDir: absoluteSourcePath });
-    return targetDir;
   }
 
   if (sourceStats.isFile() && extname(absoluteSourcePath) === ".zip") {
@@ -155,14 +162,11 @@ export async function prepareExpertAgentPluginSource(
       });
       const unpackedDir = await findUnpackedPluginRoot(tempDir);
       const manifest = readExpertAgentPluginManifest(resolve(unpackedDir, "plugin.json"));
-      const targetDir = resolve(installRoot, manifest.id);
-      await rm(targetDir, { recursive: true, force: true });
-      await cp(unpackedDir, targetDir, {
-        recursive: true,
-        filter: shouldCopyPluginPackageFile,
+      return await installExpertAgentPluginSource({
+        installRoot,
+        pluginId: manifest.id,
+        sourceDir: unpackedDir,
       });
-      await installExpertAgentPluginPackage(targetDir, { sourceDir: unpackedDir });
-      return targetDir;
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }
@@ -171,6 +175,46 @@ export async function prepareExpertAgentPluginSource(
   throw new InvalidPluginSourceError(
     `Plugin source must be a directory or .zip file: ${sourcePath}`,
   );
+}
+
+async function installExpertAgentPluginSource(options: {
+  readonly installRoot: string;
+  readonly pluginId: string;
+  readonly sourceDir: string;
+}): Promise<string> {
+  const encodedPluginId = encodePragmaPathSegment(options.pluginId);
+  const targetDir = join(options.installRoot, encodedPluginId);
+  const lockDir = join(options.installRoot, `.${encodedPluginId}.install-lock`);
+
+  try {
+    await mkdir(lockDir);
+  } catch (error) {
+    if (isAlreadyExistsError(error)) {
+      throw new PluginLoadError(
+        "install_error",
+        `Plugin ${options.pluginId} is already being installed for this Agent.`,
+      );
+    }
+    throw error;
+  }
+
+  let stagingDir: string | undefined;
+  try {
+    stagingDir = await mkdtemp(join(options.installRoot, `.${encodedPluginId}.staging-`));
+    await cp(options.sourceDir, stagingDir, {
+      recursive: true,
+      filter: shouldCopyPluginPackageFile,
+    });
+    await installExpertAgentPluginPackage(stagingDir, { sourceDir: options.sourceDir });
+    await rm(targetDir, { recursive: true, force: true });
+    await rename(stagingDir, targetDir);
+    return targetDir;
+  } finally {
+    if (stagingDir !== undefined) {
+      await rm(stagingDir, { recursive: true, force: true });
+    }
+    await rm(lockDir, { recursive: true, force: true });
+  }
 }
 
 function shouldCopyPluginPackageFile(source: string): boolean {
@@ -327,7 +371,9 @@ async function rewriteWorkspaceDependencies(
   }
 }
 
-async function readWorkspacePackageDirectories(workspaceRoot: string): Promise<Map<string, string>> {
+async function readWorkspacePackageDirectories(
+  workspaceRoot: string,
+): Promise<Map<string, string>> {
   const packages = new Map<string, string>();
   await collectPackageDirectories(workspaceRoot, packages);
   return packages;
@@ -478,4 +524,8 @@ function readPluginLoadIssueCode(error: unknown): ExpertAgentPluginLoadIssue["co
   }
 
   return "load_error";
+}
+
+function isAlreadyExistsError(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "code" in error && error.code === "EEXIST";
 }

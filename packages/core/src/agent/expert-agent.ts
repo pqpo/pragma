@@ -57,6 +57,7 @@ import type {
   ExpertAgentToolCallResult,
 } from "../tools/managed-tool.ts";
 import { mergeExpertAgentToolApprovals } from "../tools/managed-tool.ts";
+import { PragmaPaths } from "../storage/pragma-paths.ts";
 
 export type ExpertAgentSchemaVersion = "pragma.expert/v1" | undefined;
 
@@ -162,6 +163,7 @@ export interface IExpertAgent {
   readonly version: string;
   readonly scope: string;
   readonly workspace: string;
+  readonly pragmaHome: string;
   readonly mcp?: IExpertAgentMcpConfig | undefined;
   readonly skills?: IExpertAgentSkillsConfig | undefined;
   readonly models?: IExpertAgentModelsConfig | undefined;
@@ -175,9 +177,10 @@ export interface IExpertAgent {
 
 export type ExpertAgentOptions = Omit<
   IExpertAgent,
-  "contextSystem" | "pluginLoadIssues" | "logger"
+  "contextSystem" | "pluginLoadIssues" | "logger" | "pragmaHome"
 > & {
   readonly contextSystem?: ContextSystem | undefined;
+  readonly pragmaHome?: string | undefined;
 };
 
 export interface ExpertAgentCreateOptions extends ExpertAgentOptions {
@@ -185,7 +188,8 @@ export interface ExpertAgentCreateOptions extends ExpertAgentOptions {
   readonly env?: NodeJS.ProcessEnv | undefined;
 }
 
-interface ExpertAgentRuntimeOptions extends ExpertAgentOptions {
+interface ExpertAgentRuntimeOptions extends Omit<ExpertAgentOptions, "pragmaHome"> {
+  readonly pragmaHome: string;
   readonly pluginEntries?:
     | readonly (ExpertAgentPluginEntry | ExpertAgentPluginRegistration)[]
     | undefined;
@@ -207,6 +211,7 @@ export class ExpertAgent implements IExpertAgent, Directive<unknown, unknown> {
   readonly models: IExpertAgentModelsConfig | undefined;
   readonly contextSystem: ContextSystem;
   readonly workspace: string;
+  readonly pragmaHome: string;
   readonly tools: readonly ExpertAgentManagedTool<string, ExpertAgentToolCallResult>[] | undefined;
   readonly hooks: ExpertAgentPluginHooks | undefined;
   readonly pluginLoadIssues: readonly ExpertAgentPluginLoadIssue[] | undefined;
@@ -215,6 +220,7 @@ export class ExpertAgent implements IExpertAgent, Directive<unknown, unknown> {
   private readonly contextManager: ContextManager;
 
   static async create(options: ExpertAgentCreateOptions): Promise<ExpertAgent> {
+    const pragmaHome = new PragmaPaths({ pragmaHome: options.pragmaHome, env: options.env }).root;
     const pluginUses = [...(options.plugins ?? [])];
     const pluginSources: ExpertAgentPluginSource[] = [];
     const pluginEntryUses: Extract<
@@ -240,7 +246,8 @@ export class ExpertAgent implements IExpertAgent, Directive<unknown, unknown> {
     });
 
     const loaded = await loadExpertAgentPlugins({
-      workspaceRoot: options.workspace,
+      agentId: options.id,
+      pragmaHome,
       sources: pluginSources,
       env: options.env,
       loggerProvider,
@@ -248,6 +255,7 @@ export class ExpertAgent implements IExpertAgent, Directive<unknown, unknown> {
 
     const agent = new ExpertAgent({
       ...options,
+      pragmaHome,
       pluginEntries: [
         ...loaded.pluginEntries,
         ...pluginEntryUses.map((plugin) => ({
@@ -308,6 +316,7 @@ export class ExpertAgent implements IExpertAgent, Directive<unknown, unknown> {
     this.models = resolved.models;
     this.contextSystem = contextSystem;
     this.workspace = options.workspace;
+    this.pragmaHome = options.pragmaHome;
     this.tools = applyToolApprovals(resolved.tools, resolved.toolApprovals);
     this.hooks = resolved.hooks;
     this.pluginLoadIssues = options.pluginLoadIssues;
@@ -319,7 +328,8 @@ export class ExpertAgent implements IExpertAgent, Directive<unknown, unknown> {
     });
   }
 
-  async createSession(options: ExpertAgentCreateSessionOptions = {}): Promise<RuntimeAgentSession> {
+  /** @deprecated Run the agent through createPragma().run() or agent.run(). */
+  async createSession(options: ExpertAgentCreateSessionOptions): Promise<RuntimeAgentSession> {
     const runtimes = options.runtimes ?? (await createDefaultRuntimeRegistry());
     const runtime = runtimes.resolve(options.runtime);
     const request = { ...options };
@@ -343,11 +353,16 @@ export class ExpertAgent implements IExpertAgent, Directive<unknown, unknown> {
     const runtime = runtimeRegistry.resolve(request.runtime ?? execution.runtimeId);
     const session = await runtime.createSession({
       agent: this,
+      owner: {
+        workflowRunId: execution.workflow.id,
+        taskRunId: execution.task.id,
+      },
       context: withExecutionRunScope(undefined, {
         workflowRunId: execution.workflow.id,
         taskRunId: execution.task.id,
       }),
       runtimeSession: request.runtimeSession,
+      systemSessionId: request.systemSessionId,
       workflowExecution: execution,
       humanInteractionHandler: async (humanRequest) => {
         if (humanRequest.kind === "user_question") {
@@ -417,6 +432,7 @@ export class ExpertAgent implements IExpertAgent, Directive<unknown, unknown> {
 
       runResult = {
         workflowRunId: execution.workflow.id,
+        systemSessionId: session.info().systemSessionId,
         output: result.result.output,
         state: execution.state,
         runtimeSession,

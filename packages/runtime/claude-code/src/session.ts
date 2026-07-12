@@ -2,7 +2,6 @@ import { AgentMessageUsageSchema, type AgentMessage, type AgentMessageUsage } fr
 import { spawn as nodeSpawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { readFile, readdir, stat, mkdir, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 
@@ -22,7 +21,6 @@ import { createUsageFromTokenCounts, hasNonZeroUsage, readFirstTokenCount } from
 
 import type { ManagedClaudeCodeConfig } from "./claude-config.ts";
 import type {
-  ClaudeCodeRuntimeIsolationMode,
   ClaudeCodeRuntimeMessage,
   ClaudeCodeRuntimePermissionMode,
   ClaudeCodeRuntimeSessionState,
@@ -73,7 +71,6 @@ export interface ClaudeCodeNativeSession {
   readonly defaultThinkingLevel?: string | undefined;
   readonly env?: NodeJS.ProcessEnv | undefined;
   readonly humanInteractionHandler?: ExpertAgentHumanInteractionHandler | undefined;
-  readonly isolationMode: ClaudeCodeRuntimeIsolationMode;
   readonly logger: ExpertAgentLogger;
   readonly managedConfig?: ManagedClaudeCodeConfig | undefined;
   readonly mcpServerUrl: string;
@@ -86,10 +83,12 @@ export interface ClaudeCodeNativeSession {
   readonly messages: ClaudeCodeRuntimeMessage[];
   pendingStartupMessages: readonly ExpertAgentStartupMessage[];
   activeProcess?: ChildProcessWithoutNullStreams | undefined;
-  activeExitPromise?: Promise<{
-    readonly code: number | null;
-    readonly signal: NodeJS.Signals | null;
-  }> | undefined;
+  activeExitPromise?:
+    | Promise<{
+        readonly code: number | null;
+        readonly signal: NodeJS.Signals | null;
+      }>
+    | undefined;
   activeHasExited?: (() => boolean) | undefined;
   activeCancelled: boolean;
 }
@@ -102,7 +101,6 @@ export function createClaudeCodeNativeSession(options: {
   readonly defaultThinkingLevel?: string | undefined;
   readonly env?: NodeJS.ProcessEnv | undefined;
   readonly humanInteractionHandler?: ExpertAgentHumanInteractionHandler | undefined;
-  readonly isolationMode: ClaudeCodeRuntimeIsolationMode;
   readonly logger: ExpertAgentLogger;
   readonly managedConfig?: ManagedClaudeCodeConfig | undefined;
   readonly mcpServerUrl: string;
@@ -175,7 +173,6 @@ export async function startClaudeCodeTurn(
     cwd: session.agent.workspace,
     env: await createClaudeCodeEnv({
       env: session.env,
-      isolationMode: session.isolationMode,
       managedConfig: session.managedConfig,
       sessionDir: session.sessionDir,
     }),
@@ -639,7 +636,7 @@ async function createClaudeCodeArgs({
 }
 
 async function writeMcpConfig(sessionDir: string, mcpServerUrl: string): Promise<string> {
-  const path = join(sessionDir, "claude-mcp-config.json");
+  const path = join(sessionDir, "mcp-config.json");
   await writeFile(
     path,
     `${JSON.stringify(
@@ -660,12 +657,10 @@ async function writeMcpConfig(sessionDir: string, mcpServerUrl: string): Promise
 
 async function createClaudeCodeEnv({
   env,
-  isolationMode,
   managedConfig,
   sessionDir,
 }: {
   readonly env?: NodeJS.ProcessEnv | undefined;
-  readonly isolationMode: ClaudeCodeRuntimeIsolationMode;
   readonly managedConfig?: ManagedClaudeCodeConfig | undefined;
   readonly sessionDir: string;
 }): Promise<NodeJS.ProcessEnv> {
@@ -674,11 +669,9 @@ async function createClaudeCodeEnv({
     ...env,
   };
 
-  if (isolationMode === "strict") {
-    const configDir = managedConfig?.configDir ?? join(sessionDir, "claude-config");
-    await mkdir(configDir, { recursive: true });
-    nextEnv["CLAUDE_CONFIG_DIR"] = configDir;
-  }
+  const configDir = managedConfig?.configDir ?? join(sessionDir, "config");
+  await mkdir(configDir, { recursive: true });
+  nextEnv["CLAUDE_CONFIG_DIR"] = configDir;
 
   return nextEnv;
 }
@@ -907,8 +900,12 @@ function readClaudeSdkStreamEvent(
   };
 }
 
-function readClaudeSdkStreamPayload(event: Record<string, unknown>): Record<string, unknown> | undefined {
-  return readRecord(event["event"]) ?? readRecord(event["stream_event"]) ?? readRecord(event["payload"]);
+function readClaudeSdkStreamPayload(
+  event: Record<string, unknown>,
+): Record<string, unknown> | undefined {
+  return (
+    readRecord(event["event"]) ?? readRecord(event["stream_event"]) ?? readRecord(event["payload"])
+  );
 }
 
 function removeKnownTextPrefix(text: string, prefix: string): string {
@@ -1127,12 +1124,11 @@ function readToolResultText(block: Record<string, unknown>): string | undefined 
 }
 
 function resolveClaudeCodeConfigDir(session: ClaudeCodeNativeSession): string {
-  return (
-    session.managedConfig?.configDir ??
-    readString(session.env?.["CLAUDE_CONFIG_DIR"]) ??
-    readString(process.env["CLAUDE_CONFIG_DIR"]) ??
-    join(homedir(), ".claude")
-  );
+  const configDir = session.managedConfig?.configDir;
+  if (configDir === undefined) {
+    throw new Error("Claude Code session is missing its Workflow-owned managed config directory.");
+  }
+  return configDir;
 }
 
 async function scanClaudeTranscriptUsage({
@@ -1198,7 +1194,9 @@ async function listClaudeTranscriptCandidates(
   return candidates;
 }
 
-async function parseClaudeTranscriptUsageFile(path: string): Promise<AgentMessageUsage | undefined> {
+async function parseClaudeTranscriptUsageFile(
+  path: string,
+): Promise<AgentMessageUsage | undefined> {
   const content = await readFile(path, "utf8").catch(() => undefined);
 
   if (content === undefined) {

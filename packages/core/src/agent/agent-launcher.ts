@@ -1,8 +1,9 @@
 import type { ExpertAgent } from "./expert-agent.ts";
-import type { RuntimeSessionRef } from "../runtime/runtime-adapter.ts";
 import type { ExpertAgentManagedTool, ExpertAgentToolCallResult } from "../tools/managed-tool.ts";
 
-export type AgentLaunchSessionPolicy = "fresh" | "reuse_by_agent";
+// `reuse_by_agent` is intentionally deferred until PragmaApp.resume() can resume the original
+// child Workflow. See ADR 005; never implement it by attaching an old Session to a new Workflow.
+export type AgentLaunchSessionPolicy = "fresh";
 
 export interface CreateAgentLauncherOptions {
   readonly agents: readonly ExpertAgent[];
@@ -36,12 +37,13 @@ const launchAgentInputSchema = {
     },
     sessionPolicy: {
       type: "string",
-      enum: ["fresh", "reuse_by_agent"],
-      description: "Use fresh for a new runtime session, or reuse_by_agent to resume the same delegated agent conversation.",
+      enum: ["fresh"],
+      description: "Each delegated child Workflow starts a fresh runtime session.",
     },
     runtime: {
       type: "string",
-      description: "Optional runtime id for the delegated ExpertAgent. Defaults to the parent workflow runtime.",
+      description:
+        "Optional runtime id for the delegated ExpertAgent. Defaults to the parent workflow runtime.",
     },
     modelName: {
       type: "string",
@@ -58,7 +60,6 @@ const launchAgentInputSchema = {
 
 export function createAgentLauncher(options: CreateAgentLauncherOptions): AgentLauncher {
   const agentsById = new Map(options.agents.map((agent) => [agent.id, agent]));
-  const sessionRefs = new Map<string, RuntimeSessionRef>();
   const defaultSessionPolicy = options.defaultSessionPolicy ?? "fresh";
 
   return {
@@ -112,28 +113,14 @@ export function createAgentLauncher(options: CreateAgentLauncherOptions): AgentL
         }
 
         const runtime = input.runtime ?? workflowExecution.runtimeId;
-        const sessionKey = createSessionKey({
-          agentId: agent.id,
-          runtime,
-          modelName: input.modelName,
-          thinkingLevel: input.thinkingLevel,
-        });
-        const runtimeSession =
-          input.sessionPolicy === "reuse_by_agent" ? sessionRefs.get(sessionKey) : undefined;
-
         try {
           const result = await workflowExecution.runDirective(agent, {
             input: input.task,
             modelName: input.modelName,
             thinkingLevel: input.thinkingLevel,
             runtime,
-            runtimeSession,
             execution: workflowExecution,
           });
-
-          if (input.sessionPolicy === "reuse_by_agent" && result.runtimeSession !== undefined) {
-            sessionRefs.set(sessionKey, result.runtimeSession);
-          }
 
           return {
             text: formatAgentOutput(result.output),
@@ -156,13 +143,14 @@ export function createAgentLauncher(options: CreateAgentLauncherOptions): AgentL
         }
       },
     },
-    dispose() {
-      sessionRefs.clear();
-    },
+    dispose() {},
   };
 }
 
-function readLaunchAgentInput(args: unknown, defaultSessionPolicy: AgentLaunchSessionPolicy): LaunchAgentInput {
+function readLaunchAgentInput(
+  args: unknown,
+  defaultSessionPolicy: AgentLaunchSessionPolicy,
+): LaunchAgentInput {
   if (typeof args !== "object" || args === null) {
     throw new Error("launch_agent requires an object input.");
   }
@@ -213,20 +201,11 @@ function readSessionPolicy(
     return fallback;
   }
 
-  if (value === "fresh" || value === "reuse_by_agent") {
+  if (value === "fresh") {
     return value;
   }
 
-  throw new Error('launch_agent sessionPolicy must be "fresh" or "reuse_by_agent".');
-}
-
-function createSessionKey(input: {
-  readonly agentId: string;
-  readonly runtime: string;
-  readonly modelName?: string | undefined;
-  readonly thinkingLevel?: string | undefined;
-}): string {
-  return [input.agentId, input.runtime, input.modelName ?? "", input.thinkingLevel ?? ""].join(":");
+  throw new Error('launch_agent sessionPolicy must be "fresh".');
 }
 
 function formatAgentOutput(output: unknown): string {

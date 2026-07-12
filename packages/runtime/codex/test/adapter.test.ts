@@ -12,12 +12,29 @@ import {
   createInMemoryContextStore,
   ExpertAgent,
   HOST_CONTEXT_NAMESPACE,
+  PragmaPaths,
 } from "@pragma/core";
 import type { IExpertAgentMcpConfig, IExpertAgentSkillsConfig } from "@pragma/core";
 import type { RuntimeSessionStorageContext } from "@pragma/core";
-import { createCodexRuntime } from "../src/adapter.ts";
+import type { RuntimeCreateSessionRequest } from "@pragma/core";
+import { createCodexRuntime as createCodexRuntimeAdapter } from "../src/adapter.ts";
 import { canUseCodexRuntime } from "../src/availability.ts";
 import type { CodexRuntimeSpawn } from "../src/types.ts";
+import type { CodexRuntimeAdapterOptions } from "../src/types.ts";
+
+function createCodexRuntime(options?: CodexRuntimeAdapterOptions) {
+  const runtime = createCodexRuntimeAdapter(options);
+  return {
+    ...runtime,
+    createSession(request: Omit<RuntimeCreateSessionRequest, "owner">) {
+      return runtime.createSession({
+        ...request,
+        owner: { workflowRunId: "workflow-codex-test", taskRunId: "task-codex-test" },
+        pragmaHome: join(request.agent.workspace, "pragma-test-home"),
+      });
+    },
+  };
+}
 
 describe("createCodexRuntime", () => {
   beforeEach(async () => {
@@ -117,7 +134,14 @@ describe("createCodexRuntime", () => {
     expect(fake.args.slice(0, 3)).toEqual(["app-server", "--listen", "stdio://"]);
     expectCodexMcpArgs(fake.args);
     expect(fake.env["CODEX_HOME"]).toEqual(
-      join(agent.workspace, ".pragma", "runtime-sessions", "codex", agent.id, "codex-home"),
+      join(
+        new PragmaPaths({ pragmaHome: agent.pragmaHome }).runtimeRoot(
+          "workflow-codex-test",
+          session.info().systemSessionId,
+          "codex",
+        ),
+        "home",
+      ),
     );
     expect(fake.requests.map((request) => request.method)).toEqual([
       "initialize",
@@ -557,9 +581,11 @@ describe("createCodexRuntime", () => {
       spawn: fake.spawn,
     });
     const agent = await createTestAgent();
+    await seedCodexSessionRecord(agent, "system-thread-existing", "thread-existing");
 
     const session = await adapter.createSession({
       agent,
+      systemSessionId: "system-thread-existing",
       runtimeSession: {
         type: "codex-local",
         id: "thread-existing",
@@ -573,14 +599,37 @@ describe("createCodexRuntime", () => {
     await session.abort();
   });
 
-  it("rejects the session creation when the requested Codex thread cannot be resumed", async () => {
-    const fake = new FakeCodexAppServer({ failThreadResume: true });
+  it("does not accept a different Codex session file that only contains the requested id", async () => {
+    const fake = new FakeCodexAppServer();
     const adapter = createCodexRuntime({ spawn: fake.spawn });
     const agent = await createTestAgent();
+    await seedCodexSessionRecord(
+      agent,
+      "system-thread-substring",
+      "thread-existing",
+      "rollout-thread-existing-backup.jsonl",
+    );
 
     await expect(
       adapter.createSession({
         agent,
+        systemSessionId: "system-thread-substring",
+        runtimeSession: { type: "codex-local", id: "thread-existing" },
+      }),
+    ).rejects.toThrow("Codex runtime session file was not found: thread-existing.");
+    expect(fake.command).toBe("");
+  });
+
+  it("rejects the session creation when the requested Codex thread cannot be resumed", async () => {
+    const fake = new FakeCodexAppServer({ failThreadResume: true });
+    const adapter = createCodexRuntime({ spawn: fake.spawn });
+    const agent = await createTestAgent();
+    await seedCodexSessionRecord(agent, "system-thread-missing", "thread-missing");
+
+    await expect(
+      adapter.createSession({
+        agent,
+        systemSessionId: "system-thread-missing",
         runtimeSession: { type: "codex-local", id: "thread-missing" },
       }),
     ).rejects.toThrow("Injected thread resume failure");
@@ -608,9 +657,11 @@ describe("createCodexRuntime", () => {
       }),
     });
     const agent = await createTestAgent({ contextSystem });
+    await seedCodexSessionRecord(agent, "system-thread-context", "thread-existing");
 
     const session = await adapter.createSession({
       agent,
+      systemSessionId: "system-thread-context",
       runtimeSession: {
         type: "codex-local",
         id: "thread-existing",
@@ -641,9 +692,11 @@ describe("createCodexRuntime", () => {
       },
     });
     const agent = await createTestAgent();
+    await seedCodexSessionRecord(agent, "system-thread-restore", "thread-existing");
 
     const session = await adapter.createSession({
       agent,
+      systemSessionId: "system-thread-restore",
       runtimeSession: {
         type: "codex-local",
         id: "thread-existing",
@@ -691,6 +744,7 @@ async function createTestAgent(
     readonly skills?: IExpertAgentSkillsConfig | undefined;
   } = {},
 ): Promise<ExpertAgent> {
+  const workspace = await mkdtemp(join(tmpdir(), "pragma-codex-runtime-test-"));
   return await ExpertAgent.create({
     id: "agent-codex-test",
     name: "Codex Test Agent",
@@ -699,11 +753,57 @@ async function createTestAgent(
     tags: [],
     version: "0.0.0",
     scope: "test",
-    workspace: await mkdtemp(join(tmpdir(), "pragma-codex-runtime-test-")),
+    workspace,
+    pragmaHome: join(workspace, "pragma-test-home"),
     ...(options.contextSystem === undefined ? {} : { contextSystem: options.contextSystem }),
     ...(options.mcp === undefined ? {} : { mcp: options.mcp }),
     ...(options.skills === undefined ? {} : { skills: options.skills }),
   });
+}
+
+async function seedCodexSessionRecord(
+  agent: ExpertAgent,
+  systemSessionId: string,
+  runtimeSessionId: string,
+  nativeFileName = `rollout-${runtimeSessionId}.jsonl`,
+): Promise<void> {
+  const paths = new PragmaPaths({ pragmaHome: agent.pragmaHome });
+  await mkdir(paths.systemSessionRoot("workflow-codex-test", systemSessionId), {
+    recursive: true,
+  });
+  const now = new Date().toISOString();
+  await writeFile(
+    paths.systemSessionManifest("workflow-codex-test", systemSessionId),
+    `${JSON.stringify(
+      {
+        schemaVersion: 1,
+        workflowRunId: "workflow-codex-test",
+        systemSessionId,
+        agentId: agent.id,
+        taskRunId: "task-codex-test",
+        runtime: { id: "codex-local", kind: "codex-local" },
+        runtimeSessionRef: { type: "codex-local", id: runtimeSessionId },
+        currentWorkspace: agent.workspace,
+        workspaceHistory: [agent.workspace],
+        status: "closed",
+        createdAt: now,
+        updatedAt: now,
+      },
+      null,
+      2,
+    )}\n`,
+    "utf8",
+  );
+  const nativeSessionDir = join(
+    paths.runtimeRoot("workflow-codex-test", systemSessionId, "codex"),
+    "home",
+    "sessions",
+    "2026",
+    "01",
+    "01",
+  );
+  await mkdir(nativeSessionDir, { recursive: true });
+  await writeFile(join(nativeSessionDir, nativeFileName), "{}\n", "utf8");
 }
 
 async function collectAsync<T>(iterable: AsyncIterable<T>): Promise<T[]> {

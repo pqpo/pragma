@@ -1,3 +1,4 @@
+import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 
 import type {
@@ -78,7 +79,7 @@ export function createClaudeCodeRuntime(
       resolvePersistence(ctx): RuntimeSessionPersistenceSpec {
         return {
           mode: "checkpoint",
-          sessionDir: getClaudeCodeSessionDir(ctx.workspace, ctx.agent.id),
+          sessionDir: ctx.paths.runtimeSessionDir("claude-code"),
           watch: true,
           checkpointOn: [
             "session.created",
@@ -103,7 +104,7 @@ export function createClaudeCodeRuntime(
           );
         }
         const sessionDir =
-          ctx.persistence.spec?.sessionDir ?? getClaudeCodeSessionDir(ctx.workspace, ctx.agent.id);
+          ctx.persistence.spec?.sessionDir ?? ctx.paths.runtimeSessionDir("claude-code");
         const state: ClaudeCodeRuntimeSessionState = {
           sessionId:
             ctx.persistence.restoredRuntimeSessionId ?? ctx.request.runtimeSession?.id ?? "",
@@ -123,15 +124,20 @@ export function createClaudeCodeRuntime(
           state: toolRuntimeState,
           workflowExecution: ctx.request.workflowExecution,
         });
-        const isolationMode = options.isolationMode ?? "strict";
-        const managedConfig =
-          isolationMode === "strict"
-            ? await prepareManagedClaudeCodeConfig({
-                sessionDir,
-                env: options.env,
-                logger: ctx.logger,
-              })
-            : undefined;
+        const managedConfig = await prepareManagedClaudeCodeConfig({
+          sessionDir,
+          env: options.env,
+          logger: ctx.logger,
+        });
+        if (state.sessionId !== "") {
+          const exists = await nativeSessionFileExists(
+            join(managedConfig.configDir, "projects"),
+            state.sessionId,
+          );
+          if (!exists) {
+            throw new Error(`Claude Code runtime session file was not found: ${state.sessionId}.`);
+          }
+        }
 
         return {
           ...createClaudeCodeNativeSession({
@@ -142,7 +148,6 @@ export function createClaudeCodeRuntime(
             defaultThinkingLevel: options.defaultThinkingLevel,
             env: options.env,
             humanInteractionHandler: ctx.request.humanInteractionHandler,
-            isolationMode,
             logger: ctx.logger,
             managedConfig,
             mcpServerUrl: workflowToolsMcpServer.url,
@@ -196,6 +201,21 @@ export function createClaudeCodeRuntime(
   );
 }
 
+async function nativeSessionFileExists(root: string, runtimeSessionId: string): Promise<boolean> {
+  const entries = await readdir(root, { withFileTypes: true }).catch(() => []);
+  for (const entry of entries) {
+    const path = join(root, entry.name);
+    if (entry.isDirectory()) {
+      if (await nativeSessionFileExists(path, runtimeSessionId)) {
+        return true;
+      }
+    } else if (entry.isFile() && entry.name === `${runtimeSessionId}.jsonl`) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function createClaudeCodeRuntimeCanUse(
   options: ClaudeCodeRuntimeAdapterOptions,
 ): () => Promise<RuntimeCanUseResult> | RuntimeCanUseResult {
@@ -244,8 +264,4 @@ async function disposeClaudeRuntimeResources(
   }
 
   throw new AggregateError(errors, "Claude Code runtime session cleanup failed.");
-}
-
-function getClaudeCodeSessionDir(workspace: string, agentId: string): string {
-  return join(workspace, ".pragma", "runtime-sessions", "claude-code", agentId);
 }

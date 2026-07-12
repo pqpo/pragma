@@ -1,7 +1,6 @@
 import { AgentMessageUsageSchema, type AgentMessage, type AgentMessageUsage } from "@pragma/shared";
 import { randomUUID } from "node:crypto";
 import { readFile, readdir, stat } from "node:fs/promises";
-import { homedir } from "node:os";
 import { join } from "node:path";
 
 import type { CodexAppServerClient, CodexAppServerNotification } from "./app-server-client.ts";
@@ -13,11 +12,7 @@ import type {
   RuntimeTurnContext,
   RuntimeTurnResult,
 } from "@pragma/core";
-import {
-  createUsageFromTokenCounts,
-  hasNonZeroUsage,
-  readFirstTokenCount,
-} from "@pragma/core";
+import { createUsageFromTokenCounts, hasNonZeroUsage, readFirstTokenCount } from "@pragma/core";
 import type { CodexRuntimeMessage } from "./types.ts";
 import type { CodexUserInput } from "./types.ts";
 
@@ -93,7 +88,9 @@ export function listCodexMessages(session: CodexNativeSession): readonly AgentMe
   return convertCodexMessages(session.messages, session.defaultModelName);
 }
 
-export function consumeCodexStartupMessages(session: CodexNativeSession): readonly ExpertAgentStartupMessage[] {
+export function consumeCodexStartupMessages(
+  session: CodexNativeSession,
+): readonly ExpertAgentStartupMessage[] {
   const startupMessages = session.pendingStartupMessages;
   session.pendingStartupMessages = [];
 
@@ -206,7 +203,10 @@ export function mapCodexNotificationToRuntimeEvent(
     events.push(context.events.progress(notification.method, notification.params));
   }
 
-  if (notification.method === "thread/tokenUsage/updated" || notification.method === "turn/completed") {
+  if (
+    notification.method === "thread/tokenUsage/updated" ||
+    notification.method === "turn/completed"
+  ) {
     usage = readUsage(notification.params);
   }
 
@@ -523,27 +523,12 @@ async function scanCodexSessionUsage({
 }
 
 async function findCodexSessionRoot(codexHome: string | undefined): Promise<string | undefined> {
-  const roots = [
-    codexHome === undefined || codexHome.trim() === "" ? undefined : join(codexHome, "sessions"),
-    process.env.CODEX_HOME === undefined || process.env.CODEX_HOME.trim() === ""
-      ? undefined
-      : join(process.env.CODEX_HOME, "sessions"),
-    join(homedir(), ".codex", "sessions"),
-  ];
-
-  for (const root of roots) {
-    if (root === undefined) {
-      continue;
-    }
-
-    const info = await stat(root).catch(() => undefined);
-
-    if (info?.isDirectory() === true) {
-      return root;
-    }
+  if (codexHome === undefined || codexHome.trim() === "") {
+    return undefined;
   }
 
-  return undefined;
+  const root = join(codexHome, "sessions");
+  return (await stat(root).catch(() => undefined))?.isDirectory() === true ? root : undefined;
 }
 
 async function parseCodexSessionUsageFile(path: string): Promise<AgentMessageUsage | undefined> {

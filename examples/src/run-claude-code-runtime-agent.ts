@@ -10,7 +10,6 @@ import {
 } from "@pragma/core";
 import {
   createClaudeCodeRuntime,
-  type ClaudeCodeRuntimeIsolationMode,
   type ClaudeCodeRuntimePermissionMode,
 } from "@pragma/runtime-claude-code";
 
@@ -30,7 +29,6 @@ interface ClaudeCodeRuntimeExampleCliOptions {
   readonly executablePath: string | undefined;
   readonly runtimeSessionId: string | undefined;
   readonly systemSessionId: string | undefined;
-  readonly isolationMode: ClaudeCodeRuntimeIsolationMode | undefined;
   readonly permissionMode: ClaudeCodeRuntimePermissionMode | undefined;
 }
 
@@ -73,7 +71,6 @@ const agent = await ExpertAgent.create({
 const runtimeProbe = createClaudeCodeRuntime({
   loggerProvider,
   ...(cli.executablePath === undefined ? {} : { executablePath: cli.executablePath }),
-  ...(cli.isolationMode === undefined ? {} : { isolationMode: cli.isolationMode }),
   ...(cli.permissionMode === undefined ? {} : { permissionMode: cli.permissionMode }),
 });
 await exitIfRuntimeUnavailable(runtimeProbe);
@@ -91,12 +88,12 @@ const runtime = createClaudeCodeRuntime({
   defaultThinkingLevel: selection.thinkingLevel,
   listModels: async () => detectedModels,
   ...(cli.executablePath === undefined ? {} : { executablePath: cli.executablePath }),
-  ...(cli.isolationMode === undefined ? {} : { isolationMode: cli.isolationMode }),
   ...(cli.permissionMode === undefined ? {} : { permissionMode: cli.permissionMode }),
 });
 const runtimeSession = createRuntimeSessionRef(cli.runtimeSessionId);
 const session = await runtime.createSession({
   agent,
+  owner: { workflowRunId: "claude-code-runtime-example" },
   ...(cli.systemSessionId === undefined ? {} : { systemSessionId: cli.systemSessionId }),
   ...(runtimeSession === undefined ? {} : { runtimeSession }),
 });
@@ -113,7 +110,6 @@ try {
   console.log(`- executable: ${cli.executablePath ?? "claude"}`);
   console.log(`- model: ${selection.modelName ?? "Claude Code config default"}`);
   console.log(`- thinkingLevel: ${selection.thinkingLevel ?? "Claude Code config default"}`);
-  console.log(`- isolationMode: ${cli.isolationMode ?? "strict"}`);
   console.log(`- permissionMode: ${cli.permissionMode ?? defaultPermissionMode}`);
   console.log("");
 
@@ -194,7 +190,6 @@ function readClaudeCodeRuntimeExampleCli(): ClaudeCodeRuntimeExampleCliOptions {
     .option("--executable <path>", "Claude Code executable path. Defaults to claude.")
     .option("--runtime-session-id <id>", "Resume an existing Claude Code runtime session id.")
     .option("--system-session-id <id>", "Use a fixed Pragma system session id.")
-    .option("--isolation <mode>", "Claude Code isolation mode: strict or inherit.")
     .option("--permission-mode <mode>", "Claude Code permission mode.");
   cli.help();
 
@@ -209,7 +204,6 @@ function readClaudeCodeRuntimeExampleCli(): ClaudeCodeRuntimeExampleCliOptions {
     executablePath: readStringOption(parsed.options.executable),
     runtimeSessionId: readStringOption(parsed.options.runtimeSessionId),
     systemSessionId: readStringOption(parsed.options.systemSessionId),
-    isolationMode: readIsolationModeOption(parsed.options.isolation),
     permissionMode: readPermissionModeOption(parsed.options.permissionMode),
   };
 }
@@ -253,20 +247,6 @@ function readStringListOption(value: unknown): readonly string[] {
   const stringValue = readStringOption(value);
 
   return stringValue === undefined ? [] : [stringValue];
-}
-
-function readIsolationModeOption(value: unknown): ClaudeCodeRuntimeIsolationMode | undefined {
-  const option = readStringOption(value);
-
-  if (option === undefined) {
-    return undefined;
-  }
-
-  if (option === "strict" || option === "inherit") {
-    return option;
-  }
-
-  throw new Error(`Unsupported Claude Code isolation mode: ${option}`);
 }
 
 function readPermissionModeOption(value: unknown): ClaudeCodeRuntimePermissionMode | undefined {

@@ -1,16 +1,12 @@
 import { z } from "zod";
-import { createRuntimeRegistry, defineAgent } from "@pragma/core";
+import { createPragma, createRuntimeRegistry, defineAgent } from "@pragma/core";
 import { createPiRuntime } from "@pragma/runtime-pi";
 
 import { printRunResult } from "./harness/expert-agent-example-utils.ts";
-import {
-  createExpertAgentModelsConfig,
-  readExampleModelConfig,
-} from "./harness/model-config.ts";
+import { createExpertAgentModelsConfig, readExampleModelConfig } from "./harness/model-config.ts";
 import { readBasicExampleCli } from "./harness/cli.ts";
 import { defaultWorkspaceRoot, ensureWorkspaceDir, loadExamplesEnv } from "./harness/paths.ts";
 import { exitIfRuntimeUnavailable } from "./harness/runtime-availability.ts";
-import { StreamEventPrinter } from "./harness/stream-output.ts";
 
 const defaultQuery = "实现一个最小的 README 更新，并返回修改摘要。";
 
@@ -51,34 +47,22 @@ const runtime = createPiRuntime({
 
 await exitIfRuntimeUnavailable(runtime);
 
-const session = await coder.createSession({
+const pragma = createPragma({
   runtimes: createRuntimeRegistry({
     defaultRuntime: "pi",
     runtimes: [runtime],
   }),
 });
 
-try {
-  for (const [index, query] of cli.turns.entries()) {
-    console.log(`Turn ${index + 1}/${cli.turns.length}`);
-    const streamPrinter = new StreamEventPrinter();
-    const handle = session.submit({
-      query,
-      output,
-    });
-    const events = (async () => {
-      for await (const event of handle.events) {
-        streamPrinter.print(event);
-      }
-    })();
-    const result = await handle.result;
-    await events;
-    streamPrinter.finish();
+for (const [index, query] of cli.turns.entries()) {
+  console.log(`Turn ${index + 1}/${cli.turns.length}`);
+  const result = await pragma.run(coder, {
+    input: query,
+    runtime: "pi",
+    output,
+  });
 
-    printRunResult(`turn-${index + 1}`);
-    console.log(JSON.stringify(result.result.output, null, 2));
-    console.log("");
-  }
-} finally {
-  await session.abort();
+  printRunResult(`turn-${index + 1}`);
+  console.log(JSON.stringify(result.output, null, 2));
+  console.log("");
 }

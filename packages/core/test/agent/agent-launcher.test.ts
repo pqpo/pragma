@@ -73,39 +73,6 @@ describe("createAgentLauncher", () => {
     expect(result.output.workflowRunIds[0]).not.toBe(result.output.workflowRunIds[1]);
   });
 
-  it("creates new child workflow runs while reusing the delegated runtime session ref", async () => {
-    const runtime = createRecordingRuntimeAdapter();
-    const app = createPragma({
-      runtimes: createRuntimeRegistry({
-        defaultRuntime: "fake",
-        runtimes: [runtime.adapter],
-      }),
-    });
-    const explorer = await createTestAgent("code-explorer");
-    const launcher = createAgentLauncher({
-      agents: [explorer],
-      defaultSessionPolicy: "reuse_by_agent",
-    });
-    const parent = createParentDirective(launcher.tool);
-
-    const result = await app.run(parent, {
-      input: {
-        agentId: explorer.id,
-      },
-    });
-    const tree = await app.runs.getTree(result.workflowRunId);
-
-    expect(runtime.createSessionRequests).toHaveLength(2);
-    expect(runtime.createSessionRequests[0]?.runtimeSession).toBeUndefined();
-    expect(runtime.createSessionRequests[1]?.runtimeSession).toEqual({
-      type: "fake-runtime",
-      id: "runtime-session-1",
-    });
-    expect(tree?.children).toHaveLength(2);
-    expect(result.output.workflowRunIds).toHaveLength(2);
-    expect(result.output.workflowRunIds[0]).not.toBe(result.output.workflowRunIds[1]);
-  });
-
   it("cancels delegated child workflow runs when the parent run is cancelled", async () => {
     const runtime = createPendingRuntimeAdapter();
     const app = createPragma({
@@ -160,12 +127,10 @@ async function createTestAgent(id: string): Promise<ExpertAgent> {
   });
 }
 
-function createParentDirective(
-  tool: ReturnType<typeof createAgentLauncher>["tool"],
-): Directive<
+function createParentDirective(tool: ReturnType<typeof createAgentLauncher>["tool"]): Directive<
   {
     readonly agentId: string;
-    readonly sessionPolicy?: "fresh" | "reuse_by_agent" | undefined;
+    readonly sessionPolicy?: "fresh" | undefined;
   },
   { readonly workflowRunIds: readonly string[] }
 > {

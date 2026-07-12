@@ -101,25 +101,15 @@ const agent = await defineAgent({
 
 ## 创建会话并提交任务
 
-当前实现中，Agent 运行通过 Runtime Session 完成。没有 `agent.run()` 这个稳定 API；请使用 `createSession()`。
+普通 Agent 调用通过 `agent.run()` 进入 Pragma Workflow。它会创建持久化的 Workflow record，
+并把 Runtime Session 归属于该 Workflow。不要在产品调用中直接创建 Runtime Session。
 
 ```ts
-const session = await agent.createSession();
+const result = await agent.run({
+  input: "解释当前仓库的核心模块。",
+});
 
-try {
-  const handle = session.submit({
-    query: "解释当前仓库的核心模块。",
-  });
-
-  for await (const event of handle.events) {
-    console.log(event);
-  }
-
-  const result = await handle.result;
-  console.log(result.result.output);
-} finally {
-  await session.abort();
-}
+console.log(result.output);
 ```
 
 如果需要结构化输出，在 `submit()` 处传入 Zod schema：
@@ -199,14 +189,13 @@ Claude Code runtime 会读取 `settings.json` 中由 CC Switch 等工具写入�
 ```ts
 const runtime = createCodexRuntime();
 const models = await runtime.listModels?.();
-
-const session = await agent.createSession({
-  runtime: "codex-local",
+const pragma = createPragma({
   runtimes: createRuntimeRegistry({ runtimes: [runtime] }),
 });
 
-const handle = session.submit({
-  query: "分析这个改动。",
+const result = await pragma.run(agent, {
+  input: "分析这个改动。",
+  runtime: "codex-local",
   modelName: models?.[0]?.id,
   thinkingLevel: models?.[0]?.thinking?.supportedLevels[0]?.value,
 });
@@ -441,26 +430,9 @@ required  当审批策略适用时必须拿到明确批准；如果当前 Runtim
 `approval.when` 用于判断审批策略是否适用于当前工具调用。未提供 `when` 时，`ask` 和
 `required` 策略默认适用于每次调用。
 
-创建 Runtime Session 时可以传入 `humanInteractionHandler`：
-
-```ts
-const session = await agent.createSession({
-  humanInteractionHandler: async (request) => {
-    if (request.kind === "tool_approval") {
-      return {
-        kind: "tool_approval",
-        approved: true,
-      };
-    }
-
-    return {
-      kind: "user_question",
-      answered: false,
-      reason: "No interactive UI is available.",
-    };
-  },
-});
-```
+Workflow 执行会把 Runtime 审批请求桥接到 `DirectiveExecutionContext.requestHumanInteraction`。
+`humanInteractionHandler` 只保留给 Runtime Adapter 的底层集成测试和基础设施接入，不作为普通
+Agent 调用入口。
 
 ### 默认上下文工具
 
@@ -558,9 +530,10 @@ const runtimes = createRuntimeRegistry({
   defaultRuntime: "custom",
 });
 
-const session = await agent.createSession({
+const pragma = createPragma({ runtimes });
+const result = await pragma.run(agent, {
+  input: "执行自定义 Runtime 任务。",
   runtime: "custom",
-  runtimes,
 });
 ```
 

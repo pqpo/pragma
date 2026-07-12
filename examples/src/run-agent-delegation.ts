@@ -161,10 +161,7 @@ function readAgentDelegationCli(defaultTurns: readonly string[]): AgentDelegatio
   cli
     .command("[query...]", "Optional single-turn query to send to the Coding Agent.")
     .option("--turn <query>", "Turn query to submit. Repeat this option for multi-turn tests.")
-    .option(
-      "--session-policy <policy>",
-      "Delegated runtime session policy: fresh or reuse_by_agent.",
-    );
+    .option("--session-policy <policy>", "Delegated runtime session policy (fresh).");
   cli.help();
 
   const parsed = cli.parse();
@@ -226,11 +223,11 @@ function readSessionPolicy(value: unknown): AgentLaunchSessionPolicy {
     return "fresh";
   }
 
-  if (value === "fresh" || value === "reuse_by_agent") {
+  if (value === "fresh") {
     return value;
   }
 
-  throw new Error('Expected --session-policy to be "fresh" or "reuse_by_agent".');
+  throw new Error('Expected --session-policy to be "fresh".');
 }
 
 function printRunTree(tree: RunTree | undefined, depth = 0): void {
@@ -240,7 +237,9 @@ function printRunTree(tree: RunTree | undefined, depth = 0): void {
   }
 
   const indent = "  ".repeat(depth);
-  console.log(`${indent}- ${tree.workflow.directiveId} ${tree.workflow.id} [${tree.workflow.status}]`);
+  console.log(
+    `${indent}- ${tree.workflow.directiveId} ${tree.workflow.id} [${tree.workflow.status}]`,
+  );
 
   for (const child of tree.children) {
     printRunTree(child, depth + 1);

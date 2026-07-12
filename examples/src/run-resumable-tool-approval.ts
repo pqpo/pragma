@@ -39,8 +39,9 @@ const workflowsDir = join(exampleRoot, "workflows");
 const humanInteractionsDir = join(exampleRoot, "human-interactions");
 
 const WorkflowStateSchema = z.object({
-  schemaVersion: z.literal("pragma.example.resumable-approval/v4"),
+  schemaVersion: z.literal("pragma.example.resumable-approval/v5"),
   workflowId: z.string().min(1),
+  systemSessionId: z.string().min(1),
   runtimeSession: RuntimeSessionRefSchema,
   status: z.enum(["ready", "waiting_approval", "running"]),
   activeQuery: z.string().min(1).optional(),
@@ -69,7 +70,13 @@ if (cli.reset) {
 }
 
 const existingState = await findWorkflowState(cli);
+if (cli.runtimeSessionId !== undefined && existingState === undefined) {
+  throw new Error(
+    `No persisted Workflow mapping was found for Runtime Session ${cli.runtimeSessionId}. Resume requires its original workflowId and systemSessionId.`,
+  );
+}
 const workflowId = existingState?.workflowId ?? cli.workflowId ?? newId("workflow");
+const systemSessionId = existingState?.systemSessionId ?? newId("system-session");
 const requestedRuntimeSession =
   existingState?.runtimeSession ??
   (cli.runtimeSessionId === undefined ? undefined : createRuntimeSessionRef(cli.runtimeSessionId));
@@ -88,6 +95,8 @@ await exitIfRuntimeUnavailable(runtime);
 const chat = createConsoleChat();
 const session = await runtime.createSession({
   agent,
+  owner: { workflowRunId: workflowId },
+  systemSessionId,
   ...(requestedRuntimeSession === undefined ? {} : { runtimeSession: requestedRuntimeSession }),
   humanInteractionHandler: createDurableHumanInteractionHandler({
     scope: interactionScope,
@@ -113,13 +122,14 @@ const session = await runtime.createSession({
 });
 runtimeSession = session.info().runtimeSession;
 workflowState = {
-  ...(existingState ?? createWorkflowState(workflowId, runtimeSession)),
+  ...(existingState ?? createWorkflowState(workflowId, systemSessionId, runtimeSession)),
   runtimeSession,
 };
 await saveWorkflowState(workflowState);
 
 console.log("Resumable approval example (PI runtime)");
 console.log(`- workflowId: ${workflowId}`);
+console.log(`- systemSessionId: ${systemSessionId}`);
 console.log(`- session: ${runtimeSession.type}:${runtimeSession.id}`);
 console.log(`- workflow state: ${workflowStatePath(workflowId)}`);
 console.log("");
@@ -367,10 +377,15 @@ async function readWorkflowState(workflowId: string): Promise<WorkflowState | un
   return WorkflowStateSchema.parse(JSON.parse(await readFile(path, "utf8")));
 }
 
-function createWorkflowState(workflowId: string, runtimeSession: RuntimeSessionRef): WorkflowState {
+function createWorkflowState(
+  workflowId: string,
+  systemSessionId: string,
+  runtimeSession: RuntimeSessionRef,
+): WorkflowState {
   return {
-    schemaVersion: "pragma.example.resumable-approval/v4",
+    schemaVersion: "pragma.example.resumable-approval/v5",
     workflowId,
+    systemSessionId,
     runtimeSession,
     status: "ready",
     updatedAt: new Date().toISOString(),

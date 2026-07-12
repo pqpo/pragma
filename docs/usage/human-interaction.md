@@ -173,11 +173,16 @@ const humanInteractionHandler = createDurableHumanInteractionHandler({
 
 const session = await runtime.createSession({
   agent,
+  owner: { workflowRunId: workflowId },
+  systemSessionId: workflowId,
   ...(savedRuntimeSession === undefined ? {} : { runtimeSession: savedRuntimeSession }),
   humanInteractionHandler,
 });
 
-await saveWorkflowRuntimeSession(workflowId, session.info().runtimeSession);
+await saveWorkflowSession(workflowId, {
+  systemSessionId: session.info().systemSessionId,
+  runtimeSession: session.info().runtimeSession,
+});
 ```
 
 `createDurableHumanInteractionHandler()` 的行为：
@@ -191,10 +196,13 @@ await saveWorkflowRuntimeSession(workflowId, session.info().runtimeSession);
 
 ```ts
 const pending = await store.getPending({ workflowId });
-const runtimeSession = await loadWorkflowRuntimeSession(workflowId);
+const { systemSessionId: savedSystemSessionId, runtimeSession } =
+  await loadWorkflowSession(workflowId);
 
 const session = await runtime.createSession({
   agent,
+  owner: { workflowRunId: workflowId },
+  systemSessionId: savedSystemSessionId,
   runtimeSession,
   humanInteractionHandler: createDurableHumanInteractionHandler({
     scope: {

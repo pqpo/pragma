@@ -42,22 +42,19 @@ describe("createPiSessionManager", () => {
     vi.mocked(SessionManager.open).mockClear();
   });
 
-  it("creates a workspace-persisted session when no session id is provided", async () => {
-    const result = await createPiSessionManager("/workspace", "expert-1", undefined);
+  it("creates a workflow-owned session when no session id is provided", async () => {
+    const result = await createPiSessionManager("/workspace", "/pragma/runtime/pi", undefined);
 
     expect(result).toEqual({
       sessionManager: {
         cwd: "/workspace",
         options: undefined,
-        sessionDir: "/workspace/.pragma/runtime-sessions/pi/expert-1",
+        sessionDir: "/pragma/runtime/pi/sessions",
         type: "create",
       },
       resumedExistingSession: false,
     });
-    expect(SessionManager.create).toHaveBeenCalledWith(
-      "/workspace",
-      "/workspace/.pragma/runtime-sessions/pi/expert-1",
-    );
+    expect(SessionManager.create).toHaveBeenCalledWith("/workspace", "/pragma/runtime/pi/sessions");
     expect(SessionManager.inMemory).not.toHaveBeenCalled();
     expect(SessionManager.list).not.toHaveBeenCalled();
   });
@@ -74,24 +71,22 @@ describe("createPiSessionManager", () => {
       }),
     ]);
 
-    const result = await createPiSessionManager("/workspace", "expert-1", "session-2");
+    const result = await createPiSessionManager("/workspace", "/pragma/runtime/pi", "session-2");
 
     expect(result).toEqual({
       sessionManager: {
         cwd: "/workspace",
         path: "/sessions/session-2.jsonl",
-        sessionDir: "/workspace/.pragma/runtime-sessions/pi/expert-1",
+        sessionDir: "/pragma/runtime/pi/sessions",
         type: "open",
       },
       resumedExistingSession: true,
     });
     expect(SessionManager.list).not.toHaveBeenCalled();
-    expect(SessionManager.listAll).toHaveBeenCalledWith(
-      "/workspace/.pragma/runtime-sessions/pi/expert-1",
-    );
+    expect(SessionManager.listAll).toHaveBeenCalledWith("/pragma/runtime/pi/sessions");
     expect(SessionManager.open).toHaveBeenCalledWith(
       "/sessions/session-2.jsonl",
-      "/workspace/.pragma/runtime-sessions/pi/expert-1",
+      "/pragma/runtime/pi/sessions",
       "/workspace",
     );
     expect(SessionManager.create).not.toHaveBeenCalled();
@@ -100,21 +95,17 @@ describe("createPiSessionManager", () => {
   it("rejects a requested runtime session when none exists", async () => {
     vi.mocked(SessionManager.listAll).mockResolvedValue([]);
 
-    await expect(createPiSessionManager("/workspace", "expert-1", "session-3")).rejects.toThrow(
-      "PI runtime session was not found: session-3.",
-    );
+    await expect(
+      createPiSessionManager("/workspace", "/pragma/runtime/pi", "session-3"),
+    ).rejects.toThrow("PI runtime session was not found: session-3.");
     expect(SessionManager.create).not.toHaveBeenCalled();
     expect(SessionManager.list).not.toHaveBeenCalled();
-    expect(SessionManager.listAll).toHaveBeenCalledWith(
-      "/workspace/.pragma/runtime-sessions/pi/expert-1",
-    );
+    expect(SessionManager.listAll).toHaveBeenCalledWith("/pragma/runtime/pi/sessions");
     expect(SessionManager.open).not.toHaveBeenCalled();
   });
 
-  it("encodes expert ids in the workspace session directory", () => {
-    expect(getPiSessionDir("/workspace", "team/reviewer")).toBe(
-      "/workspace/.pragma/runtime-sessions/pi/team%2Freviewer",
-    );
+  it("places native sessions below the PI runtime directory", () => {
+    expect(getPiSessionDir("/pragma/runtime/pi")).toBe("/pragma/runtime/pi/sessions");
   });
 });
 

@@ -65,6 +65,7 @@ const runtime = createPiRuntime();
 await exitIfRuntimeUnavailable(runtime);
 const session = await runtime.createSession({
   agent,
+  owner: { workflowRunId: "tool-approval-example" },
   humanInteractionHandler: createCliHumanInteractionHandler(),
 });
 

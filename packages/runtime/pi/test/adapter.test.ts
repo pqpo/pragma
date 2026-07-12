@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 
@@ -8,11 +8,27 @@ import {
   ExpertAgent,
   FileSystemContextStore,
   HOST_CONTEXT_NAMESPACE,
+  PragmaPaths,
 } from "@pragma/core";
-import type { ExpertAgentRunContext } from "@pragma/core";
+import type { ExpertAgentRunContext, RuntimeCreateSessionRequest } from "@pragma/core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { createPiRuntime } from "../src/adapter.ts";
+import { createPiRuntime as createPiRuntimeAdapter } from "../src/adapter.ts";
+import type { CloudPiRuntimeAdapterOptions } from "../src/types.ts";
+
+function createPiRuntime(options?: CloudPiRuntimeAdapterOptions) {
+  const runtime = createPiRuntimeAdapter(options);
+  return {
+    ...runtime,
+    createSession(request: Omit<RuntimeCreateSessionRequest, "owner">) {
+      return runtime.createSession({
+        ...request,
+        owner: { workflowRunId: "workflow-pi-test", taskRunId: "task-pi-test" },
+        pragmaHome: resolve(request.agent.workspace, "pragma-test-home"),
+      });
+    },
+  };
+}
 
 vi.mock("@earendil-works/pi-coding-agent", () => ({
   AuthStorage: {
@@ -180,6 +196,7 @@ describe("createPiRuntime", () => {
       sessionRestoreHandler: restore,
       sessionSyncCallback: sync,
     });
+    await seedPiSessionRecord(workspace, "agent-1", "system-session-1", "pi-session-1");
     const runtimeSession = await adapter.createSession({
       agent,
       context: {
@@ -200,6 +217,8 @@ describe("createPiRuntime", () => {
 
     const expectedContext = {
       agentId: "agent-1",
+      workflowRunId: "workflow-pi-test",
+      taskRunId: "task-pi-test",
       context: {
         source: {
           type: "user",
@@ -225,7 +244,9 @@ describe("createPiRuntime", () => {
         type: "cloud-pi-agent",
         id: "pi-session-1",
       },
-      sessionDir: `${workspace}/.pragma/runtime-sessions/pi/agent-1`,
+      sessionDir: new PragmaPaths({
+        pragmaHome: resolve(workspace, "pragma-test-home"),
+      }).runtimeRoot("workflow-pi-test", "system-session-1", "pi"),
       systemSessionId: "system-session-1",
       workspace,
     };
@@ -255,10 +276,12 @@ describe("createPiRuntime", () => {
       },
     });
     const restore = vi.fn();
+    await seedPiSessionRecord(workspace, "agent-1", "system-session-missing", "pi-session-missing");
 
     await expect(
       createPiRuntime({ sessionRestoreHandler: restore }).createSession({
         agent,
+        systemSessionId: "system-session-missing",
         runtimeSession: {
           type: "cloud-pi-agent",
           id: "pi-session-missing",
@@ -301,8 +324,10 @@ describe("createPiRuntime", () => {
     const adapter = createPiRuntime();
     adapter.setSessionRestoreHandler?.(restore);
     adapter.setSessionSyncCallback?.(sync);
+    await seedPiSessionRecord(workspace, "agent-1", "system-session-2", "pi-session-2");
     const runtimeSession = await adapter.createSession({
       agent,
+      systemSessionId: "system-session-2",
       runtimeSession: {
         type: "cloud-pi-agent",
         id: "pi-session-2",
@@ -388,7 +413,7 @@ describe("createPiRuntime", () => {
         id: "pi-session-existing",
         messageCount: 1,
         modified: new Date("2026-01-01T00:00:00.000Z"),
-        path: `${workspace}/.pragma/runtime-sessions/pi/agent-1/pi-session-existing.jsonl`,
+        path: `${workspace}/pi-session-existing.jsonl`,
       },
     ]);
     vi.mocked(createAgentSession).mockResolvedValue({
@@ -400,8 +425,15 @@ describe("createPiRuntime", () => {
       session: piSession as never,
     });
 
+    await seedPiSessionRecord(
+      workspace,
+      "agent-1",
+      "system-session-existing",
+      "pi-session-existing",
+    );
     const runtimeSession = await createPiRuntime().createSession({
       agent,
+      systemSessionId: "system-session-existing",
       runtimeSession: {
         type: "cloud-pi-agent",
         id: "pi-session-existing",
@@ -480,6 +512,40 @@ describe("createPiRuntime", () => {
     expect(dispose).toHaveBeenCalledOnce();
   });
 });
+
+async function seedPiSessionRecord(
+  workspace: string,
+  agentId: string,
+  systemSessionId: string,
+  runtimeSessionId: string,
+): Promise<void> {
+  const paths = new PragmaPaths({ pragmaHome: resolve(workspace, "pragma-test-home") });
+  const manifestPath = paths.systemSessionManifest("workflow-pi-test", systemSessionId);
+  await mkdir(paths.systemSessionRoot("workflow-pi-test", systemSessionId), { recursive: true });
+  const now = new Date().toISOString();
+  await writeFile(
+    manifestPath,
+    `${JSON.stringify(
+      {
+        schemaVersion: 1,
+        workflowRunId: "workflow-pi-test",
+        systemSessionId,
+        agentId,
+        taskRunId: "task-pi-test",
+        runtime: { id: "cloud-pi-agent", kind: "cloud-pi-agent" },
+        runtimeSessionRef: { type: "cloud-pi-agent", id: runtimeSessionId },
+        currentWorkspace: workspace,
+        workspaceHistory: [workspace],
+        status: "closed",
+        createdAt: now,
+        updatedAt: now,
+      },
+      null,
+      2,
+    )}\n`,
+    "utf8",
+  );
+}
 
 async function createTempDir(): Promise<string> {
   const dir = await mkdtemp(resolve(tmpdir(), "pragma-pi-adapter-"));

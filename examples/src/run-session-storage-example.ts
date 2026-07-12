@@ -80,6 +80,7 @@ const firstRuntime = createPiRuntime({
 await exitIfRuntimeUnavailable(firstRuntime);
 const firstSession = await firstRuntime.createSession({
   agent: firstAgent,
+  owner: { workflowRunId: "session-storage-example" },
   context: {
     source: {
       type: "example",
@@ -94,6 +95,7 @@ const firstSession = await firstRuntime.createSession({
 });
 
 const runtimeSessionId = firstSession.info().runtimeSession.id;
+const systemSessionId = firstSession.info().systemSessionId;
 
 try {
   await runTurn(firstAgent, firstSession, firstTurn);
@@ -117,6 +119,8 @@ const secondRuntime = createPiRuntime({
 await exitIfRuntimeUnavailable(secondRuntime);
 const secondSession = await secondRuntime.createSession({
   agent: secondAgent,
+  owner: { workflowRunId: "session-storage-example" },
+  systemSessionId,
   context: {
     source: {
       type: "example",

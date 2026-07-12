@@ -42,6 +42,7 @@ await exitIfRuntimeUnavailable(runtime);
 const runtimeSession = createRuntimeSessionRef(cli.runtimeSessionId);
 const session = await runtime.createSession({
   agent,
+  owner: { workflowRunId: "expert-agent-runtime-example" },
   ...(cli.systemSessionId === undefined ? {} : { systemSessionId: cli.systemSessionId }),
   ...(runtimeSession === undefined ? {} : { runtimeSession }),
 });

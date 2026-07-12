@@ -329,7 +329,7 @@ const agent = await defineAgent({
 
 1. 检查插件目录或 zip。
 2. 读取 `plugin.json`。
-3. 复制到 workspace 下的 `.pragma/agent/plugins/{pluginId}`。
+3. 复制到 Pragma 管理的 Agent 缓存 `~/.pragma/cache/agents/<encoded-agent-id>/plugins/<encoded-plugin-id>/`。
 4. 安装插件依赖。
 5. 如果插件有 `build` script，则执行 build。
 6. import `runtime.entry`。

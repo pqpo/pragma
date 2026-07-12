@@ -53,11 +53,16 @@ packages/runtime/pi
 packages/runtime/codex
 ```
 
-Runtime sessions are identified across package, process, and persistence boundaries by the complete
-`RuntimeSessionRef { type, id }`. A native session id alone is only meaningful inside a concrete
-runtime adapter. Omitting `runtimeSession` from `createSession()` creates a fresh session; providing a
-ref is an explicit resume request and must fail when its type does not match the selected runtime or
-the referenced session cannot be restored.
+Runtime sessions are owned by exactly one Workflow. `RuntimeAdapter.createSession()` therefore
+requires `owner.workflowRunId`; TaskManager-created sessions also carry `taskRunId`. Core stores the
+system record at `~/.pragma/state/workflows/<workflow>/sessions/<system-session>/session.json`, and
+concrete runtimes receive only their Workflow-private runtime directory from Core. A resume request
+must provide the original workflow id, system session id, and `RuntimeSessionRef { type, id }`; all
+record fields and the native session file must match or restoration fails.
+
+Agent workspaces contain task inputs, repositories, artifacts, and task-authored files only. Runtime
+state, configuration, sessions, and installed plugin copies must never be derived from or written
+below the workspace. Agent plugin copies live under `~/.pragma/cache/agents/<agent>/plugins/`.
 
 `@pragma/core` belongs to the core agent layer. It may depend on `@pragma/shared`, but must not depend on concrete runtime packages, runtime SDKs such as PI agent, server internals, client SDKs, Web UI, or database packages. Concrete runtime packages depend on `@pragma/core` and are assembled by application entry points such as Worker. The default runtime selection is an application-layer decision; Worker currently registers PI and Codex runtimes and uses PI by default.
 

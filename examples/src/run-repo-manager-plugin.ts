@@ -120,7 +120,10 @@ console.log(
 
 const runtime = createPiRuntime({ loggerProvider });
 await exitIfRuntimeUnavailable(runtime);
-const session = await runtime.createSession({ agent });
+const session = await runtime.createSession({
+  agent,
+  owner: { workflowRunId: "repo-manager-plugin-example" },
+});
 
 try {
   console.log("");

@@ -229,6 +229,16 @@ Server 与 Agent 的关系：
 - Server/Worker 可以调用 Core；Core 不应该反向调用 Server 应用层。
 - 本地 Claude Code、Codex、自研执行环境属于 Runtime Adapter 的实现目标，由 Desktop App 承载本地连接、授权和执行桥接，不改变 Server 调度 Agent 的依赖方向。
 
+本地存储边界：
+
+- Agent workspace 只保存任务明确需要的 repository、input、artifact 和 Agent 主动创建或修改的文件。
+- Runtime Session、Runtime 配置和插件安装副本不得写入 workspace。
+- Pragma 管理的 Runtime Session 存放在 `~/.pragma/state/workflows/<workflowRunId>/sessions/<systemSessionId>/`。
+- Agent 插件副本缓存到 `~/.pragma/cache/agents/<agentId>/plugins/<pluginId>/`。
+- 外部 ID 目录段统一通过 `@pragma/core` 的 `PragmaPaths` 编码和解析，具体 Runtime 或插件 loader 不自行拼接管理路径。
+- 每个 Runtime Session 创建请求必须携带明确的 Workflow owner；恢复还必须提供原 `systemSessionId` 和 `RuntimeSessionRef`。
+- Core 必须通过原子 ownership claim 保证 `systemSessionId` 只归属一个 Workflow；不要用“先扫描再写入”的 TOCTOU 检查代替原子声明。
+
 ## 本地 Agent 桥接规范
 
 未来本地 Agent 通过 Desktop App 接入云端，不设计 `apps/local-runner`。

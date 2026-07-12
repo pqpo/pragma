@@ -85,7 +85,10 @@ export type StepInputResolver<TInput = unknown> = (
 
 export interface TaskWorkspace {
   readonly root: string;
-  readonly exec: (command: string, options?: TaskWorkspaceExecOptions) => Promise<TaskWorkspaceExecResult>;
+  readonly exec: (
+    command: string,
+    options?: TaskWorkspaceExecOptions,
+  ) => Promise<TaskWorkspaceExecResult>;
 }
 
 export interface TaskWorkspaceExecOptions {
@@ -114,10 +117,7 @@ export type TaskHandler<TInput = unknown, TOutput = unknown> = (
   context: TaskContext<TInput>,
 ) => MaybePromise<TOutput>;
 
-export interface StepDefinition<
-  TInput = unknown,
-  TOutput = unknown,
-> extends RuntimeOverride {
+export interface StepDefinition<TInput = unknown, TOutput = unknown> extends RuntimeOverride {
   readonly id: string;
   readonly directive: Directive<TInput, TOutput>;
   readonly input?: StepInputResolver<TInput> | TInput | undefined;
@@ -154,7 +154,10 @@ export interface StepLimitPolicy {
   readonly onExceeded?: TerminalTarget | undefined;
 }
 
-export interface CompiledDirective<TInput = unknown, TOutput = unknown> extends Directive<TInput, TOutput> {
+export interface CompiledDirective<TInput = unknown, TOutput = unknown> extends Directive<
+  TInput,
+  TOutput
+> {
   readonly id: string;
   readonly inputSchema?: z.ZodType<TInput> | undefined;
   readonly outputSchema?: z.ZodType<TOutput> | undefined;
@@ -171,12 +174,14 @@ export interface StartRunRequest<TInput = unknown> extends RuntimeOverride {
   readonly thinkingLevel?: string | undefined;
   readonly output?: RuntimeOutputSchema<unknown> | undefined;
   readonly runtimeSession?: RuntimeSessionRef | undefined;
+  readonly systemSessionId?: string | undefined;
   readonly runtimes?: Readonly<Record<string, string>> | undefined;
   readonly execution?: DirectiveExecutionContext | undefined;
 }
 
 export interface RunResult<TOutput = unknown> {
   readonly workflowRunId: string;
+  readonly systemSessionId?: string | undefined;
   readonly output: TOutput;
   readonly runtimeSession?: RuntimeSessionRef | undefined;
   /**
@@ -499,7 +504,9 @@ export interface DirectiveDefinitionRecord<TInput = unknown, TOutput = unknown> 
 }
 
 export interface DirectiveDefinitionStore {
-  readonly save: <TInput, TOutput>(record: DirectiveDefinitionRecord<TInput, TOutput>) => Promise<void>;
+  readonly save: <TInput, TOutput>(
+    record: DirectiveDefinitionRecord<TInput, TOutput>,
+  ) => Promise<void>;
   readonly get: (workflowRunId: string) => Promise<DirectiveDefinitionRecord | undefined>;
   readonly delete: (workflowRunId: string) => Promise<void>;
 }

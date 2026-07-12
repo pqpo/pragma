@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import { prepareManagedClaudeCodeConfig } from "../src/claude-config.ts";
 
 describe("prepareManagedClaudeCodeConfig", () => {
-  it("copies settings files and links shared state directories into the managed config", async () => {
+  it("copies settings files and creates private state directories in the managed config", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-claude-config-test-"));
     const sharedConfigDir = join(root, "shared-claude");
     const sessionDir = join(root, "session");
@@ -45,7 +45,8 @@ describe("prepareManagedClaudeCodeConfig", () => {
     await expect(readFile(join(config.configDir, "settings.local.json"), "utf8")).resolves.toBe(
       '{"theme":"dark"}\n',
     );
-    expect((await lstat(join(config.configDir, "projects"))).isSymbolicLink()).toBe(true);
+    expect((await lstat(join(config.configDir, "projects"))).isDirectory()).toBe(true);
+    expect((await lstat(join(config.configDir, "projects"))).isSymbolicLink()).toBe(false);
     expect(config.settingsPath).toBe(join(config.configDir, "settings.json"));
     expect(refreshedConfig.settingsPath).toBe(join(config.configDir, "settings.json"));
   });

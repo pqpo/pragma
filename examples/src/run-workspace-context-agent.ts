@@ -83,7 +83,10 @@ printExampleConfig(workspace, contextDir);
 await printAgentContextSummary(agent);
 await exitIfRuntimeUnavailable(runtime);
 
-const session = await runtime.createSession({ agent });
+const session = await runtime.createSession({
+  agent,
+  owner: { workflowRunId: "workspace-context-example" },
+});
 
 try {
   printRunHeader(agent, formatModelConfig(modelConfig), cli.query);

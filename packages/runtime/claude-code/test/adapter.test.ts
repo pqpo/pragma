@@ -10,13 +10,33 @@ import {
   ContextSystem,
   ExpertAgent,
   HOST_CONTEXT_NAMESPACE,
+  PragmaPaths,
   createInMemoryContextStore,
 } from "@pragma/core";
-import type { ExpertAgentHumanRequest, RuntimeSessionStorageContext } from "@pragma/core";
+import type {
+  ExpertAgentHumanRequest,
+  RuntimeCreateSessionRequest,
+  RuntimeSessionStorageContext,
+} from "@pragma/core";
 
-import { createClaudeCodeRuntime } from "../src/adapter.ts";
+import { createClaudeCodeRuntime as createClaudeCodeRuntimeAdapter } from "../src/adapter.ts";
 import { canUseClaudeCodeRuntime } from "../src/availability.ts";
 import type { ClaudeCodeRuntimeSpawn } from "../src/types.ts";
+import type { ClaudeCodeRuntimeAdapterOptions } from "../src/types.ts";
+
+function createClaudeCodeRuntime(options?: ClaudeCodeRuntimeAdapterOptions) {
+  const runtime = createClaudeCodeRuntimeAdapter(options);
+  return {
+    ...runtime,
+    createSession(request: Omit<RuntimeCreateSessionRequest, "owner">) {
+      return runtime.createSession({
+        ...request,
+        owner: { workflowRunId: "workflow-claude-test", taskRunId: "task-claude-test" },
+        pragmaHome: join(request.agent.workspace, "pragma-test-home"),
+      });
+    },
+  };
+}
 
 describe("createClaudeCodeRuntime", () => {
   it("exposes runtime availability through the adapter", async () => {
@@ -141,30 +161,18 @@ describe("createClaudeCodeRuntime", () => {
     expect(systemPrompt).toContain("Answer briefly.");
     expect(fake.args).toContain("--plugin-dir");
     expect(fake.args).toContain("--settings");
+    const claudeRuntimeDir = new PragmaPaths({ pragmaHome: agent.pragmaHome }).runtimeRoot(
+      "workflow-claude-test",
+      session.info().systemSessionId,
+      "claude-code",
+    );
     expect(fake.args[fake.args.indexOf("--settings") + 1]).toBe(
-      join(
-        agent.workspace,
-        ".pragma",
-        "runtime-sessions",
-        "claude-code",
-        agent.id,
-        "claude-config",
-        "settings.json",
-      ),
+      join(claudeRuntimeDir, "config", "settings.json"),
     );
     expect(fake.args).toContain("--model");
     expect(fake.args).toContain("claude-sonnet-4-5");
     expect(fake.args[fake.args.indexOf("--effort") + 1]).toBe("high");
-    expect(fake.env["CLAUDE_CONFIG_DIR"]).toBe(
-      join(
-        agent.workspace,
-        ".pragma",
-        "runtime-sessions",
-        "claude-code",
-        agent.id,
-        "claude-config",
-      ),
-    );
+    expect(fake.env["CLAUDE_CONFIG_DIR"]).toBe(join(claudeRuntimeDir, "config"));
     expect(fake.inputs[0]).toEqual(
       expect.objectContaining({
         type: "user",
@@ -581,9 +589,11 @@ describe("createClaudeCodeRuntime", () => {
     const adapter = createClaudeCodeRuntime({
       spawn: fake.spawn,
     });
+    await seedClaudeSessionRecord(agent, "system-session-existing", "session-existing");
 
     const session = await adapter.createSession({
       agent,
+      systemSessionId: "system-session-existing",
       runtimeSession: {
         type: "claude-code-local",
         id: "session-existing",
@@ -781,6 +791,7 @@ async function createTestAgent(
     readonly contextSystem?: ContextSystem | undefined;
   } = {},
 ): Promise<ExpertAgent> {
+  const workspace = await mkdtemp(join(tmpdir(), "pragma-claude-runtime-test-"));
   return await ExpertAgent.create({
     id: "agent-claude-test",
     name: "Claude Test Agent",
@@ -789,10 +800,53 @@ async function createTestAgent(
     tags: [],
     version: "0.0.0",
     scope: "test",
-    workspace: await mkdtemp(join(tmpdir(), "pragma-claude-runtime-test-")),
+    workspace,
+    pragmaHome: join(workspace, "pragma-test-home"),
     ...(options.contextSystem === undefined ? {} : { contextSystem: options.contextSystem }),
     ...(options.skills === undefined ? {} : { skills: options.skills }),
   });
+}
+
+async function seedClaudeSessionRecord(
+  agent: ExpertAgent,
+  systemSessionId: string,
+  runtimeSessionId: string,
+): Promise<void> {
+  const paths = new PragmaPaths({ pragmaHome: agent.pragmaHome });
+  await mkdir(paths.systemSessionRoot("workflow-claude-test", systemSessionId), {
+    recursive: true,
+  });
+  const now = new Date().toISOString();
+  await writeFile(
+    paths.systemSessionManifest("workflow-claude-test", systemSessionId),
+    `${JSON.stringify(
+      {
+        schemaVersion: 1,
+        workflowRunId: "workflow-claude-test",
+        systemSessionId,
+        agentId: agent.id,
+        taskRunId: "task-claude-test",
+        runtime: { id: "claude-code-local", kind: "claude-code-local" },
+        runtimeSessionRef: { type: "claude-code-local", id: runtimeSessionId },
+        currentWorkspace: agent.workspace,
+        workspaceHistory: [agent.workspace],
+        status: "closed",
+        createdAt: now,
+        updatedAt: now,
+      },
+      null,
+      2,
+    )}\n`,
+    "utf8",
+  );
+  const nativeSessionDir = join(
+    paths.runtimeRoot("workflow-claude-test", systemSessionId, "claude-code"),
+    "config",
+    "projects",
+    "test-project",
+  );
+  await mkdir(nativeSessionDir, { recursive: true });
+  await writeFile(join(nativeSessionDir, `${runtimeSessionId}.jsonl`), "{}\n", "utf8");
 }
 
 async function collectAsync<T>(iterable: AsyncIterable<T>): Promise<T[]> {

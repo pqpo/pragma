@@ -155,7 +155,6 @@ pnpm --filter @pragma/examples dev src/run-claude-code-runtime-agent.ts \
 ```bash
 pnpm --filter @pragma/examples dev src/run-claude-code-runtime-agent.ts \
   --permission-mode plan \
-  --isolation strict \
   --turn "列出 workspace 目录"
 ```
 
@@ -192,7 +191,7 @@ pnpm --filter @pragma/examples dev src/run-session-storage-example.ts
 
 1. 使用 `workspace/session-storage-example/workspace-a` 创建会话。
 2. 发送第一轮聊天，让模型记住项目代号和目标。
-3. 通过 `sessionSyncCallback` 把 `.pragma/runtime-sessions/pi/<agent-id>` 同步到 `workspace/session-storage-example/long-term-session-storage`。
+3. 通过 `sessionSyncCallback` 把 Workflow 私有的 PI Runtime 目录同步到示例长期存储目录。
 4. 切换到 `workspace/session-storage-example/workspace-b`。
 5. 使用同一个 `RuntimeSessionRef` 恢复会话，并通过 `sessionRestoreHandler` 把长期存储恢复到新 workspace 的 session 目录。
 6. 再发送一轮聊天，让模型总结上轮会话。
@@ -260,7 +259,7 @@ pnpm --filter @pragma/examples dev src/run-resumable-tool-approval.ts --workflow
 pnpm --filter @pragma/examples dev src/run-resumable-tool-approval.ts --session-id <session-id>
 ```
 
-示例入口是 `src/run-resumable-tool-approval.ts`。runtime transcript 由 PI runtime 保存；示例另存一份轻量 workflow state，用于映射完整的 PI `RuntimeSessionRef` 和跟踪当前 turn。首次启动不传 `runtimeSession`，创建成功后才保存 Ref；恢复时传入保存的 Ref，恢复失败会直接报错。控制台 chat 循环封装在 `src/harness/console-chat.ts`，其他 example 可以复用。pending approval 的持久化、逻辑去重、resolve 和 clear 由 `createDurableHumanInteractionHandler()` 与 `HumanInteractionStore` 负责。真实产品接入时，应把 workflow state 和 `HumanInteractionStore` 换成数据库实现，并把 `scope` 绑定到租户、用户、workflow/run 和 runtime session 类型。
+示例入口是 `src/run-resumable-tool-approval.ts`。runtime transcript 由 PI runtime 保存；示例另存一份轻量 workflow state，用于映射彼此独立的 `workflowId`、`systemSessionId`、完整 PI `RuntimeSessionRef`，并跟踪当前 turn。首次启动生成独立的 system Session ID 且不传 `runtimeSession`，创建成功后保存三者映射；恢复时必须同时传入原 Workflow owner、system Session ID 和 Runtime Ref，任何一项缺失都会直接报错。控制台 chat 循环封装在 `src/harness/console-chat.ts`，其他 example 可以复用。pending approval 的持久化、逻辑去重、resolve 和 clear 由 `createDurableHumanInteractionHandler()` 与 `HumanInteractionStore` 负责。真实产品接入时，应把 workflow state 和 `HumanInteractionStore` 换成数据库实现，并把 `scope` 绑定到租户、用户、workflow/run 和 runtime session 类型。
 
 ## 运行上下文示例
 
@@ -322,11 +321,7 @@ pnpm --filter @pragma/examples dev src/run-human-review-gate.ts
 
 Human Interaction 示例是平台协议的最小本地验证路径，不依赖模型 key。它们展示的是 `defineHumanTask()`、`human.requested` 事件和 `taskManager.respondToHumanInteraction()`，后续 Web、Server 或 Desktop UI 应接入同一套协议。
 
-Agent 委派示例需要模型 key。它展示的是 ExpertAgent 之间通过 `launch_agent` 互相委派任务，而不是 runtime 私有子会话。每次委派都会创建新的 child workflow run；`--session-policy reuse_by_agent` 只复用底层 runtime conversation/session ref，不复用 workflow run：
-
-```bash
-pnpm --filter @pragma/examples dev src/run-agent-delegation.ts --session-policy reuse_by_agent
-```
+Agent 委派示例需要模型 key。它展示的是 ExpertAgent 之间通过 `launch_agent` 互相委派任务，而不是 runtime 私有子会话。每次委派都会创建新的 child workflow run 和新的 Runtime Session。跨 Workflow 恢复将在 `PragmaApp.resume()` 阶段实现。
 
 ## 示例辅助边界
 

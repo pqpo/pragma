@@ -722,7 +722,8 @@ artifact.created
 
 ### 15.1 Runtime Adapter 接入方式
 
-`adapter.createSession()` 在创建会话时绑定 agent 和 run context；会话创建后可多次
+`adapter.createSession()` 是底层接口，在创建会话时必须绑定 `owner.workflowRunId`、agent
+和 run context；会话创建后可多次
 `submit()`，提交会在 Runtime 内部串行执行。`RuntimeSubmitRequest` 可以携带
 可选 `runId`，并可为单次提交指定 Zod output schema；未指定 `runId` 时在
 `submit()` 阶段生成，未指定 output 时默认为 string。
@@ -740,6 +741,7 @@ import { z } from "zod";
 
 const session = await adapter.createSession({
   agent,
+  owner: { workflowRunId, taskRunId },
   context,
   systemSessionId: "system-session-1",
   runtimeSession: {

@@ -18,15 +18,13 @@ export function setDefaultRuntimeRegistryFactory(
 export function createDefaultRuntimeRegistry(): ExpertAgentRuntimeRegistry {
   if (defaultRuntimeRegistryFactory === undefined) {
     throw new Error(
-      "No default runtime registry is configured. Pass runtimes to agent.createSession(), createPragma({ runtimes }), or configure setDefaultRuntimeRegistryFactory().",
+      "No default runtime registry is configured. Pass runtimes to createPragma({ runtimes }) or configure setDefaultRuntimeRegistryFactory().",
     );
   }
 
   return defaultRuntimeRegistryFactory();
 }
 
-export function createDefaultRuntimeRegistryIfConfigured():
-  | ExpertAgentRuntimeRegistry
-  | undefined {
+export function createDefaultRuntimeRegistryIfConfigured(): ExpertAgentRuntimeRegistry | undefined {
   return defaultRuntimeRegistryFactory?.();
 }

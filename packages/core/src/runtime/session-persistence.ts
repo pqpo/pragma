@@ -9,6 +9,7 @@ import type {
   RuntimeSessionRestoreHandler,
   RuntimeSessionStorageContext,
   RuntimeSessionSyncCallback,
+  RuntimeSessionOwner,
 } from "./runtime-adapter.ts";
 
 export type RuntimeCheckpointTrigger =
@@ -29,6 +30,7 @@ export interface RuntimeSessionPersistenceSpec {
 }
 
 export interface RuntimeSessionRestoreRequest {
+  readonly owner: RuntimeSessionOwner;
   readonly agentId: string;
   readonly runtime: RuntimeAdapterDescriptor;
   readonly requestedRuntimeSession?: RuntimeSessionRef | undefined;
@@ -45,6 +47,7 @@ export interface RuntimeSessionRestoreResult {
 }
 
 export interface RuntimeSessionCheckpoint {
+  readonly owner: RuntimeSessionOwner;
   readonly agentId: string;
   readonly runtime: RuntimeAdapterDescriptor;
   readonly systemSessionId: string;
@@ -107,6 +110,7 @@ export function createCallbackRuntimeSessionPersistenceProvider(options: {
       await options.restoreHandler(
         createRuntimeSessionStorageContext({
           agentId: request.agentId,
+          owner: request.owner,
           context: request.context,
           runtime: request.runtime,
           runtimeSessionId: request.requestedRuntimeSession.id,
@@ -126,6 +130,7 @@ export function createCallbackRuntimeSessionPersistenceProvider(options: {
       await options.syncCallback(
         createRuntimeSessionStorageContext({
           agentId: checkpoint.agentId,
+          owner: checkpoint.owner,
           context: checkpoint.context,
           runtime: checkpoint.runtime,
           runtimeSessionId: checkpoint.runtimeSession.id,
@@ -139,15 +144,18 @@ export function createCallbackRuntimeSessionPersistenceProvider(options: {
 }
 
 export function createRuntimeSessionStorageContext(options: {
+  readonly owner: RuntimeSessionOwner;
   readonly agentId: string;
   readonly runtime: RuntimeAdapterDescriptor;
   readonly runtimeSessionId: string;
   readonly workspace: string;
   readonly sessionDir: string;
-  readonly systemSessionId?: string | undefined;
+  readonly systemSessionId: string;
   readonly context?: ExpertAgentRunContext | undefined;
 }): RuntimeSessionStorageContext {
   return {
+    workflowRunId: options.owner.workflowRunId,
+    ...(options.owner.taskRunId === undefined ? {} : { taskRunId: options.owner.taskRunId }),
     agentId: options.agentId,
     runtime: options.runtime,
     runtimeSession: {
@@ -156,7 +164,7 @@ export function createRuntimeSessionStorageContext(options: {
     },
     workspace: options.workspace,
     sessionDir: options.sessionDir,
-    ...(options.systemSessionId === undefined ? {} : { systemSessionId: options.systemSessionId }),
+    systemSessionId: options.systemSessionId,
     ...(options.context === undefined ? {} : { context: options.context }),
   };
 }
@@ -194,6 +202,7 @@ export async function checkpointRuntimeSession(options: {
   readonly spec: RuntimeSessionPersistenceSpec | undefined;
   readonly trigger: RuntimeCheckpointTrigger;
   readonly agentId: string;
+  readonly owner: RuntimeSessionOwner;
   readonly runtime: RuntimeAdapterDescriptor;
   readonly systemSessionId: string;
   readonly runtimeSessionId: string;
@@ -208,6 +217,7 @@ export async function checkpointRuntimeSession(options: {
   try {
     await options.provider.checkpoint({
       agentId: options.agentId,
+      owner: options.owner,
       runtime: options.runtime,
       systemSessionId: options.systemSessionId,
       runtimeSession: {

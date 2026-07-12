@@ -19,6 +19,7 @@ describe("watchRuntimeSessionDir", () => {
     const callback = vi.fn();
     const watcher = watchRuntimeSessionDir({
       context: {
+        workflowRunId: "workflow-1",
         agentId: "agent-1",
         context: {
           source: {

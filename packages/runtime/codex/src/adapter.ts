@@ -1,3 +1,4 @@
+import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 
 import type { McpToolRegistry, RuntimeAdapter, RuntimeCanUseResult } from "@pragma/core";
@@ -84,7 +85,7 @@ export function createCodexRuntime(options: CodexRuntimeAdapterOptions = {}): Ru
       resolvePersistence(ctx): RuntimeSessionPersistenceSpec {
         return {
           mode: "checkpoint",
-          sessionDir: getCodexSessionDir(ctx.workspace, ctx.agent.id),
+          sessionDir: ctx.paths.runtimeSessionDir("codex"),
           checkpointOn: ["session.created", "turn.completed", "session.destroyed"],
           metadata: {
             format: "codex-managed-home",
@@ -107,14 +108,19 @@ export function createCodexRuntime(options: CodexRuntimeAdapterOptions = {}): Ru
           threadId:
             ctx.persistence.restoredRuntimeSessionId ?? ctx.request.runtimeSession?.id ?? "",
         };
-        const sessionDir =
-          ctx.persistence.spec?.sessionDir ?? getCodexSessionDir(ctx.workspace, ctx.agent.id);
+        const sessionDir = ctx.persistence.spec?.sessionDir ?? ctx.paths.runtimeSessionDir("codex");
         const codexHome = await prepareManagedCodexHome({
           agent: ctx.agent,
           sessionDir,
           env: options.env,
           logger: ctx.logger,
         });
+        if (state.threadId !== "") {
+          const exists = await nativeSessionFileExists(join(codexHome, "sessions"), state.threadId);
+          if (!exists) {
+            throw new Error(`Codex runtime session file was not found: ${state.threadId}.`);
+          }
+        }
         let mcpToolRegistry: McpToolRegistry | undefined;
         let workflowToolsMcpServer: CodexWorkflowToolsMcpServer | undefined;
         let client: CodexAppServerClient | undefined;
@@ -232,6 +238,25 @@ export function createCodexRuntime(options: CodexRuntimeAdapterOptions = {}): Ru
       sessionSyncCallback: options.sessionSyncCallback,
     },
   );
+}
+
+async function nativeSessionFileExists(root: string, runtimeSessionId: string): Promise<boolean> {
+  const entries = await readdir(root, { withFileTypes: true }).catch(() => []);
+  for (const entry of entries) {
+    const path = join(root, entry.name);
+    if (entry.isDirectory()) {
+      if (await nativeSessionFileExists(path, runtimeSessionId)) {
+        return true;
+      }
+    } else if (
+      entry.isFile() &&
+      entry.name.endsWith(".jsonl") &&
+      entry.name.endsWith(`${runtimeSessionId}.jsonl`)
+    ) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function createCodexRuntimeCanUse(
@@ -352,8 +377,4 @@ async function startOrResumeThread({
     threadId,
     startedFreshThread: true,
   };
-}
-
-function getCodexSessionDir(workspace: string, agentId: string): string {
-  return join(workspace, ".pragma", "runtime-sessions", "codex", agentId);
 }

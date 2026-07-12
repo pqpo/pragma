@@ -115,9 +115,9 @@ flowchart LR
   result["result: Promise<RuntimeRunResult>"]
   cancel["cancel()"]
 
-  agent -->|"createSession({ runtime, runtimes })"| registry
+  agent -->|"run() via Pragma Workflow"| registry
   registry -->|"resolve(runtimeId)"| adapter
-  adapter -->|"createSession()"| session
+  adapter -->|"createSession({ owner })"| session
   session -->|"submit({ query, output })"| handle
   handle --> events
   handle --> result
@@ -239,14 +239,14 @@ flowchart TB
 
 职责边界：
 
-| 模块                  | 负责                                                | 不负责                        |
-| --------------------- | --------------------------------------------------- | ----------------------------- |
-| `TaskManager`         | 任务分发、租约、执行协调、等待恢复、transition 推进 | 保存权威状态、承载消息系统    |
-| `StateManager`        | Workflow/Task/Human Interaction 状态、`RunState`、revision、幂等应用 | 执行 Agent、发布消息          |
-| `Mailbox`             | command/event 发布订阅、消息过滤、通信协议承载      | 决定状态变化、执行任务        |
-| `Task Memory`         | 共享/私有工作记忆、handoff、协作留言板              | 保存权威状态、替代消息总线    |
-| `SandboxManager`      | sandbox 生命周期、workspace、capability             | 编排 transition、保存业务状态 |
-| `DirectiveDefinitionStore` | 保存运行所需的已编译 Directive 定义                      | 执行步骤、修改状态            |
+| 模块                       | 负责                                                                 | 不负责                        |
+| -------------------------- | -------------------------------------------------------------------- | ----------------------------- |
+| `TaskManager`              | 任务分发、租约、执行协调、等待恢复、transition 推进                  | 保存权威状态、承载消息系统    |
+| `StateManager`             | Workflow/Task/Human Interaction 状态、`RunState`、revision、幂等应用 | 执行 Agent、发布消息          |
+| `Mailbox`                  | command/event 发布订阅、消息过滤、通信协议承载                       | 决定状态变化、执行任务        |
+| `Task Memory`              | 共享/私有工作记忆、handoff、协作留言板                               | 保存权威状态、替代消息总线    |
+| `SandboxManager`           | sandbox 生命周期、workspace、capability                              | 编排 transition、保存业务状态 |
+| `DirectiveDefinitionStore` | 保存运行所需的已编译 Directive 定义                                  | 执行步骤、修改状态            |
 
 默认本地组装：
 
@@ -276,10 +276,10 @@ sequenceDiagram
   participant RuntimeAgentSession
   participant ConcreteRuntime as Concrete Runtime
 
-  Caller->>ExpertAgent: agent.createSession()
+  Caller->>ExpertAgent: agent.run()
   ExpertAgent->>RuntimeRegistry: resolve(runtimeId)
   RuntimeRegistry-->>ExpertAgent: adapter
-  ExpertAgent->>RuntimeAdapter: createSession(agent config)
+  ExpertAgent->>RuntimeAdapter: createSession(agent config + Workflow owner)
   RuntimeAdapter-->>RuntimeAgentSession: create session
   Caller->>RuntimeAgentSession: submit(query, output schema)
   RuntimeAgentSession->>ConcreteRuntime: execute
@@ -475,14 +475,14 @@ flowchart TB
 
 可替换组件：
 
-| 当前默认                      | 分布式替换方向                                                     |
-| ----------------------------- | ------------------------------------------------------------------ |
-| `InMemoryStateManager`        | PostgreSQL、CockroachDB、DynamoDB、FoundationDB 或其他事务性状态库 |
-| `InMemoryMailbox`             | Redis Streams、SQS、Kafka、NATS、RabbitMQ 或内部事件总线           |
-| `LocalTaskManager`            | 多 worker 调度器、远程执行 worker、Kubernetes worker               |
-| `LocalSandboxManager`         | 容器、VM、Kubernetes、远程沙箱、Desktop bridge                     |
+| 当前默认                           | 分布式替换方向                                                     |
+| ---------------------------------- | ------------------------------------------------------------------ |
+| `InMemoryStateManager`             | PostgreSQL、CockroachDB、DynamoDB、FoundationDB 或其他事务性状态库 |
+| `InMemoryMailbox`                  | Redis Streams、SQS、Kafka、NATS、RabbitMQ 或内部事件总线           |
+| `LocalTaskManager`                 | 多 worker 调度器、远程执行 worker、Kubernetes worker               |
+| `LocalSandboxManager`              | 容器、VM、Kubernetes、远程沙箱、Desktop bridge                     |
 | `InMemoryDirectiveDefinitionStore` | 数据库、对象存储、版本化 workflow definition store                 |
-| 默认 `RuntimeRegistry`        | 租户级、区域级或能力感知 Runtime Registry                          |
+| 默认 `RuntimeRegistry`             | 租户级、区域级或能力感知 Runtime Registry                          |
 
 分布式实现必须保留以下语义：
 
