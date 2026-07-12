@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { createPiModelRegistry } from "../src/models.ts";
+import { createPiModelRegistry, resolveRuntimeModel } from "../src/models.ts";
 
 describe("createPiModelRegistry", () => {
   it("registers Pragma provider config in memory", async () => {
@@ -57,6 +57,27 @@ describe("createPiModelRegistry", () => {
     await expect(registry.getApiKeyAndHeaders(model)).resolves.toMatchObject({
       ok: true,
       apiKey: "secret-key",
+    });
+  });
+
+  it("prefers an exact provider/model match over a bare model id", () => {
+    const registry = createPiModelRegistry(AuthStorage.inMemory(), [
+      {
+        provider: "deepseek",
+        modelNames: ["deepseek-v4-flash"],
+        baseApi: "https://api.deepseek.com",
+        key: "secret-key",
+        api: "openai-completions",
+      },
+    ]);
+
+    expect(resolveRuntimeModel("deepseek/deepseek-v4-flash", registry)).toMatchObject({
+      provider: "deepseek",
+      id: "deepseek-v4-flash",
+    });
+    expect(resolveRuntimeModel("openrouter/deepseek/deepseek-v4-flash", registry)).toMatchObject({
+      provider: "openrouter",
+      id: "deepseek/deepseek-v4-flash",
     });
   });
 });

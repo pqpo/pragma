@@ -47,7 +47,17 @@ export function resolveRuntimeModel(
     return undefined;
   }
 
-  return modelRegistry.getAll().find((candidate) => matchesRuntimeModel(candidate, modelName));
+  const models = modelRegistry.getAll();
+  const canonicalMatch = models.find(
+    (candidate) =>
+      `${candidate.provider}/${candidate.id}` === modelName ||
+      `${candidate.provider}/${candidate.name}` === modelName,
+  );
+
+  return (
+    canonicalMatch ??
+    models.find((candidate) => candidate.id === modelName || candidate.name === modelName)
+  );
 }
 
 export function resolveRequiredRuntimeModel(
@@ -76,18 +86,6 @@ export function collectRuntimeModelProviders(
   providers: readonly IExpertAgentModelProviderConfig[] | undefined,
 ): readonly IExpertAgentModelProviderConfig[] {
   return [...(agent.models?.providers ?? []), ...(providers ?? [])];
-}
-
-function matchesRuntimeModel(
-  candidate: NonNullable<CreateAgentSessionOptions["model"]>,
-  modelName: string,
-): boolean {
-  return (
-    candidate.id === modelName ||
-    candidate.name === modelName ||
-    `${candidate.provider}/${candidate.id}` === modelName ||
-    `${candidate.provider}/${candidate.name}` === modelName
-  );
 }
 
 function normalizeModelProviderConfig(
