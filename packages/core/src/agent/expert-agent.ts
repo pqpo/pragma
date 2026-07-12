@@ -38,15 +38,9 @@ import type {
 import { isExpertAgentPluginEntryUse, loadExpertAgentPlugins } from "../plugins/plugin-loader.ts";
 import type { ExpertAgentRunContext } from "../runtime/run-context.ts";
 import { createExpertAgentRunContext, withExecutionRunScope } from "../runtime/run-context.ts";
-import type {
-  RuntimeAgentSession,
-  RuntimeCreateSessionRequest,
-  RuntimeOutputSchema,
-} from "../runtime/runtime-adapter.ts";
-import {
-  createDefaultRuntimeRegistry,
-  setDefaultRuntimeRegistryFactory,
-} from "../runtime/default-runtime-registry.ts";
+import type { RuntimeOutputSchema } from "../runtime/runtime-adapter.ts";
+import { setDefaultRuntimeRegistryFactory } from "../runtime/default-runtime-registry.ts";
+import { openRuntimeSession } from "../runtime/session-factory.ts";
 import type {
   ExpertAgentRuntimeRegistry,
   ExpertAgentRuntimeRegistryFactory,
@@ -142,14 +136,6 @@ export interface IExpertAgentRunResult<TOutput = string> {
 }
 
 export type { ExpertAgentRuntimeRegistry, ExpertAgentRuntimeRegistryFactory };
-
-export interface ExpertAgentCreateSessionOptions extends Omit<
-  RuntimeCreateSessionRequest,
-  "agent"
-> {
-  readonly runtime?: string | undefined;
-  readonly runtimes?: ExpertAgentRuntimeRegistry | undefined;
-}
 
 export { setDefaultRuntimeRegistryFactory };
 
@@ -328,20 +314,6 @@ export class ExpertAgent implements IExpertAgent, Directive<unknown, unknown> {
     });
   }
 
-  /** @deprecated Run the agent through createPragma().run() or agent.run(). */
-  async createSession(options: ExpertAgentCreateSessionOptions): Promise<RuntimeAgentSession> {
-    const runtimes = options.runtimes ?? (await createDefaultRuntimeRegistry());
-    const runtime = runtimes.resolve(options.runtime);
-    const request = { ...options };
-    delete request.runtime;
-    delete request.runtimes;
-
-    return await runtime.createSession({
-      agent: this,
-      ...request,
-    });
-  }
-
   async run<TOutput = unknown>(request: StartRunRequest<unknown>): Promise<RunResult<TOutput>> {
     if (request.execution === undefined) {
       const { createPragma } = await import("../directive/pragma-app.ts");
@@ -351,19 +323,16 @@ export class ExpertAgent implements IExpertAgent, Directive<unknown, unknown> {
     const execution = request.execution;
     const runtimeRegistry = execution.runtimeRegistry;
     const runtime = runtimeRegistry.resolve(request.runtime ?? execution.runtimeId);
-    const session = await runtime.createSession({
+    const context = withExecutionRunScope(undefined, {
+      workflowRunId: execution.workflow.id,
+      taskRunId: execution.task.id,
+    });
+    const session = await openRuntimeSession(runtime, {
       agent: this,
-      owner: {
-        workflowRunId: execution.workflow.id,
-        taskRunId: execution.task.id,
-      },
-      context: withExecutionRunScope(undefined, {
-        workflowRunId: execution.workflow.id,
-        taskRunId: execution.task.id,
-      }),
+      execution,
+      context,
       runtimeSession: request.runtimeSession,
       systemSessionId: request.systemSessionId,
-      workflowExecution: execution,
       humanInteractionHandler: async (humanRequest) => {
         if (humanRequest.kind === "user_question") {
           const response = await execution.requestHumanInteraction({

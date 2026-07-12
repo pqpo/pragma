@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import { runRuntimeCommand } from "@pragma/core/runtime/process-probe";
 import type {
-  RuntimeCreateSessionRequest,
+  RuntimeDriverSessionRequest,
   RuntimeModel,
   RuntimeThinkingLevel,
 } from "@pragma/core/runtime/runtime-adapter";
@@ -205,7 +205,7 @@ export function buildClaudeModels(effortLevels: readonly string[]): readonly Run
   });
 }
 
-export function assertClaudeCodeProviderConfig(request: RuntimeCreateSessionRequest): void {
+export function assertClaudeCodeProviderConfig(request: RuntimeDriverSessionRequest): void {
   if ((request.models?.length ?? 0) > 0 || (request.agent.models?.providers.length ?? 0) > 0) {
     throw new Error(
       "Claude Code runtime does not accept custom model providers; configure authentication in the local Claude Code CLI.",

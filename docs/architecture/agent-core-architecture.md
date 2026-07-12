@@ -102,23 +102,25 @@ flowchart TB
 
 ### Runtime 执行层
 
-Runtime 执行层负责屏蔽具体执行环境。Agent 只知道如何创建会话和提交任务，不知道底层是 PI agent SDK、云端沙箱、本地 Desktop 桥接，还是自托管执行器。
+Runtime 执行层负责屏蔽具体执行环境。应用只通过 Pragma 启动 Workflow，不知道底层是 PI agent SDK、云端沙箱、本地 Desktop 桥接，还是自托管执行器。
 
 ```mermaid
 flowchart LR
-  agent["ExpertAgent"]
+  app["PragmaApp"]
+  agent["ExpertAgent Directive"]
   registry["RuntimeRegistry"]
   adapter["RuntimeAdapter"]
-  session["RuntimeAgentSession"]
-  handle["RuntimeSubmitHandle"]
-  events["events: AsyncIterable<RuntimeStreamEvent>"]
-  result["result: Promise<RuntimeRunResult>"]
+  factory["Core-private Session factory"]
+  handle["RunHandle"]
+  events["events: AsyncIterable<PragmaRunEvent>"]
+  result["result: Promise<RunResult>"]
   cancel["cancel()"]
 
-  agent -->|"run() via Pragma Workflow"| registry
+  app -->|"start(agent, request)"| agent
+  agent -->|"internal execution"| registry
   registry -->|"resolve(runtimeId)"| adapter
-  adapter -->|"createSession({ owner })"| session
-  session -->|"submit({ query, output })"| handle
+  adapter -->|"private lookup"| factory
+  factory -->|"execute"| handle
   handle --> events
   handle --> result
   handle --> cancel
@@ -127,7 +129,7 @@ flowchart LR
 核心边界：
 
 - `RuntimeAdapter` 是稳定扩展点。
-- `RuntimeAgentSession` 表示一次 Agent 会话。
+- Runtime Session 只存在于 Core 内部执行链，不是应用 API。
 - `submit()` 同时返回流式事件和最终结构化结果。
 - 具体 Runtime 实现位于独立 `@pragma/runtime-*` 包，不属于 `@pragma/core`。
 - Worker 当前装配 PI 和 Codex runtime，并以 PI 作为默认 runtime。
@@ -270,24 +272,25 @@ flowchart TB
 ```mermaid
 sequenceDiagram
   participant Caller
+  participant PragmaApp
+  participant TaskManager
   participant ExpertAgent
   participant RuntimeRegistry
   participant RuntimeAdapter
-  participant RuntimeAgentSession
   participant ConcreteRuntime as Concrete Runtime
 
-  Caller->>ExpertAgent: agent.run()
+  Caller->>PragmaApp: start(agent, request)
+  PragmaApp->>TaskManager: create Workflow / eager subscribe
+  TaskManager->>ExpertAgent: run(execution context)
   ExpertAgent->>RuntimeRegistry: resolve(runtimeId)
   RuntimeRegistry-->>ExpertAgent: adapter
-  ExpertAgent->>RuntimeAdapter: createSession(agent config + Workflow owner)
-  RuntimeAdapter-->>RuntimeAgentSession: create session
-  Caller->>RuntimeAgentSession: submit(query, output schema)
-  RuntimeAgentSession->>ConcreteRuntime: execute
-  ConcreteRuntime-->>Caller: stream events
-  ConcreteRuntime-->>Caller: final result
+  ExpertAgent->>RuntimeAdapter: open private Session from execution owner
+  RuntimeAdapter->>ConcreteRuntime: execute
+  ConcreteRuntime-->>PragmaApp: normalized runtime events
+  PragmaApp-->>Caller: RunHandle.events / result
 ```
 
-Agent 会话是 Runtime 层概念。它适合单个专家任务，也可以由 Flow 的某个 step 间接触发。
+Agent 会话是 Runtime 层内部概念，由 Flow 的 Expert step 创建并在终态清理。
 
 ### Directive 执行流程
 

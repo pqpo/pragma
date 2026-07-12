@@ -6,11 +6,12 @@ import {
   createRuntimeRegistry,
   ExpertAgent,
 } from "../../src/index.ts";
+import { createTestRuntimeAdapter } from "../runtime-test-utils.ts";
 import type {
   Directive,
   RuntimeAdapter,
   RuntimeAgentSession,
-  RuntimeCreateSessionRequest,
+  RuntimeDriverSessionRequest,
   RuntimeSessionInfo,
   RuntimeStreamEvent,
   RuntimeSubmitHandle,
@@ -217,11 +218,11 @@ function createSingleLaunchDirective(
 
 function createRecordingRuntimeAdapter(): {
   readonly adapter: RuntimeAdapter;
-  readonly createSessionRequests: RuntimeCreateSessionRequest[];
+  readonly createSessionRequests: RuntimeDriverSessionRequest[];
 } {
   let nextSessionId = 1;
-  const createSessionRequests: RuntimeCreateSessionRequest[] = [];
-  const adapter: RuntimeAdapter = {
+  const createSessionRequests: RuntimeDriverSessionRequest[] = [];
+  const adapter = createTestRuntimeAdapter({
     descriptor: {
       id: "fake",
       kind: "fake-runtime",
@@ -230,8 +231,7 @@ function createRecordingRuntimeAdapter(): {
         targets: ["agent"],
       },
     },
-    canUse: () => ({ usable: true }),
-    async createSession(request) {
+    async openSession(request) {
       createSessionRequests.push(request);
       const runtimeSession = request.runtimeSession ?? {
         type: "fake-runtime",
@@ -240,7 +240,7 @@ function createRecordingRuntimeAdapter(): {
 
       return createRecordingSession(request, runtimeSession);
     },
-  };
+  });
 
   return {
     adapter,
@@ -251,7 +251,7 @@ function createRecordingRuntimeAdapter(): {
 function createPendingRuntimeAdapter(): {
   readonly adapter: RuntimeAdapter;
 } {
-  const adapter: RuntimeAdapter = {
+  const adapter = createTestRuntimeAdapter({
     descriptor: {
       id: "fake",
       kind: "fake-runtime",
@@ -260,11 +260,10 @@ function createPendingRuntimeAdapter(): {
         targets: ["agent"],
       },
     },
-    canUse: () => ({ usable: true }),
-    async createSession(request) {
+    async openSession(request) {
       return createPendingSession(request);
     },
-  };
+  });
 
   return {
     adapter,
@@ -272,7 +271,7 @@ function createPendingRuntimeAdapter(): {
 }
 
 function createRecordingSession(
-  request: RuntimeCreateSessionRequest,
+  request: RuntimeDriverSessionRequest,
   runtimeSession: RuntimeSessionInfo["runtimeSession"],
 ): RuntimeAgentSession {
   return {
@@ -308,7 +307,7 @@ function createRecordingSession(
   };
 }
 
-function createPendingSession(request: RuntimeCreateSessionRequest): RuntimeAgentSession {
+function createPendingSession(request: RuntimeDriverSessionRequest): RuntimeAgentSession {
   const runtimeSession = request.runtimeSession ?? {
     type: "fake-runtime",
     id: "runtime-session-pending",

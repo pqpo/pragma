@@ -1,3 +1,7 @@
+/*
+ * Pending migration to PragmaApp.start() plus human.requested/respondToHumanInteraction.
+ * Retained as implementation reference; direct Runtime Session creation is intentionally disabled.
+
 import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 
@@ -233,3 +237,4 @@ function parseCliQuestionAnswer(response: string): unknown {
     return { answer: response };
   }
 }
+*/

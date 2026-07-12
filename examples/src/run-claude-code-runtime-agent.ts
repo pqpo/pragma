@@ -5,8 +5,9 @@ import {
   ContextSystem,
   ExpertAgent,
   HOST_CONTEXT_NAMESPACE,
+  createPragma,
+  createRuntimeRegistry,
   createInMemoryContextStore,
-  type RuntimeSessionRef,
 } from "@pragma/core";
 import {
   createClaudeCodeRuntime,
@@ -22,13 +23,11 @@ import { createExampleLoggerProvider } from "./harness/logger.ts";
 import { defaultWorkspaceRoot, ensureWorkspaceDir, loadExamplesEnv } from "./harness/paths.ts";
 import { selectRuntimeModel } from "./harness/runtime-model-selection.ts";
 import { exitIfRuntimeUnavailable } from "./harness/runtime-availability.ts";
-import { printRunStream } from "./harness/stream-output.ts";
+import { printPragmaRunStream } from "./harness/stream-output.ts";
 
 interface ClaudeCodeRuntimeExampleCliOptions {
   readonly turns: readonly string[];
   readonly executablePath: string | undefined;
-  readonly runtimeSessionId: string | undefined;
-  readonly systemSessionId: string | undefined;
   readonly permissionMode: ClaudeCodeRuntimePermissionMode | undefined;
 }
 
@@ -90,46 +89,35 @@ const runtime = createClaudeCodeRuntime({
   ...(cli.executablePath === undefined ? {} : { executablePath: cli.executablePath }),
   ...(cli.permissionMode === undefined ? {} : { permissionMode: cli.permissionMode }),
 });
-const runtimeSession = createRuntimeSessionRef(cli.runtimeSessionId);
-const session = await runtime.createSession({
-  agent,
-  owner: { workflowRunId: "claude-code-runtime-example" },
-  ...(cli.systemSessionId === undefined ? {} : { systemSessionId: cli.systemSessionId }),
-  ...(runtimeSession === undefined ? {} : { runtimeSession }),
+const app = createPragma({
+  runtimes: createRuntimeRegistry({
+    defaultRuntime: runtime.descriptor.id,
+    runtimes: [runtime],
+  }),
 });
 
-try {
-  const sessionInfo = session.info();
+await printAgentContextSummary(agent);
+console.log("Claude Code runtime:");
+console.log(`- runtime: ${runtime.descriptor.displayName} (${runtime.descriptor.id})`);
+console.log(`- executable: ${cli.executablePath ?? "claude"}`);
+console.log(`- model: ${selection.modelName ?? "Claude Code config default"}`);
+console.log(`- thinkingLevel: ${selection.thinkingLevel ?? "Claude Code config default"}`);
+console.log(`- permissionMode: ${cli.permissionMode ?? defaultPermissionMode}`);
+console.log("");
 
-  await printAgentContextSummary(agent);
+for (const [index, query] of cli.turns.entries()) {
+  console.log(`Run ${index + 1}/${cli.turns.length}`);
+  printRunHeader(agent, selection.modelName ?? "Claude Code config default", query);
+  const handle = await app.start(agent, {
+    input: { prompt: query },
+    ...(selection.modelName === undefined ? {} : { modelName: selection.modelName }),
+    ...(selection.thinkingLevel === undefined ? {} : { thinkingLevel: selection.thinkingLevel }),
+  });
 
-  console.log("Claude Code runtime session:");
-  console.log(`- systemSessionId: ${sessionInfo.systemSessionId}`);
-  console.log(`- runtimeSessionId: ${sessionInfo.runtimeSession.id}`);
-  console.log(`- runtime: ${sessionInfo.runtime.displayName} (${sessionInfo.runtime.id})`);
-  console.log(`- executable: ${cli.executablePath ?? "claude"}`);
-  console.log(`- model: ${selection.modelName ?? "Claude Code config default"}`);
-  console.log(`- thinkingLevel: ${selection.thinkingLevel ?? "Claude Code config default"}`);
-  console.log(`- permissionMode: ${cli.permissionMode ?? defaultPermissionMode}`);
+  await printPragmaRunStream(handle.events);
+  const result = await handle.result;
+  printRunResult(result.workflowRunId);
   console.log("");
-
-  for (const [index, query] of cli.turns.entries()) {
-    console.log(`Turn ${index + 1}/${cli.turns.length}`);
-    printRunHeader(agent, selection.modelName ?? "Claude Code config default", query);
-    const run = session.submit({
-      query,
-      ...(selection.modelName === undefined ? {} : { modelName: selection.modelName }),
-      ...(selection.thinkingLevel === undefined ? {} : { thinkingLevel: selection.thinkingLevel }),
-    });
-
-    await printRunStream(run);
-
-    const result = await run.result;
-    printRunResult(result.runId);
-    console.log("");
-  }
-} finally {
-  await session.abort();
 }
 
 function createClaudeCodeRuntimeExampleContextSystem(): ContextSystem {
@@ -186,10 +174,8 @@ function readClaudeCodeRuntimeExampleCli(): ClaudeCodeRuntimeExampleCliOptions {
 
   cli
     .command("[query...]", "Task query to send to the Claude Code-backed ExpertAgent.")
-    .option("--turn <query>", "Task query to submit. Repeat this option for multi-turn tests.")
+    .option("--turn <query>", "Independent task query. Repeat to start multiple Workflows.")
     .option("--executable <path>", "Claude Code executable path. Defaults to claude.")
-    .option("--runtime-session-id <id>", "Resume an existing Claude Code runtime session id.")
-    .option("--system-session-id <id>", "Use a fixed Pragma system session id.")
     .option("--permission-mode <mode>", "Claude Code permission mode.");
   cli.help();
 
@@ -202,22 +188,7 @@ function readClaudeCodeRuntimeExampleCli(): ClaudeCodeRuntimeExampleCliOptions {
   return {
     turns: readTurns(parsed.args, parsed.options.turn),
     executablePath: readStringOption(parsed.options.executable),
-    runtimeSessionId: readStringOption(parsed.options.runtimeSessionId),
-    systemSessionId: readStringOption(parsed.options.systemSessionId),
     permissionMode: readPermissionModeOption(parsed.options.permissionMode),
-  };
-}
-
-function createRuntimeSessionRef(
-  runtimeSessionId: string | undefined,
-): RuntimeSessionRef | undefined {
-  if (runtimeSessionId === undefined) {
-    return undefined;
-  }
-
-  return {
-    type: "claude-code-local",
-    id: runtimeSessionId,
   };
 }
 

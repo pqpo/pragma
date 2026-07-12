@@ -100,13 +100,18 @@ export type RuntimeSessionRestoreHandler = (
   context: RuntimeSessionStorageContext,
 ) => void | Promise<void>;
 
-export interface RuntimeCreateSessionRequest {
+/**
+ * Session input visible to a concrete Runtime driver.
+ *
+ * Runtime sessions are opened by Core from a Directive execution. This type is not a public
+ * session-creation API and intentionally contains no caller-provided owner.
+ */
+export interface RuntimeDriverSessionRequest {
   readonly agent: ExpertAgent;
-  readonly owner: RuntimeSessionOwner;
   readonly pragmaHome?: string | undefined;
   readonly context?: ExpertAgentRunContext | undefined;
   readonly contextAssembly?: ContextAssemblerOptions | undefined;
-  readonly workflowExecution?: DirectiveExecutionContext | undefined;
+  readonly workflowExecution: DirectiveExecutionContext;
   readonly humanInteractionHandler?: ExpertAgentHumanInteractionHandler | undefined;
   readonly models?: readonly IExpertAgentModelProviderConfig[] | undefined;
   readonly systemSessionId?: string | undefined;
@@ -149,7 +154,4 @@ export interface RuntimeAdapter {
   readonly descriptor: RuntimeAdapterDescriptor;
   readonly canUse: () => Promise<RuntimeCanUseResult> | RuntimeCanUseResult;
   readonly listModels?: (() => Promise<readonly RuntimeModel[]>) | undefined;
-  readonly createSession: (request: RuntimeCreateSessionRequest) => Promise<RuntimeAgentSession>;
-  readonly setSessionSyncCallback?: (callback: RuntimeSessionSyncCallback | undefined) => void;
-  readonly setSessionRestoreHandler?: (handler: RuntimeSessionRestoreHandler | undefined) => void;
 }

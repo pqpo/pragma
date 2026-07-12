@@ -29,19 +29,23 @@ Session ID to its one Workflow owner and is not the deferred `RuntimeSessionRef 
 index. An existing claim always rejects another fresh creation, including a duplicate request from
 the same Workflow; restoration must use the existing Session record instead.
 
-`RuntimeAdapter.createSession()` requires a `RuntimeSessionOwner` with `workflowRunId`. Restoring a
-native session additionally requires its original `systemSessionId` and `RuntimeSessionRef`. Core
-validates Workflow, system session, Agent, runtime descriptor, and native reference before a concrete
-runtime validates its native session file. Restoration never falls back to a new session.
+Runtime Session creation is private to the Pragma execution chain. Core derives `RuntimeSessionOwner`
+from the active `DirectiveExecutionContext`; callers cannot provide owner strings or open Sessions
+through a Runtime Adapter. Restoring a native session additionally requires its original
+`systemSessionId` and `RuntimeSessionRef`. Core validates Workflow, task, system session, Agent,
+runtime descriptor, and native reference before a concrete runtime validates its native session file.
+Restoration never falls back to a new session.
 
 ## Consequences
 
 - Workspaces contain task-required files only.
 - Moving a session to another workspace updates `currentWorkspace` and `workspaceHistory` without
   changing its physical storage directory.
-- `ExpertAgent.createSession()` remains temporarily available but is deprecated and requires an
-  explicit owner.
-- `PragmaApp.resume()` and a global native-session index remain future work.
+- `ExpertAgent.createSession()` and public `RuntimeAdapter.createSession()` are removed. Applications
+  execute Agents through `PragmaApp.start()` or `PragmaApp.run()`.
+- Multi-turn and process-level restoration return in a later phase through
+  `PragmaApp.resume(rootDefinition, { workflowRunId })`; no partial resume API is provided here.
+- A global native-session index remains future work.
 - A crash can leave an ownership claim or an empty Session directory before `session.json` is fully
   created. These artifacts remain reserved and harmless; future storage GC should report and clean
   them explicitly rather than allowing another Workflow to reuse the ID.

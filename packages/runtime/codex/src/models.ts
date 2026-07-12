@@ -1,6 +1,6 @@
 import { runRuntimeCommand } from "@pragma/core/runtime/process-probe";
 import type {
-  RuntimeCreateSessionRequest,
+  RuntimeDriverSessionRequest,
   RuntimeModel,
   RuntimeThinkingLevel,
 } from "@pragma/core/runtime/runtime-adapter";
@@ -161,7 +161,7 @@ export function parseCodexModels(output: string): readonly RuntimeModel[] {
   });
 }
 
-export function assertCodexProviderConfig(request: RuntimeCreateSessionRequest): void {
+export function assertCodexProviderConfig(request: RuntimeDriverSessionRequest): void {
   if ((request.models?.length ?? 0) > 0 || (request.agent.models?.providers.length ?? 0) > 0) {
     throw new Error(
       "Codex runtime does not accept custom model providers; configure authentication in the local Codex CLI.",

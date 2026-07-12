@@ -1,16 +1,17 @@
 import type {
   RuntimeAdapter,
   RuntimeAgentSession,
-  RuntimeCreateSessionRequest,
+  RuntimeDriverSessionRequest,
   RuntimeSessionInfo,
   RuntimeSubmitHandle,
 } from "@pragma/core";
-import { ContextSystem, ExpertAgent } from "@pragma/core";
+import { ContextSystem, ExpertAgent, createPragma } from "@pragma/core";
 import { createRuntimeRegistry } from "@pragma/core";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
 import { defineAgent } from "../src/index.ts";
+import { createTestRuntimeAdapter } from "./runtime-test-utils.ts";
 
 describe("defineAgent", () => {
   it("normalizes instructions into the ExpertAgent system prompt", async () => {
@@ -36,7 +37,7 @@ describe("defineAgent", () => {
     expect(context.systemPrompt).toContain("Prefer small, verified changes.");
   });
 
-  it("creates sessions through the selected runtime registry", async () => {
+  it("runs through Pragma without exposing direct Session creation", async () => {
     const runtime = createFakeRuntime({
       id: "test-runtime",
       output: {
@@ -55,41 +56,27 @@ describe("defineAgent", () => {
       workspace: "/tmp/pragma-directive-test",
     });
 
-    const session = await agent.createSession({
-      owner: { workflowRunId: "workflow-from-agent", taskRunId: "task-from-agent" },
-      runtime: "test-runtime",
+    expect("createSession" in agent).toBe(false);
+    const result = await createPragma({
       runtimes: createRuntimeRegistry({
         runtimes: [runtime],
         defaultRuntime: "test-runtime",
       }),
-      systemSessionId: "system-session-from-agent",
-      runtimeSession: {
-        type: "fake-runtime",
-        id: "runtime-session-from-agent",
-      },
-    });
-    const handle = session.submit({
-      query: "Implement login",
+    }).run(agent, {
+      input: { prompt: "Implement login" },
       output: z.object({
         summary: z.string(),
         changedFiles: z.array(z.string()),
         testsPassed: z.boolean(),
       }),
     });
-    const result = await handle.result;
-
-    expect(handle.runId).toBe("run-1");
     expect(runtime.requests).toEqual([
       expect.objectContaining({
         agent,
-        systemSessionId: "system-session-from-agent",
-        runtimeSession: {
-          type: "fake-runtime",
-          id: "runtime-session-from-agent",
-        },
+        workflowExecution: expect.any(Object),
       }),
     ]);
-    expect(result.result.output).toEqual({
+    expect(result.output).toEqual({
       summary: "implemented",
       changedFiles: ["src/index.ts"],
       testsPassed: true,
@@ -123,11 +110,10 @@ describe("defineAgent", () => {
 function createFakeRuntime(options: {
   readonly id: string;
   readonly output: unknown;
-}): RuntimeAdapter & { readonly requests: RuntimeCreateSessionRequest[] } {
-  const requests: RuntimeCreateSessionRequest[] = [];
+}): RuntimeAdapter & { readonly requests: RuntimeDriverSessionRequest[] } {
+  const requests: RuntimeDriverSessionRequest[] = [];
 
-  return {
-    requests,
+  const runtime = createTestRuntimeAdapter({
     descriptor: {
       id: options.id,
       kind: "fake-runtime",
@@ -136,12 +122,13 @@ function createFakeRuntime(options: {
         targets: ["agent"],
       },
     },
-    canUse: () => ({ usable: true }),
-    async createSession(request) {
+    async openSession(request) {
       requests.push(request);
       return createFakeSession(options.output);
     },
-  };
+  });
+
+  return Object.assign(runtime, { requests });
 }
 
 function createFakeSession(output: unknown): RuntimeAgentSession {

@@ -1,5 +1,4 @@
-import { ExpertAgent } from "@pragma/core";
-import type { RuntimeSessionRef } from "@pragma/core";
+import { ExpertAgent, createPragma, createRuntimeRegistry } from "@pragma/core";
 import { createPiRuntime } from "@pragma/runtime-pi";
 
 import { printRunHeader, printRunResult } from "./harness/expert-agent-example-utils.ts";
@@ -12,7 +11,7 @@ import {
 import { readBasicExampleCli } from "./harness/cli.ts";
 import { defaultWorkspaceRoot, ensureWorkspaceDir, loadExamplesEnv } from "./harness/paths.ts";
 import { exitIfRuntimeUnavailable } from "./harness/runtime-availability.ts";
-import { printRunStream } from "./harness/stream-output.ts";
+import { printPragmaRunStream } from "./harness/stream-output.ts";
 
 const defaultQuery = "用一句话介绍 Pragma 的多专家 Agent 编排架构是什么。";
 
@@ -39,48 +38,20 @@ const agent = await ExpertAgent.create({
 
 const runtime = createPiRuntime({ loggerProvider });
 await exitIfRuntimeUnavailable(runtime);
-const runtimeSession = createRuntimeSessionRef(cli.runtimeSessionId);
-const session = await runtime.createSession({
-  agent,
-  owner: { workflowRunId: "expert-agent-runtime-example" },
-  ...(cli.systemSessionId === undefined ? {} : { systemSessionId: cli.systemSessionId }),
-  ...(runtimeSession === undefined ? {} : { runtimeSession }),
+const app = createPragma({
+  runtimes: createRuntimeRegistry({
+    defaultRuntime: runtime.descriptor.id,
+    runtimes: [runtime],
+  }),
 });
 
-try {
-  const sessionInfo = session.info();
-
-  console.log("Session:");
-  console.log(`- systemSessionId: ${sessionInfo.systemSessionId}`);
-  console.log(`- runtimeSessionId: ${sessionInfo.runtimeSession.id}`);
+for (const [index, query] of cli.turns.entries()) {
+  console.log(`Run ${index + 1}/${cli.turns.length}`);
+  printRunHeader(agent, formatModelConfig(modelConfig), query);
+  const handle = await app.start(agent, { input: { prompt: query } });
+  await printPragmaRunStream(handle.events);
+  const result = await handle.result;
+  printRunResult(result.workflowRunId);
+  console.log(`- systemSessionId: ${result.systemSessionId ?? "<none>"}`);
   console.log("");
-
-  for (const [index, query] of cli.turns.entries()) {
-    console.log(`Turn ${index + 1}/${cli.turns.length}`);
-    printRunHeader(agent, formatModelConfig(modelConfig), query);
-    const run = session.submit({
-      query,
-    });
-
-    await printRunStream(run);
-
-    const result = await run.result;
-    printRunResult(result.runId);
-    console.log("");
-  }
-} finally {
-  await session.abort();
-}
-
-function createRuntimeSessionRef(
-  runtimeSessionId: string | undefined,
-): RuntimeSessionRef | undefined {
-  if (runtimeSessionId === undefined) {
-    return undefined;
-  }
-
-  return {
-    type: "cloud-pi-agent",
-    id: runtimeSessionId,
-  };
 }

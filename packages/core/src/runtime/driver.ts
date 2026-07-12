@@ -52,7 +52,7 @@ import type {
   RuntimeAdapter,
   RuntimeAdapterDescriptor,
   RuntimeCanUseResult,
-  RuntimeCreateSessionRequest,
+  RuntimeDriverSessionRequest,
   RuntimeOutputSchema,
   RuntimeModel,
   RuntimeRunResult,
@@ -64,6 +64,10 @@ import type {
   RuntimeSubmitRequest,
 } from "./runtime-adapter.ts";
 import type { RuntimeStreamEvent } from "./stream-events.ts";
+import {
+  registerRuntimeSessionFactory,
+  type OwnedRuntimeSessionRequest,
+} from "./session-factory.ts";
 
 export interface DefineRuntimeDriverOptions {
   readonly outputRetryLimit?: number | undefined;
@@ -80,7 +84,7 @@ export interface RuntimePaths {
 
 export interface RuntimePrepareContext {
   readonly agent: ExpertAgent;
-  readonly request: RuntimeCreateSessionRequest;
+  readonly request: RuntimeDriverSessionRequest;
   readonly descriptor: RuntimeAdapterDescriptor;
   readonly systemSessionId: string;
   readonly workflowRunId: string;
@@ -215,37 +219,31 @@ export function defineRuntimeDriver<
   driver: RuntimeDriver<TNativeEvent, TNativeSession, TPrepared>,
   options: DefineRuntimeDriverOptions = {},
 ): RuntimeAdapter {
-  let sessionRestoreHandler = options.sessionRestoreHandler;
-  let sessionSyncCallback = options.sessionSyncCallback;
-
   const createPersistenceProvider = (): RuntimeSessionPersistenceProvider =>
     options.persistenceProvider ??
-    (sessionRestoreHandler === undefined && sessionSyncCallback === undefined
+    (options.sessionRestoreHandler === undefined && options.sessionSyncCallback === undefined
       ? createNoopRuntimeSessionPersistenceProvider()
       : createCallbackRuntimeSessionPersistenceProvider({
-          restoreHandler: sessionRestoreHandler,
-          syncCallback: sessionSyncCallback,
+          restoreHandler: options.sessionRestoreHandler,
+          syncCallback: options.sessionSyncCallback,
         }));
 
-  return {
+  const runtime: RuntimeAdapter = {
     descriptor: driver.descriptor,
     canUse: async () => (await driver.canUse?.()) ?? { usable: true },
     ...(driver.listModels === undefined ? {} : { listModels: driver.listModels }),
-    setSessionRestoreHandler(handler) {
-      sessionRestoreHandler = handler;
-    },
-    setSessionSyncCallback(callback) {
-      sessionSyncCallback = callback;
-    },
-    async createSession(request) {
-      return await createManagedRuntimeSession(driver, request, createPersistenceProvider());
-    },
   };
+  registerRuntimeSessionFactory(
+    runtime,
+    async (request) =>
+      await createManagedRuntimeSession(driver, request, createPersistenceProvider()),
+  );
+  return runtime;
 }
 
 async function createManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepared>(
   driver: RuntimeDriver<TNativeEvent, TNativeSession, TPrepared>,
-  request: RuntimeCreateSessionRequest,
+  request: OwnedRuntimeSessionRequest,
   persistenceProvider: RuntimeSessionPersistenceProvider,
 ): Promise<ManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepared>> {
   const agent = request.agent;

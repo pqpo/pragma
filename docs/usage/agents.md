@@ -112,7 +112,7 @@ const result = await agent.run({
 console.log(result.output);
 ```
 
-如果需要结构化输出，在 `submit()` 处传入 Zod schema：
+如果需要结构化输出，在 `app.run()` 或 `app.start()` 处传入 Zod schema：
 
 ```ts
 import { z } from "zod";
@@ -123,13 +123,14 @@ const output = z.object({
   changedFiles: z.array(z.string()),
 });
 
-const handle = session.submit({
-  query: "评审这次改动并返回结构化结果。",
+const app = createPragma({ runtimes });
+const handle = await app.start(agent, {
+  input: { prompt: "评审这次改动并返回结构化结果。" },
   output,
 });
 
 const result = await handle.result;
-console.log(result.result.output.summary);
+console.log(result.output.summary);
 ```
 
 输出 schema 属于具体调用，而不是必须固定在 Agent 声明上。同一个 Agent 可以在不同任务中返回不同结构。
@@ -547,6 +548,6 @@ Runtime 的稳定边界是 `RuntimeAdapter`。Agent 不应该直接依赖某个�
 2. 准备模型配置。
 3. 声明 MCP、Skills 和 Tools。
 4. 通过 `defineAgent()` 或 `ExpertAgent.create()` 创建 Agent。
-5. 创建 Runtime Session。
-6. 调用 `session.submit()`，消费事件流和最终结果。
-7. 在 `finally` 中调用 `session.abort()` 释放会话。
+5. 创建 `PragmaApp` 并注册 Runtime Adapter。
+6. 调用 `app.start()` 消费事件与结果，或用 `app.run()` 只等待最终结果。
+7. 由 Pragma 在 Workflow 终态统一清理内部 Runtime Session。

@@ -5,8 +5,9 @@ import {
   ContextSystem,
   ExpertAgent,
   HOST_CONTEXT_NAMESPACE,
+  createPragma,
+  createRuntimeRegistry,
   createInMemoryContextStore,
-  type RuntimeSessionRef,
 } from "@pragma/core";
 import {
   createCodexRuntime,
@@ -23,12 +24,10 @@ import { createExampleLoggerProvider } from "./harness/logger.ts";
 import { defaultWorkspaceRoot, ensureWorkspaceDir, loadExamplesEnv } from "./harness/paths.ts";
 import { selectRuntimeModel } from "./harness/runtime-model-selection.ts";
 import { exitIfRuntimeUnavailable } from "./harness/runtime-availability.ts";
-import { printRunStream } from "./harness/stream-output.ts";
+import { printPragmaRunStream } from "./harness/stream-output.ts";
 
 interface CodexRuntimeExampleCliOptions {
   readonly turns: readonly string[];
-  readonly runtimeSessionId: string | undefined;
-  readonly systemSessionId: string | undefined;
   readonly sandboxMode: CodexRuntimeSandboxMode | undefined;
   readonly approvalPolicy: CodexRuntimeApprovalPolicy | undefined;
 }
@@ -90,46 +89,35 @@ const runtime = createCodexRuntime({
   sandboxMode: cli.sandboxMode,
   approvalPolicy: cli.approvalPolicy,
 });
-const runtimeSession = createRuntimeSessionRef(cli.runtimeSessionId);
-const session = await runtime.createSession({
-  agent,
-  owner: { workflowRunId: "codex-runtime-example" },
-  ...(cli.systemSessionId === undefined ? {} : { systemSessionId: cli.systemSessionId }),
-  ...(runtimeSession === undefined ? {} : { runtimeSession }),
+const app = createPragma({
+  runtimes: createRuntimeRegistry({
+    defaultRuntime: runtime.descriptor.id,
+    runtimes: [runtime],
+  }),
 });
 
-try {
-  const sessionInfo = session.info();
+await printAgentContextSummary(agent);
+console.log("Codex runtime:");
+console.log(`- runtime: ${runtime.descriptor.displayName} (${runtime.descriptor.id})`);
+console.log(`- model: ${selection.modelName ?? "Codex config default"}`);
+console.log(`- thinkingLevel: ${selection.thinkingLevel ?? "Codex config default"}`);
+console.log(`- sandbox: ${cli.sandboxMode ?? "Codex config default"}`);
+console.log(`- approvalPolicy: ${cli.approvalPolicy ?? "Codex config default"}`);
+console.log("");
 
-  await printAgentContextSummary(agent);
+for (const [index, query] of cli.turns.entries()) {
+  console.log(`Run ${index + 1}/${cli.turns.length}`);
+  printRunHeader(agent, selection.modelName ?? "Codex config default", query);
+  const handle = await app.start(agent, {
+    input: { prompt: query },
+    ...(selection.modelName === undefined ? {} : { modelName: selection.modelName }),
+    ...(selection.thinkingLevel === undefined ? {} : { thinkingLevel: selection.thinkingLevel }),
+  });
 
-  console.log("Codex runtime session:");
-  console.log(`- systemSessionId: ${sessionInfo.systemSessionId}`);
-  console.log(`- runtimeSessionId: ${sessionInfo.runtimeSession.id}`);
-  console.log(`- runtime: ${sessionInfo.runtime.displayName} (${sessionInfo.runtime.id})`);
-  console.log(`- model: ${selection.modelName ?? "Codex config default"}`);
-  console.log(`- thinkingLevel: ${selection.thinkingLevel ?? "Codex config default"}`);
-  console.log(`- sandbox: ${cli.sandboxMode ?? "Codex config default"}`);
-  console.log(`- approvalPolicy: ${cli.approvalPolicy ?? "Codex config default"}`);
+  await printPragmaRunStream(handle.events);
+  const result = await handle.result;
+  printRunResult(result.workflowRunId);
   console.log("");
-
-  for (const [index, query] of cli.turns.entries()) {
-    console.log(`Turn ${index + 1}/${cli.turns.length}`);
-    printRunHeader(agent, selection.modelName ?? "Codex config default", query);
-    const run = session.submit({
-      query,
-      ...(selection.modelName === undefined ? {} : { modelName: selection.modelName }),
-      ...(selection.thinkingLevel === undefined ? {} : { thinkingLevel: selection.thinkingLevel }),
-    });
-
-    await printRunStream(run);
-
-    const result = await run.result;
-    printRunResult(result.runId);
-    console.log("");
-  }
-} finally {
-  await session.abort();
 }
 
 function createCodexRuntimeExampleContextSystem(): ContextSystem {
@@ -188,9 +176,7 @@ function readCodexRuntimeExampleCli(): CodexRuntimeExampleCliOptions {
 
   cli
     .command("[query...]", "Task query to send to the Codex-backed ExpertAgent.")
-    .option("--turn <query>", "Task query to submit. Repeat this option for multi-turn tests.")
-    .option("--runtime-session-id <id>", "Resume an existing Codex runtime thread id.")
-    .option("--system-session-id <id>", "Use a fixed Pragma system session id.")
+    .option("--turn <query>", "Independent task query. Repeat to start multiple Workflows.")
     .option(
       "--sandbox <mode>",
       "Codex sandbox mode: read-only, workspace-write, or danger-full-access.",
@@ -209,23 +195,8 @@ function readCodexRuntimeExampleCli(): CodexRuntimeExampleCliOptions {
 
   return {
     turns: readTurns(parsed.args, parsed.options.turn),
-    runtimeSessionId: readStringOption(parsed.options.runtimeSessionId),
-    systemSessionId: readStringOption(parsed.options.systemSessionId),
     sandboxMode: readSandboxModeOption(parsed.options.sandbox),
     approvalPolicy: readApprovalPolicyOption(parsed.options.approvalPolicy),
-  };
-}
-
-function createRuntimeSessionRef(
-  runtimeSessionId: string | undefined,
-): RuntimeSessionRef | undefined {
-  if (runtimeSessionId === undefined) {
-    return undefined;
-  }
-
-  return {
-    type: "codex-local",
-    id: runtimeSessionId,
   };
 }
 

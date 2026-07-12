@@ -218,8 +218,21 @@ export interface RequestHumanInteractionInput {
 
 export interface RunHandle<TOutput = unknown> {
   readonly workflowRunId: string;
+  readonly events: AsyncIterable<PragmaRunEvent>;
   readonly result: Promise<RunResult<TOutput>>;
   readonly cancel: (reason?: string) => Promise<void>;
+}
+
+/** A live, non-persisted projection of one Root Workflow tree. */
+export interface PragmaRunEvent<TPayload = unknown> {
+  readonly rootWorkflowRunId: string;
+  readonly workflowRunId: string;
+  readonly parentWorkflowRunId?: string | undefined;
+  readonly parentTaskRunId?: string | undefined;
+  readonly taskRunId?: string | undefined;
+  readonly stepId?: string | undefined;
+  readonly type: string;
+  readonly payload: TPayload;
 }
 
 export interface TaskLease {
@@ -392,7 +405,12 @@ export interface StateManager {
   readonly markTaskSucceeded: (
     taskRunId: string,
     output: unknown,
-    metadata?: { readonly runtimeSession?: RuntimeSessionRef | undefined } | undefined,
+    metadata?:
+      | {
+          readonly systemSessionId?: string | undefined;
+          readonly runtimeSession?: RuntimeSessionRef | undefined;
+        }
+      | undefined,
   ) => Promise<TaskRunRecord>;
   readonly markTaskFailed: (taskRunId: string, error: unknown) => Promise<TaskRunRecord>;
   readonly markTaskCancelled: (
@@ -516,6 +534,7 @@ export interface TaskManager {
   readonly startRun: <TInput, TOutput>(
     directive: CompiledDirective<TInput, TOutput>,
     request: StartRunRequest<TInput>,
+    options?: TaskManagerStartRunOptions | undefined,
   ) => Promise<RunHandle<TOutput>>;
   readonly handleEvent: (message: MailboxMessage) => Promise<void>;
   readonly dispatchReadyTasks: (workflowRunId: string) => Promise<void>;
@@ -529,6 +548,10 @@ export interface TaskManager {
   ) => Promise<HumanInteractionRecord>;
   readonly cancelTask: (taskRunId: string, reason?: string) => Promise<void>;
   readonly recoverExpiredLeases: (now: Date) => Promise<readonly TaskRunRecord[]>;
+}
+
+export interface TaskManagerStartRunOptions {
+  readonly events?: "stream" | "none" | undefined;
 }
 
 export interface TaskManagerOptions {

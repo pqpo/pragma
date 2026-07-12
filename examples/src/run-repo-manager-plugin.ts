@@ -3,6 +3,8 @@ import {
   ExpertAgent,
   HOST_CONTEXT_NAMESPACE,
   createInMemoryContextStore,
+  createPragma,
+  createRuntimeRegistry,
 } from "@pragma/core";
 import { createPiRuntime } from "@pragma/runtime-pi";
 import repoManagerPlugin from "@pragma/plugin-repo-manager";
@@ -20,7 +22,7 @@ import {
 } from "./harness/model-config.ts";
 import { defaultWorkspaceRoot, ensureWorkspaceDir, loadExamplesEnv } from "./harness/paths.ts";
 import { exitIfRuntimeUnavailable } from "./harness/runtime-availability.ts";
-import { printRunStream } from "./harness/stream-output.ts";
+import { printPragmaRunStream } from "./harness/stream-output.ts";
 
 const workspace = defaultWorkspaceRoot;
 const defaultQuery = "Agent 管理了哪些仓库？";
@@ -120,22 +122,16 @@ console.log(
 
 const runtime = createPiRuntime({ loggerProvider });
 await exitIfRuntimeUnavailable(runtime);
-const session = await runtime.createSession({
-  agent,
-  owner: { workflowRunId: "repo-manager-plugin-example" },
+const app = createPragma({
+  runtimes: createRuntimeRegistry({
+    defaultRuntime: runtime.descriptor.id,
+    runtimes: [runtime],
+  }),
 });
 
-try {
-  console.log("");
-  printRunHeader(agent, formatModelConfig(modelConfig), defaultQuery);
-  const run = session.submit({
-    query: defaultQuery,
-  });
-
-  await printRunStream(run);
-
-  const result = await run.result;
-  printRunResult(result.runId);
-} finally {
-  await session.abort();
-}
+console.log("");
+printRunHeader(agent, formatModelConfig(modelConfig), defaultQuery);
+const handle = await app.start(agent, { input: { prompt: defaultQuery } });
+await printPragmaRunStream(handle.events);
+const result = await handle.result;
+printRunResult(result.workflowRunId);

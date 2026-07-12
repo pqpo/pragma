@@ -69,6 +69,7 @@ export const TaskRunRecordSchema = z.object({
   sandbox: SandboxRefSchema.optional(),
   input: z.unknown(),
   output: z.unknown().optional(),
+  systemSessionId: z.string().min(1).optional(),
   runtimeSession: RuntimeSessionRefSchema.optional(),
   error: z.unknown().optional(),
   attempt: z.number().int().positive(),

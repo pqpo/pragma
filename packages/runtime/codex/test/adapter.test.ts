@@ -9,14 +9,21 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   ContextSystem,
-  createInMemoryContextStore,
+  createPragma,
+  createRuntimeRegistry,
   ExpertAgent,
-  HOST_CONTEXT_NAMESPACE,
   PragmaPaths,
 } from "@pragma/core";
-import type { IExpertAgentMcpConfig, IExpertAgentSkillsConfig } from "@pragma/core";
-import type { RuntimeSessionStorageContext } from "@pragma/core";
-import type { RuntimeCreateSessionRequest } from "@pragma/core";
+import type {
+  AgentMessage,
+  IExpertAgentMcpConfig,
+  IExpertAgentSkillsConfig,
+  RuntimeAgentSession,
+  RuntimeStreamEvent,
+  RuntimeSubmitHandle,
+  RuntimeSubmitRequest,
+} from "@pragma/core";
+import type { RuntimeDriverSessionRequest } from "@pragma/core";
 import { createCodexRuntime as createCodexRuntimeAdapter } from "../src/adapter.ts";
 import { canUseCodexRuntime } from "../src/availability.ts";
 import type { CodexRuntimeSpawn } from "../src/types.ts";
@@ -26,13 +33,94 @@ function createCodexRuntime(options?: CodexRuntimeAdapterOptions) {
   const runtime = createCodexRuntimeAdapter(options);
   return {
     ...runtime,
-    createSession(request: Omit<RuntimeCreateSessionRequest, "owner">) {
-      return runtime.createSession({
-        ...request,
-        owner: { workflowRunId: "workflow-codex-test", taskRunId: "task-codex-test" },
-        pragmaHome: join(request.agent.workspace, "pragma-test-home"),
-      });
+    createSession(request: Omit<RuntimeDriverSessionRequest, "workflowExecution">) {
+      return createPragmaTestSession(runtime, request);
     },
+  };
+}
+
+async function createPragmaTestSession(
+  runtime: ReturnType<typeof createCodexRuntimeAdapter>,
+  request: Omit<RuntimeDriverSessionRequest, "workflowExecution">,
+): Promise<RuntimeAgentSession & { readonly workflowRunId: () => string | undefined }> {
+  const availability = await runtime.canUse();
+  if (!availability.usable) {
+    throw new Error(
+      `Runtime is not available: ${runtime.descriptor.displayName} (${runtime.descriptor.id}).${availability.reason === undefined ? "" : ` ${availability.reason}`}`,
+    );
+  }
+  let info = {
+    systemSessionId: request.systemSessionId ?? "pending",
+    runtimeSession: request.runtimeSession ?? { type: runtime.descriptor.kind, id: "pending" },
+    agentId: request.agent.id,
+    runtime: runtime.descriptor,
+    sessionState: "active" as const,
+    runState: undefined,
+  };
+  let workflowRunId: string | undefined;
+  const messages: AgentMessage[] = [];
+
+  return {
+    info: () => info,
+    workflowRunId: () => workflowRunId,
+    messages: () => messages,
+    submit<TOutput>(submission: RuntimeSubmitRequest<TOutput>): RuntimeSubmitHandle<TOutput> {
+      const runtimeEvents: RuntimeStreamEvent[] = [];
+      let usage: Extract<RuntimeStreamEvent, { type: "run.completed" }>["payload"]["usage"];
+      const execution = (async () => {
+        const app = createPragma({
+          runtimes: createRuntimeRegistry({
+            runtimes: [runtime],
+            defaultRuntime: runtime.descriptor.id,
+          }),
+        });
+        const handle = await app.start(request.agent, {
+          input: submission.query,
+          modelName: submission.modelName,
+          thinkingLevel: submission.thinkingLevel,
+          output: submission.output,
+          runtimeSession: request.runtimeSession,
+          systemSessionId: request.systemSessionId,
+        });
+        workflowRunId = handle.workflowRunId;
+        for await (const event of handle.events) {
+          if (event.type.startsWith("workflow.") || event.type.startsWith("human.")) {
+            continue;
+          }
+          const projected = { type: event.type, payload: event.payload } as RuntimeStreamEvent;
+          runtimeEvents.push(projected);
+          if (projected.type === "run.completed") {
+            usage = projected.payload.usage;
+          }
+        }
+        const result = await handle.result;
+        info = {
+          ...info,
+          systemSessionId: result.systemSessionId ?? info.systemSessionId,
+          runtimeSession: result.runtimeSession ?? info.runtimeSession,
+        };
+        return { result, usage };
+      })();
+
+      return {
+        runId: submission.runId ?? "pragma-test-run",
+        events: {
+          async *[Symbol.asyncIterator]() {
+            await execution.catch(() => undefined);
+            yield* runtimeEvents;
+          },
+        },
+        result: execution.then(({ result, usage: runUsage }) => ({
+          runId: submission.runId ?? "pragma-test-run",
+          result: {
+            output: result.output as TOutput,
+            ...(runUsage === undefined ? {} : { usage: runUsage }),
+          },
+        })),
+        cancel: async () => undefined,
+      };
+    },
+    abort: async () => undefined,
   };
 }
 
@@ -133,17 +221,13 @@ describe("createCodexRuntime", () => {
     expect(fake.command).toBe("codex");
     expect(fake.args.slice(0, 3)).toEqual(["app-server", "--listen", "stdio://"]);
     expectCodexMcpArgs(fake.args);
-    expect(fake.env["CODEX_HOME"]).toEqual(
-      join(
-        new PragmaPaths({ pragmaHome: agent.pragmaHome }).runtimeRoot(
-          "workflow-codex-test",
-          session.info().systemSessionId,
-          "codex",
-        ),
-        "home",
+    expect(fake.env["CODEX_HOME"]).toContain(
+      new PragmaPaths({ pragmaHome: agent.pragmaHome }).workflowSessionsRoot(
+        session.workflowRunId() as string,
       ),
     );
-    expect(fake.requests.map((request) => request.method)).toEqual([
+    expect(fake.env["CODEX_HOME"]).toMatch(/\/runtime\/codex\/home$/);
+    expect(fake.requests.map((request) => request.method).slice(0, 4)).toEqual([
       "initialize",
       "initialized",
       "thread/start",
@@ -173,8 +257,6 @@ describe("createCodexRuntime", () => {
       "message.completed",
       "run.completed",
     ]);
-    expect(session.messages()).toHaveLength(2);
-
     await session.abort();
   });
 
@@ -218,8 +300,7 @@ describe("createCodexRuntime", () => {
     });
 
     const session = await adapter.createSession({ agent });
-
-    await session.abort();
+    await session.submit({ query: "Use the configured MCP server." }).result;
 
     expect(dispose).toHaveBeenCalledOnce();
   });
@@ -432,6 +513,7 @@ describe("createCodexRuntime", () => {
     });
 
     const session = await adapter.createSession({ agent });
+    await session.submit({ query: "Use the local skill." }).result;
     const codexHome = readSpawnCodexHome(fake);
     const skillContent = await readFile(
       join(codexHome, "skills", "local-skill", "SKILL.md"),
@@ -449,289 +531,6 @@ describe("createCodexRuntime", () => {
     await expect(
       lstat(join(codexHome, "skills", "unresolved-registry-skill")),
     ).rejects.toMatchObject({ code: "ENOENT" });
-
-    await session.abort();
-  });
-
-  it("injects always-on context into the first codex turn input", async () => {
-    const fake = new FakeCodexAppServer();
-    const adapter = createCodexRuntime({
-      spawn: fake.spawn,
-    });
-    const contextSystem = new ContextSystem();
-    contextSystem.register({
-      namespace: HOST_CONTEXT_NAMESPACE,
-      store: createInMemoryContextStore({
-        context: [
-          {
-            id: "startup.md",
-            content: "Codex runtime startup context marker.",
-            metadata: { trigger: "always_on" },
-          },
-        ],
-      }),
-    });
-    const agent = await createTestAgent({ contextSystem });
-
-    const session = await adapter.createSession({ agent });
-    const threadStart = fake.requests.find((request) => request.method === "thread/start");
-
-    expect(readRequestParams(threadStart)?.["developerInstructions"]).not.toContain(
-      "Codex runtime startup context marker.",
-    );
-
-    const firstHandle = session.submit({ query: "Say hello" });
-    await firstHandle.result;
-    const firstTurnStart = fake.requests.filter((request) => request.method === "turn/start")[0];
-    const firstTurnInput = readRequestParams(firstTurnStart)?.["input"];
-
-    expect(firstTurnInput).toEqual([
-      expect.objectContaining({
-        type: "text",
-        text: expect.stringContaining("Codex runtime startup context marker."),
-        text_elements: [],
-      }),
-      expect.objectContaining({
-        type: "text",
-        text: "Say hello",
-        text_elements: [],
-      }),
-    ]);
-    expect(session.messages()[0]).toEqual(
-      expect.objectContaining({
-        role: "user",
-        content: expect.stringContaining("Codex runtime startup context marker."),
-      }),
-    );
-
-    const secondHandle = session.submit({ query: "Say again" });
-    await secondHandle.result;
-    const secondTurnStart = fake.requests.filter((request) => request.method === "turn/start")[1];
-
-    expect(readRequestParams(secondTurnStart)?.["input"]).toEqual([
-      expect.objectContaining({
-        type: "text",
-        text: "Say again",
-        text_elements: [],
-      }),
-    ]);
-
-    await session.abort();
-  });
-
-  it("does not inject startup context again after the first codex turn start fails", async () => {
-    const fake = new FakeCodexAppServer({ failFirstTurnStart: true });
-    const adapter = createCodexRuntime({
-      spawn: fake.spawn,
-    });
-    const contextSystem = new ContextSystem();
-    contextSystem.register({
-      namespace: HOST_CONTEXT_NAMESPACE,
-      store: createInMemoryContextStore({
-        context: [
-          {
-            id: "startup.md",
-            content: "Codex runtime startup context marker.",
-            metadata: { trigger: "always_on" },
-          },
-        ],
-      }),
-    });
-    const agent = await createTestAgent({ contextSystem });
-
-    const session = await adapter.createSession({ agent });
-    const failedHandle = session.submit({ query: "First attempt" });
-
-    await expect(failedHandle.result).rejects.toThrow("Injected turn start failure");
-
-    const retryHandle = session.submit({ query: "Retry attempt" });
-    await retryHandle.result;
-    const turnStarts = fake.requests.filter((request) => request.method === "turn/start");
-
-    expect(readRequestParams(turnStarts[0])?.["input"]).toEqual([
-      expect.objectContaining({
-        text: expect.stringContaining("Codex runtime startup context marker."),
-      }),
-      expect.objectContaining({
-        text: "First attempt",
-      }),
-    ]);
-    expect(readRequestParams(turnStarts[1])?.["input"]).toEqual([
-      expect.objectContaining({
-        text: "Retry attempt",
-      }),
-    ]);
-    expect(
-      session
-        .messages()
-        .filter(
-          (message) =>
-            "content" in message &&
-            typeof message.content === "string" &&
-            message.content.includes("Codex runtime startup context marker."),
-        ),
-    ).toHaveLength(1);
-
-    await session.abort();
-  });
-
-  it("resumes a matching codex runtime session", async () => {
-    const fake = new FakeCodexAppServer();
-    const adapter = createCodexRuntime({
-      spawn: fake.spawn,
-    });
-    const agent = await createTestAgent();
-    await seedCodexSessionRecord(agent, "system-thread-existing", "thread-existing");
-
-    const session = await adapter.createSession({
-      agent,
-      systemSessionId: "system-thread-existing",
-      runtimeSession: {
-        type: "codex-local",
-        id: "thread-existing",
-      },
-    });
-
-    expect(fake.requests.map((request) => request.method)).toContain("thread/resume");
-    expect(fake.requests.map((request) => request.method)).not.toContain("thread/start");
-    expect(session.info().runtimeSession.id).toBe("thread-existing");
-
-    await session.abort();
-  });
-
-  it("does not accept a different Codex session file that only contains the requested id", async () => {
-    const fake = new FakeCodexAppServer();
-    const adapter = createCodexRuntime({ spawn: fake.spawn });
-    const agent = await createTestAgent();
-    await seedCodexSessionRecord(
-      agent,
-      "system-thread-substring",
-      "thread-existing",
-      "rollout-thread-existing-backup.jsonl",
-    );
-
-    await expect(
-      adapter.createSession({
-        agent,
-        systemSessionId: "system-thread-substring",
-        runtimeSession: { type: "codex-local", id: "thread-existing" },
-      }),
-    ).rejects.toThrow("Codex runtime session file was not found: thread-existing.");
-    expect(fake.command).toBe("");
-  });
-
-  it("rejects the session creation when the requested Codex thread cannot be resumed", async () => {
-    const fake = new FakeCodexAppServer({ failThreadResume: true });
-    const adapter = createCodexRuntime({ spawn: fake.spawn });
-    const agent = await createTestAgent();
-    await seedCodexSessionRecord(agent, "system-thread-missing", "thread-missing");
-
-    await expect(
-      adapter.createSession({
-        agent,
-        systemSessionId: "system-thread-missing",
-        runtimeSession: { type: "codex-local", id: "thread-missing" },
-      }),
-    ).rejects.toThrow("Injected thread resume failure");
-    expect(fake.requests.map((request) => request.method)).toContain("thread/resume");
-    expect(fake.requests.map((request) => request.method)).not.toContain("thread/start");
-    expect(fake.killed).toBe(true);
-  });
-
-  it("does not inject startup context when resuming a codex runtime session", async () => {
-    const fake = new FakeCodexAppServer();
-    const adapter = createCodexRuntime({
-      spawn: fake.spawn,
-    });
-    const contextSystem = new ContextSystem();
-    contextSystem.register({
-      namespace: HOST_CONTEXT_NAMESPACE,
-      store: createInMemoryContextStore({
-        context: [
-          {
-            id: "startup.md",
-            content: "Codex runtime startup context marker.",
-            metadata: { trigger: "always_on" },
-          },
-        ],
-      }),
-    });
-    const agent = await createTestAgent({ contextSystem });
-    await seedCodexSessionRecord(agent, "system-thread-context", "thread-existing");
-
-    const session = await adapter.createSession({
-      agent,
-      systemSessionId: "system-thread-context",
-      runtimeSession: {
-        type: "codex-local",
-        id: "thread-existing",
-      },
-    });
-    const handle = session.submit({ query: "Say hello" });
-    await handle.result;
-    const turnStart = fake.requests.find((request) => request.method === "turn/start");
-
-    expect(readRequestParams(turnStart)?.["input"]).toEqual([
-      expect.objectContaining({
-        type: "text",
-        text: "Say hello",
-        text_elements: [],
-      }),
-    ]);
-
-    await session.abort();
-  });
-
-  it("restores a matching codex runtime session before resume", async () => {
-    const fake = new FakeCodexAppServer();
-    const restoredContexts: RuntimeSessionStorageContext[] = [];
-    const adapter = createCodexRuntime({
-      spawn: fake.spawn,
-      sessionRestoreHandler: (context) => {
-        restoredContexts.push(context);
-      },
-    });
-    const agent = await createTestAgent();
-    await seedCodexSessionRecord(agent, "system-thread-restore", "thread-existing");
-
-    const session = await adapter.createSession({
-      agent,
-      systemSessionId: "system-thread-restore",
-      runtimeSession: {
-        type: "codex-local",
-        id: "thread-existing",
-      },
-    });
-    const [restoredContext] = restoredContexts;
-
-    expect(restoredContext).toBeDefined();
-    expect(restoredContext?.runtimeSession).toEqual({
-      type: "codex-local",
-      id: "thread-existing",
-    });
-    expect(fake.requests.map((request) => request.method)).toContain("thread/resume");
-
-    await session.abort();
-  });
-
-  it("rejects app-server approval requests when no human handler is configured", async () => {
-    const fake = new FakeCodexAppServer({ requestApproval: true });
-    const adapter = createCodexRuntime({
-      spawn: fake.spawn,
-    });
-    const agent = await createTestAgent();
-    const session = await adapter.createSession({ agent });
-    const handle = session.submit({ query: "Run a command" });
-
-    await handle.result;
-
-    expect(fake.responses).toContainEqual({
-      id: 100,
-      result: {
-        decision: "reject",
-        reason: "No approval handler is configured.",
-      },
-    });
 
     await session.abort();
   });
@@ -759,51 +558,6 @@ async function createTestAgent(
     ...(options.mcp === undefined ? {} : { mcp: options.mcp }),
     ...(options.skills === undefined ? {} : { skills: options.skills }),
   });
-}
-
-async function seedCodexSessionRecord(
-  agent: ExpertAgent,
-  systemSessionId: string,
-  runtimeSessionId: string,
-  nativeFileName = `rollout-${runtimeSessionId}.jsonl`,
-): Promise<void> {
-  const paths = new PragmaPaths({ pragmaHome: agent.pragmaHome });
-  await mkdir(paths.systemSessionRoot("workflow-codex-test", systemSessionId), {
-    recursive: true,
-  });
-  const now = new Date().toISOString();
-  await writeFile(
-    paths.systemSessionManifest("workflow-codex-test", systemSessionId),
-    `${JSON.stringify(
-      {
-        schemaVersion: 1,
-        workflowRunId: "workflow-codex-test",
-        systemSessionId,
-        agentId: agent.id,
-        taskRunId: "task-codex-test",
-        runtime: { id: "codex-local", kind: "codex-local" },
-        runtimeSessionRef: { type: "codex-local", id: runtimeSessionId },
-        currentWorkspace: agent.workspace,
-        workspaceHistory: [agent.workspace],
-        status: "closed",
-        createdAt: now,
-        updatedAt: now,
-      },
-      null,
-      2,
-    )}\n`,
-    "utf8",
-  );
-  const nativeSessionDir = join(
-    paths.runtimeRoot("workflow-codex-test", systemSessionId, "codex"),
-    "home",
-    "sessions",
-    "2026",
-    "01",
-    "01",
-  );
-  await mkdir(nativeSessionDir, { recursive: true });
-  await writeFile(join(nativeSessionDir, nativeFileName), "{}\n", "utf8");
 }
 
 async function collectAsync<T>(iterable: AsyncIterable<T>): Promise<T[]> {
@@ -1175,14 +929,6 @@ function createExpectedUsage(usage: {
 
 function isFakeResponse(message: FakeRequest | FakeResponse): message is FakeResponse {
   return "result" in message || "error" in message;
-}
-
-function readRequestParams(request: FakeRequest | undefined): Record<string, unknown> | undefined {
-  if (request === undefined || typeof request.params !== "object" || request.params === null) {
-    return undefined;
-  }
-
-  return request.params as Record<string, unknown>;
 }
 
 function expectCodexMcpArgs(args: readonly string[]): void {

@@ -39,8 +39,5 @@ function createFakeRuntime(id: string): RuntimeAdapter {
       displayName: "Fake Runtime",
     },
     canUse: () => ({ usable: true }),
-    async createSession() {
-      throw new Error("Not implemented in registry tests.");
-    },
   };
 }

@@ -59,7 +59,7 @@ pnpm --filter @pragma/examples dev src/run-expert-agent.ts --system-session-id l
 3. 创建自定义 logger provider，并同时传给 `ExpertAgent` 与 `createPiRuntime()`。
 4. 可选传入 `runtimeSession` 恢复 runtime session。
 5. 使用 runtime 创建 session。
-6. 对每个 turn 调用 `session.submit()` 并处理流式事件。
+6. 对每个任务调用 `app.start()` 并处理 `RunHandle.events` 与 `RunHandle.result`。
 7. 在 `finally` 中关闭 session。
 
 ## 运行 Codex Runtime 示例
@@ -181,85 +181,9 @@ pnpm --filter @pragma/examples dev src/run-memory-system-example.ts
 
 示例入口是 `src/run-memory-system-example.ts`。
 
-## 运行 Session 存储示例
+## Session 恢复与审批示例
 
-```bash
-pnpm --filter @pragma/examples dev src/run-session-storage-example.ts
-```
-
-这个示例演示 runtime session 在沙盒或 workspace 生命周期外的同步与恢复：
-
-1. 使用 `workspace/session-storage-example/workspace-a` 创建会话。
-2. 发送第一轮聊天，让模型记住项目代号和目标。
-3. 通过 `sessionSyncCallback` 把 Workflow 私有的 PI Runtime 目录同步到示例长期存储目录。
-4. 切换到 `workspace/session-storage-example/workspace-b`。
-5. 使用同一个 `RuntimeSessionRef` 恢复会话，并通过 `sessionRestoreHandler` 把长期存储恢复到新 workspace 的 session 目录。
-6. 再发送一轮聊天，让模型总结上轮会话。
-7. 关闭恢复后的会话时再次同步，模拟后续更新写回长期存储。
-
-示例入口是 `src/run-session-storage-example.ts`。它用本地目录模拟长期存储；真实服务接入时，`sessionSyncCallback` 和 `sessionRestoreHandler` 可以在相同参数里读取 `agentId`、`runtimeSession.id`、`systemSessionId`、`workspace` 和 `context.attributes`，用于鉴权、租户隔离和对象存储路径选择。
-
-## 运行审批示例
-
-```bash
-pnpm --filter @pragma/examples dev src/run-tool-approval-example.ts
-```
-
-这个示例展示两件事：
-
-- 内置 `askUserQuestion` 会通过运行时注入的 human interaction handler 读取用户回答。
-- 普通工具可以通过 `approval: { mode: "required" }` 声明为需要确认，运行时会先发出 `tool.approval_requested` 事件，再交给用户决定是否继续。
-
-示例入口是 `src/run-tool-approval-example.ts`，它通过 `runtime.createSession({ humanInteractionHandler })` 注入人类交互 handler。handler 根据 `request.kind` 区分 `user_question` 和 `tool_approval`：CLI 中 `[question] askUserQuestion` 表示输入给模型的问题回答，`[approval] <tool>` 表示是否批准工具执行。`askUserQuestion` 的每个问题支持 `kind: "single_choice"`、`kind: "multiple_choice"` 和 `kind: "text"`；旧格式只传 `options` 时会按单选处理。
-
-工具声明时可以直接要求审批：
-
-```ts
-approval: {
-  mode: "required",
-  reason: "Shell command may delete files.",
-  when: ({ input }) =>
-    typeof input === "object" &&
-    input !== null &&
-    "command" in input &&
-    typeof input.command === "string" &&
-    /\brm\b/.test(input.command),
-}
-```
-
-插件也可以通过 `toolApprovals` 给已有工具追加审批策略。工具自带策略和插件策略会合并；只要任一策略命中，就会触发审批。
-
-### 恢复未完成审批
-
-```bash
-pnpm --filter @pragma/examples dev src/run-resumable-tool-approval.ts --reset --workflow-id demo-approval
-```
-
-这个示例展示如何用真实 PI runtime 和 `@pragma/core` 的 durable human interaction 能力恢复未完成的工具审批：
-
-1. 创建带 `approval: { mode: "required" }` 的 `deploy_preview` 工具。
-2. 使用 `createPiRuntime()` 执行 Agent，并用 `createFileHumanInteractionStore()` 保存 pending approval。
-3. 用 `createDurableHumanInteractionHandler()` 包装 CLI handler。
-4. 未传 query 时用公共 `createConsoleChat()` harness 等待控制台输入，不会默认提交任务；输入 `/exit` 或 `/quit` 退出。
-5. PI runtime 保存聊天记录；示例保存 `workflowId` 到完整 `RuntimeSessionRef` 的映射和当前 turn 状态。
-6. 手动要求 Agent 调用 `deploy_preview`，在 `Approve? [y/N]` 时按 `Ctrl-C` 模拟应用关闭。
-7. 第二次启动时按 `workflowId` 或 `sessionId` 找回 PI session。PI 重新生成同一逻辑工具调用时，即使 `toolCallId` 改变，也会命中原 pending approval。
-8. 输入 `y` 后继续执行工具；approval 会被 resolve 并从 pending store 清除，当前 turn 完成后 workflow 回到 ready。
-9. 再次用同一 `workflowId` 启动会恢复聊天记录并停在 `You>`，不会重新提交任务或再次要求审批。
-
-按 `workflowId` 恢复：
-
-```bash
-pnpm --filter @pragma/examples dev src/run-resumable-tool-approval.ts --workflow-id demo-approval
-```
-
-按 `sessionId` 恢复：
-
-```bash
-pnpm --filter @pragma/examples dev src/run-resumable-tool-approval.ts --session-id <session-id>
-```
-
-示例入口是 `src/run-resumable-tool-approval.ts`。runtime transcript 由 PI runtime 保存；示例另存一份轻量 workflow state，用于映射彼此独立的 `workflowId`、`systemSessionId`、完整 PI `RuntimeSessionRef`，并跟踪当前 turn。首次启动生成独立的 system Session ID 且不传 `runtimeSession`，创建成功后保存三者映射；恢复时必须同时传入原 Workflow owner、system Session ID 和 Runtime Ref，任何一项缺失都会直接报错。控制台 chat 循环封装在 `src/harness/console-chat.ts`，其他 example 可以复用。pending approval 的持久化、逻辑去重、resolve 和 clear 由 `createDurableHumanInteractionHandler()` 与 `HumanInteractionStore` 负责。真实产品接入时，应把 workflow state 和 `HumanInteractionStore` 换成数据库实现，并把 `scope` 绑定到租户、用户、workflow/run 和 runtime session 类型。
+直接 Runtime Session、Session storage、多轮会话和 resumable approval 示例在第二阶段不再运行。原实现仍以整文件注释保留在对应 `src/run-*.ts` 中，作为第三阶段迁移参考。普通执行统一使用 `createPragma({ runtimes }).start()` 或 `.run()`；这些恢复场景将在 `PragmaApp.resume(rootDefinition, { workflowRunId })` 阶段以 Workflow 恢复方式重新启用。
 
 ## 运行上下文示例
 
@@ -333,4 +257,4 @@ Agent 委派示例需要模型 key。它展示的是 ExpertAgent 之间通过 `l
 - `logger.ts`：演示自定义 logger provider，输出简短审计日志。
 - `expert-agent-example-utils.ts`：打印运行信息、预检上下文。
 
-不要把业务流程继续包进 harness。新增示例时，应在 `src/run-*.ts` 中显式写出 ExpertAgent 的创建、models 配置、runtime session、`session.submit()` 流式事件处理和清理步骤。
+不要把业务流程继续包进 harness。新增示例时，应在 `src/run-*.ts` 中显式写出 ExpertAgent、Runtime registry、PragmaApp，以及 `app.start()`/`app.run()` 的事件和结果处理。

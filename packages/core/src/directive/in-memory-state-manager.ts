@@ -60,9 +60,7 @@ export function createInMemoryStateManager(): StateManager {
     return task;
   };
 
-  const saveHumanInteraction = (
-    interaction: HumanInteractionRecord,
-  ): HumanInteractionRecord => {
+  const saveHumanInteraction = (interaction: HumanInteractionRecord): HumanInteractionRecord => {
     humanInteractions.set(interaction.id, interaction);
     return interaction;
   };
@@ -83,9 +81,7 @@ export function createInMemoryStateManager(): StateManager {
     nextStatus: string,
   ): void => {
     if (!allowedStatuses.includes(task.status)) {
-      throw new Error(
-        `Cannot mark task ${task.id} as ${nextStatus} from status ${task.status}.`,
-      );
+      throw new Error(`Cannot mark task ${task.id} as ${nextStatus} from status ${task.status}.`);
     }
   };
 
@@ -117,11 +113,12 @@ export function createInMemoryStateManager(): StateManager {
     },
 
     async listWorkflowRuns(filter = {}) {
-      const statuses = filter.status === undefined
-        ? undefined
-        : Array.isArray(filter.status)
-          ? filter.status
-          : [filter.status];
+      const statuses =
+        filter.status === undefined
+          ? undefined
+          : Array.isArray(filter.status)
+            ? filter.status
+            : [filter.status];
 
       return [...workflows.values()]
         .filter((workflow) => {
@@ -154,11 +151,7 @@ export function createInMemoryStateManager(): StateManager {
     async createTaskRun(request: CreateTaskRunRequest) {
       const existingActiveTask = (taskIdsByWorkflowId.get(request.workflowRunId) ?? [])
         .map((taskId) => getRequiredTask(taskId))
-        .find(
-          (task) =>
-            task.stepId === request.stepId &&
-            activeTaskStatuses.has(task.status),
-        );
+        .find((task) => task.stepId === request.stepId && activeTaskStatuses.has(task.status));
 
       if (existingActiveTask !== undefined) {
         throw new Error(
@@ -296,6 +289,9 @@ export function createInMemoryStateManager(): StateManager {
             ...task,
             status: "succeeded",
             output: cloneJson(output),
+            ...(metadata?.systemSessionId === undefined
+              ? {}
+              : { systemSessionId: metadata.systemSessionId }),
             ...(metadata?.runtimeSession === undefined
               ? {}
               : { runtimeSession: metadata.runtimeSession }),
@@ -309,7 +305,9 @@ export function createInMemoryStateManager(): StateManager {
       return cloneJson(
         updateTask(taskRunId, (task) => {
           if (terminalTaskStatuses.has(task.status)) {
-            throw new Error(`Cannot mark terminal task ${task.id} as failed from status ${task.status}.`);
+            throw new Error(
+              `Cannot mark terminal task ${task.id} as failed from status ${task.status}.`,
+            );
           }
 
           return {
@@ -349,26 +347,10 @@ export function createInMemoryStateManager(): StateManager {
       if (appliedMessageIds.has(message.id)) {
         return {
           workflow: cloneJson(getRequiredWorkflow(message.workflowRunId)),
-          task: message.taskRunId === undefined ? undefined : cloneJson(getRequiredTask(message.taskRunId)),
-          duplicate: true,
-        };
-      }
-
-      appliedMessageIds.add(message.id);
-
-      return {
-        workflow: cloneJson(getRequiredWorkflow(message.workflowRunId)),
-        task: message.taskRunId === undefined ? undefined : cloneJson(getRequiredTask(message.taskRunId)),
-        duplicate: false,
-      };
-    },
-
-    async applyWorkflowEvent(message: MailboxMessage): Promise<StateTransitionResult> {
-      if (appliedMessageIds.has(message.id)) {
-        return {
-          workflow: cloneJson(getRequiredWorkflow(message.workflowRunId)),
           task:
-            message.taskRunId === undefined ? undefined : cloneJson(getRequiredTask(message.taskRunId)),
+            message.taskRunId === undefined
+              ? undefined
+              : cloneJson(getRequiredTask(message.taskRunId)),
           duplicate: true,
         };
       }
@@ -378,7 +360,33 @@ export function createInMemoryStateManager(): StateManager {
       return {
         workflow: cloneJson(getRequiredWorkflow(message.workflowRunId)),
         task:
-          message.taskRunId === undefined ? undefined : cloneJson(getRequiredTask(message.taskRunId)),
+          message.taskRunId === undefined
+            ? undefined
+            : cloneJson(getRequiredTask(message.taskRunId)),
+        duplicate: false,
+      };
+    },
+
+    async applyWorkflowEvent(message: MailboxMessage): Promise<StateTransitionResult> {
+      if (appliedMessageIds.has(message.id)) {
+        return {
+          workflow: cloneJson(getRequiredWorkflow(message.workflowRunId)),
+          task:
+            message.taskRunId === undefined
+              ? undefined
+              : cloneJson(getRequiredTask(message.taskRunId)),
+          duplicate: true,
+        };
+      }
+
+      appliedMessageIds.add(message.id);
+
+      return {
+        workflow: cloneJson(getRequiredWorkflow(message.workflowRunId)),
+        task:
+          message.taskRunId === undefined
+            ? undefined
+            : cloneJson(getRequiredTask(message.taskRunId)),
         duplicate: false,
       };
     },

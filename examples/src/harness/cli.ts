@@ -2,8 +2,6 @@ import { cac } from "cac";
 
 export interface BasicExampleCliOptions {
   readonly turns: readonly string[];
-  readonly runtimeSessionId: string | undefined;
-  readonly systemSessionId: string | undefined;
 }
 
 export interface WorkspaceContextsExampleCliOptions {
@@ -17,9 +15,7 @@ export function readBasicExampleCli(defaultQuery: string): BasicExampleCliOption
 
   cli
     .command("[query...]", "Task query to send to the ExpertAgent.")
-    .option("--turn <query>", "Task query to submit. Repeat this option for multi-turn tests.")
-    .option("--runtime-session-id <id>", "Resume or create the runtime session with this id.")
-    .option("--system-session-id <id>", "Use a fixed Pragma system session id.");
+    .option("--turn <query>", "Independent task query. Repeat to start multiple Workflows.");
   cli.help();
 
   const parsed = cli.parse();
@@ -27,8 +23,6 @@ export function readBasicExampleCli(defaultQuery: string): BasicExampleCliOption
 
   return {
     turns: readBasicTurns(parsed.args, parsed.options.turn, defaultQuery),
-    runtimeSessionId: readStringOption(parsed.options.runtimeSessionId),
-    systemSessionId: readStringOption(parsed.options.systemSessionId),
   };
 }
 

@@ -53,12 +53,13 @@ packages/runtime/pi
 packages/runtime/codex
 ```
 
-Runtime sessions are owned by exactly one Workflow. `RuntimeAdapter.createSession()` therefore
-requires `owner.workflowRunId`; TaskManager-created sessions also carry `taskRunId`. Core stores the
-system record at `~/.pragma/state/workflows/<workflow>/sessions/<system-session>/session.json`, and
-concrete runtimes receive only their Workflow-private runtime directory from Core. A resume request
-must provide the original workflow id, system session id, and `RuntimeSessionRef { type, id }`; all
-record fields and the native session file must match or restoration fails.
+Runtime sessions are owned by exactly one Workflow. Public Runtime Adapters expose capability and
+model discovery only; `defineRuntimeDriver()` registers their Session factory in a Core-private
+registry. TaskManager supplies a real `DirectiveExecutionContext`, and Core derives both
+`workflowRunId` and `taskRunId` from it. Core stores the system record at
+`~/.pragma/state/workflows/<workflow>/sessions/<system-session>/session.json`, and concrete runtimes
+receive only their Workflow-private runtime directory. Future resume requests must restore the
+original Workflow together with its system Session and `RuntimeSessionRef { type, id }`.
 
 Agent workspaces contain task inputs, repositories, artifacts, and task-authored files only. Runtime
 state, configuration, sessions, and installed plugin copies must never be derived from or written

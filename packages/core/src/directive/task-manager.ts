@@ -20,9 +20,11 @@ import type {
   TaskDispatchPayload,
   TaskManager,
   TaskManagerOptions,
+  TaskManagerStartRunOptions,
   RunHandle,
 } from "./types.ts";
 import type { RuntimeSessionRef } from "../runtime/runtime-adapter.ts";
+import { createEmptyRunEvents, createRunEventChannel } from "./run-event-channel.ts";
 import { createId, nowIso, readObjectField } from "./utils.ts";
 
 interface RunContext<TOutput = unknown> {
@@ -34,6 +36,11 @@ interface HumanInteractionWaiter {
   readonly taskRunId: string;
   readonly workflowRunId: string;
   readonly resolve: (response: HumanInteractionResponse) => void;
+}
+
+interface PreparedTaskDispatch {
+  readonly task: TaskRunRecord;
+  readonly payload: TaskDispatchPayload;
 }
 
 const cancellableTaskStatuses = new Set<TaskRunStatus>([
@@ -120,6 +127,7 @@ export function createLocalTaskManager(options: TaskManagerOptions): TaskManager
     async startRun<TInput, TOutput>(
       directive: CompiledDirective<TInput, TOutput>,
       request: StartRunRequest<TInput>,
+      startOptions: TaskManagerStartRunOptions = {},
     ): Promise<RunHandle<TOutput>> {
       await manager.start();
       const input = directive.inputSchema?.parse(request.input) ?? request.input;
@@ -172,6 +180,16 @@ export function createLocalTaskManager(options: TaskManagerOptions): TaskManager
           reject,
         });
       });
+      void result.catch(() => undefined);
+
+      const initialDispatches = await prepareReadyTaskDispatches(workflow.id);
+      const events =
+        startOptions.events === "none"
+          ? createEmptyRunEvents()
+          : await createRunEventChannel({
+              mailbox: options.mailbox,
+              rootWorkflowRunId: workflow.id,
+            });
 
       await publish({
         kind: "event",
@@ -194,7 +212,7 @@ export function createLocalTaskManager(options: TaskManagerOptions): TaskManager
         },
       });
 
-      void manager.dispatchReadyTasks(workflow.id).catch((error) => {
+      void dispatchPreparedTasks(initialDispatches).catch((error) => {
         void failWorkflow(workflow.id, toError(error), {
           message: error instanceof Error ? error.message : String(error),
         });
@@ -202,6 +220,7 @@ export function createLocalTaskManager(options: TaskManagerOptions): TaskManager
 
       return {
         workflowRunId: workflow.id,
+        events,
         result,
         async cancel(reason) {
           await manager.cancelRun(workflow.id, reason);
@@ -236,100 +255,7 @@ export function createLocalTaskManager(options: TaskManagerOptions): TaskManager
     },
 
     async dispatchReadyTasks(workflowRunId) {
-      const definition = await getDirectiveDefinition(workflowRunId);
-      const workflow = await options.stateManager.getWorkflowRun(workflowRunId);
-
-      if (workflow === undefined || workflow.status !== "running") {
-        return;
-      }
-
-      for (const stepId of workflow.currentStepIds) {
-        const step = definition.directive.steps.get(stepId);
-
-        if (step === undefined) {
-          throw new Error(`Directive ${definition.directive.id} references unknown step: ${stepId}`);
-        }
-
-        const existingTasks = await options.stateManager.listTaskRuns(workflowRunId);
-        const activeTask = existingTasks.find(
-          (task) =>
-            task.stepId === stepId &&
-            ["pending", "dispatched", "leased", "running", "waiting"].includes(task.status),
-        );
-
-        if (activeTask !== undefined) {
-          continue;
-        }
-
-        const visit = existingTasks.filter((task) => task.stepId === stepId).length + 1;
-        const limit = definition.directive.limits.get(stepId);
-
-        if (limit?.maxVisits !== undefined && visit > limit.maxVisits) {
-          await completeWithTerminal(workflowRunId, limit.onExceeded ?? { type: "fail" });
-          continue;
-        }
-
-        const latestWorkflow = await options.stateManager.getWorkflowRun(workflowRunId);
-
-        if (latestWorkflow === undefined) {
-          throw new Error(`Workflow run is not found: ${workflowRunId}`);
-        }
-
-        const input = await resolveStepInput(step, {
-          task: createSyntheticTask(workflowRunId, stepId, visit),
-          workflow: latestWorkflow,
-          state: latestWorkflow.state,
-        });
-        const runtimeId = resolveRuntimeId(
-          step,
-          definition.request,
-          options.runtimes.defaultRuntime,
-        );
-        let task: TaskRunRecord;
-
-        try {
-          task = await options.stateManager.createTaskRun({
-            workflowRunId,
-            stepId,
-            visit,
-            runtimeId,
-            input,
-          });
-        } catch (error) {
-          if (isActiveTaskRunConflict(error)) {
-            continue;
-          }
-
-          throw error;
-        }
-
-        await options.stateManager.markTaskDispatched(task.id);
-        await publish<TaskDispatchPayload>({
-          kind: "command",
-          type: "task.dispatch",
-          workflowRunId,
-          taskRunId: task.id,
-          stepId,
-          payload: {
-            taskRunId: task.id,
-            workflowRunId,
-            directiveId: definition.directive.id,
-            stepId,
-            visit,
-            input,
-            runtime: {
-              requestedId: step.runtime ?? definition.request.runtime,
-              resolvedId: runtimeId,
-            },
-            sandbox: step.sandbox ?? {
-              strategy: {
-                mode: "reuse-workflow",
-              },
-            },
-            policy: {},
-          },
-        });
-      }
+      await dispatchPreparedTasks(await prepareReadyTaskDispatches(workflowRunId));
     },
 
     async cancelRun(workflowRunId, reason) {
@@ -424,7 +350,9 @@ export function createLocalTaskManager(options: TaskManagerOptions): TaskManager
       const step = definition.directive.steps.get(lease.task.stepId);
 
       if (step === undefined) {
-        throw new Error(`Directive ${definition.directive.id} references unknown step: ${lease.task.stepId}`);
+        throw new Error(
+          `Directive ${definition.directive.id} references unknown step: ${lease.task.stepId}`,
+        );
       }
 
       let sandboxLease:
@@ -490,8 +418,10 @@ export function createLocalTaskManager(options: TaskManagerOptions): TaskManager
         }
 
         const parsedOutput =
-          (step.output ?? step.directive.outputSchema)?.parse(stepResult.output) ?? stepResult.output;
+          (step.output ?? step.directive.outputSchema)?.parse(stepResult.output) ??
+          stepResult.output;
         await options.stateManager.markTaskSucceeded(lease.task.id, parsedOutput, {
+          systemSessionId: stepResult.systemSessionId,
           runtimeSession: stepResult.runtimeSession,
         });
         stopHeartbeat();
@@ -604,6 +534,111 @@ export function createLocalTaskManager(options: TaskManagerOptions): TaskManager
     },
   };
 
+  async function prepareReadyTaskDispatches(
+    workflowRunId: string,
+  ): Promise<readonly PreparedTaskDispatch[]> {
+    const definition = await getDirectiveDefinition(workflowRunId);
+    const workflow = await options.stateManager.getWorkflowRun(workflowRunId);
+
+    if (workflow === undefined || workflow.status !== "running") {
+      return [];
+    }
+
+    const prepared: PreparedTaskDispatch[] = [];
+    for (const stepId of workflow.currentStepIds) {
+      const step = definition.directive.steps.get(stepId);
+
+      if (step === undefined) {
+        throw new Error(`Directive ${definition.directive.id} references unknown step: ${stepId}`);
+      }
+
+      const existingTasks = await options.stateManager.listTaskRuns(workflowRunId);
+      const activeTask = existingTasks.find(
+        (task) =>
+          task.stepId === stepId &&
+          ["pending", "dispatched", "leased", "running", "waiting"].includes(task.status),
+      );
+
+      if (activeTask !== undefined) {
+        continue;
+      }
+
+      const visit = existingTasks.filter((task) => task.stepId === stepId).length + 1;
+      const limit = definition.directive.limits.get(stepId);
+
+      if (limit?.maxVisits !== undefined && visit > limit.maxVisits) {
+        await completeWithTerminal(workflowRunId, limit.onExceeded ?? { type: "fail" });
+        continue;
+      }
+
+      const latestWorkflow = await options.stateManager.getWorkflowRun(workflowRunId);
+      if (latestWorkflow === undefined) {
+        throw new Error(`Workflow run is not found: ${workflowRunId}`);
+      }
+
+      const input = await resolveStepInput(step, {
+        task: createSyntheticTask(workflowRunId, stepId, visit),
+        workflow: latestWorkflow,
+        state: latestWorkflow.state,
+      });
+      const runtimeId = resolveRuntimeId(step, definition.request, options.runtimes.defaultRuntime);
+      let task: TaskRunRecord;
+
+      try {
+        task = await options.stateManager.createTaskRun({
+          workflowRunId,
+          stepId,
+          visit,
+          runtimeId,
+          input,
+        });
+      } catch (error) {
+        if (isActiveTaskRunConflict(error)) {
+          continue;
+        }
+        throw error;
+      }
+
+      prepared.push({
+        task,
+        payload: {
+          taskRunId: task.id,
+          workflowRunId,
+          directiveId: definition.directive.id,
+          stepId,
+          visit,
+          input,
+          runtime: {
+            requestedId: step.runtime ?? definition.request.runtime,
+            resolvedId: runtimeId,
+          },
+          sandbox: step.sandbox ?? {
+            strategy: {
+              mode: "reuse-workflow",
+            },
+          },
+          policy: {},
+        },
+      });
+    }
+
+    return prepared;
+  }
+
+  async function dispatchPreparedTasks(prepared: readonly PreparedTaskDispatch[]): Promise<void> {
+    for (const item of prepared) {
+      await options.stateManager.markTaskDispatched(item.task.id);
+      await publish<TaskDispatchPayload>({
+        kind: "command",
+        type: "task.dispatch",
+        workflowRunId: item.task.workflowRunId,
+        taskRunId: item.task.id,
+        stepId: item.task.stepId,
+        payload: item.payload,
+      });
+    }
+  }
+
   function startTaskHeartbeat(
     taskRunId: string,
     workflowRunId: string,
@@ -618,7 +653,10 @@ export function createLocalTaskManager(options: TaskManagerOptions): TaskManager
     };
   }
 
-  async function cancelWorkflowTree(workflowRunId: string, reason?: string | undefined): Promise<void> {
+  async function cancelWorkflowTree(
+    workflowRunId: string,
+    reason?: string | undefined,
+  ): Promise<void> {
     const latestWorkflow = await options.stateManager.getWorkflowRun(workflowRunId);
 
     if (latestWorkflow === undefined) {
@@ -666,10 +704,7 @@ export function createLocalTaskManager(options: TaskManagerOptions): TaskManager
     await options.sandboxManager.cleanupWorkflowSandboxes(workflowRunId);
   }
 
-  async function cancelTaskRun(
-    task: TaskRunRecord,
-    reason?: string | undefined,
-  ): Promise<void> {
+  async function cancelTaskRun(task: TaskRunRecord, reason?: string | undefined): Promise<void> {
     const latestTask = await options.stateManager.getTaskRun(task.id);
 
     if (latestTask === undefined || !cancellableTaskStatuses.has(latestTask.status)) {
@@ -733,6 +768,7 @@ export function createLocalTaskManager(options: TaskManagerOptions): TaskManager
     },
   ): Promise<{
     readonly output: unknown;
+    readonly systemSessionId?: string | undefined;
     readonly runtimeSession?: RuntimeSessionRef | undefined;
   }> {
     if (context.workflow === undefined) {
@@ -746,6 +782,7 @@ export function createLocalTaskManager(options: TaskManagerOptions): TaskManager
       output: step.output ?? step.directive.outputSchema,
       runtime: context.runtimeId,
       runtimeSession: context.runRequest.runtimeSession,
+      systemSessionId: context.runRequest.systemSessionId,
       runtimes: context.runRequest.runtimes,
       execution: {
         task: context.task,
@@ -825,6 +862,7 @@ export function createLocalTaskManager(options: TaskManagerOptions): TaskManager
     });
     return {
       output: result.output,
+      systemSessionId: result.systemSessionId,
       runtimeSession: result.runtimeSession,
     };
   }
@@ -981,7 +1019,10 @@ export function createLocalTaskManager(options: TaskManagerOptions): TaskManager
     const context = getRunContext(workflowRunId) as RunContext<TOutput>;
     const definition = await getDirectiveDefinition(workflowRunId);
     const workflow = await options.stateManager.completeWorkflowRun(workflowRunId, status);
-    const output = resolveDirectiveOutput(definition.directive as CompiledDirective<unknown, TOutput>, state);
+    const output = resolveDirectiveOutput(
+      definition.directive as CompiledDirective<unknown, TOutput>,
+      state,
+    );
     await publish({
       kind: "event",
       type: "workflow.completed",
@@ -992,27 +1033,37 @@ export function createLocalTaskManager(options: TaskManagerOptions): TaskManager
         output,
       },
     });
+    const latestRuntimeSession = await readLatestRuntimeSession(workflowRunId);
     context.resolve({
       workflowRunId,
       output,
       state,
-      runtimeSession: await readLatestRuntimeSession(workflowRunId),
+      systemSessionId: latestRuntimeSession?.systemSessionId,
+      runtimeSession: latestRuntimeSession?.runtimeSession,
     });
     runContexts.delete(workflowRunId);
     await options.directiveStore.delete(workflowRunId);
     await options.sandboxManager.cleanupWorkflowSandboxes(workflowRunId);
   }
 
-  async function readLatestRuntimeSession(
-    workflowRunId: string,
-  ): Promise<RuntimeSessionRef | undefined> {
+  async function readLatestRuntimeSession(workflowRunId: string): Promise<
+    | {
+        readonly systemSessionId?: string | undefined;
+        readonly runtimeSession: RuntimeSessionRef;
+      }
+    | undefined
+  > {
     const tasks = await options.stateManager.listTaskRuns(workflowRunId);
 
     for (let index = tasks.length - 1; index >= 0; index -= 1) {
-      const runtimeSession = tasks[index]?.runtimeSession;
+      const task = tasks[index];
+      const runtimeSession = task?.runtimeSession;
 
       if (runtimeSession !== undefined) {
-        return runtimeSession;
+        return {
+          systemSessionId: task?.systemSessionId,
+          runtimeSession,
+        };
       }
     }
 
@@ -1022,10 +1073,7 @@ export function createLocalTaskManager(options: TaskManagerOptions): TaskManager
   return manager;
 }
 
-async function resolveStepInput(
-  step: StepDefinition,
-  context: StepInputContext,
-): Promise<unknown> {
+async function resolveStepInput(step: StepDefinition, context: StepInputContext): Promise<unknown> {
   if (typeof step.input === "function") {
     return await step.input(context);
   }

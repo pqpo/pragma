@@ -5,6 +5,8 @@ import {
   FileSystemContextStore,
   HOST_CONTEXT_NAMESPACE,
   createInMemoryContextStore,
+  createPragma,
+  createRuntimeRegistry,
 } from "@pragma/core";
 import type { ExpertAgentContextStore } from "@pragma/core";
 import { createPiRuntime } from "@pragma/runtime-pi";
@@ -27,7 +29,7 @@ import {
   resolveExamplePath,
 } from "./harness/paths.ts";
 import { exitIfRuntimeUnavailable } from "./harness/runtime-availability.ts";
-import { printRunStream } from "./harness/stream-output.ts";
+import { printPragmaRunStream } from "./harness/stream-output.ts";
 
 const defaultQuery = [
   "测试 Pragma workspace + context 能力：",
@@ -83,24 +85,18 @@ printExampleConfig(workspace, contextDir);
 await printAgentContextSummary(agent);
 await exitIfRuntimeUnavailable(runtime);
 
-const session = await runtime.createSession({
-  agent,
-  owner: { workflowRunId: "workspace-context-example" },
+const app = createPragma({
+  runtimes: createRuntimeRegistry({
+    defaultRuntime: runtime.descriptor.id,
+    runtimes: [runtime],
+  }),
 });
 
-try {
-  printRunHeader(agent, formatModelConfig(modelConfig), cli.query);
-  const run = session.submit({
-    query: cli.query,
-  });
-
-  await printRunStream(run);
-
-  const result = await run.result;
-  printRunResult(result.runId);
-} finally {
-  await session.abort();
-}
+printRunHeader(agent, formatModelConfig(modelConfig), cli.query);
+const handle = await app.start(agent, { input: { prompt: cli.query } });
+await printPragmaRunStream(handle.events);
+const result = await handle.result;
+printRunResult(result.workflowRunId);
 
 function createExampleContextStore(contextDir: string | undefined): ExpertAgentContextStore {
   if (contextDir !== undefined) {

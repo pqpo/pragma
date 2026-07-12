@@ -31,18 +31,19 @@ export function createPragma(options: CreatePragmaOptions = {}): Pragma {
   const startDirective = async <TInput, TOutput>(
     directive: DirectiveDefinition<TInput, TOutput>,
     request: StartRunRequest<TInput>,
+    eventMode: "stream" | "none" = "stream",
   ) => {
     const compiledDirective = compileDirective(
       directive,
       request.output as CompiledDirective<TInput, TOutput>["outputSchema"] | undefined,
     );
-    return await taskManager.startRun(compiledDirective, request);
+    return await taskManager.startRun(compiledDirective, request, { events: eventMode });
   };
   const runDirective = async <TInput, TOutput>(
     directive: DirectiveDefinition<TInput, TOutput>,
     request: StartRunRequest<TInput>,
   ): Promise<RunResult<TOutput>> => {
-    const handle = await startDirective(directive, request);
+    const handle = await startDirective(directive, request, "none");
     return await handle.result;
   };
   const taskManager =
@@ -66,7 +67,7 @@ export function createPragma(options: CreatePragmaOptions = {}): Pragma {
     taskManager,
     runtimes,
     runs,
-    start: startDirective,
+    start: async (directive, request) => await startDirective(directive, request, "stream"),
     run: runDirective,
   };
 }

@@ -1,4 +1,4 @@
-import type { RuntimeStreamEvent, RuntimeSubmitHandle } from "@pragma/core";
+import type { PragmaRunEvent, RuntimeStreamEvent, RuntimeSubmitHandle } from "@pragma/core";
 
 type StreamSection = "none" | "thought" | "message" | "toolDelta";
 
@@ -32,6 +32,42 @@ export async function printRunStream(run: RuntimeSubmitHandle<unknown>): Promise
   }
 
   printer.finish();
+}
+
+export async function printPragmaRunStream(events: AsyncIterable<PragmaRunEvent>): Promise<void> {
+  for await (const event of events) {
+    if (event.type === "message.delta") {
+      const delta = readStringPayload(event.payload, "delta");
+      if (delta !== undefined) {
+        process.stdout.write(delta);
+      }
+      continue;
+    }
+
+    if (event.type === "tool.started" || event.type === "tool.completed") {
+      const toolName = readStringPayload(event.payload, "toolName");
+      if (toolName !== undefined) {
+        console.log(`\n[${event.type}] ${toolName}`);
+      }
+      continue;
+    }
+
+    if (event.type === "run.failed" || event.type === "workflow.failed") {
+      const message = readStringPayload(event.payload, "message");
+      if (message !== undefined) {
+        console.error(`\n[${event.type}] ${message}`);
+      }
+    }
+  }
+  console.log("");
+}
+
+function readStringPayload(payload: unknown, key: string): string | undefined {
+  if (typeof payload !== "object" || payload === null) {
+    return undefined;
+  }
+  const value = (payload as Record<string, unknown>)[key];
+  return typeof value === "string" ? value : undefined;
 }
 
 export class StreamEventPrinter {
@@ -123,9 +159,7 @@ export class StreamEventPrinter {
     this.streamLineStart = true;
   }
 
-  private ensureToolDeltaSection(
-    event: Extract<RuntimeStreamEvent, { type: "tool.delta" }>,
-  ): void {
+  private ensureToolDeltaSection(event: Extract<RuntimeStreamEvent, { type: "tool.delta" }>): void {
     const key = `${event.payload.toolCallId}:${event.payload.channel}`;
 
     if (this.section === "toolDelta" && this.activeToolDelta === key) {
@@ -158,7 +192,10 @@ export class StreamEventPrinter {
     this.endStreamingSection();
     this.printFrame("RUN STREAM", `${shortId(event.runId)} | ${event.payload.task}`, color.cyan);
 
-    if (event.payload.inputSummary !== undefined && event.payload.inputSummary !== event.payload.task) {
+    if (
+      event.payload.inputSummary !== undefined &&
+      event.payload.inputSummary !== event.payload.task
+    ) {
       this.printPreview("input", event.payload.inputSummary);
     }
   }

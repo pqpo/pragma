@@ -12,12 +12,14 @@ import {
   defineHumanTask,
   setDefaultRuntimeRegistryFactory,
 } from "../../src/index.ts";
+import { createTestRuntimeAdapter } from "../runtime-test-utils.ts";
 import type {
   Directive,
   RuntimeAdapter,
   RuntimeAgentSession,
-  RuntimeCreateSessionRequest,
+  RuntimeDriverSessionRequest,
   RuntimeSessionInfo,
+  RuntimeStreamEvent,
   RuntimeSubmitHandle,
   RuntimeSubmitRequest,
 } from "../../src/index.ts";
@@ -231,6 +233,160 @@ describe("directive app", () => {
     });
   });
 
+  it("does not create a public event subscription for app.run", async () => {
+    const baseMailbox = createInMemoryMailbox();
+    let subscriptionCount = 0;
+    const mailbox = {
+      publish: baseMailbox.publish,
+      async subscribe(...args: Parameters<typeof baseMailbox.subscribe>) {
+        subscriptionCount += 1;
+        return await baseMailbox.subscribe(...args);
+      },
+    };
+
+    await createPragma({ mailbox }).run(
+      defineTask({ id: "run-without-events", handler: () => "done" }),
+      { input: {} },
+    );
+
+    expect(subscriptionCount).toBe(1);
+  });
+
+  it("eagerly streams normalized Runtime events without losing startup events", async () => {
+    const runtime = createFakeRuntime({
+      id: "stream-runtime",
+      output: { summary: "done" },
+      events: [
+        createRuntimeEvent("run.started", { task: "Review" }, 0),
+        createRuntimeEvent(
+          "message.delta",
+          { role: "assistant", contentType: "text", delta: "first" },
+          1,
+        ),
+        createRuntimeEvent("run.completed", {}, 2),
+      ],
+    });
+    const agent = await ExpertAgent.create({
+      id: "stream-agent",
+      name: "Stream Agent",
+      description: "Streams immediately.",
+      tags: [],
+      version: "0.0.0",
+      scope: "test",
+      workspace: "/tmp/pragma-stream-agent-test",
+    });
+    const app = createPragma({
+      runtimes: createRuntimeRegistry({
+        runtimes: [runtime],
+        defaultRuntime: runtime.descriptor.id,
+      }),
+    });
+    const handle = await app.start(agent, {
+      input: { prompt: "Review" },
+      output: z.object({ summary: z.string() }),
+    });
+    const events = await collectEvents(handle.events);
+    const result = await handle.result;
+
+    expect(events.map((event) => event.type)).toEqual([
+      "workflow.started",
+      "run.started",
+      "message.delta",
+      "run.completed",
+      "workflow.completed",
+    ]);
+    expect(events[2]).toMatchObject({
+      rootWorkflowRunId: handle.workflowRunId,
+      workflowRunId: handle.workflowRunId,
+      taskRunId: expect.any(String),
+      stepId: agent.id,
+      type: "message.delta",
+      payload: { delta: "first" },
+    });
+    expect(result).toMatchObject({
+      workflowRunId: handle.workflowRunId,
+      systemSessionId: "system-session-1",
+      output: { summary: "done" },
+    });
+  });
+
+  it("keeps Runtime failure events consistent with a rejected result", async () => {
+    const runtime = createTestRuntimeAdapter({
+      descriptor: { id: "failed-stream", kind: "fake-runtime", displayName: "Failed Stream" },
+      async openSession() {
+        return {
+          info: createFakeSessionInfo,
+          messages: () => [],
+          submit<TOutput>(): RuntimeSubmitHandle<TOutput> {
+            return {
+              runId: "failed-run",
+              events: createEvents([
+                createRuntimeEvent(
+                  "run.failed",
+                  { message: "runtime exploded", code: "runtime.failed", retryable: false },
+                  0,
+                ),
+              ]),
+              result: Promise.reject(new Error("runtime exploded")),
+              cancel: async () => undefined,
+            };
+          },
+          abort: async () => undefined,
+        };
+      },
+    });
+    const agent = await ExpertAgent.create({
+      id: "failed-stream-agent",
+      name: "Failed Stream Agent",
+      description: "Fails.",
+      tags: [],
+      version: "0.0.0",
+      scope: "test",
+      workspace: "/tmp/pragma-failed-stream-agent-test",
+    });
+    const app = createPragma({
+      runtimes: createRuntimeRegistry({
+        runtimes: [runtime],
+        defaultRuntime: runtime.descriptor.id,
+      }),
+    });
+    const handle = await app.start(agent, { input: "fail" });
+    const eventsPromise = collectEvents(handle.events);
+
+    await expect(handle.result).rejects.toThrow("runtime exploded");
+    const events = await eventsPromise;
+    expect(events.map((event) => event.type)).toEqual([
+      "workflow.started",
+      "run.failed",
+      "workflow.failed",
+    ]);
+  });
+
+  it("emits workflow.cancelled and closes events when a RunHandle is cancelled", async () => {
+    const app = createPragma();
+    const handle = await app.start(
+      defineTask({
+        id: "cancel-stream",
+        handler: async () => {
+          await sleep(100);
+          return "late";
+        },
+      }),
+      { input: {} },
+    );
+    const eventsPromise = collectEvents(handle.events);
+    await handle.cancel("stop now");
+
+    await expect(handle.result).rejects.toThrow("stop now");
+    const events = await eventsPromise;
+    expect(events.at(-1)).toMatchObject({
+      rootWorkflowRunId: handle.workflowRunId,
+      workflowRunId: handle.workflowRunId,
+      type: "workflow.cancelled",
+      payload: { reason: "stop now" },
+    });
+  });
+
   it("watches nested directive events recursively and exposes a run tree", async () => {
     const app = createPragma();
     const childDirective = defineFlow({
@@ -271,11 +427,7 @@ describe("directive app", () => {
     const handle = await app.start(parentDirective, {
       input: {},
     });
-    const eventsPromise = collectEvents(
-      app.runs.watch(handle.workflowRunId, {
-        recursive: true,
-      }),
-    );
+    const eventsPromise = collectEvents(handle.events);
 
     await handle.result;
     const events = await eventsPromise;
@@ -294,8 +446,12 @@ describe("directive app", () => {
     expect(childCompleted?.parentWorkflowRunId).toBe(handle.workflowRunId);
     expect(events).toContainEqual(
       expect.objectContaining({
-        type: "task.progress",
+        rootWorkflowRunId: handle.workflowRunId,
+        type: "progress",
         workflowRunId: childStarted?.workflowRunId,
+        parentWorkflowRunId: handle.workflowRunId,
+        parentTaskRunId: expect.any(String),
+        taskRunId: expect.any(String),
       }),
     );
 
@@ -595,16 +751,22 @@ describe("directive app", () => {
       answer: z.string(),
     });
 
-    const result = await createPragma({
+    const app = createPragma({
       runtimes: createRuntimeRegistry({
         defaultRuntime: "fake-runtime",
         runtimes: [runtime],
       }),
-    }).run(agent, {
+    });
+    const result = await app.run(agent, {
       input: {
         prompt: "finish",
       },
       output: outputSchema,
+      systemSessionId: "system-session-1",
+      runtimeSession: {
+        type: "fake-runtime",
+        id: "runtime-session-1",
+      },
     });
 
     expect(result.output).toEqual({
@@ -616,6 +778,11 @@ describe("directive app", () => {
         owner: {
           workflowRunId: result.workflowRunId,
           taskRunId: expect.any(String),
+        },
+        systemSessionId: "system-session-1",
+        runtimeSession: {
+          type: "fake-runtime",
+          id: "runtime-session-1",
         },
       }),
     ]);
@@ -690,7 +857,7 @@ describe("directive app", () => {
       workspace: "/tmp/pragma-agent-failing-runtime-directive-test",
     });
     let abortCount = 0;
-    const runtime: RuntimeAdapter = {
+    const runtime = createTestRuntimeAdapter({
       descriptor: {
         id: "failing-runtime",
         kind: "fake-runtime",
@@ -699,8 +866,7 @@ describe("directive app", () => {
           targets: ["agent"],
         },
       },
-      canUse: () => ({ usable: true }),
-      async createSession() {
+      async openSession() {
         return {
           info: () => createFakeSessionInfo(),
           messages: () => [],
@@ -718,7 +884,7 @@ describe("directive app", () => {
           },
         };
       },
-    };
+    });
 
     setDefaultRuntimeRegistryFactory(() =>
       createRuntimeRegistry({
@@ -1010,16 +1176,15 @@ describe("directive app", () => {
 function createFakeRuntime(options: {
   readonly id: string;
   readonly output: unknown;
+  readonly events?: readonly RuntimeStreamEvent[] | undefined;
 }): RuntimeAdapter & {
-  readonly requests: RuntimeCreateSessionRequest[];
+  readonly requests: RuntimeDriverSessionRequest[];
   readonly submissions: RuntimeSubmitRequest<unknown>[];
 } {
-  const requests: RuntimeCreateSessionRequest[] = [];
+  const requests: RuntimeDriverSessionRequest[] = [];
   const submissions: RuntimeSubmitRequest<unknown>[] = [];
 
-  return {
-    requests,
-    submissions,
+  const runtime = createTestRuntimeAdapter({
     descriptor: {
       id: options.id,
       kind: "fake-runtime",
@@ -1028,17 +1193,19 @@ function createFakeRuntime(options: {
         targets: ["agent"],
       },
     },
-    canUse: () => ({ usable: true }),
-    async createSession(request) {
+    async openSession(request) {
       requests.push(request);
-      return createFakeSession(options.output, submissions);
+      return createFakeSession(options.output, submissions, options.events);
     },
-  };
+  });
+
+  return Object.assign(runtime, { requests, submissions });
 }
 
 function createFakeSession(
   output: unknown,
   submissions: RuntimeSubmitRequest<unknown>[],
+  events: readonly RuntimeStreamEvent[] = [],
 ): RuntimeAgentSession {
   return {
     info: () => createFakeSessionInfo(),
@@ -1049,7 +1216,7 @@ function createFakeSession(
       submissions.push(submission as RuntimeSubmitRequest<unknown>);
       return {
         runId: "run-1",
-        events: createEmptyEvents(),
+        events: createEvents(events),
         result: Promise.resolve({
           runId: "run-1",
           result: {
@@ -1064,7 +1231,7 @@ function createFakeSession(
 }
 
 function createHumanAskingRuntime(options: { readonly id: string }): RuntimeAdapter {
-  return {
+  return createTestRuntimeAdapter({
     descriptor: {
       id: options.id,
       kind: "fake-runtime",
@@ -1073,8 +1240,7 @@ function createHumanAskingRuntime(options: { readonly id: string }): RuntimeAdap
         targets: ["agent"],
       },
     },
-    canUse: () => ({ usable: true }),
-    async createSession(request) {
+    async openSession(request) {
       return {
         info: () => createFakeSessionInfo(),
         messages: () => [],
@@ -1114,7 +1280,7 @@ function createHumanAskingRuntime(options: { readonly id: string }): RuntimeAdap
         abort: async () => undefined,
       };
     },
-  };
+  });
 }
 
 function createFakeSessionInfo(): RuntimeSessionInfo {
@@ -1143,6 +1309,35 @@ function createEmptyEvents() {
       };
     },
   };
+}
+
+function createEvents<TEvent>(events: readonly TEvent[]): AsyncIterable<TEvent> {
+  return {
+    async *[Symbol.asyncIterator]() {
+      yield* events;
+    },
+  };
+}
+
+function createRuntimeEvent(
+  type: RuntimeStreamEvent["type"],
+  payload: unknown,
+  sequence: number,
+): RuntimeStreamEvent {
+  return {
+    schemaVersion: "pragma.stream/v1",
+    eventId: `event-${sequence}`,
+    sequence,
+    runId: "runtime-run-1",
+    emittedAt: new Date(0).toISOString(),
+    source: {
+      kind: "runtime",
+      runId: "runtime-run-1",
+      path: [],
+    },
+    type,
+    payload,
+  } as RuntimeStreamEvent;
 }
 
 async function collectEvents<TEvent>(events: AsyncIterable<TEvent>): Promise<TEvent[]> {

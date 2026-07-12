@@ -1,3 +1,8 @@
+/*
+ * Deferred until PragmaApp.resume(rootDefinition, { workflowRunId }) is implemented.
+ * Keep this previous direct-Session example as migration source; do not expose it as a runnable
+ * public example during the unified-execution phase.
+
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
@@ -476,3 +481,4 @@ function requireWorkflowState(state: WorkflowState | undefined): WorkflowState {
 function isAbortError(error: unknown): boolean {
   return error instanceof Error && (error.name === "AbortError" || error.message === "Aborted");
 }
+*/

@@ -722,55 +722,37 @@ artifact.created
 
 ### 15.1 Runtime Adapter 接入方式
 
-`adapter.createSession()` 是底层接口，在创建会话时必须绑定 `owner.workflowRunId`、agent
-和 run context；会话创建后可多次
-`submit()`，提交会在 Runtime 内部串行执行。`RuntimeSubmitRequest` 可以携带
-可选 `runId`，并可为单次提交指定 Zod output schema；未指定 `runId` 时在
-`submit()` 阶段生成，未指定 output 时默认为 string。
+Runtime Adapter 的公共边界只包含 descriptor、availability 和 model discovery。具体
+Runtime 通过 `defineRuntimeDriver()` 注册内部 Session factory；只有 Pragma/TaskManager
+持有真实 `DirectiveExecutionContext` 时才能打开 Session，owner 从 Workflow 与 Task 记录推导。
 
 Session 标识分为三层：
 
-- `systemSessionId` 是 Pragma 系统级会话标识，用于系统任务关联、审计和跨 runtime
-  追踪；`createSession()` 未传入时由系统自动生成。
+- `systemSessionId` 是 Pragma 系统级会话标识，用于系统任务关联、审计和跨 runtime 追踪。
 - `runtimeSession` 是 runtime 返回的会话引用，结构为 `{ type, id }`；Adapter 只在
   `type` 与当前 runtime 匹配时复用该会话，否则必须新建 runtime session。
-- `runId` 是单次提交的运行标识，仍由 `submit()` 阶段生成或使用调用方传入值。
+- `workflowRunId` 是调用方通过 `RunResult` 和 `PragmaRunEvent` 观察的执行标识。
 
 ```ts
-import { z } from "zod";
-
-const session = await adapter.createSession({
-  agent,
-  owner: { workflowRunId, taskRunId },
-  context,
-  systemSessionId: "system-session-1",
-  runtimeSession: {
-    type: "cloud-pi-agent",
-    id: "runtime-session-1",
-  },
-});
-
-const sessionInfo = session.info();
-
-const run = session.submit({
-  query: "Summarize the current workspace status.",
+const handle = await app.start(agent, {
+  input: { prompt: "Summarize the current workspace status." },
   output: z.object({
     summary: z.string(),
     confidence: z.number(),
   }),
 });
 
-for await (const event of run.events) {
+for await (const event of handle.events) {
   // Server/Worker 可写入 Trace、推送 SSE/WebSocket 或转发给 Desktop Bridge。
 }
 
-const result = await run.result;
+const result = await handle.result;
 ```
 
 Adapter 必须遵守：
 
-1. `submit()` 必须立即返回 `{ runId, events, result, cancel }`；
-2. `events` 必须是 `AsyncIterable<ExpertAgentStreamEvent>`，可用 `for await` 消费；
+1. `app.start()` 返回 `{ workflowRunId, events, result, cancel }`；
+2. `events` 是 `AsyncIterable<PragmaRunEvent>`，Runtime 事件已经展开为直接事件；
 3. `result` 必须返回最终结构化结果，流式事件不替代 output schema 校验；
 4. Runtime 原生事件必须先映射成 `ExpertAgentStreamEvent`，再向外暴露；
 5. 不把具体 SDK 的事件结构泄漏给上层。

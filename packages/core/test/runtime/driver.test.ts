@@ -5,8 +5,18 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { z } from "zod";
 
-import { ContextSystem, ExpertAgent, PragmaPaths } from "../../src/index.ts";
+import {
+  ContextSystem,
+  ExpertAgent,
+  PragmaPaths,
+  withExecutionRunScope,
+  type DirectiveExecutionContext,
+  type RuntimeAdapter,
+  type RuntimeAgentSession,
+  type RuntimeDriverSessionRequest,
+} from "../../src/index.ts";
 import { defineRuntimeDriver } from "../../src/runtime/driver.ts";
+import { openRuntimeSession } from "../../src/runtime/session-factory.ts";
 import type {
   RuntimeSessionCheckpoint,
   RuntimeSessionRestoreRequest,
@@ -20,6 +30,61 @@ afterEach(async () => {
 
 describe("defineRuntimeDriver", () => {
   const owner = { workflowRunId: "workflow-runtime-driver", taskRunId: "task-runtime-driver" };
+
+  it("rejects mismatched Workflow and task execution before native Session creation", async () => {
+    let createSessionCalled = false;
+    const runtime = defineRuntimeDriver<FakeEvent, FakeSession>({
+      descriptor: { id: "fake-runtime", kind: "fake-runtime", displayName: "Fake Runtime" },
+      createSession() {
+        createSessionCalled = true;
+        return { id: "native", attempts: 0 };
+      },
+      startTurn: () => ({}),
+      mapEvent: () => ({ events: [] }),
+    });
+    const agent = await createTestAgent("owner-mismatch");
+    const execution = {
+      workflow: { id: "workflow-a" },
+      task: { id: "task-a", workflowRunId: "workflow-b" },
+    } as DirectiveExecutionContext;
+
+    await expect(
+      openRuntimeSession(runtime, {
+        agent,
+        execution,
+        context: withExecutionRunScope(undefined, {
+          workflowRunId: "workflow-a",
+          taskRunId: "task-a",
+        }),
+      }),
+    ).rejects.toThrow("belongs to Workflow workflow-b, not workflow-a");
+    expect(createSessionCalled).toBe(false);
+  });
+
+  it("rejects a run scope that does not match the execution task", async () => {
+    const runtime = defineRuntimeDriver<FakeEvent, FakeSession>({
+      descriptor: { id: "fake-runtime", kind: "fake-runtime", displayName: "Fake Runtime" },
+      createSession: () => ({ id: "native", attempts: 0 }),
+      startTurn: () => ({}),
+      mapEvent: () => ({ events: [] }),
+    });
+    const agent = await createTestAgent("scope-mismatch");
+    const execution = {
+      workflow: { id: "workflow-a" },
+      task: { id: "task-a", workflowRunId: "workflow-a" },
+    } as DirectiveExecutionContext;
+
+    await expect(
+      openRuntimeSession(runtime, {
+        agent,
+        execution,
+        context: withExecutionRunScope(undefined, {
+          workflowRunId: "workflow-a",
+          taskRunId: "task-other",
+        }),
+      }),
+    ).rejects.toThrow("execution scope must match Workflow workflow-a and task task-a");
+  });
   it("rejects a runtime session ref with an empty native id", async () => {
     let createSessionCalled = false;
     const runtime = defineRuntimeDriver<FakeEvent, FakeSession>({
@@ -42,7 +107,7 @@ describe("defineRuntimeDriver", () => {
     const agent = await createTestAgent("invalid-ref");
 
     await expect(
-      runtime.createSession({
+      openTestSession(runtime, {
         agent,
         owner,
         systemSessionId: "invalid-ref-session",
@@ -82,7 +147,7 @@ describe("defineRuntimeDriver", () => {
     });
 
     await expect(
-      runtime.createSession({
+      openTestSession(runtime, {
         agent,
         owner,
         systemSessionId: "mismatched-ref-session",
@@ -179,7 +244,7 @@ describe("defineRuntimeDriver", () => {
       pragmaHome: await createTestPragmaHome("workflow"),
       contextSystem: new ContextSystem(),
     });
-    const session = await runtime.createSession({
+    const session = await openTestSession(runtime, {
       agent,
       owner,
       systemSessionId: "system-session-1",
@@ -280,7 +345,7 @@ describe("defineRuntimeDriver", () => {
     });
 
     await expect(
-      runtime.createSession({
+      openTestSession(runtime, {
         agent,
         owner,
         systemSessionId: "restore-failure-session",
@@ -328,7 +393,7 @@ describe("defineRuntimeDriver", () => {
     });
 
     await expect(
-      runtime.createSession({
+      openTestSession(runtime, {
         agent,
         owner,
         systemSessionId: "before-hook-failure-session",
@@ -396,7 +461,7 @@ describe("defineRuntimeDriver", () => {
       pragmaHome: await createTestPragmaHome("retry"),
       contextSystem: new ContextSystem(),
     });
-    const session = await runtime.createSession({ agent, owner });
+    const session = await openTestSession(runtime, { agent, owner });
 
     const result = await session.submit({
       query: "Return JSON",
@@ -448,7 +513,7 @@ describe("defineRuntimeDriver", () => {
       contextSystem: new ContextSystem(),
     });
 
-    await expect(runtime.createSession({ agent, owner })).rejects.toThrow(
+    await expect(openTestSession(runtime, { agent, owner })).rejects.toThrow(
       "Runtime is not available: Fake Runtime (fake-runtime). Fake runtime binary is missing.",
     );
   });
@@ -481,4 +546,30 @@ type FakeEvent =
 interface FakeSession {
   id: string;
   attempts: number;
+}
+
+async function openTestSession(
+  runtime: RuntimeAdapter,
+  request: Omit<RuntimeDriverSessionRequest, "workflowExecution"> & {
+    readonly owner: { readonly workflowRunId: string; readonly taskRunId?: string | undefined };
+  },
+): Promise<RuntimeAgentSession> {
+  const taskRunId = request.owner.taskRunId ?? "task-runtime-driver";
+  const execution = {
+    workflow: { id: request.owner.workflowRunId },
+    task: {
+      id: taskRunId,
+      workflowRunId: request.owner.workflowRunId,
+    },
+  } as DirectiveExecutionContext;
+  const { owner, ...sessionRequest } = request;
+
+  return await openRuntimeSession(runtime, {
+    ...sessionRequest,
+    execution,
+    context: withExecutionRunScope(sessionRequest.context, {
+      workflowRunId: owner.workflowRunId,
+      taskRunId,
+    }),
+  });
 }

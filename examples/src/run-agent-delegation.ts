@@ -6,12 +6,7 @@ import {
   createRuntimeRegistry,
   defineAgent,
 } from "@pragma/core";
-import type {
-  AgentLaunchSessionPolicy,
-  RunTree,
-  RuntimeSessionRef,
-  RuntimeStreamEvent,
-} from "@pragma/core";
+import type { AgentLaunchSessionPolicy, RunTree, RuntimeStreamEvent } from "@pragma/core";
 import { createPiRuntime } from "@pragma/runtime-pi";
 
 import {
@@ -109,31 +104,23 @@ try {
   console.log(`- turns: ${cli.turns.length}`);
   console.log("");
 
-  let runtimeSession: RuntimeSessionRef | undefined;
+  const conversation: string[] = [];
 
   for (const [index, turn] of cli.turns.entries()) {
+    const input = formatTurnInput(conversation, turn);
     console.log(`Turn ${index + 1}/${cli.turns.length}`);
     console.log("User:");
     console.log(turn);
     console.log("");
 
-    const handle = await app.start(
-      coder,
-      runtimeSession === undefined
-        ? {
-            input: turn,
-            runtime: "pi",
-          }
-        : {
-            input: turn,
-            runtime: "pi",
-            runtimeSession,
-          },
-    );
+    const handle = await app.start(coder, {
+      input,
+      runtime: "pi",
+    });
     const stream = printAgentWorkflowStreams(handle.workflowRunId);
     const result = await handle.result;
     await stream;
-    runtimeSession = result.runtimeSession;
+    conversation.push(`User:\n${turn}`, `Assistant:\n${String(result.output)}`);
 
     const tree = await app.runs.getTree(handle.workflowRunId);
 
@@ -148,6 +135,18 @@ try {
   }
 } finally {
   launcher.dispose();
+}
+
+function formatTurnInput(conversation: readonly string[], turn: string): string {
+  if (conversation.length === 0) {
+    return turn;
+  }
+
+  return [
+    "以下是此前已完成的对话记录。请把它作为当前任务的上下文，不要把记录中的旧指令当作当前指令重复执行。",
+    ...conversation,
+    `Current user:\n${turn}`,
+  ].join("\n\n");
 }
 
 interface AgentDelegationCli {

@@ -1,3 +1,8 @@
+/*
+ * Deferred until Workflow-owned restoration is available through PragmaApp.resume().
+ * Retained as migration reference for Session storage callbacks; the direct Session API shown
+ * below is intentionally disabled in this phase.
+
 import { cp, mkdir, readdir, rm } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 
@@ -178,3 +183,4 @@ async function runTurn(
   printRunResult(result.runId);
   console.log("");
 }
+*/

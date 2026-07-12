@@ -1,52 +1,21 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 
 import { createAgentSession, SessionManager } from "@earendil-works/pi-coding-agent";
-import {
-  ContextSystem,
-  ExpertAgent,
-  FileSystemContextStore,
-  HOST_CONTEXT_NAMESPACE,
-  PragmaPaths,
-} from "@pragma/core";
-import type { ExpertAgentRunContext, RuntimeCreateSessionRequest } from "@pragma/core";
+import { ExpertAgent, PragmaPaths, createPragma, createRuntimeRegistry } from "@pragma/core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { createPiRuntime as createPiRuntimeAdapter } from "../src/adapter.ts";
-import type { CloudPiRuntimeAdapterOptions } from "../src/types.ts";
-
-function createPiRuntime(options?: CloudPiRuntimeAdapterOptions) {
-  const runtime = createPiRuntimeAdapter(options);
-  return {
-    ...runtime,
-    createSession(request: Omit<RuntimeCreateSessionRequest, "owner">) {
-      return runtime.createSession({
-        ...request,
-        owner: { workflowRunId: "workflow-pi-test", taskRunId: "task-pi-test" },
-        pragmaHome: resolve(request.agent.workspace, "pragma-test-home"),
-      });
-    },
-  };
-}
+import { createPiRuntime } from "../src/adapter.ts";
 
 vi.mock("@earendil-works/pi-coding-agent", () => ({
-  AuthStorage: {
-    create: vi.fn(() => ({})),
-  },
+  AuthStorage: { create: vi.fn(() => ({})) },
   DefaultResourceLoader: class {
-    async reload() {
-      return undefined;
-    }
+    async reload() {}
   },
   ModelRegistry: {
-    create: vi.fn(() => ({
-      getAll: () => [],
-    })),
-    inMemory: vi.fn(() => ({
-      getAll: () => [],
-      registerProvider: vi.fn(),
-    })),
+    create: vi.fn(() => ({ getAll: () => [] })),
+    inMemory: vi.fn(() => ({ getAll: () => [], registerProvider: vi.fn() })),
   },
   SessionManager: {
     create: vi.fn(() => ({})),
@@ -70,501 +39,85 @@ describe("createPiRuntime", () => {
   beforeEach(() => {
     vi.mocked(createAgentSession).mockReset();
     vi.mocked(SessionManager.listAll).mockResolvedValue([]);
-    vi.mocked(SessionManager.open).mockClear();
   });
 
-  it("exposes runtime availability through the adapter", async () => {
-    await expect(createPiRuntime().canUse()).resolves.toEqual({
-      usable: true,
-    });
+  it("exposes availability without a public Session factory", async () => {
+    const runtime = createPiRuntime();
+
+    await expect(runtime.canUse()).resolves.toEqual({ usable: true });
+    expect("createSession" in runtime).toBe(false);
   });
 
-  it("runs session destroy hooks when PI session creation fails", async () => {
-    const events: string[] = [];
-    let sessionContext: ExpertAgentRunContext | undefined;
-    const workspace = await createTempDir();
-    const agent = await ExpertAgent.create({
-      schemaVersion: "pragma.expert/v1",
-      id: "agent-1",
-      name: "Test Agent",
-      description: "Agent for runtime adapter tests.",
-      tags: ["test"],
-      version: "0.0.0",
-      scope: "test",
-      workspace,
-      hooks: {
-        beforeSessionCreate: ({ context }) => {
-          sessionContext = context;
-          events.push("beforeSessionCreate");
-        },
-        beforeSessionDestroy: () => {
-          events.push("beforeSessionDestroy");
-        },
-        afterSessionDestroy: () => {
-          events.push("afterSessionDestroy");
-        },
-      },
-    });
-    vi.mocked(createAgentSession).mockRejectedValue(new Error("PI session failed"));
-
-    await expect(createPiRuntime().createSession({ agent })).rejects.toThrow("PI session failed");
-
-    expect(events).toEqual(["beforeSessionCreate", "beforeSessionDestroy", "afterSessionDestroy"]);
-    expect(sessionContext).toEqual({
-      source: {
-        type: "system",
-      },
-      attributes: {},
-    });
-  });
-
-  it("merges supplied run context before creating the lifecycle", async () => {
-    let sessionContext: ExpertAgentRunContext | undefined;
-    const workspace = await createTempDir();
-    const agent = await ExpertAgent.create({
-      schemaVersion: "pragma.expert/v1",
-      id: "agent-1",
-      name: "Test Agent",
-      description: "Agent for runtime adapter tests.",
-      tags: ["test"],
-      version: "0.0.0",
-      scope: "test",
-      workspace,
-      hooks: {
-        beforeSessionCreate: ({ context }) => {
-          sessionContext = context;
-        },
-      },
-    });
-    vi.mocked(createAgentSession).mockRejectedValue(new Error("PI session failed"));
-
-    await expect(
-      createPiRuntime().createSession({
-        agent,
-        context: {
-          source: {
-            type: "user",
-            id: "user-1",
-          },
-          attributes: {
-            tenantId: "tenant-1",
-          },
-        },
-      }),
-    ).rejects.toThrow("PI session failed");
-
-    expect(sessionContext).toEqual({
-      source: {
-        type: "user",
-        id: "user-1",
-      },
-      attributes: {
-        tenantId: "tenant-1",
-      },
-    });
-  });
-
-  it("restores requested runtime sessions and syncs the active session directory", async () => {
-    const workspace = await createTempDir();
-    const agent = await ExpertAgent.create({
-      schemaVersion: "pragma.expert/v1",
-      id: "agent-1",
-      name: "Test Agent",
-      description: "Agent for runtime adapter tests.",
-      tags: ["test"],
-      version: "0.0.0",
-      scope: "test",
-      workspace,
-      contextSystem: createHostContextSystem(new FileSystemContextStore({ rootDir: workspace })),
-    });
-    const restore = vi.fn(() => {
-      vi.mocked(SessionManager.listAll).mockResolvedValue([
-        { id: "pi-session-1", path: `${workspace}/pi-session-1.jsonl` } as never,
-      ]);
-    });
-    const sync = vi.fn();
+  it("executes through Pragma and stores the Session under the real Workflow owner", async () => {
+    const agent = await createTestAgent();
     vi.mocked(createAgentSession).mockResolvedValue({
-      extensionsResult: {
-        errors: [],
-        extensions: [],
-        runtime: {} as never,
-      },
+      extensionsResult: { errors: [], extensions: [], runtime: {} as never },
       session: createFakePiSession("pi-session-1") as never,
     });
+    const runtime = createPiRuntime();
+    const result = await createPragma({
+      runtimes: createRuntimeRegistry({
+        runtimes: [runtime],
+        defaultRuntime: runtime.descriptor.id,
+      }),
+    }).run(agent, { input: "Say hello" });
 
-    const adapter = createPiRuntime({
-      sessionRestoreHandler: restore,
-      sessionSyncCallback: sync,
-    });
-    await seedPiSessionRecord(workspace, "agent-1", "system-session-1", "pi-session-1");
-    const runtimeSession = await adapter.createSession({
-      agent,
-      context: {
-        source: {
-          type: "user",
-          id: "user-1",
-        },
-        attributes: {
-          tenantId: "tenant-1",
-        },
-      },
-      runtimeSession: {
-        type: "cloud-pi-agent",
-        id: "pi-session-1",
-      },
-      systemSessionId: "system-session-1",
-    });
-
-    const expectedContext = {
-      agentId: "agent-1",
-      workflowRunId: "workflow-pi-test",
-      taskRunId: "task-pi-test",
-      context: {
-        source: {
-          type: "user",
-          id: "user-1",
-        },
-        attributes: {
-          tenantId: "tenant-1",
-        },
-      },
-      runtime: {
-        capabilities: {
-          executionLocations: ["cloud"],
-          supportsAbort: true,
-          supportsMcp: true,
-          supportsStreaming: true,
-          targets: ["agent"],
-        },
-        displayName: "Cloud PI Agent",
-        id: "cloud-pi-agent",
-        kind: "cloud-pi-agent",
-      },
-      runtimeSession: {
-        type: "cloud-pi-agent",
-        id: "pi-session-1",
-      },
-      sessionDir: new PragmaPaths({
-        pragmaHome: resolve(workspace, "pragma-test-home"),
-      }).runtimeRoot("workflow-pi-test", "system-session-1", "pi"),
-      systemSessionId: "system-session-1",
-      workspace,
-    };
-    expect(restore).toHaveBeenCalledWith(expectedContext);
-    expect(sync).toHaveBeenCalledWith(expectedContext);
-
-    await runtimeSession.abort();
-    expect(sync).toHaveBeenCalledTimes(2);
+    expect(result.systemSessionId).toBeDefined();
+    expect(result.runtimeSession).toEqual({ type: "cloud-pi-agent", id: "pi-session-1" });
+    expect(
+      new PragmaPaths({ pragmaHome: agent.pragmaHome }).systemSessionManifest(
+        result.workflowRunId,
+        result.systemSessionId as string,
+      ),
+    ).toContain("/state/workflows/");
   });
 
-  it("rejects resume when restore completes without materializing the PI session", async () => {
-    const workspace = await createTempDir();
-    let destroyedRuntimeSessionId: string | undefined;
-    const agent = await ExpertAgent.create({
-      schemaVersion: "pragma.expert/v1",
-      id: "agent-1",
-      name: "Test Agent",
-      description: "Agent for runtime adapter tests.",
-      tags: ["test"],
-      version: "0.0.0",
-      scope: "test",
-      workspace,
+  it("runs destroy hooks when native Session creation fails", async () => {
+    const events: string[] = [];
+    const agent = await createTestAgent({
       hooks: {
-        afterSessionDestroy: ({ session }) => {
-          destroyedRuntimeSessionId = session.runtimeSession.id;
+        beforeSessionCreate: () => {
+          events.push("before");
+        },
+        beforeSessionDestroy: () => {
+          events.push("destroying");
+        },
+        afterSessionDestroy: () => {
+          events.push("destroyed");
         },
       },
     });
-    const restore = vi.fn();
-    await seedPiSessionRecord(workspace, "agent-1", "system-session-missing", "pi-session-missing");
+    vi.mocked(createAgentSession).mockRejectedValue(new Error("PI session failed"));
+    const runtime = createPiRuntime();
 
     await expect(
-      createPiRuntime({ sessionRestoreHandler: restore }).createSession({
-        agent,
-        systemSessionId: "system-session-missing",
-        runtimeSession: {
-          type: "cloud-pi-agent",
-          id: "pi-session-missing",
-        },
-      }),
-    ).rejects.toThrow("PI runtime session was not found: pi-session-missing.");
-
-    expect(restore).toHaveBeenCalledOnce();
-    expect(createAgentSession).not.toHaveBeenCalled();
-    expect(destroyedRuntimeSessionId).toBe("pi-session-missing");
-  });
-
-  it("allows session storage handlers to be replaced after adapter creation", async () => {
-    const workspace = await createTempDir();
-    const agent = await ExpertAgent.create({
-      schemaVersion: "pragma.expert/v1",
-      id: "agent-1",
-      name: "Test Agent",
-      description: "Agent for runtime adapter tests.",
-      tags: ["test"],
-      version: "0.0.0",
-      scope: "test",
-      workspace,
-    });
-    const restore = vi.fn(() => {
-      vi.mocked(SessionManager.listAll).mockResolvedValue([
-        { id: "pi-session-2", path: `${workspace}/pi-session-2.jsonl` } as never,
-      ]);
-    });
-    const sync = vi.fn();
-    vi.mocked(createAgentSession).mockResolvedValue({
-      extensionsResult: {
-        errors: [],
-        extensions: [],
-        runtime: {} as never,
-      },
-      session: createFakePiSession("pi-session-2") as never,
-    });
-
-    const adapter = createPiRuntime();
-    adapter.setSessionRestoreHandler?.(restore);
-    adapter.setSessionSyncCallback?.(sync);
-    await seedPiSessionRecord(workspace, "agent-1", "system-session-2", "pi-session-2");
-    const runtimeSession = await adapter.createSession({
-      agent,
-      systemSessionId: "system-session-2",
-      runtimeSession: {
-        type: "cloud-pi-agent",
-        id: "pi-session-2",
-      },
-    });
-
-    expect(restore).toHaveBeenCalledOnce();
-    expect(sync).toHaveBeenCalledOnce();
-
-    await runtimeSession.abort();
-  });
-
-  it("injects always-on context as a startup user message after PI session creation", async () => {
-    const workspace = await createTempDir();
-    await writeFile(
-      `${workspace}/startup.md`,
-      "---\ntrigger: always_on\n---\nFollow the workspace playbook.",
-      "utf8",
-    );
-    const agent = await ExpertAgent.create({
-      schemaVersion: "pragma.expert/v1",
-      id: "agent-1",
-      name: "Test Agent",
-      description: "Agent for runtime adapter tests.",
-      tags: ["test"],
-      version: "0.0.0",
-      scope: "test",
-      workspace,
-      contextSystem: createHostContextSystem(new FileSystemContextStore({ rootDir: workspace })),
-    });
-    const agentContext = await agent.buildContext();
-    expect(agentContext.startupMessages[0]?.content).toContain("Follow the workspace playbook.");
-    const piSession = createFakePiSession("pi-session-context");
-    vi.mocked(createAgentSession).mockResolvedValue({
-      extensionsResult: {
-        errors: [],
-        extensions: [],
-        runtime: {} as never,
-      },
-      session: piSession as never,
-    });
-
-    const runtimeSession = await createPiRuntime().createSession({ agent });
-
-    expect(piSession.messages).toEqual([
-      expect.objectContaining({
-        role: "user",
-        content: expect.stringContaining("Follow the workspace playbook."),
-      }),
-    ]);
-    expect((piSession.messages[0] as { readonly content?: string } | undefined)?.content).toContain(
-      "Always-on reference context",
-    );
-
-    await runtimeSession.abort();
-  });
-
-  it("does not inject startup user messages when resuming an existing PI session", async () => {
-    const workspace = await createTempDir();
-    await writeFile(
-      `${workspace}/startup.md`,
-      "---\ntrigger: always_on\n---\nFollow the workspace playbook.",
-      "utf8",
-    );
-    const agent = await ExpertAgent.create({
-      schemaVersion: "pragma.expert/v1",
-      id: "agent-1",
-      name: "Test Agent",
-      description: "Agent for runtime adapter tests.",
-      tags: ["test"],
-      version: "0.0.0",
-      scope: "test",
-      workspace,
-      contextSystem: createHostContextSystem(new FileSystemContextStore({ rootDir: workspace })),
-    });
-    const piSession = createFakePiSession("pi-session-existing");
-    vi.mocked(SessionManager.listAll).mockResolvedValue([
-      {
-        allMessagesText: "",
-        created: new Date("2026-01-01T00:00:00.000Z"),
-        cwd: workspace,
-        firstMessage: "",
-        id: "pi-session-existing",
-        messageCount: 1,
-        modified: new Date("2026-01-01T00:00:00.000Z"),
-        path: `${workspace}/pi-session-existing.jsonl`,
-      },
-    ]);
-    vi.mocked(createAgentSession).mockResolvedValue({
-      extensionsResult: {
-        errors: [],
-        extensions: [],
-        runtime: {} as never,
-      },
-      session: piSession as never,
-    });
-
-    await seedPiSessionRecord(
-      workspace,
-      "agent-1",
-      "system-session-existing",
-      "pi-session-existing",
-    );
-    const runtimeSession = await createPiRuntime().createSession({
-      agent,
-      systemSessionId: "system-session-existing",
-      runtimeSession: {
-        type: "cloud-pi-agent",
-        id: "pi-session-existing",
-      },
-    });
-
-    expect(SessionManager.open).toHaveBeenCalledOnce();
-    expect(piSession.messages).toEqual([]);
-
-    await runtimeSession.abort();
-  });
-
-  it("loads user MCP config into PI custom tools and disposes it on session cleanup", async () => {
-    const workspace = await createTempDir();
-    const dispose = vi.fn(async () => undefined);
-    const agent = await ExpertAgent.create({
-      schemaVersion: "pragma.expert/v1",
-      id: "agent-1",
-      name: "Test Agent",
-      description: "Agent for runtime adapter tests.",
-      tags: ["test"],
-      version: "0.0.0",
-      scope: "test",
-      workspace,
-      mcp: {
-        mcpServers: {
-          docs: {
-            name: "Docs MCP",
-            transport: "in-process",
-            inProcess: {
-              listTools: async () => [
-                {
-                  name: "lookup",
-                  description: "Lookup docs.",
-                  inputSchema: {
-                    type: "object",
-                    properties: {},
-                    additionalProperties: false,
-                  },
-                },
-              ],
-              callTool: async () => ({
-                content: [
-                  {
-                    type: "text",
-                    text: "docs",
-                  },
-                ],
-              }),
-              dispose,
-            },
-          },
-        },
-      },
-    });
-    vi.mocked(createAgentSession).mockResolvedValue({
-      extensionsResult: {
-        errors: [],
-        extensions: [],
-        runtime: {} as never,
-      },
-      session: createFakePiSession("pi-session-mcp") as never,
-    });
-
-    const runtimeSession = await createPiRuntime().createSession({ agent });
-    const sessionOptions = vi.mocked(createAgentSession).mock.calls[0]?.[0] as
-      | { readonly customTools?: readonly { readonly name: string }[] }
-      | undefined;
-
-    expect(sessionOptions?.customTools?.map((tool) => tool.name)).toEqual(
-      expect.arrayContaining(["mcp_docs_lookup"]),
-    );
-
-    await runtimeSession.abort();
-
-    expect(dispose).toHaveBeenCalledOnce();
+      createPragma({
+        runtimes: createRuntimeRegistry({
+          runtimes: [runtime],
+          defaultRuntime: runtime.descriptor.id,
+        }),
+      }).run(agent, { input: "fail" }),
+    ).rejects.toThrow("PI session failed");
+    expect(events).toEqual(["before", "destroying", "destroyed"]);
   });
 });
 
-async function seedPiSessionRecord(
-  workspace: string,
-  agentId: string,
-  systemSessionId: string,
-  runtimeSessionId: string,
-): Promise<void> {
-  const paths = new PragmaPaths({ pragmaHome: resolve(workspace, "pragma-test-home") });
-  const manifestPath = paths.systemSessionManifest("workflow-pi-test", systemSessionId);
-  await mkdir(paths.systemSessionRoot("workflow-pi-test", systemSessionId), { recursive: true });
-  const now = new Date().toISOString();
-  await writeFile(
-    manifestPath,
-    `${JSON.stringify(
-      {
-        schemaVersion: 1,
-        workflowRunId: "workflow-pi-test",
-        systemSessionId,
-        agentId,
-        taskRunId: "task-pi-test",
-        runtime: { id: "cloud-pi-agent", kind: "cloud-pi-agent" },
-        runtimeSessionRef: { type: "cloud-pi-agent", id: runtimeSessionId },
-        currentWorkspace: workspace,
-        workspaceHistory: [workspace],
-        status: "closed",
-        createdAt: now,
-        updatedAt: now,
-      },
-      null,
-      2,
-    )}\n`,
-    "utf8",
-  );
-}
-
-async function createTempDir(): Promise<string> {
-  const dir = await mkdtemp(resolve(tmpdir(), "pragma-pi-adapter-"));
-  tempDirs.push(dir);
-  return dir;
-}
-
-function createHostContextSystem(store: FileSystemContextStore): ContextSystem {
-  const contextSystem = new ContextSystem();
-  const result = contextSystem.register({
-    namespace: HOST_CONTEXT_NAMESPACE,
-    store,
+async function createTestAgent(
+  overrides: Partial<Parameters<typeof ExpertAgent.create>[0]> = {},
+): Promise<ExpertAgent> {
+  const workspace = await mkdtemp(resolve(tmpdir(), "pragma-pi-adapter-"));
+  tempDirs.push(workspace);
+  return await ExpertAgent.create({
+    id: "pi-test-agent",
+    name: "PI Test Agent",
+    description: "PI runtime test Agent.",
+    tags: ["test"],
+    version: "0.0.0",
+    scope: "test",
+    workspace,
+    pragmaHome: resolve(workspace, "pragma-test-home"),
+    ...overrides,
   });
-
-  if (!result.ok) {
-    throw new Error(result.error.message);
-  }
-
-  return contextSystem;
 }
 
 function createFakePiSession(sessionId: string) {
