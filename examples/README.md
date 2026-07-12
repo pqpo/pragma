@@ -92,15 +92,17 @@ pnpm --filter @pragma/examples example:runtime-claude-code
 ```
 
 这两个本地 Runtime 使用各自 CLI 已有的认证和模型配置，不读取 `PRAGMA_MODEL_*`。
-进入聊天后输入下面的问题验证 Context Store 加载：
+Context Store 同时准备了 `always_on`、`model_decision`、`manual` 三类内容。进入聊天后可依次输入：
 
 ```text
-你 > 请从测试上下文中读取验证码和发布代号，并说明信息来源
+你 > always-on marker 是什么？
+你 > 请加载 model-decision 测试上下文，告诉我 marker 和支持频道
+你 > 请列出测试上下文，再读取验证码和发布代号，并说明信息来源
 ```
 
-回答应包含 `7319`、`Aurora Finch` 和 In-memory Context Store；流式输出中应出现
-`list_expert_context` 或 `read_expert_context` 等上下文工具调用。测试上下文只存在于当前
-example 进程的内存中，不会写入 workspace。
+回答应分别包含 `AO-2048`、`MD-4096`、`7319` 和 `Aurora Finch`。`always_on` 内容会自动
+预加载；后两类验证中，流式输出应出现 `list_expert_context` 或 `read_expert_context` 等
+上下文工具调用。测试上下文只存在于当前 example 进程的内存中，不会写入 workspace。
 
 ## 目录规划
 

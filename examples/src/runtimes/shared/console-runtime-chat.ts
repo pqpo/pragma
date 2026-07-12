@@ -63,7 +63,7 @@ export async function runRuntimeConsoleChat(options: RuntimeConsoleChatOptions):
     session = await app.experts.createSession(expert, { runtime: runtime.descriptor.id });
 
     console.log(`\n${options.runtimeName} Expert 已就绪。输入问题开始聊天，输入 /exit 退出。`);
-    console.log("可测试：请从测试上下文中读取验证码和发布代号。");
+    console.log("可测试：分别询问 always-on、model-decision 和 manual 测试上下文。");
     console.log(`模型: ${selectedModel?.displayName ?? "CLI 默认模型"}`);
     console.log(`Session: ${session.sessionId}`);
 
@@ -151,6 +151,40 @@ export function createRuntimeTestContextSystem(): ContextSystem {
   return new ContextSystem({
     store: createInMemoryContextStore({
       context: [
+        {
+          id: "runtime-test/always-on.md",
+          content: [
+            "# Always-on runtime context",
+            "",
+            "- Always-on marker: AO-2048",
+            "- Runtime examples should answer in the user's language.",
+            "",
+            "This content is preloaded into every turn without requiring a context tool call.",
+          ].join("\n"),
+          metadata: {
+            description: "Automatically preloaded facts for validating always-on context",
+            trigger: "always_on",
+            trustLevel: "user",
+            priority: "high",
+          },
+        },
+        {
+          id: "runtime-test/model-decision.md",
+          content: [
+            "# Model-decision runtime context",
+            "",
+            "- Model-decision marker: MD-4096",
+            "- Support channel: #runtime-examples",
+            "",
+            "The model should load this content when the user's request makes it relevant.",
+          ].join("\n"),
+          metadata: {
+            description: "On-demand support facts for validating model-decided context loading",
+            trigger: "model_decision",
+            trustLevel: "user",
+            priority: "normal",
+          },
+        },
         {
           id: "runtime-test/verification.md",
           content: [

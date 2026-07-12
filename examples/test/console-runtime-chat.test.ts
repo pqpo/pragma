@@ -28,14 +28,41 @@ describe("runtime console model selection", () => {
 });
 
 describe("runtime console test context", () => {
-  it("mounts manually loadable verification content", async () => {
+  it("mounts always-on, model-decision, and manual content", async () => {
     const contextSystem = createRuntimeTestContextSystem();
     const index = await contextSystem.index();
 
     expect(index.ok).toBe(true);
     if (!index.ok) return;
-    expect(index.value.items).toEqual([
-      expect.objectContaining({ id: "runtime-test/verification.md", namespace: "host" }),
+    expect(index.value.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "runtime-test/always-on.md",
+          namespace: "host",
+          metadata: expect.objectContaining({ trigger: "always_on" }),
+        }),
+        expect.objectContaining({
+          id: "runtime-test/model-decision.md",
+          namespace: "host",
+          metadata: expect.objectContaining({ trigger: "model_decision" }),
+        }),
+        expect.objectContaining({
+          id: "runtime-test/verification.md",
+          namespace: "host",
+          metadata: expect.objectContaining({ trigger: "manual" }),
+        }),
+      ]),
+    );
+
+    const selected = contextSystem.selectContext(index.value.items);
+    expect(selected.preload).toEqual([
+      expect.objectContaining({
+        id: "runtime-test/always-on.md",
+        reasons: ["always_on"],
+      }),
+    ]);
+    expect(selected.context).toEqual([
+      expect.objectContaining({ id: "runtime-test/model-decision.md" }),
     ]);
 
     const context = await contextSystem.read({
