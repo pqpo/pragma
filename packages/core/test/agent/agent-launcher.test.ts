@@ -1,4 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { randomUUID } from "node:crypto";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import {
   createAgentLauncher,
@@ -44,6 +47,7 @@ describe("createAgentLauncher", () => {
   it("creates child workflow runs and starts fresh runtime sessions by default", async () => {
     const runtime = createRecordingRuntimeAdapter();
     const app = createPragma({
+      storage: "memory",
       runtimes: createRuntimeRegistry({
         defaultRuntime: "fake",
         runtimes: [runtime.adapter],
@@ -74,9 +78,43 @@ describe("createAgentLauncher", () => {
     expect(result.output.workflowRunIds[0]).not.toBe(result.output.workflowRunIds[1]);
   });
 
+  it("continues the same child Workflow and Runtime Session for reuse_by_agent", async () => {
+    const runtime = createRecordingRuntimeAdapter();
+    const app = createPragma({
+      storage: "memory",
+      runtimes: createRuntimeRegistry({
+        defaultRuntime: "fake",
+        runtimes: [runtime.adapter],
+      }),
+    });
+    const explorer = await createTestAgent("reusable-explorer");
+    const launcher = createAgentLauncher({ agents: [explorer] });
+    const parent = createParentDirective(launcher.tool);
+
+    const result = await app.run(parent, {
+      input: { agentId: explorer.id, sessionPolicy: "reuse_by_agent" },
+    });
+    const tree = await app.runs.getTree(result.workflowRunId);
+
+    expect(tree?.children).toHaveLength(1);
+    expect(tree?.children[0]?.tasks).toHaveLength(2);
+    expect(result.output.workflowRunIds[0]).toBe(result.output.workflowRunIds[1]);
+    expect(runtime.createSessionRequests).toHaveLength(2);
+    expect(runtime.createSessionRequests[1]?.runtimeSession).toEqual(
+      runtime.createSessionRequests[0]?.runtimeSession ?? {
+        type: "fake-runtime",
+        id: "runtime-session-1",
+      },
+    );
+    expect(runtime.createSessionRequests[1]?.systemSessionId).toBe(
+      runtime.createSessionRequests[0]?.systemSessionId,
+    );
+  });
+
   it("cancels delegated child workflow runs when the parent run is cancelled", async () => {
     const runtime = createPendingRuntimeAdapter();
     const app = createPragma({
+      storage: "memory",
       runtimes: createRuntimeRegistry({
         defaultRuntime: "fake",
         runtimes: [runtime.adapter],
@@ -118,6 +156,7 @@ describe("createAgentLauncher", () => {
 
 async function createTestAgent(id: string): Promise<ExpertAgent> {
   return await ExpertAgent.create({
+    pragmaHome: join(tmpdir(), `pragma-agent-launcher-${randomUUID()}`),
     id,
     name: id,
     description: "Test expert agent",
@@ -131,15 +170,16 @@ async function createTestAgent(id: string): Promise<ExpertAgent> {
 function createParentDirective(tool: ReturnType<typeof createAgentLauncher>["tool"]): Directive<
   {
     readonly agentId: string;
-    readonly sessionPolicy?: "fresh" | undefined;
+    readonly sessionPolicy?: "fresh" | "reuse_by_agent" | undefined;
   },
   { readonly workflowRunIds: readonly string[] }
 > {
   return {
     id: "parent-launcher",
+    version: "1.0.0",
     async run(request) {
       if (request.execution === undefined) {
-        return await createPragma().run(this, request);
+        return await createPragma({ storage: "memory" }).run(this, request);
       }
 
       const outputs = [];
@@ -185,9 +225,10 @@ function createSingleLaunchDirective(
 > {
   return {
     id: "single-parent-launcher",
+    version: "1.0.0",
     async run(request) {
       if (request.execution === undefined) {
-        return await createPragma().run(this, request);
+        return await createPragma({ storage: "memory" }).run(this, request);
       }
 
       const result = await tool.call(

@@ -43,8 +43,9 @@ Restoration never falls back to a new session.
   changing its physical storage directory.
 - `ExpertAgent.createSession()` and public `RuntimeAdapter.createSession()` are removed. Applications
   execute Agents through `PragmaApp.start()` or `PragmaApp.run()`.
-- Multi-turn and process-level restoration return in a later phase through
-  `PragmaApp.resume(rootDefinition, { workflowRunId })`; no partial resume API is provided here.
+- Multi-turn and process-level restoration use
+  `PragmaApp.resume(rootDefinition, { workflowRunId })`; no public partial Child resume API is
+  provided.
 - A global native-session index remains future work.
 - A crash can leave an ownership claim or an empty Session directory before `session.json` is fully
   created. These artifacts remain reserved and harmless; future storage GC should report and clean
@@ -58,22 +59,21 @@ Restoration never falls back to a new session.
   only authentication is shared. Copying auth would create stale, independently mutable credentials
   and is not part of this storage isolation decision.
 
-## Deferred: restore `reuse_by_agent`
+## Durable `reuse_by_agent`
 
-`launch_agent` previously exposed `sessionPolicy: "reuse_by_agent"`. It was removed in this phase
-because every delegation creates a new child Workflow, while a Runtime Session may belong to only
-one Workflow. It must not be restored by passing a previous child Workflow's native Session ref to a
-new child Workflow.
-
-Restore this capability after `PragmaApp.resume()` exists, with the following semantics:
+`launch_agent` exposes `sessionPolicy: "reuse_by_agent"` with the following semantics:
 
 1. Persist the delegated Agent's child `workflowRunId`, `systemSessionId`, and `RuntimeSessionRef` as
    one resumable reference.
-2. A later `reuse_by_agent` launch resumes that original child Workflow through
-   `PragmaApp.resume()`; it does not create a new Workflow around the old Session.
+2. A later `reuse_by_agent` launch continues that original child Workflow by appending a TaskRun;
+   completed TaskRuns remain terminal and are not executed again.
 3. Validate Agent, Runtime descriptor, Workflow owner, system Session, workspace transition, and
    native Session file using the same rules as direct Runtime restoration.
 4. Add tests proving repeated delegation keeps the same child `workflowRunId` and
    `systemSessionId`, while `fresh` continues to create both anew.
-5. Reintroduce `reuse_by_agent` in `AgentLaunchSessionPolicy`, the tool schema, examples, and usage
-   documentation only after those tests pass.
+5. `fresh` remains the explicit way to create a new Child Workflow and Runtime Session.
+
+Workflow state, TaskRuns, Human Interactions, results, definition identity, and the Root tree event
+log are stored beneath `state/workflows/<workflowRunId>/`. Definitions persist only stable
+`id`/`version` metadata; functions, closures, and Zod schemas are supplied again by the Root
+Definition passed to `PragmaApp.resume()`.

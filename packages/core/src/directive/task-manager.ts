@@ -70,15 +70,23 @@ export function createLocalTaskManager(options: TaskManagerOptions): TaskManager
   const publish = async <TPayload>(
     message: Omit<MailboxMessage<TPayload>, "id" | "occurredAt" | "producer">,
   ): Promise<void> => {
-    await options.mailbox.publish({
+    const workflow = await options.stateManager.getWorkflowRun(message.workflowRunId);
+    if (workflow === undefined) {
+      throw new Error(`Workflow run is not found: ${message.workflowRunId}`);
+    }
+    const fullMessage = {
       ...message,
+      parentWorkflowRunId: message.parentWorkflowRunId ?? workflow.parentWorkflowRunId,
+      parentTaskRunId: message.parentTaskRunId ?? workflow.parentTaskRunId,
       id: createId("message"),
       occurredAt: nowIso(),
       producer: {
         id: workerId,
         kind: "task-manager",
       },
-    });
+    } as MailboxMessage<TPayload>;
+    await options.eventStore.append(fullMessage, workflow.rootWorkflowRunId);
+    await options.mailbox.publish(fullMessage);
   };
 
   const getRunContext = (workflowRunId: string): RunContext => {
@@ -133,6 +141,12 @@ export function createLocalTaskManager(options: TaskManagerOptions): TaskManager
       const input = directive.inputSchema?.parse(request.input) ?? request.input;
       const state = RunStateSchema.parse({
         input,
+        execution: {
+          runtime: request.runtime,
+          modelName: request.modelName,
+          thinkingLevel: request.thinkingLevel,
+          runtimes: request.runtimes,
+        },
       });
       const workflowRunId = createId("workflow");
       const inheritedSandboxRequest =
@@ -159,8 +173,10 @@ export function createLocalTaskManager(options: TaskManagerOptions): TaskManager
       const workflow = await options.stateManager.createWorkflowRun({
         id: workflowRunId,
         directiveId: directive.id,
+        directiveVersion: directive.version,
         parentWorkflowRunId: request.execution?.workflow.id,
         parentTaskRunId: request.execution?.task.id,
+        continuationKey: request.continuationKey,
         input,
         state,
         startStepId: directive.startStepId,
@@ -187,7 +203,8 @@ export function createLocalTaskManager(options: TaskManagerOptions): TaskManager
         startOptions.events === "none"
           ? createEmptyRunEvents()
           : await createRunEventChannel({
-              mailbox: options.mailbox,
+              eventStore: options.eventStore,
+              stateManager: options.stateManager,
               rootWorkflowRunId: workflow.id,
             });
 
@@ -225,6 +242,147 @@ export function createLocalTaskManager(options: TaskManagerOptions): TaskManager
         async cancel(reason) {
           await manager.cancelRun(workflow.id, reason);
         },
+      };
+    },
+
+    async resumeRun<TOutput>(
+      directive: CompiledDirective<unknown, TOutput>,
+      workflowRunId: string,
+      startOptions: TaskManagerStartRunOptions = {},
+    ): Promise<RunHandle<TOutput>> {
+      await manager.start();
+      const workflow = await options.stateManager.getWorkflowRun(workflowRunId);
+      if (workflow === undefined) throw new Error(`Workflow run is not found: ${workflowRunId}`);
+      if (
+        workflow.directiveId !== directive.id ||
+        workflow.directiveVersion !== directive.version
+      ) {
+        throw new Error(
+          `Workflow definition mismatch for ${workflowRunId}: persisted ${workflow.directiveId}@${workflow.directiveVersion}, received ${directive.id}@${directive.version}.`,
+        );
+      }
+      await options.directiveStore.save({
+        workflowRunId,
+        directive,
+        request: { input: workflow.input, ...workflow.execution },
+      });
+      const cursor = await options.eventStore.latest(workflow.rootWorkflowRunId);
+      let resolveResult!: (value: RunResult<TOutput>) => void;
+      let rejectResult!: (error: Error) => void;
+      const result = new Promise<RunResult<TOutput>>((resolve, reject) => {
+        resolveResult = resolve;
+        rejectResult = reject;
+      });
+      void result.catch(() => undefined);
+      runContexts.set(workflowRunId, {
+        resolve: (value) => resolveResult(value as RunResult<TOutput>),
+        reject: rejectResult,
+      });
+      if (workflow.result?.status === "succeeded") {
+        const output =
+          directive.outputSchema?.parse(workflow.result.output) ?? workflow.result.output;
+        resolveResult({ workflowRunId, output: output as TOutput, state: workflow.state });
+        runContexts.delete(workflowRunId);
+      } else if (workflow.result?.status === "failed" || workflow.result?.status === "cancelled") {
+        rejectResult(new Error(readResultError(workflow.result.error)));
+        runContexts.delete(workflowRunId);
+      } else {
+        for (const task of await options.stateManager.listTaskRuns(workflowRunId)) {
+          if (task.status === "succeeded" && !task.transitionApplied) {
+            await publish({
+              kind: "event",
+              type: "task.completed",
+              workflowRunId,
+              taskRunId: task.id,
+              stepId: task.stepId,
+              payload: { output: task.output, recovered: true },
+            });
+          }
+        }
+        const reconciledWorkflow = await options.stateManager.getWorkflowRun(workflowRunId);
+        if (
+          reconciledWorkflow !== undefined &&
+          !["succeeded", "failed", "cancelled"].includes(reconciledWorkflow.status)
+        ) {
+          await manager.recoverExpiredLeases(new Date(8640000000000000), workflowRunId);
+          await manager.dispatchReadyTasks(workflowRunId);
+        }
+      }
+      const events =
+        startOptions.events === "none"
+          ? createEmptyRunEvents()
+          : await createRunEventChannel({
+              eventStore: options.eventStore,
+              stateManager: options.stateManager,
+              rootWorkflowRunId: workflow.rootWorkflowRunId,
+              after: cursor,
+            });
+      return {
+        workflowRunId,
+        events,
+        result,
+        cancel: async (reason) => manager.cancelRun(workflowRunId, reason),
+      };
+    },
+
+    async continueRun<TInput, TOutput>(
+      directive: CompiledDirective<TInput, TOutput>,
+      workflowRunId: string,
+      request: StartRunRequest<TInput>,
+      startOptions: TaskManagerStartRunOptions = {},
+    ): Promise<RunHandle<TOutput>> {
+      await manager.start();
+      const input = directive.inputSchema?.parse(request.input) ?? request.input;
+      const previousSession = await readLatestRuntimeSession(workflowRunId);
+      const workflow = await options.stateManager.continueWorkflowRun(
+        workflowRunId,
+        input,
+        directive.startStepId,
+      );
+      await options.directiveStore.save({
+        workflowRunId,
+        directive,
+        request: {
+          ...request,
+          input,
+          systemSessionId: previousSession?.systemSessionId,
+          runtimeSession: previousSession?.runtimeSession,
+          runtimeSessionOwnerTaskRunId: previousSession?.taskRunId,
+        },
+      });
+      const cursor = await options.eventStore.latest(workflow.rootWorkflowRunId);
+      const result = new Promise<RunResult<TOutput>>((resolve, reject) => {
+        runContexts.set(workflowRunId, {
+          resolve: (value) => resolve(value as RunResult<TOutput>),
+          reject,
+        });
+      });
+      void result.catch(() => undefined);
+      const events =
+        startOptions.events === "none"
+          ? createEmptyRunEvents()
+          : await createRunEventChannel({
+              eventStore: options.eventStore,
+              stateManager: options.stateManager,
+              rootWorkflowRunId: workflow.rootWorkflowRunId,
+              after: cursor,
+            });
+      await publish({
+        kind: "event",
+        type: "workflow.resumed",
+        workflowRunId,
+        parentWorkflowRunId: workflow.parentWorkflowRunId,
+        parentTaskRunId: workflow.parentTaskRunId,
+        payload: { continuation: true },
+      });
+      void manager.dispatchReadyTasks(workflowRunId).catch((error) => {
+        void failWorkflow(workflowRunId, toError(error), { message: String(error) });
+      });
+      return {
+        workflowRunId,
+        events,
+        result,
+        cancel: async (reason) => manager.cancelRun(workflowRunId, reason),
       };
     },
 
@@ -307,8 +465,12 @@ export function createLocalTaskManager(options: TaskManagerOptions): TaskManager
         },
       });
 
-      humanInteractionWaiters.get(interaction.id)?.resolve(interaction.response ?? {});
+      const waiter = humanInteractionWaiters.get(interaction.id);
+      waiter?.resolve(interaction.response ?? {});
       humanInteractionWaiters.delete(interaction.id);
+      if (waiter === undefined) {
+        await manager.recoverExpiredLeases(new Date(), interaction.workflowRunId);
+      }
       return interaction;
     },
 
@@ -324,7 +486,19 @@ export function createLocalTaskManager(options: TaskManagerOptions): TaskManager
         return undefined;
       }
 
-      const leasedTask = await options.stateManager.markTaskLeased(task.id, workerId, leaseTtlMs);
+      let leasedTask: TaskRunRecord;
+      try {
+        leasedTask = await options.stateManager.markTaskLeased(task.id, workerId, leaseTtlMs);
+      } catch (error) {
+        const latestTask = await options.stateManager.getTaskRun(task.id);
+        if (
+          latestTask === undefined ||
+          !["pending", "dispatched"].includes(latestTask.status)
+        ) {
+          return undefined;
+        }
+        throw error;
+      }
       await publish({
         kind: "event",
         type: "task.leased",
@@ -487,8 +661,8 @@ export function createLocalTaskManager(options: TaskManagerOptions): TaskManager
       });
     },
 
-    async recoverExpiredLeases(now) {
-      const recovered = await options.stateManager.recoverExpiredLeases(now);
+    async recoverExpiredLeases(now, workflowRunId) {
+      const recovered = await options.stateManager.recoverExpiredLeases(now, workflowRunId);
 
       for (const task of recovered) {
         const definition = await findDirectiveDefinition(task.workflowRunId);
@@ -537,12 +711,12 @@ export function createLocalTaskManager(options: TaskManagerOptions): TaskManager
   async function prepareReadyTaskDispatches(
     workflowRunId: string,
   ): Promise<readonly PreparedTaskDispatch[]> {
-    const definition = await getDirectiveDefinition(workflowRunId);
     const workflow = await options.stateManager.getWorkflowRun(workflowRunId);
 
     if (workflow === undefined || workflow.status !== "running") {
       return [];
     }
+    const definition = await getDirectiveDefinition(workflowRunId);
 
     const prepared: PreparedTaskDispatch[] = [];
     for (const stepId of workflow.currentStepIds) {
@@ -588,9 +762,17 @@ export function createLocalTaskManager(options: TaskManagerOptions): TaskManager
         task = await options.stateManager.createTaskRun({
           workflowRunId,
           stepId,
+          definition: {
+            id: step.directive.id,
+            version: step.directive.version,
+            kind: readDefinitionKind(step.directive),
+          },
           visit,
           runtimeId,
           input,
+          systemSessionId: definition.request.systemSessionId,
+          runtimeSession: definition.request.runtimeSession,
+          runtimeSessionOwnerTaskRunId: definition.request.runtimeSessionOwnerTaskRunId,
         });
       } catch (error) {
         if (isActiveTaskRunConflict(error)) {
@@ -687,6 +869,10 @@ export function createLocalTaskManager(options: TaskManagerOptions): TaskManager
       workflowRunId,
       "cancelled",
     );
+    await options.stateManager.setWorkflowResult(workflowRunId, {
+      status: "cancelled",
+      error: { message: reason ?? "Directive run was cancelled." },
+    });
     await publish({
       kind: "event",
       type: "workflow.cancelled",
@@ -781,8 +967,8 @@ export function createLocalTaskManager(options: TaskManagerOptions): TaskManager
       thinkingLevel: context.runRequest.thinkingLevel,
       output: step.output ?? step.directive.outputSchema,
       runtime: context.runtimeId,
-      runtimeSession: context.runRequest.runtimeSession,
-      systemSessionId: context.runRequest.systemSessionId,
+      systemSessionId: context.task.systemSessionId ?? context.runRequest.systemSessionId,
+      runtimeSession: context.task.runtimeSession ?? context.runRequest.runtimeSession,
       runtimes: context.runRequest.runtimes,
       execution: {
         task: context.task,
@@ -809,6 +995,9 @@ export function createLocalTaskManager(options: TaskManagerOptions): TaskManager
             stepId: context.task.stepId,
             request,
           });
+          if (interaction.status === "responded") {
+            return interaction.response ?? {};
+          }
           const responsePromise = new Promise<HumanInteractionResponse>((resolve) => {
             humanInteractionWaiters.set(interaction.id, {
               taskRunId: context.task.id,
@@ -852,6 +1041,9 @@ export function createLocalTaskManager(options: TaskManagerOptions): TaskManager
           });
 
           return await responsePromise;
+        },
+        checkpointRuntimeSession: async (checkpoint) => {
+          await options.stateManager.checkpointRuntimeSession(context.task.id, checkpoint);
         },
         runDirective:
           options.runDirective ??
@@ -905,6 +1097,7 @@ export function createLocalTaskManager(options: TaskManagerOptions): TaskManager
 
     if (targets.length === 0) {
       await completeRun(message.workflowRunId, "succeeded", nextState);
+      await options.stateManager.markTaskTransitionApplied(transition.task.id);
       return;
     }
 
@@ -912,6 +1105,7 @@ export function createLocalTaskManager(options: TaskManagerOptions): TaskManager
 
     if (terminal !== undefined) {
       await completeWithTerminal(message.workflowRunId, terminal, nextState);
+      await options.stateManager.markTaskTransitionApplied(transition.task.id);
       return;
     }
 
@@ -920,6 +1114,7 @@ export function createLocalTaskManager(options: TaskManagerOptions): TaskManager
       message.workflowRunId,
       stepTargets.map((target) => target.id),
     );
+    await options.stateManager.markTaskTransitionApplied(transition.task.id);
     await manager.dispatchReadyTasks(message.workflowRunId);
   }
 
@@ -960,6 +1155,10 @@ export function createLocalTaskManager(options: TaskManagerOptions): TaskManager
     causationId?: string | undefined,
   ): Promise<void> {
     const workflow = await options.stateManager.completeWorkflowRun(workflowRunId, "failed");
+    await options.stateManager.setWorkflowResult(workflowRunId, {
+      status: "failed",
+      error: payload,
+    });
     await publish({
       kind: "event",
       type: "workflow.failed",
@@ -984,6 +1183,10 @@ export function createLocalTaskManager(options: TaskManagerOptions): TaskManager
     if (target.type === "fail") {
       const workflow = await options.stateManager.completeWorkflowRun(workflowRunId, "failed");
       const error = new Error(target.reason ?? "Directive run failed.");
+      await options.stateManager.setWorkflowResult(workflowRunId, {
+        status: "failed",
+        error: { message: error.message },
+      });
       await publish({
         kind: "event",
         type: "workflow.failed",
@@ -1023,6 +1226,7 @@ export function createLocalTaskManager(options: TaskManagerOptions): TaskManager
       definition.directive as CompiledDirective<unknown, TOutput>,
       state,
     );
+    await options.stateManager.setWorkflowResult(workflowRunId, { status: "succeeded", output });
     await publish({
       kind: "event",
       type: "workflow.completed",
@@ -1048,6 +1252,7 @@ export function createLocalTaskManager(options: TaskManagerOptions): TaskManager
 
   async function readLatestRuntimeSession(workflowRunId: string): Promise<
     | {
+        readonly taskRunId: string;
         readonly systemSessionId?: string | undefined;
         readonly runtimeSession: RuntimeSessionRef;
       }
@@ -1059,9 +1264,10 @@ export function createLocalTaskManager(options: TaskManagerOptions): TaskManager
       const task = tasks[index];
       const runtimeSession = task?.runtimeSession;
 
-      if (runtimeSession !== undefined) {
+      if (task !== undefined && runtimeSession !== undefined) {
         return {
-          systemSessionId: task?.systemSessionId,
+          taskRunId: task.id,
+          systemSessionId: task.systemSessionId,
           runtimeSession,
         };
       }
@@ -1099,11 +1305,15 @@ function createSyntheticTask(workflowRunId: string, stepId: string, visit: numbe
     id: "pending",
     workflowRunId,
     stepId,
+    definition: { id: "pending", version: "pending", kind: "task" },
     visit,
     status: "pending",
     runtimeId: "pending",
     input: undefined,
     attempt: 1,
+    runtimeSessionState: "not_started",
+    completionApplied: false,
+    transitionApplied: false,
     createdAt: timestamp,
     updatedAt: timestamp,
   };
@@ -1191,4 +1401,18 @@ function toErrorPayload(error: unknown): { code: string; message: string; retrya
 function toError(payload: unknown): Error {
   const message = readObjectField(payload, "message");
   return new Error(typeof message === "string" ? message : "Task failed.");
+}
+
+function readDefinitionKind(
+  directive: StepDefinition["directive"],
+): "flow" | "task" | "human" | "expert" | "directive" {
+  if (directive.constructor.name === "ExpertAgent") return "expert";
+  if (directive.constructor?.name === "FlowSpec" || "steps" in directive) return "flow";
+  return "directive";
+}
+
+function readResultError(error: unknown): string {
+  return typeof error === "object" && error !== null && "message" in error
+    ? String((error as { message: unknown }).message)
+    : "Workflow did not succeed.";
 }

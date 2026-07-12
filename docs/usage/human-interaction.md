@@ -132,4 +132,7 @@ pnpm --filter @pragma/examples dev src/run-human-review-gate.ts
 
 ## 可恢复工具审批
 
-第二阶段不再向应用暴露 Runtime Session。当前审批通过 `app.start()` 产生的 `human.requested` 事件与 `app.taskManager.respondToHumanInteraction()` 处理。跨进程恢复、pending approval 重放和多轮 Runtime transcript 将在 `PragmaApp.resume(rootDefinition, { workflowRunId })` 阶段重新提供；本阶段不提供直接 Session 或半成品 resume 示例。
+应用不直接持有 Runtime Session。审批通过 `app.start()` / `app.resume()` 产生的
+`human.requested` 事件与 `app.taskManager.respondToHumanInteraction()` 处理。Pending interaction
+会随 Workflow 持久化；进程重启后重新传入 Root Definition，即可恢复原 Workflow、Task 和
+Runtime Session，无需旧 JavaScript Promise。

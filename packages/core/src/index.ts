@@ -2,6 +2,11 @@ import type { ExpertAgentCreateOptions } from "./agent/expert-agent.ts";
 import { ExpertAgent } from "./agent/expert-agent.ts";
 
 export { AgentMessageSchema, type AgentMessage, type AgentMessageUsage } from "@pragma/shared";
+export {
+  HumanInteractionRecordSchema,
+  type HumanInteractionRecord,
+  type HumanInteractionResponse,
+} from "@pragma/shared";
 export * from "./agent/context-manager.ts";
 export * from "./agent/agent-launcher.ts";
 export * from "./agent/expert-agent.ts";

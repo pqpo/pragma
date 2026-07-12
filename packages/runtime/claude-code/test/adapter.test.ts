@@ -70,6 +70,7 @@ async function createPragmaTestSession(
       let usage: Extract<RuntimeStreamEvent, { type: "run.completed" }>["payload"]["usage"];
       const execution = (async () => {
         const app = createPragma({
+          storage: "memory",
           runtimes: createRuntimeRegistry({
             runtimes: [runtime],
             defaultRuntime: runtime.descriptor.id,

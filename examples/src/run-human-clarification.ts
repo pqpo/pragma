@@ -33,6 +33,7 @@ const AnswerSchema = z.object({
 
 const flow = defineFlow({
   id: "human-clarification-directive",
+  version: "1.0.0",
   input: z.object({
     requirement: z.string(),
   }),
@@ -50,6 +51,7 @@ const clarify = flow.use(
   "clarify",
   defineTask({
     id: "clarify-code",
+    version: "1.0.0",
     output: ClarifierOutputSchema,
     handler: ({ input, state }) => {
       const payload = z
@@ -108,6 +110,7 @@ const askUser = flow.use(
   "ask-user",
   defineHumanTask({
     id: "ask-user-question",
+    version: "1.0.0",
     output: AnswerSchema,
     request: ({ state }) => {
       const clarification = ClarifierOutputSchema.parse(state.results["clarification"]);

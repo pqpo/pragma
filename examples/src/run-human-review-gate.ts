@@ -15,6 +15,7 @@ const ReviewDecisionSchema = z.object({
 
 const flow = defineFlow({
   id: "human-review-gate-directive",
+  version: "1.0.0",
   input: z.object({
     requirement: z.string(),
   }),
@@ -34,6 +35,7 @@ const coder = flow.use(
   "coder",
   defineTask({
     id: "coder-code",
+    version: "1.0.0",
     output: z.object({
       summary: z.string(),
       changedFiles: z.array(z.string()),
@@ -67,6 +69,7 @@ const verify = flow.use(
   "verify",
   defineTask({
     id: "verify-code",
+    version: "1.0.0",
     output: z.object({
       passed: z.boolean(),
       summary: z.string(),
@@ -95,6 +98,7 @@ const review = flow.use(
   "human-review",
   defineHumanTask({
     id: "human-review-gate",
+    version: "1.0.0",
     output: ReviewDecisionSchema,
     request: ({ state }) => ({
       kind: "review_gate",
@@ -128,14 +132,11 @@ const review = flow.use(
 );
 
 flow.compose(({ start, step, end, fail }) => {
-  start(coder)
-    .next(verify)
-    .next(review)
-    .route("decision", {
-      approved: end(),
-      request_changes: coder,
-      manual_patch: verify,
-    });
+  start(coder).next(verify).next(review).route("decision", {
+    approved: end(),
+    request_changes: coder,
+    manual_patch: verify,
+  });
   step(coder).limit({
     maxVisits: 3,
     onExceeded: fail("too-many-code-revisions"),

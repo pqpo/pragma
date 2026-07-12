@@ -56,6 +56,7 @@ describe("createPiRuntime", () => {
     });
     const runtime = createPiRuntime();
     const result = await createPragma({
+      storage: "memory",
       runtimes: createRuntimeRegistry({
         runtimes: [runtime],
         defaultRuntime: runtime.descriptor.id,
@@ -92,6 +93,7 @@ describe("createPiRuntime", () => {
 
     await expect(
       createPragma({
+        storage: "memory",
         runtimes: createRuntimeRegistry({
           runtimes: [runtime],
           defaultRuntime: runtime.descriptor.id,

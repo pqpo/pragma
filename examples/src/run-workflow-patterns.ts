@@ -5,10 +5,12 @@ const app = createPragma();
 
 const promptChain = patterns.promptChain({
   id: "example-prompt-chain",
+  version: "1.0.0",
   output: z.string(),
   steps: [
     defineTask({
       id: "normalize-request",
+      version: "1.0.0",
       output: z.object({
         text: z.string(),
       }),
@@ -26,6 +28,7 @@ const promptChain = patterns.promptChain({
     }),
     defineTask({
       id: "draft-reply",
+      version: "1.0.0",
       output: z.object({
         draft: z.string(),
       }),
@@ -43,6 +46,7 @@ const promptChain = patterns.promptChain({
     }),
     defineTask({
       id: "polish-reply",
+      version: "1.0.0",
       output: z.string(),
       handler: ({ input }) => {
         const payload = z
@@ -59,11 +63,13 @@ const promptChain = patterns.promptChain({
 
 const routed = patterns.routing({
   id: "example-routing",
+  version: "1.0.0",
   output: z.string(),
   field: "route",
   router: {
     directive: defineTask({
       id: "classify-ticket",
+      version: "1.0.0",
       output: z.object({
         route: z.enum(["billing", "technical"]),
       }),
@@ -84,6 +90,7 @@ const routed = patterns.routing({
     billing: {
       directive: defineTask({
         id: "billing-handler",
+        version: "1.0.0",
         handler: ({ input }) => {
           const payload = z
             .object({
@@ -98,6 +105,7 @@ const routed = patterns.routing({
     technical: {
       directive: defineTask({
         id: "technical-handler",
+        version: "1.0.0",
         handler: ({ input }) => {
           const payload = z
             .object({
@@ -114,20 +122,24 @@ const routed = patterns.routing({
 
 const parallelReview = patterns.parallel({
   id: "example-parallel",
+  version: "1.0.0",
   output: z.object({
     summary: z.string(),
   }),
   branches: {
     correctness: defineTask({
       id: "correctness-reviewer",
+      version: "1.0.0",
       handler: ({ input }) => `Correctness: ${String(input)} is internally consistent.`,
     }),
     risk: defineTask({
       id: "risk-reviewer",
+      version: "1.0.0",
       handler: ({ input }) => `Risk: ${String(input)} needs rollout monitoring.`,
     }),
     userValue: defineTask({
       id: "user-value-reviewer",
+      version: "1.0.0",
       handler: ({ input }) => `User value: ${String(input)} has a clear target user.`,
     }),
   },
@@ -142,12 +154,14 @@ const parallelReview = patterns.parallel({
 
 const reportBuilder = patterns.orchestratorWorkers({
   id: "example-orchestrator-workers",
+  version: "1.0.0",
   output: z.object({
     markdown: z.string(),
   }),
   orchestrator: {
     directive: defineTask({
       id: "report-planner",
+      version: "1.0.0",
       handler: () => ({
         tasks: [
           {
@@ -165,6 +179,7 @@ const reportBuilder = patterns.orchestratorWorkers({
   worker: {
     directive: defineTask({
       id: "section-writer",
+      version: "1.0.0",
       output: z.object({
         heading: z.string(),
         body: z.string(),
@@ -193,6 +208,7 @@ const reportBuilder = patterns.orchestratorWorkers({
 
 const refinedAnswer = patterns.evaluatorOptimizer({
   id: "example-evaluator-optimizer",
+  version: "1.0.0",
   output: z.object({
     accepted: z.boolean(),
     attempt: z.object({
@@ -208,6 +224,7 @@ const refinedAnswer = patterns.evaluatorOptimizer({
   optimizer: {
     directive: defineTask({
       id: "answer-optimizer",
+      version: "1.0.0",
       output: z.object({
         revision: z.number(),
         answer: z.string(),
@@ -228,6 +245,7 @@ const refinedAnswer = patterns.evaluatorOptimizer({
   evaluator: {
     directive: defineTask({
       id: "answer-evaluator",
+      version: "1.0.0",
       output: z.object({
         accepted: z.boolean(),
         feedback: z.string(),

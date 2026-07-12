@@ -1,240 +1,73 @@
-/*
- * Pending migration to PragmaApp.start() plus human.requested/respondToHumanInteraction.
- * Retained as implementation reference; direct Runtime Session creation is intentionally disabled.
-
 import { createInterface } from "node:readline/promises";
-import { stdin as input, stdout as output } from "node:process";
+import { stdin, stdout } from "node:process";
 
-import { ExpertAgent } from "@pragma/core";
-import type { ExpertAgentHumanInteractionHandler } from "@pragma/core";
+import { createPragma, createRuntimeRegistry, defineAgent } from "@pragma/core";
 import { createPiRuntime } from "@pragma/runtime-pi";
 
 import toolApprovalPolicyPlugin from "../plugins/tool-approval-policy/src/plugin.ts";
-import {
-  printPluginLoadIssues,
-  printRunHeader,
-  printRunResult,
-} from "./harness/expert-agent-example-utils.ts";
-import {
-  createExpertAgentModelsConfig,
-  formatModelConfig,
-  readExampleModelConfig,
-} from "./harness/model-config.ts";
-import { readBasicExampleCli } from "./harness/cli.ts";
-import { defaultWorkspaceRoot, ensureWorkspaceDir, loadExamplesEnv } from "./harness/paths.ts";
-import { exitIfRuntimeUnavailable } from "./harness/runtime-availability.ts";
-import { printRunStream } from "./harness/stream-output.ts";
-
-const defaultQuery = "先调用 askUserQuestion 问我是否继续，然后再执行一个需要确认的工具。";
+import { createExpertAgentModelsConfig, readExampleModelConfig } from "./harness/model-config.ts";
+import { defaultWorkspaceRoot, loadExamplesEnv } from "./harness/paths.ts";
 
 loadExamplesEnv();
-
-const cli = readBasicExampleCli(defaultQuery);
-const workspace = defaultWorkspaceRoot;
-
-await ensureWorkspaceDir(workspace);
-
-const modelConfig = readExampleModelConfig();
-const agent = await ExpertAgent.create({
-  schemaVersion: "pragma.expert/v1",
-  id: "tool-approval-example-expert",
-  name: "Tool Approval Example Expert",
-  description: "Demonstrates approval-required tools and askUserQuestion.",
+const runtime = createPiRuntime();
+const app = createPragma({
+  runtimes: createRuntimeRegistry({ defaultRuntime: "pi", runtimes: [runtime] }),
+});
+const agent = await defineAgent({
+  id: "tool-approval-example",
+  name: "Tool Approval Example",
+  description: "Uses the PragmaApp Human Interaction protocol for tool approval.",
   tags: ["example", "approval"],
-  version: "0.0.0",
+  version: "1.0.0",
   scope: "local-test",
-  workspace,
-  models: createExpertAgentModelsConfig(modelConfig),
-  tools: [
-    {
-      name: "delete_workspace_note",
-      description: "Delete a workspace note after explicit confirmation.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          path: { type: "string" },
-        },
-        required: ["path"],
-        additionalProperties: false,
-      },
-      call: async (args) => ({
-        text: `Deleted workspace note at ${(args as { path?: string }).path ?? "<unknown>"}`,
-      }),
-    },
-  ],
+  workspace: defaultWorkspaceRoot,
+  models: createExpertAgentModelsConfig(readExampleModelConfig()),
+  tools: [createApprovalTool()],
   plugins: [{ entry: toolApprovalPolicyPlugin }],
 });
-
-const runtime = createPiRuntime();
-await exitIfRuntimeUnavailable(runtime);
-const session = await runtime.createSession({
-  agent,
-  owner: { workflowRunId: "tool-approval-example" },
-  humanInteractionHandler: createCliHumanInteractionHandler(),
+const handle = await app.start(agent, {
+  input: "调用 delete_workspace_note 删除 notes/example.md，并说明结果。",
+  runtime: "pi",
 });
+const rl = createInterface({ input: stdin, output: stdout });
 
 try {
-  printPluginLoadIssues(agent);
-
-  console.log("Approval example:");
-  console.log(`- tools: ${agent.tools?.map((tool) => tool.name).join(", ") ?? "<none>"}`);
-  console.log("");
-
-  for (const [index, query] of cli.turns.entries()) {
-    console.log(`Turn ${index + 1}/${cli.turns.length}`);
-    printRunHeader(agent, formatModelConfig(modelConfig), query);
-    const run = session.submit({ query });
-    await printRunStream(run);
-    const result = await run.result;
-    printRunResult(result.runId);
-    console.log("");
-  }
-} finally {
-  await session.abort();
-}
-
-function createCliHumanInteractionHandler(): ExpertAgentHumanInteractionHandler {
-  const rl = createInterface({ input, output });
-
-  return async (request) => {
-    if (request.kind === "user_question") {
-      console.log("");
-      console.log(`[question] ${request.toolName}`);
-
-      return {
-        kind: "user_question",
-        answered: true,
-        answers: await readCliQuestionAnswers(rl, request.questions),
-      };
-    }
-
-    console.log("");
-    console.log(`[approval] ${request.toolName}`);
-    if (request.reason !== undefined) {
-      console.log(request.reason);
-    }
-    console.log(JSON.stringify(request.input, null, 2));
+  for await (const event of handle.events) {
+    if (event.sourceType !== "human.requested") continue;
+    const interaction = readInteraction(event.payload);
     const answer = (await rl.question("Approve? [y/N] ")).trim().toLowerCase();
-
-    if (answer !== "y" && answer !== "yes") {
-      return { kind: "tool_approval", approved: false, reason: "User denied approval." };
-    }
-
-    return { kind: "tool_approval", approved: true };
-  };
-}
-
-interface CliQuestion {
-  readonly header: string;
-  readonly question: string;
-  readonly kind?: "single_choice" | "multiple_choice" | "text" | undefined;
-  readonly options?:
-    | readonly { readonly label: string; readonly description?: string }[]
-    | undefined;
-}
-
-async function readCliQuestionAnswers(
-  rl: ReturnType<typeof createInterface>,
-  questions: readonly CliQuestion[],
-): Promise<unknown> {
-  if (questions.length === 0) {
-    const response = (await rl.question("Answer (plain text or JSON): ")).trim();
-    return parseCliQuestionAnswer(response);
-  }
-
-  const answers: unknown[] = [];
-
-  for (const question of questions) {
-    console.log("");
-    console.log(`${question.header}: ${question.question}`);
-
-    if (question.kind === "single_choice") {
-      answers.push({
-        header: question.header,
-        question: question.question,
-        kind: question.kind,
-        selected: await readSingleChoiceAnswer(rl, question.options ?? []),
-      });
-      continue;
-    }
-
-    if (question.kind === "multiple_choice") {
-      answers.push({
-        header: question.header,
-        question: question.question,
-        kind: question.kind,
-        selected: await readMultipleChoiceAnswer(rl, question.options ?? []),
-      });
-      continue;
-    }
-
-    answers.push({
-      header: question.header,
-      question: question.question,
-      kind: "text",
-      answer: await rl.question("Answer: "),
+    await app.taskManager.respondToHumanInteraction({
+      interactionId: interaction.id,
+      response: { approved: answer === "y" || answer === "yes" },
     });
   }
-
-  return { answers };
+  console.log((await handle.result).output);
+} finally {
+  rl.close();
 }
 
-async function readSingleChoiceAnswer(
-  rl: ReturnType<typeof createInterface>,
-  options: readonly { readonly label: string; readonly description?: string }[],
-): Promise<string> {
-  printChoiceOptions(options);
-  const response = (await rl.question("Choose one: ")).trim();
-  return resolveChoiceLabel(response, options) ?? response;
-}
-
-async function readMultipleChoiceAnswer(
-  rl: ReturnType<typeof createInterface>,
-  options: readonly { readonly label: string; readonly description?: string }[],
-): Promise<readonly string[]> {
-  printChoiceOptions(options);
-  const response = (await rl.question("Choose one or more, comma separated: ")).trim();
-
-  return response
-    .split(",")
-    .map((part) => part.trim())
-    .filter((part) => part.length > 0)
-    .map((part) => resolveChoiceLabel(part, options) ?? part);
-}
-
-function printChoiceOptions(
-  options: readonly { readonly label: string; readonly description?: string }[],
-): void {
-  for (const [index, option] of options.entries()) {
-    const description =
-      option.description === undefined || option.description.length === 0
-        ? ""
-        : ` - ${option.description}`;
-    console.log(`${index + 1}. ${option.label}${description}`);
+function readInteraction(payload: unknown): { readonly id: string } {
+  if (typeof payload === "object" && payload !== null && "interaction" in payload) {
+    const interaction = (payload as { interaction: unknown }).interaction;
+    if (typeof interaction === "object" && interaction !== null && "id" in interaction) {
+      return { id: String((interaction as { id: unknown }).id) };
+    }
   }
+  throw new Error("human.requested did not contain an interaction.");
 }
 
-function resolveChoiceLabel(
-  response: string,
-  options: readonly { readonly label: string; readonly description?: string }[],
-): string | undefined {
-  const index = Number.parseInt(response, 10);
-  if (Number.isInteger(index) && index >= 1 && index <= options.length) {
-    return options[index - 1]?.label;
-  }
-
-  return options.find((option) => option.label === response)?.label;
+function createApprovalTool() {
+  return {
+    name: "delete_workspace_note" as const,
+    description: "Delete a markdown note after explicit Human approval.",
+    inputSchema: {
+      type: "object",
+      properties: { path: { type: "string" } },
+      required: ["path"],
+      additionalProperties: false,
+    },
+    call: async (args: unknown) => ({
+      text: `Approved deletion: ${String((args as { path?: unknown }).path ?? "<unknown>")}`,
+    }),
+  };
 }
-
-function parseCliQuestionAnswer(response: string): unknown {
-  if (response.length === 0) {
-    return { answered: true };
-  }
-
-  try {
-    return JSON.parse(response);
-  } catch {
-    return { answer: response };
-  }
-}
-*/

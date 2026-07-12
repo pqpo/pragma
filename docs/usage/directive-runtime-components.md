@@ -4,7 +4,9 @@
 
 ## 默认组件
 
-`createPragma()` 默认使用内存状态、内存消息、本地 sandbox 和本地 task manager。这个默认组合适合开发、测试和单进程验证。
+`createPragma()` 默认使用文件型 Workflow 状态与事件日志、内存消息、本地 sandbox 和本地
+task manager。状态位于 `PragmaPaths` 管理的 `~/.pragma/state/workflows/`；测试可显式传入
+`storage: "memory"`。
 
 需要接入分布式部署或自定义执行环境时，可以替换这些组件：
 

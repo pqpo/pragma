@@ -71,6 +71,7 @@ export async function restoreRuntimeSessionRecord(options: {
   readonly agentId: string;
   readonly runtime: RuntimeAdapterDescriptor;
   readonly runtimeSession: RuntimeSessionRef;
+  readonly expectedTaskRunId?: string | undefined;
   readonly workspace: string;
 }): Promise<RuntimeSessionRecord> {
   const record = await readRuntimeSessionRecord(
@@ -79,6 +80,9 @@ export async function restoreRuntimeSessionRecord(options: {
     options.systemSessionId,
   );
   assertEqual(record.workflowRunId, options.owner.workflowRunId, "Workflow");
+  if (options.expectedTaskRunId !== undefined) {
+    assertEqual(record.taskRunId, options.expectedTaskRunId, "Task");
+  }
   assertEqual(record.systemSessionId, options.systemSessionId, "System session");
   assertEqual(record.agentId, options.agentId, "Agent");
   assertEqual(record.runtime.id, options.runtime.id, "Runtime descriptor");
@@ -110,7 +114,7 @@ export async function updateRuntimeSessionRecord(
   return updated;
 }
 
-async function readRuntimeSessionRecord(
+export async function readRuntimeSessionRecord(
   paths: PragmaPaths,
   workflowRunId: string,
   systemSessionId: string,

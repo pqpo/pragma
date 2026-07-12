@@ -117,6 +117,8 @@ export interface RuntimeDriverSessionRequest {
   readonly systemSessionId?: string | undefined;
   /** Omit to create a fresh runtime session. When provided, the referenced session must resume. */
   readonly runtimeSession?: RuntimeSessionRef | undefined;
+  /** Original TaskRun that owns a continued Runtime Session. */
+  readonly runtimeSessionOwnerTaskRunId?: string | undefined;
   readonly loggerProvider?: ExpertAgentLoggerProvider | undefined;
 }
 

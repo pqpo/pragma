@@ -303,6 +303,7 @@ async function createManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepar
           agentId: agent.id,
           runtime: descriptor,
           runtimeSession: request.runtimeSession,
+          expectedTaskRunId: request.runtimeSessionOwnerTaskRunId ?? request.owner.taskRunId,
           workspace: agent.workspace,
         });
 

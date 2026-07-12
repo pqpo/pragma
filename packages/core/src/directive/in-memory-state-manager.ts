@@ -22,13 +22,51 @@ const activeTaskStatuses = new Set(["pending", "dispatched", "leased", "running"
 const terminalTaskStatuses = new Set(["succeeded", "failed", "cancelled", "dead_letter"]);
 const completableWorkflowStatuses = new Set(["running", "waiting"]);
 
-export function createInMemoryStateManager(): StateManager {
-  const workflows = new Map<string, WorkflowRunRecord>();
-  const tasks = new Map<string, TaskRunRecord>();
-  const humanInteractions = new Map<string, HumanInteractionRecord>();
+export interface WorkflowStateSnapshot {
+  readonly schemaVersion: 1;
+  readonly workflow: WorkflowRunRecord;
+  readonly tasks: readonly TaskRunRecord[];
+  readonly humanInteractions: readonly HumanInteractionRecord[];
+  readonly appliedMessageIds: readonly string[];
+}
+
+export interface InMemoryStateManagerBackend {
+  readonly manager: StateManager;
+  readonly snapshot: (workflowRunId: string) => WorkflowStateSnapshot | undefined;
+}
+
+export function createInMemoryStateManager(
+  initial: readonly WorkflowStateSnapshot[] = [],
+): StateManager {
+  return createInMemoryStateManagerBackend(initial).manager;
+}
+
+export function createInMemoryStateManagerBackend(
+  initial: readonly WorkflowStateSnapshot[] = [],
+): InMemoryStateManagerBackend {
+  const workflows = new Map(initial.map((snapshot) => [snapshot.workflow.id, snapshot.workflow]));
+  const tasks = new Map(
+    initial.flatMap((snapshot) => snapshot.tasks.map((task) => [task.id, task] as const)),
+  );
+  const humanInteractions = new Map(
+    initial.flatMap((snapshot) =>
+      snapshot.humanInteractions.map((interaction) => [interaction.id, interaction] as const),
+    ),
+  );
   const humanInteractionIdsByWorkflowId = new Map<string, string[]>();
   const taskIdsByWorkflowId = new Map<string, string[]>();
-  const appliedMessageIds = new Set<string>();
+  const appliedMessageIds = new Set(initial.flatMap((snapshot) => snapshot.appliedMessageIds));
+
+  for (const snapshot of initial) {
+    taskIdsByWorkflowId.set(
+      snapshot.workflow.id,
+      snapshot.tasks.map((task) => task.id),
+    );
+    humanInteractionIdsByWorkflowId.set(
+      snapshot.workflow.id,
+      snapshot.humanInteractions.map((interaction) => interaction.id),
+    );
+  }
 
   const getRequiredWorkflow = (workflowRunId: string): WorkflowRunRecord => {
     const workflow = workflows.get(workflowRunId);
@@ -85,16 +123,23 @@ export function createInMemoryStateManager(): StateManager {
     }
   };
 
-  return {
+  const manager: StateManager = {
     async createWorkflowRun(request: CreateWorkflowRunRequest) {
       const createdAt = nowIso();
       const workflow: WorkflowRunRecord = {
         id: request.id,
+        rootWorkflowRunId:
+          request.parentWorkflowRunId === undefined
+            ? request.id
+            : getRequiredWorkflow(request.parentWorkflowRunId).rootWorkflowRunId,
         directiveId: request.directiveId,
+        directiveVersion: request.directiveVersion ?? "1.0.0",
         parentWorkflowRunId: request.parentWorkflowRunId,
         parentTaskRunId: request.parentTaskRunId,
+        continuationKey: request.continuationKey,
         status: "running",
         input: cloneJson(request.input),
+        execution: cloneJson(request.execution ?? {}),
         state: RunStateSchema.parse(cloneJson(request.state)),
         defaultSandbox: cloneJson(request.defaultSandbox),
         currentStepIds: [request.startStepId],
@@ -164,11 +209,26 @@ export function createInMemoryStateManager(): StateManager {
         id: createId("task"),
         workflowRunId: request.workflowRunId,
         stepId: request.stepId,
+        definition: cloneJson(
+          request.definition ?? { id: request.stepId, version: "1.0.0", kind: "task" },
+        ),
         visit: request.visit,
         status: "pending",
         runtimeId: request.runtimeId,
         input: cloneJson(request.input),
+        ...(request.systemSessionId === undefined
+          ? {}
+          : { systemSessionId: request.systemSessionId }),
+        ...(request.runtimeSession === undefined
+          ? {}
+          : { runtimeSession: cloneJson(request.runtimeSession) }),
+        ...(request.runtimeSessionOwnerTaskRunId === undefined
+          ? {}
+          : { runtimeSessionOwnerTaskRunId: request.runtimeSessionOwnerTaskRunId }),
         attempt: 1,
+        runtimeSessionState: request.runtimeSession === undefined ? "not_started" : "opened",
+        completionApplied: false,
+        transitionApplied: false,
         createdAt,
         updatedAt: createdAt,
       };
@@ -284,6 +344,9 @@ export function createInMemoryStateManager(): StateManager {
     async markTaskSucceeded(taskRunId, output, metadata) {
       return cloneJson(
         updateTask(taskRunId, (task) => {
+          if (task.status === "succeeded") {
+            return task;
+          }
           assertTaskStatus(task, ["running"], "succeeded");
           return {
             ...task,
@@ -393,6 +456,10 @@ export function createInMemoryStateManager(): StateManager {
 
     async applyStepReduction<TOutput>(request: ApplyStepReductionRequest<TOutput>) {
       const workflow = getRequiredWorkflow(request.workflowRunId);
+      const task = getRequiredTask(request.taskRunId);
+      if (task.completionApplied) {
+        return cloneJson(workflow.state);
+      }
 
       if (workflow.revision !== request.expectedRevision) {
         throw new Error(
@@ -415,11 +482,25 @@ export function createInMemoryStateManager(): StateManager {
         revision: current.revision + 1,
         updatedAt: nowIso(),
       }));
+      updateTask(request.taskRunId, (current) => ({
+        ...current,
+        completionApplied: true,
+        updatedAt: nowIso(),
+      }));
 
       return cloneJson(updatedWorkflow.state);
     },
 
     async createHumanInteraction(request) {
+      const existing = (humanInteractionIdsByWorkflowId.get(request.workflowRunId) ?? [])
+        .map((id) => humanInteractions.get(id))
+        .find(
+          (interaction) =>
+            interaction?.taskRunId === request.taskRunId && interaction?.stepId === request.stepId,
+        );
+      if (existing !== undefined) {
+        return cloneJson(existing);
+      }
       const createdAt = nowIso();
       const interaction = HumanInteractionRecordSchema.parse({
         id: createId("human"),
@@ -522,6 +603,9 @@ export function createInMemoryStateManager(): StateManager {
     async completeWorkflowRun(workflowRunId, status) {
       return cloneJson(
         updateWorkflow(workflowRunId, (workflow) => {
+          if (workflow.status === status) {
+            return workflow;
+          }
           if (!completableWorkflowStatuses.has(workflow.status)) {
             throw new Error(
               `Cannot complete workflow ${workflow.id} as ${status} from status ${workflow.status}.`,
@@ -554,15 +638,21 @@ export function createInMemoryStateManager(): StateManager {
       return workflow.currentStepIds.map((stepId): ReadyTransition => ({ stepId }));
     },
 
-    async recoverExpiredLeases(now) {
+    async recoverExpiredLeases(now, workflowRunId) {
       const recovered: TaskRunRecord[] = [];
 
       for (const task of tasks.values()) {
-        if (!["leased", "running"].includes(task.status) || task.leaseExpiresAt === undefined) {
+        if (workflowRunId !== undefined && task.workflowRunId !== workflowRunId) {
+          continue;
+        }
+        if (!["leased", "running"].includes(task.status)) {
           continue;
         }
 
-        if (new Date(task.leaseExpiresAt).getTime() > now.getTime()) {
+        if (
+          task.leaseExpiresAt !== undefined &&
+          new Date(task.leaseExpiresAt).getTime() > now.getTime()
+        ) {
           continue;
         }
 
@@ -578,6 +668,82 @@ export function createInMemoryStateManager(): StateManager {
       }
 
       return recovered;
+    },
+    async checkpointRuntimeSession(taskRunId, checkpoint) {
+      return cloneJson(
+        updateTask(taskRunId, (task) => ({
+          ...task,
+          systemSessionId: checkpoint.systemSessionId,
+          ...(checkpoint.runtimeSession === undefined
+            ? {}
+            : { runtimeSession: checkpoint.runtimeSession }),
+          runtimeSessionState: checkpoint.state,
+          updatedAt: nowIso(),
+        })),
+      );
+    },
+    async setWorkflowResult(workflowRunId, result) {
+      return cloneJson(
+        updateWorkflow(workflowRunId, (workflow) => ({
+          ...workflow,
+          ...(result === undefined ? {} : { result: cloneJson(result) }),
+          updatedAt: nowIso(),
+        })),
+      );
+    },
+    async markTaskTransitionApplied(taskRunId) {
+      return cloneJson(
+        updateTask(taskRunId, (task) => ({
+          ...task,
+          transitionApplied: true,
+          updatedAt: nowIso(),
+        })),
+      );
+    },
+    async continueWorkflowRun(workflowRunId, input, startStepId) {
+      return cloneJson(
+        updateWorkflow(workflowRunId, (workflow) => {
+          if (workflow.status !== "succeeded") {
+            throw new Error(
+              `Cannot continue workflow ${workflowRunId} from status ${workflow.status}.`,
+            );
+          }
+          const state = RunStateSchema.parse({ ...workflow.state, input: cloneJson(input) });
+          const withoutResult = { ...workflow };
+          delete withoutResult.result;
+          return {
+            ...withoutResult,
+            status: "running",
+            input: cloneJson(input),
+            state,
+            currentStepIds: [startStepId],
+            revision: workflow.revision + 1,
+            updatedAt: nowIso(),
+          };
+        }),
+      );
+    },
+  };
+
+  return {
+    manager,
+    snapshot(workflowRunId) {
+      const workflow = workflows.get(workflowRunId);
+      if (workflow === undefined) {
+        return undefined;
+      }
+      return {
+        schemaVersion: 1,
+        workflow: cloneJson(workflow),
+        tasks: (taskIdsByWorkflowId.get(workflowRunId) ?? []).map((taskId) =>
+          cloneJson(getRequiredTask(taskId)),
+        ),
+        humanInteractions: (humanInteractionIdsByWorkflowId.get(workflowRunId) ?? [])
+          .map((id) => humanInteractions.get(id))
+          .filter((value): value is HumanInteractionRecord => value !== undefined)
+          .map((value) => cloneJson(value)),
+        appliedMessageIds: [...appliedMessageIds],
+      };
     },
   };
 }

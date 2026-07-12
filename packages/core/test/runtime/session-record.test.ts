@@ -132,10 +132,23 @@ describe("runtime session ownership", () => {
         workspace: "/workspace-b",
       }),
     ).rejects.toThrow("Runtime session id mismatch while restoring runtime session");
+    await expect(
+      restoreRuntimeSessionRecord({
+        paths,
+        owner: { workflowRunId: owner.workflowRunId, taskRunId: "task-b" },
+        expectedTaskRunId: "task-b",
+        systemSessionId: record.systemSessionId,
+        agentId: record.agentId,
+        runtime,
+        runtimeSession,
+        workspace: "/workspace-b",
+      }),
+    ).rejects.toThrow("Task mismatch while restoring runtime session");
 
     const restored = await restoreRuntimeSessionRecord({
       paths,
       owner,
+      expectedTaskRunId: owner.taskRunId,
       systemSessionId: record.systemSessionId,
       agentId: record.agentId,
       runtime,
@@ -147,5 +160,30 @@ describe("runtime session ownership", () => {
       workspaceHistory: ["/workspace-a", "/workspace-b"],
       status: "active",
     });
+  });
+
+  it("fails restore when the original Runtime system Session is missing", async () => {
+    const pragmaHome = await mkdtemp(join(tmpdir(), "pragma-session-owner-test-"));
+    tempDirs.push(pragmaHome);
+    const paths = new PragmaPaths({ pragmaHome });
+
+    await expect(
+      restoreRuntimeSessionRecord({
+        paths,
+        owner: { workflowRunId: "workflow-missing", taskRunId: "task-missing" },
+        expectedTaskRunId: "task-missing",
+        systemSessionId: "system-session-missing",
+        agentId: "agent-1",
+        runtime: {
+          id: "runtime-1",
+          kind: "runtime-kind-1",
+          displayName: "Runtime 1",
+        },
+        runtimeSession: { type: "runtime-kind-1", id: "native-session-missing" },
+        workspace: "/workspace",
+      }),
+    ).rejects.toThrow(
+      "Runtime system session was not found: system-session-missing in workflow workflow-missing",
+    );
   });
 });

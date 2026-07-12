@@ -219,14 +219,14 @@ function readStringOption(value: unknown): string | undefined {
 
 function readSessionPolicy(value: unknown): AgentLaunchSessionPolicy {
   if (value === undefined) {
-    return "fresh";
+    return "reuse_by_agent";
   }
 
-  if (value === "fresh") {
+  if (value === "fresh" || value === "reuse_by_agent") {
     return value;
   }
 
-  throw new Error('Expected --session-policy to be "fresh".');
+  throw new Error('Expected --session-policy to be "fresh" or "reuse_by_agent".');
 }
 
 function printRunTree(tree: RunTree | undefined, depth = 0): void {

@@ -7,20 +7,23 @@ describe("patterns directive api", () => {
   it("builds prompt chains with previous output as the next default input", async () => {
     const chain = patterns.promptChain({
       id: "prompt-chain",
+      version: "1.0.0",
       output: z.string(),
       steps: [
         defineTask({
           id: "draft",
+          version: "1.0.0",
           handler: ({ input }) => `${String(input)} draft`,
         }),
         defineTask({
           id: "polish",
+          version: "1.0.0",
           handler: ({ input }) => `${String(input)} polished`,
         }),
       ],
     });
 
-    const result = await createPragma().run(chain, {
+    const result = await createPragma({ storage: "memory" }).run(chain, {
       input: "brief",
     });
 
@@ -30,10 +33,12 @@ describe("patterns directive api", () => {
   it("builds routing workflows around a classifier step", async () => {
     const routed = patterns.routing({
       id: "routing-workflow",
+      version: "1.0.0",
       output: z.string(),
       router: {
         directive: defineTask({
           id: "classify",
+          version: "1.0.0",
           output: z.object({
             route: z.enum(["billing", "support"]),
           }),
@@ -47,19 +52,21 @@ describe("patterns directive api", () => {
         billing: {
           directive: defineTask({
             id: "billing",
+            version: "1.0.0",
             handler: ({ input }) => `billing:${String(input)}`,
           }),
         },
         support: {
           directive: defineTask({
             id: "support",
+            version: "1.0.0",
             handler: ({ input }) => `support:${String(input)}`,
           }),
         },
       },
     });
 
-    const result = await createPragma().run(routed, {
+    const result = await createPragma({ storage: "memory" }).run(routed, {
       input: "invoice question",
     });
 
@@ -70,8 +77,10 @@ describe("patterns directive api", () => {
     expect(() =>
       patterns.routing({
         id: "empty-routing-workflow",
+        version: "1.0.0",
         router: defineTask({
           id: "classify-empty-routing",
+          version: "1.0.0",
           handler: () => ({
             route: "missing",
           }),
@@ -85,16 +94,19 @@ describe("patterns directive api", () => {
   it("runs parallel branches and merges branch outputs", async () => {
     const parallel = patterns.parallel({
       id: "parallel-workflow",
+      version: "1.0.0",
       output: z.object({
         combined: z.string(),
       }),
       branches: {
         summary: defineTask({
           id: "summary",
+          version: "1.0.0",
           handler: ({ input }) => `summary:${String(input)}`,
         }),
         risk: defineTask({
           id: "risk",
+          version: "1.0.0",
           handler: ({ input }) => `risk:${String(input)}`,
         }),
       },
@@ -103,7 +115,7 @@ describe("patterns directive api", () => {
       }),
     });
 
-    const result = await createPragma().run(parallel, {
+    const result = await createPragma({ storage: "memory" }).run(parallel, {
       input: "doc",
     });
 
@@ -115,12 +127,14 @@ describe("patterns directive api", () => {
   it("runs orchestrator-workers with dynamic worker inputs and synthesis", async () => {
     const orchestrated = patterns.orchestratorWorkers({
       id: "orchestrator-workers",
+      version: "1.0.0",
       output: z.object({
         report: z.string(),
       }),
       orchestrator: {
         directive: defineTask({
           id: "orchestrator",
+          version: "1.0.0",
           handler: () => ({
             tasks: ["intro", "details"],
           }),
@@ -129,6 +143,7 @@ describe("patterns directive api", () => {
       worker: {
         directive: defineTask({
           id: "worker",
+          version: "1.0.0",
           handler: ({ input }) => `section:${String(input)}`,
         }),
       },
@@ -137,7 +152,7 @@ describe("patterns directive api", () => {
       }),
     });
 
-    const result = await createPragma().run(orchestrated, {
+    const result = await createPragma({ storage: "memory" }).run(orchestrated, {
       input: "write report",
     });
 
@@ -149,6 +164,7 @@ describe("patterns directive api", () => {
   it("runs evaluator-optimizer until the evaluator accepts an attempt", async () => {
     const optimized = patterns.evaluatorOptimizer({
       id: "evaluator-optimizer",
+      version: "1.0.0",
       output: z.object({
         accepted: z.boolean(),
         attempt: z.object({
@@ -162,6 +178,7 @@ describe("patterns directive api", () => {
       optimizer: {
         directive: defineTask({
           id: "optimizer",
+          version: "1.0.0",
           handler: ({ input }) => {
             if (typeof input === "object" && input !== null && "iteration" in input) {
               return {
@@ -178,6 +195,7 @@ describe("patterns directive api", () => {
       evaluator: {
         directive: defineTask({
           id: "evaluator",
+          version: "1.0.0",
           handler: ({ input }) => ({
             accepted:
               typeof input === "object" &&
@@ -190,7 +208,7 @@ describe("patterns directive api", () => {
       maxIterations: 3,
     });
 
-    const result = await createPragma().run(optimized, {
+    const result = await createPragma({ storage: "memory" }).run(optimized, {
       input: {
         goal: "improve",
       },

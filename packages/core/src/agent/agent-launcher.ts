@@ -1,9 +1,10 @@
 import type { ExpertAgent } from "./expert-agent.ts";
 import type { ExpertAgentManagedTool, ExpertAgentToolCallResult } from "../tools/managed-tool.ts";
 
-// `reuse_by_agent` is intentionally deferred until PragmaApp.resume() can resume the original
-// child Workflow. See ADR 005; never implement it by attaching an old Session to a new Workflow.
-export type AgentLaunchSessionPolicy = "fresh";
+export const agentLauncherDefinitions = Symbol("pragma.agent-launcher-definitions");
+
+// `reuse_by_agent` continues the original child Workflow; never attach its Session to a new one.
+export type AgentLaunchSessionPolicy = "fresh" | "reuse_by_agent";
 
 export interface CreateAgentLauncherOptions {
   readonly agents: readonly ExpertAgent[];
@@ -37,8 +38,9 @@ const launchAgentInputSchema = {
     },
     sessionPolicy: {
       type: "string",
-      enum: ["fresh"],
-      description: "Each delegated child Workflow starts a fresh runtime session.",
+      enum: ["fresh", "reuse_by_agent"],
+      description:
+        "Use fresh for a new child Workflow, or reuse_by_agent to continue the original child Workflow and Runtime Session.",
     },
     runtime: {
       type: "string",
@@ -64,6 +66,7 @@ export function createAgentLauncher(options: CreateAgentLauncherOptions): AgentL
 
   return {
     tool: {
+      ...{ [agentLauncherDefinitions]: options.agents },
       name: "launch_agent",
       description: [
         "Launch another Pragma ExpertAgent through the workflow orchestrator.",
@@ -113,12 +116,23 @@ export function createAgentLauncher(options: CreateAgentLauncherOptions): AgentL
         }
 
         const runtime = input.runtime ?? workflowExecution.runtimeId;
+        const continuationKey =
+          input.sessionPolicy === "reuse_by_agent"
+            ? createContinuationKey({
+                rootWorkflowRunId: workflowExecution.workflow.rootWorkflowRunId,
+                agentId: agent.id,
+                runtime,
+                modelName: input.modelName,
+                thinkingLevel: input.thinkingLevel,
+              })
+            : undefined;
         try {
           const result = await workflowExecution.runDirective(agent, {
             input: input.task,
             modelName: input.modelName,
             thinkingLevel: input.thinkingLevel,
             runtime,
+            continuationKey,
             execution: workflowExecution,
           });
 
@@ -201,11 +215,28 @@ function readSessionPolicy(
     return fallback;
   }
 
-  if (value === "fresh") {
+  if (value === "fresh" || value === "reuse_by_agent") {
     return value;
   }
 
-  throw new Error('launch_agent sessionPolicy must be "fresh".');
+  throw new Error('launch_agent sessionPolicy must be "fresh" or "reuse_by_agent".');
+}
+
+function createContinuationKey(input: {
+  readonly rootWorkflowRunId: string;
+  readonly agentId: string;
+  readonly runtime: string;
+  readonly modelName?: string | undefined;
+  readonly thinkingLevel?: string | undefined;
+}): string {
+  return [
+    "agent",
+    input.rootWorkflowRunId,
+    input.agentId,
+    input.runtime,
+    input.modelName ?? "",
+    input.thinkingLevel ?? "",
+  ].join(":");
 }
 
 function formatAgentOutput(output: unknown): string {

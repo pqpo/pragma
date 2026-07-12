@@ -3,6 +3,7 @@ import { z } from "zod";
 
 const requirementDirective = defineFlow({
   id: "requirement-directive",
+  version: "1.0.0",
   input: z.object({
     requirement: z.string(),
   }),
@@ -18,6 +19,7 @@ const summarize = requirementDirective.use(
   "summarize",
   defineTask({
     id: "summarize-code",
+    version: "1.0.0",
     handler: ({ input }) => {
       const payload = z
         .object({
@@ -41,6 +43,7 @@ requirementDirective.compose(({ start, end }) => {
 
 const deliveryDirective = defineFlow({
   id: "delivery-directive",
+  version: "1.0.0",
   input: z.object({
     requirement: z.string(),
   }),
@@ -62,7 +65,7 @@ const plan = deliveryDirective.use("plan", requirementDirective, {
 
 const verify = deliveryDirective.use(
   "verify",
-  defineTask({ id: "verify-code", handler: () => "ready" }),
+  defineTask({ id: "verify-code", version: "1.0.0", handler: () => "ready" }),
   {
     reduce: ({ state, output }) => {
       state.results["verification"] = output;

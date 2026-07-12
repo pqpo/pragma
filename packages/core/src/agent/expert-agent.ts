@@ -52,6 +52,7 @@ import type {
 } from "../tools/managed-tool.ts";
 import { mergeExpertAgentToolApprovals } from "../tools/managed-tool.ts";
 import { PragmaPaths } from "../storage/pragma-paths.ts";
+import { readRuntimeSessionRecord } from "../runtime/session-record.ts";
 
 export type ExpertAgentSchemaVersion = "pragma.expert/v1" | undefined;
 
@@ -317,7 +318,10 @@ export class ExpertAgent implements IExpertAgent, Directive<unknown, unknown> {
   async run<TOutput = unknown>(request: StartRunRequest<unknown>): Promise<RunResult<TOutput>> {
     if (request.execution === undefined) {
       const { createPragma } = await import("../directive/pragma-app.ts");
-      return (await createPragma().run(this, request)) as RunResult<TOutput>;
+      return (await createPragma({ pragmaHome: this.pragmaHome }).run(
+        this,
+        request,
+      )) as RunResult<TOutput>;
     }
 
     const execution = request.execution;
@@ -327,12 +331,42 @@ export class ExpertAgent implements IExpertAgent, Directive<unknown, unknown> {
       workflowRunId: execution.workflow.id,
       taskRunId: execution.task.id,
     });
+    const systemSessionId =
+      request.systemSessionId ?? execution.task.systemSessionId ?? `system-session-${randomUUID()}`;
+    let runtimeSession = request.runtimeSession ?? execution.task.runtimeSession;
+    if (execution.task.runtimeSessionState === "opened" && runtimeSession === undefined) {
+      throw new Error(
+        `Runtime Task ${execution.task.id} is missing its persisted RuntimeSessionRef; recovery cannot create a replacement Session.`,
+      );
+    }
+    if (execution.task.runtimeSessionState === "creating" && runtimeSession === undefined) {
+      const record = await readRuntimeSessionRecord(
+        new PragmaPaths({ pragmaHome: this.pragmaHome }),
+        execution.workflow.id,
+        systemSessionId,
+      );
+      if (record.runtimeSessionRef === null) {
+        throw new Error(
+          `Runtime Session ${systemSessionId} was interrupted before its native Session was created; recovery cannot create a replacement.`,
+        );
+      }
+      runtimeSession = record.runtimeSessionRef;
+    }
+    await execution.checkpointRuntimeSession({
+      state: runtimeSession === undefined ? "creating" : "opened",
+      systemSessionId,
+      ...(runtimeSession === undefined ? {} : { runtimeSession }),
+    });
     const session = await openRuntimeSession(runtime, {
       agent: this,
       execution,
       context,
-      runtimeSession: request.runtimeSession,
-      systemSessionId: request.systemSessionId,
+      runtimeSession,
+      systemSessionId,
+      runtimeSessionOwnerTaskRunId:
+        request.runtimeSessionOwnerTaskRunId ??
+        execution.task.runtimeSessionOwnerTaskRunId ??
+        (runtimeSession === undefined ? undefined : execution.task.id),
       humanInteractionHandler: async (humanRequest) => {
         if (humanRequest.kind === "user_question") {
           const response = await execution.requestHumanInteraction({
@@ -377,6 +411,11 @@ export class ExpertAgent implements IExpertAgent, Directive<unknown, unknown> {
           ...(response.data === undefined ? {} : { updatedInput: response.data }),
         };
       },
+    });
+    await execution.checkpointRuntimeSession({
+      state: "opened",
+      systemSessionId: session.info().systemSessionId,
+      runtimeSession: session.info().runtimeSession,
     });
     let drainEvents: Promise<void> | undefined;
     let runResult: RunResult<TOutput> | undefined;
@@ -509,3 +548,4 @@ function applyToolApprovals(
     };
   });
 }
+import { randomUUID } from "node:crypto";

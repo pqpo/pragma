@@ -1,186 +1,155 @@
-/*
- * Deferred until Workflow-owned restoration is available through PragmaApp.resume().
- * Retained as migration reference for Session storage callbacks; the direct Session API shown
- * below is intentionally disabled in this phase.
+import { cp, mkdir, rm } from "node:fs/promises";
+import { join, resolve } from "node:path";
 
-import { cp, mkdir, readdir, rm } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
-
-import { ExpertAgent } from "@pragma/core";
+import {
+  createAgentLauncher,
+  createPragma,
+  createRuntimeRegistry,
+  defineAgent,
+  defineFlow,
+  defineHumanTask,
+} from "@pragma/core";
 import type {
-  RuntimeAgentSession,
+  Directive,
   RuntimeSessionRestoreHandler,
+  RuntimeSessionStorageContext,
   RuntimeSessionSyncCallback,
 } from "@pragma/core";
 import { createPiRuntime } from "@pragma/runtime-pi";
 
-import { printRunHeader, printRunResult } from "./harness/expert-agent-example-utils.ts";
-import { createExampleLoggerProvider } from "./harness/logger.ts";
-import {
-  createExpertAgentModelsConfig,
-  formatModelConfig,
-  readExampleModelConfig,
-} from "./harness/model-config.ts";
+import { createExpertAgentModelsConfig, readExampleModelConfig } from "./harness/model-config.ts";
 import { defaultWorkspaceRoot, ensureWorkspaceDir, loadExamplesEnv } from "./harness/paths.ts";
 import { exitIfRuntimeUnavailable } from "./harness/runtime-availability.ts";
-import { printRunStream } from "./harness/stream-output.ts";
-
-const agentId = "session-storage-example-expert";
-const firstTurn = [
-  "请记住本轮会话的事实：",
-  "项目代号是 mesh-session-sync，目标是验证 runtime session 可以同步到长期存储。",
-  "回复时只确认你已记住。",
-].join("\n");
-const secondTurn = "请总结上轮会话里我让你记住的项目代号和目标。";
 
 loadExamplesEnv();
-
-const modelConfig = readExampleModelConfig();
-const loggerProvider = createExampleLoggerProvider();
+const workflowRunId = readOption("--workflow-run-id");
 const exampleRoot = resolve(defaultWorkspaceRoot, "session-storage-example");
-const firstWorkspace = join(exampleRoot, "workspace-a");
-const secondWorkspace = join(exampleRoot, "workspace-b");
-const longTermStorage = join(exampleRoot, "long-term-session-storage");
-
-await rm(exampleRoot, { recursive: true, force: true });
-await Promise.all([
-  ensureWorkspaceDir(firstWorkspace),
-  ensureWorkspaceDir(secondWorkspace),
-  mkdir(longTermStorage, { recursive: true }),
-]);
+const pragmaHome = join(exampleRoot, "pragma-home");
+const archiveRoot = join(exampleRoot, "archive");
+const workspace = join(exampleRoot, workflowRunId === undefined ? "workspace-a" : "workspace-b");
+await Promise.all([ensureWorkspaceDir(workspace), mkdir(archiveRoot, { recursive: true })]);
 
 const syncSession: RuntimeSessionSyncCallback = async (context) => {
-  const archiveDir = getArchivedSessionDir(context.runtimeSession.id);
-  await mkdir(dirname(archiveDir), { recursive: true });
-  await rm(archiveDir, { recursive: true, force: true });
-  await cp(context.sessionDir, archiveDir, { recursive: true });
-  console.log(
-    `[sync] agent=${context.agentId} runtimeSession=${context.runtimeSession.id} workspace=${context.workspace}`,
-  );
-  console.log(`[sync] ${context.sessionDir} -> ${archiveDir}`);
+  const archive = archivePath(context);
+  await rm(archive, { recursive: true, force: true });
+  await cp(context.sessionDir, archive, { recursive: true });
+  console.log(`[sync] ${context.sessionDir} -> ${archive}`);
 };
-
 const restoreSession: RuntimeSessionRestoreHandler = async (context) => {
-  const archiveDir = getArchivedSessionDir(context.runtimeSession.id);
+  const archive = archivePath(context);
   await rm(context.sessionDir, { recursive: true, force: true });
   await mkdir(context.sessionDir, { recursive: true });
-  await cp(archiveDir, context.sessionDir, { recursive: true });
-  console.log(
-    `[restore] agent=${context.agentId} runtimeSession=${context.runtimeSession.id} workspace=${context.workspace}`,
-  );
-  console.log(`[restore] ${archiveDir} -> ${context.sessionDir}`);
+  await cp(archive, context.sessionDir, { recursive: true });
+  console.log(`[restore] ${archive} -> ${context.sessionDir}`);
 };
-
-console.log("Session storage example:");
-console.log(`- workspace A: ${firstWorkspace}`);
-console.log(`- workspace B: ${secondWorkspace}`);
-console.log(`- long-term storage: ${longTermStorage}`);
-console.log("");
-
-const firstAgent = await createExampleAgent(firstWorkspace);
-const firstRuntime = createPiRuntime({
-  loggerProvider,
+const runtime = createPiRuntime({
   sessionSyncCallback: syncSession,
-});
-await exitIfRuntimeUnavailable(firstRuntime);
-const firstSession = await firstRuntime.createSession({
-  agent: firstAgent,
-  owner: { workflowRunId: "session-storage-example" },
-  context: {
-    source: {
-      type: "example",
-      id: "session-storage:first-workspace",
-    },
-    attributes: {
-      tenantId: "demo-tenant",
-      userId: "demo-user",
-      workspaceName: "workspace-a",
-    },
-  },
-});
-
-const runtimeSessionId = firstSession.info().runtimeSession.id;
-const systemSessionId = firstSession.info().systemSessionId;
-
-try {
-  await runTurn(firstAgent, firstSession, firstTurn);
-} finally {
-  await firstSession.abort();
-}
-
-console.log("");
-console.log("Archived session files:");
-for (const file of await readdir(getArchivedSessionDir(runtimeSessionId))) {
-  console.log(`- ${file}`);
-}
-console.log("");
-
-const secondAgent = await createExampleAgent(secondWorkspace);
-const secondRuntime = createPiRuntime({
-  loggerProvider,
   sessionRestoreHandler: restoreSession,
-  sessionSyncCallback: syncSession,
 });
-await exitIfRuntimeUnavailable(secondRuntime);
-const secondSession = await secondRuntime.createSession({
-  agent: secondAgent,
-  owner: { workflowRunId: "session-storage-example" },
-  systemSessionId,
-  context: {
-    source: {
-      type: "example",
-      id: "session-storage:restored-workspace",
-    },
-    attributes: {
-      tenantId: "demo-tenant",
-      userId: "demo-user",
-      workspaceName: "workspace-b",
-    },
-  },
-  runtimeSession: {
-    type: "cloud-pi-agent",
-    id: runtimeSessionId,
-  },
+await exitIfRuntimeUnavailable(runtime);
+const app = createPragma({
+  pragmaHome,
+  runtimes: createRuntimeRegistry({ defaultRuntime: "pi", runtimes: [runtime] }),
 });
+const agent = await defineAgent({
+  id: "session-storage-expert",
+  name: "Session Storage Expert",
+  description: "Demonstrates Runtime Session restore through a resumed Root Workflow.",
+  tags: ["example", "session-storage", "multi-turn", "resume"],
+  version: "1.0.0",
+  scope: "local-test",
+  workspace,
+  pragmaHome,
+  models: createExpertAgentModelsConfig(readExampleModelConfig()),
+});
+const launcher = createAgentLauncher({ agents: [agent], defaultSessionPolicy: "reuse_by_agent" });
+const flow = defineFlow({
+  id: "session-storage-multi-turn",
+  version: "1.0.0",
+  result: ({ state }) => ({
+    first: state.results["first"],
+    second: state.results["second"],
+  }),
+});
+const first = flow.use("first", createLaunchTurn("remember-turn", [
+  "记住项目代号 mesh-session-sync。",
+  "目标是验证进程重启后恢复同一个 Workflow-owned Runtime Session。",
+].join("\n")), {
+  reduce: ({ state, output }) => { state.results["first"] = output; },
+});
+const pause = flow.use("restart-checkpoint", defineHumanTask({
+  id: "session-restart-checkpoint",
+  version: "1.0.0",
+  request: {
+    kind: "manual_intervention",
+    title: "Restart the example process",
+    prompt: "Resume this Root Workflow in a new process before the second Agent turn.",
+  },
+}));
+const second = flow.use("second", createLaunchTurn(
+  "recall-turn",
+  "请说出上一轮保存的项目代号和恢复目标。",
+), {
+  reduce: ({ state, output }) => { state.results["second"] = output; },
+});
+flow.compose(({ start, end }) => start(first).next(pause).next(second).next(end()));
 
 try {
-  await runTurn(secondAgent, secondSession, secondTurn);
+  if (workflowRunId === undefined) {
+    const handle = await app.start(flow, { input: {} });
+    for await (const event of handle.events) {
+      if (event.sourceType !== "human.requested") continue;
+      console.log(`Workflow paused: ${handle.workflowRunId}`);
+      console.log(
+        `Resume in a new process:\npnpm --filter @pragma/examples dev src/run-session-storage-example.ts --workflow-run-id ${handle.workflowRunId}`,
+      );
+      break;
+    }
+  } else {
+    const handle = await app.resume(flow, { workflowRunId });
+    const pending = (await app.stateManager.listHumanInteractions(workflowRunId)).find(
+      (interaction) => interaction.status === "pending",
+    );
+    if (pending !== undefined) {
+      await app.taskManager.respondToHumanInteraction({
+        interactionId: pending.id,
+        response: { decision: "continued" },
+      });
+    }
+    console.log(JSON.stringify((await handle.result).output, null, 2));
+    console.log(JSON.stringify(await app.runs.getTree(workflowRunId), null, 2));
+  }
 } finally {
-  await secondSession.abort();
+  launcher.dispose();
 }
 
-function getArchivedSessionDir(runtimeSessionId: string): string {
-  return join(longTermStorage, encodeURIComponent(agentId), encodeURIComponent(runtimeSessionId));
+function createLaunchTurn(id: string, task: string): Directive<unknown, string> {
+  return {
+    id,
+    version: "1.0.0",
+    children: [agent],
+    async run(request) {
+      if (request.execution === undefined) throw new Error("Workflow execution is required.");
+      const result = await launcher.tool.call(
+        { agentId: agent.id, task, sessionPolicy: "reuse_by_agent", runtime: "pi" },
+        undefined,
+        { workflowExecution: request.execution },
+      );
+      if (result.isError) throw new Error(result.text);
+      return {
+        workflowRunId: request.execution.workflow.id,
+        output: result.text,
+        state: request.execution.state,
+      };
+    },
+  };
 }
 
-async function createExampleAgent(workspace: string): Promise<ExpertAgent> {
-  await ensureWorkspaceDir(workspace);
-
-  return ExpertAgent.create({
-    id: agentId,
-    name: "Session Storage Example Expert",
-    description: "Demonstrates runtime session sync and restore across workspace changes.",
-    tags: ["example", "session-storage"],
-    version: "0.0.0",
-    scope: "local-test",
-    workspace,
-    loggerProvider,
-    models: createExpertAgentModelsConfig(modelConfig),
-  });
+function archivePath(context: RuntimeSessionStorageContext): string {
+  return join(archiveRoot, encodeURIComponent(context.runtimeSession.id));
 }
 
-async function runTurn(
-  agent: ExpertAgent,
-  session: RuntimeAgentSession,
-  query: string,
-): Promise<void> {
-  printRunHeader(agent, formatModelConfig(modelConfig), query);
-  const run = session.submit({ query });
-
-  await printRunStream(run);
-
-  const result = await run.result;
-  printRunResult(result.runId);
-  console.log("");
+function readOption(name: string): string | undefined {
+  const index = process.argv.indexOf(name);
+  return index < 0 ? undefined : process.argv[index + 1];
 }
-*/

@@ -28,6 +28,7 @@ import type {
 
 export interface DefineFlowOptions<TInput = unknown, TOutput = unknown> {
   readonly id: string;
+  readonly version: string;
   readonly input?: z.ZodType<TInput> | undefined;
   readonly output?: z.ZodType<TOutput> | undefined;
   readonly result?: ((context: { state: RunState }) => TOutput) | undefined;
@@ -43,6 +44,7 @@ export type StepOptions<TInput = unknown, TOutput = unknown> = {
 
 export interface DefineTaskOptions<TInput = unknown, TOutput = unknown> {
   readonly id: string;
+  readonly version: string;
   readonly input?: z.ZodType<TInput> | undefined;
   readonly output?: z.ZodType<TOutput> | undefined;
   readonly handler: TaskHandler<TInput, TOutput>;
@@ -50,6 +52,7 @@ export interface DefineTaskOptions<TInput = unknown, TOutput = unknown> {
 
 export interface DefineHumanTaskOptions<TInput = unknown, TOutput = HumanInteractionResponse> {
   readonly id: string;
+  readonly version: string;
   readonly input?: z.ZodType<TInput> | undefined;
   readonly output?: z.ZodType<TOutput> | undefined;
   readonly request:
@@ -78,6 +81,7 @@ export interface FlowChain {
 
 export class FlowSpec<TInput = unknown, TOutput = unknown> {
   readonly id: string;
+  readonly version: string;
   readonly inputSchema: z.ZodType<TInput> | undefined;
   readonly outputSchema: z.ZodType<TOutput> | undefined;
   readonly resolveOutput: ((context: { state: RunState }) => TOutput) | undefined;
@@ -89,6 +93,7 @@ export class FlowSpec<TInput = unknown, TOutput = unknown> {
 
   constructor(options: DefineFlowOptions<TInput, TOutput>) {
     this.id = options.id;
+    this.version = options.version;
     this.inputSchema = options.input;
     this.outputSchema = options.output;
     this.resolveOutput = options.result;
@@ -159,6 +164,7 @@ export class FlowSpec<TInput = unknown, TOutput = unknown> {
 
     const compiled: CompiledDirective<TInput, TOutput> = {
       id: this.id,
+      version: this.version,
       inputSchema: this.inputSchema,
       outputSchema: this.outputSchema,
       resolveOutput: this.resolveOutput,
@@ -276,6 +282,7 @@ export function defineTask<TInput = unknown, TOutput = unknown>(
 ): Directive<TInput, TOutput> {
   return {
     id: options.id,
+    version: options.version,
     inputSchema: options.input,
     outputSchema: options.output,
     async run(request) {
@@ -313,6 +320,7 @@ export function defineHumanTask<TInput = unknown, TOutput = HumanInteractionResp
 
   return {
     id: options.id,
+    version: options.version,
     inputSchema: options.input,
     outputSchema,
     async run(request) {

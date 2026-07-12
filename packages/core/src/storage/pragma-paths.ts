@@ -48,6 +48,22 @@ export class PragmaPaths {
     return join(this.workflowsRoot(), encodePragmaPathSegment(workflowRunId));
   }
 
+  workflowState(workflowRunId: string): string {
+    return join(this.workflowRoot(workflowRunId), "workflow.json");
+  }
+
+  workflowEvents(rootWorkflowRunId: string): string {
+    return join(this.workflowRoot(rootWorkflowRunId), "events.jsonl");
+  }
+
+  workflowStateLock(): string {
+    return join(this.workflowsRoot(), ".workflow-state.lock");
+  }
+
+  workflowEventsLock(rootWorkflowRunId: string): string {
+    return join(this.workflowRoot(rootWorkflowRunId), ".events.lock");
+  }
+
   workflowSessionsRoot(workflowRunId: string): string {
     return join(this.workflowRoot(workflowRunId), "sessions");
   }

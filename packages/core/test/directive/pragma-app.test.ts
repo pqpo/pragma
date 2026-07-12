@@ -28,6 +28,7 @@ describe("directive app", () => {
   it("runs code steps, reduces Directive State, and returns mapped output", async () => {
     const directive = defineFlow({
       id: "review-directive",
+      version: "1.0.0",
       input: z.object({
         decision: z.enum(["approved", "rejected"]),
       }),
@@ -43,6 +44,7 @@ describe("directive app", () => {
       "review",
       defineTask({
         id: "review-code",
+        version: "1.0.0",
         output: z.object({
           decision: z.enum(["approved", "rejected"]),
         }),
@@ -70,7 +72,7 @@ describe("directive app", () => {
       start(review).next(end());
     });
 
-    const result = await createPragma().run(directive, {
+    const result = await createPragma({ storage: "memory" }).run(directive, {
       input: {
         decision: "approved",
       },
@@ -87,6 +89,7 @@ describe("directive app", () => {
   it("routes by structured step output", async () => {
     const directive = defineFlow({
       id: "route-directive",
+      version: "1.0.0",
       output: z.object({
         path: z.string(),
       }),
@@ -99,6 +102,7 @@ describe("directive app", () => {
       "router",
       defineTask({
         id: "router-code",
+        version: "1.0.0",
         output: z.object({
           status: z.enum(["passed", "failed"]),
         }),
@@ -109,7 +113,7 @@ describe("directive app", () => {
     );
     const passed = directive.use(
       "passed",
-      defineTask({ id: "passed-code", handler: () => "passed" }),
+      defineTask({ id: "passed-code", version: "1.0.0", handler: () => "passed" }),
       {
         reduce: ({ state, output }) => {
           state.results["path"] = output;
@@ -118,7 +122,7 @@ describe("directive app", () => {
     );
     const failed = directive.use(
       "failed",
-      defineTask({ id: "failed-code", handler: () => "failed" }),
+      defineTask({ id: "failed-code", version: "1.0.0", handler: () => "failed" }),
       {
         reduce: ({ state, output }) => {
           state.results["path"] = output;
@@ -135,7 +139,7 @@ describe("directive app", () => {
       step(failed).next(end());
     });
 
-    const result = await createPragma().run(directive, {
+    const result = await createPragma({ storage: "memory" }).run(directive, {
       input: {},
     });
 
@@ -147,11 +151,15 @@ describe("directive app", () => {
   it("fails with a clear error when route output is missing the routed field", async () => {
     const directive = defineFlow({
       id: "missing-route-directive",
+      version: "1.0.0",
     });
-    const router = directive.use("router", defineTask({ id: "router-code", handler: () => ({}) }));
+    const router = directive.use(
+      "router",
+      defineTask({ id: "router-code", version: "1.0.0", handler: () => ({}) }),
+    );
     const target = directive.use(
       "target",
-      defineTask({ id: "target-code", handler: () => "done" }),
+      defineTask({ id: "target-code", version: "1.0.0", handler: () => "done" }),
     );
 
     directive.compose(({ start, step, end }) => {
@@ -162,7 +170,7 @@ describe("directive app", () => {
     });
 
     await expect(
-      createPragma().run(directive, {
+      createPragma({ storage: "memory" }).run(directive, {
         input: {},
       }),
     ).rejects.toThrow("Route router.status did not match because output field is missing.");
@@ -177,15 +185,17 @@ describe("directive app", () => {
 
     const directive = defineFlow({
       id: "events-directive",
+      version: "1.0.0",
     });
-    const task = directive.use("task", defineTask({ id: "task-code", handler: () => "done" }));
+    const task = directive.use(
+      "task",
+      defineTask({ id: "task-code", version: "1.0.0", handler: () => "done" }),
+    );
     directive.compose(({ start, end }) => {
       start(task).next(end());
     });
 
-    await createPragma({
-      mailbox,
-    }).run(directive, {
+    await createPragma({ storage: "memory", mailbox }).run(directive, {
       input: {},
     });
 
@@ -205,9 +215,10 @@ describe("directive app", () => {
   });
 
   it("starts a directive run without waiting for completion and exposes run snapshots", async () => {
-    const app = createPragma();
+    const app = createPragma({ storage: "memory" });
     const slowDirective = defineTask({
       id: "slow-directive",
+      version: "1.0.0",
       handler: async () => {
         await sleep(30);
         return "done";
@@ -244,8 +255,8 @@ describe("directive app", () => {
       },
     };
 
-    await createPragma({ mailbox }).run(
-      defineTask({ id: "run-without-events", handler: () => "done" }),
+    await createPragma({ storage: "memory", mailbox }).run(
+      defineTask({ id: "run-without-events", version: "1.0.0", handler: () => "done" }),
       { input: {} },
     );
 
@@ -267,6 +278,7 @@ describe("directive app", () => {
       ],
     });
     const agent = await ExpertAgent.create({
+      pragmaHome: join(tmpdir(), `pragma-test-${randomUUID()}`),
       id: "stream-agent",
       name: "Stream Agent",
       description: "Streams immediately.",
@@ -276,6 +288,7 @@ describe("directive app", () => {
       workspace: "/tmp/pragma-stream-agent-test",
     });
     const app = createPragma({
+      storage: "memory",
       runtimes: createRuntimeRegistry({
         runtimes: [runtime],
         defaultRuntime: runtime.descriptor.id,
@@ -336,6 +349,7 @@ describe("directive app", () => {
       },
     });
     const agent = await ExpertAgent.create({
+      pragmaHome: join(tmpdir(), `pragma-test-${randomUUID()}`),
       id: "failed-stream-agent",
       name: "Failed Stream Agent",
       description: "Fails.",
@@ -345,6 +359,7 @@ describe("directive app", () => {
       workspace: "/tmp/pragma-failed-stream-agent-test",
     });
     const app = createPragma({
+      storage: "memory",
       runtimes: createRuntimeRegistry({
         runtimes: [runtime],
         defaultRuntime: runtime.descriptor.id,
@@ -363,10 +378,11 @@ describe("directive app", () => {
   });
 
   it("emits workflow.cancelled and closes events when a RunHandle is cancelled", async () => {
-    const app = createPragma();
+    const app = createPragma({ storage: "memory" });
     const handle = await app.start(
       defineTask({
         id: "cancel-stream",
+        version: "1.0.0",
         handler: async () => {
           await sleep(100);
           return "late";
@@ -388,14 +404,16 @@ describe("directive app", () => {
   });
 
   it("watches nested directive events recursively and exposes a run tree", async () => {
-    const app = createPragma();
+    const app = createPragma({ storage: "memory" });
     const childDirective = defineFlow({
       id: "child-watch-directive",
+      version: "1.0.0",
     });
     const childTask = childDirective.use(
       "child-task",
       defineTask({
         id: "child-watch-task",
+        version: "1.0.0",
         handler: async ({ emitProgress }) => {
           await emitProgress(createProgressEvent("child-progress"));
           return "child";
@@ -408,11 +426,13 @@ describe("directive app", () => {
 
     const parentDirective = defineFlow({
       id: "parent-watch-directive",
+      version: "1.0.0",
     });
     const gate = parentDirective.use(
       "gate",
       defineTask({
         id: "gate-watch-task",
+        version: "1.0.0",
         handler: async () => {
           await sleep(30);
           return "open";
@@ -464,11 +484,13 @@ describe("directive app", () => {
     const sandboxIds: string[] = [];
     const directive = defineFlow({
       id: "default-sandbox-directive",
+      version: "1.0.0",
     });
     const first = directive.use(
       "first",
       defineTask({
         id: "first-code",
+        version: "1.0.0",
         handler: ({ sandbox }) => {
           sandboxIds.push(sandbox.id);
           return "first";
@@ -479,6 +501,7 @@ describe("directive app", () => {
       "second",
       defineTask({
         id: "second-code",
+        version: "1.0.0",
         handler: ({ sandbox }) => {
           sandboxIds.push(sandbox.id);
           return "second";
@@ -490,7 +513,7 @@ describe("directive app", () => {
       start(first).next(second).next(end());
     });
 
-    await createPragma().run(directive, {
+    await createPragma({ storage: "memory" }).run(directive, {
       input: {},
     });
 
@@ -502,11 +525,13 @@ describe("directive app", () => {
     const sandboxIds: string[] = [];
     const directive = defineFlow({
       id: "ephemeral-sandbox-directive",
+      version: "1.0.0",
     });
     const first = directive.use(
       "first",
       defineTask({
         id: "first-code",
+        version: "1.0.0",
         handler: ({ sandbox }) => {
           sandboxIds.push(sandbox.id);
           return "first";
@@ -517,6 +542,7 @@ describe("directive app", () => {
       "second",
       defineTask({
         id: "second-code",
+        version: "1.0.0",
         handler: ({ sandbox }) => {
           sandboxIds.push(sandbox.id);
           return "second";
@@ -535,7 +561,7 @@ describe("directive app", () => {
       start(first).next(second).next(end());
     });
 
-    await createPragma().run(directive, {
+    await createPragma({ storage: "memory" }).run(directive, {
       input: {},
     });
 
@@ -547,11 +573,13 @@ describe("directive app", () => {
     const sandboxIds: string[] = [];
     const childDirective = defineFlow({
       id: "child-sandbox-directive",
+      version: "1.0.0",
     });
     const childTask = childDirective.use(
       "child-task",
       defineTask({
         id: "child-code",
+        version: "1.0.0",
         handler: ({ sandbox }) => {
           sandboxIds.push(sandbox.id);
           return "child";
@@ -564,11 +592,13 @@ describe("directive app", () => {
 
     const parentDirective = defineFlow({
       id: "parent-sandbox-directive",
+      version: "1.0.0",
     });
     const parentTask = parentDirective.use(
       "parent-task",
       defineTask({
         id: "parent-code",
+        version: "1.0.0",
         handler: ({ sandbox }) => {
           sandboxIds.push(sandbox.id);
           return "parent";
@@ -581,7 +611,7 @@ describe("directive app", () => {
       start(parentTask).next(child).next(end());
     });
 
-    await createPragma().run(parentDirective, {
+    await createPragma({ storage: "memory" }).run(parentDirective, {
       input: {},
     });
 
@@ -646,7 +676,7 @@ describe("directive app", () => {
   });
 
   it("skips recovered task leases when the directive definition was cleaned up", async () => {
-    const app = createPragma();
+    const app = createPragma({ storage: "memory" });
     const workflow = await app.stateManager.createWorkflowRun({
       id: "workflow-orphaned-task",
       directiveId: "directive",
@@ -685,6 +715,7 @@ describe("directive app", () => {
   it("registers any Directive implementation as a step", async () => {
     const directive = defineFlow({
       id: "custom-directive-composition",
+      version: "1.0.0",
       output: z.object({
         value: z.string(),
       }),
@@ -694,13 +725,14 @@ describe("directive app", () => {
     });
     const customDirective: Directive<{ readonly value: string }, string> = {
       id: "custom",
+      version: "1.0.0",
       inputSchema: z.object({
         value: z.string(),
       }),
       outputSchema: z.string(),
       async run(request) {
         if (request.execution === undefined) {
-          return await createPragma().run(this, request);
+          return await createPragma({ storage: "memory" }).run(this, request);
         }
 
         return {
@@ -720,7 +752,7 @@ describe("directive app", () => {
       start(custom).next(end());
     });
 
-    const result = await createPragma().run(directive, {
+    const result = await createPragma({ storage: "memory" }).run(directive, {
       input: {
         value: "ok",
       },
@@ -733,6 +765,7 @@ describe("directive app", () => {
 
   it("runs an ExpertAgent as a Directive", async () => {
     const agent = await ExpertAgent.create({
+      pragmaHome: join(tmpdir(), `pragma-test-${randomUUID()}`),
       id: "agent-directive",
       name: "Agent Directive",
       description: "Agent that implements the Directive interface.",
@@ -752,6 +785,7 @@ describe("directive app", () => {
     });
 
     const app = createPragma({
+      storage: "memory",
       runtimes: createRuntimeRegistry({
         defaultRuntime: "fake-runtime",
         runtimes: [runtime],
@@ -795,6 +829,7 @@ describe("directive app", () => {
 
   it("runs an ExpertAgent through the configured default runtime registry", async () => {
     const agent = await ExpertAgent.create({
+      pragmaHome: join(tmpdir(), `pragma-test-${randomUUID()}`),
       id: "agent-default-runtime-directive",
       name: "Agent Default Runtime Directive",
       description: "Agent that uses the process default runtime registry.",
@@ -848,6 +883,7 @@ describe("directive app", () => {
 
   it("aborts an ExpertAgent runtime session when execution fails", async () => {
     const agent = await ExpertAgent.create({
+      pragmaHome: join(tmpdir(), `pragma-test-${randomUUID()}`),
       id: "agent-failing-runtime-directive",
       name: "Agent Failing Runtime Directive",
       description: "Agent that exercises runtime cleanup on failure.",
@@ -908,9 +944,10 @@ describe("directive app", () => {
   });
 
   it("waits for a human task response and resumes the workflow", async () => {
-    const app = createPragma();
+    const app = createPragma({ storage: "memory" });
     const directive = defineFlow({
       id: "human-review-directive",
+      version: "1.0.0",
       output: z.object({
         decision: z.string(),
       }),
@@ -922,6 +959,7 @@ describe("directive app", () => {
       "review",
       defineHumanTask({
         id: "human-review",
+        version: "1.0.0",
         output: z.object({
           decision: z.enum(["approved", "request_changes"]),
         }),
@@ -977,9 +1015,10 @@ describe("directive app", () => {
   });
 
   it("routes human review gate decisions through normal directive transitions", async () => {
-    const app = createPragma();
+    const app = createPragma({ storage: "memory" });
     const directive = defineFlow({
       id: "human-review-route-directive",
+      version: "1.0.0",
       output: z.object({
         path: z.string(),
       }),
@@ -991,6 +1030,7 @@ describe("directive app", () => {
       "review",
       defineHumanTask({
         id: "human-review-route",
+        version: "1.0.0",
         output: z.object({
           decision: z.enum(["approved", "request_changes"]),
         }),
@@ -1006,18 +1046,22 @@ describe("directive app", () => {
     );
     const revise = directive.use(
       "revise",
-      defineTask({ id: "revise-code", handler: () => "revise" }),
+      defineTask({ id: "revise-code", version: "1.0.0", handler: () => "revise" }),
       {
         reduce: ({ state, output }) => {
           state.results["path"] = output;
         },
       },
     );
-    const ship = directive.use("ship", defineTask({ id: "ship-code", handler: () => "ship" }), {
-      reduce: ({ state, output }) => {
-        state.results["path"] = output;
+    const ship = directive.use(
+      "ship",
+      defineTask({ id: "ship-code", version: "1.0.0", handler: () => "ship" }),
+      {
+        reduce: ({ state, output }) => {
+          state.results["path"] = output;
+        },
       },
-    });
+    );
     directive.compose(({ start, step, end }) => {
       start(review).route("decision", {
         approved: ship,
@@ -1046,9 +1090,10 @@ describe("directive app", () => {
   });
 
   it("does not recover waiting human task leases", async () => {
-    const app = createPragma();
+    const app = createPragma({ storage: "memory" });
     const human = defineHumanTask({
       id: "human-wait-recovery",
+      version: "1.0.0",
       request: {
         kind: "question",
         title: "Need input",
@@ -1089,13 +1134,14 @@ describe("directive app", () => {
   });
 
   it("treats duplicate human responses as idempotent", async () => {
-    const app = createPragma();
+    const app = createPragma({ storage: "memory" });
     const respondedEvents: string[] = [];
     await app.mailbox.subscribe({ types: ["human.responded"] }, async (message) => {
       respondedEvents.push(message.id);
     });
     const human = defineHumanTask({
       id: "human-idempotency",
+      version: "1.0.0",
       request: {
         kind: "approval",
         title: "Approve",
@@ -1129,6 +1175,7 @@ describe("directive app", () => {
 
   it("bridges Agent askUserQuestion requests through directive human interactions", async () => {
     const agent = await ExpertAgent.create({
+      pragmaHome: join(tmpdir(), `pragma-test-${randomUUID()}`),
       id: "agent-human-directive",
       name: "Agent Human Directive",
       description: "Agent that asks a user question.",
@@ -1141,6 +1188,7 @@ describe("directive app", () => {
       id: "fake-human-runtime",
     });
     const app = createPragma({
+      storage: "memory",
       runtimes: createRuntimeRegistry({
         defaultRuntime: "fake-human-runtime",
         runtimes: [runtime],
@@ -1411,3 +1459,6 @@ async function sleep(ms: number): Promise<void> {
     setTimeout(resolve, ms);
   });
 }
+import { randomUUID } from "node:crypto";
+import { tmpdir } from "node:os";
+import { join } from "node:path";

@@ -5,6 +5,7 @@ const app = createPragma();
 
 const requirementDirective = defineFlow({
   id: "watch-requirement-directive",
+  version: "1.0.0",
   input: z.object({
     requirement: z.string(),
   }),
@@ -20,6 +21,7 @@ const summarize = requirementDirective.use(
   "summarize",
   defineTask({
     id: "watch-summarize-code",
+    version: "1.0.0",
     handler: async ({ input, emitProgress }) => {
       const payload = z
         .object({
@@ -46,6 +48,7 @@ requirementDirective.compose(({ start, end }) => {
 
 const deliveryDirective = defineFlow({
   id: "watch-delivery-directive",
+  version: "1.0.0",
   input: z.object({
     requirement: z.string(),
   }),
@@ -63,6 +66,7 @@ const intake = deliveryDirective.use(
   "intake",
   defineTask({
     id: "watch-intake-code",
+    version: "1.0.0",
     handler: async ({ emitProgress }) => {
       await emitProgress(createProgressEvent("intake", "Preparing nested directive."));
       await sleep(80);
@@ -81,6 +85,7 @@ const verify = deliveryDirective.use(
   "verify",
   defineTask({
     id: "watch-verify-code",
+    version: "1.0.0",
     handler: async ({ emitProgress }) => {
       await emitProgress(createProgressEvent("verify", "Verifying delivery plan."));
       await sleep(20);
@@ -136,7 +141,10 @@ const [events, outputEvents, tree, succeededRuns] = await Promise.all([
 console.log("result", result.output);
 console.log("run tree");
 printRunTree(tree);
-console.log("succeeded workflow runs", succeededRuns.map((run) => run.workflow.id));
+console.log(
+  "succeeded workflow runs",
+  succeededRuns.map((run) => run.workflow.id),
+);
 console.log(
   "recursive event types",
   events.map((event) => `${event.workflowRunId}:${event.type}`),
@@ -156,10 +164,7 @@ async function collectEvents<TEvent>(events: AsyncIterable<TEvent>): Promise<TEv
   return collected;
 }
 
-function printRunTree(
-  tree: Awaited<ReturnType<typeof app.runs.getTree>>,
-  depth = 0,
-): void {
+function printRunTree(tree: Awaited<ReturnType<typeof app.runs.getTree>>, depth = 0): void {
   if (tree === undefined) {
     return;
   }

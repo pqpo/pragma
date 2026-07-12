@@ -11,6 +11,9 @@ import type {
   TaskRunStatus,
   WorkflowRunRecord,
   RunStatus,
+  DefinitionRef,
+  RunEventCursor,
+  PragmaRunEvent,
 } from "@pragma/shared";
 import type { z } from "zod";
 
@@ -26,8 +29,10 @@ export type MaybePromise<TValue> = TValue | Promise<TValue>;
 
 export interface Directive<TInput = unknown, TOutput = unknown> {
   readonly id: string;
+  readonly version: string;
   readonly inputSchema?: z.ZodType<TInput> | undefined;
   readonly outputSchema?: RuntimeOutputSchema<TOutput> | undefined;
+  readonly children?: readonly DirectiveDefinition[] | undefined;
   run(request: StartRunRequest<TInput>): Promise<RunResult<TOutput>>;
 }
 
@@ -159,6 +164,7 @@ export interface CompiledDirective<TInput = unknown, TOutput = unknown> extends 
   TOutput
 > {
   readonly id: string;
+  readonly version: string;
   readonly inputSchema?: z.ZodType<TInput> | undefined;
   readonly outputSchema?: z.ZodType<TOutput> | undefined;
   readonly resolveOutput?: ((context: { state: RunState }) => TOutput) | undefined;
@@ -177,6 +183,10 @@ export interface StartRunRequest<TInput = unknown> extends RuntimeOverride {
   readonly systemSessionId?: string | undefined;
   readonly runtimes?: Readonly<Record<string, string>> | undefined;
   readonly execution?: DirectiveExecutionContext | undefined;
+  /** Internal durable-continuation key used by orchestrated Agent delegation. */
+  readonly continuationKey?: string | undefined;
+  /** Internal provenance for a Workflow-owned Session continued by a later TaskRun. */
+  readonly runtimeSessionOwnerTaskRunId?: string | undefined;
 }
 
 export interface RunResult<TOutput = unknown> {
@@ -206,6 +216,11 @@ export interface DirectiveExecutionContext {
   readonly requestHumanInteraction: (
     request: RequestHumanInteractionInput,
   ) => Promise<HumanInteractionResponse>;
+  readonly checkpointRuntimeSession: (checkpoint: {
+    readonly state: "creating" | "opened";
+    readonly systemSessionId: string;
+    readonly runtimeSession?: RuntimeSessionRef | undefined;
+  }) => Promise<void>;
   readonly runDirective: <TInput, TOutput>(
     directive: Directive<TInput, TOutput>,
     request: StartRunRequest<TInput>,
@@ -223,17 +238,7 @@ export interface RunHandle<TOutput = unknown> {
   readonly cancel: (reason?: string) => Promise<void>;
 }
 
-/** A live, non-persisted projection of one Root Workflow tree. */
-export interface PragmaRunEvent<TPayload = unknown> {
-  readonly rootWorkflowRunId: string;
-  readonly workflowRunId: string;
-  readonly parentWorkflowRunId?: string | undefined;
-  readonly parentTaskRunId?: string | undefined;
-  readonly taskRunId?: string | undefined;
-  readonly stepId?: string | undefined;
-  readonly type: string;
-  readonly payload: TPayload;
-}
+export type { PragmaRunEvent, RunEventCursor } from "@pragma/shared";
 
 export interface TaskLease {
   readonly task: TaskRunRecord;
@@ -262,6 +267,8 @@ export interface TaskPolicy {
 }
 
 export interface CreatePragmaOptions {
+  readonly pragmaHome?: string | undefined;
+  readonly storage?: "file" | "memory" | undefined;
   readonly mailbox?: Mailbox | undefined;
   readonly stateManager?: StateManager | undefined;
   readonly taskManager?: TaskManager | undefined;
@@ -269,9 +276,14 @@ export interface CreatePragmaOptions {
   readonly directiveStore?: DirectiveDefinitionStore | undefined;
   readonly runtimes?: RuntimeRegistry | undefined;
   readonly defaultRuntime?: string | undefined;
+  readonly eventStore?: RunEventStore | undefined;
 }
 
-export interface Pragma {
+export interface ResumeRunRequest {
+  readonly workflowRunId: string;
+}
+
+export interface PragmaApp {
   readonly mailbox: Mailbox;
   readonly stateManager: StateManager;
   readonly taskManager: TaskManager;
@@ -285,7 +297,13 @@ export interface Pragma {
     directive: DirectiveDefinition<TInput, TOutput>,
     request: StartRunRequest<TInput>,
   ) => Promise<RunResult<TOutput>>;
+  readonly resume: <TInput, TOutput>(
+    directive: DirectiveDefinition<TInput, TOutput>,
+    request: ResumeRunRequest,
+  ) => Promise<RunHandle<TOutput>>;
 }
+
+export type Pragma = PragmaApp;
 
 export interface DirectiveCompiler<TInput = unknown, TOutput = unknown> {
   readonly compile: () => CompiledDirective<TInput, TOutput>;
@@ -326,9 +344,19 @@ export interface Mailbox {
 export interface CreateWorkflowRunRequest<TInput = unknown> {
   readonly id: string;
   readonly directiveId: string;
+  readonly directiveVersion?: string | undefined;
   readonly parentWorkflowRunId?: string | undefined;
   readonly parentTaskRunId?: string | undefined;
+  readonly continuationKey?: string | undefined;
   readonly input: TInput;
+  readonly execution?:
+    | {
+        readonly runtime?: string | undefined;
+        readonly modelName?: string | undefined;
+        readonly thinkingLevel?: string | undefined;
+        readonly runtimes?: Readonly<Record<string, string>> | undefined;
+      }
+    | undefined;
   readonly state: RunState;
   readonly startStepId: string;
   readonly defaultSandbox: SandboxRef;
@@ -355,9 +383,13 @@ export interface ResolveHumanInteractionResult {
 export interface CreateTaskRunRequest {
   readonly workflowRunId: string;
   readonly stepId: string;
+  readonly definition?: DefinitionRef | undefined;
   readonly visit: number;
   readonly runtimeId: string;
   readonly input: unknown;
+  readonly systemSessionId?: string | undefined;
+  readonly runtimeSession?: RuntimeSessionRef | undefined;
+  readonly runtimeSessionOwnerTaskRunId?: string | undefined;
 }
 
 export interface ApplyStepReductionRequest<TOutput = unknown> {
@@ -445,7 +477,28 @@ export interface StateManager {
     stepIds: readonly string[],
   ) => Promise<WorkflowRunRecord>;
   readonly listReadyTransitions: (workflowRunId: string) => Promise<readonly ReadyTransition[]>;
-  readonly recoverExpiredLeases: (now: Date) => Promise<readonly TaskRunRecord[]>;
+  readonly recoverExpiredLeases: (
+    now: Date,
+    workflowRunId?: string | undefined,
+  ) => Promise<readonly TaskRunRecord[]>;
+  readonly checkpointRuntimeSession: (
+    taskRunId: string,
+    checkpoint: {
+      readonly state: "creating" | "opened";
+      readonly systemSessionId: string;
+      readonly runtimeSession?: RuntimeSessionRef | undefined;
+    },
+  ) => Promise<TaskRunRecord>;
+  readonly setWorkflowResult: (
+    workflowRunId: string,
+    result: WorkflowRunRecord["result"],
+  ) => Promise<WorkflowRunRecord>;
+  readonly markTaskTransitionApplied: (taskRunId: string) => Promise<TaskRunRecord>;
+  readonly continueWorkflowRun: (
+    workflowRunId: string,
+    input: unknown,
+    startStepId: string,
+  ) => Promise<WorkflowRunRecord>;
 }
 
 export interface ListWorkflowRunsFilter {
@@ -470,6 +523,7 @@ export interface RunWatchOptions {
   readonly types?: readonly MailboxMessageType[] | undefined;
   readonly closeOnTerminal?: boolean | undefined;
   readonly signal?: AbortSignal | undefined;
+  readonly from?: "beginning" | "latest" | { readonly after: RunEventCursor } | undefined;
 }
 
 export interface RunObserver {
@@ -479,11 +533,21 @@ export interface RunObserver {
   readonly watch: (
     workflowRunId: string,
     options?: RunWatchOptions | undefined,
-  ) => AsyncIterable<MailboxMessage>;
+  ) => AsyncIterable<PragmaRunEvent>;
   readonly watchOutput: (
     workflowRunId: string,
     options?: Omit<RunWatchOptions, "types"> | undefined,
-  ) => AsyncIterable<MailboxMessage>;
+  ) => AsyncIterable<PragmaRunEvent>;
+  readonly result: <TOutput>(
+    workflowRunId: string,
+    outputSchema: z.ZodType<TOutput>,
+  ) => Promise<RunResult<TOutput>>;
+}
+
+export interface RunEventStore {
+  readonly append: (message: MailboxMessage, rootWorkflowRunId: string) => Promise<PragmaRunEvent>;
+  readonly latest: (rootWorkflowRunId: string) => Promise<RunEventCursor>;
+  readonly readAfter: (cursor: RunEventCursor) => Promise<readonly PragmaRunEvent[]>;
 }
 
 export interface CreateWorkflowSandboxRequest {
@@ -547,7 +611,21 @@ export interface TaskManager {
     request: RespondHumanInteractionRequest,
   ) => Promise<HumanInteractionRecord>;
   readonly cancelTask: (taskRunId: string, reason?: string) => Promise<void>;
-  readonly recoverExpiredLeases: (now: Date) => Promise<readonly TaskRunRecord[]>;
+  readonly recoverExpiredLeases: (
+    now: Date,
+    workflowRunId?: string | undefined,
+  ) => Promise<readonly TaskRunRecord[]>;
+  readonly resumeRun: <TOutput>(
+    directive: CompiledDirective<unknown, TOutput>,
+    workflowRunId: string,
+    options?: TaskManagerStartRunOptions | undefined,
+  ) => Promise<RunHandle<TOutput>>;
+  readonly continueRun: <TInput, TOutput>(
+    directive: CompiledDirective<TInput, TOutput>,
+    workflowRunId: string,
+    request: StartRunRequest<TInput>,
+    options?: TaskManagerStartRunOptions | undefined,
+  ) => Promise<RunHandle<TOutput>>;
 }
 
 export interface TaskManagerStartRunOptions {
@@ -560,6 +638,7 @@ export interface TaskManagerOptions {
   readonly runtimes: RuntimeRegistry;
   readonly sandboxManager: SandboxManager;
   readonly directiveStore: DirectiveDefinitionStore;
+  readonly eventStore: RunEventStore;
   readonly runDirective?: DirectiveExecutionContext["runDirective"] | undefined;
   readonly workerId?: string | undefined;
   readonly leaseTtlMs?: number | undefined;

@@ -19,8 +19,7 @@ import { readObjectField } from "./utils.ts";
 
 const workflowPatternStateKey = "workflowPatterns";
 
-export interface WorkflowPatternStep<TInput = unknown, TOutput = unknown>
-  extends RuntimeOverride {
+export interface WorkflowPatternStep<TInput = unknown, TOutput = unknown> extends RuntimeOverride {
   readonly id?: string | undefined;
   readonly directive: DirectiveDefinition<TInput, TOutput>;
   readonly input?: StepInputResolver<TInput> | TInput | undefined;
@@ -35,6 +34,7 @@ export type WorkflowPatternStepLike<TInput = unknown, TOutput = unknown> =
 
 export interface DefinePromptChainWorkflowOptions<TInput = unknown, TOutput = unknown> {
   readonly id: string;
+  readonly version: string;
   readonly input?: z.ZodType<TInput> | undefined;
   readonly output?: z.ZodType<TOutput> | undefined;
   readonly steps: readonly WorkflowPatternStepLike[];
@@ -43,6 +43,7 @@ export interface DefinePromptChainWorkflowOptions<TInput = unknown, TOutput = un
 
 export interface DefineRoutingWorkflowOptions<TInput = unknown, TOutput = unknown> {
   readonly id: string;
+  readonly version: string;
   readonly input?: z.ZodType<TInput> | undefined;
   readonly output?: z.ZodType<TOutput> | undefined;
   readonly router: WorkflowPatternStepLike<TInput>;
@@ -52,8 +53,11 @@ export interface DefineRoutingWorkflowOptions<TInput = unknown, TOutput = unknow
   readonly result?: ((context: { state: RunState }) => TOutput) | undefined;
 }
 
-export interface WorkflowParallelBranch<TInput = unknown, TBranchInput = unknown, TOutput = unknown>
-  extends RuntimeOverride {
+export interface WorkflowParallelBranch<
+  TInput = unknown,
+  TBranchInput = unknown,
+  TOutput = unknown,
+> extends RuntimeOverride {
   readonly directive: DirectiveDefinition<TBranchInput, TOutput>;
   readonly input?:
     | TBranchInput
@@ -76,10 +80,11 @@ export interface WorkflowParallelMergeContext<TInput = unknown> {
 
 export interface DefineParallelWorkflowOptions<TInput = unknown, TOutput = unknown> {
   readonly id: string;
+  readonly version: string;
   readonly input?: z.ZodType<TInput> | undefined;
   readonly output?: z.ZodType<TOutput> | undefined;
   readonly branches: Readonly<Record<string, WorkflowParallelBranch<TInput> | DirectiveDefinition>>;
-  readonly merge?: ((context: WorkflowParallelMergeContext<TInput>) => MaybePromise<TOutput>);
+  readonly merge?: (context: WorkflowParallelMergeContext<TInput>) => MaybePromise<TOutput>;
 }
 
 export interface WorkflowWorkerResult<TWorkerInput = unknown, TWorkerOutput = unknown> {
@@ -112,6 +117,7 @@ export interface DefineOrchestratorWorkersWorkflowOptions<
   TOutput = unknown,
 > {
   readonly id: string;
+  readonly version: string;
   readonly input?: z.ZodType<TInput> | undefined;
   readonly output?: z.ZodType<TOutput> | undefined;
   readonly orchestrator: WorkflowPatternStepLike<TInput, TPlan>;
@@ -183,6 +189,7 @@ export interface DefineEvaluatorOptimizerWorkflowOptions<
   TOutput = WorkflowEvaluatorOptimizerResult<TAttempt, TEvaluation>,
 > {
   readonly id: string;
+  readonly version: string;
   readonly input?: z.ZodType<TInput> | undefined;
   readonly output?: z.ZodType<TOutput> | undefined;
   readonly optimizer: WorkflowPatternStepLike<TOptimizerInput, TAttempt>;
@@ -219,6 +226,7 @@ export function definePromptChainWorkflow<TInput = unknown, TOutput = unknown>(
 
   const flow = defineFlow({
     id: options.id,
+    version: options.version,
     input: options.input,
     output: options.output,
     result: options.result ?? (({ state }) => state.results["final"] as TOutput),
@@ -230,7 +238,7 @@ export function definePromptChainWorkflow<TInput = unknown, TOutput = unknown>(
     const previousId =
       previous === undefined
         ? undefined
-        : previous.id ?? resolveDirectiveDefinitionId(previous.directive) ?? `step-${index}`;
+        : (previous.id ?? resolveDirectiveDefinitionId(previous.directive) ?? `step-${index}`);
     const stepOptions = createStepOptions(step, {
       input:
         step.input ??
@@ -280,6 +288,7 @@ export function defineRoutingWorkflow<TInput = unknown, TOutput = unknown>(
 
   const flow = defineFlow({
     id: options.id,
+    version: options.version,
     input: options.input,
     output: options.output,
     result: options.result ?? (({ state }) => state.results["final"] as TOutput),
@@ -362,6 +371,7 @@ export function defineParallelWorkflow<TInput = unknown, TOutput = unknown>(
 
   return createPatternDirective({
     id: options.id,
+    version: options.version,
     inputSchema: options.input,
     outputSchema: options.output,
     execute: async ({ input, request, execution }) => {
@@ -425,6 +435,7 @@ export function defineOrchestratorWorkersWorkflow<
 
   return createPatternDirective({
     id: options.id,
+    version: options.version,
     inputSchema: options.input,
     outputSchema: options.output,
     execute: async ({ input, request, execution }) => {
@@ -461,12 +472,7 @@ export function defineOrchestratorWorkersWorkflow<
           };
         }),
       );
-      const synthesisInput: WorkflowSynthesisInput<
-        TInput,
-        TPlan,
-        TWorkerInput,
-        TWorkerOutput
-      > = {
+      const synthesisInput: WorkflowSynthesisInput<TInput, TPlan, TWorkerInput, TWorkerOutput> = {
         input,
         orchestration,
         workerOutputs,
@@ -522,6 +528,7 @@ export function defineEvaluatorOptimizerWorkflow<
 
   return createPatternDirective({
     id: options.id,
+    version: options.version,
     inputSchema: options.input,
     outputSchema: options.output,
     execute: async ({ input, request, execution }) => {
@@ -621,6 +628,7 @@ export const patterns = {
 
 interface CreatePatternDirectiveOptions<TInput, TOutput> {
   readonly id: string;
+  readonly version: string;
   readonly inputSchema?: z.ZodType<TInput> | undefined;
   readonly outputSchema?: z.ZodType<TOutput> | undefined;
   readonly execute: (context: {
@@ -635,6 +643,7 @@ function createPatternDirective<TInput, TOutput>(
 ): Directive<TInput, TOutput> {
   const directive: Directive<TInput, TOutput> = {
     id: options.id,
+    version: options.version,
     inputSchema: options.inputSchema,
     outputSchema: options.outputSchema,
     async run(request) {
@@ -798,11 +807,7 @@ function setPatternStepOutput(
   outputs[stepId] = output;
 }
 
-function getRequiredPatternStepOutput(
-  state: RunState,
-  patternId: string,
-  stepId: string,
-): unknown {
+function getRequiredPatternStepOutput(state: RunState, patternId: string, stepId: string): unknown {
   const patternState = getPatternState(state, patternId);
   const outputs = patternState["outputs"];
 

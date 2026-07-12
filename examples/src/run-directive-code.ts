@@ -3,6 +3,7 @@ import { z } from "zod";
 
 const flow = defineFlow({
   id: "hello-directive",
+  version: "1.0.0",
   input: z.object({
     name: z.string(),
   }),
@@ -18,6 +19,7 @@ const greet = flow.use(
   "greet",
   defineTask({
     id: "greet-code",
+    version: "1.0.0",
     handler: ({ input }) => {
       const payload = z
         .object({

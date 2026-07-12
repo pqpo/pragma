@@ -183,7 +183,20 @@ pnpm --filter @pragma/examples dev src/run-memory-system-example.ts
 
 ## Session 恢复与审批示例
 
-直接 Runtime Session、Session storage、多轮会话和 resumable approval 示例在第二阶段不再运行。原实现仍以整文件注释保留在对应 `src/run-*.ts` 中，作为第三阶段迁移参考。普通执行统一使用 `createPragma({ runtimes }).start()` 或 `.run()`；这些恢复场景将在 `PragmaApp.resume(rootDefinition, { workflowRunId })` 阶段以 Workflow 恢复方式重新启用。
+这些示例全部通过 `PragmaApp` 运行，不暴露直接 Runtime Session API：
+
+```bash
+pnpm --filter @pragma/examples dev src/run-tool-approval-example.ts
+pnpm --filter @pragma/examples dev src/run-resumable-tool-approval.ts
+pnpm --filter @pragma/examples dev src/run-session-storage-example.ts
+```
+
+- `run-tool-approval-example.ts` 注册真实的 approval-required 工具，并通过
+  `human.requested` / `respondToHumanInteraction()` 完成审批。
+- `run-resumable-tool-approval.ts` 可用 `--workflow-run-id` 在新进程中恢复 pending approval。
+- `run-session-storage-example.ts` 第一进程在 Human checkpoint 暂停；第二进程通过
+  `app.resume()`、`sessionRestoreHandler` 和 `reuse_by_agent` 恢复原 Child Workflow、
+  `systemSessionId`、Runtime Session transcript，并切换到 workspace B。
 
 ## 运行上下文示例
 
@@ -245,7 +258,10 @@ pnpm --filter @pragma/examples dev src/run-human-review-gate.ts
 
 Human Interaction 示例是平台协议的最小本地验证路径，不依赖模型 key。它们展示的是 `defineHumanTask()`、`human.requested` 事件和 `taskManager.respondToHumanInteraction()`，后续 Web、Server 或 Desktop UI 应接入同一套协议。
 
-Agent 委派示例需要模型 key。它展示的是 ExpertAgent 之间通过 `launch_agent` 互相委派任务，而不是 runtime 私有子会话。每次委派都会创建新的 child workflow run 和新的 Runtime Session。跨 Workflow 恢复将在 `PragmaApp.resume()` 阶段实现。
+Agent 委派示例需要模型 key。它展示的是 ExpertAgent 之间通过 `launch_agent` 互相委派任务，
+而不是 runtime 私有子会话。`fresh` 创建新的 Child Workflow 和 Runtime Session；
+`reuse_by_agent` 在原 Child Workflow 中追加 TaskRun，并在 Root Workflow 恢复后继续复用原
+`systemSessionId` 和 Runtime Session。
 
 ## 示例辅助边界
 

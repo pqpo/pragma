@@ -3,6 +3,7 @@ export * from "./context/context-metadata.schema.ts";
 export * from "./health.schema.ts";
 export * from "./workflow/human-interaction.schema.ts";
 export * from "./workflow/mailbox.schema.ts";
+export * from "./workflow/run-event.schema.ts";
 export * from "./workflow/workflow-state.schema.ts";
 export * from "./result.ts";
 export {

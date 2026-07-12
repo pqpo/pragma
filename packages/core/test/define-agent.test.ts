@@ -58,6 +58,7 @@ describe("defineAgent", () => {
 
     expect("createSession" in agent).toBe(false);
     const result = await createPragma({
+      storage: "memory",
       runtimes: createRuntimeRegistry({
         runtimes: [runtime],
         defaultRuntime: "test-runtime",
