@@ -77,6 +77,31 @@ const messages = await session.getMessageHistory();
 模型输出并非确定性结果；这个检查验证的是调用链与多轮上下文，不代表对任意事实问题的
 答案都准确。业务准确性应为具体 Expert 准备固定输入、期望标准和自动化评测。
 
+## 2. 本地 Runtime：Codex 与 Claude Code 控制台聊天
+
+两个示例分别验证已安装并已登录的 Codex CLI 和 Claude Code CLI。启动后会依次：
+
+1. 通过 Runtime 的 `canUse()` 检查 CLI 是否可用；
+2. 通过 `listModels()` 探测当前环境支持的模型；
+3. 让你输入编号选择模型，或直接回车沿用 CLI 默认模型；
+4. 创建带测试用 In-memory Context Store 的 ExpertSession 并进入流式聊天。
+
+```bash
+pnpm --filter @pragma/examples example:runtime-codex
+pnpm --filter @pragma/examples example:runtime-claude-code
+```
+
+这两个本地 Runtime 使用各自 CLI 已有的认证和模型配置，不读取 `PRAGMA_MODEL_*`。
+进入聊天后输入下面的问题验证 Context Store 加载：
+
+```text
+你 > 请从测试上下文中读取验证码和发布代号，并说明信息来源
+```
+
+回答应包含 `7319`、`Aurora Finch` 和 In-memory Context Store；流式输出中应出现
+`list_expert_context` 或 `read_expert_context` 等上下文工具调用。测试上下文只存在于当前
+example 进程的内存中，不会写入 workspace。
+
 ## 目录规划
 
 ```text
@@ -89,6 +114,10 @@ src/
   flows/                 # 后续整理：Task、Expert、HumanTask、恢复与树
   plugins/               # 后续整理：插件能力
   runtimes/              # 后续整理：不同 Runtime
+    codex/
+      console-chat.ts
+    claude-code/
+      console-chat.ts
 ```
 
 当前已有的进阶示例仍可直接运行：
