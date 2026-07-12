@@ -55,7 +55,7 @@ const coder = defineAgent({
 
 输出约束应该放在具体调用处：
 
-- Agent 自验证时：`agent.run(input, { output })`
+- Agent 自验证时：`app.run(agent, { input, output })`
 - Directive 步骤定义时：`flow.agent(..., { output })`
 - Directive 整体定义时：`new FlowSpec({ inputSchema, outputSchema })`
 
@@ -225,7 +225,7 @@ await app.run(directive, {
 Agent Declaration = defineAgent()
 Agent Protocol    = normalized to ExpertAgent-compatible declaration
 Agent Runtime     = not bound at declaration time
-Agent Self Check  = agent.run(input, { runtime?, runtimes? })
+Agent Self Check  = app.run(agent, { input, runtime?, runtimes? })
 Default Runtime   = application registry selects a concrete runtime
 Directive Default      = app.run(directive) uses default runtime unless overridden
 Step Runtime      = step option runtime overrides directive default
@@ -240,7 +240,7 @@ Runtime Target    = agent | code | nested directive | operator
 
 # 2. FlowSpec API：核心能力
 
-`FlowSpec` 是 Directive 的可执行规格。
+`FlowSpec` 是 Directive 的组合声明规格；执行只能由 `PragmaApp` 启动。
 
 Directive 负责定义整体输入输出协议。Agent 可以是通用能力，步骤负责把 Directive State 映射成 Agent 输入并约束该步骤输出，Directive 则负责约束整个工作流的入口和最终结果。
 
@@ -856,12 +856,12 @@ createPragma()
 
 职责边界：
 
-| 模块             | 职责                                                                                                                              | 不负责                   |
-| ---------------- | --------------------------------------------------------------------------------------------------------------------------------- | ------------------------ |
-| `TaskManager`    | 创建 run、读取 `CompiledDirective`、判断可执行节点、处理 transition、为节点创建 task run、租约、重试、取消、超时、把任务派发给 Runtime | 直接修改 Directive State      |
-| `Mailbox`        | 传递 task command、task event、workflow event、ack、heartbeat                                                                     | 判断下一步该执行哪个节点 |
-| `StateManager`   | 持久化 workflow run、task run、state snapshot、step output、revision、事件应用结果                                                | 做消息投递               |
-| `RuntimeAdapter` | 执行具体 agent/code/nested directive/operator 并产生流式事件和结果                                                                         | 直接修改 Directive State      |
+| 模块             | 职责                                                                                                                                   | 不负责                   |
+| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------- | ------------------------ |
+| `TaskManager`    | 创建 run、读取 `CompiledDirective`、判断可执行节点、处理 transition、为节点创建 task run、租约、重试、取消、超时、把任务派发给 Runtime | 直接修改 Directive State |
+| `Mailbox`        | 传递 task command、task event、workflow event、ack、heartbeat                                                                          | 判断下一步该执行哪个节点 |
+| `StateManager`   | 持久化 workflow run、task run、state snapshot、step output、revision、事件应用结果                                                     | 做消息投递               |
+| `RuntimeAdapter` | 执行具体 agent/code/nested directive/operator 并产生流式事件和结果                                                                     | 直接修改 Directive State |
 
 `TaskManager` 内部可以依赖一个执行环境接口，用于获取 workspace、session、权限和未来 sandbox，但它不作为 Directive 执行层之外的独立 manager 暴露。
 

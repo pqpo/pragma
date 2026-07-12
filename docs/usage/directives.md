@@ -1,6 +1,6 @@
 # Directive 使用指南
 
-本文说明 Pragma Directive API 的核心使用方式。核心原则是：`Agent` 本身是 `Directive`，编译后的组合工作流也是 `Directive`，任何对象只要实现 `Directive` 接口，就可以注册进另一个 Directive。
+本文说明 Pragma Directive API 的核心使用方式。核心原则是：`Directive` 只描述可编排定义，`Agent`、Task 和编译后的组合工作流都可以注册进另一个 Directive，但只有 `PragmaApp` 可以启动执行。
 
 当前核心 API：
 
@@ -18,14 +18,14 @@ import { createPragma, defineTask, defineFlow } from "@pragma/core";
 
 ## 核心概念
 
-`Directive` 是统一的可执行单元：
+`Directive` 是统一的声明协议：
 
 ```ts
 interface Directive<TInput, TOutput> {
   readonly id: string;
+  readonly version: string;
   readonly inputSchema?: z.ZodType<TInput>;
   readonly outputSchema?: z.ZodType<TOutput>;
-  run(request: StartRunRequest<TInput>): Promise<RunResult<TOutput>>;
 }
 ```
 
@@ -33,10 +33,10 @@ interface Directive<TInput, TOutput> {
 
 主要对象：
 
-- `Directive`：统一执行接口。
+- `Directive`：统一声明和编排接口。
 - `FlowSpec`：组合 Flow 构建器。
 - `CompiledDirective`：编译后的组合 Directive，同时也是 `Directive`。
-- `Pragma`：运行入口，可运行任意 `Directive`。
+- `PragmaApp`：唯一运行入口，可启动任意受 Core 支持的 `Directive` 定义。
 - `RunState`：workflow 运行中的状态容器。
 
 ## 最小组合 Directive
@@ -77,7 +77,8 @@ flow.compose(({ start, end }) => {
   start(greet).next(end());
 });
 
-const result = await createPragma().run(flow, {
+const app = createPragma();
+const result = await app.run(flow, {
   input: {
     name: "Pragma",
   },
@@ -91,16 +92,17 @@ console.log(result.output);
 - `input` 是组合 Directive 的输入 schema。
 - `output` 是最终输出 schema。
 - `result` 从 `RunState` 里提取最终结果。
-- `use()` 注册任何实现了 `Directive` 的可执行单元。
+- `use()` 注册 Agent、Task、Human Task、Pattern 或组合 Flow 等 Directive 定义。
 - `reduce()` 把步骤输出写回 `state`。
 - `compose()` 定义步骤转移。
 
 ## 运行单个 Directive
 
-单个 Agent 或代码 Directive 可以直接交给 `Pragma` 运行。`Pragma` 会把它包装成单步 workflow，因此仍然有 `workflowRunId`、`RunState` 和 mailbox 事件。
+单个 Agent 或代码 Directive 可以交给 `PragmaApp` 运行。PragmaApp 会把它包装成单步 workflow，因此仍然有 `workflowRunId`、`RunState` 和 mailbox 事件。
 
 ```ts
-const result = await createPragma().run(greetDirective, {
+const app = createPragma();
+const result = await app.run(greetDirective, {
   input: {
     name: "Pragma",
   },
@@ -243,7 +245,7 @@ deliveryDirective.compose(({ start, end }) => {
 });
 ```
 
-`compile()` 是高级 API，主要用于预校验、调试或把 Flow 注册到分布式运行系统。普通执行路径由 `flow.use()` 和 `createPragma().run()` 自动完成编译归一化。
+`compile()` 是高级 API，主要用于预校验、调试或把 Flow 注册到分布式运行系统。普通执行路径由 `flow.use()` 和 `PragmaApp.run()` 自动完成编译归一化。
 
 ## RunState 和 reduce
 
@@ -343,7 +345,8 @@ const plan = flow.use("plan", planner, {
   runtime: "cloud-pi-agent",
 });
 
-await createPragma().run(flow, {
+const app = createPragma();
+await app.run(flow, {
   input: {},
   runtime: "cloud-pi-agent",
   runtimes: {

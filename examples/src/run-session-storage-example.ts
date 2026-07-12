@@ -8,9 +8,9 @@ import {
   defineAgent,
   defineFlow,
   defineHumanTask,
+  defineTask,
 } from "@pragma/core";
 import type {
-  Directive,
   RuntimeSessionRestoreHandler,
   RuntimeSessionStorageContext,
   RuntimeSessionSyncCallback,
@@ -71,27 +71,42 @@ const flow = defineFlow({
     second: state.results["second"],
   }),
 });
-const first = flow.use("first", createLaunchTurn("remember-turn", [
-  "记住项目代号 mesh-session-sync。",
-  "目标是验证进程重启后恢复同一个 Workflow-owned Runtime Session。",
-].join("\n")), {
-  reduce: ({ state, output }) => { state.results["first"] = output; },
-});
-const pause = flow.use("restart-checkpoint", defineHumanTask({
-  id: "session-restart-checkpoint",
-  version: "1.0.0",
-  request: {
-    kind: "manual_intervention",
-    title: "Restart the example process",
-    prompt: "Resume this Root Workflow in a new process before the second Agent turn.",
+const first = flow.use(
+  "first",
+  createLaunchTurn(
+    "remember-turn",
+    [
+      "记住项目代号 mesh-session-sync。",
+      "目标是验证进程重启后恢复同一个 Workflow-owned Runtime Session。",
+    ].join("\n"),
+  ),
+  {
+    reduce: ({ state, output }) => {
+      state.results["first"] = output;
+    },
   },
-}));
-const second = flow.use("second", createLaunchTurn(
-  "recall-turn",
-  "请说出上一轮保存的项目代号和恢复目标。",
-), {
-  reduce: ({ state, output }) => { state.results["second"] = output; },
-});
+);
+const pause = flow.use(
+  "restart-checkpoint",
+  defineHumanTask({
+    id: "session-restart-checkpoint",
+    version: "1.0.0",
+    request: {
+      kind: "manual_intervention",
+      title: "Restart the example process",
+      prompt: "Resume this Root Workflow in a new process before the second Agent turn.",
+    },
+  }),
+);
+const second = flow.use(
+  "second",
+  createLaunchTurn("recall-turn", "请说出上一轮保存的项目代号和恢复目标。"),
+  {
+    reduce: ({ state, output }) => {
+      state.results["second"] = output;
+    },
+  },
+);
 flow.compose(({ start, end }) => start(first).next(pause).next(second).next(end()));
 
 try {
@@ -123,26 +138,21 @@ try {
   launcher.dispose();
 }
 
-function createLaunchTurn(id: string, task: string): Directive<unknown, string> {
-  return {
+function createLaunchTurn(id: string, task: string) {
+  return defineTask({
     id,
     version: "1.0.0",
     children: [agent],
-    async run(request) {
-      if (request.execution === undefined) throw new Error("Workflow execution is required.");
+    async handler({ execution }) {
       const result = await launcher.tool.call(
         { agentId: agent.id, task, sessionPolicy: "reuse_by_agent", runtime: "pi" },
         undefined,
-        { workflowExecution: request.execution },
+        { workflowExecution: execution },
       );
       if (result.isError) throw new Error(result.text);
-      return {
-        workflowRunId: request.execution.workflow.id,
-        output: result.text,
-        state: request.execution.state,
-      };
+      return result.text;
     },
-  };
+  });
 }
 
 function archivePath(context: RuntimeSessionStorageContext): string {

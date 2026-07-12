@@ -2,6 +2,8 @@ import type { RunState } from "@pragma/shared";
 import type { z } from "zod";
 
 import { compileDirectiveDefinition, defineFlow, type StepOptions } from "./flow-spec.ts";
+import { registerDirectiveExecutionHandler } from "./directive-executor.ts";
+import { runNestedDirective as executeNestedDirective } from "./directive-execution-context.ts";
 import type {
   Directive,
   DirectiveDefinition,
@@ -646,27 +648,23 @@ function createPatternDirective<TInput, TOutput>(
     version: options.version,
     inputSchema: options.inputSchema,
     outputSchema: options.outputSchema,
-    async run(request) {
-      if (request.execution === undefined) {
-        const { createPragma } = await import("./pragma-app.ts");
-        return await createPragma().run(directive, request);
-      }
-
-      const input = options.inputSchema?.parse(request.input) ?? request.input;
-      const output = await options.execute({
-        input,
-        request,
-        execution: request.execution,
-      });
-      const parsedOutput = options.outputSchema?.parse(output) ?? output;
-
-      return {
-        workflowRunId: request.execution.workflow.id,
-        output: parsedOutput,
-        state: request.execution.state,
-      };
-    },
   };
+  registerDirectiveExecutionHandler(directive, async (request) => {
+    if (request.execution === undefined) {
+      throw new Error("Workflow Pattern execution requires a TaskManager execution context.");
+    }
+    const input = options.inputSchema?.parse(request.input) ?? request.input;
+    const output = await options.execute({
+      input,
+      request,
+      execution: request.execution,
+    });
+    return {
+      workflowRunId: request.execution.workflow.id,
+      output: options.outputSchema?.parse(output) ?? output,
+      state: request.execution.state,
+    };
+  });
 
   return directive;
 }
@@ -724,7 +722,8 @@ async function runNestedDirective<TInput, TOutput>(options: {
     };
   }
 
-  const result: RunResult<TOutput> = await options.execution.runDirective(
+  const result: RunResult<TOutput> = await executeNestedDirective(
+    options.execution,
     compileDirectiveDefinition(options.directive),
     request,
   );

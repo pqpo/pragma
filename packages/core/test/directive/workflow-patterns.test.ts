@@ -23,7 +23,9 @@ describe("patterns directive api", () => {
       ],
     });
 
-    const result = await createPragma({ storage: "memory" }).run(chain, {
+    expect("run" in chain).toBe(false);
+    const app = createPragma({ storage: "memory" });
+    const result = await app.run(chain, {
       input: "brief",
     });
 
@@ -66,7 +68,8 @@ describe("patterns directive api", () => {
       },
     });
 
-    const result = await createPragma({ storage: "memory" }).run(routed, {
+    const app = createPragma({ storage: "memory" });
+    const result = await app.run(routed, {
       input: "invoice question",
     });
 
@@ -115,7 +118,8 @@ describe("patterns directive api", () => {
       }),
     });
 
-    const result = await createPragma({ storage: "memory" }).run(parallel, {
+    const app = createPragma({ storage: "memory" });
+    const result = await app.run(parallel, {
       input: "doc",
     });
 
@@ -152,7 +156,8 @@ describe("patterns directive api", () => {
       }),
     });
 
-    const result = await createPragma({ storage: "memory" }).run(orchestrated, {
+    const app = createPragma({ storage: "memory" });
+    const result = await app.run(orchestrated, {
       input: "write report",
     });
 
@@ -208,7 +213,8 @@ describe("patterns directive api", () => {
       maxIterations: 3,
     });
 
-    const result = await createPragma({ storage: "memory" }).run(optimized, {
+    const app = createPragma({ storage: "memory" });
+    const result = await app.run(optimized, {
       input: {
         goal: "improve",
       },

@@ -13,7 +13,7 @@
 7. [Workflow 范式快捷 API](./workflow-patterns.md)
 8. [Human Interaction](./human-interaction.md)
 
-如果要接入未来分布式部署，阅读 [Directive 运行组件与扩展](./directive-runtime-components.md)，其中包含自定义 `Pragma`、`SandboxManager`、`StateManager`、`Mailbox` 和 `TaskManager`。
+如果要接入未来分布式部署，阅读 [Directive 运行组件与扩展](./directive-runtime-components.md)，其中包含 `PragmaApp`、`SandboxManager`、`StateManager`、`Mailbox` 和 `TaskManager` 的装配方式。
 
 相关架构文档：
 

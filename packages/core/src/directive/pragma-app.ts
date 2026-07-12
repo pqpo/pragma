@@ -14,7 +14,7 @@ import { createFileStateManager } from "./file-state-manager.ts";
 import { createFileRunEventStore, createInMemoryRunEventStore } from "./run-event-store.ts";
 import { createLocalSandboxManager } from "./local-sandbox-manager.ts";
 import { createRunObserver } from "./run-observer.ts";
-import { createLocalTaskManager } from "./task-manager.ts";
+import { createPragmaTaskManager } from "./task-manager.ts";
 import type {
   CompiledDirective,
   CreatePragmaOptions,
@@ -125,15 +125,17 @@ export function createPragma(options: CreatePragmaOptions = {}): PragmaApp {
   };
   const taskManager =
     options.taskManager ??
-    createLocalTaskManager({
-      mailbox,
-      stateManager,
-      runtimes,
-      sandboxManager,
-      directiveStore,
-      eventStore,
+    createPragmaTaskManager(
+      {
+        mailbox,
+        stateManager,
+        runtimes,
+        sandboxManager,
+        directiveStore,
+        eventStore,
+      },
       runDirective,
-    });
+    );
   const runs = createRunObserver({
     stateManager,
     eventStore,
@@ -360,9 +362,6 @@ function compileSingleStepDirective<TInput, TOutput>(
       },
     ],
     limits: new Map(),
-    async run(request) {
-      return await createPragma().run(compiled, request);
-    },
   };
 
   return compiled;

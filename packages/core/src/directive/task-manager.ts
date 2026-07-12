@@ -25,6 +25,11 @@ import type {
 } from "./types.ts";
 import type { RuntimeSessionRef } from "../runtime/runtime-adapter.ts";
 import { createEmptyRunEvents, createRunEventChannel } from "./run-event-channel.ts";
+import { executeDirective } from "./directive-executor.ts";
+import {
+  attachDirectiveRunner,
+  type InternalDirectiveRunner,
+} from "./directive-execution-context.ts";
 import { createId, nowIso, readObjectField } from "./utils.ts";
 
 interface RunContext<TOutput = unknown> {
@@ -58,7 +63,25 @@ const terminalTaskStatuses = new Set<TaskRunStatus>([
 ]);
 const cancellableWorkflowStatuses = new Set(["running", "waiting"]);
 
+interface LocalTaskManagerInternals {
+  readonly runDirective?: InternalDirectiveRunner | undefined;
+}
+
 export function createLocalTaskManager(options: TaskManagerOptions): TaskManager {
+  return createTaskManager(options, {});
+}
+
+export function createPragmaTaskManager(
+  options: TaskManagerOptions,
+  runDirective: InternalDirectiveRunner,
+): TaskManager {
+  return createTaskManager(options, { runDirective });
+}
+
+function createTaskManager(
+  options: TaskManagerOptions,
+  internals: LocalTaskManagerInternals,
+): TaskManager {
   const workerId = options.workerId ?? createId("worker");
   const leaseTtlMs = options.leaseTtlMs ?? 60_000;
   const heartbeatIntervalMs =
@@ -491,10 +514,7 @@ export function createLocalTaskManager(options: TaskManagerOptions): TaskManager
         leasedTask = await options.stateManager.markTaskLeased(task.id, workerId, leaseTtlMs);
       } catch (error) {
         const latestTask = await options.stateManager.getTaskRun(task.id);
-        if (
-          latestTask === undefined ||
-          !["pending", "dispatched"].includes(latestTask.status)
-        ) {
+        if (latestTask === undefined || !["pending", "dispatched"].includes(latestTask.status)) {
           return undefined;
         }
         throw error;
@@ -961,16 +981,8 @@ export function createLocalTaskManager(options: TaskManagerOptions): TaskManager
       throw new Error("Workflow run is not available for task execution.");
     }
 
-    const result = await step.directive.run({
-      input: context.task.input,
-      modelName: context.runRequest.modelName,
-      thinkingLevel: context.runRequest.thinkingLevel,
-      output: step.output ?? step.directive.outputSchema,
-      runtime: context.runtimeId,
-      systemSessionId: context.task.systemSessionId ?? context.runRequest.systemSessionId,
-      runtimeSession: context.task.runtimeSession ?? context.runRequest.runtimeSession,
-      runtimes: context.runRequest.runtimes,
-      execution: {
+    const execution = attachDirectiveRunner(
+      {
         task: context.task,
         workflow: context.workflow,
         state: context.state,
@@ -995,9 +1007,7 @@ export function createLocalTaskManager(options: TaskManagerOptions): TaskManager
             stepId: context.task.stepId,
             request,
           });
-          if (interaction.status === "responded") {
-            return interaction.response ?? {};
-          }
+          if (interaction.status === "responded") return interaction.response ?? {};
           const responsePromise = new Promise<HumanInteractionResponse>((resolve) => {
             humanInteractionWaiters.set(interaction.id, {
               taskRunId: context.task.id,
@@ -1015,9 +1025,7 @@ export function createLocalTaskManager(options: TaskManagerOptions): TaskManager
             workflowRunId: context.task.workflowRunId,
             taskRunId: context.task.id,
             stepId: context.task.stepId,
-            payload: {
-              interactionId: interaction.id,
-            },
+            payload: { interactionId: interaction.id },
           });
           await publish({
             kind: "event",
@@ -1025,9 +1033,7 @@ export function createLocalTaskManager(options: TaskManagerOptions): TaskManager
             workflowRunId: context.task.workflowRunId,
             parentWorkflowRunId: workflow.parentWorkflowRunId,
             parentTaskRunId: workflow.parentTaskRunId,
-            payload: {
-              interactionId: interaction.id,
-            },
+            payload: { interactionId: interaction.id },
           });
           await publish({
             kind: "event",
@@ -1035,22 +1041,30 @@ export function createLocalTaskManager(options: TaskManagerOptions): TaskManager
             workflowRunId: context.task.workflowRunId,
             taskRunId: context.task.id,
             stepId: context.task.stepId,
-            payload: {
-              interaction,
-            },
+            payload: { interaction },
           });
-
           return await responsePromise;
         },
         checkpointRuntimeSession: async (checkpoint) => {
           await options.stateManager.checkpointRuntimeSession(context.task.id, checkpoint);
         },
-        runDirective:
-          options.runDirective ??
-          (async () => {
-            throw new Error("No directive runner is configured for nested directive execution.");
-          }),
       },
+      internals.runDirective ??
+        (async () => {
+          throw new Error("No directive runner is configured for nested directive execution.");
+        }),
+    );
+
+    const result = await executeDirective(step.directive, {
+      input: context.task.input,
+      modelName: context.runRequest.modelName,
+      thinkingLevel: context.runRequest.thinkingLevel,
+      output: step.output ?? step.directive.outputSchema,
+      runtime: context.runtimeId,
+      systemSessionId: context.task.systemSessionId ?? context.runRequest.systemSessionId,
+      runtimeSession: context.task.runtimeSession ?? context.runRequest.runtimeSession,
+      runtimes: context.runRequest.runtimes,
+      execution,
     });
     return {
       output: result.output,

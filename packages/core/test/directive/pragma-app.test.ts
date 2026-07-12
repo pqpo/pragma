@@ -14,7 +14,6 @@ import {
 } from "../../src/index.ts";
 import { createTestRuntimeAdapter } from "../runtime-test-utils.ts";
 import type {
-  Directive,
   RuntimeAdapter,
   RuntimeAgentSession,
   RuntimeDriverSessionRequest,
@@ -84,6 +83,19 @@ describe("directive app", () => {
     expect(result.state.results["review"]).toEqual({
       decision: "approved",
     });
+  });
+
+  it("keeps execution methods off Directive declarations", () => {
+    const task = defineTask({ id: "declared-task", version: "1.0.0", handler: () => "ok" });
+    const flow = defineFlow({ id: "declared-flow", version: "1.0.0" });
+    const step = flow.use("task", task);
+    flow.compose(({ start, end }) => start(step).next(end()));
+
+    expect("run" in task).toBe(false);
+    expect("createSession" in task).toBe(false);
+    expect("run" in flow).toBe(false);
+    expect("createSession" in flow).toBe(false);
+    expect("run" in flow.compile()).toBe(false);
   });
 
   it("routes by structured step output", async () => {
@@ -712,7 +724,7 @@ describe("directive app", () => {
     expect(recovered[0]?.status).toBe("dispatched");
   });
 
-  it("registers any Directive implementation as a step", async () => {
+  it("registers a declared Task Directive as a step", async () => {
     const directive = defineFlow({
       id: "custom-directive-composition",
       version: "1.0.0",
@@ -723,25 +735,15 @@ describe("directive app", () => {
         value: String(state.results["custom"]),
       }),
     });
-    const customDirective: Directive<{ readonly value: string }, string> = {
+    const customDirective = defineTask({
       id: "custom",
       version: "1.0.0",
-      inputSchema: z.object({
+      input: z.object({
         value: z.string(),
       }),
-      outputSchema: z.string(),
-      async run(request) {
-        if (request.execution === undefined) {
-          return await createPragma({ storage: "memory" }).run(this, request);
-        }
-
-        return {
-          workflowRunId: request.execution.workflow.id,
-          output: request.input.value.toUpperCase(),
-          state: request.execution.state,
-        };
-      },
-    };
+      output: z.string(),
+      handler: ({ input }) => input.value.toUpperCase(),
+    });
 
     const custom = directive.use("custom", customDirective, {
       reduce: ({ state, output }) => {
@@ -856,7 +858,8 @@ describe("directive app", () => {
     );
 
     try {
-      const result = await agent.run({
+      const app = createPragma({ storage: "memory" });
+      const result = await app.run(agent, {
         input: {
           prompt: "finish",
         },
@@ -931,7 +934,7 @@ describe("directive app", () => {
 
     try {
       await expect(
-        agent.run({
+        createPragma({ storage: "memory" }).run(agent, {
           input: {
             prompt: "fail",
           },

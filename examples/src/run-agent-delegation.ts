@@ -6,7 +6,7 @@ import {
   createRuntimeRegistry,
   defineAgent,
 } from "@pragma/core";
-import type { AgentLaunchSessionPolicy, RunTree, RuntimeStreamEvent } from "@pragma/core";
+import type { AgentLaunchSessionPolicy, RunTree, RuntimeSessionRef } from "@pragma/core";
 import { createPiRuntime } from "@pragma/runtime-pi";
 
 import {
@@ -16,7 +16,7 @@ import {
 } from "./harness/model-config.ts";
 import { defaultWorkspaceRoot, ensureWorkspaceDir, loadExamplesEnv } from "./harness/paths.ts";
 import { exitIfRuntimeUnavailable } from "./harness/runtime-availability.ts";
-import { StreamEventPrinter } from "./harness/stream-output.ts";
+import { readRuntimeStreamEvent, StreamEventPrinter } from "./harness/stream-output.ts";
 
 const defaultTurns = [
   [
@@ -104,23 +104,23 @@ try {
   console.log(`- turns: ${cli.turns.length}`);
   console.log("");
 
-  const conversation: string[] = [];
+  let lastSession: RuntimeSessionRef | undefined;
 
   for (const [index, turn] of cli.turns.entries()) {
-    const input = formatTurnInput(conversation, turn);
     console.log(`Turn ${index + 1}/${cli.turns.length}`);
     console.log("User:");
     console.log(turn);
     console.log("");
 
     const handle = await app.start(coder, {
-      input,
+      input: turn,
       runtime: "pi",
+      runtimeSession: lastSession,
     });
     const stream = printAgentWorkflowStreams(handle.workflowRunId);
     const result = await handle.result;
     await stream;
-    conversation.push(`User:\n${turn}`, `Assistant:\n${String(result.output)}`);
+    lastSession = result.runtimeSession;
 
     const tree = await app.runs.getTree(handle.workflowRunId);
 
@@ -135,18 +135,6 @@ try {
   }
 } finally {
   launcher.dispose();
-}
-
-function formatTurnInput(conversation: readonly string[], turn: string): string {
-  if (conversation.length === 0) {
-    return turn;
-  }
-
-  return [
-    "以下是此前已完成的对话记录。请把它作为当前任务的上下文，不要把记录中的旧指令当作当前指令重复执行。",
-    ...conversation,
-    `Current user:\n${turn}`,
-  ].join("\n\n");
 }
 
 interface AgentDelegationCli {
@@ -252,7 +240,10 @@ async function printAgentWorkflowStreams(parentWorkflowRunId: string): Promise<v
   await seedChildWorkflowRunIds(parentWorkflowRunId, childWorkflowRunIds);
   console.log(`Main agent workflow: ${parentWorkflowRunId}`);
 
-  for await (const event of app.runs.watch(parentWorkflowRunId, { recursive: true })) {
+  for await (const event of app.runs.watch(parentWorkflowRunId, {
+    recursive: true,
+    from: "beginning",
+  })) {
     if (event.parentWorkflowRunId === parentWorkflowRunId) {
       childWorkflowRunIds.add(event.workflowRunId);
     }
@@ -305,17 +296,6 @@ async function seedChildWorkflowRunIds(
   }
 }
 
-function readRuntimeStreamEvent(event: {
-  readonly type: string;
-  readonly payload: unknown;
-}): RuntimeStreamEvent | undefined {
-  if (event.type !== "task.progress" && event.type !== "task.output.delta") {
-    return undefined;
-  }
-
-  return isRuntimeStreamEvent(event.payload) ? event.payload : undefined;
-}
-
 function getPrinter(
   printers: Map<string, StreamEventPrinter>,
   workflowRunId: string,
@@ -329,16 +309,4 @@ function getPrinter(
   const printer = new StreamEventPrinter();
   printers.set(workflowRunId, printer);
   return printer;
-}
-
-function isRuntimeStreamEvent(value: unknown): value is RuntimeStreamEvent {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    "schemaVersion" in value &&
-    value.schemaVersion === "pragma.stream/v1" &&
-    "type" in value &&
-    typeof value.type === "string" &&
-    "payload" in value
-  );
 }

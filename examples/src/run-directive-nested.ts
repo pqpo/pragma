@@ -78,7 +78,8 @@ deliveryDirective.compose(({ start, step, end }) => {
   step(verify).next(end());
 });
 
-const result = await createPragma().run(deliveryDirective, {
+const app = createPragma();
+const result = await app.run(deliveryDirective, {
   input: {
     requirement: "Add GitHub login",
   },

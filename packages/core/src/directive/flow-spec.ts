@@ -25,6 +25,7 @@ import type {
   TaskContext,
   TaskHandler,
 } from "./types.ts";
+import { registerDirectiveExecutionHandler } from "./directive-executor.ts";
 
 export interface DefineFlowOptions<TInput = unknown, TOutput = unknown> {
   readonly id: string;
@@ -47,6 +48,7 @@ export interface DefineTaskOptions<TInput = unknown, TOutput = unknown> {
   readonly version: string;
   readonly input?: z.ZodType<TInput> | undefined;
   readonly output?: z.ZodType<TOutput> | undefined;
+  readonly children?: readonly DirectiveDefinition[] | undefined;
   readonly handler: TaskHandler<TInput, TOutput>;
 }
 
@@ -172,16 +174,6 @@ export class FlowSpec<TInput = unknown, TOutput = unknown> {
       startStepId: this.startStepId,
       transitions: [...this.transitions],
       limits: new Map(this.limits),
-      async run(request) {
-        const runDirective = request.execution?.runDirective;
-
-        if (runDirective !== undefined) {
-          return await runDirective(compiled, request);
-        }
-
-        const { createPragma } = await import("./pragma-app.ts");
-        return await createPragma().run(compiled, request);
-      },
     };
 
     return compiled;
@@ -280,36 +272,35 @@ export function defineFlow<TInput = unknown, TOutput = unknown>(
 export function defineTask<TInput = unknown, TOutput = unknown>(
   options: DefineTaskOptions<TInput, TOutput>,
 ): Directive<TInput, TOutput> {
-  return {
+  const directive: Directive<TInput, TOutput> = {
     id: options.id,
     version: options.version,
     inputSchema: options.input,
     outputSchema: options.output,
-    async run(request) {
-      if (request.execution === undefined) {
-        const { createPragma } = await import("./pragma-app.ts");
-        return await createPragma().run(this, request);
-      }
-
-      const input = options.input?.parse(request.input) ?? request.input;
-      const output = await options.handler({
-        input,
-        state: request.execution.state,
-        workspace: request.execution.workspace,
-        task: request.execution.task,
-        workflow: request.execution.workflow,
-        sandbox: request.execution.sandbox,
-        emitProgress: request.execution.emitProgress,
-      });
-      const parsedOutput = options.output?.parse(output) ?? output;
-
-      return {
-        workflowRunId: request.execution.workflow.id,
-        output: parsedOutput,
-        state: request.execution.state,
-      };
-    },
+    children: options.children,
   };
+  registerDirectiveExecutionHandler(directive, async (request) => {
+    if (request.execution === undefined) {
+      throw new Error("Task execution requires a TaskManager execution context.");
+    }
+    const input = options.input?.parse(request.input) ?? request.input;
+    const output = await options.handler({
+      input,
+      state: request.execution.state,
+      workspace: request.execution.workspace,
+      task: request.execution.task,
+      workflow: request.execution.workflow,
+      sandbox: request.execution.sandbox,
+      execution: request.execution,
+      emitProgress: request.execution.emitProgress,
+    });
+    return {
+      workflowRunId: request.execution.workflow.id,
+      output: options.output?.parse(output) ?? output,
+      state: request.execution.state,
+    };
+  });
+  return directive;
 }
 
 export function defineHumanTask<TInput = unknown, TOutput = HumanInteractionResponse>(
@@ -318,43 +309,39 @@ export function defineHumanTask<TInput = unknown, TOutput = HumanInteractionResp
   const outputSchema =
     options.output ?? (HumanInteractionResponseSchema as unknown as z.ZodType<TOutput>);
 
-  return {
+  const directive: Directive<TInput, TOutput> = {
     id: options.id,
     version: options.version,
     inputSchema: options.input,
     outputSchema,
-    async run(request) {
-      if (request.execution === undefined) {
-        const { createPragma } = await import("./pragma-app.ts");
-        return await createPragma().run(this, request);
-      }
-
-      const input = options.input?.parse(request.input) ?? request.input;
-      const taskContext: TaskContext<TInput> = {
-        input,
-        state: request.execution.state,
-        workspace: request.execution.workspace,
-        task: request.execution.task,
-        workflow: request.execution.workflow,
-        sandbox: request.execution.sandbox,
-        emitProgress: request.execution.emitProgress,
-      };
-      const interactionRequest =
-        typeof options.request === "function"
-          ? await options.request(taskContext)
-          : options.request;
-      const response = await request.execution.requestHumanInteraction({
-        request: interactionRequest,
-      });
-      const parsedOutput = outputSchema.parse(response);
-
-      return {
-        workflowRunId: request.execution.workflow.id,
-        output: parsedOutput,
-        state: request.execution.state,
-      };
-    },
   };
+  registerDirectiveExecutionHandler(directive, async (request) => {
+    if (request.execution === undefined) {
+      throw new Error("Human Task execution requires a TaskManager execution context.");
+    }
+    const input = options.input?.parse(request.input) ?? request.input;
+    const taskContext: TaskContext<TInput> = {
+      input,
+      state: request.execution.state,
+      workspace: request.execution.workspace,
+      task: request.execution.task,
+      workflow: request.execution.workflow,
+      sandbox: request.execution.sandbox,
+      execution: request.execution,
+      emitProgress: request.execution.emitProgress,
+    };
+    const interactionRequest =
+      typeof options.request === "function" ? await options.request(taskContext) : options.request;
+    const response = await request.execution.requestHumanInteraction({
+      request: interactionRequest,
+    });
+    return {
+      workflowRunId: request.execution.workflow.id,
+      output: outputSchema.parse(response),
+      state: request.execution.state,
+    };
+  });
+  return directive;
 }
 
 function isTerminalTarget(target: TransitionTarget): target is TerminalTarget {

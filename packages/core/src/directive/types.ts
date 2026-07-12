@@ -33,7 +33,6 @@ export interface Directive<TInput = unknown, TOutput = unknown> {
   readonly inputSchema?: z.ZodType<TInput> | undefined;
   readonly outputSchema?: RuntimeOutputSchema<TOutput> | undefined;
   readonly children?: readonly DirectiveDefinition[] | undefined;
-  run(request: StartRunRequest<TInput>): Promise<RunResult<TOutput>>;
 }
 
 export interface StepRef<TOutput = unknown> {
@@ -115,6 +114,7 @@ export interface TaskContext<TInput = unknown> {
   readonly task: TaskRunRecord;
   readonly workflow: WorkflowRunRecord;
   readonly sandbox: SandboxRef;
+  readonly execution: DirectiveExecutionContext;
   readonly emitProgress: (event: RuntimeStreamEvent) => Promise<void>;
 }
 
@@ -221,10 +221,6 @@ export interface DirectiveExecutionContext {
     readonly systemSessionId: string;
     readonly runtimeSession?: RuntimeSessionRef | undefined;
   }) => Promise<void>;
-  readonly runDirective: <TInput, TOutput>(
-    directive: Directive<TInput, TOutput>,
-    request: StartRunRequest<TInput>,
-  ) => Promise<RunResult<TOutput>>;
 }
 
 export interface RequestHumanInteractionInput {
@@ -302,8 +298,6 @@ export interface PragmaApp {
     request: ResumeRunRequest,
   ) => Promise<RunHandle<TOutput>>;
 }
-
-export type Pragma = PragmaApp;
 
 export interface DirectiveCompiler<TInput = unknown, TOutput = unknown> {
   readonly compile: () => CompiledDirective<TInput, TOutput>;
@@ -639,7 +633,6 @@ export interface TaskManagerOptions {
   readonly sandboxManager: SandboxManager;
   readonly directiveStore: DirectiveDefinitionStore;
   readonly eventStore: RunEventStore;
-  readonly runDirective?: DirectiveExecutionContext["runDirective"] | undefined;
   readonly workerId?: string | undefined;
   readonly leaseTtlMs?: number | undefined;
   readonly heartbeatIntervalMs?: number | undefined;

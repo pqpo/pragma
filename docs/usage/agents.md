@@ -99,13 +99,14 @@ const agent = await defineAgent({
 
 更多内容见 [Memory System 使用指南](./memory.md)。
 
-## 创建会话并提交任务
+## 通过 PragmaApp 提交任务
 
-普通 Agent 调用通过 `agent.run()` 进入 Pragma Workflow。它会创建持久化的 Workflow record，
-并把 Runtime Session 归属于该 Workflow。不要在产品调用中直接创建 Runtime Session。
+普通 Agent 调用通过 `PragmaApp.run()` 进入 Pragma Workflow。`ExpertAgent` 只声明能力，
+不自行启动执行。PragmaApp 会创建持久化的 Workflow record，并把 Runtime Session 归属于该 Workflow。
 
 ```ts
-const result = await agent.run({
+const app = createPragma({ runtimes });
+const result = await app.run(agent, {
   input: "解释当前仓库的核心模块。",
 });
 

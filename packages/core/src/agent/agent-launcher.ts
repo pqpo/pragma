@@ -1,4 +1,5 @@
 import type { ExpertAgent } from "./expert-agent.ts";
+import { runNestedDirective } from "../directive/directive-execution-context.ts";
 import type { ExpertAgentManagedTool, ExpertAgentToolCallResult } from "../tools/managed-tool.ts";
 
 export const agentLauncherDefinitions = Symbol("pragma.agent-launcher-definitions");
@@ -93,7 +94,7 @@ export function createAgentLauncher(options: CreateAgentLauncherOptions): AgentL
 
         if (workflowExecution === undefined) {
           return {
-            text: "launch_agent requires a workflow execution context. Run the parent ExpertAgent through createPragma().run() or agent.run().",
+            text: "launch_agent requires a workflow execution context. Run the parent ExpertAgent through PragmaApp.start() or PragmaApp.run().",
             isError: true,
             details: {
               code: "missing_workflow_execution",
@@ -127,7 +128,7 @@ export function createAgentLauncher(options: CreateAgentLauncherOptions): AgentL
               })
             : undefined;
         try {
-          const result = await workflowExecution.runDirective(agent, {
+          const result = await runNestedDirective(workflowExecution, agent, {
             input: input.task,
             modelName: input.modelName,
             thinkingLevel: input.thinkingLevel,

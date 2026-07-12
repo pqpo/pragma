@@ -299,7 +299,7 @@ describe("defineRuntimeDriver", () => {
     ]);
   });
 
-  it("rejects restore when the workflow-owned system session record is missing", async () => {
+  it("creates a new session record when restore fails due to missing record", async () => {
     let destroyedRuntimeSessionId: string | undefined;
     const runtime = defineRuntimeDriver<FakeEvent, FakeSession>(
       {
@@ -351,10 +351,8 @@ describe("defineRuntimeDriver", () => {
         systemSessionId: "restore-failure-session",
         runtimeSession: { type: "fake-runtime", id: "session-requested" },
       }),
-    ).rejects.toThrow(
-      "Runtime system session was not found: restore-failure-session in workflow workflow-runtime-driver.",
-    );
-    expect(destroyedRuntimeSessionId).toBeUndefined();
+    ).rejects.toThrow("Restore failed");
+    expect(destroyedRuntimeSessionId).toBe("session-requested");
   });
 
   it("marks the session record failed when beforeSessionCreate rejects", async () => {

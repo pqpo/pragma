@@ -13,7 +13,7 @@ loadExamplesEnv();
 const workflowRunId = readOption("--workflow-run-id");
 const query =
   readOption("--query") ?? "调用 delete_workspace_note 删除 notes/resumable.md，并报告结果。";
-const runtime = createPiRuntime();
+const runtime = createPiRuntime({ descriptor: { id: "pi" } });
 const app = createPragma({
   runtimes: createRuntimeRegistry({ defaultRuntime: "pi", runtimes: [runtime] }),
 });
@@ -51,9 +51,10 @@ try {
       if (interaction.status === "pending") await respond(interaction);
     }
   })();
-  const result = await handle.result;
-  await consume;
-  console.log(result.output);
+  const [consumeResult, workflowResult] = await Promise.allSettled([consume, handle.result]);
+  if (workflowResult.status === "rejected") throw workflowResult.reason;
+  if (consumeResult.status === "rejected") throw consumeResult.reason;
+  console.log(workflowResult.value.output);
 } finally {
   rl.close();
 }

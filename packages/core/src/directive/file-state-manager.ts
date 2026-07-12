@@ -26,6 +26,29 @@ const WorkflowStateSnapshotSchema = z.object({
   appliedMessageIds: z.array(z.string().min(1)),
 });
 
+const PersistedWorkflowStateSnapshotSchema = WorkflowStateSnapshotSchema.extend({
+  workflow: WorkflowRunRecordSchema.extend({
+    execution: WorkflowRunRecordSchema.shape.execution.optional(),
+  }),
+  tasks: z.array(
+    TaskRunRecordSchema.extend({
+      transitionApplied: TaskRunRecordSchema.shape.transitionApplied.optional(),
+    }),
+  ),
+}).transform((snapshot) =>
+  WorkflowStateSnapshotSchema.parse({
+    ...snapshot,
+    workflow: {
+      ...snapshot.workflow,
+      execution: snapshot.workflow.execution ?? {},
+    },
+    tasks: snapshot.tasks.map((task) => ({
+      ...task,
+      transitionApplied: task.transitionApplied ?? task.status === "succeeded",
+    })),
+  }),
+);
+
 export interface FileStateManagerOptions {
   readonly pragmaHome?: string | undefined;
   readonly paths?: PragmaPaths | undefined;
@@ -90,7 +113,9 @@ async function loadSnapshots(paths: PragmaPaths): Promise<readonly WorkflowState
     }
     const file = `${paths.workflowsRoot()}/${entry.name}/workflow.json`;
     try {
-      snapshots.push(WorkflowStateSnapshotSchema.parse(JSON.parse(await readFile(file, "utf8"))));
+      snapshots.push(
+        PersistedWorkflowStateSnapshotSchema.parse(JSON.parse(await readFile(file, "utf8"))),
+      );
     } catch (error) {
       if (!isNotFound(error)) {
         throw new Error(`Invalid persisted Workflow state: ${file}`, { cause: error });

@@ -44,7 +44,7 @@ import { createExpertAgentRunContext, type ExpertAgentRunContext } from "./run-c
 import { PragmaPaths } from "../storage/pragma-paths.ts";
 import {
   createRuntimeSessionRecord,
-  restoreRuntimeSessionRecord,
+  restoreOrCreateRuntimeSessionRecord,
   updateRuntimeSessionRecord,
   type RuntimeSessionRecord,
 } from "./session-record.ts";
@@ -286,26 +286,28 @@ async function createManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepar
   await assertRuntimeCanUse(driver, descriptor);
   assertRequestedRuntimeSessionMatches(request.runtimeSession, descriptor);
 
-  let sessionRecord: RuntimeSessionRecord =
-    request.runtimeSession === undefined
-      ? await createRuntimeSessionRecord({
-          paths: pragmaPaths,
-          owner: request.owner,
-          systemSessionId,
-          agentId: agent.id,
-          runtime: descriptor,
-          workspace: agent.workspace,
-        })
-      : await restoreRuntimeSessionRecord({
-          paths: pragmaPaths,
-          owner: request.owner,
-          systemSessionId,
-          agentId: agent.id,
-          runtime: descriptor,
-          runtimeSession: request.runtimeSession,
-          expectedTaskRunId: request.runtimeSessionOwnerTaskRunId ?? request.owner.taskRunId,
-          workspace: agent.workspace,
-        });
+  let sessionRecord: RuntimeSessionRecord;
+  if (request.runtimeSession === undefined) {
+    sessionRecord = await createRuntimeSessionRecord({
+      paths: pragmaPaths,
+      owner: request.owner,
+      systemSessionId,
+      agentId: agent.id,
+      runtime: descriptor,
+      workspace: agent.workspace,
+    });
+  } else {
+    sessionRecord = await restoreOrCreateRuntimeSessionRecord({
+      pragmaPaths,
+      owner: request.owner,
+      systemSessionId,
+      agentId: agent.id,
+      runtime: descriptor,
+      runtimeSession: request.runtimeSession,
+      expectedTaskRunId: request.runtimeSessionOwnerTaskRunId ?? request.owner.taskRunId,
+      workspace: agent.workspace,
+    });
+  }
 
   let restoredRuntimeSessionId: string | undefined;
   let lifecycle: AgentLifecycle<ExpertAgentRunContext | undefined> | undefined;

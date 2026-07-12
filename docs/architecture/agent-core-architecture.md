@@ -150,14 +150,14 @@ flowchart TB
 
 ### Flow 编排层
 
-Flow 编排层负责把多个可执行单元组织成可执行流程。这里的可执行单元不只包括 Agent，也包括本地确定性任务、编译后的组合 Flow，以及任何实现 `Directive` 协议的对象。
+Flow 编排层负责把多个声明单元组织成可执行流程，包括 Agent、本地确定性任务、Human Task、Workflow Pattern 和编译后的组合 Flow。
 
 这里有一个刻意的命名分层：
 
-- `Directive` 是底层统一执行协议，表示“可以被运行”的最小接口。
+- `Directive` 是底层统一声明协议，描述可由 Core 编排的定义。
 - `defineFlow()` 是用户侧组合入口，返回 `FlowSpec` builder。
 - `defineTask()` 把确定性 TypeScript handler 包装成一个 leaf `Directive`。
-- 编译归一化默认发生在 `flow.use()` 和 `createPragma().run()` 边界，用户日常不需要显式调用 `compile()`。
+- 编译归一化默认发生在 `flow.use()` 和 `PragmaApp.run()` 边界，用户日常不需要显式调用 `compile()`。
 - `CompiledDirective` 是内部执行形态，本身也是 `Directive`，所以组合 Flow 可以继续嵌套。
 
 ```mermaid
@@ -166,7 +166,7 @@ flowchart TB
   directive --> expertAgent["ExpertAgent"]
   directive --> taskDirective["Task Directive"]
   directive --> compiledDirectiveRef["CompiledDirective"]
-  directive --> customDirective["任何实现 Directive 接口的对象"]
+  directive --> humanDirective["Human Task / Pattern"]
 
   flowSpec["FlowSpec"]
   flowSpec --> use["use(id, directive, options)"]
@@ -196,12 +196,12 @@ flowchart TB
 
 核心边界：
 
-- `Directive` 是统一执行接口。
+- `Directive` 是统一声明和编排接口。
 - `ExpertAgent` 本身实现 `Directive`。
 - `defineTask()` 把确定性 TypeScript handler 包装为 `Directive`。
 - `defineFlow()` 声明组合流程，`.compose()` 声明步骤之间的流转。
-- `flow.use()` 可以接收 Agent、Task、CompiledDirective、子 Flow 或任何 `Directive` 实现。
-- `createPragma().run()` 可以直接运行 Agent、Task、CompiledDirective 或 Flow。
+- `flow.use()` 可以接收 Agent、Task、Human Task、Workflow Pattern、CompiledDirective 或子 Flow。
+- `PragmaApp.start()` / `run()` 可以执行 Agent、Task、CompiledDirective 或 Flow；定义对象不提供直接执行方法。
 - `CompiledDirective` 也实现 `Directive`，所以可以继续嵌套。
 - `reduce()` 只做状态归并，不应执行外部副作用。
 
@@ -211,12 +211,12 @@ flowchart TB
 
 ```mermaid
 flowchart TB
-  app["Pragma"]
+  app["PragmaApp"]
 
   app --> taskManager["TaskManager"]
   taskManager --> dispatch["分发 task"]
   taskManager --> lease["获取 lease"]
-  taskManager --> execute["执行 step.directive.run()"]
+  taskManager --> execute["内部 Directive Executor"]
   taskManager --> transition["推进 transition"]
 
   app --> stateManager["StateManager"]
@@ -296,7 +296,7 @@ Agent 会话是 Runtime 层内部概念，由 Flow 的 Expert step 创建并在�
 
 ```mermaid
 flowchart TB
-  run["Pragma.run(directive, request)"]
+  run["PragmaApp.run(directive, request)"]
   compile["compileDirective()"]
   createSandbox["createWorkflowSandbox()"]
   createWorkflow["createWorkflowRun()"]
@@ -306,7 +306,7 @@ flowchart TB
   taskDispatch["publish(task.dispatch)"]
   lease["leaseTask()"]
   resolveSandbox["resolveTaskSandbox()"]
-  stepRun["step.directive.run()<br/>Agent Runtime Session<br/>Task handler<br/>nested CompiledDirective<br/>Human Operator Step"]
+  stepRun["Core Directive Executor<br/>Agent Runtime Session<br/>Task handler<br/>nested CompiledDirective<br/>Human Operator Step"]
   taskResult["markTaskSucceeded()<br/>or markTaskFailed()"]
   taskEvent["publish(task completed<br/>or task failed)"]
   applyTaskEvent["applyTaskEvent()"]
@@ -470,7 +470,7 @@ Core 当前默认本地实现可以平滑演进到分布式部署。推荐拆分
 flowchart TB
   api["API Server<br/>创建 workflow run<br/>校验用户、租户、预算权限<br/>写入 StateManager<br/>发布 Mailbox command"]
   mailbox["Reliable Mailbox / Queue"]
-  worker["Worker Pool<br/>lease task<br/>resolve sandbox<br/>execute step.directive.run()<br/>stream progress<br/>publish completion event"]
+  worker["Worker Pool<br/>lease task<br/>resolve sandbox<br/>invoke internal Directive Executor<br/>stream progress<br/>publish completion event"]
   state["State Store<br/>workflow/task state<br/>revision<br/>idempotency<br/>audit trail"]
 
   api --> mailbox --> worker --> state

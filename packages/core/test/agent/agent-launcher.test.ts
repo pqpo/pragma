@@ -7,6 +7,7 @@ import {
   createAgentLauncher,
   createPragma,
   createRuntimeRegistry,
+  defineTask,
   ExpertAgent,
 } from "../../src/index.ts";
 import { createTestRuntimeAdapter } from "../runtime-test-utils.ts";
@@ -174,26 +175,22 @@ function createParentDirective(tool: ReturnType<typeof createAgentLauncher>["too
   },
   { readonly workflowRunIds: readonly string[] }
 > {
-  return {
+  return defineTask({
     id: "parent-launcher",
     version: "1.0.0",
-    async run(request) {
-      if (request.execution === undefined) {
-        return await createPragma({ storage: "memory" }).run(this, request);
-      }
-
+    async handler({ input, execution }) {
       const outputs = [];
 
       for (const task of ["first inspection", "second inspection"]) {
         const result = await tool.call(
           {
-            agentId: request.input.agentId,
+            agentId: input.agentId,
             task,
-            sessionPolicy: request.input.sessionPolicy,
+            sessionPolicy: input.sessionPolicy,
           },
           undefined,
           {
-            workflowExecution: request.execution,
+            workflowExecution: execution,
           },
         );
 
@@ -205,14 +202,10 @@ function createParentDirective(tool: ReturnType<typeof createAgentLauncher>["too
       }
 
       return {
-        workflowRunId: request.execution.workflow.id,
-        output: {
-          workflowRunIds: outputs,
-        },
-        state: request.execution.state,
+        workflowRunIds: outputs,
       };
     },
-  };
+  });
 }
 
 function createSingleLaunchDirective(
@@ -223,22 +216,18 @@ function createSingleLaunchDirective(
   },
   { readonly workflowRunId: string }
 > {
-  return {
+  return defineTask({
     id: "single-parent-launcher",
     version: "1.0.0",
-    async run(request) {
-      if (request.execution === undefined) {
-        return await createPragma({ storage: "memory" }).run(this, request);
-      }
-
+    async handler({ input, execution }) {
       const result = await tool.call(
         {
-          agentId: request.input.agentId,
+          agentId: input.agentId,
           task: "inspect until cancelled",
         },
         undefined,
         {
-          workflowExecution: request.execution,
+          workflowExecution: execution,
         },
       );
 
@@ -247,14 +236,10 @@ function createSingleLaunchDirective(
       }
 
       return {
-        workflowRunId: request.execution.workflow.id,
-        output: {
-          workflowRunId: readWorkflowRunId(result.details),
-        },
-        state: request.execution.state,
+        workflowRunId: readWorkflowRunId(result.details),
       };
     },
-  };
+  });
 }
 
 function createRecordingRuntimeAdapter(): {

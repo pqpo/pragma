@@ -104,6 +104,42 @@ export async function restoreRuntimeSessionRecord(options: {
   return updated;
 }
 
+export async function restoreOrCreateRuntimeSessionRecord(options: {
+  readonly pragmaPaths: PragmaPaths;
+  readonly owner: RuntimeSessionOwner;
+  readonly systemSessionId: string;
+  readonly agentId: string;
+  readonly runtime: RuntimeAdapterDescriptor;
+  readonly runtimeSession: RuntimeSessionRef;
+  readonly expectedTaskRunId?: string | undefined;
+  readonly workspace: string;
+}): Promise<RuntimeSessionRecord> {
+  try {
+    return await restoreRuntimeSessionRecord({
+      paths: options.pragmaPaths,
+      owner: options.owner,
+      systemSessionId: options.systemSessionId,
+      agentId: options.agentId,
+      runtime: options.runtime,
+      runtimeSession: options.runtimeSession,
+      expectedTaskRunId: options.expectedTaskRunId,
+      workspace: options.workspace,
+    });
+  } catch (error) {
+    if (!isSessionRecordNotFoundError(error)) {
+      throw error;
+    }
+  }
+  return await createRuntimeSessionRecord({
+    paths: options.pragmaPaths,
+    owner: options.owner,
+    systemSessionId: options.systemSessionId,
+    agentId: options.agentId,
+    runtime: options.runtime,
+    workspace: options.workspace,
+  });
+}
+
 export async function updateRuntimeSessionRecord(
   paths: PragmaPaths,
   record: RuntimeSessionRecord,
@@ -243,6 +279,13 @@ function assertEqual(actual: unknown, expected: unknown, label: string): void {
 
 function isNotFoundError(error: unknown): boolean {
   return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
+}
+
+function isSessionRecordNotFoundError(error: unknown): boolean {
+  if (error instanceof Error && error.cause !== undefined) {
+    return isNotFoundError(error.cause);
+  }
+  return false;
 }
 
 function isAlreadyExistsError(error: unknown): boolean {

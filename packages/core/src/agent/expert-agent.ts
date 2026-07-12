@@ -28,8 +28,7 @@ import type {
 import { resolveExpertAgentPlugins } from "../plugins/expert-agent-plugin.ts";
 import type { ExpertAgentLogger, ExpertAgentLoggerProvider } from "../logging/logger.ts";
 import { createExpertAgentLogger, defaultExpertAgentLoggerProvider } from "../logging/logger.ts";
-import type { Directive, RunResult, StartRunRequest } from "../directive/types.ts";
-import { stringifyInput } from "../directive/utils.ts";
+import type { Directive } from "../directive/types.ts";
 import type {
   ExpertAgentPluginLoadIssue,
   ExpertAgentPluginSource,
@@ -37,10 +36,8 @@ import type {
 } from "../plugins/plugin-loader.ts";
 import { isExpertAgentPluginEntryUse, loadExpertAgentPlugins } from "../plugins/plugin-loader.ts";
 import type { ExpertAgentRunContext } from "../runtime/run-context.ts";
-import { createExpertAgentRunContext, withExecutionRunScope } from "../runtime/run-context.ts";
-import type { RuntimeOutputSchema } from "../runtime/runtime-adapter.ts";
+import { createExpertAgentRunContext } from "../runtime/run-context.ts";
 import { setDefaultRuntimeRegistryFactory } from "../runtime/default-runtime-registry.ts";
-import { openRuntimeSession } from "../runtime/session-factory.ts";
 import type {
   ExpertAgentRuntimeRegistry,
   ExpertAgentRuntimeRegistryFactory,
@@ -52,7 +49,6 @@ import type {
 } from "../tools/managed-tool.ts";
 import { mergeExpertAgentToolApprovals } from "../tools/managed-tool.ts";
 import { PragmaPaths } from "../storage/pragma-paths.ts";
-import { readRuntimeSessionRecord } from "../runtime/session-record.ts";
 
 export type ExpertAgentSchemaVersion = "pragma.expert/v1" | undefined;
 
@@ -315,161 +311,6 @@ export class ExpertAgent implements IExpertAgent, Directive<unknown, unknown> {
     });
   }
 
-  async run<TOutput = unknown>(request: StartRunRequest<unknown>): Promise<RunResult<TOutput>> {
-    if (request.execution === undefined) {
-      const { createPragma } = await import("../directive/pragma-app.ts");
-      return (await createPragma({ pragmaHome: this.pragmaHome }).run(
-        this,
-        request,
-      )) as RunResult<TOutput>;
-    }
-
-    const execution = request.execution;
-    const runtimeRegistry = execution.runtimeRegistry;
-    const runtime = runtimeRegistry.resolve(request.runtime ?? execution.runtimeId);
-    const context = withExecutionRunScope(undefined, {
-      workflowRunId: execution.workflow.id,
-      taskRunId: execution.task.id,
-    });
-    const systemSessionId =
-      request.systemSessionId ?? execution.task.systemSessionId ?? `system-session-${randomUUID()}`;
-    let runtimeSession = request.runtimeSession ?? execution.task.runtimeSession;
-    if (execution.task.runtimeSessionState === "opened" && runtimeSession === undefined) {
-      throw new Error(
-        `Runtime Task ${execution.task.id} is missing its persisted RuntimeSessionRef; recovery cannot create a replacement Session.`,
-      );
-    }
-    if (execution.task.runtimeSessionState === "creating" && runtimeSession === undefined) {
-      const record = await readRuntimeSessionRecord(
-        new PragmaPaths({ pragmaHome: this.pragmaHome }),
-        execution.workflow.id,
-        systemSessionId,
-      );
-      if (record.runtimeSessionRef === null) {
-        throw new Error(
-          `Runtime Session ${systemSessionId} was interrupted before its native Session was created; recovery cannot create a replacement.`,
-        );
-      }
-      runtimeSession = record.runtimeSessionRef;
-    }
-    await execution.checkpointRuntimeSession({
-      state: runtimeSession === undefined ? "creating" : "opened",
-      systemSessionId,
-      ...(runtimeSession === undefined ? {} : { runtimeSession }),
-    });
-    const session = await openRuntimeSession(runtime, {
-      agent: this,
-      execution,
-      context,
-      runtimeSession,
-      systemSessionId,
-      runtimeSessionOwnerTaskRunId:
-        request.runtimeSessionOwnerTaskRunId ??
-        execution.task.runtimeSessionOwnerTaskRunId ??
-        (runtimeSession === undefined ? undefined : execution.task.id),
-      humanInteractionHandler: async (humanRequest) => {
-        if (humanRequest.kind === "user_question") {
-          const response = await execution.requestHumanInteraction({
-            request: {
-              kind: "question",
-              title: "Agent question",
-              questions: humanRequest.questions.map((question) => ({
-                ...question,
-                options: [...question.options],
-              })),
-              data: {
-                toolName: humanRequest.toolName,
-                toolCallId: humanRequest.toolCallId,
-              },
-            },
-          });
-
-          return {
-            kind: "user_question",
-            answered: true,
-            answers: response.answers ?? response.data,
-          };
-        }
-
-        const response = await execution.requestHumanInteraction({
-          request: {
-            kind: "approval",
-            title: `Approve ${humanRequest.toolName}`,
-            ...(humanRequest.reason === undefined ? {} : { prompt: humanRequest.reason }),
-            data: {
-              toolName: humanRequest.toolName,
-              toolCallId: humanRequest.toolCallId,
-              input: humanRequest.input,
-            },
-          },
-        });
-
-        return {
-          kind: "tool_approval",
-          approved: response.approved ?? response.decision === "approved",
-          ...(response.notes === undefined ? {} : { reason: response.notes }),
-          ...(response.data === undefined ? {} : { updatedInput: response.data }),
-        };
-      },
-    });
-    await execution.checkpointRuntimeSession({
-      state: "opened",
-      systemSessionId: session.info().systemSessionId,
-      runtimeSession: session.info().runtimeSession,
-    });
-    let drainEvents: Promise<void> | undefined;
-    let runResult: RunResult<TOutput> | undefined;
-    let runError: unknown;
-
-    try {
-      const handle = session.submit<TOutput>({
-        runId: execution.task.id,
-        modelName: request.modelName,
-        thinkingLevel: request.thinkingLevel,
-        query: stringifyInput(request.input),
-        output: request.output as RuntimeOutputSchema<TOutput> | undefined,
-      });
-      drainEvents = (async (): Promise<void> => {
-        for await (const event of handle.events) {
-          await execution.emitProgress(event);
-        }
-      })();
-      const result = await handle.result;
-      await drainEvents;
-      const runtimeSession = session.info().runtimeSession;
-
-      runResult = {
-        workflowRunId: execution.workflow.id,
-        systemSessionId: session.info().systemSessionId,
-        output: result.result.output,
-        state: execution.state,
-        runtimeSession,
-      };
-    } catch (error) {
-      runError = error;
-    }
-
-    let abortError: unknown;
-    try {
-      await session.abort();
-    } catch (error) {
-      abortError = error;
-    }
-    await drainEvents?.catch(() => undefined);
-
-    if (runError !== undefined) {
-      throw runError;
-    }
-    if (abortError !== undefined) {
-      throw abortError;
-    }
-    if (runResult === undefined) {
-      throw new Error("Agent run completed without a result.");
-    }
-
-    return runResult;
-  }
-
   async buildContext(
     context: ExpertAgentRunContext = createExpertAgentRunContext(),
     options: ContextAssemblerOptions = {},
@@ -548,4 +389,3 @@ function applyToolApprovals(
     };
   });
 }
-import { randomUUID } from "node:crypto";

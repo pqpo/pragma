@@ -8,5 +8,5 @@ export * from "./run-observer.ts";
 export * from "./run-event-store.ts";
 export * from "./flow-spec.ts";
 export * from "./workflow-patterns.ts";
-export * from "./task-manager.ts";
+export { createLocalTaskManager } from "./task-manager.ts";
 export * from "./types.ts";

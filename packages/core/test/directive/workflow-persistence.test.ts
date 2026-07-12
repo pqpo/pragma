@@ -1,4 +1,4 @@
-import { access, mkdtemp, rm } from "node:fs/promises";
+import { access, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -74,6 +74,33 @@ describe("file Workflow storage", () => {
     expect(replayed.map((event) => event.cursor.sequence)).toEqual(
       events.slice(3).map((event) => event.cursor.sequence),
     );
+  });
+
+  it("loads schema version 1 snapshots written before execution metadata was added", async () => {
+    const pragmaHome = await createTempHome();
+    const definition = defineTask({
+      id: "legacy-persisted-task",
+      version: "1.0.0",
+      handler: () => "persisted output",
+    });
+    const completed = await createPragma({ pragmaHome }).run(definition, { input: {} });
+    const workflowsRoot = join(pragmaHome, "state", "workflows");
+    const [workflowDirectory] = await readdir(workflowsRoot);
+    if (workflowDirectory === undefined)
+      throw new Error("Expected a persisted Workflow directory.");
+    const snapshotFile = join(workflowsRoot, workflowDirectory, "workflow.json");
+    const snapshot = JSON.parse(await readFile(snapshotFile, "utf8")) as {
+      workflow: { execution?: unknown };
+      tasks: Array<{ status: string; transitionApplied?: boolean }>;
+    };
+    delete snapshot.workflow.execution;
+    for (const task of snapshot.tasks) delete task.transitionApplied;
+    await writeFile(snapshotFile, `${JSON.stringify(snapshot, null, 2)}\n`, "utf8");
+
+    const summary = await createPragma({ pragmaHome }).runs.get(completed.workflowRunId);
+
+    expect(summary?.workflow.execution).toEqual({});
+    expect(summary?.tasks).toMatchObject([{ status: "succeeded", transitionApplied: true }]);
   });
 
   it("keeps Pragma state outside the Agent workspace", async () => {

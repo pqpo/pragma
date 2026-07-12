@@ -66,7 +66,8 @@ flow.compose(({ start, step, end }) => {
   step(fix).next(end());
 });
 
-const result = await createPragma().run(flow, {
+const app = createPragma();
+const result = await app.run(flow, {
   input: {
     testsPassed: false,
   },

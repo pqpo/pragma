@@ -62,6 +62,34 @@ export async function printPragmaRunStream(events: AsyncIterable<PragmaRunEvent>
   console.log("");
 }
 
+/**
+ * Rehydrates a Runtime stream event from its public Pragma run-event projection.
+ *
+ * The run event store intentionally promotes `type` and keeps only the Runtime
+ * event's business payload. The display metadata below comes from the durable
+ * workflow event so callers can still use the richer Runtime stream printer.
+ */
+export function readRuntimeStreamEvent(event: PragmaRunEvent): RuntimeStreamEvent | undefined {
+  if (event.sourceType !== "task.progress" && event.sourceType !== "task.output.delta") {
+    return undefined;
+  }
+
+  return {
+    schemaVersion: "pragma.stream/v1",
+    eventId: event.id,
+    sequence: event.cursor.sequence,
+    runId: event.taskRunId ?? event.workflowRunId,
+    emittedAt: event.occurredAt,
+    source: {
+      kind: "agent",
+      runId: event.taskRunId ?? event.workflowRunId,
+      path: [],
+    },
+    type: event.type,
+    payload: event.payload,
+  } as RuntimeStreamEvent;
+}
+
 function readStringPayload(payload: unknown, key: string): string | undefined {
   if (typeof payload !== "object" || payload === null) {
     return undefined;

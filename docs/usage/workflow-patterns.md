@@ -10,7 +10,7 @@ Anthropic 在 [Building effective agents](https://www.anthropic.com/engineering/
 - `orchestratorWorkers`：先由 orchestrator 动态拆分任务，再并行派发 worker，最后汇总。
 - `evaluatorOptimizer`：optimizer 生成候选结果，evaluator 评估，不通过则带反馈继续迭代。
 
-这些快捷 API 都返回普通 `Directive` 或 `FlowSpec`，可直接传给 `createPragma().run()`，也可以作为子 Directive 注册进另一个 `defineFlow()`。
+这些快捷 API 都返回普通 `Directive` 或 `FlowSpec`，可传给具名 `PragmaApp` 的 `run()`，也可以作为子 Directive 注册进另一个 `defineFlow()`。定义对象本身不提供执行方法。
 
 ```ts
 import { patterns } from "@pragma/core";
