@@ -15,7 +15,7 @@ import type {
 import { ContextSystem, HOST_CONTEXT_NAMESPACE } from "../context-system/context-system.ts";
 import type { ExpertAgentRunContext } from "../runtime/run-context.ts";
 import type {
-  RuntimeSubmitRequest,
+  RuntimeTaskSubmission,
   RuntimeRunResult,
   RuntimeSessionInfo,
   RuntimeSessionRef,
@@ -108,7 +108,7 @@ export interface ExpertAgentPluginTaskSubmitContext<TOutput = unknown> {
   readonly agent: Expert;
   readonly session: RuntimeSessionInfo;
   readonly runId: string;
-  readonly submission: RuntimeSubmitRequest<TOutput>;
+  readonly submission: RuntimeTaskSubmission<TOutput>;
   readonly context?: ExpertAgentRunContext | undefined;
   readonly logger?: ExpertAgentLogger | undefined;
 }

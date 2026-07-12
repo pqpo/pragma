@@ -62,9 +62,14 @@ import type {
   RuntimeSessionSyncCallback,
   RuntimeSubmitHandle,
   RuntimeSubmitRequest,
+  RuntimeTaskSubmission,
 } from "./runtime-adapter.ts";
 import type { RuntimeStreamEvent } from "./stream-events.ts";
 import { registerRuntimeSessionFactory } from "./session-factory.ts";
+import type {
+  ExpertAgentHumanInteractionHandler,
+  ExpertToolExecutionContext,
+} from "../tools/managed-tool.ts";
 
 export interface DefineRuntimeDriverOptions {
   readonly outputRetryLimit?: number | undefined;
@@ -267,6 +272,11 @@ async function createManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepar
   request: RuntimeDriverSessionRequest,
   persistenceProvider: RuntimeSessionPersistenceProvider,
 ): Promise<ManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepared>> {
+  const executionBindings = new RuntimeExecutionBindings({
+    humanInteractionHandler: request.humanInteractionHandler,
+    executionContext: request.executionContext,
+  });
+  request = executionBindings.bindRequest(request);
   const agent = request.agent;
   const descriptor = driver.descriptor;
   const systemSessionId = request.systemSessionId ?? randomUUID();
@@ -495,6 +505,7 @@ async function createManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepar
         await checkpoint(trigger);
         await request.onSessionInfo?.(readSessionInfo());
       },
+      executionBindings,
     });
     managedSession.setWatcher(
       persistenceSpec === undefined
@@ -613,6 +624,7 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepared> {
         runtimeSessionId: string,
         trigger: RuntimeCheckpointTrigger,
       ) => Promise<void>;
+      readonly executionBindings: RuntimeExecutionBindings;
     },
   ) {}
 
@@ -633,6 +645,11 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepared> {
     submission: RuntimeSubmitRequest<TOutput>,
   ): RuntimeSubmitHandle<TOutput> {
     const runId = submission.runId ?? randomUUID();
+    const taskSubmission = omitRuntimeSubmissionExecution(submission);
+    this.options.executionBindings.bind(runId, {
+      humanInteractionHandler: submission.execution.humanInteractionHandler,
+      executionContext: submission.execution.context,
+    });
     const queue = new AsyncPushQueue<RuntimeStreamEvent>();
     let cancelled = false;
     const controller = createRuntimeStreamController<TNativeEvent>({
@@ -648,12 +665,13 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepared> {
 
     const result = this.options.lifecycle.enqueue(async ({ signal }) => {
       this.activeRunId = runId;
+      this.options.executionBindings.activate(runId);
       try {
         await dispatchExpertAgentHook(this.options.agent.hooks, "beforeTaskSubmit", {
           agent: this.options.agent,
           session: this.info(),
           runId,
-          submission,
+          submission: taskSubmission,
           context: this.options.runContext,
           logger: this.options.logger,
         });
@@ -680,7 +698,7 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepared> {
           agent: this.options.agent,
           session: this.info(),
           runId,
-          submission,
+          submission: taskSubmission,
           result: runResult,
           context: this.options.runContext,
           logger: this.options.logger,
@@ -711,7 +729,7 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepared> {
           agent: this.options.agent,
           session: this.info(),
           runId,
-          submission,
+          submission: taskSubmission,
           error,
           context: this.options.runContext,
           logger: this.options.logger,
@@ -719,6 +737,7 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepared> {
         await this.options.checkpoint("turn.failed");
         throw error;
       } finally {
+        this.options.executionBindings.deactivate(runId);
         if (this.activeRunId === runId) this.activeRunId = undefined;
         await controller.complete();
       }
@@ -853,6 +872,88 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepared> {
     }
 
     return createRuntimeRunResult(runId, parseResult.value, usage);
+  }
+}
+
+interface RuntimeExecutionBinding {
+  readonly humanInteractionHandler?: ExpertAgentHumanInteractionHandler | undefined;
+  readonly executionContext?: ExpertToolExecutionContext | undefined;
+}
+
+function omitRuntimeSubmissionExecution<TOutput>(
+  submission: RuntimeSubmitRequest<TOutput>,
+): RuntimeTaskSubmission<TOutput> {
+  const { execution, ...taskSubmission } = submission;
+  void execution;
+  return taskSubmission;
+}
+
+class RuntimeExecutionBindings {
+  private readonly bindings = new Map<string, RuntimeExecutionBinding>();
+  private activeRunId: string | undefined;
+
+  constructor(private initial: RuntimeExecutionBinding | undefined) {}
+
+  bindRequest(request: RuntimeDriverSessionRequest): RuntimeDriverSessionRequest {
+    return {
+      ...request,
+      ...(request.humanInteractionHandler === undefined
+        ? {}
+        : { humanInteractionHandler: this.createHumanInteractionHandler() }),
+      ...(request.executionContext === undefined
+        ? {}
+        : { executionContext: this.createExecutionContext() }),
+    };
+  }
+
+  bind(runId: string, binding: RuntimeExecutionBinding): void {
+    this.bindings.set(runId, binding);
+  }
+
+  activate(runId: string): void {
+    this.activeRunId = runId;
+    this.initial = undefined;
+  }
+
+  deactivate(runId: string): void {
+    this.bindings.delete(runId);
+    if (this.activeRunId === runId) this.activeRunId = undefined;
+  }
+
+  private current(): RuntimeExecutionBinding {
+    return this.bindings.get(this.activeRunId ?? "") ?? this.initial ?? {};
+  }
+
+  private createHumanInteractionHandler(): ExpertAgentHumanInteractionHandler {
+    return async (request) => {
+      const handler = this.current().humanInteractionHandler;
+      if (handler === undefined) {
+        throw new Error("No human interaction handler is configured for the active Runtime run.");
+      }
+      return await handler(request);
+    };
+  }
+
+  private createExecutionContext(): ExpertToolExecutionContext {
+    const initial = this.initial!.executionContext!;
+    const initialExecutionId = initial.executionId;
+    const initialInvocationId = initial.invocationId;
+    const initialDepth = initial.depth;
+    const current = (): RuntimeExecutionBinding => this.current();
+    return {
+      get executionId() {
+        return current().executionContext?.executionId ?? initialExecutionId;
+      },
+      get invocationId() {
+        return current().executionContext?.invocationId ?? initialInvocationId;
+      },
+      get depth() {
+        return current().executionContext?.depth ?? initialDepth;
+      },
+      get delegate() {
+        return current().executionContext?.delegate;
+      },
+    };
   }
 }
 

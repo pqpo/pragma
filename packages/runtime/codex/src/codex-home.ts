@@ -13,7 +13,7 @@ export interface PrepareManagedCodexHomeOptions {
   readonly logger: Pick<ExpertAgentLogger, "warn">;
 }
 
-const CODEX_COPIED_FILES = ["config.json", "config.toml", "instructions.md"] as const;
+const CODEX_COPIED_FILES = [".env", "config.json", "config.toml", "instructions.md"] as const;
 
 export async function prepareManagedCodexHome({
   agent,
@@ -47,12 +47,24 @@ async function exposeSharedAuth(
 
   try {
     await access(source);
-    await replaceSymlink(source, target, "file");
   } catch (error) {
-    if (!isNotFoundError(error)) {
-      logger.warn("Codex managed home could not expose shared auth", { error });
+    if (isNotFoundError(error)) {
+      return;
     }
+    throw error;
   }
+
+  try {
+    await replaceSymlink(source, target, "file");
+    return;
+  } catch (error) {
+    logger.warn("Codex managed home could not link shared auth; copying a session snapshot", {
+      error,
+    });
+  }
+
+  await rm(target, { recursive: true, force: true });
+  await copyFile(source, target);
 }
 
 async function copySharedConfigFiles(

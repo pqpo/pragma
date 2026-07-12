@@ -129,6 +129,7 @@ export function createCodexRuntime(options: CodexRuntimeAdapterOptions = {}): Ru
           mcpToolRegistry = await createMcpToolRegistry(ctx.agent.mcp);
           expertToolsMcpServer = await createCodexExpertToolsMcpServer({
             agent: ctx.agent,
+            instanceId: ctx.systemSessionId,
             getContext: () => ctx.lifecycle.currentContext,
             humanInteractionHandler: ctx.request.humanInteractionHandler,
             logger: ctx.logger,
@@ -150,7 +151,13 @@ export function createCodexRuntime(options: CodexRuntimeAdapterOptions = {}): Ru
             clientInfo: options.clientInfo ?? DEFAULT_CODEX_CLIENT_INFO,
             spawn: options.spawn,
             humanInteractionHandler: ctx.request.humanInteractionHandler,
-            onNotification: notificationBus.publish,
+            onNotification: (notification) => {
+              ctx.logger.debug("Codex app-server notification", {
+                method: notification.method,
+                params: notification.params,
+              });
+              notificationBus.publish(notification);
+            },
             onStderr: (chunk) => {
               ctx.logger.debug("Codex app-server stderr", { chunk });
             },

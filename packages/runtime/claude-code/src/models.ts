@@ -10,6 +10,7 @@ import type {
 } from "@pragma/core/runtime/runtime-adapter";
 
 import type { ClaudeCodeRuntimeAdapterOptions } from "./types.ts";
+import { resolveClaudeCodeCommand } from "./executable.ts";
 
 interface CatalogCacheEntry {
   readonly expiresAt: number;
@@ -95,11 +96,19 @@ export function createClaudeCodeModelDiscovery(
   options: ClaudeCodeRuntimeAdapterOptions,
 ): () => Promise<readonly RuntimeModel[]> {
   return async () => {
-    const executablePath = options.executablePath ?? "claude";
+    const command =
+      options.spawn === undefined
+        ? resolveClaudeCodeCommand(options)
+        : {
+            executablePath: options.executablePath ?? "claude",
+            launcherArgs: [] as readonly string[],
+            sourcePath: options.executablePath ?? "claude",
+          };
+    const executablePath = command.executablePath;
     const env = { ...process.env, ...(options.env ?? {}) };
     const versionResult = await runRuntimeCommand({
       executablePath,
-      args: ["--version"],
+      args: [...command.launcherArgs, "--version"],
       cwd: process.cwd(),
       env,
       timeoutMs: 5_000,
@@ -115,9 +124,15 @@ export function createClaudeCodeModelDiscovery(
       return cached.models;
     }
 
+    const effortLevels = await discoverClaudeEffortLevels(
+      options,
+      command.launcherArgs,
+      executablePath,
+      env,
+    );
     const models = routing.mappedProvider
-      ? buildClaudeMappedModels(routing)
-      : await discoverNativeClaudeModels(options, executablePath, env);
+      ? buildClaudeMappedModels(routing, effortLevels)
+      : buildClaudeModels(effortLevels);
 
     catalogCache.set(cacheKey, {
       expiresAt: Date.now() + DISCOVERY_TTL_MS,
@@ -129,6 +144,7 @@ export function createClaudeCodeModelDiscovery(
 
 function buildClaudeMappedModels(
   routing: Pick<ClaudeModelRoutingConfig, "baseUrl" | "defaultModel" | "roleModels">,
+  effortLevels: readonly string[],
 ): readonly RuntimeModel[] {
   let assignedDefault = false;
   const localRouting = isCcSwitchLocalRoutingUrl(routing.baseUrl);
@@ -144,6 +160,7 @@ function buildClaudeMappedModels(
     assignedDefault ||= isDefault;
     const roleLabel = `${role.charAt(0).toUpperCase()}${role.slice(1)}`;
     const mappingLabel = upstreamModel ?? "CC Switch local route";
+    const thinking = buildThinkingConfig(effortLevels);
 
     return [
       {
@@ -151,6 +168,7 @@ function buildClaudeMappedModels(
         displayName: `${roleLabel} → ${mappingLabel}`,
         provider: "anthropic-compatible",
         ...(isDefault ? { default: true } : {}),
+        ...(thinking === undefined ? {} : { thinking }),
       } satisfies RuntimeModel,
     ];
   });
@@ -174,33 +192,14 @@ export function parseClaudeEffortLevels(helpOutput: string): readonly string[] {
 
 export function buildClaudeModels(effortLevels: readonly string[]): readonly RuntimeModel[] {
   return CLAUDE_MODELS.map((definition) => {
-    const levels = effortLevels
-      .filter(
-        (value) =>
-          definition.allowedThinkingLevels === undefined ||
-          definition.allowedThinkingLevels.has(value),
-      )
-      .map(
-        (value): RuntimeThinkingLevel => ({
-          value,
-          label: THINKING_LEVEL_LABELS[value] ?? toDisplayLabel(value),
-        }),
-      );
-    const defaultLevel = levels.some((level) => level.value === "medium") ? "medium" : undefined;
+    const thinking = buildThinkingConfig(effortLevels, definition.allowedThinkingLevels);
 
     return {
       id: definition.id,
       displayName: definition.displayName,
       provider: "anthropic",
       ...(definition.default === true ? { default: true } : {}),
-      ...(levels.length === 0
-        ? {}
-        : {
-            thinking: {
-              supportedLevels: levels,
-              ...(defaultLevel === undefined ? {} : { defaultLevel }),
-            },
-          }),
+      ...(thinking === undefined ? {} : { thinking }),
     } satisfies RuntimeModel;
   });
 }
@@ -252,22 +251,45 @@ function firstNonEmptyLine(value: string): string | undefined {
     .find((line) => line !== "");
 }
 
-async function discoverNativeClaudeModels(
+async function discoverClaudeEffortLevels(
   options: ClaudeCodeRuntimeAdapterOptions,
+  launcherArgs: readonly string[],
   executablePath: string,
   env: NodeJS.ProcessEnv,
-): Promise<readonly RuntimeModel[]> {
+): Promise<readonly string[]> {
   const helpResult = await runRuntimeCommand({
     executablePath,
-    args: ["--help"],
+    args: [...launcherArgs, "--help"],
     cwd: process.cwd(),
     env,
     timeoutMs: 5_000,
     outputLimit: 512 * 1024,
     spawn: options.spawn,
   }).catch(() => undefined);
-  const effortLevels = helpResult?.exitCode === 0 ? parseClaudeEffortLevels(helpResult.stdout) : [];
-  return buildClaudeModels(effortLevels);
+  return helpResult?.exitCode === 0 ? parseClaudeEffortLevels(helpResult.stdout) : [];
+}
+
+function buildThinkingConfig(
+  effortLevels: readonly string[],
+  allowedLevels?: ReadonlySet<string>,
+): RuntimeModel["thinking"] | undefined {
+  const levels = effortLevels
+    .filter((value) => allowedLevels === undefined || allowedLevels.has(value))
+    .map(
+      (value): RuntimeThinkingLevel => ({
+        value,
+        label: THINKING_LEVEL_LABELS[value] ?? toDisplayLabel(value),
+      }),
+    );
+  if (levels.length === 0) {
+    return undefined;
+  }
+
+  const defaultLevel = levels.some((level) => level.value === "medium") ? "medium" : undefined;
+  return {
+    supportedLevels: levels,
+    ...(defaultLevel === undefined ? {} : { defaultLevel }),
+  };
 }
 
 async function loadClaudeModelRoutingConfig(

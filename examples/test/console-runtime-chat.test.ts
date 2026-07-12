@@ -5,10 +5,23 @@ import type { RuntimeModel } from "@pragma/core";
 import {
   createRuntimeTestContextSystem,
   selectRuntimeModel,
+  selectRuntimeThinkingLevel,
 } from "../src/runtimes/shared/console-runtime-chat.ts";
 
 const models: readonly RuntimeModel[] = [
-  { id: "model-a", displayName: "Model A", provider: "test", default: true },
+  {
+    id: "model-a",
+    displayName: "Model A",
+    provider: "test",
+    default: true,
+    thinking: {
+      supportedLevels: [
+        { value: "low", label: "Low" },
+        { value: "high", label: "High" },
+      ],
+      defaultLevel: "low",
+    },
+  },
   { id: "model-b", displayName: "Model B", provider: "test" },
 ];
 
@@ -24,6 +37,22 @@ describe("runtime console model selection", () => {
   it("rejects answers outside the discovered catalog", () => {
     expect(() => selectRuntimeModel(models, "3")).toThrow("请输入 1-2");
     expect(() => selectRuntimeModel(models, "model-a")).toThrow("请输入 1-2");
+  });
+});
+
+describe("runtime console thinking-level selection", () => {
+  const levels = models[0]?.thinking?.supportedLevels ?? [];
+
+  it("uses the CLI default when the answer is empty", () => {
+    expect(selectRuntimeThinkingLevel(levels, "")).toBeUndefined();
+  });
+
+  it("selects a discovered thinking level by its displayed number", () => {
+    expect(selectRuntimeThinkingLevel(levels, "2")).toEqual({ value: "high", label: "High" });
+  });
+
+  it("rejects answers outside the discovered thinking levels", () => {
+    expect(() => selectRuntimeThinkingLevel(levels, "3")).toThrow("请输入 1-2");
   });
 });
 

@@ -14,6 +14,7 @@ import {
   defineFlow,
   defineRuntimeDriver,
   PragmaPaths,
+  type AgentMessageUsage,
   type RuntimeDriverSessionContext,
 } from "../src/index.ts";
 
@@ -22,23 +23,70 @@ interface FakeSession {
   readonly id: string;
 }
 
-function createFakeRuntime(
-  options: { readonly delayMs?: number; readonly onSteer?: () => void } = {},
-) {
+interface FakeRuntimeStats {
+  createSessionCalls: number;
+  restoreSessionCalls: number;
+  closeSessionCalls: number;
+  cancelTurnCalls: number;
+  executionIds: string[];
+}
+
+function createFakeRuntimeStats(): FakeRuntimeStats {
+  return {
+    createSessionCalls: 0,
+    restoreSessionCalls: 0,
+    closeSessionCalls: 0,
+    cancelTurnCalls: 0,
+    executionIds: [],
+  };
+}
+
+interface FakeRuntimeOptions {
+  readonly closeError?: string;
+  readonly delayMs?: number;
+  readonly delegateContext?: "fresh" | "reuse";
+  readonly delegateRuntime?: (query: string) => string | undefined;
+  readonly failQuery?: string;
+  readonly onSteer?: () => void;
+  readonly runtimeId?: string;
+  readonly stats?: FakeRuntimeStats;
+  readonly usage?: AgentMessageUsage;
+}
+
+function createFakeRuntime(options: FakeRuntimeOptions = {}) {
+  const stats = options.stats;
   return defineRuntimeDriver<never, FakeSession>({
-    descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
-    createSession: (context) => ({ context, id: `native-${context.systemSessionId}` }),
-    restoreSession: (context) => ({ context, id: context.request.runtimeSession!.id }),
+    descriptor: {
+      id: options.runtimeId ?? "fake",
+      kind: "fake",
+      displayName: options.runtimeId ?? "Fake",
+    },
+    createSession: (context) => {
+      if (stats !== undefined) stats.createSessionCalls += 1;
+      return { context, id: `native-${context.systemSessionId}` };
+    },
+    restoreSession: (context) => {
+      if (stats !== undefined) stats.restoreSessionCalls += 1;
+      return { context, id: context.request.runtimeSession!.id };
+    },
     readSession: (session) => ({ runtimeSessionId: session.id }),
     async startTurn(session, turn) {
+      const executionId = session.context.request.executionContext?.executionId;
+      if (stats !== undefined && executionId !== undefined) stats.executionIds.push(executionId);
       if (options.delayMs !== undefined) {
         await new Promise<void>((resolve) => setTimeout(resolve, options.delayMs));
       }
+      if (turn.rawQuery === options.failQuery) throw new Error("fake turn failed");
       const delegate = session.context.agent.tools?.find((tool) => tool.name === "delegate_expert");
       let output = `${session.context.agent.id}:${turn.rawQuery}`;
       if (delegate !== undefined && session.context.agent.id === "lead") {
         const delegated = await delegate.call(
-          { expertId: "member", prompt: "subtask", context: "reuse" },
+          {
+            expertId: "member",
+            prompt: "subtask",
+            context: options.delegateContext ?? "reuse",
+            runtime: options.delegateRuntime?.(turn.rawQuery),
+          },
           turn.signal,
           { execution: session.context.request.executionContext },
         );
@@ -50,10 +98,16 @@ function createFakeRuntime(
         type: "message.delta",
         payload: { role: "assistant", contentType: "text", delta: output },
       });
-      return { outputText: output, runtimeSessionId: session.id };
+      return {
+        outputText: output,
+        runtimeSessionId: session.id,
+        ...(options.usage === undefined ? {} : { usage: options.usage }),
+      };
     },
     mapEvent: () => ({ events: [] }),
-    cancelTurn: () => undefined,
+    cancelTurn: () => {
+      if (stats !== undefined) stats.cancelTurnCalls += 1;
+    },
     ...(options.onSteer === undefined
       ? {}
       : {
@@ -61,7 +115,10 @@ function createFakeRuntime(
             options.onSteer?.();
           },
         }),
-    closeSession: () => undefined,
+    closeSession: () => {
+      if (stats !== undefined) stats.closeSessionCalls += 1;
+      if (options.closeError !== undefined) throw new Error(options.closeError);
+    },
   });
 }
 
@@ -82,6 +139,26 @@ async function fixture(delayMs?: number) {
     workspace: home,
   });
   return { home, app, expert };
+}
+
+async function trackedFixture(options: Omit<FakeRuntimeOptions, "stats"> = {}) {
+  const home = await mkdtemp(join(tmpdir(), "pragma-runtime-ownership-"));
+  const stats = createFakeRuntimeStats();
+  const runtime = createFakeRuntime({ ...options, stats });
+  const app = createPragma({
+    pragmaHome: home,
+    runtimes: createRuntimeRegistry({ runtimes: [runtime], defaultRuntime: "fake" }),
+  });
+  const expert = await defineExpert({
+    id: "tracked",
+    name: "Tracked",
+    description: "Tracked Runtime Expert",
+    tags: [],
+    version: "1.0.0",
+    scope: "test",
+    workspace: home,
+  });
+  return { home, app, expert, runtime, stats };
 }
 
 describe("ExpertSession", () => {
@@ -114,6 +191,154 @@ describe("ExpertSession", () => {
       { role: "user", requestId: "history", content: "hello" },
       { role: "assistant", content: "solo:hello" },
     ]);
+    await session.close();
+  });
+
+  it("keeps one Runtime Session alive across prompts and closes it with the ExpertSession", async () => {
+    const { home, app, expert, stats } = await trackedFixture();
+    const session = await app.experts.createSession(expert);
+    const first = await session.prompt("one", { requestId: "one" });
+    await expect(first.result).resolves.toBe("tracked:one");
+    const second = await session.prompt("two", { requestId: "two" });
+    await expect(second.result).resolves.toBe("tracked:two");
+
+    expect(stats.createSessionCalls).toBe(1);
+    expect(stats.restoreSessionCalls).toBe(0);
+    expect(stats.closeSessionCalls).toBe(0);
+    expect(stats.executionIds).toEqual([first.executionId, second.executionId]);
+
+    const competingApp = createPragma({
+      pragmaHome: home,
+      runtimes: createRuntimeRegistry({
+        runtimes: [createFakeRuntime()],
+        defaultRuntime: "fake",
+      }),
+    });
+    await expect(
+      competingApp.experts.resumeSession(expert, { sessionId: session.sessionId }),
+    ).rejects.toThrow("active in another process");
+
+    const closing = session.close();
+    await expect(session.prompt("late", { requestId: "late" })).rejects.toThrow(
+      "closing or closed",
+    );
+    await closing;
+    await session.close();
+    expect(stats.closeSessionCalls).toBe(1);
+    await expect(
+      app.experts.resumeSession(expert, { sessionId: session.sessionId }),
+    ).rejects.toThrow("is closed");
+  });
+
+  it("persists turn usage and exposes a session total without consuming events", async () => {
+    const perTurnUsage: AgentMessageUsage = {
+      input: 100,
+      output: 20,
+      cacheRead: 30,
+      cacheWrite: 5,
+      totalTokens: 155,
+      cost: { input: 0.1, output: 0.2, cacheRead: 0.03, cacheWrite: 0.01, total: 0.34 },
+    };
+    const { app, expert } = await trackedFixture({ usage: perTurnUsage });
+    const session = await app.experts.createSession(expert);
+    const first = await session.prompt("one", { requestId: "usage-one" });
+    await first.result;
+    const second = await session.prompt("two", { requestId: "usage-two" });
+    await second.result;
+
+    await expect(first.usage).resolves.toEqual(perTurnUsage);
+    await expect(second.usage).resolves.toEqual(perTurnUsage);
+    expect(await session.getUsage()).toEqual({
+      input: 200,
+      output: 40,
+      cacheRead: 60,
+      cacheWrite: 10,
+      totalTokens: 310,
+      cost: { input: 0.2, output: 0.4, cacheRead: 0.06, cacheWrite: 0.02, total: 0.68 },
+    });
+    const historicalTurns = await session.listTurns();
+    await expect(historicalTurns[0]?.usage).resolves.toEqual(perTurnUsage);
+    expect((await first.getState()).usage).toEqual(perTurnUsage);
+    await session.close();
+  });
+
+  it("releases the lease and leaves the session recoverable when Runtime cleanup fails", async () => {
+    const { home, app, expert } = await trackedFixture({ closeError: "close failed" });
+    const session = await app.experts.createSession(expert);
+    await (
+      await session.prompt("one", { requestId: "one" })
+    ).result;
+
+    await expect(session.close()).rejects.toThrow("close failed");
+    expect((await session.getState()).status).toBe("open");
+
+    const recoveryApp = createPragma({
+      pragmaHome: home,
+      runtimes: createRuntimeRegistry({
+        runtimes: [createFakeRuntime()],
+        defaultRuntime: "fake",
+      }),
+    });
+    const recovered = await recoveryApp.experts.resumeSession(expert, {
+      sessionId: session.sessionId,
+    });
+    await recovered.close();
+  });
+
+  it("allows another ExpertSession lease owner only after expiry", async () => {
+    const home = await mkdtemp(join(tmpdir(), "pragma-session-lease-"));
+    const executions = createFileExecutionStore({ pragmaHome: home });
+    const sessions = createFileExpertSessionStore({ executions, pragmaHome: home });
+    const now = new Date().toISOString();
+    await sessions.create({
+      schemaVersion: "pragma.expert-session/v1",
+      sessionId: "leased-session",
+      expertId: "expert",
+      expertVersion: "1.0.0",
+      status: "open",
+      queuedRequestIds: [],
+      executionIds: [],
+      contextIds: { root: "root" },
+      runtimeContexts: {},
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await expect(sessions.claimLease("leased-session", "owner-a", 200)).resolves.toBe(true);
+    await expect(sessions.claimLease("leased-session", "owner-b", 200)).resolves.toBe(false);
+    await new Promise<void>((resolve) => setTimeout(resolve, 220));
+    await expect(sessions.claimLease("leased-session", "owner-b", 200)).resolves.toBe(true);
+    await sessions.releaseLease("leased-session", "owner-b");
+  });
+
+  it("reuses the Runtime Session after a failed prompt", async () => {
+    const { app, expert, stats } = await trackedFixture({ failQuery: "fail" });
+    const session = await app.experts.createSession(expert);
+    const failed = await session.prompt("fail", { requestId: "fail" });
+    await expect(failed.result).rejects.toThrow("fake turn failed");
+    const recovered = await session.prompt("recover", { requestId: "recover" });
+    await expect(recovered.result).resolves.toBe("tracked:recover");
+
+    expect(stats.createSessionCalls).toBe(1);
+    expect(stats.restoreSessionCalls).toBe(0);
+    expect(stats.executionIds).toEqual([failed.executionId, recovered.executionId]);
+    await session.close();
+  });
+
+  it("cancels only the active submission and reuses its Runtime Session", async () => {
+    const { app, expert, stats } = await trackedFixture({ delayMs: 100 });
+    const session = await app.experts.createSession(expert);
+    const active = await session.prompt("slow", { requestId: "slow" });
+    await waitUntil(async () => stats.executionIds.length === 1);
+    const cancelled = expect(active.result).rejects.toThrow();
+    await active.cancel("stop current turn");
+    await cancelled;
+
+    const next = await session.prompt("next", { requestId: "next" });
+    await expect(next.result).resolves.toBe("tracked:next");
+    expect(stats.createSessionCalls).toBe(1);
+    expect(stats.cancelTurnCalls).toBeGreaterThan(0);
+    expect(stats.executionIds).toEqual([active.executionId, next.executionId]);
     await session.close();
   });
 
@@ -181,6 +406,120 @@ describe("ExpertSession", () => {
     await session.close();
     await teamSession.close();
   }, 15_000);
+
+  it("keeps reused team contexts alive and closes fresh contexts with the ExpertSession", async () => {
+    const runTeam = async (context: "fresh" | "reuse") => {
+      const { home, app, stats } = await trackedFixture({ delegateContext: context });
+      const member = await defineExpert({
+        id: "member",
+        name: "Member",
+        description: "Member",
+        tags: [],
+        version: "1.0.0",
+        scope: "test",
+        workspace: home,
+      });
+      const lead = await defineExpert({
+        id: "lead",
+        name: "Lead",
+        description: "Lead",
+        tags: [],
+        version: "1.0.0",
+        scope: "test",
+        workspace: home,
+      });
+      const team = defineExpertTeam({
+        id: `team-${context}`,
+        version: "1.0.0",
+        coordinator: lead,
+        members: [member],
+        delegation: { allow: { lead: ["member"], member: [] }, context },
+      });
+      const session = await app.experts.createSession(team);
+      const first = await session.prompt("one", { requestId: "one" });
+      await first.result;
+      const second = await session.prompt("two", { requestId: "two" });
+      await second.result;
+      const opened = stats.createSessionCalls;
+      const closedBeforeSession = stats.closeSessionCalls;
+      const state = await session.getState();
+      const childRuntimeContexts = (await Promise.all([first.getTree(), second.getTree()])).map(
+        (tree) => tree.children[0]?.invocation.runtimeContext,
+      );
+      await session.close();
+      return {
+        opened,
+        closedBeforeSession,
+        closed: stats.closeSessionCalls,
+        reusableMemberContext: state.contextIds["member"] !== undefined,
+        childRuntimeContexts: childRuntimeContexts.every((snapshot) => snapshot !== undefined),
+      };
+    };
+
+    await expect(runTeam("reuse")).resolves.toEqual({
+      opened: 2,
+      closedBeforeSession: 0,
+      closed: 2,
+      reusableMemberContext: true,
+      childRuntimeContexts: false,
+    });
+    await expect(runTeam("fresh")).resolves.toEqual({
+      opened: 3,
+      closedBeforeSession: 2,
+      closed: 3,
+      reusableMemberContext: false,
+      childRuntimeContexts: true,
+    });
+  });
+
+  it("rejects switching Runtime inside a reused team context", async () => {
+    const home = await mkdtemp(join(tmpdir(), "pragma-runtime-identity-"));
+    const runtimeA = createFakeRuntime({
+      runtimeId: "fake-a",
+      delegateRuntime: (query) => (query === "two" ? "fake-b" : "fake-a"),
+    });
+    const runtimeB = createFakeRuntime({ runtimeId: "fake-b" });
+    const app = createPragma({
+      pragmaHome: home,
+      runtimes: createRuntimeRegistry({
+        runtimes: [runtimeA, runtimeB],
+        defaultRuntime: "fake-a",
+      }),
+    });
+    const member = await defineExpert({
+      id: "member",
+      name: "Member",
+      description: "Member",
+      tags: [],
+      version: "1.0.0",
+      scope: "test",
+      workspace: home,
+    });
+    const lead = await defineExpert({
+      id: "lead",
+      name: "Lead",
+      description: "Lead",
+      tags: [],
+      version: "1.0.0",
+      scope: "test",
+      workspace: home,
+    });
+    const team = defineExpertTeam({
+      id: "runtime-switch-team",
+      version: "1.0.0",
+      coordinator: lead,
+      members: [member],
+      delegation: { allow: { lead: ["member"], member: [] }, context: "reuse" },
+    });
+    const session = await app.experts.createSession(team);
+    await (
+      await session.prompt("one", { requestId: "one" })
+    ).result;
+    await expect((await session.prompt("two", { requestId: "two" })).result).resolves.toContain(
+      "cannot be reused",
+    );
+    await session.close();
+  });
 
   it("claims concurrent steer requests once and checkpoints Runtime context before completion", async () => {
     const home = await mkdtemp(join(tmpdir(), "pragma-steer-"));
@@ -298,6 +637,20 @@ describe("ExpertSession", () => {
 });
 
 describe("FlowExecution", () => {
+  it("keeps Runtime ownership scoped to the FlowExecution", async () => {
+    const { app, expert, stats } = await trackedFixture();
+    const flow = defineFlow({ id: "runtime-flow", version: "1.0.0" });
+    const expertStep = flow.use("expert", expert);
+    flow.compose(({ start, end }) => start(expertStep).next(end()));
+
+    const execution = await app.flows.start(flow, { input: "flow prompt" });
+    await expect(execution.result).resolves.toBeDefined();
+    expect(stats.createSessionCalls).toBe(1);
+    expect(stats.closeSessionCalls).toBe(1);
+    expect((await execution.getTree()).children[0]?.invocation.runtimeContext).toBeDefined();
+    expect((await execution.getState()).state).not.toHaveProperty("__runtimeContexts");
+  });
+
   it("runs inline Task nodes and exposes a read-only open view", async () => {
     const { app } = await fixture();
     let calls = 0;

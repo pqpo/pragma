@@ -66,6 +66,7 @@ const PROTOCOL_FLAGS = new Set([
 export interface ClaudeCodeNativeSession {
   readonly agent: Expert;
   readonly executablePath: string;
+  readonly launcherArgs: readonly string[];
   readonly additionalArgs: readonly string[];
   readonly defaultModelName?: string | undefined;
   readonly defaultThinkingLevel?: string | undefined;
@@ -96,6 +97,7 @@ export interface ClaudeCodeNativeSession {
 export function createClaudeCodeNativeSession(options: {
   readonly agent: Expert;
   readonly executablePath: string;
+  readonly launcherArgs: readonly string[];
   readonly additionalArgs: readonly string[];
   readonly defaultModelName?: string | undefined;
   readonly defaultThinkingLevel?: string | undefined;
@@ -156,20 +158,23 @@ export async function startClaudeCodeTurn(
 
   const run = await runClaudeCodeProcess({
     executablePath: session.executablePath,
-    args: await createClaudeCodeArgs({
-      additionalArgs: session.additionalArgs,
-      defaultModelName: session.defaultModelName,
-      defaultThinkingLevel: session.defaultThinkingLevel,
-      managedConfig: session.managedConfig,
-      mcpServerUrl: session.mcpServerUrl,
-      modelName: turn.modelName,
-      thinkingLevel: turn.thinkingLevel,
-      permissionMode: session.permissionMode,
-      pluginDir: session.pluginDir,
-      sessionDir: session.sessionDir,
-      state: session.state,
-      systemPrompt: session.systemPrompt,
-    }),
+    args: [
+      ...session.launcherArgs,
+      ...(await createClaudeCodeArgs({
+        additionalArgs: session.additionalArgs,
+        defaultModelName: session.defaultModelName,
+        defaultThinkingLevel: session.defaultThinkingLevel,
+        managedConfig: session.managedConfig,
+        mcpServerUrl: session.mcpServerUrl,
+        modelName: turn.modelName,
+        thinkingLevel: turn.thinkingLevel,
+        permissionMode: session.permissionMode,
+        pluginDir: session.pluginDir,
+        sessionDir: session.sessionDir,
+        state: session.state,
+        systemPrompt: session.systemPrompt,
+      })),
+    ],
     cwd: session.agent.workspace,
     env: await createClaudeCodeEnv({
       env: session.env,
@@ -276,6 +281,11 @@ interface ClaudeStreamMappingResult {
   readonly usage?: AgentMessageUsage | undefined;
 }
 
+export interface ClaudeToolStreamState {
+  readonly startedToolCallIds: Set<string>;
+  readonly toolNames: Map<string, string>;
+}
+
 class ClaudeCodeRuntimeError extends Error {
   constructor(
     message: string,
@@ -343,7 +353,12 @@ async function runClaudeCodeProcess({
   let stderrTail = "";
   let finalResultSeen = false;
   let hasSeenPartialTextDelta = false;
+  let hasSeenPartialThinkingDelta = false;
   let partialThinkingText = "";
+  const toolStreamState: ClaudeToolStreamState = {
+    startedToolCallIds: new Set(),
+    toolNames: new Map(),
+  };
 
   child.stderr.setEncoding("utf8");
   child.stderr.on("data", (chunk: string) => {
@@ -369,6 +384,13 @@ async function runClaudeCodeProcess({
         logger.debug("Ignoring non-JSON Claude Code stream line", { line });
         continue;
       }
+      if (event["type"] === "system" && event["subtype"] !== "thinking_tokens") {
+        logger.debug("Claude Code system event", {
+          subtype: event["subtype"],
+          status: event["status"],
+          message: event["message"],
+        });
+      }
 
       const nextSessionId = readString(event["session_id"]) ?? readString(event["sessionId"]);
       if (nextSessionId !== undefined) {
@@ -391,14 +413,17 @@ async function runClaudeCodeProcess({
           ? readAssistantMessageEvent(message, runId, source, {
               textPrefix: hasSeenPartialTextDelta ? outputText : "",
               thinkingPrefix: partialThinkingText,
+              skipText: hasSeenPartialTextDelta,
+              skipThinking: hasSeenPartialThinkingDelta,
             })
           : mapClaudeStreamEvent(event, runId, source);
       const resultText = event["type"] === "result" ? readString(event["result"]) : undefined;
       const shouldBackfillResultDeltas =
         resultText !== undefined && event["is_error"] !== true && !hadOutputDelta;
-      const runtimeEvents = shouldBackfillResultDeltas
+      const rawRuntimeEvents = shouldBackfillResultDeltas
         ? [...createMessageDeltaEvents(resultText, runId, source), ...mapped.events]
         : mapped.events;
+      const runtimeEvents = normalizeClaudeToolRuntimeEvents(rawRuntimeEvents, toolStreamState);
 
       for (const runtimeEvent of runtimeEvents) {
         emitRuntimeEvent(runtimeEvent);
@@ -416,6 +441,9 @@ async function runClaudeCodeProcess({
       usage = mapped.usage ?? usage;
       if (mapped.partialKind === "text") {
         hasSeenPartialTextDelta = true;
+      }
+      if (mapped.partialKind === "thinking") {
+        hasSeenPartialThinkingDelta = true;
       }
 
       if (event["type"] === "result") {
@@ -467,6 +495,53 @@ async function runClaudeCodeProcess({
     ...(usage === undefined ? {} : { usage }),
     ...(sessionId === undefined ? {} : { sessionId }),
   };
+}
+
+export function normalizeClaudeToolRuntimeEvents(
+  events: readonly RuntimeStreamEventInput[],
+  state: ClaudeToolStreamState,
+): readonly RuntimeStreamEventInput[] {
+  return events.flatMap((event) => {
+    if (!event.type.startsWith("tool.")) {
+      return [event];
+    }
+
+    const payload = readRecord(event.payload);
+    const toolCallId = readString(payload?.["toolCallId"]);
+    if (payload === undefined || toolCallId === undefined) {
+      return [event];
+    }
+
+    const toolName = readString(payload["toolName"]);
+    if (event.type === "tool.started") {
+      if (state.startedToolCallIds.has(toolCallId)) {
+        return [];
+      }
+      state.startedToolCallIds.add(toolCallId);
+      if (toolName !== undefined && toolName !== "claude_tool") {
+        state.toolNames.set(toolCallId, toolName);
+      }
+      return [event];
+    }
+
+    const knownToolName = state.toolNames.get(toolCallId);
+    if (
+      knownToolName === undefined ||
+      (toolName !== undefined && toolName !== "claude_tool")
+    ) {
+      return [event];
+    }
+
+    return [
+      {
+        ...event,
+        payload: {
+          ...payload,
+          toolName: knownToolName,
+        },
+      } as RuntimeStreamEventInput,
+    ];
+  });
 }
 
 function closeClaudeCodeInput(child: ChildProcessWithoutNullStreams): void {
@@ -742,19 +817,10 @@ function mapClaudeStreamEvent(
   }
 
   if (type === "system") {
-    return {
-      events: [
-        {
-          runId,
-          source,
-          type: "progress",
-          payload: {
-            stage: "claude.system",
-            data: event,
-          },
-        },
-      ],
-    };
+    // Claude emits internal lifecycle and thinking-token accounting events in
+    // the same stream as user-facing deltas. They carry no displayable progress
+    // message and must not interrupt a contiguous Thinking section.
+    return { events: [] };
   }
 
   if (type === "stream_event") {
@@ -764,21 +830,25 @@ function mapClaudeStreamEvent(
   return { events: [] };
 }
 
-function readAssistantMessageEvent(
+export function readAssistantMessageEvent(
   message: Record<string, unknown>,
   runId: string,
   source: RuntimeStreamEvent["source"],
   options: {
     readonly textPrefix?: string | undefined;
     readonly thinkingPrefix?: string | undefined;
+    readonly skipText?: boolean | undefined;
+    readonly skipThinking?: boolean | undefined;
   } = {},
 ): {
   readonly events: readonly RuntimeStreamEventInput[];
   readonly outputDelta?: string | undefined;
+  readonly thinkingDelta?: string | undefined;
   readonly usage?: AgentMessageUsage | undefined;
 } {
   const runtimeEvents: RuntimeStreamEventInput[] = [];
   let outputDelta = "";
+  let thinkingDelta = "";
   let textPrefix = options.textPrefix ?? "";
   let thinkingPrefix = options.thinkingPrefix ?? "";
 
@@ -786,6 +856,9 @@ function readAssistantMessageEvent(
     const blockType = readString(block["type"]);
 
     if (blockType === "text") {
+      if (options.skipText === true) {
+        continue;
+      }
       const text = readString(block["text"]);
       if (text !== undefined) {
         const delta = removeKnownTextPrefix(text, textPrefix);
@@ -799,11 +872,15 @@ function readAssistantMessageEvent(
     }
 
     if (blockType === "thinking") {
+      if (options.skipThinking === true) {
+        continue;
+      }
       const thinking = readString(block["thinking"]);
       if (thinking !== undefined) {
         const delta = removeKnownTextPrefix(thinking, thinkingPrefix);
         thinkingPrefix = removeConsumedTextPrefix(thinkingPrefix, thinking);
         if (delta !== "") {
+          thinkingDelta += delta;
           runtimeEvents.push(createThoughtDeltaEvent(delta, runId, source));
         }
       }
@@ -830,6 +907,7 @@ function readAssistantMessageEvent(
   return {
     events: runtimeEvents,
     ...(outputDelta === "" ? {} : { outputDelta }),
+    ...(thinkingDelta === "" ? {} : { thinkingDelta }),
     ...(usage === undefined ? {} : { usage }),
   };
 }

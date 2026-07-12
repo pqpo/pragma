@@ -136,7 +136,16 @@ export interface RuntimeSubmitRequest<TOutput = string> {
   readonly query: string;
   readonly output?: RuntimeOutputSchema<TOutput> | undefined;
   readonly outputRetryLimit?: number | undefined;
+  readonly execution: {
+    readonly humanInteractionHandler?: ExpertAgentHumanInteractionHandler | undefined;
+    readonly context?: ExpertToolExecutionContext | undefined;
+  };
 }
+
+export type RuntimeTaskSubmission<TOutput = string> = Omit<
+  RuntimeSubmitRequest<TOutput>,
+  "execution"
+>;
 
 export interface RuntimeRunResult<TOutput = unknown> {
   readonly runId: string;

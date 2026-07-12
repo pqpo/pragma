@@ -47,6 +47,8 @@ export interface ExpertToolsMcpServer {
 
 export interface CreateExpertToolsMcpServerOptions {
   readonly agent: Expert;
+  /** Stable native runtime-session identity used to preserve the MCP config key across restores. */
+  readonly instanceId?: string | undefined;
   readonly getContext: () => ExpertAgentRunContext | undefined;
   readonly humanInteractionHandler?: ExpertAgentHumanInteractionHandler | undefined;
   readonly logger: ExpertAgentLogger;
@@ -61,7 +63,8 @@ const RUNTIME_PERMISSION_APPROVAL_REASON = "Runtime requested tool approval.";
 export async function createExpertToolsMcpServer(
   options: CreateExpertToolsMcpServerOptions,
 ): Promise<ExpertToolsMcpServer> {
-  const id = `pragma_tools_${sanitizeMcpConfigId(options.agent.id)}_${randomUUID().replaceAll("-", "_")}`;
+  const instanceId = options.instanceId ?? randomUUID();
+  const id = `pragma_tools_${sanitizeMcpConfigId(options.agent.id)}_${sanitizeMcpConfigId(instanceId)}`;
   const name = `Pragma tools for ${options.agent.name}`;
   const server = new McpServer(
     {

@@ -40,6 +40,7 @@ export interface CodexNativeSession {
 
 const CODEX_TOOL_ITEM_NAMES = {
   commandExecution: "exec_command",
+  dynamicToolCall: "dynamic_tool_call",
   fileChange: "apply_patch",
   mcpToolCall: "mcp_tool_call",
 } as const satisfies Record<string, string>;
@@ -148,6 +149,12 @@ export async function startCodexTurn(
     unsubscribe();
   }
 
+  if (outputText.trim() === "") {
+    throw new Error(
+      "Codex turn completed without assistant output. Verify Codex authentication and connectivity.",
+    );
+  }
+
   session.messages.push({
     role: "assistant",
     content: outputText,
@@ -185,17 +192,23 @@ export function mapCodexNotificationToRuntimeEvent(
   const toolEvent = readToolEvent(notification);
   if (toolEvent !== undefined) {
     events.push(
-      toolEvent.completed
-        ? context.events.toolCompleted({
+      toolEvent.failed
+        ? context.events.toolFailed({
             toolCallId: toolEvent.id,
             toolName: toolEvent.name,
-            outputPreview: toolEvent.preview,
+            message: toolEvent.failureMessage,
           })
-        : context.events.toolStarted({
-            toolCallId: toolEvent.id,
-            toolName: toolEvent.name,
-            inputPreview: toolEvent.preview,
-          }),
+        : toolEvent.completed
+          ? context.events.toolCompleted({
+              toolCallId: toolEvent.id,
+              toolName: toolEvent.name,
+              outputPreview: toolEvent.preview,
+            })
+          : context.events.toolStarted({
+              toolCallId: toolEvent.id,
+              toolName: toolEvent.name,
+              inputPreview: toolEvent.preview,
+            }),
     );
   }
 
@@ -343,6 +356,8 @@ function readToolEvent(notification: CodexAppServerNotification):
       readonly name: string;
       readonly preview: unknown;
       readonly completed: boolean;
+      readonly failed: boolean;
+      readonly failureMessage: string;
     }
   | undefined {
   if (notification.method !== "item/started" && notification.method !== "item/completed") {
@@ -352,18 +367,52 @@ function readToolEvent(notification: CodexAppServerNotification):
   const item = readRecord(notification.params["item"]);
   const id = readString(item?.["id"]) ?? randomUUID();
   const type = readString(item?.["type"]);
-  const name = type === undefined ? undefined : codexItemTypeToToolName(type);
+  const fallbackName = type === undefined ? undefined : codexItemTypeToToolName(type);
+  const name =
+    type === "mcpToolCall" || type === "dynamicToolCall"
+      ? (readString(item?.["tool"]) ?? fallbackName)
+      : fallbackName;
 
   if (name === undefined) {
     return undefined;
   }
 
+  const completed = notification.method === "item/completed";
+  const failed =
+    completed &&
+    (readString(item?.["status"]) === "failed" ||
+      item?.["success"] === false ||
+      readRecord(item?.["error"]) !== undefined);
+
   return {
     id,
     name,
     preview: item,
-    completed: notification.method === "item/completed",
+    completed,
+    failed,
+    failureMessage: readToolFailureMessage(item, name),
   };
+}
+
+function readToolFailureMessage(item: Record<string, unknown> | undefined, name: string): string {
+  const error = readRecord(item?.["error"]);
+  const directMessage = readString(error?.["message"]) ?? readString(item?.["message"]);
+
+  if (directMessage !== undefined && directMessage !== "") {
+    return directMessage;
+  }
+
+  const contentItems = item?.["contentItems"];
+  if (Array.isArray(contentItems)) {
+    for (const contentItem of contentItems) {
+      const text = readString(readRecord(contentItem)?.["text"]);
+      if (text !== undefined && text !== "") {
+        return text;
+      }
+    }
+  }
+
+  return `${name} failed.`;
 }
 
 function codexItemTypeToToolName(type: string): string | undefined {

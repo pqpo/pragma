@@ -17,6 +17,7 @@ import {
 } from "@pragma/core";
 import { prepareManagedClaudeCodeConfig } from "./claude-config.ts";
 import { canUseClaudeCodeRuntime } from "./availability.ts";
+import { resolveClaudeCodeCommand } from "./executable.ts";
 import { materializeClaudeCodePlugin } from "./skills.ts";
 import {
   cancelClaudeCodeTurn,
@@ -59,6 +60,13 @@ interface ClaudeCodeDriverSession extends ClaudeCodeNativeSession {
 export function createClaudeCodeRuntime(
   options: ClaudeCodeRuntimeAdapterOptions = {},
 ): RuntimeAdapter {
+  const command =
+    options.spawn === undefined
+      ? resolveClaudeCodeCommand(options)
+      : {
+          executablePath: options.executablePath ?? "claude",
+          launcherArgs: [] as readonly string[],
+        };
   const descriptor = {
     ...CLAUDE_CODE_LOCAL_RUNTIME_DESCRIPTOR,
     ...options.descriptor,
@@ -142,7 +150,8 @@ export function createClaudeCodeRuntime(
         return {
           ...createClaudeCodeNativeSession({
             agent: ctx.agent,
-            executablePath: options.executablePath ?? "claude",
+            executablePath: command.executablePath,
+            launcherArgs: command.launcherArgs,
             additionalArgs: options.additionalArgs ?? [],
             defaultModelName,
             defaultThinkingLevel: options.defaultThinkingLevel,

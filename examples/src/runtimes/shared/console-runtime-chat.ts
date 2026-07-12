@@ -4,20 +4,28 @@ import { createInterface, type Interface } from "node:readline/promises";
 import {
   ContextSystem,
   createInMemoryContextStore,
+  createConsoleLoggerProvider,
   createPragma,
   createRuntimeRegistry,
   defineExpert,
   type ExpertSession,
   type RuntimeAdapter,
   type RuntimeModel,
+  type RuntimeThinkingLevel,
 } from "@pragma/core";
 
 import { renderExpertTurn } from "../../console/console-turn-renderer.ts";
+import { formatConsoleUsage } from "../../console/console-usage.ts";
 
 export interface RuntimeConsoleChatOptions {
   readonly runtimeName: string;
   readonly expertId: string;
-  readonly createRuntime: (defaultModelName?: string) => RuntimeAdapter;
+  readonly createRuntime: (defaults?: RuntimeConsoleDefaults) => RuntimeAdapter;
+}
+
+export interface RuntimeConsoleDefaults {
+  readonly modelName?: string | undefined;
+  readonly thinkingLevel?: string | undefined;
 }
 
 export async function runRuntimeConsoleChat(options: RuntimeConsoleChatOptions): Promise<void> {
@@ -35,7 +43,14 @@ export async function runRuntimeConsoleChat(options: RuntimeConsoleChatOptions):
     console.log(`✓ ${formatAvailability(options.runtimeName, availability.details)}`);
     const models = await discoverModels(probeRuntime, options.runtimeName);
     const selectedModel = await promptForModel(terminal, models);
-    const runtime = options.createRuntime(selectedModel?.id);
+    const effectiveModel = selectedModel ?? models.find((model) => model.default);
+    const selectedThinkingLevel = await promptForThinkingLevel(terminal, effectiveModel);
+    const runtime = options.createRuntime({
+      ...(selectedModel === undefined ? {} : { modelName: selectedModel.id }),
+      ...(selectedThinkingLevel === undefined
+        ? {}
+        : { thinkingLevel: selectedThinkingLevel.value }),
+    });
     const contextSystem = createRuntimeTestContextSystem();
     const expert = await defineExpert({
       id: options.expertId,
@@ -53,6 +68,9 @@ export async function runRuntimeConsoleChat(options: RuntimeConsoleChatOptions):
       scope: "example",
       workspace: process.cwd(),
       contextSystem,
+      ...(process.env["PRAGMA_RUNTIME_DEBUG"] === "1"
+        ? { loggerProvider: createConsoleLoggerProvider() }
+        : {}),
     });
     const app = createPragma({
       runtimes: createRuntimeRegistry({
@@ -65,6 +83,7 @@ export async function runRuntimeConsoleChat(options: RuntimeConsoleChatOptions):
     console.log(`\n${options.runtimeName} Expert 已就绪。输入问题开始聊天，输入 /exit 退出。`);
     console.log("可测试：分别询问 always-on、model-decision 和 manual 测试上下文。");
     console.log(`模型: ${selectedModel?.displayName ?? "CLI 默认模型"}`);
+    console.log(`思考深度: ${selectedThinkingLevel?.label ?? "CLI 默认深度"}`);
     console.log(`Session: ${session.sessionId}`);
 
     let turnNumber = 0;
@@ -73,7 +92,10 @@ export async function runRuntimeConsoleChat(options: RuntimeConsoleChatOptions):
 
     for await (const line of terminal) {
       const prompt = line.trim();
-      if (prompt === "/exit") break;
+      if (prompt === "/exit") {
+        console.log(formatConsoleUsage(await session.getUsage()));
+        break;
+      }
       if (prompt === "") {
         terminal.prompt();
         continue;
@@ -112,6 +134,21 @@ export function selectRuntimeModel(
   return models[selectedIndex - 1];
 }
 
+export function selectRuntimeThinkingLevel(
+  levels: readonly RuntimeThinkingLevel[],
+  answer: string,
+): RuntimeThinkingLevel | undefined {
+  const normalized = answer.trim();
+  if (normalized === "") return undefined;
+
+  const selectedIndex = Number(normalized);
+  if (!Number.isInteger(selectedIndex) || selectedIndex < 1 || selectedIndex > levels.length) {
+    throw new Error(`请输入 1-${levels.length}，或直接回车使用 CLI 默认思考深度。`);
+  }
+
+  return levels[selectedIndex - 1];
+}
+
 async function discoverModels(
   runtime: RuntimeAdapter,
   runtimeName: string,
@@ -141,6 +178,38 @@ async function promptForModel(
     const answer = await terminal.question("选择模型编号，直接回车使用 CLI 默认模型 > ");
     try {
       return selectRuntimeModel(models, answer);
+    } catch (error) {
+      console.error(error instanceof Error ? error.message : String(error));
+    }
+  }
+}
+
+async function promptForThinkingLevel(
+  terminal: Interface,
+  model: RuntimeModel | undefined,
+): Promise<RuntimeThinkingLevel | undefined> {
+  if (model === undefined) {
+    console.log("未探测到明确的默认模型，思考深度将使用 CLI 默认值。");
+    return undefined;
+  }
+
+  const levels = model.thinking?.supportedLevels ?? [];
+  if (levels.length === 0) {
+    console.log(`${model.displayName} 未提供可选择的思考深度，将使用 CLI 默认值。`);
+    return undefined;
+  }
+
+  console.log(`\n${model.displayName} 可用思考深度：`);
+  levels.forEach((level, index) => {
+    const isDefault = level.value === model.thinking?.defaultLevel;
+    const description = level.description === undefined ? "" : ` — ${level.description}`;
+    console.log(`  ${index + 1}. ${level.label} (${level.value})${isDefault ? " [探测默认]" : ""}${description}`);
+  });
+
+  while (true) {
+    const answer = await terminal.question("选择思考深度编号，直接回车使用 CLI 默认深度 > ");
+    try {
+      return selectRuntimeThinkingLevel(levels, answer);
     } catch (error) {
       console.error(error instanceof Error ? error.message : String(error));
     }

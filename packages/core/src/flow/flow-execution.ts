@@ -5,7 +5,6 @@ import type { ExecutionRecord, HumanInteractionRequest, Invocation } from "@prag
 import { isExpertTeam, type ExpertDefinition, type ExpertTeam } from "../agent/expert-team.ts";
 import type { RuntimeRegistry } from "../runtime-registry.ts";
 import { ExecutionController, runExpertInvocation } from "../execution/expert-runner.ts";
-import type { RuntimeContextSnapshot } from "../execution/expert-runner.ts";
 import type { ExecutionStore } from "../execution/execution-store.ts";
 import {
   StoredExecutionView,
@@ -178,7 +177,11 @@ export class FlowExecutionManager {
       await this.executions.appendEvent(executionId, executionId, "execution.succeeded", {
         output,
       });
-      await this.executions.update(executionId, { status: "succeeded", output });
+      await this.executions.update(executionId, {
+        status: "succeeded",
+        output,
+        ...(controller.getUsage() === undefined ? {} : { usage: controller.getUsage() }),
+      });
     } catch (error) {
       const status = controller.isCancelled() ? "cancelled" : "failed";
       const storedError = serializeError(error);
@@ -186,7 +189,11 @@ export class FlowExecutionManager {
       await this.executions.appendEvent(executionId, executionId, `execution.${status}`, {
         message: error instanceof Error ? error.message : String(error),
       });
-      await this.executions.update(executionId, { status, error: storedError });
+      await this.executions.update(executionId, {
+        status,
+        error: storedError,
+        ...(controller.getUsage() === undefined ? {} : { usage: controller.getUsage() }),
+      });
     } finally {
       await controller.closeRuntimes();
     }
@@ -297,7 +304,6 @@ async function runStep(
     }
     const expert = step.definition as ExpertDefinition;
     const contextId = invocation.invocationId;
-    const runtimeContexts = readRuntimeContexts(record.state);
     return await runExpertInvocation({
       executionId: options.executionId,
       invocationId: invocation.invocationId,
@@ -307,23 +313,15 @@ async function runStep(
       owner: { type: "flow-execution", ownerId: options.executionId },
       runtimeId: step.options.runtime ?? options.runtime,
       contextId,
-      runtimeSnapshot: runtimeContexts[contextId],
+      runtimeSnapshot: invocation.runtimeContext,
+      runtimeScope: "invocation",
       controller: options.controller,
       store: options.store,
       runtimes: options.runtimes,
       contextForMember: (expertId, policy) => {
         const memberContextId =
           policy === "reuse" ? `${invocation.invocationId}:${expertId}` : randomUUID();
-        return { contextId: memberContextId, snapshot: runtimeContexts[memberContextId] };
-      },
-      onRuntimeContext: async (id, snapshot) => {
-        const latest = (await options.store.get(options.executionId))!;
-        await options.store.update(options.executionId, {
-          state: {
-            ...latest.state,
-            __runtimeContexts: { ...readRuntimeContexts(latest.state), [id]: snapshot },
-          },
-        });
+        return { contextId: memberContextId };
       },
     });
   } catch (error) {
@@ -483,13 +481,6 @@ async function putStatus(
 function readField(value: unknown, field: string): unknown {
   if (typeof value !== "object" || value === null) return undefined;
   return (value as Record<string, unknown>)[field];
-}
-
-function readRuntimeContexts(state: FlowState): Record<string, RuntimeContextSnapshot> {
-  const value = state["__runtimeContexts"];
-  return typeof value === "object" && value !== null
-    ? (value as Record<string, RuntimeContextSnapshot>)
-    : {};
 }
 
 function createFlowDefinitionGraph(flow: Flow): unknown {

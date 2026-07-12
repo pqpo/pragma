@@ -4,6 +4,7 @@ import { stdin, stdout } from "node:process";
 import type { ExpertAgentManagedTool, ExpertAgentToolCallResult } from "@pragma/core";
 
 import { renderExpertTurn } from "../../console/console-turn-renderer.ts";
+import { formatConsoleUsage } from "../../console/console-usage.ts";
 import { createExampleApp, createExampleExpert } from "../../example-kit.ts";
 
 const currentTimeTool: ExpertAgentManagedTool<"get_current_time", ExpertAgentToolCallResult> = {
@@ -38,7 +39,10 @@ terminal.prompt();
 try {
   for await (const line of terminal) {
     const prompt = line.trim();
-    if (prompt === "/exit") break;
+    if (prompt === "/exit") {
+      console.log(formatConsoleUsage(await session.getUsage()));
+      break;
+    }
     if (prompt === "") {
       terminal.prompt();
       continue;

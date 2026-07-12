@@ -159,7 +159,8 @@ pnpm --filter @pragma/examples example:expert-chat
 
 Continue entering prompts in the same `ExpertSession`; enter `/exit` to quit. As a first
 multi-turn check, ask the Expert to remember a random verification code and ask for it again in
-the next turn.
+the next turn. Before exiting, the example prints the persisted total returned by
+`await session.getUsage()`.
 
 See [examples/README.md](./examples/README.md) for the full example guide.
 

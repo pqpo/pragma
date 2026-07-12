@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { ExecutionStatusSchema } from "./execution.schema.ts";
+import { ExecutionStatusSchema, RuntimeContextSnapshotSchema } from "./execution.schema.ts";
 
 export const PromptModeSchema = z.enum(["enqueue", "steer"]);
 export const PromptStatusSchema = z.enum([
@@ -35,18 +35,8 @@ export const ExpertSessionRecordSchema = z.object({
   queuedRequestIds: z.array(z.string().min(1)),
   executionIds: z.array(z.string().min(1)),
   runtimeId: z.string().min(1).optional(),
-  systemSessionId: z.string().min(1).optional(),
-  runtimeSession: z.object({ type: z.string().min(1), id: z.string().min(1) }).optional(),
   contextIds: z.record(z.string(), z.string().min(1)),
-  runtimeContexts: z.record(
-    z.string(),
-    z.object({
-      expertId: z.string().min(1),
-      runtimeId: z.string().min(1),
-      systemSessionId: z.string().min(1),
-      runtimeSession: z.object({ type: z.string().min(1), id: z.string().min(1) }),
-    }),
-  ),
+  runtimeContexts: z.record(z.string(), RuntimeContextSnapshotSchema),
   lastStatus: ExecutionStatusSchema.optional(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),

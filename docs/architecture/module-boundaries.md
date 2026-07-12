@@ -59,6 +59,13 @@ Session factory. Core stores owner claims under `~/.pragma/state/runtime-session
 records under `~/.pragma/state/runtime-sessions/`. Recovery must match the original owner,
 `systemSessionId`, Expert, Runtime and `RuntimeSessionRef { type, id }`.
 
+An active ExpertSession holds a renewable cross-process lease and owns reusable Runtime Sessions
+until `ExpertSession.close()`. Runtime reuse validates the complete context identity
+`{ contextId, expertId, runtimeId }`; an existing context never switches Expert or Runtime. Team
+`fresh` contexts are Invocation-subtree-scoped and close when that subtree finishes, while `reuse`
+contexts remain ExpertSession-scoped. FlowExecution Runtime Sessions remain execution-scoped.
+Execution and human-interaction bindings are submitted atomically with each Runtime submission.
+
 Agent workspaces contain task inputs, repositories, artifacts, and task-authored files only. Runtime
 state, configuration, sessions, and installed plugin copies must never be derived from or written
 below the workspace. Agent plugin copies live under `~/.pragma/cache/agents/<agent>/plugins/`.

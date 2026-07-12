@@ -28,6 +28,7 @@ describe("ConsoleTurnRenderer", () => {
 
     expect(output).toContain("• Thinking\nChecking context...");
     expect(output).toContain("• Running get_current_time");
+    expect(output).not.toContain("↳ {}");
     expect(output).toContain("✓ get_current_time completed");
     expect(output).toContain("• Expert\n现在是 18:00。");
     expect(output.match(/现在是 18:00。/gu)).toHaveLength(1);
@@ -70,4 +71,5 @@ describe("ConsoleTurnRenderer", () => {
 
     expect(output.match(/hello/gu)).toHaveLength(1);
   });
+
 });

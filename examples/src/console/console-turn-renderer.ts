@@ -145,7 +145,7 @@ export class ConsoleTurnRenderer {
     this.endSection();
     const name = readString(payload, "toolName") || "tool";
     this.write(`${this.paint("•", ANSI.cyan)} ${this.paint(`Running ${name}`, ANSI.bold)}\n`);
-    if (payload["inputPreview"] !== undefined) {
+    if (hasMeaningfulPreview(payload["inputPreview"])) {
       this.writeIndented(
         formatValue(payload["inputPreview"], this.maxPreviewLength),
         "  ↳ ",
@@ -249,6 +249,19 @@ function asRecord(value: unknown): Record<string, unknown> {
 function readString(record: Record<string, unknown>, key: string): string {
   const value = record[key];
   return typeof value === "string" ? value : "";
+}
+
+function hasMeaningfulPreview(value: unknown): boolean {
+  if (value === undefined || value === null || value === "") {
+    return false;
+  }
+  if (Array.isArray(value)) {
+    return value.length > 0;
+  }
+  if (typeof value === "object") {
+    return Object.keys(value).length > 0;
+  }
+  return true;
 }
 
 function formatValue(value: unknown, maxLength: number): string {

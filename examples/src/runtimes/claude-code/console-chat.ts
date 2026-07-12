@@ -5,8 +5,11 @@ import { runRuntimeConsoleChat } from "../shared/console-runtime-chat.ts";
 await runRuntimeConsoleChat({
   runtimeName: "Claude Code CLI",
   expertId: "claude-code-runtime-chat",
-  createRuntime: (defaultModelName) =>
+  createRuntime: (defaults) =>
     createClaudeCodeRuntime({
-      ...(defaultModelName === undefined ? {} : { defaultModelName }),
+      ...(defaults?.modelName === undefined ? {} : { defaultModelName: defaults.modelName }),
+      ...(defaults?.thinkingLevel === undefined
+        ? {}
+        : { defaultThinkingLevel: defaults.thinkingLevel }),
     }),
 });

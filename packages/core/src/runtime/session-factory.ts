@@ -3,7 +3,6 @@ import type {
   RuntimeAgentSession,
   RuntimeDriverSessionRequest,
 } from "./runtime-adapter.ts";
-
 type RuntimeSessionFactory = (request: RuntimeDriverSessionRequest) => Promise<RuntimeAgentSession>;
 
 const runtimeSessionFactories = new WeakMap<RuntimeAdapter, RuntimeSessionFactory>();

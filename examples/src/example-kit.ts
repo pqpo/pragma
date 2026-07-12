@@ -10,12 +10,16 @@ import {
   type IExpertAgentModelsConfig,
 } from "@pragma/core";
 import { createPiRuntime } from "@pragma/runtime-pi";
+import { createRuntimeTestContextSystem } from "./runtimes/shared/console-runtime-chat.ts";
 
 export async function createExampleExpert(
   id: string,
   instructions: string,
   options: Pick<DefineExpertOptions, "tools"> = {},
 ): Promise<Expert> {
+
+   const contextSystem = createRuntimeTestContextSystem();
+
   return await defineExpert({
     id,
     name: id,
@@ -25,6 +29,7 @@ export async function createExampleExpert(
     version: "1.0.0",
     scope: "example",
     workspace: process.cwd(),
+    contextSystem,
     ...options,
     models: createExampleModelsConfig(process.env),
   });

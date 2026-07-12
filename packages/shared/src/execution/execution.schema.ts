@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { AgentMessageUsageSchema } from "../agent-message.schema.ts";
 
 export const ExecutionStatusSchema = z.enum([
   "queued",
@@ -25,6 +26,17 @@ export const DefinitionReferenceSchema = z.object({
   kind: InvocationKindSchema,
 });
 
+export const RuntimeContextSnapshotSchema = z.object({
+  expertId: z.string().min(1),
+  runtimeId: z.string().min(1),
+  systemSessionId: z.string().min(1),
+  runtimeSession: RuntimeSessionRefSchema,
+});
+
+export const InvocationRuntimeContextSchema = RuntimeContextSnapshotSchema.extend({
+  contextId: z.string().min(1),
+});
+
 export const InvocationSchema = z.object({
   invocationId: z.string().min(1),
   rootInvocationId: z.string().min(1),
@@ -35,7 +47,9 @@ export const InvocationSchema = z.object({
   status: ExecutionStatusSchema,
   input: z.unknown(),
   output: z.unknown().optional(),
+  usage: AgentMessageUsageSchema.optional(),
   error: z.unknown().optional(),
+  runtimeContext: InvocationRuntimeContextSchema.optional(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
 });
@@ -83,6 +97,7 @@ export const ExecutionRecordSchema = z.object({
   input: z.unknown(),
   state: z.record(z.string(), z.unknown()).default({}),
   output: z.unknown().optional(),
+  usage: AgentMessageUsageSchema.optional(),
   error: z.unknown().optional(),
   lastAppliedSequence: z.number().int().nonnegative(),
   createdAt: z.string().datetime(),
@@ -99,6 +114,8 @@ export type RuntimeSessionRef = z.infer<typeof RuntimeSessionRefSchema>;
 export type ExecutionKind = z.infer<typeof ExecutionKindSchema>;
 export type InvocationKind = z.infer<typeof InvocationKindSchema>;
 export type DefinitionReference = z.infer<typeof DefinitionReferenceSchema>;
+export type RuntimeContextSnapshot = z.infer<typeof RuntimeContextSnapshotSchema>;
+export type InvocationRuntimeContext = z.infer<typeof InvocationRuntimeContextSchema>;
 export type Invocation = z.infer<typeof InvocationSchema>;
 export type ExecutionCursor = z.infer<typeof ExecutionCursorSchema>;
 export type ExecutionEvent<TPayload = unknown> = Omit<

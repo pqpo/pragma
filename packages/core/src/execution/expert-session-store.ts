@@ -46,6 +46,8 @@ export interface ExpertSessionStore {
         },
   ): Promise<T>;
   listPrompts(sessionId: string): Promise<readonly PromptRequest[]>;
+  claimLease(sessionId: string, claimId: string, leaseMs: number): Promise<boolean>;
+  releaseLease(sessionId: string, claimId: string): Promise<void>;
 }
 
 export function createFileExpertSessionStore(options: {
@@ -145,8 +147,46 @@ export function createFileExpertSessionStore(options: {
         );
       });
     },
+    async claimLease(sessionId, claimId, leaseMs) {
+      return await withFileLock(paths.expertSessionLock(sessionId), async () => {
+        const session = ExpertSessionRecordSchema.parse(
+          await requireJson(paths.expertSessionState(sessionId), sessionId),
+        );
+        if (session.status === "closed") return false;
+        const existingValue = await readJson(paths.expertSessionLease(sessionId));
+        const existing =
+          existingValue === undefined ? undefined : ExpertSessionLeaseSchema.parse(existingValue);
+        if (
+          existing !== undefined &&
+          existing.claimId !== claimId &&
+          Date.parse(existing.expiresAt) > Date.now()
+        ) {
+          return false;
+        }
+        await writeJson(paths.expertSessionLease(sessionId), {
+          claimId,
+          expiresAt: new Date(Date.now() + leaseMs).toISOString(),
+        });
+        return true;
+      });
+    },
+    async releaseLease(sessionId, claimId) {
+      await withFileLock(paths.expertSessionLock(sessionId), async () => {
+        const existingValue = await readJson(paths.expertSessionLease(sessionId));
+        const existing =
+          existingValue === undefined ? undefined : ExpertSessionLeaseSchema.parse(existingValue);
+        if (existing?.claimId === claimId) {
+          await rm(paths.expertSessionLease(sessionId), { force: true });
+        }
+      });
+    },
   };
 }
+
+const ExpertSessionLeaseSchema = z.object({
+  claimId: z.string().min(1),
+  expiresAt: z.string().datetime(),
+});
 
 const EnqueueJournalSchema = z.object({
   schemaVersion: z.literal("pragma.expert-session-transaction/v1"),

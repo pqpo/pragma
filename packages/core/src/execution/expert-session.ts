@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import type {
+  AgentMessageUsage,
   ExecutionRecord,
   ExpertSessionRecord,
   ExpertSessionMessage,
@@ -11,8 +12,10 @@ import type {
 import type { ExpertDefinition } from "../agent/expert-team.ts";
 import { isExpertTeam } from "../agent/expert-team.ts";
 import type { RuntimeRegistry } from "../runtime-registry.ts";
+import { mergeUsages } from "../runtime/usage.ts";
 import { ExecutionController, runExpertInvocation } from "./expert-runner.ts";
 import type { RuntimeContextSnapshot } from "./expert-runner.ts";
+import { RuntimeSessionPool } from "./runtime-session-pool.ts";
 import type { ExecutionStore } from "./execution-store.ts";
 import type { ExpertSessionStore } from "./expert-session-store.ts";
 import { StoredExecutionView, type MutableExecution } from "./execution-view.ts";
@@ -29,6 +32,7 @@ export interface PromptOptions {
 
 export interface ExpertTurn extends MutableExecution {
   readonly result: Promise<unknown>;
+  readonly usage: Promise<AgentMessageUsage | undefined>;
 }
 
 export interface ExpertSession {
@@ -40,6 +44,7 @@ export interface ExpertSession {
   getState(): Promise<ExpertSessionRecord>;
   listTurns(): Promise<readonly ExpertTurn[]>;
   getMessageHistory(): Promise<readonly ExpertSessionMessage[]>;
+  getUsage(): Promise<AgentMessageUsage | undefined>;
   getPromptQueue(): Promise<readonly PromptRequest[]>;
 }
 
@@ -56,6 +61,9 @@ type SteerClaim =
       readonly executionId: string;
       readonly contextId: string;
     };
+
+const EXPERT_SESSION_LEASE_MS = 30_000;
+const EXPERT_SESSION_LEASE_RENEWAL_MS = 10_000;
 
 export class ExpertSessionManager {
   private readonly active = new Map<string, ExpertSessionImpl>();
@@ -83,7 +91,13 @@ export class ExpertSessionManager {
       createdAt: now,
       updatedAt: now,
     });
-    const session = new ExpertSessionImpl(expert, this.dependencies, sessionId, false);
+    const claimId = randomUUID();
+    if (
+      !(await this.dependencies.sessions.claimLease(sessionId, claimId, EXPERT_SESSION_LEASE_MS))
+    ) {
+      throw new Error(`ExpertSession lease could not be acquired: ${sessionId}`);
+    }
+    const session = this.createActiveSession(expert, sessionId, false, claimId);
     this.active.set(sessionId, session);
     void rootExpert;
     return session;
@@ -102,39 +116,77 @@ export class ExpertSessionManager {
     if (record.expertId !== expert.id || record.expertVersion !== expert.version) {
       throw new Error(`Expert definition mismatch for Session ${request.sessionId}.`);
     }
-    if (record.activeExecutionId !== undefined) {
-      const execution = await this.dependencies.executions.get(record.activeExecutionId);
-      if (execution !== undefined && !isTerminal(execution.status)) {
-        await this.dependencies.executions.update(execution.executionId, { status: "interrupted" });
-        for (const invocation of await this.dependencies.executions.listInvocations(
-          execution.executionId,
-        )) {
-          if (!isTerminal(invocation.status)) {
-            await this.dependencies.executions.putInvocation(execution.executionId, {
-              ...invocation,
-              status: "interrupted",
-              updatedAt: new Date().toISOString(),
-            });
+    const claimId = randomUUID();
+    if (
+      !(await this.dependencies.sessions.claimLease(
+        request.sessionId,
+        claimId,
+        EXPERT_SESSION_LEASE_MS,
+      ))
+    ) {
+      throw new Error(`ExpertSession is active in another process: ${request.sessionId}`);
+    }
+    try {
+      if (record.activeExecutionId !== undefined) {
+        const execution = await this.dependencies.executions.get(record.activeExecutionId);
+        if (execution !== undefined && !isTerminal(execution.status)) {
+          await this.dependencies.executions.update(execution.executionId, {
+            status: "interrupted",
+          });
+          for (const invocation of await this.dependencies.executions.listInvocations(
+            execution.executionId,
+          )) {
+            if (!isTerminal(invocation.status)) {
+              await this.dependencies.executions.putInvocation(execution.executionId, {
+                ...invocation,
+                status: "interrupted",
+                updatedAt: new Date().toISOString(),
+              });
+            }
           }
         }
+        await this.dependencies.sessions.transact(request.sessionId, ({ session, prompts }) => ({
+          result: undefined,
+          session: {
+            ...session,
+            activeExecutionId: undefined,
+            lastStatus: "interrupted",
+            updatedAt: new Date().toISOString(),
+          },
+          prompts: prompts.map((prompt) =>
+            prompt.executionId === record.activeExecutionId && prompt.status === "running"
+              ? { ...prompt, status: "interrupted" as const, updatedAt: new Date().toISOString() }
+              : prompt,
+          ),
+        }));
       }
-      await this.dependencies.sessions.transact(request.sessionId, ({ session, prompts }) => ({
-        result: undefined,
-        session: {
-          ...session,
-          activeExecutionId: undefined,
-          lastStatus: "interrupted",
-          updatedAt: new Date().toISOString(),
-        },
-        prompts: prompts.map((prompt) =>
-          prompt.executionId === record.activeExecutionId && prompt.status === "running"
-            ? { ...prompt, status: "interrupted" as const, updatedAt: new Date().toISOString() }
-            : prompt,
-        ),
-      }));
+      const session = this.createActiveSession(expert, request.sessionId, true, claimId);
+      this.active.set(request.sessionId, session);
+      return session;
+    } catch (error) {
+      await this.dependencies.sessions.releaseLease(request.sessionId, claimId);
+      throw error;
     }
-    const session = new ExpertSessionImpl(expert, this.dependencies, request.sessionId, true);
-    this.active.set(request.sessionId, session);
+  }
+
+  private createActiveSession(
+    expert: ExpertDefinition,
+    sessionId: string,
+    paused: boolean,
+    claimId: string,
+  ): ExpertSessionImpl {
+    const session = new ExpertSessionImpl(
+      expert,
+      this.dependencies,
+      sessionId,
+      paused,
+      claimId,
+      () => {
+        if (this.active.get(sessionId) === session) {
+          this.active.delete(sessionId);
+        }
+      },
+    );
     return session;
   }
 }
@@ -142,15 +194,35 @@ export class ExpertSessionManager {
 class ExpertSessionImpl implements ExpertSession {
   private controller: ExecutionController | undefined;
   private processing: Promise<void> | undefined;
+  private readonly runtimeSessions = new RuntimeSessionPool();
+  private closePromise: Promise<void> | undefined;
+  private leaseRenewalTask: Promise<void> | undefined;
+  private leaseError: Error | undefined;
+  private readonly leaseRenewal: ReturnType<typeof setInterval>;
 
   constructor(
     readonly expert: ExpertDefinition,
     private readonly dependencies: ExpertSessionManagerDependencies,
     readonly sessionId: string,
     private paused: boolean,
-  ) {}
+    private readonly claimId: string,
+    private readonly onClosed: () => void,
+  ) {
+    this.leaseRenewal = setInterval(() => {
+      if (this.leaseRenewalTask === undefined) {
+        this.leaseRenewalTask = this.renewLease().finally(() => {
+          this.leaseRenewalTask = undefined;
+        });
+      }
+    }, EXPERT_SESSION_LEASE_RENEWAL_MS);
+    this.leaseRenewal.unref();
+  }
 
   async prompt(content: string, options: PromptOptions): Promise<ExpertTurn> {
+    if (this.leaseError !== undefined) throw this.leaseError;
+    if (this.closePromise !== undefined) {
+      throw new Error(`ExpertSession is closing or closed: ${this.sessionId}`);
+    }
     if (content.trim() === "") throw new Error("Prompt content must not be empty.");
     if (options.requestId.trim() === "") throw new Error("Prompt requestId must not be empty.");
     const mode = options.mode ?? "enqueue";
@@ -203,7 +275,8 @@ class ExpertSessionImpl implements ExpertSession {
   }
 
   async abort(reason?: string): Promise<void> {
-    await this.controller?.cancel(reason);
+    const controller = this.controller;
+    await controller?.cancel(reason);
     await this.dependencies.sessions.transact(this.sessionId, ({ session, prompts }) => ({
       result: undefined,
       session: { ...session, activeExecutionId: undefined, updatedAt: new Date().toISOString() },
@@ -213,53 +286,112 @@ class ExpertSessionImpl implements ExpertSession {
           : prompt,
       ),
     }));
-    this.controller = undefined;
     this.startProcessing();
   }
 
-  async close(reason?: string): Promise<void> {
-    const pending = (await this.getPromptQueue()).filter(
-      (prompt) => prompt.status === "queued" || prompt.status === "running",
-    );
-    await this.controller?.cancel(reason);
-    await this.controller?.closeRuntimes();
-    await this.dependencies.sessions.transact(this.sessionId, ({ session, prompts }) => ({
-      result: undefined,
-      session: {
-        ...session,
-        status: "closed",
-        activeExecutionId: undefined,
-        queuedRequestIds: [],
-        updatedAt: new Date().toISOString(),
-      },
-      prompts: prompts.map((prompt) =>
-        prompt.status === "queued" || prompt.status === "running"
-          ? { ...prompt, status: "cancelled" as const, updatedAt: new Date().toISOString() }
-          : prompt,
-      ),
-    }));
-    for (const prompt of pending) {
-      const execution = await this.dependencies.executions.get(prompt.executionId);
-      if (execution !== undefined && !isTerminal(execution.status)) {
-        await this.dependencies.executions.update(prompt.executionId, {
-          status: "cancelled",
-          error: reason,
-        });
-        for (const invocation of await this.dependencies.executions.listInvocations(
-          prompt.executionId,
-        )) {
-          if (!isTerminal(invocation.status)) {
-            await this.dependencies.executions.putInvocation(prompt.executionId, {
-              ...invocation,
-              status: "cancelled",
-              error: reason,
-              updatedAt: new Date().toISOString(),
-            });
+  close(reason?: string): Promise<void> {
+    if (this.closePromise === undefined) {
+      this.paused = true;
+      clearInterval(this.leaseRenewal);
+      this.runtimeSessions.seal();
+      this.closePromise = this.closeInternal(reason);
+    }
+    return this.closePromise;
+  }
+
+  private async closeInternal(reason?: string): Promise<void> {
+    const errors: unknown[] = [];
+    try {
+      const pending = (await this.getPromptQueue()).filter(
+        (prompt) => prompt.status === "queued" || prompt.status === "running",
+      );
+      await this.dependencies.sessions.transact(this.sessionId, ({ session, prompts }) => ({
+        result: undefined,
+        session: {
+          ...session,
+          activeExecutionId: undefined,
+          queuedRequestIds: [],
+          updatedAt: new Date().toISOString(),
+        },
+        prompts: prompts.map((prompt) =>
+          prompt.status === "queued" || prompt.status === "running"
+            ? { ...prompt, status: "cancelled" as const, updatedAt: new Date().toISOString() }
+            : prompt,
+        ),
+      }));
+      await this.controller?.cancel(reason);
+      for (const prompt of pending) {
+        const execution = await this.dependencies.executions.get(prompt.executionId);
+        if (execution !== undefined && !isTerminal(execution.status)) {
+          await this.dependencies.executions.update(prompt.executionId, {
+            status: "cancelled",
+            error: reason,
+          });
+          for (const invocation of await this.dependencies.executions.listInvocations(
+            prompt.executionId,
+          )) {
+            if (!isTerminal(invocation.status)) {
+              await this.dependencies.executions.putInvocation(prompt.executionId, {
+                ...invocation,
+                status: "cancelled",
+                error: reason,
+                updatedAt: new Date().toISOString(),
+              });
+            }
           }
         }
       }
+      await this.processing;
+    } catch (error) {
+      errors.push(error);
+    }
+    try {
+      await this.runtimeSessions.close();
+    } catch (error) {
+      errors.push(error);
+    }
+    if (errors.length === 0) {
+      try {
+        await this.dependencies.sessions.transact(this.sessionId, ({ session, prompts }) => ({
+          result: undefined,
+          session: { ...session, status: "closed", updatedAt: new Date().toISOString() },
+          prompts,
+        }));
+      } catch (error) {
+        errors.push(error);
+      }
+    }
+    if (this.leaseRenewalTask !== undefined) {
+      try {
+        await this.leaseRenewalTask;
+      } catch (error) {
+        errors.push(error);
+      }
+    }
+    try {
+      await this.dependencies.sessions.releaseLease(this.sessionId, this.claimId);
+    } catch (error) {
+      errors.push(error);
     }
     this.controller = undefined;
+    this.onClosed();
+    throwCollectedErrors(errors, "ExpertSession close failed.");
+  }
+
+  private async renewLease(): Promise<void> {
+    if (this.closePromise !== undefined) return;
+    try {
+      const renewed = await this.dependencies.sessions.claimLease(
+        this.sessionId,
+        this.claimId,
+        EXPERT_SESSION_LEASE_MS,
+      );
+      if (!renewed) throw new Error(`ExpertSession lease was lost: ${this.sessionId}`);
+    } catch (error) {
+      this.leaseError = error instanceof Error ? error : new Error(String(error));
+      this.paused = true;
+      await this.controller?.cancel(this.leaseError.message).catch(() => undefined);
+    }
   }
 
   async getState(): Promise<ExpertSessionRecord> {
@@ -305,6 +437,14 @@ class ExpertSessionImpl implements ExpertSession {
       if (timestamp !== 0) return timestamp;
       return left.role === right.role ? 0 : left.role === "user" ? -1 : 1;
     });
+  }
+
+  async getUsage(): Promise<AgentMessageUsage | undefined> {
+    const session = await this.getState();
+    const executions = await Promise.all(
+      session.executionIds.map(async (executionId) => await this.dependencies.executions.get(executionId)),
+    );
+    return mergeUsages(executions.map((execution) => execution?.usage));
   }
 
   async getPromptQueue(): Promise<readonly PromptRequest[]> {
@@ -444,7 +584,12 @@ class ExpertSessionImpl implements ExpertSession {
     const rootContextId = session.contextIds["root"]!;
     const contextIds = { ...session.contextIds };
     const runtimeContexts = { ...session.runtimeContexts };
-    this.controller = new ExecutionController(prompt.executionId, this.dependencies.executions);
+    const controller = new ExecutionController(
+      prompt.executionId,
+      this.dependencies.executions,
+      this.runtimeSessions,
+    );
+    this.controller = controller;
     let status: "succeeded" | "failed" | "cancelled" = "succeeded";
     let output: unknown;
     let error: unknown;
@@ -458,7 +603,7 @@ class ExpertSessionImpl implements ExpertSession {
         runtimeId: session.runtimeId,
         contextId: rootContextId,
         runtimeSnapshot: runtimeContexts[rootContextId],
-        controller: this.controller,
+        controller,
         store: this.dependencies.executions,
         runtimes: this.dependencies.runtimes,
         contextForMember: (expertId, policy) => {
@@ -474,10 +619,11 @@ class ExpertSessionImpl implements ExpertSession {
       });
     } catch (caught) {
       error = caught;
-      status = this.controller.isCancelled() ? "cancelled" : "failed";
+      status = controller.isCancelled() ? "cancelled" : "failed";
     }
     await this.dependencies.executions.update(prompt.executionId, {
       status,
+      ...(controller.getUsage() === undefined ? {} : { usage: controller.getUsage() }),
       ...(status === "succeeded" ? { output } : { error: serializeError(error) }),
     });
     await this.dependencies.sessions.transact(this.sessionId, ({ session: current, prompts }) => ({
@@ -494,8 +640,9 @@ class ExpertSessionImpl implements ExpertSession {
           : candidate,
       ),
     }));
-    await this.controller.closeRuntimes();
-    this.controller = undefined;
+    if (this.controller === controller) {
+      this.controller = undefined;
+    }
   }
 
   private async persistRuntimeContext(
@@ -516,8 +663,10 @@ class ExpertSessionImpl implements ExpertSession {
 
   private createTurn(executionId: string): ExpertTurn {
     const view = new StoredExecutionView(executionId, this.dependencies.executions);
+    const completion = waitForTerminalExecution(this.dependencies.executions, executionId);
     return Object.assign(view, {
-      result: waitForResult(this.dependencies.executions, executionId),
+      result: completion.then(readExecutionResult),
+      usage: completion.then((execution) => execution.usage),
       cancel: async (reason?: string) => {
         const state = await this.getState();
         if (state.activeExecutionId !== executionId || this.controller === undefined) {
@@ -537,24 +686,30 @@ class ExpertSessionImpl implements ExpertSession {
   }
 }
 
-async function waitForResult(store: ExecutionStore, executionId: string): Promise<unknown> {
+async function waitForTerminalExecution(
+  store: ExecutionStore,
+  executionId: string,
+): Promise<ExecutionRecord> {
   while (true) {
     const record = await store.get(executionId);
     if (record === undefined) throw new Error(`Execution not found: ${executionId}`);
-    if (record.status === "succeeded") return record.output;
     if (
+      record.status === "succeeded" ||
       record.status === "failed" ||
       record.status === "cancelled" ||
       record.status === "interrupted"
-    ) {
-      throw new Error(
-        record.error === undefined
-          ? `Execution ${record.status}: ${executionId}`
-          : readErrorMessage(record.error),
-      );
-    }
+    ) return record;
     await new Promise<void>((resolve) => setTimeout(resolve, 10));
   }
+}
+
+function readExecutionResult(record: ExecutionRecord): unknown {
+  if (record.status === "succeeded") return record.output;
+  throw new Error(
+    record.error === undefined
+      ? `Execution ${record.status}: ${record.executionId}`
+      : readErrorMessage(record.error),
+  );
 }
 
 function isTerminal(status: string): boolean {
@@ -573,4 +728,10 @@ function readErrorMessage(error: unknown): string {
     return String(error.message);
   }
   return String(error);
+}
+
+function throwCollectedErrors(errors: readonly unknown[], message: string): void {
+  if (errors.length === 0) return;
+  if (errors.length === 1) throw errors[0];
+  throw new AggregateError(errors, message);
 }

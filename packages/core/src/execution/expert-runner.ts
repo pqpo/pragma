@@ -1,6 +1,10 @@
 import { randomUUID } from "node:crypto";
 
-import type { Invocation, RuntimeSessionRef } from "@pragma/shared";
+import type {
+  AgentMessageUsage,
+  Invocation,
+  RuntimeContextSnapshot as SharedRuntimeContextSnapshot,
+} from "@pragma/shared";
 
 import type { Expert } from "../agent/expert-agent.ts";
 import { createTeamDelegationTool } from "../agent/agent-launcher.ts";
@@ -11,20 +15,17 @@ import {
   type ExpertTeam,
 } from "../agent/expert-team.ts";
 import type { RuntimeAgentSession } from "../runtime/runtime-adapter.ts";
+import { mergeUsage } from "../runtime/usage.ts";
 import { openRuntimeSession } from "../runtime/session-factory.ts";
 import type { RuntimeRegistry } from "../runtime-registry.ts";
 import type { ExpertAgentHumanRequest, ExpertAgentHumanResponse } from "../tools/managed-tool.ts";
 import type { ExecutionStore } from "./execution-store.ts";
+import { RuntimeSessionPool, type RuntimeSessionIdentity } from "./runtime-session-pool.ts";
 
-export interface RuntimeContextSnapshot {
-  readonly expertId: string;
-  readonly runtimeId: string;
-  readonly systemSessionId: string;
-  readonly runtimeSession: RuntimeSessionRef;
-}
+export type RuntimeContextSnapshot = SharedRuntimeContextSnapshot;
 
 export class ExecutionController {
-  private readonly runtimeSessions = new Map<string, RuntimeAgentSession>();
+  private readonly activeRuntimeSessions = new Map<string, RuntimeAgentSession>();
   private readonly pendingInteractions = new Map<
     string,
     {
@@ -34,22 +35,42 @@ export class ExecutionController {
     }
   >();
   private cancelled = false;
+  private usage: AgentMessageUsage | undefined;
 
   constructor(
     readonly executionId: string,
     readonly store: ExecutionStore,
+    private readonly runtimeSessions: RuntimeSessionPool = new RuntimeSessionPool(),
   ) {}
 
   isCancelled(): boolean {
     return this.cancelled;
   }
 
-  getRuntime(contextId: string): RuntimeAgentSession | undefined {
-    return this.runtimeSessions.get(contextId);
+  addUsage(usage: AgentMessageUsage | undefined): void {
+    this.usage = mergeUsage(this.usage, usage);
   }
 
-  setRuntime(contextId: string, session: RuntimeAgentSession): void {
-    this.runtimeSessions.set(contextId, session);
+  getUsage(): AgentMessageUsage | undefined {
+    return this.usage;
+  }
+
+  async acquireRuntime(
+    identity: RuntimeSessionIdentity,
+    create: () => Promise<RuntimeAgentSession>,
+  ): Promise<RuntimeAgentSession> {
+    const session = await this.runtimeSessions.acquire(identity, create);
+    this.activeRuntimeSessions.set(identity.contextId, session);
+    if (this.cancelled) {
+      await session.cancelCurrentSubmission();
+      throw new Error(`Execution cancelled: ${this.executionId}`);
+    }
+    return session;
+  }
+
+  async releaseRuntime(identity: RuntimeSessionIdentity): Promise<void> {
+    this.activeRuntimeSessions.delete(identity.contextId);
+    await this.runtimeSessions.release(identity);
   }
 
   async requestHumanInteraction(
@@ -109,7 +130,7 @@ export class ExecutionController {
     for (const pending of this.pendingInteractions.values()) pending.reject(cancellation);
     this.pendingInteractions.clear();
     await Promise.allSettled(
-      [...this.runtimeSessions.values()].map((runtime) => runtime.cancelCurrentSubmission()),
+      [...this.activeRuntimeSessions.values()].map((runtime) => runtime.cancelCurrentSubmission()),
     );
     const record = await this.store.get(this.executionId);
     if (record !== undefined && !isTerminal(record.status)) {
@@ -137,14 +158,14 @@ export class ExecutionController {
     contextId: string,
     request: { readonly requestId: string; readonly content: string; readonly targetRunId: string },
   ): Promise<void> {
-    const runtime = this.runtimeSessions.get(contextId);
+    const runtime = this.activeRuntimeSessions.get(contextId);
     if (runtime === undefined) throw new Error("Cannot steer without an active Runtime Session.");
     await runtime.steer(request);
   }
 
   async closeRuntimes(): Promise<void> {
-    await Promise.allSettled([...this.runtimeSessions.values()].map((runtime) => runtime.close()));
-    this.runtimeSessions.clear();
+    await this.runtimeSessions.close();
+    this.activeRuntimeSessions.clear();
   }
 }
 
@@ -160,6 +181,7 @@ export interface RunExpertInvocationOptions {
   readonly runtimeId?: string | undefined;
   readonly contextId: string;
   readonly runtimeSnapshot?: RuntimeContextSnapshot | undefined;
+  readonly runtimeScope?: "invocation" | "session" | undefined;
   readonly controller: ExecutionController;
   readonly store: ExecutionStore;
   readonly runtimes: RuntimeRegistry;
@@ -194,7 +216,10 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
     options.executionId,
     options.invocationId,
   );
-  if (invocation.status === "succeeded") return invocation.output;
+  if (invocation.status === "succeeded") {
+    options.controller.addUsage(invocation.usage);
+    return invocation.output;
+  }
   await updateInvocation(options.store, options.executionId, invocation, { status: "running" });
   await options.store.appendEvent(options.executionId, options.invocationId, "invocation.started", {
     expertId: nativeExpert.id,
@@ -206,9 +231,63 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
       : withAdditionalTool(nativeExpert, createTeamDelegationTool(team));
   const runtimeId = options.runtimeId ?? options.runtimeSnapshot?.runtimeId;
   const runtime = options.runtimes.resolve(runtimeId);
-  let session = options.controller.getRuntime(options.contextId);
-  if (session === undefined) {
-    session = await openRuntimeSession(runtime, {
+  const runtimeIdentity = {
+    contextId: options.contextId,
+    expertId: nativeExpert.id,
+    runtimeId: runtime.descriptor.id,
+  } satisfies RuntimeSessionIdentity;
+  if (
+    options.runtimeSnapshot !== undefined &&
+    (options.runtimeSnapshot.expertId !== runtimeIdentity.expertId ||
+      options.runtimeSnapshot.runtimeId !== runtimeIdentity.runtimeId)
+  ) {
+    throw new Error(
+      `Runtime context ${options.contextId} is bound to ${options.runtimeSnapshot.expertId}/${options.runtimeSnapshot.runtimeId} and cannot be reused with ${runtimeIdentity.expertId}/${runtimeIdentity.runtimeId}.`,
+    );
+  }
+  const persistRuntimeSnapshot = async (snapshot: RuntimeContextSnapshot): Promise<void> => {
+    if (options.runtimeScope === "invocation") {
+      const latest = await requireInvocation(
+        options.store,
+        options.executionId,
+        options.invocationId,
+      );
+      await options.store.putInvocation(options.executionId, {
+        ...latest,
+        runtimeContext: { contextId: options.contextId, ...snapshot },
+        updatedAt: new Date().toISOString(),
+      });
+      return;
+    }
+    await options.onRuntimeContext?.(options.contextId, snapshot);
+  };
+  const executionContext = {
+    executionId: options.executionId,
+    invocationId: options.invocationId,
+    depth,
+    ...(team === undefined
+      ? {}
+      : {
+          delegate: async (request: {
+            readonly expertId: string;
+            readonly prompt: string;
+            readonly context?: "fresh" | "reuse" | undefined;
+            readonly runtime?: string | undefined;
+          }) =>
+            await delegate({
+              ...options,
+              limiter,
+              team,
+              sourceExpertId,
+              depth,
+              request,
+            }),
+        }),
+  };
+  const humanInteractionHandler = async (request: ExpertAgentHumanRequest) =>
+    await options.controller.requestHumanInteraction(options.invocationId, request);
+  const session = await options.controller.acquireRuntime(runtimeIdentity, async () => {
+    const opened = await openRuntimeSession(runtime, {
       agent: executableExpert,
       owner:
         options.owner.type === "expert-session"
@@ -216,29 +295,11 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
           : { ...options.owner, invocationId: options.invocationId },
       systemSessionId: options.runtimeSnapshot?.systemSessionId,
       runtimeSession: options.runtimeSnapshot?.runtimeSession,
-      executionContext: {
-        executionId: options.executionId,
-        invocationId: options.invocationId,
-        depth,
-        ...(team === undefined
-          ? {}
-          : {
-              delegate: async (request) =>
-                await delegate({
-                  ...options,
-                  limiter,
-                  team,
-                  sourceExpertId,
-                  depth,
-                  request,
-                }),
-            }),
-      },
-      humanInteractionHandler: async (request) =>
-        await options.controller.requestHumanInteraction(options.invocationId, request),
+      executionContext,
+      humanInteractionHandler,
       onSessionInfo: async (info) => {
         if (info.runtimeSession.id === "") return;
-        await options.onRuntimeContext?.(options.contextId, {
+        await persistRuntimeSnapshot({
           expertId: nativeExpert.id,
           runtimeId: runtime.descriptor.id,
           systemSessionId: info.systemSessionId,
@@ -246,19 +307,26 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
         });
       },
     });
-    options.controller.setRuntime(options.contextId, session);
-    const info = session.info();
+    const info = opened.info();
     if (info.runtimeSession.id !== "") {
-      await options.onRuntimeContext?.(options.contextId, {
+      await persistRuntimeSnapshot({
         expertId: nativeExpert.id,
         runtimeId: runtime.descriptor.id,
         systemSessionId: info.systemSessionId,
         runtimeSession: info.runtimeSession,
       });
     }
-  }
+    return opened;
+  });
 
-  const handle = session.submit({ runId: options.invocationId, query: options.prompt });
+  const handle = session.submit({
+    runId: options.invocationId,
+    query: options.prompt,
+    execution: {
+      context: executionContext,
+      humanInteractionHandler,
+    },
+  });
   const drain = (async () => {
     for await (const event of handle.events) {
       await options.store.appendEvent(
@@ -282,6 +350,7 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
 
   try {
     const result = await handle.result;
+    options.controller.addUsage(result.result.usage);
     await drain;
     const output = result.result.output;
     await options.store.appendOutput(options.executionId, options.invocationId, {
@@ -294,14 +363,16 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
       "invocation.succeeded",
       {
         output,
+        ...(result.result.usage === undefined ? {} : { usage: result.result.usage }),
       },
     );
     await updateInvocation(options.store, options.executionId, invocation, {
       status: "succeeded",
       output,
+      ...(result.result.usage === undefined ? {} : { usage: result.result.usage }),
     });
     const info = session.info();
-    await options.onRuntimeContext?.(options.contextId, {
+    await persistRuntimeSnapshot({
       expertId: nativeExpert.id,
       runtimeId: runtime.descriptor.id,
       systemSessionId: info.systemSessionId,
@@ -383,12 +454,31 @@ async function delegate(
       runtimeId: options.request.runtime,
       contextId: context.contextId,
       runtimeSnapshot: context.snapshot,
+      runtimeScope:
+        options.owner.type === "flow-execution"
+          ? "invocation"
+          : policy === "fresh"
+            ? "invocation"
+            : "session",
       sourceExpertId: expert.id,
       depth: options.depth + 1,
     });
     return { invocationId, output };
   } finally {
-    release?.();
+    try {
+      if (policy === "fresh") {
+        const runtime = options.runtimes.resolve(
+          options.request.runtime ?? context.snapshot?.runtimeId,
+        );
+        await options.controller.releaseRuntime({
+          contextId: context.contextId,
+          expertId: expert.id,
+          runtimeId: runtime.descriptor.id,
+        });
+      }
+    } finally {
+      release?.();
+    }
   }
 }
 
@@ -418,8 +508,9 @@ async function updateInvocation(
   current: Invocation,
   patch: Partial<Invocation>,
 ): Promise<void> {
+  const latest = await requireInvocation(store, executionId, current.invocationId);
   await store.putInvocation(executionId, {
-    ...current,
+    ...latest,
     ...patch,
     invocationId: current.invocationId,
     updatedAt: new Date().toISOString(),

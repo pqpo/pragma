@@ -66,13 +66,18 @@ for await (const event of turn.events()) {
 }
 
 const result = await turn.result;
+const turnUsage = await turn.usage;
 ```
 
 需要读取既有对话时使用 Session 的 message history，而不是重放执行事件：
 
 ```ts
 const messages = await session.getMessageHistory();
+const sessionUsage = await session.getUsage();
 ```
+
+Usage 随 Execution 持久化。`turn.usage` 读取单轮汇总，`session.getUsage()` 汇总 Session
+内所有已完成 Turn；三个控制台聊天示例会在输入 `/exit` 时打印 Session 总 Usage。
 
 模型输出并非确定性结果；这个检查验证的是调用链与多轮上下文，不代表对任意事实问题的
 答案都准确。业务准确性应为具体 Expert 准备固定输入、期望标准和自动化评测。
@@ -84,7 +89,8 @@ const messages = await session.getMessageHistory();
 1. 通过 Runtime 的 `canUse()` 检查 CLI 是否可用；
 2. 通过 `listModels()` 探测当前环境支持的模型；
 3. 让你输入编号选择模型，或直接回车沿用 CLI 默认模型；
-4. 创建带测试用 In-memory Context Store 的 ExpertSession 并进入流式聊天。
+4. 根据所选模型展示支持的思考深度，选择编号或回车沿用 CLI 默认深度；
+5. 创建带测试用 In-memory Context Store 的 ExpertSession 并进入流式聊天。
 
 ```bash
 pnpm --filter @pragma/examples example:runtime-codex
