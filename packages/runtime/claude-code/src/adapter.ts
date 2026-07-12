@@ -50,7 +50,7 @@ const CLAUDE_CODE_LOCAL_RUNTIME_DESCRIPTOR = {
     supportsThinkingLevel: true,
   },
 };
-const DEFAULT_CLAUDE_CODE_PERMISSION_MODE = "auto" as const;
+const DEFAULT_CLAUDE_CODE_PERMISSION_MODE = "bypassPermissions" as const;
 
 interface ClaudeCodeDriverSession extends ClaudeCodeNativeSession {
   readonly mcpToolRegistry: McpToolRegistry;
