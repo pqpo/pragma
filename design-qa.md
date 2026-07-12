@@ -38,12 +38,12 @@
 ## Comparison history
 
 1. Captured and compared the initial directory, detail, and creation screens.
-2. Added first-step validation because Name, ID, and Description are required by `defineAgent`.
+2. Added first-step validation because Name, ID, and Description are required by `defineExpert`.
 3. Re-captured all screens and rechecked the core navigation and creation path.
 
 ## Follow-up polish
 
-- Define the shared, executable Expert Manifest mapping before wiring these Desktop-managed declarations into `ExpertAgent.create()`; workspace and secret resolution must remain host responsibilities.
+- Define the shared, executable Expert Manifest mapping before wiring these Desktop-managed declarations into `defineExpert()`; workspace and secret resolution must remain host responsibilities.
 - Add dedicated editors for skills, tools, MCP servers, and plugins. The persisted data is preserved during identity/model edits, but only its summary is currently displayed.
 - Replace the placeholder team and tool collections when their persisted domain models are defined.
 

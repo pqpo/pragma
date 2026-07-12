@@ -12,12 +12,16 @@ import {
   type SkillMemoryConfig,
   type SkillMemoryConfigInput,
   MemoryRunEvidenceSchema as SkillMemoryRunEvidenceSchema,
-  MemoryWorkflowEvidenceSchema as SkillMemoryWorkflowEvidenceSchema,
+  MemoryExecutionEvidenceSchema as SkillMemoryExecutionEvidenceSchema,
 } from "./schema.ts";
 import { createSkillMemoryStore } from "./skill-store.ts";
 import { createMemoryContextStore } from "../context-projection/store.ts";
 
-export { SkillMemoryConfigSchema, SkillMemoryRunEvidenceSchema, SkillMemoryWorkflowEvidenceSchema };
+export {
+  SkillMemoryConfigSchema,
+  SkillMemoryRunEvidenceSchema,
+  SkillMemoryExecutionEvidenceSchema,
+};
 export type { SkillMemoryConfig, SkillMemoryConfigInput };
 
 type SkillMemoryPluginSetupContext = ExpertAgentPluginSetupContext & {
@@ -64,7 +68,11 @@ export function createSkillMemoryContributions(
     }
 
     await regenerateSummary(
-      resolveMemoryArtifactRoots(context.workspaceRoot, config, context.agent?.id ?? "unknown-agent"),
+      resolveMemoryArtifactRoots(
+        context.workspaceRoot,
+        config,
+        context.agent?.id ?? "unknown-agent",
+      ),
       context.memorySystem,
       context.agent?.id ?? "unknown-agent",
     );

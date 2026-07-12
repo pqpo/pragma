@@ -17,7 +17,7 @@ import {
   SUMMARY_CONTEXT_ID,
   TASK_MEMORY_PREFIX,
   TASKS_PREFIX,
-  WORKFLOWS_EVIDENCE_PREFIX,
+  EXECUTIONS_EVIDENCE_PREFIX,
 } from "../context-projection/constants.ts";
 
 export function parseMarkdown(raw: string): {
@@ -295,8 +295,8 @@ export function inferSchemaVersion(id: string): string {
   }
 
   if (id.startsWith(TASKS_PREFIX)) {
-    return id.endsWith(`/workflow${MARKDOWN_EXTENSION}`)
-      ? "pragma.memory-workflow-summary/v1"
+    return id.endsWith(`/execution${MARKDOWN_EXTENSION}`)
+      ? "pragma.memory-execution-summary/v1"
       : "pragma.memory-task-summary/v1";
   }
 
@@ -316,8 +316,8 @@ export function inferSchemaVersion(id: string): string {
     return "pragma.memory-run-evidence/v2";
   }
 
-  if (id.startsWith(WORKFLOWS_EVIDENCE_PREFIX)) {
-    return "pragma.memory-workflow-evidence/v2";
+  if (id.startsWith(EXECUTIONS_EVIDENCE_PREFIX)) {
+    return "pragma.memory-execution-evidence/v2";
   }
 
   if (id.startsWith(DISTILLATION_EVIDENCE_PREFIX)) {
@@ -355,7 +355,7 @@ export function isAllowedMemoryContextId(id: string): boolean {
     (id.startsWith(EXPERIENCE_MEMORY_PREFIX) && id.endsWith(MARKDOWN_EXTENSION)) ||
     (id.startsWith(FACT_MEMORY_PREFIX) && id.endsWith(MARKDOWN_EXTENSION)) ||
     ((id.startsWith(RUNS_EVIDENCE_PREFIX) ||
-      id.startsWith(WORKFLOWS_EVIDENCE_PREFIX) ||
+      id.startsWith(EXECUTIONS_EVIDENCE_PREFIX) ||
       id.startsWith(DISTILLATION_EVIDENCE_PREFIX)) &&
       id.endsWith(".json"))
   );

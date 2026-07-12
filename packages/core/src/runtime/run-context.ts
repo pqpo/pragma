@@ -6,8 +6,8 @@ export interface ExpertAgentRunSource {
   readonly label?: string | undefined;
 }
 
-export const EXECUTION_WORKFLOW_RUN_ID_ATTR = "execution.workflowRunId";
-export const EXECUTION_TASK_RUN_ID_ATTR = "execution.taskRunId";
+export const EXECUTION_ID_ATTR = "execution.executionId";
+export const INVOCATION_ID_ATTR = "execution.invocationId";
 export const EXECUTION_RUNTIME_SESSION_ATTR = "execution.runtimeSession";
 
 export interface ExpertAgentRunContext {
@@ -16,8 +16,8 @@ export interface ExpertAgentRunContext {
 }
 
 export interface ExecutionRunScope {
-  readonly workflowRunId?: string | undefined;
-  readonly taskRunId?: string | undefined;
+  readonly executionId?: string | undefined;
+  readonly invocationId?: string | undefined;
   readonly runtimeSession?: RuntimeSessionRef | undefined;
 }
 
@@ -45,10 +45,8 @@ export function withExecutionRunScope(
     ...base,
     attributes: {
       ...base.attributes,
-      ...(scope.workflowRunId === undefined
-        ? {}
-        : { [EXECUTION_WORKFLOW_RUN_ID_ATTR]: scope.workflowRunId }),
-      ...(scope.taskRunId === undefined ? {} : { [EXECUTION_TASK_RUN_ID_ATTR]: scope.taskRunId }),
+      ...(scope.executionId === undefined ? {} : { [EXECUTION_ID_ATTR]: scope.executionId }),
+      ...(scope.invocationId === undefined ? {} : { [INVOCATION_ID_ATTR]: scope.invocationId }),
       ...(scope.runtimeSession === undefined
         ? {}
         : {
@@ -62,8 +60,8 @@ export function readExecutionRunScope(
   context: ExpertAgentRunContext | undefined,
 ): ExecutionRunScope {
   return {
-    workflowRunId: readContextAttribute(context, EXECUTION_WORKFLOW_RUN_ID_ATTR),
-    taskRunId: readContextAttribute(context, EXECUTION_TASK_RUN_ID_ATTR),
+    executionId: readContextAttribute(context, EXECUTION_ID_ATTR),
+    invocationId: readContextAttribute(context, INVOCATION_ID_ATTR),
     runtimeSession: readRuntimeSessionAttribute(context),
   };
 }

@@ -28,7 +28,8 @@ export interface AgentLifecycle<TContext = unknown> {
   readonly enqueue: <TResult>(
     work: (context: AgentRunExecutionContext) => Promise<TResult>,
   ) => Promise<TResult>;
-  readonly abort: () => Promise<void>;
+  readonly cancelCurrent: () => Promise<void>;
+  readonly close: () => Promise<void>;
 }
 
 export function createQueuedAgentLifecycle<TContext = unknown>(
@@ -57,9 +58,9 @@ export function createQueuedAgentLifecycle<TContext = unknown>(
     ]);
   };
 
-  const abortCurrentRun = (): void => {
+  const abortCurrentRun = (reason: unknown): void => {
     if (currentRunController !== undefined && !currentRunController.signal.aborted) {
-      currentRunController.abort(sessionAbortController.signal.reason);
+      currentRunController.abort(reason);
     }
   };
 
@@ -126,7 +127,12 @@ export function createQueuedAgentLifecycle<TContext = unknown>(
       );
       return await result;
     },
-    async abort() {
+    async cancelCurrent() {
+      const reason = new Error("Agent submission was cancelled.");
+      abortCurrentRun(reason);
+      await hooks.abort?.(currentRunController?.signal ?? AbortSignal.abort(reason));
+    },
+    async close() {
       if (sessionState === "closed") {
         await cleanupOnce();
         return;
@@ -135,7 +141,7 @@ export function createQueuedAgentLifecycle<TContext = unknown>(
       if (sessionState === "active") {
         sessionState = "closing";
         sessionAbortController.abort(new Error("Agent session was aborted."));
-        abortCurrentRun();
+        abortCurrentRun(sessionAbortController.signal.reason);
         await hooks.abort?.(sessionAbortController.signal);
       }
 

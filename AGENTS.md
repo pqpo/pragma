@@ -233,11 +233,11 @@ Server 与 Agent 的关系：
 
 - Agent workspace 只保存任务明确需要的 repository、input、artifact 和 Agent 主动创建或修改的文件。
 - Runtime Session、Runtime 配置和插件安装副本不得写入 workspace。
-- Pragma 管理的 Runtime Session 存放在 `~/.pragma/state/workflows/<workflowRunId>/sessions/<systemSessionId>/`。
+- ExpertSession、Execution 与 Runtime Session 分别存放在 `~/.pragma/state/expert-sessions/`、`~/.pragma/state/executions/` 和 `~/.pragma/state/runtime-sessions/`。
 - Agent 插件副本缓存到 `~/.pragma/cache/agents/<agentId>/plugins/<pluginId>/`。
 - 外部 ID 目录段统一通过 `@pragma/core` 的 `PragmaPaths` 编码和解析，具体 Runtime 或插件 loader 不自行拼接管理路径。
-- 每个 Runtime Session 创建请求必须携带明确的 Workflow owner；恢复还必须提供原 `systemSessionId` 和 `RuntimeSessionRef`。
-- Core 必须通过原子 ownership claim 保证 `systemSessionId` 只归属一个 Workflow；不要用“先扫描再写入”的 TOCTOU 检查代替原子声明。
+- 每个 Runtime Session 必须由 ExpertSession context 或 FlowExecution Invocation 明确拥有；恢复还必须提供原 `systemSessionId` 和 `RuntimeSessionRef`。
+- Core 必须通过原子 ownership claim 保证 `systemSessionId` 只有一个 owner；不要用“先扫描再写入”的 TOCTOU 检查代替原子声明。
 
 ## 本地 Agent 桥接规范
 
@@ -460,11 +460,12 @@ ContextManager
 RuntimeAdapter
 ```
 
-ExpertAgent API 设计要求：
+Expert API 设计要求：
 
-- 保留 `ExpertAgent.create()` 作为标准创建入口，负责异步插件加载、inline plugin entry 合并、日志初始化和实例归一化。
-- `defineAgent()` 只是 `ExpertAgent.create()` 的声明语法糖；不要在 `defineAgent()` 下再实现独立 Agent 包装层。
-- Agent 运行能力优先加到 `ExpertAgent`，不要只放在 Directive SDK 包装层中。
+- `defineExpert()` 是单专家唯一创建入口，负责异步插件加载、inline plugin entry 合并、日志初始化和实例归一化。
+- `defineExpertTeam()` 声明由 coordinator 统一接收外部 prompt 的特殊 Expert。
+- `defineFlow()` 声明 Flow；Task 和 HumanTask 只能通过 FlowSpec 内联创建。
+- PragmaApp 只公开 `experts` 与 `flows` 两个执行 namespace。
 
 不要引入具体 Claude SDK、Codex SDK、PI SDK、具体 runtime 包、Playbook、HTTP Controller、数据库实现或 Server 应用层实现。
 

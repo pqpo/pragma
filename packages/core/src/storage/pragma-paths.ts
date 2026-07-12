@@ -32,55 +32,90 @@ export class PragmaPaths {
     return join(this.root, "state");
   }
 
-  workflowsRoot(): string {
-    return join(this.stateRoot(), "workflows");
+  expertSessionsRoot(): string {
+    return join(this.stateRoot(), "expert-sessions");
   }
 
-  systemSessionOwnersRoot(): string {
-    return join(this.workflowsRoot(), ".system-session-owners");
+  expertSessionRoot(sessionId: string): string {
+    return join(this.expertSessionsRoot(), encodePragmaPathSegment(sessionId));
   }
 
-  systemSessionOwner(systemSessionId: string): string {
-    return join(this.systemSessionOwnersRoot(), `${encodePragmaPathSegment(systemSessionId)}.json`);
+  expertSessionState(sessionId: string): string {
+    return join(this.expertSessionRoot(sessionId), "session.json");
   }
 
-  workflowRoot(workflowRunId: string): string {
-    return join(this.workflowsRoot(), encodePragmaPathSegment(workflowRunId));
+  expertSessionPrompts(sessionId: string): string {
+    return join(this.expertSessionRoot(sessionId), "prompts.json");
   }
 
-  workflowState(workflowRunId: string): string {
-    return join(this.workflowRoot(workflowRunId), "workflow.json");
+  expertSessionTransaction(sessionId: string): string {
+    return join(this.expertSessionRoot(sessionId), "transaction.json");
   }
 
-  workflowEvents(rootWorkflowRunId: string): string {
-    return join(this.workflowRoot(rootWorkflowRunId), "events.jsonl");
+  expertSessionLock(sessionId: string): string {
+    return join(this.expertSessionRoot(sessionId), ".lock");
   }
 
-  workflowStateLock(): string {
-    return join(this.workflowsRoot(), ".workflow-state.lock");
+  executionsRoot(): string {
+    return join(this.stateRoot(), "executions");
   }
 
-  workflowEventsLock(rootWorkflowRunId: string): string {
-    return join(this.workflowRoot(rootWorkflowRunId), ".events.lock");
+  executionRoot(executionId: string): string {
+    return join(this.executionsRoot(), encodePragmaPathSegment(executionId));
   }
 
-  workflowSessionsRoot(workflowRunId: string): string {
-    return join(this.workflowRoot(workflowRunId), "sessions");
+  executionState(executionId: string): string {
+    return join(this.executionRoot(executionId), "execution.json");
   }
 
-  systemSessionRoot(workflowRunId: string, systemSessionId: string): string {
-    return join(this.workflowSessionsRoot(workflowRunId), encodePragmaPathSegment(systemSessionId));
+  executionInvocations(executionId: string): string {
+    return join(this.executionRoot(executionId), "invocations.json");
   }
 
-  systemSessionManifest(workflowRunId: string, systemSessionId: string): string {
-    return join(this.systemSessionRoot(workflowRunId, systemSessionId), "session.json");
+  executionEvents(executionId: string): string {
+    return join(this.executionRoot(executionId), "events.jsonl");
   }
 
-  runtimeRoot(workflowRunId: string, systemSessionId: string, runtimeName: string): string {
+  executionOutputs(executionId: string): string {
+    return join(this.executionRoot(executionId), "outputs.jsonl");
+  }
+
+  executionLock(executionId: string): string {
+    return join(this.executionRoot(executionId), ".lock");
+  }
+
+  runtimeSessionOwnersRoot(): string {
+    return join(this.stateRoot(), "runtime-session-owners");
+  }
+
+  runtimeSessionOwner(systemSessionId: string): string {
+    return join(
+      this.runtimeSessionOwnersRoot(),
+      `${encodePragmaPathSegment(systemSessionId)}.json`,
+    );
+  }
+
+  runtimeSessionsRoot(): string {
+    return join(this.stateRoot(), "runtime-sessions");
+  }
+
+  runtimeOwnerRoot(ownerId: string): string {
+    return join(this.runtimeSessionsRoot(), encodePragmaPathSegment(ownerId));
+  }
+
+  ownedSystemSessionRoot(ownerId: string, systemSessionId: string): string {
+    return join(this.runtimeOwnerRoot(ownerId), encodePragmaPathSegment(systemSessionId));
+  }
+
+  ownedSystemSessionManifest(ownerId: string, systemSessionId: string): string {
+    return join(this.ownedSystemSessionRoot(ownerId, systemSessionId), "session.json");
+  }
+
+  ownedRuntimeRoot(ownerId: string, systemSessionId: string, runtimeName: string): string {
     if (!/^[a-z0-9][a-z0-9-]*$/.test(runtimeName)) {
       throw new Error(`Invalid Pragma runtime storage name: ${runtimeName}.`);
     }
-    return join(this.systemSessionRoot(workflowRunId, systemSessionId), "runtime", runtimeName);
+    return join(this.ownedSystemSessionRoot(ownerId, systemSessionId), "runtime", runtimeName);
   }
 
   agentsCacheRoot(): string {

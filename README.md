@@ -18,7 +18,7 @@
 
 Pragma helps teams build AI expert groups for production-grade work: requirements analysis, technical planning, code implementation, code review, testing analysis, and domain knowledge support.
 
-It is not designed as a single general-purpose chatbot. Pragma focuses on reusable expert definitions, shared context, controlled tool access, runtime replacement, and governance boundaries that can grow with complex engineering and business workflows.
+It is not designed as a single general-purpose chatbot. Pragma focuses on reusable expert definitions, shared context, controlled tool access, runtime replacement, and governance boundaries that can grow with complex engineering and business executions.
 
 ## Why Pragma?
 
@@ -51,11 +51,11 @@ flowchart LR
 
 Pragma currently provides:
 
-- `ExpertAgent` creation APIs for defining reusable AI experts.
+- `Expert` creation APIs for defining reusable AI experts.
 - Context systems backed by in-memory or filesystem stores.
 - Managed tools, MCP tool integration, plugin loading, and approval policies.
 - Runtime adapter contracts and concrete PI / Codex runtime packages.
-- Directive and workflow primitives for composing expert work with deterministic TypeScript tasks.
+- Directive and execution primitives for composing expert work with deterministic TypeScript tasks.
 - Browser-safe shared schemas and DTOs built with Zod.
 - Web, server, worker, desktop, client SDK, and infrastructure package boundaries in a pnpm monorepo.
 
@@ -160,7 +160,7 @@ pnpm --filter @pragma/examples dev src/run-expert-agent.ts
 Pass a custom prompt:
 
 ```bash
-pnpm --filter @pragma/examples dev src/run-expert-agent.ts "Summarize the ExpertAgent lifecycle in three sentences."
+pnpm --filter @pragma/examples dev src/run-expert-agent.ts "Summarize the Expert lifecycle in three sentences."
 ```
 
 More examples:
@@ -188,7 +188,7 @@ packages/
   shared/         Cross-runtime schemas, DTOs, domain models, and pure utilities
   client/         Browser/client HTTP SDK
   server/         Server-side infrastructure boundary
-  core/           ExpertAgent, context, tools, plugins, and runtime contracts
+  core/           Expert, context, tools, plugins, and runtime contracts
   runtime/pi/     PI runtime adapter
   runtime/codex/  Codex local runtime adapter
   eslint-config/  Shared ESLint config
@@ -198,7 +198,7 @@ plugins/
   memory/         Memory plugin
   repo-manager/   Repository management plugin
 
-examples/         Runnable ExpertAgent examples
+examples/         Runnable Expert examples
 docs/             Architecture notes, ADRs, conventions, and usage guides
 infra/            Infrastructure composition directory
 ```

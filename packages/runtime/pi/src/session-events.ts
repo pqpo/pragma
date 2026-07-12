@@ -25,7 +25,11 @@ export function readAssistantThinkingDelta(event: AgentSessionEvent): string | u
 }
 
 export function readAssistantMessageText(event: AgentSessionEvent): string | undefined {
-  if (event.type !== "message_end" || !isRecord(event.message) || event.message["role"] !== "assistant") {
+  if (
+    event.type !== "message_end" ||
+    !isRecord(event.message) ||
+    event.message["role"] !== "assistant"
+  ) {
     return undefined;
   }
 
@@ -34,7 +38,9 @@ export function readAssistantMessageText(event: AgentSessionEvent): string | und
 
 export function readProgressEvent(
   event: AgentSessionEvent,
-): { readonly stage: string; readonly message?: string | undefined; readonly data?: unknown } | undefined {
+):
+  | { readonly stage: string; readonly message?: string | undefined; readonly data?: unknown }
+  | undefined {
   if (event.type === "turn_start") {
     return { stage: "turn.start", message: "Turn started" };
   }
@@ -170,7 +176,9 @@ function readMessageText(message: unknown): string | undefined {
 
   if (Array.isArray(content)) {
     const text = content
-      .map((item) => (isRecord(item) && typeof item["text"] === "string" ? item["text"] : undefined))
+      .map((item) =>
+        isRecord(item) && typeof item["text"] === "string" ? item["text"] : undefined,
+      )
       .filter((item): item is string => item !== undefined)
       .join("");
 

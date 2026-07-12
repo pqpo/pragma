@@ -2,7 +2,7 @@
 
 本文专门说明 Pragma 当前的 Memory System：四类记忆的定义、显式加载方式、配置方式、工具入口，以及它们之间的演化关系。
 
-当前记忆系统由 `@pragma/plugin-memory` 提供具体实现。`ExpertAgent` / `defineAgent()` 不会默认加载记忆系统；需要记忆能力时，宿主必须显式注入 memory plugin。
+当前记忆系统由 `@pragma/plugin-memory` 提供具体实现。`Expert` / `defineExpert()` 不会默认加载记忆系统；需要记忆能力时，宿主必须显式注入 memory plugin。
 
 ## 四类记忆
 
@@ -28,15 +28,15 @@ Task Memory -> Experience Memory -> Fact Memory / Skill Memory
 
 ## 显式加载
 
-`ExpertAgent.create()` 和 `defineAgent()` 只加载宿主传入的插件。要启用四类记忆，显式传入 `@pragma/plugin-memory`：
+`defineExpert()` 和 `defineExpert()` 只加载宿主传入的插件。要启用四类记忆，显式传入 `@pragma/plugin-memory`：
 
 最小示例：
 
 ```ts
-import { defineAgent } from "@pragma/core";
+import { defineExpert } from "@pragma/core";
 import memoryPlugin from "@pragma/plugin-memory";
 
-const agent = await defineAgent({
+const agent = await defineExpert({
   id: "memory-enabled-agent",
   name: "Memory Enabled Agent",
   description: "Uses the memory plugin.",
@@ -63,8 +63,8 @@ const agent = await defineAgent({
   <agentId>/                         # Agent 级记忆根目录
     summary.md
     task-memory/
-      workflows/
-        <workflowRunId>/
+      executions/
+        <executionId>/
           records.json
           <taskMemoryId>.md
     experience-memory/
@@ -77,12 +77,12 @@ const agent = await defineAgent({
       skills/
         <skillId>.md
     tasks/
-      workflows/
-        <workflowRunId>/
+      executions/
+        <executionId>/
           <runId>.md
-          workflow.md
+          execution.md
     evidence/runs/<runId>.json
-    evidence/workflows/<workflowRunId>.json
+    evidence/executions/<executionId>.json
     evidence/distill/<evidenceId>.json
 ```
 
@@ -95,10 +95,10 @@ const agent = await defineAgent({
 如果只想关闭其中一个或多个类别：
 
 ```ts
-import { defineAgent } from "@pragma/core";
+import { defineExpert } from "@pragma/core";
 import memoryPlugin from "@pragma/plugin-memory";
 
-const agent = await defineAgent({
+const agent = await defineExpert({
   id: "selective-memory-agent",
   name: "Selective Memory Agent",
   description: "Disables selected memory categories.",
@@ -269,7 +269,7 @@ plugins: [
 
 ## 存储格式版本
 
-Task、Experience、Evidence、Run Evidence 和 Workflow Evidence 当前使用 v2 schema，并用完整的
+Task、Experience、Evidence、Run Evidence 和 Execution Evidence 当前使用 v2 schema，并用完整的
 `RuntimeSessionRef { type, id }` 记录 runtime session 身份。v1 中只保存
 `runtimeSessionId`，无法区分不同 runtime，因此不会被 v2 读取，也不保留运行期兼容分支。
 

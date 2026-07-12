@@ -17,7 +17,7 @@ import repoManagerPlugin from "@pragma/plugin-repo-manager";
 
 const gitToken = "value loaded from your app secret store";
 
-const agent = await ExpertAgent.create({
+const agent = await defineExpert({
   schemaVersion: "pragma.expert/v1",
   id: "repo-aware-agent",
   name: "Repo Aware Agent",
@@ -62,7 +62,7 @@ plugin.json
 dist/index.js
 ```
 
-Pass the plugin directory or zip path to `ExpertAgent.create`. The factory loads
+Pass the plugin directory or zip path to `defineExpert()`. The factory loads
 the plugin, copies or extracts it into the Agent workspace, and constructs the
 Agent with resolved plugin entries. Directory and zip sources may also receive
 direct config:
@@ -72,7 +72,7 @@ import { ExpertAgent } from "@pragma/core";
 
 const workspace = "/path/to/workspace";
 
-const agent = await ExpertAgent.create({
+const agent = await defineExpert({
   schemaVersion: "pragma.expert/v1",
   id: "repo-aware-agent",
   name: "Repo Aware Agent",

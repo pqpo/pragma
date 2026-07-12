@@ -54,10 +54,7 @@ export function resolveMemorySummaryConfig(
   };
 }
 
-export function normalizeTaskMemorySummary(
-  record: TaskMemoryRecord,
-  maxChars: number,
-): string {
+export function normalizeTaskMemorySummary(record: TaskMemoryRecord, maxChars: number): string {
   const parts = [
     record.title,
     summarizeTaskStatus(record),
@@ -81,10 +78,7 @@ export function normalizeExperienceMemorySummary(
   return clampSummary(parts.join(". "), maxChars);
 }
 
-export function normalizeFactMemorySummary(
-  record: FactMemoryRecord,
-  maxChars: number,
-): string {
+export function normalizeFactMemorySummary(record: FactMemoryRecord, maxChars: number): string {
   const parts = [
     record.title,
     record.statement,
@@ -95,10 +89,7 @@ export function normalizeFactMemorySummary(
   return clampSummary(parts.join(". "), maxChars);
 }
 
-export function normalizeSkillMemorySummary(
-  record: SkillMemoryRecord,
-  maxChars: number,
-): string {
+export function normalizeSkillMemorySummary(record: SkillMemoryRecord, maxChars: number): string {
   const parts = [
     record.problemClass,
     firstNonEmpty(record.recommendedApproach),
@@ -108,10 +99,7 @@ export function normalizeSkillMemorySummary(
   return clampSummary(parts.join(". "), maxChars);
 }
 
-export function normalizeTaskRecord(
-  record: TaskMemoryRecord,
-  maxChars: number,
-): TaskMemoryRecord {
+export function normalizeTaskRecord(record: TaskMemoryRecord, maxChars: number): TaskMemoryRecord {
   return {
     ...record,
     schemaVersion: TASK_MEMORY_SCHEMA_VERSION,
@@ -130,10 +118,7 @@ export function normalizeExperienceRecord(
   };
 }
 
-export function normalizeFactRecord(
-  record: FactMemoryRecord,
-  maxChars: number,
-): FactMemoryRecord {
+export function normalizeFactRecord(record: FactMemoryRecord, maxChars: number): FactMemoryRecord {
   return {
     ...record,
     schemaVersion: FACT_MEMORY_SCHEMA_VERSION,
@@ -271,11 +256,7 @@ function renderSearchableDomains(
 }
 
 function renderSection(title: string, items: readonly string[], empty: string): readonly string[] {
-  return [
-    `## ${title}`,
-    ...renderBullets(items, empty),
-    "",
-  ];
+  return [`## ${title}`, ...renderBullets(items, empty), ""];
 }
 
 function renderBullets(items: readonly string[], empty: string): readonly string[] {
@@ -350,7 +331,8 @@ function selectExperienceEntryPoints(
   return [...records]
     .filter((record) => record.status === "summarized" || record.status === "promoted")
     .sort((left, right) => {
-      const statusDelta = experienceStatusWeight(right.status) - experienceStatusWeight(left.status);
+      const statusDelta =
+        experienceStatusWeight(right.status) - experienceStatusWeight(left.status);
 
       if (statusDelta !== 0) {
         return statusDelta;
@@ -363,22 +345,18 @@ function selectExperienceEntryPoints(
 
 function deriveFactDomains(records: readonly FactMemoryRecord[]): readonly NamedDomain[] {
   return countNamedDomains(
-    records
-      .filter((record) => isActiveFact(record))
-      .flatMap((record) => inferFactDomains(record)),
+    records.filter((record) => isActiveFact(record)).flatMap((record) => inferFactDomains(record)),
   );
 }
 
 function deriveSkillDomains(records: readonly SkillMemoryRecord[]): readonly NamedDomain[] {
-  return countNamedDomains(
-    records.flatMap((record) => inferSkillDomains(record)),
-  );
+  return countNamedDomains(records.flatMap((record) => inferSkillDomains(record)));
 }
 
-function deriveExperienceDomains(records: readonly ExperienceMemoryRecord[]): readonly NamedDomain[] {
-  return countNamedDomains(
-    records.map((record) => humanizeExperienceKind(record.kind)),
-  );
+function deriveExperienceDomains(
+  records: readonly ExperienceMemoryRecord[],
+): readonly NamedDomain[] {
+  return countNamedDomains(records.map((record) => humanizeExperienceKind(record.kind)));
 }
 
 function countNamedDomains(labels: readonly string[]): readonly NamedDomain[] {
@@ -399,22 +377,25 @@ function inferFactDomains(record: FactMemoryRecord): readonly string[] {
     .join(" ")
     .toLowerCase();
   const domains = [
-    haystack.includes("user preference") || haystack.includes("prefers") ? "user preferences" : undefined,
+    haystack.includes("user preference") || haystack.includes("prefers")
+      ? "user preferences"
+      : undefined,
     haystack.includes("architecture") || haystack.includes("module") || haystack.includes("owner")
       ? "architecture and ownership"
       : undefined,
-    haystack.includes("business rule") || haystack.includes("policy") ? "rules and policies" : undefined,
-    haystack.includes("workflow") || haystack.includes("process") ? "workflow constraints" : undefined,
+    haystack.includes("business rule") || haystack.includes("policy")
+      ? "rules and policies"
+      : undefined,
+    haystack.includes("execution") || haystack.includes("process")
+      ? "execution constraints"
+      : undefined,
   ].filter((value): value is string => value !== undefined);
 
   return domains.length > 0 ? domains : deriveDomainsFromTags(record.tags);
 }
 
 function inferSkillDomains(record: SkillMemoryRecord): readonly string[] {
-  const domains = [
-    record.problemClass,
-    ...deriveDomainsFromTags(record.tags),
-  ]
+  const domains = [record.problemClass, ...deriveDomainsFromTags(record.tags)]
     .flatMap((value) => splitDomainTokens(value))
     .slice(0, 6);
 
@@ -427,7 +408,12 @@ function deriveDomainsFromTags(tags: readonly string[] | undefined): readonly st
   }
 
   return tags
-    .map((tag) => tag.replace(/^[^:]+:/, "").replace(/[-_]/g, " ").trim())
+    .map((tag) =>
+      tag
+        .replace(/^[^:]+:/, "")
+        .replace(/[-_]/g, " ")
+        .trim(),
+    )
     .filter((tag) => tag.length >= 3);
 }
 
@@ -475,7 +461,8 @@ function compareFactsForExposure(left: FactMemoryRecord, right: FactMemoryRecord
     return affinityDelta;
   }
 
-  const confidenceDelta = factConfidenceWeight(right.confidence) - factConfidenceWeight(left.confidence);
+  const confidenceDelta =
+    factConfidenceWeight(right.confidence) - factConfidenceWeight(left.confidence);
 
   if (confidenceDelta !== 0) {
     return confidenceDelta;
@@ -667,8 +654,8 @@ function humanizeExperienceKind(kind: ExperienceMemoryKind): string {
       return "recovery path";
     case "run":
       return "task history";
-    case "workflow":
-      return "workflow history";
+    case "execution":
+      return "execution history";
     case "tool":
     default:
       return "tool usage";

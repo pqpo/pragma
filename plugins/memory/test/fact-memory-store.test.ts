@@ -16,33 +16,33 @@ describe("file-system FactMemoryStore", () => {
     const store = await createStore();
 
     await store.upsert({
-        id: "fact-1",
-        type: "fact",
-        scope: "workspace",
-        statement: "@pragma/core directive code lives under packages/core/src/directive.",
-        confidence: "high",
-        observedAt: "2026-07-06T00:00:00.000Z",
-        tags: ["codebase", "directive"],
-        provenance: {
-          createdAt: "2026-07-06T00:00:00.000Z",
-          updatedAt: "2026-07-06T00:00:00.000Z",
-          evidence: [{ type: "external", id: "search-1" }],
-        },
+      id: "fact-1",
+      type: "fact",
+      scope: "workspace",
+      statement: "@pragma/core execution code lives under packages/core/src/execution.",
+      confidence: "high",
+      observedAt: "2026-07-06T00:00:00.000Z",
+      tags: ["codebase", "execution"],
+      provenance: {
+        createdAt: "2026-07-06T00:00:00.000Z",
+        updatedAt: "2026-07-06T00:00:00.000Z",
+        evidence: [{ type: "external", id: "search-1" }],
+      },
     });
     await store.upsert({
-        id: "fact-2",
-        type: "fact",
-        scope: "workspace",
-        statement: "Deprecated path.",
-        confidence: "verified",
-        observedAt: "2026-07-05T00:00:00.000Z",
-        invalidatedAt: "2026-07-06T00:00:00.000Z",
-        tags: ["codebase"],
-        provenance: {
-          createdAt: "2026-07-05T00:00:00.000Z",
-          updatedAt: "2026-07-06T00:00:00.000Z",
-          evidence: [{ type: "external", id: "search-2" }],
-        },
+      id: "fact-2",
+      type: "fact",
+      scope: "workspace",
+      statement: "Deprecated path.",
+      confidence: "verified",
+      observedAt: "2026-07-05T00:00:00.000Z",
+      invalidatedAt: "2026-07-06T00:00:00.000Z",
+      tags: ["codebase"],
+      provenance: {
+        createdAt: "2026-07-05T00:00:00.000Z",
+        updatedAt: "2026-07-06T00:00:00.000Z",
+        evidence: [{ type: "external", id: "search-2" }],
+      },
     });
 
     const listed = await store.list({
@@ -62,37 +62,37 @@ describe("file-system FactMemoryStore", () => {
     const store = await createStore();
 
     await store.upsert({
-        id: "fact-1",
-        type: "fact",
-        scope: "workspace",
-        statement: "Old directive path.",
-        confidence: "verified",
-        observedAt: "2026-07-05T00:00:00.000Z",
-        supersededBy: { type: "fact", id: "fact-2" },
-        provenance: {
-          createdAt: "2026-07-05T00:00:00.000Z",
-          updatedAt: "2026-07-05T00:00:00.000Z",
-          evidence: [{ type: "external", id: "search-1" }],
-        },
+      id: "fact-1",
+      type: "fact",
+      scope: "workspace",
+      statement: "Old execution path.",
+      confidence: "verified",
+      observedAt: "2026-07-05T00:00:00.000Z",
+      supersededBy: { type: "fact", id: "fact-2" },
+      provenance: {
+        createdAt: "2026-07-05T00:00:00.000Z",
+        updatedAt: "2026-07-05T00:00:00.000Z",
+        evidence: [{ type: "external", id: "search-1" }],
+      },
     });
     await store.upsert({
-        id: "fact-2",
-        type: "fact",
-        scope: "workspace",
-        statement: "@pragma/core directive code lives under packages/core/src/directive.",
-        confidence: "verified",
-        observedAt: "2026-07-06T00:00:00.000Z",
-        verifiedAt: "2026-07-06T00:00:00.000Z",
-        provenance: {
-          createdAt: "2026-07-06T00:00:00.000Z",
-          updatedAt: "2026-07-06T00:00:00.000Z",
-          evidence: [{ type: "external", id: "search-2" }],
-        },
+      id: "fact-2",
+      type: "fact",
+      scope: "workspace",
+      statement: "@pragma/core execution code lives under packages/core/src/execution.",
+      confidence: "verified",
+      observedAt: "2026-07-06T00:00:00.000Z",
+      verifiedAt: "2026-07-06T00:00:00.000Z",
+      provenance: {
+        createdAt: "2026-07-06T00:00:00.000Z",
+        updatedAt: "2026-07-06T00:00:00.000Z",
+        evidence: [{ type: "external", id: "search-2" }],
+      },
     });
 
     const retrieved = await store.retrieveForRuntime({
       agentId: "agent-a",
-      query: "packages/core/src/directive",
+      query: "packages/core/src/execution",
     });
 
     expect(retrieved).toMatchObject({
@@ -105,32 +105,32 @@ describe("file-system FactMemoryStore", () => {
     const store = await createStore();
 
     await store.upsert({
-        id: "fact-1",
-        type: "fact",
-        scope: "workspace",
-        statement: "Directive code path A",
-        confidence: "high",
-        observedAt: "2026-07-06T00:00:00.000Z",
-        conflictsWith: [{ type: "fact", id: "fact-2" }],
-        provenance: {
-          createdAt: "2026-07-06T00:00:00.000Z",
-          updatedAt: "2026-07-06T00:00:00.000Z",
-          evidence: [{ type: "external", id: "search-1" }],
-        },
+      id: "fact-1",
+      type: "fact",
+      scope: "workspace",
+      statement: "Execution code path A",
+      confidence: "high",
+      observedAt: "2026-07-06T00:00:00.000Z",
+      conflictsWith: [{ type: "fact", id: "fact-2" }],
+      provenance: {
+        createdAt: "2026-07-06T00:00:00.000Z",
+        updatedAt: "2026-07-06T00:00:00.000Z",
+        evidence: [{ type: "external", id: "search-1" }],
+      },
     });
     await store.upsert({
-        id: "fact-2",
-        type: "fact",
-        scope: "workspace",
-        statement: "Directive code path B",
-        confidence: "high",
-        observedAt: "2026-07-06T01:00:00.000Z",
-        conflictsWith: [{ type: "fact", id: "fact-1" }],
-        provenance: {
-          createdAt: "2026-07-06T01:00:00.000Z",
-          updatedAt: "2026-07-06T01:00:00.000Z",
-          evidence: [{ type: "external", id: "search-2" }],
-        },
+      id: "fact-2",
+      type: "fact",
+      scope: "workspace",
+      statement: "Execution code path B",
+      confidence: "high",
+      observedAt: "2026-07-06T01:00:00.000Z",
+      conflictsWith: [{ type: "fact", id: "fact-1" }],
+      provenance: {
+        createdAt: "2026-07-06T01:00:00.000Z",
+        updatedAt: "2026-07-06T01:00:00.000Z",
+        evidence: [{ type: "external", id: "search-2" }],
+      },
     });
 
     const first = await store.get({ id: "fact-1" });
@@ -150,36 +150,36 @@ describe("file-system FactMemoryStore", () => {
     const store = await createStore();
 
     await store.upsert({
-        id: "fact-1",
-        type: "fact",
-        scope: "workspace",
-        statement: "packages/core/src/directive is a candidate path.",
-        confidence: "high",
-        observedAt: "2026-07-06T00:00:00.000Z",
-        provenance: {
-          createdAt: "2026-07-06T00:00:00.000Z",
-          updatedAt: "2026-07-06T00:00:00.000Z",
-          evidence: [{ type: "external", id: "search-1" }],
-        },
+      id: "fact-1",
+      type: "fact",
+      scope: "workspace",
+      statement: "packages/core/src/execution is a candidate path.",
+      confidence: "high",
+      observedAt: "2026-07-06T00:00:00.000Z",
+      provenance: {
+        createdAt: "2026-07-06T00:00:00.000Z",
+        updatedAt: "2026-07-06T00:00:00.000Z",
+        evidence: [{ type: "external", id: "search-1" }],
+      },
     });
     await store.upsert({
-        id: "fact-2",
-        type: "fact",
-        scope: "workspace",
-        statement: "packages/core/src/directive is the verified path.",
-        confidence: "verified",
-        observedAt: "2026-07-06T01:00:00.000Z",
-        verifiedAt: "2026-07-06T01:00:00.000Z",
-        provenance: {
-          createdAt: "2026-07-06T01:00:00.000Z",
-          updatedAt: "2026-07-06T01:00:00.000Z",
-          evidence: [{ type: "external", id: "search-2" }],
-        },
+      id: "fact-2",
+      type: "fact",
+      scope: "workspace",
+      statement: "packages/core/src/execution is the verified path.",
+      confidence: "verified",
+      observedAt: "2026-07-06T01:00:00.000Z",
+      verifiedAt: "2026-07-06T01:00:00.000Z",
+      provenance: {
+        createdAt: "2026-07-06T01:00:00.000Z",
+        updatedAt: "2026-07-06T01:00:00.000Z",
+        evidence: [{ type: "external", id: "search-2" }],
+      },
     });
 
     const listed = await store.list({});
     const searched = await store.search({
-      query: "packages/core/src/directive",
+      query: "packages/core/src/execution",
     });
 
     expect(listed).toMatchObject({
@@ -205,17 +205,17 @@ describe("file-system FactMemoryStore", () => {
     });
 
     await firstStore.upsert({
-        id: "fact-1",
-        type: "fact",
-        scope: "workspace",
-        statement: "Persisted fact statement.",
-        confidence: "high",
-        observedAt: "2026-07-06T00:00:00.000Z",
-        provenance: {
-          createdAt: "2026-07-06T00:00:00.000Z",
-          updatedAt: "2026-07-06T00:00:00.000Z",
-          evidence: [{ type: "external", id: "search-1" }],
-        },
+      id: "fact-1",
+      type: "fact",
+      scope: "workspace",
+      statement: "Persisted fact statement.",
+      confidence: "high",
+      observedAt: "2026-07-06T00:00:00.000Z",
+      provenance: {
+        createdAt: "2026-07-06T00:00:00.000Z",
+        updatedAt: "2026-07-06T00:00:00.000Z",
+        evidence: [{ type: "external", id: "search-1" }],
+      },
     });
 
     const secondStore = createFileSystemFactMemoryStore({

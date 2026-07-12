@@ -28,7 +28,6 @@ import type {
 import { resolveExpertAgentPlugins } from "../plugins/expert-agent-plugin.ts";
 import type { ExpertAgentLogger, ExpertAgentLoggerProvider } from "../logging/logger.ts";
 import { createExpertAgentLogger, defaultExpertAgentLoggerProvider } from "../logging/logger.ts";
-import type { Directive } from "../directive/types.ts";
 import type {
   ExpertAgentPluginLoadIssue,
   ExpertAgentPluginSource,
@@ -158,7 +157,7 @@ export interface IExpertAgent {
   readonly logger: ExpertAgentLogger;
 }
 
-export type ExpertAgentOptions = Omit<
+export type ExpertOptions = Omit<
   IExpertAgent,
   "contextSystem" | "pluginLoadIssues" | "logger" | "pragmaHome"
 > & {
@@ -166,12 +165,14 @@ export type ExpertAgentOptions = Omit<
   readonly pragmaHome?: string | undefined;
 };
 
-export interface ExpertAgentCreateOptions extends ExpertAgentOptions {
+export interface DefineExpertOptions extends ExpertOptions {
   readonly plugins?: readonly ExpertAgentPluginUse[] | undefined;
   readonly env?: NodeJS.ProcessEnv | undefined;
 }
 
-interface ExpertAgentRuntimeOptions extends Omit<ExpertAgentOptions, "pragmaHome"> {
+const defineExpertSymbol = Symbol("pragma.define-expert");
+
+interface ExpertRuntimeOptions extends Omit<ExpertOptions, "pragmaHome"> {
   readonly pragmaHome: string;
   readonly pluginEntries?:
     | readonly (ExpertAgentPluginEntry | ExpertAgentPluginRegistration)[]
@@ -180,7 +181,7 @@ interface ExpertAgentRuntimeOptions extends Omit<ExpertAgentOptions, "pragmaHome
   readonly env?: NodeJS.ProcessEnv | undefined;
 }
 
-export class ExpertAgent implements IExpertAgent, Directive<unknown, unknown> {
+export class Expert implements IExpertAgent {
   readonly schemaVersion?: ExpertAgentSchemaVersion;
   readonly id: string;
   readonly name: string;
@@ -202,7 +203,7 @@ export class ExpertAgent implements IExpertAgent, Directive<unknown, unknown> {
   readonly logger: ExpertAgentLogger;
   private readonly contextManager: ContextManager;
 
-  static async create(options: ExpertAgentCreateOptions): Promise<ExpertAgent> {
+  static async [defineExpertSymbol](options: DefineExpertOptions): Promise<Expert> {
     const pragmaHome = new PragmaPaths({ pragmaHome: options.pragmaHome, env: options.env }).root;
     const pluginUses = [...(options.plugins ?? [])];
     const pluginSources: ExpertAgentPluginSource[] = [];
@@ -224,7 +225,7 @@ export class ExpertAgent implements IExpertAgent, Directive<unknown, unknown> {
       agentId: options.id,
     });
 
-    logger.info("Loading ExpertAgent plugins", {
+    logger.info("Loading Expert plugins", {
       pluginCount: options.plugins?.length ?? 0,
     });
 
@@ -236,7 +237,7 @@ export class ExpertAgent implements IExpertAgent, Directive<unknown, unknown> {
       loggerProvider,
     });
 
-    const agent = new ExpertAgent({
+    const agent = new Expert({
       ...options,
       pragmaHome,
       pluginEntries: [
@@ -250,7 +251,7 @@ export class ExpertAgent implements IExpertAgent, Directive<unknown, unknown> {
       pluginLoadIssues: loaded.issues,
     });
 
-    agent.logger.info("ExpertAgent created", {
+    agent.logger.info("Expert created", {
       pluginCount: loaded.pluginEntries.length,
       pluginLoadIssueCount: loaded.issues.length,
     });
@@ -258,7 +259,7 @@ export class ExpertAgent implements IExpertAgent, Directive<unknown, unknown> {
     return agent;
   }
 
-  private constructor(options: ExpertAgentRuntimeOptions) {
+  private constructor(options: ExpertRuntimeOptions) {
     const loggerProvider = options.loggerProvider ?? defaultExpertAgentLoggerProvider;
     const logger = createExpertAgentLogger(loggerProvider, {
       component: "expert-agent",
@@ -357,6 +358,10 @@ export class ExpertAgent implements IExpertAgent, Directive<unknown, unknown> {
   ): Promise<ExpertAgentContextResult<ExpertAgentContextItemDeleteResult>> {
     return await this.contextSystem.delete(input);
   }
+}
+
+export async function defineExpert(options: DefineExpertOptions): Promise<Expert> {
+  return await Expert[defineExpertSymbol](options);
 }
 
 function applyToolApprovals(

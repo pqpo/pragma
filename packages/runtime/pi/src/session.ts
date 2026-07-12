@@ -1,7 +1,11 @@
-import type { AgentSession, AgentSessionEvent, ModelRegistry } from "@earendil-works/pi-coding-agent";
+import type {
+  AgentSession,
+  AgentSessionEvent,
+  ModelRegistry,
+} from "@earendil-works/pi-coding-agent";
 import { AgentMessageUsageSchema, type AgentMessage, type AgentMessageUsage } from "@pragma/shared";
 import type {
-  ExpertAgent,
+  Expert,
   RuntimeEventMappingContext,
   RuntimeEventMappingResult,
   RuntimeTurnContext,
@@ -22,7 +26,7 @@ import { resolveRequiredRuntimeModel } from "./models.ts";
 import type { PiRuntimeStreamState } from "./types.ts";
 
 export interface PiNativeSession {
-  readonly agent: ExpertAgent;
+  readonly agent: Expert;
   readonly session: AgentSession;
   readonly streamState: PiRuntimeStreamState;
   readonly models: {
@@ -33,7 +37,7 @@ export interface PiNativeSession {
 }
 
 export function createPiNativeSession(options: {
-  readonly agent: ExpertAgent;
+  readonly agent: Expert;
   readonly session: AgentSession;
   readonly streamState: PiRuntimeStreamState;
   readonly models: {
@@ -116,7 +120,9 @@ export function mapPiAgentEvent(
   }
 
   if (progressEvent !== undefined) {
-    events.push(context.events.progress(progressEvent.stage, progressEvent.data, progressEvent.message));
+    events.push(
+      context.events.progress(progressEvent.stage, progressEvent.data, progressEvent.message),
+    );
   }
 
   if (toolEvent !== undefined) {

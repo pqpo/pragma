@@ -100,7 +100,7 @@ describe("resolveExpertCapabilities", () => {
       capabilitiesPath: "/home/user/.pragma/capabilities",
     });
 
-    expect(resolved.skills?.skills[0]?.path).toContain(
+    expect(resolved.skills?.skills[0]?.path?.replaceAll("\\", "/")).toContain(
       `${skillId}/revisions/000001/payload/SKILL.md`,
     );
     const mcpServer = resolved.mcp?.mcpServers[service.manifest.runtimeKey];

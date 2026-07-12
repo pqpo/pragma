@@ -30,10 +30,10 @@ import {
 import { canUseCodexRuntime } from "./availability.ts";
 import { resolveCodexExecutablePath } from "./executable.ts";
 import {
-  createCodexWorkflowToolsMcpServer,
-  type CodexWorkflowToolsMcpServer,
-  type CodexWorkflowToolRuntimeState,
-} from "./workflow-tools-mcp-server.ts";
+  createCodexExpertToolsMcpServer,
+  type CodexExpertToolsMcpServer,
+  type CodexExpertToolRuntimeState,
+} from "./expert-tools-mcp-server.ts";
 
 const CODEX_LOCAL_RUNTIME_DESCRIPTOR = {
   id: "codex-local",
@@ -58,7 +58,7 @@ const DEFAULT_CODEX_CLIENT_INFO = {
 
 interface CodexDriverSession extends CodexNativeSession {
   readonly mcpToolRegistry: McpToolRegistry;
-  readonly workflowToolsMcpServer: CodexWorkflowToolsMcpServer;
+  readonly expertToolsMcpServer: CodexExpertToolsMcpServer;
 }
 
 export function createCodexRuntime(options: CodexRuntimeAdapterOptions = {}): RuntimeAdapter {
@@ -103,7 +103,7 @@ export function createCodexRuntime(options: CodexRuntimeAdapterOptions = {}): Ru
           );
         }
         const notificationBus = createCodexNotificationBus();
-        const toolRuntimeState: CodexWorkflowToolRuntimeState = {};
+        const toolRuntimeState: CodexExpertToolRuntimeState = {};
         const state: CodexRuntimeSessionState = {
           threadId:
             ctx.persistence.restoredRuntimeSessionId ?? ctx.request.runtimeSession?.id ?? "",
@@ -122,25 +122,25 @@ export function createCodexRuntime(options: CodexRuntimeAdapterOptions = {}): Ru
           }
         }
         let mcpToolRegistry: McpToolRegistry | undefined;
-        let workflowToolsMcpServer: CodexWorkflowToolsMcpServer | undefined;
+        let expertToolsMcpServer: CodexExpertToolsMcpServer | undefined;
         let client: CodexAppServerClient | undefined;
 
         try {
           mcpToolRegistry = await createMcpToolRegistry(ctx.agent.mcp);
-          workflowToolsMcpServer = await createCodexWorkflowToolsMcpServer({
+          expertToolsMcpServer = await createCodexExpertToolsMcpServer({
             agent: ctx.agent,
             getContext: () => ctx.lifecycle.currentContext,
             humanInteractionHandler: ctx.request.humanInteractionHandler,
             logger: ctx.logger,
             mcpTools: mcpToolRegistry.tools,
             state: toolRuntimeState,
-            workflowExecution: ctx.request.workflowExecution,
+            executionContext: ctx.request.executionContext,
           });
           client = await CodexAppServerClient.start({
             executablePath,
             args: createCodexAppServerArgs(
               options.appServerArgs ?? ["app-server", "--listen", "stdio://"],
-              workflowToolsMcpServer,
+              expertToolsMcpServer,
             ),
             cwd: ctx.workspace,
             env: {
@@ -180,13 +180,13 @@ export function createCodexRuntime(options: CodexRuntimeAdapterOptions = {}): Ru
                 : [],
             }),
             mcpToolRegistry,
-            workflowToolsMcpServer,
+            expertToolsMcpServer,
           };
         } catch (error) {
           try {
             await disposeCodexRuntimeResources(
               client,
-              workflowToolsMcpServer,
+              expertToolsMcpServer,
               mcpToolRegistry,
               ctx.logger,
             );
@@ -224,10 +224,10 @@ export function createCodexRuntime(options: CodexRuntimeAdapterOptions = {}): Ru
           await session.client.interruptTurn(session.state.threadId).catch(() => undefined);
         }
       },
-      async destroySession(session, ctx) {
+      async closeSession(session, ctx) {
         await disposeCodexRuntimeResources(
           session.client,
-          session.workflowToolsMcpServer,
+          session.expertToolsMcpServer,
           session.mcpToolRegistry,
           ctx.logger,
         );
@@ -285,14 +285,14 @@ function createCodexRuntimeCanUse(
 
 function createCodexAppServerArgs(
   baseArgs: readonly string[],
-  workflowToolsMcpServer: CodexWorkflowToolsMcpServer,
+  expertToolsMcpServer: CodexExpertToolsMcpServer,
 ): readonly string[] {
-  const serverKey = `mcp_servers.${workflowToolsMcpServer.id}`;
+  const serverKey = `mcp_servers.${expertToolsMcpServer.id}`;
 
   return [
     ...baseArgs,
     "-c",
-    `${serverKey}.url=${JSON.stringify(workflowToolsMcpServer.url)}`,
+    `${serverKey}.url=${JSON.stringify(expertToolsMcpServer.url)}`,
     "-c",
     `${serverKey}.enabled=true`,
     "-c",
@@ -304,13 +304,13 @@ function createCodexAppServerArgs(
 
 async function disposeCodexRuntimeResources(
   client: CodexAppServerClient | undefined,
-  workflowToolsMcpServer: CodexWorkflowToolsMcpServer | undefined,
+  expertToolsMcpServer: CodexExpertToolsMcpServer | undefined,
   mcpToolRegistry: McpToolRegistry | undefined,
   logger: ExpertAgentLogger,
 ): Promise<void> {
   const results = await Promise.allSettled([
     Promise.resolve().then(() => client?.close()),
-    workflowToolsMcpServer?.dispose() ?? Promise.resolve(),
+    expertToolsMcpServer?.dispose() ?? Promise.resolve(),
     mcpToolRegistry?.dispose() ?? Promise.resolve(),
   ]);
   const errors = results.flatMap((result) =>

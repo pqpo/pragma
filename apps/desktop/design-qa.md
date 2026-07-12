@@ -37,6 +37,6 @@
 
 **Follow-up Polish**
 
-- P3: capture a populated Electron-only Mission detail state after the future Workflow continuation work enables real execution data.
+- P3: capture a populated Electron-only Mission detail state after the future Execution continuation work enables real execution data.
 
 final result: passed

@@ -154,8 +154,7 @@ export function createRuntimeSessionStorageContext(options: {
   readonly context?: ExpertAgentRunContext | undefined;
 }): RuntimeSessionStorageContext {
   return {
-    workflowRunId: options.owner.workflowRunId,
-    ...(options.owner.taskRunId === undefined ? {} : { taskRunId: options.owner.taskRunId }),
+    owner: options.owner,
     agentId: options.agentId,
     runtime: options.runtime,
     runtimeSession: {

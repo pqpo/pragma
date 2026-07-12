@@ -1,10 +1,10 @@
-import type { ExpertAgent } from "@pragma/core";
+import type { Expert } from "@pragma/core";
 import { constants } from "node:fs";
 import { access, cp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 
 export interface MaterializeCodexSkillsOptions {
-  readonly agent: ExpertAgent;
+  readonly agent: Expert;
   readonly codexHome: string;
 }
 

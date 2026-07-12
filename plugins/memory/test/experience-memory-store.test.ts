@@ -16,27 +16,27 @@ describe("file-system ExperienceMemoryStore", () => {
     const store = await createStore();
 
     const written = await store.upsert({
-        id: "experience-1",
-        type: "experience",
-        scope: "session",
-        workflowRunId: "workflow-1",
-        taskRunId: "task-1",
-        runtimeSession: { type: "cloud-pi-agent", id: "session-1" },
-        kind: "tool",
-        content: "Searched packages/core/src/directive and confirmed runtime files.",
-        status: "summarized",
-        provenance: {
-          createdAt: "2026-07-06T00:00:00.000Z",
-          updatedAt: "2026-07-06T00:00:00.000Z",
-          evidence: [{ type: "run", id: "workflow-1" }],
-        },
+      id: "experience-1",
+      type: "experience",
+      scope: "session",
+      executionId: "execution-1",
+      invocationId: "task-1",
+      runtimeSession: { type: "cloud-pi-agent", id: "session-1" },
+      kind: "tool",
+      content: "Searched packages/core/src/execution and confirmed runtime files.",
+      status: "summarized",
+      provenance: {
+        createdAt: "2026-07-06T00:00:00.000Z",
+        updatedAt: "2026-07-06T00:00:00.000Z",
+        evidence: [{ type: "run", id: "execution-1" }],
+      },
     });
 
     expect(written.ok).toBe(true);
 
     const listed = await store.list({
-      workflowRunId: "workflow-1",
-      taskRunId: "task-1",
+      executionId: "execution-1",
+      invocationId: "task-1",
       kind: "tool",
     });
 
@@ -50,38 +50,38 @@ describe("file-system ExperienceMemoryStore", () => {
     const store = await createStore();
 
     await store.upsert({
-        id: "experience-1",
-        type: "experience",
-        scope: "session",
-        workflowRunId: "workflow-1",
-        kind: "tool",
-        content: "Located @pragma/core directive code under packages/core/src/directive.",
-        status: "recorded",
-        provenance: {
-          createdAt: "2026-07-06T00:00:00.000Z",
-          updatedAt: "2026-07-06T00:00:00.000Z",
-          evidence: [{ type: "run", id: "workflow-1" }],
-        },
+      id: "experience-1",
+      type: "experience",
+      scope: "session",
+      executionId: "execution-1",
+      kind: "tool",
+      content: "Located @pragma/core execution code under packages/core/src/execution.",
+      status: "recorded",
+      provenance: {
+        createdAt: "2026-07-06T00:00:00.000Z",
+        updatedAt: "2026-07-06T00:00:00.000Z",
+        evidence: [{ type: "run", id: "execution-1" }],
+      },
     });
     await store.upsert({
-        id: "experience-2",
-        type: "experience",
-        scope: "session",
-        workflowRunId: "workflow-1",
-        kind: "tool",
-        content: "Located @pragma/core directive code under packages/core/src/directive.",
-        status: "summarized",
-        provenance: {
-          createdAt: "2026-07-06T01:00:00.000Z",
-          updatedAt: "2026-07-06T01:00:00.000Z",
-          evidence: [{ type: "run", id: "workflow-1" }],
-        },
+      id: "experience-2",
+      type: "experience",
+      scope: "session",
+      executionId: "execution-1",
+      kind: "tool",
+      content: "Located @pragma/core execution code under packages/core/src/execution.",
+      status: "summarized",
+      provenance: {
+        createdAt: "2026-07-06T01:00:00.000Z",
+        updatedAt: "2026-07-06T01:00:00.000Z",
+        evidence: [{ type: "run", id: "execution-1" }],
+      },
     });
 
     const retrieved = await store.retrieveForRuntime({
       agentId: "agent-a",
-      workflowRunId: "workflow-1",
-      query: "packages/core/src/directive",
+      executionId: "execution-1",
+      query: "packages/core/src/execution",
     });
 
     expect(retrieved.ok).toBe(true);
@@ -96,26 +96,26 @@ describe("file-system ExperienceMemoryStore", () => {
     const store = await createStore();
 
     await store.upsert({
-        id: "experience-1",
-        type: "experience",
-        scope: "session",
-        workflowRunId: "workflow-1",
-        kind: "tool",
-        title: "Directive Ownership",
-        summary: "Packages/Core/Src/Directive is the canonical location.",
-        content: "Packages/Core/Src/Directive is the canonical location.",
-        status: "summarized",
-        provenance: {
-          createdAt: "2026-07-06T00:00:00.000Z",
-          updatedAt: "2026-07-06T00:00:00.000Z",
-          evidence: [{ type: "run", id: "workflow-1" }],
-        },
+      id: "experience-1",
+      type: "experience",
+      scope: "session",
+      executionId: "execution-1",
+      kind: "tool",
+      title: "Execution Ownership",
+      summary: "Packages/Core/Src/Execution is the canonical location.",
+      content: "Packages/Core/Src/Execution is the canonical location.",
+      status: "summarized",
+      provenance: {
+        createdAt: "2026-07-06T00:00:00.000Z",
+        updatedAt: "2026-07-06T00:00:00.000Z",
+        evidence: [{ type: "run", id: "execution-1" }],
+      },
     });
 
     const retrieved = await store.retrieveForRuntime({
       agentId: "agent-a",
-      workflowRunId: "workflow-1",
-      query: "packages/core/src/directive",
+      executionId: "execution-1",
+      query: "packages/core/src/execution",
     });
 
     expect(retrieved).toMatchObject({
@@ -128,31 +128,31 @@ describe("file-system ExperienceMemoryStore", () => {
     const store = await createStore();
 
     await store.upsert({
-        id: "experience-1",
-        type: "experience",
-        scope: "session",
-        kind: "conversation",
-        content: "Initial content",
-        status: "recorded",
-        provenance: {
-          createdAt: "2026-07-06T00:00:00.000Z",
-          updatedAt: "2026-07-06T00:00:00.000Z",
-          evidence: [{ type: "message", id: "message-1" }],
-        },
+      id: "experience-1",
+      type: "experience",
+      scope: "session",
+      kind: "conversation",
+      content: "Initial content",
+      status: "recorded",
+      provenance: {
+        createdAt: "2026-07-06T00:00:00.000Z",
+        updatedAt: "2026-07-06T00:00:00.000Z",
+        evidence: [{ type: "message", id: "message-1" }],
+      },
     });
 
     const updated = await store.upsert({
-        id: "experience-1",
-        type: "experience",
-        scope: "session",
-        kind: "conversation",
-        content: "Updated content",
-        status: "summarized",
-        provenance: {
-          createdAt: "2026-07-06T00:00:00.000Z",
-          updatedAt: "2026-07-06T01:00:00.000Z",
-          evidence: [{ type: "message", id: "message-1" }],
-        },
+      id: "experience-1",
+      type: "experience",
+      scope: "session",
+      kind: "conversation",
+      content: "Updated content",
+      status: "summarized",
+      provenance: {
+        createdAt: "2026-07-06T00:00:00.000Z",
+        updatedAt: "2026-07-06T01:00:00.000Z",
+        evidence: [{ type: "message", id: "message-1" }],
+      },
     });
 
     expect(updated).toMatchObject({
@@ -180,17 +180,17 @@ describe("file-system ExperienceMemoryStore", () => {
     });
 
     await firstStore.upsert({
-        id: "experience-1",
-        type: "experience",
-        scope: "workspace",
-        kind: "tool",
-        content: "Persisted experience content.",
-        status: "summarized",
-        provenance: {
-          createdAt: "2026-07-06T00:00:00.000Z",
-          updatedAt: "2026-07-06T00:00:00.000Z",
-          evidence: [{ type: "run", id: "run-1" }],
-        },
+      id: "experience-1",
+      type: "experience",
+      scope: "workspace",
+      kind: "tool",
+      content: "Persisted experience content.",
+      status: "summarized",
+      provenance: {
+        createdAt: "2026-07-06T00:00:00.000Z",
+        updatedAt: "2026-07-06T00:00:00.000Z",
+        evidence: [{ type: "run", id: "run-1" }],
+      },
     });
 
     const secondStore = createFileSystemExperienceMemoryStore({

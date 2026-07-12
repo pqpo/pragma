@@ -1,7 +1,4 @@
-import type {
-  ExpertAgentPluginContributions,
-  ExpertAgentPluginSetupContext,
-} from "@pragma/core";
+import type { ExpertAgentPluginContributions, ExpertAgentPluginSetupContext } from "@pragma/core";
 
 import { MemorySystem, type ExperienceMemoryStore } from "../memory-system/index.ts";
 import { createFileSystemExperienceMemoryStore } from "./store.ts";
@@ -119,7 +116,9 @@ function assertExperienceMemoryStore(input: unknown): ExperienceMemoryStore {
     return input;
   }
 
-  throw new Error("Experience memory config store must implement the ExperienceMemoryStore interface.");
+  throw new Error(
+    "Experience memory config store must implement the ExperienceMemoryStore interface.",
+  );
 }
 
 function assertExperienceMemoryStoreFactory(input: unknown): ExperienceMemoryStoreFactory {

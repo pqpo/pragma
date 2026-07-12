@@ -201,8 +201,8 @@ export class MemorySystem {
               kind: "task_archive",
               agentId: input.actorAgentId,
               scope: record.scope,
-              workflowRunId: record.workflowRunId,
-              taskRunId: record.taskRunId,
+              executionId: record.executionId,
+              invocationId: record.invocationId,
               runtimeSession: record.runtimeSession,
               payload: { task: record },
               createdAt: record.provenance.updatedAt,
@@ -457,7 +457,7 @@ export class MemorySystem {
 
     return okMemory([
       ...tasks.value.map((record) => ({
-        id: `task-memory/workflows/${sanitizeArtifactPathSegment(record.workflowRunId)}/${record.id}.md`,
+        id: `task-memory/executions/${sanitizeArtifactPathSegment(record.executionId)}/${record.id}.md`,
         content: renderTaskMemoryArtifact(record),
         description: `Task memory projection for ${record.id}.`,
         trigger: "manual" as const,
@@ -609,8 +609,8 @@ function renderTaskMemoryArtifact(record: import("./types.ts").TaskMemoryRecord)
     `- kind: ${record.kind}`,
     `- visibility: ${record.visibility}`,
     `- status: ${record.status}`,
-    `- workflowRunId: ${record.workflowRunId}`,
-    ...(record.taskRunId === undefined ? [] : [`- taskRunId: ${record.taskRunId}`]),
+    `- executionId: ${record.executionId}`,
+    ...(record.invocationId === undefined ? [] : [`- invocationId: ${record.invocationId}`]),
     ...(record.runtimeSession === undefined
       ? []
       : [`- runtimeSession: ${record.runtimeSession.type}:${record.runtimeSession.id}`]),

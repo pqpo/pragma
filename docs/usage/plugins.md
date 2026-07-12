@@ -1,6 +1,6 @@
 # Plugins 使用指南
 
-本文说明 Pragma 插件的创建、加载和使用方式。插件用于给 `ExpertAgent` 扩展上下文、工具、模型配置、MCP、Skills 和生命周期 Hooks。
+本文说明 Pragma 插件的创建、加载和使用方式。插件用于给 `Expert` 扩展上下文、工具、模型配置、MCP、Skills 和生命周期 Hooks。
 
 当前插件能力在：
 
@@ -11,7 +11,7 @@ packages/core/src/plugins
 关键 API：
 
 ```ts
-import { definePluginEntry, createExpertAgentPluginConfigEnvName } from "@pragma/core";
+import { definePluginEntry, createExpertPluginConfigEnvName } from "@pragma/core";
 ```
 
 ## 插件能扩展什么
@@ -208,7 +208,7 @@ export default definePluginEntry({
       },
       afterSessionCreate: async (context) => {
         context.logger?.info("After session create", {
-          // Runtime-level session id; do not use it as workflowRunId or memory lifecycle id.
+          // Runtime-level session id; do not use it as executionId or memory lifecycle id.
           systemSessionId: context.session.systemSessionId,
         });
       },
@@ -270,7 +270,7 @@ export default definePluginEntry({
 });
 ```
 
-如果宿主工具和插件都声明了审批策略，会通过 `mergeExpertAgentToolApprovals()` 合并，取更严格的模式。
+如果宿主工具和插件都声明了审批策略，会通过 `mergeExpertToolApprovals()` 合并，取更严格的模式。
 
 ## 在 Agent 中使用插件
 
@@ -279,10 +279,10 @@ export default definePluginEntry({
 适合测试、开发和 monorepo 内直接引用：
 
 ```ts
-import { defineAgent } from "@pragma/core";
+import { defineExpert } from "@pragma/core";
 import myPlugin from "../plugins/my-plugin/src/index.ts";
 
-const agent = await defineAgent({
+const agent = await defineExpert({
   id: "plugin-agent",
   name: "Plugin Agent",
   description: "Uses inline plugin entry.",
@@ -306,7 +306,7 @@ const agent = await defineAgent({
 适合产品化加载：
 
 ```ts
-const agent = await defineAgent({
+const agent = await defineExpert({
   id: "installed-plugin-agent",
   name: "Installed Plugin Agent",
   description: "Loads plugin from source path.",
@@ -347,7 +347,7 @@ agent.pluginLoadIssues;
 环境变量名可以通过工具函数生成：
 
 ```ts
-const envName = createExpertAgentPluginConfigEnvName({
+const envName = createExpertPluginConfigEnvName({
   pluginId: "my-plugin",
   name: "apiKey",
 });
@@ -373,13 +373,13 @@ plugins/repo-manager
 `@pragma/plugin-memory`：
 
 - 入口是一个 memory plugin，内部注册 `task-memory`、`experience-memory`、`fact-memory` 和 `skill-memory` 四个子模块。
-- `ExpertAgent` 不会默认加载 memory plugin；需要记忆能力时，宿主必须通过 `plugins: [{ entry: memoryPlugin }]` 显式注入。
+- `Expert` 不会默认加载 memory plugin；需要记忆能力时，宿主必须通过 `plugins: [{ entry: memoryPlugin }]` 显式注入。
 - `task-memory` 负责在插件内部维护 `Task Memory` store，并通过插件注入 task memory 工具。
 - `experience-memory` 负责记录历史经历、操作过程和带证据的执行总结，并注入 experience memory 工具。
 - `fact-memory` 负责维护稳定事实、置信度、冲突和失效信息，并注入 fact memory 工具。
 - `task-memory`、`experience-memory` 和 `fact-memory` 默认都会持久化到用户目录 `~/.pragma/memories/` 下，接口仍然保持可替换，也支持在程序化 plugin config 中注入自定义 store 或 `storeFactory`。
 - 统一的 `memory` namespace 审计上下文暴露 `summary.md`、`skills/*.md`、`tasks/**`；默认所有产物都写到 `~/.pragma/memories/<agentId>/`，其中 skill card 写到 `<agentId>/skill-memory/skills/`。
-- `skill-memory` 使用 stream / task / session hooks 生成任务总结、workflow 总结和技能卡；`MemorySystem` 再把 task / fact / skill / experience 的摘要统一装配到 `memory` namespace 下的 `summary.md` 供 always-on 透出和后续检索使用。
+- `skill-memory` 使用 stream / task / session hooks 生成任务总结、execution 总结和技能卡；`MemorySystem` 再把 task / fact / skill / experience 的摘要统一装配到 `memory` namespace 下的 `summary.md` 供 always-on 透出和后续检索使用。
 - memory plugin 默认包含一条 promotion pipeline：`task -> experience -> fact/skill`。
 
 如果要启用记忆能力，建议先读 [Memory System 使用指南](./memory.md)。

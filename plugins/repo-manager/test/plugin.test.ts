@@ -5,8 +5,9 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
+  defineExpert,
   ContextSystem,
-  ExpertAgent,
+  Expert,
   HOST_CONTEXT_NAMESPACE,
   createInMemoryContextStore,
   createNoopLoggerProvider,
@@ -79,7 +80,7 @@ describe("Repo Manager plugin", () => {
         ],
       }),
     });
-    const agent = await ExpertAgent.create({
+    const agent = await defineExpert({
       schemaVersion: "pragma.expert/v1",
       id: "repo-agent",
       name: "Repo Agent",
@@ -132,7 +133,7 @@ describe("Repo Manager plugin", () => {
 
   it("skips repository context when repositories.json is not configured", async () => {
     const pluginSource = await createLoadablePluginSource();
-    const agent = await ExpertAgent.create({
+    const agent = await defineExpert({
       schemaVersion: "pragma.expert/v1",
       id: "repo-agent",
       name: "Repo Agent",
@@ -248,8 +249,8 @@ async function createAgent(options: {
   readonly workspace: string;
   readonly plugins: readonly ExpertAgentPluginUse[];
   readonly contextSystem?: ContextSystem | undefined;
-}): Promise<ExpertAgent> {
-  return await ExpertAgent.create({
+}): Promise<Expert> {
+  return await defineExpert({
     schemaVersion: "pragma.expert/v1",
     id: "repo-agent",
     name: "Repo Agent",

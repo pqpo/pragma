@@ -5,9 +5,9 @@ import {
   SKILLS_PREFIX,
   MARKDOWN_EXTENSION,
   JSON_EXTENSION,
-  WORKFLOWS_EVIDENCE_PREFIX,
+  EXECUTIONS_EVIDENCE_PREFIX,
 } from "../context-projection/constants.ts";
-import type { MemoryRunEvidence, MemoryWorkflowEvidence } from "./schema.ts";
+import type { MemoryRunEvidence, MemoryExecutionEvidence } from "./schema.ts";
 import {
   dedupeStrings,
   extractSectionBullets,
@@ -136,7 +136,7 @@ export function renderTaskSummary(evidence: MemoryRunEvidence): string {
     ...renderBullets(
       [
         `${RUNS_EVIDENCE_PREFIX}${evidence.runId}${JSON_EXTENSION}`,
-        `workflow:${evidence.workflowRunId}`,
+        `execution:${evidence.executionId}`,
         ...(evidence.runtimeSession === undefined
           ? []
           : [`runtime-session:${evidence.runtimeSession.type}:${evidence.runtimeSession.id}`]),
@@ -147,8 +147,8 @@ export function renderTaskSummary(evidence: MemoryRunEvidence): string {
   ].join("\n");
 }
 
-export function renderWorkflowSummary(
-  workflowEvidence: MemoryWorkflowEvidence,
+export function renderExecutionSummary(
+  executionEvidence: MemoryExecutionEvidence,
   runEvidence: readonly MemoryRunEvidence[],
 ): string {
   const successfulPatterns = dedupeStrings(
@@ -170,10 +170,10 @@ export function renderWorkflowSummary(
   );
 
   return [
-    "# Workflow Summary",
+    "# Execution Summary",
     "",
-    "## Workflow Goal",
-    summarizeWorkflowGoal(runEvidence),
+    "## Execution Goal",
+    summarizeExecutionGoal(runEvidence),
     "",
     "## Tasks Completed",
     ...renderBullets(
@@ -209,7 +209,7 @@ export function renderWorkflowSummary(
     "## Evidence References",
     ...renderBullets(
       [
-        `${WORKFLOWS_EVIDENCE_PREFIX}${workflowEvidence.workflowRunId}${JSON_EXTENSION}`,
+        `${EXECUTIONS_EVIDENCE_PREFIX}${executionEvidence.executionId}${JSON_EXTENSION}`,
         ...runEvidence.map((run) => `${RUNS_EVIDENCE_PREFIX}${run.runId}${JSON_EXTENSION}`),
       ],
       "No evidence references recorded.",
@@ -234,7 +234,7 @@ export function summarizeRunResult(evidence: MemoryRunEvidence): string {
     : `Failed. ${evidence.errorMessage}`;
 }
 
-export function summarizeWorkflowGoal(runEvidence: readonly MemoryRunEvidence[]): string {
+export function summarizeExecutionGoal(runEvidence: readonly MemoryRunEvidence[]): string {
   const firstQuery = runEvidence[0]?.query ?? "No task goal was captured.";
   return trimCharacters(firstQuery, 180);
 }

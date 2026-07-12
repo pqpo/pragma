@@ -132,9 +132,7 @@ class FileSystemSkillMemoryStore implements SkillMemoryStore {
     }
   }
 
-  async search(input: {
-    readonly query: string;
-  }): Promise<
+  async search(input: { readonly query: string }): Promise<
     MemoryResult<
       readonly {
         readonly record: SkillMemoryRecord;
@@ -248,7 +246,7 @@ class FileSystemSkillMemoryStore implements SkillMemoryStore {
         source: "skill-memory",
         createdAt: readTimestamp(parsed.frontmatter["createdAt"], parsed.frontmatter["updatedAt"]),
         updatedAt: readTimestamp(parsed.frontmatter["updatedAt"], parsed.frontmatter["createdAt"]),
-        evidence: deriveEvidenceReferences(parsed.frontmatter["workflows"], contextId),
+        evidence: deriveEvidenceReferences(parsed.frontmatter["executions"], contextId),
       },
       problemClass,
       recommendedApproach: extractSectionBullets(stored.content, "Recommended Approach"),
@@ -394,17 +392,17 @@ function readTimestamp(primary: unknown, fallback: unknown): string {
   return new Date(0).toISOString();
 }
 
-function deriveEvidenceReferences(workflows: unknown, contextId: string) {
-  const workflowRunIds = Array.isArray(workflows)
-    ? workflows.filter((value): value is string => typeof value === "string")
+function deriveEvidenceReferences(executions: unknown, contextId: string) {
+  const executionIds = Array.isArray(executions)
+    ? executions.filter((value): value is string => typeof value === "string")
     : [];
 
   return [
     { type: "context" as const, id: contextId, label: "skill-card" },
-    ...workflowRunIds.map((workflowRunId) => ({
-      type: "workflow" as const,
-      id: workflowRunId,
-      label: "source-workflow",
+    ...executionIds.map((executionId) => ({
+      type: "execution" as const,
+      id: executionId,
+      label: "source-execution",
     })),
   ];
 }

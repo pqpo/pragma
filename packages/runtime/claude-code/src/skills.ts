@@ -1,10 +1,10 @@
-import type { ExpertAgent } from "@pragma/core";
+import type { Expert } from "@pragma/core";
 import { constants } from "node:fs";
 import { access, cp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 
 export interface MaterializeClaudeCodePluginOptions {
-  readonly agent: ExpertAgent;
+  readonly agent: Expert;
   readonly sessionDir: string;
 }
 
@@ -53,7 +53,7 @@ export async function materializeClaudeCodePlugin({
   return pluginDir;
 }
 
-async function writePluginManifest(pluginDir: string, agent: ExpertAgent): Promise<void> {
+async function writePluginManifest(pluginDir: string, agent: Expert): Promise<void> {
   const manifestDir = join(pluginDir, ".claude-plugin");
   await mkdir(manifestDir, { recursive: true });
   await writeFile(
@@ -62,7 +62,7 @@ async function writePluginManifest(pluginDir: string, agent: ExpertAgent): Promi
       {
         name: `pragma-${sanitizeSkillName(agent.id)}`,
         version: agent.version,
-        description: `Pragma ExpertAgent skills for ${agent.name}.`,
+        description: `Pragma Expert skills for ${agent.name}.`,
       },
       null,
       2,

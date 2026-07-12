@@ -12,7 +12,7 @@ afterEach(async () => {
 });
 
 describe("file-system TaskMemoryStore", () => {
-  it("stores records under the workflow run directory by default", async () => {
+  it("stores records under the Execution directory by default", async () => {
     const dir = await mkdtemp(join(process.cwd(), "tmp-task-memory-"));
     tempDirs.push(dir);
     const store = createFileSystemTaskMemoryStore({
@@ -25,10 +25,10 @@ describe("file-system TaskMemoryStore", () => {
       record: {
         type: "task",
         scope: "session",
-        workflowRunId: "workflow-1",
+        executionId: "execution-1",
         visibility: "shared",
         kind: "note",
-        content: "Workflow scoped note",
+        content: "Execution scoped note",
         status: "active",
       },
     });
@@ -36,18 +36,18 @@ describe("file-system TaskMemoryStore", () => {
     expect(appended.ok).toBe(true);
 
     const raw = await readFile(
-      join(dir, "agent-a", "task-memory", "workflows", "workflow-1", "records.json"),
+      join(dir, "agent-a", "task-memory", "executions", "execution-1", "records.json"),
       "utf8",
     );
     expect(JSON.parse(raw)).toEqual([
       expect.objectContaining({
-        workflowRunId: "workflow-1",
-        content: "Workflow scoped note",
+        executionId: "execution-1",
+        content: "Execution scoped note",
       }),
     ]);
   });
 
-  it("removes stale workflow files when a record id moves to another workflow", async () => {
+  it("removes stale execution files when a record id moves to another execution", async () => {
     const dir = await mkdtemp(join(process.cwd(), "tmp-task-memory-"));
     tempDirs.push(dir);
     const store = createFileSystemTaskMemoryStore({
@@ -61,10 +61,10 @@ describe("file-system TaskMemoryStore", () => {
         id: "stable-task-id",
         type: "task",
         scope: "session",
-        workflowRunId: "workflow-1",
+        executionId: "execution-1",
         visibility: "shared",
         kind: "note",
-        content: "Original workflow note",
+        content: "Original execution note",
         status: "active",
       },
     });
@@ -74,10 +74,10 @@ describe("file-system TaskMemoryStore", () => {
         id: "stable-task-id",
         type: "task",
         scope: "session",
-        workflowRunId: "workflow-2",
+        executionId: "execution-2",
         visibility: "shared",
         kind: "note",
-        content: "Moved workflow note",
+        content: "Moved execution note",
         status: "active",
       },
     });
@@ -85,29 +85,29 @@ describe("file-system TaskMemoryStore", () => {
     expect(first.ok).toBe(true);
     expect(moved.ok).toBe(true);
 
-    const workflowOne = await store.list({
-      workflowRunId: "workflow-1",
+    const executionOne = await store.list({
+      executionId: "execution-1",
       actorAgentId: "agent-a",
     });
-    const workflowTwo = await store.list({
-      workflowRunId: "workflow-2",
+    const executionTwo = await store.list({
+      executionId: "execution-2",
       actorAgentId: "agent-a",
     });
 
-    expect(workflowOne).toMatchObject({ ok: true, value: [] });
-    expect(workflowTwo).toMatchObject({
+    expect(executionOne).toMatchObject({ ok: true, value: [] });
+    expect(executionTwo).toMatchObject({
       ok: true,
       value: [
         expect.objectContaining({
           id: "stable-task-id",
-          workflowRunId: "workflow-2",
-          content: "Moved workflow note",
+          executionId: "execution-2",
+          content: "Moved execution note",
         }),
       ],
     });
   });
 
-  it("lists shared entries by workflow run", async () => {
+  it("lists shared entries by Execution", async () => {
     const store = await createStore();
 
     const appended = await store.append({
@@ -115,7 +115,7 @@ describe("file-system TaskMemoryStore", () => {
       record: {
         type: "task",
         scope: "session",
-        workflowRunId: "workflow-1",
+        executionId: "execution-1",
         runtimeSession: { type: "cloud-pi-agent", id: "session-1" },
         visibility: "shared",
         kind: "handoff",
@@ -127,7 +127,7 @@ describe("file-system TaskMemoryStore", () => {
     expect(appended.ok).toBe(true);
 
     const result = await store.list({
-      workflowRunId: "workflow-1",
+      executionId: "execution-1",
       actorAgentId: "agent-b",
       visibility: "shared",
     });
@@ -148,7 +148,7 @@ describe("file-system TaskMemoryStore", () => {
       record: {
         type: "task",
         scope: "session",
-        workflowRunId: "workflow-1",
+        executionId: "execution-1",
         runtimeSession: { type: "cloud-pi-agent", id: "session-1" },
         visibility: "private",
         ownerAgentId: "agent-a",
@@ -184,7 +184,7 @@ describe("file-system TaskMemoryStore", () => {
       record: {
         type: "task",
         scope: "session",
-        workflowRunId: "workflow-1",
+        executionId: "execution-1",
         runtimeSession: { type: "cloud-pi-agent", id: "session-1" },
         visibility: "private",
         ownerAgentId: "agent-b",
@@ -209,7 +209,7 @@ describe("file-system TaskMemoryStore", () => {
       record: {
         type: "task",
         scope: "session",
-        workflowRunId: "workflow-1",
+        executionId: "execution-1",
         runtimeSession: { type: "cloud-pi-agent", id: "session-1" },
         visibility: "shared",
         kind: "todo",
@@ -265,7 +265,7 @@ describe("file-system TaskMemoryStore", () => {
       record: {
         type: "task",
         scope: "session",
-        workflowRunId: "workflow-1",
+        executionId: "execution-1",
         runtimeSession: { type: "cloud-pi-agent", id: "session-1" },
         visibility: "shared",
         kind: "todo",
@@ -328,7 +328,7 @@ describe("file-system TaskMemoryStore", () => {
       record: {
         type: "task",
         scope: "session",
-        workflowRunId: "workflow-1",
+        executionId: "execution-1",
         runtimeSession: { type: "cloud-pi-agent", id: "session-1" },
         visibility: "shared",
         kind: "handoff",
@@ -341,7 +341,7 @@ describe("file-system TaskMemoryStore", () => {
       record: {
         type: "task",
         scope: "session",
-        workflowRunId: "workflow-1",
+        executionId: "execution-1",
         runtimeSession: { type: "cloud-pi-agent", id: "session-1" },
         visibility: "private",
         ownerAgentId: "agent-a",
@@ -353,7 +353,7 @@ describe("file-system TaskMemoryStore", () => {
 
     const retrieved = await store.retrieveForRuntime({
       agentId: "agent-b",
-      workflowRunId: "workflow-1",
+      executionId: "execution-1",
     });
 
     expect(retrieved.ok).toBe(true);
@@ -374,9 +374,9 @@ describe("file-system TaskMemoryStore", () => {
       record: {
         type: "task",
         scope: "session",
-        workflowRunId: "workflow-1",
+        executionId: "execution-1",
         runtimeSession: { type: "cloud-pi-agent", id: "session-1" },
-        taskRunId: "task-1",
+        invocationId: "task-1",
         visibility: "private",
         ownerAgentId: "agent-a",
         kind: "note",
@@ -389,9 +389,9 @@ describe("file-system TaskMemoryStore", () => {
       record: {
         type: "task",
         scope: "session",
-        workflowRunId: "workflow-1",
+        executionId: "execution-1",
         runtimeSession: { type: "cloud-pi-agent", id: "session-1" },
-        taskRunId: "task-2",
+        invocationId: "task-2",
         visibility: "private",
         ownerAgentId: "agent-a",
         kind: "note",
@@ -402,9 +402,9 @@ describe("file-system TaskMemoryStore", () => {
 
     const retrieved = await store.retrieveForRuntime({
       agentId: "agent-a",
-      workflowRunId: "workflow-1",
+      executionId: "execution-1",
       runtimeSession: { type: "cloud-pi-agent", id: "session-1" },
-      taskRunId: "task-1",
+      invocationId: "task-1",
     });
 
     expect(retrieved).toEqual(expect.objectContaining({ ok: true }));
@@ -417,7 +417,7 @@ describe("file-system TaskMemoryStore", () => {
     expect(retrieved.value.combined).toHaveLength(1);
   });
 
-  it("does not isolate workflow task memory by runtime session during runtime retrieval", async () => {
+  it("does not isolate execution task memory by runtime session during runtime retrieval", async () => {
     const store = await createStore();
 
     await store.append({
@@ -425,18 +425,18 @@ describe("file-system TaskMemoryStore", () => {
       record: {
         type: "task",
         scope: "session",
-        workflowRunId: "workflow-1",
+        executionId: "execution-1",
         runtimeSession: { type: "cloud-pi-agent", id: "runtime-session-old" },
         visibility: "shared",
         kind: "handoff",
-        content: "Workflow state survives runtime session changes",
+        content: "Execution state survives runtime session changes",
         status: "active",
       },
     });
 
     const retrieved = await store.retrieveForRuntime({
       agentId: "agent-a",
-      workflowRunId: "workflow-1",
+      executionId: "execution-1",
       runtimeSession: { type: "cloud-pi-agent", id: "runtime-session-new" },
     });
 
@@ -447,7 +447,7 @@ describe("file-system TaskMemoryStore", () => {
 
     expect(retrieved.value.combined).toHaveLength(1);
     expect(retrieved.value.combined[0]?.content).toBe(
-      "Workflow state survives runtime session changes",
+      "Execution state survives runtime session changes",
     );
   });
 
@@ -459,7 +459,7 @@ describe("file-system TaskMemoryStore", () => {
         record: {
           type: "task",
           scope: "session",
-          workflowRunId: "workflow-1",
+          executionId: "execution-1",
           runtimeSession: { type: runtimeType, id: "session-1" },
           visibility: "shared",
           kind: "note",
@@ -470,7 +470,7 @@ describe("file-system TaskMemoryStore", () => {
     }
 
     const listed = await store.list({
-      workflowRunId: "workflow-1",
+      executionId: "execution-1",
       actorAgentId: "agent-a",
       runtimeSession: { type: "codex-local", id: "session-1" },
     });
@@ -489,9 +489,9 @@ describe("file-system TaskMemoryStore", () => {
       record: {
         type: "task",
         scope: "session",
-        workflowRunId: "workflow-1",
+        executionId: "execution-1",
         runtimeSession: { type: "cloud-pi-agent", id: "session-1" },
-        taskRunId: "task-1",
+        invocationId: "task-1",
         visibility: "shared",
         kind: "progress",
         content: "Halfway complete",
@@ -500,9 +500,9 @@ describe("file-system TaskMemoryStore", () => {
     });
 
     const archived = await store.archive({
-      workflowRunId: "workflow-1",
+      executionId: "execution-1",
       runtimeSession: { type: "cloud-pi-agent", id: "session-1" },
-      taskRunId: "task-1",
+      invocationId: "task-1",
       actorAgentId: "agent-a",
     });
 
@@ -514,13 +514,13 @@ describe("file-system TaskMemoryStore", () => {
     expect(archived.value[0]?.status).toBe("archived");
 
     const listed = await store.list({
-      workflowRunId: "workflow-1",
+      executionId: "execution-1",
       actorAgentId: "agent-a",
       status: "active",
     });
     const retrieved = await store.retrieveForRuntime({
       agentId: "agent-a",
-      workflowRunId: "workflow-1",
+      executionId: "execution-1",
     });
 
     expect(listed).toEqual(expect.objectContaining({ ok: true }));
@@ -561,7 +561,7 @@ describe("file-system TaskMemoryStore", () => {
       record: {
         type: "task",
         scope: "session",
-        workflowRunId: "workflow-1",
+        executionId: "execution-1",
         runtimeSession: { type: "cloud-pi-agent", id: "session-1" },
         visibility: "shared",
         kind: "handoff",
@@ -574,7 +574,7 @@ describe("file-system TaskMemoryStore", () => {
       record: {
         type: "task",
         scope: "session",
-        workflowRunId: "workflow-1",
+        executionId: "execution-1",
         runtimeSession: { type: "cloud-pi-agent", id: "session-1" },
         visibility: "private",
         ownerAgentId: "agent-a",
@@ -587,7 +587,7 @@ describe("file-system TaskMemoryStore", () => {
     const retrieved = await system.retrieveForRuntime({
       request: {
         agentId: "agent-a",
-        workflowRunId: "workflow-1",
+        executionId: "execution-1",
       },
     });
 
@@ -615,7 +615,7 @@ describe("file-system TaskMemoryStore", () => {
       record: {
         type: "task",
         scope: "session",
-        workflowRunId: "workflow-1",
+        executionId: "execution-1",
         runtimeSession: { type: "cloud-pi-agent", id: "session-1" },
         visibility: "shared",
         kind: "progress",
@@ -646,7 +646,7 @@ describe("file-system TaskMemoryStore", () => {
             id: "legacy-task",
             type: "task",
             scope: "session",
-            workflowRunId: "workflow-1",
+            executionId: "execution-1",
             runtimeSession: { type: "cloud-pi-agent", id: "session-1" },
             visibility: "shared",
             kind: "progress",

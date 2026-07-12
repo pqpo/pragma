@@ -38,9 +38,7 @@ export type PendingHumanInteraction = z.infer<typeof PendingHumanInteractionSche
 export type ResolvedHumanInteraction = z.infer<typeof ResolvedHumanInteractionSchema>;
 
 export interface HumanInteractionStore {
-  readonly savePending: (
-    interaction: PendingHumanInteraction,
-  ) => Promise<void> | void;
+  readonly savePending: (interaction: PendingHumanInteraction) => Promise<void> | void;
   readonly listPending: (
     scope: HumanInteractionScope,
   ) => Promise<readonly PendingHumanInteraction[]> | readonly PendingHumanInteraction[];
@@ -103,7 +101,10 @@ export function createFileHumanInteractionStore(
   return {
     async savePending(interaction) {
       await mkdir(pendingDir, { recursive: true });
-      await writeJson(pendingPath(pendingDir, interaction.id), PendingHumanInteractionSchema.parse(interaction));
+      await writeJson(
+        pendingPath(pendingDir, interaction.id),
+        PendingHumanInteractionSchema.parse(interaction),
+      );
     },
     listPending,
     async getPending(scope) {
@@ -207,13 +208,15 @@ async function readPendingInteraction(
   dir: string,
   interactionId: string,
 ): Promise<PendingHumanInteraction | undefined> {
-  const content = await readFile(pendingPath(dir, interactionId), "utf8").catch((error: unknown) => {
-    if (isNodeErrorCode(error, "ENOENT")) {
-      return undefined;
-    }
+  const content = await readFile(pendingPath(dir, interactionId), "utf8").catch(
+    (error: unknown) => {
+      if (isNodeErrorCode(error, "ENOENT")) {
+        return undefined;
+      }
 
-    throw error;
-  });
+      throw error;
+    },
+  );
 
   return content === undefined
     ? undefined
@@ -232,10 +235,7 @@ function scopeMatches(candidate: HumanInteractionScope, expected: HumanInteracti
   return Object.entries(expected).every(([key, value]) => candidate[key] === value);
 }
 
-function sameHumanRequest(
-  left: ExpertAgentHumanRequest,
-  right: ExpertAgentHumanRequest,
-): boolean {
+function sameHumanRequest(left: ExpertAgentHumanRequest, right: ExpertAgentHumanRequest): boolean {
   return stableStringify(logicalHumanRequest(left)) === stableStringify(logicalHumanRequest(right));
 }
 

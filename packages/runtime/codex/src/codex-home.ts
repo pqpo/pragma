@@ -2,12 +2,12 @@ import { access, copyFile, mkdir, readFile, rm, symlink, writeFile } from "node:
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 
-import type { ExpertAgent } from "@pragma/core";
+import type { Expert } from "@pragma/core";
 import type { ExpertAgentLogger } from "@pragma/core";
 import { materializeCodexSkills } from "./skills.ts";
 
 export interface PrepareManagedCodexHomeOptions {
-  readonly agent: ExpertAgent;
+  readonly agent: Expert;
   readonly sessionDir: string;
   readonly env?: NodeJS.ProcessEnv | undefined;
   readonly logger: Pick<ExpertAgentLogger, "warn">;

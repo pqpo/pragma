@@ -1,253 +1,85 @@
-import type { ExpertAgent } from "./expert-agent.ts";
-import { runNestedDirective } from "../directive/directive-execution-context.ts";
+import type { DelegationContextPolicy, ExpertTeam } from "./expert-team.ts";
 import type { ExpertAgentManagedTool, ExpertAgentToolCallResult } from "../tools/managed-tool.ts";
 
-export const agentLauncherDefinitions = Symbol("pragma.agent-launcher-definitions");
-
-// `reuse_by_agent` continues the original child Workflow; never attach its Session to a new one.
-export type AgentLaunchSessionPolicy = "fresh" | "reuse_by_agent";
-
-export interface CreateAgentLauncherOptions {
-  readonly agents: readonly ExpertAgent[];
-  readonly defaultSessionPolicy?: AgentLaunchSessionPolicy | undefined;
-}
-
-export interface AgentLauncher {
-  readonly tool: ExpertAgentManagedTool<"launch_agent", ExpertAgentToolCallResult>;
-  readonly dispose: () => void;
-}
-
-interface LaunchAgentInput {
-  readonly agentId: string;
-  readonly task: string;
-  readonly sessionPolicy?: AgentLaunchSessionPolicy | undefined;
-  readonly runtime?: string | undefined;
-  readonly modelName?: string | undefined;
-  readonly thinkingLevel?: string | undefined;
-}
-
-const launchAgentInputSchema = {
-  type: "object",
-  properties: {
-    agentId: {
-      type: "string",
-      description: "The ExpertAgent id to launch.",
-    },
-    task: {
-      type: "string",
-      description: "A self-contained task for the launched ExpertAgent.",
-    },
-    sessionPolicy: {
-      type: "string",
-      enum: ["fresh", "reuse_by_agent"],
-      description:
-        "Use fresh for a new child Workflow, or reuse_by_agent to continue the original child Workflow and Runtime Session.",
-    },
-    runtime: {
-      type: "string",
-      description:
-        "Optional runtime id for the delegated ExpertAgent. Defaults to the parent workflow runtime.",
-    },
-    modelName: {
-      type: "string",
-      description: "Optional model name for the delegated ExpertAgent run.",
-    },
-    thinkingLevel: {
-      type: "string",
-      description: "Optional runtime-native thinking level for the delegated ExpertAgent run.",
-    },
-  },
-  required: ["agentId", "task"],
-  additionalProperties: false,
-};
-
-export function createAgentLauncher(options: CreateAgentLauncherOptions): AgentLauncher {
-  const agentsById = new Map(options.agents.map((agent) => [agent.id, agent]));
-  const defaultSessionPolicy = options.defaultSessionPolicy ?? "fresh";
-
+export function createTeamDelegationTool(
+  team: ExpertTeam,
+): ExpertAgentManagedTool<"delegate_expert", ExpertAgentToolCallResult> {
   return {
-    tool: {
-      ...{ [agentLauncherDefinitions]: options.agents },
-      name: "launch_agent",
-      description: [
-        "Launch another Pragma ExpertAgent through the workflow orchestrator.",
-        "Use this when a listed ExpertAgent is better suited for a focused delegated task.",
-        "Each launch creates a child workflow run that is tracked by the same StateManager.",
-        "",
-        "Available ExpertAgents:",
-        ...options.agents.map((agent) => `- ${agent.id}: ${agent.name}. ${agent.description}`),
-      ].join("\n"),
-      inputSchema: launchAgentInputSchema,
-      async call(args, signal, context) {
-        if (signal?.aborted) {
-          return {
-            text: "launch_agent was cancelled before the delegated run started.",
-            isError: true,
-            details: {
-              code: "agent_launch_cancelled",
-            },
-          };
-        }
-
-        const input = readLaunchAgentInput(args, defaultSessionPolicy);
-        const workflowExecution = context?.workflowExecution;
-
-        if (workflowExecution === undefined) {
-          return {
-            text: "launch_agent requires a workflow execution context. Run the parent ExpertAgent through PragmaApp.start() or PragmaApp.run().",
-            isError: true,
-            details: {
-              code: "missing_workflow_execution",
-            },
-          };
-        }
-
-        const agent = agentsById.get(input.agentId);
-
-        if (agent === undefined) {
-          return {
-            text: `Unknown ExpertAgent: ${input.agentId}`,
-            isError: true,
-            details: {
-              code: "unknown_agent",
-              agentId: input.agentId,
-              availableAgentIds: [...agentsById.keys()],
-            },
-          };
-        }
-
-        const runtime = input.runtime ?? workflowExecution.runtimeId;
-        const continuationKey =
-          input.sessionPolicy === "reuse_by_agent"
-            ? createContinuationKey({
-                rootWorkflowRunId: workflowExecution.workflow.rootWorkflowRunId,
-                agentId: agent.id,
-                runtime,
-                modelName: input.modelName,
-                thinkingLevel: input.thinkingLevel,
-              })
-            : undefined;
-        try {
-          const result = await runNestedDirective(workflowExecution, agent, {
-            input: input.task,
-            modelName: input.modelName,
-            thinkingLevel: input.thinkingLevel,
-            runtime,
-            continuationKey,
-            execution: workflowExecution,
-          });
-
-          return {
-            text: formatAgentOutput(result.output),
-            details: {
-              agentId: agent.id,
-              workflowRunId: result.workflowRunId,
-              sessionPolicy: input.sessionPolicy,
-              runtimeSession: result.runtimeSession,
-            },
-          };
-        } catch (error) {
-          return {
-            text: error instanceof Error ? error.message : String(error),
-            isError: true,
-            details: {
-              code: "agent_launch_failed",
-              agentId: agent.id,
-            },
-          };
-        }
+    name: "delegate_expert",
+    description: [
+      `Delegate a focused task to an Expert in team ${team.name}.`,
+      "Available Experts:",
+      ...team.members.map((expert) => `- ${expert.id}: ${expert.name}. ${expert.description}`),
+    ].join("\n"),
+    inputSchema: {
+      type: "object",
+      properties: {
+        expertId: { type: "string" },
+        prompt: { type: "string" },
+        context: { type: "string", enum: ["fresh", "reuse"] },
+        runtime: { type: "string" },
       },
+      required: ["expertId", "prompt"],
+      additionalProperties: false,
     },
-    dispose() {},
+    async call(args, signal, context) {
+      if (signal?.aborted) return failure("delegation_cancelled", "Delegation was cancelled.");
+      const execution = context?.execution;
+      if (execution?.delegate === undefined) {
+        return failure("missing_execution", "Delegation requires an active ExpertTeam Turn.");
+      }
+      const input = readInput(args);
+      try {
+        const result = await execution.delegate(input);
+        return {
+          text: formatOutput(result.output),
+          details: { expertId: input.expertId, invocationId: result.invocationId },
+        };
+      } catch (error) {
+        return failure("delegation_failed", error instanceof Error ? error.message : String(error));
+      }
+    },
   };
 }
 
-function readLaunchAgentInput(
-  args: unknown,
-  defaultSessionPolicy: AgentLaunchSessionPolicy,
-): LaunchAgentInput {
-  if (typeof args !== "object" || args === null) {
-    throw new Error("launch_agent requires an object input.");
+function readInput(value: unknown): {
+  readonly expertId: string;
+  readonly prompt: string;
+  readonly context?: DelegationContextPolicy;
+  readonly runtime?: string;
+} {
+  if (typeof value !== "object" || value === null)
+    throw new Error("Delegation input must be an object.");
+  const record = value as Record<string, unknown>;
+  const expertId = readString(record["expertId"], "expertId");
+  const prompt = readString(record["prompt"], "prompt");
+  const policy = record["context"];
+  if (policy !== undefined && policy !== "fresh" && policy !== "reuse") {
+    throw new Error('Delegation context must be "fresh" or "reuse".');
   }
-
-  const record = args as Record<string, unknown>;
-  const agentId = readRequiredString(record, "agentId");
-  const task = readRequiredString(record, "task");
-  const sessionPolicy = readSessionPolicy(record["sessionPolicy"], defaultSessionPolicy);
-  const runtime = readOptionalString(record, "runtime");
-  const modelName = readOptionalString(record, "modelName");
-  const thinkingLevel = readOptionalString(record, "thinkingLevel");
-
+  const runtime = record["runtime"];
+  if (runtime !== undefined && (typeof runtime !== "string" || runtime.trim() === "")) {
+    throw new Error("Delegation runtime must be a non-empty string.");
+  }
   return {
-    agentId,
-    task,
-    sessionPolicy,
+    expertId,
+    prompt,
+    ...(policy === undefined ? {} : { context: policy }),
     ...(runtime === undefined ? {} : { runtime }),
-    ...(modelName === undefined ? {} : { modelName }),
-    ...(thinkingLevel === undefined ? {} : { thinkingLevel }),
   };
 }
 
-function readRequiredString(record: Record<string, unknown>, key: string): string {
-  const value = readOptionalString(record, key);
-
-  if (value === undefined) {
-    throw new Error(`launch_agent requires string parameter "${key}".`);
+function readString(value: unknown, name: string): string {
+  if (typeof value !== "string" || value.trim() === "") {
+    throw new Error(`Delegation ${name} must be a non-empty string.`);
   }
-
   return value;
 }
 
-function readOptionalString(record: Record<string, unknown>, key: string): string | undefined {
-  const value = record[key];
-
-  if (value === undefined) {
-    return undefined;
-  }
-
-  return typeof value === "string" && value.trim().length > 0 ? value : undefined;
+function failure(code: string, text: string): ExpertAgentToolCallResult {
+  return { text, isError: true, details: { code } };
 }
 
-function readSessionPolicy(
-  value: unknown,
-  fallback: AgentLaunchSessionPolicy,
-): AgentLaunchSessionPolicy {
-  if (value === undefined) {
-    return fallback;
-  }
-
-  if (value === "fresh" || value === "reuse_by_agent") {
-    return value;
-  }
-
-  throw new Error('launch_agent sessionPolicy must be "fresh" or "reuse_by_agent".');
-}
-
-function createContinuationKey(input: {
-  readonly rootWorkflowRunId: string;
-  readonly agentId: string;
-  readonly runtime: string;
-  readonly modelName?: string | undefined;
-  readonly thinkingLevel?: string | undefined;
-}): string {
-  return [
-    "agent",
-    input.rootWorkflowRunId,
-    input.agentId,
-    input.runtime,
-    input.modelName ?? "",
-    input.thinkingLevel ?? "",
-  ].join(":");
-}
-
-function formatAgentOutput(output: unknown): string {
-  if (output === undefined) {
-    return "";
-  }
-
-  if (typeof output === "string") {
-    return output;
-  }
-
-  return JSON.stringify(output, null, 2) ?? String(output);
+function formatOutput(value: unknown): string {
+  return typeof value === "string" ? value : (JSON.stringify(value, null, 2) ?? String(value));
 }

@@ -100,7 +100,7 @@ export async function loadExpertAgentPlugins(
         message: error instanceof Error ? error.message : String(error),
       };
       issues.push(issue);
-      logger.warn("Failed to load ExpertAgent plugin", {
+      logger.warn("Failed to load Expert plugin", {
         ...issue,
         error,
       });

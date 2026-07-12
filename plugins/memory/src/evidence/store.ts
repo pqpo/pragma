@@ -39,11 +39,11 @@ export function createFileSystemMemoryEvidenceStore(
             return false;
           }
 
-          if (input.workflowRunId !== undefined && record.workflowRunId !== input.workflowRunId) {
+          if (input.executionId !== undefined && record.executionId !== input.executionId) {
             return false;
           }
 
-          if (input.taskRunId !== undefined && record.taskRunId !== input.taskRunId) {
+          if (input.invocationId !== undefined && record.invocationId !== input.invocationId) {
             return false;
           }
 

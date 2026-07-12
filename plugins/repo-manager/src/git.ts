@@ -216,7 +216,12 @@ async function execGit(
   options: GitCommandOptions = {},
 ): Promise<{ readonly stdout: string; readonly stderr: string }> {
   const gitCommand = options.gitCommand ?? "git";
-  const result = await execFileAsync(gitCommand, createSafeGitArgs(args), {
+  const isNodeScript = /\.(?:c|m)?js$/iu.test(gitCommand);
+  const command = isNodeScript ? process.execPath : gitCommand;
+  const commandArgs = isNodeScript
+    ? [gitCommand, ...createSafeGitArgs(args)]
+    : createSafeGitArgs(args);
+  const result = await execFileAsync(command, commandArgs, {
     env: options.env,
     signal: options.signal,
     maxBuffer: 1024 * 1024 * 5,

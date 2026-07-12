@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { z } from "zod";
 
 import type {
-  ExpertAgent,
+  Expert,
   ExpertAgentModelApi,
   IExpertAgentMcpConfig,
   IExpertAgentModelsConfig,
@@ -91,7 +91,7 @@ export type ExpertAgentPluginMetadata = Pick<
 >;
 
 export interface ExpertAgentPluginSessionCreateContext {
-  readonly agent: ExpertAgent;
+  readonly agent: Expert;
   readonly context?: ExpertAgentRunContext | undefined;
   readonly systemSessionId: string;
   readonly runtimeSession?: RuntimeSessionRef | undefined;
@@ -99,13 +99,13 @@ export interface ExpertAgentPluginSessionCreateContext {
 }
 
 export interface ExpertAgentPluginSessionContext {
-  readonly agent: ExpertAgent;
+  readonly agent: Expert;
   readonly session: RuntimeSessionInfo;
   readonly logger?: ExpertAgentLogger | undefined;
 }
 
 export interface ExpertAgentPluginTaskSubmitContext<TOutput = unknown> {
-  readonly agent: ExpertAgent;
+  readonly agent: Expert;
   readonly session: RuntimeSessionInfo;
   readonly runId: string;
   readonly submission: RuntimeSubmitRequest<TOutput>;
@@ -121,7 +121,7 @@ export interface ExpertAgentPluginTaskSubmittedContext<
 }
 
 export interface ExpertAgentPluginToolCallContext {
-  readonly agent: ExpertAgent;
+  readonly agent: Expert;
   readonly toolName: string;
   readonly toolCallId?: string | undefined;
   readonly args: unknown;
@@ -136,7 +136,7 @@ export interface ExpertAgentPluginToolCalledContext extends ExpertAgentPluginToo
 }
 
 export interface ExpertAgentPluginStreamEventContext {
-  readonly agent: ExpertAgent;
+  readonly agent: Expert;
   readonly session: RuntimeSessionInfo;
   readonly runId: string;
   readonly event: RuntimeStreamEvent;
@@ -742,17 +742,15 @@ function assertUniquePluginIds(pluginEntries: readonly ExpertAgentPluginEntry[])
 
   for (const plugin of pluginEntries) {
     if (plugin.id.length === 0 || plugin.id.includes("/")) {
-      throw new Error(
-        `ExpertAgent plugin id must be non-empty and must not contain "/": ${plugin.id}`,
-      );
+      throw new Error(`Expert plugin id must be non-empty and must not contain "/": ${plugin.id}`);
     }
 
     if (plugin.id === HOST_CONTEXT_NAMESPACE) {
-      throw new Error(`ExpertAgent plugin id is reserved: ${plugin.id}`);
+      throw new Error(`Expert plugin id is reserved: ${plugin.id}`);
     }
 
     if (seen.has(plugin.id)) {
-      throw new Error(`Duplicate ExpertAgent plugin id: ${plugin.id}`);
+      throw new Error(`Duplicate Expert plugin id: ${plugin.id}`);
     }
 
     seen.add(plugin.id);
@@ -771,9 +769,7 @@ function readExpertAgentPluginManifestFromCaller(): ExpertAgentPluginManifest {
   const manifestPath = findNearestPluginManifest(callerFile);
 
   if (manifestPath === undefined) {
-    throw new Error(
-      `Unable to load ExpertAgent plugin: plugin.json was not found for ${callerFile}.`,
-    );
+    throw new Error(`Unable to load Expert plugin: plugin.json was not found for ${callerFile}.`);
   }
 
   return readExpertAgentPluginManifest(manifestPath);
@@ -786,7 +782,7 @@ function findDefinePluginEntryCallerFile(): string | undefined {
   for (const line of stack) {
     const file = parseStackFrameFile(line);
 
-    if (file !== undefined && file !== currentFile) {
+    if (file !== undefined && resolve(file) !== resolve(currentFile)) {
       return file;
     }
   }
@@ -795,7 +791,9 @@ function findDefinePluginEntryCallerFile(): string | undefined {
 }
 
 function parseStackFrameFile(line: string): string | undefined {
-  const match = /(?:\(|\s)(file:\/\/[^:)]+|\/[^:)]+):\d+:\d+\)?$/.exec(line.trim());
+  const match = /(?:\(|\s)(file:\/\/[^:)]+|[A-Za-z]:[\\/][^:)]+|\/[^:)]+):\d+:\d+\)?$/.exec(
+    line.trim(),
+  );
   const value = match?.[1];
 
   if (value === undefined) {

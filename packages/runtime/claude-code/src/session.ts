@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { createInterface } from "node:readline";
 
 import type {
-  ExpertAgent,
+  Expert,
   ExpertAgentHumanInteractionHandler,
   ExpertAgentLogger,
   ExpertAgentStartupMessage,
@@ -64,7 +64,7 @@ const PROTOCOL_FLAGS = new Set([
 ]);
 
 export interface ClaudeCodeNativeSession {
-  readonly agent: ExpertAgent;
+  readonly agent: Expert;
   readonly executablePath: string;
   readonly additionalArgs: readonly string[];
   readonly defaultModelName?: string | undefined;
@@ -94,7 +94,7 @@ export interface ClaudeCodeNativeSession {
 }
 
 export function createClaudeCodeNativeSession(options: {
-  readonly agent: ExpertAgent;
+  readonly agent: Expert;
   readonly executablePath: string;
   readonly additionalArgs: readonly string[];
   readonly defaultModelName?: string | undefined;
@@ -1126,7 +1126,7 @@ function readToolResultText(block: Record<string, unknown>): string | undefined 
 function resolveClaudeCodeConfigDir(session: ClaudeCodeNativeSession): string {
   const configDir = session.managedConfig?.configDir;
   if (configDir === undefined) {
-    throw new Error("Claude Code session is missing its Workflow-owned managed config directory.");
+    throw new Error("Claude Code session is missing its Execution-owned managed config directory.");
   }
   return configDir;
 }

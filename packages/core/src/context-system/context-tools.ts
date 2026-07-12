@@ -81,7 +81,7 @@ export function createContextTools(
     {
       name: "list_expert_context",
       label: "List expert context",
-      description: "List ExpertAgent context by context id, description, and trigger.",
+      description: "List Expert context by context id, description, and trigger.",
       inputSchema: objectSchema({}),
       call: async () => {
         const result = await contextOperations.listContext(readRunContext(options));
@@ -102,7 +102,7 @@ export function createContextTools(
     {
       name: "read_expert_context",
       label: "Read expert context",
-      description: "Read an ExpertAgent context by context id, optionally as a byte range.",
+      description: "Read an Expert context by context id, optionally as a byte range.",
       inputSchema: objectSchema(
         {
           id: stringSchema("Context id."),
@@ -138,7 +138,7 @@ export function createContextTools(
     {
       name: "search_expert_context",
       label: "Search expert context",
-      description: "Search ExpertAgent context by literal text.",
+      description: "Search Expert context by literal text.",
       inputSchema: objectSchema(
         {
           namespace: stringSchema("Optional context namespace. Omit to search every namespace."),
@@ -182,10 +182,10 @@ export function createContextTools(
     {
       name: "add_expert_context",
       label: "Add expert context",
-      description: "Add an ExpertAgent context item to a context namespace by context id.",
+      description: "Add an Expert context item to a context namespace by context id.",
       approval: {
         mode: "required",
-        reason: "Writing ExpertAgent context requires explicit approval.",
+        reason: "Writing Expert context requires explicit approval.",
       },
       inputSchema: objectSchema(
         {
@@ -223,10 +223,10 @@ export function createContextTools(
       name: "edit_expert_context",
       label: "Edit expert context",
       description:
-        'Edit an ExpertAgent context item. Use mode="replace" for full content or metadata replacement, or mode="search_replace" for exact text search/replace.',
+        'Edit an Expert context item. Use mode="replace" for full content or metadata replacement, or mode="search_replace" for exact text search/replace.',
       approval: {
         mode: "required",
-        reason: "Writing ExpertAgent context requires explicit approval.",
+        reason: "Writing Expert context requires explicit approval.",
       },
       inputSchema: objectSchema(
         {
@@ -298,10 +298,10 @@ export function createContextTools(
     {
       name: "delete_expert_context",
       label: "Delete expert context",
-      description: "Delete an ExpertAgent context by context id.",
+      description: "Delete an Expert context by context id.",
       approval: {
         mode: "required",
-        reason: "Deleting ExpertAgent context requires explicit approval.",
+        reason: "Deleting Expert context requires explicit approval.",
       },
       inputSchema: objectSchema(
         {
@@ -688,7 +688,7 @@ function readRunContext(options: CreateContextToolsOptions): ExpertAgentRunConte
 
 function formatContextSummaries(context: readonly ExpertAgentContextItemSummary[]): string {
   if (context.length === 0) {
-    return "No ExpertAgent context items are available.";
+    return "No Expert context items are available.";
   }
 
   return context.map(formatContextSummary).join("\n");
@@ -774,7 +774,7 @@ function formatContentRange(context: ExpertAgentContextItem): readonly string[] 
 
 function formatContextSearchMatches(matches: readonly ExpertAgentContextItemSearchMatch[]): string {
   if (matches.length === 0) {
-    return "No ExpertAgent context matches found.";
+    return "No Expert context matches found.";
   }
 
   const groups = groupContextSearchMatches(matches);

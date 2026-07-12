@@ -38,7 +38,7 @@ export const MemoryRunEvidenceSchema = z
       .literal("pragma.memory-run-evidence/v2")
       .default("pragma.memory-run-evidence/v2"),
     agentId: z.string().min(1),
-    workflowRunId: z.string().min(1),
+    executionId: z.string().min(1),
     runtimeSession: RuntimeSessionRefSchema.optional(),
     runId: z.string().min(1),
     query: z.string().min(1),
@@ -59,13 +59,13 @@ export const MemoryRunEvidenceSchema = z
   })
   .passthrough();
 
-export const MemoryWorkflowEvidenceSchema = z
+export const MemoryExecutionEvidenceSchema = z
   .object({
     schemaVersion: z
-      .literal("pragma.memory-workflow-evidence/v2")
-      .default("pragma.memory-workflow-evidence/v2"),
+      .literal("pragma.memory-execution-evidence/v2")
+      .default("pragma.memory-execution-evidence/v2"),
     agentId: z.string().min(1),
-    workflowRunId: z.string().min(1),
+    executionId: z.string().min(1),
     runtimeSessions: z.array(RuntimeSessionRefSchema).default([]),
     runIds: z.array(z.string().min(1)).default([]),
     externalContext: z.boolean().default(false),
@@ -77,7 +77,7 @@ export const MemoryWorkflowEvidenceSchema = z
   .passthrough();
 
 export type MemoryRunEvidence = z.infer<typeof MemoryRunEvidenceSchema>;
-export type MemoryWorkflowEvidence = z.infer<typeof MemoryWorkflowEvidenceSchema>;
+export type MemoryExecutionEvidence = z.infer<typeof MemoryExecutionEvidenceSchema>;
 
 export function parseSkillMemoryConfig(input: SkillMemoryConfigInput = {}): SkillMemoryConfig {
   return SkillMemoryConfigSchema.parse(input);

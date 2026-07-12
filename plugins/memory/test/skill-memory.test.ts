@@ -5,8 +5,9 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  defineExpert,
   ContextSystem,
-  ExpertAgent,
+  Expert,
   HOST_CONTEXT_NAMESPACE,
   createInMemoryContextStore,
   withExecutionRunScope,
@@ -126,14 +127,14 @@ describe("memory plugin unified memory context", () => {
     });
     await submitTaskHook(agent, {
       runId: "run-1",
-      query: "Debug plugin memory design for repeated session workflows.",
-      output: "Established a stable plugin memory design for repeated session workflows.",
+      query: "Debug plugin memory design for repeated session executions.",
+      output: "Established a stable plugin memory design for repeated session executions.",
     });
     await destroySessionHook(agent);
 
     const contextResult = await agent.readContext({
       namespace: "memory",
-      id: "tasks/workflows/workflow-1/run-1.md",
+      id: "tasks/executions/execution-1/run-1.md",
     });
     expect(contextResult).toMatchObject({
       ok: true,
@@ -187,7 +188,7 @@ describe("memory plugin unified memory context", () => {
         type: "task",
         scope: "session",
         visibility: "shared",
-        workflowRunId: "wf-1",
+        executionId: "wf-1",
         runtimeSession: { type: "cloud-pi-agent", id: "session-1" },
         kind: "progress",
         content:
@@ -201,12 +202,12 @@ describe("memory plugin unified memory context", () => {
         record: {
           id: "summary-session",
           type: "evidence",
-          kind: "workflow",
+          kind: "execution",
           agentId: agent.id,
           scope: "workspace",
-          workflowRunId: "summary-workflow",
+          executionId: "summary-execution",
           payload: {
-            workflowRunId: "summary-workflow",
+            executionId: "summary-execution",
             runtimeSessions: [{ type: "cloud-pi-agent", id: "runtime-session-1" }],
             runIds: ["run-1"],
             externalContext: false,
@@ -231,7 +232,7 @@ describe("memory plugin unified memory context", () => {
           provenance: {
             createdAt: new Date().toISOString(),
             updatedAt: new Date().toISOString(),
-            evidence: [{ type: "workflow", id: "summary-workflow" }],
+            evidence: [{ type: "execution", id: "summary-execution" }],
           },
         },
       },
@@ -312,7 +313,7 @@ describe("memory plugin unified memory context", () => {
         type: "task",
         scope: "session",
         visibility: "shared",
-        workflowRunId: "wf-stale-summary",
+        executionId: "wf-stale-summary",
         runtimeSession: { type: "cloud-pi-agent", id: "session-1" },
         kind: "progress",
         content: "Keep serving the previous summary when regeneration breaks.",
@@ -442,8 +443,8 @@ async function createAgent(options: {
           | undefined;
       }
     | undefined;
-}): Promise<ExpertAgent> {
-  return await ExpertAgent.create({
+}): Promise<Expert> {
+  return await defineExpert({
     schemaVersion: "pragma.expert/v1",
     id: "memory-agent",
     name: "Memory Agent",
@@ -486,11 +487,11 @@ async function createAgent(options: {
 }
 
 async function emitStreamEvent(
-  agent: ExpertAgent,
+  agent: Expert,
   options: {
     readonly runId: string;
     readonly event: RuntimeStreamEvent;
-    readonly workflowRunId?: string | undefined;
+    readonly executionId?: string | undefined;
   },
 ): Promise<void> {
   await agent.hooks?.onStreamEvent?.({
@@ -503,16 +504,16 @@ async function emitStreamEvent(
         source: { type: "test" },
         attributes: {},
       },
-      { workflowRunId: options.workflowRunId ?? "workflow-1" },
+      { executionId: options.executionId ?? "execution-1" },
     ),
   });
 }
 
 async function submitTaskHook(
-  agent: ExpertAgent,
+  agent: Expert,
   options: {
     readonly runId: string;
-    readonly workflowRunId?: string | undefined;
+    readonly executionId?: string | undefined;
     readonly systemSessionId?: string | undefined;
     readonly runtimeSessionId?: string | undefined;
     readonly query?: string | undefined;
@@ -545,13 +546,13 @@ async function submitTaskHook(
         source: { type: "test" },
         attributes: {},
       },
-      { workflowRunId: options.workflowRunId ?? "workflow-1" },
+      { executionId: options.executionId ?? "execution-1" },
     ),
   });
 }
 
 async function destroySessionHook(
-  agent: ExpertAgent,
+  agent: Expert,
   options: {
     readonly systemSessionId?: string | undefined;
     readonly runtimeSessionId?: string | undefined;

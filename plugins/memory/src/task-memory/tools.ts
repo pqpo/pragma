@@ -21,13 +21,11 @@ export function createTaskMemoryTools(options: {
     {
       name: "list_task_memory",
       description:
-        "List task memory entries for the current workflow run. Uses workflow execution context by default.",
+        "List task memory entries for the current Execution. Uses execution execution context by default.",
       inputSchema: objectSchema(
         {
-          workflowRunId: stringSchema(
-            "Workflow run id. Defaults to the current session workflow run.",
-          ),
-          taskRunId: stringSchema("Optional task run id filter."),
+          executionId: stringSchema("Execution id. Defaults to the current session Execution."),
+          invocationId: stringSchema("Optional task run id filter."),
           runtimeSession: runtimeSessionSchema("Optional runtime session filter."),
           visibility: enumSchema(["shared", "private"], "Optional visibility filter."),
           status: {
@@ -45,7 +43,7 @@ export function createTaskMemoryTools(options: {
       ),
       async call(args, _signal, context) {
         const scope = resolveTaskMemoryScope(args, context?.runContext, options.defaultAgentId, {
-          requireWorkflowRunId: true,
+          requireExecutionId: true,
         });
 
         if (!scope.ok) {
@@ -53,9 +51,9 @@ export function createTaskMemoryTools(options: {
         }
 
         const result = await options.memorySystem.listTaskMemory({
-          workflowRunId: scope.workflowRunId!,
+          executionId: scope.executionId!,
           actorAgentId: scope.actorAgentId,
-          taskRunId: readOptionalStringParam(args, "taskRunId"),
+          invocationId: readOptionalStringParam(args, "invocationId"),
           runtimeSession: readOptionalRuntimeSessionParam(args, "runtimeSession"),
           visibility: readOptionalVisibilityParam(args, "visibility"),
           status: readOptionalTaskMemoryStatusParam(args),
@@ -97,13 +95,11 @@ export function createTaskMemoryTools(options: {
     {
       name: "append_task_memory",
       description:
-        "Append a task memory entry. Workflow run id defaults to the current execution context.",
+        "Append a task memory entry. Execution id defaults to the current execution context.",
       inputSchema: objectSchema(
         {
-          workflowRunId: stringSchema(
-            "Workflow run id. Defaults to the current session workflow run.",
-          ),
-          taskRunId: stringSchema("Optional task run id."),
+          executionId: stringSchema("Execution id. Defaults to the current session Execution."),
+          invocationId: stringSchema("Optional task run id."),
           runtimeSession: runtimeSessionSchema("Optional runtime session provenance."),
           visibility: enumSchema(["shared", "private"], "Entry visibility."),
           kind: enumSchema(
@@ -131,7 +127,7 @@ export function createTaskMemoryTools(options: {
       ),
       async call(args, _signal, context) {
         const scope = resolveTaskMemoryScope(args, context?.runContext, options.defaultAgentId, {
-          requireWorkflowRunId: true,
+          requireExecutionId: true,
         });
 
         if (!scope.ok) {
@@ -145,8 +141,8 @@ export function createTaskMemoryTools(options: {
           record: {
             type: "task",
             scope: "session",
-            workflowRunId: scope.workflowRunId!,
-            taskRunId: readOptionalStringParam(args, "taskRunId") ?? scope.taskRunId,
+            executionId: scope.executionId!,
+            invocationId: readOptionalStringParam(args, "invocationId") ?? scope.invocationId,
             runtimeSession: scope.runtimeSession,
             visibility,
             ownerAgentId: visibility === "private" ? actorAgentId : undefined,
@@ -228,14 +224,14 @@ function resolveTaskMemoryScope(
   runContextInput: Parameters<typeof createExpertAgentRunContext>[0],
   defaultAgentId: string | undefined,
   requirements: {
-    readonly requireWorkflowRunId: boolean;
+    readonly requireExecutionId: boolean;
   },
 ):
   | {
       readonly ok: true;
-      readonly workflowRunId?: string | undefined;
+      readonly executionId?: string | undefined;
       readonly actorAgentId: string;
-      readonly taskRunId?: string | undefined;
+      readonly invocationId?: string | undefined;
       readonly runtimeSession?: RuntimeSessionRef | undefined;
       readonly runContext: ReturnType<typeof createExpertAgentRunContext>;
     }
@@ -245,18 +241,15 @@ function resolveTaskMemoryScope(
     } {
   const runContext = createExpertAgentRunContext(runContextInput);
   const runScope = readExecutionRunScope(runContext);
-  const workflowRunId = readOptionalStringParam(args, "workflowRunId") ?? runScope.workflowRunId;
+  const executionId = readOptionalStringParam(args, "executionId") ?? runScope.executionId;
   const runtimeSession =
     readOptionalRuntimeSessionParam(args, "runtimeSession") ?? runScope.runtimeSession;
 
-  if (
-    requirements.requireWorkflowRunId &&
-    (workflowRunId === undefined || workflowRunId.length === 0)
-  ) {
+  if (requirements.requireExecutionId && (executionId === undefined || executionId.length === 0)) {
     return {
       ok: false as const,
       result: {
-        text: "Task memory operation requires workflowRunId. Provide it explicitly or run the agent inside a workflow execution context.",
+        text: "Task memory operation requires executionId. Provide it explicitly or run the agent inside a execution execution context.",
         isError: true,
       },
     };
@@ -264,9 +257,9 @@ function resolveTaskMemoryScope(
 
   return {
     ok: true as const,
-    workflowRunId,
+    executionId,
     actorAgentId: resolveActorAgentId(runContext, defaultAgentId),
-    taskRunId: runScope.taskRunId,
+    invocationId: runScope.invocationId,
     runtimeSession,
     runContext,
   };
@@ -499,8 +492,8 @@ function formatTaskMemoryList(entries: readonly TaskMemoryRecord[]): string {
 function formatTaskMemoryRecord(entry: TaskMemoryRecord): string {
   const lines = [
     `- id: ${entry.id}`,
-    `  workflowRunId: ${entry.workflowRunId}`,
-    entry.taskRunId === undefined ? undefined : `  taskRunId: ${entry.taskRunId}`,
+    `  executionId: ${entry.executionId}`,
+    entry.invocationId === undefined ? undefined : `  invocationId: ${entry.invocationId}`,
     `  visibility: ${entry.visibility}`,
     entry.ownerAgentId === undefined ? undefined : `  ownerAgentId: ${entry.ownerAgentId}`,
     `  kind: ${entry.kind}`,

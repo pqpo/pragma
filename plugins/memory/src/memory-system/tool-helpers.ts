@@ -106,16 +106,16 @@ export function readOptionalEvidenceParam(
 }
 
 export function createDefaultEvidence(scope: {
-  readonly workflowRunId?: string | undefined;
-  readonly taskRunId?: string | undefined;
+  readonly executionId?: string | undefined;
+  readonly invocationId?: string | undefined;
   readonly runtimeSession?: RuntimeSessionRef | undefined;
 }): readonly MemoryEvidenceReference[] {
-  if (scope.workflowRunId !== undefined) {
-    return [{ type: "workflow", id: scope.workflowRunId }];
+  if (scope.executionId !== undefined) {
+    return [{ type: "execution", id: scope.executionId }];
   }
 
-  if (scope.taskRunId !== undefined) {
-    return [{ type: "task", id: scope.taskRunId }];
+  if (scope.invocationId !== undefined) {
+    return [{ type: "task", id: scope.invocationId }];
   }
 
   if (scope.runtimeSession !== undefined) {

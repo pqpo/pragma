@@ -16,9 +16,7 @@ interface CodexExecutableResolutionOptions {
  * PATH than an interactive shell. The standalone Codex installer places its command in
  * ~/.local/bin, so use that known location when PATH lookup cannot find it.
  */
-export function resolveCodexExecutablePath(
-  options: CodexExecutableResolutionOptions = {},
-): string {
+export function resolveCodexExecutablePath(options: CodexExecutableResolutionOptions = {}): string {
   if (options.executablePath !== undefined) {
     return options.executablePath;
   }

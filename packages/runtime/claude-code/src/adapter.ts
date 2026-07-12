@@ -5,15 +5,15 @@ import type {
   McpToolRegistry,
   RuntimeAdapter,
   RuntimeCanUseResult,
-  WorkflowToolsMcpServer,
+  ExpertToolsMcpServer,
 } from "@pragma/core";
 import {
   createMcpToolRegistry,
-  createWorkflowToolsMcpServer,
+  createExpertToolsMcpServer,
   defineRuntimeDriver,
   type ExpertAgentLogger,
   type RuntimeSessionPersistenceSpec,
-  type WorkflowToolRuntimeState,
+  type ExpertToolRuntimeState,
 } from "@pragma/core";
 import { prepareManagedClaudeCodeConfig } from "./claude-config.ts";
 import { canUseClaudeCodeRuntime } from "./availability.ts";
@@ -53,7 +53,7 @@ const DEFAULT_CLAUDE_CODE_PERMISSION_MODE = "auto" as const;
 
 interface ClaudeCodeDriverSession extends ClaudeCodeNativeSession {
   readonly mcpToolRegistry: McpToolRegistry;
-  readonly workflowToolsMcpServer: WorkflowToolsMcpServer;
+  readonly expertToolsMcpServer: ExpertToolsMcpServer;
 }
 
 export function createClaudeCodeRuntime(
@@ -109,20 +109,20 @@ export function createClaudeCodeRuntime(
           sessionId:
             ctx.persistence.restoredRuntimeSessionId ?? ctx.request.runtimeSession?.id ?? "",
         };
-        const toolRuntimeState: WorkflowToolRuntimeState = {};
+        const toolRuntimeState: ExpertToolRuntimeState = {};
         const pluginDir = await materializeClaudeCodePlugin({
           agent: ctx.agent,
           sessionDir,
         });
         const mcpToolRegistry = await createMcpToolRegistry(ctx.agent.mcp);
-        const workflowToolsMcpServer = await createWorkflowToolsMcpServer({
+        const expertToolsMcpServer = await createExpertToolsMcpServer({
           agent: ctx.agent,
           getContext: () => ctx.lifecycle.currentContext,
           humanInteractionHandler: ctx.request.humanInteractionHandler,
           logger: ctx.logger,
           mcpTools: mcpToolRegistry.tools,
           state: toolRuntimeState,
-          workflowExecution: ctx.request.workflowExecution,
+          executionContext: ctx.request.executionContext,
         });
         const managedConfig = await prepareManagedClaudeCodeConfig({
           sessionDir,
@@ -150,7 +150,7 @@ export function createClaudeCodeRuntime(
             humanInteractionHandler: ctx.request.humanInteractionHandler,
             logger: ctx.logger,
             managedConfig,
-            mcpServerUrl: workflowToolsMcpServer.url,
+            mcpServerUrl: expertToolsMcpServer.url,
             permissionMode: options.permissionMode ?? DEFAULT_CLAUDE_CODE_PERMISSION_MODE,
             pluginDir,
             sessionDir,
@@ -160,7 +160,7 @@ export function createClaudeCodeRuntime(
             systemPrompt: ctx.agentContext.systemPrompt,
           }),
           mcpToolRegistry,
-          workflowToolsMcpServer,
+          expertToolsMcpServer,
         };
       },
       readSession(session) {
@@ -185,10 +185,10 @@ export function createClaudeCodeRuntime(
       cancelTurn(session) {
         cancelClaudeCodeTurn(session);
       },
-      async destroySession(session, ctx) {
+      async closeSession(session, ctx) {
         cancelClaudeCodeTurn(session);
         await disposeClaudeRuntimeResources(
-          session.workflowToolsMcpServer,
+          session.expertToolsMcpServer,
           session.mcpToolRegistry,
           ctx.logger,
         );
@@ -241,12 +241,12 @@ function createClaudeCodeRuntimeCanUse(
 }
 
 async function disposeClaudeRuntimeResources(
-  workflowToolsMcpServer: WorkflowToolsMcpServer | undefined,
+  expertToolsMcpServer: ExpertToolsMcpServer | undefined,
   mcpToolRegistry: McpToolRegistry | undefined,
   logger: ExpertAgentLogger,
 ): Promise<void> {
   const results = await Promise.allSettled([
-    workflowToolsMcpServer?.dispose() ?? Promise.resolve(),
+    expertToolsMcpServer?.dispose() ?? Promise.resolve(),
     mcpToolRegistry?.dispose() ?? Promise.resolve(),
   ]);
   const errors = results.flatMap((result) =>

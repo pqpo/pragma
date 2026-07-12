@@ -4,11 +4,11 @@ import {
   getAgentDir,
 } from "@earendil-works/pi-coding-agent";
 import type { Skill } from "@earendil-works/pi-coding-agent";
-import type { ExpertAgent } from "@pragma/core";
+import type { Expert } from "@pragma/core";
 import { dirname } from "node:path";
 
 export function createResourceLoader(
-  agent: ExpertAgent,
+  agent: Expert,
   cwd: string,
   systemPrompt: string,
 ): DefaultResourceLoader {
@@ -25,7 +25,7 @@ export function createResourceLoader(
   });
 }
 
-function createPiSkills(agent: ExpertAgent): Skill[] {
+function createPiSkills(agent: Expert): Skill[] {
   return (agent.skills?.skills ?? [])
     .filter((skill) => skill.path !== undefined)
     .map((skill) => ({

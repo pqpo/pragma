@@ -64,11 +64,11 @@ function createExperienceMemoryStore(options: {
 
       return okMemory(
         records.filter((record) => {
-          if (input.workflowRunId !== undefined && record.workflowRunId !== input.workflowRunId) {
+          if (input.executionId !== undefined && record.executionId !== input.executionId) {
             return false;
           }
 
-          if (input.taskRunId !== undefined && record.taskRunId !== input.taskRunId) {
+          if (input.invocationId !== undefined && record.invocationId !== input.invocationId) {
             return false;
           }
 
@@ -155,11 +155,11 @@ function createExperienceMemoryStore(options: {
             return true;
           }
 
-          if (input.taskRunId !== undefined && record.taskRunId === input.taskRunId) {
+          if (input.invocationId !== undefined && record.invocationId === input.invocationId) {
             return true;
           }
 
-          if (input.workflowRunId !== undefined && record.workflowRunId === input.workflowRunId) {
+          if (input.executionId !== undefined && record.executionId === input.executionId) {
             return true;
           }
 
@@ -289,8 +289,8 @@ function toExperienceSearchText(record: ExperienceMemoryRecord): string {
     record.content,
     ...(record.tags ?? []),
     record.kind,
-    record.workflowRunId,
-    record.taskRunId,
+    record.executionId,
+    record.invocationId,
     record.runtimeSession?.type,
     record.runtimeSession?.id,
   ]

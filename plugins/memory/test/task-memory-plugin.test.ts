@@ -32,7 +32,7 @@ describe("task-memory plugin", () => {
     });
 
     const result = await memorySystem.listTaskMemory({
-      workflowRunId: "workflow-1",
+      executionId: "execution-1",
       actorAgentId: "agent-a",
     });
 
@@ -61,7 +61,7 @@ describe("task-memory plugin", () => {
     });
 
     const result = await memorySystem.listTaskMemory({
-      workflowRunId: "workflow-1",
+      executionId: "execution-1",
       actorAgentId: "agent-a",
     });
 

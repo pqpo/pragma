@@ -1,7 +1,4 @@
-import type {
-  ExpertAgentPluginContributions,
-  ExpertAgentPluginSetupContext,
-} from "@pragma/core";
+import type { ExpertAgentPluginContributions, ExpertAgentPluginSetupContext } from "@pragma/core";
 
 import { MemorySystem, type FactMemoryStore } from "../memory-system/index.ts";
 import { createFileSystemFactMemoryStore } from "./store.ts";
@@ -11,9 +8,7 @@ export interface FactMemoryStoreFactoryContext {
   readonly pluginContext: ExpertAgentPluginSetupContext;
 }
 
-export type FactMemoryStoreFactory = (
-  context: FactMemoryStoreFactoryContext,
-) => FactMemoryStore;
+export type FactMemoryStoreFactory = (context: FactMemoryStoreFactoryContext) => FactMemoryStore;
 
 export interface FactMemoryPluginConfig {
   readonly enabled?: boolean | undefined;
@@ -87,7 +82,9 @@ function readFactMemoryConfig(input: unknown): FactMemoryPluginConfig {
     enabled: enabled ?? true,
     ...(filePath === undefined ? {} : { filePath: assertOptionalString(filePath, "filePath") }),
     ...(store === undefined ? {} : { store: assertFactMemoryStore(store) }),
-    ...(storeFactory === undefined ? {} : { storeFactory: assertFactMemoryStoreFactory(storeFactory) }),
+    ...(storeFactory === undefined
+      ? {}
+      : { storeFactory: assertFactMemoryStoreFactory(storeFactory) }),
   };
 }
 

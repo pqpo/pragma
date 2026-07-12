@@ -114,18 +114,21 @@ describe("capability store", () => {
     });
   });
 
-  it("rejects symbolic links in Skill directories", async () => {
-    const { directory, store } = await createStore();
-    const source = join(directory, "linked-skill");
-    await mkdir(source);
-    await writeFile(join(source, "SKILL.md"), "---\nname: linked\ndescription: Linked.\n---\n");
-    await writeFile(join(directory, "outside.txt"), "outside");
-    await symlink(join(directory, "outside.txt"), join(source, "outside.txt"));
+  it.skipIf(process.platform === "win32")(
+    "rejects symbolic links in Skill directories",
+    async () => {
+      const { directory, store } = await createStore();
+      const source = join(directory, "linked-skill");
+      await mkdir(source);
+      await writeFile(join(source, "SKILL.md"), "---\nname: linked\ndescription: Linked.\n---\n");
+      await writeFile(join(directory, "outside.txt"), "outside");
+      await symlink(join(directory, "outside.txt"), join(source, "outside.txt"));
 
-    await expect(store.importSkill({ sourcePath: source })).rejects.toMatchObject({
-      code: "import_invalid",
-    });
-  });
+      await expect(store.importSkill({ sourcePath: source })).rejects.toMatchObject({
+        code: "import_invalid",
+      });
+    },
+  );
 
   it("creates fixed revisions and keeps credentials out of definitions", async () => {
     const { directory, store } = await createStore();

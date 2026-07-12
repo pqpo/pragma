@@ -20,7 +20,7 @@ describe("Git workspace path resolution", () => {
       resolveRepositoryWorkspacePath("/tmp/pragma", {
         id: "repo",
       }),
-    ).toBe("/tmp/pragma/repos/repo");
+    ).toBe(resolve("/tmp/pragma/repos/repo"));
   });
 });
 

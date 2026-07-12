@@ -31,7 +31,7 @@ export function createFileSystemTaskMemoryStore(options: {
 }): TaskMemoryStore {
   const storage =
     options.filePath === undefined
-      ? createWorkflowFileStorage({
+      ? createExecutionFileStorage({
           agentId: options.agentId,
           rootDir: options.rootDir,
         })
@@ -65,7 +65,7 @@ function createSingleFileStorage(options: { readonly agentId: string; readonly f
   };
 }
 
-function createWorkflowFileStorage(options: {
+function createExecutionFileStorage(options: {
   readonly agentId: string;
   readonly rootDir?: string | undefined;
 }) {
@@ -77,11 +77,11 @@ function createWorkflowFileStorage(options: {
 
   return {
     readRecords: async () => {
-      const workflowRunIds = await listWorkflowRunIds(rootDir);
+      const executionIds = await listExecutionIds(rootDir);
       const nestedRecords = await Promise.all(
-        workflowRunIds.map(async (workflowRunId) => {
+        executionIds.map(async (executionId) => {
           const stored = parseTaskMemoryRecords(
-            await readJsonFile<unknown>(resolveWorkflowRecordsPath(rootDir, workflowRunId), []),
+            await readJsonFile<unknown>(resolveExecutionRecordsPath(rootDir, executionId), []),
           );
           return stored.map(cloneRecord);
         }),
@@ -90,30 +90,30 @@ function createWorkflowFileStorage(options: {
       return nestedRecords.flat();
     },
     writeRecords: async (records: readonly TaskMemoryRecord[]) => {
-      const recordsByWorkflow = new Map<string, TaskMemoryRecord[]>();
+      const recordsByExecution = new Map<string, TaskMemoryRecord[]>();
 
       for (const record of records) {
-        const workflowStorageId = sanitizeMemoryPathSegment(record.workflowRunId);
-        const recordsForWorkflow = recordsByWorkflow.get(workflowStorageId) ?? [];
-        recordsForWorkflow.push(cloneRecord(record));
-        recordsByWorkflow.set(workflowStorageId, recordsForWorkflow);
+        const executionStorageId = sanitizeMemoryPathSegment(record.executionId);
+        const recordsForExecution = recordsByExecution.get(executionStorageId) ?? [];
+        recordsForExecution.push(cloneRecord(record));
+        recordsByExecution.set(executionStorageId, recordsForExecution);
       }
 
       await Promise.all(
-        [...recordsByWorkflow.entries()].map(async ([workflowStorageId, recordsForWorkflow]) => {
+        [...recordsByExecution.entries()].map(async ([executionStorageId, recordsForExecution]) => {
           await writeJsonFile(
-            resolveWorkflowRecordsPath(rootDir, workflowStorageId),
-            recordsForWorkflow.map(cloneRecord),
+            resolveExecutionRecordsPath(rootDir, executionStorageId),
+            recordsForExecution.map(cloneRecord),
           );
         }),
       );
 
-      const existingWorkflowIds = await listWorkflowRunIds(rootDir);
+      const existingExecutionIds = await listExecutionIds(rootDir);
       await Promise.all(
-        existingWorkflowIds
-          .filter((workflowStorageId) => !recordsByWorkflow.has(workflowStorageId))
-          .map(async (workflowStorageId) => {
-            await rm(resolveWorkflowDirectory(rootDir, workflowStorageId), {
+        existingExecutionIds
+          .filter((executionStorageId) => !recordsByExecution.has(executionStorageId))
+          .map(async (executionStorageId) => {
+            await rm(resolveExecutionDirectory(rootDir, executionStorageId), {
               recursive: true,
               force: true,
             });
@@ -123,11 +123,11 @@ function createWorkflowFileStorage(options: {
   };
 }
 
-async function listWorkflowRunIds(rootDir: string): Promise<readonly string[]> {
-  const workflowsDir = join(rootDir, "workflows");
+async function listExecutionIds(rootDir: string): Promise<readonly string[]> {
+  const executionsDir = join(rootDir, "executions");
 
   try {
-    const entries = await readdir(workflowsDir, { withFileTypes: true });
+    const entries = await readdir(executionsDir, { withFileTypes: true });
     return entries
       .filter((entry) => entry.isDirectory())
       .map((entry) => entry.name)
@@ -141,12 +141,12 @@ async function listWorkflowRunIds(rootDir: string): Promise<readonly string[]> {
   }
 }
 
-function resolveWorkflowRecordsPath(rootDir: string, workflowRunId: string): string {
-  return join(resolveWorkflowDirectory(rootDir, workflowRunId), TASK_MEMORY_FILE_NAME);
+function resolveExecutionRecordsPath(rootDir: string, executionId: string): string {
+  return join(resolveExecutionDirectory(rootDir, executionId), TASK_MEMORY_FILE_NAME);
 }
 
-function resolveWorkflowDirectory(rootDir: string, workflowRunId: string): string {
-  return join(rootDir, "workflows", sanitizeMemoryPathSegment(workflowRunId));
+function resolveExecutionDirectory(rootDir: string, executionId: string): string {
+  return join(rootDir, "executions", sanitizeMemoryPathSegment(executionId));
 }
 
 function createTaskMemoryStore(options: {
@@ -177,13 +177,13 @@ function createTaskMemoryStore(options: {
       const statusFilter =
         input.status === undefined ? undefined : new Set(toReadonlyArray(input.status));
       const filtered = (await options.readRecords())
-        .filter((record) => record.workflowRunId === input.workflowRunId)
+        .filter((record) => record.executionId === input.executionId)
         .filter((record) => {
           if (!canReadRecord(record, input.actorAgentId)) {
             return false;
           }
 
-          if (input.taskRunId !== undefined && record.taskRunId !== input.taskRunId) {
+          if (input.invocationId !== undefined && record.invocationId !== input.invocationId) {
             return false;
           }
 
@@ -323,10 +323,10 @@ function createTaskMemoryStore(options: {
     },
 
     async archive(input) {
-      if (input.workflowRunId === undefined && input.taskRunId === undefined) {
+      if (input.executionId === undefined && input.invocationId === undefined) {
         return errorMemory(
           "invalid_input",
-          "Archive requires workflowRunId or taskRunId. runtimeSession may only be used as an additional filter.",
+          "Archive requires executionId or invocationId. runtimeSession may only be used as an additional filter.",
         );
       }
 
@@ -338,7 +338,7 @@ function createTaskMemoryStore(options: {
             return record;
           }
 
-          if (input.taskRunId !== undefined && record.taskRunId !== input.taskRunId) {
+          if (input.invocationId !== undefined && record.invocationId !== input.invocationId) {
             return record;
           }
 
@@ -349,7 +349,7 @@ function createTaskMemoryStore(options: {
             return record;
           }
 
-          if (input.workflowRunId !== undefined && record.workflowRunId !== input.workflowRunId) {
+          if (input.executionId !== undefined && record.executionId !== input.executionId) {
             return record;
           }
 
@@ -378,7 +378,7 @@ function createTaskMemoryStore(options: {
 
     async retrieveForRuntime(input, runtimeOptions) {
       const activeRecords = (await options.readRecords()).filter(
-        (record) => record.workflowRunId === input.workflowRunId && record.status === "active",
+        (record) => record.executionId === input.executionId && record.status === "active",
       );
       const shared =
         runtimeOptions?.includeShared === false
@@ -387,9 +387,9 @@ function createTaskMemoryStore(options: {
               .filter((record) => record.visibility === "shared")
               .filter(
                 (record) =>
-                  input.taskRunId === undefined ||
-                  record.taskRunId === undefined ||
-                  record.taskRunId === input.taskRunId,
+                  input.invocationId === undefined ||
+                  record.invocationId === undefined ||
+                  record.invocationId === input.invocationId,
               );
       const privateItems =
         runtimeOptions?.includePrivate === false
@@ -398,9 +398,9 @@ function createTaskMemoryStore(options: {
               (record) =>
                 record.visibility === "private" &&
                 record.ownerAgentId === input.agentId &&
-                (input.taskRunId === undefined ||
-                  record.taskRunId === undefined ||
-                  record.taskRunId === input.taskRunId),
+                (input.invocationId === undefined ||
+                  record.invocationId === undefined ||
+                  record.invocationId === input.invocationId),
             );
       const maxItems = Math.max(1, runtimeOptions?.maxItems ?? Number.MAX_SAFE_INTEGER);
 

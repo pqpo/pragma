@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import { RuntimeSessionRefSchema, type AgentMessage, type AgentMessageUsage } from "@pragma/shared";
 
-import type { ExpertAgent } from "../agent/expert-agent.ts";
+import type { Expert } from "../agent/expert-agent.ts";
 import type { ExpertAgentContext, ExpertAgentStartupMessage } from "../agent/context-manager.ts";
 import { createExpertAgentLogger, type ExpertAgentLogger } from "../logging/logger.ts";
 import { dispatchExpertAgentHook } from "../plugins/expert-agent-plugin.ts";
@@ -44,7 +44,7 @@ import { createExpertAgentRunContext, type ExpertAgentRunContext } from "./run-c
 import { PragmaPaths } from "../storage/pragma-paths.ts";
 import {
   createRuntimeSessionRecord,
-  restoreOrCreateRuntimeSessionRecord,
+  restoreRuntimeSessionRecord,
   updateRuntimeSessionRecord,
   type RuntimeSessionRecord,
 } from "./session-record.ts";
@@ -64,10 +64,7 @@ import type {
   RuntimeSubmitRequest,
 } from "./runtime-adapter.ts";
 import type { RuntimeStreamEvent } from "./stream-events.ts";
-import {
-  registerRuntimeSessionFactory,
-  type OwnedRuntimeSessionRequest,
-} from "./session-factory.ts";
+import { registerRuntimeSessionFactory } from "./session-factory.ts";
 
 export interface DefineRuntimeDriverOptions {
   readonly outputRetryLimit?: number | undefined;
@@ -83,12 +80,11 @@ export interface RuntimePaths {
 }
 
 export interface RuntimePrepareContext {
-  readonly agent: ExpertAgent;
+  readonly agent: Expert;
   readonly request: RuntimeDriverSessionRequest;
   readonly descriptor: RuntimeAdapterDescriptor;
   readonly systemSessionId: string;
-  readonly workflowRunId: string;
-  readonly taskRunId?: string | undefined;
+  readonly owner: RuntimeDriverSessionRequest["owner"];
   readonly runContext: ExpertAgentRunContext;
   readonly requestedRuntimeSession?: RuntimeSessionRef | undefined;
   readonly workspace: string;
@@ -115,7 +111,7 @@ export interface RuntimeDriverSessionContext<
 }
 
 export interface RuntimeSessionReadContext {
-  readonly agent: ExpertAgent;
+  readonly agent: Expert;
   readonly runContext: ExpertAgentRunContext;
 }
 
@@ -157,7 +153,7 @@ export interface RuntimeCancelContext {
   readonly signal?: AbortSignal | undefined;
 }
 
-export interface RuntimeDestroyContext {
+export interface RuntimeCloseContext {
   readonly sessionInfo: RuntimeSessionInfo;
   readonly logger: ExpertAgentLogger;
 }
@@ -177,6 +173,11 @@ export interface RuntimeDriver<TNativeEvent, TNativeSession, TPrepared = Runtime
   readonly createSession: (
     context: RuntimeDriverSessionContext<TPrepared>,
   ) => Promise<TNativeSession> | TNativeSession;
+  readonly restoreSession?:
+    | ((
+        context: RuntimeDriverSessionContext<TPrepared>,
+      ) => Promise<TNativeSession> | TNativeSession)
+    | undefined;
   readonly listMessages?:
     | ((session: TNativeSession, context: RuntimeSessionReadContext) => readonly AgentMessage[])
     | undefined;
@@ -206,8 +207,18 @@ export interface RuntimeDriver<TNativeEvent, TNativeSession, TPrepared = Runtime
   readonly cancelTurn?:
     | ((session: TNativeSession, context: RuntimeCancelContext) => Promise<void> | void)
     | undefined;
-  readonly destroySession?:
-    | ((session: TNativeSession, context: RuntimeDestroyContext) => Promise<void> | void)
+  readonly steerTurn?:
+    | ((
+        session: TNativeSession,
+        request: {
+          readonly requestId: string;
+          readonly content: string;
+          readonly targetRunId: string;
+        },
+      ) => Promise<void> | void)
+    | undefined;
+  readonly closeSession?:
+    | ((session: TNativeSession, context: RuntimeCloseContext) => Promise<void> | void)
     | undefined;
 }
 
@@ -228,8 +239,18 @@ export function defineRuntimeDriver<
           syncCallback: options.sessionSyncCallback,
         }));
 
+  const descriptor: RuntimeAdapterDescriptor = {
+    ...driver.descriptor,
+    capabilities: {
+      ...driver.descriptor.capabilities,
+      supportsResume: true,
+      supportsSteer: driver.steerTurn !== undefined,
+      supportsCancel: driver.cancelTurn !== undefined,
+      supportsClose: true,
+    },
+  };
   const runtime: RuntimeAdapter = {
-    descriptor: driver.descriptor,
+    descriptor,
     canUse: async () => (await driver.canUse?.()) ?? { usable: true },
     ...(driver.listModels === undefined ? {} : { listModels: driver.listModels }),
   };
@@ -243,7 +264,7 @@ export function defineRuntimeDriver<
 
 async function createManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepared>(
   driver: RuntimeDriver<TNativeEvent, TNativeSession, TPrepared>,
-  request: OwnedRuntimeSessionRequest,
+  request: RuntimeDriverSessionRequest,
   persistenceProvider: RuntimeSessionPersistenceProvider,
 ): Promise<ManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepared>> {
   const agent = request.agent;
@@ -255,26 +276,20 @@ async function createManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepar
     agentId: agent.id,
     runtimeId: descriptor.id,
   });
-  if (request.owner.workflowRunId.trim() === "") {
-    throw new Error("Runtime session owner.workflowRunId must not be empty.");
+  if (request.owner.ownerId.trim() === "") {
+    throw new Error("Runtime Session ownerId must not be empty.");
   }
   if (request.runtimeSession !== undefined && request.systemSessionId === undefined) {
     throw new Error("Restoring a runtime session requires its original systemSessionId.");
   }
   const pragmaPaths = new PragmaPaths({ pragmaHome: request.pragmaHome ?? agent.pragmaHome });
-  const paths = createRuntimePaths(
-    pragmaPaths,
-    request.owner.workflowRunId,
-    systemSessionId,
-    descriptor,
-  );
+  const paths = createRuntimePaths(pragmaPaths, request.owner.ownerId, systemSessionId, descriptor);
   const prepareContext: RuntimePrepareContext = {
     agent,
     request,
     descriptor,
     systemSessionId,
-    workflowRunId: request.owner.workflowRunId,
-    ...(request.owner.taskRunId === undefined ? {} : { taskRunId: request.owner.taskRunId }),
+    owner: request.owner,
     runContext,
     requestedRuntimeSession: request.runtimeSession,
     workspace: agent.workspace,
@@ -297,14 +312,13 @@ async function createManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepar
       workspace: agent.workspace,
     });
   } else {
-    sessionRecord = await restoreOrCreateRuntimeSessionRecord({
-      pragmaPaths,
+    sessionRecord = await restoreRuntimeSessionRecord({
+      paths: pragmaPaths,
       owner: request.owner,
       systemSessionId,
       agentId: agent.id,
       runtime: descriptor,
       runtimeSession: request.runtimeSession,
-      expectedTaskRunId: request.runtimeSessionOwnerTaskRunId ?? request.owner.taskRunId,
       workspace: agent.workspace,
     });
   }
@@ -391,7 +405,7 @@ async function createManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepar
         });
         if (nativeSession !== undefined) {
           await Promise.resolve(
-            driver.destroySession?.(nativeSession, {
+            driver.closeSession?.(nativeSession, {
               sessionInfo,
               logger,
             }),
@@ -412,7 +426,7 @@ async function createManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepar
           });
         } catch (error) {
           logger.error("Failed to close Runtime session record", {
-            workflowRunId: request.owner.workflowRunId,
+            ownerId: request.owner.ownerId,
             systemSessionId,
             error,
           });
@@ -442,7 +456,10 @@ async function createManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepar
       prepared,
       sessionInfo: readSessionInfo(),
     };
-    nativeSession = await driver.createSession(sessionContext);
+    nativeSession =
+      request.runtimeSession === undefined
+        ? await driver.createSession(sessionContext)
+        : await (driver.restoreSession ?? driver.createSession)(sessionContext);
     const snapshot = driver.readSession?.(nativeSession, { agent, runContext });
     currentRuntimeSessionId = snapshot?.runtimeSessionId ?? currentRuntimeSessionId;
     sessionRecord = await updateRuntimeSessionRecord(pragmaPaths, sessionRecord, {
@@ -476,6 +493,7 @@ async function createManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepar
           status: "active",
         });
         await checkpoint(trigger);
+        await request.onSessionInfo?.(readSessionInfo());
       },
     });
     managedSession.setWatcher(
@@ -494,6 +512,7 @@ async function createManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepar
       session: readSessionInfo(),
       logger,
     });
+    await request.onSessionInfo?.(readSessionInfo());
 
     return managedSession;
   } catch (error) {
@@ -503,14 +522,14 @@ async function createManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepar
       });
     } catch (recordError) {
       logger.error("Failed to mark Runtime session record as failed", {
-        workflowRunId: request.owner.workflowRunId,
+        ownerId: request.owner.ownerId,
         systemSessionId,
         error: recordError,
       });
     }
     logger.error("Runtime session creation failed", { error });
     if (lifecycle !== undefined) {
-      await lifecycle.abort().catch(() => undefined);
+      await lifecycle.close().catch(() => undefined);
     } else {
       await dispatchExpertAgentHook(agent.hooks, "afterSessionDestroy", {
         agent,
@@ -574,10 +593,11 @@ function createRuntimeUnavailableMessage(
 
 class ManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepared> {
   private watcher: RuntimeSessionWatcher | undefined;
+  private activeRunId: string | undefined;
 
   constructor(
     private readonly options: {
-      readonly agent: ExpertAgent;
+      readonly agent: Expert;
       readonly driver: RuntimeDriver<TNativeEvent, TNativeSession, TPrepared>;
       readonly nativeSession: TNativeSession;
       readonly descriptor: RuntimeAdapterDescriptor;
@@ -627,6 +647,7 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepared> {
     });
 
     const result = this.options.lifecycle.enqueue(async ({ signal }) => {
+      this.activeRunId = runId;
       try {
         await dispatchExpertAgentHook(this.options.agent.hooks, "beforeTaskSubmit", {
           agent: this.options.agent,
@@ -698,6 +719,7 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepared> {
         await this.options.checkpoint("turn.failed");
         throw error;
       } finally {
+        if (this.activeRunId === runId) this.activeRunId = undefined;
         await controller.complete();
       }
     });
@@ -712,16 +734,35 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepared> {
           runId,
           signal: this.options.lifecycle.currentSignal,
         });
-        await this.options.lifecycle.abort();
+        await this.options.lifecycle.cancelCurrent();
       },
     };
   }
 
-  async abort(): Promise<void> {
+  async steer(request: {
+    readonly requestId: string;
+    readonly content: string;
+    readonly targetRunId: string;
+  }): Promise<void> {
+    if (this.options.driver.steerTurn === undefined) {
+      throw new Error(`Runtime ${this.options.descriptor.id} does not support safe steer.`);
+    }
+    if (this.activeRunId === undefined || this.activeRunId !== request.targetRunId) {
+      throw new Error(`Cannot steer inactive Runtime submission: ${request.targetRunId}`);
+    }
+    await this.options.driver.steerTurn(this.options.nativeSession, request);
+  }
+
+  async cancelCurrentSubmission(): Promise<void> {
     await this.options.driver.cancelTurn?.(this.options.nativeSession, {
+      runId: this.activeRunId,
       signal: this.options.lifecycle.currentSignal,
     });
-    await this.options.lifecycle.abort();
+    await this.options.lifecycle.cancelCurrent();
+  }
+
+  async close(): Promise<void> {
+    await this.options.lifecycle.close();
   }
 
   setWatcher(watcher: RuntimeSessionWatcher | undefined): void {
@@ -817,15 +858,15 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepared> {
 
 function createRuntimePaths(
   pragma: PragmaPaths,
-  workflowRunId: string,
+  ownerId: string,
   systemSessionId: string,
   descriptor: RuntimeAdapterDescriptor,
 ): RuntimePaths {
   return {
     pragma,
-    systemSessionDir: pragma.systemSessionRoot(workflowRunId, systemSessionId),
+    systemSessionDir: pragma.ownedSystemSessionRoot(ownerId, systemSessionId),
     runtimeSessionDir(runtimeName = descriptor.kind) {
-      return pragma.runtimeRoot(workflowRunId, systemSessionId, runtimeName);
+      return pragma.ownedRuntimeRoot(ownerId, systemSessionId, runtimeName);
     },
   };
 }

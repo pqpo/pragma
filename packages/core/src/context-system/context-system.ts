@@ -683,7 +683,7 @@ export class ContextSystem {
     if (binding === undefined) {
       return error(
         "store_unavailable",
-        `ExpertAgent context store is not configured: ${namespaceResult.value}`,
+        `Expert context store is not configured: ${namespaceResult.value}`,
         {
           namespace: namespaceResult.value,
         },

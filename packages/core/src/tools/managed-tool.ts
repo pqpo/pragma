@@ -1,11 +1,24 @@
 import type { ExpertAgentRunContext } from "../runtime/run-context.ts";
-import type { DirectiveExecutionContext } from "../directive/types.ts";
 import { z } from "zod";
 
 export interface ExpertAgentToolCallResult {
   readonly text: string;
   readonly isError?: boolean;
   readonly details?: unknown;
+}
+
+export interface ExpertToolExecutionContext {
+  readonly executionId: string;
+  readonly invocationId: string;
+  readonly depth: number;
+  readonly delegate?:
+    | ((request: {
+        readonly expertId: string;
+        readonly prompt: string;
+        readonly context?: "fresh" | "reuse" | undefined;
+        readonly runtime?: string | undefined;
+      }) => Promise<{ readonly invocationId: string; readonly output: unknown }>)
+    | undefined;
 }
 
 export type ExpertAgentToolApprovalMode = "none" | "ask" | "required";
@@ -138,7 +151,7 @@ export interface ExpertAgentManagedToolCallContext {
   readonly toolCallId?: string | undefined;
   readonly humanInteraction?: ExpertAgentHumanInteractionHandler | undefined;
   readonly runContext?: ExpertAgentRunContext | undefined;
-  readonly workflowExecution?: DirectiveExecutionContext | undefined;
+  readonly execution?: ExpertToolExecutionContext | undefined;
 }
 
 export interface ExpertAgentManagedTool<TName extends string = string, TResult = unknown> {

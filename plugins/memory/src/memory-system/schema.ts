@@ -33,7 +33,7 @@ const MemoryEvidenceReferenceSchema = z
       "event",
       "message",
       "run",
-      "workflow",
+      "execution",
       "task",
       "tool",
       "memory",
@@ -93,8 +93,8 @@ export const TaskMemoryRecordSchema = BaseMemoryRecordSchema.extend({
   scope: z.enum(["run", "session"]),
   visibility: MemoryVisibilitySchema,
   ownerAgentId: z.string().min(1).optional(),
-  workflowRunId: z.string().min(1),
-  taskRunId: z.string().min(1).optional(),
+  executionId: z.string().min(1),
+  invocationId: z.string().min(1).optional(),
   runtimeSession: RuntimeSessionRefSchema.optional(),
   kind: z.enum(["decision", "handoff", "note", "todo", "progress", "question"]),
   content: z.string(),
@@ -108,10 +108,10 @@ export const ExperienceMemoryRecordSchema = BaseMemoryRecordSchema.extend({
     .literal(EXPERIENCE_MEMORY_SCHEMA_VERSION)
     .default(EXPERIENCE_MEMORY_SCHEMA_VERSION),
   type: z.literal("experience"),
-  kind: z.enum(["conversation", "recovery", "run", "workflow", "tool"]),
+  kind: z.enum(["conversation", "recovery", "run", "execution", "tool"]),
   content: z.string(),
-  workflowRunId: z.string().min(1).optional(),
-  taskRunId: z.string().min(1).optional(),
+  executionId: z.string().min(1).optional(),
+  invocationId: z.string().min(1).optional(),
   runtimeSession: RuntimeSessionRefSchema.optional(),
   status: z.enum(["recorded", "summarized", "promoted"]),
 }).passthrough() satisfies z.ZodType<ExperienceMemoryRecord>;
@@ -164,9 +164,9 @@ const MemoryRunEvidencePayloadSchema = z
   })
   .passthrough();
 
-const MemoryWorkflowEvidencePayloadSchema = z
+const MemoryExecutionEvidencePayloadSchema = z
   .object({
-    workflowRunId: z.string().min(1),
+    executionId: z.string().min(1),
     runtimeSessions: z.array(RuntimeSessionRefSchema).default([]),
     runIds: z.array(z.string().min(1)).default([]),
     externalContext: z.boolean().default(false),
@@ -187,16 +187,16 @@ export const MemoryEvidenceRecordSchema = z
       .default(MEMORY_EVIDENCE_SCHEMA_VERSION),
     id: z.string().min(1),
     type: z.literal("evidence"),
-    kind: z.enum(["task_archive", "run", "workflow"]),
+    kind: z.enum(["task_archive", "run", "execution"]),
     agentId: z.string().min(1),
     scope: MemoryScopeSchema,
-    workflowRunId: z.string().min(1).optional(),
-    taskRunId: z.string().min(1).optional(),
+    executionId: z.string().min(1).optional(),
+    invocationId: z.string().min(1).optional(),
     runtimeSession: RuntimeSessionRefSchema.optional(),
     payload: z.union([
       MemoryTaskArchiveEvidencePayloadSchema,
       MemoryRunEvidencePayloadSchema,
-      MemoryWorkflowEvidencePayloadSchema,
+      MemoryExecutionEvidencePayloadSchema,
     ]),
     createdAt: z.string().min(1),
     updatedAt: z.string().min(1),

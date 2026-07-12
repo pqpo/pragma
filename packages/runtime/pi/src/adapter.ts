@@ -93,7 +93,7 @@ export function createPiRuntime(options: CloudPiRuntimeAdapterOptions = {}): Run
           streamState,
           lifecycle: ctx.lifecycle,
           context: ctx.runContext,
-          workflowExecution: ctx.request.workflowExecution,
+          executionContext: ctx.request.executionContext,
           humanInteractionHandler: ctx.request.humanInteractionHandler,
         });
         const piSessionManagerResult = await createPiSessionManager(
@@ -154,7 +154,7 @@ export function createPiRuntime(options: CloudPiRuntimeAdapterOptions = {}): Run
       async cancelTurn(session) {
         await session.session.abort();
       },
-      async destroySession(session) {
+      async closeSession(session) {
         session.session.dispose();
         await session.mcpToolRegistry.dispose();
       },

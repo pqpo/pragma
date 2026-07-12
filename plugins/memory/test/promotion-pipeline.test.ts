@@ -29,7 +29,7 @@ describe("memory distillation pipeline", () => {
       record: {
         type: "task",
         scope: "session",
-        workflowRunId: "workflow-1",
+        executionId: "execution-1",
         runtimeSession: { type: "cloud-pi-agent", id: "session-1" },
         visibility: "shared",
         kind: "handoff",
@@ -41,12 +41,12 @@ describe("memory distillation pipeline", () => {
 
     await memorySystem.archiveTaskMemory({
       actorAgentId: "agent-a",
-      workflowRunId: "workflow-1",
+      executionId: "execution-1",
     });
     await memorySystem.awaitIdle();
 
     const experiences = await memorySystem.listExperiences({
-      workflowRunId: "workflow-1",
+      executionId: "execution-1",
     });
     expect(experiences).toMatchObject({
       ok: true,
@@ -56,30 +56,30 @@ describe("memory distillation pipeline", () => {
     });
   });
 
-  it("distills workflow evidence into facts when stable signals are present", async () => {
+  it("distills execution evidence into facts when stable signals are present", async () => {
     const workspace = await createWorkspaceDir();
     const memorySystem = await createMemorySystem(workspace);
 
     await memorySystem.recordEvidence(
       {
         record: {
-          id: "workflow-1",
+          id: "execution-1",
           type: "evidence",
-          kind: "workflow",
+          kind: "execution",
           agentId: "agent-a",
           scope: "workspace",
-          workflowRunId: "workflow-1",
+          executionId: "execution-1",
           payload: {
-            workflowRunId: "workflow-1",
+            executionId: "execution-1",
             runtimeSessions: [{ type: "cloud-pi-agent", id: "runtime-session-1" }],
             runIds: ["run-1"],
             externalContext: false,
             runs: [
               {
-                query: "Locate directive runtime code",
+                query: "Locate execution runtime code",
                 status: "succeeded",
                 outputExcerpt:
-                  "@pragma/core directive code is located at packages/core/src/directive.",
+                  "@pragma/core execution code is located at packages/core/src/execution.",
                 lessons: [],
                 tools: [],
               },
@@ -90,7 +90,7 @@ describe("memory distillation pipeline", () => {
           provenance: {
             createdAt: "2026-07-06T00:00:00.000Z",
             updatedAt: "2026-07-06T00:00:00.000Z",
-            evidence: [{ type: "workflow", id: "workflow-1" }],
+            evidence: [{ type: "execution", id: "execution-1" }],
           },
         },
       },
@@ -105,7 +105,7 @@ describe("memory distillation pipeline", () => {
       value: [
         expect.objectContaining({
           confidence: "verified",
-          statement: expect.stringContaining("packages/core/src/directive"),
+          statement: expect.stringContaining("packages/core/src/execution"),
         }),
       ],
     });
@@ -118,14 +118,14 @@ describe("memory distillation pipeline", () => {
     await memorySystem.recordEvidence(
       {
         record: {
-          id: "workflow-sensitive",
+          id: "execution-sensitive",
           type: "evidence",
-          kind: "workflow",
+          kind: "execution",
           agentId: "agent-a",
           scope: "workspace",
-          workflowRunId: "workflow-sensitive",
+          executionId: "execution-sensitive",
           payload: {
-            workflowRunId: "workflow-sensitive",
+            executionId: "execution-sensitive",
             runtimeSessions: [{ type: "cloud-pi-agent", id: "runtime-session-sensitive" }],
             runIds: ["run-1"],
             externalContext: false,
@@ -144,7 +144,7 @@ describe("memory distillation pipeline", () => {
           provenance: {
             createdAt: "2026-07-06T00:00:00.000Z",
             updatedAt: "2026-07-06T00:00:00.000Z",
-            evidence: [{ type: "workflow", id: "workflow-sensitive" }],
+            evidence: [{ type: "execution", id: "execution-sensitive" }],
           },
         },
       },
@@ -177,7 +177,7 @@ describe("memory distillation pipeline", () => {
       record: {
         type: "task",
         scope: "session",
-        workflowRunId: "workflow-1",
+        executionId: "execution-1",
         runtimeSession: { type: "cloud-pi-agent", id: "session-1" },
         visibility: "shared",
         kind: "handoff",
@@ -188,7 +188,7 @@ describe("memory distillation pipeline", () => {
 
     const archived = await memorySystem.archiveTaskMemory({
       actorAgentId: "agent-a",
-      workflowRunId: "workflow-1",
+      executionId: "execution-1",
     });
     await memorySystem.awaitIdle();
 
@@ -216,7 +216,7 @@ describe("memory distillation pipeline", () => {
       record: {
         type: "task",
         scope: "session",
-        workflowRunId: "workflow-1",
+        executionId: "execution-1",
         runtimeSession: { type: "cloud-pi-agent", id: "session-1" },
         visibility: "shared",
         kind: "handoff",
@@ -227,7 +227,7 @@ describe("memory distillation pipeline", () => {
 
     const archived = await memorySystem.archiveTaskMemory({
       actorAgentId: "agent-a",
-      workflowRunId: "workflow-1",
+      executionId: "execution-1",
     });
 
     expect(archived.ok).toBe(true);
@@ -253,23 +253,23 @@ describe("memory distillation pipeline", () => {
     const written = await memorySystem.recordEvidence(
       {
         record: {
-          id: "workflow-1",
+          id: "execution-1",
           type: "evidence",
-          kind: "workflow",
+          kind: "execution",
           agentId: "agent-a",
           scope: "workspace",
-          workflowRunId: "workflow-1",
+          executionId: "execution-1",
           payload: {
-            workflowRunId: "workflow-1",
+            executionId: "execution-1",
             runtimeSessions: [{ type: "cloud-pi-agent", id: "runtime-session-1" }],
             runIds: ["run-1"],
             externalContext: false,
             runs: [
               {
-                query: "Locate directive runtime code",
+                query: "Locate execution runtime code",
                 status: "succeeded",
                 outputExcerpt:
-                  "@pragma/core directive code is located at packages/core/src/directive.",
+                  "@pragma/core execution code is located at packages/core/src/execution.",
                 lessons: [],
                 tools: [],
               },
@@ -280,7 +280,7 @@ describe("memory distillation pipeline", () => {
           provenance: {
             createdAt: "2026-07-06T00:00:00.000Z",
             updatedAt: "2026-07-06T00:00:00.000Z",
-            evidence: [{ type: "workflow", id: "workflow-1" }],
+            evidence: [{ type: "execution", id: "execution-1" }],
           },
         },
       },

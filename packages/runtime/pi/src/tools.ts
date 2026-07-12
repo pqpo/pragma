@@ -1,14 +1,14 @@
 import type { AuthStorage, ModelRegistry, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type {
   AgentLifecycle,
-  ExpertAgent,
+  Expert,
   ExpertAgentDefaultTool,
   ExpertAgentHumanInteractionHandler,
   ExpertAgentManagedTool,
   ExpertAgentToolApproval,
   ExpertAgentToolCallResult,
   ExpertAgentRunContext,
-  DirectiveExecutionContext,
+  ExpertToolExecutionContext,
   ResolvedTool,
   ResolvedToolSet,
 } from "@pragma/core";
@@ -24,7 +24,7 @@ import { formatMcpToolResult, normalizeInputSchema, sanitizeToolName } from "./t
 import type { PiRuntimeStreamState } from "./types.ts";
 
 export function createResolvedPiTools(options: {
-  readonly agent: ExpertAgent;
+  readonly agent: Expert;
   readonly authStorage: AuthStorage;
   readonly cwd: string;
   readonly mcpTools: readonly McpManagedTool[];
@@ -33,7 +33,7 @@ export function createResolvedPiTools(options: {
   readonly streamState: PiRuntimeStreamState;
   readonly lifecycle: AgentLifecycle<ExpertAgentRunContext | undefined>;
   readonly context?: ExpertAgentRunContext | undefined;
-  readonly workflowExecution?: DirectiveExecutionContext | undefined;
+  readonly executionContext?: ExpertToolExecutionContext | undefined;
   readonly humanInteractionHandler?: ExpertAgentHumanInteractionHandler | undefined;
 }): ResolvedToolSet<ToolDefinition> {
   const contextTools = options.agent.createDefaultTools({
@@ -56,7 +56,7 @@ export function createResolvedPiTools(options: {
         options.streamState,
         humanInteractionHandler,
         options.lifecycle.currentContext,
-        options.workflowExecution,
+        options.executionContext,
       ).map((tool) => createResolvedTool("managed", tool)),
       ...createPiMcpTools(options.agent, options.mcpTools, options.streamState).map((tool) =>
         createResolvedTool("mcp", tool),
@@ -85,7 +85,7 @@ function createResolvedTool(
 }
 
 function createPiDefaultTools(
-  agent: ExpertAgent,
+  agent: Expert,
   tools: readonly ExpertAgentDefaultTool[],
   streamState: PiRuntimeStreamState,
   humanInteractionHandler: ExpertAgentHumanInteractionHandler | undefined,
@@ -128,12 +128,12 @@ function createPiDefaultTools(
 }
 
 function createPiManagedTools(
-  agent: ExpertAgent,
+  agent: Expert,
   tools: readonly ExpertAgentManagedTool<string, ExpertAgentToolCallResult>[],
   streamState: PiRuntimeStreamState,
   humanInteractionHandler: ExpertAgentHumanInteractionHandler | undefined,
   runContext: ExpertAgentRunContext | undefined,
-  workflowExecution: DirectiveExecutionContext | undefined,
+  executionContext: ExpertToolExecutionContext | undefined,
 ): ToolDefinition[] {
   return tools.map((tool) => ({
     name: tool.name,
@@ -156,7 +156,7 @@ function createPiManagedTools(
             toolCallId,
             humanInteraction: humanInteractionHandler,
             runContext,
-            workflowExecution,
+            execution: executionContext,
           }),
       );
 
@@ -175,7 +175,7 @@ function createPiManagedTools(
 }
 
 function createPiMcpTools(
-  agent: ExpertAgent,
+  agent: Expert,
   mcpTools: readonly McpManagedTool[],
   streamState: PiRuntimeStreamState,
 ): ToolDefinition[] {
@@ -237,7 +237,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 async function executeWithToolHooks<
   TResult extends { text: string; isError?: boolean; details?: unknown },
 >(
-  agent: ExpertAgent,
+  agent: Expert,
   toolName: string,
   toolCallId: string | undefined,
   args: unknown,

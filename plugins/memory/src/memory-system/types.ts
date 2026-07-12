@@ -27,7 +27,7 @@ export interface MemoryEvidenceReference {
     | "event"
     | "message"
     | "run"
-    | "workflow"
+    | "execution"
     | "task"
     | "tool"
     | "memory"
@@ -86,8 +86,8 @@ export interface TaskMemoryRecord extends BaseMemoryRecord {
   readonly scope: "run" | "session";
   readonly visibility: MemoryVisibility;
   readonly ownerAgentId?: string | undefined;
-  readonly workflowRunId: string;
-  readonly taskRunId?: string | undefined;
+  readonly executionId: string;
+  readonly invocationId?: string | undefined;
   readonly runtimeSession?: RuntimeSessionRef | undefined;
   readonly kind: TaskMemoryKind;
   readonly content: string;
@@ -96,14 +96,14 @@ export interface TaskMemoryRecord extends BaseMemoryRecord {
   readonly revision: number;
 }
 
-export type ExperienceMemoryKind = "conversation" | "recovery" | "run" | "workflow" | "tool";
+export type ExperienceMemoryKind = "conversation" | "recovery" | "run" | "execution" | "tool";
 
 export interface ExperienceMemoryRecord extends BaseMemoryRecord {
   readonly type: "experience";
   readonly kind: ExperienceMemoryKind;
   readonly content: string;
-  readonly workflowRunId?: string | undefined;
-  readonly taskRunId?: string | undefined;
+  readonly executionId?: string | undefined;
+  readonly invocationId?: string | undefined;
   readonly runtimeSession?: RuntimeSessionRef | undefined;
   readonly status: "recorded" | "summarized" | "promoted";
 }
@@ -177,8 +177,8 @@ export interface MemorySearchMatch<TRecord extends BaseMemoryRecord> {
 export interface RuntimeMemoryRetrieveInput {
   readonly agentId: string;
   readonly query?: string | undefined;
-  readonly workflowRunId?: string | undefined;
-  readonly taskRunId?: string | undefined;
+  readonly executionId?: string | undefined;
+  readonly invocationId?: string | undefined;
   readonly runtimeSession?: RuntimeSessionRef | undefined;
   readonly runContext?: ExpertAgentRunContext | undefined;
 }
@@ -219,7 +219,7 @@ export interface RuntimeMemoryRetrieval {
   readonly skills: readonly SkillMemoryRecord[];
 }
 
-export type MemoryEvidenceKind = "task_archive" | "run" | "workflow";
+export type MemoryEvidenceKind = "task_archive" | "run" | "execution";
 
 export interface MemoryTaskArchiveEvidencePayload {
   readonly task: TaskMemoryRecord;
@@ -239,8 +239,8 @@ export interface MemoryRunEvidencePayload {
   }[];
 }
 
-export interface MemoryWorkflowEvidencePayload {
-  readonly workflowRunId: string;
+export interface MemoryExecutionEvidencePayload {
+  readonly executionId: string;
   readonly runtimeSessions: readonly RuntimeSessionRef[];
   readonly runIds: readonly string[];
   readonly externalContext: boolean;
@@ -250,7 +250,7 @@ export interface MemoryWorkflowEvidencePayload {
 export type MemoryEvidencePayload =
   | MemoryTaskArchiveEvidencePayload
   | MemoryRunEvidencePayload
-  | MemoryWorkflowEvidencePayload;
+  | MemoryExecutionEvidencePayload;
 
 export interface MemoryEvidenceRecord {
   readonly schemaVersion: MemoryEvidenceSchemaVersion;
@@ -259,8 +259,8 @@ export interface MemoryEvidenceRecord {
   readonly kind: MemoryEvidenceKind;
   readonly agentId: string;
   readonly scope: MemoryScope;
-  readonly workflowRunId?: string | undefined;
-  readonly taskRunId?: string | undefined;
+  readonly executionId?: string | undefined;
+  readonly invocationId?: string | undefined;
   readonly runtimeSession?: RuntimeSessionRef | undefined;
   readonly payload: MemoryEvidencePayload;
   readonly createdAt: string;
@@ -305,9 +305,9 @@ export interface TaskMemoryGetInput {
 }
 
 export interface TaskMemoryListInput {
-  readonly workflowRunId: string;
+  readonly executionId: string;
   readonly actorAgentId: string;
-  readonly taskRunId?: string | undefined;
+  readonly invocationId?: string | undefined;
   readonly runtimeSession?: RuntimeSessionRef | undefined;
   readonly visibility?: MemoryVisibility | undefined;
   readonly ownerAgentId?: string | undefined;
@@ -317,8 +317,8 @@ export interface TaskMemoryListInput {
 
 export interface TaskMemoryArchiveInput {
   readonly actorAgentId: string;
-  readonly workflowRunId?: string | undefined;
-  readonly taskRunId?: string | undefined;
+  readonly executionId?: string | undefined;
+  readonly invocationId?: string | undefined;
   readonly runtimeSession?: RuntimeSessionRef | undefined;
   readonly context?: ExpertAgentRunContext | undefined;
 }
@@ -335,8 +335,8 @@ export interface MemoryEvidenceGetInput {
 
 export interface MemoryEvidenceListInput {
   readonly kind?: MemoryEvidenceKind | undefined;
-  readonly workflowRunId?: string | undefined;
-  readonly taskRunId?: string | undefined;
+  readonly executionId?: string | undefined;
+  readonly invocationId?: string | undefined;
   readonly runtimeSession?: RuntimeSessionRef | undefined;
   readonly context?: ExpertAgentRunContext | undefined;
 }
@@ -347,8 +347,8 @@ export interface ExperienceMemoryGetInput {
 }
 
 export interface ExperienceMemoryListInput {
-  readonly workflowRunId?: string | undefined;
-  readonly taskRunId?: string | undefined;
+  readonly executionId?: string | undefined;
+  readonly invocationId?: string | undefined;
   readonly runtimeSession?: RuntimeSessionRef | undefined;
   readonly status?: ExperienceMemoryRecord["status"] | undefined;
   readonly kind?: ExperienceMemoryKind | undefined;

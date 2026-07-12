@@ -84,8 +84,13 @@ export function mergeUsage(
   };
 }
 
-export function mergeUsages(usages: readonly (AgentMessageUsage | undefined)[]): AgentMessageUsage | undefined {
-  return usages.reduce<AgentMessageUsage | undefined>((total, usage) => mergeUsage(total, usage), undefined);
+export function mergeUsages(
+  usages: readonly (AgentMessageUsage | undefined)[],
+): AgentMessageUsage | undefined {
+  return usages.reduce<AgentMessageUsage | undefined>(
+    (total, usage) => mergeUsage(total, usage),
+    undefined,
+  );
 }
 
 export function hasNonZeroUsage(usage: AgentMessageUsage | undefined): boolean {

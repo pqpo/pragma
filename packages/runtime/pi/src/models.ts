@@ -4,7 +4,7 @@ import type {
   ModelRegistry,
 } from "@earendil-works/pi-coding-agent";
 import { ModelRegistry as PiModelRegistry } from "@earendil-works/pi-coding-agent";
-import type { ExpertAgent, IExpertAgentModelProviderConfig } from "@pragma/core";
+import type { Expert, IExpertAgentModelProviderConfig } from "@pragma/core";
 
 const DEFAULT_PI_MODEL_API = "openai-completions";
 const DEFAULT_PI_MODEL_CONTEXT_WINDOW = 128000;
@@ -75,14 +75,14 @@ export function resolveRequiredRuntimeModel(
 }
 
 export function getRuntimeModelName(
-  agent: ExpertAgent,
+  agent: Expert,
   modelName: string | undefined,
 ): string | undefined {
   return modelName ?? agent.models?.defaultModelName;
 }
 
 export function collectRuntimeModelProviders(
-  agent: ExpertAgent,
+  agent: Expert,
   providers: readonly IExpertAgentModelProviderConfig[] | undefined,
 ): readonly IExpertAgentModelProviderConfig[] {
   return [...(agent.models?.providers ?? []), ...(providers ?? [])];

@@ -1,10 +1,11 @@
 import { join } from "node:path";
 
 import {
-  ExpertAgent,
+  defineExpert,
+  Expert,
   createHttpServiceMcpServer,
   createMcpToolRegistry,
-  type ExpertAgentCreateOptions,
+  type DefineExpertOptions,
   type IExpertAgentMcpConfig,
   type IExpertAgentMcpServer,
   type IExpertAgentSkillsConfig,
@@ -151,18 +152,15 @@ export async function createDesktopExpertAgent(options: {
   readonly store: CapabilityStore;
   readonly credentials: CapabilityCredentialStore;
   readonly capabilitiesPath: string;
-  readonly overrides?: Pick<
-    ExpertAgentCreateOptions,
-    "models" | "contextSystem" | "loggerProvider"
-  >;
-}): Promise<ExpertAgent> {
+  readonly overrides?: Pick<DefineExpertOptions, "models" | "contextSystem" | "loggerProvider">;
+}): Promise<Expert> {
   const resolved = await resolveExpertCapabilities({
     expert: options.definition,
     store: options.store,
     credentials: options.credentials,
     capabilitiesPath: options.capabilitiesPath,
   });
-  return await ExpertAgent.create({
+  return await defineExpert({
     schemaVersion: "pragma.expert/v1",
     id: options.definition.id,
     name: options.definition.name,

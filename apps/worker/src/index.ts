@@ -1,5 +1,5 @@
 import {
-  ExpertAgent,
+  defineExpert,
   createConsoleLoggerProvider,
   createExpertAgentLogger,
   createRuntimeRegistry,
@@ -32,11 +32,11 @@ setDefaultRuntimeRegistryFactory(() =>
   }),
 );
 
-const workerAgent = await ExpertAgent.create({
+const workerAgent = await defineExpert({
   schemaVersion: "pragma.expert/v1",
   id: "worker-orchestrator",
   name: "Worker Orchestrator",
-  description: "ExpertAgent used by the worker entrypoint to initialize runtime context.",
+  description: "Expert used by the worker entrypoint to initialize runtime context.",
   tags: ["worker", "orchestration"],
   version: "0.0.0",
   scope: "worker",

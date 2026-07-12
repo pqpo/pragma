@@ -22,7 +22,7 @@ examples    -> runtime-* / plugin-* / core -> shared
 | `server`    | Node-only control plane and infrastructure boundaries                           |
 | `core`      | Expert Agent execution abstractions and Runtime Adapter contracts               |
 | `runtime-*` | Concrete Runtime Adapter implementations                                        |
-| `plugins/*` | ExpertAgent extensions built on the core plugin API                             |
+| `plugins/*` | Expert extensions built on the core plugin API                                  |
 | `apps`      | Composition and process entry points, including future Desktop App local bridge |
 | `examples`  | Runnable demonstrations that may compose core, plugins, and concrete runtimes   |
 
@@ -53,13 +53,11 @@ packages/runtime/pi
 packages/runtime/codex
 ```
 
-Runtime sessions are owned by exactly one Workflow. Public Runtime Adapters expose capability and
-model discovery only; `defineRuntimeDriver()` registers their Session factory in a Core-private
-registry. TaskManager supplies a real `DirectiveExecutionContext`, and Core derives both
-`workflowRunId` and `taskRunId` from it. Core stores the system record at
-`~/.pragma/state/workflows/<workflow>/sessions/<system-session>/session.json`, and concrete runtimes
-receive only their Workflow-private runtime directory. Future resume requests must restore the
-original Workflow together with its system Session and `RuntimeSessionRef { type, id }`.
+Runtime sessions are owned by exactly one ExpertSession context or FlowExecution Invocation. Public
+Runtime Adapters expose capability and model discovery; `defineRuntimeDriver()` registers the private
+Session factory. Core stores owner claims under `~/.pragma/state/runtime-session-owners/` and Session
+records under `~/.pragma/state/runtime-sessions/`. Recovery must match the original owner,
+`systemSessionId`, Expert, Runtime and `RuntimeSessionRef { type, id }`.
 
 Agent workspaces contain task inputs, repositories, artifacts, and task-authored files only. Runtime
 state, configuration, sessions, and installed plugin copies must never be derived from or written

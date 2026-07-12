@@ -1,5 +1,5 @@
 import type {
-  ExpertAgent,
+  Expert,
   IExpertAgentModelProviderConfig,
   IExpertAgentRunResult,
 } from "../agent/expert-agent.ts";
@@ -11,8 +11,10 @@ import type { ExpertAgentLoggerProvider } from "../logging/logger.ts";
 import type { RunState, SessionState } from "./agent-lifecycle.ts";
 import type { ExpertAgentRunContext } from "./run-context.ts";
 import type { RuntimeStreamEvent } from "./stream-events.ts";
-import type { ExpertAgentHumanInteractionHandler } from "../tools/managed-tool.ts";
-import type { DirectiveExecutionContext } from "../directive/types.ts";
+import type {
+  ExpertAgentHumanInteractionHandler,
+  ExpertToolExecutionContext,
+} from "../tools/managed-tool.ts";
 
 export type RuntimeAdapterKind = "cloud-pi-agent" | (string & {});
 
@@ -26,9 +28,13 @@ export interface RuntimeAdapterCapabilities {
   readonly supportsMcp?: boolean | undefined;
   readonly supportsModelDiscovery?: boolean | undefined;
   readonly supportsThinkingLevel?: boolean | undefined;
+  readonly supportsResume?: boolean | undefined;
+  readonly supportsSteer?: boolean | undefined;
+  readonly supportsCancel?: boolean | undefined;
+  readonly supportsClose?: boolean | undefined;
 }
 
-export type RuntimeTarget = "agent" | "code" | "directive" | "operator" | (string & {});
+export type RuntimeTarget = "expert" | "code" | "flow" | "operator" | (string & {});
 
 export interface RuntimeAdapterDescriptor {
   readonly id: string;
@@ -67,8 +73,10 @@ export type RuntimeOutputSchema<TOutput = unknown> = z.ZodType<TOutput>;
 export type RuntimeSessionRef = SharedRuntimeSessionRef;
 
 export interface RuntimeSessionOwner {
-  readonly workflowRunId: string;
-  readonly taskRunId?: string | undefined;
+  readonly type: "expert-session" | "flow-execution";
+  readonly ownerId: string;
+  readonly contextId?: string | undefined;
+  readonly invocationId?: string | undefined;
 }
 
 export interface RuntimeSessionInfo {
@@ -81,8 +89,7 @@ export interface RuntimeSessionInfo {
 }
 
 export interface RuntimeSessionStorageContext {
-  readonly workflowRunId: string;
-  readonly taskRunId?: string | undefined;
+  readonly owner: RuntimeSessionOwner;
   readonly agentId: string;
   readonly runtime: RuntimeAdapterDescriptor;
   readonly runtimeSession: RuntimeSessionRef;
@@ -103,22 +110,22 @@ export type RuntimeSessionRestoreHandler = (
 /**
  * Session input visible to a concrete Runtime driver.
  *
- * Runtime sessions are opened by Core from a Directive execution. This type is not a public
+ * Runtime sessions are opened by Core from an ExpertSession or FlowExecution. This type is not a public
  * session-creation API and intentionally contains no caller-provided owner.
  */
 export interface RuntimeDriverSessionRequest {
-  readonly agent: ExpertAgent;
+  readonly agent: Expert;
+  readonly owner: RuntimeSessionOwner;
   readonly pragmaHome?: string | undefined;
   readonly context?: ExpertAgentRunContext | undefined;
   readonly contextAssembly?: ContextAssemblerOptions | undefined;
-  readonly workflowExecution: DirectiveExecutionContext;
   readonly humanInteractionHandler?: ExpertAgentHumanInteractionHandler | undefined;
+  readonly executionContext?: ExpertToolExecutionContext | undefined;
   readonly models?: readonly IExpertAgentModelProviderConfig[] | undefined;
   readonly systemSessionId?: string | undefined;
   /** Omit to create a fresh runtime session. When provided, the referenced session must resume. */
   readonly runtimeSession?: RuntimeSessionRef | undefined;
-  /** Original TaskRun that owns a continued Runtime Session. */
-  readonly runtimeSessionOwnerTaskRunId?: string | undefined;
+  readonly onSessionInfo?: ((info: RuntimeSessionInfo) => Promise<void> | void) | undefined;
   readonly loggerProvider?: ExpertAgentLoggerProvider | undefined;
 }
 
@@ -143,13 +150,21 @@ export interface RuntimeSubmitHandle<TOutput = unknown> {
   readonly cancel: () => Promise<void>;
 }
 
+export interface RuntimeSteerRequest {
+  readonly requestId: string;
+  readonly content: string;
+  readonly targetRunId: string;
+}
+
 export interface RuntimeAgentSession {
   readonly info: () => RuntimeSessionInfo;
   readonly messages: () => readonly AgentMessage[];
   readonly submit: <TSubmitOutput = string>(
     submission: RuntimeSubmitRequest<TSubmitOutput>,
   ) => RuntimeSubmitHandle<TSubmitOutput>;
-  readonly abort: () => Promise<void>;
+  readonly steer: (request: RuntimeSteerRequest) => Promise<void>;
+  readonly cancelCurrentSubmission: () => Promise<void>;
+  readonly close: () => Promise<void>;
 }
 
 export interface RuntimeAdapter {

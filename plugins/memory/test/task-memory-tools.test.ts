@@ -16,7 +16,7 @@ afterEach(async () => {
 });
 
 describe("task-memory tools", () => {
-  it("uses workflow run context and agent id defaults", async () => {
+  it("uses Execution context and agent id defaults", async () => {
     const store = await createStore("planner-agent");
     const tools = createTaskMemoryTools({
       memorySystem: new MemorySystem({
@@ -29,12 +29,12 @@ describe("task-memory tools", () => {
     const result = await listTool?.call({}, undefined, {
       runContext: {
         source: {
-          type: "workflow",
+          type: "execution",
         },
         attributes: {
-          "execution.workflowRunId": "workflow-1",
+          "execution.executionId": "execution-1",
           "execution.runtimeSession": { type: "cloud-pi-agent", id: "session-1" },
-          "execution.taskRunId": "task-1",
+          "execution.invocationId": "task-1",
         },
       },
     });
@@ -69,10 +69,10 @@ describe("task-memory tools", () => {
       {
         runContext: {
           source: {
-            type: "workflow",
+            type: "execution",
           },
           attributes: {
-            "execution.workflowRunId": "workflow-2",
+            "execution.executionId": "execution-2",
             "execution.runtimeSession": { type: "cloud-pi-agent", id: "session-1" },
           },
         },
@@ -82,7 +82,7 @@ describe("task-memory tools", () => {
     expect(result?.text).toContain("Appended task memory:");
 
     const listed = await memorySystem.listTaskMemory({
-      workflowRunId: "workflow-2",
+      executionId: "execution-2",
       actorAgentId: "specialist-agent",
     });
     expect(listed.ok).toBe(true);
@@ -98,7 +98,7 @@ describe("task-memory tools", () => {
     });
   });
 
-  it("appends task memory with workflow scope even without runtime session provenance", async () => {
+  it("appends task memory with execution scope even without runtime session provenance", async () => {
     const store = await createStore("specialist-agent");
     const tools = createTaskMemoryTools({
       memorySystem: new MemorySystem({
@@ -112,16 +112,16 @@ describe("task-memory tools", () => {
       {
         visibility: "shared",
         kind: "note",
-        content: "Workflow scoped note",
+        content: "Execution scoped note",
       },
       undefined,
       {
         runContext: {
           source: {
-            type: "workflow",
+            type: "execution",
           },
           attributes: {
-            "execution.workflowRunId": "workflow-2",
+            "execution.executionId": "execution-2",
           },
         },
       },
@@ -130,14 +130,14 @@ describe("task-memory tools", () => {
     expect(result?.text).toContain("Appended task memory:");
 
     const listed = await store.list({
-      workflowRunId: "workflow-2",
+      executionId: "execution-2",
       actorAgentId: "specialist-agent",
     });
     expect(listed).toMatchObject({
       ok: true,
       value: [
         expect.objectContaining({
-          content: "Workflow scoped note",
+          content: "Execution scoped note",
         }),
       ],
     });
@@ -165,10 +165,10 @@ describe("task-memory tools", () => {
       {
         runContext: {
           source: {
-            type: "workflow",
+            type: "execution",
           },
           attributes: {
-            "execution.workflowRunId": "workflow-2",
+            "execution.executionId": "execution-2",
             "execution.runtimeSession": { type: "cloud-pi-agent", id: "session-context" },
           },
         },
@@ -178,7 +178,7 @@ describe("task-memory tools", () => {
     expect(result?.text).toContain("Appended task memory:");
 
     const listed = await store.list({
-      workflowRunId: "workflow-2",
+      executionId: "execution-2",
       actorAgentId: "specialist-agent",
     });
     expect(listed).toMatchObject({
@@ -198,7 +198,7 @@ describe("task-memory tools", () => {
       record: {
         type: "task",
         scope: "session",
-        workflowRunId: "workflow-2",
+        executionId: "execution-2",
         runtimeSession: { type: "cloud-pi-agent", id: "session-1" },
         visibility: "private",
         ownerAgentId: "specialist-agent",
@@ -230,7 +230,7 @@ describe("task-memory tools", () => {
       record: {
         type: "task",
         scope: "session",
-        workflowRunId: "workflow-2",
+        executionId: "execution-2",
         runtimeSession: { type: "cloud-pi-agent", id: "session-1" },
         visibility: "shared",
         kind: "todo",
@@ -285,10 +285,10 @@ describe("task-memory tools", () => {
         {
           runContext: {
             source: {
-              type: "workflow",
+              type: "execution",
             },
             attributes: {
-              "execution.workflowRunId": "workflow-2",
+              "execution.executionId": "execution-2",
               "execution.runtimeSession": { type: "cloud-pi-agent", id: "session-1" },
             },
           },
@@ -329,10 +329,10 @@ describe("task-memory tools", () => {
       {
         runContext: {
           source: {
-            type: "workflow",
+            type: "execution",
           },
           attributes: {
-            "execution.workflowRunId": "workflow-1",
+            "execution.executionId": "execution-1",
             "execution.runtimeSession": { type: "cloud-pi-agent", id: "session-1" },
           },
         },
@@ -347,10 +347,10 @@ describe("task-memory tools", () => {
       {
         runContext: {
           source: {
-            type: "workflow",
+            type: "execution",
           },
           attributes: {
-            "execution.workflowRunId": "workflow-1",
+            "execution.executionId": "execution-1",
             "execution.runtimeSession": { type: "cloud-pi-agent", id: "session-1" },
           },
         },
@@ -360,7 +360,7 @@ describe("task-memory tools", () => {
     expect(result?.details).toEqual({
       entries: [
         expect.objectContaining({
-          workflowRunId: "workflow-1",
+          executionId: "execution-1",
           status: "active",
         }),
       ],
