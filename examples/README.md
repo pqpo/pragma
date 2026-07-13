@@ -110,10 +110,42 @@ Context Store 同时准备了 `always_on`、`model_decision`、`manual` 三类�
 预加载；后两类验证中，流式输出应出现 `list_expert_context` 或 `read_expert_context` 等
 上下文工具调用。测试上下文只存在于当前 example 进程的内存中，不会写入 workspace。
 
-## 目录规划
+## 3. Context、MCP、Skills、Plugin 与 Tool 审批
+
+Context 示例不调用模型，可直接运行：
+
+```bash
+pnpm --filter @pragma/examples example:context
+```
+
+它使用 `FileSystemContextStore` 演示 preload、检索、CRUD 和基于
+`ExpertAgentRunContext` 的 member/admin 授权。示例数据写入仓库根目录的
+`workspace/context-example/`。
+
+其余能力示例使用 `.env` 中的 PI Runtime 模型配置，并接受可选的命令行 prompt：
+
+```bash
+pnpm --filter @pragma/examples example:mcp
+pnpm --filter @pragma/examples example:skills
+pnpm --filter @pragma/examples example:plugin
+pnpm --filter @pragma/examples example:tool-approval
+```
+
+- `example:mcp`：使用 in-process MCP Server，展示工具白名单、调用和 Session 关闭时的资源释放。
+- `example:skills`：把 `skills/code-review/SKILL.md` 作为 local Skill 装配给 Expert。
+- `example:plugin`：加载 `plugins/learning-plugin`，展示配置、Context、Tool 和 Hooks。
+- `example:tool-approval`：由 `plugins/tool-approval-policy` 给宿主 Tool 添加 required 审批，
+  再通过 `ExpertTurn.respondToHumanInteraction()` 批准或拒绝。
+
+Tool 审批示例只演示当前进程中仍处于活动状态的 `ExpertTurn`。它没有沿用旧版跨进程
+pending interaction 恢复语义；Session 恢复应使用当前 `app.experts.resumeSession()` API，
+Flow 恢复应使用 `app.flows.recover()`。
+
+## 源码目录
 
 ```text
 src/
+  capabilities/         # Context、MCP、Skills、Plugin 与 Tool 审批
   experts/
     getting-started/
       console-chat.ts
@@ -126,7 +158,12 @@ src/
       console-chat.ts
     claude-code/
       console-chat.ts
+
+plugins/                 # 示例 Plugin 与 manifest
+skills/                  # 示例 SKILL.md
 ```
+
+完整入口索引见 [`src/README.md`](./src/README.md)。
 
 当前已有的进阶示例仍可直接运行：
 

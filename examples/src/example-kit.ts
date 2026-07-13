@@ -15,10 +15,9 @@ import { createRuntimeTestContextSystem } from "./runtimes/shared/console-runtim
 export async function createExampleExpert(
   id: string,
   instructions: string,
-  options: Pick<DefineExpertOptions, "tools"> = {},
+  options: Pick<DefineExpertOptions, "mcp" | "plugins" | "skills" | "tools"> = {},
 ): Promise<Expert> {
-
-   const contextSystem = createRuntimeTestContextSystem();
+  const contextSystem = createRuntimeTestContextSystem();
 
   return await defineExpert({
     id,

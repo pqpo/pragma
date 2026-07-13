@@ -1,0 +1,47 @@
+{
+  "schemaVersion": "pragma.plugin/v1",
+  "id": "learning-plugin",
+  "name": "Learning Plugin",
+  "description": "A teaching plugin that contributes context, a managed tool, and lifecycle hooks.",
+  "version": "1.0.0",
+  "tags": ["example", "context", "tool", "hooks"],
+  "runtime": {
+    "type": "expert-agent-plugin",
+    "entry": "./src/plugin.ts"
+  },
+  "capabilities": [
+    {
+      "type": "context",
+      "name": "learning-plugin/team.md",
+      "description": "Exposes configured team information as Agent context."
+    },
+    {
+      "type": "managed-tool",
+      "name": "create_team_greeting",
+      "description": "Creates a greeting using plugin configuration."
+    },
+    {
+      "type": "hook",
+      "name": "lifecycle",
+      "description": "Prints session, task, and tool lifecycle events."
+    }
+  ],
+  "configuration": {
+    "properties": [
+      {
+        "name": "teamName",
+        "type": "string",
+        "description": "Team name exposed through context and tools.",
+        "required": false,
+        "default": "Pragma Team"
+      },
+      {
+        "name": "greetingPrefix",
+        "type": "string",
+        "description": "Prefix used by create_team_greeting.",
+        "required": false,
+        "default": "你好"
+      }
+    ]
+  }
+}
