@@ -80,8 +80,12 @@ export class PragmaPaths {
     return join(this.executionRoot(executionId), "events.jsonl");
   }
 
-  executionOutputs(executionId: string): string {
-    return join(this.executionRoot(executionId), "outputs.jsonl");
+  executionCommits(executionId: string): string {
+    return join(this.executionRoot(executionId), "commits.json");
+  }
+
+  executionTransaction(executionId: string): string {
+    return join(this.executionRoot(executionId), "transaction.json");
   }
 
   executionLock(executionId: string): string {

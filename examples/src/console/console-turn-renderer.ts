@@ -13,7 +13,7 @@ export interface ConsoleTurnRendererOptions {
 
 interface RenderableEvent {
   readonly type: string;
-  readonly payload: unknown;
+  readonly data: unknown;
 }
 
 type Section = "answer" | "thinking" | "tool-output";
@@ -46,10 +46,10 @@ export class ConsoleTurnRenderer {
   }
 
   render(event: RenderableEvent): void {
-    const type = event.type.startsWith("runtime.")
-      ? event.type.slice("runtime.".length)
-      : event.type;
-    const payload = asRecord(event.payload);
+    const runtimeEvent = event.type === "runtime.stream" ? asRecord(event.data) : undefined;
+    const type = runtimeEvent === undefined ? event.type : readString(runtimeEvent, "type");
+    const payload =
+      runtimeEvent === undefined ? asRecord(event.data) : asRecord(runtimeEvent["payload"]);
 
     switch (type) {
       case "thought.delta":

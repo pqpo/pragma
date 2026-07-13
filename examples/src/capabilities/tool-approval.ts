@@ -53,7 +53,7 @@ try {
     renderer.render(event);
     if (event.type !== "human.requested") continue;
 
-    const interaction = readInteraction(event.payload);
+    const interaction = readInteraction(event.data);
     if (interaction.request.kind !== "tool_approval") {
       throw new Error(`不支持的 Human Interaction：${interaction.request.kind}`);
     }

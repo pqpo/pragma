@@ -1,7 +1,7 @@
 import type {
   ExecutionCursor,
   ExecutionEvent,
-  ExecutionOutputEvent,
+  ExecutionOutputItem,
   ExecutionRecord,
   Invocation,
   InvocationTree,
@@ -19,11 +19,11 @@ export interface ExecutionView {
   getState(): Promise<ExecutionRecord>;
   getTree(): Promise<InvocationTree>;
   watchTree(): AsyncIterable<InvocationTree>;
-  getRootOutput(options?: ExecutionWatchOptions): AsyncIterable<ExecutionOutputEvent>;
-  getAllOutput(options?: ExecutionWatchOptions): AsyncIterable<ExecutionOutputEvent>;
+  getRootOutput(options?: ExecutionWatchOptions): AsyncIterable<ExecutionOutputItem>;
+  getAllOutput(options?: ExecutionWatchOptions): AsyncIterable<ExecutionOutputItem>;
   getInvocation(invocationId: string): Promise<Invocation | undefined>;
   watchInvocation(invocationId: string): AsyncIterable<ExecutionEvent>;
-  watchInvocationOutput(invocationId: string): AsyncIterable<ExecutionOutputEvent>;
+  watchInvocationOutput(invocationId: string): AsyncIterable<ExecutionOutputItem>;
 }
 
 export interface MutableExecution extends ExecutionView {
@@ -75,14 +75,14 @@ export class StoredExecutionView implements ExecutionView {
     }
   }
 
-  getRootOutput(options: ExecutionWatchOptions = {}): AsyncIterable<ExecutionOutputEvent> {
+  getRootOutput(options: ExecutionWatchOptions = {}): AsyncIterable<ExecutionOutputItem> {
     return filterAsync(this.store.watchOutputs(this.executionId, options.after), async (event) => {
       const execution = await this.getState();
       return event.invocationId === execution.rootInvocationId;
     });
   }
 
-  getAllOutput(options: ExecutionWatchOptions = {}): AsyncIterable<ExecutionOutputEvent> {
+  getAllOutput(options: ExecutionWatchOptions = {}): AsyncIterable<ExecutionOutputItem> {
     return this.store.watchOutputs(this.executionId, options.after);
   }
 
@@ -94,7 +94,7 @@ export class StoredExecutionView implements ExecutionView {
     return watchFutureInvocationEvents(this.store, this.executionId, invocationId);
   }
 
-  watchInvocationOutput(invocationId: string): AsyncIterable<ExecutionOutputEvent> {
+  watchInvocationOutput(invocationId: string): AsyncIterable<ExecutionOutputItem> {
     return watchFutureInvocationOutputs(this.store, this.executionId, invocationId);
   }
 }
@@ -114,11 +114,16 @@ async function* watchFutureInvocationEvents(
   const state = await requireExecution(store, executionId);
   const initialInvocation = await store.getInvocation(executionId, invocationId);
   if (initialInvocation === undefined) throw new Error(`Invocation not found: ${invocationId}`);
-  if (isTerminal(initialInvocation.status) || isTerminal(state.status)) return;
   let cursor: ExecutionCursor = {
     executionId,
     sequence: state.lastAppliedSequence,
   };
+  if (isTerminal(initialInvocation.status) || isTerminal(state.status)) {
+    for (const event of await store.readEvents(executionId, cursor)) {
+      if (event.invocationId === invocationId) yield event;
+    }
+    return;
+  }
 
   while (true) {
     for (const event of await store.readEvents(executionId, cursor)) {
@@ -128,6 +133,9 @@ async function* watchFutureInvocationEvents(
     const invocation = await store.getInvocation(executionId, invocationId);
     const execution = await requireExecution(store, executionId);
     if (invocation === undefined || isTerminal(invocation.status) || isTerminal(execution.status)) {
+      for (const event of await store.readEvents(executionId, cursor)) {
+        if (event.invocationId === invocationId) yield event;
+      }
       return;
     }
     await delay(25);
@@ -138,12 +146,20 @@ async function* watchFutureInvocationOutputs(
   store: ExecutionStore,
   executionId: string,
   invocationId: string,
-): AsyncIterable<ExecutionOutputEvent> {
+): AsyncIterable<ExecutionOutputItem> {
+  const state = await requireExecution(store, executionId);
   const initialInvocation = await store.getInvocation(executionId, invocationId);
   if (initialInvocation === undefined) throw new Error(`Invocation not found: ${invocationId}`);
-  if (isTerminal(initialInvocation.status)) return;
-  const existing = await store.readOutputs(executionId);
-  let cursor = existing.at(-1)?.cursor;
+  let cursor: ExecutionCursor = {
+    executionId,
+    sequence: state.lastAppliedSequence,
+  };
+  if (isTerminal(initialInvocation.status) || isTerminal(state.status)) {
+    for (const event of await store.readOutputs(executionId, cursor)) {
+      if (event.invocationId === invocationId) yield event;
+    }
+    return;
+  }
 
   while (true) {
     for (const event of await store.readOutputs(executionId, cursor)) {
@@ -153,6 +169,9 @@ async function* watchFutureInvocationOutputs(
     const invocation = await store.getInvocation(executionId, invocationId);
     const execution = await requireExecution(store, executionId);
     if (invocation === undefined || isTerminal(invocation.status) || isTerminal(execution.status)) {
+      for (const event of await store.readOutputs(executionId, cursor)) {
+        if (event.invocationId === invocationId) yield event;
+      }
       return;
     }
     await delay(25);

@@ -6,7 +6,7 @@ const session = await app.experts.createSession(expert);
 const first = await session.prompt("hello", { requestId: "first" });
 for await (const event of first.events()) {
   // 只接收订阅后的事件；Execution 结束后自动退出循环。
-  console.log(event.type, event.payload);
+  console.log(event.type, event.data);
 }
 const result = await first.result;
 const turnUsage = await first.usage;

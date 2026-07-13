@@ -181,7 +181,13 @@ describe("ExpertSession", () => {
 
     await expect(turn.result).resolves.toBe("solo:hello");
     const events = await streamed;
-    expect(events.some((event) => event.type === "runtime.message.delta")).toBe(true);
+    expect(
+      events.some(
+        (event) =>
+          event.type === "runtime.stream" &&
+          (event.data as { type?: unknown }).type === "message.delta",
+      ),
+    ).toBe(true);
     expect(events.some((event) => event.type === "invocation.started")).toBe(false);
     expect((await invocationStreamed).some((event) => event.type === "invocation.succeeded")).toBe(
       true,
@@ -191,6 +197,10 @@ describe("ExpertSession", () => {
       { role: "user", requestId: "history", content: "hello" },
       { role: "assistant", content: "solo:hello" },
     ]);
+    const outputs = await collectAsync(turn.getRootOutput());
+    expect(outputs.map((output) => output.channel)).toEqual(["message", "result"]);
+    expect(outputs[0]?.cursor.sequence).toBeLessThan(outputs[1]!.cursor.sequence);
+    expect(outputs[1]).toMatchObject({ value: "solo:hello" });
     await session.close();
   });
 
@@ -604,8 +614,9 @@ describe("ExpertSession", () => {
           },
         ],
         execution: {
-          schemaVersion: "pragma.execution/v1",
+          schemaVersion: "pragma.execution/v2",
           executionId,
+          version: 0,
           kind: "expert-turn",
           definition,
           rootInvocationId: executionId,
@@ -662,8 +673,9 @@ describe("FlowExecution", () => {
     const task = flow.task({
       id: "task",
       version: "1.0.0",
-      handler: ({ input }) => {
+      handler: async ({ input }) => {
         calls += 1;
+        await new Promise<void>((resolve) => setTimeout(resolve, 25));
         return Number(input) * 2;
       },
       reduce: ({ state, output }) => {
@@ -752,8 +764,9 @@ describe("Execution observation", () => {
     const now = new Date().toISOString();
     await writer.create(
       {
-        schemaVersion: "pragma.execution/v1",
+        schemaVersion: "pragma.execution/v2",
         executionId: "cross-process",
+        version: 0,
         kind: "flow",
         definition: { id: "flow", version: "1.0.0", kind: "flow" },
         rootInvocationId: "root",
@@ -803,4 +816,10 @@ async function waitUntil(predicate: () => Promise<boolean>): Promise<void> {
     if (Date.now() >= deadline) throw new Error("Timed out waiting for test condition.");
     await new Promise<void>((resolve) => setTimeout(resolve, 10));
   }
+}
+
+async function collectAsync<T>(source: AsyncIterable<T>): Promise<T[]> {
+  const values: T[] = [];
+  for await (const value of source) values.push(value);
+  return values;
 }

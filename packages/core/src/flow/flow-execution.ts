@@ -52,8 +52,9 @@ export class FlowExecutionManager {
     const executionId = request.executionId ?? randomUUID();
     const now = new Date().toISOString();
     const record: ExecutionRecord = {
-      schemaVersion: "pragma.execution/v1",
+      schemaVersion: "pragma.execution/v2",
       executionId,
+      version: 0,
       kind: "flow",
       definition: { id: flow.id, version: flow.version, kind: "flow" },
       rootInvocationId: executionId,
@@ -154,10 +155,14 @@ export class FlowExecutionManager {
     controller: ExecutionController,
     runtime?: string,
   ): Promise<void> {
-    await this.executions.update(executionId, { status: "running" });
     const root = (await this.executions.getInvocation(executionId, executionId))!;
-    await putStatus(this.executions, executionId, root, "running");
-    await this.executions.appendEvent(executionId, executionId, "execution.started", {});
+    await this.executions.commit({
+      commitId: randomUUID(),
+      executionId,
+      executionPatch: { status: "running" },
+      invocationPatches: [{ invocationId: root.invocationId, patch: { status: "running" } }],
+      events: [{ invocationId: executionId, type: "execution.started", data: {} }],
+    });
     try {
       const output = await runFlow({
         flow,
@@ -169,31 +174,60 @@ export class FlowExecutionManager {
         runtimes: this.runtimes,
         runtime,
       });
-      await putStatus(this.executions, executionId, root, "succeeded", output);
-      await this.executions.appendOutput(executionId, executionId, {
-        channel: "result",
-        value: output,
-      });
-      await this.executions.appendEvent(executionId, executionId, "execution.succeeded", {
-        output,
-      });
-      await this.executions.update(executionId, {
-        status: "succeeded",
-        output,
-        ...(controller.getUsage() === undefined ? {} : { usage: controller.getUsage() }),
+      const usage = controller.getUsage();
+      await this.executions.commit({
+        commitId: `flow-succeeded:${executionId}`,
+        executionId,
+        executionPatch: {
+          status: "succeeded",
+          output,
+          ...(usage === undefined ? {} : { usage }),
+        },
+        invocationPatches: [
+          { invocationId: root.invocationId, patch: { status: "succeeded", output } },
+        ],
+        events: [
+          {
+            invocationId: root.invocationId,
+            type: "invocation.succeeded",
+            data: { output },
+          },
+          { invocationId: executionId, type: "execution.succeeded", data: { output } },
+        ],
       });
     } catch (error) {
       const status = controller.isCancelled() ? "cancelled" : "failed";
       const storedError = serializeError(error);
-      await putStatus(this.executions, executionId, root, status, undefined, storedError);
-      await this.executions.appendEvent(executionId, executionId, `execution.${status}`, {
-        message: error instanceof Error ? error.message : String(error),
-      });
-      await this.executions.update(executionId, {
-        status,
-        error: storedError,
-        ...(controller.getUsage() === undefined ? {} : { usage: controller.getUsage() }),
-      });
+      const usage = controller.getUsage();
+      const current = await this.executions.get(executionId);
+      if (current !== undefined && isTerminal(current.status)) {
+        if (usage !== undefined) await this.executions.update(executionId, { usage });
+      } else {
+        await this.executions.commit({
+          commitId: `flow-${status}:${executionId}`,
+          executionId,
+          executionPatch: {
+            status,
+            error: storedError,
+            ...(usage === undefined ? {} : { usage }),
+          },
+          invocationPatches: [
+            { invocationId: root.invocationId, patch: { status, error: storedError } },
+          ],
+          events: [
+            {
+              invocationId: root.invocationId,
+              type: `invocation.${status}`,
+              data: { error: storedError },
+            },
+            {
+              invocationId: executionId,
+              type: `execution.${status}`,
+              data: { message: error instanceof Error ? error.message : String(error) },
+            },
+          ],
+        });
+      }
     } finally {
       await controller.closeRuntimes();
     }
@@ -277,10 +311,12 @@ async function runStep(
         executionId: options.executionId,
         invocationId: invocation.invocationId,
         emitOutput: async (value) => {
-          await options.store.appendOutput(options.executionId, invocation.invocationId, {
-            channel: "progress",
-            value,
-          });
+          await options.store.appendEvent(
+            options.executionId,
+            invocation.invocationId,
+            "invocation.progress",
+            { value },
+          );
         },
       } as FlowTaskContext);
       if (options.controller.isCancelled()) throw new Error("FlowExecution was cancelled.");
@@ -354,10 +390,12 @@ async function runHumanTask(
     executionId: options.executionId,
     invocationId: invocation.invocationId,
     emitOutput: async (value) => {
-      await options.store.appendOutput(options.executionId, invocation.invocationId, {
-        channel: "progress",
-        value,
-      });
+      await options.store.appendEvent(
+        options.executionId,
+        invocation.invocationId,
+        "invocation.progress",
+        { value },
+      );
     },
   };
   const request: HumanInteractionRequest =
@@ -413,13 +451,18 @@ async function findOrCreateStepInvocation(
     createdAt: now,
     updatedAt: now,
   };
-  await options.store.putInvocation(options.executionId, invocation);
-  await options.store.appendEvent(
-    options.executionId,
-    invocation.invocationId,
-    "invocation.queued",
-    {},
-  );
+  await options.store.commit({
+    commitId: randomUUID(),
+    executionId: options.executionId,
+    invocationPuts: [invocation],
+    events: [
+      {
+        invocationId: invocation.invocationId,
+        type: "invocation.queued",
+        data: {},
+      },
+    ],
+  });
   return invocation;
 }
 
@@ -468,13 +511,29 @@ async function putStatus(
   output?: unknown,
   error?: unknown,
 ): Promise<void> {
-  await store.appendEvent(executionId, invocation.invocationId, `invocation.${status}`, {});
-  await store.putInvocation(executionId, {
-    ...invocation,
-    status,
-    ...(output === undefined ? {} : { output }),
-    ...(error === undefined ? {} : { error }),
-    updatedAt: new Date().toISOString(),
+  await store.commit({
+    commitId: randomUUID(),
+    executionId,
+    invocationPatches: [
+      {
+        invocationId: invocation.invocationId,
+        patch: {
+          status,
+          ...(output === undefined ? {} : { output }),
+          ...(error === undefined ? {} : { error }),
+        },
+      },
+    ],
+    events: [
+      {
+        invocationId: invocation.invocationId,
+        type: `invocation.${status}`,
+        data: {
+          ...(output === undefined ? {} : { output }),
+          ...(error === undefined ? {} : { error }),
+        },
+      },
+    ],
   });
 }
 

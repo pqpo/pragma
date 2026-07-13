@@ -233,8 +233,9 @@ class ExpertSessionImpl implements ExpertSession {
     const now = new Date().toISOString();
     const definitionKind = isExpertTeam(this.expert) ? "expert-team" : "expert";
     const execution: ExecutionRecord = {
-      schemaVersion: "pragma.execution/v1",
+      schemaVersion: "pragma.execution/v2",
       executionId: id,
+      version: 0,
       kind: "expert-turn",
       definition: { id: this.expert.id, version: this.expert.version, kind: definitionKind },
       rootInvocationId: id,
@@ -442,7 +443,9 @@ class ExpertSessionImpl implements ExpertSession {
   async getUsage(): Promise<AgentMessageUsage | undefined> {
     const session = await this.getState();
     const executions = await Promise.all(
-      session.executionIds.map(async (executionId) => await this.dependencies.executions.get(executionId)),
+      session.executionIds.map(
+        async (executionId) => await this.dependencies.executions.get(executionId),
+      ),
     );
     return mergeUsages(executions.map((execution) => execution?.usage));
   }
@@ -579,7 +582,18 @@ class ExpertSessionImpl implements ExpertSession {
           : candidate,
       ),
     }));
-    await this.dependencies.executions.update(prompt.executionId, { status: "running" });
+    await this.dependencies.executions.commit({
+      commitId: randomUUID(),
+      executionId: prompt.executionId,
+      executionPatch: { status: "running" },
+      events: [
+        {
+          invocationId: prompt.executionId,
+          type: "execution.started",
+          data: {},
+        },
+      ],
+    });
     const session = await this.getState();
     const rootContextId = session.contextIds["root"]!;
     const contextIds = { ...session.contextIds };
@@ -621,11 +635,41 @@ class ExpertSessionImpl implements ExpertSession {
       error = caught;
       status = controller.isCancelled() ? "cancelled" : "failed";
     }
-    await this.dependencies.executions.update(prompt.executionId, {
+    const usage = controller.getUsage();
+    const executionPatch = {
       status,
-      ...(controller.getUsage() === undefined ? {} : { usage: controller.getUsage() }),
+      ...(usage === undefined ? {} : { usage }),
       ...(status === "succeeded" ? { output } : { error: serializeError(error) }),
-    });
+    };
+    const currentExecution = await this.dependencies.executions.get(prompt.executionId);
+    if (currentExecution !== undefined && isTerminal(currentExecution.status)) {
+      if (usage !== undefined) {
+        await this.dependencies.executions.update(prompt.executionId, { usage });
+      }
+      if (
+        currentExecution.status === "succeeded" ||
+        currentExecution.status === "failed" ||
+        currentExecution.status === "cancelled"
+      ) {
+        status = currentExecution.status;
+      }
+    } else {
+      await this.dependencies.executions.commit({
+        commitId: `expert-turn-${status}:${prompt.executionId}`,
+        executionId: prompt.executionId,
+        executionPatch,
+        events: [
+          {
+            invocationId: prompt.executionId,
+            type: `execution.${status}`,
+            data:
+              status === "succeeded"
+                ? { output, ...(usage === undefined ? {} : { usage }) }
+                : { error: serializeError(error), ...(usage === undefined ? {} : { usage }) },
+          },
+        ],
+      });
+    }
     await this.dependencies.sessions.transact(this.sessionId, ({ session: current, prompts }) => ({
       result: undefined,
       session: {
@@ -698,7 +742,8 @@ async function waitForTerminalExecution(
       record.status === "failed" ||
       record.status === "cancelled" ||
       record.status === "interrupted"
-    ) return record;
+    )
+      return record;
     await new Promise<void>((resolve) => setTimeout(resolve, 10));
   }
 }

@@ -19,6 +19,11 @@ const legacyTokens = [
   ["parentWorkflow", "RunId"].join(""),
   ["task", "RunId"].join(""),
 ];
+const legacyExecutionSourceTokens = [
+  ["append", "Output("].join(""),
+  ["Execution", "OutputEvent"].join(""),
+  ["execution", "Outputs("].join(""),
+];
 
 async function listFiles(directory: string): Promise<string[]> {
   const entries = await readdir(directory, { withFileTypes: true });
@@ -58,6 +63,16 @@ describe("legacy execution API guard", () => {
       for (const token of legacyTokens) {
         if (content.includes(token)) {
           violations.push(`${repositoryPath}: ${token}`);
+        }
+      }
+      if (
+        repositoryPath.startsWith("packages/") ||
+        repositoryPath.startsWith("apps/") ||
+        repositoryPath.startsWith("plugins/") ||
+        repositoryPath.startsWith("examples/")
+      ) {
+        for (const token of legacyExecutionSourceTokens) {
+          if (content.includes(token)) violations.push(`${repositoryPath}: ${token}`);
         }
       }
     }

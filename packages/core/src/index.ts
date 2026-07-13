@@ -22,6 +22,7 @@ export * from "./human-interaction/durable-human-interaction.ts";
 export * from "./logging/logger.ts";
 export * from "./pragma-app.ts";
 export * from "./execution/execution-store.ts";
+export * from "./execution/execution-output.ts";
 export * from "./execution/execution-view.ts";
 export * from "./execution/expert-session-store.ts";
 export * from "./execution/expert-session.ts";

@@ -10,20 +10,22 @@ describe("ConsoleTurnRenderer", () => {
       output: { write: (text) => (output += text) },
     });
 
-    renderer.render({ type: "runtime.thought.delta", payload: { delta: "Checking context..." } });
-    renderer.render({
-      type: "runtime.tool.started",
-      payload: { toolCallId: "tool-1", toolName: "get_current_time", inputPreview: {} },
-    });
-    renderer.render({
-      type: "runtime.tool.completed",
-      payload: {
+    renderer.render(runtimeEvent("thought.delta", { delta: "Checking context..." }));
+    renderer.render(
+      runtimeEvent("tool.started", {
+        toolCallId: "tool-1",
+        toolName: "get_current_time",
+        inputPreview: {},
+      }),
+    );
+    renderer.render(
+      runtimeEvent("tool.completed", {
         toolCallId: "tool-1",
         toolName: "get_current_time",
         outputPreview: "2026-07-12T10:00:00.000Z",
-      },
-    });
-    renderer.render({ type: "runtime.message.delta", payload: { delta: "现在是 18:00。" } });
+      }),
+    );
+    renderer.render(runtimeEvent("message.delta", { delta: "现在是 18:00。" }));
     renderer.complete("现在是 18:00。");
 
     expect(output).toContain("• Thinking\nChecking context...");
@@ -65,11 +67,14 @@ describe("ConsoleTurnRenderer", () => {
       output: { write: (text) => (output += text) },
     });
 
-    renderer.render({ type: "runtime.message.delta", payload: { delta: "hello" } });
-    renderer.render({ type: "runtime.message.completed", payload: { text: "hello" } });
+    renderer.render(runtimeEvent("message.delta", { delta: "hello" }));
+    renderer.render(runtimeEvent("message.completed", { text: "hello" }));
     renderer.complete("hello");
 
     expect(output.match(/hello/gu)).toHaveLength(1);
   });
-
 });
+
+function runtimeEvent(type: string, payload: unknown) {
+  return { type: "runtime.stream", data: { type, payload } };
+}

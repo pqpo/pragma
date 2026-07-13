@@ -13,7 +13,7 @@ flow.compose(({ start, end }) => {
 const execution = await createExampleApp().flows.start(flow, { input: {} });
 for await (const event of execution.events()) {
   if (event.type === "human.requested") {
-    const id = (event.payload as { interactionId: string }).interactionId;
+    const id = (event.data as { interactionId: string }).interactionId;
     await execution.respondToHumanInteraction(id, { approved: true }, { requestId: "approval" });
   }
 }

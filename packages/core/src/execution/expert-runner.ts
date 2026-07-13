@@ -19,7 +19,11 @@ import { mergeUsage } from "../runtime/usage.ts";
 import { openRuntimeSession } from "../runtime/session-factory.ts";
 import type { RuntimeRegistry } from "../runtime-registry.ts";
 import type { ExpertAgentHumanRequest, ExpertAgentHumanResponse } from "../tools/managed-tool.ts";
-import type { ExecutionStore } from "./execution-store.ts";
+import {
+  ExecutionFinalStatusConflictError,
+  ExecutionVersionConflictError,
+  type ExecutionStore,
+} from "./execution-store.ts";
 import { RuntimeSessionPool, type RuntimeSessionIdentity } from "./runtime-session-pool.ts";
 
 export type RuntimeContextSnapshot = SharedRuntimeContextSnapshot;
@@ -89,6 +93,7 @@ export class ExecutionController {
       },
       `human-request:${interactionId}`,
     );
+    if (this.cancelled) throw new Error("Execution was cancelled.");
     return await new Promise((resolve, reject) => {
       this.pendingInteractions.set(interactionId, { resolve, reject });
     });
@@ -100,10 +105,10 @@ export class ExecutionController {
       const responded = (await this.store.readEvents(this.executionId)).find(
         (event) =>
           event.type === "human.responded" &&
-          (event.payload as { interactionId?: unknown }).interactionId === interactionId,
+          (event.data as { interactionId?: unknown }).interactionId === interactionId,
       );
       if (responded !== undefined) {
-        if ((responded.payload as { requestId?: unknown }).requestId === requestId) return;
+        if ((responded.data as { requestId?: unknown }).requestId === requestId) return;
         throw new Error(`Human interaction idempotency conflict: ${interactionId}`);
       }
       throw new Error(`Human interaction is not pending: ${interactionId}`);
@@ -132,25 +137,40 @@ export class ExecutionController {
     await Promise.allSettled(
       [...this.activeRuntimeSessions.values()].map((runtime) => runtime.cancelCurrentSubmission()),
     );
-    const record = await this.store.get(this.executionId);
-    if (record !== undefined && !isTerminal(record.status)) {
-      for (const invocation of await this.store.listInvocations(this.executionId)) {
-        if (!isTerminal(invocation.status)) {
-          await this.store.putInvocation(this.executionId, {
-            ...invocation,
-            status: "cancelled",
-            error: reason,
-            updatedAt: new Date().toISOString(),
-          });
+    while (true) {
+      const record = await this.store.get(this.executionId);
+      if (record === undefined || isTerminal(record.status)) return;
+      const invocationPatches = (await this.store.listInvocations(this.executionId))
+        .filter((invocation) => !isTerminal(invocation.status))
+        .map((invocation) => ({
+          invocationId: invocation.invocationId,
+          patch: { status: "cancelled" as const, error: reason },
+        }));
+      try {
+        await this.store.commit({
+          commitId: randomUUID(),
+          executionId: this.executionId,
+          expectedVersion: record.version,
+          executionPatch: { status: "cancelled", error: reason },
+          invocationPatches,
+          events: [
+            {
+              invocationId: record.rootInvocationId,
+              type: "execution.cancelled",
+              data: { reason },
+            },
+          ],
+        });
+        return;
+      } catch (error) {
+        if (
+          error instanceof ExecutionVersionConflictError ||
+          error instanceof ExecutionFinalStatusConflictError
+        ) {
+          continue;
         }
+        throw error;
       }
-      await this.store.appendEvent(
-        this.executionId,
-        record.rootInvocationId,
-        "execution.cancelled",
-        { reason },
-      );
-      await this.store.update(this.executionId, { status: "cancelled", error: reason });
     }
   }
 
@@ -220,9 +240,17 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
     options.controller.addUsage(invocation.usage);
     return invocation.output;
   }
-  await updateInvocation(options.store, options.executionId, invocation, { status: "running" });
-  await options.store.appendEvent(options.executionId, options.invocationId, "invocation.started", {
-    expertId: nativeExpert.id,
+  await options.store.commit({
+    commitId: randomUUID(),
+    executionId: options.executionId,
+    invocationPatches: [{ invocationId: options.invocationId, patch: { status: "running" } }],
+    events: [
+      {
+        invocationId: options.invocationId,
+        type: "invocation.started",
+        data: { expertId: nativeExpert.id },
+      },
+    ],
   });
 
   const executableExpert =
@@ -332,19 +360,10 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
       await options.store.appendEvent(
         options.executionId,
         options.invocationId,
-        `runtime.${event.type}`,
-        event.payload,
+        "runtime.stream",
+        event,
         event.eventId,
       );
-      const output = projectOutput(event);
-      if (output !== undefined) {
-        await options.store.appendOutput(
-          options.executionId,
-          options.invocationId,
-          output,
-          event.eventId,
-        );
-      }
     }
   })();
 
@@ -353,23 +372,29 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
     options.controller.addUsage(result.result.usage);
     await drain;
     const output = result.result.output;
-    await options.store.appendOutput(options.executionId, options.invocationId, {
-      channel: "result",
-      value: output,
-    });
-    await options.store.appendEvent(
-      options.executionId,
-      options.invocationId,
-      "invocation.succeeded",
-      {
-        output,
-        ...(result.result.usage === undefined ? {} : { usage: result.result.usage }),
-      },
-    );
-    await updateInvocation(options.store, options.executionId, invocation, {
-      status: "succeeded",
-      output,
-      ...(result.result.usage === undefined ? {} : { usage: result.result.usage }),
+    await options.store.commit({
+      commitId: `invocation-succeeded:${options.invocationId}`,
+      executionId: options.executionId,
+      invocationPatches: [
+        {
+          invocationId: options.invocationId,
+          patch: {
+            status: "succeeded",
+            output,
+            ...(result.result.usage === undefined ? {} : { usage: result.result.usage }),
+          },
+        },
+      ],
+      events: [
+        {
+          invocationId: options.invocationId,
+          type: "invocation.succeeded",
+          data: {
+            output,
+            ...(result.result.usage === undefined ? {} : { usage: result.result.usage }),
+          },
+        },
+      ],
     });
     const info = session.info();
     await persistRuntimeSnapshot({
@@ -382,18 +407,24 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
   } catch (error) {
     await drain.catch(() => undefined);
     const status = options.controller.isCancelled() ? "cancelled" : "failed";
-    await options.store.appendEvent(
-      options.executionId,
-      options.invocationId,
-      `invocation.${status}`,
-      {
-        message: error instanceof Error ? error.message : String(error),
-      },
-    );
-    await updateInvocation(options.store, options.executionId, invocation, {
-      status,
-      error: serializeError(error),
-    });
+    const storedError = serializeError(error);
+    const latest = await options.store.getInvocation(options.executionId, options.invocationId);
+    if (latest !== undefined && !isTerminal(latest.status)) {
+      await options.store.commit({
+        commitId: `invocation-${status}:${options.invocationId}`,
+        executionId: options.executionId,
+        invocationPatches: [
+          { invocationId: options.invocationId, patch: { status, error: storedError } },
+        ],
+        events: [
+          {
+            invocationId: options.invocationId,
+            type: `invocation.${status}`,
+            data: { message: error instanceof Error ? error.message : String(error) },
+          },
+        ],
+      });
+    }
     throw error;
   }
 }
@@ -429,7 +460,7 @@ async function delegate(
   };
   const invocationId = randomUUID();
   const now = new Date().toISOString();
-  await options.store.putInvocation(options.executionId, {
+  const delegatedInvocation: Invocation = {
     invocationId,
     rootInvocationId: (await options.store.get(options.executionId))!.rootInvocationId,
     parentInvocationId: options.invocationId,
@@ -439,9 +470,18 @@ async function delegate(
     input: options.request.prompt,
     createdAt: now,
     updatedAt: now,
-  });
-  await options.store.appendEvent(options.executionId, invocationId, "invocation.queued", {
-    parentInvocationId: options.invocationId,
+  };
+  await options.store.commit({
+    commitId: randomUUID(),
+    executionId: options.executionId,
+    invocationPuts: [delegatedInvocation],
+    events: [
+      {
+        invocationId,
+        type: "invocation.queued",
+        data: { parentInvocationId: options.invocationId },
+      },
+    ],
   });
   const release = await options.limiter?.acquire();
   try {
@@ -500,43 +540,6 @@ async function requireInvocation(
   const invocation = await store.getInvocation(executionId, invocationId);
   if (invocation === undefined) throw new Error(`Invocation not found: ${invocationId}`);
   return invocation;
-}
-
-async function updateInvocation(
-  store: ExecutionStore,
-  executionId: string,
-  current: Invocation,
-  patch: Partial<Invocation>,
-): Promise<void> {
-  const latest = await requireInvocation(store, executionId, current.invocationId);
-  await store.putInvocation(executionId, {
-    ...latest,
-    ...patch,
-    invocationId: current.invocationId,
-    updatedAt: new Date().toISOString(),
-  });
-}
-
-function projectOutput(event: {
-  readonly type: string;
-  readonly payload: Record<string, unknown>;
-}):
-  | {
-      readonly channel: "message" | "thought" | "tool" | "progress";
-      readonly delta?: string;
-      readonly value?: unknown;
-    }
-  | undefined {
-  if (event.type === "message.delta")
-    return { channel: "message", delta: String(event.payload["delta"] ?? "") };
-  if (event.type === "message.completed")
-    return { channel: "message", value: event.payload["text"] };
-  if (event.type === "thought.delta")
-    return { channel: "thought", delta: String(event.payload["delta"] ?? "") };
-  if (event.type === "tool.delta")
-    return { channel: "tool", delta: String(event.payload["delta"] ?? "") };
-  if (event.type === "progress") return { channel: "progress", value: event.payload };
-  return undefined;
 }
 
 function isTerminal(status: string): boolean {

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { AgentMessageUsageSchema } from "../agent-message.schema.ts";
+import { ExpertAgentStreamEventSchema } from "../stream-event.schema.ts";
 
 export const ExecutionStatusSchema = z.enum([
   "queued",
@@ -67,17 +68,23 @@ export const ExecutionCursorSchema = z.object({
 });
 
 export const ExecutionEventSchema = z.object({
+  schemaVersion: z.literal("pragma.execution-event/v2"),
   eventId: z.string().min(1),
   cursor: ExecutionCursorSchema,
   executionId: z.string().min(1),
   invocationId: z.string().min(1),
   type: z.string().min(1),
-  payload: z.unknown(),
+  data: z.unknown(),
   occurredAt: z.string().datetime(),
 });
 
-export const ExecutionOutputEventSchema = z.object({
-  eventId: z.string().min(1),
+export const ExecutionRuntimeStreamEventSchema = ExecutionEventSchema.extend({
+  type: z.literal("runtime.stream"),
+  data: ExpertAgentStreamEventSchema,
+});
+
+export const ExecutionOutputItemSchema = z.object({
+  sourceEventId: z.string().min(1),
   cursor: ExecutionCursorSchema,
   executionId: z.string().min(1),
   invocationId: z.string().min(1),
@@ -88,8 +95,9 @@ export const ExecutionOutputEventSchema = z.object({
 });
 
 export const ExecutionRecordSchema = z.object({
-  schemaVersion: z.literal("pragma.execution/v1"),
+  schemaVersion: z.literal("pragma.execution/v2"),
   executionId: z.string().min(1),
+  version: z.number().int().nonnegative(),
   kind: ExecutionKindSchema,
   definition: DefinitionReferenceSchema,
   rootInvocationId: z.string().min(1),
@@ -118,9 +126,9 @@ export type RuntimeContextSnapshot = z.infer<typeof RuntimeContextSnapshotSchema
 export type InvocationRuntimeContext = z.infer<typeof InvocationRuntimeContextSchema>;
 export type Invocation = z.infer<typeof InvocationSchema>;
 export type ExecutionCursor = z.infer<typeof ExecutionCursorSchema>;
-export type ExecutionEvent<TPayload = unknown> = Omit<
-  z.infer<typeof ExecutionEventSchema>,
-  "payload"
-> & { readonly payload: TPayload };
-export type ExecutionOutputEvent = z.infer<typeof ExecutionOutputEventSchema>;
+export type ExecutionEvent<TData = unknown> = Omit<z.infer<typeof ExecutionEventSchema>, "data"> & {
+  readonly data: TData;
+};
+export type ExecutionRuntimeStreamEvent = z.infer<typeof ExecutionRuntimeStreamEventSchema>;
+export type ExecutionOutputItem = z.infer<typeof ExecutionOutputItemSchema>;
 export type ExecutionRecord = z.infer<typeof ExecutionRecordSchema>;
