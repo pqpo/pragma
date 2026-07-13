@@ -1,5 +1,5 @@
 import { defineFlow } from "@pragma/core";
-import { createExampleApp } from "./example-kit.ts";
+import { createExampleApp } from "../support/example-kit.ts";
 
 const flow = defineFlow({ id: "recoverable", version: "1.0.0" });
 const task = flow.task({ id: "work", version: "1.0.0", handler: () => "done" });

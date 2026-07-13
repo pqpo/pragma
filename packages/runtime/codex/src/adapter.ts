@@ -29,10 +29,11 @@ import {
 } from "./models.ts";
 import { canUseCodexRuntime } from "./availability.ts";
 import { resolveCodexExecutablePath } from "./executable.ts";
+import { appendCodexExecutionMcpConfig } from "./execution-mcp-config.ts";
 import {
-  createCodexExpertToolsMcpServer,
-  type CodexExpertToolsMcpServer,
   type CodexExpertToolRuntimeState,
+  type CodexExpertToolsMcpSessionRegistration,
+  registerCodexExpertToolsMcpSession,
 } from "./expert-tools-mcp-server.ts";
 
 const CODEX_LOCAL_RUNTIME_DESCRIPTOR = {
@@ -58,7 +59,7 @@ const DEFAULT_CODEX_CLIENT_INFO = {
 
 interface CodexDriverSession extends CodexNativeSession {
   readonly mcpToolRegistry: McpToolRegistry;
-  readonly expertToolsMcpServer: CodexExpertToolsMcpServer;
+  readonly expertToolsMcpRegistration: CodexExpertToolsMcpSessionRegistration;
 }
 
 export function createCodexRuntime(options: CodexRuntimeAdapterOptions = {}): RuntimeAdapter {
@@ -122,12 +123,12 @@ export function createCodexRuntime(options: CodexRuntimeAdapterOptions = {}): Ru
           }
         }
         let mcpToolRegistry: McpToolRegistry | undefined;
-        let expertToolsMcpServer: CodexExpertToolsMcpServer | undefined;
+        let expertToolsMcpRegistration: CodexExpertToolsMcpSessionRegistration | undefined;
         let client: CodexAppServerClient | undefined;
 
         try {
           mcpToolRegistry = await createMcpToolRegistry(ctx.agent.mcp);
-          expertToolsMcpServer = await createCodexExpertToolsMcpServer({
+          expertToolsMcpRegistration = await registerCodexExpertToolsMcpSession({
             agent: ctx.agent,
             instanceId: ctx.systemSessionId,
             getContext: () => ctx.lifecycle.currentContext,
@@ -139,9 +140,9 @@ export function createCodexRuntime(options: CodexRuntimeAdapterOptions = {}): Ru
           });
           client = await CodexAppServerClient.start({
             executablePath,
-            args: createCodexAppServerArgs(
+            args: appendCodexExecutionMcpConfig(
               options.appServerArgs ?? ["app-server", "--listen", "stdio://"],
-              expertToolsMcpServer,
+              expertToolsMcpRegistration,
             ),
             cwd: ctx.workspace,
             env: {
@@ -187,13 +188,13 @@ export function createCodexRuntime(options: CodexRuntimeAdapterOptions = {}): Ru
                 : [],
             }),
             mcpToolRegistry,
-            expertToolsMcpServer,
+            expertToolsMcpRegistration,
           };
         } catch (error) {
           try {
             await disposeCodexRuntimeResources(
               client,
-              expertToolsMcpServer,
+              expertToolsMcpRegistration,
               mcpToolRegistry,
               ctx.logger,
             );
@@ -234,7 +235,7 @@ export function createCodexRuntime(options: CodexRuntimeAdapterOptions = {}): Ru
       async closeSession(session, ctx) {
         await disposeCodexRuntimeResources(
           session.client,
-          session.expertToolsMcpServer,
+          session.expertToolsMcpRegistration,
           session.mcpToolRegistry,
           ctx.logger,
         );
@@ -290,34 +291,15 @@ function createCodexRuntimeCanUse(
     });
 }
 
-function createCodexAppServerArgs(
-  baseArgs: readonly string[],
-  expertToolsMcpServer: CodexExpertToolsMcpServer,
-): readonly string[] {
-  const serverKey = `mcp_servers.${expertToolsMcpServer.id}`;
-
-  return [
-    ...baseArgs,
-    "-c",
-    `${serverKey}.url=${JSON.stringify(expertToolsMcpServer.url)}`,
-    "-c",
-    `${serverKey}.enabled=true`,
-    "-c",
-    `${serverKey}.required=true`,
-    "-c",
-    `${serverKey}.default_tools_approval_mode="approve"`,
-  ];
-}
-
 async function disposeCodexRuntimeResources(
   client: CodexAppServerClient | undefined,
-  expertToolsMcpServer: CodexExpertToolsMcpServer | undefined,
+  expertToolsMcpRegistration: CodexExpertToolsMcpSessionRegistration | undefined,
   mcpToolRegistry: McpToolRegistry | undefined,
   logger: ExpertAgentLogger,
 ): Promise<void> {
   const results = await Promise.allSettled([
     Promise.resolve().then(() => client?.close()),
-    expertToolsMcpServer?.dispose() ?? Promise.resolve(),
+    expertToolsMcpRegistration?.dispose() ?? Promise.resolve(),
     mcpToolRegistry?.dispose() ?? Promise.resolve(),
   ]);
   const errors = results.flatMap((result) =>

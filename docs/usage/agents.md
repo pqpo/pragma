@@ -20,6 +20,26 @@ const resumed = await app.experts.resumeSession(expert, { sessionId: session.ses
 await resumed.prompt("continue", { requestId: "second" });
 ```
 
+普通 Expert 可以显式注入 subagent launcher：
+
+```ts
+const researcher = await defineExpert({ ...researcherOptions });
+const launcher = createAgentLauncher({
+  experts: [researcher],
+  context: "reuse",
+  maxConcurrency: 2,
+  maxDepth: 1,
+});
+const coordinator = await defineExpert({
+  ...coordinatorOptions,
+  tools: [launcher.tool],
+});
+const session = await app.experts.createSession(coordinator);
+```
+
+launcher 向模型公开 `delegate_expert`。每次调用都会在当前 Execution 下创建子 Invocation，
+因此子专家出现在同一 InvocationTree 中，并参与父 Turn 的取消和 Usage 汇总。
+
 恢复会话不会自动重启 interrupted Turn。专家团使用同一个 Session API；外部只能向团队根提交 prompt。
 
 `turn.usage` 返回单轮（包含该轮专家团委派调用）的累计 Usage；`session.getUsage()` 汇总当前

@@ -56,7 +56,7 @@ Pragma 已经形成一个质量较好的**本地 Agent 执行内核**：Expert�
 | 区域               | 当前状态                                                                             | 架构判断                                           |
 | ------------------ | ------------------------------------------------------------------------------------ | -------------------------------------------------- |
 | Expert 声明        | `defineExpert()` 是异步创建入口，负责插件、Context、Tool 和模型配置归一化            | 方向正确，但公共定义仍以 TypeScript interface 为主 |
-| 多专家协作         | `defineExpertTeam()` 提供 coordinator、成员 allowlist、并发和深度限制                | 边界清晰，适合作为团队编排原语                     |
+| 多专家协作         | 普通 Expert launcher 与 `defineExpertTeam()` 共用子 Invocation 委派机制              | 局部 subagent 与团队治理边界清晰                   |
 | Flow               | Task、HumanTask、Expert、Team、子 Flow 共用 Invocation Tree                          | 顶层对象收敛合理，恢复语义已有测试                 |
 | Execution          | Execution、Invocation、Canonical Event、Output 投影、ExpertSession 均有持久化 schema | 领域骨架完整；文件存储仍不适合直接上云             |
 | Runtime            | PI、Codex、Claude Code 分包实现统一 Runtime Driver                                   | 是目前最成熟、最值得保留的扩展边界                 |
@@ -86,7 +86,7 @@ Pragma 已经形成一个质量较好的**本地 Agent 执行内核**：Expert�
 
 ### 2. Execution 统一 Expert 与 Flow 的运行视图
 
-ExpertTurn 和 FlowExecution 都落到 Execution / Invocation Tree，而不是维护两套观测、恢复和输出模型。团队委派也直接产生子 Invocation，没有伪装成单节点 Flow。这是正确的领域收敛。
+ExpertTurn 和 FlowExecution 都落到 Execution / Invocation Tree，而不是维护两套观测、恢复和输出模型。普通 Expert subagent 与团队委派都直接产生子 Invocation，没有伪装成单节点 Flow。这是正确的领域收敛。
 
 ### 3. Runtime Session 有明确 owner
 

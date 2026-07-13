@@ -1,5 +1,5 @@
 import { defineExpertTeam } from "@pragma/core";
-import { createExampleApp, createExampleExpert } from "./example-kit.ts";
+import { createExampleApp, createExampleExpert } from "../../support/example-kit.ts";
 
 const lead = await createExampleExpert("tree-lead", "Delegate once, then combine the answer.");
 const member = await createExampleExpert("tree-member", "Return one focused finding.");

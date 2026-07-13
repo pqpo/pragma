@@ -1,7 +1,7 @@
 import type { Expert } from "./expert-agent.ts";
+import type { DelegationContextPolicy } from "./agent-launcher.ts";
 
 export type ExpertDefinition = Expert | ExpertTeam;
-export type DelegationContextPolicy = "fresh" | "reuse";
 
 export interface ExpertTeamDelegationOptions {
   readonly allow: Readonly<Record<string, readonly string[]>>;

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { createExampleModelsConfig } from "../src/example-kit.ts";
+import { createExampleModelsConfig } from "../src/support/example-kit.ts";
 
 describe("example model configuration", () => {
   it("maps documented environment variables to an Expert model configuration", () => {

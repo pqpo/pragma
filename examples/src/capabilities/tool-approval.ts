@@ -9,7 +9,7 @@ import {
 
 import toolApprovalPolicy from "../../plugins/tool-approval-policy/src/plugin.ts";
 import { ConsoleTurnRenderer } from "../console/console-turn-renderer.ts";
-import { createExampleApp, createExampleExpert } from "../example-kit.ts";
+import { createExampleApp, createExampleExpert } from "../support/example-kit.ts";
 
 const deleteNoteTool: ExpertAgentManagedTool<"delete_workspace_note", ExpertAgentToolCallResult> = {
   name: "delete_workspace_note",

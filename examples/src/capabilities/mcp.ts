@@ -1,5 +1,5 @@
 import { renderExpertTurn } from "../console/console-turn-renderer.ts";
-import { createExampleApp, createExampleExpert } from "../example-kit.ts";
+import { createExampleApp, createExampleExpert } from "../support/example-kit.ts";
 
 const packageCatalog: Readonly<Record<string, string>> = {
   "@pragma/core": "定义 Expert、Context、Tool、Plugin、Runtime 边界和 Flow 编排。",

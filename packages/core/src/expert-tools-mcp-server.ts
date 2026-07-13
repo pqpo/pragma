@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { Readable } from "node:stream";
@@ -38,14 +38,14 @@ export interface ExpertToolRuntimeState {
   emitter?: RuntimeEventEmitter | undefined;
 }
 
-export interface ExpertToolsMcpServer {
+export interface ExpertToolsMcpSessionRegistration {
   readonly id: string;
   readonly name: string;
   readonly url: string;
   readonly dispose: () => Promise<void>;
 }
 
-export interface CreateExpertToolsMcpServerOptions {
+export interface RegisterExpertToolsMcpSessionOptions {
   readonly agent: Expert;
   /** Stable native runtime-session identity used to preserve the MCP config key across restores. */
   readonly instanceId?: string | undefined;
@@ -59,13 +59,174 @@ export interface CreateExpertToolsMcpServerOptions {
 
 type LocalTool = ExpertAgentManagedTool<string, ExpertAgentToolCallResult>;
 const RUNTIME_PERMISSION_APPROVAL_REASON = "Runtime requested tool approval.";
+const SESSION_MCP_PATH_PATTERN = /^\/sessions\/([A-Za-z0-9_-]{43})\/mcp$/;
 
-export async function createExpertToolsMcpServer(
-  options: CreateExpertToolsMcpServerOptions,
-): Promise<ExpertToolsMcpServer> {
-  const instanceId = options.instanceId ?? randomUUID();
-  const id = `pragma_tools_${sanitizeMcpConfigId(options.agent.id)}_${sanitizeMcpConfigId(instanceId)}`;
-  const name = `Pragma tools for ${options.agent.name}`;
+interface ExpertToolsMcpGatewayEntry {
+  readonly server: McpServer;
+  readonly transport: WebStandardStreamableHTTPServerTransport;
+  readonly logger: ExpertAgentLogger;
+}
+
+class ExpertToolsMcpGateway {
+  private readonly entries = new Map<string, ExpertToolsMcpGatewayEntry>();
+  private httpServer: ReturnType<typeof createServer> | undefined;
+  private origin: string | undefined;
+  private lifecycle: Promise<void> = Promise.resolve();
+
+  async register(
+    options: RegisterExpertToolsMcpSessionOptions,
+  ): Promise<ExpertToolsMcpSessionRegistration> {
+    const instanceId = options.instanceId ?? randomUUID();
+    const id = `pragma_tools_${sanitizeMcpConfigId(options.agent.id)}_${sanitizeMcpConfigId(instanceId)}`;
+    const name = `Pragma tools for ${options.agent.name}`;
+    const server = createSessionMcpServer(name, options);
+    const transport = new WebStandardStreamableHTTPServerTransport();
+
+    try {
+      await server.connect(transport);
+    } catch (error) {
+      await server.close().catch(() => undefined);
+      throw error;
+    }
+
+    const entry: ExpertToolsMcpGatewayEntry = { server, transport, logger: options.logger };
+    let token: string;
+    let url: string;
+
+    try {
+      ({ token, url } = await this.serialize(async () => {
+        await this.ensureListening();
+        const origin = this.origin;
+        if (origin === undefined) {
+          throw new Error("Execution MCP Gateway is not listening.");
+        }
+        const registeredToken = this.createUniqueToken();
+        this.entries.set(registeredToken, entry);
+        return {
+          token: registeredToken,
+          url: `${origin}/sessions/${registeredToken}/mcp`,
+        };
+      }));
+    } catch (error) {
+      await server.close().catch(() => undefined);
+      throw error;
+    }
+
+    let disposePromise: Promise<void> | undefined;
+
+    return {
+      id,
+      name,
+      url,
+      dispose: () => {
+        disposePromise ??= this.unregister(token, entry);
+        return disposePromise;
+      },
+    };
+  }
+
+  private unregister(token: string, entry: ExpertToolsMcpGatewayEntry): Promise<void> {
+    return this.serialize(async () => {
+      if (this.entries.get(token) !== entry) return;
+
+      this.entries.delete(token);
+      const closeResults = await Promise.allSettled([
+        entry.server.close(),
+        ...(this.entries.size === 0 && this.httpServer !== undefined ? [this.stopListening()] : []),
+      ]);
+      const errors = closeResults.flatMap((result) =>
+        result.status === "rejected" ? [result.reason as unknown] : [],
+      );
+
+      if (errors.length === 1) throw errors[0];
+      if (errors.length > 1) {
+        throw new AggregateError(errors, "Execution MCP Session cleanup failed.");
+      }
+    });
+  }
+
+  private async ensureListening(): Promise<void> {
+    if (this.httpServer !== undefined) return;
+
+    const httpServer = createServer((request, response) => {
+      void this.routeRequest(request, response);
+    });
+
+    try {
+      await listenOnLoopback(httpServer);
+      const address = httpServer.address();
+      if (!isAddressInfo(address)) {
+        throw new Error("Execution MCP Gateway did not bind to a TCP address.");
+      }
+
+      this.httpServer = httpServer;
+      this.origin = `http://127.0.0.1:${address.port}`;
+    } catch (error) {
+      await closeHttpServer(httpServer).catch(() => undefined);
+      throw error;
+    }
+  }
+
+  private async stopListening(): Promise<void> {
+    const httpServer = this.httpServer;
+    this.httpServer = undefined;
+    this.origin = undefined;
+    if (httpServer !== undefined) await closeHttpServer(httpServer);
+  }
+
+  private async routeRequest(request: IncomingMessage, response: ServerResponse): Promise<void> {
+    const token = readSessionToken(request.url);
+    const entry = token === undefined ? undefined : this.entries.get(token);
+    if (entry === undefined) {
+      response.writeHead(404);
+      response.end();
+      return;
+    }
+
+    try {
+      await handleMcpHttpRequest(entry.transport, request, response);
+    } catch (error) {
+      entry.logger.error("Execution MCP Session request failed", { error });
+      if (!response.headersSent) {
+        response.writeHead(500);
+        response.end();
+        return;
+      }
+
+      response.destroy(error instanceof Error ? error : undefined);
+    }
+  }
+
+  private createUniqueToken(): string {
+    let token: string;
+    do {
+      token = randomBytes(32).toString("base64url");
+    } while (this.entries.has(token));
+    return token;
+  }
+
+  private serialize<TResult>(operation: () => Promise<TResult>): Promise<TResult> {
+    const result = this.lifecycle.then(operation, operation);
+    this.lifecycle = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
+  }
+}
+
+const expertToolsMcpGateway = new ExpertToolsMcpGateway();
+
+export async function registerExpertToolsMcpSession(
+  options: RegisterExpertToolsMcpSessionOptions,
+): Promise<ExpertToolsMcpSessionRegistration> {
+  return await expertToolsMcpGateway.register(options);
+}
+
+function createSessionMcpServer(
+  name: string,
+  options: RegisterExpertToolsMcpSessionOptions,
+): McpServer {
   const server = new McpServer(
     {
       name,
@@ -82,57 +243,11 @@ export async function createExpertToolsMcpServer(
     registerLocalTool(server, resolvedTool.tool, options);
   }
 
-  const transport = new WebStandardStreamableHTTPServerTransport();
-  await server.connect(transport);
-
-  const httpServer = createServer((request, response) => {
-    handleMcpHttpRequest(transport, request, response).catch((error: unknown) => {
-      options.logger.error("Execution MCP HTTP request failed", { error });
-      if (!response.headersSent) {
-        response.writeHead(500);
-        response.end();
-        return;
-      }
-
-      response.destroy(error instanceof Error ? error : undefined);
-    });
-  });
-
-  await new Promise<void>((resolve, reject) => {
-    const onError = (error: Error): void => {
-      httpServer.off("listening", onListening);
-      reject(error);
-    };
-    const onListening = (): void => {
-      httpServer.off("error", onError);
-      resolve();
-    };
-
-    httpServer.once("error", onError);
-    httpServer.once("listening", onListening);
-    httpServer.listen(0, "127.0.0.1");
-  });
-
-  const address = httpServer.address();
-
-  if (!isAddressInfo(address)) {
-    await server.close();
-    await closeHttpServer(httpServer);
-    throw new Error("Execution MCP server did not bind to a TCP address.");
-  }
-
-  return {
-    id,
-    name,
-    url: `http://127.0.0.1:${address.port}/mcp`,
-    async dispose() {
-      await Promise.allSettled([server.close(), closeHttpServer(httpServer)]);
-    },
-  };
+  return server;
 }
 
 function createExecutionLocalTools(
-  options: CreateExpertToolsMcpServerOptions,
+  options: RegisterExpertToolsMcpSessionOptions,
 ): readonly ResolvedTool<LocalTool>[] {
   const defaultTools = options.agent.createDefaultTools({
     getContext: options.getContext,
@@ -156,7 +271,7 @@ function createExecutionLocalTools(
 }
 
 function createPermissionPromptTool(
-  options: CreateExpertToolsMcpServerOptions,
+  options: RegisterExpertToolsMcpSessionOptions,
   runtimeManagedToolNames: ReadonlySet<string>,
 ): LocalTool {
   return {
@@ -363,7 +478,7 @@ function fromDefaultTool(tool: ExpertAgentDefaultTool): LocalTool {
 function registerLocalTool(
   server: McpServer,
   tool: LocalTool,
-  options: CreateExpertToolsMcpServerOptions,
+  options: RegisterExpertToolsMcpSessionOptions,
 ): void {
   server.registerTool(
     tool.name,
@@ -653,12 +768,6 @@ async function handleMcpHttpRequest(
   request: IncomingMessage,
   response: ServerResponse,
 ): Promise<void> {
-  if (!request.url?.startsWith("/mcp")) {
-    response.writeHead(404);
-    response.end();
-    return;
-  }
-
   const webRequest = createWebRequest(request);
   const webResponse = await transport.handleRequest(webRequest);
 
@@ -670,6 +779,16 @@ async function handleMcpHttpRequest(
   }
 
   Readable.fromWeb(webResponse.body).pipe(response);
+}
+
+function readSessionToken(requestUrl: string | undefined): string | undefined {
+  if (requestUrl === undefined) return undefined;
+
+  try {
+    return SESSION_MCP_PATH_PATTERN.exec(new URL(requestUrl, "http://127.0.0.1").pathname)?.[1];
+  } catch {
+    return undefined;
+  }
 }
 
 function createWebRequest(request: IncomingMessage): Request {
@@ -717,6 +836,23 @@ function closeHttpServer(server: ReturnType<typeof createServer>): Promise<void>
 
       reject(error);
     });
+  });
+}
+
+function listenOnLoopback(server: ReturnType<typeof createServer>): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const onError = (error: Error): void => {
+      server.off("listening", onListening);
+      reject(error);
+    };
+    const onListening = (): void => {
+      server.off("error", onError);
+      resolve();
+    };
+
+    server.once("error", onError);
+    server.once("listening", onListening);
+    server.listen(0, "127.0.0.1");
   });
 }
 

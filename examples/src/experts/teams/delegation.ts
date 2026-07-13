@@ -1,5 +1,5 @@
 import { defineExpertTeam } from "@pragma/core";
-import { createExampleApp, createExampleExpert } from "./example-kit.ts";
+import { createExampleApp, createExampleExpert } from "../../support/example-kit.ts";
 
 const coordinator = await createExampleExpert("lead", "Delegate research when useful.");
 const researcher = await createExampleExpert("researcher", "Investigate the requested topic.");

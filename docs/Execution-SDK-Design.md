@@ -15,5 +15,9 @@ const view = await app.flows.open({ executionId: execution.executionId });
 InvocationTree 表示。所有运行事实进入单一 Canonical Event Log，并使用
 `{ executionId, sequence }` cursor 回放；Output 保留相同源 cursor，但只是事件投影，不独立持久化或编号。
 
+`createAgentLauncher().tool` 和 `defineExpertTeam()` 共享同一个 delegation application service。
+前者为普通 Expert 显式列出 subagent，后者从团队 allowlist 解析目标；两者都直接创建子
+Invocation，不创建隐藏的 ExpertSession 或伪装成单节点 Flow。
+
 Expert 恢复只恢复会话上下文，不重启 interrupted Turn。Flow recover 会继续未完成
 Invocation，并跳过已经成功的节点。

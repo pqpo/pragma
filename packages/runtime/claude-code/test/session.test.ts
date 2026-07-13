@@ -1,3 +1,7 @@
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { describe, expect, it } from "vitest";
 import type { RuntimeEventMappingContext } from "@pragma/core";
 
@@ -5,8 +9,30 @@ import {
   mapClaudeCodeNativeEvent,
   normalizeClaudeToolRuntimeEvents,
   readAssistantMessageEvent,
+  writeClaudeCodeMcpConfig,
   type ClaudeToolStreamState,
 } from "../src/session.ts";
+
+describe("Claude Code Execution MCP config", () => {
+  it("writes the isolated registration URL", async () => {
+    const sessionDir = await mkdtemp(join(tmpdir(), "pragma-claude-mcp-"));
+    const url = "http://127.0.0.1:43127/sessions/opaque-token/mcp";
+
+    try {
+      const path = await writeClaudeCodeMcpConfig(sessionDir, url);
+      expect(JSON.parse(await readFile(path, "utf8"))).toEqual({
+        mcpServers: {
+          pragma: {
+            type: "http",
+            url,
+          },
+        },
+      });
+    } finally {
+      await rm(sessionDir, { recursive: true, force: true });
+    }
+  });
+});
 
 const context = {
   runId: "run-1",

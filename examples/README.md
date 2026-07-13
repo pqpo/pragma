@@ -149,15 +149,16 @@ src/
   experts/
     getting-started/
       console-chat.ts
-    conversations/       # 后续整理：多轮、恢复、queue、steer
-    teams/               # 后续整理：委派与 InvocationTree
-  flows/                 # 后续整理：Task、Expert、HumanTask、恢复与树
-  plugins/               # 后续整理：插件能力
-  runtimes/              # 后续整理：不同 Runtime
+    conversations/      # 单轮、多轮、恢复、queue 与 steer
+    subagents/          # 普通 Expert 手动注入 delegate_expert
+    teams/              # defineExpertTeam、委派与 InvocationTree
+  flows/                # Task、Expert、HumanTask、恢复与树
+  runtimes/             # 不同 Runtime
     codex/
       console-chat.ts
     claude-code/
       console-chat.ts
+  support/              # 示例共用装配
 
 plugins/                 # 示例 Plugin 与 manifest
 skills/                  # 示例 SKILL.md
@@ -165,23 +166,31 @@ skills/                  # 示例 SKILL.md
 
 完整入口索引见 [`src/README.md`](./src/README.md)。
 
-当前已有的进阶示例仍可直接运行：
+进阶示例均已按功能归档，可直接运行：
 
-- `expert-single-multi.ts`：单专家单轮与多轮。
-- `expert-resume.ts`：恢复 ExpertSession 后通过新 prompt 继续对话。
-- `expert-queue-steer.ts`：持久化 prompt queue 与 steer。
-- `expert-team-delegation.ts`：协调专家按 allowlist 委派成员。
-- `expert-team-tree.ts`：读取团队 InvocationTree 与成员节点。
-- `flow-basic.ts`：内联 Task 与 `compose()`。
-- `flow-experts.ts`：Flow 调用 Expert 和 ExpertTeam。
-- `flow-human.ts`：HumanTask 响应。
-- `flow-recovery.ts`：`flows.open()` 只读观察执行状态。
-- `flow-tree.ts`：Flow InvocationTree 与总输出流。
+- `experts/conversations/single-multi.ts`：单专家单轮与多轮。
+- `experts/conversations/resume.ts`：恢复 ExpertSession 后通过新 prompt 继续对话。
+- `experts/conversations/queue-steer.ts`：持久化 prompt queue 与 steer。
+- `experts/subagents/delegation.ts`：普通 Expert 通过 `createAgentLauncher().tool` 委派子专家。
+- `experts/teams/delegation.ts`：用 `defineExpertTeam()` 声明专家团，协调专家按 allowlist 委派成员。
+- `experts/teams/invocation-tree.ts`：读取团队 InvocationTree 与成员节点。
+- `flows/basic.ts`：内联 Task 与 `compose()`。
+- `flows/experts.ts`：Flow 调用 Expert 和 ExpertTeam。
+- `flows/human.ts`：HumanTask 响应。
+- `flows/recovery.ts`：`flows.open()` 只读观察执行状态。
+- `flows/invocation-tree.ts`：Flow InvocationTree 与总输出流。
 
 例如：
 
 ```bash
-pnpm --filter @pragma/examples dev src/expert-single-multi.ts
+pnpm --filter @pragma/examples dev src/experts/conversations/single-multi.ts
+```
+
+专家团委派示例也提供了快捷命令：
+
+```bash
+pnpm --filter @pragma/examples example:expert-subagent
+pnpm --filter @pragma/examples example:expert-team
 ```
 
 所有外部 prompt 必须提交给 `ExpertSession`；Flow 只能通过 `app.flows` 启动、打开或恢复。

@@ -1,4 +1,4 @@
-import { createExampleApp, createExampleExpert } from "./example-kit.ts";
+import { createExampleApp, createExampleExpert } from "../../support/example-kit.ts";
 
 const expert = await createExampleExpert(
   "conversation",

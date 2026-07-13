@@ -1,5 +1,5 @@
 import { defineExpertTeam, defineFlow } from "@pragma/core";
-import { createExampleApp, createExampleExpert } from "./example-kit.ts";
+import { createExampleApp, createExampleExpert } from "../support/example-kit.ts";
 
 const expert = await createExampleExpert("flow-expert", "Answer the Flow prompt.");
 const coordinator = await createExampleExpert("flow-lead", "Coordinate the answer.");

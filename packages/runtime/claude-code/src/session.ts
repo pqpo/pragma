@@ -525,10 +525,7 @@ export function normalizeClaudeToolRuntimeEvents(
     }
 
     const knownToolName = state.toolNames.get(toolCallId);
-    if (
-      knownToolName === undefined ||
-      (toolName !== undefined && toolName !== "claude_tool")
-    ) {
+    if (knownToolName === undefined || (toolName !== undefined && toolName !== "claude_tool")) {
       return [event];
     }
 
@@ -673,7 +670,7 @@ async function createClaudeCodeArgs({
   readonly state: ClaudeCodeRuntimeSessionState;
   readonly systemPrompt: string;
 }): Promise<readonly string[]> {
-  const mcpConfigPath = await writeMcpConfig(sessionDir, mcpServerUrl);
+  const mcpConfigPath = await writeClaudeCodeMcpConfig(sessionDir, mcpServerUrl);
   const selectedModel = modelName ?? defaultModelName;
   const selectedThinkingLevel = thinkingLevel ?? defaultThinkingLevel;
   const settingsArgs =
@@ -710,7 +707,10 @@ async function createClaudeCodeArgs({
   return args;
 }
 
-async function writeMcpConfig(sessionDir: string, mcpServerUrl: string): Promise<string> {
+export async function writeClaudeCodeMcpConfig(
+  sessionDir: string,
+  mcpServerUrl: string,
+): Promise<string> {
   const path = join(sessionDir, "mcp-config.json");
   await writeFile(
     path,

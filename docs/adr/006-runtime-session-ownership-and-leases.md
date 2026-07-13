@@ -31,7 +31,7 @@ active, released on close, and may be reclaimed after expiration when a process 
 
 ## Consequences
 
-- Multiple prompts in one ExpertSession reuse the same native Runtime process and MCP server.
+- Multiple prompts in one ExpertSession reuse the same native Runtime process and isolated MCP Gateway registration.
 - A second Worker cannot concurrently resume and execute the same ExpertSession.
 - Fresh delegation cannot accumulate Runtime processes for the entire conversation.
 - Runtime cleanup failures are reported, and a Session is marked closed only after cleanup succeeds.

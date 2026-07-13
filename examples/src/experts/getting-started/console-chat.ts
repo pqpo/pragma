@@ -5,7 +5,7 @@ import type { ExpertAgentManagedTool, ExpertAgentToolCallResult } from "@pragma/
 
 import { renderExpertTurn } from "../../console/console-turn-renderer.ts";
 import { formatConsoleUsage } from "../../console/console-usage.ts";
-import { createExampleApp, createExampleExpert } from "../../example-kit.ts";
+import { createExampleApp, createExampleExpert } from "../../support/example-kit.ts";
 
 const currentTimeTool: ExpertAgentManagedTool<"get_current_time", ExpertAgentToolCallResult> = {
   name: "get_current_time",

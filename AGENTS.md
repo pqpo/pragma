@@ -463,7 +463,11 @@ RuntimeAdapter
 Expert API 设计要求：
 
 - `defineExpert()` 是单专家唯一创建入口，负责异步插件加载、inline plugin entry 合并、日志初始化和实例归一化。
+- `createAgentLauncher()` 为普通 Expert 创建可显式注入的 `delegate_expert` 工具；其子 Invocation
+  执行、Context、并发、深度、事件和 Usage 机制必须与 ExpertTeam 共用，不另建隐藏 Session 路径。
 - `defineExpertTeam()` 声明由 coordinator 统一接收外部 prompt 的特殊 Expert。
+- ExpertTeam 运行时按 allowlist 生成 delegation tool，并覆盖参与者自己的 standalone launcher，
+  防止成员绕过团队治理边界。
 - `defineFlow()` 声明 Flow；Task 和 HumanTask 只能通过 FlowSpec 内联创建。
 - PragmaApp 只公开 `experts` 与 `flows` 两个执行 namespace。
 

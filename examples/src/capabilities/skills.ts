@@ -1,7 +1,7 @@
 import { dirname, resolve } from "node:path";
 
 import { renderExpertTurn } from "../console/console-turn-renderer.ts";
-import { createExampleApp, createExampleExpert } from "../example-kit.ts";
+import { createExampleApp, createExampleExpert } from "../support/example-kit.ts";
 
 const skillPath = resolve(import.meta.dirname, "../../skills/code-review/SKILL.md");
 const expert = await createExampleExpert(

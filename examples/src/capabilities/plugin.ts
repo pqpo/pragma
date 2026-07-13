@@ -1,6 +1,6 @@
 import learningPlugin from "../../plugins/learning-plugin/src/plugin.ts";
 import { renderExpertTurn } from "../console/console-turn-renderer.ts";
-import { createExampleApp, createExampleExpert } from "../example-kit.ts";
+import { createExampleApp, createExampleExpert } from "../support/example-kit.ts";
 
 const expert = await createExampleExpert(
   "plugin-example",

@@ -5,12 +5,12 @@ import type {
   McpToolRegistry,
   RuntimeAdapter,
   RuntimeCanUseResult,
-  ExpertToolsMcpServer,
+  ExpertToolsMcpSessionRegistration,
 } from "@pragma/core";
 import {
   createMcpToolRegistry,
-  createExpertToolsMcpServer,
   defineRuntimeDriver,
+  registerExpertToolsMcpSession,
   type ExpertAgentLogger,
   type RuntimeSessionPersistenceSpec,
   type ExpertToolRuntimeState,
@@ -54,7 +54,7 @@ const DEFAULT_CLAUDE_CODE_PERMISSION_MODE = "bypassPermissions" as const;
 
 interface ClaudeCodeDriverSession extends ClaudeCodeNativeSession {
   readonly mcpToolRegistry: McpToolRegistry;
-  readonly expertToolsMcpServer: ExpertToolsMcpServer;
+  readonly expertToolsMcpRegistration: ExpertToolsMcpSessionRegistration;
 }
 
 export function createClaudeCodeRuntime(
@@ -122,55 +122,78 @@ export function createClaudeCodeRuntime(
           agent: ctx.agent,
           sessionDir,
         });
-        const mcpToolRegistry = await createMcpToolRegistry(ctx.agent.mcp);
-        const expertToolsMcpServer = await createExpertToolsMcpServer({
-          agent: ctx.agent,
-          getContext: () => ctx.lifecycle.currentContext,
-          humanInteractionHandler: ctx.request.humanInteractionHandler,
-          logger: ctx.logger,
-          mcpTools: mcpToolRegistry.tools,
-          state: toolRuntimeState,
-          executionContext: ctx.request.executionContext,
-        });
-        const managedConfig = await prepareManagedClaudeCodeConfig({
-          sessionDir,
-          env: options.env,
-          logger: ctx.logger,
-        });
-        if (state.sessionId !== "") {
-          const exists = await nativeSessionFileExists(
-            join(managedConfig.configDir, "projects"),
-            state.sessionId,
-          );
-          if (!exists) {
-            throw new Error(`Claude Code runtime session file was not found: ${state.sessionId}.`);
-          }
-        }
+        let mcpToolRegistry: McpToolRegistry | undefined;
+        let expertToolsMcpRegistration: ExpertToolsMcpSessionRegistration | undefined;
 
-        return {
-          ...createClaudeCodeNativeSession({
+        try {
+          mcpToolRegistry = await createMcpToolRegistry(ctx.agent.mcp);
+          expertToolsMcpRegistration = await registerExpertToolsMcpSession({
             agent: ctx.agent,
-            executablePath: command.executablePath,
-            launcherArgs: command.launcherArgs,
-            additionalArgs: options.additionalArgs ?? [],
-            defaultModelName,
-            defaultThinkingLevel: options.defaultThinkingLevel,
-            env: options.env,
+            instanceId: ctx.systemSessionId,
+            getContext: () => ctx.lifecycle.currentContext,
             humanInteractionHandler: ctx.request.humanInteractionHandler,
             logger: ctx.logger,
-            managedConfig,
-            mcpServerUrl: expertToolsMcpServer.url,
-            permissionMode: options.permissionMode ?? DEFAULT_CLAUDE_CODE_PERMISSION_MODE,
-            pluginDir,
+            mcpTools: mcpToolRegistry.tools,
+            state: toolRuntimeState,
+            executionContext: ctx.request.executionContext,
+          });
+          const managedConfig = await prepareManagedClaudeCodeConfig({
             sessionDir,
-            spawn: options.spawn,
-            startupMessages: state.sessionId === "" ? ctx.agentContext.startupMessages : [],
-            state,
-            systemPrompt: ctx.agentContext.systemPrompt,
-          }),
-          mcpToolRegistry,
-          expertToolsMcpServer,
-        };
+            env: options.env,
+            logger: ctx.logger,
+          });
+          if (state.sessionId !== "") {
+            const exists = await nativeSessionFileExists(
+              join(managedConfig.configDir, "projects"),
+              state.sessionId,
+            );
+            if (!exists) {
+              throw new Error(
+                `Claude Code runtime session file was not found: ${state.sessionId}.`,
+              );
+            }
+          }
+
+          return {
+            ...createClaudeCodeNativeSession({
+              agent: ctx.agent,
+              executablePath: command.executablePath,
+              launcherArgs: command.launcherArgs,
+              additionalArgs: options.additionalArgs ?? [],
+              defaultModelName,
+              defaultThinkingLevel: options.defaultThinkingLevel,
+              env: options.env,
+              humanInteractionHandler: ctx.request.humanInteractionHandler,
+              logger: ctx.logger,
+              managedConfig,
+              mcpServerUrl: expertToolsMcpRegistration.url,
+              permissionMode: options.permissionMode ?? DEFAULT_CLAUDE_CODE_PERMISSION_MODE,
+              pluginDir,
+              sessionDir,
+              spawn: options.spawn,
+              startupMessages: state.sessionId === "" ? ctx.agentContext.startupMessages : [],
+              state,
+              systemPrompt: ctx.agentContext.systemPrompt,
+            }),
+            mcpToolRegistry,
+            expertToolsMcpRegistration,
+          };
+        } catch (error) {
+          try {
+            await disposeClaudeRuntimeResources(
+              expertToolsMcpRegistration,
+              mcpToolRegistry,
+              ctx.logger,
+            );
+          } catch (cleanupError) {
+            throw new AggregateError(
+              [error, cleanupError],
+              "Claude Code runtime initialization and cleanup failed.",
+              { cause: cleanupError },
+            );
+          }
+          throw error;
+        }
       },
       readSession(session) {
         return {
@@ -197,7 +220,7 @@ export function createClaudeCodeRuntime(
       async closeSession(session, ctx) {
         cancelClaudeCodeTurn(session);
         await disposeClaudeRuntimeResources(
-          session.expertToolsMcpServer,
+          session.expertToolsMcpRegistration,
           session.mcpToolRegistry,
           ctx.logger,
         );
@@ -250,12 +273,12 @@ function createClaudeCodeRuntimeCanUse(
 }
 
 async function disposeClaudeRuntimeResources(
-  expertToolsMcpServer: ExpertToolsMcpServer | undefined,
+  expertToolsMcpRegistration: ExpertToolsMcpSessionRegistration | undefined,
   mcpToolRegistry: McpToolRegistry | undefined,
   logger: ExpertAgentLogger,
 ): Promise<void> {
   const results = await Promise.allSettled([
-    expertToolsMcpServer?.dispose() ?? Promise.resolve(),
+    expertToolsMcpRegistration?.dispose() ?? Promise.resolve(),
     mcpToolRegistry?.dispose() ?? Promise.resolve(),
   ]);
   const errors = results.flatMap((result) =>

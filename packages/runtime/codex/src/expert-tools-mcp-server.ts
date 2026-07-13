@@ -1,6 +1,6 @@
 export {
-  createExpertToolsMcpServer as createCodexExpertToolsMcpServer,
-  type CreateExpertToolsMcpServerOptions as CreateCodexExpertToolsMcpServerOptions,
+  registerExpertToolsMcpSession as registerCodexExpertToolsMcpSession,
   type ExpertToolRuntimeState as CodexExpertToolRuntimeState,
-  type ExpertToolsMcpServer as CodexExpertToolsMcpServer,
+  type ExpertToolsMcpSessionRegistration as CodexExpertToolsMcpSessionRegistration,
+  type RegisterExpertToolsMcpSessionOptions as RegisterCodexExpertToolsMcpSessionOptions,
 } from "@pragma/core";

@@ -7,13 +7,14 @@ import type {
 } from "@pragma/shared";
 
 import type { Expert } from "../agent/expert-agent.ts";
-import { createTeamDelegationTool } from "../agent/agent-launcher.ts";
 import {
-  isExpertTeam,
+  createTeamDelegationTool,
+  isAgentDelegationTool,
+  readAgentDelegationDefinition,
+  type AgentDelegationDefinition,
   type DelegationContextPolicy,
-  type ExpertDefinition,
-  type ExpertTeam,
-} from "../agent/expert-team.ts";
+} from "../agent/agent-launcher.ts";
+import { isExpertTeam, type ExpertDefinition, type ExpertTeam } from "../agent/expert-team.ts";
 import type { RuntimeAgentSession } from "../runtime/runtime-adapter.ts";
 import { mergeUsage } from "../runtime/usage.ts";
 import { openRuntimeSession } from "../runtime/session-factory.ts";
@@ -206,7 +207,6 @@ export interface RunExpertInvocationOptions {
   readonly store: ExecutionStore;
   readonly runtimes: RuntimeRegistry;
   readonly team?: ExpertTeam | undefined;
-  readonly sourceExpertId?: string | undefined;
   readonly depth?: number | undefined;
   readonly contextForMember?:
     | ((
@@ -220,17 +220,28 @@ export interface RunExpertInvocationOptions {
   readonly onRuntimeContext?:
     | ((contextId: string, snapshot: RuntimeContextSnapshot) => Promise<void>)
     | undefined;
-  readonly limiter?: DelegationLimiter | undefined;
+  readonly delegationState?: DelegationExecutionState | undefined;
+  readonly delegationPermit?: DelegationPermit | undefined;
 }
 
 export async function runExpertInvocation(options: RunExpertInvocationOptions): Promise<unknown> {
   const team = isExpertTeam(options.expert) ? options.expert : options.team;
   const nativeExpert = isExpertTeam(options.expert) ? options.expert.coordinator : options.expert;
-  const sourceExpertId = options.sourceExpertId ?? nativeExpert.id;
   const depth = options.depth ?? 0;
-  const limiter =
-    options.limiter ??
-    (team === undefined ? undefined : new DelegationLimiter(team.delegation.maxConcurrency));
+  const teamTool = team === undefined ? undefined : createTeamDelegationTool(team, nativeExpert.id);
+  const executableExpert =
+    team === undefined ? nativeExpert : withTeamDelegationTool(nativeExpert, teamTool);
+  const delegation =
+    teamTool === undefined
+      ? team === undefined
+        ? readExpertDelegationDefinition(nativeExpert)
+        : undefined
+      : readAgentDelegationDefinition(teamTool);
+  const delegationState =
+    options.delegationState ??
+    (delegation === undefined
+      ? undefined
+      : new DelegationExecutionState(delegation.maxConcurrency, delegation.maxDepth));
   const invocation = await requireInvocation(
     options.store,
     options.executionId,
@@ -253,10 +264,6 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
     ],
   });
 
-  const executableExpert =
-    team === undefined
-      ? nativeExpert
-      : withAdditionalTool(nativeExpert, createTeamDelegationTool(team));
   const runtimeId = options.runtimeId ?? options.runtimeSnapshot?.runtimeId;
   const runtime = options.runtimes.resolve(runtimeId);
   const runtimeIdentity = {
@@ -293,7 +300,7 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
     executionId: options.executionId,
     invocationId: options.invocationId,
     depth,
-    ...(team === undefined
+    ...(delegation === undefined || delegationState === undefined
       ? {}
       : {
           delegate: async (request: {
@@ -304,9 +311,10 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
           }) =>
             await delegate({
               ...options,
-              limiter,
               team,
-              sourceExpertId,
+              delegation,
+              delegationState,
+              sourceExpertId: nativeExpert.id,
               depth,
               request,
             }),
@@ -431,7 +439,9 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
 
 async function delegate(
   options: RunExpertInvocationOptions & {
-    readonly team: ExpertTeam;
+    readonly team?: ExpertTeam | undefined;
+    readonly delegation: AgentDelegationDefinition;
+    readonly delegationState: DelegationExecutionState;
     readonly sourceExpertId: string;
     readonly depth: number;
     readonly request: {
@@ -442,19 +452,18 @@ async function delegate(
     };
   },
 ): Promise<{ readonly invocationId: string; readonly output: unknown }> {
-  if (options.depth >= options.team.delegation.maxDepth) {
-    throw new Error(`ExpertTeam delegation depth exceeded: ${options.team.delegation.maxDepth}`);
+  if (options.depth >= options.delegationState.maxDepth) {
+    throw new Error(`Expert delegation depth exceeded: ${options.delegationState.maxDepth}`);
   }
-  if (!options.team.delegation.allow.get(options.sourceExpertId)?.has(options.request.expertId)) {
+  const expert = options.delegation.experts.find(
+    (candidate) => candidate.id === options.request.expertId,
+  );
+  if (expert === undefined) {
     throw new Error(
       `Expert ${options.sourceExpertId} may not delegate to ${options.request.expertId}.`,
     );
   }
-  const expert = options.team.members.find(
-    (candidate) => candidate.id === options.request.expertId,
-  );
-  if (expert === undefined) throw new Error(`Unknown team member: ${options.request.expertId}`);
-  const policy = options.request.context ?? options.team.delegation.context;
+  const policy = options.request.context ?? options.delegation.context;
   const context = options.contextForMember?.(expert.id, policy) ?? {
     contextId: policy === "reuse" ? expert.id : randomUUID(),
   };
@@ -483,8 +492,10 @@ async function delegate(
       },
     ],
   });
-  const release = await options.limiter?.acquire();
+  const resumeParentPermit = options.delegationPermit?.suspend();
+  let permit: DelegationPermit | undefined;
   try {
+    permit = await options.delegationState.acquire();
     const output = await runExpertInvocation({
       ...options,
       invocationId,
@@ -500,7 +511,8 @@ async function delegate(
           : policy === "fresh"
             ? "invocation"
             : "session",
-      sourceExpertId: expert.id,
+      delegationState: options.delegationState,
+      delegationPermit: permit,
       depth: options.depth + 1,
     });
     return { invocationId, output };
@@ -517,19 +529,41 @@ async function delegate(
         });
       }
     } finally {
-      release?.();
+      permit?.release();
+      await resumeParentPermit?.();
     }
   }
 }
 
-function withAdditionalTool(expert: Expert, tool: NonNullable<Expert["tools"]>[number]): Expert {
+function withTeamDelegationTool(
+  expert: Expert,
+  tool: NonNullable<Expert["tools"]>[number] | undefined,
+): Expert {
   const clone = Object.create(Object.getPrototypeOf(expert)) as Expert;
   Object.defineProperties(clone, Object.getOwnPropertyDescriptors(expert));
   Object.defineProperty(clone, "tools", {
-    value: [...(expert.tools ?? []), tool],
+    value: [
+      ...(expert.tools ?? []).filter((candidate) => !isAgentDelegationTool(candidate)),
+      ...(tool === undefined ? [] : [tool]),
+    ],
     enumerable: true,
   });
   return clone;
+}
+
+function readExpertDelegationDefinition(expert: Expert): AgentDelegationDefinition | undefined {
+  const definitions = (expert.tools ?? []).flatMap((tool) => {
+    const definition = readAgentDelegationDefinition(tool);
+    return definition === undefined ? [] : [definition];
+  });
+  if (definitions.length > 1) {
+    throw new Error(`Expert ${expert.id} has multiple delegation launchers.`);
+  }
+  const definition = definitions[0];
+  if (definition?.experts.some((candidate) => candidate.id === expert.id) === true) {
+    throw new Error(`Expert ${expert.id} may not delegate to itself.`);
+  }
+  return definition;
 }
 
 async function requireInvocation(
@@ -552,20 +586,101 @@ function serializeError(error: unknown): unknown {
     : error;
 }
 
-class DelegationLimiter {
+class DelegationExecutionState {
   private active = 0;
   private readonly waiting: Array<() => void> = [];
 
-  constructor(private readonly limit: number) {}
+  constructor(
+    private readonly limit: number,
+    readonly maxDepth: number,
+  ) {}
 
-  async acquire(): Promise<() => void> {
+  async acquire(): Promise<DelegationPermit> {
+    await this.acquireSlot();
+    return new DelegationPermit(this);
+  }
+
+  async acquireSlot(): Promise<void> {
     if (this.active >= this.limit) {
       await new Promise<void>((resolve) => this.waiting.push(resolve));
+      return;
     }
     this.active += 1;
-    return () => {
-      this.active -= 1;
-      this.waiting.shift()?.();
+  }
+
+  releaseSlot(): void {
+    if (this.active < 1) {
+      throw new Error("Delegation concurrency slot underflow.");
+    }
+    const next = this.waiting.shift();
+    if (next !== undefined) {
+      next();
+      return;
+    }
+    this.active -= 1;
+  }
+}
+
+class DelegationPermit {
+  private active = true;
+  private released = false;
+  private suspensionCount = 0;
+  private resumeCycle:
+    | { readonly promise: Promise<void>; readonly resolve: () => void }
+    | undefined;
+
+  constructor(private readonly state: DelegationExecutionState) {}
+
+  suspend(): () => Promise<void> {
+    if (this.released) {
+      throw new Error("Cannot suspend a released delegation permit.");
+    }
+    if (!this.active && this.suspensionCount === 0) {
+      throw new Error("Cannot suspend a delegation permit while it is resuming.");
+    }
+
+    this.suspensionCount += 1;
+    if (this.suspensionCount === 1) {
+      let resolve!: () => void;
+      const promise = new Promise<void>((complete) => {
+        resolve = complete;
+      });
+      this.resumeCycle = { promise, resolve };
+      this.active = false;
+      this.state.releaseSlot();
+    }
+
+    const cycle = this.resumeCycle;
+    if (cycle === undefined) {
+      throw new Error("Delegation permit resume cycle is missing.");
+    }
+    let resumed = false;
+
+    return async () => {
+      if (!resumed) {
+        resumed = true;
+        this.suspensionCount -= 1;
+        if (this.suspensionCount === 0) {
+          await this.state.acquireSlot();
+          if (this.released) {
+            this.state.releaseSlot();
+          } else {
+            this.active = true;
+          }
+          cycle.resolve();
+          if (this.resumeCycle === cycle) this.resumeCycle = undefined;
+        }
+      }
+      await cycle.promise;
     };
+  }
+
+  release(): void {
+    if (this.released) return;
+    this.released = true;
+    if (this.active) {
+      this.active = false;
+      this.state.releaseSlot();
+    }
   }
 }

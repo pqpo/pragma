@@ -27,5 +27,5 @@ HTTP v1 intentionally supports only GET/POST JSON APIs with scalar path/query pa
 - Updating a capability does not silently change existing Experts; they must explicitly upgrade revisions.
 - MCP tools are discovered and schema-hashed. Runtime startup fails closed when a pinned tool is missing or its input schema drifted.
 - Failed MCP verification may be saved as `needs_attention`, but unavailable capabilities cannot be newly selected.
-- HTTP services do not open a port per service. PI consumes managed tools directly; Codex and Claude Code receive them through the existing loopback execution MCP server.
+- HTTP services do not open a port per service. PI consumes managed tools directly; Codex and Claude Code receive them through the process-shared loopback Execution MCP Gateway defined by ADR 008.
 - `pragma.expert/v1` Desktop definitions are not read through a compatibility adapter.

@@ -11,7 +11,12 @@ export {
   type ExpertSessionAssistantMessage,
 } from "@pragma/shared";
 export * from "./agent/context-manager.ts";
-export * from "./agent/agent-launcher.ts";
+export {
+  createAgentLauncher,
+  type AgentLauncher,
+  type CreateAgentLauncherOptions,
+  type DelegationContextPolicy,
+} from "./agent/agent-launcher.ts";
 export * from "./agent/expert-agent.ts";
 export * from "./agent/expert-team.ts";
 export * from "./context-system/context-system.ts";

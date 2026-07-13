@@ -5,6 +5,12 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
+  createTeamDelegationTool,
+  readAgentDelegationDefinition,
+} from "../src/agent/agent-launcher.ts";
+
+import {
+  createAgentLauncher,
   createPragma,
   createFileExecutionStore,
   createFileExpertSessionStore,
@@ -46,6 +52,7 @@ interface FakeRuntimeOptions {
   readonly delayMs?: number;
   readonly delegateContext?: "fresh" | "reuse";
   readonly delegateRuntime?: (query: string) => string | undefined;
+  readonly delegationTargets?: Readonly<Record<string, string>>;
   readonly failQuery?: string;
   readonly onSteer?: () => void;
   readonly runtimeId?: string;
@@ -78,11 +85,14 @@ function createFakeRuntime(options: FakeRuntimeOptions = {}) {
       }
       if (turn.rawQuery === options.failQuery) throw new Error("fake turn failed");
       const delegate = session.context.agent.tools?.find((tool) => tool.name === "delegate_expert");
+      const delegationTarget =
+        options.delegationTargets?.[session.context.agent.id] ??
+        (session.context.agent.id === "lead" ? "member" : undefined);
       let output = `${session.context.agent.id}:${turn.rawQuery}`;
-      if (delegate !== undefined && session.context.agent.id === "lead") {
+      if (delegate !== undefined && delegationTarget !== undefined) {
         const delegated = await delegate.call(
           {
-            expertId: "member",
+            expertId: delegationTarget,
             prompt: "subtask",
             context: options.delegateContext ?? "reuse",
             runtime: options.delegateRuntime?.(turn.rawQuery),
@@ -90,7 +100,7 @@ function createFakeRuntime(options: FakeRuntimeOptions = {}) {
           turn.signal,
           { execution: session.context.request.executionContext },
         );
-        output = `lead:${delegated.text}`;
+        output = `${session.context.agent.id}:${delegated.text}`;
       }
       turn.stream.write({
         runId: turn.runId,
@@ -363,6 +373,101 @@ describe("ExpertSession", () => {
       "idempotency conflict",
     );
     await expect(first.result).resolves.toBe("solo:hello");
+    await session.close();
+  });
+
+  it("lets a standalone Expert delegate through an explicitly injected launcher", async () => {
+    const { home, app } = await fixture();
+    const member = await defineExpert({
+      id: "member",
+      name: "Member",
+      description: "Member",
+      tags: [],
+      version: "1.0.0",
+      scope: "test",
+      workspace: home,
+    });
+    const launcher = createAgentLauncher({
+      experts: [member],
+      context: "reuse",
+      maxConcurrency: 2,
+      maxDepth: 1,
+    });
+    const lead = await defineExpert({
+      id: "lead",
+      name: "Lead",
+      description: "Lead",
+      tags: [],
+      version: "1.0.0",
+      scope: "test",
+      workspace: home,
+      tools: [launcher.tool],
+    });
+
+    const session = await app.experts.createSession(lead);
+    const turn = await session.prompt("coordinate", { requestId: "standalone-delegation" });
+
+    await expect(turn.result).resolves.toBe("lead:member:subtask");
+    const tree = await turn.getTree();
+    expect(tree.invocation.definition.kind).toBe("expert");
+    expect(tree.children).toHaveLength(1);
+    expect(tree.children[0]?.invocation.executorId).toBe("member");
+    await session.close();
+  });
+
+  it("hands a concurrency permit to nested delegation when the tree limit is one", async () => {
+    const home = await mkdtemp(join(tmpdir(), "pragma-nested-delegation-"));
+    const runtime = createFakeRuntime({
+      delegationTargets: { lead: "member", member: "leaf" },
+    });
+    const app = createPragma({
+      pragmaHome: home,
+      runtimes: createRuntimeRegistry({ runtimes: [runtime], defaultRuntime: "fake" }),
+    });
+    const leaf = await defineExpert({
+      id: "leaf",
+      name: "Leaf",
+      description: "Leaf",
+      tags: [],
+      version: "1.0.0",
+      scope: "test",
+      workspace: home,
+      pragmaHome: home,
+    });
+    const memberLauncher = createAgentLauncher({ experts: [leaf] });
+    const member = await defineExpert({
+      id: "member",
+      name: "Member",
+      description: "Member",
+      tags: [],
+      version: "1.0.0",
+      scope: "test",
+      workspace: home,
+      pragmaHome: home,
+      tools: [memberLauncher.tool],
+    });
+    const leadLauncher = createAgentLauncher({
+      experts: [member],
+      maxConcurrency: 1,
+      maxDepth: 2,
+    });
+    const lead = await defineExpert({
+      id: "lead",
+      name: "Lead",
+      description: "Lead",
+      tags: [],
+      version: "1.0.0",
+      scope: "test",
+      workspace: home,
+      pragmaHome: home,
+      tools: [leadLauncher.tool],
+    });
+
+    const session = await app.experts.createSession(lead);
+    const turn = await session.prompt("coordinate", { requestId: "nested-delegation" });
+
+    await expect(turn.result).resolves.toBe("lead:member:leaf:subtask");
+    expect((await turn.getTree()).children[0]?.children[0]?.invocation.executorId).toBe("leaf");
     await session.close();
   });
 
@@ -795,7 +900,45 @@ describe("Execution observation", () => {
   });
 });
 
-describe("ExpertTeam declaration", () => {
+describe("Expert delegation declarations", () => {
+  it("validates standalone launcher targets and limits", async () => {
+    const { expert } = await fixture();
+
+    expect(() => createAgentLauncher({ experts: [] })).toThrow("at least one Expert");
+    expect(() => createAgentLauncher({ experts: [expert, expert] })).toThrow("duplicate Expert");
+    expect(() => createAgentLauncher({ experts: [expert], maxConcurrency: 0 })).toThrow(
+      "maxConcurrency",
+    );
+    expect(() => createAgentLauncher({ experts: [expert], maxDepth: 0 })).toThrow("maxDepth");
+    const launcher = createAgentLauncher({ experts: [expert] });
+    expect(readAgentDelegationDefinition({ ...launcher.tool })?.experts).toEqual([expert]);
+  });
+
+  it("resolves ExpertTeam allowlists through the shared launcher definition", async () => {
+    const { home, expert: lead } = await fixture();
+    const member = await defineExpert({
+      id: "member",
+      name: "Member",
+      description: "Member",
+      tags: [],
+      version: "1.0.0",
+      scope: "test",
+      workspace: home,
+    });
+    const team = defineExpertTeam({
+      id: "bidirectional-team",
+      version: "1.0.0",
+      coordinator: lead,
+      members: [member],
+      delegation: { allow: { solo: ["member"], member: ["solo"] } },
+    });
+    const leadTool = createTeamDelegationTool(team, "solo");
+    const memberTool = createTeamDelegationTool(team, "member");
+
+    expect(readAgentDelegationDefinition(leadTool!)?.experts).toEqual([member]);
+    expect(readAgentDelegationDefinition(memberTool!)?.experts).toEqual([lead]);
+  });
+
   it("validates allowlists and limits", async () => {
     const { expert } = await fixture();
     expect(() =>

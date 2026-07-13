@@ -10,7 +10,7 @@ import {
   type IExpertAgentModelsConfig,
 } from "@pragma/core";
 import { createPiRuntime } from "@pragma/runtime-pi";
-import { createRuntimeTestContextSystem } from "./runtimes/shared/console-runtime-chat.ts";
+import { createRuntimeTestContextSystem } from "../runtimes/shared/console-runtime-chat.ts";
 
 export async function createExampleExpert(
   id: string,

@@ -3,14 +3,15 @@
 示例按能力边界组织。每个入口直接展示关键装配步骤，不通过辅助层隐藏 Expert、Session 或
 Flow 的公共 API。
 
-## Expert 与团队
+## Expert、Subagent 与团队
 
 - `experts/getting-started/console-chat.ts`：最小控制台聊天、多轮消息与 Usage。
-- `expert-single-multi.ts`：单 Expert 的单轮和多轮执行。
-- `expert-resume.ts`：恢复 `ExpertSession` 后继续提交 prompt。
-- `expert-queue-steer.ts`：持久化 prompt queue 与 steer。
-- `expert-team-delegation.ts`：协调 Expert 按 allowlist 委派成员。
-- `expert-team-tree.ts`：读取团队 InvocationTree。
+- `experts/conversations/single-multi.ts`：单 Expert 的单轮和多轮执行。
+- `experts/conversations/resume.ts`：恢复 `ExpertSession` 后继续提交 prompt。
+- `experts/conversations/queue-steer.ts`：持久化 prompt queue 与 steer。
+- `experts/subagents/delegation.ts`：普通 Expert 注入 `createAgentLauncher().tool` 后按需委派子专家。
+- `experts/teams/delegation.ts`：用 `defineExpertTeam()` 声明团队，由协调 Expert 按 allowlist 委派成员。
+- `experts/teams/invocation-tree.ts`：读取团队 InvocationTree。
 
 ## Capabilities
 
@@ -34,8 +35,12 @@ Flow 的公共 API。
 
 ## Flow
 
-- `flow-basic.ts`：内联 Task 与 `compose()`。
-- `flow-experts.ts`：Flow 调用 Expert 和 ExpertTeam。
-- `flow-human.ts`：HumanTask 响应。
-- `flow-recovery.ts`：打开并观察既有 Flow Execution。
-- `flow-tree.ts`：Flow InvocationTree 与输出流。
+- `flows/basic.ts`：内联 Task 与 `compose()`。
+- `flows/experts.ts`：Flow 调用 Expert 和 ExpertTeam。
+- `flows/human.ts`：HumanTask 响应。
+- `flows/recovery.ts`：打开并观察既有 Flow Execution。
+- `flows/invocation-tree.ts`：Flow InvocationTree 与输出流。
+
+## 示例支撑
+
+- `support/example-kit.ts`：示例共用的 Expert、Runtime Registry 和 Pragma App 装配。
