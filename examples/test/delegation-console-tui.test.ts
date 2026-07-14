@@ -1,7 +1,10 @@
 import type { ExecutionOutputItem } from "@pragma/core";
 import { describe, expect, it } from "vitest";
 
-import { DelegationConsoleModel } from "../src/console/delegation-console-tui.ts";
+import {
+  DelegationConsoleModel,
+  parseDelegationQuestionAnswer,
+} from "../src/console/delegation-console-tui.ts";
 
 const agents = [
   { id: "lead", name: "Lead", shortName: "Lead", primary: true },
@@ -43,6 +46,14 @@ describe("DelegationConsoleModel", () => {
 
     expect(model.panes.map((pane) => pane.status)).toEqual(["working", "done", "working"]);
     expect(model.selected.definition.id).toBe("lead");
+
+    model.setAwaitingInput("research", true);
+    expect(model.panes[1]?.status).toBe("input");
+    model.syncTree(
+      tree("lead", "running", [tree("research", "waiting"), tree("tests", "running")]),
+    );
+    expect(model.panes[1]?.status).toBe("input");
+    model.setAwaitingInput("research", false);
 
     model.cycleSelection(1);
     expect(model.selected.definition.id).toBe("research");
@@ -110,6 +121,50 @@ describe("DelegationConsoleModel", () => {
     expect(model.panes[1]?.sections.find((section) => section.kind === "tool-output")?.text).toBe(
       "createAgentLauncher\npackages/core/src/agent-launcher.ts\n",
     );
+  });
+});
+
+describe("parseDelegationQuestionAnswer", () => {
+  const options = [
+    { label: "Fast", description: "Prefer speed" },
+    { label: "Safe", description: "Prefer safety" },
+    { label: "Balanced", description: "Balance both" },
+  ] as const;
+
+  it("accepts numbered and named single-choice answers", () => {
+    const question = {
+      question: "Which mode?",
+      header: "Mode",
+      kind: "single_choice" as const,
+      options,
+    };
+
+    expect(parseDelegationQuestionAnswer(question, "2")).toEqual({ ok: true, answer: "Safe" });
+    expect(parseDelegationQuestionAnswer(question, "balanced")).toEqual({
+      ok: true,
+      answer: "Balanced",
+    });
+    expect(parseDelegationQuestionAnswer(question, "unknown")).toMatchObject({ ok: false });
+  });
+
+  it("accepts comma-separated multiple choices and direct text", () => {
+    expect(
+      parseDelegationQuestionAnswer(
+        {
+          question: "Which modes?",
+          header: "Modes",
+          kind: "multiple_choice",
+          options,
+        },
+        "1，Safe",
+      ),
+    ).toEqual({ ok: true, answer: "Fast, Safe" });
+    expect(
+      parseDelegationQuestionAnswer(
+        { question: "Why?", header: "Reason", kind: "text", options: [] },
+        "  Need evidence.  ",
+      ),
+    ).toEqual({ ok: true, answer: "Need evidence." });
   });
 });
 

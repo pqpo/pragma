@@ -225,4 +225,9 @@ Lead 会根据成员 description 选择一个或多个专家；面对跨实现�
 - `PgUp` / `PgDn`：滚动当前面板。
 - `Ctrl+C` 或输入 `/exit`：取消当前 Turn 并退出。
 
+当 Main、Lead 或任一 Subagent 调用 `askUserQuestion` 时，TUI 会订阅对应的
+`human.requested` 事件，把成员状态标记为 `input`，并在底部切换到答题模式。单选题可输入编号或
+选项名称，多选题使用逗号分隔，文本题直接输入内容；包含多道题时会依次收集答案并通过
+`respondToHumanInteraction()` 回传。需要审批的工具也可以在同一位置输入 `y` / `n` 响应。
+
 所有外部 prompt 必须提交给 `ExpertSession`；Flow 只能通过 `app.flows` 启动、打开或恢复。

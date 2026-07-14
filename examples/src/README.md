@@ -19,7 +19,8 @@ Flow 的公共 API。
 
 两个 delegation 入口共用多 Agent TUI：顶部成员栏展示各 Agent 状态，`Tab` / `Shift+Tab` 或
 `F1` - `F4` 切换成员，`Esc` 返回 Main Agent / Lead，`PgUp` / `PgDn` 滚动当前日志。两个控制台
-都会按 Agent 隔离并解析思考、工具调用、工具输出、进度和回答。
+都会按 Agent 隔离并解析思考、工具调用、工具输出、进度和回答；`askUserQuestion` 触发的
+`human.requested` 会进入 TUI 答题模式，并通过 `respondToHumanInteraction()` 将答案交还当前 Turn。
 
 ## Capabilities
 

@@ -1,4 +1,13 @@
-import type { AgentMessageUsage, ExecutionOutputItem, ExpertTurn } from "@pragma/core";
+import {
+  ExpertAgentHumanRequestSchema,
+  type AgentMessageUsage,
+  type ExecutionEvent,
+  type ExecutionEventSubscription,
+  type ExecutionOutputItem,
+  type ExpertAgentHumanRequest,
+  type ExpertAgentUserQuestion,
+  type ExpertTurn,
+} from "@pragma/core";
 import {
   Input,
   Key,
@@ -13,7 +22,14 @@ import {
   visibleWidth,
 } from "@earendil-works/pi-tui";
 
-export type DelegationAgentStatus = "idle" | "queued" | "working" | "done" | "failed" | "cancelled";
+export type DelegationAgentStatus =
+  | "idle"
+  | "queued"
+  | "working"
+  | "input"
+  | "done"
+  | "failed"
+  | "cancelled";
 
 export interface DelegationConsoleAgent {
   readonly id: string;
@@ -33,6 +49,26 @@ interface AgentPane {
   status: DelegationAgentStatus;
 }
 
+interface ConsoleInteractionPresentation {
+  readonly agentName: string;
+  readonly current: number;
+  readonly total: number;
+  readonly header: string;
+  readonly question: string;
+  readonly options: ExpertAgentUserQuestion["options"];
+  readonly instruction: string;
+}
+
+interface PendingConsoleInput {
+  readonly presentation: ConsoleInteractionPresentation;
+  readonly submit: (input: string) => string | undefined;
+  readonly reject: (error: unknown) => void;
+}
+
+export type DelegationQuestionAnswerResult =
+  | { readonly ok: true; readonly answer: string }
+  | { readonly ok: false; readonly message: string };
+
 type InvocationTree = Awaited<ReturnType<ExpertTurn["getTree"]>>;
 
 const ANSI = {
@@ -51,6 +87,7 @@ const MAX_LOG_CHARACTERS = 200_000;
 
 export class DelegationConsoleModel {
   readonly panes: readonly AgentPane[];
+  private readonly awaitingInput = new Set<string>();
   private readonly invocationsWithAnswerDeltas = new Set<string>();
   private readonly toolOutputSnapshots = new Map<string, string>();
   private selectedIndex = 0;
@@ -91,6 +128,7 @@ export class DelegationConsoleModel {
   }
 
   beginTurn(prompt: string): void {
+    this.awaitingInput.clear();
     this.invocationsWithAnswerDeltas.clear();
     this.toolOutputSnapshots.clear();
     for (const pane of this.panes) pane.status = "idle";
@@ -157,13 +195,25 @@ export class DelegationConsoleModel {
     for (const pane of this.panes) {
       const values = statuses.get(pane.definition.id);
       if (values !== undefined) pane.status = aggregateStatuses(values);
+      if (this.awaitingInput.has(pane.definition.id)) pane.status = "input";
     }
   }
 
+  setAwaitingInput(executorId: string | undefined, awaiting: boolean): void {
+    if (executorId === undefined) return;
+    if (awaiting) this.awaitingInput.add(executorId);
+    else this.awaitingInput.delete(executorId);
+    const pane = this.panes.find((candidate) => candidate.definition.id === executorId);
+    if (pane !== undefined) pane.status = awaiting ? "input" : "working";
+  }
+
   completeTurn(usage: AgentMessageUsage | undefined, error?: unknown): void {
+    this.awaitingInput.clear();
     this.usage = usage;
     for (const pane of this.panes) {
-      if (pane.status === "working" || pane.status === "queued") pane.status = "done";
+      if (pane.status === "working" || pane.status === "queued" || pane.status === "input") {
+        pane.status = "done";
+      }
     }
     if (error !== undefined) {
       const primary = this.panes.find((pane) => pane.definition.primary === true)!;
@@ -209,6 +259,7 @@ export class DelegationConsoleTui {
   private readonly view: DelegationConsoleView;
   private readonly options: DelegationConsoleTuiOptions;
   private promptTask: Promise<void> | undefined;
+  private pendingInput: PendingConsoleInput | undefined;
   private exitPromise: Promise<void>;
   private resolveExit!: () => void;
   private exiting = false;
@@ -247,7 +298,9 @@ export class DelegationConsoleTui {
   }
 
   async followTurn(turn: ExpertTurn): Promise<unknown> {
-    const subscription = await turn.subscribeOutput({ scope: { kind: "all" } });
+    const output = await turn.subscribeOutput({ scope: { kind: "all" } });
+    const events = await turn.subscribeEvents({ scope: { kind: "all" } });
+    const interactionTask = this.followHumanInteractions(turn, events);
     const poll = setInterval(() => {
       void turn
         .getTree()
@@ -260,25 +313,43 @@ export class DelegationConsoleTui {
     poll.unref();
 
     try {
-      for await (const item of subscription) this.consume(item);
-      const result = await turn.result;
+      const outputTask = (async () => {
+        for await (const item of output) this.consume(item);
+      })();
+      const [result] = await Promise.all([turn.result, outputTask, interactionTask]);
       this.model.syncTree(await turn.getTree());
       this.model.completeTurn(await turn.usage);
       this.tui.requestRender();
       return result;
     } catch (error) {
+      this.rejectPendingInput(error);
+      await interactionTask.catch(() => undefined);
+      await turn.cancel("Delegation console interaction failed.").catch(() => undefined);
       this.model.completeTurn(await turn.usage.catch(() => undefined), error);
       this.tui.requestRender();
       throw error;
     } finally {
       clearInterval(poll);
-      await subscription.close();
+      await Promise.all([output.close(), events.close()]);
     }
   }
 
-  private submit(prompt: string): void {
-    if (this.promptTask !== undefined || this.exiting) return;
-    const normalized = prompt.trim();
+  private submit(input: string): void {
+    if (this.exiting) return;
+    if (this.pendingInput !== undefined) {
+      const error = this.pendingInput.submit(input);
+      if (error !== undefined) {
+        this.view.notice = error;
+      } else {
+        this.pendingInput = undefined;
+        this.view.interaction = undefined;
+        this.view.notice = "回答已提交，Agent 继续执行。";
+      }
+      this.tui.requestRender();
+      return;
+    }
+    if (this.promptTask !== undefined) return;
+    const normalized = input.trim();
     if (normalized === "") return;
     if (normalized === "/exit") {
       void this.exit();
@@ -294,6 +365,9 @@ export class DelegationConsoleTui {
       .finally(() => {
         this.promptTask = undefined;
         this.view.busy = false;
+        if (this.view.notice === "回答已提交，Agent 继续执行。") {
+          this.view.notice = undefined;
+        }
         this.tui.requestRender();
       });
   }
@@ -304,10 +378,154 @@ export class DelegationConsoleTui {
     this.view.notice = "正在关闭 Agent Session…";
     this.tui.requestRender();
     await this.options.onExit().catch(() => undefined);
+    this.rejectPendingInput(new Error("Agent console closed."));
     await this.promptTask?.catch(() => undefined);
     this.tui.stop();
     await this.terminal.drainInput(250, 25).catch(() => undefined);
     this.resolveExit();
+  }
+
+  private async followHumanInteractions(
+    turn: ExpertTurn,
+    events: ExecutionEventSubscription,
+  ): Promise<void> {
+    const handled = new Set<string>();
+    const handle = async (event: ExecutionEvent): Promise<void> => {
+      if (event.type !== "human.requested") return;
+      const interaction = readHumanInteraction(event);
+      if (handled.has(interaction.interactionId)) return;
+      handled.add(interaction.interactionId);
+      await this.respondToHumanInteraction(turn, event, interaction);
+    };
+
+    const history = await turn.listEvents({ scope: { kind: "all" }, limit: 1_000 });
+    for (const event of history.items) await handle(event);
+    for await (const event of events) await handle(event);
+  }
+
+  private async respondToHumanInteraction(
+    turn: ExpertTurn,
+    event: ExecutionEvent,
+    interaction: {
+      readonly interactionId: string;
+      readonly request: ExpertAgentHumanRequest;
+    },
+  ): Promise<void> {
+    const invocation = await turn.getInvocation(event.invocationId);
+    const executorId = invocation?.executorId;
+    const agentName =
+      this.options.agents.find((agent) => agent.id === executorId)?.name ?? executorId ?? "Agent";
+    this.model.setAwaitingInput(executorId, true);
+
+    try {
+      const response =
+        interaction.request.kind === "user_question"
+          ? await this.answerUserQuestions(agentName, interaction.request.questions)
+          : await this.answerToolApproval(agentName, interaction.request);
+      await turn.respondToHumanInteraction(interaction.interactionId, response, {
+        requestId: `console-response-${interaction.interactionId}`,
+      });
+    } finally {
+      this.model.setAwaitingInput(executorId, false);
+      this.tui.requestRender();
+    }
+  }
+
+  private async answerUserQuestions(
+    agentName: string,
+    questions: readonly ExpertAgentUserQuestion[],
+  ): Promise<{
+    readonly kind: "user_question";
+    readonly answered: true;
+    readonly answers: unknown;
+  }> {
+    const answers: Record<string, string> = {};
+    for (const [index, question] of questions.entries()) {
+      answers[question.question] = await this.requestInput(
+        {
+          agentName,
+          current: index + 1,
+          total: questions.length,
+          header: question.header,
+          question: question.question,
+          options: question.options,
+          instruction: questionInstruction(question),
+        },
+        (input) => {
+          const result = parseDelegationQuestionAnswer(question, input);
+          return result.ok
+            ? { ok: true, value: result.answer }
+            : { ok: false, message: result.message };
+        },
+      );
+    }
+    return { kind: "user_question", answered: true, answers };
+  }
+
+  private async answerToolApproval(
+    agentName: string,
+    request: Extract<ExpertAgentHumanRequest, { readonly kind: "tool_approval" }>,
+  ): Promise<{
+    readonly kind: "tool_approval";
+    readonly approved: boolean;
+    readonly reason: string;
+  }> {
+    const approved = await this.requestInput(
+      {
+        agentName,
+        current: 1,
+        total: 1,
+        header: "Tool approval",
+        question: `${request.toolName}: ${request.reason ?? "是否允许执行此工具？"}`,
+        options: [
+          { label: "Yes", description: "允许执行" },
+          { label: "No", description: "拒绝执行" },
+        ],
+        instruction: "输入 y/yes 或 n/no 后回车。",
+      },
+      parseApprovalAnswer,
+    );
+    return {
+      kind: "tool_approval",
+      approved,
+      reason: approved ? "用户批准。" : "用户拒绝。",
+    };
+  }
+
+  private requestInput<T>(
+    presentation: ConsoleInteractionPresentation,
+    parse: (
+      input: string,
+    ) =>
+      | { readonly ok: true; readonly value: T }
+      | { readonly ok: false; readonly message: string },
+  ): Promise<T> {
+    if (this.pendingInput !== undefined) {
+      throw new Error("Another human interaction is already awaiting console input.");
+    }
+    return new Promise<T>((resolve, reject) => {
+      this.pendingInput = {
+        presentation,
+        submit: (input) => {
+          const result = parse(input);
+          if (!result.ok) return result.message;
+          resolve(result.value);
+          return undefined;
+        },
+        reject,
+      };
+      this.view.interaction = presentation;
+      this.view.notice = undefined;
+      this.tui.requestRender();
+    });
+  }
+
+  private rejectPendingInput(error: unknown): void {
+    const pending = this.pendingInput;
+    if (pending === undefined) return;
+    this.pendingInput = undefined;
+    this.view.interaction = undefined;
+    pending.reject(error);
   }
 }
 
@@ -323,6 +541,7 @@ class DelegationConsoleView implements Component, Focusable {
   readonly exit: () => void;
   busy = false;
   notice: string | undefined;
+  interaction: ConsoleInteractionPresentation | undefined;
   private _focused = false;
 
   constructor(options: {
@@ -400,7 +619,7 @@ class DelegationConsoleView implements Component, Focusable {
       this.requestRender();
       return;
     }
-    if (this.busy) {
+    if (this.busy && this.interaction === undefined) {
       this.notice = "当前 Turn 尚未结束；可先切换 Agent 查看工作进度。";
       this.requestRender();
       return;
@@ -423,20 +642,25 @@ class DelegationConsoleView implements Component, Focusable {
       `${paint(selected.definition.name, ANSI.bold, color)}  ${statusLabel(selected.status, color)}${selected.definition.primary === true ? paint("  MAIN", ANSI.cyan, color) : ""}`,
       safeWidth,
     );
-    const fixedRows = 8 + tabs.length;
-    const contentHeight = Math.max(5, this.terminal.rows - fixedRows);
+    const interactionLines = renderInteraction(this.interaction, safeWidth, color);
+    const fixedRows = 8 + tabs.length + interactionLines.length;
+    const contentHeight = Math.max(3, this.terminal.rows - fixedRows);
     const logLines = renderLog(selected, safeWidth, color);
     const end = Math.max(0, logLines.length - this.model.selectedScrollOffset);
     const visibleLog = logLines.slice(Math.max(0, end - contentHeight), end);
     while (visibleLog.length < contentHeight) visibleLog.unshift("");
 
-    const inputLine = this.busy
-      ? paint("● Agents 正在工作；Tab 切换 Agent 查看实时过程", ANSI.yellow, color)
-      : `你 > ${this.input.render(Math.max(1, safeWidth - 5))[0] ?? ""}`;
+    const inputLine =
+      this.interaction !== undefined
+        ? `回答 ${this.input.render(Math.max(1, safeWidth - 5))[0] ?? ""}`
+        : this.busy
+          ? paint("● Agents 正在工作；Tab 切换 Agent 查看实时过程", ANSI.yellow, color)
+          : `你 ${this.input.render(Math.max(1, safeWidth - 3))[0] ?? ""}`;
     const usage = formatUsage(this.model.latestUsage);
     const directKeyHint = `F1-F${Math.min(4, this.model.panes.length)} 直达`;
     const hint =
       this.notice ??
+      this.interaction?.instruction ??
       (this.model.selected.sections.length === 0
         ? `示例：${this.examplePrompt}`
         : `Tab/Shift+Tab 切换 · ${directKeyHint} · Esc 回主 Agent · PgUp/PgDn 滚动 · Ctrl+C 退出`);
@@ -449,6 +673,7 @@ class DelegationConsoleView implements Component, Focusable {
       separator(safeWidth),
       ...visibleLog.map((line) => truncateToWidth(line, safeWidth)),
       separator(safeWidth),
+      ...interactionLines,
       truncateToWidth(inputLine, safeWidth),
       truncateToWidth(
         `${paint(hint, ANSI.dim, color)}${usage === "" ? "" : `  ${usage}`}`,
@@ -487,6 +712,28 @@ function renderLog(pane: AgentPane, width: number, color: boolean): string[] {
     const label = sectionLabel(section.kind, pane.definition, color);
     return wrapTextWithAnsi(`${label}\n${styleSection(section.kind, section.text, color)}`, width);
   });
+}
+
+function renderInteraction(
+  interaction: ConsoleInteractionPresentation | undefined,
+  width: number,
+  color: boolean,
+): string[] {
+  if (interaction === undefined) return [];
+  const heading = `${paint("? User input", ANSI.bold, color)} · ${interaction.agentName} · ${interaction.current}/${interaction.total}`;
+  const question = wrapTextWithAnsi(
+    `${paint(interaction.header, ANSI.cyan, color)}: ${interaction.question}`,
+    width,
+  ).slice(0, 3);
+  const options = interaction.options
+    .slice(0, 6)
+    .map((option, index) =>
+      truncateToWidth(
+        `  ${index + 1}. ${option.label}${option.description === "" ? "" : ` — ${option.description}`}`,
+        width,
+      ),
+    );
+  return [truncateToWidth(heading, width), ...question, ...options];
 }
 
 function consumeToolOutput(
@@ -593,6 +840,7 @@ function mapInvocationStatus(
 function aggregateStatuses(statuses: readonly DelegationAgentStatus[]): DelegationAgentStatus {
   const priority: readonly DelegationAgentStatus[] = [
     "failed",
+    "input",
     "working",
     "queued",
     "cancelled",
@@ -610,6 +858,8 @@ function statusIcon(status: DelegationAgentStatus): string {
       return "◷";
     case "working":
       return "●";
+    case "input":
+      return "?";
     case "done":
       return "✓";
     case "failed":
@@ -624,6 +874,7 @@ function statusLabel(status: DelegationAgentStatus, color: boolean): string {
     idle: "idle",
     queued: "queued",
     working: "working",
+    input: "input",
     done: "done",
     failed: "failed",
     cancelled: "cancelled",
@@ -632,6 +883,7 @@ function statusLabel(status: DelegationAgentStatus, color: boolean): string {
 }
 
 function statusColor(text: string, status: DelegationAgentStatus, color: boolean): string {
+  if (status === "input") return paint(text, ANSI.cyan, color);
   if (status === "working" || status === "queued") return paint(text, ANSI.yellow, color);
   if (status === "done") return paint(text, ANSI.green, color);
   if (status === "failed") return paint(text, ANSI.red, color);
@@ -688,6 +940,89 @@ function asRecord(value: unknown): Record<string, unknown> {
 function readString(record: Record<string, unknown>, key: string): string {
   const value = record[key];
   return typeof value === "string" ? value : "";
+}
+
+function readHumanInteraction(event: ExecutionEvent): {
+  readonly interactionId: string;
+  readonly request: ExpertAgentHumanRequest;
+} {
+  const payload = asRecord(event.data);
+  const interactionId = readString(payload, "interactionId");
+  if (interactionId === "") throw new Error("human.requested event is missing interactionId.");
+  return {
+    interactionId,
+    request: ExpertAgentHumanRequestSchema.parse(payload["request"]),
+  };
+}
+
+export function parseDelegationQuestionAnswer(
+  question: ExpertAgentUserQuestion,
+  input: string,
+): DelegationQuestionAnswerResult {
+  const normalized = input.trim();
+  if (normalized === "") return { ok: false, message: "请输入回答后再按回车。" };
+  if (question.kind === "text") return { ok: true, answer: normalized };
+
+  const tokens =
+    question.kind === "multiple_choice"
+      ? normalized
+          .split(/[,，]/u)
+          .map((token) => token.trim())
+          .filter((token) => token !== "")
+      : [normalized];
+  const selected: string[] = [];
+  for (const token of tokens) {
+    const option = readSelectedOption(question.options, token);
+    if (option === undefined) {
+      return {
+        ok: false,
+        message: `无法识别选项“${token}”；请输入编号或完整选项名称。`,
+      };
+    }
+    if (!selected.includes(option.label)) selected.push(option.label);
+  }
+  if (question.kind === "single_choice" && selected.length !== 1) {
+    return { ok: false, message: "单选题只能选择一个选项。" };
+  }
+  return { ok: true, answer: selected.join(", ") };
+}
+
+function readSelectedOption(
+  options: ExpertAgentUserQuestion["options"],
+  token: string,
+): ExpertAgentUserQuestion["options"][number] | undefined {
+  const numeric = Number(token);
+  if (Number.isInteger(numeric) && numeric >= 1 && numeric <= options.length) {
+    return options[numeric - 1];
+  }
+  const normalized = token.toLocaleLowerCase();
+  return options.find((option) => option.label.toLocaleLowerCase() === normalized);
+}
+
+function questionInstruction(question: ExpertAgentUserQuestion): string {
+  switch (question.kind) {
+    case "text":
+      return "输入回答后回车；Ctrl+C 可取消整个 Turn。";
+    case "single_choice":
+      return "输入一个选项编号或名称后回车；Ctrl+C 可取消整个 Turn。";
+    case "multiple_choice":
+      return "输入多个编号或名称并用逗号分隔；Ctrl+C 可取消整个 Turn。";
+  }
+}
+
+function parseApprovalAnswer(
+  input: string,
+):
+  | { readonly ok: true; readonly value: boolean }
+  | { readonly ok: false; readonly message: string } {
+  const normalized = input.trim().toLocaleLowerCase();
+  if (normalized === "y" || normalized === "yes" || normalized === "1") {
+    return { ok: true, value: true };
+  }
+  if (normalized === "n" || normalized === "no" || normalized === "2") {
+    return { ok: true, value: false };
+  }
+  return { ok: false, message: "请输入 y/yes 或 n/no。" };
 }
 
 function readCompletedMessageText(value: unknown): string | undefined {
