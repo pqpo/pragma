@@ -3,7 +3,7 @@ import type { Expert } from "./expert-agent.ts";
 export type ExpertDefinition = Expert | ExpertTeam;
 
 export interface ExpertTeamDelegationOptions {
-  readonly allow: Readonly<Record<string, readonly string[]>>;
+  readonly allow?: Readonly<Record<string, readonly string[]>> | undefined;
   readonly maxConcurrency?: number | undefined;
   readonly maxDepth?: number | undefined;
 }
@@ -42,7 +42,10 @@ export function defineExpertTeam(options: DefineExpertTeamOptions): ExpertTeam {
 
   const known = new Set(ids);
   const allow = new Map<string, ReadonlySet<string>>();
-  for (const [source, targets] of Object.entries(options.delegation.allow)) {
+  const configuredAllow = options.delegation.allow ?? {
+    [options.coordinator.id]: options.members.map((expert) => expert.id),
+  };
+  for (const [source, targets] of Object.entries(configuredAllow)) {
     if (!known.has(source)) {
       throw new Error(`ExpertTeam ${options.id} delegation source is unknown: ${source}`);
     }

@@ -12,6 +12,9 @@ allowlist 自动生成相同的五个 Expert 生命周期工具。spawn/followup
 Invocation；内部 Invocation 可观察但不可直接提交外部 prompt。Agent ID 表示可复用的执行线程，
 Invocation ID 表示该线程上的一次任务，wait 始终按 Invocation ID 工作。
 
+ExpertTeam 未显式配置 `delegation.allow` 时，默认允许 coordinator 委派给全部 members，members
+不能继续委派。需要成员间委派或限制 coordinator 目标时，必须显式配置 allowlist。
+
 每个 agent 同时最多运行一个 Invocation，不同 agent 受树级 `maxConcurrency` 约束并行运行。
 父 Invocation 只有在所有直属任务都被 join 后才能终态；遗漏显式 wait 时由 Core 自动等待并续跑综合。
 

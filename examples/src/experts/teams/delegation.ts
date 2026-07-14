@@ -87,12 +87,6 @@ const team = defineExpertTeam({
   coordinator: lead,
   members: [implementationResearcher, architectureReviewer, testAnalyst],
   delegation: {
-    allow: {
-      "engineering-lead": ["implementation-researcher", "architecture-reviewer", "test-analyst"],
-      "implementation-researcher": [],
-      "architecture-reviewer": [],
-      "test-analyst": [],
-    },
     maxConcurrency: 3,
     maxDepth: 1,
   },

@@ -1326,6 +1326,33 @@ describe("Expert delegation declarations", () => {
     expect(memberTool?.description).toContain(`- ${lead.id}: ${lead.name}. ${lead.description}`);
   });
 
+  it("defaults ExpertTeam delegation to coordinator-to-members only", async () => {
+    const { home, expert: lead } = await fixture();
+    const member = await defineExpert({
+      id: "member",
+      name: "Member",
+      description: "Member",
+      tags: [],
+      version: "1.0.0",
+      scope: "test",
+      workspace: home,
+    });
+    const team = defineExpertTeam({
+      id: "default-delegation-team",
+      version: "1.0.0",
+      coordinator: lead,
+      members: [member],
+      delegation: {},
+    });
+
+    expect(
+      readAgentDelegationDefinition(createTeamDelegationTools(team, "solo")[0]!)?.experts,
+    ).toEqual([member]);
+    expect(createTeamDelegationTools(team, "member")).toEqual([]);
+    expect(team.delegation.maxConcurrency).toBe(4);
+    expect(team.delegation.maxDepth).toBe(3);
+  });
+
   it("validates allowlists and limits", async () => {
     const { expert } = await fixture();
     expect(() =>
