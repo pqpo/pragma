@@ -181,6 +181,8 @@ skills/                  # 示例 SKILL.md
 - `flows/human.ts`：HumanTask 响应。
 - `flows/recovery.ts`：`flows.open()` 只读观察执行状态。
 - `flows/invocation-tree.ts`：Flow InvocationTree 与总输出流。
+- `flows/product-requirement-review.ts`：复杂产品需求评审 Flow，串联普通 Task、单 Expert、
+  ExpertTeam、HumanTask 和三路决策分支，并使用全屏 Flow TUI 展示完整执行过程。
 
 例如：
 
@@ -194,6 +196,25 @@ Subagent 与专家团委派示例也提供了快捷命令：
 pnpm --filter @pragma/examples example:expert-subagent
 pnpm --filter @pragma/examples example:expert-team
 ```
+
+复杂 Flow TUI 示例使用 `.env` 中的 PI Runtime 模型配置：
+
+```bash
+pnpm --filter @pragma/examples example:flow-tui
+```
+
+示例会直接执行一份“Execution replay and comparison”产品需求。左侧节点图展示 Task、Expert、
+Team、Human review gate 和最终分支；右侧可切换查看所选节点的 Activity、Input 与 Output。
+Team 节点可展开查看 coordinator 和各成员自己的 Thinking、Tool 与回答。评审门禁中选择
+`approve`、`revise` 或 `reject`，再输入评审意见，Flow 会进入对应的收尾 Task。
+
+- `↑` / `↓`：选择节点或 Team 成员。
+- `←` / `→`：切换 Activity、Input、Output。
+- `Enter`：展开或折叠 Team；Human 交互中用于提交选择。
+- `PgUp` / `PgDn`：滚动当前详情。
+- `q` 或 `Ctrl+C`：退出；执行中退出会先取消 Flow。
+
+Thinking 只在 Runtime 实际发送 reasoning delta 时展示；示例不会伪造模型思考内容。
 
 Subagent 示例也使用同一套多 Agent TUI。主视图默认只展示 Main Agent 与用户的对话，顶部同时
 显示 Research Agent 的执行状态；切换到 Research 面板后，可以单独查看它的思考、代码搜索、

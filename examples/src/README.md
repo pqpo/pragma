@@ -49,7 +49,11 @@ Flow 的公共 API。
 - `flows/human.ts`：HumanTask 响应。
 - `flows/recovery.ts`：打开并观察既有 Flow Execution。
 - `flows/invocation-tree.ts`：Flow InvocationTree 与输出流。
+- `flows/product-requirement-review.ts`：包含 Task、Expert、ExpertTeam、HumanTask 和条件分支的
+  产品需求评审 Flow；使用全屏 TUI 展示节点状态、输入输出、Agent 思考与工具流，并接收人工决策。
 
 ## 示例支撑
 
 - `support/example-kit.ts`：示例共用的 Expert、Runtime Registry 和 Pragma App 装配。
+- `console/flow-console-tui.ts`：可复用的 Flow 节点图、详情面板、Team 子树和 Human-in-the-loop
+  全屏控制台。

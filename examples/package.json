@@ -9,6 +9,7 @@
     "example:expert-chat": "tsx src/experts/getting-started/console-chat.ts",
     "example:expert-subagent": "tsx src/experts/subagents/delegation.ts",
     "example:expert-team": "tsx src/experts/teams/delegation.ts",
+    "example:flow-tui": "tsx src/flows/product-requirement-review.ts",
     "example:mcp": "tsx src/capabilities/mcp.ts",
     "example:plugin": "tsx src/capabilities/plugin.ts",
     "example:runtime-codex": "tsx src/runtimes/codex/console-chat.ts",

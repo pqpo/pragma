@@ -1,14 +1,21 @@
 import { randomUUID } from "node:crypto";
 
 import {
+  HumanInteractionResponseSchema,
   isFinalExecutionStatus as isFinal,
   type ExecutionRecord,
   type HumanInteractionRequest,
+  type HumanInteractionResponse,
   type Invocation,
 } from "@pragma/shared";
 
 import { isExpertTeam, type ExpertDefinition, type ExpertTeam } from "../agent/expert-team.ts";
 import type { RuntimeRegistry } from "../runtime-registry.ts";
+import type {
+  ExpertAgentHumanRequest,
+  ExpertAgentHumanResponse,
+  ExpertAgentUserQuestion,
+} from "../tools/managed-tool.ts";
 import { ExecutionController, runExpertInvocation } from "../execution/expert-runner.ts";
 import type { ExecutionStore } from "../execution/execution-store.ts";
 import { InvocationService } from "../execution/invocation-service.ts";
@@ -292,12 +299,38 @@ async function runFlow(options: {
     if (options.controller.isCancelled()) throw new Error("FlowExecution was cancelled.");
     const step = options.flow.steps.get(stepId);
     if (step === undefined) throw new Error(`Flow step not found: ${stepId}`);
-    const invocation = await findOrCreateStepInvocation(options, step);
+    const existingInvocation = await findStepInvocation(options, step);
+    let input: unknown;
+    let invocation: Invocation;
+    if (existingInvocation !== undefined) {
+      input = existingInvocation.input;
+      invocation = existingInvocation;
+    } else {
+      try {
+        input = resolveStepInput(
+          step,
+          (await options.store.get(options.executionId))!.state,
+          options.input,
+        );
+      } catch (error) {
+        const failed = await createStepInvocation(options, step, options.input);
+        await putStatus(
+          options.store,
+          options.executionId,
+          failed,
+          "failed",
+          undefined,
+          serializeError(error),
+        );
+        throw error;
+      }
+      invocation = await createStepInvocation(options, step, input);
+    }
     let output: unknown;
     if (invocation.status === "succeeded") {
       output = invocation.output;
     } else {
-      output = await runStep(options, step, invocation);
+      output = await runStep(options, step, invocation, input);
     }
     await applyReductionOnce(options, step, invocation.invocationId, output);
     const transition = options.flow.transitions.get(stepId);
@@ -325,13 +358,10 @@ async function runStep(
   options: Parameters<typeof runFlow>[0],
   step: CompiledFlowStep,
   invocation: Invocation,
+  input: unknown,
 ): Promise<unknown> {
   try {
     const record = (await options.store.get(options.executionId))!;
-    const input =
-      typeof step.options.input === "function"
-        ? step.options.input({ state: record.state })
-        : (step.options.input ?? options.input);
     if ("kind" in step.definition && step.definition.kind === "task") {
       await putStatus(options.store, options.executionId, invocation, "running");
       const parsedInput = step.definition.inputSchema?.parse(input) ?? input;
@@ -429,34 +459,141 @@ async function runHumanTask(
       : definition.request;
   const response = await options.controller.requestHumanInteraction(
     invocation.invocationId,
-    {
-      kind: "user_question",
-      toolName: "askUserQuestion",
-      questions: [
-        {
-          question: request.prompt ?? request.title ?? "Response required",
-          header: request.title ?? "Human task",
-          kind: "text",
-          options: [],
-        },
-      ],
-    },
+    toExpertHumanRequest(request),
     `human:${invocation.invocationId}`,
   );
-  await putStatus(options.store, options.executionId, invocation, "succeeded", response);
-  return response;
+  const output = fromExpertHumanResponse(request, response);
+  await putStatus(options.store, options.executionId, invocation, "succeeded", output);
+  return output;
 }
 
-async function findOrCreateStepInvocation(
+function toExpertHumanRequest(request: HumanInteractionRequest): ExpertAgentHumanRequest {
+  return {
+    kind: "user_question",
+    toolName: "askUserQuestion",
+    questions: humanInteractionQuestions(request),
+  };
+}
+
+function humanInteractionQuestions(
+  request: HumanInteractionRequest,
+): readonly ExpertAgentUserQuestion[] {
+  if (request.questions !== undefined && request.questions.length > 0) {
+    return request.questions;
+  }
+  const question = request.prompt ?? request.title ?? "Response required";
+  const header = request.title ?? humanInteractionHeader(request.kind);
+  if (request.options !== undefined && request.options.length > 0) {
+    return [{ question, header, kind: "single_choice", options: request.options }];
+  }
+  if (request.kind === "approval") {
+    return [
+      {
+        question,
+        header,
+        kind: "single_choice",
+        options: [
+          { label: "approve", description: "Approve and continue." },
+          { label: "reject", description: "Reject and stop this path." },
+        ],
+      },
+    ];
+  }
+  return [{ question, header, kind: "text", options: [] }];
+}
+
+function humanInteractionHeader(kind: HumanInteractionRequest["kind"]): string {
+  switch (kind) {
+    case "approval":
+      return "Approval";
+    case "review_gate":
+      return "Review gate";
+    case "manual_intervention":
+      return "Manual intervention";
+    case "question":
+      return "Question";
+  }
+}
+
+function fromExpertHumanResponse(
+  request: HumanInteractionRequest,
+  response: ExpertAgentHumanResponse,
+): HumanInteractionResponse {
+  if (response.kind !== "user_question") {
+    throw new Error(`HumanTask received an unsupported response: ${response.kind}`);
+  }
+  if (!response.answered) {
+    throw new Error(response.reason ?? "HumanTask was not answered.");
+  }
+  const questions = humanInteractionQuestions(request);
+  const answers = readHumanAnswers(response.answers, questions);
+  const decisionQuestion = questions.find((question) => question.kind === "single_choice");
+  const notesQuestion = questions.find((question) => question.kind === "text");
+  const decision =
+    decisionQuestion === undefined
+      ? undefined
+      : readHumanAnswer(answers, decisionQuestion.question);
+  const notes =
+    notesQuestion === undefined ? undefined : readHumanAnswer(answers, notesQuestion.question);
+  const approved =
+    request.kind === "approval" ? isApprovedHumanDecision(questions, decision) : undefined;
+  return HumanInteractionResponseSchema.parse({
+    answers,
+    ...(decision === undefined ? {} : { decision }),
+    ...(notes === undefined ? {} : { notes }),
+    ...(approved === undefined ? {} : { approved }),
+  });
+}
+
+function readHumanAnswers(
+  value: unknown,
+  questions: readonly ExpertAgentUserQuestion[],
+): Record<string, unknown> {
+  if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+    return { ...(value as Record<string, unknown>) };
+  }
+  if (questions.length === 1 && value !== undefined) {
+    return { [questions[0]!.question]: value };
+  }
+  return {};
+}
+
+function readHumanAnswer(
+  answers: Readonly<Record<string, unknown>>,
+  question: string,
+): string | undefined {
+  const answer = answers[question];
+  return typeof answer === "string" && answer.trim() !== "" ? answer.trim() : undefined;
+}
+
+function isApprovedHumanDecision(
+  questions: readonly ExpertAgentUserQuestion[],
+  decision: string | undefined,
+): boolean {
+  const positiveLabel = questions.find((question) => question.kind === "single_choice")?.options[0]
+    ?.label;
+  return (
+    positiveLabel !== undefined &&
+    decision?.toLocaleLowerCase() === positiveLabel.toLocaleLowerCase()
+  );
+}
+
+async function findStepInvocation(
   options: Parameters<typeof runFlow>[0],
   step: CompiledFlowStep,
-): Promise<Invocation> {
-  const definition = definitionRef(step.definition);
-  const existing = (await options.store.listInvocations(options.executionId)).find(
+): Promise<Invocation | undefined> {
+  return (await options.store.listInvocations(options.executionId)).find(
     (candidate) =>
       candidate.parentInvocationId === options.flowInvocationId && candidate.nodeId === step.id,
   );
-  if (existing !== undefined) return existing;
+}
+
+async function createStepInvocation(
+  options: Parameters<typeof runFlow>[0],
+  step: CompiledFlowStep,
+  input: unknown,
+): Promise<Invocation> {
+  const definition = definitionRef(step.definition);
   const now = new Date().toISOString();
   const invocationId = randomUUID();
   const invocation: Invocation = {
@@ -474,7 +611,7 @@ async function findOrCreateStepInvocation(
         }
       : {}),
     status: "queued",
-    input: options.input,
+    input,
     createdAt: now,
     updatedAt: now,
   };
@@ -491,6 +628,12 @@ async function findOrCreateStepInvocation(
     ],
   });
   return invocation;
+}
+
+function resolveStepInput(step: CompiledFlowStep, state: FlowState, flowInput: unknown): unknown {
+  return typeof step.options.input === "function"
+    ? step.options.input({ state })
+    : (step.options.input ?? flowInput);
 }
 
 async function applyReductionOnce(

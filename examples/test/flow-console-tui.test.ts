@@ -1,0 +1,310 @@
+import {
+  defineExpert,
+  defineExpertTeam,
+  defineFlow,
+  type ExecutionEvent,
+  type ExecutionOutputItem,
+} from "@pragma/core";
+import { describe, expect, it } from "vitest";
+
+import {
+  FlowConsoleModel,
+  FlowInteractionQueue,
+  findPendingHumanRequestEvents,
+  renderFlowConsole,
+} from "../src/console/flow-console-tui.ts";
+
+describe("FlowConsoleModel", () => {
+  it("tracks route decisions and marks unselected branches as skipped", () => {
+    const flow = defineFlow({ id: "review", version: "1.0.0" });
+    const prepare = flow.task({ id: "prepare", version: "1.0.0", handler: () => ({}) });
+    const review = flow.humanTask({
+      id: "review",
+      version: "1.0.0",
+      request: { kind: "review_gate", prompt: "Choose" },
+    });
+    const approve = flow.task({ id: "approve", version: "1.0.0", handler: () => "approved" });
+    const revise = flow.task({ id: "revise", version: "1.0.0", handler: () => "revised" });
+    const reject = flow.task({ id: "reject", version: "1.0.0", handler: () => "rejected" });
+    flow.compose(({ start, step, end }) => {
+      start(prepare).next(review).route("decision", { approve, revise, reject });
+      step(approve).next(end());
+      step(revise).next(end());
+      step(reject).next(end());
+    });
+    const model = new FlowConsoleModel(flow);
+    model.syncTree(
+      tree("flow", "flow", "running", [
+        tree("prepare-invocation", "task", "succeeded", [], {
+          nodeId: "prepare",
+          input: { brief: true },
+          output: { normalized: true },
+        }),
+        tree("review-invocation", "human-task", "succeeded", [], {
+          nodeId: "review",
+          output: { decision: "revise" },
+        }),
+        tree("revise-invocation", "task", "running", [], { nodeId: "revise" }),
+      ]),
+    );
+
+    expect(model.nodes.get("step:approve")?.status).toBe("skipped");
+    expect(model.nodes.get("step:reject")?.status).toBe("skipped");
+    expect(model.nodes.get("step:revise")?.status).toBe("running");
+    expect(model.nodes.get("step:prepare")?.input).toEqual({ brief: true });
+    model.cycleView(1);
+    expect(model.viewMode).toBe("input");
+    model.moveSelection(1);
+    expect(model.selected.nodeId).toBe("review");
+  });
+
+  it("expands team participants and isolates their streamed activity", async () => {
+    const lead = await defineExpert({
+      id: "lead",
+      name: "Review Lead",
+      description: "Lead",
+      tags: [],
+      version: "1.0.0",
+      scope: "test",
+      workspace: process.cwd(),
+    });
+    const member = await defineExpert({
+      id: "member",
+      name: "Member",
+      description: "Member",
+      tags: [],
+      version: "1.0.0",
+      scope: "test",
+      workspace: process.cwd(),
+    });
+    const team = defineExpertTeam({
+      id: "review-team",
+      version: "1.0.0",
+      coordinator: lead,
+      members: [member],
+      delegation: { maxConcurrency: 2, maxDepth: 1 },
+    });
+    const flow = defineFlow({ id: "team-flow", version: "1.0.0" });
+    const teamStep = flow.use("team", team);
+    flow.compose(({ start, end }) => start(teamStep).next(end()));
+    const model = new FlowConsoleModel(flow);
+    model.syncTree(
+      tree("flow", "flow", "running", [
+        tree(
+          "team-invocation",
+          "expert-team",
+          "running",
+          [tree("member-invocation", "expert", "running", [], { executorId: "member" })],
+          { nodeId: "team", executorId: "lead" },
+        ),
+      ]),
+    );
+    model.consumeOutput(output("member-invocation", "member", "thought", "Checking "));
+    model.consumeOutput(output("member-invocation", "member", "thought", "constraints."));
+    model.consumeOutput(
+      outputValue("member-invocation", "member", "tool", {
+        toolCallId: "tool-1",
+        toolName: "lookup_requirement_evidence",
+        inputPreview: { area: "architecture" },
+      }),
+    );
+    model.consumeOutput(output("member-invocation", "member", "tool", "first"));
+    model.consumeOutput(output("member-invocation", "member", "tool", "first result"));
+
+    const teamNode = model.nodes.get("step:team")!;
+    expect(teamNode.children).toHaveLength(2);
+    expect(model.visibleNodes.map((node) => node.label)).toEqual(["Review Lead", "lead", "member"]);
+    const memberNode = model.nodes.get("invocation:member-invocation")!;
+    expect(memberNode.activity).toMatchObject([
+      { kind: "thinking", text: "Checking constraints." },
+      { kind: "tool", text: expect.stringContaining("lookup_requirement_evidence") },
+      { kind: "tool-output", text: "first result" },
+    ]);
+    expect(teamNode.activity.some((item) => item.text.includes("[member]"))).toBe(true);
+    model.toggleSelected();
+    expect(model.visibleNodes).toHaveLength(1);
+  });
+
+  it("renders wide and stacked layouts with node details", () => {
+    const flow = defineFlow({ id: "render", version: "1.0.0" });
+    const task = flow.task({ id: "prepare", version: "1.0.0", handler: () => "done" });
+    flow.compose(({ start, end }) => start(task).next(end()));
+    const model = new FlowConsoleModel(flow);
+    const queue = new FlowInteractionQueue();
+    const wide = renderFlowConsole({
+      model,
+      interactions: queue,
+      title: "Review",
+      width: 120,
+      height: 24,
+    });
+    const narrow = renderFlowConsole({
+      model,
+      interactions: queue,
+      title: "Review",
+      width: 80,
+      height: 24,
+    });
+    expect(wide.some((line) => line.includes(" │ "))).toBe(true);
+    expect(narrow.some((line) => line.includes("Activity"))).toBe(true);
+    expect(wide.length).toBeLessThanOrEqual(24);
+    expect(narrow.length).toBeLessThanOrEqual(24);
+    const tooSmall = renderFlowConsole({
+      model,
+      interactions: queue,
+      title: "Review",
+      width: 40,
+      height: 10,
+    });
+    expect(tooSmall.join(" ")).toContain("Terminal too small");
+    expect(tooSmall.every((line) => line.length <= 40)).toBe(true);
+  });
+});
+
+describe("FlowInteractionQueue", () => {
+  it("restores only Human requests that have no durable response", () => {
+    const requested = executionEvent("requested", "human.requested", {
+      interactionId: "completed",
+    });
+    const pending = executionEvent("pending", "human.requested", {
+      interactionId: "pending",
+    });
+    const responded = executionEvent("responded", "human.responded", {
+      interactionId: "completed",
+    });
+
+    expect(findPendingHumanRequestEvents([requested, pending, responded])).toEqual([pending]);
+  });
+
+  it("collects multiple questions and queues tool approval behind them", () => {
+    const queue = new FlowInteractionQueue();
+    queue.enqueue({
+      interactionId: "review",
+      invocationId: "review-invocation",
+      request: {
+        kind: "user_question",
+        toolName: "askUserQuestion",
+        questions: [
+          {
+            header: "Decision",
+            question: "Decision?",
+            kind: "single_choice",
+            options: [
+              { label: "approve", description: "Approve" },
+              { label: "revise", description: "Revise" },
+            ],
+          },
+          { header: "Notes", question: "Notes?", kind: "text", options: [] },
+        ],
+      },
+    });
+    queue.enqueue({
+      interactionId: "approval",
+      invocationId: "expert-invocation",
+      request: {
+        kind: "tool_approval",
+        toolName: "publish",
+        input: {},
+        reason: "External side effect",
+      },
+    });
+    expect(queue.size).toBe(2);
+    queue.moveOption(1);
+    expect(queue.submit()).toBeUndefined();
+    const reviewResponse = queue.submit("Tighten scope.");
+    expect(reviewResponse).toEqual({
+      interactionId: "review",
+      invocationId: "review-invocation",
+      response: {
+        kind: "user_question",
+        answered: true,
+        answers: { "Decision?": "revise", "Notes?": "Tighten scope." },
+      },
+    });
+    expect(queue.submit()).toEqual(reviewResponse);
+    expect(queue.size).toBe(2);
+    expect(queue.remove("review")).toBe("review-invocation");
+    expect(queue.size).toBe(1);
+    expect(queue.remove("missing")).toBeUndefined();
+    const approvalResponse = queue.submit();
+    expect(approvalResponse).toEqual({
+      interactionId: "approval",
+      invocationId: "expert-invocation",
+      response: { kind: "tool_approval", approved: true, reason: "User approved." },
+    });
+    expect(queue.size).toBe(1);
+    expect(queue.remove("approval")).toBe("expert-invocation");
+    expect(queue.size).toBe(0);
+  });
+});
+
+type FlowTree = Parameters<FlowConsoleModel["syncTree"]>[0];
+
+function tree(
+  invocationId: string,
+  kind: "expert" | "expert-team" | "flow" | "human-task" | "task",
+  status: "queued" | "running" | "waiting" | "succeeded" | "failed" | "cancelled" | "interrupted",
+  children: FlowTree[] = [],
+  overrides: {
+    readonly nodeId?: string;
+    readonly executorId?: string;
+    readonly input?: unknown;
+    readonly output?: unknown;
+  } = {},
+) {
+  const now = new Date().toISOString();
+  return {
+    invocation: {
+      invocationId,
+      rootInvocationId: "flow",
+      definition: { id: overrides.nodeId ?? invocationId, version: "1.0.0", kind },
+      contextId: invocationId,
+      status,
+      input: overrides.input ?? null,
+      createdAt: now,
+      updatedAt: now,
+      ...overrides,
+    },
+    children,
+  } as FlowTree;
+}
+
+function output(
+  invocationId: string,
+  executorId: string,
+  channel: ExecutionOutputItem["channel"],
+  delta: string,
+): ExecutionOutputItem {
+  return {
+    sourceEventId: `${invocationId}-${channel}-${delta}`,
+    executionId: "execution",
+    invocationId,
+    executorId,
+    contextId: invocationId,
+    channel,
+    delta,
+    occurredAt: new Date().toISOString(),
+  };
+}
+
+function outputValue(
+  invocationId: string,
+  executorId: string,
+  channel: ExecutionOutputItem["channel"],
+  value: unknown,
+): ExecutionOutputItem {
+  return { ...output(invocationId, executorId, channel, ""), delta: undefined, value };
+}
+
+function executionEvent(eventId: string, type: string, data: unknown): ExecutionEvent {
+  return {
+    schemaVersion: "pragma.execution-event/v4",
+    eventId,
+    cursor: { executionId: "execution", sequence: 1 },
+    executionId: "execution",
+    invocationId: "invocation",
+    type,
+    data,
+    occurredAt: new Date().toISOString(),
+  };
+}

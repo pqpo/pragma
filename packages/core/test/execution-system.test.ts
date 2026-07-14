@@ -1024,6 +1024,213 @@ describe("FlowExecution", () => {
     );
   });
 
+  it("persists each mapped step input and preserves structured HumanTask responses", async () => {
+    const { app, expert } = await fixture();
+    const team = defineExpertTeam({
+      id: "review-team",
+      version: "1.0.0",
+      coordinator: expert,
+      members: [],
+      delegation: { allow: { [expert.id]: [] } },
+    });
+    const flow = defineFlow({
+      id: "mapped-input-flow",
+      version: "1.0.0",
+      result: ({ state }) => state["outcome"],
+    });
+    const prepare = flow.task({
+      id: "prepare",
+      version: "1.0.0",
+      input: { source: "root", stage: "prepare" },
+      handler: ({ input }) => input,
+      reduce: ({ state, output }) => {
+        state["prepared"] = output;
+      },
+    });
+    const expertStep = flow.use("expert", expert, {
+      input: ({ state }) => `expert:${JSON.stringify(state["prepared"])}`,
+      reduce: ({ state, output }) => {
+        state["expert"] = output;
+      },
+    });
+    const teamStep = flow.use("team", team, {
+      input: ({ state }) => `team:${String(state["expert"])}`,
+      reduce: ({ state, output }) => {
+        state["team"] = output;
+      },
+    });
+    const gate = flow.humanTask({
+      id: "review",
+      version: "1.0.0",
+      input: ({ state }) => ({ report: state["team"] }),
+      request: ({ input }) => ({
+        kind: "review_gate",
+        title: "Review proposal",
+        prompt: JSON.stringify(input),
+        questions: [
+          {
+            header: "Decision",
+            question: "What should happen?",
+            kind: "single_choice",
+            options: [
+              { label: "approve", description: "Approve" },
+              { label: "revise", description: "Revise" },
+              { label: "reject", description: "Reject" },
+            ],
+          },
+          {
+            header: "Notes",
+            question: "Reviewer notes",
+            kind: "text",
+            options: [],
+          },
+        ],
+      }),
+    });
+    const approved = flow.task({
+      id: "approved",
+      version: "1.0.0",
+      handler: () => "approved",
+      reduce: ({ state, output }) => {
+        state["outcome"] = output;
+      },
+    });
+    const revised = flow.task({
+      id: "revised",
+      version: "1.0.0",
+      handler: () => "revised",
+      reduce: ({ state, output }) => {
+        state["outcome"] = output;
+      },
+    });
+    const rejected = flow.task({
+      id: "rejected",
+      version: "1.0.0",
+      handler: () => "rejected",
+      reduce: ({ state, output }) => {
+        state["outcome"] = output;
+      },
+    });
+    flow.compose(({ start, step, end, fail }) => {
+      start(prepare)
+        .next(expertStep)
+        .next(teamStep)
+        .next(gate)
+        .route(
+          "decision",
+          { approve: approved, revise: revised, reject: rejected },
+          { fallback: fail("Unknown review decision") },
+        );
+      step(approved).next(end());
+      step(revised).next(end());
+      step(rejected).next(end());
+    });
+
+    const execution = await app.flows.start(flow, { input: { source: "root" } });
+    await waitUntil(
+      async () =>
+        (await execution.getTree()).children.find((child) => child.invocation.nodeId === "review")
+          ?.invocation.status === "waiting",
+    );
+    await waitUntil(async () =>
+      (await execution.listEvents({ scope: { kind: "all" }, limit: 1_000 })).items.some(
+        (event) => event.type === "human.requested",
+      ),
+    );
+    const tree = await execution.getTree();
+    const invocations = tree.children.map((child) => child.invocation);
+    expect(invocations.find((invocation) => invocation.nodeId === "prepare")?.input).toEqual({
+      source: "root",
+      stage: "prepare",
+    });
+    expect(invocations.find((invocation) => invocation.nodeId === "expert")?.input).toContain(
+      'expert:{"source":"root","stage":"prepare"}',
+    );
+    expect(invocations.find((invocation) => invocation.nodeId === "team")?.input).toContain(
+      "team:solo:expert:",
+    );
+    expect(invocations.find((invocation) => invocation.nodeId === "review")?.input).toEqual({
+      report: expect.stringContaining("solo:team:solo:expert:"),
+    });
+    const requested = (
+      await execution.listEvents({ scope: { kind: "all" }, limit: 1_000 })
+    ).items.find((event) => event.type === "human.requested")!;
+    expect(requested.data).toMatchObject({
+      request: {
+        kind: "user_question",
+        questions: [
+          { question: "What should happen?", kind: "single_choice" },
+          { question: "Reviewer notes", kind: "text" },
+        ],
+      },
+    });
+    const interactionId = (requested.data as { interactionId: string }).interactionId;
+    await execution.respondToHumanInteraction(
+      interactionId,
+      {
+        kind: "user_question",
+        answered: true,
+        answers: { "What should happen?": "revise", "Reviewer notes": "Tighten scope." },
+      },
+      { requestId: "review-response" },
+    );
+
+    await expect(execution.result).resolves.toBe("revised");
+    const completed = await execution.getTree();
+    expect(
+      completed.children.find((child) => child.invocation.nodeId === "review")?.invocation.output,
+    ).toEqual({
+      decision: "revise",
+      notes: "Tighten scope.",
+      answers: { "What should happen?": "revise", "Reviewer notes": "Tighten scope." },
+    });
+    expect(completed.children.some((child) => child.invocation.nodeId === "revised")).toBe(true);
+    expect(completed.children.some((child) => child.invocation.nodeId === "approved")).toBe(false);
+    expect(completed.children.some((child) => child.invocation.nodeId === "rejected")).toBe(false);
+  });
+
+  it("maps approval HumanTasks to approved responses", async () => {
+    const { app } = await fixture();
+    const flow = defineFlow({ id: "approval-flow", version: "1.0.0" });
+    const approval = flow.humanTask({
+      id: "approval",
+      version: "1.0.0",
+      request: {
+        kind: "approval",
+        prompt: "Continue?",
+        options: [
+          { label: "Allow", description: "Continue the Flow" },
+          { label: "Block", description: "Stop the Flow" },
+        ],
+      },
+    });
+    flow.compose(({ start, end }) => start(approval).next(end()));
+    const execution = await app.flows.start(flow, { input: null });
+    await waitUntil(
+      async () => (await execution.getTree()).children[0]?.invocation.status === "waiting",
+    );
+    await waitUntil(async () =>
+      (await execution.listEvents({ scope: { kind: "all" }, limit: 1_000 })).items.some(
+        (event) => event.type === "human.requested",
+      ),
+    );
+    const requested = (
+      await execution.listEvents({ scope: { kind: "all" }, limit: 1_000 })
+    ).items.find((event) => event.type === "human.requested")!;
+    const interactionId = (requested.data as { interactionId: string }).interactionId;
+    await execution.respondToHumanInteraction(
+      interactionId,
+      { kind: "user_question", answered: true, answers: { "Continue?": "Allow" } },
+      { requestId: "approval-response" },
+    );
+    await execution.result;
+    expect((await execution.getTree()).children[0]?.invocation.output).toEqual({
+      approved: true,
+      decision: "Allow",
+      answers: { "Continue?": "Allow" },
+    });
+  });
+
   it("marks a failing Task Invocation as failed", async () => {
     const { app } = await fixture();
     const flow = defineFlow({ id: "failing-flow", version: "1.0.0" });
@@ -1038,6 +1245,27 @@ describe("FlowExecution", () => {
     const execution = await app.flows.start(flow, { input: null });
     await expect(execution.result).rejects.toThrow("task exploded");
     expect((await execution.getTree()).children[0]?.invocation.status).toBe("failed");
+  });
+
+  it("marks a Step Invocation as failed when its input mapper throws", async () => {
+    const { app } = await fixture();
+    const flow = defineFlow({ id: "failing-input-flow", version: "1.0.0" });
+    const task = flow.task({
+      id: "fails-before-handler",
+      version: "1.0.0",
+      input: () => {
+        throw new Error("input mapping exploded");
+      },
+      handler: () => "unreachable",
+    });
+    flow.compose(({ start, end }) => start(task).next(end()));
+    const execution = await app.flows.start(flow, { input: { original: true } });
+    await expect(execution.result).rejects.toThrow("input mapping exploded");
+    expect((await execution.getTree()).children[0]?.invocation).toMatchObject({
+      status: "failed",
+      input: { original: true },
+      error: { message: "input mapping exploded" },
+    });
   });
 
   it("rejects recover when a nested definition version changes", async () => {
