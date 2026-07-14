@@ -1013,6 +1013,9 @@ describe("Expert delegation declarations", () => {
     expect(() => createAgentLauncher({ experts: [expert], maxDepth: 0 })).toThrow("maxDepth");
     const launcher = createAgentLauncher({ experts: [expert] });
     expect(readAgentDelegationDefinition({ ...launcher.tool })?.experts).toEqual([expert]);
+    expect(launcher.tool.description).toContain(
+      `- ${expert.id}: ${expert.name}. ${expert.description}`,
+    );
   });
 
   it("resolves ExpertTeam allowlists through the shared launcher definition", async () => {
@@ -1038,6 +1041,10 @@ describe("Expert delegation declarations", () => {
 
     expect(readAgentDelegationDefinition(leadTool!)?.experts).toEqual([member]);
     expect(readAgentDelegationDefinition(memberTool!)?.experts).toEqual([lead]);
+    expect(leadTool?.description).toContain(
+      `- ${member.id}: ${member.name}. ${member.description}`,
+    );
+    expect(memberTool?.description).toContain(`- ${lead.id}: ${lead.name}. ${lead.description}`);
   });
 
   it("validates allowlists and limits", async () => {

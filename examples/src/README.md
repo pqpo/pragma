@@ -9,13 +9,17 @@ Flow 的公共 API。
 - `experts/conversations/single-multi.ts`：单 Expert 的单轮和多轮执行。
 - `experts/conversations/resume.ts`：恢复 `ExpertSession` 后继续提交 prompt。
 - `experts/conversations/queue-steer.ts`：持久化 prompt queue 与 steer。
-- `experts/subagents/delegation.ts`：普通 Expert 注入 `createAgentLauncher().tool` 后按需委派子专家。
-- `experts/teams/delegation.ts`：用 `defineExpertTeam()` 声明团队，由协调 Expert 按 allowlist 委派成员。
+- `experts/subagents/delegation.ts`：交互式 Main Agent 根据注入 delegation tool 的 Expert
+  description，按需委派负责代码探索的 Research Agent；TUI 默认聚焦 Main，并可切换查看 Research
+  独立的思考和工具流。
+- `experts/teams/delegation.ts`：交互式工程评审 Team，由 Lead 根据 description 按需委派实现研究、
+  架构审查和测试分析成员，并综合团队结论；TUI 默认聚焦 Lead，同时显示成员状态，并允许切换查看
+  每个 Agent 独立的思考、工具和回答流。
 - `experts/teams/invocation-tree.ts`：读取团队 InvocationTree。
 
-两个 delegation 入口支持 `--stream=main|all`、`--executor <executorId>` 和
-`--invocation <invocationId>`；默认 `main` 只显示主 Agent，其他模式可以查看全部、某个专家
-或某次精确委派的未来流式输出。历史消息通过 `getMessageHistory()` 按相同标识查询。
+两个 delegation 入口共用多 Agent TUI：顶部成员栏展示各 Agent 状态，`Tab` / `Shift+Tab` 或
+`F1` - `F4` 切换成员，`Esc` 返回 Main Agent / Lead，`PgUp` / `PgDn` 滚动当前日志。两个控制台
+都会按 Agent 隔离并解析思考、工具调用、工具输出、进度和回答。
 
 ## Capabilities
 

@@ -171,8 +171,10 @@ skills/                  # 示例 SKILL.md
 - `experts/conversations/single-multi.ts`：单专家单轮与多轮。
 - `experts/conversations/resume.ts`：恢复 ExpertSession 后通过新 prompt 继续对话。
 - `experts/conversations/queue-steer.ts`：持久化 prompt queue 与 steer。
-- `experts/subagents/delegation.ts`：普通 Expert 通过 `createAgentLauncher().tool` 委派子专家。
-- `experts/teams/delegation.ts`：用 `defineExpertTeam()` 声明专家团，协调专家按 allowlist 委派成员。
+- `experts/subagents/delegation.ts`：交互式 Main Agent 通过 `createAgentLauncher().tool`
+  按需委派负责代码探索的 Research Agent。
+- `experts/teams/delegation.ts`：交互式工程评审 Team，由 Lead 按需委派实现研究、架构审查和
+  测试分析三个成员。
 - `experts/teams/invocation-tree.ts`：读取团队 InvocationTree 与成员节点。
 - `flows/basic.ts`：内联 Task 与 `compose()`。
 - `flows/experts.ts`：Flow 调用 Expert 和 ExpertTeam。
@@ -186,15 +188,41 @@ skills/                  # 示例 SKILL.md
 pnpm --filter @pragma/examples dev src/experts/conversations/single-multi.ts
 ```
 
-专家团委派示例也提供了快捷命令：
+Subagent 与专家团委派示例也提供了快捷命令：
 
 ```bash
-pnpm --filter @pragma/examples example:expert-subagent -- --stream=main
-pnpm --filter @pragma/examples example:expert-subagent -- --stream=all
-pnpm --filter @pragma/examples example:expert-team -- --stream=all
+pnpm --filter @pragma/examples example:expert-subagent
+pnpm --filter @pragma/examples example:expert-team
 ```
 
-delegation 示例默认使用 `--stream=main`，只显示主 Agent 的流式输出；`--stream=all` 会显示
-完整 Invocation 树中所有 Agent 的流式输出，并按 `executorId` 标注来源。
+Subagent 示例也使用同一套多 Agent TUI。主视图默认只展示 Main Agent 与用户的对话，顶部同时
+显示 Research Agent 的执行状态；切换到 Research 面板后，可以单独查看它的思考、代码搜索、
+文件读取、工具输出和研究结论。可以输入：
+
+```text
+你 > 请查看 Pragma 的实现原理，并说明一次 Expert 调用是如何执行的。
+```
+
+Main Agent 的提示词没有写死 Research Agent id，也没有强制每轮委派。`createAgentLauncher()` 会把
+可用 Expert 的 `id`、`name` 和 `description` 注入 `delegate_expert` 工具描述，模型据此判断何时
+委派。Research Agent 的 description 明确覆盖架构分析、实现追踪和代码搜索，因此这类问题预期会
+自动路由给它。简单对话则应由 Main Agent 自己回答。
+
+Team 示例使用全屏 TUI。主视图默认只展示 Engineering Lead 与用户的对话，顶部成员栏同时显示
+Implementation、Architecture 和 Tests 等成员的 `idle`、`working`、`done` 或 `failed` 状态。
+Lead 会根据成员 description 选择一个或多个专家；面对跨实现、架构和质量的宽问题时，可以并发
+委派互补的调查任务，再综合为团队结论。例如：
+
+```text
+你 > 请评审 Pragma 的 delegation 实现，说明当前调用链、架构风险和测试缺口，并给出改进优先级。
+```
+
+两个 TUI 都会按 Agent 隔离保存解析后的思考、工具调用、工具输出、状态和回答：
+
+- `Tab` / `Shift+Tab`：依次切换 Agent。
+- `F1` - `F4`：直接打开对应 Agent 面板；Subagent 示例使用 `F1` / `F2`。
+- `Esc`：回到 Main Agent 或 Lead 主流程。
+- `PgUp` / `PgDn`：滚动当前面板。
+- `Ctrl+C` 或输入 `/exit`：取消当前 Turn 并退出。
 
 所有外部 prompt 必须提交给 `ExpertSession`；Flow 只能通过 `app.flows` 启动、打开或恢复。

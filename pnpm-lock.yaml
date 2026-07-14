@@ -192,6 +192,9 @@ importers:
 
   examples:
     dependencies:
+      '@earendil-works/pi-tui':
+        specifier: 0.79.8
+        version: 0.79.8
       '@pragma/core':
         specifier: workspace:*
         version: link:../packages/core

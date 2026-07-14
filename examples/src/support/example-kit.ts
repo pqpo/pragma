@@ -15,21 +15,23 @@ import { createRuntimeTestContextSystem } from "../runtimes/shared/console-runti
 export async function createExampleExpert(
   id: string,
   instructions: string,
-  options: Pick<DefineExpertOptions, "mcp" | "plugins" | "skills" | "tools"> = {},
+  options: Pick<DefineExpertOptions, "mcp" | "plugins" | "skills" | "tools"> &
+    Partial<Pick<DefineExpertOptions, "description" | "name">> = {},
 ): Promise<Expert> {
   const contextSystem = createRuntimeTestContextSystem();
+  const { name = id, description = `${id} example Expert`, ...capabilities } = options;
 
   return await defineExpert({
     id,
-    name: id,
-    description: `${id} example Expert`,
+    name,
+    description,
     instructions,
     tags: ["example"],
     version: "1.0.0",
     scope: "example",
     workspace: process.cwd(),
     contextSystem,
-    ...options,
+    ...capabilities,
     models: createExampleModelsConfig(process.env),
   });
 }
