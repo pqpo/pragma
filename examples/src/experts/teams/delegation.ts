@@ -27,6 +27,12 @@ const session = await createExampleApp().experts.createSession(team);
 const turn = await session.prompt("Give three concise benefits of delegated research.", {
   requestId: "team-1",
 });
-console.log(`Streaming ${streamMode === "main" ? "the main Agent" : "all Agents"}:`);
+console.log(`Streaming ${JSON.stringify(streamMode)}:`);
 await renderDelegationOutput(turn, { mode: streamMode });
+console.dir(
+  streamMode.kind === "executor"
+    ? await session.getMessageHistory({ scope: streamMode })
+    : await turn.getMessageHistory({ scope: streamMode }),
+  { depth: null },
+);
 await session.close();

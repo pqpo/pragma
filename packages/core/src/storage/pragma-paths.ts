@@ -48,6 +48,10 @@ export class PragmaPaths {
     return join(this.expertSessionRoot(sessionId), "prompts.json");
   }
 
+  expertSessionEvents(sessionId: string): string {
+    return join(this.expertSessionRoot(sessionId), "events.json");
+  }
+
   expertSessionTransaction(sessionId: string): string {
     return join(this.expertSessionRoot(sessionId), "transaction.json");
   }

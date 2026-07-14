@@ -36,6 +36,14 @@ export function readAssistantMessageText(event: AgentSessionEvent): string | und
   return readMessageText(event.message);
 }
 
+export function readAssistantMessage(event: AgentSessionEvent): unknown | undefined {
+  return event.type === "message_end" &&
+    isRecord(event.message) &&
+    event.message["role"] === "assistant"
+    ? event.message
+    : undefined;
+}
+
 export function assertAssistantTurnCompleted(messages: readonly unknown[]): void {
   const assistant = messages.findLast(
     (message) => isRecord(message) && message["role"] === "assistant",

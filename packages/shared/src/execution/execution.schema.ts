@@ -1,6 +1,5 @@
 import { z } from "zod";
-import { AgentMessageUsageSchema } from "../agent-message.schema.ts";
-import { ExpertAgentStreamEventSchema } from "../stream-event.schema.ts";
+import { AgentMessageSchema, AgentMessageUsageSchema } from "../agent-message.schema.ts";
 
 export const ExecutionStatusSchema = z.enum([
   "queued",
@@ -45,6 +44,7 @@ export const InvocationSchema = z.object({
   nodeId: z.string().min(1).optional(),
   definition: DefinitionReferenceSchema,
   executorId: z.string().min(1).optional(),
+  contextId: z.string().min(1),
   status: ExecutionStatusSchema,
   input: z.unknown(),
   output: z.unknown().optional(),
@@ -68,7 +68,7 @@ export const ExecutionCursorSchema = z.object({
 });
 
 export const ExecutionEventSchema = z.object({
-  schemaVersion: z.literal("pragma.execution-event/v2"),
+  schemaVersion: z.literal("pragma.execution-event/v3"),
   eventId: z.string().min(1),
   cursor: ExecutionCursorSchema,
   executionId: z.string().min(1),
@@ -78,16 +78,21 @@ export const ExecutionEventSchema = z.object({
   occurredAt: z.string().datetime(),
 });
 
-export const ExecutionRuntimeStreamEventSchema = ExecutionEventSchema.extend({
-  type: z.literal("runtime.stream"),
-  data: ExpertAgentStreamEventSchema,
+export const InvocationMessageAppendedEventSchema = ExecutionEventSchema.extend({
+  type: z.literal("invocation.message.appended"),
+  data: z.object({
+    message: AgentMessageSchema,
+  }),
 });
 
 export const ExecutionOutputItemSchema = z.object({
   sourceEventId: z.string().min(1),
-  cursor: ExecutionCursorSchema,
+  cursor: ExecutionCursorSchema.optional(),
   executionId: z.string().min(1),
   invocationId: z.string().min(1),
+  parentInvocationId: z.string().min(1).optional(),
+  executorId: z.string().min(1).optional(),
+  contextId: z.string().min(1),
   channel: z.enum(["message", "thought", "tool", "progress", "result"]),
   delta: z.string().optional(),
   value: z.unknown().optional(),
@@ -95,7 +100,7 @@ export const ExecutionOutputItemSchema = z.object({
 });
 
 export const ExecutionRecordSchema = z.object({
-  schemaVersion: z.literal("pragma.execution/v2"),
+  schemaVersion: z.literal("pragma.execution/v3"),
   executionId: z.string().min(1),
   version: z.number().int().nonnegative(),
   kind: ExecutionKindSchema,
@@ -129,6 +134,6 @@ export type ExecutionCursor = z.infer<typeof ExecutionCursorSchema>;
 export type ExecutionEvent<TData = unknown> = Omit<z.infer<typeof ExecutionEventSchema>, "data"> & {
   readonly data: TData;
 };
-export type ExecutionRuntimeStreamEvent = z.infer<typeof ExecutionRuntimeStreamEventSchema>;
+export type InvocationMessageAppendedEvent = z.infer<typeof InvocationMessageAppendedEventSchema>;
 export type ExecutionOutputItem = z.infer<typeof ExecutionOutputItemSchema>;
 export type ExecutionRecord = z.infer<typeof ExecutionRecordSchema>;

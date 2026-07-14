@@ -1,29 +1,63 @@
-import type {
-  ExecutionCursor,
-  ExecutionEvent,
-  ExecutionOutputItem,
-  ExecutionRecord,
-  Invocation,
-  InvocationTree,
+import {
+  AgentMessageRecordSchema,
+  InvocationMessageAppendedEventSchema,
+  InvocationMessageHistorySchema,
+  type ExecutionCursor,
+  type ExecutionEvent,
+  type ExecutionOutputItem,
+  type ExecutionRecord,
+  type Invocation,
+  type InvocationMessageHistory,
+  type InvocationTree,
 } from "@pragma/shared";
 
+import {
+  getExecutionLiveBus,
+  type ExecutionEventSubscription,
+  type ExecutionOutputSubscription,
+} from "./execution-live-bus.ts";
 import type { ExecutionStore } from "./execution-store.ts";
 
-export interface ExecutionWatchOptions {
+export type InvocationScope =
+  | { readonly kind: "root" }
+  | { readonly kind: "all" }
+  | { readonly kind: "executor"; readonly executorId: string }
+  | { readonly kind: "invocation"; readonly invocationId: string }
+  | { readonly kind: "context"; readonly contextId: string };
+
+export interface ListExecutionEventsOptions {
+  readonly scope?: InvocationScope | undefined;
   readonly after?: ExecutionCursor | undefined;
+  readonly limit?: number | undefined;
+}
+
+export interface ExecutionEventPage {
+  readonly items: readonly ExecutionEvent[];
+  readonly nextCursor?: ExecutionCursor | undefined;
+}
+
+export interface SubscribeOutputOptions {
+  readonly scope?: Exclude<InvocationScope, { readonly kind: "context" }> | undefined;
+  readonly channels?: readonly ExecutionOutputItem["channel"][] | undefined;
+}
+
+export interface GetMessageHistoryOptions {
+  readonly scope?: InvocationScope | undefined;
 }
 
 export interface ExecutionView {
   readonly executionId: string;
-  events(): AsyncIterable<ExecutionEvent>;
   getState(): Promise<ExecutionRecord>;
   getTree(): Promise<InvocationTree>;
-  watchTree(): AsyncIterable<InvocationTree>;
-  getRootOutput(options?: ExecutionWatchOptions): AsyncIterable<ExecutionOutputItem>;
-  getAllOutput(options?: ExecutionWatchOptions): AsyncIterable<ExecutionOutputItem>;
   getInvocation(invocationId: string): Promise<Invocation | undefined>;
-  watchInvocation(invocationId: string): AsyncIterable<ExecutionEvent>;
-  watchInvocationOutput(invocationId: string): AsyncIterable<ExecutionOutputItem>;
+  listEvents(options?: ListExecutionEventsOptions): Promise<ExecutionEventPage>;
+  subscribeEvents(options?: {
+    readonly scope?: InvocationScope;
+  }): Promise<ExecutionEventSubscription>;
+  subscribeOutput(options?: SubscribeOutputOptions): Promise<ExecutionOutputSubscription>;
+  getMessageHistory(
+    options?: GetMessageHistoryOptions,
+  ): Promise<readonly InvocationMessageHistory[]>;
 }
 
 export interface MutableExecution extends ExecutionView {
@@ -39,6 +73,7 @@ export class StoredExecutionView implements ExecutionView {
   constructor(
     readonly executionId: string,
     protected readonly store: ExecutionStore,
+    private readonly sessionId: string = executionId,
   ) {}
 
   async getState(): Promise<ExecutionRecord> {
@@ -47,155 +82,216 @@ export class StoredExecutionView implements ExecutionView {
     return state;
   }
 
-  async *events(): AsyncIterable<ExecutionEvent> {
-    const state = await this.getState();
-    if (isTerminal(state.status)) return;
-    yield* this.store.watchEvents(this.executionId, {
-      executionId: this.executionId,
-      sequence: state.lastAppliedSequence,
-    });
-  }
-
   async getTree(): Promise<InvocationTree> {
     const tree = await this.store.getTree(this.executionId);
     if (tree === undefined) throw new Error(`Execution not found: ${this.executionId}`);
     return tree;
   }
 
-  async *watchTree(): AsyncIterable<InvocationTree> {
-    const state = await this.getState();
-    yield await this.getTree();
-    if (isTerminal(state.status)) return;
-    for await (const _event of this.store.watchEvents(this.executionId, {
-      executionId: this.executionId,
-      sequence: state.lastAppliedSequence,
-    })) {
-      void _event;
-      yield await this.getTree();
-    }
-  }
-
-  getRootOutput(options: ExecutionWatchOptions = {}): AsyncIterable<ExecutionOutputItem> {
-    return filterAsync(this.store.watchOutputs(this.executionId, options.after), async (event) => {
-      const execution = await this.getState();
-      return event.invocationId === execution.rootInvocationId;
-    });
-  }
-
-  getAllOutput(options: ExecutionWatchOptions = {}): AsyncIterable<ExecutionOutputItem> {
-    return this.store.watchOutputs(this.executionId, options.after);
-  }
-
   async getInvocation(invocationId: string): Promise<Invocation | undefined> {
     return await this.store.getInvocation(this.executionId, invocationId);
   }
 
-  watchInvocation(invocationId: string): AsyncIterable<ExecutionEvent> {
-    return watchFutureInvocationEvents(this.store, this.executionId, invocationId);
-  }
-
-  watchInvocationOutput(invocationId: string): AsyncIterable<ExecutionOutputItem> {
-    return watchFutureInvocationOutputs(this.store, this.executionId, invocationId);
-  }
-}
-
-async function* filterAsync<T>(
-  source: AsyncIterable<T>,
-  predicate: (value: T) => boolean | Promise<boolean>,
-): AsyncIterable<T> {
-  for await (const value of source) if (await predicate(value)) yield value;
-}
-
-async function* watchFutureInvocationEvents(
-  store: ExecutionStore,
-  executionId: string,
-  invocationId: string,
-): AsyncIterable<ExecutionEvent> {
-  const state = await requireExecution(store, executionId);
-  const initialInvocation = await store.getInvocation(executionId, invocationId);
-  if (initialInvocation === undefined) throw new Error(`Invocation not found: ${invocationId}`);
-  let cursor: ExecutionCursor = {
-    executionId,
-    sequence: state.lastAppliedSequence,
-  };
-  if (isTerminal(initialInvocation.status) || isTerminal(state.status)) {
-    for (const event of await store.readEvents(executionId, cursor)) {
-      if (event.invocationId === invocationId) yield event;
+  async listEvents(options: ListExecutionEventsOptions = {}): Promise<ExecutionEventPage> {
+    const limit = options.limit ?? 100;
+    if (!Number.isInteger(limit) || limit < 1 || limit > 1_000) {
+      throw new Error("Execution event limit must be an integer between 1 and 1000.");
     }
-    return;
+    const invocations = await this.store.listInvocations(this.executionId);
+    const selected = selectInvocations(
+      invocations,
+      (await this.getState()).rootInvocationId,
+      options.scope,
+    );
+    const matching = (await this.store.readEvents(this.executionId, options.after)).filter(
+      (event) => selected.has(event.invocationId),
+    );
+    const items = matching.slice(0, limit);
+    return {
+      items,
+      ...(matching.length > items.length && items.length > 0
+        ? { nextCursor: items.at(-1)!.cursor }
+        : {}),
+    };
   }
 
-  while (true) {
-    for (const event of await store.readEvents(executionId, cursor)) {
-      cursor = event.cursor;
-      if (event.invocationId === invocationId) yield event;
-    }
-    const invocation = await store.getInvocation(executionId, invocationId);
-    const execution = await requireExecution(store, executionId);
-    if (invocation === undefined || isTerminal(invocation.status) || isTerminal(execution.status)) {
-      for (const event of await store.readEvents(executionId, cursor)) {
-        if (event.invocationId === invocationId) yield event;
+  async subscribeOutput(
+    options: SubscribeOutputOptions = {},
+  ): Promise<ExecutionOutputSubscription> {
+    const source = getExecutionLiveBus(this.store).subscribe(this.executionId);
+    const state = await this.getState();
+    if (isTerminal(state.status)) await source.close();
+    const rootInvocationId = state.rootInvocationId;
+    const channels = options.channels === undefined ? undefined : new Set(options.channels);
+    return filterSubscription(
+      source,
+      (item) =>
+        matchesOutputScope(item, rootInvocationId, options.scope) &&
+        (channels?.has(item.channel) ?? true),
+    );
+  }
+
+  async subscribeEvents(
+    options: { readonly scope?: InvocationScope } = {},
+  ): Promise<ExecutionEventSubscription> {
+    const source = getExecutionLiveBus(this.store).subscribeEvents(this.executionId);
+    const state = await this.getState();
+    if (isTerminal(state.status)) await source.close();
+    const invocations = await this.store.listInvocations(this.executionId);
+    const matchesByInvocationId = new Map(
+      invocations.map((invocation) => [
+        invocation.invocationId,
+        matchesInvocationScope(invocation, state.rootInvocationId, options.scope),
+      ]),
+    );
+    return filterEventSubscription(source, async (event) => {
+      const cached = matchesByInvocationId.get(event.invocationId);
+      if (cached !== undefined) return cached;
+      if (options.scope?.kind === "all") return true;
+      if (options.scope?.kind === "root") return event.invocationId === state.rootInvocationId;
+      if (options.scope?.kind === "invocation") {
+        return event.invocationId === options.scope.invocationId;
       }
-      return;
-    }
-    await delay(25);
+      const invocation = await this.store.getInvocation(this.executionId, event.invocationId);
+      const matches =
+        invocation !== undefined &&
+        matchesInvocationScope(invocation, state.rootInvocationId, options.scope);
+      matchesByInvocationId.set(event.invocationId, matches);
+      return matches;
+    });
+  }
+
+  async getMessageHistory(
+    options: GetMessageHistoryOptions = {},
+  ): Promise<readonly InvocationMessageHistory[]> {
+    const state = await this.getState();
+    const invocations = await this.store.listInvocations(this.executionId);
+    const selected = selectInvocations(invocations, state.rootInvocationId, options.scope);
+    const byId = new Map(invocations.map((invocation) => [invocation.invocationId, invocation]));
+    const records = (await this.store.readEvents(this.executionId))
+      .filter((event) => event.type === "invocation.message.appended")
+      .map((event) => InvocationMessageAppendedEventSchema.parse(event))
+      .filter((event) => selected.has(event.invocationId));
+
+    return [...selected]
+      .map((invocationId) => {
+        const invocation = byId.get(invocationId);
+        if (invocation === undefined) return undefined;
+        const messages = records
+          .filter((event) => event.invocationId === invocationId)
+          .map((event) =>
+            AgentMessageRecordSchema.parse({
+              sequence: event.cursor.sequence,
+              sessionId: this.sessionId,
+              executionId: this.executionId,
+              invocationId,
+              parentInvocationId: invocation.parentInvocationId,
+              executorId: invocation.executorId,
+              contextId: invocation.contextId,
+              message: event.data.message,
+            }),
+          );
+        return InvocationMessageHistorySchema.parse({
+          sessionId: this.sessionId,
+          executionId: this.executionId,
+          invocationId,
+          parentInvocationId: invocation.parentInvocationId,
+          executorId: invocation.executorId,
+          contextId: invocation.contextId,
+          messages,
+        });
+      })
+      .filter((history): history is InvocationMessageHistory => history !== undefined);
   }
 }
 
-async function* watchFutureInvocationOutputs(
-  store: ExecutionStore,
-  executionId: string,
-  invocationId: string,
-): AsyncIterable<ExecutionOutputItem> {
-  const state = await requireExecution(store, executionId);
-  const initialInvocation = await store.getInvocation(executionId, invocationId);
-  if (initialInvocation === undefined) throw new Error(`Invocation not found: ${invocationId}`);
-  let cursor: ExecutionCursor = {
-    executionId,
-    sequence: state.lastAppliedSequence,
+function isTerminal(status: ExecutionRecord["status"]): boolean {
+  return ["succeeded", "failed", "cancelled", "interrupted"].includes(status);
+}
+
+function matchesOutputScope(
+  item: ExecutionOutputItem,
+  rootInvocationId: string,
+  scope: SubscribeOutputOptions["scope"] = { kind: "root" },
+): boolean {
+  switch (scope.kind) {
+    case "root":
+      return item.invocationId === rootInvocationId;
+    case "all":
+      return true;
+    case "executor":
+      return item.executorId === scope.executorId;
+    case "invocation":
+      return item.invocationId === scope.invocationId;
+  }
+}
+
+function selectInvocations(
+  invocations: readonly Invocation[],
+  rootInvocationId: string,
+  scope: InvocationScope = { kind: "root" },
+): Set<string> {
+  switch (scope.kind) {
+    case "root":
+      return new Set([rootInvocationId]);
+    case "all":
+      return new Set(invocations.map((invocation) => invocation.invocationId));
+    case "executor":
+      return new Set(
+        invocations
+          .filter((invocation) => invocation.executorId === scope.executorId)
+          .map((invocation) => invocation.invocationId),
+      );
+    case "invocation":
+      return new Set([scope.invocationId]);
+    case "context":
+      return new Set(
+        invocations
+          .filter((invocation) => invocation.contextId === scope.contextId)
+          .map((invocation) => invocation.invocationId),
+      );
+  }
+}
+
+function matchesInvocationScope(
+  invocation: Invocation,
+  rootInvocationId: string,
+  scope: InvocationScope = { kind: "root" },
+): boolean {
+  switch (scope.kind) {
+    case "root":
+      return invocation.invocationId === rootInvocationId;
+    case "all":
+      return true;
+    case "executor":
+      return invocation.executorId === scope.executorId;
+    case "invocation":
+      return invocation.invocationId === scope.invocationId;
+    case "context":
+      return invocation.contextId === scope.contextId;
+  }
+}
+
+function filterSubscription(
+  source: ExecutionOutputSubscription,
+  predicate: (item: ExecutionOutputItem) => boolean,
+): ExecutionOutputSubscription {
+  return {
+    async *[Symbol.asyncIterator]() {
+      for await (const item of source) if (predicate(item)) yield item;
+    },
+    close: async () => await source.close(),
   };
-  if (isTerminal(initialInvocation.status) || isTerminal(state.status)) {
-    for (const event of await store.readOutputs(executionId, cursor)) {
-      if (event.invocationId === invocationId) yield event;
-    }
-    return;
-  }
-
-  while (true) {
-    for (const event of await store.readOutputs(executionId, cursor)) {
-      cursor = event.cursor;
-      if (event.invocationId === invocationId) yield event;
-    }
-    const invocation = await store.getInvocation(executionId, invocationId);
-    const execution = await requireExecution(store, executionId);
-    if (invocation === undefined || isTerminal(invocation.status) || isTerminal(execution.status)) {
-      for (const event of await store.readOutputs(executionId, cursor)) {
-        if (event.invocationId === invocationId) yield event;
-      }
-      return;
-    }
-    await delay(25);
-  }
 }
 
-async function requireExecution(
-  store: ExecutionStore,
-  executionId: string,
-): Promise<ExecutionRecord> {
-  const execution = await store.get(executionId);
-  if (execution === undefined) throw new Error(`Execution not found: ${executionId}`);
-  return execution;
-}
-
-async function delay(milliseconds: number): Promise<void> {
-  await new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
-}
-
-function isTerminal(status: string): boolean {
-  return (
-    status === "succeeded" ||
-    status === "failed" ||
-    status === "cancelled" ||
-    status === "interrupted"
-  );
+function filterEventSubscription(
+  source: ExecutionEventSubscription,
+  predicate: (item: ExecutionEvent) => boolean | Promise<boolean>,
+): ExecutionEventSubscription {
+  return {
+    async *[Symbol.asyncIterator]() {
+      for await (const item of source) if (await predicate(item)) yield item;
+    },
+    close: async () => await source.close(),
+  };
 }

@@ -1,3 +1,4 @@
+import type { ExecutionOutputItem } from "@pragma/core";
 import { describe, expect, it } from "vitest";
 
 import { ConsoleTurnRenderer } from "../src/console/console-turn-renderer.ts";
@@ -10,22 +11,22 @@ describe("ConsoleTurnRenderer", () => {
       output: { write: (text) => (output += text) },
     });
 
-    renderer.render(runtimeEvent("thought.delta", { delta: "Checking context..." }));
-    renderer.render(
-      runtimeEvent("tool.started", {
+    renderer.renderOutput(outputItem("thought", "Checking context..."));
+    renderer.renderOutput(
+      outputItem("tool", undefined, {
         toolCallId: "tool-1",
         toolName: "get_current_time",
         inputPreview: {},
       }),
     );
-    renderer.render(
-      runtimeEvent("tool.completed", {
+    renderer.renderOutput(
+      outputItem("tool", undefined, {
         toolCallId: "tool-1",
         toolName: "get_current_time",
         outputPreview: "2026-07-12T10:00:00.000Z",
       }),
     );
-    renderer.render(runtimeEvent("message.delta", { delta: "现在是 18:00。" }));
+    renderer.renderOutput(outputItem("message", "现在是 18:00。"));
     renderer.complete("现在是 18:00。");
 
     expect(output).toContain("• Thinking\nChecking context...");
@@ -67,14 +68,27 @@ describe("ConsoleTurnRenderer", () => {
       output: { write: (text) => (output += text) },
     });
 
-    renderer.render(runtimeEvent("message.delta", { delta: "hello" }));
-    renderer.render(runtimeEvent("message.completed", { text: "hello" }));
+    renderer.renderOutput(outputItem("message", "hello"));
+    renderer.renderOutput(outputItem("message", undefined, "hello"));
     renderer.complete("hello");
 
     expect(output.match(/hello/gu)).toHaveLength(1);
   });
 });
 
-function runtimeEvent(type: string, payload: unknown) {
-  return { type: "runtime.stream", data: { type, payload } };
+function outputItem(
+  channel: ExecutionOutputItem["channel"],
+  delta?: string,
+  value?: unknown,
+): ExecutionOutputItem {
+  return {
+    sourceEventId: "event",
+    executionId: "execution",
+    invocationId: "invocation",
+    contextId: "context",
+    channel,
+    ...(delta === undefined ? {} : { delta }),
+    ...(value === undefined ? {} : { value }),
+    occurredAt: new Date().toISOString(),
+  };
 }

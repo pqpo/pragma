@@ -4,11 +4,13 @@ import { dirname, join } from "node:path";
 
 import {
   ExecutionRecordSchema,
+  ExpertSessionEventSchema,
   ExpertSessionRecordSchema,
   InvocationSchema,
   PromptRequestSchema,
   type ExecutionRecord,
   type ExpertSessionRecord,
+  type ExpertSessionEvent,
   type Invocation,
   type PromptRequest,
 } from "@pragma/shared";
@@ -46,6 +48,7 @@ export interface ExpertSessionStore {
         },
   ): Promise<T>;
   listPrompts(sessionId: string): Promise<readonly PromptRequest[]>;
+  listEvents(sessionId: string): Promise<readonly ExpertSessionEvent[]>;
   claimLease(sessionId: string, claimId: string, leaseMs: number): Promise<boolean>;
   releaseLease(sessionId: string, claimId: string): Promise<void>;
 }
@@ -58,11 +61,27 @@ export function createFileExpertSessionStore(options: {
   return {
     async create(record) {
       await withFileLock(paths.expertSessionLock(record.sessionId), async () => {
+        await recoverTransaction(paths, options.executions, record.sessionId);
         if ((await readJson(paths.expertSessionState(record.sessionId))) !== undefined) {
           throw new Error(`ExpertSession already exists: ${record.sessionId}`);
         }
-        await writeJson(paths.expertSessionState(record.sessionId), record);
-        await writeJson(paths.expertSessionPrompts(record.sessionId), []);
+        const journal = ExpertSessionTransactionJournalSchema.parse({
+          schemaVersion: "pragma.expert-session-transaction/v2",
+          session: record,
+          prompts: [],
+          events: [
+            createSessionEvent(
+              record.sessionId,
+              1,
+              "session-created",
+              "session.created",
+              {},
+              record.createdAt,
+            ),
+          ],
+        });
+        await writeJson(paths.expertSessionTransaction(record.sessionId), journal);
+        await applyTransaction(paths, options.executions, record.sessionId, journal);
       });
     },
     async enqueue(transaction) {
@@ -74,6 +93,9 @@ export function createFileExpertSessionStore(options: {
         );
         const prompts = PromptRequestSchema.array().parse(
           (await readJson(paths.expertSessionPrompts(sessionId))) ?? [],
+        );
+        const events = ExpertSessionEventSchema.array().parse(
+          (await readJson(paths.expertSessionEvents(sessionId))) ?? [],
         );
         if (session.status === "closed") throw new Error(`ExpertSession is closed: ${sessionId}`);
         const duplicate = prompts.find(
@@ -95,10 +117,22 @@ export function createFileExpertSessionStore(options: {
           updatedAt: transaction.prompt.createdAt,
         });
         const nextPrompts = PromptRequestSchema.array().parse([...prompts, transaction.prompt]);
-        const journal = EnqueueJournalSchema.parse({
-          schemaVersion: "pragma.expert-session-transaction/v1",
+        const journal = ExpertSessionTransactionJournalSchema.parse({
+          schemaVersion: "pragma.expert-session-transaction/v2",
           session: nextSession,
           prompts: nextPrompts,
+          events: materializeSessionEvents(sessionId, events, [
+            {
+              eventId: `prompt-enqueued:${transaction.prompt.requestId}`,
+              type: "prompt.enqueued",
+              data: {
+                requestId: transaction.prompt.requestId,
+                executionId: transaction.prompt.executionId,
+                content: transaction.prompt.content,
+              },
+              occurredAt: transaction.prompt.createdAt,
+            },
+          ]),
           execution: transaction.execution,
           rootInvocation: transaction.rootInvocation,
         });
@@ -127,15 +161,22 @@ export function createFileExpertSessionStore(options: {
         const prompts = PromptRequestSchema.array().parse(
           (await readJson(paths.expertSessionPrompts(sessionId))) ?? [],
         );
+        const events = ExpertSessionEventSchema.array().parse(
+          (await readJson(paths.expertSessionEvents(sessionId))) ?? [],
+        );
         const next = await action({ session: session.data, prompts });
-        await writeJson(
-          paths.expertSessionState(sessionId),
-          ExpertSessionRecordSchema.parse(next.session),
-        );
-        await writeJson(
-          paths.expertSessionPrompts(sessionId),
-          PromptRequestSchema.array().parse(next.prompts),
-        );
+        const journal = ExpertSessionTransactionJournalSchema.parse({
+          schemaVersion: "pragma.expert-session-transaction/v2",
+          session: next.session,
+          prompts: next.prompts,
+          events: materializeSessionEvents(
+            sessionId,
+            events,
+            deriveSessionEvents(session.data, prompts, next.session, next.prompts),
+          ),
+        });
+        await writeJson(paths.expertSessionTransaction(sessionId), journal);
+        await applyTransaction(paths, options.executions, sessionId, journal);
         return next.result;
       });
     },
@@ -144,6 +185,14 @@ export function createFileExpertSessionStore(options: {
         await recoverTransaction(paths, options.executions, sessionId);
         return PromptRequestSchema.array().parse(
           (await readJson(paths.expertSessionPrompts(sessionId))) ?? [],
+        );
+      });
+    },
+    async listEvents(sessionId) {
+      return await withFileLock(paths.expertSessionLock(sessionId), async () => {
+        await recoverTransaction(paths, options.executions, sessionId);
+        return ExpertSessionEventSchema.array().parse(
+          (await readJson(paths.expertSessionEvents(sessionId))) ?? [],
         );
       });
     },
@@ -188,15 +237,118 @@ const ExpertSessionLeaseSchema = z.object({
   expiresAt: z.string().datetime(),
 });
 
-const EnqueueJournalSchema = z.object({
-  schemaVersion: z.literal("pragma.expert-session-transaction/v1"),
-  session: ExpertSessionRecordSchema,
-  prompts: PromptRequestSchema.array(),
-  execution: ExecutionRecordSchema,
-  rootInvocation: InvocationSchema,
-});
+const ExpertSessionTransactionJournalSchema = z
+  .object({
+    schemaVersion: z.literal("pragma.expert-session-transaction/v2"),
+    session: ExpertSessionRecordSchema,
+    prompts: PromptRequestSchema.array(),
+    events: ExpertSessionEventSchema.array(),
+    execution: ExecutionRecordSchema.optional(),
+    rootInvocation: InvocationSchema.optional(),
+  })
+  .refine(
+    (journal) => (journal.execution === undefined) === (journal.rootInvocation === undefined),
+    "ExpertSession transaction execution and rootInvocation must be provided together.",
+  );
 
-type EnqueueJournal = z.infer<typeof EnqueueJournalSchema>;
+type ExpertSessionTransactionJournal = z.infer<typeof ExpertSessionTransactionJournalSchema>;
+
+interface NewSessionEvent {
+  readonly eventId: string;
+  readonly type: string;
+  readonly data: unknown;
+  readonly occurredAt: string;
+}
+
+function deriveSessionEvents(
+  current: ExpertSessionRecord,
+  currentPrompts: readonly PromptRequest[],
+  next: ExpertSessionRecord,
+  nextPrompts: readonly PromptRequest[],
+): readonly NewSessionEvent[] {
+  const events: NewSessionEvent[] = [];
+  const currentPromptIds = new Set(currentPrompts.map((prompt) => prompt.requestId));
+  for (const prompt of nextPrompts) {
+    if (currentPromptIds.has(prompt.requestId)) continue;
+    events.push({
+      eventId: `prompt-${prompt.mode}:${prompt.requestId}`,
+      type: prompt.mode === "steer" ? "prompt.steered" : "prompt.enqueued",
+      data: {
+        requestId: prompt.requestId,
+        executionId: prompt.executionId,
+        content: prompt.content,
+      },
+      occurredAt: prompt.createdAt,
+    });
+  }
+  if (current.activeExecutionId !== next.activeExecutionId) {
+    if (next.activeExecutionId !== undefined) {
+      events.push({
+        eventId: `execution-attached:${next.activeExecutionId}`,
+        type: "execution.attached",
+        data: { executionId: next.activeExecutionId },
+        occurredAt: next.updatedAt,
+      });
+    } else if (current.activeExecutionId !== undefined) {
+      events.push({
+        eventId: `execution-detached:${current.activeExecutionId}`,
+        type: "execution.detached",
+        data: { executionId: current.activeExecutionId, status: next.lastStatus },
+        occurredAt: next.updatedAt,
+      });
+    }
+  }
+  if (current.status !== next.status && next.status === "closed") {
+    events.push({
+      eventId: "session-closed",
+      type: "session.closed",
+      data: {},
+      occurredAt: next.updatedAt,
+    });
+  }
+  return events;
+}
+
+function materializeSessionEvents(
+  sessionId: string,
+  existing: readonly ExpertSessionEvent[],
+  inputs: readonly NewSessionEvent[],
+): readonly ExpertSessionEvent[] {
+  if (inputs.length === 0) return existing;
+  const byId = new Set(existing.map((event) => event.eventId));
+  const appended = inputs
+    .filter((event) => !byId.has(event.eventId))
+    .map((event, index) =>
+      createSessionEvent(
+        sessionId,
+        existing.length + index + 1,
+        event.eventId,
+        event.type,
+        event.data,
+        event.occurredAt,
+      ),
+    );
+  return [...existing, ...appended];
+}
+
+function createSessionEvent(
+  sessionId: string,
+  sequence: number,
+  eventId: string,
+  type: string,
+  data: unknown,
+  occurredAt: string,
+): ExpertSessionEvent {
+  return ExpertSessionEventSchema.parse({
+    schemaVersion: "pragma.expert-session-event/v1",
+    eventId,
+    cursor: { sessionId, sequence },
+    sessionId,
+    type,
+    data,
+    occurredAt,
+  });
+}
 
 async function recoverTransaction(
   paths: PragmaPaths,
@@ -205,7 +357,7 @@ async function recoverTransaction(
 ): Promise<void> {
   const value = await readJson(paths.expertSessionTransaction(sessionId));
   if (value === undefined) return;
-  const journal = EnqueueJournalSchema.safeParse(value);
+  const journal = ExpertSessionTransactionJournalSchema.safeParse(value);
   if (!journal.success) throw unsupported(sessionId, journal.error);
   await applyTransaction(paths, executions, sessionId, journal.data);
 }
@@ -214,20 +366,23 @@ async function applyTransaction(
   paths: PragmaPaths,
   executions: ExecutionStore,
   sessionId: string,
-  journal: EnqueueJournal,
+  journal: ExpertSessionTransactionJournal,
 ): Promise<void> {
-  const existing = await executions.get(journal.execution.executionId);
-  if (existing === undefined) {
-    await executions.create(journal.execution, journal.rootInvocation);
-  } else if (
-    existing.kind !== journal.execution.kind ||
-    existing.rootInvocationId !== journal.execution.rootInvocationId ||
-    existing.definition.id !== journal.execution.definition.id ||
-    existing.definition.version !== journal.execution.definition.version
-  ) {
-    throw new Error(`Execution conflict while recovering ExpertSession ${sessionId}.`);
+  if (journal.execution !== undefined && journal.rootInvocation !== undefined) {
+    const existing = await executions.get(journal.execution.executionId);
+    if (existing === undefined) {
+      await executions.create(journal.execution, journal.rootInvocation);
+    } else if (
+      existing.kind !== journal.execution.kind ||
+      existing.rootInvocationId !== journal.execution.rootInvocationId ||
+      existing.definition.id !== journal.execution.definition.id ||
+      existing.definition.version !== journal.execution.definition.version
+    ) {
+      throw new Error(`Execution conflict while recovering ExpertSession ${sessionId}.`);
+    }
   }
   await writeJson(paths.expertSessionPrompts(sessionId), journal.prompts);
+  await writeJson(paths.expertSessionEvents(sessionId), journal.events);
   await writeJson(paths.expertSessionState(sessionId), journal.session);
   await rm(paths.expertSessionTransaction(sessionId), { force: true });
 }

@@ -2,12 +2,16 @@ import { randomUUID } from "node:crypto";
 
 import type {
   AgentMessageUsage,
+  ExecutionCursor,
   ExecutionRecord,
+  ExpertMessageHistory,
+  ExpertSessionEvent,
   ExpertSessionRecord,
-  ExpertSessionMessage,
+  ExecutionEvent,
   PromptMode,
   PromptRequest,
 } from "@pragma/shared";
+import { ExpertMessageHistorySchema } from "@pragma/shared";
 
 import type { ExpertDefinition } from "../agent/expert-team.ts";
 import { isExpertTeam } from "../agent/expert-team.ts";
@@ -18,7 +22,12 @@ import type { RuntimeContextSnapshot } from "./expert-runner.ts";
 import { RuntimeSessionPool } from "./runtime-session-pool.ts";
 import type { ExecutionStore } from "./execution-store.ts";
 import type { ExpertSessionStore } from "./expert-session-store.ts";
-import { StoredExecutionView, type MutableExecution } from "./execution-view.ts";
+import {
+  StoredExecutionView,
+  type GetMessageHistoryOptions,
+  type InvocationScope,
+  type MutableExecution,
+} from "./execution-view.ts";
 
 export interface CreateExpertSessionOptions {
   readonly sessionId?: string | undefined;
@@ -44,9 +53,25 @@ export interface ExpertSession {
   close(reason?: string): Promise<void>;
   getState(): Promise<ExpertSessionRecord>;
   listTurns(): Promise<readonly ExpertTurn[]>;
-  getMessageHistory(): Promise<readonly ExpertSessionMessage[]>;
+  getMessageHistory(options?: GetMessageHistoryOptions): Promise<readonly ExpertMessageHistory[]>;
+  listEvents(options?: ListSessionEventsOptions): Promise<SessionEventPage>;
   getUsage(): Promise<AgentMessageUsage | undefined>;
   getPromptQueue(): Promise<readonly PromptRequest[]>;
+}
+
+export interface SessionEventCursor {
+  readonly offset: number;
+}
+
+export interface ListSessionEventsOptions {
+  readonly scope?: InvocationScope | undefined;
+  readonly after?: SessionEventCursor | undefined;
+  readonly limit?: number | undefined;
+}
+
+export interface SessionEventPage {
+  readonly items: readonly (ExpertSessionEvent | ExecutionEvent)[];
+  readonly nextCursor?: SessionEventCursor | undefined;
 }
 
 export interface ExpertSessionManagerDependencies {
@@ -233,9 +258,10 @@ class ExpertSessionImpl implements ExpertSession {
 
     const id = randomUUID();
     const now = new Date().toISOString();
+    const rootContextId = (await this.getState()).contextIds["root"]!;
     const definitionKind = isExpertTeam(this.expert) ? "expert-team" : "expert";
     const execution: ExecutionRecord = {
-      schemaVersion: "pragma.execution/v2",
+      schemaVersion: "pragma.execution/v3",
       executionId: id,
       version: 0,
       kind: "expert-turn",
@@ -266,6 +292,7 @@ class ExpertSessionImpl implements ExpertSession {
         rootInvocationId: id,
         definition: execution.definition,
         executorId: isExpertTeam(this.expert) ? this.expert.coordinator.id : this.expert.id,
+        contextId: rootContextId,
         status: "queued",
         input: content,
         createdAt: now,
@@ -419,39 +446,69 @@ class ExpertSessionImpl implements ExpertSession {
     });
   }
 
-  async getMessageHistory(): Promise<readonly ExpertSessionMessage[]> {
-    const prompts = await this.getPromptQueue();
+  async getMessageHistory(
+    options: GetMessageHistoryOptions = {},
+  ): Promise<readonly ExpertMessageHistory[]> {
     const session = await this.getState();
-    const executions = await Promise.all(
-      session.executionIds.map(
-        async (executionId) => await this.dependencies.executions.get(executionId),
-      ),
-    );
-    const messages: ExpertSessionMessage[] = prompts.map((prompt) => ({
-      role: "user",
-      sessionId: this.sessionId,
-      executionId: prompt.executionId,
-      requestId: prompt.requestId,
-      content: prompt.content,
-      createdAt: prompt.createdAt,
-    }));
-
-    for (const execution of executions) {
-      if (execution?.status !== "succeeded") continue;
-      messages.push({
-        role: "assistant",
-        sessionId: this.sessionId,
-        executionId: execution.executionId,
-        content: execution.output,
-        createdAt: execution.updatedAt,
-      });
+    const invocations = (
+      await Promise.all(
+        session.executionIds.map(
+          async (executionId) =>
+            await this.createExecutionView(executionId).getMessageHistory(options),
+        ),
+      )
+    ).flat();
+    const groups = new Map<string, typeof invocations>();
+    for (const invocation of invocations) {
+      const key = `${invocation.executorId ?? ""}\u0000${invocation.contextId}`;
+      groups.set(key, [...(groups.get(key) ?? []), invocation]);
     }
+    return [...groups.values()].map((group) =>
+      ExpertMessageHistorySchema.parse({
+        executorId: group[0]?.executorId,
+        contextId: group[0]!.contextId,
+        invocations: group,
+      }),
+    );
+  }
 
-    return messages.sort((left, right) => {
-      const timestamp = left.createdAt.localeCompare(right.createdAt);
-      if (timestamp !== 0) return timestamp;
-      return left.role === right.role ? 0 : left.role === "user" ? -1 : 1;
-    });
+  async listEvents(options: ListSessionEventsOptions = {}): Promise<SessionEventPage> {
+    const limit = options.limit ?? 100;
+    if (!Number.isInteger(limit) || limit < 1 || limit > 1_000) {
+      throw new Error("Session event limit must be an integer between 1 and 1000.");
+    }
+    const session = await this.getState();
+    const executionEvents = (
+      await Promise.all(
+        session.executionIds.map(async (executionId) => {
+          const view = this.createExecutionView(executionId);
+          const items: ExecutionEvent[] = [];
+          let after: ExecutionCursor | undefined;
+          do {
+            const page = await view.listEvents({ scope: options.scope, limit: 1_000, after });
+            items.push(...page.items);
+            after = page.nextCursor;
+          } while (after !== undefined);
+          return items;
+        }),
+      )
+    ).flat();
+    const events = [
+      ...(await this.dependencies.sessions.listEvents(this.sessionId)),
+      ...executionEvents,
+    ].sort((left, right) =>
+      left.occurredAt === right.occurredAt
+        ? left.eventId.localeCompare(right.eventId)
+        : left.occurredAt.localeCompare(right.occurredAt),
+    );
+    const offset = options.after?.offset ?? 0;
+    const items = events.slice(offset, offset + limit);
+    return {
+      items,
+      ...(offset + items.length < events.length
+        ? { nextCursor: { offset: offset + items.length } }
+        : {}),
+    };
   }
 
   async getUsage(): Promise<AgentMessageUsage | undefined> {
@@ -469,10 +526,7 @@ class ExpertSessionImpl implements ExpertSession {
   }
 
   private async steer(content: string, requestId: string): Promise<ExpertTurn> {
-    const controller = this.controller;
-    if (controller === undefined) {
-      throw new Error("Cannot steer without an active ExpertTurn.");
-    }
+    const controller = await this.waitForSteerController();
     const now = new Date().toISOString();
     const claim = await this.dependencies.sessions.transact<SteerClaim>(
       this.sessionId,
@@ -562,6 +616,27 @@ class ExpertSessionImpl implements ExpertSession {
           : prompt,
       ),
     }));
+  }
+
+  private async waitForSteerController(): Promise<ExecutionController> {
+    for (let attempt = 0; attempt < 500; attempt += 1) {
+      const controller = this.controller;
+      if (controller !== undefined) return controller;
+
+      const [session, prompts] = await Promise.all([this.getState(), this.getPromptQueue()]);
+      const canBecomeActive =
+        session.activeExecutionId !== undefined ||
+        prompts.some(
+          (prompt) =>
+            prompt.mode === "enqueue" &&
+            (prompt.status === "queued" || prompt.status === "running"),
+        );
+      if (!canBecomeActive) {
+        throw new Error("Cannot steer without an active ExpertTurn.");
+      }
+      await new Promise<void>((resolve) => setTimeout(resolve, 10));
+    }
+    throw new Error("ExpertTurn did not become active before steer timed out.");
   }
 
   private startProcessing(): void {
@@ -721,7 +796,7 @@ class ExpertSessionImpl implements ExpertSession {
   }
 
   private createTurn(executionId: string, requestId: string): ExpertTurn {
-    const view = new StoredExecutionView(executionId, this.dependencies.executions);
+    const view = this.createExecutionView(executionId);
     const completion = waitForTerminalExecution(this.dependencies.executions, executionId);
     return Object.assign(view, {
       requestId,
@@ -743,6 +818,10 @@ class ExpertSessionImpl implements ExpertSession {
         await this.controller.respond(interactionId, response, options.requestId);
       },
     });
+  }
+
+  private createExecutionView(executionId: string): StoredExecutionView {
+    return new StoredExecutionView(executionId, this.dependencies.executions, this.sessionId);
   }
 }
 

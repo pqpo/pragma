@@ -7,15 +7,14 @@ const first = await session.prompt("hello");
 console.log(first.requestId); // Core 自动生成，可在需要时用于幂等重试。
 const retry = await session.prompt("hello", { requestId: first.requestId });
 console.log(retry.executionId === first.executionId); // true
-for await (const event of first.events()) {
-  // 只接收订阅后的事件；Execution 结束后自动退出循环。
-  console.log(event.type, event.data);
-}
+const output = await first.subscribeOutput({ scope: { kind: "root" } });
+for await (const item of output) console.log(item.channel, item.delta ?? item.value);
 const result = await first.result;
 const turnUsage = await first.usage;
 
 // 历史对话使用独立接口读取，不通过执行事件回放。
-const messages = await session.getMessageHistory();
+const histories = await session.getMessageHistory({ scope: { kind: "root" } });
+const events = await session.listEvents();
 // Usage 随 Execution 持久化；Session API 汇总所有已完成 Turn。
 const sessionUsage = await session.getUsage();
 
@@ -46,4 +45,9 @@ launcher 向模型公开 `delegate_expert`。每次调用都会在当前 Executi
 恢复会话不会自动重启 interrupted Turn。专家团使用同一个 Session API；外部只能向团队根提交 prompt。
 
 `turn.usage` 返回单轮（包含该轮专家团委派调用）的累计 Usage；`session.getUsage()` 汇总当前
-Session 中所有已经落盘的 Turn。Usage 不需要从 `turn.events()` 的 `runtime.run.completed` 事件中解析。
+Session 中所有已经落盘的 Turn。Usage 不需要从事件流中解析。
+
+`getMessageHistory()` 返回 Runtime 已经完成并标准化的消息，包括提供商实际暴露的 thinking、
+tool call/result、bash 与 summary；实时 delta 不会伪装成历史消息。按单次委派查询使用
+`{ kind: "invocation", invocationId }`，按某个专家查询使用 `{ kind: "executor", executorId }`。
+同一专家的多段历史按 `contextId` 分组。

@@ -86,7 +86,6 @@ export async function runRuntimeConsoleChat(options: RuntimeConsoleChatOptions):
     console.log(`思考深度: ${selectedThinkingLevel?.label ?? "CLI 默认深度"}`);
     console.log(`Session: ${session.sessionId}`);
 
-    let turnNumber = 0;
     terminal.setPrompt("你 > ");
     terminal.prompt();
 
@@ -101,9 +100,8 @@ export async function runRuntimeConsoleChat(options: RuntimeConsoleChatOptions):
         continue;
       }
 
-      turnNumber += 1;
       try {
-        const turn = await session.prompt(prompt, { requestId: `console-${turnNumber}` });
+        const turn = await session.prompt(prompt);
         await renderExpertTurn(turn);
       } catch {
         // renderExpertTurn already displayed the failure with the streamed turn output.
@@ -171,7 +169,9 @@ async function promptForModel(
 ): Promise<RuntimeModel | undefined> {
   console.log("\n可用模型：");
   models.forEach((model, index) => {
-    console.log(`  ${index + 1}. ${model.displayName} (${model.id})${model.default ? " [探测默认]" : ""}`);
+    console.log(
+      `  ${index + 1}. ${model.displayName} (${model.id})${model.default ? " [探测默认]" : ""}`,
+    );
   });
 
   while (true) {
@@ -203,7 +203,9 @@ async function promptForThinkingLevel(
   levels.forEach((level, index) => {
     const isDefault = level.value === model.thinking?.defaultLevel;
     const description = level.description === undefined ? "" : ` — ${level.description}`;
-    console.log(`  ${index + 1}. ${level.label} (${level.value})${isDefault ? " [探测默认]" : ""}${description}`);
+    console.log(
+      `  ${index + 1}. ${level.label} (${level.value})${isDefault ? " [探测默认]" : ""}${description}`,
+    );
   });
 
   while (true) {

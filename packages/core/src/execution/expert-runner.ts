@@ -1,7 +1,9 @@
 import { randomUUID } from "node:crypto";
 
 import type {
+  AgentMessage,
   AgentMessageUsage,
+  ExpertAgentStreamEvent,
   Invocation,
   RuntimeContextSnapshot as SharedRuntimeContextSnapshot,
 } from "@pragma/shared";
@@ -25,6 +27,9 @@ import {
   ExecutionVersionConflictError,
   type ExecutionStore,
 } from "./execution-store.ts";
+import { getExecutionLiveBus } from "./execution-live-bus.ts";
+import { projectRuntimeOutput } from "./execution-output.ts";
+import { RuntimeMessageAccumulator } from "./runtime-message-accumulator.ts";
 import { RuntimeSessionPool, type RuntimeSessionIdentity } from "./runtime-session-pool.ts";
 
 export type RuntimeContextSnapshot = SharedRuntimeContextSnapshot;
@@ -92,11 +97,7 @@ export class ExecutionController {
     await this.runtimeSessions.release(identity);
   }
 
-  registerRuntimeSubmission(
-    contextId: string,
-    session: RuntimeAgentSession,
-    runId: string,
-  ): void {
+  registerRuntimeSubmission(contextId: string, session: RuntimeAgentSession, runId: string): void {
     const submission = { runId, session };
     this.activeRuntimeSubmissions.set(contextId, submission);
     const waiters = this.runtimeSubmissionWaiters.get(contextId);
@@ -222,6 +223,7 @@ export class ExecutionController {
       new Error("ExpertTurn completed before its Runtime submission became active."),
     );
     this.activeRuntimeSubmissions.clear();
+    getExecutionLiveBus(this.store).complete(this.executionId);
   }
 
   async closeRuntimes(): Promise<void> {
@@ -325,6 +327,20 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
     ],
   });
 
+  await options.store.appendEvent(
+    options.executionId,
+    options.invocationId,
+    "invocation.message.appended",
+    {
+      message: {
+        role: "user",
+        content: options.prompt,
+        timestamp: Date.now(),
+      } satisfies AgentMessage,
+    },
+    `invocation-user-message:${options.invocationId}`,
+  );
+
   const runtimeId = options.runtimeId ?? options.runtimeSnapshot?.runtimeId;
   const runtime = options.runtimes.resolve(runtimeId);
   const runtimeIdentity = {
@@ -425,15 +441,34 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
     },
   });
   options.controller.registerRuntimeSubmission(options.contextId, session, handle.runId);
+  const messageAccumulator = new RuntimeMessageAccumulator(runtime.descriptor);
+  const liveBus = getExecutionLiveBus(options.store);
   const drain = (async () => {
     for await (const event of handle.events) {
-      await options.store.appendEvent(
-        options.executionId,
-        options.invocationId,
-        "runtime.stream",
+      const output = projectRuntimeOutput({
+        executionId: options.executionId,
+        invocation,
         event,
-        event.eventId,
-      );
+      });
+      if (output !== undefined) liveBus.publish(options.executionId, output);
+      for (const message of messageAccumulator.consume(event)) {
+        await options.store.appendEvent(
+          options.executionId,
+          options.invocationId,
+          "invocation.message.appended",
+          { message },
+          `invocation-message:${event.eventId}:${message.timestamp}`,
+        );
+      }
+      if (isDurableRuntimeEvent(event)) {
+        await options.store.appendEvent(
+          options.executionId,
+          options.invocationId,
+          "runtime.event",
+          event,
+          event.eventId,
+        );
+      }
     }
   })();
 
@@ -442,6 +477,16 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
     options.controller.addUsage(result.result.usage);
     await drain;
     const output = result.result.output;
+    const finalMessage = messageAccumulator.complete(output, result.result.usage);
+    if (finalMessage !== undefined) {
+      await options.store.appendEvent(
+        options.executionId,
+        options.invocationId,
+        "invocation.message.appended",
+        { message: finalMessage },
+        `invocation-final-message:${options.invocationId}`,
+      );
+    }
     await options.store.commit({
       commitId: `invocation-succeeded:${options.invocationId}`,
       executionId: options.executionId,
@@ -539,6 +584,7 @@ async function delegate(
     parentInvocationId: options.invocationId,
     definition: { id: expert.id, version: expert.version, kind: "expert" },
     executorId: expert.id,
+    contextId: context.contextId,
     status: "queued",
     input: options.request.prompt,
     createdAt: now,
@@ -648,6 +694,15 @@ function serializeError(error: unknown): unknown {
   return error instanceof Error
     ? { name: error.name, message: error.message, stack: error.stack }
     : error;
+}
+
+function isDurableRuntimeEvent(event: ExpertAgentStreamEvent): boolean {
+  return (
+    event.type !== "message.delta" &&
+    event.type !== "message.completed" &&
+    event.type !== "thought.delta" &&
+    event.type !== "tool.delta"
+  );
 }
 
 class DelegationExecutionState {

@@ -180,41 +180,43 @@ describe("ExpertSession", () => {
     const { app, expert } = await fixture(100);
     const session = await app.experts.createSession(expert);
     const turn = await session.prompt("hello", { requestId: "history" });
-    await waitUntil(async () => (await turn.getState()).lastAppliedSequence > 0);
-
+    const eventSubscription = await turn.subscribeEvents({ scope: { kind: "root" } });
+    const outputSubscription = await turn.subscribeOutput({ scope: { kind: "root" } });
     const streamed = (async () => {
       const events = [];
-      for await (const event of turn.events()) events.push(event);
+      for await (const event of eventSubscription) events.push(event);
       return events;
     })();
-    const invocationStreamed = (async () => {
-      const events = [];
-      for await (const event of turn.watchInvocation(turn.executionId)) events.push(event);
-      return events;
+    const outputs = (async () => {
+      const items = [];
+      for await (const item of outputSubscription) items.push(item);
+      return items;
     })();
 
     await expect(turn.result).resolves.toBe("solo:hello");
     const events = await streamed;
-    expect(
-      events.some(
-        (event) =>
-          event.type === "runtime.stream" &&
-          (event.data as { type?: unknown }).type === "message.delta",
-      ),
-    ).toBe(true);
-    expect(events.some((event) => event.type === "invocation.started")).toBe(false);
-    expect((await invocationStreamed).some((event) => event.type === "invocation.succeeded")).toBe(
-      true,
-    );
-    expect("replayEvents" in turn).toBe(false);
-    expect(await session.getMessageHistory()).toMatchObject([
-      { role: "user", requestId: "history", content: "hello" },
-      { role: "assistant", content: "solo:hello" },
+    expect(events.some((event) => event.type === "invocation.succeeded")).toBe(true);
+    expect(await turn.getMessageHistory()).toMatchObject([
+      {
+        messages: [
+          { message: { role: "user", content: "hello" } },
+          { message: { role: "assistant", content: [{ type: "text", text: "solo:hello" }] } },
+        ],
+      },
     ]);
-    const outputs = await collectAsync(turn.getRootOutput());
-    expect(outputs.map((output) => output.channel)).toEqual(["message", "result"]);
-    expect(outputs[0]?.cursor.sequence).toBeLessThan(outputs[1]!.cursor.sequence);
-    expect(outputs[1]).toMatchObject({ value: "solo:hello" });
+    expect((await outputs).some((output) => output.channel === "message")).toBe(true);
+    const sessionEvents = (await session.listEvents({ limit: 1_000 })).items;
+    expect(sessionEvents.map((event) => event.type)).toEqual(
+      expect.arrayContaining([
+        "session.created",
+        "prompt.enqueued",
+        "execution.attached",
+        "invocation.message.appended",
+        "invocation.succeeded",
+      ]),
+    );
+    expect(sessionEvents.some((event) => event.type === "runtime.stream")).toBe(false);
+    await Promise.all([eventSubscription.close(), outputSubscription.close()]);
     await session.close();
   });
 
@@ -676,7 +678,6 @@ describe("ExpertSession", () => {
     });
     const session = await app.experts.createSession(expert);
     const turn = await session.prompt("slow", { requestId: "slow" });
-    await waitUntil(async () => stats.createSessionCalls === 1);
     const [first, duplicate] = await Promise.all([
       session.prompt("correction", { requestId: "steer-once", mode: "steer" }),
       session.prompt("correction", { requestId: "steer-once", mode: "steer" }),
@@ -712,13 +713,16 @@ describe("ExpertSession", () => {
     });
     const session = await app.experts.createSession(expert, { sessionId: "journal-session" });
     const current = await session.getState();
+    const sessionCreated = (await session.listEvents()).items.find(
+      (event) => event.type === "session.created",
+    )!;
     const now = new Date().toISOString();
     const executionId = "journal-execution";
     const definition = { id: expert.id, version: expert.version, kind: "expert" as const };
     await writeFile(
       new PragmaPaths({ pragmaHome: home }).expertSessionTransaction(session.sessionId),
       `${JSON.stringify({
-        schemaVersion: "pragma.expert-session-transaction/v1",
+        schemaVersion: "pragma.expert-session-transaction/v2",
         session: {
           ...current,
           queuedRequestIds: ["journal-request"],
@@ -737,8 +741,24 @@ describe("ExpertSession", () => {
             updatedAt: now,
           },
         ],
+        events: [
+          sessionCreated,
+          {
+            schemaVersion: "pragma.expert-session-event/v1",
+            eventId: "prompt-enqueued:journal-request",
+            cursor: { sessionId: session.sessionId, sequence: 2 },
+            sessionId: session.sessionId,
+            type: "prompt.enqueued",
+            data: {
+              requestId: "journal-request",
+              executionId,
+              content: "recover me",
+            },
+            occurredAt: now,
+          },
+        ],
         execution: {
-          schemaVersion: "pragma.execution/v2",
+          schemaVersion: "pragma.execution/v3",
           executionId,
           version: 0,
           kind: "expert-turn",
@@ -756,6 +776,7 @@ describe("ExpertSession", () => {
           rootInvocationId: executionId,
           definition,
           executorId: expert.id,
+          contextId: "journal-context",
           status: "queued",
           input: "recover me",
           createdAt: now,
@@ -767,7 +788,66 @@ describe("ExpertSession", () => {
     expect((await session.getState()).executionIds).toContain(executionId);
     expect(await executions.get(executionId)).toBeDefined();
     expect((await session.getPromptQueue())[0]?.requestId).toBe("journal-request");
+    expect((await session.listEvents()).items.map((event) => event.type)).toContain(
+      "prompt.enqueued",
+    );
+    const recoveredTurn = (await session.listTurns())[0]!;
+    const cancelled = expect(recoveredTurn.result).rejects.toThrow("cancelled");
     await session.close();
+    await cancelled;
+  });
+
+  it("recovers Session state and semantic events from the same transaction journal", async () => {
+    const home = await mkdtemp(join(tmpdir(), "pragma-session-events-"));
+    const executions = createFileExecutionStore({ pragmaHome: home });
+    const sessions = createFileExpertSessionStore({ executions, pragmaHome: home });
+    const now = new Date().toISOString();
+    await sessions.create({
+      schemaVersion: "pragma.expert-session/v1",
+      sessionId: "atomic-session",
+      expertId: "expert",
+      expertVersion: "1.0.0",
+      status: "open",
+      queuedRequestIds: [],
+      executionIds: [],
+      contextIds: { root: "root-context" },
+      runtimeContexts: {},
+      createdAt: now,
+      updatedAt: now,
+    });
+    const created = (await sessions.listEvents("atomic-session"))[0]!;
+    const closedAt = new Date(Date.now() + 1).toISOString();
+    await writeFile(
+      new PragmaPaths({ pragmaHome: home }).expertSessionTransaction("atomic-session"),
+      `${JSON.stringify({
+        schemaVersion: "pragma.expert-session-transaction/v2",
+        session: {
+          ...(await sessions.get("atomic-session")),
+          status: "closed",
+          updatedAt: closedAt,
+        },
+        prompts: [],
+        events: [
+          created,
+          {
+            schemaVersion: "pragma.expert-session-event/v1",
+            eventId: "session-closed",
+            cursor: { sessionId: "atomic-session", sequence: 2 },
+            sessionId: "atomic-session",
+            type: "session.closed",
+            data: {},
+            occurredAt: closedAt,
+          },
+        ],
+      })}\n`,
+      "utf8",
+    );
+
+    await expect(sessions.get("atomic-session")).resolves.toMatchObject({ status: "closed" });
+    await expect(sessions.listEvents("atomic-session")).resolves.toMatchObject([
+      { type: "session.created" },
+      { type: "session.closed" },
+    ]);
   });
 });
 
@@ -810,13 +890,15 @@ describe("FlowExecution", () => {
       start(task).next(end());
     });
     const execution = await app.flows.start(flow, { input: 21 });
+    const subscription = await execution.subscribeEvents({ scope: { kind: "all" } });
     const streamed = (async () => {
       const events = [];
-      for await (const event of execution.events()) events.push(event);
+      for await (const event of subscription) events.push(event);
       return events;
     })();
     await expect(execution.result).resolves.toBe(42);
     expect((await streamed).at(-1)?.type).toBe("execution.succeeded");
+    await subscription.close();
     const opened = await app.flows.open({ executionId: execution.executionId });
     expect((await opened.getState()).status).toBe("succeeded");
     expect("cancel" in opened).toBe(false);
@@ -881,14 +963,14 @@ describe("FlowExecution", () => {
 });
 
 describe("Execution observation", () => {
-  it("observes events appended by another ExecutionStore instance", async () => {
+  it("reads events appended by another ExecutionStore instance", async () => {
     const home = await mkdtemp(join(tmpdir(), "pragma-watch-"));
     const writer = createFileExecutionStore({ pragmaHome: home });
     const reader = createFileExecutionStore({ pragmaHome: home });
     const now = new Date().toISOString();
     await writer.create(
       {
-        schemaVersion: "pragma.execution/v2",
+        schemaVersion: "pragma.execution/v3",
         executionId: "cross-process",
         version: 0,
         kind: "flow",
@@ -904,6 +986,7 @@ describe("Execution observation", () => {
       {
         invocationId: "root",
         rootInvocationId: "root",
+        contextId: "root-context",
         definition: { id: "flow", version: "1.0.0", kind: "flow" },
         status: "running",
         input: null,
@@ -911,11 +994,10 @@ describe("Execution observation", () => {
         updatedAt: now,
       },
     );
-    const iterator = reader.watchEvents("cross-process")[Symbol.asyncIterator]();
-    const next = iterator.next();
     await writer.appendEvent("cross-process", "root", "external.event", {});
-    await expect(next).resolves.toMatchObject({ value: { type: "external.event" } });
-    await iterator.return?.();
+    await expect(reader.readEvents("cross-process")).resolves.toMatchObject([
+      { type: "external.event" },
+    ]);
   });
 });
 
@@ -978,10 +1060,4 @@ async function waitUntil(predicate: () => Promise<boolean>): Promise<void> {
     if (Date.now() >= deadline) throw new Error("Timed out waiting for test condition.");
     await new Promise<void>((resolve) => setTimeout(resolve, 10));
   }
-}
-
-async function collectAsync<T>(source: AsyncIterable<T>): Promise<T[]> {
-  const values: T[] = [];
-  for await (const value of source) values.push(value);
-  return values;
 }

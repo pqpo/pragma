@@ -1,57 +1,62 @@
 import {
   ExecutionOutputItemSchema,
-  ExecutionRuntimeStreamEventSchema,
-  type ExecutionEvent,
   type ExecutionOutputItem,
+  type ExpertAgentStreamEvent,
+  type Invocation,
 } from "@pragma/shared";
 
-export function projectExecutionOutput(event: ExecutionEvent): ExecutionOutputItem | undefined {
-  if (event.type === "invocation.succeeded") {
-    return createOutput(event, "result", undefined, readDataField(event.data, "output"));
-  }
-
-  if (event.type === "invocation.progress") {
-    return createOutput(event, "progress", undefined, readDataField(event.data, "value"));
-  }
-
-  if (event.type !== "runtime.stream") return undefined;
-  const runtimeEvent = ExecutionRuntimeStreamEventSchema.parse(event).data;
-
-  switch (runtimeEvent.type) {
+export function projectRuntimeOutput(options: {
+  readonly executionId: string;
+  readonly invocation: Invocation;
+  readonly event: ExpertAgentStreamEvent;
+}): ExecutionOutputItem | undefined {
+  const { event, executionId, invocation } = options;
+  const base = {
+    sourceEventId: event.eventId,
+    executionId,
+    invocationId: invocation.invocationId,
+    parentInvocationId: invocation.parentInvocationId,
+    executorId: invocation.executorId,
+    contextId: invocation.contextId,
+    occurredAt: event.emittedAt,
+  };
+  switch (event.type) {
     case "message.delta":
-      return createOutput(event, "message", runtimeEvent.payload.delta);
+      return ExecutionOutputItemSchema.parse({
+        ...base,
+        channel: "message",
+        delta: event.payload.delta,
+      });
     case "message.completed":
-      return createOutput(event, "message", undefined, runtimeEvent.payload.text);
+      return ExecutionOutputItemSchema.parse({
+        ...base,
+        channel: "message",
+        value: event.payload.message ?? event.payload.text,
+      });
     case "thought.delta":
-      return createOutput(event, "thought", runtimeEvent.payload.delta);
+      return ExecutionOutputItemSchema.parse({
+        ...base,
+        channel: "thought",
+        delta: event.payload.delta,
+      });
     case "tool.delta":
-      return createOutput(event, "tool", runtimeEvent.payload.delta);
+      return ExecutionOutputItemSchema.parse({
+        ...base,
+        channel: "tool",
+        delta: event.payload.delta,
+      });
+    case "tool.started":
+    case "tool.completed":
+    case "tool.failed":
+    case "tool.approval_requested":
+      return ExecutionOutputItemSchema.parse({ ...base, channel: "tool", value: event.payload });
     case "progress":
-      return createOutput(event, "progress", undefined, runtimeEvent.payload);
+      return ExecutionOutputItemSchema.parse({
+        ...base,
+        channel: "progress",
+        value: event.payload,
+      });
     default:
       return undefined;
   }
-}
-
-function createOutput(
-  event: ExecutionEvent,
-  channel: ExecutionOutputItem["channel"],
-  delta?: string,
-  value?: unknown,
-): ExecutionOutputItem {
-  return ExecutionOutputItemSchema.parse({
-    sourceEventId: event.eventId,
-    cursor: event.cursor,
-    executionId: event.executionId,
-    invocationId: event.invocationId,
-    channel,
-    ...(delta === undefined ? {} : { delta }),
-    ...(value === undefined ? {} : { value }),
-    occurredAt: event.occurredAt,
-  });
-}
-
-function readDataField(data: unknown, field: string): unknown {
-  if (typeof data !== "object" || data === null) return undefined;
-  return (data as Record<string, unknown>)[field];
 }

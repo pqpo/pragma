@@ -1,4 +1,4 @@
-import type { AgentMessageUsage } from "@pragma/shared";
+import type { AgentMessage, AgentMessageUsage } from "@pragma/shared";
 
 import type { Expert } from "../agent/expert-agent.ts";
 import type { ExpertAgentLogger } from "../logging/logger.ts";
@@ -34,7 +34,7 @@ export interface RuntimeEventMappingResult {
 export interface RuntimeStreamEventFactory {
   readonly messageDelta: (delta: string, role?: "assistant" | "system") => RuntimeStreamEventInput;
   readonly messageCompleted: (
-    text: string,
+    message: string | AgentMessage,
     role?: "assistant" | "system",
   ) => RuntimeStreamEventInput;
   readonly thoughtDelta: (delta: string) => RuntimeStreamEventInput;
@@ -191,7 +191,7 @@ export function createRuntimeStreamEventFactory(
         },
       };
     },
-    messageCompleted(text, role = "assistant") {
+    messageCompleted(message, role = "assistant") {
       return {
         runId,
         source,
@@ -199,7 +199,7 @@ export function createRuntimeStreamEventFactory(
         payload: {
           role,
           contentType: "text",
-          text,
+          ...(typeof message === "string" ? { text: message } : { message }),
         },
       };
     },

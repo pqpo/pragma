@@ -1,14 +1,17 @@
 export { AgentMessageSchema, type AgentMessage, type AgentMessageUsage } from "@pragma/shared";
+export type { ExecutionEvent, ExecutionOutputItem } from "@pragma/shared";
 export {
   HumanInteractionRecordSchema,
   type HumanInteractionRecord,
   type HumanInteractionResponse,
 } from "@pragma/shared";
 export {
-  ExpertSessionMessageSchema,
-  type ExpertSessionMessage,
-  type ExpertSessionUserMessage,
-  type ExpertSessionAssistantMessage,
+  AgentMessageRecordSchema,
+  InvocationMessageHistorySchema,
+  ExpertMessageHistorySchema,
+  type AgentMessageRecord,
+  type InvocationMessageHistory,
+  type ExpertMessageHistory,
 } from "@pragma/shared";
 export * from "./agent/context-manager.ts";
 export {
@@ -27,6 +30,7 @@ export * from "./human-interaction/durable-human-interaction.ts";
 export * from "./logging/logger.ts";
 export * from "./pragma-app.ts";
 export * from "./execution/execution-store.ts";
+export * from "./execution/execution-live-bus.ts";
 export * from "./execution/execution-output.ts";
 export * from "./execution/execution-view.ts";
 export * from "./execution/expert-session-store.ts";

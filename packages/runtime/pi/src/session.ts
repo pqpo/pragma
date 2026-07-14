@@ -15,13 +15,14 @@ import type { RuntimeStreamEventInput } from "@pragma/core";
 
 import {
   assertAssistantTurnCompleted,
+  readAssistantMessage,
   readAssistantMessageText,
   readAssistantTextDelta,
   readAssistantThinkingDelta,
   readProgressEvent,
   readToolExecutionEvent,
 } from "./session-events.ts";
-import { convertPiAgentMessages } from "./session-messages.ts";
+import { convertPiAgentMessage, convertPiAgentMessages } from "./session-messages.ts";
 import { createToolStreamEvents } from "./stream.ts";
 import { resolveRequiredRuntimeModel } from "./models.ts";
 import type { PiRuntimeStreamState } from "./types.ts";
@@ -108,6 +109,7 @@ export function mapPiAgentEvent(
   const delta = readAssistantTextDelta(event);
   const thinkingDelta = readAssistantThinkingDelta(event);
   const completedMessageText = readAssistantMessageText(event);
+  const completedMessage = readAssistantMessage(event);
   const progressEvent = readProgressEvent(event);
   const toolEvent = readToolExecutionEvent(event);
 
@@ -119,8 +121,8 @@ export function mapPiAgentEvent(
     events.push(context.events.thoughtDelta(thinkingDelta));
   }
 
-  if (completedMessageText !== undefined) {
-    events.push(context.events.messageCompleted(completedMessageText));
+  if (completedMessage !== undefined) {
+    events.push(context.events.messageCompleted(convertPiAgentMessage(completedMessage)));
   }
 
   if (progressEvent !== undefined) {

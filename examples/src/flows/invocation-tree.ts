@@ -10,6 +10,4 @@ flow.compose(({ start, end }) => {
 const execution = await createExampleApp().flows.start(flow, { input: {} });
 await execution.result;
 console.dir(await execution.getTree(), { depth: null });
-for await (const event of execution.getAllOutput()) {
-  console.log(event.invocationId, event.value ?? event.delta);
-}
+console.dir((await execution.listEvents({ scope: { kind: "all" } })).items, { depth: null });

@@ -147,15 +147,15 @@ Execution 的部分协议在 `@pragma/shared`，Runtime/Expert 契约在 Core，
 - Expert Definition、Capability Reference、Device Capability、Local Run Command/Event 必须各有唯一 schema owner；
 - 协议必须携带 schema version、request/event id、causation/correlation id 和幂等语义。
 
-### 已完成：Execution Event 与 Output 统一总序
+### 已完成：Execution 语义事件与实时 Output 分层
 
 **状态：已解决。**
 
-Execution 已采用单一 Canonical Event Log。Runtime 原生事件继续先归一化为 `ExpertAgentStreamEvent`，随后完整包入 `runtime.stream` Execution Event；领域事件与 Runtime Event 共享 Execution 内单调 sequence。
+Execution 已采用单一 Canonical Event Log，只持久化完整标准化消息、Invocation 生命周期、委派、人工交互等可恢复语义事件。Runtime 原生事件先归一化为 `ExpertAgentStreamEvent`，其中 token、thinking 和 tool delta 只通过 `subscribeOutput()` 实时发布，不进入事件日志。
 
-Output 已改为 `ExecutionOutputItem` 投影，复用源事件的 event id 和 cursor，不再独立持久化或编号。Execution 状态、Invocation patch 与事件还可以通过幂等 `commit()` 原子提交。
+实时 Output 使用 `ExecutionOutputItem`，保留来源 event id 和 Invocation/Executor/Context 信息，但不拥有持久化 cursor。完整 `AgentMessage` 通过 `invocation.message.appended` 进入 Canonical Event Log。Execution 状态、Invocation patch 与语义事件可通过幂等 `commit()` 原子提交。
 
-该设计为 SSE/WebSocket 合并、断点续传、Trace 重建、审计和 At-least-once 消费提供了统一 cursor。详见 ADR 007。
+该设计明确拆分“未来实时输出”和“历史/审计”：`subscribeOutput()` 只跟随未来事件，`getMessageHistory()` 读取完整消息，`listEvents()` 使用 Execution cursor 分页读取编排历史。详见 ADR 007。
 
 ### P1：文件存储是很好的本地参考实现，但不是云端后端
 

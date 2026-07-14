@@ -52,7 +52,7 @@ export class FlowExecutionManager {
     const executionId = request.executionId ?? randomUUID();
     const now = new Date().toISOString();
     const record: ExecutionRecord = {
-      schemaVersion: "pragma.execution/v2",
+      schemaVersion: "pragma.execution/v3",
       executionId,
       version: 0,
       kind: "flow",
@@ -68,6 +68,7 @@ export class FlowExecutionManager {
     await this.executions.create(record, {
       invocationId: executionId,
       rootInvocationId: executionId,
+      contextId: executionId,
       definition: record.definition,
       status: "queued",
       input,
@@ -229,6 +230,7 @@ export class FlowExecutionManager {
         });
       }
     } finally {
+      controller.finish();
       await controller.closeRuntimes();
     }
   }
@@ -433,12 +435,14 @@ async function findOrCreateStepInvocation(
   );
   if (existing !== undefined) return existing;
   const now = new Date().toISOString();
+  const invocationId = randomUUID();
   const invocation: Invocation = {
-    invocationId: randomUUID(),
+    invocationId,
     rootInvocationId: (await options.store.get(options.executionId))!.rootInvocationId,
     parentInvocationId: options.flowInvocationId,
     nodeId: step.id,
     definition,
+    contextId: invocationId,
     ...(definition.kind === "expert" || definition.kind === "expert-team"
       ? {
           executorId: isExpertTeam(step.definition as ExpertDefinition)

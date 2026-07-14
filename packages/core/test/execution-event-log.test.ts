@@ -2,25 +2,26 @@ import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
-import type { ExecutionRecord, ExpertAgentStreamEvent, Invocation } from "@pragma/shared";
+import type { ExecutionRecord, Invocation } from "@pragma/shared";
 import { describe, expect, it } from "vitest";
 
 import {
   createFileExecutionStore,
   ExecutionFinalStatusConflictError,
+  getExecutionLiveBus,
   PragmaPaths,
   StoredExecutionView,
 } from "../src/index.ts";
 
 describe("Execution canonical event log", () => {
-  it("uses one Execution sequence and derives Output items from source events", async () => {
+  it("uses one Execution sequence and projects durable message history", async () => {
     const { store } = await fixture();
     await store.appendEvent("execution", "root", "invocation.started", {});
     await store.appendEvent(
       "execution",
       "root",
-      "runtime.stream",
-      runtimeEvent("runtime-message", "hello"),
+      "invocation.message.appended",
+      { message: { role: "user", content: "hello", timestamp: 1 } },
       "runtime-message",
     );
     await store.appendEvent(
@@ -35,46 +36,84 @@ describe("Execution canonical event log", () => {
     expect(events.map((event) => event.cursor.sequence)).toEqual([1, 2, 3]);
     expect(events[1]).toMatchObject({
       eventId: "runtime-message",
-      type: "runtime.stream",
-      data: { type: "message.delta", payload: { delta: "hello" } },
+      type: "invocation.message.appended",
+      data: { message: { role: "user", content: "hello" } },
     });
-
-    const outputs = await store.readOutputs("execution");
-    expect(outputs).toMatchObject([
-      {
-        sourceEventId: "runtime-message",
-        cursor: { executionId: "execution", sequence: 2 },
-        channel: "message",
-        delta: "hello",
-      },
-      {
-        sourceEventId: "invocation-result",
-        cursor: { executionId: "execution", sequence: 3 },
-        channel: "result",
-        value: "hello",
-      },
+    const view = new StoredExecutionView("execution", store, "session");
+    await expect(view.getMessageHistory()).resolves.toMatchObject([
+      { invocationId: "root", messages: [{ message: { role: "user", content: "hello" } }] },
     ]);
-    await expect(
-      store.readOutputs("execution", { executionId: "execution", sequence: 2 }),
-    ).resolves.toMatchObject([{ sourceEventId: "invocation-result" }]);
+  });
+
+  it("caches live event scope resolution instead of rereading all Invocations per event", async () => {
+    const { store } = await fixture();
+    let listCalls = 0;
+    let getCalls = 0;
+    const trackedStore = {
+      ...store,
+      async listInvocations(executionId: string) {
+        listCalls += 1;
+        return await store.listInvocations(executionId);
+      },
+      async getInvocation(executionId: string, invocationId: string) {
+        getCalls += 1;
+        return await store.getInvocation(executionId, invocationId);
+      },
+    };
+    const view = new StoredExecutionView("execution", trackedStore);
+    const subscription = await view.subscribeEvents({
+      scope: { kind: "executor", executorId: "child" },
+    });
+    const now = new Date().toISOString();
+    await store.putInvocation("execution", {
+      invocationId: "child",
+      rootInvocationId: "root",
+      parentInvocationId: "root",
+      contextId: "child-context",
+      definition: { id: "child", version: "1.0.0", kind: "expert" },
+      executorId: "child",
+      status: "running",
+      input: null,
+      createdAt: now,
+      updatedAt: now,
+    });
+    const bus = getExecutionLiveBus(trackedStore);
+    for (const sequence of [1, 2]) {
+      bus.publishEvent("execution", {
+        schemaVersion: "pragma.execution-event/v3",
+        eventId: `child-${sequence}`,
+        cursor: { executionId: "execution", sequence },
+        executionId: "execution",
+        invocationId: "child",
+        type: "invocation.progress",
+        data: {},
+        occurredAt: now,
+      });
+    }
+    const iterator = subscription[Symbol.asyncIterator]();
+    await expect(iterator.next()).resolves.toMatchObject({ value: { eventId: "child-1" } });
+    await expect(iterator.next()).resolves.toMatchObject({ value: { eventId: "child-2" } });
+    await subscription.close();
+
+    expect(listCalls).toBe(1);
+    expect(getCalls).toBe(1);
   });
 
   it("deduplicates producer events and rejects conflicting reuse", async () => {
     const { store } = await fixture();
-    const event = runtimeEvent("same-event", "hello");
     const first = await store.appendEvent(
       "execution",
       "root",
-      "runtime.stream",
-      event,
-      event.eventId,
+      "invocation.progress",
+      { value: "hello" },
+      "same-event",
     );
     const duplicate = await store.appendEvent(
       "execution",
       "root",
-      "runtime.stream",
-      event,
-      event.eventId,
+      "invocation.progress",
+      { value: "hello" },
+      "same-event",
     );
 
     expect(duplicate.cursor).toEqual(first.cursor);
@@ -83,8 +122,8 @@ describe("Execution canonical event log", () => {
       store.appendEvent(
         "execution",
         "root",
-        "runtime.stream",
-        runtimeEvent("same-event", "different"),
+        "invocation.progress",
+        { value: "different" },
         "same-event",
       ),
     ).rejects.toThrow("event idempotency conflict");
@@ -154,98 +193,6 @@ describe("Execution canonical event log", () => {
     });
   });
 
-  it("drains output committed atomically with terminal state before ending a watcher", async () => {
-    const { store } = await fixture();
-    const originalGet = store.get.bind(store);
-    let unblockStateRead: (() => void) | undefined;
-    let reportStateRead: (() => void) | undefined;
-    const stateRead = new Promise<void>((resolve) => {
-      reportStateRead = resolve;
-    });
-    const stateReadBlocked = new Promise<void>((resolve) => {
-      unblockStateRead = resolve;
-    });
-    let shouldBlock = true;
-    store.get = async (executionId) => {
-      if (shouldBlock) {
-        shouldBlock = false;
-        reportStateRead?.();
-        await stateReadBlocked;
-      }
-      return await originalGet(executionId);
-    };
-
-    const iterator = store.watchOutputs("execution")[Symbol.asyncIterator]();
-    const next = iterator.next();
-    await stateRead;
-    await store.commit({
-      commitId: "terminal-output",
-      executionId: "execution",
-      executionPatch: { status: "succeeded", output: "done" },
-      invocationPatches: [{ invocationId: "root", patch: { status: "succeeded", output: "done" } }],
-      events: [
-        {
-          invocationId: "root",
-          type: "invocation.succeeded",
-          data: { output: "done" },
-        },
-      ],
-    });
-    unblockStateRead?.();
-
-    await expect(next).resolves.toMatchObject({
-      done: false,
-      value: { channel: "result", value: "done" },
-    });
-    await iterator.return?.();
-  });
-
-  it("does not miss an Invocation result finalized while its watcher is starting", async () => {
-    const { store } = await fixture();
-    const originalGetInvocation = store.getInvocation.bind(store);
-    let unblockInvocationRead: (() => void) | undefined;
-    let reportInvocationRead: (() => void) | undefined;
-    const invocationRead = new Promise<void>((resolve) => {
-      reportInvocationRead = resolve;
-    });
-    const invocationReadBlocked = new Promise<void>((resolve) => {
-      unblockInvocationRead = resolve;
-    });
-    let shouldBlock = true;
-    store.getInvocation = async (executionId, invocationId) => {
-      if (shouldBlock) {
-        shouldBlock = false;
-        reportInvocationRead?.();
-        await invocationReadBlocked;
-      }
-      return await originalGetInvocation(executionId, invocationId);
-    };
-
-    const view = new StoredExecutionView("execution", store);
-    const iterator = view.watchInvocationOutput("root")[Symbol.asyncIterator]();
-    const next = iterator.next();
-    await invocationRead;
-    await store.commit({
-      commitId: "invocation-terminal-output",
-      executionId: "execution",
-      invocationPatches: [{ invocationId: "root", patch: { status: "succeeded", output: "done" } }],
-      events: [
-        {
-          invocationId: "root",
-          type: "invocation.succeeded",
-          data: { output: "done" },
-        },
-      ],
-    });
-    unblockInvocationRead?.();
-
-    await expect(next).resolves.toMatchObject({
-      done: false,
-      value: { channel: "result", value: "done" },
-    });
-    await iterator.return?.();
-  });
-
   it("rejects non-JSON-safe commit values before writing state", async () => {
     const { store } = await fixture();
 
@@ -263,7 +210,7 @@ describe("Execution canonical event log", () => {
     const root = (await store.getInvocation("execution", "root"))!;
     const occurredAt = new Date().toISOString();
     const event = {
-      schemaVersion: "pragma.execution-event/v2",
+      schemaVersion: "pragma.execution-event/v3",
       eventId: "recovered-result",
       cursor: { executionId: "execution", sequence: 1 },
       executionId: "execution",
@@ -275,7 +222,7 @@ describe("Execution canonical event log", () => {
     await writeFile(
       paths.executionTransaction("execution"),
       `${JSON.stringify({
-        schemaVersion: "pragma.execution-transaction/v2",
+        schemaVersion: "pragma.execution-transaction/v3",
         commitId: "recovered-commit",
         signature: "a".repeat(64),
         execution: {
@@ -300,9 +247,6 @@ describe("Execution canonical event log", () => {
     });
     await expect(store.readEvents("execution")).resolves.toMatchObject([
       { eventId: "recovered-result", cursor: { sequence: 1 } },
-    ]);
-    await expect(store.readOutputs("execution")).resolves.toMatchObject([
-      { sourceEventId: "recovered-result", channel: "result", value: "recovered" },
     ]);
   });
 
@@ -329,7 +273,7 @@ async function fixture() {
   const timestamp = new Date().toISOString();
   const definition = { id: "flow", version: "1.0.0", kind: "flow" as const };
   const execution: ExecutionRecord = {
-    schemaVersion: "pragma.execution/v2",
+    schemaVersion: "pragma.execution/v3",
     executionId: "execution",
     version: 0,
     kind: "flow",
@@ -345,6 +289,7 @@ async function fixture() {
   const root: Invocation = {
     invocationId: "root",
     rootInvocationId: "root",
+    contextId: "root-context",
     definition,
     status: "running",
     input: null,
@@ -353,17 +298,4 @@ async function fixture() {
   };
   await store.create(execution, root);
   return { home, store };
-}
-
-function runtimeEvent(eventId: string, delta: string): ExpertAgentStreamEvent {
-  return {
-    schemaVersion: "pragma.stream/v1",
-    eventId,
-    sequence: 0,
-    runId: "root",
-    emittedAt: new Date().toISOString(),
-    source: { kind: "agent", runId: "root", path: [] },
-    type: "message.delta",
-    payload: { role: "assistant", contentType: "text", delta },
-  };
 }

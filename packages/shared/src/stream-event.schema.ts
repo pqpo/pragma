@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { AgentMessageUsageSchema } from "./agent-message.schema.ts";
+import { AgentMessageSchema, AgentMessageUsageSchema } from "./agent-message.schema.ts";
 
 export const ExpertAgentStreamSchemaVersionSchema = z.literal("pragma.stream/v1");
 
@@ -76,6 +76,7 @@ export const ExpertAgentMessageCompletedEventSchema = ExpertAgentStreamEventBase
     role: z.enum(["assistant", "system"]),
     contentType: z.enum(["text", "json"]),
     text: z.string().optional(),
+    message: AgentMessageSchema.optional(),
   }),
 });
 

@@ -4,7 +4,7 @@ export function convertPiAgentMessages(messages: readonly unknown[]): readonly A
   return messages.map((message) => convertPiAgentMessage(message));
 }
 
-function convertPiAgentMessage(message: unknown): AgentMessage {
+export function convertPiAgentMessage(message: unknown): AgentMessage {
   const parsedMessage = readRuntimeObject(message);
 
   if (parsedMessage === undefined) {

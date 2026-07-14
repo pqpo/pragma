@@ -1,4 +1,4 @@
-import type { ExpertTurn } from "@pragma/core";
+import type { ExecutionOutputItem, ExpertTurn } from "@pragma/core";
 
 interface ConsoleOutput {
   readonly isTTY?: boolean | undefined;
@@ -9,11 +9,6 @@ export interface ConsoleTurnRendererOptions {
   readonly output?: ConsoleOutput | undefined;
   readonly color?: boolean | undefined;
   readonly maxPreviewLength?: number | undefined;
-}
-
-interface RenderableEvent {
-  readonly type: string;
-  readonly data: unknown;
 }
 
 type Section = "answer" | "thinking" | "tool-output";
@@ -45,62 +40,35 @@ export class ConsoleTurnRenderer {
     this.maxPreviewLength = options.maxPreviewLength ?? 800;
   }
 
-  render(event: RenderableEvent): void {
-    const runtimeEvent = event.type === "runtime.stream" ? asRecord(event.data) : undefined;
-    const type = runtimeEvent === undefined ? event.type : readString(runtimeEvent, "type");
-    const payload =
-      runtimeEvent === undefined ? asRecord(event.data) : asRecord(runtimeEvent["payload"]);
-
-    switch (type) {
-      case "thought.delta":
-        this.renderDelta("thinking", "Thinking", readString(payload, "delta"), ANSI.dim);
-        break;
-      case "message.delta":
-        this.answerRendered = true;
-        this.renderDelta("answer", "Expert", readString(payload, "delta"));
-        break;
-      case "message.completed":
-        if (!this.answerRendered) {
-          const text = readString(payload, "text");
-          if (text !== "") {
-            this.answerRendered = true;
-            this.renderDelta("answer", "Expert", text);
-          }
-        }
-        break;
-      case "tool.started":
-        this.renderToolStarted(payload);
-        break;
-      case "tool.delta":
-        this.renderToolDelta(payload);
-        break;
-      case "tool.completed":
-        this.renderToolCompleted(payload);
-        break;
-      case "tool.failed":
-        this.renderToolFailed(payload);
-        break;
-      case "tool.approval_requested":
-        this.renderToolApproval(payload);
-        break;
-      case "progress":
-        this.renderProgress(payload);
-        break;
-      case "artifact.created":
-        this.renderStatus(
-          "◆",
-          "Artifact",
-          readString(payload, "title") || readString(payload, "kind"),
-          ANSI.cyan,
+  renderOutput(item: ExecutionOutputItem): void {
+    switch (item.channel) {
+      case "thought":
+        this.renderDelta(
+          "thinking",
+          "Thinking",
+          item.delta ?? formatValue(item.value, this.maxPreviewLength),
+          ANSI.dim,
         );
         break;
-      case "run.failed":
-        this.failureRendered = true;
-        this.renderStatus("×", "Failed", readString(payload, "message"), ANSI.red);
+      case "message":
+        if (item.delta !== undefined) {
+          this.answerRendered = true;
+          this.renderDelta("answer", "Expert", item.delta);
+        }
         break;
-      case "run.cancelled":
-        this.failureRendered = true;
-        this.renderStatus("×", "Cancelled", readString(payload, "reason"), ANSI.yellow);
+      case "tool": {
+        const payload = asRecord(item.value);
+        if (payload["message"] !== undefined) this.renderToolFailed(payload);
+        else if (payload["outputPreview"] !== undefined) this.renderToolCompleted(payload);
+        else if (payload["toolName"] !== undefined) this.renderToolStarted(payload);
+        else if (item.delta !== undefined)
+          this.renderDelta("tool-output", "Tool output", item.delta, ANSI.dim);
+        break;
+      }
+      case "progress":
+        this.renderProgress(asRecord(item.value));
+        break;
+      case "result":
         break;
     }
   }
@@ -229,16 +197,17 @@ export async function renderExpertTurn(
   options: ConsoleTurnRendererOptions = {},
 ): Promise<unknown> {
   const renderer = new ConsoleTurnRenderer(options);
+  const subscription = await turn.subscribeOutput({ scope: { kind: "all" } });
   try {
-    for await (const event of turn.events()) {
-      renderer.render(event);
-    }
+    for await (const output of subscription) renderer.renderOutput(output);
     const result = await turn.result;
     renderer.complete(result);
     return result;
   } catch (error) {
     renderer.fail(error);
     throw error;
+  } finally {
+    await subscription.close();
   }
 }
 

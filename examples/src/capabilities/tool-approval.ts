@@ -48,10 +48,17 @@ const session = await createExampleApp().experts.createSession(expert);
 try {
   const turn = await session.prompt(prompt, { requestId: "tool-approval-example-1" });
   const renderer = new ConsoleTurnRenderer();
-
-  for await (const event of turn.events()) {
-    renderer.render(event);
-    if (event.type !== "human.requested") continue;
+  const events = await turn.subscribeEvents({ scope: { kind: "all" } });
+  const output = await turn.subscribeOutput({ scope: { kind: "all" } });
+  const handled = new Set<string>();
+  const handleEvent = async (event: {
+    readonly eventId: string;
+    readonly type: string;
+    readonly data: unknown;
+  }) => {
+    if (event.type !== "human.requested") return;
+    if (handled.has(event.eventId)) return;
+    handled.add(event.eventId);
 
     const interaction = readInteraction(event.data);
     if (interaction.request.kind !== "tool_approval") {
@@ -75,9 +82,20 @@ try {
       },
       { requestId: `approval-response-${interaction.interactionId}` },
     );
-  }
+  };
 
-  renderer.complete(await turn.result);
+  try {
+    const renderTask = (async () => {
+      for await (const item of output) renderer.renderOutput(item);
+    })();
+    const history = await turn.listEvents({ scope: { kind: "all" }, limit: 1_000 });
+    for (const event of history.items) await handleEvent(event);
+    for await (const event of events) await handleEvent(event);
+    await renderTask;
+    renderer.complete(await turn.result);
+  } finally {
+    await Promise.all([events.close(), output.close()]);
+  }
 } catch (error) {
   console.error(error);
   process.exitCode = 1;

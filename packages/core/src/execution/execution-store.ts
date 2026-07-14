@@ -5,11 +5,9 @@ import { dirname, join } from "node:path";
 import {
   ExecutionEventSchema,
   ExecutionRecordSchema,
-  ExecutionRuntimeStreamEventSchema,
   InvocationSchema,
   type ExecutionCursor,
   type ExecutionEvent,
-  type ExecutionOutputItem,
   type ExecutionRecord,
   type Invocation,
   type InvocationTree,
@@ -18,7 +16,7 @@ import { z } from "zod";
 
 import { withFileLock } from "../storage/file-lock.ts";
 import { PragmaPaths } from "../storage/pragma-paths.ts";
-import { projectExecutionOutput } from "./execution-output.ts";
+import { getExecutionLiveBus } from "./execution-live-bus.ts";
 
 export interface NewExecutionEvent {
   readonly eventId?: string | undefined;
@@ -81,12 +79,6 @@ export interface ExecutionStore {
     eventId?: string,
   ): Promise<ExecutionEvent>;
   readEvents(executionId: string, after?: ExecutionCursor): Promise<readonly ExecutionEvent[]>;
-  readOutputs(
-    executionId: string,
-    after?: ExecutionCursor,
-  ): Promise<readonly ExecutionOutputItem[]>;
-  watchEvents(executionId: string, after?: ExecutionCursor): AsyncIterable<ExecutionEvent>;
-  watchOutputs(executionId: string, after?: ExecutionCursor): AsyncIterable<ExecutionOutputItem>;
 }
 
 const ExecutionCommitRecordSchema = z.object({
@@ -97,7 +89,7 @@ const ExecutionCommitRecordSchema = z.object({
 });
 
 const ExecutionCommitJournalSchema = z.object({
-  schemaVersion: z.literal("pragma.execution-transaction/v2"),
+  schemaVersion: z.literal("pragma.execution-transaction/v3"),
   commitId: z.string().min(1),
   signature: z.string().length(64),
   execution: ExecutionRecordSchema,
@@ -194,14 +186,14 @@ export function createFileExecutionStore(
         const nextExecution = ExecutionRecordSchema.parse({
           ...current,
           ...request.executionPatch,
-          schemaVersion: "pragma.execution/v2",
+          schemaVersion: "pragma.execution/v3",
           executionId: request.executionId,
           version: current.version + 1,
           lastAppliedSequence: lastSequence,
           updatedAt: now,
         });
         const journal = ExecutionCommitJournalSchema.parse({
-          schemaVersion: "pragma.execution-transaction/v2",
+          schemaVersion: "pragma.execution-transaction/v3",
           commitId: request.commitId,
           signature,
           execution: nextExecution,
@@ -211,6 +203,9 @@ export function createFileExecutionStore(
         });
         await writeJsonAtomic(paths.executionTransaction(request.executionId), journal);
         await applyTransaction(paths, request.executionId, journal);
+        for (const event of materialized.newEvents) {
+          getExecutionLiveBus(store).publishEvent(request.executionId, event);
+        }
         return {
           execution: nextExecution,
           invocations: nextInvocations,
@@ -302,38 +297,6 @@ export function createFileExecutionStore(
         await recoverTransaction(paths, executionId);
         return filterAfter(await readExecutionEvents(paths, executionId), executionId, after);
       });
-    },
-
-    async readOutputs(executionId, after) {
-      return await withFileLock(paths.executionLock(executionId), async () => {
-        await recoverTransaction(paths, executionId);
-        return filterAfter(
-          await readExecutionEvents(paths, executionId),
-          executionId,
-          after,
-        ).flatMap((event) => {
-          const output = projectExecutionOutput(event);
-          return output === undefined ? [] : [output];
-        });
-      });
-    },
-
-    watchEvents(executionId, after) {
-      return createWatch(
-        executionId,
-        after,
-        (cursor) => store.readEvents(executionId, cursor),
-        async () => isTerminal((await store.get(executionId))?.status),
-      );
-    },
-
-    watchOutputs(executionId, after) {
-      return createWatch(
-        executionId,
-        after,
-        (cursor) => store.readOutputs(executionId, cursor),
-        async () => isTerminal((await store.get(executionId))?.status),
-      );
     },
   };
 
@@ -431,7 +394,7 @@ function materializeEvents(
       continue;
     }
     const event = parseExecutionEvent({
-      schemaVersion: "pragma.execution-event/v2",
+      schemaVersion: "pragma.execution-event/v3",
       eventId,
       cursor: { executionId, sequence: ++sequence },
       executionId,
@@ -574,8 +537,7 @@ async function readCommitRecords(
 }
 
 function parseExecutionEvent(value: unknown): ExecutionEvent {
-  const event = ExecutionEventSchema.parse(value);
-  return event.type === "runtime.stream" ? ExecutionRuntimeStreamEventSchema.parse(event) : event;
+  return ExecutionEventSchema.parse(value);
 }
 
 async function readJsonIfExists(file: string): Promise<unknown | undefined> {
@@ -631,48 +593,6 @@ function filterAfter<T extends { readonly cursor: ExecutionCursor }>(
     throw new Error(`Cursor belongs to another Execution: ${after.executionId}`);
   }
   return values.filter((value) => value.cursor.sequence > (after?.sequence ?? 0));
-}
-
-function createWatch<T extends { readonly cursor: ExecutionCursor }>(
-  executionId: string,
-  after: ExecutionCursor | undefined,
-  readAfter: (cursor: ExecutionCursor | undefined) => Promise<readonly T[]>,
-  isComplete: () => Promise<boolean>,
-): AsyncIterable<T> {
-  return (async function* () {
-    let lastSequence = after?.sequence ?? 0;
-    while (true) {
-      const cursor = { executionId, sequence: lastSequence };
-      for (const event of await readAfter(cursor)) {
-        if (event.cursor.sequence > lastSequence) {
-          lastSequence = event.cursor.sequence;
-          yield event;
-        }
-      }
-      if (await isComplete()) {
-        const finalCursor = { executionId, sequence: lastSequence };
-        const finalValues = await readAfter(finalCursor);
-        if (finalValues.length === 0) return;
-        for (const event of finalValues) {
-          if (event.cursor.sequence > lastSequence) {
-            lastSequence = event.cursor.sequence;
-            yield event;
-          }
-        }
-        continue;
-      }
-      await new Promise<void>((resolve) => setTimeout(resolve, 25));
-    }
-  })();
-}
-
-function isTerminal(status: string | undefined): boolean {
-  return (
-    status === "succeeded" ||
-    status === "failed" ||
-    status === "cancelled" ||
-    status === "interrupted"
-  );
 }
 
 function isFinalStatus(status: string | undefined): boolean {

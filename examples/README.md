@@ -58,12 +58,11 @@ pnpm --filter @pragma/examples dev src/experts/getting-started/console-chat.ts
 
 `Thinking` 只会在模型和提供商实际返回 reasoning delta 时出现；renderer 不会伪造思考内容。
 
-流事件只监听订阅后的未来事件，并在 Execution 结束后自动关闭：
+实时输出只监听订阅后的未来增量，并在 Execution 结束后自动关闭：
 
 ```ts
-for await (const event of turn.events()) {
-  renderer.render(event);
-}
+const output = await turn.subscribeOutput({ scope: { kind: "all" } });
+for await (const item of output) renderer.renderOutput(item);
 
 const result = await turn.result;
 const turnUsage = await turn.usage;
@@ -72,7 +71,8 @@ const turnUsage = await turn.usage;
 需要读取既有对话时使用 Session 的 message history，而不是重放执行事件：
 
 ```ts
-const messages = await session.getMessageHistory();
+const histories = await session.getMessageHistory();
+const events = await session.listEvents();
 const sessionUsage = await session.getUsage();
 ```
 
