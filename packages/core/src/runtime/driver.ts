@@ -662,8 +662,18 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepared> {
       mapEvent: this.options.driver.mapEvent,
       mergeUsage,
     });
+    let enteredLifecycle = false;
+    let finalized = false;
+    const finalize = async (): Promise<void> => {
+      if (finalized) return;
+      finalized = true;
+      this.options.executionBindings.deactivate(runId);
+      if (this.activeRunId === runId) this.activeRunId = undefined;
+      await controller.complete();
+    };
 
-    const result = this.options.lifecycle.enqueue(async ({ signal }) => {
+    const task = this.options.lifecycle.enqueue(async ({ signal }) => {
+      enteredLifecycle = true;
       this.activeRunId = runId;
       this.options.executionBindings.activate(runId);
       try {
@@ -737,10 +747,11 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepared> {
         await this.options.checkpoint("turn.failed");
         throw error;
       } finally {
-        this.options.executionBindings.deactivate(runId);
-        if (this.activeRunId === runId) this.activeRunId = undefined;
-        await controller.complete();
+        await finalize();
       }
+    });
+    const result = task.result.finally(async () => {
+      if (!enteredLifecycle) await finalize();
     });
 
     return {
@@ -749,11 +760,16 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepared> {
       result,
       cancel: async () => {
         cancelled = true;
-        await this.options.driver.cancelTurn?.(this.options.nativeSession, {
-          runId,
-          signal: this.options.lifecycle.currentSignal,
-        });
-        await this.options.lifecycle.cancelCurrent();
+        const active = this.activeRunId === runId;
+        const signal = this.options.lifecycle.currentSignal;
+        const cancellation = task.cancel();
+        if (active) {
+          await this.options.driver.cancelTurn?.(this.options.nativeSession, {
+            runId,
+            signal,
+          });
+        }
+        await cancellation;
       },
     };
   }
@@ -770,14 +786,6 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepared> {
       throw new Error(`Cannot steer inactive Runtime submission: ${request.targetRunId}`);
     }
     await this.options.driver.steerTurn(this.options.nativeSession, request);
-  }
-
-  async cancelCurrentSubmission(): Promise<void> {
-    await this.options.driver.cancelTurn?.(this.options.nativeSession, {
-      runId: this.activeRunId,
-      signal: this.options.lifecycle.currentSignal,
-    });
-    await this.options.lifecycle.cancelCurrent();
   }
 
   async close(): Promise<void> {
@@ -950,8 +958,20 @@ class RuntimeExecutionBindings {
       get depth() {
         return current().executionContext?.depth ?? initialDepth;
       },
-      get delegate() {
-        return current().executionContext?.delegate;
+      get spawnExpert() {
+        return current().executionContext?.spawnExpert;
+      },
+      get waitExperts() {
+        return current().executionContext?.waitExperts;
+      },
+      get listExperts() {
+        return current().executionContext?.listExperts;
+      },
+      get followupExpert() {
+        return current().executionContext?.followupExpert;
+      },
+      get interruptExpert() {
+        return current().executionContext?.interruptExpert;
       },
     };
   }

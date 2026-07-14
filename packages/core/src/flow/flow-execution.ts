@@ -1,11 +1,17 @@
 import { randomUUID } from "node:crypto";
 
-import type { ExecutionRecord, HumanInteractionRequest, Invocation } from "@pragma/shared";
+import {
+  isFinalExecutionStatus as isFinal,
+  type ExecutionRecord,
+  type HumanInteractionRequest,
+  type Invocation,
+} from "@pragma/shared";
 
 import { isExpertTeam, type ExpertDefinition, type ExpertTeam } from "../agent/expert-team.ts";
 import type { RuntimeRegistry } from "../runtime-registry.ts";
 import { ExecutionController, runExpertInvocation } from "../execution/expert-runner.ts";
 import type { ExecutionStore } from "../execution/execution-store.ts";
+import { InvocationService } from "../execution/invocation-service.ts";
 import {
   StoredExecutionView,
   type ExecutionView,
@@ -52,7 +58,7 @@ export class FlowExecutionManager {
     const executionId = request.executionId ?? randomUUID();
     const now = new Date().toISOString();
     const record: ExecutionRecord = {
-      schemaVersion: "pragma.execution/v3",
+      schemaVersion: "pragma.execution/v4",
       executionId,
       version: 0,
       kind: "flow",
@@ -108,7 +114,7 @@ export class FlowExecutionManager {
     ) {
       throw new Error(`Flow definition graph mismatch for Execution ${request.executionId}.`);
     }
-    if (isTerminal(record.status)) {
+    if (isFinal(record.status)) {
       throw new Error(`Cannot recover terminal FlowExecution: ${record.status}`);
     }
     const active = this.active.get(request.executionId);
@@ -118,7 +124,7 @@ export class FlowExecutionManager {
       throw new Error(`FlowExecution recovery is already claimed: ${request.executionId}`);
     }
     for (const invocation of await this.executions.listInvocations(request.executionId)) {
-      if (!isTerminal(invocation.status) && invocation.status !== "waiting") {
+      if (!isFinal(invocation.status) && invocation.status !== "waiting") {
         await this.executions.putInvocation(request.executionId, {
           ...invocation,
           status: "interrupted",
@@ -127,6 +133,28 @@ export class FlowExecutionManager {
       }
     }
     await this.executions.update(request.executionId, { status: "interrupted" });
+    const interrupted = await this.executions.listInvocations(request.executionId);
+    await this.executions.commit({
+      commitId: `flow-recovery-prepared:${claimId}`,
+      executionId: request.executionId,
+      recoveryClaimId: claimId,
+      executionPatch: { status: "queued" },
+      invocationPatches: interrupted
+        .filter(
+          (invocation) => invocation.status === "interrupted" && invocation.agentId === undefined,
+        )
+        .map((invocation) => ({
+          invocationId: invocation.invocationId,
+          patch: { status: "queued" as const },
+        })),
+      events: [
+        {
+          invocationId: record.rootInvocationId,
+          type: "execution.recovery.prepared",
+          data: { claimId },
+        },
+      ],
+    });
     return this.activate(flow, request.executionId, request.runtime, claimId);
   }
 
@@ -201,7 +229,7 @@ export class FlowExecutionManager {
       const storedError = serializeError(error);
       const usage = controller.getUsage();
       const current = await this.executions.get(executionId);
-      if (current !== undefined && isTerminal(current.status)) {
+      if (current !== undefined && isFinal(current.status)) {
         if (usage !== undefined) await this.executions.update(executionId, { usage });
       } else {
         await this.executions.commit({
@@ -356,15 +384,10 @@ async function runStep(
       controller: options.controller,
       store: options.store,
       runtimes: options.runtimes,
-      contextForMember: (expertId, policy) => {
-        const memberContextId =
-          policy === "reuse" ? `${invocation.invocationId}:${expertId}` : randomUUID();
-        return { contextId: memberContextId };
-      },
     });
   } catch (error) {
     const latest = await options.store.getInvocation(options.executionId, invocation.invocationId);
-    if (latest !== undefined && !isTerminal(latest.status)) {
+    if (latest !== undefined && !isFinal(latest.status)) {
       await putStatus(
         options.store,
         options.executionId,
@@ -515,29 +538,15 @@ async function putStatus(
   output?: unknown,
   error?: unknown,
 ): Promise<void> {
-  await store.commit({
-    commitId: randomUUID(),
-    executionId,
-    invocationPatches: [
-      {
-        invocationId: invocation.invocationId,
-        patch: {
-          status,
-          ...(output === undefined ? {} : { output }),
-          ...(error === undefined ? {} : { error }),
-        },
-      },
-    ],
-    events: [
-      {
-        invocationId: invocation.invocationId,
-        type: `invocation.${status}`,
-        data: {
-          ...(output === undefined ? {} : { output }),
-          ...(error === undefined ? {} : { error }),
-        },
-      },
-    ],
+  const data = {
+    ...(output === undefined ? {} : { output }),
+    ...(error === undefined ? {} : { error }),
+  };
+  await new InvocationService(executionId, store).transition({
+    invocationId: invocation.invocationId,
+    status,
+    patch: data,
+    data,
   });
 }
 
@@ -600,10 +609,6 @@ async function waitForResult(store: ExecutionStore, executionId: string): Promis
       throw new Error(readErrorMessage(record.error) ?? record.status);
     await new Promise<void>((resolve) => setTimeout(resolve, 10));
   }
-}
-
-function isTerminal(status: string): boolean {
-  return status === "succeeded" || status === "failed" || status === "cancelled";
 }
 
 function serializeError(error: unknown): unknown {

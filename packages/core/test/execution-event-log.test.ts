@@ -80,7 +80,7 @@ describe("Execution canonical event log", () => {
     const bus = getExecutionLiveBus(trackedStore);
     for (const sequence of [1, 2]) {
       bus.publishEvent("execution", {
-        schemaVersion: "pragma.execution-event/v3",
+        schemaVersion: "pragma.execution-event/v4",
         eventId: `child-${sequence}`,
         cursor: { executionId: "execution", sequence },
         executionId: "execution",
@@ -193,6 +193,39 @@ describe("Execution canonical event log", () => {
     });
   });
 
+  it("keeps interrupted state resumable while protecting final outcomes", async () => {
+    const { store } = await fixture();
+    await store.commit({
+      commitId: "interrupt",
+      executionId: "execution",
+      executionPatch: { status: "interrupted" },
+      invocationPatches: [{ invocationId: "root", patch: { status: "interrupted" } }],
+    });
+
+    await expect(
+      store.commit({
+        commitId: "resume-without-claim",
+        executionId: "execution",
+        executionPatch: { status: "running" },
+        invocationPatches: [{ invocationId: "root", patch: { status: "running" } }],
+      }),
+    ).rejects.toBeInstanceOf(ExecutionFinalStatusConflictError);
+
+    await expect(store.claimRecovery("execution", "recovery-owner", 1_000)).resolves.toBe(true);
+    await expect(
+      store.commit({
+        commitId: "resume",
+        executionId: "execution",
+        recoveryClaimId: "recovery-owner",
+        executionPatch: { status: "running" },
+        invocationPatches: [{ invocationId: "root", patch: { status: "running" } }],
+      }),
+    ).resolves.toMatchObject({
+      execution: { status: "running" },
+      invocations: [{ status: "running" }],
+    });
+  });
+
   it("rejects non-JSON-safe commit values before writing state", async () => {
     const { store } = await fixture();
 
@@ -210,7 +243,7 @@ describe("Execution canonical event log", () => {
     const root = (await store.getInvocation("execution", "root"))!;
     const occurredAt = new Date().toISOString();
     const event = {
-      schemaVersion: "pragma.execution-event/v3",
+      schemaVersion: "pragma.execution-event/v4",
       eventId: "recovered-result",
       cursor: { executionId: "execution", sequence: 1 },
       executionId: "execution",
@@ -222,7 +255,7 @@ describe("Execution canonical event log", () => {
     await writeFile(
       paths.executionTransaction("execution"),
       `${JSON.stringify({
-        schemaVersion: "pragma.execution-transaction/v3",
+        schemaVersion: "pragma.execution-transaction/v4",
         commitId: "recovered-commit",
         signature: "a".repeat(64),
         execution: {
@@ -234,6 +267,7 @@ describe("Execution canonical event log", () => {
           updatedAt: occurredAt,
         },
         invocations: [{ ...root, status: "succeeded", output: "recovered", updatedAt: occurredAt }],
+        agents: [],
         events: [event],
         eventIds: [event.eventId],
       })}\n`,
@@ -273,7 +307,7 @@ async function fixture() {
   const timestamp = new Date().toISOString();
   const definition = { id: "flow", version: "1.0.0", kind: "flow" as const };
   const execution: ExecutionRecord = {
-    schemaVersion: "pragma.execution/v3",
+    schemaVersion: "pragma.execution/v4",
     executionId: "execution",
     version: 0,
     kind: "flow",

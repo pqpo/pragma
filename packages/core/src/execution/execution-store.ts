@@ -3,9 +3,12 @@ import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import {
+  AgentInstanceSchema,
   ExecutionEventSchema,
   ExecutionRecordSchema,
   InvocationSchema,
+  isTerminalExecutionStatus,
+  type AgentInstance,
   type ExecutionCursor,
   type ExecutionEvent,
   type ExecutionRecord,
@@ -31,19 +34,28 @@ export interface ExecutionInvocationPatch {
   readonly patch: Partial<Invocation>;
 }
 
+export interface ExecutionAgentPatch {
+  readonly agentId: string;
+  readonly patch: Partial<AgentInstance>;
+}
+
 export interface ExecutionCommitRequest {
   readonly commitId: string;
   readonly executionId: string;
   readonly expectedVersion?: number | undefined;
+  readonly recoveryClaimId?: string | undefined;
   readonly executionPatch?: Partial<ExecutionRecord> | undefined;
   readonly invocationPuts?: readonly Invocation[] | undefined;
   readonly invocationPatches?: readonly ExecutionInvocationPatch[] | undefined;
+  readonly agentPuts?: readonly AgentInstance[] | undefined;
+  readonly agentPatches?: readonly ExecutionAgentPatch[] | undefined;
   readonly events?: readonly NewExecutionEvent[] | undefined;
 }
 
 export interface ExecutionCommitResult {
   readonly execution: ExecutionRecord;
   readonly invocations: readonly Invocation[];
+  readonly agents: readonly AgentInstance[];
   readonly events: readonly ExecutionEvent[];
 }
 
@@ -69,6 +81,8 @@ export interface ExecutionStore {
   claimRecovery(executionId: string, claimId: string, leaseMs: number): Promise<boolean>;
   getInvocation(executionId: string, invocationId: string): Promise<Invocation | undefined>;
   listInvocations(executionId: string): Promise<readonly Invocation[]>;
+  getAgent(executionId: string, agentId: string): Promise<AgentInstance | undefined>;
+  listAgents(executionId: string): Promise<readonly AgentInstance[]>;
   putInvocation(executionId: string, invocation: Invocation): Promise<void>;
   getTree(executionId: string): Promise<InvocationTree | undefined>;
   appendEvent(
@@ -89,11 +103,12 @@ const ExecutionCommitRecordSchema = z.object({
 });
 
 const ExecutionCommitJournalSchema = z.object({
-  schemaVersion: z.literal("pragma.execution-transaction/v3"),
+  schemaVersion: z.literal("pragma.execution-transaction/v4"),
   commitId: z.string().min(1),
   signature: z.string().length(64),
   execution: ExecutionRecordSchema,
   invocations: InvocationSchema.array(),
+  agents: AgentInstanceSchema.array(),
   events: ExecutionEventSchema.array(),
   eventIds: z.array(z.string().min(1)),
 });
@@ -122,6 +137,7 @@ export function createFileExecutionStore(
         await writeJsonAtomic(paths.executionInvocations(record.executionId), [
           InvocationSchema.parse(root),
         ]);
+        await writeJsonAtomic(paths.executionAgents(record.executionId), []);
         await writeJsonAtomic(paths.executionCommits(record.executionId), []);
       });
     },
@@ -167,11 +183,23 @@ export function createFileExecutionStore(
 
         const now = new Date().toISOString();
         const currentInvocations = await readInvocations(paths, request.executionId);
-        assertFinalStatusTransitions(current, currentInvocations, request);
+        const currentAgents = await readAgents(paths, request.executionId);
+        assertFinalStatusTransitions(
+          current,
+          currentInvocations,
+          request,
+          hasActiveRecoveryClaim(current, request.recoveryClaimId),
+        );
         const nextInvocations = applyInvocationChanges(
           currentInvocations,
           request.invocationPuts ?? [],
           request.invocationPatches ?? [],
+          now,
+        );
+        const nextAgents = applyAgentChanges(
+          currentAgents,
+          request.agentPuts ?? [],
+          request.agentPatches ?? [],
           now,
         );
         const existingEvents = await readExecutionEvents(paths, request.executionId);
@@ -186,18 +214,19 @@ export function createFileExecutionStore(
         const nextExecution = ExecutionRecordSchema.parse({
           ...current,
           ...request.executionPatch,
-          schemaVersion: "pragma.execution/v3",
+          schemaVersion: "pragma.execution/v4",
           executionId: request.executionId,
           version: current.version + 1,
           lastAppliedSequence: lastSequence,
           updatedAt: now,
         });
         const journal = ExecutionCommitJournalSchema.parse({
-          schemaVersion: "pragma.execution-transaction/v3",
+          schemaVersion: "pragma.execution-transaction/v4",
           commitId: request.commitId,
           signature,
           execution: nextExecution,
           invocations: nextInvocations,
+          agents: nextAgents,
           events: materialized.newEvents,
           eventIds: materialized.requestedEvents.map((event) => event.eventId),
         });
@@ -209,6 +238,7 @@ export function createFileExecutionStore(
         return {
           execution: nextExecution,
           invocations: nextInvocations,
+          agents: nextAgents,
           events: materialized.requestedEvents,
         };
       });
@@ -263,6 +293,20 @@ export function createFileExecutionStore(
       });
     },
 
+    async getAgent(executionId, agentId) {
+      return await withFileLock(paths.executionLock(executionId), async () => {
+        await recoverTransaction(paths, executionId);
+        return (await readAgents(paths, executionId)).find((agent) => agent.agentId === agentId);
+      });
+    },
+
+    async listAgents(executionId) {
+      return await withFileLock(paths.executionLock(executionId), async () => {
+        await recoverTransaction(paths, executionId);
+        return await readAgents(paths, executionId);
+      });
+    },
+
     async putInvocation(executionId, invocation) {
       await store.commit({
         commitId: randomUUID(),
@@ -303,6 +347,33 @@ export function createFileExecutionStore(
   return store;
 }
 
+function applyAgentChanges(
+  current: readonly AgentInstance[],
+  puts: readonly AgentInstance[],
+  patches: readonly ExecutionAgentPatch[],
+  now: string,
+): AgentInstance[] {
+  const byId = new Map(current.map((agent) => [agent.agentId, agent]));
+  for (const agent of puts) {
+    if (byId.has(agent.agentId)) throw new Error(`Agent already exists: ${agent.agentId}`);
+    byId.set(agent.agentId, AgentInstanceSchema.parse(agent));
+  }
+  for (const change of patches) {
+    const agent = byId.get(change.agentId);
+    if (agent === undefined) throw new Error(`Agent not found: ${change.agentId}`);
+    byId.set(
+      change.agentId,
+      AgentInstanceSchema.parse({
+        ...agent,
+        ...change.patch,
+        agentId: change.agentId,
+        updatedAt: change.patch.updatedAt ?? now,
+      }),
+    );
+  }
+  return [...byId.values()];
+}
+
 function applyInvocationChanges(
   current: readonly Invocation[],
   puts: readonly Invocation[],
@@ -333,11 +404,13 @@ function assertFinalStatusTransitions(
   execution: ExecutionRecord,
   invocations: readonly Invocation[],
   request: ExecutionCommitRequest,
+  allowInterruptedResume: boolean,
 ): void {
   assertFinalStatusTransition(
     `Execution ${execution.executionId}`,
     execution.status,
     request.executionPatch?.status,
+    allowInterruptedResume,
   );
   const byId = new Map(invocations.map((invocation) => [invocation.invocationId, invocation]));
   for (const invocation of request.invocationPuts ?? []) {
@@ -347,6 +420,7 @@ function assertFinalStatusTransitions(
         `Invocation ${invocation.invocationId}`,
         current.status,
         invocation.status,
+        allowInterruptedResume,
       );
     }
   }
@@ -357,17 +431,43 @@ function assertFinalStatusTransitions(
         `Invocation ${change.invocationId}`,
         current.status,
         change.patch.status,
+        allowInterruptedResume,
       );
     }
   }
+}
+
+function hasActiveRecoveryClaim(
+  execution: ExecutionRecord,
+  recoveryClaimId: string | undefined,
+): boolean {
+  if (recoveryClaimId === undefined) return false;
+  const claim = execution.state["__recoveryClaim"];
+  if (typeof claim !== "object" || claim === null) return false;
+  const stored = claim as { readonly claimId?: unknown; readonly expiresAt?: unknown };
+  return (
+    stored.claimId === recoveryClaimId &&
+    typeof stored.expiresAt === "string" &&
+    Date.parse(stored.expiresAt) > Date.now()
+  );
 }
 
 function assertFinalStatusTransition(
   subject: string,
   current: Invocation["status"],
   requested: Invocation["status"] | undefined,
+  allowInterruptedResume: boolean,
 ): void {
-  if (requested !== undefined && isFinalStatus(current) && requested !== current) {
+  if (
+    requested !== undefined &&
+    isTerminalExecutionStatus(current) &&
+    requested !== current &&
+    !(
+      allowInterruptedResume &&
+      current === "interrupted" &&
+      (requested === "queued" || requested === "running")
+    )
+  ) {
     throw new ExecutionFinalStatusConflictError(subject, current, requested);
   }
 }
@@ -394,7 +494,7 @@ function materializeEvents(
       continue;
     }
     const event = parseExecutionEvent({
-      schemaVersion: "pragma.execution-event/v3",
+      schemaVersion: "pragma.execution-event/v4",
       eventId,
       cursor: { executionId, sequence: ++sequence },
       executionId,
@@ -454,6 +554,7 @@ async function applyTransaction(
 
   await writeJsonAtomic(paths.executionState(executionId), journal.execution);
   await writeJsonAtomic(paths.executionInvocations(executionId), journal.invocations);
+  await writeJsonAtomic(paths.executionAgents(executionId), journal.agents);
   await writeJsonLinesAtomic(paths.executionEvents(executionId), mergedEvents);
   await writeJsonAtomic(paths.executionCommits(executionId), nextCommits);
   await rm(paths.executionTransaction(executionId), { force: true });
@@ -492,12 +593,14 @@ async function readCommitResult(
 ): Promise<ExecutionCommitResult> {
   const execution = await requireExecution(paths, executionId);
   const invocations = await readInvocations(paths, executionId);
+  const agents = await readAgents(paths, executionId);
   const eventById = new Map(
     (await readExecutionEvents(paths, executionId)).map((event) => [event.eventId, event]),
   );
   return {
     execution,
     invocations,
+    agents,
     events: eventIds.map((eventId) => {
       const event = eventById.get(eventId);
       if (event === undefined) throw new Error(`Committed Execution event is missing: ${eventId}`);
@@ -518,6 +621,12 @@ async function readInvocations(paths: PragmaPaths, executionId: string): Promise
   const value = await readJsonIfExists(paths.executionInvocations(executionId));
   if (value === undefined) return [];
   return InvocationSchema.array().parse(value);
+}
+
+async function readAgents(paths: PragmaPaths, executionId: string): Promise<AgentInstance[]> {
+  const value = await readJsonIfExists(paths.executionAgents(executionId));
+  if (value === undefined) return [];
+  return AgentInstanceSchema.array().parse(value);
 }
 
 async function readExecutionEvents(
@@ -593,10 +702,6 @@ function filterAfter<T extends { readonly cursor: ExecutionCursor }>(
     throw new Error(`Cursor belongs to another Execution: ${after.executionId}`);
   }
   return values.filter((value) => value.cursor.sequence > (after?.sequence ?? 0));
-}
-
-function isFinalStatus(status: string | undefined): boolean {
-  return status === "succeeded" || status === "failed" || status === "cancelled";
 }
 
 function buildTree(rootId: string, invocations: readonly Invocation[]): InvocationTree {

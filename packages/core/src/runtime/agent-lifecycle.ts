@@ -27,9 +27,13 @@ export interface AgentLifecycle<TContext = unknown> {
   readonly currentSignal: AbortSignal | undefined;
   readonly enqueue: <TResult>(
     work: (context: AgentRunExecutionContext) => Promise<TResult>,
-  ) => Promise<TResult>;
-  readonly cancelCurrent: () => Promise<void>;
+  ) => AgentLifecycleTask<TResult>;
   readonly close: () => Promise<void>;
+}
+
+export interface AgentLifecycleTask<TResult> {
+  readonly result: Promise<TResult>;
+  readonly cancel: () => Promise<void>;
 }
 
 export function createQueuedAgentLifecycle<TContext = unknown>(
@@ -41,6 +45,7 @@ export function createQueuedAgentLifecycle<TContext = unknown>(
   let sessionState: SessionState = "active";
   let runState: RunState | undefined;
   let currentRunController: AbortController | undefined;
+  const pendingRunControllers = new Set<AbortController>();
   let cleanupPromise: Promise<void> | undefined;
   let queue: Promise<void> = Promise.resolve();
 
@@ -77,45 +82,53 @@ export function createQueuedAgentLifecycle<TContext = unknown>(
     get currentSignal() {
       return currentRunController?.signal;
     },
-    async enqueue(work) {
+    enqueue(work) {
+      const runController = new AbortController();
+      pendingRunControllers.add(runController);
       const execute = async (): Promise<Awaited<ReturnType<typeof work>>> => {
-        if (sessionState !== "active" || sessionAbortController.signal.aborted) {
-          runState = "cancelled";
-          throw new Error("Agent session is closing.");
-        }
-
-        const runController = new AbortController();
-        currentRunController = runController;
-        const propagateAbort = (): void => {
-          if (!runController.signal.aborted) {
-            runController.abort(sessionAbortController.signal.reason);
-          }
-        };
-        sessionAbortController.signal.addEventListener("abort", propagateAbort, { once: true });
-        runState = "running";
-
         try {
-          const result = await work({ signal: runController.signal });
-
-          if (runController.signal.aborted || sessionAbortController.signal.aborted) {
+          if (sessionState !== "active" || sessionAbortController.signal.aborted) {
             runState = "cancelled";
-            throw new Error("Agent run was cancelled.");
+            throw new Error("Agent session is closing.");
           }
+          if (runController.signal.aborted) {
+            runState = "cancelled";
+            throw new Error("Agent run was cancelled before it started.");
+          }
+          currentRunController = runController;
+          const propagateAbort = (): void => {
+            if (!runController.signal.aborted) {
+              runController.abort(sessionAbortController.signal.reason);
+            }
+          };
+          sessionAbortController.signal.addEventListener("abort", propagateAbort, { once: true });
+          runState = "running";
 
-          runState = "succeeded";
-          return result;
-        } catch (error) {
-          runState =
-            runController.signal.aborted || sessionAbortController.signal.aborted
-              ? "cancelled"
-              : "failed";
-          throw error;
+          try {
+            const result = await work({ signal: runController.signal });
+
+            if (runController.signal.aborted || sessionAbortController.signal.aborted) {
+              runState = "cancelled";
+              throw new Error("Agent run was cancelled.");
+            }
+
+            runState = "succeeded";
+            return result;
+          } catch (error) {
+            runState =
+              runController.signal.aborted || sessionAbortController.signal.aborted
+                ? "cancelled"
+                : "failed";
+            throw error;
+          } finally {
+            sessionAbortController.signal.removeEventListener("abort", propagateAbort);
+
+            if (currentRunController === runController) {
+              currentRunController = undefined;
+            }
+          }
         } finally {
-          sessionAbortController.signal.removeEventListener("abort", propagateAbort);
-
-          if (currentRunController === runController) {
-            currentRunController = undefined;
-          }
+          pendingRunControllers.delete(runController);
         }
       };
 
@@ -125,12 +138,14 @@ export function createQueuedAgentLifecycle<TContext = unknown>(
         () => undefined,
         () => undefined,
       );
-      return await result;
-    },
-    async cancelCurrent() {
-      const reason = new Error("Agent submission was cancelled.");
-      abortCurrentRun(reason);
-      await hooks.abort?.(currentRunController?.signal ?? AbortSignal.abort(reason));
+      return {
+        result,
+        cancel: async () => {
+          if (runController.signal.aborted) return;
+          const reason = new Error("Agent submission was cancelled.");
+          runController.abort(reason);
+        },
+      };
     },
     async close() {
       if (sessionState === "closed") {
@@ -141,6 +156,9 @@ export function createQueuedAgentLifecycle<TContext = unknown>(
       if (sessionState === "active") {
         sessionState = "closing";
         sessionAbortController.abort(new Error("Agent session was aborted."));
+        for (const controller of pendingRunControllers) {
+          if (!controller.signal.aborted) controller.abort(sessionAbortController.signal.reason);
+        }
         abortCurrentRun(sessionAbortController.signal.reason);
         await hooks.abort?.(sessionAbortController.signal);
       }

@@ -18,7 +18,7 @@ export {
   createAgentLauncher,
   type AgentLauncher,
   type CreateAgentLauncherOptions,
-  type DelegationContextPolicy,
+  type ExpertLifecycleToolName,
 } from "./agent/agent-launcher.ts";
 export * from "./agent/expert-agent.ts";
 export * from "./agent/expert-team.ts";

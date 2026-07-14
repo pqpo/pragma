@@ -1,23 +1,23 @@
 import { randomUUID } from "node:crypto";
 
-import type {
-  AgentMessage,
-  AgentMessageUsage,
-  ExpertAgentStreamEvent,
-  Invocation,
-  RuntimeContextSnapshot as SharedRuntimeContextSnapshot,
+import {
+  isTerminalExecutionStatus,
+  type AgentMessage,
+  type AgentMessageUsage,
+  type ExpertAgentStreamEvent,
+  type Invocation,
+  type RuntimeContextSnapshot as SharedRuntimeContextSnapshot,
 } from "@pragma/shared";
 
 import type { Expert } from "../agent/expert-agent.ts";
 import {
-  createTeamDelegationTool,
+  createTeamDelegationTools,
   isAgentDelegationTool,
   readAgentDelegationDefinition,
   type AgentDelegationDefinition,
-  type DelegationContextPolicy,
 } from "../agent/agent-launcher.ts";
 import { isExpertTeam, type ExpertDefinition, type ExpertTeam } from "../agent/expert-team.ts";
-import type { RuntimeAgentSession } from "../runtime/runtime-adapter.ts";
+import type { RuntimeAgentSession, RuntimeSubmitHandle } from "../runtime/runtime-adapter.ts";
 import { mergeUsage } from "../runtime/usage.ts";
 import { openRuntimeSession } from "../runtime/session-factory.ts";
 import type { RuntimeRegistry } from "../runtime-registry.ts";
@@ -27,6 +27,11 @@ import {
   ExecutionVersionConflictError,
   type ExecutionStore,
 } from "./execution-store.ts";
+import {
+  ExpertOrchestrator,
+  type DelegationPermit,
+  type ExpertInvocationJob,
+} from "./expert-orchestrator.ts";
 import { getExecutionLiveBus } from "./execution-live-bus.ts";
 import { projectRuntimeOutput } from "./execution-output.ts";
 import { RuntimeMessageAccumulator } from "./runtime-message-accumulator.ts";
@@ -34,22 +39,24 @@ import { RuntimeSessionPool, type RuntimeSessionIdentity } from "./runtime-sessi
 
 export type RuntimeContextSnapshot = SharedRuntimeContextSnapshot;
 
+interface ActiveSubmission {
+  readonly invocationId: string;
+  readonly contextId: string;
+  readonly session: RuntimeAgentSession;
+  readonly handle: RuntimeSubmitHandle;
+}
+
 export class ExecutionController {
   private readonly activeRuntimeSessions = new Map<string, RuntimeAgentSession>();
-  private readonly activeRuntimeSubmissions = new Map<
-    string,
-    { readonly runId: string; readonly session: RuntimeAgentSession }
-  >();
+  private readonly activeRuntimeSubmissions = new Map<string, ActiveSubmission>();
   private readonly runtimeSubmissionWaiters = new Map<
     string,
     Set<{
-      readonly resolve: (submission: {
-        readonly runId: string;
-        readonly session: RuntimeAgentSession;
-      }) => void;
+      readonly resolve: (submission: ActiveSubmission) => void;
       readonly reject: (reason: unknown) => void;
     }>
   >();
+  private readonly invocationSignals = new Map<string, AbortController>();
   private readonly pendingInteractions = new Map<
     string,
     {
@@ -79,6 +86,15 @@ export class ExecutionController {
     return this.usage;
   }
 
+  signalForInvocation(invocationId: string): AbortSignal {
+    const existing = this.invocationSignals.get(invocationId);
+    if (existing !== undefined) return existing.signal;
+    const created = new AbortController();
+    if (this.cancelled) created.abort(new Error(`Execution cancelled: ${this.executionId}`));
+    this.invocationSignals.set(invocationId, created);
+    return created.signal;
+  }
+
   async acquireRuntime(
     identity: RuntimeSessionIdentity,
     create: () => Promise<RuntimeAgentSession>,
@@ -86,7 +102,7 @@ export class ExecutionController {
     const session = await this.runtimeSessions.acquire(identity, create);
     this.activeRuntimeSessions.set(identity.contextId, session);
     if (this.cancelled) {
-      await session.cancelCurrentSubmission();
+      await session.close();
       throw new Error(`Execution cancelled: ${this.executionId}`);
     }
     return session;
@@ -97,19 +113,46 @@ export class ExecutionController {
     await this.runtimeSessions.release(identity);
   }
 
-  registerRuntimeSubmission(contextId: string, session: RuntimeAgentSession, runId: string): void {
-    const submission = { runId, session };
-    this.activeRuntimeSubmissions.set(contextId, submission);
+  registerRuntimeSubmission(
+    invocationId: string,
+    contextId: string,
+    session: RuntimeAgentSession,
+    handle: RuntimeSubmitHandle,
+  ): void {
+    const submission = { invocationId, contextId, session, handle };
+    this.activeRuntimeSubmissions.set(invocationId, submission);
     const waiters = this.runtimeSubmissionWaiters.get(contextId);
     if (waiters === undefined) return;
     this.runtimeSubmissionWaiters.delete(contextId);
     for (const waiter of waiters) waiter.resolve(submission);
   }
 
-  unregisterRuntimeSubmission(contextId: string, runId: string): void {
-    if (this.activeRuntimeSubmissions.get(contextId)?.runId === runId) {
-      this.activeRuntimeSubmissions.delete(contextId);
+  unregisterRuntimeSubmission(invocationId: string, runId: string): void {
+    if (this.activeRuntimeSubmissions.get(invocationId)?.handle.runId === runId) {
+      this.activeRuntimeSubmissions.delete(invocationId);
     }
+  }
+
+  async interruptInvocation(invocationId: string, reason?: string): Promise<boolean> {
+    const invocation = await this.store.getInvocation(this.executionId, invocationId);
+    if (invocation === undefined) throw new Error(`Invocation not found: ${invocationId}`);
+    if (isTerminalExecutionStatus(invocation.status)) return false;
+    try {
+      await this.store.commit({
+        commitId: `invocation-interrupted:${invocationId}`,
+        executionId: this.executionId,
+        invocationPatches: [{ invocationId, patch: { status: "interrupted", error: reason } }],
+        events: [{ invocationId, type: "invocation.interrupted", data: { reason } }],
+      });
+    } catch (error) {
+      if (!(error instanceof ExecutionFinalStatusConflictError)) throw error;
+      return false;
+    }
+    const controller = this.invocationSignals.get(invocationId) ?? new AbortController();
+    this.invocationSignals.set(invocationId, controller);
+    controller.abort(new Error(reason ?? `Invocation interrupted: ${invocationId}`));
+    await this.activeRuntimeSubmissions.get(invocationId)?.handle.cancel();
+    return true;
   }
 
   async requestHumanInteraction(
@@ -122,10 +165,7 @@ export class ExecutionController {
       this.executionId,
       invocationId,
       "human.requested",
-      {
-        interactionId,
-        request,
-      },
+      { interactionId, request },
       `human-request:${interactionId}`,
     );
     if (this.cancelled) throw new Error("Execution was cancelled.");
@@ -168,16 +208,17 @@ export class ExecutionController {
     this.cancelled = true;
     const cancellation = new Error(reason ?? `Execution cancelled: ${this.executionId}`);
     this.rejectRuntimeSubmissionWaiters(cancellation);
+    for (const controller of this.invocationSignals.values()) controller.abort(cancellation);
     for (const pending of this.pendingInteractions.values()) pending.reject(cancellation);
     this.pendingInteractions.clear();
     await Promise.allSettled(
-      [...this.activeRuntimeSessions.values()].map((runtime) => runtime.cancelCurrentSubmission()),
+      [...this.activeRuntimeSubmissions.values()].map((submission) => submission.handle.cancel()),
     );
     while (true) {
       const record = await this.store.get(this.executionId);
-      if (record === undefined || isTerminal(record.status)) return;
+      if (record === undefined || isTerminalExecutionStatus(record.status)) return;
       const invocationPatches = (await this.store.listInvocations(this.executionId))
-        .filter((invocation) => !isTerminal(invocation.status))
+        .filter((invocation) => !isTerminalExecutionStatus(invocation.status))
         .map((invocation) => ({
           invocationId: invocation.invocationId,
           patch: { status: "cancelled" as const, error: reason },
@@ -223,6 +264,7 @@ export class ExecutionController {
       new Error("ExpertTurn completed before its Runtime submission became active."),
     );
     this.activeRuntimeSubmissions.clear();
+    this.invocationSignals.clear();
     getExecutionLiveBus(this.store).complete(this.executionId);
   }
 
@@ -231,11 +273,10 @@ export class ExecutionController {
     this.activeRuntimeSessions.clear();
   }
 
-  private async waitForRuntimeSubmission(contextId: string): Promise<{
-    readonly runId: string;
-    readonly session: RuntimeAgentSession;
-  }> {
-    const active = this.activeRuntimeSubmissions.get(contextId);
+  private async waitForRuntimeSubmission(contextId: string): Promise<ActiveSubmission> {
+    const active = [...this.activeRuntimeSubmissions.values()].find(
+      (submission) => submission.contextId === contextId,
+    );
     if (active !== undefined) return active;
     if (this.cancelled) throw new Error(`Execution cancelled: ${this.executionId}`);
     return await new Promise((resolve, reject) => {
@@ -257,6 +298,7 @@ export interface RunExpertInvocationOptions {
   readonly executionId: string;
   readonly invocationId: string;
   readonly parentInvocationId?: string | undefined;
+  readonly agentId?: string | undefined;
   readonly expert: ExpertDefinition;
   readonly prompt: string;
   readonly owner:
@@ -265,25 +307,16 @@ export interface RunExpertInvocationOptions {
   readonly runtimeId?: string | undefined;
   readonly contextId: string;
   readonly runtimeSnapshot?: RuntimeContextSnapshot | undefined;
-  readonly runtimeScope?: "invocation" | "session" | undefined;
+  readonly runtimeScope?: "invocation" | "session" | "agent" | undefined;
   readonly controller: ExecutionController;
   readonly store: ExecutionStore;
   readonly runtimes: RuntimeRegistry;
   readonly team?: ExpertTeam | undefined;
   readonly depth?: number | undefined;
-  readonly contextForMember?:
-    | ((
-        expertId: string,
-        policy: DelegationContextPolicy,
-      ) => {
-        readonly contextId: string;
-        readonly snapshot?: RuntimeContextSnapshot | undefined;
-      })
-    | undefined;
   readonly onRuntimeContext?:
     | ((contextId: string, snapshot: RuntimeContextSnapshot) => Promise<void>)
     | undefined;
-  readonly delegationState?: DelegationExecutionState | undefined;
+  readonly orchestrator?: ExpertOrchestrator | undefined;
   readonly delegationPermit?: DelegationPermit | undefined;
 }
 
@@ -291,20 +324,31 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
   const team = isExpertTeam(options.expert) ? options.expert : options.team;
   const nativeExpert = isExpertTeam(options.expert) ? options.expert.coordinator : options.expert;
   const depth = options.depth ?? 0;
-  const teamTool = team === undefined ? undefined : createTeamDelegationTool(team, nativeExpert.id);
+  const teamTools = team === undefined ? [] : createTeamDelegationTools(team, nativeExpert.id);
   const executableExpert =
-    team === undefined ? nativeExpert : withTeamDelegationTool(nativeExpert, teamTool);
+    team === undefined ? nativeExpert : withTeamDelegationTools(nativeExpert, teamTools);
   const delegation =
-    teamTool === undefined
+    teamTools.length === 0
       ? team === undefined
         ? readExpertDelegationDefinition(nativeExpert)
         : undefined
-      : readAgentDelegationDefinition(teamTool);
-  const delegationState =
-    options.delegationState ??
-    (delegation === undefined
-      ? undefined
-      : new DelegationExecutionState(delegation.maxConcurrency, delegation.maxDepth));
+      : readAgentDelegationDefinition(teamTools[0]!);
+
+  let orchestrator = options.orchestrator;
+  if (orchestrator === undefined && delegation !== undefined) {
+    const created: ExpertOrchestrator = new ExpertOrchestrator({
+      executionId: options.executionId,
+      rootInvocationId: (await requireExecution(options.store, options.executionId))
+        .rootInvocationId,
+      store: options.store,
+      maxConcurrency: delegation.maxConcurrency,
+      maxDepth: delegation.maxDepth,
+      interruptController: options.controller,
+      execute: async (job): Promise<void> => await executeAgentJob(options, team, created, job),
+    });
+    orchestrator = created;
+  }
+
   const invocation = await requireInvocation(
     options.store,
     options.executionId,
@@ -314,8 +358,9 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
     options.controller.addUsage(invocation.usage);
     return invocation.output;
   }
+  options.controller.addUsage(invocation.usage);
   await options.store.commit({
-    commitId: randomUUID(),
+    commitId: `invocation-started:${options.invocationId}`,
     executionId: options.executionId,
     invocationPatches: [{ invocationId: options.invocationId, patch: { status: "running" } }],
     events: [
@@ -326,18 +371,9 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
       },
     ],
   });
-
-  await options.store.appendEvent(
-    options.executionId,
-    options.invocationId,
-    "invocation.message.appended",
-    {
-      message: {
-        role: "user",
-        content: options.prompt,
-        timestamp: Date.now(),
-      } satisfies AgentMessage,
-    },
+  await appendUserMessage(
+    options,
+    options.prompt,
     `invocation-user-message:${options.invocationId}`,
   );
 
@@ -348,55 +384,37 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
     expertId: nativeExpert.id,
     runtimeId: runtime.descriptor.id,
   } satisfies RuntimeSessionIdentity;
-  if (
-    options.runtimeSnapshot !== undefined &&
-    (options.runtimeSnapshot.expertId !== runtimeIdentity.expertId ||
-      options.runtimeSnapshot.runtimeId !== runtimeIdentity.runtimeId)
-  ) {
-    throw new Error(
-      `Runtime context ${options.contextId} is bound to ${options.runtimeSnapshot.expertId}/${options.runtimeSnapshot.runtimeId} and cannot be reused with ${runtimeIdentity.expertId}/${runtimeIdentity.runtimeId}.`,
-    );
-  }
+  assertRuntimeIdentity(options, runtimeIdentity);
+
   const persistRuntimeSnapshot = async (snapshot: RuntimeContextSnapshot): Promise<void> => {
-    if (options.runtimeScope === "invocation") {
+    if (options.runtimeScope === "invocation" || options.runtimeScope === "agent") {
       const latest = await requireInvocation(
         options.store,
         options.executionId,
         options.invocationId,
       );
-      await options.store.putInvocation(options.executionId, {
-        ...latest,
-        runtimeContext: { contextId: options.contextId, ...snapshot },
-        updatedAt: new Date().toISOString(),
-      });
+      if (!isTerminalExecutionStatus(latest.status) || latest.status === "succeeded") {
+        await options.store.putInvocation(options.executionId, {
+          ...latest,
+          runtimeContext: { contextId: options.contextId, ...snapshot },
+          updatedAt: new Date().toISOString(),
+        });
+      }
+      if (options.runtimeScope === "agent" && options.agentId !== undefined) {
+        await orchestrator?.updateRuntimeContext(options.agentId, snapshot);
+      }
       return;
     }
     await options.onRuntimeContext?.(options.contextId, snapshot);
   };
-  const executionContext = {
-    executionId: options.executionId,
-    invocationId: options.invocationId,
+
+  const executionContext = createExecutionContext(
+    options,
+    nativeExpert,
+    delegation,
+    orchestrator,
     depth,
-    ...(delegation === undefined || delegationState === undefined
-      ? {}
-      : {
-          delegate: async (request: {
-            readonly expertId: string;
-            readonly prompt: string;
-            readonly context?: "fresh" | "reuse" | undefined;
-            readonly runtime?: string | undefined;
-          }) =>
-            await delegate({
-              ...options,
-              team,
-              delegation,
-              delegationState,
-              sourceExpertId: nativeExpert.id,
-              depth,
-              request,
-            }),
-        }),
-  };
+  );
   const humanInteractionHandler = async (request: ExpertAgentHumanRequest) =>
     await options.controller.requestHumanInteraction(options.invocationId, request);
   const session = await options.controller.acquireRuntime(runtimeIdentity, async () => {
@@ -432,38 +450,278 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
     return opened;
   });
 
-  const handle = session.submit({
-    runId: options.invocationId,
-    query: options.prompt,
+  let query = options.prompt;
+  let continuation = 0;
+  let invocationUsage = invocation.usage;
+  try {
+    while (true) {
+      const turn = await submitRuntimeTurn({
+        options,
+        invocation,
+        session,
+        query,
+        runId:
+          continuation === 0
+            ? options.invocationId
+            : `${options.invocationId}:continuation:${continuation}`,
+        executionContext,
+        humanInteractionHandler,
+        runtimeSource: runtime.descriptor,
+      });
+      options.controller.addUsage(turn.usage);
+      invocationUsage = mergeUsage(invocationUsage, turn.usage);
+      await persistSessionInfo(
+        session,
+        nativeExpert,
+        runtime.descriptor.id,
+        persistRuntimeSnapshot,
+      );
+
+      if (
+        orchestrator !== undefined &&
+        (await orchestrator.hasOwnedUnjoined(options.invocationId))
+      ) {
+        await options.store.commit({
+          commitId: randomUUID(),
+          executionId: options.executionId,
+          invocationPatches: [
+            {
+              invocationId: options.invocationId,
+              patch: {
+                status: "waiting",
+                ...(invocationUsage === undefined ? {} : { usage: invocationUsage }),
+              },
+            },
+          ],
+          events: [
+            { invocationId: options.invocationId, type: "expert.children.waiting", data: {} },
+          ],
+        });
+        await orchestrator.waitForOwnedUnjoined(
+          options.invocationId,
+          options.controller.signalForInvocation(options.invocationId),
+          options.delegationPermit,
+        );
+        const result = await orchestrator.list(options.invocationId);
+        query = [
+          "[Pragma orchestration continuation]",
+          "All attached Expert tasks are terminal. Synthesize their results into the final answer.",
+          "Do not spawn replacement tasks for work that is already complete.",
+          JSON.stringify(result, null, 2),
+        ].join("\n");
+        continuation += 1;
+        await options.store.commit({
+          commitId: randomUUID(),
+          executionId: options.executionId,
+          invocationPatches: [{ invocationId: options.invocationId, patch: { status: "running" } }],
+          events: [
+            {
+              invocationId: options.invocationId,
+              type: "expert.children.completed",
+              data: result,
+            },
+          ],
+        });
+        await appendUserMessage(
+          options,
+          query,
+          `invocation-continuation-message:${options.invocationId}:${continuation}`,
+        );
+        continue;
+      }
+
+      await options.store.commit({
+        commitId: `invocation-succeeded:${options.invocationId}`,
+        executionId: options.executionId,
+        invocationPatches: [
+          {
+            invocationId: options.invocationId,
+            patch: {
+              status: "succeeded",
+              output: turn.output,
+              ...(invocationUsage === undefined ? {} : { usage: invocationUsage }),
+            },
+          },
+        ],
+        events: [
+          {
+            invocationId: options.invocationId,
+            type: "invocation.succeeded",
+            data: {
+              output: turn.output,
+              ...(invocationUsage === undefined ? {} : { usage: invocationUsage }),
+            },
+          },
+        ],
+      });
+      return turn.output;
+    }
+  } catch (error) {
+    let failure = error;
+    try {
+      await orchestrator?.interruptOwned(
+        options.invocationId,
+        `Owner Invocation failed: ${options.invocationId}`,
+      );
+    } catch (cleanupError) {
+      failure = new AggregateError(
+        [error, cleanupError],
+        `Invocation ${options.invocationId} failed and its descendants could not be interrupted.`,
+      );
+    }
+    const latest = await options.store.getInvocation(options.executionId, options.invocationId);
+    const status = options.controller.isCancelled()
+      ? "cancelled"
+      : latest?.status === "interrupted"
+        ? "interrupted"
+        : "failed";
+    if (latest !== undefined && !isTerminalExecutionStatus(latest.status)) {
+      await options.store.commit({
+        commitId: `invocation-${status}:${options.invocationId}`,
+        executionId: options.executionId,
+        invocationPatches: [
+          { invocationId: options.invocationId, patch: { status, error: serializeError(failure) } },
+        ],
+        events: [
+          {
+            invocationId: options.invocationId,
+            type: `invocation.${status}`,
+            data: { message: failure instanceof Error ? failure.message : String(failure) },
+          },
+        ],
+      });
+    }
+    throw failure;
+  } finally {
+    if (options.runtimeScope === "agent") {
+      await options.controller.releaseRuntime(runtimeIdentity);
+    }
+  }
+}
+
+async function executeAgentJob(
+  parent: RunExpertInvocationOptions,
+  team: ExpertTeam | undefined,
+  orchestrator: ExpertOrchestrator,
+  job: ExpertInvocationJob,
+): Promise<void> {
+  await runExpertInvocation({
+    executionId: parent.executionId,
+    invocationId: job.invocation.invocationId,
+    parentInvocationId: job.invocation.parentInvocationId,
+    agentId: job.agent.agentId,
+    expert: job.expert,
+    prompt: job.prompt,
+    owner: parent.owner,
+    runtimeId: job.runtimeId ?? job.agent.runtimeId,
+    contextId: job.agent.contextId,
+    runtimeSnapshot: job.agent.runtimeContext,
+    runtimeScope: "agent",
+    controller: parent.controller,
+    store: parent.store,
+    runtimes: parent.runtimes,
+    team,
+    depth: job.agent.depth,
+    orchestrator,
+    delegationPermit: job.permit,
+  });
+}
+
+function createExecutionContext(
+  options: RunExpertInvocationOptions,
+  nativeExpert: Expert,
+  delegation: AgentDelegationDefinition | undefined,
+  orchestrator: ExpertOrchestrator | undefined,
+  depth: number,
+) {
+  const base = { executionId: options.executionId, invocationId: options.invocationId, depth };
+  if (delegation === undefined || orchestrator === undefined) return base;
+  return {
+    ...base,
+    spawnExpert: async (request: {
+      readonly expertId: string;
+      readonly prompt: string;
+      readonly runtime?: string | undefined;
+    }) => {
+      const expert = delegation.experts.find((candidate) => candidate.id === request.expertId);
+      if (expert === undefined) {
+        throw new Error(`Expert ${nativeExpert.id} may not spawn ${request.expertId}.`);
+      }
+      return await orchestrator.spawn({
+        ownerInvocationId: options.invocationId,
+        parentAgentId: options.agentId,
+        depth,
+        expert,
+        prompt: request.prompt,
+        runtimeId: request.runtime,
+      });
+    },
+    waitExperts: async (request: {
+      readonly invocationIds: readonly string[];
+      readonly returnWhen?: "all" | "any" | undefined;
+      readonly timeoutMs?: number | undefined;
+      readonly signal?: AbortSignal | undefined;
+    }) => await orchestrator.wait(options.invocationId, request, options.delegationPermit),
+    listExperts: async () => await orchestrator.list(options.invocationId),
+    followupExpert: async (request: { readonly agentId: string; readonly prompt: string }) =>
+      await orchestrator.followup(options.invocationId, request),
+    interruptExpert: async (request: {
+      readonly agentId: string;
+      readonly invocationId?: string | undefined;
+      readonly reason?: string | undefined;
+    }) => await orchestrator.interrupt(options.invocationId, request),
+  };
+}
+
+async function submitRuntimeTurn(options: {
+  readonly options: RunExpertInvocationOptions;
+  readonly invocation: Invocation;
+  readonly session: RuntimeAgentSession;
+  readonly query: string;
+  readonly runId: string;
+  readonly executionContext: ReturnType<typeof createExecutionContext>;
+  readonly humanInteractionHandler: (
+    request: ExpertAgentHumanRequest,
+  ) => Promise<ExpertAgentHumanResponse>;
+  readonly runtimeSource: { readonly id: string; readonly kind: string };
+}): Promise<{ readonly output: unknown; readonly usage?: AgentMessageUsage | undefined }> {
+  const handle = options.session.submit({
+    runId: options.runId,
+    query: options.query,
     execution: {
-      context: executionContext,
-      humanInteractionHandler,
+      context: options.executionContext,
+      humanInteractionHandler: options.humanInteractionHandler,
     },
   });
-  options.controller.registerRuntimeSubmission(options.contextId, session, handle.runId);
-  const messageAccumulator = new RuntimeMessageAccumulator(runtime.descriptor);
-  const liveBus = getExecutionLiveBus(options.store);
+  options.options.controller.registerRuntimeSubmission(
+    options.options.invocationId,
+    options.options.contextId,
+    options.session,
+    handle,
+  );
+  const messageAccumulator = new RuntimeMessageAccumulator(options.runtimeSource);
+  const liveBus = getExecutionLiveBus(options.options.store);
   const drain = (async () => {
     for await (const event of handle.events) {
       const output = projectRuntimeOutput({
-        executionId: options.executionId,
-        invocation,
+        executionId: options.options.executionId,
+        invocation: options.invocation,
         event,
       });
-      if (output !== undefined) liveBus.publish(options.executionId, output);
+      if (output !== undefined) liveBus.publish(options.options.executionId, output);
       for (const message of messageAccumulator.consume(event)) {
-        await options.store.appendEvent(
-          options.executionId,
-          options.invocationId,
+        await options.options.store.appendEvent(
+          options.options.executionId,
+          options.options.invocationId,
           "invocation.message.appended",
           { message },
           `invocation-message:${event.eventId}:${message.timestamp}`,
         );
       }
       if (isDurableRuntimeEvent(event)) {
-        await options.store.appendEvent(
-          options.executionId,
-          options.invocationId,
+        await options.options.store.appendEvent(
+          options.options.executionId,
+          options.options.invocationId,
           "runtime.event",
           event,
           event.eventId,
@@ -471,190 +729,40 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
       }
     }
   })();
-
   try {
     const result = await handle.result;
-    options.controller.addUsage(result.result.usage);
     await drain;
     const output = result.result.output;
     const finalMessage = messageAccumulator.complete(output, result.result.usage);
     if (finalMessage !== undefined) {
-      await options.store.appendEvent(
-        options.executionId,
-        options.invocationId,
+      await options.options.store.appendEvent(
+        options.options.executionId,
+        options.options.invocationId,
         "invocation.message.appended",
         { message: finalMessage },
-        `invocation-final-message:${options.invocationId}`,
+        `invocation-final-message:${options.runId}`,
       );
     }
-    await options.store.commit({
-      commitId: `invocation-succeeded:${options.invocationId}`,
-      executionId: options.executionId,
-      invocationPatches: [
-        {
-          invocationId: options.invocationId,
-          patch: {
-            status: "succeeded",
-            output,
-            ...(result.result.usage === undefined ? {} : { usage: result.result.usage }),
-          },
-        },
-      ],
-      events: [
-        {
-          invocationId: options.invocationId,
-          type: "invocation.succeeded",
-          data: {
-            output,
-            ...(result.result.usage === undefined ? {} : { usage: result.result.usage }),
-          },
-        },
-      ],
-    });
-    const info = session.info();
-    await persistRuntimeSnapshot({
-      expertId: nativeExpert.id,
-      runtimeId: runtime.descriptor.id,
-      systemSessionId: info.systemSessionId,
-      runtimeSession: info.runtimeSession,
-    });
-    return output;
-  } catch (error) {
-    await drain.catch(() => undefined);
-    const status = options.controller.isCancelled() ? "cancelled" : "failed";
-    const storedError = serializeError(error);
-    const latest = await options.store.getInvocation(options.executionId, options.invocationId);
-    if (latest !== undefined && !isTerminal(latest.status)) {
-      await options.store.commit({
-        commitId: `invocation-${status}:${options.invocationId}`,
-        executionId: options.executionId,
-        invocationPatches: [
-          { invocationId: options.invocationId, patch: { status, error: storedError } },
-        ],
-        events: [
-          {
-            invocationId: options.invocationId,
-            type: `invocation.${status}`,
-            data: { message: error instanceof Error ? error.message : String(error) },
-          },
-        ],
-      });
-    }
-    throw error;
+    return { output, usage: result.result.usage };
   } finally {
-    options.controller.unregisterRuntimeSubmission(options.contextId, handle.runId);
-  }
-}
-
-async function delegate(
-  options: RunExpertInvocationOptions & {
-    readonly team?: ExpertTeam | undefined;
-    readonly delegation: AgentDelegationDefinition;
-    readonly delegationState: DelegationExecutionState;
-    readonly sourceExpertId: string;
-    readonly depth: number;
-    readonly request: {
-      readonly expertId: string;
-      readonly prompt: string;
-      readonly context?: DelegationContextPolicy | undefined;
-      readonly runtime?: string | undefined;
-    };
-  },
-): Promise<{ readonly invocationId: string; readonly output: unknown }> {
-  if (options.depth >= options.delegationState.maxDepth) {
-    throw new Error(`Expert delegation depth exceeded: ${options.delegationState.maxDepth}`);
-  }
-  const expert = options.delegation.experts.find(
-    (candidate) => candidate.id === options.request.expertId,
-  );
-  if (expert === undefined) {
-    throw new Error(
-      `Expert ${options.sourceExpertId} may not delegate to ${options.request.expertId}.`,
+    await drain.catch(() => undefined);
+    options.options.controller.unregisterRuntimeSubmission(
+      options.options.invocationId,
+      handle.runId,
     );
   }
-  const policy = options.request.context ?? options.delegation.context;
-  const context = options.contextForMember?.(expert.id, policy) ?? {
-    contextId: policy === "reuse" ? expert.id : randomUUID(),
-  };
-  const invocationId = randomUUID();
-  const now = new Date().toISOString();
-  const delegatedInvocation: Invocation = {
-    invocationId,
-    rootInvocationId: (await options.store.get(options.executionId))!.rootInvocationId,
-    parentInvocationId: options.invocationId,
-    definition: { id: expert.id, version: expert.version, kind: "expert" },
-    executorId: expert.id,
-    contextId: context.contextId,
-    status: "queued",
-    input: options.request.prompt,
-    createdAt: now,
-    updatedAt: now,
-  };
-  await options.store.commit({
-    commitId: randomUUID(),
-    executionId: options.executionId,
-    invocationPuts: [delegatedInvocation],
-    events: [
-      {
-        invocationId,
-        type: "invocation.queued",
-        data: { parentInvocationId: options.invocationId },
-      },
-    ],
-  });
-  const resumeParentPermit = options.delegationPermit?.suspend();
-  let permit: DelegationPermit | undefined;
-  try {
-    permit = await options.delegationState.acquire();
-    const output = await runExpertInvocation({
-      ...options,
-      invocationId,
-      parentInvocationId: options.invocationId,
-      expert,
-      prompt: options.request.prompt,
-      runtimeId: options.request.runtime,
-      contextId: context.contextId,
-      runtimeSnapshot: context.snapshot,
-      runtimeScope:
-        options.owner.type === "flow-execution"
-          ? "invocation"
-          : policy === "fresh"
-            ? "invocation"
-            : "session",
-      delegationState: options.delegationState,
-      delegationPermit: permit,
-      depth: options.depth + 1,
-    });
-    return { invocationId, output };
-  } finally {
-    try {
-      if (policy === "fresh") {
-        const runtime = options.runtimes.resolve(
-          options.request.runtime ?? context.snapshot?.runtimeId,
-        );
-        await options.controller.releaseRuntime({
-          contextId: context.contextId,
-          expertId: expert.id,
-          runtimeId: runtime.descriptor.id,
-        });
-      }
-    } finally {
-      permit?.release();
-      await resumeParentPermit?.();
-    }
-  }
 }
 
-function withTeamDelegationTool(
+function withTeamDelegationTools(
   expert: Expert,
-  tool: NonNullable<Expert["tools"]>[number] | undefined,
+  tools: readonly NonNullable<Expert["tools"]>[number][],
 ): Expert {
   const clone = Object.create(Object.getPrototypeOf(expert)) as Expert;
   Object.defineProperties(clone, Object.getOwnPropertyDescriptors(expert));
   Object.defineProperty(clone, "tools", {
     value: [
       ...(expert.tools ?? []).filter((candidate) => !isAgentDelegationTool(candidate)),
-      ...(tool === undefined ? [] : [tool]),
+      ...tools,
     ],
     enumerable: true,
   });
@@ -662,18 +770,68 @@ function withTeamDelegationTool(
 }
 
 function readExpertDelegationDefinition(expert: Expert): AgentDelegationDefinition | undefined {
-  const definitions = (expert.tools ?? []).flatMap((tool) => {
-    const definition = readAgentDelegationDefinition(tool);
-    return definition === undefined ? [] : [definition];
-  });
-  if (definitions.length > 1) {
-    throw new Error(`Expert ${expert.id} has multiple delegation launchers.`);
-  }
-  const definition = definitions[0];
+  const definitions = new Set(
+    (expert.tools ?? []).flatMap((tool) => {
+      const definition = readAgentDelegationDefinition(tool);
+      return definition === undefined ? [] : [definition];
+    }),
+  );
+  if (definitions.size > 1) throw new Error(`Expert ${expert.id} has multiple agent launchers.`);
+  const definition = [...definitions][0];
   if (definition?.experts.some((candidate) => candidate.id === expert.id) === true) {
-    throw new Error(`Expert ${expert.id} may not delegate to itself.`);
+    throw new Error(`Expert ${expert.id} may not spawn itself.`);
   }
   return definition;
+}
+
+async function appendUserMessage(
+  options: RunExpertInvocationOptions,
+  content: string,
+  eventId: string,
+): Promise<void> {
+  await options.store.appendEvent(
+    options.executionId,
+    options.invocationId,
+    "invocation.message.appended",
+    { message: { role: "user", content, timestamp: Date.now() } satisfies AgentMessage },
+    eventId,
+  );
+}
+
+async function persistSessionInfo(
+  session: RuntimeAgentSession,
+  expert: Expert,
+  runtimeId: string,
+  persist: (snapshot: RuntimeContextSnapshot) => Promise<void>,
+): Promise<void> {
+  const info = session.info();
+  await persist({
+    expertId: expert.id,
+    runtimeId,
+    systemSessionId: info.systemSessionId,
+    runtimeSession: info.runtimeSession,
+  });
+}
+
+function assertRuntimeIdentity(
+  options: RunExpertInvocationOptions,
+  identity: RuntimeSessionIdentity,
+): void {
+  if (
+    options.runtimeSnapshot !== undefined &&
+    (options.runtimeSnapshot.expertId !== identity.expertId ||
+      options.runtimeSnapshot.runtimeId !== identity.runtimeId)
+  ) {
+    throw new Error(
+      `Runtime context ${options.contextId} is bound to ${options.runtimeSnapshot.expertId}/${options.runtimeSnapshot.runtimeId} and cannot be reused with ${identity.expertId}/${identity.runtimeId}.`,
+    );
+  }
+}
+
+async function requireExecution(store: ExecutionStore, executionId: string) {
+  const execution = await store.get(executionId);
+  if (execution === undefined) throw new Error(`Execution not found: ${executionId}`);
+  return execution;
 }
 
 async function requireInvocation(
@@ -684,10 +842,6 @@ async function requireInvocation(
   const invocation = await store.getInvocation(executionId, invocationId);
   if (invocation === undefined) throw new Error(`Invocation not found: ${invocationId}`);
   return invocation;
-}
-
-function isTerminal(status: string): boolean {
-  return status === "succeeded" || status === "failed" || status === "cancelled";
 }
 
 function serializeError(error: unknown): unknown {
@@ -703,103 +857,4 @@ function isDurableRuntimeEvent(event: ExpertAgentStreamEvent): boolean {
     event.type !== "thought.delta" &&
     event.type !== "tool.delta"
   );
-}
-
-class DelegationExecutionState {
-  private active = 0;
-  private readonly waiting: Array<() => void> = [];
-
-  constructor(
-    private readonly limit: number,
-    readonly maxDepth: number,
-  ) {}
-
-  async acquire(): Promise<DelegationPermit> {
-    await this.acquireSlot();
-    return new DelegationPermit(this);
-  }
-
-  async acquireSlot(): Promise<void> {
-    if (this.active >= this.limit) {
-      await new Promise<void>((resolve) => this.waiting.push(resolve));
-      return;
-    }
-    this.active += 1;
-  }
-
-  releaseSlot(): void {
-    if (this.active < 1) {
-      throw new Error("Delegation concurrency slot underflow.");
-    }
-    const next = this.waiting.shift();
-    if (next !== undefined) {
-      next();
-      return;
-    }
-    this.active -= 1;
-  }
-}
-
-class DelegationPermit {
-  private active = true;
-  private released = false;
-  private suspensionCount = 0;
-  private resumeCycle:
-    | { readonly promise: Promise<void>; readonly resolve: () => void }
-    | undefined;
-
-  constructor(private readonly state: DelegationExecutionState) {}
-
-  suspend(): () => Promise<void> {
-    if (this.released) {
-      throw new Error("Cannot suspend a released delegation permit.");
-    }
-    if (!this.active && this.suspensionCount === 0) {
-      throw new Error("Cannot suspend a delegation permit while it is resuming.");
-    }
-
-    this.suspensionCount += 1;
-    if (this.suspensionCount === 1) {
-      let resolve!: () => void;
-      const promise = new Promise<void>((complete) => {
-        resolve = complete;
-      });
-      this.resumeCycle = { promise, resolve };
-      this.active = false;
-      this.state.releaseSlot();
-    }
-
-    const cycle = this.resumeCycle;
-    if (cycle === undefined) {
-      throw new Error("Delegation permit resume cycle is missing.");
-    }
-    let resumed = false;
-
-    return async () => {
-      if (!resumed) {
-        resumed = true;
-        this.suspensionCount -= 1;
-        if (this.suspensionCount === 0) {
-          await this.state.acquireSlot();
-          if (this.released) {
-            this.state.releaseSlot();
-          } else {
-            this.active = true;
-          }
-          cycle.resolve();
-          if (this.resumeCycle === cycle) this.resumeCycle = undefined;
-        }
-      }
-      await cycle.promise;
-    };
-  }
-
-  release(): void {
-    if (this.released) return;
-    this.released = true;
-    if (this.active) {
-      this.active = false;
-      this.state.releaseSlot();
-    }
-  }
 }

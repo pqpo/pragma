@@ -2,70 +2,72 @@ import type { Expert } from "./expert-agent.ts";
 import type { ExpertTeam } from "./expert-team.ts";
 import type { ExpertAgentManagedTool, ExpertAgentToolCallResult } from "../tools/managed-tool.ts";
 
-export type DelegationContextPolicy = "fresh" | "reuse";
-
 export interface CreateAgentLauncherOptions {
   readonly experts: readonly Expert[];
-  readonly context?: DelegationContextPolicy | undefined;
   readonly maxConcurrency?: number | undefined;
   readonly maxDepth?: number | undefined;
 }
 
+export type ExpertLifecycleToolName =
+  | "spawn_expert"
+  | "wait_experts"
+  | "list_experts"
+  | "followup_expert"
+  | "interrupt_expert";
+
 export interface AgentLauncher {
-  readonly tool: ExpertAgentManagedTool<"delegate_expert", ExpertAgentToolCallResult>;
+  readonly tools: readonly ExpertAgentManagedTool<
+    ExpertLifecycleToolName,
+    ExpertAgentToolCallResult
+  >[];
 }
 
 export interface AgentDelegationDefinition {
   readonly experts: readonly Expert[];
-  readonly context: DelegationContextPolicy;
   readonly maxConcurrency: number;
   readonly maxDepth: number;
 }
 
 const agentDelegationDefinition = Symbol("pragma.agent-delegation-definition");
 
-type AgentDelegationTool = ExpertAgentManagedTool<"delegate_expert", ExpertAgentToolCallResult> & {
+type AgentLifecycleTool = ExpertAgentManagedTool<
+  ExpertLifecycleToolName,
+  ExpertAgentToolCallResult
+> & {
   readonly [agentDelegationDefinition]: AgentDelegationDefinition;
 };
 
 export function createAgentLauncher(options: CreateAgentLauncherOptions): AgentLauncher {
   const experts = readUniqueExperts(options.experts, "AgentLauncher");
   if (experts.length === 0) throw new Error("AgentLauncher requires at least one Expert.");
-
   return Object.freeze({
-    tool: createDelegationTool({
+    tools: createLifecycleTools({
       experts,
-      context: readContextPolicy(options.context),
       maxConcurrency: readPositiveInteger(options.maxConcurrency ?? 4, "maxConcurrency"),
       maxDepth: readPositiveInteger(options.maxDepth ?? 3, "maxDepth"),
-      description: "Delegate a focused task to another Expert.",
     }),
   });
 }
 
-export function createTeamDelegationTool(
+export function createTeamDelegationTools(
   team: ExpertTeam,
   sourceExpertId: string,
-): ExpertAgentManagedTool<"delegate_expert", ExpertAgentToolCallResult> | undefined {
+): readonly AgentLifecycleTool[] {
   const allowed = team.delegation.allow.get(sourceExpertId);
-  if (allowed === undefined || allowed.size === 0) return undefined;
-
+  if (allowed === undefined || allowed.size === 0) return [];
   const experts = [team.coordinator, ...team.members].filter((expert) => allowed.has(expert.id));
-  if (experts.length === 0) return undefined;
-
-  return createDelegationTool({
+  if (experts.length === 0) return [];
+  return createLifecycleTools({
     experts,
-    context: team.delegation.context,
     maxConcurrency: team.delegation.maxConcurrency,
     maxDepth: team.delegation.maxDepth,
-    description: `Delegate a focused task to an Expert in team ${team.name}.`,
   });
 }
 
 export function readAgentDelegationDefinition(
   tool: ExpertAgentManagedTool<string, ExpertAgentToolCallResult>,
 ): AgentDelegationDefinition | undefined {
-  return (tool as Partial<AgentDelegationTool>)[agentDelegationDefinition];
+  return (tool as Partial<AgentLifecycleTool>)[agentDelegationDefinition];
 }
 
 export function isAgentDelegationTool(
@@ -74,74 +76,198 @@ export function isAgentDelegationTool(
   return readAgentDelegationDefinition(tool) !== undefined;
 }
 
-function createDelegationTool(
-  options: AgentDelegationDefinition & { readonly description: string },
-): AgentDelegationTool {
-  const definition = Object.freeze({
-    experts: Object.freeze([...options.experts]),
-    context: options.context,
-    maxConcurrency: options.maxConcurrency,
-    maxDepth: options.maxDepth,
+function createLifecycleTools(
+  definition: AgentDelegationDefinition,
+): readonly AgentLifecycleTool[] {
+  const frozen = Object.freeze({
+    experts: Object.freeze([...definition.experts]),
+    maxConcurrency: definition.maxConcurrency,
+    maxDepth: definition.maxDepth,
   });
-  const tool: AgentDelegationTool = {
-    [agentDelegationDefinition]: definition,
-    name: "delegate_expert",
-    description: [
-      options.description,
-      "Available Experts:",
-      ...definition.experts.map(
-        (expert) => `- ${expert.id}: ${expert.name}. ${expert.description}`,
+  const available = [
+    "Available Experts:",
+    ...frozen.experts.map((expert) => `- ${expert.id}: ${expert.name}. ${expert.description}`),
+  ].join("\n");
+  const tool = (
+    value: Omit<AgentLifecycleTool, typeof agentDelegationDefinition>,
+  ): AgentLifecycleTool => ({ ...value, [agentDelegationDefinition]: frozen });
+
+  return Object.freeze([
+    tool({
+      name: "spawn_expert",
+      description: `Spawn an Expert task in the background and return its agent and invocation ids immediately.\n${available}`,
+      inputSchema: objectSchema(
+        { expertId: { type: "string" }, prompt: { type: "string" }, runtime: { type: "string" } },
+        ["expertId", "prompt"],
       ),
-    ].join("\n"),
-    inputSchema: {
-      type: "object",
-      properties: {
-        expertId: { type: "string" },
-        prompt: { type: "string" },
-        context: { type: "string", enum: ["fresh", "reuse"] },
-        runtime: { type: "string" },
+      call: async (args, signal, context) =>
+        await invoke("spawn_expert", signal, context?.execution?.spawnExpert, readSpawn(args)),
+    }),
+    tool({
+      name: "wait_experts",
+      description: "Wait for exact Expert invocations. Defaults to waiting for all targets.",
+      inputSchema: objectSchema(
+        {
+          invocationIds: { type: "array", items: { type: "string" }, minItems: 1 },
+          returnWhen: { type: "string", enum: ["all", "any"] },
+          timeoutMs: { type: "integer", minimum: 1 },
+        },
+        ["invocationIds"],
+      ),
+      call: async (args, signal, context) => {
+        const input = readWait(args);
+        return await invoke("wait_experts", signal, context?.execution?.waitExperts, {
+          ...input,
+          signal,
+        });
       },
-      required: ["expertId", "prompt"],
-      additionalProperties: false,
-    },
-    async call(args, signal, context) {
-      if (signal?.aborted) return failure("delegation_cancelled", "Delegation was cancelled.");
-      const execution = context?.execution;
-      if (execution?.delegate === undefined) {
-        return failure(
-          "missing_execution",
-          "Delegation requires an active Expert delegation Turn.",
-        );
-      }
-      const input = readInput(args);
-      try {
-        const result = await execution.delegate(input);
-        return {
-          text: formatOutput(result.output),
-          details: { expertId: input.expertId, invocationId: result.invocationId },
-        };
-      } catch (error) {
-        return failure("delegation_failed", error instanceof Error ? error.message : String(error));
-      }
-    },
+    }),
+    tool({
+      name: "list_experts",
+      description: "List the Expert instances directly spawned by this caller.",
+      inputSchema: objectSchema({}, []),
+      call: async (_args, signal, context) =>
+        await invoke("list_experts", signal, context?.execution?.listExperts, undefined),
+    }),
+    tool({
+      name: "followup_expert",
+      description: "Queue a new FIFO task on an existing Expert instance.",
+      inputSchema: objectSchema({ agentId: { type: "string" }, prompt: { type: "string" } }, [
+        "agentId",
+        "prompt",
+      ]),
+      call: async (args, signal, context) =>
+        await invoke(
+          "followup_expert",
+          signal,
+          context?.execution?.followupExpert,
+          readFollowup(args),
+        ),
+    }),
+    tool({
+      name: "interrupt_expert",
+      description:
+        "Interrupt only the current task of an Expert while preserving queued follow-ups.",
+      inputSchema: objectSchema(
+        {
+          agentId: { type: "string" },
+          invocationId: { type: "string" },
+          reason: { type: "string" },
+        },
+        ["agentId"],
+      ),
+      call: async (args, signal, context) =>
+        await invoke(
+          "interrupt_expert",
+          signal,
+          context?.execution?.interruptExpert,
+          readInterrupt(args),
+        ),
+    }),
+  ]);
+}
+
+async function invoke<TInput>(
+  name: string,
+  signal: AbortSignal | undefined,
+  operation: ((input: TInput) => Promise<unknown>) | undefined,
+  input: TInput,
+): Promise<ExpertAgentToolCallResult> {
+  if (signal?.aborted) return failure(`${name}_cancelled`, `${name} was cancelled.`);
+  if (operation === undefined)
+    return failure("missing_execution", `${name} requires an active Expert Turn.`);
+  try {
+    const details = await operation(input);
+    return { text: JSON.stringify(details, null, 2), details };
+  } catch (error) {
+    return failure(`${name}_failed`, error instanceof Error ? error.message : String(error));
+  }
+}
+
+function objectSchema(properties: Record<string, unknown>, required: readonly string[]): unknown {
+  return { type: "object", properties, required, additionalProperties: false };
+}
+
+function readSpawn(value: unknown): { expertId: string; prompt: string; runtime?: string } {
+  const record = readRecord(value);
+  return {
+    expertId: readString(record["expertId"], "expertId"),
+    prompt: readString(record["prompt"], "prompt"),
+    ...readOptionalString(record, "runtime"),
   };
-  return tool;
+}
+
+function readWait(value: unknown): {
+  invocationIds: readonly string[];
+  returnWhen?: "all" | "any";
+  timeoutMs?: number;
+} {
+  const record = readRecord(value);
+  const ids = record["invocationIds"];
+  if (!Array.isArray(ids) || ids.length === 0) throw new Error("invocationIds must be non-empty.");
+  const invocationIds = ids.map((id) => readString(id, "invocationIds"));
+  if (new Set(invocationIds).size !== invocationIds.length) {
+    throw new Error("invocationIds must not contain duplicates.");
+  }
+  const returnWhen = record["returnWhen"];
+  if (returnWhen !== undefined && returnWhen !== "all" && returnWhen !== "any") {
+    throw new Error('returnWhen must be "all" or "any".');
+  }
+  const timeoutMs = record["timeoutMs"];
+  if (timeoutMs !== undefined && (!Number.isSafeInteger(timeoutMs) || (timeoutMs as number) < 1)) {
+    throw new Error("timeoutMs must be a positive integer.");
+  }
+  return {
+    invocationIds,
+    ...(returnWhen === undefined ? {} : { returnWhen }),
+    ...(timeoutMs === undefined ? {} : { timeoutMs: timeoutMs as number }),
+  };
+}
+
+function readFollowup(value: unknown): { agentId: string; prompt: string } {
+  const record = readRecord(value);
+  return {
+    agentId: readString(record["agentId"], "agentId"),
+    prompt: readString(record["prompt"], "prompt"),
+  };
+}
+
+function readInterrupt(value: unknown): {
+  agentId: string;
+  invocationId?: string;
+  reason?: string;
+} {
+  const record = readRecord(value);
+  return {
+    agentId: readString(record["agentId"], "agentId"),
+    ...readOptionalString(record, "invocationId"),
+    ...readOptionalString(record, "reason"),
+  };
+}
+
+function readRecord(value: unknown): Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error("Expert tool input must be an object.");
+  }
+  return value as Record<string, unknown>;
+}
+
+function readString(value: unknown, name: string): string {
+  if (typeof value !== "string" || value.trim() === "") {
+    throw new Error(`${name} must be a non-empty string.`);
+  }
+  return value;
+}
+
+function readOptionalString(record: Record<string, unknown>, name: string): Record<string, string> {
+  const value = record[name];
+  return value === undefined ? {} : { [name]: readString(value, name) };
 }
 
 function readUniqueExperts(experts: readonly Expert[], owner: string): readonly Expert[] {
   const ids = experts.map((expert) => expert.id);
-  if (new Set(ids).size !== ids.length) {
-    throw new Error(`${owner} contains duplicate Expert ids.`);
-  }
+  if (new Set(ids).size !== ids.length) throw new Error(`${owner} contains duplicate Expert ids.`);
   return Object.freeze([...experts]);
-}
-
-function readContextPolicy(value: DelegationContextPolicy | undefined): DelegationContextPolicy {
-  if (value === undefined) return "fresh";
-  if (value !== "fresh" && value !== "reuse") {
-    throw new Error('AgentLauncher context must be "fresh" or "reuse".');
-  }
-  return value;
 }
 
 function readPositiveInteger(value: number, field: string): number {
@@ -151,44 +277,6 @@ function readPositiveInteger(value: number, field: string): number {
   return value;
 }
 
-function readInput(value: unknown): {
-  readonly expertId: string;
-  readonly prompt: string;
-  readonly context?: DelegationContextPolicy;
-  readonly runtime?: string;
-} {
-  if (typeof value !== "object" || value === null)
-    throw new Error("Delegation input must be an object.");
-  const record = value as Record<string, unknown>;
-  const expertId = readString(record["expertId"], "expertId");
-  const prompt = readString(record["prompt"], "prompt");
-  const policy = record["context"];
-  if (policy !== undefined && policy !== "fresh" && policy !== "reuse") {
-    throw new Error('Delegation context must be "fresh" or "reuse".');
-  }
-  const runtime = record["runtime"];
-  if (runtime !== undefined && (typeof runtime !== "string" || runtime.trim() === "")) {
-    throw new Error("Delegation runtime must be a non-empty string.");
-  }
-  return {
-    expertId,
-    prompt,
-    ...(policy === undefined ? {} : { context: policy }),
-    ...(runtime === undefined ? {} : { runtime }),
-  };
-}
-
-function readString(value: unknown, name: string): string {
-  if (typeof value !== "string" || value.trim() === "") {
-    throw new Error(`Delegation ${name} must be a non-empty string.`);
-  }
-  return value;
-}
-
 function failure(code: string, text: string): ExpertAgentToolCallResult {
   return { text, isError: true, details: { code } };
-}
-
-function formatOutput(value: unknown): string {
-  return typeof value === "string" ? value : (JSON.stringify(value, null, 2) ?? String(value));
 }

@@ -12,6 +12,7 @@ import type {
   PromptRequest,
 } from "@pragma/shared";
 import { ExpertMessageHistorySchema } from "@pragma/shared";
+import { isFinalExecutionStatus as isFinal } from "@pragma/shared";
 
 import type { ExpertDefinition } from "../agent/expert-team.ts";
 import { isExpertTeam } from "../agent/expert-team.ts";
@@ -155,14 +156,14 @@ export class ExpertSessionManager {
     try {
       if (record.activeExecutionId !== undefined) {
         const execution = await this.dependencies.executions.get(record.activeExecutionId);
-        if (execution !== undefined && !isTerminal(execution.status)) {
+        if (execution !== undefined && !isFinal(execution.status)) {
           await this.dependencies.executions.update(execution.executionId, {
             status: "interrupted",
           });
           for (const invocation of await this.dependencies.executions.listInvocations(
             execution.executionId,
           )) {
-            if (!isTerminal(invocation.status)) {
+            if (!isFinal(invocation.status)) {
               await this.dependencies.executions.putInvocation(execution.executionId, {
                 ...invocation,
                 status: "interrupted",
@@ -261,7 +262,7 @@ class ExpertSessionImpl implements ExpertSession {
     const rootContextId = (await this.getState()).contextIds["root"]!;
     const definitionKind = isExpertTeam(this.expert) ? "expert-team" : "expert";
     const execution: ExecutionRecord = {
-      schemaVersion: "pragma.execution/v3",
+      schemaVersion: "pragma.execution/v4",
       executionId: id,
       version: 0,
       kind: "expert-turn",
@@ -352,7 +353,7 @@ class ExpertSessionImpl implements ExpertSession {
       await this.controller?.cancel(reason);
       for (const prompt of pending) {
         const execution = await this.dependencies.executions.get(prompt.executionId);
-        if (execution !== undefined && !isTerminal(execution.status)) {
+        if (execution !== undefined && !isFinal(execution.status)) {
           await this.dependencies.executions.update(prompt.executionId, {
             status: "cancelled",
             error: reason,
@@ -360,7 +361,7 @@ class ExpertSessionImpl implements ExpertSession {
           for (const invocation of await this.dependencies.executions.listInvocations(
             prompt.executionId,
           )) {
-            if (!isTerminal(invocation.status)) {
+            if (!isFinal(invocation.status)) {
               await this.dependencies.executions.putInvocation(prompt.executionId, {
                 ...invocation,
                 status: "cancelled",
@@ -685,7 +686,6 @@ class ExpertSessionImpl implements ExpertSession {
     });
     const session = await this.getState();
     const rootContextId = session.contextIds["root"]!;
-    const contextIds = { ...session.contextIds };
     const runtimeContexts = { ...session.runtimeContexts };
     const controller = new ExecutionController(
       prompt.executionId,
@@ -709,12 +709,6 @@ class ExpertSessionImpl implements ExpertSession {
         controller,
         store: this.dependencies.executions,
         runtimes: this.dependencies.runtimes,
-        contextForMember: (expertId, policy) => {
-          if (policy === "fresh") return { contextId: randomUUID() };
-          const contextId = contextIds[expertId] ?? randomUUID();
-          contextIds[expertId] = contextId;
-          return { contextId, snapshot: runtimeContexts[contextId] };
-        },
         onRuntimeContext: async (contextId, snapshot) => {
           runtimeContexts[contextId] = snapshot;
           await this.persistRuntimeContext(contextId, snapshot);
@@ -731,7 +725,7 @@ class ExpertSessionImpl implements ExpertSession {
       ...(status === "succeeded" ? { output } : { error: serializeError(error) }),
     };
     const currentExecution = await this.dependencies.executions.get(prompt.executionId);
-    if (currentExecution !== undefined && isTerminal(currentExecution.status)) {
+    if (currentExecution !== undefined && isFinal(currentExecution.status)) {
       if (usage !== undefined) {
         await this.dependencies.executions.update(prompt.executionId, { usage });
       }
@@ -850,10 +844,6 @@ function readExecutionResult(record: ExecutionRecord): unknown {
       ? `Execution ${record.status}: ${record.executionId}`
       : readErrorMessage(record.error),
   );
-}
-
-function isTerminal(status: string): boolean {
-  return status === "succeeded" || status === "failed" || status === "cancelled";
 }
 
 function serializeError(error: unknown): unknown {

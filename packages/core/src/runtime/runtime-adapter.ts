@@ -172,7 +172,6 @@ export interface RuntimeAgentSession {
     submission: RuntimeSubmitRequest<TSubmitOutput>,
   ) => RuntimeSubmitHandle<TSubmitOutput>;
   readonly steer: (request: RuntimeSteerRequest) => Promise<void>;
-  readonly cancelCurrentSubmission: () => Promise<void>;
   readonly close: () => Promise<void>;
 }
 

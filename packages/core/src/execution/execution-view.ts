@@ -2,6 +2,7 @@ import {
   AgentMessageRecordSchema,
   InvocationMessageAppendedEventSchema,
   InvocationMessageHistorySchema,
+  isTerminalExecutionStatus as isTerminal,
   type ExecutionCursor,
   type ExecutionEvent,
   type ExecutionOutputItem,
@@ -203,10 +204,6 @@ export class StoredExecutionView implements ExecutionView {
       })
       .filter((history): history is InvocationMessageHistory => history !== undefined);
   }
-}
-
-function isTerminal(status: ExecutionRecord["status"]): boolean {
-  return ["succeeded", "failed", "cancelled", "interrupted"].includes(status);
 }
 
 function matchesOutputScope(

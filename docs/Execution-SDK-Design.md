@@ -23,9 +23,11 @@ InvocationTree 表示。完整 `AgentMessage` 与编排事实进入单一 Canoni
 Expert Session 自身的 state、prompt queue 与 Session 级语义事件通过同一个可恢复事务 journal
 提交，避免崩溃恢复后出现状态已经变化但对应事件永久缺失。
 
-`createAgentLauncher().tool` 和 `defineExpertTeam()` 共享同一个 delegation application service。
-前者为普通 Expert 显式列出 subagent，后者从团队 allowlist 解析目标；两者都直接创建子
-Invocation，不创建隐藏的 ExpertSession 或伪装成单节点 Flow。
+`createAgentLauncher().tools` 和 `defineExpertTeam()` 共享 `InvocationService` 与 Execution 级
+`ExpertOrchestrator`。前者为普通 Expert 显式列出目标，后者从团队 allowlist 解析目标；两者都
+创建 Execution-scoped AgentInstance 和子 Invocation，不创建隐藏 ExpertSession 或伪装成单节点 Flow。
 
 Expert 恢复只恢复会话上下文，不重启 interrupted Turn。Flow recover 会继续未完成
-Invocation，并跳过已经成功的节点。
+Invocation，并跳过已经成功的节点。`interrupted` 对普通提交是不可覆盖终态；只有持有当前
+Execution recovery claim 的恢复提交可以将 Flow 自身及非 Agent 节点重新置为 queued/running，
+避免迟到的 Runtime 事件把已中断任务意外复活。

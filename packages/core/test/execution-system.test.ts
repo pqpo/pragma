@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
-  createTeamDelegationTool,
+  createTeamDelegationTools,
   readAgentDelegationDefinition,
 } from "../src/agent/agent-launcher.ts";
 
@@ -51,7 +51,6 @@ interface FakeRuntimeOptions {
   readonly closeError?: string;
   readonly createDelayMs?: number;
   readonly delayMs?: number;
-  readonly delegateContext?: "fresh" | "reuse";
   readonly delegateRuntime?: (query: string) => string | undefined;
   readonly delegationTargets?: Readonly<Record<string, string>>;
   readonly failQuery?: string;
@@ -88,23 +87,33 @@ function createFakeRuntime(options: FakeRuntimeOptions = {}) {
         await new Promise<void>((resolve) => setTimeout(resolve, options.delayMs));
       }
       if (turn.rawQuery === options.failQuery) throw new Error("fake turn failed");
-      const delegate = session.context.agent.tools?.find((tool) => tool.name === "delegate_expert");
+      const spawn = session.context.agent.tools?.find((tool) => tool.name === "spawn_expert");
+      const wait = session.context.agent.tools?.find((tool) => tool.name === "wait_experts");
       const delegationTarget =
         options.delegationTargets?.[session.context.agent.id] ??
         (session.context.agent.id === "lead" ? "member" : undefined);
       let output = `${session.context.agent.id}:${turn.rawQuery}`;
-      if (delegate !== undefined && delegationTarget !== undefined) {
-        const delegated = await delegate.call(
+      if (
+        spawn !== undefined &&
+        wait !== undefined &&
+        delegationTarget !== undefined &&
+        !turn.rawQuery.startsWith("[Pragma orchestration continuation]")
+      ) {
+        const spawned = await spawn.call(
           {
             expertId: delegationTarget,
             prompt: "subtask",
-            context: options.delegateContext ?? "reuse",
             runtime: options.delegateRuntime?.(turn.rawQuery),
           },
           turn.signal,
           { execution: session.context.request.executionContext },
         );
-        output = `${session.context.agent.id}:${delegated.text}`;
+        const invocationId = (spawned.details as { invocationId: string }).invocationId;
+        const waited = await wait.call({ invocationIds: [invocationId] }, turn.signal, {
+          execution: session.context.request.executionContext,
+        });
+        const completed = (waited.details as { completed: Array<{ output?: unknown }> }).completed;
+        output = `${session.context.agent.id}:${String(completed[0]?.output)}`;
       }
       turn.stream.write({
         runId: turn.runId,
@@ -135,6 +144,127 @@ function createFakeRuntime(options: FakeRuntimeOptions = {}) {
     },
   });
 }
+
+type OrchestrationScenario =
+  | "parallel"
+  | "concurrency"
+  | "barrier"
+  | "usage"
+  | "followup"
+  | "interrupt"
+  | "parent-failure";
+
+function createOrchestrationRuntime(
+  scenario: OrchestrationScenario,
+  stats: { active: number; maxActive: number } = { active: 0, maxActive: 0 },
+) {
+  return defineRuntimeDriver<never, FakeSession>({
+    descriptor: { id: `orchestration-${scenario}`, kind: "fake", displayName: "Orchestration" },
+    createSession: (context) => ({ context, id: `native-${context.systemSessionId}` }),
+    restoreSession: (context) => ({ context, id: context.request.runtimeSession!.id }),
+    readSession: (session) => ({ runtimeSessionId: session.id }),
+    async startTurn(session, turn) {
+      stats.active += 1;
+      stats.maxActive = Math.max(stats.maxActive, stats.active);
+      try {
+        const expertId = session.context.agent.id;
+        if (expertId !== "lead") {
+          await new Promise<void>((resolve) =>
+            setTimeout(resolve, scenario === "followup" ? 25 : 200),
+          );
+          return {
+            outputText: `${expertId}:${turn.rawQuery}`,
+            runtimeSessionId: session.id,
+            ...(scenario === "usage" ? { usage: orchestrationUsage } : {}),
+          };
+        }
+        if (turn.rawQuery.startsWith("[Pragma orchestration continuation]")) {
+          return {
+            outputText: "lead:synthesized",
+            runtimeSessionId: session.id,
+            ...(scenario === "usage" ? { usage: orchestrationUsage } : {}),
+          };
+        }
+        const execution = session.context.request.executionContext;
+        const tool = (name: string) => {
+          const found = session.context.agent.tools?.find((candidate) => candidate.name === name);
+          if (found === undefined) throw new Error(`Missing orchestration tool: ${name}`);
+          return found;
+        };
+        const call = async (name: string, input: unknown) => {
+          const result = await tool(name).call(input, turn.signal, { execution });
+          if (result.isError === true) throw new Error(result.text);
+          return result.details as Record<string, unknown>;
+        };
+        const spawn = async (expertId: string, prompt: string) =>
+          await call("spawn_expert", { expertId, prompt });
+        const wait = async (ids: readonly string[]) =>
+          await call("wait_experts", { invocationIds: ids });
+
+        if (scenario === "parallel" || scenario === "concurrency") {
+          const first = await spawn("member-a", "a");
+          const second = await spawn("member-b", "b");
+          const third = scenario === "concurrency" ? await spawn("member-c", "c") : undefined;
+          const result = await wait([
+            first["invocationId"] as string,
+            second["invocationId"] as string,
+            ...(third === undefined ? [] : [third["invocationId"] as string]),
+          ]);
+          return {
+            outputText: `lead:${JSON.stringify(result["completed"])}`,
+            runtimeSessionId: session.id,
+          };
+        }
+
+        const first = await spawn("member", "first");
+        if (scenario === "parent-failure") throw new Error("lead failed after spawn");
+        if (scenario === "barrier" || scenario === "usage") {
+          return {
+            outputText: "lead:premature",
+            runtimeSessionId: session.id,
+            ...(scenario === "usage" ? { usage: orchestrationUsage } : {}),
+          };
+        }
+        const firstInvocationId = first["invocationId"] as string;
+        const agentId = first["agentId"] as string;
+        if (scenario === "followup") {
+          await wait([firstInvocationId]);
+          const second = await call("followup_expert", { agentId, prompt: "second" });
+          const result = await wait([second["invocationId"] as string]);
+          return {
+            outputText: `lead:${JSON.stringify(result["completed"])}`,
+            runtimeSessionId: session.id,
+          };
+        }
+
+        const second = await call("followup_expert", { agentId, prompt: "second" });
+        await call("interrupt_expert", {
+          agentId,
+          invocationId: firstInvocationId,
+          reason: "test",
+        });
+        const result = await wait([firstInvocationId, second["invocationId"] as string]);
+        return {
+          outputText: `lead:${JSON.stringify(result["completed"])}`,
+          runtimeSessionId: session.id,
+        };
+      } finally {
+        stats.active -= 1;
+      }
+    },
+    mapEvent: () => ({ events: [] }),
+    closeSession: () => undefined,
+  });
+}
+
+const orchestrationUsage: AgentMessageUsage = {
+  input: 10,
+  output: 2,
+  cacheRead: 1,
+  cacheWrite: 0,
+  totalTokens: 13,
+  cost: { input: 0.01, output: 0.02, cacheRead: 0.001, cacheWrite: 0, total: 0.031 },
+};
 
 async function fixture(delayMs?: number) {
   const home = await mkdtemp(join(tmpdir(), "pragma-execution-"));
@@ -363,7 +493,7 @@ describe("ExpertSession", () => {
     const next = await session.prompt("next", { requestId: "next" });
     await expect(next.result).resolves.toBe("tracked:next");
     expect(stats.createSessionCalls).toBe(1);
-    expect(stats.cancelTurnCalls).toBeGreaterThan(0);
+    expect(stats.cancelTurnCalls).toBe(1);
     expect(stats.executionIds).toEqual([active.executionId, next.executionId]);
     await session.close();
   });
@@ -406,7 +536,6 @@ describe("ExpertSession", () => {
     });
     const launcher = createAgentLauncher({
       experts: [member],
-      context: "reuse",
       maxConcurrency: 2,
       maxDepth: 1,
     });
@@ -418,7 +547,7 @@ describe("ExpertSession", () => {
       version: "1.0.0",
       scope: "test",
       workspace: home,
-      tools: [launcher.tool],
+      tools: launcher.tools,
     });
 
     const session = await app.experts.createSession(lead);
@@ -461,7 +590,7 @@ describe("ExpertSession", () => {
       scope: "test",
       workspace: home,
       pragmaHome: home,
-      tools: [memberLauncher.tool],
+      tools: memberLauncher.tools,
     });
     const leadLauncher = createAgentLauncher({
       experts: [member],
@@ -477,7 +606,7 @@ describe("ExpertSession", () => {
       scope: "test",
       workspace: home,
       pragmaHome: home,
-      tools: [leadLauncher.tool],
+      tools: leadLauncher.tools,
     });
 
     const session = await app.experts.createSession(lead);
@@ -513,7 +642,7 @@ describe("ExpertSession", () => {
       version: "1.0.0",
       coordinator: lead,
       members: [member],
-      delegation: { allow: { lead: ["member"], member: [] }, context: "reuse" },
+      delegation: { allow: { lead: ["member"], member: [] } },
     });
     const session = await app.experts.createSession(expert);
     const one = await session.prompt("one", { requestId: "one" });
@@ -539,72 +668,58 @@ describe("ExpertSession", () => {
     await teamSession.close();
   }, 15_000);
 
-  it("keeps reused team contexts alive and closes fresh contexts with the ExpertSession", async () => {
-    const runTeam = async (context: "fresh" | "reuse") => {
-      const { home, app, stats } = await trackedFixture({ delegateContext: context });
-      const member = await defineExpert({
-        id: "member",
-        name: "Member",
-        description: "Member",
-        tags: [],
-        version: "1.0.0",
-        scope: "test",
-        workspace: home,
-      });
-      const lead = await defineExpert({
-        id: "lead",
-        name: "Lead",
-        description: "Lead",
-        tags: [],
-        version: "1.0.0",
-        scope: "test",
-        workspace: home,
-      });
-      const team = defineExpertTeam({
-        id: `team-${context}`,
-        version: "1.0.0",
-        coordinator: lead,
-        members: [member],
-        delegation: { allow: { lead: ["member"], member: [] }, context },
-      });
-      const session = await app.experts.createSession(team);
-      const first = await session.prompt("one", { requestId: "one" });
-      await first.result;
-      const second = await session.prompt("two", { requestId: "two" });
-      await second.result;
-      const opened = stats.createSessionCalls;
-      const closedBeforeSession = stats.closeSessionCalls;
-      const state = await session.getState();
-      const childRuntimeContexts = (await Promise.all([first.getTree(), second.getTree()])).map(
-        (tree) => tree.children[0]?.invocation.runtimeContext,
-      );
-      await session.close();
-      return {
-        opened,
-        closedBeforeSession,
-        closed: stats.closeSessionCalls,
-        reusableMemberContext: state.contextIds["member"] !== undefined,
-        childRuntimeContexts: childRuntimeContexts.every((snapshot) => snapshot !== undefined),
-      };
-    };
-
-    await expect(runTeam("reuse")).resolves.toEqual({
-      opened: 2,
-      closedBeforeSession: 0,
-      closed: 2,
-      reusableMemberContext: true,
-      childRuntimeContexts: false,
+  it("gives each spawned team agent a fresh Execution-scoped context", async () => {
+    const { home, app, stats } = await trackedFixture();
+    const member = await defineExpert({
+      id: "member",
+      name: "Member",
+      description: "Member",
+      tags: [],
+      version: "1.0.0",
+      scope: "test",
+      workspace: home,
     });
-    await expect(runTeam("fresh")).resolves.toEqual({
+    const lead = await defineExpert({
+      id: "lead",
+      name: "Lead",
+      description: "Lead",
+      tags: [],
+      version: "1.0.0",
+      scope: "test",
+      workspace: home,
+    });
+    const team = defineExpertTeam({
+      id: "team-fresh-agents",
+      version: "1.0.0",
+      coordinator: lead,
+      members: [member],
+      delegation: { allow: { lead: ["member"], member: [] } },
+    });
+    const session = await app.experts.createSession(team);
+    const first = await session.prompt("one", { requestId: "one" });
+    await first.result;
+    const second = await session.prompt("two", { requestId: "two" });
+    await second.result;
+    const opened = stats.createSessionCalls;
+    const closedBeforeSession = stats.closeSessionCalls;
+    const childRuntimeContexts = (await Promise.all([first.getTree(), second.getTree()])).map(
+      (tree) => tree.children[0]?.invocation.runtimeContext,
+    );
+    await session.close();
+    expect({
       opened: 3,
       closedBeforeSession: 2,
       closed: 3,
-      reusableMemberContext: false,
       childRuntimeContexts: true,
+    }).toEqual({
+      opened,
+      closedBeforeSession,
+      closed: stats.closeSessionCalls,
+      childRuntimeContexts: childRuntimeContexts.every((snapshot) => snapshot !== undefined),
     });
   });
 
-  it("rejects switching Runtime inside a reused team context", async () => {
+  it("allows each newly spawned agent to select its own Runtime", async () => {
     const home = await mkdtemp(join(tmpdir(), "pragma-runtime-identity-"));
     const runtimeA = createFakeRuntime({
       runtimeId: "fake-a",
@@ -641,14 +756,14 @@ describe("ExpertSession", () => {
       version: "1.0.0",
       coordinator: lead,
       members: [member],
-      delegation: { allow: { lead: ["member"], member: [] }, context: "reuse" },
+      delegation: { allow: { lead: ["member"], member: [] } },
     });
     const session = await app.experts.createSession(team);
     await (
       await session.prompt("one", { requestId: "one" })
     ).result;
-    await expect((await session.prompt("two", { requestId: "two" })).result).resolves.toContain(
-      "cannot be reused",
+    await expect((await session.prompt("two", { requestId: "two" })).result).resolves.toBe(
+      "lead:member:subtask",
     );
     await session.close();
   });
@@ -758,7 +873,7 @@ describe("ExpertSession", () => {
           },
         ],
         execution: {
-          schemaVersion: "pragma.execution/v3",
+          schemaVersion: "pragma.execution/v4",
           executionId,
           version: 0,
           kind: "expert-turn",
@@ -970,7 +1085,7 @@ describe("Execution observation", () => {
     const now = new Date().toISOString();
     await writer.create(
       {
-        schemaVersion: "pragma.execution/v3",
+        schemaVersion: "pragma.execution/v4",
         executionId: "cross-process",
         version: 0,
         kind: "flow",
@@ -1001,6 +1116,159 @@ describe("Execution observation", () => {
   });
 });
 
+describe("Expert lifecycle orchestration", () => {
+  async function runScenario(
+    scenario: OrchestrationScenario,
+    targets: readonly string[] = ["member"],
+  ) {
+    const home = await mkdtemp(join(tmpdir(), `pragma-${scenario}-`));
+    const stats = { active: 0, maxActive: 0 };
+    const runtime = createOrchestrationRuntime(scenario, stats);
+    const app = createPragma({
+      pragmaHome: home,
+      runtimes: createRuntimeRegistry({
+        runtimes: [runtime],
+        defaultRuntime: runtime.descriptor.id,
+      }),
+    });
+    const members = await Promise.all(
+      targets.map(
+        async (id) =>
+          await defineExpert({
+            id,
+            name: id,
+            description: id,
+            tags: [],
+            version: "1.0.0",
+            scope: "test",
+            workspace: home,
+            pragmaHome: home,
+          }),
+      ),
+    );
+    const launcher = createAgentLauncher({
+      experts: members,
+      maxConcurrency: 2,
+      maxDepth: 2,
+    });
+    const lead = await defineExpert({
+      id: "lead",
+      name: "Lead",
+      description: "Lead",
+      tags: [],
+      version: "1.0.0",
+      scope: "test",
+      workspace: home,
+      pragmaHome: home,
+      tools: launcher.tools,
+    });
+    const session = await app.experts.createSession(lead);
+    const turn = await session.prompt("coordinate", { requestId: scenario });
+    const output = await turn.result;
+    const tree = await turn.getTree();
+    const events = await turn.listEvents({ limit: 1_000 });
+    await session.close();
+    return { output, tree, events: events.items, stats };
+  }
+
+  it("starts independent spawned Experts concurrently", async () => {
+    const result = await runScenario("parallel", ["member-a", "member-b"]);
+    expect(result.tree.children).toHaveLength(2);
+    expect(result.tree.children.map((child) => child.invocation.status)).toEqual([
+      "succeeded",
+      "succeeded",
+    ]);
+    expect(result.stats.maxActive).toBeGreaterThanOrEqual(3);
+  });
+
+  it("never exceeds the configured child concurrency limit", async () => {
+    const result = await runScenario("concurrency", ["member-a", "member-b", "member-c"]);
+    expect(result.tree.children).toHaveLength(3);
+    expect(result.stats.maxActive).toBe(3);
+  });
+
+  it("automatically joins forgotten waits and resumes the parent for synthesis", async () => {
+    const result = await runScenario("barrier");
+    expect(result.output).toBe("lead:synthesized");
+    expect(result.tree.children[0]?.invocation.status).toBe("succeeded");
+    expect(result.events.some((event) => event.type === "expert.children.waiting")).toBe(true);
+    expect(result.events.some((event) => event.type === "expert.children.completed")).toBe(true);
+  });
+
+  it("persists aggregate usage across the original turn and orchestration continuation", async () => {
+    const result = await runScenario("usage");
+    expect(result.tree.invocation.usage).toEqual({
+      input: 20,
+      output: 4,
+      cacheRead: 2,
+      cacheWrite: 0,
+      totalTokens: 26,
+      cost: { input: 0.02, output: 0.04, cacheRead: 0.002, cacheWrite: 0, total: 0.062 },
+    });
+  });
+
+  it("interrupts spawned descendants before a failed parent Execution settles", async () => {
+    const home = await mkdtemp(join(tmpdir(), "pragma-parent-failure-"));
+    const runtime = createOrchestrationRuntime("parent-failure");
+    const app = createPragma({
+      pragmaHome: home,
+      runtimes: createRuntimeRegistry({
+        runtimes: [runtime],
+        defaultRuntime: runtime.descriptor.id,
+      }),
+    });
+    const member = await defineExpert({
+      id: "member",
+      name: "member",
+      description: "member",
+      tags: [],
+      version: "1.0.0",
+      scope: "test",
+      workspace: home,
+      pragmaHome: home,
+    });
+    const launcher = createAgentLauncher({ experts: [member], maxConcurrency: 2, maxDepth: 2 });
+    const lead = await defineExpert({
+      id: "lead",
+      name: "lead",
+      description: "lead",
+      tags: [],
+      version: "1.0.0",
+      scope: "test",
+      workspace: home,
+      pragmaHome: home,
+      tools: launcher.tools,
+    });
+    const session = await app.experts.createSession(lead);
+    const turn = await session.prompt("coordinate", { requestId: "parent-failure" });
+
+    await expect(turn.result).rejects.toThrow("lead failed after spawn");
+    const tree = await turn.getTree();
+    expect(tree.invocation.status).toBe("failed");
+    expect(tree.children[0]?.invocation.status).toBe("interrupted");
+    await session.close();
+  });
+
+  it("queues follow-ups FIFO on the same agent and context", async () => {
+    const result = await runScenario("followup");
+    expect(result.tree.children).toHaveLength(2);
+    const [first, second] = result.tree.children.map((child) => child.invocation);
+    expect(first?.agentId).toBe(second?.agentId);
+    expect(first?.contextId).toBe(second?.contextId);
+    expect([first?.agentTaskSequence, second?.agentTaskSequence]).toEqual([0, 1]);
+    expect([first?.status, second?.status]).toEqual(["succeeded", "succeeded"]);
+  });
+
+  it("interrupts only the current task and preserves queued follow-ups", async () => {
+    const result = await runScenario("interrupt");
+    expect(result.tree.children).toHaveLength(2);
+    expect(result.tree.children.map((child) => child.invocation.status)).toEqual([
+      "interrupted",
+      "succeeded",
+    ]);
+  });
+});
+
 describe("Expert delegation declarations", () => {
   it("validates standalone launcher targets and limits", async () => {
     const { expert } = await fixture();
@@ -1012,8 +1280,15 @@ describe("Expert delegation declarations", () => {
     );
     expect(() => createAgentLauncher({ experts: [expert], maxDepth: 0 })).toThrow("maxDepth");
     const launcher = createAgentLauncher({ experts: [expert] });
-    expect(readAgentDelegationDefinition({ ...launcher.tool })?.experts).toEqual([expert]);
-    expect(launcher.tool.description).toContain(
+    expect(launcher.tools.map((tool) => tool.name)).toEqual([
+      "spawn_expert",
+      "wait_experts",
+      "list_experts",
+      "followup_expert",
+      "interrupt_expert",
+    ]);
+    expect(readAgentDelegationDefinition({ ...launcher.tools[0]! })?.experts).toEqual([expert]);
+    expect(launcher.tools[0]?.description).toContain(
       `- ${expert.id}: ${expert.name}. ${expert.description}`,
     );
   });
@@ -1036,11 +1311,15 @@ describe("Expert delegation declarations", () => {
       members: [member],
       delegation: { allow: { solo: ["member"], member: ["solo"] } },
     });
-    const leadTool = createTeamDelegationTool(team, "solo");
-    const memberTool = createTeamDelegationTool(team, "member");
+    const leadTools = createTeamDelegationTools(team, "solo");
+    const memberTools = createTeamDelegationTools(team, "member");
+    const leadTool = leadTools[0];
+    const memberTool = memberTools[0];
 
     expect(readAgentDelegationDefinition(leadTool!)?.experts).toEqual([member]);
     expect(readAgentDelegationDefinition(memberTool!)?.experts).toEqual([lead]);
+    expect(leadTools).toHaveLength(5);
+    expect(memberTools).toHaveLength(5);
     expect(leadTool?.description).toContain(
       `- ${member.id}: ${member.name}. ${member.description}`,
     );

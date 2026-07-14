@@ -11,13 +11,31 @@ export interface ExpertToolExecutionContext {
   readonly executionId: string;
   readonly invocationId: string;
   readonly depth: number;
-  readonly delegate?:
+  readonly spawnExpert?:
     | ((request: {
         readonly expertId: string;
         readonly prompt: string;
-        readonly context?: "fresh" | "reuse" | undefined;
         readonly runtime?: string | undefined;
-      }) => Promise<{ readonly invocationId: string; readonly output: unknown }>)
+      }) => Promise<unknown>)
+    | undefined;
+  readonly waitExperts?:
+    | ((request: {
+        readonly invocationIds: readonly string[];
+        readonly returnWhen?: "all" | "any" | undefined;
+        readonly timeoutMs?: number | undefined;
+        readonly signal?: AbortSignal | undefined;
+      }) => Promise<unknown>)
+    | undefined;
+  readonly listExperts?: (() => Promise<unknown>) | undefined;
+  readonly followupExpert?:
+    | ((request: { readonly agentId: string; readonly prompt: string }) => Promise<unknown>)
+    | undefined;
+  readonly interruptExpert?:
+    | ((request: {
+        readonly agentId: string;
+        readonly invocationId?: string | undefined;
+        readonly reason?: string | undefined;
+      }) => Promise<unknown>)
     | undefined;
 }
 

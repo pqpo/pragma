@@ -44,6 +44,8 @@ export const InvocationSchema = z.object({
   nodeId: z.string().min(1).optional(),
   definition: DefinitionReferenceSchema,
   executorId: z.string().min(1).optional(),
+  agentId: z.string().min(1).optional(),
+  agentTaskSequence: z.number().int().nonnegative().optional(),
   contextId: z.string().min(1),
   status: ExecutionStatusSchema,
   input: z.unknown(),
@@ -53,6 +55,25 @@ export const InvocationSchema = z.object({
   runtimeContext: InvocationRuntimeContextSchema.optional(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
+});
+
+export const AgentInstanceSchema = z.object({
+  schemaVersion: z.literal("pragma.agent-instance/v1"),
+  agentId: z.string().min(1),
+  executionId: z.string().min(1),
+  ownerInvocationId: z.string().min(1),
+  parentAgentId: z.string().min(1).optional(),
+  definition: DefinitionReferenceSchema,
+  contextId: z.string().min(1),
+  runtimeId: z.string().min(1).optional(),
+  runtimeContext: RuntimeContextSnapshotSchema.optional(),
+  depth: z.number().int().nonnegative(),
+  lifecycle: z.enum(["open", "closed"]),
+  activeInvocationId: z.string().min(1).optional(),
+  nextTaskSequence: z.number().int().nonnegative(),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+  closedAt: z.string().datetime().optional(),
 });
 
 export const InvocationTreeSchema: z.ZodType<InvocationTree> = z.lazy(() =>
@@ -68,7 +89,7 @@ export const ExecutionCursorSchema = z.object({
 });
 
 export const ExecutionEventSchema = z.object({
-  schemaVersion: z.literal("pragma.execution-event/v3"),
+  schemaVersion: z.literal("pragma.execution-event/v4"),
   eventId: z.string().min(1),
   cursor: ExecutionCursorSchema,
   executionId: z.string().min(1),
@@ -100,7 +121,7 @@ export const ExecutionOutputItemSchema = z.object({
 });
 
 export const ExecutionRecordSchema = z.object({
-  schemaVersion: z.literal("pragma.execution/v3"),
+  schemaVersion: z.literal("pragma.execution/v4"),
   executionId: z.string().min(1),
   version: z.number().int().nonnegative(),
   kind: ExecutionKindSchema,
@@ -130,6 +151,7 @@ export type DefinitionReference = z.infer<typeof DefinitionReferenceSchema>;
 export type RuntimeContextSnapshot = z.infer<typeof RuntimeContextSnapshotSchema>;
 export type InvocationRuntimeContext = z.infer<typeof InvocationRuntimeContextSchema>;
 export type Invocation = z.infer<typeof InvocationSchema>;
+export type AgentInstance = z.infer<typeof AgentInstanceSchema>;
 export type ExecutionCursor = z.infer<typeof ExecutionCursorSchema>;
 export type ExecutionEvent<TData = unknown> = Omit<z.infer<typeof ExecutionEventSchema>, "data"> & {
   readonly data: TData;
@@ -137,3 +159,20 @@ export type ExecutionEvent<TData = unknown> = Omit<z.infer<typeof ExecutionEvent
 export type InvocationMessageAppendedEvent = z.infer<typeof InvocationMessageAppendedEventSchema>;
 export type ExecutionOutputItem = z.infer<typeof ExecutionOutputItemSchema>;
 export type ExecutionRecord = z.infer<typeof ExecutionRecordSchema>;
+
+export function isTerminalExecutionStatus(status: ExecutionStatus): boolean {
+  return (
+    status === "succeeded" ||
+    status === "failed" ||
+    status === "cancelled" ||
+    status === "interrupted"
+  );
+}
+
+/**
+ * Returns whether a status is an immutable outcome. `interrupted` is terminal for
+ * observers and joins, but remains resumable by recovery and cancellation flows.
+ */
+export function isFinalExecutionStatus(status: ExecutionStatus): boolean {
+  return status === "succeeded" || status === "failed" || status === "cancelled";
+}

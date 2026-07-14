@@ -1,11 +1,9 @@
 import type { Expert } from "./expert-agent.ts";
-import type { DelegationContextPolicy } from "./agent-launcher.ts";
 
 export type ExpertDefinition = Expert | ExpertTeam;
 
 export interface ExpertTeamDelegationOptions {
   readonly allow: Readonly<Record<string, readonly string[]>>;
-  readonly context?: DelegationContextPolicy | undefined;
   readonly maxConcurrency?: number | undefined;
   readonly maxDepth?: number | undefined;
 }
@@ -30,7 +28,6 @@ export interface ExpertTeam {
   readonly members: readonly Expert[];
   readonly delegation: {
     readonly allow: ReadonlyMap<string, ReadonlySet<string>>;
-    readonly context: DelegationContextPolicy;
     readonly maxConcurrency: number;
     readonly maxDepth: number;
   };
@@ -78,7 +75,6 @@ export function defineExpertTeam(options: DefineExpertTeamOptions): ExpertTeam {
     members: Object.freeze([...options.members]),
     delegation: Object.freeze({
       allow,
-      context: options.delegation.context ?? "fresh",
       maxConcurrency,
       maxDepth,
     }),

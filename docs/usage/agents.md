@@ -28,19 +28,23 @@ await resumed.prompt("continue");
 const researcher = await defineExpert({ ...researcherOptions });
 const launcher = createAgentLauncher({
   experts: [researcher],
-  context: "reuse",
   maxConcurrency: 2,
   maxDepth: 1,
 });
 const coordinator = await defineExpert({
   ...coordinatorOptions,
-  tools: [launcher.tool],
+  tools: launcher.tools,
 });
 const session = await app.experts.createSession(coordinator);
 ```
 
-launcher 向模型公开 `delegate_expert`。每次调用都会在当前 Execution 下创建子 Invocation，
-因此子专家出现在同一 InvocationTree 中，并参与父 Turn 的取消和 Usage 汇总。
+launcher 向模型公开 `spawn_expert`、`wait_experts`、`list_experts`、`followup_expert` 和
+`interrupt_expert`。`spawn_expert` 先原子落盘再立即返回 `{ agentId, invocationId }`；多个 agent
+可以并行运行，同一 agent 的 followup 按 FIFO 串行并复用其 Context。`wait_experts` 按精确的
+Invocation ID 收集结果。父 Invocation 即使遗漏 wait，也会在终结屏障等待未 join 的子任务并续跑综合。
+
+Agent 实例只属于当前 Execution。外部客户端通过 Execution events 和 InvocationTree 观察状态，
+不需要轮询内部任务；Core 不为所有 Tool 增加通用 background/sync 参数。
 
 恢复会话不会自动重启 interrupted Turn。专家团使用同一个 Session API；外部只能向团队根提交 prompt。
 

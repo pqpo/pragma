@@ -69,7 +69,6 @@ function createRuntimeSession(): RuntimeAgentSession {
     messages: vi.fn(() => []),
     submit: vi.fn(),
     steer: vi.fn(),
-    cancelCurrentSubmission: vi.fn(),
     close: vi.fn(),
   } as unknown as RuntimeAgentSession;
 }
