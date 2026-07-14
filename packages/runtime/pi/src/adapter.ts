@@ -154,6 +154,9 @@ export function createPiRuntime(options: CloudPiRuntimeAdapterOptions = {}): Run
       async cancelTurn(session) {
         await session.session.abort();
       },
+      async steerTurn(session, request) {
+        await session.session.steer(request.content);
+      },
       async closeSession(session) {
         session.session.dispose();
         await session.mcpToolRegistry.dispose();

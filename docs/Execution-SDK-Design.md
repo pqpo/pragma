@@ -5,7 +5,8 @@ Pragma 只有两种顶层执行对象：Expert Session 与 Flow Execution。声�
 
 ```ts
 const session = await app.experts.createSession(expert);
-const turn = await session.prompt("hello", { requestId: "request-1" });
+const turn = await session.prompt("hello");
+console.log(turn.requestId);
 
 const execution = await app.flows.start(flow, { input });
 const view = await app.flows.open({ executionId: execution.executionId });

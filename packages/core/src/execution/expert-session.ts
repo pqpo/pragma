@@ -26,11 +26,12 @@ export interface CreateExpertSessionOptions {
 }
 
 export interface PromptOptions {
-  readonly requestId: string;
+  readonly requestId?: string | undefined;
   readonly mode?: PromptMode | undefined;
 }
 
 export interface ExpertTurn extends MutableExecution {
+  readonly requestId: string;
   readonly result: Promise<unknown>;
   readonly usage: Promise<AgentMessageUsage | undefined>;
 }
@@ -38,7 +39,7 @@ export interface ExpertTurn extends MutableExecution {
 export interface ExpertSession {
   readonly sessionId: string;
   readonly expert: ExpertDefinition;
-  prompt(content: string, options: PromptOptions): Promise<ExpertTurn>;
+  prompt(content: string, options?: PromptOptions): Promise<ExpertTurn>;
   abort(reason?: string): Promise<void>;
   close(reason?: string): Promise<void>;
   getState(): Promise<ExpertSessionRecord>;
@@ -218,16 +219,17 @@ class ExpertSessionImpl implements ExpertSession {
     this.leaseRenewal.unref();
   }
 
-  async prompt(content: string, options: PromptOptions): Promise<ExpertTurn> {
+  async prompt(content: string, options: PromptOptions = {}): Promise<ExpertTurn> {
     if (this.leaseError !== undefined) throw this.leaseError;
     if (this.closePromise !== undefined) {
       throw new Error(`ExpertSession is closing or closed: ${this.sessionId}`);
     }
     if (content.trim() === "") throw new Error("Prompt content must not be empty.");
-    if (options.requestId.trim() === "") throw new Error("Prompt requestId must not be empty.");
+    const requestId = options.requestId ?? randomUUID();
+    if (requestId.trim() === "") throw new Error("Prompt requestId must not be empty.");
     const mode = options.mode ?? "enqueue";
 
-    if (mode === "steer") return await this.steer(content, options.requestId);
+    if (mode === "steer") return await this.steer(content, requestId);
 
     const id = randomUUID();
     const now = new Date().toISOString();
@@ -247,7 +249,7 @@ class ExpertSessionImpl implements ExpertSession {
       updatedAt: now,
     };
     const prompt: PromptRequest = {
-      requestId: options.requestId,
+      requestId,
       sessionId: this.sessionId,
       content,
       mode,
@@ -272,7 +274,7 @@ class ExpertSessionImpl implements ExpertSession {
     });
     this.paused = false;
     this.startProcessing();
-    return this.createTurn(executionId);
+    return this.createTurn(executionId, requestId);
   }
 
   async abort(reason?: string): Promise<void> {
@@ -402,7 +404,19 @@ class ExpertSessionImpl implements ExpertSession {
   }
 
   async listTurns(): Promise<readonly ExpertTurn[]> {
-    return (await this.getState()).executionIds.map((id) => this.createTurn(id));
+    const [session, prompts] = await Promise.all([this.getState(), this.getPromptQueue()]);
+    const requestIds = new Map(
+      prompts
+        .filter((prompt) => prompt.mode === "enqueue")
+        .map((prompt) => [prompt.executionId, prompt.requestId]),
+    );
+    return session.executionIds.map((executionId) => {
+      const requestId = requestIds.get(executionId);
+      if (requestId === undefined) {
+        throw new Error(`ExpertTurn prompt is missing: ${executionId}`);
+      }
+      return this.createTurn(executionId, requestId);
+    });
   }
 
   async getMessageHistory(): Promise<readonly ExpertSessionMessage[]> {
@@ -506,7 +520,7 @@ class ExpertSessionImpl implements ExpertSession {
         };
       },
     );
-    if (!claim.execute) return this.createTurn(claim.executionId);
+    if (!claim.execute) return this.createTurn(claim.executionId, requestId);
     try {
       const current = await this.getState();
       if (this.controller !== controller || current.activeExecutionId !== claim.executionId) {
@@ -518,7 +532,7 @@ class ExpertSessionImpl implements ExpertSession {
         targetRunId: claim.executionId,
       });
       await this.completeSteer(requestId, "succeeded");
-      return this.createTurn(claim.executionId);
+      return this.createTurn(claim.executionId, requestId);
     } catch (error) {
       await this.completeSteer(
         requestId,
@@ -687,6 +701,7 @@ class ExpertSessionImpl implements ExpertSession {
     if (this.controller === controller) {
       this.controller = undefined;
     }
+    controller.finish();
   }
 
   private async persistRuntimeContext(
@@ -705,10 +720,11 @@ class ExpertSessionImpl implements ExpertSession {
     }));
   }
 
-  private createTurn(executionId: string): ExpertTurn {
+  private createTurn(executionId: string, requestId: string): ExpertTurn {
     const view = new StoredExecutionView(executionId, this.dependencies.executions);
     const completion = waitForTerminalExecution(this.dependencies.executions, executionId);
     return Object.assign(view, {
+      requestId,
       result: completion.then(readExecutionResult),
       usage: completion.then((execution) => execution.usage),
       cancel: async (reason?: string) => {

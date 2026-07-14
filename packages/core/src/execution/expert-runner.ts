@@ -31,6 +31,20 @@ export type RuntimeContextSnapshot = SharedRuntimeContextSnapshot;
 
 export class ExecutionController {
   private readonly activeRuntimeSessions = new Map<string, RuntimeAgentSession>();
+  private readonly activeRuntimeSubmissions = new Map<
+    string,
+    { readonly runId: string; readonly session: RuntimeAgentSession }
+  >();
+  private readonly runtimeSubmissionWaiters = new Map<
+    string,
+    Set<{
+      readonly resolve: (submission: {
+        readonly runId: string;
+        readonly session: RuntimeAgentSession;
+      }) => void;
+      readonly reject: (reason: unknown) => void;
+    }>
+  >();
   private readonly pendingInteractions = new Map<
     string,
     {
@@ -76,6 +90,25 @@ export class ExecutionController {
   async releaseRuntime(identity: RuntimeSessionIdentity): Promise<void> {
     this.activeRuntimeSessions.delete(identity.contextId);
     await this.runtimeSessions.release(identity);
+  }
+
+  registerRuntimeSubmission(
+    contextId: string,
+    session: RuntimeAgentSession,
+    runId: string,
+  ): void {
+    const submission = { runId, session };
+    this.activeRuntimeSubmissions.set(contextId, submission);
+    const waiters = this.runtimeSubmissionWaiters.get(contextId);
+    if (waiters === undefined) return;
+    this.runtimeSubmissionWaiters.delete(contextId);
+    for (const waiter of waiters) waiter.resolve(submission);
+  }
+
+  unregisterRuntimeSubmission(contextId: string, runId: string): void {
+    if (this.activeRuntimeSubmissions.get(contextId)?.runId === runId) {
+      this.activeRuntimeSubmissions.delete(contextId);
+    }
   }
 
   async requestHumanInteraction(
@@ -133,6 +166,7 @@ export class ExecutionController {
   async cancel(reason?: string): Promise<void> {
     this.cancelled = true;
     const cancellation = new Error(reason ?? `Execution cancelled: ${this.executionId}`);
+    this.rejectRuntimeSubmissionWaiters(cancellation);
     for (const pending of this.pendingInteractions.values()) pending.reject(cancellation);
     this.pendingInteractions.clear();
     await Promise.allSettled(
@@ -179,14 +213,41 @@ export class ExecutionController {
     contextId: string,
     request: { readonly requestId: string; readonly content: string; readonly targetRunId: string },
   ): Promise<void> {
-    const runtime = this.activeRuntimeSessions.get(contextId);
-    if (runtime === undefined) throw new Error("Cannot steer without an active Runtime Session.");
-    await runtime.steer(request);
+    const submission = await this.waitForRuntimeSubmission(contextId);
+    await submission.session.steer(request);
+  }
+
+  finish(): void {
+    this.rejectRuntimeSubmissionWaiters(
+      new Error("ExpertTurn completed before its Runtime submission became active."),
+    );
+    this.activeRuntimeSubmissions.clear();
   }
 
   async closeRuntimes(): Promise<void> {
     await this.runtimeSessions.close();
     this.activeRuntimeSessions.clear();
+  }
+
+  private async waitForRuntimeSubmission(contextId: string): Promise<{
+    readonly runId: string;
+    readonly session: RuntimeAgentSession;
+  }> {
+    const active = this.activeRuntimeSubmissions.get(contextId);
+    if (active !== undefined) return active;
+    if (this.cancelled) throw new Error(`Execution cancelled: ${this.executionId}`);
+    return await new Promise((resolve, reject) => {
+      const waiters = this.runtimeSubmissionWaiters.get(contextId) ?? new Set();
+      waiters.add({ resolve, reject });
+      this.runtimeSubmissionWaiters.set(contextId, waiters);
+    });
+  }
+
+  private rejectRuntimeSubmissionWaiters(reason: unknown): void {
+    for (const waiters of this.runtimeSubmissionWaiters.values()) {
+      for (const waiter of waiters) waiter.reject(reason);
+    }
+    this.runtimeSubmissionWaiters.clear();
   }
 }
 
@@ -363,6 +424,7 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
       humanInteractionHandler,
     },
   });
+  options.controller.registerRuntimeSubmission(options.contextId, session, handle.runId);
   const drain = (async () => {
     for await (const event of handle.events) {
       await options.store.appendEvent(
@@ -434,6 +496,8 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
       });
     }
     throw error;
+  } finally {
+    options.controller.unregisterRuntimeSubmission(options.contextId, handle.runId);
   }
 }
 

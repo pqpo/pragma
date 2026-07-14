@@ -3,7 +3,10 @@
 ```ts
 const expert = await defineExpert({ ...options });
 const session = await app.experts.createSession(expert);
-const first = await session.prompt("hello", { requestId: "first" });
+const first = await session.prompt("hello");
+console.log(first.requestId); // Core 自动生成，可在需要时用于幂等重试。
+const retry = await session.prompt("hello", { requestId: first.requestId });
+console.log(retry.executionId === first.executionId); // true
 for await (const event of first.events()) {
   // 只接收订阅后的事件；Execution 结束后自动退出循环。
   console.log(event.type, event.data);
@@ -17,7 +20,7 @@ const messages = await session.getMessageHistory();
 const sessionUsage = await session.getUsage();
 
 const resumed = await app.experts.resumeSession(expert, { sessionId: session.sessionId });
-await resumed.prompt("continue", { requestId: "second" });
+await resumed.prompt("continue");
 ```
 
 普通 Expert 可以显式注入 subagent launcher：

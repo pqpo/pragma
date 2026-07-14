@@ -49,6 +49,7 @@ function createFakeRuntimeStats(): FakeRuntimeStats {
 
 interface FakeRuntimeOptions {
   readonly closeError?: string;
+  readonly createDelayMs?: number;
   readonly delayMs?: number;
   readonly delegateContext?: "fresh" | "reuse";
   readonly delegateRuntime?: (query: string) => string | undefined;
@@ -68,8 +69,11 @@ function createFakeRuntime(options: FakeRuntimeOptions = {}) {
       kind: "fake",
       displayName: options.runtimeId ?? "Fake",
     },
-    createSession: (context) => {
+    createSession: async (context) => {
       if (stats !== undefined) stats.createSessionCalls += 1;
+      if (options.createDelayMs !== undefined) {
+        await new Promise<void>((resolve) => setTimeout(resolve, options.createDelayMs));
+      }
       return { context, id: `native-${context.systemSessionId}` };
     },
     restoreSession: (context) => {
@@ -368,11 +372,22 @@ describe("ExpertSession", () => {
     const session = await app.experts.createSession(expert);
     const first = await session.prompt("hello", { requestId: "same" });
     const duplicate = await session.prompt("hello", { requestId: "same" });
+    expect(first.requestId).toBe("same");
     expect(duplicate.executionId).toBe(first.executionId);
     await expect(session.prompt("different", { requestId: "same" })).rejects.toThrow(
       "idempotency conflict",
     );
     await expect(first.result).resolves.toBe("solo:hello");
+
+    const generated = await session.prompt("generated");
+    expect(generated.requestId).not.toBe("");
+    const generatedRetry = await session.prompt("generated", {
+      requestId: generated.requestId,
+    });
+    expect(generatedRetry.executionId).toBe(generated.executionId);
+    expect((await session.getPromptQueue()).at(-1)?.requestId).toBe(generated.requestId);
+    expect((await session.listTurns()).at(-1)?.requestId).toBe(generated.requestId);
+    await expect(generated.result).resolves.toBe("solo:generated");
     await session.close();
   });
 
@@ -639,7 +654,13 @@ describe("ExpertSession", () => {
   it("claims concurrent steer requests once and checkpoints Runtime context before completion", async () => {
     const home = await mkdtemp(join(tmpdir(), "pragma-steer-"));
     let steerCalls = 0;
-    const runtime = createFakeRuntime({ delayMs: 250, onSteer: () => (steerCalls += 1) });
+    const stats = createFakeRuntimeStats();
+    const runtime = createFakeRuntime({
+      createDelayMs: 100,
+      delayMs: 250,
+      onSteer: () => (steerCalls += 1),
+      stats,
+    });
     const app = createPragma({
       pragmaHome: home,
       runtimes: createRuntimeRegistry({ runtimes: [runtime], defaultRuntime: "fake" }),
@@ -655,9 +676,7 @@ describe("ExpertSession", () => {
     });
     const session = await app.experts.createSession(expert);
     const turn = await session.prompt("slow", { requestId: "slow" });
-    await waitUntil(
-      async () => Object.keys((await session.getState()).runtimeContexts).length === 1,
-    );
+    await waitUntil(async () => stats.createSessionCalls === 1);
     const [first, duplicate] = await Promise.all([
       session.prompt("correction", { requestId: "steer-once", mode: "steer" }),
       session.prompt("correction", { requestId: "steer-once", mode: "steer" }),

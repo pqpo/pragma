@@ -1,8 +1,21 @@
 import { defineExpertTeam } from "@pragma/core";
+
+import {
+  parseDelegationStreamMode,
+  renderDelegationOutput,
+} from "../../console/console-delegation-output.ts";
 import { createExampleApp, createExampleExpert } from "../../support/example-kit.ts";
 
-const coordinator = await createExampleExpert("lead", "Delegate research when useful.");
-const researcher = await createExampleExpert("researcher", "Investigate the requested topic.");
+const streamMode = parseDelegationStreamMode(process.argv.slice(2));
+
+const coordinator = await createExampleExpert(
+  "lead",
+  "Delegate research immediately, then synthesize the result without inspecting the workspace.",
+);
+const researcher = await createExampleExpert(
+  "researcher",
+  "Return concise conceptual findings without inspecting the workspace or calling tools.",
+);
 const team = defineExpertTeam({
   id: "research-team",
   version: "1.0.0",
@@ -11,9 +24,9 @@ const team = defineExpertTeam({
   delegation: { allow: { lead: ["researcher"], researcher: [] }, context: "reuse" },
 });
 const session = await createExampleApp().experts.createSession(team);
-console.log(
-  await (
-    await session.prompt("Research Execution trees.", { requestId: "team-1" })
-  ).result,
-);
+const turn = await session.prompt("Give three concise benefits of delegated research.", {
+  requestId: "team-1",
+});
+console.log(`Streaming ${streamMode === "main" ? "the main Agent" : "all Agents"}:`);
+await renderDelegationOutput(turn, { mode: streamMode });
 await session.close();

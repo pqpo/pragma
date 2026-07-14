@@ -189,8 +189,12 @@ pnpm --filter @pragma/examples dev src/experts/conversations/single-multi.ts
 专家团委派示例也提供了快捷命令：
 
 ```bash
-pnpm --filter @pragma/examples example:expert-subagent
-pnpm --filter @pragma/examples example:expert-team
+pnpm --filter @pragma/examples example:expert-subagent -- --stream=main
+pnpm --filter @pragma/examples example:expert-subagent -- --stream=all
+pnpm --filter @pragma/examples example:expert-team -- --stream=all
 ```
+
+delegation 示例默认使用 `--stream=main`，只显示主 Agent 的流式输出；`--stream=all` 会显示
+完整 Invocation 树中所有 Agent 的流式输出，并按 `executorId` 标注来源。
 
 所有外部 prompt 必须提交给 `ExpertSession`；Flow 只能通过 `app.flows` 启动、打开或恢复。

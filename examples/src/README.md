@@ -13,6 +13,9 @@ Flow 的公共 API。
 - `experts/teams/delegation.ts`：用 `defineExpertTeam()` 声明团队，由协调 Expert 按 allowlist 委派成员。
 - `experts/teams/invocation-tree.ts`：读取团队 InvocationTree。
 
+两个 delegation 入口支持 `--stream=main|all`；默认 `main` 只显示主 Agent，`all` 会按
+`executorId` 标注并显示所有委派 Agent 的流式输出。
+
 ## Capabilities
 
 - `capabilities/context.ts`：Context preload、检索、CRUD 与角色授权；无需模型配置。
