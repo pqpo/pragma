@@ -7,6 +7,7 @@ import {
   ExecutionEventSchema,
   ExecutionRecordSchema,
   InvocationSchema,
+  RuntimeContextRecordSchema,
   isTerminalExecutionStatus,
   type AgentInstance,
   type ExecutionCursor,
@@ -14,6 +15,7 @@ import {
   type ExecutionRecord,
   type Invocation,
   type InvocationTree,
+  type RuntimeContextRecord,
 } from "@pragma/shared";
 import { z } from "zod";
 
@@ -39,6 +41,11 @@ export interface ExecutionAgentPatch {
   readonly patch: Partial<AgentInstance>;
 }
 
+export interface ExecutionContextPatch {
+  readonly contextId: string;
+  readonly patch: Partial<RuntimeContextRecord>;
+}
+
 export interface ExecutionCommitRequest {
   readonly commitId: string;
   readonly executionId: string;
@@ -49,6 +56,8 @@ export interface ExecutionCommitRequest {
   readonly invocationPatches?: readonly ExecutionInvocationPatch[] | undefined;
   readonly agentPuts?: readonly AgentInstance[] | undefined;
   readonly agentPatches?: readonly ExecutionAgentPatch[] | undefined;
+  readonly contextPuts?: readonly RuntimeContextRecord[] | undefined;
+  readonly contextPatches?: readonly ExecutionContextPatch[] | undefined;
   readonly events?: readonly NewExecutionEvent[] | undefined;
 }
 
@@ -56,6 +65,7 @@ export interface ExecutionCommitResult {
   readonly execution: ExecutionRecord;
   readonly invocations: readonly Invocation[];
   readonly agents: readonly AgentInstance[];
+  readonly contexts: readonly RuntimeContextRecord[];
   readonly events: readonly ExecutionEvent[];
 }
 
@@ -83,6 +93,8 @@ export interface ExecutionStore {
   listInvocations(executionId: string): Promise<readonly Invocation[]>;
   getAgent(executionId: string, agentId: string): Promise<AgentInstance | undefined>;
   listAgents(executionId: string): Promise<readonly AgentInstance[]>;
+  getContext(executionId: string, contextId: string): Promise<RuntimeContextRecord | undefined>;
+  listContexts(executionId: string): Promise<readonly RuntimeContextRecord[]>;
   putInvocation(executionId: string, invocation: Invocation): Promise<void>;
   getTree(executionId: string): Promise<InvocationTree | undefined>;
   appendEvent(
@@ -103,12 +115,13 @@ const ExecutionCommitRecordSchema = z.object({
 });
 
 const ExecutionCommitJournalSchema = z.object({
-  schemaVersion: z.literal("pragma.execution-transaction/v4"),
+  schemaVersion: z.literal("pragma.execution-transaction/v5"),
   commitId: z.string().min(1),
   signature: z.string().length(64),
   execution: ExecutionRecordSchema,
   invocations: InvocationSchema.array(),
   agents: AgentInstanceSchema.array(),
+  contexts: RuntimeContextRecordSchema.array(),
   events: ExecutionEventSchema.array(),
   eventIds: z.array(z.string().min(1)),
 });
@@ -138,6 +151,7 @@ export function createFileExecutionStore(
           InvocationSchema.parse(root),
         ]);
         await writeJsonAtomic(paths.executionAgents(record.executionId), []);
+        await writeJsonAtomic(paths.executionContexts(record.executionId), []);
         await writeJsonAtomic(paths.executionCommits(record.executionId), []);
       });
     },
@@ -184,6 +198,7 @@ export function createFileExecutionStore(
         const now = new Date().toISOString();
         const currentInvocations = await readInvocations(paths, request.executionId);
         const currentAgents = await readAgents(paths, request.executionId);
+        const currentContexts = await readContexts(paths, request.executionId);
         assertFinalStatusTransitions(
           current,
           currentInvocations,
@@ -202,6 +217,13 @@ export function createFileExecutionStore(
           request.agentPatches ?? [],
           now,
         );
+        const nextContexts = applyContextChanges(
+          currentContexts,
+          request.contextPuts ?? [],
+          request.contextPatches ?? [],
+          now,
+        );
+        assertAgentContextBindings(nextAgents, nextContexts);
         const existingEvents = await readExecutionEvents(paths, request.executionId);
         const materialized = materializeEvents(
           request.executionId,
@@ -214,19 +236,20 @@ export function createFileExecutionStore(
         const nextExecution = ExecutionRecordSchema.parse({
           ...current,
           ...request.executionPatch,
-          schemaVersion: "pragma.execution/v4",
+          schemaVersion: "pragma.execution/v5",
           executionId: request.executionId,
           version: current.version + 1,
           lastAppliedSequence: lastSequence,
           updatedAt: now,
         });
         const journal = ExecutionCommitJournalSchema.parse({
-          schemaVersion: "pragma.execution-transaction/v4",
+          schemaVersion: "pragma.execution-transaction/v5",
           commitId: request.commitId,
           signature,
           execution: nextExecution,
           invocations: nextInvocations,
           agents: nextAgents,
+          contexts: nextContexts,
           events: materialized.newEvents,
           eventIds: materialized.requestedEvents.map((event) => event.eventId),
         });
@@ -239,6 +262,7 @@ export function createFileExecutionStore(
           execution: nextExecution,
           invocations: nextInvocations,
           agents: nextAgents,
+          contexts: nextContexts,
           events: materialized.requestedEvents,
         };
       });
@@ -307,6 +331,22 @@ export function createFileExecutionStore(
       });
     },
 
+    async getContext(executionId, contextId) {
+      return await withFileLock(paths.executionLock(executionId), async () => {
+        await recoverTransaction(paths, executionId);
+        return (await readContexts(paths, executionId)).find(
+          (context) => context.contextId === contextId,
+        );
+      });
+    },
+
+    async listContexts(executionId) {
+      return await withFileLock(paths.executionLock(executionId), async () => {
+        await recoverTransaction(paths, executionId);
+        return await readContexts(paths, executionId);
+      });
+    },
+
     async putInvocation(executionId, invocation) {
       await store.commit({
         commitId: randomUUID(),
@@ -372,6 +412,79 @@ function applyAgentChanges(
     );
   }
   return [...byId.values()];
+}
+
+function applyContextChanges(
+  current: readonly RuntimeContextRecord[],
+  puts: readonly RuntimeContextRecord[],
+  patches: readonly ExecutionContextPatch[],
+  now: string,
+): RuntimeContextRecord[] {
+  const byId = new Map(current.map((context) => [context.contextId, context]));
+  for (const context of puts) {
+    if (byId.has(context.contextId)) {
+      throw new Error(`Runtime Context already exists: ${context.contextId}`);
+    }
+    byId.set(context.contextId, RuntimeContextRecordSchema.parse(context));
+  }
+  for (const change of patches) {
+    const context = byId.get(change.contextId);
+    if (context === undefined) throw new Error(`Runtime Context not found: ${change.contextId}`);
+    const next = RuntimeContextRecordSchema.parse({
+      ...context,
+      ...change.patch,
+      contextId: change.contextId,
+      owner: context.owner,
+      expert: context.expert,
+      runtimeId: context.runtimeId ?? change.patch.runtimeId,
+      createdByInvocationId: context.createdByInvocationId,
+      updatedAt: change.patch.updatedAt ?? now,
+    });
+    assertContextIdentity(context, next);
+    byId.set(change.contextId, next);
+  }
+  return [...byId.values()];
+}
+
+function assertAgentContextBindings(
+  agents: readonly AgentInstance[],
+  contexts: readonly RuntimeContextRecord[],
+): void {
+  const contextById = new Map(contexts.map((context) => [context.contextId, context]));
+  const agentByOwnedContext = new Map<string, string>();
+  for (const agent of agents) {
+    const context = contextById.get(agent.contextId);
+    if (context === undefined) {
+      throw new Error(`Agent Runtime Context not found: ${agent.contextId}`);
+    }
+    if (
+      context.expert.id !== agent.definition.id ||
+      context.expert.version !== agent.definition.version
+    ) {
+      throw new Error(`Agent Runtime Context identity conflict: ${agent.contextId}`);
+    }
+    const key = `${agent.ownerContextId}\u0000${agent.contextId}`;
+    const existing = agentByOwnedContext.get(key);
+    if (existing !== undefined && existing !== agent.agentId) {
+      throw new Error(`Runtime Context ${agent.contextId} already belongs to Agent ${existing}.`);
+    }
+    agentByOwnedContext.set(key, agent.agentId);
+  }
+}
+
+function assertContextIdentity(current: RuntimeContextRecord, next: RuntimeContextRecord): void {
+  if (
+    current.owner.type !== next.owner.type ||
+    current.owner.ownerId !== next.owner.ownerId ||
+    current.expert.id !== next.expert.id ||
+    current.expert.version !== next.expert.version ||
+    (current.runtimeId !== undefined && next.runtimeId !== current.runtimeId)
+  ) {
+    throw new Error(`Runtime Context identity cannot change: ${current.contextId}`);
+  }
+  if (current.lifecycle === "closed" && next.lifecycle !== "closed") {
+    throw new Error(`Closed Runtime Context cannot be reopened: ${current.contextId}`);
+  }
 }
 
 function applyInvocationChanges(
@@ -494,7 +607,7 @@ function materializeEvents(
       continue;
     }
     const event = parseExecutionEvent({
-      schemaVersion: "pragma.execution-event/v4",
+      schemaVersion: "pragma.execution-event/v5",
       eventId,
       cursor: { executionId, sequence: ++sequence },
       executionId,
@@ -555,6 +668,7 @@ async function applyTransaction(
   await writeJsonAtomic(paths.executionState(executionId), journal.execution);
   await writeJsonAtomic(paths.executionInvocations(executionId), journal.invocations);
   await writeJsonAtomic(paths.executionAgents(executionId), journal.agents);
+  await writeJsonAtomic(paths.executionContexts(executionId), journal.contexts);
   await writeJsonLinesAtomic(paths.executionEvents(executionId), mergedEvents);
   await writeJsonAtomic(paths.executionCommits(executionId), nextCommits);
   await rm(paths.executionTransaction(executionId), { force: true });
@@ -594,6 +708,7 @@ async function readCommitResult(
   const execution = await requireExecution(paths, executionId);
   const invocations = await readInvocations(paths, executionId);
   const agents = await readAgents(paths, executionId);
+  const contexts = await readContexts(paths, executionId);
   const eventById = new Map(
     (await readExecutionEvents(paths, executionId)).map((event) => [event.eventId, event]),
   );
@@ -601,6 +716,7 @@ async function readCommitResult(
     execution,
     invocations,
     agents,
+    contexts,
     events: eventIds.map((eventId) => {
       const event = eventById.get(eventId);
       if (event === undefined) throw new Error(`Committed Execution event is missing: ${eventId}`);
@@ -627,6 +743,15 @@ async function readAgents(paths: PragmaPaths, executionId: string): Promise<Agen
   const value = await readJsonIfExists(paths.executionAgents(executionId));
   if (value === undefined) return [];
   return AgentInstanceSchema.array().parse(value);
+}
+
+async function readContexts(
+  paths: PragmaPaths,
+  executionId: string,
+): Promise<RuntimeContextRecord[]> {
+  const value = await readJsonIfExists(paths.executionContexts(executionId));
+  if (value === undefined) return [];
+  return RuntimeContextRecordSchema.array().parse(value);
 }
 
 async function readExecutionEvents(

@@ -1,5 +1,6 @@
 import {
   defineExpertTeam,
+  defineContextIdResolver,
   defineFlow,
   type ExpertAgentManagedTool,
   type ExpertAgentToolCallResult,
@@ -29,8 +30,14 @@ const NormalizedRequirementSchema = RequirementSchema.extend({
   summary: z.string().min(1),
 });
 
+const RevisionRequestSchema = z.object({
+  cycle: z.number().int().positive(),
+  requestedChanges: z.string().min(1),
+  previousTeamReview: z.string(),
+});
+
 const ReviewOutcomeSchema = z.object({
-  status: z.enum(["approved", "revision-required", "rejected"]),
+  status: z.enum(["approved", "rejected"]),
   requirement: NormalizedRequirementSchema,
   productAnalysis: z.string(),
   teamReview: z.string(),
@@ -214,16 +221,43 @@ const productAnalysis = flow.use("product-analysis", productStrategist, {
   },
 });
 
+const revisionContext = defineContextIdResolver({
+  id: "product-requirement.revision-context",
+  version: "1.0.0",
+  resolve: ({ state, previousContexts, freshContextId }) =>
+    state["revisionRequest"] === undefined
+      ? freshContextId
+      : (previousContexts.at(-1)?.contextId ?? freshContextId),
+});
+
 const teamReview = flow.use("solution-review-team", reviewTeam, {
-  input: ({ state }) =>
-    [
+  contextId: revisionContext,
+  input: ({ state }) => {
+    const revision = RevisionRequestSchema.safeParse(state["revisionRequest"]);
+    return [
       "Review the following requirement and Product Strategist analysis.",
       "Requirement:",
       JSON.stringify(state["requirement"], null, 2),
       "Product analysis:",
       String(state["productAnalysis"]),
-    ].join("\n"),
+      ...(revision.success
+        ? [
+            `This is revision review cycle ${revision.data.cycle}.`,
+            "The human reviewer requested these changes:",
+            revision.data.requestedChanges,
+            "Previous cross-functional review:",
+            revision.data.previousTeamReview,
+            "Re-evaluate the proposal with the requested changes and return an updated recommendation.",
+          ]
+        : []),
+    ].join("\n");
+  },
   reduce: ({ state, output }) => {
+    const history = Array.isArray(state["teamReviewHistory"])
+      ? [...state["teamReviewHistory"]]
+      : [];
+    history.push({ cycle: Number(state["revisionCount"] ?? 0), review: String(output) });
+    state["teamReviewHistory"] = history;
     state["teamReview"] = String(output);
   },
 });
@@ -235,6 +269,8 @@ const humanReview = flow.humanTask({
     requirement: state["requirement"],
     productAnalysis: state["productAnalysis"],
     teamReview: state["teamReview"],
+    revisionCycle: Number(state["revisionCount"] ?? 0),
+    revisionRequest: state["revisionRequest"],
   }),
   request: ({ input }) => ({
     kind: "review_gate",
@@ -315,15 +351,19 @@ const finalizeApproved = flow.task({
 const prepareRevision = flow.task({
   id: "prepare-revision-backlog",
   version: "1.0.0",
+  outputSchema: RevisionRequestSchema,
   input: ({ state }) => state,
-  handler: ({ input }) =>
-    createOutcome(input, "revision-required", [
-      "Convert the human review notes into explicit scope changes.",
-      "Reconcile the revised scope with architecture and delivery constraints.",
-      "Submit a new version of the requirement for review.",
-    ]),
+  handler: ({ input }) => {
+    const context = readReviewContext(input);
+    return {
+      cycle: Number(input["revisionCount"] ?? 0) + 1,
+      requestedChanges: context.humanDecision.notes ?? "Rework the proposal before approval.",
+      previousTeamReview: context.teamReview,
+    };
+  },
   reduce: ({ state, output }) => {
-    state["outcome"] = output;
+    state["revisionCount"] = output.cycle;
+    state["revisionRequest"] = output;
   },
 });
 
@@ -356,7 +396,7 @@ flow.compose(({ start, step, end, fail }) => {
       { fallback: fail("Unsupported review decision") },
     );
   step(finalizeApproved).next(end());
-  step(prepareRevision).next(end());
+  step(prepareRevision).next(teamReview);
   step(archiveRejected).next(end());
 });
 

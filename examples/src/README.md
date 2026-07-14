@@ -49,8 +49,9 @@ Flow 的公共 API。
 - `flows/human.ts`：HumanTask 响应。
 - `flows/recovery.ts`：打开并观察既有 Flow Execution。
 - `flows/invocation-tree.ts`：Flow InvocationTree 与输出流。
-- `flows/product-requirement-review.ts`：包含 Task、Expert、ExpertTeam、HumanTask 和条件分支的
-  产品需求评审 Flow；使用全屏 TUI 展示节点状态、输入输出、Agent 思考与工具流，并接收人工决策。
+- `flows/product-requirement-review.ts`：包含 Task、Expert、ExpertTeam、HumanTask 和条件回边的
+  产品需求评审 Flow；`revise` 会携带人工修订信息重新进入跨职能评审，只有 `approve` 与
+  `reject` 会结束 Flow。全屏 TUI 展示节点状态、输入输出、Agent 思考与工具流，并接收人工决策。
 
 ## 示例支撑
 

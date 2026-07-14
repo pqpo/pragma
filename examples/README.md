@@ -182,7 +182,8 @@ skills/                  # 示例 SKILL.md
 - `flows/recovery.ts`：`flows.open()` 只读观察执行状态。
 - `flows/invocation-tree.ts`：Flow InvocationTree 与总输出流。
 - `flows/product-requirement-review.ts`：复杂产品需求评审 Flow，串联普通 Task、单 Expert、
-  ExpertTeam、HumanTask 和三路决策分支，并使用全屏 Flow TUI 展示完整执行过程。
+  ExpertTeam、HumanTask 和三路决策分支；`revise` 会回到 ExpertTeam 重新评审，只有
+  `approve` 与 `reject` 是终点。示例使用全屏 Flow TUI 展示完整执行过程。
 
 例如：
 
@@ -206,7 +207,13 @@ pnpm --filter @pragma/examples example:flow-tui
 示例会直接执行一份“Execution replay and comparison”产品需求。左侧节点图展示 Task、Expert、
 Team、Human review gate 和最终分支；右侧可切换查看所选节点的 Activity、Input 与 Output。
 Team 节点可展开查看 coordinator 和各成员自己的 Thinking、Tool 与回答。评审门禁中选择
-`approve`、`revise` 或 `reject`，再输入评审意见，Flow 会进入对应的收尾 Task。
+`approve`、`revise` 或 `reject`，再输入评审意见。`revise` 会把修订意见与上一次团队评审作为
+新输入送回跨职能团队，并再次进入人工门禁；明确选择 `approve` 或 `reject` 后 Flow 才会结束。
+该 Team step 设置了具名 `ContextIdResolver`：首次评审返回 Core 提供的新 ID，存在修订请求时选择
+上一轮兼容 Context，因此 coordinator 会沿用上一轮 Runtime 对话。若省略 `contextId`，Core 的
+`pragma.context.fresh@v1` 会让每轮使用独立 Context。Team member 仍由 delegation resolver 独立决定；
+本例保持默认行为，所以每轮新 spawn 的 reviewer 使用新的 Agent Context。
+发生回边后，TUI 右侧按 `Round 1`、`Round 2` 展示每次访问各自的 Activity、Input 与 Output。
 
 - `↑` / `↓`：选择节点或 Team 成员。
 - `←` / `→`：切换 Activity、Input、Output。

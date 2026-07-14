@@ -80,7 +80,7 @@ describe("Execution canonical event log", () => {
     const bus = getExecutionLiveBus(trackedStore);
     for (const sequence of [1, 2]) {
       bus.publishEvent("execution", {
-        schemaVersion: "pragma.execution-event/v4",
+        schemaVersion: "pragma.execution-event/v5",
         eventId: `child-${sequence}`,
         cursor: { executionId: "execution", sequence },
         executionId: "execution",
@@ -243,7 +243,7 @@ describe("Execution canonical event log", () => {
     const root = (await store.getInvocation("execution", "root"))!;
     const occurredAt = new Date().toISOString();
     const event = {
-      schemaVersion: "pragma.execution-event/v4",
+      schemaVersion: "pragma.execution-event/v5",
       eventId: "recovered-result",
       cursor: { executionId: "execution", sequence: 1 },
       executionId: "execution",
@@ -255,7 +255,7 @@ describe("Execution canonical event log", () => {
     await writeFile(
       paths.executionTransaction("execution"),
       `${JSON.stringify({
-        schemaVersion: "pragma.execution-transaction/v4",
+        schemaVersion: "pragma.execution-transaction/v5",
         commitId: "recovered-commit",
         signature: "a".repeat(64),
         execution: {
@@ -268,6 +268,7 @@ describe("Execution canonical event log", () => {
         },
         invocations: [{ ...root, status: "succeeded", output: "recovered", updatedAt: occurredAt }],
         agents: [],
+        contexts: [],
         events: [event],
         eventIds: [event.eventId],
       })}\n`,
@@ -307,7 +308,7 @@ async function fixture() {
   const timestamp = new Date().toISOString();
   const definition = { id: "flow", version: "1.0.0", kind: "flow" as const };
   const execution: ExecutionRecord = {
-    schemaVersion: "pragma.execution/v4",
+    schemaVersion: "pragma.execution/v5",
     executionId: "execution",
     version: 0,
     kind: "flow",

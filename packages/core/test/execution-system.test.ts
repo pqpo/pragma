@@ -17,10 +17,14 @@ import {
   createRuntimeRegistry,
   defineExpert,
   defineExpertTeam,
+  defineContextIdResolver,
   defineFlow,
   defineRuntimeDriver,
+  fingerprintExpertExecutionDefinition,
   PragmaPaths,
   type AgentMessageUsage,
+  type ExecutionEvent,
+  type FlowExecution,
   type RuntimeDriverSessionContext,
 } from "../src/index.ts";
 
@@ -151,6 +155,8 @@ type OrchestrationScenario =
   | "barrier"
   | "usage"
   | "followup"
+  | "followup-older"
+  | "reuse-spawn"
   | "interrupt"
   | "parent-failure";
 
@@ -158,6 +164,7 @@ function createOrchestrationRuntime(
   scenario: OrchestrationScenario,
   stats: { active: number; maxActive: number } = { active: 0, maxActive: 0 },
 ) {
+  const firstChildWave = createBarrier(2, 5_000);
   return defineRuntimeDriver<never, FakeSession>({
     descriptor: { id: `orchestration-${scenario}`, kind: "fake", displayName: "Orchestration" },
     createSession: (context) => ({ context, id: `native-${context.systemSessionId}` }),
@@ -169,9 +176,13 @@ function createOrchestrationRuntime(
       try {
         const expertId = session.context.agent.id;
         if (expertId !== "lead") {
-          await new Promise<void>((resolve) =>
-            setTimeout(resolve, scenario === "followup" ? 25 : 200),
-          );
+          if (scenario === "parallel" || scenario === "concurrency") {
+            await firstChildWave.arriveAndWait();
+          } else {
+            await new Promise<void>((resolve) =>
+              setTimeout(resolve, scenario === "followup" ? 25 : 200),
+            );
+          }
           return {
             outputText: `${expertId}:${turn.rawQuery}`,
             runtimeSessionId: session.id,
@@ -210,6 +221,39 @@ function createOrchestrationRuntime(
             second["invocationId"] as string,
             ...(third === undefined ? [] : [third["invocationId"] as string]),
           ]);
+          return {
+            outputText: `lead:${JSON.stringify(result["completed"])}`,
+            runtimeSessionId: session.id,
+          };
+        }
+
+        if (scenario === "reuse-spawn") {
+          const [first, second] = await Promise.all([
+            spawn("member", "first"),
+            spawn("member", "second"),
+          ]);
+          const result = await wait([
+            first["invocationId"] as string,
+            second["invocationId"] as string,
+          ]);
+          return {
+            outputText: `lead:${JSON.stringify(result["completed"])}`,
+            runtimeSessionId: session.id,
+          };
+        }
+
+        if (scenario === "followup-older") {
+          const first = await spawn("member", "first");
+          const second = await spawn("member", "second");
+          await wait([
+            first["invocationId"] as string,
+            second["invocationId"] as string,
+          ]);
+          const followup = await call("followup_expert", {
+            agentId: first["agentId"],
+            prompt: "followup-first",
+          });
+          const result = await wait([followup["invocationId"] as string]);
           return {
             outputText: `lead:${JSON.stringify(result["completed"])}`,
             runtimeSessionId: session.id,
@@ -265,6 +309,38 @@ const orchestrationUsage: AgentMessageUsage = {
   totalTokens: 13,
   cost: { input: 0.01, output: 0.02, cacheRead: 0.001, cacheWrite: 0, total: 0.031 },
 };
+
+function createBarrier(
+  participants: number,
+  timeoutMs: number,
+): { arriveAndWait(): Promise<void> } {
+  let arrived = 0;
+  let release!: () => void;
+  const ready = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  return {
+    async arriveAndWait() {
+      arrived += 1;
+      if (arrived >= participants) release();
+      let timeout: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([
+          ready,
+          new Promise<never>((_resolve, reject) => {
+            timeout = setTimeout(
+              () =>
+                reject(new Error(`Barrier timed out waiting for ${participants} participants.`)),
+              timeoutMs,
+            );
+          }),
+        ]);
+      } finally {
+        if (timeout !== undefined) clearTimeout(timeout);
+      }
+    },
+  };
+}
 
 async function fixture(delayMs?: number) {
   const home = await mkdtemp(join(tmpdir(), "pragma-execution-"));
@@ -386,6 +462,105 @@ describe("ExpertSession", () => {
     ).rejects.toThrow("is closed");
   });
 
+  it("atomically preserves the first creator of the root Context under concurrent prompts", async () => {
+    const { app, expert } = await trackedFixture({ delayMs: 25 });
+    const session = await app.experts.createSession(expert);
+    const [first, second] = await Promise.all([
+      session.prompt("one", { requestId: "concurrent-one" }),
+      session.prompt("two", { requestId: "concurrent-two" }),
+    ]);
+    const state = await session.getState();
+    expect(Object.keys(state.contexts)).toEqual([state.rootContextId]);
+    expect(state.contexts[state.rootContextId]?.createdByInvocationId).toBe(state.executionIds[0]);
+    await Promise.all([first.result, second.result]);
+    expect((await session.getState()).contexts[state.rootContextId]?.createdByInvocationId).toBe(
+      state.executionIds[0],
+    );
+    await session.close();
+  });
+
+  it("reuses a Team member Context across ExpertSession restart and persists its snapshot", async () => {
+    const home = await mkdtemp(join(tmpdir(), "pragma-team-session-context-"));
+    const stats = createFakeRuntimeStats();
+    const runtime = createFakeRuntime({ stats, closeError: "simulated process cleanup failure" });
+    const app = createPragma({
+      pragmaHome: home,
+      runtimes: createRuntimeRegistry({ runtimes: [runtime], defaultRuntime: "fake" }),
+    });
+    const coordinator = await defineExpert({
+      id: "lead",
+      name: "Lead",
+      description: "Lead",
+      tags: [],
+      version: "1.0.0",
+      scope: "test",
+      workspace: home,
+      pragmaHome: home,
+    });
+    const member = await defineExpert({
+      id: "member",
+      name: "Member",
+      description: "Member",
+      tags: [],
+      version: "1.0.0",
+      scope: "test",
+      workspace: home,
+      pragmaHome: home,
+    });
+    const team = defineExpertTeam({
+      id: "persistent-team",
+      version: "1.0.0",
+      coordinator,
+      members: [member],
+      delegation: {
+        contextId: defineContextIdResolver({
+          id: "test.persistent-team-member",
+          version: "1.0.0",
+          resolve: ({ ownerContextId, target }) =>
+            `${ownerContextId ?? "root"}:${target.expertId}`,
+        }),
+      },
+    });
+    const session = await app.experts.createSession(team);
+    const first = await session.prompt("first", { requestId: "first" });
+    await first.result;
+    const firstMember = (await first.getTree()).children[0]?.invocation;
+    expect(firstMember).toBeDefined();
+
+    await expect(session.close()).rejects.toThrow("Runtime Session pool cleanup failed");
+    const recoveredStats = createFakeRuntimeStats();
+    const recoveryApp = createPragma({
+      pragmaHome: home,
+      runtimes: createRuntimeRegistry({
+        runtimes: [createFakeRuntime({ stats: recoveredStats })],
+        defaultRuntime: "fake",
+      }),
+    });
+    const recovered = await recoveryApp.experts.resumeSession(team, {
+      sessionId: session.sessionId,
+    });
+    const second = await recovered.prompt("second", { requestId: "second" });
+    await second.result;
+    const secondMember = (await second.getTree()).children[0]?.invocation;
+    expect(secondMember?.contextId).toBe(firstMember?.contextId);
+    expect(secondMember?.contextResolution?.disposition).toBe("reused");
+
+    const state = await recovered.getState();
+    const memberContexts = Object.values(state.contexts).filter(
+      (context) => context.expert.id === member.id,
+    );
+    expect(memberContexts).toHaveLength(1);
+    expect(memberContexts[0]).toMatchObject({
+      contextId: firstMember?.contextId,
+      createdByInvocationId: firstMember?.invocationId,
+      snapshot: { expertId: member.id, runtimeId: "fake" },
+    });
+    expect(stats.createSessionCalls).toBe(2);
+    expect(recoveredStats.createSessionCalls).toBe(0);
+    expect(recoveredStats.restoreSessionCalls).toBe(2);
+    await recovered.close();
+  });
+
   it("persists turn usage and exposes a session total without consuming events", async () => {
     const perTurnUsage: AgentMessageUsage = {
       input: 100,
@@ -447,15 +622,16 @@ describe("ExpertSession", () => {
     const sessions = createFileExpertSessionStore({ executions, pragmaHome: home });
     const now = new Date().toISOString();
     await sessions.create({
-      schemaVersion: "pragma.expert-session/v1",
+      schemaVersion: "pragma.expert-session/v2",
       sessionId: "leased-session",
       expertId: "expert",
       expertVersion: "1.0.0",
+      definitionFingerprint: "a".repeat(64),
       status: "open",
       queuedRequestIds: [],
       executionIds: [],
-      contextIds: { root: "root" },
-      runtimeContexts: {},
+      rootContextId: "root",
+      contexts: {},
       createdAt: now,
       updatedAt: now,
     });
@@ -465,6 +641,72 @@ describe("ExpertSession", () => {
     await new Promise<void>((resolve) => setTimeout(resolve, 220));
     await expect(sessions.claimLease("leased-session", "owner-b", 200)).resolves.toBe(true);
     await sessions.releaseLease("leased-session", "owner-b");
+  });
+
+  it("rejects recovery when a Team resolver descriptor changes", async () => {
+    const home = await mkdtemp(join(tmpdir(), "pragma-session-fingerprint-"));
+    const executions = createFileExecutionStore({ pragmaHome: home });
+    const sessions = createFileExpertSessionStore({ executions, pragmaHome: home });
+    const app = createPragma({
+      pragmaHome: home,
+      runtimes: createRuntimeRegistry({
+        runtimes: [createFakeRuntime()],
+        defaultRuntime: "fake",
+      }),
+    });
+    const lead = await defineExpert({
+      id: "fingerprint-lead",
+      name: "Lead",
+      description: "Lead",
+      tags: [],
+      version: "1.0.0",
+      scope: "test",
+      workspace: home,
+    });
+    const member = await defineExpert({
+      id: "fingerprint-member",
+      name: "Member",
+      description: "Member",
+      tags: [],
+      version: "1.0.0",
+      scope: "test",
+      workspace: home,
+    });
+    const team = (resolverVersion: string) =>
+      defineExpertTeam({
+        id: "fingerprint-team",
+        version: "1.0.0",
+        coordinator: lead,
+        members: [member],
+        delegation: {
+          contextId: defineContextIdResolver({
+            id: "test.team-context",
+            version: resolverVersion,
+            resolve: ({ freshContextId }) => freshContextId,
+          }),
+        },
+      });
+    const original = team("1.0.0");
+    const now = new Date().toISOString();
+    await sessions.create({
+      schemaVersion: "pragma.expert-session/v2",
+      sessionId: "fingerprint-session",
+      expertId: original.id,
+      expertVersion: original.version,
+      definitionFingerprint: fingerprintExpertExecutionDefinition(original),
+      status: "open",
+      queuedRequestIds: [],
+      executionIds: [],
+      runtimeId: "fake",
+      rootContextId: "root",
+      contexts: {},
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await expect(
+      app.experts.resumeSession(team("2.0.0"), { sessionId: "fingerprint-session" }),
+    ).rejects.toThrow("fingerprint mismatch");
   });
 
   it("reuses the Runtime Session after a failed prompt", async () => {
@@ -703,12 +945,12 @@ describe("ExpertSession", () => {
     const opened = stats.createSessionCalls;
     const closedBeforeSession = stats.closeSessionCalls;
     const childRuntimeContexts = (await Promise.all([first.getTree(), second.getTree()])).map(
-      (tree) => tree.children[0]?.invocation.runtimeContext,
+      (tree) => tree.children[0]?.invocation.contextResolution,
     );
     await session.close();
     expect({
       opened: 3,
-      closedBeforeSession: 2,
+      closedBeforeSession: 0,
       closed: 3,
       childRuntimeContexts: true,
     }).toEqual({
@@ -873,7 +1115,7 @@ describe("ExpertSession", () => {
           },
         ],
         execution: {
-          schemaVersion: "pragma.execution/v4",
+          schemaVersion: "pragma.execution/v5",
           executionId,
           version: 0,
           kind: "expert-turn",
@@ -918,15 +1160,16 @@ describe("ExpertSession", () => {
     const sessions = createFileExpertSessionStore({ executions, pragmaHome: home });
     const now = new Date().toISOString();
     await sessions.create({
-      schemaVersion: "pragma.expert-session/v1",
+      schemaVersion: "pragma.expert-session/v2",
       sessionId: "atomic-session",
       expertId: "expert",
       expertVersion: "1.0.0",
+      definitionFingerprint: "a".repeat(64),
       status: "open",
       queuedRequestIds: [],
       executionIds: [],
-      contextIds: { root: "root-context" },
-      runtimeContexts: {},
+      rootContextId: "root-context",
+      contexts: {},
       createdAt: now,
       updatedAt: now,
     });
@@ -968,17 +1211,138 @@ describe("ExpertSession", () => {
 
 describe("FlowExecution", () => {
   it("keeps Runtime ownership scoped to the FlowExecution", async () => {
-    const { app, expert, stats } = await trackedFixture();
+    const { home, app, expert, stats } = await trackedFixture();
     const flow = defineFlow({ id: "runtime-flow", version: "1.0.0" });
     const expertStep = flow.use("expert", expert);
     flow.compose(({ start, end }) => start(expertStep).next(end()));
 
     const execution = await app.flows.start(flow, { input: "flow prompt" });
+    const subscription = await execution.subscribeEvents({ scope: { kind: "all" } });
+    const streamed = (async () => {
+      const events = [];
+      for await (const event of subscription) events.push(event);
+      return events;
+    })();
     await expect(execution.result).resolves.toBeDefined();
     expect(stats.createSessionCalls).toBe(1);
     expect(stats.closeSessionCalls).toBe(1);
-    expect((await execution.getTree()).children[0]?.invocation.runtimeContext).toBeDefined();
-    expect((await execution.getState()).state).not.toHaveProperty("__runtimeContexts");
+    expect((await execution.getTree()).children[0]?.invocation.contextResolution).toBeDefined();
+    const store = createFileExecutionStore({ pragmaHome: home });
+    expect(await store.listContexts(execution.executionId)).toMatchObject([
+      { lifecycle: "closed", snapshot: { runtimeId: "fake" } },
+    ]);
+    const eventTypes = (await streamed).map((event) => event.type);
+    expect(eventTypes).toContain("context.closed");
+    expect(eventTypes.indexOf("context.closed")).toBeLessThan(
+      eventTypes.indexOf("execution.succeeded"),
+    );
+    await subscription.close();
+  });
+
+  it("atomically closes Runtime Contexts when a Flow is cancelled", async () => {
+    const { home, app, expert } = await trackedFixture({ delayMs: 200 });
+    const flow = defineFlow({ id: "cancel-context-flow", version: "1.0.0" });
+    const expertStep = flow.use("expert", expert);
+    flow.compose(({ start, end }) => start(expertStep).next(end()));
+
+    const execution = await app.flows.start(flow, { input: "cancel me" });
+    const subscription = await execution.subscribeEvents({ scope: { kind: "all" } });
+    const streamed = (async () => {
+      const events = [];
+      for await (const event of subscription) events.push(event);
+      return events;
+    })();
+    const store = createFileExecutionStore({ pragmaHome: home });
+    await waitUntil(async () => (await store.listContexts(execution.executionId)).length === 1);
+    const result = expect(execution.result).rejects.toThrow("cancel context test");
+    await execution.cancel("cancel context test");
+    await result;
+    expect(await store.listContexts(execution.executionId)).toMatchObject([
+      { lifecycle: "closed" },
+    ]);
+    const eventTypes = (await streamed).map((event) => event.type);
+    expect(eventTypes.indexOf("context.closed")).toBeLessThan(
+      eventTypes.indexOf("execution.cancelled"),
+    );
+    await subscription.close();
+  });
+
+  it.each([
+    { label: "fresh by default", expectedSessions: 2, reuses: false },
+    { label: "reused when configured", expectedSessions: 1, reuses: true },
+  ])("keeps repeated Expert Runtime Contexts $label", async (scenario) => {
+    const { app, expert, stats } = await trackedFixture();
+    const flow = defineFlow({ id: `context-${scenario.label}`, version: "1.0.0" });
+    const expertStep = flow.use("expert", expert, {
+      ...(scenario.reuses
+        ? {
+            contextId: defineContextIdResolver({
+              id: "test.fixed-flow-context",
+              version: "1.0.0",
+              resolve: () => "fixed-flow-context",
+            }),
+          }
+        : {}),
+    });
+    const review = flow.humanTask({
+      id: "review",
+      version: "1.0.0",
+      request: {
+        kind: "review_gate",
+        questions: [
+          {
+            header: "Decision",
+            question: "Decision?",
+            kind: "single_choice",
+            options: [
+              { label: "approve", description: "Approve" },
+              { label: "revise", description: "Revise" },
+              { label: "reject", description: "Reject" },
+            ],
+          },
+        ],
+      },
+    });
+    flow.compose(({ start, step, end }) => {
+      start(expertStep).next(review).route("decision", {
+        approve: end(),
+        revise: expertStep,
+        reject: end(),
+      });
+      step(expertStep).next(review);
+    });
+
+    const execution = await app.flows.start(flow, { input: "initial" });
+    const firstRequest = await waitForHumanRequest(execution, 0);
+    await execution.respondToHumanInteraction(
+      String((firstRequest.data as { interactionId: string }).interactionId),
+      {
+        kind: "user_question",
+        answered: true,
+        answers: { "Decision?": "revise" },
+      },
+      { requestId: `first-${scenario.label}` },
+    );
+    const secondRequest = await waitForHumanRequest(execution, 1);
+    await execution.respondToHumanInteraction(
+      String((secondRequest.data as { interactionId: string }).interactionId),
+      {
+        kind: "user_question",
+        answered: true,
+        answers: { "Decision?": "approve" },
+      },
+      { requestId: `second-${scenario.label}` },
+    );
+    await execution.result;
+
+    const expertInvocations = (await execution.getTree()).children
+      .map((child) => child.invocation)
+      .filter((invocation) => invocation.nodeId === "expert");
+    expect(expertInvocations).toHaveLength(2);
+    expect(expertInvocations[0]?.contextId === expertInvocations[1]?.contextId).toBe(
+      scenario.reuses,
+    );
+    expect(stats.createSessionCalls).toBe(scenario.expectedSessions);
   });
 
   it("runs inline Task nodes and exposes a read-only open view", async () => {
@@ -1231,6 +1595,93 @@ describe("FlowExecution", () => {
     });
   });
 
+  it("revisits Flow nodes until a terminal route is selected", async () => {
+    const { app } = await fixture();
+    const flow = defineFlow({
+      id: "revision-loop-flow",
+      version: "1.0.0",
+      result: ({ state }) => state["outcome"],
+    });
+    const review = flow.humanTask({
+      id: "review",
+      version: "1.0.0",
+      request: {
+        kind: "review_gate",
+        questions: [
+          {
+            header: "Decision",
+            question: "Decision?",
+            kind: "single_choice",
+            options: [
+              { label: "approve", description: "Approve" },
+              { label: "revise", description: "Revise" },
+              { label: "reject", description: "Reject" },
+            ],
+          },
+        ],
+      },
+    });
+    const revise = flow.task({
+      id: "revise",
+      version: "1.0.0",
+      handler: ({ state }) => Number(state["revisionCount"] ?? 0) + 1,
+      reduce: ({ state, output }) => {
+        state["revisionCount"] = output;
+      },
+    });
+    const approve = flow.task({
+      id: "approve",
+      version: "1.0.0",
+      handler: () => "approved",
+      reduce: ({ state, output }) => {
+        state["outcome"] = output;
+      },
+    });
+    const reject = flow.task({
+      id: "reject",
+      version: "1.0.0",
+      handler: () => "rejected",
+      reduce: ({ state, output }) => {
+        state["outcome"] = output;
+      },
+    });
+    flow.compose(({ start, step, end }) => {
+      start(review).route("decision", { approve, revise, reject });
+      step(revise).next(review);
+      step(approve).next(end());
+      step(reject).next(end());
+    });
+
+    const execution = await app.flows.start(flow, { input: null });
+    const firstRequest = await waitForHumanRequest(execution, 0);
+    await execution.respondToHumanInteraction(
+      String((firstRequest.data as { interactionId: string }).interactionId),
+      {
+        kind: "user_question",
+        answered: true,
+        answers: { "Decision?": "revise" },
+      },
+      { requestId: "revise-once" },
+    );
+    const secondRequest = await waitForHumanRequest(execution, 1);
+    await execution.respondToHumanInteraction(
+      String((secondRequest.data as { interactionId: string }).interactionId),
+      {
+        kind: "user_question",
+        answered: true,
+        answers: { "Decision?": "approve" },
+      },
+      { requestId: "approve-after-revision" },
+    );
+
+    await expect(execution.result).resolves.toBe("approved");
+    const invocations = (await execution.getTree()).children.map((child) => child.invocation);
+    expect(invocations.filter((invocation) => invocation.nodeId === "review")).toHaveLength(2);
+    expect(invocations.filter((invocation) => invocation.nodeId === "revise")).toHaveLength(1);
+    expect(invocations.filter((invocation) => invocation.nodeId === "approve")).toHaveLength(1);
+    expect(invocations.filter((invocation) => invocation.nodeId === "reject")).toHaveLength(0);
+  });
+
   it("marks a failing Task Invocation as failed", async () => {
     const { app } = await fixture();
     const flow = defineFlow({ id: "failing-flow", version: "1.0.0" });
@@ -1313,7 +1764,7 @@ describe("Execution observation", () => {
     const now = new Date().toISOString();
     await writer.create(
       {
-        schemaVersion: "pragma.execution/v4",
+        schemaVersion: "pragma.execution/v5",
         executionId: "cross-process",
         version: 0,
         kind: "flow",
@@ -1378,6 +1829,16 @@ describe("Expert lifecycle orchestration", () => {
       experts: members,
       maxConcurrency: 2,
       maxDepth: 2,
+      ...(scenario === "reuse-spawn"
+        ? {
+            contextId: defineContextIdResolver({
+              id: "test.reused-sub-agent",
+              version: "1.0.0",
+              resolve: ({ ownerContextId, target }) =>
+                `${ownerContextId ?? "root"}:${target.expertId}`,
+            }),
+          }
+        : {}),
     });
     const lead = await defineExpert({
       id: "lead",
@@ -1394,7 +1855,7 @@ describe("Expert lifecycle orchestration", () => {
     const turn = await session.prompt("coordinate", { requestId: scenario });
     const output = await turn.result;
     const tree = await turn.getTree();
-    const events = await turn.listEvents({ limit: 1_000 });
+    const events = await turn.listEvents({ scope: { kind: "all" }, limit: 1_000 });
     await session.close();
     return { output, tree, events: events.items, stats };
   }
@@ -1487,6 +1948,30 @@ describe("Expert lifecycle orchestration", () => {
     expect([first?.status, second?.status]).toEqual(["succeeded", "succeeded"]);
   });
 
+  it("targets the requested older Agent when one Expert has multiple fresh Contexts", async () => {
+    const result = await runScenario("followup-older");
+    expect(result.tree.children).toHaveLength(3);
+    const [first, second, followup] = result.tree.children.map((child) => child.invocation);
+    expect(followup?.agentId).toBe(first?.agentId);
+    expect(followup?.contextId).toBe(first?.contextId);
+    expect(followup?.agentTaskSequence).toBe(1);
+    expect(second?.agentId).not.toBe(first?.agentId);
+    expect(second?.contextId).not.toBe(first?.contextId);
+  });
+
+  it("atomically folds concurrent dispatches for one Context into one Agent FIFO", async () => {
+    const result = await runScenario("reuse-spawn");
+    expect(result.tree.children).toHaveLength(2);
+    const [first, second] = result.tree.children
+      .map((child) => child.invocation)
+      .sort((left, right) => (left.agentTaskSequence ?? 0) - (right.agentTaskSequence ?? 0));
+    expect(first?.agentId).toBe(second?.agentId);
+    expect(first?.contextId).toBe(second?.contextId);
+    expect([first?.agentTaskSequence, second?.agentTaskSequence]).toEqual([0, 1]);
+    expect(result.events.some((event) => event.type === "agent.reused")).toBe(true);
+    expect(result.stats.maxActive).toBe(2);
+  });
+
   it("interrupts only the current task and preserves queued follow-ups", async () => {
     const result = await runScenario("interrupt");
     expect(result.tree.children).toHaveLength(2);
@@ -1498,6 +1983,41 @@ describe("Expert lifecycle orchestration", () => {
 });
 
 describe("Expert delegation declarations", () => {
+  it("uses the same ContextIdResolver abstraction for launcher, team, and Flow", async () => {
+    const { home, expert: lead } = await fixture();
+    const member = await defineExpert({
+      id: "shared-resolver-member",
+      name: "Member",
+      description: "Member",
+      tags: [],
+      version: "1.0.0",
+      scope: "test",
+      workspace: home,
+    });
+    const resolver = defineContextIdResolver({
+      id: "test.shared-context-resolver",
+      version: "1.0.0",
+      resolve: ({ freshContextId }) => freshContextId,
+    });
+    const launcher = createAgentLauncher({ experts: [member], contextId: resolver });
+    const team = defineExpertTeam({
+      id: "shared-resolver-team",
+      version: "1.0.0",
+      coordinator: lead,
+      members: [member],
+      delegation: { contextId: resolver },
+    });
+    const flow = defineFlow({ id: "shared-resolver-flow", version: "1.0.0" });
+    const review = flow.use("review", team, { contextId: resolver });
+    flow.compose(({ start, end }) => start(review).next(end()));
+
+    expect(readAgentDelegationDefinition(launcher.tools[0]!)?.contextId).toBe(resolver);
+    expect(team.delegation.contextId).toBe(resolver);
+    expect((flow.compile().steps.get("review")?.options as { contextId?: unknown }).contextId).toBe(
+      resolver,
+    );
+  });
+
   it("validates standalone launcher targets and limits", async () => {
     const { expert } = await fixture();
 
@@ -1601,4 +2121,18 @@ async function waitUntil(predicate: () => Promise<boolean>): Promise<void> {
     if (Date.now() >= deadline) throw new Error("Timed out waiting for test condition.");
     await new Promise<void>((resolve) => setTimeout(resolve, 10));
   }
+}
+
+async function waitForHumanRequest(
+  execution: FlowExecution,
+  index: number,
+): Promise<ExecutionEvent> {
+  let requested: ExecutionEvent | undefined;
+  await waitUntil(async () => {
+    requested = (await execution.listEvents({ scope: { kind: "all" }, limit: 1_000 })).items.filter(
+      (event) => event.type === "human.requested",
+    )[index];
+    return requested !== undefined;
+  });
+  return requested!;
 }

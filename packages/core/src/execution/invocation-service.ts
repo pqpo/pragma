@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import type { AgentInstance, Invocation } from "@pragma/shared";
+import type { AgentInstance, Invocation, RuntimeContextRecord } from "@pragma/shared";
 
 import type { ExecutionAgentPatch, ExecutionStore, NewExecutionEvent } from "./execution-store.ts";
 
@@ -16,6 +16,7 @@ export class InvocationService {
     readonly expectedVersion?: number | undefined;
     readonly agentPuts?: readonly AgentInstance[] | undefined;
     readonly agentPatches?: readonly ExecutionAgentPatch[] | undefined;
+    readonly contextPuts?: readonly RuntimeContextRecord[] | undefined;
     readonly queuedData?: unknown;
     readonly events?: readonly NewExecutionEvent[] | undefined;
   }): Promise<void> {
@@ -34,6 +35,7 @@ export class InvocationService {
       invocationPuts: [request.invocation],
       agentPuts: request.agentPuts,
       agentPatches: request.agentPatches,
+      contextPuts: request.contextPuts,
       events: [
         ...(request.events ?? []),
         {

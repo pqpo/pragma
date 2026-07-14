@@ -33,8 +33,63 @@ export const RuntimeContextSnapshotSchema = z.object({
   runtimeSession: RuntimeSessionRefSchema,
 });
 
-export const InvocationRuntimeContextSchema = RuntimeContextSnapshotSchema.extend({
-  contextId: z.string().min(1),
+export const RuntimeContextOwnerSchema = z.object({
+  type: z.enum(["flow-execution", "expert-session"]),
+  ownerId: z.string().min(1),
+});
+
+export const RuntimeContextRecordSchema = z
+  .object({
+    schemaVersion: z.literal("pragma.runtime-context/v1"),
+    contextId: z.string().min(1),
+    owner: RuntimeContextOwnerSchema,
+    createdByInvocationId: z.string().min(1),
+    expert: z.object({
+      id: z.string().min(1),
+      version: z.string().min(1),
+    }),
+    runtimeId: z.string().min(1).optional(),
+    snapshot: RuntimeContextSnapshotSchema.optional(),
+    lifecycle: z.enum(["open", "closed"]),
+    createdAt: z.string().datetime(),
+    updatedAt: z.string().datetime(),
+    closedAt: z.string().datetime().optional(),
+  })
+  .superRefine((value, context) => {
+    if (value.lifecycle === "closed" && value.closedAt === undefined) {
+      context.addIssue({ code: "custom", path: ["closedAt"], message: "closedAt is required." });
+    }
+    if (value.lifecycle === "open" && value.closedAt !== undefined) {
+      context.addIssue({
+        code: "custom",
+        path: ["closedAt"],
+        message: "Open Context cannot have closedAt.",
+      });
+    }
+    if (value.snapshot !== undefined) {
+      if (value.snapshot.expertId !== value.expert.id) {
+        context.addIssue({
+          code: "custom",
+          path: ["snapshot", "expertId"],
+          message: "Snapshot Expert mismatch.",
+        });
+      }
+      if (value.runtimeId !== undefined && value.snapshot.runtimeId !== value.runtimeId) {
+        context.addIssue({
+          code: "custom",
+          path: ["snapshot", "runtimeId"],
+          message: "Snapshot Runtime mismatch.",
+        });
+      }
+    }
+  });
+
+export const ContextResolutionRecordSchema = z.object({
+  resolver: z.object({
+    id: z.string().min(1),
+    version: z.string().min(1),
+  }),
+  disposition: z.enum(["created", "reused"]),
 });
 
 export const InvocationSchema = z.object({
@@ -47,27 +102,25 @@ export const InvocationSchema = z.object({
   agentId: z.string().min(1).optional(),
   agentTaskSequence: z.number().int().nonnegative().optional(),
   contextId: z.string().min(1),
+  contextResolution: ContextResolutionRecordSchema.optional(),
   status: ExecutionStatusSchema,
   input: z.unknown(),
   output: z.unknown().optional(),
   usage: AgentMessageUsageSchema.optional(),
   error: z.unknown().optional(),
-  runtimeContext: InvocationRuntimeContextSchema.optional(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
 });
 
 export const AgentInstanceSchema = z.object({
-  schemaVersion: z.literal("pragma.agent-instance/v1"),
+  schemaVersion: z.literal("pragma.agent-instance/v2"),
   agentId: z.string().min(1),
   executionId: z.string().min(1),
-  ownerInvocationId: z.string().min(1),
+  ownerContextId: z.string().min(1),
+  createdByInvocationId: z.string().min(1),
   parentAgentId: z.string().min(1).optional(),
   definition: DefinitionReferenceSchema,
   contextId: z.string().min(1),
-  runtimeId: z.string().min(1).optional(),
-  runtimeContext: RuntimeContextSnapshotSchema.optional(),
-  depth: z.number().int().nonnegative(),
   lifecycle: z.enum(["open", "closed"]),
   activeInvocationId: z.string().min(1).optional(),
   nextTaskSequence: z.number().int().nonnegative(),
@@ -89,7 +142,7 @@ export const ExecutionCursorSchema = z.object({
 });
 
 export const ExecutionEventSchema = z.object({
-  schemaVersion: z.literal("pragma.execution-event/v4"),
+  schemaVersion: z.literal("pragma.execution-event/v5"),
   eventId: z.string().min(1),
   cursor: ExecutionCursorSchema,
   executionId: z.string().min(1),
@@ -121,7 +174,7 @@ export const ExecutionOutputItemSchema = z.object({
 });
 
 export const ExecutionRecordSchema = z.object({
-  schemaVersion: z.literal("pragma.execution/v4"),
+  schemaVersion: z.literal("pragma.execution/v5"),
   executionId: z.string().min(1),
   version: z.number().int().nonnegative(),
   kind: ExecutionKindSchema,
@@ -149,7 +202,9 @@ export type ExecutionKind = z.infer<typeof ExecutionKindSchema>;
 export type InvocationKind = z.infer<typeof InvocationKindSchema>;
 export type DefinitionReference = z.infer<typeof DefinitionReferenceSchema>;
 export type RuntimeContextSnapshot = z.infer<typeof RuntimeContextSnapshotSchema>;
-export type InvocationRuntimeContext = z.infer<typeof InvocationRuntimeContextSchema>;
+export type RuntimeContextOwner = z.infer<typeof RuntimeContextOwnerSchema>;
+export type RuntimeContextRecord = z.infer<typeof RuntimeContextRecordSchema>;
+export type ContextResolutionRecord = z.infer<typeof ContextResolutionRecordSchema>;
 export type Invocation = z.infer<typeof InvocationSchema>;
 export type AgentInstance = z.infer<typeof AgentInstanceSchema>;
 export type ExecutionCursor = z.infer<typeof ExecutionCursorSchema>;

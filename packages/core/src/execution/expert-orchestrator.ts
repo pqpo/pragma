@@ -4,7 +4,8 @@ import {
   isTerminalExecutionStatus,
   type AgentInstance,
   type Invocation,
-  type RuntimeContextSnapshot,
+  type RuntimeContextRecord,
+  type RuntimeContextOwner,
 } from "@pragma/shared";
 
 import type { Expert } from "../agent/expert-agent.ts";
@@ -12,6 +13,18 @@ import type { ExecutionStore } from "./execution-store.ts";
 import { ExecutionVersionConflictError } from "./execution-store.ts";
 import { getExecutionLiveBus } from "./execution-live-bus.ts";
 import { InvocationService } from "./invocation-service.ts";
+import {
+  ContextResolutionService,
+  type ContextResolutionScopeReader,
+} from "./context-resolution-service.ts";
+import type { ContextIdResolutionSource, ContextIdResolver } from "./context-id-resolver.ts";
+import { defineContextIdResolver } from "./context-id-resolver.ts";
+
+const followupContextIdResolver = defineContextIdResolver({
+  id: "pragma.context.agent-followup",
+  version: "v1",
+  resolve: ({ freshContextId }) => freshContextId,
+});
 
 export interface DelegationPermit {
   suspend(): (() => Promise<void>) | undefined;
@@ -40,22 +53,13 @@ export interface ExpertOrchestratorOptions {
   readonly maxDepth: number;
   readonly interruptController: ExpertInterruptController;
   readonly execute: (job: ExpertInvocationJob) => Promise<void>;
-}
-
-interface AgentRuntimeBinding {
-  readonly expert: Expert;
-  readonly runtimeId?: string | undefined;
-}
-
-interface PendingJob {
-  readonly expert: Expert;
-  readonly runtimeId?: string | undefined;
+  readonly readContextScope?: ContextResolutionScopeReader | undefined;
+  readonly persistContext?: ((context: RuntimeContextRecord) => Promise<void>) | undefined;
 }
 
 export class ExpertOrchestrator {
   private readonly semaphore: DelegationSemaphore;
-  private readonly agentBindings = new Map<string, AgentRuntimeBinding>();
-  private readonly pendingJobs = new Map<string, PendingJob>();
+  private readonly experts = new Map<string, Expert>();
   private readonly pumping = new Set<string>();
   private readonly joinedInvocationIds = new Set<string>();
 
@@ -67,114 +71,244 @@ export class ExpertOrchestrator {
     return this.options.maxDepth;
   }
 
+  async registerExperts(experts: readonly Expert[]): Promise<void> {
+    for (const expert of experts) {
+      const current = this.experts.get(expert.id);
+      if (current !== undefined && current.version !== expert.version) {
+        throw new Error(`Expert recovery version mismatch: ${expert.id}.`);
+      }
+      this.experts.set(expert.id, expert);
+    }
+    await this.scheduleRecoverableAgents();
+  }
+
   async spawn(request: {
-    readonly ownerInvocationId: string;
+    readonly ownerContextId: string;
+    readonly createdByInvocationId: string;
     readonly parentAgentId?: string | undefined;
     readonly depth: number;
     readonly expert: Expert;
     readonly prompt: string;
     readonly runtimeId?: string | undefined;
+    readonly owner: RuntimeContextOwner;
+    readonly resolver: ContextIdResolver;
+    readonly source: ContextIdResolutionSource;
   }): Promise<{
     readonly agentId: string;
     readonly invocationId: string;
     readonly expertId: string;
+    readonly contextId: string;
+    readonly disposition: "created" | "reused";
     readonly status: "queued";
   }> {
     if (request.depth >= this.options.maxDepth) {
       throw new Error(`Expert delegation depth exceeded: ${this.options.maxDepth}`);
     }
-    const agentId = randomUUID();
     const invocationId = randomUUID();
-    const contextId = randomUUID();
-    const now = new Date().toISOString();
     const definition = {
       id: request.expert.id,
       version: request.expert.version,
       kind: "expert" as const,
     };
-    const agent: AgentInstance = {
-      schemaVersion: "pragma.agent-instance/v1",
-      agentId,
-      executionId: this.options.executionId,
-      ownerInvocationId: request.ownerInvocationId,
-      ...(request.parentAgentId === undefined ? {} : { parentAgentId: request.parentAgentId }),
-      definition,
-      contextId,
-      ...(request.runtimeId === undefined ? {} : { runtimeId: request.runtimeId }),
-      depth: request.depth + 1,
-      lifecycle: "open",
-      nextTaskSequence: 1,
-      createdAt: now,
-      updatedAt: now,
-    };
-    const invocation: Invocation = {
-      invocationId,
-      rootInvocationId: this.options.rootInvocationId,
-      parentInvocationId: request.ownerInvocationId,
-      definition,
-      executorId: request.expert.id,
-      agentId,
-      agentTaskSequence: 0,
-      contextId,
-      status: "queued",
-      input: request.prompt,
-      createdAt: now,
-      updatedAt: now,
-    };
+    const freshContextId = randomUUID();
     const invocations = new InvocationService(this.options.executionId, this.options.store);
     while (true) {
       const execution = await this.requireExecution();
-      await this.requireActiveOwner(request.ownerInvocationId);
+      await this.requireActiveOwner(request.createdByInvocationId);
+      const resolution = await new ContextResolutionService(
+        this.options.store,
+        this.options.readContextScope,
+      ).resolve({
+        executionId: this.options.executionId,
+        invocationId,
+        parentInvocationId: request.createdByInvocationId,
+        input: request.prompt,
+        state: execution.state,
+        source: request.source,
+        owner: request.owner,
+        ownerContextId: request.ownerContextId,
+        expert: { id: request.expert.id, version: request.expert.version },
+        requestedRuntimeId: request.runtimeId,
+        resolver: request.resolver,
+        freshContextId,
+      });
+      const currentAgents = await this.options.store.listAgents(this.options.executionId);
+      const reusable = currentAgents.find(
+        (agent) =>
+          agent.contextId === resolution.context.contextId &&
+          agent.ownerContextId === request.ownerContextId,
+      );
+      if (
+        resolution.disposition === "reused" &&
+        reusable === undefined &&
+        !(resolution.contextPut !== undefined && this.options.readContextScope !== undefined)
+      ) {
+        throw new Error(
+          `Runtime Context has no reusable AgentInstance: ${resolution.context.contextId}.`,
+        );
+      }
+      if (reusable !== undefined && reusable.lifecycle !== "open") {
+        throw new Error(`Agent is closed: ${reusable.agentId}`);
+      }
+      if (
+        reusable !== undefined &&
+        (reusable.definition.id !== definition.id ||
+          reusable.definition.version !== definition.version)
+      ) {
+        throw new Error(
+          `Agent identity conflicts with Runtime Context: ${resolution.context.contextId}.`,
+        );
+      }
+      const agentId = reusable?.agentId ?? randomUUID();
+      const taskSequence = reusable?.nextTaskSequence ?? 0;
+      const now = new Date().toISOString();
+      const agent: AgentInstance | undefined =
+        reusable === undefined
+          ? {
+              schemaVersion: "pragma.agent-instance/v2",
+              agentId,
+              executionId: this.options.executionId,
+              ownerContextId: request.ownerContextId,
+              createdByInvocationId: request.createdByInvocationId,
+              ...(request.parentAgentId === undefined
+                ? {}
+                : { parentAgentId: request.parentAgentId }),
+              definition,
+              contextId: resolution.context.contextId,
+              lifecycle: "open",
+              nextTaskSequence: 1,
+              createdAt: now,
+              updatedAt: now,
+            }
+          : undefined;
+      const invocation: Invocation = {
+        invocationId,
+        rootInvocationId: this.options.rootInvocationId,
+        parentInvocationId: request.createdByInvocationId,
+        definition,
+        executorId: request.expert.id,
+        agentId,
+        agentTaskSequence: taskSequence,
+        contextId: resolution.context.contextId,
+        contextResolution: {
+          resolver: resolution.resolver,
+          disposition: resolution.disposition,
+        },
+        status: "queued",
+        input: request.prompt,
+        createdAt: now,
+        updatedAt: now,
+      };
       try {
         await invocations.ensureQueued({
-          commitId: `agent-spawn:${agentId}`,
+          commitId: `agent-dispatch:${invocationId}`,
           expectedVersion: execution.version,
           invocation,
-          agentPuts: [agent],
-          queuedData: { agentId, parentInvocationId: request.ownerInvocationId, taskSequence: 0 },
+          ...(agent === undefined ? {} : { agentPuts: [agent] }),
+          ...(reusable === undefined
+            ? {}
+            : {
+                agentPatches: [
+                  { agentId, patch: { nextTaskSequence: reusable.nextTaskSequence + 1 } },
+                ],
+              }),
+          ...(resolution.contextPut === undefined ? {} : { contextPuts: [resolution.contextPut] }),
+          queuedData: {
+            agentId,
+            parentInvocationId: request.createdByInvocationId,
+            taskSequence,
+          },
           events: [
-            { invocationId, type: "agent.spawned", data: { agentId, expertId: request.expert.id } },
+            ...resolution.events,
+            {
+              invocationId,
+              type: reusable === undefined ? "agent.spawned" : "agent.reused",
+              data: {
+                agentId,
+                expertId: request.expert.id,
+                contextId: resolution.context.contextId,
+              },
+            },
           ],
         });
-        break;
+        await this.options.persistContext?.(resolution.context);
+        this.experts.set(request.expert.id, request.expert);
+        this.schedule(agentId);
+        return {
+          agentId,
+          invocationId,
+          contextId: resolution.context.contextId,
+          expertId: request.expert.id,
+          disposition: resolution.disposition,
+          status: "queued",
+        };
       } catch (error) {
         if (error instanceof ExecutionVersionConflictError) continue;
         throw error;
       }
     }
-    this.agentBindings.set(agentId, { expert: request.expert, runtimeId: request.runtimeId });
-    this.pendingJobs.set(invocationId, { expert: request.expert, runtimeId: request.runtimeId });
-    this.schedule(agentId);
-    return { agentId, invocationId, expertId: request.expert.id, status: "queued" };
   }
 
   async followup(
-    ownerInvocationId: string,
+    ownerContextId: string,
+    createdByInvocationId: string,
     request: { readonly agentId: string; readonly prompt: string },
   ): Promise<{
     readonly agentId: string;
     readonly invocationId: string;
     readonly status: "queued";
   }> {
-    const binding = this.agentBindings.get(request.agentId);
-    if (binding === undefined)
-      throw new Error(`Agent is not available in this process: ${request.agentId}`);
     while (true) {
       const execution = await this.requireExecution();
-      await this.requireActiveOwner(ownerInvocationId);
-      const agent = await this.requireOwnedAgent(ownerInvocationId, request.agentId);
+      const ownerInvocation = await this.requireActiveOwner(createdByInvocationId);
+      const agent = await this.requireOwnedAgent(ownerContextId, request.agentId);
       if (agent.lifecycle !== "open") throw new Error(`Agent is closed: ${request.agentId}`);
+      const context = await this.options.store.getContext(
+        this.options.executionId,
+        agent.contextId,
+      );
+      if (context === undefined) throw new Error(`Runtime Context not found: ${agent.contextId}.`);
       const invocationId = randomUUID();
+      const resolution = await new ContextResolutionService(
+        this.options.store,
+        this.options.readContextScope,
+      ).resolve({
+        executionId: this.options.executionId,
+        invocationId,
+        parentInvocationId: createdByInvocationId,
+        input: request.prompt,
+        state: execution.state,
+        source: {
+          kind: "expert-delegation",
+          callerExpertId: ownerInvocation.executorId ?? ownerInvocation.definition.id,
+          ...(ownerInvocation.agentId === undefined
+            ? {}
+            : { callerAgentId: ownerInvocation.agentId }),
+        },
+        owner: context.owner,
+        ownerContextId,
+        expert: context.expert,
+        requestedRuntimeId: context.runtimeId,
+        resolver: followupContextIdResolver,
+        freshContextId: context.contextId,
+      });
+      if (resolution.context.contextId !== agent.contextId) {
+        throw new Error(`Follow-up resolved a different Runtime Context: ${agent.agentId}.`);
+      }
       const now = new Date().toISOString();
       const invocation: Invocation = {
         invocationId,
         rootInvocationId: this.options.rootInvocationId,
-        parentInvocationId: ownerInvocationId,
+        parentInvocationId: createdByInvocationId,
         definition: agent.definition,
         executorId: agent.definition.id,
         agentId: agent.agentId,
         agentTaskSequence: agent.nextTaskSequence,
         contextId: agent.contextId,
+        contextResolution: {
+          resolver: resolution.resolver,
+          disposition: resolution.disposition,
+        },
         status: "queued",
         input: request.prompt,
         createdAt: now,
@@ -188,8 +322,9 @@ export class ExpertOrchestrator {
           agentPatches: [
             { agentId: agent.agentId, patch: { nextTaskSequence: agent.nextTaskSequence + 1 } },
           ],
-          queuedData: { agentId: agent.agentId, parentInvocationId: ownerInvocationId },
+          queuedData: { agentId: agent.agentId, parentInvocationId: createdByInvocationId },
           events: [
+            ...resolution.events,
             {
               invocationId,
               type: "agent.followup.queued",
@@ -197,7 +332,6 @@ export class ExpertOrchestrator {
             },
           ],
         });
-        this.pendingJobs.set(invocationId, binding);
         this.schedule(agent.agentId);
         return { agentId: agent.agentId, invocationId, status: "queued" };
       } catch (error) {
@@ -207,9 +341,9 @@ export class ExpertOrchestrator {
     }
   }
 
-  async list(ownerInvocationId: string): Promise<{ readonly experts: readonly unknown[] }> {
+  async list(ownerContextId: string): Promise<{ readonly experts: readonly unknown[] }> {
     const agents = (await this.options.store.listAgents(this.options.executionId))
-      .filter((agent) => agent.ownerInvocationId === ownerInvocationId)
+      .filter((agent) => agent.ownerContextId === ownerContextId)
       .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
     const invocations = await this.options.store.listInvocations(this.options.executionId);
     return {
@@ -243,7 +377,7 @@ export class ExpertOrchestrator {
   }
 
   async wait(
-    ownerInvocationId: string,
+    ownerContextId: string,
     request: {
       readonly invocationIds: readonly string[];
       readonly returnWhen?: "all" | "any" | undefined;
@@ -257,7 +391,7 @@ export class ExpertOrchestrator {
     readonly completed: readonly unknown[];
     readonly pendingInvocationIds: readonly string[];
   }> {
-    await this.assertOwnedInvocations(ownerInvocationId, request.invocationIds);
+    await this.assertOwnedInvocations(ownerContextId, request.invocationIds);
     const resume = permit?.suspend();
     try {
       const result = await this.waitForInvocations(request);
@@ -272,33 +406,43 @@ export class ExpertOrchestrator {
 
   async waitForOwnedUnjoined(
     ownerInvocationId: string,
+    ownerContextId: string,
     signal: AbortSignal,
     permit?: DelegationPermit,
   ): Promise<readonly unknown[]> {
     const agents = (await this.options.store.listAgents(this.options.executionId)).filter(
-      (agent) => agent.ownerInvocationId === ownerInvocationId,
+      (agent) => agent.ownerContextId === ownerContextId,
     );
-    const ids = (await this.options.store.listInvocations(this.options.executionId))
-      .filter((invocation) => agents.some((agent) => agent.agentId === invocation.agentId))
+    const allInvocations = await this.options.store.listInvocations(this.options.executionId);
+    const descendants = collectDescendantInvocationIds(allInvocations, ownerInvocationId);
+    const ids = allInvocations
+      .filter(
+        (invocation) =>
+          descendants.has(invocation.invocationId) &&
+          agents.some((agent) => agent.agentId === invocation.agentId),
+      )
       .filter((invocation) => !this.joinedInvocationIds.has(invocation.invocationId))
       .map((invocation) => invocation.invocationId);
     if (ids.length === 0) return [];
     const result = await this.wait(
-      ownerInvocationId,
+      ownerContextId,
       { invocationIds: ids, returnWhen: "all", signal },
       permit,
     );
     return result.completed;
   }
 
-  async hasOwnedUnjoined(ownerInvocationId: string): Promise<boolean> {
+  async hasOwnedUnjoined(ownerInvocationId: string, ownerContextId: string): Promise<boolean> {
     const agents = (await this.options.store.listAgents(this.options.executionId)).filter(
-      (agent) => agent.ownerInvocationId === ownerInvocationId,
+      (agent) => agent.ownerContextId === ownerContextId,
     );
     if (agents.length === 0) return false;
     const ids = new Set(agents.map((agent) => agent.agentId));
-    return (await this.options.store.listInvocations(this.options.executionId)).some(
+    const invocations = await this.options.store.listInvocations(this.options.executionId);
+    const descendants = collectDescendantInvocationIds(invocations, ownerInvocationId);
+    return invocations.some(
       (invocation) =>
+        descendants.has(invocation.invocationId) &&
         invocation.agentId !== undefined &&
         ids.has(invocation.agentId) &&
         !this.joinedInvocationIds.has(invocation.invocationId),
@@ -306,7 +450,7 @@ export class ExpertOrchestrator {
   }
 
   async interrupt(
-    ownerInvocationId: string,
+    ownerContextId: string,
     request: {
       readonly agentId: string;
       readonly invocationId?: string | undefined;
@@ -317,7 +461,7 @@ export class ExpertOrchestrator {
     readonly invocationId?: string | undefined;
     readonly outcome: "interrupted" | "already_idle";
   }> {
-    const agent = await this.requireOwnedAgent(ownerInvocationId, request.agentId);
+    const agent = await this.requireOwnedAgent(ownerContextId, request.agentId);
     const invocations = (await this.options.store.listInvocations(this.options.executionId))
       .filter((invocation) => invocation.agentId === agent.agentId)
       .sort((left, right) => (left.agentTaskSequence ?? 0) - (right.agentTaskSequence ?? 0));
@@ -374,16 +518,6 @@ export class ExpertOrchestrator {
     }
   }
 
-  async updateRuntimeContext(agentId: string, snapshot: RuntimeContextSnapshot): Promise<void> {
-    await this.options.store.commit({
-      commitId: randomUUID(),
-      executionId: this.options.executionId,
-      agentPatches: [
-        { agentId, patch: { runtimeContext: snapshot, runtimeId: snapshot.runtimeId } },
-      ],
-    });
-  }
-
   private schedule(agentId: string): void {
     if (this.pumping.has(agentId)) return;
     this.pumping.add(agentId);
@@ -408,9 +542,17 @@ export class ExpertOrchestrator {
         .filter((invocation) => invocation.agentId === agentId && invocation.status === "queued")
         .sort((left, right) => (left.agentTaskSequence ?? 0) - (right.agentTaskSequence ?? 0))[0];
       if (next === undefined) return;
-      const pending = this.pendingJobs.get(next.invocationId);
-      if (pending === undefined) {
-        await this.failUnrecoverableJob(next, "Agent task runtime binding is unavailable.");
+      const expert = this.experts.get(agent.definition.id);
+      if (expert === undefined || expert.version !== agent.definition.version) {
+        await this.failUnrecoverableJob(next, "Agent task Expert definition is unavailable.");
+        continue;
+      }
+      const context = await this.options.store.getContext(
+        this.options.executionId,
+        agent.contextId,
+      );
+      if (context === undefined) {
+        await this.failUnrecoverableJob(next, "Agent task Runtime Context is unavailable.");
         continue;
       }
       const permit = await this.semaphore.acquire();
@@ -435,9 +577,9 @@ export class ExpertOrchestrator {
         await this.options.execute({
           agent: activeAgent,
           invocation: latest,
-          expert: pending.expert,
+          expert,
           prompt: String(latest.input),
-          runtimeId: pending.runtimeId,
+          runtimeId: context.runtimeId,
           permit,
         });
       } catch {
@@ -452,7 +594,6 @@ export class ExpertOrchestrator {
           );
         }
       } finally {
-        this.pendingJobs.delete(next.invocationId);
         const currentAgent = await this.options.store.getAgent(this.options.executionId, agentId);
         if (currentAgent?.activeInvocationId === next.invocationId) {
           await this.options.store.commit({
@@ -514,7 +655,7 @@ export class ExpertOrchestrator {
   }
 
   private async assertOwnedInvocations(
-    ownerInvocationId: string,
+    ownerContextId: string,
     invocationIds: readonly string[],
   ): Promise<void> {
     const invocations = await this.loadInvocations(invocationIds);
@@ -526,7 +667,7 @@ export class ExpertOrchestrator {
     );
     for (const invocation of invocations) {
       const agent = invocation.agentId === undefined ? undefined : agents.get(invocation.agentId);
-      if (agent?.ownerInvocationId !== ownerInvocationId) {
+      if (agent?.ownerContextId !== ownerContextId) {
         throw new Error(
           `Invocation is not owned by the current Expert: ${invocation.invocationId}`,
         );
@@ -548,12 +689,9 @@ export class ExpertOrchestrator {
     });
   }
 
-  private async requireOwnedAgent(
-    ownerInvocationId: string,
-    agentId: string,
-  ): Promise<AgentInstance> {
+  private async requireOwnedAgent(ownerContextId: string, agentId: string): Promise<AgentInstance> {
     const agent = await this.options.store.getAgent(this.options.executionId, agentId);
-    if (agent === undefined || agent.ownerInvocationId !== ownerInvocationId) {
+    if (agent === undefined || agent.ownerContextId !== ownerContextId) {
       throw new Error(`Agent is not owned by the current Expert: ${agentId}`);
     }
     return agent;
@@ -589,6 +727,17 @@ export class ExpertOrchestrator {
         { invocationId: invocation.invocationId, type: "invocation.failed", data: { message } },
       ],
     });
+  }
+
+  private async scheduleRecoverableAgents(): Promise<void> {
+    for (const agent of await this.options.store.listAgents(this.options.executionId)) {
+      if (
+        agent.lifecycle === "open" &&
+        this.experts.get(agent.definition.id)?.version === agent.definition.version
+      ) {
+        this.schedule(agent.agentId);
+      }
+    }
   }
 }
 

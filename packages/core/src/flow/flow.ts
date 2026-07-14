@@ -2,6 +2,7 @@ import type { HumanInteractionRequest, HumanInteractionResponse } from "@pragma/
 import type { z } from "zod";
 
 import type { ExpertDefinition } from "../agent/expert-team.ts";
+import type { ContextIdResolver } from "../execution/context-id-resolver.ts";
 
 export type FlowState = Record<string, unknown>;
 export type FlowNodeDefinition = FlowTaskDefinition | HumanTaskDefinition | ExpertDefinition | Flow;
@@ -48,7 +49,14 @@ export interface FlowStepOptions<TInput = unknown, TOutput = unknown> {
   readonly reduce?:
     | ((context: { readonly state: FlowState; readonly output: TOutput }) => void)
     | undefined;
+}
+
+export interface FlowExpertStepOptions<TInput = unknown, TOutput = unknown> extends FlowStepOptions<
+  TInput,
+  TOutput
+> {
   readonly runtime?: string | undefined;
+  readonly contextId?: ContextIdResolver | undefined;
 }
 
 export interface FlowStepReference<TOutput = unknown> {
@@ -80,7 +88,7 @@ export interface FlowChain {
 export interface CompiledFlowStep {
   readonly id: string;
   readonly definition: FlowNodeDefinition;
-  readonly options: FlowStepOptions;
+  readonly options: FlowStepOptions | FlowExpertStepOptions;
 }
 
 export interface Flow {
@@ -95,7 +103,7 @@ export interface Flow {
   readonly transitions: ReadonlyMap<string, FlowTransition>;
 }
 
-type FlowTransition =
+export type FlowTransition =
   | { readonly type: "next"; readonly target: FlowStepReference | FlowTerminal }
   | {
       readonly type: "route";
@@ -127,7 +135,7 @@ export class FlowSpec<TInput = unknown, TOutput = unknown> {
     options: Omit<FlowTaskDefinition<TStepInput, TStepOutput>, "kind"> &
       FlowStepOptions<TStepInput, TStepOutput>,
   ): FlowStepReference<TStepOutput> {
-    const { input, output, reduce, runtime, ...definition } = options;
+    const { input, output, reduce, ...definition } = options;
     return this.addStep(
       options.id,
       { kind: "task", ...definition } as unknown as FlowNodeDefinition,
@@ -135,7 +143,6 @@ export class FlowSpec<TInput = unknown, TOutput = unknown> {
         input,
         output,
         reduce,
-        runtime,
       } as unknown as FlowStepOptions,
     );
   }
@@ -144,7 +151,7 @@ export class FlowSpec<TInput = unknown, TOutput = unknown> {
     options: Omit<HumanTaskDefinition<TStepInput>, "kind"> &
       FlowStepOptions<TStepInput, HumanInteractionResponse>,
   ): FlowStepReference<HumanInteractionResponse> {
-    const { input, output, reduce, runtime, ...definition } = options;
+    const { input, output, reduce, ...definition } = options;
     return this.addStep(
       options.id,
       { kind: "human-task", ...definition } as unknown as FlowNodeDefinition,
@@ -152,15 +159,26 @@ export class FlowSpec<TInput = unknown, TOutput = unknown> {
         input,
         output,
         reduce,
-        runtime,
       } as unknown as FlowStepOptions,
     );
   }
 
   use<TStepInput = unknown, TStepOutput = unknown>(
     id: string,
+    definition: ExpertDefinition,
+    options?: FlowExpertStepOptions<TStepInput, TStepOutput>,
+  ): FlowStepReference<TStepOutput>;
+  use<TStepInput = unknown, TStepOutput = unknown>(
+    id: string,
+    definition: Flow | FlowSpec,
+    options?: FlowStepOptions<TStepInput, TStepOutput>,
+  ): FlowStepReference<TStepOutput>;
+  use<TStepInput = unknown, TStepOutput = unknown>(
+    id: string,
     definition: ExpertDefinition | Flow | FlowSpec,
-    options: FlowStepOptions<TStepInput, TStepOutput> = {},
+    options:
+      | FlowStepOptions<TStepInput, TStepOutput>
+      | FlowExpertStepOptions<TStepInput, TStepOutput> = {},
   ): FlowStepReference<TStepOutput> {
     const compiled = "compile" in definition ? definition.compile() : definition;
     if (!isExecutableDefinition(compiled)) {

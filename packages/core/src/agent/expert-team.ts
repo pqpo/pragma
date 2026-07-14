@@ -1,4 +1,8 @@
 import type { Expert } from "./expert-agent.ts";
+import {
+  freshContextIdResolver,
+  type ContextIdResolver,
+} from "../execution/context-id-resolver.ts";
 
 export type ExpertDefinition = Expert | ExpertTeam;
 
@@ -6,6 +10,7 @@ export interface ExpertTeamDelegationOptions {
   readonly allow?: Readonly<Record<string, readonly string[]>> | undefined;
   readonly maxConcurrency?: number | undefined;
   readonly maxDepth?: number | undefined;
+  readonly contextId?: ContextIdResolver | undefined;
 }
 
 export interface DefineExpertTeamOptions {
@@ -30,6 +35,7 @@ export interface ExpertTeam {
     readonly allow: ReadonlyMap<string, ReadonlySet<string>>;
     readonly maxConcurrency: number;
     readonly maxDepth: number;
+    readonly contextId: ContextIdResolver;
   };
 }
 
@@ -80,6 +86,7 @@ export function defineExpertTeam(options: DefineExpertTeamOptions): ExpertTeam {
       allow,
       maxConcurrency,
       maxDepth,
+      contextId: options.delegation.contextId ?? freshContextIdResolver,
     }),
   });
 }

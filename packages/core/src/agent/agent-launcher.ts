@@ -1,11 +1,16 @@
 import type { Expert } from "./expert-agent.ts";
 import type { ExpertTeam } from "./expert-team.ts";
+import {
+  freshContextIdResolver,
+  type ContextIdResolver,
+} from "../execution/context-id-resolver.ts";
 import type { ExpertAgentManagedTool, ExpertAgentToolCallResult } from "../tools/managed-tool.ts";
 
 export interface CreateAgentLauncherOptions {
   readonly experts: readonly Expert[];
   readonly maxConcurrency?: number | undefined;
   readonly maxDepth?: number | undefined;
+  readonly contextId?: ContextIdResolver | undefined;
 }
 
 export type ExpertLifecycleToolName =
@@ -26,6 +31,7 @@ export interface AgentDelegationDefinition {
   readonly experts: readonly Expert[];
   readonly maxConcurrency: number;
   readonly maxDepth: number;
+  readonly contextId: ContextIdResolver;
 }
 
 const agentDelegationDefinition = Symbol("pragma.agent-delegation-definition");
@@ -45,6 +51,7 @@ export function createAgentLauncher(options: CreateAgentLauncherOptions): AgentL
       experts,
       maxConcurrency: readPositiveInteger(options.maxConcurrency ?? 4, "maxConcurrency"),
       maxDepth: readPositiveInteger(options.maxDepth ?? 3, "maxDepth"),
+      contextId: options.contextId ?? freshContextIdResolver,
     }),
   });
 }
@@ -61,6 +68,7 @@ export function createTeamDelegationTools(
     experts,
     maxConcurrency: team.delegation.maxConcurrency,
     maxDepth: team.delegation.maxDepth,
+    contextId: team.delegation.contextId,
   });
 }
 
@@ -83,6 +91,7 @@ function createLifecycleTools(
     experts: Object.freeze([...definition.experts]),
     maxConcurrency: definition.maxConcurrency,
     maxDepth: definition.maxDepth,
+    contextId: definition.contextId,
   });
   const available = [
     "Available Experts:",

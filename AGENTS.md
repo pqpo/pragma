@@ -470,6 +470,11 @@ Expert API 设计要求：
 - ExpertTeam 运行时按 allowlist 生成相同的生命周期工具集，并覆盖参与者自己的 standalone launcher，
   防止成员绕过团队治理边界。
 - `defineFlow()` 声明 Flow；Task 和 HumanTask 只能通过 FlowSpec 内联创建。
+- Flow Expert step、普通 Expert launcher 与 ExpertTeam delegation 必须统一使用具名、带版本的
+  `ContextIdResolver`；是否复用只由最终 `contextId` 决定，不引入 `fresh/reuse` policy。
+- Runtime Context 的 identity、snapshot 和 lifecycle 只存放在 `RuntimeContextRecord`；Invocation 与
+  AgentInstance 只引用 `contextId`，不得复制 Runtime snapshot。
+- `ownerContextId` 是子 Agent 生命周期工具的权限边界；`createdByInvocationId` 只用于审计和树关系。
 - PragmaApp 只公开 `experts` 与 `flows` 两个执行 namespace。
 
 不要引入具体 Claude SDK、Codex SDK、PI SDK、具体 runtime 包、Playbook、HTTP Controller、数据库实现或 Server 应用层实现。

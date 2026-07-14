@@ -31,4 +31,75 @@ describe("withFileLock", () => {
     expect(maximumActive).toBe(1);
     expect(completed).toBe(50);
   });
+
+  it("serves in-process contenders in arrival order", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-lock-fifo-"));
+    const lockDir = join(root, "execution", ".lock");
+    const order: number[] = [];
+    let releaseFirst!: () => void;
+    let markFirstEntered!: () => void;
+    const firstEntered = new Promise<void>((resolve) => {
+      markFirstEntered = resolve;
+    });
+    const holdFirst = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+
+    const first = withFileLock(lockDir, async () => {
+      order.push(1);
+      markFirstEntered();
+      await holdFirst;
+    });
+    await firstEntered;
+    const second = withFileLock(lockDir, async () => {
+      order.push(2);
+    });
+    const third = withFileLock(lockDir, async () => {
+      order.push(3);
+    });
+
+    releaseFirst();
+    await Promise.all([first, second, third]);
+
+    expect(order).toEqual([1, 2, 3]);
+  });
+
+  it("hands the local lock to the next waiter after an operation fails", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-lock-failure-"));
+    const lockDir = join(root, "execution", ".lock");
+    const failed = withFileLock(lockDir, async () => {
+      throw new Error("expected failure");
+    });
+    const next = withFileLock(lockDir, async () => "continued");
+
+    await expect(failed).rejects.toThrow("expected failure");
+    await expect(next).resolves.toBe("continued");
+  });
+
+  it("removes a timed-out local waiter without blocking the queue", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-lock-timeout-"));
+    const lockDir = join(root, "execution", ".lock");
+    let releaseFirst!: () => void;
+    let markFirstEntered!: () => void;
+    const firstEntered = new Promise<void>((resolve) => {
+      markFirstEntered = resolve;
+    });
+    const holdFirst = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const first = withFileLock(lockDir, async () => {
+      markFirstEntered();
+      await holdFirst;
+    });
+    await firstEntered;
+
+    await expect(withFileLock(lockDir, async () => undefined, { timeoutMs: 20 })).rejects.toThrow(
+      "in-process file lock",
+    );
+    const next = withFileLock(lockDir, async () => "continued");
+    releaseFirst();
+
+    await first;
+    await expect(next).resolves.toBe("continued");
+  });
 });

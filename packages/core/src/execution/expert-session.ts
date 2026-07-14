@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import type {
+  AgentInstance,
   AgentMessageUsage,
   ExecutionCursor,
   ExecutionRecord,
@@ -8,21 +9,28 @@ import type {
   ExpertSessionEvent,
   ExpertSessionRecord,
   ExecutionEvent,
+  Invocation,
   PromptMode,
   PromptRequest,
+  RuntimeContextRecord,
 } from "@pragma/shared";
 import { ExpertMessageHistorySchema } from "@pragma/shared";
 import { isFinalExecutionStatus as isFinal } from "@pragma/shared";
 
 import type { ExpertDefinition } from "../agent/expert-team.ts";
 import { isExpertTeam } from "../agent/expert-team.ts";
+import { fingerprintExpertExecutionDefinition } from "../agent/expert-definition-descriptor.ts";
 import type { RuntimeRegistry } from "../runtime-registry.ts";
 import { mergeUsages } from "../runtime/usage.ts";
 import { ExecutionController, runExpertInvocation } from "./expert-runner.ts";
-import type { RuntimeContextSnapshot } from "./expert-runner.ts";
 import { RuntimeSessionPool } from "./runtime-session-pool.ts";
 import type { ExecutionStore } from "./execution-store.ts";
+import {
+  closeExecutionContexts,
+  type ContextResolutionScopeSnapshot,
+} from "./context-resolution-service.ts";
 import type { ExpertSessionStore } from "./expert-session-store.ts";
+import { mergeRuntimeContextRecord } from "./runtime-context-record.ts";
 import {
   StoredExecutionView,
   type GetMessageHistoryOptions,
@@ -104,17 +112,19 @@ export class ExpertSessionManager {
     const sessionId = options.sessionId ?? randomUUID();
     const now = new Date().toISOString();
     const rootExpert = isExpertTeam(expert) ? expert.coordinator : expert;
+    const runtimeId = this.dependencies.runtimes.resolve(options.runtime).descriptor.id;
     await this.dependencies.sessions.create({
-      schemaVersion: "pragma.expert-session/v1",
+      schemaVersion: "pragma.expert-session/v2",
       sessionId,
       expertId: expert.id,
       expertVersion: expert.version,
+      definitionFingerprint: fingerprintExpertExecutionDefinition(expert),
       status: "open",
       queuedRequestIds: [],
       executionIds: [],
-      ...(options.runtime === undefined ? {} : { runtimeId: options.runtime }),
-      contextIds: { root: randomUUID() },
-      runtimeContexts: {},
+      runtimeId,
+      rootContextId: randomUUID(),
+      contexts: {},
       createdAt: now,
       updatedAt: now,
     });
@@ -142,6 +152,9 @@ export class ExpertSessionManager {
       throw new Error(`ExpertSession is closed: ${request.sessionId}`);
     if (record.expertId !== expert.id || record.expertVersion !== expert.version) {
       throw new Error(`Expert definition mismatch for Session ${request.sessionId}.`);
+    }
+    if (record.definitionFingerprint !== fingerprintExpertExecutionDefinition(expert)) {
+      throw new Error(`Expert definition fingerprint mismatch for Session ${request.sessionId}.`);
     }
     const claimId = randomUUID();
     if (
@@ -259,10 +272,11 @@ class ExpertSessionImpl implements ExpertSession {
 
     const id = randomUUID();
     const now = new Date().toISOString();
-    const rootContextId = (await this.getState()).contextIds["root"]!;
+    const session = await this.getState();
+    const rootContextId = session.rootContextId;
     const definitionKind = isExpertTeam(this.expert) ? "expert-team" : "expert";
     const execution: ExecutionRecord = {
-      schemaVersion: "pragma.execution/v4",
+      schemaVersion: "pragma.execution/v5",
       executionId: id,
       version: 0,
       kind: "expert-turn",
@@ -288,6 +302,18 @@ class ExpertSessionImpl implements ExpertSession {
     const executionId = await this.dependencies.sessions.enqueue({
       execution,
       prompt,
+      ...(session.contexts[rootContextId] === undefined
+        ? {
+            context: createRootRuntimeContext(
+              this.expert,
+              this.sessionId,
+              rootContextId,
+              id,
+              session.runtimeId,
+              now,
+            ),
+          }
+        : {}),
       rootInvocation: {
         invocationId: id,
         rootInvocationId: id,
@@ -373,6 +399,10 @@ class ExpertSessionImpl implements ExpertSession {
         }
       }
       await this.processing;
+      const session = await this.getState();
+      for (const executionId of session.executionIds) {
+        await closeExecutionContexts(this.dependencies.executions, executionId);
+      }
     } catch (error) {
       errors.push(error);
     }
@@ -385,7 +415,7 @@ class ExpertSessionImpl implements ExpertSession {
       try {
         await this.dependencies.sessions.transact(this.sessionId, ({ session, prompts }) => ({
           result: undefined,
-          session: { ...session, status: "closed", updatedAt: new Date().toISOString() },
+          session: closeSessionContexts(session),
           prompts,
         }));
       } catch (error) {
@@ -552,8 +582,7 @@ class ExpertSessionImpl implements ExpertSession {
             prompts,
           };
         }
-        const contextId = session.contextIds["root"];
-        if (contextId === undefined) throw new Error("ExpertSession root context is missing.");
+        const contextId = session.rootContextId;
         const executionId = session.activeExecutionId;
         return {
           result: { execute: true as const, executionId, contextId },
@@ -685,8 +714,9 @@ class ExpertSessionImpl implements ExpertSession {
       ],
     });
     const session = await this.getState();
-    const rootContextId = session.contextIds["root"]!;
-    const runtimeContexts = { ...session.runtimeContexts };
+    const rootContextId = session.rootContextId;
+    const rootContext = session.contexts[rootContextId];
+    if (rootContext === undefined) throw new Error("ExpertSession root Context is missing.");
     const controller = new ExecutionController(
       prompt.executionId,
       this.dependencies.executions,
@@ -704,19 +734,16 @@ class ExpertSessionImpl implements ExpertSession {
         prompt: prompt.content,
         owner: { type: "expert-session", ownerId: this.sessionId },
         runtimeId: session.runtimeId,
-        contextId: rootContextId,
-        runtimeSnapshot: runtimeContexts[rootContextId],
+        context: rootContext,
         controller,
         store: this.dependencies.executions,
         runtimes: this.dependencies.runtimes,
-        onRuntimeContext: async (contextId, snapshot) => {
-          runtimeContexts[contextId] = snapshot;
-          await this.persistRuntimeContext(contextId, snapshot);
-        },
+        persistContext: async (context) => await this.persistRuntimeContext(context),
+        readContextScope: async () => await this.readRuntimeContextScope(),
       });
     } catch (caught) {
-      error = caught;
       status = controller.isCancelled() ? "cancelled" : "failed";
+      error = status === "cancelled" ? (controller.getCancellationReason() ?? caught) : caught;
     }
     const usage = controller.getUsage();
     const executionPatch = {
@@ -773,20 +800,42 @@ class ExpertSessionImpl implements ExpertSession {
     controller.finish();
   }
 
-  private async persistRuntimeContext(
-    contextId: string,
-    snapshot: RuntimeContextSnapshot,
-  ): Promise<void> {
+  private async persistRuntimeContext(context: RuntimeContextRecord): Promise<void> {
     await this.dependencies.sessions.transact(this.sessionId, ({ session, prompts }) => ({
       result: undefined,
       session: {
         ...session,
-        contextIds: { ...session.contextIds, [snapshot.expertId]: contextId },
-        runtimeContexts: { ...session.runtimeContexts, [contextId]: snapshot },
+        contexts: {
+          ...session.contexts,
+          [context.contextId]: mergeRuntimeContextRecord(
+            session.contexts[context.contextId],
+            context,
+          ),
+        },
         updatedAt: new Date().toISOString(),
       },
       prompts,
     }));
+  }
+
+  private async readRuntimeContextScope(): Promise<ContextResolutionScopeSnapshot> {
+    const session = await this.getState();
+    const histories = await Promise.all(
+      session.executionIds.map(async (executionId) => {
+        const [invocations, agents] = await Promise.all([
+          this.dependencies.executions.listInvocations(executionId),
+          this.dependencies.executions.listAgents(executionId),
+        ]);
+        return { invocations, agents };
+      }),
+    );
+    return {
+      contexts: Object.values(session.contexts),
+      invocations: histories.flatMap(
+        (history): readonly Invocation[] => history.invocations,
+      ),
+      agents: histories.flatMap((history): readonly AgentInstance[] => history.agents),
+    };
   }
 
   private createTurn(executionId: string, requestId: string): ExpertTurn {
@@ -817,6 +866,49 @@ class ExpertSessionImpl implements ExpertSession {
   private createExecutionView(executionId: string): StoredExecutionView {
     return new StoredExecutionView(executionId, this.dependencies.executions, this.sessionId);
   }
+}
+
+function createRootRuntimeContext(
+  definition: ExpertDefinition,
+  sessionId: string,
+  contextId: string,
+  invocationId: string,
+  runtimeId: string | undefined,
+  now: string,
+): RuntimeContextRecord {
+  const expert = rootExpert(definition);
+  return {
+    schemaVersion: "pragma.runtime-context/v1",
+    contextId,
+    owner: { type: "expert-session", ownerId: sessionId },
+    createdByInvocationId: invocationId,
+    expert: { id: expert.id, version: expert.version },
+    ...(runtimeId === undefined ? {} : { runtimeId }),
+    lifecycle: "open",
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+function rootExpert(definition: ExpertDefinition) {
+  return isExpertTeam(definition) ? definition.coordinator : definition;
+}
+
+function closeSessionContexts(session: ExpertSessionRecord): ExpertSessionRecord {
+  const now = new Date().toISOString();
+  return {
+    ...session,
+    status: "closed",
+    contexts: Object.fromEntries(
+      Object.entries(session.contexts).map(([contextId, context]) => [
+        contextId,
+        context.lifecycle === "closed"
+          ? context
+          : { ...context, lifecycle: "closed" as const, closedAt: now, updatedAt: now },
+      ]),
+    ),
+    updatedAt: now,
+  };
 }
 
 async function waitForTerminalExecution(

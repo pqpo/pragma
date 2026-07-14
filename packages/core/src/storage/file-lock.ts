@@ -1,14 +1,37 @@
 import { mkdir, rm, stat } from "node:fs/promises";
 import { dirname } from "node:path";
 
+interface LocalLockWaiter {
+  cancelled: boolean;
+  timeout?: ReturnType<typeof setTimeout> | undefined;
+  readonly grant: () => void;
+}
+
+const localLockWaiters = new Map<string, LocalLockWaiter[]>();
+
 export async function withFileLock<TValue>(
   lockDir: string,
   operation: () => Promise<TValue>,
   options: { readonly timeoutMs?: number; readonly staleMs?: number } = {},
 ): Promise<TValue> {
   const timeoutMs = options.timeoutMs ?? 10_000;
-  const staleMs = options.staleMs ?? 30_000;
   const startedAt = Date.now();
+  const releaseLocalLock = await acquireLocalLock(lockDir, startedAt, timeoutMs);
+  try {
+    return await withCrossProcessFileLock(lockDir, operation, options, startedAt);
+  } finally {
+    releaseLocalLock();
+  }
+}
+
+async function withCrossProcessFileLock<TValue>(
+  lockDir: string,
+  operation: () => Promise<TValue>,
+  options: { readonly timeoutMs?: number; readonly staleMs?: number },
+  startedAt: number,
+): Promise<TValue> {
+  const timeoutMs = options.timeoutMs ?? 10_000;
+  const staleMs = options.staleMs ?? 30_000;
   await retryTransientFsOperation(
     () => mkdir(dirname(lockDir), { recursive: true }).then(() => undefined),
     startedAt,
@@ -47,6 +70,57 @@ export async function withFileLock<TValue>(
       `releasing the Pragma file lock: ${lockDir}`,
     );
   }
+}
+
+async function acquireLocalLock(
+  lockDir: string,
+  startedAt: number,
+  timeoutMs: number,
+): Promise<() => void> {
+  const waiters = localLockWaiters.get(lockDir);
+  if (waiters === undefined) {
+    localLockWaiters.set(lockDir, []);
+  } else {
+    const remainingMs = timeoutMs - (Date.now() - startedAt);
+    if (remainingMs <= 0) throw localLockTimeout(lockDir);
+    await new Promise<void>((resolve, reject) => {
+      const waiter: LocalLockWaiter = {
+        cancelled: false,
+        grant: () => {
+          if (waiter.cancelled) return;
+          if (waiter.timeout !== undefined) clearTimeout(waiter.timeout);
+          resolve();
+        },
+      };
+      waiters.push(waiter);
+      waiter.timeout = setTimeout(() => {
+        waiter.cancelled = true;
+        reject(localLockTimeout(lockDir));
+      }, remainingMs);
+    });
+  }
+
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    const queued = localLockWaiters.get(lockDir);
+    while (true) {
+      const next = queued?.shift();
+      if (next === undefined) {
+        localLockWaiters.delete(lockDir);
+        return;
+      }
+      if (!next.cancelled) {
+        next.grant();
+        return;
+      }
+    }
+  };
+}
+
+function localLockTimeout(lockDir: string): Error {
+  return new Error(`Timed out waiting for Pragma in-process file lock: ${lockDir}`);
 }
 
 async function isStaleLock(lockDir: string, staleMs: number): Promise<boolean> {

@@ -26,10 +26,16 @@ await resumed.prompt("continue");
 
 ```ts
 const researcher = await defineExpert({ ...researcherOptions });
+const researcherContext = defineContextIdResolver({
+  id: "researcher-by-owner",
+  version: "1.0.0",
+  resolve: ({ ownerContextId, target }) => `${ownerContextId}:${target.expertId}`,
+});
 const launcher = createAgentLauncher({
   experts: [researcher],
   maxConcurrency: 2,
   maxDepth: 1,
+  contextId: researcherContext,
 });
 const coordinator = await defineExpert({
   ...coordinatorOptions,
@@ -39,11 +45,18 @@ const session = await app.experts.createSession(coordinator);
 ```
 
 launcher 向模型公开 `spawn_expert`、`wait_experts`、`list_experts`、`followup_expert` 和
-`interrupt_expert`。`spawn_expert` 先原子落盘再立即返回 `{ agentId, invocationId }`；多个 agent
-可以并行运行，同一 agent 的 followup 按 FIFO 串行并复用其 Context。`wait_experts` 按精确的
+`interrupt_expert`。`spawn_expert` 先原子落盘再立即返回
+`{ agentId, invocationId, contextId, disposition }`；多个 agent 可以并行运行。Resolver 返回同一
+Context 时，dispatch 会原子归并到同一 agent 并按 FIFO 串行；默认 resolver 每次创建新 Context。
+`wait_experts` 按精确的
 Invocation ID 收集结果。父 Invocation 即使遗漏 wait，也会在终结屏障等待未 join 的子任务并续跑综合。
 
-Agent 实例只属于当前 Execution。外部客户端通过 Execution events 和 InvocationTree 观察状态，
+ExpertTeam 使用完全相同的配置入口：`delegation.contextId`。Resolver 只能从当前 owner 的兼容
+Context 候选中选择；相同字符串不能跨 ExpertSession/FlowExecution，也不能切换 Expert 或 Runtime。
+ExpertSession 的后续 prompt 会把本 Session 的历史成员 Context 作为候选并恢复其 snapshot；由于每个
+prompt 仍是独立 Execution，本轮会创建新的 AgentInstance，但相同 `contextId` 继续代表同一 Runtime 对话。
+
+Agent 实例只属于当前 Execution，操作权限由 `ownerContextId` 决定。外部客户端通过 Execution events 和 InvocationTree 观察状态，
 不需要轮询内部任务；Core 不为所有 Tool 增加通用 background/sync 参数。
 
 恢复会话不会自动重启 interrupted Turn。专家团使用同一个 Session API；外部只能向团队根提交 prompt。

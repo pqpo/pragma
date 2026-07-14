@@ -10,6 +10,7 @@ import {
 } from "@pragma/shared";
 
 import { isExpertTeam, type ExpertDefinition, type ExpertTeam } from "../agent/expert-team.ts";
+import { describeExpertExecutionDefinition } from "../agent/expert-definition-descriptor.ts";
 import type { RuntimeRegistry } from "../runtime-registry.ts";
 import type {
   ExpertAgentHumanRequest,
@@ -17,6 +18,16 @@ import type {
   ExpertAgentUserQuestion,
 } from "../tools/managed-tool.ts";
 import { ExecutionController, runExpertInvocation } from "../execution/expert-runner.ts";
+import {
+  ContextResolutionService,
+  closeExecutionContexts,
+  prepareExecutionContextClosure,
+  type RuntimeContextResolution,
+} from "../execution/context-resolution-service.ts";
+import {
+  describeContextIdResolver,
+  freshContextIdResolver,
+} from "../execution/context-id-resolver.ts";
 import type { ExecutionStore } from "../execution/execution-store.ts";
 import { InvocationService } from "../execution/invocation-service.ts";
 import {
@@ -63,9 +74,10 @@ export class FlowExecutionManager {
     const flow = compileFlow(definition);
     const input = flow.input?.parse(request.input) ?? request.input;
     const executionId = request.executionId ?? randomUUID();
+    const runtimeId = this.runtimes.resolve(request.runtime).descriptor.id;
     const now = new Date().toISOString();
     const record: ExecutionRecord = {
-      schemaVersion: "pragma.execution/v4",
+      schemaVersion: "pragma.execution/v5",
       executionId,
       version: 0,
       kind: "flow",
@@ -73,7 +85,10 @@ export class FlowExecutionManager {
       rootInvocationId: executionId,
       status: "queued",
       input,
-      state: { __flowDefinitionGraph: createFlowDefinitionGraph(flow) },
+      state: {
+        __flowDefinitionGraph: createFlowDefinitionGraph(flow),
+        __requestedRuntimeId: runtimeId,
+      },
       lastAppliedSequence: 0,
       createdAt: now,
       updatedAt: now,
@@ -90,7 +105,7 @@ export class FlowExecutionManager {
     });
     const claimId = randomUUID();
     await this.executions.claimRecovery(executionId, claimId, 30_000);
-    return this.activate(flow, executionId, request.runtime, claimId);
+    return this.activate(flow, executionId, runtimeId, claimId);
   }
 
   async open(request: { readonly executionId: string }): Promise<FlowExecutionView> {
@@ -121,6 +136,10 @@ export class FlowExecutionManager {
     ) {
       throw new Error(`Flow definition graph mismatch for Execution ${request.executionId}.`);
     }
+    const runtimeId = this.runtimes.resolve(request.runtime).descriptor.id;
+    if (record.state["__requestedRuntimeId"] !== runtimeId) {
+      throw new Error(`Flow Runtime mismatch for Execution ${request.executionId}.`);
+    }
     if (isFinal(record.status)) {
       throw new Error(`Cannot recover terminal FlowExecution: ${record.status}`);
     }
@@ -147,9 +166,7 @@ export class FlowExecutionManager {
       recoveryClaimId: claimId,
       executionPatch: { status: "queued" },
       invocationPatches: interrupted
-        .filter(
-          (invocation) => invocation.status === "interrupted" && invocation.agentId === undefined,
-        )
+        .filter((invocation) => invocation.status === "interrupted")
         .map((invocation) => ({
           invocationId: invocation.invocationId,
           patch: { status: "queued" as const },
@@ -162,7 +179,7 @@ export class FlowExecutionManager {
         },
       ],
     });
-    return this.activate(flow, request.executionId, request.runtime, claimId);
+    return this.activate(flow, request.executionId, runtimeId, claimId);
   }
 
   private activate(
@@ -171,7 +188,9 @@ export class FlowExecutionManager {
     runtime: string | undefined,
     claimId: string,
   ): FlowExecution {
-    const controller = new ExecutionController(executionId, this.executions);
+    const controller = new ExecutionController(executionId, this.executions, undefined, {
+      closeContextsOnCancel: true,
+    });
     const handle = this.createHandle(executionId, controller);
     this.active.set(executionId, { controller, handle });
     const renewal = setInterval(() => {
@@ -211,6 +230,7 @@ export class FlowExecutionManager {
         runtime,
       });
       const usage = controller.getUsage();
+      const closure = await prepareExecutionContextClosure(this.executions, executionId);
       await this.executions.commit({
         commitId: `flow-succeeded:${executionId}`,
         executionId,
@@ -222,7 +242,10 @@ export class FlowExecutionManager {
         invocationPatches: [
           { invocationId: root.invocationId, patch: { status: "succeeded", output } },
         ],
+        contextPatches: closure.contextPatches,
+        agentPatches: closure.agentPatches,
         events: [
+          ...closure.events,
           {
             invocationId: root.invocationId,
             type: "invocation.succeeded",
@@ -233,12 +256,15 @@ export class FlowExecutionManager {
       });
     } catch (error) {
       const status = controller.isCancelled() ? "cancelled" : "failed";
-      const storedError = serializeError(error);
+      const terminalError =
+        status === "cancelled" ? (controller.getCancellationReason() ?? error) : error;
+      const storedError = serializeError(terminalError);
       const usage = controller.getUsage();
       const current = await this.executions.get(executionId);
       if (current !== undefined && isFinal(current.status)) {
         if (usage !== undefined) await this.executions.update(executionId, { usage });
       } else {
+        const closure = await prepareExecutionContextClosure(this.executions, executionId);
         await this.executions.commit({
           commitId: `flow-${status}:${executionId}`,
           executionId,
@@ -250,7 +276,10 @@ export class FlowExecutionManager {
           invocationPatches: [
             { invocationId: root.invocationId, patch: { status, error: storedError } },
           ],
+          contextPatches: closure.contextPatches,
+          agentPatches: closure.agentPatches,
           events: [
+            ...closure.events,
             {
               invocationId: root.invocationId,
               type: `invocation.${status}`,
@@ -259,14 +288,24 @@ export class FlowExecutionManager {
             {
               invocationId: executionId,
               type: `execution.${status}`,
-              data: { message: error instanceof Error ? error.message : String(error) },
+              data: {
+                message:
+                  terminalError instanceof Error ? terminalError.message : String(terminalError),
+              },
             },
           ],
         });
       }
     } finally {
-      controller.finish();
-      await controller.closeRuntimes();
+      try {
+        await controller.closeRuntimes();
+      } finally {
+        try {
+          await closeExecutionContexts(this.executions, executionId);
+        } finally {
+          controller.finish();
+        }
+      }
     }
   }
 
@@ -295,11 +334,15 @@ async function runFlow(options: {
   readonly runtime?: string | undefined;
 }): Promise<unknown> {
   let stepId: string | undefined = options.flow.startStepId;
+  const visits = new Map<string, number>();
   while (stepId !== undefined) {
     if (options.controller.isCancelled()) throw new Error("FlowExecution was cancelled.");
     const step = options.flow.steps.get(stepId);
     if (step === undefined) throw new Error(`Flow step not found: ${stepId}`);
-    const existingInvocation = await findStepInvocation(options, step);
+    const visit = visits.get(stepId) ?? 0;
+    visits.set(stepId, visit + 1);
+    const stepInvocations = await findStepInvocations(options, step);
+    const existingInvocation = stepInvocations[visit];
     let input: unknown;
     let invocation: Invocation;
     if (existingInvocation !== undefined) {
@@ -313,7 +356,7 @@ async function runFlow(options: {
           options.input,
         );
       } catch (error) {
-        const failed = await createStepInvocation(options, step, options.input);
+        const failed = await createStepInvocation(options, step, options.input, visit);
         await putStatus(
           options.store,
           options.executionId,
@@ -324,7 +367,7 @@ async function runFlow(options: {
         );
         throw error;
       }
-      invocation = await createStepInvocation(options, step, input);
+      invocation = await createStepInvocation(options, step, input, visit);
     }
     let output: unknown;
     if (invocation.status === "succeeded") {
@@ -399,7 +442,10 @@ async function runStep(
       return output;
     }
     const expert = step.definition as ExpertDefinition;
-    const contextId = invocation.invocationId;
+    const context = await options.store.getContext(options.executionId, invocation.contextId);
+    if (context === undefined) {
+      throw new Error(`Runtime Context not found: ${invocation.contextId}.`);
+    }
     return await runExpertInvocation({
       executionId: options.executionId,
       invocationId: invocation.invocationId,
@@ -407,10 +453,8 @@ async function runStep(
       expert,
       prompt: typeof input === "string" ? input : JSON.stringify(input),
       owner: { type: "flow-execution", ownerId: options.executionId },
-      runtimeId: step.options.runtime ?? options.runtime,
-      contextId,
-      runtimeSnapshot: invocation.runtimeContext,
-      runtimeScope: "invocation",
+      runtimeId: ("runtime" in step.options ? step.options.runtime : undefined) ?? options.runtime,
+      context,
       controller: options.controller,
       store: options.store,
       runtimes: options.runtimes,
@@ -578,11 +622,11 @@ function isApprovedHumanDecision(
   );
 }
 
-async function findStepInvocation(
+async function findStepInvocations(
   options: Parameters<typeof runFlow>[0],
   step: CompiledFlowStep,
-): Promise<Invocation | undefined> {
-  return (await options.store.listInvocations(options.executionId)).find(
+): Promise<readonly Invocation[]> {
+  return (await options.store.listInvocations(options.executionId)).filter(
     (candidate) =>
       candidate.parentInvocationId === options.flowInvocationId && candidate.nodeId === step.id,
   );
@@ -592,17 +636,53 @@ async function createStepInvocation(
   options: Parameters<typeof runFlow>[0],
   step: CompiledFlowStep,
   input: unknown,
+  visit: number,
 ): Promise<Invocation> {
   const definition = definitionRef(step.definition);
   const now = new Date().toISOString();
   const invocationId = randomUUID();
+  let contextResolution: RuntimeContextResolution | undefined;
+  if (definition.kind === "expert" || definition.kind === "expert-team") {
+    const expert = step.definition as ExpertDefinition;
+    const nativeExpert = isExpertTeam(expert) ? expert.coordinator : expert;
+    const record = (await options.store.get(options.executionId))!;
+    contextResolution = await new ContextResolutionService(options.store).resolve({
+      executionId: options.executionId,
+      invocationId,
+      parentInvocationId: options.flowInvocationId,
+      input,
+      state: record.state,
+      source: {
+        kind: "flow",
+        flowId: options.flow.id,
+        stepId: step.id,
+        visit: visit + 1,
+      },
+      owner: { type: "flow-execution", ownerId: options.executionId },
+      expert: { id: nativeExpert.id, version: nativeExpert.version },
+      requestedRuntimeId: options.runtimes.resolve(
+        ("runtime" in step.options ? step.options.runtime : undefined) ?? options.runtime,
+      ).descriptor.id,
+      resolver:
+        ("contextId" in step.options ? step.options.contextId : undefined) ??
+        freshContextIdResolver,
+    });
+  }
   const invocation: Invocation = {
     invocationId,
     rootInvocationId: (await options.store.get(options.executionId))!.rootInvocationId,
     parentInvocationId: options.flowInvocationId,
     nodeId: step.id,
     definition,
-    contextId: invocationId,
+    contextId: contextResolution?.context.contextId ?? invocationId,
+    ...(contextResolution === undefined
+      ? {}
+      : {
+          contextResolution: {
+            resolver: contextResolution.resolver,
+            disposition: contextResolution.disposition,
+          },
+        }),
     ...(definition.kind === "expert" || definition.kind === "expert-team"
       ? {
           executorId: isExpertTeam(step.definition as ExpertDefinition)
@@ -619,7 +699,11 @@ async function createStepInvocation(
     commitId: randomUUID(),
     executionId: options.executionId,
     invocationPuts: [invocation],
+    ...(contextResolution?.contextPut === undefined
+      ? {}
+      : { contextPuts: [contextResolution.contextPut] }),
     events: [
+      ...(contextResolution?.events ?? []),
       {
         invocationId: invocation.invocationId,
         type: "invocation.queued",
@@ -709,26 +793,51 @@ function visitFlowDefinition(flow: Flow, ancestors: Set<Flow>): unknown {
     definition: { id: flow.id, version: flow.version, kind: "flow" },
     steps: [...flow.steps.values()]
       .sort((left, right) => left.id.localeCompare(right.id))
-      .map((step) => ({ nodeId: step.id, definition: describeDefinition(step.definition) })),
+      .map((step) => ({
+        nodeId: step.id,
+        definition: describeDefinition(step.definition),
+        options: describeStepOptions(step),
+      })),
+    transitions: [...flow.transitions.entries()]
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([stepId, transition]) => ({ stepId, transition: describeTransition(transition) })),
   };
 
   function describeDefinition(definition: CompiledFlowStep["definition"]): unknown {
     if ("kind" in definition && definition.kind === "flow") {
       return visitFlowDefinition(definition, nextAncestors);
     }
-    if ("kind" in definition && definition.kind === "expert-team") {
-      return {
-        definition: definitionRef(definition),
-        coordinator: {
-          id: definition.coordinator.id,
-          version: definition.coordinator.version,
-        },
-        members: [...definition.members]
-          .sort((left, right) => left.id.localeCompare(right.id))
-          .map((member) => ({ id: member.id, version: member.version })),
-      };
+    if (!("kind" in definition) || definition.kind === "expert-team") {
+      return describeExpertExecutionDefinition(definition as ExpertDefinition);
     }
     return definitionRef(definition);
+  }
+
+  function describeStepOptions(step: CompiledFlowStep): unknown {
+    const kind = definitionRef(step.definition).kind;
+    const resolver =
+      kind === "expert" || kind === "expert-team"
+        ? (("contextId" in step.options ? step.options.contextId : undefined) ??
+          freshContextIdResolver)
+        : undefined;
+    return {
+      ...(!("runtime" in step.options) || step.options.runtime === undefined
+        ? {}
+        : { runtime: step.options.runtime }),
+      ...(resolver === undefined ? {} : { contextId: describeContextIdResolver(resolver) }),
+    };
+  }
+
+  function describeTransition(
+    transition: Flow["transitions"] extends ReadonlyMap<string, infer T> ? T : never,
+  ): unknown {
+    if (transition.type === "next") return { type: "next", target: transition.target };
+    return {
+      type: "route",
+      field: transition.field,
+      cases: [...transition.cases.entries()].sort(([left], [right]) => left.localeCompare(right)),
+      ...(transition.fallback === undefined ? {} : { fallback: transition.fallback }),
+    };
   }
 }
 

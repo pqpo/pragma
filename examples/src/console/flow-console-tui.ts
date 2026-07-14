@@ -46,6 +46,22 @@ export interface FlowConsoleActivity {
   text: string;
 }
 
+export interface FlowConsoleVisit {
+  readonly invocationId: string;
+  readonly activity: FlowConsoleActivity[];
+  agentId?: string | undefined;
+  contextId?: string | undefined;
+  resolver?: string | undefined;
+  disposition?: "created" | "reused" | undefined;
+  status: FlowConsoleStatus;
+  input?: unknown;
+  output?: unknown;
+  error?: unknown;
+  usage?: AgentMessageUsage | undefined;
+  createdAt?: string | undefined;
+  updatedAt?: string | undefined;
+}
+
 export interface FlowConsoleNode {
   readonly key: string;
   readonly nodeId?: string | undefined;
@@ -55,9 +71,14 @@ export interface FlowConsoleNode {
   readonly branchLabels: readonly string[];
   readonly children: string[];
   readonly activity: FlowConsoleActivity[];
+  readonly visits: FlowConsoleVisit[];
   status: FlowConsoleStatus;
   expanded: boolean;
   invocationId?: string | undefined;
+  agentId?: string | undefined;
+  contextId?: string | undefined;
+  resolver?: string | undefined;
+  disposition?: "created" | "reused" | undefined;
   input?: unknown;
   output?: unknown;
   error?: unknown;
@@ -95,6 +116,7 @@ export class FlowConsoleModel {
   notice: string | undefined;
   private selectedKey: string;
   private readonly invocationKeys = new Map<string, Set<string>>();
+  private readonly invocationVisitByNode = new Map<string, Map<string, string>>();
   private readonly toolSnapshots = new Map<string, string>();
   private readonly invocationsWithAnswerDeltas = new Set<string>();
 
@@ -112,6 +134,7 @@ export class FlowConsoleModel {
         branchLabels: branchLabels.get(step.id) ?? [],
         children: [],
         activity: [],
+        visits: [],
         status: "pending",
         expanded: definitionKind(step.definition) === "expert-team",
       });
@@ -166,31 +189,69 @@ export class FlowConsoleModel {
       switch (item.channel) {
         case "thought": {
           const text = item.delta ?? formatValue(item.value);
-          if (text !== undefined) this.append(node, "thinking", text, true, item.executorId);
+          if (text !== undefined)
+            this.append(
+              node,
+              "thinking",
+              text,
+              true,
+              item.executorId,
+              this.visitId(item.invocationId, key),
+            );
           break;
         }
         case "message": {
           if (item.delta !== undefined) {
             this.invocationsWithAnswerDeltas.add(item.invocationId);
-            this.append(node, "answer", item.delta, true, item.executorId);
+            this.append(
+              node,
+              "answer",
+              item.delta,
+              true,
+              item.executorId,
+              this.visitId(item.invocationId, key),
+            );
           } else if (!this.invocationsWithAnswerDeltas.has(item.invocationId)) {
             const text = readCompletedMessageText(item.value);
-            if (text !== undefined) this.append(node, "answer", text, false, item.executorId);
+            if (text !== undefined)
+              this.append(
+                node,
+                "answer",
+                text,
+                false,
+                item.executorId,
+                this.visitId(item.invocationId, key),
+              );
           }
           break;
         }
         case "tool":
-          this.consumeTool(node, item, item.executorId);
+          this.consumeTool(node, item, item.executorId, this.visitId(item.invocationId, key));
           break;
         case "progress": {
           const text = formatProgress(item.value);
-          if (text !== undefined) this.append(node, "progress", text, false, item.executorId);
+          if (text !== undefined)
+            this.append(
+              node,
+              "progress",
+              text,
+              false,
+              item.executorId,
+              this.visitId(item.invocationId, key),
+            );
           break;
         }
         case "result": {
           const text = formatValue(item.value);
           if (text !== undefined && !this.invocationsWithAnswerDeltas.has(item.invocationId)) {
-            this.append(node, "answer", text, false, item.executorId);
+            this.append(
+              node,
+              "answer",
+              text,
+              false,
+              item.executorId,
+              this.visitId(item.invocationId, key),
+            );
           }
           break;
         }
@@ -206,7 +267,15 @@ export class FlowConsoleModel {
       if (keys !== undefined && text !== undefined) {
         for (const key of keys) {
           const node = this.nodes.get(key);
-          if (node !== undefined) this.append(node, "progress", text);
+          if (node !== undefined)
+            this.append(
+              node,
+              "progress",
+              text,
+              false,
+              undefined,
+              this.visitId(event.invocationId, key),
+            );
         }
       }
     }
@@ -220,32 +289,38 @@ export class FlowConsoleModel {
       for (const key of keys) {
         const node = this.nodes.get(key);
         if (node === undefined) continue;
-        const existingKinds = new Set(node.activity.map((item) => item.kind));
+        const visitId = this.visitId(history.invocationId, key);
+        const visit = node.visits.find((candidate) => candidate.invocationId === visitId);
+        const hasActivity = (kind: FlowConsoleActivity["kind"]): boolean =>
+          (visit?.activity ?? node.activity).some(
+            (item) => item.kind === kind && item.source === history.executorId,
+          );
         for (const record of history.messages) {
           const message = record.message;
           if (message.role === "assistant") {
             for (const content of message.content) {
-              if (content.type === "thinking" && !existingKinds.has("thinking")) {
-                this.append(node, "thinking", content.thinking, false, history.executorId);
-              } else if (content.type === "text" && !existingKinds.has("answer")) {
-                this.append(node, "answer", content.text, false, history.executorId);
-              } else if (content.type === "toolCall" && !existingKinds.has("tool")) {
+              if (content.type === "thinking" && !hasActivity("thinking")) {
+                this.append(node, "thinking", content.thinking, false, history.executorId, visitId);
+              } else if (content.type === "text" && !hasActivity("answer")) {
+                this.append(node, "answer", content.text, false, history.executorId, visitId);
+              } else if (content.type === "toolCall" && !hasActivity("tool")) {
                 this.append(
                   node,
                   "tool",
                   `→ ${content.name}\n${JSON.stringify(content.arguments, null, 2)}`,
                   false,
                   history.executorId,
+                  visitId,
                 );
               }
             }
-          } else if (message.role === "toolResult" && !existingKinds.has("tool-output")) {
+          } else if (message.role === "toolResult" && !hasActivity("tool-output")) {
             const text = message.content
               .filter((content) => content.type === "text")
               .map((content) => content.text)
               .join("\n");
             if (text !== "") {
-              this.append(node, "tool-output", text, false, history.executorId);
+              this.append(node, "tool-output", text, false, history.executorId, visitId);
             }
           }
         }
@@ -256,7 +331,12 @@ export class FlowConsoleModel {
   markWaitingHuman(invocationId: string, waiting: boolean): void {
     for (const key of this.invocationKeys.get(invocationId) ?? []) {
       const node = this.nodes.get(key);
-      if (node !== undefined) node.status = waiting ? "waiting-human" : "running";
+      if (node !== undefined) {
+        node.status = waiting ? "waiting-human" : "running";
+        const visitId = this.visitId(invocationId, key);
+        const visit = node.visits.find((candidate) => candidate.invocationId === visitId);
+        if (visit !== undefined) visit.status = node.status;
+      }
     }
   }
 
@@ -323,6 +403,7 @@ export class FlowConsoleModel {
           branchLabels: [],
           children: [],
           activity: [],
+          visits: [],
           status: "pending",
           expanded: true,
         };
@@ -330,12 +411,16 @@ export class FlowConsoleModel {
         node.children.unshift(coordinatorKey);
       }
       this.applyInvocation(coordinator, invocation);
-      this.bindInvocation(invocation.invocationId, coordinatorKey);
+      this.bindInvocation(invocation.invocationId, coordinatorKey, invocation.invocationId);
       childrenParentKey = staticKey;
     }
-    this.bindInvocation(invocation.invocationId, key);
+    this.bindInvocation(invocation.invocationId, key, invocation.invocationId);
     if (parentKey !== undefined && this.nodes.get(parentKey)?.kind === "expert-team") {
-      this.bindInvocation(invocation.invocationId, parentKey);
+      this.bindInvocation(
+        invocation.invocationId,
+        parentKey,
+        this.nodes.get(parentKey)?.invocationId ?? invocation.invocationId,
+      );
     }
     for (const child of tree.children) this.syncInvocationTree(child, childrenParentKey);
   }
@@ -351,6 +436,7 @@ export class FlowConsoleModel {
         branchLabels: [],
         children: [],
         activity: [],
+        visits: [],
         status: "pending",
         expanded: true,
       };
@@ -362,7 +448,33 @@ export class FlowConsoleModel {
   }
 
   private applyInvocation(node: FlowConsoleNode, invocation: Invocation): void {
+    let visit = node.visits.find((candidate) => candidate.invocationId === invocation.invocationId);
+    if (visit === undefined) {
+      visit = {
+        invocationId: invocation.invocationId,
+        activity: [],
+        status: mapStatus(invocation.status),
+      };
+      node.visits.push(visit);
+    }
+    visit.status = mapStatus(invocation.status);
+    visit.agentId = invocation.agentId;
+    visit.contextId = invocation.contextId;
+    visit.resolver = invocation.contextResolution
+      ? `${invocation.contextResolution.resolver.id}@${invocation.contextResolution.resolver.version}`
+      : undefined;
+    visit.disposition = invocation.contextResolution?.disposition;
+    visit.input = invocation.input;
+    visit.output = invocation.output;
+    visit.error = invocation.error;
+    visit.usage = invocation.usage;
+    visit.createdAt = invocation.createdAt;
+    visit.updatedAt = invocation.updatedAt;
     node.invocationId = invocation.invocationId;
+    node.agentId = invocation.agentId;
+    node.contextId = invocation.contextId;
+    node.resolver = visit.resolver;
+    node.disposition = visit.disposition;
     node.status = node.status === "waiting-human" ? "waiting-human" : mapStatus(invocation.status);
     node.input = invocation.input;
     node.output = invocation.output;
@@ -372,10 +484,17 @@ export class FlowConsoleModel {
     node.updatedAt = invocation.updatedAt;
   }
 
-  private bindInvocation(invocationId: string, key: string): void {
+  private bindInvocation(invocationId: string, key: string, visitId: string): void {
     const keys = this.invocationKeys.get(invocationId) ?? new Set<string>();
     keys.add(key);
     this.invocationKeys.set(invocationId, keys);
+    const visits = this.invocationVisitByNode.get(invocationId) ?? new Map<string, string>();
+    visits.set(key, visitId);
+    this.invocationVisitByNode.set(invocationId, visits);
+  }
+
+  private visitId(invocationId: string, key: string): string {
+    return this.invocationVisitByNode.get(invocationId)?.get(key) ?? invocationId;
   }
 
   private append(
@@ -384,17 +503,13 @@ export class FlowConsoleModel {
     text: string,
     append = false,
     source?: string,
+    visitId?: string,
   ): void {
     if (text === "") return;
-    const current = node.activity.at(-1);
-    if (append && current?.kind === kind && current.source === source) current.text += text;
-    else {
-      const prefix = node.kind === "expert-team" ? agentPrefix(source) : "";
-      node.activity.push({ kind, text: `${prefix}${text}`, source });
-    }
-    let total = node.activity.reduce((sum, item) => sum + item.text.length, 0);
-    while (total > MAX_ACTIVITY_CHARACTERS && node.activity.length > 1) {
-      total -= node.activity.shift()!.text.length;
+    appendActivity(node.activity, node.kind, kind, text, append, source);
+    const visit = node.visits.find((candidate) => candidate.invocationId === visitId);
+    if (visit !== undefined) {
+      appendActivity(visit.activity, node.kind, kind, text, append, source);
     }
   }
 
@@ -402,6 +517,7 @@ export class FlowConsoleModel {
     node: FlowConsoleNode,
     item: ExecutionOutputItem,
     source: string | undefined,
+    visitId: string,
   ): void {
     const payload = asRecord(item.value);
     const toolName = readString(payload, "toolName") || "tool";
@@ -409,17 +525,25 @@ export class FlowConsoleModel {
     const snapshotKey = `${node.key}:${toolCallId}`;
     if (item.delta !== undefined) {
       const increment = readToolIncrement(this.toolSnapshots, snapshotKey, item.delta);
-      if (increment !== undefined) this.append(node, "tool-output", increment, true, source);
+      if (increment !== undefined)
+        this.append(node, "tool-output", increment, true, source, visitId);
       return;
     }
     if (payload["message"] !== undefined) {
-      this.append(node, "tool", `× ${toolName}: ${readString(payload, "message")}`, false, source);
+      this.append(
+        node,
+        "tool",
+        `× ${toolName}: ${readString(payload, "message")}`,
+        false,
+        source,
+        visitId,
+      );
     } else if (payload["approvalId"] !== undefined) {
-      this.append(node, "tool", `! ${toolName} requires approval`, false, source);
+      this.append(node, "tool", `! ${toolName} requires approval`, false, source, visitId);
     } else if (payload["outputPreview"] !== undefined) {
-      this.append(node, "tool", `✓ ${toolName} completed`, false, source);
+      this.append(node, "tool", `✓ ${toolName} completed`, false, source, visitId);
       const preview = formatPreview(payload["outputPreview"]);
-      if (preview !== undefined) this.append(node, "tool-output", preview, false, source);
+      if (preview !== undefined) this.append(node, "tool-output", preview, false, source, visitId);
     } else {
       const preview = formatPreview(payload["inputPreview"]);
       this.append(
@@ -428,6 +552,7 @@ export class FlowConsoleModel {
         `→ ${toolName}${preview === undefined ? "" : `\n${preview}`}`,
         false,
         source,
+        visitId,
       );
     }
   }
@@ -436,8 +561,17 @@ export class FlowConsoleModel {
     for (const [nodeId, transition] of this.flow.transitions) {
       if (transition.type !== "route") continue;
       const node = this.nodes.get(stepKey(nodeId));
+      if (node?.status !== "succeeded") {
+        for (const target of transition.cases.values()) {
+          if ("type" in target) continue;
+          const candidate = this.nodes.get(stepKey(target.id));
+          if (candidate?.status === "skipped" && candidate.invocationId === undefined) {
+            candidate.status = "pending";
+          }
+        }
+        continue;
+      }
       const output = asRecord(node?.output);
-      if (node?.status !== "succeeded") continue;
       const selected = transition.cases.get(String(output[transition.field]));
       for (const target of transition.cases.values()) {
         if (target === selected || "type" in target) continue;
@@ -636,6 +770,9 @@ export class FlowConsoleTui {
   private async startAndFollow(): Promise<void> {
     try {
       this.execution = await this.options.start();
+      // Startup performs several asynchronous hydration steps before awaiting the result. Observe
+      // it immediately so an early failure or cancellation cannot become an unhandled rejection.
+      void this.execution.result.catch(() => undefined);
       this.model.setExecution(this.execution.executionId);
       if (this.exiting) {
         await this.execution.cancel("Flow console closed before startup completed.");
@@ -1004,7 +1141,8 @@ function renderGraph(
     const depth = nodeDepth(model, node);
     const branch = node.branchLabels.length === 0 ? "" : `[${node.branchLabels.join("|")}] `;
     const expandable = node.children.length === 0 ? " " : node.expanded ? "▾" : "▸";
-    const text = `${"  ".repeat(depth)}${expandable} ${statusIcon(node.status)} ${branch}${node.label} · ${node.kind}`;
+    const rounds = node.visits.length > 1 ? ` ×${node.visits.length}` : "";
+    const text = `${"  ".repeat(depth)}${expandable} ${statusIcon(node.status)} ${branch}${node.label}${rounds} · ${node.kind}`;
     const styled =
       node.key === model.selected.key
         ? paint(` ${text} `, ANSI.inverse, color)
@@ -1039,24 +1177,111 @@ function renderDetails(
         : ` ${capitalize(mode)} `,
     )
     .join(" ");
-  const meta = `${node.label}  ${statusLabel(node.status, color)}${formatDuration(node)}`;
-  const content =
-    model.viewMode === "activity"
-      ? renderActivity(node, width, color)
-      : wrapTextWithAnsi(
-          formatValue(model.viewMode === "input" ? node.input : node.output) ?? "—",
-          width,
-        );
+  const identity = formatContextIdentity(node);
+  const meta = `${node.label}  ${statusLabel(node.status, color)}${formatDuration(node)}${identity}`;
+  const detail = renderDetailContent(node, model.viewMode, width, color);
+  const content = detail.lines;
   const contentHeight = Math.max(1, height - 2);
-  const end = Math.max(0, content.length - model.scrollOffset);
-  const visible = content.slice(Math.max(0, end - contentHeight), end);
-  while (visible.length < contentHeight) visible.unshift("");
+  let visible: string[];
+  if (detail.pinToBottom) {
+    const end = Math.max(0, content.length - model.scrollOffset);
+    visible = content.slice(Math.max(0, end - contentHeight), end);
+    while (visible.length < contentHeight) visible.unshift("");
+  } else {
+    visible = content.slice(0, contentHeight);
+    while (visible.length < contentHeight) visible.push("");
+  }
   return [truncateToWidth(meta, width), truncateToWidth(tabs, width), ...visible];
 }
 
-function renderActivity(node: FlowConsoleNode, width: number, color: boolean): string[] {
-  if (node.activity.length === 0) return [paint("No activity yet.", ANSI.dim, color)];
-  return node.activity.flatMap((item) => {
+function renderDetailContent(
+  node: FlowConsoleNode,
+  mode: FlowConsoleViewMode,
+  width: number,
+  color: boolean,
+): { readonly lines: string[]; readonly pinToBottom: boolean } {
+  if (node.status === "skipped" && node.visits.length === 0) {
+    const routes = node.branchLabels.map((label) => `"${label}"`).join(", ");
+    const routeMessage =
+      routes === ""
+        ? "This node was skipped."
+        : `Route ${routes} was not selected. Conditional branches are mutually exclusive.`;
+    return {
+      lines: wrapTextWithAnsi(
+        `${paint("Not executed", ANSI.bold, color)}\n${routeMessage}\nNo Activity, Input, or Output was produced.`,
+        width,
+      ),
+      pinToBottom: false,
+    };
+  }
+  if (mode === "activity") {
+    const lines =
+      node.visits.length > 1
+        ? node.visits.flatMap((visit, index) => [
+            roundHeader(index, visit, color),
+            ...renderActivityItems(visit.activity, width, color),
+          ])
+        : renderActivityItems(node.activity, width, color);
+    return {
+      lines,
+      pinToBottom: node.activity.length > 0,
+    };
+  }
+  const value = mode === "input" ? node.input : node.output;
+  if (node.visits.length > 1) {
+    return {
+      lines: node.visits.flatMap((visit, index) => {
+        const visitValue = mode === "input" ? visit.input : visit.output;
+        return [
+          roundHeader(index, visit, color),
+          ...wrapTextWithAnsi(
+            formatValue(visitValue) ?? `No ${mode === "input" ? "input" : "output"} recorded.`,
+            width,
+          ),
+        ];
+      }),
+      pinToBottom: true,
+    };
+  }
+  return {
+    lines: wrapTextWithAnsi(
+      formatValue(value) ?? `No ${mode === "input" ? "input" : "output"} recorded.`,
+      width,
+    ),
+    pinToBottom: value !== undefined,
+  };
+}
+
+function roundHeader(index: number, visit: FlowConsoleVisit, color: boolean): string {
+  return paint(
+    `── Round ${index + 1} · ${visit.status}${formatContextIdentity(visit)} ──`,
+    ANSI.bold,
+    color,
+  );
+}
+
+function formatContextIdentity(value: {
+  readonly agentId?: string | undefined;
+  readonly contextId?: string | undefined;
+  readonly resolver?: string | undefined;
+  readonly disposition?: "created" | "reused" | undefined;
+}): string {
+  const parts = [
+    value.agentId === undefined ? undefined : `agent ${value.agentId}`,
+    value.contextId === undefined ? undefined : `context ${value.contextId}`,
+    value.resolver === undefined ? undefined : `resolver ${value.resolver}`,
+    value.disposition,
+  ].filter((part): part is string => part !== undefined);
+  return parts.length === 0 ? "" : ` · ${parts.join(" · ")}`;
+}
+
+function renderActivityItems(
+  activity: readonly FlowConsoleActivity[],
+  width: number,
+  color: boolean,
+): string[] {
+  if (activity.length === 0) return [paint("No activity recorded.", ANSI.dim, color)];
+  return activity.flatMap((item) => {
     const label: Record<FlowConsoleActivity["kind"], string> = {
       answer: "Answer",
       progress: "Progress",
@@ -1070,6 +1295,39 @@ function renderActivity(node: FlowConsoleNode, width: number, color: boolean): s
         : item.text;
     return wrapTextWithAnsi(`${paint(label[item.kind], ANSI.bold, color)}\n${body}`, width);
   });
+}
+
+function findAppendTarget(
+  activity: readonly FlowConsoleActivity[],
+  kind: FlowConsoleActivity["kind"],
+  source: string | undefined,
+): FlowConsoleActivity | undefined {
+  for (let index = activity.length - 1; index >= 0; index -= 1) {
+    const candidate = activity[index]!;
+    if (candidate.source !== source) continue;
+    return candidate.kind === kind ? candidate : undefined;
+  }
+  return undefined;
+}
+
+function appendActivity(
+  activity: FlowConsoleActivity[],
+  nodeKind: string,
+  kind: FlowConsoleActivity["kind"],
+  text: string,
+  append: boolean,
+  source: string | undefined,
+): void {
+  const current = append ? findAppendTarget(activity, kind, source) : undefined;
+  if (current !== undefined) current.text += text;
+  else {
+    const prefix = nodeKind === "expert-team" ? agentPrefix(source) : "";
+    activity.push({ kind, text: `${prefix}${text}`, source });
+  }
+  let total = activity.reduce((sum, item) => sum + item.text.length, 0);
+  while (total > MAX_ACTIVITY_CHARACTERS && activity.length > 1) {
+    total -= activity.shift()!.text.length;
+  }
 }
 
 function renderHumanInteraction(

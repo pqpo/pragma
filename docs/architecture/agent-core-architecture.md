@@ -18,26 +18,39 @@ FIFO Invocation，`wait_experts` 按 Invocation ID 汇合结果。`list_experts`
 - standalone Expert 的 launcher 显式列出可调用的子专家；
 - ExpertTeam 根据当前调用者和 allowlist 动态生成工具，并覆盖成员自己的 standalone launcher。
 
-根 launcher 的 `maxConcurrency` 和 `maxDepth` 是整个委派树的执行预算。每次 spawn 使用新 Context；
-只有同一 Agent 的 followup 复用该 Context 和 Runtime 快照。等待子孙时释放并发 permit，避免嵌套死锁。
+根 launcher 的 `maxConcurrency` 和 `maxDepth` 是整个委派树的执行预算。Flow step、standalone launcher
+和 ExpertTeam delegation 都通过同一个 `ContextIdResolver` 选择 Context。默认 resolver 每次返回
+Core 提供的新 ID；返回既有 ID 时复用 Context，并把 dispatch 归并到该 Context 对应的 Agent FIFO。
+等待子孙时释放并发 permit，避免嵌套死锁。
 
 ## InvocationService 与 ExpertOrchestrator
 
 `InvocationService` 统一承担 Invocation 的可靠创建、状态迁移和 Canonical Event 原子提交。
-Flow Scheduler 保留静态图遍历、`nodeId` 幂等、reduce 和 transition；`ExpertOrchestrator` 保留
-Agent ownership、FIFO、并发、深度、wait、followup、interrupt 和终结屏障策略。
+Flow Scheduler 保留静态图遍历、按 `nodeId + visit` 幂等的循环访问、reduce 和 transition；同一节点
+被条件回边再次访问时创建新的 Invocation，恢复时按访问序号重放既有 Invocation。
+`ExpertOrchestrator` 保留 Agent ownership、FIFO、并发、深度、wait、followup、interrupt 和终结屏障策略。
+
+Flow 回边后会为新的 Invocation 再次调用 step resolver：返回旧 `contextId` 就沿用 coordinator 的
+Runtime Session，返回新 ID 就隔离。Team 成员由 delegation resolver 独立决定，因此可以实现
+“coordinator 复用、成员新建”或“coordinator 与各成员都复用”。流程必要数据（修订要求、历史产物）
+仍通过 state/input 显式传递；Context 复用只负责 Runtime 对话连续性。
 
 ```text
 Flow Scheduler / ExpertOrchestrator
 → InvocationService.ensureQueued() / transition()
-→ ExecutionStore.commit(Agent + Invocation + Event)
+→ ContextResolutionService.resolve()
+→ ExecutionStore.commit(Context + Agent + Invocation + Event)
 → runExpertInvocation()
 → RuntimeAgentSession.submit()
 ```
 
-AgentInstance 与 Invocation 是不同身份：AgentInstance 表示当前 Execution 内可接收 followup 的线程，
+RuntimeContextRecord、AgentInstance 与 Invocation 是三个不同身份：Context 保存 Runtime 对话与 snapshot，
+AgentInstance 表示当前 owner Context 下可接收 followup 的线程，
 Invocation 表示该线程上的一次任务。一个 Agent 同时最多运行一个 Invocation，不同 Agent 可并行。
 Invocation 的 `agentTaskSequence` 是 FIFO 的唯一顺序源，不另存一份易漂移的 queue 数组。
+ExpertSession 以 Session Context Registry 作为跨 prompt 的 Context/snapshot 来源；每个 prompt 的
+Execution 只物化本轮 AgentInstance、Invocation 及其 Context binding，因此跨 prompt 复用 Context
+不会把上一轮 Agent 的任务队列带入本轮。
 
 父 Runtime turn 返回后，若仍存在未 join 的直属 Invocation，父 Invocation 进入 `waiting`，释放 permit，
 等待全部结果并记录 `expert.children.completed`，然后在原 Context 中启动框架续跑。失败、取消和中断的

@@ -56,6 +56,19 @@ describe("FlowConsoleModel", () => {
     expect(model.viewMode).toBe("input");
     model.moveSelection(1);
     expect(model.selected.nodeId).toBe("review");
+    model.moveSelection(1);
+    expect(model.selected.nodeId).toBe("approve");
+    const skippedDetails = renderFlowConsole({
+      model,
+      interactions: new FlowInteractionQueue(),
+      title: "Review",
+      width: 120,
+      height: 24,
+    }).join("\n");
+    expect(skippedDetails).toContain(
+      'Route "approve" was not selected. Conditional branches are mutually',
+    );
+    expect(skippedDetails).toContain("No Activity, Input, or Output was produced.");
   });
 
   it("expands team participants and isolates their streamed activity", async () => {
@@ -95,7 +108,16 @@ describe("FlowConsoleModel", () => {
           "expert-team",
           "running",
           [tree("member-invocation", "expert", "running", [], { executorId: "member" })],
-          { nodeId: "team", executorId: "lead" },
+          {
+            nodeId: "team",
+            executorId: "lead",
+            agentId: "coordinator-agent",
+            contextId: "review-context",
+            contextResolution: {
+              resolver: { id: "revision-context", version: "1.0.0" },
+              disposition: "created",
+            },
+          },
         ),
       ]),
     );
@@ -123,6 +145,189 @@ describe("FlowConsoleModel", () => {
     expect(teamNode.activity.some((item) => item.text.includes("[member]"))).toBe(true);
     model.toggleSelected();
     expect(model.visibleNodes).toHaveLength(1);
+  });
+
+  it("coalesces interleaved team deltas independently by participant and channel", async () => {
+    const lead = await defineExpert({
+      id: "lead",
+      name: "Lead",
+      description: "Lead",
+      tags: [],
+      version: "1.0.0",
+      scope: "test",
+      workspace: process.cwd(),
+    });
+    const first = await defineExpert({
+      id: "first",
+      name: "First",
+      description: "First",
+      tags: [],
+      version: "1.0.0",
+      scope: "test",
+      workspace: process.cwd(),
+    });
+    const second = await defineExpert({
+      id: "second",
+      name: "Second",
+      description: "Second",
+      tags: [],
+      version: "1.0.0",
+      scope: "test",
+      workspace: process.cwd(),
+    });
+    const team = defineExpertTeam({
+      id: "team",
+      version: "1.0.0",
+      coordinator: lead,
+      members: [first, second],
+      delegation: { maxConcurrency: 2, maxDepth: 1 },
+    });
+    const flow = defineFlow({ id: "interleaved", version: "1.0.0" });
+    const teamStep = flow.use("team", team);
+    flow.compose(({ start, end }) => start(teamStep).next(end()));
+    const model = new FlowConsoleModel(flow);
+    model.syncTree(
+      tree("flow", "flow", "running", [
+        tree(
+          "team-invocation",
+          "expert-team",
+          "running",
+          [
+            tree("first-invocation", "expert", "running", [], { executorId: "first" }),
+            tree("second-invocation", "expert", "running", [], { executorId: "second" }),
+          ],
+          {
+            nodeId: "team",
+            executorId: "lead",
+            agentId: "coordinator-agent",
+            contextId: "review-context",
+            contextResolution: {
+              resolver: { id: "revision-context", version: "1.0.0" },
+              disposition: "created",
+            },
+          },
+        ),
+      ]),
+    );
+
+    model.consumeOutput(output("first-invocation", "first", "message", "first "));
+    model.consumeOutput(output("second-invocation", "second", "thought", "checking "));
+    model.consumeOutput(output("first-invocation", "first", "message", "answer"));
+    model.consumeOutput(output("second-invocation", "second", "thought", "constraints"));
+
+    expect(model.nodes.get("step:team")?.activity).toMatchObject([
+      { kind: "answer", source: "first", text: "[first] first answer" },
+      { kind: "thinking", source: "second", text: "[second] checking constraints" },
+    ]);
+
+    model.syncTree(
+      tree("flow", "flow", "running", [
+        tree(
+          "team-invocation",
+          "expert-team",
+          "succeeded",
+          [
+            tree("first-invocation", "expert", "succeeded", [], { executorId: "first" }),
+            tree("second-invocation", "expert", "succeeded", [], { executorId: "second" }),
+          ],
+          {
+            nodeId: "team",
+            executorId: "lead",
+            agentId: "coordinator-agent",
+            contextId: "review-context",
+            contextResolution: {
+              resolver: { id: "revision-context", version: "1.0.0" },
+              disposition: "created",
+            },
+          },
+        ),
+        tree(
+          "team-invocation-2",
+          "expert-team",
+          "running",
+          [
+            tree("first-invocation-2", "expert", "running", [], { executorId: "first" }),
+            tree("second-invocation-2", "expert", "running", [], { executorId: "second" }),
+          ],
+          {
+            nodeId: "team",
+            executorId: "lead",
+            agentId: "coordinator-agent",
+            contextId: "review-context",
+            contextResolution: {
+              resolver: { id: "revision-context", version: "1.0.0" },
+              disposition: "reused",
+            },
+          },
+        ),
+      ]),
+    );
+    model.consumeOutput(output("first-invocation-2", "first", "message", "revised answer"));
+
+    const visits = model.nodes.get("step:team")?.visits;
+    expect(visits).toHaveLength(2);
+    expect(visits?.[0]?.activity).toContainEqual(
+      expect.objectContaining({ source: "first", text: "[first] first answer" }),
+    );
+    expect(visits?.[1]?.activity).toContainEqual(
+      expect.objectContaining({ source: "first", text: "[first] revised answer" }),
+    );
+    const rendered = renderFlowConsole({
+      model,
+      interactions: new FlowInteractionQueue(),
+      title: "Review",
+      width: 240,
+      height: 40,
+    }).join("\n");
+    expect(rendered).toContain("Round 1 · succeeded");
+    expect(rendered).toContain("Round 2 · running");
+    expect(rendered).toContain("context review-context");
+    expect(rendered).toContain("resolver revision-context@1.0.0");
+    expect(rendered).toContain("reused");
+  });
+
+  it("makes terminal routes eligible again while a revision review is waiting", () => {
+    const flow = defineFlow({ id: "revision-loop", version: "1.0.0" });
+    const review = flow.humanTask({
+      id: "review",
+      version: "1.0.0",
+      request: { kind: "review_gate", prompt: "Choose" },
+    });
+    const approve = flow.task({ id: "approve", version: "1.0.0", handler: () => "approved" });
+    const revise = flow.task({ id: "revise", version: "1.0.0", handler: () => "revised" });
+    const reject = flow.task({ id: "reject", version: "1.0.0", handler: () => "rejected" });
+    flow.compose(({ start, step, end }) => {
+      start(review).route("decision", { approve, revise, reject });
+      step(revise).next(review);
+      step(approve).next(end());
+      step(reject).next(end());
+    });
+    const model = new FlowConsoleModel(flow);
+    model.syncTree(
+      tree("flow", "flow", "running", [
+        tree("first-review", "human-task", "succeeded", [], {
+          nodeId: "review",
+          output: { decision: "revise" },
+        }),
+        tree("revision", "task", "succeeded", [], { nodeId: "revise" }),
+      ]),
+    );
+    expect(model.nodes.get("step:approve")?.status).toBe("skipped");
+    expect(model.nodes.get("step:reject")?.status).toBe("skipped");
+
+    model.syncTree(
+      tree("flow", "flow", "running", [
+        tree("first-review", "human-task", "succeeded", [], {
+          nodeId: "review",
+          output: { decision: "revise" },
+        }),
+        tree("revision", "task", "succeeded", [], { nodeId: "revise" }),
+        tree("second-review", "human-task", "waiting", [], { nodeId: "review" }),
+      ]),
+    );
+    expect(model.nodes.get("step:approve")?.status).toBe("pending");
+    expect(model.nodes.get("step:reject")?.status).toBe("pending");
+    expect(model.nodes.get("step:revise")?.status).toBe("succeeded");
   });
 
   it("renders wide and stacked layouts with node details", () => {
@@ -248,6 +453,12 @@ function tree(
   overrides: {
     readonly nodeId?: string;
     readonly executorId?: string;
+    readonly agentId?: string;
+    readonly contextId?: string;
+    readonly contextResolution?: {
+      readonly resolver: { readonly id: string; readonly version: string };
+      readonly disposition: "created" | "reused";
+    };
     readonly input?: unknown;
     readonly output?: unknown;
   } = {},
@@ -258,7 +469,7 @@ function tree(
       invocationId,
       rootInvocationId: "flow",
       definition: { id: overrides.nodeId ?? invocationId, version: "1.0.0", kind },
-      contextId: invocationId,
+      contextId: overrides.contextId ?? invocationId,
       status,
       input: overrides.input ?? null,
       createdAt: now,
@@ -298,7 +509,7 @@ function outputValue(
 
 function executionEvent(eventId: string, type: string, data: unknown): ExecutionEvent {
   return {
-    schemaVersion: "pragma.execution-event/v4",
+    schemaVersion: "pragma.execution-event/v5",
     eventId,
     cursor: { executionId: "execution", sequence: 1 },
     executionId: "execution",

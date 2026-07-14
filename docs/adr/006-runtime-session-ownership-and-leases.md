@@ -10,16 +10,22 @@ An `ExpertSession` owns reusable Runtime Sessions for its full lifetime. A `Flow
 Runtime Sessions until the Flow reaches a terminal state. `ExecutionController` borrows active
 Runtime Sessions only for cancellation, steering, and human interaction.
 
-Runtime reuse is keyed by a stable context identity containing `contextId`, `expertId`, and
-`runtimeId`. A reusable context cannot change Expert or Runtime; callers must request a fresh
-context instead.
+Runtime reuse is keyed exclusively by a stable identity containing `owner`, `contextId`,
+`expertId`, and `runtimeId`. `ContextIdResolver` is the single selection abstraction used by Flow
+Expert steps, ExpertTeam delegation, and standalone Expert delegation. The resolver is identified
+by `id/version`; it is synchronous and receives only persisted execution inputs, compatible prior
+Contexts, and a Core-generated fresh ID. Returning an existing ID reuses that Context; returning a
+new ID creates one. There is no separate `fresh/reuse` policy.
 
-Team context policies define resource lifetime:
+`RuntimeContextRecord` is the sole persisted source for Context identity, lifecycle, and Runtime
+snapshot. Invocation and AgentInstance reference only `contextId`; neither stores a snapshot copy.
+Once created, a Context cannot change owner, Expert, or Runtime. A fixed string therefore cannot
+cross FlowExecution or ExpertSession ownership boundaries.
 
-- `reuse` is ExpertSession-scoped and remains available across prompts.
-- `fresh` is Invocation-subtree-scoped, stores its recovery snapshot on the Invocation, and closes
-  when that delegated subtree reaches a terminal state. Fresh contexts are not added to the
-  ExpertSession reusable-context map.
+Agent ownership is distinct from Runtime Context identity. `ownerContextId` grants list, wait,
+follow-up, and interrupt authority; `createdByInvocationId` records provenance; `agentId` identifies
+the FIFO task lane. Concurrent dispatches that resolve to the same Context are atomically folded
+into one open AgentInstance.
 
 Execution context is submitted atomically with each Runtime submission. The submission carries the
 current Execution, Invocation, delegation, and human-interaction bindings; there is no separate
@@ -31,8 +37,8 @@ active, released on close, and may be reclaimed after expiration when a process 
 
 ## Consequences
 
-- Multiple prompts in one ExpertSession reuse the same native Runtime process and isolated MCP Gateway registration.
+- Multiple prompts in one ExpertSession can reuse the same native Runtime process and isolated MCP Gateway registration by resolving the same Context ID.
 - A second Worker cannot concurrently resume and execute the same ExpertSession.
-- Fresh delegation cannot accumulate Runtime processes for the entire conversation.
+- Default resolution uses `pragma.context.fresh@v1`; deliberate reuse must be expressed by an identified resolver.
 - Runtime cleanup failures are reported, and a Session is marked closed only after cleanup succeeds.
-- Runtime and Invocation snapshots use validated schemas instead of hidden Flow state fields.
+- Runtime snapshots are stored only in validated RuntimeContext records, never copied into Invocation or AgentInstance.

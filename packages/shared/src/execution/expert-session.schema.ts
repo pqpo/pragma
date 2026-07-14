@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 import { AgentMessageSchema } from "../agent-message.schema.ts";
-import { ExecutionStatusSchema, RuntimeContextSnapshotSchema } from "./execution.schema.ts";
+import { ExecutionStatusSchema, RuntimeContextRecordSchema } from "./execution.schema.ts";
 
 export const PromptModeSchema = z.enum(["enqueue", "steer"]);
 export const PromptStatusSchema = z.enum([
@@ -27,17 +27,18 @@ export const PromptRequestSchema = z.object({
 });
 
 export const ExpertSessionRecordSchema = z.object({
-  schemaVersion: z.literal("pragma.expert-session/v1"),
+  schemaVersion: z.literal("pragma.expert-session/v2"),
   sessionId: z.string().min(1),
   expertId: z.string().min(1),
   expertVersion: z.string().min(1),
+  definitionFingerprint: z.string().length(64),
   status: z.enum(["open", "closed"]),
   activeExecutionId: z.string().min(1).optional(),
   queuedRequestIds: z.array(z.string().min(1)),
   executionIds: z.array(z.string().min(1)),
   runtimeId: z.string().min(1).optional(),
-  contextIds: z.record(z.string(), z.string().min(1)),
-  runtimeContexts: z.record(z.string(), RuntimeContextSnapshotSchema),
+  rootContextId: z.string().min(1),
+  contexts: z.record(z.string(), RuntimeContextRecordSchema),
   lastStatus: ExecutionStatusSchema.optional(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),

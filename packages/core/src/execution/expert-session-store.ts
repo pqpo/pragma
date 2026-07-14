@@ -13,17 +13,20 @@ import {
   type ExpertSessionEvent,
   type Invocation,
   type PromptRequest,
+  type RuntimeContextRecord,
 } from "@pragma/shared";
 import { z } from "zod";
 
 import { withFileLock } from "../storage/file-lock.ts";
 import { PragmaPaths } from "../storage/pragma-paths.ts";
 import type { ExecutionStore } from "./execution-store.ts";
+import { mergeRuntimeContextRecord } from "./runtime-context-record.ts";
 
 export interface EnqueuePromptTransaction {
   readonly execution: ExecutionRecord;
   readonly rootInvocation: Invocation;
   readonly prompt: PromptRequest;
+  readonly context?: RuntimeContextRecord | undefined;
 }
 
 export interface ExpertSessionStore {
@@ -114,6 +117,16 @@ export function createFileExpertSessionStore(options: {
           ...session,
           queuedRequestIds: [...session.queuedRequestIds, transaction.prompt.requestId],
           executionIds: [...session.executionIds, transaction.execution.executionId],
+          contexts:
+            transaction.context === undefined
+              ? session.contexts
+              : {
+                  ...session.contexts,
+                  [transaction.context.contextId]: mergeRuntimeContextRecord(
+                    session.contexts[transaction.context.contextId],
+                    transaction.context,
+                  ),
+                },
           updatedAt: transaction.prompt.createdAt,
         });
         const nextPrompts = PromptRequestSchema.array().parse([...prompts, transaction.prompt]);

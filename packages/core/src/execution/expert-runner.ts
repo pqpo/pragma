@@ -2,10 +2,12 @@ import { randomUUID } from "node:crypto";
 
 import {
   isTerminalExecutionStatus,
+  type AgentInstance,
   type AgentMessage,
   type AgentMessageUsage,
   type ExpertAgentStreamEvent,
   type Invocation,
+  type RuntimeContextRecord,
   type RuntimeContextSnapshot as SharedRuntimeContextSnapshot,
 } from "@pragma/shared";
 
@@ -32,6 +34,10 @@ import {
   type DelegationPermit,
   type ExpertInvocationJob,
 } from "./expert-orchestrator.ts";
+import {
+  prepareExecutionContextClosure,
+  type ContextResolutionScopeReader,
+} from "./context-resolution-service.ts";
 import { getExecutionLiveBus } from "./execution-live-bus.ts";
 import { projectRuntimeOutput } from "./execution-output.ts";
 import { RuntimeMessageAccumulator } from "./runtime-message-accumulator.ts";
@@ -66,16 +72,22 @@ export class ExecutionController {
     }
   >();
   private cancelled = false;
+  private cancellationReason: Error | undefined;
   private usage: AgentMessageUsage | undefined;
 
   constructor(
     readonly executionId: string,
     readonly store: ExecutionStore,
     private readonly runtimeSessions: RuntimeSessionPool = new RuntimeSessionPool(),
+    private readonly options: { readonly closeContextsOnCancel?: boolean } = {},
   ) {}
 
   isCancelled(): boolean {
     return this.cancelled;
+  }
+
+  getCancellationReason(): Error | undefined {
+    return this.cancellationReason;
   }
 
   addUsage(usage: AgentMessageUsage | undefined): void {
@@ -207,6 +219,7 @@ export class ExecutionController {
   async cancel(reason?: string): Promise<void> {
     this.cancelled = true;
     const cancellation = new Error(reason ?? `Execution cancelled: ${this.executionId}`);
+    this.cancellationReason = cancellation;
     this.rejectRuntimeSubmissionWaiters(cancellation);
     for (const controller of this.invocationSignals.values()) controller.abort(cancellation);
     for (const pending of this.pendingInteractions.values()) pending.reject(cancellation);
@@ -223,6 +236,9 @@ export class ExecutionController {
           invocationId: invocation.invocationId,
           patch: { status: "cancelled" as const, error: reason },
         }));
+      const closure = this.options.closeContextsOnCancel === true
+        ? await prepareExecutionContextClosure(this.store, this.executionId)
+        : { contextPatches: [], agentPatches: [], events: [] };
       try {
         await this.store.commit({
           commitId: randomUUID(),
@@ -230,7 +246,10 @@ export class ExecutionController {
           expectedVersion: record.version,
           executionPatch: { status: "cancelled", error: reason },
           invocationPatches,
+          contextPatches: closure.contextPatches,
+          agentPatches: closure.agentPatches,
           events: [
+            ...closure.events,
             {
               invocationId: record.rootInvocationId,
               type: "execution.cancelled",
@@ -305,17 +324,14 @@ export interface RunExpertInvocationOptions {
     | { readonly type: "expert-session"; readonly ownerId: string }
     | { readonly type: "flow-execution"; readonly ownerId: string };
   readonly runtimeId?: string | undefined;
-  readonly contextId: string;
-  readonly runtimeSnapshot?: RuntimeContextSnapshot | undefined;
-  readonly runtimeScope?: "invocation" | "session" | "agent" | undefined;
+  readonly context: RuntimeContextRecord;
   readonly controller: ExecutionController;
   readonly store: ExecutionStore;
   readonly runtimes: RuntimeRegistry;
   readonly team?: ExpertTeam | undefined;
   readonly depth?: number | undefined;
-  readonly onRuntimeContext?:
-    | ((contextId: string, snapshot: RuntimeContextSnapshot) => Promise<void>)
-    | undefined;
+  readonly persistContext?: ((context: RuntimeContextRecord) => Promise<void>) | undefined;
+  readonly readContextScope?: ContextResolutionScopeReader | undefined;
   readonly orchestrator?: ExpertOrchestrator | undefined;
   readonly delegationPermit?: DelegationPermit | undefined;
 }
@@ -345,8 +361,15 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
       maxDepth: delegation.maxDepth,
       interruptController: options.controller,
       execute: async (job): Promise<void> => await executeAgentJob(options, team, created, job),
+      ...(options.readContextScope === undefined
+        ? {}
+        : { readContextScope: options.readContextScope }),
+      ...(options.persistContext === undefined ? {} : { persistContext: options.persistContext }),
     });
     orchestrator = created;
+  }
+  if (orchestrator !== undefined && delegation !== undefined) {
+    await orchestrator.registerExperts(delegation.experts);
   }
 
   const invocation = await requireInvocation(
@@ -377,40 +400,50 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
     `invocation-user-message:${options.invocationId}`,
   );
 
-  const runtimeId = options.runtimeId ?? options.runtimeSnapshot?.runtimeId;
+  const runtimeId =
+    options.runtimeId ?? options.context.runtimeId ?? options.context.snapshot?.runtimeId;
   const runtime = options.runtimes.resolve(runtimeId);
   const runtimeIdentity = {
-    contextId: options.contextId,
+    contextId: options.context.contextId,
     expertId: nativeExpert.id,
     runtimeId: runtime.descriptor.id,
   } satisfies RuntimeSessionIdentity;
   assertRuntimeIdentity(options, runtimeIdentity);
 
   const persistRuntimeSnapshot = async (snapshot: RuntimeContextSnapshot): Promise<void> => {
-    if (options.runtimeScope === "invocation" || options.runtimeScope === "agent") {
-      const latest = await requireInvocation(
-        options.store,
-        options.executionId,
-        options.invocationId,
-      );
-      if (!isTerminalExecutionStatus(latest.status) || latest.status === "succeeded") {
-        await options.store.putInvocation(options.executionId, {
-          ...latest,
-          runtimeContext: { contextId: options.contextId, ...snapshot },
-          updatedAt: new Date().toISOString(),
-        });
-      }
-      if (options.runtimeScope === "agent" && options.agentId !== undefined) {
-        await orchestrator?.updateRuntimeContext(options.agentId, snapshot);
-      }
-      return;
-    }
-    await options.onRuntimeContext?.(options.contextId, snapshot);
+    const next: RuntimeContextRecord = {
+      ...options.context,
+      runtimeId: snapshot.runtimeId,
+      snapshot,
+      updatedAt: new Date().toISOString(),
+    };
+    const localContext = await options.store.getContext(
+      options.executionId,
+      options.context.contextId,
+    );
+    await Promise.all([
+      ...(options.persistContext === undefined ? [] : [options.persistContext(next)]),
+      ...(localContext === undefined
+        ? []
+        : [
+            options.store.commit({
+              commitId: randomUUID(),
+              executionId: options.executionId,
+              contextPatches: [
+                {
+                  contextId: options.context.contextId,
+                  patch: { runtimeId: snapshot.runtimeId, snapshot },
+                },
+              ],
+            }),
+          ]),
+    ]);
   };
 
   const executionContext = createExecutionContext(
     options,
     nativeExpert,
+    team,
     delegation,
     orchestrator,
     depth,
@@ -422,10 +455,13 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
       agent: executableExpert,
       owner:
         options.owner.type === "expert-session"
-          ? { ...options.owner, contextId: options.contextId }
-          : { ...options.owner, invocationId: options.invocationId },
-      systemSessionId: options.runtimeSnapshot?.systemSessionId,
-      runtimeSession: options.runtimeSnapshot?.runtimeSession,
+          ? { ...options.owner, contextId: options.context.contextId }
+          : {
+              ...options.owner,
+              invocationId: options.context.createdByInvocationId,
+            },
+      systemSessionId: options.context.snapshot?.systemSessionId,
+      runtimeSession: options.context.snapshot?.runtimeSession,
       executionContext,
       humanInteractionHandler,
       onSessionInfo: async (info) => {
@@ -479,7 +515,7 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
 
       if (
         orchestrator !== undefined &&
-        (await orchestrator.hasOwnedUnjoined(options.invocationId))
+        (await orchestrator.hasOwnedUnjoined(options.invocationId, options.context.contextId))
       ) {
         await options.store.commit({
           commitId: randomUUID(),
@@ -499,10 +535,11 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
         });
         await orchestrator.waitForOwnedUnjoined(
           options.invocationId,
+          options.context.contextId,
           options.controller.signalForInvocation(options.invocationId),
           options.delegationPermit,
         );
-        const result = await orchestrator.list(options.invocationId);
+        const result = await orchestrator.list(options.context.contextId);
         query = [
           "[Pragma orchestration continuation]",
           "All attached Expert tasks are terminal. Synthesize their results into the final answer.",
@@ -593,9 +630,7 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
     }
     throw failure;
   } finally {
-    if (options.runtimeScope === "agent") {
-      await options.controller.releaseRuntime(runtimeIdentity);
-    }
+    // Context lifetime is controlled by its owner, not by one Invocation.
   }
 }
 
@@ -605,6 +640,8 @@ async function executeAgentJob(
   orchestrator: ExpertOrchestrator,
   job: ExpertInvocationJob,
 ): Promise<void> {
+  const context = await parent.store.getContext(parent.executionId, job.agent.contextId);
+  if (context === undefined) throw new Error(`Runtime Context not found: ${job.agent.contextId}.`);
   await runExpertInvocation({
     executionId: parent.executionId,
     invocationId: job.invocation.invocationId,
@@ -613,23 +650,26 @@ async function executeAgentJob(
     expert: job.expert,
     prompt: job.prompt,
     owner: parent.owner,
-    runtimeId: job.runtimeId ?? job.agent.runtimeId,
-    contextId: job.agent.contextId,
-    runtimeSnapshot: job.agent.runtimeContext,
-    runtimeScope: "agent",
+    runtimeId: job.runtimeId ?? context.runtimeId,
+    context,
     controller: parent.controller,
     store: parent.store,
     runtimes: parent.runtimes,
     team,
-    depth: job.agent.depth,
+    depth: await readAgentDepth(parent.store, parent.executionId, job.agent),
     orchestrator,
     delegationPermit: job.permit,
+    ...(parent.readContextScope === undefined
+      ? {}
+      : { readContextScope: parent.readContextScope }),
+    ...(parent.persistContext === undefined ? {} : { persistContext: parent.persistContext }),
   });
 }
 
 function createExecutionContext(
   options: RunExpertInvocationOptions,
   nativeExpert: Expert,
+  team: ExpertTeam | undefined,
   delegation: AgentDelegationDefinition | undefined,
   orchestrator: ExpertOrchestrator | undefined,
   depth: number,
@@ -648,12 +688,28 @@ function createExecutionContext(
         throw new Error(`Expert ${nativeExpert.id} may not spawn ${request.expertId}.`);
       }
       return await orchestrator.spawn({
-        ownerInvocationId: options.invocationId,
+        ownerContextId: options.context.contextId,
+        createdByInvocationId: options.invocationId,
         parentAgentId: options.agentId,
         depth,
         expert,
         prompt: request.prompt,
-        runtimeId: request.runtime,
+        runtimeId: options.runtimes.resolve(request.runtime).descriptor.id,
+        owner: options.owner,
+        resolver: delegation.contextId,
+        source:
+          team === undefined
+            ? {
+                kind: "expert-delegation",
+                callerExpertId: nativeExpert.id,
+                ...(options.agentId === undefined ? {} : { callerAgentId: options.agentId }),
+              }
+            : {
+                kind: "expert-team",
+                teamId: team.id,
+                callerExpertId: nativeExpert.id,
+                ...(options.agentId === undefined ? {} : { callerAgentId: options.agentId }),
+              },
       });
     },
     waitExperts: async (request: {
@@ -661,15 +717,15 @@ function createExecutionContext(
       readonly returnWhen?: "all" | "any" | undefined;
       readonly timeoutMs?: number | undefined;
       readonly signal?: AbortSignal | undefined;
-    }) => await orchestrator.wait(options.invocationId, request, options.delegationPermit),
-    listExperts: async () => await orchestrator.list(options.invocationId),
+    }) => await orchestrator.wait(options.context.contextId, request, options.delegationPermit),
+    listExperts: async () => await orchestrator.list(options.context.contextId),
     followupExpert: async (request: { readonly agentId: string; readonly prompt: string }) =>
-      await orchestrator.followup(options.invocationId, request),
+      await orchestrator.followup(options.context.contextId, options.invocationId, request),
     interruptExpert: async (request: {
       readonly agentId: string;
       readonly invocationId?: string | undefined;
       readonly reason?: string | undefined;
-    }) => await orchestrator.interrupt(options.invocationId, request),
+    }) => await orchestrator.interrupt(options.context.contextId, request),
   };
 }
 
@@ -695,7 +751,7 @@ async function submitRuntimeTurn(options: {
   });
   options.options.controller.registerRuntimeSubmission(
     options.options.invocationId,
-    options.options.contextId,
+    options.options.context.contextId,
     options.session,
     handle,
   );
@@ -818,14 +874,38 @@ function assertRuntimeIdentity(
   identity: RuntimeSessionIdentity,
 ): void {
   if (
-    options.runtimeSnapshot !== undefined &&
-    (options.runtimeSnapshot.expertId !== identity.expertId ||
-      options.runtimeSnapshot.runtimeId !== identity.runtimeId)
+    options.context.expert.id !== identity.expertId ||
+    (options.context.runtimeId !== undefined && options.context.runtimeId !== identity.runtimeId) ||
+    (options.context.snapshot !== undefined &&
+      options.context.snapshot.runtimeId !== identity.runtimeId)
   ) {
     throw new Error(
-      `Runtime context ${options.contextId} is bound to ${options.runtimeSnapshot.expertId}/${options.runtimeSnapshot.runtimeId} and cannot be reused with ${identity.expertId}/${identity.runtimeId}.`,
+      `Runtime Context ${options.context.contextId} identity conflicts with ${identity.expertId}/${identity.runtimeId}.`,
     );
   }
+}
+
+async function readAgentDepth(
+  store: ExecutionStore,
+  executionId: string,
+  agent: AgentInstance,
+): Promise<number> {
+  const byId = new Map(
+    (await store.listAgents(executionId)).map((candidate) => [candidate.agentId, candidate]),
+  );
+  let depth = 1;
+  let current = agent;
+  const visited = new Set([agent.agentId]);
+  while (current.parentAgentId !== undefined) {
+    const parent = byId.get(current.parentAgentId);
+    if (parent === undefined) throw new Error(`Parent Agent not found: ${current.parentAgentId}.`);
+    if (visited.has(parent.agentId))
+      throw new Error(`Cyclic Agent parent chain: ${parent.agentId}.`);
+    visited.add(parent.agentId);
+    depth += 1;
+    current = parent;
+  }
+  return depth;
 }
 
 async function requireExecution(store: ExecutionStore, executionId: string) {
