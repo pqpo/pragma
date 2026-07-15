@@ -1370,6 +1370,50 @@ describe("ExpertSession", () => {
 });
 
 describe("FlowExecution", () => {
+  it("rejects Flow runtime routes hidden by ExpertTeam delegation", async () => {
+    const { home } = await fixture();
+    const hidden = await defineExpert({
+      id: "hidden",
+      name: "Hidden",
+      description: "Only reachable from the standalone launcher",
+      tags: [],
+      version: "1.0.0",
+      scope: "test",
+      workspace: home,
+    });
+    const member = await defineExpert({
+      id: "member",
+      name: "Member",
+      description: "Team member",
+      tags: [],
+      version: "1.0.0",
+      scope: "test",
+      workspace: home,
+    });
+    const coordinator = await defineExpert({
+      id: "coordinator",
+      name: "Coordinator",
+      description: "Team coordinator",
+      tags: [],
+      version: "1.0.0",
+      scope: "test",
+      workspace: home,
+      tools: createAgentLauncher({ experts: [hidden] }).tools,
+    });
+    const team = defineExpertTeam({
+      id: "governed-team",
+      version: "1.0.0",
+      coordinator,
+      members: [member],
+      delegation: { allow: { coordinator: ["member"] } },
+    });
+    const flow = defineFlow({ id: "governed-team-flow", version: "1.0.0" });
+
+    expect(() => flow.use("team", team, { runtimeByExpert: { hidden: "fake" } })).toThrow(
+      "runtimeByExpert target is unknown: hidden",
+    );
+  });
+
   it("keeps Runtime ownership scoped to the FlowExecution", async () => {
     const { home, app, expert, stats } = await trackedFixture();
     const flow = defineFlow({ id: "runtime-flow", version: "1.0.0" });

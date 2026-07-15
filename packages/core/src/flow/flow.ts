@@ -309,7 +309,7 @@ function validateFlowRuntimeByExpert(
 
 function collectReachableExpertIds(definition: ExpertDefinition): ReadonlySet<string> {
   const expertIds = new Set<string>();
-  const visitExpert = (expert: Expert): void => {
+  const visitStandaloneExpert = (expert: Expert): void => {
     if (expertIds.has(expert.id)) return;
     expertIds.add(expert.id);
     const launchers = new Set(
@@ -321,13 +321,26 @@ function collectReachableExpertIds(definition: ExpertDefinition): ReadonlySet<st
     if (launchers.size > 1) {
       throw new Error(`Expert ${expert.id} has multiple agent launchers.`);
     }
-    for (const target of [...launchers][0]?.experts ?? []) visitExpert(target);
+    for (const target of [...launchers][0]?.experts ?? []) visitStandaloneExpert(target);
   };
   if (isExpertTeam(definition)) {
-    visitExpert(definition.coordinator);
-    for (const member of definition.members) visitExpert(member);
+    const participants = new Map(
+      [definition.coordinator, ...definition.members].map((expert) => [expert.id, expert]),
+    );
+    const visitTeamExpert = (expertId: string): void => {
+      if (expertIds.has(expertId)) return;
+      const expert = participants.get(expertId);
+      if (expert === undefined) {
+        throw new Error(`ExpertTeam ${definition.id} delegation target is unknown: ${expertId}`);
+      }
+      expertIds.add(expert.id);
+      for (const targetId of definition.delegation.allow.get(expertId) ?? []) {
+        visitTeamExpert(targetId);
+      }
+    };
+    visitTeamExpert(definition.coordinator.id);
   } else {
-    visitExpert(definition);
+    visitStandaloneExpert(definition);
   }
   return expertIds;
 }
