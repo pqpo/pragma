@@ -15,7 +15,6 @@ export interface ExpertToolExecutionContext {
     | ((request: {
         readonly expertId: string;
         readonly prompt: string;
-        readonly runtime?: string | undefined;
       }) => Promise<unknown>)
     | undefined;
   readonly waitExperts?:
