@@ -1,6 +1,6 @@
 import { createAgentLauncher, type ExpertTurn } from "@pragma/core";
 
-import { DelegationConsoleTui } from "../../console/delegation-console-tui.ts";
+import { ExpertConsoleTui } from "../../console/expert-console-tui.ts";
 import { createExampleApp, createExampleExpert } from "../../support/example-kit.ts";
 
 if (process.stdin.isTTY !== true || process.stdout.isTTY !== true) {
@@ -48,7 +48,7 @@ const mainAgent = await createExampleExpert(
 
 const session = await createExampleApp().experts.createSession(mainAgent);
 let activeTurn: ExpertTurn | undefined;
-const consoleUi = new DelegationConsoleTui({
+const consoleUi = new ExpertConsoleTui({
   title: "Pragma Main + Research Agent",
   sessionId: session.sessionId,
   examplePrompt: "请查看 Pragma 的实现原理，并说明一次 Expert 调用是如何执行的。",

@@ -1,6 +1,6 @@
 import { defineExpertTeam, type ExpertTurn } from "@pragma/core";
 
-import { DelegationConsoleTui } from "../../console/delegation-console-tui.ts";
+import { ExpertConsoleTui } from "../../console/expert-console-tui.ts";
 import { createExampleApp, createExampleExpert } from "../../support/example-kit.ts";
 
 if (process.stdin.isTTY !== true || process.stdout.isTTY !== true) {
@@ -94,7 +94,7 @@ const team = defineExpertTeam({
 
 const session = await createExampleApp().experts.createSession(team);
 let activeTurn: ExpertTurn | undefined;
-const consoleUi = new DelegationConsoleTui({
+const consoleUi = new ExpertConsoleTui({
   title: "Pragma Engineering Review Team",
   sessionId: session.sessionId,
   examplePrompt: "请评审 Pragma 的 delegation 实现，说明调用链、架构风险和测试缺口，并给出优先级。",

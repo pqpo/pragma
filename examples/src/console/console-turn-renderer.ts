@@ -1,5 +1,11 @@
 import type { ExecutionOutputItem, ExpertTurn } from "@pragma/core";
 
+import {
+  asConsoleRecord as asRecord,
+  formatConsoleValue,
+  readConsoleString as readString,
+} from "./execution-output-accumulator.ts";
+
 interface ConsoleOutput {
   readonly isTTY?: boolean | undefined;
   write(text: string): unknown;
@@ -211,15 +217,6 @@ export async function renderExpertTurn(
   }
 }
 
-function asRecord(value: unknown): Record<string, unknown> {
-  return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
-}
-
-function readString(record: Record<string, unknown>, key: string): string {
-  const value = record[key];
-  return typeof value === "string" ? value : "";
-}
-
 function hasMeaningfulPreview(value: unknown): boolean {
   if (value === undefined || value === null || value === "") {
     return false;
@@ -234,7 +231,5 @@ function hasMeaningfulPreview(value: unknown): boolean {
 }
 
 function formatValue(value: unknown, maxLength: number): string {
-  const text =
-    typeof value === "string" ? value : (JSON.stringify(value, null, 2) ?? String(value));
-  return text.length <= maxLength ? text : `${text.slice(0, Math.max(0, maxLength - 1))}…`;
+  return formatConsoleValue(value, maxLength) ?? String(value);
 }

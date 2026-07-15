@@ -1,11 +1,8 @@
 import {
-  ExpertAgentHumanRequestSchema,
   type AgentMessageUsage,
   type ExecutionEvent,
   type ExecutionEventSubscription,
   type ExecutionOutputItem,
-  type ExpertAgentHumanRequest,
-  type ExpertAgentUserQuestion,
   type Flow,
   type FlowExecution,
   type FlowSpec,
@@ -24,6 +21,20 @@ import {
   visibleWidth,
   wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
+
+import {
+  asConsoleRecord as asRecord,
+  ExecutionOutputAccumulator,
+  formatConsolePreview as formatPreview,
+  formatConsoleProgress as formatProgress,
+  formatConsoleValue as formatValue,
+  readConsoleString as readString,
+} from "./execution-output-accumulator.ts";
+import { HumanInteractionQueue } from "./human-interaction-controller.ts";
+import {
+  findPendingHumanRequestEvents,
+  parseHumanInteractionEvent,
+} from "./human-interaction-parser.ts";
 
 type InvocationTree = Awaited<ReturnType<FlowExecution["getTree"]>>;
 type Invocation = InvocationTree["invocation"];
@@ -117,8 +128,9 @@ export class FlowConsoleModel {
   private selectedKey: string;
   private readonly invocationKeys = new Map<string, Set<string>>();
   private readonly invocationVisitByNode = new Map<string, Map<string, string>>();
-  private readonly toolSnapshots = new Map<string, string>();
-  private readonly invocationsWithAnswerDeltas = new Set<string>();
+  private readonly outputAccumulator = new ExecutionOutputAccumulator({
+    maxPreviewLength: 500,
+  });
 
   constructor(definition: FlowSpec | Flow) {
     this.flow = "compile" in definition ? definition.compile() : definition;
@@ -183,78 +195,19 @@ export class FlowConsoleModel {
   consumeOutput(item: ExecutionOutputItem): void {
     const keys = this.invocationKeys.get(item.invocationId);
     if (keys === undefined) return;
+    const activities = this.outputAccumulator.consume(item);
     for (const key of keys) {
       const node = this.nodes.get(key);
       if (node === undefined) continue;
-      switch (item.channel) {
-        case "thought": {
-          const text = item.delta ?? formatValue(item.value);
-          if (text !== undefined)
-            this.append(
-              node,
-              "thinking",
-              text,
-              true,
-              item.executorId,
-              this.visitId(item.invocationId, key),
-            );
-          break;
-        }
-        case "message": {
-          if (item.delta !== undefined) {
-            this.invocationsWithAnswerDeltas.add(item.invocationId);
-            this.append(
-              node,
-              "answer",
-              item.delta,
-              true,
-              item.executorId,
-              this.visitId(item.invocationId, key),
-            );
-          } else if (!this.invocationsWithAnswerDeltas.has(item.invocationId)) {
-            const text = readCompletedMessageText(item.value);
-            if (text !== undefined)
-              this.append(
-                node,
-                "answer",
-                text,
-                false,
-                item.executorId,
-                this.visitId(item.invocationId, key),
-              );
-          }
-          break;
-        }
-        case "tool":
-          this.consumeTool(node, item, item.executorId, this.visitId(item.invocationId, key));
-          break;
-        case "progress": {
-          const text = formatProgress(item.value);
-          if (text !== undefined)
-            this.append(
-              node,
-              "progress",
-              text,
-              false,
-              item.executorId,
-              this.visitId(item.invocationId, key),
-            );
-          break;
-        }
-        case "result": {
-          const text = formatValue(item.value);
-          if (text !== undefined && !this.invocationsWithAnswerDeltas.has(item.invocationId)) {
-            this.append(
-              node,
-              "answer",
-              text,
-              false,
-              item.executorId,
-              this.visitId(item.invocationId, key),
-            );
-          }
-          break;
-        }
+      for (const activity of activities) {
+        this.append(
+          node,
+          activity.kind,
+          activity.text,
+          activity.append,
+          item.executorId,
+          this.visitId(item.invocationId, key),
+        );
       }
     }
     this.scrollOffset = 0;
@@ -513,50 +466,6 @@ export class FlowConsoleModel {
     }
   }
 
-  private consumeTool(
-    node: FlowConsoleNode,
-    item: ExecutionOutputItem,
-    source: string | undefined,
-    visitId: string,
-  ): void {
-    const payload = asRecord(item.value);
-    const toolName = readString(payload, "toolName") || "tool";
-    const toolCallId = readString(payload, "toolCallId") || item.invocationId;
-    const snapshotKey = `${node.key}:${toolCallId}`;
-    if (item.delta !== undefined) {
-      const increment = readToolIncrement(this.toolSnapshots, snapshotKey, item.delta);
-      if (increment !== undefined)
-        this.append(node, "tool-output", increment, true, source, visitId);
-      return;
-    }
-    if (payload["message"] !== undefined) {
-      this.append(
-        node,
-        "tool",
-        `× ${toolName}: ${readString(payload, "message")}`,
-        false,
-        source,
-        visitId,
-      );
-    } else if (payload["approvalId"] !== undefined) {
-      this.append(node, "tool", `! ${toolName} requires approval`, false, source, visitId);
-    } else if (payload["outputPreview"] !== undefined) {
-      this.append(node, "tool", `✓ ${toolName} completed`, false, source, visitId);
-      const preview = formatPreview(payload["outputPreview"]);
-      if (preview !== undefined) this.append(node, "tool-output", preview, false, source, visitId);
-    } else {
-      const preview = formatPreview(payload["inputPreview"]);
-      this.append(
-        node,
-        "tool",
-        `→ ${toolName}${preview === undefined ? "" : `\n${preview}`}`,
-        false,
-        source,
-        visitId,
-      );
-    }
-  }
-
   private markSkippedRoutes(): void {
     for (const [nodeId, transition] of this.flow.transitions) {
       if (transition.type !== "route") continue;
@@ -582,139 +491,6 @@ export class FlowConsoleModel {
   }
 }
 
-interface QueuedInteraction {
-  readonly interactionId: string;
-  readonly invocationId: string;
-  readonly request: ExpertAgentHumanRequest;
-  readonly questions: readonly ExpertAgentUserQuestion[];
-  readonly answers: Record<string, string>;
-  questionIndex: number;
-  optionIndex: number;
-  selectedOptions: Set<number>;
-  completion?: CompletedInteraction | undefined;
-}
-
-interface CompletedInteraction {
-  readonly interactionId: string;
-  readonly invocationId: string;
-  readonly response: unknown;
-}
-
-export class FlowInteractionQueue {
-  private readonly items: QueuedInteraction[] = [];
-
-  get active(): QueuedInteraction | undefined {
-    return this.items[0];
-  }
-
-  get size(): number {
-    return this.items.length;
-  }
-
-  enqueue(input: {
-    readonly interactionId: string;
-    readonly invocationId: string;
-    readonly request: ExpertAgentHumanRequest;
-  }): void {
-    if (this.items.some((item) => item.interactionId === input.interactionId)) return;
-    const questions =
-      input.request.kind === "user_question"
-        ? input.request.questions
-        : [
-            {
-              header: "Tool approval",
-              question: `${input.request.toolName}: ${input.request.reason ?? "Allow this tool?"}`,
-              kind: "single_choice" as const,
-              options: [
-                { label: "Yes", description: "Allow execution" },
-                { label: "No", description: "Reject execution" },
-              ],
-            },
-          ];
-    this.items.push({
-      ...input,
-      questions,
-      answers: {},
-      questionIndex: 0,
-      optionIndex: 0,
-      selectedOptions: new Set(),
-    });
-  }
-
-  remove(interactionId: string): string | undefined {
-    const index = this.items.findIndex((item) => item.interactionId === interactionId);
-    if (index < 0) return undefined;
-    return this.items.splice(index, 1)[0]?.invocationId;
-  }
-
-  moveOption(direction: 1 | -1): void {
-    const active = this.active;
-    const question = active?.questions[active.questionIndex];
-    if (active === undefined || question === undefined || question.options.length === 0) return;
-    active.optionIndex =
-      (active.optionIndex + direction + question.options.length) % question.options.length;
-  }
-
-  selectNumber(number: number): void {
-    const active = this.active;
-    const question = active?.questions[active.questionIndex];
-    if (
-      active === undefined ||
-      question === undefined ||
-      number < 1 ||
-      number > question.options.length
-    )
-      return;
-    active.optionIndex = number - 1;
-  }
-
-  toggleOption(): void {
-    const active = this.active;
-    const question = active?.questions[active.questionIndex];
-    if (active === undefined || question?.kind !== "multiple_choice") return;
-    if (active.selectedOptions.has(active.optionIndex))
-      active.selectedOptions.delete(active.optionIndex);
-    else active.selectedOptions.add(active.optionIndex);
-  }
-
-  submit(text = ""): CompletedInteraction | string | undefined {
-    const active = this.active;
-    if (active?.completion !== undefined) return active.completion;
-    const question = active?.questions[active.questionIndex];
-    if (active === undefined || question === undefined) return undefined;
-    let answer: string;
-    if (question.kind === "text") {
-      answer = text.trim();
-      if (answer === "") return "请输入回答后再提交。";
-    } else if (question.kind === "multiple_choice") {
-      const indexes = [...active.selectedOptions].sort((left, right) => left - right);
-      if (indexes.length === 0) return "请至少选择一个选项。";
-      answer = indexes.map((index) => question.options[index]!.label).join(", ");
-    } else {
-      answer = question.options[active.optionIndex]?.label ?? "";
-      if (answer === "") return "请选择一个选项。";
-    }
-    active.answers[question.question] = answer;
-    active.questionIndex += 1;
-    active.optionIndex = 0;
-    active.selectedOptions.clear();
-    if (active.questionIndex < active.questions.length) return undefined;
-    active.completion = {
-      interactionId: active.interactionId,
-      invocationId: active.invocationId,
-      response:
-        active.request.kind === "tool_approval"
-          ? {
-              kind: "tool_approval",
-              approved: answer.toLocaleLowerCase() === "yes",
-              reason: answer.toLocaleLowerCase() === "yes" ? "User approved." : "User rejected.",
-            }
-          : { kind: "user_question", answered: true, answers: active.answers },
-    };
-    return active.completion;
-  }
-}
-
 export interface FlowConsoleTuiOptions {
   readonly definition: FlowSpec | Flow;
   readonly title: string;
@@ -724,7 +500,7 @@ export interface FlowConsoleTuiOptions {
 
 export class FlowConsoleTui {
   readonly model: FlowConsoleModel;
-  readonly interactions = new FlowInteractionQueue();
+  readonly interactions = new HumanInteractionQueue();
   private readonly options: FlowConsoleTuiOptions;
   private readonly terminal: Terminal;
   private readonly tui: TUI;
@@ -864,15 +640,11 @@ export class FlowConsoleTui {
   }
 
   private async enqueueInteraction(event: ExecutionEvent): Promise<void> {
-    const payload = asRecord(event.data);
-    const interactionId = readString(payload, "interactionId");
+    const interaction = parseHumanInteractionEvent(event);
+    const { interactionId } = interaction;
     if (interactionId === "" || this.handledInteractions.has(interactionId)) return;
     this.handledInteractions.add(interactionId);
-    this.interactions.enqueue({
-      interactionId,
-      invocationId: event.invocationId,
-      request: ExpertAgentHumanRequestSchema.parse(payload["request"]),
-    });
+    this.interactions.enqueue(interaction);
     this.model.focusInvocation(event.invocationId);
   }
 
@@ -971,22 +743,6 @@ export class FlowConsoleTui {
   }
 }
 
-export function findPendingHumanRequestEvents(
-  events: readonly ExecutionEvent[],
-): readonly ExecutionEvent[] {
-  const responded = new Set(
-    events
-      .filter((event) => event.type === "human.responded")
-      .map((event) => readString(asRecord(event.data), "interactionId"))
-      .filter((interactionId) => interactionId !== ""),
-  );
-  return events.filter(
-    (event) =>
-      event.type === "human.requested" &&
-      !responded.has(readString(asRecord(event.data), "interactionId")),
-  );
-}
-
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -998,7 +754,7 @@ class FlowConsoleView implements Component, Focusable {
   constructor(
     private readonly options: {
       readonly model: FlowConsoleModel;
-      readonly interactions: FlowInteractionQueue;
+      readonly interactions: HumanInteractionQueue;
       readonly terminal: Terminal;
       readonly title: string;
       readonly requestRender: () => void;
@@ -1038,7 +794,7 @@ class FlowConsoleView implements Component, Focusable {
 
 export function renderFlowConsole(options: {
   readonly model: FlowConsoleModel;
-  readonly interactions: FlowInteractionQueue;
+  readonly interactions: HumanInteractionQueue;
   readonly input?: Input | undefined;
   readonly title: string;
   readonly width: number;
@@ -1331,7 +1087,7 @@ function appendActivity(
 }
 
 function renderHumanInteraction(
-  interactions: FlowInteractionQueue,
+  interactions: HumanInteractionQueue,
   input: Input | undefined,
   width: number,
   color: boolean,
@@ -1485,70 +1241,8 @@ function formatUsage(usage: AgentMessageUsage | undefined): string {
   return `tokens ${(usage.totalTokens ?? usage.input + usage.output).toLocaleString("en-US")}`;
 }
 
-function formatProgress(value: unknown): string | undefined {
-  if (value === undefined) return undefined;
-  if (typeof value === "string") return value;
-  const record = asRecord(value);
-  const stage = readString(record, "stage");
-  const message = readString(record, "message");
-  if (stage !== "" || message !== "")
-    return `${stage}${stage !== "" && message !== "" ? " — " : ""}${message}`;
-  return formatValue(value);
-}
-
-function readCompletedMessageText(value: unknown): string | undefined {
-  if (typeof value === "string") return value;
-  const content = asRecord(value)["content"];
-  if (!Array.isArray(content)) return undefined;
-  const text = content
-    .map((item) => {
-      const record = asRecord(item);
-      return record["type"] === "text" ? readString(record, "text") : "";
-    })
-    .join("");
-  return text === "" ? undefined : text;
-}
-
-function readToolIncrement(
-  snapshots: Map<string, string>,
-  key: string,
-  next: string,
-): string | undefined {
-  const previous = snapshots.get(key);
-  if (previous === undefined) {
-    snapshots.set(key, next);
-    return next;
-  }
-  if (next === previous) return undefined;
-  if (next.startsWith(previous)) {
-    snapshots.set(key, next);
-    return next.slice(previous.length);
-  }
-  snapshots.set(key, `${previous}${next}`);
-  return next;
-}
-
 function agentPrefix(executorId: string | undefined): string {
   return executorId === undefined ? "" : `[${executorId}] `;
-}
-
-function asRecord(value: unknown): Record<string, unknown> {
-  return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
-}
-
-function readString(record: Record<string, unknown>, key: string): string {
-  return typeof record[key] === "string" ? record[key] : "";
-}
-
-function formatValue(value: unknown): string | undefined {
-  if (value === undefined) return undefined;
-  return typeof value === "string" ? value : (JSON.stringify(value, null, 2) ?? String(value));
-}
-
-function formatPreview(value: unknown): string | undefined {
-  const text = formatValue(value);
-  if (text === undefined) return undefined;
-  return text.length <= 500 ? text : `${text.slice(0, 499)}…`;
 }
 
 function shortId(value: string): string {

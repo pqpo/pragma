@@ -1,18 +1,8 @@
-import {
-  defineExpert,
-  defineExpertTeam,
-  defineFlow,
-  type ExecutionEvent,
-  type ExecutionOutputItem,
-} from "@pragma/core";
+import { defineExpert, defineExpertTeam, defineFlow, type ExecutionOutputItem } from "@pragma/core";
 import { describe, expect, it } from "vitest";
 
-import {
-  FlowConsoleModel,
-  FlowInteractionQueue,
-  findPendingHumanRequestEvents,
-  renderFlowConsole,
-} from "../src/console/flow-console-tui.ts";
+import { FlowConsoleModel, renderFlowConsole } from "../src/console/flow-console-tui.ts";
+import { HumanInteractionQueue } from "../src/console/human-interaction-controller.ts";
 
 describe("FlowConsoleModel", () => {
   it("tracks route decisions and marks unselected branches as skipped", () => {
@@ -60,7 +50,7 @@ describe("FlowConsoleModel", () => {
     expect(model.selected.nodeId).toBe("approve");
     const skippedDetails = renderFlowConsole({
       model,
-      interactions: new FlowInteractionQueue(),
+      interactions: new HumanInteractionQueue(),
       title: "Review",
       width: 120,
       height: 24,
@@ -274,7 +264,7 @@ describe("FlowConsoleModel", () => {
     );
     const rendered = renderFlowConsole({
       model,
-      interactions: new FlowInteractionQueue(),
+      interactions: new HumanInteractionQueue(),
       title: "Review",
       width: 240,
       height: 40,
@@ -335,7 +325,7 @@ describe("FlowConsoleModel", () => {
     const task = flow.task({ id: "prepare", version: "1.0.0", handler: () => "done" });
     flow.compose(({ start, end }) => start(task).next(end()));
     const model = new FlowConsoleModel(flow);
-    const queue = new FlowInteractionQueue();
+    const queue = new HumanInteractionQueue();
     const wide = renderFlowConsole({
       model,
       interactions: queue,
@@ -363,83 +353,6 @@ describe("FlowConsoleModel", () => {
     });
     expect(tooSmall.join(" ")).toContain("Terminal too small");
     expect(tooSmall.every((line) => line.length <= 40)).toBe(true);
-  });
-});
-
-describe("FlowInteractionQueue", () => {
-  it("restores only Human requests that have no durable response", () => {
-    const requested = executionEvent("requested", "human.requested", {
-      interactionId: "completed",
-    });
-    const pending = executionEvent("pending", "human.requested", {
-      interactionId: "pending",
-    });
-    const responded = executionEvent("responded", "human.responded", {
-      interactionId: "completed",
-    });
-
-    expect(findPendingHumanRequestEvents([requested, pending, responded])).toEqual([pending]);
-  });
-
-  it("collects multiple questions and queues tool approval behind them", () => {
-    const queue = new FlowInteractionQueue();
-    queue.enqueue({
-      interactionId: "review",
-      invocationId: "review-invocation",
-      request: {
-        kind: "user_question",
-        toolName: "askUserQuestion",
-        questions: [
-          {
-            header: "Decision",
-            question: "Decision?",
-            kind: "single_choice",
-            options: [
-              { label: "approve", description: "Approve" },
-              { label: "revise", description: "Revise" },
-            ],
-          },
-          { header: "Notes", question: "Notes?", kind: "text", options: [] },
-        ],
-      },
-    });
-    queue.enqueue({
-      interactionId: "approval",
-      invocationId: "expert-invocation",
-      request: {
-        kind: "tool_approval",
-        toolName: "publish",
-        input: {},
-        reason: "External side effect",
-      },
-    });
-    expect(queue.size).toBe(2);
-    queue.moveOption(1);
-    expect(queue.submit()).toBeUndefined();
-    const reviewResponse = queue.submit("Tighten scope.");
-    expect(reviewResponse).toEqual({
-      interactionId: "review",
-      invocationId: "review-invocation",
-      response: {
-        kind: "user_question",
-        answered: true,
-        answers: { "Decision?": "revise", "Notes?": "Tighten scope." },
-      },
-    });
-    expect(queue.submit()).toEqual(reviewResponse);
-    expect(queue.size).toBe(2);
-    expect(queue.remove("review")).toBe("review-invocation");
-    expect(queue.size).toBe(1);
-    expect(queue.remove("missing")).toBeUndefined();
-    const approvalResponse = queue.submit();
-    expect(approvalResponse).toEqual({
-      interactionId: "approval",
-      invocationId: "expert-invocation",
-      response: { kind: "tool_approval", approved: true, reason: "User approved." },
-    });
-    expect(queue.size).toBe(1);
-    expect(queue.remove("approval")).toBe("expert-invocation");
-    expect(queue.size).toBe(0);
   });
 });
 
@@ -505,17 +418,4 @@ function outputValue(
   value: unknown,
 ): ExecutionOutputItem {
   return { ...output(invocationId, executorId, channel, ""), delta: undefined, value };
-}
-
-function executionEvent(eventId: string, type: string, data: unknown): ExecutionEvent {
-  return {
-    schemaVersion: "pragma.execution-event/v5",
-    eventId,
-    cursor: { executionId: "execution", sequence: 1 },
-    executionId: "execution",
-    invocationId: "invocation",
-    type,
-    data,
-    occurredAt: new Date().toISOString(),
-  };
 }

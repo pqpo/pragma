@@ -1,5 +1,4 @@
 import {
-  ExpertAgentHumanRequestSchema,
   type AgentMessageUsage,
   type ExecutionEvent,
   type ExecutionEventSubscription,
@@ -22,7 +21,17 @@ import {
   visibleWidth,
 } from "@earendil-works/pi-tui";
 
-export type DelegationAgentStatus =
+import { ExecutionOutputAccumulator } from "./execution-output-accumulator.ts";
+import {
+  consoleQuestionInstruction,
+  createToolApprovalResponse,
+  createUserQuestionResponse,
+  parseConsoleApprovalAnswer,
+  parseConsoleQuestionAnswer,
+  parseHumanInteractionEvent,
+} from "./human-interaction-parser.ts";
+
+export type ExpertConsoleAgentStatus =
   | "idle"
   | "queued"
   | "working"
@@ -31,7 +40,7 @@ export type DelegationAgentStatus =
   | "failed"
   | "cancelled";
 
-export interface DelegationConsoleAgent {
+export interface ExpertConsoleAgent {
   readonly id: string;
   readonly name: string;
   readonly shortName: string;
@@ -44,9 +53,9 @@ interface AgentLogSection {
 }
 
 interface AgentPane {
-  readonly definition: DelegationConsoleAgent;
+  readonly definition: ExpertConsoleAgent;
   readonly sections: AgentLogSection[];
-  status: DelegationAgentStatus;
+  status: ExpertConsoleAgentStatus;
 }
 
 interface ConsoleInteractionPresentation {
@@ -65,10 +74,6 @@ interface PendingConsoleInput {
   readonly reject: (error: unknown) => void;
 }
 
-export type DelegationQuestionAnswerResult =
-  | { readonly ok: true; readonly answer: string }
-  | { readonly ok: false; readonly message: string };
-
 type InvocationTree = Awaited<ReturnType<ExpertTurn["getTree"]>>;
 
 const ANSI = {
@@ -85,27 +90,28 @@ const ANSI = {
 
 const MAX_LOG_CHARACTERS = 200_000;
 
-export class DelegationConsoleModel {
+export class ExpertConsoleModel {
   readonly panes: readonly AgentPane[];
   private readonly awaitingInput = new Set<string>();
-  private readonly invocationsWithAnswerDeltas = new Set<string>();
-  private readonly toolOutputSnapshots = new Map<string, string>();
+  private readonly outputAccumulator = new ExecutionOutputAccumulator({
+    includeRoutineProgress: false,
+  });
   private selectedIndex = 0;
   private scrollOffset = 0;
   private usage: AgentMessageUsage | undefined;
 
-  constructor(agents: readonly DelegationConsoleAgent[]) {
-    if (agents.length < 2) {
-      throw new Error("Delegation console requires a primary Agent and at least one subagent.");
+  constructor(agents: readonly ExpertConsoleAgent[]) {
+    if (agents.length === 0) {
+      throw new Error("Expert console requires at least one Agent.");
     }
     if (new Set(agents.map((agent) => agent.id)).size !== agents.length) {
-      throw new Error("Delegation console Agent ids must be unique.");
+      throw new Error("Expert console Agent ids must be unique.");
     }
     const primaryIndexes = agents.flatMap((agent, index) =>
       agent.primary === true ? [index] : [],
     );
     if (primaryIndexes.length !== 1) {
-      throw new Error("Delegation console requires exactly one primary Agent.");
+      throw new Error("Expert console requires exactly one primary Agent.");
     }
     this.panes = agents.map((definition) => ({ definition, sections: [], status: "idle" }));
     this.selectedIndex = primaryIndexes[0]!;
@@ -129,8 +135,7 @@ export class DelegationConsoleModel {
 
   beginTurn(prompt: string): void {
     this.awaitingInput.clear();
-    this.invocationsWithAnswerDeltas.clear();
-    this.toolOutputSnapshots.clear();
+    this.outputAccumulator.reset();
     for (const pane of this.panes) pane.status = "idle";
     const primary = this.panes.find((pane) => pane.definition.primary === true)!;
     primary.status = "working";
@@ -144,41 +149,13 @@ export class DelegationConsoleModel {
     if (pane === undefined) return;
     if (pane.status === "idle" || pane.status === "queued") pane.status = "working";
 
-    switch (item.channel) {
-      case "thought": {
-        const text = item.delta ?? formatValue(item.value);
-        if (text !== undefined) appendSection(pane, "thinking", text, item.delta !== undefined);
-        break;
-      }
-      case "message": {
-        if (item.delta !== undefined) {
-          this.invocationsWithAnswerDeltas.add(item.invocationId);
-          appendSection(pane, "answer", item.delta, true);
-        } else if (!this.invocationsWithAnswerDeltas.has(item.invocationId)) {
-          const text = readCompletedMessageText(item.value);
-          if (text !== undefined) appendSection(pane, "answer", text);
-        }
-        break;
-      }
-      case "tool":
-        consumeToolOutput(pane, item, this.toolOutputSnapshots);
-        break;
-      case "progress": {
-        const payload = asRecord(item.value);
-        const stage = readString(payload, "stage");
-        if (!isRoutineProgress(stage)) {
-          const message = readString(payload, "message");
-          appendSection(pane, "system", `${stage}${message === "" ? "" : ` — ${message}`}`);
-        }
-        break;
-      }
-      case "result": {
-        const text = formatValue(item.value);
-        if (text !== undefined && !this.invocationsWithAnswerDeltas.has(item.invocationId)) {
-          appendSection(pane, "answer", text);
-        }
-        break;
-      }
+    for (const activity of this.outputAccumulator.consume(item)) {
+      appendSection(
+        pane,
+        activity.kind === "progress" ? "system" : activity.kind,
+        activity.text,
+        activity.append,
+      );
     }
 
     trimPane(pane);
@@ -186,7 +163,7 @@ export class DelegationConsoleModel {
   }
 
   syncTree(tree: InvocationTree): void {
-    const statuses = new Map<string, DelegationAgentStatus[]>();
+    const statuses = new Map<string, ExpertConsoleAgentStatus[]>();
     visitTree(tree, (executorId, status) => {
       const values = statuses.get(executorId) ?? [];
       values.push(mapInvocationStatus(status));
@@ -242,34 +219,34 @@ export class DelegationConsoleModel {
   }
 }
 
-export interface DelegationConsoleTuiOptions {
-  readonly agents: readonly DelegationConsoleAgent[];
+export interface ExpertConsoleTuiOptions {
+  readonly agents: readonly ExpertConsoleAgent[];
   readonly sessionId: string;
   readonly title: string;
   readonly examplePrompt: string;
-  readonly onPrompt: (prompt: string, ui: DelegationConsoleTui) => Promise<void>;
+  readonly onPrompt: (prompt: string, ui: ExpertConsoleTui) => Promise<void>;
   readonly onExit: () => Promise<void>;
   readonly terminal?: Terminal | undefined;
 }
 
-export class DelegationConsoleTui {
-  readonly model: DelegationConsoleModel;
+export class ExpertConsoleTui {
+  readonly model: ExpertConsoleModel;
   private readonly terminal: Terminal;
   private readonly tui: TUI;
-  private readonly view: DelegationConsoleView;
-  private readonly options: DelegationConsoleTuiOptions;
+  private readonly view: ExpertConsoleView;
+  private readonly options: ExpertConsoleTuiOptions;
   private promptTask: Promise<void> | undefined;
   private pendingInput: PendingConsoleInput | undefined;
   private exitPromise: Promise<void>;
   private resolveExit!: () => void;
   private exiting = false;
 
-  constructor(options: DelegationConsoleTuiOptions) {
+  constructor(options: ExpertConsoleTuiOptions) {
     this.options = options;
-    this.model = new DelegationConsoleModel(options.agents);
+    this.model = new ExpertConsoleModel(options.agents);
     this.terminal = options.terminal ?? new ProcessTerminal();
     this.tui = new TUI(this.terminal, true);
-    this.view = new DelegationConsoleView({
+    this.view = new ExpertConsoleView({
       model: this.model,
       terminal: this.terminal,
       sessionId: options.sessionId,
@@ -324,7 +301,7 @@ export class DelegationConsoleTui {
     } catch (error) {
       this.rejectPendingInput(error);
       await interactionTask.catch(() => undefined);
-      await turn.cancel("Delegation console interaction failed.").catch(() => undefined);
+      await turn.cancel("Expert console interaction failed.").catch(() => undefined);
       this.model.completeTurn(await turn.usage.catch(() => undefined), error);
       this.tui.requestRender();
       throw error;
@@ -392,7 +369,7 @@ export class DelegationConsoleTui {
     const handled = new Set<string>();
     const handle = async (event: ExecutionEvent): Promise<void> => {
       if (event.type !== "human.requested") return;
-      const interaction = readHumanInteraction(event);
+      const interaction = parseHumanInteractionEvent(event);
       if (handled.has(interaction.interactionId)) return;
       handled.add(interaction.interactionId);
       await this.respondToHumanInteraction(turn, event, interaction);
@@ -449,17 +426,17 @@ export class DelegationConsoleTui {
           header: question.header,
           question: question.question,
           options: question.options,
-          instruction: questionInstruction(question),
+          instruction: consoleQuestionInstruction(question),
         },
         (input) => {
-          const result = parseDelegationQuestionAnswer(question, input);
+          const result = parseConsoleQuestionAnswer(question, input);
           return result.ok
             ? { ok: true, value: result.answer }
             : { ok: false, message: result.message };
         },
       );
     }
-    return { kind: "user_question", answered: true, answers };
+    return createUserQuestionResponse(answers);
   }
 
   private async answerToolApproval(
@@ -483,13 +460,17 @@ export class DelegationConsoleTui {
         ],
         instruction: "输入 y/yes 或 n/no 后回车。",
       },
-      parseApprovalAnswer,
+      (input) => {
+        const result = parseConsoleApprovalAnswer(input);
+        return result.ok
+          ? { ok: true, value: result.approved }
+          : { ok: false, message: result.message };
+      },
     );
-    return {
-      kind: "tool_approval",
-      approved,
-      reason: approved ? "用户批准。" : "用户拒绝。",
-    };
+    return createToolApprovalResponse(approved, {
+      approvedReason: "用户批准。",
+      rejectedReason: "用户拒绝。",
+    });
   }
 
   private requestInput<T>(
@@ -529,8 +510,8 @@ export class DelegationConsoleTui {
   }
 }
 
-class DelegationConsoleView implements Component, Focusable {
-  readonly model: DelegationConsoleModel;
+class ExpertConsoleView implements Component, Focusable {
+  readonly model: ExpertConsoleModel;
   readonly terminal: Terminal;
   readonly sessionId: string;
   readonly title: string;
@@ -545,7 +526,7 @@ class DelegationConsoleView implements Component, Focusable {
   private _focused = false;
 
   constructor(options: {
-    readonly model: DelegationConsoleModel;
+    readonly model: ExpertConsoleModel;
     readonly terminal: Terminal;
     readonly sessionId: string;
     readonly title: string;
@@ -654,16 +635,24 @@ class DelegationConsoleView implements Component, Focusable {
       this.interaction !== undefined
         ? `回答 ${this.input.render(Math.max(1, safeWidth - 5))[0] ?? ""}`
         : this.busy
-          ? paint("● Agents 正在工作；Tab 切换 Agent 查看实时过程", ANSI.yellow, color)
+          ? paint(
+              this.model.panes.length === 1
+                ? "● Agent 正在工作；Thinking、Tool 与回答将实时更新"
+                : "● Agents 正在工作；Tab 切换 Agent 查看实时过程",
+              ANSI.yellow,
+              color,
+            )
           : `你 ${this.input.render(Math.max(1, safeWidth - 3))[0] ?? ""}`;
     const usage = formatUsage(this.model.latestUsage);
     const directKeyHint = `F1-F${Math.min(4, this.model.panes.length)} 直达`;
+    const navigationHint =
+      this.model.panes.length === 1
+        ? "PgUp/PgDn 滚动 · Ctrl+C 退出"
+        : `Tab/Shift+Tab 切换 · ${directKeyHint} · Esc 回主 Agent · PgUp/PgDn 滚动 · Ctrl+C 退出`;
     const hint =
       this.notice ??
       this.interaction?.instruction ??
-      (this.model.selected.sections.length === 0
-        ? `示例：${this.examplePrompt}`
-        : `Tab/Shift+Tab 切换 · ${directKeyHint} · Esc 回主 Agent · PgUp/PgDn 滚动 · Ctrl+C 退出`);
+      (this.model.selected.sections.length === 0 ? `示例：${this.examplePrompt}` : navigationHint);
 
     return [
       header,
@@ -683,7 +672,7 @@ class DelegationConsoleView implements Component, Focusable {
   }
 }
 
-function renderAgentTabs(model: DelegationConsoleModel, width: number, color: boolean): string[] {
+function renderAgentTabs(model: ExpertConsoleModel, width: number, color: boolean): string[] {
   const tabs = model.panes.map((pane, index) => {
     const icon = statusIcon(pane.status);
     const text = `${index + 1}:${icon} ${pane.definition.shortName}`;
@@ -706,7 +695,15 @@ function renderAgentTabs(model: DelegationConsoleModel, width: number, color: bo
 
 function renderLog(pane: AgentPane, width: number, color: boolean): string[] {
   if (pane.sections.length === 0) {
-    return [paint("尚未参与当前对话。主 Agent 会在任务需要该能力时自动委派。", ANSI.dim, color)];
+    return [
+      paint(
+        pane.definition.primary === true
+          ? "尚无对话内容。输入问题开始聊天。"
+          : "尚未参与当前对话。主 Agent 会在任务需要该能力时自动委派。",
+        ANSI.dim,
+        color,
+      ),
+    ];
   }
   return pane.sections.flatMap((section) => {
     const label = sectionLabel(section.kind, pane.definition, color);
@@ -734,59 +731,6 @@ function renderInteraction(
       ),
     );
   return [truncateToWidth(heading, width), ...question, ...options];
-}
-
-function consumeToolOutput(
-  pane: AgentPane,
-  item: ExecutionOutputItem,
-  snapshots: Map<string, string>,
-): void {
-  if (item.delta !== undefined) {
-    const normalized = normalizeToolDelta(item.delta);
-    const text =
-      normalized === undefined
-        ? undefined
-        : readToolOutputIncrement(item.invocationId, normalized, snapshots);
-    if (text !== undefined) appendSection(pane, "tool-output", text, true);
-    return;
-  }
-  const payload = asRecord(item.value);
-  const name = readString(payload, "toolName") || "tool";
-  const started =
-    payload["message"] === undefined &&
-    payload["approvalId"] === undefined &&
-    payload["outputPreview"] === undefined;
-  if (started) snapshots.delete(item.invocationId);
-  if (payload["message"] !== undefined) {
-    appendSection(pane, "tool", `× ${name}: ${readString(payload, "message")}`);
-  } else if (payload["approvalId"] !== undefined) {
-    appendSection(pane, "tool", `! ${name} requires approval`);
-  } else if (payload["outputPreview"] !== undefined) {
-    appendSection(pane, "tool", `✓ ${name} completed`);
-  } else if (payload["toolName"] !== undefined) {
-    const preview = formatPreview(payload["inputPreview"]);
-    appendSection(pane, "tool", `→ ${name}${preview === undefined ? "" : `\n${preview}`}`);
-  }
-  if (!started) snapshots.delete(item.invocationId);
-}
-
-function readToolOutputIncrement(
-  invocationId: string,
-  next: string,
-  snapshots: Map<string, string>,
-): string | undefined {
-  const previous = snapshots.get(invocationId);
-  if (previous === undefined) {
-    snapshots.set(invocationId, next);
-    return next;
-  }
-  if (next === previous) return undefined;
-  if (next.startsWith(previous)) {
-    snapshots.set(invocationId, next);
-    return next.slice(previous.length) || undefined;
-  }
-  snapshots.set(invocationId, `${previous}${next}`);
-  return next;
 }
 
 function appendSection(
@@ -820,7 +764,7 @@ function visitTree(
 
 function mapInvocationStatus(
   status: InvocationTree["invocation"]["status"],
-): DelegationAgentStatus {
+): ExpertConsoleAgentStatus {
   switch (status) {
     case "queued":
       return "queued";
@@ -837,8 +781,10 @@ function mapInvocationStatus(
   }
 }
 
-function aggregateStatuses(statuses: readonly DelegationAgentStatus[]): DelegationAgentStatus {
-  const priority: readonly DelegationAgentStatus[] = [
+function aggregateStatuses(
+  statuses: readonly ExpertConsoleAgentStatus[],
+): ExpertConsoleAgentStatus {
+  const priority: readonly ExpertConsoleAgentStatus[] = [
     "failed",
     "input",
     "working",
@@ -850,7 +796,7 @@ function aggregateStatuses(statuses: readonly DelegationAgentStatus[]): Delegati
   return priority.find((status) => statuses.includes(status)) ?? "idle";
 }
 
-function statusIcon(status: DelegationAgentStatus): string {
+function statusIcon(status: ExpertConsoleAgentStatus): string {
   switch (status) {
     case "idle":
       return "○";
@@ -869,8 +815,8 @@ function statusIcon(status: DelegationAgentStatus): string {
   }
 }
 
-function statusLabel(status: DelegationAgentStatus, color: boolean): string {
-  const labels: Record<DelegationAgentStatus, string> = {
+function statusLabel(status: ExpertConsoleAgentStatus, color: boolean): string {
+  const labels: Record<ExpertConsoleAgentStatus, string> = {
     idle: "idle",
     queued: "queued",
     working: "working",
@@ -882,7 +828,7 @@ function statusLabel(status: DelegationAgentStatus, color: boolean): string {
   return statusColor(`${statusIcon(status)} ${labels[status]}`, status, color);
 }
 
-function statusColor(text: string, status: DelegationAgentStatus, color: boolean): string {
+function statusColor(text: string, status: ExpertConsoleAgentStatus, color: boolean): string {
   if (status === "input") return paint(text, ANSI.cyan, color);
   if (status === "working" || status === "queued") return paint(text, ANSI.yellow, color);
   if (status === "done") return paint(text, ANSI.green, color);
@@ -892,7 +838,7 @@ function statusColor(text: string, status: DelegationAgentStatus, color: boolean
 
 function sectionLabel(
   kind: AgentLogSection["kind"],
-  agent: DelegationConsoleAgent,
+  agent: ExpertConsoleAgent,
   color: boolean,
 ): string {
   switch (kind) {
@@ -931,147 +877,4 @@ function formatUsage(usage: AgentMessageUsage | undefined): string {
   if (usage === undefined) return "";
   const total = usage.totalTokens ?? usage.input + usage.output;
   return `tokens ${total.toLocaleString("en-US")}`;
-}
-
-function asRecord(value: unknown): Record<string, unknown> {
-  return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
-}
-
-function readString(record: Record<string, unknown>, key: string): string {
-  const value = record[key];
-  return typeof value === "string" ? value : "";
-}
-
-function readHumanInteraction(event: ExecutionEvent): {
-  readonly interactionId: string;
-  readonly request: ExpertAgentHumanRequest;
-} {
-  const payload = asRecord(event.data);
-  const interactionId = readString(payload, "interactionId");
-  if (interactionId === "") throw new Error("human.requested event is missing interactionId.");
-  return {
-    interactionId,
-    request: ExpertAgentHumanRequestSchema.parse(payload["request"]),
-  };
-}
-
-export function parseDelegationQuestionAnswer(
-  question: ExpertAgentUserQuestion,
-  input: string,
-): DelegationQuestionAnswerResult {
-  const normalized = input.trim();
-  if (normalized === "") return { ok: false, message: "请输入回答后再按回车。" };
-  if (question.kind === "text") return { ok: true, answer: normalized };
-
-  const tokens =
-    question.kind === "multiple_choice"
-      ? normalized
-          .split(/[,，]/u)
-          .map((token) => token.trim())
-          .filter((token) => token !== "")
-      : [normalized];
-  const selected: string[] = [];
-  for (const token of tokens) {
-    const option = readSelectedOption(question.options, token);
-    if (option === undefined) {
-      return {
-        ok: false,
-        message: `无法识别选项“${token}”；请输入编号或完整选项名称。`,
-      };
-    }
-    if (!selected.includes(option.label)) selected.push(option.label);
-  }
-  if (question.kind === "single_choice" && selected.length !== 1) {
-    return { ok: false, message: "单选题只能选择一个选项。" };
-  }
-  return { ok: true, answer: selected.join(", ") };
-}
-
-function readSelectedOption(
-  options: ExpertAgentUserQuestion["options"],
-  token: string,
-): ExpertAgentUserQuestion["options"][number] | undefined {
-  const numeric = Number(token);
-  if (Number.isInteger(numeric) && numeric >= 1 && numeric <= options.length) {
-    return options[numeric - 1];
-  }
-  const normalized = token.toLocaleLowerCase();
-  return options.find((option) => option.label.toLocaleLowerCase() === normalized);
-}
-
-function questionInstruction(question: ExpertAgentUserQuestion): string {
-  switch (question.kind) {
-    case "text":
-      return "输入回答后回车；Ctrl+C 可取消整个 Turn。";
-    case "single_choice":
-      return "输入一个选项编号或名称后回车；Ctrl+C 可取消整个 Turn。";
-    case "multiple_choice":
-      return "输入多个编号或名称并用逗号分隔；Ctrl+C 可取消整个 Turn。";
-  }
-}
-
-function parseApprovalAnswer(
-  input: string,
-):
-  | { readonly ok: true; readonly value: boolean }
-  | { readonly ok: false; readonly message: string } {
-  const normalized = input.trim().toLocaleLowerCase();
-  if (normalized === "y" || normalized === "yes" || normalized === "1") {
-    return { ok: true, value: true };
-  }
-  if (normalized === "n" || normalized === "no" || normalized === "2") {
-    return { ok: true, value: false };
-  }
-  return { ok: false, message: "请输入 y/yes 或 n/no。" };
-}
-
-function readCompletedMessageText(value: unknown): string | undefined {
-  if (typeof value === "string") return value;
-  const content = asRecord(value)["content"];
-  if (!Array.isArray(content)) return undefined;
-  const text = content
-    .map((item) => {
-      const record = asRecord(item);
-      return record["type"] === "text" ? readString(record, "text") : "";
-    })
-    .join("");
-  return text === "" ? undefined : text;
-}
-
-function formatValue(value: unknown): string | undefined {
-  if (value === undefined) return undefined;
-  return typeof value === "string" ? value : (JSON.stringify(value, null, 2) ?? String(value));
-}
-
-function formatPreview(value: unknown): string | undefined {
-  if (value === undefined || value === null || value === "") return undefined;
-  if (Array.isArray(value) && value.length === 0) return undefined;
-  if (
-    typeof value === "object" &&
-    !Array.isArray(value) &&
-    Object.keys(asRecord(value)).length === 0
-  ) {
-    return undefined;
-  }
-  const text = formatValue(value);
-  if (text === undefined) return undefined;
-  return text.length <= 800 ? text : `${text.slice(0, 799)}…`;
-}
-
-function normalizeToolDelta(delta: string): string | undefined {
-  try {
-    const parsed = JSON.parse(delta) as unknown;
-    const content = asRecord(parsed)["content"];
-    if (Array.isArray(content)) {
-      const text = content.map((item) => readString(asRecord(item), "text")).join("\n");
-      return text === "" ? undefined : text;
-    }
-    return formatPreview(parsed);
-  } catch {
-    return delta;
-  }
-}
-
-function isRoutineProgress(stage: string): boolean {
-  return stage === "" || stage === "turn.start" || stage === "turn.end" || stage === "queue.update";
 }
