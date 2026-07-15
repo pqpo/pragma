@@ -1,5 +1,9 @@
 import type { Expert } from "./expert-agent.ts";
 import {
+  normalizeRuntimeByExpert,
+  type RuntimeByExpert,
+} from "./agent-launcher.ts";
+import {
   freshContextIdResolver,
   type ContextIdResolver,
 } from "../execution/context-id-resolver.ts";
@@ -11,6 +15,7 @@ export interface ExpertTeamDelegationOptions {
   readonly maxConcurrency?: number | undefined;
   readonly maxDepth?: number | undefined;
   readonly contextId?: ContextIdResolver | undefined;
+  readonly runtimeByExpert?: RuntimeByExpert | undefined;
 }
 
 export interface DefineExpertTeamOptions {
@@ -36,6 +41,7 @@ export interface ExpertTeam {
     readonly maxConcurrency: number;
     readonly maxDepth: number;
     readonly contextId: ContextIdResolver;
+    readonly runtimeByExpert: ReadonlyMap<string, string>;
   };
 }
 
@@ -68,6 +74,14 @@ export function defineExpertTeam(options: DefineExpertTeamOptions): ExpertTeam {
     allow.set(source, targetSet);
   }
 
+  const routableExpertIds = new Set([...allow.values()].flatMap((targets) => [...targets]));
+  const routableExperts = participants.filter((expert) => routableExpertIds.has(expert.id));
+  const runtimeByExpert = normalizeRuntimeByExpert(
+    options.delegation.runtimeByExpert,
+    routableExperts,
+    `ExpertTeam ${options.id}`,
+  );
+
   const maxConcurrency = readPositiveInteger(
     options.delegation.maxConcurrency ?? 4,
     "maxConcurrency",
@@ -87,6 +101,7 @@ export function defineExpertTeam(options: DefineExpertTeamOptions): ExpertTeam {
       maxConcurrency,
       maxDepth,
       contextId: options.delegation.contextId ?? freshContextIdResolver,
+      runtimeByExpert,
     }),
   });
 }
