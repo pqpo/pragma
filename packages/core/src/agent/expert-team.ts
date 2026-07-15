@@ -1,8 +1,5 @@
 import type { Expert } from "./expert-agent.ts";
-import {
-  normalizeRuntimeByExpert,
-  type RuntimeByExpert,
-} from "./agent-launcher.ts";
+import { normalizeRuntimeByExpert, type RuntimeByExpert } from "./agent-launcher.ts";
 import {
   freshContextIdResolver,
   type ContextIdResolver,
