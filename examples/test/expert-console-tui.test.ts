@@ -1,10 +1,7 @@
 import type { ExecutionOutputItem } from "@pragma/core";
 import { describe, expect, it } from "vitest";
 
-import {
-  DelegationConsoleModel,
-  parseDelegationQuestionAnswer,
-} from "../src/console/delegation-console-tui.ts";
+import { ExpertConsoleModel } from "../src/console/expert-console-tui.ts";
 
 const agents = [
   { id: "lead", name: "Lead", shortName: "Lead", primary: true },
@@ -12,9 +9,27 @@ const agents = [
   { id: "tests", name: "Tests", shortName: "Tests" },
 ] as const;
 
-describe("DelegationConsoleModel", () => {
+describe("ExpertConsoleModel", () => {
+  it("supports a single primary Expert", () => {
+    const model = new ExpertConsoleModel([
+      { id: "expert", name: "Expert", shortName: "Expert", primary: true },
+    ]);
+
+    model.beginTurn("Hello");
+    model.consume(output("expert", "thought", "Considering the request."));
+    model.consume(output("expert", "message", "Hello!"));
+
+    expect(model.selected.definition.id).toBe("expert");
+    expect(model.selected.status).toBe("working");
+    expect(model.selected.sections).toMatchObject([
+      { kind: "user", text: "Hello" },
+      { kind: "thinking", text: "Considering the request." },
+      { kind: "answer", text: "Hello!" },
+    ]);
+  });
+
   it("tracks the lead conversation and member activity independently", () => {
-    const model = new DelegationConsoleModel(agents);
+    const model = new ExpertConsoleModel(agents);
 
     model.beginTurn("Review delegation.");
     model.consume(output("research", "thought", "Inspecting "));
@@ -38,7 +53,7 @@ describe("DelegationConsoleModel", () => {
   });
 
   it("syncs Invocation status and supports focus switching without mixing logs", () => {
-    const model = new DelegationConsoleModel(agents);
+    const model = new ExpertConsoleModel(agents);
     model.beginTurn("Review delegation.");
     model.syncTree(
       tree("lead", "running", [tree("research", "succeeded"), tree("tests", "running")]),
@@ -66,21 +81,21 @@ describe("DelegationConsoleModel", () => {
   it("requires a unique lead and unique member ids", () => {
     expect(
       () =>
-        new DelegationConsoleModel([
+        new ExpertConsoleModel([
           { id: "one", name: "One", shortName: "One" },
           { id: "two", name: "Two", shortName: "Two" },
         ]),
     ).toThrow("primary Agent");
     expect(
       () =>
-        new DelegationConsoleModel([
+        new ExpertConsoleModel([
           { id: "one", name: "One", shortName: "One", primary: true },
           { id: "two", name: "Two", shortName: "Two", primary: true },
         ]),
     ).toThrow("exactly one primary Agent");
     expect(
       () =>
-        new DelegationConsoleModel([
+        new ExpertConsoleModel([
           { id: "same", name: "Lead", shortName: "Lead", primary: true },
           { id: "same", name: "Member", shortName: "Member" },
         ]),
@@ -88,7 +103,7 @@ describe("DelegationConsoleModel", () => {
   });
 
   it("keeps completed-only answers from later turns", () => {
-    const model = new DelegationConsoleModel(agents);
+    const model = new ExpertConsoleModel(agents);
 
     model.beginTurn("First");
     model.consume(outputValue("lead", "message", "First answer"));
@@ -105,7 +120,7 @@ describe("DelegationConsoleModel", () => {
   });
 
   it("deduplicates cumulative tool snapshots while preserving true deltas", () => {
-    const model = new DelegationConsoleModel(agents);
+    const model = new ExpertConsoleModel(agents);
     model.beginTurn("Inspect the repository.");
     model.consume(
       outputValue("research", "tool", {
@@ -121,50 +136,6 @@ describe("DelegationConsoleModel", () => {
     expect(model.panes[1]?.sections.find((section) => section.kind === "tool-output")?.text).toBe(
       "createAgentLauncher\npackages/core/src/agent-launcher.ts\n",
     );
-  });
-});
-
-describe("parseDelegationQuestionAnswer", () => {
-  const options = [
-    { label: "Fast", description: "Prefer speed" },
-    { label: "Safe", description: "Prefer safety" },
-    { label: "Balanced", description: "Balance both" },
-  ] as const;
-
-  it("accepts numbered and named single-choice answers", () => {
-    const question = {
-      question: "Which mode?",
-      header: "Mode",
-      kind: "single_choice" as const,
-      options,
-    };
-
-    expect(parseDelegationQuestionAnswer(question, "2")).toEqual({ ok: true, answer: "Safe" });
-    expect(parseDelegationQuestionAnswer(question, "balanced")).toEqual({
-      ok: true,
-      answer: "Balanced",
-    });
-    expect(parseDelegationQuestionAnswer(question, "unknown")).toMatchObject({ ok: false });
-  });
-
-  it("accepts comma-separated multiple choices and direct text", () => {
-    expect(
-      parseDelegationQuestionAnswer(
-        {
-          question: "Which modes?",
-          header: "Modes",
-          kind: "multiple_choice",
-          options,
-        },
-        "1，Safe",
-      ),
-    ).toEqual({ ok: true, answer: "Fast, Safe" });
-    expect(
-      parseDelegationQuestionAnswer(
-        { question: "Why?", header: "Reason", kind: "text", options: [] },
-        "  Need evidence.  ",
-      ),
-    ).toEqual({ ok: true, answer: "Need evidence." });
   });
 });
 
@@ -208,5 +179,5 @@ function tree(executorId: string, status: string, children: unknown[] = []) {
       updatedAt: now,
     },
     children,
-  } as Parameters<DelegationConsoleModel["syncTree"]>[0];
+  } as Parameters<ExpertConsoleModel["syncTree"]>[0];
 }

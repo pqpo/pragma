@@ -5,7 +5,8 @@ Flow 的公共 API。
 
 ## Expert、Subagent 与团队
 
-- `experts/getting-started/console-chat.ts`：最小控制台聊天、多轮消息与 Usage。
+- `experts/getting-started/console-chat.ts`：单 Expert 全屏 TUI、多轮消息、流式 Thinking/Tool、
+  `askUserQuestion` 与 Usage。
 - `experts/conversations/single-multi.ts`：单 Expert 的单轮和多轮执行。
 - `experts/conversations/resume.ts`：恢复 `ExpertSession` 后继续提交 prompt。
 - `experts/conversations/queue-steer.ts`：持久化 prompt queue 与 steer。
@@ -17,8 +18,9 @@ Flow 的公共 API。
   每个 Agent 独立的思考、工具和回答流。
 - `experts/teams/invocation-tree.ts`：读取团队 InvocationTree。
 
-两个 delegation 入口共用多 Agent TUI：顶部成员栏展示各 Agent 状态，`Tab` / `Shift+Tab` 或
-`F1` - `F4` 切换成员，`Esc` 返回 Main Agent / Lead，`PgUp` / `PgDn` 滚动当前日志。两个控制台
+Getting Started 与两个 delegation 入口共用 Expert TUI 的事件和 Human-in-the-loop 处理。
+多 Agent 模式在顶部成员栏展示各 Agent 状态，`Tab` / `Shift+Tab` 或
+`F1` - `F4` 切换成员，`Esc` 返回 Main Agent / Lead，`PgUp` / `PgDn` 滚动当前日志。所有 TUI
 都会按 Agent 隔离并解析思考、工具调用、工具输出、进度和回答；`askUserQuestion` 触发的
 `human.requested` 会进入 TUI 答题模式，并通过 `respondToHumanInteraction()` 将答案交还当前 Turn。
 
@@ -38,9 +40,9 @@ Flow 的公共 API。
 
 ## Runtime
 
-- `runtimes/codex/console-chat.ts`：Codex CLI Runtime。
-- `runtimes/claude-code/console-chat.ts`：Claude Code CLI Runtime。
-- `runtimes/shared/console-runtime-chat.ts`：两个本地 Runtime 共用的控制台流程。
+- `runtimes/codex/console-chat.ts`：Codex CLI Runtime 的单 Expert 全屏 TUI。
+- `runtimes/claude-code/console-chat.ts`：Claude Code CLI Runtime 的单 Expert 全屏 TUI。
+- `runtimes/shared/console-runtime-chat.ts`：两个本地 Runtime 共用的探测、模型选择与 TUI 流程。
 
 ## Flow
 
@@ -56,5 +58,11 @@ Flow 的公共 API。
 ## 示例支撑
 
 - `support/example-kit.ts`：示例共用的 Expert、Runtime Registry 和 Pragma App 装配。
+- `console/execution-output-accumulator.ts`：统一把 Runtime 输出解析成 Answer、Thinking、Tool、
+  Tool output 和 Progress 活动，处理完成消息回退、结构化 Tool delta 与累积快照去重。
+- `console/human-interaction-parser.ts`：统一校验 `human.requested`，解析单选、多选、文本和审批输入，
+  并构造类型安全的 Human response。
+- `console/human-interaction-controller.ts`：管理多问题、多个等待交互、选项状态和已完成响应。
+- `console/expert-console-tui.ts`：单 Expert 与多 Expert 共用的状态、Turn 生命周期和全屏 TUI。
 - `console/flow-console-tui.ts`：可复用的 Flow 节点图、详情面板、Team 子树和 Human-in-the-loop
-  全屏控制台。
+  全屏控制台；与 Expert TUI 共用上述输出和人工交互协议层。

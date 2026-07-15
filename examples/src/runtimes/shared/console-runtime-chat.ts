@@ -9,13 +9,13 @@ import {
   createRuntimeRegistry,
   defineExpert,
   type ExpertSession,
+  type ExpertTurn,
   type RuntimeAdapter,
   type RuntimeModel,
   type RuntimeThinkingLevel,
 } from "@pragma/core";
 
-import { renderExpertTurn } from "../../console/console-turn-renderer.ts";
-import { formatConsoleUsage } from "../../console/console-usage.ts";
+import { ExpertConsoleTui } from "../../console/expert-console-tui.ts";
 
 export interface RuntimeConsoleChatOptions {
   readonly runtimeName: string;
@@ -29,8 +29,14 @@ export interface RuntimeConsoleDefaults {
 }
 
 export async function runRuntimeConsoleChat(options: RuntimeConsoleChatOptions): Promise<void> {
+  if (stdin.isTTY !== true || stdout.isTTY !== true) {
+    throw new Error(`${options.runtimeName} chat example requires an interactive TTY terminal.`);
+  }
+
   const terminal = createInterface({ input: stdin, output: stdout });
+  let terminalOpen = true;
   let session: ExpertSession | undefined;
+  let activeTurn: ExpertTurn | undefined;
 
   try {
     const probeRuntime = options.createRuntime();
@@ -62,6 +68,7 @@ export async function runRuntimeConsoleChat(options: RuntimeConsoleChatOptions):
         "Use earlier messages in this session when they are relevant.",
         "When the user asks about test reference material, use the Pragma context tools.",
         "Read the requested context instead of guessing from its description.",
+        "When a useful answer requires a preference or missing detail from the user, call askUserQuestion instead of guessing.",
       ].join("\n"),
       tags: ["example", "runtime", "context"],
       version: "1.0.0",
@@ -78,42 +85,41 @@ export async function runRuntimeConsoleChat(options: RuntimeConsoleChatOptions):
         defaultRuntime: runtime.descriptor.id,
       }),
     });
-    session = await app.experts.createSession(expert, { runtime: runtime.descriptor.id });
+    const expertSession = await app.experts.createSession(expert, {
+      runtime: runtime.descriptor.id,
+    });
+    session = expertSession;
+    terminal.close();
+    terminalOpen = false;
 
-    console.log(`\n${options.runtimeName} Expert 已就绪。输入问题开始聊天，输入 /exit 退出。`);
-    console.log("可测试：分别询问 always-on、model-decision 和 manual 测试上下文。");
-    console.log(`模型: ${selectedModel?.displayName ?? "CLI 默认模型"}`);
-    console.log(`思考深度: ${selectedThinkingLevel?.label ?? "CLI 默认深度"}`);
-    console.log(`Session: ${session.sessionId}`);
-
-    terminal.setPrompt("你 > ");
-    terminal.prompt();
-
-    for await (const line of terminal) {
-      const prompt = line.trim();
-      if (prompt === "/exit") {
-        console.log(formatConsoleUsage(await session.getUsage()));
-        break;
-      }
-      if (prompt === "") {
-        terminal.prompt();
-        continue;
-      }
-
-      try {
-        const turn = await session.prompt(prompt);
-        await renderExpertTurn(turn);
-      } catch {
-        // renderExpertTurn already displayed the failure with the streamed turn output.
-      }
-      terminal.prompt();
-    }
+    const modelLabel = selectedModel?.displayName ?? "CLI 默认模型";
+    const thinkingLabel = selectedThinkingLevel?.label ?? "CLI 默认深度";
+    const consoleUi = new ExpertConsoleTui({
+      title: `${options.runtimeName} · ${modelLabel} · ${thinkingLabel}`,
+      sessionId: expertSession.sessionId,
+      examplePrompt: "请列出测试上下文，再读取验证码和发布代号，并说明信息来源。",
+      agents: [{ id: expert.id, name: expert.name, shortName: "Expert", primary: true }],
+      async onPrompt(prompt, ui) {
+        activeTurn = await expertSession.prompt(prompt);
+        try {
+          await ui.followTurn(activeTurn);
+        } finally {
+          activeTurn = undefined;
+        }
+      },
+      async onExit() {
+        if (activeTurn !== undefined) {
+          await activeTurn.cancel(`${options.runtimeName} console closed.`);
+        }
+      },
+    });
+    await consoleUi.run();
   } catch (error) {
     console.error(`× ${error instanceof Error ? error.message : String(error)}`);
     process.exitCode = 1;
   } finally {
-    terminal.close();
-    await session?.close("Console chat ended.");
+    if (terminalOpen) terminal.close();
+    await session?.close(`${options.runtimeName} console chat ended.`);
   }
 }
 

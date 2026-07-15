@@ -3,11 +3,11 @@
 示例按功能目录组织，每个文件聚焦验证一个能力。建议从 `experts/getting-started`
 开始，再逐步阅读会话、团队和 Flow 示例。
 
-## 1. Expert 入门：控制台聊天
+## 1. Expert 入门：TUI 聊天
 
 这个示例会创建一个最小 Expert 和一个 `ExpertSession`，然后在同一个 Session 中持续
-接收控制台输入，因此 Expert 可以使用之前轮次的对话内容。控制台会像 Codex CLI 一样
-区分并流式展示 `Thinking`、工具调用、工具结果和最终 `Expert` 回答。
+接收控制台输入，因此 Expert 可以使用之前轮次的对话内容。全屏 TUI 会区分并流式展示
+`Thinking`、工具调用、工具结果和最终回答；发生 `askUserQuestion` 时，底部输入区会切换成答题模式。
 
 准备模型配置：
 
@@ -27,7 +27,7 @@ pnpm --filter @pragma/examples example:expert-chat
 pnpm --filter @pragma/examples dev src/experts/getting-started/console-chat.ts
 ```
 
-输入 `/exit` 或按 `Ctrl+C` 结束聊天。
+输入 `/exit` 或按 `Ctrl+C` 结束聊天，使用 `PgUp` / `PgDn` 滚动历史输出。
 
 ### 如何验证
 
@@ -45,27 +45,23 @@ pnpm --filter @pragma/examples dev src/experts/getting-started/console-chat.ts
 3. 两轮输入属于控制台打印出的同一个 `ExpertSession`；
 4. Runtime 保留并使用了同一会话的上下文。
 
-再输入“现在几点？”，Expert 应调用 `get_current_time`，控制台会展示：
+再输入“现在几点？”，Expert 应调用 `get_current_time`，TUI 会依次展示工具调用参数、流式工具输出
+和完成状态。输入下面的提示可验证 Human-in-the-loop：
 
 ```text
-• Running get_current_time
-  ↳ {}
-  ↳ 2026-07-12T10:00:00.000Z
-  ✓ get_current_time completed
-• Expert
-...
+你 > 请先用 askUserQuestion 问我想聊哪个主题，再根据回答继续。
 ```
 
-`Thinking` 只会在模型和提供商实际返回 reasoning delta 时出现；renderer 不会伪造思考内容。
+TUI 应显示结构化问题；单选题可输入编号或选项名，多选题使用逗号分隔，文本题直接输入内容。
+回答会通过 `respondToHumanInteraction()` 交还正在等待的 Turn。
+
+`Thinking` 只会在模型和提供商实际返回 reasoning delta 时出现；TUI 不会伪造思考内容。
 
 实时输出只监听订阅后的未来增量，并在 Execution 结束后自动关闭：
 
 ```ts
-const output = await turn.subscribeOutput({ scope: { kind: "all" } });
-for await (const item of output) renderer.renderOutput(item);
-
-const result = await turn.result;
-const turnUsage = await turn.usage;
+activeTurn = await session.prompt(prompt);
+await ui.followTurn(activeTurn);
 ```
 
 需要读取既有对话时使用 Session 的 message history，而不是重放执行事件：
@@ -77,12 +73,12 @@ const sessionUsage = await session.getUsage();
 ```
 
 Usage 随 Execution 持久化。`turn.usage` 读取单轮汇总，`session.getUsage()` 汇总 Session
-内所有已完成 Turn；三个控制台聊天示例会在输入 `/exit` 时打印 Session 总 Usage。
+内所有已完成 Turn；TUI 底部会显示最近完成 Turn 的 token Usage。
 
 模型输出并非确定性结果；这个检查验证的是调用链与多轮上下文，不代表对任意事实问题的
 答案都准确。业务准确性应为具体 Expert 准备固定输入、期望标准和自动化评测。
 
-## 2. 本地 Runtime：Codex 与 Claude Code 控制台聊天
+## 2. 本地 Runtime：Codex 与 Claude Code TUI 聊天
 
 两个示例分别验证已安装并已登录的 Codex CLI 和 Claude Code CLI。启动后会依次：
 
@@ -90,7 +86,7 @@ Usage 随 Execution 持久化。`turn.usage` 读取单轮汇总，`session.getUs
 2. 通过 `listModels()` 探测当前环境支持的模型；
 3. 让你输入编号选择模型，或直接回车沿用 CLI 默认模型；
 4. 根据所选模型展示支持的思考深度，选择编号或回车沿用 CLI 默认深度；
-5. 创建带测试用 In-memory Context Store 的 ExpertSession 并进入流式聊天。
+5. 创建带测试用 In-memory Context Store 的 ExpertSession 并进入全屏流式 TUI。
 
 ```bash
 pnpm --filter @pragma/examples example:runtime-codex
@@ -109,6 +105,9 @@ Context Store 同时准备了 `always_on`、`model_decision`、`manual` 三类�
 回答应分别包含 `AO-2048`、`MD-4096`、`7319` 和 `Aurora Finch`。`always_on` 内容会自动
 预加载；后两类验证中，流式输出应出现 `list_expert_context` 或 `read_expert_context` 等
 上下文工具调用。测试上下文只存在于当前 example 进程的内存中，不会写入 workspace。
+
+两个 Runtime TUI 与 Getting Started 共用同一套交互层，也支持 `Thinking`、工具调用与工具输出增量、
+`askUserQuestion`、`/exit`、`Ctrl+C` 和滚动历史。模型与思考深度仍在进入全屏 TUI 前选择。
 
 ## 3. Context、MCP、Skills、Plugin 与 Tool 审批
 

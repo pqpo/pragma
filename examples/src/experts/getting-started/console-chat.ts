@@ -1,12 +1,12 @@
-import { createInterface } from "node:readline/promises";
-import { stdin, stdout } from "node:process";
+import type { ExpertAgentManagedTool, ExpertAgentToolCallResult, ExpertTurn } from "@pragma/core";
 
-import type { ExpertAgentManagedTool, ExpertAgentToolCallResult } from "@pragma/core";
-
-import { renderExpertTurn } from "../../console/console-turn-renderer.ts";
-import { formatConsoleUsage } from "../../console/console-usage.ts";
+import { ExpertConsoleTui } from "../../console/expert-console-tui.ts";
 import { createExampleApp, createExampleExpert } from "../../support/example-kit.ts";
 import { readCurrentLocalTime } from "../../support/current-time.ts";
+
+if (process.stdin.isTTY !== true || process.stdout.isTTY !== true) {
+  throw new Error("The Getting Started chat example requires an interactive TTY terminal.");
+}
 
 const currentTimeTool: ExpertAgentManagedTool<"get_current_time", ExpertAgentToolCallResult> = {
   name: "get_current_time",
@@ -25,39 +25,32 @@ const expert = await createExampleExpert(
     "Use earlier messages in this session when they are relevant.",
     "When the user asks for the current time, call get_current_time instead of guessing.",
     "Report the tool's timestamp as local time and preserve its UTC offset and time zone.",
+    "When a useful answer requires a preference or missing detail from the user, call askUserQuestion instead of guessing.",
   ].join("\n"),
   { tools: [currentTimeTool] },
 );
 const session = await createExampleApp().experts.createSession(expert);
-const terminal = createInterface({ input: stdin, output: stdout });
-
-console.log("Pragma Expert 已就绪。输入问题开始聊天，输入 /exit 退出。");
-console.log(`Session: ${session.sessionId}`);
-
-terminal.setPrompt("你 > ");
-terminal.prompt();
+let activeTurn: ExpertTurn | undefined;
+const consoleUi = new ExpertConsoleTui({
+  title: "Pragma Getting Started",
+  sessionId: session.sessionId,
+  examplePrompt: "请先用 askUserQuestion 问我想聊哪个主题，再根据回答继续。",
+  agents: [{ id: expert.id, name: expert.name, shortName: "Expert", primary: true }],
+  async onPrompt(prompt, ui) {
+    activeTurn = await session.prompt(prompt);
+    try {
+      await ui.followTurn(activeTurn);
+    } finally {
+      activeTurn = undefined;
+    }
+  },
+  async onExit() {
+    if (activeTurn !== undefined) await activeTurn.cancel("Getting Started console closed.");
+  },
+});
 
 try {
-  for await (const line of terminal) {
-    const prompt = line.trim();
-    if (prompt === "/exit") {
-      console.log(formatConsoleUsage(await session.getUsage()));
-      break;
-    }
-    if (prompt === "") {
-      terminal.prompt();
-      continue;
-    }
-
-    try {
-      const turn = await session.prompt(prompt);
-      await renderExpertTurn(turn);
-    } catch {
-      // renderExpertTurn already displayed the failure with the streamed turn output.
-    }
-    terminal.prompt();
-  }
+  await consoleUi.run();
 } finally {
-  terminal.close();
-  await session.close("Console chat ended.");
+  await session.close("Getting Started console chat ended.");
 }
