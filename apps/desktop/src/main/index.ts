@@ -21,6 +21,8 @@ import { installPragmaProjectHandlers } from "./pragma-project-ipc.ts";
 import { createPragmaProjectStore } from "./pragma-project-store.ts";
 import { getRuntimeAvailability } from "./runtime-availability.ts";
 import { installWorkspaceScopeHandlers } from "./workspace-scope.ts";
+import { installWorkflowLayoutHandlers } from "./workflow-layout-ipc.ts";
+import { createWorkflowLayoutStore } from "./workflow-layout-store.ts";
 
 const currentDir = dirname(fileURLToPath(import.meta.url));
 
@@ -82,6 +84,11 @@ void app.whenReady().then(async () => {
   const pragmaProjectStore = createPragmaProjectStore({
     projectsPath: join(app.getPath("home"), ".pragma", "projects"),
   });
+  installWorkflowLayoutHandlers(
+    createWorkflowLayoutStore({
+      projectsPath: join(app.getPath("home"), ".pragma", "projects"),
+    }),
+  );
   const expertStore = createExpertDefinitionStore({ project: pragmaProjectStore });
   const missionStore = createMissionStore({
     missionsPath: join(app.getPath("home"), ".pragma", "missions"),

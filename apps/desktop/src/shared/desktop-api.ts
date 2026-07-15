@@ -570,10 +570,43 @@ export const DeletePragmaResourceSchema = z.object({
 
 export const ValidatePragmaYamlSchema = z.object({ source: z.string().max(2_000_000) });
 
+export const ValidatePragmaResourceSchema = z.object({
+  expectedRevision: z.number().int().nonnegative(),
+  resource: PragmaResourceSchema,
+});
+
 export const PragmaYamlValidationResultSchema = z.object({
   resource: PragmaResourceSchema.optional(),
   diagnostics: z.array(PragmaDiagnosticSchema),
 });
+
+const WorkflowLayoutIdentitySchema = z.object({
+  projectId: z
+    .string()
+    .trim()
+    .min(1)
+    .max(120)
+    .regex(/^[A-Za-z0-9_-]+$/),
+  flowId: z.string().trim().min(1).max(120),
+});
+
+export const WorkflowLayoutSchema = WorkflowLayoutIdentitySchema.extend({
+  schemaVersion: z.literal("pragma.desktop-flow-layout/v1"),
+  flowVersion: z.string().trim().min(1).max(100),
+  nodes: z.record(
+    z.string().trim().min(1),
+    z.object({ x: z.number().finite(), y: z.number().finite() }),
+  ),
+  viewport: z.object({
+    x: z.number().finite(),
+    y: z.number().finite(),
+    zoom: z.number().finite().positive().max(4),
+  }),
+  updatedAt: z.string().datetime(),
+});
+
+export const GetWorkflowLayoutSchema = WorkflowLayoutIdentitySchema;
+export const DeleteWorkflowLayoutSchema = WorkflowLayoutIdentitySchema;
 
 export const MissionIdSchema = z.string().uuid();
 
@@ -670,6 +703,10 @@ export type PublishPragmaProject = z.infer<typeof PublishPragmaProjectSchema>;
 export type UpsertPragmaResource = z.infer<typeof UpsertPragmaResourceSchema>;
 export type DeletePragmaResource = z.infer<typeof DeletePragmaResourceSchema>;
 export type PragmaYamlValidationResult = z.infer<typeof PragmaYamlValidationResultSchema>;
+export type ValidatePragmaResource = z.infer<typeof ValidatePragmaResourceSchema>;
+export type WorkflowLayout = z.infer<typeof WorkflowLayoutSchema>;
+export type GetWorkflowLayout = z.infer<typeof GetWorkflowLayoutSchema>;
+export type DeleteWorkflowLayout = z.infer<typeof DeleteWorkflowLayoutSchema>;
 export type Mission = z.infer<typeof MissionSchema>;
 export type MissionExecutor = z.infer<typeof MissionExecutorSchema>;
 export type MissionLifecycleStatus = z.infer<typeof MissionLifecycleStatusSchema>;
@@ -710,6 +747,10 @@ export interface PragmaDesktopAPI {
   upsertPragmaResource: (input: UpsertPragmaResource) => Promise<PragmaProjectSnapshot>;
   deletePragmaResource: (input: DeletePragmaResource) => Promise<PragmaProjectSnapshot>;
   validatePragmaYaml: (source: string) => Promise<PragmaYamlValidationResult>;
+  validatePragmaResource: (input: ValidatePragmaResource) => Promise<PragmaYamlValidationResult>;
+  getWorkflowLayout: (input: GetWorkflowLayout) => Promise<WorkflowLayout | null>;
+  saveWorkflowLayout: (layout: WorkflowLayout) => Promise<WorkflowLayout>;
+  deleteWorkflowLayout: (input: DeleteWorkflowLayout) => Promise<void>;
   listMissions: () => Promise<Mission[]>;
   getMission: (id: string) => Promise<Mission>;
   createMission: (input: CreateMission) => Promise<Mission>;

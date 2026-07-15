@@ -10,6 +10,7 @@ import {
   CapabilityTestResultSchema,
   CreateCapabilitySchema,
   DesktopRuntimeAvailabilitySchema,
+  DeleteWorkflowLayoutSchema,
   ContextStoreSchema,
   CreateExpertDefinitionSchema,
   CreateContextStoreSchema,
@@ -17,6 +18,7 @@ import {
   ExpertDefinitionSchema,
   ExpertIdSchema,
   ExpertSummarySchema,
+  GetWorkflowLayoutSchema,
   ImportSkillCapabilitySchema,
   CreateModelProviderSchema,
   DeleteModelProviderSchema,
@@ -41,6 +43,8 @@ import {
   UpdateCapabilitySchema,
   ValidateWorkspacePathSchema,
   ValidateWorkspaceResultSchema,
+  ValidatePragmaResourceSchema,
+  WorkflowLayoutSchema,
   type PragmaDesktopAPI,
 } from "../shared/desktop-api.ts";
 
@@ -128,6 +132,27 @@ const api: PragmaDesktopAPI = {
         ValidatePragmaYamlSchema.parse({ source }),
       ),
     ),
+  validatePragmaResource: async (input) =>
+    PragmaYamlValidationResultSchema.parse(
+      await ipcRenderer.invoke(
+        "pragma-project:validate-resource",
+        ValidatePragmaResourceSchema.parse(input),
+      ),
+    ),
+  getWorkflowLayout: async (input) => {
+    const result: unknown = await ipcRenderer.invoke(
+      "workflow-layout:get",
+      GetWorkflowLayoutSchema.parse(input),
+    );
+    return result === null ? null : WorkflowLayoutSchema.parse(result);
+  },
+  saveWorkflowLayout: async (layout) =>
+    WorkflowLayoutSchema.parse(
+      await ipcRenderer.invoke("workflow-layout:save", WorkflowLayoutSchema.parse(layout)),
+    ),
+  deleteWorkflowLayout: async (input) => {
+    await ipcRenderer.invoke("workflow-layout:delete", DeleteWorkflowLayoutSchema.parse(input));
+  },
   listMissions: async () => MissionSchema.array().parse(await ipcRenderer.invoke("missions:list")),
   getMission: async (id) =>
     MissionSchema.parse(await ipcRenderer.invoke("missions:get", MissionIdSchema.parse(id))),

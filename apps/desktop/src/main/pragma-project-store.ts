@@ -46,6 +46,10 @@ export interface PragmaProjectStore {
     readonly ref: string;
   }): Promise<PragmaProjectSnapshot>;
   validateYaml(source: string): Promise<PragmaYamlValidationResult>;
+  validateCandidate(input: {
+    readonly expectedRevision: number;
+    readonly resource: PragmaResource;
+  }): Promise<PragmaYamlValidationResult>;
   openRevision(revision: number): Promise<PragmaProject>;
 }
 
@@ -261,6 +265,47 @@ export function createPragmaProjectStore(options: {
             }),
           ],
         };
+      }
+    },
+    async validateCandidate(input) {
+      const snapshot = await readSnapshot();
+      if (snapshot.revision !== input.expectedRevision) {
+        throw new PragmaProjectStoreError(
+          "revision_conflict",
+          `Project revision changed from ${input.expectedRevision} to ${snapshot.revision}.`,
+        );
+      }
+      const resource = PragmaResourceSchema.parse(input.resource);
+      const key = resourceKey(resource);
+      const resources = [
+        ...snapshot.resources.filter((current) => resourceKey(current) !== key),
+        resource,
+      ];
+      assertUniqueResources(resources);
+      const validationPath = join(projectPath, `.validation-${randomUUID()}.tmp`);
+      await mkdir(validationPath, { recursive: true, mode: 0o700 });
+      try {
+        const imports: string[] = [];
+        for (const current of resources) {
+          const directory = `${resourceKind(current)}s`;
+          const relativePath = `${directory}/${current.metadata.id}.pragma.yaml`;
+          imports.push(relativePath);
+          await mkdir(join(validationPath, directory), { recursive: true, mode: 0o700 });
+          await writeFile(join(validationPath, relativePath), formatPragmaYaml(current), {
+            mode: 0o600,
+          });
+        }
+        await writeFile(
+          join(validationPath, "pragma.yaml"),
+          formatPragmaYaml({ apiVersion: "pragma/v1", kind: "Bundle", imports, resources: [] }),
+          { mode: 0o600 },
+        );
+        const candidate = await loadPragmaProject(join(validationPath, "pragma.yaml"), {
+          rootDir: validationPath,
+        });
+        return { resource, diagnostics: [...(await candidate.validate())] };
+      } finally {
+        await rm(validationPath, { recursive: true, force: true });
       }
     },
     async openRevision(revision) {

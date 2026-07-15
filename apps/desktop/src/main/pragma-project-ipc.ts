@@ -4,6 +4,7 @@ import {
   DeletePragmaResourceSchema,
   PublishPragmaProjectSchema,
   UpsertPragmaResourceSchema,
+  ValidatePragmaResourceSchema,
   ValidatePragmaYamlSchema,
 } from "../shared/desktop-api.ts";
 import type { PragmaProjectStore } from "./pragma-project-store.ts";
@@ -22,4 +23,8 @@ export function installPragmaProjectHandlers(store: PragmaProjectStore): void {
   ipcMain.handle("pragma-project:validate-yaml", (_event, input: unknown) =>
     store.validateYaml(ValidatePragmaYamlSchema.parse(input).source),
   );
+  ipcMain.handle("pragma-project:validate-resource", (_event, input: unknown) => {
+    const parsed = ValidatePragmaResourceSchema.parse(input);
+    return store.validateCandidate(parsed);
+  });
 }

@@ -64,6 +64,23 @@ describe("PragmaProjectStore", () => {
     expect((await project.get()).revision).toBe(0);
   });
 
+  it("validates a Flow candidate against the current project without publishing it", async () => {
+    const { project } = await stores();
+    await project.publish({ expectedRevision: 0, resources: [exampleExpert(), exampleFlow()] });
+    const candidate = exampleFlow();
+    candidate.spec.graph.steps["write"] = {
+      expert: { ref: "expert:missing@1.0.0" },
+      version: "1.0.0",
+    };
+    candidate.spec.graph.transitions["write"] = { end: true };
+
+    const result = await project.validateCandidate({ expectedRevision: 1, resource: candidate });
+
+    expect(result.resource).toEqual(candidate);
+    expect(result.diagnostics.some((diagnostic) => diagnostic.severity === "error")).toBe(true);
+    expect((await project.get()).revision).toBe(1);
+  });
+
   it("backs the Desktop expert form with YAML resources and no JSON migration path", async () => {
     const { directory, experts } = await stores();
     const created = await experts.create({

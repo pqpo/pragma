@@ -49,6 +49,57 @@ final result: passed
 
 ---
 
+# Flow editor design QA
+
+- Source visual truth: `/tmp/dify-workflow.png` (Dify workflow builder reference)
+- Implementation screenshot: `/tmp/pragma-flow-final.png`
+- Viewport: 1280 × 720, light theme, Desktop renderer
+- State: a five-step Flow with a route, failure fallback, and bounded repeat transition; palette and inspector collapsed to prioritize the canvas
+- Full-view comparison evidence: the source and implementation were opened together in one comparison input after the final capture. Both use a persistent workflow toolbar, dotted infinite canvas, typed nodes, visible connectors, collapsible authoring controls, and a minimap. Pragma intentionally retains its existing warm neutral/green visual tokens instead of copying Dify's blue palette.
+- Focused region comparison: not required for the final gate because the full-view captures keep the toolbar, nodes, edges, minimap, and collapsed panel affordances readable. Inspector fields and validation states were separately exercised in the same browser session.
+
+## Findings
+
+No actionable P0, P1, or P2 findings remain.
+
+- Fonts and typography: the implementation preserves Pragma's existing system and mono typography, with clear hierarchy between the Flow title, toolbar controls, node types, node names, and inspector labels.
+- Spacing and layout rhythm: the editor now takes over the Studio content region, panels collapse to 52 px rails, the graph is centered at a readable minimum zoom, and persistent controls remain visible at the tested viewport.
+- Colors and visual tokens: neutral canvas, green semantic accents, subtle borders, and error colors follow the existing Desktop token system while retaining the interaction structure of the reference.
+- Image and asset fidelity: no raster product art is required. All visible interface icons come from the existing Phosphor icon library or React Flow itself; no placeholder drawings, emoji, or handcrafted SVG assets were introduced.
+- Copy and content: authoring labels are concise and domain-specific (`Validate & publish`, `Auto arrange`, `Human input`, `Runtime routes`, `On limit destination`). Validation errors are translated into actionable language.
+
+## Comparison history
+
+1. Initial capture found a P1 canvas-width issue: the Studio section navigation, open palette, and open inspector left too little graph space. Fixed by letting the editor occupy the complete Studio content region, hiding the redundant Studio section rail while editing, and defaulting both authoring panels to accessible collapsed rails. Post-fix evidence: `/tmp/pragma-flow-final.png`.
+2. Initial capture found a P2 node-readability issue on longer graphs. Fixed by applying a 0.55 minimum zoom for the initial canvas focus while keeping the explicit Fit control available for whole-graph framing. Post-fix evidence: `/tmp/pragma-flow-final.png`.
+3. Validation review found a P2 raw-schema-message issue. Fixed by mapping common metadata failures to human-readable messages and labeling the toolbar badge as `Check` or an explicit issue count.
+4. Interaction review found a P2 accessibility issue when collapsed panel text was visually hidden. Fixed with state-specific accessible labels for the node palette and inspector toggles.
+
+## Primary interactions tested
+
+- Open a new Flow editor.
+- Add Expert, Human input, and Action nodes.
+- Rename a node and verify graph references update.
+- Switch a transition to route mode and expose editable cases/fallback.
+- Auto-arrange the graph.
+- Drag a node on the canvas and confirm undo becomes available.
+- Trigger a metadata validation error, open the validation panel, and verify the actionable message.
+- Open and collapse the palette/inspector surfaces.
+
+## Console and quality checks
+
+- Browser console: no app errors or warnings observed during the Flow interactions.
+- Desktop lint, TypeScript checks, tests, and production build passed.
+- Source and implementation were compared from captured visual evidence, not from code alone.
+
+## Follow-up polish
+
+- P3: consider adding named layout presets for especially wide graphs once real-world Flow sizes are available.
+
+final result: passed
+
+---
+
 # Overview long-content optimization design QA
 
 ## Comparison targets
