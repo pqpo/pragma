@@ -66,6 +66,11 @@ Agent contexts are fresh and Execution-scoped; FIFO followups reuse that Agent c
 Runtime snapshot. FlowExecution Runtime Sessions remain execution-scoped.
 Execution and human-interaction bindings are submitted atomically with each Runtime submission.
 
+ExpertSession creation atomically establishes one root Runtime Context. All root prompts in that
+Session reuse it, while a fresh root requires a new ExpertSession. Runtime routing completes before
+Context creation; afterward `RuntimeContextRecord.runtimeId` is the only execution-time Runtime
+identity source.
+
 Agent workspaces contain task inputs, repositories, artifacts, and task-authored files only. Runtime
 state, configuration, sessions, and installed plugin copies must never be derived from or written
 below the workspace. Agent plugin copies live under `~/.pragma/cache/agents/<agent>/plugins/`.

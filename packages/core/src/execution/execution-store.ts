@@ -22,6 +22,7 @@ import { z } from "zod";
 import { withFileLock } from "../storage/file-lock.ts";
 import { PragmaPaths } from "../storage/pragma-paths.ts";
 import { getExecutionLiveBus } from "./execution-live-bus.ts";
+import { sameRuntimeContextOrigin } from "./runtime-context-record.ts";
 
 export interface NewExecutionEvent {
   readonly eventId?: string | undefined;
@@ -115,7 +116,7 @@ const ExecutionCommitRecordSchema = z.object({
 });
 
 const ExecutionCommitJournalSchema = z.object({
-  schemaVersion: z.literal("pragma.execution-transaction/v5"),
+  schemaVersion: z.literal("pragma.execution-transaction/v6"),
   commitId: z.string().min(1),
   signature: z.string().length(64),
   execution: ExecutionRecordSchema,
@@ -243,7 +244,7 @@ export function createFileExecutionStore(
           updatedAt: now,
         });
         const journal = ExecutionCommitJournalSchema.parse({
-          schemaVersion: "pragma.execution-transaction/v5",
+          schemaVersion: "pragma.execution-transaction/v6",
           commitId: request.commitId,
           signature,
           execution: nextExecution,
@@ -433,11 +434,6 @@ function applyContextChanges(
     const next = RuntimeContextRecordSchema.parse({
       ...context,
       ...change.patch,
-      contextId: change.contextId,
-      owner: context.owner,
-      expert: context.expert,
-      runtimeId: context.runtimeId ?? change.patch.runtimeId,
-      createdByInvocationId: context.createdByInvocationId,
       updatedAt: change.patch.updatedAt ?? now,
     });
     assertContextIdentity(context, next);
@@ -474,11 +470,13 @@ function assertAgentContextBindings(
 
 function assertContextIdentity(current: RuntimeContextRecord, next: RuntimeContextRecord): void {
   if (
+    current.contextId !== next.contextId ||
     current.owner.type !== next.owner.type ||
     current.owner.ownerId !== next.owner.ownerId ||
+    !sameRuntimeContextOrigin(current.origin, next.origin) ||
     current.expert.id !== next.expert.id ||
     current.expert.version !== next.expert.version ||
-    (current.runtimeId !== undefined && next.runtimeId !== current.runtimeId)
+    next.runtimeId !== current.runtimeId
   ) {
     throw new Error(`Runtime Context identity cannot change: ${current.contextId}`);
   }

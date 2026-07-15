@@ -255,7 +255,7 @@ describe("Execution canonical event log", () => {
     await writeFile(
       paths.executionTransaction("execution"),
       `${JSON.stringify({
-        schemaVersion: "pragma.execution-transaction/v5",
+        schemaVersion: "pragma.execution-transaction/v6",
         commitId: "recovered-commit",
         signature: "a".repeat(64),
         execution: {

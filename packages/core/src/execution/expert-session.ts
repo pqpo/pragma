@@ -30,7 +30,7 @@ import {
   type ContextResolutionScopeSnapshot,
 } from "./context-resolution-service.ts";
 import type { ExpertSessionStore } from "./expert-session-store.ts";
-import { mergeRuntimeContextRecord } from "./runtime-context-record.ts";
+import { createRuntimeContextRecord, mergeRuntimeContextRecord } from "./runtime-context-record.ts";
 import {
   StoredExecutionView,
   type GetMessageHistoryOptions,
@@ -113,8 +113,17 @@ export class ExpertSessionManager {
     const now = new Date().toISOString();
     const rootExpert = isExpertTeam(expert) ? expert.coordinator : expert;
     const runtimeId = this.dependencies.runtimes.resolve(options.runtime).descriptor.id;
+    const rootContextId = randomUUID();
+    const rootContext = createRuntimeContextRecord({
+      contextId: rootContextId,
+      owner: { type: "expert-session", ownerId: sessionId },
+      origin: { type: "expert-session", sessionId },
+      expert: { id: rootExpert.id, version: rootExpert.version },
+      runtimeId,
+      now,
+    });
     await this.dependencies.sessions.create({
-      schemaVersion: "pragma.expert-session/v2",
+      schemaVersion: "pragma.expert-session/v3",
       sessionId,
       expertId: expert.id,
       expertVersion: expert.version,
@@ -122,9 +131,8 @@ export class ExpertSessionManager {
       status: "open",
       queuedRequestIds: [],
       executionIds: [],
-      runtimeId,
-      rootContextId: randomUUID(),
-      contexts: {},
+      rootContextId,
+      contexts: { [rootContextId]: rootContext },
       createdAt: now,
       updatedAt: now,
     });
@@ -136,7 +144,6 @@ export class ExpertSessionManager {
     }
     const session = this.createActiveSession(expert, sessionId, false, claimId);
     this.active.set(sessionId, session);
-    void rootExpert;
     return session;
   }
 
@@ -302,18 +309,6 @@ class ExpertSessionImpl implements ExpertSession {
     const executionId = await this.dependencies.sessions.enqueue({
       execution,
       prompt,
-      ...(session.contexts[rootContextId] === undefined
-        ? {
-            context: createRootRuntimeContext(
-              this.expert,
-              this.sessionId,
-              rootContextId,
-              id,
-              session.runtimeId,
-              now,
-            ),
-          }
-        : {}),
       rootInvocation: {
         invocationId: id,
         rootInvocationId: id,
@@ -527,11 +522,14 @@ class ExpertSessionImpl implements ExpertSession {
     const events = [
       ...(await this.dependencies.sessions.listEvents(this.sessionId)),
       ...executionEvents,
-    ].sort((left, right) =>
-      left.occurredAt === right.occurredAt
-        ? left.eventId.localeCompare(right.eventId)
-        : left.occurredAt.localeCompare(right.occurredAt),
-    );
+    ].sort((left, right) => {
+      const occurredAt = left.occurredAt.localeCompare(right.occurredAt);
+      if (occurredAt !== 0) return occurredAt;
+      if ("sessionId" in left.cursor && "sessionId" in right.cursor) {
+        return left.cursor.sequence - right.cursor.sequence;
+      }
+      return left.eventId.localeCompare(right.eventId);
+    });
     const offset = options.after?.offset ?? 0;
     const items = events.slice(offset, offset + limit);
     return {
@@ -733,7 +731,6 @@ class ExpertSessionImpl implements ExpertSession {
         expert: this.expert,
         prompt: prompt.content,
         owner: { type: "expert-session", ownerId: this.sessionId },
-        runtimeId: session.runtimeId,
         context: rootContext,
         controller,
         store: this.dependencies.executions,
@@ -831,9 +828,7 @@ class ExpertSessionImpl implements ExpertSession {
     );
     return {
       contexts: Object.values(session.contexts),
-      invocations: histories.flatMap(
-        (history): readonly Invocation[] => history.invocations,
-      ),
+      invocations: histories.flatMap((history): readonly Invocation[] => history.invocations),
       agents: histories.flatMap((history): readonly AgentInstance[] => history.agents),
     };
   }
@@ -866,32 +861,6 @@ class ExpertSessionImpl implements ExpertSession {
   private createExecutionView(executionId: string): StoredExecutionView {
     return new StoredExecutionView(executionId, this.dependencies.executions, this.sessionId);
   }
-}
-
-function createRootRuntimeContext(
-  definition: ExpertDefinition,
-  sessionId: string,
-  contextId: string,
-  invocationId: string,
-  runtimeId: string | undefined,
-  now: string,
-): RuntimeContextRecord {
-  const expert = rootExpert(definition);
-  return {
-    schemaVersion: "pragma.runtime-context/v1",
-    contextId,
-    owner: { type: "expert-session", ownerId: sessionId },
-    createdByInvocationId: invocationId,
-    expert: { id: expert.id, version: expert.version },
-    ...(runtimeId === undefined ? {} : { runtimeId }),
-    lifecycle: "open",
-    createdAt: now,
-    updatedAt: now,
-  };
-}
-
-function rootExpert(definition: ExpertDefinition) {
-  return isExpertTeam(definition) ? definition.coordinator : definition;
 }
 
 function closeSessionContexts(session: ExpertSessionRecord): ExpertSessionRecord {

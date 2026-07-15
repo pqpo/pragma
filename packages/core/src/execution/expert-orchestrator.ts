@@ -36,7 +36,6 @@ export interface ExpertInvocationJob {
   readonly invocation: Invocation;
   readonly expert: Expert;
   readonly prompt: string;
-  readonly runtimeId?: string | undefined;
   readonly permit: DelegationPermit;
 }
 
@@ -90,7 +89,7 @@ export class ExpertOrchestrator {
     readonly depth: number;
     readonly expert: Expert;
     readonly prompt: string;
-    readonly runtimeId?: string | undefined;
+    readonly runtimeId: string;
     readonly owner: RuntimeContextOwner;
     readonly resolver: ContextIdResolver;
     readonly source: ContextIdResolutionSource;
@@ -129,7 +128,7 @@ export class ExpertOrchestrator {
         owner: request.owner,
         ownerContextId: request.ownerContextId,
         expert: { id: request.expert.id, version: request.expert.version },
-        requestedRuntimeId: request.runtimeId,
+        runtimeId: request.runtimeId,
         resolver: request.resolver,
         freshContextId,
       });
@@ -289,7 +288,7 @@ export class ExpertOrchestrator {
         owner: context.owner,
         ownerContextId,
         expert: context.expert,
-        requestedRuntimeId: context.runtimeId,
+        runtimeId: context.runtimeId,
         resolver: followupContextIdResolver,
         freshContextId: context.contextId,
       });
@@ -585,7 +584,6 @@ export class ExpertOrchestrator {
         invocation: latest,
         expert,
         prompt: String(latest.input),
-        runtimeId: context.runtimeId,
         permit,
       });
       this.activeJobs.set(next.invocationId, running);
@@ -604,7 +602,6 @@ export class ExpertOrchestrator {
     readonly invocation: Invocation;
     readonly expert: Expert;
     readonly prompt: string;
-    readonly runtimeId?: string | undefined;
     readonly permit: DelegationPermit;
   }): Promise<void> {
     try {
@@ -612,7 +609,10 @@ export class ExpertOrchestrator {
         commitId: `agent-activated:${options.invocation.invocationId}`,
         executionId: this.options.executionId,
         agentPatches: [
-          { agentId: options.agentId, patch: { activeInvocationId: options.invocation.invocationId } },
+          {
+            agentId: options.agentId,
+            patch: { activeInvocationId: options.invocation.invocationId },
+          },
         ],
         events: [
           {
@@ -631,7 +631,6 @@ export class ExpertOrchestrator {
         invocation: options.invocation,
         expert: options.expert,
         prompt: options.prompt,
-        runtimeId: options.runtimeId,
         permit: options.permit,
       });
     } catch {

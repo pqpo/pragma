@@ -444,7 +444,6 @@ async function runStep(
       return output;
     }
     const expert = step.definition as ExpertDefinition;
-    const nativeExpert = isExpertTeam(expert) ? expert.coordinator : expert;
     const context = await options.store.getContext(options.executionId, invocation.contextId);
     if (context === undefined) {
       throw new Error(`Runtime Context not found: ${invocation.contextId}.`);
@@ -456,7 +455,6 @@ async function runStep(
       expert,
       prompt: typeof input === "string" ? input : JSON.stringify(input),
       owner: { type: "flow-execution", ownerId: options.executionId },
-      runtimeId: resolveFlowStepRuntimeId(step, nativeExpert.id, options.runtime),
       ...(readFlowStepRuntimeByExpert(step) === undefined
         ? {}
         : { runtimeByExpert: readFlowStepRuntimeByExpert(step) }),
@@ -666,7 +664,7 @@ async function createStepInvocation(
       },
       owner: { type: "flow-execution", ownerId: options.executionId },
       expert: { id: nativeExpert.id, version: nativeExpert.version },
-      requestedRuntimeId: options.runtimes.resolve(
+      runtimeId: options.runtimes.resolve(
         resolveFlowStepRuntimeId(step, nativeExpert.id, options.runtime),
       ).descriptor.id,
       resolver:

@@ -27,8 +27,6 @@ export const DefinitionReferenceSchema = z.object({
 });
 
 export const RuntimeContextSnapshotSchema = z.object({
-  expertId: z.string().min(1),
-  runtimeId: z.string().min(1),
   systemSessionId: z.string().min(1),
   runtimeSession: RuntimeSessionRefSchema,
 });
@@ -38,17 +36,28 @@ export const RuntimeContextOwnerSchema = z.object({
   ownerId: z.string().min(1),
 });
 
+export const RuntimeContextOriginSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("expert-session"),
+    sessionId: z.string().min(1),
+  }),
+  z.object({
+    type: z.literal("invocation"),
+    invocationId: z.string().min(1),
+  }),
+]);
+
 export const RuntimeContextRecordSchema = z
   .object({
-    schemaVersion: z.literal("pragma.runtime-context/v1"),
+    schemaVersion: z.literal("pragma.runtime-context/v2"),
     contextId: z.string().min(1),
     owner: RuntimeContextOwnerSchema,
-    createdByInvocationId: z.string().min(1),
+    origin: RuntimeContextOriginSchema,
     expert: z.object({
       id: z.string().min(1),
       version: z.string().min(1),
     }),
-    runtimeId: z.string().min(1).optional(),
+    runtimeId: z.string().min(1),
     snapshot: RuntimeContextSnapshotSchema.optional(),
     lifecycle: z.enum(["open", "closed"]),
     createdAt: z.string().datetime(),
@@ -56,6 +65,23 @@ export const RuntimeContextRecordSchema = z
     closedAt: z.string().datetime().optional(),
   })
   .superRefine((value, context) => {
+    if (
+      value.origin.type === "expert-session" &&
+      (value.owner.type !== "expert-session" || value.owner.ownerId !== value.origin.sessionId)
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["origin"],
+        message: "ExpertSession Context origin must match its owner.",
+      });
+    }
+    if (value.owner.type === "flow-execution" && value.origin.type !== "invocation") {
+      context.addIssue({
+        code: "custom",
+        path: ["origin"],
+        message: "FlowExecution Context requires an Invocation origin.",
+      });
+    }
     if (value.lifecycle === "closed" && value.closedAt === undefined) {
       context.addIssue({ code: "custom", path: ["closedAt"], message: "closedAt is required." });
     }
@@ -65,22 +91,6 @@ export const RuntimeContextRecordSchema = z
         path: ["closedAt"],
         message: "Open Context cannot have closedAt.",
       });
-    }
-    if (value.snapshot !== undefined) {
-      if (value.snapshot.expertId !== value.expert.id) {
-        context.addIssue({
-          code: "custom",
-          path: ["snapshot", "expertId"],
-          message: "Snapshot Expert mismatch.",
-        });
-      }
-      if (value.runtimeId !== undefined && value.snapshot.runtimeId !== value.runtimeId) {
-        context.addIssue({
-          code: "custom",
-          path: ["snapshot", "runtimeId"],
-          message: "Snapshot Runtime mismatch.",
-        });
-      }
     }
   });
 
@@ -203,6 +213,7 @@ export type InvocationKind = z.infer<typeof InvocationKindSchema>;
 export type DefinitionReference = z.infer<typeof DefinitionReferenceSchema>;
 export type RuntimeContextSnapshot = z.infer<typeof RuntimeContextSnapshotSchema>;
 export type RuntimeContextOwner = z.infer<typeof RuntimeContextOwnerSchema>;
+export type RuntimeContextOrigin = z.infer<typeof RuntimeContextOriginSchema>;
 export type RuntimeContextRecord = z.infer<typeof RuntimeContextRecordSchema>;
 export type ContextResolutionRecord = z.infer<typeof ContextResolutionRecordSchema>;
 export type Invocation = z.infer<typeof InvocationSchema>;

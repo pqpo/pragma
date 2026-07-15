@@ -20,6 +20,10 @@ import type {
   ExecutionStore,
   NewExecutionEvent,
 } from "./execution-store.ts";
+import {
+  createRuntimeContextRecord,
+  requireInvocationContextOrigin,
+} from "./runtime-context-record.ts";
 
 export interface ResolveRuntimeContextRequest {
   readonly executionId: string;
@@ -31,7 +35,7 @@ export interface ResolveRuntimeContextRequest {
   readonly owner: RuntimeContextOwner;
   readonly ownerContextId?: string | undefined;
   readonly expert: { readonly id: string; readonly version: string };
-  readonly requestedRuntimeId?: string | undefined;
+  readonly runtimeId: string;
   readonly resolver: ContextIdResolver;
   readonly freshContextId?: string | undefined;
 }
@@ -75,11 +79,7 @@ export class ContextResolutionService {
       localInvocations,
       (invocation) => invocation.invocationId,
     );
-    const agents = mergeById(
-      ownerScope?.agents ?? [],
-      localAgents,
-      (agent) => agent.agentId,
-    );
+    const agents = mergeById(ownerScope?.agents ?? [], localAgents, (agent) => agent.agentId);
     const previousContexts = selectCompatibleCandidates(request, contexts, invocations, agents);
     const contextId = resolveContextId(request.resolver, {
       source: request.source,
@@ -89,9 +89,7 @@ export class ContextResolutionService {
       target: {
         expertId: request.expert.id,
         expertVersion: request.expert.version,
-        ...(request.requestedRuntimeId === undefined
-          ? {}
-          : { requestedRuntimeId: request.requestedRuntimeId }),
+        runtimeId: request.runtimeId,
       },
       invocation: {
         ...(request.parentInvocationId === undefined
@@ -109,19 +107,14 @@ export class ContextResolutionService {
     const now = new Date().toISOString();
     const context =
       existing ??
-      ({
-        schemaVersion: "pragma.runtime-context/v1",
+      createRuntimeContextRecord({
         contextId,
         owner: request.owner,
-        createdByInvocationId: request.invocationId,
+        origin: { type: "invocation", invocationId: request.invocationId },
         expert: request.expert,
-        ...(request.requestedRuntimeId === undefined
-          ? {}
-          : { runtimeId: request.requestedRuntimeId }),
-        lifecycle: "open",
-        createdAt: now,
-        updatedAt: now,
-      } satisfies RuntimeContextRecord);
+        runtimeId: request.runtimeId,
+        now,
+      });
     assertCompatibleContext(request, context, agents);
     const resolver = describeContextIdResolver(request.resolver);
     const eventData = {
@@ -203,7 +196,7 @@ export async function prepareExecutionContextClosure(
       patch: { lifecycle: "closed" as const, closedAt: now, activeInvocationId: undefined },
     })),
     events: openContexts.map((context) => ({
-      invocationId: context.createdByInvocationId,
+      invocationId: requireInvocationContextOrigin(context),
       type: "context.closed",
       data: { contextId: context.contextId },
     })),
@@ -224,12 +217,7 @@ function selectCompatibleCandidates(
       context.expert.version !== request.expert.version
     )
       return false;
-    if (
-      request.requestedRuntimeId !== undefined &&
-      context.runtimeId !== undefined &&
-      context.runtimeId !== request.requestedRuntimeId
-    )
-      return false;
+    if (context.runtimeId !== request.runtimeId) return false;
     if (flowStepId !== undefined) {
       return invocations.some(
         (invocation) =>
@@ -258,7 +246,7 @@ function selectCompatibleCandidates(
           ...(agent === undefined ? {} : { agentId: agent.agentId }),
           expertId: context.expert.id,
           expertVersion: context.expert.version,
-          ...(context.runtimeId === undefined ? {} : { runtimeId: context.runtimeId }),
+          runtimeId: context.runtimeId,
           lifecycle: context.lifecycle,
           lastInvocationId: last.invocationId,
           lastInvocationStatus: last.status,
@@ -292,11 +280,7 @@ function assertCompatibleContext(
   ) {
     throw new Error(`Runtime Context Expert identity conflict: ${context.contextId}.`);
   }
-  if (
-    request.requestedRuntimeId !== undefined &&
-    context.runtimeId !== undefined &&
-    context.runtimeId !== request.requestedRuntimeId
-  ) {
+  if (context.runtimeId !== request.runtimeId) {
     throw new Error(`Runtime Context Runtime identity conflict: ${context.contextId}.`);
   }
   if (context.lifecycle !== "open") {

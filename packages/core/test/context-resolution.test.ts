@@ -2,7 +2,11 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import type { Invocation, RuntimeContextRecord } from "@pragma/shared";
+import {
+  RuntimeContextRecordSchema,
+  type Invocation,
+  type RuntimeContextRecord,
+} from "@pragma/shared";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -17,11 +21,13 @@ describe("ContextResolutionService", () => {
   it("selects any earlier compatible Context in stable history order", async () => {
     const fixture = await createFixture();
     let candidates: readonly string[] = [];
+    let selectedRuntimeId: string | undefined;
     const resolver = defineContextIdResolver({
       id: "test.select-first",
       version: "1.0.0",
-      resolve: ({ previousContexts, freshContextId }) => {
+      resolve: ({ previousContexts, freshContextId, target }) => {
         candidates = previousContexts.map((context) => context.contextId);
+        selectedRuntimeId = target.runtimeId;
         return previousContexts[0]?.contextId ?? freshContextId;
       },
     });
@@ -35,12 +41,13 @@ describe("ContextResolutionService", () => {
       source: { kind: "flow", flowId: "flow", stepId: "review", visit: 3 },
       owner: fixture.owner,
       expert: fixture.expert,
-      requestedRuntimeId: "runtime",
+      runtimeId: "runtime",
       resolver,
       freshContextId: "fresh-third",
     });
 
     expect(candidates).toEqual(["context-1", "context-2"]);
+    expect(selectedRuntimeId).toBe("runtime");
     expect(resolution).toMatchObject({
       disposition: "reused",
       context: { contextId: "context-1" },
@@ -104,7 +111,7 @@ describe("ContextResolutionService", () => {
         source: { kind: "flow", flowId: "flow", stepId: "review", visit: 3 },
         owner: fixture.owner,
         expert: fixture.expert,
-        requestedRuntimeId: "runtime",
+        runtimeId: "runtime",
         resolver: fixed("context-1"),
       }),
     ).rejects.toThrow("closed");
@@ -118,7 +125,7 @@ describe("ContextResolutionService", () => {
         source: { kind: "flow", flowId: "flow", stepId: "other", visit: 1 },
         owner: fixture.owner,
         expert: { id: "other-expert", version: "1.0.0" },
-        requestedRuntimeId: "runtime",
+        runtimeId: "runtime",
         resolver: fixed("context-2"),
       }),
     ).rejects.toThrow("Expert identity conflict");
@@ -132,7 +139,7 @@ describe("ContextResolutionService", () => {
         source: { kind: "flow", flowId: "flow", stepId: "review", visit: 3 },
         owner: fixture.owner,
         expert: fixture.expert,
-        requestedRuntimeId: "other-runtime",
+        runtimeId: "other-runtime",
         resolver: fixed("context-2"),
       }),
     ).rejects.toThrow("Runtime identity conflict");
@@ -146,10 +153,56 @@ describe("ContextResolutionService", () => {
         source: { kind: "flow", flowId: "flow", stepId: "review", visit: 3 },
         owner: { type: "flow-execution", ownerId: "other-execution" },
         expert: fixture.expert,
-        requestedRuntimeId: "runtime",
+        runtimeId: "runtime",
         resolver: fixed("context-2"),
       }),
     ).rejects.toThrow("owner conflict");
+  });
+
+  it("requires immutable Runtime identity and valid Session provenance", () => {
+    const now = new Date().toISOString();
+    const base = {
+      schemaVersion: "pragma.runtime-context/v2",
+      contextId: "root",
+      owner: { type: "expert-session", ownerId: "session" },
+      origin: { type: "expert-session", sessionId: "session" },
+      expert: { id: "expert", version: "1.0.0" },
+      runtimeId: "runtime",
+      lifecycle: "open",
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    expect(RuntimeContextRecordSchema.safeParse(base).success).toBe(true);
+    expect(
+      RuntimeContextRecordSchema.safeParse({
+        ...base,
+        origin: { type: "expert-session", sessionId: "other-session" },
+      }).success,
+    ).toBe(false);
+    expect(RuntimeContextRecordSchema.safeParse({ ...base, runtimeId: undefined }).success).toBe(
+      false,
+    );
+  });
+
+  it("rejects Runtime Context identity mutation patches instead of ignoring them", async () => {
+    const fixture = await createFixture();
+
+    await expect(
+      fixture.store.commit({
+        commitId: "mutate-context-origin",
+        executionId: "execution",
+        contextPatches: [
+          {
+            contextId: "context-2",
+            patch: { origin: { type: "invocation", invocationId: "replacement" } },
+          },
+        ],
+      }),
+    ).rejects.toThrow("Runtime Context identity cannot change");
+    await expect(fixture.store.getContext("execution", "context-2")).resolves.toMatchObject({
+      origin: { type: "invocation", invocationId: "second" },
+    });
   });
 });
 
@@ -226,10 +279,10 @@ function contextRecord(
   closed: boolean,
 ): RuntimeContextRecord {
   return {
-    schemaVersion: "pragma.runtime-context/v1",
+    schemaVersion: "pragma.runtime-context/v2",
     contextId,
     owner,
-    createdByInvocationId: invocationId,
+    origin: { type: "invocation", invocationId },
     expert,
     runtimeId: "runtime",
     lifecycle: closed ? "closed" : "open",
@@ -244,7 +297,7 @@ function resolutionContext() {
     source: { kind: "flow" as const, flowId: "flow", stepId: "step", visit: 1 },
     executionId: "execution",
     owner: { type: "flow-execution" as const, ownerId: "execution" },
-    target: { expertId: "expert", expertVersion: "1.0.0" },
+    target: { expertId: "expert", expertVersion: "1.0.0", runtimeId: "runtime" },
     invocation: { input: null },
     state: {},
     previousContexts: [],
