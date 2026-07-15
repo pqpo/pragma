@@ -1,5 +1,5 @@
 import type { Icon } from "@phosphor-icons/react";
-import { Database, GitBranch, SquaresFour, User, UsersThree, Wrench } from "@phosphor-icons/react";
+import { Database, GitBranch, User, UsersThree, Wrench } from "@phosphor-icons/react";
 
 import type {
   CreateExpertDefinition,
@@ -8,13 +8,7 @@ import type {
 } from "../../../../shared/desktop-api.ts";
 
 export type ExpertModel = ExpertDefinition["model"];
-export type StudioView =
-  | "overview"
-  | "experts"
-  | "teams"
-  | "flows"
-  | "capabilities"
-  | "context-stores";
+export type StudioView = "experts" | "teams" | "flows" | "capabilities" | "context-stores";
 
 export type ExpertRecord = {
   readonly id: string;
@@ -111,7 +105,6 @@ export function desktopApi() {
 }
 
 export const studioSections = [
-  { id: "overview", label: "Overview", icon: SquaresFour },
   { id: "experts", label: "Experts", icon: User },
   { id: "teams", label: "Expert teams", icon: UsersThree },
   { id: "flows", label: "Flows", icon: GitBranch },
@@ -122,19 +115,3 @@ export const studioSections = [
   readonly label: string;
   readonly icon: Icon;
 }[];
-
-export const studioLabels = {
-  experts: "Experts",
-  teams: "Expert teams",
-  flows: "Flows",
-  capabilities: "Capabilities",
-  "context-stores": "Context stores",
-} satisfies Record<Exclude<StudioView, "overview">, string>;
-
-export const studioDescriptions = {
-  experts: "Individuals that perform specialized work in your missions.",
-  teams: "Groups of experts that work together toward a mission.",
-  flows: "Durable workflows with expert, team, action, human, and nested flow nodes.",
-  capabilities: "Reusable skills and external tools selected by experts.",
-  "context-stores": "Reusable knowledge sources mounted by experts.",
-} satisfies Record<Exclude<StudioView, "overview">, string>;

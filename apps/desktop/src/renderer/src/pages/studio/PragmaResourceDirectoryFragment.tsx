@@ -80,18 +80,19 @@ export function PragmaResourceDirectoryFragment(props: {
   }
 
   const Icon = props.kind === "team" ? UsersThree : GitBranch;
+  const headingId = props.kind === "team" ? "expert-teams-heading" : "flows-heading";
   return (
-    <section className="studio-collection pragma-resource-directory">
-      <header className="studio-collection-heading">
+    <section className="studio-collection pragma-resource-directory" aria-labelledby={headingId}>
+      <header className="studio-heading">
         <div>
-          <h2>{props.kind === "team" ? "Expert teams" : "Flows"}</h2>
+          <h1 id={headingId}>{props.kind === "team" ? "Expert teams" : "Flows"}</h1>
           <p>
             {props.kind === "team"
               ? "Governed expert groups with an explicit coordinator and delegation policy."
               : "Durable graphs with explicit transitions, human gates, and bounded loops."}
           </p>
         </div>
-        <button className="studio-primary-action" type="button" onClick={() => setEditing("new")}>
+        <button className="primary-button" type="button" onClick={() => setEditing("new")}>
           <Plus size={17} aria-hidden="true" /> New {props.kind}
         </button>
       </header>

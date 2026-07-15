@@ -23,7 +23,6 @@ import { ExpertDetailFragment, ExpertDirectoryFragment } from "./ExpertDirectory
 import { ExpertEditorFragment } from "./ExpertEditorFragment.tsx";
 import { CapabilityDirectoryFragment } from "./CapabilityDirectoryFragment.tsx";
 import { PragmaResourceDirectoryFragment } from "./PragmaResourceDirectoryFragment.tsx";
-import { StudioOverviewFragment } from "./StudioOverviewFragment.tsx";
 import {
   desktopApi,
   emptyDraft,
@@ -206,21 +205,19 @@ export function StudioPage() {
           const SectionIcon = section.icon;
           const isActive = section.id === activeView;
           const count =
-            section.id === "overview"
-              ? undefined
-              : section.id === "context-stores"
-                ? contextStores.length
-                : section.id === "experts"
-                  ? experts.length
-                  : section.id === "teams"
-                    ? (project?.resources.filter((resource) => resource.kind === "ExpertTeam")
-                        .length ?? 0)
-                    : section.id === "flows"
-                      ? (project?.resources.filter((resource) => resource.kind === "Flow").length ??
-                        0)
-                      : section.id === "capabilities"
-                        ? capabilities.length
-                        : 0;
+            section.id === "context-stores"
+              ? contextStores.length
+              : section.id === "experts"
+                ? experts.length
+                : section.id === "teams"
+                  ? (project?.resources.filter((resource) => resource.kind === "ExpertTeam")
+                      .length ?? 0)
+                  : section.id === "flows"
+                    ? (project?.resources.filter((resource) => resource.kind === "Flow").length ??
+                      0)
+                    : section.id === "capabilities"
+                      ? capabilities.length
+                      : 0;
           return (
             <button
               key={section.id}
@@ -317,17 +314,6 @@ export function StudioPage() {
           <p className="form-error" role="alert">
             {expertError}
           </p>
-        ) : null}
-        {screen === "directory" && activeView === "overview" ? (
-          <StudioOverviewFragment
-            experts={experts}
-            capabilities={capabilities}
-            contextStores={contextStores}
-            onNavigate={(view) => {
-              setActiveView(view);
-              setScreen("directory");
-            }}
-          />
         ) : null}
         {screen === "directory" &&
         (activeView === "teams" || activeView === "flows") &&

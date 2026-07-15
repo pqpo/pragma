@@ -202,62 +202,13 @@ p {
 }
 
 .desktop-shell.is-sidebar-collapsed .brand-name,
-.desktop-shell.is-sidebar-collapsed .navigation-item span,
-.desktop-shell.is-sidebar-collapsed .account-details,
-.desktop-shell.is-sidebar-collapsed .account-caret {
+.desktop-shell.is-sidebar-collapsed .navigation-item span {
   display: none;
 }
 
 .desktop-shell.is-sidebar-collapsed .navigation-item {
   justify-content: center;
   padding: 0;
-}
-
-.account {
-  display: grid;
-  grid-template-columns: auto 1fr auto;
-  align-items: center;
-  gap: 10px;
-  margin-top: auto;
-  padding: 28px 13px 0;
-  border-top: 1px solid var(--border);
-}
-
-.account-avatar {
-  color: #607067;
-}
-
-.account-details {
-  display: grid;
-  gap: 1px;
-  min-width: 0;
-}
-
-.account-details strong {
-  overflow: hidden;
-  font-size: 14px;
-  font-weight: 650;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.account-details span {
-  color: var(--muted);
-  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.03em;
-}
-
-.account-caret {
-  color: #606a63;
-}
-
-.desktop-shell.is-sidebar-collapsed .account {
-  display: flex;
-  justify-content: center;
-  padding-right: 0;
-  padding-left: 0;
 }
 
 .settings-page {
@@ -1017,7 +968,6 @@ p {
 }
 
 .studio-nav-item:focus-visible,
-.studio-resource-heading button:focus-visible,
 .studio-asset-row:focus-visible,
 .studio-create-menu button:focus-visible {
   outline: 2px solid var(--green);
@@ -1053,16 +1003,12 @@ p {
   padding: 7px 0 0 48px;
 }
 
-.studio-heading,
-.studio-collection-heading {
+.studio-heading {
   display: flex;
+  min-height: 111px;
   align-items: flex-start;
   justify-content: space-between;
   gap: 30px;
-}
-
-.studio-heading {
-  min-height: 111px;
   padding-bottom: 36px;
   border-bottom: 1px solid var(--border);
 }
@@ -1074,8 +1020,7 @@ p {
   line-height: 1.08;
 }
 
-.studio-heading p,
-.studio-collection-heading p {
+.studio-heading p {
   max-width: 620px;
   margin-top: 8px;
   color: var(--muted);
@@ -1120,72 +1065,6 @@ p {
 
 .studio-create-menu button:hover {
   background: var(--surface-muted);
-}
-
-.studio-overview-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  margin-top: 46px;
-}
-
-.studio-resource-section {
-  min-width: 0;
-  padding: 0 32px 34px;
-}
-
-.studio-resource-section:nth-child(odd) {
-  padding-left: 0;
-}
-
-.studio-resource-section:nth-child(even) {
-  padding-right: 0;
-  border-left: 1px solid #dfe4e0;
-}
-
-.studio-resource-section:nth-child(n + 3) {
-  padding-top: 34px;
-  border-top: 1px solid var(--border);
-}
-
-.studio-resource-heading {
-  display: flex;
-  min-height: 104px;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-  padding-bottom: 22px;
-  border-bottom: 1px solid var(--border);
-}
-
-.studio-resource-heading > div {
-  min-width: 0;
-}
-
-.studio-resource-heading h2,
-.studio-collection-heading h2 {
-  font-size: 19px;
-  font-weight: 700;
-  letter-spacing: -0.035em;
-  line-height: 1.2;
-}
-
-.studio-resource-heading p {
-  max-width: 420px;
-  margin-top: 11px;
-  color: var(--muted);
-  font-size: 13px;
-  line-height: 1.6;
-}
-
-.studio-resource-heading button {
-  flex: 0 0 auto;
-  padding: 2px 0;
-  border: 0;
-  background: transparent;
-  color: var(--green-dark);
-  cursor: pointer;
-  font-size: 13px;
-  font-weight: 650;
 }
 
 .studio-asset-rows {
@@ -1256,29 +1135,8 @@ p {
   -webkit-line-clamp: 2;
 }
 
-.studio-relationship-note {
-  display: flex;
-  align-items: center;
-  gap: 17px;
-  margin-top: 42px;
-  padding: 30px 0 0;
-  border-top: 1px solid var(--border);
-  color: #677169;
-  font-size: 13px;
-}
-
-.studio-relationship-note svg {
-  flex: 0 0 auto;
-  color: #5d6b61;
-}
-
 .studio-collection {
-  margin-top: 46px;
-}
-
-.studio-collection-heading {
-  padding-bottom: 22px;
-  border-bottom: 1px solid var(--border);
+  margin-top: 0;
 }
 
 .studio-collection .studio-asset-row {
@@ -1291,7 +1149,6 @@ p {
   height: 50px;
 }
 
-.studio-collection-heading,
 .pragma-resource-editor > header,
 .pragma-flow-nodes > header,
 .pragma-resource-editor > footer,
@@ -3134,15 +2991,6 @@ p {
     padding-left: 32px;
   }
 
-  .studio-resource-section {
-    padding-right: 16px;
-    padding-left: 16px;
-  }
-
-  .studio-resource-heading p {
-    font-size: 12px;
-  }
-
   .studio-asset-row {
     gap: 11px;
   }
@@ -3175,26 +3023,6 @@ p {
 
   .studio-content {
     padding-left: 32px;
-  }
-
-  .studio-overview-grid {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .studio-resource-section {
-    padding: 30px 0 34px;
-  }
-
-  .studio-resource-section:nth-child(even) {
-    border-left: 0;
-  }
-
-  .studio-resource-section:first-child {
-    padding-top: 0;
-  }
-
-  .studio-resource-section:nth-child(n + 2) {
-    border-top: 1px solid var(--border);
   }
 }
 

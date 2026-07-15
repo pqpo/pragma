@@ -17,6 +17,7 @@ describe("App", () => {
   it("offers the Studio collections with their counts", () => {
     const html = renderToStaticMarkup(<App />);
 
+    expect(html).not.toContain("Overview");
     expect(html).toContain("Experts");
     expect(html).toContain("Expert teams");
     expect(html).toContain("Flows");
@@ -29,7 +30,9 @@ describe("App", () => {
 
     expect(html).toContain("Missions");
     expect(html).toContain("Studio");
-    expect(html.match(/disabled=""/g)?.length).toBe(2);
+    expect(html).not.toContain("Inbox");
+    expect(html).not.toContain("Alex Chen");
+    expect(html.match(/disabled=""/g)?.length).toBe(1);
   });
 
   it("includes an accessible sidebar collapse control", () => {
