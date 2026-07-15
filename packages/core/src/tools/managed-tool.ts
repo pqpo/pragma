@@ -12,10 +12,7 @@ export interface ExpertToolExecutionContext {
   readonly invocationId: string;
   readonly depth: number;
   readonly spawnExpert?:
-    | ((request: {
-        readonly expertId: string;
-        readonly prompt: string;
-      }) => Promise<unknown>)
+    | ((request: { readonly expertId: string; readonly prompt: string }) => Promise<unknown>)
     | undefined;
   readonly waitExperts?:
     | ((request: {
