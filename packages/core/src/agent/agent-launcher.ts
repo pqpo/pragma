@@ -6,11 +6,14 @@ import {
 } from "../execution/context-id-resolver.ts";
 import type { ExpertAgentManagedTool, ExpertAgentToolCallResult } from "../tools/managed-tool.ts";
 
+export type RuntimeByExpert = Readonly<Record<string, string>>;
+
 export interface CreateAgentLauncherOptions {
   readonly experts: readonly Expert[];
   readonly maxConcurrency?: number | undefined;
   readonly maxDepth?: number | undefined;
   readonly contextId?: ContextIdResolver | undefined;
+  readonly runtimeByExpert?: RuntimeByExpert | undefined;
 }
 
 export type ExpertLifecycleToolName =
@@ -32,6 +35,7 @@ export interface AgentDelegationDefinition {
   readonly maxConcurrency: number;
   readonly maxDepth: number;
   readonly contextId: ContextIdResolver;
+  readonly runtimeByExpert: ReadonlyMap<string, string>;
 }
 
 const agentDelegationDefinition = Symbol("pragma.agent-delegation-definition");
@@ -52,6 +56,11 @@ export function createAgentLauncher(options: CreateAgentLauncherOptions): AgentL
       maxConcurrency: readPositiveInteger(options.maxConcurrency ?? 4, "maxConcurrency"),
       maxDepth: readPositiveInteger(options.maxDepth ?? 3, "maxDepth"),
       contextId: options.contextId ?? freshContextIdResolver,
+      runtimeByExpert: normalizeRuntimeByExpert(
+        options.runtimeByExpert,
+        experts,
+        "AgentLauncher",
+      ),
     }),
   });
 }
@@ -69,6 +78,9 @@ export function createTeamDelegationTools(
     maxConcurrency: team.delegation.maxConcurrency,
     maxDepth: team.delegation.maxDepth,
     contextId: team.delegation.contextId,
+    runtimeByExpert: new Map(
+      [...team.delegation.runtimeByExpert].filter(([expertId]) => allowed.has(expertId)),
+    ),
   });
 }
 
@@ -92,6 +104,7 @@ function createLifecycleTools(
     maxConcurrency: definition.maxConcurrency,
     maxDepth: definition.maxDepth,
     contextId: definition.contextId,
+    runtimeByExpert: new Map(definition.runtimeByExpert),
   });
   const available = [
     "Available Experts:",
@@ -106,7 +119,7 @@ function createLifecycleTools(
       name: "spawn_expert",
       description: `Spawn an Expert task in the background and return its agent and invocation ids immediately.\n${available}`,
       inputSchema: objectSchema(
-        { expertId: { type: "string" }, prompt: { type: "string" }, runtime: { type: "string" } },
+        { expertId: { type: "string" }, prompt: { type: "string" } },
         ["expertId", "prompt"],
       ),
       call: async (args, signal, context) =>
@@ -197,12 +210,11 @@ function objectSchema(properties: Record<string, unknown>, required: readonly st
   return { type: "object", properties, required, additionalProperties: false };
 }
 
-function readSpawn(value: unknown): { expertId: string; prompt: string; runtime?: string } {
+function readSpawn(value: unknown): { expertId: string; prompt: string } {
   const record = readRecord(value);
   return {
     expertId: readString(record["expertId"], "expertId"),
     prompt: readString(record["prompt"], "prompt"),
-    ...readOptionalString(record, "runtime"),
   };
 }
 
@@ -277,6 +289,25 @@ function readUniqueExperts(experts: readonly Expert[], owner: string): readonly 
   const ids = experts.map((expert) => expert.id);
   if (new Set(ids).size !== ids.length) throw new Error(`${owner} contains duplicate Expert ids.`);
   return Object.freeze([...experts]);
+}
+
+export function normalizeRuntimeByExpert(
+  runtimeByExpert: RuntimeByExpert | undefined,
+  experts: readonly Pick<Expert, "id">[],
+  owner: string,
+): ReadonlyMap<string, string> {
+  const knownExpertIds = new Set(experts.map((expert) => expert.id));
+  const normalized = new Map<string, string>();
+  for (const [expertId, runtimeId] of Object.entries(runtimeByExpert ?? {})) {
+    if (!knownExpertIds.has(expertId)) {
+      throw new Error(`${owner} runtimeByExpert target is unknown: ${expertId}`);
+    }
+    if (runtimeId.trim() === "") {
+      throw new Error(`${owner} runtimeByExpert value must not be empty: ${expertId}`);
+    }
+    normalized.set(expertId, runtimeId);
+  }
+  return normalized;
 }
 
 function readPositiveInteger(value: number, field: string): number {
