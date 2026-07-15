@@ -17,6 +17,7 @@ import {
   isAgentDelegationTool,
   readAgentDelegationDefinition,
   type AgentDelegationDefinition,
+  type RuntimeByExpert,
 } from "../agent/agent-launcher.ts";
 import { isExpertTeam, type ExpertDefinition, type ExpertTeam } from "../agent/expert-team.ts";
 import type { RuntimeAgentSession, RuntimeSubmitHandle } from "../runtime/runtime-adapter.ts";
@@ -324,6 +325,7 @@ export interface RunExpertInvocationOptions {
     | { readonly type: "expert-session"; readonly ownerId: string }
     | { readonly type: "flow-execution"; readonly ownerId: string };
   readonly runtimeId?: string | undefined;
+  readonly runtimeByExpert?: RuntimeByExpert | undefined;
   readonly context: RuntimeContextRecord;
   readonly controller: ExecutionController;
   readonly store: ExecutionStore;
@@ -405,6 +407,7 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
   const runtimeId =
     options.runtimeId ?? options.context.runtimeId ?? options.context.snapshot?.runtimeId;
   const runtime = options.runtimes.resolve(runtimeId);
+  validateDelegatedRuntimeRouting(options, delegation, runtime.descriptor.id);
   const runtimeIdentity = {
     contextId: options.context.contextId,
     expertId: nativeExpert.id,
@@ -449,6 +452,7 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
     delegation,
     orchestrator,
     depth,
+    runtime.descriptor.id,
   );
   const humanInteractionHandler = async (request: ExpertAgentHumanRequest) =>
     await options.controller.requestHumanInteraction(options.invocationId, request);
@@ -662,6 +666,9 @@ async function executeAgentJob(
     depth: await readAgentDepth(parent.store, parent.executionId, job.agent),
     orchestrator,
     delegationPermit: job.permit,
+    ...(parent.runtimeByExpert === undefined
+      ? {}
+      : { runtimeByExpert: parent.runtimeByExpert }),
     ...(parent.readContextScope === undefined
       ? {}
       : { readContextScope: parent.readContextScope }),
@@ -676,6 +683,7 @@ function createExecutionContext(
   delegation: AgentDelegationDefinition | undefined,
   orchestrator: ExpertOrchestrator | undefined,
   depth: number,
+  parentRuntimeId: string,
 ) {
   const base = { executionId: options.executionId, invocationId: options.invocationId, depth };
   if (delegation === undefined || orchestrator === undefined) return base;
@@ -684,12 +692,17 @@ function createExecutionContext(
     spawnExpert: async (request: {
       readonly expertId: string;
       readonly prompt: string;
-      readonly runtime?: string | undefined;
     }) => {
       const expert = delegation.experts.find((candidate) => candidate.id === request.expertId);
       if (expert === undefined) {
         throw new Error(`Expert ${nativeExpert.id} may not spawn ${request.expertId}.`);
       }
+      const childRuntimeId = resolveDelegatedRuntimeId(
+        options,
+        delegation,
+        expert.id,
+        parentRuntimeId,
+      );
       return await orchestrator.spawn({
         ownerContextId: options.context.contextId,
         createdByInvocationId: options.invocationId,
@@ -697,7 +710,7 @@ function createExecutionContext(
         depth,
         expert,
         prompt: request.prompt,
-        runtimeId: options.runtimes.resolve(request.runtime).descriptor.id,
+        runtimeId: childRuntimeId,
         owner: options.owner,
         resolver: delegation.contextId,
         source:
@@ -937,6 +950,30 @@ function throwIfAborted(signal: AbortSignal, invocationId: string): void {
   if (!signal.aborted) return;
   if (signal.reason instanceof Error) throw signal.reason;
   throw new Error(`Invocation interrupted: ${invocationId}`);
+}
+
+function resolveDelegatedRuntimeId(
+  options: RunExpertInvocationOptions,
+  delegation: AgentDelegationDefinition,
+  expertId: string,
+  parentRuntimeId: string,
+): string {
+  const configuredRuntimeId =
+    options.runtimeByExpert?.[expertId] ??
+    delegation.runtimeByExpert.get(expertId) ??
+    parentRuntimeId;
+  return options.runtimes.resolve(configuredRuntimeId).descriptor.id;
+}
+
+function validateDelegatedRuntimeRouting(
+  options: RunExpertInvocationOptions,
+  delegation: AgentDelegationDefinition | undefined,
+  parentRuntimeId: string,
+): void {
+  if (delegation === undefined) return;
+  for (const expert of delegation.experts) {
+    resolveDelegatedRuntimeId(options, delegation, expert.id, parentRuntimeId);
+  }
 }
 
 function isDurableRuntimeEvent(event: ExpertAgentStreamEvent): boolean {
