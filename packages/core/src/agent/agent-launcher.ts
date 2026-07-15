@@ -56,11 +56,7 @@ export function createAgentLauncher(options: CreateAgentLauncherOptions): AgentL
       maxConcurrency: readPositiveInteger(options.maxConcurrency ?? 4, "maxConcurrency"),
       maxDepth: readPositiveInteger(options.maxDepth ?? 3, "maxDepth"),
       contextId: options.contextId ?? freshContextIdResolver,
-      runtimeByExpert: normalizeRuntimeByExpert(
-        options.runtimeByExpert,
-        experts,
-        "AgentLauncher",
-      ),
+      runtimeByExpert: normalizeRuntimeByExpert(options.runtimeByExpert, experts, "AgentLauncher"),
     }),
   });
 }
@@ -118,10 +114,10 @@ function createLifecycleTools(
     tool({
       name: "spawn_expert",
       description: `Spawn an Expert task in the background and return its agent and invocation ids immediately.\n${available}`,
-      inputSchema: objectSchema(
-        { expertId: { type: "string" }, prompt: { type: "string" } },
-        ["expertId", "prompt"],
-      ),
+      inputSchema: objectSchema({ expertId: { type: "string" }, prompt: { type: "string" } }, [
+        "expertId",
+        "prompt",
+      ]),
       call: async (args, signal, context) =>
         await invoke("spawn_expert", signal, context?.execution?.spawnExpert, readSpawn(args)),
     }),
