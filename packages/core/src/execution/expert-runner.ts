@@ -237,9 +237,10 @@ export class ExecutionController {
           invocationId: invocation.invocationId,
           patch: { status: "cancelled" as const, error: reason },
         }));
-      const closure = this.options.closeContextsOnCancel === true
-        ? await prepareExecutionContextClosure(this.store, this.executionId)
-        : { contextPatches: [], agentPatches: [], events: [] };
+      const closure =
+        this.options.closeContextsOnCancel === true
+          ? await prepareExecutionContextClosure(this.store, this.executionId)
+          : { contextPatches: [], agentPatches: [], events: [] };
       try {
         await this.store.commit({
           commitId: randomUUID(),
@@ -666,12 +667,8 @@ async function executeAgentJob(
     depth: await readAgentDepth(parent.store, parent.executionId, job.agent),
     orchestrator,
     delegationPermit: job.permit,
-    ...(parent.runtimeByExpert === undefined
-      ? {}
-      : { runtimeByExpert: parent.runtimeByExpert }),
-    ...(parent.readContextScope === undefined
-      ? {}
-      : { readContextScope: parent.readContextScope }),
+    ...(parent.runtimeByExpert === undefined ? {} : { runtimeByExpert: parent.runtimeByExpert }),
+    ...(parent.readContextScope === undefined ? {} : { readContextScope: parent.readContextScope }),
     ...(parent.persistContext === undefined ? {} : { persistContext: parent.persistContext }),
   });
 }
@@ -689,10 +686,7 @@ function createExecutionContext(
   if (delegation === undefined || orchestrator === undefined) return base;
   return {
     ...base,
-    spawnExpert: async (request: {
-      readonly expertId: string;
-      readonly prompt: string;
-    }) => {
+    spawnExpert: async (request: { readonly expertId: string; readonly prompt: string }) => {
       const expert = delegation.experts.find((candidate) => candidate.id === request.expertId);
       if (expert === undefined) {
         throw new Error(`Expert ${nativeExpert.id} may not spawn ${request.expertId}.`);
