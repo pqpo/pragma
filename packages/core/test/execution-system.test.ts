@@ -55,7 +55,6 @@ interface FakeRuntimeOptions {
   readonly closeError?: string;
   readonly createDelayMs?: number;
   readonly delayMs?: number;
-  readonly delegateRuntime?: (query: string) => string | undefined;
   readonly delegationTargets?: Readonly<Record<string, string>>;
   readonly failQuery?: string;
   readonly onSteer?: () => void;
@@ -107,7 +106,6 @@ function createFakeRuntime(options: FakeRuntimeOptions = {}) {
           {
             expertId: delegationTarget,
             prompt: "subtask",
-            runtime: options.delegateRuntime?.(turn.rawQuery),
           },
           turn.signal,
           { execution: session.context.request.executionContext },
@@ -981,13 +979,12 @@ describe("ExpertSession", () => {
     });
   });
 
-  it("allows each newly spawned agent to select its own Runtime", async () => {
-    const home = await mkdtemp(join(tmpdir(), "pragma-runtime-identity-"));
-    const runtimeA = createFakeRuntime({
-      runtimeId: "fake-a",
-      delegateRuntime: (query) => (query === "two" ? "fake-b" : "fake-a"),
-    });
-    const runtimeB = createFakeRuntime({ runtimeId: "fake-b" });
+  it("routes ExpertTeam members through configured runtimes", async () => {
+    const home = await mkdtemp(join(tmpdir(), "pragma-team-runtime-routing-"));
+    const statsA = createFakeRuntimeStats();
+    const statsB = createFakeRuntimeStats();
+    const runtimeA = createFakeRuntime({ runtimeId: "fake-a", stats: statsA });
+    const runtimeB = createFakeRuntime({ runtimeId: "fake-b", stats: statsB });
     const app = createPragma({
       pragmaHome: home,
       runtimes: createRuntimeRegistry({
@@ -1014,20 +1011,167 @@ describe("ExpertSession", () => {
       workspace: home,
     });
     const team = defineExpertTeam({
-      id: "runtime-switch-team",
+      id: "runtime-routing-team",
       version: "1.0.0",
       coordinator: lead,
       members: [member],
-      delegation: { allow: { lead: ["member"], member: [] } },
+      delegation: {
+        allow: { lead: ["member"], member: [] },
+        runtimeByExpert: { member: "fake-b" },
+      },
     });
     const session = await app.experts.createSession(team);
-    await (
-      await session.prompt("one", { requestId: "one" })
-    ).result;
-    await expect((await session.prompt("two", { requestId: "two" })).result).resolves.toBe(
-      "lead:member:subtask",
-    );
+    await expect(
+      (await session.prompt("coordinate", { requestId: "team-runtime-routing" })).result,
+    ).resolves.toBe("lead:member:subtask");
+    expect(statsA.createSessionCalls).toBe(1);
+    expect(statsB.createSessionCalls).toBe(1);
     await session.close();
+  });
+
+  it("routes standalone SubAgents through launcher runtimeByExpert", async () => {
+    const home = await mkdtemp(join(tmpdir(), "pragma-launcher-runtime-routing-"));
+    const statsA = createFakeRuntimeStats();
+    const statsB = createFakeRuntimeStats();
+    const runtimeA = createFakeRuntime({ runtimeId: "fake-a", stats: statsA });
+    const runtimeB = createFakeRuntime({ runtimeId: "fake-b", stats: statsB });
+    const app = createPragma({
+      pragmaHome: home,
+      runtimes: createRuntimeRegistry({
+        runtimes: [runtimeA, runtimeB],
+        defaultRuntime: "fake-a",
+      }),
+    });
+    const member = await defineExpert({
+      id: "member",
+      name: "Member",
+      description: "Member",
+      tags: [],
+      version: "1.0.0",
+      scope: "test",
+      workspace: home,
+    });
+    const lead = await defineExpert({
+      id: "lead",
+      name: "Lead",
+      description: "Lead",
+      tags: [],
+      version: "1.0.0",
+      scope: "test",
+      workspace: home,
+      tools: createAgentLauncher({
+        experts: [member],
+        runtimeByExpert: { member: "fake-b" },
+      }).tools,
+    });
+    const session = await app.experts.createSession(lead);
+    await expect(
+      (await session.prompt("coordinate", { requestId: "launcher-runtime-routing" })).result,
+    ).resolves.toBe("lead:member:subtask");
+    expect(statsA.createSessionCalls).toBe(1);
+    expect(statsB.createSessionCalls).toBe(1);
+    await session.close();
+  });
+
+  it("inherits the parent Runtime when runtimeByExpert is omitted", async () => {
+    const home = await mkdtemp(join(tmpdir(), "pragma-inherited-runtime-routing-"));
+    const statsA = createFakeRuntimeStats();
+    const statsB = createFakeRuntimeStats();
+    const runtimeA = createFakeRuntime({ runtimeId: "fake-a", stats: statsA });
+    const runtimeB = createFakeRuntime({ runtimeId: "fake-b", stats: statsB });
+    const app = createPragma({
+      pragmaHome: home,
+      runtimes: createRuntimeRegistry({
+        runtimes: [runtimeA, runtimeB],
+        defaultRuntime: "fake-a",
+      }),
+    });
+    const member = await defineExpert({
+      id: "member",
+      name: "Member",
+      description: "Member",
+      tags: [],
+      version: "1.0.0",
+      scope: "test",
+      workspace: home,
+    });
+    const lead = await defineExpert({
+      id: "lead",
+      name: "Lead",
+      description: "Lead",
+      tags: [],
+      version: "1.0.0",
+      scope: "test",
+      workspace: home,
+      tools: createAgentLauncher({ experts: [member] }).tools,
+    });
+    const session = await app.experts.createSession(lead, { runtime: "fake-b" });
+    await expect(
+      (await session.prompt("coordinate", { requestId: "inherited-runtime-routing" })).result,
+    ).resolves.toBe("lead:member:subtask");
+    expect(statsA.createSessionCalls).toBe(0);
+    expect(statsB.createSessionCalls).toBe(2);
+    await session.close();
+  });
+
+  it("lets Flow runtimeByExpert override ExpertTeam routing", async () => {
+    const home = await mkdtemp(join(tmpdir(), "pragma-flow-runtime-routing-"));
+    const statsA = createFakeRuntimeStats();
+    const statsB = createFakeRuntimeStats();
+    const statsC = createFakeRuntimeStats();
+    const runtimes = [
+      createFakeRuntime({ runtimeId: "fake-a", stats: statsA }),
+      createFakeRuntime({ runtimeId: "fake-b", stats: statsB }),
+      createFakeRuntime({ runtimeId: "fake-c", stats: statsC }),
+    ];
+    const app = createPragma({
+      pragmaHome: home,
+      runtimes: createRuntimeRegistry({ runtimes, defaultRuntime: "fake-a" }),
+    });
+    const member = await defineExpert({
+      id: "member",
+      name: "Member",
+      description: "Member",
+      tags: [],
+      version: "1.0.0",
+      scope: "test",
+      workspace: home,
+    });
+    const lead = await defineExpert({
+      id: "lead",
+      name: "Lead",
+      description: "Lead",
+      tags: [],
+      version: "1.0.0",
+      scope: "test",
+      workspace: home,
+    });
+    const team = defineExpertTeam({
+      id: "flow-runtime-routing-team",
+      version: "1.0.0",
+      coordinator: lead,
+      members: [member],
+      delegation: { runtimeByExpert: { member: "fake-b" } },
+    });
+    const flow = defineFlow({
+      id: "flow-runtime-routing",
+      version: "1.0.0",
+      result: ({ state }) => state["review"],
+    });
+    const review = flow.use("review", team, {
+      runtime: "fake-a",
+      runtimeByExpert: { member: "fake-c" },
+      reduce: ({ state, output }) => {
+        state["review"] = output;
+      },
+    });
+    flow.compose(({ start, end }) => start(review).next(end()));
+
+    const execution = await app.flows.start(flow, { input: "coordinate" });
+    await expect(execution.result).resolves.toBe("lead:member:subtask");
+    expect(statsA.createSessionCalls).toBe(1);
+    expect(statsB.createSessionCalls).toBe(0);
+    expect(statsC.createSessionCalls).toBe(1);
   });
 
   it("claims concurrent steer requests once and checkpoints Runtime context before completion", async () => {
@@ -2049,7 +2193,10 @@ describe("Expert delegation declarations", () => {
       "maxConcurrency",
     );
     expect(() => createAgentLauncher({ experts: [expert], maxDepth: 0 })).toThrow("maxDepth");
-    const launcher = createAgentLauncher({ experts: [expert] });
+    const launcher = createAgentLauncher({
+      experts: [expert],
+      runtimeByExpert: { [expert.id]: "fake" },
+    });
     expect(launcher.tools.map((tool) => tool.name)).toEqual([
       "spawn_expert",
       "wait_experts",
@@ -2058,6 +2205,15 @@ describe("Expert delegation declarations", () => {
       "interrupt_expert",
     ]);
     expect(readAgentDelegationDefinition({ ...launcher.tools[0]! })?.experts).toEqual([expert]);
+    expect(readAgentDelegationDefinition(launcher.tools[0]!)?.runtimeByExpert).toEqual(
+      new Map([[expert.id, "fake"]]),
+    );
+    expect(
+      (launcher.tools[0]?.inputSchema as { properties: Record<string, unknown> }).properties,
+    ).not.toHaveProperty("runtime");
+    expect(() =>
+      createAgentLauncher({ experts: [expert], runtimeByExpert: { missing: "fake" } }),
+    ).toThrow("runtimeByExpert target is unknown");
     expect(launcher.tools[0]?.description).toContain(
       `- ${expert.id}: ${expert.name}. ${expert.description}`,
     );
@@ -2079,7 +2235,10 @@ describe("Expert delegation declarations", () => {
       version: "1.0.0",
       coordinator: lead,
       members: [member],
-      delegation: { allow: { solo: ["member"], member: ["solo"] } },
+      delegation: {
+        allow: { solo: ["member"], member: ["solo"] },
+        runtimeByExpert: { member: "fake-member", solo: "fake-lead" },
+      },
     });
     const leadTools = createTeamDelegationTools(team, "solo");
     const memberTools = createTeamDelegationTools(team, "member");
@@ -2088,6 +2247,12 @@ describe("Expert delegation declarations", () => {
 
     expect(readAgentDelegationDefinition(leadTool!)?.experts).toEqual([member]);
     expect(readAgentDelegationDefinition(memberTool!)?.experts).toEqual([lead]);
+    expect(readAgentDelegationDefinition(leadTool!)?.runtimeByExpert).toEqual(
+      new Map([["member", "fake-member"]]),
+    );
+    expect(readAgentDelegationDefinition(memberTool!)?.runtimeByExpert).toEqual(
+      new Map([["solo", "fake-lead"]]),
+    );
     expect(leadTools).toHaveLength(5);
     expect(memberTools).toHaveLength(5);
     expect(leadTool?.description).toContain(
@@ -2121,6 +2286,7 @@ describe("Expert delegation declarations", () => {
     expect(createTeamDelegationTools(team, "member")).toEqual([]);
     expect(team.delegation.maxConcurrency).toBe(4);
     expect(team.delegation.maxDepth).toBe(3);
+    expect(team.delegation.runtimeByExpert).toEqual(new Map());
   });
 
   it("validates allowlists and limits", async () => {
@@ -2134,6 +2300,15 @@ describe("Expert delegation declarations", () => {
         delegation: { allow: { solo: ["missing"] } },
       }),
     ).toThrow("unknown");
+    expect(() =>
+      defineExpertTeam({
+        id: "invalid-runtime-route",
+        version: "1.0.0",
+        coordinator: expert,
+        members: [],
+        delegation: { runtimeByExpert: { missing: "fake" } },
+      }),
+    ).toThrow("runtimeByExpert target is unknown");
   });
 });
 
