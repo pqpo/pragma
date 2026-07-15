@@ -20,6 +20,9 @@ import {
   type RuntimeByExpert,
 } from "../agent/agent-launcher.ts";
 import { isExpertTeam, type ExpertDefinition, type ExpertTeam } from "../agent/expert-team.ts";
+import { freshContextIdResolver } from "./context-id-resolver.ts";
+import type { Flow } from "../flow/flow.ts";
+import { runNestedFlowInvocation } from "../flow/flow-execution.ts";
 import type { RuntimeAgentSession, RuntimeSubmitHandle } from "../runtime/runtime-adapter.ts";
 import { mergeUsage } from "../runtime/usage.ts";
 import { openRuntimeSession } from "../runtime/session-factory.ts";
@@ -36,6 +39,7 @@ import {
   type ExpertInvocationJob,
 } from "./expert-orchestrator.ts";
 import {
+  ContextResolutionService,
   prepareExecutionContextClosure,
   type ContextResolutionScopeReader,
 } from "./context-resolution-service.ts";
@@ -669,7 +673,16 @@ function createExecutionContext(
   depth: number,
   parentRuntimeId: string,
 ) {
-  const base = { executionId: options.executionId, invocationId: options.invocationId, depth };
+  const base = {
+    executionId: options.executionId,
+    invocationId: options.invocationId,
+    depth,
+    invokeResource: async (request: {
+      readonly target: unknown;
+      readonly input: unknown;
+      readonly signal?: AbortSignal | undefined;
+    }) => await invokeResourceFromExpert(options, nativeExpert, depth, parentRuntimeId, request),
+  };
   if (delegation === undefined || orchestrator === undefined) return base;
   return {
     ...base,
@@ -724,6 +737,191 @@ function createExecutionContext(
       readonly reason?: string | undefined;
     }) => await orchestrator.interrupt(options.context.contextId, request),
   };
+}
+
+async function invokeResourceFromExpert(
+  options: RunExpertInvocationOptions,
+  caller: Expert,
+  depth: number,
+  parentRuntimeId: string,
+  request: {
+    readonly target: unknown;
+    readonly input: unknown;
+    readonly signal?: AbortSignal | undefined;
+  },
+): Promise<unknown> {
+  if (request.signal?.aborted) throw new Error("Resource call was cancelled.");
+  if (depth >= 16) throw new Error("Resource call exceeded the maximum invocation depth (16).");
+  if (!isInvocableResource(request.target)) throw new Error("Resource call target is invalid.");
+  const target = request.target;
+  const execution = await requireExecution(options.store, options.executionId);
+  const invocationId = randomUUID();
+  const now = new Date().toISOString();
+
+  if (isFlowResource(target)) {
+    const invocation: Invocation = {
+      invocationId,
+      rootInvocationId: execution.rootInvocationId,
+      parentInvocationId: options.invocationId,
+      nodeId: `tool:${target.id}`,
+      definition: { id: target.id, version: target.version, kind: "flow" },
+      contextId: invocationId,
+      status: "queued",
+      input: request.input,
+      createdAt: now,
+      updatedAt: now,
+    };
+    await options.store.commit({
+      commitId: `resource-call-queued:${invocationId}`,
+      executionId: options.executionId,
+      invocationPuts: [invocation],
+      events: [{ invocationId, type: "invocation.queued", data: { resourceCall: true } }],
+    });
+    await options.store.commit({
+      commitId: `resource-call-started:${invocationId}`,
+      executionId: options.executionId,
+      invocationPatches: [{ invocationId, patch: { status: "running" } }],
+      events: [{ invocationId, type: "invocation.started", data: { resourceCall: true } }],
+    });
+    try {
+      const output = await runNestedFlowInvocation({
+        flow: target,
+        executionId: options.executionId,
+        flowInvocationId: invocationId,
+        input: request.input,
+        owner: options.owner,
+        controller: options.controller,
+        store: options.store,
+        runtimes: options.runtimes,
+        runtime: parentRuntimeId,
+      });
+      await options.store.commit({
+        commitId: `resource-call-succeeded:${invocationId}`,
+        executionId: options.executionId,
+        invocationPatches: [{ invocationId, patch: { status: "succeeded", output } }],
+        events: [{ invocationId, type: "invocation.succeeded", data: { output } }],
+      });
+      return output;
+    } catch (error) {
+      await options.store.commit({
+        commitId: `resource-call-failed:${invocationId}`,
+        executionId: options.executionId,
+        invocationPatches: [
+          {
+            invocationId,
+            patch: {
+              status: options.controller.isCancelled() ? "cancelled" : "failed",
+              error: serializeError(error),
+            },
+          },
+        ],
+        events: [
+          {
+            invocationId,
+            type: options.controller.isCancelled() ? "invocation.cancelled" : "invocation.failed",
+            data: { error: serializeError(error) },
+          },
+        ],
+      });
+      throw error;
+    }
+  }
+
+  const nativeTarget = isExpertTeam(target) ? target.coordinator : target;
+  const contextResolution = await new ContextResolutionService(options.store).resolve({
+    executionId: options.executionId,
+    invocationId,
+    parentInvocationId: options.invocationId,
+    input: request.input,
+    state: execution.state,
+    source: {
+      kind: "expert-delegation",
+      callerExpertId: caller.id,
+      ...(options.agentId === undefined ? {} : { callerAgentId: options.agentId }),
+    },
+    owner: options.owner,
+    ownerContextId: options.context.contextId,
+    expert: { id: nativeTarget.id, version: nativeTarget.version },
+    runtimeId: options.runtimes.resolve(parentRuntimeId).descriptor.id,
+    resolver: freshContextIdResolver,
+  });
+  const invocation: Invocation = {
+    invocationId,
+    rootInvocationId: execution.rootInvocationId,
+    parentInvocationId: options.invocationId,
+    nodeId: `tool:${target.id}`,
+    definition: {
+      id: target.id,
+      version: target.version,
+      kind: isExpertTeam(target) ? "expert-team" : "expert",
+    },
+    executorId: nativeTarget.id,
+    contextId: contextResolution.context.contextId,
+    contextResolution: {
+      resolver: contextResolution.resolver,
+      disposition: contextResolution.disposition,
+    },
+    status: "queued",
+    input: request.input,
+    createdAt: now,
+    updatedAt: now,
+  };
+  await options.store.commit({
+    commitId: `resource-call-queued:${invocationId}`,
+    executionId: options.executionId,
+    invocationPuts: [invocation],
+    ...(contextResolution.contextPut === undefined
+      ? {}
+      : { contextPuts: [contextResolution.contextPut] }),
+    events: [
+      ...contextResolution.events,
+      { invocationId, type: "invocation.queued", data: { resourceCall: true } },
+    ],
+  });
+  return await runExpertInvocation({
+    executionId: options.executionId,
+    invocationId,
+    parentInvocationId: options.invocationId,
+    expert: target,
+    prompt: readResourcePrompt(request.input),
+    owner: options.owner,
+    context: contextResolution.context,
+    controller: options.controller,
+    store: options.store,
+    runtimes: options.runtimes,
+    depth: depth + 1,
+    ...(options.readContextScope === undefined
+      ? {}
+      : { readContextScope: options.readContextScope }),
+    ...(options.persistContext === undefined ? {} : { persistContext: options.persistContext }),
+  });
+}
+
+function isInvocableResource(value: unknown): value is ExpertDefinition | Flow {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "id" in value &&
+    "version" in value &&
+    (!("kind" in value) || value.kind === "expert-team" || value.kind === "flow")
+  );
+}
+
+function isFlowResource(value: ExpertDefinition | Flow): value is Flow {
+  return "kind" in value && value.kind === "flow";
+}
+
+function readResourcePrompt(input: unknown): string {
+  if (typeof input === "string") return input;
+  if (
+    typeof input === "object" &&
+    input !== null &&
+    "prompt" in input &&
+    typeof input.prompt === "string"
+  ) {
+    return input.prompt;
+  }
+  return JSON.stringify(input);
 }
 
 async function submitRuntimeTurn(options: {

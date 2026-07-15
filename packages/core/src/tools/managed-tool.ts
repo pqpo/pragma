@@ -11,6 +11,13 @@ export interface ExpertToolExecutionContext {
   readonly executionId: string;
   readonly invocationId: string;
   readonly depth: number;
+  readonly invokeResource?:
+    | ((request: {
+        readonly target: unknown;
+        readonly input: unknown;
+        readonly signal?: AbortSignal | undefined;
+      }) => Promise<unknown>)
+    | undefined;
   readonly spawnExpert?:
     | ((request: { readonly expertId: string; readonly prompt: string }) => Promise<unknown>)
     | undefined;
