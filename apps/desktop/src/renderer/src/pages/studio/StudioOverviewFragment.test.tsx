@@ -34,6 +34,6 @@ describe("StudioOverviewFragment", () => {
     expect(html).toContain("Product context");
     expect(html).toContain("Shared product decisions and terminology.");
     expect(html).toContain('title="Shared product decisions and terminology."');
-    expect(html.match(/>View all</g)?.length).toBe(4);
+    expect(html.match(/>View all</g)?.length).toBe(5);
   });
 });

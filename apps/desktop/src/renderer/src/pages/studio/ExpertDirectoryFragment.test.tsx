@@ -19,6 +19,7 @@ const expert: ExpertRecord = {
   tools: 0,
   mcpServers: 0,
   contextStoreMounts: [],
+  resourceTools: [],
   usesApproval: false,
   icon: User,
 };

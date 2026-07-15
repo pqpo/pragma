@@ -5,10 +5,8 @@
 - Expert directory reference: `/Users/linminqiu/.codex/generated_images/019f4eef-cbe3-7673-8c93-03cc10e04658/exec-8d01cacc-d5c7-4512-bbf0-c7af71744d65.png`
 - Expert detail reference: `/Users/linminqiu/.codex/generated_images/019f4eef-cbe3-7673-8c93-03cc10e04658/exec-d2e5e09d-bbad-4c81-ad1e-fa01a8340b11.png`
 - Expert creation reference: `/Users/linminqiu/.codex/generated_images/019f4eef-cbe3-7673-8c93-03cc10e04658/exec-715f6979-dbe7-4b83-bfd5-a0a29d5c9ea8.png`
-- Implementation captures:
-  - `apps/desktop/expert-directory-implementation.png`
-  - `apps/desktop/expert-detail-implementation.png`
-  - `apps/desktop/expert-create-implementation.png`
+- Historical implementation captures were removed after the comparison was completed; the
+  findings below retain the durable QA record.
 - Reference viewport: 1536 × 1024.
 - Browser-rendered implementation viewport: 1280 × 720; the in-app browser capped the requested desktop viewport at this size.
 

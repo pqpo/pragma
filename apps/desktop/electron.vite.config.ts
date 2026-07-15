@@ -8,7 +8,9 @@ export default defineConfig({
         exclude: [
           "@pragma/runtime-claude-code",
           "@pragma/runtime-codex",
+          "@pragma/runtime-pi",
           "@pragma/core",
+          "@pragma/interpreter",
           "@pragma/shared",
         ],
       }),

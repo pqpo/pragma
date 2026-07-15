@@ -19,8 +19,10 @@
   },
   "dependencies": {
     "@pragma/core": "workspace:*",
+    "@pragma/interpreter": "workspace:*",
     "@pragma/runtime-claude-code": "workspace:*",
     "@pragma/runtime-codex": "workspace:*",
+    "@pragma/runtime-pi": "workspace:*",
     "@pragma/shared": "workspace:*",
     "@phosphor-icons/react": "latest",
     "fflate": "^0.8.2",

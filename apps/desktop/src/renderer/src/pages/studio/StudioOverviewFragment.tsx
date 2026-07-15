@@ -1,5 +1,13 @@
 import type { Icon } from "@phosphor-icons/react";
-import { CaretRight, Database, Info, User, UsersThree, Wrench } from "@phosphor-icons/react";
+import {
+  CaretRight,
+  Database,
+  GitBranch,
+  Info,
+  User,
+  UsersThree,
+  Wrench,
+} from "@phosphor-icons/react";
 import type { Capability, ContextStore } from "../../../../shared/desktop-api.ts";
 
 import {
@@ -43,6 +51,7 @@ export function StudioOverviewFragment(props: {
   const studioAssets = {
     experts: props.experts.slice(0, 2),
     teams: [],
+    flows: [],
     capabilities: props.capabilities.slice(0, 2).map((capability) => ({
       name: capability.manifest.name,
       description: capability.definition.description,
@@ -59,35 +68,39 @@ export function StudioOverviewFragment(props: {
   return (
     <>
       <section className="studio-overview-grid" aria-label="Studio resources">
-        {(["experts", "teams", "capabilities", "context-stores"] as const).map((section) => {
-          const SectionIcon =
-            section === "experts"
-              ? User
-              : section === "teams"
-                ? UsersThree
-                : section === "capabilities"
-                  ? Wrench
-                  : Database;
+        {(["experts", "teams", "flows", "capabilities", "context-stores"] as const).map(
+          (section) => {
+            const SectionIcon =
+              section === "experts"
+                ? User
+                : section === "teams"
+                  ? UsersThree
+                  : section === "flows"
+                    ? GitBranch
+                    : section === "capabilities"
+                      ? Wrench
+                      : Database;
 
-          return (
-            <section className="studio-resource-section" key={section}>
-              <header className="studio-resource-heading">
-                <div>
-                  <h2>{studioLabels[section]}</h2>
-                  <p>{studioDescriptions[section]}</p>
-                </div>
-                <button type="button" onClick={() => props.onNavigate(section)}>
-                  View all
-                </button>
-              </header>
-              <StudioAssetRows
-                assets={studioAssets[section]}
-                icon={SectionIcon}
-                onOpen={() => props.onNavigate(section)}
-              />
-            </section>
-          );
-        })}
+            return (
+              <section className="studio-resource-section" key={section}>
+                <header className="studio-resource-heading">
+                  <div>
+                    <h2>{studioLabels[section]}</h2>
+                    <p>{studioDescriptions[section]}</p>
+                  </div>
+                  <button type="button" onClick={() => props.onNavigate(section)}>
+                    View all
+                  </button>
+                </header>
+                <StudioAssetRows
+                  assets={studioAssets[section]}
+                  icon={SectionIcon}
+                  onOpen={() => props.onNavigate(section)}
+                />
+              </section>
+            );
+          },
+        )}
       </section>
       <aside className="studio-relationship-note">
         <Info size={22} aria-hidden="true" />
@@ -97,8 +110,8 @@ export function StudioOverviewFragment(props: {
   );
 }
 
-export function StudioCollectionFragment(props: { readonly view: "teams" }) {
-  const Icon = UsersThree;
+export function StudioCollectionFragment(props: { readonly view: "teams" | "flows" }) {
+  const Icon = props.view === "teams" ? UsersThree : GitBranch;
 
   return (
     <section className="studio-collection" aria-labelledby="studio-collection-heading">

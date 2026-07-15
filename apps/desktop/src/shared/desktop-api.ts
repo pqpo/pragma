@@ -1,4 +1,16 @@
-import { ContextTriggerSchema } from "@pragma/shared";
+import {
+  ContextTriggerSchema,
+  HumanInteractionRequestSchema,
+  HumanInteractionResponseSchema,
+} from "@pragma/shared";
+import {
+  PragmaDiagnosticSchema,
+  PragmaExpertResourceSchema,
+  PragmaLockSchema,
+  PragmaResourceRefSchema,
+  PragmaResourceSchema,
+  PragmaToolBindingSchema,
+} from "@pragma/interpreter/ast";
 import { z } from "zod";
 
 export const DesktopAppInfoSchema = z.object({
@@ -472,7 +484,7 @@ export const ExpertContextStoreMountSchema = z.object({
 });
 
 export const ExpertDefinitionSchema = z.object({
-  schemaVersion: z.literal("pragma.expert/v2"),
+  schemaVersion: z.literal("pragma.desktop-expert-view/v1"),
   id: ExpertIdSchema,
   name: z.string().trim().min(1).max(120),
   description: z.string().trim().min(1).max(2_000),
@@ -485,6 +497,9 @@ export const ExpertDefinitionSchema = z.object({
   toolApprovals: z.record(z.string().max(200), ExpertToolApprovalModeSchema),
   plugins: z.array(ExpertPluginReferenceSchema).max(100),
   contextStoreMounts: z.array(ExpertContextStoreMountSchema).max(200),
+  resourceTools: z.array(PragmaToolBindingSchema).max(200).default([]),
+  resourceRuntime: PragmaExpertResourceSchema.shape.spec.shape.runtime,
+  opaqueCapabilities: PragmaExpertResourceSchema.shape.spec.shape.capabilities.optional(),
   revision: z.number().int().positive(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
@@ -519,11 +534,46 @@ export const CreateExpertDefinitionSchema = ExpertDefinitionSchema.omit({
   toolApprovals: z.record(z.string().max(200), ExpertToolApprovalModeSchema).optional(),
   plugins: z.array(ExpertPluginReferenceSchema).max(100).optional(),
   contextStoreMounts: z.array(ExpertContextStoreMountSchema).max(200).optional(),
+  resourceTools: z.array(PragmaToolBindingSchema).max(200).optional(),
+  resourceRuntime: PragmaExpertResourceSchema.shape.spec.shape.runtime,
+  opaqueCapabilities: PragmaExpertResourceSchema.shape.spec.shape.capabilities.optional(),
 });
 
 export const UpdateExpertDefinitionSchema = CreateExpertDefinitionSchema.omit({ id: true });
 
 export const DeleteExpertDefinitionSchema = z.object({ id: ExpertIdSchema });
+
+export const PragmaProjectSnapshotSchema = z.object({
+  schemaVersion: z.literal("pragma.desktop-project/v1"),
+  projectId: z.string().trim().min(1).max(120),
+  revision: z.number().int().nonnegative(),
+  resources: z.array(PragmaResourceSchema),
+  diagnostics: z.array(PragmaDiagnosticSchema),
+  lock: PragmaLockSchema.optional(),
+  updatedAt: z.string().datetime().optional(),
+});
+
+export const PublishPragmaProjectSchema = z.object({
+  expectedRevision: z.number().int().nonnegative(),
+  resources: z.array(PragmaResourceSchema),
+});
+
+export const UpsertPragmaResourceSchema = z.object({
+  expectedRevision: z.number().int().nonnegative(),
+  resource: PragmaResourceSchema,
+});
+
+export const DeletePragmaResourceSchema = z.object({
+  expectedRevision: z.number().int().nonnegative(),
+  ref: PragmaResourceRefSchema,
+});
+
+export const ValidatePragmaYamlSchema = z.object({ source: z.string().max(2_000_000) });
+
+export const PragmaYamlValidationResultSchema = z.object({
+  resource: PragmaResourceSchema.optional(),
+  diagnostics: z.array(PragmaDiagnosticSchema),
+});
 
 export const MissionIdSchema = z.string().uuid();
 
@@ -533,26 +583,40 @@ export const MissionWorkspaceSchema = z.object({
 });
 
 const MissionExecutorBaseSchema = z.object({
-  id: z.string().trim().min(1).max(100),
+  ref: PragmaResourceRefSchema,
   name: z.string().trim().min(1).max(120),
   version: z.string().trim().min(1).max(100),
-  revision: z.number().int().positive(),
 });
 
 export const MissionExecutorSchema = z.discriminatedUnion("kind", [
   MissionExecutorBaseSchema.extend({ kind: z.literal("expert") }),
-  MissionExecutorBaseSchema.extend({ kind: z.literal("expert_team") }),
+  MissionExecutorBaseSchema.extend({ kind: z.literal("team") }),
+  MissionExecutorBaseSchema.extend({ kind: z.literal("flow") }),
 ]);
 
 export const MissionLifecycleStatusSchema = z.enum(["active", "completed"]);
 
 export const MissionSchema = z.object({
-  schemaVersion: z.literal("pragma.mission/v1"),
+  schemaVersion: z.literal("pragma.mission/v2"),
   id: MissionIdSchema,
   title: z.string().trim().min(1).max(120),
   goal: z.string().trim().min(1).max(100_000),
   workspace: MissionWorkspaceSchema,
+  project: z.object({
+    id: z.string().trim().min(1),
+    revision: z.number().int().positive(),
+  }),
   executor: MissionExecutorSchema,
+  execution: z
+    .object({
+      id: z.string().uuid(),
+      sessionId: z.string().uuid().optional(),
+      status: z.enum(["queued", "running", "waiting", "succeeded", "failed", "cancelled"]),
+      startedAt: z.string().datetime(),
+      finishedAt: z.string().datetime().optional(),
+      error: z.string().max(10_000).optional(),
+    })
+    .optional(),
   lifecycleStatus: MissionLifecycleStatusSchema,
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
@@ -562,13 +626,22 @@ export const MissionSchema = z.object({
 export const CreateMissionSchema = z.object({
   workspace: z.string().trim().min(1).max(2_000),
   executor: z.object({
-    kind: z.literal("expert"),
-    id: ExpertIdSchema,
+    ref: PragmaResourceRefSchema,
   }),
   goal: z.string().trim().min(1).max(100_000),
 });
 
 export const MissionActionSchema = z.object({ id: MissionIdSchema });
+export const MissionHumanInteractionSchema = z.object({
+  interactionId: z.string().min(1),
+  request: HumanInteractionRequestSchema,
+});
+export const RespondMissionHumanInteractionSchema = z.object({
+  missionId: MissionIdSchema,
+  interactionId: z.string().min(1),
+  requestId: z.string().uuid(),
+  response: HumanInteractionResponseSchema,
+});
 
 export type DesktopAppInfo = z.infer<typeof DesktopAppInfoSchema>;
 export type RuntimeGatewayConfig = z.infer<typeof RuntimeGatewayConfigSchema>;
@@ -592,10 +665,17 @@ export type ExpertDefinition = z.infer<typeof ExpertDefinitionSchema>;
 export type ExpertSummary = z.infer<typeof ExpertSummarySchema>;
 export type CreateExpertDefinition = z.infer<typeof CreateExpertDefinitionSchema>;
 export type UpdateExpertDefinition = z.infer<typeof UpdateExpertDefinitionSchema>;
+export type PragmaProjectSnapshot = z.infer<typeof PragmaProjectSnapshotSchema>;
+export type PublishPragmaProject = z.infer<typeof PublishPragmaProjectSchema>;
+export type UpsertPragmaResource = z.infer<typeof UpsertPragmaResourceSchema>;
+export type DeletePragmaResource = z.infer<typeof DeletePragmaResourceSchema>;
+export type PragmaYamlValidationResult = z.infer<typeof PragmaYamlValidationResultSchema>;
 export type Mission = z.infer<typeof MissionSchema>;
 export type MissionExecutor = z.infer<typeof MissionExecutorSchema>;
 export type MissionLifecycleStatus = z.infer<typeof MissionLifecycleStatusSchema>;
 export type CreateMission = z.infer<typeof CreateMissionSchema>;
+export type MissionHumanInteraction = z.infer<typeof MissionHumanInteractionSchema>;
+export type RespondMissionHumanInteraction = z.infer<typeof RespondMissionHumanInteractionSchema>;
 export type Capability = z.infer<typeof CapabilitySchema>;
 export type CapabilityManifest = z.infer<typeof CapabilityManifestSchema>;
 export type CapabilityHealth = z.infer<typeof CapabilityHealthSchema>;
@@ -625,9 +705,17 @@ export interface PragmaDesktopAPI {
   createExpert: (input: CreateExpertDefinition) => Promise<ExpertDefinition>;
   updateExpert: (id: string, input: UpdateExpertDefinition) => Promise<ExpertDefinition>;
   deleteExpert: (id: string) => Promise<void>;
+  getPragmaProject: () => Promise<PragmaProjectSnapshot>;
+  publishPragmaProject: (input: PublishPragmaProject) => Promise<PragmaProjectSnapshot>;
+  upsertPragmaResource: (input: UpsertPragmaResource) => Promise<PragmaProjectSnapshot>;
+  deletePragmaResource: (input: DeletePragmaResource) => Promise<PragmaProjectSnapshot>;
+  validatePragmaYaml: (source: string) => Promise<PragmaYamlValidationResult>;
   listMissions: () => Promise<Mission[]>;
   getMission: (id: string) => Promise<Mission>;
   createMission: (input: CreateMission) => Promise<Mission>;
+  runMission: (id: string) => Promise<Mission>;
+  listMissionHumanInteractions: (id: string) => Promise<MissionHumanInteraction[]>;
+  respondToMissionHumanInteraction: (input: RespondMissionHumanInteraction) => Promise<void>;
   markMissionComplete: (id: string) => Promise<Mission>;
   reopenMission: (id: string) => Promise<Mission>;
   listCapabilities: () => Promise<Capability[]>;

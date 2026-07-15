@@ -1,24 +1,32 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from "react";
 
 import {
   ArrowCounterClockwise,
   CheckCircle,
   Folder,
+  GitBranch,
   MagnifyingGlass,
   Paperclip,
   Plus,
+  Play,
   User,
   UsersThree,
 } from "@phosphor-icons/react";
+import type { PragmaResource } from "@pragma/interpreter/ast";
+import type { HumanInteractionResponse } from "@pragma/shared";
 
-import type { ExpertSummary, Mission, PragmaDesktopAPI } from "../../../../shared/desktop-api.ts";
+import type {
+  Mission,
+  MissionHumanInteraction,
+  PragmaDesktopAPI,
+} from "../../../../shared/desktop-api.ts";
 import { errorMessage } from "../../lib/errors.ts";
 
 type MissionScreen = "create" | "detail";
 
 export function MissionsPage() {
   const [missions, setMissions] = useState<readonly Mission[]>([]);
-  const [experts, setExperts] = useState<readonly ExpertSummary[]>([]);
+  const [executors, setExecutors] = useState<readonly PragmaResource[]>([]);
   const [screen, setScreen] = useState<MissionScreen>("create");
   const [selectedMissionId, setSelectedMissionId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
@@ -28,11 +36,11 @@ export function MissionsPage() {
     const api = desktopApi();
     if (api === undefined) return;
     let cancelled = false;
-    void Promise.all([api.listMissions(), api.listExperts()])
-      .then(([storedMissions, storedExperts]) => {
+    void Promise.all([api.listMissions(), api.getPragmaProject()])
+      .then(([storedMissions, project]) => {
         if (cancelled) return;
         setMissions(storedMissions);
-        setExperts(storedExperts);
+        setExecutors(project.resources);
       })
       .catch((loadError: unknown) => {
         if (!cancelled) setError(errorMessage(loadError));
@@ -52,6 +60,20 @@ export function MissionsPage() {
     );
   }, [missions, search]);
   const selectedMission = missions.find((mission) => mission.id === selectedMissionId) ?? null;
+
+  useEffect(() => {
+    const api = desktopApi();
+    if (
+      api === undefined ||
+      (selectedMission?.execution?.status !== "running" &&
+        selectedMission?.execution?.status !== "waiting")
+    )
+      return;
+    const timer = setInterval(() => {
+      void api.getMission(selectedMission.id).then(replaceMission);
+    }, 1_000);
+    return () => clearInterval(timer);
+  }, [selectedMission?.id, selectedMission?.execution?.status]);
 
   const replaceMission = (updated: Mission) => {
     setMissions((current) =>
@@ -83,7 +105,7 @@ export function MissionsPage() {
       <div className="mission-main">
         {screen === "create" ? (
           <CreateMissionFragment
-            experts={experts}
+            executors={executors}
             onCreated={(mission) => {
               setMissions((current) => [mission, ...current]);
               setSelectedMissionId(mission.id);
@@ -94,6 +116,15 @@ export function MissionsPage() {
         ) : selectedMission !== null ? (
           <MissionDetailFragment
             mission={selectedMission}
+            onRun={async () => {
+              const api = desktopApi();
+              if (api === undefined) return;
+              replaceMission(await api.runMission(selectedMission.id));
+            }}
+            onHumanResponded={async () => {
+              const api = desktopApi();
+              if (api !== undefined) replaceMission(await api.getMission(selectedMission.id));
+            }}
             onLifecycleChange={async () => {
               const api = desktopApi();
               if (api === undefined) return;
@@ -208,11 +239,11 @@ function MissionRailGroup(props: {
 }
 
 function CreateMissionFragment(props: {
-  readonly experts: readonly ExpertSummary[];
+  readonly executors: readonly PragmaResource[];
   readonly onCreated: (mission: Mission) => void;
 }) {
   const [workspace, setWorkspace] = useState<{ path: string; basename: string } | null>(null);
-  const [expertId, setExpertId] = useState("");
+  const [executorRef, setExecutorRef] = useState("");
   const [goal, setGoal] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -235,14 +266,14 @@ function CreateMissionFragment(props: {
 
   const submit = async () => {
     const api = desktopApi();
-    if (api === undefined || workspace === null || expertId === "" || goal.trim() === "") return;
+    if (api === undefined || workspace === null || executorRef === "" || goal.trim() === "") return;
     setSaving(true);
     setError(null);
     try {
       props.onCreated(
         await api.createMission({
           workspace: workspace.path,
-          executor: { kind: "expert", id: expertId },
+          executor: { ref: executorRef },
           goal: goal.trim(),
         }),
       );
@@ -271,19 +302,28 @@ function CreateMissionFragment(props: {
         </button>
         <label className="mission-selector">
           <span className="mission-selector-icon">
-            <User size={23} aria-hidden="true" />
+            <UsersThree size={23} aria-hidden="true" />
           </span>
           <span>
             <small>Executor</small>
-            <select value={expertId} onChange={(event) => setExpertId(event.target.value)}>
-              <option value="">Choose an expert</option>
-              {props.experts.map((expert) => (
-                <option value={expert.id} key={expert.id}>
-                  {expert.name}
-                </option>
-              ))}
+            <select value={executorRef} onChange={(event) => setExecutorRef(event.target.value)}>
+              <option value="">Choose an expert, team, or flow</option>
+              {props.executors.map((executor) => {
+                const kind =
+                  executor.kind === "Expert"
+                    ? "expert"
+                    : executor.kind === "ExpertTeam"
+                      ? "team"
+                      : "flow";
+                const ref = `${kind}:${executor.metadata.id}@${executor.metadata.version}`;
+                return (
+                  <option value={ref} key={ref}>
+                    {executor.metadata.name} · {kind}
+                  </option>
+                );
+              })}
             </select>
-            <em>Expert</em>
+            <em>Project resource revision is pinned when the mission is created</em>
           </span>
         </label>
       </div>
@@ -304,15 +344,17 @@ function CreateMissionFragment(props: {
           <button
             className="primary-button"
             type="button"
-            disabled={saving || workspace === null || expertId === "" || goal.trim() === ""}
+            disabled={saving || workspace === null || executorRef === "" || goal.trim() === ""}
             onClick={() => void submit()}
           >
             {saving ? "Creating…" : "Create mission"}
           </button>
         </footer>
       </div>
-      {props.experts.length === 0 ? (
-        <p className="mission-form-note">Create an expert in Studio before starting a mission.</p>
+      {props.executors.length === 0 ? (
+        <p className="mission-form-note">
+          Create an expert, team, or flow in Studio before starting a mission.
+        </p>
       ) : null}
       {error ? (
         <p className="form-error" role="alert">
@@ -325,11 +367,19 @@ function CreateMissionFragment(props: {
 
 export function MissionDetailFragment(props: {
   readonly mission: Mission;
+  readonly onRun?: () => void | Promise<void>;
+  readonly onHumanResponded?: () => void | Promise<void>;
   readonly onLifecycleChange?: () => void | Promise<void>;
 }) {
   const [tab, setTab] = useState<"chat" | "work">("chat");
   const [workspaceAvailable, setWorkspaceAvailable] = useState<boolean | null>(null);
-  const isTeam = props.mission.executor.kind === "expert_team";
+  const [interactions, setInteractions] = useState<readonly MissionHumanInteraction[]>([]);
+  const [humanNotes, setHumanNotes] = useState<Record<string, string>>({});
+  const [humanAnswers, setHumanAnswers] = useState<
+    Record<string, Record<string, string | readonly string[]>>
+  >({});
+  const isTeam = props.mission.executor.kind === "team";
+  const isFlow = props.mission.executor.kind === "flow";
 
   useEffect(() => {
     const api = desktopApi();
@@ -342,6 +392,43 @@ export function MissionDetailFragment(props: {
       cancelled = true;
     };
   }, [props.mission.workspace.path]);
+
+  useEffect(() => {
+    const api = desktopApi();
+    if (api === undefined || props.mission.execution?.status !== "waiting") {
+      setInteractions([]);
+      return;
+    }
+    void api.listMissionHumanInteractions(props.mission.id).then(setInteractions);
+  }, [props.mission.id, props.mission.execution?.status]);
+
+  const respond = async (
+    interaction: MissionHumanInteraction,
+    response: HumanInteractionResponse,
+  ) => {
+    const api = desktopApi();
+    if (api === undefined) return;
+    await api.respondToMissionHumanInteraction({
+      missionId: props.mission.id,
+      interactionId: interaction.interactionId,
+      requestId: crypto.randomUUID(),
+      response,
+    });
+    setInteractions((current) =>
+      current.filter((item) => item.interactionId !== interaction.interactionId),
+    );
+    setHumanNotes((current) => {
+      const next = { ...current };
+      delete next[interaction.interactionId];
+      return next;
+    });
+    setHumanAnswers((current) => {
+      const next = { ...current };
+      delete next[interaction.interactionId];
+      return next;
+    });
+    await props.onHumanResponded?.();
+  };
 
   return (
     <section className={isTeam ? "mission-detail has-team-inspector" : "mission-detail"}>
@@ -358,27 +445,42 @@ export function MissionDetailFragment(props: {
             <span aria-hidden="true">·</span>
             {isTeam ? (
               <UsersThree size={17} aria-hidden="true" />
+            ) : isFlow ? (
+              <GitBranch size={17} aria-hidden="true" />
             ) : (
               <User size={17} aria-hidden="true" />
             )}
             {props.mission.executor.name}
           </p>
         </div>
-        <button
-          className="secondary-button"
-          type="button"
-          onClick={() => void props.onLifecycleChange?.()}
-        >
+        <div className="mission-header-actions">
           {props.mission.lifecycleStatus === "active" ? (
-            <>
-              <CheckCircle size={17} aria-hidden="true" /> Mark complete
-            </>
-          ) : (
-            <>
-              <ArrowCounterClockwise size={17} aria-hidden="true" /> Reopen
-            </>
-          )}
-        </button>
+            <button className="primary-button" type="button" onClick={() => void props.onRun?.()}>
+              <Play size={17} />
+              {props.mission.execution?.status === "running" ||
+              props.mission.execution?.status === "waiting"
+                ? "Resume"
+                : props.mission.execution === undefined
+                  ? "Run"
+                  : "Run again"}
+            </button>
+          ) : null}
+          <button
+            className="secondary-button"
+            type="button"
+            onClick={() => void props.onLifecycleChange?.()}
+          >
+            {props.mission.lifecycleStatus === "active" ? (
+              <>
+                <CheckCircle size={17} aria-hidden="true" /> Mark complete
+              </>
+            ) : (
+              <>
+                <ArrowCounterClockwise size={17} aria-hidden="true" /> Reopen
+              </>
+            )}
+          </button>
+        </div>
       </header>
       <div className="mission-detail-tabs" role="tablist" aria-label="Mission detail views">
         <button
@@ -411,12 +513,149 @@ export function MissionDetailFragment(props: {
               </div>
             </div>
             <div className="mission-execution-notice">
-              <strong>Mission created</strong>
-              <p>Execution will be available after Workflow continuation support is added.</p>
+              <strong>
+                {props.mission.execution === undefined
+                  ? "Ready to run"
+                  : `Execution ${props.mission.execution.status}`}
+              </strong>
+              <p>
+                {props.mission.execution?.error ??
+                  `Pinned to ${props.mission.executor.ref} in project revision ${props.mission.project.revision}.`}
+              </p>
             </div>
+            {interactions.map((interaction) => (
+              <section className="mission-human-loop" key={interaction.interactionId}>
+                <strong>{interaction.request.title ?? "Human input required"}</strong>
+                <p>{interaction.request.prompt ?? "Review the current workflow state."}</p>
+                {interaction.request.kind === "question"
+                  ? interaction.request.questions?.map((question) => (
+                      <label key={question.question}>
+                        {question.question}
+                        {question.kind === "single_choice" ? (
+                          <select
+                            value={String(
+                              humanAnswers[interaction.interactionId]?.[question.question] ?? "",
+                            )}
+                            onChange={(event) =>
+                              setHumanAnswer(
+                                setHumanAnswers,
+                                interaction.interactionId,
+                                question.question,
+                                event.target.value,
+                              )
+                            }
+                          >
+                            <option value="">Choose an option</option>
+                            {question.options.map((option) => (
+                              <option value={option.label} key={option.label}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
+                        ) : question.kind === "multiple_choice" ? (
+                          <span>
+                            {question.options.map((option) => {
+                              const selected =
+                                humanAnswers[interaction.interactionId]?.[question.question];
+                              const values = Array.isArray(selected) ? selected : [];
+                              return (
+                                <label key={option.label}>
+                                  <input
+                                    type="checkbox"
+                                    checked={values.includes(option.label)}
+                                    onChange={(event) =>
+                                      setHumanAnswer(
+                                        setHumanAnswers,
+                                        interaction.interactionId,
+                                        question.question,
+                                        event.target.checked
+                                          ? [...values, option.label]
+                                          : values.filter((value) => value !== option.label),
+                                      )
+                                    }
+                                  />
+                                  {option.label}
+                                </label>
+                              );
+                            })}
+                          </span>
+                        ) : (
+                          <textarea
+                            value={String(
+                              humanAnswers[interaction.interactionId]?.[question.question] ?? "",
+                            )}
+                            onChange={(event) =>
+                              setHumanAnswer(
+                                setHumanAnswers,
+                                interaction.interactionId,
+                                question.question,
+                                event.target.value,
+                              )
+                            }
+                          />
+                        )}
+                      </label>
+                    ))
+                  : null}
+                <textarea
+                  value={humanNotes[interaction.interactionId] ?? ""}
+                  onChange={(event) =>
+                    setHumanNotes((current) => ({
+                      ...current,
+                      [interaction.interactionId]: event.target.value,
+                    }))
+                  }
+                  placeholder="Optional notes"
+                />
+                <footer>
+                  {interaction.request.kind === "approval" ? (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          void respond(interaction, {
+                            approved: false,
+                            decision: "rejected",
+                            notes: humanNotes[interaction.interactionId] ?? "",
+                          })
+                        }
+                      >
+                        Reject
+                      </button>
+                      <button
+                        className="primary-button"
+                        type="button"
+                        onClick={() =>
+                          void respond(interaction, {
+                            approved: true,
+                            decision: "approved",
+                            notes: humanNotes[interaction.interactionId] ?? "",
+                          })
+                        }
+                      >
+                        Approve & continue
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      className="primary-button"
+                      type="button"
+                      onClick={() =>
+                        void respond(interaction, {
+                          answers: humanAnswers[interaction.interactionId] ?? {},
+                          notes: humanNotes[interaction.interactionId] ?? "",
+                        })
+                      }
+                    >
+                      Submit response
+                    </button>
+                  )}
+                </footer>
+              </section>
+            ))}
             <div className="mission-disabled-composer" aria-disabled="true">
               <Paperclip size={20} aria-hidden="true" />
-              <span>Mission execution is not available yet</span>
+              <span>Use Run to start the pinned executor</span>
               <button type="button" disabled>
                 Send
               </button>
@@ -425,8 +664,16 @@ export function MissionDetailFragment(props: {
         ) : (
           <div className="mission-work-empty">
             <CheckCircle size={31} weight="thin" aria-hidden="true" />
-            <h2>No execution records</h2>
-            <p>Runs, tool activity, and artifacts will appear here after execution is enabled.</p>
+            <h2>
+              {props.mission.execution === undefined
+                ? "No execution records"
+                : `Execution ${props.mission.execution.status}`}
+            </h2>
+            <p>
+              {props.mission.execution === undefined
+                ? "Run this mission to create an execution."
+                : `Execution ID: ${props.mission.execution.id}`}
+            </p>
           </div>
         )}
       </div>
@@ -438,6 +685,18 @@ export function MissionDetailFragment(props: {
       ) : null}
     </section>
   );
+}
+
+function setHumanAnswer(
+  update: Dispatch<SetStateAction<Record<string, Record<string, string | readonly string[]>>>>,
+  interactionId: string,
+  question: string,
+  value: string | readonly string[],
+): void {
+  update((current) => ({
+    ...current,
+    [interactionId]: { ...current[interactionId], [question]: value },
+  }));
 }
 
 function desktopApi(): PragmaDesktopAPI | undefined {

@@ -4,7 +4,7 @@ import type { ExpertDefinition } from "../../../../shared/desktop-api.ts";
 import { toExpertRecord, toPersistedInput } from "./studio-model.ts";
 
 const persistedExpert: ExpertDefinition = {
-  schemaVersion: "pragma.expert/v2",
+  schemaVersion: "pragma.desktop-expert-view/v1",
   id: "reviewer",
   name: "Reviewer",
   description: "Reviews changes.",
@@ -16,6 +16,7 @@ const persistedExpert: ExpertDefinition = {
   toolApprovals: {},
   plugins: [],
   contextStoreMounts: [],
+  resourceTools: [],
   revision: 1,
   createdAt: "2026-01-01T00:00:00.000Z",
   updatedAt: "2026-01-01T00:00:00.000Z",

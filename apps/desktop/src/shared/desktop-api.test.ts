@@ -43,35 +43,38 @@ describe("expert input limits", () => {
 });
 
 describe("mission contracts", () => {
-  it("accepts single-expert creation and rejects team creation", () => {
+  it("accepts versioned expert, team, and flow resource references", () => {
     const input = {
       workspace: "/workspace/repo",
-      executor: { kind: "expert" as const, id: "expert_01" },
+      executor: { ref: "expert:expert_01@1.0.0" },
       goal: "Review the repository",
     };
     expect(CreateMissionSchema.safeParse(input).success).toBe(true);
     expect(
       CreateMissionSchema.safeParse({
         ...input,
-        executor: { kind: "expert_team", id: "team_01" },
+        executor: { ref: "team:delivery@1.0.0" },
       }).success,
+    ).toBe(true);
+    expect(
+      CreateMissionSchema.safeParse({ ...input, executor: { ref: "not-a-ref" } }).success,
     ).toBe(false);
   });
 
-  it("keeps expert-team as a readable executor variant", () => {
+  it("pins a team executor to a project revision", () => {
     expect(
       MissionSchema.safeParse({
-        schemaVersion: "pragma.mission/v1",
+        schemaVersion: "pragma.mission/v2",
         id: "00000000-0000-4000-8000-000000000000",
         title: "Deliver the feature",
         goal: "Deliver the feature",
         workspace: { path: "/workspace/repo", basename: "repo" },
+        project: { id: "studio", revision: 3 },
         executor: {
-          kind: "expert_team",
-          id: "delivery_team",
+          kind: "team",
+          ref: "team:delivery_team@0.1.0",
           name: "Delivery Team",
           version: "0.1.0",
-          revision: 1,
         },
         lifecycleStatus: "active",
         createdAt: "2026-07-11T00:00:00.000Z",

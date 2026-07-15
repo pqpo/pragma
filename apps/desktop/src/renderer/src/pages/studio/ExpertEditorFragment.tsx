@@ -1,5 +1,6 @@
 import { User } from "@phosphor-icons/react";
 import { useState } from "react";
+import type { PragmaResource } from "@pragma/interpreter/ast";
 
 import { errorMessage } from "../../lib/errors.ts";
 import {
@@ -23,6 +24,7 @@ export function ExpertEditorFragment(props: {
   readonly runtimes: readonly DesktopRuntimeAvailability[];
   readonly contextStores: readonly ContextStore[];
   readonly capabilities: readonly Capability[];
+  readonly resources: readonly PragmaResource[];
   readonly existingExpertIds: readonly string[];
   readonly onCancel: () => void;
   readonly onCreated: (expert: ExpertRecord) => Promise<void>;
@@ -400,6 +402,67 @@ export function ExpertEditorFragment(props: {
                   ) : null}
                 </label>
               ) : null}
+              <fieldset className="expert-context-store-picker expert-capability-picker">
+                <legend>Experts, teams, and flows as tools</legend>
+                <small>
+                  Each selection is compiled through the versioned pragma.tool.call@v1 adapter.
+                </small>
+                {props.resources
+                  .filter(
+                    (resource) =>
+                      !(resource.kind === "Expert" && resource.metadata.id === draft.id),
+                  )
+                  .map((resource) => {
+                    const kind =
+                      resource.kind === "Expert"
+                        ? "expert"
+                        : resource.kind === "ExpertTeam"
+                          ? "team"
+                          : "flow";
+                    const ref = `${kind}:${resource.metadata.id}@${resource.metadata.version}`;
+                    const selected = draft.resourceTools.some(
+                      (binding) => binding.target?.ref === ref,
+                    );
+                    return (
+                      <label key={ref}>
+                        <input
+                          type="checkbox"
+                          checked={selected}
+                          onChange={(event) =>
+                            setDraft({
+                              ...draft,
+                              resourceTools: event.target.checked
+                                ? [
+                                    ...draft.resourceTools,
+                                    {
+                                      adapter: "pragma.tool.call@v1",
+                                      target: { ref },
+                                      tool: {
+                                        name: `call_${kind}_${resource.metadata.id}`.replace(
+                                          /[^A-Za-z0-9_-]/g,
+                                          "_",
+                                        ),
+                                        description: `Call ${resource.metadata.name}.`,
+                                        approval: "ask",
+                                      },
+                                    },
+                                  ]
+                                : draft.resourceTools.filter(
+                                    (binding) => binding.target?.ref !== ref,
+                                  ),
+                            })
+                          }
+                        />
+                        <span>
+                          <strong>{resource.metadata.name}</strong>
+                          <small>
+                            {kind} · {resource.metadata.version}
+                          </small>
+                        </span>
+                      </label>
+                    );
+                  })}
+              </fieldset>
               <fieldset className="expert-context-store-picker">
                 <legend>Context stores</legend>
                 <small>An expert can mount multiple stores.</small>

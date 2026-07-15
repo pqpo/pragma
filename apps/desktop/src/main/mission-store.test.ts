@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import type { ExpertDefinition } from "../shared/desktop-api.ts";
+import type { PragmaExpertResource } from "@pragma/interpreter/ast";
 import { createMissionStore } from "./mission-store.ts";
 
 const temporaryPaths: string[] = [];
@@ -16,7 +16,7 @@ afterEach(async () => {
 });
 
 describe("mission store", () => {
-  it("persists a mission and an immutable executor snapshot", async () => {
+  it("persists a mission pinned to an immutable project revision", async () => {
     const root = await temporaryRoot();
     const store = createMissionStore({ missionsPath: join(root, "missions") });
     const expert = expertFixture();
@@ -24,16 +24,20 @@ describe("mission store", () => {
     const created = await store.create({
       workspace: { path: join(root, "workspace"), basename: "workspace" },
       goal: "Design the Missions experience\nwith a second line.",
-      expert,
+      project: { id: "studio", revision: 3 },
+      executor: expert,
     });
 
     expect(created.title).toBe("Design the Missions experience");
-    expect(created.executor).toMatchObject({ kind: "expert", id: expert.id, revision: 1 });
+    expect(created.executor).toMatchObject({
+      kind: "expert",
+      ref: "expert:product_designer@0.1.0",
+    });
+    expect(created.project).toEqual({ id: "studio", revision: 3 });
     await expect(store.get(created.id)).resolves.toEqual(created);
-    await expect(store.getExecutor(created.id)).resolves.toEqual(expert);
     await expect(store.list()).resolves.toEqual([created]);
-    expect(await readFile(join(root, "missions", created.id, "executor.json"), "utf8")).toContain(
-      '"revision": 1',
+    expect(await readFile(join(root, "missions", created.id, "mission.yaml"), "utf8")).toContain(
+      "revision: 3",
     );
   });
 
@@ -43,7 +47,8 @@ describe("mission store", () => {
     const created = await store.create({
       workspace: { path: join(root, "workspace"), basename: "workspace" },
       goal: "Review the desktop shell",
-      expert: expertFixture(),
+      project: { id: "studio", revision: 1 },
+      executor: expertFixture(),
     });
 
     const completed = await store.markComplete(created.id);
@@ -53,6 +58,39 @@ describe("mission store", () => {
     const reopened = await store.reopen(created.id);
     expect(reopened.lifecycleStatus).toBe("active");
     expect(reopened.completedAt).toBeUndefined();
+  });
+
+  it("does not let a stale observer overwrite a terminal execution status", async () => {
+    const root = await temporaryRoot();
+    const store = createMissionStore({ missionsPath: join(root, "missions") });
+    const created = await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "Run once",
+      project: { id: "studio", revision: 1 },
+      executor: expertFixture(),
+    });
+    const executionId = "00000000-0000-4000-8000-000000000001";
+    const startedAt = "2026-07-15T00:00:00.000Z";
+    await store.updateExecution(created.id, { id: executionId, status: "running", startedAt });
+    await store.updateExecution(
+      created.id,
+      {
+        id: executionId,
+        status: "succeeded",
+        startedAt,
+        finishedAt: "2026-07-15T00:01:00.000Z",
+      },
+      { executionId, statuses: ["running", "waiting"] },
+    );
+
+    const stale = await store.updateExecution(
+      created.id,
+      { id: executionId, status: "waiting", startedAt },
+      { executionId, statuses: ["running", "waiting"] },
+    );
+
+    expect(stale.execution?.status).toBe("succeeded");
+    expect((await store.get(created.id)).execution?.status).toBe("succeeded");
   });
 
   it("reports a stable error for a missing mission", async () => {
@@ -70,22 +108,24 @@ async function temporaryRoot(): Promise<string> {
   return path;
 }
 
-function expertFixture(): ExpertDefinition {
+function expertFixture(): PragmaExpertResource {
   return {
-    schemaVersion: "pragma.expert/v2",
-    id: "product_designer",
-    name: "Product Designer",
-    description: "Designs product experiences.",
-    tags: ["design"],
-    version: "0.1.0",
-    scope: "Product experience design.",
-    model: null,
-    capabilities: [],
-    toolApprovals: {},
-    plugins: [],
-    contextStoreMounts: [],
-    revision: 1,
-    createdAt: "2026-07-11T00:00:00.000Z",
-    updatedAt: "2026-07-11T00:00:00.000Z",
+    apiVersion: "pragma/v1",
+    kind: "Expert",
+    metadata: {
+      id: "product_designer",
+      name: "Product Designer",
+      description: "Designs product experiences.",
+      tags: ["design"],
+      version: "0.1.0",
+    },
+    spec: {
+      scope: "Product experience design.",
+      capabilities: [],
+      toolApprovals: {},
+      contextStores: [],
+      plugins: [],
+      tools: [],
+    },
   };
 }
