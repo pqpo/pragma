@@ -61,6 +61,7 @@ export class ExpertOrchestrator {
   private readonly semaphore: DelegationSemaphore;
   private readonly experts = new Map<string, Expert>();
   private readonly pumping = new Set<string>();
+  private readonly activeJobs = new Map<string, Promise<void>>();
   private readonly joinedInvocationIds = new Set<string>();
 
   constructor(private readonly options: ExpertOrchestratorOptions) {
@@ -511,10 +512,25 @@ export class ExpertOrchestrator {
           descendantIds.has(invocation.invocationId) &&
           !isTerminalExecutionStatus(invocation.status),
       );
-      if (active.length === 0) return;
       for (const invocation of active) {
         await this.options.interruptController.interruptInvocation(invocation.invocationId, reason);
       }
+      const running = [...descendantIds].flatMap((invocationId) => {
+        const job = this.activeJobs.get(invocationId);
+        return job === undefined ? [] : [job];
+      });
+      if (running.length > 0) {
+        const results = await Promise.allSettled(running);
+        const errors = results.flatMap((result) =>
+          result.status === "rejected" ? [result.reason as unknown] : [],
+        );
+        if (errors.length === 1) throw errors[0];
+        if (errors.length > 1) {
+          throw new AggregateError(errors, "Descendant Expert jobs failed to become idle.");
+        }
+        continue;
+      }
+      if (active.length === 0) return;
     }
   }
 
@@ -564,48 +580,93 @@ export class ExpertOrchestrator {
         permit.release();
         continue;
       }
+      const running = this.executeActiveJob({
+        agentId,
+        invocation: latest,
+        expert,
+        prompt: String(latest.input),
+        runtimeId: context.runtimeId,
+        permit,
+      });
+      this.activeJobs.set(next.invocationId, running);
+      try {
+        await running;
+      } finally {
+        if (this.activeJobs.get(next.invocationId) === running) {
+          this.activeJobs.delete(next.invocationId);
+        }
+      }
+    }
+  }
+
+  private async executeActiveJob(options: {
+    readonly agentId: string;
+    readonly invocation: Invocation;
+    readonly expert: Expert;
+    readonly prompt: string;
+    readonly runtimeId?: string | undefined;
+    readonly permit: DelegationPermit;
+  }): Promise<void> {
+    try {
       await this.options.store.commit({
-        commitId: `agent-activated:${next.invocationId}`,
+        commitId: `agent-activated:${options.invocation.invocationId}`,
         executionId: this.options.executionId,
-        agentPatches: [{ agentId, patch: { activeInvocationId: next.invocationId } }],
+        agentPatches: [
+          { agentId: options.agentId, patch: { activeInvocationId: options.invocation.invocationId } },
+        ],
         events: [
-          { invocationId: next.invocationId, type: "agent.task.activated", data: { agentId } },
+          {
+            invocationId: options.invocation.invocationId,
+            type: "agent.task.activated",
+            data: { agentId: options.agentId },
+          },
         ],
       });
-      try {
-        const activeAgent = (await this.options.store.getAgent(this.options.executionId, agentId))!;
-        await this.options.execute({
-          agent: activeAgent,
-          invocation: latest,
-          expert,
-          prompt: String(latest.input),
-          runtimeId: context.runtimeId,
-          permit,
-        });
-      } catch {
-        const current = await this.options.store.getInvocation(
-          this.options.executionId,
-          next.invocationId,
+      const activeAgent = (await this.options.store.getAgent(
+        this.options.executionId,
+        options.agentId,
+      ))!;
+      await this.options.execute({
+        agent: activeAgent,
+        invocation: options.invocation,
+        expert: options.expert,
+        prompt: options.prompt,
+        runtimeId: options.runtimeId,
+        permit: options.permit,
+      });
+    } catch {
+      const current = await this.options.store.getInvocation(
+        this.options.executionId,
+        options.invocation.invocationId,
+      );
+      if (current !== undefined && !isTerminalExecutionStatus(current.status)) {
+        await this.failUnrecoverableJob(
+          current,
+          "Expert task failed before reaching a terminal state.",
         );
-        if (current !== undefined && !isTerminalExecutionStatus(current.status)) {
-          await this.failUnrecoverableJob(
-            current,
-            "Expert task failed before reaching a terminal state.",
-          );
-        }
-      } finally {
-        const currentAgent = await this.options.store.getAgent(this.options.executionId, agentId);
-        if (currentAgent?.activeInvocationId === next.invocationId) {
+      }
+    } finally {
+      try {
+        const currentAgent = await this.options.store.getAgent(
+          this.options.executionId,
+          options.agentId,
+        );
+        if (currentAgent?.activeInvocationId === options.invocation.invocationId) {
           await this.options.store.commit({
-            commitId: `agent-idle:${next.invocationId}`,
+            commitId: `agent-idle:${options.invocation.invocationId}`,
             executionId: this.options.executionId,
-            agentPatches: [{ agentId, patch: { activeInvocationId: undefined } }],
+            agentPatches: [{ agentId: options.agentId, patch: { activeInvocationId: undefined } }],
             events: [
-              { invocationId: next.invocationId, type: "agent.task.released", data: { agentId } },
+              {
+                invocationId: options.invocation.invocationId,
+                type: "agent.task.released",
+                data: { agentId: options.agentId },
+              },
             ],
           });
         }
-        permit.release();
+      } finally {
+        options.permit.release();
       }
     }
   }

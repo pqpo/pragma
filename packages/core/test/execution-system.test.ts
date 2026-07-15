@@ -160,14 +160,30 @@ type OrchestrationScenario =
   | "interrupt"
   | "parent-failure";
 
+interface OrchestrationRuntimeStats {
+  active: number;
+  maxActive: number;
+  memberTurns: number;
+}
+
 function createOrchestrationRuntime(
   scenario: OrchestrationScenario,
-  stats: { active: number; maxActive: number } = { active: 0, maxActive: 0 },
+  stats: OrchestrationRuntimeStats = { active: 0, maxActive: 0, memberTurns: 0 },
 ) {
   const firstChildWave = createBarrier(2, 5_000);
+  let signalChildSessionOpening!: () => void;
+  const childSessionOpening = new Promise<void>((resolve) => {
+    signalChildSessionOpening = resolve;
+  });
   return defineRuntimeDriver<never, FakeSession>({
     descriptor: { id: `orchestration-${scenario}`, kind: "fake", displayName: "Orchestration" },
-    createSession: (context) => ({ context, id: `native-${context.systemSessionId}` }),
+    createSession: async (context) => {
+      if (scenario === "parent-failure" && context.agent.id !== "lead") {
+        signalChildSessionOpening();
+        await new Promise<void>((resolve) => setTimeout(resolve, 1_000));
+      }
+      return { context, id: `native-${context.systemSessionId}` };
+    },
     restoreSession: (context) => ({ context, id: context.request.runtimeSession!.id }),
     readSession: (session) => ({ runtimeSessionId: session.id }),
     async startTurn(session, turn) {
@@ -176,6 +192,7 @@ function createOrchestrationRuntime(
       try {
         const expertId = session.context.agent.id;
         if (expertId !== "lead") {
+          stats.memberTurns += 1;
           if (scenario === "parallel" || scenario === "concurrency") {
             await firstChildWave.arriveAndWait();
           } else {
@@ -261,7 +278,10 @@ function createOrchestrationRuntime(
         }
 
         const first = await spawn("member", "first");
-        if (scenario === "parent-failure") throw new Error("lead failed after spawn");
+        if (scenario === "parent-failure") {
+          await childSessionOpening;
+          throw new Error("lead failed after spawn");
+        }
         if (scenario === "barrier" || scenario === "usage") {
           return {
             outputText: "lead:premature",
@@ -1801,7 +1821,7 @@ describe("Expert lifecycle orchestration", () => {
     targets: readonly string[] = ["member"],
   ) {
     const home = await mkdtemp(join(tmpdir(), `pragma-${scenario}-`));
-    const stats = { active: 0, maxActive: 0 };
+    const stats = { active: 0, maxActive: 0, memberTurns: 0 };
     const runtime = createOrchestrationRuntime(scenario, stats);
     const app = createPragma({
       pragmaHome: home,
@@ -1898,7 +1918,8 @@ describe("Expert lifecycle orchestration", () => {
 
   it("interrupts spawned descendants before a failed parent Execution settles", async () => {
     const home = await mkdtemp(join(tmpdir(), "pragma-parent-failure-"));
-    const runtime = createOrchestrationRuntime("parent-failure");
+    const stats = { active: 0, maxActive: 0, memberTurns: 0 };
+    const runtime = createOrchestrationRuntime("parent-failure", stats);
     const app = createPragma({
       pragmaHome: home,
       runtimes: createRuntimeRegistry({
@@ -1936,6 +1957,7 @@ describe("Expert lifecycle orchestration", () => {
     expect(tree.invocation.status).toBe("failed");
     expect(tree.children[0]?.invocation.status).toBe("interrupted");
     await session.close();
+    expect(stats.memberTurns).toBe(0);
   });
 
   it("queues follow-ups FIFO on the same agent and context", async () => {

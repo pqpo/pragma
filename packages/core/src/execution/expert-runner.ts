@@ -399,6 +399,8 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
     options.prompt,
     `invocation-user-message:${options.invocationId}`,
   );
+  const invocationSignal = options.controller.signalForInvocation(options.invocationId);
+  throwIfAborted(invocationSignal, options.invocationId);
 
   const runtimeId =
     options.runtimeId ?? options.context.runtimeId ?? options.context.snapshot?.runtimeId;
@@ -485,6 +487,7 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
     }
     return opened;
   });
+  throwIfAborted(invocationSignal, options.invocationId);
 
   let query = options.prompt;
   let continuation = 0;
@@ -928,6 +931,12 @@ function serializeError(error: unknown): unknown {
   return error instanceof Error
     ? { name: error.name, message: error.message, stack: error.stack }
     : error;
+}
+
+function throwIfAborted(signal: AbortSignal, invocationId: string): void {
+  if (!signal.aborted) return;
+  if (signal.reason instanceof Error) throw signal.reason;
+  throw new Error(`Invocation interrupted: ${invocationId}`);
 }
 
 function isDurableRuntimeEvent(event: ExpertAgentStreamEvent): boolean {
