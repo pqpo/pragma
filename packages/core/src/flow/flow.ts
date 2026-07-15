@@ -1,10 +1,7 @@
 import type { HumanInteractionRequest, HumanInteractionResponse } from "@pragma/shared";
 import type { z } from "zod";
 
-import {
-  readAgentDelegationDefinition,
-  type RuntimeByExpert,
-} from "../agent/agent-launcher.ts";
+import { readAgentDelegationDefinition, type RuntimeByExpert } from "../agent/agent-launcher.ts";
 import type { Expert } from "../agent/expert-agent.ts";
 import { isExpertTeam, type ExpertDefinition } from "../agent/expert-team.ts";
 import type { ContextIdResolver } from "../execution/context-id-resolver.ts";
