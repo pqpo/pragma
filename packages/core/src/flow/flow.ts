@@ -1,7 +1,9 @@
 import type { HumanInteractionRequest, HumanInteractionResponse } from "@pragma/shared";
 import type { z } from "zod";
 
-import type { ExpertDefinition } from "../agent/expert-team.ts";
+import { readAgentDelegationDefinition, type RuntimeByExpert } from "../agent/agent-launcher.ts";
+import type { Expert } from "../agent/expert-agent.ts";
+import { isExpertTeam, type ExpertDefinition } from "../agent/expert-team.ts";
 import type { ContextIdResolver } from "../execution/context-id-resolver.ts";
 
 export type FlowState = Record<string, unknown>;
@@ -56,6 +58,7 @@ export interface FlowExpertStepOptions<TInput = unknown, TOutput = unknown> exte
   TOutput
 > {
   readonly runtime?: string | undefined;
+  readonly runtimeByExpert?: RuntimeByExpert | undefined;
   readonly contextId?: ContextIdResolver | undefined;
 }
 
@@ -184,7 +187,19 @@ export class FlowSpec<TInput = unknown, TOutput = unknown> {
     if (!isExecutableDefinition(compiled)) {
       throw new Error(`Flow.use() only accepts Expert, ExpertTeam, or Flow: ${id}`);
     }
-    return this.addStep(id, compiled, options as unknown as FlowStepOptions);
+    if (!("kind" in compiled) || compiled.kind === "expert-team") {
+      validateFlowRuntimeByExpert(
+        compiled as ExpertDefinition,
+        (options as FlowExpertStepOptions).runtimeByExpert,
+        id,
+      );
+    }
+    const runtimeByExpert = (options as FlowExpertStepOptions).runtimeByExpert;
+    const normalizedOptions =
+      runtimeByExpert === undefined
+        ? options
+        : { ...options, runtimeByExpert: Object.freeze({ ...runtimeByExpert }) };
+    return this.addStep(id, compiled, normalizedOptions as unknown as FlowStepOptions);
   }
 
   compose(declare: (builder: FlowBuilder) => void): this {
@@ -273,6 +288,61 @@ export function defineFlow<TInput = unknown, TOutput = unknown>(
   options: DefineFlowOptions<TInput, TOutput>,
 ): FlowSpec<TInput, TOutput> {
   return new FlowSpec(options);
+}
+
+function validateFlowRuntimeByExpert(
+  definition: ExpertDefinition,
+  runtimeByExpert: RuntimeByExpert | undefined,
+  stepId: string,
+): void {
+  if (runtimeByExpert === undefined) return;
+  const knownExpertIds = collectReachableExpertIds(definition);
+  for (const [expertId, runtimeId] of Object.entries(runtimeByExpert)) {
+    if (!knownExpertIds.has(expertId)) {
+      throw new Error(`Flow step ${stepId} runtimeByExpert target is unknown: ${expertId}`);
+    }
+    if (runtimeId.trim() === "") {
+      throw new Error(`Flow step ${stepId} runtimeByExpert value must not be empty: ${expertId}`);
+    }
+  }
+}
+
+function collectReachableExpertIds(definition: ExpertDefinition): ReadonlySet<string> {
+  const expertIds = new Set<string>();
+  const visitStandaloneExpert = (expert: Expert): void => {
+    if (expertIds.has(expert.id)) return;
+    expertIds.add(expert.id);
+    const launchers = new Set(
+      (expert.tools ?? []).flatMap((tool) => {
+        const launcher = readAgentDelegationDefinition(tool);
+        return launcher === undefined ? [] : [launcher];
+      }),
+    );
+    if (launchers.size > 1) {
+      throw new Error(`Expert ${expert.id} has multiple agent launchers.`);
+    }
+    for (const target of [...launchers][0]?.experts ?? []) visitStandaloneExpert(target);
+  };
+  if (isExpertTeam(definition)) {
+    const participants = new Map(
+      [definition.coordinator, ...definition.members].map((expert) => [expert.id, expert]),
+    );
+    const visitTeamExpert = (expertId: string): void => {
+      if (expertIds.has(expertId)) return;
+      const expert = participants.get(expertId);
+      if (expert === undefined) {
+        throw new Error(`ExpertTeam ${definition.id} delegation target is unknown: ${expertId}`);
+      }
+      expertIds.add(expert.id);
+      for (const targetId of definition.delegation.allow.get(expertId) ?? []) {
+        visitTeamExpert(targetId);
+      }
+    };
+    visitTeamExpert(definition.coordinator.id);
+  } else {
+    visitStandaloneExpert(definition);
+  }
+  return expertIds;
 }
 
 function isExecutableDefinition(value: unknown): value is ExpertDefinition | Flow {
