@@ -23,6 +23,10 @@ FIFO Invocation，`wait_experts` 按 Invocation ID 汇合结果。`list_experts`
 Core 提供的新 ID；返回既有 ID 时复用 Context，并把 dispatch 归并到该 Context 对应的 Agent FIFO。
 等待子孙时释放并发 permit，避免嵌套死锁。
 
+ExpertSession 根 Expert 不属于 delegation：Session 创建时同步建立唯一根 Runtime Context，所有根 prompt
+始终引用该 Context；需要 fresh root 时创建新的 ExpertSession。`createSession({ runtime })` 只负责在创建
+根 Context 前完成 Runtime routing，后续执行和恢复只读取 Context 上不可变的 `runtimeId`。
+
 ## InvocationService 与 ExpertOrchestrator
 
 `InvocationService` 统一承担 Invocation 的可靠创建、状态迁移和 Canonical Event 原子提交。
@@ -51,6 +55,9 @@ Invocation 的 `agentTaskSequence` 是 FIFO 的唯一顺序源，不另存一份
 ExpertSession 以 Session Context Registry 作为跨 prompt 的 Context/snapshot 来源；每个 prompt 的
 Execution 只物化本轮 AgentInstance、Invocation 及其 Context binding，因此跨 prompt 复用 Context
 不会把上一轮 Agent 的任务队列带入本轮。
+
+Runtime Context 使用显式 origin：根 Context 由 ExpertSession 创建，Flow 与 delegation Context 由
+Invocation 创建。Snapshot 只保存 `systemSessionId` 与 `RuntimeSessionRef`，不复制 Expert 或 Runtime identity。
 
 父 Runtime turn 返回后，若仍存在未 join 的直属 Invocation，父 Invocation 进入 `waiting`，释放 permit，
 等待全部结果并记录 `expert.children.completed`，然后在原 Context 中启动框架续跑。失败、取消和中断的

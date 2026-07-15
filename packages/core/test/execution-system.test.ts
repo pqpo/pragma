@@ -397,6 +397,44 @@ async function trackedFixture(options: Omit<FakeRuntimeOptions, "stats"> = {}) {
 }
 
 describe("ExpertSession", () => {
+  it("creates one durable root Context before the first prompt", async () => {
+    const { app, expert } = await fixture();
+    const first = await app.experts.createSession(expert);
+    const firstState = await first.getState();
+    const firstRoot = firstState.contexts[firstState.rootContextId];
+
+    expect("runtimeId" in firstState).toBe(false);
+    expect(firstRoot).toMatchObject({
+      owner: { type: "expert-session", ownerId: first.sessionId },
+      origin: { type: "expert-session", sessionId: first.sessionId },
+      expert: { id: expert.id, version: expert.version },
+      runtimeId: "fake",
+      lifecycle: "open",
+    });
+    expect((await first.listEvents()).items.map((event) => event.type)).toEqual([
+      "session.created",
+      "context.created",
+    ]);
+
+    const turn = await first.prompt("hello", { requestId: "root-binding" });
+    await turn.result;
+    expect((await turn.getTree()).invocation).toMatchObject({
+      contextId: firstState.rootContextId,
+    });
+    expect((await turn.getTree()).invocation.contextResolution).toBeUndefined();
+
+    const second = await app.experts.createSession(expert);
+    expect((await second.getState()).rootContextId).not.toBe(firstState.rootContextId);
+    await first.close();
+    expect((await first.getState()).contexts[firstState.rootContextId]).toMatchObject({
+      lifecycle: "closed",
+    });
+    expect((await first.listEvents()).items.map((event) => event.type)).toEqual(
+      expect.arrayContaining(["context.closed", "session.closed"]),
+    );
+    await second.close();
+  });
+
   it("streams only future events until terminal and exposes durable message history", async () => {
     const { app, expert } = await fixture(100);
     const session = await app.experts.createSession(expert);
@@ -477,7 +515,7 @@ describe("ExpertSession", () => {
     ).rejects.toThrow("is closed");
   });
 
-  it("atomically preserves the first creator of the root Context under concurrent prompts", async () => {
+  it("keeps the Session-created root Context immutable under concurrent prompts", async () => {
     const { app, expert } = await trackedFixture({ delayMs: 25 });
     const session = await app.experts.createSession(expert);
     const [first, second] = await Promise.all([
@@ -486,11 +524,15 @@ describe("ExpertSession", () => {
     ]);
     const state = await session.getState();
     expect(Object.keys(state.contexts)).toEqual([state.rootContextId]);
-    expect(state.contexts[state.rootContextId]?.createdByInvocationId).toBe(state.executionIds[0]);
+    expect(state.contexts[state.rootContextId]?.origin).toEqual({
+      type: "expert-session",
+      sessionId: session.sessionId,
+    });
     await Promise.all([first.result, second.result]);
-    expect((await session.getState()).contexts[state.rootContextId]?.createdByInvocationId).toBe(
-      state.executionIds[0],
-    );
+    expect((await session.getState()).contexts[state.rootContextId]?.origin).toEqual({
+      type: "expert-session",
+      sessionId: session.sessionId,
+    });
     await session.close();
   });
 
@@ -566,8 +608,9 @@ describe("ExpertSession", () => {
     expect(memberContexts).toHaveLength(1);
     expect(memberContexts[0]).toMatchObject({
       contextId: firstMember?.contextId,
-      createdByInvocationId: firstMember?.invocationId,
-      snapshot: { expertId: member.id, runtimeId: "fake" },
+      origin: { type: "invocation", invocationId: firstMember?.invocationId },
+      runtimeId: "fake",
+      snapshot: { systemSessionId: expect.any(String) },
     });
     expect(stats.createSessionCalls).toBe(2);
     expect(recoveredStats.createSessionCalls).toBe(0);
@@ -636,7 +679,7 @@ describe("ExpertSession", () => {
     const sessions = createFileExpertSessionStore({ executions, pragmaHome: home });
     const now = new Date().toISOString();
     await sessions.create({
-      schemaVersion: "pragma.expert-session/v2",
+      schemaVersion: "pragma.expert-session/v3",
       sessionId: "leased-session",
       expertId: "expert",
       expertVersion: "1.0.0",
@@ -645,7 +688,9 @@ describe("ExpertSession", () => {
       queuedRequestIds: [],
       executionIds: [],
       rootContextId: "root",
-      contexts: {},
+      contexts: {
+        root: sessionRootContext("leased-session", "root", "expert", "1.0.0", "fake", now),
+      },
       createdAt: now,
       updatedAt: now,
     });
@@ -703,7 +748,7 @@ describe("ExpertSession", () => {
     const original = team("1.0.0");
     const now = new Date().toISOString();
     await sessions.create({
-      schemaVersion: "pragma.expert-session/v2",
+      schemaVersion: "pragma.expert-session/v3",
       sessionId: "fingerprint-session",
       expertId: original.id,
       expertVersion: original.version,
@@ -711,9 +756,10 @@ describe("ExpertSession", () => {
       status: "open",
       queuedRequestIds: [],
       executionIds: [],
-      runtimeId: "fake",
       rootContextId: "root",
-      contexts: {},
+      contexts: {
+        root: sessionRootContext("fingerprint-session", "root", lead.id, lead.version, "fake", now),
+      },
       createdAt: now,
       updatedAt: now,
     });
@@ -1230,16 +1276,14 @@ describe("ExpertSession", () => {
     });
     const session = await app.experts.createSession(expert, { sessionId: "journal-session" });
     const current = await session.getState();
-    const sessionCreated = (await session.listEvents()).items.find(
-      (event) => event.type === "session.created",
-    )!;
+    const sessionCreated = (await session.listEvents()).items;
     const now = new Date().toISOString();
     const executionId = "journal-execution";
     const definition = { id: expert.id, version: expert.version, kind: "expert" as const };
     await writeFile(
       new PragmaPaths({ pragmaHome: home }).expertSessionTransaction(session.sessionId),
       `${JSON.stringify({
-        schemaVersion: "pragma.expert-session-transaction/v2",
+        schemaVersion: "pragma.expert-session-transaction/v3",
         session: {
           ...current,
           queuedRequestIds: ["journal-request"],
@@ -1259,11 +1303,11 @@ describe("ExpertSession", () => {
           },
         ],
         events: [
-          sessionCreated,
+          ...sessionCreated,
           {
             schemaVersion: "pragma.expert-session-event/v1",
             eventId: "prompt-enqueued:journal-request",
-            cursor: { sessionId: session.sessionId, sequence: 2 },
+            cursor: { sessionId: session.sessionId, sequence: 3 },
             sessionId: session.sessionId,
             type: "prompt.enqueued",
             data: {
@@ -1293,7 +1337,7 @@ describe("ExpertSession", () => {
           rootInvocationId: executionId,
           definition,
           executorId: expert.id,
-          contextId: "journal-context",
+          contextId: current.rootContextId,
           status: "queued",
           input: "recover me",
           createdAt: now,
@@ -1320,7 +1364,7 @@ describe("ExpertSession", () => {
     const sessions = createFileExpertSessionStore({ executions, pragmaHome: home });
     const now = new Date().toISOString();
     await sessions.create({
-      schemaVersion: "pragma.expert-session/v2",
+      schemaVersion: "pragma.expert-session/v3",
       sessionId: "atomic-session",
       expertId: "expert",
       expertVersion: "1.0.0",
@@ -1329,28 +1373,54 @@ describe("ExpertSession", () => {
       queuedRequestIds: [],
       executionIds: [],
       rootContextId: "root-context",
-      contexts: {},
+      contexts: {
+        "root-context": sessionRootContext(
+          "atomic-session",
+          "root-context",
+          "expert",
+          "1.0.0",
+          "fake",
+          now,
+        ),
+      },
       createdAt: now,
       updatedAt: now,
     });
-    const created = (await sessions.listEvents("atomic-session"))[0]!;
+    const created = await sessions.listEvents("atomic-session");
     const closedAt = new Date(Date.now() + 1).toISOString();
+    const current = (await sessions.get("atomic-session"))!;
+    const closedRoot = {
+      ...current.contexts[current.rootContextId]!,
+      lifecycle: "closed" as const,
+      closedAt,
+      updatedAt: closedAt,
+    };
     await writeFile(
       new PragmaPaths({ pragmaHome: home }).expertSessionTransaction("atomic-session"),
       `${JSON.stringify({
-        schemaVersion: "pragma.expert-session-transaction/v2",
+        schemaVersion: "pragma.expert-session-transaction/v3",
         session: {
-          ...(await sessions.get("atomic-session")),
+          ...current,
           status: "closed",
+          contexts: { ...current.contexts, [current.rootContextId]: closedRoot },
           updatedAt: closedAt,
         },
         prompts: [],
         events: [
-          created,
+          ...created,
+          {
+            schemaVersion: "pragma.expert-session-event/v1",
+            eventId: "context-closed:root-context",
+            cursor: { sessionId: "atomic-session", sequence: 3 },
+            sessionId: "atomic-session",
+            type: "context.closed",
+            data: { contextId: "root-context" },
+            occurredAt: closedAt,
+          },
           {
             schemaVersion: "pragma.expert-session-event/v1",
             eventId: "session-closed",
-            cursor: { sessionId: "atomic-session", sequence: 2 },
+            cursor: { sessionId: "atomic-session", sequence: 4 },
             sessionId: "atomic-session",
             type: "session.closed",
             data: {},
@@ -1364,6 +1434,8 @@ describe("ExpertSession", () => {
     await expect(sessions.get("atomic-session")).resolves.toMatchObject({ status: "closed" });
     await expect(sessions.listEvents("atomic-session")).resolves.toMatchObject([
       { type: "session.created" },
+      { type: "context.created" },
+      { type: "context.closed" },
       { type: "session.closed" },
     ]);
   });
@@ -1433,7 +1505,7 @@ describe("FlowExecution", () => {
     expect((await execution.getTree()).children[0]?.invocation.contextResolution).toBeDefined();
     const store = createFileExecutionStore({ pragmaHome: home });
     expect(await store.listContexts(execution.executionId)).toMatchObject([
-      { lifecycle: "closed", snapshot: { runtimeId: "fake" } },
+      { lifecycle: "closed", runtimeId: "fake", snapshot: { systemSessionId: expect.any(String) } },
     ]);
     const eventTypes = (await streamed).map((event) => event.type);
     expect(eventTypes).toContain("context.closed");
@@ -2358,6 +2430,27 @@ async function waitUntil(predicate: () => Promise<boolean>): Promise<void> {
     if (Date.now() >= deadline) throw new Error("Timed out waiting for test condition.");
     await new Promise<void>((resolve) => setTimeout(resolve, 10));
   }
+}
+
+function sessionRootContext(
+  sessionId: string,
+  contextId: string,
+  expertId: string,
+  expertVersion: string,
+  runtimeId: string,
+  now: string,
+) {
+  return {
+    schemaVersion: "pragma.runtime-context/v2" as const,
+    contextId,
+    owner: { type: "expert-session" as const, ownerId: sessionId },
+    origin: { type: "expert-session" as const, sessionId },
+    expert: { id: expertId, version: expertVersion },
+    runtimeId,
+    lifecycle: "open" as const,
+    createdAt: now,
+    updatedAt: now,
+  };
 }
 
 async function waitForHumanRequest(

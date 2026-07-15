@@ -474,6 +474,11 @@ Expert API 设计要求：
   `ContextIdResolver`；是否复用只由最终 `contextId` 决定，不引入 `fresh/reuse` policy。
 - Runtime Context 的 identity、snapshot 和 lifecycle 只存放在 `RuntimeContextRecord`；Invocation 与
   AgentInstance 只引用 `contextId`，不得复制 Runtime snapshot。
+- ExpertSession 创建时必须同时创建唯一根 Runtime Context；同一 Session 的所有根 prompt 始终复用该
+  Context，需要 fresh root 时创建新的 ExpertSession。根 Context 是固定 Session binding，不属于 delegation，
+  不调用 `ContextIdResolver`。
+- Runtime routing 必须先完成并写入新 Context 的必填 `runtimeId`；执行时只读取
+  `RuntimeContextRecord.runtimeId`，Session、Invocation 和 snapshot 不复制 Runtime identity。
 - `ownerContextId` 是子 Agent 生命周期工具的权限边界；`createdByInvocationId` 只用于审计和树关系。
 - PragmaApp 只公开 `experts` 与 `flows` 两个执行 namespace。
 

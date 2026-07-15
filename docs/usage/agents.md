@@ -22,6 +22,12 @@ const resumed = await app.experts.resumeSession(expert, { sessionId: session.ses
 await resumed.prompt("continue");
 ```
 
+`createSession()` 会在返回前创建唯一根 Runtime Context；同一 Session 的所有根 prompt 都延续这条
+Runtime 对话，进程恢复后也不变。需要完全独立的根对话时应创建新的 ExpertSession。
+`createSession({ sessionId })` 只是用指定 ID 创建新 Session，同 ID 已存在会报错；恢复已有 Session
+只能使用 `resumeSession()`。`createSession({ runtime })` 中的 Runtime 只用于首次绑定根 Context，绑定后
+Runtime identity 只保存在该 Context 上。
+
 普通 Expert 可以显式注入 subagent launcher：
 
 ```ts

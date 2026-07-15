@@ -13,20 +13,17 @@ import {
   type ExpertSessionEvent,
   type Invocation,
   type PromptRequest,
-  type RuntimeContextRecord,
 } from "@pragma/shared";
 import { z } from "zod";
 
 import { withFileLock } from "../storage/file-lock.ts";
 import { PragmaPaths } from "../storage/pragma-paths.ts";
 import type { ExecutionStore } from "./execution-store.ts";
-import { mergeRuntimeContextRecord } from "./runtime-context-record.ts";
 
 export interface EnqueuePromptTransaction {
   readonly execution: ExecutionRecord;
   readonly rootInvocation: Invocation;
   readonly prompt: PromptRequest;
-  readonly context?: RuntimeContextRecord | undefined;
 }
 
 export interface ExpertSessionStore {
@@ -68,18 +65,33 @@ export function createFileExpertSessionStore(options: {
         if ((await readJson(paths.expertSessionState(record.sessionId))) !== undefined) {
           throw new Error(`ExpertSession already exists: ${record.sessionId}`);
         }
+        const parsedRecord = ExpertSessionRecordSchema.parse(record);
+        const rootContext = parsedRecord.contexts[parsedRecord.rootContextId]!;
         const journal = ExpertSessionTransactionJournalSchema.parse({
-          schemaVersion: "pragma.expert-session-transaction/v2",
-          session: record,
+          schemaVersion: "pragma.expert-session-transaction/v3",
+          session: parsedRecord,
           prompts: [],
           events: [
             createSessionEvent(
-              record.sessionId,
+              parsedRecord.sessionId,
               1,
               "session-created",
               "session.created",
               {},
-              record.createdAt,
+              parsedRecord.createdAt,
+            ),
+            createSessionEvent(
+              parsedRecord.sessionId,
+              2,
+              `context-created:${parsedRecord.rootContextId}`,
+              "context.created",
+              {
+                contextId: parsedRecord.rootContextId,
+                source: { kind: "expert-session-root" },
+                expert: rootContext.expert,
+                runtimeId: rootContext.runtimeId,
+              },
+              parsedRecord.createdAt,
             ),
           ],
         });
@@ -117,21 +129,11 @@ export function createFileExpertSessionStore(options: {
           ...session,
           queuedRequestIds: [...session.queuedRequestIds, transaction.prompt.requestId],
           executionIds: [...session.executionIds, transaction.execution.executionId],
-          contexts:
-            transaction.context === undefined
-              ? session.contexts
-              : {
-                  ...session.contexts,
-                  [transaction.context.contextId]: mergeRuntimeContextRecord(
-                    session.contexts[transaction.context.contextId],
-                    transaction.context,
-                  ),
-                },
           updatedAt: transaction.prompt.createdAt,
         });
         const nextPrompts = PromptRequestSchema.array().parse([...prompts, transaction.prompt]);
         const journal = ExpertSessionTransactionJournalSchema.parse({
-          schemaVersion: "pragma.expert-session-transaction/v2",
+          schemaVersion: "pragma.expert-session-transaction/v3",
           session: nextSession,
           prompts: nextPrompts,
           events: materializeSessionEvents(sessionId, events, [
@@ -179,7 +181,7 @@ export function createFileExpertSessionStore(options: {
         );
         const next = await action({ session: session.data, prompts });
         const journal = ExpertSessionTransactionJournalSchema.parse({
-          schemaVersion: "pragma.expert-session-transaction/v2",
+          schemaVersion: "pragma.expert-session-transaction/v3",
           session: next.session,
           prompts: next.prompts,
           events: materializeSessionEvents(
@@ -252,7 +254,7 @@ const ExpertSessionLeaseSchema = z.object({
 
 const ExpertSessionTransactionJournalSchema = z
   .object({
-    schemaVersion: z.literal("pragma.expert-session-transaction/v2"),
+    schemaVersion: z.literal("pragma.expert-session-transaction/v3"),
     session: ExpertSessionRecordSchema,
     prompts: PromptRequestSchema.array(),
     events: ExpertSessionEventSchema.array(),
@@ -312,6 +314,16 @@ function deriveSessionEvents(
     }
   }
   if (current.status !== next.status && next.status === "closed") {
+    const currentRoot = current.contexts[current.rootContextId];
+    const nextRoot = next.contexts[next.rootContextId];
+    if (currentRoot?.lifecycle === "open" && nextRoot?.lifecycle === "closed") {
+      events.push({
+        eventId: `context-closed:${next.rootContextId}`,
+        type: "context.closed",
+        data: { contextId: next.rootContextId },
+        occurredAt: next.updatedAt,
+      });
+    }
     events.push({
       eventId: "session-closed",
       type: "session.closed",

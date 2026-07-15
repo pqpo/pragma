@@ -42,6 +42,7 @@ import {
 import { getExecutionLiveBus } from "./execution-live-bus.ts";
 import { projectRuntimeOutput } from "./execution-output.ts";
 import { RuntimeMessageAccumulator } from "./runtime-message-accumulator.ts";
+import { requireInvocationContextOrigin } from "./runtime-context-record.ts";
 import { RuntimeSessionPool, type RuntimeSessionIdentity } from "./runtime-session-pool.ts";
 
 export type RuntimeContextSnapshot = SharedRuntimeContextSnapshot;
@@ -325,7 +326,6 @@ export interface RunExpertInvocationOptions {
   readonly owner:
     | { readonly type: "expert-session"; readonly ownerId: string }
     | { readonly type: "flow-execution"; readonly ownerId: string };
-  readonly runtimeId?: string | undefined;
   readonly runtimeByExpert?: RuntimeByExpert | undefined;
   readonly context: RuntimeContextRecord;
   readonly controller: ExecutionController;
@@ -405,9 +405,7 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
   const invocationSignal = options.controller.signalForInvocation(options.invocationId);
   throwIfAborted(invocationSignal, options.invocationId);
 
-  const runtimeId =
-    options.runtimeId ?? options.context.runtimeId ?? options.context.snapshot?.runtimeId;
-  const runtime = options.runtimes.resolve(runtimeId);
+  const runtime = options.runtimes.resolve(options.context.runtimeId);
   validateDelegatedRuntimeRouting(options, delegation, runtime.descriptor.id);
   const runtimeIdentity = {
     contextId: options.context.contextId,
@@ -419,7 +417,6 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
   const persistRuntimeSnapshot = async (snapshot: RuntimeContextSnapshot): Promise<void> => {
     const next: RuntimeContextRecord = {
       ...options.context,
-      runtimeId: snapshot.runtimeId,
       snapshot,
       updatedAt: new Date().toISOString(),
     };
@@ -438,7 +435,7 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
               contextPatches: [
                 {
                   contextId: options.context.contextId,
-                  patch: { runtimeId: snapshot.runtimeId, snapshot },
+                  patch: { snapshot },
                 },
               ],
             }),
@@ -465,7 +462,7 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
           ? { ...options.owner, contextId: options.context.contextId }
           : {
               ...options.owner,
-              invocationId: options.context.createdByInvocationId,
+              invocationId: requireInvocationContextOrigin(options.context),
             },
       systemSessionId: options.context.snapshot?.systemSessionId,
       runtimeSession: options.context.snapshot?.runtimeSession,
@@ -474,8 +471,6 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
       onSessionInfo: async (info) => {
         if (info.runtimeSession.id === "") return;
         await persistRuntimeSnapshot({
-          expertId: nativeExpert.id,
-          runtimeId: runtime.descriptor.id,
           systemSessionId: info.systemSessionId,
           runtimeSession: info.runtimeSession,
         });
@@ -484,8 +479,6 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
     const info = opened.info();
     if (info.runtimeSession.id !== "") {
       await persistRuntimeSnapshot({
-        expertId: nativeExpert.id,
-        runtimeId: runtime.descriptor.id,
         systemSessionId: info.systemSessionId,
         runtimeSession: info.runtimeSession,
       });
@@ -514,12 +507,7 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
       });
       options.controller.addUsage(turn.usage);
       invocationUsage = mergeUsage(invocationUsage, turn.usage);
-      await persistSessionInfo(
-        session,
-        nativeExpert,
-        runtime.descriptor.id,
-        persistRuntimeSnapshot,
-      );
+      await persistSessionInfo(session, persistRuntimeSnapshot);
 
       if (
         orchestrator !== undefined &&
@@ -658,7 +646,6 @@ async function executeAgentJob(
     expert: job.expert,
     prompt: job.prompt,
     owner: parent.owner,
-    runtimeId: job.runtimeId ?? context.runtimeId,
     context,
     controller: parent.controller,
     store: parent.store,
@@ -866,14 +853,10 @@ async function appendUserMessage(
 
 async function persistSessionInfo(
   session: RuntimeAgentSession,
-  expert: Expert,
-  runtimeId: string,
   persist: (snapshot: RuntimeContextSnapshot) => Promise<void>,
 ): Promise<void> {
   const info = session.info();
   await persist({
-    expertId: expert.id,
-    runtimeId,
     systemSessionId: info.systemSessionId,
     runtimeSession: info.runtimeSession,
   });
@@ -885,9 +868,7 @@ function assertRuntimeIdentity(
 ): void {
   if (
     options.context.expert.id !== identity.expertId ||
-    (options.context.runtimeId !== undefined && options.context.runtimeId !== identity.runtimeId) ||
-    (options.context.snapshot !== undefined &&
-      options.context.snapshot.runtimeId !== identity.runtimeId)
+    options.context.runtimeId !== identity.runtimeId
   ) {
     throw new Error(
       `Runtime Context ${options.context.contextId} identity conflicts with ${identity.expertId}/${identity.runtimeId}.`,

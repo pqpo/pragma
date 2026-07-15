@@ -22,6 +22,18 @@ snapshot. Invocation and AgentInstance reference only `contextId`; neither store
 Once created, a Context cannot change owner, Expert, or Runtime. A fixed string therefore cannot
 cross FlowExecution or ExpertSession ownership boundaries.
 
+An ExpertSession creates exactly one root Runtime Context atomically with the Session. Every root
+prompt in that Session references the same Context; callers create another ExpertSession when they
+need a fresh root conversation. This fixed root binding is not delegation and does not invoke a
+`ContextIdResolver`. `CreateExpertSessionOptions.runtime` is only the routing input used to bind the
+root Context. After binding, execution reads Runtime identity exclusively from
+`RuntimeContextRecord.runtimeId`.
+
+Context provenance is explicit: an ExpertSession root Context has an ExpertSession origin, while
+Flow and delegated Contexts have an Invocation origin. Runtime Context snapshots contain only the
+system and native Runtime Session references; Expert and Runtime identity remain on the containing
+Runtime Context record.
+
 Agent ownership is distinct from Runtime Context identity. `ownerContextId` grants list, wait,
 follow-up, and interrupt authority; `createdByInvocationId` records provenance; `agentId` identifies
 the FIFO task lane. Concurrent dispatches that resolve to the same Context are atomically folded
@@ -37,8 +49,8 @@ active, released on close, and may be reclaimed after expiration when a process 
 
 ## Consequences
 
-- Multiple prompts in one ExpertSession can reuse the same native Runtime process and isolated MCP Gateway registration by resolving the same Context ID.
+- Multiple prompts in one ExpertSession reuse the same root Context and native Runtime process until the Session closes.
 - A second Worker cannot concurrently resume and execute the same ExpertSession.
-- Default resolution uses `pragma.context.fresh@v1`; deliberate reuse must be expressed by an identified resolver.
+- Flow and delegation default resolution uses `pragma.context.fresh@v1`; deliberate reuse must be expressed by an identified resolver.
 - Runtime cleanup failures are reported, and a Session is marked closed only after cleanup succeeds.
 - Runtime snapshots are stored only in validated RuntimeContext records, never copied into Invocation or AgentInstance.
