@@ -19,6 +19,7 @@ export {
   type AgentLauncher,
   type CreateAgentLauncherOptions,
   type ExpertLifecycleToolName,
+  type RuntimeByExpert,
 } from "./agent/agent-launcher.ts";
 export * from "./agent/expert-agent.ts";
 export * from "./agent/expert-definition-descriptor.ts";
