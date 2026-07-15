@@ -260,10 +260,7 @@ function createOrchestrationRuntime(
         if (scenario === "followup-older") {
           const first = await spawn("member", "first");
           const second = await spawn("member", "second");
-          await wait([
-            first["invocationId"] as string,
-            second["invocationId"] as string,
-          ]);
+          await wait([first["invocationId"] as string, second["invocationId"] as string]);
           const followup = await call("followup_expert", {
             agentId: first["agentId"],
             prompt: "followup-first",
@@ -534,8 +531,7 @@ describe("ExpertSession", () => {
         contextId: defineContextIdResolver({
           id: "test.persistent-team-member",
           version: "1.0.0",
-          resolve: ({ ownerContextId, target }) =>
-            `${ownerContextId ?? "root"}:${target.expertId}`,
+          resolve: ({ ownerContextId, target }) => `${ownerContextId ?? "root"}:${target.expertId}`,
         }),
       },
     });
