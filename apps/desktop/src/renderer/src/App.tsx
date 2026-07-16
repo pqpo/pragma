@@ -8,20 +8,31 @@ import { StudioPage } from "./pages/studio/StudioPage.tsx";
 export function App() {
   const [activeView, setActiveView] = useState<AppView>("studio");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [missionExecutorRef, setMissionExecutorRef] = useState<string>();
+
+  const navigate = (view: AppView) => {
+    if (view !== "missions") setMissionExecutorRef(undefined);
+    setActiveView(view);
+  };
 
   return (
     <main className={sidebarCollapsed ? "desktop-shell is-sidebar-collapsed" : "desktop-shell"}>
       <Sidebar
         activeView={activeView}
         collapsed={sidebarCollapsed}
-        onNavigate={setActiveView}
+        onNavigate={navigate}
         onToggle={() => setSidebarCollapsed((collapsed) => !collapsed)}
       />
 
       {activeView === "missions" ? (
-        <MissionsPage />
+        <MissionsPage initialExecutorRef={missionExecutorRef} />
       ) : activeView === "studio" ? (
-        <StudioPage />
+        <StudioPage
+          onTryExpert={(expert) => {
+            setMissionExecutorRef(`expert:${expert.id}@${expert.version}`);
+            setActiveView("missions");
+          }}
+        />
       ) : (
         <SettingsPage />
       )}

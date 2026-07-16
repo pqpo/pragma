@@ -100,6 +100,32 @@ describe("mission store", () => {
       code: "mission_not_found",
     });
   });
+
+  it("deletes an idle mission and protects an active execution", async () => {
+    const root = await temporaryRoot();
+    const store = createMissionStore({ missionsPath: join(root, "missions") });
+    const idle = await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "Remove this conversation",
+      project: { id: "studio", revision: 1 },
+      executor: expertFixture(),
+    });
+    await store.remove(idle.id);
+    await expect(store.get(idle.id)).rejects.toMatchObject({ code: "mission_not_found" });
+
+    const active = await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "Keep this execution",
+      project: { id: "studio", revision: 1 },
+      executor: expertFixture(),
+    });
+    await store.updateExecution(active.id, {
+      id: "00000000-0000-4000-8000-000000000002",
+      status: "running",
+      startedAt: "2026-07-16T00:00:00.000Z",
+    });
+    await expect(store.remove(active.id)).rejects.toMatchObject({ code: "mission_active" });
+  });
 });
 
 async function temporaryRoot(): Promise<string> {

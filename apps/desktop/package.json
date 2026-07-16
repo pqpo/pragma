@@ -10,6 +10,10 @@
     "prepare:electron": "install-electron",
     "dev": "electron-vite dev",
     "build": "electron-vite build",
+    "package:dir": "pnpm run build && electron-builder --dir",
+    "dist": "pnpm run build && electron-builder",
+    "dist:mac": "pnpm run build && electron-builder --mac --x64 --arm64",
+    "dist:win": "pnpm run build && electron-builder --win --x64",
     "lint": "eslint .",
     "typecheck": "pnpm run typecheck:node && pnpm run typecheck:web",
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json",
@@ -32,6 +36,11 @@
     "react-dom": "latest",
     "zod": "latest"
   },
+  "optionalDependencies": {
+    "@mariozechner/clipboard-darwin-arm64": "0.3.9",
+    "@mariozechner/clipboard-darwin-x64": "0.3.9",
+    "@mariozechner/clipboard-win32-x64-msvc": "0.3.9"
+  },
   "devDependencies": {
     "@pragma/tsconfig": "workspace:*",
     "@types/node": "latest",
@@ -39,6 +48,7 @@
     "@types/react-dom": "latest",
     "@vitejs/plugin-react": "^5.0.0",
     "electron": "latest",
+    "electron-builder": "^26.15.3",
     "electron-vite": "latest",
     "typescript": "latest",
     "vite": "^7.0.0",

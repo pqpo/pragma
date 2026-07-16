@@ -5,7 +5,12 @@ import { join } from "node:path";
 import { formatPragmaYaml, parsePragmaYaml } from "@pragma/interpreter";
 import type { PragmaResource } from "@pragma/interpreter/ast";
 
-import { MissionIdSchema, MissionSchema, type Mission } from "../shared/desktop-api.ts";
+import {
+  MissionIdSchema,
+  MissionSchema,
+  type Mission,
+  type MissionMessage,
+} from "../shared/desktop-api.ts";
 
 export interface MissionStore {
   list(): Promise<Mission[]>;
@@ -24,13 +29,15 @@ export interface MissionStore {
       readonly statuses?: readonly NonNullable<Mission["execution"]>["status"][] | undefined;
     },
   ): Promise<Mission>;
+  appendMessage(id: string, message: MissionMessage): Promise<Mission>;
   markComplete(id: string): Promise<Mission>;
   reopen(id: string): Promise<Mission>;
+  remove(id: string): Promise<void>;
 }
 
 export class MissionStoreError extends Error {
   constructor(
-    readonly code: "mission_not_found" | "config_invalid",
+    readonly code: "mission_not_found" | "mission_active" | "config_invalid",
     message: string,
   ) {
     super(message);
@@ -111,6 +118,14 @@ export function createMissionStore(options: { readonly missionsPath: string }): 
           name: input.executor.metadata.name,
           version: input.executor.metadata.version,
         },
+        messages: [
+          {
+            id: randomUUID(),
+            role: "user",
+            content: goal,
+            createdAt: timestamp,
+          },
+        ],
         lifecycleStatus: "active",
         createdAt: timestamp,
         updatedAt: timestamp,
@@ -144,6 +159,14 @@ export function createMissionStore(options: { readonly missionsPath: string }): 
         return { ...current, execution, updatedAt: timestamp };
       });
     },
+    async appendMessage(id, message) {
+      return await updateMission(MissionIdSchema.parse(id), (current, timestamp) => {
+        const messages = current.messages.some((candidate) => candidate.id === message.id)
+          ? current.messages.map((candidate) => (candidate.id === message.id ? message : candidate))
+          : [...current.messages, message];
+        return { ...current, messages, updatedAt: timestamp };
+      });
+    },
     async markComplete(id) {
       return await updateMission(MissionIdSchema.parse(id), (current, timestamp) => ({
         ...current,
@@ -157,6 +180,22 @@ export function createMissionStore(options: { readonly missionsPath: string }): 
         const mission = { ...current };
         delete mission.completedAt;
         return { ...mission, lifecycleStatus: "active", updatedAt: timestamp };
+      });
+    },
+    async remove(id) {
+      const parsedId = MissionIdSchema.parse(id);
+      await serializeWrite(async () => {
+        const current = await readMission(parsedId);
+        if (
+          current.execution !== undefined &&
+          ["queued", "running", "waiting"].includes(current.execution.status)
+        ) {
+          throw new MissionStoreError(
+            "mission_active",
+            "Stop the active execution before deleting this mission.",
+          );
+        }
+        await rm(missionPath(parsedId), { recursive: true, force: true });
       });
     },
   };

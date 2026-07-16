@@ -1,5 +1,6 @@
 import {
   createPragma,
+  createFileExecutionStore,
   createRuntimeRegistry,
   ExpertAgentHumanRequestSchema,
   type Expert,
@@ -13,12 +14,16 @@ import {
 } from "@pragma/core";
 import type { InvocableResource } from "@pragma/interpreter";
 import type { PragmaExpertResource, PragmaResource } from "@pragma/interpreter/ast";
-import type { HumanInteractionRequest, HumanInteractionResponse } from "@pragma/shared";
+import type {
+  HumanInteractionRequest,
+  HumanInteractionResponse,
+  InvocationTree,
+} from "@pragma/shared";
 import { createClaudeCodeRuntime } from "@pragma/runtime-claude-code";
 import { createCodexRuntime } from "@pragma/runtime-codex";
 import { createPiRuntime } from "@pragma/runtime-pi";
 
-import type { Mission, MissionHumanInteraction } from "../shared/desktop-api.ts";
+import type { Mission, MissionHumanInteraction, MissionWorkItem } from "../shared/desktop-api.ts";
 import type { CapabilityCredentialStore } from "./capability-credential-store.ts";
 import type { CapabilityStore } from "./capability-store.ts";
 import { createDesktopExpertAgent } from "./desktop-expert-factory.ts";
@@ -29,6 +34,13 @@ import type { PragmaProjectStore } from "./pragma-project-store.ts";
 
 export interface MissionRunner {
   run(id: string): Promise<Mission>;
+  sendMessage(input: {
+    readonly id: string;
+    readonly content: string;
+    readonly requestId: string;
+  }): Promise<Mission>;
+  listWorkItems(id: string): Promise<readonly MissionWorkItem[]>;
+  delete(id: string): Promise<void>;
   listHumanInteractions(id: string): Promise<readonly MissionHumanInteraction[]>;
   respondToHumanInteraction(input: {
     readonly missionId: string;
@@ -37,6 +49,11 @@ export interface MissionRunner {
     readonly response: HumanInteractionResponse;
   }): Promise<void>;
 }
+
+type PendingMissionOperation =
+  | { readonly kind: "run"; readonly promise: Promise<Mission> }
+  | { readonly kind: "message"; readonly promise: Promise<Mission> }
+  | { readonly kind: "delete"; readonly promise: Promise<void> };
 
 export function createMissionRunner(options: {
   readonly missions: MissionStore;
@@ -49,9 +66,30 @@ export function createMissionRunner(options: {
   readonly runtimes?: RuntimeRegistry | undefined;
 }): MissionRunner {
   const runtimes = options.runtimes ?? createDesktopRuntimeRegistry();
-  const app = createPragma({ pragmaHome: options.pragmaHome, runtimes });
+  const executionStore = createFileExecutionStore({ pragmaHome: options.pragmaHome });
+  const app = createPragma({
+    pragmaHome: options.pragmaHome,
+    runtimes,
+    executionStore,
+  });
   const active = new Map<string, MutableExecution & { readonly result: Promise<unknown> }>();
-  const starting = new Map<string, Promise<Mission>>();
+  const sessions = new Map<string, ExpertSession>();
+  const pendingOperations = new Map<string, PendingMissionOperation>();
+
+  const trackOperation = (id: string, operation: PendingMissionOperation): void => {
+    pendingOperations.set(id, operation);
+    const clear = () => {
+      if (pendingOperations.get(id) === operation) pendingOperations.delete(id);
+    };
+    void operation.promise.then(clear, clear);
+  };
+
+  const forgetActive = (
+    id: string,
+    execution: MutableExecution & { readonly result: Promise<unknown> },
+  ): void => {
+    if (active.get(id) === execution) active.delete(id);
+  };
 
   const runMission = async (id: string): Promise<Mission> => {
     const mission = await options.missions.get(id);
@@ -85,9 +123,19 @@ export function createMissionRunner(options: {
         startedAt,
       });
       active.set(mission.id, handle);
-      observeExecution(options.missions, mission.id, handle, startedAt, () => {
-        active.delete(mission.id);
-      });
+      observeExecution(
+        options.missions,
+        mission.id,
+        handle,
+        startedAt,
+        () => {
+          forgetActive(mission.id, handle);
+        },
+        undefined,
+        async (result) => {
+          await appendExecutionReply(options.missions, mission.id, handle, result);
+        },
+      );
       return running;
     }
 
@@ -95,13 +143,16 @@ export function createMissionRunner(options: {
       mission.execution !== undefined &&
       mission.execution.sessionId !== undefined &&
       ["queued", "running", "waiting"].includes(mission.execution.status);
-    const session = recoverable
-      ? await app.experts.resumeSession(compiled.value, {
-          sessionId: mission.execution!.sessionId!,
-        })
-      : await app.experts.createSession(compiled.value, {
-          runtime: resolveRootRuntime(project.listResources(), mission.executor.ref, runtimes),
-        });
+    const session =
+      sessions.get(mission.id) ??
+      (recoverable
+        ? await app.experts.resumeSession(compiled.value, {
+            sessionId: mission.execution!.sessionId!,
+          })
+        : await app.experts.createSession(compiled.value, {
+            runtime: resolveRootRuntime(project.listResources(), mission.executor.ref, runtimes),
+          }));
+    sessions.set(mission.id, session);
     const turn = await session.prompt(
       recoverable
         ? [
@@ -127,27 +178,132 @@ export function createMissionRunner(options: {
       async () => {
         try {
           await waitForExpertTurnSettlement(session, turn.requestId);
-          await session.close("Mission execution finished.");
         } finally {
-          active.delete(mission.id);
+          forgetActive(mission.id, turn);
         }
       },
       session.sessionId,
+      async (result) => {
+        await appendExecutionReply(options.missions, mission.id, turn, result);
+      },
     );
     return running;
   };
 
+  const sendMissionMessage = async (input: {
+    readonly id: string;
+    readonly content: string;
+    readonly requestId: string;
+  }): Promise<Mission> => {
+    const mission = await options.missions.get(input.id);
+    if (mission.executor.kind === "flow") {
+      throw new Error("Flow missions accept input through workflow steps, not chat messages.");
+    }
+    if (mission.lifecycleStatus !== "active") {
+      throw new Error("Reopen this mission before sending another message.");
+    }
+    if (active.has(mission.id)) {
+      throw new Error("Wait for the current expert turn before sending another message.");
+    }
+    const project = await options.project.openRevision(mission.project.revision);
+    const compiled = await project.compile<InvocableResource>(mission.executor.ref, {
+      workspace: mission.workspace.path,
+      runtimes,
+      createExpert: async ({ resource, tools, workspace }) =>
+        await createExpert(resource, tools, workspace, mission.project.revision, options),
+    });
+    if ("kind" in compiled.value && compiled.value.kind === "flow") {
+      throw new Error("Flow missions cannot receive chat messages.");
+    }
+    const session =
+      sessions.get(mission.id) ??
+      (mission.execution?.sessionId === undefined
+        ? await app.experts.createSession(compiled.value, {
+            runtime: resolveRootRuntime(project.listResources(), mission.executor.ref, runtimes),
+          })
+        : await app.experts.resumeSession(compiled.value, {
+            sessionId: mission.execution.sessionId,
+          }));
+    sessions.set(mission.id, session);
+    await options.missions.appendMessage(mission.id, {
+      id: input.requestId,
+      role: "user",
+      content: input.content,
+      createdAt: new Date().toISOString(),
+    });
+    const turn = await session.prompt(input.content, { requestId: input.requestId });
+    const startedAt = new Date().toISOString();
+    const running = await options.missions.updateExecution(mission.id, {
+      id: turn.executionId,
+      sessionId: session.sessionId,
+      status: "running",
+      startedAt,
+    });
+    active.set(mission.id, turn);
+    observeExecution(
+      options.missions,
+      mission.id,
+      turn,
+      startedAt,
+      async () => {
+        try {
+          await waitForExpertTurnSettlement(session, turn.requestId);
+        } finally {
+          forgetActive(mission.id, turn);
+        }
+      },
+      session.sessionId,
+      async (result) => {
+        await appendExecutionReply(options.missions, mission.id, turn, result);
+      },
+    );
+    return running;
+  };
+
+  const deleteMission = async (id: string): Promise<void> => {
+    if (active.has(id)) {
+      throw new Error("Stop the active execution before deleting this mission.");
+    }
+    const session = sessions.get(id);
+    if (session !== undefined) {
+      await session.close("Mission deleted.");
+      sessions.delete(id);
+    }
+    await options.missions.remove(id);
+  };
+
   return {
     async run(id) {
-      const pending = starting.get(id);
-      if (pending !== undefined) return await pending;
-      const started = runMission(id);
-      starting.set(id, started);
-      try {
-        return await started;
-      } finally {
-        if (starting.get(id) === started) starting.delete(id);
+      const pending = pendingOperations.get(id);
+      if (pending?.kind === "run") return await pending.promise;
+      if (pending !== undefined) {
+        throw new Error("Wait for the current mission operation to finish.");
       }
+      const started = runMission(id);
+      trackOperation(id, { kind: "run", promise: started });
+      return await started;
+    },
+    async sendMessage(input) {
+      if (pendingOperations.has(input.id)) {
+        throw new Error("Wait for the current mission operation to finish.");
+      }
+      const sending = sendMissionMessage(input);
+      trackOperation(input.id, { kind: "message", promise: sending });
+      return await sending;
+    },
+    async listWorkItems(id) {
+      const mission = await options.missions.get(id);
+      if (mission.execution === undefined) return [];
+      const tree = await executionStore.getTree(mission.execution.id);
+      return tree === undefined ? [] : flattenWorkItems(tree);
+    },
+    async delete(id) {
+      if (pendingOperations.has(id)) {
+        throw new Error("Wait for the current mission operation to finish.");
+      }
+      const deleting = deleteMission(id);
+      trackOperation(id, { kind: "delete", promise: deleting });
+      await deleting;
     },
     async listHumanInteractions(id) {
       const execution = active.get(id);
@@ -291,10 +447,12 @@ function observeExecution(
     readonly result: Promise<unknown>;
     readonly getState: () => Promise<{ readonly status: string }>;
     readonly listEvents: MutableExecution["listEvents"];
+    readonly getMessageHistory: MutableExecution["getMessageHistory"];
   },
   startedAt: string,
   onFinished: () => void | Promise<void>,
   sessionId?: string,
+  onSucceeded?: (result: unknown) => void | Promise<void>,
 ): void {
   let lastObservedStatus: string | undefined;
   const probe = setInterval(() => {
@@ -346,19 +504,26 @@ function observeExecution(
   void (async () => {
     let status: "succeeded" | "failed" | "cancelled" = "succeeded";
     let failure: unknown;
+    let result: unknown;
     try {
-      await execution.result;
+      result = await execution.result;
     } catch (error) {
       const state = await execution.getState().catch(() => undefined);
       status = state?.status === "cancelled" ? "cancelled" : "failed";
       failure = error;
     }
+    if (status === "succeeded") {
+      try {
+        await onSucceeded?.(result);
+      } catch (error) {
+        console.error(`Failed to persist Mission reply for ${execution.executionId}.`, error);
+      }
+    }
     clearInterval(probe);
     try {
       await onFinished();
     } catch (error) {
-      status = "failed";
-      failure ??= error;
+      console.error(`Failed to finish Mission execution ${execution.executionId}.`, error);
     }
     await missions.updateExecution(
       missionId,
@@ -380,6 +545,73 @@ function observeExecution(
   })().catch((error: unknown) => {
     console.error(`Failed to persist terminal Mission execution ${execution.executionId}.`, error);
   });
+}
+
+async function appendExecutionReply(
+  missions: MissionStore,
+  missionId: string,
+  execution: Pick<MutableExecution, "executionId" | "getMessageHistory">,
+  result: unknown,
+): Promise<void> {
+  const histories = await execution.getMessageHistory({ scope: { kind: "root" } }).catch(() => []);
+  const assistantText = histories
+    .flatMap((history) => history.messages)
+    .map((record) => record.message)
+    .filter((message) => message.role === "assistant")
+    .map((message) =>
+      message.content
+        .flatMap((content) => (content.type === "text" ? [content.text] : []))
+        .join("\n"),
+    )
+    .filter((content) => content.trim() !== "")
+    .at(-1);
+  const content = formatValue(assistantText ?? result, 200_000).trim();
+  await missions.appendMessage(missionId, {
+    id: execution.executionId,
+    role: "assistant",
+    content: content === "" ? "Execution completed without a text result." : content,
+    createdAt: new Date().toISOString(),
+    executionId: execution.executionId,
+  });
+}
+
+function flattenWorkItems(tree: InvocationTree): MissionWorkItem[] {
+  const invocation = tree.invocation;
+  return [
+    {
+      invocationId: invocation.invocationId,
+      ...(invocation.parentInvocationId === undefined
+        ? {}
+        : { parentInvocationId: invocation.parentInvocationId }),
+      ...(invocation.nodeId === undefined ? {} : { nodeId: invocation.nodeId }),
+      ...(invocation.executorId === undefined ? {} : { executorId: invocation.executorId }),
+      kind: invocation.definition.kind,
+      status: invocation.status,
+      inputSummary: formatValue(invocation.input, 500),
+      ...(invocation.output === undefined
+        ? {}
+        : { outputSummary: formatValue(invocation.output, 1_000) }),
+    },
+    ...tree.children.flatMap(flattenWorkItems),
+  ];
+}
+
+function formatValue(value: unknown, maxLength: number): string {
+  let content: string;
+  if (typeof value === "string") {
+    content = value;
+  } else if (value === undefined) {
+    content = "";
+  } else {
+    try {
+      content = JSON.stringify(value, null, 2) ?? String(value);
+    } catch {
+      content = String(value);
+    }
+  }
+  return content.length <= maxLength
+    ? content
+    : `${content.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`;
 }
 
 async function hasPendingHumanInteraction(execution: {

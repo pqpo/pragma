@@ -9,3 +9,13 @@ allowBuilds:
   esbuild: true
   protobufjs: true
   sharp: true
+
+supportedArchitectures:
+  os:
+    - current
+    - darwin
+    - win32
+  cpu:
+    - current
+    - x64
+    - arm64

@@ -33,6 +33,7 @@ describe("ExpertDetailFragment", () => {
         onBack={() => undefined}
         onEdit={() => undefined}
         onConfigureContext={() => undefined}
+        onTryInSession={() => undefined}
       />,
     );
 

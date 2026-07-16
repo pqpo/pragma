@@ -1,4 +1,11 @@
-import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from "react";
+import {
+  useEffect,
+  useMemo,
+  useState,
+  type CSSProperties,
+  type Dispatch,
+  type SetStateAction,
+} from "react";
 
 import {
   ArrowCounterClockwise,
@@ -9,10 +16,12 @@ import {
   GitBranch,
   MagnifyingGlass,
   Paperclip,
+  PaperPlaneTilt,
   Plus,
   Play,
   Stack,
   Toolbox,
+  Trash,
   User,
   UsersThree,
 } from "@phosphor-icons/react";
@@ -22,6 +31,7 @@ import type { HumanInteractionResponse } from "@pragma/shared";
 import type {
   Mission,
   MissionHumanInteraction,
+  MissionWorkItem,
   PragmaDesktopAPI,
 } from "../../../../shared/desktop-api.ts";
 import { errorMessage } from "../../lib/errors.ts";
@@ -29,13 +39,15 @@ import { formatMissionDateTime, formatMissionTime } from "../../lib/mission-time
 
 type MissionScreen = "create" | "detail";
 
-export function MissionsPage() {
+export function MissionsPage(props: { readonly initialExecutorRef?: string | undefined }) {
   const [missions, setMissions] = useState<readonly Mission[]>([]);
   const [executors, setExecutors] = useState<readonly PragmaResource[]>([]);
   const [screen, setScreen] = useState<MissionScreen>("create");
   const [selectedMissionId, setSelectedMissionId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [deleteCandidate, setDeleteCandidate] = useState<Mission | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
@@ -112,22 +124,48 @@ export function MissionsPage() {
           setScreen("detail");
           setError(null);
         }}
+        onDelete={setDeleteCandidate}
       />
 
       <div className="mission-main">
         {screen === "create" ? (
           <CreateMissionFragment
             executors={executors}
-            onCreated={(mission) => {
+            initialExecutorRef={props.initialExecutorRef}
+            onCreated={async (mission) => {
               setMissions((current) => [mission, ...current]);
               setSelectedMissionId(mission.id);
               setScreen("detail");
               setError(null);
+              const api = desktopApi();
+              if (api === undefined) return;
+              try {
+                replaceMission(await api.runMission(mission.id));
+              } catch (runError) {
+                setError(errorMessage(runError));
+              }
             }}
           />
         ) : selectedMission !== null ? (
           <MissionDetailFragment
             mission={selectedMission}
+            onSend={async (content) => {
+              const api = desktopApi();
+              if (api === undefined) return;
+              try {
+                replaceMission(
+                  await api.sendMissionMessage({
+                    id: selectedMission.id,
+                    content,
+                    requestId: crypto.randomUUID(),
+                  }),
+                );
+                setError(null);
+              } catch (sendError) {
+                setError(errorMessage(sendError));
+                throw sendError;
+              }
+            }}
             onRun={async () => {
               const api = desktopApi();
               if (api === undefined) return;
@@ -164,6 +202,68 @@ export function MissionsPage() {
           </p>
         ) : null}
       </div>
+      {deleteCandidate !== null ? (
+        <div className="mission-dialog-backdrop">
+          <section
+            className="mission-confirm-dialog"
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="delete-mission-title"
+            aria-describedby="delete-mission-description"
+            onKeyDown={(event) => {
+              if (event.key === "Escape" && !deleting) setDeleteCandidate(null);
+            }}
+          >
+            <h2 id="delete-mission-title">Delete this mission?</h2>
+            <p id="delete-mission-description">
+              “{deleteCandidate.title}” and its conversation will be removed from Missions. This
+              cannot be undone.
+            </p>
+            <footer>
+              <button
+                className="secondary-button"
+                type="button"
+                disabled={deleting}
+                autoFocus
+                onClick={() => setDeleteCandidate(null)}
+              >
+                Cancel
+              </button>
+              <button
+                className="danger-button"
+                type="button"
+                disabled={deleting}
+                onClick={() => {
+                  const api = desktopApi();
+                  if (api === undefined) return;
+                  setDeleting(true);
+                  void api
+                    .deleteMission(deleteCandidate.id)
+                    .then(() => {
+                      setMissions((current) =>
+                        current.filter((mission) => mission.id !== deleteCandidate.id),
+                      );
+                      if (selectedMissionId === deleteCandidate.id) {
+                        setSelectedMissionId(null);
+                        setScreen("create");
+                      }
+                      setDeleteCandidate(null);
+                      setError(null);
+                    })
+                    .catch((deleteError: unknown) => {
+                      setError(errorMessage(deleteError));
+                      setDeleteCandidate(null);
+                    })
+                    .finally(() => setDeleting(false));
+                }}
+              >
+                <Trash size={17} aria-hidden="true" />
+                {deleting ? "Deleting…" : "Delete mission"}
+              </button>
+            </footer>
+          </section>
+        </div>
+      ) : null}
     </section>
   );
 }
@@ -176,6 +276,7 @@ function MissionRail(props: {
   readonly onSearch: (value: string) => void;
   readonly onCreate: () => void;
   readonly onOpen: (mission: Mission) => void;
+  readonly onDelete: (mission: Mission) => void;
 }) {
   const active = props.missions.filter((mission) => mission.lifecycleStatus === "active");
   const completed = props.missions.filter((mission) => mission.lifecycleStatus === "completed");
@@ -201,6 +302,7 @@ function MissionRail(props: {
         now={props.now}
         selectedMissionId={props.selectedMissionId}
         onOpen={props.onOpen}
+        onDelete={props.onDelete}
       />
       <MissionRailGroup
         label="Completed"
@@ -208,6 +310,7 @@ function MissionRail(props: {
         now={props.now}
         selectedMissionId={props.selectedMissionId}
         onOpen={props.onOpen}
+        onDelete={props.onDelete}
       />
     </aside>
   );
@@ -219,6 +322,7 @@ function MissionRailGroup(props: {
   readonly now: number;
   readonly selectedMissionId: string | null;
   readonly onOpen: (mission: Mission) => void;
+  readonly onDelete: (mission: Mission) => void;
 }) {
   return (
     <section className="mission-rail-group">
@@ -226,48 +330,68 @@ function MissionRailGroup(props: {
       {props.missions.length === 0 ? (
         <p className="mission-rail-empty">No {props.label.toLocaleLowerCase()} missions</p>
       ) : (
-        props.missions.map((mission) => (
-          <button
-            className={
-              mission.id === props.selectedMissionId ? "mission-row is-active" : "mission-row"
-            }
-            type="button"
-            key={mission.id}
-            onClick={() => props.onOpen(mission)}
-          >
-            <span
+        props.missions.map((mission) => {
+          const executionActive =
+            mission.execution !== undefined &&
+            ["queued", "running", "waiting"].includes(mission.execution.status);
+          return (
+            <div
               className={
-                mission.lifecycleStatus === "active"
-                  ? "mission-status-dot is-active"
-                  : "mission-status-dot"
+                mission.id === props.selectedMissionId ? "mission-row is-active" : "mission-row"
               }
-              aria-hidden="true"
-            />
-            <span>
-              <strong>{mission.title}</strong>
-              <small>
-                <span>{mission.lifecycleStatus === "active" ? "Ready" : "Completed"}</span>
-                <time
-                  dateTime={mission.updatedAt}
-                  title={formatMissionDateTime(mission.updatedAt)}
-                >
-                  {formatMissionTime(mission.updatedAt, props.now)}
-                </time>
-              </small>
-            </span>
-          </button>
-        ))
+              key={mission.id}
+            >
+              <button
+                className="mission-row-open"
+                type="button"
+                onClick={() => props.onOpen(mission)}
+              >
+                <span
+                  className={
+                    mission.lifecycleStatus === "active"
+                      ? "mission-status-dot is-active"
+                      : "mission-status-dot"
+                  }
+                  aria-hidden="true"
+                />
+                <span>
+                  <strong>{mission.title}</strong>
+                  <small>
+                    <span>{missionStatusLabel(mission)}</span>
+                    <time
+                      dateTime={mission.updatedAt}
+                      title={formatMissionDateTime(mission.updatedAt)}
+                    >
+                      {formatMissionTime(mission.updatedAt, props.now)}
+                    </time>
+                  </small>
+                </span>
+              </button>
+              <button
+                className="mission-row-delete"
+                type="button"
+                disabled={executionActive}
+                title={executionActive ? "Wait for this execution to finish" : "Delete mission"}
+                aria-label={`Delete ${mission.title}`}
+                onClick={() => props.onDelete(mission)}
+              >
+                <Trash size={15} aria-hidden="true" />
+              </button>
+            </div>
+          );
+        })
       )}
     </section>
   );
 }
 
-function CreateMissionFragment(props: {
+export function CreateMissionFragment(props: {
   readonly executors: readonly PragmaResource[];
-  readonly onCreated: (mission: Mission) => void;
+  readonly initialExecutorRef?: string | undefined;
+  readonly onCreated: (mission: Mission) => void | Promise<void>;
 }) {
   const [workspace, setWorkspace] = useState<{ path: string; basename: string } | null>(null);
-  const [executorRef, setExecutorRef] = useState("");
+  const [executorRef, setExecutorRef] = useState(props.initialExecutorRef ?? "");
   const [goal, setGoal] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -294,13 +418,12 @@ function CreateMissionFragment(props: {
     setSaving(true);
     setError(null);
     try {
-      props.onCreated(
-        await api.createMission({
-          workspace: workspace.path,
-          executor: { ref: executorRef },
-          goal: goal.trim(),
-        }),
-      );
+      const mission = await api.createMission({
+        workspace: workspace.path,
+        executor: { ref: executorRef },
+        goal: goal.trim(),
+      });
+      await props.onCreated(mission);
     } catch (submitError) {
       setError(errorMessage(submitError));
       setSaving(false);
@@ -414,7 +537,7 @@ function CreateMissionFragment(props: {
             disabled={saving || workspace === null || executorRef === "" || goal.trim() === ""}
             onClick={() => void submit()}
           >
-            {saving ? "Creating…" : "Create mission"}
+            {saving ? "Starting…" : "Start mission"}
           </button>
         </footer>
       </div>
@@ -435,18 +558,25 @@ function CreateMissionFragment(props: {
 export function MissionDetailFragment(props: {
   readonly mission: Mission;
   readonly onRun?: () => void | Promise<void>;
+  readonly onSend?: (content: string) => void | Promise<void>;
   readonly onHumanResponded?: () => void | Promise<void>;
   readonly onLifecycleChange?: () => void | Promise<void>;
 }) {
   const [tab, setTab] = useState<"chat" | "work">("chat");
   const [workspaceAvailable, setWorkspaceAvailable] = useState<boolean | null>(null);
   const [interactions, setInteractions] = useState<readonly MissionHumanInteraction[]>([]);
+  const [workItems, setWorkItems] = useState<readonly MissionWorkItem[]>([]);
+  const [draft, setDraft] = useState("");
+  const [sending, setSending] = useState(false);
   const [humanNotes, setHumanNotes] = useState<Record<string, string>>({});
   const [humanAnswers, setHumanAnswers] = useState<
     Record<string, Record<string, string | readonly string[]>>
   >({});
   const isTeam = props.mission.executor.kind === "team";
   const isFlow = props.mission.executor.kind === "flow";
+  const executionActive =
+    props.mission.execution !== undefined &&
+    ["queued", "running", "waiting"].includes(props.mission.execution.status);
 
   useEffect(() => {
     const api = desktopApi();
@@ -468,6 +598,43 @@ export function MissionDetailFragment(props: {
     }
     void api.listMissionHumanInteractions(props.mission.id).then(setInteractions);
   }, [props.mission.id, props.mission.execution?.status]);
+
+  useEffect(() => {
+    const api = desktopApi();
+    if (api === undefined || tab !== "work" || props.mission.execution === undefined) {
+      setWorkItems([]);
+      return;
+    }
+    let cancelled = false;
+    const refresh = () => {
+      void api
+        .listMissionWorkItems(props.mission.id)
+        .then((items) => {
+          if (!cancelled) setWorkItems(items);
+        })
+        .catch((loadError: unknown) => {
+          if (!cancelled) console.error("Failed to refresh Mission work items.", loadError);
+        });
+    };
+    refresh();
+    const timer = executionActive ? setInterval(refresh, 1_000) : undefined;
+    return () => {
+      cancelled = true;
+      if (timer !== undefined) clearInterval(timer);
+    };
+  }, [executionActive, props.mission.id, props.mission.execution?.id, tab]);
+
+  const send = async () => {
+    const content = draft.trim();
+    if (content === "" || sending || executionActive || isFlow) return;
+    setSending(true);
+    try {
+      await props.onSend?.(content);
+      setDraft("");
+    } finally {
+      setSending(false);
+    }
+  };
 
   const respond = async (
     interaction: MissionHumanInteraction,
@@ -498,13 +665,13 @@ export function MissionDetailFragment(props: {
   };
 
   return (
-    <section className={isTeam ? "mission-detail has-team-inspector" : "mission-detail"}>
+    <section className="mission-detail">
       <header className="mission-detail-header">
         <div>
           <h1>{props.mission.title}</h1>
           <p>
             <span className="mission-ready-dot" aria-hidden="true" />
-            {props.mission.lifecycleStatus === "active" ? "Ready" : "Completed"}
+            {missionStatusLabel(props.mission)}
             <span aria-hidden="true">·</span>
             <Folder size={16} aria-hidden="true" />
             {props.mission.workspace.basename}
@@ -521,15 +688,15 @@ export function MissionDetailFragment(props: {
           </p>
         </div>
         <div className="mission-header-actions">
-          {props.mission.lifecycleStatus === "active" ? (
+          {props.mission.lifecycleStatus === "active" &&
+          (isFlow || props.mission.execution === undefined || executionActive) ? (
             <button className="primary-button" type="button" onClick={() => void props.onRun?.()}>
               <Play size={17} />
-              {props.mission.execution?.status === "running" ||
-              props.mission.execution?.status === "waiting"
+              {executionActive
                 ? "Resume"
                 : props.mission.execution === undefined
                   ? "Run"
-                  : "Run again"}
+                  : "Run workflow again"}
             </button>
           ) : null}
           <button
@@ -572,13 +739,43 @@ export function MissionDetailFragment(props: {
       <div className="mission-detail-body">
         {tab === "chat" ? (
           <div className="mission-chat">
-            <div className="mission-user-message">
-              <span aria-hidden="true">AC</span>
-              <div>
-                <strong>You</strong>
-                <p>{props.mission.goal}</p>
-              </div>
-            </div>
+            {(props.mission.messages.length === 0
+              ? [
+                  {
+                    id: props.mission.id,
+                    role: "user" as const,
+                    content: props.mission.goal,
+                    createdAt: props.mission.createdAt,
+                  },
+                ]
+              : props.mission.messages
+            ).map((message) =>
+              message.role === "user" ? (
+                <div className="mission-user-message" key={message.id}>
+                  <span aria-hidden="true">You</span>
+                  <div>
+                    <strong>You</strong>
+                    <p>{message.content}</p>
+                  </div>
+                </div>
+              ) : (
+                <div className="mission-assistant-message" key={message.id}>
+                  <span aria-hidden="true">
+                    {isTeam ? (
+                      <UsersThree size={18} />
+                    ) : isFlow ? (
+                      <GitBranch size={18} />
+                    ) : (
+                      <User size={18} />
+                    )}
+                  </span>
+                  <div>
+                    <strong>{props.mission.executor.name}</strong>
+                    <p>{message.content}</p>
+                  </div>
+                </div>
+              ),
+            )}
             <div className="mission-execution-notice">
               <strong>
                 {props.mission.execution === undefined
@@ -720,15 +917,55 @@ export function MissionDetailFragment(props: {
                 </footer>
               </section>
             ))}
-            <div className="mission-disabled-composer" aria-disabled="true">
-              <Paperclip size={20} aria-hidden="true" />
-              <span>Use Run to start the pinned executor</span>
-              <button type="button" disabled>
-                Send
-              </button>
-            </div>
+            {isFlow ? (
+              <div className="mission-disabled-composer" aria-disabled="true">
+                <GitBranch size={20} aria-hidden="true" />
+                <span>Flow input continues through workflow steps and human checkpoints.</span>
+                <button type="button" disabled>
+                  Send
+                </button>
+              </div>
+            ) : (
+              <div className="mission-chat-composer">
+                <Paperclip size={20} aria-hidden="true" />
+                <textarea
+                  value={draft}
+                  disabled={
+                    sending || executionActive || props.mission.lifecycleStatus === "completed"
+                  }
+                  placeholder={
+                    executionActive
+                      ? `${props.mission.executor.name} is working…`
+                      : props.mission.lifecycleStatus === "completed"
+                        ? "Reopen this mission to continue the conversation"
+                        : `Message ${props.mission.executor.name}`
+                  }
+                  aria-label={`Message ${props.mission.executor.name}`}
+                  onChange={(event) => setDraft(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" && !event.shiftKey) {
+                      event.preventDefault();
+                      void send();
+                    }
+                  }}
+                />
+                <button
+                  type="button"
+                  aria-label="Send message"
+                  disabled={
+                    draft.trim() === "" ||
+                    sending ||
+                    executionActive ||
+                    props.mission.lifecycleStatus === "completed"
+                  }
+                  onClick={() => void send()}
+                >
+                  <PaperPlaneTilt size={18} aria-hidden="true" />
+                </button>
+              </div>
+            )}
           </div>
-        ) : (
+        ) : workItems.length === 0 ? (
           <div className="mission-work-empty">
             <CheckCircle size={31} weight="thin" aria-hidden="true" />
             <h2>
@@ -742,16 +979,69 @@ export function MissionDetailFragment(props: {
                 : `Execution ID: ${props.mission.execution.id}`}
             </p>
           </div>
+        ) : (
+          <div className="mission-work-list" aria-label="Mission execution work">
+            <header>
+              <h2>Execution map</h2>
+              <p>Workflow steps and delegated experts share the same execution tree.</p>
+            </header>
+            <ol>
+              {workItems.map((item) => (
+                <li
+                  key={item.invocationId}
+                  style={
+                    { "--mission-work-depth": workItemDepth(item, workItems) } as CSSProperties
+                  }
+                >
+                  <span className={`mission-work-status is-${item.status}`} aria-hidden="true" />
+                  <div>
+                    <strong>{item.nodeId ?? item.executorId ?? item.kind}</strong>
+                    <small>
+                      {item.kind} · {item.status}
+                    </small>
+                    <p>{item.outputSummary ?? item.inputSummary}</p>
+                  </div>
+                </li>
+              ))}
+            </ol>
+          </div>
         )}
       </div>
-      {isTeam ? (
-        <aside className="mission-team-inspector">
-          <h2>Experts</h2>
-          <p>Team members will appear here.</p>
-        </aside>
-      ) : null}
     </section>
   );
+}
+
+function workItemDepth(item: MissionWorkItem, items: readonly MissionWorkItem[]): number {
+  const byId = new Map(items.map((candidate) => [candidate.invocationId, candidate]));
+  let depth = 0;
+  let parentId = item.parentInvocationId;
+  const visited = new Set<string>();
+  while (parentId !== undefined && !visited.has(parentId)) {
+    visited.add(parentId);
+    depth += 1;
+    parentId = byId.get(parentId)?.parentInvocationId;
+  }
+  return Math.min(depth, 6);
+}
+
+function missionStatusLabel(mission: Mission): string {
+  if (mission.lifecycleStatus === "completed") return "Completed";
+  switch (mission.execution?.status) {
+    case "queued":
+      return "Queued";
+    case "running":
+      return "Working";
+    case "waiting":
+      return "Needs input";
+    case "succeeded":
+      return "Succeeded";
+    case "failed":
+      return "Failed";
+    case "cancelled":
+      return "Cancelled";
+    default:
+      return "Ready";
+  }
 }
 
 function setHumanAnswer(

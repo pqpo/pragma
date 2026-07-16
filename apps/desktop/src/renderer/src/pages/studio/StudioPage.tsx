@@ -36,7 +36,7 @@ import {
   type StudioView,
 } from "./studio-model.ts";
 
-export function StudioPage() {
+export function StudioPage(props: { readonly onTryExpert: (expert: ExpertRecord) => void }) {
   const [activeView, setActiveView] = useState<StudioView>("experts");
   const [screen, setScreen] = useState<
     "directory" | "expert-detail" | "context-store-detail" | "create"
@@ -290,6 +290,7 @@ export function StudioPage() {
             onBack={openExpertDirectory}
             onEdit={() => openCreate(selectedExpert)}
             onConfigureContext={() => setContextDrawerOpen(true)}
+            onTryInSession={() => props.onTryExpert(selectedExpert)}
           />
         ) : null}
         {screen === "create" ? (

@@ -13,13 +13,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CapabilityCredentialStore } from "./capability-credential-store.ts";
 import type { CapabilityStore } from "./capability-store.ts";
 import { createMissionRunner } from "./mission-runner.ts";
-import { createMissionStore } from "./mission-store.ts";
+import { createMissionStore, type MissionStore } from "./mission-store.ts";
 import type { ModelProviderStore } from "./model-provider-store.ts";
 import { createPragmaProjectStore } from "./pragma-project-store.ts";
 
 const temporaryPaths: string[] = [];
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   await Promise.all(
     temporaryPaths.splice(0).map(async (path) => await rm(path, { recursive: true, force: true })),
   );
@@ -70,10 +71,12 @@ describe("MissionRunner", () => {
       runtimes: createRuntimeRegistry({ runtimes: [runtime], defaultRuntime: "fake" }),
     });
 
-    const [firstRun, duplicateRun] = await Promise.all([
-      runner.run(mission.id),
-      runner.run(mission.id),
-    ]);
+    const firstRunPromise = runner.run(mission.id);
+    const duplicateRunPromise = runner.run(mission.id);
+    await expect(runner.delete(mission.id)).rejects.toThrow(
+      "Wait for the current mission operation to finish.",
+    );
+    const [firstRun, duplicateRun] = await Promise.all([firstRunPromise, duplicateRunPromise]);
     expect(firstRun.execution?.status).toBe("running");
     expect(duplicateRun.execution?.id).toBe(firstRun.execution?.id);
     expect(firstRun.execution?.sessionId).toMatch(/^[0-9a-f-]{36}$/);
@@ -81,7 +84,41 @@ describe("MissionRunner", () => {
       async () => expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
       { timeout: 3_000 },
     );
-    expect(startTurn).toHaveBeenCalledTimes(1);
+    expect((await missions.get(mission.id)).messages.at(-1)?.content).toBe(
+      "writer:Prepare a concise answer",
+    );
+
+    const followup = runner.sendMessage({
+      id: mission.id,
+      content: "Make it shorter",
+      requestId: "00000000-0000-4000-8000-000000000010",
+    });
+    await expect(
+      runner.sendMessage({
+        id: mission.id,
+        content: "This turn must not be queued concurrently",
+        requestId: "00000000-0000-4000-8000-000000000011",
+      }),
+    ).rejects.toThrow("Wait for the current mission operation to finish.");
+    await expect(runner.delete(mission.id)).rejects.toThrow(
+      "Wait for the current mission operation to finish.",
+    );
+    await followup;
+    await vi.waitFor(
+      async () => expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
+      { timeout: 3_000 },
+    );
+    const conversation = (await missions.get(mission.id)).messages;
+    expect(conversation.map((message) => message.content)).toEqual([
+      "Prepare a concise answer",
+      "writer:Prepare a concise answer",
+      "Make it shorter",
+      "writer:Make it shorter",
+    ]);
+    expect(startTurn).toHaveBeenCalledTimes(2);
+    await expect(runner.listWorkItems(mission.id)).resolves.toEqual([
+      expect.objectContaining({ kind: "expert", status: "succeeded", executorId: "writer" }),
+    ]);
   });
 
   it("round-trips a Flow human interaction and resolves same-id resources by kind", async () => {
@@ -128,6 +165,12 @@ describe("MissionRunner", () => {
       async () => expect((await missions.get(mission.id)).execution?.status).toBe("waiting"),
       { timeout: 3_000 },
     );
+    await expect(runner.listWorkItems(mission.id)).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: "flow" }),
+        expect.objectContaining({ kind: "human-task", status: "waiting" }),
+      ]),
+    );
     const interactions = await runner.listHumanInteractions(mission.id);
     expect(interactions).toHaveLength(1);
     expect(interactions[0]?.request.kind).toBe("approval");
@@ -141,6 +184,81 @@ describe("MissionRunner", () => {
       async () => expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
       { timeout: 3_000 },
     );
+  });
+
+  it("keeps execution success independent from reply persistence and truncates long replies", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-mission-reply-"));
+    temporaryPaths.push(root);
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    const snapshot = await project.publish({ expectedRevision: 0, resources: [expertFixture()] });
+    const storedMissions = createMissionStore({ missionsPath: join(root, "missions") });
+    const mission = await storedMissions.create({
+      workspace: { path: root, basename: "workspace" },
+      goal: "Persist this reply",
+      project: { id: snapshot.projectId, revision: snapshot.revision },
+      executor: snapshot.resources[0]!,
+    });
+    let rejectAssistantReply = true;
+    const missions: MissionStore = {
+      ...storedMissions,
+      appendMessage: async (id, message) => {
+        if (rejectAssistantReply && message.role === "assistant") {
+          throw new Error("reply storage unavailable");
+        }
+        return await storedMissions.appendMessage(id, message);
+      },
+    };
+    const runtime = defineRuntimeDriver<never, { id: string }>({
+      descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
+      createSession: () => ({ id: "runtime" }),
+      restoreSession: () => ({ id: "runtime" }),
+      readSession: (session) => ({ runtimeSessionId: session.id }),
+      startTurn: (_session, turn) => ({
+        outputText:
+          turn.rawQuery === "Return oversized reply"
+            ? "x".repeat(200_001)
+            : `writer:${turn.rawQuery}`,
+        runtimeSessionId: "runtime",
+      }),
+      mapEvent: () => ({ events: [] }),
+      closeSession: () => undefined,
+    });
+    const runner = createMissionRunner({
+      missions,
+      project,
+      capabilityStore: {} as CapabilityStore,
+      capabilityCredentials: {} as CapabilityCredentialStore,
+      capabilitiesPath: join(root, "capabilities"),
+      pragmaHome: join(root, "state"),
+      modelProviders: {} as ModelProviderStore,
+      runtimes: createRuntimeRegistry({ runtimes: [runtime], defaultRuntime: "fake" }),
+    });
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    await runner.run(mission.id);
+    await vi.waitFor(
+      async () => expect((await storedMissions.get(mission.id)).execution?.status).toBe("succeeded"),
+      { timeout: 3_000 },
+    );
+    expect(consoleError).toHaveBeenCalledWith(
+      expect.stringContaining("Failed to persist Mission reply"),
+      expect.objectContaining({ message: "reply storage unavailable" }),
+    );
+
+    rejectAssistantReply = false;
+    await runner.sendMessage({
+      id: mission.id,
+      content: "Return oversized reply",
+      requestId: "00000000-0000-4000-8000-000000000020",
+    });
+    await vi.waitFor(
+      async () => expect((await storedMissions.get(mission.id)).execution?.status).toBe("succeeded"),
+      { timeout: 3_000 },
+    );
+    const reply = (await storedMissions.get(mission.id)).messages.at(-1);
+    expect(reply?.role).toBe("assistant");
+    expect(reply?.content).toHaveLength(200_000);
+    expect(reply?.content.endsWith("…")).toBe(true);
   });
 });
 

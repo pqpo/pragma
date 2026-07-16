@@ -5090,6 +5090,7 @@ textarea:focus-visible,
 }
 
 .missions-page {
+  position: relative;
   background: var(--background);
 }
 
@@ -5127,11 +5128,68 @@ textarea:focus-visible,
 }
 
 .mission-row {
+  position: relative;
+  display: block;
   grid-template-columns: 8px minmax(0, 1fr);
   margin-top: 3px;
-  padding: 11px 10px;
+  padding: 0;
   border: 1px solid transparent;
   border-radius: 12px;
+}
+
+.mission-row-open {
+  display: grid;
+  grid-template-columns: 8px minmax(0, 1fr);
+  width: 100%;
+  align-items: start;
+  gap: 10px;
+  padding: 11px 34px 11px 10px;
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+}
+
+.mission-row-open > span:last-child {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.mission-row-delete {
+  position: absolute;
+  top: 50%;
+  right: 7px;
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--faint);
+  cursor: pointer;
+  opacity: 0;
+  transform: translateY(-50%);
+}
+
+.mission-row:hover .mission-row-delete,
+.mission-row:focus-within .mission-row-delete,
+.mission-row.is-active .mission-row-delete {
+  opacity: 1;
+}
+
+.mission-row-delete:hover:not(:disabled) {
+  background: #fff0ee;
+  color: #a5453c;
+}
+
+.mission-row-delete:disabled {
+  cursor: not-allowed;
+  opacity: 0.35;
 }
 
 .mission-row:hover {
@@ -5347,6 +5405,42 @@ textarea:focus-visible,
   border-radius: 12px;
 }
 
+.mission-user-message + .mission-user-message,
+.mission-user-message + .mission-assistant-message,
+.mission-assistant-message + .mission-user-message,
+.mission-assistant-message + .mission-assistant-message {
+  margin-top: 24px;
+}
+
+.mission-assistant-message {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  align-items: start;
+  gap: 14px;
+}
+
+.mission-assistant-message > span {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  place-items: center;
+  border-radius: 12px;
+  background: var(--green);
+  color: #fff;
+}
+
+.mission-assistant-message strong {
+  font-size: 14px;
+}
+
+.mission-assistant-message p {
+  max-width: 760px;
+  margin-top: 7px;
+  white-space: pre-wrap;
+  font-size: 14px;
+  line-height: 1.65;
+}
+
 .mission-execution-notice {
   border-left: 0;
   border-radius: 12px;
@@ -5363,6 +5457,173 @@ textarea:focus-visible,
   border-radius: var(--radius-card);
   background: #fff;
   box-shadow: var(--shadow-soft);
+}
+
+.mission-chat-composer {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  flex: 0 0 auto;
+  min-height: 58px;
+  align-items: center;
+  gap: 11px;
+  margin-top: auto;
+  padding: 8px 9px 8px 17px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: #fff;
+  color: var(--faint);
+  box-shadow: var(--shadow-soft);
+}
+
+.mission-chat-composer:focus-within {
+  border-color: var(--green);
+  box-shadow:
+    0 0 0 3px var(--focus-ring),
+    var(--shadow-soft);
+}
+
+.mission-chat-composer textarea {
+  min-height: 38px;
+  max-height: 130px;
+  resize: none;
+  padding: 9px 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+}
+
+.mission-chat-composer > button {
+  display: grid;
+  width: 39px;
+  height: 39px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 10px;
+  background: var(--green);
+  color: #fff;
+  cursor: pointer;
+}
+
+.mission-chat-composer > button:disabled {
+  background: #cad1cc;
+}
+
+.mission-work-list {
+  height: 100%;
+  overflow-y: auto;
+  padding: 28px 0;
+}
+
+.mission-work-list > header h2 {
+  font-size: 18px;
+}
+
+.mission-work-list > header p {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.mission-work-list ol {
+  display: grid;
+  gap: 8px;
+  margin: 22px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.mission-work-list li {
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr);
+  gap: 12px;
+  margin-left: calc(var(--mission-work-depth) * 26px);
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: #fff;
+}
+
+.mission-work-list li strong,
+.mission-work-list li small {
+  display: block;
+}
+
+.mission-work-list li small {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: capitalize;
+}
+
+.mission-work-list li p {
+  margin-top: 7px;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mission-work-status {
+  width: 8px;
+  height: 8px;
+  margin-top: 6px;
+  border-radius: 50%;
+  background: #aeb4af;
+}
+
+.mission-work-status.is-running,
+.mission-work-status.is-waiting {
+  background: #d49a45;
+}
+
+.mission-work-status.is-succeeded {
+  background: var(--green);
+}
+
+.mission-work-status.is-failed,
+.mission-work-status.is-cancelled {
+  background: #b65348;
+}
+
+.mission-dialog-backdrop {
+  position: absolute;
+  z-index: 20;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgb(29 33 31 / 36%);
+  backdrop-filter: blur(2px);
+}
+
+.mission-confirm-dialog {
+  width: min(440px, 100%);
+  padding: 25px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: var(--shadow-panel);
+}
+
+.mission-confirm-dialog h2 {
+  font-size: 20px;
+}
+
+.mission-confirm-dialog p {
+  margin-top: 9px;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.mission-confirm-dialog footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 9px;
+  margin-top: 24px;
 }
 
 .mission-team-inspector {

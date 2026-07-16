@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1000">
+  <defs>
+    <filter id="cardShadow" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="18" stdDeviation="30" flood-color="#18352a" flood-opacity="0.12" />
+    </filter>
+  </defs>
+
+  <rect width="1600" height="1000" fill="#eef1ed" />
+  <circle cx="1426" cy="132" r="260" fill="#b9d75d" opacity="0.14" />
+  <circle cx="126" cy="922" r="310" fill="#507665" opacity="0.1" />
+
+  <text x="110" y="104" fill="#16382d" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="42" font-weight="700">Pragma Desktop</text>
+  <text x="110" y="146" fill="#5d7168" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="22">Geometric letter P · platform adaptations</text>
+
+  <g filter="url(#cardShadow)">
+    <rect x="110" y="196" width="650" height="610" rx="40" fill="#fafbf9" />
+    <rect x="840" y="196" width="650" height="610" rx="40" fill="#fafbf9" />
+  </g>
+
+  <image href="../build/icon-mac.png" x="175" y="236" width="520" height="520" />
+  <image href="../build/icon-windows.png" x="905" y="236" width="520" height="520" />
+
+  <text x="435" y="770" text-anchor="middle" fill="#18382e" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="25" font-weight="650">macOS</text>
+  <text x="1165" y="770" text-anchor="middle" fill="#18382e" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="25" font-weight="650">Windows</text>
+
+  <text x="110" y="872" fill="#53675e" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="19" font-weight="600">SMALL-SIZE CHECK</text>
+  <image href="../build/icon-mac.png" x="110" y="898" width="64" height="64" />
+  <image href="../build/icon-mac.png" x="194" y="914" width="48" height="48" />
+  <image href="../build/icon-mac.png" x="262" y="930" width="32" height="32" />
+  <text x="324" y="954" fill="#718179" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="17">64 · 48 · 32 px</text>
+
+  <rect x="1190" y="886" width="196" height="54" rx="27" fill="#153a2f" />
+  <rect x="1205" y="900" width="26" height="26" rx="7" fill="#f6f0df" />
+  <text x="1250" y="922" fill="#f6f3e7" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="18" font-weight="650">Geometric P</text>
+</svg>

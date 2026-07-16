@@ -657,6 +657,33 @@ export const MissionExecutorSchema = z.discriminatedUnion("kind", [
 
 export const MissionLifecycleStatusSchema = z.enum(["active", "completed"]);
 
+export const MissionMessageSchema = z.object({
+  id: z.string().uuid(),
+  role: z.enum(["user", "assistant"]),
+  content: z.string().min(1).max(200_000),
+  createdAt: z.string().datetime(),
+  executionId: z.string().uuid().optional(),
+});
+
+export const MissionWorkItemSchema = z.object({
+  invocationId: z.string().min(1),
+  parentInvocationId: z.string().min(1).optional(),
+  nodeId: z.string().min(1).optional(),
+  executorId: z.string().min(1).optional(),
+  kind: z.enum(["flow", "task", "human-task", "expert", "expert-team"]),
+  status: z.enum([
+    "queued",
+    "running",
+    "waiting",
+    "succeeded",
+    "failed",
+    "cancelled",
+    "interrupted",
+  ]),
+  inputSummary: z.string().max(500),
+  outputSummary: z.string().max(1_000).optional(),
+});
+
 export const MissionSchema = z.object({
   schemaVersion: z.literal("pragma.mission/v2"),
   id: MissionIdSchema,
@@ -668,6 +695,7 @@ export const MissionSchema = z.object({
     revision: z.number().int().positive(),
   }),
   executor: MissionExecutorSchema,
+  messages: z.array(MissionMessageSchema).default([]),
   execution: z
     .object({
       id: z.string().uuid(),
@@ -693,6 +721,11 @@ export const CreateMissionSchema = z.object({
 });
 
 export const MissionActionSchema = z.object({ id: MissionIdSchema });
+export const SendMissionMessageSchema = z.object({
+  id: MissionIdSchema,
+  content: z.string().trim().min(1).max(100_000),
+  requestId: z.string().uuid(),
+});
 export const MissionHumanInteractionSchema = z.object({
   interactionId: z.string().min(1),
   request: HumanInteractionRequestSchema,
@@ -744,6 +777,9 @@ export type Mission = z.infer<typeof MissionSchema>;
 export type MissionExecutor = z.infer<typeof MissionExecutorSchema>;
 export type MissionLifecycleStatus = z.infer<typeof MissionLifecycleStatusSchema>;
 export type CreateMission = z.infer<typeof CreateMissionSchema>;
+export type MissionMessage = z.infer<typeof MissionMessageSchema>;
+export type MissionWorkItem = z.infer<typeof MissionWorkItemSchema>;
+export type SendMissionMessage = z.infer<typeof SendMissionMessageSchema>;
 export type MissionHumanInteraction = z.infer<typeof MissionHumanInteractionSchema>;
 export type RespondMissionHumanInteraction = z.infer<typeof RespondMissionHumanInteractionSchema>;
 export type Capability = z.infer<typeof CapabilitySchema>;
@@ -792,6 +828,9 @@ export interface PragmaDesktopAPI {
   getMission: (id: string) => Promise<Mission>;
   createMission: (input: CreateMission) => Promise<Mission>;
   runMission: (id: string) => Promise<Mission>;
+  sendMissionMessage: (input: SendMissionMessage) => Promise<Mission>;
+  listMissionWorkItems: (id: string) => Promise<MissionWorkItem[]>;
+  deleteMission: (id: string) => Promise<void>;
   listMissionHumanInteractions: (id: string) => Promise<MissionHumanInteraction[]>;
   respondToMissionHumanInteraction: (input: RespondMissionHumanInteraction) => Promise<void>;
   markMissionComplete: (id: string) => Promise<Mission>;

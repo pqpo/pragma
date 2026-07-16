@@ -34,8 +34,10 @@ import {
   MissionIdSchema,
   MissionSchema,
   MissionHumanInteractionSchema,
+  MissionWorkItemSchema,
   PickWorkspaceResultSchema,
   RespondMissionHumanInteractionSchema,
+  SendMissionMessageSchema,
   DeletePragmaResourceSchema,
   PragmaProjectSnapshotSchema,
   PragmaYamlValidationResultSchema,
@@ -182,6 +184,17 @@ const api: PragmaDesktopAPI = {
     MissionSchema.parse(
       await ipcRenderer.invoke("missions:run", MissionActionSchema.parse({ id })),
     ),
+  sendMissionMessage: async (input) =>
+    MissionSchema.parse(
+      await ipcRenderer.invoke("missions:message:send", SendMissionMessageSchema.parse(input)),
+    ),
+  listMissionWorkItems: async (id) =>
+    MissionWorkItemSchema.array().parse(
+      await ipcRenderer.invoke("missions:work:list", MissionActionSchema.parse({ id })),
+    ),
+  deleteMission: async (id) => {
+    await ipcRenderer.invoke("missions:delete", MissionActionSchema.parse({ id }));
+  },
   listMissionHumanInteractions: async (id) =>
     MissionHumanInteractionSchema.array().parse(
       await ipcRenderer.invoke("missions:human:list", MissionActionSchema.parse({ id })),

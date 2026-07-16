@@ -113,6 +113,7 @@ export function ExpertDetailFragment(props: {
   readonly onBack: () => void;
   readonly onEdit: () => void;
   readonly onConfigureContext: () => void;
+  readonly onTryInSession: () => void;
 }) {
   const ExpertIcon = props.expert.icon;
   const [instructionsExpanded, setInstructionsExpanded] = useState(false);
@@ -149,7 +150,7 @@ export function ExpertDetailFragment(props: {
             <PencilSimple size={17} aria-hidden="true" />
             Edit expert
           </button>
-          <button className="secondary-button" type="button">
+          <button className="secondary-button" type="button" onClick={props.onTryInSession}>
             <Play size={17} aria-hidden="true" />
             Try in session
           </button>

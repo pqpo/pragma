@@ -25,8 +25,20 @@ import { installWorkflowLayoutHandlers } from "./workflow-layout-ipc.ts";
 import { createWorkflowLayoutStore } from "./workflow-layout-store.ts";
 
 const currentDir = dirname(fileURLToPath(import.meta.url));
+const applicationId = "dev.pragma.desktop";
+
+if (process.platform === "win32") {
+  app.setAppUserModelId(applicationId);
+}
 
 let mainWindow: BrowserWindow | null = null;
+
+function applicationIconPath(): string {
+  const fileName = process.platform === "darwin" ? "icon-mac.png" : "icon-windows.png";
+  return app.isPackaged
+    ? join(process.resourcesPath, "icons", fileName)
+    : join(currentDir, "../../build", fileName);
+}
 
 async function createWindow(): Promise<void> {
   mainWindow = new BrowserWindow({
@@ -35,6 +47,7 @@ async function createWindow(): Promise<void> {
     minWidth: 1080,
     minHeight: 700,
     title: "Pragma Desktop",
+    icon: applicationIconPath(),
     autoHideMenuBar: true,
     show: false,
     webPreferences: {
@@ -76,6 +89,10 @@ ipcMain.handle("runtimes:availability", () => getRuntimeAvailability());
 installWorkspaceScopeHandlers(() => mainWindow);
 
 void app.whenReady().then(async () => {
+  if (process.platform === "darwin") {
+    app.dock?.setIcon(applicationIconPath());
+  }
+
   const encryption = {
     isAvailable: () => safeStorage.isEncryptionAvailable(),
     encrypt: (plainText: string) => safeStorage.encryptString(plainText),
