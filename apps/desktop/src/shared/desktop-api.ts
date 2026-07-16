@@ -893,6 +893,62 @@ export const MissionHumanInteractionSchema = z.object({
   interactionId: z.string().min(1),
   request: HumanInteractionRequestSchema,
 });
+
+const MissionChatEntryBaseSchema = z.object({
+  id: z.string().min(1),
+  executionId: z.string().min(1).optional(),
+  invocationId: z.string().min(1).optional(),
+  executorId: z.string().min(1).optional(),
+  executorName: z.string().min(1).optional(),
+  createdAt: z.string().datetime(),
+});
+
+export const MissionChatEntrySchema = z.discriminatedUnion("kind", [
+  MissionChatEntryBaseSchema.extend({
+    kind: z.literal("user"),
+    content: z.string().max(200_000),
+  }),
+  MissionChatEntryBaseSchema.extend({
+    kind: z.literal("assistant"),
+    content: z.string().max(200_000),
+    streaming: z.boolean().default(false),
+  }),
+  MissionChatEntryBaseSchema.extend({
+    kind: z.literal("thinking"),
+    content: z.string().max(200_000),
+    streaming: z.boolean().default(false),
+  }),
+  MissionChatEntryBaseSchema.extend({
+    kind: z.literal("tool"),
+    toolCallId: z.string().min(1),
+    toolName: z.string().min(1),
+    status: z.enum(["running", "approval_required", "succeeded", "failed"]),
+    inputPreview: z.string().max(801).optional(),
+    outputPreview: z.string().max(801).optional(),
+    error: z.string().max(10_000).optional(),
+  }),
+]);
+
+export const MissionChatExecutionSchema = z.object({
+  id: z.string().uuid(),
+  status: z.enum(["queued", "running", "waiting", "succeeded", "failed", "cancelled"]),
+  interruptible: z.boolean(),
+  error: z.string().max(10_000).optional(),
+});
+
+export const MissionChatSnapshotSchema = z.object({
+  missionId: MissionIdSchema,
+  revision: z.number().int().nonnegative(),
+  entries: z.array(MissionChatEntrySchema),
+  pendingInteractions: z.array(MissionHumanInteractionSchema),
+  execution: MissionChatExecutionSchema.optional(),
+});
+
+export const MissionChatUpdateSchema = z.object({
+  missionId: MissionIdSchema,
+  revision: z.number().int().nonnegative(),
+});
+
 export const RespondMissionHumanInteractionSchema = z.object({
   missionId: MissionIdSchema,
   interactionId: z.string().min(1),
@@ -944,6 +1000,9 @@ export type MissionMessage = z.infer<typeof MissionMessageSchema>;
 export type MissionWorkItem = z.infer<typeof MissionWorkItemSchema>;
 export type SendMissionMessage = z.infer<typeof SendMissionMessageSchema>;
 export type MissionHumanInteraction = z.infer<typeof MissionHumanInteractionSchema>;
+export type MissionChatEntry = z.infer<typeof MissionChatEntrySchema>;
+export type MissionChatSnapshot = z.infer<typeof MissionChatSnapshotSchema>;
+export type MissionChatUpdate = z.infer<typeof MissionChatUpdateSchema>;
 export type RespondMissionHumanInteraction = z.infer<typeof RespondMissionHumanInteractionSchema>;
 export type Capability = z.infer<typeof CapabilitySchema>;
 export type CapabilityManifest = z.infer<typeof CapabilityManifestSchema>;
@@ -994,6 +1053,9 @@ export interface PragmaDesktopAPI {
   createMission: (input: CreateMission) => Promise<Mission>;
   runMission: (id: string) => Promise<Mission>;
   sendMissionMessage: (input: SendMissionMessage) => Promise<Mission>;
+  getMissionChat: (id: string) => Promise<MissionChatSnapshot>;
+  subscribeMissionChat: (id: string, listener: (update: MissionChatUpdate) => void) => () => void;
+  interruptMission: (id: string) => Promise<Mission>;
   listMissionWorkItems: (id: string) => Promise<MissionWorkItem[]>;
   deleteMission: (id: string) => Promise<void>;
   listMissionHumanInteractions: (id: string) => Promise<MissionHumanInteraction[]>;

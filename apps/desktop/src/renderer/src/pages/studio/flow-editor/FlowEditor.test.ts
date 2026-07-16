@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 
+import type { PragmaFlowResource } from "@pragma/interpreter/ast";
+
 import { createEmptyFlow } from "./flow-model.ts";
 import {
   buildCanvasNodes,
@@ -13,9 +15,8 @@ import {
 } from "./FlowEditor.tsx";
 
 describe("Flow editor canvas", () => {
-  it("keeps terminal nodes draggable and restores their saved positions", () => {
+  it("renders a new draft as draggable Start and End terminals without Fail", () => {
     const positions = {
-      start: { x: 200, y: 160 },
       [START_NODE_ID]: { x: 12, y: 34 },
       [END_NODE_ID]: { x: 560, y: 78 },
       [FAIL_NODE_ID]: { x: 560, y: 188 },
@@ -23,32 +24,40 @@ describe("Flow editor canvas", () => {
 
     const nodes = buildCanvasNodes(createEmptyFlow(), positions);
 
-    for (const terminalId of [START_NODE_ID, END_NODE_ID, FAIL_NODE_ID] as const) {
+    for (const terminalId of [START_NODE_ID, END_NODE_ID] as const) {
       const terminal = nodes.find((node) => node.id === terminalId);
       expect(terminal?.draggable).toBe(true);
       expect(terminal?.deletable).toBe(false);
       expect(terminal?.position).toEqual(positions[terminalId]);
     }
+    expect(nodes.find((node) => node.id === FAIL_NODE_ID)).toBeUndefined();
+    expect(buildCanvasEdges(createEmptyFlow())).toContainEqual(
+      expect.objectContaining({ id: "start-edge", target: END_NODE_ID }),
+    );
+
+    const defaultNodes = buildCanvasNodes(createEmptyFlow(), {});
+    expect(defaultNodes.find((node) => node.id === START_NODE_ID)?.position.y).toBe(
+      defaultNodes.find((node) => node.id === END_NODE_ID)?.position.y,
+    );
   });
 
   it("leaves generous default spacing around the start and terminal nodes", () => {
-    const nodes = buildCanvasNodes(createEmptyFlow(), {});
-    const step = nodes.find((node) => node.id === "start")!;
+    const nodes = buildCanvasNodes(flowFixture(), {});
+    const step = nodes.find((node) => node.id === "review")!;
     const start = nodes.find((node) => node.id === START_NODE_ID)!;
     const end = nodes.find((node) => node.id === END_NODE_ID)!;
-    const fail = nodes.find((node) => node.id === FAIL_NODE_ID)!;
 
     expect(step.position.x - (start.position.x + 112)).toBeGreaterThanOrEqual(180);
     expect(end.position.x - (step.position.x + 238)).toBeGreaterThanOrEqual(180);
-    expect(fail.position.x - (step.position.x + 238)).toBeGreaterThanOrEqual(180);
   });
 
   it("includes terminal nodes when collecting positions for layout persistence", () => {
-    const nodes = buildCanvasNodes(createEmptyFlow(), {});
+    const nodes = buildCanvasNodes(flowFixture(), {});
 
     expect(Object.keys(canvasPositions(nodes))).toEqual(
-      expect.arrayContaining(["start", START_NODE_ID, END_NODE_ID, FAIL_NODE_ID]),
+      expect.arrayContaining(["review", START_NODE_ID, END_NODE_ID]),
     );
+    expect(Object.keys(canvasPositions(nodes))).not.toContain(FAIL_NODE_ID);
   });
 
   it("places repeatedly added nodes into distinct non-overlapping grid cells", () => {
@@ -76,17 +85,81 @@ describe("Flow editor canvas", () => {
       expert: { ref: "reviewer" },
       version: "1.0.0",
     };
+    flow.spec.graph.start = "expert_1";
 
     expect(buildCanvasEdges(flow).some((edge) => edge.source === "expert_1")).toBe(false);
   });
 
   it("removes a transition instead of replacing it with an End edge", () => {
-    const flow = createEmptyFlow();
-    const edge = buildCanvasEdges(flow).find((candidate) => candidate.id === "start:default")!;
+    const flow = flowFixture();
+    const edge = buildCanvasEdges(flow).find((candidate) => candidate.id === "review:default")!;
 
     removeEdgeFromFlow(flow, edge);
 
-    expect(flow.spec.graph.transitions.start).toBeUndefined();
-    expect(buildCanvasEdges(flow).some((candidate) => candidate.source === "start")).toBe(false);
+    expect(flow.spec.graph.transitions.review).toBeUndefined();
+    expect(buildCanvasEdges(flow).some((candidate) => candidate.source === "review")).toBe(false);
+  });
+
+  it("shows Fail only while a transition or loop limit references it", () => {
+    const direct = flowFixture();
+    direct.spec.graph.transitions.review = { fail: "Rejected" };
+    expect(buildCanvasNodes(direct, {}).some((node) => node.id === FAIL_NODE_ID)).toBe(true);
+
+    const routed = flowFixture();
+    routed.spec.graph.transitions.review = {
+      route: "decision",
+      cases: { rejected: { fail: "Rejected" } },
+      fallback: { end: true },
+    };
+    expect(buildCanvasNodes(routed, {}).some((node) => node.id === FAIL_NODE_ID)).toBe(true);
+
+    const limited = flowFixture();
+    limited.spec.graph.loops.review_loop = {
+      entry: "review",
+      maxIterations: 3,
+      onLimit: { fail: "Review timed out" },
+    };
+    expect(buildCanvasNodes(limited, {}).some((node) => node.id === FAIL_NODE_ID)).toBe(true);
+
+    expect(buildCanvasNodes(flowFixture(), {}).some((node) => node.id === FAIL_NODE_ID)).toBe(
+      false,
+    );
+  });
+
+  it("preserves the selected step across semantic canvas rebuilds", () => {
+    const flow = flowFixture();
+    const before = buildCanvasNodes(flow, {}, new Set(), "review");
+    flow.spec.graph.steps.review!.version = "2.0.0";
+    const after = buildCanvasNodes(flow, canvasPositions(before), new Set(), "review");
+
+    expect(after.find((node) => node.id === "review")?.selected).toBe(true);
   });
 });
+
+function flowFixture(): PragmaFlowResource {
+  return {
+    apiVersion: "pragma/v1",
+    kind: "Flow",
+    metadata: {
+      id: "review_flow",
+      version: "1.0.0",
+      name: "Review flow",
+      description: "Review a change",
+      tags: [],
+    },
+    spec: {
+      limits: { maxNodeVisits: 10 },
+      graph: {
+        start: "review",
+        steps: {
+          review: {
+            human: { kind: "approval", prompt: "Approve?" },
+            version: "1.0.0",
+          },
+        },
+        loops: {},
+        transitions: { review: { end: true } },
+      },
+    },
+  };
+}

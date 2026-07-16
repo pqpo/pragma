@@ -10,8 +10,13 @@ import {
 } from "./flow-model.ts";
 
 describe("Flow editor model", () => {
-  it("starts new Flows as valid, publishable DSL resources", () => {
-    expect(validateFlowDraft(createEmptyFlow("triage_flow"))).toEqual([]);
+  it("starts new Flows as empty editor drafts with one actionable issue", () => {
+    const flow = createEmptyFlow("triage_flow");
+
+    expect(flow.spec.graph).toEqual({ start: "", steps: {}, loops: {}, transitions: {} });
+    expect(validateFlowDraft(flow)).toEqual([
+      { path: ["spec", "graph", "steps"], message: "Add at least one node." },
+    ]);
   });
 
   it("keeps the complete route and bounded-repeat semantics editable", () => {
@@ -91,6 +96,17 @@ describe("Flow editor model", () => {
 
     expect(removed.spec.graph.loops["review_loop"]).toBeUndefined();
     expect(validateFlowDraft(removed)).toEqual([]);
+  });
+
+  it("returns to the empty draft state after deleting the last step", () => {
+    const flow = flowFixture();
+    const withoutFinish = deleteFlowStep(flow, "finish");
+    const empty = deleteFlowStep(withoutFinish, "review");
+
+    expect(empty.spec.graph).toEqual({ start: "", steps: {}, loops: {}, transitions: {} });
+    expect(validateFlowDraft(empty)).toEqual([
+      { path: ["spec", "graph", "steps"], message: "Add at least one node." },
+    ]);
   });
 });
 

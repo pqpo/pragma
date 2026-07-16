@@ -1,6 +1,6 @@
 import { basename } from "node:path";
 
-import { ipcMain } from "electron";
+import { ipcMain, type BrowserWindow } from "electron";
 
 import {
   CreateMissionSchema,
@@ -18,6 +18,7 @@ export function installMissionHandlers(options: {
   readonly missions: MissionStore;
   readonly project: PragmaProjectStore;
   readonly runner: MissionRunner;
+  readonly getWindow: () => BrowserWindow | null;
 }): void {
   ipcMain.handle("missions:list", () => options.missions.list());
   ipcMain.handle("missions:get", (_event, id: unknown) =>
@@ -50,6 +51,12 @@ export function installMissionHandlers(options: {
   ipcMain.handle("missions:message:send", (_event, input: unknown) =>
     options.runner.sendMessage(SendMissionMessageSchema.parse(input)),
   );
+  ipcMain.handle("missions:chat:get", (_event, input: unknown) =>
+    options.runner.getChat(MissionActionSchema.parse(input).id),
+  );
+  ipcMain.handle("missions:interrupt", (_event, input: unknown) =>
+    options.runner.interrupt(MissionActionSchema.parse(input).id),
+  );
   ipcMain.handle("missions:work:list", (_event, input: unknown) =>
     options.runner.listWorkItems(MissionActionSchema.parse(input).id),
   );
@@ -70,4 +77,7 @@ export function installMissionHandlers(options: {
   ipcMain.handle("missions:delete", (_event, input: unknown) =>
     options.runner.delete(MissionActionSchema.parse(input).id),
   );
+  options.runner.subscribeChat((update) => {
+    options.getWindow()?.webContents.send("missions:chat:updated", update);
+  });
 }

@@ -128,10 +128,10 @@ function FlowEditorCanvas(props: {
   );
   const baselineRef = useRef(JSON.stringify(initialFlow));
   const [flow, setFlow] = useState<PragmaFlowResource>(initialFlow);
+  const [selectedStepId, setSelectedStepId] = useState<string | null>(null);
   const [nodes, setNodes, onNodesChange] = useNodesState<WorkflowCanvasNode>(
     buildCanvasNodes(initialFlow, {}),
   );
-  const [selectedStepId, setSelectedStepId] = useState<string | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(true);
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const [validationOpen, setValidationOpen] = useState(false);
@@ -177,22 +177,24 @@ function FlowEditorCanvas(props: {
       futureRef.current = [];
       setFlow(next);
       if (nextPositions !== undefined) {
-        setNodes(buildCanvasNodes(next, nextPositions, invalidStepIds));
+        setNodes(buildCanvasNodes(next, nextPositions, invalidStepIds, selectedStepId));
       }
     },
-    [flow, invalidStepIds, setNodes, snapshot],
+    [flow, invalidStepIds, selectedStepId, setNodes, snapshot],
   );
 
   const restoreSnapshot = useCallback(
     (next: EditorSnapshot) => {
+      const nextSelectedStepId =
+        selectedStepId !== null && next.flow.spec.graph.steps[selectedStepId] !== undefined
+          ? selectedStepId
+          : null;
       setFlow(structuredClone(next.flow));
-      setNodes(buildCanvasNodes(next.flow, next.positions));
-      setSelectedStepId((current) =>
-        current !== null && next.flow.spec.graph.steps[current] !== undefined ? current : null,
-      );
+      setNodes(buildCanvasNodes(next.flow, next.positions, new Set(), nextSelectedStepId));
+      setSelectedStepId(nextSelectedStepId);
       setLayoutStatus("unsaved");
     },
-    [setNodes],
+    [selectedStepId, setNodes],
   );
 
   const undo = useCallback(() => {
@@ -275,8 +277,10 @@ function FlowEditorCanvas(props: {
   }, [fitView, initialFlow, props.project.projectId, setNodes, setViewport]);
 
   useEffect(() => {
-    setNodes((current) => buildCanvasNodes(flow, canvasPositions(current), invalidStepIds));
-  }, [flow, invalidStepIds, setNodes]);
+    setNodes((current) =>
+      buildCanvasNodes(flow, canvasPositions(current), invalidStepIds, selectedStepId),
+    );
+  }, [flow, invalidStepIds, selectedStepId, setNodes]);
 
   useEffect(() => {
     const listener = (event: KeyboardEvent) => {
@@ -448,7 +452,7 @@ function FlowEditorCanvas(props: {
               const arranged = automaticPositions(flow);
               historyRef.current.push(snapshot());
               futureRef.current = [];
-              setNodes(buildCanvasNodes(flow, arranged, invalidStepIds));
+              setNodes(buildCanvasNodes(flow, arranged, invalidStepIds, selectedStepId));
               scheduleLayoutSave();
             }}
           >
@@ -546,6 +550,10 @@ function FlowEditorCanvas(props: {
                 setSelectedStepId(node.id);
                 setInspectorOpen(true);
               } else setSelectedStepId(null);
+            }}
+            onEdgeClick={() => {
+              setSelectedStepId(null);
+              setNodeContextMenu(null);
             }}
             onNodeContextMenu={(event, node) => {
               event.preventDefault();
@@ -730,6 +738,10 @@ function StepNode(props: NodeProps<StepCanvasNode>) {
           : props.data.kind === "action"
             ? Sparkle
             : UserFocus;
+  const singleOutput =
+    props.data.outputs.length === 1 && props.data.outputs[0]?.id === "default"
+      ? props.data.outputs[0]
+      : undefined;
   return (
     <article
       className={`flow-step-node is-${props.data.kind}${props.selected ? " is-selected" : ""}${props.data.invalid ? " is-invalid" : ""}`}
@@ -745,23 +757,36 @@ function StepNode(props: NodeProps<StepCanvasNode>) {
           <small>{props.data.subtitle || "Not configured"}</small>
         </div>
       </div>
-      <div className="flow-step-outputs">
-        {props.data.outputs.map((output) => (
-          <span key={output.id}>
-            {output.label}
-            <Handle
-              type="source"
-              id={output.id}
-              position={Position.Right}
-              className="flow-step-add-handle"
-              aria-label={`Connect ${props.data.label} via ${output.label}`}
-              title={`Drag to connect ${output.label}`}
-            >
-              <Plus size={13} weight="bold" />
-            </Handle>
-          </span>
-        ))}
-      </div>
+      {singleOutput === undefined ? (
+        <div className="flow-step-outputs">
+          {props.data.outputs.map((output) => (
+            <span key={output.id}>
+              {output.label}
+              <Handle
+                type="source"
+                id={output.id}
+                position={Position.Right}
+                className="flow-step-add-handle"
+                aria-label={`Connect ${props.data.label} via ${output.label}`}
+                title={`Drag to connect ${output.label}`}
+              >
+                <Plus size={13} weight="bold" />
+              </Handle>
+            </span>
+          ))}
+        </div>
+      ) : (
+        <Handle
+          type="source"
+          id={singleOutput.id}
+          position={Position.Right}
+          className="flow-step-add-handle is-single"
+          aria-label={`Connect ${props.data.label}`}
+          title="Drag to connect"
+        >
+          <Plus size={13} weight="bold" />
+        </Handle>
+      )}
     </article>
   );
 }
@@ -1010,22 +1035,6 @@ function StepInspector(props: {
           defaultValue={props.stepId}
           onBlur={(event) => props.onRename(event.target.value)}
         />
-      </InspectorField>
-      <InspectorField label="Type">
-        <select
-          value={kind}
-          onChange={(event) =>
-            patchStep((current) =>
-              replaceStepKind(current, event.target.value as FlowStepKind, props.targets),
-            )
-          }
-        >
-          {(["expert", "team", "flow", "human", "action"] as const).map((value) => (
-            <option key={value} value={value}>
-              {value}
-            </option>
-          ))}
-        </select>
       </InspectorField>
       {kind === "human" ? (
         <>
@@ -1449,19 +1458,6 @@ function defaultStep(kind: FlowStepKind, targets: readonly ResourceTarget[]): Fl
   return { [kind]: { ref: target }, version } as FlowStep;
 }
 
-function replaceStepKind(
-  step: FlowStep,
-  kind: FlowStepKind,
-  targets: readonly ResourceTarget[],
-): void {
-  delete step.action;
-  delete step.expert;
-  delete step.team;
-  delete step.flow;
-  delete step.human;
-  Object.assign(step, defaultStep(kind, targets));
-}
-
 function setStepReference(step: FlowStep, kind: Exclude<FlowStepKind, "human">, ref: string): void {
   const value = step[kind];
   if (value !== undefined) value.ref = ref;
@@ -1601,6 +1597,7 @@ export function buildCanvasNodes(
   flow: PragmaFlowResource,
   suppliedPositions: Readonly<Record<string, { readonly x: number; readonly y: number }>>,
   invalidStepIds: ReadonlySet<string> = new Set(),
+  selectedStepId: string | null = null,
 ): WorkflowCanvasNode[] {
   const automatic = automaticPositions(flow);
   const stepIds = Object.keys(flow.spec.graph.steps);
@@ -1614,6 +1611,7 @@ export function buildCanvasNodes(
       type: "step",
       position: positions[id]!,
       deletable: false,
+      selected: id === selectedStepId,
       data: {
         kind: flowStepKind(step),
         label: id,
@@ -1630,14 +1628,15 @@ export function buildCanvasNodes(
       ? 0
       : Object.values(positions).reduce((total, position) => total + position.y, 0) /
         Object.values(positions).length;
+  const showFail = flowUsesFail(flow);
   const terminalX = maxX + NODE_WIDTH + TERMINAL_HORIZONTAL_GAP;
   const defaultStartPosition = {
     x: startPosition.x - TERMINAL_NODE_WIDTH - TERMINAL_HORIZONTAL_GAP,
     y: startPosition.y + 25,
   };
-  const defaultEndPosition = { x: terminalX, y: averageY - 35 };
+  const defaultEndPosition = { x: terminalX, y: showFail ? averageY - 35 : averageY + 25 };
   const defaultFailPosition = { x: terminalX, y: averageY + 70 };
-  return [
+  const terminalNodes: WorkflowCanvasNode[] = [
     {
       id: START_NODE_ID,
       type: "terminal",
@@ -1655,24 +1654,31 @@ export function buildCanvasNodes(
       deletable: false,
       data: { label: "End", tone: "end" },
     },
-    {
+  ];
+  if (showFail) {
+    terminalNodes.push({
       id: FAIL_NODE_ID,
       type: "terminal",
       position: suppliedPositions[FAIL_NODE_ID] ?? defaultFailPosition,
       draggable: true,
       deletable: false,
       data: { label: "Fail", tone: "fail" },
-    },
-  ];
+    });
+  }
+  return terminalNodes;
 }
 
 export function buildCanvasEdges(flow: PragmaFlowResource): Edge[] {
+  const startTarget =
+    flow.spec.graph.steps[flow.spec.graph.start] === undefined
+      ? END_NODE_ID
+      : flow.spec.graph.start;
   const edges: Edge[] = [
     {
       id: "start-edge",
       source: START_NODE_ID,
       sourceHandle: "start",
-      target: flow.spec.graph.start,
+      target: startTarget,
       targetHandle: "target",
       type: "workflow",
       animated: true,
@@ -1689,6 +1695,22 @@ export function buildCanvasEdges(flow: PragmaFlowResource): Edge[] {
     } else edges.push(destinationEdge(source, "default", transition, transitionMode(transition)));
   }
   return edges;
+}
+
+function flowUsesFail(flow: PragmaFlowResource): boolean {
+  const transitionFails = Object.values(flow.spec.graph.transitions).some((transition) =>
+    transitionDestinations(transition).some(isFailDestination),
+  );
+  return (
+    transitionFails ||
+    Object.values(flow.spec.graph.loops).some(
+      (loop) => loop.onLimit !== undefined && isFailDestination(loop.onLimit),
+    )
+  );
+}
+
+function isFailDestination(destination: PragmaFlowDestination): boolean {
+  return typeof destination === "object" && "fail" in destination;
 }
 
 function destinationEdge(

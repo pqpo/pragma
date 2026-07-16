@@ -16,7 +16,7 @@ export interface FlowValidationIssue {
 }
 
 export function createEmptyFlow(id = "untitled_flow"): PragmaFlowResource {
-  return PragmaFlowResourceSchema.parse({
+  return {
     apiVersion: "pragma/v1",
     kind: "Flow",
     metadata: {
@@ -29,18 +29,13 @@ export function createEmptyFlow(id = "untitled_flow"): PragmaFlowResource {
     spec: {
       limits: { maxNodeVisits: 1_000 },
       graph: {
-        start: "start",
-        steps: {
-          start: {
-            human: { kind: "approval", prompt: "Approve this step" },
-            version: "1.0.0",
-          },
-        },
+        start: "",
+        steps: {},
         loops: {},
-        transitions: { start: { end: true } },
+        transitions: {},
       },
     },
-  });
+  };
 }
 
 export function flowStepKind(step: FlowStep): FlowStepKind {
@@ -133,18 +128,32 @@ export function deleteFlowStep(flow: PragmaFlowResource, stepId: string): Pragma
 }
 
 export function validateFlowDraft(flow: PragmaFlowResource): readonly FlowValidationIssue[] {
+  const stepIds = new Set(Object.keys(flow.spec.graph.steps));
+  const emptyGraph = stepIds.size === 0;
   const parsed = PragmaFlowResourceSchema.safeParse(flow);
   const issues: FlowValidationIssue[] = parsed.success
     ? []
-    : parsed.error.issues.map((issue) => ({
-        path: issue.path.filter(
-          (segment): segment is string | number => typeof segment !== "symbol",
-        ),
-        message: friendlyIssueMessage(issue.path, issue.message),
-        stepId: stepIdFromPath(issue.path),
-      }));
-  const stepIds = new Set(Object.keys(flow.spec.graph.steps));
-  if (!stepIds.has(flow.spec.graph.start)) {
+    : parsed.error.issues
+        .filter(
+          (issue) =>
+            !(
+              emptyGraph &&
+              issue.path.length === 3 &&
+              issue.path[0] === "spec" &&
+              issue.path[1] === "graph" &&
+              issue.path[2] === "start"
+            ),
+        )
+        .map((issue) => ({
+          path: issue.path.filter(
+            (segment): segment is string | number => typeof segment !== "symbol",
+          ),
+          message: friendlyIssueMessage(issue.path, issue.message),
+          stepId: stepIdFromPath(issue.path),
+        }));
+  if (emptyGraph) {
+    issues.push({ path: ["spec", "graph", "steps"], message: "Add at least one node." });
+  } else if (!stepIds.has(flow.spec.graph.start)) {
     issues.push({ path: ["spec", "graph", "start"], message: "Choose a valid start node." });
   }
   for (const [source, transition] of Object.entries(flow.spec.graph.transitions)) {

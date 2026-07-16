@@ -8,6 +8,7 @@ import {
   CreateExpertDefinitionSchema,
   CodeServiceCapabilityDefinitionSchema,
   CreateMissionSchema,
+  MissionChatSnapshotSchema,
   MissionSchema,
 } from "./desktop-api.ts";
 
@@ -133,6 +134,45 @@ describe("mission contracts", () => {
         lifecycleStatus: "active",
         createdAt: "2026-07-11T00:00:00.000Z",
         updatedAt: "2026-07-11T00:00:00.000Z",
+      }).success,
+    ).toBe(true);
+  });
+
+  it("validates rich chat entries and interruptible execution state", () => {
+    expect(
+      MissionChatSnapshotSchema.safeParse({
+        missionId: "00000000-0000-4000-8000-000000000000",
+        revision: 4,
+        entries: [
+          {
+            id: "thinking:1",
+            kind: "thinking",
+            executionId: "execution-1",
+            invocationId: "invocation-1",
+            executorId: "writer",
+            content: "Checking the workspace.",
+            streaming: true,
+            createdAt: "2026-07-11T00:00:01.000Z",
+          },
+          {
+            id: "tool:execution-1:call-1",
+            kind: "tool",
+            executionId: "execution-1",
+            invocationId: "invocation-1",
+            toolCallId: "call-1",
+            toolName: "read_file",
+            status: "succeeded",
+            inputPreview: '{"path":"README.md"}',
+            outputPreview: "Pragma",
+            createdAt: "2026-07-11T00:00:02.000Z",
+          },
+        ],
+        pendingInteractions: [],
+        execution: {
+          id: "00000000-0000-4000-8000-000000000010",
+          status: "running",
+          interruptible: true,
+        },
       }).success,
     ).toBe(true);
   });

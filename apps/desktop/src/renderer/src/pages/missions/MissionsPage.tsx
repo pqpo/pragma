@@ -1,6 +1,7 @@
 import {
   useEffect,
   useMemo,
+  useRef,
   useState,
   type CSSProperties,
   type Dispatch,
@@ -9,7 +10,10 @@ import {
 
 import {
   ArrowCounterClockwise,
+  Brain,
   Books,
+  CaretDown,
+  Check,
   CheckCircle,
   Files,
   Folder,
@@ -20,6 +24,7 @@ import {
   Plus,
   Play,
   Stack,
+  StopCircle,
   Toolbox,
   Trash,
   User,
@@ -30,6 +35,8 @@ import type { HumanInteractionResponse } from "@pragma/shared";
 
 import type {
   Mission,
+  MissionChatEntry,
+  MissionChatSnapshot,
   MissionHumanInteraction,
   MissionWorkItem,
   PragmaDesktopAPI,
@@ -170,6 +177,11 @@ export function MissionsPage(props: { readonly initialExecutorRef?: string | und
               const api = desktopApi();
               if (api === undefined) return;
               replaceMission(await api.runMission(selectedMission.id));
+            }}
+            onInterrupt={async () => {
+              const api = desktopApi();
+              if (api === undefined) return;
+              replaceMission(await api.interruptMission(selectedMission.id));
             }}
             onHumanResponded={async () => {
               const api = desktopApi();
@@ -558,25 +570,34 @@ export function CreateMissionFragment(props: {
 export function MissionDetailFragment(props: {
   readonly mission: Mission;
   readonly onRun?: () => void | Promise<void>;
+  readonly onInterrupt?: () => void | Promise<void>;
   readonly onSend?: (content: string) => void | Promise<void>;
   readonly onHumanResponded?: () => void | Promise<void>;
   readonly onLifecycleChange?: () => void | Promise<void>;
 }) {
   const [tab, setTab] = useState<"chat" | "work">("chat");
   const [workspaceAvailable, setWorkspaceAvailable] = useState<boolean | null>(null);
-  const [interactions, setInteractions] = useState<readonly MissionHumanInteraction[]>([]);
+  const [chat, setChat] = useState<MissionChatSnapshot | null>(null);
   const [workItems, setWorkItems] = useState<readonly MissionWorkItem[]>([]);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
+  const [interrupting, setInterrupting] = useState(false);
+  const [responding, setResponding] = useState(false);
+  const [humanQuestionIndex, setHumanQuestionIndex] = useState(0);
+  const [showJumpToLatest, setShowJumpToLatest] = useState(false);
   const [humanNotes, setHumanNotes] = useState<Record<string, string>>({});
   const [humanAnswers, setHumanAnswers] = useState<
     Record<string, Record<string, string | readonly string[]>>
   >({});
   const isTeam = props.mission.executor.kind === "team";
   const isFlow = props.mission.executor.kind === "flow";
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const followLatestRef = useRef(true);
+  const executionStatus = chat?.execution?.status ?? props.mission.execution?.status;
   const executionActive =
-    props.mission.execution !== undefined &&
-    ["queued", "running", "waiting"].includes(props.mission.execution.status);
+    executionStatus !== undefined && ["queued", "running", "waiting"].includes(executionStatus);
+  const interactions = chat?.pendingInteractions ?? [];
+  const interruptible = chat?.execution?.interruptible ?? false;
 
   useEffect(() => {
     const api = desktopApi();
@@ -592,12 +613,40 @@ export function MissionDetailFragment(props: {
 
   useEffect(() => {
     const api = desktopApi();
-    if (api === undefined || props.mission.execution?.status !== "waiting") {
-      setInteractions([]);
-      return;
-    }
-    void api.listMissionHumanInteractions(props.mission.id).then(setInteractions);
-  }, [props.mission.id, props.mission.execution?.status]);
+    setChat(null);
+    setHumanQuestionIndex(0);
+    followLatestRef.current = true;
+    setShowJumpToLatest(false);
+    if (api === undefined) return;
+    let cancelled = false;
+    let refreshing = false;
+    let refreshQueued = false;
+    const refresh = async (): Promise<void> => {
+      if (refreshing) {
+        refreshQueued = true;
+        return;
+      }
+      refreshing = true;
+      try {
+        const snapshot = await api.getMissionChat(props.mission.id);
+        if (!cancelled) setChat(snapshot);
+      } catch (loadError) {
+        if (!cancelled) console.error("Failed to refresh Mission chat.", loadError);
+      } finally {
+        refreshing = false;
+        if (refreshQueued && !cancelled) {
+          refreshQueued = false;
+          void refresh();
+        }
+      }
+    };
+    const unsubscribe = api.subscribeMissionChat(props.mission.id, () => void refresh());
+    void refresh();
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, [props.mission.id]);
 
   useEffect(() => {
     const api = desktopApi();
@@ -636,33 +685,74 @@ export function MissionDetailFragment(props: {
     }
   };
 
+  const interrupt = async () => {
+    if (interrupting || !interruptible) return;
+    setInterrupting(true);
+    try {
+      await props.onInterrupt?.();
+    } finally {
+      setInterrupting(false);
+    }
+  };
+
   const respond = async (
     interaction: MissionHumanInteraction,
     response: HumanInteractionResponse,
   ) => {
     const api = desktopApi();
-    if (api === undefined) return;
-    await api.respondToMissionHumanInteraction({
-      missionId: props.mission.id,
-      interactionId: interaction.interactionId,
-      requestId: crypto.randomUUID(),
-      response,
-    });
-    setInteractions((current) =>
-      current.filter((item) => item.interactionId !== interaction.interactionId),
-    );
-    setHumanNotes((current) => {
-      const next = { ...current };
-      delete next[interaction.interactionId];
-      return next;
-    });
-    setHumanAnswers((current) => {
-      const next = { ...current };
-      delete next[interaction.interactionId];
-      return next;
-    });
-    await props.onHumanResponded?.();
+    if (api === undefined || responding) return;
+    setResponding(true);
+    try {
+      await api.respondToMissionHumanInteraction({
+        missionId: props.mission.id,
+        interactionId: interaction.interactionId,
+        requestId: crypto.randomUUID(),
+        response,
+      });
+      setChat((current) =>
+        current === null
+          ? current
+          : {
+              ...current,
+              pendingInteractions: current.pendingInteractions.filter(
+                (item) => item.interactionId !== interaction.interactionId,
+              ),
+            },
+      );
+      setHumanQuestionIndex(0);
+      setHumanNotes((current) => {
+        const next = { ...current };
+        delete next[interaction.interactionId];
+        return next;
+      });
+      setHumanAnswers((current) => {
+        const next = { ...current };
+        delete next[interaction.interactionId];
+        return next;
+      });
+      await props.onHumanResponded?.();
+    } finally {
+      setResponding(false);
+    }
   };
+
+  const displayEntries = chat?.entries ?? missionMessagesToChatEntries(props.mission);
+  const lastEntry = displayEntries.at(-1);
+  const lastEntryFingerprint =
+    lastEntry === undefined
+      ? "empty"
+      : `${lastEntry.id}:${lastEntry.kind}:${entryContentLength(lastEntry)}`;
+
+  useEffect(() => {
+    const element = scrollRef.current;
+    if (element === null) return;
+    if (followLatestRef.current) {
+      element.scrollTop = element.scrollHeight;
+      setShowJumpToLatest(false);
+    } else {
+      setShowJumpToLatest(true);
+    }
+  }, [lastEntryFingerprint, interactions.length]);
 
   return (
     <section className="mission-detail">
@@ -689,7 +779,9 @@ export function MissionDetailFragment(props: {
         </div>
         <div className="mission-header-actions">
           {props.mission.lifecycleStatus === "active" &&
-          (isFlow || props.mission.execution === undefined || executionActive) ? (
+          (props.mission.execution === undefined ||
+            (!executionActive && isFlow) ||
+            (executionActive && !interruptible)) ? (
             <button className="primary-button" type="button" onClick={() => void props.onRun?.()}>
               <Play size={17} />
               {executionActive
@@ -738,232 +830,141 @@ export function MissionDetailFragment(props: {
       </div>
       <div className="mission-detail-body">
         {tab === "chat" ? (
-          <div className="mission-chat">
-            {(props.mission.messages.length === 0
-              ? [
-                  {
-                    id: props.mission.id,
-                    role: "user" as const,
-                    content: props.mission.goal,
-                    createdAt: props.mission.createdAt,
-                  },
-                ]
-              : props.mission.messages
-            ).map((message) =>
-              message.role === "user" ? (
-                <div className="mission-user-message" key={message.id}>
-                  <span aria-hidden="true">You</span>
-                  <div>
-                    <strong>You</strong>
-                    <p>{message.content}</p>
-                  </div>
-                </div>
-              ) : (
-                <div className="mission-assistant-message" key={message.id}>
-                  <span aria-hidden="true">
-                    {isTeam ? (
-                      <UsersThree size={18} />
-                    ) : isFlow ? (
-                      <GitBranch size={18} />
-                    ) : (
-                      <User size={18} />
-                    )}
-                  </span>
-                  <div>
-                    <strong>{props.mission.executor.name}</strong>
-                    <p>{message.content}</p>
-                  </div>
-                </div>
-              ),
-            )}
-            <div className="mission-execution-notice">
-              <strong>
-                {props.mission.execution === undefined
-                  ? "Ready to run"
-                  : `Execution ${props.mission.execution.status}`}
-              </strong>
-              <p>
-                {props.mission.execution?.error ??
-                  `Pinned to ${props.mission.executor.ref} in project revision ${props.mission.project.revision}.`}
-              </p>
+          <div className="mission-chat-shell">
+            <div
+              className="mission-chat-scroll"
+              ref={scrollRef}
+              onScroll={(event) => {
+                const element = event.currentTarget;
+                const nearBottom =
+                  element.scrollHeight - element.scrollTop - element.clientHeight < 72;
+                followLatestRef.current = nearBottom;
+                if (nearBottom) setShowJumpToLatest(false);
+              }}
+            >
+              <div className="mission-chat-list">
+                {displayEntries.map((entry) => (
+                  <MissionChatEntryView
+                    entry={entry}
+                    executorName={props.mission.executor.name}
+                    isTeam={isTeam}
+                    isFlow={isFlow}
+                    key={entry.id}
+                  />
+                ))}
+              </div>
+              {showJumpToLatest ? (
+                <button
+                  className="mission-jump-latest"
+                  type="button"
+                  onClick={() => {
+                    const element = scrollRef.current;
+                    if (element !== null) element.scrollTop = element.scrollHeight;
+                    followLatestRef.current = true;
+                    setShowJumpToLatest(false);
+                  }}
+                >
+                  <CaretDown size={15} aria-hidden="true" /> Jump to latest
+                </button>
+              ) : null}
             </div>
-            {interactions.map((interaction) => (
-              <section className="mission-human-loop" key={interaction.interactionId}>
-                <strong>{interaction.request.title ?? "Human input required"}</strong>
-                <p>{interaction.request.prompt ?? "Review the current workflow state."}</p>
-                {interaction.request.kind === "question"
-                  ? interaction.request.questions?.map((question) => (
-                      <label key={question.question}>
-                        {question.question}
-                        {question.kind === "single_choice" ? (
-                          <select
-                            value={String(
-                              humanAnswers[interaction.interactionId]?.[question.question] ?? "",
-                            )}
-                            onChange={(event) =>
-                              setHumanAnswer(
-                                setHumanAnswers,
-                                interaction.interactionId,
-                                question.question,
-                                event.target.value,
-                              )
-                            }
-                          >
-                            <option value="">Choose an option</option>
-                            {question.options.map((option) => (
-                              <option value={option.label} key={option.label}>
-                                {option.label}
-                              </option>
-                            ))}
-                          </select>
-                        ) : question.kind === "multiple_choice" ? (
-                          <span>
-                            {question.options.map((option) => {
-                              const selected =
-                                humanAnswers[interaction.interactionId]?.[question.question];
-                              const values = Array.isArray(selected) ? selected : [];
-                              return (
-                                <label key={option.label}>
-                                  <input
-                                    type="checkbox"
-                                    checked={values.includes(option.label)}
-                                    onChange={(event) =>
-                                      setHumanAnswer(
-                                        setHumanAnswers,
-                                        interaction.interactionId,
-                                        question.question,
-                                        event.target.checked
-                                          ? [...values, option.label]
-                                          : values.filter((value) => value !== option.label),
-                                      )
-                                    }
-                                  />
-                                  {option.label}
-                                </label>
-                              );
-                            })}
-                          </span>
-                        ) : (
-                          <textarea
-                            value={String(
-                              humanAnswers[interaction.interactionId]?.[question.question] ?? "",
-                            )}
-                            onChange={(event) =>
-                              setHumanAnswer(
-                                setHumanAnswers,
-                                interaction.interactionId,
-                                question.question,
-                                event.target.value,
-                              )
-                            }
-                          />
-                        )}
-                      </label>
-                    ))
-                  : null}
-                <textarea
-                  value={humanNotes[interaction.interactionId] ?? ""}
-                  onChange={(event) =>
+            <div className="mission-chat-footer">
+              {missionFooterTip(props.mission, chat) ? (
+                <small className="mission-chat-footer-tip">
+                  {missionFooterTip(props.mission, chat)}
+                </small>
+              ) : null}
+              {interactions[0] !== undefined ? (
+                <MissionHumanComposer
+                  interaction={interactions[0]}
+                  answers={humanAnswers[interactions[0].interactionId] ?? {}}
+                  notes={humanNotes[interactions[0].interactionId] ?? ""}
+                  questionIndex={humanQuestionIndex}
+                  interactionPosition={{ current: 1, total: interactions.length }}
+                  responding={responding}
+                  interruptible={interruptible}
+                  interrupting={interrupting}
+                  onQuestionIndex={setHumanQuestionIndex}
+                  onAnswer={(question, value) =>
+                    setHumanAnswer(setHumanAnswers, interactions[0]!.interactionId, question, value)
+                  }
+                  onNotes={(value) =>
                     setHumanNotes((current) => ({
                       ...current,
-                      [interaction.interactionId]: event.target.value,
+                      [interactions[0]!.interactionId]: value,
                     }))
                   }
-                  placeholder="Optional notes"
+                  onRespond={(response) => void respond(interactions[0]!, response)}
+                  onInterrupt={() => void interrupt()}
                 />
-                <footer>
-                  {interaction.request.kind === "approval" ? (
-                    <>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          void respond(interaction, {
-                            approved: false,
-                            decision: "rejected",
-                            notes: humanNotes[interaction.interactionId] ?? "",
-                          })
-                        }
-                      >
-                        Reject
-                      </button>
-                      <button
-                        className="primary-button"
-                        type="button"
-                        onClick={() =>
-                          void respond(interaction, {
-                            approved: true,
-                            decision: "approved",
-                            notes: humanNotes[interaction.interactionId] ?? "",
-                          })
-                        }
-                      >
-                        Approve & continue
-                      </button>
-                    </>
+              ) : (
+                <div className="mission-chat-composer">
+                  {isFlow ? (
+                    <GitBranch size={20} aria-hidden="true" />
+                  ) : (
+                    <Paperclip size={20} aria-hidden="true" />
+                  )}
+                  <textarea
+                    value={draft}
+                    disabled={
+                      isFlow ||
+                      sending ||
+                      executionActive ||
+                      props.mission.lifecycleStatus === "completed"
+                    }
+                    placeholder={
+                      executionActive
+                        ? interruptible
+                          ? `${props.mission.executor.name} is working…`
+                          : "Resume this execution to manage it"
+                        : props.mission.lifecycleStatus === "completed"
+                          ? "Reopen this mission to continue the conversation"
+                          : isFlow
+                            ? "Flow input continues through workflow steps"
+                            : `Message ${props.mission.executor.name}`
+                    }
+                    aria-label={`Message ${props.mission.executor.name}`}
+                    onChange={(event) => setDraft(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" && !event.shiftKey) {
+                        event.preventDefault();
+                        void send();
+                      }
+                    }}
+                  />
+                  {executionActive ? (
+                    <button
+                      className="is-interrupt"
+                      type="button"
+                      aria-label="Interrupt execution"
+                      title={
+                        interruptible
+                          ? "Interrupt execution"
+                          : "Resume this execution before interrupting it"
+                      }
+                      disabled={!interruptible || interrupting}
+                      onClick={() => void interrupt()}
+                    >
+                      <StopCircle size={19} weight="fill" aria-hidden="true" />
+                    </button>
                   ) : (
                     <button
-                      className="primary-button"
                       type="button"
-                      onClick={() =>
-                        void respond(interaction, {
-                          answers: humanAnswers[interaction.interactionId] ?? {},
-                          notes: humanNotes[interaction.interactionId] ?? "",
-                        })
+                      aria-label="Send message"
+                      disabled={
+                        isFlow ||
+                        draft.trim() === "" ||
+                        sending ||
+                        props.mission.lifecycleStatus === "completed"
                       }
+                      onClick={() => void send()}
                     >
-                      Submit response
+                      <PaperPlaneTilt size={18} aria-hidden="true" />
                     </button>
                   )}
-                </footer>
-              </section>
-            ))}
-            {isFlow ? (
-              <div className="mission-disabled-composer" aria-disabled="true">
-                <GitBranch size={20} aria-hidden="true" />
-                <span>Flow input continues through workflow steps and human checkpoints.</span>
-                <button type="button" disabled>
-                  Send
-                </button>
-              </div>
-            ) : (
-              <div className="mission-chat-composer">
-                <Paperclip size={20} aria-hidden="true" />
-                <textarea
-                  value={draft}
-                  disabled={
-                    sending || executionActive || props.mission.lifecycleStatus === "completed"
-                  }
-                  placeholder={
-                    executionActive
-                      ? `${props.mission.executor.name} is working…`
-                      : props.mission.lifecycleStatus === "completed"
-                        ? "Reopen this mission to continue the conversation"
-                        : `Message ${props.mission.executor.name}`
-                  }
-                  aria-label={`Message ${props.mission.executor.name}`}
-                  onChange={(event) => setDraft(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter" && !event.shiftKey) {
-                      event.preventDefault();
-                      void send();
-                    }
-                  }}
-                />
-                <button
-                  type="button"
-                  aria-label="Send message"
-                  disabled={
-                    draft.trim() === "" ||
-                    sending ||
-                    executionActive ||
-                    props.mission.lifecycleStatus === "completed"
-                  }
-                  onClick={() => void send()}
-                >
-                  <PaperPlaneTilt size={18} aria-hidden="true" />
-                </button>
-              </div>
-            )}
+                </div>
+              )}
+            </div>
           </div>
         ) : workItems.length === 0 ? (
           <div className="mission-work-empty">
@@ -1009,6 +1010,368 @@ export function MissionDetailFragment(props: {
       </div>
     </section>
   );
+}
+
+function MissionChatEntryView(props: {
+  readonly entry: MissionChatEntry;
+  readonly executorName: string;
+  readonly isTeam: boolean;
+  readonly isFlow: boolean;
+}) {
+  const name = props.entry.executorName ?? props.entry.executorId ?? props.executorName;
+  if (props.entry.kind === "user") {
+    return (
+      <div className="mission-user-message">
+        <span aria-hidden="true">You</span>
+        <div>
+          <strong>You</strong>
+          <p>{props.entry.content}</p>
+        </div>
+      </div>
+    );
+  }
+  if (props.entry.kind === "thinking") {
+    return (
+      <details className="mission-chat-activity mission-thinking-entry">
+        <summary>
+          <Brain size={17} aria-hidden="true" />
+          <span>{props.entry.streaming ? `${name} is thinking…` : `Thinking · ${name}`}</span>
+          <CaretDown size={15} aria-hidden="true" />
+        </summary>
+        <p>{props.entry.content}</p>
+      </details>
+    );
+  }
+  if (props.entry.kind === "tool") {
+    return (
+      <details className={`mission-chat-activity mission-tool-entry is-${props.entry.status}`}>
+        <summary>
+          <Toolbox size={17} aria-hidden="true" />
+          <span>{props.entry.toolName}</span>
+          <small>{toolStatusLabel(props.entry.status)}</small>
+          {props.entry.status === "succeeded" ? (
+            <Check size={15} aria-hidden="true" />
+          ) : (
+            <CaretDown size={15} aria-hidden="true" />
+          )}
+        </summary>
+        {props.entry.inputPreview !== undefined ? (
+          <div>
+            <strong>Input</strong>
+            <pre>{props.entry.inputPreview}</pre>
+          </div>
+        ) : null}
+        {props.entry.outputPreview !== undefined ? (
+          <div>
+            <strong>Output</strong>
+            <pre>{props.entry.outputPreview}</pre>
+          </div>
+        ) : null}
+        {props.entry.error !== undefined ? <p role="alert">{props.entry.error}</p> : null}
+      </details>
+    );
+  }
+  return (
+    <div className="mission-assistant-message">
+      <span aria-hidden="true">
+        {props.isTeam ? (
+          <UsersThree size={18} />
+        ) : props.isFlow ? (
+          <GitBranch size={18} />
+        ) : (
+          <User size={18} />
+        )}
+      </span>
+      <div>
+        <strong>{name}</strong>
+        <p>{props.entry.content}</p>
+      </div>
+    </div>
+  );
+}
+
+type MissionHumanQuestion = NonNullable<MissionHumanInteraction["request"]["questions"]>[number];
+
+function MissionHumanComposer(props: {
+  readonly interaction: MissionHumanInteraction;
+  readonly answers: Readonly<Record<string, string | readonly string[]>>;
+  readonly notes: string;
+  readonly questionIndex: number;
+  readonly interactionPosition: { readonly current: number; readonly total: number };
+  readonly responding: boolean;
+  readonly interruptible: boolean;
+  readonly interrupting: boolean;
+  readonly onQuestionIndex: (index: number) => void;
+  readonly onAnswer: (question: string, value: string | readonly string[]) => void;
+  readonly onNotes: (value: string) => void;
+  readonly onRespond: (response: HumanInteractionResponse) => void;
+  readonly onInterrupt: () => void;
+}) {
+  const request = props.interaction.request;
+  const questions = request.questions ?? [];
+  const index = Math.min(props.questionIndex, Math.max(questions.length - 1, 0));
+  const question = questions[index];
+  const answer = question === undefined ? undefined : props.answers[question.question];
+  const answerValid = question === undefined ? true : humanAnswerValid(question, answer);
+
+  return (
+    <section className="mission-human-composer" aria-labelledby="mission-human-title">
+      <header>
+        <div>
+          <small>
+            User input · {props.interactionPosition.current}/{props.interactionPosition.total}
+          </small>
+          <strong id="mission-human-title">{request.title ?? "Human input required"}</strong>
+          <p>{request.prompt ?? "Review the current execution before continuing."}</p>
+        </div>
+        <button
+          className="mission-human-interrupt"
+          type="button"
+          disabled={!props.interruptible || props.interrupting}
+          onClick={props.onInterrupt}
+        >
+          <StopCircle size={17} weight="fill" aria-hidden="true" /> Interrupt
+        </button>
+      </header>
+      {request.kind === "approval" ? (
+        <>
+          {request.data === undefined ? null : <pre>{formatInteractionData(request.data)}</pre>}
+          <textarea
+            value={props.notes}
+            onChange={(event) => props.onNotes(event.target.value)}
+            placeholder="Optional notes"
+          />
+          <footer>
+            <button
+              type="button"
+              disabled={props.responding}
+              onClick={() =>
+                props.onRespond({
+                  approved: false,
+                  decision: "rejected",
+                  notes: props.notes,
+                })
+              }
+            >
+              Reject
+            </button>
+            <button
+              className="primary-button"
+              type="button"
+              disabled={props.responding}
+              onClick={() =>
+                props.onRespond({
+                  approved: true,
+                  decision: "approved",
+                  notes: props.notes,
+                })
+              }
+            >
+              {props.responding ? "Submitting…" : "Approve & continue"}
+            </button>
+          </footer>
+        </>
+      ) : question === undefined ? (
+        <footer>
+          <button
+            className="primary-button"
+            type="button"
+            disabled={props.responding}
+            onClick={() => props.onRespond({ notes: props.notes })}
+          >
+            Continue
+          </button>
+        </footer>
+      ) : (
+        <>
+          <div className="mission-human-question">
+            <small>
+              Question {index + 1} of {questions.length} · {question.header}
+            </small>
+            <strong>{question.question}</strong>
+            <HumanQuestionInput question={question} answer={answer} onAnswer={props.onAnswer} />
+          </div>
+          <textarea
+            value={props.notes}
+            onChange={(event) => props.onNotes(event.target.value)}
+            placeholder="Optional notes"
+          />
+          <footer>
+            <button
+              type="button"
+              disabled={index === 0 || props.responding}
+              onClick={() => props.onQuestionIndex(index - 1)}
+            >
+              Back
+            </button>
+            {index < questions.length - 1 ? (
+              <button
+                className="primary-button"
+                type="button"
+                disabled={!answerValid || props.responding}
+                onClick={() => props.onQuestionIndex(index + 1)}
+              >
+                Next
+              </button>
+            ) : (
+              <button
+                className="primary-button"
+                type="button"
+                disabled={!answerValid || props.responding}
+                onClick={() =>
+                  props.onRespond({
+                    answers: props.answers,
+                    notes: props.notes,
+                  })
+                }
+              >
+                {props.responding ? "Submitting…" : "Submit response"}
+              </button>
+            )}
+          </footer>
+        </>
+      )}
+    </section>
+  );
+}
+
+function HumanQuestionInput(props: {
+  readonly question: MissionHumanQuestion;
+  readonly answer: string | readonly string[] | undefined;
+  readonly onAnswer: (question: string, value: string | readonly string[]) => void;
+}) {
+  if (props.question.kind === "text") {
+    return (
+      <textarea
+        value={typeof props.answer === "string" ? props.answer : ""}
+        onChange={(event) => props.onAnswer(props.question.question, event.target.value)}
+        autoFocus
+      />
+    );
+  }
+  if (props.question.kind === "single_choice") {
+    return (
+      <div className="mission-human-options">
+        {props.question.options.map((option) => (
+          <button
+            className={props.answer === option.label ? "is-selected" : ""}
+            type="button"
+            key={option.label}
+            onClick={() => props.onAnswer(props.question.question, option.label)}
+          >
+            <strong>{option.label}</strong>
+            {option.description === "" ? null : <small>{option.description}</small>}
+          </button>
+        ))}
+      </div>
+    );
+  }
+  const selected = Array.isArray(props.answer) ? props.answer : [];
+  return (
+    <div className="mission-human-options is-multiple">
+      {props.question.options.map((option) => (
+        <label key={option.label}>
+          <input
+            type="checkbox"
+            checked={selected.includes(option.label)}
+            onChange={(event) =>
+              props.onAnswer(
+                props.question.question,
+                event.target.checked
+                  ? [...selected, option.label]
+                  : selected.filter((value) => value !== option.label),
+              )
+            }
+          />
+          <span>
+            <strong>{option.label}</strong>
+            {option.description === "" ? null : <small>{option.description}</small>}
+          </span>
+        </label>
+      ))}
+    </div>
+  );
+}
+
+function humanAnswerValid(
+  question: MissionHumanQuestion,
+  answer: string | readonly string[] | undefined,
+): boolean {
+  if (question.kind === "multiple_choice") return Array.isArray(answer) && answer.length > 0;
+  return typeof answer === "string" && answer.trim() !== "";
+}
+
+function missionMessagesToChatEntries(mission: Mission): MissionChatEntry[] {
+  const messages =
+    mission.messages.length === 0
+      ? [
+          {
+            id: mission.id,
+            role: "user" as const,
+            content: mission.goal,
+            createdAt: mission.createdAt,
+          },
+        ]
+      : mission.messages;
+  return messages.map((message): MissionChatEntry => {
+    const base = {
+      id: message.id,
+      content: message.content,
+      createdAt: message.createdAt,
+      ...(message.executionId === undefined ? {} : { executionId: message.executionId }),
+    };
+    return message.role === "assistant"
+      ? { ...base, kind: "assistant", streaming: false }
+      : { ...base, kind: "user" };
+  });
+}
+
+function entryContentLength(entry: MissionChatEntry): number {
+  if (entry.kind === "tool") {
+    return (entry.inputPreview?.length ?? 0) + (entry.outputPreview?.length ?? 0);
+  }
+  return entry.content.length;
+}
+
+function missionFooterTip(mission: Mission, chat: MissionChatSnapshot | null): string | null {
+  if (mission.lifecycleStatus === "completed") {
+    return "Reopen this mission to continue the conversation.";
+  }
+  const execution = chat?.execution ?? mission.execution;
+  if (execution === undefined) return null;
+  if (execution.status === "failed") return execution.error ?? "Execution failed.";
+  if (execution.status === "cancelled") {
+    return "Execution interrupted. You can continue the conversation.";
+  }
+  if (
+    ["queued", "running", "waiting"].includes(execution.status) &&
+    chat?.execution?.interruptible === false
+  ) {
+    return "Resume this execution before interrupting it.";
+  }
+  return null;
+}
+
+function toolStatusLabel(status: Extract<MissionChatEntry, { kind: "tool" }>["status"]): string {
+  switch (status) {
+    case "running":
+      return "Running";
+    case "approval_required":
+      return "Approval required";
+    case "succeeded":
+      return "Completed";
+    case "failed":
+      return "Failed";
+  }
+}
+
+function formatInteractionData(value: unknown): string {
+  if (typeof value === "string") return value;
+  try {
+    return JSON.stringify(value, null, 2) ?? String(value);
+  } catch {
+    return String(value);
+  }
 }
 
 function workItemDepth(item: MissionWorkItem, items: readonly MissionWorkItem[]): number {

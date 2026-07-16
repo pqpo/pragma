@@ -143,6 +143,7 @@ void app.whenReady().then(async () => {
   installMissionHandlers({
     missions: missionStore,
     project: pragmaProjectStore,
+    getWindow: () => mainWindow,
     runner: createMissionRunner({
       missions: missionStore,
       project: pragmaProjectStore,

@@ -57,8 +57,11 @@ describe("MissionDetailFragment", () => {
     const html = renderToStaticMarkup(<MissionDetailFragment mission={missionFixture("expert")} />);
 
     expect(html).toContain(">Chat<");
-    expect(html).toContain("Ready to run");
+    expect(html).toContain("mission-chat-scroll");
+    expect(html).toContain("mission-chat-footer");
     expect(html).toContain("mission-chat-composer");
+    expect(html).not.toContain("mission-execution-notice");
+    expect(html).not.toContain("Pinned to");
   });
 
   it("keeps team conversations in the shared chat surface", () => {
@@ -67,6 +70,21 @@ describe("MissionDetailFragment", () => {
     expect(html).toContain("Team channel");
     expect(html).toContain("mission-chat-composer");
     expect(html).not.toContain("mission-team-inspector");
+  });
+
+  it("replaces the send action with an interrupt action while an execution is active", () => {
+    const mission = missionFixture("expert");
+    mission.execution = {
+      id: "00000000-0000-4000-8000-000000000010",
+      sessionId: "00000000-0000-4000-8000-000000000011",
+      status: "running",
+      startedAt: "2026-07-11T00:00:01.000Z",
+    };
+    const html = renderToStaticMarkup(<MissionDetailFragment mission={mission} />);
+
+    expect(html).toContain('aria-label="Interrupt execution"');
+    expect(html).not.toContain('aria-label="Send message"');
+    expect(html).not.toContain("Execution running");
   });
 });
 

@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from "electron";
+import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
 
 import {
   DesktopBridgeSnapshotSchema,
@@ -33,6 +33,8 @@ import {
   ModelProviderSchema,
   CreateMissionSchema,
   MissionActionSchema,
+  MissionChatSnapshotSchema,
+  MissionChatUpdateSchema,
   MissionIdSchema,
   MissionSchema,
   MissionHumanInteractionSchema,
@@ -189,6 +191,23 @@ const api: PragmaDesktopAPI = {
   sendMissionMessage: async (input) =>
     MissionSchema.parse(
       await ipcRenderer.invoke("missions:message:send", SendMissionMessageSchema.parse(input)),
+    ),
+  getMissionChat: async (id) =>
+    MissionChatSnapshotSchema.parse(
+      await ipcRenderer.invoke("missions:chat:get", MissionActionSchema.parse({ id })),
+    ),
+  subscribeMissionChat: (id, listener) => {
+    const missionId = MissionIdSchema.parse(id);
+    const handler = (_event: IpcRendererEvent, value: unknown) => {
+      const update = MissionChatUpdateSchema.parse(value);
+      if (update.missionId === missionId) listener(update);
+    };
+    ipcRenderer.on("missions:chat:updated", handler);
+    return () => ipcRenderer.removeListener("missions:chat:updated", handler);
+  },
+  interruptMission: async (id) =>
+    MissionSchema.parse(
+      await ipcRenderer.invoke("missions:interrupt", MissionActionSchema.parse({ id })),
     ),
   listMissionWorkItems: async (id) =>
     MissionWorkItemSchema.array().parse(
