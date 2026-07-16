@@ -205,7 +205,7 @@ function ProviderCard(props: {
     <article className="provider-card is-expanded">
       <header className="card-header">
         <span className="card-icon" aria-hidden="true">
-          <Robot size={24} weight="duotone" />
+          <Robot size={24} />
         </span>
         <div className="card-title-group">
           <h3>{props.provider.name}</h3>

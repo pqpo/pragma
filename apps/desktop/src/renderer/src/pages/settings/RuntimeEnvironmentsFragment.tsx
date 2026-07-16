@@ -37,7 +37,7 @@ function RuntimeCard(props: { readonly runtime: DesktopRuntimeAvailability }) {
     <article className="runtime-card">
       <header className="card-header runtime-card-header">
         <span className="card-icon runtime-icon" aria-hidden="true">
-          <TerminalWindow size={24} weight="duotone" />
+          <TerminalWindow size={24} />
         </span>
         <div className="card-title-group">
           <h3>{details.name}</h3>

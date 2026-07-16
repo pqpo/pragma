@@ -664,7 +664,7 @@ function StepNode(props: NodeProps<StepCanvasNode>) {
       <span className="flow-step-kind">{props.data.kind}</span>
       <div className="flow-step-main">
         <span className="flow-step-icon">
-          <Icon size={18} weight="duotone" />
+          <Icon size={18} />
         </span>
         <div>
           <strong>{props.data.label}</strong>
@@ -712,7 +712,7 @@ function TerminalNode(props: NodeProps<TerminalCanvasNode>) {
 }
 
 function PlayIcon() {
-  return <GitBranch size={18} weight="duotone" />;
+  return <GitBranch size={18} />;
 }
 
 const nodeTypes = { step: StepNode, terminal: TerminalNode };

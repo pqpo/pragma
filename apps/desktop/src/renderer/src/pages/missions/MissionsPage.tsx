@@ -2,13 +2,17 @@ import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from
 
 import {
   ArrowCounterClockwise,
+  Books,
   CheckCircle,
+  Files,
   Folder,
   GitBranch,
   MagnifyingGlass,
   Paperclip,
   Plus,
   Play,
+  Stack,
+  Toolbox,
   User,
   UsersThree,
 } from "@phosphor-icons/react";
@@ -21,6 +25,7 @@ import type {
   PragmaDesktopAPI,
 } from "../../../../shared/desktop-api.ts";
 import { errorMessage } from "../../lib/errors.ts";
+import { formatMissionDateTime, formatMissionTime } from "../../lib/mission-time.ts";
 
 type MissionScreen = "create" | "detail";
 
@@ -31,6 +36,12 @@ export function MissionsPage() {
   const [selectedMissionId, setSelectedMissionId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 60_000);
+    return () => clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     const api = desktopApi();
@@ -88,6 +99,7 @@ export function MissionsPage() {
       <MissionRail
         missions={visibleMissions}
         search={search}
+        now={now}
         selectedMissionId={screen === "detail" ? selectedMissionId : null}
         onSearch={setSearch}
         onCreate={() => {
@@ -159,6 +171,7 @@ export function MissionsPage() {
 function MissionRail(props: {
   readonly missions: readonly Mission[];
   readonly search: string;
+  readonly now: number;
   readonly selectedMissionId: string | null;
   readonly onSearch: (value: string) => void;
   readonly onCreate: () => void;
@@ -170,7 +183,7 @@ function MissionRail(props: {
     <aside className="mission-rail">
       <h1>Missions</h1>
       <button className="mission-new-button" type="button" onClick={props.onCreate}>
-        <Plus size={18} weight="bold" aria-hidden="true" />
+        <Plus size={18} aria-hidden="true" />
         New mission
       </button>
       <label className="mission-search">
@@ -185,12 +198,14 @@ function MissionRail(props: {
       <MissionRailGroup
         label="Active"
         missions={active}
+        now={props.now}
         selectedMissionId={props.selectedMissionId}
         onOpen={props.onOpen}
       />
       <MissionRailGroup
         label="Completed"
         missions={completed}
+        now={props.now}
         selectedMissionId={props.selectedMissionId}
         onOpen={props.onOpen}
       />
@@ -201,6 +216,7 @@ function MissionRail(props: {
 function MissionRailGroup(props: {
   readonly label: string;
   readonly missions: readonly Mission[];
+  readonly now: number;
   readonly selectedMissionId: string | null;
   readonly onOpen: (mission: Mission) => void;
 }) {
@@ -229,7 +245,15 @@ function MissionRailGroup(props: {
             />
             <span>
               <strong>{mission.title}</strong>
-              <small>{mission.lifecycleStatus === "active" ? "Ready" : "Completed"}</small>
+              <small>
+                <span>{mission.lifecycleStatus === "active" ? "Ready" : "Completed"}</span>
+                <time
+                  dateTime={mission.updatedAt}
+                  title={formatMissionDateTime(mission.updatedAt)}
+                >
+                  {formatMissionTime(mission.updatedAt, props.now)}
+                </time>
+              </small>
             </span>
           </button>
         ))
@@ -337,10 +361,53 @@ function CreateMissionFragment(props: {
           autoFocus
         />
         <footer>
-          <span className="mission-context-disabled" title="Files are accessed from the workspace">
-            <Paperclip size={19} aria-hidden="true" />
-            Workspace context
-          </span>
+          <div className="mission-prompt-tools" aria-label="Mission context and tools">
+            <button
+              type="button"
+              aria-disabled="true"
+              title={
+                executorRef === ""
+                  ? "Choose an executor to inherit its context"
+                  : "Context is inherited from the selected executor"
+              }
+            >
+              <Stack size={18} aria-hidden="true" />
+              Context
+            </button>
+            <button
+              className={workspace === null ? "" : "is-active"}
+              type="button"
+              onClick={() => void pickWorkspace()}
+              title={workspace?.path ?? "Choose files through a mission workspace"}
+            >
+              <Files size={18} aria-hidden="true" />
+              Files
+            </button>
+            <button
+              type="button"
+              aria-disabled="true"
+              title={
+                executorRef === ""
+                  ? "Choose an executor to inherit its knowledge"
+                  : "Knowledge is managed by the selected executor"
+              }
+            >
+              <Books size={18} aria-hidden="true" />
+              Knowledge
+            </button>
+            <button
+              type="button"
+              aria-disabled="true"
+              title={
+                executorRef === ""
+                  ? "Choose an executor to inherit its tools"
+                  : "Tools are managed by the selected executor"
+              }
+            >
+              <Toolbox size={18} aria-hidden="true" />
+              Tools
+            </button>
+          </div>
           <button
             className="primary-button"
             type="button"

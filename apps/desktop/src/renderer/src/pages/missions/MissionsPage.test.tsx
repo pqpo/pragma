@@ -2,7 +2,21 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import type { Mission } from "../../../../shared/desktop-api.ts";
-import { MissionDetailFragment } from "./MissionsPage.tsx";
+import { MissionDetailFragment, MissionsPage } from "./MissionsPage.tsx";
+
+describe("MissionsPage", () => {
+  it("presents mission creation as an AI prompt card with scoped capability entries", () => {
+    const html = renderToStaticMarkup(<MissionsPage />);
+
+    expect(html).toContain("Start a mission");
+    expect(html).toContain('aria-label="Mission context and tools"');
+    expect(html).toContain(">Context<");
+    expect(html).toContain(">Files<");
+    expect(html).toContain(">Knowledge<");
+    expect(html).toContain(">Tools<");
+    expect(html.match(/aria-disabled="true"/g)?.length).toBe(3);
+  });
+});
 
 describe("MissionDetailFragment", () => {
   it("uses the full detail width for a single expert", () => {
