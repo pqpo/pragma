@@ -55,6 +55,7 @@ import {
   destinationTarget,
   flowStepKind,
   flowStepTarget,
+  isFlowStepKind,
   renameFlowStep,
   transitionMode,
   validateFlowDraft,
@@ -171,13 +172,14 @@ function FlowEditorCanvas(props: {
     (
       next: PragmaFlowResource,
       nextPositions?: Readonly<Record<string, { x: number; y: number }>>,
+      nextSelectedStepId = selectedStepId,
     ) => {
       if (JSON.stringify(next) === JSON.stringify(flow) && nextPositions === undefined) return;
       historyRef.current.push(snapshot());
       futureRef.current = [];
       setFlow(next);
       if (nextPositions !== undefined) {
-        setNodes(buildCanvasNodes(next, nextPositions, invalidStepIds, selectedStepId));
+        setNodes(buildCanvasNodes(next, nextPositions, invalidStepIds, nextSelectedStepId));
       }
     },
     [flow, invalidStepIds, selectedStepId, setNodes, snapshot],
@@ -277,10 +279,16 @@ function FlowEditorCanvas(props: {
   }, [fitView, initialFlow, props.project.projectId, setNodes, setViewport]);
 
   useEffect(() => {
-    setNodes((current) =>
-      buildCanvasNodes(flow, canvasPositions(current), invalidStepIds, selectedStepId),
-    );
-  }, [flow, invalidStepIds, selectedStepId, setNodes]);
+    setNodes((current) => {
+      const selectedStep = current.find((node) => node.type === "step" && node.selected);
+      return buildCanvasNodes(
+        flow,
+        canvasPositions(current),
+        invalidStepIds,
+        selectedStep?.id ?? null,
+      );
+    });
+  }, [flow, invalidStepIds, setNodes]);
 
   useEffect(() => {
     const listener = (event: KeyboardEvent) => {
@@ -339,7 +347,7 @@ function FlowEditorCanvas(props: {
         x: viewportCenter.x - NODE_WIDTH / 2,
         y: viewportCenter.y - NODE_HEIGHT / 2,
       });
-    commitFlow(copy, { ...currentPositions, [id]: nextPosition });
+    commitFlow(copy, { ...currentPositions, [id]: nextPosition }, id);
     setSelectedStepId(id);
     setInspectorOpen(true);
   };
@@ -497,24 +505,14 @@ function FlowEditorCanvas(props: {
               <p>Drag a node onto the canvas</p>
               <div className="flow-palette-group">
                 <strong>Executors</strong>
-                <PaletteItem kind="expert" icon={<Robot />} label="Expert" onAdd={addStep} />
-                <PaletteItem
-                  kind="team"
-                  icon={<UsersThree />}
-                  label="Expert team"
-                  onAdd={addStep}
-                />
-                <PaletteItem kind="flow" icon={<GitBranch />} label="Sub-flow" onAdd={addStep} />
+                <PaletteItem kind="expert" icon={<Robot />} label="Expert" />
+                <PaletteItem kind="team" icon={<UsersThree />} label="Expert team" />
+                <PaletteItem kind="flow" icon={<GitBranch />} label="Sub-flow" />
               </div>
               <div className="flow-palette-group">
                 <strong>Control</strong>
-                <PaletteItem
-                  kind="human"
-                  icon={<UserFocus />}
-                  label="Human input"
-                  onAdd={addStep}
-                />
-                <PaletteItem kind="action" icon={<Sparkle />} label="Action" onAdd={addStep} />
+                <PaletteItem kind="human" icon={<UserFocus />} label="Human input" />
+                <PaletteItem kind="action" icon={<Sparkle />} label="Action" />
               </div>
             </div>
           ) : null}
@@ -526,8 +524,8 @@ function FlowEditorCanvas(props: {
           onDragOver={(event) => event.preventDefault()}
           onDrop={(event) => {
             event.preventDefault();
-            const kind = event.dataTransfer.getData("application/pragma-flow-node") as FlowStepKind;
-            if (!(["expert", "team", "flow", "human", "action"] as const).includes(kind)) return;
+            const kind = event.dataTransfer.getData("application/pragma-flow-node");
+            if (!isFlowStepKind(kind)) return;
             addStep(kind, screenToFlowPosition({ x: event.clientX, y: event.clientY }));
           }}
         >
@@ -704,26 +702,23 @@ function PaletteItem(props: {
   readonly kind: FlowStepKind;
   readonly label: string;
   readonly icon: ReactNode;
-  readonly onAdd: (kind: FlowStepKind) => void;
 }) {
   return (
-    <button
+    <div
       className={`flow-palette-item is-${props.kind}`}
-      type="button"
       draggable
       onDragStart={(event) => {
         event.dataTransfer.effectAllowed = "copy";
         event.dataTransfer.setData("application/pragma-flow-node", props.kind);
       }}
-      onClick={() => props.onAdd(props.kind)}
-      aria-label={`Add ${props.label} to the canvas`}
+      aria-label={`Drag ${props.label} to the canvas`}
     >
       <span>{props.icon}</span>
       <div>
         <strong>{props.label}</strong>
-        <small>Drag or press Enter</small>
+        <small>Drag to canvas</small>
       </div>
-    </button>
+    </div>
   );
 }
 

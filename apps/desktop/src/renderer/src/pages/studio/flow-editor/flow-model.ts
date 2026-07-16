@@ -6,8 +6,13 @@ import {
 } from "@pragma/interpreter/ast";
 
 export type FlowStep = PragmaFlowResource["spec"]["graph"]["steps"][string];
-export type FlowStepKind = "action" | "expert" | "team" | "flow" | "human";
+export const FLOW_STEP_KINDS = ["action", "expert", "team", "flow", "human"] as const;
+export type FlowStepKind = (typeof FLOW_STEP_KINDS)[number];
 export type TransitionMode = "goto" | "end" | "fail" | "repeat" | "route";
+
+export function isFlowStepKind(value: string): value is FlowStepKind {
+  return (FLOW_STEP_KINDS as readonly string[]).includes(value);
+}
 
 export interface FlowValidationIssue {
   readonly path: readonly (string | number)[];

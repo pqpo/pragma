@@ -1,7 +1,10 @@
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import type { PragmaFlowResource } from "@pragma/interpreter/ast";
 
+import type { PragmaProjectSnapshot } from "../../../../../shared/desktop-api.ts";
 import { createEmptyFlow } from "./flow-model.ts";
 import {
   buildCanvasNodes,
@@ -9,12 +12,36 @@ import {
   canvasPositions,
   END_NODE_ID,
   FAIL_NODE_ID,
+  FlowEditor,
   nextAvailableNodePosition,
   removeEdgeFromFlow,
   START_NODE_ID,
 } from "./FlowEditor.tsx";
 
 describe("Flow editor canvas", () => {
+  it("exposes palette items as drag-only controls", () => {
+    const project: PragmaProjectSnapshot = {
+      schemaVersion: "pragma.desktop-project/v1",
+      projectId: "test-project",
+      revision: 0,
+      resources: [],
+      diagnostics: [],
+    };
+    const html = renderToStaticMarkup(
+      createElement(FlowEditor, {
+        project,
+        error: null,
+        onCancel: () => undefined,
+        onSave: async () => true,
+      }),
+    );
+
+    expect(html).toContain('class="flow-palette-item is-expert" draggable="true"');
+    expect(html).not.toContain('<button class="flow-palette-item');
+    expect(html).toContain("Drag to canvas");
+    expect(html).not.toContain("press Enter");
+  });
+
   it("renders a new draft as draggable Start and End terminals without Fail", () => {
     const positions = {
       [START_NODE_ID]: { x: 12, y: 34 },
