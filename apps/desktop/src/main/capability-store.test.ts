@@ -6,6 +6,7 @@ import { strToU8, zipSync } from "fflate";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { CapabilityCredentialStore } from "./capability-credential-store.ts";
+import { createCapabilityVerifier } from "./capability-verifier.ts";
 import { createCapabilityStore } from "./capability-store.ts";
 
 const directories: string[] = [];
@@ -15,7 +16,9 @@ afterEach(async () => {
   await Promise.all(directories.splice(0).map((directory) => rm(directory, { recursive: true })));
 });
 
-async function createStore(options: { readonly referenced?: boolean } = {}) {
+async function createStore(
+  options: { readonly referenced?: boolean; readonly realVerifier?: boolean } = {},
+) {
   const directory = await mkdtemp(join(tmpdir(), "pragma-capabilities-"));
   directories.push(directory);
   const secrets = new Map<string, string>();
@@ -35,10 +38,13 @@ async function createStore(options: { readonly referenced?: boolean } = {}) {
     store: createCapabilityStore({
       capabilitiesPath: join(directory, "capabilities"),
       credentials,
-      verify: async (definition) => ({
-        definition,
-        health: { status: "ready", checkedAt: "2026-07-11T00:00:00.000Z" },
-      }),
+      verify:
+        options.realVerifier === true
+          ? createCapabilityVerifier(credentials)
+          : async (definition) => ({
+              definition,
+              health: { status: "ready" as const, checkedAt: "2026-07-11T00:00:00.000Z" },
+            }),
       isReferenced: async () => options.referenced ?? false,
     }),
   };
@@ -62,6 +68,31 @@ const httpDefinition = {
       ],
     },
   ],
+};
+
+const codeDefinition = {
+  kind: "code_service" as const,
+  name: "Calculator",
+  description: "Add numbers.",
+  language: "javascript" as const,
+  timeoutMs: 2_000,
+  tool: {
+    name: "add",
+    description: "Add two numbers.",
+    inputSchema: {
+      type: "object" as const,
+      properties: { left: { type: "number" as const }, right: { type: "number" as const } },
+      required: ["left", "right"],
+      additionalProperties: false as const,
+    },
+    outputSchema: {
+      type: "object" as const,
+      properties: { result: { type: "number" as const } },
+      required: ["result"],
+      additionalProperties: false as const,
+    },
+    source: "function main(input) { return { result: input.left + input.right }; }",
+  },
 };
 
 describe("capability store", () => {
@@ -189,6 +220,58 @@ describe("capability store", () => {
     expect(result).toMatchObject({
       ok: false,
       code: "upstream_5xx",
+      capability: { health: { status: "needs_attention" } },
+    });
+  });
+
+  it("previews code without persisting it", async () => {
+    const { store } = await createStore();
+
+    await expect(
+      store.previewCode({ definition: codeDefinition, input: { left: 2, right: 4 } }),
+    ).resolves.toMatchObject({ ok: true, output: { result: 6 } });
+    await expect(store.list()).resolves.toEqual([]);
+  });
+
+  it("rejects code revisions that do not compile", async () => {
+    const { store } = await createStore({ realVerifier: true });
+
+    await expect(
+      store.create({
+        definition: {
+          ...codeDefinition,
+          tool: { ...codeDefinition.tool, source: "const missingMain = true;" },
+        },
+        credentials: {},
+      }),
+    ).rejects.toMatchObject({ code: "config_invalid" });
+    await expect(store.list()).resolves.toEqual([]);
+  });
+
+  it("tests saved code and records output contract failures", async () => {
+    const { store } = await createStore();
+    const capability = await store.create({ definition: codeDefinition, credentials: {} });
+
+    await expect(
+      store.test({ id: capability.manifest.id, input: { left: 2, right: 4 } }),
+    ).resolves.toMatchObject({ ok: true, output: { result: 6 } });
+
+    const broken = await store.update({
+      id: capability.manifest.id,
+      definition: {
+        ...codeDefinition,
+        tool: {
+          ...codeDefinition.tool,
+          source: "function main() { return { result: 'wrong' }; }",
+        },
+      },
+      credentials: {},
+    });
+    await expect(
+      store.test({ id: broken.manifest.id, input: { left: 1, right: 1 } }),
+    ).resolves.toMatchObject({
+      ok: false,
+      code: "invalid_output",
       capability: { health: { status: "needs_attention" } },
     });
   });

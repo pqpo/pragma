@@ -3,7 +3,11 @@ import { lstat, mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/
 import { extname, join, relative, resolve, sep } from "node:path";
 
 import { unzipSync } from "fflate";
-import { createHttpServiceMcpServer, type HttpServiceAuth } from "@pragma/core";
+import {
+  createCodeServiceMcpServer,
+  createHttpServiceMcpServer,
+  type HttpServiceAuth,
+} from "@pragma/core";
 
 import {
   CapabilityDefinitionSchema,
@@ -21,6 +25,8 @@ import {
   type CapabilityTestResult,
   type CreateCapability,
   type ImportSkillCapability,
+  type PreviewCodeServiceRequest,
+  type PreviewCodeServiceResult,
   type UpdateCapability,
 } from "../shared/desktop-api.ts";
 import type { CapabilityCredentialStore } from "./capability-credential-store.ts";
@@ -41,6 +47,7 @@ export interface CapabilityStore {
   update(input: UpdateCapability): Promise<Capability>;
   retry(id: string): Promise<Capability>;
   test(input: CapabilityTestRequest): Promise<CapabilityTestResult>;
+  previewCode(input: PreviewCodeServiceRequest): Promise<PreviewCodeServiceResult>;
   remove(id: string): Promise<void>;
 }
 
@@ -228,6 +235,7 @@ export function createCapabilityStore(options: {
       const timestamp = new Date().toISOString();
       await options.credentials.setMany(id, input.credentials);
       const verified = await options.verify(validateDefinition(input.definition), id);
+      assertCodeServiceReady(input.definition, verified.health);
       const manifest = CapabilityManifestSchema.parse({
         schemaVersion: "pragma.capability/v1",
         id,
@@ -249,6 +257,7 @@ export function createCapabilityStore(options: {
       }
       await options.credentials.setMany(input.id, input.credentials);
       const verified = await options.verify(validateDefinition(input.definition), input.id);
+      assertCodeServiceReady(input.definition, verified.health);
       const timestamp = new Date().toISOString();
       return await writeNewRevision(
         CapabilityManifestSchema.parse({
@@ -298,6 +307,43 @@ export function createCapabilityStore(options: {
           code: capability.health.diagnostic?.code ?? "ready",
           message: capability.health.diagnostic?.message ?? "The MCP server is ready.",
           capability,
+        };
+      }
+      if (current.definition.kind === "code_service") {
+        const server = createCodeServiceMcpServer(toCoreCodeService(current.definition));
+        const result = await server.callTool(current.definition.tool.name, input.input ?? {});
+        const failure = readMcpFailure(result);
+        if (failure?.code === "invalid_input") {
+          return {
+            ok: false,
+            code: failure.code,
+            message: failure.message,
+            capability: current,
+          };
+        }
+        const health = CapabilityHealthSchema.parse({
+          revision: current.manifest.latestRevision,
+          status: failure === undefined ? "ready" : "needs_attention",
+          checkedAt: new Date().toISOString(),
+          ...(failure === undefined
+            ? {}
+            : {
+                diagnostic: {
+                  code: failure.code,
+                  message: failure.message,
+                  retryable: true,
+                },
+              }),
+        });
+        await writeJson(healthPath(input.id), health);
+        return {
+          ok: failure === undefined,
+          code: failure?.code ?? "success",
+          message: failure?.message ?? "The code tool test succeeded.",
+          capability: await readCapability(input.id),
+          ...(readStructuredOutput(result) === undefined
+            ? {}
+            : { output: readStructuredOutput(result) }),
         };
       }
       if (input.toolName === undefined) {
@@ -369,6 +415,19 @@ export function createCapabilityStore(options: {
         };
       }
     },
+    async previewCode(input) {
+      const server = createCodeServiceMcpServer(toCoreCodeService(input.definition));
+      const result = await server.callTool(input.definition.tool.name, input.input);
+      const failure = readMcpFailure(result);
+      return {
+        ok: failure === undefined,
+        code: failure?.code ?? "success",
+        message: failure?.message ?? "The code tool test succeeded.",
+        ...(readStructuredOutput(result) === undefined
+          ? {}
+          : { output: readStructuredOutput(result) }),
+      };
+    },
     async remove(id) {
       await readManifest(id);
       if (await options.isReferenced(id)) {
@@ -380,6 +439,27 @@ export function createCapabilityStore(options: {
       await rm(capabilityPath(id), { recursive: true, force: true });
       await options.credentials.removeCapability(id);
     },
+  };
+}
+
+function assertCodeServiceReady(
+  definition: CapabilityDefinition,
+  health: Omit<CapabilityHealth, "revision">,
+): void {
+  if (definition.kind !== "code_service" || health.status === "ready") return;
+  throw new CapabilityStoreError(
+    "config_invalid",
+    health.diagnostic?.message ?? "The code service could not be compiled.",
+  );
+}
+
+function toCoreCodeService(
+  definition: Extract<CapabilityDefinition, { readonly kind: "code_service" }>,
+) {
+  return {
+    name: definition.name,
+    timeoutMs: definition.timeoutMs,
+    tool: definition.tool,
   };
 }
 
@@ -576,4 +656,20 @@ function readMcpResultText(value: unknown): string | undefined {
       .filter((item): item is string => item !== undefined)
       .join("\n") || undefined
   );
+}
+
+function readMcpFailure(
+  value: unknown,
+): { readonly code: string; readonly message: string } | undefined {
+  if (!isRecord(value) || value["isError"] !== true) return undefined;
+  const details = isRecord(value["details"]) ? value["details"] : undefined;
+  return {
+    code: typeof details?.["code"] === "string" ? details["code"] : "runtime_error",
+    message: readMcpResultText(value) ?? "The code tool test failed.",
+  };
+}
+
+function readStructuredOutput(value: unknown): Record<string, unknown> | undefined {
+  if (!isRecord(value)) return undefined;
+  return isRecord(value["structuredContent"]) ? value["structuredContent"] : undefined;
 }

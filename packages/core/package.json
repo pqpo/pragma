@@ -31,10 +31,13 @@
     "vitest": "latest"
   },
   "dependencies": {
+    "@cfworker/json-schema": "^4.1.1",
+    "@jitl/quickjs-singlefile-cjs-release-sync": "^0.32.0",
     "@pragma/shared": "workspace:*",
     "@modelcontextprotocol/client": "2.0.0-alpha.2",
     "@modelcontextprotocol/server": "2.0.0-alpha.2",
     "gray-matter": "^4.0.3",
+    "quickjs-emscripten-core": "^0.32.0",
     "zod": "latest"
   }
 }

@@ -7,6 +7,7 @@ import {
   CapabilityTestRequestSchema,
   CreateCapabilitySchema,
   ImportSkillCapabilitySchema,
+  PreviewCodeServiceRequestSchema,
   UpdateCapabilitySchema,
   type PickWorkspaceResult,
 } from "../shared/desktop-api.ts";
@@ -34,6 +35,9 @@ export function installCapabilityHandlers(
   );
   ipcMain.handle("capabilities:test", (_event, input: unknown) =>
     store.test(CapabilityTestRequestSchema.parse(input)),
+  );
+  ipcMain.handle("capabilities:preview-code", (_event, input: unknown) =>
+    store.previewCode(PreviewCodeServiceRequestSchema.parse(input)),
   );
   ipcMain.handle("capabilities:delete", async (_event, input: unknown) => {
     await store.remove(CapabilityActionSchema.parse(input).id);

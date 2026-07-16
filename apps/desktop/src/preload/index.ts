@@ -24,6 +24,8 @@ import {
   ExpertSummarySchema,
   GetWorkflowLayoutSchema,
   ImportSkillCapabilitySchema,
+  PreviewCodeServiceRequestSchema,
+  PreviewCodeServiceResultSchema,
   CreateModelProviderSchema,
   DeleteModelProviderSchema,
   ModelConnectionTestRequestSchema,
@@ -241,6 +243,13 @@ const api: PragmaDesktopAPI = {
   testCapability: async (input) =>
     CapabilityTestResultSchema.parse(
       await ipcRenderer.invoke("capabilities:test", CapabilityTestRequestSchema.parse(input)),
+    ),
+  previewCodeService: async (input) =>
+    PreviewCodeServiceResultSchema.parse(
+      await ipcRenderer.invoke(
+        "capabilities:preview-code",
+        PreviewCodeServiceRequestSchema.parse(input),
+      ),
     ),
   deleteCapability: async (id) => {
     await ipcRenderer.invoke("capabilities:delete", CapabilityActionSchema.parse({ id }));

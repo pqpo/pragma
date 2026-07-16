@@ -3,6 +3,7 @@ import { join } from "node:path";
 import {
   defineExpert,
   Expert,
+  createCodeServiceMcpServer,
   createHttpServiceMcpServer,
   createMcpToolRegistry,
   type DefineExpertOptions,
@@ -112,6 +113,26 @@ export async function resolveExpertCapabilities(options: {
       continue;
     }
 
+    if (capability.definition.kind === "code_service") {
+      mcpServers[capability.manifest.runtimeKey] = {
+        name: capability.definition.name,
+        transport: "in-process",
+        timeout: capability.definition.timeoutMs,
+        allowTools: reference.toolNames,
+        toolApprovals: createApprovals(
+          options.expert,
+          capability.manifest.runtimeKey,
+          reference.toolNames,
+        ),
+        inProcess: createCodeServiceMcpServer({
+          name: capability.definition.name,
+          timeoutMs: capability.definition.timeoutMs,
+          tool: capability.definition.tool,
+        }),
+      };
+      continue;
+    }
+
     const selectedDefinitions = capability.definition.tools.filter((tool) =>
       reference.toolNames.includes(tool.name),
     );
@@ -188,7 +209,11 @@ function assertSelectedTools(
   selected: readonly string[],
   capabilityName: string,
 ): void {
-  const available = new Set(definition.tools.map((tool) => tool.name));
+  const available = new Set(
+    definition.kind === "code_service"
+      ? [definition.tool.name]
+      : definition.tools.map((tool) => tool.name),
+  );
   const missing = selected.filter((tool) => !available.has(tool));
   if (missing.length > 0) {
     throw new ExpertCapabilityResolutionError(

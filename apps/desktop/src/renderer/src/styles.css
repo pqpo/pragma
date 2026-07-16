@@ -1536,6 +1536,10 @@ p {
   box-shadow: -12px 0 35px rgb(26 34 28 / 12%);
 }
 
+.capability-drawer.is-code-service {
+  width: min(760px, 65vw);
+}
+
 .capability-drawer > header {
   display: flex;
   justify-content: space-between;
@@ -1663,6 +1667,108 @@ p {
 .http-tool-drafts small {
   color: var(--muted);
   font-family: "SFMono-Regular", Consolas, monospace;
+}
+
+.code-service-source {
+  min-height: 210px !important;
+  line-height: 1.55;
+}
+
+.code-schema-fields,
+.code-service-preview {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-muted);
+}
+
+.code-schema-fields .code-schema-fields {
+  margin-top: 9px;
+  border-left: 3px solid #c6d2c8;
+  background: #fff;
+}
+
+.code-schema-field {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid #dbe2dc;
+  border-radius: 7px;
+  background: #fff;
+}
+
+.code-schema-field-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) 100px auto 32px;
+  align-items: center;
+  gap: 8px;
+}
+
+.code-schema-field-row > button {
+  display: grid;
+  min-height: 32px;
+  padding: 0;
+  place-items: center;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.capability-form .code-required-field {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.capability-form .code-required-field input {
+  width: 15px;
+  min-height: 15px;
+}
+
+.code-value-editor {
+  display: grid;
+  gap: 9px;
+}
+
+.code-service-preview > button {
+  justify-self: start;
+}
+
+.code-preview-result {
+  padding: 11px;
+  border-radius: 7px;
+  font-size: 12px;
+}
+
+.code-preview-result.is-success {
+  border: 1px solid #b8d2bd;
+  background: #f1f8f2;
+  color: #315d39;
+}
+
+.code-preview-result.is-error {
+  border: 1px solid #e1b8b8;
+  background: #fff4f4;
+  color: #7a3535;
+}
+
+.code-preview-result p {
+  margin: 5px 0 0;
+}
+
+.code-preview-result pre {
+  overflow: auto;
+  max-height: 220px;
+  margin: 10px 0 0;
+  padding: 10px;
+  border-radius: 5px;
+  background: rgb(255 255 255 / 70%);
+  font-size: 11px;
 }
 
 .expert-tool-capability {
@@ -4087,6 +4193,10 @@ p {
   box-shadow: 0 5px 12px rgb(52 70 58 / 8%);
 }
 
+.flow-palette-item:active {
+  cursor: grabbing;
+}
+
 .flow-palette-item > span,
 .flow-step-icon,
 .flow-inspector-icon,
@@ -4212,7 +4322,7 @@ p {
 .flow-step-outputs > span {
   position: relative;
   min-height: 14px;
-  padding-right: 5px;
+  padding-right: 8px;
 }
 
 .flow-canvas .react-flow__handle {
@@ -4221,6 +4331,35 @@ p {
   border: 2px solid white;
   background: var(--green);
   box-shadow: 0 0 0 1px var(--green-dark);
+}
+
+.flow-canvas .flow-step-add-handle {
+  right: -14px;
+  width: 22px;
+  height: 22px;
+  border: 1px solid var(--green-dark);
+  background: white;
+  color: var(--green-dark);
+  cursor: crosshair;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity 120ms ease,
+    background 120ms ease,
+    color 120ms ease,
+    transform 120ms ease;
+}
+
+.flow-step-node:hover .flow-step-add-handle,
+.flow-step-add-handle.connectingfrom {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.flow-canvas .flow-step-add-handle:hover {
+  background: var(--green);
+  color: white;
+  transform: translate(50%, -50%) scale(1.08);
 }
 
 .flow-terminal-node {
@@ -4304,6 +4443,44 @@ p {
 
 .flow-canvas .react-flow__edge-textbg {
   fill: #f7f8f5;
+}
+
+.flow-edge-hitbox {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 20px;
+  pointer-events: stroke;
+}
+
+.flow-edge-delete {
+  position: absolute;
+  z-index: 8;
+  display: grid;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  place-items: center;
+  border: 1px solid #e0b5af;
+  border-radius: 50%;
+  background: white;
+  color: #a34e45;
+  box-shadow: 0 4px 12px rgb(74 40 35 / 16%);
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity 100ms ease,
+    background 100ms ease,
+    transform 100ms ease;
+}
+
+.flow-edge-delete.is-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.flow-edge-delete:hover {
+  background: #fff3f1;
 }
 
 .flow-minimap {

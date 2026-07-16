@@ -7,6 +7,7 @@ import { resolveExpertCapabilities } from "./desktop-expert-factory.ts";
 
 const skillId = "7abfdc9a-a5e2-4be2-a7bb-a11f8e5fbb17";
 const serviceId = "77af9336-0d2f-435d-a53c-d65077db75ba";
+const codeId = "887fb535-438b-427a-9e91-bc2f9f86292e";
 
 const skill: Capability = {
   manifest: {
@@ -60,11 +61,50 @@ const service: Capability = {
   },
 };
 
+const codeService: Capability = {
+  manifest: {
+    schemaVersion: "pragma.capability/v1",
+    id: codeId,
+    runtimeKey: "calculator_887fb535",
+    name: "Calculator",
+    kind: "code_service",
+    latestRevision: 1,
+    createdAt: "2026-07-11T00:00:00.000Z",
+    updatedAt: "2026-07-11T00:00:00.000Z",
+  },
+  health: { revision: 1, status: "ready", checkedAt: "2026-07-11T00:00:00.000Z" },
+  definition: {
+    kind: "code_service",
+    name: "Calculator",
+    description: "Add numbers.",
+    language: "javascript",
+    timeoutMs: 2_000,
+    tool: {
+      name: "add",
+      description: "Add two numbers.",
+      inputSchema: {
+        type: "object",
+        properties: { left: { type: "number" }, right: { type: "number" } },
+        required: ["left", "right"],
+        additionalProperties: false,
+      },
+      outputSchema: {
+        type: "object",
+        properties: { result: { type: "number" } },
+        required: ["result"],
+        additionalProperties: false,
+      },
+      source: "function main(input) { return { result: input.left + input.right }; }",
+    },
+  },
+};
+
 describe("resolveExpertCapabilities", () => {
   it("materializes pinned Skills and selected HTTP tools", async () => {
     const capabilities = new Map([
       [skillId, skill],
       [serviceId, service],
+      [codeId, codeService],
     ]);
     const store = {
       get: async (id: string) => capabilities.get(id) as Capability,
@@ -84,6 +124,7 @@ describe("resolveExpertCapabilities", () => {
       capabilities: [
         { kind: "skill", capabilityId: skillId, revision: 1 },
         { kind: "tools", capabilityId: serviceId, revision: 1, toolNames: ["get_customer"] },
+        { kind: "tools", capabilityId: codeId, revision: 1, toolNames: ["add"] },
       ],
       toolApprovals: {},
       plugins: [],
@@ -111,5 +152,16 @@ describe("resolveExpertCapabilities", () => {
       expect.objectContaining({ name: "get_customer" }),
     ]);
     expect(mcpServer.toolApprovals?.["get_customer"]?.mode).toBe("ask");
+    const codeMcpServer = resolved.mcp?.mcpServers[codeService.manifest.runtimeKey];
+    expect(codeMcpServer?.transport).toBe("in-process");
+    if (codeMcpServer?.transport !== "in-process") {
+      throw new Error("Expected in-process code MCP server.");
+    }
+    await expect(
+      codeMcpServer.inProcess.callTool("add", { left: 3, right: 4 }),
+    ).resolves.toMatchObject({
+      structuredContent: { result: 7 },
+    });
+    expect(codeMcpServer.toolApprovals?.["add"]?.mode).toBe("ask");
   });
 });

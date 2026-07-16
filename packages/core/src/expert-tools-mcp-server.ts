@@ -430,6 +430,7 @@ function createExecutionMcpTools(
         `Original MCP server: ${mcpTool.serverName}. Original tool: ${mcpTool.name}.`,
       ].join("\n"),
       inputSchema: mcpTool.inputSchema,
+      ...(mcpTool.outputSchema === undefined ? {} : { outputSchema: mcpTool.outputSchema }),
       async call(args, signal, context) {
         const result = await mcpTool.call(args, signal, {
           toolCallId: context?.toolCallId,
@@ -438,11 +439,14 @@ function createExecutionMcpTools(
         return {
           text: formatMcpToolResult(result),
           ...(isRecord(result) && result["isError"] === true ? { isError: true } : {}),
-          details: {
-            server: mcpTool.serverName,
-            tool: mcpTool.name,
-            result,
-          },
+          details:
+            isRecord(result) && isJsonObject(result["structuredContent"])
+              ? result["structuredContent"]
+              : {
+                  server: mcpTool.serverName,
+                  tool: mcpTool.name,
+                  result,
+                },
         };
       },
     };
@@ -480,11 +484,14 @@ function registerLocalTool(
   tool: LocalTool,
   options: RegisterExpertToolsMcpSessionOptions,
 ): void {
+  const outputSchema =
+    tool.outputSchema === undefined ? undefined : toMcpInputSchema(tool.outputSchema);
   server.registerTool(
     tool.name,
     {
       description: tool.description,
       inputSchema: toMcpInputSchema(tool.inputSchema),
+      ...(outputSchema === undefined ? {} : { outputSchema }),
     },
     async (input, context) => {
       const toolCallId = String(context.mcpReq.id);
@@ -759,7 +766,9 @@ function toCallToolResult(result: ExpertAgentToolCallResult): CallToolResult {
       },
     ],
     ...(result.isError === undefined ? {} : { isError: result.isError }),
-    ...(isJsonObject(result.details) ? { structuredContent: result.details } : {}),
+    ...(result.isError === true || !isJsonObject(result.details)
+      ? {}
+      : { structuredContent: result.details }),
   };
 }
 

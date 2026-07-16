@@ -6,6 +6,7 @@ import {
   EXPERT_NAME_MAX_LENGTH,
   EXPERT_TAG_MAX_LENGTH,
   CreateExpertDefinitionSchema,
+  CodeServiceCapabilityDefinitionSchema,
   CreateMissionSchema,
   MissionSchema,
 } from "./desktop-api.ts";
@@ -39,6 +40,59 @@ describe("expert input limits", () => {
     expect(CreateExpertDefinitionSchema.safeParse({ ...validInput, ...override }).success).toBe(
       false,
     );
+  });
+});
+
+describe("code service contracts", () => {
+  const definition = {
+    kind: "code_service" as const,
+    name: "Formatter",
+    description: "Format records.",
+    language: "javascript" as const,
+    timeoutMs: 2_000,
+    tool: {
+      name: "format_records",
+      description: "Format records.",
+      inputSchema: {
+        type: "object" as const,
+        properties: {
+          records: {
+            type: "array" as const,
+            items: {
+              type: "object" as const,
+              properties: { id: { type: "string" as const } },
+              required: ["id"],
+              additionalProperties: false as const,
+            },
+          },
+        },
+        required: ["records"],
+        additionalProperties: false as const,
+      },
+      outputSchema: {
+        type: "object" as const,
+        properties: { count: { type: "integer" as const } },
+        required: ["count"],
+        additionalProperties: false as const,
+      },
+      source: "function main(input) { return { count: input.records.length }; }",
+    },
+  };
+
+  it("accepts recursive object and array schemas", () => {
+    expect(CodeServiceCapabilityDefinitionSchema.safeParse(definition).success).toBe(true);
+  });
+
+  it("rejects required fields that are not declared", () => {
+    expect(
+      CodeServiceCapabilityDefinitionSchema.safeParse({
+        ...definition,
+        tool: {
+          ...definition.tool,
+          outputSchema: { ...definition.tool.outputSchema, required: ["missing"] },
+        },
+      }).success,
+    ).toBe(false);
   });
 });
 

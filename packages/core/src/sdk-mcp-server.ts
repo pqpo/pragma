@@ -74,6 +74,7 @@ export function createSdkMcpServer(options: CreateSdkMcpServerOptions): SdkMcpSe
           name: tool.name,
           ...(tool.description === undefined ? {} : { description: tool.description }),
           ...(tool.inputSchema === undefined ? {} : { inputSchema: tool.inputSchema }),
+          ...(tool.outputSchema === undefined ? {} : { outputSchema: tool.outputSchema }),
         }));
       },
       async callTool(name, args) {

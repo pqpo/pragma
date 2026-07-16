@@ -24,6 +24,9 @@ import dagre from "@dagrejs/dagre";
 import {
   Background,
   BackgroundVariant,
+  BaseEdge,
+  EdgeLabelRenderer,
+  getSmoothStepPath,
   Handle,
   MarkerType,
   MiniMap,
@@ -35,6 +38,7 @@ import {
   useReactFlow,
   type Connection,
   type Edge,
+  type EdgeProps,
   type Node,
   type NodeProps,
   type OnMoveEnd,
@@ -152,7 +156,6 @@ function FlowEditorCanvas(props: {
     () => new Set(localIssues.map((issue) => issue.stepId).filter((id): id is string => !!id)),
     [localIssues],
   );
-  const edges = useMemo(() => buildCanvasEdges(flow), [flow]);
   const targets = useMemo(
     () => resourceTargets(props.project.resources, flow.metadata.id),
     [flow.metadata.id, props.project.resources],
@@ -316,7 +319,6 @@ function FlowEditorCanvas(props: {
     const id = nextStepId(flow, kind);
     const copy = structuredClone(flow);
     copy.spec.graph.steps[id] = defaultStep(kind, targets);
-    copy.spec.graph.transitions[id] = { end: true };
     if (Object.keys(copy.spec.graph.steps).length === 1) copy.spec.graph.start = id;
     const currentPositions = positions();
     const canvasBounds = canvasRef.current?.getBoundingClientRect();
@@ -374,6 +376,8 @@ function FlowEditorCanvas(props: {
     for (const edge of deletedEdges) removeEdgeFromFlow(copy, edge);
     commitFlow(copy);
   };
+
+  const edges = useMemo(() => buildCanvasEdges(flow), [flow]);
 
   const publish = async () => {
     const api = desktopApi();
@@ -527,6 +531,7 @@ function FlowEditorCanvas(props: {
             nodes={nodes}
             edges={edges}
             nodeTypes={nodeTypes}
+            edgeTypes={edgeTypes}
             onNodesChange={onNodesChange}
             onConnect={setConnection}
             onReconnect={reconnect}
@@ -703,11 +708,12 @@ function PaletteItem(props: {
         event.dataTransfer.setData("application/pragma-flow-node", props.kind);
       }}
       onClick={() => props.onAdd(props.kind)}
+      aria-label={`Add ${props.label} to the canvas`}
     >
       <span>{props.icon}</span>
       <div>
         <strong>{props.label}</strong>
-        <small>Add to canvas</small>
+        <small>Drag or press Enter</small>
       </div>
     </button>
   );
@@ -740,15 +746,19 @@ function StepNode(props: NodeProps<StepCanvasNode>) {
         </div>
       </div>
       <div className="flow-step-outputs">
-        {props.data.outputs.map((output, index) => (
+        {props.data.outputs.map((output) => (
           <span key={output.id}>
             {output.label}
             <Handle
               type="source"
               id={output.id}
               position={Position.Right}
-              style={{ top: `${76 + index * 18}px` }}
-            />
+              className="flow-step-add-handle"
+              aria-label={`Connect ${props.data.label} via ${output.label}`}
+              title={`Drag to connect ${output.label}`}
+            >
+              <Plus size={13} weight="bold" />
+            </Handle>
           </span>
         ))}
       </div>
@@ -784,6 +794,78 @@ function PlayIcon() {
 }
 
 const nodeTypes = { step: StepNode, terminal: TerminalNode };
+
+function WorkflowEdge(props: EdgeProps) {
+  const { deleteElements } = useReactFlow();
+  const [deleteVisible, setDeleteVisible] = useState(false);
+  const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [path, labelX, labelY] = getSmoothStepPath({
+    sourceX: props.sourceX,
+    sourceY: props.sourceY,
+    sourcePosition: props.sourcePosition,
+    targetX: props.targetX,
+    targetY: props.targetY,
+    targetPosition: props.targetPosition,
+  });
+  const showDelete = () => {
+    if (hideTimerRef.current !== null) clearTimeout(hideTimerRef.current);
+    setDeleteVisible(true);
+  };
+  const hideDeleteSoon = () => {
+    hideTimerRef.current = setTimeout(() => setDeleteVisible(false), 120);
+  };
+  useEffect(
+    () => () => {
+      if (hideTimerRef.current !== null) clearTimeout(hideTimerRef.current);
+    },
+    [],
+  );
+
+  return (
+    <>
+      <BaseEdge
+        id={props.id}
+        path={path}
+        label={props.label}
+        labelX={labelX}
+        labelY={labelY}
+        interactionWidth={0}
+        {...(props.markerStart === undefined ? {} : { markerStart: props.markerStart })}
+        {...(props.markerEnd === undefined ? {} : { markerEnd: props.markerEnd })}
+        {...(props.style === undefined ? {} : { style: props.style })}
+      />
+      {props.deletable === false ? null : (
+        <path
+          className="flow-edge-hitbox"
+          d={path}
+          onMouseEnter={showDelete}
+          onMouseLeave={hideDeleteSoon}
+        />
+      )}
+      {props.deletable === false ? null : (
+        <EdgeLabelRenderer>
+          <button
+            className={`flow-edge-delete nodrag nopan${deleteVisible ? " is-visible" : ""}`}
+            type="button"
+            aria-label={`Delete ${String(props.label ?? "connection")} edge`}
+            title="Delete edge"
+            style={{ transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY - 20}px)` }}
+            onMouseEnter={showDelete}
+            onMouseLeave={() => setDeleteVisible(false)}
+            onClick={(event) => {
+              event.stopPropagation();
+              void deleteElements({ edges: [{ id: props.id }] });
+            }}
+          >
+            <Trash size={13} weight="bold" />
+          </button>
+        </EdgeLabelRenderer>
+      )}
+    </>
+  );
+}
+
+const edgeTypes = { workflow: WorkflowEdge };
 
 function FlowSettings(props: {
   readonly flow: PragmaFlowResource;
@@ -1469,7 +1551,7 @@ function applyConnection(
   removeOrphanedLoop(flow, previous);
 }
 
-function removeEdgeFromFlow(flow: PragmaFlowResource, edge: Edge): void {
+export function removeEdgeFromFlow(flow: PragmaFlowResource, edge: Edge): void {
   if (edge.id === "start-edge") return;
   const transition = flow.spec.graph.transitions[edge.source];
   if (transition === undefined) return;
@@ -1485,7 +1567,7 @@ function removeEdgeFromFlow(flow: PragmaFlowResource, edge: Edge): void {
     }
   } else {
     removed = transition;
-    flow.spec.graph.transitions[edge.source] = { end: true };
+    delete flow.spec.graph.transitions[edge.source];
   }
   removeOrphanedLoop(flow, removed);
 }
@@ -1584,7 +1666,7 @@ export function buildCanvasNodes(
   ];
 }
 
-function buildCanvasEdges(flow: PragmaFlowResource): Edge[] {
+export function buildCanvasEdges(flow: PragmaFlowResource): Edge[] {
   const edges: Edge[] = [
     {
       id: "start-edge",
@@ -1592,8 +1674,9 @@ function buildCanvasEdges(flow: PragmaFlowResource): Edge[] {
       sourceHandle: "start",
       target: flow.spec.graph.start,
       targetHandle: "target",
-      type: "smoothstep",
+      type: "workflow",
       animated: true,
+      deletable: false,
       markerEnd: { type: MarkerType.ArrowClosed },
     },
   ];
@@ -1625,7 +1708,7 @@ function destinationEdge(
     target,
     targetHandle: "target",
     label: repeat ? `${label} · ${destination.repeat.loop}` : label,
-    type: "smoothstep",
+    type: "workflow",
     animated: repeat,
     ...(repeat ? { className: "is-repeat-edge" } : {}),
     markerEnd: { type: MarkerType.ArrowClosed },

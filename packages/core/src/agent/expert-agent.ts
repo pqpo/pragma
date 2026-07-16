@@ -57,6 +57,7 @@ export interface IExpertAgentMcpToolInfo {
   readonly name: string;
   readonly description?: string | undefined;
   readonly inputSchema?: unknown;
+  readonly outputSchema?: unknown;
 }
 
 export interface IExpertAgentInProcessMcpServer {

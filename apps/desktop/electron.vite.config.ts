@@ -1,8 +1,20 @@
+import { fileURLToPath } from "node:url";
+
 import react from "@vitejs/plugin-react";
 import { defineConfig, externalizeDepsPlugin } from "electron-vite";
 
 export default defineConfig({
   main: {
+    build: {
+      rollupOptions: {
+        input: {
+          index: fileURLToPath(new URL("./src/main/index.ts", import.meta.url)),
+          "code-service-worker": fileURLToPath(
+            new URL("../../packages/core/src/code-service-worker.ts", import.meta.url),
+          ),
+        },
+      },
+    },
     plugins: [
       externalizeDepsPlugin({
         exclude: [

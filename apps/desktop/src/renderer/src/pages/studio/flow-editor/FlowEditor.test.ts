@@ -3,10 +3,12 @@ import { describe, expect, it } from "vitest";
 import { createEmptyFlow } from "./flow-model.ts";
 import {
   buildCanvasNodes,
+  buildCanvasEdges,
   canvasPositions,
   END_NODE_ID,
   FAIL_NODE_ID,
   nextAvailableNodePosition,
+  removeEdgeFromFlow,
   START_NODE_ID,
 } from "./FlowEditor.tsx";
 
@@ -66,5 +68,25 @@ describe("Flow editor canvas", () => {
         ).toBe(true);
       }
     }
+  });
+
+  it("does not render an automatic edge for a newly added unconnected step", () => {
+    const flow = createEmptyFlow();
+    flow.spec.graph.steps.expert_1 = {
+      expert: { ref: "reviewer" },
+      version: "1.0.0",
+    };
+
+    expect(buildCanvasEdges(flow).some((edge) => edge.source === "expert_1")).toBe(false);
+  });
+
+  it("removes a transition instead of replacing it with an End edge", () => {
+    const flow = createEmptyFlow();
+    const edge = buildCanvasEdges(flow).find((candidate) => candidate.id === "start:default")!;
+
+    removeEdgeFromFlow(flow, edge);
+
+    expect(flow.spec.graph.transitions.start).toBeUndefined();
+    expect(buildCanvasEdges(flow).some((candidate) => candidate.source === "start")).toBe(false);
   });
 });

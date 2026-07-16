@@ -25,6 +25,7 @@ interface McpToolInfo {
   readonly name: string;
   readonly description?: string | undefined;
   readonly inputSchema?: unknown;
+  readonly outputSchema?: unknown;
 }
 
 interface McpClient {
@@ -86,6 +87,7 @@ function createManagedMcpTool(
     name: mcpTool.name,
     description: `Call MCP tool ${mcpTool.name}.`,
     inputSchema: {},
+    ...(mcpTool.outputSchema === undefined ? {} : { outputSchema: mcpTool.outputSchema }),
     ...(server.toolApprovals?.[mcpTool.name] === undefined
       ? {}
       : { approval: server.toolApprovals[mcpTool.name] }),
@@ -247,6 +249,7 @@ function normalizeMcpToolInfo(tool: McpToolInfo): McpToolInfo {
     name: tool.name,
     ...(tool.description === undefined ? {} : { description: tool.description }),
     ...(tool.inputSchema === undefined ? {} : { inputSchema: tool.inputSchema }),
+    ...(tool.outputSchema === undefined ? {} : { outputSchema: tool.outputSchema }),
   };
 }
 

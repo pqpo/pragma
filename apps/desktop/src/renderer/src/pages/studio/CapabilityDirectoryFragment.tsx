@@ -2,6 +2,7 @@ import {
   Archive,
   CaretDown,
   CloudArrowUp,
+  Code,
   DotsThree,
   Globe,
   MagnifyingGlass,
@@ -12,12 +13,17 @@ import {
 } from "@phosphor-icons/react";
 import { useState } from "react";
 
-import type { Capability, CapabilityDefinition } from "../../../../shared/desktop-api.ts";
+import type {
+  Capability,
+  CapabilityDefinition,
+  CodeServiceJsonSchema,
+  PreviewCodeServiceResult,
+} from "../../../../shared/desktop-api.ts";
 import { errorMessage } from "../../lib/errors.ts";
 import { desktopApi } from "./studio-model.ts";
 
 type Filter = "all" | "skills" | "tools";
-type CreateMode = "skill" | "mcp" | "http" | null;
+type CreateMode = "skill" | "mcp" | "http" | "code" | null;
 
 const emptyMcp = {
   name: "",
@@ -56,6 +62,37 @@ const emptyHttp = {
   tools: [] as HttpToolDraft[],
 };
 
+type CodeFieldType = "string" | "number" | "integer" | "boolean" | "object" | "array";
+
+type CodeValueDraft = {
+  readonly type: CodeFieldType;
+  readonly fields: readonly CodeFieldDraft[];
+  readonly item?: CodeValueDraft;
+};
+
+type CodeFieldDraft = {
+  readonly id: string;
+  readonly name: string;
+  readonly description: string;
+  readonly required: boolean;
+  readonly value: CodeValueDraft;
+};
+
+const emptyCode = {
+  name: "",
+  description: "",
+  toolName: "",
+  toolDescription: "",
+  inputFields: [] as readonly CodeFieldDraft[],
+  outputFields: [] as readonly CodeFieldDraft[],
+  source: `function main(input) {
+  return {
+    result: input.value,
+  };
+}`,
+  testInput: "{}",
+};
+
 export function CapabilityDirectoryFragment(props: {
   readonly capabilities: readonly Capability[];
   readonly onChanged: (capability?: Capability, removedId?: string) => void;
@@ -66,6 +103,8 @@ export function CapabilityDirectoryFragment(props: {
   const [mode, setMode] = useState<CreateMode>(null);
   const [mcp, setMcp] = useState(emptyMcp);
   const [http, setHttp] = useState(emptyHttp);
+  const [code, setCode] = useState(emptyCode);
+  const [codePreview, setCodePreview] = useState<PreviewCodeServiceResult | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const normalizedQuery = query.trim().toLowerCase();
@@ -209,6 +248,61 @@ export function CapabilityDirectoryFragment(props: {
     }
   };
 
+  const codeDefinition = (): Extract<CapabilityDefinition, { kind: "code_service" }> => ({
+    kind: "code_service",
+    name: code.name,
+    description: code.description,
+    language: "javascript",
+    timeoutMs: 2_000,
+    tool: {
+      name: code.toolName,
+      description: code.toolDescription,
+      inputSchema: fieldsToObjectSchema(code.inputFields),
+      outputSchema: fieldsToObjectSchema(code.outputFields),
+      source: code.source,
+    },
+  });
+
+  const previewCode = async () => {
+    const api = desktopApi();
+    if (!api) return;
+    setSaving(true);
+    setError(null);
+    setCodePreview(null);
+    try {
+      const result = await api.previewCodeService({
+        definition: codeDefinition(),
+        input: JSON.parse(code.testInput) as unknown,
+      });
+      setCodePreview(result);
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const saveCode = async () => {
+    const api = desktopApi();
+    if (!api) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const capability = await api.createCapability({
+        definition: codeDefinition(),
+        credentials: {},
+      });
+      props.onChanged(capability);
+      setCode(emptyCode);
+      setCodePreview(null);
+      setMode(null);
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <section className="capability-directory" aria-labelledby="capabilities-heading">
       <header className="studio-heading capability-heading">
@@ -261,6 +355,19 @@ export function CapabilityDirectoryFragment(props: {
                 <span>
                   <strong>Add HTTP service</strong>
                   <small>Wrap a JSON API as local MCP tools.</small>
+                </span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setMode("code");
+                  setMenuOpen(false);
+                }}
+              >
+                <Code size={19} />
+                <span>
+                  <strong>Add code service</strong>
+                  <small>Run a pure JavaScript function as a local MCP tool.</small>
                 </span>
               </button>
             </div>
@@ -316,7 +423,7 @@ export function CapabilityDirectoryFragment(props: {
       {mode ? (
         <div className="capability-drawer-backdrop" role="presentation">
           <section
-            className="capability-drawer"
+            className={`capability-drawer${mode === "code" ? " is-code-service" : ""}`}
             role="dialog"
             aria-modal="true"
             aria-labelledby="capability-form-heading"
@@ -328,12 +435,16 @@ export function CapabilityDirectoryFragment(props: {
                     ? "Upload skill"
                     : mode === "mcp"
                       ? "Connect MCP server"
-                      : "Add HTTP service"}
+                      : mode === "http"
+                        ? "Add HTTP service"
+                        : "Add code service"}
                 </h2>
                 <p>
                   {mode === "skill"
                     ? "Copy a reusable Skill package into the library."
-                    : "Configure a reusable external tool connection."}
+                    : mode === "code"
+                      ? "Define a reusable pure-computation MCP tool."
+                      : "Configure a reusable external tool connection."}
                 </p>
               </div>
               <button type="button" onClick={() => setMode(null)} aria-label="Close">
@@ -356,6 +467,18 @@ export function CapabilityDirectoryFragment(props: {
             ) : null}
             {mode === "mcp" ? <McpForm value={mcp} onChange={setMcp} /> : null}
             {mode === "http" ? <HttpForm value={http} onChange={setHttp} /> : null}
+            {mode === "code" ? (
+              <CodeForm
+                value={code}
+                preview={codePreview}
+                busy={saving}
+                onChange={(value) => {
+                  setCode(value);
+                  setCodePreview(null);
+                }}
+                onPreview={() => void previewCode()}
+              />
+            ) : null}
             {error ? (
               <p className="form-error" role="alert">
                 {error}
@@ -370,7 +493,9 @@ export function CapabilityDirectoryFragment(props: {
                   className="primary-button"
                   type="button"
                   disabled={saving}
-                  onClick={() => void (mode === "mcp" ? saveMcp() : saveHttp())}
+                  onClick={() =>
+                    void (mode === "mcp" ? saveMcp() : mode === "http" ? saveHttp() : saveCode())
+                  }
                 >
                   {saving ? "Saving…" : "Save capability"}
                 </button>
@@ -395,21 +520,27 @@ function CapabilityRow(props: {
       ? "Uploaded package"
       : capability.definition.kind === "http_service"
         ? `${capability.definition.baseUrl} · Local MCP wrapper`
-        : capability.definition.connection.transport === "stdio"
-          ? `stdio · ${capability.definition.connection.command}`
-          : `${capability.definition.connection.transport === "sse" ? "SSE" : "Streamable HTTP"} · ${capability.definition.connection.url}`;
+        : capability.definition.kind === "code_service"
+          ? `JavaScript · ${capability.definition.tool.name}`
+          : capability.definition.connection.transport === "stdio"
+            ? `stdio · ${capability.definition.connection.command}`
+            : `${capability.definition.connection.transport === "sse" ? "SSE" : "Streamable HTTP"} · ${capability.definition.connection.url}`;
   const type =
     capability.definition.kind === "skill"
       ? "Skill"
       : capability.definition.kind === "http_service"
         ? "HTTP service"
-        : "MCP server";
+        : capability.definition.kind === "code_service"
+          ? "Code service"
+          : "MCP server";
   const Icon =
     capability.definition.kind === "skill"
       ? Archive
       : capability.definition.kind === "http_service"
         ? Globe
-        : Wrench;
+        : capability.definition.kind === "code_service"
+          ? Code
+          : Wrench;
   const act = async (action: "retry" | "delete") => {
     const api = desktopApi();
     if (!api) return;
@@ -750,4 +881,294 @@ function toHttpToolDefinition(draft: HttpToolDraft) {
     ],
     ...(bodySchema === undefined ? {} : { bodySchema }),
   };
+}
+
+function CodeForm(props: {
+  readonly value: typeof emptyCode;
+  readonly preview: PreviewCodeServiceResult | null;
+  readonly busy: boolean;
+  readonly onChange: (value: typeof emptyCode) => void;
+  readonly onPreview: () => void;
+}) {
+  const value = props.value;
+  const set = (change: Partial<typeof emptyCode>) => props.onChange({ ...value, ...change });
+  return (
+    <div className="capability-form code-service-form">
+      <label>
+        Service name
+        <input
+          value={value.name}
+          onChange={(event) => set({ name: event.target.value })}
+          placeholder="Data formatter"
+        />
+      </label>
+      <label>
+        Description
+        <textarea
+          value={value.description}
+          onChange={(event) => set({ description: event.target.value })}
+        />
+      </label>
+      <div className="capability-form-grid">
+        <label>
+          Tool name
+          <input
+            value={value.toolName}
+            onChange={(event) => set({ toolName: event.target.value })}
+            placeholder="format_data"
+          />
+        </label>
+        <label>
+          Tool description
+          <input
+            value={value.toolDescription}
+            onChange={(event) => set({ toolDescription: event.target.value })}
+            placeholder="Transform structured data."
+          />
+        </label>
+      </div>
+      <SchemaFieldsEditor
+        title="Input fields"
+        fields={value.inputFields}
+        onChange={(inputFields) => set({ inputFields })}
+      />
+      <SchemaFieldsEditor
+        title="Output fields"
+        fields={value.outputFields}
+        onChange={(outputFields) => set({ outputFields })}
+      />
+      <label>
+        JavaScript <small>define a synchronous function main(input)</small>
+        <textarea
+          className="code-input code-service-source"
+          spellCheck={false}
+          value={value.source}
+          onChange={(event) => set({ source: event.target.value })}
+        />
+      </label>
+      <section className="code-service-preview" aria-label="Code service test">
+        <label>
+          Test input JSON
+          <textarea
+            className="code-input"
+            spellCheck={false}
+            value={value.testInput}
+            onChange={(event) => set({ testInput: event.target.value })}
+          />
+        </label>
+        <button
+          className="secondary-button"
+          type="button"
+          disabled={props.busy}
+          onClick={props.onPreview}
+        >
+          {props.busy ? "Running…" : "Run test"}
+        </button>
+        {props.preview ? (
+          <div
+            className={
+              props.preview.ok ? "code-preview-result is-success" : "code-preview-result is-error"
+            }
+          >
+            <strong>{props.preview.ok ? "Test passed" : props.preview.code}</strong>
+            <p>{props.preview.message}</p>
+            {props.preview.output ? (
+              <pre>{JSON.stringify(props.preview.output, null, 2)}</pre>
+            ) : null}
+          </div>
+        ) : null}
+      </section>
+    </div>
+  );
+}
+
+function SchemaFieldsEditor(props: {
+  readonly title?: string;
+  readonly fields: readonly CodeFieldDraft[];
+  readonly depth?: number;
+  readonly onChange: (fields: readonly CodeFieldDraft[]) => void;
+}) {
+  const depth = props.depth ?? 2;
+  const replace = (index: number, field: CodeFieldDraft) =>
+    props.onChange(
+      props.fields.map((current, currentIndex) => (currentIndex === index ? field : current)),
+    );
+  return (
+    <section className="code-schema-fields">
+      {props.title ? <h3>{props.title}</h3> : null}
+      {props.fields.map((field, index) => (
+        <div className="code-schema-field" key={field.id}>
+          <div className="code-schema-field-row">
+            <input
+              aria-label="Field name"
+              value={field.name}
+              onChange={(event) => replace(index, { ...field, name: event.target.value })}
+              placeholder="field_name"
+            />
+            <select
+              aria-label="Field type"
+              value={field.value.type}
+              onChange={(event) =>
+                replace(index, {
+                  ...field,
+                  value: emptyCodeValue(event.target.value as CodeFieldType),
+                })
+              }
+            >
+              {CODE_FIELD_TYPES.map((type) => (
+                <option
+                  key={type}
+                  value={type}
+                  disabled={depth >= 5 && (type === "object" || type === "array")}
+                >
+                  {type}
+                </option>
+              ))}
+            </select>
+            <label className="code-required-field">
+              <input
+                type="checkbox"
+                checked={field.required}
+                onChange={(event) => replace(index, { ...field, required: event.target.checked })}
+              />
+              Required
+            </label>
+            <button
+              type="button"
+              aria-label={`Remove ${field.name || "field"}`}
+              onClick={() =>
+                props.onChange(props.fields.filter((candidate) => candidate !== field))
+              }
+            >
+              <X size={15} />
+            </button>
+          </div>
+          <input
+            aria-label="Field description"
+            value={field.description}
+            onChange={(event) => replace(index, { ...field, description: event.target.value })}
+            placeholder="Optional field description"
+          />
+          <CodeValueEditor
+            value={field.value}
+            depth={depth}
+            hideType
+            onChange={(value) => replace(index, { ...field, value })}
+          />
+        </div>
+      ))}
+      <button
+        className="secondary-button"
+        type="button"
+        onClick={() => props.onChange([...props.fields, newCodeField()])}
+      >
+        <Plus size={15} /> Add field
+      </button>
+    </section>
+  );
+}
+
+function CodeValueEditor(props: {
+  readonly value: CodeValueDraft;
+  readonly depth: number;
+  readonly hideType?: boolean;
+  readonly onChange: (value: CodeValueDraft) => void;
+}) {
+  const value = props.value;
+  return (
+    <div className="code-value-editor">
+      {props.hideType ? null : (
+        <label>
+          Item type
+          <select
+            value={value.type}
+            onChange={(event) =>
+              props.onChange(emptyCodeValue(event.target.value as CodeFieldType))
+            }
+          >
+            {CODE_FIELD_TYPES.map((type) => (
+              <option
+                key={type}
+                value={type}
+                disabled={props.depth >= 5 && (type === "object" || type === "array")}
+              >
+                {type}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+      {value.type === "object" ? (
+        <SchemaFieldsEditor
+          fields={value.fields}
+          depth={props.depth + 1}
+          onChange={(fields) => props.onChange({ ...value, fields })}
+        />
+      ) : null}
+      {value.type === "array" ? (
+        <CodeValueEditor
+          value={value.item ?? emptyCodeValue("string")}
+          depth={props.depth + 1}
+          onChange={(item) => props.onChange({ ...value, item })}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+const CODE_FIELD_TYPES: readonly CodeFieldType[] = [
+  "string",
+  "number",
+  "integer",
+  "boolean",
+  "object",
+  "array",
+];
+
+function newCodeField(): CodeFieldDraft {
+  return {
+    id: crypto.randomUUID(),
+    name: "",
+    description: "",
+    required: true,
+    value: emptyCodeValue("string"),
+  };
+}
+
+function emptyCodeValue(type: CodeFieldType): CodeValueDraft {
+  return {
+    type,
+    fields: [],
+    ...(type === "array" ? { item: { type: "string", fields: [] } } : {}),
+  };
+}
+
+export function fieldsToObjectSchema(
+  fields: readonly CodeFieldDraft[],
+): Extract<CodeServiceJsonSchema, { readonly type: "object" }> {
+  const names = fields.map((field) => field.name.trim());
+  if (new Set(names).size !== names.length) {
+    throw new Error("Field names must be unique within each object.");
+  }
+  return {
+    type: "object",
+    properties: Object.fromEntries(
+      fields.map((field) => [field.name.trim(), valueToSchema(field.value, field.description)]),
+    ),
+    required: fields.filter((field) => field.required).map((field) => field.name.trim()),
+    additionalProperties: false,
+  };
+}
+
+function valueToSchema(value: CodeValueDraft, description: string): CodeServiceJsonSchema {
+  const details = description.trim() ? { description: description.trim() } : {};
+  if (value.type === "object") return { ...fieldsToObjectSchema(value.fields), ...details };
+  if (value.type === "array") {
+    return {
+      type: "array",
+      items: valueToSchema(value.item ?? emptyCodeValue("string"), ""),
+      ...details,
+    };
+  }
+  return { type: value.type, ...details };
 }

@@ -46,6 +46,12 @@ describe.sequential("Expert tools MCP Gateway", () => {
     expect(alphaTools.tools.map((tool) => tool.name)).not.toContain("read_beta");
     expect(betaTools.tools.map((tool) => tool.name)).toContain("read_beta");
     expect(betaTools.tools.map((tool) => tool.name)).not.toContain("read_alpha");
+    expect(alphaTools.tools.find((tool) => tool.name === "read_alpha")?.outputSchema).toMatchObject(
+      {
+        type: "object",
+        required: ["value"],
+      },
+    );
 
     await expect(
       alphaClient.callTool({ name: "read_alpha", arguments: {} }),
@@ -53,6 +59,12 @@ describe.sequential("Expert tools MCP Gateway", () => {
     await expect(betaClient.callTool({ name: "read_beta", arguments: {} })).resolves.toMatchObject({
       content: [{ type: "text", text: "beta" }],
     });
+    const failedResult = await alphaClient.callTool({ name: "fail_alpha", arguments: {} });
+    expect(failedResult).toMatchObject({
+      isError: true,
+      content: [{ type: "text", text: "alpha failed" }],
+    });
+    expect(failedResult).not.toHaveProperty("structuredContent");
 
     const unknownTokenUrl = new URL(`/sessions/${"A".repeat(43)}/mcp`, alphaUrl.origin);
     await expect(fetch(unknownTokenUrl)).resolves.toMatchObject({ status: 404 });
@@ -139,8 +151,36 @@ async function registerTestSession(
           properties: {},
           additionalProperties: false,
         },
+        outputSchema: {
+          type: "object",
+          properties: { value: { type: "string" } },
+          required: ["value"],
+          additionalProperties: false,
+        },
         async call() {
-          return { text: label };
+          return { text: label, details: { value: label } };
+        },
+      },
+      {
+        name: `fail_${label}`,
+        description: `Fail ${label}`,
+        inputSchema: {
+          type: "object",
+          properties: {},
+          additionalProperties: false,
+        },
+        outputSchema: {
+          type: "object",
+          properties: { value: { type: "string" } },
+          required: ["value"],
+          additionalProperties: false,
+        },
+        async call() {
+          return {
+            text: `${label} failed`,
+            isError: true,
+            details: { code: "expected_failure" },
+          };
         },
       },
     ],

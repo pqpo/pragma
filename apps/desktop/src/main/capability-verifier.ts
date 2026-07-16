@@ -1,6 +1,10 @@
 import { createHash } from "node:crypto";
 
-import { createMcpToolRegistry, type IExpertAgentMcpServer } from "@pragma/core";
+import {
+  createMcpToolRegistry,
+  verifyCodeServiceDefinition,
+  type IExpertAgentMcpServer,
+} from "@pragma/core";
 
 import {
   CapabilityDefinitionSchema,
@@ -15,6 +19,23 @@ export function createCapabilityVerifier(
 ): (definition: CapabilityDefinition, capabilityId: string) => Promise<CapabilityVerifierResult> {
   return async (definition, capabilityId) => {
     const checkedAt = new Date().toISOString();
+    if (definition.kind === "code_service") {
+      const result = await verifyCodeServiceDefinition({
+        name: definition.name,
+        timeoutMs: definition.timeoutMs,
+        tool: definition.tool,
+      });
+      return result.ok
+        ? { definition, health: { status: "ready", checkedAt } }
+        : {
+            definition,
+            health: {
+              status: "needs_attention",
+              checkedAt,
+              diagnostic: { code: result.code, message: result.message, retryable: true },
+            },
+          };
+    }
     if (definition.kind !== "mcp_server") {
       return { definition, health: { status: "ready", checkedAt } };
     }

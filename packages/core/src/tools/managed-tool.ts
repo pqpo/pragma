@@ -179,6 +179,7 @@ export interface ExpertAgentManagedTool<TName extends string = string, TResult =
   readonly name: TName;
   readonly description: string;
   readonly inputSchema: unknown;
+  readonly outputSchema?: unknown;
   readonly approval?: ExpertAgentToolApproval | undefined;
   readonly call: (
     args: unknown,

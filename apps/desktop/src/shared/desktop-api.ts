@@ -305,6 +305,127 @@ export const HttpServiceCapabilityDefinitionSchema = z
   })
   .superRefine((definition, context) => addDuplicateToolIssues(definition.tools, context));
 
+export type CodeServiceJsonSchema =
+  | { readonly type: "string"; readonly description?: string | undefined }
+  | { readonly type: "number"; readonly description?: string | undefined }
+  | { readonly type: "integer"; readonly description?: string | undefined }
+  | { readonly type: "boolean"; readonly description?: string | undefined }
+  | {
+      readonly type: "object";
+      readonly description?: string | undefined;
+      readonly properties: Readonly<Record<string, CodeServiceJsonSchema>>;
+      readonly required?: readonly string[] | undefined;
+      readonly additionalProperties: false;
+    }
+  | {
+      readonly type: "array";
+      readonly description?: string | undefined;
+      readonly items: CodeServiceJsonSchema;
+    };
+
+const CodeServiceFieldNameSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(100)
+  .regex(/^[A-Za-z_][A-Za-z0-9_]*$/, "Use a JavaScript-style field name.");
+const CodeServiceDescriptionSchema = z.string().trim().max(500).optional();
+
+export const CodeServiceJsonSchemaSchema: z.ZodType<CodeServiceJsonSchema> = z.lazy(() =>
+  z.discriminatedUnion("type", [
+    z.object({ type: z.literal("string"), description: CodeServiceDescriptionSchema }).strict(),
+    z.object({ type: z.literal("number"), description: CodeServiceDescriptionSchema }).strict(),
+    z.object({ type: z.literal("integer"), description: CodeServiceDescriptionSchema }).strict(),
+    z.object({ type: z.literal("boolean"), description: CodeServiceDescriptionSchema }).strict(),
+    z
+      .object({
+        type: z.literal("object"),
+        description: CodeServiceDescriptionSchema,
+        properties: z.record(CodeServiceFieldNameSchema, CodeServiceJsonSchemaSchema),
+        required: z.array(CodeServiceFieldNameSchema).max(200).optional(),
+        additionalProperties: z.literal(false),
+      })
+      .strict()
+      .superRefine((schema, context) => {
+        const properties = new Set(Object.keys(schema.properties));
+        const required = schema.required ?? [];
+        required.forEach((name, index) => {
+          if (!properties.has(name)) {
+            context.addIssue({
+              code: "custom",
+              message: `Required field ${name} must exist in properties.`,
+              path: ["required", index],
+            });
+          }
+          if (required.indexOf(name) !== index) {
+            context.addIssue({
+              code: "custom",
+              message: `Required field ${name} must be unique.`,
+              path: ["required", index],
+            });
+          }
+        });
+      }),
+    z
+      .object({
+        type: z.literal("array"),
+        description: CodeServiceDescriptionSchema,
+        items: CodeServiceJsonSchemaSchema,
+      })
+      .strict(),
+  ]),
+);
+
+export const CodeServiceObjectJsonSchemaSchema = CodeServiceJsonSchemaSchema.refine(
+  (schema): schema is Extract<CodeServiceJsonSchema, { readonly type: "object" }> =>
+    schema.type === "object",
+  "The root schema must be an object.",
+).superRefine((schema, context) => {
+  const limits = codeSchemaLimits(schema);
+  if (limits.depth > 5) {
+    context.addIssue({ code: "custom", message: "Schema nesting cannot exceed 5 levels." });
+  }
+  if (limits.fields > 200) {
+    context.addIssue({ code: "custom", message: "Schema cannot contain more than 200 fields." });
+  }
+});
+
+export const CodeServiceCapabilityDefinitionSchema = z.object({
+  kind: z.literal("code_service"),
+  name: z.string().trim().min(1).max(120),
+  description: z.string().trim().max(2_000),
+  language: z.literal("javascript"),
+  timeoutMs: z.number().int().min(100).max(10_000).default(2_000),
+  tool: z.object({
+    name: CapabilityToolNameSchema,
+    description: z.string().trim().min(1).max(2_000),
+    inputSchema: CodeServiceObjectJsonSchemaSchema,
+    outputSchema: CodeServiceObjectJsonSchemaSchema,
+    source: z
+      .string()
+      .min(1)
+      .max(100 * 1024),
+  }),
+});
+
+function codeSchemaLimits(schema: CodeServiceJsonSchema): {
+  readonly depth: number;
+  readonly fields: number;
+} {
+  if (schema.type === "array") {
+    const child = codeSchemaLimits(schema.items);
+    return { depth: child.depth + 1, fields: child.fields };
+  }
+  if (schema.type !== "object") return { depth: 1, fields: 0 };
+  const children = Object.values(schema.properties).map(codeSchemaLimits);
+  return {
+    depth: 1 + Math.max(0, ...children.map((child) => child.depth)),
+    fields:
+      Object.keys(schema.properties).length +
+      children.reduce((sum, child) => sum + child.fields, 0),
+  };
+}
+
 function addDuplicateToolIssues(
   tools: readonly { readonly name: string }[],
   context: z.RefinementCtx,
@@ -326,6 +447,7 @@ export const CapabilityDefinitionSchema = z.discriminatedUnion("kind", [
   SkillCapabilityDefinitionSchema,
   McpServerCapabilityDefinitionSchema,
   HttpServiceCapabilityDefinitionSchema,
+  CodeServiceCapabilityDefinitionSchema,
 ]);
 
 export const CapabilityManifestSchema = z.object({
@@ -333,7 +455,7 @@ export const CapabilityManifestSchema = z.object({
   id: CapabilityIdSchema,
   runtimeKey: CapabilityRuntimeKeySchema,
   name: z.string().trim().min(1).max(120),
-  kind: z.enum(["skill", "mcp_server", "http_service"]),
+  kind: z.enum(["skill", "mcp_server", "http_service", "code_service"]),
   latestRevision: z.number().int().positive(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
@@ -378,16 +500,44 @@ export const ImportSkillCapabilitySchema = z.object({
   description: z.string().trim().min(1).max(2_000).optional(),
 });
 
-export const CreateCapabilitySchema = z.object({
-  definition: z.union([McpServerCapabilityDefinitionSchema, HttpServiceCapabilityDefinitionSchema]),
-  credentials: z.record(z.string().max(200), z.string().min(1).max(10_000)).default({}),
-});
+export const CreateCapabilitySchema = z
+  .object({
+    definition: z.union([
+      McpServerCapabilityDefinitionSchema,
+      HttpServiceCapabilityDefinitionSchema,
+      CodeServiceCapabilityDefinitionSchema,
+    ]),
+    credentials: z.record(z.string().max(200), z.string().min(1).max(10_000)).default({}),
+  })
+  .superRefine(addCodeCredentialIssue);
 
-export const UpdateCapabilitySchema = z.object({
-  id: CapabilityIdSchema,
-  definition: z.union([McpServerCapabilityDefinitionSchema, HttpServiceCapabilityDefinitionSchema]),
-  credentials: z.record(z.string().max(200), z.string().min(1).max(10_000)).default({}),
-});
+export const UpdateCapabilitySchema = z
+  .object({
+    id: CapabilityIdSchema,
+    definition: z.union([
+      McpServerCapabilityDefinitionSchema,
+      HttpServiceCapabilityDefinitionSchema,
+      CodeServiceCapabilityDefinitionSchema,
+    ]),
+    credentials: z.record(z.string().max(200), z.string().min(1).max(10_000)).default({}),
+  })
+  .superRefine(addCodeCredentialIssue);
+
+function addCodeCredentialIssue(
+  input: {
+    readonly definition: { readonly kind: string };
+    readonly credentials: Readonly<Record<string, string>>;
+  },
+  context: z.RefinementCtx,
+): void {
+  if (input.definition.kind === "code_service" && Object.keys(input.credentials).length > 0) {
+    context.addIssue({
+      code: "custom",
+      message: "Code services cannot receive credentials.",
+      path: ["credentials"],
+    });
+  }
+}
 
 export const CapabilityActionSchema = z.object({ id: CapabilityIdSchema });
 export const CapabilityTestRequestSchema = z.object({
@@ -400,6 +550,19 @@ export const CapabilityTestResultSchema = z.object({
   code: z.string().min(1).max(100),
   message: z.string().min(1).max(2_000),
   capability: CapabilitySchema,
+  output: z.record(z.string(), z.unknown()).optional(),
+});
+
+export const PreviewCodeServiceRequestSchema = z.object({
+  definition: CodeServiceCapabilityDefinitionSchema,
+  input: z.unknown(),
+});
+
+export const PreviewCodeServiceResultSchema = z.object({
+  ok: z.boolean(),
+  code: z.string().min(1).max(100),
+  message: z.string().min(1).max(2_000),
+  output: z.record(z.string(), z.unknown()).optional(),
 });
 
 export const ExpertToolApprovalModeSchema = z.enum(["none", "ask", "required"]);
@@ -792,6 +955,8 @@ export type CreateCapability = z.infer<typeof CreateCapabilitySchema>;
 export type UpdateCapability = z.infer<typeof UpdateCapabilitySchema>;
 export type CapabilityTestRequest = z.infer<typeof CapabilityTestRequestSchema>;
 export type CapabilityTestResult = z.infer<typeof CapabilityTestResultSchema>;
+export type PreviewCodeServiceRequest = z.infer<typeof PreviewCodeServiceRequestSchema>;
+export type PreviewCodeServiceResult = z.infer<typeof PreviewCodeServiceResultSchema>;
 
 export interface PragmaDesktopAPI {
   getBridgeSnapshot: () => Promise<DesktopBridgeSnapshot>;
@@ -842,6 +1007,7 @@ export interface PragmaDesktopAPI {
   updateCapability: (input: UpdateCapability) => Promise<Capability>;
   retryCapability: (id: string) => Promise<Capability>;
   testCapability: (input: CapabilityTestRequest) => Promise<CapabilityTestResult>;
+  previewCodeService: (input: PreviewCodeServiceRequest) => Promise<PreviewCodeServiceResult>;
   deleteCapability: (id: string) => Promise<void>;
   pickSkillSource: () => Promise<PickWorkspaceResult>;
   getRuntimeAvailability: () => Promise<DesktopRuntimeAvailability[]>;

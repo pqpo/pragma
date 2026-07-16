@@ -43,6 +43,7 @@ export * from "./flow/flow.ts";
 export * from "./flow/flow-execution.ts";
 export * from "./mcp-tools.ts";
 export * from "./http-service-mcp-server.ts";
+export * from "./code-service-mcp-server.ts";
 export * from "./expert-tools-mcp-server.ts";
 export * from "./plugins/expert-agent-plugin.ts";
 export * from "./plugins/plugin-loader.ts";

@@ -561,7 +561,7 @@ export function ExpertEditorFragment(props: {
               </fieldset>
               <fieldset className="expert-context-store-picker expert-capability-picker">
                 <legend>Tools</legend>
-                <small>Select only the MCP or HTTP tools this Expert needs.</small>
+                <small>Select only the MCP, HTTP, or code tools this Expert needs.</small>
                 {props.capabilities.map((capability) => {
                   const definition = capability.definition;
                   if (definition.kind === "skill") return null;
@@ -573,14 +573,19 @@ export function ExpertEditorFragment(props: {
                   const selected = foundReference?.kind === "tools" ? foundReference : undefined;
                   const unavailable =
                     capability.health.status !== "ready" && selected === undefined;
-                  const tools = definition.tools;
+                  const tools =
+                    definition.kind === "code_service" ? [definition.tool] : definition.tools;
                   return (
                     <div className="expert-tool-capability" key={capability.manifest.id}>
                       <header>
                         <span>
                           <strong>{capability.manifest.name}</strong>
                           <small>
-                            {definition.kind === "mcp_server" ? "MCP server" : "HTTP service"}
+                            {definition.kind === "mcp_server"
+                              ? "MCP server"
+                              : definition.kind === "http_service"
+                                ? "HTTP service"
+                                : "Code service"}
                             {unavailable ? " · Needs attention" : ""}
                           </small>
                         </span>
