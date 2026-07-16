@@ -49,6 +49,47 @@ final result: passed
 
 ---
 
+# Main sidebar compression design QA
+
+## Comparison targets
+
+- Source visual truth: `/tmp/expert-mesh-design-qa-main-merge-fix/create-expert-fixed-1080.jpg`
+- Browser-rendered implementation: `/tmp/expert-mesh-design-qa-sidebar/create-expert-sidebar-240-1080.jpg`
+- Viewport and state: 1080 × 720, Studio → Experts → Create expert → Identity.
+
+## Findings
+
+- The 290 px primary navigation rail consumed excessive horizontal space and compressed the Create expert workspace.
+- The expanded rail is now 240 px. No actionable P0, P1, or P2 differences remain for this scoped adjustment.
+
+## Fidelity review
+
+- **Spacing and layout:** The primary rail is 50 px narrower while its existing 20 px horizontal content padding, item rhythm, and navigation hierarchy are retained.
+- **Collapsed state:** The existing 88 px collapsed width remains unchanged. Its internal horizontal padding is 8 px and the brand-row gap is 4 px so the logo mark and toggle fit without overflow.
+- **Typography, colors, icons, and copy:** These remain unchanged; the update is limited to rail proportions and collapsed-state containment.
+
+## Interaction and runtime evidence
+
+- The sidebar collapsed and expanded successfully through its visible toggle.
+- Expanded measurements at 1080 px and 1280 px matched the 240 px rail and showed equal document `scrollWidth` and `clientWidth`.
+- Collapsed measurements showed an 88 px rail with equal sidebar `scrollWidth` and `clientWidth`; the brand row also had equal scroll and client widths.
+- The Create expert Name field remained focusable and the browser console contained no error-level messages.
+
+## Comparison history
+
+1. The baseline capture showed the 290 px primary rail taking disproportionate space from the working area.
+2. Reduced the expanded grid track to 240 px and re-captured the same Create expert state at 1080 × 720.
+3. Exercised the 88 px collapsed state, found a 2 px internal overflow, and corrected its padding and brand-row gap.
+4. Rechecked both expanded and collapsed states with no document or sidebar overflow.
+
+## Follow-up polish
+
+- None required for this scoped visual fix.
+
+final result: passed
+
+---
+
 # Flow editor design QA
 
 - Source visual truth: `/tmp/dify-workflow.png` (Dify workflow builder reference)
@@ -95,6 +136,56 @@ No actionable P0, P1, or P2 findings remain.
 ## Follow-up polish
 
 - P3: consider adding named layout presets for especially wide graphs once real-world Flow sizes are available.
+
+final result: passed
+
+---
+
+# Create expert right-pane layout design QA
+
+## Comparison targets
+
+- Source visual truth: `/tmp/codex-remote-attachments/019f68ab-37ad-7562-a6f2-232dbe3d02c8/7199cfd0-b651-4094-93dc-5cc3965180b4/1-Photo-1.jpg`
+- Browser-rendered implementation: `/tmp/expert-mesh-design-qa/create-expert-after.jpg`
+- Compact-layout evidence: `/tmp/expert-mesh-design-qa/create-expert-after-1080.jpg`
+- Primary viewport and state: 1280 × 720, Studio → Experts → Create expert → Identity.
+- Compact viewport and state: 1080 × 720, the same empty Identity form.
+
+## Findings
+
+- The source showed a P1 structural mismatch: the right-hand surface behaved like a narrow inset card, leaving external horizontal space while its preview icon could shrink with the flex row.
+- No actionable P0, P1, or P2 differences remain after the layout fix.
+
+## Fidelity review
+
+- **Fonts and typography:** Existing type family, weights, hierarchy, wrapping, and small field-copy treatment are unchanged.
+- **Spacing and layout:** The right-side form surface now occupies its full grid column. The former 48 px outer grid gap is represented as internal content padding, so any surface background spans the complete right region. Form content keeps a 680 px readable maximum without constraining the surface itself.
+- **Colors and tokens:** Existing off-white page and control tokens are unchanged; no new card color, border, radius, or elevation was introduced.
+- **Image and icon fidelity:** No raster assets are involved. The existing Phosphor preview icon remains inside a measured 54 × 54 surface and now has `flex-shrink: 0`.
+- **Copy and content:** All expert labels, placeholders, counters, and support copy are unchanged.
+
+## Interaction and runtime evidence
+
+- Clicking **Create expert** opened the Identity step in the running renderer.
+- The Name field retained autofocus and the form remained fully interactive.
+- At 1080 px, document `scrollWidth` equaled `clientWidth` (1080 px); no horizontal overflow was present.
+- At both checked sizes, the preview icon measured exactly 54 × 54 px with flex shrink disabled.
+- Browser console contained no error-level messages.
+
+## Full-view and focused comparison evidence
+
+- The supplied photo and the 1080 × 720 implementation capture were opened together in the same comparison pass. The source is a photographed, differently cropped window, so typography and color were not judged with pixel-level precision.
+- A separate focused crop was unnecessary: the complete right pane, its external gutters, preview row, and icon were readable in the 1080 × 720 capture.
+
+## Comparison history
+
+1. The source showed an inset right-hand card and a preview icon vulnerable to width compression.
+2. Removed the external layout gap, made the form surface full-width, converted the spacing to internal padding, separated the 680 px content measure from the full-width surface, and fixed the icon flex basis at 54 px.
+3. Re-captured the running renderer at 1280 × 720 and 1080 × 720. The surface fills its grid column, the icon remains 54 × 54 px, and the compact viewport has no horizontal overflow.
+
+## Follow-up polish
+
+- None required for this scoped fix.
 
 final result: passed
 
@@ -195,5 +286,52 @@ final result: passed
 ## Follow-up polish
 
 - None required for this scoped addition.
+
+final result: passed
+
+---
+
+# Create expert post-merge card regression design QA
+
+## Comparison targets
+
+- Source visual truth: `/tmp/expert-mesh-design-qa/create-expert-after-1080.jpg`
+- Browser-rendered implementation: `/tmp/expert-mesh-design-qa-main-merge-fix/create-expert-fixed-1080.jpg`
+- Viewport and state: 1080 × 720, Studio → Experts → Create expert → Identity.
+
+## Findings
+
+- The merged theme initially reapplied a white background, 14 px radius, and shadow to both `.creator-form` and `.creator-preview`, recreating the P1 nested-card regression.
+- No actionable P0, P1, or P2 differences remain after removing those two surfaces from the shared card-theme selector.
+
+## Fidelity review
+
+- **Fonts and typography:** Existing merged typography, weights, line heights, wrapping, and field hierarchy remain unchanged.
+- **Spacing and layout:** The form and preview are transparent, square, shadowless layout regions again. The full-width right-side grid, 680 px readable content track, responsive internal padding, and zero external creator-layout gap remain intact.
+- **Colors and tokens:** The merged theme remains active for navigation, inputs, icons, capability cards, and other intended surfaces. Only the two accidental large white card backgrounds were removed.
+- **Image and icon fidelity:** No raster assets are involved. The existing preview icon remains exactly 54 × 54 px with flex shrink disabled.
+- **Copy and content:** All labels, placeholders, hints, counters, and step copy are unchanged.
+
+## Interaction and runtime evidence
+
+- Clicking **Create expert** opened the Identity step and Name retained autofocus.
+- The 1080 px viewport had equal document `scrollWidth` and `clientWidth`; no horizontal overflow was present.
+- Computed styles confirmed transparent backgrounds, 0 px radii, and no shadows on both `.creator-form` and `.creator-preview`.
+- Browser console contained no error-level messages.
+
+## Full-view and focused comparison evidence
+
+- The pre-merge target and post-fix implementation were opened together in the same comparison pass at 1080 × 720.
+- A separate focused crop was unnecessary because the entire affected right pane, preview row, icon, and external gutters are legible in both captures.
+
+## Comparison history
+
+1. The post-merge capture showed a white outer form card containing a second white preview card.
+2. Removed `.creator-form` and `.creator-preview` from the shared large-card selector without changing the merged theme elsewhere.
+3. Re-captured the running renderer at 1080 × 720; both accidental surfaces are now transparent and shadowless, while icon sizing and responsive containment remain correct.
+
+## Follow-up polish
+
+- None required for this scoped regression fix.
 
 final result: passed

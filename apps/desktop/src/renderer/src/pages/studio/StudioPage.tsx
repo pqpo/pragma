@@ -1,10 +1,12 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import type {
   ContextStore,
   Capability,
   ContextNoteEntry,
   CreateContextStore,
+  ContextStoreContent,
+  ContextStoreContentSummary,
   CreateExpertDefinition,
   ExpertContextStoreMount,
   DesktopRuntimeAvailability,
@@ -189,6 +191,48 @@ export function StudioPage() {
     setContextStores((stores) => stores.map((store) => (store.id === storeId ? updated : store)));
     return updated;
   };
+  const listContextStoreContents = useCallback(
+    async (storeId: string): Promise<readonly ContextStoreContentSummary[]> => {
+      const api = desktopApi();
+      if (api !== undefined) return api.listContextStoreContents({ storeId });
+      const current = contextStores.find((store) => store.id === storeId);
+      if (current?.type !== "note") return [];
+      return current.entries.map((entry) => ({
+        id: entry.id,
+        metadata: {
+          description: entry.description,
+          trigger: entry.trigger,
+          priority: "normal",
+        },
+        sizeBytes: new TextEncoder().encode(entry.content).byteLength,
+      }));
+    },
+    [contextStores],
+  );
+  const getContextStoreContent = useCallback(
+    async (storeId: string, contentId: string): Promise<ContextStoreContent> => {
+      const api = desktopApi();
+      if (api !== undefined) return api.getContextStoreContent({ storeId, contentId });
+      const current = contextStores.find((store) => store.id === storeId);
+      const entry =
+        current?.type === "note"
+          ? current.entries.find((candidate) => candidate.id === contentId)
+          : undefined;
+      if (entry === undefined) throw new Error(`Context not found: ${contentId}`);
+      return {
+        id: entry.id,
+        content: entry.content,
+        metadata: {
+          description: entry.description,
+          trigger: entry.trigger,
+          priority: "normal",
+        },
+        sizeBytes: new TextEncoder().encode(entry.content).byteLength,
+        truncated: false,
+      };
+    },
+    [contextStores],
+  );
   const saveContextMounts = async (mounts: readonly ExpertContextStoreMount[]) => {
     if (selectedExpert === null) return;
     const updated = { ...selectedExpert, contextStoreMounts: [...mounts] };
@@ -287,6 +331,8 @@ export function StudioPage() {
             store={selectedContextStore}
             onBack={() => setScreen("directory")}
             onAddNoteEntry={addContextNoteEntry}
+            onListContents={listContextStoreContents}
+            onGetContent={getContextStoreContent}
           />
         ) : null}
         {screen === "directory" && activeView === "capabilities" ? (

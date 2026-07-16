@@ -59,11 +59,15 @@ import {
 } from "./flow-model.ts";
 import "@xyflow/react/dist/style.css";
 
-const START_NODE_ID = "__pragma_canvas_start__";
-const END_NODE_ID = "__pragma_canvas_end__";
-const FAIL_NODE_ID = "__pragma_canvas_fail__";
+export const START_NODE_ID = "__pragma_canvas_start__";
+export const END_NODE_ID = "__pragma_canvas_end__";
+export const FAIL_NODE_ID = "__pragma_canvas_fail__";
 const NODE_WIDTH = 238;
 const NODE_HEIGHT = 104;
+const TERMINAL_NODE_WIDTH = 112;
+const TERMINAL_HORIZONTAL_GAP = 180;
+const NODE_HORIZONTAL_GAP = 36;
+const NODE_VERTICAL_GAP = 28;
 
 interface StepNodeData extends Record<string, unknown> {
   readonly kind: FlowStepKind;
@@ -85,6 +89,12 @@ type WorkflowCanvasNode = StepCanvasNode | TerminalCanvasNode;
 interface EditorSnapshot {
   readonly flow: PragmaFlowResource;
   readonly positions: Readonly<Record<string, { readonly x: number; readonly y: number }>>;
+}
+
+interface NodeContextMenuState {
+  readonly stepId: string;
+  readonly x: number;
+  readonly y: number;
 }
 
 export function FlowEditor(props: {
@@ -118,9 +128,10 @@ function FlowEditorCanvas(props: {
     buildCanvasNodes(initialFlow, {}),
   );
   const [selectedStepId, setSelectedStepId] = useState<string | null>(null);
-  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(true);
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const [validationOpen, setValidationOpen] = useState(false);
+  const [nodeContextMenu, setNodeContextMenu] = useState<NodeContextMenuState | null>(null);
   const [candidateIssues, setCandidateIssues] = useState<readonly string[]>([]);
   const [localError, setLocalError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -129,6 +140,7 @@ function FlowEditorCanvas(props: {
   const futureRef = useRef<EditorSnapshot[]>([]);
   const dragSnapshotRef = useRef<EditorSnapshot | null>(null);
   const layoutTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const canvasRef = useRef<HTMLDivElement>(null);
   const { fitView, getViewport, screenToFlowPosition, setViewport } = useReactFlow<
     WorkflowCanvasNode,
     Edge
@@ -146,7 +158,7 @@ function FlowEditorCanvas(props: {
     [flow.metadata.id, props.project.resources],
   );
 
-  const positions = useCallback(() => semanticPositions(nodes), [nodes]);
+  const positions = useCallback(() => canvasPositions(nodes), [nodes]);
   const snapshot = useCallback(
     (): EditorSnapshot => ({ flow: structuredClone(flow), positions: positions() }),
     [flow, positions],
@@ -260,7 +272,7 @@ function FlowEditorCanvas(props: {
   }, [fitView, initialFlow, props.project.projectId, setNodes, setViewport]);
 
   useEffect(() => {
-    setNodes((current) => buildCanvasNodes(flow, semanticPositions(current), invalidStepIds));
+    setNodes((current) => buildCanvasNodes(flow, canvasPositions(current), invalidStepIds));
   }, [flow, invalidStepIds, setNodes]);
 
   useEffect(() => {
@@ -273,7 +285,9 @@ function FlowEditorCanvas(props: {
       )
         return;
       const modifier = event.metaKey || event.ctrlKey;
-      if (modifier && event.key.toLowerCase() === "s") {
+      if (event.key === "Escape") {
+        setNodeContextMenu(null);
+      } else if (modifier && event.key.toLowerCase() === "s") {
         event.preventDefault();
         void publish();
       } else if (modifier && event.key.toLowerCase() === "z") {
@@ -304,7 +318,22 @@ function FlowEditorCanvas(props: {
     copy.spec.graph.steps[id] = defaultStep(kind, targets);
     copy.spec.graph.transitions[id] = { end: true };
     if (Object.keys(copy.spec.graph.steps).length === 1) copy.spec.graph.start = id;
-    commitFlow(copy, { ...positions(), [id]: position ?? { x: 180, y: 180 } });
+    const currentPositions = positions();
+    const canvasBounds = canvasRef.current?.getBoundingClientRect();
+    const viewportCenter =
+      canvasBounds === undefined
+        ? { x: 180 + NODE_WIDTH / 2, y: 180 + NODE_HEIGHT / 2 }
+        : screenToFlowPosition({
+            x: canvasBounds.left + canvasBounds.width / 2,
+            y: canvasBounds.top + canvasBounds.height / 2,
+          });
+    const nextPosition =
+      position ??
+      nextAvailableNodePosition(currentPositions, {
+        x: viewportCenter.x - NODE_WIDTH / 2,
+        y: viewportCenter.y - NODE_HEIGHT / 2,
+      });
+    commitFlow(copy, { ...currentPositions, [id]: nextPosition });
     setSelectedStepId(id);
     setInspectorOpen(true);
   };
@@ -312,6 +341,7 @@ function FlowEditorCanvas(props: {
   const removeStep = (stepId: string) => {
     commitFlow(deleteFlowStep(flow, stepId));
     setSelectedStepId(null);
+    setNodeContextMenu(null);
   };
 
   const setConnection = (connection: Connection) => {
@@ -483,6 +513,7 @@ function FlowEditorCanvas(props: {
         </aside>
 
         <div
+          ref={canvasRef}
           className="flow-canvas"
           onDragOver={(event) => event.preventDefault()}
           onDrop={(event) => {
@@ -505,13 +536,33 @@ function FlowEditorCanvas(props: {
               setSelectedStepId(selectedNode?.type === "step" ? selectedNode.id : null);
             }}
             onNodeClick={(_event, node) => {
+              setNodeContextMenu(null);
               if (node.type === "step") {
                 setSelectedStepId(node.id);
                 setInspectorOpen(true);
               } else setSelectedStepId(null);
             }}
-            onPaneClick={() => setSelectedStepId(null)}
+            onNodeContextMenu={(event, node) => {
+              event.preventDefault();
+              if (node.type !== "step") {
+                setNodeContextMenu(null);
+                return;
+              }
+              const bounds = canvasRef.current?.getBoundingClientRect();
+              if (bounds === undefined) return;
+              setSelectedStepId(node.id);
+              setNodeContextMenu({
+                stepId: node.id,
+                x: Math.max(8, Math.min(event.clientX - bounds.left, bounds.width - 154)),
+                y: Math.max(8, Math.min(event.clientY - bounds.top, bounds.height - 52)),
+              });
+            }}
+            onPaneClick={() => {
+              setSelectedStepId(null);
+              setNodeContextMenu(null);
+            }}
             onNodeDragStart={() => {
+              setNodeContextMenu(null);
               dragSnapshotRef.current = snapshot();
             }}
             onNodeDragStop={() => {
@@ -544,6 +595,23 @@ function FlowEditorCanvas(props: {
               <Hand size={15} /> Scroll to zoom · drag canvas to pan
             </Panel>
           </ReactFlow>
+          {nodeContextMenu !== null ? (
+            <div
+              className="flow-node-context-menu"
+              role="menu"
+              aria-label={`${nodeContextMenu.stepId} actions`}
+              style={{ left: nodeContextMenu.x, top: nodeContextMenu.y }}
+              onContextMenu={(event) => event.preventDefault()}
+            >
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => removeStep(nodeContextMenu.stepId)}
+              >
+                <Trash size={15} /> Delete node
+              </button>
+            </div>
+          ) : null}
         </div>
 
         <aside className={inspectorOpen ? "flow-inspector" : "flow-inspector is-collapsed"}>
@@ -1447,7 +1515,7 @@ function transitionDestinations(
     : [transition];
 }
 
-function buildCanvasNodes(
+export function buildCanvasNodes(
   flow: PragmaFlowResource,
   suppliedPositions: Readonly<Record<string, { readonly x: number; readonly y: number }>>,
   invalidStepIds: ReadonlySet<string> = new Set(),
@@ -1480,12 +1548,19 @@ function buildCanvasNodes(
       ? 0
       : Object.values(positions).reduce((total, position) => total + position.y, 0) /
         Object.values(positions).length;
+  const terminalX = maxX + NODE_WIDTH + TERMINAL_HORIZONTAL_GAP;
+  const defaultStartPosition = {
+    x: startPosition.x - TERMINAL_NODE_WIDTH - TERMINAL_HORIZONTAL_GAP,
+    y: startPosition.y + 25,
+  };
+  const defaultEndPosition = { x: terminalX, y: averageY - 35 };
+  const defaultFailPosition = { x: terminalX, y: averageY + 70 };
   return [
     {
       id: START_NODE_ID,
       type: "terminal",
-      position: { x: startPosition.x - 190, y: startPosition.y + 25 },
-      draggable: false,
+      position: suppliedPositions[START_NODE_ID] ?? defaultStartPosition,
+      draggable: true,
       deletable: false,
       data: { label: "Start", tone: "start" },
     },
@@ -1493,16 +1568,16 @@ function buildCanvasNodes(
     {
       id: END_NODE_ID,
       type: "terminal",
-      position: { x: maxX + 340, y: averageY - 35 },
-      draggable: false,
+      position: suppliedPositions[END_NODE_ID] ?? defaultEndPosition,
+      draggable: true,
       deletable: false,
       data: { label: "End", tone: "end" },
     },
     {
       id: FAIL_NODE_ID,
       type: "terminal",
-      position: { x: maxX + 340, y: averageY + 70 },
-      draggable: false,
+      position: suppliedPositions[FAIL_NODE_ID] ?? defaultFailPosition,
+      draggable: true,
       deletable: false,
       data: { label: "Fail", tone: "fail" },
     },
@@ -1598,14 +1673,50 @@ function automaticPositions(flow: PragmaFlowResource): Record<string, { x: numbe
   );
 }
 
-function semanticPositions(
+export function canvasPositions(
   nodes: readonly WorkflowCanvasNode[],
 ): Record<string, { x: number; y: number }> {
-  return Object.fromEntries(
-    nodes
-      .filter((node): node is StepCanvasNode => node.type === "step")
-      .map((node) => [node.id, node.position]),
-  );
+  return Object.fromEntries(nodes.map((node) => [node.id, node.position]));
+}
+
+export function nextAvailableNodePosition(
+  existing: Readonly<Record<string, { readonly x: number; readonly y: number }>>,
+  preferred: { readonly x: number; readonly y: number },
+): { x: number; y: number } {
+  const occupied = Object.values(existing);
+  const cellWidth = NODE_WIDTH + NODE_HORIZONTAL_GAP;
+  const cellHeight = NODE_HEIGHT + NODE_VERTICAL_GAP;
+  const isAvailable = (candidate: { readonly x: number; readonly y: number }) =>
+    occupied.every(
+      (position) =>
+        Math.abs(candidate.x - position.x) >= cellWidth ||
+        Math.abs(candidate.y - position.y) >= cellHeight,
+    );
+
+  if (isAvailable(preferred)) return { ...preferred };
+  for (let ring = 1; ring <= 50; ring += 1) {
+    for (const [column, row] of gridRing(ring)) {
+      const candidate = {
+        x: preferred.x + column * cellWidth,
+        y: preferred.y + row * cellHeight,
+      };
+      if (isAvailable(candidate)) return candidate;
+    }
+  }
+  return {
+    x: preferred.x + occupied.length * cellWidth,
+    y: preferred.y,
+  };
+}
+
+function gridRing(ring: number): readonly (readonly [number, number])[] {
+  const offsets: [number, number][] = [];
+  for (let row = 0; row <= ring; row += 1) offsets.push([ring, row]);
+  for (let column = ring - 1; column >= -ring; column -= 1) offsets.push([column, ring]);
+  for (let row = ring - 1; row >= -ring; row -= 1) offsets.push([-ring, row]);
+  for (let column = -ring + 1; column <= ring; column += 1) offsets.push([column, -ring]);
+  for (let row = -ring + 1; row < 0; row += 1) offsets.push([ring, row]);
+  return offsets;
 }
 
 export function workflowLayoutFromCanvas(input: {

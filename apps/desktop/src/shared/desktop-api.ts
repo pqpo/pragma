@@ -477,6 +477,34 @@ export const AddContextNoteEntrySchema = z.object({
   entry: ContextNoteEntrySchema,
 });
 
+export const ContextStoreContentMetadataSchema = z.object({
+  description: z.string().max(2_000).optional(),
+  trigger: ContextTriggerSchema,
+  trustLevel: z.enum(["system", "workspace", "user", "external"]).optional(),
+  sensitivity: z.enum(["public", "internal", "confidential", "restricted"]).optional(),
+  priority: z.enum(["critical", "high", "normal", "low"]),
+});
+
+export const ContextStoreContentSummarySchema = z.object({
+  id: z.string().trim().min(1).max(2_000),
+  metadata: ContextStoreContentMetadataSchema,
+  revision: z.string().max(500).optional(),
+  sizeBytes: z.number().int().nonnegative().optional(),
+});
+
+export const ContextStoreContentSchema = ContextStoreContentSummarySchema.extend({
+  content: z.string().max(1_000_000),
+  truncated: z.boolean(),
+});
+
+export const ListContextStoreContentsSchema = z.object({
+  storeId: ContextStoreIdSchema,
+});
+
+export const GetContextStoreContentSchema = ListContextStoreContentsSchema.extend({
+  contentId: z.string().trim().min(1).max(2_000),
+});
+
 export const ExpertContextStoreMountSchema = z.object({
   storeId: ContextStoreIdSchema,
   enabled: z.boolean(),
@@ -693,6 +721,11 @@ export type ContextStore = z.infer<typeof ContextStoreSchema>;
 export type CreateContextStore = z.infer<typeof CreateContextStoreSchema>;
 export type ContextNoteEntry = z.infer<typeof ContextNoteEntrySchema>;
 export type AddContextNoteEntry = z.infer<typeof AddContextNoteEntrySchema>;
+export type ContextStoreContentMetadata = z.infer<typeof ContextStoreContentMetadataSchema>;
+export type ContextStoreContentSummary = z.infer<typeof ContextStoreContentSummarySchema>;
+export type ContextStoreContent = z.infer<typeof ContextStoreContentSchema>;
+export type ListContextStoreContents = z.infer<typeof ListContextStoreContentsSchema>;
+export type GetContextStoreContent = z.infer<typeof GetContextStoreContentSchema>;
 export type ExpertContextStoreMount = z.infer<typeof ExpertContextStoreMountSchema>;
 export type ExpertDefinition = z.infer<typeof ExpertDefinitionSchema>;
 export type ExpertSummary = z.infer<typeof ExpertSummarySchema>;
@@ -736,6 +769,10 @@ export interface PragmaDesktopAPI {
   listContextStores: () => Promise<ContextStore[]>;
   createContextStore: (input: CreateContextStore) => Promise<ContextStore>;
   addContextNoteEntry: (input: AddContextNoteEntry) => Promise<ContextStore>;
+  listContextStoreContents: (
+    input: ListContextStoreContents,
+  ) => Promise<ContextStoreContentSummary[]>;
+  getContextStoreContent: (input: GetContextStoreContent) => Promise<ContextStoreContent>;
   pickContextStoreFolder: () => Promise<PickWorkspaceResult>;
   listExperts: () => Promise<ExpertSummary[]>;
   getExpert: (id: string) => Promise<ExpertDefinition>;

@@ -4,18 +4,22 @@ import {
   CaretRight,
   Check,
   Database,
+  File,
   FileText,
   Folder,
   MagnifyingGlass,
   Plus,
+  ArrowClockwise,
   X,
 } from "@phosphor-icons/react";
 import type { ContextTrigger } from "@pragma/shared";
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import type {
   ContextNoteEntry,
   ContextStore,
+  ContextStoreContent,
+  ContextStoreContentSummary,
   CreateContextStore,
   ExpertContextStoreMount,
 } from "../../../../shared/desktop-api.ts";
@@ -28,6 +32,18 @@ function triggerLabel(trigger: ContextTrigger): string {
   if (trigger === "always_on") return "Load immediately";
   if (trigger === "model_decision") return "Model decides";
   return "On demand";
+}
+
+function formatBytes(sizeBytes: number | undefined): string {
+  if (sizeBytes === undefined) return "—";
+  if (sizeBytes < 1_000) return `${sizeBytes} B`;
+  if (sizeBytes < 1_000_000) return `${(sizeBytes / 1_000).toFixed(1)} KB`;
+  return `${(sizeBytes / 1_000_000).toFixed(1)} MB`;
+}
+
+function metadataLabel(value: string | undefined): string {
+  if (value === undefined) return "Not set";
+  return value.replaceAll("_", " ").replace(/^./, (character) => character.toUpperCase());
 }
 
 export function ContextStoreDirectoryFragment(props: {
@@ -160,9 +176,45 @@ export function ContextStoreDetailFragment(props: {
   readonly store: ContextStore;
   readonly onBack: () => void;
   readonly onAddNoteEntry: (storeId: string, entry: ContextNoteEntry) => Promise<ContextStore>;
+  readonly onListContents: (storeId: string) => Promise<readonly ContextStoreContentSummary[]>;
+  readonly onGetContent: (storeId: string, contentId: string) => Promise<ContextStoreContent>;
 }) {
   const [addingEntity, setAddingEntity] = useState(false);
+  const [contents, setContents] = useState<readonly ContextStoreContentSummary[]>([]);
+  const [loadingContents, setLoadingContents] = useState(true);
+  const [contentsError, setContentsError] = useState<string | null>(null);
+  const [selectedContent, setSelectedContent] = useState<ContextStoreContent | null>(null);
+  const [loadingContentId, setLoadingContentId] = useState<string | null>(null);
   const StoreIcon = props.store.type === "file" ? Folder : BookOpenText;
+  const loadContents = useCallback(async () => {
+    setLoadingContents(true);
+    setContentsError(null);
+    try {
+      setContents(await props.onListContents(props.store.id));
+    } catch (loadError) {
+      setContentsError(errorMessage(loadError));
+    } finally {
+      setLoadingContents(false);
+    }
+  }, [props.onListContents, props.store.id]);
+
+  useEffect(() => {
+    setSelectedContent(null);
+    void loadContents();
+  }, [loadContents, props.store.updatedAt]);
+
+  const openContent = async (contentId: string) => {
+    setLoadingContentId(contentId);
+    setContentsError(null);
+    try {
+      setSelectedContent(await props.onGetContent(props.store.id, contentId));
+    } catch (loadError) {
+      setContentsError(errorMessage(loadError));
+    } finally {
+      setLoadingContentId(null);
+    }
+  };
+
   return (
     <section className="store-detail" aria-labelledby="context-store-name">
       <button className="back-link" type="button" onClick={props.onBack}>
@@ -210,38 +262,171 @@ export function ContextStoreDetailFragment(props: {
           </dd>
         </div>
       </dl>
-      {props.store.type === "note" ? (
-        <>
-          <div className="context-entity-heading">
-            <h3>Entities</h3>
-            <button
-              className="secondary-button"
-              type="button"
-              onClick={() => setAddingEntity(true)}
-            >
-              <Plus size={16} /> Add entity
-            </button>
+      <section className="store-content-overview" aria-labelledby="store-overview-heading">
+        <div className="context-entity-heading">
+          <div>
+            <h2 id="store-overview-heading">Overview</h2>
+            <p>Browse the content available to experts and inspect its runtime metadata.</p>
           </div>
-          <div className="context-entity-list">
-            {props.store.entries.length === 0 ? <p>No entities yet.</p> : null}
-            {props.store.entries.map((entry) => (
-              <article key={entry.id}>
-                <strong>{entry.id}</strong>
-                <p>{entry.description}</p>
-                <small>{triggerLabel(entry.trigger)}</small>
-              </article>
+          <div className="store-overview-actions">
+            <button
+              className="secondary-button compact-button"
+              type="button"
+              onClick={() => void loadContents()}
+              disabled={loadingContents}
+            >
+              <ArrowClockwise size={16} aria-hidden="true" />
+              Refresh
+            </button>
+            {props.store.type === "note" ? (
+              <button
+                className="secondary-button"
+                type="button"
+                onClick={() => setAddingEntity(true)}
+              >
+                <Plus size={16} /> Add entity
+              </button>
+            ) : null}
+          </div>
+        </div>
+
+        {contentsError ? (
+          <p className="form-error" role="alert">
+            {contentsError}
+          </p>
+        ) : null}
+        {loadingContents ? <p className="store-content-state">Loading store contents…</p> : null}
+        {!loadingContents && contents.length === 0 && contentsError === null ? (
+          <div className="store-content-empty">
+            <File size={24} aria-hidden="true" />
+            <strong>No content found</strong>
+            <p>
+              {props.store.type === "file"
+                ? "Add Markdown files to the source folder, then refresh this overview."
+                : "Add an entity to make context available to experts."}
+            </p>
+          </div>
+        ) : null}
+        {contents.length > 0 ? (
+          <div className="store-content-table" role="list" aria-label="Store contents">
+            <div className="store-content-table-heading" aria-hidden="true">
+              <span>Content</span>
+              <span>Loading</span>
+              <span>Priority</span>
+              <span>Size</span>
+            </div>
+            {contents.map((item) => (
+              <button
+                className="store-content-row"
+                key={item.id}
+                type="button"
+                onClick={() => void openContent(item.id)}
+                disabled={loadingContentId !== null}
+              >
+                <span className="store-content-name">
+                  <FileText size={20} aria-hidden="true" />
+                  <span>
+                    <strong>{item.id}</strong>
+                    <small>{item.metadata.description ?? "No description metadata"}</small>
+                  </span>
+                </span>
+                <span>{triggerLabel(item.metadata.trigger)}</span>
+                <span>{metadataLabel(item.metadata.priority)}</span>
+                <span>{formatBytes(item.sizeBytes)}</span>
+                <CaretRight size={16} aria-hidden="true" />
+              </button>
             ))}
           </div>
-          {addingEntity ? (
-            <ContextEntityCreatorDrawer
-              store={props.store}
-              onClose={() => setAddingEntity(false)}
-              onCreate={props.onAddNoteEntry}
-            />
-          ) : null}
-        </>
+        ) : null}
+      </section>
+
+      {props.store.type === "note" && addingEntity ? (
+        <ContextEntityCreatorDrawer
+          store={props.store}
+          onClose={() => setAddingEntity(false)}
+          onCreate={props.onAddNoteEntry}
+        />
+      ) : null}
+      {selectedContent !== null ? (
+        <ContextContentDetailDrawer
+          content={selectedContent}
+          storeName={props.store.name}
+          onClose={() => setSelectedContent(null)}
+        />
       ) : null}
     </section>
+  );
+}
+
+function ContextContentDetailDrawer(props: {
+  readonly content: ContextStoreContent;
+  readonly storeName: string;
+  readonly onClose: () => void;
+}) {
+  return (
+    <div className="drawer-layer" role="presentation">
+      <button
+        className="drawer-scrim"
+        type="button"
+        aria-label="Close content details"
+        onClick={props.onClose}
+      />
+      <aside className="store-creator-drawer context-content-drawer" aria-labelledby="content-name">
+        <header className="drawer-heading">
+          <div>
+            <p>{props.storeName}</p>
+            <h2 id="content-name">{props.content.id}</h2>
+          </div>
+          <button type="button" aria-label="Close" onClick={props.onClose}>
+            <X size={22} />
+          </button>
+        </header>
+        <div className="drawer-body context-content-body">
+          <section aria-labelledby="content-metadata-heading">
+            <h3 id="content-metadata-heading">Metadata</h3>
+            <dl className="content-metadata-grid">
+              <div>
+                <dt>Description</dt>
+                <dd>{props.content.metadata.description ?? "Not set"}</dd>
+              </div>
+              <div>
+                <dt>Loading behavior</dt>
+                <dd>{triggerLabel(props.content.metadata.trigger)}</dd>
+              </div>
+              <div>
+                <dt>Priority</dt>
+                <dd>{metadataLabel(props.content.metadata.priority)}</dd>
+              </div>
+              <div>
+                <dt>Trust level</dt>
+                <dd>{metadataLabel(props.content.metadata.trustLevel)}</dd>
+              </div>
+              <div>
+                <dt>Sensitivity</dt>
+                <dd>{metadataLabel(props.content.metadata.sensitivity)}</dd>
+              </div>
+              <div>
+                <dt>Size</dt>
+                <dd>{formatBytes(props.content.sizeBytes)}</dd>
+              </div>
+              {props.content.revision === undefined ? null : (
+                <div>
+                  <dt>Revision</dt>
+                  <dd>{props.content.revision}</dd>
+                </div>
+              )}
+            </dl>
+          </section>
+          <section className="context-content-preview" aria-labelledby="content-preview-heading">
+            <h3 id="content-preview-heading">Content</h3>
+            <pre>{props.content.content}</pre>
+            {props.content.truncated ? (
+              <p>This preview is truncated because the content is larger than 900 KB.</p>
+            ) : null}
+          </section>
+        </div>
+      </aside>
+    </div>
   );
 }
 

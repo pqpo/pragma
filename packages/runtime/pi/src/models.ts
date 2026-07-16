@@ -78,7 +78,31 @@ export function getRuntimeModelName(
   agent: Expert,
   modelName: string | undefined,
 ): string | undefined {
-  return modelName ?? agent.models?.defaultModelName;
+  const selectedModelName = modelName ?? agent.models?.defaultModelName;
+  if (selectedModelName === undefined) {
+    return undefined;
+  }
+
+  const normalizedModelName = selectedModelName.trim();
+  const configuredProviders = agent.models?.providers ?? [];
+  const isCanonicalConfiguredModel = configuredProviders.some((provider) =>
+    provider.modelNames.some(
+      (candidate) =>
+        `${provider.provider.trim()}/${candidate.trim()}` === normalizedModelName,
+    ),
+  );
+  if (isCanonicalConfiguredModel) {
+    return normalizedModelName;
+  }
+
+  const configuredProvider = configuredProviders.find((provider) =>
+    provider.modelNames.some((candidate) => candidate.trim() === normalizedModelName),
+  );
+  const providerName = configuredProvider?.provider.trim();
+
+  return providerName === undefined || providerName.length === 0
+    ? normalizedModelName
+    : `${providerName}/${normalizedModelName}`;
 }
 
 export function collectRuntimeModelProviders(

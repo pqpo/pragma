@@ -24,7 +24,7 @@ import {
 } from "./session-events.ts";
 import { convertPiAgentMessage, convertPiAgentMessages } from "./session-messages.ts";
 import { createToolStreamEvents } from "./stream.ts";
-import { resolveRequiredRuntimeModel } from "./models.ts";
+import { getRuntimeModelName, resolveRequiredRuntimeModel } from "./models.ts";
 import type { PiRuntimeStreamState } from "./types.ts";
 
 export interface PiNativeSession {
@@ -80,10 +80,14 @@ export async function startPiTurn(
   });
 
   try {
+    const submissionModelName =
+      turn.modelName === undefined
+        ? nativeSession.models.defaultModelName
+        : getRuntimeModelName(nativeSession.agent, turn.modelName);
     await applySubmissionModel(
       nativeSession.session,
       nativeSession.models.modelRegistry,
-      turn.modelName ?? nativeSession.models.defaultModelName,
+      submissionModelName,
     );
     await nativeSession.session.prompt(turn.prompt);
     assertAssistantTurnCompleted(

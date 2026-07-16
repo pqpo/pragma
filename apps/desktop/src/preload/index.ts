@@ -12,8 +12,12 @@ import {
   DesktopRuntimeAvailabilitySchema,
   DeleteWorkflowLayoutSchema,
   ContextStoreSchema,
+  ContextStoreContentSchema,
+  ContextStoreContentSummarySchema,
   CreateExpertDefinitionSchema,
   CreateContextStoreSchema,
+  GetContextStoreContentSchema,
+  ListContextStoreContentsSchema,
   DeleteExpertDefinitionSchema,
   ExpertDefinitionSchema,
   ExpertIdSchema,
@@ -88,6 +92,20 @@ const api: PragmaDesktopAPI = {
       await ipcRenderer.invoke(
         "context-stores:add-note-entry",
         AddContextNoteEntrySchema.parse(input),
+      ),
+    ),
+  listContextStoreContents: async (input) =>
+    ContextStoreContentSummarySchema.array().parse(
+      await ipcRenderer.invoke(
+        "context-stores:list-contents",
+        ListContextStoreContentsSchema.parse(input),
+      ),
+    ),
+  getContextStoreContent: async (input) =>
+    ContextStoreContentSchema.parse(
+      await ipcRenderer.invoke(
+        "context-stores:get-content",
+        GetContextStoreContentSchema.parse(input),
       ),
     ),
   pickContextStoreFolder: async () =>

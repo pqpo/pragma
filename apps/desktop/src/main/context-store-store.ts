@@ -4,24 +4,38 @@ import { join } from "node:path";
 
 import { z } from "zod";
 
+import { FileSystemContextStore } from "@pragma/core";
+
 import {
   ContextNoteEntrySchema,
   ContextStoreSchema,
   CreateContextStoreSchema,
   type ContextNoteEntry,
   type ContextStore,
+  type ContextStoreContent,
+  type ContextStoreContentSummary,
   type CreateContextStore,
 } from "../shared/desktop-api.ts";
+
+const CONTENT_PREVIEW_MAX_BYTES = 900_000;
 
 export interface ContextStoreStore {
   list(): Promise<ContextStore[]>;
   create(input: CreateContextStore): Promise<ContextStore>;
   addNoteEntry(storeId: string, entry: ContextNoteEntry): Promise<ContextStore>;
+  listContents(storeId: string): Promise<readonly ContextStoreContentSummary[]>;
+  getContent(storeId: string, contentId: string): Promise<ContextStoreContent>;
 }
 
 export class ContextStoreStoreError extends Error {
   constructor(
-    readonly code: "config_invalid" | "store_not_found" | "entry_exists" | "invalid_store_type",
+    readonly code:
+      | "config_invalid"
+      | "store_not_found"
+      | "entry_exists"
+      | "content_not_found"
+      | "source_unavailable"
+      | "invalid_store_type",
     message: string,
   ) {
     super(message);
@@ -152,6 +166,71 @@ export function createContextStoreStore(options: {
       });
       await writeJson(manifestPath(storeId), { ...updated, entries: [] });
       return updated;
+    },
+
+    async listContents(storeId: string): Promise<readonly ContextStoreContentSummary[]> {
+      const current = await readStore(storeId);
+      if (current.type === "note") {
+        return current.entries.map((entry) => ({
+          id: entry.id,
+          metadata: {
+            description: entry.description,
+            trigger: entry.trigger,
+            priority: "normal",
+          },
+          sizeBytes: Buffer.byteLength(entry.content, "utf8"),
+        }));
+      }
+
+      const result = await new FileSystemContextStore({
+        rootDir: current.source.path,
+      }).listContext();
+      if (!result.ok) {
+        throw new ContextStoreStoreError("source_unavailable", result.error.message);
+      }
+      return result.value;
+    },
+
+    async getContent(storeId: string, contentId: string): Promise<ContextStoreContent> {
+      const current = await readStore(storeId);
+      if (current.type === "note") {
+        const entry = current.entries.find((candidate) => candidate.id === contentId);
+        if (entry === undefined) {
+          throw new ContextStoreStoreError("content_not_found", `Context not found: ${contentId}`);
+        }
+        return {
+          id: entry.id,
+          content: entry.content,
+          metadata: {
+            description: entry.description,
+            trigger: entry.trigger,
+            priority: "normal",
+          },
+          sizeBytes: Buffer.byteLength(entry.content, "utf8"),
+          truncated: false,
+        };
+      }
+
+      const result = await new FileSystemContextStore({ rootDir: current.source.path }).readContext(
+        {
+          id: contentId,
+          offset: CONTENT_PREVIEW_MAX_BYTES,
+        },
+      );
+      if (!result.ok) {
+        throw new ContextStoreStoreError(
+          result.error.code === "context_not_found" ? "content_not_found" : "source_unavailable",
+          result.error.message,
+        );
+      }
+      return {
+        id: result.value.id,
+        content: result.value.content,
+        metadata: result.value.metadata,
+        ...(result.value.revision === undefined ? {} : { revision: result.value.revision }),
+        ...(result.value.sizeBytes === undefined ? {} : { sizeBytes: result.value.sizeBytes }),
+        truncated: result.value.contentRange.truncated,
+      };
     },
   };
 }

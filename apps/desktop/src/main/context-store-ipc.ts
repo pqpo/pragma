@@ -7,6 +7,8 @@ import { BrowserWindow, dialog, ipcMain } from "electron";
 import {
   AddContextNoteEntrySchema,
   CreateContextStoreSchema,
+  GetContextStoreContentSchema,
+  ListContextStoreContentsSchema,
   type PickWorkspaceResult,
 } from "../shared/desktop-api.ts";
 import type { ContextStoreStore } from "./context-store-store.ts";
@@ -26,6 +28,14 @@ export function installContextStoreHandlers(
   ipcMain.handle("context-stores:add-note-entry", (_event, input: unknown) => {
     const parsed = AddContextNoteEntrySchema.parse(input);
     return store.addNoteEntry(parsed.storeId, parsed.entry);
+  });
+  ipcMain.handle("context-stores:list-contents", (_event, input: unknown) => {
+    const parsed = ListContextStoreContentsSchema.parse(input);
+    return store.listContents(parsed.storeId);
+  });
+  ipcMain.handle("context-stores:get-content", (_event, input: unknown) => {
+    const parsed = GetContextStoreContentSchema.parse(input);
+    return store.getContent(parsed.storeId, parsed.contentId);
   });
   ipcMain.handle("context-stores:pick-folder", async (): Promise<PickWorkspaceResult> => {
     const window = windowGetter();

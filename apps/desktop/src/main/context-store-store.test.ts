@@ -16,7 +16,7 @@ async function createStore() {
   const directory = await mkdtemp(join(tmpdir(), "pragma-context-stores-"));
   directories.push(directory);
   const storesPath = join(directory, ".pragma", "context-stores");
-  return { storesPath, store: createContextStoreStore({ storesPath }) };
+  return { directory, storesPath, store: createContextStoreStore({ storesPath }) };
 }
 
 describe("context store store", () => {
@@ -73,6 +73,68 @@ describe("context store store", () => {
         trigger: "manual",
       }),
     ).rejects.toMatchObject({ code: "entry_exists" });
+
+    await expect(store.listContents(created.id)).resolves.toEqual([
+      {
+        id: "architecture",
+        metadata: {
+          description: "Architecture rules for code review.",
+          trigger: "always_on",
+          priority: "normal",
+        },
+        sizeBytes: 50,
+      },
+    ]);
+    await expect(store.getContent(created.id, "architecture")).resolves.toMatchObject({
+      id: "architecture",
+      content: "Prefer clear boundaries over compatibility layers.",
+      truncated: false,
+    });
+  });
+
+  it("lists file content metadata and reads selected content", async () => {
+    const { directory, store } = await createStore();
+    const sourcePath = join(directory, "docs");
+    await mkdir(join(sourcePath, "guides"), { recursive: true });
+    await writeFile(
+      join(sourcePath, "guides", "review.md"),
+      [
+        "---",
+        "description: Review guidance",
+        "trigger: model_decision",
+        "trustLevel: workspace",
+        "sensitivity: internal",
+        "priority: high",
+        "---",
+        "Review the architecture boundaries.",
+      ].join("\n"),
+      "utf8",
+    );
+    await writeFile(join(sourcePath, "ignored.txt"), "Not indexed", "utf8");
+    const created = await store.create({
+      type: "file",
+      name: "Product documentation",
+      description: "Central product docs and guides.",
+      source: { path: sourcePath, updateBehavior: "watch" },
+    });
+
+    await expect(store.listContents(created.id)).resolves.toEqual([
+      expect.objectContaining({
+        id: "guides/review.md",
+        metadata: {
+          description: "Review guidance",
+          trigger: "model_decision",
+          trustLevel: "workspace",
+          sensitivity: "internal",
+          priority: "high",
+        },
+      }),
+    ]);
+    await expect(store.getContent(created.id, "guides/review.md")).resolves.toMatchObject({
+      id: "guides/review.md",
+      content: "Review the architecture boundaries.",
+      truncated: false,
+    });
   });
 
   it("rejects corrupt persisted data", async () => {

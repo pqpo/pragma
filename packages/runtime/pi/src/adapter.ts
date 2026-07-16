@@ -108,8 +108,9 @@ export function createPiRuntime(options: CloudPiRuntimeAdapterOptions = {}): Run
           resourceLoader: loader,
           sessionManager: piSessionManagerResult.sessionManager,
         };
+        const defaultModelName = getRuntimeModelName(ctx.agent, undefined);
         const defaultModel = resolveRequiredRuntimeModel(
-          getRuntimeModelName(ctx.agent, undefined),
+          defaultModelName,
           modelRegistry,
           "agent default",
         );
@@ -133,7 +134,7 @@ export function createPiRuntime(options: CloudPiRuntimeAdapterOptions = {}): Run
             session,
             streamState,
             models: {
-              defaultModelName: ctx.agent.models?.defaultModelName,
+              defaultModelName,
               modelRegistry,
             },
           }),
