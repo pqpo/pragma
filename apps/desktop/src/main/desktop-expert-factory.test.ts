@@ -73,7 +73,7 @@ describe("resolveExpertCapabilities", () => {
       get: async (_id: string, name: string) => (name === "service-auth" ? "secret" : undefined),
     } as CapabilityCredentialStore;
     const expert: ExpertDefinition = {
-      schemaVersion: "pragma.expert/v2",
+      schemaVersion: "pragma.desktop-expert-view/v1",
       id: "reviewer",
       name: "Reviewer",
       description: "Reviews work.",
@@ -88,6 +88,7 @@ describe("resolveExpertCapabilities", () => {
       toolApprovals: {},
       plugins: [],
       contextStoreMounts: [],
+      resourceTools: [],
       revision: 1,
       createdAt: "2026-07-11T00:00:00.000Z",
       updatedAt: "2026-07-11T00:00:00.000Z",

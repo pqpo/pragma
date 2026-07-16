@@ -152,7 +152,10 @@ export async function createDesktopExpertAgent(options: {
   readonly store: CapabilityStore;
   readonly credentials: CapabilityCredentialStore;
   readonly capabilitiesPath: string;
-  readonly overrides?: Pick<DefineExpertOptions, "models" | "contextSystem" | "loggerProvider">;
+  readonly overrides?: Pick<
+    DefineExpertOptions,
+    "models" | "contextSystem" | "loggerProvider" | "tools"
+  >;
 }): Promise<Expert> {
   const resolved = await resolveExpertCapabilities({
     expert: options.definition,

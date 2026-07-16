@@ -31,7 +31,6 @@
     "vitest": "latest"
   },
   "dependencies": {
-    "@cfworker/json-schema": "^4.1.1",
     "@pragma/shared": "workspace:*",
     "@modelcontextprotocol/client": "2.0.0-alpha.2",
     "@modelcontextprotocol/server": "2.0.0-alpha.2",

@@ -1897,14 +1897,6 @@ describe("FlowExecution", () => {
         ],
       },
     });
-    const revise = flow.task({
-      id: "revise",
-      version: "1.0.0",
-      handler: ({ state }) => Number(state["revisionCount"] ?? 0) + 1,
-      reduce: ({ state, output }) => {
-        state["revisionCount"] = output;
-      },
-    });
     const approve = flow.task({
       id: "approve",
       version: "1.0.0",
@@ -1921,11 +1913,16 @@ describe("FlowExecution", () => {
         state["outcome"] = output;
       },
     });
-    flow.compose(({ start, step, end }) => {
-      start(review).route("decision", { approve, revise, reject });
-      step(revise).next(review);
+    flow.compose(({ start, step, end, repeat }) => {
+      start(review).route("decision", { approve, revise: repeat("revision", review), reject });
       step(approve).next(end());
       step(reject).next(end());
+    });
+    flow.loop({
+      id: "revision",
+      entry: review,
+      steps: [review],
+      maxIterations: 3,
     });
 
     const execution = await app.flows.start(flow, { input: null });
@@ -1953,9 +1950,13 @@ describe("FlowExecution", () => {
     await expect(execution.result).resolves.toBe("approved");
     const invocations = (await execution.getTree()).children.map((child) => child.invocation);
     expect(invocations.filter((invocation) => invocation.nodeId === "review")).toHaveLength(2);
-    expect(invocations.filter((invocation) => invocation.nodeId === "revise")).toHaveLength(1);
     expect(invocations.filter((invocation) => invocation.nodeId === "approve")).toHaveLength(1);
     expect(invocations.filter((invocation) => invocation.nodeId === "reject")).toHaveLength(0);
+    expect(
+      (await execution.listEvents({ scope: { kind: "all" }, limit: 1_000 })).items.map(
+        (event) => event.type,
+      ),
+    ).toContain("flow.loop.repeated");
   });
 
   it("marks a failing Task Invocation as failed", async () => {

@@ -9,6 +9,7 @@ import type {
   ExpertContextStoreMount,
   DesktopRuntimeAvailability,
   ModelProvider,
+  PragmaProjectSnapshot,
   UpdateExpertDefinition,
 } from "../../../../shared/desktop-api.ts";
 import { ContextStoreSchema } from "../../../../shared/desktop-api.ts";
@@ -21,7 +22,7 @@ import {
 import { ExpertDetailFragment, ExpertDirectoryFragment } from "./ExpertDirectoryFragment.tsx";
 import { ExpertEditorFragment } from "./ExpertEditorFragment.tsx";
 import { CapabilityDirectoryFragment } from "./CapabilityDirectoryFragment.tsx";
-import { StudioCollectionFragment, StudioOverviewFragment } from "./StudioOverviewFragment.tsx";
+import { PragmaResourceDirectoryFragment } from "./PragmaResourceDirectoryFragment.tsx";
 import {
   desktopApi,
   emptyDraft,
@@ -48,6 +49,7 @@ export function StudioPage() {
   const [capabilities, setCapabilities] = useState<readonly Capability[]>([]);
   const [contextDrawerOpen, setContextDrawerOpen] = useState(false);
   const [expertError, setExpertError] = useState<string | null>(null);
+  const [project, setProject] = useState<PragmaProjectSnapshot | null>(null);
 
   useEffect(() => {
     const api = desktopApi();
@@ -69,6 +71,14 @@ export function StudioPage() {
         setExpertError(errorMessage(loadError));
       }
     })();
+    void api
+      .getPragmaProject()
+      .then((snapshot) => {
+        if (!cancelled) setProject(snapshot);
+      })
+      .catch((loadError: unknown) => {
+        if (!cancelled) setExpertError(errorMessage(loadError));
+      });
     void api
       .listModelProviders()
       .then((providers) => {
@@ -123,6 +133,7 @@ export function StudioPage() {
           ? await api.createExpert(input as CreateExpertDefinition)
           : await api.updateExpert(expert.id, input as UpdateExpertDefinition);
       saved = toExpertRecord(definition);
+      setProject(await api.getPragmaProject());
     }
     setExperts((current) =>
       current.some((item) => item.id === saved.id)
@@ -194,15 +205,19 @@ export function StudioPage() {
           const SectionIcon = section.icon;
           const isActive = section.id === activeView;
           const count =
-            section.id === "overview"
-              ? undefined
-              : section.id === "context-stores"
-                ? contextStores.length
-                : section.id === "experts"
-                  ? experts.length
-                  : section.id === "capabilities"
-                    ? capabilities.length
-                    : 0;
+            section.id === "context-stores"
+              ? contextStores.length
+              : section.id === "experts"
+                ? experts.length
+                : section.id === "teams"
+                  ? (project?.resources.filter((resource) => resource.kind === "ExpertTeam")
+                      .length ?? 0)
+                  : section.id === "flows"
+                    ? (project?.resources.filter((resource) => resource.kind === "Flow").length ??
+                      0)
+                    : section.id === "capabilities"
+                      ? capabilities.length
+                      : 0;
           return (
             <button
               key={section.id}
@@ -240,6 +255,7 @@ export function StudioPage() {
             runtimes={runtimes}
             contextStores={contextStores}
             capabilities={capabilities}
+            resources={project?.resources ?? []}
             existingExpertIds={experts.map((expert) => expert.id)}
             onCancel={openExpertDirectory}
             onCreated={saveExpert}
@@ -299,19 +315,14 @@ export function StudioPage() {
             {expertError}
           </p>
         ) : null}
-        {screen === "directory" && activeView === "overview" ? (
-          <StudioOverviewFragment
-            experts={experts}
-            capabilities={capabilities}
-            contextStores={contextStores}
-            onNavigate={(view) => {
-              setActiveView(view);
-              setScreen("directory");
-            }}
+        {screen === "directory" &&
+        (activeView === "teams" || activeView === "flows") &&
+        project !== null ? (
+          <PragmaResourceDirectoryFragment
+            kind={activeView === "teams" ? "team" : "flow"}
+            project={project}
+            onProjectChanged={setProject}
           />
-        ) : null}
-        {screen === "directory" && activeView === "teams" ? (
-          <StudioCollectionFragment view={activeView} />
         ) : null}
       </div>
       {contextDrawerOpen && selectedExpert !== null ? (

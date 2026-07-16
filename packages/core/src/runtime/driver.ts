@@ -958,6 +958,9 @@ class RuntimeExecutionBindings {
       get depth() {
         return current().executionContext?.depth ?? initialDepth;
       },
+      get invokeResource() {
+        return current().executionContext?.invokeResource;
+      },
       get spawnExpert() {
         return current().executionContext?.spawnExpert;
       },

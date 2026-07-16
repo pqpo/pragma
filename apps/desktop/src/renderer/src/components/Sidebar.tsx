@@ -1,14 +1,11 @@
 import type { Icon } from "@phosphor-icons/react";
 import {
-  ArchiveTrayIcon,
-  CaretDown,
   CaretDoubleLeft,
   CaretDoubleRight,
   GearSix,
   House,
   RocketLaunch,
   TerminalWindow,
-  UserCircle,
 } from "@phosphor-icons/react";
 
 export type AppView = "missions" | "studio" | "settings";
@@ -20,7 +17,6 @@ const navigationItems: readonly {
   { label: "Home", icon: House },
   { label: "Missions", icon: RocketLaunch },
   { label: "Studio", icon: TerminalWindow },
-  { label: "Inbox", icon: ArchiveTrayIcon },
   { label: "Settings", icon: GearSix },
 ];
 
@@ -85,15 +81,6 @@ export function Sidebar(props: {
           );
         })}
       </nav>
-
-      <div className="account">
-        <UserCircle className="account-avatar" size={40} weight="thin" />
-        <div className="account-details">
-          <strong>Alex Chen</strong>
-          <span>Acme Corp</span>
-        </div>
-        <CaretDown className="account-caret" size={16} weight="bold" />
-      </div>
     </aside>
   );
 }

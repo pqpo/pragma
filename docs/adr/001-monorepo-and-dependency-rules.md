@@ -14,6 +14,7 @@ The repository is layered by package family:
 - `client` for browser/client SDK capabilities.
 - `server` for Node service infrastructure boundaries.
 - `core` for Expert Agent declarations, runtime contracts, directives, tools, plugins, and shared execution abstractions.
+- `interpreter` for Pragma DSL AST, parsing, validation, compilation, extension registries, and dump.
 - `runtime-*` for concrete runtime adapter implementations.
 - `plugins/*` for ExpertAgent extensions built on the `core` plugin API.
 - `apps` for application composition and startup only.

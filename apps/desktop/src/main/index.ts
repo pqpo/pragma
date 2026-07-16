@@ -15,9 +15,14 @@ import { createExpertDefinitionStore } from "./expert-definition-store.ts";
 import { installModelProviderHandlers } from "./model-provider-ipc.ts";
 import { createModelProviderStore } from "./model-provider-store.ts";
 import { installMissionHandlers } from "./mission-ipc.ts";
+import { createMissionRunner } from "./mission-runner.ts";
 import { createMissionStore } from "./mission-store.ts";
+import { installPragmaProjectHandlers } from "./pragma-project-ipc.ts";
+import { createPragmaProjectStore } from "./pragma-project-store.ts";
 import { getRuntimeAvailability } from "./runtime-availability.ts";
 import { installWorkspaceScopeHandlers } from "./workspace-scope.ts";
+import { installWorkflowLayoutHandlers } from "./workflow-layout-ipc.ts";
+import { createWorkflowLayoutStore } from "./workflow-layout-store.ts";
 
 const currentDir = dirname(fileURLToPath(import.meta.url));
 
@@ -76,11 +81,21 @@ void app.whenReady().then(async () => {
     encrypt: (plainText: string) => safeStorage.encryptString(plainText),
     decrypt: (encrypted: Buffer) => safeStorage.decryptString(encrypted),
   };
-  const expertStore = createExpertDefinitionStore({
-    expertsPath: join(app.getPath("home"), ".pragma", "experts"),
+  const pragmaProjectStore = createPragmaProjectStore({
+    projectsPath: join(app.getPath("home"), ".pragma", "projects"),
   });
+  installWorkflowLayoutHandlers(
+    createWorkflowLayoutStore({
+      projectsPath: join(app.getPath("home"), ".pragma", "projects"),
+    }),
+  );
+  const expertStore = createExpertDefinitionStore({ project: pragmaProjectStore });
   const missionStore = createMissionStore({
     missionsPath: join(app.getPath("home"), ".pragma", "missions"),
+  });
+  const modelProviderStore = createModelProviderStore({
+    configPath: join(app.getPath("home"), ".pragma", "model-providers.json"),
+    encryption,
   });
   const capabilityCredentials = createCapabilityCredentialStore({
     configPath: join(app.getPath("home"), ".pragma", "capability-credentials.json"),
@@ -107,13 +122,21 @@ void app.whenReady().then(async () => {
     () => mainWindow,
   );
   installExpertDefinitionHandlers(expertStore);
-  installMissionHandlers({ missions: missionStore, experts: expertStore });
-  installModelProviderHandlers(
-    createModelProviderStore({
-      configPath: join(app.getPath("home"), ".pragma", "model-providers.json"),
-      encryption,
+  installPragmaProjectHandlers(pragmaProjectStore);
+  installMissionHandlers({
+    missions: missionStore,
+    project: pragmaProjectStore,
+    runner: createMissionRunner({
+      missions: missionStore,
+      project: pragmaProjectStore,
+      capabilityStore,
+      capabilityCredentials,
+      capabilitiesPath: join(app.getPath("home"), ".pragma", "capabilities"),
+      pragmaHome: join(app.getPath("home"), ".pragma"),
+      modelProviders: modelProviderStore,
     }),
-  );
+  });
+  installModelProviderHandlers(modelProviderStore);
   await createWindow();
 
   app.on("activate", () => {

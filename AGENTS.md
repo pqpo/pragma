@@ -40,6 +40,7 @@ packages/
   client/         浏览器或客户端使用的 HTTP SDK
   server/         Node 服务端基础设施边界，例如数据库边界
   core/           ExpertAgent、Context、工具、插件、Runtime Adapter 与默认 Runtime
+  interpreter/    Pragma YAML DSL 的 AST、解析、校验、编译、扩展 registry 与 dump
   eslint-config/ 共享 ESLint 配置出口
   tsconfig/      共享 TypeScript 配置
 
@@ -88,6 +89,7 @@ tsconfig.base.json
 @pragma/client
 @pragma/server
 @pragma/core
+@pragma/interpreter
 @pragma/runtime-pi
 @pragma/runtime-codex
 @pragma/runtime-claude-code
@@ -109,7 +111,7 @@ helpers
 lib
 ```
 
-新增 package 前，必须先明确它属于 `shared`、`client`、`server`、`core`、`runtime-*`、`plugins/*`、`examples`、`apps/*` 还是配置工具。
+新增 package 前，必须先明确它属于 `shared`、`client`、`server`、`core`、`interpreter`、`runtime-*`、`plugins/*`、`examples`、`apps/*` 还是配置工具。
 
 ## 模块依赖规范
 
@@ -120,6 +122,7 @@ lib
 - `shared` 是最底层协议、领域模型和纯工具，不依赖任何运行环境层。
 - `client` 是浏览器/客户端 SDK，只依赖 `shared`，不直接碰 Server 内部实现或 Agent。
 - `core` 是专家 Agent 的执行抽象和 Runtime Adapter 边界，只依赖 `shared` 和 core 内部模块，不依赖具体 runtime、`client` 或 `server`。
+- `interpreter` 是 Pragma DSL 的语言实现，拥有 AST、解析、链接、校验、编译、扩展 registry 和 dump；可以依赖 `core` 的对象模型与执行抽象，但 `core` 不得反向依赖 `interpreter`。
 - `runtime-*` 是具体 Runtime Adapter 实现，依赖 `core`、`shared` 和该 runtime 自己的 SDK；不同 runtime 包相互独立。
 - `server` 是服务端控制面与基础设施层，可以依赖 `shared` 和 `core` 抽象。
 - `apps/server` 和 `apps/worker` 是云端运行入口，未来由它们调度专家 Agent；不是 Agent 反过来依赖 Server。
@@ -129,6 +132,7 @@ lib
 apps/web    -> client -> shared
 apps/server -> server -> core -> shared
 apps/worker -> server -> runtime-* -> core -> shared
+apps/desktop    -> interpreter -> core -> shared
 apps/desktop    -> runtime-* -> core -> shared
 plugins/*   -> core -> shared
 examples    -> runtime-* / plugin-* / core -> shared
@@ -136,19 +140,20 @@ examples    -> runtime-* / plugin-* / core -> shared
 
 更具体地说：
 
-| 来源                 | 允许依赖                                                                     |
-| -------------------- | ---------------------------------------------------------------------------- |
-| `apps/web`           | `@pragma/shared`、`@pragma/client`                                           |
-| `apps/server`        | `@pragma/shared`、`@pragma/server`、`@pragma/core`                           |
-| `apps/worker`        | `@pragma/shared`、`@pragma/server`、`@pragma/core`、具体 `@pragma/runtime-*` |
-| `apps/desktop`       | `@pragma/shared`、`@pragma/core`、具体 `@pragma/runtime-*`                   |
-| `plugins/*`          | `@pragma/shared`、`@pragma/core`；不依赖 app、server、client 或具体 runtime  |
-| `examples`           | `@pragma/core`、具体 `@pragma/runtime-*`、具体 `@pragma/plugin-*`            |
-| `packages/shared`    | 无内部 package 依赖；只允许运行时中立依赖                                    |
-| `packages/client`    | `@pragma/shared`                                                             |
-| `packages/server`    | `@pragma/shared`；需要编排时可依赖 `@pragma/core`                            |
-| `packages/core`      | `@pragma/shared`                                                             |
-| `packages/runtime/*` | `@pragma/shared`、`@pragma/core`、该 runtime 自己的 SDK                      |
+| 来源                   | 允许依赖                                                                          |
+| ---------------------- | --------------------------------------------------------------------------------- |
+| `apps/web`             | `@pragma/shared`、`@pragma/client`                                                |
+| `apps/server`          | `@pragma/shared`、`@pragma/server`、`@pragma/core`                                |
+| `apps/worker`          | `@pragma/shared`、`@pragma/server`、`@pragma/core`、具体 `@pragma/runtime-*`      |
+| `apps/desktop`         | `@pragma/shared`、`@pragma/core`、`@pragma/interpreter`、具体 `@pragma/runtime-*` |
+| `plugins/*`            | `@pragma/shared`、`@pragma/core`；不依赖 app、server、client 或具体 runtime       |
+| `examples`             | `@pragma/core`、具体 `@pragma/runtime-*`、具体 `@pragma/plugin-*`                 |
+| `packages/shared`      | 无内部 package 依赖；只允许运行时中立依赖                                         |
+| `packages/client`      | `@pragma/shared`                                                                  |
+| `packages/server`      | `@pragma/shared`；需要编排时可依赖 `@pragma/core`                                 |
+| `packages/core`        | `@pragma/shared`                                                                  |
+| `packages/interpreter` | `@pragma/core`；AST 子入口只使用运行时中立依赖                                    |
+| `packages/runtime/*`   | `@pragma/shared`、`@pragma/core`、该 runtime 自己的 SDK                           |
 
 明确禁止：
 
@@ -160,8 +165,10 @@ client -> core
 shared -> client
 shared -> server
 shared -> core
+shared -> interpreter
 core -> client
 core -> server
+core -> interpreter
 core -> runtime-*
 runtime-pi -> runtime-codex
 runtime-pi -> runtime-claude-code
@@ -177,7 +184,7 @@ plugin-* -> client
 plugin-* -> runtime-*
 ```
 
-这里的 `core` 指专家 Agent 的执行抽象、Manifest、Invocation、Runtime Adapter 合约和公共运行协议。具体 runtime 实现放在独立 `@pragma/runtime-*` 包，由 Server/Worker/Desktop 等应用入口按需装配；不要让 `core` 依赖具体 runtime、`client`、Web 或 Server 应用层。
+这里的 `core` 指专家 Agent 的执行抽象、Invocation、Runtime Adapter 合约和公共运行协议。DSL AST、Manifest 解析和对象编译属于 `@pragma/interpreter`。具体 runtime 实现放在独立 `@pragma/runtime-*` 包，由 Server/Worker/Desktop 等应用入口按需装配；不要让 `core` 依赖 `interpreter`、具体 runtime、`client`、Web 或 Server 应用层。
 
 所有跨 package 依赖必须使用 package import：
 
@@ -481,10 +488,34 @@ Expert API 设计要求：
   `RuntimeContextRecord.runtimeId`，Session、Invocation 和 snapshot 不复制 Runtime identity。
 - `ownerContextId` 是子 Agent 生命周期工具的权限边界；`createdByInvocationId` 只用于审计和树关系。
 - PragmaApp 只公开 `experts` 与 `flows` 两个执行 namespace。
+- Flow 循环控制状态必须随 Execution 持久化，保证恢复幂等。
 
-不要引入具体 Claude SDK、Codex SDK、PI SDK、具体 runtime 包、Playbook、HTTP Controller、数据库实现或 Server 应用层实现。
+不要引入 `@pragma/interpreter`、具体 Claude SDK、Codex SDK、PI SDK、具体 runtime 包、Playbook、HTTP Controller、数据库实现或 Server 应用层实现。
 
 禁止引入 Server 应用层、Client SDK、React / Next Web UI、数据库实现或 Desktop 本地权限 UI。
+
+### `packages/interpreter`
+
+职责：
+
+- 定义 `Expert`、`ExpertTeam`、`Flow` 的 `pragma/v1` YAML DSL AST 与 Zod Schema。
+- 负责 YAML 解析、跨文件 import/include、引用链接、静态校验和 lock 校验。
+- 将 DSL 编译为 `@pragma/core` 的 Expert、ExpertTeam、Flow 对象实例。
+- 提供 Tool Adapter、Flow Action、Context Policy、Serializer 等具名版本 registry。
+- 保存编译 provenance，并将实例通过 `dump()` 恢复成规范化 DSL。
+
+边界要求：
+
+- 主入口 `@pragma/interpreter` 是 Node-only，可以依赖 `@pragma/core`。
+- `@pragma/interpreter/ast` 必须保持浏览器安全，只导出 Schema 和从 Schema 推导的类型。
+- `core`、`shared`、具体 runtime 和 plugin 不得反向依赖 `interpreter`。
+- 不要新增 `defineExpertFromManifest`、`defineExpertTeamFromManifest` 或 `defineFlowFromManifest`。
+- Expert 对 Expert、ExpertTeam、Flow 的引用必须声明具名、带版本的 Tool Adapter；内置
+  `pragma.tool.call@v1` 与 `pragma.tool.delegate@v1`，新增语义通过 registry 扩展。
+- Flow 普通边必须保持 DAG；回边只能使用具名 `repeat` transition，并声明正整数
+  `maxIterations`。
+
+禁止引入具体 Runtime Adapter、Desktop UI、Server 应用层、数据库实现或 Client SDK。
 
 ## TypeScript 与导入规范
 
@@ -657,6 +688,9 @@ import "@pragma/client";
 
 // packages/core 中禁止
 import "@pragma/runtime-pi";
+
+// packages/core 中禁止
+import "@pragma/interpreter";
 ```
 
 可以用 stdin 临时验证，不要提交非法测试文件：

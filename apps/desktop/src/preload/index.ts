@@ -10,6 +10,7 @@ import {
   CapabilityTestResultSchema,
   CreateCapabilitySchema,
   DesktopRuntimeAvailabilitySchema,
+  DeleteWorkflowLayoutSchema,
   ContextStoreSchema,
   CreateExpertDefinitionSchema,
   CreateContextStoreSchema,
@@ -17,6 +18,7 @@ import {
   ExpertDefinitionSchema,
   ExpertIdSchema,
   ExpertSummarySchema,
+  GetWorkflowLayoutSchema,
   ImportSkillCapabilitySchema,
   CreateModelProviderSchema,
   DeleteModelProviderSchema,
@@ -27,12 +29,22 @@ import {
   MissionActionSchema,
   MissionIdSchema,
   MissionSchema,
+  MissionHumanInteractionSchema,
   PickWorkspaceResultSchema,
+  RespondMissionHumanInteractionSchema,
+  DeletePragmaResourceSchema,
+  PragmaProjectSnapshotSchema,
+  PragmaYamlValidationResultSchema,
+  PublishPragmaProjectSchema,
+  UpsertPragmaResourceSchema,
+  ValidatePragmaYamlSchema,
   UpdateModelProviderSchema,
   UpdateExpertDefinitionSchema,
   UpdateCapabilitySchema,
   ValidateWorkspacePathSchema,
   ValidateWorkspaceResultSchema,
+  ValidatePragmaResourceSchema,
+  WorkflowLayoutSchema,
   type PragmaDesktopAPI,
 } from "../shared/desktop-api.ts";
 
@@ -99,6 +111,48 @@ const api: PragmaDesktopAPI = {
   deleteExpert: async (id) => {
     await ipcRenderer.invoke("experts:delete", DeleteExpertDefinitionSchema.parse({ id }));
   },
+  getPragmaProject: async () =>
+    PragmaProjectSnapshotSchema.parse(await ipcRenderer.invoke("pragma-project:get")),
+  publishPragmaProject: async (input) =>
+    PragmaProjectSnapshotSchema.parse(
+      await ipcRenderer.invoke("pragma-project:publish", PublishPragmaProjectSchema.parse(input)),
+    ),
+  upsertPragmaResource: async (input) =>
+    PragmaProjectSnapshotSchema.parse(
+      await ipcRenderer.invoke("pragma-project:upsert", UpsertPragmaResourceSchema.parse(input)),
+    ),
+  deletePragmaResource: async (input) =>
+    PragmaProjectSnapshotSchema.parse(
+      await ipcRenderer.invoke("pragma-project:delete", DeletePragmaResourceSchema.parse(input)),
+    ),
+  validatePragmaYaml: async (source) =>
+    PragmaYamlValidationResultSchema.parse(
+      await ipcRenderer.invoke(
+        "pragma-project:validate-yaml",
+        ValidatePragmaYamlSchema.parse({ source }),
+      ),
+    ),
+  validatePragmaResource: async (input) =>
+    PragmaYamlValidationResultSchema.parse(
+      await ipcRenderer.invoke(
+        "pragma-project:validate-resource",
+        ValidatePragmaResourceSchema.parse(input),
+      ),
+    ),
+  getWorkflowLayout: async (input) => {
+    const result: unknown = await ipcRenderer.invoke(
+      "workflow-layout:get",
+      GetWorkflowLayoutSchema.parse(input),
+    );
+    return result === null ? null : WorkflowLayoutSchema.parse(result);
+  },
+  saveWorkflowLayout: async (layout) =>
+    WorkflowLayoutSchema.parse(
+      await ipcRenderer.invoke("workflow-layout:save", WorkflowLayoutSchema.parse(layout)),
+    ),
+  deleteWorkflowLayout: async (input) => {
+    await ipcRenderer.invoke("workflow-layout:delete", DeleteWorkflowLayoutSchema.parse(input));
+  },
   listMissions: async () => MissionSchema.array().parse(await ipcRenderer.invoke("missions:list")),
   getMission: async (id) =>
     MissionSchema.parse(await ipcRenderer.invoke("missions:get", MissionIdSchema.parse(id))),
@@ -106,6 +160,20 @@ const api: PragmaDesktopAPI = {
     MissionSchema.parse(
       await ipcRenderer.invoke("missions:create", CreateMissionSchema.parse(input)),
     ),
+  runMission: async (id) =>
+    MissionSchema.parse(
+      await ipcRenderer.invoke("missions:run", MissionActionSchema.parse({ id })),
+    ),
+  listMissionHumanInteractions: async (id) =>
+    MissionHumanInteractionSchema.array().parse(
+      await ipcRenderer.invoke("missions:human:list", MissionActionSchema.parse({ id })),
+    ),
+  respondToMissionHumanInteraction: async (input) => {
+    await ipcRenderer.invoke(
+      "missions:human:respond",
+      RespondMissionHumanInteractionSchema.parse(input),
+    );
+  },
   markMissionComplete: async (id) =>
     MissionSchema.parse(
       await ipcRenderer.invoke("missions:complete", MissionActionSchema.parse({ id })),

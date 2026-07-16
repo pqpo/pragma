@@ -18,11 +18,15 @@
     "clean": "rm -rf out dist"
   },
   "dependencies": {
+    "@dagrejs/dagre": "^3.0.0",
+    "@phosphor-icons/react": "latest",
     "@pragma/core": "workspace:*",
+    "@pragma/interpreter": "workspace:*",
     "@pragma/runtime-claude-code": "workspace:*",
     "@pragma/runtime-codex": "workspace:*",
+    "@pragma/runtime-pi": "workspace:*",
     "@pragma/shared": "workspace:*",
-    "@phosphor-icons/react": "latest",
+    "@xyflow/react": "^12.11.2",
     "fflate": "^0.8.2",
     "react": "latest",
     "react-dom": "latest",

@@ -1,5 +1,5 @@
 import type { Icon } from "@phosphor-icons/react";
-import { Database, SquaresFour, User, UsersThree, Wrench } from "@phosphor-icons/react";
+import { Database, GitBranch, User, UsersThree, Wrench } from "@phosphor-icons/react";
 
 import type {
   CreateExpertDefinition,
@@ -8,7 +8,7 @@ import type {
 } from "../../../../shared/desktop-api.ts";
 
 export type ExpertModel = ExpertDefinition["model"];
-export type StudioView = "overview" | "experts" | "teams" | "capabilities" | "context-stores";
+export type StudioView = "experts" | "teams" | "flows" | "capabilities" | "context-stores";
 
 export type ExpertRecord = {
   readonly id: string;
@@ -24,6 +24,7 @@ export type ExpertRecord = {
   readonly tools: number;
   readonly mcpServers: number;
   readonly contextStoreMounts: ExpertDefinition["contextStoreMounts"];
+  readonly resourceTools: ExpertDefinition["resourceTools"];
   readonly usesApproval: boolean;
   readonly icon: Icon;
   readonly persisted?: ExpertDefinition | undefined;
@@ -45,6 +46,7 @@ export const emptyDraft = (): ExpertDraft => ({
   tools: 0,
   mcpServers: 0,
   contextStoreMounts: [],
+  resourceTools: [],
   usesApproval: false,
   tagInput: "",
 });
@@ -66,6 +68,7 @@ export function toExpertRecord(definition: ExpertDefinition): ExpertRecord {
       .reduce((total, reference) => total + reference.toolNames.length, 0),
     mcpServers: definition.capabilities.filter((reference) => reference.kind === "tools").length,
     contextStoreMounts: definition.contextStoreMounts,
+    resourceTools: definition.resourceTools,
     usesApproval: Object.values(definition.toolApprovals).some((mode) => mode !== "none"),
     icon: User,
     persisted: definition,
@@ -89,6 +92,11 @@ export function toPersistedInput(
     toolApprovals: existing?.toolApprovals ?? {},
     plugins: existing?.plugins ?? [],
     contextStoreMounts: [...expert.contextStoreMounts],
+    resourceTools: [...expert.resourceTools],
+    opaqueCapabilities: [...(existing?.opaqueCapabilities ?? [])],
+    ...(expert.model === null && existing?.resourceRuntime !== undefined
+      ? { resourceRuntime: existing.resourceRuntime }
+      : {}),
   };
 }
 
@@ -97,9 +105,9 @@ export function desktopApi() {
 }
 
 export const studioSections = [
-  { id: "overview", label: "Overview", icon: SquaresFour },
   { id: "experts", label: "Experts", icon: User },
   { id: "teams", label: "Expert teams", icon: UsersThree },
+  { id: "flows", label: "Flows", icon: GitBranch },
   { id: "capabilities", label: "Capabilities", icon: Wrench },
   { id: "context-stores", label: "Context stores", icon: Database },
 ] as const satisfies readonly {
@@ -107,17 +115,3 @@ export const studioSections = [
   readonly label: string;
   readonly icon: Icon;
 }[];
-
-export const studioLabels = {
-  experts: "Experts",
-  teams: "Expert teams",
-  capabilities: "Capabilities",
-  "context-stores": "Context stores",
-} satisfies Record<Exclude<StudioView, "overview">, string>;
-
-export const studioDescriptions = {
-  experts: "Individuals that perform specialized work in your missions.",
-  teams: "Groups of experts that work together toward a mission.",
-  capabilities: "Reusable skills and external tools selected by experts.",
-  "context-stores": "Reusable knowledge sources mounted by experts.",
-} satisfies Record<Exclude<StudioView, "overview">, string>;

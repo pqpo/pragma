@@ -93,7 +93,13 @@ const config = tseslint.config(
       "no-restricted-imports": [
         "error",
         {
-          paths: ["@pragma/client", "@pragma/core", "@pragma/server", "@prisma/client"],
+          paths: [
+            "@pragma/client",
+            "@pragma/core",
+            "@pragma/interpreter",
+            "@pragma/server",
+            "@prisma/client",
+          ],
           patterns: [
             ...commonRestrictedPatterns,
             {
@@ -111,7 +117,7 @@ const config = tseslint.config(
       "no-restricted-imports": [
         "error",
         {
-          paths: ["@pragma/client", "@pragma/server", "@prisma/client"],
+          paths: ["@pragma/client", "@pragma/interpreter", "@pragma/server", "@prisma/client"],
           patterns: [
             ...commonRestrictedPatterns,
             {
@@ -130,6 +136,7 @@ const config = tseslint.config(
       "apps/worker/**/*.{ts,tsx}",
       "packages/server/**/*.{ts,tsx}",
       "packages/core/**/*.{ts,tsx}",
+      "packages/interpreter/**/*.{ts,tsx}",
       "packages/runtime/**/*.{ts,tsx}",
       "plugins/**/*.{ts,tsx}",
       "examples/**/*.{ts,tsx}",
@@ -151,7 +158,14 @@ const config = tseslint.config(
           patterns: [
             ...commonRestrictedPatterns,
             {
-              group: ["@pragma/core", "node:*", "next", "next/*"],
+              group: [
+                "@pragma/core",
+                "@pragma/interpreter",
+                "@pragma/interpreter/*",
+                "node:*",
+                "next",
+                "next/*",
+              ],
               message: "Shared packages must remain runtime-neutral.",
             },
           ],
@@ -207,7 +221,7 @@ const config = tseslint.config(
       "no-restricted-imports": [
         "error",
         {
-          paths: ["@pragma/client", "@pragma/server", "react"],
+          paths: ["@pragma/client", "@pragma/interpreter", "@pragma/server", "react"],
           patterns: [
             ...commonRestrictedPatterns,
             {
@@ -222,6 +236,25 @@ const config = tseslint.config(
               ],
               message:
                 "Core agent packages must not depend on concrete runtimes, server internals, or client UI.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    files: ["packages/interpreter/**/*.{ts,tsx}"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: ["@pragma/client", "@pragma/server", "react"],
+          patterns: [
+            ...commonRestrictedPatterns,
+            {
+              group: ["@pragma/runtime-*", "@pragma/server-*", "@pragma/ui-*", "next", "next/*"],
+              message:
+                "Interpreter may depend on Core execution abstractions, not concrete runtimes or app layers.",
             },
           ],
         },

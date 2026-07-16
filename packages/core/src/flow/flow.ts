@@ -43,10 +43,14 @@ export interface DefineFlowOptions<TInput = unknown, TOutput = unknown> {
   readonly input?: z.ZodType<TInput> | undefined;
   readonly output?: z.ZodType<TOutput> | undefined;
   readonly result?: ((context: { readonly state: FlowState }) => TOutput) | undefined;
+  readonly maxNodeVisits?: number | undefined;
 }
 
 export interface FlowStepOptions<TInput = unknown, TOutput = unknown> {
-  readonly input?: TInput | ((context: { readonly state: FlowState }) => TInput) | undefined;
+  readonly input?:
+    | TInput
+    | ((context: { readonly state: FlowState; readonly flowInput: unknown }) => TInput)
+    | undefined;
   readonly output?: z.ZodType<TOutput> | undefined;
   readonly reduce?:
     | ((context: { readonly state: FlowState; readonly output: TOutput }) => void)
@@ -72,19 +76,29 @@ export interface FlowTerminal {
   readonly reason?: string | undefined;
 }
 
+export interface FlowRepeatTarget {
+  readonly type: "repeat";
+  readonly loopId: string;
+  readonly target: FlowStepReference;
+}
+
+export type FlowDestination = FlowStepReference | FlowTerminal | FlowRepeatTarget;
+
 export interface FlowBuilder {
   start(step: FlowStepReference): FlowChain;
   step(step: FlowStepReference): FlowChain;
   end(): FlowTerminal;
   fail(reason?: string): FlowTerminal;
+  repeat(loopId: string, target: FlowStepReference): FlowRepeatTarget;
 }
 
 export interface FlowChain {
   next(target: FlowStepReference | FlowTerminal): FlowChain;
+  repeat(loopId: string, target: FlowStepReference): FlowChain;
   route(
     field: string,
-    cases: Readonly<Record<string, FlowStepReference | FlowTerminal>>,
-    options?: { readonly fallback?: FlowStepReference | FlowTerminal | undefined },
+    cases: Readonly<Record<string, FlowDestination>>,
+    options?: { readonly fallback?: FlowDestination | undefined },
   ): FlowChain;
 }
 
@@ -101,19 +115,30 @@ export interface Flow {
   readonly input?: z.ZodType | undefined;
   readonly output?: z.ZodType | undefined;
   readonly result?: ((context: { readonly state: FlowState }) => unknown) | undefined;
+  readonly maxNodeVisits: number;
   readonly steps: ReadonlyMap<string, CompiledFlowStep>;
   readonly startStepId: string;
   readonly transitions: ReadonlyMap<string, FlowTransition>;
+  readonly loops: ReadonlyMap<string, FlowLoopDefinition>;
 }
 
 export type FlowTransition =
   | { readonly type: "next"; readonly target: FlowStepReference | FlowTerminal }
+  | FlowRepeatTarget
   | {
       readonly type: "route";
       readonly field: string;
-      readonly cases: ReadonlyMap<string, FlowStepReference | FlowTerminal>;
-      readonly fallback?: FlowStepReference | FlowTerminal | undefined;
+      readonly cases: ReadonlyMap<string, FlowDestination>;
+      readonly fallback?: FlowDestination | undefined;
     };
+
+export interface FlowLoopDefinition {
+  readonly id: string;
+  readonly entryStepId: string;
+  readonly stepIds: ReadonlySet<string>;
+  readonly maxIterations: number;
+  readonly onLimit?: FlowStepReference | FlowTerminal | undefined;
+}
 
 export class FlowSpec<TInput = unknown, TOutput = unknown> {
   readonly kind = "flow" as const;
@@ -122,8 +147,10 @@ export class FlowSpec<TInput = unknown, TOutput = unknown> {
   readonly input: z.ZodType<TInput> | undefined;
   readonly output: z.ZodType<TOutput> | undefined;
   readonly result: ((context: { readonly state: FlowState }) => TOutput) | undefined;
+  readonly maxNodeVisits: number;
   private readonly stepDefinitions = new Map<string, CompiledFlowStep>();
   private readonly transitionDefinitions = new Map<string, FlowTransition>();
+  private readonly loopDefinitions = new Map<string, FlowLoopDefinition>();
   private firstStepId: string | undefined;
 
   constructor(options: DefineFlowOptions<TInput, TOutput>) {
@@ -132,6 +159,7 @@ export class FlowSpec<TInput = unknown, TOutput = unknown> {
     this.input = options.input;
     this.output = options.output;
     this.result = options.result;
+    this.maxNodeVisits = readPositiveInteger(options.maxNodeVisits ?? 1_000, "maxNodeVisits");
   }
 
   task<TStepInput = unknown, TStepOutput = unknown>(
@@ -218,8 +246,32 @@ export class FlowSpec<TInput = unknown, TOutput = unknown> {
       },
       end: () => ({ type: "end" }),
       fail: (reason) => ({ type: "fail", ...(reason === undefined ? {} : { reason }) }),
+      repeat: (loopId, target) => ({ type: "repeat", loopId, target }),
     };
     declare(builder);
+    return this;
+  }
+
+  loop(options: {
+    readonly id: string;
+    readonly entry: FlowStepReference;
+    readonly steps: readonly FlowStepReference[];
+    readonly maxIterations: number;
+    readonly onLimit?: FlowStepReference | FlowTerminal | undefined;
+  }): this {
+    if (this.loopDefinitions.has(options.id))
+      throw new Error(`Duplicate Flow loop id: ${options.id}`);
+    this.assertStep(options.entry.id);
+    const stepIds = new Set(options.steps.map((step) => step.id));
+    stepIds.add(options.entry.id);
+    for (const stepId of stepIds) this.assertStep(stepId);
+    this.loopDefinitions.set(options.id, {
+      id: options.id,
+      entryStepId: options.entry.id,
+      stepIds,
+      maxIterations: readPositiveInteger(options.maxIterations, `loop ${options.id} maxIterations`),
+      onLimit: options.onLimit,
+    });
     return this;
   }
 
@@ -232,9 +284,11 @@ export class FlowSpec<TInput = unknown, TOutput = unknown> {
       input: this.input,
       output: this.output,
       result: this.result,
+      maxNodeVisits: this.maxNodeVisits,
       steps: new Map(this.stepDefinitions),
       startStepId: this.firstStepId,
       transitions: new Map(this.transitionDefinitions),
+      loops: new Map(this.loopDefinitions),
     });
   }
 
@@ -269,10 +323,15 @@ class Chain implements FlowChain {
     return "id" in target ? new Chain(this.flow, target.id) : this;
   }
 
+  repeat(loopId: string, target: FlowStepReference): FlowChain {
+    this.flow.setTransition(this.stepId, { type: "repeat", loopId, target });
+    return new Chain(this.flow, target.id);
+  }
+
   route(
     field: string,
-    cases: Readonly<Record<string, FlowStepReference | FlowTerminal>>,
-    options: { readonly fallback?: FlowStepReference | FlowTerminal | undefined } = {},
+    cases: Readonly<Record<string, FlowDestination>>,
+    options: { readonly fallback?: FlowDestination | undefined } = {},
   ): FlowChain {
     this.flow.setTransition(this.stepId, {
       type: "route",
@@ -288,6 +347,13 @@ export function defineFlow<TInput = unknown, TOutput = unknown>(
   options: DefineFlowOptions<TInput, TOutput>,
 ): FlowSpec<TInput, TOutput> {
   return new FlowSpec(options);
+}
+
+function readPositiveInteger(value: number, field: string): number {
+  if (!Number.isSafeInteger(value) || value < 1) {
+    throw new Error(`Flow ${field} must be a positive integer.`);
+  }
+  return value;
 }
 
 function validateFlowRuntimeByExpert(
