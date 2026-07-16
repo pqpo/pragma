@@ -230,7 +230,7 @@ export function StudioPage() {
                 setContextDrawerOpen(false);
               }}
             >
-              <SectionIcon size={20} weight={isActive ? "fill" : "regular"} aria-hidden="true" />
+              <SectionIcon size={20} aria-hidden="true" />
               <span>{section.label}</span>
               {count !== undefined ? <em>{count}</em> : null}
             </button>
