@@ -43,9 +43,9 @@ export function Sidebar(props: {
           onClick={props.onToggle}
         >
           {props.collapsed ? (
-            <CaretDoubleRight size={18} weight="bold" aria-hidden="true" />
+            <CaretDoubleRight size={18} aria-hidden="true" />
           ) : (
-            <CaretDoubleLeft size={18} weight="bold" aria-hidden="true" />
+            <CaretDoubleLeft size={18} aria-hidden="true" />
           )}
         </button>
       </div>
@@ -75,7 +75,7 @@ export function Sidebar(props: {
               disabled={!isAvailable}
               onClick={() => targetView !== null && props.onNavigate(targetView)}
             >
-              <NavigationIcon size={24} weight={isActive ? "fill" : "regular"} />
+              <NavigationIcon size={22} aria-hidden="true" />
               <span>{item.label}</span>
             </button>
           );
