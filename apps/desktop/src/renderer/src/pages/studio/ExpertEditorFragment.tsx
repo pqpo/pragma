@@ -15,6 +15,7 @@ import {
   type ModelProvider,
 } from "../../../../shared/desktop-api.ts";
 import type { ExpertDraft, ExpertRecord } from "./studio-model.ts";
+import { ExpertCapabilityPicker } from "./ExpertCapabilityPicker.tsx";
 
 type CreateStep = "identity" | "instructions" | "capabilities" | "review";
 
@@ -405,254 +406,20 @@ export function ExpertEditorFragment(props: {
                   ) : null}
                 </label>
               ) : null}
-              <fieldset className="expert-context-store-picker expert-capability-picker">
-                <legend>Experts, teams, and flows as tools</legend>
-                <small>
-                  Each selection is compiled through the versioned pragma.tool.call@v1 adapter.
-                </small>
-                {props.resources
-                  .filter(
-                    (resource) =>
-                      !(resource.kind === "Expert" && resource.metadata.id === draft.id),
-                  )
-                  .map((resource) => {
-                    const kind =
-                      resource.kind === "Expert"
-                        ? "expert"
-                        : resource.kind === "ExpertTeam"
-                          ? "team"
-                          : "flow";
-                    const ref = `${kind}:${resource.metadata.id}@${resource.metadata.version}`;
-                    const selected = draft.resourceTools.some(
-                      (binding) => binding.target?.ref === ref,
-                    );
-                    return (
-                      <label key={ref}>
-                        <input
-                          type="checkbox"
-                          checked={selected}
-                          onChange={(event) =>
-                            setDraft({
-                              ...draft,
-                              resourceTools: event.target.checked
-                                ? [
-                                    ...draft.resourceTools,
-                                    {
-                                      adapter: "pragma.tool.call@v1",
-                                      target: { ref },
-                                      tool: {
-                                        name: `call_${kind}_${resource.metadata.id}`.replace(
-                                          /[^A-Za-z0-9_-]/g,
-                                          "_",
-                                        ),
-                                        description: `Call ${resource.metadata.name}.`,
-                                        approval: "ask",
-                                      },
-                                    },
-                                  ]
-                                : draft.resourceTools.filter(
-                                    (binding) => binding.target?.ref !== ref,
-                                  ),
-                            })
-                          }
-                        />
-                        <span>
-                          <strong>{resource.metadata.name}</strong>
-                          <small>
-                            {kind} · {resource.metadata.version}
-                          </small>
-                        </span>
-                      </label>
-                    );
-                  })}
-              </fieldset>
-              <fieldset className="expert-context-store-picker">
-                <legend>Context stores</legend>
-                <small>An expert can mount multiple stores.</small>
-                {props.contextStores.length === 0 ? <p>No context stores available.</p> : null}
-                {props.contextStores.map((store) => {
-                  const mounted = draft.contextStoreMounts.some(
-                    (mount) => mount.storeId === store.id,
-                  );
-                  return (
-                    <label key={store.id}>
-                      <input
-                        type="checkbox"
-                        checked={mounted}
-                        onChange={() => {
-                          const mounts = mounted
-                            ? draft.contextStoreMounts.filter((mount) => mount.storeId !== store.id)
-                            : [
-                                ...draft.contextStoreMounts,
-                                {
-                                  storeId: store.id,
-                                  enabled: true,
-                                  priority: draft.contextStoreMounts.length,
-                                },
-                              ];
-                          setDraft({
-                            ...draft,
-                            contextStoreMounts: mounts.map((mount, priority) => ({
-                              ...mount,
-                              priority,
-                            })),
-                          });
-                        }}
-                      />
-                      <span>
-                        <strong>{store.name}</strong>
-                        <small>
-                          {store.description ||
-                            (store.type === "file" ? "File store" : "Context note")}
-                        </small>
-                      </span>
-                    </label>
-                  );
-                })}
-              </fieldset>
-              <fieldset className="expert-context-store-picker expert-capability-picker">
-                <legend>Skills</legend>
-                <small>Load reusable guidance packages into this Expert.</small>
-                {props.capabilities.filter((capability) => capability.definition.kind === "skill")
-                  .length === 0 ? (
-                  <p>No Skills have been imported.</p>
-                ) : null}
-                {props.capabilities
-                  .filter((capability) => capability.definition.kind === "skill")
-                  .map((capability) => {
-                    const selected = draft.capabilities.find(
-                      (reference) =>
-                        reference.kind === "skill" &&
-                        reference.capabilityId === capability.manifest.id,
-                    );
-                    const unavailable =
-                      capability.health.status !== "ready" && selected === undefined;
-                    return (
-                      <label
-                        key={capability.manifest.id}
-                        className={unavailable ? "is-disabled" : ""}
-                      >
-                        <input
-                          type="checkbox"
-                          disabled={unavailable}
-                          checked={selected !== undefined}
-                          onChange={() =>
-                            setCapabilityReferences(
-                              selected === undefined
-                                ? [
-                                    ...draft.capabilities,
-                                    {
-                                      kind: "skill",
-                                      capabilityId: capability.manifest.id,
-                                      revision: capability.manifest.latestRevision,
-                                    },
-                                  ]
-                                : draft.capabilities.filter((reference) => reference !== selected),
-                            )
-                          }
-                        />
-                        <span>
-                          <strong>{capability.manifest.name}</strong>
-                          <small>
-                            {capability.definition.description}
-                            {unavailable ? " · Needs attention" : ""}
-                          </small>
-                        </span>
-                      </label>
-                    );
-                  })}
-              </fieldset>
-              <fieldset className="expert-context-store-picker expert-capability-picker">
-                <legend>Tools</legend>
-                <small>Select only the MCP, HTTP, or code tools this Expert needs.</small>
-                {props.capabilities.map((capability) => {
-                  const definition = capability.definition;
-                  if (definition.kind === "skill") return null;
-                  const foundReference = draft.capabilities.find(
-                    (reference) =>
-                      reference.kind === "tools" &&
-                      reference.capabilityId === capability.manifest.id,
-                  );
-                  const selected = foundReference?.kind === "tools" ? foundReference : undefined;
-                  const unavailable =
-                    capability.health.status !== "ready" && selected === undefined;
-                  const tools =
-                    definition.kind === "code_service" ? [definition.tool] : definition.tools;
-                  return (
-                    <div className="expert-tool-capability" key={capability.manifest.id}>
-                      <header>
-                        <span>
-                          <strong>{capability.manifest.name}</strong>
-                          <small>
-                            {definition.kind === "mcp_server"
-                              ? "MCP server"
-                              : definition.kind === "http_service"
-                                ? "HTTP service"
-                                : "Code service"}
-                            {unavailable ? " · Needs attention" : ""}
-                          </small>
-                        </span>
-                        {selected && selected.revision < capability.manifest.latestRevision ? (
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setCapabilityReferences(
-                                draft.capabilities.map((reference) =>
-                                  reference === selected
-                                    ? { ...reference, revision: capability.manifest.latestRevision }
-                                    : reference,
-                                ),
-                              )
-                            }
-                          >
-                            Upgrade to r{capability.manifest.latestRevision}
-                          </button>
-                        ) : null}
-                      </header>
-                      {tools.map((tool) => {
-                        const checked =
-                          selected?.kind === "tools" && selected.toolNames.includes(tool.name);
-                        return (
-                          <label key={tool.name} className={unavailable ? "is-disabled" : ""}>
-                            <input
-                              type="checkbox"
-                              disabled={unavailable}
-                              checked={checked}
-                              onChange={() => {
-                                const nextNames = checked
-                                  ? (selected?.toolNames ?? []).filter((name) => name !== tool.name)
-                                  : [...(selected?.toolNames ?? []), tool.name];
-                                const without = draft.capabilities.filter(
-                                  (reference) => reference !== selected,
-                                );
-                                setCapabilityReferences(
-                                  nextNames.length === 0
-                                    ? without
-                                    : [
-                                        ...without,
-                                        {
-                                          kind: "tools",
-                                          capabilityId: capability.manifest.id,
-                                          revision:
-                                            selected?.revision ??
-                                            capability.manifest.latestRevision,
-                                          toolNames: nextNames,
-                                        },
-                                      ],
-                                );
-                              }}
-                            />
-                            <span>
-                              <strong>{tool.name}</strong>
-                              <small>{tool.description ?? "External tool"}</small>
-                            </span>
-                          </label>
-                        );
-                      })}
-                    </div>
-                  );
-                })}
-              </fieldset>
+              <ExpertCapabilityPicker
+                currentExpertId={draft.id}
+                resources={props.resources}
+                contextStores={props.contextStores}
+                capabilities={props.capabilities}
+                resourceTools={draft.resourceTools}
+                contextStoreMounts={draft.contextStoreMounts}
+                capabilityReferences={draft.capabilities}
+                onResourceToolsChange={(resourceTools) => setDraft({ ...draft, resourceTools })}
+                onContextStoreMountsChange={(contextStoreMounts) =>
+                  setDraft({ ...draft, contextStoreMounts })
+                }
+                onCapabilityReferencesChange={setCapabilityReferences}
+              />
             </div>
           ) : null}
           {step === "review" ? (
