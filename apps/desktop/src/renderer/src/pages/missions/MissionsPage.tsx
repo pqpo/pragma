@@ -30,16 +30,20 @@ import {
   User,
   UsersThree,
 } from "@phosphor-icons/react";
-import type { PragmaResource } from "@pragma/interpreter/ast";
+import type { PragmaInvocableResource, PragmaResource } from "@pragma/interpreter/ast";
 import type { HumanInteractionResponse } from "@pragma/shared";
 
-import type {
-  Mission,
-  MissionChatEntry,
-  MissionChatSnapshot,
-  MissionHumanInteraction,
-  MissionWorkItem,
-  PragmaDesktopAPI,
+import {
+  isMissionExecutorResource,
+  missionExecutorKind,
+  missionExecutorRef,
+  type Mission,
+  type MissionChatEntry,
+  type MissionChatSnapshot,
+  type MissionHumanInteraction,
+  type MissionSummary,
+  type MissionWorkItem,
+  type PragmaDesktopAPI,
 } from "../../../../shared/desktop-api.ts";
 import { errorMessage } from "../../lib/errors.ts";
 import { formatMissionDateTime, formatMissionTime } from "../../lib/mission-time.ts";
@@ -47,15 +51,17 @@ import { formatMissionDateTime, formatMissionTime } from "../../lib/mission-time
 type MissionScreen = "create" | "detail";
 
 export function MissionsPage(props: { readonly initialExecutorRef?: string | undefined }) {
-  const [missions, setMissions] = useState<readonly Mission[]>([]);
+  const [missions, setMissions] = useState<readonly MissionSummary[]>([]);
+  const [selectedMission, setSelectedMission] = useState<Mission | null>(null);
   const [executors, setExecutors] = useState<readonly PragmaResource[]>([]);
   const [screen, setScreen] = useState<MissionScreen>("create");
   const [selectedMissionId, setSelectedMissionId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [deleteCandidate, setDeleteCandidate] = useState<Mission | null>(null);
+  const [deleteCandidate, setDeleteCandidate] = useState<MissionSummary | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [now, setNow] = useState(() => Date.now());
+  const selectedMissionIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 60_000);
@@ -70,7 +76,7 @@ export function MissionsPage(props: { readonly initialExecutorRef?: string | und
       .then(([storedMissions, project]) => {
         if (cancelled) return;
         setMissions(storedMissions);
-        setExecutors(project.resources);
+        setExecutors(project.resources.filter(isMissionExecutorResource));
       })
       .catch((loadError: unknown) => {
         if (!cancelled) setError(errorMessage(loadError));
@@ -89,8 +95,6 @@ export function MissionsPage(props: { readonly initialExecutorRef?: string | und
       ),
     );
   }, [missions, search]);
-  const selectedMission = missions.find((mission) => mission.id === selectedMissionId) ?? null;
-
   useEffect(() => {
     const api = desktopApi();
     if (
@@ -106,10 +110,12 @@ export function MissionsPage(props: { readonly initialExecutorRef?: string | und
   }, [selectedMission?.id, selectedMission?.execution?.status]);
 
   const replaceMission = (updated: Mission) => {
+    setSelectedMission((current) => (current?.id === updated.id ? updated : current));
     setMissions((current) =>
-      current
-        .map((mission) => (mission.id === updated.id ? updated : mission))
-        .toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
+      [
+        ...current.filter((mission) => mission.id !== updated.id),
+        missionToSummary(updated),
+      ].toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
     );
   };
 
@@ -122,14 +128,31 @@ export function MissionsPage(props: { readonly initialExecutorRef?: string | und
         selectedMissionId={screen === "detail" ? selectedMissionId : null}
         onSearch={setSearch}
         onCreate={() => {
+          selectedMissionIdRef.current = null;
           setScreen("create");
           setSelectedMissionId(null);
+          setSelectedMission(null);
           setError(null);
         }}
-        onOpen={(mission) => {
-          setSelectedMissionId(mission.id);
+        onOpen={(summary) => {
+          selectedMissionIdRef.current = summary.id;
+          setSelectedMissionId(summary.id);
+          setSelectedMission(null);
           setScreen("detail");
           setError(null);
+          const api = desktopApi();
+          if (api !== undefined) {
+            void api
+              .getMission(summary.id)
+              .then((mission) => {
+                if (selectedMissionIdRef.current === summary.id) setSelectedMission(mission);
+              })
+              .catch((loadError: unknown) => {
+                if (selectedMissionIdRef.current === summary.id) {
+                  setError(errorMessage(loadError));
+                }
+              });
+          }
         }}
         onDelete={setDeleteCandidate}
       />
@@ -140,8 +163,10 @@ export function MissionsPage(props: { readonly initialExecutorRef?: string | und
             executors={executors}
             initialExecutorRef={props.initialExecutorRef}
             onCreated={async (mission) => {
-              setMissions((current) => [mission, ...current]);
+              setMissions((current) => [missionToSummary(mission), ...current]);
+              selectedMissionIdRef.current = mission.id;
               setSelectedMissionId(mission.id);
+              setSelectedMission(mission);
               setScreen("detail");
               setError(null);
               const api = desktopApi();
@@ -256,7 +281,9 @@ export function MissionsPage(props: { readonly initialExecutorRef?: string | und
                         current.filter((mission) => mission.id !== deleteCandidate.id),
                       );
                       if (selectedMissionId === deleteCandidate.id) {
+                        selectedMissionIdRef.current = null;
                         setSelectedMissionId(null);
+                        setSelectedMission(null);
                         setScreen("create");
                       }
                       setDeleteCandidate(null);
@@ -281,14 +308,14 @@ export function MissionsPage(props: { readonly initialExecutorRef?: string | und
 }
 
 function MissionRail(props: {
-  readonly missions: readonly Mission[];
+  readonly missions: readonly MissionSummary[];
   readonly search: string;
   readonly now: number;
   readonly selectedMissionId: string | null;
   readonly onSearch: (value: string) => void;
   readonly onCreate: () => void;
-  readonly onOpen: (mission: Mission) => void;
-  readonly onDelete: (mission: Mission) => void;
+  readonly onOpen: (mission: MissionSummary) => void;
+  readonly onDelete: (mission: MissionSummary) => void;
 }) {
   const active = props.missions.filter((mission) => mission.lifecycleStatus === "active");
   const completed = props.missions.filter((mission) => mission.lifecycleStatus === "completed");
@@ -330,11 +357,11 @@ function MissionRail(props: {
 
 function MissionRailGroup(props: {
   readonly label: string;
-  readonly missions: readonly Mission[];
+  readonly missions: readonly MissionSummary[];
   readonly now: number;
   readonly selectedMissionId: string | null;
-  readonly onOpen: (mission: Mission) => void;
-  readonly onDelete: (mission: Mission) => void;
+  readonly onOpen: (mission: MissionSummary) => void;
+  readonly onDelete: (mission: MissionSummary) => void;
 }) {
   return (
     <section className="mission-rail-group">
@@ -407,6 +434,24 @@ export function CreateMissionFragment(props: {
   const [goal, setGoal] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const executors = useMemo(
+    () => props.executors.filter(isMissionExecutorResource),
+    [props.executors],
+  );
+  const selectedExecutor = executors.find(
+    (executor) => missionExecutorRef(executor) === executorRef,
+  );
+  const hasValidExecutor = selectedExecutor !== undefined;
+
+  useEffect(() => {
+    if (hasValidExecutor) return;
+    const requested = executors.find(
+      (executor) => missionExecutorRef(executor) === props.initialExecutorRef,
+    );
+    const fallback = requested ?? (executors.length === 1 ? executors[0] : undefined);
+    const nextRef = fallback === undefined ? "" : missionExecutorRef(fallback);
+    if (nextRef !== executorRef) setExecutorRef(nextRef);
+  }, [executorRef, executors, hasValidExecutor, props.initialExecutorRef]);
 
   const pickWorkspace = async () => {
     const api = desktopApi();
@@ -426,7 +471,7 @@ export function CreateMissionFragment(props: {
 
   const submit = async () => {
     const api = desktopApi();
-    if (api === undefined || workspace === null || executorRef === "" || goal.trim() === "") return;
+    if (api === undefined || workspace === null || !hasValidExecutor || goal.trim() === "") return;
     setSaving(true);
     setError(null);
     try {
@@ -453,38 +498,17 @@ export function CreateMissionFragment(props: {
           <span className="mission-selector-icon">
             <Folder size={23} aria-hidden="true" />
           </span>
-          <span>
+          <span className="mission-selector-copy">
             <small>Workspace</small>
             <strong>{workspace?.basename ?? "Choose a folder"}</strong>
             <em>{workspace?.path ?? "One working directory per mission"}</em>
           </span>
         </button>
-        <label className="mission-selector">
-          <span className="mission-selector-icon">
-            <UsersThree size={23} aria-hidden="true" />
-          </span>
-          <span>
-            <small>Executor</small>
-            <select value={executorRef} onChange={(event) => setExecutorRef(event.target.value)}>
-              <option value="">Choose an expert, team, or flow</option>
-              {props.executors.map((executor) => {
-                const kind =
-                  executor.kind === "Expert"
-                    ? "expert"
-                    : executor.kind === "ExpertTeam"
-                      ? "team"
-                      : "flow";
-                const ref = `${kind}:${executor.metadata.id}@${executor.metadata.version}`;
-                return (
-                  <option value={ref} key={ref}>
-                    {executor.metadata.name} · {kind}
-                  </option>
-                );
-              })}
-            </select>
-            <em>Project resource revision is pinned when the mission is created</em>
-          </span>
-        </label>
+        <MissionExecutorPicker
+          executors={executors}
+          value={hasValidExecutor ? executorRef : ""}
+          onChange={setExecutorRef}
+        />
       </div>
       <div className="mission-goal-composer">
         <label htmlFor="mission-goal">What do you want to accomplish?</label>
@@ -501,7 +525,7 @@ export function CreateMissionFragment(props: {
               type="button"
               aria-disabled="true"
               title={
-                executorRef === ""
+                !hasValidExecutor
                   ? "Choose an executor to inherit its context"
                   : "Context is inherited from the selected executor"
               }
@@ -522,7 +546,7 @@ export function CreateMissionFragment(props: {
               type="button"
               aria-disabled="true"
               title={
-                executorRef === ""
+                !hasValidExecutor
                   ? "Choose an executor to inherit its knowledge"
                   : "Knowledge is managed by the selected executor"
               }
@@ -534,7 +558,7 @@ export function CreateMissionFragment(props: {
               type="button"
               aria-disabled="true"
               title={
-                executorRef === ""
+                !hasValidExecutor
                   ? "Choose an executor to inherit its tools"
                   : "Tools are managed by the selected executor"
               }
@@ -546,14 +570,14 @@ export function CreateMissionFragment(props: {
           <button
             className="primary-button"
             type="button"
-            disabled={saving || workspace === null || executorRef === "" || goal.trim() === ""}
+            disabled={saving || workspace === null || !hasValidExecutor || goal.trim() === ""}
             onClick={() => void submit()}
           >
             {saving ? "Starting…" : "Start mission"}
           </button>
         </footer>
       </div>
-      {props.executors.length === 0 ? (
+      {executors.length === 0 ? (
         <p className="mission-form-note">
           Create an expert, team, or flow in Studio before starting a mission.
         </p>
@@ -565,6 +589,172 @@ export function CreateMissionFragment(props: {
       ) : null}
     </section>
   );
+}
+
+function MissionExecutorPicker(props: {
+  readonly executors: readonly PragmaInvocableResource[];
+  readonly value: string;
+  readonly onChange: (value: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState("");
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const selected = props.executors.find((executor) => missionExecutorRef(executor) === props.value);
+  const visibleExecutors = useMemo(() => {
+    const query = search.trim().toLocaleLowerCase();
+    if (query === "") return props.executors;
+    return props.executors.filter((executor) =>
+      [
+        executor.metadata.name,
+        executor.metadata.description,
+        executor.metadata.id,
+        missionExecutorKind(executor),
+      ].some((value) => value.toLocaleLowerCase().includes(query)),
+    );
+  }, [props.executors, search]);
+  const SelectedIcon = selected === undefined ? UsersThree : executorIcon(selected);
+
+  useEffect(() => {
+    if (!open) return;
+    const close = (event: MouseEvent) => {
+      if (event.target instanceof Node && !rootRef.current?.contains(event.target)) {
+        setOpen(false);
+        setSearch("");
+      }
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setOpen(false);
+        setSearch("");
+      }
+    };
+    document.addEventListener("mousedown", close);
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("mousedown", close);
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [open]);
+
+  return (
+    <div
+      className={
+        open
+          ? "mission-selector mission-executor-picker is-open"
+          : "mission-selector mission-executor-picker"
+      }
+      ref={rootRef}
+    >
+      <span className="mission-selector-icon">
+        <SelectedIcon size={23} aria-hidden="true" />
+      </span>
+      <div className="mission-selector-copy">
+        <small>Executor</small>
+        <button
+          className="mission-executor-trigger"
+          type="button"
+          aria-expanded={open}
+          aria-haspopup="dialog"
+          onClick={() => {
+            setOpen((current) => !current);
+            setSearch("");
+          }}
+        >
+          <strong>{selected?.metadata.name ?? "Choose an expert, team, or flow"}</strong>
+          <CaretDown size={16} aria-hidden="true" />
+        </button>
+        <em>
+          {selected === undefined
+            ? "Only executable Studio resources are shown"
+            : `${executorLabel(selected)} · ${selected.metadata.version}`}
+        </em>
+        {open ? (
+          <div
+            className="mission-executor-menu"
+            role="dialog"
+            aria-modal="false"
+            aria-label="Choose mission executor"
+          >
+            <header>
+              <div>
+                <strong>Choose executor</strong>
+                <small>Experts, teams, and flows can run missions.</small>
+              </div>
+              <span>{props.executors.length} available</span>
+            </header>
+            {props.executors.length > 5 ? (
+              <label className="mission-executor-search">
+                <MagnifyingGlass size={17} aria-hidden="true" />
+                <span className="sr-only">Search executors</span>
+                <input
+                  autoFocus
+                  value={search}
+                  onChange={(event) => setSearch(event.target.value)}
+                  placeholder="Search executors"
+                />
+              </label>
+            ) : null}
+            <div className="mission-executor-options" role="list" aria-label="Mission executors">
+              {visibleExecutors.map((executor, index) => {
+                const ref = missionExecutorRef(executor);
+                const kind = missionExecutorKind(executor);
+                const Icon = executorIcon(executor);
+                const isSelected = ref === props.value;
+                return (
+                  <button
+                    type="button"
+                    aria-pressed={isSelected}
+                    autoFocus={props.executors.length <= 5 && index === 0}
+                    className={
+                      isSelected ? "mission-executor-option is-selected" : "mission-executor-option"
+                    }
+                    key={ref}
+                    onClick={() => {
+                      props.onChange(ref);
+                      setOpen(false);
+                      setSearch("");
+                    }}
+                  >
+                    <span className="mission-executor-option-icon">
+                      <Icon size={18} aria-hidden="true" />
+                    </span>
+                    <span>
+                      <strong>{executor.metadata.name}</strong>
+                      <small>{executor.metadata.description}</small>
+                    </span>
+                    <span className="mission-executor-option-kind">{kind}</span>
+                    {isSelected ? <Check size={17} aria-hidden="true" /> : null}
+                  </button>
+                );
+              })}
+              {visibleExecutors.length === 0 ? (
+                <div className="mission-executor-empty">
+                  <strong>No executors found</strong>
+                  <span>Try another name or description.</span>
+                </div>
+              ) : null}
+            </div>
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function executorIcon(resource: PragmaInvocableResource) {
+  return resource.kind === "Expert"
+    ? User
+    : resource.kind === "ExpertTeam"
+      ? UsersThree
+      : GitBranch;
+}
+
+function executorLabel(resource: PragmaInvocableResource): string {
+  return resource.kind === "Expert"
+    ? "Expert"
+    : resource.kind === "ExpertTeam"
+      ? "Expert team"
+      : "Flow";
 }
 
 export function MissionDetailFragment(props: {
@@ -583,6 +773,8 @@ export function MissionDetailFragment(props: {
   const [sending, setSending] = useState(false);
   const [interrupting, setInterrupting] = useState(false);
   const [responding, setResponding] = useState(false);
+  const [loadingEarlier, setLoadingEarlier] = useState(false);
+  const [historyError, setHistoryError] = useState<string | null>(null);
   const [humanQuestionIndex, setHumanQuestionIndex] = useState(0);
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
   const [humanNotes, setHumanNotes] = useState<Record<string, string>>({});
@@ -593,6 +785,7 @@ export function MissionDetailFragment(props: {
   const isFlow = props.mission.executor.kind === "flow";
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const followLatestRef = useRef(true);
+  const prependScrollHeightRef = useRef<number | null>(null);
   const executionStatus = chat?.execution?.status ?? props.mission.execution?.status;
   const executionActive =
     executionStatus !== undefined && ["queued", "running", "waiting"].includes(executionStatus);
@@ -614,6 +807,7 @@ export function MissionDetailFragment(props: {
   useEffect(() => {
     const api = desktopApi();
     setChat(null);
+    setHistoryError(null);
     setHumanQuestionIndex(0);
     followLatestRef.current = true;
     setShowJumpToLatest(false);
@@ -628,8 +822,8 @@ export function MissionDetailFragment(props: {
       }
       refreshing = true;
       try {
-        const snapshot = await api.getMissionChat(props.mission.id);
-        if (!cancelled) setChat(snapshot);
+        const snapshot = await api.getMissionChat({ id: props.mission.id, limit: 50 });
+        if (!cancelled) setChat((current) => mergeLatestChatPage(current, snapshot));
       } catch (loadError) {
         if (!cancelled) console.error("Failed to refresh Mission chat.", loadError);
       } finally {
@@ -736,23 +930,52 @@ export function MissionDetailFragment(props: {
     }
   };
 
-  const displayEntries = chat?.entries ?? missionMessagesToChatEntries(props.mission);
+  const displayEntries = chat?.entries ?? [];
   const lastEntry = displayEntries.at(-1);
   const lastEntryFingerprint =
     lastEntry === undefined
       ? "empty"
       : `${lastEntry.id}:${lastEntry.kind}:${entryContentLength(lastEntry)}`;
 
+  const loadEarlier = async (): Promise<void> => {
+    const api = desktopApi();
+    const beforeSequence = chat?.page.nextBeforeSequence;
+    if (api === undefined || beforeSequence === undefined || loadingEarlier) return;
+    setLoadingEarlier(true);
+    setHistoryError(null);
+    const element = scrollRef.current;
+    prependScrollHeightRef.current = element?.scrollHeight ?? null;
+    followLatestRef.current = false;
+    try {
+      const earlier = await api.getMissionChat({
+        id: props.mission.id,
+        beforeSequence,
+        limit: 50,
+      });
+      setChat((current) => (current === null ? earlier : prependChatPage(current, earlier)));
+    } catch (loadError) {
+      setHistoryError(errorMessage(loadError));
+    } finally {
+      setLoadingEarlier(false);
+    }
+  };
+
   useEffect(() => {
     const element = scrollRef.current;
     if (element === null) return;
+    if (prependScrollHeightRef.current !== null) {
+      element.scrollTop += element.scrollHeight - prependScrollHeightRef.current;
+      prependScrollHeightRef.current = null;
+      setShowJumpToLatest(true);
+      return;
+    }
     if (followLatestRef.current) {
       element.scrollTop = element.scrollHeight;
       setShowJumpToLatest(false);
     } else {
       setShowJumpToLatest(true);
     }
-  }, [lastEntryFingerprint, interactions.length]);
+  }, [displayEntries.length, lastEntryFingerprint, interactions.length]);
 
   return (
     <section className="mission-detail">
@@ -843,6 +1066,21 @@ export function MissionDetailFragment(props: {
               }}
             >
               <div className="mission-chat-list">
+                {chat?.page.nextBeforeSequence !== undefined ? (
+                  <button
+                    className="mission-load-earlier"
+                    type="button"
+                    disabled={loadingEarlier}
+                    onClick={() => void loadEarlier()}
+                  >
+                    {loadingEarlier ? "Loading…" : "Load earlier messages"}
+                  </button>
+                ) : null}
+                {historyError === null ? null : (
+                  <p className="mission-history-error" role="alert">
+                    {historyError}
+                  </p>
+                )}
                 {displayEntries.map((entry) => (
                   <MissionChatEntryView
                     entry={entry}
@@ -1301,36 +1539,54 @@ function humanAnswerValid(
   return typeof answer === "string" && answer.trim() !== "";
 }
 
-function missionMessagesToChatEntries(mission: Mission): MissionChatEntry[] {
-  const messages =
-    mission.messages.length === 0
-      ? [
-          {
-            id: mission.id,
-            role: "user" as const,
-            content: mission.goal,
-            createdAt: mission.createdAt,
-          },
-        ]
-      : mission.messages;
-  return messages.map((message): MissionChatEntry => {
-    const base = {
-      id: message.id,
-      content: message.content,
-      createdAt: message.createdAt,
-      ...(message.executionId === undefined ? {} : { executionId: message.executionId }),
-    };
-    return message.role === "assistant"
-      ? { ...base, kind: "assistant", streaming: false }
-      : { ...base, kind: "user" };
-  });
-}
-
 function entryContentLength(entry: MissionChatEntry): number {
   if (entry.kind === "tool") {
     return (entry.inputPreview?.length ?? 0) + (entry.outputPreview?.length ?? 0);
   }
   return entry.content.length;
+}
+
+function mergeLatestChatPage(
+  current: MissionChatSnapshot | null,
+  latest: MissionChatSnapshot,
+): MissionChatSnapshot {
+  if (current === null) return latest;
+  const latestOldest = latest.page.oldestSequence;
+  const retainedOlder =
+    latestOldest === undefined
+      ? []
+      : current.entries.filter(
+          (entry) => entry.timelineSequence !== undefined && entry.timelineSequence < latestOldest,
+        );
+  return { ...latest, entries: uniqueChatEntries([...retainedOlder, ...latest.entries]) };
+}
+
+function prependChatPage(
+  current: MissionChatSnapshot,
+  earlier: MissionChatSnapshot,
+): MissionChatSnapshot {
+  return {
+    ...current,
+    revision: Math.max(current.revision, earlier.revision),
+    entries: uniqueChatEntries([...earlier.entries, ...current.entries]),
+    page: {
+      ...(earlier.page.oldestSequence === undefined
+        ? {}
+        : { oldestSequence: earlier.page.oldestSequence }),
+      ...(current.page.newestSequence === undefined
+        ? {}
+        : { newestSequence: current.page.newestSequence }),
+      ...(earlier.page.nextBeforeSequence === undefined
+        ? {}
+        : { nextBeforeSequence: earlier.page.nextBeforeSequence }),
+    },
+  };
+}
+
+function uniqueChatEntries(entries: readonly MissionChatEntry[]): MissionChatEntry[] {
+  const byId = new Map<string, MissionChatEntry>();
+  for (const entry of entries) byId.set(entry.id, entry);
+  return [...byId.values()];
 }
 
 function missionFooterTip(mission: Mission, chat: MissionChatSnapshot | null): string | null {
@@ -1387,7 +1643,7 @@ function workItemDepth(item: MissionWorkItem, items: readonly MissionWorkItem[])
   return Math.min(depth, 6);
 }
 
-function missionStatusLabel(mission: Mission): string {
+function missionStatusLabel(mission: Mission | MissionSummary): string {
   if (mission.lifecycleStatus === "completed") return "Completed";
   switch (mission.execution?.status) {
     case "queued":
@@ -1405,6 +1661,18 @@ function missionStatusLabel(mission: Mission): string {
     default:
       return "Ready";
   }
+}
+
+function missionToSummary(mission: Mission): MissionSummary {
+  return {
+    id: mission.id,
+    title: mission.title,
+    workspace: { basename: mission.workspace.basename },
+    executor: { kind: mission.executor.kind, name: mission.executor.name },
+    ...(mission.execution === undefined ? {} : { execution: { status: mission.execution.status } }),
+    lifecycleStatus: mission.lifecycleStatus,
+    updatedAt: mission.updatedAt,
+  };
 }
 
 function setHumanAnswer(

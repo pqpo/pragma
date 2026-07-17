@@ -8,6 +8,7 @@ import {
   CreateExpertDefinitionSchema,
   CodeServiceCapabilityDefinitionSchema,
   CreateMissionSchema,
+  GetMissionChatSchema,
   MissionChatSnapshotSchema,
   MissionSchema,
 } from "./desktop-api.ts";
@@ -114,15 +115,28 @@ describe("mission contracts", () => {
     expect(
       CreateMissionSchema.safeParse({ ...input, executor: { ref: "not-a-ref" } }).success,
     ).toBe(false);
+    expect(
+      CreateMissionSchema.safeParse({
+        ...input,
+        executor: { ref: "capability:repository_tools@1.0.0" },
+      }).success,
+    ).toBe(false);
+    expect(
+      CreateMissionSchema.safeParse({
+        ...input,
+        executor: { ref: "runtime-profile:expert_runtime@1.0.0" },
+      }).success,
+    ).toBe(false);
   });
 
   it("pins a team executor to a project revision", () => {
     expect(
       MissionSchema.safeParse({
-        schemaVersion: "pragma.mission/v2",
+        schemaVersion: "pragma.mission/v3",
         id: "00000000-0000-4000-8000-000000000000",
         title: "Deliver the feature",
         goal: "Deliver the feature",
+        initialMessageId: "00000000-0000-4000-8000-000000000001",
         workspace: { path: "/workspace/repo", basename: "repo" },
         project: { id: "studio", revision: 3 },
         executor: {
@@ -167,6 +181,7 @@ describe("mission contracts", () => {
             createdAt: "2026-07-11T00:00:02.000Z",
           },
         ],
+        page: { oldestSequence: 1, newestSequence: 1 },
         pendingInteractions: [],
         execution: {
           id: "00000000-0000-4000-8000-000000000010",
@@ -175,5 +190,11 @@ describe("mission contracts", () => {
         },
       }).success,
     ).toBe(true);
+  });
+
+  it("defaults Mission chat pages to 50 turns and caps them at 100", () => {
+    const id = "00000000-0000-4000-8000-000000000000";
+    expect(GetMissionChatSchema.parse({ id }).limit).toBe(50);
+    expect(GetMissionChatSchema.safeParse({ id, limit: 101 }).success).toBe(false);
   });
 });

@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { appendFile, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -36,9 +36,15 @@ describe("mission store", () => {
     });
     expect(created.project).toEqual({ id: "studio", revision: 3 });
     await expect(store.get(created.id)).resolves.toEqual(created);
-    await expect(store.list()).resolves.toEqual([created]);
-    expect(await readFile(join(root, "missions", created.id, "mission.yaml"), "utf8")).toContain(
-      "revision: 3",
+    await expect(store.list()).resolves.toEqual([
+      expect.objectContaining({ id: created.id, title: created.title }),
+    ]);
+    const manifest = await readFile(join(root, "missions", created.id, "mission.yaml"), "utf8");
+    expect(manifest).toContain("schemaVersion: pragma.mission/v3");
+    expect(manifest).toContain("revision: 3");
+    expect(manifest).not.toContain("messages:");
+    expect(await readFile(join(root, "missions", created.id, "messages.jsonl"), "utf8")).toContain(
+      '"kind":"user"',
     );
   });
 
@@ -74,6 +80,7 @@ describe("mission store", () => {
     const startedAt = "2026-07-15T00:00:00.000Z";
     await store.updateExecution(created.id, {
       id: executionId,
+      inputMessageId: created.initialMessageId,
       environmentFingerprint,
       status: "running",
       startedAt,
@@ -82,6 +89,7 @@ describe("mission store", () => {
       created.id,
       {
         id: executionId,
+        inputMessageId: created.initialMessageId,
         environmentFingerprint,
         status: "succeeded",
         startedAt,
@@ -92,7 +100,13 @@ describe("mission store", () => {
 
     const stale = await store.updateExecution(
       created.id,
-      { id: executionId, environmentFingerprint, status: "waiting", startedAt },
+      {
+        id: executionId,
+        inputMessageId: created.initialMessageId,
+        environmentFingerprint,
+        status: "waiting",
+        startedAt,
+      },
       { executionId, statuses: ["running", "waiting"] },
     );
 
@@ -128,11 +142,118 @@ describe("mission store", () => {
     });
     await store.updateExecution(active.id, {
       id: "00000000-0000-4000-8000-000000000002",
+      inputMessageId: active.initialMessageId,
       environmentFingerprint,
       status: "running",
       startedAt: "2026-07-16T00:00:00.000Z",
     });
     await expect(store.remove(active.id)).rejects.toMatchObject({ code: "mission_active" });
+  });
+
+  it("appends idempotent timeline records and pages logical turns", async () => {
+    const root = await temporaryRoot();
+    const store = createMissionStore({ missionsPath: join(root, "missions") });
+    const created = await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "Initial request",
+      project: { id: "studio", revision: 1 },
+      executor: expertFixture(),
+    });
+    const message = {
+      id: "00000000-0000-4000-8000-000000000010",
+      content: "Follow up",
+      createdAt: "2026-07-17T00:00:00.000Z",
+    };
+    const first = await store.appendUserMessage(created.id, message);
+    const duplicate = await store.appendUserMessage(created.id, message);
+    expect(duplicate).toEqual(first);
+    const executionReference = {
+      missionId: created.id,
+      inputMessageId: message.id,
+      executionId: "00000000-0000-4000-8000-000000000011",
+      createdAt: "2026-07-17T00:00:01.000Z",
+    };
+    const firstExecutionReference = await store.appendExecutionReference(executionReference);
+    await expect(store.appendExecutionReference(executionReference)).resolves.toEqual(
+      firstExecutionReference,
+    );
+
+    const latest = await store.readTimelinePage(created.id, { limit: 1 });
+    expect(latest.turns).toEqual([
+      expect.objectContaining({
+        sequence: 2,
+        message: expect.objectContaining({ content: "Follow up" }),
+        executionId: "00000000-0000-4000-8000-000000000011",
+      }),
+    ]);
+    expect(latest.nextBeforeSequence).toBe(2);
+    await expect(
+      store.readTimelinePage(created.id, { beforeSequence: 2, limit: 1 }),
+    ).resolves.toMatchObject({
+      turns: [expect.objectContaining({ sequence: 1 })],
+    });
+    await expect(
+      store.appendUserMessage(created.id, { ...message, content: "Conflicting content" }),
+    ).rejects.toMatchObject({ code: "message_conflict" });
+  });
+
+  it("recovers a journaled append and repairs only a torn final line", async () => {
+    const root = await temporaryRoot();
+    const store = createMissionStore({ missionsPath: join(root, "missions") });
+    const created = await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "Recover timeline",
+      project: { id: "studio", revision: 1 },
+      executor: expertFixture(),
+    });
+    const directory = join(root, "missions", created.id);
+    await appendFile(join(directory, "messages.jsonl"), '{"torn"', "utf8");
+    await writeFile(
+      join(directory, ".messages.transaction.json"),
+      `${JSON.stringify({
+        schemaVersion: "pragma.mission-message-transaction/v1",
+        record: {
+          schemaVersion: "pragma.mission-message/v1",
+          sequence: 2,
+          kind: "execution",
+          inputMessageId: created.initialMessageId,
+          executionId: "00000000-0000-4000-8000-000000000012",
+          createdAt: "2026-07-17T00:00:01.000Z",
+        },
+        updatedAt: "2026-07-17T00:00:02.000Z",
+      })}\n`,
+      "utf8",
+    );
+
+    await store.get(created.id);
+    const timeline = await store.readTimelinePage(created.id, { limit: 10 });
+    expect(timeline.turns[0]?.executionId).toBe("00000000-0000-4000-8000-000000000012");
+    expect(await readFile(join(directory, "messages.jsonl"), "utf8")).not.toContain("torn");
+  });
+
+  it("rejects v2 explicitly and does not read timelines while listing summaries", async () => {
+    const root = await temporaryRoot();
+    const store = createMissionStore({ missionsPath: join(root, "missions") });
+    const created = await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "Versioned storage",
+      project: { id: "studio", revision: 1 },
+      executor: expertFixture(),
+    });
+    const directory = join(root, "missions", created.id);
+    await appendFile(join(directory, "messages.jsonl"), "invalid-json\n", "utf8");
+    await expect(store.list()).resolves.toEqual([expect.objectContaining({ id: created.id })]);
+    await expect(store.readTimelinePage(created.id, { limit: 50 })).rejects.toMatchObject({
+      code: "timeline_invalid",
+    });
+
+    const manifestPath = join(directory, "mission.yaml");
+    await writeFile(
+      manifestPath,
+      (await readFile(manifestPath, "utf8")).replace("pragma.mission/v3", "pragma.mission/v2"),
+      "utf8",
+    );
+    await expect(store.get(created.id)).rejects.toMatchObject({ code: "unsupported_schema" });
   });
 });
 

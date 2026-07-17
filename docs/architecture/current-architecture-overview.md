@@ -73,7 +73,8 @@ Pragma 已经形成一个质量较好的**本地 Agent 执行内核**：Expert�
 - `apps/worker` 只注册 Runtime、创建一个 Expert 并输出 Ready，没有任务获取、调度、重试或治理循环。
 - `packages/server/src/runtime-gateway` 和 `packages/core/src/local-agent-bridge` 尚不存在。
 - Desktop 的 Gateway 和 Device 状态是离线快照，没有设备绑定、心跳、任务下发、事件回传或断线恢复。
-- Mission 当前是本地定义和生命周期记录，还没有连接 Execution。
+- Mission 已连接 ExpertSession / Flow Execution；v3 manifest 只保存有界元数据，跨轮用户消息和
+  Execution 引用追加到 `messages.jsonl`，生成内容仍由 Execution Canonical Event Log 投影。
 - Web 和 Client 仍只有健康检查路径，不代表控制面产品能力。
 
 ## 合理、应继续保持的设计

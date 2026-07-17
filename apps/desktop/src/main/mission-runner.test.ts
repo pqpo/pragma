@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -95,7 +95,7 @@ describe("MissionRunner", () => {
 
     await runner.run(mission.id);
     await vi.waitFor(async () => {
-      const chat = await runner.getChat(mission.id);
+      const chat = await runner.getChat({ id: mission.id, limit: 50 });
       expect(chat.execution?.interruptible).toBe(true);
       expect(chat.entries).toEqual(
         expect.arrayContaining([
@@ -108,7 +108,7 @@ describe("MissionRunner", () => {
     const interrupted = await runner.interrupt(mission.id);
     expect(interrupted.execution?.status).toBe("cancelled");
     expect(cancelTurn).toHaveBeenCalledTimes(1);
-    const settledChat = await runner.getChat(mission.id);
+    const settledChat = await runner.getChat({ id: mission.id, limit: 50 });
     expect(settledChat.execution?.interruptible).toBe(false);
     expect(settledChat.entries).toEqual(
       expect.arrayContaining([
@@ -120,7 +120,7 @@ describe("MissionRunner", () => {
     unsubscribe();
   });
 
-  it("compiles and runs the resource pinned by Mission v2", async () => {
+  it("compiles and runs the resource pinned by Mission v3", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-mission-runner-"));
     temporaryPaths.push(root);
     const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
@@ -180,9 +180,11 @@ describe("MissionRunner", () => {
       async () => expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
       { timeout: 3_000 },
     );
-    expect((await missions.get(mission.id)).messages.at(-1)?.content).toBe(
-      "writer:Prepare a concise answer",
-    );
+    await expect(runner.getChat({ id: mission.id, limit: 50 })).resolves.toMatchObject({
+      entries: expect.arrayContaining([
+        expect.objectContaining({ kind: "assistant", content: "writer:Prepare a concise answer" }),
+      ]),
+    });
 
     const followup = runner.sendMessage({
       id: mission.id,
@@ -204,8 +206,12 @@ describe("MissionRunner", () => {
       async () => expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
       { timeout: 3_000 },
     );
-    const conversation = (await missions.get(mission.id)).messages;
-    expect(conversation.map((message) => message.content)).toEqual([
+    const conversation = await runner.getChat({ id: mission.id, limit: 50 });
+    expect(
+      conversation.entries
+        .filter((entry) => entry.kind === "user" || entry.kind === "assistant")
+        .map((entry) => entry.content),
+    ).toEqual([
       "Prepare a concise answer",
       "writer:Prepare a concise answer",
       "Make it shorter",
@@ -261,6 +267,31 @@ describe("MissionRunner", () => {
       async () => expect((await missions.get(mission.id)).execution?.status).toBe("waiting"),
       { timeout: 3_000 },
     );
+    const waitingMission = await missions.get(mission.id);
+    const rejectRecoveryReference = vi.fn(async () => {
+      throw new Error("timeline preflight failed");
+    });
+    const recoveryMissions = {
+      ...missions,
+      appendExecutionReference: rejectRecoveryReference,
+    } satisfies MissionStore;
+    const restartingRunner = createMissionRunner({
+      missions: recoveryMissions,
+      project,
+      capabilityStore: {} as CapabilityStore,
+      capabilityCredentials: {} as CapabilityCredentialStore,
+      capabilitiesPath: join(root, "capabilities"),
+      pragmaHome: join(root, "state"),
+      modelProviders: {} as ModelProviderStore,
+      runtimes: createRuntimeRegistry({ runtimes: [runtime], defaultRuntime: "fake" }),
+    });
+    await expect(restartingRunner.run(mission.id)).rejects.toThrow("timeline preflight failed");
+    expect(rejectRecoveryReference).toHaveBeenCalledWith({
+      missionId: mission.id,
+      inputMessageId: waitingMission.execution?.inputMessageId,
+      executionId: waitingMission.execution?.id,
+      createdAt: waitingMission.execution?.startedAt,
+    });
     await expect(runner.listWorkItems(mission.id)).resolves.toEqual(
       expect.arrayContaining([
         expect.objectContaining({ kind: "flow" }),
@@ -282,7 +313,7 @@ describe("MissionRunner", () => {
     );
   });
 
-  it("keeps execution success independent from reply persistence and truncates long replies", async () => {
+  it("projects and truncates replies without copying assistant text into messages.jsonl", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-mission-reply-"));
     temporaryPaths.push(root);
     const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
@@ -297,16 +328,6 @@ describe("MissionRunner", () => {
       project: { id: snapshot.projectId, revision: snapshot.revision },
       executor: snapshot.resources.find((resource) => resource.kind === "Expert")!,
     });
-    let rejectAssistantReply = true;
-    const missions: MissionStore = {
-      ...storedMissions,
-      appendMessage: async (id, message) => {
-        if (rejectAssistantReply && message.role === "assistant") {
-          throw new Error("reply storage unavailable");
-        }
-        return await storedMissions.appendMessage(id, message);
-      },
-    };
     const runtime = defineRuntimeDriver<never, { id: string }>({
       descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
       createSession: () => ({ id: "runtime" }),
@@ -323,7 +344,7 @@ describe("MissionRunner", () => {
       closeSession: () => undefined,
     });
     const runner = createMissionRunner({
-      missions,
+      missions: storedMissions,
       project,
       capabilityStore: {} as CapabilityStore,
       capabilityCredentials: {} as CapabilityCredentialStore,
@@ -332,20 +353,12 @@ describe("MissionRunner", () => {
       modelProviders: {} as ModelProviderStore,
       runtimes: createRuntimeRegistry({ runtimes: [runtime], defaultRuntime: "fake" }),
     });
-    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
-
     await runner.run(mission.id);
     await vi.waitFor(
       async () =>
         expect((await storedMissions.get(mission.id)).execution?.status).toBe("succeeded"),
       { timeout: 3_000 },
     );
-    expect(consoleError).toHaveBeenCalledWith(
-      expect.stringContaining("Failed to persist Mission reply"),
-      expect.objectContaining({ message: "reply storage unavailable" }),
-    );
-
-    rejectAssistantReply = false;
     await runner.sendMessage({
       id: mission.id,
       content: "Return oversized reply",
@@ -356,10 +369,15 @@ describe("MissionRunner", () => {
         expect((await storedMissions.get(mission.id)).execution?.status).toBe("succeeded"),
       { timeout: 3_000 },
     );
-    const reply = (await storedMissions.get(mission.id)).messages.at(-1);
-    expect(reply?.role).toBe("assistant");
-    expect(reply?.content).toHaveLength(200_000);
-    expect(reply?.content.endsWith("…")).toBe(true);
+    const chat = await runner.getChat({ id: mission.id, limit: 50 });
+    const reply = chat.entries.filter((entry) => entry.kind === "assistant").at(-1);
+    expect(reply?.kind).toBe("assistant");
+    if (reply?.kind !== "assistant") throw new Error("Expected an assistant reply.");
+    expect(reply.content).toHaveLength(200_000);
+    expect(reply.content.endsWith("…")).toBe(true);
+    const timeline = await readFile(join(root, "missions", mission.id, "messages.jsonl"), "utf8");
+    expect(timeline).not.toContain('"kind":"assistant"');
+    expect(timeline).not.toContain("x".repeat(1_000));
   });
 });
 

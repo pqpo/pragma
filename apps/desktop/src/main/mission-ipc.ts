@@ -4,8 +4,11 @@ import { ipcMain, type BrowserWindow } from "electron";
 
 import {
   CreateMissionSchema,
+  GetMissionChatSchema,
+  isMissionExecutorResource,
   MissionActionSchema,
   MissionIdSchema,
+  missionExecutorRef,
   RespondMissionHumanInteractionSchema,
   SendMissionMessageSchema,
 } from "../shared/desktop-api.ts";
@@ -31,11 +34,9 @@ export function installMissionHandlers(options: {
       throw new Error("The selected workspace must be an accessible, writable directory.");
     }
     const snapshot = await options.project.get();
-    const executor = snapshot.resources.find((resource) => {
-      const kind =
-        resource.kind === "Expert" ? "expert" : resource.kind === "ExpertTeam" ? "team" : "flow";
-      return `${kind}:${resource.metadata.id}@${resource.metadata.version}` === parsed.executor.ref;
-    });
+    const executor = snapshot.resources
+      .filter(isMissionExecutorResource)
+      .find((resource) => missionExecutorRef(resource) === parsed.executor.ref);
     if (executor === undefined)
       throw new Error(`Mission executor not found: ${parsed.executor.ref}`);
     return await options.missions.create({
@@ -52,7 +53,7 @@ export function installMissionHandlers(options: {
     options.runner.sendMessage(SendMissionMessageSchema.parse(input)),
   );
   ipcMain.handle("missions:chat:get", (_event, input: unknown) =>
-    options.runner.getChat(MissionActionSchema.parse(input).id),
+    options.runner.getChat(GetMissionChatSchema.parse(input)),
   );
   ipcMain.handle("missions:interrupt", (_event, input: unknown) =>
     options.runner.interrupt(MissionActionSchema.parse(input).id),

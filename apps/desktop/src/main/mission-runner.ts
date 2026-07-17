@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 import {
   createPragma,
@@ -33,6 +33,7 @@ import type {
   MissionChatEntry,
   MissionChatSnapshot,
   MissionChatUpdate,
+  MissionChatQuery,
   MissionHumanInteraction,
   MissionWorkItem,
 } from "../shared/desktop-api.ts";
@@ -45,7 +46,7 @@ import {
   parseDesktopContextBindingRef,
   parseDesktopModelProviderBindingRef,
 } from "./desktop-binding-ref.ts";
-import type { MissionStore } from "./mission-store.ts";
+import type { MissionStore, MissionTimelineTurn } from "./mission-store.ts";
 import type { ModelProviderStore } from "./model-provider-store.ts";
 import type { PragmaProjectStore } from "./pragma-project-store.ts";
 
@@ -56,7 +57,7 @@ export interface MissionRunner {
     readonly content: string;
     readonly requestId: string;
   }): Promise<Mission>;
-  getChat(id: string): Promise<MissionChatSnapshot>;
+  getChat(input: MissionChatQuery): Promise<MissionChatSnapshot>;
   subscribeChat(listener: (update: MissionChatUpdate) => void): () => void;
   interrupt(id: string): Promise<Mission>;
   listWorkItems(id: string): Promise<readonly MissionWorkItem[]>;
@@ -113,10 +114,6 @@ export function createMissionRunner(options: {
   const chatRevisions = new Map<string, number>();
   const chatTimers = new Map<string, ReturnType<typeof setTimeout>>();
   const liveChats = new Map<string, LiveMissionChat>();
-  const historyCache = new Map<
-    string,
-    { readonly signature: string; readonly entries: MissionChatEntry[] }
-  >();
   const executorNameCache = new Map<string, ReadonlyMap<string, string>>();
 
   const trackOperation = (id: string, operation: PendingMissionOperation): void => {
@@ -170,10 +167,10 @@ export function createMissionRunner(options: {
     readonly missionId: string;
     readonly handle: MutableExecution & { readonly result: Promise<unknown> };
     readonly startedAt: string;
+    readonly inputMessageId: string;
     readonly environmentFingerprint: string;
     readonly sessionId?: string | undefined;
     readonly onFinished?: (() => void | Promise<void>) | undefined;
-    readonly onSucceeded?: ((result: unknown) => void | Promise<void>) | undefined;
   }): void => {
     const live = observeMissionChat(input.handle, () => scheduleChatUpdate(input.missionId));
     liveChats.set(input.missionId, live);
@@ -182,10 +179,10 @@ export function createMissionRunner(options: {
       input.missionId,
       input.handle,
       input.startedAt,
+      input.inputMessageId,
       input.environmentFingerprint,
       input.onFinished ?? (() => undefined),
       input.sessionId,
-      input.onSucceeded,
     ).finally(async () => await forgetActive(input.missionId, input.handle.executionId));
     active.set(input.missionId, { handle: input.handle, settlement });
     scheduleChatUpdate(input.missionId, true);
@@ -214,6 +211,29 @@ export function createMissionRunner(options: {
       const recoverable =
         mission.execution !== undefined &&
         ["queued", "running", "waiting"].includes(mission.execution.status);
+      const inputMessageId = recoverable
+        ? mission.execution!.inputMessageId
+        : mission.execution === undefined
+          ? mission.initialMessageId
+          : randomUUID();
+      if (!recoverable && mission.execution !== undefined) {
+        await options.missions.appendUserMessage(mission.id, {
+          id: inputMessageId,
+          content: mission.goal,
+          createdAt: startedAt,
+        });
+      }
+      const executionStartedAt = recoverable ? mission.execution!.startedAt : startedAt;
+      if (recoverable) {
+        // Verify the durable Mission link before recover() starts the Flow again. Recovery keeps the
+        // same Execution id, so the original timestamp makes this append idempotent.
+        await options.missions.appendExecutionReference({
+          missionId: mission.id,
+          inputMessageId,
+          executionId: mission.execution!.id,
+          createdAt: executionStartedAt,
+        });
+      }
       const handle = recoverable
         ? await app.flows.recover(compiled.value, {
             executionId: mission.execution!.id,
@@ -223,20 +243,27 @@ export function createMissionRunner(options: {
             input: { goal: mission.goal, workspace: mission.workspace.path },
             runtime,
           });
+      if (!recoverable) {
+        await options.missions.appendExecutionReference({
+          missionId: mission.id,
+          inputMessageId,
+          executionId: handle.executionId,
+          createdAt: executionStartedAt,
+        });
+      }
       const running = await options.missions.updateExecution(mission.id, {
         id: handle.executionId,
+        inputMessageId,
         environmentFingerprint: compiled.environmentFingerprint.value,
         status: "running",
-        startedAt,
+        startedAt: executionStartedAt,
       });
       trackExecution({
         missionId: mission.id,
         handle,
-        startedAt,
+        startedAt: executionStartedAt,
+        inputMessageId,
         environmentFingerprint: compiled.environmentFingerprint.value,
-        onSucceeded: async (result) => {
-          await appendExecutionReply(options.missions, mission.id, handle, result);
-        },
       });
       return running;
     }
@@ -255,6 +282,9 @@ export function createMissionRunner(options: {
             runtime: compiled.rootRuntimeId,
           }));
     sessions.set(mission.id, session);
+    const inputMessageId = recoverable
+      ? mission.execution!.inputMessageId
+      : mission.initialMessageId;
     const turn = await session.prompt(
       recoverable
         ? [
@@ -264,9 +294,17 @@ export function createMissionRunner(options: {
             `Mission goal: ${mission.goal}`,
           ].join("\n")
         : mission.goal,
+      { requestId: recoverable ? randomUUID() : inputMessageId },
     );
+    await options.missions.appendExecutionReference({
+      missionId: mission.id,
+      inputMessageId,
+      executionId: turn.executionId,
+      createdAt: startedAt,
+    });
     const running = await options.missions.updateExecution(mission.id, {
       id: turn.executionId,
+      inputMessageId,
       sessionId: session.sessionId,
       environmentFingerprint: compiled.environmentFingerprint.value,
       status: "running",
@@ -276,12 +314,10 @@ export function createMissionRunner(options: {
       missionId: mission.id,
       handle: turn,
       startedAt,
+      inputMessageId,
       environmentFingerprint: compiled.environmentFingerprint.value,
       sessionId: session.sessionId,
       onFinished: async () => await waitForExpertTurnSettlement(session, turn.requestId),
-      onSucceeded: async (result) => {
-        await appendExecutionReply(options.missions, mission.id, turn, result);
-      },
     });
     return running;
   };
@@ -324,16 +360,22 @@ export function createMissionRunner(options: {
             sessionId: mission.execution.sessionId,
           }));
     sessions.set(mission.id, session);
-    await options.missions.appendMessage(mission.id, {
+    await options.missions.appendUserMessage(mission.id, {
       id: input.requestId,
-      role: "user",
       content: input.content,
       createdAt: new Date().toISOString(),
     });
     const turn = await session.prompt(input.content, { requestId: input.requestId });
     const startedAt = new Date().toISOString();
+    await options.missions.appendExecutionReference({
+      missionId: mission.id,
+      inputMessageId: input.requestId,
+      executionId: turn.executionId,
+      createdAt: startedAt,
+    });
     const running = await options.missions.updateExecution(mission.id, {
       id: turn.executionId,
+      inputMessageId: input.requestId,
       sessionId: session.sessionId,
       environmentFingerprint: compiled.environmentFingerprint.value,
       status: "running",
@@ -343,12 +385,10 @@ export function createMissionRunner(options: {
       missionId: mission.id,
       handle: turn,
       startedAt,
+      inputMessageId: input.requestId,
       environmentFingerprint: compiled.environmentFingerprint.value,
       sessionId: session.sessionId,
       onFinished: async () => await waitForExpertTurnSettlement(session, turn.requestId),
-      onSucceeded: async (result) => {
-        await appendExecutionReply(options.missions, mission.id, turn, result);
-      },
     });
     return running;
   };
@@ -365,27 +405,16 @@ export function createMissionRunner(options: {
     await options.missions.remove(id);
   };
 
-  const getChatSnapshot = async (id: string): Promise<MissionChatSnapshot> => {
-    const mission = await options.missions.get(id);
-    const signature = JSON.stringify(mission.messages);
-    let cached = historyCache.get(id);
-    if (cached?.signature !== signature) {
-      cached = {
-        signature,
-        entries: await readMissionChatHistory(mission, executionStore),
-      };
-      historyCache.set(id, cached);
-    }
-
-    const currentLive = liveChats.get(id);
-    const entries = [...cached.entries];
-    if (
-      currentLive !== undefined &&
-      !mission.messages.some(
-        (message) =>
-          message.role === "assistant" && message.executionId === currentLive.executionId,
-      )
-    ) {
+  const getChatSnapshot = async (input: MissionChatQuery): Promise<MissionChatSnapshot> => {
+    const mission = await options.missions.get(input.id);
+    const timeline = await options.missions.readTimelinePage(mission.id, input);
+    const currentLive = liveChats.get(mission.id);
+    const entries = await readMissionChatHistory(
+      timeline.turns,
+      executionStore,
+      currentLive?.executionId,
+    );
+    if (input.beforeSequence === undefined && currentLive !== undefined) {
       entries.push(...currentLive.entries);
     }
 
@@ -405,14 +434,25 @@ export function createMissionRunner(options: {
         executorName: names.get(entry.executorId) ?? entry.executorId,
       };
     });
-    const current = active.get(id);
+    const current = active.get(mission.id);
     const pendingInteractions =
       current === undefined ? [] : await listPendingHumanInteractions(current.handle);
 
     return {
       missionId: mission.id,
-      revision: chatRevisions.get(id) ?? 0,
+      revision: chatRevisions.get(mission.id) ?? 0,
       entries: namedEntries,
+      page: {
+        ...(timeline.oldestSequence === undefined
+          ? {}
+          : { oldestSequence: timeline.oldestSequence }),
+        ...(timeline.newestSequence === undefined
+          ? {}
+          : { newestSequence: timeline.newestSequence }),
+        ...(timeline.nextBeforeSequence === undefined
+          ? {}
+          : { nextBeforeSequence: timeline.nextBeforeSequence }),
+      },
       pendingInteractions,
       ...(mission.execution === undefined
         ? {}
@@ -465,8 +505,8 @@ export function createMissionRunner(options: {
       trackOperation(input.id, { kind: "message", promise: sending });
       return await sending;
     },
-    async getChat(id) {
-      return await getChatSnapshot(id);
+    async getChat(input) {
+      return await getChatSnapshot(input);
     },
     subscribeChat(listener) {
       chatListeners.add(listener);
@@ -501,7 +541,6 @@ export function createMissionRunner(options: {
       const deleting = deleteMission(id);
       trackOperation(id, { kind: "delete", promise: deleting });
       await deleting;
-      historyCache.delete(id);
       chatRevisions.delete(id);
     },
     async listHumanInteractions(id) {
@@ -656,10 +695,10 @@ function observeExecution(
     readonly getMessageHistory: MutableExecution["getMessageHistory"];
   },
   startedAt: string,
+  inputMessageId: string,
   environmentFingerprint: string,
   onFinished: () => void | Promise<void>,
   sessionId?: string,
-  onSucceeded?: (result: unknown) => void | Promise<void>,
 ): Promise<void> {
   let lastObservedStatus: string | undefined;
   const probe = setInterval(() => {
@@ -675,6 +714,7 @@ function observeExecution(
               missionId,
               {
                 id: execution.executionId,
+                inputMessageId,
                 ...(sessionId === undefined ? {} : { sessionId }),
                 environmentFingerprint,
                 status: "running",
@@ -694,6 +734,7 @@ function observeExecution(
           missionId,
           {
             id: execution.executionId,
+            inputMessageId,
             ...(sessionId === undefined ? {} : { sessionId }),
             environmentFingerprint,
             status: "waiting",
@@ -713,38 +754,24 @@ function observeExecution(
   return (async () => {
     let status: "succeeded" | "failed" | "cancelled" = "succeeded";
     let failure: unknown;
-    let result: unknown;
     try {
-      result = await execution.result;
+      await execution.result;
     } catch (error) {
       const state = await execution.getState().catch(() => undefined);
       status =
         state?.status === "cancelled" || state?.status === "interrupted" ? "cancelled" : "failed";
       failure = error;
     }
-    if (status === "succeeded") {
-      try {
-        await onSucceeded?.(result);
-      } catch (error) {
-        console.error(`Failed to persist Mission reply for ${execution.executionId}.`, error);
-      }
-    }
     try {
       await onFinished();
     } catch (error) {
       console.error(`Failed to finish Mission execution ${execution.executionId}.`, error);
     }
-    if (status !== "succeeded") {
-      try {
-        await appendTerminalExecutionReply(missions, missionId, execution, status, failure);
-      } catch (error) {
-        console.error(`Failed to persist Mission outcome for ${execution.executionId}.`, error);
-      }
-    }
     await missions.updateExecution(
       missionId,
       {
         id: execution.executionId,
+        inputMessageId,
         ...(sessionId === undefined ? {} : { sessionId }),
         environmentFingerprint,
         status,
@@ -762,101 +789,80 @@ function observeExecution(
   })().finally(() => clearInterval(probe));
 }
 
-async function appendExecutionReply(
-  missions: MissionStore,
-  missionId: string,
-  execution: Pick<MutableExecution, "executionId" | "getMessageHistory">,
-  result: unknown,
-): Promise<void> {
-  const histories = await execution.getMessageHistory({ scope: { kind: "root" } }).catch(() => []);
-  const assistantText = latestAssistantText(histories.flatMap((history) => history.messages));
-  const content = formatValue(assistantText ?? result, 200_000).trim();
-  await missions.appendMessage(missionId, {
-    id: execution.executionId,
-    role: "assistant",
-    content: content === "" ? "Execution completed without a text result." : content,
-    createdAt: new Date().toISOString(),
-    executionId: execution.executionId,
-  });
-}
-
-async function appendTerminalExecutionReply(
-  missions: MissionStore,
-  missionId: string,
-  execution: Pick<MutableExecution, "executionId" | "getMessageHistory">,
-  status: "failed" | "cancelled",
-  failure: unknown,
-): Promise<void> {
-  const histories = await execution.getMessageHistory({ scope: { kind: "root" } }).catch(() => []);
-  const assistantText = latestAssistantText(histories.flatMap((history) => history.messages));
-  const failureMessage = failure instanceof Error ? failure.message : String(failure ?? "");
-  const fallback =
-    status === "cancelled"
-      ? "Execution interrupted."
-      : failureMessage.trim() === ""
-        ? "Execution failed."
-        : `Execution failed: ${failureMessage}`;
-  await missions.appendMessage(missionId, {
-    id: execution.executionId,
-    role: "assistant",
-    content: truncate(assistantText?.trim() || fallback, 200_000),
-    createdAt: new Date().toISOString(),
-    executionId: execution.executionId,
-  });
-}
-
-function latestAssistantText(records: readonly AgentMessageRecord[]): string | undefined {
-  return records
-    .map((record) => record.message)
-    .filter((message) => message.role === "assistant")
-    .map((message) =>
-      message.content
-        .flatMap((content) => (content.type === "text" ? [content.text] : []))
-        .join("\n"),
-    )
-    .filter((content) => content.trim() !== "")
-    .at(-1);
-}
-
 async function readMissionChatHistory(
-  mission: Mission,
+  turns: readonly MissionTimelineTurn[],
   executionStore: ReturnType<typeof createFileExecutionStore>,
+  activeExecutionId?: string,
 ): Promise<MissionChatEntry[]> {
   const entries: MissionChatEntry[] = [];
-  for (const message of mission.messages) {
-    if (message.role === "user") {
+  for (const turn of turns) {
+    entries.push({
+      id: turn.message.id,
+      timelineSequence: turn.sequence,
+      kind: "user",
+      content: turn.message.content,
+      createdAt: turn.message.createdAt,
+      ...(turn.executionId === undefined ? {} : { executionId: turn.executionId }),
+    });
+    if (turn.executionId === undefined || turn.executionId === activeExecutionId) continue;
+
+    const view = new StoredExecutionView(turn.executionId, executionStore);
+    const state = await view.getState().catch(() => undefined);
+    if (state === undefined) {
       entries.push({
-        id: message.id,
-        kind: "user",
-        content: message.content,
-        createdAt: message.createdAt,
-        ...(message.executionId === undefined ? {} : { executionId: message.executionId }),
+        id: `missing:${turn.executionId}`,
+        timelineSequence: turn.sequence,
+        executionId: turn.executionId,
+        kind: "assistant",
+        content: "Execution history unavailable.",
+        streaming: false,
+        createdAt: turn.message.createdAt,
       });
       continue;
     }
+    if (["queued", "running", "waiting"].includes(state.status)) continue;
 
-    let richEntries: MissionChatEntry[] = [];
-    if (message.executionId !== undefined) {
-      const view = new StoredExecutionView(message.executionId, executionStore);
-      const histories = await view.getMessageHistory({ scope: { kind: "all" } }).catch(() => []);
-      richEntries = finalizeHistoricalChatEntries(
-        messageRecordsToChatEntries(histories.flatMap((history) => history.messages)),
-      );
-    }
-    if (richEntries.length > 0) {
-      entries.push(...richEntries);
-    } else {
+    const histories = await view.getMessageHistory({ scope: { kind: "all" } }).catch(() => []);
+    const richEntries = finalizeHistoricalChatEntries(
+      messageRecordsToChatEntries(histories.flatMap((history) => history.messages)).map(
+        (entry) => ({
+          ...entry,
+          timelineSequence: turn.sequence,
+        }),
+      ),
+    );
+    entries.push(...richEntries);
+    if (!richEntries.some((entry) => entry.kind === "assistant")) {
       entries.push({
-        id: message.id,
+        id: `result:${turn.executionId}`,
+        timelineSequence: turn.sequence,
+        executionId: turn.executionId,
         kind: "assistant",
-        content: message.content,
+        content: executionFallback(state.status, state.output, state.error),
         streaming: false,
-        createdAt: message.createdAt,
-        ...(message.executionId === undefined ? {} : { executionId: message.executionId }),
+        createdAt: state.updatedAt,
       });
     }
   }
   return entries;
+}
+
+function executionFallback(status: string, output: unknown, error: unknown): string {
+  if (status === "succeeded") {
+    const content = formatValue(output, 200_000).trim();
+    return content === "" ? "Execution completed without a text result." : content;
+  }
+  if (status === "cancelled" || status === "interrupted") return "Execution interrupted.";
+  const message = readErrorMessage(error);
+  return message === "" ? "Execution failed." : `Execution failed: ${message}`;
+}
+
+function readErrorMessage(error: unknown): string {
+  if (typeof error === "string") return error.trim();
+  if (typeof error === "object" && error !== null && "message" in error) {
+    return String(error.message).trim();
+  }
+  return error === undefined ? "" : String(error).trim();
 }
 
 function finalizeHistoricalChatEntries(entries: readonly MissionChatEntry[]): MissionChatEntry[] {

@@ -32,11 +32,13 @@ import {
   ModelConnectionTestResultSchema,
   ModelProviderSchema,
   CreateMissionSchema,
+  GetMissionChatSchema,
   MissionActionSchema,
   MissionChatSnapshotSchema,
   MissionChatUpdateSchema,
   MissionIdSchema,
   MissionSchema,
+  MissionSummarySchema,
   MissionHumanInteractionSchema,
   MissionWorkItemSchema,
   PickWorkspaceResultSchema,
@@ -119,7 +121,9 @@ const api: PragmaDesktopAPI = {
   listExperts: async () =>
     ExpertSummarySchema.array().parse(await ipcRenderer.invoke("experts:list")),
   getExpert: async (ref) =>
-    ExpertDefinitionSchema.parse(await ipcRenderer.invoke("experts:get", ExpertRefSchema.parse(ref))),
+    ExpertDefinitionSchema.parse(
+      await ipcRenderer.invoke("experts:get", ExpertRefSchema.parse(ref)),
+    ),
   createExpert: async (input) =>
     ExpertDefinitionSchema.parse(
       await ipcRenderer.invoke("experts:create", CreateExpertDefinitionSchema.parse(input)),
@@ -177,7 +181,8 @@ const api: PragmaDesktopAPI = {
   deleteWorkflowLayout: async (input) => {
     await ipcRenderer.invoke("workflow-layout:delete", DeleteWorkflowLayoutSchema.parse(input));
   },
-  listMissions: async () => MissionSchema.array().parse(await ipcRenderer.invoke("missions:list")),
+  listMissions: async () =>
+    MissionSummarySchema.array().parse(await ipcRenderer.invoke("missions:list")),
   getMission: async (id) =>
     MissionSchema.parse(await ipcRenderer.invoke("missions:get", MissionIdSchema.parse(id))),
   createMission: async (input) =>
@@ -192,9 +197,9 @@ const api: PragmaDesktopAPI = {
     MissionSchema.parse(
       await ipcRenderer.invoke("missions:message:send", SendMissionMessageSchema.parse(input)),
     ),
-  getMissionChat: async (id) =>
+  getMissionChat: async (input) =>
     MissionChatSnapshotSchema.parse(
-      await ipcRenderer.invoke("missions:chat:get", MissionActionSchema.parse({ id })),
+      await ipcRenderer.invoke("missions:chat:get", GetMissionChatSchema.parse(input)),
     ),
   subscribeMissionChat: (id, listener) => {
     const missionId = MissionIdSchema.parse(id);

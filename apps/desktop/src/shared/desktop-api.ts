@@ -4,8 +4,10 @@ import {
   HumanInteractionResponseSchema,
 } from "@pragma/shared";
 import {
+  canonicalPragmaResourceRef,
   PragmaDiagnosticSchema,
   PragmaExpertResourceSchema,
+  PragmaInvocableResourceRefSchema,
   PragmaLockSchema,
   PragmaResourceRefSchema,
   PragmaSemanticResourceRefSchema,
@@ -16,6 +18,8 @@ import {
   PragmaJsonSchemaSchema,
   PragmaObjectJsonSchemaSchema,
   type PragmaJsonSchema,
+  type PragmaInvocableResource,
+  type PragmaResource,
 } from "@pragma/interpreter/ast";
 import { z } from "zod";
 
@@ -686,7 +690,7 @@ export const MissionWorkspaceSchema = z.object({
 });
 
 const MissionExecutorBaseSchema = z.object({
-  ref: PragmaResourceRefSchema,
+  ref: PragmaInvocableResourceRefSchema,
   name: z.string().trim().min(1).max(120),
   version: z.string().trim().min(1).max(100),
 });
@@ -699,13 +703,27 @@ export const MissionExecutorSchema = z.discriminatedUnion("kind", [
 
 export const MissionLifecycleStatusSchema = z.enum(["active", "completed"]);
 
-export const MissionMessageSchema = z.object({
+export const MissionUserMessageSchema = z.object({
   id: z.string().uuid(),
-  role: z.enum(["user", "assistant"]),
-  content: z.string().min(1).max(200_000),
+  content: z.string().min(1).max(100_000),
   createdAt: z.string().datetime(),
-  executionId: z.string().uuid().optional(),
 });
+
+export const MissionTimelineRecordSchema = z.discriminatedUnion("kind", [
+  MissionUserMessageSchema.extend({
+    schemaVersion: z.literal("pragma.mission-message/v1"),
+    sequence: z.number().int().positive(),
+    kind: z.literal("user"),
+  }),
+  z.object({
+    schemaVersion: z.literal("pragma.mission-message/v1"),
+    sequence: z.number().int().positive(),
+    kind: z.literal("execution"),
+    inputMessageId: z.string().uuid(),
+    executionId: z.string().uuid(),
+    createdAt: z.string().datetime(),
+  }),
+]);
 
 export const MissionWorkItemSchema = z.object({
   invocationId: z.string().min(1),
@@ -726,24 +744,34 @@ export const MissionWorkItemSchema = z.object({
   outputSummary: z.string().max(1_000).optional(),
 });
 
+const MissionExecutionStatusSchema = z.enum([
+  "queued",
+  "running",
+  "waiting",
+  "succeeded",
+  "failed",
+  "cancelled",
+]);
+
 export const MissionSchema = z.object({
-  schemaVersion: z.literal("pragma.mission/v2"),
+  schemaVersion: z.literal("pragma.mission/v3"),
   id: MissionIdSchema,
   title: z.string().trim().min(1).max(120),
   goal: z.string().trim().min(1).max(100_000),
+  initialMessageId: z.string().uuid(),
   workspace: MissionWorkspaceSchema,
   project: z.object({
     id: z.string().trim().min(1),
     revision: z.number().int().positive(),
   }),
   executor: MissionExecutorSchema,
-  messages: z.array(MissionMessageSchema).default([]),
   execution: z
     .object({
       id: z.string().uuid(),
+      inputMessageId: z.string().uuid(),
       sessionId: z.string().uuid().optional(),
       environmentFingerprint: z.string().length(64),
-      status: z.enum(["queued", "running", "waiting", "succeeded", "failed", "cancelled"]),
+      status: MissionExecutionStatusSchema,
       startedAt: z.string().datetime(),
       finishedAt: z.string().datetime().optional(),
       error: z.string().max(10_000).optional(),
@@ -755,15 +783,54 @@ export const MissionSchema = z.object({
   completedAt: z.string().datetime().optional(),
 });
 
+export const MissionSummarySchema = z.object({
+  id: MissionIdSchema,
+  title: z.string().trim().min(1).max(120),
+  workspace: z.object({ basename: z.string().trim().min(1).max(255) }),
+  executor: z.object({
+    kind: z.enum(["expert", "team", "flow"]),
+    name: z.string().trim().min(1).max(120),
+  }),
+  execution: z.object({ status: MissionExecutionStatusSchema }).optional(),
+  lifecycleStatus: MissionLifecycleStatusSchema,
+  updatedAt: z.string().datetime(),
+});
+
 export const CreateMissionSchema = z.object({
   workspace: z.string().trim().min(1).max(2_000),
   executor: z.object({
-    ref: PragmaResourceRefSchema,
+    ref: PragmaInvocableResourceRefSchema,
   }),
   goal: z.string().trim().min(1).max(100_000),
 });
 
+export function isMissionExecutorResource(
+  resource: PragmaResource,
+): resource is PragmaInvocableResource {
+  return resource.kind === "Expert" || resource.kind === "ExpertTeam" || resource.kind === "Flow";
+}
+
+export function missionExecutorKind(resource: PragmaInvocableResource): "expert" | "team" | "flow" {
+  switch (resource.kind) {
+    case "Expert":
+      return "expert";
+    case "ExpertTeam":
+      return "team";
+    case "Flow":
+      return "flow";
+  }
+}
+
+export function missionExecutorRef(resource: PragmaInvocableResource): string {
+  return canonicalPragmaResourceRef(resource);
+}
+
 export const MissionActionSchema = z.object({ id: MissionIdSchema });
+export const GetMissionChatSchema = z.object({
+  id: MissionIdSchema,
+  beforeSequence: z.number().int().positive().optional(),
+  limit: z.number().int().min(1).max(100).default(50),
+});
 export const SendMissionMessageSchema = z.object({
   id: MissionIdSchema,
   content: z.string().trim().min(1).max(100_000),
@@ -776,6 +843,7 @@ export const MissionHumanInteractionSchema = z.object({
 
 const MissionChatEntryBaseSchema = z.object({
   id: z.string().min(1),
+  timelineSequence: z.number().int().positive().optional(),
   executionId: z.string().min(1).optional(),
   invocationId: z.string().min(1).optional(),
   executorId: z.string().min(1).optional(),
@@ -820,6 +888,11 @@ export const MissionChatSnapshotSchema = z.object({
   missionId: MissionIdSchema,
   revision: z.number().int().nonnegative(),
   entries: z.array(MissionChatEntrySchema),
+  page: z.object({
+    oldestSequence: z.number().int().positive().optional(),
+    newestSequence: z.number().int().positive().optional(),
+    nextBeforeSequence: z.number().int().positive().optional(),
+  }),
   pendingInteractions: z.array(MissionHumanInteractionSchema),
   execution: MissionChatExecutionSchema.optional(),
 });
@@ -873,11 +946,15 @@ export type WorkflowLayout = z.infer<typeof WorkflowLayoutSchema>;
 export type GetWorkflowLayout = z.infer<typeof GetWorkflowLayoutSchema>;
 export type DeleteWorkflowLayout = z.infer<typeof DeleteWorkflowLayoutSchema>;
 export type Mission = z.infer<typeof MissionSchema>;
+export type MissionSummary = z.infer<typeof MissionSummarySchema>;
 export type MissionExecutor = z.infer<typeof MissionExecutorSchema>;
 export type MissionLifecycleStatus = z.infer<typeof MissionLifecycleStatusSchema>;
 export type CreateMission = z.infer<typeof CreateMissionSchema>;
-export type MissionMessage = z.infer<typeof MissionMessageSchema>;
+export type MissionUserMessage = z.infer<typeof MissionUserMessageSchema>;
+export type MissionTimelineRecord = z.infer<typeof MissionTimelineRecordSchema>;
 export type MissionWorkItem = z.infer<typeof MissionWorkItemSchema>;
+export type GetMissionChat = z.input<typeof GetMissionChatSchema>;
+export type MissionChatQuery = z.output<typeof GetMissionChatSchema>;
 export type SendMissionMessage = z.infer<typeof SendMissionMessageSchema>;
 export type MissionHumanInteraction = z.infer<typeof MissionHumanInteractionSchema>;
 export type MissionChatEntry = z.infer<typeof MissionChatEntrySchema>;
@@ -928,12 +1005,12 @@ export interface PragmaDesktopAPI {
   getWorkflowLayout: (input: GetWorkflowLayout) => Promise<WorkflowLayout | null>;
   saveWorkflowLayout: (layout: WorkflowLayout) => Promise<WorkflowLayout>;
   deleteWorkflowLayout: (input: DeleteWorkflowLayout) => Promise<void>;
-  listMissions: () => Promise<Mission[]>;
+  listMissions: () => Promise<MissionSummary[]>;
   getMission: (id: string) => Promise<Mission>;
   createMission: (input: CreateMission) => Promise<Mission>;
   runMission: (id: string) => Promise<Mission>;
   sendMissionMessage: (input: SendMissionMessage) => Promise<Mission>;
-  getMissionChat: (id: string) => Promise<MissionChatSnapshot>;
+  getMissionChat: (input: GetMissionChat) => Promise<MissionChatSnapshot>;
   subscribeMissionChat: (id: string, listener: (update: MissionChatUpdate) => void) => () => void;
   interruptMission: (id: string) => Promise<Mission>;
   listMissionWorkItems: (id: string) => Promise<MissionWorkItem[]>;

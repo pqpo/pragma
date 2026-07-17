@@ -207,5 +207,8 @@ const compiled = await service.compile({
 Publishing validates the complete candidate and advances the repository with compare-and-swap.
 Desktop stores revisions below `~/.pragma/projects/<projectId>/revisions/<revision>/` and only
 implements source persistence and local binding adapters. Missions pin an exact resource and
-revision. The built-in Steward bundle under `packages/interpreter/fixtures/steward` is a read-only
+revision. A Mission v3 directory keeps bounded identity and lifecycle metadata in `mission.yaml`
+and appends user turns plus Execution references to `messages.jsonl`; assistant, thinking, and tool
+history is projected from the canonical Execution event log. The built-in Steward bundle under
+`packages/interpreter/fixtures/steward` is a read-only
 template fixture, not a second hard-coded runtime implementation.

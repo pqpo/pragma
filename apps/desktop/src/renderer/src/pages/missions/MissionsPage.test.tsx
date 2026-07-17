@@ -48,8 +48,55 @@ describe("MissionsPage", () => {
     );
 
     expect(html).toContain(
-      '<option value="expert:test_expert@0.1.0" selected="">Test Expert · expert</option>',
+      '<button class="mission-executor-trigger" type="button" aria-expanded="false" aria-haspopup="dialog"><strong>Test Expert</strong>',
     );
+    expect(html).not.toContain("<select");
+  });
+
+  it("does not present capabilities or runtime profiles as mission executors", () => {
+    const expert: PragmaResource = {
+      apiVersion: "pragma/v2",
+      kind: "Expert",
+      metadata: {
+        id: "real_expert",
+        version: "1.0.0",
+        name: "Real Expert",
+        description: "Runs the mission.",
+        tags: [],
+      },
+      spec: {
+        scope: "testing",
+        runtime: { ref: "runtime-profile:real_expert@1.0.0" },
+        capabilities: [],
+        toolApprovals: {},
+        contextStores: [],
+        plugins: [],
+        tools: [],
+      },
+    };
+    const capability: PragmaResource = {
+      apiVersion: "pragma/v2",
+      kind: "Capability",
+      metadata: {
+        id: "not_an_executor",
+        version: "1.0.0",
+        name: "Capability should stay hidden",
+        description: "This resource cannot run a mission.",
+        tags: [],
+      },
+      spec: { adapter: "pragma.capability.mcp@v1", config: {} },
+    };
+    const html = renderToStaticMarkup(
+      <CreateMissionFragment
+        executors={[expert, capability]}
+        initialExecutorRef="expert:real_expert@1.0.0"
+        onCreated={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("Real Expert");
+    expect(html).not.toContain("Capability should stay hidden");
+    expect(html).not.toContain("· flow");
   });
 });
 
@@ -77,6 +124,7 @@ describe("MissionDetailFragment", () => {
     const mission = missionFixture("expert");
     mission.execution = {
       id: "00000000-0000-4000-8000-000000000010",
+      inputMessageId: mission.initialMessageId,
       sessionId: "00000000-0000-4000-8000-000000000011",
       environmentFingerprint: "a".repeat(64),
       status: "running",
@@ -92,10 +140,11 @@ describe("MissionDetailFragment", () => {
 
 function missionFixture(kind: "expert" | "team"): Mission {
   return {
-    schemaVersion: "pragma.mission/v2",
+    schemaVersion: "pragma.mission/v3",
     id: "00000000-0000-4000-8000-000000000000",
     title: "Missions page design",
     goal: "Design the Missions page.",
+    initialMessageId: "00000000-0000-4000-8000-000000000001",
     workspace: { path: "/workspace/expert-mesh", basename: "expert-mesh" },
     project: { id: "studio", revision: 1 },
     executor: {
@@ -104,7 +153,6 @@ function missionFixture(kind: "expert" | "team"): Mission {
       name: kind === "expert" ? "Product Designer" : "Delivery Team",
       version: "0.1.0",
     },
-    messages: [],
     lifecycleStatus: "active",
     createdAt: "2026-07-11T00:00:00.000Z",
     updatedAt: "2026-07-11T00:00:00.000Z",
