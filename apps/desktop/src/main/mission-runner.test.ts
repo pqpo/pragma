@@ -7,7 +7,11 @@ import {
   defineRuntimeDriver,
   type RuntimeDriverSessionContext,
 } from "@pragma/core";
-import type { PragmaExpertResource, PragmaFlowResource } from "@pragma/interpreter/ast";
+import type {
+  PragmaExpertResource,
+  PragmaFlowResource,
+  PragmaRuntimeProfileResource,
+} from "@pragma/interpreter/ast";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { CapabilityCredentialStore } from "./capability-credential-store.ts";
@@ -31,13 +35,16 @@ describe("MissionRunner", () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-mission-interrupt-"));
     temporaryPaths.push(root);
     const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
-    const snapshot = await project.publish({ expectedRevision: 0, resources: [expertFixture()] });
+    const snapshot = await project.publish({
+      expectedRevision: 0,
+      resources: [runtimeFixture(), expertFixture()],
+    });
     const missions = createMissionStore({ missionsPath: join(root, "missions") });
     const mission = await missions.create({
       workspace: { path: root, basename: "workspace" },
       goal: "Inspect before stopping",
       project: { id: snapshot.projectId, revision: snapshot.revision },
-      executor: snapshot.resources[0]!,
+      executor: snapshot.resources.find((resource) => resource.kind === "Expert")!,
     });
     const cancelTurn = vi.fn();
     const runtime = defineRuntimeDriver<never, { id: string }>({
@@ -117,13 +124,16 @@ describe("MissionRunner", () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-mission-runner-"));
     temporaryPaths.push(root);
     const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
-    const snapshot = await project.publish({ expectedRevision: 0, resources: [expertFixture()] });
+    const snapshot = await project.publish({
+      expectedRevision: 0,
+      resources: [runtimeFixture(), expertFixture()],
+    });
     const missions = createMissionStore({ missionsPath: join(root, "missions") });
     const mission = await missions.create({
       workspace: { path: root, basename: "workspace" },
       goal: "Prepare a concise answer",
       project: { id: snapshot.projectId, revision: snapshot.revision },
-      executor: snapshot.resources[0]!,
+      executor: snapshot.resources.find((resource) => resource.kind === "Expert")!,
     });
     const startTurn = vi.fn(
       (
@@ -213,10 +223,10 @@ describe("MissionRunner", () => {
     const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
     const expert = expertFixture();
     expert.metadata.id = "review";
-    expert.spec.runtime = { id: "unregistered" };
+    const runtimeProfile = runtimeFixture("unregistered");
     const snapshot = await project.publish({
       expectedRevision: 0,
-      resources: [expert, approvalFlowFixture()],
+      resources: [runtimeProfile, expert, approvalFlowFixture()],
     });
     const flow = snapshot.resources.find((resource) => resource.kind === "Flow")!;
     const missions = createMissionStore({ missionsPath: join(root, "missions") });
@@ -276,13 +286,16 @@ describe("MissionRunner", () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-mission-reply-"));
     temporaryPaths.push(root);
     const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
-    const snapshot = await project.publish({ expectedRevision: 0, resources: [expertFixture()] });
+    const snapshot = await project.publish({
+      expectedRevision: 0,
+      resources: [runtimeFixture(), expertFixture()],
+    });
     const storedMissions = createMissionStore({ missionsPath: join(root, "missions") });
     const mission = await storedMissions.create({
       workspace: { path: root, basename: "workspace" },
       goal: "Persist this reply",
       project: { id: snapshot.projectId, revision: snapshot.revision },
-      executor: snapshot.resources[0]!,
+      executor: snapshot.resources.find((resource) => resource.kind === "Expert")!,
     });
     let rejectAssistantReply = true;
     const missions: MissionStore = {
@@ -352,7 +365,7 @@ describe("MissionRunner", () => {
 
 function expertFixture(): PragmaExpertResource {
   return {
-    apiVersion: "pragma/v1",
+    apiVersion: "pragma/v2",
     kind: "Expert",
     metadata: {
       id: "writer",
@@ -363,6 +376,7 @@ function expertFixture(): PragmaExpertResource {
     },
     spec: {
       scope: "Writing",
+      runtime: { ref: "runtime-profile:writer.runtime@1.0.0" },
       capabilities: [],
       toolApprovals: {},
       contextStores: [],
@@ -372,9 +386,27 @@ function expertFixture(): PragmaExpertResource {
   };
 }
 
+function runtimeFixture(runtimeId = "fake"): PragmaRuntimeProfileResource {
+  return {
+    apiVersion: "pragma/v2",
+    kind: "RuntimeProfile",
+    metadata: {
+      id: "writer.runtime",
+      version: "1.0.0",
+      name: "Writer Runtime",
+      description: "Runtime used by the test writer.",
+      tags: [],
+    },
+    spec: {
+      adapter: "pragma.runtime.profile@v1",
+      config: { runtimeId },
+    },
+  };
+}
+
 function approvalFlowFixture(): PragmaFlowResource {
   return {
-    apiVersion: "pragma/v1",
+    apiVersion: "pragma/v2",
     kind: "Flow",
     metadata: {
       id: "review",

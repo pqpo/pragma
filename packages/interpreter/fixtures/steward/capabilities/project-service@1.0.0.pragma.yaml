@@ -1,0 +1,13 @@
+apiVersion: pragma/v2
+kind: Capability
+metadata:
+  id: project-service
+  version: 1.0.0
+  name: Pragma project service
+  description: Environment-provided tools for validating and publishing Pragma resources.
+  tags: [builtin, steward]
+spec:
+  adapter: pragma.capability.host@v1
+  binding: binding:pragma.project-service
+  config:
+    key: pragma.project-service

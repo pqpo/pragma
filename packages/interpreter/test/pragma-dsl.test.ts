@@ -3,9 +3,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
-import type { Expert, Flow } from "@pragma/core";
+import { createRuntimeRegistry, type Expert, type Flow } from "@pragma/core";
 
-import { FlowActionRegistry, formatPragmaYaml, loadPragmaProject } from "../src/index.ts";
+import {
+  FlowActionRegistry,
+  PragmaExpertResourceSchema,
+  formatPragmaYaml,
+  loadPragmaProject,
+  type PragmaExpertResource,
+} from "../src/index.ts";
 
 describe("Pragma YAML DSL", () => {
   it("loads split resources, compiles an explicit loop, and dumps stable YAML", async () => {
@@ -15,7 +21,7 @@ describe("Pragma YAML DSL", () => {
       writeFile(
         join(root, "pragma.yaml"),
         [
-          "apiVersion: pragma/v1",
+          "apiVersion: pragma/v2",
           "kind: Bundle",
           "imports:",
           "  - ./flows/review/flow.pragma.yaml",
@@ -25,7 +31,7 @@ describe("Pragma YAML DSL", () => {
       writeFile(
         join(root, "flows", "review", "flow.pragma.yaml"),
         [
-          "apiVersion: pragma/v1",
+          "apiVersion: pragma/v2",
           "kind: Flow",
           "metadata:",
           "  id: review",
@@ -83,7 +89,10 @@ describe("Pragma YAML DSL", () => {
 
     const project = await loadPragmaProject(join(root, "pragma.yaml"));
     expect(await project.validate()).toEqual([]);
-    const compiled = await project.compile<Flow>("flow:review", { workspace: root, actions });
+    const compiled = await project.compile<Flow>("flow:review@1.0.0", {
+      workspace: root,
+      actions,
+    });
     expect(compiled.value.loops.get("revision")).toMatchObject({
       entryStepId: "review",
       maxIterations: 3,
@@ -95,8 +104,8 @@ describe("Pragma YAML DSL", () => {
       loopId: "revision",
     });
     const dumped = await project.dump(compiled.value, { split: "by-resource" });
-    expect(dumped.files.get("flows/review.pragma.yaml")).toContain("kind: Flow");
-    expect(dumped.files.get("pragma.lock.yaml")).toContain("compilerVersion: pragma.dsl/v1");
+    expect(dumped.files.get("flows/review@1.0.0.pragma.yaml")).toContain("kind: Flow");
+    expect(dumped.files.get("pragma.lock.yaml")).toContain("compilerVersion: pragma.dsl/v2");
     const single = await project.dump(compiled.value, { split: "single" });
     await writeFile(join(root, "single.yaml"), single.files.get("pragma.yaml")!);
     expect((await loadPragmaProject(join(root, "single.yaml"))).listResources()).toHaveLength(1);
@@ -104,16 +113,15 @@ describe("Pragma YAML DSL", () => {
 
   it("enforces an optional content-addressed lock", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-dsl-lock-"));
-    const entry = join(root, "expert.pragma.yaml");
+    const entry = join(root, "pragma.yaml");
     await writeFile(
       entry,
-      [
-        "apiVersion: pragma/v1",
-        "kind: Expert",
-        "metadata: { id: writer, version: 1.0.0, name: Writer, description: Writes }",
-        "spec: { scope: writing }",
-        "",
-      ].join("\n"),
+      formatPragmaYaml({
+        apiVersion: "pragma/v2",
+        kind: "Bundle",
+        imports: [],
+        resources: [runtimeProfile(), expertResource("writer", "Writes")],
+      }),
     );
     const unlocked = await loadPragmaProject(entry);
     await writeFile(join(root, "pragma.lock.yaml"), formatPragmaYaml(unlocked.createLock()));
@@ -130,12 +138,12 @@ describe("Pragma YAML DSL", () => {
     await writeFile(
       entry,
       formatPragmaYaml({
-        apiVersion: "pragma/v1",
+        apiVersion: "pragma/v2",
         kind: "Bundle",
         imports: [],
         resources: [
           {
-            apiVersion: "pragma/v1",
+            apiVersion: "pragma/v2",
             kind: "Expert",
             metadata: {
               id: "reviewer",
@@ -143,10 +151,10 @@ describe("Pragma YAML DSL", () => {
               name: "Reviewer",
               description: "Reviews work",
             },
-            spec: { scope: "review" },
+            spec: expertSpec(),
           },
           {
-            apiVersion: "pragma/v1",
+            apiVersion: "pragma/v2",
             kind: "Expert",
             metadata: {
               id: "lead",
@@ -155,7 +163,7 @@ describe("Pragma YAML DSL", () => {
               description: "Leads work",
             },
             spec: {
-              scope: "lead",
+              ...expertSpec("lead"),
               tools: [
                 {
                   adapter: "pragma.tool.call@v1",
@@ -164,18 +172,77 @@ describe("Pragma YAML DSL", () => {
                     name: "call_reviewer",
                     description: "Call the reviewer",
                     approval: "none",
+                    timeoutMs: 25,
+                  },
+                },
+                {
+                  adapter: "pragma.tool.call@v1",
+                  target: { ref: "flow:approval@1.0.0" },
+                  tool: {
+                    name: "call_approval",
+                    description: "Call the approval flow",
+                    approval: "none",
                   },
                 },
               ],
             },
           },
+          {
+            apiVersion: "pragma/v2",
+            kind: "Flow",
+            metadata: {
+              id: "approval",
+              version: "1.0.0",
+              name: "Approval",
+              description: "Collects approval",
+              tags: [],
+            },
+            spec: {
+              input: {
+                schema: {
+                  type: "object",
+                  properties: { proposal: { type: "string" } },
+                  required: ["proposal"],
+                  additionalProperties: false,
+                },
+              },
+              output: {
+                schema: {
+                  type: "object",
+                  properties: { approved: { type: "boolean" } },
+                  required: ["approved"],
+                  additionalProperties: false,
+                },
+              },
+              graph: {
+                start: "approve",
+                steps: {
+                  approve: {
+                    human: { kind: "approval", prompt: "Approve?" },
+                    version: "1.0.0",
+                  },
+                },
+                transitions: { approve: { end: true } },
+              },
+            },
+          },
+          runtimeProfile(),
         ],
       }),
     );
     const project = await loadPragmaProject(entry);
     const lead = (await project.compile<Expert>("expert:lead@1.0.0", { workspace: root })).value;
     const tool = lead.tools?.find((candidate) => candidate.name === "call_reviewer");
-    const invokeResource = vi.fn(async () => ({ accepted: true }));
+    const invokeResource = vi.fn(
+      async (request: {
+        readonly target: unknown;
+        readonly input: unknown;
+        readonly signal?: AbortSignal | undefined;
+      }): Promise<unknown> => {
+        void request;
+        return { accepted: true };
+      },
+    );
     const result = await tool!.call({ prompt: "Review this" }, undefined, {
       execution: { executionId: "execution", invocationId: "invocation", depth: 0, invokeResource },
     });
@@ -188,6 +255,49 @@ describe("Pragma YAML DSL", () => {
         target: expect.objectContaining({ id: "reviewer", version: "1.0.0" }),
       }),
     );
+
+    invokeResource.mockResolvedValueOnce(undefined);
+    const empty = await tool!.call({}, undefined, {
+      execution: { executionId: "execution", invocationId: "invocation", depth: 0, invokeResource },
+    });
+    expect(empty).toMatchObject({ text: "null", details: undefined });
+
+    invokeResource.mockResolvedValueOnce(1n);
+    const invalid = await tool!.call({}, undefined, {
+      execution: { executionId: "execution", invocationId: "invocation", depth: 0, invokeResource },
+    });
+    expect(invalid).toMatchObject({
+      isError: true,
+      details: { code: "resource_call_failed" },
+    });
+    invokeResource.mockImplementationOnce(
+      async (request) =>
+        await new Promise<never>((_resolve, reject) => {
+          request.signal?.addEventListener("abort", () => reject(request.signal?.reason), {
+            once: true,
+          });
+        }),
+    );
+    const timedOut = await tool!.call({}, undefined, {
+      execution: { executionId: "execution", invocationId: "invocation", depth: 0, invokeResource },
+    });
+    expect(timedOut).toMatchObject({
+      isError: true,
+      details: { code: "resource_call_timeout" },
+    });
+    const flowTool = lead.tools?.find((candidate) => candidate.name === "call_approval");
+    expect(flowTool?.inputSchema).toEqual({
+      type: "object",
+      properties: { proposal: { type: "string" } },
+      required: ["proposal"],
+      additionalProperties: false,
+    });
+    expect(flowTool?.outputSchema).toEqual({
+      type: "object",
+      properties: { approved: { type: "boolean" } },
+      required: ["approved"],
+      additionalProperties: false,
+    });
   });
 
   it("rejects an unmarked control-flow cycle", async () => {
@@ -195,7 +305,7 @@ describe("Pragma YAML DSL", () => {
     await writeFile(
       join(root, "flow.pragma.yaml"),
       [
-        "apiVersion: pragma/v1",
+        "apiVersion: pragma/v2",
         "kind: Flow",
         "metadata:",
         "  id: invalid",
@@ -224,6 +334,147 @@ describe("Pragma YAML DSL", () => {
     );
   });
 
+  it("rejects unknown DSL fields and prototype-sensitive save paths", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-dsl-strict-"));
+    await writeFile(
+      join(root, "flow.pragma.yaml"),
+      [
+        "apiVersion: pragma/v2",
+        "kind: Flow",
+        "metadata:",
+        "  id: unsafe",
+        "  version: 1.0.0",
+        "  name: Unsafe",
+        "  description: Unsafe state path",
+        "spec:",
+        "  graph:",
+        "    start: one",
+        "    steps:",
+        "      one:",
+        "        action: { ref: action:one@1.0.0 }",
+        "        save: state.__proto__.polluted",
+        "    transitions:",
+        "      one: { end: true }",
+        "",
+      ].join("\n"),
+    );
+    const project = await loadPragmaProject(join(root, "flow.pragma.yaml"));
+    expect(await project.validate()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "schema.invalid", severity: "error" }),
+      ]),
+    );
+    expect(
+      PragmaExpertResourceSchema.safeParse({
+        ...expertResource("strict", "Strict"),
+        spec: { ...expertSpec(), toolApprovalz: { shell: "required" } },
+      }).success,
+    ).toBe(false);
+    expect(({} as { polluted?: unknown }).polluted).toBeUndefined();
+  });
+
+  it("rejects malformed Flow JSON Schemas during project validation", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-flow-schema-"));
+    await writeFile(
+      join(root, "flow.pragma.yaml"),
+      formatPragmaYaml({
+        apiVersion: "pragma/v2",
+        kind: "Flow",
+        metadata: {
+          id: "invalid-schema",
+          version: "1.0.0",
+          name: "Invalid schema",
+          description: "Invalid JSON Schema",
+          tags: [],
+        },
+        spec: {
+          input: { schema: { type: "definitely-not-a-json-schema-type" } },
+          graph: {
+            start: "one",
+            steps: { one: { action: { ref: "action:one@1.0.0" } } },
+            transitions: { one: { end: true } },
+          },
+        },
+      }),
+    );
+    const project = await loadPragmaProject(join(root, "flow.pragma.yaml"));
+    expect(await project.validate()).toEqual(
+      expect.arrayContaining([expect.objectContaining({ code: "flow.schema.invalid" })]),
+    );
+  });
+
+  it("does not let a repeat edge hide an ordinary edge with the same endpoints", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-dsl-multigraph-"));
+    await writeFile(
+      join(root, "flow.pragma.yaml"),
+      [
+        "apiVersion: pragma/v2",
+        "kind: Flow",
+        "metadata:",
+        "  id: invalid",
+        "  version: 1.0.0",
+        "  name: Invalid",
+        "  description: Mixed repeat and ordinary edge",
+        "spec:",
+        "  graph:",
+        "    start: one",
+        "    steps:",
+        "      one: { action: { ref: action:one@1.0.0 } }",
+        "      two: { action: { ref: action:two@1.0.0 } }",
+        "    loops:",
+        "      retry: { entry: one, maxIterations: 2 }",
+        "    transitions:",
+        "      one: two",
+        "      two:",
+        "        route: choice",
+        "        cases:",
+        "          unsafe: one",
+        "          retry: { repeat: { loop: retry, goto: one } }",
+        "        fallback: { end: true }",
+        "",
+      ].join("\n"),
+    );
+    const project = await loadPragmaProject(join(root, "flow.pragma.yaml"));
+    expect(await project.validate()).toEqual(
+      expect.arrayContaining([expect.objectContaining({ code: "flow.graph.invalid" })]),
+    );
+  });
+
+  it("requires loop onLimit transitions to leave the loop region", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-dsl-loop-limit-"));
+    await writeFile(
+      join(root, "flow.pragma.yaml"),
+      [
+        "apiVersion: pragma/v2",
+        "kind: Flow",
+        "metadata:",
+        "  id: invalid",
+        "  version: 1.0.0",
+        "  name: Invalid",
+        "  description: Loop limit cycles forever",
+        "spec:",
+        "  graph:",
+        "    start: one",
+        "    steps:",
+        "      one: { action: { ref: action:one@1.0.0 } }",
+        "      two: { action: { ref: action:two@1.0.0 } }",
+        "    loops:",
+        "      retry:",
+        "        entry: one",
+        "        maxIterations: 2",
+        "        onLimit: one",
+        "    transitions:",
+        "      one: two",
+        "      two: { repeat: { loop: retry, goto: one } }",
+        "",
+      ].join("\n"),
+    );
+    const project = await loadPragmaProject(join(root, "flow.pragma.yaml"));
+    expect(await project.validate()).toEqual(
+      expect.arrayContaining([expect.objectContaining({ code: "flow.graph.invalid" })]),
+    );
+  });
+
   it("rejects includes that escape the project root", async () => {
     const parent = await mkdtemp(join(tmpdir(), "pragma-dsl-path-"));
     const root = join(parent, "project");
@@ -232,7 +483,7 @@ describe("Pragma YAML DSL", () => {
     await writeFile(
       join(root, "flow.pragma.yaml"),
       [
-        "apiVersion: pragma/v1",
+        "apiVersion: pragma/v2",
         "kind: Flow",
         "metadata:",
         "  id: unsafe",
@@ -250,4 +501,288 @@ describe("Pragma YAML DSL", () => {
       expect.arrayContaining([expect.objectContaining({ code: "source.parse" })]),
     );
   });
+
+  it("keeps the built-in steward portable and fingerprints environment bindings separately", async () => {
+    const entry = join(process.cwd(), "fixtures/steward/pragma.yaml");
+    const project = await loadPragmaProject(entry, {
+      rootDir: join(process.cwd(), "fixtures/steward"),
+    });
+    expect(await project.validate()).toEqual([]);
+    expect(project.listResources()).toHaveLength(4);
+
+    const missing = await project.validateEnvironment({ workspace: process.cwd() });
+    expect(missing).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "environment.resource_unavailable" }),
+      ]),
+    );
+
+    const compile = async (revision: string) =>
+      await project.compile<Expert>("expert:steward@1.0.0", {
+        workspace: process.cwd(),
+        environmentId: "test-desktop",
+        adapterHost: {
+          environmentId: "test-desktop",
+          projectRoot: process.cwd(),
+          async resolveBinding(ref) {
+            return ref === "binding:pragma.project-service"
+              ? {
+                  ref,
+                  revision,
+                  fingerprint: "a".repeat(64),
+                  value: { contribution: { tools: [] } },
+                }
+              : undefined;
+          },
+          async resolveArtifact(source) {
+            throw new Error(`Unexpected artifact: ${JSON.stringify(source)}`);
+          },
+          async resolveSecret() {
+            return undefined;
+          },
+        },
+      });
+    const first = await compile("1");
+    const second = await compile("2");
+    expect(first.projectFingerprint).toBe(second.projectFingerprint);
+    expect(first.environmentFingerprint.value).not.toBe(second.environmentFingerprint.value);
+    expect(first.rootRuntimeId).toBe("codex");
+    expect(first.value.defaultRuntimeId).toBe("codex");
+  });
+
+  it("marks registered but unusable RuntimeProfiles as unavailable", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-runtime-unusable-"));
+    const entry = join(root, "pragma.yaml");
+    await writeFile(
+      entry,
+      formatPragmaYaml({
+        apiVersion: "pragma/v2",
+        kind: "Bundle",
+        imports: [],
+        resources: [runtimeProfile(), expertResource("writer", "Writes")],
+      }),
+    );
+    const project = await loadPragmaProject(entry);
+    const runtimes = createRuntimeRegistry({
+      defaultRuntime: "codex",
+      runtimes: [
+        {
+          descriptor: { id: "codex", kind: "test", displayName: "Codex" },
+          canUse: () => ({ usable: false, reason: "codex executable is missing" }),
+        },
+      ],
+    });
+    const inspection = await project.inspectEnvironment({ workspace: root, runtimes });
+    expect(inspection.resources).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          ref: "runtime-profile:default-runtime@1.0.0",
+          status: "needs_attention",
+        }),
+      ]),
+    );
+    expect(inspection.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "environment.runtime_unavailable",
+          message: expect.stringContaining("executable is missing"),
+        }),
+      ]),
+    );
+  });
+
+  it("fingerprints the verified Runtime installation identity", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-runtime-fingerprint-"));
+    const entry = join(root, "pragma.yaml");
+    await writeFile(
+      entry,
+      formatPragmaYaml({
+        apiVersion: "pragma/v2",
+        kind: "Bundle",
+        imports: [],
+        resources: [runtimeProfile(), expertResource("writer", "Writes")],
+      }),
+    );
+    const project = await loadPragmaProject(entry);
+    const compile = async (version: string) =>
+      await project.compile<Expert>("expert:writer@1.0.0", {
+        workspace: root,
+        runtimes: createRuntimeRegistry({
+          defaultRuntime: "codex",
+          runtimes: [
+            {
+              descriptor: { id: "codex", kind: "test", displayName: "Codex" },
+              canUse: () => ({ usable: true, details: { version } }),
+              listModels: async () => [
+                { id: "model", displayName: "Model", provider: "test", default: true },
+              ],
+            },
+          ],
+        }),
+      });
+    expect((await compile("1.0.0")).environmentFingerprint.value).not.toBe(
+      (await compile("2.0.0")).environmentFingerprint.value,
+    );
+  });
+
+  it("never downgrades capability-owned MCP approval requirements", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-mcp-approvals-"));
+    const entry = join(root, "pragma.yaml");
+    const expert: PragmaExpertResource = expertResource("writer", "Writes");
+    expert.spec.capabilities = [
+      { ref: "capability:writer-tools@1.0.0", kind: "tools", tools: ["write"] },
+    ];
+    expert.spec.toolApprovals = { write: "none", mcp_writer_write: "none" };
+    await writeFile(
+      entry,
+      formatPragmaYaml({
+        apiVersion: "pragma/v2",
+        kind: "Bundle",
+        imports: [],
+        resources: [
+          runtimeProfile(),
+          expert,
+          {
+            apiVersion: "pragma/v2",
+            kind: "Capability",
+            metadata: {
+              id: "writer-tools",
+              version: "1.0.0",
+              name: "Writer tools",
+              description: "Writes data",
+              tags: [],
+            },
+            spec: {
+              adapter: "pragma.capability.host@v1",
+              binding: "binding:writer-tools",
+              config: { key: "writer-tools" },
+            },
+          },
+        ],
+      }),
+    );
+    const project = await loadPragmaProject(entry);
+    const compiled = await project.compile<Expert>("expert:writer@1.0.0", {
+      workspace: root,
+      adapterHost: {
+        environmentId: "test",
+        projectRoot: root,
+        async resolveBinding(ref) {
+          return {
+            ref,
+            revision: "1",
+            fingerprint: "a".repeat(64),
+            value: {
+              contribution: {
+                mcp: {
+                  mcpServers: {
+                    writer: {
+                      name: "Writer",
+                      transport: "in-process",
+                      inProcess: {
+                        listTools: async () => [{ name: "write" }],
+                        callTool: async () => ({ ok: true }),
+                      },
+                      toolApprovals: { write: { mode: "required" } },
+                    },
+                  },
+                },
+              },
+            },
+          };
+        },
+        async resolveArtifact() {
+          throw new Error("unused");
+        },
+        async resolveSecret() {
+          return undefined;
+        },
+      },
+    });
+    expect(compiled.value.mcp?.mcpServers["writer"]?.toolApprovals?.["write"]?.mode).toBe(
+      "required",
+    );
+  });
+
+  it("links multiple versions of the same resource by exact reference", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-dsl-versions-"));
+    await writeFile(
+      join(root, "pragma.yaml"),
+      formatPragmaYaml({
+        apiVersion: "pragma/v2",
+        kind: "Bundle",
+        imports: [],
+        resources: [
+          runtimeProfile(),
+          { ...runtimeProfile(), metadata: { ...runtimeProfile().metadata, version: "2.0.0" } },
+          expertResource("writer", "Version one"),
+          {
+            ...expertResource("writer", "Version two"),
+            metadata: { ...expertResource("writer", "Version two").metadata, version: "2.0.0" },
+            spec: {
+              ...expertSpec(),
+              runtime: { ref: "runtime-profile:default-runtime@2.0.0" },
+            },
+          },
+        ],
+      }),
+    );
+    const project = await loadPragmaProject(join(root, "pragma.yaml"));
+    expect(await project.validate()).toEqual([]);
+    expect(
+      (await project.compile<Expert>("expert:writer@1.0.0", { workspace: root })).value.version,
+    ).toBe("1.0.0");
+    expect(
+      (await project.compile<Expert>("expert:writer@2.0.0", { workspace: root })).value.version,
+    ).toBe("2.0.0");
+    expect(
+      await project.validateEnvironment({
+        workspace: root,
+        runtimes: createRuntimeRegistry(),
+      }),
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "environment.runtime_unavailable" }),
+      ]),
+    );
+  });
 });
+
+function runtimeProfile() {
+  return {
+    apiVersion: "pragma/v2" as const,
+    kind: "RuntimeProfile" as const,
+    metadata: {
+      id: "default-runtime",
+      version: "1.0.0",
+      name: "Default Runtime",
+      description: "Default test runtime",
+      tags: [],
+    },
+    spec: {
+      adapter: "pragma.runtime.profile@v1",
+      config: { runtimeId: "codex" },
+    },
+  };
+}
+
+function expertSpec(scope = "writing") {
+  return {
+    scope,
+    runtime: { ref: "runtime-profile:default-runtime@1.0.0" },
+    capabilities: [],
+    toolApprovals: {},
+    contextStores: [],
+    plugins: [],
+    tools: [],
+  };
+}
+
+function expertResource(id: string, description: string) {
+  return {
+    apiVersion: "pragma/v2" as const,
+    kind: "Expert" as const,
+    metadata: { id, version: "1.0.0", name: "Writer", description, tags: [] },
+    spec: expertSpec(),
+  };
+}

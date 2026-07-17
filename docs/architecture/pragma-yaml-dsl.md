@@ -1,53 +1,114 @@
-# Pragma YAML DSL
+# Pragma YAML DSL v2
 
-Pragma DSL is the canonical declaration format for `Expert`, `ExpertTeam`, and `Flow`. The runtime
-loads YAML into Zod-validated portable resources, resolves references, validates dependency and
-control-flow graphs, and compiles the selected resource directly into the existing Core object
-model. There is intentionally no parallel `define*FromManifest` API.
+Pragma DSL is the canonical, portable definition language for `Expert`, `ExpertTeam`, `Flow`,
+`Capability`, `ContextStore`, and `RuntimeProfile`. `@pragma/interpreter` owns parsing, linking,
+validation, environment resolution, compilation, locking, and normalized dumping. Core remains the
+execution object model and does not depend on the interpreter.
 
-The implementation belongs to `@pragma/interpreter`. AST consumers that must remain browser-safe
-import schemas and inferred types from `@pragma/interpreter/ast`; Node hosts import parsing and
-compilation APIs from `@pragma/interpreter`. Core only provides the object model and execution
-primitives targeted by compilation.
+`pragma/v2` is a clean break. The interpreter does not read or migrate `pragma/v1`, and applications
+must report old local projects as unsupported rather than silently rewriting or deleting them.
 
-## Project layout
+## Definition, installation, and execution
+
+The same DSL project can be installed in Desktop, a server, or another future host:
+
+```text
+portable YAML project
+  -> ProjectService: load / validate / publish / pin revision
+  -> Adapter Registry: resolve named environment bindings and artifacts
+  -> compiler: Core Expert / Team / Flow + root Runtime + environment fingerprint
+  -> Core execution
+```
+
+Applications provide persistence and environment adapters. They do not recreate Expert, Team, or
+Flow compilation. Desktop stores immutable project revisions and supplies local bindings; a Web
+deployment can store the same sources and resolve bindings on its server.
+
+## Project layout and identity
+
+Every semantic reference is exact. Multiple versions of the same kind and ID may coexist.
 
 ```text
 pragma.yaml
-experts/
-  lead.pragma.yaml
-  reviewer.pragma.yaml
-teams/
-  delivery.pragma.yaml
-flows/
-  review/
-    flow.pragma.yaml
-    graph.pragma.yaml
+experts/steward@1.0.0.pragma.yaml
+teams/delivery@2.0.0.pragma.yaml
+flows/review@1.2.0.pragma.yaml
+capabilities/repository-tools@3.0.0.pragma.yaml
+context-stores/project-guide@1.0.0.pragma.yaml
+runtime-profiles/desktop-codex@1.0.0.pragma.yaml
 pragma.lock.yaml
 ```
 
-The root file imports resources. A structural `$include` can split any large mapping or list. Both
-imports and includes are confined to the configured project root after resolving symlinks.
-
 ```yaml
-apiVersion: pragma/v1
+apiVersion: pragma/v2
 kind: Bundle
 imports:
-  - ./experts/lead.pragma.yaml
-  - ./experts/reviewer.pragma.yaml
-  - ./teams/delivery.pragma.yaml
-  - ./flows/review/flow.pragma.yaml
+  - ./runtime-profiles/desktop-codex@1.0.0.pragma.yaml
+  - ./experts/lead@1.0.0.pragma.yaml
+resources: []
 ```
 
-## Expert and invocable tools
+Imports and structural `$include` paths are confined to the project root after symlink resolution.
 
-An Expert refers to another Expert, Team, or Flow through a versioned Tool Adapter. The reference
-itself does not invent tool semantics: `pragma.tool.call@v1` exposes one synchronous call tool,
-while `pragma.tool.delegate@v1` exposes the governed expert lifecycle tools. New semantics are
-registered through `ToolAdapterRegistry` without changing the DSL compiler.
+## Declarative resources and environment bindings
+
+MCP, Skills, code tools, context sources, and model settings are represented by portable resources.
+Machine-specific endpoints, credentials, live stores, and host tools are referenced through named
+bindings and resolved only by the installation environment.
 
 ```yaml
-apiVersion: pragma/v1
+apiVersion: pragma/v2
+kind: Capability
+metadata:
+  id: repository-tools
+  version: 1.0.0
+  name: Repository tools
+  description: Tools supplied by the installed environment
+spec:
+  adapter: pragma.capability.host@v1
+  binding: binding:repository-tools
+  config: { key: repository-tools }
+```
+
+Built-in versioned adapters cover Skill artifacts, MCP, HTTP and code capabilities; file, static,
+note and host context stores; host capabilities; and runtime profiles. New semantics are registered
+in `PragmaResourceAdapterRegistry` and never inferred from arbitrary YAML fields. Portable DSL,
+lock, and health objects are strict schemas: unknown keys are rejected instead of silently removed.
+
+An artifact source is either project-local or external and integrity-pinned:
+
+```yaml
+source: { type: project, path: skills/release-writing }
+# or
+source:
+  type: registry
+  uri: registry://skills/release-writing/1.0.0
+  integrity: sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+```
+
+Portable validation and publishing do not require environment bindings. Environment validation and
+compilation do. This allows a project to be authored and shared before every target environment is
+installed.
+
+Environment inspection returns one structured health record per declarative resource. A resource
+is either `ready`, with a contribution and verification fingerprint, or `needs_attention`, with
+stable issues and no contribution. Compilation accepts only `ready` resources. External artifact
+verification compares the requested source, declared integrity, resolver hash, and materialized
+text or path bytes. Skill `entry` paths must resolve to readable regular files inside the artifact
+root, including after symlink resolution. Adapters must enumerate artifact dependencies through
+their adapter contract before verification; undeclared artifact reads fail. File hashes use raw
+bytes, and directory hashes include each entry's name, type, and child hash.
+
+Host Context bindings expose the six-method Context Store contract. Core supplies
+`JsonContextStore` for durable local notes and `StaticContextStore` for DSL-defined read-only
+entries. The JSON store uses one `contexts.json` payload, optimistic item revisions/etags,
+cross-process locking, and atomic replacement. Dynamic Context content is deliberately excluded
+from environment fingerprints; only store identity and connection configuration are pinned.
+
+## Expert and resource invocation
+
+```yaml
+apiVersion: pragma/v2
 kind: Expert
 metadata:
   id: lead
@@ -56,135 +117,95 @@ metadata:
   description: Coordinates delivery
 spec:
   scope: Own the delivery outcome.
-  runtime:
-    id: codex
-    model: gpt-5.3-codex
+  runtime: { ref: runtime-profile:desktop-codex@1.0.0 }
+  capabilities:
+    - ref: capability:repository-tools@1.0.0
+      kind: tools
+      tools: [read_file, edit_file]
+  toolApprovals: { edit_file: required }
+  contextStores:
+    - ref: context-store:project-guide@1.0.0
+      namespace: project_guide
+      required: true
+  plugins: []
   tools:
     - adapter: pragma.tool.call@v1
       target: { ref: flow:review@1.0.0 }
       tool:
         name: run_review
-        description: Run the governed review workflow.
+        description: Run the review Flow.
         approval: ask
-    - adapter: pragma.tool.delegate@v1
-      targets:
-        - { ref: expert:reviewer@1.0.0 }
-      policy:
-        maxConcurrency: 2
-        maxDepth: 3
-        context: context:pragma.context.fresh@v1
 ```
 
-`ResourceInvoker` execution stays inside the current `Execution`: child invocations, contexts,
-runtime routing, events, cancellation, and usage remain visible to the same governance boundary.
+`pragma.tool.call@v1` makes one synchronous call. `pragma.tool.delegate@v1` exposes governed expert
+lifecycle tools. Nested calls remain in the current Execution, so context ownership, events,
+cancellation, usage, and recovery stay under one governance boundary.
 
-## ExpertTeam
+Flow input and output JSON Schemas remain attached when a Flow is exposed as a Tool. Tool timeout,
+caller cancellation, and target Flow timeout are independent deadlines; the earliest aborts only
+the affected Invocation subtree. Tool output uses safe JSON serialization, including an explicit
+`null` text result for `undefined`.
 
-```yaml
-apiVersion: pragma/v1
-kind: ExpertTeam
-metadata:
-  id: delivery
-  version: 1.0.0
-  name: Delivery team
-  description: Delivers and reviews changes
-spec:
-  coordinator: { ref: expert:lead@1.0.0 }
-  members:
-    - { ref: expert:lead@1.0.0 }
-    - { ref: expert:reviewer@1.0.0 }
-  delegation:
-    maxConcurrency: 4
-    maxDepth: 3
-    context: context:pragma.context.fresh@v1
-    runtimes: {}
-```
+## Teams and bounded Flow loops
 
-The Team is itself invocable. A Team does not implicitly turn arbitrary Flow references into
-behavior; its coordinator declares any Flow it needs as a tool.
+Teams refer to exact Expert and RuntimeProfile versions. Flow ordinary edges must form a DAG. A
+back edge is legal only as a named `repeat` transition with a positive `maxIterations`. Loop state
+is persisted with the Execution before the next node is scheduled, making recovery idempotent.
+Ordinary and repeat edges remain distinct multigraph edges, and `onLimit` must leave the loop.
+Internal control state lives in a reserved namespace that DSL `save` paths cannot address; state
+reducers, deadlines, loop counters, and transition decisions use versioned CAS commits so
+concurrent nested Flows cannot overwrite one another.
+Flow `limits.timeoutMs` is compiled into Core and persisted as an absolute wall-clock deadline on
+first entry. Recovery reuses that deadline, so process downtime and HumanTask waits count toward
+the same timeout. Timeout is a `failed` terminal state; explicit user cancellation remains
+`cancelled`.
 
-## Flow, Human Loop, and explicit back edges
+Context reuse policies are versioned extension references such as
+`context-policy:pragma.fresh@v1`; runtime overrides are exact RuntimeProfile references. Runtime
+routing precedence is step override, scoped per-Expert mapping, inherited nested-Flow override,
+target Expert RuntimeProfile, then application fallback. The final identity is written only to the
+new `RuntimeContextRecord`.
 
-A Flow is a durable directed graph. Ordinary transitions must remain acyclic. Every back edge is a
-`repeat` transition owned by a named loop with a positive iteration limit. Validation rejects
-unmarked cycles, unknown targets, loops with multiple entries, and repeat edges that do not return
-to the declared entry.
+## Lock and environment fingerprint
 
-```yaml
-apiVersion: pragma/v1
-kind: Flow
-metadata:
-  id: review
-  version: 1.0.0
-  name: Review loop
-  description: Revise until a human accepts the result
-spec:
-  limits:
-    maxNodeVisits: 100
-  graph:
-    start: draft
-    steps:
-      draft:
-        expert: { ref: expert:reviewer@1.0.0 }
-        input: "Review this goal: {{ $input.goal }}"
-        save: state.review
-      approve:
-        human:
-          kind: approval
-          title: Accept review
-          prompt: Approve the review or request another iteration.
-        save: state.decision
-    loops:
-      revision:
-        entry: draft
-        maxIterations: 3
-        onLimit: { fail: Review iteration limit reached }
-    transitions:
-      draft: approve
-      approve:
-        route: approved
-        cases:
-          "false":
-            repeat:
-              loop: revision
-              goto: draft
-        fallback: { end: true }
-```
+`pragma.lock.yaml` records canonical resource content hashes and artifact integrity. Its
+`projectFingerprint` describes portable semantics and intentionally excludes file placement.
+Published revisions must contain their actual lock. A missing, malformed, stale, or compiler-
+incompatible lock removes trust in the project fingerprint and blocks apply, compile, and recover;
+the service never synthesizes a replacement lock while reading a snapshot.
 
-Loop counters and the selected transition are committed to execution state before scheduling the
-next node. Recovery therefore cannot accidentally consume the same iteration twice. Runtime emits
-`flow.loop.entered`, `flow.loop.repeated`, `flow.loop.exited`, and `flow.loop.exhausted` events.
+Compilation separately returns an environment fingerprint containing:
 
-## Runtime API
+- the environment ID;
+- the project fingerprint;
+- every resolved resource's binding revision and verification fingerprint.
+
+A run pins both the project revision and environment fingerprint. Recovery must fail if the current
+bindings no longer produce the pinned fingerprint.
+
+## Application service
+
+Hosts use `PragmaProjectService` instead of directly assembling runtime objects:
 
 ```ts
-import { loadPragmaProject } from "@pragma/interpreter";
-
-const project = await loadPragmaProject("./pragma.yaml", {
-  rootDir: process.cwd(),
-  requireLock: true,
+const service = new PragmaProjectService({ repository });
+const published = await service.publish({
+  projectId: "studio",
+  expectedRevision: 4,
+  resources,
 });
-
-const diagnostics = await project.validate();
-const compiled = await project.compile("flow:review@1.0.0", host);
-const files = await project.dump(compiled.value, { split: "by-resource" });
+const compiled = await service.compile({
+  projectId: "studio",
+  revision: published.revision,
+  ref: "expert:lead@1.0.0",
+  workspace,
+  environmentId: "desktop",
+  adapterHost,
+});
 ```
 
-`createLock()` records canonical references and SHA-256 content hashes. With `requireLock`, missing,
-stale, or incomplete locks are validation errors. `dump()` uses compiler provenance, so a compiled
-object can be serialized back to canonical DSL without defining separate manifest constructors.
-
-## Desktop persistence
-
-Desktop publishes the same resources under:
-
-```text
-~/.pragma/projects/<projectId>/manifest.yaml
-~/.pragma/projects/<projectId>/revisions/<revision>/pragma.yaml
-~/.pragma/projects/<projectId>/revisions/<revision>/{experts,teams,flows}/*.pragma.yaml
-~/.pragma/projects/<projectId>/revisions/<revision>/pragma.lock.yaml
-```
-
-Publishing validates the complete staged project and atomically advances `manifest.yaml`. Missions
-pin a resource reference and project revision, so later Studio edits do not change an existing
-mission. The removed expert JSON format is not read or migrated.
+Publishing validates the complete candidate and advances the repository with compare-and-swap.
+Desktop stores revisions below `~/.pragma/projects/<projectId>/revisions/<revision>/` and only
+implements source persistence and local binding adapters. Missions pin an exact resource and
+revision. The built-in Steward bundle under `packages/interpreter/fixtures/steward` is a read-only
+template fixture, not a second hard-coded runtime implementation.

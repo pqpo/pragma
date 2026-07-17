@@ -21,9 +21,17 @@ function describeDefinition(definition: ExpertDefinition, ancestors: Set<string>
       kind: "expert-team",
       id: definition.id,
       version: definition.version,
-      coordinator: { id: definition.coordinator.id, version: definition.coordinator.version },
+      coordinator: {
+        id: definition.coordinator.id,
+        version: definition.coordinator.version,
+        defaultRuntimeId: definition.coordinator.defaultRuntimeId,
+      },
       members: definition.members
-        .map((member) => ({ id: member.id, version: member.version }))
+        .map((member) => ({
+          id: member.id,
+          version: member.version,
+          defaultRuntimeId: member.defaultRuntimeId,
+        }))
         .sort((left, right) => left.id.localeCompare(right.id)),
       delegation: {
         allow: [...definition.delegation.allow.entries()]
@@ -39,13 +47,20 @@ function describeDefinition(definition: ExpertDefinition, ancestors: Set<string>
     };
   }
   if (ancestors.has(definition.id)) {
-    return { kind: "expert", id: definition.id, version: definition.version, recursive: true };
+    return {
+      kind: "expert",
+      id: definition.id,
+      version: definition.version,
+      defaultRuntimeId: definition.defaultRuntimeId,
+      recursive: true,
+    };
   }
   const nextAncestors = new Set(ancestors).add(definition.id);
   return {
     kind: "expert",
     id: definition.id,
     version: definition.version,
+    defaultRuntimeId: definition.defaultRuntimeId,
     delegation: describeLauncher(definition, nextAncestors),
   };
 }

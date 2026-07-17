@@ -112,7 +112,9 @@ export class ExpertSessionManager {
     const sessionId = options.sessionId ?? randomUUID();
     const now = new Date().toISOString();
     const rootExpert = isExpertTeam(expert) ? expert.coordinator : expert;
-    const runtimeId = this.dependencies.runtimes.resolve(options.runtime).descriptor.id;
+    const runtimeId = this.dependencies.runtimes.resolve(
+      options.runtime ?? rootExpert.defaultRuntimeId,
+    ).descriptor.id;
     const rootContextId = randomUUID();
     const rootContext = createRuntimeContextRecord({
       contextId: rootContextId,

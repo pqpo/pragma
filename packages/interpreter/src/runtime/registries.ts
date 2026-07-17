@@ -1,5 +1,5 @@
 import type {
-  PragmaExpertResource,
+  PragmaInvocableResource,
   PragmaResource,
   PragmaToolBinding,
 } from "../ast/pragma-dsl.schema.ts";
@@ -8,7 +8,6 @@ import {
   createAgentLauncher,
   freshContextIdResolver,
   type ContextIdResolver,
-  type DefineExpertOptions,
   type Expert,
   type ExpertAgentManagedTool,
   type ExpertAgentToolCallResult,
@@ -17,6 +16,8 @@ import {
   type FlowTaskContext,
   type RuntimeRegistry,
 } from "@pragma/core";
+
+import type { PragmaAdapterHost, PragmaResourceAdapterRegistry } from "./resource-adapters.ts";
 
 export type InvocableResource = ExpertDefinition | Flow;
 
@@ -65,7 +66,7 @@ export class ContextPolicyRegistry {
 
   constructor() {
     this.register({
-      id: "pragma.context.fresh",
+      id: "pragma.fresh",
       version: "v1",
       create: () => freshContextIdResolver,
     });
@@ -79,7 +80,7 @@ export class ContextPolicyRegistry {
   }
 
   resolve(ref: string): ContextIdResolver {
-    const { id, version } = parseNamespacedReference(ref, "context");
+    const { id, version } = parseNamespacedReference(ref, "context-policy");
     if (version === undefined) throw new Error(`Context policy must include a version: ${ref}`);
     const factory = this.factories.get(extensionKey(id, version));
     if (factory === undefined) throw new Error(`Context policy not found: ${ref}`);
@@ -89,8 +90,12 @@ export class ContextPolicyRegistry {
 
 export interface ToolAdapterCompileContext {
   readonly binding: PragmaToolBinding;
-  readonly targets: readonly InvocableResource[];
+  readonly targets: readonly {
+    readonly resource: PragmaInvocableResource;
+    readonly value: InvocableResource;
+  }[];
   readonly contextPolicies: ContextPolicyRegistry;
+  readonly runtimeByExpert?: Readonly<Record<string, string>> | undefined;
 }
 
 export interface ResourceToolAdapter {
@@ -119,29 +124,27 @@ export class ToolAdapterRegistry {
   createTools(
     context: ToolAdapterCompileContext,
   ): readonly ExpertAgentManagedTool<string, ExpertAgentToolCallResult>[] {
-    const adapter = this.adapters.get(context.binding.adapter);
-    if (adapter === undefined)
-      throw new Error(`Tool Adapter not found: ${context.binding.adapter}`);
-    return adapter.createTools(context);
+    return this.resolve(context.binding.adapter).createTools(context);
+  }
+
+  resolve(ref: string): ResourceToolAdapter {
+    const adapter = this.adapters.get(ref);
+    if (adapter === undefined) throw new Error(`Tool Adapter not found: ${ref}`);
+    return adapter;
   }
 }
 
 export interface PragmaCompileHost {
   readonly workspace: string;
+  readonly projectRoot?: string | undefined;
+  readonly environmentId?: string | undefined;
   readonly runtimes?: RuntimeRegistry | undefined;
   readonly actions?: FlowActionRegistry | undefined;
   readonly contextPolicies?: ContextPolicyRegistry | undefined;
   readonly toolAdapters?: ToolAdapterRegistry | undefined;
-  readonly createExpert?:
-    | ((input: {
-        readonly resource: PragmaExpertResource;
-        readonly tools: readonly ExpertAgentManagedTool<string, ExpertAgentToolCallResult>[];
-        readonly workspace: string;
-      }) => Promise<Expert>)
-    | undefined;
-  readonly expertOptions?:
-    | ((resource: PragmaExpertResource) => Partial<DefineExpertOptions>)
-    | undefined;
+  readonly resourceAdapters?: PragmaResourceAdapterRegistry | undefined;
+  readonly adapterHost?: PragmaAdapterHost | undefined;
+  readonly pragmaHome?: string | undefined;
 }
 
 export interface DefinitionSerializer {
@@ -166,9 +169,10 @@ export class DefinitionSerializerRegistry {
 const delegateToolAdapter: ResourceToolAdapter = {
   id: "pragma.tool.delegate",
   version: "v1",
-  createTools({ binding, targets, contextPolicies }) {
-    const experts = targets.filter((target): target is Expert => !("kind" in target));
-    if (experts.length !== targets.length) {
+  createTools({ binding, targets, contextPolicies, runtimeByExpert }) {
+    const values = targets.map((target) => target.value);
+    const experts = values.filter((target): target is Expert => !("kind" in target));
+    if (experts.length !== values.length) {
       throw new Error("pragma.tool.delegate@v1 only supports Expert targets.");
     }
     const policy = binding.policy;
@@ -176,8 +180,8 @@ const delegateToolAdapter: ResourceToolAdapter = {
       experts,
       maxConcurrency: policy?.maxConcurrency,
       maxDepth: policy?.maxDepth,
-      contextId: contextPolicies.resolve(policy?.context ?? "context:pragma.context.fresh@v1"),
-      runtimeByExpert: policy?.runtimes,
+      contextId: contextPolicies.resolve(policy?.context ?? "context-policy:pragma.fresh@v1"),
+      runtimeByExpert,
     }).tools;
   },
 };
@@ -195,7 +199,10 @@ const callToolAdapter: ResourceToolAdapter = {
       {
         name: tool.name,
         description: tool.description,
-        inputSchema: invocationInputSchema(target),
+        inputSchema: invocationInputSchema(target.resource),
+        ...(target.resource.kind === "Flow" && target.resource.spec.output?.schema !== undefined
+          ? { outputSchema: target.resource.spec.output.schema }
+          : {}),
         approval: { mode: tool.approval },
         async call(input, signal, context) {
           if (signal?.aborted)
@@ -204,17 +211,35 @@ const callToolAdapter: ResourceToolAdapter = {
           if (invoke === undefined) {
             return failure("missing_execution", "Resource calls require an active Execution.");
           }
+          const timeoutController = new AbortController();
+          const timeout =
+            tool.timeoutMs === undefined
+              ? undefined
+              : setTimeout(
+                  () =>
+                    timeoutController.abort(
+                      new Error(`Resource call timed out after ${tool.timeoutMs}ms.`),
+                    ),
+                  tool.timeoutMs,
+                );
+          const invocationSignal =
+            signal === undefined
+              ? timeoutController.signal
+              : AbortSignal.any([signal, timeoutController.signal]);
           try {
-            const output = await invoke({ target, input, signal });
+            const output = await invoke({ target: target.value, input, signal: invocationSignal });
+            const text = serializeToolOutput(output);
             return {
-              text: typeof output === "string" ? output : JSON.stringify(output, null, 2),
+              text,
               details: output,
             };
           } catch (error) {
             return failure(
-              "resource_call_failed",
+              timeoutController.signal.aborted ? "resource_call_timeout" : "resource_call_failed",
               error instanceof Error ? error.message : String(error),
             );
+          } finally {
+            if (timeout !== undefined) clearTimeout(timeout);
           }
         },
       },
@@ -222,9 +247,9 @@ const callToolAdapter: ResourceToolAdapter = {
   },
 };
 
-function invocationInputSchema(target: InvocableResource): unknown {
-  if ("kind" in target && target.kind === "flow") {
-    return { type: "object", additionalProperties: true };
+function invocationInputSchema(target: PragmaInvocableResource): unknown {
+  if (target.kind === "Flow") {
+    return target.spec.input?.schema ?? { type: "object", additionalProperties: true };
   }
   return {
     type: "object",
@@ -232,6 +257,14 @@ function invocationInputSchema(target: InvocableResource): unknown {
     required: ["prompt"],
     additionalProperties: false,
   };
+}
+
+function serializeToolOutput(output: unknown): string {
+  if (typeof output === "string") return output;
+  if (output === undefined) return "null";
+  const serialized = JSON.stringify(output, null, 2);
+  if (serialized === undefined) throw new Error("Resource output is not JSON serializable.");
+  return serialized;
 }
 
 function failure(code: string, message: string): ExpertAgentToolCallResult {

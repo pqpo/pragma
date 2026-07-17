@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 
@@ -17,6 +17,7 @@ export interface CapabilityCredentialStore {
   setMany(capabilityId: string, credentials: Readonly<Record<string, string>>): Promise<void>;
   get(capabilityId: string, name: string): Promise<string | undefined>;
   removeCapability(capabilityId: string): Promise<void>;
+  fingerprint(capabilityId: string): Promise<string>;
 }
 
 export class CapabilityCredentialStoreError extends Error {
@@ -114,6 +115,13 @@ export function createCapabilityCredentialStore(options: {
           Object.entries(config.credentials).filter(([key]) => !key.startsWith(`${capabilityId}/`)),
         ),
       });
+    },
+    async fingerprint(capabilityId) {
+      const config = await readConfig();
+      const values = Object.entries(config.credentials)
+        .filter(([key]) => key.startsWith(`${capabilityId}/`))
+        .sort(([left], [right]) => left.localeCompare(right));
+      return createHash("sha256").update(JSON.stringify(values)).digest("hex");
     },
   };
 }

@@ -20,7 +20,7 @@ import {
   ListContextStoreContentsSchema,
   DeleteExpertDefinitionSchema,
   ExpertDefinitionSchema,
-  ExpertIdSchema,
+  ExpertRefSchema,
   ExpertSummarySchema,
   GetWorkflowLayoutSchema,
   ImportSkillCapabilitySchema,
@@ -118,22 +118,22 @@ const api: PragmaDesktopAPI = {
     PickWorkspaceResultSchema.parse(await ipcRenderer.invoke("context-stores:pick-folder")),
   listExperts: async () =>
     ExpertSummarySchema.array().parse(await ipcRenderer.invoke("experts:list")),
-  getExpert: async (id) =>
-    ExpertDefinitionSchema.parse(await ipcRenderer.invoke("experts:get", ExpertIdSchema.parse(id))),
+  getExpert: async (ref) =>
+    ExpertDefinitionSchema.parse(await ipcRenderer.invoke("experts:get", ExpertRefSchema.parse(ref))),
   createExpert: async (input) =>
     ExpertDefinitionSchema.parse(
       await ipcRenderer.invoke("experts:create", CreateExpertDefinitionSchema.parse(input)),
     ),
-  updateExpert: async (id, input) =>
+  updateExpert: async (ref, input) =>
     ExpertDefinitionSchema.parse(
       await ipcRenderer.invoke(
         "experts:update",
-        ExpertIdSchema.parse(id),
+        ExpertRefSchema.parse(ref),
         UpdateExpertDefinitionSchema.parse(input),
       ),
     ),
-  deleteExpert: async (id) => {
-    await ipcRenderer.invoke("experts:delete", DeleteExpertDefinitionSchema.parse({ id }));
+  deleteExpert: async (ref) => {
+    await ipcRenderer.invoke("experts:delete", DeleteExpertDefinitionSchema.parse({ ref }));
   },
   getPragmaProject: async () =>
     PragmaProjectSnapshotSchema.parse(await ipcRenderer.invoke("pragma-project:get")),

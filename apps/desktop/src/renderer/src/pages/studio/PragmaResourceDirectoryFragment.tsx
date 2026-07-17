@@ -169,7 +169,7 @@ function TeamEditor(props: {
         ? members
         : [coordinator, ...members].filter(Boolean);
       const resource = PragmaExpertTeamResourceSchema.parse({
-        apiVersion: "pragma/v1",
+        apiVersion: "pragma/v2",
         kind: "ExpertTeam",
         metadata: { id, name, description, version, tags: props.initial?.metadata.tags ?? [] },
         spec: {

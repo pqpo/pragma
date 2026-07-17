@@ -20,7 +20,7 @@ describe("MissionsPage", () => {
 
   it("preselects an expert requested from Studio", () => {
     const expert: PragmaResource = {
-      apiVersion: "pragma/v1",
+      apiVersion: "pragma/v2",
       kind: "Expert",
       metadata: {
         id: "test_expert",
@@ -31,6 +31,7 @@ describe("MissionsPage", () => {
       },
       spec: {
         scope: "testing",
+        runtime: { ref: "runtime-profile:test@1.0.0" },
         capabilities: [],
         toolApprovals: {},
         contextStores: [],
@@ -77,6 +78,7 @@ describe("MissionDetailFragment", () => {
     mission.execution = {
       id: "00000000-0000-4000-8000-000000000010",
       sessionId: "00000000-0000-4000-8000-000000000011",
+      environmentFingerprint: "a".repeat(64),
       status: "running",
       startedAt: "2026-07-11T00:00:01.000Z",
     };

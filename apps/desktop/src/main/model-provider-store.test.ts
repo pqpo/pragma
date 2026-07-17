@@ -46,7 +46,7 @@ describe("model provider store", () => {
       hasApiKey: true,
     });
     expect(await store.list()).toEqual([provider]);
-    expect(await store.getCredentials(provider.id)).toEqual({
+    expect(await store.getCredentials(provider.id)).toMatchObject({
       baseUrl: "https://api.openai.com/v1",
       apiKey: "sk-top-secret",
       models: ["gpt-4.1", "gpt-4.1-mini"],
@@ -65,6 +65,7 @@ describe("model provider store", () => {
       apiKey: "sk-original",
       models: ["gpt-4.1"],
     });
+    const before = (await store.getCredentials(created.id)).revision;
 
     const updated = await store.update({
       id: created.id,
@@ -74,11 +75,12 @@ describe("model provider store", () => {
     });
 
     expect(updated).toMatchObject({ name: "Company gateway", hasApiKey: true });
-    expect(await store.getCredentials(created.id)).toEqual({
+    expect(await store.getCredentials(created.id)).toMatchObject({
       baseUrl: "https://models.example.com/v1",
       apiKey: "sk-original",
       models: ["gpt-4.1", "gpt-4.1-mini"],
     });
+    expect((await store.getCredentials(created.id)).revision).not.toBe(before);
   });
 
   it("rejects duplicate model IDs and plaintext fallback when encryption is unavailable", async () => {
@@ -108,6 +110,8 @@ describe("model provider store", () => {
         apiKey: "sk-test",
         models: ["gpt-4.1"],
       }),
-    ).rejects.toMatchObject({ code: "encryption_unavailable" } satisfies Partial<ModelProviderStoreError>);
+    ).rejects.toMatchObject({
+      code: "encryption_unavailable",
+    } satisfies Partial<ModelProviderStoreError>);
   });
 });

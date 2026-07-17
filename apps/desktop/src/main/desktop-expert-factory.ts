@@ -38,7 +38,7 @@ export class ExpertCapabilityResolutionError extends Error {
 }
 
 export async function resolveExpertCapabilities(options: {
-  readonly expert: ExpertDefinition;
+  readonly expert: Pick<ExpertDefinition, "capabilities" | "toolApprovals">;
   readonly store: CapabilityStore;
   readonly credentials: CapabilityCredentialStore;
   readonly capabilitiesPath: string;
@@ -269,7 +269,11 @@ async function resolveHttpAuth(
     : { type: "api_key_header" as const, headerName: definition.auth.headerName, value };
 }
 
-function createApprovals(expert: ExpertDefinition, runtimeKey: string, tools: readonly string[]) {
+function createApprovals(
+  expert: Pick<ExpertDefinition, "toolApprovals">,
+  runtimeKey: string,
+  tools: readonly string[],
+) {
   return Object.fromEntries(
     tools.map((tool) => {
       const mode = expert.toolApprovals[`mcp_${runtimeKey}_${sanitizeToolName(tool)}`] ?? "ask";
@@ -279,7 +283,7 @@ function createApprovals(expert: ExpertDefinition, runtimeKey: string, tools: re
 }
 
 function createHttpApprovals(
-  expert: ExpertDefinition,
+  expert: Pick<ExpertDefinition, "toolApprovals">,
   runtimeKey: string,
   tools: readonly { readonly name: string; readonly method: "GET" | "POST" }[],
 ) {

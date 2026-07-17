@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 
@@ -34,14 +34,22 @@ export interface ModelProviderStore {
   create(input: CreateModelProvider): Promise<ModelProvider>;
   update(input: UpdateModelProvider): Promise<ModelProvider>;
   remove(id: string): Promise<void>;
-  getCredentials(
-    id: string,
-  ): Promise<{ readonly baseUrl: string; readonly apiKey: string; readonly models: readonly string[] }>;
+  getCredentials(id: string): Promise<{
+    readonly baseUrl: string;
+    readonly apiKey: string;
+    readonly models: readonly string[];
+    readonly revision: string;
+  }>;
 }
 
 export class ModelProviderStoreError extends Error {
   constructor(
-    readonly code: "config_invalid" | "encryption_unavailable" | "provider_not_found" | "secret_unavailable" | "invalid_base_url",
+    readonly code:
+      | "config_invalid"
+      | "encryption_unavailable"
+      | "provider_not_found"
+      | "secret_unavailable"
+      | "invalid_base_url",
     message: string,
   ) {
     super(message);
@@ -61,7 +69,10 @@ function ensureEncryption(encryption: ModelProviderEncryption): void {
 function normalizeModels(models: readonly string[]): string[] {
   const unique = new Set(models.map((model) => model.trim()));
   if (unique.size !== models.length) {
-    throw new ModelProviderStoreError("config_invalid", "Each model ID must be unique within a provider.");
+    throw new ModelProviderStoreError(
+      "config_invalid",
+      "Each model ID must be unique within a provider.",
+    );
   }
   return [...unique];
 }
@@ -82,7 +93,10 @@ function normalizeBaseUrl(baseUrl: string): string {
     );
   }
   if (url.username || url.password || url.search || url.hash) {
-    throw new ModelProviderStoreError("invalid_base_url", "API base URL cannot contain credentials, queries, or fragments.");
+    throw new ModelProviderStoreError(
+      "invalid_base_url",
+      "API base URL cannot contain credentials, queries, or fragments.",
+    );
   }
 
   url.pathname = url.pathname.replace(/\/+$/, "");
@@ -104,7 +118,10 @@ function parseConfig(raw: string): StoredModelProviderConfig {
   try {
     value = JSON.parse(raw);
   } catch {
-    throw new ModelProviderStoreError("config_invalid", "The model provider configuration file is not valid JSON.");
+    throw new ModelProviderStoreError(
+      "config_invalid",
+      "The model provider configuration file is not valid JSON.",
+    );
   }
 
   if (
@@ -113,7 +130,10 @@ function parseConfig(raw: string): StoredModelProviderConfig {
     (value as { schemaVersion?: unknown }).schemaVersion !== CONFIG_SCHEMA_VERSION ||
     !Array.isArray((value as { providers?: unknown }).providers)
   ) {
-    throw new ModelProviderStoreError("config_invalid", "The model provider configuration has an unsupported format.");
+    throw new ModelProviderStoreError(
+      "config_invalid",
+      "The model provider configuration has an unsupported format.",
+    );
   }
 
   const providers = (value as { providers: unknown[] }).providers.map((provider) => {
@@ -127,7 +147,10 @@ function parseConfig(raw: string): StoredModelProviderConfig {
       !Array.isArray((provider as StoredModelProvider).models) ||
       !(provider as StoredModelProvider).models.every((model) => typeof model === "string")
     ) {
-      throw new ModelProviderStoreError("config_invalid", "The model provider configuration contains invalid data.");
+      throw new ModelProviderStoreError(
+        "config_invalid",
+        "The model provider configuration contains invalid data.",
+      );
     }
     return provider as StoredModelProvider;
   });
@@ -206,12 +229,18 @@ export function createModelProviderStore(options: {
       if (!config.providers.some((provider) => provider.id === id)) {
         throw new ModelProviderStoreError("provider_not_found", "The provider no longer exists.");
       }
-      await writeConfig({ ...config, providers: config.providers.filter((provider) => provider.id !== id) });
+      await writeConfig({
+        ...config,
+        providers: config.providers.filter((provider) => provider.id !== id),
+      });
     },
 
-    async getCredentials(
-      id: string,
-    ): Promise<{ readonly baseUrl: string; readonly apiKey: string; readonly models: readonly string[] }> {
+    async getCredentials(id: string): Promise<{
+      readonly baseUrl: string;
+      readonly apiKey: string;
+      readonly models: readonly string[];
+      readonly revision: string;
+    }> {
       ensureEncryption(options.encryption);
       const provider = (await readConfig()).providers.find((item) => item.id === id);
       if (!provider) {
@@ -222,6 +251,17 @@ export function createModelProviderStore(options: {
           baseUrl: provider.baseUrl,
           apiKey: options.encryption.decrypt(Buffer.from(provider.encryptedApiKey, "base64")),
           models: provider.models,
+          revision: createHash("sha256")
+            .update(
+              JSON.stringify({
+                id: provider.id,
+                baseUrl: provider.baseUrl,
+                models: provider.models,
+                api: "openai-completions",
+                encryptedApiKey: provider.encryptedApiKey,
+              }),
+            )
+            .digest("hex"),
         };
       } catch {
         throw new ModelProviderStoreError(

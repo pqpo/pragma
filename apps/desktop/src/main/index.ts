@@ -124,7 +124,7 @@ void app.whenReady().then(async () => {
     verify: createCapabilityVerifier(capabilityCredentials),
     isReferenced: async (capabilityId) => {
       const definitions = await Promise.all(
-        (await expertStore.list()).map((summary) => expertStore.get(summary.id)),
+        (await expertStore.list()).map((summary) => expertStore.get(summary.ref)),
       );
       return definitions.some((expert) =>
         expert.capabilities.some((reference) => reference.capabilityId === capabilityId),
@@ -132,12 +132,10 @@ void app.whenReady().then(async () => {
     },
   });
   installCapabilityHandlers(capabilityStore, () => mainWindow);
-  installContextStoreHandlers(
-    createContextStoreStore({
-      storesPath: join(app.getPath("home"), ".pragma", "context-stores"),
-    }),
-    () => mainWindow,
-  );
+  const contextStores = createContextStoreStore({
+    storesPath: join(app.getPath("home"), ".pragma", "context-stores"),
+  });
+  installContextStoreHandlers(contextStores, () => mainWindow);
   installExpertDefinitionHandlers(expertStore);
   installPragmaProjectHandlers(pragmaProjectStore);
   installMissionHandlers({
@@ -152,6 +150,7 @@ void app.whenReady().then(async () => {
       capabilitiesPath: join(app.getPath("home"), ".pragma", "capabilities"),
       pragmaHome: join(app.getPath("home"), ".pragma"),
       modelProviders: modelProviderStore,
+      contextStores,
     }),
   });
   installModelProviderHandlers(modelProviderStore);

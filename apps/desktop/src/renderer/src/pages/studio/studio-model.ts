@@ -11,6 +11,7 @@ export type ExpertModel = ExpertDefinition["model"];
 export type StudioView = "experts" | "teams" | "flows" | "capabilities" | "context-stores";
 
 export type ExpertRecord = {
+  readonly ref?: string | undefined;
   readonly id: string;
   readonly name: string;
   readonly description: string;
@@ -54,6 +55,7 @@ export const emptyDraft = (): ExpertDraft => ({
 export function toExpertRecord(definition: ExpertDefinition): ExpertRecord {
   return {
     id: definition.id,
+    ref: definition.ref,
     name: definition.name,
     description: definition.description,
     tags: definition.tags,

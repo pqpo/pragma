@@ -32,6 +32,9 @@ async function createStore(
     async removeCapability(id) {
       for (const key of secrets.keys()) if (key.startsWith(`${id}/`)) secrets.delete(key);
     },
+    async fingerprint() {
+      return "a".repeat(64);
+    },
   };
   return {
     directory,

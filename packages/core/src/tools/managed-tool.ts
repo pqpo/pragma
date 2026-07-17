@@ -254,11 +254,11 @@ function mergeApprovalCondition(
   left: ExpertAgentToolApprovalCondition | undefined,
   right: ExpertAgentToolApprovalCondition | undefined,
 ): Pick<ExpertAgentToolApproval, "when"> | Record<string, never> {
-  if (left === undefined) {
-    return right === undefined ? {} : { when: right };
-  }
+  // An unconditioned policy applies to every call. Keeping only the other condition would
+  // accidentally disable the merged approval outside that condition.
+  if (left === undefined || right === undefined) return {};
 
-  if (right === undefined || right === left) {
+  if (right === left) {
     return { when: left };
   }
 

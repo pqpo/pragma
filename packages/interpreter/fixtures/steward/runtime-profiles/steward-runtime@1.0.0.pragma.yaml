@@ -1,0 +1,12 @@
+apiVersion: pragma/v2
+kind: RuntimeProfile
+metadata:
+  id: steward-runtime
+  version: 1.0.0
+  name: Steward runtime
+  description: Portable runtime profile for the built-in steward template.
+  tags: [builtin, steward]
+spec:
+  adapter: pragma.runtime.profile@v1
+  config:
+    runtimeId: codex

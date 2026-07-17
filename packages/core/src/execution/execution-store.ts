@@ -831,13 +831,26 @@ function buildTree(rootId: string, invocations: readonly Invocation[]): Invocati
   const byId = new Map(invocations.map((invocation) => [invocation.invocationId, invocation]));
   const root = byId.get(rootId);
   if (root === undefined) throw new Error(`Root Invocation not found: ${rootId}`);
-  const visit = (invocation: Invocation): InvocationTree => ({
-    invocation,
-    children: invocations
-      .filter((candidate) => candidate.parentInvocationId === invocation.invocationId)
-      .map(visit),
-  });
-  return visit(root);
+  const childrenByParent = new Map<string, Invocation[]>();
+  for (const invocation of invocations) {
+    if (invocation.parentInvocationId === undefined) continue;
+    const children = childrenByParent.get(invocation.parentInvocationId) ?? [];
+    children.push(invocation);
+    childrenByParent.set(invocation.parentInvocationId, children);
+  }
+  const visit = (invocation: Invocation, ancestors: ReadonlySet<string>): InvocationTree => {
+    if (ancestors.has(invocation.invocationId)) {
+      throw new Error(`Invocation tree contains a cycle: ${invocation.invocationId}`);
+    }
+    const nextAncestors = new Set(ancestors).add(invocation.invocationId);
+    return {
+      invocation,
+      children: (childrenByParent.get(invocation.invocationId) ?? []).map((child) =>
+        visit(child, nextAncestors),
+      ),
+    };
+  };
+  return visit(root, new Set());
 }
 
 function commitSignature(request: ExecutionCommitRequest): string {

@@ -8,6 +8,7 @@ import type { PragmaExpertResource } from "@pragma/interpreter/ast";
 import { createMissionStore } from "./mission-store.ts";
 
 const temporaryPaths: string[] = [];
+const environmentFingerprint = "a".repeat(64);
 
 afterEach(async () => {
   await Promise.all(
@@ -71,11 +72,17 @@ describe("mission store", () => {
     });
     const executionId = "00000000-0000-4000-8000-000000000001";
     const startedAt = "2026-07-15T00:00:00.000Z";
-    await store.updateExecution(created.id, { id: executionId, status: "running", startedAt });
+    await store.updateExecution(created.id, {
+      id: executionId,
+      environmentFingerprint,
+      status: "running",
+      startedAt,
+    });
     await store.updateExecution(
       created.id,
       {
         id: executionId,
+        environmentFingerprint,
         status: "succeeded",
         startedAt,
         finishedAt: "2026-07-15T00:01:00.000Z",
@@ -85,7 +92,7 @@ describe("mission store", () => {
 
     const stale = await store.updateExecution(
       created.id,
-      { id: executionId, status: "waiting", startedAt },
+      { id: executionId, environmentFingerprint, status: "waiting", startedAt },
       { executionId, statuses: ["running", "waiting"] },
     );
 
@@ -121,6 +128,7 @@ describe("mission store", () => {
     });
     await store.updateExecution(active.id, {
       id: "00000000-0000-4000-8000-000000000002",
+      environmentFingerprint,
       status: "running",
       startedAt: "2026-07-16T00:00:00.000Z",
     });
@@ -136,7 +144,7 @@ async function temporaryRoot(): Promise<string> {
 
 function expertFixture(): PragmaExpertResource {
   return {
-    apiVersion: "pragma/v1",
+    apiVersion: "pragma/v2",
     kind: "Expert",
     metadata: {
       id: "product_designer",
@@ -147,6 +155,7 @@ function expertFixture(): PragmaExpertResource {
     },
     spec: {
       scope: "Product experience design.",
+      runtime: { ref: "runtime-profile:product_designer.runtime@0.1.0" },
       capabilities: [],
       toolApprovals: {},
       contextStores: [],

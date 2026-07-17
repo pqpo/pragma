@@ -1,10 +1,14 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { z } from "zod";
 
-import { FileSystemContextStore } from "@pragma/core";
+import {
+  FileSystemContextStore,
+  JsonContextStore,
+  type ExpertAgentContextStore,
+} from "@pragma/core";
 
 import {
   ContextNoteEntrySchema,
@@ -25,6 +29,10 @@ export interface ContextStoreStore {
   addNoteEntry(storeId: string, entry: ContextNoteEntry): Promise<ContextStore>;
   listContents(storeId: string): Promise<readonly ContextStoreContentSummary[]>;
   getContent(storeId: string, contentId: string): Promise<ContextStoreContent>;
+  resolve(storeId: string): Promise<{
+    readonly revision: string;
+    readonly store: ExpertAgentContextStore;
+  }>;
 }
 
 export class ContextStoreStoreError extends Error {
@@ -51,18 +59,64 @@ function parseJson(raw: string, label: string): unknown {
   }
 }
 
-async function writeJson(path: string, value: unknown): Promise<void> {
-  const temporaryPath = `${path}.${randomUUID()}.tmp`;
-  await writeFile(temporaryPath, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
-  await rename(temporaryPath, path);
-}
-
 export function createContextStoreStore(options: {
   readonly storesPath: string;
 }): ContextStoreStore {
   const storePath = (id: string) => join(options.storesPath, id);
   const manifestPath = (id: string) => join(storePath(id), "store.json");
   const entriesPath = (id: string) => join(storePath(id), "entries");
+  const contentsPath = (id: string) => join(storePath(id), "contexts.json");
+  const noteStore = (id: string, path = contentsPath(id)) =>
+    new JsonContextStore({ filePath: path, maxContextBytes: 100_000 });
+
+  const migrateNoteStore = async (id: string): Promise<void> => {
+    try {
+      await readFile(contentsPath(id), "utf8");
+      return;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+    let entryFiles: string[];
+    try {
+      entryFiles = (await readdir(entriesPath(id))).filter((name) => name.endsWith(".json"));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+      throw error;
+    }
+    const entries = await Promise.all(
+      entryFiles.map(async (name) =>
+        ContextNoteEntrySchema.parse(
+          parseJson(await readFile(join(entriesPath(id), name), "utf8"), `${id}/entries/${name}`),
+        ),
+      ),
+    );
+    const temporaryPath = `${contentsPath(id)}.${randomUUID()}.migration`;
+    const temporaryStore = noteStore(id, temporaryPath);
+    try {
+      if (entries.length === 0) {
+        await writeFile(temporaryPath, `${JSON.stringify(emptyNotePayload(), null, 2)}\n`, {
+          mode: 0o600,
+        });
+      }
+      for (const entry of entries) {
+        const result = await temporaryStore.addContext({
+          id: entry.id,
+          content: entry.content,
+          metadata: {
+            description: entry.description,
+            trigger: entry.trigger,
+            priority: "normal",
+          },
+        });
+        if (!result.ok) throw new ContextStoreStoreError("config_invalid", result.error.message);
+      }
+      await rename(temporaryPath, contentsPath(id));
+      await rm(entriesPath(id), { recursive: true, force: true });
+    } catch (error) {
+      await rm(temporaryPath, { force: true });
+      throw error;
+    }
+  };
 
   const readStore = async (id: string): Promise<ContextStore> => {
     try {
@@ -70,20 +124,32 @@ export function createContextStoreStore(options: {
         parseJson(await readFile(manifestPath(id), "utf8"), `${id}/store.json`),
       );
       if (manifest.type === "file") return manifest;
-      let entryFiles: string[] = [];
-      try {
-        entryFiles = (await readdir(entriesPath(id))).filter((name) => name.endsWith(".json"));
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-      }
+      await migrateNoteStore(id);
+      const store = noteStore(id);
+      const listed = await store.listContext({});
+      if (!listed.ok) throw new ContextStoreStoreError("config_invalid", listed.error.message);
       const entries = await Promise.all(
-        entryFiles.map(async (name) =>
-          ContextNoteEntrySchema.parse(
-            parseJson(await readFile(join(entriesPath(id), name), "utf8"), `${id}/entries/${name}`),
-          ),
-        ),
+        listed.value.map(async (summary) => {
+          const read = await store.readContext({ id: summary.id });
+          if (!read.ok) throw new ContextStoreStoreError("config_invalid", read.error.message);
+          return ContextNoteEntrySchema.parse({
+            id: read.value.id,
+            description: read.value.metadata.description ?? read.value.id,
+            content: read.value.content,
+            trigger: read.value.metadata.trigger,
+          });
+        }),
       );
-      return ContextStoreSchema.parse({ ...manifest, entries });
+      const metadata = await store.inspect();
+      if (!metadata.ok) throw new ContextStoreStoreError("config_invalid", metadata.error.message);
+      return ContextStoreSchema.parse({
+        ...manifest,
+        entries,
+        updatedAt:
+          metadata.value.updatedAt > manifest.updatedAt
+            ? metadata.value.updatedAt
+            : manifest.updatedAt,
+      });
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") {
         throw new ContextStoreStoreError("store_not_found", "The context store no longer exists.");
@@ -132,7 +198,13 @@ export function createContextStoreStore(options: {
         await writeFile(join(temporaryPath, "store.json"), `${JSON.stringify(store, null, 2)}\n`, {
           mode: 0o600,
         });
-        if (store.type === "note") await mkdir(join(temporaryPath, "entries"), { mode: 0o700 });
+        if (store.type === "note") {
+          await writeFile(
+            join(temporaryPath, "contexts.json"),
+            `${JSON.stringify(emptyNotePayload(timestamp), null, 2)}\n`,
+            { mode: 0o600 },
+          );
+        }
         await mkdir(options.storesPath, { recursive: true, mode: 0o700 });
         await rename(temporaryPath, targetPath);
       } catch (error) {
@@ -151,34 +223,35 @@ export function createContextStoreStore(options: {
           "Entities can only be added to a context note store.",
         );
       }
-      if (current.entries.some((candidate) => candidate.id === entry.id)) {
+      const result = await noteStore(storeId).addContext({
+        id: entry.id,
+        content: entry.content,
+        metadata: {
+          description: entry.description,
+          trigger: entry.trigger,
+          priority: "normal",
+        },
+      });
+      if (!result.ok) {
         throw new ContextStoreStoreError(
-          "entry_exists",
-          `Context entity ${entry.id} already exists.`,
+          result.error.code === "context_already_exists" ? "entry_exists" : "config_invalid",
+          result.error.message,
         );
       }
-      await mkdir(entriesPath(storeId), { recursive: true, mode: 0o700 });
-      await writeJson(join(entriesPath(storeId), `${entry.id}.json`), entry);
-      const updated = ContextStoreSchema.parse({
-        ...current,
-        entries: [...current.entries, entry],
-        updatedAt: new Date().toISOString(),
-      });
-      await writeJson(manifestPath(storeId), { ...updated, entries: [] });
-      return updated;
+      return await readStore(storeId);
     },
 
     async listContents(storeId: string): Promise<readonly ContextStoreContentSummary[]> {
       const current = await readStore(storeId);
       if (current.type === "note") {
-        return current.entries.map((entry) => ({
-          id: entry.id,
-          metadata: {
-            description: entry.description,
-            trigger: entry.trigger,
-            priority: "normal",
-          },
-          sizeBytes: Buffer.byteLength(entry.content, "utf8"),
+        const result = await noteStore(storeId).listContext({});
+        if (!result.ok)
+          throw new ContextStoreStoreError("source_unavailable", result.error.message);
+        return result.value.map((item) => ({
+          id: item.id,
+          metadata: item.metadata,
+          ...(item.revision === undefined ? {} : { revision: item.revision }),
+          ...(item.sizeBytes === undefined ? {} : { sizeBytes: item.sizeBytes }),
         }));
       }
 
@@ -194,20 +267,19 @@ export function createContextStoreStore(options: {
     async getContent(storeId: string, contentId: string): Promise<ContextStoreContent> {
       const current = await readStore(storeId);
       if (current.type === "note") {
-        const entry = current.entries.find((candidate) => candidate.id === contentId);
-        if (entry === undefined) {
-          throw new ContextStoreStoreError("content_not_found", `Context not found: ${contentId}`);
-        }
+        const result = await noteStore(storeId).readContext({ id: contentId });
+        if (!result.ok)
+          throw new ContextStoreStoreError(
+            result.error.code === "context_not_found" ? "content_not_found" : "source_unavailable",
+            result.error.message,
+          );
         return {
-          id: entry.id,
-          content: entry.content,
-          metadata: {
-            description: entry.description,
-            trigger: entry.trigger,
-            priority: "normal",
-          },
-          sizeBytes: Buffer.byteLength(entry.content, "utf8"),
-          truncated: false,
+          id: result.value.id,
+          content: result.value.content,
+          metadata: result.value.metadata,
+          ...(result.value.revision === undefined ? {} : { revision: result.value.revision }),
+          ...(result.value.sizeBytes === undefined ? {} : { sizeBytes: result.value.sizeBytes }),
+          truncated: result.value.contentRange.truncated,
         };
       }
 
@@ -232,5 +304,33 @@ export function createContextStoreStore(options: {
         truncated: result.value.contentRange.truncated,
       };
     },
+
+    async resolve(storeId) {
+      const current = await readStore(storeId);
+      return {
+        revision: createHash("sha256")
+          .update(
+            JSON.stringify(
+              current.type === "file"
+                ? { id: current.id, type: current.type, source: current.source }
+                : { id: current.id, type: current.type },
+            ),
+          )
+          .digest("hex"),
+        store:
+          current.type === "file"
+            ? new FileSystemContextStore({ rootDir: current.source.path })
+            : noteStore(storeId),
+      };
+    },
+  };
+}
+
+function emptyNotePayload(updatedAt = new Date().toISOString()) {
+  return {
+    schemaVersion: "pragma.context-json-store/v1" as const,
+    revision: 0,
+    updatedAt,
+    items: [],
   };
 }

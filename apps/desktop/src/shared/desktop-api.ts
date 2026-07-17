@@ -8,8 +8,14 @@ import {
   PragmaExpertResourceSchema,
   PragmaLockSchema,
   PragmaResourceRefSchema,
+  PragmaSemanticResourceRefSchema,
   PragmaResourceSchema,
   PragmaToolBindingSchema,
+  PragmaHttpParameterSchema,
+  PragmaHttpToolSchema,
+  PragmaJsonSchemaSchema,
+  PragmaObjectJsonSchemaSchema,
+  type PragmaJsonSchema,
 } from "@pragma/interpreter/ast";
 import { z } from "zod";
 
@@ -242,46 +248,8 @@ export const McpServerCapabilityDefinitionSchema = z
   })
   .superRefine((definition, context) => addDuplicateToolIssues(definition.tools, context));
 
-export const HttpServiceParameterSchema = z.object({
-  name: z.string().trim().min(1).max(100),
-  location: z.enum(["path", "query"]),
-  required: z.boolean(),
-  type: z.enum(["string", "number", "integer", "boolean"]),
-  description: z.string().trim().max(500).optional(),
-});
-
-export const HttpServiceToolSchema = z
-  .object({
-    name: CapabilityToolNameSchema,
-    description: z.string().trim().min(1).max(2_000),
-    method: z.enum(["GET", "POST"]),
-    path: z.string().trim().min(1).max(1_000).regex(/^\//, "Path must start with /"),
-    parameters: z.array(HttpServiceParameterSchema).max(100).default([]),
-    bodySchema: z.record(z.string(), z.unknown()).optional(),
-  })
-  .superRefine((tool, context) => {
-    if (tool.method === "GET" && tool.bodySchema !== undefined) {
-      context.addIssue({
-        code: "custom",
-        message: "GET tools cannot declare a body.",
-        path: ["bodySchema"],
-      });
-    }
-    const declaredPathParameters = new Set(
-      tool.parameters
-        .filter((parameter) => parameter.location === "path")
-        .map((parameter) => parameter.name),
-    );
-    for (const match of tool.path.matchAll(/\{([^}]+)\}/g)) {
-      if (!declaredPathParameters.has(match[1] ?? "")) {
-        context.addIssue({
-          code: "custom",
-          message: `Path parameter ${match[1]} must be declared.`,
-          path: ["path"],
-        });
-      }
-    }
-  });
+export const HttpServiceParameterSchema = PragmaHttpParameterSchema;
+export const HttpServiceToolSchema = PragmaHttpToolSchema;
 
 export const HttpServiceAuthSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("none") }),
@@ -305,90 +273,9 @@ export const HttpServiceCapabilityDefinitionSchema = z
   })
   .superRefine((definition, context) => addDuplicateToolIssues(definition.tools, context));
 
-export type CodeServiceJsonSchema =
-  | { readonly type: "string"; readonly description?: string | undefined }
-  | { readonly type: "number"; readonly description?: string | undefined }
-  | { readonly type: "integer"; readonly description?: string | undefined }
-  | { readonly type: "boolean"; readonly description?: string | undefined }
-  | {
-      readonly type: "object";
-      readonly description?: string | undefined;
-      readonly properties: Readonly<Record<string, CodeServiceJsonSchema>>;
-      readonly required?: readonly string[] | undefined;
-      readonly additionalProperties: false;
-    }
-  | {
-      readonly type: "array";
-      readonly description?: string | undefined;
-      readonly items: CodeServiceJsonSchema;
-    };
-
-const CodeServiceFieldNameSchema = z
-  .string()
-  .trim()
-  .min(1)
-  .max(100)
-  .regex(/^[A-Za-z_][A-Za-z0-9_]*$/, "Use a JavaScript-style field name.");
-const CodeServiceDescriptionSchema = z.string().trim().max(500).optional();
-
-export const CodeServiceJsonSchemaSchema: z.ZodType<CodeServiceJsonSchema> = z.lazy(() =>
-  z.discriminatedUnion("type", [
-    z.object({ type: z.literal("string"), description: CodeServiceDescriptionSchema }).strict(),
-    z.object({ type: z.literal("number"), description: CodeServiceDescriptionSchema }).strict(),
-    z.object({ type: z.literal("integer"), description: CodeServiceDescriptionSchema }).strict(),
-    z.object({ type: z.literal("boolean"), description: CodeServiceDescriptionSchema }).strict(),
-    z
-      .object({
-        type: z.literal("object"),
-        description: CodeServiceDescriptionSchema,
-        properties: z.record(CodeServiceFieldNameSchema, CodeServiceJsonSchemaSchema),
-        required: z.array(CodeServiceFieldNameSchema).max(200).optional(),
-        additionalProperties: z.literal(false),
-      })
-      .strict()
-      .superRefine((schema, context) => {
-        const properties = new Set(Object.keys(schema.properties));
-        const required = schema.required ?? [];
-        required.forEach((name, index) => {
-          if (!properties.has(name)) {
-            context.addIssue({
-              code: "custom",
-              message: `Required field ${name} must exist in properties.`,
-              path: ["required", index],
-            });
-          }
-          if (required.indexOf(name) !== index) {
-            context.addIssue({
-              code: "custom",
-              message: `Required field ${name} must be unique.`,
-              path: ["required", index],
-            });
-          }
-        });
-      }),
-    z
-      .object({
-        type: z.literal("array"),
-        description: CodeServiceDescriptionSchema,
-        items: CodeServiceJsonSchemaSchema,
-      })
-      .strict(),
-  ]),
-);
-
-export const CodeServiceObjectJsonSchemaSchema = CodeServiceJsonSchemaSchema.refine(
-  (schema): schema is Extract<CodeServiceJsonSchema, { readonly type: "object" }> =>
-    schema.type === "object",
-  "The root schema must be an object.",
-).superRefine((schema, context) => {
-  const limits = codeSchemaLimits(schema);
-  if (limits.depth > 5) {
-    context.addIssue({ code: "custom", message: "Schema nesting cannot exceed 5 levels." });
-  }
-  if (limits.fields > 200) {
-    context.addIssue({ code: "custom", message: "Schema cannot contain more than 200 fields." });
-  }
-});
+export type CodeServiceJsonSchema = PragmaJsonSchema;
+export const CodeServiceJsonSchemaSchema = PragmaJsonSchemaSchema;
+export const CodeServiceObjectJsonSchemaSchema = PragmaObjectJsonSchemaSchema;
 
 export const CodeServiceCapabilityDefinitionSchema = z.object({
   kind: z.literal("code_service"),
@@ -407,24 +294,6 @@ export const CodeServiceCapabilityDefinitionSchema = z.object({
       .max(100 * 1024),
   }),
 });
-
-function codeSchemaLimits(schema: CodeServiceJsonSchema): {
-  readonly depth: number;
-  readonly fields: number;
-} {
-  if (schema.type === "array") {
-    const child = codeSchemaLimits(schema.items);
-    return { depth: child.depth + 1, fields: child.fields };
-  }
-  if (schema.type !== "object") return { depth: 1, fields: 0 };
-  const children = Object.values(schema.properties).map(codeSchemaLimits);
-  return {
-    depth: 1 + Math.max(0, ...children.map((child) => child.depth)),
-    fields:
-      Object.keys(schema.properties).length +
-      children.reduce((sum, child) => sum + child.fields, 0),
-  };
-}
 
 function addDuplicateToolIssues(
   tools: readonly { readonly name: string }[],
@@ -676,6 +545,7 @@ export const ExpertContextStoreMountSchema = z.object({
 
 export const ExpertDefinitionSchema = z.object({
   schemaVersion: z.literal("pragma.desktop-expert-view/v1"),
+  ref: PragmaSemanticResourceRefSchema.refine((value) => value.startsWith("expert:")),
   id: ExpertIdSchema,
   name: z.string().trim().min(1).max(120),
   description: z.string().trim().min(1).max(2_000),
@@ -698,6 +568,7 @@ export const ExpertDefinitionSchema = z.object({
 
 export const ExpertSummarySchema = ExpertDefinitionSchema.pick({
   schemaVersion: true,
+  ref: true,
   id: true,
   name: true,
   description: true,
@@ -711,6 +582,8 @@ export const ExpertSummarySchema = ExpertDefinitionSchema.pick({
 
 export const CreateExpertDefinitionSchema = ExpertDefinitionSchema.omit({
   schemaVersion: true,
+  ref: true,
+  resourceRuntime: true,
   revision: true,
   createdAt: true,
   updatedAt: true,
@@ -726,21 +599,27 @@ export const CreateExpertDefinitionSchema = ExpertDefinitionSchema.omit({
   plugins: z.array(ExpertPluginReferenceSchema).max(100).optional(),
   contextStoreMounts: z.array(ExpertContextStoreMountSchema).max(200).optional(),
   resourceTools: z.array(PragmaToolBindingSchema).max(200).optional(),
-  resourceRuntime: PragmaExpertResourceSchema.shape.spec.shape.runtime,
   opaqueCapabilities: PragmaExpertResourceSchema.shape.spec.shape.capabilities.optional(),
 });
 
 export const UpdateExpertDefinitionSchema = CreateExpertDefinitionSchema.omit({ id: true });
 
-export const DeleteExpertDefinitionSchema = z.object({ id: ExpertIdSchema });
+export const ExpertRefSchema = PragmaSemanticResourceRefSchema.refine((value) =>
+  value.startsWith("expert:"),
+);
+export const DeleteExpertDefinitionSchema = z.object({ ref: ExpertRefSchema });
 
 export const PragmaProjectSnapshotSchema = z.object({
-  schemaVersion: z.literal("pragma.desktop-project/v1"),
+  schemaVersion: z.literal("pragma.project-snapshot/v2"),
   projectId: z.string().trim().min(1).max(120),
   revision: z.number().int().nonnegative(),
   resources: z.array(PragmaResourceSchema),
   diagnostics: z.array(PragmaDiagnosticSchema),
   lock: PragmaLockSchema.optional(),
+  projectFingerprint: z
+    .string()
+    .regex(/^[a-f0-9]{64}$/)
+    .optional(),
   updatedAt: z.string().datetime().optional(),
 });
 
@@ -863,6 +742,7 @@ export const MissionSchema = z.object({
     .object({
       id: z.string().uuid(),
       sessionId: z.string().uuid().optional(),
+      environmentFingerprint: z.string().length(64),
       status: z.enum(["queued", "running", "waiting", "succeeded", "failed", "cancelled"]),
       startedAt: z.string().datetime(),
       finishedAt: z.string().datetime().optional(),
@@ -1035,10 +915,10 @@ export interface PragmaDesktopAPI {
   getContextStoreContent: (input: GetContextStoreContent) => Promise<ContextStoreContent>;
   pickContextStoreFolder: () => Promise<PickWorkspaceResult>;
   listExperts: () => Promise<ExpertSummary[]>;
-  getExpert: (id: string) => Promise<ExpertDefinition>;
+  getExpert: (ref: string) => Promise<ExpertDefinition>;
   createExpert: (input: CreateExpertDefinition) => Promise<ExpertDefinition>;
-  updateExpert: (id: string, input: UpdateExpertDefinition) => Promise<ExpertDefinition>;
-  deleteExpert: (id: string) => Promise<void>;
+  updateExpert: (ref: string, input: UpdateExpertDefinition) => Promise<ExpertDefinition>;
+  deleteExpert: (ref: string) => Promise<void>;
   getPragmaProject: () => Promise<PragmaProjectSnapshot>;
   publishPragmaProject: (input: PublishPragmaProject) => Promise<PragmaProjectSnapshot>;
   upsertPragmaResource: (input: UpsertPragmaResource) => Promise<PragmaProjectSnapshot>;

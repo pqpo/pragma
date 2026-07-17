@@ -61,7 +61,7 @@ export function StudioPage(props: { readonly onTryExpert: (expert: ExpertRecord)
       try {
         const summaries = await api.listExperts();
         const definitions = await Promise.all(
-          summaries.map((summary) => api.getExpert(summary.id)),
+          summaries.map((summary) => api.getExpert(summary.ref)),
         );
         const storedExperts = definitions.map(toExpertRecord);
         if (cancelled) return;
@@ -133,13 +133,22 @@ export function StudioPage(props: { readonly onTryExpert: (expert: ExpertRecord)
       const definition =
         expert.persisted === undefined
           ? await api.createExpert(input as CreateExpertDefinition)
-          : await api.updateExpert(expert.id, input as UpdateExpertDefinition);
+          : await api.updateExpert(expert.persisted.ref, input as UpdateExpertDefinition);
       saved = toExpertRecord(definition);
       setProject(await api.getPragmaProject());
     }
     setExperts((current) =>
-      current.some((item) => item.id === saved.id)
-        ? current.map((item) => (item.id === saved.id ? saved : item))
+      current.some(
+        (item) =>
+          (item.ref ?? `${item.id}@${item.version}`) ===
+          (saved.ref ?? `${saved.id}@${saved.version}`),
+      )
+        ? current.map((item) =>
+            (item.ref ?? `${item.id}@${item.version}`) ===
+            (saved.ref ?? `${saved.id}@${saved.version}`)
+              ? saved
+              : item,
+          )
         : [saved, ...current],
     );
     setSelectedExpert(saved);
@@ -301,7 +310,9 @@ export function StudioPage(props: { readonly onTryExpert: (expert: ExpertRecord)
             contextStores={contextStores}
             capabilities={capabilities}
             resources={project?.resources ?? []}
-            existingExpertIds={experts.map((expert) => expert.id)}
+            existingExpertRefs={experts.map(
+              (expert) => expert.ref ?? `expert:${expert.id}@${expert.version}`,
+            )}
             onCancel={openExpertDirectory}
             onCreated={saveExpert}
           />

@@ -21,7 +21,7 @@ import {
 describe("Flow editor canvas", () => {
   it("exposes palette items as drag-only controls", () => {
     const project: PragmaProjectSnapshot = {
-      schemaVersion: "pragma.desktop-project/v1",
+      schemaVersion: "pragma.project-snapshot/v2",
       projectId: "test-project",
       revision: 0,
       resources: [],
@@ -165,7 +165,7 @@ describe("Flow editor canvas", () => {
 
 function flowFixture(): PragmaFlowResource {
   return {
-    apiVersion: "pragma/v1",
+    apiVersion: "pragma/v2",
     kind: "Flow",
     metadata: {
       id: "review_flow",

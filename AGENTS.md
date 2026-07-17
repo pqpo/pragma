@@ -498,7 +498,8 @@ Expert API 设计要求：
 
 职责：
 
-- 定义 `Expert`、`ExpertTeam`、`Flow` 的 `pragma/v1` YAML DSL AST 与 Zod Schema。
+- 定义 `Expert`、`ExpertTeam`、`Flow`、`Capability`、`ContextStore`、`RuntimeProfile` 的
+  `pragma/v2` YAML DSL AST 与 Zod Schema。
 - 负责 YAML 解析、跨文件 import/include、引用链接、静态校验和 lock 校验。
 - 将 DSL 编译为 `@pragma/core` 的 Expert、ExpertTeam、Flow 对象实例。
 - 提供 Tool Adapter、Flow Action、Context Policy、Serializer 等具名版本 registry。

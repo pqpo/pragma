@@ -72,6 +72,7 @@ export class ExecutionController {
   private readonly pendingInteractions = new Map<
     string,
     {
+      invocationId: string;
       resolve(value: ExpertAgentHumanResponse): void;
       reject(reason: unknown): void;
       requestId?: string;
@@ -173,6 +174,59 @@ export class ExecutionController {
     return true;
   }
 
+  async interruptInvocationTree(invocationId: string, reason?: string): Promise<void> {
+    const descendants = await this.invocationTreeIds(invocationId);
+    for (const [interactionId, pending] of this.pendingInteractions) {
+      if (!descendants.has(pending.invocationId)) continue;
+      this.pendingInteractions.delete(interactionId);
+      pending.reject(new Error(reason ?? `Invocation interrupted: ${invocationId}`));
+    }
+    await Promise.allSettled(
+      [...descendants].reverse().map(async (id) => await this.interruptInvocation(id, reason)),
+    );
+  }
+
+  async abortInvocationTree(invocationId: string, reason?: string | Error): Promise<void> {
+    const descendants = await this.invocationTreeIds(invocationId);
+    const error =
+      reason instanceof Error ? reason : new Error(reason ?? `Invocation aborted: ${invocationId}`);
+    for (const id of descendants) {
+      const controller = this.invocationSignals.get(id) ?? new AbortController();
+      this.invocationSignals.set(id, controller);
+      controller.abort(error);
+    }
+    for (const [interactionId, pending] of this.pendingInteractions) {
+      if (!descendants.has(pending.invocationId)) continue;
+      this.pendingInteractions.delete(interactionId);
+      pending.reject(error);
+    }
+    await Promise.allSettled(
+      [...descendants].map(
+        async (id) => await this.activeRuntimeSubmissions.get(id)?.handle.cancel(),
+      ),
+    );
+  }
+
+  private async invocationTreeIds(invocationId: string): Promise<Set<string>> {
+    const invocations = await this.store.listInvocations(this.executionId);
+    const descendants = new Set([invocationId]);
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const invocation of invocations) {
+        if (
+          invocation.parentInvocationId !== undefined &&
+          descendants.has(invocation.parentInvocationId) &&
+          !descendants.has(invocation.invocationId)
+        ) {
+          descendants.add(invocation.invocationId);
+          changed = true;
+        }
+      }
+    }
+    return descendants;
+  }
+
   async requestHumanInteraction(
     invocationId: string,
     request: ExpertAgentHumanRequest,
@@ -188,7 +242,7 @@ export class ExecutionController {
     );
     if (this.cancelled) throw new Error("Execution was cancelled.");
     return await new Promise((resolve, reject) => {
-      this.pendingInteractions.set(interactionId, { resolve, reject });
+      this.pendingInteractions.set(interactionId, { invocationId, resolve, reject });
     });
   }
 
@@ -694,7 +748,7 @@ function createExecutionContext(
       const childRuntimeId = resolveDelegatedRuntimeId(
         options,
         delegation,
-        expert.id,
+        expert,
         parentRuntimeId,
       );
       return await orchestrator.spawn({
@@ -757,6 +811,7 @@ async function invokeResourceFromExpert(
   const execution = await requireExecution(options.store, options.executionId);
   const invocationId = randomUUID();
   const now = new Date().toISOString();
+  const unlinkAbort = linkInvocationAbort(request.signal, options.controller, invocationId);
 
   if (isFlowResource(target)) {
     const invocation: Invocation = {
@@ -824,10 +879,14 @@ async function invokeResourceFromExpert(
         ],
       });
       throw error;
+    } finally {
+      unlinkAbort();
     }
   }
 
   const nativeTarget = isExpertTeam(target) ? target.coordinator : target;
+  const targetRuntimeId = options.runtimes.resolve(nativeTarget.defaultRuntimeId ?? parentRuntimeId)
+    .descriptor.id;
   const contextResolution = await new ContextResolutionService(options.store).resolve({
     executionId: options.executionId,
     invocationId,
@@ -842,7 +901,7 @@ async function invokeResourceFromExpert(
     owner: options.owner,
     ownerContextId: options.context.contextId,
     expert: { id: nativeTarget.id, version: nativeTarget.version },
-    runtimeId: options.runtimes.resolve(parentRuntimeId).descriptor.id,
+    runtimeId: targetRuntimeId,
     resolver: freshContextIdResolver,
   });
   const invocation: Invocation = {
@@ -878,23 +937,42 @@ async function invokeResourceFromExpert(
       { invocationId, type: "invocation.queued", data: { resourceCall: true } },
     ],
   });
-  return await runExpertInvocation({
-    executionId: options.executionId,
-    invocationId,
-    parentInvocationId: options.invocationId,
-    expert: target,
-    prompt: readResourcePrompt(request.input),
-    owner: options.owner,
-    context: contextResolution.context,
-    controller: options.controller,
-    store: options.store,
-    runtimes: options.runtimes,
-    depth: depth + 1,
-    ...(options.readContextScope === undefined
-      ? {}
-      : { readContextScope: options.readContextScope }),
-    ...(options.persistContext === undefined ? {} : { persistContext: options.persistContext }),
-  });
+  try {
+    return await runExpertInvocation({
+      executionId: options.executionId,
+      invocationId,
+      parentInvocationId: options.invocationId,
+      expert: target,
+      prompt: readResourcePrompt(request.input),
+      owner: options.owner,
+      context: contextResolution.context,
+      controller: options.controller,
+      store: options.store,
+      runtimes: options.runtimes,
+      depth: depth + 1,
+      ...(options.readContextScope === undefined
+        ? {}
+        : { readContextScope: options.readContextScope }),
+      ...(options.persistContext === undefined ? {} : { persistContext: options.persistContext }),
+    });
+  } finally {
+    unlinkAbort();
+  }
+}
+
+function linkInvocationAbort(
+  signal: AbortSignal | undefined,
+  controller: ExecutionController,
+  invocationId: string,
+): () => void {
+  if (signal === undefined) return () => undefined;
+  const abort = () => {
+    const reason = signal.reason instanceof Error ? signal.reason : "Resource call aborted.";
+    void controller.abortInvocationTree(invocationId, reason);
+  };
+  if (signal.aborted) abort();
+  else signal.addEventListener("abort", abort, { once: true });
+  return () => signal.removeEventListener("abort", abort);
 }
 
 function isInvocableResource(value: unknown): value is ExpertDefinition | Flow {
@@ -1128,12 +1206,13 @@ function throwIfAborted(signal: AbortSignal, invocationId: string): void {
 function resolveDelegatedRuntimeId(
   options: RunExpertInvocationOptions,
   delegation: AgentDelegationDefinition,
-  expertId: string,
+  expert: Expert,
   parentRuntimeId: string,
 ): string {
   const configuredRuntimeId =
-    options.runtimeByExpert?.[expertId] ??
-    delegation.runtimeByExpert.get(expertId) ??
+    options.runtimeByExpert?.[expert.id] ??
+    delegation.runtimeByExpert.get(expert.id) ??
+    expert.defaultRuntimeId ??
     parentRuntimeId;
   return options.runtimes.resolve(configuredRuntimeId).descriptor.id;
 }
@@ -1145,7 +1224,7 @@ function validateDelegatedRuntimeRouting(
 ): void {
   if (delegation === undefined) return;
   for (const expert of delegation.experts) {
-    resolveDelegatedRuntimeId(options, delegation, expert.id, parentRuntimeId);
+    resolveDelegatedRuntimeId(options, delegation, expert, parentRuntimeId);
   }
 }
 

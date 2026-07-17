@@ -25,7 +25,7 @@ export function ExpertEditorFragment(props: {
   readonly contextStores: readonly ContextStore[];
   readonly capabilities: readonly Capability[];
   readonly resources: readonly PragmaResource[];
-  readonly existingExpertIds: readonly string[];
+  readonly existingExpertRefs: readonly string[];
   readonly onCancel: () => void;
   readonly onCreated: (expert: ExpertRecord) => Promise<void>;
 }) {
@@ -58,7 +58,10 @@ export function ExpertEditorFragment(props: {
       const idResult = CreateExpertIdSchema.safeParse(draft.id);
       const idAlreadyExists =
         !isEditing &&
-        props.existingExpertIds.some((id) => id.toLowerCase() === draft.id.trim().toLowerCase());
+        props.existingExpertRefs.some(
+          (ref) =>
+            ref.toLowerCase() === `expert:${draft.id.trim()}@${draft.version.trim()}`.toLowerCase(),
+        );
       const hasInvalidLength =
         draft.name.trim().length > EXPERT_NAME_MAX_LENGTH ||
         draft.description.trim().length > EXPERT_DESCRIPTION_MAX_LENGTH ||
@@ -73,7 +76,7 @@ export function ExpertEditorFragment(props: {
       ) {
         setError(
           idAlreadyExists
-            ? "This expert ID is already in use. Choose a unique ID."
+            ? "This expert ID and version already exist. Choose a different version."
             : hasInvalidLength
               ? "Name, description, or tags exceed their character limits."
               : idResult.success

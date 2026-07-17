@@ -15,6 +15,7 @@ export interface FlowTaskContext<TInput = unknown> {
   readonly executionId: string;
   readonly invocationId: string;
   readonly emitOutput: (value: unknown) => Promise<void>;
+  readonly signal: AbortSignal;
 }
 
 export interface FlowTaskDefinition<TInput = unknown, TOutput = unknown> {
@@ -44,6 +45,7 @@ export interface DefineFlowOptions<TInput = unknown, TOutput = unknown> {
   readonly output?: z.ZodType<TOutput> | undefined;
   readonly result?: ((context: { readonly state: FlowState }) => TOutput) | undefined;
   readonly maxNodeVisits?: number | undefined;
+  readonly timeoutMs?: number | undefined;
 }
 
 export interface FlowStepOptions<TInput = unknown, TOutput = unknown> {
@@ -64,6 +66,13 @@ export interface FlowExpertStepOptions<TInput = unknown, TOutput = unknown> exte
   readonly runtime?: string | undefined;
   readonly runtimeByExpert?: RuntimeByExpert | undefined;
   readonly contextId?: ContextIdResolver | undefined;
+}
+
+export interface FlowNestedStepOptions<TInput = unknown, TOutput = unknown> extends FlowStepOptions<
+  TInput,
+  TOutput
+> {
+  readonly runtime?: string | undefined;
 }
 
 export interface FlowStepReference<TOutput = unknown> {
@@ -105,7 +114,7 @@ export interface FlowChain {
 export interface CompiledFlowStep {
   readonly id: string;
   readonly definition: FlowNodeDefinition;
-  readonly options: FlowStepOptions | FlowExpertStepOptions;
+  readonly options: FlowStepOptions | FlowNestedStepOptions | FlowExpertStepOptions;
 }
 
 export interface Flow {
@@ -116,6 +125,7 @@ export interface Flow {
   readonly output?: z.ZodType | undefined;
   readonly result?: ((context: { readonly state: FlowState }) => unknown) | undefined;
   readonly maxNodeVisits: number;
+  readonly timeoutMs?: number | undefined;
   readonly steps: ReadonlyMap<string, CompiledFlowStep>;
   readonly startStepId: string;
   readonly transitions: ReadonlyMap<string, FlowTransition>;
@@ -148,6 +158,7 @@ export class FlowSpec<TInput = unknown, TOutput = unknown> {
   readonly output: z.ZodType<TOutput> | undefined;
   readonly result: ((context: { readonly state: FlowState }) => TOutput) | undefined;
   readonly maxNodeVisits: number;
+  readonly timeoutMs: number | undefined;
   private readonly stepDefinitions = new Map<string, CompiledFlowStep>();
   private readonly transitionDefinitions = new Map<string, FlowTransition>();
   private readonly loopDefinitions = new Map<string, FlowLoopDefinition>();
@@ -160,6 +171,10 @@ export class FlowSpec<TInput = unknown, TOutput = unknown> {
     this.output = options.output;
     this.result = options.result;
     this.maxNodeVisits = readPositiveInteger(options.maxNodeVisits ?? 1_000, "maxNodeVisits");
+    this.timeoutMs =
+      options.timeoutMs === undefined
+        ? undefined
+        : readPositiveInteger(options.timeoutMs, "timeoutMs");
   }
 
   task<TStepInput = unknown, TStepOutput = unknown>(
@@ -202,13 +217,14 @@ export class FlowSpec<TInput = unknown, TOutput = unknown> {
   use<TStepInput = unknown, TStepOutput = unknown>(
     id: string,
     definition: Flow | FlowSpec,
-    options?: FlowStepOptions<TStepInput, TStepOutput>,
+    options?: FlowNestedStepOptions<TStepInput, TStepOutput>,
   ): FlowStepReference<TStepOutput>;
   use<TStepInput = unknown, TStepOutput = unknown>(
     id: string,
     definition: ExpertDefinition | Flow | FlowSpec,
     options:
       | FlowStepOptions<TStepInput, TStepOutput>
+      | FlowNestedStepOptions<TStepInput, TStepOutput>
       | FlowExpertStepOptions<TStepInput, TStepOutput> = {},
   ): FlowStepReference<TStepOutput> {
     const compiled = "compile" in definition ? definition.compile() : definition;
@@ -285,6 +301,7 @@ export class FlowSpec<TInput = unknown, TOutput = unknown> {
       output: this.output,
       result: this.result,
       maxNodeVisits: this.maxNodeVisits,
+      timeoutMs: this.timeoutMs,
       steps: new Map(this.stepDefinitions),
       startStepId: this.firstStepId,
       transitions: new Map(this.transitionDefinitions),

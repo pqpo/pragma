@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import {
   createPragma,
   createFileExecutionStore,
@@ -6,17 +8,17 @@ import {
   StoredExecutionView,
   type AgentMessageRecord,
   type ExecutionOutputItem,
-  type Expert,
   type ExpertAgentHumanRequest,
   type ExpertAgentHumanResponse,
-  type ExpertAgentManagedTool,
-  type ExpertAgentToolCallResult,
   type ExpertSession,
   type MutableExecution,
   type RuntimeRegistry,
 } from "@pragma/core";
-import type { InvocableResource } from "@pragma/interpreter";
-import type { PragmaExpertResource, PragmaResource } from "@pragma/interpreter/ast";
+import type {
+  InvocableResource,
+  PragmaAdapterHost,
+  PragmaBindingRecord,
+} from "@pragma/interpreter";
 import type {
   HumanInteractionRequest,
   HumanInteractionResponse,
@@ -36,8 +38,13 @@ import type {
 } from "../shared/desktop-api.ts";
 import type { CapabilityCredentialStore } from "./capability-credential-store.ts";
 import type { CapabilityStore } from "./capability-store.ts";
-import { createDesktopExpertAgent } from "./desktop-expert-factory.ts";
-import { pragmaExpertResourceToDesktopDefinition } from "./expert-definition-store.ts";
+import { resolveExpertCapabilities } from "./desktop-expert-factory.ts";
+import type { ContextStoreStore } from "./context-store-store.ts";
+import {
+  parseDesktopCapabilityBindingRef,
+  parseDesktopContextBindingRef,
+  parseDesktopModelProviderBindingRef,
+} from "./desktop-binding-ref.ts";
 import type { MissionStore } from "./mission-store.ts";
 import type { ModelProviderStore } from "./model-provider-store.ts";
 import type { PragmaProjectStore } from "./pragma-project-store.ts";
@@ -89,6 +96,7 @@ export function createMissionRunner(options: {
   readonly capabilitiesPath: string;
   readonly pragmaHome: string;
   readonly modelProviders: ModelProviderStore;
+  readonly contextStores?: ContextStoreStore | undefined;
   readonly runtimes?: RuntimeRegistry | undefined;
 }): MissionRunner {
   const runtimes = options.runtimes ?? createDesktopRuntimeRegistry();
@@ -162,6 +170,7 @@ export function createMissionRunner(options: {
     readonly missionId: string;
     readonly handle: MutableExecution & { readonly result: Promise<unknown> };
     readonly startedAt: string;
+    readonly environmentFingerprint: string;
     readonly sessionId?: string | undefined;
     readonly onFinished?: (() => void | Promise<void>) | undefined;
     readonly onSucceeded?: ((result: unknown) => void | Promise<void>) | undefined;
@@ -173,6 +182,7 @@ export function createMissionRunner(options: {
       input.missionId,
       input.handle,
       input.startedAt,
+      input.environmentFingerprint,
       input.onFinished ?? (() => undefined),
       input.sessionId,
       input.onSucceeded,
@@ -187,17 +197,20 @@ export function createMissionRunner(options: {
   const runMission = async (id: string): Promise<Mission> => {
     const mission = await options.missions.get(id);
     if (active.has(mission.id)) return mission;
-    const project = await options.project.openRevision(mission.project.revision);
-    const compiled = await project.compile<InvocableResource>(mission.executor.ref, {
+    const compiled = await options.project.service.compile<InvocableResource>({
+      projectId: mission.project.id,
+      revision: mission.project.revision,
+      ref: mission.executor.ref,
       workspace: mission.workspace.path,
+      environmentId: "desktop",
+      adapterHost: createDesktopAdapterHost(options, mission.workspace.path),
       runtimes,
-      createExpert: async ({ resource, tools, workspace }) =>
-        await createExpert(resource, tools, workspace, mission.project.revision, options),
     });
+    assertRecoverableEnvironment(mission, compiled.environmentFingerprint.value);
     const startedAt = new Date().toISOString();
 
     if ("kind" in compiled.value && compiled.value.kind === "flow") {
-      const runtime = resolveRootRuntime(project.listResources(), mission.executor.ref, runtimes);
+      const runtime = compiled.rootRuntimeId;
       const recoverable =
         mission.execution !== undefined &&
         ["queued", "running", "waiting"].includes(mission.execution.status);
@@ -212,6 +225,7 @@ export function createMissionRunner(options: {
           });
       const running = await options.missions.updateExecution(mission.id, {
         id: handle.executionId,
+        environmentFingerprint: compiled.environmentFingerprint.value,
         status: "running",
         startedAt,
       });
@@ -219,6 +233,7 @@ export function createMissionRunner(options: {
         missionId: mission.id,
         handle,
         startedAt,
+        environmentFingerprint: compiled.environmentFingerprint.value,
         onSucceeded: async (result) => {
           await appendExecutionReply(options.missions, mission.id, handle, result);
         },
@@ -237,7 +252,7 @@ export function createMissionRunner(options: {
             sessionId: mission.execution!.sessionId!,
           })
         : await app.experts.createSession(compiled.value, {
-            runtime: resolveRootRuntime(project.listResources(), mission.executor.ref, runtimes),
+            runtime: compiled.rootRuntimeId,
           }));
     sessions.set(mission.id, session);
     const turn = await session.prompt(
@@ -253,6 +268,7 @@ export function createMissionRunner(options: {
     const running = await options.missions.updateExecution(mission.id, {
       id: turn.executionId,
       sessionId: session.sessionId,
+      environmentFingerprint: compiled.environmentFingerprint.value,
       status: "running",
       startedAt,
     });
@@ -260,6 +276,7 @@ export function createMissionRunner(options: {
       missionId: mission.id,
       handle: turn,
       startedAt,
+      environmentFingerprint: compiled.environmentFingerprint.value,
       sessionId: session.sessionId,
       onFinished: async () => await waitForExpertTurnSettlement(session, turn.requestId),
       onSucceeded: async (result) => {
@@ -284,13 +301,16 @@ export function createMissionRunner(options: {
     if (active.has(mission.id)) {
       throw new Error("Wait for the current expert turn before sending another message.");
     }
-    const project = await options.project.openRevision(mission.project.revision);
-    const compiled = await project.compile<InvocableResource>(mission.executor.ref, {
+    const compiled = await options.project.service.compile<InvocableResource>({
+      projectId: mission.project.id,
+      revision: mission.project.revision,
+      ref: mission.executor.ref,
       workspace: mission.workspace.path,
+      environmentId: "desktop",
+      adapterHost: createDesktopAdapterHost(options, mission.workspace.path),
       runtimes,
-      createExpert: async ({ resource, tools, workspace }) =>
-        await createExpert(resource, tools, workspace, mission.project.revision, options),
     });
+    assertRecoverableEnvironment(mission, compiled.environmentFingerprint.value);
     if ("kind" in compiled.value && compiled.value.kind === "flow") {
       throw new Error("Flow missions cannot receive chat messages.");
     }
@@ -298,7 +318,7 @@ export function createMissionRunner(options: {
       sessions.get(mission.id) ??
       (mission.execution?.sessionId === undefined
         ? await app.experts.createSession(compiled.value, {
-            runtime: resolveRootRuntime(project.listResources(), mission.executor.ref, runtimes),
+            runtime: compiled.rootRuntimeId,
           })
         : await app.experts.resumeSession(compiled.value, {
             sessionId: mission.execution.sessionId,
@@ -315,6 +335,7 @@ export function createMissionRunner(options: {
     const running = await options.missions.updateExecution(mission.id, {
       id: turn.executionId,
       sessionId: session.sessionId,
+      environmentFingerprint: compiled.environmentFingerprint.value,
       status: "running",
       startedAt,
     });
@@ -322,6 +343,7 @@ export function createMissionRunner(options: {
       missionId: mission.id,
       handle: turn,
       startedAt,
+      environmentFingerprint: compiled.environmentFingerprint.value,
       sessionId: session.sessionId,
       onFinished: async () => await waitForExpertTurnSettlement(session, turn.requestId),
       onSucceeded: async (result) => {
@@ -516,90 +538,111 @@ function createDesktopRuntimeRegistry(): RuntimeRegistry {
   });
 }
 
-async function createExpert(
-  resource: PragmaExpertResource,
-  tools: readonly ExpertAgentManagedTool<string, ExpertAgentToolCallResult>[],
-  workspace: string,
-  revision: number,
+function createDesktopAdapterHost(
   options: {
     readonly capabilityStore: CapabilityStore;
     readonly capabilityCredentials: CapabilityCredentialStore;
     readonly capabilitiesPath: string;
     readonly modelProviders: ModelProviderStore;
+    readonly contextStores?: ContextStoreStore | undefined;
   },
-): Promise<Expert> {
-  const definition = pragmaExpertResourceToDesktopDefinition(
-    resource,
-    revision,
-    new Date().toISOString(),
-  );
-  return await createDesktopExpertAgent({
-    definition,
-    workspace,
-    store: options.capabilityStore,
-    credentials: options.capabilityCredentials,
-    capabilitiesPath: options.capabilitiesPath,
-    overrides: {
-      tools,
-      ...(await resolveExpertModels(resource, options)),
-    },
-  });
-}
-
-async function resolveExpertModels(
-  resource: PragmaExpertResource,
-  options: { readonly modelProviders: ModelProviderStore },
-) {
-  const runtime = resource.spec.runtime;
-  if (runtime?.model === undefined) return {};
-  if (runtime.id !== "pi") {
-    return { models: { defaultModelName: runtime.model, providers: [] } };
-  }
-  if (runtime.provider === undefined) {
-    throw new Error(`Expert ${resource.metadata.id} must configure a PI model provider.`);
-  }
-  const provider = await options.modelProviders.getCredentials(runtime.provider);
+  projectRoot: string,
+): PragmaAdapterHost {
+  const secretCache = new Map<string, string>();
   return {
-    models: {
-      defaultModelName: runtime.model,
-      providers: [
-        {
-          provider: runtime.provider,
-          modelNames: provider.models,
-          baseApi: provider.baseUrl,
-          key: provider.apiKey,
-          api: "openai-completions" as const,
-        },
-      ],
+    environmentId: "desktop",
+    projectRoot,
+    async resolveBinding(ref): Promise<PragmaBindingRecord | undefined> {
+      const providerId = parseDesktopModelProviderBindingRef(ref);
+      if (providerId !== undefined) {
+        const provider = await options.modelProviders.getCredentials(providerId);
+        const secretRef = `model-provider:${providerId}`;
+        secretCache.set(secretRef, provider.apiKey);
+        return {
+          ref,
+          revision: provider.revision,
+          fingerprint: provider.revision,
+          value: {
+            provider: providerId,
+            baseApi: provider.baseUrl,
+            modelNames: provider.models,
+            api: "openai-completions",
+            secretRef,
+          },
+        };
+      }
+
+      const capabilityRef = parseDesktopCapabilityBindingRef(ref);
+      if (capabilityRef !== undefined) {
+        const capabilityId = capabilityRef.id;
+        const revision = capabilityRef.revision;
+        const capability = await options.capabilityStore.get(capabilityId, revision);
+        const toolNames =
+          capability.definition.kind === "skill"
+            ? []
+            : capability.definition.kind === "code_service"
+              ? [capability.definition.tool.name]
+              : capability.definition.tools.map((tool) => tool.name);
+        const contribution = await resolveExpertCapabilities({
+          expert: {
+            capabilities: [
+              capability.definition.kind === "skill"
+                ? { kind: "skill", capabilityId, revision }
+                : { kind: "tools", capabilityId, revision, toolNames },
+            ],
+            toolApprovals: {},
+          },
+          store: options.capabilityStore,
+          credentials: options.capabilityCredentials,
+          capabilitiesPath: options.capabilitiesPath,
+        });
+        const fingerprint = createHash("sha256")
+          .update(
+            JSON.stringify({
+              id: capabilityId,
+              revision,
+              definition: capability.definition,
+              credentials: await options.capabilityCredentials.fingerprint(capabilityId),
+            }),
+          )
+          .digest("hex");
+        return { ref, revision: String(revision), fingerprint, value: { contribution } };
+      }
+
+      const contextId = parseDesktopContextBindingRef(ref);
+      if (contextId !== undefined) {
+        if (options.contextStores === undefined) {
+          throw new Error(`Desktop context binding is unavailable: ${contextId}`);
+        }
+        const context = await options.contextStores.resolve(contextId);
+        return {
+          ref,
+          revision: context.revision,
+          fingerprint: context.revision,
+          value: { store: context.store },
+        };
+      }
+      return undefined;
+    },
+    async resolveArtifact(source) {
+      throw new Error(
+        source.type === "project"
+          ? `Project artifact was not resolved by the interpreter: ${source.path}`
+          : `Desktop has no external artifact resolver for: ${source.uri}`,
+      );
+    },
+    async resolveSecret(ref) {
+      return secretCache.get(ref);
     },
   };
 }
 
-function resolveRootRuntime(
-  resources: readonly PragmaResource[],
-  ref: string,
-  runtimes: RuntimeRegistry,
-): string {
-  const parsed = /^(expert|team|flow):([^@]+)@(.+)$/.exec(ref);
-  if (parsed === null) return runtimes.defaultRuntime;
-  let resource = resources.find(
-    (candidate) =>
-      resourceKind(candidate) === parsed[1] &&
-      candidate.metadata.id === parsed[2] &&
-      candidate.metadata.version === parsed[3],
-  );
-  if (resource?.kind === "ExpertTeam") {
-    const coordinator = /^expert:([^@]+)@(.+)$/.exec(resource.spec.coordinator.ref);
-    resource = resources.find(
-      (candidate) =>
-        candidate.kind === "Expert" &&
-        candidate.metadata.id === coordinator?.[1] &&
-        candidate.metadata.version === coordinator?.[2],
+function assertRecoverableEnvironment(mission: Mission, fingerprint: string): void {
+  if (mission.execution !== undefined && mission.execution.environmentFingerprint !== fingerprint) {
+    throw new Error(
+      "The Desktop environment changed since this execution started. Start a new mission instead of recovering it.",
     );
   }
-  return resource?.kind === "Expert"
-    ? (resource.spec.runtime?.id ?? runtimes.defaultRuntime)
-    : runtimes.defaultRuntime;
 }
 
 function observeExecution(
@@ -613,6 +656,7 @@ function observeExecution(
     readonly getMessageHistory: MutableExecution["getMessageHistory"];
   },
   startedAt: string,
+  environmentFingerprint: string,
   onFinished: () => void | Promise<void>,
   sessionId?: string,
   onSucceeded?: (result: unknown) => void | Promise<void>,
@@ -632,6 +676,7 @@ function observeExecution(
               {
                 id: execution.executionId,
                 ...(sessionId === undefined ? {} : { sessionId }),
+                environmentFingerprint,
                 status: "running",
                 startedAt,
               },
@@ -650,6 +695,7 @@ function observeExecution(
           {
             id: execution.executionId,
             ...(sessionId === undefined ? {} : { sessionId }),
+            environmentFingerprint,
             status: "waiting",
             startedAt,
           },
@@ -700,6 +746,7 @@ function observeExecution(
       {
         id: execution.executionId,
         ...(sessionId === undefined ? {} : { sessionId }),
+        environmentFingerprint,
         status,
         startedAt,
         finishedAt: new Date().toISOString(),
@@ -1215,10 +1262,6 @@ async function hasPendingHumanInteraction(execution: {
       event.type === "human.requested" &&
       !responded.has(String((event.data as { interactionId?: unknown }).interactionId)),
   );
-}
-
-function resourceKind(resource: PragmaResource): "expert" | "team" | "flow" {
-  return resource.kind === "Expert" ? "expert" : resource.kind === "ExpertTeam" ? "team" : "flow";
 }
 
 async function findHumanRequest(

@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted.
+Superseded in part by ADR 010. This record describes the historical v1 decision.
 
 ## Context
 

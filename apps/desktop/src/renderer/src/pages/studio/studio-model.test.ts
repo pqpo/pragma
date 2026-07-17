@@ -5,6 +5,7 @@ import { toExpertRecord, toPersistedInput } from "./studio-model.ts";
 
 const persistedExpert: ExpertDefinition = {
   schemaVersion: "pragma.desktop-expert-view/v1",
+  ref: "expert:reviewer@1.0.0",
   id: "reviewer",
   name: "Reviewer",
   description: "Reviews changes.",
@@ -12,6 +13,7 @@ const persistedExpert: ExpertDefinition = {
   version: "1.0.0",
   scope: "Reviews code quality. Does not merge changes.",
   model: null,
+  resourceRuntime: { ref: "runtime-profile:reviewer.runtime@1.0.0" },
   capabilities: [],
   toolApprovals: {},
   plugins: [],

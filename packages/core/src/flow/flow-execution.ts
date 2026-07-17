@@ -28,7 +28,10 @@ import {
   describeContextIdResolver,
   freshContextIdResolver,
 } from "../execution/context-id-resolver.ts";
-import type { ExecutionStore } from "../execution/execution-store.ts";
+import {
+  ExecutionVersionConflictError,
+  type ExecutionStore,
+} from "../execution/execution-store.ts";
 import { InvocationService } from "../execution/invocation-service.ts";
 import {
   StoredExecutionView,
@@ -91,8 +94,13 @@ export class FlowExecutionManager {
       status: "queued",
       input,
       state: {
-        __flowDefinitionGraph: createFlowDefinitionGraph(flow),
-        __requestedRuntimeId: runtimeId,
+        [FLOW_INTERNAL_STATE_KEY]: {
+          definitionGraph: createFlowDefinitionGraph(flow),
+          requestedRuntimeId: runtimeId,
+          reductions: {},
+          flowControl: emptyFlowControl(),
+          deadlines: {},
+        } satisfies StoredFlowInternalState,
       },
       lastAppliedSequence: 0,
       createdAt: now,
@@ -133,7 +141,8 @@ export class FlowExecutionManager {
     if (record.definition.id !== flow.id || record.definition.version !== flow.version) {
       throw new Error(`Flow definition mismatch for Execution ${request.executionId}.`);
     }
-    const storedGraph = record.state["__flowDefinitionGraph"];
+    const internal = readFlowInternalState(record.state);
+    const storedGraph = internal.definitionGraph;
     const currentGraph = createFlowDefinitionGraph(flow);
     if (
       storedGraph === undefined ||
@@ -143,7 +152,7 @@ export class FlowExecutionManager {
     }
     const runtimeId = this.runtimes.resolve(request.runtime).descriptor.id;
     validateFlowRuntimeConfiguration(flow, this.runtimes, runtimeId);
-    if (record.state["__requestedRuntimeId"] !== runtimeId) {
+    if (internal.requestedRuntimeId !== runtimeId) {
       throw new Error(`Flow Runtime mismatch for Execution ${request.executionId}.`);
     }
     if (isFinal(record.status)) {
@@ -342,66 +351,91 @@ async function runFlow(options: {
   readonly store: ExecutionStore;
   readonly runtimes: RuntimeRegistry;
   readonly runtime?: string | undefined;
+  readonly runtimeOverride?: string | undefined;
 }): Promise<unknown> {
+  const deadline = await ensureFlowDeadline(options);
+  const timeoutReason = `Flow ${options.flow.id} timed out.`;
+  const timeoutError = new FlowTimeoutError(timeoutReason);
+  if (deadline !== undefined && deadline <= Date.now()) {
+    await options.controller.abortInvocationTree(options.flowInvocationId, timeoutError);
+    throw timeoutError;
+  }
+  const timeout =
+    deadline === undefined
+      ? undefined
+      : setTimeout(
+          () => {
+            void options.controller.abortInvocationTree(options.flowInvocationId, timeoutError);
+          },
+          Math.max(1, deadline - Date.now()),
+        );
+  timeout?.unref();
   let stepId: string | undefined = options.flow.startStepId;
   const visits = new Map<string, number>();
-  while (stepId !== undefined) {
-    if (options.controller.isCancelled()) throw new Error("FlowExecution was cancelled.");
-    await ensureLoopEntry(options, stepId);
-    const step = options.flow.steps.get(stepId);
-    if (step === undefined) throw new Error(`Flow step not found: ${stepId}`);
-    const visit = visits.get(stepId) ?? 0;
-    visits.set(stepId, visit + 1);
-    const stepInvocations = await findStepInvocations(options, step);
-    const existingInvocation = stepInvocations[visit];
-    let input: unknown;
-    let invocation: Invocation;
-    if (existingInvocation !== undefined) {
-      input = existingInvocation.input;
-      invocation = existingInvocation;
-    } else {
-      await recordNodeVisit(options);
-      try {
-        input = resolveStepInput(
-          step,
-          (await options.store.get(options.executionId))!.state,
-          options.input,
-        );
-      } catch (error) {
-        const failed = await createStepInvocation(options, step, options.input, visit);
-        await putStatus(
-          options.store,
-          options.executionId,
-          failed,
-          "failed",
-          undefined,
-          serializeError(error),
-        );
-        throw error;
+  try {
+    while (stepId !== undefined) {
+      if (options.controller.isCancelled()) throw new Error("FlowExecution was cancelled.");
+      const flowSignal = options.controller.signalForInvocation(options.flowInvocationId);
+      if (flowSignal.aborted) throw flowSignal.reason ?? new FlowTimeoutError(timeoutReason);
+      await ensureLoopEntry(options, stepId);
+      const step = options.flow.steps.get(stepId);
+      if (step === undefined) throw new Error(`Flow step not found: ${stepId}`);
+      const visit = visits.get(stepId) ?? 0;
+      visits.set(stepId, visit + 1);
+      const stepInvocations = await findStepInvocations(options, step);
+      const existingInvocation = stepInvocations[visit];
+      let input: unknown;
+      let invocation: Invocation;
+      if (existingInvocation !== undefined) {
+        input = existingInvocation.input;
+        invocation = existingInvocation;
+      } else {
+        await recordNodeVisit(options, step.id, visit);
+        try {
+          input = resolveStepInput(
+            step,
+            readUserFlowState((await options.store.get(options.executionId))!.state),
+            options.input,
+          );
+        } catch (error) {
+          const failed = await createStepInvocation(options, step, options.input, visit);
+          await putStatus(
+            options.store,
+            options.executionId,
+            failed,
+            "failed",
+            undefined,
+            serializeError(error),
+          );
+          throw error;
+        }
+        invocation = await createStepInvocation(options, step, input, visit);
       }
-      invocation = await createStepInvocation(options, step, input, visit);
+      let output: unknown;
+      if (invocation.status === "succeeded") {
+        output = invocation.output;
+      } else {
+        output = await runStep(options, step, invocation, input);
+      }
+      await applyReductionOnce(options, step, invocation.invocationId, output);
+      const transition = options.flow.transitions.get(stepId);
+      if (transition === undefined) throw new Error(`Flow step has no transition: ${stepId}`);
+      const target = await applyTransitionOnce(options, invocation, output, transition);
+      if ("type" in target) {
+        if (target.type === "fail")
+          throw new Error(target.reason ?? `Flow ${options.flow.id} failed.`);
+        stepId = undefined;
+      } else {
+        stepId = target.id;
+      }
     }
-    let output: unknown;
-    if (invocation.status === "succeeded") {
-      output = invocation.output;
-    } else {
-      output = await runStep(options, step, invocation, input);
-    }
-    await applyReductionOnce(options, step, invocation.invocationId, output);
-    const transition = options.flow.transitions.get(stepId);
-    if (transition === undefined) throw new Error(`Flow step has no transition: ${stepId}`);
-    const target = await applyTransitionOnce(options, invocation, output, transition);
-    if ("type" in target) {
-      if (target.type === "fail")
-        throw new Error(target.reason ?? `Flow ${options.flow.id} failed.`);
-      stepId = undefined;
-    } else {
-      stepId = target.id;
-    }
+    const record = (await options.store.get(options.executionId))!;
+    const userState = readUserFlowState(record.state);
+    const output = options.flow.result?.({ state: userState }) ?? userState;
+    return options.flow.output?.parse(output) ?? output;
+  } finally {
+    if (timeout !== undefined) clearTimeout(timeout);
   }
-  const record = (await options.store.get(options.executionId))!;
-  const output = options.flow.result?.({ state: record.state }) ?? record.state;
-  return options.flow.output?.parse(output) ?? output;
 }
 
 export async function runNestedFlowInvocation(options: {
@@ -436,27 +470,40 @@ async function runStep(
     if ("kind" in step.definition && step.definition.kind === "task") {
       await putStatus(options.store, options.executionId, invocation, "running");
       const parsedInput = step.definition.inputSchema?.parse(input) ?? input;
-      const output = await step.definition.handler({
-        input: parsedInput,
-        state: record.state,
-        executionId: options.executionId,
-        invocationId: invocation.invocationId,
-        emitOutput: async (value) => {
-          await options.store.appendEvent(
-            options.executionId,
-            invocation.invocationId,
-            "invocation.progress",
-            { value },
-          );
-        },
-      } as FlowTaskContext);
+      const signal = options.controller.signalForInvocation(invocation.invocationId);
+      const output = await raceWithSignal(
+        Promise.resolve(
+          step.definition.handler({
+            input: parsedInput,
+            state: readUserFlowState(record.state),
+            executionId: options.executionId,
+            invocationId: invocation.invocationId,
+            signal,
+            emitOutput: async (value) => {
+              await options.store.appendEvent(
+                options.executionId,
+                invocation.invocationId,
+                "invocation.progress",
+                { value },
+              );
+            },
+          } as FlowTaskContext),
+        ),
+        signal,
+      );
       if (options.controller.isCancelled()) throw new Error("FlowExecution was cancelled.");
       const parsed = step.definition.outputSchema?.parse(output) ?? output;
       await putStatus(options.store, options.executionId, invocation, "succeeded", parsed);
       return parsed;
     }
     if ("kind" in step.definition && step.definition.kind === "human-task") {
-      return await runHumanTask(options, step.definition, invocation, input, record.state);
+      return await runHumanTask(
+        options,
+        step.definition,
+        invocation,
+        input,
+        readUserFlowState(record.state),
+      );
     }
     if ("kind" in step.definition && step.definition.kind === "flow") {
       await putStatus(options.store, options.executionId, invocation, "running");
@@ -465,6 +512,9 @@ async function runStep(
         flow: step.definition,
         flowInvocationId: invocation.invocationId,
         input,
+        runtime: ("runtime" in step.options ? step.options.runtime : undefined) ?? options.runtime,
+        runtimeOverride:
+          ("runtime" in step.options ? step.options.runtime : undefined) ?? options.runtimeOverride,
       });
       await putStatus(options.store, options.executionId, invocation, "succeeded", output);
       return output;
@@ -518,6 +568,7 @@ async function runHumanTask(
     state,
     executionId: options.executionId,
     invocationId: invocation.invocationId,
+    signal: options.controller.signalForInvocation(invocation.invocationId),
     emitOutput: async (value) => {
       await options.store.appendEvent(
         options.executionId,
@@ -681,7 +732,7 @@ async function createStepInvocation(
       invocationId,
       parentInvocationId: options.flowInvocationId,
       input,
-      state: record.state,
+      state: readUserFlowState(record.state),
       source: {
         kind: "flow",
         flowId: options.flow.id,
@@ -691,7 +742,7 @@ async function createStepInvocation(
       owner: options.owner,
       expert: { id: nativeExpert.id, version: nativeExpert.version },
       runtimeId: options.runtimes.resolve(
-        resolveFlowStepRuntimeId(step, nativeExpert.id, options.runtime),
+        resolveFlowStepRuntimeId(step, nativeExpert, options.runtime, options.runtimeOverride),
       ).descriptor.id,
       resolver:
         ("contextId" in step.options ? step.options.contextId : undefined) ??
@@ -756,14 +807,18 @@ async function applyReductionOnce(
   invocationId: string,
   output: unknown,
 ): Promise<void> {
-  const record = (await options.store.get(options.executionId))!;
-  const key = `__reduced:${invocationId}`;
-  if (record.state[key] === true) return;
-  const state = { ...record.state };
-  step.options.reduce?.({ state, output });
-  state[key] = true;
-  state[`result:${step.id}`] = output;
-  await options.store.update(options.executionId, { state });
+  await mutateFlowState(options, (record) => {
+    const internal = readFlowInternalState(record.state);
+    if (internal.reductions[invocationId] === true) return { changed: false, value: undefined };
+    const userState = structuredClone(readUserFlowState(record.state));
+    step.options.reduce?.({ state: userState, output });
+    internal.reductions[invocationId] = true;
+    return {
+      changed: true,
+      value: undefined,
+      state: { ...userState, [FLOW_INTERNAL_STATE_KEY]: internal },
+    };
+  });
 }
 
 function definitionRef(definition: CompiledFlowStep["definition"]): Invocation["definition"] {
@@ -812,7 +867,51 @@ function readField(value: unknown, field: string): unknown {
   return (value as Record<string, unknown>)[field];
 }
 
-const FLOW_CONTROL_STATE_KEY = "__pragma.flowControl";
+const FLOW_INTERNAL_STATE_KEY = "__pragma";
+
+interface StoredFlowInternalState {
+  definitionGraph?: unknown;
+  requestedRuntimeId?: string | undefined;
+  reductions: Record<string, boolean>;
+  flowControl: StoredFlowControl;
+  deadlines: Record<string, unknown>;
+}
+
+class FlowTimeoutError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "FlowTimeoutError";
+  }
+}
+
+async function ensureFlowDeadline(
+  options: Parameters<typeof runFlow>[0],
+): Promise<number | undefined> {
+  if (options.flow.timeoutMs === undefined) return undefined;
+  return await mutateFlowState(options, (record) => {
+    const internal = readFlowInternalState(record.state);
+    const stored = internal.deadlines[options.flowInvocationId];
+    if (typeof stored === "number" && Number.isFinite(stored)) {
+      return { changed: false, value: stored };
+    }
+    const deadline = Date.now() + options.flow.timeoutMs!;
+    internal.deadlines[options.flowInvocationId] = deadline;
+    return {
+      changed: true,
+      value: deadline,
+      state: { ...readUserFlowState(record.state), [FLOW_INTERNAL_STATE_KEY]: internal },
+    };
+  });
+}
+
+async function raceWithSignal<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) throw signal.reason ?? new Error("Invocation was aborted.");
+  return await new Promise<T>((resolve, reject) => {
+    const abort = () => reject(signal.reason ?? new Error("Invocation was aborted."));
+    signal.addEventListener("abort", abort, { once: true });
+    void promise.then(resolve, reject).finally(() => signal.removeEventListener("abort", abort));
+  });
+}
 
 interface StoredFlowTarget {
   readonly type: "step" | "end" | "fail";
@@ -824,22 +923,34 @@ interface StoredFlowControl {
   readonly loops: Record<string, { iteration: number; status: "active" | "exited" | "exhausted" }>;
   readonly transitions: Record<string, { target: StoredFlowTarget }>;
   readonly nodeVisits: Record<string, number>;
+  readonly nodeVisitRecords: Record<string, boolean>;
 }
 
-async function recordNodeVisit(options: Parameters<typeof runFlow>[0]): Promise<void> {
-  const record = (await options.store.get(options.executionId))!;
-  const control = readFlowControl(record.state[FLOW_CONTROL_STATE_KEY]);
-  const next = (control.nodeVisits[options.flowInvocationId] ?? 0) + 1;
-  if (next > options.flow.maxNodeVisits) {
-    throw new Error(
-      `Flow ${options.flow.id} exceeded maxNodeVisits (${options.flow.maxNodeVisits}).`,
-    );
-  }
-  control.nodeVisits[options.flowInvocationId] = next;
-  await options.store.commit({
-    commitId: `flow-node-visit:${options.flowInvocationId}:${next}`,
-    executionId: options.executionId,
-    executionPatch: { state: { ...record.state, [FLOW_CONTROL_STATE_KEY]: control } },
+async function recordNodeVisit(
+  options: Parameters<typeof runFlow>[0],
+  stepId: string,
+  visit: number,
+): Promise<void> {
+  await mutateFlowState(options, (record) => {
+    const internal = readFlowInternalState(record.state);
+    const control = internal.flowControl;
+    const visitKey = `${options.flowInvocationId}:${stepId}:${visit}`;
+    if (control.nodeVisitRecords[visitKey] === true) {
+      return { changed: false, value: undefined };
+    }
+    const next = (control.nodeVisits[options.flowInvocationId] ?? 0) + 1;
+    if (next > options.flow.maxNodeVisits) {
+      throw new Error(
+        `Flow ${options.flow.id} exceeded maxNodeVisits (${options.flow.maxNodeVisits}).`,
+      );
+    }
+    control.nodeVisits[options.flowInvocationId] = next;
+    control.nodeVisitRecords[visitKey] = true;
+    return {
+      changed: true,
+      value: undefined,
+      state: { ...readUserFlowState(record.state), [FLOW_INTERNAL_STATE_KEY]: internal },
+    };
   });
 }
 
@@ -849,27 +960,27 @@ async function ensureLoopEntry(
 ): Promise<void> {
   const entering = [...options.flow.loops.values()].filter((loop) => loop.entryStepId === stepId);
   if (entering.length === 0) return;
-  const record = (await options.store.get(options.executionId))!;
-  const control = readFlowControl(record.state[FLOW_CONTROL_STATE_KEY]);
-  const events: { invocationId: string; type: string; data: unknown }[] = [];
-  let changed = false;
-  for (const loop of entering) {
-    const loopStateKey = flowLoopStateKey(options.flowInvocationId, loop.id);
-    if (control.loops[loopStateKey] !== undefined) continue;
-    control.loops[loopStateKey] = { iteration: 1, status: "active" };
-    events.push({
-      invocationId: options.flowInvocationId,
-      type: "flow.loop.entered",
-      data: { loopId: loop.id, iteration: 1, entryStepId: loop.entryStepId },
-    });
-    changed = true;
-  }
-  if (!changed) return;
-  await options.store.commit({
-    commitId: randomUUID(),
-    executionId: options.executionId,
-    executionPatch: { state: { ...record.state, [FLOW_CONTROL_STATE_KEY]: control } },
-    events,
+  await mutateFlowState(options, (record) => {
+    const internal = readFlowInternalState(record.state);
+    const control = internal.flowControl;
+    const events: { invocationId: string; type: string; data: unknown }[] = [];
+    for (const loop of entering) {
+      const loopStateKey = flowLoopStateKey(options.flowInvocationId, loop.id);
+      if (control.loops[loopStateKey] !== undefined) continue;
+      control.loops[loopStateKey] = { iteration: 1, status: "active" };
+      events.push({
+        invocationId: options.flowInvocationId,
+        type: "flow.loop.entered",
+        data: { loopId: loop.id, iteration: 1, entryStepId: loop.entryStepId },
+      });
+    }
+    if (events.length === 0) return { changed: false, value: undefined };
+    return {
+      changed: true,
+      value: undefined,
+      state: { ...readUserFlowState(record.state), [FLOW_INTERNAL_STATE_KEY]: internal },
+      events,
+    };
   });
 }
 
@@ -879,94 +990,99 @@ async function applyTransitionOnce(
   output: unknown,
   transition: FlowTransition,
 ): Promise<{ readonly id: string } | FlowTerminal> {
-  const record = (await options.store.get(options.executionId))!;
-  const control = readFlowControl(record.state[FLOW_CONTROL_STATE_KEY]);
-  const existing = control.transitions[invocation.invocationId];
-  if (existing !== undefined) return restoreFlowTarget(existing.target);
+  return await mutateFlowState(options, (record) => {
+    const internal = readFlowInternalState(record.state);
+    const control = internal.flowControl;
+    const existing = control.transitions[invocation.invocationId];
+    if (existing !== undefined) {
+      return { changed: false, value: restoreFlowTarget(existing.target) };
+    }
 
-  let destination: FlowDestination | undefined;
-  let target: { readonly id: string } | FlowTerminal | undefined;
-  const events: { invocationId: string; type: string; data: unknown }[] = [];
-  if (transition.type === "next") {
-    destination = transition.target;
-  } else if (transition.type === "route") {
-    destination =
-      transition.cases.get(String(readField(output, transition.field))) ?? transition.fallback;
-  } else {
-    destination = transition;
-  }
-  if (destination !== undefined && isFlowRepeatTarget(destination)) {
-    const loop = options.flow.loops.get(destination.loopId);
-    if (loop === undefined)
-      throw new Error(`Flow repeat references unknown loop: ${destination.loopId}`);
-    if (!loop.stepIds.has(invocation.nodeId ?? "")) {
-      throw new Error(`Flow repeat source is outside loop ${loop.id}: ${invocation.nodeId ?? ""}`);
-    }
-    if (destination.target.id !== loop.entryStepId) {
-      throw new Error(`Flow repeat must target loop entry ${loop.entryStepId}: ${loop.id}`);
-    }
-    const loopStateKey = flowLoopStateKey(options.flowInvocationId, loop.id);
-    const current = control.loops[loopStateKey] ?? {
-      iteration: 1,
-      status: "active" as const,
-    };
-    if (current.iteration >= loop.maxIterations) {
-      control.loops[loopStateKey] = { ...current, status: "exhausted" };
-      target = loop.onLimit ?? {
-        type: "fail",
-        reason: `Flow loop ${loop.id} exceeded maxIterations (${loop.maxIterations}).`,
-      };
-      events.push({
-        invocationId: invocation.invocationId,
-        type: "flow.loop.exhausted",
-        data: { loopId: loop.id, iteration: current.iteration },
-      });
+    let destination: FlowDestination | undefined;
+    let target: { readonly id: string } | FlowTerminal | undefined;
+    const events: { invocationId: string; type: string; data: unknown }[] = [];
+    if (transition.type === "next") {
+      destination = transition.target;
+    } else if (transition.type === "route") {
+      destination =
+        transition.cases.get(String(readField(output, transition.field))) ?? transition.fallback;
     } else {
-      const iteration = current.iteration + 1;
-      control.loops[loopStateKey] = { iteration, status: "active" };
-      target = destination.target;
+      destination = transition;
+    }
+    if (destination !== undefined && isFlowRepeatTarget(destination)) {
+      const loop = options.flow.loops.get(destination.loopId);
+      if (loop === undefined)
+        throw new Error(`Flow repeat references unknown loop: ${destination.loopId}`);
+      if (!loop.stepIds.has(invocation.nodeId ?? "")) {
+        throw new Error(
+          `Flow repeat source is outside loop ${loop.id}: ${invocation.nodeId ?? ""}`,
+        );
+      }
+      if (destination.target.id !== loop.entryStepId) {
+        throw new Error(`Flow repeat must target loop entry ${loop.entryStepId}: ${loop.id}`);
+      }
+      const loopStateKey = flowLoopStateKey(options.flowInvocationId, loop.id);
+      const current = control.loops[loopStateKey] ?? {
+        iteration: 1,
+        status: "active" as const,
+      };
+      if (current.iteration >= loop.maxIterations) {
+        control.loops[loopStateKey] = { ...current, status: "exhausted" };
+        target = loop.onLimit ?? {
+          type: "fail",
+          reason: `Flow loop ${loop.id} exceeded maxIterations (${loop.maxIterations}).`,
+        };
+        events.push({
+          invocationId: invocation.invocationId,
+          type: "flow.loop.exhausted",
+          data: { loopId: loop.id, iteration: current.iteration },
+        });
+      } else {
+        const iteration = current.iteration + 1;
+        control.loops[loopStateKey] = { iteration, status: "active" };
+        target = destination.target;
+        events.push({
+          invocationId: invocation.invocationId,
+          type: "flow.loop.repeated",
+          data: {
+            loopId: loop.id,
+            iteration,
+            fromStepId: invocation.nodeId,
+            toStepId: destination.target.id,
+          },
+        });
+      }
+    } else {
+      target = destination;
+    }
+    if (target === undefined) {
+      throw new Error(
+        `Flow route has no matching target: ${invocation.nodeId ?? invocation.invocationId}`,
+      );
+    }
+
+    for (const loop of options.flow.loops.values()) {
+      const loopStateKey = flowLoopStateKey(options.flowInvocationId, loop.id);
+      const current = control.loops[loopStateKey];
+      if (current?.status !== "active" || !loop.stepIds.has(invocation.nodeId ?? "")) continue;
+      const targetId = "id" in target ? target.id : undefined;
+      if (targetId !== undefined && loop.stepIds.has(targetId)) continue;
+      control.loops[loopStateKey] = { ...current, status: "exited" };
       events.push({
         invocationId: invocation.invocationId,
-        type: "flow.loop.repeated",
-        data: {
-          loopId: loop.id,
-          iteration,
-          fromStepId: invocation.nodeId,
-          toStepId: destination.target.id,
-        },
+        type: "flow.loop.exited",
+        data: { loopId: loop.id, iteration: current.iteration, targetStepId: targetId },
       });
     }
-  } else {
-    target = destination;
-  }
-  if (target === undefined) {
-    throw new Error(
-      `Flow route has no matching target: ${invocation.nodeId ?? invocation.invocationId}`,
-    );
-  }
 
-  for (const loop of options.flow.loops.values()) {
-    const loopStateKey = flowLoopStateKey(options.flowInvocationId, loop.id);
-    const current = control.loops[loopStateKey];
-    if (current?.status !== "active" || !loop.stepIds.has(invocation.nodeId ?? "")) continue;
-    const targetId = "id" in target ? target.id : undefined;
-    if (targetId !== undefined && loop.stepIds.has(targetId)) continue;
-    control.loops[loopStateKey] = { ...current, status: "exited" };
-    events.push({
-      invocationId: invocation.invocationId,
-      type: "flow.loop.exited",
-      data: { loopId: loop.id, iteration: current.iteration, targetStepId: targetId },
-    });
-  }
-
-  control.transitions[invocation.invocationId] = { target: storeFlowTarget(target) };
-  await options.store.commit({
-    commitId: `flow-transition:${invocation.invocationId}`,
-    executionId: options.executionId,
-    executionPatch: { state: { ...record.state, [FLOW_CONTROL_STATE_KEY]: control } },
-    events,
+    control.transitions[invocation.invocationId] = { target: storeFlowTarget(target) };
+    return {
+      changed: true,
+      value: target,
+      state: { ...readUserFlowState(record.state), [FLOW_INTERNAL_STATE_KEY]: internal },
+      events,
+    };
   });
-  return target;
 }
 
 function isFlowRepeatTarget(destination: FlowDestination): destination is FlowRepeatTarget {
@@ -979,14 +1095,81 @@ function flowLoopStateKey(flowInvocationId: string, loopId: string): string {
 
 function readFlowControl(value: unknown): StoredFlowControl {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return { loops: {}, transitions: {}, nodeVisits: {} };
+    return emptyFlowControl();
   }
   const record = value as Partial<StoredFlowControl>;
   return {
     loops: { ...(record.loops ?? {}) },
     transitions: { ...(record.transitions ?? {}) },
     nodeVisits: { ...(record.nodeVisits ?? {}) },
+    nodeVisitRecords: { ...(record.nodeVisitRecords ?? {}) },
   };
+}
+
+function emptyFlowControl(): StoredFlowControl {
+  return { loops: {}, transitions: {}, nodeVisits: {}, nodeVisitRecords: {} };
+}
+
+function readFlowInternalState(state: FlowState): StoredFlowInternalState {
+  const value = state[FLOW_INTERNAL_STATE_KEY];
+  const record =
+    typeof value === "object" && value !== null && !Array.isArray(value)
+      ? (value as Partial<StoredFlowInternalState>)
+      : {};
+  return {
+    ...(record.definitionGraph === undefined ? {} : { definitionGraph: record.definitionGraph }),
+    ...(record.requestedRuntimeId === undefined
+      ? {}
+      : { requestedRuntimeId: record.requestedRuntimeId }),
+    reductions: { ...(record.reductions ?? {}) },
+    flowControl: readFlowControl(record.flowControl),
+    deadlines: { ...(record.deadlines ?? {}) },
+  };
+}
+
+function readUserFlowState(state: FlowState): FlowState {
+  return Object.fromEntries(
+    Object.entries(state).filter(([key]) => key !== FLOW_INTERNAL_STATE_KEY),
+  );
+}
+
+type FlowStateMutation<T> =
+  | { readonly changed: false; readonly value: T }
+  | {
+      readonly changed: true;
+      readonly value: T;
+      readonly state: FlowState;
+      readonly events?: readonly {
+        readonly invocationId: string;
+        readonly type: string;
+        readonly data: unknown;
+      }[];
+    };
+
+async function mutateFlowState<T>(
+  options: Pick<Parameters<typeof runFlow>[0], "executionId" | "store">,
+  mutate: (record: ExecutionRecord) => FlowStateMutation<T>,
+): Promise<T> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const record = await options.store.get(options.executionId);
+    if (record === undefined) throw new Error(`Execution not found: ${options.executionId}`);
+    const mutation = mutate(record);
+    if (!mutation.changed) return mutation.value;
+    try {
+      await options.store.commit({
+        commitId: randomUUID(),
+        executionId: options.executionId,
+        expectedVersion: record.version,
+        executionPatch: { state: mutation.state },
+        ...(mutation.events === undefined ? {} : { events: mutation.events }),
+      });
+      return mutation.value;
+    } catch (error) {
+      if (error instanceof ExecutionVersionConflictError) continue;
+      throw error;
+    }
+  }
+  throw new Error(`Flow state contention exceeded the retry limit: ${options.executionId}`);
 }
 
 function storeFlowTarget(target: { readonly id: string } | FlowTerminal): StoredFlowTarget {
@@ -1016,6 +1199,7 @@ function visitFlowDefinition(flow: Flow, ancestors: Set<Flow>): unknown {
   return {
     definition: { id: flow.id, version: flow.version, kind: "flow" },
     maxNodeVisits: flow.maxNodeVisits,
+    ...(flow.timeoutMs === undefined ? {} : { timeoutMs: flow.timeoutMs }),
     loops: [...flow.loops.values()]
       .sort((left, right) => left.id.localeCompare(right.id))
       .map((loop) => ({
@@ -1094,31 +1278,53 @@ function readFlowStepRuntimeByExpert(
 
 function resolveFlowStepRuntimeId(
   step: CompiledFlowStep,
-  expertId: string,
+  expert: { readonly id: string; readonly defaultRuntimeId?: string | undefined },
   fallbackRuntimeId: string | undefined,
+  inheritedOverride?: string | undefined,
 ): string | undefined {
   const explicitRuntime = "runtime" in step.options ? step.options.runtime : undefined;
-  return explicitRuntime ?? readFlowStepRuntimeByExpert(step)?.[expertId] ?? fallbackRuntimeId;
+  return (
+    explicitRuntime ??
+    readFlowStepRuntimeByExpert(step)?.[expert.id] ??
+    inheritedOverride ??
+    expert.defaultRuntimeId ??
+    fallbackRuntimeId
+  );
 }
 
 function validateFlowRuntimeConfiguration(
   flow: Flow,
   runtimes: RuntimeRegistry,
   fallbackRuntimeId: string,
-  visited: Set<Flow> = new Set(),
+  visited: Map<Flow, Set<string>> = new Map(),
+  inheritedOverride?: string | undefined,
 ): void {
-  if (visited.has(flow)) return;
-  visited.add(flow);
+  const routeKey = `${fallbackRuntimeId}:${inheritedOverride ?? "<none>"}`;
+  const visitedRoutes = visited.get(flow) ?? new Set<string>();
+  if (visitedRoutes.has(routeKey)) return;
+  visitedRoutes.add(routeKey);
+  visited.set(flow, visitedRoutes);
   for (const step of flow.steps.values()) {
     if ("kind" in step.definition && step.definition.kind === "flow") {
-      validateFlowRuntimeConfiguration(step.definition, runtimes, fallbackRuntimeId, visited);
+      const nestedOverride =
+        ("runtime" in step.options ? step.options.runtime : undefined) ?? inheritedOverride;
+      runtimes.resolve(nestedOverride ?? fallbackRuntimeId);
+      validateFlowRuntimeConfiguration(
+        step.definition,
+        runtimes,
+        fallbackRuntimeId,
+        visited,
+        nestedOverride,
+      );
       continue;
     }
     const definition = definitionRef(step.definition);
     if (definition.kind !== "expert" && definition.kind !== "expert-team") continue;
     const expert = step.definition as ExpertDefinition;
     const nativeExpert = isExpertTeam(expert) ? expert.coordinator : expert;
-    runtimes.resolve(resolveFlowStepRuntimeId(step, nativeExpert.id, fallbackRuntimeId));
+    runtimes.resolve(
+      resolveFlowStepRuntimeId(step, nativeExpert, fallbackRuntimeId, inheritedOverride),
+    );
     for (const runtimeId of Object.values(readFlowStepRuntimeByExpert(step) ?? {})) {
       runtimes.resolve(runtimeId);
     }

@@ -1,0 +1,8 @@
+apiVersion: pragma/v2
+kind: Bundle
+imports:
+  - ./capabilities/project-service@1.0.0.pragma.yaml
+  - ./context-stores/steward-guide@1.0.0.pragma.yaml
+  - ./runtime-profiles/steward-runtime@1.0.0.pragma.yaml
+  - ./experts/steward@1.0.0.pragma.yaml
+resources: []

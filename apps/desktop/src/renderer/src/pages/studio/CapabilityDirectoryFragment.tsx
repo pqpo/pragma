@@ -13,11 +13,12 @@ import {
 } from "@phosphor-icons/react";
 import { useState } from "react";
 
-import type {
-  Capability,
-  CapabilityDefinition,
-  CodeServiceJsonSchema,
-  PreviewCodeServiceResult,
+import {
+  CodeServiceObjectJsonSchemaSchema,
+  type Capability,
+  type CapabilityDefinition,
+  type CodeServiceJsonSchema,
+  type PreviewCodeServiceResult,
 } from "../../../../shared/desktop-api.ts";
 import { errorMessage } from "../../lib/errors.ts";
 import { desktopApi } from "./studio-model.ts";
@@ -58,7 +59,7 @@ const emptyHttp = {
   method: "GET" as "GET" | "POST",
   path: "/",
   queryParameters: "",
-  bodySchema: '{\n  "type": "object",\n  "properties": {}\n}',
+  bodySchema: '{\n  "type": "object",\n  "properties": {},\n  "additionalProperties": false\n}',
   tools: [] as HttpToolDraft[],
 };
 
@@ -859,7 +860,9 @@ function toHttpToolDefinition(draft: HttpToolDraft) {
     .map((name) => name.trim())
     .filter(Boolean);
   const bodySchema =
-    draft.method === "POST" ? (JSON.parse(draft.bodySchema) as Record<string, unknown>) : undefined;
+    draft.method === "POST"
+      ? CodeServiceObjectJsonSchemaSchema.parse(JSON.parse(draft.bodySchema))
+      : undefined;
   return {
     name: draft.toolName,
     description: draft.toolDescription,

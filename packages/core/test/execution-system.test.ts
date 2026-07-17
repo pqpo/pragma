@@ -24,6 +24,8 @@ import {
   PragmaPaths,
   type AgentMessageUsage,
   type ExecutionEvent,
+  type ExpertAgentManagedTool,
+  type ExpertAgentToolCallResult,
   type FlowExecution,
   type RuntimeDriverSessionContext,
 } from "../src/index.ts";
@@ -54,6 +56,7 @@ function createFakeRuntimeStats(): FakeRuntimeStats {
 interface FakeRuntimeOptions {
   readonly closeError?: string;
   readonly createDelayMs?: number;
+  readonly concurrentToolNames?: readonly string[];
   readonly delayMs?: number;
   readonly delegationTargets?: Readonly<Record<string, string>>;
   readonly failQuery?: string;
@@ -96,7 +99,19 @@ function createFakeRuntime(options: FakeRuntimeOptions = {}) {
         options.delegationTargets?.[session.context.agent.id] ??
         (session.context.agent.id === "lead" ? "member" : undefined);
       let output = `${session.context.agent.id}:${turn.rawQuery}`;
-      if (
+      if (options.concurrentToolNames !== undefined) {
+        const execution = session.context.request.executionContext;
+        const results = await Promise.all(
+          options.concurrentToolNames.map(async (name) => {
+            const tool = session.context.agent.tools?.find((candidate) => candidate.name === name);
+            if (tool === undefined) throw new Error(`Missing concurrent test tool: ${name}`);
+            const result = await tool.call({}, turn.signal, { execution });
+            if (result.isError === true) throw new Error(result.text);
+            return result.details;
+          }),
+        );
+        output = JSON.stringify(results);
+      } else if (
         spawn !== undefined &&
         wait !== undefined &&
         delegationTarget !== undefined &&
@@ -1156,6 +1171,122 @@ describe("ExpertSession", () => {
     await session.close();
   });
 
+  it("uses a delegated Expert definition Runtime before the parent fallback", async () => {
+    const home = await mkdtemp(join(tmpdir(), "pragma-definition-runtime-routing-"));
+    const statsA = createFakeRuntimeStats();
+    const statsB = createFakeRuntimeStats();
+    const runtimeA = createFakeRuntime({ runtimeId: "fake-a", stats: statsA });
+    const runtimeB = createFakeRuntime({ runtimeId: "fake-b", stats: statsB });
+    const app = createPragma({
+      pragmaHome: home,
+      runtimes: createRuntimeRegistry({
+        runtimes: [runtimeA, runtimeB],
+        defaultRuntime: "fake-a",
+      }),
+    });
+    const member = await defineExpert({
+      id: "member",
+      name: "Member",
+      description: "Member",
+      tags: [],
+      version: "1.0.0",
+      scope: "test",
+      workspace: home,
+      defaultRuntimeId: "fake-b",
+    });
+    const lead = await defineExpert({
+      id: "lead",
+      name: "Lead",
+      description: "Lead",
+      tags: [],
+      version: "1.0.0",
+      scope: "test",
+      workspace: home,
+      tools: createAgentLauncher({ experts: [member] }).tools,
+    });
+    const session = await app.experts.createSession(lead);
+    await (
+      await session.prompt("coordinate", { requestId: "definition-runtime-routing" })
+    ).result;
+    expect(statsA.createSessionCalls).toBe(1);
+    expect(statsB.createSessionCalls).toBe(1);
+    await session.close();
+  });
+
+  it("uses an Expert definition Runtime for a root Session unless explicitly overridden", async () => {
+    const home = await mkdtemp(join(tmpdir(), "pragma-root-definition-runtime-"));
+    const statsA = createFakeRuntimeStats();
+    const statsB = createFakeRuntimeStats();
+    const app = createPragma({
+      pragmaHome: home,
+      runtimes: createRuntimeRegistry({
+        runtimes: [
+          createFakeRuntime({ runtimeId: "fake-a", stats: statsA }),
+          createFakeRuntime({ runtimeId: "fake-b", stats: statsB }),
+        ],
+        defaultRuntime: "fake-a",
+      }),
+    });
+    const expert = await defineExpert({
+      id: "root",
+      name: "Root",
+      description: "Root",
+      tags: [],
+      version: "1.0.0",
+      scope: "test",
+      workspace: home,
+      defaultRuntimeId: "fake-b",
+    });
+    const session = await app.experts.createSession(expert);
+    await (
+      await session.prompt("run", { requestId: "root-definition-runtime" })
+    ).result;
+    expect(statsA.createSessionCalls).toBe(0);
+    expect(statsB.createSessionCalls).toBe(1);
+    await session.close();
+  });
+
+  it("propagates an explicit nested Flow Runtime override above Expert defaults", async () => {
+    const home = await mkdtemp(join(tmpdir(), "pragma-nested-flow-runtime-routing-"));
+    const statsA = createFakeRuntimeStats();
+    const statsB = createFakeRuntimeStats();
+    const statsC = createFakeRuntimeStats();
+    const app = createPragma({
+      pragmaHome: home,
+      runtimes: createRuntimeRegistry({
+        runtimes: [
+          createFakeRuntime({ runtimeId: "fake-a", stats: statsA }),
+          createFakeRuntime({ runtimeId: "fake-b", stats: statsB }),
+          createFakeRuntime({ runtimeId: "fake-c", stats: statsC }),
+        ],
+        defaultRuntime: "fake-a",
+      }),
+    });
+    const worker = await defineExpert({
+      id: "worker",
+      name: "Worker",
+      description: "Worker",
+      tags: [],
+      version: "1.0.0",
+      scope: "test",
+      workspace: home,
+      defaultRuntimeId: "fake-b",
+    });
+    const nested = defineFlow({ id: "nested", version: "1.0.0" });
+    const work = nested.use("work", worker);
+    nested.compose(({ start, end }) => start(work).next(end()));
+    const outer = defineFlow({ id: "outer", version: "1.0.0" });
+    const callNested = outer.use("nested", nested, { runtime: "fake-c" });
+    outer.compose(({ start, end }) => start(callNested).next(end()));
+
+    await (
+      await app.flows.start(outer, { input: "run" })
+    ).result;
+    expect(statsA.createSessionCalls).toBe(0);
+    expect(statsB.createSessionCalls).toBe(0);
+    expect(statsC.createSessionCalls).toBe(1);
+  });
+
   it("lets Flow runtimeByExpert override ExpertTeam routing", async () => {
     const home = await mkdtemp(join(tmpdir(), "pragma-flow-runtime-routing-"));
     const statsA = createFakeRuntimeStats();
@@ -1442,6 +1573,49 @@ describe("ExpertSession", () => {
 });
 
 describe("FlowExecution", () => {
+  it("persists a wall-clock timeout and aborts the active Task", async () => {
+    const { app } = await fixture();
+    let observedAbort = false;
+    const flow = defineFlow({ id: "timeout-flow", version: "1.0.0", timeoutMs: 40 });
+    const task = flow.task({
+      id: "wait",
+      version: "1.0.0",
+      handler: async ({ signal }) =>
+        await new Promise<never>((_resolve, reject) => {
+          signal.addEventListener(
+            "abort",
+            () => {
+              observedAbort = true;
+              reject(signal.reason);
+            },
+            { once: true },
+          );
+        }),
+    });
+    flow.compose(({ start, end }) => start(task).next(end()));
+
+    const execution = await app.flows.start(flow, { input: null });
+    await expect(execution.result).rejects.toThrow("timed out");
+    expect(observedAbort).toBe(true);
+    expect((await execution.getState()).status).toBe("failed");
+    expect((await execution.getTree()).children[0]?.invocation.status).toBe("failed");
+  });
+
+  it("times out a pending HumanTask as failed instead of cancelled", async () => {
+    const { app } = await fixture();
+    const flow = defineFlow({ id: "human-timeout-flow", version: "1.0.0", timeoutMs: 40 });
+    const gate = flow.humanTask({
+      id: "approval",
+      version: "1.0.0",
+      request: { kind: "approval", prompt: "Wait forever?" },
+    });
+    flow.compose(({ start, end }) => start(gate).next(end()));
+
+    const execution = await app.flows.start(flow, { input: null });
+    await expect(execution.result).rejects.toThrow("timed out");
+    expect((await execution.getState()).status).toBe("failed");
+  });
+
   it("rejects Flow runtime routes hidden by ExpertTeam delegation", async () => {
     const { home } = await fixture();
     const hidden = await defineExpert({
@@ -1662,6 +1836,67 @@ describe("FlowExecution", () => {
     await expect(app.flows.recover(flow, { executionId: execution.executionId })).rejects.toThrow(
       "terminal",
     );
+  });
+
+  it("preserves concurrent nested Flow reductions in one shared Execution", async () => {
+    const home = await mkdtemp(join(tmpdir(), "pragma-concurrent-nested-flows-"));
+    const barrier = createBarrier(2, 5_000);
+    const nested = (id: string, field: string) => {
+      const flow = defineFlow({ id, version: "1.0.0" });
+      const task = flow.task({
+        id: "work",
+        version: "1.0.0",
+        async handler({ state }) {
+          expect(state["__pragma"]).toBeUndefined();
+          await barrier.arriveAndWait();
+          return field;
+        },
+        reduce: ({ state, output }) => {
+          state[field] = output;
+        },
+      });
+      flow.compose(({ start, end }) => start(task).next(end()));
+      return flow.compile();
+    };
+    const firstFlow = nested("nested-a", "first");
+    const secondFlow = nested("nested-b", "second");
+    const resourceTool = (
+      name: string,
+      target: typeof firstFlow,
+    ): ExpertAgentManagedTool<string, ExpertAgentToolCallResult> => ({
+      name,
+      description: `Invoke ${name}`,
+      inputSchema: {},
+      async call(input, signal, context) {
+        const invoke = context?.execution?.invokeResource;
+        if (invoke === undefined) return { text: "missing execution", isError: true as const };
+        const output = await invoke({ target, input, signal });
+        return { text: JSON.stringify(output), details: output };
+      },
+    });
+    const runtime = createFakeRuntime({
+      runtimeId: "fake",
+      concurrentToolNames: ["call_first", "call_second"],
+    });
+    const app = createPragma({
+      pragmaHome: home,
+      runtimes: createRuntimeRegistry({ runtimes: [runtime], defaultRuntime: "fake" }),
+    });
+    const expert = await defineExpert({
+      id: "caller",
+      name: "Caller",
+      description: "Calls nested flows",
+      tags: [],
+      version: "1.0.0",
+      scope: "test",
+      workspace: home,
+      tools: [resourceTool("call_first", firstFlow), resourceTool("call_second", secondFlow)],
+    });
+    const session = await app.experts.createSession(expert);
+    const turn = await session.prompt("run", { requestId: "concurrent-nested-flows" });
+    await turn.result;
+    expect((await turn.getState()).state).toMatchObject({ first: "first", second: "second" });
+    await session.close();
   });
 
   it("persists each mapped step input and preserves structured HumanTask responses", async () => {
