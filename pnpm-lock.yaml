@@ -192,12 +192,6 @@ importers:
       '@pragma/core':
         specifier: workspace:*
         version: link:../../packages/core
-      '@pragma/runtime-codex':
-        specifier: workspace:*
-        version: link:../../packages/runtime/codex
-      '@pragma/runtime-pi':
-        specifier: workspace:*
-        version: link:../../packages/runtime/pi
       '@pragma/server':
         specifier: workspace:*
         version: link:../../packages/server

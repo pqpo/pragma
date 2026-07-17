@@ -20,7 +20,7 @@ import { isFinalExecutionStatus as isFinal } from "@pragma/shared";
 import type { ExpertDefinition } from "../agent/expert-team.ts";
 import { isExpertTeam } from "../agent/expert-team.ts";
 import { fingerprintExpertExecutionDefinition } from "../agent/expert-definition-descriptor.ts";
-import type { RuntimeRegistry } from "../runtime-registry.ts";
+import type { RuntimeResolver } from "../runtime-resolver.ts";
 import { mergeUsages } from "../runtime/usage.ts";
 import { ExecutionController, runExpertInvocation } from "./expert-runner.ts";
 import { RuntimeSessionPool } from "./runtime-session-pool.ts";
@@ -86,7 +86,7 @@ export interface SessionEventPage {
 export interface ExpertSessionManagerDependencies {
   readonly sessions: ExpertSessionStore;
   readonly executions: ExecutionStore;
-  readonly runtimes: RuntimeRegistry;
+  readonly runtimes: RuntimeResolver;
 }
 
 type SteerClaim =
@@ -112,20 +112,21 @@ export class ExpertSessionManager {
     const sessionId = options.sessionId ?? randomUUID();
     const now = new Date().toISOString();
     const rootExpert = isExpertTeam(expert) ? expert.coordinator : expert;
-    const runtimeId = this.dependencies.runtimes.resolve(
-      options.runtime ?? rootExpert.defaultRuntimeId,
-    ).descriptor.id;
+    const runtime = await this.dependencies.runtimes.bind({
+      runtimeId: options.runtime ?? rootExpert.defaultRuntimeId,
+      modelSelection: rootExpert.models?.default,
+    });
     const rootContextId = randomUUID();
     const rootContext = createRuntimeContextRecord({
       contextId: rootContextId,
       owner: { type: "expert-session", ownerId: sessionId },
       origin: { type: "expert-session", sessionId },
       expert: { id: rootExpert.id, version: rootExpert.version },
-      runtimeId,
+      runtime: runtime.binding,
       now,
     });
     await this.dependencies.sessions.create({
-      schemaVersion: "pragma.expert-session/v3",
+      schemaVersion: "pragma.expert-session/v4",
       sessionId,
       expertId: expert.id,
       expertVersion: expert.version,

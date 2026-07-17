@@ -177,7 +177,7 @@ export function ExpertDetailFragment(props: {
       <section className="expert-capabilities" aria-label="Expert capabilities">
         <div>
           <h2>Model</h2>
-          <p>{props.expert.model?.modelName ?? "Not configured"}</p>
+          <p>{props.expert.model?.modelId ?? "Not configured"}</p>
         </div>
         <div>
           <h2>Capabilities</h2>

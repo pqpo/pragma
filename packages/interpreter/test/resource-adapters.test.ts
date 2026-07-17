@@ -100,7 +100,7 @@ describe("Pragma resource adapters", () => {
     expect(inspection.health.status).toBe("needs_attention");
   });
 
-  it("reports a configured default model that the bound provider does not install", async () => {
+  it("keeps Runtime model identity separate from provider credentials", async () => {
     const registry = createDefaultPragmaResourceAdapterRegistry();
     const resource = {
       apiVersion: "pragma/v2",
@@ -114,31 +114,20 @@ describe("Pragma resource adapters", () => {
       },
       spec: {
         adapter: "pragma.runtime.profile@v1",
-        binding: "binding:model.provider",
-        config: { runtimeId: "codex", model: "missing-model" },
+        config: { runtimeId: "codex", providerId: "openai", model: "model" },
       },
     } satisfies PragmaRuntimeProfileResource;
     const inspection = await registry.inspect(resource, {
       ...host(async () => {
         throw new Error("unused");
       }),
-      async resolveBinding(ref) {
-        return {
-          ref,
-          revision: "1",
-          fingerprint: "a".repeat(64),
-          value: {
-            provider: "provider",
-            baseApi: "https://models.example.com/v1",
-            modelNames: ["installed-model"],
-            secretRef: "secret:model",
-          },
-        };
-      },
     });
     expect(inspection.health).toMatchObject({
-      status: "needs_attention",
-      issues: [expect.objectContaining({ message: expect.stringContaining("missing-model") })],
+      status: "ready",
+    });
+    expect(inspection.contribution).toEqual({
+      runtimeId: "codex",
+      models: { default: { model: { providerId: "openai", modelId: "model" } } },
     });
   });
 

@@ -3,7 +3,6 @@ import { createHash, randomUUID } from "node:crypto";
 import {
   createPragma,
   createFileExecutionStore,
-  createRuntimeRegistry,
   ExpertAgentHumanRequestSchema,
   StoredExecutionView,
   type AgentMessageRecord,
@@ -12,7 +11,7 @@ import {
   type ExpertAgentHumanResponse,
   type ExpertSession,
   type MutableExecution,
-  type RuntimeRegistry,
+  type RuntimeResolver,
 } from "@pragma/core";
 import type {
   InvocableResource,
@@ -24,9 +23,6 @@ import type {
   HumanInteractionResponse,
   InvocationTree,
 } from "@pragma/shared";
-import { createClaudeCodeRuntime } from "@pragma/runtime-claude-code";
-import { createCodexRuntime } from "@pragma/runtime-codex";
-import { createPiRuntime } from "@pragma/runtime-pi";
 
 import type {
   Mission,
@@ -44,10 +40,8 @@ import type { ContextStoreStore } from "./context-store-store.ts";
 import {
   parseDesktopCapabilityBindingRef,
   parseDesktopContextBindingRef,
-  parseDesktopModelProviderBindingRef,
 } from "./desktop-binding-ref.ts";
 import type { MissionStore, MissionTimelineTurn } from "./mission-store.ts";
-import type { ModelProviderStore } from "./model-provider-store.ts";
 import type { PragmaProjectStore } from "./pragma-project-store.ts";
 import type { PluginStore } from "./plugin-store.ts";
 
@@ -97,12 +91,11 @@ export function createMissionRunner(options: {
   readonly capabilityCredentials: CapabilityCredentialStore;
   readonly capabilitiesPath: string;
   readonly pragmaHome: string;
-  readonly modelProviders: ModelProviderStore;
   readonly contextStores?: ContextStoreStore | undefined;
   readonly plugins?: PluginStore | undefined;
-  readonly runtimes?: RuntimeRegistry | undefined;
+  readonly runtimes: RuntimeResolver;
 }): MissionRunner {
-  const runtimes = options.runtimes ?? createDesktopRuntimeRegistry();
+  const runtimes = options.runtimes;
   const executionStore = createFileExecutionStore({ pragmaHome: options.pragmaHome });
   const app = createPragma({
     pragmaHome: options.pragmaHome,
@@ -604,51 +597,19 @@ export function createMissionRunner(options: {
   };
 }
 
-function createDesktopRuntimeRegistry(): RuntimeRegistry {
-  return createRuntimeRegistry({
-    defaultRuntime: "codex",
-    runtimes: [
-      createCodexRuntime({ descriptor: { id: "codex" } }),
-      createClaudeCodeRuntime({ descriptor: { id: "claude-code" } }),
-      createPiRuntime({ descriptor: { id: "pi" } }),
-    ],
-  });
-}
-
 function createDesktopAdapterHost(
   options: {
     readonly capabilityStore: CapabilityStore;
     readonly capabilityCredentials: CapabilityCredentialStore;
     readonly capabilitiesPath: string;
-    readonly modelProviders: ModelProviderStore;
     readonly contextStores?: ContextStoreStore | undefined;
   },
   projectRoot: string,
 ): PragmaAdapterHost {
-  const secretCache = new Map<string, string>();
   return {
     environmentId: "desktop",
     projectRoot,
     async resolveBinding(ref): Promise<PragmaBindingRecord | undefined> {
-      const providerId = parseDesktopModelProviderBindingRef(ref);
-      if (providerId !== undefined) {
-        const provider = await options.modelProviders.getCredentials(providerId);
-        const secretRef = `model-provider:${providerId}`;
-        secretCache.set(secretRef, provider.apiKey);
-        return {
-          ref,
-          revision: provider.revision,
-          fingerprint: provider.revision,
-          value: {
-            provider: providerId,
-            baseApi: provider.baseUrl,
-            modelNames: provider.models,
-            api: "openai-completions",
-            secretRef,
-          },
-        };
-      }
-
       const capabilityRef = parseDesktopCapabilityBindingRef(ref);
       if (capabilityRef !== undefined) {
         const capabilityId = capabilityRef.id;
@@ -708,8 +669,8 @@ function createDesktopAdapterHost(
           : `Desktop has no external artifact resolver for: ${source.uri}`,
       );
     },
-    async resolveSecret(ref) {
-      return secretCache.get(ref);
+    async resolveSecret() {
+      return undefined;
     },
   };
 }

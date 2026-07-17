@@ -16,7 +16,7 @@ import {
   type ExpertDefinition,
   type Flow,
   type FlowTaskContext,
-  type RuntimeRegistry,
+  type RuntimeResolver,
 } from "@pragma/core";
 
 import type { PragmaAdapterHost, PragmaResourceAdapterRegistry } from "./resource-adapters.ts";
@@ -168,7 +168,7 @@ export interface PragmaCompileHost {
   readonly workspace: string;
   readonly projectRoot?: string | undefined;
   readonly environmentId?: string | undefined;
-  readonly runtimes?: RuntimeRegistry | undefined;
+  readonly runtimes?: RuntimeResolver | undefined;
   readonly actions?: FlowActionRegistry | undefined;
   readonly contextPolicies?: ContextPolicyRegistry | undefined;
   readonly toolAdapters?: ToolAdapterRegistry | undefined;

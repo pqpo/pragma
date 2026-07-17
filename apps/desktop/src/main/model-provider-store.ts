@@ -2,20 +2,26 @@ import { createHash, randomUUID } from "node:crypto";
 import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 
+import type { RuntimeModel } from "@pragma/core";
+
 import type {
   CreateModelProvider,
   ModelProvider,
   UpdateModelProvider,
 } from "../shared/desktop-api.ts";
+import { ModelMetadataByIdSchema } from "../shared/desktop-api.ts";
 
-const CONFIG_SCHEMA_VERSION = 1;
+const CONFIG_SCHEMA_VERSION = 2;
 
 interface StoredModelProvider {
   readonly id: string;
   readonly name: string;
+  readonly protocol: ModelProvider["protocol"];
   readonly baseUrl: string;
   readonly models: readonly string[];
+  readonly modelMetadata?: ModelProvider["modelMetadata"] | undefined;
   readonly encryptedApiKey: string;
+  readonly revision: number;
 }
 
 interface StoredModelProviderConfig {
@@ -38,8 +44,11 @@ export interface ModelProviderStore {
     readonly baseUrl: string;
     readonly apiKey: string;
     readonly models: readonly string[];
-    readonly revision: string;
+    readonly protocol: ModelProvider["protocol"];
+    readonly revision: number;
+    readonly credentialFingerprint: string;
   }>;
+  listRuntimeModels(): Promise<readonly RuntimeModel[]>;
 }
 
 export class ModelProviderStoreError extends Error {
@@ -107,9 +116,12 @@ function toPublicProvider(provider: StoredModelProvider): ModelProvider {
   return {
     id: provider.id,
     name: provider.name,
+    protocol: provider.protocol,
     baseUrl: provider.baseUrl,
     models: [...provider.models],
+    modelMetadata: provider.modelMetadata ?? {},
     hasApiKey: provider.encryptedApiKey.length > 0,
+    revision: provider.revision,
   };
 }
 
@@ -142,17 +154,30 @@ function parseConfig(raw: string): StoredModelProviderConfig {
       typeof provider !== "object" ||
       typeof (provider as StoredModelProvider).id !== "string" ||
       typeof (provider as StoredModelProvider).name !== "string" ||
+      !["openai-completions", "openai-responses", "anthropic-messages"].includes(
+        (provider as StoredModelProvider).protocol,
+      ) ||
       typeof (provider as StoredModelProvider).baseUrl !== "string" ||
       typeof (provider as StoredModelProvider).encryptedApiKey !== "string" ||
+      !Number.isSafeInteger((provider as StoredModelProvider).revision) ||
+      (provider as StoredModelProvider).revision <= 0 ||
       !Array.isArray((provider as StoredModelProvider).models) ||
-      !(provider as StoredModelProvider).models.every((model) => typeof model === "string")
+      !(provider as StoredModelProvider).models.every((model) => typeof model === "string") ||
+      ((provider as StoredModelProvider).modelMetadata !== undefined &&
+        (typeof (provider as StoredModelProvider).modelMetadata !== "object" ||
+          (provider as StoredModelProvider).modelMetadata === null))
     ) {
       throw new ModelProviderStoreError(
         "config_invalid",
         "The model provider configuration contains invalid data.",
       );
     }
-    return provider as StoredModelProvider;
+    return {
+      ...(provider as StoredModelProvider),
+      modelMetadata: ModelMetadataByIdSchema.parse(
+        (provider as StoredModelProvider).modelMetadata ?? {},
+      ),
+    };
   });
 
   return { schemaVersion: CONFIG_SCHEMA_VERSION, providers };
@@ -193,9 +218,12 @@ export function createModelProviderStore(options: {
       const provider: StoredModelProvider = {
         id: randomUUID(),
         name: input.name.trim(),
+        protocol: input.protocol,
         baseUrl: normalizeBaseUrl(input.baseUrl),
         models: normalizeModels(input.models),
+        modelMetadata: normalizeModelMetadata(input.models, input.modelMetadata ?? {}),
         encryptedApiKey: options.encryption.encrypt(input.apiKey).toString("base64"),
+        revision: 1,
       };
       await writeConfig({ ...config, providers: [...config.providers, provider] });
       return toPublicProvider(provider);
@@ -211,11 +239,14 @@ export function createModelProviderStore(options: {
       const provider: StoredModelProvider = {
         ...existing,
         name: input.name.trim(),
+        protocol: input.protocol,
         baseUrl: normalizeBaseUrl(input.baseUrl),
         models: normalizeModels(input.models),
+        modelMetadata: normalizeModelMetadata(input.models, input.modelMetadata ?? {}),
         ...(input.apiKey === undefined
           ? {}
           : { encryptedApiKey: options.encryption.encrypt(input.apiKey).toString("base64") }),
+        revision: existing.revision + 1,
       };
       await writeConfig({
         ...config,
@@ -239,7 +270,9 @@ export function createModelProviderStore(options: {
       readonly baseUrl: string;
       readonly apiKey: string;
       readonly models: readonly string[];
-      readonly revision: string;
+      readonly protocol: ModelProvider["protocol"];
+      readonly revision: number;
+      readonly credentialFingerprint: string;
     }> {
       ensureEncryption(options.encryption);
       const provider = (await readConfig()).providers.find((item) => item.id === id);
@@ -251,13 +284,16 @@ export function createModelProviderStore(options: {
           baseUrl: provider.baseUrl,
           apiKey: options.encryption.decrypt(Buffer.from(provider.encryptedApiKey, "base64")),
           models: provider.models,
-          revision: createHash("sha256")
+          protocol: provider.protocol,
+          revision: provider.revision,
+          credentialFingerprint: createHash("sha256")
             .update(
               JSON.stringify({
                 id: provider.id,
                 baseUrl: provider.baseUrl,
                 models: provider.models,
-                api: "openai-completions",
+                modelMetadata: provider.modelMetadata,
+                protocol: provider.protocol,
                 encryptedApiKey: provider.encryptedApiKey,
               }),
             )
@@ -270,5 +306,31 @@ export function createModelProviderStore(options: {
         );
       }
     },
+
+    async listRuntimeModels(): Promise<readonly RuntimeModel[]> {
+      return (await readConfig()).providers.flatMap((provider) =>
+        provider.models.map((modelId) => {
+          const metadata = provider.modelMetadata?.[modelId];
+          return {
+            id: modelId,
+            displayName: metadata?.displayName ?? modelId,
+            provider: {
+              kind: "registered" as const,
+              id: provider.id,
+              displayName: provider.name,
+            },
+            ...(metadata?.thinking === undefined ? {} : { thinking: metadata.thinking }),
+          } satisfies RuntimeModel;
+        }),
+      );
+    },
   };
+}
+
+function normalizeModelMetadata(
+  models: readonly string[],
+  metadata: ModelProvider["modelMetadata"],
+): ModelProvider["modelMetadata"] {
+  const allowed = new Set(models);
+  return Object.fromEntries(Object.entries(metadata).filter(([modelId]) => allowed.has(modelId)));
 }

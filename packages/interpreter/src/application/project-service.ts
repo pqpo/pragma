@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 
-import type { RuntimeRegistry } from "@pragma/core";
+import type { RuntimeResolver } from "@pragma/core";
 
 import {
   PragmaDiagnosticSchema,
@@ -288,7 +288,7 @@ export class PragmaProjectService {
     readonly workspace: string;
     readonly environmentId: string;
     readonly adapterHost: PragmaAdapterHost;
-    readonly runtimes?: RuntimeRegistry | undefined;
+    readonly runtimes?: RuntimeResolver | undefined;
     readonly plugins?: PragmaPluginResolver | undefined;
   }): Promise<CompiledResource<T>> {
     const location = await this.options.repository.getRevision(input.projectId, input.revision);

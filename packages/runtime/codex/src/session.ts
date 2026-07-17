@@ -137,8 +137,8 @@ export async function startCodexTurn(
   try {
     await session.client.startTurn({
       threadId: session.state.threadId,
-      model: turn.modelName,
-      thinkingLevel: turn.thinkingLevel,
+      model: turn.modelSelection?.model.modelId,
+      thinkingLevel: turn.modelSelection?.thinkingLevel,
       input: createTextInputList(
         ...turn.startupMessages.map((message) => message.content),
         turn.prompt,

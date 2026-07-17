@@ -7,11 +7,9 @@ import { z } from "zod";
 
 import type {
   Expert,
-  ExpertAgentModelApi,
   IExpertAgentMcpConfig,
   IExpertAgentModelsConfig,
   IExpertAgentSkillsConfig,
-  IExpertAgentModelProviderConfig,
 } from "../agent/expert-agent.ts";
 import { ContextSystem, HOST_CONTEXT_NAMESPACE } from "../context-system/context-system.ts";
 import type { ExpertAgentRunContext } from "../runtime/run-context.ts";
@@ -644,19 +642,8 @@ function mergeSkillsConfigs(
 function mergeModelsConfigs(
   configs: readonly (IExpertAgentModelsConfig | undefined)[],
 ): IExpertAgentModelsConfig | undefined {
-  const providers = mergeModelProviders(configs.flatMap((config) => config?.providers ?? []));
-  const defaultModelName = configs.findLast(
-    (config) => config?.defaultModelName !== undefined,
-  )?.defaultModelName;
-
-  if (providers.length === 0 && defaultModelName === undefined) {
-    return undefined;
-  }
-
-  return {
-    ...(defaultModelName === undefined ? {} : { defaultModelName }),
-    providers,
-  };
+  const selection = configs.findLast((config) => config?.default !== undefined)?.default;
+  return selection === undefined ? undefined : { default: selection };
 }
 
 function mergeManagedTools(
@@ -766,37 +753,6 @@ function mergePluginHooks(
   };
 }
 
-function mergeModelProviders(
-  providers: readonly IExpertAgentModelProviderConfig[],
-): readonly IExpertAgentModelProviderConfig[] {
-  const merged = new Map<string, IExpertAgentModelProviderConfig>();
-
-  for (const provider of providers) {
-    const existing = merged.get(provider.provider);
-
-    if (existing === undefined) {
-      merged.set(provider.provider, provider);
-      continue;
-    }
-
-    merged.set(provider.provider, {
-      provider: provider.provider,
-      baseApi: provider.baseApi,
-      key: provider.key,
-      modelNames: dedupeStrings([...existing.modelNames, ...provider.modelNames]),
-      ...mergeModelApi(provider.api),
-    });
-  }
-
-  return [...merged.values()];
-}
-
-function mergeModelApi(api: ExpertAgentModelApi | undefined): {
-  readonly api?: ExpertAgentModelApi;
-} {
-  return api === undefined ? {} : { api };
-}
-
 async function callHooks<TName extends keyof ExpertAgentPluginHooks>(
   hooks: readonly ExpertAgentPluginHooks[],
   name: TName,
@@ -830,10 +786,6 @@ function dedupeBy<TValue>(
   }
 
   return deduped;
-}
-
-function dedupeStrings(values: readonly string[]): readonly string[] {
-  return [...new Set(values)];
 }
 
 function assertUniquePluginIds(pluginEntries: readonly ExpertAgentPluginEntry[]): void {

@@ -3,7 +3,11 @@ import { describe, expect, it, vi } from "vitest";
 
 import { RuntimeSessionPool } from "../src/execution/runtime-session-pool.ts";
 
-const identity = { contextId: "context", expertId: "expert", runtimeId: "runtime" };
+const identity = {
+  contextId: "context",
+  expertId: "expert",
+  runtime: { runtimeId: "runtime", revision: 1, fingerprint: "a".repeat(64) },
+};
 
 describe("RuntimeSessionPool", () => {
   it("deduplicates concurrent creation for one context", async () => {
@@ -43,7 +47,10 @@ describe("RuntimeSessionPool", () => {
     await pool.acquire(identity, async () => session);
 
     await expect(
-      pool.acquire({ ...identity, runtimeId: "other-runtime" }, async () => session),
+      pool.acquire(
+        { ...identity, runtime: { ...identity.runtime, runtimeId: "other-runtime" } },
+        async () => session,
+      ),
     ).rejects.toThrow("cannot be reused");
     await pool.close();
   });

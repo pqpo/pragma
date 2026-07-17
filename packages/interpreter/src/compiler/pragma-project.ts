@@ -89,7 +89,7 @@ export interface CompiledResource<T> {
   readonly fingerprint: string;
   readonly projectFingerprint: string;
   readonly environmentFingerprint: PragmaEnvironmentFingerprint;
-  readonly rootRuntimeId: string;
+  readonly rootRuntimeId?: string | undefined;
   readonly dependencies: readonly LockedResourceRef[];
 }
 
@@ -667,11 +667,29 @@ class PragmaProjectImpl implements PragmaProject {
       resolveRuntime,
       host,
     );
+    let rootRuntimeEnvironment: unknown;
     if (host.runtimes !== undefined) {
-      host.runtimes.resolve(rootRuntimeId);
+      const resolvedRootRuntime = await host.runtimes.bind({ runtimeId: rootRuntimeId });
+      const availability = await resolvedRootRuntime.adapter.canUse();
+      if (!availability.usable) {
+        throw new Error(
+          availability.reason ??
+            `Runtime is unavailable: ${resolvedRootRuntime.adapter.descriptor.id}`,
+        );
+      }
+      const models =
+        resolvedRootRuntime.adapter.listModels === undefined
+          ? undefined
+          : await resolvedRootRuntime.adapter.listModels();
+      rootRuntimeEnvironment = {
+        binding: resolvedRootRuntime.binding,
+        descriptor: resolvedRootRuntime.adapter.descriptor,
+        availability,
+        models,
+      };
       for (const resolved of resolvedResources.values()) {
         if ("runtimeId" in resolved.contribution) {
-          host.runtimes.resolve(resolved.contribution.runtimeId);
+          await host.runtimes.bind({ runtimeId: resolved.contribution.runtimeId });
         }
       }
     }
@@ -701,6 +719,7 @@ class PragmaProjectImpl implements PragmaProject {
         projectFingerprint,
         resources: fingerprintResources,
         plugins: fingerprintPlugins,
+        rootRuntime: rootRuntimeEnvironment,
       }),
     );
     return {
@@ -715,7 +734,7 @@ class PragmaProjectImpl implements PragmaProject {
         resources: fingerprintResources,
         plugins: fingerprintPlugins,
       },
-      rootRuntimeId,
+      ...(rootRuntimeId === undefined ? {} : { rootRuntimeId }),
       dependencies: collectLockedDependencies(indexed, this.resources),
     };
   }
@@ -884,7 +903,10 @@ async function compileExpert(
   },
 ): Promise<Expert> {
   const plugins = await Promise.all(resource.spec.plugins.map(resolvers.resolvePlugin));
-  const runtime = await resolvers.resolveRuntime(resource.spec.runtime.ref);
+  const runtime =
+    resource.spec.runtime === undefined
+      ? undefined
+      : await resolvers.resolveRuntime(resource.spec.runtime.ref);
   const capabilities = await Promise.all(
     resource.spec.capabilities.map(async (binding) => ({
       binding,
@@ -939,8 +961,8 @@ async function compileExpert(
     tools: [...tools, ...capabilityTools],
     skills: mergeSkills(skillConfigs),
     mcp: mergeMcp(mcpConfigs),
-    models: runtime.models,
-    defaultRuntimeId: runtime.runtimeId,
+    ...(runtime?.models === undefined ? {} : { models: runtime.models }),
+    ...(runtime === undefined ? {} : { defaultRuntimeId: runtime.runtimeId }),
     contextSystem: createContextSystem(contextStores),
     plugins: plugins.map((plugin) => ({
       source: plugin.source,
@@ -1818,7 +1840,7 @@ function validateResourceCycles(
 function resourceDependencies(resource: PragmaResource): string[] {
   if (resource.kind === "Expert") {
     return [
-      resource.spec.runtime.ref,
+      ...(resource.spec.runtime === undefined ? [] : [resource.spec.runtime.ref]),
       ...resource.spec.capabilities.map((binding) => binding.ref),
       ...resource.spec.contextStores.map((binding) => binding.ref),
       ...resource.spec.tools.flatMap((binding) => [
@@ -1975,7 +1997,10 @@ async function verifyRuntimeEnvironment(
       if (!requireRegistry) return inspection;
       throw new Error("A Runtime registry is required to verify RuntimeProfile availability.");
     }
-    const runtime = runtimes.resolve(inspection.contribution.runtimeId);
+    const resolvedRuntime = await runtimes.bind({
+      runtimeId: inspection.contribution.runtimeId,
+    });
+    const runtime = resolvedRuntime.adapter;
     const canUse = await runtime.canUse();
     if (!canUse.usable) {
       throw new Error(canUse.reason ?? `Runtime is unavailable: ${runtime.descriptor.id}`);
@@ -1984,13 +2009,35 @@ async function verifyRuntimeEnvironment(
       runtime.listModels === undefined
         ? undefined
         : [...(await runtime.listModels())].sort((left, right) => left.id.localeCompare(right.id));
-    const defaultModel = inspection.contribution.models?.defaultModelName;
+    const selection = inspection.contribution.models?.default;
+    const defaultModel = selection?.model.modelId;
+    const defaultProvider = selection?.model.providerId;
+    const defaultThinkingLevel = selection?.thinkingLevel;
     if (defaultModel !== undefined && models !== undefined) {
-      if (!models.some((model) => model.id === defaultModel)) {
+      const selectedModel = models.find(
+        (model) =>
+          model.id === defaultModel &&
+          (defaultProvider === undefined || model.provider.id === defaultProvider),
+      );
+      if (selectedModel === undefined) {
         throw new Error(
           `Runtime model is unavailable for ${runtime.descriptor.id}: ${defaultModel}`,
         );
       }
+      if (
+        defaultThinkingLevel !== undefined &&
+        !selectedModel.thinking?.supportedLevels.some(
+          (level) => level.value === defaultThinkingLevel,
+        )
+      ) {
+        throw new Error(
+          `Runtime thinking level is unavailable for ${runtime.descriptor.id}/${defaultModel}: ${defaultThinkingLevel}`,
+        );
+      }
+    } else if (defaultThinkingLevel !== undefined) {
+      throw new Error(
+        `Runtime thinking level requires a discoverable model for ${runtime.descriptor.id}.`,
+      );
     }
     return {
       ...inspection,
@@ -2052,9 +2099,11 @@ async function resolveRootRuntime(
   resources: ReadonlyMap<string, IndexedResource>,
   resolveRuntime: (ref: string) => Promise<PragmaRuntimeProfileContribution>,
   host: PragmaCompileHost,
-): Promise<string> {
+): Promise<string | undefined> {
   if (resource.kind === "Expert") {
-    return (await resolveRuntime(resource.spec.runtime.ref)).runtimeId;
+    return resource.spec.runtime === undefined
+      ? await host.runtimes?.getDefaultRuntimeId()
+      : (await resolveRuntime(resource.spec.runtime.ref)).runtimeId;
   }
   if (resource.kind === "ExpertTeam") {
     const coordinator = resources.get(resource.spec.coordinator.ref)?.resource;
@@ -2063,9 +2112,11 @@ async function resolveRootRuntime(
         `ExpertTeam coordinator not found: ${resource.spec.coordinator.ref}`,
       );
     }
-    return (await resolveRuntime(coordinator.spec.runtime.ref)).runtimeId;
+    return coordinator.spec.runtime === undefined
+      ? await host.runtimes?.getDefaultRuntimeId()
+      : (await resolveRuntime(coordinator.spec.runtime.ref)).runtimeId;
   }
-  return host.runtimes?.defaultRuntime ?? "default";
+  return await host.runtimes?.getDefaultRuntimeId();
 }
 
 function isDeclarativeResource(resource: PragmaResource): resource is PragmaDeclarativeResource {

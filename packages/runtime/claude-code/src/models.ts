@@ -3,11 +3,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 import { runRuntimeCommand } from "@pragma/core/runtime/process-probe";
-import type {
-  RuntimeDriverSessionRequest,
-  RuntimeModel,
-  RuntimeThinkingLevel,
-} from "@pragma/core/runtime/runtime-adapter";
+import type { RuntimeModel, RuntimeThinkingLevel } from "@pragma/core/runtime/runtime-adapter";
 
 import type { ClaudeCodeRuntimeAdapterOptions } from "./types.ts";
 import { resolveClaudeCodeCommand } from "./executable.ts";
@@ -166,7 +162,11 @@ function buildClaudeMappedModels(
       {
         id: role,
         displayName: `${roleLabel} → ${mappingLabel}`,
-        provider: "anthropic-compatible",
+        provider: {
+          kind: "runtime-managed",
+          id: "anthropic-compatible",
+          displayName: "Anthropic-compatible",
+        },
         ...(isDefault ? { default: true } : {}),
         ...(thinking === undefined ? {} : { thinking }),
       } satisfies RuntimeModel,
@@ -197,19 +197,11 @@ export function buildClaudeModels(effortLevels: readonly string[]): readonly Run
     return {
       id: definition.id,
       displayName: definition.displayName,
-      provider: "anthropic",
+      provider: { kind: "runtime-managed", id: "anthropic", displayName: "Anthropic" },
       ...(definition.default === true ? { default: true } : {}),
       ...(thinking === undefined ? {} : { thinking }),
     } satisfies RuntimeModel;
   });
-}
-
-export function assertClaudeCodeProviderConfig(request: RuntimeDriverSessionRequest): void {
-  if ((request.models?.length ?? 0) > 0 || (request.agent.models?.providers.length ?? 0) > 0) {
-    throw new Error(
-      "Claude Code runtime does not accept custom model providers; configure authentication in the local Claude Code CLI.",
-    );
-  }
 }
 
 export function assertClaudeCodeModelSelection(

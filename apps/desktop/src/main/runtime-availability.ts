@@ -1,96 +1,93 @@
-import { canUseClaudeCodeRuntime } from "@pragma/runtime-claude-code/availability";
-import { canUseCodexRuntime } from "@pragma/runtime-codex/availability";
-import { createClaudeCodeModelDiscovery } from "@pragma/runtime-claude-code/models";
-import { createCodexModelDiscovery } from "@pragma/runtime-codex/models";
-
 import type { DesktopRuntimeAvailability } from "../shared/desktop-api.ts";
-
-type RuntimeCheckResult = {
-  readonly usable: boolean;
-  readonly reason?: string | undefined;
-  readonly details?: Readonly<Record<string, unknown>> | undefined;
-};
-
-type RuntimeChecker = () => Promise<RuntimeCheckResult>;
-type ModelDiscovery = (executablePath?: string) => Promise<readonly RuntimeModelSummary[]>;
-
-type RuntimeModelSummary = {
-  readonly id: string;
-  readonly displayName: string;
-  readonly default?: boolean | undefined;
-};
+import type { RuntimeEnvironmentService } from "./runtime-environment-service.ts";
 
 export async function getRuntimeAvailability(
-  options: {
-    readonly canUseCodexRuntime?: RuntimeChecker | undefined;
-    readonly canUseClaudeCodeRuntime?: RuntimeChecker | undefined;
-    readonly listCodexModels?: ModelDiscovery | undefined;
-    readonly listClaudeCodeModels?: ModelDiscovery | undefined;
-  } = {},
+  runtimes: RuntimeEnvironmentService,
 ): Promise<DesktopRuntimeAvailability[]> {
-  const [codex, claudeCode] = await Promise.all([
-    (options.canUseCodexRuntime ?? canUseCodexRuntime)(),
-    (options.canUseClaudeCodeRuntime ?? canUseClaudeCodeRuntime)(),
-  ]);
+  const defaultRuntimeId = await runtimes.getDefaultRuntimeId();
+  const inspections = await runtimes.list();
+  return await Promise.all(
+    inspections.flatMap((inspection) => {
+      const revision = inspection.head.revision;
+      if (revision?.status === "deleted") return [];
+      return [
+        (async (): Promise<DesktopRuntimeAvailability> => {
+          const definition = revision?.definition;
+          const adapter = inspection.adapter;
+          if (adapter === undefined) {
+            return {
+              id: inspection.head.entry.runtimeId,
+              isDefault: inspection.head.entry.runtimeId === defaultRuntimeId,
+              displayName: definition?.displayName ?? inspection.head.entry.runtimeId,
+              kind: definition?.adapter.id ?? "unknown",
+              status: "unavailable",
+              reason: inspection.error ?? "Runtime Environment revision is unavailable.",
+              ...(revision === undefined ? {} : { revision: revision.revision }),
+              ...(definition === undefined
+                ? {}
+                : { origin: definition.origin, adapter: definition.adapter }),
+            };
+          }
 
-  const runtimes: DesktopRuntimeAvailability[] = [
-    { id: "pi", status: "available" },
-    toDesktopRuntimeAvailability("codex", codex),
-    toDesktopRuntimeAvailability("claude-code", claudeCode),
-  ];
-
-  await Promise.all(
-    runtimes.map(async (runtime) => {
-      if (runtime.id === "pi" || runtime.status !== "available") return;
-      const listModels =
-        runtime.id === "codex"
-          ? (options.listCodexModels ?? defaultCodexModelDiscovery)
-          : (options.listClaudeCodeModels ?? defaultClaudeCodeModelDiscovery);
-      try {
-        runtime.models = (await listModels(runtime.executablePath)).map((model) => ({
-          id: model.id,
-          displayName: model.displayName,
-          ...(model.default === undefined ? {} : { default: model.default }),
-        }));
-      } catch (error) {
-        runtime.modelDiscoveryError =
-          error instanceof Error ? error.message : "Model discovery failed.";
-      }
+          let availability;
+          try {
+            availability = await adapter.canUse();
+          } catch (error) {
+            availability = { usable: false as const, reason: errorMessage(error) };
+          }
+          const executablePath = stringDetail(availability.details, "executablePath");
+          const version = stringDetail(availability.details, "version");
+          let models: DesktopRuntimeAvailability["models"];
+          let modelDiscoveryError: string | undefined;
+          if (availability.usable && adapter.listModels !== undefined) {
+            try {
+              models = (await adapter.listModels()).map(({ thinking, ...model }) => ({
+                ...model,
+                provider: { ...model.provider },
+                ...(thinking === undefined
+                  ? {}
+                  : {
+                      thinking: {
+                        ...thinking,
+                        supportedLevels: thinking.supportedLevels.map((level) => ({ ...level })),
+                      },
+                    }),
+              }));
+            } catch (error) {
+              modelDiscoveryError = errorMessage(error);
+            }
+          }
+          return {
+            id: adapter.descriptor.id,
+            revision: revision!.revision,
+            origin: definition!.origin,
+            adapter: definition!.adapter,
+            isDefault: adapter.descriptor.id === defaultRuntimeId,
+            kind: adapter.descriptor.kind,
+            displayName: adapter.descriptor.displayName,
+            status: availability.usable ? "available" : "unavailable",
+            ...(executablePath === undefined ? {} : { executablePath }),
+            ...(version === undefined ? {} : { version }),
+            ...(availability.usable || availability.reason === undefined
+              ? {}
+              : { reason: availability.reason }),
+            ...(models === undefined ? {} : { models }),
+            ...(modelDiscoveryError === undefined ? {} : { modelDiscoveryError }),
+          };
+        })(),
+      ];
     }),
   );
-
-  return runtimes;
 }
 
-async function defaultCodexModelDiscovery(
-  executablePath?: string,
-): Promise<readonly RuntimeModelSummary[]> {
-  return await createCodexModelDiscovery({ executablePath })();
-}
-
-async function defaultClaudeCodeModelDiscovery(
-  executablePath?: string,
-): Promise<readonly RuntimeModelSummary[]> {
-  return await createClaudeCodeModelDiscovery({ executablePath })();
-}
-
-function toDesktopRuntimeAvailability(
-  id: "codex" | "claude-code",
-  result: RuntimeCheckResult,
-): DesktopRuntimeAvailability {
-  const executablePath = stringDetail(result, "executablePath");
-  const version = stringDetail(result, "version");
-
-  return {
-    id,
-    status: result.usable ? "available" : "unavailable",
-    ...(executablePath === undefined ? {} : { executablePath }),
-    ...(version === undefined ? {} : { version }),
-    ...(result.usable || result.reason === undefined ? {} : { reason: result.reason }),
-  };
-}
-
-function stringDetail(result: RuntimeCheckResult, key: string): string | undefined {
-  const value = result.details?.[key];
+function stringDetail(
+  details: Readonly<Record<string, unknown>> | undefined,
+  key: string,
+): string | undefined {
+  const value = details?.[key];
   return typeof value === "string" ? value : undefined;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : "Runtime inspection failed.";
 }

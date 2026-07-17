@@ -11,7 +11,6 @@ import type {
   ExpertContextStoreMount,
   DesktopRuntimeAvailability,
   DesktopPlugin,
-  ModelProvider,
   PragmaProjectSnapshot,
   UpdateExpertDefinition,
 } from "../../../../shared/desktop-api.ts";
@@ -52,7 +51,6 @@ export function StudioPage(props: { readonly onTryExpert: (expert: ExpertRecord)
   const [experts, setExperts] = useState<readonly ExpertRecord[]>([]);
   const [selectedExpert, setSelectedExpert] = useState<ExpertRecord | null>(null);
   const [draft, setDraft] = useState<ExpertDraft>(emptyDraft());
-  const [modelProviders, setModelProviders] = useState<readonly ModelProvider[]>([]);
   const [runtimes, setRuntimes] = useState<readonly DesktopRuntimeAvailability[]>([]);
   const [contextStores, setContextStores] = useState<readonly ContextStore[]>([]);
   const [selectedContextStoreId, setSelectedContextStoreId] = useState<string | null>(null);
@@ -88,14 +86,6 @@ export function StudioPage(props: { readonly onTryExpert: (expert: ExpertRecord)
       .getPragmaProject()
       .then((snapshot) => {
         if (!cancelled) setProject(snapshot);
-      })
-      .catch((loadError: unknown) => {
-        if (!cancelled) setExpertError(errorMessage(loadError));
-      });
-    void api
-      .listModelProviders()
-      .then((providers) => {
-        if (!cancelled) setModelProviders(providers);
       })
       .catch((loadError: unknown) => {
         if (!cancelled) setExpertError(errorMessage(loadError));
@@ -339,7 +329,6 @@ export function StudioPage(props: { readonly onTryExpert: (expert: ExpertRecord)
         {screen === "create" ? (
           <ExpertEditorFragment
             initialValue={draft}
-            modelProviders={modelProviders}
             runtimes={runtimes}
             contextStores={contextStores}
             capabilities={capabilities}

@@ -11,4 +11,36 @@ describe("PI Runtime contract", () => {
       supportsSteer: true,
     });
   });
+
+  it("publishes models supplied by the registered model catalog", async () => {
+    const models = [
+      {
+        id: "gpt-test",
+        displayName: "GPT Test",
+        provider: {
+          kind: "registered" as const,
+          id: "provider-id",
+          displayName: "Provider",
+        },
+        thinking: {
+          supportedLevels: [{ value: "high", label: "High" }],
+          defaultLevel: "high",
+        },
+      },
+    ];
+    const runtime = createPiRuntime({
+      modelCatalog: {
+        listModels: async () => models,
+        resolveProvider: async () => ({
+          id: "provider-id",
+          modelIds: ["gpt-test"],
+          baseUrl: "https://models.example.com/v1",
+          apiKey: "secret",
+          api: "openai-completions",
+        }),
+      },
+    });
+
+    await expect(runtime.listModels?.()).resolves.toEqual(models);
+  });
 });

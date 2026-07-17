@@ -55,6 +55,7 @@ import type {
   RuntimeDriverSessionRequest,
   RuntimeOutputSchema,
   RuntimeModel,
+  RuntimeModelSelection,
   RuntimeRunResult,
   RuntimeSessionInfo,
   RuntimeSessionRef,
@@ -132,8 +133,7 @@ export interface RuntimeTurnContext<TNativeEvent> {
   readonly rawQuery: string;
   readonly prompt: string;
   readonly startupMessages: readonly ExpertAgentStartupMessage[];
-  readonly modelName?: string | undefined;
-  readonly thinkingLevel?: string | undefined;
+  readonly modelSelection?: RuntimeModelSelection | undefined;
   readonly output?: RuntimeOutputSchema | undefined;
   readonly signal: AbortSignal;
   readonly source: RuntimeStreamEvent["source"];
@@ -835,8 +835,7 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepared> {
         rawQuery: submission.query,
         prompt,
         startupMessages: attempt === 1 ? startupMessages : [],
-        modelName: submission.modelName,
-        thinkingLevel: submission.thinkingLevel,
+        modelSelection: submission.modelSelection,
         output: submission.output,
         signal,
         source: controller.source,

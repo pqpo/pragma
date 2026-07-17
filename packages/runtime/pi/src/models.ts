@@ -4,30 +4,55 @@ import type {
   ModelRegistry,
 } from "@earendil-works/pi-coding-agent";
 import { ModelRegistry as PiModelRegistry } from "@earendil-works/pi-coding-agent";
-import type { Expert, IExpertAgentModelProviderConfig } from "@pragma/core";
+import type { RuntimeModel } from "@pragma/core";
 
-const DEFAULT_PI_MODEL_API = "openai-completions";
+import type { PiModelProviderConfig } from "./types.ts";
+
 const DEFAULT_PI_MODEL_CONTEXT_WINDOW = 128000;
 const DEFAULT_PI_MODEL_MAX_TOKENS = 16384;
+const PI_THINKING_LEVELS = new Set(["off", "minimal", "low", "medium", "high", "xhigh"]);
+
+export function normalizePiRuntimeModels(models: readonly RuntimeModel[]): readonly RuntimeModel[] {
+  return models.map((model) => {
+    if (model.thinking === undefined) return model;
+    const supportedLevels = model.thinking.supportedLevels.filter((level) =>
+      PI_THINKING_LEVELS.has(level.value),
+    );
+    if (supportedLevels.length === 0) {
+      return {
+        id: model.id,
+        displayName: model.displayName,
+        provider: model.provider,
+        ...(model.default === undefined ? {} : { default: model.default }),
+      };
+    }
+    const defaultLevel = model.thinking.defaultLevel;
+    return {
+      ...model,
+      thinking: {
+        supportedLevels,
+        ...(defaultLevel !== undefined && PI_THINKING_LEVELS.has(defaultLevel)
+          ? { defaultLevel }
+          : {}),
+      },
+    };
+  });
+}
 
 export function createPiModelRegistry(
   authStorage: AuthStorage,
-  providers: readonly IExpertAgentModelProviderConfig[],
+  providers: readonly PiModelProviderConfig[],
 ): ModelRegistry {
   const modelRegistry = PiModelRegistry.inMemory(authStorage);
-  const normalizedProviders = providers
-    .map(normalizeModelProviderConfig)
-    .filter((provider): provider is IExpertAgentModelProviderConfig => provider !== undefined);
-
-  for (const provider of normalizedProviders) {
-    modelRegistry.registerProvider(provider.provider, {
-      baseUrl: provider.baseApi,
-      api: provider.api ?? DEFAULT_PI_MODEL_API,
-      apiKey: provider.key,
-      models: provider.modelNames.map((modelName) => ({
-        id: modelName,
-        name: modelName,
-        reasoning: false,
+  for (const provider of providers.map(normalizeProvider).filter(isDefined)) {
+    modelRegistry.registerProvider(provider.id, {
+      baseUrl: provider.baseUrl,
+      api: provider.api,
+      apiKey: provider.apiKey,
+      models: provider.modelIds.map((modelId) => ({
+        id: modelId,
+        name: modelId,
+        reasoning: true,
         input: ["text"],
         cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
         contextWindow: DEFAULT_PI_MODEL_CONTEXT_WINDOW,
@@ -35,107 +60,53 @@ export function createPiModelRegistry(
       })),
     });
   }
-
   return modelRegistry;
 }
 
-export function resolveRuntimeModel(
-  modelName: string | undefined,
-  modelRegistry: ModelRegistry,
-): CreateAgentSessionOptions["model"] | undefined {
-  if (modelName === undefined) {
-    return undefined;
-  }
-
-  const models = modelRegistry.getAll();
-  const canonicalMatch = models.find(
-    (candidate) =>
-      `${candidate.provider}/${candidate.id}` === modelName ||
-      `${candidate.provider}/${candidate.name}` === modelName,
-  );
-
-  return (
-    canonicalMatch ??
-    models.find((candidate) => candidate.id === modelName || candidate.name === modelName)
-  );
-}
-
 export function resolveRequiredRuntimeModel(
-  modelName: string | undefined,
+  modelRef: { readonly providerId: string; readonly modelId: string } | undefined,
   modelRegistry: ModelRegistry,
   source: string,
 ): CreateAgentSessionOptions["model"] | undefined {
-  const model = resolveRuntimeModel(modelName, modelRegistry);
-
-  if (modelName !== undefined && model === undefined) {
-    throw new Error(`Unknown ${source} model: ${modelName}`);
+  if (modelRef === undefined) return undefined;
+  const model = modelRegistry
+    .getAll()
+    .find(
+      (candidate) =>
+        candidate.provider === modelRef.providerId && candidate.id === modelRef.modelId,
+    );
+  if (model === undefined) {
+    throw new Error(`Unknown ${source} model: ${modelRef.providerId}/${modelRef.modelId}`);
   }
-
   return model;
 }
 
-export function getRuntimeModelName(
-  agent: Expert,
-  modelName: string | undefined,
-): string | undefined {
-  const selectedModelName = modelName ?? agent.models?.defaultModelName;
-  if (selectedModelName === undefined) {
-    return undefined;
+export function resolvePiThinkingLevel(
+  thinkingLevel: string | undefined,
+): CreateAgentSessionOptions["thinkingLevel"] | undefined {
+  switch (thinkingLevel) {
+    case undefined:
+    case "off":
+    case "minimal":
+    case "low":
+    case "medium":
+    case "high":
+    case "xhigh":
+      return thinkingLevel;
+    default:
+      throw new Error(`Unsupported PI thinking level: ${thinkingLevel}`);
   }
-
-  const normalizedModelName = selectedModelName.trim();
-  const configuredProviders = agent.models?.providers ?? [];
-  const isCanonicalConfiguredModel = configuredProviders.some((provider) =>
-    provider.modelNames.some(
-      (candidate) =>
-        `${provider.provider.trim()}/${candidate.trim()}` === normalizedModelName,
-    ),
-  );
-  if (isCanonicalConfiguredModel) {
-    return normalizedModelName;
-  }
-
-  const configuredProvider = configuredProviders.find((provider) =>
-    provider.modelNames.some((candidate) => candidate.trim() === normalizedModelName),
-  );
-  const providerName = configuredProvider?.provider.trim();
-
-  return providerName === undefined || providerName.length === 0
-    ? normalizedModelName
-    : `${providerName}/${normalizedModelName}`;
 }
 
-export function collectRuntimeModelProviders(
-  agent: Expert,
-  providers: readonly IExpertAgentModelProviderConfig[] | undefined,
-): readonly IExpertAgentModelProviderConfig[] {
-  return [...(agent.models?.providers ?? []), ...(providers ?? [])];
+function normalizeProvider(provider: PiModelProviderConfig): PiModelProviderConfig | undefined {
+  const id = provider.id.trim();
+  const baseUrl = provider.baseUrl.trim();
+  const apiKey = provider.apiKey.trim();
+  const modelIds = [...new Set(provider.modelIds.map((modelId) => modelId.trim()))].filter(Boolean);
+  if (id === "" || baseUrl === "" || apiKey === "" || modelIds.length === 0) return undefined;
+  return { ...provider, id, baseUrl, apiKey, modelIds };
 }
 
-function normalizeModelProviderConfig(
-  provider: IExpertAgentModelProviderConfig,
-): IExpertAgentModelProviderConfig | undefined {
-  const providerName = provider.provider.trim();
-  const baseApi = provider.baseApi.trim();
-  const key = provider.key.trim();
-  const modelNames = [...new Set(provider.modelNames.map((modelName) => modelName.trim()))].filter(
-    (modelName) => modelName.length > 0,
-  );
-
-  if (
-    providerName.length === 0 ||
-    baseApi.length === 0 ||
-    key.length === 0 ||
-    modelNames.length === 0
-  ) {
-    return undefined;
-  }
-
-  return {
-    ...provider,
-    provider: providerName,
-    baseApi,
-    key,
-    modelNames,
-  };
+function isDefined<T>(value: T | undefined): value is T {
+  return value !== undefined;
 }

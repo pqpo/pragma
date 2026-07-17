@@ -13,16 +13,7 @@ describe("example model configuration", () => {
         PRAGMA_MODEL_API_KEY: "test-key",
       }),
     ).toEqual({
-      defaultModelName: "openai/gpt-example",
-      providers: [
-        {
-          provider: "openai",
-          modelNames: ["gpt-example"],
-          baseApi: "https://api.example.com/v1",
-          api: "openai-responses",
-          key: "test-key",
-        },
-      ],
+      default: { model: { providerId: "openai", modelId: "gpt-example" } },
     });
   });
 
@@ -30,15 +21,11 @@ describe("example model configuration", () => {
     expect(() => createExampleModelsConfig({})).toThrow("PRAGMA_MODEL_PROVIDER");
   });
 
-  it("rejects an unsupported model API", () => {
+  it("fails early when the model ID is missing", () => {
     expect(() =>
       createExampleModelsConfig({
         PRAGMA_MODEL_PROVIDER: "openai",
-        PRAGMA_MODEL_NAME: "gpt-example",
-        PRAGMA_MODEL_BASE_API: "https://api.example.com/v1",
-        PRAGMA_MODEL_API: "unsupported",
-        PRAGMA_MODEL_API_KEY: "test-key",
       }),
-    ).toThrow("Unsupported PRAGMA_MODEL_API");
+    ).toThrow("PRAGMA_MODEL_NAME");
   });
 });

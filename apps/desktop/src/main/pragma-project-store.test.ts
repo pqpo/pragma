@@ -160,7 +160,7 @@ describe("PragmaProjectStore", () => {
         tags: [],
         version,
         scope: "Release communication",
-        model: null,
+        model: { runtimeId: "codex", providerId: "openai", modelId: "gpt-test" },
         capabilities: [],
         contextStoreMounts: [],
         plugins: [],
@@ -218,7 +218,7 @@ describe("PragmaProjectStore", () => {
     expect((await first.get()).revision).toBe(1);
   });
 
-  it("preserves portable runtime and capability declarations outside the Desktop form model", async () => {
+  it("edits arbitrary runtime profiles while preserving portable capabilities", async () => {
     const { project, experts } = await stores();
     const expert = exampleExpert();
     expert.spec.runtime = { ref: "runtime-profile:remote@1.0.0" };
@@ -229,7 +229,11 @@ describe("PragmaProjectStore", () => {
     });
 
     const view = await experts.get("expert:writer@1.0.0");
-    expect(view.model).toBeNull();
+    expect(view.model).toEqual({
+      runtimeId: "remote-runtime",
+      providerId: "remote-provider",
+      modelId: "remote-model",
+    });
     expect(view.resourceRuntime).toEqual(expert.spec.runtime);
     expect(view.opaqueCapabilities).toEqual(expert.spec.capabilities);
     await experts.update("expert:writer@1.0.0", {
@@ -304,7 +308,11 @@ function remoteRuntime(): PragmaRuntimeProfileResource {
     metadata: { ...exampleRuntime().metadata, id: "remote", name: "Remote Runtime" },
     spec: {
       adapter: "pragma.runtime.profile@v1",
-      config: { runtimeId: "remote-runtime", model: "remote-model" },
+      config: {
+        runtimeId: "remote-runtime",
+        providerId: "remote-provider",
+        model: "remote-model",
+      },
     },
   };
 }

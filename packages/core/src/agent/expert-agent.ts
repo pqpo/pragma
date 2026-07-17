@@ -36,11 +36,6 @@ import type {
 import { isExpertAgentPluginEntryUse, loadExpertAgentPlugins } from "../plugins/plugin-loader.ts";
 import type { ExpertAgentRunContext } from "../runtime/run-context.ts";
 import { createExpertAgentRunContext } from "../runtime/run-context.ts";
-import { setDefaultRuntimeRegistryFactory } from "../runtime/default-runtime-registry.ts";
-import type {
-  ExpertAgentRuntimeRegistry,
-  ExpertAgentRuntimeRegistryFactory,
-} from "../runtime/default-runtime-registry.ts";
 import type {
   ExpertAgentManagedTool,
   ExpertAgentToolApproval,
@@ -108,33 +103,14 @@ export interface IExpertAgentSkillsConfig {
   readonly skills: readonly IExpertAgentSkill[];
 }
 
-export type ExpertAgentModelApi =
-  | "anthropic-messages"
-  | "google-generative-ai"
-  | "openai-completions"
-  | "openai-responses";
-
-export interface IExpertAgentModelProviderConfig {
-  readonly provider: string;
-  readonly modelNames: readonly string[];
-  readonly baseApi: string;
-  readonly key: string;
-  readonly api?: ExpertAgentModelApi | undefined;
-}
-
 export interface IExpertAgentModelsConfig {
-  readonly defaultModelName?: string | undefined;
-  readonly providers: readonly IExpertAgentModelProviderConfig[];
+  readonly default?: import("../runtime/runtime-adapter.ts").RuntimeModelSelection | undefined;
 }
 
 export interface IExpertAgentRunResult<TOutput = string> {
   readonly output: TOutput;
   readonly usage?: AgentMessageUsage | undefined;
 }
-
-export type { ExpertAgentRuntimeRegistry, ExpertAgentRuntimeRegistryFactory };
-
-export { setDefaultRuntimeRegistryFactory };
 
 export interface IExpertAgent {
   readonly schemaVersion?: ExpertAgentSchemaVersion;

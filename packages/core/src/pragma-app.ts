@@ -16,15 +16,11 @@ import {
   type FlowExecutionView,
   type StartFlowRequest,
 } from "./flow/flow-execution.ts";
-import {
-  createDefaultRuntimeRegistry,
-  createDefaultRuntimeRegistryIfConfigured,
-} from "./runtime/default-runtime-registry.ts";
-import type { RuntimeRegistry } from "./runtime-registry.ts";
+import type { RuntimeResolver } from "./runtime-resolver.ts";
 
 export interface CreatePragmaOptions {
   readonly pragmaHome?: string | undefined;
-  readonly runtimes?: RuntimeRegistry | undefined;
+  readonly runtimes: RuntimeResolver;
   readonly executionStore?: ExecutionStore | undefined;
   readonly expertSessionStore?: ExpertSessionStore | undefined;
 }
@@ -53,7 +49,7 @@ export interface PragmaApp {
   };
 }
 
-export function createPragma(options: CreatePragmaOptions = {}): PragmaApp {
+export function createPragma(options: CreatePragmaOptions): PragmaApp {
   const executions =
     options.executionStore ??
     createFileExecutionStore(
@@ -66,7 +62,7 @@ export function createPragma(options: CreatePragmaOptions = {}): PragmaApp {
         ? { executions }
         : { executions, pragmaHome: options.pragmaHome },
     );
-  const runtimes = options.runtimes ?? resolveDefaultRuntimeRegistry();
+  const runtimes = options.runtimes;
   const experts = new ExpertSessionManager({ sessions, executions, runtimes });
   const flows = new FlowExecutionManager(executions, runtimes);
   return {
@@ -79,25 +75,5 @@ export function createPragma(options: CreatePragmaOptions = {}): PragmaApp {
       open: async (request) => await flows.open(request),
       recover: async (flow, request) => await flows.recover(flow, request),
     },
-  };
-}
-
-function resolveDefaultRuntimeRegistry(): RuntimeRegistry {
-  const configured = createDefaultRuntimeRegistryIfConfigured();
-  const registry = configured ?? createDefaultRuntimeRegistry();
-  if ("list" in registry && "get" in registry) return registry as RuntimeRegistry;
-  return {
-    get defaultRuntime() {
-      return registry.defaultRuntime ?? "default";
-    },
-    list: () => [],
-    get: (runtimeId) => {
-      try {
-        return registry.resolve(runtimeId);
-      } catch {
-        return undefined;
-      }
-    },
-    resolve: (runtimeId) => registry.resolve(runtimeId),
   };
 }

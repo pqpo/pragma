@@ -1,8 +1,4 @@
-import type {
-  Expert,
-  IExpertAgentModelProviderConfig,
-  IExpertAgentRunResult,
-} from "../agent/expert-agent.ts";
+import type { Expert, IExpertAgentRunResult } from "../agent/expert-agent.ts";
 import type { ContextAssemblerOptions } from "../agent/context-manager.ts";
 import type { AgentMessage, RuntimeSessionRef as SharedRuntimeSessionRef } from "@pragma/shared";
 export { RuntimeSessionRefSchema } from "@pragma/shared";
@@ -26,8 +22,6 @@ export interface RuntimeAdapterCapabilities {
   readonly supportsStreaming?: boolean | undefined;
   readonly supportsAbort?: boolean | undefined;
   readonly supportsMcp?: boolean | undefined;
-  readonly supportsModelDiscovery?: boolean | undefined;
-  readonly supportsThinkingLevel?: boolean | undefined;
   readonly supportsResume?: boolean | undefined;
   readonly supportsSteer?: boolean | undefined;
   readonly supportsCancel?: boolean | undefined;
@@ -60,12 +54,28 @@ export interface RuntimeModelThinking {
   readonly defaultLevel?: string | undefined;
 }
 
+export interface RuntimeModelProvider {
+  readonly kind: "runtime-managed" | "registered";
+  readonly id: string;
+  readonly displayName: string;
+}
+
 export interface RuntimeModel {
   readonly id: string;
   readonly displayName: string;
-  readonly provider: string;
+  readonly provider: RuntimeModelProvider;
   readonly default?: boolean | undefined;
   readonly thinking?: RuntimeModelThinking | undefined;
+}
+
+export interface RuntimeModelRef {
+  readonly providerId: string;
+  readonly modelId: string;
+}
+
+export interface RuntimeModelSelection {
+  readonly model: RuntimeModelRef;
+  readonly thinkingLevel?: string | undefined;
 }
 
 export type RuntimeOutputSchema<TOutput = unknown> = z.ZodType<TOutput>;
@@ -121,7 +131,7 @@ export interface RuntimeDriverSessionRequest {
   readonly contextAssembly?: ContextAssemblerOptions | undefined;
   readonly humanInteractionHandler?: ExpertAgentHumanInteractionHandler | undefined;
   readonly executionContext?: ExpertToolExecutionContext | undefined;
-  readonly models?: readonly IExpertAgentModelProviderConfig[] | undefined;
+  readonly modelSelection?: RuntimeModelSelection | undefined;
   readonly systemSessionId?: string | undefined;
   /** Omit to create a fresh runtime session. When provided, the referenced session must resume. */
   readonly runtimeSession?: RuntimeSessionRef | undefined;
@@ -131,8 +141,7 @@ export interface RuntimeDriverSessionRequest {
 
 export interface RuntimeSubmitRequest<TOutput = string> {
   readonly runId?: string | undefined;
-  readonly modelName?: string | undefined;
-  readonly thinkingLevel?: string | undefined;
+  readonly modelSelection?: RuntimeModelSelection | undefined;
   readonly query: string;
   readonly output?: RuntimeOutputSchema<TOutput> | undefined;
   readonly outputRetryLimit?: number | undefined;

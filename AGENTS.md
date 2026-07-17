@@ -455,7 +455,7 @@ createDatabaseClient()
 - Expert Agent 声明、Run Request / Result 协议。
 - ExpertAgent 公共实现，包括上下文系统、AGENTS.md 加载、subAgent 声明和系统提示词组装。
 - RuntimeAdapter 与 RuntimeAgentSession 核心接口。
-- RuntimeRegistry、运行事件、会话、取消、错误等公共运行协议。
+- RuntimeResolver、不可变 Runtime Environment binding、运行事件、会话、取消、错误等公共运行协议。
 - 未来本地 Claude Code、Codex、自研执行环境通过独立 Runtime Adapter 包对接。
 
 当前保留：

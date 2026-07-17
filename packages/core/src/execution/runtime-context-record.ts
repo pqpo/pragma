@@ -1,4 +1,5 @@
 import type {
+  RuntimeEnvironmentBinding,
   RuntimeContextOrigin,
   RuntimeContextOwner,
   RuntimeContextRecord,
@@ -9,7 +10,7 @@ export interface CreateRuntimeContextRecordOptions {
   readonly owner: RuntimeContextOwner;
   readonly origin: RuntimeContextOrigin;
   readonly expert: { readonly id: string; readonly version: string };
-  readonly runtimeId: string;
+  readonly runtime: RuntimeEnvironmentBinding;
   readonly now?: string | undefined;
 }
 
@@ -18,12 +19,12 @@ export function createRuntimeContextRecord(
 ): RuntimeContextRecord {
   const now = options.now ?? new Date().toISOString();
   return {
-    schemaVersion: "pragma.runtime-context/v2",
+    schemaVersion: "pragma.runtime-context/v3",
     contextId: options.contextId,
     owner: options.owner,
     origin: options.origin,
     expert: options.expert,
-    runtimeId: options.runtimeId,
+    runtime: options.runtime,
     lifecycle: "open",
     createdAt: now,
     updatedAt: now,
@@ -77,7 +78,11 @@ function assertSameRuntimeContext(
   ) {
     throw new Error(`Runtime Context Expert identity conflict: ${incoming.contextId}.`);
   }
-  if (current.runtimeId !== incoming.runtimeId) {
+  if (
+    current.runtime.runtimeId !== incoming.runtime.runtimeId ||
+    current.runtime.revision !== incoming.runtime.revision ||
+    current.runtime.fingerprint !== incoming.runtime.fingerprint
+  ) {
     throw new Error(`Runtime Context Runtime identity conflict: ${incoming.contextId}.`);
   }
 }

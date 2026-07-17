@@ -27,7 +27,7 @@ describe("ContextResolutionService", () => {
       version: "1.0.0",
       resolve: ({ previousContexts, freshContextId, target }) => {
         candidates = previousContexts.map((context) => context.contextId);
-        selectedRuntimeId = target.runtimeId;
+        selectedRuntimeId = target.runtime.runtimeId;
         return previousContexts[0]?.contextId ?? freshContextId;
       },
     });
@@ -41,7 +41,7 @@ describe("ContextResolutionService", () => {
       source: { kind: "flow", flowId: "flow", stepId: "review", visit: 3 },
       owner: fixture.owner,
       expert: fixture.expert,
-      runtimeId: "runtime",
+      runtime: runtimeBinding(),
       resolver,
       freshContextId: "fresh-third",
     });
@@ -111,7 +111,7 @@ describe("ContextResolutionService", () => {
         source: { kind: "flow", flowId: "flow", stepId: "review", visit: 3 },
         owner: fixture.owner,
         expert: fixture.expert,
-        runtimeId: "runtime",
+        runtime: runtimeBinding(),
         resolver: fixed("context-1"),
       }),
     ).rejects.toThrow("closed");
@@ -125,7 +125,7 @@ describe("ContextResolutionService", () => {
         source: { kind: "flow", flowId: "flow", stepId: "other", visit: 1 },
         owner: fixture.owner,
         expert: { id: "other-expert", version: "1.0.0" },
-        runtimeId: "runtime",
+        runtime: runtimeBinding(),
         resolver: fixed("context-2"),
       }),
     ).rejects.toThrow("Expert identity conflict");
@@ -139,7 +139,7 @@ describe("ContextResolutionService", () => {
         source: { kind: "flow", flowId: "flow", stepId: "review", visit: 3 },
         owner: fixture.owner,
         expert: fixture.expert,
-        runtimeId: "other-runtime",
+        runtime: runtimeBinding("other-runtime"),
         resolver: fixed("context-2"),
       }),
     ).rejects.toThrow("Runtime identity conflict");
@@ -153,7 +153,7 @@ describe("ContextResolutionService", () => {
         source: { kind: "flow", flowId: "flow", stepId: "review", visit: 3 },
         owner: { type: "flow-execution", ownerId: "other-execution" },
         expert: fixture.expert,
-        runtimeId: "runtime",
+        runtime: runtimeBinding(),
         resolver: fixed("context-2"),
       }),
     ).rejects.toThrow("owner conflict");
@@ -162,12 +162,12 @@ describe("ContextResolutionService", () => {
   it("requires immutable Runtime identity and valid Session provenance", () => {
     const now = new Date().toISOString();
     const base = {
-      schemaVersion: "pragma.runtime-context/v2",
+      schemaVersion: "pragma.runtime-context/v3",
       contextId: "root",
       owner: { type: "expert-session", ownerId: "session" },
       origin: { type: "expert-session", sessionId: "session" },
       expert: { id: "expert", version: "1.0.0" },
-      runtimeId: "runtime",
+      runtime: runtimeBinding(),
       lifecycle: "open",
       createdAt: now,
       updatedAt: now,
@@ -180,7 +180,7 @@ describe("ContextResolutionService", () => {
         origin: { type: "expert-session", sessionId: "other-session" },
       }).success,
     ).toBe(false);
-    expect(RuntimeContextRecordSchema.safeParse({ ...base, runtimeId: undefined }).success).toBe(
+    expect(RuntimeContextRecordSchema.safeParse({ ...base, runtime: undefined }).success).toBe(
       false,
     );
   });
@@ -279,12 +279,12 @@ function contextRecord(
   closed: boolean,
 ): RuntimeContextRecord {
   return {
-    schemaVersion: "pragma.runtime-context/v2",
+    schemaVersion: "pragma.runtime-context/v3",
     contextId,
     owner,
     origin: { type: "invocation", invocationId },
     expert,
-    runtimeId: "runtime",
+    runtime: runtimeBinding(),
     lifecycle: closed ? "closed" : "open",
     ...(closed ? { closedAt: createdAt } : {}),
     createdAt,
@@ -297,10 +297,14 @@ function resolutionContext() {
     source: { kind: "flow" as const, flowId: "flow", stepId: "step", visit: 1 },
     executionId: "execution",
     owner: { type: "flow-execution" as const, ownerId: "execution" },
-    target: { expertId: "expert", expertVersion: "1.0.0", runtimeId: "runtime" },
+    target: { expertId: "expert", expertVersion: "1.0.0", runtime: runtimeBinding() },
     invocation: { input: null },
     state: {},
     previousContexts: [],
     freshContextId: "fresh",
   };
+}
+
+function runtimeBinding(runtimeId = "runtime") {
+  return { runtimeId, revision: 1, fingerprint: "a".repeat(64) };
 }

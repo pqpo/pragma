@@ -14,7 +14,7 @@ import {
   createPragma,
   createFileExecutionStore,
   createFileExpertSessionStore,
-  createRuntimeRegistry,
+  createStaticRuntimeResolver,
   defineExpert,
   defineExpertTeam,
   defineContextIdResolver,
@@ -28,6 +28,7 @@ import {
   type ExpertAgentToolCallResult,
   type FlowExecution,
   type RuntimeDriverSessionContext,
+  type RuntimeModelSelection,
 } from "../src/index.ts";
 
 interface FakeSession {
@@ -41,6 +42,8 @@ interface FakeRuntimeStats {
   closeSessionCalls: number;
   cancelTurnCalls: number;
   executionIds: string[];
+  sessionModelSelections: Array<RuntimeModelSelection | undefined>;
+  turnModelSelections: Array<RuntimeModelSelection | undefined>;
 }
 
 function createFakeRuntimeStats(): FakeRuntimeStats {
@@ -50,6 +53,8 @@ function createFakeRuntimeStats(): FakeRuntimeStats {
     closeSessionCalls: 0,
     cancelTurnCalls: 0,
     executionIds: [],
+    sessionModelSelections: [],
+    turnModelSelections: [],
   };
 }
 
@@ -76,6 +81,7 @@ function createFakeRuntime(options: FakeRuntimeOptions = {}) {
     },
     createSession: async (context) => {
       if (stats !== undefined) stats.createSessionCalls += 1;
+      if (stats !== undefined) stats.sessionModelSelections.push(context.request.modelSelection);
       if (options.createDelayMs !== undefined) {
         await new Promise<void>((resolve) => setTimeout(resolve, options.createDelayMs));
       }
@@ -87,6 +93,7 @@ function createFakeRuntime(options: FakeRuntimeOptions = {}) {
     },
     readSession: (session) => ({ runtimeSessionId: session.id }),
     async startTurn(session, turn) {
+      stats?.turnModelSelections.push(turn.modelSelection);
       const executionId = session.context.request.executionContext?.executionId;
       if (stats !== undefined && executionId !== undefined) stats.executionIds.push(executionId);
       if (options.delayMs !== undefined) {
@@ -377,7 +384,7 @@ async function fixture(delayMs?: number) {
   const runtime = createFakeRuntime(delayMs === undefined ? {} : { delayMs });
   const app = createPragma({
     pragmaHome: home,
-    runtimes: createRuntimeRegistry({ runtimes: [runtime], defaultRuntime: "fake" }),
+    runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
   });
   const expert = await defineExpert({
     id: "solo",
@@ -397,7 +404,7 @@ async function trackedFixture(options: Omit<FakeRuntimeOptions, "stats"> = {}) {
   const runtime = createFakeRuntime({ ...options, stats });
   const app = createPragma({
     pragmaHome: home,
-    runtimes: createRuntimeRegistry({ runtimes: [runtime], defaultRuntime: "fake" }),
+    runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
   });
   const expert = await defineExpert({
     id: "tracked",
@@ -412,6 +419,46 @@ async function trackedFixture(options: Omit<FakeRuntimeOptions, "stats"> = {}) {
 }
 
 describe("ExpertSession", () => {
+  it("passes the Expert model selection to Runtime session creation and turns", async () => {
+    const home = await mkdtemp(join(tmpdir(), "pragma-runtime-model-selection-"));
+    const stats = createFakeRuntimeStats();
+    const app = createPragma({
+      pragmaHome: home,
+      runtimes: createStaticRuntimeResolver({
+        runtimes: [createFakeRuntime({ stats })],
+        defaultRuntimeId: "fake",
+      }),
+    });
+    const expert = await defineExpert({
+      id: "model-selection",
+      name: "Model Selection",
+      description: "Model selection test",
+      tags: [],
+      version: "1.0.0",
+      scope: "test",
+      workspace: home,
+      models: {
+        default: {
+          model: { providerId: "provider-a", modelId: "model-a" },
+          thinkingLevel: "high",
+        },
+      },
+    });
+
+    const session = await app.experts.createSession(expert);
+    await (
+      await session.prompt("hello", { requestId: "model-selection" })
+    ).result;
+
+    const selection = {
+      model: { providerId: "provider-a", modelId: "model-a" },
+      thinkingLevel: "high",
+    };
+    expect(stats.sessionModelSelections).toEqual([selection]);
+    expect(stats.turnModelSelections).toEqual([selection]);
+    await session.close();
+  });
+
   it("creates one durable root Context before the first prompt", async () => {
     const { app, expert } = await fixture();
     const first = await app.experts.createSession(expert);
@@ -423,7 +470,7 @@ describe("ExpertSession", () => {
       owner: { type: "expert-session", ownerId: first.sessionId },
       origin: { type: "expert-session", sessionId: first.sessionId },
       expert: { id: expert.id, version: expert.version },
-      runtimeId: "fake",
+      runtime: { runtimeId: "fake", revision: 1 },
       lifecycle: "open",
     });
     expect((await first.listEvents()).items.map((event) => event.type)).toEqual([
@@ -509,9 +556,9 @@ describe("ExpertSession", () => {
 
     const competingApp = createPragma({
       pragmaHome: home,
-      runtimes: createRuntimeRegistry({
+      runtimes: createStaticRuntimeResolver({
         runtimes: [createFakeRuntime()],
-        defaultRuntime: "fake",
+        defaultRuntimeId: "fake",
       }),
     });
     await expect(
@@ -557,7 +604,7 @@ describe("ExpertSession", () => {
     const runtime = createFakeRuntime({ stats, closeError: "simulated process cleanup failure" });
     const app = createPragma({
       pragmaHome: home,
-      runtimes: createRuntimeRegistry({ runtimes: [runtime], defaultRuntime: "fake" }),
+      runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
     });
     const coordinator = await defineExpert({
       id: "lead",
@@ -602,9 +649,9 @@ describe("ExpertSession", () => {
     const recoveredStats = createFakeRuntimeStats();
     const recoveryApp = createPragma({
       pragmaHome: home,
-      runtimes: createRuntimeRegistry({
+      runtimes: createStaticRuntimeResolver({
         runtimes: [createFakeRuntime({ stats: recoveredStats })],
-        defaultRuntime: "fake",
+        defaultRuntimeId: "fake",
       }),
     });
     const recovered = await recoveryApp.experts.resumeSession(team, {
@@ -624,7 +671,7 @@ describe("ExpertSession", () => {
     expect(memberContexts[0]).toMatchObject({
       contextId: firstMember?.contextId,
       origin: { type: "invocation", invocationId: firstMember?.invocationId },
-      runtimeId: "fake",
+      runtime: { runtimeId: "fake", revision: 1 },
       snapshot: { systemSessionId: expect.any(String) },
     });
     expect(stats.createSessionCalls).toBe(2);
@@ -677,9 +724,9 @@ describe("ExpertSession", () => {
 
     const recoveryApp = createPragma({
       pragmaHome: home,
-      runtimes: createRuntimeRegistry({
+      runtimes: createStaticRuntimeResolver({
         runtimes: [createFakeRuntime()],
-        defaultRuntime: "fake",
+        defaultRuntimeId: "fake",
       }),
     });
     const recovered = await recoveryApp.experts.resumeSession(expert, {
@@ -694,7 +741,7 @@ describe("ExpertSession", () => {
     const sessions = createFileExpertSessionStore({ executions, pragmaHome: home });
     const now = new Date().toISOString();
     await sessions.create({
-      schemaVersion: "pragma.expert-session/v3",
+      schemaVersion: "pragma.expert-session/v4",
       sessionId: "leased-session",
       expertId: "expert",
       expertVersion: "1.0.0",
@@ -723,9 +770,9 @@ describe("ExpertSession", () => {
     const sessions = createFileExpertSessionStore({ executions, pragmaHome: home });
     const app = createPragma({
       pragmaHome: home,
-      runtimes: createRuntimeRegistry({
+      runtimes: createStaticRuntimeResolver({
         runtimes: [createFakeRuntime()],
-        defaultRuntime: "fake",
+        defaultRuntimeId: "fake",
       }),
     });
     const lead = await defineExpert({
@@ -763,7 +810,7 @@ describe("ExpertSession", () => {
     const original = team("1.0.0");
     const now = new Date().toISOString();
     await sessions.create({
-      schemaVersion: "pragma.expert-session/v3",
+      schemaVersion: "pragma.expert-session/v4",
       sessionId: "fingerprint-session",
       expertId: original.id,
       expertVersion: original.version,
@@ -885,7 +932,7 @@ describe("ExpertSession", () => {
     });
     const app = createPragma({
       pragmaHome: home,
-      runtimes: createRuntimeRegistry({ runtimes: [runtime], defaultRuntime: "fake" }),
+      runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
     });
     const leaf = await defineExpert({
       id: "leaf",
@@ -1044,9 +1091,9 @@ describe("ExpertSession", () => {
     const runtimeB = createFakeRuntime({ runtimeId: "fake-b", stats: statsB });
     const app = createPragma({
       pragmaHome: home,
-      runtimes: createRuntimeRegistry({
+      runtimes: createStaticRuntimeResolver({
         runtimes: [runtimeA, runtimeB],
-        defaultRuntime: "fake-a",
+        defaultRuntimeId: "fake-a",
       }),
     });
     const member = await defineExpert({
@@ -1094,9 +1141,9 @@ describe("ExpertSession", () => {
     const runtimeB = createFakeRuntime({ runtimeId: "fake-b", stats: statsB });
     const app = createPragma({
       pragmaHome: home,
-      runtimes: createRuntimeRegistry({
+      runtimes: createStaticRuntimeResolver({
         runtimes: [runtimeA, runtimeB],
-        defaultRuntime: "fake-a",
+        defaultRuntimeId: "fake-a",
       }),
     });
     const member = await defineExpert({
@@ -1138,9 +1185,9 @@ describe("ExpertSession", () => {
     const runtimeB = createFakeRuntime({ runtimeId: "fake-b", stats: statsB });
     const app = createPragma({
       pragmaHome: home,
-      runtimes: createRuntimeRegistry({
+      runtimes: createStaticRuntimeResolver({
         runtimes: [runtimeA, runtimeB],
-        defaultRuntime: "fake-a",
+        defaultRuntimeId: "fake-a",
       }),
     });
     const member = await defineExpert({
@@ -1179,9 +1226,9 @@ describe("ExpertSession", () => {
     const runtimeB = createFakeRuntime({ runtimeId: "fake-b", stats: statsB });
     const app = createPragma({
       pragmaHome: home,
-      runtimes: createRuntimeRegistry({
+      runtimes: createStaticRuntimeResolver({
         runtimes: [runtimeA, runtimeB],
-        defaultRuntime: "fake-a",
+        defaultRuntimeId: "fake-a",
       }),
     });
     const member = await defineExpert({
@@ -1219,12 +1266,12 @@ describe("ExpertSession", () => {
     const statsB = createFakeRuntimeStats();
     const app = createPragma({
       pragmaHome: home,
-      runtimes: createRuntimeRegistry({
+      runtimes: createStaticRuntimeResolver({
         runtimes: [
           createFakeRuntime({ runtimeId: "fake-a", stats: statsA }),
           createFakeRuntime({ runtimeId: "fake-b", stats: statsB }),
         ],
-        defaultRuntime: "fake-a",
+        defaultRuntimeId: "fake-a",
       }),
     });
     const expert = await defineExpert({
@@ -1253,13 +1300,13 @@ describe("ExpertSession", () => {
     const statsC = createFakeRuntimeStats();
     const app = createPragma({
       pragmaHome: home,
-      runtimes: createRuntimeRegistry({
+      runtimes: createStaticRuntimeResolver({
         runtimes: [
           createFakeRuntime({ runtimeId: "fake-a", stats: statsA }),
           createFakeRuntime({ runtimeId: "fake-b", stats: statsB }),
           createFakeRuntime({ runtimeId: "fake-c", stats: statsC }),
         ],
-        defaultRuntime: "fake-a",
+        defaultRuntimeId: "fake-a",
       }),
     });
     const worker = await defineExpert({
@@ -1299,7 +1346,7 @@ describe("ExpertSession", () => {
     ];
     const app = createPragma({
       pragmaHome: home,
-      runtimes: createRuntimeRegistry({ runtimes, defaultRuntime: "fake-a" }),
+      runtimes: createStaticRuntimeResolver({ runtimes, defaultRuntimeId: "fake-a" }),
     });
     const member = await defineExpert({
       id: "member",
@@ -1359,7 +1406,7 @@ describe("ExpertSession", () => {
     });
     const app = createPragma({
       pragmaHome: home,
-      runtimes: createRuntimeRegistry({ runtimes: [runtime], defaultRuntime: "fake" }),
+      runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
     });
     const expert = await defineExpert({
       id: "steerable",
@@ -1391,9 +1438,9 @@ describe("ExpertSession", () => {
       pragmaHome: home,
       executionStore: executions,
       expertSessionStore: sessions,
-      runtimes: createRuntimeRegistry({
+      runtimes: createStaticRuntimeResolver({
         runtimes: [createFakeRuntime()],
-        defaultRuntime: "fake",
+        defaultRuntimeId: "fake",
       }),
     });
     const expert = await defineExpert({
@@ -1414,7 +1461,7 @@ describe("ExpertSession", () => {
     await writeFile(
       new PragmaPaths({ pragmaHome: home }).expertSessionTransaction(session.sessionId),
       `${JSON.stringify({
-        schemaVersion: "pragma.expert-session-transaction/v3",
+        schemaVersion: "pragma.expert-session-transaction/v4",
         session: {
           ...current,
           queuedRequestIds: ["journal-request"],
@@ -1495,7 +1542,7 @@ describe("ExpertSession", () => {
     const sessions = createFileExpertSessionStore({ executions, pragmaHome: home });
     const now = new Date().toISOString();
     await sessions.create({
-      schemaVersion: "pragma.expert-session/v3",
+      schemaVersion: "pragma.expert-session/v4",
       sessionId: "atomic-session",
       expertId: "expert",
       expertVersion: "1.0.0",
@@ -1529,7 +1576,7 @@ describe("ExpertSession", () => {
     await writeFile(
       new PragmaPaths({ pragmaHome: home }).expertSessionTransaction("atomic-session"),
       `${JSON.stringify({
-        schemaVersion: "pragma.expert-session-transaction/v3",
+        schemaVersion: "pragma.expert-session-transaction/v4",
         session: {
           ...current,
           status: "closed",
@@ -1679,7 +1726,11 @@ describe("FlowExecution", () => {
     expect((await execution.getTree()).children[0]?.invocation.contextResolution).toBeDefined();
     const store = createFileExecutionStore({ pragmaHome: home });
     expect(await store.listContexts(execution.executionId)).toMatchObject([
-      { lifecycle: "closed", runtimeId: "fake", snapshot: { systemSessionId: expect.any(String) } },
+      {
+        lifecycle: "closed",
+        runtime: { runtimeId: "fake", revision: 1 },
+        snapshot: { systemSessionId: expect.any(String) },
+      },
     ]);
     const eventTypes = (await streamed).map((event) => event.type);
     expect(eventTypes).toContain("context.closed");
@@ -1880,7 +1931,7 @@ describe("FlowExecution", () => {
     });
     const app = createPragma({
       pragmaHome: home,
-      runtimes: createRuntimeRegistry({ runtimes: [runtime], defaultRuntime: "fake" }),
+      runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
     });
     const expert = await defineExpert({
       id: "caller",
@@ -2254,9 +2305,9 @@ describe("FlowExecution", () => {
     changed.compose(({ start, end }) => start(changedWaiting).next(end()));
     const secondApp = createPragma({
       pragmaHome: home,
-      runtimes: createRuntimeRegistry({
+      runtimes: createStaticRuntimeResolver({
         runtimes: [createFakeRuntime()],
-        defaultRuntime: "fake",
+        defaultRuntimeId: "fake",
       }),
     });
     await expect(
@@ -2317,9 +2368,9 @@ describe("Expert lifecycle orchestration", () => {
     const runtime = createOrchestrationRuntime(scenario, stats);
     const app = createPragma({
       pragmaHome: home,
-      runtimes: createRuntimeRegistry({
+      runtimes: createStaticRuntimeResolver({
         runtimes: [runtime],
-        defaultRuntime: runtime.descriptor.id,
+        defaultRuntimeId: runtime.descriptor.id,
       }),
     });
     const members = await Promise.all(
@@ -2414,9 +2465,9 @@ describe("Expert lifecycle orchestration", () => {
     const runtime = createOrchestrationRuntime("parent-failure", stats);
     const app = createPragma({
       pragmaHome: home,
-      runtimes: createRuntimeRegistry({
+      runtimes: createStaticRuntimeResolver({
         runtimes: [runtime],
-        defaultRuntime: runtime.descriptor.id,
+        defaultRuntimeId: runtime.descriptor.id,
       }),
     });
     const member = await defineExpert({
@@ -2677,12 +2728,12 @@ function sessionRootContext(
   now: string,
 ) {
   return {
-    schemaVersion: "pragma.runtime-context/v2" as const,
+    schemaVersion: "pragma.runtime-context/v3" as const,
     contextId,
     owner: { type: "expert-session" as const, ownerId: sessionId },
     origin: { type: "expert-session" as const, sessionId },
     expert: { id: expertId, version: expertVersion },
-    runtimeId,
+    runtime: { runtimeId, revision: 1, fingerprint: "a".repeat(64) },
     lifecycle: "open" as const,
     createdAt: now,
     updatedAt: now,

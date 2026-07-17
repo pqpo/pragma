@@ -12,7 +12,7 @@ const models: readonly RuntimeModel[] = [
   {
     id: "model-a",
     displayName: "Model A",
-    provider: "test",
+    provider: { kind: "runtime-managed", id: "test", displayName: "Test" },
     default: true,
     thinking: {
       supportedLevels: [
@@ -22,7 +22,11 @@ const models: readonly RuntimeModel[] = [
       defaultLevel: "low",
     },
   },
-  { id: "model-b", displayName: "Model B", provider: "test" },
+  {
+    id: "model-b",
+    displayName: "Model B",
+    provider: { kind: "runtime-managed", id: "test", displayName: "Test" },
+  },
 ];
 
 describe("runtime console model selection", () => {

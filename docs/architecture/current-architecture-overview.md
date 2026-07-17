@@ -184,11 +184,16 @@ Execution 已采用单一 Canonical Event Log，只持久化完整标准化消�
 
 ### P2：Runtime 默认注册依赖进程级可变全局状态
 
-**状态：已确认。**
+**状态：已修复。**
 
-`setDefaultRuntimeRegistryFactory()` 修改模块级全局变量。它对单进程示例方便，但会导致测试隔离、多租户、多个 PragmaApp 实例和动态配置刷新之间相互影响。
+已删除 `setDefaultRuntimeRegistryFactory()`、默认 Registry 单例以及同步 `RuntimeRegistry`。
+`createPragma()` 现在必须显式注入异步 `RuntimeResolver`。Resolver 在创建 Context 时绑定最新的
+Runtime Environment revision，在恢复已有 Context 时按持久化的 `runtimeId + revision + fingerprint`
+解析历史版本。
 
-**建议：** `createPragma()` 的生产调用必须显式注入 RuntimeRegistry；全局默认只保留给 CLI 示例，或直接删除。Runtime 选择策略应是应用服务，不应是隐含单例。
+Desktop 的 `RuntimeEnvironmentService` 每次解析都读取版本化 Store，不要求重启 Desktop。更新只影响
+之后创建的 Context；已有 Context 和 Runtime Session 保持原 binding。默认 Runtime 是安装级显式配置，
+Expert 未指定 Runtime 时由 Resolver 读取，而不是在 Expert 或 DSL 中推断 Codex。
 
 ### P2：Memory 的架构决策与实现所有权冲突
 
@@ -212,6 +217,27 @@ ADR 002 把 Memory System 定义为 Core 抽象，但当前 `MemorySystem`、Mem
 Expert migration、Capability revision、Credential、Context Store、Mission 和 Runtime discovery 都直接实现在 `apps/desktop/src/main`。短期合理，但继续增长后，Electron 生命周期、IPC、文件存储和领域规则会绑死在一起。
 
 **建议：** 保持 Renderer → typed preload → Main 的边界，同时把 Main 视为 composition root。可测试的 device-local application service 与 store port 不应依赖 Electron；只有窗口、对话框、safeStorage、系统托盘和 IPC adapter 留在 Electron 层。
+
+### Runtime environment 与模型能力
+
+Desktop 将 Runtime environment 保存为独立的 Adapter binding：`runtimeId` 是该 Runtime
+实例的唯一标识，`adapter.id + adapter.version` 决定由哪个 Adapter factory 创建实例，配置只属于该
+实例。`runtimeId` 不编码 PI、Codex、Claude Code 等类型，也不编码本机或云端 placement。
+
+`RuntimeResolver` 是执行侧唯一的解析边界，Desktop 的实现由版本化 Store 与 Adapter Factory Registry
+组成。Settings 和 Expert 编辑器通过 Resolver inspection 中的 Adapter descriptor 与 `listModels()`
+获取显示名称、模型、Provider 和思考深度，不按已知 Runtime ID 分支。一个损坏或未知 Factory 的环境
+只会报告自身不可用，不影响其他环境和 Desktop 启动。
+
+PI Adapter 的模型目录来自 Desktop 注册的 Model Provider；Codex 和 Claude Code Adapter 使用各自的
+原生模型发现能力。模型身份统一为 `providerId + modelId`，思考深度必须属于所选模型声明的集合。PI
+还会把声明集合与自身真实支持的思考深度取交集。RuntimeProfile 不再承载 Provider credential；凭据只
+由具体 Runtime Factory/Adapter 在运行时解析。
+
+接入一个直接可访问的云端 Agent Runtime 不需要先建设 Runtime Gateway：实现一个负责远程认证、
+会话与事件流的 `RuntimeAdapter`，提供 factory，并把对应 environment 注册到版本化 Store 即可。
+只有当需要由云端控制面向 Desktop 设备下发本地任务、维护设备在线状态和断线恢复时，
+才引入 Local Agent Bridge 与 Runtime Gateway。
 
 ## 最需要预留的扩展点
 

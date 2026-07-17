@@ -22,11 +22,7 @@ import {
   type CodexRuntimeSessionState,
 } from "./session.ts";
 import type { CodexRuntimeAdapterOptions } from "./types.ts";
-import {
-  assertCodexModelSelection,
-  assertCodexProviderConfig,
-  createCodexModelDiscovery,
-} from "./models.ts";
+import { assertCodexModelSelection, createCodexModelDiscovery } from "./models.ts";
 import { canUseCodexRuntime } from "./availability.ts";
 import { resolveCodexExecutablePath } from "./executable.ts";
 import { appendCodexExecutionMcpConfig } from "./execution-mcp-config.ts";
@@ -94,14 +90,17 @@ export function createCodexRuntime(options: CodexRuntimeAdapterOptions = {}): Ru
         };
       },
       async createSession(ctx): Promise<CodexDriverSession> {
-        assertCodexProviderConfig(ctx.request);
-        const defaultModelName = options.defaultModelName ?? ctx.agent.models?.defaultModelName;
-        if (defaultModelName !== undefined || options.defaultThinkingLevel !== undefined) {
-          assertCodexModelSelection(
-            await listModels(),
-            defaultModelName,
-            options.defaultThinkingLevel,
-          );
+        assertRuntimeManagedProvider(
+          ctx.request.modelSelection?.model.providerId,
+          "openai",
+          "Codex",
+        );
+        const defaultModelName =
+          ctx.request.modelSelection?.model.modelId ?? options.defaultModelName;
+        const defaultThinkingLevel =
+          ctx.request.modelSelection?.thinkingLevel ?? options.defaultThinkingLevel;
+        if (defaultModelName !== undefined || defaultThinkingLevel !== undefined) {
+          assertCodexModelSelection(await listModels(), defaultModelName, defaultThinkingLevel);
         }
         const notificationBus = createCodexNotificationBus();
         const toolRuntimeState: CodexExpertToolRuntimeState = {};
@@ -168,7 +167,7 @@ export function createCodexRuntime(options: CodexRuntimeAdapterOptions = {}): Ru
             runtimeSessionId: state.threadId,
             cwd: ctx.workspace,
             model: defaultModelName,
-            thinkingLevel: options.defaultThinkingLevel,
+            thinkingLevel: defaultThinkingLevel,
             developerInstructions: ctx.agentContext.systemPrompt,
             sandboxMode: options.sandboxMode,
             approvalPolicy: options.approvalPolicy,
@@ -181,7 +180,7 @@ export function createCodexRuntime(options: CodexRuntimeAdapterOptions = {}): Ru
               notificationBus,
               state,
               defaultModelName,
-              defaultThinkingLevel: options.defaultThinkingLevel,
+              defaultThinkingLevel,
               codexHome,
               startupMessages: threadStartResult.startedFreshThread
                 ? ctx.agentContext.startupMessages
@@ -216,12 +215,19 @@ export function createCodexRuntime(options: CodexRuntimeAdapterOptions = {}): Ru
       listMessages: listCodexMessages,
       consumeStartupMessages: consumeCodexStartupMessages,
       async startTurn(session, turn) {
-        const modelName = turn.modelName ?? session.defaultModelName;
-        const thinkingLevel = turn.thinkingLevel ?? session.defaultThinkingLevel;
+        assertRuntimeManagedProvider(turn.modelSelection?.model.providerId, "openai", "Codex");
+        const modelName = turn.modelSelection?.model.modelId ?? session.defaultModelName;
+        const thinkingLevel = turn.modelSelection?.thinkingLevel ?? session.defaultThinkingLevel;
         if (modelName !== undefined || thinkingLevel !== undefined) {
           assertCodexModelSelection(await listModels(), modelName, thinkingLevel);
         }
-        return await startCodexTurn(session, { ...turn, modelName, thinkingLevel });
+        return await startCodexTurn(session, {
+          ...turn,
+          modelSelection:
+            modelName === undefined
+              ? undefined
+              : { model: { providerId: "openai", modelId: modelName }, thinkingLevel },
+        });
       },
       mapEvent: mapCodexNotificationToRuntimeEvent,
       async collectUsage(session, ctx) {
@@ -246,6 +252,16 @@ export function createCodexRuntime(options: CodexRuntimeAdapterOptions = {}): Ru
       sessionSyncCallback: options.sessionSyncCallback,
     },
   );
+}
+
+function assertRuntimeManagedProvider(
+  providerId: string | undefined,
+  expectedProviderId: string,
+  runtime: string,
+): void {
+  if (providerId !== undefined && providerId !== expectedProviderId) {
+    throw new Error(`${runtime} runtime only supports provider ${expectedProviderId}.`);
+  }
 }
 
 async function nativeSessionFileExists(root: string, runtimeSessionId: string): Promise<boolean> {

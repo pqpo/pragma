@@ -23,6 +23,8 @@ const legacyExecutionSourceTokens = [
   ["append", "Output("].join(""),
   ["Execution", "OutputEvent"].join(""),
   ["execution", "Outputs("].join(""),
+  ["create", "RuntimeRegistry"].join(""),
+  ["setDefault", "RuntimeRegistryFactory"].join(""),
 ];
 
 async function listFiles(directory: string): Promise<string[]> {

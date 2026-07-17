@@ -23,7 +23,6 @@ import type { PragmaProjectStore } from "./pragma-project-store.ts";
 import {
   desktopCapabilityBindingRef,
   desktopContextBindingRef,
-  desktopModelProviderBindingRef,
   parseDesktopCapabilityBindingRef,
   parseDesktopModelProviderBindingRef,
 } from "./desktop-binding-ref.ts";
@@ -205,27 +204,32 @@ function definitionToResources(
 ): PragmaResource[] {
   const runtimeId = `${definition.id}.runtime`;
   const runtimeRef = `runtime-profile:${runtimeId}@${definition.version}`;
-  const runtime = PragmaRuntimeProfileResourceSchema.parse({
-    apiVersion: "pragma/v2",
-    kind: "RuntimeProfile",
-    metadata: {
-      id: runtimeId,
-      version: definition.version,
-      name: `${definition.name} Runtime`,
-      description: `Runtime profile for ${definition.name}.`,
-      tags: ["desktop-managed"],
-    },
-    spec: {
-      adapter: "pragma.runtime.profile@v1",
-      ...(definition.model?.runtimeId === "pi"
-        ? { binding: desktopModelProviderBindingRef(definition.model.providerId) }
-        : {}),
-      config: {
-        runtimeId: definition.model?.runtimeId ?? "codex",
-        ...(definition.model?.modelName === undefined ? {} : { model: definition.model.modelName }),
-      },
-    },
-  });
+  const selectedModel = definition.model ?? null;
+  const runtime =
+    selectedModel === null
+      ? undefined
+      : PragmaRuntimeProfileResourceSchema.parse({
+          apiVersion: "pragma/v2",
+          kind: "RuntimeProfile",
+          metadata: {
+            id: runtimeId,
+            version: definition.version,
+            name: `${definition.name} Runtime`,
+            description: `Runtime profile for ${definition.name}.`,
+            tags: ["desktop-managed"],
+          },
+          spec: {
+            adapter: "pragma.runtime.profile@v1",
+            config: {
+              runtimeId: selectedModel.runtimeId,
+              providerId: selectedModel.providerId,
+              model: selectedModel.modelId,
+              ...(selectedModel.thinkingLevel === undefined
+                ? {}
+                : { thinkingLevel: selectedModel.thinkingLevel }),
+            },
+          },
+        });
   const capabilityResources = (definition.capabilities ?? []).map((capability) =>
     PragmaCapabilityResourceSchema.parse({
       apiVersion: "pragma/v2",
@@ -275,7 +279,7 @@ function definitionToResources(
     spec: {
       scope: definition.scope,
       instructions: definition.instructions,
-      runtime: { ref: runtimeRef },
+      ...(runtime === undefined ? {} : { runtime: { ref: runtimeRef } }),
       capabilities: [
         ...(definition.capabilities ?? []).map((capability) => ({
           ref: `capability:${capability.capabilityId}@${capability.revision}`,
@@ -299,7 +303,7 @@ function definitionToResources(
     },
   });
   return [
-    runtime,
+    ...(runtime === undefined ? [] : [runtime]),
     ...capabilityResources.filter(
       (resource, index, all) =>
         all.findIndex(
@@ -371,7 +375,7 @@ function referencedResourceRefs(resources: readonly PragmaResource[]): Set<strin
   };
   for (const resource of resources) {
     if (resource.kind === "Expert") {
-      refs.add(resource.spec.runtime.ref);
+      if (resource.spec.runtime !== undefined) refs.add(resource.spec.runtime.ref);
       for (const capability of resource.spec.capabilities) refs.add(capability.ref);
       for (const context of resource.spec.contextStores) refs.add(context.ref);
       addToolRefs(resource.spec.tools);
@@ -476,10 +480,11 @@ function desktopModel(
   resource: PragmaExpertResource,
   resources: readonly PragmaResource[],
 ): ExpertDefinition["model"] {
+  if (resource.spec.runtime === undefined) return null;
+  const runtimeRef = resource.spec.runtime.ref;
   const runtime = resources.find(
     (candidate): candidate is PragmaRuntimeProfileResource =>
-      candidate.kind === "RuntimeProfile" &&
-      canonicalPragmaResourceRef(candidate) === resource.spec.runtime.ref,
+      candidate.kind === "RuntimeProfile" && canonicalPragmaResourceRef(candidate) === runtimeRef,
   );
   if (
     runtime === undefined ||
@@ -488,19 +493,26 @@ function desktopModel(
   ) {
     return null;
   }
-  const config = runtime.spec.config as { runtimeId?: unknown; model?: unknown };
+  const config = runtime.spec.config as {
+    runtimeId?: unknown;
+    providerId?: unknown;
+    model?: unknown;
+    thinkingLevel?: unknown;
+  };
   const runtimeId = typeof config.runtimeId === "string" ? config.runtimeId : undefined;
-  const model = typeof config.model === "string" ? config.model : "default";
-  const providerId = parseDesktopModelProviderBindingRef(runtime.spec.binding ?? "");
-  if (runtimeId === "pi" && providerId !== undefined) {
+  const model = typeof config.model === "string" ? config.model : undefined;
+  const thinkingLevel = typeof config.thinkingLevel === "string" ? config.thinkingLevel : undefined;
+  const providerId =
+    typeof config.providerId === "string"
+      ? config.providerId
+      : parseDesktopModelProviderBindingRef(runtime.spec.binding ?? "");
+  if (runtimeId !== undefined && providerId !== undefined && model !== undefined) {
     return {
-      runtimeId: "pi",
+      runtimeId,
       providerId,
-      modelName: model,
+      modelId: model,
+      ...(thinkingLevel === undefined ? {} : { thinkingLevel }),
     };
-  }
-  if (runtimeId === "codex" || runtimeId === "claude-code") {
-    return { runtimeId, modelName: model };
   }
   return null;
 }

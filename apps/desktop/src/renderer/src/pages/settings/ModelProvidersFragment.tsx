@@ -7,16 +7,20 @@ import { errorMessage } from "../../lib/errors.ts";
 type ProviderDraft = {
   readonly id?: string;
   readonly name: string;
+  readonly protocol: ModelProvider["protocol"];
   readonly baseUrl: string;
   readonly apiKey: string;
   readonly models: readonly string[];
+  readonly modelMetadata: ModelProvider["modelMetadata"];
 };
 
 const emptyProviderDraft = (): ProviderDraft => ({
   name: "",
+  protocol: "openai-completions",
   baseUrl: "https://api.openai.com/v1",
   apiKey: "",
   models: [],
+  modelMetadata: {},
 });
 
 function ProviderEditor(props: {
@@ -47,8 +51,10 @@ function ProviderEditor(props: {
     try {
       const input = {
         name: draft.name,
+        protocol: draft.protocol,
         baseUrl: draft.baseUrl,
         models: [...draft.models],
+        modelMetadata: draft.modelMetadata,
       };
       const provider = isEditing
         ? await window.pragmaDesktop.updateModelProvider({
@@ -81,6 +87,19 @@ function ProviderEditor(props: {
           placeholder="My OpenAI-compatible API"
           autoFocus
         />
+      </label>
+      <label className="static-field">
+        <span>API protocol</span>
+        <select
+          value={draft.protocol}
+          onChange={(event) =>
+            setDraft({ ...draft, protocol: event.target.value as ModelProvider["protocol"] })
+          }
+        >
+          <option value="openai-completions">OpenAI Chat Completions</option>
+          <option value="openai-responses">OpenAI Responses</option>
+          <option value="anthropic-messages">Anthropic Messages</option>
+        </select>
       </label>
       <label className="static-field">
         <span>API base URL</span>
@@ -131,13 +150,102 @@ function ProviderEditor(props: {
                 type="button"
                 aria-label={`Remove ${model}`}
                 onClick={() =>
-                  setDraft({ ...draft, models: draft.models.filter((item) => item !== model) })
+                  setDraft({
+                    ...draft,
+                    models: draft.models.filter((item) => item !== model),
+                    modelMetadata: Object.fromEntries(
+                      Object.entries(draft.modelMetadata).filter(([id]) => id !== model),
+                    ),
+                  })
                 }
               >
                 ×
               </button>
             </span>
           ))}
+        </div>
+        <div className="configured-model-list">
+          {draft.models.map((model) => {
+            const metadata = draft.modelMetadata[model];
+            const levels = metadata?.thinking?.supportedLevels ?? [];
+            return (
+              <div className="configured-model" key={`${model}:metadata`}>
+                <div>
+                  <strong>{model}</strong>
+                  <label className="static-field">
+                    <span>Display name</span>
+                    <input
+                      value={metadata?.displayName ?? ""}
+                      placeholder={model}
+                      onChange={(event) =>
+                        setDraft({
+                          ...draft,
+                          modelMetadata: updateModelMetadata(
+                            draft.modelMetadata,
+                            model,
+                            event.target.value,
+                            levels.map((level) => level.value),
+                            metadata?.thinking?.defaultLevel,
+                          ),
+                        })
+                      }
+                    />
+                  </label>
+                  <label className="static-field">
+                    <span>Thinking levels</span>
+                    <input
+                      key={`${model}:${levels.map((level) => level.value).join(",")}`}
+                      defaultValue={levels.map((level) => level.value).join(", ")}
+                      placeholder="low, medium, high"
+                      onBlur={(event) => {
+                        const values = parseThinkingLevels(event.target.value);
+                        const defaultLevel = values.includes(metadata?.thinking?.defaultLevel ?? "")
+                          ? metadata?.thinking?.defaultLevel
+                          : undefined;
+                        setDraft({
+                          ...draft,
+                          modelMetadata: updateModelMetadata(
+                            draft.modelMetadata,
+                            model,
+                            metadata?.displayName,
+                            values,
+                            defaultLevel,
+                          ),
+                        });
+                      }}
+                    />
+                  </label>
+                  {levels.length > 0 ? (
+                    <label className="static-field">
+                      <span>Default thinking level</span>
+                      <select
+                        value={metadata?.thinking?.defaultLevel ?? ""}
+                        onChange={(event) =>
+                          setDraft({
+                            ...draft,
+                            modelMetadata: updateModelMetadata(
+                              draft.modelMetadata,
+                              model,
+                              metadata?.displayName,
+                              levels.map((level) => level.value),
+                              event.target.value || undefined,
+                            ),
+                          })
+                        }
+                      >
+                        <option value="">Runtime default</option>
+                        {levels.map((level) => (
+                          <option key={level.value} value={level.value}>
+                            {level.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  ) : null}
+                </div>
+              </div>
+            );
+          })}
         </div>
       </div>
       {error ? (
@@ -212,7 +320,7 @@ function ProviderCard(props: {
           <p className="status-copy is-active">
             {props.provider.models.length} {props.provider.models.length === 1 ? "model" : "models"}
             <span aria-hidden="true">•</span>
-            OpenAI compatible
+            {props.provider.protocol}
           </p>
         </div>
         <button className="text-button" type="button" onClick={props.onEdit}>
@@ -241,6 +349,14 @@ function ProviderCard(props: {
                 <div className="configured-model" key={model}>
                   <div>
                     <strong>{model}</strong>
+                    {props.provider.modelMetadata[model]?.thinking !== undefined ? (
+                      <p>
+                        Thinking:{" "}
+                        {props.provider.modelMetadata[model]!.thinking!.supportedLevels.map(
+                          (level) => level.label,
+                        ).join(", ")}
+                      </p>
+                    ) : null}
                     {result ? (
                       <p
                         className={
@@ -363,9 +479,11 @@ export function ModelProvidersFragment() {
               setDraft({
                 id: provider.id,
                 name: provider.name,
+                protocol: provider.protocol,
                 baseUrl: provider.baseUrl,
                 apiKey: "",
                 models: provider.models,
+                modelMetadata: provider.modelMetadata,
               })
             }
             onDelete={() =>
@@ -381,4 +499,40 @@ export function ModelProvidersFragment() {
       ) : null}
     </div>
   );
+}
+
+function parseThinkingLevels(value: string): string[] {
+  return [
+    ...new Set(
+      value
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean),
+    ),
+  ];
+}
+
+function updateModelMetadata(
+  current: ModelProvider["modelMetadata"],
+  modelId: string,
+  displayName: string | undefined,
+  thinkingLevels: readonly string[],
+  defaultLevel: string | undefined,
+): ModelProvider["modelMetadata"] {
+  const normalizedDisplayName = displayName?.trim();
+  const metadata = {
+    ...(normalizedDisplayName ? { displayName: normalizedDisplayName } : {}),
+    ...(thinkingLevels.length === 0
+      ? {}
+      : {
+          thinking: {
+            supportedLevels: thinkingLevels.map((value) => ({ value, label: value })),
+            ...(defaultLevel === undefined ? {} : { defaultLevel }),
+          },
+        }),
+  };
+  if (Object.keys(metadata).length === 0) {
+    return Object.fromEntries(Object.entries(current).filter(([id]) => id !== modelId));
+  }
+  return { ...current, [modelId]: metadata };
 }

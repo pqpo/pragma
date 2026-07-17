@@ -8,6 +8,7 @@ import type {
   Expert,
   RuntimeEventMappingContext,
   RuntimeEventMappingResult,
+  RuntimeModelRef,
   RuntimeTurnContext,
   RuntimeTurnResult,
 } from "@pragma/core";
@@ -24,7 +25,7 @@ import {
 } from "./session-events.ts";
 import { convertPiAgentMessage, convertPiAgentMessages } from "./session-messages.ts";
 import { createToolStreamEvents } from "./stream.ts";
-import { getRuntimeModelName, resolveRequiredRuntimeModel } from "./models.ts";
+import { resolvePiThinkingLevel, resolveRequiredRuntimeModel } from "./models.ts";
 import type { PiRuntimeStreamState } from "./types.ts";
 
 export interface PiNativeSession {
@@ -32,7 +33,7 @@ export interface PiNativeSession {
   readonly session: AgentSession;
   readonly streamState: PiRuntimeStreamState;
   readonly models: {
-    readonly defaultModelName?: string | undefined;
+    readonly defaultModel?: RuntimeModelRef | undefined;
     readonly modelRegistry: ModelRegistry;
   };
   messageCountBeforeRun: number;
@@ -43,7 +44,7 @@ export function createPiNativeSession(options: {
   readonly session: AgentSession;
   readonly streamState: PiRuntimeStreamState;
   readonly models: {
-    readonly defaultModelName?: string | undefined;
+    readonly defaultModel?: RuntimeModelRef | undefined;
     readonly modelRegistry: ModelRegistry;
   };
 }): PiNativeSession {
@@ -80,15 +81,16 @@ export async function startPiTurn(
   });
 
   try {
-    const submissionModelName =
-      turn.modelName === undefined
-        ? nativeSession.models.defaultModelName
-        : getRuntimeModelName(nativeSession.agent, turn.modelName);
+    const submissionModel = turn.modelSelection?.model ?? nativeSession.models.defaultModel;
     await applySubmissionModel(
       nativeSession.session,
       nativeSession.models.modelRegistry,
-      submissionModelName,
+      submissionModel,
     );
+    const thinkingLevel = resolvePiThinkingLevel(turn.modelSelection?.thinkingLevel);
+    if (thinkingLevel !== undefined) {
+      nativeSession.session.setThinkingLevel(thinkingLevel);
+    }
     await nativeSession.session.prompt(turn.prompt);
     assertAssistantTurnCompleted(
       nativeSession.session.messages.slice(nativeSession.messageCountBeforeRun),
@@ -159,9 +161,9 @@ export function collectPiUsage(session: PiNativeSession): AgentMessageUsage | un
 async function applySubmissionModel(
   session: AgentSession,
   modelRegistry: ModelRegistry,
-  modelName: string | undefined,
+  modelRef: RuntimeModelRef | undefined,
 ): Promise<void> {
-  const model = resolveRequiredRuntimeModel(modelName, modelRegistry, "submission");
+  const model = resolveRequiredRuntimeModel(modelRef, modelRegistry, "submission");
 
   if (
     model === undefined ||

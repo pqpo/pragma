@@ -8,6 +8,7 @@ import {
   type ExpertAgentStreamEvent,
   type Invocation,
   type RuntimeContextRecord,
+  type RuntimeEnvironmentBinding,
   type RuntimeContextSnapshot as SharedRuntimeContextSnapshot,
 } from "@pragma/shared";
 
@@ -23,10 +24,14 @@ import { isExpertTeam, type ExpertDefinition, type ExpertTeam } from "../agent/e
 import { freshContextIdResolver } from "./context-id-resolver.ts";
 import type { Flow } from "../flow/flow.ts";
 import { runNestedFlowInvocation } from "../flow/flow-execution.ts";
-import type { RuntimeAgentSession, RuntimeSubmitHandle } from "../runtime/runtime-adapter.ts";
+import type {
+  RuntimeAgentSession,
+  RuntimeModelSelection,
+  RuntimeSubmitHandle,
+} from "../runtime/runtime-adapter.ts";
 import { mergeUsage } from "../runtime/usage.ts";
 import { openRuntimeSession } from "../runtime/session-factory.ts";
-import type { RuntimeRegistry } from "../runtime-registry.ts";
+import type { RuntimeResolver } from "../runtime-resolver.ts";
 import type { ExpertAgentHumanRequest, ExpertAgentHumanResponse } from "../tools/managed-tool.ts";
 import {
   ExecutionFinalStatusConflictError,
@@ -388,7 +393,7 @@ export interface RunExpertInvocationOptions {
   readonly context: RuntimeContextRecord;
   readonly controller: ExecutionController;
   readonly store: ExecutionStore;
-  readonly runtimes: RuntimeRegistry;
+  readonly runtimes: RuntimeResolver;
   readonly team?: ExpertTeam | undefined;
   readonly depth?: number | undefined;
   readonly persistContext?: ((context: RuntimeContextRecord) => Promise<void>) | undefined;
@@ -463,12 +468,16 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
   const invocationSignal = options.controller.signalForInvocation(options.invocationId);
   throwIfAborted(invocationSignal, options.invocationId);
 
-  const runtime = options.runtimes.resolve(options.context.runtimeId);
-  validateDelegatedRuntimeRouting(options, delegation, runtime.descriptor.id);
+  const resolvedRuntime = await options.runtimes.resolve({
+    binding: options.context.runtime,
+    modelSelection: nativeExpert.models?.default,
+  });
+  const runtime = resolvedRuntime.adapter;
+  await validateDelegatedRuntimeRouting(options, delegation, runtime.descriptor.id);
   const runtimeIdentity = {
     contextId: options.context.contextId,
     expertId: nativeExpert.id,
-    runtimeId: runtime.descriptor.id,
+    runtime: options.context.runtime,
   } satisfies RuntimeSessionIdentity;
   assertRuntimeIdentity(options, runtimeIdentity);
 
@@ -512,6 +521,7 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
   );
   const humanInteractionHandler = async (request: ExpertAgentHumanRequest) =>
     await options.controller.requestHumanInteraction(options.invocationId, request);
+  const modelSelection = readExpertModelSelection(nativeExpert);
   const session = await options.controller.acquireRuntime(runtimeIdentity, async () => {
     const opened = await openRuntimeSession(runtime, {
       agent: executableExpert,
@@ -526,6 +536,7 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
       runtimeSession: options.context.snapshot?.runtimeSession,
       executionContext,
       humanInteractionHandler,
+      modelSelection,
       onSessionInfo: async (info) => {
         if (info.runtimeSession.id === "") return;
         await persistRuntimeSnapshot({
@@ -561,6 +572,7 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
             : `${options.invocationId}:continuation:${continuation}`,
         executionContext,
         humanInteractionHandler,
+        modelSelection,
         runtimeSource: runtime.descriptor,
       });
       options.controller.addUsage(turn.usage);
@@ -745,12 +757,7 @@ function createExecutionContext(
       if (expert === undefined) {
         throw new Error(`Expert ${nativeExpert.id} may not spawn ${request.expertId}.`);
       }
-      const childRuntimeId = resolveDelegatedRuntimeId(
-        options,
-        delegation,
-        expert,
-        parentRuntimeId,
-      );
+      const childRuntime = await bindDelegatedRuntime(options, delegation, expert, parentRuntimeId);
       return await orchestrator.spawn({
         ownerContextId: options.context.contextId,
         createdByInvocationId: options.invocationId,
@@ -758,7 +765,7 @@ function createExecutionContext(
         depth,
         expert,
         prompt: request.prompt,
-        runtimeId: childRuntimeId,
+        runtime: childRuntime,
         owner: options.owner,
         resolver: delegation.contextId,
         source:
@@ -885,8 +892,10 @@ async function invokeResourceFromExpert(
   }
 
   const nativeTarget = isExpertTeam(target) ? target.coordinator : target;
-  const targetRuntimeId = options.runtimes.resolve(nativeTarget.defaultRuntimeId ?? parentRuntimeId)
-    .descriptor.id;
+  const targetRuntime = await options.runtimes.bind({
+    runtimeId: nativeTarget.defaultRuntimeId ?? parentRuntimeId,
+    modelSelection: nativeTarget.models?.default,
+  });
   const contextResolution = await new ContextResolutionService(options.store).resolve({
     executionId: options.executionId,
     invocationId,
@@ -901,7 +910,7 @@ async function invokeResourceFromExpert(
     owner: options.owner,
     ownerContextId: options.context.contextId,
     expert: { id: nativeTarget.id, version: nativeTarget.version },
-    runtimeId: targetRuntimeId,
+    runtime: targetRuntime.binding,
     resolver: freshContextIdResolver,
   });
   const invocation: Invocation = {
@@ -1012,11 +1021,13 @@ async function submitRuntimeTurn(options: {
   readonly humanInteractionHandler: (
     request: ExpertAgentHumanRequest,
   ) => Promise<ExpertAgentHumanResponse>;
+  readonly modelSelection?: RuntimeModelSelection | undefined;
   readonly runtimeSource: { readonly id: string; readonly kind: string };
 }): Promise<{ readonly output: unknown; readonly usage?: AgentMessageUsage | undefined }> {
   const handle = options.session.submit({
     runId: options.runId,
     query: options.query,
+    ...(options.modelSelection === undefined ? {} : { modelSelection: options.modelSelection }),
     execution: {
       context: options.executionContext,
       humanInteractionHandler: options.humanInteractionHandler,
@@ -1082,6 +1093,10 @@ async function submitRuntimeTurn(options: {
   }
 }
 
+function readExpertModelSelection(expert: Expert): RuntimeModelSelection | undefined {
+  return expert.models?.default;
+}
+
 function withTeamDelegationTools(
   expert: Expert,
   tools: readonly NonNullable<Expert["tools"]>[number][],
@@ -1144,10 +1159,10 @@ function assertRuntimeIdentity(
 ): void {
   if (
     options.context.expert.id !== identity.expertId ||
-    options.context.runtimeId !== identity.runtimeId
+    !sameRuntimeBinding(options.context.runtime, identity.runtime)
   ) {
     throw new Error(
-      `Runtime Context ${options.context.contextId} identity conflicts with ${identity.expertId}/${identity.runtimeId}.`,
+      `Runtime Context ${options.context.contextId} identity conflicts with ${identity.expertId}/${identity.runtime.runtimeId}@${identity.runtime.revision}.`,
     );
   }
 }
@@ -1203,29 +1218,45 @@ function throwIfAborted(signal: AbortSignal, invocationId: string): void {
   throw new Error(`Invocation interrupted: ${invocationId}`);
 }
 
-function resolveDelegatedRuntimeId(
+async function bindDelegatedRuntime(
   options: RunExpertInvocationOptions,
   delegation: AgentDelegationDefinition,
   expert: Expert,
   parentRuntimeId: string,
-): string {
+): Promise<RuntimeEnvironmentBinding> {
   const configuredRuntimeId =
     options.runtimeByExpert?.[expert.id] ??
     delegation.runtimeByExpert.get(expert.id) ??
     expert.defaultRuntimeId ??
     parentRuntimeId;
-  return options.runtimes.resolve(configuredRuntimeId).descriptor.id;
+  return (
+    await options.runtimes.bind({
+      runtimeId: configuredRuntimeId,
+      modelSelection: expert.models?.default,
+    })
+  ).binding;
 }
 
-function validateDelegatedRuntimeRouting(
+async function validateDelegatedRuntimeRouting(
   options: RunExpertInvocationOptions,
   delegation: AgentDelegationDefinition | undefined,
   parentRuntimeId: string,
-): void {
+): Promise<void> {
   if (delegation === undefined) return;
   for (const expert of delegation.experts) {
-    resolveDelegatedRuntimeId(options, delegation, expert, parentRuntimeId);
+    await bindDelegatedRuntime(options, delegation, expert, parentRuntimeId);
   }
+}
+
+function sameRuntimeBinding(
+  left: RuntimeEnvironmentBinding,
+  right: RuntimeEnvironmentBinding,
+): boolean {
+  return (
+    left.runtimeId === right.runtimeId &&
+    left.revision === right.revision &&
+    left.fingerprint === right.fingerprint
+  );
 }
 
 function isDurableRuntimeEvent(event: ExpertAgentStreamEvent): boolean {

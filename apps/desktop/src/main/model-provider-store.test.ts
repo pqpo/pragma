@@ -34,15 +34,28 @@ describe("model provider store", () => {
 
     const provider = await store.create({
       name: "OpenAI",
+      protocol: "openai-completions",
       baseUrl: "https://api.openai.com/v1/",
       apiKey: "sk-top-secret",
       models: ["gpt-4.1", "gpt-4.1-mini"],
+      modelMetadata: {
+        "gpt-4.1": {
+          displayName: "GPT 4.1",
+          thinking: {
+            supportedLevels: [{ value: "high", label: "High" }],
+            defaultLevel: "high",
+          },
+        },
+      },
     });
 
     expect(provider).toMatchObject({
       name: "OpenAI",
       baseUrl: "https://api.openai.com/v1",
       models: ["gpt-4.1", "gpt-4.1-mini"],
+      modelMetadata: expect.objectContaining({
+        "gpt-4.1": expect.objectContaining({ displayName: "GPT 4.1" }),
+      }),
       hasApiKey: true,
     });
     expect(await store.list()).toEqual([provider]);
@@ -51,6 +64,15 @@ describe("model provider store", () => {
       apiKey: "sk-top-secret",
       models: ["gpt-4.1", "gpt-4.1-mini"],
     });
+    await expect(store.listRuntimeModels()).resolves.toEqual([
+      expect.objectContaining({
+        id: "gpt-4.1",
+        displayName: "GPT 4.1",
+        provider: expect.objectContaining({ kind: "registered", id: provider.id }),
+        thinking: expect.objectContaining({ defaultLevel: "high" }),
+      }),
+      expect.objectContaining({ id: "gpt-4.1-mini", displayName: "gpt-4.1-mini" }),
+    ]);
 
     const rawConfig = await readFile(configPath, "utf8");
     expect(rawConfig).not.toContain("sk-top-secret");
@@ -61,6 +83,7 @@ describe("model provider store", () => {
     const { store } = await createStore();
     const created = await store.create({
       name: "OpenAI",
+      protocol: "openai-completions",
       baseUrl: "https://api.openai.com/v1",
       apiKey: "sk-original",
       models: ["gpt-4.1"],
@@ -70,6 +93,7 @@ describe("model provider store", () => {
     const updated = await store.update({
       id: created.id,
       name: "Company gateway",
+      protocol: "openai-completions",
       baseUrl: "https://models.example.com/v1",
       models: ["gpt-4.1", "gpt-4.1-mini"],
     });
@@ -89,6 +113,7 @@ describe("model provider store", () => {
     await expect(
       store.create({
         name: "OpenAI",
+        protocol: "openai-completions",
         baseUrl: "https://api.openai.com/v1",
         apiKey: "sk-test",
         models: ["gpt-4.1", "gpt-4.1"],
@@ -106,6 +131,7 @@ describe("model provider store", () => {
     await expect(
       unavailableStore.create({
         name: "OpenAI",
+        protocol: "openai-completions",
         baseUrl: "https://api.openai.com/v1",
         apiKey: "sk-test",
         models: ["gpt-4.1"],

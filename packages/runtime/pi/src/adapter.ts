@@ -8,9 +8,9 @@ import {
 } from "@pragma/core";
 
 import {
-  collectRuntimeModelProviders,
   createPiModelRegistry,
-  getRuntimeModelName,
+  normalizePiRuntimeModels,
+  resolvePiThinkingLevel,
   resolveRequiredRuntimeModel,
 } from "./models.ts";
 import { createResourceLoader } from "./resources.ts";
@@ -58,6 +58,8 @@ export function createPiRuntime(options: CloudPiRuntimeAdapterOptions = {}): Run
   return defineRuntimeDriver(
     {
       descriptor,
+      listModels: async () =>
+        normalizePiRuntimeModels((await options.modelCatalog?.listModels()) ?? []),
       defaultOutputParser: options.outputParser ?? defaultOutputParser,
       outputRetryLimit: options.outputRetryLimit ?? 3,
       resolvePersistence(ctx): RuntimeSessionPersistenceSpec {
@@ -73,11 +75,20 @@ export function createPiRuntime(options: CloudPiRuntimeAdapterOptions = {}): Run
         };
       },
       async createSession(ctx): Promise<PiDriverSession> {
+        const selectedModel = ctx.request.modelSelection?.model;
+        const selectedProviderId = selectedModel?.providerId;
+        const registeredProvider =
+          selectedProviderId === undefined
+            ? undefined
+            : await options.modelCatalog?.resolveProvider(selectedProviderId);
+        if (selectedProviderId !== undefined && registeredProvider === undefined) {
+          throw new Error(`PI model provider is not registered: ${selectedProviderId}`);
+        }
         const authStorage = AuthStorage.create();
         const cwd = ctx.workspace;
         const modelRegistry = createPiModelRegistry(
           authStorage,
-          collectRuntimeModelProviders(ctx.agent, ctx.request.models),
+          registeredProvider === undefined ? [] : [registeredProvider],
         );
         const loader = createResourceLoader(ctx.agent, cwd, ctx.agentContext.systemPrompt);
         await loader.reload();
@@ -108,15 +119,20 @@ export function createPiRuntime(options: CloudPiRuntimeAdapterOptions = {}): Run
           resourceLoader: loader,
           sessionManager: piSessionManagerResult.sessionManager,
         };
-        const defaultModelName = getRuntimeModelName(ctx.agent, undefined);
         const defaultModel = resolveRequiredRuntimeModel(
-          defaultModelName,
+          selectedModel,
           modelRegistry,
           "agent default",
         );
 
         if (defaultModel !== undefined) {
           sessionOptions.model = defaultModel;
+        }
+        const defaultThinkingLevel = resolvePiThinkingLevel(
+          ctx.request.modelSelection?.thinkingLevel,
+        );
+        if (defaultThinkingLevel !== undefined) {
+          sessionOptions.thinkingLevel = defaultThinkingLevel;
         }
 
         if (resolvedTools.tools.length > 0) {
@@ -134,7 +150,7 @@ export function createPiRuntime(options: CloudPiRuntimeAdapterOptions = {}): Run
             session,
             streamState,
             models: {
-              defaultModelName,
+              defaultModel: selectedModel,
               modelRegistry,
             },
           }),

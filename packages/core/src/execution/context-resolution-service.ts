@@ -4,6 +4,7 @@ import type {
   AgentInstance,
   Invocation,
   RuntimeContextRecord,
+  RuntimeEnvironmentBinding,
   RuntimeContextOwner,
 } from "@pragma/shared";
 
@@ -35,7 +36,7 @@ export interface ResolveRuntimeContextRequest {
   readonly owner: RuntimeContextOwner;
   readonly ownerContextId?: string | undefined;
   readonly expert: { readonly id: string; readonly version: string };
-  readonly runtimeId: string;
+  readonly runtime: RuntimeEnvironmentBinding;
   readonly resolver: ContextIdResolver;
   readonly freshContextId?: string | undefined;
 }
@@ -89,7 +90,7 @@ export class ContextResolutionService {
       target: {
         expertId: request.expert.id,
         expertVersion: request.expert.version,
-        runtimeId: request.runtimeId,
+        runtime: request.runtime,
       },
       invocation: {
         ...(request.parentInvocationId === undefined
@@ -112,7 +113,7 @@ export class ContextResolutionService {
         owner: request.owner,
         origin: { type: "invocation", invocationId: request.invocationId },
         expert: request.expert,
-        runtimeId: request.runtimeId,
+        runtime: request.runtime,
         now,
       });
     assertCompatibleContext(request, context, agents);
@@ -217,7 +218,7 @@ function selectCompatibleCandidates(
       context.expert.version !== request.expert.version
     )
       return false;
-    if (context.runtimeId !== request.runtimeId) return false;
+    if (!sameRuntimeBinding(context.runtime, request.runtime)) return false;
     if (flowStepId !== undefined) {
       return invocations.some(
         (invocation) =>
@@ -246,7 +247,7 @@ function selectCompatibleCandidates(
           ...(agent === undefined ? {} : { agentId: agent.agentId }),
           expertId: context.expert.id,
           expertVersion: context.expert.version,
-          runtimeId: context.runtimeId,
+          runtime: context.runtime,
           lifecycle: context.lifecycle,
           lastInvocationId: last.invocationId,
           lastInvocationStatus: last.status,
@@ -280,7 +281,7 @@ function assertCompatibleContext(
   ) {
     throw new Error(`Runtime Context Expert identity conflict: ${context.contextId}.`);
   }
-  if (context.runtimeId !== request.runtimeId) {
+  if (!sameRuntimeBinding(context.runtime, request.runtime)) {
     throw new Error(`Runtime Context Runtime identity conflict: ${context.contextId}.`);
   }
   if (context.lifecycle !== "open") {
@@ -297,6 +298,17 @@ function assertCompatibleContext(
       );
     }
   }
+}
+
+function sameRuntimeBinding(
+  left: RuntimeEnvironmentBinding,
+  right: RuntimeEnvironmentBinding,
+): boolean {
+  return (
+    left.runtimeId === right.runtimeId &&
+    left.revision === right.revision &&
+    left.fingerprint === right.fingerprint
+  );
 }
 
 function sameOwner(left: RuntimeContextOwner, right: RuntimeContextOwner): boolean {

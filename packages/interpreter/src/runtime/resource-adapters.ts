@@ -381,25 +381,27 @@ const HostContextBindingSchema = z
 const RuntimeProfileConfigSchema = z
   .object({
     runtimeId: z.string().trim().min(1),
+    providerId: z.string().trim().min(1).optional(),
     model: z.string().trim().min(1).optional(),
+    thinkingLevel: z.string().trim().min(1).optional(),
   })
-  .strict();
-const RuntimeBindingSchema = z
-  .object({
-    provider: z.string().trim().min(1),
-    baseApi: z.string().url(),
-    modelNames: z.array(z.string().min(1)).min(1),
-    api: z
-      .enum([
-        "anthropic-messages",
-        "google-generative-ai",
-        "openai-completions",
-        "openai-responses",
-      ])
-      .optional(),
-    secretRef: z.string().trim().min(1),
-  })
-  .strict();
+  .strict()
+  .superRefine((value, context) => {
+    if ((value.providerId === undefined) !== (value.model === undefined)) {
+      context.addIssue({
+        code: "custom",
+        path: ["providerId"],
+        message: "A Runtime model requires both providerId and model.",
+      });
+    }
+    if (value.thinkingLevel !== undefined && value.model === undefined) {
+      context.addIssue({
+        code: "custom",
+        path: ["thinkingLevel"],
+        message: "A Runtime thinking level requires an explicit model.",
+      });
+    }
+  });
 
 export function createDefaultPragmaResourceAdapterRegistry(): PragmaResourceAdapterRegistry {
   return new PragmaResourceAdapterRegistry()
@@ -669,43 +671,21 @@ function runtimeProfileAdapter(): PragmaResourceAdapter<PragmaRuntimeProfileReso
     version: "v1",
     kind: "RuntimeProfile",
     configSchema: RuntimeProfileConfigSchema,
-    bindingSchema: RuntimeBindingSchema,
-    async verify({ config, binding, host }) {
+    async verify({ config }) {
       const parsed = RuntimeProfileConfigSchema.parse(config);
-      const provider =
-        binding === undefined ? undefined : RuntimeBindingSchema.parse(binding.value);
-      if (
-        provider !== undefined &&
-        parsed.model !== undefined &&
-        !provider.modelNames.includes(parsed.model)
-      ) {
-        throw new Error(`Default model is not installed for ${provider.provider}: ${parsed.model}`);
-      }
       const models =
-        provider === undefined
-          ? parsed.model === undefined
-            ? undefined
-            : { defaultModelName: parsed.model, providers: [] }
+        parsed.model === undefined || parsed.providerId === undefined
+          ? undefined
           : {
-              defaultModelName: parsed.model,
-              providers: [
-                {
-                  provider: provider.provider,
-                  baseApi: provider.baseApi,
-                  modelNames: provider.modelNames,
-                  key: await requireSecret(host, provider.secretRef),
-                  api: provider.api,
-                },
-              ],
+              default: {
+                model: { providerId: parsed.providerId, modelId: parsed.model },
+                ...(parsed.thinkingLevel === undefined
+                  ? {}
+                  : { thinkingLevel: parsed.thinkingLevel }),
+              },
             };
       return {
-        fingerprint: sha256(
-          stableStringify({
-            parsed,
-            bindingRevision: binding?.revision,
-            provider: provider?.provider,
-          }),
-        ),
+        fingerprint: sha256(stableStringify({ parsed })),
         contribution: {
           runtimeId: parsed.runtimeId,
           ...(models === undefined ? {} : { models }),

@@ -1,9 +1,5 @@
 import { runRuntimeCommand } from "@pragma/core/runtime/process-probe";
-import type {
-  RuntimeDriverSessionRequest,
-  RuntimeModel,
-  RuntimeThinkingLevel,
-} from "@pragma/core/runtime/runtime-adapter";
+import type { RuntimeModel, RuntimeThinkingLevel } from "@pragma/core/runtime/runtime-adapter";
 
 import { resolveCodexExecutablePath } from "./executable.ts";
 import type { CodexRuntimeAdapterOptions } from "./types.ts";
@@ -147,7 +143,7 @@ export function parseCodexModels(output: string): readonly RuntimeModel[] {
     return {
       id: model.slug,
       displayName: model.display_name?.trim() || model.slug,
-      provider: "openai",
+      provider: { kind: "runtime-managed", id: "openai", displayName: "OpenAI" },
       ...(model === defaultModel ? { default: true } : {}),
       ...(levels.length === 0
         ? {}
@@ -159,14 +155,6 @@ export function parseCodexModels(output: string): readonly RuntimeModel[] {
           }),
     } satisfies RuntimeModel;
   });
-}
-
-export function assertCodexProviderConfig(request: RuntimeDriverSessionRequest): void {
-  if ((request.models?.length ?? 0) > 0 || (request.agent.models?.providers.length ?? 0) > 0) {
-    throw new Error(
-      "Codex runtime does not accept custom model providers; configure authentication in the local Codex CLI.",
-    );
-  }
 }
 
 export function assertCodexModelSelection(

@@ -16,6 +16,12 @@ export const RuntimeSessionRefSchema = z.object({
   id: z.string().min(1),
 });
 
+export const RuntimeEnvironmentBindingSchema = z.object({
+  runtimeId: z.string().min(1),
+  revision: z.number().int().positive(),
+  fingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+});
+
 export const ExecutionKindSchema = z.enum(["expert-turn", "flow"]);
 
 export const InvocationKindSchema = z.enum(["flow", "task", "human-task", "expert", "expert-team"]);
@@ -49,7 +55,7 @@ export const RuntimeContextOriginSchema = z.discriminatedUnion("type", [
 
 export const RuntimeContextRecordSchema = z
   .object({
-    schemaVersion: z.literal("pragma.runtime-context/v2"),
+    schemaVersion: z.literal("pragma.runtime-context/v3"),
     contextId: z.string().min(1),
     owner: RuntimeContextOwnerSchema,
     origin: RuntimeContextOriginSchema,
@@ -57,7 +63,7 @@ export const RuntimeContextRecordSchema = z
       id: z.string().min(1),
       version: z.string().min(1),
     }),
-    runtimeId: z.string().min(1),
+    runtime: RuntimeEnvironmentBindingSchema,
     snapshot: RuntimeContextSnapshotSchema.optional(),
     lifecycle: z.enum(["open", "closed"]),
     createdAt: z.string().datetime(),
@@ -215,6 +221,7 @@ export type RuntimeContextSnapshot = z.infer<typeof RuntimeContextSnapshotSchema
 export type RuntimeContextOwner = z.infer<typeof RuntimeContextOwnerSchema>;
 export type RuntimeContextOrigin = z.infer<typeof RuntimeContextOriginSchema>;
 export type RuntimeContextRecord = z.infer<typeof RuntimeContextRecordSchema>;
+export type RuntimeEnvironmentBinding = z.infer<typeof RuntimeEnvironmentBindingSchema>;
 export type ContextResolutionRecord = z.infer<typeof ContextResolutionRecordSchema>;
 export type Invocation = z.infer<typeof InvocationSchema>;
 export type AgentInstance = z.infer<typeof AgentInstanceSchema>;

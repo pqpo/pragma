@@ -1,11 +1,15 @@
-import type { ExecutionStatus, RuntimeContextOwner } from "@pragma/shared";
+import type {
+  ExecutionStatus,
+  RuntimeContextOwner,
+  RuntimeEnvironmentBinding,
+} from "@pragma/shared";
 
 export interface ContextCandidate {
   readonly contextId: string;
   readonly agentId?: string | undefined;
   readonly expertId: string;
   readonly expertVersion: string;
-  readonly runtimeId: string;
+  readonly runtime: RuntimeEnvironmentBinding;
   readonly lifecycle: "open" | "closed";
   readonly lastInvocationId: string;
   readonly lastInvocationStatus: ExecutionStatus;
@@ -38,7 +42,7 @@ export interface ContextIdResolutionContext {
   readonly target: {
     readonly expertId: string;
     readonly expertVersion: string;
-    readonly runtimeId: string;
+    readonly runtime: RuntimeEnvironmentBinding;
   };
   readonly invocation: {
     readonly parentInvocationId?: string | undefined;

@@ -1,36 +1,6 @@
-import {
-  defineExpert,
-  createConsoleLoggerProvider,
-  createExpertAgentLogger,
-  createRuntimeRegistry,
-  setDefaultRuntimeRegistryFactory,
-} from "@pragma/core";
-import { createCodexRuntime } from "@pragma/runtime-codex";
-import { createPiRuntime } from "@pragma/runtime-pi";
+import { defineExpert, createConsoleLoggerProvider, createExpertAgentLogger } from "@pragma/core";
 
 const loggerProvider = createConsoleLoggerProvider();
-
-setDefaultRuntimeRegistryFactory(() =>
-  createRuntimeRegistry({
-    defaultRuntime: "pi",
-    runtimes: [
-      createPiRuntime({
-        descriptor: {
-          id: "pi",
-          displayName: "PI Runtime",
-        },
-        loggerProvider,
-      }),
-      createCodexRuntime({
-        descriptor: {
-          id: "codex",
-          displayName: "Codex Runtime",
-        },
-        loggerProvider,
-      }),
-    ],
-  }),
-);
 
 const workerAgent = await defineExpert({
   schemaVersion: "pragma.expert/v1",

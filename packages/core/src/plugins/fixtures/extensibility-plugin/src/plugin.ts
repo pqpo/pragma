@@ -24,15 +24,9 @@ export const extensibilityPlugin = definePluginEntry({
       ],
     },
     models: {
-      defaultModelName: "plugin-model",
-      providers: [
-        {
-          provider: "plugin-provider",
-          modelNames: ["plugin-model"],
-          baseApi: "https://models.example.test",
-          key: "test-key",
-        },
-      ],
+      default: {
+        model: { providerId: "plugin-provider", modelId: "plugin-model" },
+      },
     },
     tools: [
       {

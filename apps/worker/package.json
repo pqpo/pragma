@@ -13,8 +13,6 @@
   },
   "dependencies": {
     "@pragma/core": "workspace:*",
-    "@pragma/runtime-codex": "workspace:*",
-    "@pragma/runtime-pi": "workspace:*",
     "@pragma/shared": "workspace:*",
     "@pragma/server": "workspace:*"
   },

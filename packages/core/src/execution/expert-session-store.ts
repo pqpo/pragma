@@ -68,7 +68,7 @@ export function createFileExpertSessionStore(options: {
         const parsedRecord = ExpertSessionRecordSchema.parse(record);
         const rootContext = parsedRecord.contexts[parsedRecord.rootContextId]!;
         const journal = ExpertSessionTransactionJournalSchema.parse({
-          schemaVersion: "pragma.expert-session-transaction/v3",
+          schemaVersion: "pragma.expert-session-transaction/v4",
           session: parsedRecord,
           prompts: [],
           events: [
@@ -89,7 +89,7 @@ export function createFileExpertSessionStore(options: {
                 contextId: parsedRecord.rootContextId,
                 source: { kind: "expert-session-root" },
                 expert: rootContext.expert,
-                runtimeId: rootContext.runtimeId,
+                runtime: rootContext.runtime,
               },
               parsedRecord.createdAt,
             ),
@@ -133,7 +133,7 @@ export function createFileExpertSessionStore(options: {
         });
         const nextPrompts = PromptRequestSchema.array().parse([...prompts, transaction.prompt]);
         const journal = ExpertSessionTransactionJournalSchema.parse({
-          schemaVersion: "pragma.expert-session-transaction/v3",
+          schemaVersion: "pragma.expert-session-transaction/v4",
           session: nextSession,
           prompts: nextPrompts,
           events: materializeSessionEvents(sessionId, events, [
@@ -181,7 +181,7 @@ export function createFileExpertSessionStore(options: {
         );
         const next = await action({ session: session.data, prompts });
         const journal = ExpertSessionTransactionJournalSchema.parse({
-          schemaVersion: "pragma.expert-session-transaction/v3",
+          schemaVersion: "pragma.expert-session-transaction/v4",
           session: next.session,
           prompts: next.prompts,
           events: materializeSessionEvents(
@@ -254,7 +254,7 @@ const ExpertSessionLeaseSchema = z.object({
 
 const ExpertSessionTransactionJournalSchema = z
   .object({
-    schemaVersion: z.literal("pragma.expert-session-transaction/v3"),
+    schemaVersion: z.literal("pragma.expert-session-transaction/v4"),
     session: ExpertSessionRecordSchema,
     prompts: PromptRequestSchema.array(),
     events: ExpertSessionEventSchema.array(),

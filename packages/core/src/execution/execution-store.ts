@@ -476,7 +476,9 @@ function assertContextIdentity(current: RuntimeContextRecord, next: RuntimeConte
     !sameRuntimeContextOrigin(current.origin, next.origin) ||
     current.expert.id !== next.expert.id ||
     current.expert.version !== next.expert.version ||
-    next.runtimeId !== current.runtimeId
+    next.runtime.runtimeId !== current.runtime.runtimeId ||
+    next.runtime.revision !== current.runtime.revision ||
+    next.runtime.fingerprint !== current.runtime.fingerprint
   ) {
     throw new Error(`Runtime Context identity cannot change: ${current.contextId}`);
   }

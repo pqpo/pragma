@@ -161,7 +161,7 @@ export const PragmaExpertResourceSchema = z
       .object({
         scope: z.string().max(10_000).default("general"),
         instructions: z.string().max(200_000).optional(),
-        runtime: z.object({ ref: PragmaRuntimeProfileRefSchema }).strict(),
+        runtime: z.object({ ref: PragmaRuntimeProfileRefSchema }).strict().optional(),
         capabilities: z
           .array(
             z

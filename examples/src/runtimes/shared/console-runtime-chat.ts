@@ -6,7 +6,7 @@ import {
   createInMemoryContextStore,
   createConsoleLoggerProvider,
   createPragma,
-  createRuntimeRegistry,
+  createStaticRuntimeResolver,
   defineExpert,
   type ExpertSession,
   type ExpertTurn,
@@ -80,9 +80,9 @@ export async function runRuntimeConsoleChat(options: RuntimeConsoleChatOptions):
         : {}),
     });
     const app = createPragma({
-      runtimes: createRuntimeRegistry({
+      runtimes: createStaticRuntimeResolver({
         runtimes: [runtime],
-        defaultRuntime: runtime.descriptor.id,
+        defaultRuntimeId: runtime.descriptor.id,
       }),
     });
     const expertSession = await app.experts.createSession(expert, {

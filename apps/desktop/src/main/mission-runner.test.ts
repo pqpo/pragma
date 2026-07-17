@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
-  createRuntimeRegistry,
+  createStaticRuntimeResolver,
   defineRuntimeDriver,
   type RuntimeDriverSessionContext,
 } from "@pragma/core";
@@ -18,7 +18,6 @@ import type { CapabilityCredentialStore } from "./capability-credential-store.ts
 import type { CapabilityStore } from "./capability-store.ts";
 import { createMissionRunner } from "./mission-runner.ts";
 import { createMissionStore, type MissionStore } from "./mission-store.ts";
-import type { ModelProviderStore } from "./model-provider-store.ts";
 import { createPragmaProjectStore } from "./pragma-project-store.ts";
 
 const temporaryPaths: string[] = [];
@@ -87,8 +86,7 @@ describe("MissionRunner", () => {
       capabilityCredentials: {} as CapabilityCredentialStore,
       capabilitiesPath: join(root, "capabilities"),
       pragmaHome: join(root, "state"),
-      modelProviders: {} as ModelProviderStore,
-      runtimes: createRuntimeRegistry({ runtimes: [runtime], defaultRuntime: "fake" }),
+      runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
     });
     const updates = vi.fn();
     const unsubscribe = runner.subscribeChat(updates);
@@ -163,8 +161,7 @@ describe("MissionRunner", () => {
       capabilityCredentials: {} as CapabilityCredentialStore,
       capabilitiesPath: join(root, "capabilities"),
       pragmaHome: join(root, "state"),
-      modelProviders: {} as ModelProviderStore,
-      runtimes: createRuntimeRegistry({ runtimes: [runtime], defaultRuntime: "fake" }),
+      runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
     });
 
     const firstRunPromise = runner.run(mission.id);
@@ -258,8 +255,7 @@ describe("MissionRunner", () => {
       capabilityCredentials: {} as CapabilityCredentialStore,
       capabilitiesPath: join(root, "capabilities"),
       pragmaHome: join(root, "state"),
-      modelProviders: {} as ModelProviderStore,
-      runtimes: createRuntimeRegistry({ runtimes: [runtime], defaultRuntime: "fake" }),
+      runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
     });
 
     await runner.run(mission.id);
@@ -282,8 +278,7 @@ describe("MissionRunner", () => {
       capabilityCredentials: {} as CapabilityCredentialStore,
       capabilitiesPath: join(root, "capabilities"),
       pragmaHome: join(root, "state"),
-      modelProviders: {} as ModelProviderStore,
-      runtimes: createRuntimeRegistry({ runtimes: [runtime], defaultRuntime: "fake" }),
+      runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
     });
     await expect(restartingRunner.run(mission.id)).rejects.toThrow("timeline preflight failed");
     expect(rejectRecoveryReference).toHaveBeenCalledWith({
@@ -350,8 +345,7 @@ describe("MissionRunner", () => {
       capabilityCredentials: {} as CapabilityCredentialStore,
       capabilitiesPath: join(root, "capabilities"),
       pragmaHome: join(root, "state"),
-      modelProviders: {} as ModelProviderStore,
-      runtimes: createRuntimeRegistry({ runtimes: [runtime], defaultRuntime: "fake" }),
+      runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
     });
     await runner.run(mission.id);
     await vi.waitFor(

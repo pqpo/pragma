@@ -1,9 +1,10 @@
 import type { RuntimeAgentSession } from "../runtime/runtime-adapter.ts";
+import type { RuntimeEnvironmentBinding } from "@pragma/shared";
 
 export interface RuntimeSessionIdentity {
   readonly contextId: string;
   readonly expertId: string;
-  readonly runtimeId: string;
+  readonly runtime: RuntimeEnvironmentBinding;
 }
 
 interface RuntimeSessionEntry {
@@ -100,9 +101,14 @@ function assertMatchingIdentity(
   existing: RuntimeSessionIdentity,
   requested: RuntimeSessionIdentity,
 ): void {
-  if (existing.expertId === requested.expertId && existing.runtimeId === requested.runtimeId)
+  if (
+    existing.expertId === requested.expertId &&
+    existing.runtime.runtimeId === requested.runtime.runtimeId &&
+    existing.runtime.revision === requested.runtime.revision &&
+    existing.runtime.fingerprint === requested.runtime.fingerprint
+  )
     return;
   throw new Error(
-    `Runtime context ${requested.contextId} is bound to ${existing.expertId}/${existing.runtimeId} and cannot be reused with ${requested.expertId}/${requested.runtimeId}.`,
+    `Runtime context ${requested.contextId} is bound to ${existing.expertId}/${existing.runtime.runtimeId}@${existing.runtime.revision} and cannot be reused with ${requested.expertId}/${requested.runtime.runtimeId}@${requested.runtime.revision}.`,
   );
 }

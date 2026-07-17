@@ -119,6 +119,25 @@ export class PragmaPaths {
     return join(this.stateRoot(), "runtime-sessions");
   }
 
+  runtimeEnvironmentsRoot(): string {
+    return join(this.stateRoot(), "runtime-environments");
+  }
+
+  runtimeEnvironmentCatalog(): string {
+    return join(this.runtimeEnvironmentsRoot(), "catalog.json");
+  }
+
+  runtimeEnvironmentRoot(runtimeId: string): string {
+    return join(this.runtimeEnvironmentsRoot(), encodePragmaPathSegment(runtimeId));
+  }
+
+  runtimeEnvironmentRevision(runtimeId: string, revision: number): string {
+    if (!Number.isSafeInteger(revision) || revision <= 0) {
+      throw new Error(`Invalid Runtime Environment revision: ${revision}.`);
+    }
+    return join(this.runtimeEnvironmentRoot(runtimeId), "revisions", `${revision}.json`);
+  }
+
   runtimeOwnerRoot(ownerId: string): string {
     return join(this.runtimeSessionsRoot(), encodePragmaPathSegment(ownerId));
   }

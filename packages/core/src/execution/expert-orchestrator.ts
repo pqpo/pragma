@@ -6,6 +6,7 @@ import {
   type Invocation,
   type RuntimeContextRecord,
   type RuntimeContextOwner,
+  type RuntimeEnvironmentBinding,
 } from "@pragma/shared";
 
 import type { Expert } from "../agent/expert-agent.ts";
@@ -89,7 +90,7 @@ export class ExpertOrchestrator {
     readonly depth: number;
     readonly expert: Expert;
     readonly prompt: string;
-    readonly runtimeId: string;
+    readonly runtime: RuntimeEnvironmentBinding;
     readonly owner: RuntimeContextOwner;
     readonly resolver: ContextIdResolver;
     readonly source: ContextIdResolutionSource;
@@ -128,7 +129,7 @@ export class ExpertOrchestrator {
         owner: request.owner,
         ownerContextId: request.ownerContextId,
         expert: { id: request.expert.id, version: request.expert.version },
-        runtimeId: request.runtimeId,
+        runtime: request.runtime,
         resolver: request.resolver,
         freshContextId,
       });
@@ -288,7 +289,7 @@ export class ExpertOrchestrator {
         owner: context.owner,
         ownerContextId,
         expert: context.expert,
-        runtimeId: context.runtimeId,
+        runtime: context.runtime,
         resolver: followupContextIdResolver,
         freshContextId: context.contextId,
       });

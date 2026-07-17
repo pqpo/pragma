@@ -11,7 +11,7 @@ import {
 
 import { isExpertTeam, type ExpertDefinition, type ExpertTeam } from "../agent/expert-team.ts";
 import { describeExpertExecutionDefinition } from "../agent/expert-definition-descriptor.ts";
-import type { RuntimeRegistry } from "../runtime-registry.ts";
+import type { RuntimeResolver } from "../runtime-resolver.ts";
 import type {
   ExpertAgentHumanRequest,
   ExpertAgentHumanResponse,
@@ -71,7 +71,7 @@ export class FlowExecutionManager {
 
   constructor(
     private readonly executions: ExecutionStore,
-    private readonly runtimes: RuntimeRegistry,
+    private readonly runtimes: RuntimeResolver,
   ) {}
 
   async start<TInput>(
@@ -81,8 +81,8 @@ export class FlowExecutionManager {
     const flow = compileFlow(definition);
     const input = flow.input?.parse(request.input) ?? request.input;
     const executionId = request.executionId ?? randomUUID();
-    const runtimeId = this.runtimes.resolve(request.runtime).descriptor.id;
-    validateFlowRuntimeConfiguration(flow, this.runtimes, runtimeId);
+    const runtimeId = (await this.runtimes.bind({ runtimeId: request.runtime })).binding.runtimeId;
+    await validateFlowRuntimeConfiguration(flow, this.runtimes, runtimeId);
     const now = new Date().toISOString();
     const record: ExecutionRecord = {
       schemaVersion: "pragma.execution/v5",
@@ -150,8 +150,10 @@ export class FlowExecutionManager {
     ) {
       throw new Error(`Flow definition graph mismatch for Execution ${request.executionId}.`);
     }
-    const runtimeId = this.runtimes.resolve(request.runtime).descriptor.id;
-    validateFlowRuntimeConfiguration(flow, this.runtimes, runtimeId);
+    const runtimeId = (
+      await this.runtimes.bind({ runtimeId: request.runtime ?? internal.requestedRuntimeId })
+    ).binding.runtimeId;
+    await validateFlowRuntimeConfiguration(flow, this.runtimes, runtimeId);
     if (internal.requestedRuntimeId !== runtimeId) {
       throw new Error(`Flow Runtime mismatch for Execution ${request.executionId}.`);
     }
@@ -349,7 +351,7 @@ async function runFlow(options: {
     | { readonly type: "flow-execution"; readonly ownerId: string };
   readonly controller: ExecutionController;
   readonly store: ExecutionStore;
-  readonly runtimes: RuntimeRegistry;
+  readonly runtimes: RuntimeResolver;
   readonly runtime?: string | undefined;
   readonly runtimeOverride?: string | undefined;
 }): Promise<unknown> {
@@ -448,15 +450,12 @@ export async function runNestedFlowInvocation(options: {
     | { readonly type: "flow-execution"; readonly ownerId: string };
   readonly controller: ExecutionController;
   readonly store: ExecutionStore;
-  readonly runtimes: RuntimeRegistry;
+  readonly runtimes: RuntimeResolver;
   readonly runtime?: string | undefined;
 }): Promise<unknown> {
-  validateFlowRuntimeConfiguration(
-    options.flow,
-    options.runtimes,
-    options.runtimes.resolve(options.runtime).descriptor.id,
-  );
-  return await runFlow(options);
+  const runtimeId = (await options.runtimes.bind({ runtimeId: options.runtime })).binding.runtimeId;
+  await validateFlowRuntimeConfiguration(options.flow, options.runtimes, runtimeId);
+  return await runFlow({ ...options, runtime: runtimeId });
 }
 
 async function runStep(
@@ -727,6 +726,15 @@ async function createStepInvocation(
     const expert = step.definition as ExpertDefinition;
     const nativeExpert = isExpertTeam(expert) ? expert.coordinator : expert;
     const record = (await options.store.get(options.executionId))!;
+    const runtime = await options.runtimes.bind({
+      runtimeId: resolveFlowStepRuntimeId(
+        step,
+        nativeExpert,
+        options.runtime,
+        options.runtimeOverride,
+      ),
+      modelSelection: nativeExpert.models?.default,
+    });
     contextResolution = await new ContextResolutionService(options.store).resolve({
       executionId: options.executionId,
       invocationId,
@@ -741,9 +749,7 @@ async function createStepInvocation(
       },
       owner: options.owner,
       expert: { id: nativeExpert.id, version: nativeExpert.version },
-      runtimeId: options.runtimes.resolve(
-        resolveFlowStepRuntimeId(step, nativeExpert, options.runtime, options.runtimeOverride),
-      ).descriptor.id,
+      runtime: runtime.binding,
       resolver:
         ("contextId" in step.options ? step.options.contextId : undefined) ??
         freshContextIdResolver,
@@ -1292,13 +1298,13 @@ function resolveFlowStepRuntimeId(
   );
 }
 
-function validateFlowRuntimeConfiguration(
+async function validateFlowRuntimeConfiguration(
   flow: Flow,
-  runtimes: RuntimeRegistry,
+  runtimes: RuntimeResolver,
   fallbackRuntimeId: string,
   visited: Map<Flow, Set<string>> = new Map(),
   inheritedOverride?: string | undefined,
-): void {
+): Promise<void> {
   const routeKey = `${fallbackRuntimeId}:${inheritedOverride ?? "<none>"}`;
   const visitedRoutes = visited.get(flow) ?? new Set<string>();
   if (visitedRoutes.has(routeKey)) return;
@@ -1308,8 +1314,8 @@ function validateFlowRuntimeConfiguration(
     if ("kind" in step.definition && step.definition.kind === "flow") {
       const nestedOverride =
         ("runtime" in step.options ? step.options.runtime : undefined) ?? inheritedOverride;
-      runtimes.resolve(nestedOverride ?? fallbackRuntimeId);
-      validateFlowRuntimeConfiguration(
+      await runtimes.bind({ runtimeId: nestedOverride ?? fallbackRuntimeId });
+      await validateFlowRuntimeConfiguration(
         step.definition,
         runtimes,
         fallbackRuntimeId,
@@ -1322,11 +1328,12 @@ function validateFlowRuntimeConfiguration(
     if (definition.kind !== "expert" && definition.kind !== "expert-team") continue;
     const expert = step.definition as ExpertDefinition;
     const nativeExpert = isExpertTeam(expert) ? expert.coordinator : expert;
-    runtimes.resolve(
-      resolveFlowStepRuntimeId(step, nativeExpert, fallbackRuntimeId, inheritedOverride),
-    );
+    await runtimes.bind({
+      runtimeId: resolveFlowStepRuntimeId(step, nativeExpert, fallbackRuntimeId, inheritedOverride),
+      modelSelection: nativeExpert.models?.default,
+    });
     for (const runtimeId of Object.values(readFlowStepRuntimeByExpert(step) ?? {})) {
-      runtimes.resolve(runtimeId);
+      await runtimes.bind({ runtimeId });
     }
   }
 }

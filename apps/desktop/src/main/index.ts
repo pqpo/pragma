@@ -15,6 +15,11 @@ import { installExpertDefinitionHandlers } from "./expert-definition-ipc.ts";
 import { createExpertDefinitionStore } from "./expert-definition-store.ts";
 import { installModelProviderHandlers } from "./model-provider-ipc.ts";
 import { createModelProviderStore } from "./model-provider-store.ts";
+import {
+  createBuiltInRuntimeFactories,
+  createRuntimeEnvironmentService,
+} from "./runtime-environment-service.ts";
+import { createRuntimeEnvironmentStore } from "./runtime-environment-store.ts";
 import { installPluginHandlers } from "./plugin-ipc.ts";
 import { createPluginCredentialStore } from "./plugin-credential-store.ts";
 import { createPluginStore } from "./plugin-store.ts";
@@ -89,7 +94,6 @@ async function createWindow(): Promise<void> {
 }
 
 ipcMain.handle("bridge:snapshot", () => createBridgeSnapshot());
-ipcMain.handle("runtimes:availability", () => getRuntimeAvailability());
 installWorkspaceScopeHandlers(() => mainWindow);
 
 void app.whenReady().then(async () => {
@@ -138,6 +142,15 @@ void app.whenReady().then(async () => {
     configPath: join(app.getPath("home"), ".pragma", "model-providers.json"),
     encryption,
   });
+  const runtimeEnvironments = createRuntimeEnvironmentStore({
+    pragmaHome: pragmaPaths.root,
+  });
+  await runtimeEnvironments.initialize();
+  const runtimes = createRuntimeEnvironmentService({
+    store: runtimeEnvironments,
+    factories: createBuiltInRuntimeFactories(modelProviderStore),
+  });
+  ipcMain.handle("runtimes:availability", () => getRuntimeAvailability(runtimes));
   const capabilityCredentials = createCapabilityCredentialStore({
     configPath: join(app.getPath("home"), ".pragma", "capability-credentials.json"),
     encryption,
@@ -173,9 +186,9 @@ void app.whenReady().then(async () => {
       capabilityCredentials,
       capabilitiesPath: join(app.getPath("home"), ".pragma", "capabilities"),
       pragmaHome: join(app.getPath("home"), ".pragma"),
-      modelProviders: modelProviderStore,
       contextStores,
       plugins: pluginStore,
+      runtimes,
     }),
   });
   installModelProviderHandlers(modelProviderStore);

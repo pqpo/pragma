@@ -4,33 +4,7 @@ import { useEffect, useState } from "react";
 import type { DesktopRuntimeAvailability } from "../../../../shared/desktop-api.ts";
 import { errorMessage } from "../../lib/errors.ts";
 
-const runtimeDetails = {
-  pi: {
-    name: "PI Runtime",
-    description: "Pragma's built-in runtime for managed agent execution.",
-    command: "Built in",
-  },
-  codex: {
-    name: "Codex",
-    description: "OpenAI's coding agent runtime for local workspaces and shell tasks.",
-    command: "codex",
-  },
-  "claude-code": {
-    name: "Claude Code",
-    description: "Anthropic's coding agent runtime for repository-aware development tasks.",
-    command: "claude",
-  },
-} satisfies Record<
-  DesktopRuntimeAvailability["id"],
-  {
-    readonly name: string;
-    readonly description: string;
-    readonly command: string;
-  }
->;
-
 function RuntimeCard(props: { readonly runtime: DesktopRuntimeAvailability }) {
-  const details = runtimeDetails[props.runtime.id];
   const available = props.runtime.status === "available";
 
   return (
@@ -40,7 +14,7 @@ function RuntimeCard(props: { readonly runtime: DesktopRuntimeAvailability }) {
           <TerminalWindow size={24} />
         </span>
         <div className="card-title-group">
-          <h3>{details.name}</h3>
+          <h3>{props.runtime.displayName}</h3>
           <p className={available ? "status-copy is-active" : "status-copy"}>
             <span className="status-dot" aria-hidden="true" />
             {available ? "Available" : "Unavailable"}
@@ -51,18 +25,40 @@ function RuntimeCard(props: { readonly runtime: DesktopRuntimeAvailability }) {
         </span>
       </header>
 
-      <p className="runtime-description">{details.description}</p>
+      <p className="runtime-description">{props.runtime.kind}</p>
 
       <div className="runtime-command">
         <div>
-          <span>{props.runtime.id === "pi" ? "Runtime" : "Executable"}</span>
-          <code>{props.runtime.executablePath ?? details.command}</code>
+          <span>{props.runtime.executablePath === undefined ? "Runtime ID" : "Executable"}</span>
+          <code>{props.runtime.executablePath ?? props.runtime.id}</code>
         </div>
         {props.runtime.version ? (
           <code className="runtime-version">{props.runtime.version}</code>
         ) : null}
       </div>
       {props.runtime.reason ? <p className="runtime-reason">{props.runtime.reason}</p> : null}
+      {props.runtime.modelDiscoveryError ? (
+        <p className="runtime-reason">{props.runtime.modelDiscoveryError}</p>
+      ) : null}
+      {(props.runtime.models?.length ?? 0) > 0 ? (
+        <div className="configured-model-list">
+          {props.runtime.models!.map((model) => (
+            <div className="configured-model" key={runtimeModelKey(model)}>
+              <div>
+                <strong>{model.displayName}</strong>
+                <p>
+                  {model.provider.displayName}
+                  {model.thinking === undefined
+                    ? ""
+                    : ` · Thinking: ${model.thinking.supportedLevels
+                        .map((level) => level.label)
+                        .join(", ")}`}
+                </p>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : null}
     </article>
   );
 }
@@ -93,7 +89,7 @@ export function RuntimeEnvironmentsFragment() {
       <header className="panel-heading panel-heading-with-action">
         <div>
           <h2>Runtime Environments</h2>
-          <p>Check which runtimes are available on this device.</p>
+          <p>Inspect registered runtimes and the model catalogs they provide.</p>
         </div>
         <button
           className="secondary-button"
@@ -107,8 +103,8 @@ export function RuntimeEnvironmentsFragment() {
 
       <section className="runtime-section" aria-labelledby="local-runtimes-heading">
         <header className="section-copy compact-section-copy">
-          <h3 id="local-runtimes-heading">Available runtimes</h3>
-          <p>PI is built in. Codex and Claude Code are checked from their local commands.</p>
+          <h3 id="local-runtimes-heading">Registered runtimes</h3>
+          <p>Runtime availability and models are reported by each registered adapter.</p>
         </header>
 
         <div className="runtime-list">
@@ -125,4 +121,8 @@ export function RuntimeEnvironmentsFragment() {
       ) : null}
     </div>
   );
+}
+
+function runtimeModelKey(model: NonNullable<DesktopRuntimeAvailability["models"]>[number]): string {
+  return JSON.stringify([model.provider.kind, model.provider.id, model.id]);
 }

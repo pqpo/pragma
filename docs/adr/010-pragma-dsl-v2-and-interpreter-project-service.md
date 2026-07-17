@@ -34,9 +34,21 @@ Adapters explicitly enumerate artifact dependencies, undeclared reads fail, and 
 on raw bytes. Credentials and live values never enter the DSL or project lock.
 
 Resource adapters expose `ready` or `needs_attention` inspection rather than hiding installation
-failures. RuntimeProfile inspection also verifies that the Runtime is installed and that any
-default model exists in the bound provider. Binding fingerprints cover the complete effective
-installation; display revisions remain separate audit metadata.
+failures. RuntimeProfile declares only routing plus an optional composite model selection
+(`providerId + modelId + thinkingLevel`); it never embeds Provider credentials. Environment
+inspection verifies that selection against the resolved Runtime Adapter's catalog. The Runtime
+Adapter owns model discovery: PI projects registered Model Provider models, while Codex and Claude
+Code use their native discovery.
+
+`runtimeId` is the unique identity of one configured Runtime Adapter instance. It does not encode
+the Adapter implementation or execution placement. Core depends on an asynchronous
+`RuntimeResolver`, never a process-global Registry. A new Context binds the latest immutable
+Runtime Environment revision; persisted Contexts resolve their original
+`runtimeId + revision + fingerprint`. Desktop implements this with a versioned store, tombstones,
+and an Adapter Factory Registry, so configuration changes do not require restart and do not mutate
+active Context identity. Consequently, a directly accessible remote Runtime is another Adapter and
+does not require a Runtime Gateway; Gateway remains reserved for cloud-to-device dispatch and
+bridge lifecycle concerns.
 
 DSL objects are strict and reject unknown fields. Flow control metadata is isolated from user state,
 and all shared Execution state mutations use optimistic version checks with retries. Runtime routing

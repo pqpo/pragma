@@ -42,23 +42,90 @@ export const LocalRuntimeCapabilitySchema = z.object({
   status: z.enum(["available", "not_configured"]),
 });
 
-export const DesktopRuntimeIdSchema = z.enum(["pi", "codex", "claude-code"]);
+export const DesktopRuntimeIdSchema = z.string().trim().min(1).max(200);
+
+export const RuntimeEnvironmentDefinitionSchema = z.object({
+  schemaVersion: z.literal("pragma.runtime-environment/v1"),
+  id: DesktopRuntimeIdSchema,
+  adapter: z.object({
+    id: z.string().trim().min(1).max(200),
+    version: z.string().trim().min(1).max(100),
+  }),
+  displayName: z.string().trim().min(1).max(200),
+  origin: z.enum(["built-in", "registered"]),
+  config: z.record(z.string(), z.unknown()),
+});
+
+export const RuntimeEnvironmentRevisionSchema = z.object({
+  schemaVersion: z.literal("pragma.runtime-environment-revision/v1"),
+  runtimeId: DesktopRuntimeIdSchema,
+  revision: z.number().int().positive(),
+  fingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+  definition: RuntimeEnvironmentDefinitionSchema,
+  status: z.enum(["active", "deleted"]),
+  createdAt: z.string().datetime(),
+});
+
+export const RuntimeEnvironmentCatalogEntrySchema = z.object({
+  runtimeId: DesktopRuntimeIdSchema,
+  latestRevision: z.number().int().positive(),
+});
+
+export const RuntimeEnvironmentCatalogSchema = z.object({
+  schemaVersion: z.literal("pragma.runtime-environment-catalog/v1"),
+  defaultRuntimeId: DesktopRuntimeIdSchema,
+  entries: z.array(z.unknown()),
+});
+
+export const RuntimeThinkingLevelSchema = z.object({
+  value: z.string().trim().min(1).max(100),
+  label: z.string().trim().min(1).max(200),
+  description: z.string().max(2_000).optional(),
+});
+
+export const RuntimeModelThinkingSchema = z
+  .object({
+    supportedLevels: z.array(RuntimeThinkingLevelSchema).min(1),
+    defaultLevel: z.string().trim().min(1).max(100).optional(),
+  })
+  .superRefine((value, context) => {
+    if (
+      value.defaultLevel !== undefined &&
+      !value.supportedLevels.some((level) => level.value === value.defaultLevel)
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["defaultLevel"],
+        message: "The default thinking level must be supported by the model.",
+      });
+    }
+  });
+
+export const DesktopRuntimeModelSchema = z.object({
+  id: z.string().trim().min(1).max(200),
+  displayName: z.string().trim().min(1).max(200),
+  provider: z.object({
+    kind: z.enum(["runtime-managed", "registered"]),
+    id: z.string().trim().min(1).max(200),
+    displayName: z.string().trim().min(1).max(200),
+  }),
+  default: z.boolean().optional(),
+  thinking: RuntimeModelThinkingSchema.optional(),
+});
 
 export const DesktopRuntimeAvailabilitySchema = z.object({
   id: DesktopRuntimeIdSchema,
+  revision: z.number().int().positive().optional(),
+  origin: z.enum(["built-in", "registered"]).optional(),
+  adapter: z.object({ id: z.string().trim().min(1), version: z.string().trim().min(1) }).optional(),
+  isDefault: z.boolean(),
+  kind: z.string().trim().min(1).max(200),
+  displayName: z.string().trim().min(1).max(200),
   status: z.enum(["available", "unavailable"]),
   executablePath: z.string().optional(),
   version: z.string().optional(),
   reason: z.string().optional(),
-  models: z
-    .array(
-      z.object({
-        id: z.string().trim().min(1).max(200),
-        displayName: z.string().trim().min(1).max(200),
-        default: z.boolean().optional(),
-      }),
-    )
-    .optional(),
+  models: z.array(DesktopRuntimeModelSchema).optional(),
   modelDiscoveryError: z.string().optional(),
 });
 
@@ -97,28 +164,45 @@ export const ValidateWorkspaceResultSchema = z.object({
 export const ModelProviderIdSchema = z.string().uuid();
 
 export const ModelIdSchema = z.string().trim().min(1).max(200);
+export const ModelMetadataSchema = z.object({
+  displayName: z.string().trim().min(1).max(200).optional(),
+  thinking: RuntimeModelThinkingSchema.optional(),
+});
+export const ModelMetadataByIdSchema = z.record(ModelIdSchema, ModelMetadataSchema);
+export const ModelProviderProtocolSchema = z.enum([
+  "openai-completions",
+  "openai-responses",
+  "anthropic-messages",
+]);
 
 export const ModelProviderSchema = z.object({
   id: ModelProviderIdSchema,
   name: z.string().trim().min(1).max(100),
+  protocol: ModelProviderProtocolSchema,
   baseUrl: z.string().url(),
   models: z.array(ModelIdSchema).min(1),
+  modelMetadata: ModelMetadataByIdSchema.default({}),
   hasApiKey: z.boolean(),
+  revision: z.number().int().positive(),
 });
 
 export const CreateModelProviderSchema = z.object({
   name: z.string().trim().min(1).max(100),
+  protocol: ModelProviderProtocolSchema,
   baseUrl: z.string().trim().url(),
   apiKey: z.string().trim().min(1).max(10_000),
   models: z.array(ModelIdSchema).min(1).max(100),
+  modelMetadata: ModelMetadataByIdSchema.optional(),
 });
 
 export const UpdateModelProviderSchema = z.object({
   id: ModelProviderIdSchema,
   name: z.string().trim().min(1).max(100),
+  protocol: ModelProviderProtocolSchema,
   baseUrl: z.string().trim().url(),
   apiKey: z.string().trim().min(1).max(10_000).optional(),
   models: z.array(ModelIdSchema).min(1).max(100),
+  modelMetadata: ModelMetadataByIdSchema.optional(),
 });
 
 export const DeleteModelProviderSchema = z.object({
@@ -168,21 +252,12 @@ export const CreateExpertIdSchema = z
 
 export const ExpertScopeSchema = z.string().trim().min(1).max(4_000);
 
-export const ExpertModelConfigSchema = z.discriminatedUnion("runtimeId", [
-  z.object({
-    runtimeId: z.literal("pi"),
-    providerId: ModelProviderIdSchema,
-    modelName: ModelIdSchema,
-  }),
-  z.object({
-    runtimeId: z.literal("codex"),
-    modelName: ModelIdSchema,
-  }),
-  z.object({
-    runtimeId: z.literal("claude-code"),
-    modelName: ModelIdSchema,
-  }),
-]);
+export const ExpertModelConfigSchema = z.object({
+  runtimeId: DesktopRuntimeIdSchema,
+  providerId: z.string().trim().min(1).max(200),
+  modelId: ModelIdSchema,
+  thinkingLevel: z.string().trim().min(1).max(100).optional(),
+});
 
 const CapabilityEnvironmentSchema = z
   .record(z.string().max(200), z.string().max(2_000))
@@ -681,7 +756,7 @@ export const ExpertDefinitionSchema = z.object({
   plugins: z.array(ExpertPluginReferenceSchema).max(100),
   contextStoreMounts: z.array(ExpertContextStoreMountSchema).max(200),
   resourceTools: z.array(PragmaToolBindingSchema).max(200).default([]),
-  resourceRuntime: PragmaExpertResourceSchema.shape.spec.shape.runtime,
+  resourceRuntime: PragmaExpertResourceSchema.shape.spec.shape.runtime.optional(),
   opaqueCapabilities: PragmaExpertResourceSchema.shape.spec.shape.capabilities.optional(),
   revision: z.number().int().positive(),
   createdAt: z.string().datetime(),
@@ -1031,6 +1106,10 @@ export type DesktopAppInfo = z.infer<typeof DesktopAppInfoSchema>;
 export type RuntimeGatewayConfig = z.infer<typeof RuntimeGatewayConfigSchema>;
 export type LocalRuntimeCapability = z.infer<typeof LocalRuntimeCapabilitySchema>;
 export type DesktopRuntimeAvailability = z.infer<typeof DesktopRuntimeAvailabilitySchema>;
+export type DesktopRuntimeModel = z.infer<typeof DesktopRuntimeModelSchema>;
+export type RuntimeEnvironmentDefinition = z.infer<typeof RuntimeEnvironmentDefinitionSchema>;
+export type RuntimeEnvironmentRevision = z.infer<typeof RuntimeEnvironmentRevisionSchema>;
+export type RuntimeEnvironmentCatalogEntry = z.infer<typeof RuntimeEnvironmentCatalogEntrySchema>;
 export type DesktopBridgeSnapshot = z.infer<typeof DesktopBridgeSnapshotSchema>;
 export type PickWorkspaceResult = z.infer<typeof PickWorkspaceResultSchema>;
 export type ValidateWorkspaceResult = z.infer<typeof ValidateWorkspaceResultSchema>;

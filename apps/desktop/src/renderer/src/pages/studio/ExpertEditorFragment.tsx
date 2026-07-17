@@ -12,8 +12,8 @@ import {
   type Capability,
   type ContextStore,
   type DesktopRuntimeAvailability,
+  type DesktopRuntimeModel,
   type DesktopPlugin,
-  type ModelProvider,
 } from "../../../../shared/desktop-api.ts";
 import { desktopApi, type ExpertDraft, type ExpertRecord } from "./studio-model.ts";
 import { ExpertCapabilityPicker } from "./ExpertCapabilityPicker.tsx";
@@ -23,7 +23,6 @@ type CreateStep = "identity" | "instructions" | "capabilities" | "review";
 
 export function ExpertEditorFragment(props: {
   readonly initialValue: ExpertDraft;
-  readonly modelProviders: readonly ModelProvider[];
   readonly runtimes: readonly DesktopRuntimeAvailability[];
   readonly contextStores: readonly ContextStore[];
   readonly capabilities: readonly Capability[];
@@ -38,18 +37,12 @@ export function ExpertEditorFragment(props: {
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [selectedRuntime, setSelectedRuntime] = useState(props.initialValue.model?.runtimeId ?? "");
-  const [selectedProviderId, setSelectedProviderId] = useState(
-    props.initialValue.model?.runtimeId === "pi" ? props.initialValue.model.providerId : "",
-  );
   const isEditing = props.initialValue.persisted !== undefined;
-  const selectedProvider = props.modelProviders.find(
-    (provider) => provider.id === selectedProviderId,
-  );
   const selectedRuntimeInfo = props.runtimes.find((runtime) => runtime.id === selectedRuntime);
-  const modelOptions =
-    selectedRuntime === "pi"
-      ? (selectedProvider?.models ?? [])
-      : (selectedRuntimeInfo?.models ?? []);
+  const modelOptions = selectedRuntimeInfo?.models ?? [];
+  const selectedModel = modelOptions.find(
+    (model) => model.id === draft.model?.modelId && model.provider.id === draft.model?.providerId,
+  );
   const steps: readonly { readonly id: CreateStep; readonly label: string }[] = [
     { id: "identity", label: "Identity" },
     { id: "instructions", label: "Instructions" },
@@ -344,7 +337,6 @@ export function ExpertEditorFragment(props: {
                   value={selectedRuntime}
                   onChange={(event) => {
                     setSelectedRuntime(event.target.value);
-                    setSelectedProviderId("");
                     setDraft({ ...draft, model: null });
                   }}
                 >
@@ -355,69 +347,85 @@ export function ExpertEditorFragment(props: {
                       value={runtime.id}
                       disabled={runtime.status !== "available"}
                     >
-                      {runtime.id === "pi"
-                        ? "PI"
-                        : runtime.id === "codex"
-                          ? "Codex"
-                          : "Claude Code"}
+                      {runtime.displayName}
                       {runtime.status === "available" ? "" : " (unavailable)"}
                     </option>
                   ))}
                 </select>
               </label>
-              {selectedRuntime === "pi" ? (
-                <label>
-                  Model provider
-                  <select
-                    value={selectedProviderId}
-                    onChange={(event) => {
-                      setSelectedProviderId(event.target.value);
-                      setDraft({ ...draft, model: null });
-                    }}
-                  >
-                    <option value="">Select a configured provider</option>
-                    {props.modelProviders.map((provider) => (
-                      <option key={provider.id} value={provider.id}>
-                        {provider.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              ) : null}
               {selectedRuntime ? (
                 <label>
                   Model
                   <select
-                    value={draft.model?.modelName ?? ""}
-                    disabled={selectedRuntime === "pi" && !selectedProviderId}
+                    value={selectedModel === undefined ? "" : runtimeModelKey(selectedModel)}
                     onChange={(event) => {
-                      const modelName = event.target.value;
+                      const model = modelOptions.find(
+                        (candidate) => runtimeModelKey(candidate) === event.target.value,
+                      );
                       setDraft({
                         ...draft,
-                        model: !modelName
-                          ? null
-                          : selectedRuntime === "pi"
-                            ? { runtimeId: "pi", providerId: selectedProviderId, modelName }
-                            : selectedRuntime === "codex"
-                              ? { runtimeId: "codex", modelName }
-                              : { runtimeId: "claude-code", modelName },
+                        model:
+                          model === undefined
+                            ? null
+                            : {
+                                runtimeId: selectedRuntime,
+                                providerId: model.provider.id,
+                                modelId: model.id,
+                              },
                       });
                     }}
                   >
-                    <option value="">Select a model</option>
+                    <option value="">
+                      {draft.model === null
+                        ? "Select a model"
+                        : `Unavailable: ${draft.model.modelId}`}
+                    </option>
                     {modelOptions.map((model) => {
-                      const id = typeof model === "string" ? model : model.id;
-                      const label = typeof model === "string" ? model : model.displayName;
                       return (
-                        <option key={id} value={id}>
-                          {label}
+                        <option key={runtimeModelKey(model)} value={runtimeModelKey(model)}>
+                          {model.provider.kind === "registered"
+                            ? `${model.provider.displayName} / ${model.displayName}`
+                            : model.displayName}
                         </option>
                       );
                     })}
                   </select>
-                  {selectedRuntime !== "pi" && selectedRuntimeInfo?.modelDiscoveryError ? (
+                  {selectedRuntimeInfo?.modelDiscoveryError ? (
                     <small className="form-error">{selectedRuntimeInfo.modelDiscoveryError}</small>
                   ) : null}
+                </label>
+              ) : null}
+              {selectedModel?.thinking !== undefined ? (
+                <label>
+                  Thinking level
+                  <select
+                    value={draft.model?.thinkingLevel ?? ""}
+                    onChange={(event) => {
+                      if (draft.model === null) return;
+                      const thinkingLevel = event.target.value;
+                      const model = { ...draft.model };
+                      delete model.thinkingLevel;
+                      setDraft({
+                        ...draft,
+                        model: {
+                          ...model,
+                          ...(thinkingLevel === "" ? {} : { thinkingLevel }),
+                        },
+                      });
+                    }}
+                  >
+                    <option value="">
+                      Runtime default
+                      {selectedModel.thinking.defaultLevel === undefined
+                        ? ""
+                        : ` (${selectedModel.thinking.defaultLevel})`}
+                    </option>
+                    {selectedModel.thinking.supportedLevels.map((level) => (
+                      <option key={level.value} value={level.value}>
+                        {level.label}
+                      </option>
+                    ))}
+                  </select>
                 </label>
               ) : null}
               <ExpertCapabilityPicker
@@ -467,7 +475,7 @@ export function ExpertEditorFragment(props: {
                   <dd>
                     {draft.model === null
                       ? "No runtime/model"
-                      : `${draft.model.runtimeId} / ${draft.model.modelName}`}{" "}
+                      : `${draft.model.runtimeId} / ${draft.model.modelId}`}{" "}
                     · {draft.contextStoreMounts.length} context stores · {draft.skills} skills ·{" "}
                     {draft.tools} tools · {draft.mcpServers} MCP server · {draft.plugins.length}{" "}
                     plugins
@@ -501,4 +509,8 @@ export function ExpertEditorFragment(props: {
       </div>
     </section>
   );
+}
+
+function runtimeModelKey(model: DesktopRuntimeModel): string {
+  return JSON.stringify([model.provider.kind, model.provider.id, model.id]);
 }

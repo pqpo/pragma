@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import {
   createExpertAgentPluginPackageFingerprint,
-  createRuntimeRegistry,
+  createStaticRuntimeResolver,
   type Expert,
   type Flow,
 } from "@pragma/core";
@@ -568,8 +568,8 @@ describe("Pragma YAML DSL", () => {
       }),
     );
     const project = await loadPragmaProject(entry);
-    const runtimes = createRuntimeRegistry({
-      defaultRuntime: "codex",
+    const runtimes = createStaticRuntimeResolver({
+      defaultRuntimeId: "codex",
       runtimes: [
         {
           descriptor: { id: "codex", kind: "test", displayName: "Codex" },
@@ -612,14 +612,19 @@ describe("Pragma YAML DSL", () => {
     const compile = async (version: string) =>
       await project.compile<Expert>("expert:writer@1.0.0", {
         workspace: root,
-        runtimes: createRuntimeRegistry({
-          defaultRuntime: "codex",
+        runtimes: createStaticRuntimeResolver({
+          defaultRuntimeId: "codex",
           runtimes: [
             {
               descriptor: { id: "codex", kind: "test", displayName: "Codex" },
               canUse: () => ({ usable: true, details: { version } }),
               listModels: async () => [
-                { id: "model", displayName: "Model", provider: "test", default: true },
+                {
+                  id: "model",
+                  displayName: "Model",
+                  provider: { kind: "runtime-managed", id: "test", displayName: "Test" },
+                  default: true,
+                },
               ],
             },
           ],
@@ -743,7 +748,15 @@ describe("Pragma YAML DSL", () => {
     expect(
       await project.validateEnvironment({
         workspace: root,
-        runtimes: createRuntimeRegistry(),
+        runtimes: createStaticRuntimeResolver({
+          defaultRuntimeId: "other",
+          runtimes: [
+            {
+              descriptor: { id: "other", kind: "test", displayName: "Other" },
+              canUse: () => ({ usable: true }),
+            },
+          ],
+        }),
       }),
     ).toEqual(
       expect.arrayContaining([
