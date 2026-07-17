@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "pragma.plugin/v1",
+  "schemaVersion": "pragma.plugin/v2",
   "id": "memory",
   "name": "Memory",
   "description": "Registers task memory tools plus evidence-based experience, fact, and skill memory distillation with unified memory context.",
@@ -7,7 +7,8 @@
   "tags": ["memory", "context", "skill", "task", "experience", "fact"],
   "runtime": {
     "type": "expert-agent-plugin",
-    "entry": "./dist/index.js"
+    "entry": "./dist/index.js",
+    "trust": "trusted-host"
   },
   "capabilities": [
     {
@@ -47,64 +48,67 @@
     }
   ],
   "configuration": {
-    "properties": [
-      {
-        "name": "task.enabled",
-        "type": "boolean",
-        "description": "Whether task memory should register its store and tools.",
-        "required": false,
-        "default": true
+    "type": "object",
+    "properties": {
+      "task": {
+        "type": "object",
+        "properties": {
+          "enabled": { "type": "boolean", "default": true },
+          "rootDir": { "type": "string", "minLength": 1 },
+          "filePath": { "type": "string", "minLength": 1 }
+        },
+        "additionalProperties": false
       },
-      {
-        "name": "skill.enabled",
-        "type": "boolean",
-        "description": "Whether skill memory should register its store and hooks.",
-        "required": false,
-        "default": true
+      "experience": {
+        "type": "object",
+        "properties": {
+          "enabled": { "type": "boolean", "default": true },
+          "filePath": { "type": "string", "minLength": 1 }
+        },
+        "additionalProperties": false
       },
-      {
-        "name": "experience.enabled",
-        "type": "boolean",
-        "description": "Whether experience memory should register its distilled view store.",
-        "required": false,
-        "default": true
+      "fact": {
+        "type": "object",
+        "properties": {
+          "enabled": { "type": "boolean", "default": true },
+          "filePath": { "type": "string", "minLength": 1 }
+        },
+        "additionalProperties": false
       },
-      {
-        "name": "fact.enabled",
-        "type": "boolean",
-        "description": "Whether fact memory should register its distilled view store.",
-        "required": false,
-        "default": true
+      "skill": {
+        "type": "object",
+        "properties": {
+          "enabled": { "type": "boolean", "default": true },
+          "useMemories": { "type": "boolean", "default": true },
+          "generateMemories": { "type": "boolean", "default": true },
+          "disableOnExternalContext": { "type": "boolean", "default": true },
+          "minRunOutputChars": { "type": "number", "minimum": 0, "default": 0 },
+          "summaryMaxBytes": { "type": "number", "minimum": 1, "default": 8192 },
+          "maxOutputExcerptChars": { "type": "number", "minimum": 1, "default": 1200 },
+          "maxToolExcerptChars": { "type": "number", "minimum": 1, "default": 400 },
+          "memoryRoot": { "type": "string", "minLength": 1, "default": ".pragma/agent/memory" }
+        },
+        "additionalProperties": false
       },
-      {
-        "name": "skill.useMemories",
-        "type": "boolean",
-        "description": "Whether skill memory retrieval should be injected into runtime context.",
-        "required": false,
-        "default": true
-      },
-      {
-        "name": "skill.generateMemories",
-        "type": "boolean",
-        "description": "Whether runtime evidence should produce skill memory artifacts.",
-        "required": false,
-        "default": true
-      },
-      {
-        "name": "skill.memoryRoot",
-        "type": "string",
-        "description": "Filesystem root for unified memory artifacts.",
-        "required": false,
-        "default": ".pragma/agent/memory"
-      },
-      {
-        "name": "summary.maxBytes",
-        "type": "number",
-        "description": "Maximum size in bytes for the always-on memory summary document.",
-        "required": false,
-        "default": 8192
+      "summary": {
+        "type": "object",
+        "properties": {
+          "maxBytes": { "type": "number", "minimum": 1, "default": 8192 },
+          "perRecordMaxChars": { "type": "number", "minimum": 1, "default": 220 },
+          "maxTaskItems": { "type": "number", "minimum": 0, "default": 5 },
+          "maxFactItems": { "type": "number", "minimum": 0, "default": 6 },
+          "maxSkillItems": { "type": "number", "minimum": 0, "default": 5 },
+          "maxExperienceItems": { "type": "number", "minimum": 0, "default": 2 }
+        },
+        "additionalProperties": false
       }
-    ]
+    },
+    "additionalProperties": false
   },
-  "required_config": []
+  "permissions": {
+    "filesystem": ["pragma-home:read", "pragma-home:write"],
+    "shell": [],
+    "network": [],
+    "environment": []
+  }
 }

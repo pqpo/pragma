@@ -2,6 +2,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { BrowserWindow, app, ipcMain, safeStorage, shell } from "electron";
+import { PragmaPaths } from "@pragma/core";
 
 import { createBridgeSnapshot } from "./bridge-snapshot.ts";
 import { installCapabilityHandlers } from "./capability-ipc.ts";
@@ -14,6 +15,9 @@ import { installExpertDefinitionHandlers } from "./expert-definition-ipc.ts";
 import { createExpertDefinitionStore } from "./expert-definition-store.ts";
 import { installModelProviderHandlers } from "./model-provider-ipc.ts";
 import { createModelProviderStore } from "./model-provider-store.ts";
+import { installPluginHandlers } from "./plugin-ipc.ts";
+import { createPluginCredentialStore } from "./plugin-credential-store.ts";
+import { createPluginStore } from "./plugin-store.ts";
 import { installMissionHandlers } from "./mission-ipc.ts";
 import { createMissionRunner } from "./mission-runner.ts";
 import { createMissionStore } from "./mission-store.ts";
@@ -98,6 +102,7 @@ void app.whenReady().then(async () => {
     encrypt: (plainText: string) => safeStorage.encryptString(plainText),
     decrypt: (encrypted: Buffer) => safeStorage.decryptString(encrypted),
   };
+  const pragmaPaths = new PragmaPaths();
   const pragmaProjectStore = createPragmaProjectStore({
     projectsPath: join(app.getPath("home"), ".pragma", "projects"),
   });
@@ -107,6 +112,25 @@ void app.whenReady().then(async () => {
     }),
   );
   const expertStore = createExpertDefinitionStore({ project: pragmaProjectStore });
+  const pluginCredentials = createPluginCredentialStore({
+    configPath: join(pragmaPaths.stateRoot(), "plugin-credentials.json"),
+    encryption,
+  });
+  const pluginStore = createPluginStore({
+    builtInPluginsPath: app.isPackaged
+      ? join(process.resourcesPath, "plugins")
+      : join(currentDir, "../../.plugin-bundles/plugins"),
+    userPluginsPath: pragmaPaths.pluginsRoot(),
+    statePath: join(pragmaPaths.pluginStateRoot(), "catalog.json"),
+    credentials: pluginCredentials,
+    isReferenced: async (ref) => {
+      const definitions = await Promise.all(
+        (await expertStore.list()).map((summary) => expertStore.get(summary.ref)),
+      );
+      return definitions.some((expert) => expert.plugins.some((plugin) => plugin.ref === ref));
+    },
+  });
+  installPluginHandlers(pluginStore, () => mainWindow);
   const missionStore = createMissionStore({
     missionsPath: join(app.getPath("home"), ".pragma", "missions"),
   });
@@ -151,6 +175,7 @@ void app.whenReady().then(async () => {
       pragmaHome: join(app.getPath("home"), ".pragma"),
       modelProviders: modelProviderStore,
       contextStores,
+      plugins: pluginStore,
     }),
   });
   installModelProviderHandlers(modelProviderStore);

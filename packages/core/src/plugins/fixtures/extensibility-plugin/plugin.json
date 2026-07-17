@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "pragma.plugin/v1",
+  "schemaVersion": "pragma.plugin/v2",
   "id": "plugin.extensibility",
   "name": "Extensibility",
   "description": "Contributes every plugin surface",
@@ -7,7 +7,8 @@
   "tags": ["fixture", "extensibility"],
   "runtime": {
     "type": "expert-agent-plugin",
-    "entry": "./src/plugin.ts"
+    "entry": "./src/plugin.ts",
+    "trust": "trusted-host"
   },
   "capabilities": [
     {
@@ -16,7 +17,15 @@
       "description": "Plugin tool"
     }
   ],
+  "configuration": {
+    "type": "object",
+    "properties": {},
+    "additionalProperties": false
+  },
   "permissions": {
-    "network": ["models.example.test"]
+    "filesystem": [],
+    "shell": [],
+    "network": ["models.example.test"],
+    "environment": []
   }
 }

@@ -1,6 +1,11 @@
-import { createInMemoryContextStore, definePluginEntry } from "@pragma/core";
+import {
+  createInMemoryContextStore,
+  definePluginEntry,
+  readExpertAgentPluginManifest,
+} from "@pragma/core";
 
 export const otherContextPlugin = definePluginEntry({
+  manifest: readExpertAgentPluginManifest(new URL("../plugin.json", import.meta.url)),
   setup: ({ contextSystem }) => {
     contextSystem.register({
       namespace: "plugin.other-context",

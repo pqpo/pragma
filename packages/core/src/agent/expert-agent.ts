@@ -171,6 +171,7 @@ export type ExpertOptions = Omit<
 export interface DefineExpertOptions extends ExpertOptions {
   readonly plugins?: readonly ExpertAgentPluginUse[] | undefined;
   readonly env?: NodeJS.ProcessEnv | undefined;
+  readonly pluginFailurePolicy?: "throw" | "collect" | undefined;
 }
 
 const defineExpertSymbol = Symbol("pragma.define-expert");
@@ -239,6 +240,7 @@ export class Expert implements IExpertAgent {
       sources: pluginSources,
       env: options.env,
       loggerProvider,
+      pluginFailurePolicy: options.pluginFailurePolicy,
     });
 
     const agent = new Expert({
@@ -248,11 +250,15 @@ export class Expert implements IExpertAgent {
         ...loaded.pluginEntries,
         ...pluginEntryUses.map((plugin) => ({
           entry: plugin.entry,
-          ...(plugin.config === undefined ? {} : { config: plugin.config }),
+          ...(plugin.userConfig === undefined ? {} : { userConfig: plugin.userConfig }),
+          ...(plugin.hostBindings === undefined ? {} : { hostBindings: plugin.hostBindings }),
         })),
       ],
       loggerProvider,
-      pluginLoadIssues: loaded.issues,
+      pluginLoadIssues:
+        options.pluginFailurePolicy === "collect" && loaded.issues.length > 0
+          ? loaded.issues
+          : undefined,
     });
 
     agent.logger.info("Expert created", {

@@ -1,5 +1,6 @@
 import {
   definePluginEntry,
+  readExpertAgentPluginManifest,
   type ExpertAgentPluginContributions,
   type ExpertAgentPluginEntry,
 } from "@pragma/core";
@@ -60,12 +61,13 @@ export function createMemoryPluginEntry(
   options: CreateMemoryPluginEntryOptions = {},
 ): ExpertAgentPluginEntry {
   return definePluginEntry({
+    manifest: readExpertAgentPluginManifest(new URL("../plugin.json", import.meta.url)),
     setup: (context) => {
       const memorySystem =
         options.memorySystem ??
         new MemorySystem({
           distillation: createDefaultMemoryDistillationPipeline(),
-          summaryConfig: readMemorySummaryConfig(context.config),
+          summaryConfig: readMemorySummaryConfig(context.userConfig),
         });
 
       return mergeContributions([
@@ -84,7 +86,7 @@ export function createMemoryPluginEntry(
         createSkillMemoryContributions({
           ...context,
           memorySystem,
-          config: readSkillMemoryConfig(context.config),
+          userConfig: readSkillMemoryConfig(context.userConfig) ?? {},
         }),
       ]);
     },

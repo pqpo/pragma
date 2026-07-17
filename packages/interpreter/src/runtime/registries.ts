@@ -1,5 +1,7 @@
 import type {
   PragmaInvocableResource,
+  PragmaDiagnostic,
+  PragmaExpertResource,
   PragmaResource,
   PragmaToolBinding,
 } from "../ast/pragma-dsl.schema.ts";
@@ -20,6 +22,34 @@ import {
 import type { PragmaAdapterHost, PragmaResourceAdapterRegistry } from "./resource-adapters.ts";
 
 export type InvocableResource = ExpertDefinition | Flow;
+
+export interface PragmaPluginResolution {
+  readonly ref: `plugin:${string}@${string}`;
+  readonly source: string;
+  readonly packageFingerprint: string;
+  readonly verificationFingerprint: string;
+  readonly userConfig: Readonly<Record<string, unknown>>;
+  readonly hostBindings?: Readonly<Record<string, unknown>> | undefined;
+}
+
+export interface PragmaPluginInspection {
+  readonly ref: `plugin:${string}@${string}`;
+  readonly status: "ready" | "needs_attention";
+  readonly packageFingerprint?: string | undefined;
+  readonly verificationFingerprint?: string | undefined;
+  readonly issues: readonly PragmaDiagnostic[];
+}
+
+export interface PragmaPluginResolver {
+  readonly inspect: (input: {
+    readonly expertRef: `expert:${string}@${string}`;
+    readonly binding: PragmaExpertResource["spec"]["plugins"][number];
+  }) => Promise<PragmaPluginInspection>;
+  readonly resolve: (input: {
+    readonly expertRef: `expert:${string}@${string}`;
+    readonly binding: PragmaExpertResource["spec"]["plugins"][number];
+  }) => Promise<PragmaPluginResolution>;
+}
 
 export interface FlowAction<TInput = unknown, TOutput = unknown> {
   readonly id: string;
@@ -143,6 +173,7 @@ export interface PragmaCompileHost {
   readonly contextPolicies?: ContextPolicyRegistry | undefined;
   readonly toolAdapters?: ToolAdapterRegistry | undefined;
   readonly resourceAdapters?: PragmaResourceAdapterRegistry | undefined;
+  readonly plugins?: PragmaPluginResolver | undefined;
   readonly adapterHost?: PragmaAdapterHost | undefined;
   readonly pragmaHome?: string | undefined;
 }

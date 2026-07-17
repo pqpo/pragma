@@ -14,6 +14,7 @@ import {
 
 import type { CapabilityDefinition, ExpertDefinition } from "../shared/desktop-api.ts";
 import type { CapabilityCredentialStore } from "./capability-credential-store.ts";
+import type { PluginStore } from "./plugin-store.ts";
 import type { CapabilityStore } from "./capability-store.ts";
 import { hashSchema, toCoreMcpServer } from "./capability-verifier.ts";
 
@@ -173,6 +174,7 @@ export async function createDesktopExpertAgent(options: {
   readonly store: CapabilityStore;
   readonly credentials: CapabilityCredentialStore;
   readonly capabilitiesPath: string;
+  readonly plugins?: PluginStore | undefined;
   readonly overrides?: Pick<
     DefineExpertOptions,
     "models" | "contextSystem" | "loggerProvider" | "tools"
@@ -184,6 +186,24 @@ export async function createDesktopExpertAgent(options: {
     credentials: options.credentials,
     capabilitiesPath: options.capabilitiesPath,
   });
+  if (options.definition.plugins.length > 0 && options.plugins === undefined) {
+    throw new Error("Desktop plugin resolution is required for this expert.");
+  }
+  const plugins = await Promise.all(
+    options.definition.plugins.map(async (plugin) => {
+      const resolvedPlugin = await options.plugins!.resolve({
+        ref: plugin.ref,
+        config: plugin.config,
+        secretBindings: plugin.secretBindings,
+      });
+      return {
+        source: resolvedPlugin.source,
+        expectedRef: resolvedPlugin.ref,
+        packageFingerprint: resolvedPlugin.packageFingerprint,
+        userConfig: resolvedPlugin.userConfig,
+      };
+    }),
+  );
   return await defineExpert({
     schemaVersion: "pragma.expert/v1",
     id: options.definition.id,
@@ -196,10 +216,7 @@ export async function createDesktopExpertAgent(options: {
     workspace: options.workspace,
     skills: resolved.skills,
     mcp: resolved.mcp,
-    plugins: options.definition.plugins.map((plugin) => ({
-      source: plugin.source,
-      ...(plugin.config === undefined ? {} : { config: plugin.config }),
-    })),
+    plugins,
     ...options.overrides,
   });
 }

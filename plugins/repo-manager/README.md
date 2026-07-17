@@ -29,7 +29,7 @@ const agent = await defineExpert({
   plugins: [
     {
       entry: repoManagerPlugin,
-      config: {
+      userConfig: {
         repositories: [
           {
             id: "pragma",
@@ -49,8 +49,8 @@ const agent = await defineExpert({
 });
 ```
 
-Explicit `config` values take precedence. If auth config is omitted, the plugin
-falls back to the reserved environment variables listed below.
+Explicit `userConfig` values take precedence. Authentication secrets must be resolved by the host
+before plugin setup; the plugin does not implicitly read configuration from environment variables.
 
 ## Plugin Package Usage
 
@@ -84,7 +84,7 @@ const agent = await defineExpert({
   plugins: [
     {
       source: "/path/to/repo-manager",
-      config: {
+      userConfig: {
         repositories: [
           {
             id: "pragma",
@@ -99,32 +99,12 @@ const agent = await defineExpert({
 });
 ```
 
-`plugin.json` declares `configuration.properties` so hosts can discover supported
-config keys, types, defaults, secret fields, and descriptions without executing
-plugin code. `required_config` is reserved for startup gates: Agent startup builds
-those required values from the reserved environment variable namespace first, then
-overlays explicit plugin `config`. Missing required config causes startup to fail
-with the generated environment variable name in the error message. Secret values
-should be marked with `"secret": true`.
+`plugin.json` declares an object JSON Schema so hosts can discover and validate config keys,
+types, defaults, conditional requirements, secret fields, and descriptions without executing
+plugin code. Agent startup applies manifest defaults and resolved `userConfig`. Secret values use
+`"x-pragma-secret": true`; Desktop stores them through encrypted bindings instead of YAML.
 
-This plugin reserves the following environment variable namespace:
-
-```text
-PRAGMA_PLUGIN_REPO_MANAGER_AUTH_TOKEN
-PRAGMA_PLUGIN_REPO_MANAGER_AUTH_USERNAME
-PRAGMA_PLUGIN_REPO_MANAGER_AUTH_HELPER
-PRAGMA_PLUGIN_REPO_MANAGER_AUTH_PRIVATE_KEY
-PRAGMA_PLUGIN_REPO_MANAGER_AUTH_KNOWN_HOSTS
-```
-
-Use `createExpertAgentPluginConfigEnvName` from `@pragma/core` to derive
-these names from `pluginId` and config key. Set
-`PRAGMA_PLUGIN_REPO_MANAGER_AUTH_HELPER` to a
-`credential.helper` value when Git credentials should come from an existing helper
-or a custom helper command. During each session, the plugin writes that value to an
-isolated temporary Git config and removes it during cleanup.
-
-Repository lists can be supplied directly through plugin `config.repositories`.
+Repository lists can be supplied directly through plugin `userConfig.repositories`.
 For dynamic Agent data, they may still be registered in host Agent context as
 `repositories.json`; explicit config takes precedence over host context. Agents
 should use bash `git` directly and clone repositories to

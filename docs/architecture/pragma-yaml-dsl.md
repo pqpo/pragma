@@ -127,7 +127,9 @@ spec:
     - ref: context-store:project-guide@1.0.0
       namespace: project_guide
       required: true
-  plugins: []
+  plugins:
+    - ref: plugin:pragma.memory@0.0.0
+      config: { task: { enabled: true } }
   tools:
     - adapter: pragma.tool.call@v1
       target: { ref: flow:review@1.0.0 }
@@ -140,6 +142,12 @@ spec:
 `pragma.tool.call@v1` makes one synchronous call. `pragma.tool.delegate@v1` exposes governed expert
 lifecycle tools. Nested calls remain in the current Execution, so context ownership, events,
 cancellation, usage, and recovery stay under one governance boundary.
+
+Plugin references are exact environment extension references, not project resources. The host
+supplies `PragmaPluginResolver`, which resolves the installed package, Desktop defaults, Expert
+overrides, and secret bindings without putting secret values in YAML. Plugin package/config/
+credential fingerprints participate in the environment fingerprint, so a changed plugin blocks
+recovery of an execution pinned to the previous environment.
 
 Flow input and output JSON Schemas remain attached when a Flow is exposed as a Tool. Tool timeout,
 caller cancellation, and target Flow timeout are independent deadlines; the earliest aborts only

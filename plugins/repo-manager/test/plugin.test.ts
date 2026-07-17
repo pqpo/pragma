@@ -37,20 +37,10 @@ describe("Repo Manager plugin", () => {
       version: manifest.version,
       tags: manifest.tags,
     });
-    expect(manifest.configuration.properties.map((property) => property.name)).toEqual([
-      "contextInjection.mode",
-      "repositories",
-      "auth.strategy",
-      "auth.token",
-      "auth.tokenEnv",
-      "auth.username",
-      "auth.privateKey",
-      "auth.privateKeyEnv",
-      "auth.knownHosts",
-      "auth.knownHostsEnv",
-      "auth.helper",
-      "auth.helperEnv",
-    ]);
+    expect(manifest.configuration).toMatchObject({
+      type: "object",
+      additionalProperties: false,
+    });
     expect(repoManagerPlugin.manifest).toEqual(manifest);
   });
 
@@ -157,7 +147,7 @@ describe("Repo Manager plugin", () => {
       plugins: [
         {
           entry: repoManagerPlugin,
-          config: {
+          userConfig: {
             repositories: [
               {
                 id: "configured-repo",
@@ -190,6 +180,8 @@ describe("Repo Manager plugin", () => {
       contextSystem: new ContextSystem(),
       workspaceRoot: "/tmp/pragma",
       env: process.env,
+      userConfig: {},
+      hostBindings: {},
       logger: createNoopLoggerProvider().createLogger({
         component: "plugin",
         pluginId: "plugin.repo-manager",

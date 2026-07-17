@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "pragma.plugin/v1",
+  "schemaVersion": "pragma.plugin/v2",
   "id": "repo-manager",
   "name": "Repo Manager",
   "description": "Registers configured Git repositories as Agent context and prepares Git authentication before runtime sessions start.",
@@ -7,7 +7,8 @@
   "tags": ["git", "repository", "workspace"],
   "runtime": {
     "type": "expert-agent-plugin",
-    "entry": "./dist/index.js"
+    "entry": "./dist/index.js",
+    "trust": "trusted-host"
   },
   "capabilities": [
     {
@@ -22,93 +23,98 @@
     }
   ],
   "configuration": {
-    "properties": [
-      {
-        "name": "contextInjection.mode",
-        "type": "string",
-        "description": "Controls when repository context is exposed to the model.",
-        "required": false,
-        "default": "manual",
-        "enum": ["manual", "model_decision", "always_on"]
+    "type": "object",
+    "properties": {
+      "contextInjection": {
+        "type": "object",
+        "properties": {
+          "mode": {
+            "type": "string",
+            "description": "Controls when repository context is exposed to the model.",
+            "enum": ["manual", "model_decision", "always_on"],
+            "default": "manual"
+          }
+        },
+        "additionalProperties": false
       },
-      {
-        "name": "repositories",
+      "repositories": {
         "type": "array",
         "description": "Configured Git repositories. When omitted, the plugin reads host context repositories.json if present.",
-        "required": false,
-        "default": []
+        "items": {
+          "type": "object",
+          "properties": {
+            "id": { "type": "string", "minLength": 1 },
+            "name": { "type": "string", "minLength": 1 },
+            "cloneUrl": { "type": "string", "minLength": 1 },
+            "defaultBranch": { "type": "string", "minLength": 1 },
+            "provider": {
+              "type": "string",
+              "enum": ["github", "gitlab", "bitbucket", "generic"],
+              "default": "generic"
+            },
+            "description": { "type": "string", "minLength": 1 },
+            "allowedBranches": {
+              "type": "array",
+              "items": { "type": "string", "minLength": 1 }
+            },
+            "shallowClone": { "type": "boolean", "default": true }
+          },
+          "required": ["id", "name", "cloneUrl", "defaultBranch"],
+          "additionalProperties": false
+        }
       },
-      {
-        "name": "auth.strategy",
-        "type": "string",
-        "description": "Git authentication strategy used when preparing runtime sessions.",
-        "required": false,
-        "default": "none",
-        "enum": ["none", "token", "ssh", "credential_helper"]
-      },
-      {
-        "name": "auth.token",
-        "type": "string",
-        "description": "Git token used when auth.strategy is token. Prefer auth.tokenEnv for packaged plugins.",
-        "required": false,
-        "secret": true
-      },
-      {
-        "name": "auth.tokenEnv",
-        "type": "string",
-        "description": "Environment variable name containing the Git token used when auth.strategy is token.",
-        "required": false
-      },
-      {
-        "name": "auth.username",
-        "type": "string",
-        "description": "Git username used with token authentication.",
-        "required": false,
-        "default": "x-access-token"
-      },
-      {
-        "name": "auth.privateKey",
-        "type": "string",
-        "description": "SSH private key used when auth.strategy is ssh. Prefer auth.privateKeyEnv for packaged plugins.",
-        "required": false,
-        "secret": true
-      },
-      {
-        "name": "auth.privateKeyEnv",
-        "type": "string",
-        "description": "Environment variable name containing the SSH private key used when auth.strategy is ssh.",
-        "required": false
-      },
-      {
-        "name": "auth.knownHosts",
-        "type": "string",
-        "description": "Known hosts content used with SSH authentication.",
-        "required": false
-      },
-      {
-        "name": "auth.knownHostsEnv",
-        "type": "string",
-        "description": "Environment variable name containing known hosts content used with SSH authentication.",
-        "required": false
-      },
-      {
-        "name": "auth.helper",
-        "type": "string",
-        "description": "Git credential.helper value used when auth.strategy is credential_helper.",
-        "required": false
-      },
-      {
-        "name": "auth.helperEnv",
-        "type": "string",
-        "description": "Environment variable name containing a Git credential.helper value.",
-        "required": false
+      "auth": {
+        "type": "object",
+        "properties": {
+          "strategy": {
+            "type": "string",
+            "enum": ["none", "token", "ssh", "credential_helper"],
+            "default": "none"
+          },
+          "token": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Resolved Git token.",
+            "x-pragma-secret": true
+          },
+          "username": {
+            "type": "string",
+            "minLength": 1,
+            "default": "x-access-token"
+          },
+          "privateKey": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Resolved SSH private key.",
+            "x-pragma-secret": true
+          },
+          "knownHosts": { "type": "string", "minLength": 1 },
+          "helper": { "type": "string", "minLength": 1 }
+        },
+        "required": ["strategy"],
+        "allOf": [
+          {
+            "if": { "properties": { "strategy": { "const": "token" } } },
+            "then": { "required": ["token"] }
+          },
+          {
+            "if": { "properties": { "strategy": { "const": "ssh" } } },
+            "then": { "required": ["privateKey"] }
+          },
+          {
+            "if": { "properties": { "strategy": { "const": "credential_helper" } } },
+            "then": { "required": ["helper"] }
+          }
+        ],
+        "additionalProperties": false
       }
-    ]
+    },
+    "additionalProperties": false
   },
   "permissions": {
     "filesystem": ["workspace:read", "workspace:write"],
     "shell": ["git"],
     "network": ["configured git remotes"],
-    "environment": ["configured credential variables"]
+    "environment": ["git session variables"]
   }
 }

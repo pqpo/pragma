@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "pragma.plugin/v1",
+  "schemaVersion": "pragma.plugin/v2",
   "id": "plugin.invalid",
   "runtime": {
     "type": "expert-agent-plugin",

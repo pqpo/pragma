@@ -10,6 +10,7 @@ import type {
   CreateExpertDefinition,
   ExpertContextStoreMount,
   DesktopRuntimeAvailability,
+  DesktopPlugin,
   ModelProvider,
   PragmaProjectSnapshot,
   UpdateExpertDefinition,
@@ -26,6 +27,7 @@ import { ExpertEditorFragment } from "./ExpertEditorFragment.tsx";
 import { CapabilityDirectoryFragment } from "./CapabilityDirectoryFragment.tsx";
 import { CapabilityDetailFragment } from "./CapabilityDetailFragment.tsx";
 import { PragmaResourceDirectoryFragment } from "./PragmaResourceDirectoryFragment.tsx";
+import { PluginDetailFragment, PluginDirectoryFragment } from "./PluginDirectoryFragment.tsx";
 import {
   desktopApi,
   emptyDraft,
@@ -40,7 +42,12 @@ import {
 export function StudioPage(props: { readonly onTryExpert: (expert: ExpertRecord) => void }) {
   const [activeView, setActiveView] = useState<StudioView>("experts");
   const [screen, setScreen] = useState<
-    "directory" | "expert-detail" | "context-store-detail" | "capability-detail" | "create"
+    | "directory"
+    | "expert-detail"
+    | "context-store-detail"
+    | "capability-detail"
+    | "plugin-detail"
+    | "create"
   >("directory");
   const [experts, setExperts] = useState<readonly ExpertRecord[]>([]);
   const [selectedExpert, setSelectedExpert] = useState<ExpertRecord | null>(null);
@@ -50,6 +57,8 @@ export function StudioPage(props: { readonly onTryExpert: (expert: ExpertRecord)
   const [contextStores, setContextStores] = useState<readonly ContextStore[]>([]);
   const [selectedContextStoreId, setSelectedContextStoreId] = useState<string | null>(null);
   const [capabilities, setCapabilities] = useState<readonly Capability[]>([]);
+  const [plugins, setPlugins] = useState<readonly DesktopPlugin[]>([]);
+  const [selectedPluginRef, setSelectedPluginRef] = useState<string | null>(null);
   const [selectedCapabilityId, setSelectedCapabilityId] = useState<string | null>(null);
   const [contextDrawerOpen, setContextDrawerOpen] = useState(false);
   const [expertError, setExpertError] = useState<string | null>(null);
@@ -108,6 +117,14 @@ export function StudioPage(props: { readonly onTryExpert: (expert: ExpertRecord)
         if (!cancelled) setExpertError(errorMessage(loadError));
       });
     void api
+      .listPlugins()
+      .then((items) => {
+        if (!cancelled) setPlugins(items);
+      })
+      .catch((loadError: unknown) => {
+        if (!cancelled) setExpertError(errorMessage(loadError));
+      });
+    void api
       .getRuntimeAvailability()
       .then((availability) => {
         if (!cancelled) setRuntimes(availability);
@@ -124,7 +141,9 @@ export function StudioPage(props: { readonly onTryExpert: (expert: ExpertRecord)
     setScreen("directory");
   };
   const openCreate = (expert?: ExpertRecord) => {
-    setDraft(expert === undefined ? emptyDraft() : { ...expert, tagInput: "" });
+    setDraft(
+      expert === undefined ? emptyDraft() : { ...expert, tagInput: "", pluginSecretMutations: {} },
+    );
     setScreen("create");
   };
   const saveExpert = async (expert: ExpertRecord) => {
@@ -254,6 +273,7 @@ export function StudioPage(props: { readonly onTryExpert: (expert: ExpertRecord)
     contextStores.find((store) => store.id === selectedContextStoreId) ?? null;
   const selectedCapability =
     capabilities.find((capability) => capability.manifest.id === selectedCapabilityId) ?? null;
+  const selectedPlugin = plugins.find((plugin) => plugin.ref === selectedPluginRef) ?? null;
 
   const updateCapability = (capability: Capability) => {
     setCapabilities((current) =>
@@ -282,7 +302,9 @@ export function StudioPage(props: { readonly onTryExpert: (expert: ExpertRecord)
                       0)
                     : section.id === "capabilities"
                       ? capabilities.length
-                      : 0;
+                      : section.id === "plugins"
+                        ? plugins.length
+                        : 0;
           return (
             <button
               key={section.id}
@@ -321,6 +343,7 @@ export function StudioPage(props: { readonly onTryExpert: (expert: ExpertRecord)
             runtimes={runtimes}
             contextStores={contextStores}
             capabilities={capabilities}
+            plugins={plugins}
             resources={project?.resources ?? []}
             existingExpertRefs={experts.map(
               (expert) => expert.ref ?? `expert:${expert.id}@${expert.version}`,
@@ -382,6 +405,38 @@ export function StudioPage(props: { readonly onTryExpert: (expert: ExpertRecord)
               }
               if (capability === undefined) return;
               updateCapability(capability);
+            }}
+          />
+        ) : null}
+        {screen === "directory" && activeView === "plugins" ? (
+          <PluginDirectoryFragment
+            plugins={plugins}
+            onOpen={(plugin) => {
+              setSelectedPluginRef(plugin.ref);
+              setScreen("plugin-detail");
+            }}
+            onChanged={(plugin) =>
+              setPlugins((current) =>
+                current.some((item) => item.ref === plugin.ref)
+                  ? current.map((item) => (item.ref === plugin.ref ? plugin : item))
+                  : [plugin, ...current],
+              )
+            }
+          />
+        ) : null}
+        {screen === "plugin-detail" && selectedPlugin !== null ? (
+          <PluginDetailFragment
+            plugin={selectedPlugin}
+            onBack={() => setScreen("directory")}
+            onChanged={(plugin) => {
+              setPlugins((current) =>
+                current.map((item) => (item.ref === plugin.ref ? plugin : item)),
+              );
+            }}
+            onDeleted={(ref) => {
+              setPlugins((current) => current.filter((item) => item.ref !== ref));
+              setSelectedPluginRef(null);
+              setScreen("directory");
             }}
           />
         ) : null}

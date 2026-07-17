@@ -353,10 +353,9 @@ function createPluginContext(workspace: string) {
       },
     },
     env: {},
-    config: {
-      skill: {
-        memoryRoot: workspace,
-      },
+    userConfig: {
+      memoryRoot: workspace,
     },
+    hostBindings: {},
   } as unknown as Parameters<typeof createFileSystemMemoryEvidenceStore>[0];
 }

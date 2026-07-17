@@ -1,4 +1,8 @@
-import { createInMemoryContextStore, definePluginEntry } from "@pragma/core";
+import {
+  createInMemoryContextStore,
+  definePluginEntry,
+  readExpertAgentPluginManifest,
+} from "@pragma/core";
 import { z } from "zod";
 
 /** Plugin config 在 setup 阶段解析，错误配置会让 Agent 创建立即失败。 */
@@ -8,8 +12,9 @@ const LearningPluginConfigSchema = z.object({
 });
 
 export default definePluginEntry({
+  manifest: readExpertAgentPluginManifest(new URL("../plugin.json", import.meta.url)),
   setup(context) {
-    const config = LearningPluginConfigSchema.parse(context.config ?? {});
+    const config = LearningPluginConfigSchema.parse(context.userConfig);
 
     // Plugin 使用独立 namespace，避免和 host 或其他 Plugin 的 Context ID 冲突。
     context.contextSystem.register({

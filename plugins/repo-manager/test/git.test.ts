@@ -25,17 +25,16 @@ describe("Git workspace path resolution", () => {
 });
 
 describe("Git session environment", () => {
-  it("prepares token auth for direct bash git and restores env on cleanup", async () => {
+  it("prepares resolved token auth and restores env on cleanup", async () => {
     const root = await createTempDir();
     const env: NodeJS.ProcessEnv = {
       PATH: process.env.PATH,
-      TEST_GIT_TOKEN: "secret-token",
       UNRELATED_SECRET: "do-not-pass",
     };
     const config = parseRepoManagerConfig({
       auth: {
         strategy: "token",
-        tokenEnv: "TEST_GIT_TOKEN",
+        token: "secret-token",
         username: "oauth2",
       },
     });
@@ -97,37 +96,24 @@ describe("Git session environment", () => {
     await prepared.cleanup();
   });
 
-  it("rejects token auth when tokenEnv is configured but missing", async () => {
-    const root = await createTempDir();
-    const config = parseRepoManagerConfig({
-      auth: {
-        strategy: "token",
-        tokenEnv: "MISSING_GIT_TOKEN",
-      },
-    });
-
-    await expect(
-      prepareGitSessionEnvironment(config, {
-        gitCommand: await createFakeGit(root),
-        env: {
-          PATH: process.env.PATH,
-        },
+  it("rejects token auth without a resolved token", () => {
+    expect(() =>
+      parseRepoManagerConfig({
+        auth: { strategy: "token" } as never,
       }),
-    ).rejects.toThrow("Missing Git token environment variable: MISSING_GIT_TOKEN");
+    ).toThrow();
   });
 
   it("writes SSH identity to a temporary session file and removes it on cleanup", async () => {
     const root = await createTempDir();
     const env: NodeJS.ProcessEnv = {
       PATH: process.env.PATH,
-      TEST_SSH_KEY: "test-private-key",
-      TEST_KNOWN_HOSTS: "github.com ssh-ed25519 AAAA",
     };
     const config = parseRepoManagerConfig({
       auth: {
         strategy: "ssh",
-        privateKeyEnv: "TEST_SSH_KEY",
-        knownHostsEnv: "TEST_KNOWN_HOSTS",
+        privateKey: "test-private-key",
+        knownHosts: "github.com ssh-ed25519 AAAA",
       },
     });
 
@@ -180,12 +166,11 @@ describe("Git session environment", () => {
     const root = await createTempDir();
     const env: NodeJS.ProcessEnv = {
       PATH: process.env.PATH,
-      TEST_CREDENTIAL_HELPER: "!test-git-credential-helper",
     };
     const config = parseRepoManagerConfig({
       auth: {
         strategy: "credential_helper",
-        helperEnv: "TEST_CREDENTIAL_HELPER",
+        helper: "!test-git-credential-helper",
       },
     });
 
@@ -242,12 +227,11 @@ describe("Git session environment", () => {
     const root = await createTempDir();
     const env: NodeJS.ProcessEnv = {
       PATH: process.env.PATH,
-      TEST_CREDENTIAL_HELPER: "!helper\nextra-command",
     };
     const config = parseRepoManagerConfig({
       auth: {
         strategy: "credential_helper",
-        helperEnv: "TEST_CREDENTIAL_HELPER",
+        helper: "!helper\nextra-command",
       },
     });
 

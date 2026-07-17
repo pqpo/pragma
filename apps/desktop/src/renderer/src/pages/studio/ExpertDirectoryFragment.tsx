@@ -183,7 +183,9 @@ export function ExpertDetailFragment(props: {
           <h2>Capabilities</h2>
           <p>
             {props.expert.skills} skills <span>•</span> {props.expert.tools} tools <span>•</span>{" "}
-            {props.expert.mcpServers} MCP server{props.expert.mcpServers === 1 ? "" : "s"}
+            {props.expert.mcpServers} MCP server{props.expert.mcpServers === 1 ? "" : "s"}{" "}
+            <span>•</span> {props.expert.plugins.length} plugin
+            {props.expert.plugins.length === 1 ? "" : "s"}
           </p>
         </div>
       </section>

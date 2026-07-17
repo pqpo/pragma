@@ -13,7 +13,7 @@ const expert = await createExampleExpert(
     plugins: [
       {
         entry: learningPlugin,
-        config: {
+        userConfig: {
           teamName: "Pragma Example Team",
           greetingPrefix: "欢迎",
         },

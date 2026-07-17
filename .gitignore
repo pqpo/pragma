@@ -7,6 +7,7 @@ out
 .next
 coverage
 .turbo
+.plugin-bundles
 tsconfig.tsbuildinfo
 *.tsbuildinfo
 .pragma/runtime-sessions/

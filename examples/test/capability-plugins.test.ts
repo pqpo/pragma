@@ -22,7 +22,7 @@ describe("capability example plugins", () => {
       plugins: [
         {
           entry: learningPlugin,
-          config: { teamName: "Runtime Team", greetingPrefix: "Hello" },
+          userConfig: { teamName: "Runtime Team", greetingPrefix: "Hello" },
         },
       ],
     });

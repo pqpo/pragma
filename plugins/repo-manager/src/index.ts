@@ -1,4 +1,4 @@
-import { createExpertAgentPluginConfigEnvName, definePluginEntry } from "@pragma/core";
+import { definePluginEntry, readExpertAgentPluginManifest } from "@pragma/core";
 import type {
   ExpertAgentContextItemMetadata,
   ExpertAgentContextStore,
@@ -15,14 +15,8 @@ import { prepareGitSessionEnvironment } from "./git.ts";
 import type { CodeRepository, RepoManagerConfigInput } from "./schema.ts";
 import { parseRepoManagerConfig, parseRepoManagerRepositoriesContext } from "./schema.ts";
 
-const PLUGIN_ID = "repo-manager";
-const TOKEN_ENV = createPluginEnvName("auth.token");
-const TOKEN_USERNAME_ENV = createPluginEnvName("auth.username");
-const CREDENTIAL_HELPER_ENV = createPluginEnvName("auth.helper");
-const SSH_PRIVATE_KEY_ENV = createPluginEnvName("auth.privateKey");
-const SSH_KNOWN_HOSTS_ENV = createPluginEnvName("auth.knownHosts");
-
 export default definePluginEntry({
+  manifest: readExpertAgentPluginManifest(new URL("../plugin.json", import.meta.url)),
   setup: (context) => {
     const cleanupGitSessionEnvironments = new Map<string, () => Promise<void>>();
     context.logger.info("Registering repo manager context store", {
@@ -147,11 +141,11 @@ function createCodeRepositoryContextStore(
 async function resolveConfig(
   context: ExpertAgentPluginSetupContext,
 ): Promise<ReturnType<typeof parseRepoManagerConfig>> {
-  const explicitConfig = readExplicitConfig(context.config);
+  const explicitConfig = readExplicitConfig(context.userConfig);
   const repositories = await readHostRepositories(context);
   const parsedConfig = parseRepoManagerConfig({
     ...explicitConfig,
-    auth: explicitConfig.auth ?? resolveAuth(context.env),
+    auth: explicitConfig.auth,
   });
 
   return {
@@ -206,41 +200,6 @@ async function readHostRepositories(
   return parseRepoManagerRepositoriesContext(JSON.parse(result.value.content));
 }
 
-function resolveAuth(env: NodeJS.ProcessEnv): ReturnType<typeof parseRepoManagerConfig>["auth"] {
-  const token = readEnv(env, TOKEN_ENV);
-
-  if (token !== undefined) {
-    return {
-      strategy: "token",
-      token,
-      username: readEnv(env, TOKEN_USERNAME_ENV) ?? "x-access-token",
-    };
-  }
-
-  const helper = readEnv(env, CREDENTIAL_HELPER_ENV);
-
-  if (helper !== undefined) {
-    return {
-      strategy: "credential_helper",
-      helper,
-    };
-  }
-
-  const privateKey = readEnv(env, SSH_PRIVATE_KEY_ENV);
-
-  if (privateKey !== undefined) {
-    const knownHosts = readEnv(env, SSH_KNOWN_HOSTS_ENV);
-
-    return {
-      strategy: "ssh",
-      privateKey,
-      ...(knownHosts === undefined ? {} : { knownHosts }),
-    };
-  }
-
-  return { strategy: "none" };
-}
-
 function normalizeContextMetadata(
   metadata: Partial<ExpertAgentContextItemMetadata> | undefined,
 ): ExpertAgentContextItemMetadata {
@@ -251,16 +210,4 @@ function normalizeContextMetadata(
     ...(metadata?.sensitivity === undefined ? {} : { sensitivity: metadata.sensitivity }),
     priority: metadata?.priority ?? "normal",
   };
-}
-
-function readEnv(env: NodeJS.ProcessEnv, name: string): string | undefined {
-  const value = env[name];
-  return value === undefined || value.length === 0 ? undefined : value;
-}
-
-function createPluginEnvName(name: string): string {
-  return createExpertAgentPluginConfigEnvName({
-    pluginId: PLUGIN_ID,
-    name,
-  });
 }

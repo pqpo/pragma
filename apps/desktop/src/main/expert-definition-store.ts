@@ -286,8 +286,9 @@ function definitionToResources(
       ],
       toolApprovals: definition.toolApprovals ?? {},
       plugins: (definition.plugins ?? []).map((plugin) => ({
-        ref: toPluginRef(plugin.source),
+        ref: plugin.ref,
         ...(plugin.config === undefined ? {} : { config: plugin.config }),
+        ...(plugin.secretBindings === undefined ? {} : { secretBindings: plugin.secretBindings }),
       })),
       contextStores: (definition.contextStoreMounts ?? []).map((mount) => ({
         ref: `context-store:${mount.storeId}@1.0.0`,
@@ -447,8 +448,9 @@ export function pragmaExpertResourceToDesktopDefinition(
     opaqueCapabilities,
     toolApprovals: resource.spec.toolApprovals,
     plugins: resource.spec.plugins.map((plugin) => ({
-      source: plugin.ref,
+      ref: plugin.ref,
       ...(plugin.config === undefined ? {} : { config: plugin.config }),
+      ...(plugin.secretBindings === undefined ? {} : { secretBindings: plugin.secretBindings }),
     })),
     contextStoreMounts: resource.spec.contextStores.map((mount) => ({
       storeId: /^context-store:([^@]+)@/.exec(mount.ref)?.[1] ?? mount.namespace,
@@ -501,12 +503,4 @@ function desktopModel(
     return { runtimeId, modelName: model };
   }
   return null;
-}
-
-function toPluginRef(source: string): string {
-  if (/^plugin:[A-Za-z0-9][A-Za-z0-9._-]*@[A-Za-z0-9][A-Za-z0-9.+_-]*$/.test(source)) {
-    return source;
-  }
-  const id = source.replace(/[^A-Za-z0-9._-]+/g, ".").replace(/^\.+|\.+$/g, "") || "plugin";
-  return `plugin:${id}@1.0.0`;
 }

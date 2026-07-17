@@ -13,6 +13,9 @@ export type FactMemoryStoreFactory = (context: FactMemoryStoreFactoryContext) =>
 export interface FactMemoryPluginConfig {
   readonly enabled?: boolean | undefined;
   readonly filePath?: string | undefined;
+}
+
+export interface FactMemoryPluginHostBindings {
   readonly store?: FactMemoryStore | undefined;
   readonly storeFactory?: FactMemoryStoreFactory | undefined;
 }
@@ -32,7 +35,10 @@ export const factMemoryCapabilities = [
 export function createFactMemoryContributions(
   context: FactMemoryPluginSetupContext,
 ): ExpertAgentPluginContributions {
-  const config = readFactMemoryConfig(context.config);
+  const config = {
+    ...readFactMemoryConfig(context.userConfig),
+    ...readFactMemoryHostBindings(context.hostBindings),
+  };
 
   if (config.enabled === false) {
     return {};
@@ -71,9 +77,6 @@ function readFactMemoryConfig(input: unknown): FactMemoryPluginConfig {
 
   const enabled = (fact as { enabled?: unknown }).enabled;
   const filePath = (fact as { filePath?: unknown }).filePath;
-  const store = (fact as { store?: unknown }).store;
-  const storeFactory = (fact as { storeFactory?: unknown }).storeFactory;
-
   if (enabled !== undefined && typeof enabled !== "boolean") {
     throw new Error("Fact memory config enabled must be a boolean when provided.");
   }
@@ -81,15 +84,11 @@ function readFactMemoryConfig(input: unknown): FactMemoryPluginConfig {
   return {
     enabled: enabled ?? true,
     ...(filePath === undefined ? {} : { filePath: assertOptionalString(filePath, "filePath") }),
-    ...(store === undefined ? {} : { store: assertFactMemoryStore(store) }),
-    ...(storeFactory === undefined
-      ? {}
-      : { storeFactory: assertFactMemoryStoreFactory(storeFactory) }),
   };
 }
 
 function resolveFactMemoryStore(
-  config: FactMemoryPluginConfig,
+  config: FactMemoryPluginConfig & FactMemoryPluginHostBindings,
   context: FactMemoryPluginSetupContext,
 ): FactMemoryStore {
   if (config.store !== undefined) {
@@ -122,6 +121,23 @@ function assertFactMemoryStoreFactory(input: unknown): FactMemoryStoreFactory {
   }
 
   throw new Error("Fact memory config storeFactory must be a function.");
+}
+
+function readFactMemoryHostBindings(
+  input: Readonly<Record<string, unknown>>,
+): FactMemoryPluginHostBindings {
+  const fact = input["fact"];
+  if (fact === undefined) return {};
+  if (fact === null || typeof fact !== "object" || Array.isArray(fact)) {
+    throw new Error("Fact memory hostBindings.fact must be an object.");
+  }
+  const value = fact as Record<string, unknown>;
+  return {
+    ...(value["store"] === undefined ? {} : { store: assertFactMemoryStore(value["store"]) }),
+    ...(value["storeFactory"] === undefined
+      ? {}
+      : { storeFactory: assertFactMemoryStoreFactory(value["storeFactory"]) }),
+  };
 }
 
 function assertOptionalString(input: unknown, fieldName: string): string {

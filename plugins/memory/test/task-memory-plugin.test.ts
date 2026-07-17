@@ -20,7 +20,8 @@ describe("task-memory plugin", () => {
       memorySystem,
       workspaceRoot: "/tmp/pragma",
       env: process.env,
-      config: {
+      userConfig: {},
+      hostBindings: {
         task: {
           store,
         },
@@ -49,7 +50,8 @@ describe("task-memory plugin", () => {
       memorySystem,
       workspaceRoot: "/tmp/pragma",
       env: process.env,
-      config: {
+      userConfig: {},
+      hostBindings: {
         task: {
           storeFactory: () => store,
         },

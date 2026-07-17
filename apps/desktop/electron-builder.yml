@@ -11,6 +11,8 @@ files:
   - package.json
 
 extraResources:
+  - from: .plugin-bundles/plugins
+    to: plugins
   - from: build/icon-mac.png
     to: icons/icon-mac.png
   - from: build/icon-windows.png

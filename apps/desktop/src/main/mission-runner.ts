@@ -49,6 +49,7 @@ import {
 import type { MissionStore, MissionTimelineTurn } from "./mission-store.ts";
 import type { ModelProviderStore } from "./model-provider-store.ts";
 import type { PragmaProjectStore } from "./pragma-project-store.ts";
+import type { PluginStore } from "./plugin-store.ts";
 
 export interface MissionRunner {
   run(id: string): Promise<Mission>;
@@ -98,6 +99,7 @@ export function createMissionRunner(options: {
   readonly pragmaHome: string;
   readonly modelProviders: ModelProviderStore;
   readonly contextStores?: ContextStoreStore | undefined;
+  readonly plugins?: PluginStore | undefined;
   readonly runtimes?: RuntimeRegistry | undefined;
 }): MissionRunner {
   const runtimes = options.runtimes ?? createDesktopRuntimeRegistry();
@@ -202,6 +204,24 @@ export function createMissionRunner(options: {
       environmentId: "desktop",
       adapterHost: createDesktopAdapterHost(options, mission.workspace.path),
       runtimes,
+      ...(options.plugins === undefined
+        ? {}
+        : {
+            plugins: {
+              inspect: async ({ binding }) =>
+                await options.plugins!.inspect({
+                  ref: binding.ref,
+                  config: binding.config,
+                  secretBindings: binding.secretBindings,
+                }),
+              resolve: async ({ binding }) =>
+                await options.plugins!.resolve({
+                  ref: binding.ref,
+                  config: binding.config,
+                  secretBindings: binding.secretBindings,
+                }),
+            },
+          }),
     });
     assertRecoverableEnvironment(mission, compiled.environmentFingerprint.value);
     const startedAt = new Date().toISOString();
@@ -345,6 +365,24 @@ export function createMissionRunner(options: {
       environmentId: "desktop",
       adapterHost: createDesktopAdapterHost(options, mission.workspace.path),
       runtimes,
+      ...(options.plugins === undefined
+        ? {}
+        : {
+            plugins: {
+              inspect: async ({ binding }) =>
+                await options.plugins!.inspect({
+                  ref: binding.ref,
+                  config: binding.config,
+                  secretBindings: binding.secretBindings,
+                }),
+              resolve: async ({ binding }) =>
+                await options.plugins!.resolve({
+                  ref: binding.ref,
+                  config: binding.config,
+                  secretBindings: binding.secretBindings,
+                }),
+            },
+          }),
     });
     assertRecoverableEnvironment(mission, compiled.environmentFingerprint.value);
     if ("kind" in compiled.value && compiled.value.kind === "flow") {

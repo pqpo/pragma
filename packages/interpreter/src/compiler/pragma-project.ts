@@ -56,6 +56,7 @@ import {
   ToolAdapterRegistry,
   type InvocableResource,
   type PragmaCompileHost,
+  type PragmaPluginResolution,
 } from "../runtime/registries.ts";
 import {
   createContextSystem,
@@ -404,6 +405,49 @@ class PragmaProjectImpl implements PragmaProject {
       createDefaultPragmaResourceAdapterRegistry();
     const adapterHost = createAdapterHost(host);
     diagnostics.push(...validateExtensionEnvironment(this.resources, host));
+    if (host.plugins !== undefined) {
+      for (const indexed of this.resources.values()) {
+        if (indexed.resource.kind !== "Expert") continue;
+        for (const [index, binding] of indexed.resource.spec.plugins.entries()) {
+          try {
+            const inspection = await host.plugins.inspect({
+              expertRef: canonicalRef(indexed.resource) as `expert:${string}@${string}`,
+              binding,
+            });
+            if (inspection.ref !== binding.ref || inspection.status !== "ready") {
+              diagnostics.push(
+                ...(inspection.issues.length > 0
+                  ? inspection.issues.map((issue) => ({
+                      ...issue,
+                      source: issue.source ?? indexed.source,
+                      path: ["spec", "plugins", index, ...issue.path],
+                    }))
+                  : [
+                      {
+                        severity: "error" as const,
+                        code: "environment.plugin_unavailable",
+                        message:
+                          inspection.ref === binding.ref
+                            ? `Plugin ${binding.ref} needs attention.`
+                            : `Plugin resolver returned ${inspection.ref} for ${binding.ref}.`,
+                        source: indexed.source,
+                        path: ["spec", "plugins", index],
+                      },
+                    ]),
+              );
+            }
+          } catch (error) {
+            diagnostics.push({
+              severity: "error",
+              code: "environment.plugin_unavailable",
+              message: error instanceof Error ? error.message : String(error),
+              source: indexed.source,
+              path: ["spec", "plugins", index],
+            });
+          }
+        }
+      }
+    }
     const health: PragmaResourceHealth[] = [];
     for (const indexed of this.resources.values()) {
       if (!isDeclarativeResource(indexed.resource)) continue;
@@ -454,6 +498,11 @@ class PragmaProjectImpl implements PragmaProject {
       string,
       { readonly contribution: PragmaResourceContribution; readonly health: PragmaResourceHealth }
     >();
+    const resolvedPlugins: {
+      readonly expertRef: string;
+      readonly ref: string;
+      readonly resolution: PragmaPluginResolution;
+    }[] = [];
 
     const resolveDeclarative = async <TContribution extends PragmaResourceContribution>(
       resourceRef: string,
@@ -539,6 +588,25 @@ class PragmaProjectImpl implements PragmaProject {
             (await resolveDeclarative<PragmaContextStoreContribution>(resourceRef, "ContextStore"))
               .contribution,
           resolveRuntime,
+          resolvePlugin: async (binding) => {
+            if (host.plugins === undefined) {
+              throw new PragmaDslError(
+                `Expert ${indexed.resource.metadata.id} references ${binding.ref}, but the host has no Plugin resolver.`,
+              );
+            }
+            const expertRef = canonicalRef(indexed.resource) as `expert:${string}@${string}`;
+            const resolution = await host.plugins.resolve({
+              expertRef,
+              binding,
+            });
+            assertPluginResolution(binding.ref, resolution);
+            resolvedPlugins.push({
+              expertRef,
+              ref: binding.ref,
+              resolution,
+            });
+            return resolution;
+          },
         });
       } else if (indexed.resource.kind === "ExpertTeam") {
         const coordinator = await instantiate(indexed.resource.spec.coordinator.ref);
@@ -617,11 +685,22 @@ class PragmaProjectImpl implements PragmaProject {
         verificationFingerprint: resolved.health.verificationFingerprint!,
       }))
       .sort((left, right) => left.ref.localeCompare(right.ref));
+    const fingerprintPlugins = resolvedPlugins
+      .map((resolved) => ({
+        expertRef: resolved.expertRef,
+        ref: resolved.ref,
+        packageFingerprint: resolved.resolution.packageFingerprint,
+        verificationFingerprint: resolved.resolution.verificationFingerprint,
+      }))
+      .sort((left, right) =>
+        `${left.expertRef}:${left.ref}`.localeCompare(`${right.expertRef}:${right.ref}`),
+      );
     const environmentFingerprintValue = sha256(
       stableStringify({
         environmentId: adapterHost.environmentId,
         projectFingerprint,
         resources: fingerprintResources,
+        plugins: fingerprintPlugins,
       }),
     );
     return {
@@ -634,6 +713,7 @@ class PragmaProjectImpl implements PragmaProject {
         projectFingerprint,
         value: environmentFingerprintValue,
         resources: fingerprintResources,
+        plugins: fingerprintPlugins,
       },
       rootRuntimeId,
       dependencies: collectLockedDependencies(indexed, this.resources),
@@ -798,13 +878,12 @@ async function compileExpert(
     readonly resolveCapability: (ref: string) => Promise<PragmaCapabilityContribution>;
     readonly resolveContextStore: (ref: string) => Promise<PragmaContextStoreContribution>;
     readonly resolveRuntime: (ref: string) => Promise<PragmaRuntimeProfileContribution>;
+    readonly resolvePlugin: (
+      binding: PragmaExpertResource["spec"]["plugins"][number],
+    ) => Promise<PragmaPluginResolution>;
   },
 ): Promise<Expert> {
-  if (resource.spec.plugins.length > 0) {
-    throw new PragmaDslError(
-      `Expert ${resource.metadata.id} references Plugins, but no v2 Plugin resolver is available.`,
-    );
-  }
+  const plugins = await Promise.all(resource.spec.plugins.map(resolvers.resolvePlugin));
   const runtime = await resolvers.resolveRuntime(resource.spec.runtime.ref);
   const capabilities = await Promise.all(
     resource.spec.capabilities.map(async (binding) => ({
@@ -863,7 +942,30 @@ async function compileExpert(
     models: runtime.models,
     defaultRuntimeId: runtime.runtimeId,
     contextSystem: createContextSystem(contextStores),
+    plugins: plugins.map((plugin) => ({
+      source: plugin.source,
+      expectedRef: plugin.ref,
+      packageFingerprint: plugin.packageFingerprint,
+      userConfig: plugin.userConfig,
+      ...(plugin.hostBindings === undefined ? {} : { hostBindings: plugin.hostBindings }),
+    })),
   });
+}
+
+function assertPluginResolution(expectedRef: string, resolution: PragmaPluginResolution): void {
+  if (resolution.ref !== expectedRef) {
+    throw new PragmaDslError(
+      `Plugin resolver returned ${resolution.ref} for requested ${expectedRef}.`,
+    );
+  }
+  for (const [name, value] of [
+    ["packageFingerprint", resolution.packageFingerprint],
+    ["verificationFingerprint", resolution.verificationFingerprint],
+  ] as const) {
+    if (!/^[a-f0-9]{64}$/.test(value)) {
+      throw new PragmaDslError(`Plugin resolver returned an invalid ${name} for ${expectedRef}.`);
+    }
+  }
 }
 
 async function compileFlowResource(
@@ -1146,12 +1248,6 @@ function validatePortableSemantics(
   };
   const resource = indexed.resource;
   if (resource.kind === "Expert") {
-    if (resource.spec.plugins.length > 0) {
-      add("plugin.unsupported", "pragma/v2 does not currently define a Plugin resolver.", [
-        "spec",
-        "plugins",
-      ]);
-    }
     resource.spec.tools.forEach((binding, index) => {
       if (binding.adapter === "pragma.tool.call@v1") {
         if (
@@ -1397,6 +1493,15 @@ function validateExtensionEnvironment(
   for (const indexed of resources.values()) {
     const resource = indexed.resource;
     if (resource.kind === "Expert") {
+      if (resource.spec.plugins.length > 0 && host.plugins === undefined) {
+        diagnostics.push({
+          severity: "error",
+          code: "environment.plugin_resolver_unavailable",
+          message: "The host does not provide a Plugin resolver.",
+          source: indexed.source,
+          path: ["spec", "plugins"],
+        });
+      }
       resource.spec.tools.forEach((binding, index) => {
         check(
           indexed,

@@ -1,5 +1,5 @@
 import type { Icon } from "@phosphor-icons/react";
-import { Database, GitBranch, User, UsersThree, Wrench } from "@phosphor-icons/react";
+import { Database, GitBranch, PuzzlePiece, User, UsersThree, Wrench } from "@phosphor-icons/react";
 
 import type {
   CreateExpertDefinition,
@@ -8,7 +8,13 @@ import type {
 } from "../../../../shared/desktop-api.ts";
 
 export type ExpertModel = ExpertDefinition["model"];
-export type StudioView = "experts" | "teams" | "flows" | "capabilities" | "context-stores";
+export type StudioView =
+  | "experts"
+  | "teams"
+  | "flows"
+  | "capabilities"
+  | "plugins"
+  | "context-stores";
 
 export type ExpertRecord = {
   readonly ref?: string | undefined;
@@ -26,12 +32,16 @@ export type ExpertRecord = {
   readonly mcpServers: number;
   readonly contextStoreMounts: ExpertDefinition["contextStoreMounts"];
   readonly resourceTools: ExpertDefinition["resourceTools"];
+  readonly plugins: ExpertDefinition["plugins"];
   readonly usesApproval: boolean;
   readonly icon: Icon;
   readonly persisted?: ExpertDefinition | undefined;
 };
 
-export type ExpertDraft = Omit<ExpertRecord, "icon"> & { readonly tagInput: string };
+export type ExpertDraft = Omit<ExpertRecord, "icon"> & {
+  readonly tagInput: string;
+  readonly pluginSecretMutations: Readonly<Record<string, string | null>>;
+};
 
 export const emptyDraft = (): ExpertDraft => ({
   id: "",
@@ -48,8 +58,10 @@ export const emptyDraft = (): ExpertDraft => ({
   mcpServers: 0,
   contextStoreMounts: [],
   resourceTools: [],
+  plugins: [],
   usesApproval: false,
   tagInput: "",
+  pluginSecretMutations: {},
 });
 
 export function toExpertRecord(definition: ExpertDefinition): ExpertRecord {
@@ -71,6 +83,7 @@ export function toExpertRecord(definition: ExpertDefinition): ExpertRecord {
     mcpServers: definition.capabilities.filter((reference) => reference.kind === "tools").length,
     contextStoreMounts: definition.contextStoreMounts,
     resourceTools: definition.resourceTools,
+    plugins: definition.plugins,
     usesApproval: Object.values(definition.toolApprovals).some((mode) => mode !== "none"),
     icon: User,
     persisted: definition,
@@ -92,7 +105,7 @@ export function toPersistedInput(
     model: expert.model,
     capabilities: [...expert.capabilities],
     toolApprovals: existing?.toolApprovals ?? {},
-    plugins: existing?.plugins ?? [],
+    plugins: [...expert.plugins],
     contextStoreMounts: [...expert.contextStoreMounts],
     resourceTools: [...expert.resourceTools],
     opaqueCapabilities: [...(existing?.opaqueCapabilities ?? [])],
@@ -111,6 +124,7 @@ export const studioSections = [
   { id: "teams", label: "Expert teams", icon: UsersThree },
   { id: "flows", label: "Flows", icon: GitBranch },
   { id: "capabilities", label: "Capabilities", icon: Wrench },
+  { id: "plugins", label: "Plugins", icon: PuzzlePiece },
   { id: "context-stores", label: "Context stores", icon: Database },
 ] as const satisfies readonly {
   readonly id: StudioView;

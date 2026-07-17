@@ -12,10 +12,12 @@ import {
   type Capability,
   type ContextStore,
   type DesktopRuntimeAvailability,
+  type DesktopPlugin,
   type ModelProvider,
 } from "../../../../shared/desktop-api.ts";
-import type { ExpertDraft, ExpertRecord } from "./studio-model.ts";
+import { desktopApi, type ExpertDraft, type ExpertRecord } from "./studio-model.ts";
 import { ExpertCapabilityPicker } from "./ExpertCapabilityPicker.tsx";
+import { ExpertPluginPicker } from "./ExpertPluginPicker.tsx";
 
 type CreateStep = "identity" | "instructions" | "capabilities" | "review";
 
@@ -25,6 +27,7 @@ export function ExpertEditorFragment(props: {
   readonly runtimes: readonly DesktopRuntimeAvailability[];
   readonly contextStores: readonly ContextStore[];
   readonly capabilities: readonly Capability[];
+  readonly plugins: readonly DesktopPlugin[];
   readonly resources: readonly PragmaResource[];
   readonly existingExpertRefs: readonly string[];
   readonly onCancel: () => void;
@@ -122,8 +125,19 @@ export function ExpertEditorFragment(props: {
     }
     setSaving(true);
     try {
+      const api = desktopApi();
+      if (api !== undefined && Object.keys(draft.pluginSecretMutations).length > 0) {
+        await api.setPluginSecrets(draft.pluginSecretMutations);
+      }
+      const {
+        pluginSecretMutations: _pluginSecretMutations,
+        tagInput: _tagInput,
+        ...record
+      } = draft;
+      void _pluginSecretMutations;
+      void _tagInput;
       await props.onCreated({
-        ...draft,
+        ...record,
         id: idResult.data,
         name,
         description,
@@ -420,6 +434,15 @@ export function ExpertEditorFragment(props: {
                 }
                 onCapabilityReferencesChange={setCapabilityReferences}
               />
+              <ExpertPluginPicker
+                plugins={props.plugins}
+                references={draft.plugins}
+                secretMutations={draft.pluginSecretMutations}
+                onReferencesChange={(plugins) => setDraft({ ...draft, plugins: [...plugins] })}
+                onSecretMutationsChange={(pluginSecretMutations) =>
+                  setDraft({ ...draft, pluginSecretMutations })
+                }
+              />
             </div>
           ) : null}
           {step === "review" ? (
@@ -446,7 +469,8 @@ export function ExpertEditorFragment(props: {
                       ? "No runtime/model"
                       : `${draft.model.runtimeId} / ${draft.model.modelName}`}{" "}
                     · {draft.contextStoreMounts.length} context stores · {draft.skills} skills ·{" "}
-                    {draft.tools} tools · {draft.mcpServers} MCP server
+                    {draft.tools} tools · {draft.mcpServers} MCP server · {draft.plugins.length}{" "}
+                    plugins
                   </dd>
                 </div>
               </dl>

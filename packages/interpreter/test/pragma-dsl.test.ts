@@ -3,7 +3,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
-import { createRuntimeRegistry, type Expert, type Flow } from "@pragma/core";
+import {
+  createExpertAgentPluginPackageFingerprint,
+  createRuntimeRegistry,
+  type Expert,
+  type Flow,
+} from "@pragma/core";
 
 import {
   FlowActionRegistry,
@@ -745,6 +750,141 @@ describe("Pragma YAML DSL", () => {
         expect.objectContaining({ code: "environment.runtime_unavailable" }),
       ]),
     );
+  });
+
+  it("resolves exact plugin references and fingerprints the environment", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-dsl-plugin-"));
+    const pluginRoot = join(root, "plugin");
+    await mkdir(pluginRoot);
+    const pluginManifest = {
+      schemaVersion: "pragma.plugin/v2",
+      id: "plugin.context",
+      name: "Plugin context",
+      description: "Test plugin",
+      version: "0.0.0",
+      tags: [],
+      runtime: {
+        type: "expert-agent-plugin",
+        entry: "./index.mjs",
+        trust: "trusted-host",
+      },
+      capabilities: [],
+      configuration: { type: "object", properties: {}, additionalProperties: false },
+      permissions: { filesystem: [], shell: [], network: [], environment: [] },
+    };
+    await Promise.all([
+      writeFile(join(pluginRoot, "plugin.json"), JSON.stringify(pluginManifest)),
+      writeFile(
+        join(pluginRoot, "package.json"),
+        JSON.stringify({ name: "plugin.context", version: "0.0.0", type: "module" }),
+      ),
+      writeFile(
+        join(pluginRoot, "index.mjs"),
+        `export default { id: "plugin.context", name: "Plugin context", description: "Test plugin", version: "0.0.0", tags: [], manifest: ${JSON.stringify(pluginManifest)}, setup: () => ({}) };`,
+      ),
+    ]);
+    const packageFingerprint = await createExpertAgentPluginPackageFingerprint(pluginRoot);
+    const expert = expertResource("writer", "Plugin writer");
+    await writeFile(
+      join(root, "pragma.yaml"),
+      formatPragmaYaml({
+        apiVersion: "pragma/v2",
+        kind: "Bundle",
+        imports: [],
+        resources: [
+          runtimeProfile(),
+          {
+            ...expert,
+            spec: {
+              ...expert.spec,
+              plugins: [{ ref: "plugin:plugin.context@0.0.0", config: {} }],
+            },
+          },
+        ],
+      }),
+    );
+    const project = await loadPragmaProject(join(root, "pragma.yaml"));
+    const inspectPlugin = vi.fn(async ({ binding }: { binding: { ref: string } }) => ({
+      ref: binding.ref as `plugin:${string}@${string}`,
+      status: "ready" as const,
+      packageFingerprint,
+      verificationFingerprint: "b".repeat(64),
+      issues: [],
+    }));
+    await expect(
+      project.validateEnvironment({
+        workspace: root,
+        plugins: { inspect: inspectPlugin, resolve: async () => Promise.reject(new Error()) },
+      }),
+    ).resolves.not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ code: "environment.plugin_unavailable" })]),
+    );
+    expect(inspectPlugin).toHaveBeenCalledWith(
+      expect.objectContaining({ expertRef: "expert:writer@1.0.0" }),
+    );
+    const compiled = await project.compile<Expert>("expert:writer@1.0.0", {
+      workspace: root,
+      pragmaHome: join(root, ".pragma"),
+      plugins: {
+        inspect: inspectPlugin,
+        async resolve() {
+          return {
+            ref: "plugin:plugin.context@0.0.0" as const,
+            source: pluginRoot,
+            packageFingerprint,
+            userConfig: {},
+            verificationFingerprint: "b".repeat(64),
+          };
+        },
+      },
+    });
+    expect(compiled.value.pluginLoadIssues).toBeUndefined();
+    expect(compiled.environmentFingerprint.plugins).toEqual([
+      {
+        expertRef: "expert:writer@1.0.0",
+        ref: "plugin:plugin.context@0.0.0",
+        packageFingerprint,
+        verificationFingerprint: "b".repeat(64),
+      },
+    ]);
+    await expect(
+      project.compile<Expert>("expert:writer@1.0.0", {
+        workspace: root,
+        plugins: {
+          inspect: inspectPlugin,
+          async resolve() {
+            return {
+              ref: "plugin:wrong@1.0.0" as const,
+              source: pluginRoot,
+              packageFingerprint,
+              userConfig: {},
+              verificationFingerprint: "b".repeat(64),
+            };
+          },
+        },
+      }),
+    ).rejects.toThrow("returned plugin:wrong@1.0.0");
+  });
+
+  it("rejects multiple versions of one plugin in an Expert", () => {
+    const expert = expertResource("writer", "Plugin writer");
+    const result = PragmaExpertResourceSchema.safeParse({
+      ...expert,
+      spec: {
+        ...expert.spec,
+        plugins: [{ ref: "plugin:memory@1.0.0" }, { ref: "plugin:memory@2.0.0" }],
+      },
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            message: "An Expert can activate only one version of plugin memory.",
+          }),
+        ]),
+      );
+    }
   });
 });
 

@@ -1,8 +1,9 @@
-import { definePluginEntry } from "@pragma/core";
+import { definePluginEntry, readExpertAgentPluginManifest } from "@pragma/core";
 
 export const events: string[] = [];
 
 export const extensibilityPlugin = definePluginEntry({
+  manifest: readExpertAgentPluginManifest(new URL("../plugin.json", import.meta.url)),
   setup: () => ({
     mcp: {
       mcpServers: {

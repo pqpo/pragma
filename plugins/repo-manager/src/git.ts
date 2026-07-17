@@ -28,7 +28,6 @@ export async function prepareGitSessionEnvironment(
 ): Promise<GitSessionEnvironment> {
   const env = options.env ?? process.env;
   const gitVersion = await checkGitCli(options);
-  assertAuthEnvironment(config.auth, env);
   const prepared = await createGitSessionEnvironment(config.auth, env);
   const restore = applyGitEnvironment(env, prepared.env);
 
@@ -117,7 +116,7 @@ async function createGitSessionEnvironment(
         ...sharedEnv,
         GIT_ASKPASS: askPassPath,
         PRAGMA_GIT_USERNAME: auth.username,
-        PRAGMA_GIT_TOKEN: auth.token ?? readRequiredEnv(baseEnv, auth.tokenEnv),
+        PRAGMA_GIT_TOKEN: auth.token,
         HOME: tempDir,
         XDG_CONFIG_HOME: tempDir,
       },
@@ -129,8 +128,8 @@ async function createGitSessionEnvironment(
 
   if (auth.strategy === "credential_helper") {
     const gitConfigPath = resolve(tempDir, "gitconfig");
-    const credentialHelper = auth.helper ?? readRequiredEnv(baseEnv, auth.helperEnv);
-    assertSafeCredentialHelperValue(credentialHelper, auth.helperEnv ?? "configured helper");
+    const credentialHelper = auth.helper;
+    assertSafeCredentialHelperValue(credentialHelper, "configured helper");
     await writeFile(
       gitConfigPath,
       ["[credential]", `\thelper = ${escapeGitConfigValue(credentialHelper)}`, ""].join("\n"),
@@ -151,10 +150,9 @@ async function createGitSessionEnvironment(
   }
 
   const privateKeyPath = resolve(tempDir, "identity");
-  const knownHostsEnv = auth.knownHostsEnv;
-  const knownHosts = auth.knownHosts ?? readOptionalEnv(baseEnv, knownHostsEnv);
+  const knownHosts = auth.knownHosts;
   const knownHostsPath = knownHosts === undefined ? undefined : resolve(tempDir, "known_hosts");
-  await writeFile(privateKeyPath, auth.privateKey ?? readRequiredEnv(baseEnv, auth.privateKeyEnv), {
+  await writeFile(privateKeyPath, auth.privateKey, {
     mode: 0o600,
   });
   await chmod(privateKeyPath, 0o600);
@@ -247,72 +245,6 @@ function createGitProcessEnv(baseEnv: NodeJS.ProcessEnv): Record<string, string>
     GIT_CONFIG_NOSYSTEM: "1",
     GIT_CONFIG_GLOBAL: "/dev/null",
   };
-}
-
-function assertAuthEnvironment(auth: CodeRepositoryAuth, env: NodeJS.ProcessEnv): void {
-  if (
-    auth.strategy === "token" &&
-    auth.token === undefined &&
-    auth.tokenEnv !== undefined &&
-    readEnv(env, auth.tokenEnv) === undefined
-  ) {
-    throw new Error(`Missing Git token environment variable: ${auth.tokenEnv}`);
-  }
-
-  if (
-    auth.strategy === "ssh" &&
-    auth.privateKey === undefined &&
-    auth.privateKeyEnv !== undefined &&
-    readEnv(env, auth.privateKeyEnv) === undefined
-  ) {
-    throw new Error(`Missing Git SSH private key environment variable: ${auth.privateKeyEnv}`);
-  }
-
-  if (
-    auth.strategy === "ssh" &&
-    auth.knownHosts === undefined &&
-    auth.knownHostsEnv !== undefined &&
-    readEnv(env, auth.knownHostsEnv) === undefined
-  ) {
-    throw new Error(`Missing Git known_hosts environment variable: ${auth.knownHostsEnv}`);
-  }
-
-  if (
-    auth.strategy === "credential_helper" &&
-    auth.helper === undefined &&
-    auth.helperEnv !== undefined &&
-    readEnv(env, auth.helperEnv) === undefined
-  ) {
-    throw new Error(`Missing Git credential.helper environment variable: ${auth.helperEnv}`);
-  }
-}
-
-function readRequiredEnv(env: NodeJS.ProcessEnv, name: string | undefined): string {
-  if (name === undefined) {
-    throw new Error("Missing environment variable name.");
-  }
-
-  const value = readEnv(env, name);
-
-  if (value === undefined) {
-    throw new Error(`Missing environment variable: ${name}`);
-  }
-
-  return value;
-}
-
-function readOptionalEnv(env: NodeJS.ProcessEnv, name: string | undefined): string | undefined {
-  return name === undefined ? undefined : readEnv(env, name);
-}
-
-function readEnv(env: NodeJS.ProcessEnv, name: string): string | undefined {
-  const value = env[name];
-
-  if (value === undefined || value.length === 0) {
-    return undefined;
-  }
-
-  return value;
 }
 
 function shellQuote(value: string): string {

@@ -3880,6 +3880,205 @@ p {
   text-underline-offset: 3px;
 }
 
+.plugin-directory .capability-open-button {
+  width: 100%;
+  border-right: 0;
+  border-bottom: 0;
+  border-left: 0;
+  background: transparent;
+  text-align: left;
+}
+
+.plugin-import-dialog {
+  position: relative;
+  width: min(680px, calc(100vw - 48px));
+}
+
+.plugin-dialog-close {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.plugin-import-dialog dl,
+.plugin-permission-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.plugin-import-dialog dl > div,
+.plugin-permission-grid > div {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.plugin-import-dialog dt,
+.plugin-permission-grid strong {
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.plugin-import-dialog dd {
+  margin: 5px 0 0;
+  overflow-wrap: anywhere;
+}
+
+.plugin-permission-summary h3,
+.plugin-detail-section > header,
+.expert-plugin-picker > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.plugin-permission-grid ul,
+.plugin-detail-section ul {
+  margin: 8px 0 0;
+  padding-left: 18px;
+}
+
+.plugin-permission-grid span {
+  display: block;
+  margin-top: 8px;
+  color: var(--muted);
+}
+
+.plugin-detail-section {
+  margin-top: 24px;
+  padding: 22px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.plugin-detail-section h2,
+.plugin-detail-section p {
+  margin: 0;
+}
+
+.plugin-detail-section > header p,
+.expert-plugin-picker > header p {
+  margin-top: 5px;
+  color: var(--muted);
+}
+
+.plugin-config-fields {
+  display: grid;
+  gap: 16px;
+  margin-top: 20px;
+}
+
+.plugin-config-field {
+  display: grid;
+  gap: 7px;
+}
+
+.plugin-config-field > header,
+.plugin-secret-input {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.plugin-config-field > small {
+  color: var(--muted);
+}
+
+.plugin-config-field input,
+.plugin-config-field select,
+.plugin-config-field textarea {
+  width: 100%;
+  min-height: 40px;
+  padding: 9px 11px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--text);
+}
+
+.plugin-config-field textarea {
+  min-height: 140px;
+  font-family: var(--font-mono);
+}
+
+.plugin-inherit-toggle {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.plugin-inherit-toggle input {
+  width: auto;
+  min-height: auto;
+}
+
+.plugin-secret-input button {
+  min-height: 38px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.expert-plugin-picker {
+  margin-top: 26px;
+}
+
+.expert-plugin-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.expert-plugin-list > article {
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+}
+
+.expert-plugin-list > article.is-active {
+  border-color: var(--accent);
+}
+
+.expert-plugin-list article > header {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+}
+
+.expert-plugin-list article > header div {
+  display: grid;
+  gap: 3px;
+}
+
+.expert-plugin-list article > header small {
+  color: var(--muted);
+}
+
+.expert-plugin-list details {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.expert-plugin-list summary {
+  cursor: pointer;
+  font-weight: 650;
+}
+
 .expert-picker-backdrop {
   position: fixed;
   z-index: 90;

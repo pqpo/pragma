@@ -21,13 +21,19 @@ import {
   GetSkillDocumentSchema,
   ListContextStoreContentsSchema,
   DeleteExpertDefinitionSchema,
+  DesktopPluginRefSchema,
+  DesktopPluginSchema,
   ExpertDefinitionSchema,
   ExpertRefSchema,
   ExpertSummarySchema,
   GetWorkflowLayoutSchema,
   ImportSkillCapabilitySchema,
+  ImportPluginZipSchema,
+  InspectPluginZipSchema,
   PreviewCodeServiceRequestSchema,
   PreviewCodeServiceResultSchema,
+  PluginActionSchema,
+  PluginZipInspectionSchema,
   CreateModelProviderSchema,
   DeleteModelProviderSchema,
   ModelConnectionTestRequestSchema,
@@ -47,6 +53,7 @@ import {
   RespondMissionHumanInteractionSchema,
   SendMissionMessageSchema,
   SkillDocumentSchema,
+  SetPluginSecretsSchema,
   DeletePragmaResourceSchema,
   PragmaProjectSnapshotSchema,
   PragmaYamlValidationResultSchema,
@@ -55,6 +62,7 @@ import {
   ValidatePragmaYamlSchema,
   UpdateModelProviderSchema,
   UpdateExpertDefinitionSchema,
+  UpdatePluginDefaultsSchema,
   UpdateCapabilitySchema,
   ValidateWorkspacePathSchema,
   ValidateWorkspaceResultSchema,
@@ -141,6 +149,32 @@ const api: PragmaDesktopAPI = {
     ),
   deleteExpert: async (ref) => {
     await ipcRenderer.invoke("experts:delete", DeleteExpertDefinitionSchema.parse({ ref }));
+  },
+  listPlugins: async () =>
+    DesktopPluginSchema.array().parse(await ipcRenderer.invoke("plugins:list")),
+  getPlugin: async (ref) =>
+    DesktopPluginSchema.parse(
+      await ipcRenderer.invoke("plugins:get", DesktopPluginRefSchema.parse(ref)),
+    ),
+  pickPluginZip: async () =>
+    PickWorkspaceResultSchema.parse(await ipcRenderer.invoke("plugins:pick-zip")),
+  inspectPluginZip: async (sourcePath) =>
+    PluginZipInspectionSchema.parse(
+      await ipcRenderer.invoke("plugins:inspect", InspectPluginZipSchema.parse({ sourcePath })),
+    ),
+  importPluginZip: async (input) =>
+    DesktopPluginSchema.parse(
+      await ipcRenderer.invoke("plugins:import", ImportPluginZipSchema.parse(input)),
+    ),
+  updatePluginDefaults: async (input) =>
+    DesktopPluginSchema.parse(
+      await ipcRenderer.invoke("plugins:update-defaults", UpdatePluginDefaultsSchema.parse(input)),
+    ),
+  setPluginSecrets: async (secrets) => {
+    await ipcRenderer.invoke("plugins:set-secrets", SetPluginSecretsSchema.parse({ secrets }));
+  },
+  deletePlugin: async (ref) => {
+    await ipcRenderer.invoke("plugins:delete", PluginActionSchema.parse({ ref }));
   },
   getPragmaProject: async () =>
     PragmaProjectSnapshotSchema.parse(await ipcRenderer.invoke("pragma-project:get")),

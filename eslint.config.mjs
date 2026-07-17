@@ -14,7 +14,14 @@ const commonRestrictedPatterns = [
 
 const config = tseslint.config(
   {
-    ignores: ["**/dist/**", "**/out/**", "**/.next/**", "**/coverage/**", "node_modules/**"],
+    ignores: [
+      "**/dist/**",
+      "**/out/**",
+      "**/.next/**",
+      "**/coverage/**",
+      "**/.plugin-bundles/**",
+      "node_modules/**",
+    ],
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,

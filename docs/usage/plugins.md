@@ -11,7 +11,7 @@ packages/core/src/plugins
 关键 API：
 
 ```ts
-import { definePluginEntry, createExpertPluginConfigEnvName } from "@pragma/core";
+import { definePluginEntry, readExpertAgentPluginManifest } from "@pragma/core";
 ```
 
 ## 插件能扩展什么
@@ -41,7 +41,7 @@ plugins/my-plugin/
   tsconfig.json
 ```
 
-构建后 `plugin.json` 的 `runtime.entry` 应指向可被 Node import 的 ESM 文件，通常是 `./dist/index.js`。
+构建后 `plugin.json` 的 `runtime.entry` 应指向可被 Node import 的 ESM 文件。Desktop 导入包必须把运行时依赖打入一个自包含 ESM entry。
 
 ## plugin.json
 
@@ -49,7 +49,7 @@ plugins/my-plugin/
 
 ```json
 {
-  "schemaVersion": "pragma.plugin/v1",
+  "schemaVersion": "pragma.plugin/v2",
   "id": "my-plugin",
   "name": "My Plugin",
   "description": "Adds custom context and tools.",
@@ -57,7 +57,8 @@ plugins/my-plugin/
   "tags": ["context", "tools"],
   "runtime": {
     "type": "expert-agent-plugin",
-    "entry": "./dist/index.js"
+    "entry": "./dist/index.js",
+    "trust": "trusted-host"
   },
   "capabilities": [
     {
@@ -67,14 +68,22 @@ plugins/my-plugin/
     }
   ],
   "configuration": {
-    "properties": []
+    "type": "object",
+    "properties": {},
+    "additionalProperties": false
+  },
+  "permissions": {
+    "filesystem": [],
+    "shell": [],
+    "network": [],
+    "environment": []
   }
 }
 ```
 
 支持字段：
 
-- `schemaVersion`：当前为 `pragma.plugin/v1`。
+- `schemaVersion`：当前为 `pragma.plugin/v2`。
 - `id`：插件唯一 ID，也常作为 context namespace。
 - `name`
 - `description`
@@ -82,18 +91,17 @@ plugins/my-plugin/
 - `tags`
 - `runtime.type`
 - `runtime.entry`
+- `runtime.trust`：当前只能是 `trusted-host`，表示插件在宿主进程执行。
 - `capabilities`
-- `configuration.properties`
-- `required_config`
+- `configuration`：JSON Schema 2020-12 对象 schema。
+- `permissions`
 
-`configuration.properties` 用来描述插件配置：
+`configuration.properties` 使用标准 JSON Schema 描述插件配置：
 
 ```json
 {
-  "name": "enabled",
   "type": "boolean",
   "description": "Enables plugin behavior.",
-  "required": false,
   "default": true
 }
 ```
@@ -113,9 +121,14 @@ array
 插件入口必须 default export `definePluginEntry(...)`。
 
 ```ts
-import { definePluginEntry, createInMemoryContextStore } from "@pragma/core";
+import {
+  createInMemoryContextStore,
+  definePluginEntry,
+  readExpertAgentPluginManifest,
+} from "@pragma/core";
 
 export default definePluginEntry({
+  manifest: readExpertAgentPluginManifest(new URL("../plugin.json", import.meta.url)),
   setup: (context) => {
     context.contextSystem.register({
       namespace: "my-plugin",
@@ -140,7 +153,7 @@ export default definePluginEntry({
 });
 ```
 
-`definePluginEntry()` 会从调用方附近读取 `plugin.json`，并把 manifest 信息绑定到插件 entry。
+`definePluginEntry()` 要求显式传入已经校验的 manifest，不依赖调用栈或 bundle 位置猜测文件。
 
 ## setup 上下文
 
@@ -151,22 +164,24 @@ export default definePluginEntry({
 - `contextSystem`：上下文系统，可注册插件 namespace。
 - `workspaceRoot`：Agent workspace。
 - `env`：环境变量。
-- `config`：插件配置。
+- `userConfig`：经过 manifest JSON Schema 校验的可序列化配置。
+- `hostBindings`：宿主注入的 store、factory 等不可序列化依赖。
 - `logger`：插件级 logger。
 
 示例：读取配置并注册工具。
 
 ```ts
 import { z } from "zod";
-import { definePluginEntry } from "@pragma/core";
+import { definePluginEntry, readExpertAgentPluginManifest } from "@pragma/core";
 
 const ConfigSchema = z.object({
   enabled: z.boolean().default(true),
 });
 
 export default definePluginEntry({
+  manifest: readExpertAgentPluginManifest(new URL("../plugin.json", import.meta.url)),
   setup: (context) => {
-    const config = ConfigSchema.parse(context.config ?? {});
+    const config = ConfigSchema.parse(context.userConfig);
 
     if (!config.enabled) {
       return {};
@@ -293,7 +308,7 @@ const agent = await defineExpert({
   plugins: [
     {
       entry: myPlugin,
-      config: {
+      userConfig: {
         enabled: true,
       },
     },
@@ -301,7 +316,7 @@ const agent = await defineExpert({
 });
 ```
 
-### 使用插件目录或 zip
+### 使用预构建插件目录
 
 适合产品化加载：
 
@@ -317,7 +332,7 @@ const agent = await defineExpert({
   plugins: [
     {
       source: "/path/to/plugins/my-plugin",
-      config: {
+      userConfig: {
         enabled: true,
       },
     },
@@ -325,41 +340,48 @@ const agent = await defineExpert({
 });
 ```
 
-插件 loader 会：
+Core loader 会：
 
-1. 检查插件目录或 zip。
+1. 检查宿主已经验证并展开的预构建插件目录。
 2. 读取 `plugin.json`。
-3. 复制到 Pragma 管理的 Agent 缓存 `~/.pragma/cache/agents/<encoded-agent-id>/plugins/<encoded-plugin-id>/`。
-4. 安装插件依赖。
-5. 如果插件有 `build` script，则执行 build。
-6. import `runtime.entry`。
+3. 按插件 ID 和版本复制到 Agent 缓存 `~/.pragma/cache/agents/<encoded-agent-id>/plugins/<encoded-plugin-id>/<encoded-version>/`。
+4. import `runtime.entry`。
 
-加载问题会记录到：
+Core 不解压 ZIP、不安装依赖，也不执行 build 或 lifecycle script。Desktop Studio 负责 ZIP 静态校验、信任确认和原子安装；ZIP 必须是预构建的自包含 ESM 包。
+
+默认加载策略是 fail-closed，任一插件失败都会抛出 `ExpertAgentPluginLoadError`。只有诊断工具显式传入 `pluginFailurePolicy: "collect"` 时，问题才会记录到：
 
 ```ts
 agent.pluginLoadIssues;
 ```
 
-## 插件配置和环境变量
+## 插件配置和宿主依赖
 
-插件可以通过 `config` 直接接收配置，也可以使用环境变量。
-
-环境变量名可以通过工具函数生成：
-
-```ts
-const envName = createExpertPluginConfigEnvName({
-  pluginId: "my-plugin",
-  name: "apiKey",
-});
-
-// PRAGMA_PLUGIN_MY_PLUGIN_API_KEY
-```
+插件通过 `userConfig` 接收可序列化配置，通过 `hostBindings` 接收 store、factory 等不可序列化宿主依赖。Core 不从环境变量隐式覆盖插件配置。
 
 推荐规则：
 
-- 普通配置放 `config`。
-- Secret 从 `env` 读取。
-- `plugin.json` 中把 secret 配置标记为 `"secret": true`。
+- 普通配置放 `userConfig`，并必须通过 manifest JSON Schema。
+- Secret 由宿主解析命名 binding 后放入 `userConfig`；使用 `"x-pragma-secret": true` 标记。
+- store 和 factory 放 `hostBindings`，不进入 DSL、日志或环境指纹明文。
+
+插件是受信代码：`permissions` 是强制声明的审计信息，不是沙箱，也不会限制恶意插件。导入和激活用户插件等同于信任其在 Desktop Node 进程执行任意代码。
+
+## Pragma DSL
+
+Expert 通过精确版本引用宿主已经安装的插件。普通覆盖保存在 `config`，secret 只保存命名 binding：
+
+```yaml
+plugins:
+  - ref: plugin:repo-manager@0.0.0
+    config:
+      auth:
+        strategy: token
+    secretBindings:
+      auth.token: binding:plugin-secret-repo-manager
+```
+
+Desktop 按 manifest 默认值、Desktop 默认值、Expert 覆盖的顺序合并配置。配置必须使用 manifest 声明的字段，点分属性在 YAML 中写成嵌套对象。插件包、Desktop 默认值、Expert 覆盖和凭据修订都会写入 environment fingerprint。
 
 ## 内置与示例能力
 
@@ -377,7 +399,7 @@ plugins/repo-manager
 - `task-memory` 负责在插件内部维护 `Task Memory` store，并通过插件注入 task memory 工具。
 - `experience-memory` 负责记录历史经历、操作过程和带证据的执行总结，并注入 experience memory 工具。
 - `fact-memory` 负责维护稳定事实、置信度、冲突和失效信息，并注入 fact memory 工具。
-- `task-memory`、`experience-memory` 和 `fact-memory` 默认都会持久化到用户目录 `~/.pragma/memories/` 下，接口仍然保持可替换，也支持在程序化 plugin config 中注入自定义 store 或 `storeFactory`。
+- `task-memory`、`experience-memory` 和 `fact-memory` 默认都会持久化到用户目录 `~/.pragma/memories/` 下，接口仍然保持可替换，也支持通过程序化 `hostBindings` 注入自定义 store 或 `storeFactory`。
 - 统一的 `memory` namespace 审计上下文暴露 `summary.md`、`skills/*.md`、`tasks/**`；默认所有产物都写到 `~/.pragma/memories/<agentId>/`，其中 skill card 写到 `<agentId>/skill-memory/skills/`。
 - `skill-memory` 使用 stream / task / session hooks 生成任务总结、execution 总结和技能卡；`MemorySystem` 再把 task / fact / skill / experience 的摘要统一装配到 `memory` namespace 下的 `summary.md` 供 always-on 透出和后续检索使用。
 - memory plugin 默认包含一条 promotion pipeline：`task -> experience -> fact/skill`。
@@ -398,4 +420,4 @@ plugins/repo-manager
 - 文件、网络、删除、shell 等敏感操作应提供 tool approval。
 - Hooks 用于横切能力，例如审计、可选插件扩展、策略检查，不要把核心业务流程藏进 hook。
 - 插件应明确长期数据和会话数据的落盘边界；当前 memory plugin 默认使用用户目录 `~/.pragma/memories/`，而不是 workspace。
-- 插件加载失败不应该让 Agent 创建过程不可解释，错误应进入 `pluginLoadIssues`。
+- 插件加载失败必须阻断正常 Agent 创建；诊断调用可显式使用 collect 策略读取 `pluginLoadIssues`。

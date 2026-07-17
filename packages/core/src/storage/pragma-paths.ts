@@ -153,4 +153,16 @@ export class PragmaPaths {
   agentPluginRoot(agentId: string, pluginId: string): string {
     return join(this.agentPluginsRoot(agentId), encodePragmaPathSegment(pluginId));
   }
+
+  versionedAgentPluginRoot(agentId: string, pluginId: string, version: string): string {
+    return join(this.agentPluginRoot(agentId, pluginId), encodePragmaPathSegment(version));
+  }
+
+  pluginsRoot(): string {
+    return join(this.root, "plugins");
+  }
+
+  pluginStateRoot(): string {
+    return join(this.stateRoot(), "plugins");
+  }
 }

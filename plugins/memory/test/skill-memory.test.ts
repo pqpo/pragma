@@ -462,7 +462,7 @@ async function createAgent(options: {
                 memorySystem: options.memorySystem,
               },
         ),
-        config: {
+        userConfig: {
           task: {
             rootDir: options.memoryDir,
             ...(options.pluginConfig?.task ?? {}),

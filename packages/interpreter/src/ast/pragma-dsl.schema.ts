@@ -197,7 +197,8 @@ export const PragmaExpertResourceSchema = z
             z
               .object({
                 ref: exactRefSchema(["plugin"], "plugin:pragma.memory@1.0.0"),
-                config: z.unknown().optional(),
+                config: z.record(z.string(), z.unknown()).optional(),
+                secretBindings: z.record(z.string(), PragmaBindingRefSchema).optional(),
               })
               .strict(),
           )
@@ -206,7 +207,21 @@ export const PragmaExpertResourceSchema = z
       })
       .strict(),
   })
-  .strict();
+  .strict()
+  .superRefine((expert, context) => {
+    const pluginIds = new Set<string>();
+    expert.spec.plugins.forEach((plugin, index) => {
+      const pluginId = plugin.ref.slice("plugin:".length, plugin.ref.lastIndexOf("@"));
+      if (pluginIds.has(pluginId)) {
+        context.addIssue({
+          code: "custom",
+          message: `An Expert can activate only one version of plugin ${pluginId}.`,
+          path: ["spec", "plugins", index, "ref"],
+        });
+      }
+      pluginIds.add(pluginId);
+    });
+  });
 
 export const PragmaExpertTeamResourceSchema = z
   .object({
@@ -520,6 +535,18 @@ export const PragmaEnvironmentFingerprintSchema = z
         })
         .strict(),
     ),
+    plugins: z
+      .array(
+        z
+          .object({
+            expertRef: exactRefSchema(["expert"], "expert:lead@1.0.0"),
+            ref: exactRefSchema(["plugin"], "plugin:pragma.memory@1.0.0"),
+            packageFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+            verificationFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+          })
+          .strict(),
+      )
+      .default([]),
   })
   .strict();
 

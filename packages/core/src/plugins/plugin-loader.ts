@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   cp,
   mkdir,
@@ -10,34 +10,41 @@ import {
   stat,
   writeFile,
 } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { basename, dirname, extname, isAbsolute, join, resolve } from "node:path";
+import { extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
-import { promisify } from "node:util";
 
 import type {
   ExpertAgentPluginEntry,
+  ExpertAgentPluginManifest,
   ExpertAgentPluginRegistration,
 } from "./expert-agent-plugin.ts";
 import { readExpertAgentPluginManifest } from "./expert-agent-plugin.ts";
 import type { ExpertAgentLoggerProvider } from "../logging/logger.ts";
 import { createExpertAgentLogger, defaultExpertAgentLoggerProvider } from "../logging/logger.ts";
-import { encodePragmaPathSegment, PragmaPaths } from "../storage/pragma-paths.ts";
+import { PragmaPaths } from "../storage/pragma-paths.ts";
 
-const execFileAsync = promisify(execFile);
+const INSTALL_METADATA_FILE = ".pragma-plugin-install.json";
+const HOST_INSTALL_METADATA_FILES = new Set([INSTALL_METADATA_FILE, ".pragma-install.json"]);
+const INSTALL_FORMAT_VERSION = 1;
+const SHA256_PATTERN = /^[a-f0-9]{64}$/;
+const EXCLUDED_PACKAGE_SEGMENTS = new Set(["node_modules", ".turbo"]);
 
-export type ExpertAgentPluginSource =
-  | string
-  | {
-      readonly source: string;
-      readonly config?: unknown | undefined;
-    };
+export interface ExpertAgentPluginSourceDescriptor {
+  readonly source: string;
+  readonly expectedRef?: `plugin:${string}@${string}` | undefined;
+  readonly packageFingerprint?: string | undefined;
+  readonly userConfig?: Readonly<Record<string, unknown>> | undefined;
+  readonly hostBindings?: Readonly<Record<string, unknown>> | undefined;
+}
+
+export type ExpertAgentPluginSource = string | ExpertAgentPluginSourceDescriptor;
 
 export type ExpertAgentPluginUse =
   | ExpertAgentPluginSource
   | {
       readonly entry: ExpertAgentPluginEntry;
-      readonly config?: unknown | undefined;
+      readonly userConfig?: Readonly<Record<string, unknown>> | undefined;
+      readonly hostBindings?: Readonly<Record<string, unknown>> | undefined;
     };
 
 export interface LoadExpertAgentPluginsOptions {
@@ -46,20 +53,29 @@ export interface LoadExpertAgentPluginsOptions {
   readonly sources: readonly ExpertAgentPluginSource[];
   readonly env?: NodeJS.ProcessEnv | undefined;
   readonly loggerProvider?: ExpertAgentLoggerProvider | undefined;
+  readonly pluginFailurePolicy?: "throw" | "collect" | undefined;
 }
 
 export interface ExpertAgentPluginLoadIssue {
   readonly source: string;
   readonly code:
-    | "missing_config"
     | "invalid_source"
     | "missing_manifest"
     | "missing_entry"
+    | "identity_conflict"
     | "install_error"
     | "load_error";
   readonly message: string;
   readonly pluginId?: string | undefined;
-  readonly missingConfig?: readonly string[] | undefined;
+}
+
+export class ExpertAgentPluginLoadError extends Error {
+  constructor(readonly issues: readonly ExpertAgentPluginLoadIssue[]) {
+    super(
+      `Expert plugin loading failed: ${issues.map((issue) => `${issue.code}: ${issue.message}`).join("; ")}`,
+    );
+    this.name = "ExpertAgentPluginLoadError";
+  }
 }
 
 export interface LoadExpertAgentPluginsResult {
@@ -69,6 +85,13 @@ export interface LoadExpertAgentPluginsResult {
 
 export interface ExpertAgentPluginModule {
   readonly default?: ExpertAgentPluginEntry | undefined;
+}
+
+interface InstalledPluginMetadata {
+  readonly formatVersion: 1;
+  readonly ref: string;
+  readonly packageFingerprint: string;
+  readonly manifestFingerprint: string;
 }
 
 export async function loadExpertAgentPlugins(
@@ -83,182 +106,317 @@ export async function loadExpertAgentPlugins(
   });
 
   for (const source of options.sources) {
-    const sourcePath = readPluginSourcePath(source);
-    const config = readPluginSourceConfig(source);
-
+    const descriptor = normalizePluginSource(source);
     try {
-      const pluginDir = await prepareExpertAgentPluginSource(sourcePath, options);
-
+      const pluginDir = await prepareExpertAgentPluginSource(descriptor, options);
       pluginEntries.push({
-        entry: await importExpertAgentPlugin(pluginDir),
-        ...(config === undefined ? {} : { config }),
+        entry: await importExpertAgentPlugin(pluginDir, descriptor.expectedRef),
+        ...(descriptor.userConfig === undefined ? {} : { userConfig: descriptor.userConfig }),
+        ...(descriptor.hostBindings === undefined ? {} : { hostBindings: descriptor.hostBindings }),
       });
     } catch (error) {
       const issue: ExpertAgentPluginLoadIssue = {
-        source: sourcePath,
+        source: descriptor.source,
         code: readPluginLoadIssueCode(error),
         message: error instanceof Error ? error.message : String(error),
       };
       issues.push(issue);
-      logger.warn("Failed to load Expert plugin", {
-        ...issue,
-        error,
-      });
+      logger.warn("Failed to load Expert plugin", { ...issue, error });
     }
   }
 
+  if (issues.length > 0 && (options.pluginFailurePolicy ?? "throw") === "throw") {
+    throw new ExpertAgentPluginLoadError(issues);
+  }
   return { pluginEntries, issues };
 }
 
-export function isExpertAgentPluginEntryUse(
-  plugin: ExpertAgentPluginUse,
-): plugin is { readonly entry: ExpertAgentPluginEntry; readonly config?: unknown | undefined } {
+export function isExpertAgentPluginEntryUse(plugin: ExpertAgentPluginUse): plugin is {
+  readonly entry: ExpertAgentPluginEntry;
+  readonly userConfig?: Readonly<Record<string, unknown>> | undefined;
+  readonly hostBindings?: Readonly<Record<string, unknown>> | undefined;
+} {
   return typeof plugin === "object" && "entry" in plugin;
 }
 
-function readPluginSourcePath(source: ExpertAgentPluginSource): string {
-  return typeof source === "string" ? source : source.source;
-}
-
-function readPluginSourceConfig(source: ExpertAgentPluginSource): unknown | undefined {
-  return typeof source === "string" ? undefined : source.config;
-}
-
 export async function prepareExpertAgentPluginSource(
-  sourcePath: string,
+  source: ExpertAgentPluginSource,
   options: Pick<LoadExpertAgentPluginsOptions, "agentId" | "pragmaHome" | "env">,
 ): Promise<string> {
-  const absoluteSourcePath = isAbsolute(sourcePath) ? sourcePath : resolve(sourcePath);
+  const descriptor = normalizePluginSource(source);
+  const absoluteSourcePath = isAbsolute(descriptor.source)
+    ? descriptor.source
+    : resolve(descriptor.source);
   const sourceStats = await stat(absoluteSourcePath).catch(() => undefined);
 
   if (sourceStats === undefined) {
-    throw new InvalidPluginSourceError(`Plugin source does not exist: ${sourcePath}`);
+    throw new InvalidPluginSourceError(`Plugin source does not exist: ${descriptor.source}`);
   }
-
-  const installRoot = new PragmaPaths({
-    pragmaHome: options.pragmaHome,
-    env: options.env,
-  }).agentPluginsRoot(options.agentId);
-  await mkdir(installRoot, { recursive: true });
-
-  if (sourceStats.isDirectory()) {
-    await assertPluginManifestExists(absoluteSourcePath);
-    await assertPluginPackageJsonExists(absoluteSourcePath);
-
-    const manifest = readExpertAgentPluginManifest(resolve(absoluteSourcePath, "plugin.json"));
-    return await installExpertAgentPluginSource({
-      installRoot,
-      pluginId: manifest.id,
-      sourceDir: absoluteSourcePath,
-    });
-  }
-
   if (sourceStats.isFile() && extname(absoluteSourcePath) === ".zip") {
-    const tempDir = await mkdtemp(resolve(tmpdir(), "pragma-plugin-"));
-
-    try {
-      await execFileAsync("unzip", ["-q", absoluteSourcePath, "-d", tempDir], {
-        maxBuffer: 1024 * 1024 * 10,
-      });
-      const unpackedDir = await findUnpackedPluginRoot(tempDir);
-      const manifest = readExpertAgentPluginManifest(resolve(unpackedDir, "plugin.json"));
-      return await installExpertAgentPluginSource({
-        installRoot,
-        pluginId: manifest.id,
-        sourceDir: unpackedDir,
-      });
-    } finally {
-      await rm(tempDir, { recursive: true, force: true });
-    }
+    throw new InvalidPluginSourceError(
+      "Core does not expand plugin ZIP files. The host must validate and install a prebuilt ZIP before loading it.",
+    );
+  }
+  if (!sourceStats.isDirectory()) {
+    throw new InvalidPluginSourceError(
+      `Plugin source must be a directory or .zip file: ${descriptor.source}`,
+    );
   }
 
-  throw new InvalidPluginSourceError(
-    `Plugin source must be a directory or .zip file: ${sourcePath}`,
-  );
+  await assertPluginManifestExists(absoluteSourcePath);
+  await assertPluginPackageJsonExists(absoluteSourcePath);
+  const manifest = readExpertAgentPluginManifest(resolve(absoluteSourcePath, "plugin.json"));
+  const ref = pluginRef(manifest);
+  assertExpectedPluginRef(descriptor.expectedRef, ref);
+  const sourceFingerprint = await createExpertAgentPluginPackageFingerprint(absoluteSourcePath);
+  assertExpectedPackageFingerprint(descriptor.packageFingerprint, sourceFingerprint, ref);
+
+  const paths = new PragmaPaths({ pragmaHome: options.pragmaHome, env: options.env });
+  return await installExpertAgentPluginSource({
+    paths,
+    agentId: options.agentId,
+    manifest,
+    sourceDir: absoluteSourcePath,
+    packageFingerprint: sourceFingerprint,
+  });
+}
+
+export async function createExpertAgentPluginPackageFingerprint(
+  pluginDir: string,
+): Promise<string> {
+  const files = await collectPluginPackageFiles(resolve(pluginDir));
+  const hash = createHash("sha256");
+  hash.update("pragma.plugin.package/v1\0");
+  for (const file of files) {
+    const relativePath = relative(resolve(pluginDir), file).split(sep).join("/");
+    const contents = await readFile(file);
+    hash.update(String(Buffer.byteLength(relativePath)));
+    hash.update(":");
+    hash.update(relativePath);
+    hash.update(":");
+    hash.update(String(contents.byteLength));
+    hash.update(":");
+    hash.update(contents);
+    hash.update("\0");
+  }
+  return hash.digest("hex");
 }
 
 async function installExpertAgentPluginSource(options: {
-  readonly installRoot: string;
-  readonly pluginId: string;
+  readonly paths: PragmaPaths;
+  readonly agentId: string;
+  readonly manifest: ExpertAgentPluginManifest;
   readonly sourceDir: string;
+  readonly packageFingerprint: string;
 }): Promise<string> {
-  const encodedPluginId = encodePragmaPathSegment(options.pluginId);
-  const targetDir = join(options.installRoot, encodedPluginId);
-  const lockDir = join(options.installRoot, `.${encodedPluginId}.install-lock`);
+  const pluginRoot = options.paths.agentPluginRoot(options.agentId, options.manifest.id);
+  const targetDir = options.paths.versionedAgentPluginRoot(
+    options.agentId,
+    options.manifest.id,
+    options.manifest.version,
+  );
+  const expectedMetadata = createInstalledMetadata(options.manifest, options.packageFingerprint);
+  await mkdir(pluginRoot, { recursive: true });
 
-  try {
-    await mkdir(lockDir);
-  } catch (error) {
-    if (isAlreadyExistsError(error)) {
-      throw new PluginLoadError(
-        "install_error",
-        `Plugin ${options.pluginId} is already being installed for this Agent.`,
-      );
-    }
-    throw error;
+  const existingState = await inspectInstalledPlugin(targetDir);
+  if (existingState === "legacy-or-invalid") {
+    await rm(targetDir, { recursive: true, force: true });
+  } else if (existingState !== undefined) {
+    assertInstalledPluginMatches(existingState, expectedMetadata);
+    return targetDir;
   }
 
   let stagingDir: string | undefined;
   try {
-    stagingDir = await mkdtemp(join(options.installRoot, `.${encodedPluginId}.staging-`));
+    stagingDir = await mkdtemp(join(pluginRoot, `.${options.manifest.version}.staging-`));
     await cp(options.sourceDir, stagingDir, {
       recursive: true,
-      filter: shouldCopyPluginPackageFile,
+      filter: (sourcePath) => shouldCopyPluginPackageFile(options.sourceDir, sourcePath),
     });
-    await installExpertAgentPluginPackage(stagingDir, { sourceDir: options.sourceDir });
-    await rm(targetDir, { recursive: true, force: true });
-    await rename(stagingDir, targetDir);
-    return targetDir;
+    const copiedFingerprint = await createExpertAgentPluginPackageFingerprint(stagingDir);
+    assertExpectedPackageFingerprint(
+      options.packageFingerprint,
+      copiedFingerprint,
+      pluginRef(options.manifest),
+    );
+    await writeFile(
+      resolve(stagingDir, INSTALL_METADATA_FILE),
+      `${JSON.stringify(expectedMetadata, undefined, 2)}\n`,
+      "utf8",
+    );
+    try {
+      await rename(stagingDir, targetDir);
+      stagingDir = undefined;
+      return targetDir;
+    } catch (error) {
+      if (!isRenameCollision(error)) throw error;
+      const winner = await inspectInstalledPlugin(targetDir);
+      if (winner === undefined || winner === "legacy-or-invalid") throw error;
+      assertInstalledPluginMatches(winner, expectedMetadata);
+      return targetDir;
+    }
   } finally {
     if (stagingDir !== undefined) {
       await rm(stagingDir, { recursive: true, force: true });
     }
-    await rm(lockDir, { recursive: true, force: true });
   }
 }
 
-function shouldCopyPluginPackageFile(source: string): boolean {
-  return !pathContainsSegment(source, "node_modules") && !pathContainsSegment(source, ".turbo");
+async function inspectInstalledPlugin(
+  targetDir: string,
+): Promise<InstalledPluginMetadata | "legacy-or-invalid" | undefined> {
+  if ((await stat(targetDir).catch(() => undefined))?.isDirectory() !== true) return undefined;
+  try {
+    const value = JSON.parse(
+      await readFile(resolve(targetDir, INSTALL_METADATA_FILE), "utf8"),
+    ) as Partial<InstalledPluginMetadata>;
+    if (
+      value.formatVersion !== INSTALL_FORMAT_VERSION ||
+      typeof value.ref !== "string" ||
+      typeof value.packageFingerprint !== "string" ||
+      !SHA256_PATTERN.test(value.packageFingerprint) ||
+      typeof value.manifestFingerprint !== "string" ||
+      !SHA256_PATTERN.test(value.manifestFingerprint)
+    ) {
+      return "legacy-or-invalid";
+    }
+    const actualFingerprint = await createExpertAgentPluginPackageFingerprint(targetDir);
+    if (actualFingerprint !== value.packageFingerprint) return "legacy-or-invalid";
+    return value as InstalledPluginMetadata;
+  } catch {
+    return "legacy-or-invalid";
+  }
 }
 
-function pathContainsSegment(path: string, segment: string): boolean {
-  return path.split("/").includes(segment);
-}
-
-async function importExpertAgentPlugin(pluginDir: string): Promise<ExpertAgentPluginEntry> {
+async function importExpertAgentPlugin(
+  pluginDir: string,
+  expectedRef?: string,
+): Promise<ExpertAgentPluginEntry> {
   const manifest = readExpertAgentPluginManifest(resolve(pluginDir, "plugin.json"));
+  const ref = pluginRef(manifest);
+  assertExpectedPluginRef(expectedRef, ref);
   const entryPath = resolve(pluginDir, manifest.runtime.entry);
-
-  const entryStats = await stat(entryPath).catch(() => undefined);
-
-  if (entryStats?.isFile() !== true) {
+  if ((await stat(entryPath).catch(() => undefined))?.isFile() !== true) {
     throw new PluginLoadError(
       "missing_entry",
       `Plugin ${manifest.id} entry file does not exist: ${manifest.runtime.entry}`,
     );
   }
-
   const module = (await import(pathToFileURL(entryPath).href)) as ExpertAgentPluginModule;
   const plugin = module.default;
-
   if (plugin === undefined) {
-    throw new Error(`Plugin ${manifest.id} must default export definePluginEntry(...).`);
-  }
-
-  if (plugin.manifest.id !== manifest.id) {
-    throw new Error(
-      `Plugin export id ${plugin.manifest.id} does not match manifest id ${manifest.id}.`,
+    throw new PluginLoadError(
+      "load_error",
+      `Plugin ${manifest.id} must default export definePluginEntry(...).`,
     );
   }
-
+  if (stableStringify(plugin.manifest) !== stableStringify(manifest)) {
+    throw new PluginLoadError(
+      "identity_conflict",
+      `Plugin export manifest does not match installed manifest for ${ref}.`,
+    );
+  }
   return plugin;
+}
+
+async function collectPluginPackageFiles(root: string): Promise<string[]> {
+  const files: string[] = [];
+  const visit = async (directory: string): Promise<void> => {
+    const entries = await readdir(directory, { withFileTypes: true });
+    for (const entry of entries) {
+      if (
+        HOST_INSTALL_METADATA_FILES.has(entry.name) ||
+        EXCLUDED_PACKAGE_SEGMENTS.has(entry.name)
+      ) {
+        continue;
+      }
+      const path = resolve(directory, entry.name);
+      if (entry.isSymbolicLink()) {
+        throw new InvalidPluginSourceError(
+          `Plugin packages cannot contain symbolic links: ${path}`,
+        );
+      }
+      if (entry.isDirectory()) {
+        await visit(path);
+      } else if (entry.isFile()) {
+        files.push(path);
+      } else {
+        throw new InvalidPluginSourceError(`Plugin packages can contain only files: ${path}`);
+      }
+    }
+  };
+  await visit(root);
+  return files.sort((left, right) => left.localeCompare(right));
+}
+
+function shouldCopyPluginPackageFile(root: string, sourcePath: string): boolean {
+  const segments = relative(root, sourcePath)
+    .split(/[\\/]+/u)
+    .filter(Boolean);
+  return !segments.some((segment) => EXCLUDED_PACKAGE_SEGMENTS.has(segment));
+}
+
+function normalizePluginSource(source: ExpertAgentPluginSource): ExpertAgentPluginSourceDescriptor {
+  return typeof source === "string" ? { source } : source;
+}
+
+function pluginRef(manifest: ExpertAgentPluginManifest): `plugin:${string}@${string}` {
+  return `plugin:${manifest.id}@${manifest.version}`;
+}
+
+function createInstalledMetadata(
+  manifest: ExpertAgentPluginManifest,
+  packageFingerprint: string,
+): InstalledPluginMetadata {
+  return {
+    formatVersion: INSTALL_FORMAT_VERSION,
+    ref: pluginRef(manifest),
+    packageFingerprint,
+    manifestFingerprint: sha256(stableStringify(manifest)),
+  };
+}
+
+function assertInstalledPluginMatches(
+  actual: InstalledPluginMetadata,
+  expected: InstalledPluginMetadata,
+): void {
+  if (
+    actual.ref !== expected.ref ||
+    actual.packageFingerprint !== expected.packageFingerprint ||
+    actual.manifestFingerprint !== expected.manifestFingerprint
+  ) {
+    throw new PluginLoadError(
+      "identity_conflict",
+      `Plugin ${expected.ref} is immutable and the cached package contains different bytes.`,
+    );
+  }
+}
+
+function assertExpectedPluginRef(expected: string | undefined, actual: string): void {
+  if (expected !== undefined && expected !== actual) {
+    throw new PluginLoadError(
+      "identity_conflict",
+      `Resolved plugin ${actual} does not match requested ${expected}.`,
+    );
+  }
+}
+
+function assertExpectedPackageFingerprint(
+  expected: string | undefined,
+  actual: string,
+  ref: string,
+): void {
+  if (expected !== undefined && (!SHA256_PATTERN.test(expected) || expected !== actual)) {
+    throw new PluginLoadError(
+      "identity_conflict",
+      `Plugin ${ref} package fingerprint does not match the resolved package bytes.`,
+    );
+  }
 }
 
 async function assertPluginManifestExists(pluginDir: string): Promise<void> {
   const manifestPath = resolve(pluginDir, "plugin.json");
-  const manifestStats = await stat(manifestPath).catch(() => undefined);
-
-  if (manifestStats?.isFile() !== true) {
+  if ((await stat(manifestPath).catch(() => undefined))?.isFile() !== true) {
     throw new PluginLoadError(
       "missing_manifest",
       `Plugin manifest does not exist: ${manifestPath}`,
@@ -268,240 +426,13 @@ async function assertPluginManifestExists(pluginDir: string): Promise<void> {
 
 async function assertPluginPackageJsonExists(pluginDir: string): Promise<void> {
   const packageJsonPath = resolve(pluginDir, "package.json");
-  const packageJsonStats = await stat(packageJsonPath).catch(() => undefined);
-
-  if (packageJsonStats?.isFile() !== true) {
+  if ((await stat(packageJsonPath).catch(() => undefined))?.isFile() !== true) {
     throw new PluginLoadError(
       "invalid_source",
       `Plugin package.json does not exist: ${packageJsonPath}`,
     );
   }
 }
-
-async function findUnpackedPluginRoot(tempDir: string): Promise<string> {
-  const directManifest = resolve(tempDir, "plugin.json");
-  const directStats = await stat(directManifest).catch(() => undefined);
-
-  if (directStats?.isFile() === true) {
-    return tempDir;
-  }
-
-  const name = basename(tempDir);
-  const candidates = await import("node:fs/promises").then((fs) => fs.readdir(tempDir));
-
-  for (const candidate of candidates) {
-    const path = resolve(tempDir, candidate);
-    const manifestStats = await stat(resolve(path, "plugin.json")).catch(() => undefined);
-
-    if (manifestStats?.isFile() === true) {
-      return path;
-    }
-  }
-
-  throw new PluginLoadError(
-    "missing_manifest",
-    `Zip ${name} does not contain a plugin.json at its root.`,
-  );
-}
-
-async function installExpertAgentPluginPackage(
-  pluginDir: string,
-  options: { readonly sourceDir: string },
-): Promise<void> {
-  const packageJsonPath = resolve(pluginDir, "package.json");
-  const packageJson = await readPackageJson(packageJsonPath);
-
-  if (packageJson === undefined) {
-    return;
-  }
-
-  await rm(resolve(pluginDir, "node_modules"), { recursive: true, force: true });
-  await rewriteWorkspaceDependencies(packageJsonPath, packageJson, options.sourceDir);
-  await runPluginPackageCommand(pluginDir, "install", [
-    "install",
-    "--ignore-workspace",
-    "--no-frozen-lockfile",
-  ]);
-
-  if (hasPackageScript(packageJson, "build")) {
-    await runPluginPackageCommand(pluginDir, "build", ["run", "build"]);
-  }
-}
-
-async function rewriteWorkspaceDependencies(
-  packageJsonPath: string,
-  packageJson: PackageJson,
-  sourceDir: string,
-): Promise<void> {
-  const workspaceRoot = await findNearestFile(sourceDir, "pnpm-workspace.yaml");
-  const workspacePackages =
-    workspaceRoot === undefined
-      ? new Map<string, string>()
-      : await readWorkspacePackageDirectories(dirname(workspaceRoot));
-  let changed = false;
-
-  for (const field of dependencyFields) {
-    const dependencies = readRecord(packageJson[field]);
-
-    if (dependencies === undefined) {
-      continue;
-    }
-
-    for (const [name, version] of Object.entries(dependencies)) {
-      if (!version.startsWith("workspace:")) {
-        continue;
-      }
-
-      const workspacePackageDir = workspacePackages.get(name);
-
-      if (workspacePackageDir === undefined) {
-        throw new PluginLoadError(
-          "install_error",
-          `Plugin package ${packageJsonPath} uses workspace dependency ${name} but no source workspace package was found.`,
-        );
-      }
-
-      dependencies[name] = `link:${workspacePackageDir}`;
-      changed = true;
-    }
-  }
-
-  if (changed) {
-    await writeFile(packageJsonPath, `${JSON.stringify(packageJson, null, 2)}\n`, "utf8");
-  }
-}
-
-async function readWorkspacePackageDirectories(
-  workspaceRoot: string,
-): Promise<Map<string, string>> {
-  const packages = new Map<string, string>();
-  await collectPackageDirectories(workspaceRoot, packages);
-  return packages;
-}
-
-async function collectPackageDirectories(
-  dir: string,
-  packages: Map<string, string>,
-): Promise<void> {
-  const entries = await readdir(dir, { withFileTypes: true }).catch(() => []);
-
-  if (entries.some((entry) => entry.isFile() && entry.name === "package.json")) {
-    const packageJson = await readPackageJson(resolve(dir, "package.json"));
-    const name = typeof packageJson?.name === "string" ? packageJson.name : undefined;
-
-    if (name !== undefined) {
-      packages.set(name, dir);
-    }
-  }
-
-  for (const entry of entries) {
-    if (!entry.isDirectory() || ignoredWorkspaceDirs.has(entry.name)) {
-      continue;
-    }
-
-    await collectPackageDirectories(resolve(dir, entry.name), packages);
-  }
-}
-
-async function findNearestFile(startDir: string, fileName: string): Promise<string | undefined> {
-  let currentDir = startDir;
-
-  while (true) {
-    const candidate = resolve(currentDir, fileName);
-    const candidateStats = await stat(candidate).catch(() => undefined);
-
-    if (candidateStats?.isFile() === true) {
-      return candidate;
-    }
-
-    const parentDir = dirname(currentDir);
-
-    if (parentDir === currentDir) {
-      return undefined;
-    }
-
-    currentDir = parentDir;
-  }
-}
-
-async function runPluginPackageCommand(
-  pluginDir: string,
-  commandName: string,
-  args: readonly string[],
-): Promise<void> {
-  try {
-    await execFileAsync("pnpm", ["--dir", pluginDir, ...args], {
-      maxBuffer: 1024 * 1024 * 10,
-    });
-  } catch (error) {
-    const message = formatPluginPackageCommandError(error);
-
-    throw new PluginLoadError(
-      "install_error",
-      `Plugin package ${commandName} failed in ${pluginDir}: ${message}`,
-    );
-  }
-}
-
-function formatPluginPackageCommandError(error: unknown): string {
-  if (!(error instanceof Error)) {
-    return String(error);
-  }
-
-  const output = error as Error & {
-    readonly stdout?: string | Buffer | undefined;
-    readonly stderr?: string | Buffer | undefined;
-  };
-  const stdout = output.stdout === undefined ? "" : output.stdout.toString().trim();
-  const stderr = output.stderr === undefined ? "" : output.stderr.toString().trim();
-
-  return [error.message, stdout === "" ? undefined : stdout, stderr === "" ? undefined : stderr]
-    .filter((part): part is string => part !== undefined)
-    .join("\n");
-}
-
-async function readPackageJson(path: string): Promise<PackageJson | undefined> {
-  const packageJsonStats = await stat(path).catch(() => undefined);
-
-  if (packageJsonStats?.isFile() !== true) {
-    return undefined;
-  }
-
-  return JSON.parse(await readFile(path, "utf8")) as PackageJson;
-}
-
-function hasPackageScript(packageJson: PackageJson, name: string): boolean {
-  const scripts = readRecord(packageJson.scripts);
-  return typeof scripts?.[name] === "string";
-}
-
-function readRecord(value: unknown): Record<string, string> | undefined {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
-    return undefined;
-  }
-
-  return value as Record<string, string>;
-}
-
-type PackageJson = Record<string, unknown>;
-
-const dependencyFields = [
-  "dependencies",
-  "devDependencies",
-  "peerDependencies",
-  "optionalDependencies",
-] as const;
-
-const ignoredWorkspaceDirs = new Set([
-  ".git",
-  ".turbo",
-  ".next",
-  ".pragma",
-  "coverage",
-  "dist",
-  "node_modules",
-  "workspace",
-]);
 
 class InvalidPluginSourceError extends Error {}
 
@@ -515,17 +446,31 @@ class PluginLoadError extends Error {
 }
 
 function readPluginLoadIssueCode(error: unknown): ExpertAgentPluginLoadIssue["code"] {
-  if (error instanceof PluginLoadError) {
-    return error.code;
-  }
-
-  if (error instanceof InvalidPluginSourceError) {
-    return "invalid_source";
-  }
-
+  if (error instanceof PluginLoadError) return error.code;
+  if (error instanceof InvalidPluginSourceError) return "invalid_source";
   return "load_error";
 }
 
-function isAlreadyExistsError(error: unknown): boolean {
-  return typeof error === "object" && error !== null && "code" in error && error.code === "EEXIST";
+function isRenameCollision(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    ["EEXIST", "ENOTEMPTY", "EPERM"].includes(String(error.code))
+  );
+}
+
+function sha256(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function stableStringify(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
+  if (value !== null && typeof value === "object") {
+    return `{${Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, nested]) => `${JSON.stringify(key)}:${stableStringify(nested)}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "null";
 }

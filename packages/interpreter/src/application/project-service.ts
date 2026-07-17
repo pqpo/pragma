@@ -26,6 +26,7 @@ import {
   type PragmaProject,
 } from "../compiler/pragma-project.ts";
 import type { InvocableResource } from "../runtime/registries.ts";
+import type { PragmaPluginResolver } from "../runtime/registries.ts";
 import {
   createDefaultPragmaResourceAdapterRegistry,
   type PragmaAdapterHost,
@@ -288,6 +289,7 @@ export class PragmaProjectService {
     readonly environmentId: string;
     readonly adapterHost: PragmaAdapterHost;
     readonly runtimes?: RuntimeRegistry | undefined;
+    readonly plugins?: PragmaPluginResolver | undefined;
   }): Promise<CompiledResource<T>> {
     const location = await this.options.repository.getRevision(input.projectId, input.revision);
     if (location === undefined) {
@@ -301,6 +303,7 @@ export class PragmaProjectService {
       adapterHost: input.adapterHost,
       resourceAdapters: this.adapters,
       runtimes: input.runtimes,
+      plugins: input.plugins,
     });
   }
 

@@ -16,6 +16,9 @@ export type ExperienceMemoryStoreFactory = (
 export interface ExperienceMemoryPluginConfig {
   readonly enabled?: boolean | undefined;
   readonly filePath?: string | undefined;
+}
+
+export interface ExperienceMemoryPluginHostBindings {
   readonly store?: ExperienceMemoryStore | undefined;
   readonly storeFactory?: ExperienceMemoryStoreFactory | undefined;
 }
@@ -35,7 +38,10 @@ export const experienceMemoryCapabilities = [
 export function createExperienceMemoryContributions(
   context: ExperienceMemoryPluginSetupContext,
 ): ExpertAgentPluginContributions {
-  const config = readExperienceMemoryConfig(context.config);
+  const config = {
+    ...readExperienceMemoryConfig(context.userConfig),
+    ...readExperienceMemoryHostBindings(context.hostBindings),
+  };
 
   if (config.enabled === false) {
     return {};
@@ -74,9 +80,6 @@ function readExperienceMemoryConfig(input: unknown): ExperienceMemoryPluginConfi
 
   const enabled = (experience as { enabled?: unknown }).enabled;
   const filePath = (experience as { filePath?: unknown }).filePath;
-  const store = (experience as { store?: unknown }).store;
-  const storeFactory = (experience as { storeFactory?: unknown }).storeFactory;
-
   if (enabled !== undefined && typeof enabled !== "boolean") {
     throw new Error("Experience memory config enabled must be a boolean when provided.");
   }
@@ -84,15 +87,11 @@ function readExperienceMemoryConfig(input: unknown): ExperienceMemoryPluginConfi
   return {
     enabled: enabled ?? true,
     ...(filePath === undefined ? {} : { filePath: assertOptionalString(filePath, "filePath") }),
-    ...(store === undefined ? {} : { store: assertExperienceMemoryStore(store) }),
-    ...(storeFactory === undefined
-      ? {}
-      : { storeFactory: assertExperienceMemoryStoreFactory(storeFactory) }),
   };
 }
 
 function resolveExperienceMemoryStore(
-  config: ExperienceMemoryPluginConfig,
+  config: ExperienceMemoryPluginConfig & ExperienceMemoryPluginHostBindings,
   context: ExperienceMemoryPluginSetupContext,
 ): ExperienceMemoryStore {
   if (config.store !== undefined) {
@@ -127,6 +126,23 @@ function assertExperienceMemoryStoreFactory(input: unknown): ExperienceMemorySto
   }
 
   throw new Error("Experience memory config storeFactory must be a function.");
+}
+
+function readExperienceMemoryHostBindings(
+  input: Readonly<Record<string, unknown>>,
+): ExperienceMemoryPluginHostBindings {
+  const experience = input["experience"];
+  if (experience === undefined) return {};
+  if (experience === null || typeof experience !== "object" || Array.isArray(experience)) {
+    throw new Error("Experience memory hostBindings.experience must be an object.");
+  }
+  const value = experience as Record<string, unknown>;
+  return {
+    ...(value["store"] === undefined ? {} : { store: assertExperienceMemoryStore(value["store"]) }),
+    ...(value["storeFactory"] === undefined
+      ? {}
+      : { storeFactory: assertExperienceMemoryStoreFactory(value["storeFactory"]) }),
+  };
 }
 
 function assertOptionalString(input: unknown, fieldName: string): string {

@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "pragma.plugin/v1",
+  "schemaVersion": "pragma.plugin/v2",
   "id": "learning-plugin",
   "name": "Learning Plugin",
   "description": "A teaching plugin that contributes context, a managed tool, and lifecycle hooks.",
@@ -7,7 +7,8 @@
   "tags": ["example", "context", "tool", "hooks"],
   "runtime": {
     "type": "expert-agent-plugin",
-    "entry": "./src/plugin.ts"
+    "entry": "./src/plugin.ts",
+    "trust": "trusted-host"
   },
   "capabilities": [
     {
@@ -27,21 +28,27 @@
     }
   ],
   "configuration": {
-    "properties": [
-      {
-        "name": "teamName",
+    "type": "object",
+    "properties": {
+      "teamName": {
         "type": "string",
         "description": "Team name exposed through context and tools.",
-        "required": false,
+        "minLength": 1,
         "default": "Pragma Team"
       },
-      {
-        "name": "greetingPrefix",
+      "greetingPrefix": {
         "type": "string",
         "description": "Prefix used by create_team_greeting.",
-        "required": false,
+        "minLength": 1,
         "default": "你好"
       }
-    ]
+    },
+    "additionalProperties": false
+  },
+  "permissions": {
+    "filesystem": [],
+    "shell": [],
+    "network": [],
+    "environment": []
   }
 }

@@ -1,7 +1,8 @@
-import { existsSync, readFileSync } from "node:fs";
-import { dirname, isAbsolute, resolve } from "node:path";
+import { readFileSync } from "node:fs";
+import { isAbsolute, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { Validator, type Schema } from "@cfworker/json-schema";
 import { z } from "zod";
 
 import type {
@@ -31,58 +32,141 @@ import type {
 import { mergeExpertAgentToolApprovals } from "../tools/managed-tool.ts";
 
 type MaybePromise<TValue> = TValue | Promise<TValue>;
-type DeepReadonly<TValue> = TValue extends (...args: never[]) => unknown
+const PLUGIN_CONFIGURATION_SCHEMA_KEYWORDS = new Set([
+  "$id",
+  "$schema",
+  "$comment",
+  "type",
+  "title",
+  "description",
+  "default",
+  "examples",
+  "properties",
+  "required",
+  "additionalProperties",
+  "items",
+  "prefixItems",
+  "minItems",
+  "maxItems",
+  "uniqueItems",
+  "contains",
+  "minContains",
+  "maxContains",
+  "minimum",
+  "maximum",
+  "exclusiveMinimum",
+  "exclusiveMaximum",
+  "multipleOf",
+  "minLength",
+  "maxLength",
+  "pattern",
+  "format",
+  "enum",
+  "const",
+  "allOf",
+  "anyOf",
+  "oneOf",
+  "not",
+  "if",
+  "then",
+  "else",
+  "dependentRequired",
+  "dependentSchemas",
+  "minProperties",
+  "maxProperties",
+  "propertyNames",
+  "x-pragma-secret",
+]);
+export type DeepReadonly<TValue> = TValue extends (...args: never[]) => unknown
   ? TValue
   : TValue extends readonly (infer TItem)[]
     ? readonly DeepReadonly<TItem>[]
     : TValue extends object
       ? { readonly [TKey in keyof TValue]: DeepReadonly<TValue[TKey]> }
       : TValue;
+const PluginIdentifierSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(120)
+  .regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/);
 
-const ExpertAgentPluginCapabilitySchema = z.looseObject({
-  type: z.string().min(1),
-  name: z.string().min(1),
-  description: z.string().min(1).optional(),
-});
+const PluginVersionSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(100)
+  .regex(/^[A-Za-z0-9][A-Za-z0-9.+_-]*$/);
 
-const ExpertAgentPluginRequiredConfigSchema = z.looseObject({
-  name: z.string().min(1),
-  description: z.string().min(1).optional(),
-  secret: z.boolean().default(false),
-});
+const PluginEntryPathSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(2_000)
+  .refine((entry) => {
+    const normalized = entry.replaceAll("\\", "/");
+    return (
+      !entry.includes("\0") &&
+      !isAbsolute(entry) &&
+      !/^[A-Za-z]:\//.test(normalized) &&
+      !normalized.startsWith("/") &&
+      !normalized.split("/").includes("..")
+    );
+  }, "Plugin runtime entry must stay inside the plugin package.");
 
-const ExpertAgentPluginConfigurationPropertySchema = z.looseObject({
-  name: z.string().min(1),
-  type: z.enum(["string", "number", "boolean", "object", "array"]),
-  description: z.string().min(1),
-  required: z.boolean().default(false),
-  secret: z.boolean().default(false),
-  default: z.unknown().optional(),
-  enum: z.array(z.union([z.string(), z.number(), z.boolean()])).optional(),
-});
-
-const ExpertAgentPluginConfigurationSchema = z.looseObject({
-  properties: z.array(ExpertAgentPluginConfigurationPropertySchema).default([]),
-});
-
-const ExpertAgentPluginManifestSchema = z.looseObject({
-  schemaVersion: z.literal("pragma.plugin/v1"),
-  id: z.string().min(1),
-  name: z.string().min(1),
-  description: z.string().min(1),
-  version: z.string().min(1).optional(),
-  tags: z.array(z.string().min(1)).optional(),
-  runtime: z.looseObject({
+const ExpertAgentPluginCapabilitySchema = z
+  .object({
     type: z.string().min(1),
-    entry: z.string().min(1),
-  }),
-  capabilities: z.array(ExpertAgentPluginCapabilitySchema).default([]),
-  configuration: ExpertAgentPluginConfigurationSchema.default({ properties: [] }),
-  required_config: z.array(ExpertAgentPluginRequiredConfigSchema).default([]),
-});
+    name: z.string().min(1),
+    description: z.string().min(1).optional(),
+  })
+  .strict();
+
+export const ExpertAgentPluginConfigurationSchema = z
+  .record(z.string(), z.unknown())
+  .superRefine((schema, context) => validatePluginConfigurationSchema(schema, context));
+
+const ExpertAgentPluginPermissionsSchema = z
+  .object({
+    filesystem: z.array(z.string().trim().min(1)).refine(hasUniqueStrings),
+    shell: z.array(z.string().trim().min(1)).refine(hasUniqueStrings),
+    network: z.array(z.string().trim().min(1)).refine(hasUniqueStrings),
+    environment: z.array(z.string().trim().min(1)).refine(hasUniqueStrings),
+  })
+  .strict();
+
+export const ExpertAgentPluginManifestSchema = z
+  .object({
+    schemaVersion: z.literal("pragma.plugin/v2"),
+    id: PluginIdentifierSchema,
+    name: z.string().min(1),
+    description: z.string().min(1),
+    version: PluginVersionSchema,
+    tags: z.array(z.string().min(1)).default([]),
+    runtime: z
+      .object({
+        type: z.literal("expert-agent-plugin"),
+        entry: PluginEntryPathSchema,
+        trust: z.literal("trusted-host"),
+      })
+      .strict(),
+    capabilities: z.array(ExpertAgentPluginCapabilitySchema).default([]),
+    configuration: ExpertAgentPluginConfigurationSchema,
+    permissions: ExpertAgentPluginPermissionsSchema,
+  })
+  .strict()
+  .superRefine((manifest, context) => {
+    if (manifest.configuration["type"] !== "object") {
+      context.addIssue({
+        code: "custom",
+        message: "Plugin configuration must be a JSON Schema with an object root.",
+        path: ["configuration", "type"],
+      });
+    }
+  });
 
 export type ExpertAgentPluginManifest = DeepReadonly<
-  z.infer<typeof ExpertAgentPluginManifestSchema> & Record<string, unknown>
+  z.infer<typeof ExpertAgentPluginManifestSchema>
 >;
 
 export type ExpertAgentPluginMetadata = Pick<
@@ -156,7 +240,8 @@ export interface ExpertAgentPluginSetupContext {
   readonly contextSystem: ContextSystem;
   readonly workspaceRoot: string;
   readonly env: NodeJS.ProcessEnv;
-  readonly config?: unknown | undefined;
+  readonly userConfig: DeepReadonly<Record<string, unknown>>;
+  readonly hostBindings: Readonly<Record<string, unknown>>;
   readonly logger: ExpertAgentLogger;
 }
 
@@ -215,10 +300,12 @@ export interface ExpertAgentPluginEntry extends ExpertAgentPluginMetadata {
 
 export interface ExpertAgentPluginRegistration {
   readonly entry: ExpertAgentPluginEntry;
-  readonly config?: unknown | undefined;
+  readonly userConfig?: Readonly<Record<string, unknown>> | undefined;
+  readonly hostBindings?: Readonly<Record<string, unknown>> | undefined;
 }
 
 export interface DefineExpertAgentPluginEntryOptions {
+  readonly manifest: ExpertAgentPluginManifest;
   readonly setup: (context: ExpertAgentPluginSetupContext) => ExpertAgentPluginContributions;
 }
 
@@ -258,14 +345,14 @@ export interface ResolveExpertAgentPluginsOptions {
 export function definePluginEntry(
   options: DefineExpertAgentPluginEntryOptions,
 ): ExpertAgentPluginEntry {
-  const manifest = readExpertAgentPluginManifestFromCaller();
+  const manifest = deepFreeze(ExpertAgentPluginManifestSchema.parse(options.manifest));
 
   return {
     id: manifest.id,
     name: manifest.name,
     description: manifest.description,
-    ...(manifest.version === undefined ? {} : { version: manifest.version }),
-    ...(manifest.tags === undefined ? {} : { tags: manifest.tags }),
+    version: manifest.version,
+    tags: manifest.tags,
     manifest,
     setup: (context) => options.setup(context),
   };
@@ -286,13 +373,6 @@ export function readExpertAgentPluginManifest(
   return deepFreeze(ExpertAgentPluginManifestSchema.parse(manifest));
 }
 
-export function createExpertAgentPluginConfigEnvName(options: {
-  readonly pluginId: string;
-  readonly name: string;
-}): string {
-  return `PRAGMA_PLUGIN_${toEnvSegment(options.pluginId)}_${toEnvSegment(options.name)}`;
-}
-
 export function resolveExpertAgentPlugins(
   options: ResolveExpertAgentPluginsOptions,
 ): ResolvedExpertAgentPluginContributions {
@@ -308,13 +388,16 @@ export function resolveExpertAgentPlugins(
     env: options.env ?? process.env,
   };
   const pluginEntries = registrations.map((registration) => {
-    const config = resolvePluginConfig(registration, baseContext.env);
+    const userConfig = resolveExpertAgentPluginConfig(registration.entry.manifest, [
+      registration.userConfig ?? {},
+    ]);
 
     return {
       plugin: registration.entry,
       contributions: registration.entry.setup({
         ...baseContext,
-        ...(config === undefined ? {} : { config }),
+        userConfig,
+        hostBindings: registration.hostBindings ?? {},
         logger: createExpertAgentLogger(loggerProvider, {
           component: "plugin",
           agentId: options.agentId,
@@ -352,86 +435,22 @@ function normalizePluginRegistration(
   return { entry: plugin };
 }
 
-function resolvePluginConfig(
-  registration: ExpertAgentPluginRegistration,
-  env: NodeJS.ProcessEnv,
-): unknown | undefined {
-  const envConfig = readPluginEnvConfig(registration.entry.manifest, env);
-  const explicitConfig = readExplicitPluginConfig(registration);
-  const config = mergePlainObjects(envConfig, explicitConfig ?? {});
-  const missingConfig = findMissingRequiredConfig(registration.entry.manifest, config);
-
-  if (missingConfig.length > 0) {
-    const missing = missingConfig
-      .map(
-        (item) =>
-          `${item.name} (${createExpertAgentPluginConfigEnvName({
-            pluginId: registration.entry.manifest.id,
-            name: item.name,
-          })})`,
-      )
-      .join(", ");
-    throw new Error(`Plugin ${registration.entry.manifest.id} requires missing config: ${missing}`);
-  }
-
-  return Object.keys(config).length === 0 ? undefined : config;
-}
-
-function readPluginEnvConfig(
+export function resolveExpertAgentPluginConfig(
   manifest: ExpertAgentPluginManifest,
-  env: NodeJS.ProcessEnv,
+  layers: readonly Readonly<Record<string, unknown>>[],
 ): Record<string, unknown> {
-  const config: Record<string, unknown> = {};
-
-  for (const item of manifest.required_config) {
-    const envName = createExpertAgentPluginConfigEnvName({
-      pluginId: manifest.id,
-      name: item.name,
-    });
-    const value = readEnv(env, envName);
-
-    if (value !== undefined) {
-      setConfigPath(config, item.name, value);
-    }
+  const defaults = readJsonSchemaDefaults(manifest.configuration as Record<string, unknown>);
+  const config = layers.reduce((current, layer) => mergePlainObjects(current, layer), defaults);
+  const result = new Validator(manifest.configuration as Schema, "2020-12", false).validate(config);
+  if (!result.valid) {
+    throw new Error(
+      `Plugin ${manifest.id} config is invalid: ${result.errors.map((error) => `${error.instanceLocation || "/"}: ${error.error}`).join("; ")}`,
+    );
   }
-
-  return config;
+  return deepFreeze(config);
 }
 
-function readExplicitPluginConfig(
-  registration: ExpertAgentPluginRegistration,
-): Record<string, unknown> | undefined {
-  if (registration.config === undefined) {
-    return undefined;
-  }
-
-  if (
-    registration.config !== null &&
-    typeof registration.config === "object" &&
-    !Array.isArray(registration.config)
-  ) {
-    return registration.config as Record<string, unknown>;
-  }
-
-  throw new Error(`Plugin ${registration.entry.manifest.id} config must be an object.`);
-}
-
-function findMissingRequiredConfig(
-  manifest: ExpertAgentPluginManifest,
-  config: Record<string, unknown>,
-): readonly { readonly name: string }[] {
-  return manifest.required_config.flatMap((item) => {
-    const value = readConfigPath(config, item.name);
-
-    if (value === undefined || (typeof value === "string" && value.length === 0)) {
-      return [{ name: item.name }];
-    }
-
-    return [];
-  });
-}
-
-function mergePlainObjects(
+export function mergeExpertAgentPluginConfig(
   left: Record<string, unknown>,
   right: Record<string, unknown>,
 ): Record<string, unknown> {
@@ -440,13 +459,21 @@ function mergePlainObjects(
   for (const [key, value] of Object.entries(right)) {
     const existing = merged[key];
     merged[key] =
-      isPlainObject(existing) && isPlainObject(value) ? mergePlainObjects(existing, value) : value;
+      isPlainObject(existing) && isPlainObject(value)
+        ? mergeExpertAgentPluginConfig(existing, value)
+        : value;
   }
 
   return merged;
 }
 
-function setConfigPath(config: Record<string, unknown>, path: string, value: string): void {
+const mergePlainObjects = mergeExpertAgentPluginConfig;
+
+export function setExpertAgentPluginConfigPath(
+  config: Record<string, unknown>,
+  path: string,
+  value: unknown,
+): void {
   const parts = path.split(".").filter((part) => part.length > 0);
   let cursor = config;
 
@@ -467,36 +494,108 @@ function setConfigPath(config: Record<string, unknown>, path: string, value: str
   }
 }
 
-function readConfigPath(config: Record<string, unknown>, path: string): unknown {
-  let cursor: unknown = config;
-
-  for (const part of path.split(".").filter((item) => item.length > 0)) {
-    if (!isPlainObject(cursor)) {
-      return undefined;
-    }
-
-    cursor = cursor[part];
-  }
-
-  return cursor;
-}
-
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-function readEnv(env: NodeJS.ProcessEnv, name: string): string | undefined {
-  const value = env[name];
-
-  return value === undefined || value.length === 0 ? undefined : value;
+function hasUniqueStrings(values: readonly string[]): boolean {
+  return new Set(values).size === values.length;
 }
 
-function toEnvSegment(value: string): string {
-  return value
-    .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
-    .replace(/[^A-Za-z0-9]+/g, "_")
-    .replace(/^_+|_+$/g, "")
-    .toUpperCase();
+function validatePluginConfigurationSchema(
+  schema: Record<string, unknown>,
+  context: z.RefinementCtx,
+): void {
+  try {
+    new Validator(schema as Schema, "2020-12", false).validate({});
+  } catch (error) {
+    context.addIssue({
+      code: "custom",
+      message: `Invalid plugin configuration JSON Schema: ${error instanceof Error ? error.message : String(error)}`,
+    });
+  }
+
+  visitPluginConfigurationSchema(schema, [], context);
+}
+
+function visitPluginConfigurationSchema(
+  schema: unknown,
+  path: readonly (string | number)[],
+  context: z.RefinementCtx,
+): void {
+  if (!isPlainObject(schema)) return;
+  for (const key of Object.keys(schema)) {
+    if (!PLUGIN_CONFIGURATION_SCHEMA_KEYWORDS.has(key)) {
+      context.addIssue({
+        code: "custom",
+        message: `Unsupported plugin configuration schema keyword: ${key}.`,
+        path: [...path, key],
+      });
+    }
+  }
+  if ("$ref" in schema || "$recursiveRef" in schema) {
+    context.addIssue({
+      code: "custom",
+      message: "Plugin configuration schemas cannot use references.",
+      path: [...path, "$ref"],
+    });
+  }
+  if (schema["type"] === "object" && schema["additionalProperties"] !== false) {
+    context.addIssue({
+      code: "custom",
+      message: "Object configuration schemas must set additionalProperties to false.",
+      path: [...path, "additionalProperties"],
+    });
+  }
+  if (schema["x-pragma-secret"] === true && schema["default"] !== undefined) {
+    context.addIssue({
+      code: "custom",
+      message: "Secret plugin configuration cannot declare a plaintext default.",
+      path: [...path, "default"],
+    });
+  }
+  if (schema["x-pragma-secret"] !== undefined && typeof schema["x-pragma-secret"] !== "boolean") {
+    context.addIssue({
+      code: "custom",
+      message: "x-pragma-secret must be a boolean.",
+      path: [...path, "x-pragma-secret"],
+    });
+  }
+  for (const [key, value] of Object.entries(schema)) {
+    if (key === "properties" && isPlainObject(value)) {
+      for (const [propertyName, propertySchema] of Object.entries(value)) {
+        visitPluginConfigurationSchema(propertySchema, [...path, key, propertyName], context);
+      }
+      continue;
+    }
+    if (["items", "if", "then", "else", "not", "contains"].includes(key)) {
+      visitPluginConfigurationSchema(value, [...path, key], context);
+      continue;
+    }
+    if (["allOf", "anyOf", "oneOf", "prefixItems"].includes(key) && Array.isArray(value)) {
+      value.forEach((item, index) =>
+        visitPluginConfigurationSchema(item, [...path, key, index], context),
+      );
+    }
+  }
+}
+
+function readJsonSchemaDefaults(schema: Record<string, unknown>): Record<string, unknown> {
+  const defaults: Record<string, unknown> = {};
+  const properties = schema["properties"];
+  if (!isPlainObject(properties)) return defaults;
+  for (const [name, propertySchema] of Object.entries(properties)) {
+    if (!isPlainObject(propertySchema)) continue;
+    if (propertySchema["default"] !== undefined) {
+      defaults[name] = structuredClone(propertySchema["default"]);
+      continue;
+    }
+    if (propertySchema["type"] === "object") {
+      const nested = readJsonSchemaDefaults(propertySchema);
+      if (Object.keys(nested).length > 0) defaults[name] = nested;
+    }
+  }
+  return defaults;
 }
 
 export async function dispatchExpertAgentHook<TName extends keyof ExpertAgentPluginHooks>(
@@ -754,72 +853,6 @@ function assertUniquePluginIds(pluginEntries: readonly ExpertAgentPluginEntry[])
     }
 
     seen.add(plugin.id);
-  }
-}
-
-function readExpertAgentPluginManifestFromCaller(): ExpertAgentPluginManifest {
-  const callerFile = findDefinePluginEntryCallerFile();
-
-  if (callerFile === undefined) {
-    throw new Error(
-      "Unable to locate plugin.json: definePluginEntry caller could not be resolved.",
-    );
-  }
-
-  const manifestPath = findNearestPluginManifest(callerFile);
-
-  if (manifestPath === undefined) {
-    throw new Error(`Unable to load Expert plugin: plugin.json was not found for ${callerFile}.`);
-  }
-
-  return readExpertAgentPluginManifest(manifestPath);
-}
-
-function findDefinePluginEntryCallerFile(): string | undefined {
-  const stack = new Error().stack?.split("\n").slice(1) ?? [];
-  const currentFile = fileURLToPath(import.meta.url);
-
-  for (const line of stack) {
-    const file = parseStackFrameFile(line);
-
-    if (file !== undefined && resolve(file) !== resolve(currentFile)) {
-      return file;
-    }
-  }
-
-  return undefined;
-}
-
-function parseStackFrameFile(line: string): string | undefined {
-  const match = /(?:\(|\s)(file:\/\/[^:)]+|[A-Za-z]:[\\/][^:)]+|\/[^:)]+):\d+:\d+\)?$/.exec(
-    line.trim(),
-  );
-  const value = match?.[1];
-
-  if (value === undefined) {
-    return undefined;
-  }
-
-  return value.startsWith("file://") ? fileURLToPath(value) : value;
-}
-
-function findNearestPluginManifest(fromFile: string): string | undefined {
-  let directory = dirname(fromFile);
-
-  while (true) {
-    const candidate = resolve(directory, "plugin.json");
-
-    if (existsSync(candidate)) {
-      return candidate;
-    }
-
-    const parent = dirname(directory);
-
-    if (parent === directory) {
-      return undefined;
-    }
-
-    directory = parent;
   }
 }
 

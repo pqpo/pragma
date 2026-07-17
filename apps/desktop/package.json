@@ -8,7 +8,10 @@
   "main": "./out/main/index.js",
   "scripts": {
     "prepare:electron": "install-electron",
+    "prepare:plugins": "node ./scripts/package-built-in-plugins.mjs",
+    "predev": "pnpm run prepare:plugins",
     "dev": "electron-vite dev",
+    "prebuild": "pnpm run prepare:plugins",
     "build": "electron-vite build",
     "package:dir": "pnpm run build && electron-builder --dir",
     "dist": "pnpm run build && electron-builder",
@@ -19,7 +22,7 @@
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json",
     "typecheck:web": "tsc --noEmit -p tsconfig.web.json",
     "test": "vitest run --passWithNoTests",
-    "clean": "rm -rf out dist"
+    "clean": "rm -rf out dist .plugin-bundles"
   },
   "dependencies": {
     "@dagrejs/dagre": "^3.0.0",
@@ -51,6 +54,7 @@
     "electron": "latest",
     "electron-builder": "^26.15.3",
     "electron-vite": "latest",
+    "esbuild": "^0.28.1",
     "typescript": "latest",
     "vite": "^7.0.0",
     "vitest": "latest"

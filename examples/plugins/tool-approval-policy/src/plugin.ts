@@ -1,6 +1,7 @@
-import { definePluginEntry } from "@pragma/core";
+import { definePluginEntry, readExpertAgentPluginManifest } from "@pragma/core";
 
 export default definePluginEntry({
+  manifest: readExpertAgentPluginManifest(new URL("../plugin.json", import.meta.url)),
   setup: () => ({
     toolApprovals: [
       {

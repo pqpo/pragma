@@ -1,11 +1,13 @@
 {
-  "schemaVersion": "pragma.plugin/v1",
+  "schemaVersion": "pragma.plugin/v2",
   "id": "plugin.other-context",
   "name": "Other plugin context",
   "description": "Adds context with colliding local ids",
+  "version": "0.0.0",
   "runtime": {
     "type": "expert-agent-plugin",
-    "entry": "./src/plugin.ts"
+    "entry": "./src/plugin.ts",
+    "trust": "trusted-host"
   },
   "capabilities": [
     {
@@ -13,5 +15,16 @@
       "name": "plugin.md",
       "description": "Other fixture context"
     }
-  ]
+  ],
+  "configuration": {
+    "type": "object",
+    "properties": {},
+    "additionalProperties": false
+  },
+  "permissions": {
+    "filesystem": [],
+    "shell": [],
+    "network": [],
+    "environment": []
+  }
 }

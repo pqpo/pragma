@@ -22,6 +22,9 @@ export interface TaskMemoryPluginConfig {
   readonly enabled?: boolean | undefined;
   readonly rootDir?: string | undefined;
   readonly filePath?: string | undefined;
+}
+
+export interface TaskMemoryPluginHostBindings {
   readonly store?: TaskMemoryStore | undefined;
   readonly storeFactory?: TaskMemoryStoreFactory | undefined;
 }
@@ -46,7 +49,10 @@ export const taskMemoryCapabilities = [
 export function createTaskMemoryContributions(
   context: TaskMemoryPluginSetupContext,
 ): ExpertAgentPluginContributions {
-  const config = readTaskMemoryConfig(context.config);
+  const config = {
+    ...readTaskMemoryConfig(context.userConfig),
+    ...readTaskMemoryHostBindings(context.hostBindings),
+  };
 
   if (config.enabled === false) {
     return {};
@@ -91,18 +97,11 @@ function readTaskMemoryConfig(input: unknown): TaskMemoryPluginConfig {
   const enabled = (task as { enabled?: unknown }).enabled;
   const rootDir = (task as { rootDir?: unknown }).rootDir;
   const filePath = (task as { filePath?: unknown }).filePath;
-  const store = (task as { store?: unknown }).store;
-  const storeFactory = (task as { storeFactory?: unknown }).storeFactory;
-
   if (enabled === undefined) {
     return {
       enabled: true,
       ...(rootDir === undefined ? {} : { rootDir: assertOptionalString(rootDir, "rootDir") }),
       ...(filePath === undefined ? {} : { filePath: assertOptionalString(filePath, "filePath") }),
-      ...(store === undefined ? {} : { store: assertTaskMemoryStore(store) }),
-      ...(storeFactory === undefined
-        ? {}
-        : { storeFactory: assertTaskMemoryStoreFactory(storeFactory) }),
     };
   }
 
@@ -114,15 +113,11 @@ function readTaskMemoryConfig(input: unknown): TaskMemoryPluginConfig {
     enabled,
     ...(rootDir === undefined ? {} : { rootDir: assertOptionalString(rootDir, "rootDir") }),
     ...(filePath === undefined ? {} : { filePath: assertOptionalString(filePath, "filePath") }),
-    ...(store === undefined ? {} : { store: assertTaskMemoryStore(store) }),
-    ...(storeFactory === undefined
-      ? {}
-      : { storeFactory: assertTaskMemoryStoreFactory(storeFactory) }),
   };
 }
 
 function resolveTaskMemoryStore(
-  config: TaskMemoryPluginConfig,
+  config: TaskMemoryPluginConfig & TaskMemoryPluginHostBindings,
   context: TaskMemoryPluginSetupContext,
 ): TaskMemoryStore {
   if (config.store !== undefined) {
@@ -132,7 +127,7 @@ function resolveTaskMemoryStore(
   if (config.storeFactory !== undefined) {
     return config.storeFactory({
       pluginContext: context,
-      summaryConfig: readMemorySummaryConfig(context.config),
+      summaryConfig: readMemorySummaryConfig(context.userConfig),
     });
   }
 
@@ -140,7 +135,7 @@ function resolveTaskMemoryStore(
     agentId: context.agent?.id ?? "unknown-agent",
     rootDir: config.rootDir,
     filePath: config.filePath,
-    summaryMaxChars: readMemorySummaryConfig(context.config)?.perRecordMaxChars,
+    summaryMaxChars: readMemorySummaryConfig(context.userConfig)?.perRecordMaxChars,
   });
 }
 
@@ -158,6 +153,23 @@ function assertTaskMemoryStoreFactory(input: unknown): TaskMemoryStoreFactory {
   }
 
   throw new Error("Task memory config storeFactory must be a function.");
+}
+
+function readTaskMemoryHostBindings(
+  input: Readonly<Record<string, unknown>>,
+): TaskMemoryPluginHostBindings {
+  const task = input["task"];
+  if (task === undefined) return {};
+  if (task === null || typeof task !== "object" || Array.isArray(task)) {
+    throw new Error("Task memory hostBindings.task must be an object.");
+  }
+  const value = task as Record<string, unknown>;
+  return {
+    ...(value["store"] === undefined ? {} : { store: assertTaskMemoryStore(value["store"]) }),
+    ...(value["storeFactory"] === undefined
+      ? {}
+      : { storeFactory: assertTaskMemoryStoreFactory(value["storeFactory"]) }),
+  };
 }
 
 function assertOptionalString(input: unknown, fieldName: string): string {
