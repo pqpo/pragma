@@ -413,6 +413,23 @@ function addCodeCredentialIssue(
 }
 
 export const CapabilityActionSchema = z.object({ id: CapabilityIdSchema });
+export const CapabilityDeleteResultSchema = z.discriminatedUnion("ok", [
+  z.object({ ok: z.literal(true) }),
+  z.object({
+    ok: z.literal(false),
+    code: z.literal("capability_referenced"),
+  }),
+]);
+export const GetSkillDocumentSchema = z.object({
+  id: CapabilityIdSchema,
+  revision: z.number().int().positive().optional(),
+});
+export const SkillDocumentSchema = z.object({
+  capabilityId: CapabilityIdSchema,
+  revision: z.number().int().positive(),
+  entryPath: z.literal("SKILL.md"),
+  content: z.string(),
+});
 export const CapabilityTestRequestSchema = z.object({
   id: CapabilityIdSchema,
   toolName: CapabilityToolNameSchema.optional(),
@@ -423,7 +440,7 @@ export const CapabilityTestResultSchema = z.object({
   code: z.string().min(1).max(100),
   message: z.string().min(1).max(2_000),
   capability: CapabilitySchema,
-  output: z.record(z.string(), z.unknown()).optional(),
+  output: z.unknown().optional(),
 });
 
 export const PreviewCodeServiceRequestSchema = z.object({
@@ -969,6 +986,9 @@ export type ExpertCapabilityReference = z.infer<typeof ExpertCapabilityReference
 export type ImportSkillCapability = z.infer<typeof ImportSkillCapabilitySchema>;
 export type CreateCapability = z.infer<typeof CreateCapabilitySchema>;
 export type UpdateCapability = z.infer<typeof UpdateCapabilitySchema>;
+export type CapabilityDeleteResult = z.infer<typeof CapabilityDeleteResultSchema>;
+export type GetSkillDocument = z.infer<typeof GetSkillDocumentSchema>;
+export type SkillDocument = z.infer<typeof SkillDocumentSchema>;
 export type CapabilityTestRequest = z.infer<typeof CapabilityTestRequestSchema>;
 export type CapabilityTestResult = z.infer<typeof CapabilityTestResultSchema>;
 export type PreviewCodeServiceRequest = z.infer<typeof PreviewCodeServiceRequestSchema>;
@@ -1021,13 +1041,14 @@ export interface PragmaDesktopAPI {
   reopenMission: (id: string) => Promise<Mission>;
   listCapabilities: () => Promise<Capability[]>;
   getCapability: (id: string, revision?: number) => Promise<Capability>;
+  getSkillDocument: (input: GetSkillDocument) => Promise<SkillDocument>;
   importSkillCapability: (input: ImportSkillCapability) => Promise<Capability>;
   createCapability: (input: CreateCapability) => Promise<Capability>;
   updateCapability: (input: UpdateCapability) => Promise<Capability>;
   retryCapability: (id: string) => Promise<Capability>;
   testCapability: (input: CapabilityTestRequest) => Promise<CapabilityTestResult>;
   previewCodeService: (input: PreviewCodeServiceRequest) => Promise<PreviewCodeServiceResult>;
-  deleteCapability: (id: string) => Promise<void>;
+  deleteCapability: (id: string) => Promise<CapabilityDeleteResult>;
   pickSkillSource: () => Promise<PickWorkspaceResult>;
   getRuntimeAvailability: () => Promise<DesktopRuntimeAvailability[]>;
 }

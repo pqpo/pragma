@@ -6,12 +6,13 @@ import {
   CapabilityIdSchema,
   CapabilityTestRequestSchema,
   CreateCapabilitySchema,
+  GetSkillDocumentSchema,
   ImportSkillCapabilitySchema,
   PreviewCodeServiceRequestSchema,
   UpdateCapabilitySchema,
   type PickWorkspaceResult,
 } from "../shared/desktop-api.ts";
-import type { CapabilityStore } from "./capability-store.ts";
+import { CapabilityStoreError, type CapabilityStore } from "./capability-store.ts";
 
 export function installCapabilityHandlers(
   store: CapabilityStore,
@@ -20,6 +21,9 @@ export function installCapabilityHandlers(
   ipcMain.handle("capabilities:list", () => store.list());
   ipcMain.handle("capabilities:get", (_event, id: unknown, revision: unknown) =>
     store.get(CapabilityIdSchema.parse(id), revision === undefined ? undefined : Number(revision)),
+  );
+  ipcMain.handle("capabilities:get-skill-document", (_event, input: unknown) =>
+    store.getSkillDocument(GetSkillDocumentSchema.parse(input)),
   );
   ipcMain.handle("capabilities:import-skill", (_event, input: unknown) =>
     store.importSkill(ImportSkillCapabilitySchema.parse(input)),
@@ -40,7 +44,15 @@ export function installCapabilityHandlers(
     store.previewCode(PreviewCodeServiceRequestSchema.parse(input)),
   );
   ipcMain.handle("capabilities:delete", async (_event, input: unknown) => {
-    await store.remove(CapabilityActionSchema.parse(input).id);
+    try {
+      await store.remove(CapabilityActionSchema.parse(input).id);
+      return { ok: true as const };
+    } catch (error) {
+      if (error instanceof CapabilityStoreError && error.code === "capability_referenced") {
+        return { ok: false as const, code: error.code };
+      }
+      throw error;
+    }
   });
   ipcMain.handle("capabilities:pick-skill", async (): Promise<PickWorkspaceResult> => {
     const window = windowGetter();

@@ -32,6 +32,7 @@
     "@pragma/shared": "workspace:*",
     "@xyflow/react": "^12.11.2",
     "fflate": "^0.8.2",
+    "marked": "18.0.5",
     "react": "latest",
     "react-dom": "latest",
     "zod": "latest"

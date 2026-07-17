@@ -24,6 +24,7 @@ import {
 import { ExpertDetailFragment, ExpertDirectoryFragment } from "./ExpertDirectoryFragment.tsx";
 import { ExpertEditorFragment } from "./ExpertEditorFragment.tsx";
 import { CapabilityDirectoryFragment } from "./CapabilityDirectoryFragment.tsx";
+import { CapabilityDetailFragment } from "./CapabilityDetailFragment.tsx";
 import { PragmaResourceDirectoryFragment } from "./PragmaResourceDirectoryFragment.tsx";
 import {
   desktopApi,
@@ -39,7 +40,7 @@ import {
 export function StudioPage(props: { readonly onTryExpert: (expert: ExpertRecord) => void }) {
   const [activeView, setActiveView] = useState<StudioView>("experts");
   const [screen, setScreen] = useState<
-    "directory" | "expert-detail" | "context-store-detail" | "create"
+    "directory" | "expert-detail" | "context-store-detail" | "capability-detail" | "create"
   >("directory");
   const [experts, setExperts] = useState<readonly ExpertRecord[]>([]);
   const [selectedExpert, setSelectedExpert] = useState<ExpertRecord | null>(null);
@@ -49,6 +50,7 @@ export function StudioPage(props: { readonly onTryExpert: (expert: ExpertRecord)
   const [contextStores, setContextStores] = useState<readonly ContextStore[]>([]);
   const [selectedContextStoreId, setSelectedContextStoreId] = useState<string | null>(null);
   const [capabilities, setCapabilities] = useState<readonly Capability[]>([]);
+  const [selectedCapabilityId, setSelectedCapabilityId] = useState<string | null>(null);
   const [contextDrawerOpen, setContextDrawerOpen] = useState(false);
   const [expertError, setExpertError] = useState<string | null>(null);
   const [project, setProject] = useState<PragmaProjectSnapshot | null>(null);
@@ -250,6 +252,16 @@ export function StudioPage(props: { readonly onTryExpert: (expert: ExpertRecord)
   };
   const selectedContextStore =
     contextStores.find((store) => store.id === selectedContextStoreId) ?? null;
+  const selectedCapability =
+    capabilities.find((capability) => capability.manifest.id === selectedCapabilityId) ?? null;
+
+  const updateCapability = (capability: Capability) => {
+    setCapabilities((current) =>
+      current.some((item) => item.manifest.id === capability.manifest.id)
+        ? current.map((item) => (item.manifest.id === capability.manifest.id ? capability : item))
+        : [capability, ...current],
+    );
+  };
 
   return (
     <section className="studio-page">
@@ -347,9 +359,20 @@ export function StudioPage(props: { readonly onTryExpert: (expert: ExpertRecord)
             onGetContent={getContextStoreContent}
           />
         ) : null}
+        {screen === "capability-detail" && selectedCapability !== null ? (
+          <CapabilityDetailFragment
+            capability={selectedCapability}
+            onBack={() => setScreen("directory")}
+            onChanged={updateCapability}
+          />
+        ) : null}
         {screen === "directory" && activeView === "capabilities" ? (
           <CapabilityDirectoryFragment
             capabilities={capabilities}
+            onOpen={(capability) => {
+              setSelectedCapabilityId(capability.manifest.id);
+              setScreen("capability-detail");
+            }}
             onChanged={(capability, removedId) => {
               if (removedId !== undefined) {
                 setCapabilities((current) =>
@@ -358,13 +381,7 @@ export function StudioPage(props: { readonly onTryExpert: (expert: ExpertRecord)
                 return;
               }
               if (capability === undefined) return;
-              setCapabilities((current) =>
-                current.some((item) => item.manifest.id === capability.manifest.id)
-                  ? current.map((item) =>
-                      item.manifest.id === capability.manifest.id ? capability : item,
-                    )
-                  : [capability, ...current],
-              );
+              updateCapability(capability);
             }}
           />
         ) : null}

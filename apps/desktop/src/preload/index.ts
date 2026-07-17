@@ -4,6 +4,7 @@ import {
   DesktopBridgeSnapshotSchema,
   AddContextNoteEntrySchema,
   CapabilityActionSchema,
+  CapabilityDeleteResultSchema,
   CapabilityIdSchema,
   CapabilitySchema,
   CapabilityTestRequestSchema,
@@ -17,6 +18,7 @@ import {
   CreateExpertDefinitionSchema,
   CreateContextStoreSchema,
   GetContextStoreContentSchema,
+  GetSkillDocumentSchema,
   ListContextStoreContentsSchema,
   DeleteExpertDefinitionSchema,
   ExpertDefinitionSchema,
@@ -44,6 +46,7 @@ import {
   PickWorkspaceResultSchema,
   RespondMissionHumanInteractionSchema,
   SendMissionMessageSchema,
+  SkillDocumentSchema,
   DeletePragmaResourceSchema,
   PragmaProjectSnapshotSchema,
   PragmaYamlValidationResultSchema,
@@ -245,6 +248,13 @@ const api: PragmaDesktopAPI = {
     CapabilitySchema.parse(
       await ipcRenderer.invoke("capabilities:get", CapabilityIdSchema.parse(id), revision),
     ),
+  getSkillDocument: async (input) =>
+    SkillDocumentSchema.parse(
+      await ipcRenderer.invoke(
+        "capabilities:get-skill-document",
+        GetSkillDocumentSchema.parse(input),
+      ),
+    ),
   importSkillCapability: async (input) =>
     CapabilitySchema.parse(
       await ipcRenderer.invoke(
@@ -275,9 +285,10 @@ const api: PragmaDesktopAPI = {
         PreviewCodeServiceRequestSchema.parse(input),
       ),
     ),
-  deleteCapability: async (id) => {
-    await ipcRenderer.invoke("capabilities:delete", CapabilityActionSchema.parse({ id }));
-  },
+  deleteCapability: async (id) =>
+    CapabilityDeleteResultSchema.parse(
+      await ipcRenderer.invoke("capabilities:delete", CapabilityActionSchema.parse({ id })),
+    ),
   pickSkillSource: async () =>
     PickWorkspaceResultSchema.parse(await ipcRenderer.invoke("capabilities:pick-skill")),
   getRuntimeAvailability: async () =>

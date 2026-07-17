@@ -130,7 +130,7 @@ function canonicalJson(value: unknown): string {
   return JSON.stringify(value) ?? "null";
 }
 
-function classifyMcpError(error: unknown): {
+export function classifyMcpError(error: unknown): {
   readonly code: string;
   readonly message: string;
   readonly retryable: boolean;

@@ -65,6 +65,9 @@ importers:
       fflate:
         specifier: ^0.8.2
         version: 0.8.3
+      marked:
+        specifier: 18.0.5
+        version: 18.0.5
       react:
         specifier: latest
         version: 19.2.7

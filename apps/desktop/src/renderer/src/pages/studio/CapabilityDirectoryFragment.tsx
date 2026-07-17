@@ -8,6 +8,7 @@ import {
   MagnifyingGlass,
   Plug,
   Plus,
+  Trash,
   Wrench,
   X,
 } from "@phosphor-icons/react";
@@ -96,6 +97,7 @@ const emptyCode = {
 
 export function CapabilityDirectoryFragment(props: {
   readonly capabilities: readonly Capability[];
+  readonly onOpen: (capability: Capability) => void;
   readonly onChanged: (capability?: Capability, removedId?: string) => void;
 }) {
   const [query, setQuery] = useState("");
@@ -413,6 +415,7 @@ export function CapabilityDirectoryFragment(props: {
           <CapabilityRow
             key={capability.manifest.id}
             capability={capability}
+            onOpen={() => props.onOpen(capability)}
             onChanged={props.onChanged}
           />
         ))}
@@ -511,10 +514,13 @@ export function CapabilityDirectoryFragment(props: {
 
 function CapabilityRow(props: {
   readonly capability: Capability;
+  readonly onOpen: () => void;
   readonly onChanged: (capability?: Capability, removedId?: string) => void;
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
   const { capability } = props;
   const source =
     capability.definition.kind === "skill"
@@ -542,60 +548,153 @@ function CapabilityRow(props: {
         : capability.definition.kind === "code_service"
           ? Code
           : Wrench;
-  const act = async (action: "retry" | "delete") => {
+  const retry = async () => {
     const api = desktopApi();
     if (!api) return;
     setBusy(true);
     setError(null);
     try {
-      if (action === "retry") props.onChanged(await api.retryCapability(capability.manifest.id));
-      else {
-        await api.deleteCapability(capability.manifest.id);
-        props.onChanged(undefined, capability.manifest.id);
-      }
+      props.onChanged(await api.retryCapability(capability.manifest.id));
     } catch (cause) {
       setError(errorMessage(cause));
     } finally {
       setBusy(false);
     }
   };
+  const remove = async () => {
+    const api = desktopApi();
+    if (!api) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await api.deleteCapability(capability.manifest.id);
+      if (!result.ok) {
+        setError(capabilityDeleteErrorMessage(result.code));
+        setConfirmOpen(false);
+        return;
+      }
+      props.onChanged(undefined, capability.manifest.id);
+    } catch {
+      setError(capabilityDeleteErrorMessage());
+      setConfirmOpen(false);
+    } finally {
+      setBusy(false);
+    }
+  };
   return (
-    <div className="capability-row" role="listitem">
-      <span className="capability-name">
-        <span className="studio-asset-icon">
-          <Icon size={22} />
-        </span>
-        <span>
-          <strong>{capability.manifest.name}</strong>
-          <small>{capability.definition.description}</small>
-          {error ? <em>{error}</em> : null}
-        </span>
-      </span>
-      <span>
-        <em className="capability-type">{type}</em>
-      </span>
-      <span className="capability-source">{source}</span>
-      <span className="capability-status">
-        <i className={capability.health.status === "ready" ? "is-ready" : "is-warning"} />
-        {capability.health.status === "ready" ? "Ready" : "Needs attention"}
-      </span>
-      <span className="capability-row-actions">
-        {capability.health.status === "needs_attention" ? (
-          <button type="button" disabled={busy} onClick={() => void act("retry")}>
-            Retry
-          </button>
-        ) : null}
+    <>
+      <div className="capability-row" role="listitem">
         <button
+          className="capability-name capability-open-button"
           type="button"
-          disabled={busy}
-          onClick={() => void act("delete")}
-          aria-label={`Delete ${capability.manifest.name}`}
+          onClick={props.onOpen}
         >
-          <DotsThree size={20} />
+          <span className="studio-asset-icon">
+            <Icon size={22} />
+          </span>
+          <span>
+            <strong>{capability.manifest.name}</strong>
+            <small>{capability.definition.description}</small>
+            {error ? (
+              <em role="alert" title={error}>
+                {error}
+              </em>
+            ) : null}
+          </span>
         </button>
-      </span>
-    </div>
+        <span>
+          <em className="capability-type">{type}</em>
+        </span>
+        <span className="capability-source">{source}</span>
+        <span className="capability-status">
+          <i className={capability.health.status === "ready" ? "is-ready" : "is-warning"} />
+          {capability.health.status === "ready" ? "Ready" : "Needs attention"}
+        </span>
+        <span
+          className="capability-row-actions"
+          onBlur={(event) => {
+            if (!event.currentTarget.contains(event.relatedTarget)) setMenuOpen(false);
+          }}
+        >
+          {capability.health.status === "needs_attention" ? (
+            <button type="button" disabled={busy} onClick={() => void retry()}>
+              Retry
+            </button>
+          ) : null}
+          <button
+            type="button"
+            disabled={busy}
+            aria-label={`More actions for ${capability.manifest.name}`}
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
+            onClick={() => setMenuOpen((open) => !open)}
+          >
+            <DotsThree size={20} />
+          </button>
+          {menuOpen ? (
+            <div className="capability-row-menu" role="menu">
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  setMenuOpen(false);
+                  setConfirmOpen(true);
+                  setError(null);
+                }}
+              >
+                <Trash size={16} /> Delete capability
+              </button>
+            </div>
+          ) : null}
+        </span>
+      </div>
+      {confirmOpen ? (
+        <div className="capability-confirm-backdrop">
+          <section
+            className="capability-confirm-dialog"
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby={`delete-capability-${capability.manifest.id}`}
+            aria-describedby={`delete-capability-description-${capability.manifest.id}`}
+            onKeyDown={(event) => {
+              if (event.key === "Escape" && !busy) setConfirmOpen(false);
+            }}
+          >
+            <h2 id={`delete-capability-${capability.manifest.id}`}>Delete this capability?</h2>
+            <p id={`delete-capability-description-${capability.manifest.id}`}>
+              “{capability.manifest.name}” will be permanently removed. Experts that use a
+              capability must be updated before it can be deleted.
+            </p>
+            <footer>
+              <button
+                className="secondary-button"
+                type="button"
+                disabled={busy}
+                autoFocus
+                onClick={() => setConfirmOpen(false)}
+              >
+                Cancel
+              </button>
+              <button
+                className="danger-button"
+                type="button"
+                disabled={busy}
+                onClick={() => void remove()}
+              >
+                <Trash size={17} /> {busy ? "Deleting…" : "Delete capability"}
+              </button>
+            </footer>
+          </section>
+        </div>
+      ) : null}
+    </>
   );
+}
+
+export function capabilityDeleteErrorMessage(code?: string): string {
+  return code === "capability_referenced"
+    ? "This capability is still used by one or more Experts. Remove it from those Experts, then try again."
+    : "This capability could not be deleted. Please try again.";
 }
 
 function McpForm(props: {

@@ -6,6 +6,7 @@ import { unzipSync } from "fflate";
 import {
   createCodeServiceMcpServer,
   createHttpServiceMcpServer,
+  createMcpToolRegistry,
   type HttpServiceAuth,
 } from "@pragma/core";
 
@@ -14,6 +15,7 @@ import {
   CapabilityHealthSchema,
   CapabilityManifestSchema,
   CapabilitySchema,
+  SkillDocumentSchema,
   CreateCapabilitySchema,
   ImportSkillCapabilitySchema,
   UpdateCapabilitySchema,
@@ -25,11 +27,14 @@ import {
   type CapabilityTestResult,
   type CreateCapability,
   type ImportSkillCapability,
+  type GetSkillDocument,
+  type SkillDocument,
   type PreviewCodeServiceRequest,
   type PreviewCodeServiceResult,
   type UpdateCapability,
 } from "../shared/desktop-api.ts";
 import type { CapabilityCredentialStore } from "./capability-credential-store.ts";
+import { classifyMcpError, toCoreMcpServer } from "./capability-verifier.ts";
 
 const MAX_SKILL_BYTES = 25 * 1024 * 1024;
 const MAX_SKILL_FILES = 1000;
@@ -42,6 +47,7 @@ export interface CapabilityVerifierResult {
 export interface CapabilityStore {
   list(): Promise<Capability[]>;
   get(id: string, revision?: number): Promise<Capability>;
+  getSkillDocument(input: GetSkillDocument): Promise<SkillDocument>;
   importSkill(input: ImportSkillCapability): Promise<Capability>;
   create(input: CreateCapability): Promise<Capability>;
   update(input: UpdateCapability): Promise<Capability>;
@@ -68,6 +74,7 @@ export class CapabilityStoreError extends Error {
 export function createCapabilityStore(options: {
   readonly capabilitiesPath: string;
   readonly credentials: CapabilityCredentialStore;
+  readonly createMcpRegistry?: typeof createMcpToolRegistry;
   readonly verify: (
     definition: CapabilityDefinition,
     capabilityId: string,
@@ -177,6 +184,33 @@ export function createCapabilityStore(options: {
       }
     },
     get: readCapability,
+    async getSkillDocument(input) {
+      const capability = await readCapability(input.id, input.revision);
+      if (capability.definition.kind !== "skill") {
+        throw new CapabilityStoreError(
+          "config_invalid",
+          "Only Skill capabilities expose a SKILL.md document.",
+        );
+      }
+      try {
+        const revision = capability.manifest.latestRevision;
+        return SkillDocumentSchema.parse({
+          capabilityId: capability.manifest.id,
+          revision,
+          entryPath: capability.definition.entryPath,
+          content: await readFile(
+            join(revisionPath(capability.manifest.id, revision), "payload", "SKILL.md"),
+            "utf8",
+          ),
+        });
+      } catch (error) {
+        if (error instanceof CapabilityStoreError) throw error;
+        throw new CapabilityStoreError(
+          "config_invalid",
+          `Skill ${capability.manifest.name} has an unreadable SKILL.md document.`,
+        );
+      }
+    },
     async importSkill(rawInput) {
       const input = ImportSkillCapabilitySchema.parse(rawInput);
       const id = randomUUID();
@@ -301,18 +335,79 @@ export function createCapabilityStore(options: {
         };
       }
       if (current.definition.kind === "mcp_server") {
-        const capability = await this.retry(input.id);
-        return {
-          ok: capability.health.status === "ready",
-          code: capability.health.diagnostic?.code ?? "ready",
-          message: capability.health.diagnostic?.message ?? "The MCP server is ready.",
-          capability,
-        };
+        if (input.toolName === undefined) {
+          throw new CapabilityStoreError("config_invalid", "Choose an MCP tool to test.");
+        }
+        if (!current.definition.tools.some((tool) => tool.name === input.toolName)) {
+          throw new CapabilityStoreError(
+            "config_invalid",
+            `MCP tool ${input.toolName} does not exist in the current capability revision.`,
+          );
+        }
+
+        try {
+          const server = await toCoreMcpServer(
+            current.definition,
+            current.manifest.id,
+            options.credentials,
+            [input.toolName],
+          );
+          const registry = await (options.createMcpRegistry ?? createMcpToolRegistry)({
+            mcpServers: { capability: server },
+          });
+          try {
+            const tool = registry.tools.find((candidate) => candidate.name === input.toolName);
+            if (tool === undefined) {
+              throw new Error(`MCP tool ${input.toolName} is not currently available.`);
+            }
+            const result = await tool.call(input.input ?? {}, undefined);
+            const failure = readToolFailure(result, "The MCP tool test failed.");
+            const health = CapabilityHealthSchema.parse({
+              revision: current.manifest.latestRevision,
+              status: failure === undefined ? "ready" : "needs_attention",
+              checkedAt: new Date().toISOString(),
+              ...(failure === undefined
+                ? {}
+                : {
+                    diagnostic: {
+                      code: failure.code,
+                      message: failure.message,
+                      retryable: true,
+                    },
+                  }),
+            });
+            await writeJson(healthPath(input.id), health);
+            const output = readToolOutput(result);
+            return {
+              ok: failure === undefined,
+              code: failure?.code ?? "success",
+              message: failure?.message ?? "The MCP tool test succeeded.",
+              capability: await readCapability(input.id),
+              ...(output === undefined ? {} : { output }),
+            };
+          } finally {
+            await registry.dispose();
+          }
+        } catch (error) {
+          const diagnostic = classifyMcpError(error);
+          await writeJson(healthPath(input.id), {
+            revision: current.manifest.latestRevision,
+            status: "needs_attention",
+            checkedAt: new Date().toISOString(),
+            diagnostic,
+          });
+          return {
+            ok: false,
+            code: diagnostic.code,
+            message: diagnostic.message,
+            capability: await readCapability(input.id),
+          };
+        }
       }
       if (current.definition.kind === "code_service") {
         const server = createCodeServiceMcpServer(toCoreCodeService(current.definition));
         const result = await server.callTool(current.definition.tool.name, input.input ?? {});
-        const failure = readMcpFailure(result);
+        const failure = readToolFailure(result, "The code tool test failed.");
         if (failure?.code === "invalid_input") {
           return {
             ok: false,
@@ -392,11 +487,13 @@ export function createCapabilityStore(options: {
         });
         await writeJson(healthPath(input.id), health);
         const capability = await readCapability(input.id);
+        const output = readToolOutput(result);
         return {
           ok: !isError,
           code: health.diagnostic?.code ?? "success",
           message: isError ? message : "The HTTP tool test succeeded.",
           capability,
+          ...(output === undefined ? {} : { output }),
         };
       } catch (error) {
         const message = error instanceof Error ? error.message : "The HTTP tool test failed.";
@@ -418,7 +515,7 @@ export function createCapabilityStore(options: {
     async previewCode(input) {
       const server = createCodeServiceMcpServer(toCoreCodeService(input.definition));
       const result = await server.callTool(input.definition.tool.name, input.input);
-      const failure = readMcpFailure(result);
+      const failure = readToolFailure(result, "The code tool test failed.");
       return {
         ok: failure === undefined,
         code: failure?.code ?? "success",
@@ -433,7 +530,7 @@ export function createCapabilityStore(options: {
       if (await options.isReferenced(id)) {
         throw new CapabilityStoreError(
           "capability_referenced",
-          "This capability is still referenced by an Expert and cannot be deleted.",
+          "This capability is used by one or more Experts. Remove it from those Experts before deleting it.",
         );
       }
       await rm(capabilityPath(id), { recursive: true, force: true });
@@ -658,15 +755,34 @@ function readMcpResultText(value: unknown): string | undefined {
   );
 }
 
-function readMcpFailure(
+function readToolFailure(
   value: unknown,
+  fallbackMessage: string,
 ): { readonly code: string; readonly message: string } | undefined {
   if (!isRecord(value) || value["isError"] !== true) return undefined;
   const details = isRecord(value["details"]) ? value["details"] : undefined;
   return {
     code: typeof details?.["code"] === "string" ? details["code"] : "runtime_error",
-    message: readMcpResultText(value) ?? "The code tool test failed.",
+    message: readMcpResultText(value) ?? fallbackMessage,
   };
+}
+
+function readToolOutput(value: unknown): unknown | undefined {
+  if (!isRecord(value)) return value;
+  if (value["structuredContent"] !== undefined) return value["structuredContent"];
+  if (!Array.isArray(value["content"])) return value;
+  const text = readMcpResultText(value);
+  if (
+    text !== undefined &&
+    value["content"].every((item) => isRecord(item) && item["type"] === "text")
+  ) {
+    try {
+      return JSON.parse(text) as unknown;
+    } catch {
+      return text;
+    }
+  }
+  return value["content"];
 }
 
 function readStructuredOutput(value: unknown): Record<string, unknown> | undefined {

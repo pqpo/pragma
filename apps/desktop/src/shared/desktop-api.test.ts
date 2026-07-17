@@ -7,6 +7,8 @@ import {
   EXPERT_TAG_MAX_LENGTH,
   CreateExpertDefinitionSchema,
   CodeServiceCapabilityDefinitionSchema,
+  CapabilityTestResultSchema,
+  CapabilityDeleteResultSchema,
   CreateMissionSchema,
   GetMissionChatSchema,
   MissionChatSnapshotSchema,
@@ -95,6 +97,58 @@ describe("code service contracts", () => {
         },
       }).success,
     ).toBe(false);
+  });
+});
+
+describe("capability test contracts", () => {
+  it("accepts text, arrays, and objects as tool output", () => {
+    const base = {
+      ok: true,
+      code: "success",
+      message: "Succeeded.",
+      capability: {
+        manifest: {
+          schemaVersion: "pragma.capability/v1",
+          id: "00000000-0000-4000-8000-000000000000",
+          runtimeKey: "test_capability",
+          name: "Test capability",
+          kind: "code_service",
+          latestRevision: 1,
+          createdAt: "2026-07-11T00:00:00.000Z",
+          updatedAt: "2026-07-11T00:00:00.000Z",
+        },
+        health: { revision: 1, status: "ready", checkedAt: "2026-07-11T00:00:00.000Z" },
+        definition: {
+          kind: "code_service",
+          name: "Test capability",
+          description: "Test output shapes.",
+          language: "javascript",
+          timeoutMs: 2_000,
+          tool: {
+            name: "test_output",
+            description: "Return output.",
+            inputSchema: { type: "object", properties: {}, additionalProperties: false },
+            outputSchema: { type: "object", properties: {}, additionalProperties: false },
+            source: "function main() { return {}; }",
+          },
+        },
+      },
+    };
+
+    expect(CapabilityTestResultSchema.safeParse({ ...base, output: "plain text" }).success).toBe(
+      true,
+    );
+    expect(CapabilityTestResultSchema.safeParse({ ...base, output: ["one", "two"] }).success).toBe(
+      true,
+    );
+  });
+});
+
+describe("capability delete contracts", () => {
+  it("returns a stable code when an Expert still references the capability", () => {
+    expect(
+      CapabilityDeleteResultSchema.parse({ ok: false, code: "capability_referenced" }),
+    ).toEqual({ ok: false, code: "capability_referenced" });
   });
 });
 

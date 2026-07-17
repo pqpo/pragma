@@ -17,7 +17,11 @@ afterEach(async () => {
 });
 
 async function createStore(
-  options: { readonly referenced?: boolean; readonly realVerifier?: boolean } = {},
+  options: {
+    readonly referenced?: boolean;
+    readonly realVerifier?: boolean;
+    readonly createMcpRegistry?: Parameters<typeof createCapabilityStore>[0]["createMcpRegistry"];
+  } = {},
 ) {
   const directory = await mkdtemp(join(tmpdir(), "pragma-capabilities-"));
   directories.push(directory);
@@ -41,6 +45,9 @@ async function createStore(
     store: createCapabilityStore({
       capabilitiesPath: join(directory, "capabilities"),
       credentials,
+      ...(options.createMcpRegistry === undefined
+        ? {}
+        : { createMcpRegistry: options.createMcpRegistry }),
       verify:
         options.realVerifier === true
           ? createCapabilityVerifier(credentials)
@@ -131,6 +138,14 @@ describe("capability store", () => {
         "utf8",
       ),
     ).resolves.toBe("Check tests.\n");
+    await expect(
+      store.getSkillDocument({ id: capability.manifest.id, revision: 1 }),
+    ).resolves.toEqual({
+      capabilityId: capability.manifest.id,
+      revision: 1,
+      entryPath: "SKILL.md",
+      content: "---\nname: repo-review\ndescription: Review a repository.\n---\n\n# Repo review\n",
+    });
   });
 
   it("rejects ZIP path traversal", async () => {
@@ -225,6 +240,78 @@ describe("capability store", () => {
       code: "upstream_5xx",
       capability: { health: { status: "needs_attention" } },
     });
+  });
+
+  it("returns a successful HTTP response as test output", async () => {
+    const { store } = await createStore();
+    const capability = await store.create({
+      definition: httpDefinition,
+      credentials: { "service-auth": "secret" },
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Response.json({ id: "42", name: "Ada" })),
+    );
+
+    await expect(
+      store.test({
+        id: capability.manifest.id,
+        toolName: "get_customer",
+        input: { path: { id: "42" } },
+      }),
+    ).resolves.toMatchObject({
+      ok: true,
+      code: "success",
+      output: { id: "42", name: "Ada" },
+    });
+  });
+
+  it("calls a selected MCP tool and disposes its connection", async () => {
+    const call = vi.fn(async (input: unknown) => ({ structuredContent: { echoed: input } }));
+    const dispose = vi.fn(async () => undefined);
+    const { store } = await createStore({
+      createMcpRegistry: async () => ({
+        tools: [
+          {
+            serverId: "capability",
+            serverName: "Echo server",
+            name: "echo",
+            description: "Echo input.",
+            inputSchema: { type: "object" },
+            call,
+          },
+        ],
+        dispose,
+      }),
+    });
+    const capability = await store.create({
+      definition: {
+        kind: "mcp_server",
+        name: "Echo server",
+        description: "Echo input.",
+        connection: { transport: "stdio", command: "node", args: [], env: {}, secretEnv: {} },
+        timeoutMs: 30_000,
+        tools: [
+          {
+            name: "echo",
+            description: "Echo input.",
+            inputSchema: { type: "object" },
+            schemaHash: "a".repeat(64),
+          },
+        ],
+      },
+      credentials: {},
+    });
+
+    await expect(
+      store.test({ id: capability.manifest.id, toolName: "echo", input: { value: "hello" } }),
+    ).resolves.toMatchObject({
+      ok: true,
+      output: { echoed: { value: "hello" } },
+      capability: { health: { status: "ready" } },
+    });
+    expect(call).toHaveBeenCalledWith({ value: "hello" }, undefined);
+    expect(dispose).toHaveBeenCalledOnce();
   });
 
   it("previews code without persisting it", async () => {
