@@ -7,17 +7,19 @@ import {
   RocketLaunch,
   TerminalWindow,
 } from "@phosphor-icons/react";
+import { useTranslation } from "react-i18next";
 
 export type AppView = "missions" | "studio" | "settings";
 
 const navigationItems: readonly {
-  readonly label: string;
+  readonly id: AppView | "home";
+  readonly labelKey: string;
   readonly icon: Icon;
 }[] = [
-  { label: "Home", icon: House },
-  { label: "Missions", icon: RocketLaunch },
-  { label: "Studio", icon: TerminalWindow },
-  { label: "Settings", icon: GearSix },
+  { id: "home", labelKey: "navigation.home", icon: House },
+  { id: "missions", labelKey: "navigation.missions", icon: RocketLaunch },
+  { id: "studio", labelKey: "navigation.studio", icon: TerminalWindow },
+  { id: "settings", labelKey: "navigation.settings", icon: GearSix },
 ];
 
 export function Sidebar(props: {
@@ -26,6 +28,8 @@ export function Sidebar(props: {
   readonly onNavigate: (view: AppView) => void;
   readonly onToggle: () => void;
 }) {
+  const { t } = useTranslation("common");
+
   return (
     <aside className="sidebar">
       <div className="sidebar-brand-row">
@@ -37,33 +41,27 @@ export function Sidebar(props: {
         </div>
       </div>
 
-      <nav className="navigation" aria-label="Main navigation">
+      <nav className="navigation" aria-label={t("navigation.main")}>
         {navigationItems.map((item) => {
           const NavigationIcon = item.icon;
-          const targetView: AppView | null =
-            item.label === "Missions"
-              ? "missions"
-              : item.label === "Studio"
-                ? "studio"
-                : item.label === "Settings"
-                  ? "settings"
-                  : null;
+          const targetView: AppView | null = item.id === "home" ? null : item.id;
+          const label = t(item.labelKey);
           const isActive = targetView !== null && props.activeView === targetView;
           const isAvailable = targetView !== null;
 
           return (
             <button
-              key={item.label}
+              key={item.id}
               className={isActive ? "navigation-item is-active" : "navigation-item"}
               type="button"
               aria-current={isActive ? "page" : undefined}
-              aria-label={item.label}
-              title={item.label}
+              aria-label={label}
+              title={label}
               disabled={!isAvailable}
               onClick={() => targetView !== null && props.onNavigate(targetView)}
             >
               <NavigationIcon size={22} aria-hidden="true" />
-              <span>{item.label}</span>
+              <span>{label}</span>
             </button>
           );
         })}
@@ -73,8 +71,8 @@ export function Sidebar(props: {
         <button
           className="sidebar-collapse-toggle"
           type="button"
-          aria-label={props.collapsed ? "Expand navigation" : "Collapse navigation"}
-          title={props.collapsed ? "Expand navigation" : "Collapse navigation"}
+          aria-label={props.collapsed ? t("navigation.expand") : t("navigation.collapse")}
+          title={props.collapsed ? t("navigation.expand") : t("navigation.collapse")}
           onClick={props.onToggle}
         >
           {props.collapsed ? (

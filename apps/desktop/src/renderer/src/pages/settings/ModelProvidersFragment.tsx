@@ -1,5 +1,6 @@
 import { CaretDown, Key, Plus, Robot, Trash } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import type { ModelConnectionTestResult, ModelProvider } from "../../../../shared/desktop-api.ts";
 import { errorMessage } from "../../lib/errors.ts";
@@ -29,6 +30,7 @@ function ProviderEditor(props: {
   readonly onCancel: () => void;
   readonly onSaved: (provider: ModelProvider) => void;
 }) {
+  const { t } = useTranslation(["settings", "common"]);
   const [draft, setDraft] = useState(props.initialValue);
   const [modelId, setModelId] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -45,7 +47,7 @@ function ProviderEditor(props: {
   const save = async () => {
     setError(null);
     if (!isEditing && !draft.apiKey.trim()) {
-      setError("Enter an API key before saving the provider.");
+      setError(t("models.enterApiKey", { ns: "settings" }));
       return;
     }
     setSaving(true);
@@ -81,7 +83,7 @@ function ProviderEditor(props: {
       }}
     >
       <label className="static-field">
-        <span>Provider name</span>
+        <span>{t("models.providerName", { ns: "settings" })}</span>
         <input
           value={draft.name}
           onChange={(event) => setDraft({ ...draft, name: event.target.value })}
@@ -90,7 +92,7 @@ function ProviderEditor(props: {
         />
       </label>
       <label className="static-field">
-        <span>API protocol</span>
+        <span>{t("models.protocol", { ns: "settings" })}</span>
         <span className="protocol-select-shell">
           <select
             value={draft.protocol}
@@ -106,7 +108,7 @@ function ProviderEditor(props: {
         </span>
       </label>
       <label className="static-field">
-        <span>API base URL</span>
+        <span>{t("models.baseUrl", { ns: "settings" })}</span>
         <input
           value={draft.baseUrl}
           onChange={(event) => setDraft({ ...draft, baseUrl: event.target.value })}
@@ -115,20 +117,22 @@ function ProviderEditor(props: {
         />
       </label>
       <label className="static-field">
-        <span>API key</span>
+        <span>{t("models.apiKey", { ns: "settings" })}</span>
         <span className="key-input-wrap">
           <Key size={16} aria-hidden="true" />
           <input
             type="password"
             value={draft.apiKey}
             onChange={(event) => setDraft({ ...draft, apiKey: event.target.value })}
-            placeholder={isEditing ? "Saved securely — enter to replace" : "sk-..."}
+            placeholder={
+              isEditing ? t("models.savedSecurelyReplace", { ns: "settings" }) : "sk-..."
+            }
             autoComplete="off"
           />
         </span>
       </label>
       <div className="static-field">
-        <span>Models</span>
+        <span>{t("models.models", { ns: "settings" })}</span>
         <div className="model-input-row">
           <input
             value={modelId}
@@ -143,16 +147,19 @@ function ProviderEditor(props: {
           />
           <button className="secondary-button" type="button" onClick={addModel}>
             <Plus size={16} aria-hidden="true" />
-            Add model
+            {t("models.addModel", { ns: "settings" })}
           </button>
         </div>
-        <div className="model-chip-list" aria-label="Configured models">
+        <div
+          className="model-chip-list"
+          aria-label={t("models.configuredModels", { ns: "settings" })}
+        >
           {draft.models.map((model) => (
             <span className="model-chip" key={model}>
               {model}
               <button
                 type="button"
-                aria-label={`Remove ${model}`}
+                aria-label={t("models.removeModel", { ns: "settings", model })}
                 onClick={() =>
                   setDraft({
                     ...draft,
@@ -177,7 +184,7 @@ function ProviderEditor(props: {
                 <div>
                   <strong>{model}</strong>
                   <label className="static-field">
-                    <span>Display name</span>
+                    <span>{t("models.displayName", { ns: "settings" })}</span>
                     <input
                       value={metadata?.displayName ?? ""}
                       placeholder={model}
@@ -196,7 +203,7 @@ function ProviderEditor(props: {
                     />
                   </label>
                   <label className="static-field">
-                    <span>Thinking levels</span>
+                    <span>{t("models.thinkingLevels", { ns: "settings" })}</span>
                     <input
                       key={`${model}:${levels.map((level) => level.value).join(",")}`}
                       defaultValue={levels.map((level) => level.value).join(", ")}
@@ -221,7 +228,7 @@ function ProviderEditor(props: {
                   </label>
                   {levels.length > 0 ? (
                     <label className="static-field">
-                      <span>Default thinking level</span>
+                      <span>{t("models.defaultThinkingLevel", { ns: "settings" })}</span>
                       <select
                         value={metadata?.thinking?.defaultLevel ?? ""}
                         onChange={(event) =>
@@ -237,7 +244,7 @@ function ProviderEditor(props: {
                           })
                         }
                       >
-                        <option value="">Runtime default</option>
+                        <option value="">{t("models.runtimeDefault", { ns: "settings" })}</option>
                         {levels.map((level) => (
                           <option key={level.value} value={level.value}>
                             {level.label}
@@ -264,10 +271,12 @@ function ProviderEditor(props: {
           onClick={props.onCancel}
           disabled={saving}
         >
-          Cancel
+          {t("models.cancel", { ns: "settings" })}
         </button>
         <button className="primary-button" type="submit" disabled={saving}>
-          {saving ? "Saving…" : "Save provider"}
+          {saving
+            ? t("actions.saving", { ns: "common" })
+            : t("models.saveProvider", { ns: "settings" })}
         </button>
       </div>
     </form>
@@ -279,6 +288,7 @@ function ProviderCard(props: {
   readonly onDelete: () => void;
   readonly onEdit: () => void;
 }) {
+  const { t } = useTranslation(["settings", "common"]);
   const [testingModel, setTestingModel] = useState<string | null>(null);
   const [results, setResults] = useState<Record<string, ModelConnectionTestResult>>({});
   const [deleting, setDeleting] = useState(false);
@@ -301,7 +311,8 @@ function ProviderCard(props: {
   };
 
   const remove = async () => {
-    if (!window.confirm(`Delete ${props.provider.name}? This removes its saved API key.`)) return;
+    if (!window.confirm(t("models.deleteConfirm", { ns: "settings", name: props.provider.name })))
+      return;
     setDeleting(true);
     setError(null);
     try {
@@ -322,29 +333,31 @@ function ProviderCard(props: {
         <div className="card-title-group">
           <h3>{props.provider.name}</h3>
           <p className="status-copy is-active">
-            {props.provider.models.length} {props.provider.models.length === 1 ? "model" : "models"}
+            {t("counts.model", { ns: "common", count: props.provider.models.length })}
             <span aria-hidden="true">•</span>
             {props.provider.protocol}
           </p>
         </div>
         <button className="text-button" type="button" onClick={props.onEdit}>
-          Edit
+          {t("models.edit", { ns: "settings" })}
         </button>
       </header>
       <div className="provider-fields">
         <div className="static-field">
-          <span>API base URL</span>
+          <span>{t("models.baseUrl", { ns: "settings" })}</span>
           <code className="configured-value">{props.provider.baseUrl}</code>
         </div>
         <div className="static-field">
-          <span>API key</span>
+          <span>{t("models.apiKey", { ns: "settings" })}</span>
           <span className="configured-value secret-value">
             <Key size={16} aria-hidden="true" />
-            {props.provider.hasApiKey ? "Saved securely" : "Missing"}
+            {props.provider.hasApiKey
+              ? t("models.savedSecurely", { ns: "settings" })
+              : t("models.missing", { ns: "settings" })}
           </span>
         </div>
         <div className="static-field">
-          <span>Configured models</span>
+          <span>{t("models.configuredModels", { ns: "settings" })}</span>
           <div className="configured-model-list">
             {props.provider.models.map((model) => {
               const result = results[model];
@@ -355,10 +368,12 @@ function ProviderCard(props: {
                     <strong>{model}</strong>
                     {props.provider.modelMetadata[model]?.thinking !== undefined ? (
                       <p>
-                        Thinking:{" "}
-                        {props.provider.modelMetadata[model]!.thinking!.supportedLevels.map(
-                          (level) => level.label,
-                        ).join(", ")}
+                        {t("models.thinking", {
+                          ns: "settings",
+                          levels: props.provider.modelMetadata[
+                            model
+                          ]!.thinking!.supportedLevels.map((level) => level.label).join(", "),
+                        })}
                       </p>
                     ) : null}
                     {result ? (
@@ -378,7 +393,9 @@ function ProviderCard(props: {
                     onClick={() => void testModel(model)}
                     disabled={testingModel !== null}
                   >
-                    {isTesting ? "Testing…" : "Test connection"}
+                    {isTesting
+                      ? t("models.testing", { ns: "settings" })
+                      : t("models.testConnection", { ns: "settings" })}
                   </button>
                 </div>
               );
@@ -399,7 +416,9 @@ function ProviderCard(props: {
           disabled={deleting}
         >
           <Trash size={16} aria-hidden="true" />
-          {deleting ? "Deleting…" : "Delete provider"}
+          {deleting
+            ? t("models.deleting", { ns: "settings" })
+            : t("models.deleteProvider", { ns: "settings" })}
         </button>
       </div>
     </article>
@@ -407,6 +426,7 @@ function ProviderCard(props: {
 }
 
 export function ModelProvidersFragment() {
+  const { t } = useTranslation("settings");
   const [providers, setProviders] = useState<readonly ModelProvider[]>([]);
   const [draft, setDraft] = useState<ProviderDraft | null>(null);
   const [loading, setLoading] = useState(true);
@@ -445,8 +465,8 @@ export function ModelProvidersFragment() {
       header={
         <header className="panel-heading panel-heading-with-action">
           <div>
-            <h2 id="models-panel-heading">Models &amp; Providers</h2>
-            <p>Add OpenAI-compatible APIs and test each configured model.</p>
+            <h2 id="models-panel-heading">{t("models.title")}</h2>
+            <p>{t("models.description")}</p>
           </div>
           {draft ? null : (
             <button
@@ -455,7 +475,7 @@ export function ModelProvidersFragment() {
               onClick={() => setDraft(emptyProviderDraft())}
             >
               <Plus size={17} aria-hidden="true" />
-              Add provider
+              {t("models.addProvider")}
             </button>
           )}
         </header>
@@ -471,12 +491,12 @@ export function ModelProvidersFragment() {
             />
           </article>
         ) : null}
-        {loading ? <p className="empty-state">Loading providers…</p> : null}
+        {loading ? <p className="empty-state">{t("models.loading")}</p> : null}
         {!loading && !draft && providers.length === 0 ? (
           <div className="empty-state">
             <Robot size={28} aria-hidden="true" />
-            <h3>No providers configured</h3>
-            <p>Add an OpenAI-compatible API to configure models for this device.</p>
+            <h3>{t("models.empty")}</h3>
+            <p>{t("models.addProviderDescription")}</p>
           </div>
         ) : null}
         {providers.map((provider) => (

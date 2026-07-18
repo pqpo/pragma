@@ -1,5 +1,6 @@
 import { User } from "@phosphor-icons/react";
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import type { PragmaResource } from "@pragma/interpreter/ast";
 
 import { errorMessage } from "../../lib/errors.ts";
@@ -33,6 +34,7 @@ export function ExpertEditorFragment(props: {
   readonly onCancel: () => void;
   readonly onCreated: (expert: ExpertRecord) => Promise<void>;
 }) {
+  const { t } = useTranslation(["studio", "common"]);
   const [draft, setDraft] = useState(props.initialValue);
   const [step, setStep] = useState<CreateStep>("identity");
   const [error, setError] = useState<string | null>(null);
@@ -45,10 +47,10 @@ export function ExpertEditorFragment(props: {
     (model) => model.id === draft.model?.modelId && model.provider.id === draft.model?.providerId,
   );
   const steps: readonly { readonly id: CreateStep; readonly label: string }[] = [
-    { id: "identity", label: "Identity" },
-    { id: "instructions", label: "Instructions" },
-    { id: "capabilities", label: "Capabilities" },
-    { id: "review", label: "Review" },
+    { id: "identity", label: t("identity", { ns: "studio" }) },
+    { id: "instructions", label: t("instructions", { ns: "studio" }) },
+    { id: "capabilities", label: t("capabilities", { ns: "studio" }) },
+    { id: "review", label: t("review", { ns: "studio" }) },
   ];
   const index = steps.findIndex((item) => item.id === step);
   const advance = () => {
@@ -151,18 +153,20 @@ export function ExpertEditorFragment(props: {
       header={
         <header className="studio-heading creator-heading">
           <div>
-            <h1 id="create-expert-heading">{isEditing ? "Edit expert" : "Create expert"}</h1>
+            <h1 id="create-expert-heading">
+              {isEditing ? t("editExpert", { ns: "studio" }) : t("createExpert", { ns: "studio" })}
+            </h1>
             <p>
               {isEditing
-                ? "Update this reusable expert declaration."
-                : "Build a reusable expert to power missions."}
+                ? t("updateExpertDescription", { ns: "studio" })
+                : t("createExpertDescription", { ns: "studio" })}
             </p>
           </div>
         </header>
       }
     >
       <div className="creator-layout">
-        <ol className="creator-steps" aria-label="Create expert steps">
+        <ol className="creator-steps" aria-label={t("createExpertSteps", { ns: "studio" })}>
           {steps.map((item, itemIndex) => (
             <li
               className={item.id === step ? "is-active" : itemIndex < index ? "is-complete" : ""}
@@ -191,12 +195,12 @@ export function ExpertEditorFragment(props: {
                   <User size={24} />
                 </span>
                 <div>
-                  <strong>{draft.name || "Expert name"}</strong>
-                  <p>{draft.description || "A concise description will appear here."}</p>
+                  <strong>{draft.name || t("expertName", { ns: "studio" })}</strong>
+                  <p>{draft.description || t("conciseDescription", { ns: "studio" })}</p>
                 </div>
               </div>
               <label>
-                Name
+                {t("name", { ns: "studio" })}
                 <input
                   value={draft.name}
                   onChange={(event) =>
@@ -205,19 +209,19 @@ export function ExpertEditorFragment(props: {
                       name: event.target.value.slice(0, EXPERT_NAME_MAX_LENGTH),
                     })
                   }
-                  placeholder="Expert name"
+                  placeholder={t("expertName", { ns: "studio" })}
                   maxLength={EXPERT_NAME_MAX_LENGTH}
                   autoFocus
                 />
                 <small className="field-hint">
-                  <span>Choose a short, recognizable name.</span>
+                  <span>{t("chooseName", { ns: "studio" })}</span>
                   <span>
                     {draft.name.length}/{EXPERT_NAME_MAX_LENGTH}
                   </span>
                 </small>
               </label>
               <label>
-                ID
+                {t("id", { ns: "studio" })}
                 <input
                   value={draft.id}
                   onChange={(event) =>
@@ -231,14 +235,14 @@ export function ExpertEditorFragment(props: {
                   disabled={isEditing}
                 />
                 <small className="field-hint">
-                  <span>Unique identifier. Use only letters, numbers, and underscores.</span>
+                  <span>{t("idHint", { ns: "studio" })}</span>
                   <span>
                     {draft.id.length}/{EXPERT_ID_MAX_LENGTH}
                   </span>
                 </small>
               </label>
               <label>
-                Description
+                {t("description", { ns: "studio" })}
                 <textarea
                   value={draft.description}
                   onChange={(event) =>
@@ -247,18 +251,18 @@ export function ExpertEditorFragment(props: {
                       description: event.target.value.slice(0, EXPERT_DESCRIPTION_MAX_LENGTH),
                     })
                   }
-                  placeholder="What does this expert do?"
+                  placeholder={t("expertPurpose", { ns: "studio" })}
                   maxLength={EXPERT_DESCRIPTION_MAX_LENGTH}
                 />
                 <small className="field-hint">
-                  <span>Summarize the expert's purpose in one or two sentences.</span>
+                  <span>{t("descriptionHint", { ns: "studio" })}</span>
                   <span>
                     {draft.description.length}/{EXPERT_DESCRIPTION_MAX_LENGTH}
                   </span>
                 </small>
               </label>
               <label>
-                Tags
+                {t("tags", { ns: "studio" })}
                 <input
                   value={draft.tagInput}
                   onChange={(event) =>
@@ -274,10 +278,10 @@ export function ExpertEditorFragment(props: {
                       addTag();
                     }
                   }}
-                  placeholder="Add a tag and press Enter"
+                  placeholder={t("addTag", { ns: "studio" })}
                 />
                 <small className="field-hint">
-                  <span>Each tag can contain up to {EXPERT_TAG_MAX_LENGTH} characters.</span>
+                  <span>{t("tagLimit", { ns: "studio", count: EXPERT_TAG_MAX_LENGTH })}</span>
                   <span>
                     {draft.tagInput.length}/{EXPERT_TAG_MAX_LENGTH}
                   </span>
@@ -297,19 +301,16 @@ export function ExpertEditorFragment(props: {
                 </span>
               </label>
               <label>
-                Scope
+                {t("scope", { ns: "studio" })}
                 <textarea
                   value={draft.scope}
                   onChange={(event) => setDraft({ ...draft, scope: event.target.value })}
-                  placeholder="What is this expert responsible for, and what is explicitly outside its responsibility?"
+                  placeholder={t("scopePrompt", { ns: "studio" })}
                 />
-                <small>
-                  A responsibility boundary shown to callers and included in the expert context.
-                  This is not an access level.
-                </small>
+                <small>{t("scopeHint", { ns: "studio" })}</small>
               </label>
               <label>
-                Version
+                {t("version", { ns: "studio" })}
                 <input
                   value={draft.version}
                   onChange={(event) => setDraft({ ...draft, version: event.target.value })}
@@ -319,26 +320,23 @@ export function ExpertEditorFragment(props: {
           ) : null}
           {step === "instructions" ? (
             <label>
-              Instructions
+              {t("instructions", { ns: "studio" })}
               <textarea
                 className="instructions-input"
                 value={draft.instructions}
                 onChange={(event) => setDraft({ ...draft, instructions: event.target.value })}
-                placeholder="Define how this expert should work, reason, and communicate."
+                placeholder={t("instructionsPrompt", { ns: "studio" })}
                 autoFocus
               />
-              <small>Instructions become part of the expert's system context.</small>
+              <small>{t("instructionsHint", { ns: "studio" })}</small>
             </label>
           ) : null}
           {step === "capabilities" ? (
             <div className="capability-editor">
-              <h2>Add capabilities</h2>
-              <p>
-                Choose the execution runtime first, then select one of the models available to that
-                runtime.
-              </p>
+              <h2>{t("addCapabilities", { ns: "studio" })}</h2>
+              <p>{t("modelSelectionHint", { ns: "studio" })}</p>
               <label>
-                Runtime
+                {t("runtime", { ns: "studio" })}
                 <select
                   value={selectedRuntime}
                   onChange={(event) => {
@@ -346,7 +344,7 @@ export function ExpertEditorFragment(props: {
                     setDraft({ ...draft, model: null });
                   }}
                 >
-                  <option value="">Not configured</option>
+                  <option value="">{t("notConfigured", { ns: "studio" })}</option>
                   {props.runtimes.map((runtime) => (
                     <option
                       key={runtime.id}
@@ -354,14 +352,16 @@ export function ExpertEditorFragment(props: {
                       disabled={runtime.status !== "available"}
                     >
                       {runtime.displayName}
-                      {runtime.status === "available" ? "" : " (unavailable)"}
+                      {runtime.status === "available"
+                        ? ""
+                        : ` (${t("unavailable", { ns: "studio" })})`}
                     </option>
                   ))}
                 </select>
               </label>
               {selectedRuntime ? (
                 <label>
-                  Model
+                  {t("model", { ns: "studio" })}
                   <select
                     value={selectedModel === undefined ? "" : runtimeModelKey(selectedModel)}
                     onChange={(event) => {
@@ -383,8 +383,11 @@ export function ExpertEditorFragment(props: {
                   >
                     <option value="">
                       {draft.model === null
-                        ? "Select a model"
-                        : `Unavailable: ${draft.model.modelId}`}
+                        ? t("selectModel", { ns: "studio" })
+                        : t("unavailableModel", {
+                            ns: "studio",
+                            model: draft.model.modelId,
+                          })}
                     </option>
                     {modelOptions.map((model) => {
                       return (
@@ -403,7 +406,7 @@ export function ExpertEditorFragment(props: {
               ) : null}
               {selectedModel?.thinking !== undefined ? (
                 <label>
-                  Thinking level
+                  {t("thinkingLevel", { ns: "studio" })}
                   <select
                     value={draft.model?.thinkingLevel ?? ""}
                     onChange={(event) => {
@@ -421,7 +424,7 @@ export function ExpertEditorFragment(props: {
                     }}
                   >
                     <option value="">
-                      Runtime default
+                      {t("runtimeDefault", { ns: "studio" })}
                       {selectedModel.thinking.defaultLevel === undefined
                         ? ""
                         : ` (${selectedModel.thinking.defaultLevel})`}
@@ -461,23 +464,29 @@ export function ExpertEditorFragment(props: {
           ) : null}
           {step === "review" ? (
             <div className="review-summary">
-              <h2>{isEditing ? "Ready to save" : "Ready to create"}</h2>
-              <p>Review the declaration before {isEditing ? "saving" : "creating"} this expert.</p>
+              <h2>
+                {isEditing ? t("readySave", { ns: "studio" }) : t("readyCreate", { ns: "studio" })}
+              </h2>
+              <p>
+                {isEditing
+                  ? t("reviewSave", { ns: "studio" })
+                  : t("reviewCreate", { ns: "studio" })}
+              </p>
               <dl>
                 <div>
-                  <dt>Name</dt>
-                  <dd>{draft.name || "Untitled Expert"}</dd>
+                  <dt>{t("name", { ns: "studio" })}</dt>
+                  <dd>{draft.name || t("untitledExpert", { ns: "studio" })}</dd>
                 </div>
                 <div>
-                  <dt>ID</dt>
-                  <dd>{draft.id || "Generated from name"}</dd>
+                  <dt>{t("id", { ns: "studio" })}</dt>
+                  <dd>{draft.id || t("generatedName", { ns: "studio" })}</dd>
                 </div>
                 <div>
-                  <dt>Scope</dt>
+                  <dt>{t("scope", { ns: "studio" })}</dt>
                   <dd>{draft.scope}</dd>
                 </div>
                 <div>
-                  <dt>Capabilities</dt>
+                  <dt>{t("capabilities", { ns: "studio" })}</dt>
                   <dd>
                     {draft.model === null
                       ? "No runtime/model"
@@ -497,18 +506,18 @@ export function ExpertEditorFragment(props: {
           ) : null}
           <footer className="creator-actions">
             <button className="secondary-button" type="button" onClick={retreat} disabled={saving}>
-              {index === 0 ? "Cancel" : "Back"}
+              {index === 0 ? t("cancel", { ns: "studio" }) : t("back", { ns: "studio" })}
             </button>
             <button className="primary-button" type="submit" disabled={saving}>
               {saving
                 ? isEditing
-                  ? "Saving…"
-                  : "Creating…"
+                  ? t("actions.saving", { ns: "common" })
+                  : t("creating", { ns: "studio" })
                 : step === "review"
                   ? isEditing
-                    ? "Save expert"
-                    : "Create expert"
-                  : "Continue"}
+                    ? t("saveExpert", { ns: "studio" })
+                    : t("createExpert", { ns: "studio" })
+                  : t("continue", { ns: "studio" })}
             </button>
           </footer>
         </form>

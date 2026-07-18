@@ -30,6 +30,7 @@ import {
   User,
   UsersThree,
 } from "@phosphor-icons/react";
+import { useTranslation } from "react-i18next";
 import type { PragmaInvocableResource, PragmaResource } from "@pragma/interpreter/ast";
 import type { HumanInteractionResponse } from "@pragma/shared";
 
@@ -46,11 +47,13 @@ import {
   type PragmaDesktopAPI,
 } from "../../../../shared/desktop-api.ts";
 import { errorMessage } from "../../lib/errors.ts";
+import { i18n } from "../../i18n/index.ts";
 import { formatMissionDateTime, formatMissionTime } from "../../lib/mission-time.ts";
 
 type MissionScreen = "create" | "detail";
 
 export function MissionsPage(props: { readonly initialExecutorRef?: string | undefined }) {
+  const { t } = useTranslation(["missions", "common"]);
   const [missions, setMissions] = useState<readonly MissionSummary[]>([]);
   const [selectedMission, setSelectedMission] = useState<Mission | null>(null);
   const [executors, setExecutors] = useState<readonly PragmaResource[]>([]);
@@ -229,8 +232,8 @@ export function MissionsPage(props: { readonly initialExecutorRef?: string | und
           />
         ) : (
           <div className="mission-empty-detail">
-            <h1>Mission not found</h1>
-            <p>Select another mission or create a new one.</p>
+            <h1>{t("notFound", { ns: "missions" })}</h1>
+            <p>{t("selectAnother", { ns: "missions" })}</p>
           </div>
         )}
         {error ? (
@@ -251,10 +254,9 @@ export function MissionsPage(props: { readonly initialExecutorRef?: string | und
               if (event.key === "Escape" && !deleting) setDeleteCandidate(null);
             }}
           >
-            <h2 id="delete-mission-title">Delete this mission?</h2>
+            <h2 id="delete-mission-title">{t("deleteTitle", { ns: "missions" })}</h2>
             <p id="delete-mission-description">
-              “{deleteCandidate.title}” and its conversation will be removed from Missions. This
-              cannot be undone.
+              {t("deleteDescription", { ns: "missions", title: deleteCandidate.title })}
             </p>
             <footer>
               <button
@@ -264,7 +266,7 @@ export function MissionsPage(props: { readonly initialExecutorRef?: string | und
                 autoFocus
                 onClick={() => setDeleteCandidate(null)}
               >
-                Cancel
+                {t("actions.cancel", { ns: "common" })}
               </button>
               <button
                 className="danger-button"
@@ -297,7 +299,9 @@ export function MissionsPage(props: { readonly initialExecutorRef?: string | und
                 }}
               >
                 <Trash size={17} aria-hidden="true" />
-                {deleting ? "Deleting…" : "Delete mission"}
+                {deleting
+                  ? t("deleting", { ns: "missions" })
+                  : t("deleteMission", { ns: "missions" })}
               </button>
             </footer>
           </section>
@@ -317,26 +321,28 @@ function MissionRail(props: {
   readonly onOpen: (mission: MissionSummary) => void;
   readonly onDelete: (mission: MissionSummary) => void;
 }) {
+  const { t } = useTranslation("missions");
   const active = props.missions.filter((mission) => mission.lifecycleStatus === "active");
   const completed = props.missions.filter((mission) => mission.lifecycleStatus === "completed");
   return (
     <aside className="mission-rail">
-      <h1>Missions</h1>
+      <h1>{t("title")}</h1>
       <button className="mission-new-button" type="button" onClick={props.onCreate}>
         <Plus size={18} aria-hidden="true" />
-        New mission
+        {t("newMission")}
       </button>
       <label className="mission-search">
         <MagnifyingGlass size={18} aria-hidden="true" />
-        <span className="sr-only">Search missions</span>
+        <span className="sr-only">{t("search")}</span>
         <input
           value={props.search}
           onChange={(event) => props.onSearch(event.target.value)}
-          placeholder="Search missions"
+          placeholder={t("search")}
         />
       </label>
       <MissionRailGroup
-        label="Active"
+        label={t("active")}
+        emptyLabel={t("noActive")}
         missions={active}
         now={props.now}
         selectedMissionId={props.selectedMissionId}
@@ -344,7 +350,8 @@ function MissionRail(props: {
         onDelete={props.onDelete}
       />
       <MissionRailGroup
-        label="Completed"
+        label={t("completed")}
+        emptyLabel={t("noCompleted")}
         missions={completed}
         now={props.now}
         selectedMissionId={props.selectedMissionId}
@@ -357,6 +364,7 @@ function MissionRail(props: {
 
 function MissionRailGroup(props: {
   readonly label: string;
+  readonly emptyLabel: string;
   readonly missions: readonly MissionSummary[];
   readonly now: number;
   readonly selectedMissionId: string | null;
@@ -367,7 +375,7 @@ function MissionRailGroup(props: {
     <section className="mission-rail-group">
       <h2>{props.label}</h2>
       {props.missions.length === 0 ? (
-        <p className="mission-rail-empty">No {props.label.toLocaleLowerCase()} missions</p>
+        <p className="mission-rail-empty">{props.emptyLabel}</p>
       ) : (
         props.missions.map((mission) => {
           const executionActive =
@@ -410,8 +418,12 @@ function MissionRailGroup(props: {
                 className="mission-row-delete"
                 type="button"
                 disabled={executionActive}
-                title={executionActive ? "Wait for this execution to finish" : "Delete mission"}
-                aria-label={`Delete ${mission.title}`}
+                title={
+                  executionActive
+                    ? i18n.t("waitToDelete", { ns: "missions" })
+                    : i18n.t("deleteMission", { ns: "missions" })
+                }
+                aria-label={i18n.t("deleteNamed", { ns: "missions", title: mission.title })}
                 onClick={() => props.onDelete(mission)}
               >
                 <Trash size={15} aria-hidden="true" />
@@ -429,6 +441,7 @@ export function CreateMissionFragment(props: {
   readonly initialExecutorRef?: string | undefined;
   readonly onCreated: (mission: Mission) => void | Promise<void>;
 }) {
+  const { t } = useTranslation("missions");
   const [workspace, setWorkspace] = useState<{ path: string; basename: string } | null>(null);
   const [executorRef, setExecutorRef] = useState(props.initialExecutorRef ?? "");
   const [goal, setGoal] = useState("");
@@ -462,7 +475,7 @@ export function CreateMissionFragment(props: {
         setWorkspace({ path: result.path, basename: result.basename });
         setError(null);
       } else if (result.reason !== "cancelled") {
-        setError(result.error ?? "The selected workspace is not available.");
+        setError(result.error ?? t("workspaceUnavailable"));
       }
     } catch (pickError) {
       setError(errorMessage(pickError));
@@ -490,8 +503,8 @@ export function CreateMissionFragment(props: {
   return (
     <section className="mission-create" aria-labelledby="new-mission-title">
       <header>
-        <h1 id="new-mission-title">Start a mission</h1>
-        <p>Choose a workspace and an executor, then describe the outcome.</p>
+        <h1 id="new-mission-title">{t("start")}</h1>
+        <p>{t("createDescription")}</p>
       </header>
       <div className="mission-create-selectors">
         <button className="mission-selector" type="button" onClick={() => void pickWorkspace()}>
@@ -499,9 +512,9 @@ export function CreateMissionFragment(props: {
             <Folder size={23} aria-hidden="true" />
           </span>
           <span className="mission-selector-copy">
-            <small>Workspace</small>
-            <strong>{workspace?.basename ?? "Choose a folder"}</strong>
-            <em>{workspace?.path ?? "One working directory per mission"}</em>
+            <small>{t("workspace")}</small>
+            <strong>{workspace?.basename ?? t("chooseFolder")}</strong>
+            <em>{workspace?.path ?? t("oneDirectory")}</em>
           </span>
         </button>
         <MissionExecutorPicker
@@ -511,60 +524,48 @@ export function CreateMissionFragment(props: {
         />
       </div>
       <div className="mission-goal-composer">
-        <label htmlFor="mission-goal">What do you want to accomplish?</label>
+        <label htmlFor="mission-goal">{t("prompt")}</label>
         <textarea
           id="mission-goal"
           value={goal}
           onChange={(event) => setGoal(event.target.value)}
-          placeholder="Describe the outcome you want this expert to deliver."
+          placeholder={t("goalPlaceholder")}
           autoFocus
         />
         <footer>
-          <div className="mission-prompt-tools" aria-label="Mission context and tools">
+          <div className="mission-prompt-tools" aria-label={t("contextTools")}>
             <button
               type="button"
               aria-disabled="true"
-              title={
-                !hasValidExecutor
-                  ? "Choose an executor to inherit its context"
-                  : "Context is inherited from the selected executor"
-              }
+              title={!hasValidExecutor ? t("chooseExecutorContext") : t("inheritedContext")}
             >
               <Stack size={18} aria-hidden="true" />
-              Context
+              {t("context")}
             </button>
             <button
               className={workspace === null ? "" : "is-active"}
               type="button"
               onClick={() => void pickWorkspace()}
-              title={workspace?.path ?? "Choose files through a mission workspace"}
+              title={workspace?.path ?? t("chooseWorkspaceFiles")}
             >
               <Files size={18} aria-hidden="true" />
-              Files
+              {t("files")}
             </button>
             <button
               type="button"
               aria-disabled="true"
-              title={
-                !hasValidExecutor
-                  ? "Choose an executor to inherit its knowledge"
-                  : "Knowledge is managed by the selected executor"
-              }
+              title={!hasValidExecutor ? t("chooseExecutorKnowledge") : t("managedKnowledge")}
             >
               <Books size={18} aria-hidden="true" />
-              Knowledge
+              {t("knowledge")}
             </button>
             <button
               type="button"
               aria-disabled="true"
-              title={
-                !hasValidExecutor
-                  ? "Choose an executor to inherit its tools"
-                  : "Tools are managed by the selected executor"
-              }
+              title={!hasValidExecutor ? t("chooseExecutorTools") : t("managedTools")}
             >
               <Toolbox size={18} aria-hidden="true" />
-              Tools
+              {t("tools")}
             </button>
           </div>
           <button
@@ -573,15 +574,11 @@ export function CreateMissionFragment(props: {
             disabled={saving || workspace === null || !hasValidExecutor || goal.trim() === ""}
             onClick={() => void submit()}
           >
-            {saving ? "Starting…" : "Start mission"}
+            {saving ? t("starting") : t("startMission")}
           </button>
         </footer>
       </div>
-      {executors.length === 0 ? (
-        <p className="mission-form-note">
-          Create an expert, team, or flow in Studio before starting a mission.
-        </p>
-      ) : null}
+      {executors.length === 0 ? <p className="mission-form-note">{t("createFirst")}</p> : null}
       {error ? (
         <p className="form-error" role="alert">
           {error}
@@ -596,6 +593,7 @@ function MissionExecutorPicker(props: {
   readonly value: string;
   readonly onChange: (value: string) => void;
 }) {
+  const { t } = useTranslation("missions");
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -649,7 +647,7 @@ function MissionExecutorPicker(props: {
         <SelectedIcon size={23} aria-hidden="true" />
       </span>
       <div className="mission-selector-copy">
-        <small>Executor</small>
+        <small>{t("executor")}</small>
         <button
           className="mission-executor-trigger"
           type="button"
@@ -660,12 +658,12 @@ function MissionExecutorPicker(props: {
             setSearch("");
           }}
         >
-          <strong>{selected?.metadata.name ?? "Choose an expert, team, or flow"}</strong>
+          <strong>{selected?.metadata.name ?? t("chooseResource")}</strong>
           <CaretDown size={16} aria-hidden="true" />
         </button>
         <em>
           {selected === undefined
-            ? "Only executable Studio resources are shown"
+            ? t("executableOnly")
             : `${executorLabel(selected)} · ${selected.metadata.version}`}
         </em>
         {open ? (
@@ -673,28 +671,32 @@ function MissionExecutorPicker(props: {
             className="mission-executor-menu"
             role="dialog"
             aria-modal="false"
-            aria-label="Choose mission executor"
+            aria-label={t("chooseMissionExecutor")}
           >
             <header>
               <div>
-                <strong>Choose executor</strong>
-                <small>Experts, teams, and flows can run missions.</small>
+                <strong>{t("chooseExecutor")}</strong>
+                <small>{t("executorDescription")}</small>
               </div>
-              <span>{props.executors.length} available</span>
+              <span>{t("availableCount", { count: props.executors.length })}</span>
             </header>
             {props.executors.length > 5 ? (
               <label className="mission-executor-search">
                 <MagnifyingGlass size={17} aria-hidden="true" />
-                <span className="sr-only">Search executors</span>
+                <span className="sr-only">{t("searchExecutors")}</span>
                 <input
                   autoFocus
                   value={search}
                   onChange={(event) => setSearch(event.target.value)}
-                  placeholder="Search executors"
+                  placeholder={t("searchExecutors")}
                 />
               </label>
             ) : null}
-            <div className="mission-executor-options" role="list" aria-label="Mission executors">
+            <div
+              className="mission-executor-options"
+              role="list"
+              aria-label={t("missionExecutors")}
+            >
               {visibleExecutors.map((executor, index) => {
                 const ref = missionExecutorRef(executor);
                 const kind = missionExecutorKind(executor);
@@ -729,8 +731,8 @@ function MissionExecutorPicker(props: {
               })}
               {visibleExecutors.length === 0 ? (
                 <div className="mission-executor-empty">
-                  <strong>No executors found</strong>
-                  <span>Try another name or description.</span>
+                  <strong>{t("noExecutors")}</strong>
+                  <span>{t("tryAnother")}</span>
                 </div>
               ) : null}
             </div>
@@ -751,10 +753,10 @@ function executorIcon(resource: PragmaInvocableResource) {
 
 function executorLabel(resource: PragmaInvocableResource): string {
   return resource.kind === "Expert"
-    ? "Expert"
+    ? i18n.t("expert", { ns: "missions" })
     : resource.kind === "ExpertTeam"
-      ? "Expert team"
-      : "Flow";
+      ? i18n.t("expertTeam", { ns: "missions" })
+      : i18n.t("flow", { ns: "missions" });
 }
 
 export function MissionDetailFragment(props: {
@@ -765,6 +767,7 @@ export function MissionDetailFragment(props: {
   readonly onHumanResponded?: () => void | Promise<void>;
   readonly onLifecycleChange?: () => void | Promise<void>;
 }) {
+  const { t } = useTranslation(["missions", "common"]);
   const [tab, setTab] = useState<"chat" | "work">("chat");
   const [workspaceAvailable, setWorkspaceAvailable] = useState<boolean | null>(null);
   const [chat, setChat] = useState<MissionChatSnapshot | null>(null);
@@ -988,7 +991,9 @@ export function MissionDetailFragment(props: {
             <span aria-hidden="true">·</span>
             <Folder size={16} aria-hidden="true" />
             {props.mission.workspace.basename}
-            {workspaceAvailable === false ? <strong>Workspace unavailable</strong> : null}
+            {workspaceAvailable === false ? (
+              <strong>{t("workspaceUnavailableTitle", { ns: "missions" })}</strong>
+            ) : null}
             <span aria-hidden="true">·</span>
             {isTeam ? (
               <UsersThree size={17} aria-hidden="true" />
@@ -1008,10 +1013,10 @@ export function MissionDetailFragment(props: {
             <button className="primary-button" type="button" onClick={() => void props.onRun?.()}>
               <Play size={17} />
               {executionActive
-                ? "Resume"
+                ? t("resume", { ns: "missions" })
                 : props.mission.execution === undefined
-                  ? "Run"
-                  : "Run workflow again"}
+                  ? t("run", { ns: "missions" })
+                  : t("runAgain", { ns: "missions" })}
             </button>
           ) : null}
           <button
@@ -1021,17 +1026,23 @@ export function MissionDetailFragment(props: {
           >
             {props.mission.lifecycleStatus === "active" ? (
               <>
-                <CheckCircle size={17} aria-hidden="true" /> Mark complete
+                <CheckCircle size={17} aria-hidden="true" />
+                {t("markComplete", { ns: "missions" })}
               </>
             ) : (
               <>
-                <ArrowCounterClockwise size={17} aria-hidden="true" /> Reopen
+                <ArrowCounterClockwise size={17} aria-hidden="true" />
+                {t("reopen", { ns: "missions" })}
               </>
             )}
           </button>
         </div>
       </header>
-      <div className="mission-detail-tabs" role="tablist" aria-label="Mission detail views">
+      <div
+        className="mission-detail-tabs"
+        role="tablist"
+        aria-label={t("detailViews", { ns: "missions" })}
+      >
         <button
           className={tab === "chat" ? "is-active" : ""}
           type="button"
@@ -1039,7 +1050,7 @@ export function MissionDetailFragment(props: {
           aria-selected={tab === "chat"}
           onClick={() => setTab("chat")}
         >
-          {isTeam ? "Team channel" : "Chat"}
+          {isTeam ? t("teamChannel", { ns: "missions" }) : t("chat", { ns: "missions" })}
         </button>
         <button
           className={tab === "work" ? "is-active" : ""}
@@ -1048,7 +1059,7 @@ export function MissionDetailFragment(props: {
           aria-selected={tab === "work"}
           onClick={() => setTab("work")}
         >
-          Work
+          {t("work", { ns: "missions" })}
         </button>
       </div>
       <div className="mission-detail-body">
@@ -1073,7 +1084,9 @@ export function MissionDetailFragment(props: {
                     disabled={loadingEarlier}
                     onClick={() => void loadEarlier()}
                   >
-                    {loadingEarlier ? "Loading…" : "Load earlier messages"}
+                    {loadingEarlier
+                      ? t("loadingEarlier", { ns: "missions" })
+                      : t("loadEarlier", { ns: "missions" })}
                   </button>
                 ) : null}
                 {historyError === null ? null : (
@@ -1102,7 +1115,8 @@ export function MissionDetailFragment(props: {
                     setShowJumpToLatest(false);
                   }}
                 >
-                  <CaretDown size={15} aria-hidden="true" /> Jump to latest
+                  <CaretDown size={15} aria-hidden="true" />
+                  {t("jumpLatest", { ns: "missions" })}
                 </button>
               ) : null}
             </div>
@@ -1153,15 +1167,24 @@ export function MissionDetailFragment(props: {
                     placeholder={
                       executionActive
                         ? interruptible
-                          ? `${props.mission.executor.name} is working…`
-                          : "Resume this execution to manage it"
+                          ? t("executorWorking", {
+                              ns: "missions",
+                              name: props.mission.executor.name,
+                            })
+                          : t("resumeToManage", { ns: "missions" })
                         : props.mission.lifecycleStatus === "completed"
-                          ? "Reopen this mission to continue the conversation"
+                          ? t("reopenToContinue", { ns: "missions" })
                           : isFlow
-                            ? "Flow input continues through workflow steps"
-                            : `Message ${props.mission.executor.name}`
+                            ? t("flowContinues", { ns: "missions" })
+                            : t("messageExecutor", {
+                                ns: "missions",
+                                name: props.mission.executor.name,
+                              })
                     }
-                    aria-label={`Message ${props.mission.executor.name}`}
+                    aria-label={t("messageExecutor", {
+                      ns: "missions",
+                      name: props.mission.executor.name,
+                    })}
                     onChange={(event) => setDraft(event.target.value)}
                     onKeyDown={(event) => {
                       if (event.key === "Enter" && !event.shiftKey) {
@@ -1174,11 +1197,11 @@ export function MissionDetailFragment(props: {
                     <button
                       className="is-interrupt"
                       type="button"
-                      aria-label="Interrupt execution"
+                      aria-label={t("interrupt", { ns: "missions" })}
                       title={
                         interruptible
-                          ? "Interrupt execution"
-                          : "Resume this execution before interrupting it"
+                          ? t("interrupt", { ns: "missions" })
+                          : t("resumeBeforeInterrupt", { ns: "missions" })
                       }
                       disabled={!interruptible || interrupting}
                       onClick={() => void interrupt()}
@@ -1188,7 +1211,7 @@ export function MissionDetailFragment(props: {
                   ) : (
                     <button
                       type="button"
-                      aria-label="Send message"
+                      aria-label={t("send", { ns: "missions" })}
                       disabled={
                         isFlow ||
                         draft.trim() === "" ||
@@ -1209,20 +1232,23 @@ export function MissionDetailFragment(props: {
             <CheckCircle size={31} weight="thin" aria-hidden="true" />
             <h2>
               {props.mission.execution === undefined
-                ? "No execution records"
-                : `Execution ${props.mission.execution.status}`}
+                ? t("noExecutionRecords", { ns: "missions" })
+                : t("executionStatus", {
+                    ns: "missions",
+                    status: props.mission.execution.status,
+                  })}
             </h2>
             <p>
               {props.mission.execution === undefined
-                ? "Run this mission to create an execution."
-                : `Execution ID: ${props.mission.execution.id}`}
+                ? t("runToCreateExecution", { ns: "missions" })
+                : t("executionId", { ns: "missions", id: props.mission.execution.id })}
             </p>
           </div>
         ) : (
-          <div className="mission-work-list" aria-label="Mission execution work">
+          <div className="mission-work-list" aria-label={t("executionWork", { ns: "missions" })}>
             <header>
-              <h2>Execution map</h2>
-              <p>Workflow steps and delegated experts share the same execution tree.</p>
+              <h2>{t("executionMap", { ns: "missions" })}</h2>
+              <p>{t("executionMapDescription", { ns: "missions" })}</p>
             </header>
             <ol>
               {workItems.map((item) => (
@@ -1256,13 +1282,14 @@ function MissionChatEntryView(props: {
   readonly isTeam: boolean;
   readonly isFlow: boolean;
 }) {
+  const { t } = useTranslation("missions");
   const name = props.entry.executorName ?? props.entry.executorId ?? props.executorName;
   if (props.entry.kind === "user") {
     return (
       <div className="mission-user-message">
-        <span aria-hidden="true">You</span>
+        <span aria-hidden="true">{t("you")}</span>
         <div>
-          <strong>You</strong>
+          <strong>{t("you")}</strong>
           <p>{props.entry.content}</p>
         </div>
       </div>
@@ -1273,7 +1300,9 @@ function MissionChatEntryView(props: {
       <details className="mission-chat-activity mission-thinking-entry">
         <summary>
           <Brain size={17} aria-hidden="true" />
-          <span>{props.entry.streaming ? `${name} is thinking…` : `Thinking · ${name}`}</span>
+          <span>
+            {props.entry.streaming ? t("thinkingActive", { name }) : t("thinkingDone", { name })}
+          </span>
           <CaretDown size={15} aria-hidden="true" />
         </summary>
         <p>{props.entry.content}</p>
@@ -1295,13 +1324,13 @@ function MissionChatEntryView(props: {
         </summary>
         {props.entry.inputPreview !== undefined ? (
           <div>
-            <strong>Input</strong>
+            <strong>{t("input")}</strong>
             <pre>{props.entry.inputPreview}</pre>
           </div>
         ) : null}
         {props.entry.outputPreview !== undefined ? (
           <div>
-            <strong>Output</strong>
+            <strong>{t("output")}</strong>
             <pre>{props.entry.outputPreview}</pre>
           </div>
         ) : null}
@@ -1345,6 +1374,7 @@ function MissionHumanComposer(props: {
   readonly onRespond: (response: HumanInteractionResponse) => void;
   readonly onInterrupt: () => void;
 }) {
+  const { t } = useTranslation(["missions", "common"]);
   const request = props.interaction.request;
   const questions = request.questions ?? [];
   const index = Math.min(props.questionIndex, Math.max(questions.length - 1, 0));
@@ -1357,10 +1387,16 @@ function MissionHumanComposer(props: {
       <header>
         <div>
           <small>
-            User input · {props.interactionPosition.current}/{props.interactionPosition.total}
+            {t("userInputPosition", {
+              ns: "missions",
+              current: props.interactionPosition.current,
+              total: props.interactionPosition.total,
+            })}
           </small>
-          <strong id="mission-human-title">{request.title ?? "Human input required"}</strong>
-          <p>{request.prompt ?? "Review the current execution before continuing."}</p>
+          <strong id="mission-human-title">
+            {request.title ?? t("humanInputRequired", { ns: "missions" })}
+          </strong>
+          <p>{request.prompt ?? t("humanReview", { ns: "missions" })}</p>
         </div>
         <button
           className="mission-human-interrupt"
@@ -1368,7 +1404,8 @@ function MissionHumanComposer(props: {
           disabled={!props.interruptible || props.interrupting}
           onClick={props.onInterrupt}
         >
-          <StopCircle size={17} weight="fill" aria-hidden="true" /> Interrupt
+          <StopCircle size={17} weight="fill" aria-hidden="true" />
+          {t("interrupt", { ns: "missions" })}
         </button>
       </header>
       {request.kind === "approval" ? (
@@ -1377,7 +1414,7 @@ function MissionHumanComposer(props: {
           <textarea
             value={props.notes}
             onChange={(event) => props.onNotes(event.target.value)}
-            placeholder="Optional notes"
+            placeholder={t("optionalNotes", { ns: "missions" })}
           />
           <footer>
             <button
@@ -1391,7 +1428,7 @@ function MissionHumanComposer(props: {
                 })
               }
             >
-              Reject
+              {t("reject", { ns: "missions" })}
             </button>
             <button
               className="primary-button"
@@ -1405,7 +1442,9 @@ function MissionHumanComposer(props: {
                 })
               }
             >
-              {props.responding ? "Submitting…" : "Approve & continue"}
+              {props.responding
+                ? t("submitting", { ns: "missions" })
+                : t("approveContinue", { ns: "missions" })}
             </button>
           </footer>
         </>
@@ -1417,14 +1456,19 @@ function MissionHumanComposer(props: {
             disabled={props.responding}
             onClick={() => props.onRespond({ notes: props.notes })}
           >
-            Continue
+            {t("continue", { ns: "missions" })}
           </button>
         </footer>
       ) : (
         <>
           <div className="mission-human-question">
             <small>
-              Question {index + 1} of {questions.length} · {question.header}
+              {t("questionPosition", {
+                ns: "missions",
+                current: index + 1,
+                total: questions.length,
+                header: question.header,
+              })}
             </small>
             <strong>{question.question}</strong>
             <HumanQuestionInput question={question} answer={answer} onAnswer={props.onAnswer} />
@@ -1432,7 +1476,7 @@ function MissionHumanComposer(props: {
           <textarea
             value={props.notes}
             onChange={(event) => props.onNotes(event.target.value)}
-            placeholder="Optional notes"
+            placeholder={t("optionalNotes", { ns: "missions" })}
           />
           <footer>
             <button
@@ -1440,7 +1484,7 @@ function MissionHumanComposer(props: {
               disabled={index === 0 || props.responding}
               onClick={() => props.onQuestionIndex(index - 1)}
             >
-              Back
+              {t("actions.back", { ns: "common" })}
             </button>
             {index < questions.length - 1 ? (
               <button
@@ -1449,7 +1493,7 @@ function MissionHumanComposer(props: {
                 disabled={!answerValid || props.responding}
                 onClick={() => props.onQuestionIndex(index + 1)}
               >
-                Next
+                {t("actions.next", { ns: "common" })}
               </button>
             ) : (
               <button
@@ -1463,7 +1507,9 @@ function MissionHumanComposer(props: {
                   })
                 }
               >
-                {props.responding ? "Submitting…" : "Submit response"}
+                {props.responding
+                  ? t("submitting", { ns: "missions" })
+                  : t("submitResponse", { ns: "missions" })}
               </button>
             )}
           </footer>
@@ -1591,19 +1637,20 @@ function uniqueChatEntries(entries: readonly MissionChatEntry[]): MissionChatEnt
 
 function missionFooterTip(mission: Mission, chat: MissionChatSnapshot | null): string | null {
   if (mission.lifecycleStatus === "completed") {
-    return "Reopen this mission to continue the conversation.";
+    return i18n.t("reopenToContinue", { ns: "missions" });
   }
   const execution = chat?.execution ?? mission.execution;
   if (execution === undefined) return null;
-  if (execution.status === "failed") return execution.error ?? "Execution failed.";
+  if (execution.status === "failed")
+    return execution.error ?? i18n.t("executionFailed", { ns: "missions" });
   if (execution.status === "cancelled") {
-    return "Execution interrupted. You can continue the conversation.";
+    return i18n.t("executionInterrupted", { ns: "missions" });
   }
   if (
     ["queued", "running", "waiting"].includes(execution.status) &&
     chat?.execution?.interruptible === false
   ) {
-    return "Resume this execution before interrupting it.";
+    return i18n.t("resumeBeforeInterrupt", { ns: "missions" });
   }
   return null;
 }
@@ -1611,13 +1658,13 @@ function missionFooterTip(mission: Mission, chat: MissionChatSnapshot | null): s
 function toolStatusLabel(status: Extract<MissionChatEntry, { kind: "tool" }>["status"]): string {
   switch (status) {
     case "running":
-      return "Running";
+      return i18n.t("statusRunning", { ns: "missions" });
     case "approval_required":
-      return "Approval required";
+      return i18n.t("statusApproval", { ns: "missions" });
     case "succeeded":
-      return "Completed";
+      return i18n.t("statusCompleted", { ns: "missions" });
     case "failed":
-      return "Failed";
+      return i18n.t("statusFailed", { ns: "missions" });
   }
 }
 
@@ -1644,22 +1691,22 @@ function workItemDepth(item: MissionWorkItem, items: readonly MissionWorkItem[])
 }
 
 function missionStatusLabel(mission: Mission | MissionSummary): string {
-  if (mission.lifecycleStatus === "completed") return "Completed";
+  if (mission.lifecycleStatus === "completed") return i18n.t("statusCompleted", { ns: "missions" });
   switch (mission.execution?.status) {
     case "queued":
-      return "Queued";
+      return i18n.t("statusQueued", { ns: "missions" });
     case "running":
-      return "Working";
+      return i18n.t("statusWorking", { ns: "missions" });
     case "waiting":
-      return "Needs input";
+      return i18n.t("statusNeedsInput", { ns: "missions" });
     case "succeeded":
-      return "Succeeded";
+      return i18n.t("statusSucceeded", { ns: "missions" });
     case "failed":
-      return "Failed";
+      return i18n.t("statusFailed", { ns: "missions" });
     case "cancelled":
-      return "Cancelled";
+      return i18n.t("statusCancelled", { ns: "missions" });
     default:
-      return "Ready";
+      return i18n.t("statusReady", { ns: "missions" });
   }
 }
 

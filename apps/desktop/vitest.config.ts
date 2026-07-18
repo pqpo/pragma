@@ -6,5 +6,6 @@ export default defineConfig({
   test: {
     include: ["src/**/*.test.{ts,tsx}"],
     passWithNoTests: true,
+    setupFiles: ["./src/renderer/src/test-setup.ts"],
   },
 });

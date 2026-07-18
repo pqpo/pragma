@@ -120,14 +120,14 @@ export function desktopApi() {
 }
 
 export const studioSections = [
-  { id: "experts", label: "Experts", icon: User },
-  { id: "teams", label: "Expert teams", icon: UsersThree },
-  { id: "flows", label: "Flows", icon: GitBranch },
-  { id: "capabilities", label: "Capabilities", icon: Wrench },
-  { id: "plugins", label: "Plugins", icon: PuzzlePiece },
-  { id: "context-stores", label: "Context stores", icon: Database },
+  { id: "experts", labelKey: "experts", icon: User },
+  { id: "teams", labelKey: "teams", icon: UsersThree },
+  { id: "flows", labelKey: "flows", icon: GitBranch },
+  { id: "capabilities", labelKey: "capabilities", icon: Wrench },
+  { id: "plugins", labelKey: "plugins", icon: PuzzlePiece },
+  { id: "context-stores", labelKey: "contextStores", icon: Database },
 ] as const satisfies readonly {
   readonly id: StudioView;
-  readonly label: string;
+  readonly labelKey: string;
   readonly icon: Icon;
 }[];

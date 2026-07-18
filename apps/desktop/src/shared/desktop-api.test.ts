@@ -13,7 +13,25 @@ import {
   GetMissionChatSchema,
   MissionChatSnapshotSchema,
   MissionSchema,
+  DesktopSettingsSnapshotSchema,
+  UpdateDesktopSettingsSchema,
 } from "./desktop-api.ts";
+
+describe("desktop settings contracts", () => {
+  it("accepts supported language preferences and rejects arbitrary locale tags", () => {
+    expect(UpdateDesktopSettingsSchema.parse({ localePreference: "system" })).toEqual({
+      localePreference: "system",
+    });
+    expect(
+      DesktopSettingsSnapshotSchema.parse({
+        schemaVersion: 1,
+        localePreference: "zh-Hant",
+        resolvedLocale: "zh-Hant",
+      }),
+    ).toMatchObject({ resolvedLocale: "zh-Hant" });
+    expect(UpdateDesktopSettingsSchema.safeParse({ localePreference: "fr" }).success).toBe(false);
+  });
+});
 
 const validInput = {
   id: "expert_01",

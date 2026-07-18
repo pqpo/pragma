@@ -1,4 +1,5 @@
 import { useState, type ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 
 import { GitBranch, Plus, Trash, UsersThree } from "@phosphor-icons/react";
 import {
@@ -21,6 +22,7 @@ export function PragmaResourceDirectoryFragment(props: {
   readonly project: PragmaProjectSnapshot;
   readonly onProjectChanged: (snapshot: PragmaProjectSnapshot) => void;
 }) {
+  const { t } = useTranslation("studio");
   const [editing, setEditing] = useState<PragmaResource | "new" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const resources = props.project.resources.filter((resource) =>
@@ -97,15 +99,12 @@ export function PragmaResourceDirectoryFragment(props: {
       header={
         <header className="studio-heading">
           <div>
-            <h1 id={headingId}>{props.kind === "team" ? "Expert teams" : "Flows"}</h1>
-            <p>
-              {props.kind === "team"
-                ? "Governed expert groups with an explicit coordinator and delegation policy."
-                : "Durable graphs with explicit transitions, human gates, and bounded loops."}
-            </p>
+            <h1 id={headingId}>{props.kind === "team" ? t("teams") : t("flows")}</h1>
+            <p>{props.kind === "team" ? t("teamsDescription") : t("flowsDescription")}</p>
           </div>
           <button className="primary-button" type="button" onClick={() => setEditing("new")}>
-            <Plus size={17} aria-hidden="true" /> New {props.kind}
+            <Plus size={17} aria-hidden="true" />{" "}
+            {t("newResource", { kind: props.kind === "team" ? t("expertTeam") : t("flow") })}
           </button>
         </header>
       }
@@ -123,14 +122,18 @@ export function PragmaResourceDirectoryFragment(props: {
             <small>{resource.metadata.version}</small>
             <button
               type="button"
-              aria-label={`Delete ${resource.metadata.name}`}
+              aria-label={t("deleteNamed", { name: resource.metadata.name })}
               onClick={() => void remove(resource)}
             >
               <Trash size={17} />
             </button>
           </div>
         ))}
-        {resources.length === 0 ? <p className="studio-empty-copy">No {props.kind}s yet.</p> : null}
+        {resources.length === 0 ? (
+          <p className="studio-empty-copy">
+            {t("noResourcesYet", { kind: props.kind === "team" ? t("expertTeam") : t("flow") })}
+          </p>
+        ) : null}
       </div>
       {error ? (
         <p className="form-error" role="alert">
@@ -148,6 +151,7 @@ function TeamEditor(props: {
   readonly onCancel: () => void;
   readonly onSave: (resource: PragmaExpertTeamResource) => Promise<void>;
 }) {
+  const { t } = useTranslation("studio");
   const experts = props.project.resources.filter(
     (resource): resource is PragmaExpertResource => resource.kind === "Expert",
   );
@@ -199,7 +203,7 @@ function TeamEditor(props: {
 
   return (
     <ResourceEditor
-      title={props.initial === undefined ? "New expert team" : "Edit expert team"}
+      title={props.initial === undefined ? t("newExpertTeam") : t("editExpertTeam")}
       error={validationError ?? props.error}
       onCancel={props.onCancel}
       onSave={submit}
@@ -216,9 +220,9 @@ function TeamEditor(props: {
         onVersion={setVersion}
       />
       <label>
-        Coordinator
+        {t("coordinator")}
         <select value={coordinator} onChange={(event) => setCoordinator(event.target.value)}>
-          <option value="">Select an expert</option>
+          <option value="">{t("selectExpert")}</option>
           {expertRefs.map((expert) => (
             <option key={expert.ref} value={expert.ref}>
               {expert.label}
@@ -227,7 +231,7 @@ function TeamEditor(props: {
         </select>
       </label>
       <fieldset>
-        <legend>Members</legend>
+        <legend>{t("members")}</legend>
         {expertRefs.map((expert) => (
           <label className="pragma-check" key={expert.ref}>
             <input
@@ -247,7 +251,7 @@ function TeamEditor(props: {
       </fieldset>
       <div className="pragma-two-columns">
         <label>
-          Max concurrency
+          {t("maxConcurrency")}
           <input
             type="number"
             min={1}
@@ -256,7 +260,7 @@ function TeamEditor(props: {
           />
         </label>
         <label>
-          Max delegation depth
+          {t("maxDelegationDepth")}
           <input
             type="number"
             min={1}
@@ -277,6 +281,7 @@ function ResourceEditor(props: {
   readonly onSave: () => void;
   readonly saveDisabled?: boolean | undefined;
 }) {
+  const { t } = useTranslation("studio");
   return (
     <StudioScreenFrame
       className="pragma-resource-editor"
@@ -285,7 +290,7 @@ function ResourceEditor(props: {
         <header>
           <div>
             <h2 id="resource-editor-heading">{props.title}</h2>
-            <p>Saved as canonical Pragma YAML when published.</p>
+            <p>{t("canonicalYaml")}</p>
           </div>
         </header>
       }
@@ -298,7 +303,7 @@ function ResourceEditor(props: {
       ) : null}
       <footer>
         <button type="button" onClick={props.onCancel}>
-          Cancel
+          {t("cancel")}
         </button>
         <button
           className="studio-primary-action"
@@ -306,7 +311,7 @@ function ResourceEditor(props: {
           onClick={props.onSave}
           disabled={props.saveDisabled}
         >
-          Validate & publish
+          {t("validatePublish")}
         </button>
       </footer>
     </StudioScreenFrame>
@@ -324,11 +329,12 @@ function MetadataFields(props: {
   readonly onDescription: (value: string) => void;
   readonly onVersion: (value: string) => void;
 }) {
+  const { t } = useTranslation("studio");
   return (
     <>
       <div className="pragma-two-columns">
         <label>
-          Resource ID
+          {t("resourceId")}
           <input
             value={props.id}
             disabled={props.lockId}
@@ -336,16 +342,16 @@ function MetadataFields(props: {
           />
         </label>
         <label>
-          Version
+          {t("version")}
           <input value={props.version} onChange={(event) => props.onVersion(event.target.value)} />
         </label>
       </div>
       <label>
-        Name
+        {t("name")}
         <input value={props.name} onChange={(event) => props.onName(event.target.value)} />
       </label>
       <label>
-        Description
+        {t("description")}
         <textarea
           rows={3}
           value={props.description}

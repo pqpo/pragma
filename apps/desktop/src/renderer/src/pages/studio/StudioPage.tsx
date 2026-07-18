@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import type {
   ContextStore,
@@ -39,6 +40,7 @@ import {
 } from "./studio-model.ts";
 
 export function StudioPage(props: { readonly onTryExpert: (expert: ExpertRecord) => void }) {
+  const { t } = useTranslation("studio");
   const [activeView, setActiveView] = useState<StudioView>("experts");
   const [screen, setScreen] = useState<
     | "directory"
@@ -275,7 +277,7 @@ export function StudioPage(props: { readonly onTryExpert: (expert: ExpertRecord)
 
   return (
     <section className="studio-page">
-      <nav className="studio-navigation" aria-label="Studio sections">
+      <nav className="studio-navigation" aria-label={t("sections")}>
         {studioSections.map((section) => {
           const SectionIcon = section.icon;
           const isActive = section.id === activeView;
@@ -308,7 +310,7 @@ export function StudioPage(props: { readonly onTryExpert: (expert: ExpertRecord)
               }}
             >
               <SectionIcon size={20} aria-hidden="true" />
-              <span>{section.label}</span>
+              <span>{t(section.labelKey)}</span>
               {count !== undefined ? <em>{count}</em> : null}
             </button>
           );

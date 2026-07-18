@@ -1,6 +1,7 @@
 import { BookOpenText, Database, MagnifyingGlass, Network, Wrench, X } from "@phosphor-icons/react";
 import { useEffect, useMemo, useState } from "react";
 import type { PragmaResource } from "@pragma/interpreter/ast";
+import { useTranslation } from "react-i18next";
 
 import type { Capability, ContextStore } from "../../../../shared/desktop-api.ts";
 import type { ExpertDraft } from "./studio-model.ts";
@@ -10,33 +11,6 @@ type InvocableResource = Extract<
   PragmaResource,
   { readonly kind: "Expert" | "ExpertTeam" | "Flow" }
 >;
-
-const pickerCopy = {
-  resources: {
-    eyebrow: "As tools",
-    title: "Experts, teams & flows",
-    description: "Let this expert call other Pragma resources when a task needs them.",
-    searchPlaceholder: "Search experts, teams, and flows",
-  },
-  "context-stores": {
-    eyebrow: "Knowledge",
-    title: "Context stores",
-    description: "Mount the stores this expert can use for durable context.",
-    searchPlaceholder: "Search context stores",
-  },
-  skills: {
-    eyebrow: "Guidance",
-    title: "Skills",
-    description: "Load reusable instructions and specialist workflows.",
-    searchPlaceholder: "Search skills",
-  },
-  tools: {
-    eyebrow: "Actions",
-    title: "Tools",
-    description: "Choose individual MCP, HTTP, and code tools this expert can call.",
-    searchPlaceholder: "Search tools and services",
-  },
-} as const;
 
 function isInvocableResource(resource: PragmaResource): resource is InvocableResource {
   return resource.kind === "Expert" || resource.kind === "ExpertTeam" || resource.kind === "Flow";
@@ -104,8 +78,9 @@ export function matchingToolNames(capability: Capability, query: string): readon
 }
 
 function SummaryNames(props: { readonly names: readonly string[] }) {
+  const { t } = useTranslation("studio");
   if (props.names.length === 0) {
-    return <span className="capability-summary-empty">None selected</span>;
+    return <span className="capability-summary-empty">{t("noneSelected")}</span>;
   }
   const visible = props.names.slice(0, 3);
   return (
@@ -114,7 +89,7 @@ function SummaryNames(props: { readonly names: readonly string[] }) {
         <span key={`${name}-${index}`}>{name}</span>
       ))}
       {props.names.length > visible.length ? (
-        <span>+{props.names.length - visible.length} more</span>
+        <span>{t("moreCount", { count: props.names.length - visible.length })}</span>
       ) : null}
     </span>
   );
@@ -132,6 +107,7 @@ export function ExpertCapabilityPicker(props: {
   readonly onContextStoreMountsChange: (value: ExpertDraft["contextStoreMounts"]) => void;
   readonly onCapabilityReferencesChange: (value: ExpertDraft["capabilities"]) => void;
 }) {
+  const { t } = useTranslation("studio");
   const [activePicker, setActivePicker] = useState<PickerKind | null>(null);
   const [search, setSearch] = useState("");
   const invocableResources = useMemo(
@@ -161,6 +137,32 @@ export function ExpertCapabilityPicker(props: {
     (total, reference) => total + reference.toolNames.length,
     0,
   );
+  const pickerCopy = {
+    resources: {
+      eyebrow: t("asTools"),
+      title: t("expertsTeamsFlows"),
+      description: t("resourcesPickerDescription"),
+      searchPlaceholder: t("searchResources"),
+    },
+    "context-stores": {
+      eyebrow: t("knowledge"),
+      title: t("contextStores"),
+      description: t("contextStoresPickerDescription"),
+      searchPlaceholder: t("searchContextStores"),
+    },
+    skills: {
+      eyebrow: t("guidance"),
+      title: t("skills"),
+      description: t("skillsPickerDescription"),
+      searchPlaceholder: t("searchSkills"),
+    },
+    tools: {
+      eyebrow: t("actions"),
+      title: t("tools"),
+      description: t("toolsPickerDescription"),
+      searchPlaceholder: t("searchTools"),
+    },
+  } as const;
 
   const closePicker = () => {
     setActivePicker(null);
@@ -295,15 +297,17 @@ export function ExpertCapabilityPicker(props: {
       <section className="capability-summary-section" aria-labelledby="capability-library-heading">
         <div className="capability-section-heading">
           <div>
-            <h3 id="capability-library-heading">Capability library</h3>
-            <p>Open a category to search and choose only what this expert needs.</p>
+            <h3 id="capability-library-heading">{t("capabilityLibrary")}</h3>
+            <p>{t("capabilityLibraryDescription")}</p>
           </div>
           <span>
-            {props.resourceTools.length +
-              props.contextStoreMounts.length +
-              selectedSkillReferences.length +
-              selectedToolCount}{" "}
-            selected
+            {t("selectedCount", {
+              count:
+                props.resourceTools.length +
+                props.contextStoreMounts.length +
+                selectedSkillReferences.length +
+                selectedToolCount,
+            })}
           </span>
         </div>
         <div className="capability-summary-grid">
@@ -317,7 +321,7 @@ export function ExpertCapabilityPicker(props: {
                     <Icon size={19} aria-hidden="true" />
                   </span>
                   <span className="capability-summary-count">
-                    <strong>{summary.selected}</strong> selected
+                    {t("selectedCount", { count: summary.selected })}
                   </span>
                 </header>
                 <div>
@@ -327,9 +331,9 @@ export function ExpertCapabilityPicker(props: {
                 </div>
                 <SummaryNames names={summary.names} />
                 <footer>
-                  <span>{summary.available} available</span>
+                  <span>{t("availableCount", { count: summary.available })}</span>
                   <button type="button" onClick={() => openPicker(summary.id)}>
-                    {summary.selected > 0 ? "Edit selection" : "Choose"}
+                    {summary.selected > 0 ? t("editSelection") : t("choose")}
                   </button>
                 </footer>
               </article>
@@ -358,7 +362,7 @@ export function ExpertCapabilityPicker(props: {
                 <h2 id="expert-picker-heading">{pickerCopy[activePicker].title}</h2>
                 <p>{pickerCopy[activePicker].description}</p>
               </div>
-              <button type="button" aria-label="Close capability picker" onClick={closePicker}>
+              <button type="button" aria-label={t("closeCapabilityPicker")} onClick={closePicker}>
                 <X size={19} aria-hidden="true" />
               </button>
             </header>
@@ -372,16 +376,16 @@ export function ExpertCapabilityPicker(props: {
                 placeholder={pickerCopy[activePicker].searchPlaceholder}
               />
               {search ? (
-                <button type="button" aria-label="Clear search" onClick={() => setSearch("")}>
+                <button type="button" aria-label={t("clearSearch")} onClick={() => setSearch("")}>
                   <X size={16} aria-hidden="true" />
                 </button>
               ) : null}
             </label>
             <div className="expert-picker-toolbar">
-              <span>{activeSelectedCount} selected</span>
+              <span>{t("selectedCount", { count: activeSelectedCount })}</span>
               {activeSelectedCount > 0 ? (
                 <button type="button" onClick={clearActivePicker}>
-                  Clear selection
+                  {t("clearSelection")}
                 </button>
               ) : null}
             </div>
@@ -429,9 +433,9 @@ export function ExpertCapabilityPicker(props: {
               ) : null}
             </div>
             <footer className="expert-picker-actions">
-              <span>Changes are applied to this expert immediately.</span>
+              <span>{t("changesImmediate")}</span>
               <button className="primary-button" type="button" onClick={closePicker}>
-                Done
+                {t("common:actions.done")}
               </button>
             </footer>
           </aside>
@@ -442,14 +446,13 @@ export function ExpertCapabilityPicker(props: {
 }
 
 function EmptyResults(props: { readonly hasQuery: boolean; readonly label: string }) {
+  const { t } = useTranslation("studio");
   return (
     <div className="expert-picker-empty">
-      <strong>{props.hasQuery ? "No matches found" : `No ${props.label} available`}</strong>
-      <p>
-        {props.hasQuery
-          ? "Try a different name or description."
-          : "Add items in Studio, then return here."}
-      </p>
+      <strong>
+        {props.hasQuery ? t("noMatchesFound") : t("noAvailable", { label: props.label })}
+      </strong>
+      <p>{props.hasQuery ? t("tryDifferentDescription") : t("addItemsStudio")}</p>
     </div>
   );
 }
@@ -460,6 +463,7 @@ function ResourceResults(props: {
   readonly selected: ExpertDraft["resourceTools"];
   readonly onChange: (value: ExpertDraft["resourceTools"]) => void;
 }) {
+  const { t } = useTranslation("studio");
   const visible = props.resources.filter((resource) => {
     const details = resourceDetails(resource);
     return includesQuery(
@@ -471,7 +475,7 @@ function ResourceResults(props: {
     );
   });
   if (visible.length === 0)
-    return <EmptyResults hasQuery={Boolean(props.query.trim())} label="resources" />;
+    return <EmptyResults hasQuery={Boolean(props.query.trim())} label={t("resources")} />;
   return (
     <div className="expert-picker-list">
       {visible.map((resource) => {
@@ -507,7 +511,12 @@ function ResourceResults(props: {
             <span>
               <strong>{resource.metadata.name}</strong>
               <small>
-                {details.label} · {resource.metadata.version}
+                {details.kind === "team"
+                  ? t("expertTeam")
+                  : details.kind === "expert"
+                    ? t("expert")
+                    : t("flow")}{" "}
+                · {resource.metadata.version}
               </small>
             </span>
           </label>
@@ -523,6 +532,7 @@ function ContextStoreResults(props: {
   readonly selected: ExpertDraft["contextStoreMounts"];
   readonly onChange: (value: ExpertDraft["contextStoreMounts"]) => void;
 }) {
+  const { t } = useTranslation("studio");
   const visible = props.stores.filter((store) =>
     includesQuery(
       props.query,
@@ -532,7 +542,7 @@ function ContextStoreResults(props: {
     ),
   );
   if (visible.length === 0)
-    return <EmptyResults hasQuery={Boolean(props.query.trim())} label="context stores" />;
+    return <EmptyResults hasQuery={Boolean(props.query.trim())} label={t("contextStoresLower")} />;
   return (
     <div className="expert-picker-list">
       {visible.map((store) => {
@@ -555,7 +565,7 @@ function ContextStoreResults(props: {
             <span>
               <strong>{store.name}</strong>
               <small>
-                {store.description || (store.type === "file" ? "File store" : "Context note")}
+                {store.description || (store.type === "file" ? t("fileStore") : t("contextNote"))}
               </small>
             </span>
           </label>
@@ -571,6 +581,7 @@ function SkillResults(props: {
   readonly references: ExpertDraft["capabilities"];
   readonly onChange: (value: ExpertDraft["capabilities"]) => void;
 }) {
+  const { t } = useTranslation("studio");
   const visible = props.capabilities.filter((capability) =>
     includesQuery(
       props.query,
@@ -580,7 +591,7 @@ function SkillResults(props: {
     ),
   );
   if (visible.length === 0)
-    return <EmptyResults hasQuery={Boolean(props.query.trim())} label="skills" />;
+    return <EmptyResults hasQuery={Boolean(props.query.trim())} label={t("skillsLower")} />;
   return (
     <div className="expert-picker-list">
       {visible.map((capability) => {
@@ -617,7 +628,7 @@ function SkillResults(props: {
               <strong>{capability.manifest.name}</strong>
               <small>
                 {capability.definition.description}
-                {unavailable ? " · Needs attention" : ""}
+                {unavailable ? ` · ${t("needsAttention")}` : ""}
               </small>
             </span>
           </label>
@@ -637,6 +648,7 @@ function ToolResults(props: {
     capability: Capability,
   ) => void;
 }) {
+  const { t } = useTranslation("studio");
   const visible = props.capabilities.flatMap((capability) => {
     const tools = getTools(capability);
     const matchingNames = matchingToolNames(capability, props.query);
@@ -644,7 +656,7 @@ function ToolResults(props: {
     return visibleTools.length > 0 ? [{ capability, tools, visibleTools }] : [];
   });
   if (visible.length === 0)
-    return <EmptyResults hasQuery={Boolean(props.query.trim())} label="tools" />;
+    return <EmptyResults hasQuery={Boolean(props.query.trim())} label={t("toolsLower")} />;
   return (
     <div className="expert-tool-results">
       {visible.map(({ capability, tools, visibleTools }) => {
@@ -666,14 +678,19 @@ function ToolResults(props: {
               <div>
                 <strong>{capability.manifest.name}</strong>
                 <small>
-                  {serviceLabel(capability)} · {selectedNames.length} of {tools.length} selected
-                  {unavailable ? " · Needs attention" : ""}
+                  {capability.definition.kind === "mcp_server"
+                    ? t("mcpServer")
+                    : capability.definition.kind === "http_service"
+                      ? t("httpService")
+                      : t("codeService")}{" "}
+                  · {t("selectedOfTotal", { selected: selectedNames.length, total: tools.length })}
+                  {unavailable ? ` · ${t("needsAttention")}` : ""}
                 </small>
               </div>
               <div>
                 {selected && selected.revision < capability.manifest.latestRevision ? (
                   <button type="button" onClick={() => props.onUpgrade(selected, capability)}>
-                    Upgrade to r{capability.manifest.latestRevision}
+                    {t("upgradeRevision", { revision: capability.manifest.latestRevision })}
                   </button>
                 ) : null}
                 <label>
@@ -685,7 +702,7 @@ function ToolResults(props: {
                       props.onUpdate(capability, allSelected ? [] : tools.map((tool) => tool.name))
                     }
                   />{" "}
-                  Select all
+                  {t("selectAll")}
                 </label>
               </div>
             </header>
@@ -709,7 +726,7 @@ function ToolResults(props: {
                     />
                     <span>
                       <strong>{tool.name}</strong>
-                      <small>{tool.description ?? "External tool"}</small>
+                      <small>{tool.description ?? t("externalTool")}</small>
                     </span>
                   </label>
                 );

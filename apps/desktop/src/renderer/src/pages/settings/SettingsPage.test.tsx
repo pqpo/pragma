@@ -1,7 +1,12 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
+import { i18n } from "../../i18n/index.ts";
 import { SettingsPage } from "./SettingsPage.tsx";
+
+afterEach(async () => {
+  await i18n.changeLanguage("en");
+});
 
 describe("SettingsPage", () => {
   it("uses a fixed navigation and content frame without a redundant page title", () => {
@@ -11,6 +16,19 @@ describe("SettingsPage", () => {
     expect(html).toContain('class="settings-content"');
     expect(html).toContain('class="settings-screen-header"');
     expect(html).toContain('class="settings-screen-body"');
+    expect(html).toContain("General");
+    expect(html).toContain("Language");
     expect(html).not.toContain("<h1>Settings</h1>");
+  });
+
+  it("renders General settings in Simplified Chinese", async () => {
+    await i18n.changeLanguage("zh-Hans");
+
+    const html = renderToStaticMarkup(<SettingsPage />);
+
+    expect(html).toContain("常规");
+    expect(html).toContain("语言");
+    expect(html).toContain("跟随系统");
+    expect(html).toContain("繁體中文");
   });
 });

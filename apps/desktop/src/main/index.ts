@@ -11,6 +11,8 @@ import { createCapabilityStore } from "./capability-store.ts";
 import { createCapabilityVerifier } from "./capability-verifier.ts";
 import { installContextStoreHandlers } from "./context-store-ipc.ts";
 import { createContextStoreStore } from "./context-store-store.ts";
+import { installDesktopSettingsHandlers } from "./desktop-settings-ipc.ts";
+import { createDesktopSettingsStore } from "./desktop-settings-store.ts";
 import { installExpertDefinitionHandlers } from "./expert-definition-ipc.ts";
 import { createExpertDefinitionStore } from "./expert-definition-store.ts";
 import { installModelProviderHandlers } from "./model-provider-ipc.ts";
@@ -119,6 +121,12 @@ void app.whenReady().then(async () => {
     decrypt: (encrypted: Buffer) => safeStorage.decryptString(encrypted),
   };
   const pragmaPaths = new PragmaPaths();
+  installDesktopSettingsHandlers(
+    createDesktopSettingsStore({
+      settingsPath: join(pragmaPaths.stateRoot(), "desktop-settings.json"),
+      warn: (message, error) => console.warn(message, error),
+    }),
+  );
   const pragmaProjectStore = createPragmaProjectStore({
     projectsPath: join(app.getPath("home"), ".pragma", "projects"),
   });

@@ -330,6 +330,38 @@ p {
   min-width: 0;
 }
 
+.general-settings-list {
+  max-width: 820px;
+  padding-top: 18px;
+}
+
+.general-language-setting {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 32px;
+}
+
+.setting-copy {
+  display: grid;
+  gap: 5px;
+}
+
+.setting-copy strong {
+  color: var(--text);
+  font-size: 15px;
+}
+
+.setting-copy span,
+.setting-copy small {
+  color: var(--muted);
+}
+
+.language-select-shell {
+  width: 220px;
+  flex: 0 0 220px;
+}
+
 .settings-screen-body {
   min-height: 0;
   overflow-x: hidden;

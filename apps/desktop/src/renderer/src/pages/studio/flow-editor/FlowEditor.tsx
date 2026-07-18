@@ -45,6 +45,7 @@ import {
   type Viewport,
 } from "@xyflow/react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 
 import type { PragmaProjectSnapshot, WorkflowLayout } from "../../../../../shared/desktop-api.ts";
 import { errorMessage } from "../../../lib/errors.ts";
@@ -123,6 +124,7 @@ function FlowEditorCanvas(props: {
   readonly onCancel: () => void;
   readonly onSave: (resource: PragmaFlowResource) => Promise<boolean>;
 }) {
+  const { t } = useTranslation("studio");
   const initialFlow = useMemo(
     () => props.initial ?? createEmptyFlow(nextFlowResourceId(props.project.resources)),
     [props.initial, props.project.resources],
@@ -423,10 +425,7 @@ function FlowEditorCanvas(props: {
   };
 
   const handleBack = () => {
-    if (
-      (semanticDirty || layoutStatus === "unsaved") &&
-      !window.confirm("Discard unpublished Flow changes?")
-    )
+    if ((semanticDirty || layoutStatus === "unsaved") && !window.confirm(t("discardFlowChanges")))
       return;
     props.onCancel();
   };
@@ -434,25 +433,26 @@ function FlowEditorCanvas(props: {
   const handleMoveEnd: OnMoveEnd = () => scheduleLayoutSave();
 
   return (
-    <section className="flow-editor-shell" aria-label="Flow editor">
+    <section className="flow-editor-shell" aria-label={t("flowEditor")}>
       <header className="flow-editor-toolbar">
         <div className="flow-editor-title">
-          <button type="button" aria-label="Back to flows" onClick={handleBack}>
+          <button type="button" aria-label={t("backFlows")} onClick={handleBack}>
             <ArrowLeft size={18} />
           </button>
           <div>
-            <strong>{flow.metadata.name || "Untitled flow"}</strong>
+            <strong>{flow.metadata.name || t("untitledFlow")}</strong>
             <span>
-              {semanticDirty ? "Unpublished changes" : "Published"} · Layout {layoutStatus}
+              {semanticDirty ? t("unpublishedChanges") : t("published")} ·{" "}
+              {t("layoutStatus", { status: layoutStatus })}
             </span>
           </div>
         </div>
         <div className="flow-editor-toolbar-actions">
           <button type="button" disabled={historyRef.current.length === 0} onClick={undo}>
-            Undo
+            {t("undo")}
           </button>
           <button type="button" disabled={futureRef.current.length === 0} onClick={redo}>
-            Redo
+            {t("redo")}
           </button>
           <button
             type="button"
@@ -464,10 +464,10 @@ function FlowEditorCanvas(props: {
               scheduleLayoutSave();
             }}
           >
-            <CirclesFour size={16} /> Auto arrange
+            <CirclesFour size={16} /> {t("autoArrange")}
           </button>
           <button type="button" onClick={() => void fitView({ padding: 0.08, duration: 220 })}>
-            <ArrowsOut size={16} /> Fit
+            <ArrowsOut size={16} /> {t("fit")}
           </button>
           <button
             className="flow-validate-button"
@@ -476,8 +476,8 @@ function FlowEditorCanvas(props: {
           >
             <CheckCircle size={16} />
             {localIssues.length + candidateIssues.length > 0
-              ? `${localIssues.length + candidateIssues.length} issue${localIssues.length + candidateIssues.length === 1 ? "" : "s"}`
-              : "Check"}
+              ? t("issueCount", { count: localIssues.length + candidateIssues.length })
+              : t("check")}
           </button>
           <button
             className="primary-button"
@@ -485,7 +485,7 @@ function FlowEditorCanvas(props: {
             disabled={saving}
             onClick={() => void publish()}
           >
-            {saving ? "Validating…" : "Validate & publish"}
+            {saving ? t("validating") : t("validatePublish")}
           </button>
         </div>
       </header>
@@ -495,24 +495,24 @@ function FlowEditorCanvas(props: {
           <button
             className="flow-panel-toggle"
             type="button"
-            aria-label={paletteOpen ? "Collapse node palette" : "Open node palette"}
+            aria-label={paletteOpen ? t("collapseNodePalette") : t("openNodePalette")}
             onClick={() => setPaletteOpen(!paletteOpen)}
           >
-            <Plus size={17} /> <span>Add node</span>
+            <Plus size={17} /> <span>{t("addNode")}</span>
           </button>
           {paletteOpen ? (
             <div className="flow-palette-content">
-              <p>Drag a node onto the canvas</p>
+              <p>{t("dragNode")}</p>
               <div className="flow-palette-group">
-                <strong>Executors</strong>
-                <PaletteItem kind="expert" icon={<Robot />} label="Expert" />
-                <PaletteItem kind="team" icon={<UsersThree />} label="Expert team" />
-                <PaletteItem kind="flow" icon={<GitBranch />} label="Sub-flow" />
+                <strong>{t("executors")}</strong>
+                <PaletteItem kind="expert" icon={<Robot />} label={t("expert")} />
+                <PaletteItem kind="team" icon={<UsersThree />} label={t("expertTeam")} />
+                <PaletteItem kind="flow" icon={<GitBranch />} label={t("subFlow")} />
               </div>
               <div className="flow-palette-group">
-                <strong>Control</strong>
-                <PaletteItem kind="human" icon={<UserFocus />} label="Human input" />
-                <PaletteItem kind="action" icon={<Sparkle />} label="Action" />
+                <strong>{t("control")}</strong>
+                <PaletteItem kind="human" icon={<UserFocus />} label={t("humanInput")} />
+                <PaletteItem kind="action" icon={<Sparkle />} label={t("action")} />
               </div>
             </div>
           ) : null}
@@ -603,7 +603,7 @@ function FlowEditorCanvas(props: {
               nodeColor={(node) => (node.type === "terminal" ? "#87938b" : "#5e806f")}
             />
             <Panel position="bottom-left" className="flow-canvas-hint">
-              <Hand size={15} /> Scroll to zoom · drag canvas to pan
+              <Hand size={15} /> {t("canvasHint")}
             </Panel>
           </ReactFlow>
           {nodeContextMenu !== null ? (
@@ -619,7 +619,7 @@ function FlowEditorCanvas(props: {
                 role="menuitem"
                 onClick={() => removeStep(nodeContextMenu.stepId)}
               >
-                <Trash size={15} /> Delete node
+                <Trash size={15} /> {t("deleteNode")}
               </button>
             </div>
           ) : null}
@@ -629,10 +629,10 @@ function FlowEditorCanvas(props: {
           <button
             className="flow-panel-toggle"
             type="button"
-            aria-label={inspectorOpen ? "Collapse inspector" : "Open inspector"}
+            aria-label={inspectorOpen ? t("collapseInspector") : t("openInspector")}
             onClick={() => setInspectorOpen(!inspectorOpen)}
           >
-            <Path size={17} /> <span>Inspector</span>
+            <Path size={17} /> <span>{t("inspector")}</span>
           </button>
           {inspectorOpen ? (
             selectedStepId === null ? (
@@ -661,14 +661,14 @@ function FlowEditorCanvas(props: {
       {validationOpen ? (
         <aside className="flow-validation-panel">
           <header>
-            <strong>Validation</strong>
+            <strong>{t("validation")}</strong>
             <button type="button" onClick={() => setValidationOpen(false)}>
-              Close
+              {t("close")}
             </button>
           </header>
           {localIssues.length === 0 && candidateIssues.length === 0 ? (
             <p className="flow-validation-success">
-              <CheckCircle size={17} /> Flow is structurally valid.
+              <CheckCircle size={17} /> {t("flowValid")}
             </p>
           ) : (
             <ul>
@@ -703,6 +703,7 @@ function PaletteItem(props: {
   readonly label: string;
   readonly icon: ReactNode;
 }) {
+  const { t } = useTranslation("studio");
   return (
     <div
       className={`flow-palette-item is-${props.kind}`}
@@ -711,18 +712,19 @@ function PaletteItem(props: {
         event.dataTransfer.effectAllowed = "copy";
         event.dataTransfer.setData("application/pragma-flow-node", props.kind);
       }}
-      aria-label={`Drag ${props.label} to the canvas`}
+      aria-label={t("dragNamedCanvas", { name: props.label })}
     >
       <span>{props.icon}</span>
       <div>
         <strong>{props.label}</strong>
-        <small>Drag to canvas</small>
+        <small>{t("dragCanvas")}</small>
       </div>
     </div>
   );
 }
 
 function StepNode(props: NodeProps<StepCanvasNode>) {
+  const { t } = useTranslation("studio");
   const Icon =
     props.data.kind === "expert"
       ? Robot
@@ -749,7 +751,7 @@ function StepNode(props: NodeProps<StepCanvasNode>) {
         </span>
         <div>
           <strong>{props.data.label}</strong>
-          <small>{props.data.subtitle || "Not configured"}</small>
+          <small>{props.data.subtitle || t("notConfigured")}</small>
         </div>
       </div>
       {singleOutput === undefined ? (
@@ -777,7 +779,7 @@ function StepNode(props: NodeProps<StepCanvasNode>) {
           position={Position.Right}
           className="flow-step-add-handle is-single"
           aria-label={`Connect ${props.data.label}`}
-          title="Drag to connect"
+          title={t("dragConnect")}
         >
           <Plus size={13} weight="bold" />
         </Handle>
@@ -816,6 +818,7 @@ function PlayIcon() {
 const nodeTypes = { step: StepNode, terminal: TerminalNode };
 
 function WorkflowEdge(props: EdgeProps) {
+  const { t } = useTranslation("studio");
   const { deleteElements } = useReactFlow();
   const [deleteVisible, setDeleteVisible] = useState(false);
   const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -868,7 +871,7 @@ function WorkflowEdge(props: EdgeProps) {
             className={`flow-edge-delete nodrag nopan${deleteVisible ? " is-visible" : ""}`}
             type="button"
             aria-label={`Delete ${String(props.label ?? "connection")} edge`}
-            title="Delete edge"
+            title={t("deleteEdge")}
             style={{ transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY - 20}px)` }}
             onMouseEnter={showDelete}
             onMouseLeave={() => setDeleteVisible(false)}
@@ -892,6 +895,7 @@ function FlowSettings(props: {
   readonly lockId: boolean;
   readonly onPatch: (mutator: (copy: PragmaFlowResource) => void) => void;
 }) {
+  const { t } = useTranslation("studio");
   return (
     <div className="flow-inspector-content">
       <header>
@@ -899,8 +903,8 @@ function FlowSettings(props: {
           <Brain size={19} />
         </span>
         <div>
-          <strong>Flow settings</strong>
-          <small>Metadata and execution limits</small>
+          <strong>{t("flowSettings")}</strong>
+          <small>{t("flowSettingsDescription")}</small>
         </div>
       </header>
       <InspectorField label="Resource ID">
@@ -1002,6 +1006,7 @@ function StepInspector(props: {
   readonly onRename: (nextId: string) => void;
   readonly onDelete: () => void;
 }) {
+  const { t } = useTranslation("studio");
   const step = props.flow.spec.graph.steps[props.stepId];
   const transition = props.flow.spec.graph.transitions[props.stepId] ?? { end: true };
   if (step === undefined) return null;
@@ -1102,7 +1107,7 @@ function StepInspector(props: {
               patchStep((current) => setStepReference(current, kind, event.target.value))
             }
           >
-            <option value="">Select resource</option>
+            <option value="">{t("selectResource")}</option>
             {target !== "" &&
             !props.targets.some((item) => item.kind === kind && item.ref === target) ? (
               <option value={target}>{target} · unavailable</option>

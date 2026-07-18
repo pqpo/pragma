@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
 
 import {
   DesktopBridgeSnapshotSchema,
+  DesktopSettingsSnapshotSchema,
   AddContextNoteEntrySchema,
   CapabilityActionSchema,
   CapabilityDeleteResultSchema,
@@ -64,6 +65,7 @@ import {
   UpdateExpertDefinitionSchema,
   UpdatePluginDefaultsSchema,
   UpdateCapabilitySchema,
+  UpdateDesktopSettingsSchema,
   ValidateWorkspacePathSchema,
   ValidateWorkspaceResultSchema,
   ValidatePragmaResourceSchema,
@@ -74,6 +76,12 @@ import {
 const api: PragmaDesktopAPI = {
   getBridgeSnapshot: async () =>
     DesktopBridgeSnapshotSchema.parse(await ipcRenderer.invoke("bridge:snapshot")),
+  getDesktopSettings: async () =>
+    DesktopSettingsSnapshotSchema.parse(await ipcRenderer.invoke("desktop-settings:get")),
+  updateDesktopSettings: async (input) =>
+    DesktopSettingsSnapshotSchema.parse(
+      await ipcRenderer.invoke("desktop-settings:update", UpdateDesktopSettingsSchema.parse(input)),
+    ),
   pickWorkspace: async () =>
     PickWorkspaceResultSchema.parse(await ipcRenderer.invoke("workspace:pick")),
   validateWorkspace: async (path: string) =>

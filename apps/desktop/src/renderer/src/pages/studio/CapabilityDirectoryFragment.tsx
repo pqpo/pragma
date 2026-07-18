@@ -13,6 +13,7 @@ import {
   X,
 } from "@phosphor-icons/react";
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import {
   CodeServiceObjectJsonSchemaSchema,
@@ -101,6 +102,7 @@ export function CapabilityDirectoryFragment(props: {
   readonly onOpen: (capability: Capability) => void;
   readonly onChanged: (capability?: Capability, removedId?: string) => void;
 }) {
+  const { t } = useTranslation("studio");
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<Filter>("all");
   const [menuOpen, setMenuOpen] = useState(false);
@@ -314,14 +316,12 @@ export function CapabilityDirectoryFragment(props: {
       header={
         <header className="studio-heading capability-heading">
           <div>
-            <h1 id="capabilities-heading">Capabilities</h1>
-            <p>
-              Reusable skills and external tools that Experts can select when creating or editing.
-            </p>
+            <h1 id="capabilities-heading">{t("capabilities")}</h1>
+            <p>{t("capabilitiesDescription")}</p>
           </div>
           <div className="studio-create-wrap">
             <button className="primary-button" type="button" onClick={() => setMenuOpen(!menuOpen)}>
-              <Plus size={17} /> Add capability <CaretDown size={14} />
+              <Plus size={17} /> {t("addCapability")} <CaretDown size={14} />
             </button>
             {menuOpen ? (
               <div className="studio-create-menu capability-create-menu">
@@ -334,8 +334,8 @@ export function CapabilityDirectoryFragment(props: {
                 >
                   <CloudArrowUp size={19} />
                   <span>
-                    <strong>Upload skill</strong>
-                    <small>Import a directory or ZIP containing SKILL.md.</small>
+                    <strong>{t("uploadSkill")}</strong>
+                    <small>{t("uploadSkillDescription")}</small>
                   </span>
                 </button>
                 <button
@@ -347,8 +347,8 @@ export function CapabilityDirectoryFragment(props: {
                 >
                   <Plug size={19} />
                   <span>
-                    <strong>Connect MCP server</strong>
-                    <small>stdio, Streamable HTTP, or SSE.</small>
+                    <strong>{t("connectMcp")}</strong>
+                    <small>{t("connectMcpDescription")}</small>
                   </span>
                 </button>
                 <button
@@ -360,8 +360,8 @@ export function CapabilityDirectoryFragment(props: {
                 >
                   <Globe size={19} />
                   <span>
-                    <strong>Add HTTP service</strong>
-                    <small>Wrap a JSON API as local MCP tools.</small>
+                    <strong>{t("addHttp")}</strong>
+                    <small>{t("addHttpDescription")}</small>
                   </span>
                 </button>
                 <button
@@ -373,8 +373,8 @@ export function CapabilityDirectoryFragment(props: {
                 >
                   <Code size={19} />
                   <span>
-                    <strong>Add code service</strong>
-                    <small>Run a pure JavaScript function as a local MCP tool.</small>
+                    <strong>{t("addCode")}</strong>
+                    <small>{t("addCodeDescription")}</small>
                   </span>
                 </button>
               </div>
@@ -386,15 +386,15 @@ export function CapabilityDirectoryFragment(props: {
       <div className="capability-controls">
         <label className="directory-search">
           <MagnifyingGlass size={18} />
-          <span className="sr-only">Search capabilities</span>
+          <span className="sr-only">{t("searchCapabilities")}</span>
           <input
             type="search"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="Search capabilities"
+            placeholder={t("searchCapabilities")}
           />
         </label>
-        <div className="capability-filters" aria-label="Capability type">
+        <div className="capability-filters" aria-label={t("capabilityType")}>
           {(["all", "skills", "tools"] as const).map((value) => (
             <button
               key={value}
@@ -402,7 +402,7 @@ export function CapabilityDirectoryFragment(props: {
               type="button"
               onClick={() => setFilter(value)}
             >
-              {value[0]!.toUpperCase() + value.slice(1)}
+              {t(value)}
             </button>
           ))}
         </div>
@@ -410,10 +410,10 @@ export function CapabilityDirectoryFragment(props: {
 
       <div className="capability-table" role="list">
         <div className="capability-table-heading" aria-hidden="true">
-          <span>Name</span>
-          <span>Type</span>
-          <span>Source / Connection</span>
-          <span>Status</span>
+          <span>{t("name")}</span>
+          <span>{t("type")}</span>
+          <span>{t("sourceConnection")}</span>
+          <span>{t("status")}</span>
           <span />
         </div>
         {matching.map((capability) => (
@@ -424,9 +424,7 @@ export function CapabilityDirectoryFragment(props: {
             onChanged={props.onChanged}
           />
         ))}
-        {matching.length === 0 ? (
-          <p className="capability-empty">No capabilities match this view.</p>
-        ) : null}
+        {matching.length === 0 ? <p className="capability-empty">{t("noCapabilities")}</p> : null}
       </div>
 
       {mode ? (
@@ -441,36 +439,36 @@ export function CapabilityDirectoryFragment(props: {
               <div>
                 <h2 id="capability-form-heading">
                   {mode === "skill"
-                    ? "Upload skill"
+                    ? t("uploadSkill")
                     : mode === "mcp"
-                      ? "Connect MCP server"
+                      ? t("connectMcp")
                       : mode === "http"
-                        ? "Add HTTP service"
-                        : "Add code service"}
+                        ? t("addHttp")
+                        : t("addCode")}
                 </h2>
                 <p>
                   {mode === "skill"
-                    ? "Copy a reusable Skill package into the library."
+                    ? t("copySkillLibrary")
                     : mode === "code"
-                      ? "Define a reusable pure-computation MCP tool."
-                      : "Configure a reusable external tool connection."}
+                      ? t("defineCodeTool")
+                      : t("configureExternalTool")}
                 </p>
               </div>
-              <button type="button" onClick={() => setMode(null)} aria-label="Close">
+              <button type="button" onClick={() => setMode(null)} aria-label={t("close")}>
                 <X size={20} />
               </button>
             </header>
             {mode === "skill" ? (
               <div className="capability-upload">
                 <Archive size={34} />
-                <p>Select a directory or ZIP with a root SKILL.md file.</p>
+                <p>{t("selectSkillSource")}</p>
                 <button
                   className="primary-button"
                   type="button"
                   disabled={saving}
                   onClick={() => void importSkill()}
                 >
-                  {saving ? "Importing…" : "Choose package"}
+                  {saving ? t("importing") : t("choosePackage")}
                 </button>
               </div>
             ) : null}
@@ -496,7 +494,7 @@ export function CapabilityDirectoryFragment(props: {
             {mode !== "skill" ? (
               <footer>
                 <button className="secondary-button" type="button" onClick={() => setMode(null)}>
-                  Cancel
+                  {t("cancel")}
                 </button>
                 <button
                   className="primary-button"
@@ -506,7 +504,7 @@ export function CapabilityDirectoryFragment(props: {
                     void (mode === "mcp" ? saveMcp() : mode === "http" ? saveHttp() : saveCode())
                   }
                 >
-                  {saving ? "Saving…" : "Save capability"}
+                  {saving ? t("saving") : t("saveCapability")}
                 </button>
               </footer>
             ) : null}
@@ -522,6 +520,7 @@ function CapabilityRow(props: {
   readonly onOpen: () => void;
   readonly onChanged: (capability?: Capability, removedId?: string) => void;
 }) {
+  const { t } = useTranslation("studio");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -529,9 +528,9 @@ function CapabilityRow(props: {
   const { capability } = props;
   const source =
     capability.definition.kind === "skill"
-      ? "Uploaded package"
+      ? t("uploadedPackage")
       : capability.definition.kind === "http_service"
-        ? `${capability.definition.baseUrl} · Local MCP wrapper`
+        ? `${capability.definition.baseUrl} · ${t("localMcpWrapper")}`
         : capability.definition.kind === "code_service"
           ? `JavaScript · ${capability.definition.tool.name}`
           : capability.definition.connection.transport === "stdio"
@@ -539,12 +538,12 @@ function CapabilityRow(props: {
             : `${capability.definition.connection.transport === "sse" ? "SSE" : "Streamable HTTP"} · ${capability.definition.connection.url}`;
   const type =
     capability.definition.kind === "skill"
-      ? "Skill"
+      ? t("skill")
       : capability.definition.kind === "http_service"
-        ? "HTTP service"
+        ? t("httpService")
         : capability.definition.kind === "code_service"
-          ? "Code service"
-          : "MCP server";
+          ? t("codeService")
+          : t("mcpServer");
   const Icon =
     capability.definition.kind === "skill"
       ? Archive
@@ -613,7 +612,7 @@ function CapabilityRow(props: {
         <span className="capability-source">{source}</span>
         <span className="capability-status">
           <i className={capability.health.status === "ready" ? "is-ready" : "is-warning"} />
-          {capability.health.status === "ready" ? "Ready" : "Needs attention"}
+          {capability.health.status === "ready" ? t("ready") : t("needsAttention")}
         </span>
         <span
           className="capability-row-actions"
@@ -623,13 +622,13 @@ function CapabilityRow(props: {
         >
           {capability.health.status === "needs_attention" ? (
             <button type="button" disabled={busy} onClick={() => void retry()}>
-              Retry
+              {t("common:actions.retry")}
             </button>
           ) : null}
           <button
             type="button"
             disabled={busy}
-            aria-label={`More actions for ${capability.manifest.name}`}
+            aria-label={t("moreActions", { name: capability.manifest.name })}
             aria-haspopup="menu"
             aria-expanded={menuOpen}
             onClick={() => setMenuOpen((open) => !open)}
@@ -647,7 +646,7 @@ function CapabilityRow(props: {
                   setError(null);
                 }}
               >
-                <Trash size={16} /> Delete capability
+                <Trash size={16} /> {t("deleteCapabilityAction")}
               </button>
             </div>
           ) : null}
@@ -665,10 +664,9 @@ function CapabilityRow(props: {
               if (event.key === "Escape" && !busy) setConfirmOpen(false);
             }}
           >
-            <h2 id={`delete-capability-${capability.manifest.id}`}>Delete this capability?</h2>
+            <h2 id={`delete-capability-${capability.manifest.id}`}>{t("deleteCapability")}</h2>
             <p id={`delete-capability-description-${capability.manifest.id}`}>
-              “{capability.manifest.name}” will be permanently removed. Experts that use a
-              capability must be updated before it can be deleted.
+              {t("deleteCapabilityDescription", { name: capability.manifest.name })}
             </p>
             <footer>
               <button
@@ -678,7 +676,7 @@ function CapabilityRow(props: {
                 autoFocus
                 onClick={() => setConfirmOpen(false)}
               >
-                Cancel
+                {t("cancel")}
               </button>
               <button
                 className="danger-button"
@@ -686,7 +684,7 @@ function CapabilityRow(props: {
                 disabled={busy}
                 onClick={() => void remove()}
               >
-                <Trash size={17} /> {busy ? "Deleting…" : "Delete capability"}
+                <Trash size={17} /> {busy ? t("deleting") : t("deleteCapabilityAction")}
               </button>
             </footer>
           </section>
@@ -706,11 +704,12 @@ function McpForm(props: {
   readonly value: typeof emptyMcp;
   readonly onChange: (value: typeof emptyMcp) => void;
 }) {
+  const { t } = useTranslation("studio");
   const value = props.value;
   return (
     <div className="capability-form">
       <label>
-        Name
+        {t("name")}
         <input
           value={value.name}
           onChange={(e) => props.onChange({ ...value, name: e.target.value })}
@@ -718,14 +717,14 @@ function McpForm(props: {
         />
       </label>
       <label>
-        Description
+        {t("description")}
         <textarea
           value={value.description}
           onChange={(e) => props.onChange({ ...value, description: e.target.value })}
         />
       </label>
       <label>
-        Transport
+        {t("transport")}
         <select
           value={value.transport}
           onChange={(e) =>
@@ -740,7 +739,7 @@ function McpForm(props: {
       {value.transport === "stdio" ? (
         <>
           <label>
-            Command
+            {t("command")}
             <input
               value={value.command}
               onChange={(e) => props.onChange({ ...value, command: e.target.value })}
@@ -748,7 +747,7 @@ function McpForm(props: {
             />
           </label>
           <label>
-            Arguments
+            {t("arguments")}
             <input
               value={value.args}
               onChange={(e) => props.onChange({ ...value, args: e.target.value })}
@@ -756,7 +755,7 @@ function McpForm(props: {
             />
           </label>
           <label>
-            Environment JSON <small>non-sensitive values only</small>
+            {t("environmentJson")} <small>{t("nonSensitiveOnly")}</small>
             <textarea
               className="code-input"
               value={value.environment}
@@ -764,8 +763,7 @@ function McpForm(props: {
             />
           </label>
           <label>
-            Secret environment JSON{" "}
-            <small>values are encrypted and only references are stored</small>
+            {t("secretEnvironmentJson")} <small>{t("encryptedReferences")}</small>
             <textarea
               className="code-input"
               value={value.secretEnvironment}
@@ -776,7 +774,7 @@ function McpForm(props: {
       ) : (
         <>
           <label>
-            Server URL
+            {t("serverUrl")}
             <input
               value={value.url}
               onChange={(e) => props.onChange({ ...value, url: e.target.value })}
@@ -784,7 +782,7 @@ function McpForm(props: {
             />
           </label>
           <label>
-            Bearer token <small>optional, encrypted on this device</small>
+            {t("bearerToken")} <small>{t("optionalEncrypted")}</small>
             <input
               type="password"
               value={value.token}
@@ -801,12 +799,13 @@ function HttpForm(props: {
   readonly value: typeof emptyHttp;
   readonly onChange: (value: typeof emptyHttp) => void;
 }) {
+  const { t } = useTranslation("studio");
   const value = props.value;
   const set = (change: Partial<typeof emptyHttp>) => props.onChange({ ...value, ...change });
   return (
     <div className="capability-form">
       <label>
-        Service name
+        {t("serviceName")}
         <input
           value={value.name}
           onChange={(e) => set({ name: e.target.value })}
@@ -814,14 +813,14 @@ function HttpForm(props: {
         />
       </label>
       <label>
-        Description
+        {t("description")}
         <textarea
           value={value.description}
           onChange={(e) => set({ description: e.target.value })}
         />
       </label>
       <label>
-        Base URL
+        {t("baseUrl")}
         <input
           value={value.baseUrl}
           onChange={(e) => set({ baseUrl: e.target.value })}
@@ -830,26 +829,26 @@ function HttpForm(props: {
       </label>
       <div className="capability-form-grid">
         <label>
-          Authentication
+          {t("authentication")}
           <select
             value={value.authType}
             onChange={(e) => set({ authType: e.target.value as typeof value.authType })}
           >
-            <option value="none">None</option>
-            <option value="bearer">Bearer token</option>
-            <option value="api_key_header">API key header</option>
+            <option value="none">{t("none")}</option>
+            <option value="bearer">{t("bearerToken")}</option>
+            <option value="api_key_header">{t("apiKeyHeader")}</option>
           </select>
         </label>
         {value.authType === "api_key_header" ? (
           <label>
-            Header name
+            {t("headerName")}
             <input value={value.headerName} onChange={(e) => set({ headerName: e.target.value })} />
           </label>
         ) : null}
       </div>
       {value.authType !== "none" ? (
         <label>
-          Credential <small>encrypted on this device</small>
+          {t("credential")} <small>{t("encryptedDevice")}</small>
           <input
             type="password"
             value={value.secret}
@@ -858,7 +857,7 @@ function HttpForm(props: {
         </label>
       ) : null}
       <hr />
-      <h3>{value.tools.length === 0 ? "First tool" : "Add another tool"}</h3>
+      <h3>{value.tools.length === 0 ? t("firstTool") : t("addAnotherTool")}</h3>
       {value.tools.length > 0 ? (
         <div className="http-tool-drafts">
           {value.tools.map((tool) => (
@@ -873,7 +872,7 @@ function HttpForm(props: {
       ) : null}
       <div className="capability-form-grid">
         <label>
-          Tool name
+          {t("toolName")}
           <input
             value={value.toolName}
             onChange={(e) => set({ toolName: e.target.value })}
@@ -881,7 +880,7 @@ function HttpForm(props: {
           />
         </label>
         <label>
-          Method
+          {t("method")}
           <select
             value={value.method}
             onChange={(e) => set({ method: e.target.value as typeof value.method })}
@@ -892,14 +891,14 @@ function HttpForm(props: {
         </label>
       </div>
       <label>
-        Tool description
+        {t("toolDescription")}
         <input
           value={value.toolDescription}
           onChange={(e) => set({ toolDescription: e.target.value })}
         />
       </label>
       <label>
-        Path
+        {t("path")}
         <input
           value={value.path}
           onChange={(e) => set({ path: e.target.value })}
@@ -907,7 +906,7 @@ function HttpForm(props: {
         />
       </label>
       <label>
-        Optional query parameters <small>comma separated</small>
+        {t("optionalQuery")} <small>{t("commaSeparated")}</small>
         <input
           value={value.queryParameters}
           onChange={(e) => set({ queryParameters: e.target.value })}
@@ -916,7 +915,7 @@ function HttpForm(props: {
       </label>
       {value.method === "POST" ? (
         <label>
-          JSON body schema
+          {t("jsonBodySchema")}
           <textarea
             className="code-input"
             value={value.bodySchema}
@@ -951,7 +950,7 @@ function HttpForm(props: {
           })
         }
       >
-        Add another tool
+        {t("addAnotherTool")}
       </button>
     </div>
   );
@@ -997,12 +996,13 @@ function CodeForm(props: {
   readonly onChange: (value: typeof emptyCode) => void;
   readonly onPreview: () => void;
 }) {
+  const { t } = useTranslation("studio");
   const value = props.value;
   const set = (change: Partial<typeof emptyCode>) => props.onChange({ ...value, ...change });
   return (
     <div className="capability-form code-service-form">
       <label>
-        Service name
+        {t("serviceName")}
         <input
           value={value.name}
           onChange={(event) => set({ name: event.target.value })}
@@ -1010,7 +1010,7 @@ function CodeForm(props: {
         />
       </label>
       <label>
-        Description
+        {t("description")}
         <textarea
           value={value.description}
           onChange={(event) => set({ description: event.target.value })}
@@ -1018,7 +1018,7 @@ function CodeForm(props: {
       </label>
       <div className="capability-form-grid">
         <label>
-          Tool name
+          {t("toolName")}
           <input
             value={value.toolName}
             onChange={(event) => set({ toolName: event.target.value })}
@@ -1026,7 +1026,7 @@ function CodeForm(props: {
           />
         </label>
         <label>
-          Tool description
+          {t("toolDescription")}
           <input
             value={value.toolDescription}
             onChange={(event) => set({ toolDescription: event.target.value })}
@@ -1035,17 +1035,17 @@ function CodeForm(props: {
         </label>
       </div>
       <SchemaFieldsEditor
-        title="Input fields"
+        title={t("inputFields")}
         fields={value.inputFields}
         onChange={(inputFields) => set({ inputFields })}
       />
       <SchemaFieldsEditor
-        title="Output fields"
+        title={t("outputFields")}
         fields={value.outputFields}
         onChange={(outputFields) => set({ outputFields })}
       />
       <label>
-        JavaScript <small>define a synchronous function main(input)</small>
+        JavaScript <small>{t("javascriptFunctionHint")}</small>
         <textarea
           className="code-input code-service-source"
           spellCheck={false}
@@ -1053,9 +1053,9 @@ function CodeForm(props: {
           onChange={(event) => set({ source: event.target.value })}
         />
       </label>
-      <section className="code-service-preview" aria-label="Code service test">
+      <section className="code-service-preview" aria-label={t("codeServiceTest")}>
         <label>
-          Test input JSON
+          {t("testInputJson")}
           <textarea
             className="code-input"
             spellCheck={false}
@@ -1069,7 +1069,7 @@ function CodeForm(props: {
           disabled={props.busy}
           onClick={props.onPreview}
         >
-          {props.busy ? "Running…" : "Run test"}
+          {props.busy ? t("running") : t("runTest")}
         </button>
         {props.preview ? (
           <div
@@ -1077,7 +1077,7 @@ function CodeForm(props: {
               props.preview.ok ? "code-preview-result is-success" : "code-preview-result is-error"
             }
           >
-            <strong>{props.preview.ok ? "Test passed" : props.preview.code}</strong>
+            <strong>{props.preview.ok ? t("testPassed") : props.preview.code}</strong>
             <p>{props.preview.message}</p>
             {props.preview.output ? (
               <pre>{JSON.stringify(props.preview.output, null, 2)}</pre>
@@ -1095,6 +1095,7 @@ function SchemaFieldsEditor(props: {
   readonly depth?: number;
   readonly onChange: (fields: readonly CodeFieldDraft[]) => void;
 }) {
+  const { t } = useTranslation("studio");
   const depth = props.depth ?? 2;
   const replace = (index: number, field: CodeFieldDraft) =>
     props.onChange(
@@ -1107,13 +1108,13 @@ function SchemaFieldsEditor(props: {
         <div className="code-schema-field" key={field.id}>
           <div className="code-schema-field-row">
             <input
-              aria-label="Field name"
+              aria-label={t("fieldName")}
               value={field.name}
               onChange={(event) => replace(index, { ...field, name: event.target.value })}
               placeholder="field_name"
             />
             <select
-              aria-label="Field type"
+              aria-label={t("fieldType")}
               value={field.value.type}
               onChange={(event) =>
                 replace(index, {
@@ -1138,11 +1139,11 @@ function SchemaFieldsEditor(props: {
                 checked={field.required}
                 onChange={(event) => replace(index, { ...field, required: event.target.checked })}
               />
-              Required
+              {t("required")}
             </label>
             <button
               type="button"
-              aria-label={`Remove ${field.name || "field"}`}
+              aria-label={t("removeField", { name: field.name || t("fieldName") })}
               onClick={() =>
                 props.onChange(props.fields.filter((candidate) => candidate !== field))
               }
@@ -1151,10 +1152,10 @@ function SchemaFieldsEditor(props: {
             </button>
           </div>
           <input
-            aria-label="Field description"
+            aria-label={t("fieldDescription")}
             value={field.description}
             onChange={(event) => replace(index, { ...field, description: event.target.value })}
-            placeholder="Optional field description"
+            placeholder={t("optionalFieldDescription")}
           />
           <CodeValueEditor
             value={field.value}
@@ -1169,7 +1170,7 @@ function SchemaFieldsEditor(props: {
         type="button"
         onClick={() => props.onChange([...props.fields, newCodeField()])}
       >
-        <Plus size={15} /> Add field
+        <Plus size={15} /> {t("addField")}
       </button>
     </section>
   );

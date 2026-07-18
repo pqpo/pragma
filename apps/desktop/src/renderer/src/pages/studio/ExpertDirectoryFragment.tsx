@@ -11,6 +11,7 @@ import {
   Plus,
 } from "@phosphor-icons/react";
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import type { ContextStore } from "../../../../shared/desktop-api.ts";
 import { StudioScreenFrame } from "./StudioScreenFrame.tsx";
@@ -31,6 +32,7 @@ export function ExpertDirectoryFragment(props: {
   readonly onCreate: () => void;
   readonly onOpen: (expert: ExpertRecord) => void;
 }) {
+  const { t } = useTranslation("studio");
   const [query, setQuery] = useState("");
   const matchingExperts = props.experts.filter((expert) =>
     `${expert.name} ${expert.description} ${expert.tags.join(" ")}`
@@ -45,12 +47,12 @@ export function ExpertDirectoryFragment(props: {
       header={
         <header className="studio-heading expert-directory-heading">
           <div>
-            <h1 id="experts-heading">Experts</h1>
-            <p>Reusable specialists available to your missions.</p>
+            <h1 id="experts-heading">{t("experts")}</h1>
+            <p>{t("expertsDescription")}</p>
           </div>
           <button className="primary-button" type="button" onClick={props.onCreate}>
             <Plus size={17} aria-hidden="true" />
-            Create expert
+            {t("createExpert")}
           </button>
         </header>
       }
@@ -58,25 +60,25 @@ export function ExpertDirectoryFragment(props: {
       <div className="directory-controls">
         <label className="directory-search">
           <MagnifyingGlass size={18} aria-hidden="true" />
-          <span className="sr-only">Search experts</span>
+          <span className="sr-only">{t("searchExperts")}</span>
           <input
             type="search"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="Search experts"
+            placeholder={t("searchExperts")}
           />
         </label>
         <button className="directory-filter" type="button">
-          All experts
+          {t("allExperts")}
           <CaretDown size={16} aria-hidden="true" />
         </button>
       </div>
 
-      <div className="expert-table" role="list" aria-label="Available experts">
+      <div className="expert-table" role="list" aria-label={t("availableExperts")}>
         <div className="expert-table-heading" aria-hidden="true">
-          <span>Expert</span>
-          <span>Tags</span>
-          <span>Scope</span>
+          <span>{t("expert")}</span>
+          <span>{t("tags")}</span>
+          <span>{t("scope")}</span>
         </div>
         {matchingExperts.map((expert) => {
           const ExpertIcon = expert.icon;
@@ -107,7 +109,7 @@ export function ExpertDirectoryFragment(props: {
           );
         })}
       </div>
-      <p className="directory-count">{matchingExperts.length} experts</p>
+      <p className="directory-count">{t("expertCount", { count: matchingExperts.length })}</p>
     </StudioScreenFrame>
   );
 }
@@ -120,6 +122,7 @@ export function ExpertDetailFragment(props: {
   readonly onConfigureContext: () => void;
   readonly onTryInSession: () => void;
 }) {
+  const { t } = useTranslation("studio");
   const ExpertIcon = props.expert.icon;
   const [instructionsExpanded, setInstructionsExpanded] = useState(false);
   const hasLongInstructions = props.expert.instructions.trim().length > INSTRUCTIONS_PREVIEW_LENGTH;
@@ -134,7 +137,7 @@ export function ExpertDetailFragment(props: {
       header={
         <button className="back-link" type="button" onClick={props.onBack}>
           <ArrowLeft size={18} aria-hidden="true" />
-          Back to Experts
+          {t("backExperts")}
         </button>
       }
     >
@@ -158,21 +161,21 @@ export function ExpertDetailFragment(props: {
         <div className="detail-actions">
           <button className="primary-button" type="button" onClick={props.onEdit}>
             <PencilSimple size={17} aria-hidden="true" />
-            Edit expert
+            {t("editExpert")}
           </button>
           <button className="secondary-button" type="button" onClick={props.onTryInSession}>
             <Play size={17} aria-hidden="true" />
-            Try in session
+            {t("trySession")}
           </button>
         </div>
       </header>
       <section className="expert-scope" aria-labelledby="expert-scope-heading">
-        <h2 id="expert-scope-heading">Scope</h2>
+        <h2 id="expert-scope-heading">{t("scope")}</h2>
         <p>{props.expert.scope}</p>
       </section>
       <section className="instructions-preview">
-        <h2>Instructions</h2>
-        <p>{displayedInstructions || "No instructions provided."}</p>
+        <h2>{t("instructions")}</h2>
+        <p>{displayedInstructions || t("noInstructions")}</p>
         {hasLongInstructions ? (
           <button
             className="text-button instructions-toggle"
@@ -180,17 +183,17 @@ export function ExpertDetailFragment(props: {
             aria-expanded={instructionsExpanded}
             onClick={() => setInstructionsExpanded((expanded) => !expanded)}
           >
-            {instructionsExpanded ? "Show less" : "Show more"}
+            {instructionsExpanded ? t("showLess") : t("showMore")}
           </button>
         ) : null}
       </section>
-      <section className="expert-capabilities" aria-label="Expert capabilities">
+      <section className="expert-capabilities" aria-label={t("expertCapabilities")}>
         <div>
-          <h2>Model</h2>
-          <p>{props.expert.model?.modelId ?? "Not configured"}</p>
+          <h2>{t("model")}</h2>
+          <p>{props.expert.model?.modelId ?? t("notConfigured")}</p>
         </div>
         <div>
-          <h2>Capabilities</h2>
+          <h2>{t("capabilities")}</h2>
           <p>
             {props.expert.skills} skills <span>•</span> {props.expert.tools} tools <span>•</span>{" "}
             {props.expert.mcpServers} MCP server{props.expert.mcpServers === 1 ? "" : "s"}{" "}
@@ -202,15 +205,15 @@ export function ExpertDetailFragment(props: {
       <section className="expert-context-section" aria-labelledby="expert-context-heading">
         <header>
           <div>
-            <h2 id="expert-context-heading">Context</h2>
-            <p>Reusable stores this expert can apply or retrieve at runtime.</p>
+            <h2 id="expert-context-heading">{t("context")}</h2>
+            <p>{t("contextDescription")}</p>
           </div>
           <button className="secondary-button" type="button" onClick={props.onConfigureContext}>
-            <Plus size={16} /> Configure context
+            <Plus size={16} /> {t("configureContext")}
           </button>
         </header>
         {props.expert.contextStoreMounts.length === 0 ? (
-          <p className="expert-context-empty">No context stores mounted.</p>
+          <p className="expert-context-empty">{t("noContext")}</p>
         ) : (
           <div className="expert-context-list">
             {props.expert.contextStoreMounts.map((mount) => {
@@ -234,12 +237,12 @@ export function ExpertDetailFragment(props: {
                   </span>
                   <span>
                     <strong>{store.name}</strong>
-                    <small>{store.type === "file" ? "File store" : "Context note"}</small>
+                    <small>{store.type === "file" ? t("fileStore") : t("contextNote")}</small>
                   </span>
                   <em>{loadingBehavior}</em>
                   <span className="store-status">
                     <i className="is-ready" />
-                    {mount.enabled ? "Enabled" : "Disabled"}
+                    {mount.enabled ? t("enabled") : t("disabled")}
                   </span>
                 </div>
               );
@@ -249,7 +252,7 @@ export function ExpertDetailFragment(props: {
       </section>
       {props.expert.usesApproval ? (
         <p className="approval-note">
-          <Info size={19} aria-hidden="true" /> One tool requires approval before use in sessions.
+          <Info size={19} aria-hidden="true" /> {t("approvalNote")}
         </p>
       ) : null}
     </StudioScreenFrame>

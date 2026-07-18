@@ -10,6 +10,7 @@ import {
 import { marked, type Token, type Tokens } from "marked";
 import { createElement, Fragment, useEffect, useMemo, useState } from "react";
 import type { Key, ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 
 import type {
   Capability,
@@ -25,6 +26,7 @@ export function CapabilityDetailFragment(props: {
   readonly onBack: () => void;
   readonly onChanged: (capability: Capability) => void;
 }) {
+  const { t } = useTranslation("studio");
   const { capability } = props;
   const definition = capability.definition;
   const [skillDocument, setSkillDocument] = useState<SkillDocument | null>(null);
@@ -124,7 +126,7 @@ export function CapabilityDetailFragment(props: {
       header={
         <button className="back-link" type="button" onClick={props.onBack}>
           <ArrowLeft size={18} aria-hidden="true" />
-          Back to Capabilities
+          {t("backCapabilities")}
         </button>
       }
     >
@@ -147,23 +149,23 @@ export function CapabilityDetailFragment(props: {
             disabled={busy}
             onClick={() => void refreshMcp()}
           >
-            <ArrowsClockwise size={17} /> {busy ? "Refreshing…" : "Refresh tools"}
+            <ArrowsClockwise size={17} /> {busy ? t("refreshing") : t("refreshTools")}
           </button>
         ) : null}
       </header>
 
-      <section className="capability-detail-meta" aria-label="Capability status and identity">
-        <DetailFact label="Status">
+      <section className="capability-detail-meta" aria-label={t("capabilityIdentity")}>
+        <DetailFact label={t("status")}>
           <span className="capability-status">
             <i className={capability.health.status === "ready" ? "is-ready" : "is-warning"} />
-            {capability.health.status === "ready" ? "Ready" : "Needs attention"}
+            {capability.health.status === "ready" ? t("ready") : t("needsAttention")}
           </span>
         </DetailFact>
-        <DetailFact label="Runtime key">
+        <DetailFact label={t("runtimeKey")}>
           <code>{capability.manifest.runtimeKey}</code>
         </DetailFact>
-        <DetailFact label="Source / connection">{capabilitySource(capability)}</DetailFact>
-        <DetailFact label="Last checked">
+        <DetailFact label={t("sourceConnection")}>{capabilitySource(capability)}</DetailFact>
+        <DetailFact label={t("lastChecked")}>
           {new Date(capability.health.checkedAt).toLocaleString()}
         </DetailFact>
       </section>
@@ -180,7 +182,7 @@ export function CapabilityDetailFragment(props: {
           <header>
             <div>
               <h2 id="skill-document-heading">SKILL.md</h2>
-              <p>Documentation bundled with this Skill revision.</p>
+              <p>{t("skillDocumentation")}</p>
             </div>
             <button
               className="secondary-button"
@@ -188,11 +190,11 @@ export function CapabilityDetailFragment(props: {
               aria-pressed={documentSourceVisible}
               onClick={() => setDocumentSourceVisible((visible) => !visible)}
             >
-              {documentSourceVisible ? "View rendered" : "View source"}
+              {documentSourceVisible ? t("viewRendered") : t("viewSource")}
             </button>
           </header>
           {skillDocument === null ? (
-            <p className="capability-empty">Loading Skill documentation…</p>
+            <p className="capability-empty">{t("loadingSkill")}</p>
           ) : documentSourceVisible ? (
             <pre className="skill-document-source">{skillDocument.content}</pre>
           ) : (
@@ -202,10 +204,10 @@ export function CapabilityDetailFragment(props: {
           )}
         </section>
       ) : (
-        <section className="capability-tool-workspace" aria-label="Capability tools and test panel">
+        <section className="capability-tool-workspace" aria-label={t("capabilityToolsPanel")}>
           <aside className="capability-tool-list">
             <header>
-              <h2>Tools</h2>
+              <h2>{t("tools")}</h2>
               <span>{tools.length}</span>
             </header>
             {tools.map((tool) => (
@@ -220,7 +222,7 @@ export function CapabilityDetailFragment(props: {
                 <small>{tool.summary}</small>
               </button>
             ))}
-            {tools.length === 0 ? <p>No tools are available.</p> : null}
+            {tools.length === 0 ? <p>{t("noTools")}</p> : null}
           </aside>
 
           <div className="capability-tool-detail">
@@ -233,8 +235,8 @@ export function CapabilityDetailFragment(props: {
                 >
                   <header>
                     <div>
-                      <h2 id="capability-test-heading">Test tool</h2>
-                      <p>Call this tool with a JSON object.</p>
+                      <h2 id="capability-test-heading">{t("testTool")}</h2>
+                      <p>{t("callJson")}</p>
                     </div>
                     <button
                       className="primary-button"
@@ -242,11 +244,11 @@ export function CapabilityDetailFragment(props: {
                       disabled={busy || selectedToolName.length === 0}
                       onClick={() => void runTest()}
                     >
-                      <Play size={16} /> {busy ? "Running…" : "Run test"}
+                      <Play size={16} /> {busy ? t("running") : t("runTest")}
                     </button>
                   </header>
                   <label>
-                    JSON input
+                    {t("jsonInput")}
                     <textarea
                       className="capability-test-input"
                       spellCheck={false}
@@ -258,7 +260,7 @@ export function CapabilityDetailFragment(props: {
                 </section>
               </>
             ) : (
-              <p className="capability-empty">Select or refresh a tool to inspect and test it.</p>
+              <p className="capability-empty">{t("selectTool")}</p>
             )}
           </div>
         </section>

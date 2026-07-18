@@ -14,6 +14,7 @@ import {
 } from "@phosphor-icons/react";
 import type { ContextTrigger } from "@pragma/shared";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import type {
   ContextNoteEntry,
@@ -53,6 +54,7 @@ export function ContextStoreDirectoryFragment(props: {
   readonly onPickFolder: () => Promise<string | undefined>;
   readonly onOpen: (store: ContextStore) => void;
 }) {
+  const { t } = useTranslation("studio");
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<StoreFilter>("all");
   const [creating, setCreating] = useState(false);
@@ -74,17 +76,17 @@ export function ContextStoreDirectoryFragment(props: {
       header={
         <header className="studio-heading expert-directory-heading">
           <div>
-            <h1 id="context-stores-heading">Context stores</h1>
-            <p>Reusable knowledge sources for your experts.</p>
+            <h1 id="context-stores-heading">{t("contextStores")}</h1>
+            <p>{t("contextStoresDescription")}</p>
           </div>
           <button className="primary-button" type="button" onClick={() => setCreating(true)}>
             <Plus size={17} aria-hidden="true" />
-            Create store
+            {t("createStore")}
           </button>
         </header>
       }
     >
-      <div className="store-filter-tabs" aria-label="Filter context stores">
+      <div className="store-filter-tabs" aria-label={t("filterStores")}>
         {(["all", "file", "note"] as const).map((value) => (
           <button
             className={filter === value ? "is-active" : ""}
@@ -92,44 +94,40 @@ export function ContextStoreDirectoryFragment(props: {
             type="button"
             onClick={() => setFilter(value)}
           >
-            {value === "all" ? "All" : value === "file" ? "Files" : "Context notes"}
+            {value === "all" ? t("all") : value === "file" ? t("files") : t("contextNotes")}
           </button>
         ))}
       </div>
 
       <label className="directory-search store-search">
         <MagnifyingGlass size={18} aria-hidden="true" />
-        <span className="sr-only">Search stores</span>
+        <span className="sr-only">{t("searchStores")}</span>
         <input
           type="search"
           value={query}
           onChange={(event) => setQuery(event.target.value)}
-          placeholder="Search stores"
+          placeholder={t("searchStores")}
         />
       </label>
 
       {stores.length === 0 ? (
         <div className="empty-state store-empty-state">
           <Database size={28} aria-hidden="true" />
-          <h3>{props.stores.length === 0 ? "No context stores yet" : "No matching stores"}</h3>
-          <p>
-            {props.stores.length === 0
-              ? "Create a file store or context note, then mount it to one or more experts."
-              : "Try another search or filter."}
-          </p>
+          <h3>{props.stores.length === 0 ? t("noStores") : t("noMatchingStores")}</h3>
+          <p>{props.stores.length === 0 ? t("createStoreDescription") : t("trySearchFilter")}</p>
           {props.stores.length === 0 ? (
             <button className="primary-button" type="button" onClick={() => setCreating(true)}>
-              Create store
+              {t("createStore")}
             </button>
           ) : null}
         </div>
       ) : (
-        <div className="store-table" role="list" aria-label="Context stores">
+        <div className="store-table" role="list" aria-label={t("contextStores")}>
           <div className="store-table-heading" aria-hidden="true">
-            <span>Store</span>
-            <span>Type</span>
-            <span>Source</span>
-            <span>Status</span>
+            <span>{t("store")}</span>
+            <span>{t("type")}</span>
+            <span>{t("source")}</span>
+            <span>{t("status")}</span>
           </div>
           {stores.map((store) => {
             const StoreIcon = store.type === "file" ? Folder : BookOpenText;
@@ -146,10 +144,10 @@ export function ContextStoreDirectoryFragment(props: {
                   </span>
                   <span>
                     <strong>{store.name}</strong>
-                    <small>{store.description || "No description"}</small>
+                    <small>{store.description || t("noDescription")}</small>
                   </span>
                 </span>
-                <span>{store.type === "file" ? "File store" : "Context note"}</span>
+                <span>{store.type === "file" ? t("fileStore") : t("contextNote")}</span>
                 <span className="store-source">
                   {store.type === "file" ? store.source.path : `${store.entries.length} entries`}
                 </span>
@@ -184,6 +182,7 @@ export function ContextStoreDetailFragment(props: {
   readonly onListContents: (storeId: string) => Promise<readonly ContextStoreContentSummary[]>;
   readonly onGetContent: (storeId: string, contentId: string) => Promise<ContextStoreContent>;
 }) {
+  const { t } = useTranslation("studio");
   const [addingEntity, setAddingEntity] = useState(false);
   const [contents, setContents] = useState<readonly ContextStoreContentSummary[]>([]);
   const [loadingContents, setLoadingContents] = useState(true);
@@ -227,7 +226,7 @@ export function ContextStoreDetailFragment(props: {
       header={
         <button className="back-link" type="button" onClick={props.onBack}>
           <ArrowLeft size={18} aria-hidden="true" />
-          Back to Context stores
+          {t("backContextStores")}
         </button>
       }
     >
@@ -242,12 +241,12 @@ export function ContextStoreDetailFragment(props: {
       </div>
       <dl>
         <div>
-          <dt>Type</dt>
+          <dt>{t("type")}</dt>
           <dd>{props.store.type === "file" ? "File store" : "Context note"}</dd>
         </div>
         <div>
-          <dt>Access</dt>
-          <dd>Read only</dd>
+          <dt>{t("access")}</dt>
+          <dd>{t("readOnly")}</dd>
         </div>
         <div>
           <dt>{props.store.type === "file" ? "Source" : "Entries"}</dt>
@@ -258,11 +257,11 @@ export function ContextStoreDetailFragment(props: {
           </dd>
         </div>
         <div>
-          <dt>Availability</dt>
+          <dt>{t("availability")}</dt>
           <dd>{props.store.type === "file" ? "This device" : "Cloud and local runtimes"}</dd>
         </div>
         <div>
-          <dt>Loading behavior</dt>
+          <dt>{t("loadingBehavior")}</dt>
           <dd>
             {props.store.type === "file"
               ? "Read from file metadata; defaults to On demand"
@@ -275,8 +274,8 @@ export function ContextStoreDetailFragment(props: {
       <section className="store-content-overview" aria-labelledby="store-overview-heading">
         <div className="context-entity-heading">
           <div>
-            <h2 id="store-overview-heading">Overview</h2>
-            <p>Browse the content available to experts and inspect its runtime metadata.</p>
+            <h2 id="store-overview-heading">{t("overview")}</h2>
+            <p>{t("overviewDescription")}</p>
           </div>
           <div className="store-overview-actions">
             <button
@@ -305,11 +304,11 @@ export function ContextStoreDetailFragment(props: {
             {contentsError}
           </p>
         ) : null}
-        {loadingContents ? <p className="store-content-state">Loading store contents…</p> : null}
+        {loadingContents ? <p className="store-content-state">{t("loadingContents")}</p> : null}
         {!loadingContents && contents.length === 0 && contentsError === null ? (
           <div className="store-content-empty">
             <File size={24} aria-hidden="true" />
-            <strong>No content found</strong>
+            <strong>{t("noContent")}</strong>
             <p>
               {props.store.type === "file"
                 ? "Add Markdown files to the source folder, then refresh this overview."
@@ -318,12 +317,12 @@ export function ContextStoreDetailFragment(props: {
           </div>
         ) : null}
         {contents.length > 0 ? (
-          <div className="store-content-table" role="list" aria-label="Store contents">
+          <div className="store-content-table" role="list" aria-label={t("content")}>
             <div className="store-content-table-heading" aria-hidden="true">
-              <span>Content</span>
-              <span>Loading</span>
-              <span>Priority</span>
-              <span>Size</span>
+              <span>{t("content")}</span>
+              <span>{t("loading")}</span>
+              <span>{t("priority")}</span>
+              <span>{t("size")}</span>
             </div>
             {contents.map((item) => (
               <button
@@ -373,12 +372,13 @@ function ContextContentDetailDrawer(props: {
   readonly storeName: string;
   readonly onClose: () => void;
 }) {
+  const { t } = useTranslation("studio");
   return (
     <div className="drawer-layer" role="presentation">
       <button
         className="drawer-scrim"
         type="button"
-        aria-label="Close content details"
+        aria-label={t("closeContent")}
         onClick={props.onClose}
       />
       <aside className="store-creator-drawer context-content-drawer" aria-labelledby="content-name">
@@ -387,52 +387,50 @@ function ContextContentDetailDrawer(props: {
             <p>{props.storeName}</p>
             <h2 id="content-name">{props.content.id}</h2>
           </div>
-          <button type="button" aria-label="Close" onClick={props.onClose}>
+          <button type="button" aria-label={t("close")} onClick={props.onClose}>
             <X size={22} />
           </button>
         </header>
         <div className="drawer-body context-content-body">
           <section aria-labelledby="content-metadata-heading">
-            <h3 id="content-metadata-heading">Metadata</h3>
+            <h3 id="content-metadata-heading">{t("metadata")}</h3>
             <dl className="content-metadata-grid">
               <div>
-                <dt>Description</dt>
+                <dt>{t("description")}</dt>
                 <dd>{props.content.metadata.description ?? "Not set"}</dd>
               </div>
               <div>
-                <dt>Loading behavior</dt>
+                <dt>{t("loadingBehavior")}</dt>
                 <dd>{triggerLabel(props.content.metadata.trigger)}</dd>
               </div>
               <div>
-                <dt>Priority</dt>
+                <dt>{t("priority")}</dt>
                 <dd>{metadataLabel(props.content.metadata.priority)}</dd>
               </div>
               <div>
-                <dt>Trust level</dt>
+                <dt>{t("trustLevel")}</dt>
                 <dd>{metadataLabel(props.content.metadata.trustLevel)}</dd>
               </div>
               <div>
-                <dt>Sensitivity</dt>
+                <dt>{t("sensitivity")}</dt>
                 <dd>{metadataLabel(props.content.metadata.sensitivity)}</dd>
               </div>
               <div>
-                <dt>Size</dt>
+                <dt>{t("size")}</dt>
                 <dd>{formatBytes(props.content.sizeBytes)}</dd>
               </div>
               {props.content.revision === undefined ? null : (
                 <div>
-                  <dt>Revision</dt>
+                  <dt>{t("revision")}</dt>
                   <dd>{props.content.revision}</dd>
                 </div>
               )}
             </dl>
           </section>
           <section className="context-content-preview" aria-labelledby="content-preview-heading">
-            <h3 id="content-preview-heading">Content</h3>
+            <h3 id="content-preview-heading">{t("content")}</h3>
             <pre>{props.content.content}</pre>
-            {props.content.truncated ? (
-              <p>This preview is truncated because the content is larger than 900 KB.</p>
-            ) : null}
+            {props.content.truncated ? <p>{t("previewTruncated")}</p> : null}
           </section>
         </div>
       </aside>
@@ -447,6 +445,7 @@ export function ContextStoreCreatorDrawer(props: {
   readonly onPickFolder: () => Promise<string | undefined>;
   readonly mountExpertName?: string;
 }) {
+  const { t } = useTranslation("studio");
   const [step, setStep] = useState<CreateStep>("type");
   const [type, setType] = useState<ContextStore["type"]>("file");
   const [name, setName] = useState("");
@@ -487,17 +486,17 @@ export function ContextStoreCreatorDrawer(props: {
       <button
         className="drawer-scrim"
         type="button"
-        aria-label="Close create store"
+        aria-label={t("closeCreateStore")}
         onClick={props.onClose}
       />
       <aside className="store-creator-drawer" aria-labelledby="create-store-heading">
         <header className="drawer-heading">
-          <h2 id="create-store-heading">Create store</h2>
-          <button type="button" aria-label="Close" onClick={props.onClose}>
+          <h2 id="create-store-heading">{t("createStore")}</h2>
+          <button type="button" aria-label={t("close")} onClick={props.onClose}>
             <X size={22} />
           </button>
         </header>
-        <ol className="drawer-steps" aria-label="Create store steps">
+        <ol className="drawer-steps" aria-label={t("createStoreSteps")}>
           {(["type", "configure", "review"] as const).map((item, index) => (
             <li className={step === item ? "is-active" : ""} key={item}>
               <span>{index + 1}</span>
@@ -510,8 +509,8 @@ export function ContextStoreCreatorDrawer(props: {
           {step === "type" ? (
             <>
               <div className="drawer-copy">
-                <h3>Choose a store type</h3>
-                <p>Select where this store gets its knowledge.</p>
+                <h3>{t("chooseStoreType")}</h3>
+                <p>{t("chooseStoreTypeDescription")}</p>
               </div>
               <div className="store-type-options">
                 <button
@@ -521,9 +520,9 @@ export function ContextStoreCreatorDrawer(props: {
                 >
                   <Folder size={26} />
                   <span>
-                    <strong>File store</strong>
-                    <small>Index a folder on this device.</small>
-                    <em>Available while this device is online.</em>
+                    <strong>{t("fileStore")}</strong>
+                    <small>{t("indexFolder")}</small>
+                    <em>{t("deviceAvailable")}</em>
                   </span>
                   {type === "file" ? <Check size={18} /> : null}
                 </button>
@@ -534,18 +533,18 @@ export function ContextStoreCreatorDrawer(props: {
                 >
                   <BookOpenText size={26} />
                   <span>
-                    <strong>Context note</strong>
-                    <small>Write rules, instructions, or reference text.</small>
-                    <em>Available to cloud and local runtimes.</em>
+                    <strong>{t("contextNote")}</strong>
+                    <small>{t("writeRules")}</small>
+                    <em>{t("cloudAvailable")}</em>
                   </span>
                   {type === "note" ? <Check size={18} /> : null}
                 </button>
                 <button type="button" disabled>
                   <Database size={26} />
                   <span>
-                    <strong>Connected store</strong>
-                    <small>Sync knowledge from a third-party service.</small>
-                    <em>Coming later</em>
+                    <strong>{t("connectedStore")}</strong>
+                    <small>{t("syncService")}</small>
+                    <em>{t("comingLater")}</em>
                   </span>
                 </button>
               </div>
@@ -579,7 +578,7 @@ export function ContextStoreCreatorDrawer(props: {
                     <label>
                       Source folder
                       <span className="folder-picker">
-                        <input value={path} readOnly placeholder="Choose a folder" />
+                        <input value={path} readOnly placeholder={t("chooseFolder")} />
                         <button
                           className="secondary-button"
                           type="button"
@@ -587,34 +586,30 @@ export function ContextStoreCreatorDrawer(props: {
                             void props.onPickFolder().then((folder) => folder && setPath(folder))
                           }
                         >
-                          Choose folder
+                          {t("chooseFolder")}
                         </button>
                       </span>
                     </label>
                     <label>
-                      Update behavior
+                      {t("updateBehavior")}
                       <select
                         value={updateBehavior}
                         onChange={(event) =>
                           setUpdateBehavior(event.target.value as typeof updateBehavior)
                         }
                       >
-                        <option value="watch">Watch for changes</option>
-                        <option value="manual">Refresh manually</option>
+                        <option value="watch">{t("watchChanges")}</option>
+                        <option value="manual">{t("refreshManually")}</option>
                       </select>
                     </label>
                     {path ? (
                       <p className="store-availability-note">
-                        <Check size={17} /> Folder configured. Indexing will start when the context
-                        runtime is enabled.
+                        <Check size={17} /> {t("folderConfigured")}
                       </p>
                     ) : null}
                   </>
                 ) : (
-                  <p className="store-availability-note">
-                    Create the store first, then add one or more context entities from its detail
-                    page.
-                  </p>
+                  <p className="store-availability-note">{t("createStoreFirst")}</p>
                 )}
               </div>
             </>
@@ -623,25 +618,33 @@ export function ContextStoreCreatorDrawer(props: {
           {step === "review" ? (
             <>
               <div className="drawer-copy">
-                <h3>Review {type === "file" ? "file store" : "context note"}</h3>
-                <p>Confirm what will be created{props.mountExpertName ? " and mounted" : ""}.</p>
+                <h3>
+                  {t("reviewStore", {
+                    type: type === "file" ? t("fileStore") : t("contextNote"),
+                  })}
+                </h3>
+                <p>
+                  {t("confirmCreated", {
+                    mounted: props.mountExpertName ? t("mountedSuffix") : "",
+                  })}
+                </p>
               </div>
               <dl className="store-review-list">
                 <div>
-                  <dt>Name</dt>
+                  <dt>{t("name")}</dt>
                   <dd>{name}</dd>
                 </div>
                 <div>
-                  <dt>Type</dt>
-                  <dd>{type === "file" ? "File store" : "Context note"}</dd>
+                  <dt>{t("type")}</dt>
+                  <dd>{type === "file" ? t("fileStore") : t("contextNote")}</dd>
                 </div>
                 <div>
-                  <dt>Access</dt>
-                  <dd>Read only</dd>
+                  <dt>{t("access")}</dt>
+                  <dd>{t("readOnly")}</dd>
                 </div>
                 {type === "file" ? (
                   <div>
-                    <dt>Source</dt>
+                    <dt>{t("source")}</dt>
                     <dd>{path}</dd>
                   </div>
                 ) : null}
@@ -650,8 +653,10 @@ export function ContextStoreCreatorDrawer(props: {
                 <div className="mount-destination">
                   <FileText size={23} />
                   <p>
-                    After creation, <strong>{name}</strong> will be mounted to{" "}
-                    <strong>{props.mountExpertName}</strong>.
+                    {t("afterCreationMounted", {
+                      store: name,
+                      expert: props.mountExpertName,
+                    })}
                   </p>
                 </div>
               ) : null}
@@ -674,7 +679,7 @@ export function ContextStoreCreatorDrawer(props: {
               else setStep(step === "review" ? "configure" : "type");
             }}
           >
-            {step === "type" ? "Cancel" : "Back"}
+            {step === "type" ? t("cancel") : t("back")}
           </button>
           <button
             className="primary-button"
@@ -687,14 +692,14 @@ export function ContextStoreCreatorDrawer(props: {
             }}
           >
             {saving
-              ? "Creating…"
+              ? t("creating")
               : step === "review"
                 ? props.mountExpertName
-                  ? "Create and mount"
-                  : "Create store"
+                  ? t("createAndMount")
+                  : t("createStore")
                 : step === "configure"
-                  ? "Continue to review"
-                  : "Continue"}
+                  ? t("continueReview")
+                  : t("continue")}
           </button>
         </footer>
       </aside>
@@ -707,6 +712,7 @@ function ContextEntityCreatorDrawer(props: {
   readonly onClose: () => void;
   readonly onCreate: (storeId: string, entry: ContextNoteEntry) => Promise<ContextStore>;
 }) {
+  const { t } = useTranslation("studio");
   const [id, setId] = useState("");
   const [description, setDescription] = useState("");
   const [content, setContent] = useState("");
@@ -716,7 +722,7 @@ function ContextEntityCreatorDrawer(props: {
 
   const submit = async () => {
     if (!id.trim() || !description.trim() || !content.trim()) {
-      setError("ID, description, content, and loading behavior are required.");
+      setError(t("entityRequired"));
       return;
     }
     setSaving(true);
@@ -740,42 +746,40 @@ function ContextEntityCreatorDrawer(props: {
       <button
         className="drawer-scrim"
         type="button"
-        aria-label="Close add entity"
+        aria-label={t("closeAddEntity")}
         onClick={props.onClose}
       />
       <aside className="store-creator-drawer" aria-labelledby="add-context-entity-heading">
         <header className="drawer-heading">
           <div>
-            <h2 id="add-context-entity-heading">Add context entity</h2>
+            <h2 id="add-context-entity-heading">{t("addContextEntity")}</h2>
             <p>{props.store.name}</p>
           </div>
-          <button type="button" aria-label="Close" onClick={props.onClose}>
+          <button type="button" aria-label={t("close")} onClick={props.onClose}>
             <X size={22} />
           </button>
         </header>
         <div className="drawer-body store-config-form">
           <label>
-            Entity ID
+            {t("entityId")}
             <input
               value={id}
               onChange={(event) => setId(event.target.value)}
               placeholder="review-rules"
               autoFocus
             />
-            <small>
-              Use lowercase letters, numbers, and hyphens. The ID becomes the JSON filename.
-            </small>
+            <small>{t("entityIdHint")}</small>
           </label>
           <label>
-            Description
+            {t("description")}
             <input
               value={description}
               onChange={(event) => setDescription(event.target.value)}
-              placeholder="When this context is relevant"
+              placeholder={t("whenRelevant")}
             />
           </label>
           <label>
-            Content
+            {t("content")}
             <textarea
               className="note-content-input"
               value={content}
@@ -783,16 +787,12 @@ function ContextEntityCreatorDrawer(props: {
             />
           </label>
           <fieldset className="trigger-options">
-            <legend>Loading behavior</legend>
+            <legend>{t("loadingBehavior")}</legend>
             {(
               [
-                ["always_on", "Load immediately", "Inject content into every run."],
-                [
-                  "model_decision",
-                  "Model decides",
-                  "Expose ID and description, then let the model load it.",
-                ],
-                ["manual", "On demand", "Load explicitly by context ID."],
+                ["always_on", t("loadImmediately"), t("injectEveryRun")],
+                ["model_decision", t("modelDecides"), t("modelLoad")],
+                ["manual", t("onDemand"), t("loadExplicitly")],
               ] as const
             ).map(([value, label, help]) => (
               <label className={trigger === value ? "is-selected" : ""} key={value}>
@@ -848,6 +848,7 @@ export function ExpertContextMountDrawer(props: {
   readonly onStoreCreated: (store: ContextStore) => void;
   readonly onPickFolder: () => Promise<string | undefined>;
 }) {
+  const { t } = useTranslation("studio");
   const [query, setQuery] = useState("");
   const [draft, setDraft] = useState<readonly ExpertContextStoreMount[]>(props.mounts);
   const [creating, setCreating] = useState(false);
@@ -889,7 +890,7 @@ export function ExpertContextMountDrawer(props: {
       <button
         className="drawer-scrim"
         type="button"
-        aria-label="Close context configuration"
+        aria-label={t("closeContextConfiguration")}
         onClick={props.onClose}
       />
       <aside
@@ -898,22 +899,22 @@ export function ExpertContextMountDrawer(props: {
       >
         <header className="drawer-heading">
           <div>
-            <h2 id="mount-context-heading">Add context</h2>
+            <h2 id="mount-context-heading">{t("addContext")}</h2>
             <p>Choose what {props.expertName} can know at runtime.</p>
           </div>
-          <button type="button" aria-label="Close" onClick={props.onClose}>
+          <button type="button" aria-label={t("close")} onClick={props.onClose}>
             <X size={22} />
           </button>
         </header>
         <div className="drawer-body">
           <label className="directory-search mount-search">
             <MagnifyingGlass size={18} />
-            <span className="sr-only">Search stores</span>
+            <span className="sr-only">{t("searchStores")}</span>
             <input
               type="search"
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search stores"
+              placeholder={t("searchStores")}
             />
           </label>
           <div className="mount-store-list">
@@ -954,14 +955,14 @@ export function ExpertContextMountDrawer(props: {
               );
             })}
             {filteredStores.length === 0 ? (
-              <p className="mount-empty">No matching stores.</p>
+              <p className="mount-empty">{t("noMatchingStores")}</p>
             ) : null}
           </div>
           <button className="create-inline-store" type="button" onClick={() => setCreating(true)}>
             <Plus size={18} />
             <span>
-              <strong>Create new store</strong>
-              <small>Add a file store or context note without leaving this expert.</small>
+              <strong>{t("createNewStore")}</strong>
+              <small>{t("createNewStoreDescription")}</small>
             </span>
             <CaretRight size={17} />
           </button>

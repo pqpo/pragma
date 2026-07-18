@@ -143,6 +143,23 @@ export const DesktopBridgeSnapshotSchema = z.object({
   capabilities: z.array(LocalRuntimeCapabilitySchema),
 });
 
+export const DesktopLocalePreferenceSchema = z.enum(["system", "en", "zh-Hans", "zh-Hant"]);
+
+export const DesktopResolvedLocaleSchema = z.enum(["en", "zh-Hans", "zh-Hant"]);
+
+export const DesktopSettingsSchema = z.object({
+  schemaVersion: z.literal(1),
+  localePreference: DesktopLocalePreferenceSchema,
+});
+
+export const DesktopSettingsSnapshotSchema = DesktopSettingsSchema.extend({
+  resolvedLocale: DesktopResolvedLocaleSchema,
+});
+
+export const UpdateDesktopSettingsSchema = z.object({
+  localePreference: DesktopLocalePreferenceSchema,
+});
+
 export const PickWorkspaceResultSchema = z.object({
   ok: z.boolean(),
   path: z.string().optional(),
@@ -1111,6 +1128,11 @@ export type RuntimeEnvironmentDefinition = z.infer<typeof RuntimeEnvironmentDefi
 export type RuntimeEnvironmentRevision = z.infer<typeof RuntimeEnvironmentRevisionSchema>;
 export type RuntimeEnvironmentCatalogEntry = z.infer<typeof RuntimeEnvironmentCatalogEntrySchema>;
 export type DesktopBridgeSnapshot = z.infer<typeof DesktopBridgeSnapshotSchema>;
+export type DesktopLocalePreference = z.infer<typeof DesktopLocalePreferenceSchema>;
+export type DesktopResolvedLocale = z.infer<typeof DesktopResolvedLocaleSchema>;
+export type DesktopSettings = z.infer<typeof DesktopSettingsSchema>;
+export type DesktopSettingsSnapshot = z.infer<typeof DesktopSettingsSnapshotSchema>;
+export type UpdateDesktopSettings = z.infer<typeof UpdateDesktopSettingsSchema>;
 export type PickWorkspaceResult = z.infer<typeof PickWorkspaceResultSchema>;
 export type ValidateWorkspaceResult = z.infer<typeof ValidateWorkspaceResultSchema>;
 export type ModelProvider = z.infer<typeof ModelProviderSchema>;
@@ -1182,6 +1204,8 @@ export type PreviewCodeServiceResult = z.infer<typeof PreviewCodeServiceResultSc
 
 export interface PragmaDesktopAPI {
   getBridgeSnapshot: () => Promise<DesktopBridgeSnapshot>;
+  getDesktopSettings: () => Promise<DesktopSettingsSnapshot>;
+  updateDesktopSettings: (input: UpdateDesktopSettings) => Promise<DesktopSettingsSnapshot>;
   pickWorkspace: () => Promise<PickWorkspaceResult>;
   validateWorkspace: (path: string) => Promise<ValidateWorkspaceResult>;
   listModelProviders: () => Promise<ModelProvider[]>;

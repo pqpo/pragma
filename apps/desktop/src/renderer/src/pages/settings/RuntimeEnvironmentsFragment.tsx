@@ -1,5 +1,6 @@
 import { CaretRight, TerminalWindow } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import type { DesktopRuntimeAvailability } from "../../../../shared/desktop-api.ts";
 import { errorMessage } from "../../lib/errors.ts";
@@ -10,6 +11,7 @@ export function RuntimeCard(props: {
   readonly runtime: DesktopRuntimeAvailability;
   readonly onOpen: () => void;
 }) {
+  const { t } = useTranslation(["settings", "common"]);
   const available = props.runtime.status === "available";
   const modelCount = props.runtime.models?.length;
 
@@ -18,7 +20,10 @@ export function RuntimeCard(props: {
       <button
         className="runtime-card-hit-target"
         type="button"
-        aria-label={`View ${props.runtime.displayName} details`}
+        aria-label={t("runtimes.viewDetails", {
+          ns: "settings",
+          name: props.runtime.displayName,
+        })}
         onClick={props.onOpen}
       />
       <header className="card-header runtime-card-header">
@@ -29,11 +34,15 @@ export function RuntimeCard(props: {
           <h3>{props.runtime.displayName}</h3>
           <p className={available ? "status-copy is-active" : "status-copy"}>
             <span className="status-dot" aria-hidden="true" />
-            {available ? "Available" : "Unavailable"}
+            {available
+              ? t("status.available", { ns: "common" })
+              : t("status.unavailable", { ns: "common" })}
           </p>
         </div>
         <span className={available ? "status-badge is-ready" : "status-badge"}>
-          {available ? "Ready" : "Not available"}
+          {available
+            ? t("status.ready", { ns: "common" })
+            : t("status.notAvailable", { ns: "common" })}
         </span>
       </header>
 
@@ -42,12 +51,12 @@ export function RuntimeCard(props: {
           <p>{props.runtime.kind}</p>
           <span>
             {modelCount === undefined
-              ? "Model catalog unavailable"
-              : `${modelCount} ${modelCount === 1 ? "model" : "models"}`}
+              ? t("runtimes.catalogUnavailable", { ns: "settings" })
+              : t("counts.model", { ns: "common", count: modelCount })}
           </span>
         </div>
         <span className="runtime-open-detail" aria-hidden="true">
-          View details
+          {t("actions.viewDetails", { ns: "common" })}
           <CaretRight size={17} />
         </span>
       </div>
@@ -56,6 +65,7 @@ export function RuntimeCard(props: {
 }
 
 export function RuntimeEnvironmentsFragment() {
+  const { t } = useTranslation(["settings", "common"]);
   const [runtimes, setRuntimes] = useState<readonly DesktopRuntimeAvailability[]>([]);
   const [selectedRuntimeId, setSelectedRuntimeId] = useState<string>();
   const [loading, setLoading] = useState(true);
@@ -98,8 +108,8 @@ export function RuntimeEnvironmentsFragment() {
       header={
         <header className="panel-heading panel-heading-with-action">
           <div>
-            <h2 id="runtimes-panel-heading">Runtime Environments</h2>
-            <p>Inspect registered runtimes and the model catalogs they provide.</p>
+            <h2 id="runtimes-panel-heading">{t("runtimes.title", { ns: "settings" })}</h2>
+            <p>{t("runtimes.description", { ns: "settings" })}</p>
           </div>
           <button
             className="secondary-button"
@@ -107,14 +117,18 @@ export function RuntimeEnvironmentsFragment() {
             onClick={() => void loadRuntimes()}
             disabled={loading}
           >
-            {loading ? "Checking…" : "Check again"}
+            {loading
+              ? t("actions.checking", { ns: "common" })
+              : t("actions.checkAgain", { ns: "common" })}
           </button>
         </header>
       }
     >
       <section className="runtime-section" aria-labelledby="local-runtimes-heading">
         <div className="runtime-list">
-          {loading ? <p className="empty-state">Checking runtime availability…</p> : null}
+          {loading ? (
+            <p className="empty-state">{t("runtimes.checking", { ns: "settings" })}</p>
+          ) : null}
           {runtimes.map((runtime) => (
             <RuntimeCard
               key={runtime.id}

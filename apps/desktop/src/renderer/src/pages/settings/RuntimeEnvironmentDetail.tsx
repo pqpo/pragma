@@ -1,5 +1,6 @@
 import { ArrowLeft, ArrowsClockwise, TerminalWindow } from "@phosphor-icons/react";
 import type { ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 
 import type { DesktopRuntimeAvailability } from "../../../../shared/desktop-api.ts";
 import { SettingsScreenFrame } from "./SettingsScreenFrame.tsx";
@@ -11,6 +12,7 @@ export function RuntimeEnvironmentDetail(props: {
   readonly onBack: () => void;
   readonly onRefresh: () => void;
 }) {
+  const { t } = useTranslation(["settings", "common"]);
   const { runtime } = props;
   const available = runtime.status === "available";
   const models = runtime.models ?? [];
@@ -24,7 +26,7 @@ export function RuntimeEnvironmentDetail(props: {
         <>
           <button className="back-link runtime-detail-back" type="button" onClick={props.onBack}>
             <ArrowLeft size={18} aria-hidden="true" />
-            Back to Runtime Environments
+            {t("runtimes.back", { ns: "settings" })}
           </button>
 
           <header className="runtime-detail-header">
@@ -34,7 +36,11 @@ export function RuntimeEnvironmentDetail(props: {
             <div>
               <div className="runtime-detail-title-line">
                 <h2 id="runtime-detail-name">{runtime.displayName}</h2>
-                {runtime.isDefault ? <span className="status-badge is-ready">Default</span> : null}
+                {runtime.isDefault ? (
+                  <span className="status-badge is-ready">
+                    {t("status.default", { ns: "common" })}
+                  </span>
+                ) : null}
               </div>
               <p>{runtime.kind}</p>
             </div>
@@ -45,31 +51,50 @@ export function RuntimeEnvironmentDetail(props: {
               disabled={props.refreshing}
             >
               <ArrowsClockwise size={16} aria-hidden="true" />
-              {props.refreshing ? "Checking…" : "Check again"}
+              {props.refreshing
+                ? t("actions.checking", { ns: "common" })
+                : t("actions.checkAgain", { ns: "common" })}
             </button>
           </header>
         </>
       }
     >
-      <section className="runtime-detail-meta" aria-label="Runtime status and identity">
-        <RuntimeFact label="Status">
+      <section
+        className="runtime-detail-meta"
+        aria-label={t("runtimes.statusIdentity", { ns: "settings" })}
+      >
+        <RuntimeFact label={t("runtimes.status", { ns: "settings" })}>
           <span className={available ? "runtime-detail-status is-active" : "runtime-detail-status"}>
             <i aria-hidden="true" />
-            {available ? "Available" : "Unavailable"}
+            {available
+              ? t("status.available", { ns: "common" })
+              : t("status.unavailable", { ns: "common" })}
           </span>
         </RuntimeFact>
-        <RuntimeFact label="Runtime ID">
+        <RuntimeFact label={t("runtimes.runtimeId", { ns: "settings" })}>
           <code>{runtime.id}</code>
         </RuntimeFact>
-        <RuntimeFact label="Origin">
-          {runtime.origin ? runtimeOrigin(runtime.origin) : "—"}
+        <RuntimeFact label={t("runtimes.origin", { ns: "settings" })}>
+          {runtime.origin
+            ? runtime.origin === "built-in"
+              ? t("runtimes.builtIn", { ns: "settings" })
+              : t("runtimes.registered", { ns: "settings" })
+            : "—"}
         </RuntimeFact>
-        <RuntimeFact label="Revision">{runtime.revision ?? "—"}</RuntimeFact>
-        <RuntimeFact label="Executable">
-          {runtime.executablePath ? <code>{runtime.executablePath}</code> : "Managed by adapter"}
+        <RuntimeFact label={t("runtimes.revision", { ns: "settings" })}>
+          {runtime.revision ?? "—"}
         </RuntimeFact>
-        <RuntimeFact label="Runtime version">{runtime.version ?? "—"}</RuntimeFact>
-        <RuntimeFact label="Adapter">
+        <RuntimeFact label={t("runtimes.executable", { ns: "settings" })}>
+          {runtime.executablePath ? (
+            <code>{runtime.executablePath}</code>
+          ) : (
+            t("runtimes.managedByAdapter", { ns: "settings" })
+          )}
+        </RuntimeFact>
+        <RuntimeFact label={t("runtimes.runtimeVersion", { ns: "settings" })}>
+          {runtime.version ?? "—"}
+        </RuntimeFact>
+        <RuntimeFact label={t("runtimes.adapter", { ns: "settings" })}>
           {runtime.adapter ? (
             <code>
               {runtime.adapter.id}@{runtime.adapter.version}
@@ -82,13 +107,13 @@ export function RuntimeEnvironmentDetail(props: {
 
       {runtime.reason ? (
         <p className="runtime-detail-diagnostic" role="status">
-          <strong>Runtime unavailable</strong>
+          <strong>{t("runtimes.unavailable", { ns: "settings" })}</strong>
           {runtime.reason}
         </p>
       ) : null}
       {runtime.modelDiscoveryError ? (
         <p className="runtime-detail-diagnostic" role="status">
-          <strong>Model discovery failed</strong>
+          <strong>{t("runtimes.discoveryFailed", { ns: "settings" })}</strong>
           {runtime.modelDiscoveryError}
         </p>
       ) : null}
@@ -101,8 +126,8 @@ export function RuntimeEnvironmentDetail(props: {
       <section className="runtime-model-section" aria-labelledby="runtime-models-heading">
         <header>
           <div>
-            <h3 id="runtime-models-heading">Models</h3>
-            <p>The model catalog reported by this Runtime Environment.</p>
+            <h3 id="runtime-models-heading">{t("runtimes.models", { ns: "settings" })}</h3>
+            <p>{t("runtimes.catalogDescription", { ns: "settings" })}</p>
           </div>
           <span>{models.length}</span>
         </header>
@@ -110,8 +135,8 @@ export function RuntimeEnvironmentDetail(props: {
         {models.length === 0 ? (
           <p className="empty-state">
             {runtime.modelDiscoveryError
-              ? "The model catalog could not be loaded."
-              : "This Runtime Environment did not report any models."}
+              ? t("runtimes.catalogLoadFailed", { ns: "settings" })
+              : t("runtimes.noModels", { ns: "settings" })}
           </p>
         ) : (
           <div className="runtime-model-list">
@@ -120,21 +145,28 @@ export function RuntimeEnvironmentDetail(props: {
                 <div>
                   <div className="runtime-model-name">
                     <strong>{model.displayName}</strong>
-                    {model.default ? <span className="status-badge is-ready">Default</span> : null}
+                    {model.default ? (
+                      <span className="status-badge is-ready">
+                        {t("status.default", { ns: "common" })}
+                      </span>
+                    ) : null}
                   </div>
                   <p>
-                    {model.provider.displayName} · {providerKind(model.provider.kind)}
+                    {model.provider.displayName} ·{" "}
+                    {model.provider.kind === "runtime-managed"
+                      ? t("runtimes.runtimeManaged", { ns: "settings" })
+                      : t("runtimes.registeredProvider", { ns: "settings" })}
                   </p>
                 </div>
                 <div className="runtime-model-identity">
-                  <span>Model ID</span>
+                  <span>{t("runtimes.modelId", { ns: "settings" })}</span>
                   <code>{model.id}</code>
                 </div>
                 <div className="runtime-model-thinking">
-                  <span>Thinking levels</span>
+                  <span>{t("runtimes.thinkingLevels", { ns: "settings" })}</span>
                   <p>
                     {model.thinking === undefined
-                      ? "Not reported"
+                      ? t("runtimes.notReported", { ns: "settings" })
                       : model.thinking.supportedLevels.map((level) => level.label).join(", ")}
                   </p>
                 </div>
@@ -154,16 +186,6 @@ function RuntimeFact(props: { readonly label: string; readonly children: ReactNo
       <p>{props.children}</p>
     </div>
   );
-}
-
-function runtimeOrigin(origin: NonNullable<DesktopRuntimeAvailability["origin"]>): string {
-  return origin === "built-in" ? "Built in" : "Registered";
-}
-
-function providerKind(
-  kind: NonNullable<DesktopRuntimeAvailability["models"]>[number]["provider"]["kind"],
-): string {
-  return kind === "runtime-managed" ? "Runtime managed" : "Registered provider";
 }
 
 function runtimeModelKey(model: NonNullable<DesktopRuntimeAvailability["models"]>[number]): string {

@@ -1,5 +1,6 @@
 import { ArrowCounterClockwise, MagnifyingGlass, PuzzlePiece, X } from "@phosphor-icons/react";
 import { useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import type { DesktopPlugin, ExpertPluginReference } from "../../../../shared/desktop-api.ts";
 import { PluginConfigFields } from "./PluginConfigFields.tsx";
@@ -60,6 +61,7 @@ export function ExpertPluginPicker(props: {
   readonly onReferencesChange: (references: readonly ExpertPluginReference[]) => void;
   readonly onSecretMutationsChange: (values: Readonly<Record<string, string | null>>) => void;
 }) {
+  const { t } = useTranslation("studio");
   const [pickerOpen, setPickerOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [resetCandidate, setResetCandidate] = useState<DesktopPlugin | null>(null);
@@ -155,18 +157,16 @@ export function ExpertPluginPicker(props: {
       <section className="expert-plugin-picker" aria-labelledby="expert-plugins-heading">
         <header>
           <div>
-            <h3 id="expert-plugins-heading">Plugins</h3>
-            <p>Add installed extensions, then configure only the ones this expert uses.</p>
+            <h3 id="expert-plugins-heading">{t("plugins")}</h3>
+            <p>{t("addInstalledExtensions")}</p>
           </div>
-          <span>{props.references.length} active</span>
+          <span>{t("activeCount", { count: props.references.length })}</span>
         </header>
         <div className="expert-plugin-toolbar">
-          <span>
-            {props.plugins.length} installed · Search the library instead of browsing a long list.
-          </span>
+          <span>{t("installedPluginSummary", { count: props.plugins.length })}</span>
           <button className="secondary-button" type="button" onClick={() => setPickerOpen(true)}>
             <PuzzlePiece size={16} aria-hidden="true" />
-            {props.references.length > 0 ? "Edit plugins" : "Add plugins"}
+            {props.references.length > 0 ? t("editPlugins") : t("addPlugins")}
           </button>
         </div>
         <div className="expert-plugin-list">
@@ -184,18 +184,19 @@ export function ExpertPluginPicker(props: {
                     <strong>{plugin.manifest.name}</strong>
                     <small>{plugin.manifest.description}</small>
                   </div>
-                  <span className="expert-plugin-active-label">Active</span>
+                  <span className="expert-plugin-active-label">{t("active")}</span>
                 </header>
                 <details>
-                  <summary>Configure expert parameters</summary>
+                  <summary>{t("configureParameters")}</summary>
                   <div className="expert-plugin-config-heading">
-                    <p>Values changed here override this plugin’s Desktop defaults.</p>
+                    <p>{t("overrideDefaults")}</p>
                     <button
                       type="button"
                       disabled={!hasOverrides}
                       onClick={() => setResetCandidate(plugin)}
                     >
-                      <ArrowCounterClockwise size={15} aria-hidden="true" /> Restore defaults
+                      <ArrowCounterClockwise size={15} aria-hidden="true" />{" "}
+                      {t("restoreDefaultsAction")}
                     </button>
                   </div>
                   <PluginConfigFields
@@ -246,15 +247,16 @@ export function ExpertPluginPicker(props: {
                 <PuzzlePiece size={20} aria-hidden="true" />
               </span>
               <div>
-                <strong>No plugins added</strong>
-                <p>Search installed plugins and add only what this expert needs.</p>
+                <strong>{t("noPluginsAdded")}</strong>
+                <p>{t("noPluginsAddedDescription")}</p>
               </div>
             </div>
           ) : null}
           {props.references.length > activePlugins.length ? (
             <p className="capability-empty">
-              {props.references.length - activePlugins.length} selected plugin reference(s) are no
-              longer installed.
+              {t("missingPluginReferences", {
+                count: props.references.length - activePlugins.length,
+              })}
             </p>
           ) : null}
         </div>
@@ -276,33 +278,33 @@ export function ExpertPluginPicker(props: {
           >
             <header className="expert-picker-heading">
               <div>
-                <small>Extensions</small>
-                <h2 id="plugin-library-heading">Plugin library</h2>
-                <p>Search installed plugins and choose the extensions this expert can use.</p>
+                <small>{t("extensions")}</small>
+                <h2 id="plugin-library-heading">{t("pluginLibrary")}</h2>
+                <p>{t("pluginLibraryDescription")}</p>
               </div>
-              <button type="button" aria-label="Close plugin library" onClick={closePicker}>
+              <button type="button" aria-label={t("closePluginLibrary")} onClick={closePicker}>
                 <X size={19} aria-hidden="true" />
               </button>
             </header>
             <label className="expert-picker-search">
               <MagnifyingGlass size={18} aria-hidden="true" />
-              <span className="sr-only">Search installed plugins</span>
+              <span className="sr-only">{t("searchInstalledPlugins")}</span>
               <input
                 autoFocus
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
-                placeholder="Search plugins by name, ID, or description"
+                placeholder={t("searchPluginsDescription")}
               />
               {search ? (
-                <button type="button" aria-label="Clear search" onClick={() => setSearch("")}>
+                <button type="button" aria-label={t("clearSearch")} onClick={() => setSearch("")}>
                   <X size={16} aria-hidden="true" />
                 </button>
               ) : null}
             </label>
             <div className="expert-picker-toolbar">
-              <span>{props.references.length} selected</span>
+              <span>{t("selectedCount", { count: props.references.length })}</span>
               <span>
-                Showing {visiblePlugins.length} of {matchingCount} matching
+                {t("showingMatching", { visible: visiblePlugins.length, total: matchingCount })}
               </span>
             </div>
             <div className="expert-picker-results">
@@ -326,7 +328,7 @@ export function ExpertPluginPicker(props: {
                           <strong>{plugin.manifest.name}</strong>
                           <small>
                             {plugin.manifest.description}
-                            {unavailable ? " · Needs attention" : ""}
+                            {unavailable ? ` · ${t("needsAttention")}` : ""}
                           </small>
                         </span>
                       </label>
@@ -335,25 +337,20 @@ export function ExpertPluginPicker(props: {
                 </div>
               ) : (
                 <div className="expert-picker-empty">
-                  <strong>{search.trim() ? "No matches found" : "No plugins installed"}</strong>
-                  <p>
-                    {search.trim()
-                      ? "Try a different name, ID, description, or tag."
-                      : "Install a plugin from the Studio plugin directory first."}
-                  </p>
+                  <strong>{search.trim() ? t("noMatchesFound") : t("noPluginsInstalled")}</strong>
+                  <p>{search.trim() ? t("tryPluginSearch") : t("installPluginFirst")}</p>
                 </div>
               )}
               {matchingCount > visiblePlugins.length ? (
                 <p className="expert-plugin-result-hint">
-                  {matchingCount - visiblePlugins.length} more plugin(s) hidden. Refine your search
-                  to find them.
+                  {t("hiddenPlugins", { count: matchingCount - visiblePlugins.length })}
                 </p>
               ) : null}
             </div>
             <footer className="expert-picker-actions">
-              <span>Plugin parameters remain configurable after you add them.</span>
+              <span>{t("pluginConfigurable")}</span>
               <button className="primary-button" type="button" onClick={closePicker}>
-                Done
+                {t("common:actions.done")}
               </button>
             </footer>
           </aside>
@@ -369,11 +366,9 @@ export function ExpertPluginPicker(props: {
             aria-labelledby="restore-plugin-defaults-title"
             aria-describedby="restore-plugin-defaults-description"
           >
-            <h2 id="restore-plugin-defaults-title">Restore all plugin defaults?</h2>
+            <h2 id="restore-plugin-defaults-title">{t("restoreDefaults")}</h2>
             <p id="restore-plugin-defaults-description">
-              This will overwrite every custom parameter and secret for “
-              {resetCandidate.manifest.name}”. The expert will use the plugin’s Desktop defaults
-              instead.
+              {t("restoreDefaultsDescription", { name: resetCandidate.manifest.name })}
             </p>
             <footer>
               <button
@@ -382,10 +377,10 @@ export function ExpertPluginPicker(props: {
                 autoFocus
                 onClick={() => setResetCandidate(null)}
               >
-                Cancel
+                {t("cancel")}
               </button>
               <button className="primary-button" type="button" onClick={restoreDefaults}>
-                <ArrowCounterClockwise size={16} aria-hidden="true" /> Restore defaults
+                <ArrowCounterClockwise size={16} aria-hidden="true" /> {t("restoreDefaultsAction")}
               </button>
             </footer>
           </section>

@@ -9,6 +9,7 @@ import {
   X,
 } from "@phosphor-icons/react";
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import type { DesktopPlugin, PluginZipInspection } from "../../../../shared/desktop-api.ts";
 import { errorMessage } from "../../lib/errors.ts";
@@ -23,6 +24,7 @@ export function PluginDirectoryFragment(props: {
   readonly onOpen: (plugin: DesktopPlugin) => void;
   readonly onChanged: (plugin: DesktopPlugin) => void;
 }) {
+  const { t } = useTranslation("studio");
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<PluginFilter>("all");
   const [inspection, setInspection] = useState<PluginZipInspection | null>(null);
@@ -81,8 +83,8 @@ export function PluginDirectoryFragment(props: {
       header={
         <header className="studio-heading capability-heading">
           <div>
-            <h1 id="plugins-heading">Plugins</h1>
-            <p>Install reusable Expert extensions and configure their Desktop defaults.</p>
+            <h1 id="plugins-heading">{t("plugins")}</h1>
+            <p>{t("pluginsDescription")}</p>
           </div>
           <button
             className="primary-button"
@@ -90,7 +92,7 @@ export function PluginDirectoryFragment(props: {
             disabled={busy}
             onClick={() => void inspect()}
           >
-            <UploadSimple size={17} /> {busy ? "Checking…" : "Import ZIP"}
+            <UploadSimple size={17} /> {busy ? t("checking") : t("importZip")}
           </button>
         </header>
       }
@@ -98,15 +100,15 @@ export function PluginDirectoryFragment(props: {
       <div className="capability-controls">
         <label className="directory-search">
           <MagnifyingGlass size={18} />
-          <span className="sr-only">Search plugins</span>
+          <span className="sr-only">{t("searchPlugins")}</span>
           <input
             type="search"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="Search plugins"
+            placeholder={t("searchPlugins")}
           />
         </label>
-        <div className="capability-filters" aria-label="Plugin origin">
+        <div className="capability-filters" aria-label={t("pluginOrigin")}>
           {(["all", "built_in", "user"] as const).map((value) => (
             <button
               key={value}
@@ -114,17 +116,17 @@ export function PluginDirectoryFragment(props: {
               type="button"
               onClick={() => setFilter(value)}
             >
-              {value === "built_in" ? "Built-in" : value === "user" ? "Imported" : "All"}
+              {value === "built_in" ? t("builtIn") : value === "user" ? t("imported") : t("all")}
             </button>
           ))}
         </div>
       </div>
       <div className="capability-table" role="list">
         <div className="capability-table-heading" aria-hidden="true">
-          <span>Name</span>
-          <span>Origin</span>
-          <span>Version / ID</span>
-          <span>Status</span>
+          <span>{t("name")}</span>
+          <span>{t("origin")}</span>
+          <span>{t("versionId")}</span>
+          <span>{t("status")}</span>
           <span />
         </div>
         {matching.map((plugin) => (
@@ -145,7 +147,7 @@ export function PluginDirectoryFragment(props: {
               </span>
             </span>
             <span className="capability-type">
-              {plugin.origin === "built_in" ? "Built-in" : "Imported"}
+              {plugin.origin === "built_in" ? t("builtIn") : t("imported")}
             </span>
             <span className="capability-source">
               <code>{plugin.manifest.version}</code>
@@ -153,14 +155,12 @@ export function PluginDirectoryFragment(props: {
             </span>
             <span className="capability-status">
               <i className={plugin.status === "ready" ? "is-ready" : "is-warning"} />
-              {plugin.status === "ready" ? "Ready" : "Needs attention"}
+              {plugin.status === "ready" ? t("ready") : t("needsAttention")}
             </span>
-            <span>Open</span>
+            <span>{t("open")}</span>
           </button>
         ))}
-        {matching.length === 0 ? (
-          <p className="capability-empty">No plugins match this view.</p>
-        ) : null}
+        {matching.length === 0 ? <p className="capability-empty">{t("noPlugins")}</p> : null}
       </div>
       {error ? (
         <p className="form-error" role="alert">
@@ -178,21 +178,23 @@ export function PluginDirectoryFragment(props: {
             <button
               className="plugin-dialog-close"
               type="button"
-              aria-label="Close"
+              aria-label={t("close")}
               onClick={() => setInspection(null)}
             >
               <X size={18} />
             </button>
             <Package size={30} />
-            <h2 id="plugin-import-title">Import {inspection.manifest.name}?</h2>
+            <h2 id="plugin-import-title">
+              {t("importPlugin", { name: inspection.manifest.name })}
+            </h2>
             <p>{inspection.manifest.description}</p>
             <dl>
               <div>
-                <dt>Version</dt>
+                <dt>{t("version")}</dt>
                 <dd>{inspection.manifest.version}</dd>
               </div>
               <div>
-                <dt>Package</dt>
+                <dt>{t("package")}</dt>
                 <dd>
                   {inspection.fileCount} files · {(inspection.unpackedBytes / 1024).toFixed(1)} KiB
                 </dd>
@@ -206,8 +208,7 @@ export function PluginDirectoryFragment(props: {
             </dl>
             <PermissionSummary plugin={inspection} />
             <p className="plugin-trust-warning" role="note">
-              This plugin runs trusted code inside Pragma Desktop. Declared permissions are for
-              review and audit only; they are not a sandbox or an enforced access boundary.
+              {t("trustPluginWarning")}
             </p>
             <footer>
               <button
@@ -215,7 +216,7 @@ export function PluginDirectoryFragment(props: {
                 type="button"
                 onClick={() => setInspection(null)}
               >
-                Cancel
+                {t("cancel")}
               </button>
               <button
                 className="primary-button"
@@ -223,7 +224,7 @@ export function PluginDirectoryFragment(props: {
                 disabled={busy}
                 onClick={() => void install()}
               >
-                <ShieldCheck size={17} /> Trust code and import
+                <ShieldCheck size={17} /> {t("trustAndImport")}
               </button>
             </footer>
           </section>
@@ -239,6 +240,7 @@ export function PluginDetailFragment(props: {
   readonly onChanged: (plugin: DesktopPlugin) => void;
   readonly onDeleted: (ref: string) => void;
 }) {
+  const { t } = useTranslation("studio");
   const [config, setConfig] = useState<Record<string, unknown>>(props.plugin.defaultConfig);
   const [secrets, setSecrets] = useState<Record<string, string | null>>({});
   const [busy, setBusy] = useState(false);
@@ -276,7 +278,7 @@ export function PluginDetailFragment(props: {
       labelledBy="plugin-detail-name"
       header={
         <button className="back-link" type="button" onClick={props.onBack}>
-          <ArrowLeft size={18} /> Back to Plugins
+          <ArrowLeft size={18} /> {t("backPlugins")}
         </button>
       }
     >
@@ -288,7 +290,7 @@ export function PluginDetailFragment(props: {
           <div>
             <h1 id="plugin-detail-name">{props.plugin.manifest.name}</h1>
             <span className="capability-type">
-              {props.plugin.origin === "built_in" ? "Built-in" : "Imported"}
+              {props.plugin.origin === "built_in" ? t("builtIn") : t("imported")}
             </span>
             <span className="version-label">{props.plugin.manifest.version}</span>
           </div>
@@ -301,30 +303,30 @@ export function PluginDetailFragment(props: {
             disabled={busy}
             onClick={() => void remove()}
           >
-            <Trash size={17} /> Delete
+            <Trash size={17} /> {t("deletePlugin")}
           </button>
         ) : null}
       </header>
       <section className="capability-detail-meta">
         <div>
-          <h2>Status</h2>
+          <h2>{t("status")}</h2>
           <p className="capability-status">
             <i className={props.plugin.status === "ready" ? "is-ready" : "is-warning"} />
-            {props.plugin.status === "ready" ? "Ready" : "Needs attention"}
+            {props.plugin.status === "ready" ? t("ready") : t("needsAttention")}
           </p>
         </div>
         <div>
-          <h2>Reference</h2>
+          <h2>{t("reference")}</h2>
           <p>
             <code>{props.plugin.ref}</code>
           </p>
         </div>
         <div>
-          <h2>Capabilities</h2>
+          <h2>{t("capabilities")}</h2>
           <p>{props.plugin.manifest.capabilities.length}</p>
         </div>
         <div>
-          <h2>Package hash</h2>
+          <h2>{t("packageHash")}</h2>
           <p>
             <code>{props.plugin.contentHash.slice(0, 16)}…</code>
           </p>
@@ -336,8 +338,8 @@ export function PluginDetailFragment(props: {
       <section className="plugin-detail-section">
         <header>
           <div>
-            <h2>Default configuration</h2>
-            <p>Experts inherit these values unless they define an override.</p>
+            <h2>{t("defaultConfiguration")}</h2>
+            <p>{t("defaultsDescription")}</p>
           </div>
           <button
             className="primary-button"
@@ -345,7 +347,7 @@ export function PluginDetailFragment(props: {
             disabled={busy}
             onClick={() => void save()}
           >
-            {busy ? "Saving…" : "Save defaults"}
+            {busy ? t("saving") : t("saveDefaults")}
           </button>
         </header>
         <PluginConfigFields
@@ -362,14 +364,12 @@ export function PluginDetailFragment(props: {
         />
       </section>
       <section className="plugin-detail-section">
-        <h2>Declared permissions</h2>
-        <p>
-          Advisory only. This trusted-host plugin executes with the Desktop process permissions.
-        </p>
+        <h2>{t("declaredPermissions")}</h2>
+        <p>{t("advisoryPermissions")}</p>
         <PermissionLists permissions={props.plugin.manifest.permissions} />
       </section>
       <section className="plugin-detail-section">
-        <h2>Contributed capabilities</h2>
+        <h2>{t("contributedCapabilities")}</h2>
         <ul>
           {props.plugin.manifest.capabilities.map((capability) => (
             <li key={`${capability.type}:${capability.name}`}>
@@ -390,10 +390,11 @@ export function PluginDetailFragment(props: {
 }
 
 function PermissionSummary(props: { readonly plugin: PluginZipInspection }) {
+  const { t } = useTranslation("studio");
   return (
     <section className="plugin-permission-summary">
       <h3>
-        <ShieldCheck size={18} /> Declared permissions
+        <ShieldCheck size={18} /> {t("declaredPermissions")}
       </h3>
       <PermissionLists permissions={props.plugin.manifest.permissions} />
     </section>
@@ -403,6 +404,7 @@ function PermissionSummary(props: { readonly plugin: PluginZipInspection }) {
 function PermissionLists(props: {
   readonly permissions: DesktopPlugin["manifest"]["permissions"];
 }) {
+  const { t } = useTranslation("studio");
   const groups = Object.entries(props.permissions);
   return (
     <div className="plugin-permission-grid">
@@ -410,7 +412,7 @@ function PermissionLists(props: {
         <div key={name}>
           <strong>{name}</strong>
           {values.length === 0 ? (
-            <span>None</span>
+            <span>{t("none")}</span>
           ) : (
             <ul>
               {values.map((value) => (

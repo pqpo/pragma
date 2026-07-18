@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import type { DesktopPluginManifest } from "../../../../shared/desktop-api.ts";
 
@@ -10,6 +11,7 @@ export function PluginConfigFields(props: {
   readonly onValuesChange: (values: Record<string, unknown>) => void;
   readonly onSecretChange: (path: string, value: string | null) => void;
 }) {
+  const { t } = useTranslation("studio");
   const properties = flattenConfigurationProperties(props.manifest.configuration);
   return (
     <div className="plugin-config-fields">
@@ -33,16 +35,16 @@ export function PluginConfigFields(props: {
                   type="password"
                   placeholder={
                     props.configuredSecrets.has(property.name)
-                      ? "Secret configured"
+                      ? t("secretConfigured")
                       : property.required
-                        ? "Required secret"
-                        : "Optional secret"
+                        ? t("requiredSecret")
+                        : t("optionalSecret")
                   }
                   onChange={(event) => props.onSecretChange(property.name, event.target.value)}
                 />
                 {props.configuredSecrets.has(property.name) ? (
                   <button type="button" onClick={() => props.onSecretChange(property.name, null)}>
-                    Clear
+                    {t("clear")}
                   </button>
                 ) : null}
               </div>
@@ -76,8 +78,8 @@ export function PluginConfigFields(props: {
                   )
                 }
               >
-                <option value="true">True</option>
-                <option value="false">False</option>
+                <option value="true">{t("true")}</option>
+                <option value="false">{t("false")}</option>
               </select>
             ) : property.type === "object" || property.type === "array" ? (
               <JsonConfigInput
@@ -108,7 +110,7 @@ export function PluginConfigFields(props: {
         );
       })}
       {properties.length === 0 ? (
-        <p className="capability-empty">This plugin has no configurable parameters.</p>
+        <p className="capability-empty">{t("noConfigurableParameters")}</p>
       ) : null}
     </div>
   );
