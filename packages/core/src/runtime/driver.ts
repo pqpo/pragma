@@ -6,6 +6,7 @@ import type { Expert } from "../agent/expert-agent.ts";
 import type { ExpertAgentContext, ExpertAgentStartupMessage } from "../agent/context-manager.ts";
 import { createExpertAgentLogger, type ExpertAgentLogger } from "../logging/logger.ts";
 import { dispatchExpertAgentHook } from "../plugins/expert-agent-plugin.ts";
+import type { ExpertAgentProcessEnvironmentPatch } from "../plugins/expert-agent-plugin.ts";
 import { AsyncPushQueue } from "./async-push-queue.ts";
 import {
   createQueuedAgentLifecycle,
@@ -77,6 +78,7 @@ export interface DefineRuntimeDriverOptions {
   readonly persistenceProvider?: RuntimeSessionPersistenceProvider | undefined;
   readonly sessionRestoreHandler?: RuntimeSessionRestoreHandler | undefined;
   readonly sessionSyncCallback?: RuntimeSessionSyncCallback | undefined;
+  readonly createProcessEnvironment?: (() => NodeJS.ProcessEnv) | undefined;
 }
 
 export interface RuntimePaths {
@@ -96,6 +98,7 @@ export interface RuntimePrepareContext {
   readonly workspace: string;
   readonly logger: ExpertAgentLogger;
   readonly paths: RuntimePaths;
+  readonly processEnvironment: Readonly<NodeJS.ProcessEnv>;
 }
 
 export interface RuntimePreparedContext {
@@ -262,7 +265,12 @@ export function defineRuntimeDriver<
   registerRuntimeSessionFactory(
     runtime,
     async (request) =>
-      await createManagedRuntimeSession(driver, request, createPersistenceProvider()),
+      await createManagedRuntimeSession(
+        driver,
+        request,
+        createPersistenceProvider(),
+        options.createProcessEnvironment,
+      ),
   );
   return runtime;
 }
@@ -271,6 +279,7 @@ async function createManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepar
   driver: RuntimeDriver<TNativeEvent, TNativeSession, TPrepared>,
   request: RuntimeDriverSessionRequest,
   persistenceProvider: RuntimeSessionPersistenceProvider,
+  createProcessEnvironment: (() => NodeJS.ProcessEnv) | undefined,
 ): Promise<ManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepared>> {
   const executionBindings = new RuntimeExecutionBindings({
     humanInteractionHandler: request.humanInteractionHandler,
@@ -294,7 +303,10 @@ async function createManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepar
   }
   const pragmaPaths = new PragmaPaths({ pragmaHome: request.pragmaHome ?? agent.pragmaHome });
   const paths = createRuntimePaths(pragmaPaths, request.owner.ownerId, systemSessionId, descriptor);
-  const prepareContext: RuntimePrepareContext = {
+  const baseProcessEnvironment = freezeProcessEnvironment(
+    createProcessEnvironment?.() ?? process.env,
+  );
+  let prepareContext: RuntimePrepareContext = {
     agent,
     request,
     descriptor,
@@ -305,6 +317,7 @@ async function createManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepar
     workspace: agent.workspace,
     logger,
     paths,
+    processEnvironment: baseProcessEnvironment,
   };
   const persistenceSpec = driver.resolvePersistence?.(prepareContext);
 
@@ -343,13 +356,21 @@ async function createManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepar
       await ensureRuntimeSessionDir(persistenceSpec.sessionDir);
     }
 
-    await dispatchExpertAgentHook(agent.hooks, "beforeSessionCreate", {
+    const preparation = await dispatchExpertAgentHook(agent.hooks, "beforeSessionCreate", {
       agent,
       context: runContext,
       systemSessionId,
       runtimeSession: request.runtimeSession,
+      processEnvironment: baseProcessEnvironment,
       logger,
     });
+    prepareContext = {
+      ...prepareContext,
+      processEnvironment: applyProcessEnvironmentPatch(
+        baseProcessEnvironment,
+        preparation?.processEnvironment,
+      ),
+    };
 
     const restored = await persistenceProvider.restore({
       agentId: agent.id,
@@ -560,6 +581,33 @@ async function createManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepar
     }
     throw error;
   }
+}
+
+function freezeProcessEnvironment(
+  environment: Readonly<NodeJS.ProcessEnv>,
+): Readonly<NodeJS.ProcessEnv> {
+  return Object.freeze(
+    Object.fromEntries(
+      Object.entries(environment).filter((entry): entry is [string, string] => {
+        return entry[1] !== undefined;
+      }),
+    ),
+  );
+}
+
+function applyProcessEnvironmentPatch(
+  base: Readonly<NodeJS.ProcessEnv>,
+  patch: ExpertAgentProcessEnvironmentPatch | undefined,
+): Readonly<NodeJS.ProcessEnv> {
+  if (patch === undefined) {
+    return base;
+  }
+  const environment: NodeJS.ProcessEnv = { ...base };
+  for (const name of patch.unset ?? []) {
+    delete environment[name];
+  }
+  Object.assign(environment, patch.set ?? {});
+  return freezeProcessEnvironment(environment);
 }
 
 function assertRequestedRuntimeSessionMatches(

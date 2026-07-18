@@ -2,20 +2,15 @@
   "schemaVersion": "pragma.plugin/v2",
   "id": "repo-manager",
   "name": "Repo Manager",
-  "description": "Registers configured Git repositories as Agent context and prepares Git authentication before runtime sessions start.",
+  "description": "Initializes isolated Git session configuration and authentication for Agent runtimes.",
   "version": "0.0.0",
-  "tags": ["git", "repository", "workspace"],
+  "tags": ["git", "authentication", "configuration"],
   "runtime": {
     "type": "expert-agent-plugin",
     "entry": "./dist/index.js",
     "trust": "trusted-host"
   },
   "capabilities": [
-    {
-      "type": "context",
-      "name": "code-repositories.md",
-      "description": "Exposes configured repository metadata to the Agent context system."
-    },
     {
       "type": "hook",
       "name": "beforeSessionCreate",
@@ -25,44 +20,6 @@
   "configuration": {
     "type": "object",
     "properties": {
-      "contextInjection": {
-        "type": "object",
-        "properties": {
-          "mode": {
-            "type": "string",
-            "description": "Controls when repository context is exposed to the model.",
-            "enum": ["manual", "model_decision", "always_on"],
-            "default": "manual"
-          }
-        },
-        "additionalProperties": false
-      },
-      "repositories": {
-        "type": "array",
-        "description": "Configured Git repositories. When omitted, the plugin reads host context repositories.json if present.",
-        "items": {
-          "type": "object",
-          "properties": {
-            "id": { "type": "string", "minLength": 1 },
-            "name": { "type": "string", "minLength": 1 },
-            "cloneUrl": { "type": "string", "minLength": 1 },
-            "defaultBranch": { "type": "string", "minLength": 1 },
-            "provider": {
-              "type": "string",
-              "enum": ["github", "gitlab", "bitbucket", "generic"],
-              "default": "generic"
-            },
-            "description": { "type": "string", "minLength": 1 },
-            "allowedBranches": {
-              "type": "array",
-              "items": { "type": "string", "minLength": 1 }
-            },
-            "shallowClone": { "type": "boolean", "default": true }
-          },
-          "required": ["id", "name", "cloneUrl", "defaultBranch"],
-          "additionalProperties": false
-        }
-      },
       "auth": {
         "type": "object",
         "properties": {
@@ -88,7 +45,11 @@
             "description": "Resolved SSH private key.",
             "x-pragma-secret": true
           },
-          "knownHosts": { "type": "string", "minLength": 1 },
+          "knownHosts": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Pinned SSH known_hosts entries. When omitted, the session uses accept-new with a temporary known_hosts file."
+          },
           "helper": { "type": "string", "minLength": 1 }
         },
         "required": ["strategy"],
@@ -112,9 +73,9 @@
     "additionalProperties": false
   },
   "permissions": {
-    "filesystem": ["workspace:read", "workspace:write"],
+    "filesystem": ["temporary Git authentication and config files"],
     "shell": ["git"],
-    "network": ["configured git remotes"],
+    "network": [],
     "environment": ["git session variables"]
   }
 }

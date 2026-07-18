@@ -163,7 +163,6 @@ export default definePluginEntry({
 - `host`：宿主已经声明的 MCP、Skills、Models、Tools、Hooks 等。
 - `contextSystem`：上下文系统，可注册插件 namespace。
 - `workspaceRoot`：Agent workspace。
-- `env`：环境变量。
 - `userConfig`：经过 manifest JSON Schema 校验的可序列化配置。
 - `hostBindings`：宿主注入的 store、factory 等不可序列化依赖。
 - `logger`：插件级 logger。
@@ -365,6 +364,21 @@ agent.pluginLoadIssues;
 - Secret 由宿主解析命名 binding 后放入 `userConfig`；使用 `"x-pragma-secret": true` 标记。
 - store 和 factory 放 `hostBindings`，不进入 DSL、日志或环境指纹明文。
 
+Desktop 将每个插件版本的默认配置独立保存到
+`~/.pragma/state/plugins/<encoded-plugin-ref>/config.json`。文件只包含普通配置、secret binding
+和更新时间；secret 明文仍统一加密保存在 `~/.pragma/state/plugin-credentials.json`。旧的共享
+`~/.pragma/state/plugins/catalog.json` 不再读取或迁移。
+
+`beforeSessionCreate` 可以返回声明式 `processEnvironment` 补丁。Core 为每个 Runtime Session
+从 Runtime Adapter 的基础环境创建独立快照，合并插件补丁后再启动 Runtime 子进程；插件不得修改
+`process.env`。Codex、Claude Code 和 PI Bash 命令均使用该 Session 快照。两个贡献者对同一环境变量
+声明不同值时，Session 创建会 fail-closed。
+
+Repo Manager 只负责 Git CLI 检查、Session 级认证和 Git 环境初始化，不提供 repository 元数据，
+也不读取任何隐藏的 repository 清单协议。repository 引用由知识库或其他 Context Provider 提供。
+其 Session 配置会覆盖当前 checkout 中的 credential helper 和 HTTP authorization header；SSH 未配置
+`knownHosts` 时使用 Session 临时 `known_hosts` 文件和 `accept-new`，不会修改用户的 Git/SSH 配置。
+
 插件是受信代码：`permissions` 是强制声明的审计信息，不是沙箱，也不会限制恶意插件。导入和激活用户插件等同于信任其在 Desktop Node 进程执行任意代码。
 
 ## Pragma DSL
@@ -408,9 +422,11 @@ plugins/repo-manager
 
 `repo-manager`：
 
-- 暴露仓库元数据上下文。
-- 提供仓库管理相关能力。
-- 可作为代码仓库上下文插件参考。
+- 在 Agent runtime session 创建前检查 Git CLI，并准备隔离的 Git 配置和认证环境。
+- 在 session 销毁后清理临时凭据与配置。
+- 不修改宿主 `process.env`、用户 `~/.gitconfig` 或 `~/.ssh`；不同 Expert 并发时使用独立的
+  Runtime Session 环境和临时认证文件。
+- 不读取或暴露仓库参考信息；仓库知识由知识库等独立上下文来源提供。
 
 ## 插件设计建议
 

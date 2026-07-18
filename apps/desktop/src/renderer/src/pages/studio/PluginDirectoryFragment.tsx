@@ -1,5 +1,6 @@
 import {
   ArrowLeft,
+  Lightning,
   MagnifyingGlass,
   Package,
   PuzzlePiece,
@@ -123,11 +124,10 @@ export function PluginDirectoryFragment(props: {
       </div>
       <div className="capability-table" role="list">
         <div className="capability-table-heading" aria-hidden="true">
-          <span>{t("name")}</span>
-          <span>{t("origin")}</span>
-          <span>{t("versionId")}</span>
-          <span>{t("status")}</span>
-          <span />
+          <span className="plugin-column-name">{t("name")}</span>
+          <span className="plugin-column-origin">{t("origin")}</span>
+          <span className="plugin-column-version">{t("version")}</span>
+          <span className="plugin-column-status">{t("status")}</span>
         </div>
         {matching.map((plugin) => (
           <button
@@ -137,7 +137,7 @@ export function PluginDirectoryFragment(props: {
             key={plugin.ref}
             onClick={() => props.onOpen(plugin)}
           >
-            <span className="capability-name">
+            <span className="capability-name plugin-column-name">
               <span className="studio-asset-icon">
                 <PuzzlePiece size={20} />
               </span>
@@ -146,18 +146,16 @@ export function PluginDirectoryFragment(props: {
                 <small>{plugin.manifest.description}</small>
               </span>
             </span>
-            <span className="capability-type">
+            <span className="capability-type plugin-column-origin">
               {plugin.origin === "built_in" ? t("builtIn") : t("imported")}
             </span>
-            <span className="capability-source">
+            <span className="capability-source plugin-column-version">
               <code>{plugin.manifest.version}</code>
-              <small>{plugin.manifest.id}</small>
             </span>
-            <span className="capability-status">
+            <span className="capability-status plugin-column-status">
               <i className={plugin.status === "ready" ? "is-ready" : "is-warning"} />
               {plugin.status === "ready" ? t("ready") : t("needsAttention")}
             </span>
-            <span>{t("open")}</span>
           </button>
         ))}
         {matching.length === 0 ? <p className="capability-empty">{t("noPlugins")}</p> : null}
@@ -241,6 +239,10 @@ export function PluginDetailFragment(props: {
   readonly onDeleted: (ref: string) => void;
 }) {
   const { t } = useTranslation("studio");
+  const declaredPermissionCount = Object.values(props.plugin.manifest.permissions).reduce(
+    (count, permissions) => count + permissions.length,
+    0,
+  );
   const [config, setConfig] = useState<Record<string, unknown>>(props.plugin.defaultConfig);
   const [secrets, setSecrets] = useState<Record<string, string | null>>({});
   const [busy, setBusy] = useState(false);
@@ -363,22 +365,70 @@ export function PluginDetailFragment(props: {
           onSecretChange={(path, value) => setSecrets((current) => ({ ...current, [path]: value }))}
         />
       </section>
-      <section className="plugin-detail-section">
-        <h2>{t("declaredPermissions")}</h2>
-        <p>{t("advisoryPermissions")}</p>
-        <PermissionLists permissions={props.plugin.manifest.permissions} />
-      </section>
-      <section className="plugin-detail-section">
-        <h2>{t("contributedCapabilities")}</h2>
-        <ul>
-          {props.plugin.manifest.capabilities.map((capability) => (
-            <li key={`${capability.type}:${capability.name}`}>
-              <strong>{capability.name}</strong>
-              <span>{capability.type}</span>
-              <p>{capability.description}</p>
-            </li>
-          ))}
-        </ul>
+      <section className="plugin-detail-section plugin-declarations">
+        <header className="plugin-declarations-heading">
+          <div>
+            <h2>{t("pluginDeclarations")}</h2>
+            <p>{t("pluginDeclarationsDescription")}</p>
+          </div>
+        </header>
+        <div className="plugin-declaration-groups">
+          <section
+            className="plugin-declaration-group"
+            aria-labelledby="plugin-permissions-heading"
+          >
+            <header>
+              <span className="plugin-declaration-icon">
+                <ShieldCheck size={19} />
+              </span>
+              <div>
+                <h3 id="plugin-permissions-heading">{t("declaredPermissions")}</h3>
+                <p>{t("advisoryPermissions")}</p>
+              </div>
+              <span className="plugin-declaration-count">
+                {t("declarationItemCount", { count: declaredPermissionCount })}
+              </span>
+            </header>
+            <PermissionLists permissions={props.plugin.manifest.permissions} structured />
+          </section>
+          <section
+            className="plugin-declaration-group"
+            aria-labelledby="plugin-capabilities-heading"
+          >
+            <header>
+              <span className="plugin-declaration-icon">
+                <Lightning size={19} />
+              </span>
+              <div>
+                <h3 id="plugin-capabilities-heading">{t("contributedCapabilities")}</h3>
+                <p>{t("contributedCapabilitiesDescription")}</p>
+              </div>
+              <span className="plugin-declaration-count">
+                {t("declarationItemCount", {
+                  count: props.plugin.manifest.capabilities.length,
+                })}
+              </span>
+            </header>
+            <div className="plugin-declaration-list">
+              {props.plugin.manifest.capabilities.length === 0 ? (
+                <p className="plugin-declaration-empty">{t("none")}</p>
+              ) : (
+                props.plugin.manifest.capabilities.map((capability) => (
+                  <article
+                    className="plugin-declaration-item plugin-capability-declaration"
+                    key={`${capability.type}:${capability.name}`}
+                  >
+                    <header>
+                      <strong>{capability.name}</strong>
+                      <span>{capability.type}</span>
+                    </header>
+                    <p>{capability.description ?? t("noDescription")}</p>
+                  </article>
+                ))
+              )}
+            </div>
+          </section>
+        </div>
       </section>
       {error ? (
         <p className="form-error" role="alert">
@@ -403,16 +453,26 @@ function PermissionSummary(props: { readonly plugin: PluginZipInspection }) {
 
 function PermissionLists(props: {
   readonly permissions: DesktopPlugin["manifest"]["permissions"];
+  readonly structured?: boolean;
 }) {
   const { t } = useTranslation("studio");
   const groups = Object.entries(props.permissions);
   return (
-    <div className="plugin-permission-grid">
+    <div
+      className={
+        props.structured ? "plugin-permission-grid is-structured" : "plugin-permission-grid"
+      }
+    >
       {groups.map(([name, values]) => (
         <div key={name}>
-          <strong>{name}</strong>
+          <header>
+            <strong>{name}</strong>
+            {props.structured ? (
+              <span>{t("declarationItemCount", { count: values.length })}</span>
+            ) : null}
+          </header>
           {values.length === 0 ? (
-            <span>{t("none")}</span>
+            <span className="plugin-permission-empty">{t("none")}</span>
           ) : (
             <ul>
               {values.map((value) => (

@@ -76,9 +76,10 @@ export function ExpertDirectoryFragment(props: {
 
       <div className="expert-table" role="list" aria-label={t("availableExperts")}>
         <div className="expert-table-heading" aria-hidden="true">
-          <span>{t("expert")}</span>
-          <span>{t("tags")}</span>
-          <span>{t("scope")}</span>
+          <span className="expert-column-name">{t("expert")}</span>
+          <span className="expert-column-tags">{t("tags")}</span>
+          <span className="expert-column-scope">{t("scope")}</span>
+          <span className="expert-column-action" />
         </div>
         {matchingExperts.map((expert) => {
           const ExpertIcon = expert.icon;
@@ -89,7 +90,7 @@ export function ExpertDirectoryFragment(props: {
               key={expert.id}
               onClick={() => props.onOpen(expert)}
             >
-              <span className="expert-list-name">
+              <span className="expert-list-name expert-column-name">
                 <span className="studio-asset-icon" aria-hidden="true">
                   <ExpertIcon size={24} weight="regular" />
                 </span>
@@ -98,13 +99,13 @@ export function ExpertDirectoryFragment(props: {
                   <small>{expert.description}</small>
                 </span>
               </span>
-              <span className="expert-tag-list">
+              <span className="expert-tag-list expert-column-tags">
                 {expert.tags.slice(0, 2).map((tag) => (
                   <em key={tag}>{tag}</em>
                 ))}
               </span>
-              <span className="expert-list-scope">{expert.scope}</span>
-              <CaretRight size={19} aria-hidden="true" />
+              <span className="expert-list-scope expert-column-scope">{expert.scope}</span>
+              <CaretRight className="expert-column-action" size={19} aria-hidden="true" />
             </button>
           );
         })}

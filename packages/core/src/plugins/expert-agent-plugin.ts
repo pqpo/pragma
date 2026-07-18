@@ -177,7 +177,17 @@ export interface ExpertAgentPluginSessionCreateContext {
   readonly context?: ExpertAgentRunContext | undefined;
   readonly systemSessionId: string;
   readonly runtimeSession?: RuntimeSessionRef | undefined;
+  readonly processEnvironment: Readonly<NodeJS.ProcessEnv>;
   readonly logger?: ExpertAgentLogger | undefined;
+}
+
+export interface ExpertAgentProcessEnvironmentPatch {
+  readonly set?: Readonly<Record<string, string>> | undefined;
+  readonly unset?: readonly string[] | undefined;
+}
+
+export interface ExpertAgentPluginSessionPreparation {
+  readonly processEnvironment?: ExpertAgentProcessEnvironmentPatch | undefined;
 }
 
 export interface ExpertAgentPluginSessionContext {
@@ -237,7 +247,6 @@ export interface ExpertAgentPluginSetupContext {
   readonly host: ExpertAgentPluginContributions;
   readonly contextSystem: ContextSystem;
   readonly workspaceRoot: string;
-  readonly env: NodeJS.ProcessEnv;
   readonly userConfig: DeepReadonly<Record<string, unknown>>;
   readonly hostBindings: Readonly<Record<string, unknown>>;
   readonly logger: ExpertAgentLogger;
@@ -245,7 +254,9 @@ export interface ExpertAgentPluginSetupContext {
 
 export interface ExpertAgentPluginHooks {
   readonly beforeSessionCreate?:
-    | ((context: ExpertAgentPluginSessionCreateContext) => MaybePromise<void>)
+    | ((
+        context: ExpertAgentPluginSessionCreateContext,
+      ) => MaybePromise<ExpertAgentPluginSessionPreparation | void>)
     | undefined;
   readonly afterSessionCreate?:
     | ((context: ExpertAgentPluginSessionContext) => MaybePromise<void>)
@@ -335,7 +346,6 @@ export interface ResolveExpertAgentPluginsOptions {
     | readonly (ExpertAgentPluginEntry | ExpertAgentPluginRegistration)[]
     | undefined;
   readonly workspaceRoot?: string | undefined;
-  readonly env?: NodeJS.ProcessEnv | undefined;
   readonly loggerProvider?: ExpertAgentLoggerProvider | undefined;
   readonly agentId?: string | undefined;
 }
@@ -383,7 +393,6 @@ export function resolveExpertAgentPlugins(
     host,
     contextSystem: options.contextSystem ?? new ContextSystem(),
     workspaceRoot: options.workspaceRoot ?? "",
-    env: options.env ?? process.env,
   };
   const pluginEntries = registrations.map((registration) => {
     const userConfig = resolveExpertAgentPluginConfig(registration.entry.manifest, [
@@ -405,21 +414,26 @@ export function resolveExpertAgentPlugins(
     };
   });
   const contributions = [
-    options.host,
-    ...pluginEntries.map((plugin) => plugin.contributions),
-  ].filter(
-    (contribution): contribution is ExpertAgentPluginContributions => contribution !== undefined,
-  );
+    ...(options.host === undefined
+      ? []
+      : [{ source: "host", contribution: options.host } as const]),
+    ...pluginEntries.map((plugin) => ({
+      source: `plugin:${plugin.plugin.id}@${plugin.plugin.version}`,
+      contribution: plugin.contributions,
+    })),
+  ];
 
   return {
-    mcp: mergeMcpConfigs(contributions.map((contribution) => contribution.mcp)),
-    skills: mergeSkillsConfigs(contributions.map((contribution) => contribution.skills)),
-    models: mergeModelsConfigs(contributions.map((contribution) => contribution.models)),
-    tools: mergeManagedTools(contributions.map((contribution) => contribution.tools)),
+    mcp: mergeMcpConfigs(contributions.map(({ contribution }) => contribution.mcp)),
+    skills: mergeSkillsConfigs(contributions.map(({ contribution }) => contribution.skills)),
+    models: mergeModelsConfigs(contributions.map(({ contribution }) => contribution.models)),
+    tools: mergeManagedTools(contributions.map(({ contribution }) => contribution.tools)),
     toolApprovals: mergeToolApprovals(
-      contributions.map((contribution) => contribution.toolApprovals),
+      contributions.map(({ contribution }) => contribution.toolApprovals),
     ),
-    hooks: mergePluginHooks(contributions.map((contribution) => contribution.hooks)),
+    hooks: mergePluginHooks(
+      contributions.map(({ source, contribution }) => ({ source, hooks: contribution.hooks })),
+    ),
   };
 }
 
@@ -600,14 +614,18 @@ export async function dispatchExpertAgentHook<TName extends keyof ExpertAgentPlu
   hooks: ExpertAgentPluginHooks | undefined,
   name: TName,
   context: Parameters<NonNullable<ExpertAgentPluginHooks[TName]>>[0],
-): Promise<void> {
+): Promise<Awaited<ReturnType<NonNullable<ExpertAgentPluginHooks[TName]>>> | undefined> {
   const hook = hooks?.[name];
 
   if (hook === undefined) {
     return;
   }
 
-  await (hook as (value: typeof context) => MaybePromise<void>)(context);
+  return await (
+    hook as (
+      value: typeof context,
+    ) => MaybePromise<Awaited<ReturnType<NonNullable<ExpertAgentPluginHooks[TName]>>>>
+  )(context);
 }
 
 function mergeMcpConfigs(
@@ -712,10 +730,14 @@ function mergeToolApprovals(
 }
 
 function mergePluginHooks(
-  hookGroups: readonly (ExpertAgentPluginHooks | undefined)[],
+  hookGroups: readonly {
+    readonly source: string;
+    readonly hooks: ExpertAgentPluginHooks | undefined;
+  }[],
 ): ExpertAgentPluginHooks | undefined {
   const hooks = hookGroups.filter(
-    (hookGroup): hookGroup is ExpertAgentPluginHooks => hookGroup !== undefined,
+    (hookGroup): hookGroup is { readonly source: string; readonly hooks: ExpertAgentPluginHooks } =>
+      hookGroup.hooks !== undefined,
   );
 
   if (hooks.length === 0) {
@@ -724,7 +746,18 @@ function mergePluginHooks(
 
   return {
     beforeSessionCreate: async (context) => {
-      await callHooks(hooks, "beforeSessionCreate", context);
+      const patches: {
+        readonly source: string;
+        readonly patch: ExpertAgentProcessEnvironmentPatch;
+      }[] = [];
+      for (const { source, hooks: hookGroup } of hooks) {
+        const preparation = await hookGroup.beforeSessionCreate?.(context);
+        if (preparation?.processEnvironment !== undefined) {
+          patches.push({ source, patch: preparation.processEnvironment });
+        }
+      }
+      const processEnvironment = mergeProcessEnvironmentPatches(patches);
+      return processEnvironment === undefined ? undefined : { processEnvironment };
     },
     afterSessionCreate: async (context) => {
       await callHooks(hooks, "afterSessionCreate", context);
@@ -754,17 +787,80 @@ function mergePluginHooks(
 }
 
 async function callHooks<TName extends keyof ExpertAgentPluginHooks>(
-  hooks: readonly ExpertAgentPluginHooks[],
+  hooks: readonly { readonly hooks: ExpertAgentPluginHooks }[],
   name: TName,
   context: Parameters<NonNullable<ExpertAgentPluginHooks[TName]>>[0],
 ): Promise<void> {
   for (const hookGroup of hooks) {
-    const hook = hookGroup[name];
+    const hook = hookGroup.hooks[name];
 
     if (hook !== undefined) {
       await (hook as (value: typeof context) => MaybePromise<void>)(context);
     }
   }
+}
+
+function mergeProcessEnvironmentPatches(
+  contributions: readonly {
+    readonly source: string;
+    readonly patch: ExpertAgentProcessEnvironmentPatch;
+  }[],
+): ExpertAgentProcessEnvironmentPatch | undefined {
+  const claims = new Map<
+    string,
+    { readonly source: string; readonly operation: "set" | "unset"; readonly value?: string }
+  >();
+
+  for (const { source, patch } of contributions) {
+    const ownUnset = new Set(patch.unset ?? []);
+    for (const name of Object.keys(patch.set ?? {})) {
+      if (ownUnset.has(name)) {
+        throw new Error(`Process environment patch both sets and unsets ${name}: ${source}.`);
+      }
+    }
+    for (const name of patch.unset ?? []) {
+      claimProcessEnvironment(claims, name, { source, operation: "unset" });
+    }
+    for (const [name, value] of Object.entries(patch.set ?? {})) {
+      claimProcessEnvironment(claims, name, { source, operation: "set", value });
+    }
+  }
+
+  if (claims.size === 0) {
+    return undefined;
+  }
+
+  return {
+    set: Object.fromEntries(
+      [...claims].flatMap(([name, claim]) =>
+        claim.operation === "set" ? [[name, claim.value!]] : [],
+      ),
+    ),
+    unset: [...claims].flatMap(([name, claim]) => (claim.operation === "unset" ? [name] : [])),
+  };
+}
+
+function claimProcessEnvironment(
+  claims: Map<
+    string,
+    { readonly source: string; readonly operation: "set" | "unset"; readonly value?: string }
+  >,
+  name: string,
+  claim: { readonly source: string; readonly operation: "set" | "unset"; readonly value?: string },
+): void {
+  if (name.length === 0 || name.includes("=") || name.includes("\0")) {
+    throw new Error(`Invalid process environment variable name from ${claim.source}.`);
+  }
+  const existing = claims.get(name);
+  if (
+    existing !== undefined &&
+    (existing.operation !== claim.operation || existing.value !== claim.value)
+  ) {
+    throw new Error(
+      `Conflicting process environment variable ${name}: ${existing.source} and ${claim.source}.`,
+    );
+  }
+  claims.set(name, existing ?? claim);
 }
 
 function dedupeBy<TValue>(

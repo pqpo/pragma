@@ -112,7 +112,7 @@ export function createCodexRuntime(options: CodexRuntimeAdapterOptions = {}): Ru
         const codexHome = await prepareManagedCodexHome({
           agent: ctx.agent,
           sessionDir,
-          env: options.env,
+          env: ctx.processEnvironment,
           logger: ctx.logger,
         });
         if (state.threadId !== "") {
@@ -145,7 +145,7 @@ export function createCodexRuntime(options: CodexRuntimeAdapterOptions = {}): Ru
             ),
             cwd: ctx.workspace,
             env: {
-              ...(options.env ?? {}),
+              ...ctx.processEnvironment,
               CODEX_HOME: codexHome,
             },
             clientInfo: options.clientInfo ?? DEFAULT_CODEX_CLIENT_INFO,
@@ -250,6 +250,7 @@ export function createCodexRuntime(options: CodexRuntimeAdapterOptions = {}): Ru
     {
       sessionRestoreHandler: options.sessionRestoreHandler,
       sessionSyncCallback: options.sessionSyncCallback,
+      createProcessEnvironment: () => ({ ...process.env, ...(options.env ?? {}) }),
     },
   );
 }

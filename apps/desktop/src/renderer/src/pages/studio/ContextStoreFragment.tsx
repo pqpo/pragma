@@ -124,10 +124,11 @@ export function ContextStoreDirectoryFragment(props: {
       ) : (
         <div className="store-table" role="list" aria-label={t("contextStores")}>
           <div className="store-table-heading" aria-hidden="true">
-            <span>{t("store")}</span>
-            <span>{t("type")}</span>
-            <span>{t("source")}</span>
-            <span>{t("status")}</span>
+            <span className="store-column-name">{t("store")}</span>
+            <span className="store-column-type">{t("type")}</span>
+            <span className="store-column-source">{t("source")}</span>
+            <span className="store-column-status">{t("status")}</span>
+            <span className="store-column-action" />
           </div>
           {stores.map((store) => {
             const StoreIcon = store.type === "file" ? Folder : BookOpenText;
@@ -138,7 +139,7 @@ export function ContextStoreDirectoryFragment(props: {
                 type="button"
                 onClick={() => props.onOpen(store)}
               >
-                <span className="store-list-name">
+                <span className="store-list-name store-column-name">
                   <span className="store-icon" aria-hidden="true">
                     <StoreIcon size={22} />
                   </span>
@@ -147,15 +148,17 @@ export function ContextStoreDirectoryFragment(props: {
                     <small>{store.description || t("noDescription")}</small>
                   </span>
                 </span>
-                <span>{store.type === "file" ? t("fileStore") : t("contextNote")}</span>
-                <span className="store-source">
+                <span className="store-column-type">
+                  {store.type === "file" ? t("fileStore") : t("contextNote")}
+                </span>
+                <span className="store-source store-column-source">
                   {store.type === "file" ? store.source.path : `${store.entries.length} entries`}
                 </span>
-                <span className="store-status">
+                <span className="store-status store-column-status">
                   <i className={store.status === "ready" ? "is-ready" : ""} />
                   {store.status === "ready" ? "Ready" : "Configured"}
                 </span>
-                <CaretRight size={17} aria-hidden="true" />
+                <CaretRight className="store-column-action" size={17} aria-hidden="true" />
               </button>
             );
           })}
@@ -319,10 +322,11 @@ export function ContextStoreDetailFragment(props: {
         {contents.length > 0 ? (
           <div className="store-content-table" role="list" aria-label={t("content")}>
             <div className="store-content-table-heading" aria-hidden="true">
-              <span>{t("content")}</span>
-              <span>{t("loading")}</span>
-              <span>{t("priority")}</span>
-              <span>{t("size")}</span>
+              <span className="store-content-column-name">{t("content")}</span>
+              <span className="store-content-column-trigger">{t("loading")}</span>
+              <span className="store-content-column-priority">{t("priority")}</span>
+              <span className="store-content-column-size">{t("size")}</span>
+              <span className="store-content-column-action" />
             </div>
             {contents.map((item) => (
               <button
@@ -332,17 +336,21 @@ export function ContextStoreDetailFragment(props: {
                 onClick={() => void openContent(item.id)}
                 disabled={loadingContentId !== null}
               >
-                <span className="store-content-name">
+                <span className="store-content-name store-content-column-name">
                   <FileText size={20} aria-hidden="true" />
                   <span>
                     <strong>{item.id}</strong>
                     <small>{item.metadata.description ?? "No description metadata"}</small>
                   </span>
                 </span>
-                <span>{triggerLabel(item.metadata.trigger)}</span>
-                <span>{metadataLabel(item.metadata.priority)}</span>
-                <span>{formatBytes(item.sizeBytes)}</span>
-                <CaretRight size={16} aria-hidden="true" />
+                <span className="store-content-column-trigger">
+                  {triggerLabel(item.metadata.trigger)}
+                </span>
+                <span className="store-content-column-priority">
+                  {metadataLabel(item.metadata.priority)}
+                </span>
+                <span className="store-content-column-size">{formatBytes(item.sizeBytes)}</span>
+                <CaretRight className="store-content-column-action" size={16} aria-hidden="true" />
               </button>
             ))}
           </div>

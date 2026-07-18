@@ -3,6 +3,8 @@ import {
   readExpertAgentPluginManifest,
   type ExpertAgentPluginContributions,
   type ExpertAgentPluginEntry,
+  type ExpertAgentPluginHooks,
+  type ExpertAgentPluginSessionPreparation,
 } from "@pragma/core";
 
 import { MemorySystem } from "./memory-system/index.ts";
@@ -167,7 +169,9 @@ function mergeHooks(
   }
 
   return {
-    beforeSessionCreate: chainHooks(hooks.map((hook) => hook.beforeSessionCreate)),
+    beforeSessionCreate: chainBeforeSessionCreateHooks(
+      hooks.map((hook) => hook.beforeSessionCreate),
+    ),
     afterSessionCreate: chainHooks(hooks.map((hook) => hook.afterSessionCreate)),
     beforeTaskSubmit: chainHooks(hooks.map((hook) => hook.beforeTaskSubmit)),
     afterTaskSubmit: chainHooks(hooks.map((hook) => hook.afterTaskSubmit)),
@@ -176,6 +180,37 @@ function mergeHooks(
     beforeToolCall: chainHooks(hooks.map((hook) => hook.beforeToolCall)),
     afterToolCall: chainHooks(hooks.map((hook) => hook.afterToolCall)),
     onStreamEvent: chainHooks(hooks.map((hook) => hook.onStreamEvent)),
+  };
+}
+
+function chainBeforeSessionCreateHooks(
+  hooks: readonly ExpertAgentPluginHooks["beforeSessionCreate"][],
+): ExpertAgentPluginHooks["beforeSessionCreate"] {
+  const activeHooks = hooks.filter((hook): hook is NonNullable<typeof hook> => hook !== undefined);
+  if (activeHooks.length === 0) {
+    return undefined;
+  }
+  return async (context): Promise<ExpertAgentPluginSessionPreparation | undefined> => {
+    const set: Record<string, string> = {};
+    const unset = new Set<string>();
+    for (const hook of activeHooks) {
+      const preparation = await hook(context);
+      for (const name of preparation?.processEnvironment?.unset ?? []) {
+        if (set[name] !== undefined) {
+          throw new Error(`Memory plugin process environment both sets and unsets ${name}.`);
+        }
+        unset.add(name);
+      }
+      for (const [name, value] of Object.entries(preparation?.processEnvironment?.set ?? {})) {
+        if (unset.has(name) || (set[name] !== undefined && set[name] !== value)) {
+          throw new Error(`Memory plugin process environment conflicts on ${name}.`);
+        }
+        set[name] = value;
+      }
+    }
+    return Object.keys(set).length === 0 && unset.size === 0
+      ? undefined
+      : { processEnvironment: { set, unset: [...unset] } };
   };
 }
 

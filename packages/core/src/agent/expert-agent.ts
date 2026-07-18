@@ -268,7 +268,6 @@ export class Expert implements IExpertAgent {
       contextSystem,
       pluginEntries: options.pluginEntries,
       workspaceRoot: options.workspace,
-      env: options.env,
       loggerProvider,
       agentId: options.id,
     });

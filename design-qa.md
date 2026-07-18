@@ -49,6 +49,57 @@ final result: passed
 
 ---
 
+# Design QA: plugin declarations module
+
+- Source visual truth: `/var/folders/7y/x39kntq56gvcfdymbtjb36280000gn/T/codex-clipboard-eb8eedca-421d-4bb3-bbae-0d36befc0a9e.png`
+- Browser-rendered implementation: `/tmp/pragma-plugin-declarations-implemented.png`
+- Side-by-side comparison evidence: `/tmp/pragma-plugin-declarations-comparison.png`
+- Responsive evidence: `/tmp/pragma-plugin-declarations-narrow.png`
+- Primary viewport and state: 1280 × 720, Simplified Chinese, Repository Manager plugin detail scrolled to Plugin declarations.
+- Responsive viewport and state: 1100 × 720, the same plugin and declaration data.
+
+## Full-view comparison evidence
+
+The supplied source showed permissions and capabilities as two unrelated cards. The implementation places both under one Plugin declarations surface, preserves their distinct semantics, and uses the same group-header, count, item-card, and metadata-tag structure. The source and implementation were opened together in one side-by-side comparison input.
+
+## Focused region comparison evidence
+
+The complete declaration module is readable in the 1280 × 720 capture, including every permission value, capability name, capability type, and description. A separate crop was not required. The 1100 × 720 pass was inspected independently to verify the one-column responsive layout.
+
+## Findings
+
+No actionable P0, P1, or P2 findings remain in the requested scope.
+
+## Required fidelity surfaces
+
+- Fonts and typography: the existing Inter/SF system stack, mono permission values, heading hierarchy, and muted support copy are preserved. Capability names and types are now visually separated and no longer concatenate.
+- Spacing and layout rhythm: one bordered module contains a shared heading and two balanced declaration groups. At widths below 1180 px the groups stack with a divider and no horizontal overflow.
+- Colors and visual tokens: the module reuses the existing surface, soft-surface, border, green-soft, muted, and foreground tokens.
+- Image quality and asset fidelity: no raster imagery is required. Shield and lightning icons come from the existing Phosphor icon library; no custom SVG, CSS drawing, or placeholder asset was introduced.
+- Copy and content: all manifest permission values, capability names, capability types, and descriptions remain unchanged. New heading and support copy are available in English, Simplified Chinese, and Traditional Chinese.
+
+## Interaction and runtime evidence
+
+- The declaration content rendered from the real `PluginDetailFragment` with representative Repository Manager manifest data.
+- The module contains no interactive controls; existing back and save actions remained present in the surrounding detail page.
+- The 1280 px two-column layout and 1100 px one-column layout both rendered without document overflow.
+- Browser console contained no warning- or error-level messages.
+- Desktop component tests, renderer typecheck, and lint passed.
+
+## Comparison history
+
+1. The source showed separate permission and capability cards plus inconsistent bullet-list formatting.
+2. Consolidated both into one Plugin declarations module with shared group headers, item counts, structured permission tags, and typed capability rows.
+3. Captured the real component at 1280 × 720 and 1100 × 720; no clipping, overflow, or unreadable long content remained.
+
+## Follow-up polish
+
+None required for this scoped module consolidation.
+
+final result: passed
+
+---
+
 # Main sidebar compression design QA
 
 ## Comparison targets
@@ -426,5 +477,65 @@ final result: passed
 **Follow-up Polish**
 
 - None required for this scoped control update.
+
+final result: passed
+
+---
+
+# Design QA: page title-to-content spacing
+
+- Source visual truth: `/var/folders/7y/x39kntq56gvcfdymbtjb36280000gn/T/codex-clipboard-11a53df5-d2a0-4845-9efe-d3ec8e94f241.png`
+- Implementation screenshot: `/Users/linminqiu/Workspace/expert-mesh/.codex/tmp/design-qa/settings-spacing-after.png`
+- Combined comparison: `/Users/linminqiu/Workspace/expert-mesh/.codex/tmp/design-qa/settings-spacing-comparison.png`
+- Viewport: 1642 × 522
+- State: Simplified Chinese, Settings > General, system language selected
+
+## Full-view comparison evidence
+
+The annotated source is an issue reference rather than a final mock: its red box marks the excessive vertical space between the page heading and the first setting. The implementation preserves the existing Pragma typography, palette, navigation, control styling, copy, and interaction while reducing only that title-to-content interval.
+
+The source and implementation were captured at the same pixel viewport and placed in one side-by-side comparison image. The current application layout differs from the older frame shown in the issue reference, so fidelity judgment is scoped to the marked title-to-content relationship rather than legacy navigation dimensions.
+
+## Focused region comparison evidence
+
+The focused heading/body region was inspected at rendered size. Computed title-to-content gaps are:
+
+- Settings > General: 24px
+- Settings > Model Providers: 24px
+- Settings > Runtime Environments: 24px
+- Studio > Experts: 24px
+- Missions > Create: 24px
+
+No extra top padding or collapsing first-child margin remains in those paths.
+
+## Required fidelity surfaces
+
+- Fonts and typography: unchanged; existing Inter/SF system stack, sizes, weights, and line heights are preserved.
+- Spacing and layout rhythm: the marked oversized interval is replaced by the shared `--screen-title-content-gap: 24px` token across primary screens.
+- Colors and visual tokens: unchanged.
+- Image quality and asset fidelity: no image assets were added, removed, or substituted.
+- Copy and content: unchanged; Simplified Chinese labels and system-language state render correctly.
+
+## Findings
+
+No actionable P0, P1, or P2 findings remain in the requested scope.
+
+## Comparison history
+
+1. Initial inspection found two hidden additions to the shared 24px rhythm: the General row added 22px and the Runtime list added 19px through nested first-child margins.
+2. Removed the obsolete row/list top margins and the General list's extra 18px top padding; introduced the shared spacing token and applied it to Settings, Studio, and Mission creation.
+3. Post-fix browser evidence measured a 24px rendered gap on every screen listed above. Navigation among all three Settings views worked, the Mission creation controls rendered, and no browser console errors were reported.
+
+## Implementation checklist
+
+- [x] Use one shared title-to-content spacing token.
+- [x] Remove duplicate General and Runtime top spacing.
+- [x] Apply the same rhythm to Settings, Studio, and Mission creation.
+- [x] Verify affected screens at the reference viewport.
+- [x] Run lint, typecheck, and tests.
+
+## Follow-up polish
+
+None required for this spacing change.
 
 final result: passed

@@ -89,10 +89,7 @@ export class CodexAppServerClient {
     const spawn = options.spawn ?? defaultSpawn;
     const process = spawn(options.executablePath, options.args, {
       cwd: options.cwd,
-      env: {
-        ...processEnv(),
-        ...options.env,
-      },
+      env: options.env,
     });
     const client = new CodexAppServerClient(process, options);
 
@@ -385,10 +382,6 @@ function defaultSpawn(
     env: options.env,
     stdio: "pipe",
   });
-}
-
-function processEnv(): NodeJS.ProcessEnv {
-  return process.env;
 }
 
 function readThreadId(result: unknown): string | undefined {

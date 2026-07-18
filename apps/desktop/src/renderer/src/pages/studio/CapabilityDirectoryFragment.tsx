@@ -311,7 +311,7 @@ export function CapabilityDirectoryFragment(props: {
 
   return (
     <StudioScreenFrame
-      className="capability-directory"
+      className="capability-directory capability-catalog"
       labelledBy="capabilities-heading"
       header={
         <header className="studio-heading capability-heading">
@@ -410,11 +410,11 @@ export function CapabilityDirectoryFragment(props: {
 
       <div className="capability-table" role="list">
         <div className="capability-table-heading" aria-hidden="true">
-          <span>{t("name")}</span>
-          <span>{t("type")}</span>
-          <span>{t("sourceConnection")}</span>
-          <span>{t("status")}</span>
-          <span />
+          <span className="capability-column-name">{t("name")}</span>
+          <span className="capability-column-type">{t("type")}</span>
+          <span className="capability-column-source">{t("sourceConnection")}</span>
+          <span className="capability-column-status">{t("status")}</span>
+          <span className="capability-column-actions" />
         </div>
         {matching.map((capability) => (
           <CapabilityRow
@@ -589,7 +589,7 @@ function CapabilityRow(props: {
     <>
       <div className="capability-row" role="listitem">
         <button
-          className="capability-name capability-open-button"
+          className="capability-name capability-open-button capability-column-name"
           type="button"
           onClick={props.onOpen}
         >
@@ -606,16 +606,16 @@ function CapabilityRow(props: {
             ) : null}
           </span>
         </button>
-        <span>
+        <span className="capability-column-type">
           <em className="capability-type">{type}</em>
         </span>
-        <span className="capability-source">{source}</span>
-        <span className="capability-status">
+        <span className="capability-source capability-column-source">{source}</span>
+        <span className="capability-status capability-column-status">
           <i className={capability.health.status === "ready" ? "is-ready" : "is-warning"} />
           {capability.health.status === "ready" ? t("ready") : t("needsAttention")}
         </span>
         <span
-          className="capability-row-actions"
+          className="capability-row-actions capability-column-actions"
           onBlur={(event) => {
             if (!event.currentTarget.contains(event.relatedTarget)) setMenuOpen(false);
           }}

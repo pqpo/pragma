@@ -2,6 +2,8 @@ import { createHash, randomUUID } from "node:crypto";
 import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 
+import { withFileLock } from "@pragma/core";
+
 import type { CapabilityCredentialEncryption } from "./capability-credential-store.ts";
 
 interface StoredPluginCredentials {
@@ -10,6 +12,7 @@ interface StoredPluginCredentials {
 }
 
 export interface PluginCredentialStore {
+  applyChanges(changes: PluginCredentialChanges): Promise<void>;
   set(ref: string, value: string): Promise<void>;
   get(ref: string): Promise<string | undefined>;
   has(ref: string): Promise<boolean>;
@@ -18,10 +21,16 @@ export interface PluginCredentialStore {
   fingerprint(refs: readonly string[]): Promise<string>;
 }
 
+export interface PluginCredentialChanges {
+  readonly set?: Readonly<Record<string, string>> | undefined;
+  readonly remove?: readonly string[] | undefined;
+}
+
 export function createPluginCredentialStore(options: {
   readonly configPath: string;
   readonly encryption: CapabilityCredentialEncryption;
 }): PluginCredentialStore {
+  const lockPath = `${options.configPath}.lock`;
   const read = async (): Promise<StoredPluginCredentials> => {
     try {
       const value = JSON.parse(
@@ -55,20 +64,35 @@ export function createPluginCredentialStore(options: {
     await rename(temporaryPath, options.configPath);
     await chmod(options.configPath, 0o600).catch(() => undefined);
   };
+  const applyChanges = async (changes: PluginCredentialChanges): Promise<void> => {
+    const set = changes.set ?? {};
+    const remove = new Set(changes.remove ?? []);
+    for (const ref of Object.keys(set)) {
+      if (remove.has(ref)) {
+        throw new Error(`Plugin credential change both sets and removes binding: ${ref}.`);
+      }
+    }
+    if (Object.keys(set).length === 0 && remove.size === 0) return;
+    if (Object.keys(set).length > 0 && !options.encryption.isAvailable()) {
+      throw new Error("Secure storage is unavailable on this device.");
+    }
+
+    await withFileLock(lockPath, async () => {
+      const current = await read();
+      const credentials = Object.fromEntries(
+        Object.entries(current.credentials).filter(([ref]) => !remove.has(ref)),
+      );
+      for (const [ref, value] of Object.entries(set)) {
+        credentials[ref] = options.encryption.encrypt(value).toString("base64");
+      }
+      await write({ schemaVersion: 1, credentials });
+    });
+  };
 
   return {
+    applyChanges,
     async set(ref, value) {
-      if (!options.encryption.isAvailable()) {
-        throw new Error("Secure storage is unavailable on this device.");
-      }
-      const current = await read();
-      await write({
-        schemaVersion: 1,
-        credentials: {
-          ...current.credentials,
-          [ref]: options.encryption.encrypt(value).toString("base64"),
-        },
-      });
+      await applyChanges({ set: { [ref]: value } });
     },
     async get(ref) {
       const encrypted = (await read()).credentials[ref];
@@ -82,21 +106,16 @@ export function createPluginCredentialStore(options: {
       return (await read()).credentials[ref] !== undefined;
     },
     async remove(ref) {
-      const current = await read();
-      await write({
-        schemaVersion: 1,
-        credentials: Object.fromEntries(
-          Object.entries(current.credentials).filter(([key]) => key !== ref),
-        ),
-      });
+      await applyChanges({ remove: [ref] });
     },
     async removePrefix(prefix) {
-      const current = await read();
-      await write({
-        schemaVersion: 1,
-        credentials: Object.fromEntries(
+      await withFileLock(lockPath, async () => {
+        const current = await read();
+        const credentials = Object.fromEntries(
           Object.entries(current.credentials).filter(([key]) => !key.startsWith(prefix)),
-        ),
+        );
+        if (Object.keys(credentials).length === Object.keys(current.credentials).length) return;
+        await write({ schemaVersion: 1, credentials });
       });
     },
     async fingerprint(refs) {

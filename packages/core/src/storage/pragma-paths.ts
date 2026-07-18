@@ -184,4 +184,16 @@ export class PragmaPaths {
   pluginStateRoot(): string {
     return join(this.stateRoot(), "plugins");
   }
+
+  pluginState(pluginRef: string): string {
+    return join(this.pluginStateRoot(), encodePragmaPathSegment(pluginRef));
+  }
+
+  pluginConfigState(pluginRef: string): string {
+    return join(this.pluginState(pluginRef), "config.json");
+  }
+
+  pluginMutationLock(pluginRef: string): string {
+    return join(this.pluginState(pluginRef), ".mutation.lock");
+  }
 }

@@ -4,13 +4,16 @@ import { dirname, extname, isAbsolute, join, relative, resolve } from "node:path
 
 import {
   ExpertAgentPluginManifestSchema,
+  PragmaPaths,
   createExpertAgentPluginPackageFingerprint,
   encodePragmaPathSegment,
   resolveExpertAgentPluginConfig,
   setExpertAgentPluginConfigPath,
+  withFileLock,
   type ExpertAgentPluginManifest,
 } from "@pragma/core";
 import { unzipSync } from "fflate";
+import { z } from "zod";
 
 import {
   DesktopPluginSchema,
@@ -27,19 +30,17 @@ const MAX_ARCHIVE_BYTES = 50 * 1024 * 1024;
 const MAX_UNPACKED_BYTES = 200 * 1024 * 1024;
 const MAX_FILES = 2_000;
 
-interface PluginCatalogState {
-  readonly schemaVersion: 1;
-  readonly plugins: Readonly<
-    Record<
-      string,
-      {
-        readonly config: Readonly<Record<string, unknown>>;
-        readonly secretBindings: Readonly<Record<string, string>>;
-        readonly updatedAt: string;
-      }
-    >
-  >;
-}
+const PluginConfigStateSchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    ref: z.string().min(1),
+    config: z.record(z.string(), z.unknown()),
+    secretBindings: z.record(z.string(), z.string().min(1)),
+    updatedAt: z.string().datetime(),
+  })
+  .strict();
+
+type PluginConfigState = z.infer<typeof PluginConfigStateSchema>;
 
 interface InstalledPluginMetadata {
   readonly schemaVersion: 1;
@@ -117,33 +118,35 @@ export class PluginStoreError extends Error {
 export function createPluginStore(options: {
   readonly builtInPluginsPath: string;
   readonly userPluginsPath: string;
-  readonly statePath: string;
+  readonly paths: PragmaPaths;
   readonly credentials: PluginCredentialStore;
   readonly isReferenced: (ref: string) => Promise<boolean>;
 }): PluginStore {
-  const readState = async (): Promise<PluginCatalogState> => {
+  const readState = async (ref: string): Promise<PluginConfigState | undefined> => {
     try {
-      const value = JSON.parse(await readFile(options.statePath, "utf8")) as PluginCatalogState;
-      if (
-        value.schemaVersion !== 1 ||
-        value.plugins === null ||
-        typeof value.plugins !== "object"
-      ) {
-        throw new PluginStoreError("config_invalid", "The plugin catalog state is invalid.");
+      const value = PluginConfigStateSchema.parse(
+        JSON.parse(await readFile(options.paths.pluginConfigState(ref), "utf8")) as unknown,
+      );
+      if (value.ref !== ref) {
+        throw new PluginStoreError(
+          "config_invalid",
+          `Plugin config state ref does not match its path: ${ref}.`,
+        );
       }
       return value;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-        return { schemaVersion: 1, plugins: {} };
+        return undefined;
       }
       throw error;
     }
   };
-  const writeState = async (value: PluginCatalogState): Promise<void> => {
-    await mkdir(dirname(options.statePath), { recursive: true, mode: 0o700 });
-    const temporaryPath = `${options.statePath}.${randomUUID()}.tmp`;
+  const writeState = async (value: PluginConfigState): Promise<void> => {
+    const statePath = options.paths.pluginConfigState(value.ref);
+    await mkdir(dirname(statePath), { recursive: true, mode: 0o700 });
+    const temporaryPath = `${statePath}.${randomUUID()}.tmp`;
     await writeFile(temporaryPath, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
-    await rename(temporaryPath, options.statePath);
+    await rename(temporaryPath, statePath);
   };
   const locateAll = async (): Promise<LocatedPlugin[]> => {
     const [builtIns, users] = await Promise.all([
@@ -172,7 +175,7 @@ export function createPluginStore(options: {
     return plugin;
   };
   const project = async (plugin: LocatedPlugin): Promise<DesktopPlugin> => {
-    const state = (await readState()).plugins[plugin.ref];
+    const state = await readState(plugin.ref);
     return DesktopPluginSchema.parse({
       ref: plugin.ref,
       origin: plugin.origin,
@@ -204,92 +207,102 @@ export function createPluginStore(options: {
         );
       }
       const ref = pluginRef(inspection.manifest.id, inspection.manifest.version);
-      const existing = (await locateAll()).find((candidate) => candidate.ref === ref);
-      if (existing !== undefined) {
-        if (existing.contentHash === inspection.contentHash) return await project(existing);
-        throw new PluginStoreError(
-          "version_conflict",
-          `Plugin ${ref} is immutable and is already installed with different contents.`,
-        );
-      }
       const archive = await readFile(input.sourcePath);
       const files = normalizedZipFiles(archive);
-      const target = join(
-        options.userPluginsPath,
-        encodePragmaPathSegment(inspection.manifest.id),
-        encodePragmaPathSegment(inspection.manifest.version),
-      );
-      const temporary = `${target}.${randomUUID()}.tmp`;
-      await mkdir(temporary, { recursive: true, mode: 0o700 });
-      try {
-        for (const [path, contents] of files) {
-          const destination = join(temporary, path);
-          await mkdir(dirname(destination), { recursive: true, mode: 0o700 });
-          await writeFile(destination, contents, { mode: 0o600 });
+      return await withFileLock(options.paths.pluginMutationLock(ref), async () => {
+        const existing = (await locateAll()).find((candidate) => candidate.ref === ref);
+        if (existing !== undefined) {
+          if (existing.contentHash === inspection.contentHash) return await project(existing);
+          throw new PluginStoreError(
+            "version_conflict",
+            `Plugin ${ref} is immutable and is already installed with different contents.`,
+          );
         }
-        const metadata: InstalledPluginMetadata = {
-          schemaVersion: 1,
-          contentHash: inspection.contentHash,
-          createdAt: new Date().toISOString(),
-        };
-        await writeFile(
-          join(temporary, ".pragma-install.json"),
-          `${JSON.stringify(metadata, null, 2)}\n`,
-          { mode: 0o600 },
+        const target = join(
+          options.userPluginsPath,
+          encodePragmaPathSegment(inspection.manifest.id),
+          encodePragmaPathSegment(inspection.manifest.version),
         );
-        await mkdir(dirname(target), { recursive: true, mode: 0o700 });
-        await rename(temporary, target);
-      } catch (error) {
-        await rm(temporary, { recursive: true, force: true });
-        throw error;
-      }
-      return await project(await locate(ref));
+        const temporary = `${target}.${randomUUID()}.tmp`;
+        await mkdir(temporary, { recursive: true, mode: 0o700 });
+        try {
+          for (const [path, contents] of files) {
+            const destination = join(temporary, path);
+            await mkdir(dirname(destination), { recursive: true, mode: 0o700 });
+            await writeFile(destination, contents, { mode: 0o600 });
+          }
+          const metadata: InstalledPluginMetadata = {
+            schemaVersion: 1,
+            contentHash: inspection.contentHash,
+            createdAt: new Date().toISOString(),
+          };
+          await writeFile(
+            join(temporary, ".pragma-install.json"),
+            `${JSON.stringify(metadata, null, 2)}\n`,
+            { mode: 0o600 },
+          );
+          await mkdir(dirname(target), { recursive: true, mode: 0o700 });
+          await rename(temporary, target);
+        } catch (error) {
+          await rm(temporary, { recursive: true, force: true });
+          throw error;
+        }
+        return await project(await locate(ref));
+      });
     },
     async updateDefaults(input) {
-      const plugin = await locate(input.ref);
-      assertConfigHasNoPlaintextSecrets(plugin.manifest, input.config);
-      const state = await readState();
-      const previous = state.plugins[input.ref] ?? {
-        config: {},
-        secretBindings: {},
-        updatedAt: plugin.createdAt,
-      };
-      const secretBindings = { ...previous.secretBindings };
-      for (const [path, value] of Object.entries(input.secrets)) {
-        assertSecretProperty(plugin.manifest, path);
-        const binding = secretBindings[path] ?? defaultSecretBinding(input.ref, path);
-        if (value === null) {
-          delete secretBindings[path];
-        } else {
-          secretBindings[path] = binding;
+      return await withFileLock(options.paths.pluginMutationLock(input.ref), async () => {
+        const plugin = await locate(input.ref);
+        assertConfigHasNoPlaintextSecrets(plugin.manifest, input.config);
+        const previous = (await readState(input.ref)) ?? {
+          schemaVersion: 1 as const,
+          ref: input.ref,
+          config: {},
+          secretBindings: {},
+          updatedAt: plugin.createdAt,
+        };
+        const secretBindings = { ...previous.secretBindings };
+        for (const [path, value] of Object.entries(input.secrets)) {
+          assertSecretProperty(plugin.manifest, path);
+          const binding = secretBindings[path] ?? defaultSecretBinding(input.ref, path);
+          if (value === null) {
+            delete secretBindings[path];
+          } else {
+            secretBindings[path] = binding;
+          }
         }
-      }
-      await resolveConfiguration(
-        plugin.manifest,
-        [input.config],
-        secretBindings,
-        options.credentials,
-        input.secrets,
-      );
-      for (const [path, value] of Object.entries(input.secrets)) {
-        const previousBinding = previous.secretBindings[path];
-        if (value === null) {
-          if (previousBinding !== undefined) await options.credentials.remove(previousBinding);
-        } else {
-          await options.credentials.set(secretBindings[path]!, value);
+        await resolveConfiguration(
+          plugin.manifest,
+          [input.config],
+          secretBindings,
+          options.credentials,
+          input.secrets,
+        );
+        const secretsToSet: Record<string, string> = {};
+        const bindingsToRemove: string[] = [];
+        for (const [path, value] of Object.entries(input.secrets)) {
+          const previousBinding = previous.secretBindings[path];
+          if (value === null) {
+            if (previousBinding !== undefined) bindingsToRemove.push(previousBinding);
+          } else {
+            secretsToSet[secretBindings[path]!] = value;
+          }
         }
-      }
-      const updatedAt = new Date().toISOString();
-      await writeState({
-        schemaVersion: 1,
-        plugins: {
-          ...state.plugins,
-          [input.ref]: { config: input.config, secretBindings, updatedAt },
-        },
+        await options.credentials.applyChanges({ set: secretsToSet });
+        await writeState({
+          schemaVersion: 1,
+          ref: input.ref,
+          config: input.config,
+          secretBindings,
+          updatedAt: new Date().toISOString(),
+        });
+        await options.credentials.applyChanges({ remove: bindingsToRemove });
+        return await project(plugin);
       });
-      return await project(plugin);
     },
     async setSecrets(secrets) {
+      const valuesToSet: Record<string, string> = {};
+      const bindingsToRemove: string[] = [];
       for (const [binding, value] of Object.entries(secrets)) {
         if (!/^binding:[A-Za-z0-9][A-Za-z0-9._-]*$/.test(binding)) {
           throw new PluginStoreError(
@@ -297,28 +310,29 @@ export function createPluginStore(options: {
             `Invalid plugin secret binding: ${binding}.`,
           );
         }
-        if (value === null) await options.credentials.remove(binding);
-        else await options.credentials.set(binding, value);
+        if (value === null) bindingsToRemove.push(binding);
+        else valuesToSet[binding] = value;
       }
+      await options.credentials.applyChanges({ set: valuesToSet, remove: bindingsToRemove });
     },
     async remove(ref) {
-      const plugin = await locate(ref);
-      if (plugin.origin === "built_in") {
-        throw new PluginStoreError("built_in_readonly", "Built-in plugins cannot be deleted.");
-      }
-      if (await options.isReferenced(ref)) {
-        throw new PluginStoreError(
-          "plugin_referenced",
-          "Deactivate this plugin in every expert first.",
-        );
-      }
-      const state = await readState();
-      const bindings = Object.values(state.plugins[ref]?.secretBindings ?? {});
-      for (const binding of bindings) await options.credentials.remove(binding);
-      await rm(plugin.root, { recursive: true, force: true });
-      const nextPlugins = { ...state.plugins };
-      delete nextPlugins[ref];
-      await writeState({ schemaVersion: 1, plugins: nextPlugins });
+      await withFileLock(options.paths.pluginMutationLock(ref), async () => {
+        const plugin = await locate(ref);
+        if (plugin.origin === "built_in") {
+          throw new PluginStoreError("built_in_readonly", "Built-in plugins cannot be deleted.");
+        }
+        if (await options.isReferenced(ref)) {
+          throw new PluginStoreError(
+            "plugin_referenced",
+            "Deactivate this plugin in every expert first.",
+          );
+        }
+        const state = await readState(ref);
+        const bindings = Object.values(state?.secretBindings ?? {});
+        await rm(plugin.root, { recursive: true, force: true });
+        await rm(options.paths.pluginConfigState(ref), { force: true });
+        await options.credentials.applyChanges({ remove: bindings });
+      });
     },
     async inspect(input) {
       try {
@@ -338,7 +352,7 @@ export function createPluginStore(options: {
             ],
           };
         }
-        const state = (await readState()).plugins[input.ref];
+        const state = await readState(input.ref);
         const secretBindings = {
           ...(state?.secretBindings ?? {}),
           ...(input.secretBindings ?? {}),
@@ -395,7 +409,7 @@ export function createPluginStore(options: {
         );
       }
       assertConfigHasNoPlaintextSecrets(plugin.manifest, input.config ?? {});
-      const state = (await readState()).plugins[input.ref];
+      const state = await readState(input.ref);
       const secretBindings = {
         ...(state?.secretBindings ?? {}),
         ...(input.secretBindings ?? {}),
@@ -664,7 +678,10 @@ async function findFiles(root: string, name: string, depth: number): Promise<str
     .map((entry) => join(root, entry.name));
   const nested = await Promise.all(
     entries
-      .filter((entry) => entry.isDirectory() && !entry.name.startsWith("."))
+      .filter(
+        (entry) =>
+          entry.isDirectory() && !entry.name.startsWith(".") && !entry.name.endsWith(".tmp"),
+      )
       .map((entry) => findFiles(join(root, entry.name), name, depth - 1)),
   );
   return [...matches, ...nested.flat()];

@@ -1,27 +1,26 @@
 # Repo Manager Plugin
 
-This Pragma plugin exposes a configured list of Git repositories through the Agent context system and prepares Git authentication before each Agent runtime session starts.
+This Pragma plugin initializes an isolated Git environment before each Agent runtime session and removes its temporary configuration after the session ends.
 
-The plugin never injects secrets into context. Token and SSH material are read from environment variables only when the session Git environment is prepared.
+Its responsibility is limited to Git CLI availability, authentication, and session-level configuration. Repository reference information belongs to an independent knowledge or context provider; this plugin does not declare repository metadata, register a context store, or read hidden host context files.
+
+The plugin never injects secrets into Agent context. Authentication values must be resolved by the host before plugin setup.
 
 ## Plugin Usage
 
-For plugins available as source dependencies, import the plugin entry and pass it
-through the Agent `plugins` array. This is the preferred shape for built-in
-plugins because parameters can be supplied directly instead of routed through
-environment variables or host context.
+For plugins available as source dependencies, import the plugin entry and pass it through the Agent `plugins` array:
 
 ```ts
-import { ExpertAgent } from "@pragma/core";
+import { defineExpert } from "@pragma/core";
 import repoManagerPlugin from "@pragma/plugin-repo-manager";
 
 const gitToken = "value loaded from your app secret store";
 
 const agent = await defineExpert({
   schemaVersion: "pragma.expert/v1",
-  id: "repo-aware-agent",
-  name: "Repo Aware Agent",
-  description: "Agent with repository access.",
+  id: "git-enabled-agent",
+  name: "Git Enabled Agent",
+  description: "Agent with isolated Git authentication.",
   tags: ["code"],
   version: "0.0.0",
   scope: "local-test",
@@ -30,14 +29,6 @@ const agent = await defineExpert({
     {
       entry: repoManagerPlugin,
       userConfig: {
-        repositories: [
-          {
-            id: "pragma",
-            name: "Pragma",
-            cloneUrl: "https://github.com/example/pragma.git",
-            defaultBranch: "main",
-          },
-        ],
         auth: {
           strategy: "token",
           token: gitToken,
@@ -49,8 +40,15 @@ const agent = await defineExpert({
 });
 ```
 
-Explicit `userConfig` values take precedence. Authentication secrets must be resolved by the host
-before plugin setup; the plugin does not implicitly read configuration from environment variables.
+Supported authentication strategies are `none`, `token`, `ssh`, and `credential_helper`. The default is `none`; even unauthenticated sessions receive isolated Git configuration and have interactive credential prompts disabled.
+
+Each Runtime Session receives its own immutable process-environment snapshot and unique temporary Git home. Codex, Claude Code, and PI Bash commands consume that exact snapshot; the plugin never modifies the Desktop process environment. Concurrent Experts can therefore use different tokens or SSH keys even when they share the same Git executable and workspace. Concurrent writes to the same checkout remain the workflow's responsibility because Git working-tree locks are not managed by this plugin.
+
+Session authentication takes precedence over authentication settings in the current checkout. Repo Manager resets checkout-local credential helpers and HTTP authorization headers while leaving unrelated Git settings intact. `credential_helper` is an explicit local-integration exception: only the helper named in the plugin config is re-enabled, and that helper may access the user's credential store. The plugin never reads or modifies the user's global or system Git configuration.
+
+For SSH, a configured `knownHosts` value is pinned with strict host-key checking. If it is omitted, the session uses `accept-new` and records discovered keys only in its temporary `known_hosts` file; the user's SSH files are not changed.
+
+Repository references and clone URLs must come from the prompt or a separate knowledge/context provider. Keep credentials out of clone URLs so Repo Manager can enforce the selected session authentication strategy.
 
 ## Plugin Package Usage
 
@@ -62,56 +60,33 @@ plugin.json
 dist/index.js
 ```
 
-Pass the plugin directory or zip path to `defineExpert()`. The factory loads
-the plugin, copies or extracts it into the Agent workspace, and constructs the
-Agent with resolved plugin entries. Directory and zip sources may also receive
-direct config:
+Directory and zip plugin sources may receive the same direct authentication config:
 
 ```ts
-import { ExpertAgent } from "@pragma/core";
-
-const workspace = "/path/to/workspace";
+import { defineExpert } from "@pragma/core";
 
 const agent = await defineExpert({
   schemaVersion: "pragma.expert/v1",
-  id: "repo-aware-agent",
-  name: "Repo Aware Agent",
-  description: "Agent with repository access.",
+  id: "git-enabled-agent",
+  name: "Git Enabled Agent",
+  description: "Agent with isolated Git authentication.",
   tags: ["code"],
   version: "0.0.0",
   scope: "local-test",
-  workspace,
+  workspace: "/path/to/workspace",
   plugins: [
     {
       source: "/path/to/repo-manager",
       userConfig: {
-        repositories: [
-          {
-            id: "pragma",
-            name: "Pragma",
-            cloneUrl: "https://github.com/example/pragma.git",
-            defaultBranch: "main",
-          },
-        ],
+        auth: {
+          strategy: "ssh",
+          privateKey: "value loaded from your app secret store",
+          knownHosts: "github.com ssh-ed25519 AAAA...",
+        },
       },
     },
   ],
 });
 ```
 
-`plugin.json` declares an object JSON Schema so hosts can discover and validate config keys,
-types, defaults, conditional requirements, secret fields, and descriptions without executing
-plugin code. Agent startup applies manifest defaults and resolved `userConfig`. Secret values use
-`"x-pragma-secret": true`; Desktop stores them through encrypted bindings instead of YAML.
-
-Repository lists can be supplied directly through plugin `userConfig.repositories`.
-For dynamic Agent data, they may still be registered in host Agent context as
-`repositories.json`; explicit config takes precedence over host context. Agents
-should use bash `git` directly and clone repositories to
-`workspace/repos/<repository id>`.
-
-Run the repository example from the monorepo root:
-
-```bash
-pnpm --filter @pragma/examples dev src/run-repo-manager-plugin.ts
-```
+`plugin.json` declares the authentication JSON Schema so hosts can discover and validate config keys, defaults, conditional requirements, and secret fields without executing plugin code. Secret values use `"x-pragma-secret": true`; Desktop stores them through encrypted bindings instead of YAML.

@@ -145,7 +145,7 @@ void app.whenReady().then(async () => {
       ? join(process.resourcesPath, "plugins")
       : join(currentDir, "../../.plugin-bundles/plugins"),
     userPluginsPath: pragmaPaths.pluginsRoot(),
-    statePath: join(pragmaPaths.pluginStateRoot(), "catalog.json"),
+    paths: pragmaPaths,
     credentials: pluginCredentials,
     isReferenced: async (ref) => {
       const definitions = await Promise.all(

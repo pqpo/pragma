@@ -24,6 +24,7 @@ import {
   collectClaudeCodeUsage,
   consumeClaudeCodeStartupMessages,
   createClaudeCodeNativeSession,
+  filterClaudeRuntimeEnv,
   listClaudeCodeMessages,
   mapClaudeCodeNativeEvent,
   startClaudeCodeTurn,
@@ -142,7 +143,7 @@ export function createClaudeCodeRuntime(
           });
           const managedConfig = await prepareManagedClaudeCodeConfig({
             sessionDir,
-            env: options.env,
+            env: ctx.processEnvironment,
             logger: ctx.logger,
           });
           if (state.sessionId !== "") {
@@ -165,7 +166,7 @@ export function createClaudeCodeRuntime(
               additionalArgs: options.additionalArgs ?? [],
               defaultModelName,
               defaultThinkingLevel,
-              env: options.env,
+              env: ctx.processEnvironment,
               humanInteractionHandler: ctx.request.humanInteractionHandler,
               logger: ctx.logger,
               managedConfig,
@@ -243,6 +244,10 @@ export function createClaudeCodeRuntime(
     {
       sessionRestoreHandler: options.sessionRestoreHandler,
       sessionSyncCallback: options.sessionSyncCallback,
+      createProcessEnvironment: () => ({
+        ...filterClaudeRuntimeEnv(process.env),
+        ...(options.env ?? {}),
+      }),
     },
   );
 }

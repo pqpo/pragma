@@ -740,8 +740,7 @@ async function createClaudeCodeEnv({
   readonly sessionDir: string;
 }): Promise<NodeJS.ProcessEnv> {
   const nextEnv = {
-    ...filterClaudeRuntimeEnv(process.env),
-    ...env,
+    ...(env ?? filterClaudeRuntimeEnv(process.env)),
   };
 
   const configDir = managedConfig?.configDir ?? join(sessionDir, "config");
@@ -1446,7 +1445,7 @@ function filterAdditionalArgs(args: readonly string[]): string[] {
   return result;
 }
 
-function filterClaudeRuntimeEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+export function filterClaudeRuntimeEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const result: NodeJS.ProcessEnv = {};
 
   for (const [key, value] of Object.entries(env)) {

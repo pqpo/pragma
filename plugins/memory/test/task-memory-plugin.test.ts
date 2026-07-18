@@ -19,7 +19,6 @@ describe("task-memory plugin", () => {
       contextSystem: new ContextSystem(),
       memorySystem,
       workspaceRoot: "/tmp/pragma",
-      env: process.env,
       userConfig: {},
       hostBindings: {
         task: {
@@ -49,7 +48,6 @@ describe("task-memory plugin", () => {
       contextSystem: new ContextSystem(),
       memorySystem,
       workspaceRoot: "/tmp/pragma",
-      env: process.env,
       userConfig: {},
       hostBindings: {
         task: {

@@ -1,5 +1,15 @@
-import { AuthStorage, createAgentSession } from "@earendil-works/pi-coding-agent";
-import type { AgentSession, CreateAgentSessionOptions } from "@earendil-works/pi-coding-agent";
+import {
+  AuthStorage,
+  SettingsManager,
+  createAgentSession,
+  createBashToolDefinition,
+} from "@earendil-works/pi-coding-agent";
+import type {
+  AgentSession,
+  BashToolInput,
+  CreateAgentSessionOptions,
+  ToolDefinition,
+} from "@earendil-works/pi-coding-agent";
 import type { McpToolRegistry, RuntimeAdapter } from "@pragma/core";
 import {
   createMcpToolRegistry,
@@ -86,6 +96,7 @@ export function createPiRuntime(options: CloudPiRuntimeAdapterOptions = {}): Run
         }
         const authStorage = AuthStorage.create();
         const cwd = ctx.workspace;
+        const settingsManager = SettingsManager.create(cwd);
         const modelRegistry = createPiModelRegistry(
           authStorage,
           registeredProvider === undefined ? [] : [registeredProvider],
@@ -118,6 +129,7 @@ export function createPiRuntime(options: CloudPiRuntimeAdapterOptions = {}): Run
           modelRegistry,
           resourceLoader: loader,
           sessionManager: piSessionManagerResult.sessionManager,
+          settingsManager,
         };
         const defaultModel = resolveRequiredRuntimeModel(
           selectedModel,
@@ -135,9 +147,15 @@ export function createPiRuntime(options: CloudPiRuntimeAdapterOptions = {}): Run
           sessionOptions.thinkingLevel = defaultThinkingLevel;
         }
 
-        if (resolvedTools.tools.length > 0) {
-          sessionOptions.customTools = resolvedTools.tools.map((tool) => tool.tool);
-        }
+        sessionOptions.customTools = [
+          ...resolvedTools.tools.map((tool) => tool.tool),
+          createPiSessionBashTool({
+            cwd,
+            processEnvironment: ctx.processEnvironment,
+            commandPrefix: settingsManager.getShellCommandPrefix(),
+            shellPath: settingsManager.getShellPath(),
+          }),
+        ];
 
         const { session } = await createAgentSession(sessionOptions);
         if (!piSessionManagerResult.resumedExistingSession) {
@@ -184,6 +202,39 @@ export function createPiRuntime(options: CloudPiRuntimeAdapterOptions = {}): Run
       sessionSyncCallback: options.sessionSyncCallback,
     },
   );
+}
+
+export function createPiSessionBashTool(options: {
+  readonly cwd: string;
+  readonly processEnvironment: Readonly<NodeJS.ProcessEnv>;
+  readonly commandPrefix?: string | undefined;
+  readonly shellPath?: string | undefined;
+}): ToolDefinition {
+  const tool = createBashToolDefinition(options.cwd, {
+    ...(options.commandPrefix === undefined ? {} : { commandPrefix: options.commandPrefix }),
+    ...(options.shellPath === undefined ? {} : { shellPath: options.shellPath }),
+    spawnHook: (context) => ({
+      ...context,
+      env: { ...options.processEnvironment },
+    }),
+  });
+  return {
+    name: tool.name,
+    label: tool.label,
+    description: tool.description,
+    ...(tool.promptSnippet === undefined ? {} : { promptSnippet: tool.promptSnippet }),
+    parameters: tool.parameters,
+    ...(tool.executionMode === undefined ? {} : { executionMode: tool.executionMode }),
+    async execute(toolCallId, params, signal, onUpdate, context) {
+      return await tool.execute(
+        toolCallId,
+        params as BashToolInput,
+        signal,
+        onUpdate as Parameters<typeof tool.execute>[3],
+        context as Parameters<typeof tool.execute>[4],
+      );
+    },
+  };
 }
 
 function appendStartupMessages(
