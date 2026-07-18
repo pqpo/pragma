@@ -394,6 +394,7 @@ export interface RunExpertInvocationOptions {
   readonly controller: ExecutionController;
   readonly store: ExecutionStore;
   readonly runtimes: RuntimeResolver;
+  readonly modelSelection?: RuntimeModelSelection | undefined;
   readonly team?: ExpertTeam | undefined;
   readonly depth?: number | undefined;
   readonly persistContext?: ((context: RuntimeContextRecord) => Promise<void>) | undefined;
@@ -468,9 +469,10 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
   const invocationSignal = options.controller.signalForInvocation(options.invocationId);
   throwIfAborted(invocationSignal, options.invocationId);
 
+  const modelSelection = options.modelSelection ?? readExpertModelSelection(nativeExpert);
   const resolvedRuntime = await options.runtimes.resolve({
     binding: options.context.runtime,
-    modelSelection: nativeExpert.models?.default,
+    modelSelection,
   });
   const runtime = resolvedRuntime.adapter;
   await validateDelegatedRuntimeRouting(options, delegation, runtime.descriptor.id);
@@ -521,7 +523,6 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
   );
   const humanInteractionHandler = async (request: ExpertAgentHumanRequest) =>
     await options.controller.requestHumanInteraction(options.invocationId, request);
-  const modelSelection = readExpertModelSelection(nativeExpert);
   const session = await options.controller.acquireRuntime(runtimeIdentity, async () => {
     const opened = await openRuntimeSession(runtime, {
       agent: executableExpert,

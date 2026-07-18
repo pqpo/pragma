@@ -12,7 +12,7 @@ describe("RuntimeEnvironmentStore", () => {
     const store = createRuntimeEnvironmentStore({ pragmaHome });
     await store.initialize();
 
-    expect(await store.getDefaultRuntimeId()).toBe("codex");
+    expect(await store.getDefaultRuntimeId()).toBe("pi");
     expect((await store.listHeads()).map((head) => head.entry.runtimeId)).toEqual([
       "pi",
       "codex",
@@ -28,6 +28,7 @@ describe("RuntimeEnvironmentStore", () => {
     expect((await store.getRevision("pi", 1))?.definition.displayName).toBe("PI Runtime");
     expect((await store.getRevision("pi"))?.definition.displayName).toBe("PI Updated");
 
+    await store.setDefaultRuntimeId("codex");
     const deleted = await store.delete({ runtimeId: "pi", expectedRevision: 2 });
     expect(deleted).toMatchObject({ revision: 3, status: "deleted" });
     await expect(store.delete({ runtimeId: "codex", expectedRevision: 1 })).rejects.toThrow(

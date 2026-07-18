@@ -14,7 +14,7 @@ import {
   type RuntimeEnvironmentRevision,
 } from "../shared/desktop-api.ts";
 
-export const DEFAULT_RUNTIME_ID = "codex";
+export const DEFAULT_RUNTIME_ID = "pi";
 
 export const DEFAULT_RUNTIME_ENVIRONMENTS: readonly RuntimeEnvironmentDefinition[] = [
   environment("pi", "PI Runtime", "pragma.runtime.pi"),

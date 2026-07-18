@@ -507,54 +507,6 @@ describe("Pragma YAML DSL", () => {
     );
   });
 
-  it("keeps the built-in steward portable and fingerprints environment bindings separately", async () => {
-    const entry = join(process.cwd(), "fixtures/steward/pragma.yaml");
-    const project = await loadPragmaProject(entry, {
-      rootDir: join(process.cwd(), "fixtures/steward"),
-    });
-    expect(await project.validate()).toEqual([]);
-    expect(project.listResources()).toHaveLength(4);
-
-    const missing = await project.validateEnvironment({ workspace: process.cwd() });
-    expect(missing).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ code: "environment.resource_unavailable" }),
-      ]),
-    );
-
-    const compile = async (revision: string) =>
-      await project.compile<Expert>("expert:steward@1.0.0", {
-        workspace: process.cwd(),
-        environmentId: "test-desktop",
-        adapterHost: {
-          environmentId: "test-desktop",
-          projectRoot: process.cwd(),
-          async resolveBinding(ref) {
-            return ref === "binding:pragma.project-service"
-              ? {
-                  ref,
-                  revision,
-                  fingerprint: "a".repeat(64),
-                  value: { contribution: { tools: [] } },
-                }
-              : undefined;
-          },
-          async resolveArtifact(source) {
-            throw new Error(`Unexpected artifact: ${JSON.stringify(source)}`);
-          },
-          async resolveSecret() {
-            return undefined;
-          },
-        },
-      });
-    const first = await compile("1");
-    const second = await compile("2");
-    expect(first.projectFingerprint).toBe(second.projectFingerprint);
-    expect(first.environmentFingerprint.value).not.toBe(second.environmentFingerprint.value);
-    expect(first.rootRuntimeId).toBe("codex");
-    expect(first.value.defaultRuntimeId).toBe("codex");
-  });
-
   it("marks registered but unusable RuntimeProfiles as unavailable", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-runtime-unusable-"));
     const entry = join(root, "pragma.yaml");

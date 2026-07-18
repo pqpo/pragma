@@ -31,4 +31,12 @@ describe("SettingsPage", () => {
     expect(html).toContain("跟随系统");
     expect(html).toContain("繁體中文");
   });
+
+  it("opens a requested settings section from an application deep link", () => {
+    const html = renderToStaticMarkup(<SettingsPage initialView="runtimes" />);
+
+    expect(html).toContain('aria-selected="true"');
+    expect(html).toContain("Runtime Environments");
+    expect(html).toContain("Checking runtime availability");
+  });
 });

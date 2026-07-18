@@ -217,6 +217,6 @@ Desktop stores revisions below `~/.pragma/projects/<projectId>/revisions/<revisi
 implements source persistence and local binding adapters. Missions pin an exact resource and
 revision. A Mission v3 directory keeps bounded identity and lifecycle metadata in `mission.yaml`
 and appends user turns plus Execution references to `messages.jsonl`; assistant, thinking, and tool
-history is projected from the canonical Execution event log. The built-in Steward bundle under
-`packages/interpreter/fixtures/steward` is a read-only
-template fixture, not a second hard-coded runtime implementation.
+history is projected from the canonical Execution event log. The built-in Steward bundle and its
+DSL-authoring Skill live in `packages/steward/dsl`; applications install the package with explicit
+project and task ports rather than maintaining a second hard-coded runtime implementation.

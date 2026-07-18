@@ -59,8 +59,9 @@ and Human Interaction work while recording `failed/timeout`. Desktop Note Contex
 durable JSON store; DSL note/static entries are read-only static stores. Changing dynamic note
 content does not change a Context binding fingerprint.
 
-The built-in Steward is stored as a read-only DSL fixture. It becomes a product Home experience
-only when the application explicitly installs it with project-service tools and confirmation UI.
+The built-in Steward is owned by `@pragma/steward` as portable DSL plus an authoring Skill. It
+becomes a product Home experience only when the application supplies project/task ports, Runtime
+selection, and confirmation UI.
 
 ## Consequences
 

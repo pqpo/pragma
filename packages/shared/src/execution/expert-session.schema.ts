@@ -13,6 +13,14 @@ export const PromptStatusSchema = z.enum([
   "interrupted",
 ]);
 
+export const PromptRuntimeModelSelectionSchema = z.object({
+  model: z.object({
+    providerId: z.string().trim().min(1),
+    modelId: z.string().trim().min(1),
+  }),
+  thinkingLevel: z.string().trim().min(1).optional(),
+});
+
 export const PromptRequestSchema = z.object({
   requestId: z.string().min(1),
   sessionId: z.string().min(1),
@@ -20,6 +28,7 @@ export const PromptRequestSchema = z.object({
   mode: PromptModeSchema,
   executionId: z.string().min(1),
   status: PromptStatusSchema,
+  modelSelection: PromptRuntimeModelSelectionSchema.optional(),
   targetExecutionId: z.string().min(1).optional(),
   error: z.string().min(1).optional(),
   createdAt: z.string().datetime(),
@@ -137,6 +146,7 @@ export const ExpertMessageHistorySchema = z.object({
 
 export type PromptMode = z.infer<typeof PromptModeSchema>;
 export type PromptStatus = z.infer<typeof PromptStatusSchema>;
+export type PromptRuntimeModelSelection = z.infer<typeof PromptRuntimeModelSelectionSchema>;
 export type PromptRequest = z.infer<typeof PromptRequestSchema>;
 export type ExpertSessionRecord = z.infer<typeof ExpertSessionRecordSchema>;
 export type ExpertSessionEventCursor = z.infer<typeof ExpertSessionEventCursorSchema>;

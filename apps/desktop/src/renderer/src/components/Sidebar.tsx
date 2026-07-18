@@ -9,10 +9,10 @@ import {
 } from "@phosphor-icons/react";
 import { useTranslation } from "react-i18next";
 
-export type AppView = "missions" | "studio" | "settings";
+export type AppView = "home" | "missions" | "studio" | "settings";
 
 const navigationItems: readonly {
-  readonly id: AppView | "home";
+  readonly id: AppView;
   readonly labelKey: string;
   readonly icon: Icon;
 }[] = [
@@ -44,10 +44,8 @@ export function Sidebar(props: {
       <nav className="navigation" aria-label={t("navigation.main")}>
         {navigationItems.map((item) => {
           const NavigationIcon = item.icon;
-          const targetView: AppView | null = item.id === "home" ? null : item.id;
           const label = t(item.labelKey);
-          const isActive = targetView !== null && props.activeView === targetView;
-          const isAvailable = targetView !== null;
+          const isActive = props.activeView === item.id;
 
           return (
             <button
@@ -57,8 +55,7 @@ export function Sidebar(props: {
               aria-current={isActive ? "page" : undefined}
               aria-label={label}
               title={label}
-              disabled={!isAvailable}
-              onClick={() => targetView !== null && props.onNavigate(targetView)}
+              onClick={() => props.onNavigate(item.id)}
             >
               <NavigationIcon size={22} aria-hidden="true" />
               <span>{label}</span>

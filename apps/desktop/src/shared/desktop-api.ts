@@ -22,7 +22,26 @@ import {
   type PragmaInvocableResource,
   type PragmaResource,
 } from "@pragma/interpreter/ast";
+import type { PragmaStewardAPI } from "@pragma/steward/contracts";
 import { z } from "zod";
+
+export {
+  InitializeStewardSchema,
+  PromptStewardSchema,
+  RespondStewardInteractionSchema,
+  StewardChatSnapshotSchema,
+  StewardInteractionSchema,
+  StewardSessionStateSchema,
+} from "@pragma/steward/contracts";
+export type {
+  InitializeSteward,
+  PromptSteward,
+  RespondStewardInteraction,
+  StewardChatEntry,
+  StewardChatSnapshot,
+  StewardInteraction,
+  StewardSessionState,
+} from "@pragma/steward/contracts";
 
 export const DesktopAppInfoSchema = z.object({
   name: z.literal("Pragma Desktop"),
@@ -1202,7 +1221,7 @@ export type CapabilityTestResult = z.infer<typeof CapabilityTestResultSchema>;
 export type PreviewCodeServiceRequest = z.infer<typeof PreviewCodeServiceRequestSchema>;
 export type PreviewCodeServiceResult = z.infer<typeof PreviewCodeServiceResultSchema>;
 
-export interface PragmaDesktopAPI {
+export interface PragmaDesktopAPI extends PragmaStewardAPI {
   getBridgeSnapshot: () => Promise<DesktopBridgeSnapshot>;
   getDesktopSettings: () => Promise<DesktopSettingsSnapshot>;
   updateDesktopSettings: (input: UpdateDesktopSettings) => Promise<DesktopSettingsSnapshot>;

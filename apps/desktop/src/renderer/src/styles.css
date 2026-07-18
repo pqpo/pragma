@@ -247,6 +247,347 @@ p {
   padding: 0;
 }
 
+.steward-home {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  min-width: 0;
+  min-height: 0;
+  padding: 54px 72px 42px;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 50% 22%, rgb(151 189 87 / 9%), transparent 30%), var(--background);
+}
+
+.steward-home-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.steward-eyebrow {
+  color: var(--green);
+  font-size: 11px;
+  font-weight: 750;
+  letter-spacing: 0.16em;
+}
+
+.steward-home-header h1 {
+  margin-top: 4px;
+  font-size: 20px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+
+.steward-text-button {
+  padding: 7px 10px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.steward-chat {
+  min-height: 0;
+  overflow: auto;
+  padding: 30px max(8px, calc((100% - 860px) / 2));
+}
+
+.steward-chat.is-empty {
+  display: grid;
+  place-items: center;
+}
+
+.steward-welcome {
+  display: grid;
+  max-width: 600px;
+  justify-items: center;
+  text-align: center;
+}
+
+.steward-orb {
+  display: grid;
+  width: 62px;
+  height: 62px;
+  place-items: center;
+  margin-bottom: 22px;
+  border: 1px solid rgb(88 121 104 / 18%);
+  border-radius: 20px;
+  background: linear-gradient(145deg, #f5f9f1, #e7f0e9);
+  box-shadow: 0 14px 40px rgb(69 100 84 / 12%);
+  color: var(--green);
+}
+
+.steward-welcome h2 {
+  font-size: 30px;
+  font-weight: 680;
+  letter-spacing: -0.04em;
+}
+
+.steward-welcome p {
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 15px;
+}
+
+.steward-messages {
+  display: grid;
+  gap: 20px;
+}
+
+.steward-message {
+  max-width: 82%;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.steward-message.is-user {
+  justify-self: end;
+  padding: 12px 16px;
+  border-radius: 16px 16px 4px 16px;
+  background: var(--green-soft);
+}
+
+.steward-message.is-assistant {
+  font-size: 14px;
+  line-height: 1.65;
+}
+
+.steward-message.is-thinking {
+  padding-left: 14px;
+  border-left: 2px solid var(--border-strong);
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.steward-message.is-tool {
+  width: min(680px, 100%);
+  max-width: 100%;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface-soft);
+  color: var(--muted);
+  font-family: ui-monospace, "SFMono-Regular", monospace;
+  font-size: 12px;
+}
+
+.steward-tool-name {
+  display: block;
+  margin-bottom: 7px;
+  color: var(--text);
+  font-family: inherit;
+  font-weight: 700;
+}
+
+.steward-message.is-tool button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 10px;
+  padding: 6px 9px;
+  border: 1px solid var(--border-strong);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--green-dark);
+  cursor: pointer;
+}
+
+.steward-approval {
+  width: min(680px, 100%);
+  margin-top: 18px;
+  padding: 18px;
+  border: 1px solid #d9dfcf;
+  border-radius: 14px;
+  background: #fbfcf8;
+  box-shadow: var(--shadow-soft);
+}
+
+.steward-approval p {
+  margin-top: 6px;
+  color: var(--muted);
+}
+
+.steward-approval pre {
+  max-height: 220px;
+  margin: 12px 0;
+  padding: 10px;
+  overflow: auto;
+  border-radius: 8px;
+  background: var(--surface-muted);
+  white-space: pre-wrap;
+  font-size: 11px;
+}
+
+.steward-approval > div {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.steward-approval button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 7px 11px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--surface);
+  cursor: pointer;
+}
+
+.steward-approval button.is-primary {
+  border-color: var(--green);
+  background: var(--green);
+  color: white;
+}
+
+.steward-composer-wrap {
+  width: min(860px, 100%);
+  justify-self: center;
+}
+
+.steward-composer {
+  padding: 14px 14px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 17px;
+  background: var(--surface);
+  box-shadow: 0 15px 40px rgb(20 31 25 / 9%);
+}
+
+.steward-composer:focus-within {
+  border-color: rgb(88 121 104 / 55%);
+  box-shadow:
+    0 0 0 4px var(--focus-ring),
+    0 15px 40px rgb(20 31 25 / 9%);
+}
+
+.steward-composer textarea {
+  width: 100%;
+  min-height: 70px;
+  resize: none;
+  padding: 0 2px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+}
+
+.steward-composer-footer,
+.steward-context-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.steward-context-controls {
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  min-width: 0;
+}
+
+.steward-context-controls select,
+.steward-context-controls button {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 7px;
+  background: var(--surface-soft);
+  color: var(--muted);
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.steward-context-controls select:disabled,
+.steward-context-controls button:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+.steward-thinking-select {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding-left: 7px;
+  border-radius: 7px;
+  background: var(--surface-soft);
+  color: var(--muted);
+}
+
+.steward-thinking-select select {
+  padding-left: 3px;
+}
+
+.steward-send {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border: 0;
+  border-radius: 10px;
+  background: var(--green);
+  color: white;
+  cursor: pointer;
+}
+
+.steward-send:disabled {
+  background: var(--surface-muted);
+  color: var(--faint);
+}
+
+.steward-send.is-stop {
+  background: #8a5b54;
+}
+
+.steward-error {
+  margin-bottom: 8px;
+  color: #9b413b;
+  font-size: 13px;
+}
+
+.steward-configuration-notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  margin-bottom: 8px;
+  padding: 12px 14px;
+  border: 1px solid #d8cba9;
+  border-radius: 12px;
+  background: #fffaf0;
+  color: #5e5135;
+  font-size: 12px;
+}
+
+.steward-configuration-notice > div {
+  display: grid;
+  gap: 3px;
+}
+
+.steward-configuration-notice span {
+  color: #766a50;
+}
+
+.steward-configuration-notice button {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 5px;
+  padding: 7px 10px;
+  border: 1px solid #c9b98f;
+  border-radius: 8px;
+  background: #fff;
+  color: #66562e;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 680;
+}
+
 .settings-page {
   display: grid;
   grid-template-columns: 242px minmax(0, 1fr);

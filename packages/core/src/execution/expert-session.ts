@@ -21,6 +21,7 @@ import type { ExpertDefinition } from "../agent/expert-team.ts";
 import { isExpertTeam } from "../agent/expert-team.ts";
 import { fingerprintExpertExecutionDefinition } from "../agent/expert-definition-descriptor.ts";
 import type { RuntimeResolver } from "../runtime-resolver.ts";
+import type { RuntimeModelSelection } from "../runtime/runtime-adapter.ts";
 import { mergeUsages } from "../runtime/usage.ts";
 import { ExecutionController, runExpertInvocation } from "./expert-runner.ts";
 import { RuntimeSessionPool } from "./runtime-session-pool.ts";
@@ -46,6 +47,7 @@ export interface CreateExpertSessionOptions {
 export interface PromptOptions {
   readonly requestId?: string | undefined;
   readonly mode?: PromptMode | undefined;
+  readonly modelSelection?: RuntimeModelSelection | undefined;
 }
 
 export interface ExpertTurn extends MutableExecution {
@@ -278,7 +280,12 @@ class ExpertSessionImpl implements ExpertSession {
     if (requestId.trim() === "") throw new Error("Prompt requestId must not be empty.");
     const mode = options.mode ?? "enqueue";
 
-    if (mode === "steer") return await this.steer(content, requestId);
+    if (mode === "steer") {
+      if (options.modelSelection !== undefined) {
+        throw new Error("A steer request cannot change the active Runtime model selection.");
+      }
+      return await this.steer(content, requestId);
+    }
 
     const id = randomUUID();
     const now = new Date().toISOString();
@@ -306,6 +313,7 @@ class ExpertSessionImpl implements ExpertSession {
       mode,
       executionId: id,
       status: "queued",
+      ...(options.modelSelection === undefined ? {} : { modelSelection: options.modelSelection }),
       createdAt: now,
       updatedAt: now,
     };
@@ -738,6 +746,7 @@ class ExpertSessionImpl implements ExpertSession {
         controller,
         store: this.dependencies.executions,
         runtimes: this.dependencies.runtimes,
+        ...(prompt.modelSelection === undefined ? {} : { modelSelection: prompt.modelSelection }),
         persistContext: async (context) => await this.persistRuntimeContext(context),
         readContextScope: async () => await this.readRuntimeContextScope(),
       });

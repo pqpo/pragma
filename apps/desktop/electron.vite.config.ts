@@ -24,6 +24,7 @@ export default defineConfig({
           "@pragma/core",
           "@pragma/interpreter",
           "@pragma/shared",
+          "@pragma/steward",
         ],
       }),
     ],

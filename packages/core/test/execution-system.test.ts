@@ -450,12 +450,23 @@ describe("ExpertSession", () => {
       await session.prompt("hello", { requestId: "model-selection" })
     ).result;
 
+    const override = {
+      model: { providerId: "provider-b", modelId: "model-b" },
+      thinkingLevel: "low",
+    };
+    await (
+      await session.prompt("follow up", {
+        requestId: "model-selection-override",
+        modelSelection: override,
+      })
+    ).result;
+
     const selection = {
       model: { providerId: "provider-a", modelId: "model-a" },
       thinkingLevel: "high",
     };
     expect(stats.sessionModelSelections).toEqual([selection]);
-    expect(stats.turnModelSelections).toEqual([selection]);
+    expect(stats.turnModelSelections).toEqual([selection, override]);
     await session.close();
   });
 

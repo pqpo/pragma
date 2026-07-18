@@ -1,0 +1,19 @@
+import { defineConfig } from "vitest/config";
+
+interface OxcTsconfigOptions {
+  readonly tsconfig: {
+    readonly compilerOptions: {
+      readonly target: string;
+      readonly verbatimModuleSyntax: boolean;
+    };
+  };
+}
+
+const oxcOptions: OxcTsconfigOptions = {
+  tsconfig: { compilerOptions: { target: "ES2022", verbatimModuleSyntax: true } },
+};
+
+export default defineConfig({
+  oxc: oxcOptions as never,
+  test: { include: ["test/**/*.test.ts"], environment: "node" },
+});

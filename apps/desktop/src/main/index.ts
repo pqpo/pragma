@@ -1,8 +1,10 @@
+import { mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { BrowserWindow, app, ipcMain, safeStorage, shell } from "electron";
 import { PragmaPaths } from "@pragma/core";
+import { createFileStewardStateRepository, createStewardService } from "@pragma/steward";
 
 import { createBridgeSnapshot } from "./bridge-snapshot.ts";
 import { installCapabilityHandlers } from "./capability-ipc.ts";
@@ -32,6 +34,9 @@ import { installPragmaProjectHandlers } from "./pragma-project-ipc.ts";
 import { createPragmaProjectStore } from "./pragma-project-store.ts";
 import { getRuntimeAvailability } from "./runtime-availability.ts";
 import { installWorkspaceScopeHandlers } from "./workspace-scope.ts";
+import { installStewardHandlers } from "./steward-ipc.ts";
+import { createDesktopStewardProjectPort } from "./steward-project-adapter.ts";
+import { createDesktopStewardTaskPort } from "./steward-task-adapter.ts";
 import { installWorkflowLayoutHandlers } from "./workflow-layout-ipc.ts";
 import { createWorkflowLayoutStore } from "./workflow-layout-store.ts";
 
@@ -195,22 +200,45 @@ void app.whenReady().then(async () => {
   installContextStoreHandlers(contextStores, () => mainWindow);
   installExpertDefinitionHandlers(expertStore);
   installPragmaProjectHandlers(pragmaProjectStore);
+  const missionRunner = createMissionRunner({
+    missions: missionStore,
+    project: pragmaProjectStore,
+    capabilityStore,
+    capabilityCredentials,
+    capabilitiesPath: join(app.getPath("home"), ".pragma", "capabilities"),
+    pragmaHome: join(app.getPath("home"), ".pragma"),
+    contextStores,
+    plugins: pluginStore,
+    runtimes,
+  });
   installMissionHandlers({
     missions: missionStore,
     project: pragmaProjectStore,
     getWindow: () => mainWindow,
-    runner: createMissionRunner({
-      missions: missionStore,
-      project: pragmaProjectStore,
-      capabilityStore,
-      capabilityCredentials,
-      capabilitiesPath: join(app.getPath("home"), ".pragma", "capabilities"),
-      pragmaHome: join(app.getPath("home"), ".pragma"),
-      contextStores,
-      plugins: pluginStore,
-      runtimes,
-    }),
+    runner: missionRunner,
   });
+  const stewardStateRoot = join(pragmaPaths.stateRoot(), "steward");
+  const stewardWorkspace = join(pragmaPaths.root, "workspaces", "steward");
+  await mkdir(stewardWorkspace, { recursive: true, mode: 0o700 });
+  installStewardHandlers(
+    createStewardService({
+      pragmaHome: pragmaPaths.root,
+      workspace: stewardWorkspace,
+      definitionStateRoot: join(stewardStateRoot, "definitions"),
+      runtimes,
+      state: createFileStewardStateRepository(join(stewardStateRoot, "installation.json")),
+      project: createDesktopStewardProjectPort({
+        project: pragmaProjectStore,
+        stateRoot: stewardStateRoot,
+      }),
+      tasks: createDesktopStewardTaskPort({
+        missions: missionStore,
+        runner: missionRunner,
+        project: pragmaProjectStore,
+        stateRoot: stewardStateRoot,
+      }),
+    }),
+  );
   installModelProviderHandlers(modelProviderStore);
   await createWindow();
 

@@ -5,11 +5,11 @@ import { GeneralSettingsFragment } from "./GeneralSettingsFragment.tsx";
 import { ModelProvidersFragment } from "./ModelProvidersFragment.tsx";
 import { RuntimeEnvironmentsFragment } from "./RuntimeEnvironmentsFragment.tsx";
 
-type SettingsView = "general" | "models" | "runtimes";
+export type SettingsView = "general" | "models" | "runtimes";
 
-export function SettingsPage() {
+export function SettingsPage(props: { readonly initialView?: SettingsView } = {}) {
   const { t } = useTranslation("settings");
-  const [activeView, setActiveView] = useState<SettingsView>("general");
+  const [activeView, setActiveView] = useState<SettingsView>(props.initialView ?? "general");
 
   return (
     <section className="settings-page">

@@ -4,36 +4,36 @@ import { describe, expect, it } from "vitest";
 import { App } from "./App.tsx";
 
 describe("App", () => {
-  it("renders the expert directory by default", () => {
+  it("renders the Steward Home by default", () => {
     const html = renderToStaticMarkup(<App />);
 
+    expect(html).toContain("PRAGMA STEWARD");
+    expect(html).toContain("What would you like to orchestrate?");
+    expect(html).toContain("Create or update an Expert");
+    expect(html).toContain("PI Runtime");
+    expect(html).toContain('aria-label="Model"');
+    expect(html).toContain('aria-label="Thinking depth"');
+    expect(html).toContain("Manage runtimes");
     expect(html).toContain("Studio");
-    expect(html).toContain("Reusable specialists available to your missions.");
-    expect(html).toContain("Create expert");
-    expect(html).toContain("Search experts");
-    expect(html).toContain("0 experts");
   });
 
-  it("offers the Studio collections with their counts", () => {
+  it("offers every available application destination", () => {
     const html = renderToStaticMarkup(<App />);
 
-    expect(html).not.toContain("Overview");
-    expect(html).toContain("Experts");
-    expect(html).toContain("Expert teams");
-    expect(html).toContain("Flows");
-    expect(html).toContain("Capabilities");
-    expect(html).toContain("Plugins");
-    expect(html.match(/>0</g)?.length).toBe(6);
+    expect(html).toContain("Home");
+    expect(html).toContain("Missions");
+    expect(html).toContain("Studio");
+    expect(html).toContain("Settings");
   });
 
-  it("keeps unavailable application navigation disabled", () => {
+  it("keeps every application navigation destination enabled", () => {
     const html = renderToStaticMarkup(<App />);
 
     expect(html).toContain("Missions");
     expect(html).toContain("Studio");
     expect(html).not.toContain("Inbox");
     expect(html).not.toContain("Alex Chen");
-    expect(html.match(/disabled=""/g)?.length).toBe(1);
+    expect(html).not.toContain('class="navigation-item" type="button" disabled');
   });
 
   it("keeps the accessible sidebar collapse control in a compact footer", () => {

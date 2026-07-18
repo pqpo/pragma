@@ -1,0 +1,15 @@
+apiVersion: pragma/v2
+kind: Capability
+metadata:
+  id: pragma-dsl-authoring
+  version: 1.0.0
+  name: Author Pragma DSL
+  description: Instructions and references for authoring validated pragma/v2 resources.
+  tags: [builtin, steward, skill]
+spec:
+  adapter: pragma.capability.skill@v1
+  config:
+    source:
+      type: project
+      path: skills/author-pragma-dsl
+    entry: SKILL.md

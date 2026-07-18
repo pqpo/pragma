@@ -1,0 +1,4 @@
+interface:
+  display_name: "Author Pragma DSL"
+  short_description: "Create and update validated pragma/v2 resources"
+  default_prompt: "Create or update Pragma DSL resources from the user intent, validate the complete project, and save the approved change."
