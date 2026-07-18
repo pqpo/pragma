@@ -45,5 +45,6 @@ describe("ExpertDetailFragment", () => {
     expect(html).toContain("Show more");
     expect(html).not.toContain("d".repeat(201));
     expect(html).not.toContain("i".repeat(421));
+    expect(html).toMatch(/studio-screen-header.*Back to Experts.*studio-screen-body.*Test Expert/s);
   });
 });

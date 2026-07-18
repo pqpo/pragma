@@ -430,7 +430,7 @@ export function StudioPage(props: { readonly onTryExpert: (expert: ExpertRecord)
           />
         ) : null}
         {expertError ? (
-          <p className="form-error" role="alert">
+          <p className="form-error studio-page-error" role="alert">
             {expertError}
           </p>
         ) : null}

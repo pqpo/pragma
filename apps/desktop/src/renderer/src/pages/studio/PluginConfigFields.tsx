@@ -7,7 +7,6 @@ export function PluginConfigFields(props: {
   readonly values: Readonly<Record<string, unknown>>;
   readonly inherited?: Readonly<Record<string, unknown>> | undefined;
   readonly configuredSecrets: ReadonlySet<string>;
-  readonly allowInherit?: boolean | undefined;
   readonly onValuesChange: (values: Record<string, unknown>) => void;
   readonly onSecretChange: (path: string, value: string | null) => void;
 }) {
@@ -25,26 +24,6 @@ export function PluginConfigFields(props: {
           <div className="plugin-config-field" key={property.name}>
             <header>
               <label htmlFor={`plugin-config-${property.name}`}>{property.name}</label>
-              {props.allowInherit && !property.secret ? (
-                <label className="plugin-inherit-toggle">
-                  <input
-                    type="checkbox"
-                    checked={!overridden}
-                    onChange={(event) =>
-                      props.onValuesChange(
-                        event.target.checked
-                          ? removePath(props.values, property.name)
-                          : setPath(
-                              props.values,
-                              property.name,
-                              value ?? emptyValue(property.type),
-                            ),
-                      )
-                    }
-                  />
-                  Inherit default
-                </label>
-              ) : null}
             </header>
             <small>{property.description}</small>
             {property.secret ? (
@@ -70,7 +49,6 @@ export function PluginConfigFields(props: {
             ) : property.enum !== undefined ? (
               <select
                 id={`plugin-config-${property.name}`}
-                disabled={props.allowInherit === true && !overridden}
                 value={String(value ?? "")}
                 onChange={(event) =>
                   props.onValuesChange(
@@ -91,7 +69,6 @@ export function PluginConfigFields(props: {
             ) : property.type === "boolean" ? (
               <select
                 id={`plugin-config-${property.name}`}
-                disabled={props.allowInherit === true && !overridden}
                 value={String(value ?? false)}
                 onChange={(event) =>
                   props.onValuesChange(
@@ -105,7 +82,6 @@ export function PluginConfigFields(props: {
             ) : property.type === "object" || property.type === "array" ? (
               <JsonConfigInput
                 id={`plugin-config-${property.name}`}
-                disabled={props.allowInherit === true && !overridden}
                 type={property.type}
                 value={value ?? emptyValue(property.type)}
                 onChange={(next) =>
@@ -116,7 +92,6 @@ export function PluginConfigFields(props: {
               <input
                 id={`plugin-config-${property.name}`}
                 type={property.type === "number" ? "number" : "text"}
-                disabled={props.allowInherit === true && !overridden}
                 value={typeof value === "string" || typeof value === "number" ? value : ""}
                 onChange={(event) =>
                   props.onValuesChange(
@@ -195,7 +170,6 @@ function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
 
 function JsonConfigInput(props: {
   readonly id: string;
-  readonly disabled: boolean;
   readonly type: "object" | "array";
   readonly value: unknown;
   readonly onChange: (value: unknown) => void;
@@ -211,7 +185,6 @@ function JsonConfigInput(props: {
     <>
       <textarea
         id={props.id}
-        disabled={props.disabled}
         spellCheck={false}
         value={text}
         aria-invalid={invalid}
@@ -271,22 +244,6 @@ function setPath(
     cursor = cursor[segment] as Record<string, unknown>;
   }
   cursor[segments.at(-1)!] = value;
-  return result;
-}
-
-function removePath(
-  source: Readonly<Record<string, unknown>>,
-  path: string,
-): Record<string, unknown> {
-  const result = structuredClone(source) as Record<string, unknown>;
-  const segments = path.split(".");
-  let cursor: Record<string, unknown> | undefined = result;
-  for (const segment of segments.slice(0, -1)) {
-    const next: unknown = cursor[segment];
-    if (next === null || typeof next !== "object" || Array.isArray(next)) return result;
-    cursor = next as Record<string, unknown>;
-  }
-  delete cursor[segments.at(-1)!];
   return result;
 }
 

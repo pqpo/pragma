@@ -17,6 +17,7 @@ import type {
   SkillDocument,
 } from "../../../../shared/desktop-api.ts";
 import { errorMessage } from "../../lib/errors.ts";
+import { StudioScreenFrame } from "./StudioScreenFrame.tsx";
 import { desktopApi } from "./studio-model.ts";
 
 export function CapabilityDetailFragment(props: {
@@ -117,12 +118,16 @@ export function CapabilityDetailFragment(props: {
   const Icon = capabilityIcon(capability);
 
   return (
-    <section className="capability-detail" aria-labelledby="capability-detail-name">
-      <button className="back-link" type="button" onClick={props.onBack}>
-        <ArrowLeft size={18} aria-hidden="true" />
-        Back to Capabilities
-      </button>
-
+    <StudioScreenFrame
+      className="capability-detail"
+      labelledBy="capability-detail-name"
+      header={
+        <button className="back-link" type="button" onClick={props.onBack}>
+          <ArrowLeft size={18} aria-hidden="true" />
+          Back to Capabilities
+        </button>
+      }
+    >
       <header className="capability-detail-header">
         <span className="expert-avatar" aria-hidden="true">
           <Icon size={40} />
@@ -264,7 +269,7 @@ export function CapabilityDetailFragment(props: {
           {error}
         </p>
       ) : null}
-    </section>
+    </StudioScreenFrame>
   );
 }
 

@@ -60,6 +60,9 @@ describe("CapabilityDetailFragment", () => {
     expect(html).toContain("JSON input");
     expect(html).toContain("Run test");
     expect(html).not.toContain("service-auth");
+    expect(html).toMatch(
+      /studio-screen-header.*Back to Capabilities.*studio-screen-body.*Customer API/s,
+    );
   });
 
   it("strips Skill frontmatter only from the rendered Markdown body", () => {

@@ -22,6 +22,7 @@ import {
   type PreviewCodeServiceResult,
 } from "../../../../shared/desktop-api.ts";
 import { errorMessage } from "../../lib/errors.ts";
+import { StudioScreenFrame } from "./StudioScreenFrame.tsx";
 import { desktopApi } from "./studio-model.ts";
 
 type Filter = "all" | "skills" | "tools";
@@ -307,77 +308,81 @@ export function CapabilityDirectoryFragment(props: {
   };
 
   return (
-    <section className="capability-directory" aria-labelledby="capabilities-heading">
-      <header className="studio-heading capability-heading">
-        <div>
-          <h1 id="capabilities-heading">Capabilities</h1>
-          <p>
-            Reusable skills and external tools that Experts can select when creating or editing.
-          </p>
-        </div>
-        <div className="studio-create-wrap">
-          <button className="primary-button" type="button" onClick={() => setMenuOpen(!menuOpen)}>
-            <Plus size={17} /> Add capability <CaretDown size={14} />
-          </button>
-          {menuOpen ? (
-            <div className="studio-create-menu capability-create-menu">
-              <button
-                type="button"
-                onClick={() => {
-                  setMode("skill");
-                  setMenuOpen(false);
-                }}
-              >
-                <CloudArrowUp size={19} />
-                <span>
-                  <strong>Upload skill</strong>
-                  <small>Import a directory or ZIP containing SKILL.md.</small>
-                </span>
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setMode("mcp");
-                  setMenuOpen(false);
-                }}
-              >
-                <Plug size={19} />
-                <span>
-                  <strong>Connect MCP server</strong>
-                  <small>stdio, Streamable HTTP, or SSE.</small>
-                </span>
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setMode("http");
-                  setMenuOpen(false);
-                }}
-              >
-                <Globe size={19} />
-                <span>
-                  <strong>Add HTTP service</strong>
-                  <small>Wrap a JSON API as local MCP tools.</small>
-                </span>
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setMode("code");
-                  setMenuOpen(false);
-                }}
-              >
-                <Code size={19} />
-                <span>
-                  <strong>Add code service</strong>
-                  <small>Run a pure JavaScript function as a local MCP tool.</small>
-                </span>
-              </button>
-            </div>
-          ) : null}
-        </div>
-      </header>
-
+    <StudioScreenFrame
+      className="capability-directory"
+      labelledBy="capabilities-heading"
+      header={
+        <header className="studio-heading capability-heading">
+          <div>
+            <h1 id="capabilities-heading">Capabilities</h1>
+            <p>
+              Reusable skills and external tools that Experts can select when creating or editing.
+            </p>
+          </div>
+          <div className="studio-create-wrap">
+            <button className="primary-button" type="button" onClick={() => setMenuOpen(!menuOpen)}>
+              <Plus size={17} /> Add capability <CaretDown size={14} />
+            </button>
+            {menuOpen ? (
+              <div className="studio-create-menu capability-create-menu">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMode("skill");
+                    setMenuOpen(false);
+                  }}
+                >
+                  <CloudArrowUp size={19} />
+                  <span>
+                    <strong>Upload skill</strong>
+                    <small>Import a directory or ZIP containing SKILL.md.</small>
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMode("mcp");
+                    setMenuOpen(false);
+                  }}
+                >
+                  <Plug size={19} />
+                  <span>
+                    <strong>Connect MCP server</strong>
+                    <small>stdio, Streamable HTTP, or SSE.</small>
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMode("http");
+                    setMenuOpen(false);
+                  }}
+                >
+                  <Globe size={19} />
+                  <span>
+                    <strong>Add HTTP service</strong>
+                    <small>Wrap a JSON API as local MCP tools.</small>
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMode("code");
+                    setMenuOpen(false);
+                  }}
+                >
+                  <Code size={19} />
+                  <span>
+                    <strong>Add code service</strong>
+                    <small>Run a pure JavaScript function as a local MCP tool.</small>
+                  </span>
+                </button>
+              </div>
+            ) : null}
+          </div>
+        </header>
+      }
+    >
       <div className="capability-controls">
         <label className="directory-search">
           <MagnifyingGlass size={18} />
@@ -508,7 +513,7 @@ export function CapabilityDirectoryFragment(props: {
           </section>
         </div>
       ) : null}
-    </section>
+    </StudioScreenFrame>
   );
 }
 

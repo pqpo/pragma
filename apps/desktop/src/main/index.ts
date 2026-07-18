@@ -50,6 +50,8 @@ function applicationIconPath(): string {
 }
 
 async function createWindow(): Promise<void> {
+  const isMac = process.platform === "darwin";
+
   mainWindow = new BrowserWindow({
     width: 1440,
     height: 900,
@@ -59,6 +61,16 @@ async function createWindow(): Promise<void> {
     icon: applicationIconPath(),
     autoHideMenuBar: true,
     show: false,
+    titleBarStyle: isMac ? "hiddenInset" : "hidden",
+    ...(isMac
+      ? { trafficLightPosition: { x: 18, y: 18 } }
+      : {
+          titleBarOverlay: {
+            color: "#f1f3f2",
+            symbolColor: "#67706a",
+            height: 36,
+          },
+        }),
     webPreferences: {
       preload: join(currentDir, "../preload/index.mjs"),
       sandbox: false,

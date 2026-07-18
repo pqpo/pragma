@@ -13,6 +13,7 @@ import {
 import { useState } from "react";
 
 import type { ContextStore } from "../../../../shared/desktop-api.ts";
+import { StudioScreenFrame } from "./StudioScreenFrame.tsx";
 import type { ExpertRecord } from "./studio-model.ts";
 
 const DESCRIPTION_PREVIEW_LENGTH = 200;
@@ -38,18 +39,22 @@ export function ExpertDirectoryFragment(props: {
   );
 
   return (
-    <section className="expert-directory" aria-labelledby="experts-heading">
-      <header className="studio-heading expert-directory-heading">
-        <div>
-          <h1 id="experts-heading">Experts</h1>
-          <p>Reusable specialists available to your missions.</p>
-        </div>
-        <button className="primary-button" type="button" onClick={props.onCreate}>
-          <Plus size={17} aria-hidden="true" />
-          Create expert
-        </button>
-      </header>
-
+    <StudioScreenFrame
+      className="expert-directory"
+      labelledBy="experts-heading"
+      header={
+        <header className="studio-heading expert-directory-heading">
+          <div>
+            <h1 id="experts-heading">Experts</h1>
+            <p>Reusable specialists available to your missions.</p>
+          </div>
+          <button className="primary-button" type="button" onClick={props.onCreate}>
+            <Plus size={17} aria-hidden="true" />
+            Create expert
+          </button>
+        </header>
+      }
+    >
       <div className="directory-controls">
         <label className="directory-search">
           <MagnifyingGlass size={18} aria-hidden="true" />
@@ -103,7 +108,7 @@ export function ExpertDirectoryFragment(props: {
         })}
       </div>
       <p className="directory-count">{matchingExperts.length} experts</p>
-    </section>
+    </StudioScreenFrame>
   );
 }
 
@@ -123,11 +128,16 @@ export function ExpertDetailFragment(props: {
       ? truncateText(props.expert.instructions, INSTRUCTIONS_PREVIEW_LENGTH)
       : props.expert.instructions.trim();
   return (
-    <section className="expert-detail" aria-labelledby="expert-name">
-      <button className="back-link" type="button" onClick={props.onBack}>
-        <ArrowLeft size={18} aria-hidden="true" />
-        Back to Experts
-      </button>
+    <StudioScreenFrame
+      className="expert-detail"
+      labelledBy="expert-name"
+      header={
+        <button className="back-link" type="button" onClick={props.onBack}>
+          <ArrowLeft size={18} aria-hidden="true" />
+          Back to Experts
+        </button>
+      }
+    >
       <header className="expert-detail-header">
         <span className="expert-avatar" aria-hidden="true">
           <ExpertIcon size={42} weight="regular" />
@@ -242,6 +252,6 @@ export function ExpertDetailFragment(props: {
           <Info size={19} aria-hidden="true" /> One tool requires approval before use in sessions.
         </p>
       ) : null}
-    </section>
+    </StudioScreenFrame>
   );
 }

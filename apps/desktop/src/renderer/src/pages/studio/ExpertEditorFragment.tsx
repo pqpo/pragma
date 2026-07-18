@@ -18,6 +18,7 @@ import {
 import { desktopApi, type ExpertDraft, type ExpertRecord } from "./studio-model.ts";
 import { ExpertCapabilityPicker } from "./ExpertCapabilityPicker.tsx";
 import { ExpertPluginPicker } from "./ExpertPluginPicker.tsx";
+import { StudioScreenFrame } from "./StudioScreenFrame.tsx";
 
 type CreateStep = "identity" | "instructions" | "capabilities" | "review";
 
@@ -144,17 +145,22 @@ export function ExpertEditorFragment(props: {
   };
 
   return (
-    <section className="expert-creator" aria-labelledby="create-expert-heading">
-      <header className="studio-heading creator-heading">
-        <div>
-          <h1 id="create-expert-heading">{isEditing ? "Edit expert" : "Create expert"}</h1>
-          <p>
-            {isEditing
-              ? "Update this reusable expert declaration."
-              : "Build a reusable expert to power missions."}
-          </p>
-        </div>
-      </header>
+    <StudioScreenFrame
+      className="expert-creator"
+      labelledBy="create-expert-heading"
+      header={
+        <header className="studio-heading creator-heading">
+          <div>
+            <h1 id="create-expert-heading">{isEditing ? "Edit expert" : "Create expert"}</h1>
+            <p>
+              {isEditing
+                ? "Update this reusable expert declaration."
+                : "Build a reusable expert to power missions."}
+            </p>
+          </div>
+        </header>
+      }
+    >
       <div className="creator-layout">
         <ol className="creator-steps" aria-label="Create expert steps">
           {steps.map((item, itemIndex) => (
@@ -507,7 +513,7 @@ export function ExpertEditorFragment(props: {
           </footer>
         </form>
       </div>
-    </section>
+    </StudioScreenFrame>
   );
 }
 

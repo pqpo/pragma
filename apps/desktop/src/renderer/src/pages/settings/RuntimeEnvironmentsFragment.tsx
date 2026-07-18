@@ -1,14 +1,26 @@
-import { TerminalWindow } from "@phosphor-icons/react";
+import { CaretRight, TerminalWindow } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
 
 import type { DesktopRuntimeAvailability } from "../../../../shared/desktop-api.ts";
 import { errorMessage } from "../../lib/errors.ts";
+import { RuntimeEnvironmentDetail } from "./RuntimeEnvironmentDetail.tsx";
+import { SettingsScreenFrame } from "./SettingsScreenFrame.tsx";
 
-function RuntimeCard(props: { readonly runtime: DesktopRuntimeAvailability }) {
+export function RuntimeCard(props: {
+  readonly runtime: DesktopRuntimeAvailability;
+  readonly onOpen: () => void;
+}) {
   const available = props.runtime.status === "available";
+  const modelCount = props.runtime.models?.length;
 
   return (
-    <article className="runtime-card">
+    <article className="runtime-card runtime-summary-card">
+      <button
+        className="runtime-card-hit-target"
+        type="button"
+        aria-label={`View ${props.runtime.displayName} details`}
+        onClick={props.onOpen}
+      />
       <header className="card-header runtime-card-header">
         <span className="card-icon runtime-icon" aria-hidden="true">
           <TerminalWindow size={24} />
@@ -25,46 +37,27 @@ function RuntimeCard(props: { readonly runtime: DesktopRuntimeAvailability }) {
         </span>
       </header>
 
-      <p className="runtime-description">{props.runtime.kind}</p>
-
-      <div className="runtime-command">
+      <div className="runtime-summary-footer">
         <div>
-          <span>{props.runtime.executablePath === undefined ? "Runtime ID" : "Executable"}</span>
-          <code>{props.runtime.executablePath ?? props.runtime.id}</code>
+          <p>{props.runtime.kind}</p>
+          <span>
+            {modelCount === undefined
+              ? "Model catalog unavailable"
+              : `${modelCount} ${modelCount === 1 ? "model" : "models"}`}
+          </span>
         </div>
-        {props.runtime.version ? (
-          <code className="runtime-version">{props.runtime.version}</code>
-        ) : null}
+        <span className="runtime-open-detail" aria-hidden="true">
+          View details
+          <CaretRight size={17} />
+        </span>
       </div>
-      {props.runtime.reason ? <p className="runtime-reason">{props.runtime.reason}</p> : null}
-      {props.runtime.modelDiscoveryError ? (
-        <p className="runtime-reason">{props.runtime.modelDiscoveryError}</p>
-      ) : null}
-      {(props.runtime.models?.length ?? 0) > 0 ? (
-        <div className="configured-model-list">
-          {props.runtime.models!.map((model) => (
-            <div className="configured-model" key={runtimeModelKey(model)}>
-              <div>
-                <strong>{model.displayName}</strong>
-                <p>
-                  {model.provider.displayName}
-                  {model.thinking === undefined
-                    ? ""
-                    : ` · Thinking: ${model.thinking.supportedLevels
-                        .map((level) => level.label)
-                        .join(", ")}`}
-                </p>
-              </div>
-            </div>
-          ))}
-        </div>
-      ) : null}
     </article>
   );
 }
 
 export function RuntimeEnvironmentsFragment() {
   const [runtimes, setRuntimes] = useState<readonly DesktopRuntimeAvailability[]>([]);
+  const [selectedRuntimeId, setSelectedRuntimeId] = useState<string>();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -84,33 +77,50 @@ export function RuntimeEnvironmentsFragment() {
     void loadRuntimes();
   }, []);
 
+  const selectedRuntime = runtimes.find((runtime) => runtime.id === selectedRuntimeId);
+
+  if (selectedRuntime !== undefined) {
+    return (
+      <RuntimeEnvironmentDetail
+        runtime={selectedRuntime}
+        refreshing={loading}
+        error={error}
+        onBack={() => setSelectedRuntimeId(undefined)}
+        onRefresh={() => void loadRuntimes()}
+      />
+    );
+  }
+
   return (
-    <div className="settings-panel" id="runtimes-panel" role="tabpanel">
-      <header className="panel-heading panel-heading-with-action">
-        <div>
-          <h2>Runtime Environments</h2>
-          <p>Inspect registered runtimes and the model catalogs they provide.</p>
-        </div>
-        <button
-          className="secondary-button"
-          type="button"
-          onClick={() => void loadRuntimes()}
-          disabled={loading}
-        >
-          {loading ? "Checking…" : "Check again"}
-        </button>
-      </header>
-
-      <section className="runtime-section" aria-labelledby="local-runtimes-heading">
-        <header className="section-copy compact-section-copy">
-          <h3 id="local-runtimes-heading">Registered runtimes</h3>
-          <p>Runtime availability and models are reported by each registered adapter.</p>
+    <SettingsScreenFrame
+      id="runtimes-panel"
+      labelledBy="runtimes-panel-heading"
+      header={
+        <header className="panel-heading panel-heading-with-action">
+          <div>
+            <h2 id="runtimes-panel-heading">Runtime Environments</h2>
+            <p>Inspect registered runtimes and the model catalogs they provide.</p>
+          </div>
+          <button
+            className="secondary-button"
+            type="button"
+            onClick={() => void loadRuntimes()}
+            disabled={loading}
+          >
+            {loading ? "Checking…" : "Check again"}
+          </button>
         </header>
-
+      }
+    >
+      <section className="runtime-section" aria-labelledby="local-runtimes-heading">
         <div className="runtime-list">
           {loading ? <p className="empty-state">Checking runtime availability…</p> : null}
           {runtimes.map((runtime) => (
-            <RuntimeCard key={runtime.id} runtime={runtime} />
+            <RuntimeCard
+              key={runtime.id}
+              runtime={runtime}
+              onOpen={() => setSelectedRuntimeId(runtime.id)}
+            />
           ))}
         </div>
       </section>
@@ -119,10 +129,6 @@ export function RuntimeEnvironmentsFragment() {
           {error}
         </p>
       ) : null}
-    </div>
+    </SettingsScreenFrame>
   );
-}
-
-function runtimeModelKey(model: NonNullable<DesktopRuntimeAvailability["models"]>[number]): string {
-  return JSON.stringify([model.provider.kind, model.provider.id, model.id]);
 }

@@ -12,8 +12,9 @@ import { useState } from "react";
 
 import type { DesktopPlugin, PluginZipInspection } from "../../../../shared/desktop-api.ts";
 import { errorMessage } from "../../lib/errors.ts";
-import { desktopApi } from "./studio-model.ts";
 import { PluginConfigFields } from "./PluginConfigFields.tsx";
+import { StudioScreenFrame } from "./StudioScreenFrame.tsx";
+import { desktopApi } from "./studio-model.ts";
 
 type PluginFilter = "all" | "built_in" | "user";
 
@@ -74,21 +75,26 @@ export function PluginDirectoryFragment(props: {
   };
 
   return (
-    <section className="capability-directory plugin-directory">
-      <header className="studio-heading capability-heading">
-        <div>
-          <h1>Plugins</h1>
-          <p>Install reusable Expert extensions and configure their Desktop defaults.</p>
-        </div>
-        <button
-          className="primary-button"
-          type="button"
-          disabled={busy}
-          onClick={() => void inspect()}
-        >
-          <UploadSimple size={17} /> {busy ? "Checking…" : "Import ZIP"}
-        </button>
-      </header>
+    <StudioScreenFrame
+      className="capability-directory plugin-directory"
+      labelledBy="plugins-heading"
+      header={
+        <header className="studio-heading capability-heading">
+          <div>
+            <h1 id="plugins-heading">Plugins</h1>
+            <p>Install reusable Expert extensions and configure their Desktop defaults.</p>
+          </div>
+          <button
+            className="primary-button"
+            type="button"
+            disabled={busy}
+            onClick={() => void inspect()}
+          >
+            <UploadSimple size={17} /> {busy ? "Checking…" : "Import ZIP"}
+          </button>
+        </header>
+      }
+    >
       <div className="capability-controls">
         <label className="directory-search">
           <MagnifyingGlass size={18} />
@@ -223,7 +229,7 @@ export function PluginDirectoryFragment(props: {
           </section>
         </div>
       ) : null}
-    </section>
+    </StudioScreenFrame>
   );
 }
 
@@ -265,17 +271,22 @@ export function PluginDetailFragment(props: {
     }
   };
   return (
-    <section className="capability-detail plugin-detail">
-      <button className="back-link" type="button" onClick={props.onBack}>
-        <ArrowLeft size={18} /> Back to Plugins
-      </button>
+    <StudioScreenFrame
+      className="capability-detail plugin-detail"
+      labelledBy="plugin-detail-name"
+      header={
+        <button className="back-link" type="button" onClick={props.onBack}>
+          <ArrowLeft size={18} /> Back to Plugins
+        </button>
+      }
+    >
       <header className="capability-detail-header">
         <span className="expert-avatar">
           <PuzzlePiece size={40} />
         </span>
         <div className="capability-detail-title">
           <div>
-            <h1>{props.plugin.manifest.name}</h1>
+            <h1 id="plugin-detail-name">{props.plugin.manifest.name}</h1>
             <span className="capability-type">
               {props.plugin.origin === "built_in" ? "Built-in" : "Imported"}
             </span>
@@ -340,7 +351,6 @@ export function PluginDetailFragment(props: {
         <PluginConfigFields
           manifest={props.plugin.manifest}
           values={config}
-          allowInherit
           configuredSecrets={
             new Set([
               ...props.plugin.configuredSecrets.filter((path) => secrets[path] !== null),
@@ -375,7 +385,7 @@ export function PluginDetailFragment(props: {
           {error}
         </p>
       ) : null}
-    </section>
+    </StudioScreenFrame>
   );
 }
 

@@ -335,3 +335,96 @@ final result: passed
 - None required for this scoped regression fix.
 
 final result: passed
+
+---
+
+# Desktop Settings Layout Design QA
+
+- Source visual truth: `/Users/linminqiu/Workspace/expert-mesh/apps/desktop/design-qa/settings-layout-reference.png`
+- Implementation screenshots:
+  - `/Users/linminqiu/Workspace/expert-mesh/apps/desktop/design-qa/settings-models-2048x616.png`
+  - `/Users/linminqiu/Workspace/expert-mesh/apps/desktop/design-qa/settings-models-scrolled-2048x616.png`
+  - `/Users/linminqiu/Workspace/expert-mesh/apps/desktop/design-qa/settings-models-1440x900.png`
+- Full-view comparison: `/Users/linminqiu/Workspace/expert-mesh/apps/desktop/design-qa/settings-layout-comparison.png`
+- Viewports: reference comparison at 2048 × 616; product default window verification at 1440 × 900
+- States: Models empty state, Models provider editor scrolled, Runtime directory
+
+**Findings**
+
+- No actionable P0, P1, or P2 differences remain for the requested layout behavior.
+- The redundant page-level `Settings` heading is absent.
+- The settings page uses a fixed two-column frame aligned with Studio: the secondary navigation is outside the scrolling region and the active content owns the remaining height.
+- Each Settings screen uses a fixed header row and an independently scrolling body row.
+- Scroll evidence at 2048 × 616: the body moved from `scrollTop: 0` to `scrollTop: 50.5`; the navigation stayed at `top: 56`, and the content header stayed at `top: 50 / bottom: 152`.
+
+**Required Fidelity Surfaces**
+
+- Fonts and typography: existing Pragma font stack, weights, sizes, and heading hierarchy are preserved. Content titles use the same 32px product heading treatment as Studio.
+- Spacing and layout rhythm: page columns, top offset, content inset, fixed header height, and responsive 1180px breakpoint follow the Studio frame. The content body alone owns vertical overflow.
+- Colors and visual tokens: existing background, surface, green, border, focus, shadow, and radius tokens are unchanged.
+- Image quality and asset fidelity: no raster assets were introduced or replaced. Existing Phosphor icons remain the source for visible UI icons.
+- Copy and content: Settings navigation labels, content headings, descriptions, actions, and empty-state copy are unchanged.
+
+**Interaction And Runtime Checks**
+
+- Tested switching between Models & Providers and Runtime Environments.
+- Tested opening the provider editor and scrolling its content body.
+- Browser console errors checked: none.
+- The red API alert visible in the browser-only screenshots is an expected preview limitation because the Electron preload bridge is unavailable outside the Desktop shell; it is not present in the packaged/runtime Desktop environment.
+
+**Focused Region Comparison Evidence**
+
+- Header and scroll behavior: `/Users/linminqiu/Workspace/expert-mesh/apps/desktop/design-qa/settings-models-scrolled-2048x616.png`
+- The focused check confirms that the provider form moves beneath the stationary content title and settings navigation.
+
+**Comparison History**
+
+- Initial comparison found no P0/P1/P2 mismatch against the annotated layout requirements, so no visual correction loop was required.
+
+**Follow-up Polish**
+
+- None required for this layout change.
+
+final result: passed
+
+---
+
+# Desktop Settings Protocol Select Design QA
+
+- Source visual truth: `/Users/linminqiu/Workspace/expert-mesh/apps/desktop/design-qa/settings-protocol-native-reference.png`
+- Implementation screenshot: `/Users/linminqiu/Workspace/expert-mesh/apps/desktop/design-qa/settings-protocol-focus-1440x900.png`
+- Full-view comparison: `/Users/linminqiu/Workspace/expert-mesh/apps/desktop/design-qa/settings-protocol-comparison.png`
+- Viewport and state: 1440 × 900, Settings → Models & Providers → Add provider, API protocol focused with OpenAI Responses selected.
+
+**Findings**
+
+- The supplied screenshot identified a P2 visual inconsistency: API protocol exposed the browser's unstyled select border, typography, and system arrow.
+- No actionable P0, P1, or P2 differences remain after the control styling update.
+
+**Required Fidelity Surfaces**
+
+- Fonts and typography: the selected value now inherits the same 14px Pragma form typography as adjacent fields.
+- Spacing and layout rhythm: the control is 42px high with the same 10px radius, horizontal padding, and field rhythm as the provider name, base URL, and API key controls.
+- Colors and visual tokens: default, hover, and focus states use the existing surface-soft, green, focus-ring, and muted foreground tokens.
+- Image quality and asset fidelity: the system arrow is replaced by the existing Phosphor `CaretDown` icon; no custom SVG, CSS drawing, or raster asset is used.
+- Copy and content: protocol values and selection behavior are unchanged.
+
+**Interaction Evidence**
+
+- Selected OpenAI Responses through the semantic combobox and verified the selected state.
+- Verified keyboard focus remains on the native select while the rounded wrapper renders the visible focus ring.
+- Computed styles confirm `appearance: none`, no inner border or outline, a 10px shell radius, and a 3px tokenized focus ring.
+- Browser console errors checked: none.
+
+**Comparison History**
+
+1. Initial screenshot showed the P2 unstyled native control.
+2. Added a styled select shell, removed native appearance, and added a Phosphor caret.
+3. The first focus pass exposed the global square `select:focus-visible` outline; suppressed the inner outline so only the rounded wrapper focus ring remains.
+4. Re-captured and compared the final focused state.
+
+**Follow-up Polish**
+
+- None required for this scoped control update.
+
+final result: passed

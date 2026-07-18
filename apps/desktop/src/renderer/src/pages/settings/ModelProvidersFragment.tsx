@@ -1,8 +1,9 @@
-import { Key, Plus, Robot, Trash } from "@phosphor-icons/react";
+import { CaretDown, Key, Plus, Robot, Trash } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
 
 import type { ModelConnectionTestResult, ModelProvider } from "../../../../shared/desktop-api.ts";
 import { errorMessage } from "../../lib/errors.ts";
+import { SettingsScreenFrame } from "./SettingsScreenFrame.tsx";
 
 type ProviderDraft = {
   readonly id?: string;
@@ -90,16 +91,19 @@ function ProviderEditor(props: {
       </label>
       <label className="static-field">
         <span>API protocol</span>
-        <select
-          value={draft.protocol}
-          onChange={(event) =>
-            setDraft({ ...draft, protocol: event.target.value as ModelProvider["protocol"] })
-          }
-        >
-          <option value="openai-completions">OpenAI Chat Completions</option>
-          <option value="openai-responses">OpenAI Responses</option>
-          <option value="anthropic-messages">Anthropic Messages</option>
-        </select>
+        <span className="protocol-select-shell">
+          <select
+            value={draft.protocol}
+            onChange={(event) =>
+              setDraft({ ...draft, protocol: event.target.value as ModelProvider["protocol"] })
+            }
+          >
+            <option value="openai-completions">OpenAI Chat Completions</option>
+            <option value="openai-responses">OpenAI Responses</option>
+            <option value="anthropic-messages">Anthropic Messages</option>
+          </select>
+          <CaretDown size={17} weight="bold" aria-hidden="true" />
+        </span>
       </label>
       <label className="static-field">
         <span>API base URL</span>
@@ -435,24 +439,28 @@ export function ModelProvidersFragment() {
   };
 
   return (
-    <div className="settings-panel" id="models-panel" role="tabpanel">
-      <header className="panel-heading panel-heading-with-action">
-        <div>
-          <h2>Models &amp; Providers</h2>
-          <p>Add OpenAI-compatible APIs and test each configured model.</p>
-        </div>
-        {draft ? null : (
-          <button
-            className="primary-button"
-            type="button"
-            onClick={() => setDraft(emptyProviderDraft())}
-          >
-            <Plus size={17} aria-hidden="true" />
-            Add provider
-          </button>
-        )}
-      </header>
-
+    <SettingsScreenFrame
+      id="models-panel"
+      labelledBy="models-panel-heading"
+      header={
+        <header className="panel-heading panel-heading-with-action">
+          <div>
+            <h2 id="models-panel-heading">Models &amp; Providers</h2>
+            <p>Add OpenAI-compatible APIs and test each configured model.</p>
+          </div>
+          {draft ? null : (
+            <button
+              className="primary-button"
+              type="button"
+              onClick={() => setDraft(emptyProviderDraft())}
+            >
+              <Plus size={17} aria-hidden="true" />
+              Add provider
+            </button>
+          )}
+        </header>
+      }
+    >
       <div className="provider-list">
         {draft ? (
           <article className="provider-card is-expanded">
@@ -497,7 +505,7 @@ export function ModelProvidersFragment() {
           {error}
         </p>
       ) : null}
-    </div>
+    </SettingsScreenFrame>
   );
 }
 

@@ -24,6 +24,7 @@ import type {
   ExpertContextStoreMount,
 } from "../../../../shared/desktop-api.ts";
 import { errorMessage } from "../../lib/errors.ts";
+import { StudioScreenFrame } from "./StudioScreenFrame.tsx";
 
 type StoreFilter = "all" | ContextStore["type"];
 type CreateStep = "type" | "configure" | "review";
@@ -67,18 +68,22 @@ export function ContextStoreDirectoryFragment(props: {
     [filter, props.stores, query],
   );
   return (
-    <section className="context-store-directory" aria-labelledby="context-stores-heading">
-      <header className="studio-heading expert-directory-heading">
-        <div>
-          <h1 id="context-stores-heading">Context stores</h1>
-          <p>Reusable knowledge sources for your experts.</p>
-        </div>
-        <button className="primary-button" type="button" onClick={() => setCreating(true)}>
-          <Plus size={17} aria-hidden="true" />
-          Create store
-        </button>
-      </header>
-
+    <StudioScreenFrame
+      className="context-store-directory"
+      labelledBy="context-stores-heading"
+      header={
+        <header className="studio-heading expert-directory-heading">
+          <div>
+            <h1 id="context-stores-heading">Context stores</h1>
+            <p>Reusable knowledge sources for your experts.</p>
+          </div>
+          <button className="primary-button" type="button" onClick={() => setCreating(true)}>
+            <Plus size={17} aria-hidden="true" />
+            Create store
+          </button>
+        </header>
+      }
+    >
       <div className="store-filter-tabs" aria-label="Filter context stores">
         {(["all", "file", "note"] as const).map((value) => (
           <button
@@ -168,7 +173,7 @@ export function ContextStoreDirectoryFragment(props: {
           onPickFolder={props.onPickFolder}
         />
       ) : null}
-    </section>
+    </StudioScreenFrame>
   );
 }
 
@@ -216,11 +221,16 @@ export function ContextStoreDetailFragment(props: {
   };
 
   return (
-    <section className="store-detail" aria-labelledby="context-store-name">
-      <button className="back-link" type="button" onClick={props.onBack}>
-        <ArrowLeft size={18} aria-hidden="true" />
-        Back to Context stores
-      </button>
+    <StudioScreenFrame
+      className="store-detail"
+      labelledBy="context-store-name"
+      header={
+        <button className="back-link" type="button" onClick={props.onBack}>
+          <ArrowLeft size={18} aria-hidden="true" />
+          Back to Context stores
+        </button>
+      }
+    >
       <div className="store-detail-title">
         <span className="store-icon" aria-hidden="true">
           <StoreIcon size={24} />
@@ -354,7 +364,7 @@ export function ContextStoreDetailFragment(props: {
           onClose={() => setSelectedContent(null)}
         />
       ) : null}
-    </section>
+    </StudioScreenFrame>
   );
 }
 

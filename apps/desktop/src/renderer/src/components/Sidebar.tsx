@@ -35,19 +35,6 @@ export function Sidebar(props: {
           </span>
           <span className="brand-name">Pragma</span>
         </div>
-        <button
-          className="sidebar-collapse-toggle"
-          type="button"
-          aria-label={props.collapsed ? "Expand navigation" : "Collapse navigation"}
-          title={props.collapsed ? "Expand navigation" : "Collapse navigation"}
-          onClick={props.onToggle}
-        >
-          {props.collapsed ? (
-            <CaretDoubleRight size={18} aria-hidden="true" />
-          ) : (
-            <CaretDoubleLeft size={18} aria-hidden="true" />
-          )}
-        </button>
       </div>
 
       <nav className="navigation" aria-label="Main navigation">
@@ -81,6 +68,22 @@ export function Sidebar(props: {
           );
         })}
       </nav>
+
+      <div className="sidebar-footer">
+        <button
+          className="sidebar-collapse-toggle"
+          type="button"
+          aria-label={props.collapsed ? "Expand navigation" : "Collapse navigation"}
+          title={props.collapsed ? "Expand navigation" : "Collapse navigation"}
+          onClick={props.onToggle}
+        >
+          {props.collapsed ? (
+            <CaretDoubleRight size={17} aria-hidden="true" />
+          ) : (
+            <CaretDoubleLeft size={17} aria-hidden="true" />
+          )}
+        </button>
+      </div>
     </aside>
   );
 }

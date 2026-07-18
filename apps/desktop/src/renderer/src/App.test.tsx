@@ -36,9 +36,19 @@ describe("App", () => {
     expect(html.match(/disabled=""/g)?.length).toBe(1);
   });
 
-  it("includes an accessible sidebar collapse control", () => {
+  it("keeps the accessible sidebar collapse control in a compact footer", () => {
     const html = renderToStaticMarkup(<App />);
 
     expect(html).toContain('aria-label="Collapse navigation"');
+    expect(html).toContain('class="sidebar-footer"');
+    expect(html.indexOf('class="sidebar-footer"')).toBeGreaterThan(
+      html.indexOf('aria-label="Main navigation"'),
+    );
+  });
+
+  it("provides a frameless window drag region above the application shell", () => {
+    const html = renderToStaticMarkup(<App />);
+
+    expect(html).toContain('class="window-drag-region"');
   });
 });

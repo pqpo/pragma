@@ -11,6 +11,7 @@ import type { PragmaProjectSnapshot } from "../../../../shared/desktop-api.ts";
 
 import { errorMessage } from "../../lib/errors.ts";
 import { FlowEditor } from "./flow-editor/FlowEditor.tsx";
+import { StudioScreenFrame } from "./StudioScreenFrame.tsx";
 import { desktopApi } from "./studio-model.ts";
 
 type ResourceKind = "team" | "flow";
@@ -90,20 +91,25 @@ export function PragmaResourceDirectoryFragment(props: {
   const Icon = props.kind === "team" ? UsersThree : GitBranch;
   const headingId = props.kind === "team" ? "expert-teams-heading" : "flows-heading";
   return (
-    <section className="studio-collection pragma-resource-directory" aria-labelledby={headingId}>
-      <header className="studio-heading">
-        <div>
-          <h1 id={headingId}>{props.kind === "team" ? "Expert teams" : "Flows"}</h1>
-          <p>
-            {props.kind === "team"
-              ? "Governed expert groups with an explicit coordinator and delegation policy."
-              : "Durable graphs with explicit transitions, human gates, and bounded loops."}
-          </p>
-        </div>
-        <button className="primary-button" type="button" onClick={() => setEditing("new")}>
-          <Plus size={17} aria-hidden="true" /> New {props.kind}
-        </button>
-      </header>
+    <StudioScreenFrame
+      className="studio-collection pragma-resource-directory"
+      labelledBy={headingId}
+      header={
+        <header className="studio-heading">
+          <div>
+            <h1 id={headingId}>{props.kind === "team" ? "Expert teams" : "Flows"}</h1>
+            <p>
+              {props.kind === "team"
+                ? "Governed expert groups with an explicit coordinator and delegation policy."
+                : "Durable graphs with explicit transitions, human gates, and bounded loops."}
+            </p>
+          </div>
+          <button className="primary-button" type="button" onClick={() => setEditing("new")}>
+            <Plus size={17} aria-hidden="true" /> New {props.kind}
+          </button>
+        </header>
+      }
+    >
       <div className="studio-asset-rows">
         {resources.map((resource) => (
           <div className="studio-asset-row pragma-resource-row" key={resource.metadata.id}>
@@ -131,7 +137,7 @@ export function PragmaResourceDirectoryFragment(props: {
           {error}
         </p>
       ) : null}
-    </section>
+    </StudioScreenFrame>
   );
 }
 
@@ -272,13 +278,18 @@ function ResourceEditor(props: {
   readonly saveDisabled?: boolean | undefined;
 }) {
   return (
-    <section className="pragma-resource-editor">
-      <header>
-        <div>
-          <h2>{props.title}</h2>
-          <p>Saved as canonical Pragma YAML when published.</p>
-        </div>
-      </header>
+    <StudioScreenFrame
+      className="pragma-resource-editor"
+      labelledBy="resource-editor-heading"
+      header={
+        <header>
+          <div>
+            <h2 id="resource-editor-heading">{props.title}</h2>
+            <p>Saved as canonical Pragma YAML when published.</p>
+          </div>
+        </header>
+      }
+    >
       <div className="pragma-resource-form">{props.children}</div>
       {props.error ? (
         <p className="form-error" role="alert">
@@ -298,7 +309,7 @@ function ResourceEditor(props: {
           Validate & publish
         </button>
       </footer>
-    </section>
+    </StudioScreenFrame>
   );
 }
 
