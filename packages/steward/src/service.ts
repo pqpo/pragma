@@ -6,7 +6,6 @@ import {
   ExpertAgentHumanRequestSchema,
   type Expert,
   type ExpertAgentHumanRequest,
-  type ExpertAgentHumanResponse,
   type ExpertSession,
   type ExpertTurn,
   type PragmaApp,
@@ -30,6 +29,7 @@ import {
   type StewardInteraction,
   type StewardSessionState,
 } from "./contracts.ts";
+import { toExpertHumanResponse, toStewardHumanRequest } from "./human-interaction.ts";
 import type { StewardDslProjectPort, StewardStateRepository, StewardTaskPort } from "./ports.ts";
 import { createStewardTools } from "./tools.ts";
 
@@ -198,9 +198,11 @@ export function createStewardService(options: {
       for (const turn of turns.toReversed()) {
         const request = await findRequest(turn, input.interactionId);
         if (request === undefined) continue;
-        await turn.respondToHumanInteraction(input.interactionId, toHumanResponse(request, input), {
-          requestId: input.requestId,
-        });
+        await turn.respondToHumanInteraction(
+          input.interactionId,
+          toExpertHumanResponse(request, input.response),
+          { requestId: input.requestId },
+        );
         await updateStatus("running");
         return;
       }
@@ -353,14 +355,11 @@ async function pendingInteractions(turn: ExpertTurn): Promise<StewardInteraction
     const interactionId = String(data.interactionId ?? "");
     if (interactionId === "" || responded.has(interactionId)) return [];
     const request = ExpertAgentHumanRequestSchema.safeParse(data.request);
-    if (!request.success || request.data.kind !== "tool_approval") return [];
+    if (!request.success) return [];
     return [
       {
         interactionId,
-        kind: "approval" as const,
-        title: request.data.toolName,
-        prompt: request.data.reason ?? `Approve ${request.data.toolName}?`,
-        data: request.data.input,
+        request: toStewardHumanRequest(request.data),
       },
     ];
   });
@@ -379,18 +378,4 @@ async function findRequest(
   return event === undefined
     ? undefined
     : ExpertAgentHumanRequestSchema.parse((event.data as { request?: unknown }).request);
-}
-
-function toHumanResponse(
-  request: ExpertAgentHumanRequest,
-  input: RespondStewardInteraction,
-): ExpertAgentHumanResponse {
-  if (request.kind !== "tool_approval") {
-    throw new Error("The Home UI currently supports Steward tool approvals only.");
-  }
-  return {
-    kind: "tool_approval",
-    approved: input.approved,
-    ...(input.notes === undefined ? {} : { reason: input.notes }),
-  };
 }

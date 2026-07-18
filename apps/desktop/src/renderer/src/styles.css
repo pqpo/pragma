@@ -392,8 +392,10 @@ p {
   cursor: pointer;
 }
 
-.steward-approval {
+.steward-interaction {
+  display: grid;
   width: min(680px, 100%);
+  gap: 12px;
   margin-top: 18px;
   padding: 18px;
   border: 1px solid #d9dfcf;
@@ -402,14 +404,28 @@ p {
   box-shadow: var(--shadow-soft);
 }
 
-.steward-approval p {
+.steward-interaction > header {
+  display: grid;
+  gap: 4px;
+}
+
+.steward-interaction > header > small,
+.steward-question > small {
+  color: var(--green-dark);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.steward-interaction p {
   margin-top: 6px;
   color: var(--muted);
 }
 
-.steward-approval pre {
+.steward-interaction pre {
   max-height: 220px;
-  margin: 12px 0;
+  margin: 0;
   padding: 10px;
   overflow: auto;
   border-radius: 8px;
@@ -418,13 +434,77 @@ p {
   font-size: 11px;
 }
 
-.steward-approval > div {
+.steward-interaction > textarea,
+.steward-question > textarea {
+  min-height: 64px;
+  resize: vertical;
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  outline: 0;
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+}
+
+.steward-interaction > textarea:focus,
+.steward-question > textarea:focus {
+  border-color: var(--green);
+  box-shadow: 0 0 0 2px var(--focus-ring);
+}
+
+.steward-question {
+  display: grid;
+  gap: 9px;
+}
+
+.steward-question-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.steward-question-options > button,
+.steward-question-options > label {
+  display: grid;
+  gap: 3px;
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+}
+
+.steward-question-options > button.is-selected {
+  border-color: var(--green);
+  background: var(--green-soft);
+  box-shadow: 0 0 0 2px var(--focus-ring);
+}
+
+.steward-question-options small {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.steward-question-options.is-multiple > label {
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+}
+
+.steward-question-options.is-multiple > label > span {
+  display: grid;
+  gap: 2px;
+}
+
+.steward-interaction > footer {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
 }
 
-.steward-approval button {
+.steward-interaction button {
   display: inline-flex;
   align-items: center;
   gap: 5px;
@@ -435,10 +515,15 @@ p {
   cursor: pointer;
 }
 
-.steward-approval button.is-primary {
+.steward-interaction button.is-primary {
   border-color: var(--green);
   background: var(--green);
   color: white;
+}
+
+.steward-interaction button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
 }
 
 .steward-composer-wrap {

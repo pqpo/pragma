@@ -2,14 +2,13 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowRight,
   Brain,
-  Check,
   FolderOpen,
   GearSix,
   PaperPlaneTilt,
   Sparkle,
   StopCircle,
-  X,
 } from "@phosphor-icons/react";
+import type { HumanInteractionResponse } from "@pragma/shared";
 
 import type {
   DesktopRuntimeAvailability,
@@ -19,6 +18,7 @@ import type {
   StewardSessionState,
 } from "../../../../shared/desktop-api.ts";
 import { errorMessage } from "../../lib/errors.ts";
+import { StewardInteractionCard } from "./StewardInteractionCard.tsx";
 
 const WORKSPACE_KEY = "pragma.steward.task-workspace";
 
@@ -237,23 +237,12 @@ export function HomePage(props: {
         )}
 
         {interactions.map((interaction) => (
-          <article className="steward-approval" key={interaction.interactionId}>
-            <strong>{interaction.title}</strong>
-            <p>{interaction.prompt}</p>
-            <pre>{JSON.stringify(interaction.data, null, 2)}</pre>
-            <div>
-              <button type="button" onClick={() => void respond(interaction, false)}>
-                <X size={15} /> Reject
-              </button>
-              <button
-                className="is-primary"
-                type="button"
-                onClick={() => void respond(interaction, true)}
-              >
-                <Check size={15} /> Approve
-              </button>
-            </div>
-          </article>
+          <StewardInteractionCard
+            key={interaction.interactionId}
+            interaction={interaction}
+            responding={busy}
+            onRespond={(response) => void respond(interaction, response)}
+          />
         ))}
         <div ref={endRef} />
       </div>
@@ -388,13 +377,13 @@ export function HomePage(props: {
     </section>
   );
 
-  async function respond(interaction: StewardInteraction, approved: boolean) {
+  async function respond(interaction: StewardInteraction, response: HumanInteractionResponse) {
     setBusy(true);
     try {
       await window.pragmaDesktop.respondStewardInteraction({
         interactionId: interaction.interactionId,
         requestId: crypto.randomUUID(),
-        approved,
+        response,
       });
       await refresh();
     } catch (respondError) {

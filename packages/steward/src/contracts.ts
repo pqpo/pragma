@@ -1,5 +1,9 @@
 import { PragmaDiagnosticSchema, PragmaSemanticResourceRefSchema } from "@pragma/interpreter/ast";
-import { PromptRuntimeModelSelectionSchema } from "@pragma/shared";
+import {
+  HumanInteractionRequestSchema,
+  HumanInteractionResponseSchema,
+  PromptRuntimeModelSelectionSchema,
+} from "@pragma/shared";
 import { z } from "zod";
 
 export const StewardResourceSummarySchema = z.object({
@@ -87,10 +91,7 @@ export const StewardChatSnapshotSchema = z.object({
 
 export const StewardInteractionSchema = z.object({
   interactionId: z.string().min(1),
-  kind: z.literal("approval"),
-  title: z.string().min(1),
-  prompt: z.string().min(1),
-  data: z.unknown().optional(),
+  request: HumanInteractionRequestSchema,
 });
 
 export const InitializeStewardSchema = z.object({ runtimeId: z.string().min(1) });
@@ -103,8 +104,7 @@ export const PromptStewardSchema = z.object({
 export const RespondStewardInteractionSchema = z.object({
   interactionId: z.string().min(1),
   requestId: z.string().uuid(),
-  approved: z.boolean(),
-  notes: z.string().max(10_000).optional(),
+  response: HumanInteractionResponseSchema,
 });
 
 export type StewardResourceSummary = z.infer<typeof StewardResourceSummarySchema>;
