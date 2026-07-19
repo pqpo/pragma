@@ -12,13 +12,17 @@ source of truth and use only the Steward DSL tools to inspect, validate, and sav
 
 1. Discuss missing intent before changing definitions.
 2. Call `list_dsl_resources`, then read every resource that will be changed or referenced.
-3. Read the relevant reference file below before drafting YAML.
-4. Preserve exact references. Keep an existing resource version unless the user asks for a new
+3. Before creating or changing an Expert, call `list_expert_options`. Confirm a listed Runtime
+   model, recommend only listed capabilities that match the user's intent, and ask whether to use
+   the recommendation, customize it, or enable no capabilities.
+4. Read the relevant reference file below before drafting YAML.
+5. Preserve exact references. Keep an existing resource version unless the user asks for a new
    version or the change intentionally introduces a separately addressable contract.
-5. Call `prepare_dsl_changes` with complete YAML documents for all affected resources.
-6. Fix every error diagnostic. Never bypass validation or hand-edit project files.
-7. Explain the normalized diff, then call `commit_dsl_changes` with the returned change-set ID.
-8. Report the committed project revision and changed canonical refs.
+6. Call `prepare_dsl_changes` with complete YAML documents for all affected resources.
+7. Fix every error diagnostic. Never bypass validation or hand-edit project files.
+8. Explain the normalized diff, then call `commit_dsl_changes` with the returned change-set ID.
+9. After the tool returns, always report success or failure, the committed project revision, and
+   the changed canonical refs.
 
 ## References
 

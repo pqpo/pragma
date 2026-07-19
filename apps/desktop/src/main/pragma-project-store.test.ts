@@ -5,6 +5,7 @@ import { join } from "node:path";
 import type {
   PragmaCapabilityResource,
   PragmaExpertResource,
+  PragmaExpertTeamResource,
   PragmaFlowResource,
   PragmaRuntimeProfileResource,
 } from "@pragma/interpreter/ast";
@@ -27,7 +28,11 @@ async function stores() {
   const directory = await mkdtemp(join(tmpdir(), "pragma-project-store-"));
   directories.push(directory);
   const project = createPragmaProjectStore({ projectsPath: directory });
-  return { directory, project, experts: createExpertDefinitionStore({ project }) };
+  return {
+    directory,
+    project,
+    experts: createExpertDefinitionStore({ project, validateModel: async () => undefined }),
+  };
 }
 
 describe("PragmaProjectStore", () => {
@@ -79,6 +84,30 @@ describe("PragmaProjectStore", () => {
     expect((await project.get()).revision).toBe(0);
   });
 
+  it("rejects Expert submissions without a runtime and explicit model", async () => {
+    const { project } = await stores();
+    const missingRuntime = exampleExpert();
+    delete missingRuntime.spec.runtime;
+    await expect(
+      project.publish({ expectedRevision: 0, resources: [missingRuntime] }),
+    ).rejects.toMatchObject({
+      code: "project_invalid",
+      diagnostics: [expect.objectContaining({ message: "Runtime is required." })],
+    });
+
+    const runtime = exampleRuntime();
+    runtime.spec.config = { runtimeId: "codex" };
+    await expect(
+      project.publish({ expectedRevision: 0, resources: [runtime, exampleExpert()] }),
+    ).rejects.toMatchObject({
+      code: "project_invalid",
+      diagnostics: expect.arrayContaining([
+        expect.objectContaining({ message: "Model provider is required." }),
+        expect.objectContaining({ message: "Model is required." }),
+      ]),
+    });
+  });
+
   it("validates a Flow candidate against the current project without publishing it", async () => {
     const { project } = await stores();
     await project.publish({
@@ -108,7 +137,8 @@ describe("PragmaProjectStore", () => {
       tags: ["writing"],
       version: "1.0.0",
       scope: "Release communication",
-      model: null,
+      instructions: "Write verified release notes.",
+      model: { runtimeId: "codex", providerId: "openai", modelId: "gpt-test" },
       capabilities: [],
       contextStoreMounts: [],
       plugins: [],
@@ -138,7 +168,8 @@ describe("PragmaProjectStore", () => {
       tags: ["writing"],
       version: "1.0.0",
       scope: "Release communication",
-      model: null,
+      instructions: "Write verified release notes.",
+      model: { runtimeId: "codex", providerId: "openai", modelId: "gpt-test" },
       capabilities: [],
       contextStoreMounts: [],
       plugins: [],
@@ -160,6 +191,7 @@ describe("PragmaProjectStore", () => {
         tags: [],
         version,
         scope: "Release communication",
+        instructions: "Write verified release notes.",
         model: { runtimeId: "codex", providerId: "openai", modelId: "gpt-test" },
         capabilities: [],
         contextStoreMounts: [],
@@ -178,9 +210,67 @@ describe("PragmaProjectStore", () => {
       (resource) => `${resource.kind}:${resource.metadata.id}@${resource.metadata.version}`,
     );
     expect(refs).not.toContain("Expert:writer@1.0.0");
-    expect(refs).not.toContain("RuntimeProfile:writer.runtime@1.0.0");
+    expect(refs).not.toContain("RuntimeProfile:writer_runtime@1.0.0");
     expect(refs).toContain("Expert:writer@2.0.0");
-    expect(refs).toContain("RuntimeProfile:writer.runtime@2.0.0");
+    expect(refs).toContain("RuntimeProfile:writer_runtime@2.0.0");
+  });
+
+  it("blocks deletion of referenced Experts and built-in resources", async () => {
+    const { project, experts } = await stores();
+    const flow = exampleFlow();
+    flow.spec.graph.steps["finish"] = {
+      expert: { ref: "expert:writer@1.0.0" },
+      version: "1.0.0",
+    };
+    const builtIn = exampleFlow();
+    builtIn.metadata = { ...builtIn.metadata, id: "built_in_flow", tags: ["builtin"] };
+    await project.publish({
+      expectedRevision: 0,
+      resources: [exampleRuntime(), exampleExpert(), flow, builtIn],
+    });
+
+    await expect(experts.remove("expert:writer@1.0.0")).rejects.toMatchObject({
+      code: "expert_referenced",
+    });
+    await expect(
+      project.remove({ expectedRevision: 1, ref: "flow:built_in_flow@1.0.0" }),
+    ).rejects.toMatchObject({ code: "built_in_readonly" });
+    expect((await project.get()).revision).toBe(1);
+  });
+
+  it("blocks deletion of Teams and Flows referenced by another Flow", async () => {
+    const { project } = await stores();
+    const team = exampleTeam();
+    const teamConsumer = exampleFlow();
+    teamConsumer.metadata = {
+      ...teamConsumer.metadata,
+      id: "team_consumer",
+      name: "Team consumer",
+    };
+    teamConsumer.spec.graph.steps["finish"] = {
+      team: { ref: "team:reviewers@1.0.0" },
+      version: "1.0.0",
+    };
+    const child = exampleFlow();
+    child.metadata = { ...child.metadata, id: "child", name: "Child flow" };
+    const parent = exampleFlow();
+    parent.metadata = { ...parent.metadata, id: "parent", name: "Parent flow" };
+    parent.spec.graph.steps["finish"] = {
+      flow: { ref: "flow:child@1.0.0" },
+      version: "1.0.0",
+    };
+    await project.publish({
+      expectedRevision: 0,
+      resources: [exampleRuntime(), exampleExpert(), team, teamConsumer, child, parent],
+    });
+
+    await expect(
+      project.remove({ expectedRevision: 1, ref: "team:reviewers@1.0.0" }),
+    ).rejects.toMatchObject({ code: "resource_referenced" });
+    await expect(
+      project.remove({ expectedRevision: 1, ref: "flow:child@1.0.0" }),
+    ).rejects.toMatchObject({ code: "resource_referenced" });
+    expect((await project.get()).revision).toBe(1);
   });
 
   it("recovers an unpublished revision directory left by an interrupted publish", async () => {
@@ -256,7 +346,7 @@ describe("PragmaProjectStore", () => {
       (resource) => resource.kind === "Expert" && resource.metadata.id === "writer",
     );
     expect(stored?.kind === "Expert" ? stored.spec.runtime : undefined).toEqual({
-      ref: "runtime-profile:writer.runtime@1.0.0",
+      ref: "runtime-profile:writer_runtime@1.0.0",
     });
     expect(stored?.kind === "Expert" ? stored.spec.capabilities : undefined).toEqual(
       expert.spec.capabilities,
@@ -277,7 +367,8 @@ function exampleExpert(): PragmaExpertResource {
     },
     spec: {
       scope: "Release communication",
-      runtime: { ref: "runtime-profile:writer.runtime@1.0.0" },
+      instructions: "Write verified release notes.",
+      runtime: { ref: "runtime-profile:writer_runtime@1.0.0" },
       capabilities: [],
       toolApprovals: {},
       contextStores: [],
@@ -292,13 +383,40 @@ function exampleRuntime(): PragmaRuntimeProfileResource {
     apiVersion: "pragma/v2",
     kind: "RuntimeProfile",
     metadata: {
-      id: "writer.runtime",
+      id: "writer_runtime",
       version: "1.0.0",
       name: "Writer Runtime",
       description: "Writer runtime profile.",
       tags: [],
     },
-    spec: { adapter: "pragma.runtime.profile@v1", config: { runtimeId: "codex" } },
+    spec: {
+      adapter: "pragma.runtime.profile@v1",
+      config: { runtimeId: "codex", providerId: "openai", model: "gpt-test" },
+    },
+  };
+}
+
+function exampleTeam(): PragmaExpertTeamResource {
+  return {
+    apiVersion: "pragma/v2",
+    kind: "ExpertTeam",
+    metadata: {
+      id: "reviewers",
+      version: "1.0.0",
+      name: "Reviewers",
+      description: "Coordinates review work.",
+      tags: [],
+    },
+    spec: {
+      coordinator: { ref: "expert:writer@1.0.0" },
+      members: [{ ref: "expert:writer@1.0.0" }],
+      delegation: {
+        maxConcurrency: 2,
+        maxDepth: 2,
+        context: "context-policy:pragma.fresh@v1",
+        runtimes: {},
+      },
+    },
   };
 }
 

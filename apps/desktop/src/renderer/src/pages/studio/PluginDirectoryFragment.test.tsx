@@ -90,5 +90,19 @@ describe("PluginDirectoryFragment", () => {
     expect(html).toContain("5 items");
     expect(html).toContain("code-repositories.md");
     expect(html).toContain("beforeSessionCreate");
+    expect(html).not.toContain("Delete plugin");
+  });
+
+  it("offers deletion for an imported plugin", () => {
+    const html = renderToStaticMarkup(
+      <PluginDetailFragment
+        plugin={{ ...plugin, origin: "user" }}
+        onBack={() => undefined}
+        onChanged={() => undefined}
+        onDeleted={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("Delete plugin");
   });
 });

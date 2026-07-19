@@ -173,19 +173,7 @@ export function createBuiltInRuntimeFactories(
         assertEmptyRuntimeConfig(environment);
         return createPiRuntime({
           descriptor: { id: environment.id, displayName: environment.displayName },
-          modelCatalog: {
-            listModels: async () => await modelProviders.listRuntimeModels(),
-            resolveProvider: async (providerId) => {
-              const provider = await modelProviders.getCredentials(providerId);
-              return {
-                id: providerId,
-                baseUrl: provider.baseUrl,
-                modelIds: provider.models,
-                apiKey: provider.apiKey,
-                api: provider.protocol,
-              };
-            },
-          },
+          modelProviders,
         });
       },
     },

@@ -276,7 +276,8 @@ function expertFixture(): PragmaExpertResource {
     },
     spec: {
       scope: "Product experience design.",
-      runtime: { ref: "runtime-profile:product_designer.runtime@0.1.0" },
+      instructions: "Design accessible product experiences.",
+      runtime: { ref: "runtime-profile:product_designer_runtime@0.1.0" },
       capabilities: [],
       toolApprovals: {},
       contextStores: [],

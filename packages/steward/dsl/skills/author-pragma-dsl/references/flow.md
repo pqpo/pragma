@@ -6,7 +6,7 @@ Use a Flow for explicit, inspectable control flow.
 apiVersion: pragma/v2
 kind: Flow
 metadata:
-  id: review-change
+  id: review_change
   version: 1.0.0
   name: Review Change
   description: Implements a change and asks a reviewer to inspect it.

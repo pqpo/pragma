@@ -21,6 +21,15 @@ describe("desktop translations", () => {
     await i18n.changeLanguage(locale);
     expect(i18n.t("navigation.settings", { ns: "common" })).toBe(expected);
   });
+
+  it.each([
+    ["en", "Your orchestration workspace"],
+    ["zh-Hans", "你的编排工作空间"],
+    ["zh-Hant", "你的編排工作空間"],
+  ] as const)("renders the Home title in %s", async (locale, expected) => {
+    await i18n.changeLanguage(locale);
+    expect(i18n.t("title", { ns: "home" })).toBe(expected);
+  });
 });
 
 function resourceKeys(value: object, prefix = ""): string[] {

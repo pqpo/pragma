@@ -17,6 +17,7 @@ import { errorMessage } from "../../lib/errors.ts";
 import { PluginConfigFields } from "./PluginConfigFields.tsx";
 import { StudioScreenFrame } from "./StudioScreenFrame.tsx";
 import { desktopApi } from "./studio-model.ts";
+import { DeleteConfirmationDialog } from "./DeleteConfirmationDialog.tsx";
 
 type PluginFilter = "all" | "built_in" | "user";
 
@@ -247,6 +248,7 @@ export function PluginDetailFragment(props: {
   const [secrets, setSecrets] = useState<Record<string, string | null>>({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [confirmOpen, setConfirmOpen] = useState(false);
   const save = async () => {
     const api = desktopApi();
     if (api === undefined) return;
@@ -271,6 +273,7 @@ export function PluginDetailFragment(props: {
       props.onDeleted(props.plugin.ref);
     } catch (cause) {
       setError(errorMessage(cause));
+      setConfirmOpen(false);
       setBusy(false);
     }
   };
@@ -303,7 +306,10 @@ export function PluginDetailFragment(props: {
             className="secondary-button danger-button"
             type="button"
             disabled={busy}
-            onClick={() => void remove()}
+            onClick={() => {
+              setError(null);
+              setConfirmOpen(true);
+            }}
           >
             <Trash size={17} /> {t("deletePlugin")}
           </button>
@@ -336,6 +342,18 @@ export function PluginDetailFragment(props: {
       </section>
       {props.plugin.diagnostic ? (
         <p className="capability-diagnostic">{props.plugin.diagnostic}</p>
+      ) : null}
+      {confirmOpen ? (
+        <DeleteConfirmationDialog
+          title={t("deletePluginTitle")}
+          description={t("deletePluginDescription", { name: props.plugin.manifest.name })}
+          cancelLabel={t("cancel")}
+          confirmLabel={t("deletePlugin")}
+          deletingLabel={t("deleting")}
+          busy={busy}
+          onCancel={() => setConfirmOpen(false)}
+          onConfirm={() => void remove()}
+        />
       ) : null}
       <section className="plugin-detail-section">
         <header>

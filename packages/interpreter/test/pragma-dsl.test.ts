@@ -12,13 +12,58 @@ import {
 
 import {
   FlowActionRegistry,
+  PRAGMA_EXPERT_INSTRUCTIONS_MAX_LENGTH,
+  PRAGMA_EXPERT_SCOPE_MAX_LENGTH,
   PragmaExpertResourceSchema,
+  PragmaSemanticResourceIdSchema,
   formatPragmaYaml,
   loadPragmaProject,
   type PragmaExpertResource,
 } from "../src/index.ts";
 
 describe("Pragma YAML DSL", () => {
+  it("uses one semantic ID rule and bounded required Expert text", () => {
+    expect(PragmaSemanticResourceIdSchema.safeParse("code_reviewer_2").success).toBe(true);
+    expect(PragmaSemanticResourceIdSchema.safeParse("code-reviewer").success).toBe(false);
+    expect(PragmaSemanticResourceIdSchema.safeParse("code.reviewer").success).toBe(false);
+
+    const expert = expertResource("reviewer", "Reviews work");
+    expect(
+      PragmaExpertResourceSchema.safeParse({
+        ...expert,
+        spec: {
+          ...expert.spec,
+          scope: "界".repeat(PRAGMA_EXPERT_SCOPE_MAX_LENGTH),
+          instructions: "令".repeat(PRAGMA_EXPERT_INSTRUCTIONS_MAX_LENGTH),
+        },
+      }).success,
+    ).toBe(true);
+    expect(
+      PragmaExpertResourceSchema.safeParse({
+        ...expert,
+        spec: {
+          ...expert.spec,
+          scope: "界".repeat(PRAGMA_EXPERT_SCOPE_MAX_LENGTH + 1),
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      PragmaExpertResourceSchema.safeParse({
+        ...expert,
+        spec: {
+          ...expert.spec,
+          instructions: "令".repeat(PRAGMA_EXPERT_INSTRUCTIONS_MAX_LENGTH + 1),
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      PragmaExpertResourceSchema.safeParse({
+        ...expert,
+        spec: { ...expert.spec, instructions: undefined },
+      }).success,
+    ).toBe(false);
+  });
+
   it("loads split resources, compiles an explicit loop, and dumps stable YAML", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-dsl-"));
     await mkdir(join(root, "flows", "review"), { recursive: true });
@@ -386,7 +431,7 @@ describe("Pragma YAML DSL", () => {
         apiVersion: "pragma/v2",
         kind: "Flow",
         metadata: {
-          id: "invalid-schema",
+          id: "invalid_schema",
           version: "1.0.0",
           name: "Invalid schema",
           description: "Invalid JSON Schema",
@@ -533,7 +578,7 @@ describe("Pragma YAML DSL", () => {
     expect(inspection.resources).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          ref: "runtime-profile:default-runtime@1.0.0",
+          ref: "runtime-profile:default_runtime@1.0.0",
           status: "needs_attention",
         }),
       ]),
@@ -592,7 +637,7 @@ describe("Pragma YAML DSL", () => {
     const entry = join(root, "pragma.yaml");
     const expert: PragmaExpertResource = expertResource("writer", "Writes");
     expert.spec.capabilities = [
-      { ref: "capability:writer-tools@1.0.0", kind: "tools", tools: ["write"] },
+      { ref: "capability:writer_tools@1.0.0", kind: "tools", tools: ["write"] },
     ];
     expert.spec.toolApprovals = { write: "none", mcp_writer_write: "none" };
     await writeFile(
@@ -608,7 +653,7 @@ describe("Pragma YAML DSL", () => {
             apiVersion: "pragma/v2",
             kind: "Capability",
             metadata: {
-              id: "writer-tools",
+              id: "writer_tools",
               version: "1.0.0",
               name: "Writer tools",
               description: "Writes data",
@@ -683,7 +728,7 @@ describe("Pragma YAML DSL", () => {
             metadata: { ...expertResource("writer", "Version two").metadata, version: "2.0.0" },
             spec: {
               ...expertSpec(),
-              runtime: { ref: "runtime-profile:default-runtime@2.0.0" },
+              runtime: { ref: "runtime-profile:default_runtime@2.0.0" },
             },
           },
         ],
@@ -858,7 +903,7 @@ function runtimeProfile() {
     apiVersion: "pragma/v2" as const,
     kind: "RuntimeProfile" as const,
     metadata: {
-      id: "default-runtime",
+      id: "default_runtime",
       version: "1.0.0",
       name: "Default Runtime",
       description: "Default test runtime",
@@ -874,7 +919,8 @@ function runtimeProfile() {
 function expertSpec(scope = "writing") {
   return {
     scope,
-    runtime: { ref: "runtime-profile:default-runtime@1.0.0" },
+    instructions: "Write concise text.",
+    runtime: { ref: "runtime-profile:default_runtime@1.0.0" },
     capabilities: [],
     toolApprovals: {},
     contextStores: [],

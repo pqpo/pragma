@@ -26,6 +26,7 @@
   },
   "dependencies": {
     "@dagrejs/dagre": "^3.0.0",
+    "@lobehub/icons-static-svg": "1.73.0",
     "@phosphor-icons/react": "latest",
     "@pragma/core": "workspace:*",
     "@pragma/interpreter": "workspace:*",

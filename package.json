@@ -23,5 +23,16 @@
     "typescript": "latest",
     "typescript-eslint": "latest",
     "vitest": "latest"
+  },
+  "pnpm": {
+    "overrides": {
+      "typescript": "6.0.3",
+      "eslint": "10.6.0",
+      "typescript-eslint": "8.63.0",
+      "turbo": "2.10.4",
+      "@types/node": "26.1.0",
+      "tsx": "4.23.0",
+      "electron": "43.0.0"
+    }
   }
 }

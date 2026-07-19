@@ -2,39 +2,42 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowRight,
   Brain,
-  FolderOpen,
-  GearSix,
+  CaretDown,
+  Check,
   PaperPlaneTilt,
   Sparkle,
   StopCircle,
+  Toolbox,
+  WarningCircle,
 } from "@phosphor-icons/react";
+import { useTranslation } from "react-i18next";
 import type { HumanInteractionResponse } from "@pragma/shared";
 
 import type {
   DesktopRuntimeAvailability,
   DesktopRuntimeModel,
+  StewardChatEntry,
   StewardChatSnapshot,
   StewardInteraction,
   StewardSessionState,
 } from "../../../../shared/desktop-api.ts";
 import { errorMessage } from "../../lib/errors.ts";
+import { readStewardTaskWorkspace } from "../../lib/steward-preferences.ts";
 import { StewardInteractionCard } from "./StewardInteractionCard.tsx";
-
-const WORKSPACE_KEY = "pragma.steward.task-workspace";
 
 export function HomePage(props: {
   readonly onOpenStudio: () => void;
   readonly onOpenMissions: () => void;
   readonly onOpenModelSettings: () => void;
-  readonly onOpenRuntimeSettings: () => void;
 }) {
+  const { t } = useTranslation("home");
   const [snapshot, setSnapshot] = useState<StewardChatSnapshot>({ state: null, entries: [] });
   const [runtimes, setRuntimes] = useState<readonly DesktopRuntimeAvailability[]>([]);
   const [runtimeId, setRuntimeId] = useState("pi");
   const [modelKey, setModelKey] = useState("");
   const [thinkingLevel, setThinkingLevel] = useState("");
-  const [workspace, setWorkspace] = useState(() =>
-    typeof window === "undefined" ? "" : (window.localStorage.getItem(WORKSPACE_KEY) ?? ""),
+  const [workspace] = useState(() =>
+    readStewardTaskWorkspace(typeof window === "undefined" ? undefined : window.localStorage),
   );
   const [message, setMessage] = useState("");
   const [interactions, setInteractions] = useState<readonly StewardInteraction[]>([]);
@@ -45,12 +48,8 @@ export function HomePage(props: {
 
   const refresh = async () => {
     const api = window.pragmaDesktop;
-    const [chat, pending] = await Promise.all([
-      api.getStewardChat(),
-      api
-        .getStewardState()
-        .then((state) => (state === null ? Promise.resolve([]) : api.listStewardInteractions())),
-    ]);
+    const chat = await api.getStewardChat();
+    const pending = chat.state === null ? [] : await api.listStewardInteractions();
     setSnapshot(chat);
     setInteractions(pending);
   };
@@ -65,7 +64,12 @@ export function HomePage(props: {
         if (cancelled) return;
         setSnapshot((current) => ({ ...current, state }));
         setRuntimes(availability);
-        setRuntimeId(state?.runtimeId ?? "pi");
+        setRuntimeId(
+          state?.runtimeId ??
+            availability.find((runtime) => runtime.isDefault)?.id ??
+            availability.find((runtime) => runtime.status === "available")?.id ??
+            "pi",
+        );
         if (state !== null) {
           void refresh().catch((loadError: unknown) => setError(errorMessage(loadError)));
         }
@@ -145,13 +149,10 @@ export function HomePage(props: {
         return;
       }
       if (selectedRuntime?.status !== "available") {
-        throw new Error(selectedRuntime?.reason ?? "The selected Runtime is unavailable.");
+        throw new Error(selectedRuntime?.reason ?? t("errors.runtimeUnavailable"));
       }
       if (modelSelection === undefined) {
-        throw new Error(
-          selectedRuntime.modelDiscoveryError ??
-            "No model is available for this Runtime. Configure a model provider first.",
-        );
+        throw new Error(selectedRuntime.modelDiscoveryError ?? t("errors.noModelAvailable"));
       }
       let state: StewardSessionState | null = snapshot.state;
       if (state === null) state = await window.pragmaDesktop.initializeSteward({ runtimeId });
@@ -177,16 +178,14 @@ export function HomePage(props: {
       <header className="steward-home-header">
         <div>
           <span className="steward-eyebrow">PRAGMA STEWARD</span>
-          <h1>Your orchestration workspace</h1>
+          <h1>{t("title")}</h1>
         </div>
         {initialized ? (
           <button
             className="steward-text-button"
             type="button"
             onClick={() => {
-              if (
-                !window.confirm("Reset the Steward session? Existing history will remain archived.")
-              ) {
+              if (!window.confirm(t("resetConfirm"))) {
                 return;
               }
               void window.pragmaDesktop.resetSteward().then(() => {
@@ -195,7 +194,7 @@ export function HomePage(props: {
               });
             }}
           >
-            Reset session
+            {t("resetSession")}
           </button>
         ) : null}
       </header>
@@ -206,33 +205,25 @@ export function HomePage(props: {
             <span className="steward-orb">
               <Sparkle size={28} weight="fill" />
             </span>
-            <h2>What would you like to orchestrate?</h2>
-            <p>Create or update an Expert, assemble a Team, design a Flow, or submit a task.</p>
+            <h2>{t("welcomeTitle")}</h2>
+            <p>{t("welcomeDescription")}</p>
           </div>
         ) : (
           <div className="steward-messages">
-            {snapshot.entries.map((entry) => (
-              <article key={entry.id} className={`steward-message is-${entry.role}`}>
-                {entry.role === "tool" ? (
-                  <span className="steward-tool-name">{entry.toolName}</span>
-                ) : null}
-                <div>{entry.content}</div>
-                {entry.role === "tool" &&
-                !entry.isError &&
-                /projectRevision|changedRefs/.test(entry.content) ? (
-                  <button type="button" onClick={props.onOpenStudio}>
-                    Open Studio <ArrowRight size={14} />
-                  </button>
-                ) : null}
-                {entry.role === "tool" &&
-                !entry.isError &&
-                /workspaceLabel|executorRef/.test(entry.content) ? (
-                  <button type="button" onClick={props.onOpenMissions}>
-                    Open Missions <ArrowRight size={14} />
-                  </button>
-                ) : null}
-              </article>
-            ))}
+            {snapshot.entries.map((entry) =>
+              entry.role === "tool" ? (
+                <StewardToolMessage
+                  key={entry.id}
+                  entry={entry}
+                  onOpenStudio={props.onOpenStudio}
+                  onOpenMissions={props.onOpenMissions}
+                />
+              ) : (
+                <article key={entry.id} className={`steward-message is-${entry.role}`}>
+                  <div>{entry.content}</div>
+                </article>
+              ),
+            )}
           </div>
         )}
 
@@ -252,18 +243,18 @@ export function HomePage(props: {
         {configurationNeeded ? (
           <div className="steward-configuration-notice" role="alert">
             <div>
-              <strong>Configure a model before chatting</strong>
-              <span>The PI Runtime needs at least one Model Provider with an API key.</span>
+              <strong>{t("configuration.title")}</strong>
+              <span>{t("configuration.description")}</span>
             </div>
             <button type="button" onClick={props.onOpenModelSettings}>
-              Configure models <ArrowRight size={14} />
+              {t("configuration.action")} <ArrowRight size={14} />
             </button>
           </div>
         ) : null}
         <div className="steward-composer">
           <textarea
             value={message}
-            placeholder="Ask the Steward to create an expert, design a flow, or run a task…"
+            placeholder={t("composerPlaceholder")}
             onChange={(event) => setMessage(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === "Enter" && !event.shiftKey) {
@@ -275,25 +266,7 @@ export function HomePage(props: {
           <div className="steward-composer-footer">
             <div className="steward-context-controls">
               <select
-                aria-label="Runtime"
-                value={runtimeId}
-                disabled={busy || turnActive}
-                onChange={(event) => void changeRuntime(event.target.value)}
-              >
-                {runtimes.length === 0 ? <option value="pi">PI Runtime</option> : null}
-                {runtimes.map((runtime) => (
-                  <option
-                    value={runtime.id}
-                    key={runtime.id}
-                    disabled={runtime.status !== "available"}
-                  >
-                    {runtime.displayName}
-                    {runtime.status === "available" ? "" : " · unavailable"}
-                  </option>
-                ))}
-              </select>
-              <select
-                aria-label="Model"
+                aria-label={t("model")}
                 value={modelKey}
                 disabled={busy || turnActive || selectedRuntime?.status !== "available"}
                 onChange={(event) => {
@@ -306,7 +279,7 @@ export function HomePage(props: {
                 }}
               >
                 {(selectedRuntime?.models?.length ?? 0) === 0 ? (
-                  <option value="">No model configured</option>
+                  <option value="">{t("noModelConfigured")}</option>
                 ) : null}
                 {selectedRuntime?.models?.map((model) => (
                   <option value={runtimeModelKey(model)} key={runtimeModelKey(model)}>
@@ -317,12 +290,12 @@ export function HomePage(props: {
               <label className="steward-thinking-select">
                 <Brain size={16} aria-hidden="true" />
                 <select
-                  aria-label="Thinking depth"
+                  aria-label={t("thinkingDepth")}
                   value={thinkingLevel}
                   disabled={busy || turnActive || selectedModel?.thinking === undefined}
                   onChange={(event) => setThinkingLevel(event.target.value)}
                 >
-                  <option value="">Default thinking</option>
+                  <option value="">{t("defaultThinking")}</option>
                   {selectedModel?.thinking?.supportedLevels.map((level) => (
                     <option value={level.value} key={level.value}>
                       {level.label}
@@ -330,32 +303,13 @@ export function HomePage(props: {
                   ))}
                 </select>
               </label>
-              <button
-                type="button"
-                title="Manage Runtime Environments"
-                onClick={props.onOpenRuntimeSettings}
-              >
-                <GearSix size={16} /> Manage runtimes
-              </button>
-              <button
-                type="button"
-                title={workspace || "Choose task workspace"}
-                onClick={() =>
-                  void window.pragmaDesktop.pickWorkspace().then((result) => {
-                    if (!result.ok || result.path === undefined) return;
-                    window.localStorage.setItem(WORKSPACE_KEY, result.path);
-                    setWorkspace(result.path);
-                  })
-                }
-              >
-                <FolderOpen size={16} />{" "}
-                {workspace === "" ? "Task workspace" : workspace.split(/[\\/]/).at(-1)}
-              </button>
             </div>
             {turnActive ? (
               <button
                 className="steward-send is-stop"
                 type="button"
+                aria-label={t("interrupt")}
+                title={t("interrupt")}
                 onClick={() => void window.pragmaDesktop.interruptSteward().then(refresh)}
               >
                 <StopCircle size={19} />
@@ -366,7 +320,8 @@ export function HomePage(props: {
                 type="button"
                 disabled={!canSend}
                 onClick={() => void send()}
-                title={selectedRuntime?.displayName}
+                aria-label={t("send")}
+                title={selectedRuntime?.displayName ?? t("send")}
               >
                 <PaperPlaneTilt size={19} weight="fill" />
               </button>
@@ -392,32 +347,69 @@ export function HomePage(props: {
       setBusy(false);
     }
   }
+}
 
-  async function changeRuntime(nextRuntimeId: string) {
-    if (nextRuntimeId === runtimeId) return;
-    if (!initialized) {
-      setRuntimeId(nextRuntimeId);
-      return;
-    }
-    const confirmed = window.confirm(
-      "Switching Runtime starts a new Steward session. The current conversation context will be lost. Continue?",
-    );
-    if (!confirmed) return;
-    setBusy(true);
-    setError(null);
-    try {
-      await window.pragmaDesktop.resetSteward();
-      setRuntimeId(nextRuntimeId);
-      setSnapshot({ state: null, entries: [] });
-      setInteractions([]);
-      const state = await window.pragmaDesktop.initializeSteward({ runtimeId: nextRuntimeId });
-      setSnapshot({ state, entries: [] });
-    } catch (switchError) {
-      setError(errorMessage(switchError));
-    } finally {
-      setBusy(false);
-    }
-  }
+function StewardToolMessage(props: {
+  readonly entry: StewardChatEntry;
+  readonly onOpenStudio: () => void;
+  readonly onOpenMissions: () => void;
+}) {
+  const { t } = useTranslation("home");
+  const status =
+    props.entry.toolStatus ??
+    (props.entry.content === "Running" ? "running" : props.entry.isError ? "failed" : "succeeded");
+  const hasDetails = status !== "running" && props.entry.content.trim() !== "";
+  const label =
+    status === "running"
+      ? t("tool.calling")
+      : status === "failed"
+        ? t("tool.failed")
+        : t("tool.completed");
+  const summary = (
+    <>
+      <Toolbox size={16} aria-hidden="true" />
+      <strong>{props.entry.toolName ?? t("tool.defaultName")}</strong>
+      <span>{label}</span>
+      {status === "failed" ? (
+        <WarningCircle size={15} aria-hidden="true" />
+      ) : status === "succeeded" ? (
+        <Check size={15} aria-hidden="true" />
+      ) : null}
+    </>
+  );
+
+  return (
+    <article className={`steward-message is-tool is-${status}`}>
+      {hasDetails ? (
+        <details className="steward-tool-activity">
+          <summary>
+            {summary}
+            <CaretDown className="steward-tool-caret" size={14} aria-hidden="true" />
+          </summary>
+          <pre>{props.entry.content}</pre>
+        </details>
+      ) : (
+        <div
+          className={
+            status === "running" ? "steward-tool-status is-running" : "steward-tool-status"
+          }
+          role={status === "running" ? "status" : undefined}
+        >
+          {summary}
+        </div>
+      )}
+      {status === "succeeded" && /projectRevision|changedRefs/.test(props.entry.content) ? (
+        <button type="button" onClick={props.onOpenStudio}>
+          {t("tool.openStudio")} <ArrowRight size={14} />
+        </button>
+      ) : null}
+      {status === "succeeded" && /workspaceLabel|executorRef/.test(props.entry.content) ? (
+        <button type="button" onClick={props.onOpenMissions}>
+          {t("tool.openMissions")} <ArrowRight size={14} />
+        </button>
+      ) : null}
+    </article>
+  );
 }
 
 function runtimeModelKey(model: DesktopRuntimeModel): string {

@@ -1,7 +1,8 @@
-import { AuthStorage } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it } from "vitest";
+import type { ModelProviderDefinition } from "@pragma/core";
 
 import {
+  createPiModelProviderConverter,
   createPiModelRegistry,
   normalizePiRuntimeModels,
   resolvePiThinkingLevel,
@@ -12,14 +13,14 @@ describe("PI runtime model resolution", () => {
   it("uses provider and model as the canonical identity", async () => {
     const provider = {
       id: "configured-provider",
-      modelIds: ["vendor/model-id"],
+      models: [testModel("vendor/model-id")],
       baseUrl: "https://models.example.com/v1",
       apiKey: "configured-api-key",
-      api: "openai-completions",
+      api: "openai-completions" as const,
     };
-    const registry = createPiModelRegistry(AuthStorage.create(), [provider]);
+    const registry = await createPiModelRegistry([provider]);
     const model = resolveRequiredRuntimeModel(
-      { providerId: provider.id, modelId: provider.modelIds[0]! },
+      { providerId: provider.id, modelId: provider.models[0]!.id },
       registry,
       "agent default",
     );
@@ -59,4 +60,88 @@ describe("PI runtime model resolution", () => {
       "Unsupported PI thinking level: extreme",
     );
   });
+
+  it("converts neutral providers inside the PI adapter boundary", () => {
+    const converter = createPiModelProviderConverter();
+    const provider: ModelProviderDefinition = {
+      id: "provider",
+      displayName: "Provider",
+      api: "openai-completions",
+      baseUrl: "https://models.example.com/v1",
+      models: [
+        {
+          ...testModel("reasoning-model"),
+          name: "Reasoning Model",
+          reasoning: true,
+          thinkingLevelMap: {
+            off: null,
+            minimal: null,
+            low: null,
+            medium: null,
+            high: "provider-high",
+            xhigh: null,
+            max: null,
+          },
+        },
+      ],
+    };
+
+    expect(converter.toRuntimeModels(provider)).toEqual([
+      expect.objectContaining({
+        id: "reasoning-model",
+        provider: { kind: "registered", id: "provider", displayName: "Provider" },
+        thinking: { supportedLevels: [{ value: "high", label: "High" }] },
+      }),
+    ]);
+    expect(
+      converter.convertProvider({
+        ...provider,
+        apiKey: "secret",
+        credentialFingerprint: "fingerprint",
+      }),
+    ).toMatchObject({
+      id: "provider",
+      api: "openai-completions",
+      apiKey: "secret",
+      models: [
+        expect.objectContaining({
+          id: "reasoning-model",
+          thinkingLevelMap: expect.objectContaining({ high: "provider-high" }),
+        }),
+      ],
+    });
+  });
+
+  it("filters neutral protocols unsupported by PI", () => {
+    const converter = createPiModelProviderConverter();
+    const provider: ModelProviderDefinition = {
+      id: "provider",
+      displayName: "Provider",
+      api: "future-runtime-api",
+      baseUrl: "https://models.example.com",
+      models: [testModel("future-model")],
+    };
+
+    expect(converter.supports(provider.api)).toBe(false);
+    expect(converter.toRuntimeModels(provider)).toEqual([]);
+    expect(() =>
+      converter.convertProvider({
+        ...provider,
+        apiKey: "secret",
+        credentialFingerprint: "fingerprint",
+      }),
+    ).toThrow("does not support any configured models");
+  });
 });
+
+function testModel(id: string) {
+  return {
+    id,
+    name: id,
+    reasoning: false,
+    input: ["text"] as ("text" | "image")[],
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: 128_000,
+    maxTokens: 16_384,
+  };
+}

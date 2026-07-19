@@ -6,26 +6,39 @@ import type {
   RuntimeSessionSyncCallback,
   RuntimeEventEmitter,
   RuntimeStreamEvent,
-  RuntimeModel,
+  ModelProviderRegistry,
 } from "@pragma/core";
+import type { Api, Model } from "@earendil-works/pi-ai";
+
+export interface PiProviderModelConfig {
+  readonly id: string;
+  readonly name: string;
+  readonly api?: Api | undefined;
+  readonly baseUrl?: string | undefined;
+  readonly reasoning: boolean;
+  readonly thinkingLevelMap?: Model<Api>["thinkingLevelMap"] | undefined;
+  readonly input: readonly ("text" | "image")[];
+  readonly cost: Model<Api>["cost"];
+  readonly contextWindow: number;
+  readonly maxTokens: number;
+  readonly headers?: Readonly<Record<string, string>> | undefined;
+  readonly compat?: Model<Api>["compat"] | undefined;
+}
 
 export interface PiModelProviderConfig {
   readonly id: string;
   readonly baseUrl: string;
   readonly apiKey: string;
-  readonly modelIds: readonly string[];
-  readonly api: string;
-}
-
-export interface PiModelCatalog {
-  readonly listModels: () => Promise<readonly RuntimeModel[]>;
-  readonly resolveProvider: (providerId: string) => Promise<PiModelProviderConfig>;
+  readonly models: readonly PiProviderModelConfig[];
+  readonly api: Api;
+  readonly headers?: Readonly<Record<string, string>> | undefined;
+  readonly authHeader?: boolean | undefined;
 }
 
 export interface CloudPiRuntimeAdapterOptions {
   readonly descriptor?: Partial<RuntimeAdapterDescriptor> | undefined;
   readonly loggerProvider?: ExpertAgentLoggerProvider | undefined;
-  readonly modelCatalog?: PiModelCatalog | undefined;
+  readonly modelProviders?: ModelProviderRegistry | undefined;
   readonly outputParser?: <TOutput>(text: string) => TOutput;
   readonly outputRetryLimit?: number | undefined;
   readonly sessionRestoreHandler?: RuntimeSessionRestoreHandler | undefined;

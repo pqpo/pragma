@@ -1,6 +1,7 @@
 export * from "./agent-message.schema.ts";
 export * from "./context/context-metadata.schema.ts";
 export * from "./health.schema.ts";
+export * from "./model-provider.schema.ts";
 export * from "./result.ts";
 export {
   RunStatus as ExecutionRunStatus,

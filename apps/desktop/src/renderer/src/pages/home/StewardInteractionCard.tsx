@@ -1,5 +1,6 @@
 import { ArrowLeft, ArrowRight, Check, X } from "@phosphor-icons/react";
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import type { HumanInteractionResponse } from "@pragma/shared";
 
@@ -13,6 +14,7 @@ export function StewardInteractionCard(props: {
   readonly responding: boolean;
   readonly onRespond: (response: HumanInteractionResponse) => void;
 }) {
+  const { t } = useTranslation("home");
   const request = props.interaction.request;
   const questions = request.questions ?? [];
   const [answers, setAnswers] = useState<Readonly<Record<string, StewardAnswer>>>({});
@@ -33,9 +35,13 @@ export function StewardInteractionCard(props: {
       aria-labelledby={`steward-${props.interaction.interactionId}`}
     >
       <header>
-        <small>{request.kind === "approval" ? "Approval required" : "Your input is needed"}</small>
+        <small>
+          {request.kind === "approval"
+            ? t("interaction.approvalRequired")
+            : t("interaction.inputNeeded")}
+        </small>
         <strong id={`steward-${props.interaction.interactionId}`}>
-          {request.title ?? "Steward needs your input"}
+          {request.title ?? t("interaction.defaultTitle")}
         </strong>
         {request.prompt === undefined ? null : <p>{request.prompt}</p>}
       </header>
@@ -46,8 +52,8 @@ export function StewardInteractionCard(props: {
           <textarea
             value={notes}
             onChange={(event) => setNotes(event.target.value)}
-            placeholder="Optional notes"
-            aria-label="Optional approval notes"
+            placeholder={t("interaction.optionalNotes")}
+            aria-label={t("interaction.optionalApprovalNotes")}
           />
           <footer>
             <button
@@ -61,7 +67,7 @@ export function StewardInteractionCard(props: {
                 })
               }
             >
-              <X size={15} /> Reject
+              <X size={15} /> {t("interaction.reject")}
             </button>
             <button
               className="is-primary"
@@ -71,7 +77,8 @@ export function StewardInteractionCard(props: {
                 props.onRespond({ approved: true, decision: "approved", notes: notes || undefined })
               }
             >
-              <Check size={15} /> {props.responding ? "Submitting…" : "Approve"}
+              <Check size={15} />
+              {props.responding ? t("interaction.submitting") : t("interaction.approve")}
             </button>
           </footer>
         </>
@@ -83,14 +90,18 @@ export function StewardInteractionCard(props: {
             disabled={props.responding}
             onClick={() => props.onRespond({ notes: notes || undefined })}
           >
-            Continue
+            {t("interaction.continue")}
           </button>
         </footer>
       ) : (
         <>
           <section className="steward-question">
             <small>
-              Question {index + 1} of {questions.length} · {question.header}
+              {t("interaction.questionPosition", {
+                current: index + 1,
+                total: questions.length,
+                header: question.header,
+              })}
             </small>
             <strong>{question.question}</strong>
             <StewardQuestionInput question={question} answer={answer} onAnswer={setAnswer} />
@@ -98,8 +109,8 @@ export function StewardInteractionCard(props: {
           <textarea
             value={notes}
             onChange={(event) => setNotes(event.target.value)}
-            placeholder="Optional notes"
-            aria-label="Optional response notes"
+            placeholder={t("interaction.optionalNotes")}
+            aria-label={t("interaction.optionalResponseNotes")}
           />
           <footer>
             <button
@@ -107,7 +118,7 @@ export function StewardInteractionCard(props: {
               disabled={index === 0 || props.responding}
               onClick={() => setQuestionIndex(index - 1)}
             >
-              <ArrowLeft size={15} /> Back
+              <ArrowLeft size={15} /> {t("interaction.back")}
             </button>
             {index < questions.length - 1 ? (
               <button
@@ -116,7 +127,7 @@ export function StewardInteractionCard(props: {
                 disabled={!answerValid || props.responding}
                 onClick={() => setQuestionIndex(index + 1)}
               >
-                Next <ArrowRight size={15} />
+                {t("interaction.next")} <ArrowRight size={15} />
               </button>
             ) : (
               <button
@@ -125,7 +136,7 @@ export function StewardInteractionCard(props: {
                 disabled={!answerValid || props.responding}
                 onClick={() => props.onRespond({ answers, notes: notes || undefined })}
               >
-                {props.responding ? "Submitting…" : "Submit response"}
+                {props.responding ? t("interaction.submitting") : t("interaction.submitResponse")}
               </button>
             )}
           </footer>

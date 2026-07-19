@@ -7,7 +7,7 @@ import type { PragmaProjectSnapshot } from "../../../../shared/desktop-api.ts";
 import { matchingTeamExperts, TeamEditor } from "./PragmaResourceDirectoryFragment.tsx";
 
 function expert(index: number): PragmaExpertResource {
-  const id = `expert-${String(index).padStart(3, "0")}`;
+  const id = `expert_${String(index).padStart(3, "0")}`;
   return PragmaExpertResourceSchema.parse({
     apiVersion: "pragma/v2",
     kind: "Expert",
@@ -18,7 +18,7 @@ function expert(index: number): PragmaExpertResource {
       description: `Specialist description ${index}`,
       tags: index === 99 ? ["needle"] : [],
     },
-    spec: { scope: "general" },
+    spec: { scope: "general", instructions: "General expert." },
   });
 }
 
@@ -50,20 +50,20 @@ describe("expert team editor", () => {
 
   it("limits the default list and searches names, ids, descriptions, and tags", () => {
     const experts = Array.from({ length: 100 }, (_, index) => expert(index));
-    const selectedRef = "expert:expert-099@1.0.0";
+    const selectedRef = "expert:expert_099@1.0.0";
 
     expect(matchingTeamExperts(experts, "", new Set())).toHaveLength(8);
     expect(matchingTeamExperts(experts, "", new Set([selectedRef]))[0]?.metadata.id).toBe(
-      "expert-099",
+      "expert_099",
     );
     expect(
-      matchingTeamExperts(experts, "expert-042", new Set()).map((item) => item.metadata.id),
-    ).toEqual(["expert-042"]);
+      matchingTeamExperts(experts, "expert_042", new Set()).map((item) => item.metadata.id),
+    ).toEqual(["expert_042"]);
     expect(
       matchingTeamExperts(experts, "description 42", new Set()).map((item) => item.metadata.id),
-    ).toEqual(["expert-042"]);
+    ).toEqual(["expert_042"]);
     expect(
       matchingTeamExperts(experts, "needle", new Set()).map((item) => item.metadata.id),
-    ).toEqual(["expert-099"]);
+    ).toEqual(["expert_099"]);
   });
 });

@@ -1,4 +1,4 @@
-import type { AuthStorage, ModelRegistry, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type {
   AgentLifecycle,
   Expert,
@@ -25,10 +25,8 @@ import type { PiRuntimeStreamState } from "./types.ts";
 
 export function createResolvedPiTools(options: {
   readonly agent: Expert;
-  readonly authStorage: AuthStorage;
   readonly cwd: string;
   readonly mcpTools: readonly McpManagedTool[];
-  readonly modelRegistry: ModelRegistry;
   readonly parentSystemPrompt: string;
   readonly streamState: PiRuntimeStreamState;
   readonly lifecycle: AgentLifecycle<ExpertAgentRunContext | undefined>;

@@ -13,13 +13,14 @@ spec:
     Inspect current resources, prepare and validate a complete candidate, explain diagnostics and
     diffs, and commit only the prepared change-set. Never edit project storage directly.
   capabilities:
-    - ref: capability:pragma-dsl-authoring@1.0.0
+    - ref: capability:pragma_dsl_authoring@1.0.0
       kind: skill
-    - ref: capability:steward-host@1.0.0
+    - ref: capability:steward_host@1.0.0
       kind: tools
       tools:
         - list_dsl_resources
         - read_dsl_resource
+        - list_expert_options
         - prepare_dsl_changes
         - commit_dsl_changes
         - list_tasks

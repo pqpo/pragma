@@ -7,6 +7,7 @@ import {
   type DefineExpertOptions,
   type Expert,
   type IExpertAgentModelsConfig,
+  type ModelProviderDefinition,
 } from "@pragma/core";
 import { createPiRuntime } from "@pragma/runtime-pi";
 import { createRuntimeTestContextSystem } from "../runtimes/shared/console-runtime-chat.ts";
@@ -46,25 +47,35 @@ export function createExampleModelsConfig(env: NodeJS.ProcessEnv): IExpertAgentM
 export function createExampleApp(pragmaHome?: string) {
   const providerId = requiredEnv(process.env, "PRAGMA_MODEL_PROVIDER");
   const modelId = requiredEnv(process.env, "PRAGMA_MODEL_NAME");
-  const provider = {
+  const api = parseModelApi(process.env["PRAGMA_MODEL_API"]) ?? "openai-completions";
+  const provider: ModelProviderDefinition = {
     id: providerId,
-    modelIds: [modelId],
+    displayName: providerId,
+    models: [
+      {
+        id: modelId,
+        name: modelId,
+        api,
+        reasoning: false,
+        input: ["text"],
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        contextWindow: 128_000,
+        maxTokens: 16_384,
+      },
+    ],
     baseUrl: requiredEnv(process.env, "PRAGMA_MODEL_BASE_API"),
-    apiKey: requiredEnv(process.env, "PRAGMA_MODEL_API_KEY"),
-    api: parseModelApi(process.env["PRAGMA_MODEL_API"]) ?? "openai-completions",
+    api,
   };
   const runtime = createPiRuntime({
-    modelCatalog: {
-      listModels: async () => [
-        {
-          id: modelId,
-          displayName: modelId,
-          provider: { kind: "registered", id: providerId, displayName: providerId },
-        },
-      ],
+    modelProviders: {
+      listProviders: async () => [provider],
       resolveProvider: async (id) => {
         if (id !== providerId) throw new Error(`Unknown example model provider: ${id}`);
-        return provider;
+        return {
+          ...provider,
+          apiKey: requiredEnv(process.env, "PRAGMA_MODEL_API_KEY"),
+          credentialFingerprint: `example:${providerId}`,
+        };
       },
     },
   });

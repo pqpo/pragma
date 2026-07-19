@@ -1,2 +1,7 @@
 export { createPiRuntime } from "./adapter.ts";
-export type { CloudPiRuntimeAdapterOptions } from "./types.ts";
+export { createPiModelProviderConverter } from "./models.ts";
+export type {
+  CloudPiRuntimeAdapterOptions,
+  PiModelProviderConfig,
+  PiProviderModelConfig,
+} from "./types.ts";

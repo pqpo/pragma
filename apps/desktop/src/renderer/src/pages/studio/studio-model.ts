@@ -38,7 +38,8 @@ export type ExpertRecord = {
   readonly persisted?: ExpertDefinition | undefined;
 };
 
-export type ExpertDraft = Omit<ExpertRecord, "icon"> & {
+export type ExpertDraft = Omit<ExpertRecord, "icon" | "model"> & {
+  readonly model: ExpertModel | null;
   readonly tagInput: string;
   readonly pluginSecretMutations: Readonly<Record<string, string | null>>;
 };
@@ -90,6 +91,14 @@ export function toExpertRecord(definition: ExpertDefinition): ExpertRecord {
   };
 }
 
+export function isBuiltInExpert(expert: Pick<ExpertRecord, "tags">): boolean {
+  return isBuiltInTags(expert.tags);
+}
+
+export function isBuiltInTags(tags: readonly string[]): boolean {
+  return tags.some((tag) => tag === "builtin" || tag === "built-in");
+}
+
 export function toPersistedInput(
   expert: ExpertRecord,
 ): CreateExpertDefinition | UpdateExpertDefinition {
@@ -101,7 +110,7 @@ export function toPersistedInput(
     tags: [...expert.tags],
     version: expert.version,
     scope: expert.scope,
-    instructions: expert.instructions || undefined,
+    instructions: expert.instructions,
     model: expert.model,
     capabilities: [...expert.capabilities],
     toolApprovals: existing?.toolApprovals ?? {},
@@ -109,9 +118,6 @@ export function toPersistedInput(
     contextStoreMounts: [...expert.contextStoreMounts],
     resourceTools: [...expert.resourceTools],
     opaqueCapabilities: [...(existing?.opaqueCapabilities ?? [])],
-    ...(expert.model === null && existing?.resourceRuntime !== undefined
-      ? { resourceRuntime: existing.resourceRuntime }
-      : {}),
   };
 }
 

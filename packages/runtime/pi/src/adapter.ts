@@ -1,5 +1,4 @@
 import {
-  AuthStorage,
   SettingsManager,
   createAgentSession,
   createBashToolDefinition,
@@ -18,7 +17,8 @@ import {
 } from "@pragma/core";
 
 import {
-  createPiModelRegistry,
+  createPiModelRuntime,
+  createPiModelProviderConverter,
   normalizePiRuntimeModels,
   resolvePiThinkingLevel,
   resolveRequiredRuntimeModel,
@@ -55,6 +55,7 @@ interface PiDriverSession extends PiNativeSession {
 }
 
 export function createPiRuntime(options: CloudPiRuntimeAdapterOptions = {}): RuntimeAdapter {
+  const modelProviderConverter = createPiModelProviderConverter();
   const descriptor = {
     ...CLOUD_PI_RUNTIME_DESCRIPTOR,
     ...options.descriptor,
@@ -69,7 +70,11 @@ export function createPiRuntime(options: CloudPiRuntimeAdapterOptions = {}): Run
     {
       descriptor,
       listModels: async () =>
-        normalizePiRuntimeModels((await options.modelCatalog?.listModels()) ?? []),
+        normalizePiRuntimeModels(
+          (await options.modelProviders?.listProviders())?.flatMap((provider) =>
+            modelProviderConverter.toRuntimeModels(provider),
+          ) ?? [],
+        ),
       defaultOutputParser: options.outputParser ?? defaultOutputParser,
       outputRetryLimit: options.outputRetryLimit ?? 3,
       resolvePersistence(ctx): RuntimeSessionPersistenceSpec {
@@ -90,16 +95,16 @@ export function createPiRuntime(options: CloudPiRuntimeAdapterOptions = {}): Run
         const registeredProvider =
           selectedProviderId === undefined
             ? undefined
-            : await options.modelCatalog?.resolveProvider(selectedProviderId);
+            : await options.modelProviders?.resolveProvider(selectedProviderId);
         if (selectedProviderId !== undefined && registeredProvider === undefined) {
           throw new Error(`PI model provider is not registered: ${selectedProviderId}`);
         }
-        const authStorage = AuthStorage.create();
         const cwd = ctx.workspace;
         const settingsManager = SettingsManager.create(cwd);
-        const modelRegistry = createPiModelRegistry(
-          authStorage,
-          registeredProvider === undefined ? [] : [registeredProvider],
+        const { modelRegistry, modelRuntime } = await createPiModelRuntime(
+          registeredProvider === undefined
+            ? []
+            : [modelProviderConverter.convertProvider(registeredProvider)],
         );
         const loader = createResourceLoader(ctx.agent, cwd, ctx.agentContext.systemPrompt);
         await loader.reload();
@@ -107,10 +112,8 @@ export function createPiRuntime(options: CloudPiRuntimeAdapterOptions = {}): Run
         const streamState: PiRuntimeStreamState = { logger: ctx.logger };
         const resolvedTools = createResolvedPiTools({
           agent: ctx.agent,
-          authStorage,
           cwd,
           mcpTools: mcpToolRegistry.tools,
-          modelRegistry,
           parentSystemPrompt: ctx.agentContext.systemPrompt,
           streamState,
           lifecycle: ctx.lifecycle,
@@ -125,8 +128,7 @@ export function createPiRuntime(options: CloudPiRuntimeAdapterOptions = {}): Run
         );
         const sessionOptions: CreateAgentSessionOptions = {
           cwd,
-          authStorage,
-          modelRegistry,
+          modelRuntime,
           resourceLoader: loader,
           sessionManager: piSessionManagerResult.sessionManager,
           settingsManager,

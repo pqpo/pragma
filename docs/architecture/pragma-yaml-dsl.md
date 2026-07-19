@@ -60,7 +60,7 @@ bindings and resolved only by the installation environment.
 apiVersion: pragma/v2
 kind: Capability
 metadata:
-  id: repository-tools
+  id: repository_tools
   version: 1.0.0
   name: Repository tools
   description: Tools supplied by the installed environment
@@ -117,14 +117,14 @@ metadata:
   description: Coordinates delivery
 spec:
   scope: Own the delivery outcome.
-  runtime: { ref: runtime-profile:desktop-codex@1.0.0 }
+  runtime: { ref: runtime-profile:desktop_codex@1.0.0 }
   capabilities:
-    - ref: capability:repository-tools@1.0.0
+    - ref: capability:repository_tools@1.0.0
       kind: tools
       tools: [read_file, edit_file]
   toolApprovals: { edit_file: required }
   contextStores:
-    - ref: context-store:project-guide@1.0.0
+    - ref: context-store:project_guide@1.0.0
       namespace: project_guide
       required: true
   plugins:

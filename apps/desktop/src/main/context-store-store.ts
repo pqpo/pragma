@@ -26,6 +26,7 @@ const CONTENT_PREVIEW_MAX_BYTES = 900_000;
 export interface ContextStoreStore {
   list(): Promise<ContextStore[]>;
   create(input: CreateContextStore): Promise<ContextStore>;
+  remove(storeId: string): Promise<void>;
   addNoteEntry(storeId: string, entry: ContextNoteEntry): Promise<ContextStore>;
   listContents(storeId: string): Promise<readonly ContextStoreContentSummary[]>;
   getContent(storeId: string, contentId: string): Promise<ContextStoreContent>;
@@ -43,7 +44,8 @@ export class ContextStoreStoreError extends Error {
       | "entry_exists"
       | "content_not_found"
       | "source_unavailable"
-      | "invalid_store_type",
+      | "invalid_store_type"
+      | "store_referenced",
     message: string,
   ) {
     super(message);
@@ -61,6 +63,7 @@ function parseJson(raw: string, label: string): unknown {
 
 export function createContextStoreStore(options: {
   readonly storesPath: string;
+  readonly isReferenced?: ((storeId: string) => Promise<boolean>) | undefined;
 }): ContextStoreStore {
   const storePath = (id: string) => join(options.storesPath, id);
   const manifestPath = (id: string) => join(storePath(id), "store.json");
@@ -212,6 +215,17 @@ export function createContextStoreStore(options: {
         throw error;
       }
       return store;
+    },
+
+    async remove(storeId: string): Promise<void> {
+      await readStore(storeId);
+      if (await options.isReferenced?.(storeId)) {
+        throw new ContextStoreStoreError(
+          "store_referenced",
+          "This context store is mounted by one or more Experts. Remove it from those Experts before deleting it.",
+        );
+      }
+      await rm(storePath(storeId), { recursive: true, force: true });
     },
 
     async addNoteEntry(storeId: string, input: ContextNoteEntry): Promise<ContextStore> {

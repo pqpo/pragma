@@ -388,7 +388,8 @@ function expertFixture(): PragmaExpertResource {
     },
     spec: {
       scope: "Writing",
-      runtime: { ref: "runtime-profile:writer.runtime@1.0.0" },
+      instructions: "Write concise answers.",
+      runtime: { ref: "runtime-profile:writer_runtime@1.0.0" },
       capabilities: [],
       toolApprovals: {},
       contextStores: [],
@@ -403,7 +404,7 @@ function runtimeFixture(runtimeId = "fake"): PragmaRuntimeProfileResource {
     apiVersion: "pragma/v2",
     kind: "RuntimeProfile",
     metadata: {
-      id: "writer.runtime",
+      id: "writer_runtime",
       version: "1.0.0",
       name: "Writer Runtime",
       description: "Runtime used by the test writer.",
@@ -411,7 +412,7 @@ function runtimeFixture(runtimeId = "fake"): PragmaRuntimeProfileResource {
     },
     spec: {
       adapter: "pragma.runtime.profile@v1",
-      config: { runtimeId },
+      config: { runtimeId, providerId: "test", model: "test-model" },
     },
   };
 }
