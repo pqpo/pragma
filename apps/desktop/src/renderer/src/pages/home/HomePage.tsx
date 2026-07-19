@@ -10,6 +10,7 @@ import {
   Toolbox,
   WarningCircle,
 } from "@phosphor-icons/react";
+import { useTranslation } from "react-i18next";
 import type { HumanInteractionResponse } from "@pragma/shared";
 
 import type {
@@ -29,6 +30,7 @@ export function HomePage(props: {
   readonly onOpenMissions: () => void;
   readonly onOpenModelSettings: () => void;
 }) {
+  const { t } = useTranslation("home");
   const [snapshot, setSnapshot] = useState<StewardChatSnapshot>({ state: null, entries: [] });
   const [runtimes, setRuntimes] = useState<readonly DesktopRuntimeAvailability[]>([]);
   const [runtimeId, setRuntimeId] = useState("pi");
@@ -147,13 +149,10 @@ export function HomePage(props: {
         return;
       }
       if (selectedRuntime?.status !== "available") {
-        throw new Error(selectedRuntime?.reason ?? "The selected Runtime is unavailable.");
+        throw new Error(selectedRuntime?.reason ?? t("errors.runtimeUnavailable"));
       }
       if (modelSelection === undefined) {
-        throw new Error(
-          selectedRuntime.modelDiscoveryError ??
-            "No model is available for this Runtime. Configure a model provider first.",
-        );
+        throw new Error(selectedRuntime.modelDiscoveryError ?? t("errors.noModelAvailable"));
       }
       let state: StewardSessionState | null = snapshot.state;
       if (state === null) state = await window.pragmaDesktop.initializeSteward({ runtimeId });
@@ -179,16 +178,14 @@ export function HomePage(props: {
       <header className="steward-home-header">
         <div>
           <span className="steward-eyebrow">PRAGMA STEWARD</span>
-          <h1>Your orchestration workspace</h1>
+          <h1>{t("title")}</h1>
         </div>
         {initialized ? (
           <button
             className="steward-text-button"
             type="button"
             onClick={() => {
-              if (
-                !window.confirm("Reset the Steward session? Existing history will remain archived.")
-              ) {
+              if (!window.confirm(t("resetConfirm"))) {
                 return;
               }
               void window.pragmaDesktop.resetSteward().then(() => {
@@ -197,7 +194,7 @@ export function HomePage(props: {
               });
             }}
           >
-            Reset session
+            {t("resetSession")}
           </button>
         ) : null}
       </header>
@@ -208,8 +205,8 @@ export function HomePage(props: {
             <span className="steward-orb">
               <Sparkle size={28} weight="fill" />
             </span>
-            <h2>What would you like to orchestrate?</h2>
-            <p>Create or update an Expert, assemble a Team, design a Flow, or submit a task.</p>
+            <h2>{t("welcomeTitle")}</h2>
+            <p>{t("welcomeDescription")}</p>
           </div>
         ) : (
           <div className="steward-messages">
@@ -246,18 +243,18 @@ export function HomePage(props: {
         {configurationNeeded ? (
           <div className="steward-configuration-notice" role="alert">
             <div>
-              <strong>Configure a model before chatting</strong>
-              <span>The PI Runtime needs at least one Model Provider with an API key.</span>
+              <strong>{t("configuration.title")}</strong>
+              <span>{t("configuration.description")}</span>
             </div>
             <button type="button" onClick={props.onOpenModelSettings}>
-              Configure models <ArrowRight size={14} />
+              {t("configuration.action")} <ArrowRight size={14} />
             </button>
           </div>
         ) : null}
         <div className="steward-composer">
           <textarea
             value={message}
-            placeholder="Ask the Steward to create an expert, design a flow, or run a task…"
+            placeholder={t("composerPlaceholder")}
             onChange={(event) => setMessage(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === "Enter" && !event.shiftKey) {
@@ -269,7 +266,7 @@ export function HomePage(props: {
           <div className="steward-composer-footer">
             <div className="steward-context-controls">
               <select
-                aria-label="Model"
+                aria-label={t("model")}
                 value={modelKey}
                 disabled={busy || turnActive || selectedRuntime?.status !== "available"}
                 onChange={(event) => {
@@ -282,7 +279,7 @@ export function HomePage(props: {
                 }}
               >
                 {(selectedRuntime?.models?.length ?? 0) === 0 ? (
-                  <option value="">No model configured</option>
+                  <option value="">{t("noModelConfigured")}</option>
                 ) : null}
                 {selectedRuntime?.models?.map((model) => (
                   <option value={runtimeModelKey(model)} key={runtimeModelKey(model)}>
@@ -293,12 +290,12 @@ export function HomePage(props: {
               <label className="steward-thinking-select">
                 <Brain size={16} aria-hidden="true" />
                 <select
-                  aria-label="Thinking depth"
+                  aria-label={t("thinkingDepth")}
                   value={thinkingLevel}
                   disabled={busy || turnActive || selectedModel?.thinking === undefined}
                   onChange={(event) => setThinkingLevel(event.target.value)}
                 >
-                  <option value="">Default thinking</option>
+                  <option value="">{t("defaultThinking")}</option>
                   {selectedModel?.thinking?.supportedLevels.map((level) => (
                     <option value={level.value} key={level.value}>
                       {level.label}
@@ -311,6 +308,8 @@ export function HomePage(props: {
               <button
                 className="steward-send is-stop"
                 type="button"
+                aria-label={t("interrupt")}
+                title={t("interrupt")}
                 onClick={() => void window.pragmaDesktop.interruptSteward().then(refresh)}
               >
                 <StopCircle size={19} />
@@ -321,7 +320,8 @@ export function HomePage(props: {
                 type="button"
                 disabled={!canSend}
                 onClick={() => void send()}
-                title={selectedRuntime?.displayName}
+                aria-label={t("send")}
+                title={selectedRuntime?.displayName ?? t("send")}
               >
                 <PaperPlaneTilt size={19} weight="fill" />
               </button>
@@ -354,15 +354,21 @@ function StewardToolMessage(props: {
   readonly onOpenStudio: () => void;
   readonly onOpenMissions: () => void;
 }) {
+  const { t } = useTranslation("home");
   const status =
     props.entry.toolStatus ??
     (props.entry.content === "Running" ? "running" : props.entry.isError ? "failed" : "succeeded");
   const hasDetails = status !== "running" && props.entry.content.trim() !== "";
-  const label = status === "running" ? "Calling" : status === "failed" ? "Failed" : "Completed";
+  const label =
+    status === "running"
+      ? t("tool.calling")
+      : status === "failed"
+        ? t("tool.failed")
+        : t("tool.completed");
   const summary = (
     <>
       <Toolbox size={16} aria-hidden="true" />
-      <strong>{props.entry.toolName ?? "tool"}</strong>
+      <strong>{props.entry.toolName ?? t("tool.defaultName")}</strong>
       <span>{label}</span>
       {status === "failed" ? (
         <WarningCircle size={15} aria-hidden="true" />
@@ -394,12 +400,12 @@ function StewardToolMessage(props: {
       )}
       {status === "succeeded" && /projectRevision|changedRefs/.test(props.entry.content) ? (
         <button type="button" onClick={props.onOpenStudio}>
-          Open Studio <ArrowRight size={14} />
+          {t("tool.openStudio")} <ArrowRight size={14} />
         </button>
       ) : null}
       {status === "succeeded" && /workspaceLabel|executorRef/.test(props.entry.content) ? (
         <button type="button" onClick={props.onOpenMissions}>
-          Open Missions <ArrowRight size={14} />
+          {t("tool.openMissions")} <ArrowRight size={14} />
         </button>
       ) : null}
     </article>

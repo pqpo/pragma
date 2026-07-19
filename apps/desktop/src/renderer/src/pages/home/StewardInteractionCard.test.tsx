@@ -1,7 +1,12 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
+import { i18n } from "../../i18n/index.ts";
 import { StewardInteractionCard, stewardAnswerValid } from "./StewardInteractionCard.tsx";
+
+afterEach(async () => {
+  await i18n.changeLanguage("en");
+});
 
 describe("StewardInteractionCard", () => {
   it("renders an askUserQuestion choice with its descriptions", () => {
@@ -60,5 +65,26 @@ describe("StewardInteractionCard", () => {
     expect(stewardAnswerValid({ ...base, question: "Choose?", kind: "multiple_choice" }, [])).toBe(
       false,
     );
+  });
+
+  it("renders interaction controls in Traditional Chinese", async () => {
+    await i18n.changeLanguage("zh-Hant");
+
+    const html = renderToStaticMarkup(
+      <StewardInteractionCard
+        interaction={{
+          interactionId: "interaction-2",
+          request: { kind: "approval" },
+        }}
+        responding={false}
+        onRespond={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("需要核准");
+    expect(html).toContain("管家需要你的輸入");
+    expect(html).toContain("核准備註（選填）");
+    expect(html).toContain("拒絕");
+    expect(html).toContain("核准");
   });
 });
