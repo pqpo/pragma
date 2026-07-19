@@ -1437,7 +1437,8 @@ p {
 
 .provider-wizard-steps li {
   position: relative;
-  display: flex;
+  display: grid;
+  grid-template-columns: 26px max-content minmax(12px, 1fr);
   align-items: center;
   gap: 8px;
   color: var(--muted);
@@ -1446,18 +1447,14 @@ p {
 }
 
 .provider-wizard-steps li:not(:last-child)::after {
-  position: absolute;
-  z-index: 0;
-  top: 13px;
-  right: 12px;
-  left: 36px;
+  grid-column: 3;
   height: 1px;
+  margin-right: 12px;
   background: var(--border);
   content: "";
 }
 
-.provider-wizard-steps li > span {
-  z-index: 1;
+.provider-wizard-step-index {
   display: grid;
   width: 26px;
   height: 26px;
@@ -1467,13 +1464,17 @@ p {
   background: var(--surface);
 }
 
+.provider-wizard-step-label {
+  white-space: nowrap;
+}
+
 .provider-wizard-steps li.is-current,
 .provider-wizard-steps li.is-complete {
   color: var(--green-dark);
 }
 
-.provider-wizard-steps li.is-current > span,
-.provider-wizard-steps li.is-complete > span {
+.provider-wizard-steps li.is-current > .provider-wizard-step-index,
+.provider-wizard-steps li.is-complete > .provider-wizard-step-index {
   border-color: var(--green);
   background: var(--green);
   color: #fff;
@@ -1542,9 +1543,15 @@ p {
   height: 34px;
   place-items: center;
   border-radius: 9px;
-  background: #e8eee9;
-  color: var(--green-dark);
-  font-weight: 750;
+  background: #eef1ed;
+  color: var(--text);
+}
+
+.model-provider-logo {
+  display: block;
+  width: 24px;
+  height: 24px;
+  object-fit: contain;
 }
 
 .provider-preset-card strong,

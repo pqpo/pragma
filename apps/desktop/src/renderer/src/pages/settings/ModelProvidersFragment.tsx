@@ -23,6 +23,7 @@ import {
   MODEL_PROVIDER_PRESETS,
   findModelProviderPreset,
 } from "../../../../shared/model-provider-presets.ts";
+import { ModelProviderLogo } from "../../components/ModelProviderLogo.tsx";
 import { errorMessage } from "../../lib/errors.ts";
 import { SettingsScreenFrame } from "./SettingsScreenFrame.tsx";
 
@@ -178,8 +179,12 @@ export function ProviderEditor(props: {
             className={number === step ? "is-current" : number < step ? "is-complete" : ""}
             key={number}
           >
-            <span>{number < step ? <Check size={13} weight="bold" /> : number}</span>
-            {t(`models.step${number}` as "models.step1", { ns: "settings" })}
+            <span className="provider-wizard-step-index">
+              {number < step ? <Check size={13} weight="bold" /> : number}
+            </span>
+            <span className="provider-wizard-step-label">
+              {t(`models.step${number}` as "models.step1", { ns: "settings" })}
+            </span>
           </li>
         ))}
       </ol>
@@ -204,7 +209,9 @@ export function ProviderEditor(props: {
                       key={preset.id}
                       onClick={() => selectPreset(preset.id)}
                     >
-                      <span className="provider-preset-mark">{preset.name.slice(0, 1)}</span>
+                      <span className="provider-preset-mark">
+                        <ModelProviderLogo presetId={preset.id} />
+                      </span>
                       <span>
                         <strong>{preset.name}</strong>
                         <small>
@@ -565,7 +572,7 @@ function ProviderCard(props: {
     <article className="provider-card provider-summary-card">
       <header className="card-header">
         <span className="card-icon">
-          <Robot size={24} />
+          <ModelProviderLogo presetId={props.provider.presetId} />
         </span>
         <div className="card-title-group">
           <h3>{props.provider.name}</h3>
