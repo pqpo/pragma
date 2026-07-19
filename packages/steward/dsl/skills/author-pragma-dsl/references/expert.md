@@ -6,7 +6,7 @@ Use an Expert for one conversational agent with a bounded scope.
 apiVersion: pragma/v2
 kind: Expert
 metadata:
-  id: release-writer
+  id: release_writer
   version: 1.0.0
   name: Release Writer
   description: Produces concise release notes from verified changes.
@@ -15,9 +15,9 @@ spec:
   scope: Write release notes; do not publish them.
   instructions: Verify the supplied changes before drafting.
   runtime:
-    ref: runtime-profile:default@1.0.0
+    ref: runtime-profile:default_runtime@1.0.0
   capabilities:
-    - ref: capability:repository-tools@1.0.0
+    - ref: capability:repository_tools@1.0.0
       kind: tools
       tools: [read_file]
   toolApprovals: {}
@@ -27,7 +27,9 @@ spec:
 ```
 
 - Use only exact Capability, ContextStore, RuntimeProfile, plugin, Expert, Team, and Flow refs.
-- Omit `runtime` to let the invoking application choose its fallback Runtime.
+- `name`, `id`, `description`, `version`, `scope`, `instructions`, and `runtime` are required.
+- Use only a RuntimeProfile returned by `list_expert_options`; it must select an explicit provider
+  and model.
 - For `kind: tools`, list the exact allowed tool names. For `kind: skill`, omit `tools`.
 - Put behavioral rules in `scope` and `instructions`; never put credentials or machine paths in DSL.
 - Expose another resource as a tool only through a named, versioned tool adapter.

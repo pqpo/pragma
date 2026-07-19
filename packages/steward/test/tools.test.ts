@@ -7,6 +7,7 @@ describe("Steward managed tools", () => {
   it("keeps read tools open and gates durable writes", async () => {
     const tools = createStewardTools({ project: projectPort(), tasks: taskPort() });
     expect(tools.find((tool) => tool.name === "list_dsl_resources")?.approval).toBeUndefined();
+    expect(tools.find((tool) => tool.name === "list_expert_options")?.approval).toBeUndefined();
     expect(tools.find((tool) => tool.name === "commit_dsl_changes")?.approval?.mode).toBe(
       "required",
     );
@@ -35,6 +36,7 @@ describe("Steward managed tools", () => {
 function projectPort(overrides: Partial<StewardDslProjectPort> = {}): StewardDslProjectPort {
   return {
     list: async () => ({ projectRevision: 0, resources: [] }),
+    listExpertOptions: async () => ({ runtimeModels: [], capabilities: [] }),
     read: async () => {
       throw new Error("unused");
     },

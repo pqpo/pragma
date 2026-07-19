@@ -1,6 +1,7 @@
 import type {
   StewardChangeSet,
   StewardDslDocument,
+  StewardExpertOptionCatalog,
   StewardProjectCommit,
   StewardResourceSummary,
   StewardSessionState,
@@ -14,6 +15,7 @@ export interface StewardDslProjectPort {
     readonly projectRevision: number;
     readonly resources: StewardResourceSummary[];
   }>;
+  listExpertOptions(): Promise<StewardExpertOptionCatalog>;
   read(ref: string): Promise<StewardDslDocument>;
   prepare(input: {
     readonly expectedProjectRevision: number;

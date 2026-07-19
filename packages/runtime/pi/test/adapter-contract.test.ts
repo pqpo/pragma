@@ -24,19 +24,57 @@ describe("PI Runtime contract", () => {
         },
         thinking: {
           supportedLevels: [{ value: "high", label: "High" }],
-          defaultLevel: "high",
         },
       },
     ];
     const runtime = createPiRuntime({
-      modelCatalog: {
-        listModels: async () => models,
+      modelProviders: {
+        listProviders: async () => [
+          {
+            id: "provider-id",
+            displayName: "Provider",
+            api: "openai-completions",
+            baseUrl: "https://models.example.com/v1",
+            models: [
+              {
+                id: "gpt-test",
+                name: "GPT Test",
+                reasoning: true,
+                thinkingLevelMap: {
+                  off: null,
+                  minimal: null,
+                  low: null,
+                  medium: null,
+                  high: "high",
+                  xhigh: null,
+                  max: null,
+                },
+                input: ["text"],
+                cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+                contextWindow: 128_000,
+                maxTokens: 16_384,
+              },
+            ],
+          },
+        ],
         resolveProvider: async () => ({
           id: "provider-id",
-          modelIds: ["gpt-test"],
+          displayName: "Provider",
+          models: [
+            {
+              id: "gpt-test",
+              name: "GPT Test",
+              reasoning: true,
+              input: ["text"],
+              cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+              contextWindow: 128_000,
+              maxTokens: 16_384,
+            },
+          ],
           baseUrl: "https://models.example.com/v1",
           apiKey: "secret",
           api: "openai-completions",
+          credentialFingerprint: "fingerprint",
         }),
       },
     });

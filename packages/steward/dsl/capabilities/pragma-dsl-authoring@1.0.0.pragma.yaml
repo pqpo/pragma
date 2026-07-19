@@ -1,7 +1,7 @@
 apiVersion: pragma/v2
 kind: Capability
 metadata:
-  id: pragma-dsl-authoring
+  id: pragma_dsl_authoring
   version: 1.0.0
   name: Author Pragma DSL
   description: Instructions and references for authoring validated pragma/v2 resources.

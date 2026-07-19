@@ -749,6 +749,15 @@ printf 'import "@pragma/server";\n' \
 - 不要新增未来能力 package，除非当前任务明确要求并同步更新 ADR、边界文档和验证路径。
 - 不要提交 `node_modules`、`dist`、`.next`、`.turbo`、coverage 等构建产物。
 
+### UI 输入控件约束
+
+- 组合输入框只能有一层可见边界。外层容器已经提供 `border`、`box-shadow` 或
+  `:focus-within` 焦点环时，内部的 `input`、`textarea`、`select` 必须去掉自身的
+  `border`、`outline` 和焦点阴影，禁止出现“外部容器边框套内部输入框边框”的双框效果。
+- 新增或修改全局 `:focus` / `:focus-visible` 规则后，必须检查组合输入框是否被级联样式重新加上
+  内框；必要时为内部控件添加更具体的 `:focus-visible` 重置，并保留外层清晰可见的键盘焦点态。
+- 修改 Desktop UI 输入控件后，除代码检查外还必须在普通态和键盘焦点态下做视觉检查。
+
 ## 文档位置
 
 更多背景见：

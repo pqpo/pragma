@@ -149,7 +149,7 @@ function skill(): PragmaCapabilityResource {
     apiVersion: "pragma/v2",
     kind: "Capability",
     metadata: {
-      id: "writing-skill",
+      id: "writing_skill",
       version: "1.0.0",
       name: "Writing skill",
       description: "Project-local writing guidance.",
@@ -170,7 +170,7 @@ function runtime(): PragmaRuntimeProfileResource {
     apiVersion: "pragma/v2",
     kind: "RuntimeProfile",
     metadata: {
-      id: "writer-runtime",
+      id: "writer_runtime",
       version: "1.0.0",
       name: "Writer runtime",
       description: "Runtime for the writer.",
@@ -193,8 +193,9 @@ function expert(): PragmaExpertResource {
     },
     spec: {
       scope: "writing",
-      runtime: { ref: "runtime-profile:writer-runtime@1.0.0" },
-      capabilities: [{ ref: "capability:writing-skill@1.0.0", kind: "skill" }],
+      instructions: "Write concise text.",
+      runtime: { ref: "runtime-profile:writer_runtime@1.0.0" },
+      capabilities: [{ ref: "capability:writing_skill@1.0.0", kind: "skill" }],
       toolApprovals: {},
       contextStores: [],
       plugins: [],

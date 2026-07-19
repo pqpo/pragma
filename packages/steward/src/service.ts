@@ -24,13 +24,18 @@ import {
   StewardSessionStateSchema,
   type PromptSteward,
   type RespondStewardInteraction,
-  type StewardChatEntry,
   type StewardChatSnapshot,
   type StewardInteraction,
   type StewardSessionState,
 } from "./contracts.ts";
+import {
+  mergeStewardChatEntries,
+  toStewardChatEntries,
+  toStewardHumanResponseEntries,
+} from "./chat-history.ts";
 import { toExpertHumanResponse, toStewardHumanRequest } from "./human-interaction.ts";
 import type { StewardDslProjectPort, StewardStateRepository, StewardTaskPort } from "./ports.ts";
+import { listAllRootSessionEvents } from "./session-events.ts";
 import { createStewardTools } from "./tools.ts";
 
 export interface StewardService {
@@ -177,12 +182,16 @@ export function createStewardService(options: {
       const state = await options.state.get();
       if (state === undefined) return { state: null, entries: [] };
       const currentSession = await requireSession();
-      const histories = await currentSession.getMessageHistory({ scope: { kind: "root" } });
-      const entries = histories
-        .flatMap((history) => history.invocations.flatMap((invocation) => invocation.messages))
-        .toSorted((left, right) => left.sequence - right.sequence)
-        .flatMap(toChatEntries);
-      return StewardChatSnapshotSchema.parse({ state: await this.getState(), entries });
+      const resolvedState = await this.getState();
+      const [histories, events] = await Promise.all([
+        currentSession.getMessageHistory({ scope: { kind: "root" } }),
+        listAllRootSessionEvents(currentSession),
+      ]);
+      const entries = mergeStewardChatEntries(
+        toStewardChatEntries(histories),
+        toStewardHumanResponseEntries(events),
+      );
+      return StewardChatSnapshotSchema.parse({ state: resolvedState, entries });
     },
     async listInteractions() {
       const currentSession = await requireSession();
@@ -253,93 +262,6 @@ function stewardAdapterHost(
       return undefined;
     },
   };
-}
-
-function toChatEntries(record: {
-  readonly sequence: number;
-  readonly executionId: string;
-  readonly message: {
-    readonly role: string;
-    readonly timestamp: number;
-    readonly content?: unknown;
-    readonly toolName?: string | undefined;
-    readonly isError?: boolean | undefined;
-  };
-}): StewardChatEntry[] {
-  const createdAt = new Date(record.message.timestamp).toISOString();
-  const baseId = `${record.executionId}:${record.sequence}`;
-  if (record.message.role === "user") {
-    return [
-      {
-        id: baseId,
-        role: "user",
-        content: visibleUserMessage(messageText(record.message.content)),
-        createdAt,
-      },
-    ];
-  }
-  if (record.message.role === "assistant" && Array.isArray(record.message.content)) {
-    return record.message.content.flatMap((item, index): StewardChatEntry[] => {
-      const value = item as { type?: unknown; text?: unknown; thinking?: unknown; name?: unknown };
-      if (value.type === "text" && typeof value.text === "string") {
-        return [
-          { id: `${baseId}:${index}`, role: "assistant" as const, content: value.text, createdAt },
-        ];
-      }
-      if (value.type === "thinking" && typeof value.thinking === "string") {
-        return [
-          {
-            id: `${baseId}:${index}`,
-            role: "thinking" as const,
-            content: value.thinking,
-            createdAt,
-          },
-        ];
-      }
-      if (value.type === "toolCall" && typeof value.name === "string") {
-        return [
-          {
-            id: `${baseId}:${index}`,
-            role: "tool" as const,
-            toolName: value.name,
-            content: "Running",
-            createdAt,
-          },
-        ];
-      }
-      return [];
-    });
-  }
-  if (record.message.role === "toolResult") {
-    return [
-      {
-        id: baseId,
-        role: "tool",
-        toolName: record.message.toolName ?? "tool",
-        content: messageText(record.message.content),
-        isError: record.message.isError ?? false,
-        createdAt,
-      },
-    ];
-  }
-  return [];
-}
-
-function messageText(content: unknown): string {
-  if (typeof content === "string") return content;
-  if (!Array.isArray(content)) return "";
-  return content
-    .flatMap((item) => {
-      const value = item as { type?: unknown; text?: unknown };
-      return value.type === "text" && typeof value.text === "string" ? [value.text] : [];
-    })
-    .join("\n");
-}
-
-function visibleUserMessage(content: string): string {
-  if (!content.startsWith("[Pragma Home context]\n")) return content;
-  const end = content.indexOf("\n[/Pragma Home context]\n");
-  return end < 0 ? content : content.slice(end + "\n[/Pragma Home context]\n".length).trimStart();
 }
 
 async function pendingInteractions(turn: ExpertTurn): Promise<StewardInteraction[]> {

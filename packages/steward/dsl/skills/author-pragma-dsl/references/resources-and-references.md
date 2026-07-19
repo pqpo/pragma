@@ -6,13 +6,13 @@ Canonical semantic refs have the form `<kind>:<id>@<version>`:
 expert:writer@1.0.0
 team:delivery@1.0.0
 flow:review@1.0.0
-capability:repository-tools@2.0.0
-context-store:project-guide@1.0.0
-runtime-profile:default@1.0.0
+capability:repository_tools@2.0.0
+context-store:project_guide@1.0.0
+runtime-profile:default_runtime@1.0.0
 ```
 
-- IDs and versions contain letters, digits, `.`, `_`, `+`, or `-` and must start with a letter or
-  digit.
+- Semantic resource IDs contain only letters, digits, and underscores and must start with a letter
+  or digit. Versions use their separate version syntax.
 - A project revision is the atomic history of the whole DSL project. Updating an existing canonical
   ref creates a new project revision, so runs pinned to an older revision remain reproducible.
 - Create a new resource version when the user wants both contracts to coexist or callers must opt in

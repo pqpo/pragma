@@ -32,6 +32,7 @@ describe("built-in Steward DSL", () => {
     const tools = createStewardTools({
       project: {
         list: unavailable,
+        listExpertOptions: unavailable,
         read: unavailable,
         prepare: unavailable,
         getChangeSet: unavailable,
@@ -70,7 +71,8 @@ describe("built-in Steward DSL", () => {
         },
       },
     });
-    expect(compiled.value.tools?.map((tool) => tool.name)).toHaveLength(10);
+    expect(compiled.value.tools?.map((tool) => tool.name)).toHaveLength(11);
+    expect(compiled.value.tools?.map((tool) => tool.name)).toContain("list_expert_options");
     expect(compiled.value.skills?.skills[0]?.path).toMatch(/author-pragma-dsl\/SKILL\.md$/);
   });
 

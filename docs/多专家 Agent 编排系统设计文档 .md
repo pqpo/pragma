@@ -182,7 +182,7 @@ docs/architecture/expert-agent-standard-protocol.md
 示例结构：
 
 ```yaml
-id: order-domain-expert
+id: order_domain_expert
 name: 订单业务专家
 description: 负责订单领域的业务规则、流程、异常场景和历史决策分析
 version: 1.3.0

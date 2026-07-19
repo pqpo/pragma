@@ -19,6 +19,31 @@ export const StewardDslDocumentSchema = StewardResourceSummarySchema.extend({
   source: z.string().min(1),
 });
 
+export const StewardRuntimeModelOptionSchema = z.object({
+  key: z.string().min(1).max(500),
+  runtimeProfileRef: PragmaSemanticResourceRefSchema.refine((value) =>
+    value.startsWith("runtime-profile:"),
+  ),
+  runtimeName: z.string().min(1).max(200),
+  providerName: z.string().min(1).max(200),
+  modelName: z.string().min(1).max(200),
+  isDefault: z.boolean(),
+});
+
+export const StewardCapabilityOptionSchema = z.object({
+  key: z.string().min(1).max(500),
+  ref: PragmaSemanticResourceRefSchema.refine((value) => value.startsWith("capability:")),
+  name: z.string().min(1).max(200),
+  description: z.string().max(2_000),
+  kind: z.enum(["skill", "tools"]),
+  toolNames: z.array(z.string().min(1).max(128)).max(500),
+});
+
+export const StewardExpertOptionCatalogSchema = z.object({
+  runtimeModels: z.array(StewardRuntimeModelOptionSchema),
+  capabilities: z.array(StewardCapabilityOptionSchema),
+});
+
 export const StewardDslChangeSchema = z.object({ source: z.string().min(1).max(2_000_000) });
 
 export const StewardChangeSetSchema = z.object({
@@ -80,6 +105,8 @@ export const StewardChatEntrySchema = z.object({
   role: z.enum(["user", "assistant", "thinking", "tool"]),
   content: z.string(),
   toolName: z.string().min(1).optional(),
+  toolCallId: z.string().min(1).optional(),
+  toolStatus: z.enum(["running", "succeeded", "failed"]).optional(),
   isError: z.boolean().optional(),
   createdAt: z.string().datetime(),
 });
@@ -109,6 +136,9 @@ export const RespondStewardInteractionSchema = z.object({
 
 export type StewardResourceSummary = z.infer<typeof StewardResourceSummarySchema>;
 export type StewardDslDocument = z.infer<typeof StewardDslDocumentSchema>;
+export type StewardRuntimeModelOption = z.infer<typeof StewardRuntimeModelOptionSchema>;
+export type StewardCapabilityOption = z.infer<typeof StewardCapabilityOptionSchema>;
+export type StewardExpertOptionCatalog = z.infer<typeof StewardExpertOptionCatalogSchema>;
 export type StewardDslChange = z.infer<typeof StewardDslChangeSchema>;
 export type StewardChangeSet = z.infer<typeof StewardChangeSetSchema>;
 export type StewardProjectCommit = z.infer<typeof StewardProjectCommitSchema>;

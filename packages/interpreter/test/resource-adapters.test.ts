@@ -46,7 +46,7 @@ describe("Pragma resource adapters", () => {
       apiVersion: "pragma/v2",
       kind: "Capability",
       metadata: {
-        id: "unsafe-skill",
+        id: "unsafe_skill",
         version: "1.0.0",
         name: "Unsafe Skill",
         description: "Tests entry containment.",
@@ -184,17 +184,20 @@ describe("Pragma resource adapters", () => {
         config: { payload: { type: "project", path: "not-an-artifact.txt" } },
       },
     };
+    expect(registry.validate(resource)).toEqual([]);
     expect(registry.artifactSources(resource)).toEqual([]);
   });
 
   it("rejects adapter reads of undeclared artifact dependencies", async () => {
     const source = { type: "project" as const, path: "hidden.txt" };
+    let verifyCalled = false;
     const registry = new PragmaResourceAdapterRegistry().register({
       id: "test.undeclared",
       version: "v1",
       kind: "Capability",
       configSchema: z.object({}).strict(),
       async verify({ host: adapterHost }) {
+        verifyCalled = true;
         await adapterHost.resolveArtifact(source);
         return { fingerprint: "a".repeat(64), contribution: {} };
       },
@@ -215,6 +218,7 @@ describe("Pragma resource adapters", () => {
       resource,
       host(async () => ({ source, contentHash: sha256("hidden"), text: "hidden" })),
     );
+    expect(verifyCalled).toBe(true);
     expect(inspection.health).toMatchObject({
       status: "needs_attention",
       issues: [expect.objectContaining({ message: expect.stringContaining("undeclared") })],

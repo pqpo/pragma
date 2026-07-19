@@ -1,7 +1,7 @@
 apiVersion: pragma/v2
 kind: Capability
 metadata:
-  id: steward-host
+  id: steward_host
   version: 1.0.0
   name: Steward host operations
   description: App-provided DSL project and task operations for the built-in Steward.

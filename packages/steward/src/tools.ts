@@ -49,6 +49,12 @@ export function createStewardTools(options: {
       async (args) => ok(await options.project.read(RefInput.parse(args).ref)),
     ),
     tool(
+      "list_expert_options",
+      "List host-provided Runtime models and ready capabilities that can be assigned to an Expert.",
+      {},
+      async () => ok(await options.project.listExpertOptions()),
+    ),
+    tool(
       "prepare_dsl_changes",
       "Parse and validate complete YAML documents against the full candidate project without saving.",
       objectSchema(
