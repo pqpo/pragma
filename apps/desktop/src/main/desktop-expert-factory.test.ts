@@ -121,8 +121,9 @@ describe("resolveExpertCapabilities", () => {
       tags: [],
       version: "1.0.0",
       scope: "Review only.",
-      model: null,
-      resourceRuntime: { ref: "runtime-profile:reviewer.runtime@1.0.0" },
+      instructions: "Review the supplied work.",
+      model: { runtimeId: "test", providerId: "test", modelId: "test" },
+      resourceRuntime: { ref: "runtime-profile:reviewer_runtime@1.0.0" },
       capabilities: [
         { kind: "skill", capabilityId: skillId, revision: 1 },
         { kind: "tools", capabilityId: serviceId, revision: 1, toolNames: ["get_customer"] },

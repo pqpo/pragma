@@ -12,11 +12,15 @@ afterEach(async () => {
   await Promise.all(directories.splice(0).map((directory) => rm(directory, { recursive: true })));
 });
 
-async function createStore() {
+async function createStore(isReferenced?: (storeId: string) => Promise<boolean>) {
   const directory = await mkdtemp(join(tmpdir(), "pragma-context-stores-"));
   directories.push(directory);
   const storesPath = join(directory, ".pragma", "context-stores");
-  return { directory, storesPath, store: createContextStoreStore({ storesPath }) };
+  return {
+    directory,
+    storesPath,
+    store: createContextStoreStore({ storesPath, isReferenced }),
+  };
 }
 
 describe("context store store", () => {
@@ -39,6 +43,31 @@ describe("context store store", () => {
     expect(await readFile(join(storesPath, created.id, "store.json"), "utf8")).toContain(
       "Product documentation",
     );
+  });
+
+  it("removes unreferenced stores and blocks stores mounted by an Expert", async () => {
+    const referenced = new Set<string>();
+    const { storesPath, store } = await createStore(async (storeId) => referenced.has(storeId));
+    const blocked = await store.create({
+      type: "note",
+      name: "Mounted rules",
+      description: "Still mounted.",
+    });
+    const removable = await store.create({
+      type: "note",
+      name: "Unused rules",
+      description: "No longer mounted.",
+    });
+    referenced.add(blocked.id);
+
+    await expect(store.remove(blocked.id)).rejects.toMatchObject({ code: "store_referenced" });
+    await expect(readFile(join(storesPath, blocked.id, "store.json"), "utf8")).resolves.toContain(
+      "Mounted rules",
+    );
+    await expect(store.remove(removable.id)).resolves.toBeUndefined();
+    await expect(
+      readFile(join(storesPath, removable.id, "store.json"), "utf8"),
+    ).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("persists context notes without using memory terminology", async () => {

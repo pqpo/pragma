@@ -2,6 +2,9 @@ import {
   ContextTriggerSchema,
   HumanInteractionRequestSchema,
   HumanInteractionResponseSchema,
+  ModelApiSchema as SharedModelApiSchema,
+  ModelThinkingLevelMapSchema as SharedModelThinkingLevelMapSchema,
+  ProviderModelDefinitionSchema,
 } from "@pragma/shared";
 import {
   canonicalPragmaResourceRef,
@@ -16,6 +19,11 @@ import {
   PragmaToolBindingSchema,
   PragmaHttpParameterSchema,
   PragmaHttpToolSchema,
+  PRAGMA_EXPERT_INSTRUCTIONS_MAX_LENGTH,
+  PRAGMA_EXPERT_SCOPE_MAX_LENGTH,
+  PragmaExpertInstructionsSchema,
+  PragmaExpertScopeSchema,
+  PragmaSemanticResourceIdSchema,
   PragmaJsonSchemaSchema,
   PragmaObjectJsonSchemaSchema,
   type PragmaJsonSchema,
@@ -148,6 +156,10 @@ export const DesktopRuntimeAvailabilitySchema = z.object({
   modelDiscoveryError: z.string().optional(),
 });
 
+export const SetDefaultRuntimeSchema = z.object({
+  runtimeId: DesktopRuntimeIdSchema,
+});
+
 export const DesktopBridgeSnapshotSchema = z.object({
   app: DesktopAppInfoSchema,
   gateway: RuntimeGatewayConfigSchema,
@@ -200,45 +212,55 @@ export const ValidateWorkspaceResultSchema = z.object({
 export const ModelProviderIdSchema = z.string().uuid();
 
 export const ModelIdSchema = z.string().trim().min(1).max(200);
-export const ModelMetadataSchema = z.object({
-  displayName: z.string().trim().min(1).max(200).optional(),
-  thinking: RuntimeModelThinkingSchema.optional(),
+export const ModelProviderPresetIdSchema = z.string().trim().min(1).max(80);
+export const ModelProviderProtocolSchema = SharedModelApiSchema;
+export const ModelThinkingLevelMapSchema = SharedModelThinkingLevelMapSchema;
+
+export const ModelProviderModelSchema = ProviderModelDefinitionSchema.extend({
+  capabilitiesSource: z.enum(["preset", "provider", "manual"]),
 });
-export const ModelMetadataByIdSchema = z.record(ModelIdSchema, ModelMetadataSchema);
-export const ModelProviderProtocolSchema = z.enum([
-  "openai-completions",
-  "openai-responses",
-  "anthropic-messages",
-]);
+
+export const ModelProviderVerificationSchema = z.object({
+  status: z.enum(["unverified", "verified", "failed"]),
+  checkedAt: z.string().datetime().optional(),
+  latencyMs: z.number().int().nonnegative().optional(),
+  code: z.string().trim().min(1).max(100).optional(),
+  message: z.string().max(2_000).optional(),
+  revision: z.number().int().positive().optional(),
+});
 
 export const ModelProviderSchema = z.object({
   id: ModelProviderIdSchema,
+  presetId: ModelProviderPresetIdSchema,
   name: z.string().trim().min(1).max(100),
   protocol: ModelProviderProtocolSchema,
   baseUrl: z.string().url(),
-  models: z.array(ModelIdSchema).min(1),
-  modelMetadata: ModelMetadataByIdSchema.default({}),
+  models: z.array(ModelProviderModelSchema).min(1),
   hasApiKey: z.boolean(),
+  requiresApiKey: z.boolean(),
+  verification: ModelProviderVerificationSchema,
   revision: z.number().int().positive(),
 });
 
 export const CreateModelProviderSchema = z.object({
+  presetId: ModelProviderPresetIdSchema,
   name: z.string().trim().min(1).max(100),
   protocol: ModelProviderProtocolSchema,
   baseUrl: z.string().trim().url(),
-  apiKey: z.string().trim().min(1).max(10_000),
-  models: z.array(ModelIdSchema).min(1).max(100),
-  modelMetadata: ModelMetadataByIdSchema.optional(),
+  apiKey: z.string().trim().max(10_000),
+  requiresApiKey: z.boolean(),
+  models: z.array(ModelProviderModelSchema).min(1).max(100),
 });
 
 export const UpdateModelProviderSchema = z.object({
   id: ModelProviderIdSchema,
+  presetId: ModelProviderPresetIdSchema,
   name: z.string().trim().min(1).max(100),
   protocol: ModelProviderProtocolSchema,
   baseUrl: z.string().trim().url(),
-  apiKey: z.string().trim().min(1).max(10_000).optional(),
-  models: z.array(ModelIdSchema).min(1).max(100),
-  modelMetadata: ModelMetadataByIdSchema.optional(),
+  apiKey: z.string().trim().max(10_000).optional(),
+  requiresApiKey: z.boolean(),
+  models: z.array(ModelProviderModelSchema).min(1).max(100),
 });
 
 export const DeleteModelProviderSchema = z.object({
@@ -247,7 +269,7 @@ export const DeleteModelProviderSchema = z.object({
 
 export const ModelConnectionTestRequestSchema = z.object({
   providerId: ModelProviderIdSchema,
-  modelId: ModelIdSchema,
+  modelId: ModelIdSchema.optional(),
 });
 
 export const ModelConnectionTestResultSchema = z.object({
@@ -260,6 +282,7 @@ export const ModelConnectionTestResultSchema = z.object({
     "timeout",
     "network",
     "invalid_response",
+    "unsupported_protocol",
     "request_failed",
   ]),
   message: z.string(),
@@ -267,26 +290,55 @@ export const ModelConnectionTestResultSchema = z.object({
   status: z.number().int().optional(),
 });
 
+export const DiscoverProviderModelsSchema = z.object({
+  presetId: ModelProviderPresetIdSchema,
+  protocol: ModelProviderProtocolSchema,
+  baseUrl: z.string().trim().url(),
+  apiKey: z.string().trim().max(10_000).optional(),
+  providerId: ModelProviderIdSchema.optional(),
+});
+
+export const ModelDiscoveryResultSchema = z.object({
+  ok: z.boolean(),
+  models: z.array(ModelProviderModelSchema),
+  message: z.string().max(2_000),
+  source: z.enum(["provider", "preset", "manual"]),
+});
+
+export const ModelProviderSettingsSnapshotSchema = z.object({
+  status: z.enum(["ready", "reset_required"]),
+  providers: z.array(ModelProviderSchema),
+  legacyConfigPath: z.string().optional(),
+  message: z.string().optional(),
+});
+
+export const ResetModelProvidersResultSchema = ModelProviderSettingsSnapshotSchema.extend({
+  backupPath: z.string().optional(),
+});
+
 export const EXPERT_NAME_MAX_LENGTH = 20;
 export const EXPERT_ID_MAX_LENGTH = 20;
 export const EXPERT_DESCRIPTION_MAX_LENGTH = 200;
 export const EXPERT_TAG_MAX_LENGTH = 20;
+export const EXPERT_SCOPE_MAX_LENGTH = PRAGMA_EXPERT_SCOPE_MAX_LENGTH;
+export const EXPERT_INSTRUCTIONS_MAX_LENGTH = PRAGMA_EXPERT_INSTRUCTIONS_MAX_LENGTH;
 
 export const ExpertIdSchema = z
   .string()
   .trim()
   .min(1)
-  .max(100)
-  .regex(/^[A-Za-z0-9_-]+$/, "Use only letters, numbers, underscores, and hyphens.");
+  .max(EXPERT_ID_MAX_LENGTH)
+  .pipe(PragmaSemanticResourceIdSchema);
 
 export const CreateExpertIdSchema = z
   .string()
   .trim()
   .min(1)
   .max(EXPERT_ID_MAX_LENGTH)
-  .regex(/^[A-Za-z0-9_]+$/, "Use only letters, numbers, and underscores.");
+  .pipe(PragmaSemanticResourceIdSchema);
 
-export const ExpertScopeSchema = z.string().trim().min(1).max(4_000);
+export const ExpertScopeSchema = PragmaExpertScopeSchema;
+export const ExpertInstructionsSchema = PragmaExpertInstructionsSchema;
 
 export const ExpertModelConfigSchema = z.object({
   runtimeId: DesktopRuntimeIdSchema,
@@ -742,6 +794,10 @@ export const AddContextNoteEntrySchema = z.object({
   entry: ContextNoteEntrySchema,
 });
 
+export const DeleteContextStoreSchema = z.object({
+  storeId: ContextStoreIdSchema,
+});
+
 export const ContextStoreContentMetadataSchema = z.object({
   description: z.string().max(2_000).optional(),
   trigger: ContextTriggerSchema,
@@ -785,8 +841,8 @@ export const ExpertDefinitionSchema = z.object({
   tags: z.array(z.string().trim().min(1).max(100)).max(30),
   version: z.string().trim().min(1).max(100),
   scope: ExpertScopeSchema,
-  instructions: z.string().max(100_000).optional(),
-  model: ExpertModelConfigSchema.nullable(),
+  instructions: ExpertInstructionsSchema,
+  model: ExpertModelConfigSchema,
   capabilities: z.array(ExpertCapabilityReferenceSchema).max(500),
   toolApprovals: z.record(z.string().max(200), ExpertToolApprovalModeSchema),
   plugins: z.array(ExpertPluginReferenceSchema).max(100),
@@ -825,8 +881,8 @@ export const CreateExpertDefinitionSchema = ExpertDefinitionSchema.omit({
   name: z.string().trim().min(1).max(EXPERT_NAME_MAX_LENGTH),
   description: z.string().trim().min(1).max(EXPERT_DESCRIPTION_MAX_LENGTH),
   tags: z.array(z.string().trim().min(1).max(EXPERT_TAG_MAX_LENGTH)).max(30),
-  instructions: z.string().max(100_000).optional(),
-  model: ExpertModelConfigSchema.nullable().optional(),
+  instructions: ExpertInstructionsSchema,
+  model: ExpertModelConfigSchema,
   capabilities: z.array(ExpertCapabilityReferenceSchema).max(500).optional(),
   toolApprovals: z.record(z.string().max(200), ExpertToolApprovalModeSchema).optional(),
   plugins: z.array(ExpertPluginReferenceSchema).max(100).optional(),
@@ -1142,6 +1198,7 @@ export type DesktopAppInfo = z.infer<typeof DesktopAppInfoSchema>;
 export type RuntimeGatewayConfig = z.infer<typeof RuntimeGatewayConfigSchema>;
 export type LocalRuntimeCapability = z.infer<typeof LocalRuntimeCapabilitySchema>;
 export type DesktopRuntimeAvailability = z.infer<typeof DesktopRuntimeAvailabilitySchema>;
+export type SetDefaultRuntime = z.infer<typeof SetDefaultRuntimeSchema>;
 export type DesktopRuntimeModel = z.infer<typeof DesktopRuntimeModelSchema>;
 export type RuntimeEnvironmentDefinition = z.infer<typeof RuntimeEnvironmentDefinitionSchema>;
 export type RuntimeEnvironmentRevision = z.infer<typeof RuntimeEnvironmentRevisionSchema>;
@@ -1154,14 +1211,21 @@ export type DesktopSettingsSnapshot = z.infer<typeof DesktopSettingsSnapshotSche
 export type UpdateDesktopSettings = z.infer<typeof UpdateDesktopSettingsSchema>;
 export type PickWorkspaceResult = z.infer<typeof PickWorkspaceResultSchema>;
 export type ValidateWorkspaceResult = z.infer<typeof ValidateWorkspaceResultSchema>;
+export type ModelProviderModel = z.infer<typeof ModelProviderModelSchema>;
+export type ModelProviderVerification = z.infer<typeof ModelProviderVerificationSchema>;
 export type ModelProvider = z.infer<typeof ModelProviderSchema>;
 export type CreateModelProvider = z.infer<typeof CreateModelProviderSchema>;
 export type UpdateModelProvider = z.infer<typeof UpdateModelProviderSchema>;
 export type DeleteModelProvider = z.infer<typeof DeleteModelProviderSchema>;
 export type ModelConnectionTestRequest = z.infer<typeof ModelConnectionTestRequestSchema>;
 export type ModelConnectionTestResult = z.infer<typeof ModelConnectionTestResultSchema>;
+export type DiscoverProviderModels = z.infer<typeof DiscoverProviderModelsSchema>;
+export type ModelDiscoveryResult = z.infer<typeof ModelDiscoveryResultSchema>;
+export type ModelProviderSettingsSnapshot = z.infer<typeof ModelProviderSettingsSnapshotSchema>;
+export type ResetModelProvidersResult = z.infer<typeof ResetModelProvidersResultSchema>;
 export type ContextStore = z.infer<typeof ContextStoreSchema>;
 export type CreateContextStore = z.infer<typeof CreateContextStoreSchema>;
+export type DeleteContextStore = z.infer<typeof DeleteContextStoreSchema>;
 export type ContextNoteEntry = z.infer<typeof ContextNoteEntrySchema>;
 export type AddContextNoteEntry = z.infer<typeof AddContextNoteEntrySchema>;
 export type ContextStoreContentMetadata = z.infer<typeof ContextStoreContentMetadataSchema>;
@@ -1227,13 +1291,17 @@ export interface PragmaDesktopAPI extends PragmaStewardAPI {
   updateDesktopSettings: (input: UpdateDesktopSettings) => Promise<DesktopSettingsSnapshot>;
   pickWorkspace: () => Promise<PickWorkspaceResult>;
   validateWorkspace: (path: string) => Promise<ValidateWorkspaceResult>;
+  getModelProviderSettings: () => Promise<ModelProviderSettingsSnapshot>;
   listModelProviders: () => Promise<ModelProvider[]>;
   createModelProvider: (input: CreateModelProvider) => Promise<ModelProvider>;
   updateModelProvider: (input: UpdateModelProvider) => Promise<ModelProvider>;
   deleteModelProvider: (input: DeleteModelProvider) => Promise<void>;
+  discoverProviderModels: (input: DiscoverProviderModels) => Promise<ModelDiscoveryResult>;
   testModelConnection: (input: ModelConnectionTestRequest) => Promise<ModelConnectionTestResult>;
+  resetModelProviders: () => Promise<ResetModelProvidersResult>;
   listContextStores: () => Promise<ContextStore[]>;
   createContextStore: (input: CreateContextStore) => Promise<ContextStore>;
+  deleteContextStore: (input: DeleteContextStore) => Promise<void>;
   addContextNoteEntry: (input: AddContextNoteEntry) => Promise<ContextStore>;
   listContextStoreContents: (
     input: ListContextStoreContents,
@@ -1288,4 +1356,5 @@ export interface PragmaDesktopAPI extends PragmaStewardAPI {
   deleteCapability: (id: string) => Promise<CapabilityDeleteResult>;
   pickSkillSource: () => Promise<PickWorkspaceResult>;
   getRuntimeAvailability: () => Promise<DesktopRuntimeAvailability[]>;
+  setDefaultRuntime: (input: SetDefaultRuntime) => Promise<DesktopRuntimeAvailability[]>;
 }

@@ -2,39 +2,40 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowRight,
   Brain,
-  FolderOpen,
-  GearSix,
+  CaretDown,
+  Check,
   PaperPlaneTilt,
   Sparkle,
   StopCircle,
+  Toolbox,
+  WarningCircle,
 } from "@phosphor-icons/react";
 import type { HumanInteractionResponse } from "@pragma/shared";
 
 import type {
   DesktopRuntimeAvailability,
   DesktopRuntimeModel,
+  StewardChatEntry,
   StewardChatSnapshot,
   StewardInteraction,
   StewardSessionState,
 } from "../../../../shared/desktop-api.ts";
 import { errorMessage } from "../../lib/errors.ts";
+import { readStewardTaskWorkspace } from "../../lib/steward-preferences.ts";
 import { StewardInteractionCard } from "./StewardInteractionCard.tsx";
-
-const WORKSPACE_KEY = "pragma.steward.task-workspace";
 
 export function HomePage(props: {
   readonly onOpenStudio: () => void;
   readonly onOpenMissions: () => void;
   readonly onOpenModelSettings: () => void;
-  readonly onOpenRuntimeSettings: () => void;
 }) {
   const [snapshot, setSnapshot] = useState<StewardChatSnapshot>({ state: null, entries: [] });
   const [runtimes, setRuntimes] = useState<readonly DesktopRuntimeAvailability[]>([]);
   const [runtimeId, setRuntimeId] = useState("pi");
   const [modelKey, setModelKey] = useState("");
   const [thinkingLevel, setThinkingLevel] = useState("");
-  const [workspace, setWorkspace] = useState(() =>
-    typeof window === "undefined" ? "" : (window.localStorage.getItem(WORKSPACE_KEY) ?? ""),
+  const [workspace] = useState(() =>
+    readStewardTaskWorkspace(typeof window === "undefined" ? undefined : window.localStorage),
   );
   const [message, setMessage] = useState("");
   const [interactions, setInteractions] = useState<readonly StewardInteraction[]>([]);
@@ -45,12 +46,8 @@ export function HomePage(props: {
 
   const refresh = async () => {
     const api = window.pragmaDesktop;
-    const [chat, pending] = await Promise.all([
-      api.getStewardChat(),
-      api
-        .getStewardState()
-        .then((state) => (state === null ? Promise.resolve([]) : api.listStewardInteractions())),
-    ]);
+    const chat = await api.getStewardChat();
+    const pending = chat.state === null ? [] : await api.listStewardInteractions();
     setSnapshot(chat);
     setInteractions(pending);
   };
@@ -65,7 +62,12 @@ export function HomePage(props: {
         if (cancelled) return;
         setSnapshot((current) => ({ ...current, state }));
         setRuntimes(availability);
-        setRuntimeId(state?.runtimeId ?? "pi");
+        setRuntimeId(
+          state?.runtimeId ??
+            availability.find((runtime) => runtime.isDefault)?.id ??
+            availability.find((runtime) => runtime.status === "available")?.id ??
+            "pi",
+        );
         if (state !== null) {
           void refresh().catch((loadError: unknown) => setError(errorMessage(loadError)));
         }
@@ -211,28 +213,20 @@ export function HomePage(props: {
           </div>
         ) : (
           <div className="steward-messages">
-            {snapshot.entries.map((entry) => (
-              <article key={entry.id} className={`steward-message is-${entry.role}`}>
-                {entry.role === "tool" ? (
-                  <span className="steward-tool-name">{entry.toolName}</span>
-                ) : null}
-                <div>{entry.content}</div>
-                {entry.role === "tool" &&
-                !entry.isError &&
-                /projectRevision|changedRefs/.test(entry.content) ? (
-                  <button type="button" onClick={props.onOpenStudio}>
-                    Open Studio <ArrowRight size={14} />
-                  </button>
-                ) : null}
-                {entry.role === "tool" &&
-                !entry.isError &&
-                /workspaceLabel|executorRef/.test(entry.content) ? (
-                  <button type="button" onClick={props.onOpenMissions}>
-                    Open Missions <ArrowRight size={14} />
-                  </button>
-                ) : null}
-              </article>
-            ))}
+            {snapshot.entries.map((entry) =>
+              entry.role === "tool" ? (
+                <StewardToolMessage
+                  key={entry.id}
+                  entry={entry}
+                  onOpenStudio={props.onOpenStudio}
+                  onOpenMissions={props.onOpenMissions}
+                />
+              ) : (
+                <article key={entry.id} className={`steward-message is-${entry.role}`}>
+                  <div>{entry.content}</div>
+                </article>
+              ),
+            )}
           </div>
         )}
 
@@ -275,24 +269,6 @@ export function HomePage(props: {
           <div className="steward-composer-footer">
             <div className="steward-context-controls">
               <select
-                aria-label="Runtime"
-                value={runtimeId}
-                disabled={busy || turnActive}
-                onChange={(event) => void changeRuntime(event.target.value)}
-              >
-                {runtimes.length === 0 ? <option value="pi">PI Runtime</option> : null}
-                {runtimes.map((runtime) => (
-                  <option
-                    value={runtime.id}
-                    key={runtime.id}
-                    disabled={runtime.status !== "available"}
-                  >
-                    {runtime.displayName}
-                    {runtime.status === "available" ? "" : " · unavailable"}
-                  </option>
-                ))}
-              </select>
-              <select
                 aria-label="Model"
                 value={modelKey}
                 disabled={busy || turnActive || selectedRuntime?.status !== "available"}
@@ -330,27 +306,6 @@ export function HomePage(props: {
                   ))}
                 </select>
               </label>
-              <button
-                type="button"
-                title="Manage Runtime Environments"
-                onClick={props.onOpenRuntimeSettings}
-              >
-                <GearSix size={16} /> Manage runtimes
-              </button>
-              <button
-                type="button"
-                title={workspace || "Choose task workspace"}
-                onClick={() =>
-                  void window.pragmaDesktop.pickWorkspace().then((result) => {
-                    if (!result.ok || result.path === undefined) return;
-                    window.localStorage.setItem(WORKSPACE_KEY, result.path);
-                    setWorkspace(result.path);
-                  })
-                }
-              >
-                <FolderOpen size={16} />{" "}
-                {workspace === "" ? "Task workspace" : workspace.split(/[\\/]/).at(-1)}
-              </button>
             </div>
             {turnActive ? (
               <button
@@ -392,32 +347,63 @@ export function HomePage(props: {
       setBusy(false);
     }
   }
+}
 
-  async function changeRuntime(nextRuntimeId: string) {
-    if (nextRuntimeId === runtimeId) return;
-    if (!initialized) {
-      setRuntimeId(nextRuntimeId);
-      return;
-    }
-    const confirmed = window.confirm(
-      "Switching Runtime starts a new Steward session. The current conversation context will be lost. Continue?",
-    );
-    if (!confirmed) return;
-    setBusy(true);
-    setError(null);
-    try {
-      await window.pragmaDesktop.resetSteward();
-      setRuntimeId(nextRuntimeId);
-      setSnapshot({ state: null, entries: [] });
-      setInteractions([]);
-      const state = await window.pragmaDesktop.initializeSteward({ runtimeId: nextRuntimeId });
-      setSnapshot({ state, entries: [] });
-    } catch (switchError) {
-      setError(errorMessage(switchError));
-    } finally {
-      setBusy(false);
-    }
-  }
+function StewardToolMessage(props: {
+  readonly entry: StewardChatEntry;
+  readonly onOpenStudio: () => void;
+  readonly onOpenMissions: () => void;
+}) {
+  const status =
+    props.entry.toolStatus ??
+    (props.entry.content === "Running" ? "running" : props.entry.isError ? "failed" : "succeeded");
+  const hasDetails = status !== "running" && props.entry.content.trim() !== "";
+  const label = status === "running" ? "Calling" : status === "failed" ? "Failed" : "Completed";
+  const summary = (
+    <>
+      <Toolbox size={16} aria-hidden="true" />
+      <strong>{props.entry.toolName ?? "tool"}</strong>
+      <span>{label}</span>
+      {status === "failed" ? (
+        <WarningCircle size={15} aria-hidden="true" />
+      ) : status === "succeeded" ? (
+        <Check size={15} aria-hidden="true" />
+      ) : null}
+    </>
+  );
+
+  return (
+    <article className={`steward-message is-tool is-${status}`}>
+      {hasDetails ? (
+        <details className="steward-tool-activity">
+          <summary>
+            {summary}
+            <CaretDown className="steward-tool-caret" size={14} aria-hidden="true" />
+          </summary>
+          <pre>{props.entry.content}</pre>
+        </details>
+      ) : (
+        <div
+          className={
+            status === "running" ? "steward-tool-status is-running" : "steward-tool-status"
+          }
+          role={status === "running" ? "status" : undefined}
+        >
+          {summary}
+        </div>
+      )}
+      {status === "succeeded" && /projectRevision|changedRefs/.test(props.entry.content) ? (
+        <button type="button" onClick={props.onOpenStudio}>
+          Open Studio <ArrowRight size={14} />
+        </button>
+      ) : null}
+      {status === "succeeded" && /workspaceLabel|executorRef/.test(props.entry.content) ? (
+        <button type="button" onClick={props.onOpenMissions}>
+          Open Missions <ArrowRight size={14} />
+        </button>
+      ) : null}
+    </article>
+  );
 }
 
 function runtimeModelKey(model: DesktopRuntimeModel): string {

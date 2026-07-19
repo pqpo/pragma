@@ -13,7 +13,7 @@ const expert: ExpertRecord = {
   version: "0.1.0",
   scope: "Handles focused test work.",
   instructions: "i".repeat(500),
-  model: null,
+  model: { runtimeId: "test", providerId: "test", modelId: "test" },
   capabilities: [],
   skills: 0,
   tools: 0,
@@ -35,6 +35,7 @@ describe("ExpertDetailFragment", () => {
         onEdit={() => undefined}
         onConfigureContext={() => undefined}
         onTryInSession={() => undefined}
+        onDelete={async () => undefined}
       />,
     );
 
@@ -46,5 +47,22 @@ describe("ExpertDetailFragment", () => {
     expect(html).not.toContain("d".repeat(201));
     expect(html).not.toContain("i".repeat(421));
     expect(html).toMatch(/studio-screen-header.*Back to Experts.*studio-screen-body.*Test Expert/s);
+    expect(html).toContain("Delete expert");
+  });
+
+  it("does not offer deletion for a built-in expert", () => {
+    const html = renderToStaticMarkup(
+      <ExpertDetailFragment
+        expert={{ ...expert, tags: ["builtin"] }}
+        contextStores={[]}
+        onBack={() => undefined}
+        onEdit={() => undefined}
+        onConfigureContext={() => undefined}
+        onTryInSession={() => undefined}
+        onDelete={async () => undefined}
+      />,
+    );
+
+    expect(html).not.toContain("Delete expert");
   });
 });

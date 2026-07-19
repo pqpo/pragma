@@ -9,13 +9,16 @@ import {
   PencilSimple,
   Play,
   Plus,
+  Trash,
 } from "@phosphor-icons/react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import type { ContextStore } from "../../../../shared/desktop-api.ts";
 import { StudioScreenFrame } from "./StudioScreenFrame.tsx";
-import type { ExpertRecord } from "./studio-model.ts";
+import { DeleteConfirmationDialog } from "./DeleteConfirmationDialog.tsx";
+import { isBuiltInExpert, type ExpertRecord } from "./studio-model.ts";
+import { errorMessage } from "../../lib/errors.ts";
 
 const DESCRIPTION_PREVIEW_LENGTH = 200;
 const INSTRUCTIONS_PREVIEW_LENGTH = 420;
@@ -122,15 +125,31 @@ export function ExpertDetailFragment(props: {
   readonly onEdit: () => void;
   readonly onConfigureContext: () => void;
   readonly onTryInSession: () => void;
+  readonly onDelete: () => Promise<void>;
 }) {
   const { t } = useTranslation("studio");
   const ExpertIcon = props.expert.icon;
   const [instructionsExpanded, setInstructionsExpanded] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const hasLongInstructions = props.expert.instructions.trim().length > INSTRUCTIONS_PREVIEW_LENGTH;
   const displayedInstructions =
     hasLongInstructions && !instructionsExpanded
       ? truncateText(props.expert.instructions, INSTRUCTIONS_PREVIEW_LENGTH)
       : props.expert.instructions.trim();
+  const remove = async () => {
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      await props.onDelete();
+    } catch (cause) {
+      setDeleteError(errorMessage(cause));
+      setConfirmOpen(false);
+    } finally {
+      setDeleting(false);
+    }
+  };
   return (
     <StudioScreenFrame
       className="expert-detail"
@@ -168,8 +187,26 @@ export function ExpertDetailFragment(props: {
             <Play size={17} aria-hidden="true" />
             {t("trySession")}
           </button>
+          {!isBuiltInExpert(props.expert) ? (
+            <button
+              className="danger-button"
+              type="button"
+              onClick={() => {
+                setDeleteError(null);
+                setConfirmOpen(true);
+              }}
+            >
+              <Trash size={17} aria-hidden="true" />
+              {t("deleteExpertAction")}
+            </button>
+          ) : null}
         </div>
       </header>
+      {deleteError ? (
+        <p className="form-error" role="alert">
+          {deleteError}
+        </p>
+      ) : null}
       <section className="expert-scope" aria-labelledby="expert-scope-heading">
         <h2 id="expert-scope-heading">{t("scope")}</h2>
         <p>{props.expert.scope}</p>
@@ -255,6 +292,18 @@ export function ExpertDetailFragment(props: {
         <p className="approval-note">
           <Info size={19} aria-hidden="true" /> {t("approvalNote")}
         </p>
+      ) : null}
+      {confirmOpen ? (
+        <DeleteConfirmationDialog
+          title={t("deleteExpert")}
+          description={t("deleteExpertDescription", { name: props.expert.name })}
+          cancelLabel={t("cancel")}
+          confirmLabel={t("deleteExpertAction")}
+          deletingLabel={t("deleting")}
+          busy={deleting}
+          onCancel={() => setConfirmOpen(false)}
+          onConfirm={() => void remove()}
+        />
       ) : null}
     </StudioScreenFrame>
   );

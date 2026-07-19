@@ -31,6 +31,7 @@ describe("MissionsPage", () => {
       },
       spec: {
         scope: "testing",
+        instructions: "Run focused tests.",
         runtime: { ref: "runtime-profile:test@1.0.0" },
         capabilities: [],
         toolApprovals: {},
@@ -66,6 +67,7 @@ describe("MissionsPage", () => {
       },
       spec: {
         scope: "testing",
+        instructions: "Run the mission.",
         runtime: { ref: "runtime-profile:real_expert@1.0.0" },
         capabilities: [],
         toolApprovals: {},

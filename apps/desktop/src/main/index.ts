@@ -39,6 +39,7 @@ import { createDesktopStewardProjectPort } from "./steward-project-adapter.ts";
 import { createDesktopStewardTaskPort } from "./steward-task-adapter.ts";
 import { installWorkflowLayoutHandlers } from "./workflow-layout-ipc.ts";
 import { createWorkflowLayoutStore } from "./workflow-layout-store.ts";
+import { SetDefaultRuntimeSchema } from "../shared/desktop-api.ts";
 
 const currentDir = dirname(fileURLToPath(import.meta.url));
 const applicationId = "dev.pragma.desktop";
@@ -140,26 +141,10 @@ void app.whenReady().then(async () => {
       projectsPath: join(app.getPath("home"), ".pragma", "projects"),
     }),
   );
-  const expertStore = createExpertDefinitionStore({ project: pragmaProjectStore });
   const pluginCredentials = createPluginCredentialStore({
     configPath: join(pragmaPaths.stateRoot(), "plugin-credentials.json"),
     encryption,
   });
-  const pluginStore = createPluginStore({
-    builtInPluginsPath: app.isPackaged
-      ? join(process.resourcesPath, "plugins")
-      : join(currentDir, "../../.plugin-bundles/plugins"),
-    userPluginsPath: pragmaPaths.pluginsRoot(),
-    paths: pragmaPaths,
-    credentials: pluginCredentials,
-    isReferenced: async (ref) => {
-      const definitions = await Promise.all(
-        (await expertStore.list()).map((summary) => expertStore.get(summary.ref)),
-      );
-      return definitions.some((expert) => expert.plugins.some((plugin) => plugin.ref === ref));
-    },
-  });
-  installPluginHandlers(pluginStore, () => mainWindow);
   const missionStore = createMissionStore({
     missionsPath: join(app.getPath("home"), ".pragma", "missions"),
   });
@@ -176,6 +161,53 @@ void app.whenReady().then(async () => {
     factories: createBuiltInRuntimeFactories(modelProviderStore),
   });
   ipcMain.handle("runtimes:availability", () => getRuntimeAvailability(runtimes));
+  ipcMain.handle("runtimes:set-default", async (_event, input: unknown) => {
+    const { runtimeId } = SetDefaultRuntimeSchema.parse(input);
+    await runtimeEnvironments.setDefaultRuntimeId(runtimeId);
+    return await getRuntimeAvailability(runtimes);
+  });
+  const expertStore = createExpertDefinitionStore({
+    project: pragmaProjectStore,
+    validateModel: async (selection) => {
+      const availability = await getRuntimeAvailability(runtimes);
+      const runtime = availability.find((candidate) => candidate.id === selection.runtimeId);
+      if (runtime?.status !== "available") {
+        throw new Error(runtime?.reason ?? `Runtime is unavailable: ${selection.runtimeId}.`);
+      }
+      const model = runtime.models?.find(
+        (candidate) =>
+          candidate.provider.id === selection.providerId && candidate.id === selection.modelId,
+      );
+      if (model === undefined) {
+        throw new Error(
+          `Runtime model is unavailable: ${selection.runtimeId}/${selection.providerId}/${selection.modelId}.`,
+        );
+      }
+      if (
+        selection.thinkingLevel !== undefined &&
+        !model.thinking?.supportedLevels.some((level) => level.value === selection.thinkingLevel)
+      ) {
+        throw new Error(
+          `Thinking level is unavailable: ${selection.modelId}/${selection.thinkingLevel}.`,
+        );
+      }
+    },
+  });
+  const pluginStore = createPluginStore({
+    builtInPluginsPath: app.isPackaged
+      ? join(process.resourcesPath, "plugins")
+      : join(currentDir, "../../.plugin-bundles/plugins"),
+    userPluginsPath: pragmaPaths.pluginsRoot(),
+    paths: pragmaPaths,
+    credentials: pluginCredentials,
+    isReferenced: async (ref) => {
+      const definitions = await Promise.all(
+        (await expertStore.list()).map((summary) => expertStore.get(summary.ref)),
+      );
+      return definitions.some((expert) => expert.plugins.some((plugin) => plugin.ref === ref));
+    },
+  });
+  installPluginHandlers(pluginStore, () => mainWindow);
   const capabilityCredentials = createCapabilityCredentialStore({
     configPath: join(app.getPath("home"), ".pragma", "capability-credentials.json"),
     encryption,
@@ -196,6 +228,14 @@ void app.whenReady().then(async () => {
   installCapabilityHandlers(capabilityStore, () => mainWindow);
   const contextStores = createContextStoreStore({
     storesPath: join(app.getPath("home"), ".pragma", "context-stores"),
+    isReferenced: async (storeId) => {
+      const definitions = await Promise.all(
+        (await expertStore.list()).map((summary) => expertStore.get(summary.ref)),
+      );
+      return definitions.some((expert) =>
+        expert.contextStoreMounts.some((mount) => mount.storeId === storeId),
+      );
+    },
   });
   installContextStoreHandlers(contextStores, () => mainWindow);
   installExpertDefinitionHandlers(expertStore);
@@ -230,6 +270,8 @@ void app.whenReady().then(async () => {
       project: createDesktopStewardProjectPort({
         project: pragmaProjectStore,
         stateRoot: stewardStateRoot,
+        capabilities: capabilityStore,
+        runtimes,
       }),
       tasks: createDesktopStewardTaskPort({
         missions: missionStore,
@@ -239,7 +281,14 @@ void app.whenReady().then(async () => {
       }),
     }),
   );
-  installModelProviderHandlers(modelProviderStore);
+  installModelProviderHandlers(modelProviderStore, {
+    isProviderReferenced: async (providerId) =>
+      (await pragmaProjectStore.get()).resources.some(
+        (resource) =>
+          resource.kind === "RuntimeProfile" &&
+          (resource.spec.config as Record<string, unknown>).providerId === providerId,
+      ),
+  });
   await createWindow();
 
   app.on("activate", () => {

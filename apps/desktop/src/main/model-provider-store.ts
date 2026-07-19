@@ -2,25 +2,44 @@ import { createHash, randomUUID } from "node:crypto";
 import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 
-import type { RuntimeModel } from "@pragma/core";
+import type {
+  ModelProviderDefinition,
+  ModelProviderRegistry,
+  ResolvedModelProvider,
+} from "@pragma/core";
+import { withFileLock } from "@pragma/core";
+import { ProviderModelDefinitionSchema } from "@pragma/shared";
+import { z } from "zod";
 
 import type {
   CreateModelProvider,
+  ModelConnectionTestResult,
   ModelProvider,
+  ModelProviderModel,
+  ModelProviderSettingsSnapshot,
+  ModelProviderVerification,
+  ResetModelProvidersResult,
   UpdateModelProvider,
 } from "../shared/desktop-api.ts";
-import { ModelMetadataByIdSchema } from "../shared/desktop-api.ts";
+import {
+  ModelProviderModelSchema,
+  ModelProviderSchema,
+  ModelProviderVerificationSchema,
+} from "../shared/desktop-api.ts";
+import { findModelProviderPreset } from "../shared/model-provider-presets.ts";
 
-const CONFIG_SCHEMA_VERSION = 2;
+const CONFIG_SCHEMA_VERSION = 3;
 
 interface StoredModelProvider {
   readonly id: string;
+  readonly presetId: string;
   readonly name: string;
   readonly protocol: ModelProvider["protocol"];
   readonly baseUrl: string;
-  readonly models: readonly string[];
-  readonly modelMetadata?: ModelProvider["modelMetadata"] | undefined;
+  readonly models: readonly ModelProviderModel[];
   readonly encryptedApiKey: string;
+  readonly requiresApiKey: boolean;
+  readonly verification: ModelProviderVerification;
   readonly revision: number;
 }
 
@@ -35,20 +54,25 @@ export interface ModelProviderEncryption {
   readonly decrypt: (encrypted: Buffer) => string;
 }
 
-export interface ModelProviderStore {
+export interface ModelProviderStore extends ModelProviderRegistry {
+  getSnapshot(): Promise<ModelProviderSettingsSnapshot>;
   list(): Promise<ModelProvider[]>;
   create(input: CreateModelProvider): Promise<ModelProvider>;
   update(input: UpdateModelProvider): Promise<ModelProvider>;
   remove(id: string): Promise<void>;
-  getCredentials(id: string): Promise<{
-    readonly baseUrl: string;
-    readonly apiKey: string;
-    readonly models: readonly string[];
-    readonly protocol: ModelProvider["protocol"];
-    readonly revision: number;
-    readonly credentialFingerprint: string;
-  }>;
-  listRuntimeModels(): Promise<readonly RuntimeModel[]>;
+  reset(): Promise<ResetModelProvidersResult>;
+  resolveDiscoveryApiKey(
+    id: string,
+    connection: { readonly protocol: ModelProvider["protocol"]; readonly baseUrl: string },
+  ): Promise<string>;
+  resolveProviderWithRevision(
+    id: string,
+  ): Promise<{ readonly provider: ResolvedModelProvider; readonly revision: number }>;
+  recordVerification(
+    id: string,
+    expectedRevision: number,
+    result: ModelConnectionTestResult,
+  ): Promise<ModelProviderVerification>;
 }
 
 export class ModelProviderStoreError extends Error {
@@ -58,7 +82,8 @@ export class ModelProviderStoreError extends Error {
       | "encryption_unavailable"
       | "provider_not_found"
       | "secret_unavailable"
-      | "invalid_base_url",
+      | "invalid_base_url"
+      | "connection_changed",
     message: string,
   ) {
     super(message);
@@ -75,18 +100,20 @@ function ensureEncryption(encryption: ModelProviderEncryption): void {
   }
 }
 
-function normalizeModels(models: readonly string[]): string[] {
-  const unique = new Set(models.map((model) => model.trim()));
-  if (unique.size !== models.length) {
+function normalizeModels(models: readonly ModelProviderModel[]): ModelProviderModel[] {
+  const normalized = models.map((model) =>
+    ModelProviderModelSchema.parse({ ...model, id: model.id.trim(), name: model.name.trim() }),
+  );
+  if (new Set(normalized.map((model) => model.id)).size !== normalized.length) {
     throw new ModelProviderStoreError(
       "config_invalid",
       "Each model ID must be unique within a provider.",
     );
   }
-  return [...unique];
+  return normalized;
 }
 
-function normalizeBaseUrl(baseUrl: string): string {
+export function normalizeModelProviderBaseUrl(baseUrl: string): string {
   let url: URL;
   try {
     url = new URL(baseUrl);
@@ -115,12 +142,14 @@ function normalizeBaseUrl(baseUrl: string): string {
 function toPublicProvider(provider: StoredModelProvider): ModelProvider {
   return {
     id: provider.id,
+    presetId: provider.presetId,
     name: provider.name,
     protocol: provider.protocol,
     baseUrl: provider.baseUrl,
-    models: [...provider.models],
-    modelMetadata: provider.modelMetadata ?? {},
+    models: provider.models.map((model) => ({ ...model })),
     hasApiKey: provider.encryptedApiKey.length > 0,
+    requiresApiKey: provider.requiresApiKey,
+    verification: provider.verification,
     revision: provider.revision,
   };
 }
@@ -132,7 +161,7 @@ function parseConfig(raw: string): StoredModelProviderConfig {
   } catch {
     throw new ModelProviderStoreError(
       "config_invalid",
-      "The model provider configuration file is not valid JSON.",
+      "The model provider configuration is unreadable and must be archived before continuing.",
     );
   }
 
@@ -144,43 +173,50 @@ function parseConfig(raw: string): StoredModelProviderConfig {
   ) {
     throw new ModelProviderStoreError(
       "config_invalid",
-      "The model provider configuration has an unsupported format.",
+      "This model provider configuration uses an older format and must be reconfigured.",
     );
   }
 
-  const providers = (value as { providers: unknown[] }).providers.map((provider) => {
-    if (
-      !provider ||
-      typeof provider !== "object" ||
-      typeof (provider as StoredModelProvider).id !== "string" ||
-      typeof (provider as StoredModelProvider).name !== "string" ||
-      !["openai-completions", "openai-responses", "anthropic-messages"].includes(
-        (provider as StoredModelProvider).protocol,
-      ) ||
-      typeof (provider as StoredModelProvider).baseUrl !== "string" ||
-      typeof (provider as StoredModelProvider).encryptedApiKey !== "string" ||
-      !Number.isSafeInteger((provider as StoredModelProvider).revision) ||
-      (provider as StoredModelProvider).revision <= 0 ||
-      !Array.isArray((provider as StoredModelProvider).models) ||
-      !(provider as StoredModelProvider).models.every((model) => typeof model === "string") ||
-      ((provider as StoredModelProvider).modelMetadata !== undefined &&
-        (typeof (provider as StoredModelProvider).modelMetadata !== "object" ||
-          (provider as StoredModelProvider).modelMetadata === null))
-    ) {
-      throw new ModelProviderStoreError(
-        "config_invalid",
-        "The model provider configuration contains invalid data.",
-      );
-    }
-    return {
-      ...(provider as StoredModelProvider),
-      modelMetadata: ModelMetadataByIdSchema.parse(
-        (provider as StoredModelProvider).modelMetadata ?? {},
-      ),
-    };
-  });
-
+  let providers: StoredModelProvider[];
+  try {
+    providers = (value as { providers: unknown[] }).providers.map((candidate) => {
+      if (!candidate || typeof candidate !== "object") invalidStoredProvider();
+      const provider = candidate as Partial<StoredModelProvider>;
+      if (
+        typeof provider.id !== "string" ||
+        typeof provider.presetId !== "string" ||
+        typeof provider.name !== "string" ||
+        typeof provider.baseUrl !== "string" ||
+        typeof provider.encryptedApiKey !== "string" ||
+        typeof provider.requiresApiKey !== "boolean" ||
+        !Number.isSafeInteger(provider.revision) ||
+        (provider.revision ?? 0) <= 0 ||
+        !Array.isArray(provider.models) ||
+        typeof provider.protocol !== "string" ||
+        provider.protocol.trim() === ""
+      ) {
+        invalidStoredProvider();
+      }
+      const stored = {
+        ...provider,
+        models: provider.models!.map((model) => ModelProviderModelSchema.parse(model)),
+        verification: ModelProviderVerificationSchema.parse(provider.verification),
+      } as StoredModelProvider;
+      ModelProviderSchema.parse(toPublicProvider(stored));
+      return stored;
+    });
+  } catch (error) {
+    if (error instanceof z.ZodError) invalidStoredProvider();
+    throw error;
+  }
   return { schemaVersion: CONFIG_SCHEMA_VERSION, providers };
+}
+
+function invalidStoredProvider(): never {
+  throw new ModelProviderStoreError(
+    "config_invalid",
+    "The model provider configuration contains invalid data and must be reconfigured.",
+  );
 }
 
 export function createModelProviderStore(options: {
@@ -207,130 +243,281 @@ export function createModelProviderStore(options: {
     await chmod(options.configPath, 0o600).catch(() => undefined);
   };
 
+  const mutate = async <T>(operation: () => Promise<T>): Promise<T> => {
+    return await withFileLock(`${options.configPath}.lock`, operation);
+  };
+
+  const requireProvider = async (id: string): Promise<StoredModelProvider> => {
+    const provider = (await readConfig()).providers.find((item) => item.id === id);
+    if (!provider) {
+      throw new ModelProviderStoreError("provider_not_found", "The provider no longer exists.");
+    }
+    return provider;
+  };
+
+  const decryptApiKey = (provider: StoredModelProvider): string => {
+    if (provider.encryptedApiKey === "") return "";
+    ensureEncryption(options.encryption);
+    try {
+      return options.encryption.decrypt(Buffer.from(provider.encryptedApiKey, "base64"));
+    } catch {
+      throw new ModelProviderStoreError(
+        "secret_unavailable",
+        "The saved API key cannot be decrypted on this device. Update the provider with a new key.",
+      );
+    }
+  };
+
+  const resolveStoredProvider = (provider: StoredModelProvider): ResolvedModelProvider => {
+    return {
+      id: provider.id,
+      displayName: provider.name,
+      baseUrl: provider.baseUrl,
+      apiKey: decryptApiKey(provider),
+      models: provider.models.map(toProviderModelDefinition),
+      api: provider.protocol,
+      credentialFingerprint: createHash("sha256")
+        .update(
+          JSON.stringify({
+            id: provider.id,
+            baseUrl: provider.baseUrl,
+            models: provider.models,
+            protocol: provider.protocol,
+            encryptedApiKey: provider.encryptedApiKey,
+          }),
+        )
+        .digest("hex"),
+    };
+  };
+
   return {
+    async getSnapshot(): Promise<ModelProviderSettingsSnapshot> {
+      try {
+        return { status: "ready", providers: (await readConfig()).providers.map(toPublicProvider) };
+      } catch (error) {
+        if (error instanceof ModelProviderStoreError && error.code === "config_invalid") {
+          return {
+            status: "reset_required",
+            providers: [],
+            legacyConfigPath: options.configPath,
+            message: error.message,
+          };
+        }
+        throw error;
+      }
+    },
+
     async list(): Promise<ModelProvider[]> {
       return (await readConfig()).providers.map(toPublicProvider);
     },
 
+    async listProviders(): Promise<readonly ModelProviderDefinition[]> {
+      return (await readConfig()).providers.map((provider) => ({
+        id: provider.id,
+        displayName: provider.name,
+        api: provider.protocol,
+        baseUrl: provider.baseUrl,
+        models: provider.models.map(toProviderModelDefinition),
+      }));
+    },
+
     async create(input: CreateModelProvider): Promise<ModelProvider> {
-      ensureEncryption(options.encryption);
-      const config = await readConfig();
-      const provider: StoredModelProvider = {
-        id: randomUUID(),
-        name: input.name.trim(),
-        protocol: input.protocol,
-        baseUrl: normalizeBaseUrl(input.baseUrl),
-        models: normalizeModels(input.models),
-        modelMetadata: normalizeModelMetadata(input.models, input.modelMetadata ?? {}),
-        encryptedApiKey: options.encryption.encrypt(input.apiKey).toString("base64"),
-        revision: 1,
-      };
-      await writeConfig({ ...config, providers: [...config.providers, provider] });
-      return toPublicProvider(provider);
+      validatePreset(input);
+      if (input.requiresApiKey && input.apiKey === "") {
+        throw new ModelProviderStoreError("config_invalid", "Enter an API key for this provider.");
+      }
+      if (input.apiKey !== "") ensureEncryption(options.encryption);
+      return await mutate(async () => {
+        const config = await readConfig();
+        const provider: StoredModelProvider = {
+          id: randomUUID(),
+          presetId: input.presetId,
+          name: input.name.trim(),
+          protocol: input.protocol,
+          baseUrl: normalizeModelProviderBaseUrl(input.baseUrl),
+          models: normalizeModels(input.models),
+          encryptedApiKey:
+            input.apiKey === ""
+              ? ""
+              : options.encryption.encrypt(input.apiKey).toString("base64"),
+          requiresApiKey: input.requiresApiKey,
+          verification: { status: "unverified" },
+          revision: 1,
+        };
+        await writeConfig({ ...config, providers: [...config.providers, provider] });
+        return toPublicProvider(provider);
+      });
     },
 
     async update(input: UpdateModelProvider): Promise<ModelProvider> {
-      const config = await readConfig();
-      const existing = config.providers.find((provider) => provider.id === input.id);
-      if (!existing) {
-        throw new ModelProviderStoreError("provider_not_found", "The provider no longer exists.");
-      }
-      if (input.apiKey !== undefined) ensureEncryption(options.encryption);
-      const provider: StoredModelProvider = {
-        ...existing,
-        name: input.name.trim(),
-        protocol: input.protocol,
-        baseUrl: normalizeBaseUrl(input.baseUrl),
-        models: normalizeModels(input.models),
-        modelMetadata: normalizeModelMetadata(input.models, input.modelMetadata ?? {}),
-        ...(input.apiKey === undefined
-          ? {}
-          : { encryptedApiKey: options.encryption.encrypt(input.apiKey).toString("base64") }),
-        revision: existing.revision + 1,
-      };
-      await writeConfig({
-        ...config,
-        providers: config.providers.map((item) => (item.id === provider.id ? provider : item)),
+      validatePreset(input);
+      if (input.apiKey !== undefined && input.apiKey !== "") ensureEncryption(options.encryption);
+      return await mutate(async () => {
+        const config = await readConfig();
+        const existing = config.providers.find((provider) => provider.id === input.id);
+        if (!existing) {
+          throw new ModelProviderStoreError("provider_not_found", "The provider no longer exists.");
+        }
+        const baseUrl = normalizeModelProviderBaseUrl(input.baseUrl);
+        const connectionChanged =
+          existing.protocol !== input.protocol || existing.baseUrl !== baseUrl;
+        if (
+          connectionChanged &&
+          existing.encryptedApiKey !== "" &&
+          input.apiKey === undefined
+        ) {
+          throw new ModelProviderStoreError(
+            "connection_changed",
+            "Re-enter the API key after changing the provider protocol or base URL.",
+          );
+        }
+        const encryptedApiKey =
+          input.apiKey === undefined
+            ? existing.encryptedApiKey
+            : input.apiKey === ""
+              ? ""
+              : options.encryption.encrypt(input.apiKey).toString("base64");
+        if (input.requiresApiKey && encryptedApiKey === "") {
+          throw new ModelProviderStoreError(
+            "config_invalid",
+            "Enter an API key for this provider.",
+          );
+        }
+        const provider: StoredModelProvider = {
+          ...existing,
+          presetId: input.presetId,
+          name: input.name.trim(),
+          protocol: input.protocol,
+          baseUrl,
+          models: normalizeModels(input.models),
+          encryptedApiKey,
+          requiresApiKey: input.requiresApiKey,
+          verification: { status: "unverified" },
+          revision: existing.revision + 1,
+        };
+        await writeConfig({
+          ...config,
+          providers: config.providers.map((item) => (item.id === provider.id ? provider : item)),
+        });
+        return toPublicProvider(provider);
       });
-      return toPublicProvider(provider);
     },
 
     async remove(id: string): Promise<void> {
-      const config = await readConfig();
-      if (!config.providers.some((provider) => provider.id === id)) {
-        throw new ModelProviderStoreError("provider_not_found", "The provider no longer exists.");
-      }
-      await writeConfig({
-        ...config,
-        providers: config.providers.filter((provider) => provider.id !== id),
+      await mutate(async () => {
+        const config = await readConfig();
+        if (!config.providers.some((provider) => provider.id === id)) {
+          throw new ModelProviderStoreError(
+            "provider_not_found",
+            "The provider no longer exists.",
+          );
+        }
+        await writeConfig({
+          ...config,
+          providers: config.providers.filter((provider) => provider.id !== id),
+        });
       });
     },
 
-    async getCredentials(id: string): Promise<{
-      readonly baseUrl: string;
-      readonly apiKey: string;
-      readonly models: readonly string[];
-      readonly protocol: ModelProvider["protocol"];
-      readonly revision: number;
-      readonly credentialFingerprint: string;
-    }> {
-      ensureEncryption(options.encryption);
-      const provider = (await readConfig()).providers.find((item) => item.id === id);
-      if (!provider) {
-        throw new ModelProviderStoreError("provider_not_found", "The provider no longer exists.");
-      }
-      try {
+    async reset(): Promise<ResetModelProvidersResult> {
+      return await mutate(async () => {
+        let backupPath: string | undefined;
+        try {
+          backupPath = `${options.configPath}.backup-${new Date().toISOString().replaceAll(":", "-")}`;
+          await rename(options.configPath, backupPath);
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+          backupPath = undefined;
+        }
+        await writeConfig({ schemaVersion: CONFIG_SCHEMA_VERSION, providers: [] });
         return {
-          baseUrl: provider.baseUrl,
-          apiKey: options.encryption.decrypt(Buffer.from(provider.encryptedApiKey, "base64")),
-          models: provider.models,
-          protocol: provider.protocol,
-          revision: provider.revision,
-          credentialFingerprint: createHash("sha256")
-            .update(
-              JSON.stringify({
-                id: provider.id,
-                baseUrl: provider.baseUrl,
-                models: provider.models,
-                modelMetadata: provider.modelMetadata,
-                protocol: provider.protocol,
-                encryptedApiKey: provider.encryptedApiKey,
-              }),
-            )
-            .digest("hex"),
+          status: "ready",
+          providers: [],
+          ...(backupPath === undefined ? {} : { backupPath }),
         };
-      } catch {
-        throw new ModelProviderStoreError(
-          "secret_unavailable",
-          "The saved API key cannot be decrypted on this device. Update the provider with a new key.",
-        );
-      }
+      });
     },
 
-    async listRuntimeModels(): Promise<readonly RuntimeModel[]> {
-      return (await readConfig()).providers.flatMap((provider) =>
-        provider.models.map((modelId) => {
-          const metadata = provider.modelMetadata?.[modelId];
-          return {
-            id: modelId,
-            displayName: metadata?.displayName ?? modelId,
-            provider: {
-              kind: "registered" as const,
-              id: provider.id,
-              displayName: provider.name,
-            },
-            ...(metadata?.thinking === undefined ? {} : { thinking: metadata.thinking }),
-          } satisfies RuntimeModel;
-        }),
-      );
+    async resolveDiscoveryApiKey(id, connection): Promise<string> {
+      const provider = await requireProvider(id);
+      const requestedBaseUrl = normalizeModelProviderBaseUrl(connection.baseUrl);
+      if (provider.protocol !== connection.protocol || provider.baseUrl !== requestedBaseUrl) {
+        throw new ModelProviderStoreError(
+          "connection_changed",
+          "Re-enter the API key after changing the provider protocol or base URL.",
+        );
+      }
+      return decryptApiKey(provider);
+    },
+
+    async recordVerification(id, expectedRevision, result): Promise<ModelProviderVerification> {
+      return await mutate(async () => {
+        const config = await readConfig();
+        const existing = config.providers.find((provider) => provider.id === id);
+        if (!existing) {
+          throw new ModelProviderStoreError(
+            "provider_not_found",
+            "The provider no longer exists.",
+          );
+        }
+        if (existing.revision !== expectedRevision) {
+          throw new ModelProviderStoreError(
+            "connection_changed",
+            "The provider changed while the connection test was running. Test it again.",
+          );
+        }
+        const verification: ModelProviderVerification = {
+          status: result.ok ? "verified" : "failed",
+          checkedAt: new Date().toISOString(),
+          ...(result.latencyMs === undefined ? {} : { latencyMs: result.latencyMs }),
+          code: result.code,
+          message: result.message,
+          revision: existing.revision,
+        };
+        await writeConfig({
+          ...config,
+          providers: config.providers.map((provider) =>
+            provider.id === id ? { ...provider, verification } : provider,
+          ),
+        });
+        return verification;
+      });
+    },
+
+    async resolveProviderWithRevision(id) {
+      const provider = await requireProvider(id);
+      return { provider: resolveStoredProvider(provider), revision: provider.revision };
+    },
+
+    async resolveProvider(id): Promise<ResolvedModelProvider> {
+      return resolveStoredProvider(await requireProvider(id));
     },
   };
 }
 
-function normalizeModelMetadata(
-  models: readonly string[],
-  metadata: ModelProvider["modelMetadata"],
-): ModelProvider["modelMetadata"] {
-  const allowed = new Set(models);
-  return Object.fromEntries(Object.entries(metadata).filter(([modelId]) => allowed.has(modelId)));
+function toProviderModelDefinition(model: ModelProviderModel) {
+  return ProviderModelDefinitionSchema.parse(model);
+}
+
+function validatePreset(input: {
+  readonly presetId: string;
+  readonly protocol: ModelProvider["protocol"];
+  readonly requiresApiKey: boolean;
+}): void {
+  const preset = findModelProviderPreset(input.presetId);
+  if (preset === undefined) {
+    throw new ModelProviderStoreError("config_invalid", "Choose a supported provider preset.");
+  }
+  if (preset.requiresApiKey !== input.requiresApiKey) {
+    throw new ModelProviderStoreError(
+      "config_invalid",
+      "The provider credential requirements do not match its preset.",
+    );
+  }
+  if (preset.id !== "custom-openai" && preset.protocol !== input.protocol) {
+    throw new ModelProviderStoreError(
+      "config_invalid",
+      "The provider protocol does not match its preset.",
+    );
+  }
 }

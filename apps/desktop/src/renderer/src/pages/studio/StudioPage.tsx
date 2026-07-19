@@ -168,6 +168,20 @@ export function StudioPage(props: { readonly onTryExpert: (expert: ExpertRecord)
     setExpertError(null);
     setScreen("expert-detail");
   };
+  const deleteSelectedExpert = async () => {
+    if (selectedExpert === null) return;
+    const ref = selectedExpert.ref ?? `expert:${selectedExpert.id}@${selectedExpert.version}`;
+    const api = desktopApi();
+    if (api !== undefined) {
+      await api.deleteExpert(ref);
+      setProject(await api.getPragmaProject());
+    }
+    setExperts((current) =>
+      current.filter((expert) => (expert.ref ?? `expert:${expert.id}@${expert.version}`) !== ref),
+    );
+    setSelectedExpert(null);
+    setScreen("directory");
+  };
   const createContextStore = async (input: CreateContextStore): Promise<ContextStore> => {
     const api = desktopApi();
     const timestamp = new Date().toISOString();
@@ -326,6 +340,7 @@ export function StudioPage(props: { readonly onTryExpert: (expert: ExpertRecord)
             onEdit={() => openCreate(selectedExpert)}
             onConfigureContext={() => setContextDrawerOpen(true)}
             onTryInSession={() => props.onTryExpert(selectedExpert)}
+            onDelete={deleteSelectedExpert}
           />
         ) : null}
         {screen === "create" ? (
@@ -371,6 +386,16 @@ export function StudioPage(props: { readonly onTryExpert: (expert: ExpertRecord)
             onAddNoteEntry={addContextNoteEntry}
             onListContents={listContextStoreContents}
             onGetContent={getContextStoreContent}
+            onDelete={async () => {
+              const api = desktopApi();
+              if (api !== undefined)
+                await api.deleteContextStore({ storeId: selectedContextStore.id });
+              setContextStores((current) =>
+                current.filter((store) => store.id !== selectedContextStore.id),
+              );
+              setSelectedContextStoreId(null);
+              setScreen("directory");
+            }}
           />
         ) : null}
         {screen === "capability-detail" && selectedCapability !== null ? (

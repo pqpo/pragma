@@ -50,7 +50,6 @@ export function App() {
           onOpenStudio={() => navigate("studio")}
           onOpenMissions={() => navigate("missions")}
           onOpenModelSettings={() => openSettings("models")}
-          onOpenRuntimeSettings={() => openSettings("runtimes")}
         />
       ) : activeView === "missions" ? (
         <MissionsPage initialExecutorRef={missionExecutorRef} />

@@ -3,16 +3,20 @@ import { describe, expect, it } from "vitest";
 import {
   EXPERT_DESCRIPTION_MAX_LENGTH,
   EXPERT_ID_MAX_LENGTH,
+  EXPERT_INSTRUCTIONS_MAX_LENGTH,
   EXPERT_NAME_MAX_LENGTH,
+  EXPERT_SCOPE_MAX_LENGTH,
   EXPERT_TAG_MAX_LENGTH,
   CreateExpertDefinitionSchema,
   CodeServiceCapabilityDefinitionSchema,
   CapabilityTestResultSchema,
   CapabilityDeleteResultSchema,
   CreateMissionSchema,
+  DeleteContextStoreSchema,
   GetMissionChatSchema,
   MissionChatSnapshotSchema,
   MissionSchema,
+  SetDefaultRuntimeSchema,
   DesktopSettingsSnapshotSchema,
   UpdateDesktopSettingsSchema,
 } from "./desktop-api.ts";
@@ -33,6 +37,24 @@ describe("desktop settings contracts", () => {
   });
 });
 
+describe("runtime settings contracts", () => {
+  it("requires a concrete Runtime ID", () => {
+    expect(SetDefaultRuntimeSchema.parse({ runtimeId: "codex" })).toEqual({
+      runtimeId: "codex",
+    });
+    expect(SetDefaultRuntimeSchema.safeParse({ runtimeId: "" }).success).toBe(false);
+  });
+});
+
+describe("context store delete contracts", () => {
+  it("requires a context store UUID", () => {
+    expect(
+      DeleteContextStoreSchema.parse({ storeId: "00000000-0000-4000-8000-000000000000" }),
+    ).toEqual({ storeId: "00000000-0000-4000-8000-000000000000" });
+    expect(DeleteContextStoreSchema.safeParse({ storeId: "notes" }).success).toBe(false);
+  });
+});
+
 const validInput = {
   id: "expert_01",
   name: "Expert 01",
@@ -40,7 +62,8 @@ const validInput = {
   tags: ["analysis"],
   version: "0.1.0",
   scope: "Focused analysis.",
-  model: null,
+  instructions: "Analyze the supplied work.",
+  model: { runtimeId: "test", providerId: "test", modelId: "test" },
   capabilities: [],
   toolApprovals: {},
   plugins: [],
@@ -57,6 +80,10 @@ describe("expert input limits", () => {
     ["id length", { id: "a".repeat(EXPERT_ID_MAX_LENGTH + 1) }],
     ["name length", { name: "a".repeat(EXPERT_NAME_MAX_LENGTH + 1) }],
     ["description length", { description: "a".repeat(EXPERT_DESCRIPTION_MAX_LENGTH + 1) }],
+    ["scope length", { scope: "a".repeat(EXPERT_SCOPE_MAX_LENGTH + 1) }],
+    ["instructions length", { instructions: "a".repeat(EXPERT_INSTRUCTIONS_MAX_LENGTH + 1) }],
+    ["missing instructions", { instructions: "" }],
+    ["missing model", { model: null }],
     ["tag length", { tags: ["a".repeat(EXPERT_TAG_MAX_LENGTH + 1)] }],
   ])("rejects invalid %s", (_label, override) => {
     expect(CreateExpertDefinitionSchema.safeParse({ ...validInput, ...override }).success).toBe(

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { ExpertDefinition } from "../../../../shared/desktop-api.ts";
-import { toExpertRecord, toPersistedInput } from "./studio-model.ts";
+import { isBuiltInTags, toExpertRecord, toPersistedInput } from "./studio-model.ts";
 
 const persistedExpert: ExpertDefinition = {
   schemaVersion: "pragma.desktop-expert-view/v1",
@@ -12,8 +12,9 @@ const persistedExpert: ExpertDefinition = {
   tags: [],
   version: "1.0.0",
   scope: "Reviews code quality. Does not merge changes.",
-  model: null,
-  resourceRuntime: { ref: "runtime-profile:reviewer.runtime@1.0.0" },
+  instructions: "Review changes carefully.",
+  model: { runtimeId: "test", providerId: "test", modelId: "test" },
+  resourceRuntime: { ref: "runtime-profile:reviewer_runtime@1.0.0" },
   capabilities: [],
   toolApprovals: {},
   plugins: [],
@@ -38,5 +39,13 @@ describe("toPersistedInput", () => {
     };
 
     expect(toPersistedInput(record).contextStoreMounts).toEqual(record.contextStoreMounts);
+  });
+});
+
+describe("isBuiltInTags", () => {
+  it("recognizes both supported built-in markers", () => {
+    expect(isBuiltInTags(["builtin"])).toBe(true);
+    expect(isBuiltInTags(["built-in"])).toBe(true);
+    expect(isBuiltInTags(["user"])).toBe(false);
   });
 });

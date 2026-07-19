@@ -24,10 +24,15 @@ import { z } from "zod";
 import { withFileLock } from "@pragma/core";
 
 import {
+  CreateExpertIdSchema,
   PragmaProjectSnapshotSchema,
   type PragmaProjectSnapshot,
   type PragmaYamlValidationResult,
 } from "../shared/desktop-api.ts";
+import {
+  isBuiltInPragmaResource,
+  referencingPragmaResources,
+} from "./pragma-resource-references.ts";
 
 const ProjectManifestSchema = z
   .object({
@@ -71,6 +76,8 @@ export class PragmaProjectStoreError extends Error {
       | "project_invalid"
       | "revision_conflict"
       | "resource_not_found"
+      | "resource_referenced"
+      | "built_in_readonly"
       | "unsupported_format",
     message: string,
     readonly diagnostics: readonly PragmaDiagnostic[] = [],
@@ -109,6 +116,7 @@ export function createPragmaProjectStore(options: {
     get,
     async publish(input) {
       try {
+        assertDesktopExpertAuthoring(input.resources);
         const artifacts =
           input.artifacts ??
           (input.expectedRevision === 0
@@ -128,6 +136,14 @@ export function createPragmaProjectStore(options: {
     },
     async upsert(input) {
       try {
+        const current = await get();
+        assertDesktopExpertAuthoring([
+          ...current.resources.filter(
+            (resource) =>
+              canonicalPragmaResourceRef(resource) !== canonicalPragmaResourceRef(input.resource),
+          ),
+          input.resource,
+        ]);
         return PragmaProjectSnapshotSchema.parse(
           await service.apply({
             projectId,
@@ -141,10 +157,23 @@ export function createPragmaProjectStore(options: {
     },
     async remove(input) {
       const snapshot = await get();
-      if (
-        !snapshot.resources.some((resource) => canonicalPragmaResourceRef(resource) === input.ref)
-      ) {
+      const resource = snapshot.resources.find(
+        (candidate) => canonicalPragmaResourceRef(candidate) === input.ref,
+      );
+      if (resource === undefined) {
         throw new PragmaProjectStoreError("resource_not_found", `Resource not found: ${input.ref}`);
+      }
+      if (isBuiltInPragmaResource(resource)) {
+        throw new PragmaProjectStoreError(
+          "built_in_readonly",
+          "Built-in Studio resources cannot be deleted.",
+        );
+      }
+      if (referencingPragmaResources(snapshot.resources, input.ref).length > 0) {
+        throw new PragmaProjectStoreError(
+          "resource_referenced",
+          "This resource is used by another Expert, Expert Team, or Flow. Remove those dependencies before deleting it.",
+        );
       }
       try {
         return PragmaProjectSnapshotSchema.parse(
@@ -163,7 +192,10 @@ export function createPragmaProjectStore(options: {
         const parsed = PragmaResourceSchema.safeParse(parsePragmaYaml(source));
         if (!parsed.success) return { diagnostics: issuesToDiagnostics(parsed.error.issues) };
         const diagnostics = await service.validate({ resources: [parsed.data] });
-        return { resource: parsed.data, diagnostics: [...diagnostics] };
+        return {
+          resource: parsed.data,
+          diagnostics: [...desktopExpertAuthoringDiagnostics([parsed.data]), ...diagnostics],
+        };
       } catch (error) {
         return {
           diagnostics: [
@@ -179,9 +211,18 @@ export function createPragmaProjectStore(options: {
     },
     async validateCandidate(input) {
       const resource = PragmaResourceSchema.parse(input.resource);
+      const current = await get();
+      const resources = [
+        ...current.resources.filter(
+          (candidate) =>
+            canonicalPragmaResourceRef(candidate) !== canonicalPragmaResourceRef(resource),
+        ),
+        resource,
+      ];
       return {
         resource,
         diagnostics: [
+          ...desktopExpertAuthoringDiagnostics(resources),
           ...(await service.validateCandidate({
             projectId,
             expectedRevision: input.expectedRevision,
@@ -204,6 +245,64 @@ export function createPragmaProjectStore(options: {
       });
     },
   };
+}
+
+function assertDesktopExpertAuthoring(resources: readonly PragmaResource[]): void {
+  const diagnostics = desktopExpertAuthoringDiagnostics(resources);
+  if (diagnostics.length === 0) return;
+  throw new PragmaProjectStoreError(
+    "project_invalid",
+    "The Expert definition is incomplete or invalid.",
+    diagnostics,
+  );
+}
+
+function desktopExpertAuthoringDiagnostics(
+  resources: readonly PragmaResource[],
+): PragmaDiagnostic[] {
+  const runtimes = new Map(
+    resources
+      .filter((resource) => resource.kind === "RuntimeProfile")
+      .map((resource) => [canonicalPragmaResourceRef(resource), resource] as const),
+  );
+  const diagnostics: PragmaDiagnostic[] = [];
+  const add = (message: string, path: readonly (string | number)[]) => {
+    diagnostics.push(
+      PragmaDiagnosticSchema.parse({
+        severity: "error",
+        code: "desktop.expert.required",
+        message,
+        path,
+      }),
+    );
+  };
+
+  for (const resource of resources) {
+    if (resource.kind !== "Expert") continue;
+    const id = CreateExpertIdSchema.safeParse(resource.metadata.id);
+    if (!id.success) {
+      for (const issue of id.error.issues) {
+        add(issue.message, [resource.metadata.id, "metadata", "id"]);
+      }
+    }
+    if (resource.spec.runtime === undefined) {
+      add("Runtime is required.", [resource.metadata.id, "spec", "runtime"]);
+      continue;
+    }
+    const runtime = runtimes.get(resource.spec.runtime.ref);
+    if (runtime === undefined) continue;
+    const config = runtime.spec.config as Record<string, unknown>;
+    if (typeof config.runtimeId !== "string" || config.runtimeId.trim() === "") {
+      add("Runtime ID is required.", [runtime.metadata.id, "spec", "config", "runtimeId"]);
+    }
+    if (typeof config.providerId !== "string" || config.providerId.trim() === "") {
+      add("Model provider is required.", [runtime.metadata.id, "spec", "config", "providerId"]);
+    }
+    if (typeof config.model !== "string" || config.model.trim() === "") {
+      add("Model is required.", [runtime.metadata.id, "spec", "config", "model"]);
+    }
+  }
+  return diagnostics;
 }
 
 function createDesktopProjectSourceRepository(options: {

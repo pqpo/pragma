@@ -7,6 +7,7 @@ import { BrowserWindow, dialog, ipcMain } from "electron";
 import {
   AddContextNoteEntrySchema,
   CreateContextStoreSchema,
+  DeleteContextStoreSchema,
   GetContextStoreContentSchema,
   ListContextStoreContentsSchema,
   type PickWorkspaceResult,
@@ -25,6 +26,9 @@ export function installContextStoreHandlers(
   ipcMain.handle("context-stores:create", (_event, input: unknown) =>
     store.create(CreateContextStoreSchema.parse(input)),
   );
+  ipcMain.handle("context-stores:delete", async (_event, input: unknown) => {
+    await store.remove(DeleteContextStoreSchema.parse(input).storeId);
+  });
   ipcMain.handle("context-stores:add-note-entry", (_event, input: unknown) => {
     const parsed = AddContextNoteEntrySchema.parse(input);
     return store.addNoteEntry(parsed.storeId, parsed.entry);

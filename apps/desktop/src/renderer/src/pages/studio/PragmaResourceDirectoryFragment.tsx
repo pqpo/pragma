@@ -22,7 +22,8 @@ import type { PragmaProjectSnapshot } from "../../../../shared/desktop-api.ts";
 import { errorMessage } from "../../lib/errors.ts";
 import { FlowEditor } from "./flow-editor/FlowEditor.tsx";
 import { StudioScreenFrame } from "./StudioScreenFrame.tsx";
-import { desktopApi } from "./studio-model.ts";
+import { desktopApi, isBuiltInTags } from "./studio-model.ts";
+import { DeleteConfirmationDialog } from "./DeleteConfirmationDialog.tsx";
 
 type ResourceKind = "team" | "flow";
 type TeamExpertPickerKind = "coordinator" | "members";
@@ -77,6 +78,8 @@ export function PragmaResourceDirectoryFragment(props: {
   const { t } = useTranslation("studio");
   const [editing, setEditing] = useState<PragmaResource | "new" | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [pendingRemoval, setPendingRemoval] = useState<PragmaResource | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const resources = props.project.resources.filter((resource) =>
     props.kind === "team" ? resource.kind === "ExpertTeam" : resource.kind === "Flow",
   );
@@ -101,6 +104,7 @@ export function PragmaResourceDirectoryFragment(props: {
   const remove = async (resource: PragmaResource) => {
     const api = desktopApi();
     if (api === undefined) return;
+    setDeleting(true);
     try {
       const prefix = resource.kind === "ExpertTeam" ? "team" : "flow";
       const snapshot = await api.deletePragmaResource({
@@ -115,8 +119,12 @@ export function PragmaResourceDirectoryFragment(props: {
         });
       }
       setError(null);
+      setPendingRemoval(null);
     } catch (removeError) {
       setError(errorMessage(removeError));
+      setPendingRemoval(null);
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -172,13 +180,17 @@ export function PragmaResourceDirectoryFragment(props: {
               <span>{resource.metadata.description}</span>
             </button>
             <small>{resource.metadata.version}</small>
-            <button
-              type="button"
-              aria-label={t("deleteNamed", { name: resource.metadata.name })}
-              onClick={() => void remove(resource)}
-            >
-              <Trash size={17} />
-            </button>
+            {isBuiltInTags(resource.metadata.tags) ? (
+              <span className="resource-origin-label">{t("builtIn")}</span>
+            ) : (
+              <button
+                type="button"
+                aria-label={t("deleteNamed", { name: resource.metadata.name })}
+                onClick={() => setPendingRemoval(resource)}
+              >
+                <Trash size={17} />
+              </button>
+            )}
           </div>
         ))}
         {resources.length === 0 ? (
@@ -191,6 +203,20 @@ export function PragmaResourceDirectoryFragment(props: {
         <p className="form-error" role="alert">
           {error}
         </p>
+      ) : null}
+      {pendingRemoval !== null ? (
+        <DeleteConfirmationDialog
+          title={t("deleteResource", {
+            kind: pendingRemoval.kind === "ExpertTeam" ? t("expertTeam") : t("flow"),
+          })}
+          description={t("deleteResourceDescription", { name: pendingRemoval.metadata.name })}
+          cancelLabel={t("cancel")}
+          confirmLabel={t("deleteResourceAction")}
+          deletingLabel={t("deleting")}
+          busy={deleting}
+          onCancel={() => setPendingRemoval(null)}
+          onConfirm={() => void remove(pendingRemoval)}
+        />
       ) : null}
     </StudioScreenFrame>
   );

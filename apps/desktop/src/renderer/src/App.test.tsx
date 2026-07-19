@@ -10,10 +10,11 @@ describe("App", () => {
     expect(html).toContain("PRAGMA STEWARD");
     expect(html).toContain("What would you like to orchestrate?");
     expect(html).toContain("Create or update an Expert");
-    expect(html).toContain("PI Runtime");
     expect(html).toContain('aria-label="Model"');
     expect(html).toContain('aria-label="Thinking depth"');
-    expect(html).toContain("Manage runtimes");
+    expect(html).not.toContain('aria-label="Runtime"');
+    expect(html).not.toContain("Manage runtimes");
+    expect(html).not.toContain("Task workspace");
     expect(html).toContain("Studio");
   });
 

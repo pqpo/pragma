@@ -7,9 +7,13 @@ import { errorMessage } from "../../lib/errors.ts";
 import {
   EXPERT_DESCRIPTION_MAX_LENGTH,
   EXPERT_ID_MAX_LENGTH,
+  EXPERT_INSTRUCTIONS_MAX_LENGTH,
   EXPERT_NAME_MAX_LENGTH,
+  EXPERT_SCOPE_MAX_LENGTH,
   EXPERT_TAG_MAX_LENGTH,
   CreateExpertIdSchema,
+  ExpertInstructionsSchema,
+  ExpertScopeSchema,
   type Capability,
   type ContextStore,
   type DesktopRuntimeAvailability,
@@ -56,6 +60,7 @@ export function ExpertEditorFragment(props: {
   const advance = () => {
     if (step === "identity") {
       const idResult = CreateExpertIdSchema.safeParse(draft.id);
+      const scopeResult = ExpertScopeSchema.safeParse(draft.scope);
       const idAlreadyExists =
         !isEditing &&
         props.existingExpertRefs.some(
@@ -69,7 +74,8 @@ export function ExpertEditorFragment(props: {
       if (
         !draft.name.trim() ||
         !draft.description.trim() ||
-        !draft.scope.trim() ||
+        !draft.version.trim() ||
+        !scopeResult.success ||
         !idResult.success ||
         idAlreadyExists ||
         hasInvalidLength
@@ -85,6 +91,25 @@ export function ExpertEditorFragment(props: {
         );
         return;
       }
+    }
+    if (step === "instructions") {
+      const instructionsResult = ExpertInstructionsSchema.safeParse(draft.instructions);
+      if (!instructionsResult.success) {
+        setError(
+          instructionsResult.error.issues[0]?.message ??
+            "Instructions are required to define an expert.",
+        );
+        return;
+      }
+    }
+    if (
+      step === "capabilities" &&
+      (draft.model === null ||
+        selectedRuntimeInfo?.status !== "available" ||
+        selectedModel === undefined)
+    ) {
+      setError("Choose an available Runtime and model before continuing.");
+      return;
     }
     setError(null);
     setStep(steps[Math.min(index + 1, steps.length - 1)]!.id);
@@ -111,11 +136,29 @@ export function ExpertEditorFragment(props: {
     const name = draft.name.trim();
     const idResult = CreateExpertIdSchema.safeParse(draft.id);
     const description = draft.description.trim();
-    if (!name || !description || !draft.scope.trim() || !idResult.success) {
+    const scopeResult = ExpertScopeSchema.safeParse(draft.scope);
+    const instructionsResult = ExpertInstructionsSchema.safeParse(draft.instructions);
+    if (
+      !name ||
+      !description ||
+      !draft.version.trim() ||
+      !scopeResult.success ||
+      !instructionsResult.success ||
+      !idResult.success ||
+      draft.model === null ||
+      selectedRuntimeInfo?.status !== "available" ||
+      selectedModel === undefined
+    ) {
       setError(
-        idResult.success
-          ? "Name, ID, description, and scope are required to define an expert."
-          : (idResult.error.issues[0]?.message ?? "The expert ID is invalid."),
+        !idResult.success
+          ? (idResult.error.issues[0]?.message ?? "The expert ID is invalid.")
+          : !scopeResult.success
+            ? (scopeResult.error.issues[0]?.message ?? "The expert scope is invalid.")
+            : !instructionsResult.success
+              ? (instructionsResult.error.issues[0]?.message ?? "Expert instructions are invalid.")
+              : draft.model === null || selectedModel === undefined
+                ? "Choose an available Runtime and model before creating the expert."
+                : "Name, ID, description, version, scope, and instructions are required.",
       );
       return;
     }
@@ -137,7 +180,9 @@ export function ExpertEditorFragment(props: {
         id: idResult.data,
         name,
         description,
-        instructions: draft.instructions.trim(),
+        scope: scopeResult.data,
+        instructions: instructionsResult.data,
+        model: draft.model,
         icon: User,
       });
     } catch (submitError) {
@@ -304,10 +349,21 @@ export function ExpertEditorFragment(props: {
                 {t("scope", { ns: "studio" })}
                 <textarea
                   value={draft.scope}
-                  onChange={(event) => setDraft({ ...draft, scope: event.target.value })}
+                  onChange={(event) =>
+                    setDraft({
+                      ...draft,
+                      scope: truncateUnicode(event.target.value, EXPERT_SCOPE_MAX_LENGTH),
+                    })
+                  }
                   placeholder={t("scopePrompt", { ns: "studio" })}
+                  maxLength={EXPERT_SCOPE_MAX_LENGTH * 2}
                 />
-                <small>{t("scopeHint", { ns: "studio" })}</small>
+                <small className="field-hint">
+                  <span>{t("scopeHint", { ns: "studio" })}</span>
+                  <span>
+                    {unicodeLength(draft.scope)}/{EXPERT_SCOPE_MAX_LENGTH}
+                  </span>
+                </small>
               </label>
               <label>
                 {t("version", { ns: "studio" })}
@@ -324,11 +380,25 @@ export function ExpertEditorFragment(props: {
               <textarea
                 className="instructions-input"
                 value={draft.instructions}
-                onChange={(event) => setDraft({ ...draft, instructions: event.target.value })}
+                onChange={(event) =>
+                  setDraft({
+                    ...draft,
+                    instructions: truncateUnicode(
+                      event.target.value,
+                      EXPERT_INSTRUCTIONS_MAX_LENGTH,
+                    ),
+                  })
+                }
                 placeholder={t("instructionsPrompt", { ns: "studio" })}
+                maxLength={EXPERT_INSTRUCTIONS_MAX_LENGTH * 2}
                 autoFocus
               />
-              <small>{t("instructionsHint", { ns: "studio" })}</small>
+              <small className="field-hint">
+                <span>{t("instructionsHint", { ns: "studio" })}</span>
+                <span>
+                  {unicodeLength(draft.instructions)}/{EXPERT_INSTRUCTIONS_MAX_LENGTH}
+                </span>
+              </small>
             </label>
           ) : null}
           {step === "capabilities" ? (
@@ -528,4 +598,12 @@ export function ExpertEditorFragment(props: {
 
 function runtimeModelKey(model: DesktopRuntimeModel): string {
   return JSON.stringify([model.provider.kind, model.provider.id, model.id]);
+}
+
+function unicodeLength(value: string): number {
+  return [...value].length;
+}
+
+function truncateUnicode(value: string, length: number): string {
+  return [...value].slice(0, length).join("");
 }

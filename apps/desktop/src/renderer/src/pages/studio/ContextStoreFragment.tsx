@@ -10,6 +10,7 @@ import {
   MagnifyingGlass,
   Plus,
   ArrowClockwise,
+  Trash,
   X,
 } from "@phosphor-icons/react";
 import type { ContextTrigger } from "@pragma/shared";
@@ -26,6 +27,7 @@ import type {
 } from "../../../../shared/desktop-api.ts";
 import { errorMessage } from "../../lib/errors.ts";
 import { StudioScreenFrame } from "./StudioScreenFrame.tsx";
+import { DeleteConfirmationDialog } from "./DeleteConfirmationDialog.tsx";
 
 type StoreFilter = "all" | ContextStore["type"];
 type CreateStep = "type" | "configure" | "review";
@@ -184,6 +186,7 @@ export function ContextStoreDetailFragment(props: {
   readonly onAddNoteEntry: (storeId: string, entry: ContextNoteEntry) => Promise<ContextStore>;
   readonly onListContents: (storeId: string) => Promise<readonly ContextStoreContentSummary[]>;
   readonly onGetContent: (storeId: string, contentId: string) => Promise<ContextStoreContent>;
+  readonly onDelete: () => Promise<void>;
 }) {
   const { t } = useTranslation("studio");
   const [addingEntity, setAddingEntity] = useState(false);
@@ -192,6 +195,8 @@ export function ContextStoreDetailFragment(props: {
   const [contentsError, setContentsError] = useState<string | null>(null);
   const [selectedContent, setSelectedContent] = useState<ContextStoreContent | null>(null);
   const [loadingContentId, setLoadingContentId] = useState<string | null>(null);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const StoreIcon = props.store.type === "file" ? Folder : BookOpenText;
   const loadContents = useCallback(async () => {
     setLoadingContents(true);
@@ -221,6 +226,18 @@ export function ContextStoreDetailFragment(props: {
       setLoadingContentId(null);
     }
   };
+  const remove = async () => {
+    setDeleting(true);
+    setContentsError(null);
+    try {
+      await props.onDelete();
+    } catch (cause) {
+      setContentsError(errorMessage(cause));
+      setConfirmOpen(false);
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   return (
     <StudioScreenFrame
@@ -241,6 +258,13 @@ export function ContextStoreDetailFragment(props: {
           <h1 id="context-store-name">{props.store.name}</h1>
           <p>{props.store.description || "No description"}</p>
         </div>
+        <button
+          className="danger-button store-delete-button"
+          type="button"
+          onClick={() => setConfirmOpen(true)}
+        >
+          <Trash size={17} aria-hidden="true" /> {t("deleteContextStoreAction")}
+        </button>
       </div>
       <dl>
         <div>
@@ -369,6 +393,18 @@ export function ContextStoreDetailFragment(props: {
           content={selectedContent}
           storeName={props.store.name}
           onClose={() => setSelectedContent(null)}
+        />
+      ) : null}
+      {confirmOpen ? (
+        <DeleteConfirmationDialog
+          title={t("deleteContextStore")}
+          description={t("deleteContextStoreDescription", { name: props.store.name })}
+          cancelLabel={t("cancel")}
+          confirmLabel={t("deleteContextStoreAction")}
+          deletingLabel={t("deleting")}
+          busy={deleting}
+          onCancel={() => setConfirmOpen(false)}
+          onConfirm={() => void remove()}
         />
       ) : null}
     </StudioScreenFrame>

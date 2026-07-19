@@ -24,8 +24,14 @@ import {
   desktopCapabilityBindingRef,
   desktopContextBindingRef,
   parseDesktopCapabilityBindingRef,
+  parseDesktopContextBindingRef,
   parseDesktopModelProviderBindingRef,
 } from "./desktop-binding-ref.ts";
+import {
+  isBuiltInPragmaResource,
+  referencedPragmaResourceRefs,
+  referencingPragmaResources,
+} from "./pragma-resource-references.ts";
 
 export interface ExpertDefinitionStore {
   list(): Promise<ExpertSummary[]>;
@@ -37,7 +43,12 @@ export interface ExpertDefinitionStore {
 
 export class ExpertDefinitionStoreError extends Error {
   constructor(
-    readonly code: "config_invalid" | "expert_exists" | "expert_not_found",
+    readonly code:
+      | "config_invalid"
+      | "expert_exists"
+      | "expert_not_found"
+      | "expert_referenced"
+      | "built_in_readonly",
     message: string,
   ) {
     super(message);
@@ -51,6 +62,7 @@ export class ExpertDefinitionStoreError extends Error {
  */
 export function createExpertDefinitionStore(options: {
   readonly project: PragmaProjectStore;
+  readonly validateModel: (model: CreateExpertDefinition["model"]) => Promise<void>;
 }): ExpertDefinitionStore {
   const getResource = async (
     ref: string,
@@ -103,6 +115,7 @@ export function createExpertDefinitionStore(options: {
     },
     async create(input) {
       const parsed = CreateExpertDefinitionSchema.parse(input);
+      await options.validateModel(parsed.model);
       const snapshot = await options.project.get();
       const requestedRef = `expert:${parsed.id}@${parsed.version}`;
       if (
@@ -134,6 +147,7 @@ export function createExpertDefinitionStore(options: {
     },
     async update(id, input) {
       const parsed = UpdateExpertDefinitionSchema.parse(input);
+      await options.validateModel(parsed.model);
       const snapshot = await options.project.get();
       const current = snapshot.resources.find(
         (resource): resource is PragmaExpertResource =>
@@ -185,6 +199,18 @@ export function createExpertDefinitionStore(options: {
       if (resource === undefined) {
         throw new ExpertDefinitionStoreError("expert_not_found", "The expert no longer exists.");
       }
+      if (isBuiltInPragmaResource(resource)) {
+        throw new ExpertDefinitionStoreError(
+          "built_in_readonly",
+          "Built-in Experts cannot be deleted.",
+        );
+      }
+      if (referencingPragmaResources(snapshot.resources, id).length > 0) {
+        throw new ExpertDefinitionStoreError(
+          "expert_referenced",
+          "This Expert is used by an Expert Team, Flow, or resource tool. Remove those dependencies before deleting it.",
+        );
+      }
       await options.project.publish({
         expectedRevision: snapshot.revision,
         resources: pruneUnreferencedDesktopResources(
@@ -202,40 +228,37 @@ function definitionToResources(
   definition: CreateExpertDefinition & { readonly id: string },
   current?: PragmaExpertResource,
 ): PragmaResource[] {
-  const runtimeId = `${definition.id}.runtime`;
+  const runtimeId = `${definition.id}_runtime`;
   const runtimeRef = `runtime-profile:${runtimeId}@${definition.version}`;
-  const selectedModel = definition.model ?? null;
-  const runtime =
-    selectedModel === null
-      ? undefined
-      : PragmaRuntimeProfileResourceSchema.parse({
-          apiVersion: "pragma/v2",
-          kind: "RuntimeProfile",
-          metadata: {
-            id: runtimeId,
-            version: definition.version,
-            name: `${definition.name} Runtime`,
-            description: `Runtime profile for ${definition.name}.`,
-            tags: ["desktop-managed"],
-          },
-          spec: {
-            adapter: "pragma.runtime.profile@v1",
-            config: {
-              runtimeId: selectedModel.runtimeId,
-              providerId: selectedModel.providerId,
-              model: selectedModel.modelId,
-              ...(selectedModel.thinkingLevel === undefined
-                ? {}
-                : { thinkingLevel: selectedModel.thinkingLevel }),
-            },
-          },
-        });
+  const selectedModel = definition.model;
+  const runtime = PragmaRuntimeProfileResourceSchema.parse({
+    apiVersion: "pragma/v2",
+    kind: "RuntimeProfile",
+    metadata: {
+      id: runtimeId,
+      version: definition.version,
+      name: `${definition.name} Runtime`,
+      description: `Runtime profile for ${definition.name}.`,
+      tags: ["desktop-managed"],
+    },
+    spec: {
+      adapter: "pragma.runtime.profile@v1",
+      config: {
+        runtimeId: selectedModel.runtimeId,
+        providerId: selectedModel.providerId,
+        model: selectedModel.modelId,
+        ...(selectedModel.thinkingLevel === undefined
+          ? {}
+          : { thinkingLevel: selectedModel.thinkingLevel }),
+      },
+    },
+  });
   const capabilityResources = (definition.capabilities ?? []).map((capability) =>
     PragmaCapabilityResourceSchema.parse({
       apiVersion: "pragma/v2",
       kind: "Capability",
       metadata: {
-        id: capability.capabilityId,
+        id: desktopCapabilityResourceId(capability.capabilityId),
         version: String(capability.revision),
         name: `Capability ${capability.capabilityId}`,
         description: "Desktop-managed capability binding.",
@@ -253,7 +276,7 @@ function definitionToResources(
       apiVersion: "pragma/v2",
       kind: "ContextStore",
       metadata: {
-        id: mount.storeId,
+        id: desktopContextResourceId(mount.storeId),
         version: "1.0.0",
         name: `Context ${mount.storeId}`,
         description: "Desktop-managed context store binding.",
@@ -279,10 +302,10 @@ function definitionToResources(
     spec: {
       scope: definition.scope,
       instructions: definition.instructions,
-      ...(runtime === undefined ? {} : { runtime: { ref: runtimeRef } }),
+      runtime: { ref: runtimeRef },
       capabilities: [
         ...(definition.capabilities ?? []).map((capability) => ({
-          ref: `capability:${capability.capabilityId}@${capability.revision}`,
+          ref: `capability:${desktopCapabilityResourceId(capability.capabilityId)}@${capability.revision}`,
           kind: capability.kind,
           ...(capability.kind === "tools" ? { tools: capability.toolNames } : {}),
         })),
@@ -295,15 +318,15 @@ function definitionToResources(
         ...(plugin.secretBindings === undefined ? {} : { secretBindings: plugin.secretBindings }),
       })),
       contextStores: (definition.contextStoreMounts ?? []).map((mount) => ({
-        ref: `context-store:${mount.storeId}@1.0.0`,
-        namespace: `context_${mount.storeId.replaceAll("-", "_")}`,
+        ref: `context-store:${desktopContextResourceId(mount.storeId)}@1.0.0`,
+        namespace: desktopContextResourceId(mount.storeId),
         required: mount.enabled,
       })),
       tools: definition.resourceTools ?? current?.spec.tools ?? [],
     },
   });
   return [
-    ...(runtime === undefined ? [] : [runtime]),
+    runtime,
     ...capabilityResources.filter(
       (resource, index, all) =>
         all.findIndex(
@@ -342,7 +365,7 @@ function mergeResources(
 function pruneUnreferencedDesktopResources(resources: readonly PragmaResource[]): PragmaResource[] {
   let remaining = [...resources];
   for (;;) {
-    const referenced = referencedResourceRefs(remaining);
+    const referenced = referencedPragmaResourceRefs(remaining);
     const next = remaining.filter(
       (resource) =>
         !(
@@ -364,41 +387,6 @@ function isDesktopManagedDependency(resource: PragmaResource): boolean {
   );
 }
 
-function referencedResourceRefs(resources: readonly PragmaResource[]): Set<string> {
-  const refs = new Set<string>();
-  const addToolRefs = (tools: PragmaExpertResource["spec"]["tools"]) => {
-    for (const tool of tools) {
-      if (tool.target !== undefined) refs.add(tool.target.ref);
-      for (const target of tool.targets ?? []) refs.add(target.ref);
-      for (const runtime of Object.values(tool.policy?.runtimes ?? {})) refs.add(runtime);
-    }
-  };
-  for (const resource of resources) {
-    if (resource.kind === "Expert") {
-      if (resource.spec.runtime !== undefined) refs.add(resource.spec.runtime.ref);
-      for (const capability of resource.spec.capabilities) refs.add(capability.ref);
-      for (const context of resource.spec.contextStores) refs.add(context.ref);
-      addToolRefs(resource.spec.tools);
-      continue;
-    }
-    if (resource.kind === "ExpertTeam") {
-      refs.add(resource.spec.coordinator.ref);
-      for (const member of resource.spec.members) refs.add(member.ref);
-      for (const runtime of Object.values(resource.spec.delegation.runtimes)) refs.add(runtime);
-      continue;
-    }
-    if (resource.kind === "Flow") {
-      for (const step of Object.values(resource.spec.graph.steps)) {
-        const target = step.expert ?? step.team ?? step.flow;
-        if (target !== undefined) refs.add(target.ref);
-        if (step.runtime !== undefined) refs.add(step.runtime);
-        for (const runtime of Object.values(step.runtimes ?? {})) refs.add(runtime);
-      }
-    }
-  }
-  return refs;
-}
-
 export function pragmaExpertResourceToDesktopDefinition(
   resource: PragmaExpertResource,
   revision: number,
@@ -408,7 +396,6 @@ export function pragmaExpertResourceToDesktopDefinition(
   const capabilities: ExpertDefinition["capabilities"] = [];
   const opaqueCapabilities: PragmaExpertResource["spec"]["capabilities"] = [];
   for (const capability of resource.spec.capabilities) {
-    const parsed = parseCapabilityRef(capability.ref);
     const declared = resources.find(
       (candidate) => canonicalPragmaResourceRef(candidate) === capability.ref,
     );
@@ -418,22 +405,21 @@ export function pragmaExpertResourceToDesktopDefinition(
       declared.metadata.tags.includes("desktop-managed")
         ? parseDesktopCapabilityBindingRef(declared.spec.binding ?? "")
         : undefined;
-    if (
-      parsed === undefined ||
-      desktopBinding === undefined ||
-      desktopBinding.id !== parsed.id ||
-      desktopBinding.revision !== parsed.revision
-    ) {
+    if (desktopBinding === undefined || !capability.ref.endsWith(`@${desktopBinding.revision}`)) {
       opaqueCapabilities.push(capability);
     } else if (capability.kind === "tools") {
       capabilities.push({
         kind: "tools",
-        capabilityId: parsed.id,
-        revision: parsed.revision,
+        capabilityId: desktopBinding.id,
+        revision: desktopBinding.revision,
         toolNames: capability.tools ?? [],
       });
     } else {
-      capabilities.push({ kind: "skill", capabilityId: parsed.id, revision: parsed.revision });
+      capabilities.push({
+        kind: "skill",
+        capabilityId: desktopBinding.id,
+        revision: desktopBinding.revision,
+      });
     }
   }
   return ExpertDefinitionSchema.parse({
@@ -456,11 +442,20 @@ export function pragmaExpertResourceToDesktopDefinition(
       ...(plugin.config === undefined ? {} : { config: plugin.config }),
       ...(plugin.secretBindings === undefined ? {} : { secretBindings: plugin.secretBindings }),
     })),
-    contextStoreMounts: resource.spec.contextStores.map((mount) => ({
-      storeId: /^context-store:([^@]+)@/.exec(mount.ref)?.[1] ?? mount.namespace,
-      enabled: mount.required,
-      priority: 0,
-    })),
+    contextStoreMounts: resource.spec.contextStores.map((mount) => {
+      const declared = resources.find(
+        (candidate) => canonicalPragmaResourceRef(candidate) === mount.ref,
+      );
+      const storeId =
+        declared?.kind === "ContextStore"
+          ? parseDesktopContextBindingRef(declared.spec.binding ?? "")
+          : undefined;
+      return {
+        storeId: storeId ?? mount.namespace,
+        enabled: mount.required,
+        priority: 0,
+      };
+    }),
     resourceTools: resource.spec.tools,
     revision: Math.max(1, revision),
     createdAt: timestamp,
@@ -468,19 +463,24 @@ export function pragmaExpertResourceToDesktopDefinition(
   });
 }
 
-function parseCapabilityRef(
-  ref: string,
-): { readonly id: string; readonly revision: number } | undefined {
-  const match = /^capability:([^@]+)@(\d+)$/.exec(ref);
-  if (match === null) return undefined;
-  return { id: match[1]!, revision: Number(match[2]) };
+function desktopCapabilityResourceId(id: string): string {
+  return `capability_${id.replaceAll("-", "")}`;
+}
+
+function desktopContextResourceId(id: string): string {
+  return `context_${id.replaceAll("-", "")}`;
 }
 
 function desktopModel(
   resource: PragmaExpertResource,
   resources: readonly PragmaResource[],
 ): ExpertDefinition["model"] {
-  if (resource.spec.runtime === undefined) return null;
+  if (resource.spec.runtime === undefined) {
+    throw new ExpertDefinitionStoreError(
+      "config_invalid",
+      `Expert ${resource.metadata.id} does not declare a Runtime profile.`,
+    );
+  }
   const runtimeRef = resource.spec.runtime.ref;
   const runtime = resources.find(
     (candidate): candidate is PragmaRuntimeProfileResource =>
@@ -491,7 +491,10 @@ function desktopModel(
     typeof runtime.spec.config !== "object" ||
     runtime.spec.config === null
   ) {
-    return null;
+    throw new ExpertDefinitionStoreError(
+      "config_invalid",
+      `Expert ${resource.metadata.id} references an invalid Runtime profile.`,
+    );
   }
   const config = runtime.spec.config as {
     runtimeId?: unknown;
@@ -514,5 +517,8 @@ function desktopModel(
       ...(thinkingLevel === undefined ? {} : { thinkingLevel }),
     };
   }
-  return null;
+  throw new ExpertDefinitionStoreError(
+    "config_invalid",
+    `Expert ${resource.metadata.id} does not declare a usable Runtime model.`,
+  );
 }

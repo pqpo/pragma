@@ -1,17 +1,22 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { testOpenAiCompatibleModel } from "./model-connectivity.ts";
+import { testProviderModel } from "./model-connectivity.ts";
 
-describe("testOpenAiCompatibleModel", () => {
+describe("testProviderModel", () => {
   it("sends a minimal OpenAI chat completion request and reports success", async () => {
-    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
-      new Response(JSON.stringify({ choices: [{ message: { content: "OK" } }] }), { status: 200 }),
-    );
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(
+        new Response(JSON.stringify({ choices: [{ message: { content: "OK" } }] }), {
+          status: 200,
+        }),
+      );
 
-    const result = await testOpenAiCompatibleModel({
+    const result = await testProviderModel({
       baseUrl: "https://api.example.com/v1",
       apiKey: "sk-test",
-      modelId: "gpt-4.1-mini",
+      protocol: "openai-completions",
+      model: testModel("gpt-4.1-mini"),
       fetchImpl,
     });
 
@@ -33,22 +38,25 @@ describe("testOpenAiCompatibleModel", () => {
   });
 
   it("maps authentication, unavailable model, and malformed success responses to safe results", async () => {
-    const authentication = await testOpenAiCompatibleModel({
+    const authentication = await testProviderModel({
       baseUrl: "https://api.example.com/v1",
       apiKey: "sk-test",
-      modelId: "gpt-4.1",
+      protocol: "openai-completions",
+      model: testModel("gpt-4.1"),
       fetchImpl: vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status: 401 })),
     });
-    const missingModel = await testOpenAiCompatibleModel({
+    const missingModel = await testProviderModel({
       baseUrl: "https://api.example.com/v1",
       apiKey: "sk-test",
-      modelId: "gpt-missing",
+      protocol: "openai-completions",
+      model: testModel("gpt-missing"),
       fetchImpl: vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status: 404 })),
     });
-    const malformed = await testOpenAiCompatibleModel({
+    const malformed = await testProviderModel({
       baseUrl: "https://api.example.com/v1",
       apiKey: "sk-test",
-      modelId: "gpt-4.1",
+      protocol: "openai-completions",
+      model: testModel("gpt-4.1"),
       fetchImpl: vi.fn<typeof fetch>().mockResolvedValue(new Response("{}", { status: 200 })),
     });
 
@@ -57,3 +65,17 @@ describe("testOpenAiCompatibleModel", () => {
     expect(malformed).toMatchObject({ ok: false, code: "invalid_response" });
   });
 });
+
+function testModel(id: string) {
+  return {
+    id,
+    name: id,
+    api: "openai-completions" as const,
+    reasoning: false,
+    input: ["text" as const],
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: 128_000,
+    maxTokens: 16_384,
+    capabilitiesSource: "manual" as const,
+  };
+}

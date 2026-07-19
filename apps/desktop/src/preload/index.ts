@@ -12,12 +12,14 @@ import {
   CapabilityTestResultSchema,
   CreateCapabilitySchema,
   DesktopRuntimeAvailabilitySchema,
+  SetDefaultRuntimeSchema,
   DeleteWorkflowLayoutSchema,
   ContextStoreSchema,
   ContextStoreContentSchema,
   ContextStoreContentSummarySchema,
   CreateExpertDefinitionSchema,
   CreateContextStoreSchema,
+  DeleteContextStoreSchema,
   GetContextStoreContentSchema,
   GetSkillDocumentSchema,
   ListContextStoreContentsSchema,
@@ -39,9 +41,13 @@ import {
   PluginZipInspectionSchema,
   CreateModelProviderSchema,
   DeleteModelProviderSchema,
+  DiscoverProviderModelsSchema,
+  ModelDiscoveryResultSchema,
   ModelConnectionTestRequestSchema,
   ModelConnectionTestResultSchema,
   ModelProviderSchema,
+  ModelProviderSettingsSnapshotSchema,
+  ResetModelProvidersResultSchema,
   CreateMissionSchema,
   GetMissionChatSchema,
   MissionActionSchema,
@@ -121,6 +127,8 @@ const api: PragmaDesktopAPI = {
     ValidateWorkspaceResultSchema.parse(
       await ipcRenderer.invoke("workspace:validate", ValidateWorkspacePathSchema.parse(path)),
     ),
+  getModelProviderSettings: async () =>
+    ModelProviderSettingsSnapshotSchema.parse(await ipcRenderer.invoke("model-providers:settings")),
   listModelProviders: async () =>
     ModelProviderSchema.array().parse(await ipcRenderer.invoke("model-providers:list")),
   createModelProvider: async (input) =>
@@ -134,6 +142,13 @@ const api: PragmaDesktopAPI = {
   deleteModelProvider: async (input) => {
     await ipcRenderer.invoke("model-providers:delete", DeleteModelProviderSchema.parse(input));
   },
+  discoverProviderModels: async (input) =>
+    ModelDiscoveryResultSchema.parse(
+      await ipcRenderer.invoke(
+        "model-providers:discover",
+        DiscoverProviderModelsSchema.parse(input),
+      ),
+    ),
   testModelConnection: async (input) =>
     ModelConnectionTestResultSchema.parse(
       await ipcRenderer.invoke(
@@ -141,12 +156,17 @@ const api: PragmaDesktopAPI = {
         ModelConnectionTestRequestSchema.parse(input),
       ),
     ),
+  resetModelProviders: async () =>
+    ResetModelProvidersResultSchema.parse(await ipcRenderer.invoke("model-providers:reset")),
   listContextStores: async () =>
     ContextStoreSchema.array().parse(await ipcRenderer.invoke("context-stores:list")),
   createContextStore: async (input) =>
     ContextStoreSchema.parse(
       await ipcRenderer.invoke("context-stores:create", CreateContextStoreSchema.parse(input)),
     ),
+  deleteContextStore: async (input) => {
+    await ipcRenderer.invoke("context-stores:delete", DeleteContextStoreSchema.parse(input));
+  },
   addContextNoteEntry: async (input) =>
     ContextStoreSchema.parse(
       await ipcRenderer.invoke(
@@ -369,6 +389,10 @@ const api: PragmaDesktopAPI = {
   getRuntimeAvailability: async () =>
     DesktopRuntimeAvailabilitySchema.array().parse(
       await ipcRenderer.invoke("runtimes:availability"),
+    ),
+  setDefaultRuntime: async (input) =>
+    DesktopRuntimeAvailabilitySchema.array().parse(
+      await ipcRenderer.invoke("runtimes:set-default", SetDefaultRuntimeSchema.parse(input)),
     ),
 };
 
