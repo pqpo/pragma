@@ -27,8 +27,8 @@ describe("desktop settings contracts", () => {
     expect(UpdateDesktopSettingsSchema.parse({ localePreference: "system" })).toEqual({
       localePreference: "system",
     });
-    expect(UpdateDesktopSettingsSchema.parse({ stewardWorkspace: "/workspace/steward" })).toEqual({
-      stewardWorkspace: "/workspace/steward",
+    expect(UpdateDesktopSettingsSchema.parse({ defaultWorkspace: "/workspace/default" })).toEqual({
+      defaultWorkspace: "/workspace/default",
     });
     expect(UpdateDesktopSettingsSchema.parse({ toolPermissionMode: "full-access" })).toEqual({
       toolPermissionMode: "full-access",
@@ -39,13 +39,13 @@ describe("desktop settings contracts", () => {
         schemaVersion: 1,
         localePreference: "zh-Hant",
         toolPermissionMode: "request-approval",
-        stewardWorkspace: "/workspace/steward",
-        usesDefaultStewardWorkspace: false,
+        defaultWorkspace: "/workspace/default",
+        usesBuiltInDefaultWorkspace: false,
         resolvedLocale: "zh-Hant",
       }),
     ).toMatchObject({
-      stewardWorkspace: "/workspace/steward",
-      usesDefaultStewardWorkspace: false,
+      defaultWorkspace: "/workspace/default",
+      usesBuiltInDefaultWorkspace: false,
       resolvedLocale: "zh-Hant",
     });
     expect(UpdateDesktopSettingsSchema.safeParse({ localePreference: "fr" }).success).toBe(false);
@@ -58,6 +58,32 @@ describe("runtime settings contracts", () => {
       runtimeId: "codex",
     });
     expect(SetDefaultRuntimeSchema.safeParse({ runtimeId: "" }).success).toBe(false);
+  });
+});
+
+describe("mission model override contracts", () => {
+  const mission = {
+    workspace: "/workspace/default",
+    executor: { ref: "expert:steward@1.0.0" },
+    goal: "Prepare a plan",
+  };
+
+  it("accepts a model-only override", () => {
+    expect(
+      CreateMissionSchema.safeParse({
+        ...mission,
+        modelOverride: { providerId: "provider", modelId: "model", thinkingLevel: "high" },
+      }).success,
+    ).toBe(true);
+  });
+
+  it("rejects attempts to switch Runtime from Home", () => {
+    expect(
+      CreateMissionSchema.safeParse({
+        ...mission,
+        modelOverride: { runtimeId: "codex", providerId: "provider", modelId: "model" },
+      }).success,
+    ).toBe(false);
   });
 });
 

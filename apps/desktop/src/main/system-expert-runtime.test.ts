@@ -13,23 +13,32 @@ describe("system Expert Runtime defaults", () => {
       runtimes: [runtime("pi", "cloud-pi-agent")],
     });
 
-    await expect(resolveSystemExpertRuntimeDefaults(runtimes, undefined)).resolves.toEqual({
+    await expect(
+      resolveSystemExpertRuntimeDefaults(runtimes, undefined, undefined),
+    ).resolves.toEqual({
       runtimeId: "pi",
       modelSelection: { model: { providerId: "provider", modelId: "configured-model" } },
     });
   });
 
-  it("uses a mission model and thinking override as the compiler defaults", async () => {
+  it("uses a mission model override without changing the configured Runtime", async () => {
     const runtimes = createStaticRuntimeResolver({
       defaultRuntimeId: "pi",
       runtimes: [runtime("pi", "cloud-pi-agent"), runtime("codex", "codex-local")],
     });
-    const defaults = await resolveSystemExpertRuntimeDefaults(runtimes, {
-      runtimeId: "codex",
-      providerId: "openai",
-      modelId: "gpt-test",
-      thinkingLevel: "high",
-    });
+    const defaults = await resolveSystemExpertRuntimeDefaults(
+      runtimes,
+      {
+        runtimeId: "codex",
+        providerId: "openai",
+        modelId: "gpt-test",
+      },
+      {
+        providerId: "openai",
+        modelId: "gpt-test",
+        thinkingLevel: "high",
+      },
+    );
     const scoped = withRuntimeDefaults(runtimes, defaults);
 
     expect(await scoped.getDefaultRuntimeId()).toBe("codex");

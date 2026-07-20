@@ -236,6 +236,12 @@ PI Adapter 的模型目录来自 Desktop 注册的 Model Provider；Codex 和 Cl
 还会把声明集合与自身真实支持的思考深度取交集。RuntimeProfile 不再承载 Provider credential；凭据只
 由具体 Runtime Factory/Adapter 在运行时解析。
 
+模型能力协议只保存运行时中立的 `reasoning`、规范化思考档位与可选默认档位，不保存 PI 的
+`thinkingLevelMap` 或 `compat`。PI 内置模型目录与版本化 Compatibility Profile 均由
+`@pragma/runtime-pi` 持有：精确命中的内置模型优先，未知兼容服务使用保守 Profile，Desktop 的供应商
+级和模型级高级设置可以显式覆盖。Desktop 的连接验证也通过 PI 发起最小真实请求，从而同时验证消息
+角色、思考参数和 Token 字段转换；Codex 与 Claude Code 不经过这条 Profile 链路。详见 ADR 015。
+
 接入一个直接可访问的云端 Agent Runtime 不需要先建设 Runtime Gateway：实现一个负责远程认证、
 会话与事件流的 `RuntimeAdapter`，提供 factory，并把对应 environment 注册到版本化 Store 即可。
 只有当需要由云端控制面向 Desktop 设备下发本地任务、维护设备在线状态和断线恢复时，

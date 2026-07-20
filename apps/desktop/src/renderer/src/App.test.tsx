@@ -14,7 +14,7 @@ describe("App", () => {
 
     expect(html).toContain("Start a mission");
     expect(html).toContain("What do you want to accomplish?");
-    expect(html).toContain('aria-label="Mission context and tools"');
+    expect(html).toContain('aria-label="Mission options"');
     expect(html).toContain('aria-label="Tool permissions"');
     expect(html).not.toContain("PRAGMA STEWARD");
     expect(html).toContain("Studio");
@@ -27,7 +27,7 @@ describe("App", () => {
 
     expect(html).toContain("开始任务");
     expect(html).toContain("你想完成什么？");
-    expect(html).toContain('aria-label="任务上下文与工具"');
+    expect(html).toContain('aria-label="任务选项"');
     expect(html).toContain('aria-label="工具权限"');
   });
 

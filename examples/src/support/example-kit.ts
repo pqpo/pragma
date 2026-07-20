@@ -50,6 +50,7 @@ export function createExampleApp(pragmaHome?: string) {
   const api = parseModelApi(process.env["PRAGMA_MODEL_API"]) ?? "openai-completions";
   const provider: ModelProviderDefinition = {
     id: providerId,
+    catalogId: providerId,
     displayName: providerId,
     models: [
       {

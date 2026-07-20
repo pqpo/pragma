@@ -42,8 +42,8 @@ describe("desktop settings store", () => {
       schemaVersion: 1,
       localePreference: "system",
       toolPermissionMode: "request-approval",
-      stewardWorkspace: "/default/steward",
-      usesDefaultStewardWorkspace: true,
+      defaultWorkspace: "/default/workspace",
+      usesBuiltInDefaultWorkspace: true,
       resolvedLocale: "zh-Hant",
     });
   });
@@ -56,8 +56,8 @@ describe("desktop settings store", () => {
       schemaVersion: 1,
       localePreference: "zh-Hans",
       toolPermissionMode: "request-approval",
-      stewardWorkspace: "/default/steward",
-      usesDefaultStewardWorkspace: true,
+      defaultWorkspace: "/default/workspace",
+      usesBuiltInDefaultWorkspace: true,
       resolvedLocale: "zh-Hans",
     });
     expect(JSON.parse(await readFile(settingsPath, "utf8"))).toEqual({
@@ -67,35 +67,35 @@ describe("desktop settings store", () => {
     });
   });
 
-  it("persists a custom Steward workspace without overwriting the locale", async () => {
+  it("persists a custom default workspace without overwriting the locale", async () => {
     const settingsPath = await temporarySettingsPath();
     const store = createStore(settingsPath);
     await store.update({ localePreference: "zh-Hant" }, ["en-US"]);
 
-    await expect(store.update({ stewardWorkspace: "/work/steward" }, ["en-US"])).resolves.toEqual({
+    await expect(store.update({ defaultWorkspace: "/work/project" }, ["en-US"])).resolves.toEqual({
       schemaVersion: 1,
       localePreference: "zh-Hant",
       toolPermissionMode: "request-approval",
-      stewardWorkspace: "/work/steward",
-      usesDefaultStewardWorkspace: false,
+      defaultWorkspace: "/work/project",
+      usesBuiltInDefaultWorkspace: false,
       resolvedLocale: "zh-Hant",
     });
     expect(JSON.parse(await readFile(settingsPath, "utf8"))).toEqual({
       schemaVersion: 1,
       localePreference: "zh-Hant",
       toolPermissionMode: "request-approval",
-      stewardWorkspace: "/work/steward",
+      defaultWorkspace: "/work/project",
     });
   });
 
-  it("restores the default Steward workspace", async () => {
+  it("restores the built-in default workspace", async () => {
     const settingsPath = await temporarySettingsPath();
     const store = createStore(settingsPath);
-    await store.update({ stewardWorkspace: "/work/steward" }, ["en-US"]);
+    await store.update({ defaultWorkspace: "/work/project" }, ["en-US"]);
 
-    await expect(store.update({ stewardWorkspace: null }, ["en-US"])).resolves.toMatchObject({
-      stewardWorkspace: "/default/steward",
-      usesDefaultStewardWorkspace: true,
+    await expect(store.update({ defaultWorkspace: null }, ["en-US"])).resolves.toMatchObject({
+      defaultWorkspace: "/default/workspace",
+      usesBuiltInDefaultWorkspace: true,
     });
     expect(JSON.parse(await readFile(settingsPath, "utf8"))).toEqual({
       schemaVersion: 1,
@@ -136,7 +136,7 @@ describe("desktop settings store", () => {
 function createStore(settingsPath: string, warn?: (message: string, error: unknown) => void) {
   return createDesktopSettingsStore({
     settingsPath,
-    defaultStewardWorkspace: "/default/steward",
+    builtInDefaultWorkspace: "/default/workspace",
     ...(warn === undefined ? {} : { warn }),
   });
 }

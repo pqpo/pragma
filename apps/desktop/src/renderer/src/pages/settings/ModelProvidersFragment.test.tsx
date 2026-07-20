@@ -14,6 +14,7 @@ describe("ProviderEditor", () => {
           baseUrl: "https://api.deepseek.com/v1",
           apiKey: "secret",
           requiresApiKey: true,
+          compatibilityProfileId: "",
           models: [model("deepseek-v4-flash"), model("deepseek-v4-pro")],
         }}
         onCancel={() => undefined}
@@ -26,21 +27,15 @@ describe("ProviderEditor", () => {
     expect(html).toContain("https://api.deepseek.com/v1");
   });
 
-  it("requires explicit mappings for xhigh and max thinking levels", () => {
-    expect(supportedThinkingLevels({ ...model("reasoning"), reasoning: true })).toEqual([
-      "off",
-      "minimal",
-      "low",
-      "medium",
-      "high",
-    ]);
+  it("uses the runtime-neutral declared thinking levels", () => {
+    expect(supportedThinkingLevels({ ...model("reasoning"), reasoning: true })).toEqual([]);
     expect(
       supportedThinkingLevels({
         ...model("extended"),
         reasoning: true,
-        thinkingLevelMap: { low: null, xhigh: "xhigh", max: "max" },
+        thinking: { supportedLevels: ["off", "medium", "xhigh", "max"] },
       }),
-    ).toEqual(["off", "minimal", "medium", "high", "xhigh", "max"]);
+    ).toEqual(["off", "medium", "xhigh", "max"]);
   });
 });
 

@@ -289,6 +289,7 @@ export class PragmaProjectService {
     readonly environmentId: string;
     readonly adapterHost: PragmaAdapterHost;
     readonly runtimes?: RuntimeResolver | undefined;
+    readonly rootModelSelectionOverride?: PragmaCompileOptions["rootModelSelectionOverride"];
     readonly rootExecutionOverride?: PragmaCompileOptions["rootExecutionOverride"];
     readonly plugins?: PragmaPluginResolver | undefined;
   }): Promise<CompiledResource<T>> {
@@ -304,6 +305,7 @@ export class PragmaProjectService {
       adapterHost: input.adapterHost,
       resourceAdapters: this.adapters,
       runtimes: input.runtimes,
+      rootModelSelectionOverride: input.rootModelSelectionOverride,
       rootExecutionOverride: input.rootExecutionOverride,
       plugins: input.plugins,
     });

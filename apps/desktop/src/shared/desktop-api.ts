@@ -3,7 +3,8 @@ import {
   HumanInteractionRequestSchema,
   HumanInteractionResponseSchema,
   ModelApiSchema as SharedModelApiSchema,
-  ModelThinkingLevelMapSchema as SharedModelThinkingLevelMapSchema,
+  ModelCompatibilityProfileIdSchema,
+  ModelThinkingLevelSchema,
   ProviderModelDefinitionSchema,
   ToolPermissionModeSchema,
 } from "@pragma/shared";
@@ -166,14 +167,14 @@ export const DesktopSettingsSchema = z.object({
   schemaVersion: z.literal(1),
   localePreference: DesktopLocalePreferenceSchema,
   toolPermissionMode: DesktopToolPermissionModeSchema.default("request-approval"),
-  stewardWorkspace: z.string().trim().min(1).max(2_000).optional(),
+  defaultWorkspace: z.string().trim().min(1).max(2_000).optional(),
 });
 
 export const DesktopSettingsSnapshotSchema = DesktopSettingsSchema.omit({
-  stewardWorkspace: true,
+  defaultWorkspace: true,
 }).extend({
-  stewardWorkspace: z.string().trim().min(1).max(2_000),
-  usesDefaultStewardWorkspace: z.boolean(),
+  defaultWorkspace: z.string().trim().min(1).max(2_000),
+  usesBuiltInDefaultWorkspace: z.boolean(),
   resolvedLocale: DesktopResolvedLocaleSchema,
 });
 
@@ -181,13 +182,13 @@ export const UpdateDesktopSettingsSchema = z
   .object({
     localePreference: DesktopLocalePreferenceSchema.optional(),
     toolPermissionMode: DesktopToolPermissionModeSchema.optional(),
-    stewardWorkspace: z.string().trim().min(1).max(2_000).nullable().optional(),
+    defaultWorkspace: z.string().trim().min(1).max(2_000).nullable().optional(),
   })
   .refine(
     (input) =>
       input.localePreference !== undefined ||
       input.toolPermissionMode !== undefined ||
-      input.stewardWorkspace !== undefined,
+      input.defaultWorkspace !== undefined,
     "At least one Desktop setting must be provided.",
   );
 
@@ -214,7 +215,13 @@ export const ModelProviderIdSchema = z.string().uuid();
 export const ModelIdSchema = z.string().trim().min(1).max(200);
 export const ModelProviderPresetIdSchema = z.string().trim().min(1).max(80);
 export const ModelProviderProtocolSchema = SharedModelApiSchema;
-export const ModelThinkingLevelMapSchema = SharedModelThinkingLevelMapSchema;
+
+export const ModelCompatibilityProfileDescriptorSchema = z.object({
+  id: ModelCompatibilityProfileIdSchema,
+  displayName: z.string().trim().min(1).max(200),
+  description: z.string().trim().min(1).max(2_000),
+  api: z.enum(["openai-completions", "openai-responses"]),
+});
 
 export const ModelProviderModelSchema = ProviderModelDefinitionSchema.extend({
   capabilitiesSource: z.enum(["preset", "provider", "manual"]),
@@ -235,6 +242,7 @@ export const ModelProviderSchema = z.object({
   name: z.string().trim().min(1).max(100),
   protocol: ModelProviderProtocolSchema,
   baseUrl: z.string().url(),
+  compatibilityProfileId: ModelCompatibilityProfileIdSchema.optional(),
   models: z.array(ModelProviderModelSchema).min(1),
   hasApiKey: z.boolean(),
   requiresApiKey: z.boolean(),
@@ -247,6 +255,7 @@ export const CreateModelProviderSchema = z.object({
   name: z.string().trim().min(1).max(100),
   protocol: ModelProviderProtocolSchema,
   baseUrl: z.string().trim().url(),
+  compatibilityProfileId: ModelCompatibilityProfileIdSchema.optional(),
   apiKey: z.string().trim().max(10_000),
   requiresApiKey: z.boolean(),
   models: z.array(ModelProviderModelSchema).min(1).max(100),
@@ -258,6 +267,7 @@ export const UpdateModelProviderSchema = z.object({
   name: z.string().trim().min(1).max(100),
   protocol: ModelProviderProtocolSchema,
   baseUrl: z.string().trim().url(),
+  compatibilityProfileId: ModelCompatibilityProfileIdSchema.optional(),
   apiKey: z.string().trim().max(10_000).optional(),
   requiresApiKey: z.boolean(),
   models: z.array(ModelProviderModelSchema).min(1).max(100),
@@ -270,6 +280,7 @@ export const DeleteModelProviderSchema = z.object({
 export const ModelConnectionTestRequestSchema = z.object({
   providerId: ModelProviderIdSchema,
   modelId: ModelIdSchema.optional(),
+  thinkingLevel: ModelThinkingLevelSchema.optional(),
 });
 
 export const ModelConnectionTestResultSchema = z.object({
@@ -1046,7 +1057,15 @@ export const MissionCreationDefaultsSchema = z.object({
   toolPermissionMode: DesktopToolPermissionModeSchema,
 });
 
-export const MissionModelOverrideSchema = ExpertModelConfigSchema;
+export const MissionModelOverrideSchema = ExpertModelConfigSchema.omit({ runtimeId: true }).strict();
+
+export const MissionModelOptionsRequestSchema = z.object({
+  executorRef: PragmaInvocableResourceRefSchema,
+});
+
+export const MissionModelOptionsSchema = z.object({
+  models: z.array(DesktopRuntimeModelSchema),
+});
 
 export const MissionLifecycleStatusSchema = z.enum(["active", "completed"]);
 
@@ -1288,6 +1307,9 @@ export type DesktopToolPermissionMode = z.infer<typeof DesktopToolPermissionMode
 export type PickWorkspaceResult = z.infer<typeof PickWorkspaceResultSchema>;
 export type ValidateWorkspaceResult = z.infer<typeof ValidateWorkspaceResultSchema>;
 export type ModelProviderModel = z.infer<typeof ModelProviderModelSchema>;
+export type ModelCompatibilityProfileDescriptor = z.infer<
+  typeof ModelCompatibilityProfileDescriptorSchema
+>;
 export type ModelProviderVerification = z.infer<typeof ModelProviderVerificationSchema>;
 export type ModelProvider = z.infer<typeof ModelProviderSchema>;
 export type CreateModelProvider = z.infer<typeof CreateModelProviderSchema>;
@@ -1338,6 +1360,7 @@ export type MissionExecutor = z.infer<typeof MissionExecutorSchema>;
 export type MissionExecutorOption = z.infer<typeof MissionExecutorOptionSchema>;
 export type MissionCreationDefaults = z.infer<typeof MissionCreationDefaultsSchema>;
 export type MissionModelOverride = z.infer<typeof MissionModelOverrideSchema>;
+export type MissionModelOptions = z.infer<typeof MissionModelOptionsSchema>;
 export type MissionLifecycleStatus = z.infer<typeof MissionLifecycleStatusSchema>;
 export type CreateMission = z.infer<typeof CreateMissionSchema>;
 export type MissionUserMessage = z.infer<typeof MissionUserMessageSchema>;
@@ -1374,6 +1397,7 @@ export interface PragmaDesktopAPI {
   pickWorkspace: () => Promise<PickWorkspaceResult>;
   validateWorkspace: (path: string) => Promise<ValidateWorkspaceResult>;
   getModelProviderSettings: () => Promise<ModelProviderSettingsSnapshot>;
+  listModelCompatibilityProfiles: () => Promise<ModelCompatibilityProfileDescriptor[]>;
   listModelProviders: () => Promise<ModelProvider[]>;
   createModelProvider: (input: CreateModelProvider) => Promise<ModelProvider>;
   updateModelProvider: (input: UpdateModelProvider) => Promise<ModelProvider>;
@@ -1419,6 +1443,7 @@ export interface PragmaDesktopAPI {
   deleteWorkflowLayout: (input: DeleteWorkflowLayout) => Promise<void>;
   listMissions: () => Promise<MissionSummary[]>;
   listMissionExecutors: () => Promise<MissionExecutorOption[]>;
+  getMissionModelOptions: (executorRef: string) => Promise<MissionModelOptions>;
   getMissionCreationDefaults: () => Promise<MissionCreationDefaults>;
   getMission: (id: string) => Promise<Mission>;
   createMission: (input: CreateMission) => Promise<Mission>;

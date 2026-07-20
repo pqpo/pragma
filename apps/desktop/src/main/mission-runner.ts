@@ -211,10 +211,7 @@ export function createMissionRunner(options: {
       ...(mission.modelOverride === undefined
         ? {}
         : {
-            rootExecutionOverride: {
-              runtimeId: mission.modelOverride.runtimeId,
-              modelSelection: toRuntimeModelSelection(mission.modelOverride),
-            },
+            rootModelSelectionOverride: toRuntimeModelSelection(mission.modelOverride),
           }),
       ...(options.plugins === undefined
         ? {}
@@ -272,7 +269,10 @@ export function createMissionRunner(options: {
     const compiled = await compileMissionExecutor(mission, runtimes);
     const modelSelection = toRuntimeModelSelection(mission.modelOverride);
     if (mission.modelOverride !== undefined) {
-      await runtimes.bind({ runtimeId: mission.modelOverride.runtimeId, modelSelection });
+      await runtimes.bind({
+        runtimeId: requireRootRuntimeId(compiled),
+        modelSelection,
+      });
     }
     const environmentFingerprint = missionExecutionFingerprint(
       compiled.environmentFingerprint.value,
@@ -354,7 +354,7 @@ export function createMissionRunner(options: {
             sessionId: mission.execution!.sessionId!,
           })
         : await app.experts.createSession(compiled.value, {
-            runtime: mission.modelOverride?.runtimeId ?? compiled.rootRuntimeId,
+            runtime: compiled.rootRuntimeId,
             ...(modelSelection === undefined ? {} : { modelSelection }),
           }));
     sessions.set(mission.id, session);
@@ -420,7 +420,10 @@ export function createMissionRunner(options: {
     const compiled = await compileMissionExecutor(mission, runtimes);
     const modelSelection = toRuntimeModelSelection(mission.modelOverride);
     if (mission.modelOverride !== undefined) {
-      await runtimes.bind({ runtimeId: mission.modelOverride.runtimeId, modelSelection });
+      await runtimes.bind({
+        runtimeId: requireRootRuntimeId(compiled),
+        modelSelection,
+      });
     }
     const environmentFingerprint = missionExecutionFingerprint(
       compiled.environmentFingerprint.value,
@@ -434,7 +437,7 @@ export function createMissionRunner(options: {
       sessions.get(mission.id) ??
       (mission.execution?.sessionId === undefined
         ? await app.experts.createSession(compiled.value, {
-            runtime: mission.modelOverride?.runtimeId ?? compiled.rootRuntimeId,
+            runtime: compiled.rootRuntimeId,
             ...(modelSelection === undefined ? {} : { modelSelection }),
           })
         : await app.experts.resumeSession(compiled.value, {
@@ -745,6 +748,13 @@ function toRuntimeModelSelection(
         model: { providerId: override.providerId, modelId: override.modelId },
         ...(override.thinkingLevel === undefined ? {} : { thinkingLevel: override.thinkingLevel }),
       };
+}
+
+function requireRootRuntimeId(compiled: CompiledResource<InvocableResource>): string {
+  if (compiled.rootRuntimeId === undefined) {
+    throw new Error("Mission executor did not resolve a root Runtime.");
+  }
+  return compiled.rootRuntimeId;
 }
 
 function missionExecutionFingerprint(

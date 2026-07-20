@@ -40,7 +40,7 @@ export function resolveDesktopLocale(
 
 export function createDesktopSettingsStore(options: {
   readonly settingsPath: string;
-  readonly defaultStewardWorkspace: string;
+  readonly builtInDefaultWorkspace: string;
   readonly warn?: ((message: string, error: unknown) => void) | undefined;
 }): DesktopSettingsStore {
   const lockPath = `${options.settingsPath}.lock`;
@@ -67,8 +67,8 @@ export function createDesktopSettingsStore(options: {
     schemaVersion: settings.schemaVersion,
     localePreference: settings.localePreference,
     toolPermissionMode: settings.toolPermissionMode,
-    stewardWorkspace: settings.stewardWorkspace ?? options.defaultStewardWorkspace,
-    usesDefaultStewardWorkspace: settings.stewardWorkspace === undefined,
+    defaultWorkspace: settings.defaultWorkspace ?? options.builtInDefaultWorkspace,
+    usesBuiltInDefaultWorkspace: settings.defaultWorkspace === undefined,
     resolvedLocale:
       settings.localePreference === "system"
         ? resolveDesktopLocale(preferredSystemLanguages)
@@ -83,15 +83,15 @@ export function createDesktopSettingsStore(options: {
       let settings: DesktopSettings | undefined;
       await withFileLock(lockPath, async () => {
         const current = await readSettings();
-        const stewardWorkspace =
-          input.stewardWorkspace === null
+        const defaultWorkspace =
+          input.defaultWorkspace === null
             ? undefined
-            : (input.stewardWorkspace ?? current.stewardWorkspace);
+            : (input.defaultWorkspace ?? current.defaultWorkspace);
         settings = DesktopSettingsSchema.parse({
           schemaVersion: 1,
           localePreference: input.localePreference ?? current.localePreference,
           toolPermissionMode: input.toolPermissionMode ?? current.toolPermissionMode,
-          ...(stewardWorkspace === undefined ? {} : { stewardWorkspace }),
+          ...(defaultWorkspace === undefined ? {} : { defaultWorkspace }),
         });
         await mkdir(dirname(options.settingsPath), { recursive: true, mode: 0o700 });
         await chmod(dirname(options.settingsPath), 0o700).catch(() => undefined);

@@ -18,7 +18,7 @@ describe("SettingsPage", () => {
     expect(html).toContain('class="settings-screen-body"');
     expect(html).toContain("General");
     expect(html).toContain("Language");
-    expect(html).toContain("Steward Workspace");
+    expect(html).toContain("Default workspace");
     expect(html).toContain("Tool permissions");
     expect(html).toContain("Request approval");
     expect(html).toContain("Approve for me");
@@ -34,7 +34,7 @@ describe("SettingsPage", () => {
 
     expect(html).toContain("常规");
     expect(html).toContain("语言");
-    expect(html).toContain("管家 Workspace");
+    expect(html).toContain("默认工作区");
     expect(html).toContain("工具权限");
     expect(html).toContain("替我审批");
     expect(html).toContain("跟随系统");

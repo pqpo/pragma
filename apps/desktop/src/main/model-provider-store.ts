@@ -28,7 +28,7 @@ import {
 } from "../shared/desktop-api.ts";
 import { findModelProviderPreset } from "../shared/model-provider-presets.ts";
 
-const CONFIG_SCHEMA_VERSION = 3;
+const CONFIG_SCHEMA_VERSION = 4;
 
 interface StoredModelProvider {
   readonly id: string;
@@ -36,6 +36,7 @@ interface StoredModelProvider {
   readonly name: string;
   readonly protocol: ModelProvider["protocol"];
   readonly baseUrl: string;
+  readonly compatibilityProfileId?: string | undefined;
   readonly models: readonly ModelProviderModel[];
   readonly encryptedApiKey: string;
   readonly requiresApiKey: boolean;
@@ -146,6 +147,9 @@ function toPublicProvider(provider: StoredModelProvider): ModelProvider {
     name: provider.name,
     protocol: provider.protocol,
     baseUrl: provider.baseUrl,
+    ...(provider.compatibilityProfileId === undefined
+      ? {}
+      : { compatibilityProfileId: provider.compatibilityProfileId }),
     models: provider.models.map((model) => ({ ...model })),
     hasApiKey: provider.encryptedApiKey.length > 0,
     requiresApiKey: provider.requiresApiKey,
@@ -271,16 +275,21 @@ export function createModelProviderStore(options: {
   const resolveStoredProvider = (provider: StoredModelProvider): ResolvedModelProvider => {
     return {
       id: provider.id,
+      catalogId: provider.presetId,
       displayName: provider.name,
       baseUrl: provider.baseUrl,
       apiKey: decryptApiKey(provider),
       models: provider.models.map(toProviderModelDefinition),
       api: provider.protocol,
+      ...(provider.compatibilityProfileId === undefined
+        ? {}
+        : { compatibilityProfileId: provider.compatibilityProfileId }),
       credentialFingerprint: createHash("sha256")
         .update(
           JSON.stringify({
             id: provider.id,
             baseUrl: provider.baseUrl,
+            compatibilityProfileId: provider.compatibilityProfileId,
             models: provider.models,
             protocol: provider.protocol,
             encryptedApiKey: provider.encryptedApiKey,
@@ -314,9 +323,13 @@ export function createModelProviderStore(options: {
     async listProviders(): Promise<readonly ModelProviderDefinition[]> {
       return (await readConfig()).providers.map((provider) => ({
         id: provider.id,
+        catalogId: provider.presetId,
         displayName: provider.name,
         api: provider.protocol,
         baseUrl: provider.baseUrl,
+        ...(provider.compatibilityProfileId === undefined
+          ? {}
+          : { compatibilityProfileId: provider.compatibilityProfileId }),
         models: provider.models.map(toProviderModelDefinition),
       }));
     },
@@ -335,11 +348,12 @@ export function createModelProviderStore(options: {
           name: input.name.trim(),
           protocol: input.protocol,
           baseUrl: normalizeModelProviderBaseUrl(input.baseUrl),
+          ...(input.compatibilityProfileId === undefined
+            ? {}
+            : { compatibilityProfileId: input.compatibilityProfileId }),
           models: normalizeModels(input.models),
           encryptedApiKey:
-            input.apiKey === ""
-              ? ""
-              : options.encryption.encrypt(input.apiKey).toString("base64"),
+            input.apiKey === "" ? "" : options.encryption.encrypt(input.apiKey).toString("base64"),
           requiresApiKey: input.requiresApiKey,
           verification: { status: "unverified" },
           revision: 1,
@@ -361,11 +375,7 @@ export function createModelProviderStore(options: {
         const baseUrl = normalizeModelProviderBaseUrl(input.baseUrl);
         const connectionChanged =
           existing.protocol !== input.protocol || existing.baseUrl !== baseUrl;
-        if (
-          connectionChanged &&
-          existing.encryptedApiKey !== "" &&
-          input.apiKey === undefined
-        ) {
+        if (connectionChanged && existing.encryptedApiKey !== "" && input.apiKey === undefined) {
           throw new ModelProviderStoreError(
             "connection_changed",
             "Re-enter the API key after changing the provider protocol or base URL.",
@@ -389,6 +399,9 @@ export function createModelProviderStore(options: {
           name: input.name.trim(),
           protocol: input.protocol,
           baseUrl,
+          ...(input.compatibilityProfileId === undefined
+            ? { compatibilityProfileId: undefined }
+            : { compatibilityProfileId: input.compatibilityProfileId }),
           models: normalizeModels(input.models),
           encryptedApiKey,
           requiresApiKey: input.requiresApiKey,
@@ -407,10 +420,7 @@ export function createModelProviderStore(options: {
       await mutate(async () => {
         const config = await readConfig();
         if (!config.providers.some((provider) => provider.id === id)) {
-          throw new ModelProviderStoreError(
-            "provider_not_found",
-            "The provider no longer exists.",
-          );
+          throw new ModelProviderStoreError("provider_not_found", "The provider no longer exists.");
         }
         await writeConfig({
           ...config,
@@ -455,10 +465,7 @@ export function createModelProviderStore(options: {
         const config = await readConfig();
         const existing = config.providers.find((provider) => provider.id === id);
         if (!existing) {
-          throw new ModelProviderStoreError(
-            "provider_not_found",
-            "The provider no longer exists.",
-          );
+          throw new ModelProviderStoreError("provider_not_found", "The provider no longer exists.");
         }
         if (existing.revision !== expectedRevision) {
           throw new ModelProviderStoreError(

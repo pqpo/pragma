@@ -4,37 +4,24 @@ import { describe, expect, it } from "vitest";
 import { MissionModelOverrideControls } from "./HomePage.tsx";
 
 describe("MissionModelOverrideControls", () => {
-  it("lists available models and thinking levels for Expert missions", () => {
+  it("lists models without exposing or changing their Runtime", () => {
     const html = renderToStaticMarkup(
       <MissionModelOverrideControls
-        runtimes={[
+        models={[
           {
-            id: "pi",
-            revision: 1,
-            origin: "built-in",
-            adapter: { id: "pragma.runtime.pi", version: "v1" },
-            isDefault: true,
-            kind: "cloud-pi-agent",
+            id: "deepseek",
             displayName: "PI Runtime",
-            status: "available",
-            models: [
-              {
-                id: "deepseek",
-                displayName: "DeepSeek",
-                provider: {
-                  kind: "registered",
-                  id: "provider",
-                  displayName: "DeepSeek",
-                },
-                thinking: {
-                  supportedLevels: [{ value: "high", label: "High" }],
-                },
-              },
-            ],
+            provider: {
+              kind: "registered",
+              id: "provider",
+              displayName: "DeepSeek",
+            },
+            thinking: {
+              supportedLevels: [{ value: "high", label: "High" }],
+            },
           },
         ]}
         value={{
-          runtimeId: "pi",
           providerId: "provider",
           modelId: "deepseek",
           thinkingLevel: "high",
@@ -43,8 +30,9 @@ describe("MissionModelOverrideControls", () => {
       />,
     );
 
-    expect(html).toContain("PI Runtime · DeepSeek · DeepSeek");
+    expect(html).toContain("DeepSeek · PI Runtime");
     expect(html).toContain('<option value="high" selected="">High</option>');
     expect(html).toContain("Use executor default");
+    expect(html).not.toContain("runtimeId");
   });
 });

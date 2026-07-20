@@ -95,9 +95,9 @@ export function GeneralSettingsFragment() {
     try {
       const result = await window.pragmaDesktop.pickWorkspace();
       if (!result.ok || result.path === undefined) return;
-      if (result.path === settings.stewardWorkspace) return;
+      if (result.path === settings.defaultWorkspace) return;
       setSettings(
-        await window.pragmaDesktop.updateDesktopSettings({ stewardWorkspace: result.path }),
+        await window.pragmaDesktop.updateDesktopSettings({ defaultWorkspace: result.path }),
       );
     } catch {
       setError(t("general.saveError", { ns: "settings" }));
@@ -107,11 +107,11 @@ export function GeneralSettingsFragment() {
   };
 
   const restoreDefaultWorkspace = async () => {
-    if (settings === undefined || settings.usesDefaultStewardWorkspace) return;
+    if (settings === undefined || settings.usesBuiltInDefaultWorkspace) return;
     setSaving(true);
     setError(undefined);
     try {
-      setSettings(await window.pragmaDesktop.updateDesktopSettings({ stewardWorkspace: null }));
+      setSettings(await window.pragmaDesktop.updateDesktopSettings({ defaultWorkspace: null }));
     } catch {
       setError(t("general.saveError", { ns: "settings" }));
     } finally {
@@ -120,7 +120,7 @@ export function GeneralSettingsFragment() {
   };
 
   const defaultRuntimeId = runtimes.find((runtime) => runtime.isDefault)?.id ?? "";
-  const workspace = settings?.stewardWorkspace ?? "";
+  const workspace = settings?.defaultWorkspace ?? "";
   const workspaceName = workspace.split(/[\\/]/).at(-1);
 
   return (
@@ -227,8 +227,8 @@ export function GeneralSettingsFragment() {
         </div>
         <div className="setting-row general-workspace-setting">
           <span className="setting-copy">
-            <strong>{t("general.stewardWorkspace", { ns: "settings" })}</strong>
-            <span>{t("general.stewardWorkspaceDescription", { ns: "settings" })}</span>
+            <strong>{t("general.defaultWorkspace", { ns: "settings" })}</strong>
+            <span>{t("general.defaultWorkspaceDescription", { ns: "settings" })}</span>
             {workspace === "" ? null : <small>{workspace}</small>}
           </span>
           <span className="general-workspace-controls">
@@ -244,7 +244,7 @@ export function GeneralSettingsFragment() {
                 ? t("general.chooseWorkspace", { ns: "settings" })
                 : (workspaceName ?? workspace)}
             </button>
-            {settings?.usesDefaultStewardWorkspace === false ? (
+            {settings?.usesBuiltInDefaultWorkspace === false ? (
               <button
                 className="general-workspace-clear"
                 type="button"

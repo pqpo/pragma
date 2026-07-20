@@ -1,68 +1,46 @@
-import { describe, expect, it, vi } from "vitest";
+import type { ResolvedModelProvider } from "@pragma/core";
+import { probePiModelProvider } from "@pragma/runtime-pi";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { testProviderModel } from "./model-connectivity.ts";
 
+vi.mock("@pragma/runtime-pi", () => ({ probePiModelProvider: vi.fn() }));
+
 describe("testProviderModel", () => {
-  it("sends a minimal OpenAI chat completion request and reports success", async () => {
-    const fetchImpl = vi
-      .fn<typeof fetch>()
-      .mockResolvedValue(
-        new Response(JSON.stringify({ choices: [{ message: { content: "OK" } }] }), {
-          status: 200,
-        }),
-      );
-
-    const result = await testProviderModel({
-      baseUrl: "https://api.example.com/v1",
-      apiKey: "sk-test",
-      protocol: "openai-completions",
-      model: testModel("gpt-4.1-mini"),
-      fetchImpl,
-    });
-
-    expect(result).toMatchObject({ ok: true, code: "success" });
-    expect(fetchImpl).toHaveBeenCalledWith(
-      new URL("https://api.example.com/v1/chat/completions"),
-      expect.objectContaining({
-        method: "POST",
-        headers: expect.objectContaining({ Authorization: "Bearer sk-test" }),
-        body: JSON.stringify({
-          model: "gpt-4.1-mini",
-          messages: [{ role: "user", content: "Reply with OK." }],
-          max_tokens: 1,
-          temperature: 0,
-          stream: false,
-        }),
-      }),
-    );
+  beforeEach(() => {
+    vi.mocked(probePiModelProvider).mockReset();
   });
 
-  it("maps authentication, unavailable model, and malformed success responses to safe results", async () => {
-    const authentication = await testProviderModel({
+  it("tests the exact saved provider through PI", async () => {
+    vi.mocked(probePiModelProvider).mockResolvedValue({
+      ok: true,
+      code: "success",
+      message: "Connection successful through the PI runtime.",
+    });
+    const model = testModel("gpt-test");
+    const provider: ResolvedModelProvider = {
+      id: "provider-id",
+      catalogId: "custom-openai",
+      displayName: "Provider",
+      api: "openai-completions",
       baseUrl: "https://api.example.com/v1",
       apiKey: "sk-test",
-      protocol: "openai-completions",
-      model: testModel("gpt-4.1"),
-      fetchImpl: vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status: 401 })),
-    });
-    const missingModel = await testProviderModel({
-      baseUrl: "https://api.example.com/v1",
-      apiKey: "sk-test",
-      protocol: "openai-completions",
-      model: testModel("gpt-missing"),
-      fetchImpl: vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status: 404 })),
-    });
-    const malformed = await testProviderModel({
-      baseUrl: "https://api.example.com/v1",
-      apiKey: "sk-test",
-      protocol: "openai-completions",
-      model: testModel("gpt-4.1"),
-      fetchImpl: vi.fn<typeof fetch>().mockResolvedValue(new Response("{}", { status: 200 })),
-    });
+      credentialFingerprint: "fingerprint",
+      models: [model],
+    };
 
-    expect(authentication).toMatchObject({ ok: false, code: "authentication", status: 401 });
-    expect(missingModel).toMatchObject({ ok: false, code: "model_unavailable", status: 404 });
-    expect(malformed).toMatchObject({ ok: false, code: "invalid_response" });
+    await expect(
+      testProviderModel({
+        provider,
+        model: { ...model, capabilitiesSource: "manual" },
+        thinkingLevel: "high",
+      }),
+    ).resolves.toMatchObject({ ok: true, code: "success" });
+    expect(probePiModelProvider).toHaveBeenCalledWith({
+      provider,
+      modelId: "gpt-test",
+      thinkingLevel: "high",
+    });
   });
 });
 
@@ -71,11 +49,14 @@ function testModel(id: string) {
     id,
     name: id,
     api: "openai-completions" as const,
-    reasoning: false,
+    reasoning: true,
+    thinking: {
+      supportedLevels: ["off", "high"] as ("off" | "high")[],
+      defaultLevel: "high" as const,
+    },
     input: ["text" as const],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow: 128_000,
     maxTokens: 16_384,
-    capabilitiesSource: "manual" as const,
   };
 }

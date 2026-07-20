@@ -20,17 +20,34 @@ export const ModelThinkingLevelSchema = z.enum([
   "max",
 ]);
 
-export const ModelThinkingLevelMapSchema = z
+export const ModelThinkingCapabilitySchema = z
   .object({
-    off: z.string().nullable().optional(),
-    minimal: z.string().nullable().optional(),
-    low: z.string().nullable().optional(),
-    medium: z.string().nullable().optional(),
-    high: z.string().nullable().optional(),
-    xhigh: z.string().nullable().optional(),
-    max: z.string().nullable().optional(),
+    supportedLevels: z.array(ModelThinkingLevelSchema).min(1),
+    defaultLevel: ModelThinkingLevelSchema.optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((value, context) => {
+    if (new Set(value.supportedLevels).size !== value.supportedLevels.length) {
+      context.addIssue({
+        code: "custom",
+        path: ["supportedLevels"],
+        message: "Thinking levels must be unique.",
+      });
+    }
+    if (value.defaultLevel !== undefined && !value.supportedLevels.includes(value.defaultLevel)) {
+      context.addIssue({
+        code: "custom",
+        path: ["defaultLevel"],
+        message: "The default thinking level must be supported by the model.",
+      });
+    }
+  });
+
+export const ModelCompatibilityProfileIdSchema = z
+  .string()
+  .trim()
+  .regex(/^[a-z][a-z0-9.-]*@v[1-9][0-9]*$/u)
+  .max(120);
 
 export const ModelCostRatesSchema = z.object({
   input: z.number().nonnegative(),
@@ -45,21 +62,33 @@ export const ModelCostSchema = ModelCostRatesSchema.extend({
     .optional(),
 });
 
-export const ProviderModelDefinitionSchema = z.object({
-  id: z.string().trim().min(1).max(200),
-  name: z.string().trim().min(1).max(200),
-  api: ModelApiSchema.optional(),
-  baseUrl: z.string().url().optional(),
-  reasoning: z.boolean(),
-  thinkingLevelMap: ModelThinkingLevelMapSchema.optional(),
-  input: z.array(z.enum(["text", "image"])).min(1),
-  cost: ModelCostSchema,
-  contextWindow: z.number().int().positive(),
-  maxTokens: z.number().int().positive(),
-});
+export const ProviderModelDefinitionSchema = z
+  .object({
+    id: z.string().trim().min(1).max(200),
+    name: z.string().trim().min(1).max(200),
+    api: ModelApiSchema.optional(),
+    baseUrl: z.string().url().optional(),
+    reasoning: z.boolean(),
+    thinking: ModelThinkingCapabilitySchema.optional(),
+    compatibilityProfileId: ModelCompatibilityProfileIdSchema.optional(),
+    input: z.array(z.enum(["text", "image"])).min(1),
+    cost: ModelCostSchema,
+    contextWindow: z.number().int().positive(),
+    maxTokens: z.number().int().positive(),
+  })
+  .superRefine((value, context) => {
+    if (!value.reasoning && value.thinking !== undefined) {
+      context.addIssue({
+        code: "custom",
+        path: ["thinking"],
+        message: "Only reasoning models can declare adjustable thinking levels.",
+      });
+    }
+  });
 
 export type ModelApi = z.infer<typeof ModelApiSchema>;
 export type ModelThinkingLevel = z.infer<typeof ModelThinkingLevelSchema>;
-export type ModelThinkingLevelMap = z.infer<typeof ModelThinkingLevelMapSchema>;
+export type ModelThinkingCapability = z.infer<typeof ModelThinkingCapabilitySchema>;
+export type ModelCompatibilityProfileId = z.infer<typeof ModelCompatibilityProfileIdSchema>;
 export type ModelCost = z.infer<typeof ModelCostSchema>;
 export type ProviderModelDefinition = z.infer<typeof ProviderModelDefinitionSchema>;

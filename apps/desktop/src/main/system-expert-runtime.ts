@@ -1,6 +1,6 @@
 import type { RuntimeModelSelection, RuntimeResolver } from "@pragma/core";
 
-import type { MissionModelOverride } from "../shared/desktop-api.ts";
+import type { ExpertModelConfig, MissionModelOverride } from "../shared/desktop-api.ts";
 
 export interface SystemExpertRuntimeDefaults {
   readonly runtimeId: string;
@@ -9,18 +9,33 @@ export interface SystemExpertRuntimeDefaults {
 
 export async function resolveSystemExpertRuntimeDefaults(
   runtimes: RuntimeResolver,
+  configuredModel: ExpertModelConfig | undefined,
   override: MissionModelOverride | undefined,
 ): Promise<SystemExpertRuntimeDefaults> {
+  const runtimeId = configuredModel?.runtimeId ?? (await runtimes.getDefaultRuntimeId());
   if (override !== undefined) {
     return {
-      runtimeId: override.runtimeId,
+      runtimeId,
       modelSelection: {
         model: { providerId: override.providerId, modelId: override.modelId },
         ...(override.thinkingLevel === undefined ? {} : { thinkingLevel: override.thinkingLevel }),
       },
     };
   }
-  const runtimeId = await runtimes.getDefaultRuntimeId();
+  if (configuredModel !== undefined) {
+    return {
+      runtimeId,
+      modelSelection: {
+        model: {
+          providerId: configuredModel.providerId,
+          modelId: configuredModel.modelId,
+        },
+        ...(configuredModel.thinkingLevel === undefined
+          ? {}
+          : { thinkingLevel: configuredModel.thinkingLevel }),
+      },
+    };
+  }
   const resolved = await runtimes.bind({ runtimeId });
   if (resolved.adapter.descriptor.kind !== "cloud-pi-agent") return { runtimeId };
   const model = (await resolved.adapter.listModels?.())?.[0];

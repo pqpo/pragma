@@ -1,3 +1,69 @@
+# Home Mission Composer Design QA
+
+- Source visual truth: `/tmp/codex-remote-attachments/019f7d75-4f4a-7cb1-98eb-f65af5988432/67a59236-a701-44f9-82f8-036d2bd3b341/1-Photo-1.jpg`
+- Implementation screenshots: `design-qa/home-default-workspace.png`,
+  `design-qa/home-workspace-menu-focus.png`, and `design-qa/home-keyboard-focus.png`
+- Combined comparison: `design-qa/home-reference-comparison.png`
+- Viewport: 1440 × 900 at DPR 2; the annotated reference is 1280 × 660
+- State: Home with the built-in Steward, built-in default workspace, and an intentionally disabled
+  submit action because the goal is empty
+
+**Findings**
+
+- No actionable P0, P1, or P2 visual differences remain.
+- The implementation preserves the product shell while matching the reference's centered heading,
+  single bordered composer, workspace row, large borderless prompt area, compact option footer, and
+  arrow submit action.
+- Workspace selection is explicitly optional. The default path is visible without dominating the
+  row, and the expanded menu distinguishes the persistent default from a one-Mission override.
+- Expert selection defaults to the built-in Steward. Expert and ExpertTeam states expose only model
+  and thinking-depth overrides; Runtime is not presented on Home. Flow states omit both controls.
+- Existing typography, Phosphor icons, graphite/sage tokens, radii, and surface shadows are reused.
+  No raster or generated product assets were introduced.
+
+**Full-view comparison evidence**
+
+- The source and actual Electron implementation were opened together in
+  `home-reference-comparison.png`.
+- The implementation keeps the Desktop navigation rail, then centers the reference composition in
+  the remaining content viewport. Composer proportions, row order, whitespace, and action placement
+  follow the supplied reference.
+- The implementation adds the resolved default workspace path and product-real permission choices;
+  these are functional content additions, not alternative visual structure.
+
+**Focused region comparison evidence**
+
+- `home-workspace-menu-focus.png` verifies the workspace menu, selected default state, and the
+  one-Mission folder override description without clipping.
+- `home-keyboard-focus.png` verifies a single visible focus boundary around the composite input. An
+  initial nested focus shadow on the workspace trigger was removed during this QA pass.
+
+**Interactions and diagnostics**
+
+- Verified keyboard traversal from the application rail into the workspace trigger and prompt,
+  prompt focus styling, workspace menu open/close, selected-default indication, and disabled submit
+  state.
+- Desktop tests cover Home executor/model state and the Mission creation contracts. Runtime IDs are
+  rejected by the strict model-override schema and cannot be submitted by Home.
+- The local Electron run reported that the existing model-provider configuration uses an older
+  format. Home handled this by disabling model overrides and showing the executor-default fallback;
+  the stored user configuration was not changed for QA.
+
+**Comparison history**
+
+- Pass 1: found a nested keyboard focus shadow on the workspace trigger.
+- Pass 2: removed the inner shadow, added the correctly scoped outer `:focus-within` state, and
+  verified normal, expanded-menu, and keyboard-focus screenshots.
+
+**Follow-up Polish**
+
+- P3: recapture the ordinary state after the local model-provider configuration is reconfigured if
+  a populated model dropdown screenshot is desired. The invalid-config fallback is already covered.
+
+final result: passed
+
+---
+
 # Missions v1 Design QA
 
 - Source visual truth: `/Users/linminqiu/.codex/generated_images/019f5139-fbcc-75e0-8165-8c56a2bb5552/exec-aa9b2bf8-e19b-4550-b6a0-67e44aa856d7.png`

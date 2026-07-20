@@ -8,6 +8,7 @@ import {
   MissionActionSchema,
   MissionCreationDefaultsSchema,
   MissionExecutorOptionSchema,
+  MissionModelOptionsRequestSchema,
   MissionIdSchema,
   RespondMissionHumanInteractionSchema,
   SendMissionMessageSchema,
@@ -38,6 +39,10 @@ export function installMissionHandlers(options: {
   ipcMain.handle("missions:executors:list", async () =>
     MissionExecutorOptionSchema.array().parse(await options.executors.list()),
   );
+  ipcMain.handle("missions:model-options:get", async (_event, input: unknown) => {
+    const { executorRef } = MissionModelOptionsRequestSchema.parse(input);
+    return await options.executors.getModelOptions(executorRef);
+  });
   ipcMain.handle("missions:create-defaults:get", async () => {
     const workspace = await options.getDefaultWorkspace();
     return MissionCreationDefaultsSchema.parse({
@@ -58,6 +63,9 @@ export function installMissionHandlers(options: {
       throw new Error(`Mission executor not found: ${parsed.executor.ref}`);
     if (executor.kind === "flow" && parsed.modelOverride !== undefined) {
       throw new Error("Flow missions do not support a model override.");
+    }
+    if (parsed.modelOverride !== undefined) {
+      await options.executors.validateModelOverride(executor.ref, parsed.modelOverride);
     }
     return await options.missions.create({
       workspace: { path: parsed.workspace, basename: basename(parsed.workspace) },

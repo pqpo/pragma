@@ -542,7 +542,8 @@ Expert API 设计要求：
 - `@pragma/steward/contracts` 必须保持浏览器安全，只依赖运行时中立 schema。
 - 管家只通过 DSL 修改 Expert、ExpertTeam 和 Flow；应用层实现持久化与任务端口。
 - Desktop 将管家注册为只读系统专家；Home 只负责创建全新 Mission，不维护独立 Chat。
-- Home 为 Expert/ExpertTeam Mission 提供可选的模型与思考深度覆盖，并随 Mission 持久化；Flow 不接受该覆盖。
+- Home 为 Expert/ExpertTeam Mission 提供可选的模型与思考深度覆盖，并随 Mission 持久化；Home
+  不允许覆盖 Runtime，Flow 不接受模型或思考深度覆盖。
 - 宿主端口使用直接 TypeScript 接口；具体 Runtime 可继续通过现有 Execution MCP Gateway 调用 managed tools。
 
 禁止依赖 Desktop/Electron、React、Server 应用层、Client SDK、数据库实现或具体 Runtime Adapter。

@@ -18,10 +18,12 @@ decisions and the Steward could not participate in normal Studio and Mission flo
 ## Decision
 
 Home is the single Mission creation entry. It displays a centered task form, defaults to the
-configured Steward Workspace and `expert:steward@1.0.0`, and allows Workspace, executor, and tool
-permission overrides for that Mission. Expert and ExpertTeam Missions may also persist an explicit
-Runtime model and thinking-depth override; Flow Missions cannot. Every submission creates a new Mission, opens its detail,
-and starts it. A start failure leaves the Mission intact so the normal detail action can retry it.
+configured default workspace and `expert:steward@1.0.0`, and allows Workspace, executor, and tool
+permission overrides for that Mission. When no default workspace is configured, Desktop uses
+`~/.pragma/workspace`. Expert and ExpertTeam Missions may also persist an explicit model and
+thinking-depth override for the Runtime selected by the executor; Home never changes the Runtime.
+Flow Missions cannot persist either override. Every submission creates a new Mission, opens its
+detail, and starts it. A start failure leaves the Mission intact so the normal detail action can retry it.
 The Missions page owns only the list and detail surfaces; its create action navigates Home. Studio
 try actions also navigate Home with an executor override.
 
@@ -48,7 +50,8 @@ managed tools. It does not own application Session persistence or a product chat
 - Built-in Experts are ordinary runnable catalog entries but remain immutable through both UI and
   backend APIs.
 - Project Experts keep pinned model configuration, while system Experts resolve the application's
-  default Runtime and model when compiled. Mission-level model overrides take precedence for the
-  root Expert or ExpertTeam coordinator and remain fixed for retries and later turns.
+  default Runtime and model when compiled. Mission-level model and thinking-depth overrides take
+  precedence for the root Expert or ExpertTeam coordinator without changing its Runtime, and remain
+  fixed for retries and later turns.
 - Existing Mission v3 data remains valid. Obsolete Steward Session files are ignored and are not
   migrated or automatically deleted.

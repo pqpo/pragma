@@ -1,28 +1,33 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import {
-  Books,
+  ArrowUp,
+  Brain,
   CaretDown,
   Check,
-  Files,
   Folder,
+  FolderOpen,
   GitBranch,
   MagnifyingGlass,
-  Stack,
-  Toolbox,
+  Robot,
   User,
   UsersThree,
 } from "@phosphor-icons/react";
 import { useTranslation } from "react-i18next";
 
 import type {
+  DesktopRuntimeModel,
   DesktopToolPermissionMode,
-  DesktopRuntimeAvailability,
-  ExpertModelConfig,
   Mission,
   MissionExecutorOption,
+  MissionModelOverride,
 } from "../../../../shared/desktop-api.ts";
 import { ToolPermissionSelect } from "../../components/ToolPermissionSelect.tsx";
 import { errorMessage } from "../../lib/errors.ts";
+
+interface WorkspaceSelection {
+  readonly path: string;
+  readonly basename: string;
+}
 
 export function HomePage(props: {
   readonly initialExecutorRef?: string | undefined;
@@ -30,30 +35,31 @@ export function HomePage(props: {
 }) {
   const { t } = useTranslation("missions");
   const [executors, setExecutors] = useState<readonly MissionExecutorOption[]>([]);
-  const [runtimes, setRuntimes] = useState<readonly DesktopRuntimeAvailability[]>([]);
-  const [workspace, setWorkspace] = useState<{ path: string; basename: string } | null>(null);
+  const [defaultWorkspace, setDefaultWorkspace] = useState<WorkspaceSelection>();
+  const [workspaceOverride, setWorkspaceOverride] = useState<WorkspaceSelection>();
   const [executorRef, setExecutorRef] = useState(props.initialExecutorRef ?? "");
   const [defaultExecutorRef, setDefaultExecutorRef] = useState("");
   const [goal, setGoal] = useState("");
   const [toolPermissionMode, setToolPermissionMode] =
     useState<DesktopToolPermissionMode>("request-approval");
-  const [modelOverride, setModelOverride] = useState<ExpertModelConfig>();
+  const [models, setModels] = useState<readonly DesktopRuntimeModel[]>([]);
+  const [modelsLoading, setModelsLoading] = useState(false);
+  const [modelOverride, setModelOverride] = useState<MissionModelOverride>();
   const [saving, setSaving] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [modelError, setModelError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     void Promise.all([
       window.pragmaDesktop.listMissionExecutors(),
       window.pragmaDesktop.getMissionCreationDefaults(),
-      window.pragmaDesktop.getRuntimeAvailability(),
     ])
-      .then(([availableExecutors, defaults, runtimeAvailability]) => {
+      .then(([availableExecutors, defaults]) => {
         if (cancelled) return;
         setExecutors(availableExecutors);
-        setRuntimes(runtimeAvailability);
-        setWorkspace(defaults.workspace);
+        setDefaultWorkspace(defaults.workspace);
         setDefaultExecutorRef(defaults.executorRef);
         setToolPermissionMode(defaults.toolPermissionMode);
         const requested = props.initialExecutorRef ?? defaults.executorRef;
@@ -82,13 +88,41 @@ export function HomePage(props: {
     setExecutorRef(fallback?.ref ?? "");
   }, [defaultExecutorRef, executorRef, executors, hasValidExecutor]);
 
-  useEffect(() => setModelOverride(undefined), [executorRef]);
+  useEffect(() => {
+    setModelOverride(undefined);
+    setModelError(null);
+    if (
+      selectedExecutor === undefined ||
+      (selectedExecutor.kind !== "expert" && selectedExecutor.kind !== "team")
+    ) {
+      setModels([]);
+      setModelsLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setModels([]);
+    setModelsLoading(true);
+    void window.pragmaDesktop
+      .getMissionModelOptions(selectedExecutor.ref)
+      .then((options) => {
+        if (!cancelled) setModels(options.models);
+      })
+      .catch((loadError: unknown) => {
+        if (!cancelled) setModelError(errorMessage(loadError));
+      })
+      .finally(() => {
+        if (!cancelled) setModelsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedExecutor?.ref, selectedExecutor?.kind]);
 
   const pickWorkspace = async () => {
     try {
       const result = await window.pragmaDesktop.pickWorkspace();
       if (result.ok && result.path !== undefined && result.basename !== undefined) {
-        setWorkspace({ path: result.path, basename: result.basename });
+        setWorkspaceOverride({ path: result.path, basename: result.basename });
         setError(null);
       } else if (result.reason !== "cancelled") {
         setError(result.error ?? t("workspaceUnavailable"));
@@ -99,7 +133,8 @@ export function HomePage(props: {
   };
 
   const submit = async () => {
-    if (workspace === null || !hasValidExecutor || goal.trim() === "" || saving) return;
+    const workspace = workspaceOverride ?? defaultWorkspace;
+    if (workspace === undefined || !hasValidExecutor || goal.trim() === "" || saving) return;
     setSaving(true);
     setError(null);
     try {
@@ -124,68 +159,45 @@ export function HomePage(props: {
           <h1 id="new-mission-title">{t("start")}</h1>
           <p>{t("createDescription")}</p>
         </header>
-        <div className="mission-create-selectors">
-          <button className="mission-selector" type="button" onClick={() => void pickWorkspace()}>
-            <span className="mission-selector-icon">
-              <Folder size={23} aria-hidden="true" />
-            </span>
-            <span className="mission-selector-copy">
-              <small>{t("workspace")}</small>
-              <strong>{workspace?.basename ?? t("chooseFolder")}</strong>
-              <em>{workspace?.path ?? t("oneDirectory")}</em>
-            </span>
-          </button>
-          <MissionExecutorPicker
-            executors={executors}
-            value={hasValidExecutor ? executorRef : ""}
-            onChange={setExecutorRef}
-          />
-        </div>
-        {selectedExecutor?.kind === "expert" || selectedExecutor?.kind === "team" ? (
-          <MissionModelOverrideControls
-            runtimes={runtimes}
-            value={modelOverride}
-            onChange={setModelOverride}
-          />
-        ) : null}
         <div className="mission-goal-composer">
-          <label htmlFor="mission-goal">{t("prompt")}</label>
-          <textarea
-            id="mission-goal"
-            value={goal}
-            onChange={(event) => setGoal(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" && !event.shiftKey) {
-                event.preventDefault();
-                void submit();
-              }
-            }}
-            placeholder={t("goalPlaceholder")}
-            autoFocus
+          <WorkspacePicker
+            defaultWorkspace={defaultWorkspace}
+            override={workspaceOverride}
+            onChoose={() => void pickWorkspace()}
+            onUseDefault={() => setWorkspaceOverride(undefined)}
           />
+          <div className="mission-goal-field">
+            <label htmlFor="mission-goal">{t("prompt")}</label>
+            <textarea
+              id="mission-goal"
+              value={goal}
+              onChange={(event) => setGoal(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && !event.shiftKey) {
+                  event.preventDefault();
+                  void submit();
+                }
+              }}
+              placeholder={t("goalPlaceholder")}
+              autoFocus
+            />
+          </div>
           <footer>
-            <div className="mission-prompt-tools" aria-label={t("contextTools")}>
-              <button type="button" aria-disabled="true" title={t("inheritedContext")}>
-                <Stack size={18} aria-hidden="true" />
-                {t("context")}
-              </button>
-              <button
-                className={workspace === null ? "" : "is-active"}
-                type="button"
-                onClick={() => void pickWorkspace()}
-                title={workspace?.path ?? t("chooseWorkspaceFiles")}
-              >
-                <Files size={18} aria-hidden="true" />
-                {t("files")}
-              </button>
-              <button type="button" aria-disabled="true" title={t("managedKnowledge")}>
-                <Books size={18} aria-hidden="true" />
-                {t("knowledge")}
-              </button>
-              <button type="button" aria-disabled="true" title={t("managedTools")}>
-                <Toolbox size={18} aria-hidden="true" />
-                {t("tools")}
-              </button>
+            <div className="mission-prompt-tools" aria-label={t("missionOptions")}>
+              <MissionExecutorPicker
+                executors={executors}
+                value={hasValidExecutor ? executorRef : ""}
+                defaultExecutorRef={defaultExecutorRef}
+                onChange={setExecutorRef}
+              />
+              {selectedExecutor?.kind === "expert" || selectedExecutor?.kind === "team" ? (
+                <MissionModelOverrideControls
+                  models={models}
+                  loading={modelsLoading}
+                  value={modelOverride}
+                  onChange={setModelOverride}
+                />
+              ) : null}
               <ToolPermissionSelect
                 value={toolPermissionMode}
                 onChange={setToolPermissionMode}
@@ -194,18 +206,27 @@ export function HomePage(props: {
               />
             </div>
             <button
-              className="primary-button"
+              className="mission-submit-button"
               type="button"
-              disabled={saving || workspace === null || !hasValidExecutor || goal.trim() === ""}
+              aria-label={saving ? t("starting") : t("startMission")}
+              title={saving ? t("starting") : t("startMission")}
+              disabled={
+                saving ||
+                !loaded ||
+                defaultWorkspace === undefined ||
+                !hasValidExecutor ||
+                goal.trim() === ""
+              }
               onClick={() => void submit()}
             >
-              {saving ? t("starting") : t("startMission")}
+              <ArrowUp size={19} weight="bold" aria-hidden="true" />
             </button>
           </footer>
         </div>
         {loaded && executors.length === 0 ? (
           <p className="mission-form-note">{t("createFirst")}</p>
         ) : null}
+        {modelError ? <p className="mission-form-note">{t("modelOptionsUnavailable")}</p> : null}
         {error ? (
           <p className="form-error" role="alert">
             {error}
@@ -216,69 +237,133 @@ export function HomePage(props: {
   );
 }
 
-export function MissionModelOverrideControls(props: {
-  readonly runtimes: readonly DesktopRuntimeAvailability[];
-  readonly value?: ExpertModelConfig | undefined;
-  readonly onChange: (value: ExpertModelConfig | undefined) => void;
+function WorkspacePicker(props: {
+  readonly defaultWorkspace?: WorkspaceSelection | undefined;
+  readonly override?: WorkspaceSelection | undefined;
+  readonly onChoose: () => void;
+  readonly onUseDefault: () => void;
 }) {
   const { t } = useTranslation("missions");
-  const models = props.runtimes.flatMap((runtime) =>
-    runtime.status !== "available"
-      ? []
-      : (runtime.models ?? []).map((model) => ({ runtime, model })),
-  );
-  const valueKey =
-    props.value === undefined
-      ? ""
-      : modelOptionKey(props.value.runtimeId, props.value.providerId, props.value.modelId);
-  const selected = models.find(
-    ({ runtime, model }) => modelOptionKey(runtime.id, model.provider.id, model.id) === valueKey,
-  );
-  const thinkingLevels = selected?.model.thinking?.supportedLevels ?? [];
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const workspace = props.override ?? props.defaultWorkspace;
+
+  useDismissableMenu(open, rootRef, () => setOpen(false));
 
   return (
-    <div className="mission-model-overrides">
-      <label>
-        <span>{t("modelOverride")}</span>
+    <div className={open ? "mission-workspace-picker is-open" : "mission-workspace-picker"} ref={rootRef}>
+      <button
+        className="mission-workspace-trigger"
+        type="button"
+        aria-expanded={open}
+        aria-haspopup="menu"
+        onClick={() => setOpen((current) => !current)}
+      >
+        <Folder size={20} aria-hidden="true" />
+        <span>
+          <strong>
+            {props.override === undefined
+              ? t("useDefaultWorkspace")
+              : (props.override.basename || t("taskWorkspace"))}
+          </strong>
+          <small>{workspace?.path ?? t("loadingWorkspace")}</small>
+        </span>
+        <CaretDown size={16} aria-hidden="true" />
+      </button>
+      {open ? (
+        <div className="mission-workspace-menu" role="menu" aria-label={t("chooseWorkspace")}>
+          <button
+            type="button"
+            role="menuitemradio"
+            aria-checked={props.override === undefined}
+            onClick={() => {
+              props.onUseDefault();
+              setOpen(false);
+            }}
+          >
+            <Folder size={18} aria-hidden="true" />
+            <span>
+              <strong>{t("useDefaultWorkspace")}</strong>
+              <small>{props.defaultWorkspace?.path ?? t("loadingWorkspace")}</small>
+            </span>
+            {props.override === undefined ? <Check size={16} aria-hidden="true" /> : null}
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              setOpen(false);
+              props.onChoose();
+            }}
+          >
+            <FolderOpen size={18} aria-hidden="true" />
+            <span>
+              <strong>{t("chooseDifferentWorkspace")}</strong>
+              <small>{t("workspaceOverrideDescription")}</small>
+            </span>
+          </button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+export function MissionModelOverrideControls(props: {
+  readonly models: readonly DesktopRuntimeModel[];
+  readonly loading?: boolean | undefined;
+  readonly value?: MissionModelOverride | undefined;
+  readonly onChange: (value: MissionModelOverride | undefined) => void;
+}) {
+  const { t } = useTranslation("missions");
+  const valueKey =
+    props.value === undefined ? "" : modelOptionKey(props.value.providerId, props.value.modelId);
+  const selected = props.models.find(
+    (model) => modelOptionKey(model.provider.id, model.id) === valueKey,
+  );
+  const thinkingLevels = selected?.thinking?.supportedLevels ?? [];
+
+  return (
+    <>
+      <label className="mission-compact-select mission-model-select">
+        <Robot size={16} aria-hidden="true" />
         <select
+          aria-label={t("modelOverride")}
           value={valueKey}
+          disabled={props.loading}
           onChange={(event) => {
-            const option = models.find(
-              ({ runtime, model }) =>
-                modelOptionKey(runtime.id, model.provider.id, model.id) === event.target.value,
+            const option = props.models.find(
+              (model) => modelOptionKey(model.provider.id, model.id) === event.target.value,
             );
             props.onChange(
               option === undefined
                 ? undefined
-                : {
-                    runtimeId: option.runtime.id,
-                    providerId: option.model.provider.id,
-                    modelId: option.model.id,
-                  },
+                : { providerId: option.provider.id, modelId: option.id },
             );
           }}
         >
-          <option value="">{t("useExecutorDefaultModel")}</option>
-          {models.map(({ runtime, model }) => (
+          <option value="">
+            {props.loading ? t("loadingModels") : t("useExecutorDefaultModel")}
+          </option>
+          {props.models.map((model) => (
             <option
-              key={modelOptionKey(runtime.id, model.provider.id, model.id)}
-              value={modelOptionKey(runtime.id, model.provider.id, model.id)}
+              key={modelOptionKey(model.provider.id, model.id)}
+              value={modelOptionKey(model.provider.id, model.id)}
             >
-              {runtime.displayName} · {model.provider.displayName} · {model.displayName}
+              {model.provider.displayName} · {model.displayName}
             </option>
           ))}
         </select>
       </label>
-      <label>
-        <span>{t("thinkingDepth")}</span>
+      <label className="mission-compact-select mission-thinking-select">
+        <Brain size={16} aria-hidden="true" />
         <select
+          aria-label={t("thinkingDepth")}
           value={props.value?.thinkingLevel ?? ""}
           disabled={props.value === undefined || thinkingLevels.length === 0}
           onChange={(event) => {
             if (props.value === undefined) return;
             const thinkingLevel = event.target.value;
             props.onChange({
-              runtimeId: props.value.runtimeId,
               providerId: props.value.providerId,
               modelId: props.value.modelId,
               ...(thinkingLevel === "" ? {} : { thinkingLevel }),
@@ -293,17 +378,18 @@ export function MissionModelOverrideControls(props: {
           ))}
         </select>
       </label>
-    </div>
+    </>
   );
 }
 
-function modelOptionKey(runtimeId: string, providerId: string, modelId: string): string {
-  return JSON.stringify([runtimeId, providerId, modelId]);
+function modelOptionKey(providerId: string, modelId: string): string {
+  return JSON.stringify([providerId, modelId]);
 }
 
 function MissionExecutorPicker(props: {
   readonly executors: readonly MissionExecutorOption[];
   readonly value: string;
+  readonly defaultExecutorRef: string;
   readonly onChange: (value: string) => void;
 }) {
   const { t } = useTranslation("missions");
@@ -328,127 +414,114 @@ function MissionExecutorPicker(props: {
   }, [props.executors, search]);
   const SelectedIcon = selected === undefined ? UsersThree : executorIcon(selected);
 
-  useEffect(() => {
-    if (!open) return;
-    const close = (event: MouseEvent) => {
-      if (event.target instanceof Node && !rootRef.current?.contains(event.target)) {
-        setOpen(false);
-        setSearch("");
-      }
-    };
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setOpen(false);
-        setSearch("");
-      }
-    };
-    document.addEventListener("mousedown", close);
-    window.addEventListener("keydown", closeOnEscape);
-    return () => {
-      document.removeEventListener("mousedown", close);
-      window.removeEventListener("keydown", closeOnEscape);
-    };
-  }, [open]);
+  useDismissableMenu(open, rootRef, () => {
+    setOpen(false);
+    setSearch("");
+  });
 
   return (
-    <div
-      className={
-        open
-          ? "mission-selector mission-executor-picker is-open"
-          : "mission-selector mission-executor-picker"
-      }
-      ref={rootRef}
-    >
-      <span className="mission-selector-icon">
-        <SelectedIcon size={23} aria-hidden="true" />
-      </span>
-      <div className="mission-selector-copy">
-        <small>{t("executor")}</small>
-        <button
-          className="mission-executor-trigger"
-          type="button"
-          aria-expanded={open}
-          aria-haspopup="dialog"
-          onClick={() => {
-            setOpen((current) => !current);
-            setSearch("");
-          }}
+    <div className={open ? "mission-executor-picker is-open" : "mission-executor-picker"} ref={rootRef}>
+      <button
+        className="mission-executor-trigger"
+        type="button"
+        aria-expanded={open}
+        aria-haspopup="dialog"
+        onClick={() => {
+          setOpen((current) => !current);
+          setSearch("");
+        }}
+      >
+        <SelectedIcon size={17} aria-hidden="true" />
+        <span>{selected?.name ?? t("chooseResource")}</span>
+        <CaretDown size={14} aria-hidden="true" />
+      </button>
+      {open ? (
+        <div
+          className="mission-executor-menu"
+          role="dialog"
+          aria-modal="false"
+          aria-label={t("chooseMissionExecutor")}
         >
-          <strong>{selected?.name ?? t("chooseResource")}</strong>
-          <CaretDown size={16} aria-hidden="true" />
-        </button>
-        <em>
-          {selected === undefined
-            ? t("executableOnly")
-            : `${executorLabel(selected)} · ${selected.version}`}
-        </em>
-        {open ? (
-          <div
-            className="mission-executor-menu"
-            role="dialog"
-            aria-modal="false"
-            aria-label={t("chooseMissionExecutor")}
-          >
-            <header>
-              <div>
-                <strong>{t("chooseExecutor")}</strong>
-                <small>{t("executorDescription")}</small>
-              </div>
-              <span>{t("availableCount", { count: props.executors.length })}</span>
-            </header>
-            {props.executors.length > 5 ? (
-              <label className="mission-executor-search">
-                <MagnifyingGlass size={17} aria-hidden="true" />
-                <span className="sr-only">{t("searchExecutors")}</span>
-                <input
-                  autoFocus
-                  value={search}
-                  onChange={(event) => setSearch(event.target.value)}
-                  placeholder={t("searchExecutors")}
-                />
-              </label>
-            ) : null}
-            <div
-              className="mission-executor-options"
-              role="list"
-              aria-label={t("missionExecutors")}
-            >
-              {visibleExecutors.map((executor, index) => {
-                const Icon = executorIcon(executor);
-                const isSelected = executor.ref === props.value;
-                return (
-                  <button
-                    type="button"
-                    aria-pressed={isSelected}
-                    autoFocus={props.executors.length <= 5 && index === 0}
-                    className={
-                      isSelected ? "mission-executor-option is-selected" : "mission-executor-option"
-                    }
-                    key={executor.ref}
-                    onClick={() => {
-                      props.onChange(executor.ref);
-                      setOpen(false);
-                      setSearch("");
-                    }}
-                  >
-                    <span className="mission-executor-option-icon">
-                      <Icon size={18} aria-hidden="true" />
-                    </span>
-                    <span>
-                      <strong>{executor.name}</strong>
-                      <small>{executor.description}</small>
-                    </span>
-                    <span className="mission-executor-option-kind">{executorLabel(executor)}</span>
-                    {isSelected ? <Check size={17} aria-hidden="true" /> : null}
-                  </button>
-                );
-              })}
+          <header>
+            <div>
+              <strong>{t("chooseExecutor")}</strong>
+              <small>{t("executorDescription")}</small>
             </div>
+            <span>{t("availableCount", { count: props.executors.length })}</span>
+          </header>
+          {props.executors.length > 5 ? (
+            <label className="mission-executor-search">
+              <MagnifyingGlass size={17} aria-hidden="true" />
+              <span className="sr-only">{t("searchExecutors")}</span>
+              <input
+                autoFocus
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder={t("searchExecutors")}
+              />
+            </label>
+          ) : null}
+          <div className="mission-executor-options" role="list" aria-label={t("missionExecutors")}>
+            {visibleExecutors.map((executor, index) => {
+              const Icon = executorIcon(executor);
+              const isSelected = executor.ref === props.value;
+              const isDefault = executor.ref === props.defaultExecutorRef;
+              return (
+                <button
+                  type="button"
+                  aria-pressed={isSelected}
+                  autoFocus={props.executors.length <= 5 && index === 0}
+                  className={
+                    isSelected ? "mission-executor-option is-selected" : "mission-executor-option"
+                  }
+                  key={executor.ref}
+                  onClick={() => {
+                    props.onChange(executor.ref);
+                    setOpen(false);
+                    setSearch("");
+                  }}
+                >
+                  <span className="mission-executor-option-icon">
+                    <Icon size={18} aria-hidden="true" />
+                  </span>
+                  <span>
+                    <strong>{executor.name}</strong>
+                    <small>{executor.description}</small>
+                  </span>
+                  <span className="mission-executor-option-kind">
+                    {isDefault ? t("defaultExecutor") : executorLabel(executor)}
+                  </span>
+                  {isSelected ? <Check size={17} aria-hidden="true" /> : null}
+                </button>
+              );
+            })}
           </div>
-        ) : null}
-      </div>
+        </div>
+      ) : null}
     </div>
   );
+}
+
+function useDismissableMenu(
+  open: boolean,
+  rootRef: RefObject<HTMLElement | null>,
+  close: () => void,
+): void {
+  useEffect(() => {
+    if (!open) return;
+    const closeOutside = (event: MouseEvent) => {
+      if (event.target instanceof Node && !rootRef.current?.contains(event.target)) close();
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") close();
+    };
+    document.addEventListener("mousedown", closeOutside);
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("mousedown", closeOutside);
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [close, open, rootRef]);
 }
 
 function executorIcon(executor: Pick<MissionExecutorOption, "kind">) {

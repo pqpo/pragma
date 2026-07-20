@@ -2169,6 +2169,9 @@ async function resolveRootModelSelection(
   resolveRuntime: (ref: string) => Promise<PragmaRuntimeProfileContribution>,
   host: PragmaCompileHost,
 ) {
+  if (host.rootModelSelectionOverride !== undefined) {
+    return host.rootModelSelectionOverride;
+  }
   if (host.rootExecutionOverride !== undefined) {
     return host.rootExecutionOverride.modelSelection;
   }

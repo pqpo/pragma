@@ -150,7 +150,6 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
         snapshot.resources.find((resource) => resource.kind === "Expert")!,
       ),
       modelOverride: {
-        runtimeId: "fake",
         providerId: "provider",
         modelId: "model",
         thinkingLevel: "high",

@@ -1256,7 +1256,8 @@ p {
   text-transform: uppercase;
 }
 
-.static-field input {
+.static-field input,
+.static-field > select {
   width: 100%;
   height: 42px;
   padding: 0 14px;
@@ -1269,6 +1270,7 @@ p {
 }
 
 .static-field input:focus,
+.static-field > select:focus,
 .key-input-wrap:focus-within {
   border-color: var(--green);
   box-shadow: 0 0 0 2px rgb(94 128 111 / 18%);
@@ -1721,6 +1723,15 @@ p {
   grid-column: 1 / -1;
 }
 
+.provider-compatibility-field {
+  grid-column: 1 / -1;
+}
+
+.provider-compatibility-field > small {
+  color: var(--muted);
+  line-height: 1.45;
+}
+
 .model-search-shell {
   display: flex;
   height: 42px;
@@ -1845,13 +1856,59 @@ p {
 
 .selected-model-row {
   display: grid;
-  grid-template-columns: minmax(160px, 1fr) auto minmax(280px, auto) auto;
+  grid-template-columns: minmax(160px, 1fr) minmax(0, 3fr) auto;
   align-items: center;
   gap: 12px;
   padding: 11px 12px;
   border: 1px solid var(--border);
   border-radius: 9px;
   background: var(--surface-soft);
+}
+
+.model-capability-controls {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+.thinking-controls {
+  display: grid;
+  gap: 7px;
+}
+
+.thinking-default-field,
+.model-profile-field {
+  display: grid;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.thinking-default-field select,
+.model-profile-field select,
+.provider-compatibility-field > select {
+  min-width: 0;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  outline: 0;
+  background: #fff;
+  color: var(--text);
+  font: inherit;
+}
+
+.thinking-default-field select:focus-visible,
+.model-profile-field select:focus-visible,
+.provider-compatibility-field > select:focus-visible {
+  border-color: var(--green);
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+.fixed-thinking-note {
+  color: var(--muted);
 }
 
 .compact-check,
@@ -1984,8 +2041,16 @@ p {
     grid-template-columns: 1fr auto;
   }
 
-  .thinking-level-options {
+  .model-capability-controls {
     grid-column: 1 / -1;
+    grid-row: 2;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
+
+  .selected-model-row .model-remove-button {
+    grid-column: 2;
+    grid-row: 1;
   }
 
   .provider-summary-card .card-header {
@@ -8650,6 +8715,7 @@ textarea:focus-visible,
 }
 
 .static-field input,
+.static-field > select,
 .key-input-wrap,
 .protocol-select-shell,
 .configured-value,
@@ -8661,6 +8727,7 @@ textarea:focus-visible,
 }
 
 .static-field input:hover,
+.static-field > select:hover,
 .key-input-wrap:hover,
 .protocol-select-shell:hover,
 .input-shell:hover {
@@ -8668,6 +8735,7 @@ textarea:focus-visible,
 }
 
 .static-field input:focus,
+.static-field > select:focus,
 .key-input-wrap:focus-within,
 .protocol-select-shell:focus-within {
   border-color: var(--green);
@@ -10335,6 +10403,350 @@ textarea:focus-visible,
 .mission-model-overrides select:focus-visible {
   outline: 0;
   box-shadow: none;
+}
+
+/* Home mission composer mirrors the single-surface creation flow. */
+.home-mission-create .mission-create > header {
+  text-align: center;
+}
+
+.home-mission-create .mission-create > header p {
+  margin-top: 10px;
+}
+
+.home-mission-create .mission-goal-composer {
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  min-height: 380px;
+  margin-top: 32px;
+  overflow: visible;
+  border-color: var(--border);
+  border-radius: 16px;
+  box-shadow: 0 12px 32px rgb(20 31 25 / 6%);
+}
+
+.home-mission-create .mission-goal-composer:focus-within {
+  border-color: var(--green);
+  box-shadow:
+    0 0 0 3px var(--focus-ring),
+    0 12px 32px rgb(20 31 25 / 8%);
+}
+
+.mission-workspace-picker {
+  position: relative;
+  z-index: 8;
+  border-bottom: 1px solid var(--border);
+}
+
+.mission-workspace-picker.is-open {
+  z-index: 40;
+}
+
+.mission-workspace-trigger {
+  display: grid;
+  width: 100%;
+  min-height: 50px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 11px;
+  padding: 8px 20px;
+  border: 0;
+  border-radius: 16px 16px 0 0;
+  outline: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  text-align: left;
+}
+
+.mission-workspace-trigger:hover,
+.mission-workspace-trigger:focus-visible,
+.mission-workspace-picker.is-open .mission-workspace-trigger {
+  background: var(--surface-soft);
+  color: var(--text);
+}
+
+.mission-workspace-trigger > span {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 9px;
+}
+
+.mission-workspace-trigger strong {
+  flex: 0 0 auto;
+  color: inherit;
+  font-size: 13px;
+  font-weight: 620;
+}
+
+.mission-workspace-trigger small {
+  overflow: hidden;
+  color: var(--faint);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mission-workspace-picker.is-open .mission-workspace-trigger > svg:last-child {
+  transform: rotate(180deg);
+}
+
+.mission-workspace-menu {
+  position: absolute;
+  z-index: 50;
+  top: calc(100% + 8px);
+  left: 14px;
+  display: grid;
+  width: min(430px, calc(100vw - 96px));
+  gap: 4px;
+  padding: 7px;
+  border: 1px solid var(--border);
+  border-radius: 13px;
+  background: #fff;
+  box-shadow: var(--shadow-panel);
+}
+
+.mission-workspace-menu > button {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: auto minmax(0, 1fr) 18px;
+  align-items: center;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  outline: 0;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+}
+
+.mission-workspace-menu > button:hover,
+.mission-workspace-menu > button:focus-visible {
+  border-color: rgb(88 121 104 / 18%);
+  background: var(--surface-soft);
+}
+
+.mission-workspace-menu > button > span {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.mission-workspace-menu strong {
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.mission-workspace-menu small {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mission-goal-field {
+  display: grid;
+  min-height: 0;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.home-mission-create .mission-goal-field > label {
+  padding: 21px 24px 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.home-mission-create .mission-goal-field textarea {
+  min-height: 210px;
+  resize: none;
+  padding: 14px 24px 22px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 16px;
+  line-height: 1.65;
+}
+
+.home-mission-create .mission-goal-field textarea:focus-visible {
+  border: 0;
+  outline: 0;
+  box-shadow: none;
+}
+
+.home-mission-create .mission-goal-composer footer {
+  min-height: 58px;
+  padding: 10px 13px 10px 16px;
+}
+
+.home-mission-create .mission-prompt-tools {
+  gap: 4px;
+  overflow: visible;
+}
+
+.home-mission-create .mission-executor-picker {
+  position: relative;
+  z-index: 10;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.home-mission-create .mission-executor-picker.is-open {
+  z-index: 45;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.home-mission-create .mission-executor-trigger {
+  display: inline-flex;
+  width: auto;
+  min-height: 34px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.home-mission-create .mission-executor-trigger:hover,
+.home-mission-create .mission-executor-trigger:focus-visible,
+.home-mission-create .mission-executor-picker.is-open .mission-executor-trigger {
+  background: var(--surface-soft);
+  color: var(--text);
+}
+
+.home-mission-create .mission-executor-trigger:focus-visible {
+  outline: 0;
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+.home-mission-create .mission-executor-trigger > span {
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.home-mission-create .mission-executor-menu {
+  top: auto;
+  right: auto;
+  bottom: calc(100% + 11px);
+  left: 0;
+}
+
+.mission-compact-select {
+  display: inline-flex;
+  min-width: 0;
+  min-height: 34px;
+  align-items: center;
+  gap: 3px;
+  padding-left: 8px;
+  border-radius: 9px;
+  color: var(--muted);
+}
+
+.mission-compact-select:hover,
+.mission-compact-select:focus-within {
+  background: var(--surface-soft);
+  color: var(--text);
+}
+
+.mission-compact-select select {
+  min-width: 0;
+  max-width: 180px;
+  padding: 7px 7px 7px 2px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.mission-thinking-select select {
+  max-width: 145px;
+}
+
+.mission-compact-select select:focus-visible {
+  outline: 0;
+  box-shadow: none;
+}
+
+.mission-compact-select:has(select:disabled) {
+  opacity: 0.52;
+}
+
+.home-mission-create .tool-permission-select {
+  min-height: 34px;
+  background: transparent;
+}
+
+.home-mission-create .tool-permission-select:hover,
+.home-mission-create .tool-permission-select:focus-within {
+  background: var(--surface-soft);
+}
+
+.mission-submit-button {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  flex: 0 0 38px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 11px;
+  background: #172137;
+  color: #fff;
+  cursor: pointer;
+  box-shadow: 0 4px 12px rgb(23 33 55 / 16%);
+}
+
+.mission-submit-button:hover:not(:disabled),
+.mission-submit-button:focus-visible:not(:disabled) {
+  background: #0f1729;
+  transform: translateY(-1px);
+}
+
+.mission-submit-button:focus-visible {
+  outline: 0;
+  box-shadow: 0 0 0 3px rgb(23 33 55 / 18%);
+}
+
+.mission-submit-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.35;
+  box-shadow: none;
+}
+
+@media (max-width: 1060px) {
+  .home-mission-create {
+    padding: 36px;
+  }
+
+  .home-mission-create .mission-goal-composer footer {
+    align-items: flex-end;
+  }
+
+  .home-mission-create .mission-prompt-tools {
+    flex-wrap: wrap;
+  }
+
+  .mission-compact-select select {
+    max-width: 145px;
+  }
 }
 
 .panel-heading-with-action,

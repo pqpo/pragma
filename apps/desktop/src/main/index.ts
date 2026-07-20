@@ -133,10 +133,10 @@ void app.whenReady().then(async () => {
     decrypt: (encrypted: Buffer) => safeStorage.decryptString(encrypted),
   };
   const pragmaPaths = new PragmaPaths();
-  const defaultStewardWorkspace = join(pragmaPaths.root, "workspaces", "steward");
+  const builtInDefaultWorkspace = join(pragmaPaths.root, "workspace");
   const desktopSettings = createDesktopSettingsStore({
     settingsPath: join(pragmaPaths.stateRoot(), "desktop-settings.json"),
-    defaultStewardWorkspace,
+    builtInDefaultWorkspace,
     warn: (message, error) => console.warn(message, error),
   });
   const getToolPermissionMode = async () =>
@@ -151,10 +151,6 @@ void app.whenReady().then(async () => {
   const pragmaProjectStore = createPragmaProjectStore({
     projectsPath: join(app.getPath("home"), ".pragma", "projects"),
     reservedResourceRefs: new Set([BUILT_IN_STEWARD_REF]),
-  });
-  const missionExecutors = createMissionExecutorCatalog({
-    project: pragmaProjectStore,
-    systemExperts,
   });
   installWorkflowLayoutHandlers(
     createWorkflowLayoutStore({
@@ -179,6 +175,11 @@ void app.whenReady().then(async () => {
   const runtimes = createRuntimeEnvironmentService({
     store: runtimeEnvironments,
     factories: createBuiltInRuntimeFactories(modelProviderStore, getToolPermissionMode),
+  });
+  const missionExecutors = createMissionExecutorCatalog({
+    project: pragmaProjectStore,
+    systemExperts,
+    runtimes,
   });
   ipcMain.handle("runtimes:availability", () => getRuntimeAvailability(runtimes));
   ipcMain.handle("runtimes:set-default", async (_event, input: unknown) => {
@@ -262,7 +263,7 @@ void app.whenReady().then(async () => {
   installExpertDefinitionHandlers(expertStore);
   installPragmaProjectHandlers(pragmaProjectStore);
   const initialSettings = await desktopSettings.getSnapshot(app.getPreferredSystemLanguages());
-  await mkdir(initialSettings.stewardWorkspace, { recursive: true, mode: 0o700 });
+  await mkdir(initialSettings.defaultWorkspace, { recursive: true, mode: 0o700 });
   const stewardStateRoot = join(pragmaPaths.stateRoot(), "steward");
   const stewardProject = createDesktopStewardProjectPort({
     project: pragmaProjectStore,
@@ -296,8 +297,11 @@ void app.whenReady().then(async () => {
         definition.executionProfile.mode === "pinned"
           ? definition.executionProfile.model
           : undefined;
-      const executionModel = mission.modelOverride ?? configuredModel;
-      const defaults = await resolveSystemExpertRuntimeDefaults(scopedRuntimes, executionModel);
+      const defaults = await resolveSystemExpertRuntimeDefaults(
+        scopedRuntimes,
+        configuredModel,
+        mission.modelOverride,
+      );
       return await compileBuiltInSteward({
         definitionStateRoot: join(stewardStateRoot, "definitions"),
         workspace: mission.workspace.path,
@@ -360,21 +364,17 @@ void app.whenReady().then(async () => {
     runner: missionRunner,
     getDefaultToolPermissionMode: getToolPermissionMode,
     getDefaultWorkspace: async () =>
-      (await desktopSettings.getSnapshot(app.getPreferredSystemLanguages())).stewardWorkspace,
+      (await desktopSettings.getSnapshot(app.getPreferredSystemLanguages())).defaultWorkspace,
     defaultExecutorRef: BUILT_IN_STEWARD_REF,
   });
   installDesktopSettingsHandlers({
     store: desktopSettings,
-    validateStewardWorkspace: async (path) => {
+    validateDefaultWorkspace: async (path) => {
       const validation = await validateWorkspace(path);
       if (!validation.ok) {
-        throw new Error(
-          "The selected Steward workspace must be an accessible, writable directory.",
-        );
+        throw new Error("The default workspace must be an accessible, writable directory.");
       }
     },
-    onStewardWorkspaceChanged: async () => undefined,
-    onToolPermissionModeChanged: async () => undefined,
   });
   installModelProviderHandlers(modelProviderStore, {
     isProviderReferenced: async (providerId) =>

@@ -30,7 +30,6 @@ describe("mission store", () => {
       executor: missionExecutorSnapshot(expert),
       toolPermissionMode: "full-access",
       modelOverride: {
-        runtimeId: "pi",
         providerId: "provider",
         modelId: "configured-model",
         thinkingLevel: "high",
@@ -45,7 +44,6 @@ describe("mission store", () => {
     expect(created.project).toEqual({ id: "studio", revision: 3 });
     expect(created.toolPermissionMode).toBe("full-access");
     expect(created.modelOverride).toEqual({
-      runtimeId: "pi",
       providerId: "provider",
       modelId: "configured-model",
       thinkingLevel: "high",

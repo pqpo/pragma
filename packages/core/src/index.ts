@@ -33,7 +33,6 @@ export * from "./context-system/static-context-store.ts";
 export * from "./human-interaction/durable-human-interaction.ts";
 export * from "./logging/logger.ts";
 export * from "./model-provider/model-provider.ts";
-export * from "./model-provider/model-provider-directory.ts";
 export * from "./model-provider/model-provider-drivers.ts";
 export * from "./pragma-app.ts";
 export * from "./execution/execution-store.ts";

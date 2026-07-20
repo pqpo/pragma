@@ -43,6 +43,7 @@ import {
   ModelDiscoveryResultSchema,
   ModelConnectionTestRequestSchema,
   ModelConnectionTestResultSchema,
+  ModelCompatibilityProfileDescriptorSchema,
   ModelProviderSchema,
   ModelProviderSettingsSnapshotSchema,
   ResetModelProvidersResultSchema,
@@ -54,6 +55,8 @@ import {
   MissionChatUpdateSchema,
   MissionCreationDefaultsSchema,
   MissionExecutorOptionSchema,
+  MissionModelOptionsRequestSchema,
+  MissionModelOptionsSchema,
   MissionIdSchema,
   MissionSchema,
   MissionSummarySchema,
@@ -100,6 +103,10 @@ const api: PragmaDesktopAPI = {
     ),
   getModelProviderSettings: async () =>
     ModelProviderSettingsSnapshotSchema.parse(await ipcRenderer.invoke("model-providers:settings")),
+  listModelCompatibilityProfiles: async () =>
+    ModelCompatibilityProfileDescriptorSchema.array().parse(
+      await ipcRenderer.invoke("model-providers:compatibility-profiles"),
+    ),
   listModelProviders: async () =>
     ModelProviderSchema.array().parse(await ipcRenderer.invoke("model-providers:list")),
   createModelProvider: async (input) =>
@@ -269,6 +276,13 @@ const api: PragmaDesktopAPI = {
     MissionSummarySchema.array().parse(await ipcRenderer.invoke("missions:list")),
   listMissionExecutors: async () =>
     MissionExecutorOptionSchema.array().parse(await ipcRenderer.invoke("missions:executors:list")),
+  getMissionModelOptions: async (executorRef) =>
+    MissionModelOptionsSchema.parse(
+      await ipcRenderer.invoke(
+        "missions:model-options:get",
+        MissionModelOptionsRequestSchema.parse({ executorRef }),
+      ),
+    ),
   getMissionCreationDefaults: async () =>
     MissionCreationDefaultsSchema.parse(await ipcRenderer.invoke("missions:create-defaults:get")),
   getMission: async (id) =>

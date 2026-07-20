@@ -171,6 +171,7 @@ export interface PragmaCompileHost {
   readonly environmentId?: string | undefined;
   readonly runtimes?: RuntimeResolver | undefined;
   readonly defaultModelSelection?: RuntimeModelSelection | undefined;
+  readonly rootModelSelectionOverride?: RuntimeModelSelection | undefined;
   readonly rootExecutionOverride?:
     | {
         readonly runtimeId: string;

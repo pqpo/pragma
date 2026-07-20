@@ -15,6 +15,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import type {
+  ModelCompatibilityProfileDescriptor,
   ModelConnectionTestResult,
   ModelProvider,
   ModelProviderModel,
@@ -37,6 +38,7 @@ export type ProviderDraft = {
   readonly baseUrl: string;
   readonly apiKey: string;
   readonly requiresApiKey: boolean;
+  readonly compatibilityProfileId: string;
   readonly models: readonly ModelProviderModel[];
 };
 
@@ -47,6 +49,7 @@ const emptyProviderDraft = (): ProviderDraft => ({
   baseUrl: "",
   apiKey: "",
   requiresApiKey: true,
+  compatibilityProfileId: "",
   models: [],
 });
 
@@ -66,7 +69,29 @@ export function ProviderEditor(props: {
   const [discoveryMessage, setDiscoveryMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [compatibilityProfiles, setCompatibilityProfiles] = useState<
+    readonly ModelCompatibilityProfileDescriptor[]
+  >([]);
   const isEditing = draft.id !== undefined;
+  const compatibleProfiles = useMemo(
+    () => compatibilityProfiles.filter((profile) => profile.api === draft.protocol),
+    [compatibilityProfiles, draft.protocol],
+  );
+
+  useEffect(() => {
+    let active = true;
+    void window.pragmaDesktop
+      .listModelCompatibilityProfiles()
+      .then((profiles) => {
+        if (active) setCompatibilityProfiles(profiles);
+      })
+      .catch((profileError: unknown) => {
+        if (active) setError(errorMessage(profileError));
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const selectPreset = (presetId: string) => {
     const preset = findModelProviderPreset(presetId)!;
@@ -77,6 +102,7 @@ export function ProviderEditor(props: {
       protocol: preset.protocol,
       baseUrl: preset.baseUrl,
       requiresApiKey: preset.requiresApiKey,
+      compatibilityProfileId: "",
       models: [],
     });
     setAvailableModels([]);
@@ -128,6 +154,9 @@ export function ProviderEditor(props: {
         protocol: draft.protocol,
         baseUrl: draft.baseUrl,
         requiresApiKey: draft.requiresApiKey,
+        ...(draft.compatibilityProfileId === ""
+          ? {}
+          : { compatibilityProfileId: draft.compatibilityProfileId }),
         models: [...draft.models],
       };
       const saved = isEditing
@@ -287,12 +316,40 @@ export function ProviderEditor(props: {
                     setDraft({
                       ...draft,
                       protocol: event.target.value as ModelProvider["protocol"],
+                      compatibilityProfileId: "",
+                      models: draft.models.map((model) => ({
+                        ...model,
+                        compatibilityProfileId: undefined,
+                      })),
                     })
                   }
                 >
                   <option value="openai-completions">OpenAI Chat Completions</option>
                   <option value="openai-responses">OpenAI Responses</option>
                 </select>
+              </label>
+            ) : null}
+            {compatibleProfiles.length > 0 ? (
+              <label className="static-field provider-compatibility-field">
+                <span>{t("models.compatibilityProfile", { ns: "settings" })}</span>
+                <select
+                  value={draft.compatibilityProfileId}
+                  onChange={(event) =>
+                    setDraft({ ...draft, compatibilityProfileId: event.target.value })
+                  }
+                >
+                  <option value="">{t("models.automaticCompatibility", { ns: "settings" })}</option>
+                  {compatibleProfiles.map((profile) => (
+                    <option key={profile.id} value={profile.id}>
+                      {profile.displayName}
+                    </option>
+                  ))}
+                </select>
+                <small>
+                  {compatibleProfiles.find((profile) => profile.id === draft.compatibilityProfileId)
+                    ?.description ??
+                    t("models.automaticCompatibilityDescription", { ns: "settings" })}
+                </small>
               </label>
             ) : null}
           </div>
@@ -383,6 +440,7 @@ export function ProviderEditor(props: {
                 <ModelCapabilityEditor
                   key={model.id}
                   model={model}
+                  compatibilityProfiles={compatibleProfiles}
                   onChange={(next) =>
                     setDraft({
                       ...draft,
@@ -463,6 +521,7 @@ export function ProviderEditor(props: {
 
 function ModelCapabilityEditor(props: {
   readonly model: ModelProviderModel;
+  readonly compatibilityProfiles: readonly ModelCompatibilityProfileDescriptor[];
   readonly onChange: (model: ModelProviderModel) => void;
   readonly onRemove: () => void;
 }) {
@@ -472,43 +531,123 @@ function ModelCapabilityEditor(props: {
     props.onChange({
       ...props.model,
       reasoning,
-      ...(reasoning
-        ? { thinkingLevelMap: createThinkingMap(["off", "low", "medium", "high"]) }
-        : { thinkingLevelMap: undefined }),
+      thinking: undefined,
+    });
+  const setAdjustableThinking = (adjustable: boolean) =>
+    props.onChange({
+      ...props.model,
+      thinking: adjustable ? { supportedLevels: ["off", "high"], defaultLevel: "high" } : undefined,
     });
   return (
     <div className="selected-model-row">
-      <div>
+      <div className="model-identity">
         <strong>{props.model.name}</strong>
         <small>{props.model.id}</small>
       </div>
-      <label className="compact-check">
-        <input
-          type="checkbox"
-          checked={props.model.reasoning}
-          onChange={(event) => setReasoning(event.target.checked)}
-        />
-        {t("models.reasoning")}
-      </label>
-      {props.model.reasoning ? (
-        <div className="thinking-level-options" aria-label={t("models.thinkingLevels")}>
-          {THINKING_LEVELS.map((level) => (
-            <label key={level}>
+      <div className="model-capability-controls">
+        <label className="compact-check">
+          <input
+            type="checkbox"
+            checked={props.model.reasoning}
+            onChange={(event) => setReasoning(event.target.checked)}
+          />
+          {t("models.reasoning")}
+        </label>
+        {props.model.reasoning ? (
+          <>
+            <label className="compact-check">
               <input
                 type="checkbox"
-                checked={supported.includes(level)}
-                onChange={() => {
-                  const next = supported.includes(level)
-                    ? supported.filter((value) => value !== level)
-                    : [...supported, level];
-                  props.onChange({ ...props.model, thinkingLevelMap: createThinkingMap(next) });
-                }}
+                checked={props.model.thinking !== undefined}
+                onChange={(event) => setAdjustableThinking(event.target.checked)}
               />
-              <span>{level}</span>
+              {t("models.adjustableThinking")}
             </label>
-          ))}
-        </div>
-      ) : null}
+            {props.model.thinking === undefined ? (
+              <small className="fixed-thinking-note">{t("models.fixedThinking")}</small>
+            ) : (
+              <div className="thinking-controls">
+                <div className="thinking-level-options" aria-label={t("models.thinkingLevels")}>
+                  {THINKING_LEVELS.map((level) => (
+                    <label key={level}>
+                      <input
+                        type="checkbox"
+                        checked={supported.includes(level)}
+                        disabled={supported.length === 1 && supported.includes(level)}
+                        onChange={() => {
+                          const next = supported.includes(level)
+                            ? supported.filter((value) => value !== level)
+                            : THINKING_LEVELS.filter(
+                                (candidate) => supported.includes(candidate) || candidate === level,
+                              );
+                          const currentDefault = props.model.thinking?.defaultLevel;
+                          props.onChange({
+                            ...props.model,
+                            thinking: {
+                              supportedLevels: next,
+                              ...(currentDefault !== undefined && next.includes(currentDefault)
+                                ? { defaultLevel: currentDefault }
+                                : { defaultLevel: next[0] }),
+                            },
+                          });
+                        }}
+                      />
+                      <span>{level}</span>
+                    </label>
+                  ))}
+                </div>
+                <label className="thinking-default-field">
+                  <span>{t("models.defaultThinkingLevel")}</span>
+                  <select
+                    value={props.model.thinking.defaultLevel ?? ""}
+                    onChange={(event) =>
+                      props.onChange({
+                        ...props.model,
+                        thinking: {
+                          ...props.model.thinking!,
+                          defaultLevel:
+                            event.target.value === ""
+                              ? undefined
+                              : (event.target.value as (typeof THINKING_LEVELS)[number]),
+                        },
+                      })
+                    }
+                  >
+                    <option value="">{t("models.runtimeDefault")}</option>
+                    {supported.map((level) => (
+                      <option key={level} value={level}>
+                        {level}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+            )}
+          </>
+        ) : null}
+        {props.compatibilityProfiles.length > 0 ? (
+          <label className="model-profile-field">
+            <span>{t("models.modelCompatibilityOverride")}</span>
+            <select
+              value={props.model.compatibilityProfileId ?? ""}
+              onChange={(event) =>
+                props.onChange({
+                  ...props.model,
+                  compatibilityProfileId:
+                    event.target.value === "" ? undefined : event.target.value,
+                })
+              }
+            >
+              <option value="">{t("models.inheritCompatibility")}</option>
+              {props.compatibilityProfiles.map((profile) => (
+                <option key={profile.id} value={profile.id}>
+                  {profile.displayName}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
+      </div>
       <button
         className="model-remove-button"
         type="button"
@@ -770,6 +909,7 @@ export function ModelProvidersFragment() {
                 baseUrl: provider.baseUrl,
                 apiKey: "",
                 requiresApiKey: provider.requiresApiKey,
+                compatibilityProfileId: provider.compatibilityProfileId ?? "",
                 models: provider.models,
               })
             }
@@ -799,21 +939,11 @@ function mergeModels(
   for (const model of current) map.set(model.id, model);
   return [...map.values()];
 }
-export function supportedThinkingLevels(model: ModelProviderModel): string[] {
+export function supportedThinkingLevels(
+  model: ModelProviderModel,
+): (typeof THINKING_LEVELS)[number][] {
   if (!model.reasoning) return [];
-  return THINKING_LEVELS.filter((level) => {
-    const mapped = model.thinkingLevelMap?.[level];
-    if (mapped === null) return false;
-    if (level === "xhigh" || level === "max") return mapped !== undefined;
-    return true;
-  });
-}
-function createThinkingMap(
-  supported: readonly string[],
-): NonNullable<ModelProviderModel["thinkingLevelMap"]> {
-  return Object.fromEntries(
-    THINKING_LEVELS.map((level) => [level, supported.includes(level) ? level : null]),
-  );
+  return model.thinking?.supportedLevels.filter((level) => THINKING_LEVELS.includes(level)) ?? [];
 }
 function addManualModel(
   idValue: string,
