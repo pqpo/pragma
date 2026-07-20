@@ -20,6 +20,7 @@ import {
   createPiModelRuntime,
   createPiModelProviderConverter,
   normalizePiRuntimeModels,
+  registerPiModelProvider,
   resolvePiThinkingLevel,
   resolveRequiredRuntimeModel,
 } from "./models.ts";
@@ -172,6 +173,7 @@ export function createPiRuntime(options: CloudPiRuntimeAdapterOptions = {}): Run
             models: {
               defaultModel: selectedModel,
               modelRegistry,
+              modelRuntime,
             },
           }),
           mcpToolRegistry,
@@ -183,7 +185,20 @@ export function createPiRuntime(options: CloudPiRuntimeAdapterOptions = {}): Run
         };
       },
       listMessages: listPiMessages,
-      startTurn: startPiTurn,
+      async startTurn(session, turn) {
+        const selectedModel = turn.modelSelection?.model;
+        if (selectedModel !== undefined) {
+          const provider = await options.modelProviders?.resolveProvider(selectedModel.providerId);
+          if (provider === undefined) {
+            throw new Error(`PI model provider is not registered: ${selectedModel.providerId}`);
+          }
+          registerPiModelProvider(
+            session.models.modelRuntime,
+            modelProviderConverter.convertProvider(provider),
+          );
+        }
+        return await startPiTurn(session, turn);
+      },
       mapEvent: mapPiAgentEvent,
       collectUsage(session) {
         return collectPiUsage(session);

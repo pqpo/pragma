@@ -22,6 +22,14 @@ export const RuntimeEnvironmentBindingSchema = z.object({
   fingerprint: z.string().regex(/^[a-f0-9]{64}$/),
 });
 
+export const RuntimeModelSelectionSchema = z.object({
+  model: z.object({
+    providerId: z.string().trim().min(1),
+    modelId: z.string().trim().min(1),
+  }),
+  thinkingLevel: z.string().trim().min(1).optional(),
+});
+
 export const ExecutionKindSchema = z.enum(["expert-turn", "flow"]);
 
 export const InvocationKindSchema = z.enum(["flow", "task", "human-task", "expert", "expert-team"]);
@@ -55,7 +63,7 @@ export const RuntimeContextOriginSchema = z.discriminatedUnion("type", [
 
 export const RuntimeContextRecordSchema = z
   .object({
-    schemaVersion: z.literal("pragma.runtime-context/v3"),
+    schemaVersion: z.literal("pragma.runtime-context/v4"),
     contextId: z.string().min(1),
     owner: RuntimeContextOwnerSchema,
     origin: RuntimeContextOriginSchema,
@@ -64,6 +72,7 @@ export const RuntimeContextRecordSchema = z
       version: z.string().min(1),
     }),
     runtime: RuntimeEnvironmentBindingSchema,
+    modelSelection: RuntimeModelSelectionSchema.optional(),
     snapshot: RuntimeContextSnapshotSchema.optional(),
     lifecycle: z.enum(["open", "closed"]),
     createdAt: z.string().datetime(),

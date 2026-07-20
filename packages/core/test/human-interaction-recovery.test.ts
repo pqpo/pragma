@@ -49,7 +49,7 @@ describe("ExpertSession human interaction recovery", () => {
       rootContextId: "root",
       contexts: {
         root: {
-          schemaVersion: "pragma.runtime-context/v3",
+          schemaVersion: "pragma.runtime-context/v4",
           contextId: "root",
           owner: { type: "expert-session", ownerId: "stale-lease-session" },
           origin: { type: "expert-session", sessionId: "stale-lease-session" },
@@ -189,7 +189,7 @@ describe("ExpertSession human interaction recovery", () => {
       rootContextId: contextId,
       contexts: {
         [contextId]: {
-          schemaVersion: "pragma.runtime-context/v3",
+          schemaVersion: "pragma.runtime-context/v4",
           contextId,
           owner: { type: "expert-session", ownerId: sessionId },
           origin: { type: "expert-session", sessionId },

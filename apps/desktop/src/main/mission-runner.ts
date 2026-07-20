@@ -3,7 +3,9 @@ import { createHash, randomUUID } from "node:crypto";
 import {
   createPragma,
   createFileExecutionStore,
+  createFileExpertSessionStore,
   ExpertAgentHumanRequestSchema,
+  isExpertTeam,
   StoredExecutionView,
   type AgentMessageRecord,
   type ExecutionOutputItem,
@@ -25,11 +27,14 @@ import type {
   HumanInteractionRequest,
   HumanInteractionResponse,
   InvocationTree,
+  RuntimeContextRecord,
+  RuntimeEnvironmentBinding,
 } from "@pragma/shared";
 
 import type {
   Mission,
   MissionChatEntry,
+  MissionChatPatch,
   MissionChatSnapshot,
   MissionChatUpdate,
   MissionChatQuery,
@@ -60,6 +65,7 @@ export interface MissionRunner {
     readonly requestId: string;
   }): Promise<Mission>;
   getChat(input: MissionChatQuery): Promise<MissionChatSnapshot>;
+  getRuntimeBinding(id: string): Promise<RuntimeEnvironmentBinding | undefined>;
   subscribeChat(listener: (update: MissionChatUpdate) => void): () => void;
   interrupt(id: string): Promise<Mission>;
   listWorkItems(id: string): Promise<readonly MissionWorkItem[]>;
@@ -119,6 +125,10 @@ export function createMissionRunner(options: {
     | undefined;
 }): MissionRunner {
   const executionStore = createFileExecutionStore({ pragmaHome: options.pragmaHome });
+  const expertSessionStore = createFileExpertSessionStore({
+    executions: executionStore,
+    pragmaHome: options.pragmaHome,
+  });
   const executionContexts = new Map<
     DesktopToolPermissionMode,
     { readonly app: ReturnType<typeof createPragma>; readonly runtimes: RuntimeResolver }
@@ -133,6 +143,7 @@ export function createMissionRunner(options: {
         pragmaHome: options.pragmaHome,
         runtimes,
         executionStore,
+        expertSessionStore,
         automaticHumanInteractionHandler:
           options.automaticHumanInteractionHandlerForToolPermissionMode?.(mode) ??
           options.automaticHumanInteractionHandler,
@@ -146,7 +157,6 @@ export function createMissionRunner(options: {
   const pendingOperations = new Map<string, PendingMissionOperation>();
   const chatListeners = new Set<(update: MissionChatUpdate) => void>();
   const chatRevisions = new Map<string, number>();
-  const chatTimers = new Map<string, ReturnType<typeof setTimeout>>();
   const liveChats = new Map<string, LiveMissionChat>();
   const executorNameCache = new Map<string, ReadonlyMap<string, string>>();
 
@@ -158,34 +168,32 @@ export function createMissionRunner(options: {
     void operation.promise.then(clear, clear);
   };
 
-  const emitChatUpdate = (id: string): void => {
+  const emitChatUpdate = (
+    id: string,
+    update:
+      | { readonly kind: "patch"; readonly patches: readonly MissionChatPatch[] }
+      | { readonly kind: "invalidate" },
+  ): void => {
     const revision = (chatRevisions.get(id) ?? 0) + 1;
     chatRevisions.set(id, revision);
-    const update = { missionId: id, revision } satisfies MissionChatUpdate;
+    const notification: MissionChatUpdate =
+      update.kind === "patch"
+        ? { missionId: id, revision, kind: "patch", patches: [...update.patches] }
+        : { missionId: id, revision, kind: "invalidate" };
     for (const listener of chatListeners) {
       try {
-        listener(update);
+        listener(notification);
       } catch (error) {
         console.error(`Failed to notify Mission chat listeners for ${id}.`, error);
       }
     }
   };
 
-  const scheduleChatUpdate = (id: string, immediate = false): void => {
-    const timer = chatTimers.get(id);
-    if (timer !== undefined) clearTimeout(timer);
-    if (immediate) {
-      chatTimers.delete(id);
-      emitChatUpdate(id);
-      return;
-    }
-    const next = setTimeout(() => {
-      chatTimers.delete(id);
-      emitChatUpdate(id);
-    }, 50);
-    next.unref();
-    chatTimers.set(id, next);
+  const emitChatPatches = (id: string, patches: readonly MissionChatPatch[]): void => {
+    if (patches.length > 0) emitChatUpdate(id, { kind: "patch", patches });
   };
+
+  const invalidateChat = (id: string): void => emitChatUpdate(id, { kind: "invalidate" });
 
   const forgetActive = async (id: string, executionId: string): Promise<void> => {
     if (active.get(id)?.handle.executionId === executionId) active.delete(id);
@@ -194,7 +202,7 @@ export function createMissionRunner(options: {
       await live.close();
       liveChats.delete(id);
     }
-    scheduleChatUpdate(id, true);
+    invalidateChat(id);
   };
 
   const compileMissionExecutor = async (
@@ -237,6 +245,15 @@ export function createMissionRunner(options: {
     });
   };
 
+  const readMissionRootContext = async (
+    mission: Mission,
+  ): Promise<RuntimeContextRecord | undefined> => {
+    const sessionId = mission.execution?.sessionId;
+    if (sessionId === undefined) return undefined;
+    const record = await expertSessionStore.get(sessionId);
+    return record?.contexts[record.rootContextId];
+  };
+
   const trackExecution = (input: {
     readonly missionId: string;
     readonly handle: MutableExecution & { readonly result: Promise<unknown> };
@@ -245,7 +262,11 @@ export function createMissionRunner(options: {
     readonly sessionId?: string | undefined;
     readonly onFinished?: (() => void | Promise<void>) | undefined;
   }): void => {
-    const live = observeMissionChat(input.handle, () => scheduleChatUpdate(input.missionId));
+    const live = observeMissionChat(
+      input.handle,
+      (patches) => emitChatPatches(input.missionId, patches),
+      () => invalidateChat(input.missionId),
+    );
     liveChats.set(input.missionId, live);
     const settlement = observeExecution(
       options.missions,
@@ -257,7 +278,7 @@ export function createMissionRunner(options: {
       input.sessionId,
     ).finally(async () => await forgetActive(input.missionId, input.handle.executionId));
     active.set(input.missionId, { handle: input.handle, settlement });
-    scheduleChatUpdate(input.missionId, true);
+    invalidateChat(input.missionId);
     void settlement.catch((error: unknown) => {
       console.error(`Failed to observe Mission execution ${input.handle.executionId}.`, error);
     });
@@ -266,7 +287,8 @@ export function createMissionRunner(options: {
   const runMission = async (id: string): Promise<Mission> => {
     const mission = await options.missions.get(id);
     if (active.has(mission.id)) return mission;
-    const { app, runtimes } = executionContext(mission.toolPermissionMode);
+    const { app, runtimes: baseRuntimes } = executionContext(mission.toolPermissionMode);
+    const runtimes = withMissionRuntimeBinding(baseRuntimes, await readMissionRootContext(mission));
     const compiled = await compileMissionExecutor(mission, runtimes);
     const modelSelection = toRuntimeModelSelection(mission.modelOverride);
     if (mission.modelOverride !== undefined) {
@@ -366,7 +388,6 @@ export function createMissionRunner(options: {
         : mission.goal,
       {
         requestId: recoverable ? randomUUID() : inputMessageId,
-        ...(modelSelection === undefined ? {} : { modelSelection }),
       },
     );
     await options.missions.appendExecutionReference({
@@ -399,7 +420,9 @@ export function createMissionRunner(options: {
     readonly requestId: string;
   }): Promise<Mission> => {
     const mission = await options.missions.get(input.id);
-    const { app, runtimes } = executionContext(mission.toolPermissionMode);
+    const { app, runtimes: baseRuntimes } = executionContext(mission.toolPermissionMode);
+    const rootContext = await readMissionRootContext(mission);
+    const runtimes = withMissionRuntimeBinding(baseRuntimes, rootContext);
     if (mission.executor.kind === "flow") {
       throw new Error("Flow missions accept input through workflow steps, not chat messages.");
     }
@@ -420,6 +443,14 @@ export function createMissionRunner(options: {
     if ("kind" in compiled.value && compiled.value.kind === "flow") {
       throw new Error("Flow missions cannot receive chat messages.");
     }
+    const rootExpert = isExpertTeam(compiled.value) ? compiled.value.coordinator : compiled.value;
+    const desiredModelSelection = modelSelection ?? rootExpert.models?.default;
+    const promptModelSelection = matchesBoundModel(
+      desiredModelSelection,
+      rootContext?.modelSelection,
+    )
+      ? undefined
+      : desiredModelSelection;
     const session =
       sessions.get(mission.id) ??
       (mission.execution?.sessionId === undefined
@@ -438,7 +469,7 @@ export function createMissionRunner(options: {
     });
     const turn = await session.prompt(input.content, {
       requestId: input.requestId,
-      ...(modelSelection === undefined ? {} : { modelSelection }),
+      ...(promptModelSelection === undefined ? {} : { modelSelection: promptModelSelection }),
     });
     const startedAt = new Date().toISOString();
     await options.missions.appendExecutionReference({
@@ -480,7 +511,8 @@ export function createMissionRunner(options: {
     const prospective = { ...mission, toolPermissionMode: input.toolPermissionMode };
     if (input.modelOverride === null) delete prospective.modelOverride;
     else prospective.modelOverride = input.modelOverride;
-    const { runtimes } = executionContext(input.toolPermissionMode);
+    const { runtimes: baseRuntimes } = executionContext(input.toolPermissionMode);
+    const runtimes = withMissionRuntimeBinding(baseRuntimes, await readMissionRootContext(mission));
     await compileMissionExecutor(prospective, runtimes);
     return await options.missions.updateOptions(mission.id, {
       toolPermissionMode: input.toolPermissionMode,
@@ -505,15 +537,12 @@ export function createMissionRunner(options: {
   const getChatSnapshot = async (input: MissionChatQuery): Promise<MissionChatSnapshot> => {
     const mission = await options.missions.get(input.id);
     const timeline = await options.missions.readTimelinePage(mission.id, input);
-    const currentLive = liveChats.get(mission.id);
+    const capturedLive = liveChats.get(mission.id);
     const entries = await readMissionChatHistory(
       timeline.turns,
       executionStore,
-      currentLive?.executionId,
+      capturedLive?.executionId,
     );
-    if (input.beforeSequence === undefined && currentLive !== undefined) {
-      entries.push(...currentLive.entries);
-    }
 
     const projectKey = `${mission.project.id}:${mission.project.revision}`;
     let names = executorNameCache.get(projectKey);
@@ -524,6 +553,21 @@ export function createMissionRunner(options: {
       );
       executorNameCache.set(projectKey, names);
     }
+    const current = active.get(mission.id);
+    const pendingInteractions =
+      current === undefined ? [] : await listPendingHumanInteractions(current.handle);
+
+    // Keep using the projection captured before history was read. The execution may settle across
+    // the awaits above; looking it up again would omit both durable history (which was skipped for
+    // the captured live execution) and the live entries that were removed during settlement.
+    if (input.beforeSequence === undefined && capturedLive !== undefined) {
+      entries.push(...capturedLive.entries.map((entry) => ({ ...entry })));
+    }
+    // Mission execution state can change while history and executor metadata are being read. Read
+    // it again immediately before the revision so a snapshot cannot pair a stale `running` state
+    // with the terminal invalidation revision.
+    const latestMission = await options.missions.get(mission.id);
+    const revision = chatRevisions.get(mission.id) ?? 0;
     const namedEntries = entries.map((entry) => {
       if (entry.executorName !== undefined || entry.executorId === undefined) return entry;
       return {
@@ -531,13 +575,9 @@ export function createMissionRunner(options: {
         executorName: names.get(entry.executorId) ?? entry.executorId,
       };
     });
-    const current = active.get(mission.id);
-    const pendingInteractions =
-      current === undefined ? [] : await listPendingHumanInteractions(current.handle);
-
     return {
       missionId: mission.id,
-      revision: chatRevisions.get(mission.id) ?? 0,
+      revision,
       entries: namedEntries,
       page: {
         ...(timeline.oldestSequence === undefined
@@ -551,16 +591,18 @@ export function createMissionRunner(options: {
           : { nextBeforeSequence: timeline.nextBeforeSequence }),
       },
       pendingInteractions,
-      ...(mission.execution === undefined
+      ...(latestMission.execution === undefined
         ? {}
         : {
             execution: {
-              id: mission.execution.id,
-              status: mission.execution.status,
+              id: latestMission.execution.id,
+              status: latestMission.execution.status,
               interruptible:
-                current?.handle.executionId === mission.execution.id &&
-                ["queued", "running", "waiting"].includes(mission.execution.status),
-              ...(mission.execution.error === undefined ? {} : { error: mission.execution.error }),
+                current?.handle.executionId === latestMission.execution.id &&
+                ["queued", "running", "waiting"].includes(latestMission.execution.status),
+              ...(latestMission.execution.error === undefined
+                ? {}
+                : { error: latestMission.execution.error }),
             },
           }),
     };
@@ -613,6 +655,9 @@ export function createMissionRunner(options: {
     async getChat(input) {
       return await getChatSnapshot(input);
     },
+    async getRuntimeBinding(id) {
+      return (await readMissionRootContext(await options.missions.get(id)))?.runtime;
+    },
     subscribeChat(listener) {
       chatListeners.add(listener);
       return () => chatListeners.delete(listener);
@@ -637,9 +682,6 @@ export function createMissionRunner(options: {
       if (pendingOperations.has(id)) {
         throw new Error("Wait for the current mission operation to finish.");
       }
-      const chatTimer = chatTimers.get(id);
-      if (chatTimer !== undefined) clearTimeout(chatTimer);
-      chatTimers.delete(id);
       const liveChat = liveChats.get(id);
       if (liveChat !== undefined) await liveChat.close();
       liveChats.delete(id);
@@ -666,7 +708,7 @@ export function createMissionRunner(options: {
           requestId: input.requestId,
         },
       );
-      scheduleChatUpdate(input.missionId, true);
+      invalidateChat(input.missionId);
     },
   };
 }
@@ -765,6 +807,43 @@ function requireRootRuntimeId(compiled: CompiledResource<InvocableResource>): st
     throw new Error("Mission executor did not resolve a root Runtime.");
   }
   return compiled.rootRuntimeId;
+}
+
+function withMissionRuntimeBinding(
+  runtimes: RuntimeResolver,
+  context: RuntimeContextRecord | undefined,
+): RuntimeResolver {
+  if (context === undefined) return runtimes;
+  const binding = context.runtime;
+  return {
+    getDefaultRuntimeId: async () => binding.runtimeId,
+    bind: async (request = {}) =>
+      request.runtimeId === undefined || request.runtimeId === binding.runtimeId
+        ? await runtimes.resolve({
+            binding,
+            ...(request.modelSelection === undefined && context.modelSelection === undefined
+              ? {}
+              : {
+                  modelSelection: matchesBoundModel(request.modelSelection, context.modelSelection)
+                    ? context.modelSelection
+                    : request.modelSelection,
+                }),
+          })
+        : await runtimes.bind(request),
+    resolve: async (request) => await runtimes.resolve(request),
+  };
+}
+
+function matchesBoundModel(
+  requested: RuntimeModelSelection | undefined,
+  bound: RuntimeModelSelection | undefined,
+): boolean {
+  if (requested === undefined) return bound !== undefined;
+  return (
+    requested.model.providerId === bound?.model.providerId &&
+    requested.model.modelId === bound.model.modelId &&
+    requested.thinkingLevel === bound.thinkingLevel
+  );
 }
 
 function observeExecution(
@@ -1032,7 +1111,8 @@ function messageRecordsToChatEntries(records: readonly AgentMessageRecord[]): Mi
 
 function observeMissionChat(
   execution: MutableExecution & { readonly result: Promise<unknown> },
-  onChange: () => void,
+  onOutput: (patches: readonly MissionChatPatch[]) => void,
+  onInvalidate: () => void,
 ): LiveMissionChat {
   const chat: LiveMissionChat = {
     executionId: execution.executionId,
@@ -1048,8 +1128,8 @@ function observeMissionChat(
       try {
         for await (const item of subscription) {
           if (closed) break;
-          consumeLiveChatOutput(chat, item);
-          onChange();
+          const patches = consumeLiveChatOutput(chat, item);
+          if (patches.length > 0) onOutput(patches);
         }
       } finally {
         await subscription.close();
@@ -1066,7 +1146,7 @@ function observeMissionChat(
             event.type === "human.responded" ||
             event.type.startsWith("execution.")
           ) {
-            onChange();
+            onInvalidate();
           }
         }
       } finally {
@@ -1088,7 +1168,10 @@ function observeMissionChat(
   return chat;
 }
 
-function consumeLiveChatOutput(chat: LiveMissionChat, item: ExecutionOutputItem): void {
+function consumeLiveChatOutput(
+  chat: LiveMissionChat,
+  item: ExecutionOutputItem,
+): MissionChatPatch[] {
   const base = {
     executionId: item.executionId,
     invocationId: item.invocationId,
@@ -1097,34 +1180,53 @@ function consumeLiveChatOutput(chat: LiveMissionChat, item: ExecutionOutputItem)
   };
   if (item.channel === "thought") {
     const content = item.delta ?? formatValue(item.value, 200_000);
-    if (content === "") return;
+    if (content === "") return [];
     const current = chat.entries.at(-1);
     if (current?.kind === "thinking" && current.invocationId === item.invocationId) {
+      const canAppend = current.content.length + content.length <= 200_000;
       current.content = truncate(current.content + content, 200_000);
-      current.streaming = true;
+      const patches: MissionChatPatch[] = canAppend
+        ? [{ type: "entry.append", entryId: current.id, field: "content", delta: content }]
+        : [{ type: "entry.upsert", entry: { ...current } }];
+      if (!current.streaming) {
+        current.streaming = true;
+        patches.push({ type: "entry.streaming", entryId: current.id, streaming: true });
+      }
+      return patches;
     } else {
-      chat.entries.push({
+      const entry = {
         ...base,
         id: `${item.executionId}:${item.invocationId}:thinking:${chat.sequence++}`,
-        kind: "thinking",
+        kind: "thinking" as const,
         content: truncate(content, 200_000),
         streaming: true,
-      });
+      };
+      chat.entries.push(entry);
+      return [{ type: "entry.upsert", entry: { ...entry } }];
     }
-    return;
   }
   if (item.channel === "message") {
     const content = item.delta ?? completedMessageText(item.value);
-    if (content === "") return;
-    markInvocationThinkingComplete(chat.entries, item.invocationId);
+    const patches = markInvocationThinkingComplete(chat.entries, item.invocationId);
     const current = chat.entries.at(-1);
     if (
       item.delta !== undefined &&
       current?.kind === "assistant" &&
       current.invocationId === item.invocationId
     ) {
+      const canAppend = current.content.length + content.length <= 200_000;
       current.content = truncate(current.content + content, 200_000);
-      current.streaming = true;
+      if (content !== "") {
+        patches.push(
+          canAppend
+            ? { type: "entry.append", entryId: current.id, field: "content", delta: content }
+            : { type: "entry.upsert", entry: { ...current } },
+        );
+      }
+      if (!current.streaming) {
+        current.streaming = true;
+        patches.push({ type: "entry.streaming", entryId: current.id, streaming: true });
+      }
     } else if (
       item.delta === undefined &&
       chat.entries.some(
@@ -1134,17 +1236,22 @@ function consumeLiveChatOutput(chat: LiveMissionChat, item: ExecutionOutputItem)
       const last = [...chat.entries]
         .reverse()
         .find((entry) => entry.kind === "assistant" && entry.invocationId === item.invocationId);
-      if (last?.kind === "assistant") last.streaming = false;
-    } else {
-      chat.entries.push({
+      if (last?.kind === "assistant" && last.streaming) {
+        last.streaming = false;
+        patches.push({ type: "entry.streaming", entryId: last.id, streaming: false });
+      }
+    } else if (content !== "") {
+      const entry = {
         ...base,
         id: `${item.executionId}:${item.invocationId}:answer:${chat.sequence++}`,
-        kind: "assistant",
+        kind: "assistant" as const,
         content: truncate(content, 200_000),
         streaming: item.delta !== undefined,
-      });
+      };
+      chat.entries.push(entry);
+      patches.push({ type: "entry.upsert", entry: { ...entry } });
     }
-    return;
+    return patches;
   }
   if (item.channel === "tool") {
     const payload = asRecord(item.value);
@@ -1158,11 +1265,16 @@ function consumeLiveChatOutput(chat: LiveMissionChat, item: ExecutionOutputItem)
             entry.status === "running",
         );
       if (tool?.kind === "tool") {
-        tool.outputPreview = preview(
-          `${tool.outputPreview ?? ""}${normalizeToolDelta(item.delta)}`,
-        );
+        const delta = normalizeToolDelta(item.delta);
+        const canAppend = (tool.outputPreview?.length ?? 0) + delta.length <= 801;
+        tool.outputPreview = preview(`${tool.outputPreview ?? ""}${delta}`);
+        return delta === ""
+          ? []
+          : canAppend
+            ? [{ type: "entry.append", entryId: tool.id, field: "outputPreview", delta }]
+            : [{ type: "entry.upsert", entry: { ...tool } }];
       }
-      return;
+      return [];
     }
     const toolCallId = readString(payload, "toolCallId") || item.sourceEventId;
     const existing = chat.entries.find(
@@ -1179,13 +1291,13 @@ function consumeLiveChatOutput(chat: LiveMissionChat, item: ExecutionOutputItem)
         existing.status = "succeeded";
         existing.outputPreview = preview(payload["outputPreview"]);
       }
-      return;
+      return [{ type: "entry.upsert", entry: { ...existing } }];
     }
-    markInvocationThinkingComplete(chat.entries, item.invocationId);
-    chat.entries.push({
+    const patches = markInvocationThinkingComplete(chat.entries, item.invocationId);
+    const entry: MissionChatEntry = {
       ...base,
       id: `tool:${item.executionId}:${toolCallId}`,
-      kind: "tool",
+      kind: "tool" as const,
       toolCallId,
       toolName,
       status:
@@ -1205,8 +1317,10 @@ function consumeLiveChatOutput(chat: LiveMissionChat, item: ExecutionOutputItem)
       ...(payload["message"] === undefined
         ? {}
         : { error: readString(payload, "message") || "Tool failed." }),
-    });
-    return;
+    };
+    chat.entries.push(entry);
+    patches.push({ type: "entry.upsert", entry: { ...entry } });
+    return patches;
   }
   if (item.channel === "result") {
     const content = formatValue(item.value, 200_000);
@@ -1216,15 +1330,18 @@ function consumeLiveChatOutput(chat: LiveMissionChat, item: ExecutionOutputItem)
         (entry) => entry.kind === "assistant" && entry.invocationId === item.invocationId,
       )
     ) {
-      chat.entries.push({
+      const entry = {
         ...base,
         id: `${item.executionId}:${item.invocationId}:result:${chat.sequence++}`,
-        kind: "assistant",
+        kind: "assistant" as const,
         content,
         streaming: false,
-      });
+      };
+      chat.entries.push(entry);
+      return [{ type: "entry.upsert", entry: { ...entry } }];
     }
   }
+  return [];
 }
 
 async function listPendingHumanInteractions(
@@ -1269,10 +1386,18 @@ function normalizeToolDelta(delta: string): string {
   }
 }
 
-function markInvocationThinkingComplete(entries: MissionChatEntry[], invocationId: string): void {
+function markInvocationThinkingComplete(
+  entries: MissionChatEntry[],
+  invocationId: string,
+): MissionChatPatch[] {
+  const patches: MissionChatPatch[] = [];
   for (const entry of entries) {
-    if (entry.kind === "thinking" && entry.invocationId === invocationId) entry.streaming = false;
+    if (entry.kind === "thinking" && entry.invocationId === invocationId && entry.streaming) {
+      entry.streaming = false;
+      patches.push({ type: "entry.streaming", entryId: entry.id, streaming: false });
+    }
   }
+  return patches;
 }
 
 function asRecord(value: unknown): Record<string, unknown> {

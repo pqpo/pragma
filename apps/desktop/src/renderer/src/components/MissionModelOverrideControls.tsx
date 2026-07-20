@@ -8,6 +8,7 @@ export function MissionModelOverrideControls(props: {
   readonly loading?: boolean | undefined;
   readonly disabled?: boolean | undefined;
   readonly value?: MissionModelOverride | undefined;
+  readonly defaultValue?: MissionModelOverride | undefined;
   readonly onChange: (value: MissionModelOverride | undefined) => void;
 }) {
   const { t } = useTranslation("missions");
@@ -16,7 +17,30 @@ export function MissionModelOverrideControls(props: {
   const selected = props.models.find(
     (model) => modelOptionKey(model.provider.id, model.id) === valueKey,
   );
-  const thinkingLevels = selected?.thinking?.supportedLevels ?? [];
+  const defaultModel = props.models.find(
+    (model) =>
+      model.provider.id === props.defaultValue?.providerId &&
+      model.id === props.defaultValue.modelId,
+  );
+  const effectiveModel = selected ?? defaultModel;
+  const thinkingLevels = effectiveModel?.thinking?.supportedLevels ?? [];
+  const defaultThinkingLevel =
+    props.value === undefined
+      ? props.defaultValue?.thinkingLevel
+      : effectiveModel?.thinking?.defaultLevel;
+  const defaultThinkingLabel = thinkingLevels.find(
+    (level) => level.value === defaultThinkingLevel,
+  )?.label;
+  const defaultModelLabel =
+    defaultModel === undefined
+      ? t("defaultModel")
+      : t("defaultValue", {
+          value: `${defaultModel.provider.displayName} · ${defaultModel.displayName}`,
+        });
+  const defaultThinkingOptionLabel =
+    defaultThinkingLabel === undefined
+      ? t("defaultThinkingDepth")
+      : t("defaultValue", { value: defaultThinkingLabel });
 
   return (
     <>
@@ -37,9 +61,7 @@ export function MissionModelOverrideControls(props: {
             );
           }}
         >
-          <option value="">
-            {props.loading ? t("loadingModels") : t("useExecutorDefaultModel")}
-          </option>
+          <option value="">{defaultModelLabel}</option>
           {props.models.map((model) => (
             <option
               key={modelOptionKey(model.provider.id, model.id)}
@@ -66,7 +88,7 @@ export function MissionModelOverrideControls(props: {
             });
           }}
         >
-          <option value="">{t("useModelDefaultThinking")}</option>
+          <option value="">{defaultThinkingOptionLabel}</option>
           {thinkingLevels.map((level) => (
             <option key={level.value} value={level.value}>
               {level.label}

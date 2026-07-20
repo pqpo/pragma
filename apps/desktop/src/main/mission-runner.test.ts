@@ -4,9 +4,11 @@ import { join } from "node:path";
 
 import {
   createStaticRuntimeResolver,
+  defineExpert,
   defineRuntimeDriver,
   type RuntimeDriverSessionContext,
   type RuntimeModelSelection,
+  type RuntimeResolver,
 } from "@pragma/core";
 import type {
   PragmaExpertResource,
@@ -59,12 +61,15 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
       readSession: (session) => ({ runtimeSessionId: session.id }),
       async startTurn(_session, turn) {
         await new Promise<void>((resolve) => setTimeout(resolve, 50));
-        turn.stream.write({
-          runId: turn.runId,
-          source: turn.source,
-          type: "thought.delta",
-          payload: { contentType: "text", delta: "Checking constraints." },
-        });
+        for (const delta of "Checking constraints.") {
+          turn.stream.write({
+            runId: turn.runId,
+            source: turn.source,
+            type: "thought.delta",
+            payload: { contentType: "text", delta },
+          });
+          await new Promise<void>((resolve) => setTimeout(resolve, 5));
+        }
         turn.stream.write({
           runId: turn.runId,
           source: turn.source,
@@ -131,7 +136,130 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
       ]),
     );
     expect(updates).toHaveBeenCalled();
+    const patchUpdates = updates.mock.calls
+      .map(([update]) => update)
+      .filter((update) => update.kind === "patch");
+    expect(patchUpdates.length).toBeGreaterThanOrEqual("Checking constraints.".length + 1);
+    expect(patchUpdates.flatMap((update) => update.patches)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "entry.upsert",
+          entry: expect.objectContaining({ kind: "thinking" }),
+        }),
+        expect.objectContaining({
+          type: "entry.upsert",
+          entry: expect.objectContaining({ kind: "tool" }),
+        }),
+      ]),
+    );
     unsubscribe();
+  });
+
+  it("keeps the captured live answer when the execution settles during a chat read", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-mission-chat-settlement-"));
+    temporaryPaths.push(root);
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    const snapshot = await project.publish({
+      expectedRevision: 0,
+      resources: [runtimeFixture(), expertFixture()],
+    });
+    const missions = createMissionStore({ missionsPath: join(root, "missions") });
+    const mission = await missions.create({
+      workspace: { path: root, basename: "workspace" },
+      goal: "Keep the final Codex answer visible",
+      project: { id: snapshot.projectId, revision: snapshot.revision },
+      executor: missionExecutorSnapshot(
+        snapshot.resources.find((resource) => resource.kind === "Expert")!,
+      ),
+    });
+    let announceDelta = (): void => undefined;
+    const deltaWritten = new Promise<void>((resolve) => {
+      announceDelta = resolve;
+    });
+    let finishTurn = (): void => undefined;
+    const turnCanFinish = new Promise<void>((resolve) => {
+      finishTurn = resolve;
+    });
+    const runtime = defineRuntimeDriver<never, { id: string }>({
+      descriptor: { id: "fake", kind: "codex-local", displayName: "Codex" },
+      createSession: () => ({ id: "codex-thread" }),
+      readSession: (session) => ({ runtimeSessionId: session.id }),
+      async startTurn(_session, turn) {
+        turn.stream.write({
+          runId: turn.runId,
+          source: turn.source,
+          type: "message.delta",
+          payload: { role: "assistant", contentType: "text", delta: "Codex answer" },
+        });
+        announceDelta();
+        await turnCanFinish;
+        return { outputText: "Codex answer", runtimeSessionId: "codex-thread" };
+      },
+      mapEvent: () => ({ events: [] }),
+      closeSession: () => undefined,
+    });
+    const runtimeResolver = createStaticRuntimeResolver({
+      runtimes: [runtime],
+      defaultRuntimeId: "fake",
+    });
+    const runner = createMissionRunner({
+      missions,
+      project,
+      capabilityStore: {} as CapabilityStore,
+      capabilityCredentials: {} as CapabilityCredentialStore,
+      capabilitiesPath: join(root, "capabilities"),
+      pragmaHome: join(root, "state"),
+      runtimes: runtimeResolver,
+    });
+
+    await runner.run(mission.id);
+    await deltaWritten;
+
+    const openRevision = project.openRevision.bind(project);
+    let enterProjectRead = (): void => undefined;
+    const projectReadEntered = new Promise<void>((resolve) => {
+      enterProjectRead = resolve;
+    });
+    let releaseProjectRead = (): void => undefined;
+    const projectReadCanFinish = new Promise<void>((resolve) => {
+      releaseProjectRead = resolve;
+    });
+    vi.spyOn(project, "openRevision").mockImplementationOnce(async (revision) => {
+      enterProjectRead();
+      await projectReadCanFinish;
+      return await openRevision(revision);
+    });
+
+    const racedSnapshot = runner.getChat({ id: mission.id, limit: 50 });
+    await projectReadEntered;
+    finishTurn();
+    try {
+      await vi.waitFor(
+        async () => {
+          const settled = await runner.getChat({ id: mission.id, limit: 50 });
+          expect(settled.entries).toEqual(
+            expect.arrayContaining([
+              expect.objectContaining({
+                kind: "assistant",
+                content: "Codex answer",
+                timelineSequence: expect.any(Number),
+              }),
+            ]),
+          );
+          expect(settled.execution).toMatchObject({ status: "succeeded", interruptible: false });
+        },
+        { timeout: settlementTimeoutMs },
+      );
+    } finally {
+      releaseProjectRead();
+    }
+
+    await expect(racedSnapshot).resolves.toMatchObject({
+      entries: expect.arrayContaining([
+        expect.objectContaining({ kind: "assistant", content: "Codex answer" }),
+      ]),
+      execution: { status: "succeeded", interruptible: false },
+    });
   });
 
   it("compiles and runs the resource pinned by Mission v3", async () => {
@@ -210,6 +338,10 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
       async () => expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
       { timeout: settlementTimeoutMs },
     );
+    await expect(runner.getRuntimeBinding(mission.id)).resolves.toMatchObject({
+      runtimeId: "fake",
+      revision: 1,
+    });
     expect(createSession).toHaveBeenCalledWith(
       expect.objectContaining({
         request: expect.objectContaining({
@@ -280,6 +412,166 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
     await expect(runner.listWorkItems(mission.id)).resolves.toEqual([
       expect.objectContaining({ kind: "expert", status: "succeeded", executorId: "writer" }),
     ]);
+  });
+
+  it("keeps an existing Mission on its original Runtime after the default changes", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-mission-runtime-binding-"));
+    temporaryPaths.push(root);
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    const expert = expertFixture();
+    const snapshot = await project.publish({
+      expectedRevision: 0,
+      resources: [runtimeFixture(), expert],
+    });
+    const missions = createMissionStore({ missionsPath: join(root, "missions") });
+    const mission = await missions.create({
+      workspace: { path: root, basename: "workspace" },
+      goal: "Keep this conversation on PI",
+      project: { id: snapshot.projectId, revision: snapshot.revision },
+      executor: missionExecutorSnapshot(expert),
+      modelOverride: { providerId: "pi-provider", modelId: "pi-model" },
+    });
+    const piSelections: (RuntimeModelSelection | undefined)[] = [];
+    const piTurns = vi.fn((_session, turn) => {
+      piSelections.push(turn.modelSelection);
+      return { outputText: "pi", runtimeSessionId: "pi-session" };
+    });
+    const codexTurns = vi.fn(() => ({ outputText: "codex", runtimeSessionId: "codex-session" }));
+    const pi = defineRuntimeDriver<never, { id: string }>({
+      descriptor: { id: "pi", kind: "cloud-pi-agent", displayName: "PI" },
+      listModels: async () => [
+        {
+          id: "pi-model",
+          displayName: "PI Model",
+          provider: { kind: "registered", id: "pi-provider", displayName: "PI Provider" },
+        },
+      ],
+      createSession: () => ({ id: "pi-session" }),
+      readSession: (session) => ({ runtimeSessionId: session.id }),
+      startTurn: piTurns,
+      mapEvent: () => ({ events: [] }),
+      closeSession: () => undefined,
+    });
+    const codex = defineRuntimeDriver<never, { id: string }>({
+      descriptor: { id: "codex", kind: "codex-local", displayName: "Codex" },
+      listModels: async () => [
+        {
+          id: "codex-model",
+          displayName: "Codex Model",
+          provider: { kind: "runtime-managed", id: "openai", displayName: "OpenAI" },
+        },
+      ],
+      createSession: () => ({ id: "codex-session" }),
+      readSession: (session) => ({ runtimeSessionId: session.id }),
+      startTurn: codexTurns,
+      mapEvent: () => ({ events: [] }),
+      closeSession: () => undefined,
+    });
+    const registered = createStaticRuntimeResolver({
+      runtimes: [pi, codex],
+      defaultRuntimeId: "pi",
+    });
+    let defaultRuntimeId = "pi";
+    const validate = async (
+      resolved: Awaited<ReturnType<RuntimeResolver["bind"]>>,
+      selection: RuntimeModelSelection | undefined,
+    ) => {
+      if (selection === undefined) return resolved;
+      const models = await resolved.adapter.listModels?.();
+      if (
+        !models?.some(
+          (model) =>
+            model.id === selection.model.modelId &&
+            model.provider.id === selection.model.providerId,
+        )
+      ) {
+        throw new Error(
+          `Runtime model is unavailable: ${resolved.binding.runtimeId}/${selection.model.providerId}/${selection.model.modelId}.`,
+        );
+      }
+      return resolved;
+    };
+    const runtimes: RuntimeResolver = {
+      getDefaultRuntimeId: async () => defaultRuntimeId,
+      bind: async (request = {}) =>
+        await validate(
+          await registered.bind({ ...request, runtimeId: request.runtimeId ?? defaultRuntimeId }),
+          request.modelSelection,
+        ),
+      resolve: async (request) =>
+        await validate(await registered.resolve(request), request.modelSelection),
+    };
+    const runner = createMissionRunner({
+      missions,
+      project,
+      capabilityStore: {} as CapabilityStore,
+      capabilityCredentials: {} as CapabilityCredentialStore,
+      capabilitiesPath: join(root, "capabilities"),
+      pragmaHome: join(root, "state"),
+      runtimes,
+      compileSystemExecutor: async ({ mission: current, runtimes: scopedRuntimes }) => {
+        const runtimeId = await scopedRuntimes.getDefaultRuntimeId();
+        const compiledExpert = await defineExpert({
+          id: "writer",
+          name: "Writer",
+          description: "Runtime binding test Expert",
+          tags: [],
+          version: "1.0.0",
+          scope: "test",
+          workspace: current.workspace.path,
+          pragmaHome: join(root, "state"),
+          defaultRuntimeId: runtimeId,
+        });
+        return {
+          ref: current.executor.ref,
+          value: compiledExpert,
+          fingerprint: "c".repeat(64),
+          projectFingerprint: "d".repeat(64),
+          environmentFingerprint: {
+            environmentId: "desktop",
+            projectFingerprint: "d".repeat(64),
+            value: "e".repeat(64),
+            resources: [],
+            plugins: [],
+          },
+          rootRuntimeId: runtimeId,
+          dependencies: [],
+        };
+      },
+    });
+
+    const first = await runner.run(mission.id);
+    await vi.waitFor(
+      async () => expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
+      { timeout: settlementTimeoutMs },
+    );
+    defaultRuntimeId = "codex";
+    await runner.updateOptions({
+      id: mission.id,
+      toolPermissionMode: mission.toolPermissionMode,
+      modelOverride: { providerId: "pi-provider", modelId: "pi-model" },
+    });
+    await runner.sendMessage({
+      id: mission.id,
+      content: "Continue on the original Runtime",
+      requestId: "00000000-0000-4000-8000-000000000020",
+    });
+    await vi.waitFor(
+      async () => expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
+      { timeout: settlementTimeoutMs },
+    );
+
+    expect((await missions.get(mission.id)).execution?.sessionId).toBe(first.execution?.sessionId);
+    expect(piTurns).toHaveBeenCalledTimes(2);
+    expect(piSelections).toEqual([
+      {
+        model: { providerId: "pi-provider", modelId: "pi-model" },
+      },
+      {
+        model: { providerId: "pi-provider", modelId: "pi-model" },
+      },
+    ]);
+    expect(codexTurns).not.toHaveBeenCalled();
   });
 
   it("round-trips a Flow human interaction and resolves same-id resources by kind", async () => {

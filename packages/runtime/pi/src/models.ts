@@ -76,17 +76,24 @@ export async function createPiModelRuntime(
     allowModelNetwork: false,
   });
   const modelRegistry = new PiModelRegistry(modelRuntime);
-  for (const provider of providers.map(normalizeProvider).filter(isDefined)) {
-    modelRuntime.registerProvider(provider.id, {
-      baseUrl: provider.baseUrl,
-      api: provider.api,
-      apiKey: provider.apiKey,
-      ...(provider.headers === undefined ? {} : { headers: { ...provider.headers } }),
-      ...(provider.authHeader === undefined ? {} : { authHeader: provider.authHeader }),
-      models: provider.models.map((model) => toRegisteredPiModel(provider, model)),
-    });
-  }
+  for (const provider of providers) registerPiModelProvider(modelRuntime, provider);
   return { modelRegistry, modelRuntime };
+}
+
+export function registerPiModelProvider(
+  modelRuntime: ModelRuntime,
+  input: PiModelProviderConfig,
+): void {
+  const provider = normalizeProvider(input);
+  if (provider === undefined) return;
+  modelRuntime.registerProvider(provider.id, {
+    baseUrl: provider.baseUrl,
+    api: provider.api,
+    apiKey: provider.apiKey,
+    ...(provider.headers === undefined ? {} : { headers: { ...provider.headers } }),
+    ...(provider.authHeader === undefined ? {} : { authHeader: provider.authHeader }),
+    models: provider.models.map((model) => toRegisteredPiModel(provider, model)),
+  });
 }
 
 export async function createPiModelRegistry(
@@ -367,8 +374,4 @@ function normalizeProvider(provider: PiModelProviderConfig): PiModelProviderConf
     .filter((model) => model.id !== "" && model.name !== "");
   if (id === "" || baseUrl === "" || models.length === 0) return undefined;
   return { ...provider, id, baseUrl, apiKey, models };
-}
-
-function isDefined<T>(value: T | undefined): value is T {
-  return value !== undefined;
 }

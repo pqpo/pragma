@@ -1064,11 +1064,17 @@ export const MissionModelOverrideSchema = ExpertModelConfigSchema.omit({
 
 export const MissionModelOptionsRequestSchema = z.object({
   executorRef: PragmaInvocableResourceRefSchema,
+  missionId: MissionIdSchema.optional(),
 });
 
 export const MissionModelOptionsSchema = z.object({
   status: z.enum(["ready", "reset_required"]),
+  runtime: z.object({
+    id: DesktopRuntimeIdSchema,
+    displayName: z.string().trim().min(1).max(200),
+  }),
   models: z.array(DesktopRuntimeModelSchema),
+  defaultSelection: MissionModelOverrideSchema.optional(),
 });
 
 export const MissionLifecycleStatusSchema = z.enum(["active", "completed"]);
@@ -1285,10 +1291,38 @@ export const MissionChatSnapshotSchema = z.object({
   execution: MissionChatExecutionSchema.optional(),
 });
 
-export const MissionChatUpdateSchema = z.object({
+export const MissionChatPatchSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("entry.upsert"),
+    entry: MissionChatEntrySchema,
+  }),
+  z.object({
+    type: z.literal("entry.append"),
+    entryId: z.string().min(1),
+    field: z.enum(["content", "outputPreview"]),
+    delta: z.string().max(200_000),
+  }),
+  z.object({
+    type: z.literal("entry.streaming"),
+    entryId: z.string().min(1),
+    streaming: z.boolean(),
+  }),
+]);
+
+const MissionChatUpdateBaseSchema = z.object({
   missionId: MissionIdSchema,
-  revision: z.number().int().nonnegative(),
+  revision: z.number().int().positive(),
 });
+
+export const MissionChatUpdateSchema = z.discriminatedUnion("kind", [
+  MissionChatUpdateBaseSchema.extend({
+    kind: z.literal("patch"),
+    patches: z.array(MissionChatPatchSchema).min(1),
+  }),
+  MissionChatUpdateBaseSchema.extend({
+    kind: z.literal("invalidate"),
+  }),
+]);
 
 export const RespondMissionHumanInteractionSchema = z.object({
   missionId: MissionIdSchema,
@@ -1382,6 +1416,7 @@ export type SendMissionMessage = z.infer<typeof SendMissionMessageSchema>;
 export type MissionHumanInteraction = z.infer<typeof MissionHumanInteractionSchema>;
 export type MissionChatEntry = z.infer<typeof MissionChatEntrySchema>;
 export type MissionChatSnapshot = z.infer<typeof MissionChatSnapshotSchema>;
+export type MissionChatPatch = z.infer<typeof MissionChatPatchSchema>;
 export type MissionChatUpdate = z.infer<typeof MissionChatUpdateSchema>;
 export type RespondMissionHumanInteraction = z.infer<typeof RespondMissionHumanInteractionSchema>;
 export type Capability = z.infer<typeof CapabilitySchema>;
@@ -1453,7 +1488,10 @@ export interface PragmaDesktopAPI {
   deleteWorkflowLayout: (input: DeleteWorkflowLayout) => Promise<void>;
   listMissions: () => Promise<MissionSummary[]>;
   listMissionExecutors: () => Promise<MissionExecutorOption[]>;
-  getMissionModelOptions: (executorRef: string) => Promise<MissionModelOptions>;
+  getMissionModelOptions: (
+    executorRef: string,
+    missionId?: string | undefined,
+  ) => Promise<MissionModelOptions>;
   getMissionCreationDefaults: () => Promise<MissionCreationDefaults>;
   getMission: (id: string) => Promise<Mission>;
   createMission: (input: CreateMission) => Promise<Mission>;

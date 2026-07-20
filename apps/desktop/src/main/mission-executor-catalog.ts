@@ -1,4 +1,5 @@
 import type { RuntimeModel, RuntimeModelSelection, RuntimeResolver } from "@pragma/core";
+import type { RuntimeEnvironmentBinding } from "@pragma/shared";
 import {
   canonicalPragmaResourceRef,
   type PragmaExpertResource,
@@ -27,8 +28,15 @@ import { ModelProviderStoreError } from "./model-provider-store.ts";
 export interface MissionExecutorCatalog {
   list(): Promise<readonly MissionExecutorOption[]>;
   resolve(ref: string): Promise<MissionExecutor | undefined>;
-  getModelOptions(ref: string): Promise<MissionModelOptions>;
-  validateModelOverride(ref: string, override: MissionModelOverride): Promise<void>;
+  getModelOptions(
+    ref: string,
+    runtimeBinding?: RuntimeEnvironmentBinding | undefined,
+  ): Promise<MissionModelOptions>;
+  validateModelOverride(
+    ref: string,
+    override: MissionModelOverride,
+    runtimeBinding?: RuntimeEnvironmentBinding | undefined,
+  ): Promise<void>;
 }
 
 export function createMissionExecutorCatalog(options: {
@@ -36,12 +44,32 @@ export function createMissionExecutorCatalog(options: {
   readonly systemExperts: DesktopSystemExpertRegistry;
   readonly runtimes: RuntimeResolver;
 }): MissionExecutorCatalog {
-  const resolveRuntimeId = async (ref: string): Promise<string | undefined> => {
+  const resolveRuntimeDefaults = async (
+    ref: string,
+  ): Promise<
+    | {
+        readonly runtimeId: string;
+        readonly modelSelection?: RuntimeModelSelection | undefined;
+      }
+    | undefined
+  > => {
     const system = options.systemExperts.get(ref);
     if (system !== undefined) {
-      return system.executionProfile.mode === "pinned"
-        ? system.executionProfile.model.runtimeId
-        : await options.runtimes.getDefaultRuntimeId();
+      if (system.executionProfile.mode === "system-default") {
+        return { runtimeId: await options.runtimes.getDefaultRuntimeId() };
+      }
+      return {
+        runtimeId: system.executionProfile.model.runtimeId,
+        modelSelection: {
+          model: {
+            providerId: system.executionProfile.model.providerId,
+            modelId: system.executionProfile.model.modelId,
+          },
+          ...(system.executionProfile.model.thinkingLevel === undefined
+            ? {}
+            : { thinkingLevel: system.executionProfile.model.thinkingLevel }),
+        },
+      };
     }
 
     const snapshot = await options.project.get();
@@ -60,16 +88,41 @@ export function createMissionExecutorCatalog(options: {
     if (expert === undefined) {
       throw new Error(`Mission executor coordinator not found: ${ref}.`);
     }
-    return await projectExpertRuntimeId(expert, snapshot.resources, options.runtimes);
+    return await projectExpertRuntimeDefaults(expert, snapshot.resources, options.runtimes);
   };
 
-  const bindModel = async (ref: string, selection?: RuntimeModelSelection) => {
-    const runtimeId = await resolveRuntimeId(ref);
-    if (runtimeId === undefined) throw new Error("Flow missions do not support a model override.");
-    return await options.runtimes.bind({
-      runtimeId,
-      ...(selection === undefined ? {} : { modelSelection: selection }),
-    });
+  const bindRuntimeDefaults = async (
+    defaults: {
+      readonly runtimeId: string;
+      readonly modelSelection?: RuntimeModelSelection | undefined;
+    },
+    selection?: RuntimeModelSelection,
+    runtimeBinding?: RuntimeEnvironmentBinding,
+  ) => {
+    const configuredSelection =
+      runtimeBinding === undefined || runtimeBinding.runtimeId === defaults.runtimeId
+        ? defaults.modelSelection
+        : undefined;
+    const modelSelection = selection ?? configuredSelection;
+    return runtimeBinding === undefined
+      ? await options.runtimes.bind({
+          runtimeId: defaults.runtimeId,
+          ...(modelSelection === undefined ? {} : { modelSelection }),
+        })
+      : await options.runtimes.resolve({
+          binding: runtimeBinding,
+          ...(modelSelection === undefined ? {} : { modelSelection }),
+        });
+  };
+
+  const bindModel = async (
+    ref: string,
+    selection?: RuntimeModelSelection,
+    runtimeBinding?: RuntimeEnvironmentBinding,
+  ) => {
+    const defaults = await resolveRuntimeDefaults(ref);
+    if (defaults === undefined) throw new Error("Flow missions do not support a model override.");
+    return await bindRuntimeDefaults(defaults, selection, runtimeBinding);
   };
 
   return {
@@ -91,39 +144,60 @@ export function createMissionExecutorCatalog(options: {
         .find((candidate) => missionExecutorRef(candidate) === ref);
       return resource === undefined ? undefined : projectExecutor(resource);
     },
-    async getModelOptions(ref) {
-      const resolved = await bindModel(ref);
+    async getModelOptions(ref, runtimeBinding) {
+      const defaults = await resolveRuntimeDefaults(ref);
+      if (defaults === undefined) throw new Error("Flow missions do not support a model override.");
+      const resolved = await bindRuntimeDefaults(defaults, undefined, runtimeBinding);
       const availability = await resolved.adapter.canUse();
       if (!availability.usable) {
         throw new Error(
           availability.reason ?? `Runtime is unavailable for mission executor: ${ref}.`,
         );
       }
+      const runtime = {
+        id: resolved.binding.runtimeId,
+        displayName: resolved.adapter.descriptor.displayName,
+      };
       try {
         const models =
           resolved.adapter.listModels === undefined
             ? []
             : (await resolved.adapter.listModels()).map(cloneRuntimeModel);
-        return MissionModelOptionsSchema.parse({ status: "ready", models });
+        const configuredSelection =
+          runtimeBinding === undefined || runtimeBinding.runtimeId === defaults.runtimeId
+            ? defaults.modelSelection
+            : undefined;
+        const defaultSelection = resolveDefaultModelSelection(models, configuredSelection);
+        return MissionModelOptionsSchema.parse({
+          status: "ready",
+          runtime,
+          models,
+          ...(defaultSelection === undefined ? {} : { defaultSelection }),
+        });
       } catch (error) {
         if (error instanceof ModelProviderStoreError && error.code === "config_invalid") {
-          return MissionModelOptionsSchema.parse({ status: "reset_required", models: [] });
+          return MissionModelOptionsSchema.parse({ status: "reset_required", runtime, models: [] });
         }
         throw error;
       }
     },
-    async validateModelOverride(ref, override) {
-      await bindModel(ref, toModelSelection(override));
+    async validateModelOverride(ref, override, runtimeBinding) {
+      await bindModel(ref, toModelSelection(override), runtimeBinding);
     },
   };
 }
 
-async function projectExpertRuntimeId(
+async function projectExpertRuntimeDefaults(
   expert: PragmaExpertResource,
   resources: readonly PragmaResource[],
   runtimes: RuntimeResolver,
-): Promise<string> {
-  if (expert.spec.runtime === undefined) return await runtimes.getDefaultRuntimeId();
+): Promise<{
+  readonly runtimeId: string;
+  readonly modelSelection?: RuntimeModelSelection | undefined;
+}> {
+  if (expert.spec.runtime === undefined) {
+    return { runtimeId: await runtimes.getDefaultRuntimeId() };
+  }
   const profile = resources.find(
     (candidate): candidate is PragmaRuntimeProfileResource =>
       candidate.kind === "RuntimeProfile" &&
@@ -137,7 +211,50 @@ async function projectExpertRuntimeId(
   if (typeof runtimeId !== "string" || runtimeId.trim() === "") {
     throw new Error(`Expert Runtime ID is invalid: ${expert.spec.runtime.ref}.`);
   }
-  return runtimeId;
+  const runtimeConfig: Readonly<Record<string, unknown>> = config;
+  const providerId = runtimeConfig["providerId"];
+  const modelId = runtimeConfig["model"];
+  const thinkingLevel = runtimeConfig["thinkingLevel"];
+  return {
+    runtimeId,
+    ...(typeof providerId === "string" &&
+    providerId.trim() !== "" &&
+    typeof modelId === "string" &&
+    modelId.trim() !== ""
+      ? {
+          modelSelection: {
+            model: { providerId, modelId },
+            ...(typeof thinkingLevel === "string" && thinkingLevel.trim() !== ""
+              ? { thinkingLevel }
+              : {}),
+          },
+        }
+      : {}),
+  };
+}
+
+function resolveDefaultModelSelection(
+  models: readonly DesktopRuntimeModel[],
+  configured: RuntimeModelSelection | undefined,
+): MissionModelOverride | undefined {
+  const model =
+    configured === undefined
+      ? (models.find((candidate) => candidate.default === true) ?? models[0])
+      : models.find(
+          (candidate) =>
+            candidate.provider.id === configured.model.providerId &&
+            candidate.id === configured.model.modelId,
+        );
+  if (configured === undefined && model === undefined) return undefined;
+  const providerId = configured?.model.providerId ?? model?.provider.id;
+  const modelId = configured?.model.modelId ?? model?.id;
+  if (providerId === undefined || modelId === undefined) return undefined;
+  const thinkingLevel = configured?.thinkingLevel ?? model?.thinking?.defaultLevel;
+  return {
+    providerId,
+    modelId,
+    ...(thinkingLevel === undefined ? {} : { thinkingLevel }),
+  };
 }
 
 function toModelSelection(override: MissionModelOverride): RuntimeModelSelection {

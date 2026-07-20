@@ -125,10 +125,12 @@ export class ExpertSessionManager {
     const sessionId = options.sessionId ?? randomUUID();
     const now = new Date().toISOString();
     const rootExpert = isExpertTeam(expert) ? expert.coordinator : expert;
+    const requestedModelSelection = options.modelSelection ?? rootExpert.models?.default;
     const runtime = await this.dependencies.runtimes.bind({
       runtimeId: options.runtime ?? rootExpert.defaultRuntimeId,
-      modelSelection: options.modelSelection ?? rootExpert.models?.default,
+      modelSelection: requestedModelSelection,
     });
+    const modelSelection = requestedModelSelection;
     const rootContextId = randomUUID();
     const rootContext = createRuntimeContextRecord({
       contextId: rootContextId,
@@ -136,6 +138,7 @@ export class ExpertSessionManager {
       origin: { type: "expert-session", sessionId },
       expert: { id: rootExpert.id, version: rootExpert.version },
       runtime: runtime.binding,
+      modelSelection,
       now,
     });
     await this.dependencies.sessions.create({
@@ -176,9 +179,11 @@ export class ExpertSessionManager {
     if (record.expertId !== expert.id || record.expertVersion !== expert.version) {
       throw new Error(`Expert definition mismatch for Session ${request.sessionId}.`);
     }
-    if (record.definitionFingerprint !== fingerprintExpertExecutionDefinition(expert)) {
-      throw new Error(`Expert definition fingerprint mismatch for Session ${request.sessionId}.`);
-    }
+    // The fingerprint is creation-time provenance, not a recovery gate. Mission/project snapshots
+    // select the Expert definition for future turns, while RuntimeContextRecord remains the sole
+    // owner of the historical Runtime binding and native Runtime Session snapshot. Rejecting a
+    // changed descriptor here would strand otherwise valid long-lived sessions after an Expert,
+    // plugin, or default Runtime configuration update.
     const claimId = randomUUID();
     if (
       !(await this.dependencies.sessions.claimLease(
@@ -372,6 +377,7 @@ class ExpertSessionImpl implements ExpertSession {
     const now = new Date().toISOString();
     const session = await this.getState();
     const rootContextId = session.rootContextId;
+    const modelSelection = options.modelSelection;
     const definitionKind = isExpertTeam(this.expert) ? "expert-team" : "expert";
     const execution: ExecutionRecord = {
       schemaVersion: "pragma.execution/v5",
@@ -394,7 +400,7 @@ class ExpertSessionImpl implements ExpertSession {
       mode,
       executionId: id,
       status: "queued",
-      ...(options.modelSelection === undefined ? {} : { modelSelection: options.modelSelection }),
+      ...(modelSelection === undefined ? {} : { modelSelection }),
       createdAt: now,
       updatedAt: now,
     };

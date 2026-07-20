@@ -46,6 +46,7 @@ export function HomePage(props: {
   const [models, setModels] = useState<readonly DesktopRuntimeModel[]>([]);
   const [modelsLoading, setModelsLoading] = useState(false);
   const [modelOverride, setModelOverride] = useState<MissionModelOverride>();
+  const [defaultModelSelection, setDefaultModelSelection] = useState<MissionModelOverride>();
   const [saving, setSaving] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -92,6 +93,7 @@ export function HomePage(props: {
 
   useEffect(() => {
     setModelOverride(undefined);
+    setDefaultModelSelection(undefined);
     setModelError(null);
     setModelResetRequired(false);
     if (
@@ -110,6 +112,7 @@ export function HomePage(props: {
       .then((options) => {
         if (cancelled) return;
         setModels(options.models);
+        setDefaultModelSelection(options.defaultSelection);
         setModelResetRequired(options.status === "reset_required");
       })
       .catch((loadError: unknown) => {
@@ -172,9 +175,9 @@ export function HomePage(props: {
             onUseDefault={() => setWorkspaceOverride(undefined)}
           />
           <div className="mission-goal-field">
-            <label htmlFor="mission-goal">{t("prompt")}</label>
             <textarea
               id="mission-goal"
+              aria-label={t("goalPlaceholder")}
               value={goal}
               onChange={(event) => setGoal(event.target.value)}
               onKeyDown={(event) => {
@@ -200,6 +203,7 @@ export function HomePage(props: {
                   models={models}
                   loading={modelsLoading}
                   value={modelOverride}
+                  defaultValue={defaultModelSelection}
                   onChange={setModelOverride}
                 />
               ) : null}
@@ -351,15 +355,7 @@ function MissionExecutorPicker(props: {
     localizeSystemExpertCopy(executor, pragmaCopy);
   const selectedCopy = selected === undefined ? undefined : displayCopy(selected);
   const query = search.trim().toLocaleLowerCase();
-  const visibleExecutors =
-    query === ""
-      ? props.executors
-      : props.executors.filter((executor) => {
-          const copy = displayCopy(executor);
-          return [copy.name, copy.description, executor.ref, executor.kind].some((value) =>
-            value.toLocaleLowerCase().includes(query),
-          );
-        });
+  const visibleExecutors = filterMissionExecutors(props.executors, query, displayCopy);
   const SelectedIcon = selected === undefined ? UsersThree : executorIcon(selected);
 
   useDismissableMenu(open, rootRef, () => {
@@ -400,20 +396,24 @@ function MissionExecutorPicker(props: {
             </div>
             <span>{t("availableCount", { count: props.executors.length })}</span>
           </header>
-          {props.executors.length > 5 ? (
-            <label className="mission-executor-search">
-              <MagnifyingGlass size={17} aria-hidden="true" />
-              <span className="sr-only">{t("searchExecutors")}</span>
-              <input
-                autoFocus
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
-                placeholder={t("searchExecutors")}
-              />
-            </label>
-          ) : null}
+          <label className="mission-executor-search">
+            <MagnifyingGlass size={17} aria-hidden="true" />
+            <span className="sr-only">{t("searchExecutors")}</span>
+            <input
+              autoFocus
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder={t("searchExecutors")}
+            />
+          </label>
           <div className="mission-executor-options" role="list" aria-label={t("missionExecutors")}>
-            {visibleExecutors.map((executor, index) => {
+            {visibleExecutors.length === 0 ? (
+              <p className="mission-executor-empty">
+                {t("noExecutors")}
+                <span>{t("tryAnother")}</span>
+              </p>
+            ) : null}
+            {visibleExecutors.map((executor) => {
               const Icon = executorIcon(executor);
               const copy = displayCopy(executor);
               const isSelected = executor.ref === props.value;
@@ -422,7 +422,6 @@ function MissionExecutorPicker(props: {
                 <button
                   type="button"
                   aria-pressed={isSelected}
-                  autoFocus={props.executors.length <= 5 && index === 0}
                   className={
                     isSelected ? "mission-executor-option is-selected" : "mission-executor-option"
                   }
@@ -452,6 +451,25 @@ function MissionExecutorPicker(props: {
       ) : null}
     </div>
   );
+}
+
+export function filterMissionExecutors(
+  executors: readonly MissionExecutorOption[],
+  query: string,
+  displayCopy: (
+    executor: MissionExecutorOption,
+  ) => Pick<MissionExecutorOption, "name" | "description"> = (executor) => executor,
+): readonly MissionExecutorOption[] {
+  const normalizedQuery = query.trim().toLocaleLowerCase();
+  return executors
+    .filter((executor) => {
+      if (normalizedQuery === "") return true;
+      const copy = displayCopy(executor);
+      return [copy.name, copy.description, executor.ref, executor.kind].some((value) =>
+        value.toLocaleLowerCase().includes(normalizedQuery),
+      );
+    })
+    .slice(0, 5);
 }
 
 function useDismissableMenu(

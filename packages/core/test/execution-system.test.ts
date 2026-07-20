@@ -467,7 +467,64 @@ describe("ExpertSession", () => {
     };
     expect(stats.sessionModelSelections).toEqual([selection]);
     expect(stats.turnModelSelections).toEqual([selection, override]);
+    const state = await session.getState();
+    expect(state.contexts[state.rootContextId]?.modelSelection).toEqual(override);
     await session.close();
+  });
+
+  it("keeps a resumed Runtime Session model when the Expert default changes", async () => {
+    const home = await mkdtemp(join(tmpdir(), "pragma-resumed-model-selection-"));
+    const originalStats = createFakeRuntimeStats();
+    const originalApp = createPragma({
+      pragmaHome: home,
+      runtimes: createStaticRuntimeResolver({
+        runtimes: [
+          createFakeRuntime({ stats: originalStats, closeError: "simulate process exit" }),
+        ],
+        defaultRuntimeId: "fake",
+      }),
+    });
+    const expert = async (providerId: string, modelId: string) =>
+      await defineExpert({
+        id: "resumed-model-selection",
+        name: "Resumed Model Selection",
+        description: "Resumed model selection test",
+        tags: [],
+        version: "1.0.0",
+        scope: "test",
+        workspace: home,
+        models: { default: { model: { providerId, modelId } } },
+      });
+    const original = await expert("openai", "codex-model");
+    const session = await originalApp.experts.createSession(original);
+    await (
+      await session.prompt("first", { requestId: "resumed-model-first" })
+    ).result;
+    const persisted = await session.getState();
+    expect(persisted.contexts[persisted.rootContextId]?.snapshot).toBeDefined();
+    await expect(session.close()).rejects.toThrow("simulate process exit");
+
+    const recoveredStats = createFakeRuntimeStats();
+    const recoveryApp = createPragma({
+      pragmaHome: home,
+      runtimes: createStaticRuntimeResolver({
+        runtimes: [createFakeRuntime({ stats: recoveredStats })],
+        defaultRuntimeId: "fake",
+      }),
+    });
+    const changed = await expert("deepseek", "deepseek-v4-flash");
+    const recovered = await recoveryApp.experts.resumeSession(changed, {
+      sessionId: session.sessionId,
+    });
+    await (
+      await recovered.prompt("second", { requestId: "resumed-model-second" })
+    ).result;
+
+    expect(recoveredStats.restoreSessionCalls).toBe(1);
+    expect(recoveredStats.turnModelSelections).toEqual([
+      { model: { providerId: "openai", modelId: "codex-model" } },
+    ]);
+    await recovered.close();
   });
 
   it("creates one durable root Context before the first prompt", async () => {
@@ -548,6 +605,13 @@ describe("ExpertSession", () => {
       ]),
     );
     expect(sessionEvents.some((event) => event.type === "runtime.stream")).toBe(false);
+    expect(
+      sessionEvents.some(
+        (event) =>
+          event.type === "runtime.event" &&
+          (event.data as { type?: unknown }).type === "message.delta",
+      ),
+    ).toBe(false);
     await Promise.all([eventSubscription.close(), outputSubscription.close()]);
     await session.close();
   });
@@ -775,7 +839,7 @@ describe("ExpertSession", () => {
     await sessions.releaseLease("leased-session", "owner-b");
   });
 
-  it("rejects recovery when a Team resolver descriptor changes", async () => {
+  it("resumes an existing Session when its Team resolver descriptor changes", async () => {
     const home = await mkdtemp(join(tmpdir(), "pragma-session-fingerprint-"));
     const executions = createFileExecutionStore({ pragmaHome: home });
     const sessions = createFileExpertSessionStore({ executions, pragmaHome: home });
@@ -837,9 +901,15 @@ describe("ExpertSession", () => {
       updatedAt: now,
     });
 
-    await expect(
-      app.experts.resumeSession(team("2.0.0"), { sessionId: "fingerprint-session" }),
-    ).rejects.toThrow("fingerprint mismatch");
+    const resumed = await app.experts.resumeSession(team("2.0.0"), {
+      sessionId: "fingerprint-session",
+    });
+
+    expect(resumed.sessionId).toBe("fingerprint-session");
+    expect((await sessions.get("fingerprint-session"))?.definitionFingerprint).toBe(
+      fingerprintExpertExecutionDefinition(original),
+    );
+    await resumed.close();
   });
 
   it("reuses the Runtime Session after a failed prompt", async () => {
@@ -2759,7 +2829,7 @@ function sessionRootContext(
   now: string,
 ) {
   return {
-    schemaVersion: "pragma.runtime-context/v3" as const,
+    schemaVersion: "pragma.runtime-context/v4" as const,
     contextId,
     owner: { type: "expert-session" as const, ownerId: sessionId },
     origin: { type: "expert-session" as const, sessionId },

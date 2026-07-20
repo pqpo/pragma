@@ -41,8 +41,10 @@ export function installMissionHandlers(options: {
     MissionExecutorOptionSchema.array().parse(await options.executors.list()),
   );
   ipcMain.handle("missions:model-options:get", async (_event, input: unknown) => {
-    const { executorRef } = MissionModelOptionsRequestSchema.parse(input);
-    return await options.executors.getModelOptions(executorRef);
+    const { executorRef, missionId } = MissionModelOptionsRequestSchema.parse(input);
+    const runtimeBinding =
+      missionId === undefined ? undefined : await options.runner.getRuntimeBinding(missionId);
+    return await options.executors.getModelOptions(executorRef, runtimeBinding);
   });
   ipcMain.handle("missions:create-defaults:get", async () => {
     const workspace = await options.getDefaultWorkspace();

@@ -277,11 +277,14 @@ const api: PragmaDesktopAPI = {
     MissionSummarySchema.array().parse(await ipcRenderer.invoke("missions:list")),
   listMissionExecutors: async () =>
     MissionExecutorOptionSchema.array().parse(await ipcRenderer.invoke("missions:executors:list")),
-  getMissionModelOptions: async (executorRef) =>
+  getMissionModelOptions: async (executorRef, missionId) =>
     MissionModelOptionsSchema.parse(
       await ipcRenderer.invoke(
         "missions:model-options:get",
-        MissionModelOptionsRequestSchema.parse({ executorRef }),
+        MissionModelOptionsRequestSchema.parse({
+          executorRef,
+          ...(missionId === undefined ? {} : { missionId }),
+        }),
       ),
     ),
   getMissionCreationDefaults: async () =>

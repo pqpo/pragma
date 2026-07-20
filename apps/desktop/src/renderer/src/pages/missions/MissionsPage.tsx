@@ -23,6 +23,7 @@ import {
   Play,
   StopCircle,
   SpinnerGap,
+  TerminalWindow,
   Toolbox,
   Trash,
   User,
@@ -35,7 +36,9 @@ import type { HumanInteractionResponse } from "@pragma/shared";
 import {
   type Mission,
   type MissionChatEntry,
+  type MissionChatPatch,
   type MissionChatSnapshot,
+  type MissionChatUpdate,
   type MissionHumanInteraction,
   type MissionSummary,
   type MissionWorkItem,
@@ -525,7 +528,9 @@ export function MissionDetailFragment(props: {
   const [awaitingRequestId, setAwaitingRequestId] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [models, setModels] = useState<readonly DesktopRuntimeModel[]>([]);
+  const [runtimeName, setRuntimeName] = useState<string>();
   const [modelsLoading, setModelsLoading] = useState(false);
+  const [defaultModelSelection, setDefaultModelSelection] = useState<MissionModelOverride>();
   const [modelResetRequired, setModelResetRequired] = useState(false);
   const [optionsSaving, setOptionsSaving] = useState(false);
   const [optionsError, setOptionsError] = useState<string | null>(null);
@@ -549,8 +554,14 @@ export function MissionDetailFragment(props: {
   const isFlow = props.mission.executor.kind === "flow";
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const chatRef = useRef<MissionChatSnapshot | null>(null);
   const followLatestRef = useRef(true);
   const prependScrollHeightRef = useRef<number | null>(null);
+  const updateChat = useCallback((update: SetStateAction<MissionChatSnapshot | null>) => {
+    const next = typeof update === "function" ? update(chatRef.current) : update;
+    chatRef.current = next;
+    setChat(next);
+  }, []);
   const executionStatus = chat?.execution?.status ?? props.mission.execution?.status;
   const executionActive =
     executionStatus !== undefined && ["queued", "running", "waiting"].includes(executionStatus);
@@ -575,16 +586,20 @@ export function MissionDetailFragment(props: {
   useEffect(() => {
     const api = desktopApi();
     setModels([]);
+    setRuntimeName(undefined);
+    setDefaultModelSelection(undefined);
     setOptionsError(null);
     setModelResetRequired(false);
     if (api === undefined || isFlow) return;
     let cancelled = false;
     setModelsLoading(true);
     void api
-      .getMissionModelOptions(props.mission.executor.ref)
+      .getMissionModelOptions(props.mission.executor.ref, props.mission.id)
       .then((result) => {
         if (cancelled) return;
+        setRuntimeName(result.runtime.displayName);
         setModels(result.models);
+        setDefaultModelSelection(result.defaultSelection);
         setModelResetRequired(result.status === "reset_required");
       })
       .catch((loadError: unknown) => {
@@ -596,7 +611,7 @@ export function MissionDetailFragment(props: {
     return () => {
       cancelled = true;
     };
-  }, [isFlow, props.mission.executor.ref]);
+  }, [isFlow, props.mission.executor.ref, props.mission.id]);
 
   useEffect(() => {
     const textarea = textareaRef.current;
@@ -619,7 +634,7 @@ export function MissionDetailFragment(props: {
 
   useEffect(() => {
     const api = desktopApi();
-    setChat(null);
+    updateChat(null);
     setHistoryError(null);
     setHumanQuestionIndex(0);
     followLatestRef.current = true;
@@ -628,6 +643,54 @@ export function MissionDetailFragment(props: {
     let cancelled = false;
     let refreshing = false;
     let refreshQueued = false;
+    let frame: number | undefined;
+    let hiddenTimer: ReturnType<typeof setTimeout> | undefined;
+    let pending: MissionChatUpdate[] = [];
+
+    const drainPending = (
+      base: MissionChatSnapshot,
+    ): { readonly snapshot: MissionChatSnapshot; readonly needsRefresh: boolean } => {
+      const updates = pending.toSorted((left, right) => left.revision - right.revision);
+      pending = [];
+      let snapshot = base;
+      for (let index = 0; index < updates.length; index += 1) {
+        const update = updates[index]!;
+        if (update.revision <= snapshot.revision) continue;
+        if (update.revision !== snapshot.revision + 1 || update.kind === "invalidate") {
+          pending.push(...updates.slice(index));
+          return { snapshot, needsRefresh: true };
+        }
+        const next = applyMissionChatPatches(snapshot, update.patches, update.revision);
+        if (next === null) {
+          pending.push(...updates.slice(index));
+          return { snapshot, needsRefresh: true };
+        }
+        snapshot = next;
+      }
+      return { snapshot, needsRefresh: false };
+    };
+
+    const flush = (): void => {
+      frame = undefined;
+      if (hiddenTimer !== undefined) {
+        clearTimeout(hiddenTimer);
+        hiddenTimer = undefined;
+      }
+      if (cancelled || chatRef.current === null || pending.length === 0) return;
+      const drained = drainPending(chatRef.current);
+      updateChat(drained.snapshot);
+      if (drained.needsRefresh) void refresh();
+    };
+
+    const scheduleFlush = (): void => {
+      if (frame !== undefined || hiddenTimer !== undefined || cancelled) return;
+      if (document.visibilityState === "hidden") {
+        hiddenTimer = setTimeout(flush, 100);
+      } else {
+        frame = requestAnimationFrame(flush);
+      }
+    };
+
     const refresh = async (): Promise<void> => {
       if (refreshing) {
         refreshQueued = true;
@@ -636,7 +699,13 @@ export function MissionDetailFragment(props: {
       refreshing = true;
       try {
         const snapshot = await api.getMissionChat({ id: props.mission.id, limit: 50 });
-        if (!cancelled) setChat((current) => mergeLatestChatPage(current, snapshot));
+        if (!cancelled) {
+          pending = pending.filter((update) => update.revision > snapshot.revision);
+          const merged = mergeLatestChatPage(chatRef.current, snapshot);
+          const drained = drainPending(merged);
+          updateChat(drained.snapshot);
+          if (drained.needsRefresh) refreshQueued = true;
+        }
       } catch (loadError) {
         if (!cancelled) console.error("Failed to refresh Mission chat.", loadError);
       } finally {
@@ -647,13 +716,18 @@ export function MissionDetailFragment(props: {
         }
       }
     };
-    const unsubscribe = api.subscribeMissionChat(props.mission.id, () => void refresh());
+    const unsubscribe = api.subscribeMissionChat(props.mission.id, (update) => {
+      pending.push(update);
+      scheduleFlush();
+    });
     void refresh();
     return () => {
       cancelled = true;
+      if (frame !== undefined) cancelAnimationFrame(frame);
+      if (hiddenTimer !== undefined) clearTimeout(hiddenTimer);
       unsubscribe();
     };
-  }, [props.mission.id]);
+  }, [props.mission.id, updateChat]);
 
   useEffect(() => {
     const api = desktopApi();
@@ -703,7 +777,7 @@ export function MissionDetailFragment(props: {
         api === undefined
           ? undefined
           : await api.getMissionChat({ id: props.mission.id, limit: 50 }).catch(() => undefined);
-      if (snapshot !== undefined) setChat((current) => mergeLatestChatPage(current, snapshot));
+      if (snapshot !== undefined) updateChat((current) => mergeLatestChatPage(current, snapshot));
       const persisted = snapshot?.entries.some((entry) => entry.id === requestId) ?? false;
       setOptimisticMessages((current) =>
         persisted
@@ -767,7 +841,7 @@ export function MissionDetailFragment(props: {
         requestId: crypto.randomUUID(),
         response,
       });
-      setChat((current) =>
+      updateChat((current) =>
         current === null
           ? current
           : {
@@ -849,7 +923,7 @@ export function MissionDetailFragment(props: {
         beforeSequence,
         limit: 50,
       });
-      setChat((current) => (current === null ? earlier : prependChatPage(current, earlier)));
+      updateChat((current) => (current === null ? earlier : prependChatPage(current, earlier)));
     } catch (loadError) {
       setHistoryError(errorMessage(loadError));
     } finally {
@@ -903,6 +977,13 @@ export function MissionDetailFragment(props: {
               <User size={17} aria-hidden="true" />
             )}
             {props.mission.executor.name}
+            {runtimeName === undefined ? null : (
+              <>
+                <span aria-hidden="true">·</span>
+                <TerminalWindow size={17} aria-hidden="true" />
+                {runtimeName}
+              </>
+            )}
           </p>
         </div>
         <div className="mission-header-actions">
@@ -1135,6 +1216,7 @@ export function MissionDetailFragment(props: {
                           loading={modelsLoading}
                           disabled={controlsDisabled}
                           value={modelOverride}
+                          defaultValue={defaultModelSelection}
                           onChange={(value) => void saveOptions(toolPermissionMode, value)}
                         />
                       ) : null}
@@ -1613,6 +1695,60 @@ function entryContentLength(entry: MissionChatEntry): number {
     return (entry.inputPreview?.length ?? 0) + (entry.outputPreview?.length ?? 0);
   }
   return entry.content.length;
+}
+
+export function applyMissionChatPatches(
+  snapshot: MissionChatSnapshot,
+  patches: readonly MissionChatPatch[],
+  revision: number,
+): MissionChatSnapshot | null {
+  const entries = [...snapshot.entries];
+  for (const patch of patches) {
+    const index =
+      patch.type === "entry.upsert" ? -1 : entries.findIndex((entry) => entry.id === patch.entryId);
+    if (patch.type === "entry.upsert") {
+      const existingIndex = entries.findIndex((entry) => entry.id === patch.entry.id);
+      if (existingIndex === -1) entries.push({ ...patch.entry });
+      else {
+        const existing = entries[existingIndex]!;
+        entries[existingIndex] = {
+          ...patch.entry,
+          ...(patch.entry.timelineSequence === undefined && existing.timelineSequence !== undefined
+            ? { timelineSequence: existing.timelineSequence }
+            : {}),
+          ...(patch.entry.executorName === undefined && existing.executorName !== undefined
+            ? { executorName: existing.executorName }
+            : {}),
+        };
+      }
+      continue;
+    }
+    if (index === -1) return null;
+    const entry = entries[index]!;
+    if (patch.type === "entry.streaming") {
+      if (entry.kind !== "assistant" && entry.kind !== "thinking") return null;
+      entries[index] = { ...entry, streaming: patch.streaming };
+      continue;
+    }
+    if (patch.field === "content") {
+      if (entry.kind !== "assistant" && entry.kind !== "thinking") return null;
+      entries[index] = {
+        ...entry,
+        content: truncateChatStream(`${entry.content}${patch.delta}`, 200_000),
+      };
+      continue;
+    }
+    if (entry.kind !== "tool") return null;
+    entries[index] = {
+      ...entry,
+      outputPreview: truncateChatStream(`${entry.outputPreview ?? ""}${patch.delta}`, 801),
+    };
+  }
+  return { ...snapshot, revision, entries };
+}
+
+function truncateChatStream(value: string, maxLength: number): string {
+  return value.length <= maxLength ? value : `${value.slice(0, maxLength - 1).trimEnd()}…`;
 }
 
 function mergeLatestChatPage(

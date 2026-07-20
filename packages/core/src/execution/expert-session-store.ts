@@ -125,27 +125,44 @@ export function createFileExpertSessionStore(options: {
           }
           return duplicate.executionId;
         }
+        const rootContext = session.contexts[session.rootContextId]!;
+        const prompt =
+          transaction.prompt.modelSelection !== undefined || rootContext.modelSelection === undefined
+            ? transaction.prompt
+            : { ...transaction.prompt, modelSelection: rootContext.modelSelection };
         const nextSession = ExpertSessionRecordSchema.parse({
           ...session,
-          queuedRequestIds: [...session.queuedRequestIds, transaction.prompt.requestId],
+          ...(prompt.modelSelection === undefined
+            ? {}
+            : {
+                contexts: {
+                  ...session.contexts,
+                  [session.rootContextId]: {
+                    ...rootContext,
+                    modelSelection: prompt.modelSelection,
+                    updatedAt: prompt.createdAt,
+                  },
+                },
+              }),
+          queuedRequestIds: [...session.queuedRequestIds, prompt.requestId],
           executionIds: [...session.executionIds, transaction.execution.executionId],
-          updatedAt: transaction.prompt.createdAt,
+          updatedAt: prompt.createdAt,
         });
-        const nextPrompts = PromptRequestSchema.array().parse([...prompts, transaction.prompt]);
+        const nextPrompts = PromptRequestSchema.array().parse([...prompts, prompt]);
         const journal = ExpertSessionTransactionJournalSchema.parse({
           schemaVersion: "pragma.expert-session-transaction/v4",
           session: nextSession,
           prompts: nextPrompts,
           events: materializeSessionEvents(sessionId, events, [
             {
-              eventId: `prompt-enqueued:${transaction.prompt.requestId}`,
+              eventId: `prompt-enqueued:${prompt.requestId}`,
               type: "prompt.enqueued",
               data: {
-                requestId: transaction.prompt.requestId,
-                executionId: transaction.prompt.executionId,
-                content: transaction.prompt.content,
+                requestId: prompt.requestId,
+                executionId: prompt.executionId,
+                content: prompt.content,
               },
-              occurredAt: transaction.prompt.createdAt,
+              occurredAt: prompt.createdAt,
             },
           ]),
           execution: transaction.execution,

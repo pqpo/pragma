@@ -4,7 +4,9 @@ import type { ModelProviderDefinition } from "@pragma/core";
 import {
   createPiModelProviderConverter,
   createPiModelRegistry,
+  createPiModelRuntime,
   normalizePiRuntimeModels,
+  registerPiModelProvider,
   resolvePiThinkingLevel,
   resolveRequiredRuntimeModel,
 } from "../src/models.ts";
@@ -34,6 +36,28 @@ describe("PI runtime model resolution", () => {
         "agent default",
       ),
     ).toThrow("Unknown agent default model: other/vendor/model-id");
+  });
+
+  it("rebinds a provider inside one native model runtime", async () => {
+    const original = {
+      id: "configured-provider",
+      catalogId: "custom-openai",
+      models: [testModel("model-a")],
+      baseUrl: "https://models.example.com/v1",
+      apiKey: "key-a",
+      api: "openai-completions" as const,
+    };
+    const { modelRegistry, modelRuntime } = await createPiModelRuntime([original]);
+    registerPiModelProvider(modelRuntime, {
+      ...original,
+      models: [testModel("model-b")],
+      apiKey: "key-b",
+    });
+
+    expect(modelRegistry.getAll().filter((model) => model.provider === original.id)).toEqual([
+      expect.objectContaining({ provider: original.id, id: "model-b" }),
+    ]);
+    expect(await modelRegistry.getApiKeyForProvider(original.id)).toBe("key-b");
   });
 
   it("intersects declared thinking levels with PI capabilities", () => {

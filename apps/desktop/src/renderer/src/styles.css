@@ -10140,14 +10140,7 @@ textarea:focus-visible,
 .mission-goal-field {
   display: grid;
   min-height: 0;
-  grid-template-rows: auto minmax(0, 1fr);
-}
-
-.home-mission-create .mission-goal-field > label {
-  padding: 21px 24px 0;
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 650;
+  grid-template-rows: minmax(0, 1fr);
 }
 
 .home-mission-create .mission-goal-field textarea {

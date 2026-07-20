@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import type { Mission } from "../../../../shared/desktop-api.ts";
-import { MissionDetailFragment, MissionsPage } from "./MissionsPage.tsx";
+import type { Mission, MissionChatSnapshot } from "../../../../shared/desktop-api.ts";
+import { applyMissionChatPatches, MissionDetailFragment, MissionsPage } from "./MissionsPage.tsx";
 
 describe("MissionsPage", () => {
   it("keeps creation outside the missions surface", () => {
@@ -62,6 +62,47 @@ describe("MissionDetailFragment", () => {
     expect(html.indexOf("mission-page-error")).toBeLessThan(html.indexOf("mission-chat-composer"));
     expect(html).toContain('aria-label="Close"');
     expect(html).toContain("The message could not be submitted.");
+  });
+});
+
+describe("Mission chat patches", () => {
+  it("applies streaming deltas without replacing the accumulated entry", () => {
+    const snapshot: MissionChatSnapshot = {
+      missionId: "00000000-0000-4000-8000-000000000000",
+      revision: 1,
+      entries: [
+        {
+          id: "answer",
+          kind: "assistant",
+          content: "hel",
+          streaming: true,
+          createdAt: "2026-07-11T00:00:00.000Z",
+        },
+      ],
+      page: {},
+      pendingInteractions: [],
+    };
+
+    const updated = applyMissionChatPatches(
+      snapshot,
+      [
+        { type: "entry.append", entryId: "answer", field: "content", delta: "lo" },
+        { type: "entry.streaming", entryId: "answer", streaming: false },
+      ],
+      2,
+    );
+
+    expect(updated).toMatchObject({
+      revision: 2,
+      entries: [{ id: "answer", content: "hello", streaming: false }],
+    });
+    expect(
+      applyMissionChatPatches(
+        snapshot,
+        [{ type: "entry.append", entryId: "missing", field: "content", delta: "x" }],
+        2,
+      ),
+    ).toBeNull();
   });
 });
 

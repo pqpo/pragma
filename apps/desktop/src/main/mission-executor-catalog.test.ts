@@ -17,6 +17,7 @@ describe("Mission executor model options", () => {
 
     await expect(catalog.getModelOptions("expert:pragma@1.0.0")).resolves.toEqual({
       status: "reset_required",
+      runtime: { id: "pi", displayName: "PI" },
       models: [],
     });
   });
@@ -26,22 +27,144 @@ describe("Mission executor model options", () => {
       {
         id: "model",
         displayName: "Model",
+        default: true,
         provider: {
           kind: "runtime-managed" as const,
           id: "provider",
           displayName: "Provider",
+        },
+        thinking: {
+          supportedLevels: [{ value: "high", label: "High" }],
+          defaultLevel: "high",
         },
       },
     ]);
 
     await expect(catalog.getModelOptions("expert:pragma@1.0.0")).resolves.toMatchObject({
       status: "ready",
+      runtime: { id: "pi", displayName: "PI" },
       models: [{ id: "model" }],
+      defaultSelection: { providerId: "provider", modelId: "model", thinkingLevel: "high" },
+    });
+  });
+
+  it("reports a pinned executor model instead of the Runtime default", async () => {
+    const catalog = createCatalog(
+      async () => [
+        {
+          id: "runtime-default",
+          displayName: "Runtime default",
+          default: true,
+          provider: {
+            kind: "runtime-managed" as const,
+            id: "runtime",
+            displayName: "Runtime",
+          },
+        },
+        {
+          id: "pinned",
+          displayName: "Pinned",
+          provider: {
+            kind: "runtime-managed" as const,
+            id: "provider",
+            displayName: "Provider",
+          },
+          thinking: {
+            supportedLevels: [{ value: "medium", label: "Medium" }],
+            defaultLevel: "medium",
+          },
+        },
+      ],
+      {
+        mode: "pinned",
+        model: { runtimeId: "pi", providerId: "provider", modelId: "pinned" },
+      },
+    );
+
+    await expect(catalog.getModelOptions("expert:pragma@1.0.0")).resolves.toMatchObject({
+      defaultSelection: { providerId: "provider", modelId: "pinned", thinkingLevel: "medium" },
+    });
+  });
+
+  it("uses the persisted Mission Session Runtime instead of the current default Runtime", async () => {
+    const piModels: readonly RuntimeModel[] = [
+      {
+        id: "pi-model",
+        displayName: "PI Model",
+        provider: {
+          kind: "registered",
+          id: "pi-provider",
+          displayName: "PI Provider",
+        },
+      },
+    ];
+    const codexModels: readonly RuntimeModel[] = [
+      {
+        id: "codex-model",
+        displayName: "Codex Model",
+        provider: {
+          kind: "runtime-managed",
+          id: "openai",
+          displayName: "OpenAI",
+        },
+      },
+    ];
+    const runtime = (id: string, models: readonly RuntimeModel[]) => ({
+      descriptor: { id, kind: "test", displayName: id },
+      canUse: async () => ({ usable: true }),
+      listModels: async () => models,
+      createSession: async () => {
+        throw new Error("unused");
+      },
+    });
+    const runtimes: RuntimeResolver = {
+      getDefaultRuntimeId: async () => "codex",
+      bind: async () => ({
+        binding: { runtimeId: "codex", revision: 2, fingerprint: "b".repeat(64) },
+        adapter: runtime("codex", codexModels),
+      }),
+      resolve: async ({ binding }) => ({ binding, adapter: runtime("pi", piModels) }),
+    };
+    const systemExperts = {
+      get: () => ({ executionProfile: { mode: "system-default" } }),
+      getExecutor: () => undefined,
+      listExecutors: () => [],
+    } as unknown as DesktopSystemExpertRegistry;
+    const project = {
+      get: async () => {
+        throw new Error("unused");
+      },
+    } as unknown as PragmaProjectStore;
+    const catalog = createMissionExecutorCatalog({ project, systemExperts, runtimes });
+
+    await expect(
+      catalog.getModelOptions("expert:pragma@1.0.0", {
+        runtimeId: "pi",
+        revision: 1,
+        fingerprint: "a".repeat(64),
+      }),
+    ).resolves.toMatchObject({
+      status: "ready",
+      runtime: { id: "pi", displayName: "pi" },
+      models: [{ id: "pi-model", provider: { id: "pi-provider" } }],
+      defaultSelection: { providerId: "pi-provider", modelId: "pi-model" },
     });
   });
 });
 
-function createCatalog(listModels: () => Promise<readonly RuntimeModel[]>) {
+function createCatalog(
+  listModels: () => Promise<readonly RuntimeModel[]>,
+  executionProfile:
+    | { readonly mode: "system-default" }
+    | {
+        readonly mode: "pinned";
+        readonly model: {
+          readonly runtimeId: string;
+          readonly providerId: string;
+          readonly modelId: string;
+        };
+      } = { mode: "system-default" },
+) {
   const runtimes: RuntimeResolver = {
     getDefaultRuntimeId: async () => "pi",
     bind: async () => ({
@@ -60,7 +183,7 @@ function createCatalog(listModels: () => Promise<readonly RuntimeModel[]>) {
     },
   };
   const systemExperts = {
-    get: () => ({ executionProfile: { mode: "system-default" } }),
+    get: () => ({ executionProfile }),
     getExecutor: () => undefined,
     listExecutors: () => [],
   } as unknown as DesktopSystemExpertRegistry;

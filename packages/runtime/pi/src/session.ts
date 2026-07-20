@@ -2,6 +2,7 @@ import type {
   AgentSession,
   AgentSessionEvent,
   ModelRegistry,
+  ModelRuntime,
 } from "@earendil-works/pi-coding-agent";
 import { AgentMessageUsageSchema, type AgentMessage, type AgentMessageUsage } from "@pragma/shared";
 import type {
@@ -35,6 +36,7 @@ export interface PiNativeSession {
   readonly models: {
     readonly defaultModel?: RuntimeModelRef | undefined;
     readonly modelRegistry: ModelRegistry;
+    readonly modelRuntime: ModelRuntime;
   };
   messageCountBeforeRun: number;
 }
@@ -46,6 +48,7 @@ export function createPiNativeSession(options: {
   readonly models: {
     readonly defaultModel?: RuntimeModelRef | undefined;
     readonly modelRegistry: ModelRegistry;
+    readonly modelRuntime: ModelRuntime;
   };
 }): PiNativeSession {
   return {

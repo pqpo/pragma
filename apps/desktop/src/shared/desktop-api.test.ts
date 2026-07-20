@@ -15,6 +15,7 @@ import {
   DeleteContextStoreSchema,
   GetMissionChatSchema,
   MissionChatSnapshotSchema,
+  MissionChatUpdateSchema,
   MissionModelOptionsSchema,
   MissionSchema,
   SetDefaultRuntimeSchema,
@@ -107,10 +108,59 @@ describe("mission model override contracts", () => {
   });
 
   it("represents provider reset requirements without rejecting model option loading", () => {
-    expect(MissionModelOptionsSchema.parse({ status: "reset_required", models: [] })).toEqual({
+    expect(
+      MissionModelOptionsSchema.parse({
+        status: "reset_required",
+        runtime: { id: "codex", displayName: "Codex" },
+        models: [],
+      }),
+    ).toEqual({
       status: "reset_required",
+      runtime: { id: "codex", displayName: "Codex" },
       models: [],
     });
+  });
+
+  it("carries the asynchronously resolved executor model defaults", () => {
+    expect(
+      MissionModelOptionsSchema.parse({
+        status: "ready",
+        runtime: { id: "codex", displayName: "Codex" },
+        models: [],
+        defaultSelection: {
+          providerId: "provider",
+          modelId: "model",
+          thinkingLevel: "high",
+        },
+      }).defaultSelection,
+    ).toEqual({ providerId: "provider", modelId: "model", thinkingLevel: "high" });
+  });
+});
+
+describe("mission chat streaming contracts", () => {
+  it("accepts incremental patches and invalidations with positive revisions", () => {
+    const missionId = "00000000-0000-4000-8000-000000000000";
+    expect(
+      MissionChatUpdateSchema.parse({
+        kind: "patch",
+        missionId,
+        revision: 1,
+        patches: [{ type: "entry.append", entryId: "answer", field: "content", delta: "hello" }],
+      }),
+    ).toMatchObject({ kind: "patch", revision: 1 });
+    expect(MissionChatUpdateSchema.parse({ kind: "invalidate", missionId, revision: 2 })).toEqual({
+      kind: "invalidate",
+      missionId,
+      revision: 2,
+    });
+    expect(
+      MissionChatUpdateSchema.safeParse({
+        kind: "patch",
+        missionId,
+        revision: 0,
+        patches: [],
+      }).success,
+    ).toBe(false);
   });
 });
 

@@ -5,6 +5,7 @@ import {
   type AgentInstance,
   type AgentMessage,
   type AgentMessageUsage,
+  type ExpertAgentStreamEvent,
   type Invocation,
   type RuntimeContextRecord,
   type RuntimeEnvironmentBinding,
@@ -577,9 +578,7 @@ async function readHumanInteractionResponse(
   );
   return responded === undefined
     ? undefined
-    : ExpertAgentHumanResponseSchema.parse(
-        (responded.data as { response?: unknown }).response,
-      );
+    : ExpertAgentHumanResponseSchema.parse((responded.data as { response?: unknown }).response);
 }
 
 export interface RunExpertInvocationOptions {
@@ -676,7 +675,7 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
   );
   throwIfAborted(invocationSignal, options.invocationId);
 
-  const modelSelection = options.modelSelection ?? readExpertModelSelection(nativeExpert);
+  const modelSelection = options.modelSelection ?? options.context.modelSelection;
   const resolvedRuntime = await options.runtimes.resolve({
     binding: options.context.runtime,
     modelSelection,
@@ -744,7 +743,7 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
       runtimeSession: options.context.snapshot?.runtimeSession,
       executionContext,
       humanInteractionHandler,
-      modelSelection,
+        modelSelection,
       onSessionInfo: async (info) => {
         if (info.runtimeSession.id === "") return;
         await persistRuntimeSnapshot({
@@ -780,7 +779,7 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
             : `${options.runtimeRunId ?? options.invocationId}:continuation:${continuation}`,
         executionContext,
         humanInteractionHandler,
-        modelSelection,
+      modelSelection,
         runtimeSource: runtime.descriptor,
       });
       options.controller.addUsage(turn.usage);
@@ -1100,9 +1099,10 @@ async function invokeResourceFromExpert(
   }
 
   const nativeTarget = isExpertTeam(target) ? target.coordinator : target;
+  const targetModelSelection = nativeTarget.models?.default;
   const targetRuntime = await options.runtimes.bind({
     runtimeId: nativeTarget.defaultRuntimeId ?? parentRuntimeId,
-    modelSelection: nativeTarget.models?.default,
+    modelSelection: targetModelSelection,
   });
   const contextResolution = await new ContextResolutionService(options.store).resolve({
     executionId: options.executionId,
@@ -1119,6 +1119,7 @@ async function invokeResourceFromExpert(
     ownerContextId: options.context.contextId,
     expert: { id: nativeTarget.id, version: nativeTarget.version },
     runtime: targetRuntime.binding,
+    modelSelection: targetModelSelection,
     resolver: freshContextIdResolver,
   });
   const invocation: Invocation = {
@@ -1266,13 +1267,15 @@ async function submitRuntimeTurn(options: {
           `invocation-message:${event.eventId}:${message.timestamp}`,
         );
       }
-      await options.options.store.appendEvent(
-        options.options.executionId,
-        options.options.invocationId,
-        "runtime.event",
-        event,
-        event.eventId,
-      );
+      if (!isLiveOnlyRuntimeEvent(event)) {
+        await options.options.store.appendEvent(
+          options.options.executionId,
+          options.options.invocationId,
+          "runtime.event",
+          event,
+          event.eventId,
+        );
+      }
     }
   })();
   try {
@@ -1299,8 +1302,10 @@ async function submitRuntimeTurn(options: {
   }
 }
 
-function readExpertModelSelection(expert: Expert): RuntimeModelSelection | undefined {
-  return expert.models?.default;
+function isLiveOnlyRuntimeEvent(event: ExpertAgentStreamEvent): boolean {
+  return (
+    event.type === "message.delta" || event.type === "thought.delta" || event.type === "tool.delta"
+  );
 }
 
 function withTeamDelegationTools(

@@ -13,7 +13,7 @@ describe("App", () => {
     const html = renderToStaticMarkup(<App />);
 
     expect(html).toContain("Start a mission");
-    expect(html).toContain("What do you want to accomplish?");
+    expect(html).toContain("What can I help you with?");
     expect(html).toContain('aria-label="Mission options"');
     expect(html).toContain('aria-label="Tool permissions"');
     expect(html).not.toContain("PRAGMA STEWARD");
@@ -26,7 +26,7 @@ describe("App", () => {
     const html = renderToStaticMarkup(<App />);
 
     expect(html).toContain("开始任务");
-    expect(html).toContain("你想完成什么？");
+    expect(html).toContain("可以让我帮你做什么呢？");
     expect(html).toContain('aria-label="任务选项"');
     expect(html).toContain('aria-label="工具权限"');
   });

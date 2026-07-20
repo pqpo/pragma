@@ -304,7 +304,7 @@ void app.whenReady().then(async () => {
       const defaults = await resolveSystemExpertRuntimeDefaults(
         scopedRuntimes,
         configuredModel,
-        mission.modelOverride,
+        mission.execution?.sessionId === undefined ? mission.modelOverride : undefined,
       );
       return await compileBuiltInDefaultAgent({
         definitionStateRoot: join(defaultAgentStateRoot, "definitions"),
