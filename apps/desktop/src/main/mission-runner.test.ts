@@ -414,7 +414,7 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
     ]);
   });
 
-  it("keeps an existing Mission on its original Runtime after the default changes", async () => {
+  it("keeps an existing Mission on its original Runtime and ignores changed Expert defaults", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-mission-runtime-binding-"));
     temporaryPaths.push(root);
     const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
@@ -429,7 +429,6 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
       goal: "Keep this conversation on PI",
       project: { id: snapshot.projectId, revision: snapshot.revision },
       executor: missionExecutorSnapshot(expert),
-      modelOverride: { providerId: "pi-provider", modelId: "pi-model" },
     });
     const piSelections: (RuntimeModelSelection | undefined)[] = [];
     const piTurns = vi.fn((_session, turn) => {
@@ -472,6 +471,10 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
       defaultRuntimeId: "pi",
     });
     let defaultRuntimeId = "pi";
+    const configured: {
+      runtimeId: string;
+      modelSelection?: RuntimeModelSelection | undefined;
+    } = { runtimeId: "pi" };
     const validate = async (
       resolved: Awaited<ReturnType<RuntimeResolver["bind"]>>,
       selection: RuntimeModelSelection | undefined,
@@ -509,8 +512,7 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
       capabilitiesPath: join(root, "capabilities"),
       pragmaHome: join(root, "state"),
       runtimes,
-      compileSystemExecutor: async ({ mission: current, runtimes: scopedRuntimes }) => {
-        const runtimeId = await scopedRuntimes.getDefaultRuntimeId();
+      compileSystemExecutor: async ({ mission: current }) => {
         const compiledExpert = await defineExpert({
           id: "writer",
           name: "Writer",
@@ -520,7 +522,10 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
           scope: "test",
           workspace: current.workspace.path,
           pragmaHome: join(root, "state"),
-          defaultRuntimeId: runtimeId,
+          defaultRuntimeId: configured.runtimeId,
+          ...(configured.modelSelection === undefined
+            ? {}
+            : { models: { default: configured.modelSelection } }),
         });
         return {
           ref: current.executor.ref,
@@ -534,7 +539,7 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
             resources: [],
             plugins: [],
           },
-          rootRuntimeId: runtimeId,
+          rootRuntimeId: configured.runtimeId,
           dependencies: [],
         };
       },
@@ -546,11 +551,10 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
       { timeout: settlementTimeoutMs },
     );
     defaultRuntimeId = "codex";
-    await runner.updateOptions({
-      id: mission.id,
-      toolPermissionMode: mission.toolPermissionMode,
-      modelOverride: { providerId: "pi-provider", modelId: "pi-model" },
-    });
+    configured.runtimeId = "codex";
+    configured.modelSelection = {
+      model: { providerId: "openai", modelId: "codex-model" },
+    };
     await runner.sendMessage({
       id: mission.id,
       content: "Continue on the original Runtime",
@@ -563,14 +567,7 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
 
     expect((await missions.get(mission.id)).execution?.sessionId).toBe(first.execution?.sessionId);
     expect(piTurns).toHaveBeenCalledTimes(2);
-    expect(piSelections).toEqual([
-      {
-        model: { providerId: "pi-provider", modelId: "pi-model" },
-      },
-      {
-        model: { providerId: "pi-provider", modelId: "pi-model" },
-      },
-    ]);
+    expect(piSelections).toEqual([undefined, undefined]);
     expect(codexTurns).not.toHaveBeenCalled();
   });
 

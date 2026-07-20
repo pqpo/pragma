@@ -297,14 +297,15 @@ void app.whenReady().then(async () => {
       }
       const definition = systemExperts.get(BUILT_IN_PRAGMA_REF);
       if (definition === undefined) throw new Error("The built-in Pragma definition is missing.");
+      const createsSession = mission.execution?.sessionId === undefined;
       const configuredModel =
-        definition.executionProfile.mode === "pinned"
+        createsSession && definition.executionProfile.mode === "pinned"
           ? definition.executionProfile.model
           : undefined;
       const defaults = await resolveSystemExpertRuntimeDefaults(
         scopedRuntimes,
         configuredModel,
-        mission.execution?.sessionId === undefined ? mission.modelOverride : undefined,
+        createsSession ? mission.modelOverride : undefined,
       );
       return await compileBuiltInDefaultAgent({
         definitionStateRoot: join(defaultAgentStateRoot, "definitions"),

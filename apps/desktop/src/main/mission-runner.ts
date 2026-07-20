@@ -444,7 +444,10 @@ export function createMissionRunner(options: {
       throw new Error("Flow missions cannot receive chat messages.");
     }
     const rootExpert = isExpertTeam(compiled.value) ? compiled.value.coordinator : compiled.value;
-    const desiredModelSelection = modelSelection ?? rootExpert.models?.default;
+    const desiredModelSelection =
+      mission.execution?.sessionId === undefined
+        ? (modelSelection ?? rootExpert.models?.default)
+        : modelSelection;
     const promptModelSelection = matchesBoundModel(
       desiredModelSelection,
       rootContext?.modelSelection,
