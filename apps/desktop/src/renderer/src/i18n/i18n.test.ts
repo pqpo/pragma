@@ -30,6 +30,15 @@ describe("desktop translations", () => {
     await i18n.changeLanguage(locale);
     expect(i18n.t("title", { ns: "home" })).toBe(expected);
   });
+
+  it.each([
+    ["en", "The built-in general-purpose Agent for everyday work and expert orchestration."],
+    ["zh-Hans", "内置通用 Agent，可直接处理日常工作并协调专业专家。"],
+    ["zh-Hant", "內建通用 Agent，可直接處理日常工作並協調專業專家。"],
+  ] as const)("renders the built-in Pragma description in %s", async (locale, expected) => {
+    await i18n.changeLanguage(locale);
+    expect(i18n.t("builtInExperts.pragma.description", { ns: "common" })).toBe(expected);
+  });
 });
 
 function resourceKeys(value: object, prefix = ""): string[] {

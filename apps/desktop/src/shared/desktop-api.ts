@@ -1043,6 +1043,7 @@ const MissionExecutorOptionBaseSchema = MissionExecutorBaseSchema.extend({
   description: z.string().trim().max(2_000),
   origin: z.enum(["project", "built-in"]),
   readOnly: z.boolean(),
+  customized: z.boolean(),
 });
 
 export const MissionExecutorOptionSchema = z.discriminatedUnion("kind", [

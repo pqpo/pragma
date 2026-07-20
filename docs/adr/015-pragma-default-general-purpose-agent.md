@@ -31,6 +31,9 @@ Rename the built-in product Agent to `Pragma` and give it the canonical ref
   Agent never edits project storage directly.
 - Mission storage, Execution events, chat, approvals, interruption, and recovery remain shared with
   every other executor. Pragma does not gain a separate Session or product protocol.
+- Desktop localizes the built-in Pragma name, description, and scope in presentation surfaces without
+  changing its canonical DSL or execution fingerprint. Customized built-in metadata and user-authored
+  Expert metadata remain authored content and are displayed without translation.
 
 Rename the reusable package from `@pragma/steward` to `@pragma/default-agent`. The package owns the
 portable Pragma DSL, bundled authoring Skill, application-neutral project and Mission ports, managed

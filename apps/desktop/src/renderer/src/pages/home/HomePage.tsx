@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { useEffect, useRef, useState, type RefObject } from "react";
 import {
   ArrowUp,
   CaretDown,
@@ -22,6 +22,7 @@ import type {
 import { ToolPermissionSelect } from "../../components/ToolPermissionSelect.tsx";
 import { MissionModelOverrideControls } from "../../components/MissionModelOverrideControls.tsx";
 import { errorMessage } from "../../lib/errors.ts";
+import { localizeSystemExpertCopy } from "../../lib/system-expert-copy.ts";
 
 interface WorkspaceSelection {
   readonly path: string;
@@ -330,6 +331,7 @@ function MissionExecutorPicker(props: {
   readonly onChange: (value: string) => void;
 }) {
   const { t } = useTranslation("missions");
+  const { t: tCommon } = useTranslation("common");
   const executorLabel = (executor: Pick<MissionExecutorOption, "kind">): string =>
     executor.kind === "expert"
       ? t("expert")
@@ -340,15 +342,24 @@ function MissionExecutorPicker(props: {
   const [search, setSearch] = useState("");
   const rootRef = useRef<HTMLDivElement | null>(null);
   const selected = props.executors.find((executor) => executor.ref === props.value);
-  const visibleExecutors = useMemo(() => {
-    const query = search.trim().toLocaleLowerCase();
-    if (query === "") return props.executors;
-    return props.executors.filter((executor) =>
-      [executor.name, executor.description, executor.ref, executor.kind].some((value) =>
-        value.toLocaleLowerCase().includes(query),
-      ),
-    );
-  }, [props.executors, search]);
+  const pragmaCopy = {
+    name: tCommon("builtInExperts.pragma.name"),
+    description: tCommon("builtInExperts.pragma.description"),
+    scope: tCommon("builtInExperts.pragma.scope"),
+  };
+  const displayCopy = (executor: MissionExecutorOption) =>
+    localizeSystemExpertCopy(executor, pragmaCopy);
+  const selectedCopy = selected === undefined ? undefined : displayCopy(selected);
+  const query = search.trim().toLocaleLowerCase();
+  const visibleExecutors =
+    query === ""
+      ? props.executors
+      : props.executors.filter((executor) => {
+          const copy = displayCopy(executor);
+          return [copy.name, copy.description, executor.ref, executor.kind].some((value) =>
+            value.toLocaleLowerCase().includes(query),
+          );
+        });
   const SelectedIcon = selected === undefined ? UsersThree : executorIcon(selected);
 
   useDismissableMenu(open, rootRef, () => {
@@ -372,7 +383,7 @@ function MissionExecutorPicker(props: {
         }}
       >
         <SelectedIcon size={17} aria-hidden="true" />
-        <span>{selected?.name ?? t("chooseResource")}</span>
+        <span>{selectedCopy?.name ?? t("chooseResource")}</span>
         <CaretDown size={14} aria-hidden="true" />
       </button>
       {open ? (
@@ -404,6 +415,7 @@ function MissionExecutorPicker(props: {
           <div className="mission-executor-options" role="list" aria-label={t("missionExecutors")}>
             {visibleExecutors.map((executor, index) => {
               const Icon = executorIcon(executor);
+              const copy = displayCopy(executor);
               const isSelected = executor.ref === props.value;
               const isDefault = executor.ref === props.defaultExecutorRef;
               return (
@@ -425,8 +437,8 @@ function MissionExecutorPicker(props: {
                     <Icon size={18} aria-hidden="true" />
                   </span>
                   <span>
-                    <strong>{executor.name}</strong>
-                    <small>{executor.description}</small>
+                    <strong>{copy.name}</strong>
+                    <small>{copy.description}</small>
                   </span>
                   <span className="mission-executor-option-kind">
                     {isDefault ? t("defaultExecutor") : executorLabel(executor)}

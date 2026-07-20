@@ -173,5 +173,6 @@ function projectExecutorOption(resource: PragmaInvocableResource): MissionExecut
     description: resource.metadata.description,
     origin: "project",
     readOnly: false,
+    customized: false,
   });
 }

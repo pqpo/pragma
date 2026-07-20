@@ -218,6 +218,7 @@ export function createDesktopSystemExpertRegistry(options?: {
           description: current.description,
           origin: current.origin,
           readOnly: current.readOnly,
+          customized: current.customized,
         }),
       ];
     },

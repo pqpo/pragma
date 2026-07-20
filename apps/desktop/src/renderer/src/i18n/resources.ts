@@ -54,6 +54,14 @@ export const en = {
       model_one: "{{count}} model",
       model_other: "{{count}} models",
     },
+    builtInExperts: {
+      pragma: {
+        name: "Pragma",
+        description:
+          "The built-in general-purpose Agent for everyday work and expert orchestration.",
+        scope: "Complete your work with the active Runtime, workspace, and available capabilities.",
+      },
+    },
   },
   home: {
     title: "Your AI workspace",
@@ -882,6 +890,13 @@ export const zhHans: TranslationShape<typeof en> = {
       model_one: "{{count}} 个模型",
       model_other: "{{count}} 个模型",
     },
+    builtInExperts: {
+      pragma: {
+        name: "Pragma",
+        description: "内置通用 Agent，可直接处理日常工作并协调专业专家。",
+        scope: "使用当前 Runtime、授权工作区和可用能力完成你的工作。",
+      },
+    },
   },
   home: {
     title: "你的 AI 工作空间",
@@ -1675,6 +1690,13 @@ export const zhHant: TranslationShape<typeof en> = {
     counts: {
       model_one: "{{count}} 個模型",
       model_other: "{{count}} 個模型",
+    },
+    builtInExperts: {
+      pragma: {
+        name: "Pragma",
+        description: "內建通用 Agent，可直接處理日常工作並協調專業專家。",
+        scope: "使用目前 Runtime、授權工作區和可用能力完成你的工作。",
+      },
     },
   },
   home: {

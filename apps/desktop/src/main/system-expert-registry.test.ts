@@ -40,6 +40,7 @@ describe("DesktopSystemExpertRegistry", () => {
         kind: "expert",
         origin: "built-in",
         readOnly: true,
+        customized: false,
       }),
     );
     expect(registry.isReservedRef(BUILT_IN_PRAGMA_REF)).toBe(true);
@@ -84,6 +85,13 @@ describe("DesktopSystemExpertRegistry", () => {
       additionalInstructions: "Prefer concise plans and confirm destructive operations.",
       executionProfile: { mode: "pinned", model: { runtimeId: "codex", modelId: "gpt-5.6" } },
     });
+    expect(registry.listExecutors()).toContainEqual(
+      expect.objectContaining({
+        ref: BUILT_IN_PRAGMA_REF,
+        name: "My Pragma",
+        customized: true,
+      }),
+    );
     expect(registry.getResource(BUILT_IN_PRAGMA_REF)?.spec.instructions).toContain(
       original.instructions,
     );
