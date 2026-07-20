@@ -6779,6 +6779,32 @@ p {
   background: transparent;
 }
 
+.expert-tool-service .expert-tool-row {
+  grid-template-columns: 18px minmax(0, 1fr) max-content;
+}
+
+.tool-approval-select {
+  align-self: center;
+}
+
+.creator-form .tool-approval-select select {
+  min-height: 32px;
+  padding: 5px 28px 5px 9px;
+  font-size: 11px;
+}
+
+.instructions-editor {
+  display: grid;
+  gap: 18px;
+}
+
+.instructions-editor textarea[readonly],
+.creator-form textarea[readonly] {
+  background: var(--surface-soft);
+  color: var(--muted);
+  cursor: default;
+}
+
 .expert-tool-service .expert-picker-row + .expert-picker-row {
   border-top-color: var(--border);
 }

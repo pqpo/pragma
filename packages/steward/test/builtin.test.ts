@@ -5,11 +5,11 @@ import { fileURLToPath } from "node:url";
 
 import type { Expert } from "@pragma/core";
 import { loadPragmaProject, parsePragmaYaml } from "@pragma/interpreter";
-import { PragmaResourceSchema } from "@pragma/interpreter/ast";
+import { PragmaCapabilityResourceSchema, PragmaResourceSchema } from "@pragma/interpreter/ast";
 import { describe, expect, it } from "vitest";
 
 import { BUILT_IN_STEWARD_FILES } from "../src/builtin.generated.ts";
-import { materializeBuiltInSteward } from "../src/builtin.ts";
+import { builtInStewardResource, materializeBuiltInSteward } from "../src/builtin.ts";
 import { createStewardTools } from "../src/tools.ts";
 
 describe("built-in Steward DSL", () => {
@@ -88,6 +88,43 @@ describe("built-in Steward DSL", () => {
       ),
     );
     expect(actual).toEqual(BUILT_IN_STEWARD_FILES);
+  });
+
+  it("materializes an overridden built-in Expert while preserving its bundled dependencies", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-steward-override-"));
+    const resource = builtInStewardResource();
+    resource.metadata.name = "My Steward";
+    resource.spec.instructions = "Use the customized built-in instructions.";
+    const optionalCapability = PragmaCapabilityResourceSchema.parse({
+      apiVersion: "pragma/v2",
+      kind: "Capability",
+      metadata: {
+        id: "desktop_optional",
+        version: "1",
+        name: "Desktop optional capability",
+        description: "An optional capability embedded by Desktop.",
+        tags: ["desktop-managed"],
+      },
+      spec: {
+        adapter: "pragma.capability.host@v1",
+        binding: "binding:desktop-capability.test.1",
+        config: { key: "desktop_optional" },
+      },
+    });
+    const entry = await materializeBuiltInSteward(root, resource, [optionalCapability]);
+    const project = await loadPragmaProject(entry, { rootDir: dirname(entry) });
+    const stored = project
+      .listResources()
+      .find((candidate) => candidate.kind === "Expert" && candidate.metadata.id === "steward");
+
+    expect(stored?.metadata.name).toBe("My Steward");
+    expect(stored?.kind === "Expert" ? stored.spec.instructions : undefined).toBe(
+      "Use the customized built-in instructions.",
+    );
+    expect(
+      project.listResources().filter((candidate) => candidate.kind === "Capability"),
+    ).toHaveLength(3);
+    expect(await project.validate()).toEqual([]);
   });
 
   it("keeps every YAML example in the Skill structurally valid", async () => {

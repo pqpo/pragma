@@ -1,8 +1,10 @@
 import {
   ArrowLeft,
+  ArrowCounterClockwise,
   BookOpenText,
   CaretDown,
   CaretRight,
+  Copy,
   Info,
   Folder,
   MagnifyingGlass,
@@ -123,9 +125,11 @@ export function ExpertDetailFragment(props: {
   readonly contextStores: readonly ContextStore[];
   readonly onBack: () => void;
   readonly onEdit: () => void;
+  readonly onUseAsTemplate: () => void;
   readonly onConfigureContext: () => void;
   readonly onTryInSession: () => void;
   readonly onDelete: () => Promise<void>;
+  readonly onReset: () => Promise<void>;
 }) {
   const { t } = useTranslation("studio");
   const ExpertIcon = props.expert.icon;
@@ -133,6 +137,8 @@ export function ExpertDetailFragment(props: {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [resetConfirmOpen, setResetConfirmOpen] = useState(false);
+  const [resetting, setResetting] = useState(false);
   const hasLongInstructions = props.expert.instructions.trim().length > INSTRUCTIONS_PREVIEW_LENGTH;
   const displayedInstructions =
     hasLongInstructions && !instructionsExpanded
@@ -148,6 +154,19 @@ export function ExpertDetailFragment(props: {
       setConfirmOpen(false);
     } finally {
       setDeleting(false);
+    }
+  };
+  const reset = async () => {
+    setResetting(true);
+    setDeleteError(null);
+    try {
+      await props.onReset();
+      setResetConfirmOpen(false);
+    } catch (cause) {
+      setDeleteError(errorMessage(cause));
+      setResetConfirmOpen(false);
+    } finally {
+      setResetting(false);
     }
   };
   return (
@@ -179,10 +198,32 @@ export function ExpertDetailFragment(props: {
           </div>
         </div>
         <div className="detail-actions">
-          {!props.expert.readOnly ? (
+          {!props.expert.readOnly || isBuiltInExpert(props.expert) ? (
             <button className="primary-button" type="button" onClick={props.onEdit}>
               <PencilSimple size={17} aria-hidden="true" />
-              {t("editExpert")}
+              {t(isBuiltInExpert(props.expert) ? "customizeBuiltInExpert" : "editExpert")}
+            </button>
+          ) : null}
+          {isBuiltInExpert(props.expert) ? (
+            <button
+              className="secondary-button"
+              type="button"
+              title={t("templateExcludesSystemCapabilities")}
+              onClick={props.onUseAsTemplate}
+            >
+              <Copy size={17} aria-hidden="true" />
+              {t("useAsTemplate")}
+            </button>
+          ) : null}
+          {isBuiltInExpert(props.expert) ? (
+            <button
+              className="secondary-button"
+              type="button"
+              disabled={!props.expert.customized}
+              onClick={() => setResetConfirmOpen(true)}
+            >
+              <ArrowCounterClockwise size={17} aria-hidden="true" />
+              {t("resetBuiltInExpert")}
             </button>
           ) : null}
           <button className="secondary-button" type="button" onClick={props.onTryInSession}>
@@ -214,7 +255,9 @@ export function ExpertDetailFragment(props: {
         <p>{props.expert.scope}</p>
       </section>
       <section className="instructions-preview">
-        <h2>{t("instructions")}</h2>
+        <h2>
+          {isBuiltInExpert(props.expert) ? t("builtInFoundationInstructions") : t("instructions")}
+        </h2>
         <p>{displayedInstructions || t("noInstructions")}</p>
         {hasLongInstructions ? (
           <button
@@ -227,10 +270,19 @@ export function ExpertDetailFragment(props: {
           </button>
         ) : null}
       </section>
+      {isBuiltInExpert(props.expert) ? (
+        <section className="instructions-preview">
+          <h2>{t("additionalInstructions")}</h2>
+          <p>{props.expert.additionalInstructions.trim() || t("noAdditionalInstructions")}</p>
+        </section>
+      ) : null}
       <section className="expert-capabilities" aria-label={t("expertCapabilities")}>
         <div>
           <h2>{t("model")}</h2>
-          <p>{props.expert.model?.modelId ?? t("notConfigured")}</p>
+          <p>
+            {props.expert.model?.modelId ??
+              t(isBuiltInExpert(props.expert) ? "systemDefault" : "notConfigured")}
+          </p>
         </div>
         <div>
           <h2>{t("capabilities")}</h2>
@@ -248,7 +300,7 @@ export function ExpertDetailFragment(props: {
             <h2 id="expert-context-heading">{t("context")}</h2>
             <p>{t("contextDescription")}</p>
           </div>
-          {!props.expert.readOnly ? (
+          {!props.expert.readOnly || isBuiltInExpert(props.expert) ? (
             <button className="secondary-button" type="button" onClick={props.onConfigureContext}>
               <Plus size={16} /> {t("configureContext")}
             </button>
@@ -297,6 +349,11 @@ export function ExpertDetailFragment(props: {
           <Info size={19} aria-hidden="true" /> {t("approvalNote")}
         </p>
       ) : null}
+      {isBuiltInExpert(props.expert) ? (
+        <p className="approval-note">
+          <Info size={19} aria-hidden="true" /> {t("templateExcludesSystemCapabilities")}
+        </p>
+      ) : null}
       {confirmOpen ? (
         <DeleteConfirmationDialog
           title={t("deleteExpert")}
@@ -307,6 +364,19 @@ export function ExpertDetailFragment(props: {
           busy={deleting}
           onCancel={() => setConfirmOpen(false)}
           onConfirm={() => void remove()}
+        />
+      ) : null}
+      {resetConfirmOpen ? (
+        <DeleteConfirmationDialog
+          title={t("resetBuiltInExpertConfirm")}
+          description={t("resetBuiltInExpertDescription", { name: props.expert.name })}
+          cancelLabel={t("cancel")}
+          confirmLabel={t("resetBuiltInExpert")}
+          deletingLabel={t("resettingBuiltInExpert")}
+          busy={resetting}
+          action="reset"
+          onCancel={() => setResetConfirmOpen(false)}
+          onConfirm={() => void reset()}
         />
       ) : null}
     </StudioScreenFrame>

@@ -103,9 +103,12 @@ export function ExpertCapabilityPicker(props: {
   readonly resourceTools: ExpertDraft["resourceTools"];
   readonly contextStoreMounts: ExpertDraft["contextStoreMounts"];
   readonly capabilityReferences: ExpertDraft["capabilities"];
+  readonly toolApprovals: ExpertDraft["toolApprovals"];
+  readonly allowResourceTools?: boolean | undefined;
   readonly onResourceToolsChange: (value: ExpertDraft["resourceTools"]) => void;
   readonly onContextStoreMountsChange: (value: ExpertDraft["contextStoreMounts"]) => void;
   readonly onCapabilityReferencesChange: (value: ExpertDraft["capabilities"]) => void;
+  readonly onToolApprovalsChange: (value: ExpertDraft["toolApprovals"]) => void;
 }) {
   const { t } = useTranslation("studio");
   const [activePicker, setActivePicker] = useState<PickerKind | null>(null);
@@ -210,13 +213,17 @@ export function ExpertCapabilityPicker(props: {
     readonly available: number;
     readonly names: readonly string[];
   }[] = [
-    {
-      id: "resources",
-      icon: Network,
-      selected: props.resourceTools.length,
-      available: invocableResources.length,
-      names: selectedResourceNames,
-    },
+    ...(props.allowResourceTools === false
+      ? []
+      : [
+          {
+            id: "resources" as const,
+            icon: Network,
+            selected: props.resourceTools.length,
+            available: invocableResources.length,
+            names: selectedResourceNames,
+          },
+        ]),
     {
       id: "context-stores",
       icon: Database,
@@ -254,6 +261,7 @@ export function ExpertCapabilityPicker(props: {
         );
         break;
       case "tools":
+        props.onToolApprovalsChange({});
         props.onCapabilityReferencesChange(
           props.capabilityReferences.filter((reference) => reference.kind !== "tools"),
         );
@@ -290,6 +298,17 @@ export function ExpertCapabilityPicker(props: {
             },
           ],
     );
+    const removedNames = (existing?.toolNames ?? []).filter((name) => !toolNames.includes(name));
+    if (removedNames.length > 0) {
+      const removedKeys = new Set(
+        removedNames.map((name) => toolApprovalKey(capability.manifest.runtimeKey, name)),
+      );
+      props.onToolApprovalsChange(
+        Object.fromEntries(
+          Object.entries(props.toolApprovals).filter(([key]) => !removedKeys.has(key)),
+        ),
+      );
+    }
   };
 
   return (
@@ -419,7 +438,14 @@ export function ExpertCapabilityPicker(props: {
                   capabilities={toolServices}
                   query={search}
                   references={props.capabilityReferences}
+                  toolApprovals={props.toolApprovals}
                   onUpdate={updateToolReference}
+                  onApprovalChange={(key, mode) => {
+                    const next = { ...props.toolApprovals };
+                    if (mode === undefined) delete next[key];
+                    else next[key] = mode;
+                    props.onToolApprovalsChange(next);
+                  }}
                   onUpgrade={(selected, capability) =>
                     props.onCapabilityReferencesChange(
                       props.capabilityReferences.map((reference) =>
@@ -642,7 +668,12 @@ function ToolResults(props: {
   readonly capabilities: readonly Capability[];
   readonly query: string;
   readonly references: ExpertDraft["capabilities"];
+  readonly toolApprovals: ExpertDraft["toolApprovals"];
   readonly onUpdate: (capability: Capability, toolNames: readonly string[]) => void;
+  readonly onApprovalChange: (
+    key: string,
+    mode: ExpertDraft["toolApprovals"][string] | undefined,
+  ) => void;
   readonly onUpgrade: (
     selected: Extract<ExpertDraft["capabilities"][number], { readonly kind: "tools" }>,
     capability: Capability,
@@ -709,10 +740,12 @@ function ToolResults(props: {
             <div className="expert-picker-list">
               {visibleTools.map((tool) => {
                 const checked = selectedNames.includes(tool.name);
+                const approvalKey = toolApprovalKey(capability.manifest.runtimeKey, tool.name);
                 return (
-                  <label className="expert-picker-row expert-tool-row" key={tool.name}>
+                  <div className="expert-picker-row expert-tool-row" key={tool.name}>
                     <input
                       type="checkbox"
+                      aria-label={t("selectExpertTool", { name: tool.name })}
                       disabled={unavailable}
                       checked={checked}
                       onChange={() =>
@@ -728,7 +761,28 @@ function ToolResults(props: {
                       <strong>{tool.name}</strong>
                       <small>{tool.description ?? t("externalTool")}</small>
                     </span>
-                  </label>
+                    {checked ? (
+                      <label className="tool-approval-select">
+                        <span className="sr-only">{t("toolApprovalFor", { name: tool.name })}</span>
+                        <select
+                          value={props.toolApprovals[approvalKey] ?? ""}
+                          onChange={(event) =>
+                            props.onApprovalChange(
+                              approvalKey,
+                              event.target.value === ""
+                                ? undefined
+                                : (event.target.value as ExpertDraft["toolApprovals"][string]),
+                            )
+                          }
+                        >
+                          <option value="">{t("approvalDefault")}</option>
+                          <option value="none">{t("approvalNone")}</option>
+                          <option value="ask">{t("approvalAsk")}</option>
+                          <option value="required">{t("approvalRequired")}</option>
+                        </select>
+                      </label>
+                    ) : null}
+                  </div>
                 );
               })}
             </div>
@@ -737,4 +791,9 @@ function ToolResults(props: {
       })}
     </div>
   );
+}
+
+function toolApprovalKey(runtimeKey: string, toolName: string): string {
+  const sanitized = toolName.replace(/[^a-zA-Z0-9_]/g, "_").replace(/_+/g, "_") || "tool";
+  return `mcp_${runtimeKey}_${sanitized}`;
 }

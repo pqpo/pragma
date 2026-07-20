@@ -14,10 +14,12 @@ import {
   ExpertDefinitionSchema,
   ExpertSummarySchema,
   UpdateExpertDefinitionSchema,
+  UpdateBuiltInExpertDefinitionSchema,
   type CreateExpertDefinition,
   type ExpertDefinition,
   type ExpertSummary,
   type UpdateExpertDefinition,
+  type UpdateBuiltInExpertDefinition,
 } from "../shared/desktop-api.ts";
 import type { PragmaProjectStore } from "./pragma-project-store.ts";
 import type { DesktopSystemExpertRegistry } from "./system-expert-registry.ts";
@@ -38,6 +40,8 @@ export interface ExpertDefinitionStore {
   get(ref: string): Promise<ExpertDefinition>;
   create(input: CreateExpertDefinition): Promise<ExpertDefinition>;
   update(ref: string, input: UpdateExpertDefinition): Promise<ExpertDefinition>;
+  updateBuiltIn(ref: string, input: UpdateBuiltInExpertDefinition): Promise<ExpertDefinition>;
+  resetBuiltIn(ref: string): Promise<ExpertDefinition>;
   remove(ref: string): Promise<void>;
 }
 
@@ -206,6 +210,14 @@ export function createExpertDefinitionStore(options: {
         updated.updatedAt ?? new Date().toISOString(),
         updated.resources,
       );
+    },
+    async updateBuiltIn(id, input) {
+      const parsed = UpdateBuiltInExpertDefinitionSchema.parse(input);
+      if (parsed.model !== undefined) await options.validateModel(parsed.model);
+      return await options.systemExperts.update(id, parsed);
+    },
+    async resetBuiltIn(id) {
+      return await options.systemExperts.reset(id);
     },
     async remove(id) {
       if (options.systemExperts.isReservedRef(id)) {
@@ -449,8 +461,10 @@ export function pragmaExpertResourceToDesktopDefinition(
     version: resource.metadata.version,
     scope: resource.spec.scope,
     instructions: resource.spec.instructions,
+    additionalInstructions: "",
     origin: "project",
     readOnly: false,
+    customized: false,
     executionProfile: { mode: "pinned", model: desktopModel(resource, resources) },
     resourceRuntime: resource.spec.runtime,
     capabilities,

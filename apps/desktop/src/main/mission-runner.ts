@@ -650,7 +650,7 @@ export function createMissionRunner(options: {
   };
 }
 
-function createDesktopAdapterHost(
+export function createDesktopAdapterHost(
   options: {
     readonly capabilityStore: CapabilityStore;
     readonly capabilityCredentials: CapabilityCredentialStore;

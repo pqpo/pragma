@@ -13,10 +13,13 @@ const expert: ExpertRecord = {
   version: "0.1.0",
   scope: "Handles focused test work.",
   instructions: "i".repeat(500),
+  additionalInstructions: "",
   origin: "project",
   readOnly: false,
+  customized: false,
   model: { runtimeId: "test", providerId: "test", modelId: "test" },
   capabilities: [],
+  toolApprovals: {},
   skills: 0,
   tools: 0,
   mcpServers: 0,
@@ -35,9 +38,11 @@ describe("ExpertDetailFragment", () => {
         contextStores={[]}
         onBack={() => undefined}
         onEdit={() => undefined}
+        onUseAsTemplate={() => undefined}
         onConfigureContext={() => undefined}
         onTryInSession={() => undefined}
         onDelete={async () => undefined}
+        onReset={async () => undefined}
       />,
     );
 
@@ -52,22 +57,32 @@ describe("ExpertDetailFragment", () => {
     expect(html).toContain("Delete expert");
   });
 
-  it("does not offer deletion for a built-in expert", () => {
+  it("offers edit and reset, but not deletion, for a built-in expert", () => {
     const html = renderToStaticMarkup(
       <ExpertDetailFragment
-        expert={{ ...expert, origin: "built-in", readOnly: true, model: null }}
+        expert={{
+          ...expert,
+          origin: "built-in",
+          readOnly: true,
+          customized: true,
+          model: null,
+        }}
         contextStores={[]}
         onBack={() => undefined}
         onEdit={() => undefined}
+        onUseAsTemplate={() => undefined}
         onConfigureContext={() => undefined}
         onTryInSession={() => undefined}
         onDelete={async () => undefined}
+        onReset={async () => undefined}
       />,
     );
 
     expect(html).not.toContain("Delete expert");
-    expect(html).not.toContain("Edit expert");
-    expect(html).not.toContain("Configure context");
+    expect(html).toContain("Customize");
+    expect(html).toContain("Use as template");
+    expect(html).toContain("Reset to default");
+    expect(html).toContain("Configure context");
     expect(html).toContain("Try in session");
   });
 });

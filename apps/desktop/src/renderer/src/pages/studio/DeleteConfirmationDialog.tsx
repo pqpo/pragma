@@ -1,4 +1,4 @@
-import { Trash } from "@phosphor-icons/react";
+import { ArrowCounterClockwise, Trash } from "@phosphor-icons/react";
 
 export function DeleteConfirmationDialog(props: {
   readonly title: string;
@@ -9,7 +9,9 @@ export function DeleteConfirmationDialog(props: {
   readonly busy: boolean;
   readonly onCancel: () => void;
   readonly onConfirm: () => void;
+  readonly action?: "delete" | "reset" | undefined;
 }) {
+  const ConfirmIcon = props.action === "reset" ? ArrowCounterClockwise : Trash;
   return (
     <div className="capability-confirm-backdrop">
       <section
@@ -40,7 +42,7 @@ export function DeleteConfirmationDialog(props: {
             disabled={props.busy}
             onClick={props.onConfirm}
           >
-            <Trash size={17} /> {props.busy ? props.deletingLabel : props.confirmLabel}
+            <ConfirmIcon size={17} /> {props.busy ? props.deletingLabel : props.confirmLabel}
           </button>
         </footer>
       </section>

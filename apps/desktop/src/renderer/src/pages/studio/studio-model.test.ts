@@ -13,8 +13,10 @@ const persistedExpert: ExpertDefinition = {
   version: "1.0.0",
   scope: "Reviews code quality. Does not merge changes.",
   instructions: "Review changes carefully.",
+  additionalInstructions: "",
   origin: "project",
   readOnly: false,
+  customized: false,
   executionProfile: {
     mode: "pinned",
     model: { runtimeId: "test", providerId: "test", modelId: "test" },
@@ -48,7 +50,7 @@ describe("toPersistedInput", () => {
 });
 
 describe("isBuiltInExpert", () => {
-  it("uses explicit origin and read-only metadata", () => {
+  it("uses explicit origin metadata", () => {
     expect(isBuiltInExpert({ origin: "built-in", readOnly: true })).toBe(true);
     expect(isBuiltInExpert({ origin: "project", readOnly: false })).toBe(false);
   });

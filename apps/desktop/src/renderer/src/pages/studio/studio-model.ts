@@ -28,10 +28,13 @@ export type ExpertRecord = {
   readonly version: string;
   readonly scope: string;
   readonly instructions: string;
+  readonly additionalInstructions: string;
   readonly origin: ExpertDefinition["origin"];
   readonly readOnly: boolean;
+  readonly customized: boolean;
   readonly model: ExpertModel | null;
   readonly capabilities: ExpertDefinition["capabilities"];
+  readonly toolApprovals: ExpertDefinition["toolApprovals"];
   readonly skills: number;
   readonly tools: number;
   readonly mcpServers: number;
@@ -57,10 +60,13 @@ export const emptyDraft = (): ExpertDraft => ({
   version: "0.1.0",
   scope: "",
   instructions: "",
+  additionalInstructions: "",
   origin: "project",
   readOnly: false,
+  customized: false,
   model: null,
   capabilities: [],
+  toolApprovals: {},
   skills: 0,
   tools: 0,
   mcpServers: 0,
@@ -82,10 +88,13 @@ export function toExpertRecord(definition: ExpertDefinition): ExpertRecord {
     version: definition.version,
     scope: definition.scope,
     instructions: definition.instructions ?? "",
+    additionalInstructions: definition.additionalInstructions,
     origin: definition.origin,
     readOnly: definition.readOnly,
+    customized: definition.customized,
     model: definition.executionProfile.mode === "pinned" ? definition.executionProfile.model : null,
     capabilities: definition.capabilities,
+    toolApprovals: definition.toolApprovals,
     skills:
       definition.capabilities.filter((reference) => reference.kind === "skill").length +
       (definition.opaqueCapabilities ?? []).filter((reference) => reference.kind === "skill")
@@ -111,7 +120,7 @@ export function toExpertRecord(definition: ExpertDefinition): ExpertRecord {
 }
 
 export function isBuiltInExpert(expert: Pick<ExpertRecord, "origin" | "readOnly">): boolean {
-  return expert.origin === "built-in" && expert.readOnly;
+  return expert.origin === "built-in";
 }
 
 export function toPersistedInput(
@@ -131,7 +140,7 @@ export function toPersistedInput(
     instructions: expert.instructions,
     model: expert.model,
     capabilities: [...expert.capabilities],
-    toolApprovals: existing?.toolApprovals ?? {},
+    toolApprovals: expert.toolApprovals,
     plugins: [...expert.plugins],
     contextStoreMounts: [...expert.contextStoreMounts],
     resourceTools: [...expert.resourceTools],

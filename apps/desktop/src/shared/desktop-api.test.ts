@@ -19,6 +19,7 @@ import {
   SetDefaultRuntimeSchema,
   DesktopSettingsSnapshotSchema,
   UpdateDesktopSettingsSchema,
+  UpdateBuiltInExpertDefinitionSchema,
 } from "./desktop-api.ts";
 
 describe("desktop settings contracts", () => {
@@ -103,6 +104,35 @@ describe("expert input limits", () => {
     expect(CreateExpertDefinitionSchema.safeParse({ ...validInput, ...override }).success).toBe(
       false,
     );
+  });
+});
+
+describe("built-in expert customization contracts", () => {
+  const customization = {
+    name: "My Steward",
+    description: "A customized built-in expert.",
+    tags: ["customized"],
+    additionalInstructions: "Prefer concise answers.",
+    capabilities: [],
+    toolApprovals: {},
+    plugins: [],
+    contextStoreMounts: [],
+  };
+
+  it("accepts only the user customization layer", () => {
+    expect(UpdateBuiltInExpertDefinitionSchema.safeParse(customization).success).toBe(true);
+    expect(
+      UpdateBuiltInExpertDefinitionSchema.safeParse({
+        ...customization,
+        scope: "Replace the system-owned scope.",
+      }).success,
+    ).toBe(false);
+    expect(
+      UpdateBuiltInExpertDefinitionSchema.safeParse({
+        ...customization,
+        instructions: "Replace the system-owned foundation.",
+      }).success,
+    ).toBe(false);
   });
 });
 

@@ -28,7 +28,7 @@ import { installPluginHandlers } from "./plugin-ipc.ts";
 import { createPluginCredentialStore } from "./plugin-credential-store.ts";
 import { createPluginStore } from "./plugin-store.ts";
 import { installMissionHandlers } from "./mission-ipc.ts";
-import { createMissionRunner } from "./mission-runner.ts";
+import { createDesktopAdapterHost, createMissionRunner } from "./mission-runner.ts";
 import { createMissionStore } from "./mission-store.ts";
 import { createMissionExecutorCatalog } from "./mission-executor-catalog.ts";
 import { installPragmaProjectHandlers } from "./pragma-project-ipc.ts";
@@ -143,7 +143,11 @@ void app.whenReady().then(async () => {
     (await desktopSettings.getSnapshot(app.getPreferredSystemLanguages())).toolPermissionMode;
   const automaticHumanInteractionHandler =
     createAutomaticToolPermissionHandler(getToolPermissionMode);
-  const systemExperts = createDesktopSystemExpertRegistry();
+  const systemExperts = createDesktopSystemExpertRegistry({
+    configPath: join(pragmaPaths.stateRoot(), "system-experts.json"),
+    warn: (message, error) => console.warn(message, error),
+  });
+  await systemExperts.initialize();
   const pragmaProjectStore = createPragmaProjectStore({
     projectsPath: join(app.getPath("home"), ".pragma", "projects"),
     reservedResourceRefs: new Set([BUILT_IN_STEWARD_REF]),
@@ -286,10 +290,14 @@ void app.whenReady().then(async () => {
       if (stewardToolsRef.current === undefined) {
         throw new Error("The built-in Steward tools have not been initialized.");
       }
-      const defaults = await resolveSystemExpertRuntimeDefaults(
-        scopedRuntimes,
-        mission.modelOverride,
-      );
+      const definition = systemExperts.get(BUILT_IN_STEWARD_REF);
+      if (definition === undefined) throw new Error("The built-in Steward definition is missing.");
+      const configuredModel =
+        definition.executionProfile.mode === "pinned"
+          ? definition.executionProfile.model
+          : undefined;
+      const executionModel = mission.modelOverride ?? configuredModel;
+      const defaults = await resolveSystemExpertRuntimeDefaults(scopedRuntimes, executionModel);
       return await compileBuiltInSteward({
         definitionStateRoot: join(stewardStateRoot, "definitions"),
         workspace: mission.workspace.path,
@@ -298,7 +306,40 @@ void app.whenReady().then(async () => {
         ...(defaults.modelSelection === undefined
           ? {}
           : { defaultModelSelection: defaults.modelSelection }),
+        rootExecutionOverride: {
+          runtimeId: defaults.runtimeId,
+          ...(defaults.modelSelection === undefined
+            ? {}
+            : { modelSelection: defaults.modelSelection }),
+        },
         tools: stewardToolsRef.current,
+        ...(definition.customized
+          ? { expertResource: systemExperts.getResource(BUILT_IN_STEWARD_REF) }
+          : {}),
+        additionalResources: systemExperts.getAdditionalResources(BUILT_IN_STEWARD_REF),
+        adapterHost: createDesktopAdapterHost(
+          {
+            capabilityStore,
+            capabilityCredentials,
+            capabilitiesPath: join(app.getPath("home"), ".pragma", "capabilities"),
+            contextStores,
+          },
+          mission.workspace.path,
+        ),
+        plugins: {
+          inspect: async ({ binding }) =>
+            await pluginStore.inspect({
+              ref: binding.ref,
+              config: binding.config,
+              secretBindings: binding.secretBindings,
+            }),
+          resolve: async ({ binding }) =>
+            await pluginStore.resolve({
+              ref: binding.ref,
+              config: binding.config,
+              secretBindings: binding.secretBindings,
+            }),
+        },
       });
     },
   });

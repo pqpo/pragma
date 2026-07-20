@@ -31,6 +31,7 @@ import { PluginDetailFragment, PluginDirectoryFragment } from "./PluginDirectory
 import {
   desktopApi,
   emptyDraft,
+  isBuiltInExpert,
   studioSections,
   toExpertRecord,
   toPersistedInput,
@@ -138,17 +139,62 @@ export function StudioPage(props: { readonly onTryExpert: (expert: ExpertRecord)
     );
     setScreen("create");
   };
+  const useBuiltInAsTemplate = (expert: ExpertRecord) => {
+    const baseId = `${expert.id}_custom`;
+    let id = baseId;
+    let suffix = 2;
+    const existingIds = new Set(experts.map((item) => item.id.toLowerCase()));
+    while (existingIds.has(id.toLowerCase())) {
+      id = `${baseId}_${suffix}`;
+      suffix += 1;
+    }
+    const capabilities = [...expert.capabilities];
+    openCreate({
+      ...expert,
+      ref: undefined,
+      id,
+      name: t("expertTemplateName", { name: expert.name }),
+      version: "0.1.0",
+      instructions: [expert.instructions, expert.additionalInstructions.trim()]
+        .filter(Boolean)
+        .join("\n\n"),
+      additionalInstructions: "",
+      origin: "project",
+      readOnly: false,
+      customized: false,
+      capabilities,
+      skills: capabilities.filter((reference) => reference.kind === "skill").length,
+      tools: capabilities
+        .filter((reference) => reference.kind === "tools")
+        .reduce((total, reference) => total + reference.toolNames.length, 0),
+      mcpServers: capabilities.filter((reference) => reference.kind === "tools").length,
+      persisted: undefined,
+    });
+  };
   const saveExpert = async (expert: ExpertRecord) => {
     const api = desktopApi();
     let saved = expert;
     if (api !== undefined) {
-      const input = toPersistedInput(expert);
-      const definition =
-        expert.persisted === undefined
-          ? await api.createExpert(input as CreateExpertDefinition)
-          : await api.updateExpert(expert.persisted.ref, input as UpdateExpertDefinition);
+      const definition = isBuiltInExpert(expert)
+        ? await api.updateBuiltInExpert(expert.ref!, {
+            name: expert.name,
+            description: expert.description,
+            tags: [...expert.tags],
+            additionalInstructions: expert.additionalInstructions,
+            ...(expert.model === null ? {} : { model: expert.model }),
+            capabilities: [...expert.capabilities],
+            toolApprovals: expert.toolApprovals,
+            plugins: [...expert.plugins],
+            contextStoreMounts: [...expert.contextStoreMounts],
+          })
+        : expert.persisted === undefined
+          ? await api.createExpert(toPersistedInput(expert) as CreateExpertDefinition)
+          : await api.updateExpert(
+              expert.persisted.ref,
+              toPersistedInput(expert) as UpdateExpertDefinition,
+            );
       saved = toExpertRecord(definition);
-      setProject(await api.getPragmaProject());
+      if (!isBuiltInExpert(expert)) setProject(await api.getPragmaProject());
     }
     setExperts((current) =>
       current.some(
@@ -167,6 +213,15 @@ export function StudioPage(props: { readonly onTryExpert: (expert: ExpertRecord)
     setSelectedExpert(saved);
     setExpertError(null);
     setScreen("expert-detail");
+  };
+  const resetSelectedExpert = async () => {
+    if (selectedExpert === null || !isBuiltInExpert(selectedExpert)) return;
+    const api = desktopApi();
+    if (api === undefined) return;
+    const reset = toExpertRecord(await api.resetBuiltInExpert(selectedExpert.ref!));
+    setExperts((current) => current.map((expert) => (expert.ref === reset.ref ? reset : expert)));
+    setSelectedExpert(reset);
+    setExpertError(null);
   };
   const deleteSelectedExpert = async () => {
     if (selectedExpert === null) return;
@@ -338,9 +393,11 @@ export function StudioPage(props: { readonly onTryExpert: (expert: ExpertRecord)
             contextStores={contextStores}
             onBack={openExpertDirectory}
             onEdit={() => openCreate(selectedExpert)}
+            onUseAsTemplate={() => useBuiltInAsTemplate(selectedExpert)}
             onConfigureContext={() => setContextDrawerOpen(true)}
             onTryInSession={() => props.onTryExpert(selectedExpert)}
             onDelete={deleteSelectedExpert}
+            onReset={resetSelectedExpert}
           />
         ) : null}
         {screen === "create" ? (

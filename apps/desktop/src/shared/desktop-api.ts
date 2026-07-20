@@ -339,6 +339,10 @@ export const CreateExpertIdSchema = z
 
 export const ExpertScopeSchema = PragmaExpertScopeSchema;
 export const ExpertInstructionsSchema = PragmaExpertInstructionsSchema;
+export const ExpertAdditionalInstructionsSchema = z
+  .string()
+  .max(EXPERT_INSTRUCTIONS_MAX_LENGTH)
+  .default("");
 
 export const ExpertModelConfigSchema = z.object({
   runtimeId: DesktopRuntimeIdSchema,
@@ -847,8 +851,10 @@ export const ExpertDefinitionSchema = z.object({
   version: z.string().trim().min(1).max(100),
   scope: ExpertScopeSchema,
   instructions: ExpertInstructionsSchema,
+  additionalInstructions: ExpertAdditionalInstructionsSchema,
   origin: z.enum(["project", "built-in"]),
   readOnly: z.boolean(),
+  customized: z.boolean(),
   executionProfile: ExpertExecutionProfileSchema,
   capabilities: z.array(ExpertCapabilityReferenceSchema).max(500),
   toolApprovals: z.record(z.string().max(200), ExpertToolApprovalModeSchema),
@@ -873,6 +879,7 @@ export const ExpertSummarySchema = ExpertDefinitionSchema.pick({
   scope: true,
   origin: true,
   readOnly: true,
+  customized: true,
   revision: true,
   createdAt: true,
   updatedAt: true,
@@ -884,6 +891,8 @@ export const CreateExpertDefinitionSchema = ExpertDefinitionSchema.omit({
   resourceRuntime: true,
   origin: true,
   readOnly: true,
+  customized: true,
+  additionalInstructions: true,
   executionProfile: true,
   revision: true,
   createdAt: true,
@@ -905,10 +914,31 @@ export const CreateExpertDefinitionSchema = ExpertDefinitionSchema.omit({
 
 export const UpdateExpertDefinitionSchema = CreateExpertDefinitionSchema.omit({ id: true });
 
+export const UpdateBuiltInExpertDefinitionSchema = CreateExpertDefinitionSchema.pick({
+  name: true,
+  description: true,
+  tags: true,
+  model: true,
+  capabilities: true,
+  toolApprovals: true,
+  plugins: true,
+  contextStoreMounts: true,
+})
+  .extend({
+    additionalInstructions: ExpertAdditionalInstructionsSchema,
+    model: ExpertModelConfigSchema.optional(),
+    capabilities: ExpertDefinitionSchema.shape.capabilities,
+    toolApprovals: ExpertDefinitionSchema.shape.toolApprovals,
+    plugins: ExpertDefinitionSchema.shape.plugins,
+    contextStoreMounts: ExpertDefinitionSchema.shape.contextStoreMounts,
+  })
+  .strict();
+
 export const ExpertRefSchema = PragmaSemanticResourceRefSchema.refine((value) =>
   value.startsWith("expert:"),
 );
 export const DeleteExpertDefinitionSchema = z.object({ ref: ExpertRefSchema });
+export const ResetBuiltInExpertDefinitionSchema = z.object({ ref: ExpertRefSchema });
 
 export const PragmaProjectSnapshotSchema = z.object({
   schemaVersion: z.literal("pragma.project-snapshot/v2"),
@@ -1292,6 +1322,7 @@ export type ExpertModelConfig = z.infer<typeof ExpertModelConfigSchema>;
 export type ExpertSummary = z.infer<typeof ExpertSummarySchema>;
 export type CreateExpertDefinition = z.infer<typeof CreateExpertDefinitionSchema>;
 export type UpdateExpertDefinition = z.infer<typeof UpdateExpertDefinitionSchema>;
+export type UpdateBuiltInExpertDefinition = z.infer<typeof UpdateBuiltInExpertDefinitionSchema>;
 export type PragmaProjectSnapshot = z.infer<typeof PragmaProjectSnapshotSchema>;
 export type PublishPragmaProject = z.infer<typeof PublishPragmaProjectSchema>;
 export type UpsertPragmaResource = z.infer<typeof UpsertPragmaResourceSchema>;
@@ -1363,6 +1394,11 @@ export interface PragmaDesktopAPI {
   getExpert: (ref: string) => Promise<ExpertDefinition>;
   createExpert: (input: CreateExpertDefinition) => Promise<ExpertDefinition>;
   updateExpert: (ref: string, input: UpdateExpertDefinition) => Promise<ExpertDefinition>;
+  updateBuiltInExpert: (
+    ref: string,
+    input: UpdateBuiltInExpertDefinition,
+  ) => Promise<ExpertDefinition>;
+  resetBuiltInExpert: (ref: string) => Promise<ExpertDefinition>;
   deleteExpert: (ref: string) => Promise<void>;
   listPlugins: () => Promise<DesktopPlugin[]>;
   getPlugin: (ref: string) => Promise<DesktopPlugin>;

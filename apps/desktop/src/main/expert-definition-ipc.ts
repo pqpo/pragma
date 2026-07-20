@@ -5,6 +5,8 @@ import {
   CreateExpertDefinitionSchema,
   DeleteExpertDefinitionSchema,
   ExpertRefSchema,
+  ResetBuiltInExpertDefinitionSchema,
+  UpdateBuiltInExpertDefinitionSchema,
   UpdateExpertDefinitionSchema,
 } from "../shared/desktop-api.ts";
 
@@ -16,6 +18,15 @@ export function installExpertDefinitionHandlers(store: ExpertDefinitionStore): v
   );
   ipcMain.handle("experts:update", (_event, ref: unknown, input: unknown) =>
     store.update(ExpertRefSchema.parse(ref), UpdateExpertDefinitionSchema.parse(input)),
+  );
+  ipcMain.handle("experts:update-built-in", (_event, ref: unknown, input: unknown) =>
+    store.updateBuiltIn(
+      ExpertRefSchema.parse(ref),
+      UpdateBuiltInExpertDefinitionSchema.parse(input),
+    ),
+  );
+  ipcMain.handle("experts:reset-built-in", (_event, input: unknown) =>
+    store.resetBuiltIn(ResetBuiltInExpertDefinitionSchema.parse(input).ref),
   );
   ipcMain.handle("experts:delete", async (_event, input: unknown) => {
     await store.remove(DeleteExpertDefinitionSchema.parse(input).ref);

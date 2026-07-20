@@ -46,6 +46,7 @@ import {
   ModelProviderSchema,
   ModelProviderSettingsSnapshotSchema,
   ResetModelProvidersResultSchema,
+  ResetBuiltInExpertDefinitionSchema,
   CreateMissionSchema,
   GetMissionChatSchema,
   MissionActionSchema,
@@ -71,6 +72,7 @@ import {
   ValidatePragmaYamlSchema,
   UpdateModelProviderSchema,
   UpdateExpertDefinitionSchema,
+  UpdateBuiltInExpertDefinitionSchema,
   UpdatePluginDefaultsSchema,
   UpdateCapabilitySchema,
   UpdateDesktopSettingsSchema,
@@ -175,6 +177,21 @@ const api: PragmaDesktopAPI = {
         "experts:update",
         ExpertRefSchema.parse(ref),
         UpdateExpertDefinitionSchema.parse(input),
+      ),
+    ),
+  updateBuiltInExpert: async (ref, input) =>
+    ExpertDefinitionSchema.parse(
+      await ipcRenderer.invoke(
+        "experts:update-built-in",
+        ExpertRefSchema.parse(ref),
+        UpdateBuiltInExpertDefinitionSchema.parse(input),
+      ),
+    ),
+  resetBuiltInExpert: async (ref) =>
+    ExpertDefinitionSchema.parse(
+      await ipcRenderer.invoke(
+        "experts:reset-built-in",
+        ResetBuiltInExpertDefinitionSchema.parse({ ref }),
       ),
     ),
   deleteExpert: async (ref) => {

@@ -122,8 +122,10 @@ describe("resolveExpertCapabilities", () => {
       version: "1.0.0",
       scope: "Review only.",
       instructions: "Review the supplied work.",
+      additionalInstructions: "",
       origin: "project",
       readOnly: false,
+      customized: false,
       executionProfile: {
         mode: "pinned",
         model: { runtimeId: "test", providerId: "test", modelId: "test" },
