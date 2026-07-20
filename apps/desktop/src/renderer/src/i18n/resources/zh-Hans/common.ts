@@ -8,6 +8,8 @@ export const common = {
     checking: "检查中…",
     clear: "清除",
     close: "关闭",
+    copied: "已复制",
+    copy: "复制",
     create: "创建",
     delete: "删除",
     done: "完成",

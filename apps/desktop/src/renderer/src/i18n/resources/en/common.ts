@@ -8,6 +8,8 @@ export const common = {
     checking: "Checking…",
     clear: "Clear",
     close: "Close",
+    copied: "Copied",
+    copy: "Copy",
     create: "Create",
     delete: "Delete",
     done: "Done",

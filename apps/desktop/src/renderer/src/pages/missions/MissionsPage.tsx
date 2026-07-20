@@ -52,6 +52,7 @@ import { i18n } from "../../i18n/index.ts";
 import { formatMissionDateTime, formatMissionTime } from "../../lib/mission-time.ts";
 import { ToolPermissionSelect } from "../../components/ToolPermissionSelect.tsx";
 import { MissionModelOverrideControls } from "../../components/MissionModelOverrideControls.tsx";
+import { MarkdownContent } from "../../components/MarkdownContent.tsx";
 import {
   readLastOpenedMissionId,
   selectPreferredMissionId,
@@ -1091,18 +1092,12 @@ export function MissionDetailFragment(props: {
                     <MissionChatEntryView
                       entry={item.entry}
                       executorName={props.mission.executor.name}
-                      isTeam={isTeam}
-                      isFlow={isFlow}
                       key={item.entry.id}
                     />
                   ),
                 )}
                 {awaitingRequestId !== null ? (
-                  <MissionThinkingPlaceholder
-                    executorName={props.mission.executor.name}
-                    isTeam={isTeam}
-                    isFlow={isFlow}
-                  />
+                  <MissionThinkingPlaceholder executorName={props.mission.executor.name} />
                 ) : null}
               </div>
               {showJumpToLatest ? (
@@ -1344,39 +1339,21 @@ function LocalMissionUserMessageView(props: { readonly message: LocalMissionUser
       }
     >
       <div>
-        <strong>{t("you")}</strong>
-        <p>{props.message.content}</p>
+        <MissionMessageContent source={props.message.content} />
         {props.message.status === "failed" ? <small>{t("messageSendFailed")}</small> : null}
       </div>
-      <span aria-hidden="true">{t("you")}</span>
     </div>
   );
 }
 
-function MissionThinkingPlaceholder(props: {
-  readonly executorName: string;
-  readonly isTeam: boolean;
-  readonly isFlow: boolean;
-}) {
+function MissionThinkingPlaceholder(props: { readonly executorName: string }) {
   const { t } = useTranslation("missions");
   return (
     <div className="mission-assistant-message mission-thinking-placeholder" aria-live="polite">
-      <span aria-hidden="true">
-        {props.isTeam ? (
-          <UsersThree size={18} />
-        ) : props.isFlow ? (
-          <GitBranch size={18} />
-        ) : (
-          <User size={18} />
-        )}
-      </span>
-      <div>
-        <strong>{props.executorName}</strong>
-        <p>
-          <SpinnerGap size={17} aria-hidden="true" />
-          {t("thinkingActive", { name: props.executorName })}
-        </p>
-      </div>
+      <p>
+        <SpinnerGap size={17} aria-hidden="true" />
+        {t("thinkingActive", { name: props.executorName })}
+      </p>
     </div>
   );
 }
@@ -1384,8 +1361,6 @@ function MissionThinkingPlaceholder(props: {
 function MissionChatEntryView(props: {
   readonly entry: MissionChatEntry;
   readonly executorName: string;
-  readonly isTeam: boolean;
-  readonly isFlow: boolean;
 }) {
   const { t } = useTranslation("missions");
   const name = props.entry.executorName ?? props.entry.executorId ?? props.executorName;
@@ -1393,10 +1368,8 @@ function MissionChatEntryView(props: {
     return (
       <div className="mission-user-message">
         <div>
-          <strong>{t("you")}</strong>
-          <p>{props.entry.content}</p>
+          <MissionMessageContent source={props.entry.content} />
         </div>
-        <span aria-hidden="true">{t("you")}</span>
       </div>
     );
   }
@@ -1445,19 +1418,15 @@ function MissionChatEntryView(props: {
   }
   return (
     <div className="mission-assistant-message">
-      <span aria-hidden="true">
-        {props.isTeam ? (
-          <UsersThree size={18} />
-        ) : props.isFlow ? (
-          <GitBranch size={18} />
-        ) : (
-          <User size={18} />
-        )}
-      </span>
-      <div>
-        <strong>{name}</strong>
-        <p>{props.entry.content}</p>
-      </div>
+      <MissionMessageContent source={props.entry.content} />
+    </div>
+  );
+}
+
+function MissionMessageContent(props: { readonly source: string }) {
+  return (
+    <div className="mission-markdown">
+      <MarkdownContent source={props.source} codeBlockControls />
     </div>
   );
 }

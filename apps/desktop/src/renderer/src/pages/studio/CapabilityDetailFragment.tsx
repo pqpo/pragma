@@ -7,9 +7,8 @@ import {
   Play,
   Plug,
 } from "@phosphor-icons/react";
-import { marked, type Token, type Tokens } from "marked";
-import { createElement, Fragment, useEffect, useMemo, useState } from "react";
-import type { Key, ReactNode } from "react";
+import { useEffect, useMemo, useState } from "react";
+import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 
 import type {
@@ -18,6 +17,7 @@ import type {
   SkillDocument,
 } from "../../../../shared/desktop-api.ts";
 import { errorMessage } from "../../lib/errors.ts";
+import { MarkdownContent } from "../../components/MarkdownContent.tsx";
 import { StudioScreenFrame } from "./StudioScreenFrame.tsx";
 import { desktopApi } from "./studio-model.ts";
 
@@ -199,7 +199,7 @@ export function CapabilityDetailFragment(props: {
             <pre className="skill-document-source">{skillDocument.content}</pre>
           ) : (
             <article className="skill-markdown">
-              <MarkdownDocument source={skillMarkdownBody(skillDocument.content)} />
+              <MarkdownContent source={skillMarkdownBody(skillDocument.content)} />
             </article>
           )}
         </section>
@@ -392,146 +392,6 @@ export function skillMarkdownBody(source: string): string {
 
 function formatTestOutput(output: unknown): string {
   return typeof output === "string" ? output : JSON.stringify(output, null, 2);
-}
-
-function MarkdownDocument(props: { readonly source: string }) {
-  const tokens = useMemo(() => marked.lexer(props.source, { gfm: true }), [props.source]);
-  return <>{renderMarkdownTokens(tokens)}</>;
-}
-
-function renderMarkdownTokens(tokens: readonly Token[]): ReactNode[] {
-  return tokens.map((token, index) => renderMarkdownToken(token, index));
-}
-
-function renderMarkdownToken(token: Token, key: Key): ReactNode {
-  switch (token.type) {
-    case "heading": {
-      const heading = token as Tokens.Heading;
-      return createElement(
-        `h${Math.min(6, Math.max(1, heading.depth))}`,
-        { key },
-        renderMarkdownTokens(heading.tokens),
-      );
-    }
-    case "paragraph": {
-      const paragraph = token as Tokens.Paragraph;
-      return <p key={key}>{renderMarkdownTokens(paragraph.tokens)}</p>;
-    }
-    case "text": {
-      const text = token as Tokens.Text;
-      return text.tokens ? (
-        <Fragment key={key}>{renderMarkdownTokens(text.tokens)}</Fragment>
-      ) : (
-        <Fragment key={key}>{text.text}</Fragment>
-      );
-    }
-    case "escape":
-      return <Fragment key={key}>{(token as Tokens.Escape).text}</Fragment>;
-    case "strong": {
-      const strong = token as Tokens.Strong;
-      return <strong key={key}>{renderMarkdownTokens(strong.tokens)}</strong>;
-    }
-    case "em": {
-      const emphasis = token as Tokens.Em;
-      return <em key={key}>{renderMarkdownTokens(emphasis.tokens)}</em>;
-    }
-    case "del": {
-      const deleted = token as Tokens.Del;
-      return <del key={key}>{renderMarkdownTokens(deleted.tokens)}</del>;
-    }
-    case "codespan":
-      return <code key={key}>{(token as Tokens.Codespan).text}</code>;
-    case "code": {
-      const code = token as Tokens.Code;
-      return (
-        <pre key={key}>
-          <code className={code.lang ? `language-${code.lang}` : undefined}>{code.text}</code>
-        </pre>
-      );
-    }
-    case "blockquote": {
-      const quote = token as Tokens.Blockquote;
-      return <blockquote key={key}>{renderMarkdownTokens(quote.tokens)}</blockquote>;
-    }
-    case "list": {
-      const list = token as Tokens.List;
-      const children = list.items.map((item, index) => (
-        <li key={index}>
-          {item.task ? <input type="checkbox" checked={item.checked === true} readOnly /> : null}
-          {renderMarkdownTokens(item.tokens)}
-        </li>
-      ));
-      return createElement(
-        list.ordered ? "ol" : "ul",
-        { key, ...(list.ordered && list.start !== "" ? { start: list.start } : {}) },
-        children,
-      );
-    }
-    case "table": {
-      const table = token as Tokens.Table;
-      return (
-        <table key={key}>
-          <thead>
-            <tr>
-              {table.header.map((cell, index) => (
-                <th key={index} style={{ textAlign: cell.align ?? undefined }}>
-                  {renderMarkdownTokens(cell.tokens)}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {table.rows.map((row, rowIndex) => (
-              <tr key={rowIndex}>
-                {row.map((cell, cellIndex) => (
-                  <td key={cellIndex} style={{ textAlign: cell.align ?? undefined }}>
-                    {renderMarkdownTokens(cell.tokens)}
-                  </td>
-                ))}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      );
-    }
-    case "link": {
-      const link = token as Tokens.Link;
-      const children = renderMarkdownTokens(link.tokens);
-      return isExternalLink(link.href) ? (
-        <a key={key} href={link.href} target="_blank" rel="noreferrer">
-          {children}
-        </a>
-      ) : (
-        <span key={key}>{children}</span>
-      );
-    }
-    case "image":
-      return (
-        <span className="markdown-image-placeholder" key={key}>
-          [Image: {(token as Tokens.Image).text}]
-        </span>
-      );
-    case "br":
-      return <br key={key} />;
-    case "hr":
-      return <hr key={key} />;
-    case "checkbox":
-      return (
-        <input key={key} type="checkbox" checked={(token as Tokens.Checkbox).checked} readOnly />
-      );
-    case "space":
-    case "def":
-    case "html":
-      return null;
-    default:
-      return "tokens" in token && Array.isArray(token.tokens) ? (
-        <Fragment key={key}>{renderMarkdownTokens(token.tokens as Token[])}</Fragment>
-      ) : null;
-  }
-}
-
-function isExternalLink(href: string): boolean {
-  return href.startsWith("https://") || href.startsWith("http://");
 }
 
 function capabilityTypeLabel(capability: Capability): string {
