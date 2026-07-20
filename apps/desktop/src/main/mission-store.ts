@@ -54,6 +54,14 @@ export interface MissionStore {
     readonly toolPermissionMode?: DesktopToolPermissionMode | undefined;
     readonly modelOverride?: MissionModelOverride | undefined;
   }): Promise<Mission>;
+  updateOptions(
+    id: string,
+    input: {
+      readonly toolPermissionMode: DesktopToolPermissionMode;
+      readonly modelOverride?: MissionModelOverride | undefined;
+      readonly environmentFingerprint: string;
+    },
+  ): Promise<Mission>;
   updateExecution(
     id: string,
     execution: NonNullable<Mission["execution"]>,
@@ -308,6 +316,35 @@ export function createMissionStore(options: { readonly missionsPath: string }): 
         throw error;
       }
       return mission;
+    },
+    async updateOptions(id, input) {
+      return await updateMission(MissionIdSchema.parse(id), (current, timestamp) => {
+        if (
+          current.execution !== undefined &&
+          ["queued", "running", "waiting"].includes(current.execution.status)
+        ) {
+          throw new MissionStoreError(
+            "mission_active",
+            "Wait for the current execution before changing mission options.",
+          );
+        }
+        const next = {
+          ...current,
+          toolPermissionMode: input.toolPermissionMode,
+          ...(current.execution === undefined
+            ? {}
+            : {
+                execution: {
+                  ...current.execution,
+                  environmentFingerprint: input.environmentFingerprint,
+                },
+              }),
+          updatedAt: timestamp,
+        };
+        if (input.modelOverride === undefined) delete next.modelOverride;
+        else next.modelOverride = input.modelOverride;
+        return next;
+      });
     },
     async updateExecution(id, execution, guard) {
       return await updateMission(MissionIdSchema.parse(id), (current, timestamp) => {

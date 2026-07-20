@@ -1,14 +1,12 @@
 import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import {
   ArrowUp,
-  Brain,
   CaretDown,
   Check,
   Folder,
   FolderOpen,
   GitBranch,
   MagnifyingGlass,
-  Robot,
   User,
   UsersThree,
 } from "@phosphor-icons/react";
@@ -22,6 +20,7 @@ import type {
   MissionModelOverride,
 } from "../../../../shared/desktop-api.ts";
 import { ToolPermissionSelect } from "../../components/ToolPermissionSelect.tsx";
+import { MissionModelOverrideControls } from "../../components/MissionModelOverrideControls.tsx";
 import { errorMessage } from "../../lib/errors.ts";
 
 interface WorkspaceSelection {
@@ -251,7 +250,10 @@ function WorkspacePicker(props: {
   useDismissableMenu(open, rootRef, () => setOpen(false));
 
   return (
-    <div className={open ? "mission-workspace-picker is-open" : "mission-workspace-picker"} ref={rootRef}>
+    <div
+      className={open ? "mission-workspace-picker is-open" : "mission-workspace-picker"}
+      ref={rootRef}
+    >
       <button
         className="mission-workspace-trigger"
         type="button"
@@ -264,7 +266,7 @@ function WorkspacePicker(props: {
           <strong>
             {props.override === undefined
               ? t("useDefaultWorkspace")
-              : (props.override.basename || t("taskWorkspace"))}
+              : props.override.basename || t("taskWorkspace")}
           </strong>
           <small>{workspace?.path ?? t("loadingWorkspace")}</small>
         </span>
@@ -308,84 +310,6 @@ function WorkspacePicker(props: {
   );
 }
 
-export function MissionModelOverrideControls(props: {
-  readonly models: readonly DesktopRuntimeModel[];
-  readonly loading?: boolean | undefined;
-  readonly value?: MissionModelOverride | undefined;
-  readonly onChange: (value: MissionModelOverride | undefined) => void;
-}) {
-  const { t } = useTranslation("missions");
-  const valueKey =
-    props.value === undefined ? "" : modelOptionKey(props.value.providerId, props.value.modelId);
-  const selected = props.models.find(
-    (model) => modelOptionKey(model.provider.id, model.id) === valueKey,
-  );
-  const thinkingLevels = selected?.thinking?.supportedLevels ?? [];
-
-  return (
-    <>
-      <label className="mission-compact-select mission-model-select">
-        <Robot size={16} aria-hidden="true" />
-        <select
-          aria-label={t("modelOverride")}
-          value={valueKey}
-          disabled={props.loading}
-          onChange={(event) => {
-            const option = props.models.find(
-              (model) => modelOptionKey(model.provider.id, model.id) === event.target.value,
-            );
-            props.onChange(
-              option === undefined
-                ? undefined
-                : { providerId: option.provider.id, modelId: option.id },
-            );
-          }}
-        >
-          <option value="">
-            {props.loading ? t("loadingModels") : t("useExecutorDefaultModel")}
-          </option>
-          {props.models.map((model) => (
-            <option
-              key={modelOptionKey(model.provider.id, model.id)}
-              value={modelOptionKey(model.provider.id, model.id)}
-            >
-              {model.provider.displayName} · {model.displayName}
-            </option>
-          ))}
-        </select>
-      </label>
-      <label className="mission-compact-select mission-thinking-select">
-        <Brain size={16} aria-hidden="true" />
-        <select
-          aria-label={t("thinkingDepth")}
-          value={props.value?.thinkingLevel ?? ""}
-          disabled={props.value === undefined || thinkingLevels.length === 0}
-          onChange={(event) => {
-            if (props.value === undefined) return;
-            const thinkingLevel = event.target.value;
-            props.onChange({
-              providerId: props.value.providerId,
-              modelId: props.value.modelId,
-              ...(thinkingLevel === "" ? {} : { thinkingLevel }),
-            });
-          }}
-        >
-          <option value="">{t("useModelDefaultThinking")}</option>
-          {thinkingLevels.map((level) => (
-            <option key={level.value} value={level.value}>
-              {level.label}
-            </option>
-          ))}
-        </select>
-      </label>
-    </>
-  );
-}
-
-function modelOptionKey(providerId: string, modelId: string): string {
-  return JSON.stringify([providerId, modelId]);
-}
-
 function MissionExecutorPicker(props: {
   readonly executors: readonly MissionExecutorOption[];
   readonly value: string;
@@ -420,7 +344,10 @@ function MissionExecutorPicker(props: {
   });
 
   return (
-    <div className={open ? "mission-executor-picker is-open" : "mission-executor-picker"} ref={rootRef}>
+    <div
+      className={open ? "mission-executor-picker is-open" : "mission-executor-picker"}
+      ref={rootRef}
+    >
       <button
         className="mission-executor-trigger"
         type="button"

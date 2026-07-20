@@ -20,6 +20,9 @@ describe("MissionDetailFragment", () => {
     expect(html).toContain("mission-chat-scroll");
     expect(html).toContain("mission-chat-footer");
     expect(html).toContain("mission-chat-composer");
+    expect(html).toContain("mission-chat-composer-toolbar");
+    expect(html).toContain('aria-label="Model"');
+    expect(html).toContain('aria-label="Tool permissions"');
     expect(html).not.toContain("mission-execution-notice");
     expect(html).not.toContain("Pinned to");
   });
@@ -47,6 +50,19 @@ describe("MissionDetailFragment", () => {
     expect(html).toContain('aria-label="Interrupt execution"');
     expect(html).not.toContain('aria-label="Send message"');
     expect(html).not.toContain("Execution running");
+  });
+
+  it("places dismissible errors above the composer", () => {
+    const html = renderToStaticMarkup(
+      <MissionDetailFragment
+        mission={missionFixture("expert")}
+        error="The message could not be submitted."
+      />,
+    );
+
+    expect(html.indexOf("mission-page-error")).toBeLessThan(html.indexOf("mission-chat-composer"));
+    expect(html).toContain('aria-label="Close"');
+    expect(html).toContain("The message could not be submitted.");
   });
 });
 

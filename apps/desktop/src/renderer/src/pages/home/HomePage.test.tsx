@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import { MissionModelOverrideControls } from "./HomePage.tsx";
+import { MissionModelOverrideControls } from "../../components/MissionModelOverrideControls.tsx";
 
 describe("MissionModelOverrideControls", () => {
   it("lists models without exposing or changing their Runtime", () => {

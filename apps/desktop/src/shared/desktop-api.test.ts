@@ -19,6 +19,7 @@ import {
   SetDefaultRuntimeSchema,
   DesktopSettingsSnapshotSchema,
   UpdateDesktopSettingsSchema,
+  UpdateMissionOptionsSchema,
   UpdateBuiltInExpertDefinitionSchema,
 } from "./desktop-api.ts";
 
@@ -84,6 +85,24 @@ describe("mission model override contracts", () => {
         modelOverride: { runtimeId: "codex", providerId: "provider", modelId: "model" },
       }).success,
     ).toBe(false);
+  });
+
+  it("supports replacing or clearing persisted Mission options", () => {
+    const id = "00000000-0000-4000-8000-000000000000";
+    expect(
+      UpdateMissionOptionsSchema.parse({
+        id,
+        toolPermissionMode: "auto-approve",
+        modelOverride: { providerId: "provider", modelId: "model", thinkingLevel: "high" },
+      }),
+    ).toMatchObject({ toolPermissionMode: "auto-approve" });
+    expect(
+      UpdateMissionOptionsSchema.parse({
+        id,
+        toolPermissionMode: "request-approval",
+        modelOverride: null,
+      }).modelOverride,
+    ).toBeNull();
   });
 });
 

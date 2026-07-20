@@ -12,6 +12,7 @@ import {
   MissionIdSchema,
   RespondMissionHumanInteractionSchema,
   SendMissionMessageSchema,
+  UpdateMissionOptionsSchema,
 } from "../shared/desktop-api.ts";
 import type { MissionRunner } from "./mission-runner.ts";
 import type { MissionStore } from "./mission-store.ts";
@@ -79,6 +80,9 @@ export function installMissionHandlers(options: {
   });
   ipcMain.handle("missions:run", (_event, input: unknown) =>
     options.runner.run(MissionActionSchema.parse(input).id),
+  );
+  ipcMain.handle("missions:options:update", (_event, input: unknown) =>
+    options.runner.updateOptions(UpdateMissionOptionsSchema.parse(input)),
   );
   ipcMain.handle("missions:message:send", (_event, input: unknown) =>
     options.runner.sendMessage(SendMissionMessageSchema.parse(input)),

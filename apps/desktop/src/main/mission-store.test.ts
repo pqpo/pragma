@@ -82,6 +82,49 @@ describe("mission store", () => {
     expect(reopened.completedAt).toBeUndefined();
   });
 
+  it("updates idle Mission options and refreshes the recoverable environment", async () => {
+    const root = await temporaryRoot();
+    const store = createMissionStore({ missionsPath: join(root, "missions") });
+    const created = await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "Continue with a different model",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+    });
+    const execution = {
+      id: "00000000-0000-4000-8000-000000000010",
+      inputMessageId: created.initialMessageId,
+      environmentFingerprint,
+      status: "running" as const,
+      startedAt: "2026-07-15T00:00:00.000Z",
+    };
+    await store.updateExecution(created.id, execution);
+
+    await expect(
+      store.updateOptions(created.id, {
+        toolPermissionMode: "full-access",
+        environmentFingerprint: "b".repeat(64),
+      }),
+    ).rejects.toThrow("Wait for the current execution");
+
+    await store.updateExecution(created.id, { ...execution, status: "succeeded" });
+    const updated = await store.updateOptions(created.id, {
+      toolPermissionMode: "auto-approve",
+      modelOverride: { providerId: "provider", modelId: "next-model", thinkingLevel: "high" },
+      environmentFingerprint: "b".repeat(64),
+    });
+
+    expect(updated.toolPermissionMode).toBe("auto-approve");
+    expect(updated.modelOverride?.modelId).toBe("next-model");
+    expect(updated.execution?.environmentFingerprint).toBe("b".repeat(64));
+
+    const cleared = await store.updateOptions(created.id, {
+      toolPermissionMode: "request-approval",
+      environmentFingerprint: "c".repeat(64),
+    });
+    expect(cleared.modelOverride).toBeUndefined();
+  });
+
   it("does not let a stale observer overwrite a terminal execution status", async () => {
     const root = await temporaryRoot();
     const store = createMissionStore({ missionsPath: join(root, "missions") });

@@ -1057,7 +1057,9 @@ export const MissionCreationDefaultsSchema = z.object({
   toolPermissionMode: DesktopToolPermissionModeSchema,
 });
 
-export const MissionModelOverrideSchema = ExpertModelConfigSchema.omit({ runtimeId: true }).strict();
+export const MissionModelOverrideSchema = ExpertModelConfigSchema.omit({
+  runtimeId: true,
+}).strict();
 
 export const MissionModelOptionsRequestSchema = z.object({
   executorRef: PragmaInvocableResourceRefSchema,
@@ -1172,6 +1174,12 @@ export const CreateMissionSchema = z.object({
   goal: z.string().trim().min(1).max(100_000),
   toolPermissionMode: DesktopToolPermissionModeSchema.optional(),
   modelOverride: MissionModelOverrideSchema.optional(),
+});
+
+export const UpdateMissionOptionsSchema = z.object({
+  id: MissionIdSchema,
+  toolPermissionMode: DesktopToolPermissionModeSchema,
+  modelOverride: MissionModelOverrideSchema.nullable(),
 });
 
 export function isMissionExecutorResource(
@@ -1363,6 +1371,7 @@ export type MissionModelOverride = z.infer<typeof MissionModelOverrideSchema>;
 export type MissionModelOptions = z.infer<typeof MissionModelOptionsSchema>;
 export type MissionLifecycleStatus = z.infer<typeof MissionLifecycleStatusSchema>;
 export type CreateMission = z.infer<typeof CreateMissionSchema>;
+export type UpdateMissionOptions = z.infer<typeof UpdateMissionOptionsSchema>;
 export type MissionUserMessage = z.infer<typeof MissionUserMessageSchema>;
 export type MissionTimelineRecord = z.infer<typeof MissionTimelineRecordSchema>;
 export type MissionWorkItem = z.infer<typeof MissionWorkItemSchema>;
@@ -1447,6 +1456,7 @@ export interface PragmaDesktopAPI {
   getMissionCreationDefaults: () => Promise<MissionCreationDefaults>;
   getMission: (id: string) => Promise<Mission>;
   createMission: (input: CreateMission) => Promise<Mission>;
+  updateMissionOptions: (input: UpdateMissionOptions) => Promise<Mission>;
   runMission: (id: string) => Promise<Mission>;
   sendMissionMessage: (input: SendMissionMessage) => Promise<Mission>;
   getMissionChat: (input: GetMissionChat) => Promise<MissionChatSnapshot>;

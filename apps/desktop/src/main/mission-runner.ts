@@ -37,6 +37,7 @@ import type {
   MissionModelOverride,
   MissionWorkItem,
   DesktopToolPermissionMode,
+  UpdateMissionOptions,
 } from "../shared/desktop-api.ts";
 import type { CapabilityCredentialStore } from "./capability-credential-store.ts";
 import type { CapabilityStore } from "./capability-store.ts";
@@ -52,6 +53,7 @@ import type { PluginStore } from "./plugin-store.ts";
 
 export interface MissionRunner {
   run(id: string): Promise<Mission>;
+  updateOptions(input: UpdateMissionOptions): Promise<Mission>;
   sendMessage(input: {
     readonly id: string;
     readonly content: string;
@@ -73,6 +75,7 @@ export interface MissionRunner {
 
 type PendingMissionOperation =
   | { readonly kind: "run"; readonly promise: Promise<Mission> }
+  | { readonly kind: "options"; readonly promise: Promise<Mission> }
   | { readonly kind: "message"; readonly promise: Promise<Mission> }
   | { readonly kind: "interrupt"; readonly promise: Promise<Mission> }
   | { readonly kind: "delete"; readonly promise: Promise<void> };
@@ -480,6 +483,36 @@ export function createMissionRunner(options: {
     return running;
   };
 
+  const updateMissionOptions = async (input: UpdateMissionOptions): Promise<Mission> => {
+    const mission = await options.missions.get(input.id);
+    if (
+      active.has(mission.id) ||
+      (mission.execution !== undefined &&
+        ["queued", "running", "waiting"].includes(mission.execution.status))
+    ) {
+      throw new Error("Wait for the current execution before changing mission options.");
+    }
+    if (mission.executor.kind === "flow" && input.modelOverride !== null) {
+      throw new Error("Flow missions do not support a model override.");
+    }
+    const prospective = { ...mission, toolPermissionMode: input.toolPermissionMode };
+    if (input.modelOverride === null) delete prospective.modelOverride;
+    else prospective.modelOverride = input.modelOverride;
+    const { runtimes } = executionContext(input.toolPermissionMode);
+    const compiled = await compileMissionExecutor(prospective, runtimes);
+    const environmentFingerprint = missionExecutionFingerprint(
+      compiled.environmentFingerprint.value,
+      prospective.modelOverride,
+    );
+    return await options.missions.updateOptions(mission.id, {
+      toolPermissionMode: input.toolPermissionMode,
+      ...(prospective.modelOverride === undefined
+        ? {}
+        : { modelOverride: prospective.modelOverride }),
+      environmentFingerprint,
+    });
+  };
+
   const deleteMission = async (id: string): Promise<void> => {
     if (active.has(id)) {
       throw new Error("Stop the active execution before deleting this mission.");
@@ -583,6 +616,14 @@ export function createMissionRunner(options: {
       const started = runMission(id);
       trackOperation(id, { kind: "run", promise: started });
       return await started;
+    },
+    async updateOptions(input) {
+      if (pendingOperations.has(input.id)) {
+        throw new Error("Wait for the current mission operation to finish.");
+      }
+      const updating = updateMissionOptions(input);
+      trackOperation(input.id, { kind: "options", promise: updating });
+      return await updating;
     },
     async sendMessage(input) {
       if (pendingOperations.has(input.id)) {

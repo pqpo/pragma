@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -17,15 +18,16 @@ import {
   Folder,
   GitBranch,
   MagnifyingGlass,
-  Paperclip,
   PaperPlaneTilt,
   Plus,
   Play,
   StopCircle,
+  SpinnerGap,
   Toolbox,
   Trash,
   User,
   UsersThree,
+  X,
 } from "@phosphor-icons/react";
 import { useTranslation } from "react-i18next";
 import type { HumanInteractionResponse } from "@pragma/shared";
@@ -37,12 +39,21 @@ import {
   type MissionHumanInteraction,
   type MissionSummary,
   type MissionWorkItem,
+  type DesktopRuntimeModel,
+  type DesktopToolPermissionMode,
+  type MissionModelOverride,
   type PragmaDesktopAPI,
 } from "../../../../shared/desktop-api.ts";
 import { errorMessage } from "../../lib/errors.ts";
 import { i18n } from "../../i18n/index.ts";
 import { formatMissionDateTime, formatMissionTime } from "../../lib/mission-time.ts";
 import { ToolPermissionSelect } from "../../components/ToolPermissionSelect.tsx";
+import { MissionModelOverrideControls } from "../../components/MissionModelOverrideControls.tsx";
+import {
+  readLastOpenedMissionId,
+  selectPreferredMissionId,
+  writeLastOpenedMissionId,
+} from "../../lib/mission-preference.ts";
 
 export function MissionsPage(props: {
   readonly initialMission?: Mission | undefined;
@@ -65,10 +76,46 @@ export function MissionsPage(props: {
   const selectedMissionIdRef = useRef<string | null>(props.initialMission?.id ?? null);
   const initialRunStartedRef = useRef(false);
 
+  const replaceMission = useCallback((updated: Mission) => {
+    setSelectedMission((current) => (current?.id === updated.id ? updated : current));
+    setMissions((current) =>
+      [
+        ...current.filter((mission) => mission.id !== updated.id),
+        missionToSummary(updated),
+      ].toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
+    );
+  }, []);
+
+  const openMission = useCallback((id: string) => {
+    selectedMissionIdRef.current = id;
+    setSelectedMissionId(id);
+    setSelectedMission(null);
+    setError(null);
+    writeLastOpenedMissionId(typeof window === "undefined" ? undefined : window.localStorage, id);
+    const api = desktopApi();
+    if (api === undefined) return;
+    void api
+      .getMission(id)
+      .then((mission) => {
+        if (selectedMissionIdRef.current === id) setSelectedMission(mission);
+      })
+      .catch((loadError: unknown) => {
+        if (selectedMissionIdRef.current === id) setError(errorMessage(loadError));
+      });
+  }, []);
+
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 60_000);
     return () => clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    if (props.initialMission === undefined) return;
+    writeLastOpenedMissionId(
+      typeof window === "undefined" ? undefined : window.localStorage,
+      props.initialMission.id,
+    );
+  }, [props.initialMission?.id]);
 
   useEffect(() => {
     if (
@@ -83,7 +130,7 @@ export function MissionsPage(props: {
       .runMission(props.initialMission.id)
       .then(replaceMission)
       .catch((runError: unknown) => setError(errorMessage(runError)));
-  }, [props.autoRunInitialMission, props.initialMission?.id]);
+  }, [props.autoRunInitialMission, props.initialMission?.id, replaceMission]);
 
   useEffect(() => {
     const api = desktopApi();
@@ -94,6 +141,18 @@ export function MissionsPage(props: {
       .then((storedMissions) => {
         if (cancelled) return;
         setMissions(storedMissions);
+        if (selectedMissionIdRef.current !== null) return;
+        const lastOpenedId = readLastOpenedMissionId(
+          typeof window === "undefined" ? undefined : window.localStorage,
+        );
+        const preferredId = selectPreferredMissionId(storedMissions, lastOpenedId);
+        if (preferredId !== null) openMission(preferredId);
+        else {
+          writeLastOpenedMissionId(
+            typeof window === "undefined" ? undefined : window.localStorage,
+            null,
+          );
+        }
       })
       .catch((loadError: unknown) => {
         if (!cancelled) setError(errorMessage(loadError));
@@ -101,7 +160,7 @@ export function MissionsPage(props: {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [openMission]);
 
   const visibleMissions = useMemo(() => {
     const query = search.trim().toLocaleLowerCase();
@@ -116,25 +175,19 @@ export function MissionsPage(props: {
     const api = desktopApi();
     if (
       api === undefined ||
-      (selectedMission?.execution?.status !== "running" &&
+      (selectedMission?.execution?.status !== "queued" &&
+        selectedMission?.execution?.status !== "running" &&
         selectedMission?.execution?.status !== "waiting")
     )
       return;
     const timer = setInterval(() => {
-      void api.getMission(selectedMission.id).then(replaceMission);
+      void api
+        .getMission(selectedMission.id)
+        .then(replaceMission)
+        .catch(() => undefined);
     }, 1_000);
     return () => clearInterval(timer);
-  }, [selectedMission?.id, selectedMission?.execution?.status]);
-
-  const replaceMission = (updated: Mission) => {
-    setSelectedMission((current) => (current?.id === updated.id ? updated : current));
-    setMissions((current) =>
-      [
-        ...current.filter((mission) => mission.id !== updated.id),
-        missionToSummary(updated),
-      ].toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
-    );
-  };
+  }, [replaceMission, selectedMission?.id, selectedMission?.execution?.status]);
 
   return (
     <section className="missions-page">
@@ -145,25 +198,7 @@ export function MissionsPage(props: {
         selectedMissionId={selectedMissionId}
         onSearch={setSearch}
         onCreate={props.onCreate}
-        onOpen={(summary) => {
-          selectedMissionIdRef.current = summary.id;
-          setSelectedMissionId(summary.id);
-          setSelectedMission(null);
-          setError(null);
-          const api = desktopApi();
-          if (api !== undefined) {
-            void api
-              .getMission(summary.id)
-              .then((mission) => {
-                if (selectedMissionIdRef.current === summary.id) setSelectedMission(mission);
-              })
-              .catch((loadError: unknown) => {
-                if (selectedMissionIdRef.current === summary.id) {
-                  setError(errorMessage(loadError));
-                }
-              });
-          }
-        }}
+        onOpen={(summary) => openMission(summary.id)}
         onDelete={setDeleteCandidate}
       />
 
@@ -171,7 +206,9 @@ export function MissionsPage(props: {
         {selectedMission !== null ? (
           <MissionDetailFragment
             mission={selectedMission}
-            onSend={async (content) => {
+            error={error}
+            onDismissError={() => setError(null)}
+            onSend={async (content, requestId) => {
               const api = desktopApi();
               if (api === undefined) return;
               try {
@@ -179,7 +216,7 @@ export function MissionsPage(props: {
                   await api.sendMissionMessage({
                     id: selectedMission.id,
                     content,
-                    requestId: crypto.randomUUID(),
+                    requestId,
                   }),
                 );
                 setError(null);
@@ -191,16 +228,43 @@ export function MissionsPage(props: {
             onRun={async () => {
               const api = desktopApi();
               if (api === undefined) return;
-              replaceMission(await api.runMission(selectedMission.id));
+              try {
+                replaceMission(await api.runMission(selectedMission.id));
+                setError(null);
+              } catch (runError) {
+                setError(errorMessage(runError));
+              }
             }}
             onInterrupt={async () => {
               const api = desktopApi();
               if (api === undefined) return;
-              replaceMission(await api.interruptMission(selectedMission.id));
+              try {
+                replaceMission(await api.interruptMission(selectedMission.id));
+                setError(null);
+              } catch (interruptError) {
+                setError(errorMessage(interruptError));
+              }
             }}
             onHumanResponded={async () => {
               const api = desktopApi();
               if (api !== undefined) replaceMission(await api.getMission(selectedMission.id));
+            }}
+            onOptionsChange={async (options) => {
+              const api = desktopApi();
+              if (api === undefined) return;
+              try {
+                replaceMission(
+                  await api.updateMissionOptions({
+                    id: selectedMission.id,
+                    toolPermissionMode: options.toolPermissionMode,
+                    modelOverride: options.modelOverride ?? null,
+                  }),
+                );
+                setError(null);
+              } catch (optionsError) {
+                setError(errorMessage(optionsError));
+                throw optionsError;
+              }
             }}
             onLifecycleChange={async () => {
               const api = desktopApi();
@@ -223,10 +287,8 @@ export function MissionsPage(props: {
             <p>{t("selectAnother", { ns: "missions" })}</p>
           </div>
         )}
-        {error ? (
-          <p className="mission-page-error" role="alert">
-            {error}
-          </p>
+        {error && selectedMission === null ? (
+          <MissionErrorBanner error={error} onDismiss={() => setError(null)} />
         ) : null}
       </div>
       {deleteCandidate !== null ? (
@@ -265,14 +327,19 @@ export function MissionsPage(props: {
                   setDeleting(true);
                   void api
                     .deleteMission(deleteCandidate.id)
-                    .then(() => {
-                      setMissions((current) =>
-                        current.filter((mission) => mission.id !== deleteCandidate.id),
-                      );
+                    .then(async () => {
+                      const storedMissions = await api.listMissions();
+                      setMissions(storedMissions);
                       if (selectedMissionId === deleteCandidate.id) {
                         selectedMissionIdRef.current = null;
                         setSelectedMissionId(null);
                         setSelectedMission(null);
+                        const fallback = storedMissions[0];
+                        if (fallback === undefined) {
+                          writeLastOpenedMissionId(window.localStorage, null);
+                        } else {
+                          openMission(fallback.id);
+                        }
                       }
                       setDeleteCandidate(null);
                       setError(null);
@@ -422,11 +489,26 @@ function MissionRailGroup(props: {
   );
 }
 
+interface LocalMissionUserMessage {
+  readonly id: string;
+  readonly content: string;
+  readonly createdAt: string;
+  readonly status: "pending" | "failed";
+}
+
 export function MissionDetailFragment(props: {
   readonly mission: Mission;
+  readonly error?: string | null | undefined;
+  readonly onDismissError?: (() => void) | undefined;
   readonly onRun?: () => void | Promise<void>;
   readonly onInterrupt?: () => void | Promise<void>;
-  readonly onSend?: (content: string) => void | Promise<void>;
+  readonly onSend?: (content: string, requestId: string) => void | Promise<void>;
+  readonly onOptionsChange?:
+    | ((options: {
+        readonly toolPermissionMode: DesktopToolPermissionMode;
+        readonly modelOverride?: MissionModelOverride | undefined;
+      }) => void | Promise<void>)
+    | undefined;
   readonly onHumanResponded?: () => void | Promise<void>;
   readonly onLifecycleChange?: () => void | Promise<void>;
 }) {
@@ -436,7 +518,19 @@ export function MissionDetailFragment(props: {
   const [chat, setChat] = useState<MissionChatSnapshot | null>(null);
   const [workItems, setWorkItems] = useState<readonly MissionWorkItem[]>([]);
   const [draft, setDraft] = useState("");
+  const [optimisticMessages, setOptimisticMessages] = useState<LocalMissionUserMessage[]>([]);
+  const [awaitingRequestId, setAwaitingRequestId] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
+  const [models, setModels] = useState<readonly DesktopRuntimeModel[]>([]);
+  const [modelsLoading, setModelsLoading] = useState(false);
+  const [optionsSaving, setOptionsSaving] = useState(false);
+  const [optionsError, setOptionsError] = useState<string | null>(null);
+  const [toolPermissionMode, setToolPermissionMode] = useState<DesktopToolPermissionMode>(
+    props.mission.toolPermissionMode,
+  );
+  const [modelOverride, setModelOverride] = useState<MissionModelOverride | undefined>(
+    props.mission.modelOverride,
+  );
   const [interrupting, setInterrupting] = useState(false);
   const [responding, setResponding] = useState(false);
   const [loadingEarlier, setLoadingEarlier] = useState(false);
@@ -450,6 +544,7 @@ export function MissionDetailFragment(props: {
   const isTeam = props.mission.executor.kind === "team";
   const isFlow = props.mission.executor.kind === "flow";
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const followLatestRef = useRef(true);
   const prependScrollHeightRef = useRef<number | null>(null);
   const executionStatus = chat?.execution?.status ?? props.mission.execution?.status;
@@ -457,6 +552,51 @@ export function MissionDetailFragment(props: {
     executionStatus !== undefined && ["queued", "running", "waiting"].includes(executionStatus);
   const interactions = chat?.pendingInteractions ?? [];
   const interruptible = chat?.execution?.interruptible ?? false;
+  const controlsDisabled = executionActive || optionsSaving;
+  const visibleError = props.error ?? optionsError;
+
+  useEffect(() => {
+    setDraft("");
+    setOptimisticMessages([]);
+    setAwaitingRequestId(null);
+    setOptionsError(null);
+  }, [props.mission.id]);
+
+  useEffect(() => {
+    if (optionsSaving) return;
+    setToolPermissionMode(props.mission.toolPermissionMode);
+    setModelOverride(props.mission.modelOverride);
+  }, [optionsSaving, props.mission.modelOverride, props.mission.toolPermissionMode]);
+
+  useEffect(() => {
+    const api = desktopApi();
+    setModels([]);
+    setOptionsError(null);
+    if (api === undefined || isFlow) return;
+    let cancelled = false;
+    setModelsLoading(true);
+    void api
+      .getMissionModelOptions(props.mission.executor.ref)
+      .then((result) => {
+        if (!cancelled) setModels(result.models);
+      })
+      .catch((loadError: unknown) => {
+        if (!cancelled) setOptionsError(errorMessage(loadError));
+      })
+      .finally(() => {
+        if (!cancelled) setModelsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isFlow, props.mission.executor.ref]);
+
+  useEffect(() => {
+    const textarea = textareaRef.current;
+    if (textarea === null) return;
+    textarea.style.height = "auto";
+    textarea.style.height = `${Math.min(textarea.scrollHeight, 130)}px`;
+  }, [draft]);
 
   useEffect(() => {
     const api = desktopApi();
@@ -535,13 +675,64 @@ export function MissionDetailFragment(props: {
 
   const send = async () => {
     const content = draft.trim();
-    if (content === "" || sending || executionActive || isFlow) return;
+    if (content === "" || sending || optionsSaving || executionActive || isFlow) return;
+    const requestId = crypto.randomUUID();
+    const optimistic: LocalMissionUserMessage = {
+      id: requestId,
+      content,
+      createdAt: new Date().toISOString(),
+      status: "pending",
+    };
+    setDraft("");
+    setOptimisticMessages((current) => [...current, optimistic]);
+    setAwaitingRequestId(requestId);
+    followLatestRef.current = true;
     setSending(true);
     try {
-      await props.onSend?.(content);
-      setDraft("");
+      await props.onSend?.(content, requestId);
+    } catch {
+      const api = desktopApi();
+      const snapshot =
+        api === undefined
+          ? undefined
+          : await api.getMissionChat({ id: props.mission.id, limit: 50 }).catch(() => undefined);
+      if (snapshot !== undefined) setChat((current) => mergeLatestChatPage(current, snapshot));
+      const persisted = snapshot?.entries.some((entry) => entry.id === requestId) ?? false;
+      setOptimisticMessages((current) =>
+        persisted
+          ? current.filter((message) => message.id !== requestId)
+          : current.map((message) =>
+              message.id === requestId ? { ...message, status: "failed" } : message,
+            ),
+      );
+      setAwaitingRequestId(null);
     } finally {
       setSending(false);
+      requestAnimationFrame(() => textareaRef.current?.focus());
+    }
+  };
+
+  const saveOptions = async (
+    nextToolPermissionMode: DesktopToolPermissionMode,
+    nextModelOverride: MissionModelOverride | undefined,
+  ) => {
+    if (controlsDisabled) return;
+    const previousToolPermissionMode = toolPermissionMode;
+    const previousModelOverride = modelOverride;
+    setToolPermissionMode(nextToolPermissionMode);
+    setModelOverride(nextModelOverride);
+    setOptionsSaving(true);
+    try {
+      await props.onOptionsChange?.({
+        toolPermissionMode: nextToolPermissionMode,
+        ...(nextModelOverride === undefined ? {} : { modelOverride: nextModelOverride }),
+      });
+      setOptionsError(null);
+    } catch {
+      setToolPermissionMode(previousToolPermissionMode);
+      setModelOverride(previousModelOverride);
+    } finally {
+      setOptionsSaving(false);
     }
   };
 
@@ -597,11 +788,44 @@ export function MissionDetailFragment(props: {
   };
 
   const displayEntries = chat?.entries ?? [];
+  const durableEntryIds = useMemo(
+    () => new Set(displayEntries.map((entry) => entry.id)),
+    [displayEntries],
+  );
+  const conversationEntries = useMemo(
+    () =>
+      [
+        ...displayEntries.map((entry) => ({ type: "durable" as const, entry })),
+        ...optimisticMessages
+          .filter((message) => !durableEntryIds.has(message.id))
+          .map((message) => ({ type: "local" as const, entry: message })),
+      ].toSorted((left, right) => left.entry.createdAt.localeCompare(right.entry.createdAt)),
+    [displayEntries, durableEntryIds, optimisticMessages],
+  );
   const lastEntry = displayEntries.at(-1);
   const lastEntryFingerprint =
     lastEntry === undefined
       ? "empty"
       : `${lastEntry.id}:${lastEntry.kind}:${entryContentLength(lastEntry)}`;
+
+  useEffect(() => {
+    if (durableEntryIds.size === 0) return;
+    setOptimisticMessages((current) =>
+      current.filter((message) => !durableEntryIds.has(message.id)),
+    );
+  }, [durableEntryIds]);
+
+  useEffect(() => {
+    if (awaitingRequestId === null || chat === null) return;
+    const userIndex = chat.entries.findIndex((entry) => entry.id === awaitingRequestId);
+    const responseStarted =
+      userIndex >= 0 && chat.entries.slice(userIndex + 1).some((entry) => entry.kind !== "user");
+    const executionFinished =
+      userIndex >= 0 &&
+      chat.execution !== undefined &&
+      !["queued", "running", "waiting"].includes(chat.execution.status);
+    if (responseStarted || executionFinished) setAwaitingRequestId(null);
+  }, [awaitingRequestId, chat]);
 
   const loadEarlier = async (): Promise<void> => {
     const api = desktopApi();
@@ -641,7 +865,13 @@ export function MissionDetailFragment(props: {
     } else {
       setShowJumpToLatest(true);
     }
-  }, [displayEntries.length, lastEntryFingerprint, interactions.length]);
+  }, [
+    awaitingRequestId,
+    conversationEntries.length,
+    displayEntries.length,
+    lastEntryFingerprint,
+    interactions.length,
+  ]);
 
   return (
     <section className="mission-detail">
@@ -726,6 +956,15 @@ export function MissionDetailFragment(props: {
         </button>
       </div>
       <div className="mission-detail-body">
+        {tab !== "chat" && visibleError !== null && visibleError !== undefined ? (
+          <MissionErrorBanner
+            error={visibleError}
+            onDismiss={() => {
+              setOptionsError(null);
+              props.onDismissError?.();
+            }}
+          />
+        ) : null}
         {tab === "chat" ? (
           <div className="mission-chat-shell">
             <div
@@ -757,15 +996,26 @@ export function MissionDetailFragment(props: {
                     {historyError}
                   </p>
                 )}
-                {displayEntries.map((entry) => (
-                  <MissionChatEntryView
-                    entry={entry}
+                {conversationEntries.map((item) =>
+                  item.type === "local" ? (
+                    <LocalMissionUserMessageView message={item.entry} key={item.entry.id} />
+                  ) : (
+                    <MissionChatEntryView
+                      entry={item.entry}
+                      executorName={props.mission.executor.name}
+                      isTeam={isTeam}
+                      isFlow={isFlow}
+                      key={item.entry.id}
+                    />
+                  ),
+                )}
+                {awaitingRequestId !== null ? (
+                  <MissionThinkingPlaceholder
                     executorName={props.mission.executor.name}
                     isTeam={isTeam}
                     isFlow={isFlow}
-                    key={entry.id}
                   />
-                ))}
+                ) : null}
               </div>
               {showJumpToLatest ? (
                 <button
@@ -784,6 +1034,15 @@ export function MissionDetailFragment(props: {
               ) : null}
             </div>
             <div className="mission-chat-footer">
+              {visibleError !== null && visibleError !== undefined ? (
+                <MissionErrorBanner
+                  error={visibleError}
+                  onDismiss={() => {
+                    setOptionsError(null);
+                    props.onDismissError?.();
+                  }}
+                />
+              ) : null}
               {missionFooterTip(props.mission, chat) ? (
                 <small className="mission-chat-footer-tip">
                   {missionFooterTip(props.mission, chat)}
@@ -813,18 +1072,10 @@ export function MissionDetailFragment(props: {
                   onInterrupt={() => void interrupt()}
                 />
               ) : (
-                <div className="mission-chat-composer">
-                  {isFlow ? (
-                    <GitBranch size={20} aria-hidden="true" />
-                  ) : (
-                    <Paperclip size={20} aria-hidden="true" />
-                  )}
-                  <ToolPermissionSelect
-                    value={props.mission.toolPermissionMode}
-                    disabled
-                    title={t("permissionTaskLocked", { ns: "missions" })}
-                  />
+                <div className="mission-chat-composer" aria-busy={sending || optionsSaving}>
                   <textarea
+                    ref={textareaRef}
+                    rows={1}
                     value={draft}
                     disabled={
                       isFlow ||
@@ -861,36 +1112,60 @@ export function MissionDetailFragment(props: {
                       }
                     }}
                   />
-                  {executionActive ? (
-                    <button
-                      className="is-interrupt"
-                      type="button"
-                      aria-label={t("interrupt", { ns: "missions" })}
-                      title={
-                        interruptible
-                          ? t("interrupt", { ns: "missions" })
-                          : t("resumeBeforeInterrupt", { ns: "missions" })
-                      }
-                      disabled={!interruptible || interrupting}
-                      onClick={() => void interrupt()}
-                    >
-                      <StopCircle size={19} weight="fill" aria-hidden="true" />
-                    </button>
-                  ) : (
-                    <button
-                      type="button"
-                      aria-label={t("send", { ns: "missions" })}
-                      disabled={
-                        isFlow ||
-                        draft.trim() === "" ||
-                        sending ||
-                        props.mission.lifecycleStatus === "completed"
-                      }
-                      onClick={() => void send()}
-                    >
-                      <PaperPlaneTilt size={18} aria-hidden="true" />
-                    </button>
-                  )}
+                  <div className="mission-chat-composer-toolbar">
+                    <div className="mission-chat-options" aria-label={t("missionOptions")}>
+                      {!isFlow ? (
+                        <MissionModelOverrideControls
+                          models={models}
+                          loading={modelsLoading}
+                          disabled={controlsDisabled}
+                          value={modelOverride}
+                          onChange={(value) => void saveOptions(toolPermissionMode, value)}
+                        />
+                      ) : null}
+                      <ToolPermissionSelect
+                        value={toolPermissionMode}
+                        disabled={controlsDisabled}
+                        title={
+                          executionActive
+                            ? t("optionsAvailableNextTurn", { ns: "missions" })
+                            : t("permissionOverride", { ns: "missions" })
+                        }
+                        onChange={(value) => void saveOptions(value, modelOverride)}
+                      />
+                    </div>
+                    {executionActive ? (
+                      <button
+                        className="is-interrupt"
+                        type="button"
+                        aria-label={t("interrupt", { ns: "missions" })}
+                        title={
+                          interruptible
+                            ? t("interrupt", { ns: "missions" })
+                            : t("resumeBeforeInterrupt", { ns: "missions" })
+                        }
+                        disabled={!interruptible || interrupting}
+                        onClick={() => void interrupt()}
+                      >
+                        <StopCircle size={19} weight="fill" aria-hidden="true" />
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        aria-label={t("send", { ns: "missions" })}
+                        disabled={
+                          isFlow ||
+                          draft.trim() === "" ||
+                          sending ||
+                          optionsSaving ||
+                          props.mission.lifecycleStatus === "completed"
+                        }
+                        onClick={() => void send()}
+                      >
+                        <PaperPlaneTilt size={18} aria-hidden="true" />
+                      </button>
+                    )}
+                  </div>
                 </div>
               )}
             </div>
@@ -944,6 +1219,71 @@ export function MissionDetailFragment(props: {
   );
 }
 
+function MissionErrorBanner(props: { readonly error: string; readonly onDismiss: () => void }) {
+  const { t } = useTranslation("common");
+  return (
+    <div className="mission-page-error" role="alert">
+      <span>{props.error}</span>
+      <button
+        type="button"
+        aria-label={t("actions.close")}
+        title={t("actions.close")}
+        onClick={props.onDismiss}
+      >
+        <X size={16} aria-hidden="true" />
+      </button>
+    </div>
+  );
+}
+
+function LocalMissionUserMessageView(props: { readonly message: LocalMissionUserMessage }) {
+  const { t } = useTranslation("missions");
+  return (
+    <div
+      className={
+        props.message.status === "failed"
+          ? "mission-user-message is-local is-failed"
+          : "mission-user-message is-local"
+      }
+    >
+      <div>
+        <strong>{t("you")}</strong>
+        <p>{props.message.content}</p>
+        {props.message.status === "failed" ? <small>{t("messageSendFailed")}</small> : null}
+      </div>
+      <span aria-hidden="true">{t("you")}</span>
+    </div>
+  );
+}
+
+function MissionThinkingPlaceholder(props: {
+  readonly executorName: string;
+  readonly isTeam: boolean;
+  readonly isFlow: boolean;
+}) {
+  const { t } = useTranslation("missions");
+  return (
+    <div className="mission-assistant-message mission-thinking-placeholder" aria-live="polite">
+      <span aria-hidden="true">
+        {props.isTeam ? (
+          <UsersThree size={18} />
+        ) : props.isFlow ? (
+          <GitBranch size={18} />
+        ) : (
+          <User size={18} />
+        )}
+      </span>
+      <div>
+        <strong>{props.executorName}</strong>
+        <p>
+          <SpinnerGap size={17} aria-hidden="true" />
+          {t("thinkingActive", { name: props.executorName })}
+        </p>
+      </div>
+    </div>
+  );
+}
+
 function MissionChatEntryView(props: {
   readonly entry: MissionChatEntry;
   readonly executorName: string;
@@ -955,11 +1295,11 @@ function MissionChatEntryView(props: {
   if (props.entry.kind === "user") {
     return (
       <div className="mission-user-message">
-        <span aria-hidden="true">{t("you")}</span>
         <div>
           <strong>{t("you")}</strong>
           <p>{props.entry.content}</p>
         </div>
+        <span aria-hidden="true">{t("you")}</span>
       </div>
     );
   }

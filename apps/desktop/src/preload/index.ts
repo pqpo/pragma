@@ -74,6 +74,7 @@ import {
   UpsertPragmaResourceSchema,
   ValidatePragmaYamlSchema,
   UpdateModelProviderSchema,
+  UpdateMissionOptionsSchema,
   UpdateExpertDefinitionSchema,
   UpdateBuiltInExpertDefinitionSchema,
   UpdatePluginDefaultsSchema,
@@ -290,6 +291,10 @@ const api: PragmaDesktopAPI = {
   createMission: async (input) =>
     MissionSchema.parse(
       await ipcRenderer.invoke("missions:create", CreateMissionSchema.parse(input)),
+    ),
+  updateMissionOptions: async (input) =>
+    MissionSchema.parse(
+      await ipcRenderer.invoke("missions:options:update", UpdateMissionOptionsSchema.parse(input)),
     ),
   runMission: async (id) =>
     MissionSchema.parse(

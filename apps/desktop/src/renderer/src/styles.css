@@ -9595,6 +9595,54 @@ textarea:focus-visible,
   box-shadow: var(--shadow-hover);
 }
 
+.mission-page-error {
+  position: static;
+  display: flex;
+  max-width: none;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  color: #9d3f34;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.mission-page-error > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.mission-page-error > button {
+  display: grid;
+  width: 26px;
+  height: 26px;
+  flex: 0 0 26px;
+  place-items: center;
+  margin: -4px -5px -4px 0;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.mission-page-error > button:hover,
+.mission-page-error > button:focus-visible {
+  outline: 0;
+  background: #fbe9e6;
+  box-shadow: 0 0 0 3px rgb(168 74 64 / 12%);
+}
+
+.mission-main > .mission-page-error {
+  position: absolute;
+  z-index: 3;
+  right: 32px;
+  bottom: 28px;
+  left: 32px;
+}
+
 .mission-detail-header {
   padding-top: 54px;
 }
@@ -9628,6 +9676,44 @@ textarea:focus-visible,
   grid-template-columns: 42px minmax(0, 1fr);
   align-items: start;
   gap: 14px;
+}
+
+.mission-user-message {
+  display: grid;
+  grid-template-columns: minmax(0, 760px) 42px;
+  justify-content: end;
+  gap: 14px;
+}
+
+.mission-user-message > div {
+  justify-self: end;
+  max-width: 760px;
+  padding: 11px 14px;
+  border: 1px solid rgb(88 121 104 / 14%);
+  border-radius: 14px 4px 14px 14px;
+  background: var(--green-soft);
+}
+
+.mission-user-message strong {
+  display: block;
+  color: var(--green-dark);
+  font-size: 11px;
+}
+
+.mission-user-message p {
+  margin-top: 4px;
+}
+
+.mission-user-message.is-failed > div {
+  border-color: #e6bab4;
+  background: #fff8f7;
+}
+
+.mission-user-message.is-failed small {
+  display: block;
+  margin-top: 7px;
+  color: #a5453c;
+  font-size: 11px;
 }
 
 .mission-assistant-message > span {
@@ -9665,13 +9751,13 @@ textarea:focus-visible,
 
 .mission-chat-composer {
   display: grid;
-  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr);
   flex: 0 0 auto;
-  min-height: 58px;
-  align-items: center;
-  gap: 11px;
+  min-height: 92px;
+  align-items: stretch;
+  gap: 0;
   margin-top: auto;
-  padding: 8px 9px 8px 17px;
+  padding: 0;
   border: 1px solid var(--border);
   border-radius: var(--radius-card);
   background: #fff;
@@ -9687,18 +9773,43 @@ textarea:focus-visible,
 }
 
 .mission-chat-composer textarea {
-  min-height: 38px;
+  width: 100%;
+  min-height: 52px;
   max-height: 130px;
   resize: none;
-  padding: 9px 0;
+  padding: 16px 18px 8px;
   border: 0;
   outline: 0;
   background: transparent;
   color: var(--text);
   font: inherit;
+  line-height: 1.5;
+  overflow-y: auto;
 }
 
-.mission-chat-composer > button {
+.mission-chat-composer textarea:focus-visible {
+  outline: 0;
+  box-shadow: none;
+}
+
+.mission-chat-composer-toolbar {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 5px 8px 8px 10px;
+}
+
+.mission-chat-options {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+}
+
+.mission-chat-composer-toolbar > button {
   display: grid;
   width: 39px;
   height: 39px;
@@ -9711,7 +9822,7 @@ textarea:focus-visible,
   cursor: pointer;
 }
 
-.mission-chat-composer > button:disabled {
+.mission-chat-composer-toolbar > button:disabled {
   background: #cad1cc;
 }
 
@@ -9916,14 +10027,31 @@ textarea:focus-visible,
   font-size: 11px;
 }
 
-.mission-chat-composer > button.is-interrupt,
-.mission-chat-composer > button.is-interrupt:disabled {
+.mission-chat-composer-toolbar > button.is-interrupt,
+.mission-chat-composer-toolbar > button.is-interrupt:disabled {
   background: #a84a40;
 }
 
-.mission-chat-composer > button.is-interrupt:disabled {
+.mission-chat-composer-toolbar > button.is-interrupt:disabled {
   cursor: not-allowed;
   opacity: 0.45;
+}
+
+.mission-thinking-placeholder p {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--muted);
+}
+
+.mission-thinking-placeholder p svg {
+  animation: mission-thinking-spin 900ms linear infinite;
+}
+
+@keyframes mission-thinking-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .mission-human-composer {

@@ -6,6 +6,7 @@ import {
   createStaticRuntimeResolver,
   defineRuntimeDriver,
   type RuntimeDriverSessionContext,
+  type RuntimeModelSelection,
 } from "@pragma/core";
 import type {
   PragmaExpertResource,
@@ -158,7 +159,7 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
     const startTurn = vi.fn(
       (
         session: { context: RuntimeDriverSessionContext; id: string },
-        turn: { rawQuery: string },
+        turn: { rawQuery: string; modelSelection?: RuntimeModelSelection | undefined },
       ) => ({
         outputText: `${session.context.agent.id}:${turn.rawQuery}`,
         runtimeSessionId: session.id,
@@ -180,6 +181,11 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
       mapEvent: () => ({ events: [] }),
       closeSession: () => undefined,
     });
+    const runtimeResolver = createStaticRuntimeResolver({
+      runtimes: [runtime],
+      defaultRuntimeId: "fake",
+    });
+    const runtimesForToolPermissionMode = vi.fn(() => runtimeResolver);
     const runner = createMissionRunner({
       missions,
       project,
@@ -187,7 +193,8 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
       capabilityCredentials: {} as CapabilityCredentialStore,
       capabilitiesPath: join(root, "capabilities"),
       pragmaHome: join(root, "state"),
-      runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
+      runtimes: runtimeResolver,
+      runtimesForToolPermissionMode,
     });
 
     const firstRunPromise = runner.run(mission.id);
@@ -218,6 +225,21 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
         expect.objectContaining({ kind: "assistant", content: "writer:Prepare a concise answer" }),
       ]),
     });
+
+    const configured = await runner.updateOptions({
+      id: mission.id,
+      toolPermissionMode: "auto-approve",
+      modelOverride: {
+        providerId: "provider",
+        modelId: "model",
+        thinkingLevel: "low",
+      },
+    });
+    expect(configured).toMatchObject({
+      toolPermissionMode: "auto-approve",
+      modelOverride: { thinkingLevel: "low" },
+    });
+    expect(runtimesForToolPermissionMode).toHaveBeenCalledWith("auto-approve");
 
     const followup = runner.sendMessage({
       id: mission.id,
@@ -251,6 +273,10 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
       "writer:Make it shorter",
     ]);
     expect(startTurn).toHaveBeenCalledTimes(2);
+    expect(startTurn.mock.calls[1]?.[1].modelSelection).toEqual({
+      model: { providerId: "provider", modelId: "model" },
+      thinkingLevel: "low",
+    });
     await expect(runner.listWorkItems(mission.id)).resolves.toEqual([
       expect.objectContaining({ kind: "expert", status: "succeeded", executorId: "writer" }),
     ]);
