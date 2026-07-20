@@ -25,22 +25,22 @@ import {
   type PragmaResource,
 } from "@pragma/interpreter/ast";
 
-import { BUILT_IN_STEWARD_FILES } from "./builtin.generated.ts";
+import { BUILT_IN_PRAGMA_FILES } from "./builtin.generated.ts";
 
-export const BUILT_IN_STEWARD_REF = "expert:steward@1.0.0" as const;
+export const BUILT_IN_PRAGMA_REF = "expert:pragma@1.0.0" as const;
 
-export function builtInStewardResource(): PragmaExpertResource {
+export function builtInPragmaResource(): PragmaExpertResource {
   return PragmaExpertResourceSchema.parse(
-    parsePragmaYaml(BUILT_IN_STEWARD_FILES["experts/steward@1.0.0.pragma.yaml"]!),
+    parsePragmaYaml(BUILT_IN_PRAGMA_FILES["experts/pragma@1.0.0.pragma.yaml"]!),
   );
 }
 
-export function builtInStewardFingerprint(
+export function builtInPragmaFingerprint(
   expertResource?: PragmaExpertResource,
   additionalResources: readonly PragmaResource[] = [],
 ): string {
   const hash = createHash("sha256");
-  for (const [path, source] of Object.entries(BUILT_IN_STEWARD_FILES).toSorted(([left], [right]) =>
+  for (const [path, source] of Object.entries(BUILT_IN_PRAGMA_FILES).toSorted(([left], [right]) =>
     left.localeCompare(right),
   )) {
     hash.update(path);
@@ -51,13 +51,13 @@ export function builtInStewardFingerprint(
   return hash.digest("hex");
 }
 
-export async function materializeBuiltInSteward(
+export async function materializeBuiltInDefaultAgent(
   root: string,
   expertResource?: PragmaExpertResource,
   additionalResources: readonly PragmaResource[] = [],
 ): Promise<string> {
-  const targetRoot = join(root, builtInStewardFingerprint(expertResource, additionalResources));
-  for (const [relativePath, source] of Object.entries(BUILT_IN_STEWARD_FILES)) {
+  const targetRoot = join(root, builtInPragmaFingerprint(expertResource, additionalResources));
+  for (const [relativePath, source] of Object.entries(BUILT_IN_PRAGMA_FILES)) {
     const target = join(targetRoot, relativePath);
     await mkdir(dirname(target), { recursive: true, mode: 0o700 });
     await writeFile(
@@ -69,7 +69,7 @@ export async function materializeBuiltInSteward(
   return join(targetRoot, "pragma.yaml");
 }
 
-export async function compileBuiltInSteward(options: {
+export async function compileBuiltInDefaultAgent(options: {
   readonly definitionStateRoot: string;
   readonly workspace: string;
   readonly pragmaHome: string;
@@ -82,13 +82,13 @@ export async function compileBuiltInSteward(options: {
   readonly adapterHost?: PragmaCompileOptions["adapterHost"];
   readonly tools: readonly ExpertAgentManagedTool<string, ExpertAgentToolCallResult>[];
 }): Promise<CompiledResource<Expert>> {
-  const entry = await materializeBuiltInSteward(
+  const entry = await materializeBuiltInDefaultAgent(
     options.definitionStateRoot,
     options.expertResource,
     options.additionalResources,
   );
   const project = await loadPragmaProject(entry, { rootDir: dirname(entry) });
-  return await project.compile<Expert>(BUILT_IN_STEWARD_REF, {
+  return await project.compile<Expert>(BUILT_IN_PRAGMA_REF, {
     workspace: options.workspace,
     pragmaHome: options.pragmaHome,
     environmentId: "desktop-system-expert",
@@ -100,11 +100,11 @@ export async function compileBuiltInSteward(options: {
       ? {}
       : { rootExecutionOverride: options.rootExecutionOverride }),
     ...(options.plugins === undefined ? {} : { plugins: options.plugins }),
-    adapterHost: stewardAdapterHost(dirname(entry), options.tools, options.adapterHost),
+    adapterHost: defaultAgentAdapterHost(dirname(entry), options.tools, options.adapterHost),
   });
 }
 
-function stewardAdapterHost(
+function defaultAgentAdapterHost(
   projectRoot: string,
   tools: readonly ExpertAgentManagedTool<string, ExpertAgentToolCallResult>[],
   external?: PragmaCompileOptions["adapterHost"],
@@ -125,14 +125,14 @@ function stewardAdapterHost(
     projectRoot,
     async resolveBinding(ref): Promise<PragmaBindingRecord | undefined> {
       const builtIn =
-        ref === "binding:pragma.steward-host"
+        ref === "binding:pragma.default-agent-host"
           ? { ref, revision: "1", fingerprint, value: { contribution: { tools } } }
           : undefined;
       return builtIn ?? (await external?.resolveBinding(ref));
     },
     async resolveArtifact(source) {
       if (external !== undefined) return await external.resolveArtifact(source);
-      throw new Error(`Unexpected external Steward artifact: ${JSON.stringify(source)}`);
+      throw new Error(`Unexpected external Pragma artifact: ${JSON.stringify(source)}`);
     },
     async resolveSecret(ref) {
       return await external?.resolveSecret(ref);
@@ -146,7 +146,7 @@ function customizedBuiltInSource(
   expertResource: PragmaExpertResource | undefined,
   additionalResources: readonly PragmaResource[],
 ): string {
-  if (path === "experts/steward@1.0.0.pragma.yaml" && expertResource !== undefined) {
+  if (path === "experts/pragma@1.0.0.pragma.yaml" && expertResource !== undefined) {
     return formatPragmaYaml(PragmaExpertResourceSchema.parse(expertResource));
   }
   if (path === "pragma.yaml" && additionalResources.length > 0) {

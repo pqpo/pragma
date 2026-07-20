@@ -157,7 +157,7 @@ export function HomePage(props: {
   };
 
   return (
-    <section className="steward-home home-mission-create">
+    <section className="default-agent-home home-mission-create">
       <section className="mission-create" aria-labelledby="new-mission-title">
         <header>
           <h1 id="new-mission-title">{t("start")}</h1>

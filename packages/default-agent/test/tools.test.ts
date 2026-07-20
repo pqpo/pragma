@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import type { StewardDslProjectPort, StewardTaskPort } from "../src/ports.ts";
-import { createStewardTools } from "../src/tools.ts";
+import type { DefaultAgentDslProjectPort, DefaultAgentTaskPort } from "../src/ports.ts";
+import { createDefaultAgentTools } from "../src/tools.ts";
 
-describe("Steward managed tools", () => {
+describe("DefaultAgent managed tools", () => {
   it("keeps read tools open and gates durable writes", async () => {
-    const tools = createStewardTools({ project: projectPort(), tasks: taskPort() });
+    const tools = createDefaultAgentTools({ project: projectPort(), tasks: taskPort() });
     expect(tools.find((tool) => tool.name === "list_dsl_resources")?.approval).toBeUndefined();
     expect(tools.find((tool) => tool.name === "list_expert_options")?.approval).toBeUndefined();
     expect(tools.find((tool) => tool.name === "commit_dsl_changes")?.approval?.mode).toBe(
@@ -23,7 +23,7 @@ describe("Steward managed tools", () => {
         return { projectId: "studio", projectRevision: 2, changedRefs: [] };
       },
     });
-    const tool = createStewardTools({ project, tasks: taskPort() }).find(
+    const tool = createDefaultAgentTools({ project, tasks: taskPort() }).find(
       (candidate) => candidate.name === "commit_dsl_changes",
     )!;
     await tool.call({ changeSetId: "ed1bcbb5-b1e6-4aa5-9357-7853ce745f6b" }, undefined, {
@@ -33,7 +33,9 @@ describe("Steward managed tools", () => {
   });
 });
 
-function projectPort(overrides: Partial<StewardDslProjectPort> = {}): StewardDslProjectPort {
+function projectPort(
+  overrides: Partial<DefaultAgentDslProjectPort> = {},
+): DefaultAgentDslProjectPort {
   return {
     list: async () => ({ projectRevision: 0, resources: [] }),
     listExpertOptions: async () => ({ runtimeModels: [], capabilities: [] }),
@@ -51,7 +53,7 @@ function projectPort(overrides: Partial<StewardDslProjectPort> = {}): StewardDsl
   };
 }
 
-function taskPort(): StewardTaskPort {
+function taskPort(): DefaultAgentTaskPort {
   return {
     list: async () => [],
     get: async () => {

@@ -6,15 +6,17 @@ import { describe, expect, it } from "vitest";
 
 import type { Capability } from "../shared/desktop-api.ts";
 import { createPragmaProjectStore } from "./pragma-project-store.ts";
-import { createDesktopStewardProjectPort } from "./steward-project-adapter.ts";
+import { createDesktopDefaultAgentProjectPort } from "./default-agent-project-adapter.ts";
 import type { CapabilityStore } from "./capability-store.ts";
 import type { RuntimeEnvironmentService } from "./runtime-environment-service.ts";
 
-describe("Desktop Steward DSL project adapter", () => {
+describe("Desktop DefaultAgent DSL project adapter", () => {
   it("creates and updates the same exact ref through immutable project revisions", async () => {
-    const root = await mkdtemp(join(tmpdir(), "pragma-steward-project-"));
+    const root = await mkdtemp(join(tmpdir(), "pragma-default-agent-project-"));
     const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
-    const adapter = createDesktopStewardProjectPort(adapterOptions(project, join(root, "state")));
+    const adapter = createDesktopDefaultAgentProjectPort(
+      adapterOptions(project, join(root, "state")),
+    );
     const runtimeRef = (await adapter.listExpertOptions()).runtimeModels[0]!.runtimeProfileRef;
     const first = await adapter.prepare({
       expectedProjectRevision: 0,
@@ -44,9 +46,11 @@ describe("Desktop Steward DSL project adapter", () => {
   });
 
   it("replays a committed operation idempotently", async () => {
-    const root = await mkdtemp(join(tmpdir(), "pragma-steward-idempotent-"));
+    const root = await mkdtemp(join(tmpdir(), "pragma-default-agent-idempotent-"));
     const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
-    const adapter = createDesktopStewardProjectPort(adapterOptions(project, join(root, "state")));
+    const adapter = createDesktopDefaultAgentProjectPort(
+      adapterOptions(project, join(root, "state")),
+    );
     const runtimeRef = (await adapter.listExpertOptions()).runtimeModels[0]!.runtimeProfileRef;
     const candidate = await adapter.prepare({
       expectedProjectRevision: 0,
@@ -62,9 +66,9 @@ describe("Desktop Steward DSL project adapter", () => {
   });
 
   it("exposes only available models and ready capabilities through the portable port", async () => {
-    const root = await mkdtemp(join(tmpdir(), "pragma-steward-options-"));
+    const root = await mkdtemp(join(tmpdir(), "pragma-default-agent-options-"));
     const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
-    const adapter = createDesktopStewardProjectPort(
+    const adapter = createDesktopDefaultAgentProjectPort(
       adapterOptions(project, join(root, "state"), [
         capability("00000000-0000-4000-8000-000000000001", "ready"),
         capability("00000000-0000-4000-8000-000000000002", "needs_attention"),

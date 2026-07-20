@@ -4,7 +4,11 @@ import { fileURLToPath } from "node:url";
 
 import { BrowserWindow, app, ipcMain, safeStorage, shell } from "electron";
 import { PragmaPaths } from "@pragma/core";
-import { BUILT_IN_STEWARD_REF, compileBuiltInSteward, createStewardTools } from "@pragma/steward";
+import {
+  BUILT_IN_PRAGMA_REF,
+  compileBuiltInDefaultAgent,
+  createDefaultAgentTools,
+} from "@pragma/default-agent";
 
 import { createBridgeSnapshot } from "./bridge-snapshot.ts";
 import { installCapabilityHandlers } from "./capability-ipc.ts";
@@ -35,8 +39,8 @@ import { installPragmaProjectHandlers } from "./pragma-project-ipc.ts";
 import { createPragmaProjectStore } from "./pragma-project-store.ts";
 import { getRuntimeAvailability } from "./runtime-availability.ts";
 import { installWorkspaceScopeHandlers, validateWorkspace } from "./workspace-scope.ts";
-import { createDesktopStewardProjectPort } from "./steward-project-adapter.ts";
-import { createDesktopStewardTaskPort } from "./steward-task-adapter.ts";
+import { createDesktopDefaultAgentProjectPort } from "./default-agent-project-adapter.ts";
+import { createDesktopDefaultAgentTaskPort } from "./default-agent-task-adapter.ts";
 import { createDesktopSystemExpertRegistry } from "./system-expert-registry.ts";
 import {
   resolveSystemExpertRuntimeDefaults,
@@ -150,7 +154,7 @@ void app.whenReady().then(async () => {
   await systemExperts.initialize();
   const pragmaProjectStore = createPragmaProjectStore({
     projectsPath: join(app.getPath("home"), ".pragma", "projects"),
-    reservedResourceRefs: new Set([BUILT_IN_STEWARD_REF]),
+    reservedResourceRefs: new Set([BUILT_IN_PRAGMA_REF]),
   });
   installWorkflowLayoutHandlers(
     createWorkflowLayoutStore({
@@ -264,14 +268,14 @@ void app.whenReady().then(async () => {
   installPragmaProjectHandlers(pragmaProjectStore);
   const initialSettings = await desktopSettings.getSnapshot(app.getPreferredSystemLanguages());
   await mkdir(initialSettings.defaultWorkspace, { recursive: true, mode: 0o700 });
-  const stewardStateRoot = join(pragmaPaths.stateRoot(), "steward");
-  const stewardProject = createDesktopStewardProjectPort({
+  const defaultAgentStateRoot = join(pragmaPaths.stateRoot(), "pragma");
+  const defaultAgentProject = createDesktopDefaultAgentProjectPort({
     project: pragmaProjectStore,
-    stateRoot: stewardStateRoot,
+    stateRoot: defaultAgentStateRoot,
     capabilities: capabilityStore,
     runtimes,
   });
-  const stewardToolsRef: { current?: ReturnType<typeof createStewardTools> } = {};
+  const defaultAgentToolsRef: { current?: ReturnType<typeof createDefaultAgentTools> } = {};
   const missionRunner = createMissionRunner({
     missions: missionStore,
     project: pragmaProjectStore,
@@ -287,12 +291,12 @@ void app.whenReady().then(async () => {
     automaticHumanInteractionHandlerForToolPermissionMode: (mode) =>
       createAutomaticToolPermissionHandler(() => mode),
     compileSystemExecutor: async ({ mission, runtimes: scopedRuntimes }) => {
-      if (mission.executor.ref !== BUILT_IN_STEWARD_REF) return undefined;
-      if (stewardToolsRef.current === undefined) {
-        throw new Error("The built-in Steward tools have not been initialized.");
+      if (mission.executor.ref !== BUILT_IN_PRAGMA_REF) return undefined;
+      if (defaultAgentToolsRef.current === undefined) {
+        throw new Error("The built-in Pragma tools have not been initialized.");
       }
-      const definition = systemExperts.get(BUILT_IN_STEWARD_REF);
-      if (definition === undefined) throw new Error("The built-in Steward definition is missing.");
+      const definition = systemExperts.get(BUILT_IN_PRAGMA_REF);
+      if (definition === undefined) throw new Error("The built-in Pragma definition is missing.");
       const configuredModel =
         definition.executionProfile.mode === "pinned"
           ? definition.executionProfile.model
@@ -302,8 +306,8 @@ void app.whenReady().then(async () => {
         configuredModel,
         mission.modelOverride,
       );
-      return await compileBuiltInSteward({
-        definitionStateRoot: join(stewardStateRoot, "definitions"),
+      return await compileBuiltInDefaultAgent({
+        definitionStateRoot: join(defaultAgentStateRoot, "definitions"),
         workspace: mission.workspace.path,
         pragmaHome: pragmaPaths.root,
         runtimes: withRuntimeDefaults(scopedRuntimes, defaults),
@@ -316,11 +320,11 @@ void app.whenReady().then(async () => {
             ? {}
             : { modelSelection: defaults.modelSelection }),
         },
-        tools: stewardToolsRef.current,
+        tools: defaultAgentToolsRef.current,
         ...(definition.customized
-          ? { expertResource: systemExperts.getResource(BUILT_IN_STEWARD_REF) }
+          ? { expertResource: systemExperts.getResource(BUILT_IN_PRAGMA_REF) }
           : {}),
-        additionalResources: systemExperts.getAdditionalResources(BUILT_IN_STEWARD_REF),
+        additionalResources: systemExperts.getAdditionalResources(BUILT_IN_PRAGMA_REF),
         adapterHost: createDesktopAdapterHost(
           {
             capabilityStore,
@@ -347,15 +351,18 @@ void app.whenReady().then(async () => {
       });
     },
   });
-  const stewardTasks = createDesktopStewardTaskPort({
+  const defaultAgentTasks = createDesktopDefaultAgentTaskPort({
     missions: missionStore,
     runner: missionRunner,
     project: pragmaProjectStore,
     executors: missionExecutors,
-    stateRoot: stewardStateRoot,
+    stateRoot: defaultAgentStateRoot,
     getToolPermissionMode,
   });
-  stewardToolsRef.current = createStewardTools({ project: stewardProject, tasks: stewardTasks });
+  defaultAgentToolsRef.current = createDefaultAgentTools({
+    project: defaultAgentProject,
+    tasks: defaultAgentTasks,
+  });
   installMissionHandlers({
     missions: missionStore,
     project: pragmaProjectStore,
@@ -365,7 +372,7 @@ void app.whenReady().then(async () => {
     getDefaultToolPermissionMode: getToolPermissionMode,
     getDefaultWorkspace: async () =>
       (await desktopSettings.getSnapshot(app.getPreferredSystemLanguages())).defaultWorkspace,
-    defaultExecutorRef: BUILT_IN_STEWARD_REF,
+    defaultExecutorRef: BUILT_IN_PRAGMA_REF,
   });
   installDesktopSettingsHandlers({
     store: desktopSettings,

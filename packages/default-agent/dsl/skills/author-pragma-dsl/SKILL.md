@@ -1,12 +1,12 @@
 ---
 name: author-pragma-dsl
-description: Create and update validated pragma/v2 Expert, ExpertTeam, and Flow resources. Use when a user asks the Steward to create, change, configure, or repair an Expert, team, or Flow in the current Pragma project.
+description: Create and update validated pragma/v2 Expert, ExpertTeam, and Flow resources. Use when a user asks Pragma to create, change, configure, or repair an Expert, team, or Flow in the current Pragma project.
 ---
 
 # Author Pragma DSL
 
 Translate the user's intent into the smallest complete DSL change. Treat the interpreter as the
-source of truth and use only the Steward DSL tools to inspect, validate, and save resources.
+source of truth and use only the Pragma DSL tools to inspect, validate, and save resources.
 
 ## Workflow
 

@@ -10,7 +10,7 @@ import type {
   PragmaRuntimeProfileResource,
 } from "@pragma/interpreter/ast";
 import { afterEach, describe, expect, it } from "vitest";
-import { BUILT_IN_STEWARD_REF, builtInStewardResource } from "@pragma/steward";
+import { BUILT_IN_PRAGMA_REF, builtInPragmaResource } from "@pragma/default-agent";
 
 import { createExpertDefinitionStore } from "./expert-definition-store.ts";
 import { createPragmaProjectStore, PragmaProjectStoreError } from "./pragma-project-store.ts";
@@ -31,7 +31,7 @@ async function stores() {
   directories.push(directory);
   const project = createPragmaProjectStore({
     projectsPath: directory,
-    reservedResourceRefs: new Set([BUILT_IN_STEWARD_REF]),
+    reservedResourceRefs: new Set([BUILT_IN_PRAGMA_REF]),
   });
   return {
     directory,
@@ -211,7 +211,7 @@ describe("PragmaProjectStore", () => {
     await create("2.0.0");
 
     expect((await experts.list()).map((expert) => expert.ref).toSorted()).toEqual([
-      BUILT_IN_STEWARD_REF,
+      BUILT_IN_PRAGMA_REF,
       "expert:writer@1.0.0",
       "expert:writer@2.0.0",
     ]);
@@ -241,9 +241,9 @@ describe("PragmaProjectStore", () => {
       code: "expert_referenced",
     });
     await expect(
-      project.upsert({ expectedRevision: 1, resource: builtInStewardResource() }),
+      project.upsert({ expectedRevision: 1, resource: builtInPragmaResource() }),
     ).rejects.toMatchObject({ code: "built_in_readonly" });
-    await expect(experts.remove(BUILT_IN_STEWARD_REF)).rejects.toMatchObject({
+    await expect(experts.remove(BUILT_IN_PRAGMA_REF)).rejects.toMatchObject({
       code: "built_in_readonly",
     });
     expect((await project.get()).revision).toBe(1);

@@ -8,7 +8,7 @@ In the diagrams below, `A -> B` means `A` may depend on `B`.
 apps/web    -> client -> shared
 apps/server -> server -> core -> shared
 apps/worker -> server -> runtime-* -> core -> shared
-apps/desktop    -> steward -> interpreter -> core -> shared
+apps/desktop    -> default-agent -> interpreter -> core -> shared
 apps/desktop    -> interpreter -> core -> shared
 apps/desktop    -> runtime-* -> core -> shared
 plugins/*   -> core -> shared
@@ -17,36 +17,36 @@ examples    -> runtime-* / plugin-* / core -> shared
 
 ## Layers
 
-| Layer         | Responsibility                                                                   |
-| ------------- | -------------------------------------------------------------------------------- |
-| `shared`      | Runtime-neutral contracts, domain types, and pure utilities                      |
-| `client`      | Browser/client SDKs and client-safe API access                                   |
-| `server`      | Node-only control plane and infrastructure boundaries                            |
-| `core`        | Expert Agent execution abstractions and Runtime Adapter contracts                |
-| `interpreter` | Pragma DSL AST, parser, validator, compiler, registries, and semantic dump       |
-| `steward`     | Reusable built-in Steward DSL, Skill, descriptor/compiler, host ports, and tools |
-| `runtime-*`   | Concrete Runtime Adapter implementations                                         |
-| `plugins/*`   | Expert extensions built on the core plugin API                                   |
-| `apps`        | Composition and process entry points, including future Desktop App local bridge  |
-| `examples`    | Runnable demonstrations that may compose core, plugins, and concrete runtimes    |
+| Layer           | Responsibility                                                                        |
+| --------------- | ------------------------------------------------------------------------------------- |
+| `shared`        | Runtime-neutral contracts, domain types, and pure utilities                           |
+| `client`        | Browser/client SDKs and client-safe API access                                        |
+| `server`        | Node-only control plane and infrastructure boundaries                                 |
+| `core`          | Expert Agent execution abstractions and Runtime Adapter contracts                     |
+| `interpreter`   | Pragma DSL AST, parser, validator, compiler, registries, and semantic dump            |
+| `default-agent` | Reusable built-in Pragma Agent DSL, Skill, descriptor/compiler, host ports, and tools |
+| `runtime-*`     | Concrete Runtime Adapter implementations                                              |
+| `plugins/*`     | Expert extensions built on the core plugin API                                        |
+| `apps`          | Composition and process entry points, including future Desktop App local bridge       |
+| `examples`      | Runnable demonstrations that may compose core, plugins, and concrete runtimes         |
 
 ## Dependency Matrix
 
-| Source                 | Allowed dependencies                                                                                              |
-| ---------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `apps/web`             | `shared/*`, `client/*`                                                                                            |
-| `apps/server`          | `@pragma/shared`, `@pragma/server`, `@pragma/core`                                                                |
-| `apps/worker`          | `@pragma/shared`, `@pragma/server`, `@pragma/core`, concrete `@pragma/runtime-*` packages                         |
-| `apps/desktop`         | `@pragma/shared`, `@pragma/core`, `@pragma/interpreter`, `@pragma/steward`, concrete `@pragma/runtime-*` packages |
-| `plugins/*`            | `@pragma/shared`, `@pragma/core`; no app, server, client, or concrete runtime dependencies                        |
-| `examples`             | `@pragma/core`, concrete `@pragma/runtime-*`, and concrete `@pragma/plugin-*` packages                            |
-| `packages/shared`      | Runtime-neutral dependencies only                                                                                 |
-| `packages/client`      | `@pragma/shared`                                                                                                  |
-| `packages/server`      | `@pragma/shared`; orchestration code may depend on `@pragma/core`                                                 |
-| `packages/core`        | `@pragma/shared`                                                                                                  |
-| `packages/interpreter` | `@pragma/core`; its `/ast` export remains browser-safe                                                            |
-| `packages/steward`     | `@pragma/shared`, `@pragma/core`, `@pragma/interpreter`; its `/contracts` export remains browser-safe             |
-| `packages/runtime/*`   | `@pragma/shared`, `@pragma/core`, and that runtime's own SDKs                                                     |
+| Source                   | Allowed dependencies                                                                                                    |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------- |
+| `apps/web`               | `shared/*`, `client/*`                                                                                                  |
+| `apps/server`            | `@pragma/shared`, `@pragma/server`, `@pragma/core`                                                                      |
+| `apps/worker`            | `@pragma/shared`, `@pragma/server`, `@pragma/core`, concrete `@pragma/runtime-*` packages                               |
+| `apps/desktop`           | `@pragma/shared`, `@pragma/core`, `@pragma/interpreter`, `@pragma/default-agent`, concrete `@pragma/runtime-*` packages |
+| `plugins/*`              | `@pragma/shared`, `@pragma/core`; no app, server, client, or concrete runtime dependencies                              |
+| `examples`               | `@pragma/core`, concrete `@pragma/runtime-*`, and concrete `@pragma/plugin-*` packages                                  |
+| `packages/shared`        | Runtime-neutral dependencies only                                                                                       |
+| `packages/client`        | `@pragma/shared`                                                                                                        |
+| `packages/server`        | `@pragma/shared`; orchestration code may depend on `@pragma/core`                                                       |
+| `packages/core`          | `@pragma/shared`                                                                                                        |
+| `packages/interpreter`   | `@pragma/core`; its `/ast` export remains browser-safe                                                                  |
+| `packages/default-agent` | `@pragma/shared`, `@pragma/core`, `@pragma/interpreter`; its `/contracts` export remains browser-safe                   |
+| `packages/runtime/*`     | `@pragma/shared`, `@pragma/core`, and that runtime's own SDKs                                                           |
 
 Cross-package imports must use `@pragma/*` names, not relative paths.
 
@@ -89,16 +89,18 @@ runtime packages depend on `@pragma/core` and are assembled by application entry
 Worker. The default runtime selection is an application-layer decision; Worker currently registers
 PI and Codex runtimes and uses PI by default.
 
-`@pragma/steward` owns the portable built-in Steward definition and application-neutral host ports.
+`@pragma/default-agent` owns the portable built-in general-purpose Pragma Agent definition and application-neutral host ports.
 It does not depend on Desktop, Electron, Web, Server, database code, or a concrete Runtime Adapter.
 Applications compose the package with their own DSL project persistence and task implementations;
-the package exposes runtime-neutral project/task schemas through `@pragma/steward/contracts`.
+the package exposes runtime-neutral project/task schemas through `@pragma/default-agent/contracts`.
 
 Desktop Home is a Mission creation entry, not a separate chat runtime. Desktop's System Expert
-Registry projects the versioned Steward DSL as a read-only built-in Expert and resolves it for both
-Studio and Mission execution. Mission storage, Execution events, chat projection, approvals, and
-recovery are shared by every executor. System refs are reserved by the application; resource tags
-never grant immutability.
+Registry projects `expert:pragma@1.0.0` as the read-only default Expert and resolves it for both
+Studio and Mission execution. Users can run Pragma without authoring any project Expert. Its DSL
+authoring and Mission-management tools are built-in capabilities, while ordinary work uses the
+selected Runtime and authorized workspace. Mission storage, Execution events, chat projection,
+approvals, and recovery are shared by every executor. System refs are reserved by the application;
+resource tags never grant immutability.
 
 Future local bridge directories:
 

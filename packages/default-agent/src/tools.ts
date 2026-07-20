@@ -5,7 +5,7 @@ import type {
 } from "@pragma/core";
 import { z } from "zod";
 
-import type { StewardDslProjectPort, StewardTaskPort } from "./ports.ts";
+import type { DefaultAgentDslProjectPort, DefaultAgentTaskPort } from "./ports.ts";
 
 const RefInput = z.object({ ref: z.string().min(1) });
 const PrepareInput = z.object({
@@ -24,15 +24,15 @@ const SendTaskMessageInput = z.object({
   content: z.string().trim().min(1).max(100_000),
 });
 
-type StewardTool = ExpertAgentManagedTool<string, ExpertAgentToolCallResult>;
+type DefaultAgentTool = ExpertAgentManagedTool<string, ExpertAgentToolCallResult>;
 
-export function createStewardTools(options: {
-  readonly project: StewardDslProjectPort;
-  readonly tasks: StewardTaskPort;
-}): readonly StewardTool[] {
+export function createDefaultAgentTools(options: {
+  readonly project: DefaultAgentDslProjectPort;
+  readonly tasks: DefaultAgentTaskPort;
+}): readonly DefaultAgentTool[] {
   const operationId = (context: ExpertAgentManagedToolCallContext | undefined): string => {
     const id = context?.toolCallId;
-    if (id === undefined) throw new Error("A Steward write tool requires a toolCallId.");
+    if (id === undefined) throw new Error("A default Agent write tool requires a toolCallId.");
     return id;
   };
   return [
@@ -155,7 +155,7 @@ function tool(
     args: unknown,
     context?: ExpertAgentManagedToolCallContext,
   ) => Promise<ExpertAgentToolCallResult>,
-): StewardTool {
+): DefaultAgentTool {
   return {
     name,
     description,

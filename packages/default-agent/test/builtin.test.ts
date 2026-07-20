@@ -8,14 +8,14 @@ import { loadPragmaProject, parsePragmaYaml } from "@pragma/interpreter";
 import { PragmaCapabilityResourceSchema, PragmaResourceSchema } from "@pragma/interpreter/ast";
 import { describe, expect, it } from "vitest";
 
-import { BUILT_IN_STEWARD_FILES } from "../src/builtin.generated.ts";
-import { builtInStewardResource, materializeBuiltInSteward } from "../src/builtin.ts";
-import { createStewardTools } from "../src/tools.ts";
+import { BUILT_IN_PRAGMA_FILES } from "../src/builtin.generated.ts";
+import { builtInPragmaResource, materializeBuiltInDefaultAgent } from "../src/builtin.ts";
+import { createDefaultAgentTools } from "../src/tools.ts";
 
-describe("built-in Steward DSL", () => {
+describe("built-in Pragma Agent DSL", () => {
   it("loads as a portable pragma/v2 project with the authoring Skill", async () => {
-    const root = await mkdtemp(join(tmpdir(), "pragma-steward-builtin-"));
-    const entry = await materializeBuiltInSteward(root);
+    const root = await mkdtemp(join(tmpdir(), "pragma-default-agent-builtin-"));
+    const entry = await materializeBuiltInDefaultAgent(root);
     const project = await loadPragmaProject(entry, { rootDir: dirname(entry) });
 
     expect(await project.validate()).toEqual([]);
@@ -27,9 +27,9 @@ describe("built-in Steward DSL", () => {
     ).toEqual(["Capability", "Capability", "Expert"]);
 
     const unavailable = async (): Promise<never> => {
-      throw new Error("This compile-only test does not execute Steward tools.");
+      throw new Error("This compile-only test does not execute Pragma tools.");
     };
-    const tools = createStewardTools({
+    const tools = createDefaultAgentTools({
       project: {
         list: unavailable,
         listExpertOptions: unavailable,
@@ -47,14 +47,14 @@ describe("built-in Steward DSL", () => {
         interrupt: unavailable,
       },
     });
-    const compiled = await project.compile<Expert>("expert:steward@1.0.0", {
+    const compiled = await project.compile<Expert>("expert:pragma@1.0.0", {
       workspace: root,
       environmentId: "test",
       adapterHost: {
         environmentId: "test",
         projectRoot: dirname(entry),
         async resolveBinding(ref) {
-          return ref === "binding:pragma.steward-host"
+          return ref === "binding:pragma.default-agent-host"
             ? {
                 ref,
                 revision: "1",
@@ -74,6 +74,16 @@ describe("built-in Steward DSL", () => {
     expect(compiled.value.tools?.map((tool) => tool.name)).toHaveLength(11);
     expect(compiled.value.tools?.map((tool) => tool.name)).toContain("list_expert_options");
     expect(compiled.value.skills?.skills[0]?.path).toMatch(/author-pragma-dsl[\\/]SKILL\.md$/);
+    expect(compiled.value).toMatchObject({
+      id: "pragma",
+      name: "Pragma",
+      scope:
+        "Accomplish the user's work with the active Runtime, workspace, and available capabilities.",
+    });
+    expect(compiled.value.instructions).toContain("Your name is Pragma");
+    expect(compiled.value.instructions).toContain("identify yourself as Pragma");
+    expect(compiled.value.instructions).toContain("default general-purpose Agent");
+    expect(compiled.value.instructions).toContain("not the limit of your role");
   });
 
   it("keeps generated assets byte-identical to the DSL source tree", async () => {
@@ -87,13 +97,13 @@ describe("built-in Steward DSL", () => {
         ]),
       ),
     );
-    expect(actual).toEqual(BUILT_IN_STEWARD_FILES);
+    expect(actual).toEqual(BUILT_IN_PRAGMA_FILES);
   });
 
   it("materializes an overridden built-in Expert while preserving its bundled dependencies", async () => {
-    const root = await mkdtemp(join(tmpdir(), "pragma-steward-override-"));
-    const resource = builtInStewardResource();
-    resource.metadata.name = "My Steward";
+    const root = await mkdtemp(join(tmpdir(), "pragma-default-agent-override-"));
+    const resource = builtInPragmaResource();
+    resource.metadata.name = "My Pragma";
     resource.spec.instructions = "Use the customized built-in instructions.";
     const optionalCapability = PragmaCapabilityResourceSchema.parse({
       apiVersion: "pragma/v2",
@@ -111,13 +121,13 @@ describe("built-in Steward DSL", () => {
         config: { key: "desktop_optional" },
       },
     });
-    const entry = await materializeBuiltInSteward(root, resource, [optionalCapability]);
+    const entry = await materializeBuiltInDefaultAgent(root, resource, [optionalCapability]);
     const project = await loadPragmaProject(entry, { rootDir: dirname(entry) });
     const stored = project
       .listResources()
-      .find((candidate) => candidate.kind === "Expert" && candidate.metadata.id === "steward");
+      .find((candidate) => candidate.kind === "Expert" && candidate.metadata.id === "pragma");
 
-    expect(stored?.metadata.name).toBe("My Steward");
+    expect(stored?.metadata.name).toBe("My Pragma");
     expect(stored?.kind === "Expert" ? stored.spec.instructions : undefined).toBe(
       "Use the customized built-in instructions.",
     );

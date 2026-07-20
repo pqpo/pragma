@@ -1,6 +1,6 @@
 # Pragma 当前架构概览与演进判断
 
-> 基线：2026-07-13 当前仓库实现。本文面向架构评审，描述已经存在的系统，而不是早期愿景；不展开类和函数级细节。
+> 基线：2026-07-20 当前仓库实现。本文面向架构评审，描述已经存在的系统，而不是早期愿景；不展开类和函数级细节。
 
 ## 结论先行
 
@@ -75,8 +75,9 @@ Pragma 已经形成一个质量较好的**本地 Agent 执行内核**：Expert�
 - Desktop 的 Gateway 和 Device 状态是离线快照，没有设备绑定、心跳、任务下发、事件回传或断线恢复。
 - Mission 已连接 ExpertSession / Flow Execution；v3 manifest 只保存有界元数据，跨轮用户消息和
   Execution 引用追加到 `messages.jsonl`，生成内容仍由 Execution Canonical Event Log 投影。
-- Desktop Home 是 Mission 新建入口，默认使用只读系统专家 `expert:steward@1.0.0`；Studio 与任务
-  执行器目录通过同一个 System Expert Registry 展示和解析管家，不再维护独立 Home Chat。
+- Desktop Home 是 Mission 新建入口，默认使用只读通用系统 Agent `expert:pragma@1.0.0`；即使没有
+  创建任何项目 Expert，用户也可以直接让 Pragma 在授权工作区中完成任务。Studio 与任务执行器
+  目录通过同一个 System Expert Registry 展示和解析 Pragma，不再维护独立 Home Chat。
 - Web 和 Client 仍只有健康检查路径，不代表控制面产品能力。
 
 ## 合理、应继续保持的设计

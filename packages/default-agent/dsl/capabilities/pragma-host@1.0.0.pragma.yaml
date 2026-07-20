@@ -1,0 +1,13 @@
+apiVersion: pragma/v2
+kind: Capability
+metadata:
+  id: pragma_host
+  version: 1.0.0
+  name: Pragma host operations
+  description: App-provided project and Mission operations available to the built-in Pragma Agent.
+  tags: [builtin, pragma, default-agent]
+spec:
+  adapter: pragma.capability.host@v1
+  binding: binding:pragma.default-agent-host
+  config:
+    key: pragma.default-agent-host

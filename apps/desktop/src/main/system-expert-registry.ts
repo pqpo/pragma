@@ -10,10 +10,10 @@ import {
   type PragmaResource,
 } from "@pragma/interpreter/ast";
 import {
-  BUILT_IN_STEWARD_REF,
-  builtInStewardFingerprint,
-  builtInStewardResource,
-} from "@pragma/steward";
+  BUILT_IN_PRAGMA_REF,
+  builtInPragmaFingerprint,
+  builtInPragmaResource,
+} from "@pragma/default-agent";
 import { z } from "zod";
 
 import {
@@ -31,10 +31,10 @@ import {
 import { desktopCapabilityBindingRef, desktopContextBindingRef } from "./desktop-binding-ref.ts";
 
 const BUILT_IN_TIMESTAMP = "1970-01-01T00:00:00.000Z";
-const CONFIG_SCHEMA_VERSION = 2;
+const CONFIG_SCHEMA_VERSION = 3;
 
 const SystemExpertCustomizationSchema = UpdateBuiltInExpertDefinitionSchema.extend({
-  ref: z.literal(BUILT_IN_STEWARD_REF),
+  ref: z.literal(BUILT_IN_PRAGMA_REF),
   revision: z.number().int().min(2),
   updatedAt: z.string().datetime(),
 });
@@ -65,15 +65,15 @@ export function createDesktopSystemExpertRegistry(options?: {
   readonly configPath?: string | undefined;
   readonly warn?: ((message: string, error: unknown) => void) | undefined;
 }): DesktopSystemExpertRegistry {
-  const defaultResource = builtInStewardResource();
+  const defaultResource = builtInPragmaResource();
   let customizations = new Map<string, SystemExpertCustomization>();
 
   const requireBuiltInRef = (ref: string): void => {
-    if (ref !== BUILT_IN_STEWARD_REF) throw new Error(`Built-in Expert not found: ${ref}`);
+    if (ref !== BUILT_IN_PRAGMA_REF) throw new Error(`Built-in Expert not found: ${ref}`);
   };
 
   const effectiveResource = (): PragmaExpertResource => {
-    const customization = customizations.get(BUILT_IN_STEWARD_REF);
+    const customization = customizations.get(BUILT_IN_PRAGMA_REF);
     if (customization === undefined) return defaultResource;
     return {
       ...defaultResource,
@@ -117,10 +117,10 @@ export function createDesktopSystemExpertRegistry(options?: {
 
   const definition = (): ExpertDefinition => {
     const resource = effectiveResource();
-    const customization = customizations.get(BUILT_IN_STEWARD_REF);
+    const customization = customizations.get(BUILT_IN_PRAGMA_REF);
     return ExpertDefinitionSchema.parse({
       schemaVersion: "pragma.desktop-expert-view/v1",
-      ref: BUILT_IN_STEWARD_REF,
+      ref: BUILT_IN_PRAGMA_REF,
       id: resource.metadata.id,
       name: resource.metadata.name,
       description: resource.metadata.description,
@@ -193,12 +193,12 @@ export function createDesktopSystemExpertRegistry(options?: {
       customizations = await readConfig();
     },
     list: () => [ExpertSummarySchema.parse(definition())],
-    get: (ref) => (ref === BUILT_IN_STEWARD_REF ? definition() : undefined),
-    getResource: (ref) => (ref === BUILT_IN_STEWARD_REF ? effectiveResource() : undefined),
+    get: (ref) => (ref === BUILT_IN_PRAGMA_REF ? definition() : undefined),
+    getResource: (ref) => (ref === BUILT_IN_PRAGMA_REF ? effectiveResource() : undefined),
     getAdditionalResources: (ref) =>
-      ref === BUILT_IN_STEWARD_REF ? customizationResources(customizations.get(ref)) : [],
+      ref === BUILT_IN_PRAGMA_REF ? customizationResources(customizations.get(ref)) : [],
     getExecutor: (ref) => {
-      if (ref !== BUILT_IN_STEWARD_REF) return undefined;
+      if (ref !== BUILT_IN_PRAGMA_REF) return undefined;
       const current = definition();
       return MissionExecutorSchema.parse({
         kind: "expert",
@@ -222,13 +222,13 @@ export function createDesktopSystemExpertRegistry(options?: {
       ];
     },
     fingerprint: (ref) =>
-      ref === BUILT_IN_STEWARD_REF
-        ? builtInStewardFingerprint(
-            customizations.has(BUILT_IN_STEWARD_REF) ? effectiveResource() : undefined,
-            customizationResources(customizations.get(BUILT_IN_STEWARD_REF)),
+      ref === BUILT_IN_PRAGMA_REF
+        ? builtInPragmaFingerprint(
+            customizations.has(BUILT_IN_PRAGMA_REF) ? effectiveResource() : undefined,
+            customizationResources(customizations.get(BUILT_IN_PRAGMA_REF)),
           )
         : undefined,
-    isReservedRef: (ref) => ref === BUILT_IN_STEWARD_REF,
+    isReservedRef: (ref) => ref === BUILT_IN_PRAGMA_REF,
     isReservedId: (id) => id === defaultResource.metadata.id,
     async update(ref, input) {
       requireBuiltInRef(ref);

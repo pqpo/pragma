@@ -13,12 +13,12 @@ import {
   type PragmaResource,
 } from "@pragma/interpreter/ast";
 import {
-  StewardChangeSetSchema,
-  StewardExpertOptionCatalogSchema,
-  StewardProjectCommitSchema,
-  type StewardDslProjectPort,
-  type StewardExpertOptionCatalog,
-} from "@pragma/steward";
+  DefaultAgentChangeSetSchema,
+  DefaultAgentExpertOptionCatalogSchema,
+  DefaultAgentProjectCommitSchema,
+  type DefaultAgentDslProjectPort,
+  type DefaultAgentExpertOptionCatalog,
+} from "@pragma/default-agent";
 import { z } from "zod";
 
 import type { Capability } from "../shared/desktop-api.ts";
@@ -32,16 +32,16 @@ import { getRuntimeAvailability } from "./runtime-availability.ts";
 import type { RuntimeEnvironmentService } from "./runtime-environment-service.ts";
 
 const CandidateRecordSchema = z.object({
-  changeSet: StewardChangeSetSchema,
+  changeSet: DefaultAgentChangeSetSchema,
   resources: z.array(PragmaResourceSchema),
 });
 
-export function createDesktopStewardProjectPort(options: {
+export function createDesktopDefaultAgentProjectPort(options: {
   readonly project: PragmaProjectStore;
   readonly stateRoot: string;
   readonly capabilities: CapabilityStore;
   readonly runtimes: RuntimeEnvironmentService;
-}): StewardDslProjectPort {
+}): DefaultAgentDslProjectPort {
   const candidatePath = (id: string) =>
     join(options.stateRoot, "change-sets", `${encodePragmaPathSegment(id)}.json`);
   const operationPath = (id: string) =>
@@ -87,7 +87,7 @@ export function createDesktopStewardProjectPort(options: {
           `Project revision changed from ${input.expectedProjectRevision} to ${snapshot.revision}.`,
         );
       }
-      const authoredResources = input.sources.map(parseStewardResource);
+      const authoredResources = input.sources.map(parseDefaultAgentResource);
       const catalog = await buildExpertCatalog(options);
       const knownRefs = new Set([
         ...snapshot.resources.map(canonicalPragmaResourceRef),
@@ -113,7 +113,7 @@ export function createDesktopStewardProjectPort(options: {
         upserts: resources,
       });
       const existing = new Set(snapshot.resources.map(canonicalPragmaResourceRef));
-      const changeSet = StewardChangeSetSchema.parse({
+      const changeSet = DefaultAgentChangeSetSchema.parse({
         changeSetId: randomUUID(),
         projectRevision: snapshot.revision,
         diagnostics,
@@ -134,7 +134,7 @@ export function createDesktopStewardProjectPort(options: {
       const path = operationPath(input.operationId);
       return await withFileLock(`${path}.lock`, async () => {
         const completed = await readJson(path);
-        if (completed !== undefined) return StewardProjectCommitSchema.parse(completed);
+        if (completed !== undefined) return DefaultAgentProjectCommitSchema.parse(completed);
         const candidate = await readCandidate(candidatePath(input.changeSetId));
         if (candidate.changeSet.diagnostics.some((diagnostic) => diagnostic.severity === "error")) {
           throw new Error("The prepared DSL change-set contains validation errors.");
@@ -151,7 +151,7 @@ export function createDesktopStewardProjectPort(options: {
           expectedRevision: candidate.changeSet.projectRevision,
           upserts: candidate.resources,
         });
-        const result = StewardProjectCommitSchema.parse({
+        const result = DefaultAgentProjectCommitSchema.parse({
           projectId: published.projectId,
           projectRevision: published.revision,
           changedRefs: candidate.changeSet.changes.map((change) => change.ref),
@@ -164,7 +164,7 @@ export function createDesktopStewardProjectPort(options: {
 }
 
 interface DesktopExpertCatalog {
-  readonly options: StewardExpertOptionCatalog;
+  readonly options: DefaultAgentExpertOptionCatalog;
   readonly resources: ReadonlyMap<string, PragmaResource>;
   readonly availableModels: ReadonlySet<string>;
   readonly readyCapabilityIds: ReadonlySet<string>;
@@ -193,7 +193,7 @@ async function buildExpertCatalog(options: {
             version: "1.0.0",
             name: `${runtime.displayName} / ${model.displayName}`,
             description: `Host-provided Runtime model ${model.provider.displayName} / ${model.displayName}.`,
-            tags: ["desktop-managed", "steward-option"],
+            tags: ["desktop-managed", "default-agent-option"],
           },
           spec: {
             adapter: "pragma.runtime.profile@v1",
@@ -234,7 +234,7 @@ async function buildExpertCatalog(options: {
     };
   });
   return {
-    options: StewardExpertOptionCatalogSchema.parse({
+    options: DefaultAgentExpertOptionCatalogSchema.parse({
       runtimeModels,
       capabilities: capabilityOptions,
     }),
@@ -261,7 +261,7 @@ function capabilityResource(capability: Capability): PragmaResource {
       version: String(capability.manifest.latestRevision),
       name: capability.definition.name,
       description: capability.definition.description,
-      tags: ["desktop-managed", "steward-option"],
+      tags: ["desktop-managed", "default-agent-option"],
     },
     spec: {
       adapter: "pragma.capability.host@v1",
@@ -345,10 +345,12 @@ function runtimeModelIdentity(runtimeId: string, providerId: string, modelId: st
   return JSON.stringify([runtimeId, providerId, modelId]);
 }
 
-function parseStewardResource(source: string): PragmaResource {
+function parseDefaultAgentResource(source: string): PragmaResource {
   const resource = PragmaResourceSchema.parse(parsePragmaYaml(source));
   if (resource.kind !== "Expert" && resource.kind !== "ExpertTeam" && resource.kind !== "Flow") {
-    throw new Error("Steward v1 can only create or update Expert, ExpertTeam, and Flow resources.");
+    throw new Error(
+      "default Agent can only create or update Expert, ExpertTeam, and Flow resources.",
+    );
   }
   return resource;
 }

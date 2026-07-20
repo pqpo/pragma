@@ -1,7 +1,7 @@
 import { PragmaDiagnosticSchema, PragmaSemanticResourceRefSchema } from "@pragma/interpreter/ast";
 import { z } from "zod";
 
-export const StewardResourceSummarySchema = z.object({
+export const DefaultAgentResourceSummarySchema = z.object({
   ref: PragmaSemanticResourceRefSchema,
   kind: z.enum(["Expert", "ExpertTeam", "Flow", "Capability", "ContextStore", "RuntimeProfile"]),
   name: z.string().min(1),
@@ -9,12 +9,12 @@ export const StewardResourceSummarySchema = z.object({
   version: z.string().min(1),
 });
 
-export const StewardDslDocumentSchema = StewardResourceSummarySchema.extend({
+export const DefaultAgentDslDocumentSchema = DefaultAgentResourceSummarySchema.extend({
   projectRevision: z.number().int().nonnegative(),
   source: z.string().min(1),
 });
 
-export const StewardRuntimeModelOptionSchema = z.object({
+export const DefaultAgentRuntimeModelOptionSchema = z.object({
   key: z.string().min(1).max(500),
   runtimeProfileRef: PragmaSemanticResourceRefSchema.refine((value) =>
     value.startsWith("runtime-profile:"),
@@ -25,7 +25,7 @@ export const StewardRuntimeModelOptionSchema = z.object({
   isDefault: z.boolean(),
 });
 
-export const StewardCapabilityOptionSchema = z.object({
+export const DefaultAgentCapabilityOptionSchema = z.object({
   key: z.string().min(1).max(500),
   ref: PragmaSemanticResourceRefSchema.refine((value) => value.startsWith("capability:")),
   name: z.string().min(1).max(200),
@@ -34,14 +34,14 @@ export const StewardCapabilityOptionSchema = z.object({
   toolNames: z.array(z.string().min(1).max(128)).max(500),
 });
 
-export const StewardExpertOptionCatalogSchema = z.object({
-  runtimeModels: z.array(StewardRuntimeModelOptionSchema),
-  capabilities: z.array(StewardCapabilityOptionSchema),
+export const DefaultAgentExpertOptionCatalogSchema = z.object({
+  runtimeModels: z.array(DefaultAgentRuntimeModelOptionSchema),
+  capabilities: z.array(DefaultAgentCapabilityOptionSchema),
 });
 
-export const StewardDslChangeSchema = z.object({ source: z.string().min(1).max(2_000_000) });
+export const DefaultAgentDslChangeSchema = z.object({ source: z.string().min(1).max(2_000_000) });
 
-export const StewardChangeSetSchema = z.object({
+export const DefaultAgentChangeSetSchema = z.object({
   changeSetId: z.string().uuid(),
   projectRevision: z.number().int().nonnegative(),
   diagnostics: z.array(PragmaDiagnosticSchema),
@@ -55,13 +55,13 @@ export const StewardChangeSetSchema = z.object({
   createdAt: z.string().datetime(),
 });
 
-export const StewardProjectCommitSchema = z.object({
+export const DefaultAgentProjectCommitSchema = z.object({
   projectId: z.string().min(1),
   projectRevision: z.number().int().positive(),
   changedRefs: z.array(PragmaSemanticResourceRefSchema),
 });
 
-export const StewardTaskSummarySchema = z.object({
+export const DefaultAgentTaskSummarySchema = z.object({
   id: z.string().min(1),
   title: z.string().min(1),
   status: z.string().min(1),
@@ -70,13 +70,13 @@ export const StewardTaskSummarySchema = z.object({
   updatedAt: z.string().datetime(),
 });
 
-export const StewardTaskSchema = StewardTaskSummarySchema.extend({
+export const DefaultAgentTaskSchema = DefaultAgentTaskSummarySchema.extend({
   goal: z.string().min(1),
   workspaceId: z.string().min(1),
   details: z.unknown().optional(),
 });
 
-export const StewardTaskWorkItemSchema = z.object({
+export const DefaultAgentTaskWorkItemSchema = z.object({
   id: z.string().min(1),
   kind: z.string().min(1),
   status: z.string().min(1),
@@ -84,14 +84,14 @@ export const StewardTaskWorkItemSchema = z.object({
   details: z.unknown().optional(),
 });
 
-export type StewardResourceSummary = z.infer<typeof StewardResourceSummarySchema>;
-export type StewardDslDocument = z.infer<typeof StewardDslDocumentSchema>;
-export type StewardRuntimeModelOption = z.infer<typeof StewardRuntimeModelOptionSchema>;
-export type StewardCapabilityOption = z.infer<typeof StewardCapabilityOptionSchema>;
-export type StewardExpertOptionCatalog = z.infer<typeof StewardExpertOptionCatalogSchema>;
-export type StewardDslChange = z.infer<typeof StewardDslChangeSchema>;
-export type StewardChangeSet = z.infer<typeof StewardChangeSetSchema>;
-export type StewardProjectCommit = z.infer<typeof StewardProjectCommitSchema>;
-export type StewardTaskSummary = z.infer<typeof StewardTaskSummarySchema>;
-export type StewardTask = z.infer<typeof StewardTaskSchema>;
-export type StewardTaskWorkItem = z.infer<typeof StewardTaskWorkItemSchema>;
+export type DefaultAgentResourceSummary = z.infer<typeof DefaultAgentResourceSummarySchema>;
+export type DefaultAgentDslDocument = z.infer<typeof DefaultAgentDslDocumentSchema>;
+export type DefaultAgentRuntimeModelOption = z.infer<typeof DefaultAgentRuntimeModelOptionSchema>;
+export type DefaultAgentCapabilityOption = z.infer<typeof DefaultAgentCapabilityOptionSchema>;
+export type DefaultAgentExpertOptionCatalog = z.infer<typeof DefaultAgentExpertOptionCatalogSchema>;
+export type DefaultAgentDslChange = z.infer<typeof DefaultAgentDslChangeSchema>;
+export type DefaultAgentChangeSet = z.infer<typeof DefaultAgentChangeSetSchema>;
+export type DefaultAgentProjectCommit = z.infer<typeof DefaultAgentProjectCommitSchema>;
+export type DefaultAgentTaskSummary = z.infer<typeof DefaultAgentTaskSummarySchema>;
+export type DefaultAgentTask = z.infer<typeof DefaultAgentTaskSchema>;
+export type DefaultAgentTaskWorkItem = z.infer<typeof DefaultAgentTaskWorkItemSchema>;

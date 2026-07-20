@@ -1,5 +1,5 @@
 {
-  "name": "@pragma/steward",
+  "name": "@pragma/default-agent",
   "version": "0.0.0",
   "private": true,
   "type": "module",

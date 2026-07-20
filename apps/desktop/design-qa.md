@@ -5,7 +5,7 @@
   `design-qa/home-workspace-menu-focus.png`, and `design-qa/home-keyboard-focus.png`
 - Combined comparison: `design-qa/home-reference-comparison.png`
 - Viewport: 1440 × 900 at DPR 2; the annotated reference is 1280 × 660
-- State: Home with the built-in Steward, built-in default workspace, and an intentionally disabled
+- State: Home with the built-in Pragma Agent, built-in default workspace, and an intentionally disabled
   submit action because the goal is empty
 
 **Findings**
@@ -16,7 +16,7 @@
   arrow submit action.
 - Workspace selection is explicitly optional. The default path is visible without dominating the
   row, and the expanded menu distinguishes the persistent default from a one-Mission override.
-- Expert selection defaults to the built-in Steward. Expert and ExpertTeam states expose only model
+- Expert selection defaults to the built-in Pragma Agent. Expert and ExpertTeam states expose only model
   and thinking-depth overrides; Runtime is not presented on Home. Flow states omit both controls.
 - Existing typography, Phosphor icons, graphite/sage tokens, radii, and surface shadows are reused.
   No raster or generated product assets were introduced.

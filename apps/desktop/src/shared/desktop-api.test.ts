@@ -66,7 +66,7 @@ describe("runtime settings contracts", () => {
 describe("mission model override contracts", () => {
   const mission = {
     workspace: "/workspace/default",
-    executor: { ref: "expert:steward@1.0.0" },
+    executor: { ref: "expert:pragma@1.0.0" },
     goal: "Prepare a plan",
   };
 
@@ -162,7 +162,7 @@ describe("expert input limits", () => {
 
 describe("built-in expert customization contracts", () => {
   const customization = {
-    name: "My Steward",
+    name: "My Pragma",
     description: "A customized built-in expert.",
     tags: ["customized"],
     additionalInstructions: "Prefer concise answers.",

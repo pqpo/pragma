@@ -30,7 +30,7 @@ Every semantic reference is exact. Multiple versions of the same kind and ID may
 
 ```text
 pragma.yaml
-experts/steward@1.0.0.pragma.yaml
+experts/pragma@1.0.0.pragma.yaml
 teams/delivery@2.0.0.pragma.yaml
 flows/review@1.2.0.pragma.yaml
 capabilities/repository-tools@3.0.0.pragma.yaml
@@ -220,8 +220,8 @@ Desktop stores revisions below `~/.pragma/projects/<projectId>/revisions/<revisi
 implements source persistence and local binding adapters. Missions pin an exact resource and
 revision. A Mission v3 directory keeps bounded identity and lifecycle metadata in `mission.yaml`
 and appends user turns plus Execution references to `messages.jsonl`; assistant, thinking, and tool
-history is projected from the canonical Execution event log. The built-in Steward bundle and its
-DSL-authoring Skill live in `packages/steward/dsl`; applications install the package with explicit
-project and task ports rather than maintaining a second hard-coded runtime implementation. Desktop
-registers that bundle as a read-only System Expert; Home creates a fresh Mission using it by default,
-and all streaming output uses the normal Mission chat projection.
+history is projected from the canonical Execution event log. The built-in general-purpose Pragma
+Agent bundle and its DSL-authoring Skill live in `packages/default-agent/dsl`; applications install
+the package with explicit project and task ports rather than maintaining a second hard-coded runtime
+implementation. Desktop registers that bundle as a read-only System Expert; Home creates a fresh
+Mission using it by default, and all streaming output uses the normal Mission chat projection.

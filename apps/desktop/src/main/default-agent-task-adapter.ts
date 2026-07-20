@@ -4,11 +4,11 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 
 import { encodePragmaPathSegment, withFileLock } from "@pragma/core";
 import {
-  type StewardTask,
-  type StewardTaskPort,
-  type StewardTaskSummary,
-  type StewardTaskWorkItem,
-} from "@pragma/steward";
+  type DefaultAgentTask,
+  type DefaultAgentTaskPort,
+  type DefaultAgentTaskSummary,
+  type DefaultAgentTaskWorkItem,
+} from "@pragma/default-agent";
 
 import { type Mission, type DesktopToolPermissionMode } from "../shared/desktop-api.ts";
 import type { MissionRunner } from "./mission-runner.ts";
@@ -17,7 +17,7 @@ import type { PragmaProjectStore } from "./pragma-project-store.ts";
 import type { MissionExecutorCatalog } from "./mission-executor-catalog.ts";
 import { validateWorkspace } from "./workspace-scope.ts";
 
-export function createDesktopStewardTaskPort(options: {
+export function createDesktopDefaultAgentTaskPort(options: {
   readonly missions: MissionStore;
   readonly runner: MissionRunner;
   readonly project: PragmaProjectStore;
@@ -26,13 +26,13 @@ export function createDesktopStewardTaskPort(options: {
   readonly getToolPermissionMode: () =>
     | DesktopToolPermissionMode
     | Promise<DesktopToolPermissionMode>;
-}): StewardTaskPort {
+}): DefaultAgentTaskPort {
   const operationPath = (id: string) =>
     join(options.stateRoot, "operations", `${encodePragmaPathSegment(id)}.task.json`);
   return {
     async list() {
       return await Promise.all(
-        (await options.missions.list()).map(async (summary): Promise<StewardTaskSummary> => {
+        (await options.missions.list()).map(async (summary): Promise<DefaultAgentTaskSummary> => {
           const mission = await options.missions.get(summary.id);
           return {
             id: mission.id,
@@ -86,7 +86,7 @@ export function createDesktopStewardTaskPort(options: {
     },
     async listWorkItems(id) {
       return (await options.runner.listWorkItems(id)).map(
-        (item): StewardTaskWorkItem => ({
+        (item): DefaultAgentTaskWorkItem => ({
           id: item.invocationId,
           kind: item.kind,
           status: item.status,
@@ -101,7 +101,7 @@ export function createDesktopStewardTaskPort(options: {
   };
 }
 
-function toTask(mission: Mission): StewardTask {
+function toTask(mission: Mission): DefaultAgentTask {
   return {
     id: mission.id,
     title: mission.title,

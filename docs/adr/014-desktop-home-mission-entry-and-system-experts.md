@@ -4,6 +4,10 @@
 
 Accepted
 
+The Steward-specific name, ref, package, and narrow product role in this decision are superseded by
+[ADR 015](./015-pragma-default-general-purpose-agent.md). The shared Home/Mission architecture remains
+in force.
+
 ## Context
 
 Desktop previously treated Home as a second execution product. A durable Steward Session, a
@@ -28,7 +32,7 @@ The Missions page owns only the list and detail surfaces; its create action navi
 try actions also navigate Home with an executor override.
 
 Desktop owns a System Expert Registry. The Registry reads the versioned Steward DSL and bundle
-fingerprint from `@pragma/steward`, projects it as `origin: built-in`, `readOnly: true`, and
+fingerprint from `@pragma/default-agent`, projects it as `origin: built-in`, `readOnly: true`, and
 `executionProfile: system-default`, and exposes the same ref to Studio and Mission executor
 discovery. System Experts do not live in the editable project. Every project write path rejects
 reserved system refs, and the Expert API rejects create-by-reserved-ID, update, and delete. Tags are
@@ -39,7 +43,7 @@ built-in Steward compiles from its package DSL with the existing project/task ma
 uses Mission storage, Execution events, chat projection, approvals, interruption, and recovery.
 There is no Steward-specific Session, chat history, event projection, IPC, or preload API.
 
-`@pragma/steward` retains the built-in DSL and Skill, bundle descriptor/compiler, host ports, and
+`@pragma/default-agent` retains the built-in DSL and Skill, bundle descriptor/compiler, host ports, and
 managed tools. It does not own application Session persistence or a product chat protocol.
 
 ## Consequences

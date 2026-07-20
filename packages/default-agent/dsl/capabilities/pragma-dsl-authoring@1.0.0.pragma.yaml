@@ -5,7 +5,7 @@ metadata:
   version: 1.0.0
   name: Author Pragma DSL
   description: Instructions and references for authoring validated pragma/v2 resources.
-  tags: [builtin, steward, skill]
+  tags: [builtin, pragma, default-agent, skill]
 spec:
   adapter: pragma.capability.skill@v1
   config:

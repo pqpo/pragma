@@ -15,7 +15,7 @@ describe("Mission executor model options", () => {
       );
     });
 
-    await expect(catalog.getModelOptions("expert:steward@1.0.0")).resolves.toEqual({
+    await expect(catalog.getModelOptions("expert:pragma@1.0.0")).resolves.toEqual({
       status: "reset_required",
       models: [],
     });
@@ -34,7 +34,7 @@ describe("Mission executor model options", () => {
       },
     ]);
 
-    await expect(catalog.getModelOptions("expert:steward@1.0.0")).resolves.toMatchObject({
+    await expect(catalog.getModelOptions("expert:pragma@1.0.0")).resolves.toMatchObject({
       status: "ready",
       models: [{ id: "model" }],
     });

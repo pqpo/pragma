@@ -2,6 +2,6 @@ apiVersion: pragma/v2
 kind: Bundle
 imports:
   - ./capabilities/pragma-dsl-authoring@1.0.0.pragma.yaml
-  - ./capabilities/steward-host@1.0.0.pragma.yaml
-  - ./experts/steward@1.0.0.pragma.yaml
+  - ./capabilities/pragma-host@1.0.0.pragma.yaml
+  - ./experts/pragma@1.0.0.pragma.yaml
 resources: []
