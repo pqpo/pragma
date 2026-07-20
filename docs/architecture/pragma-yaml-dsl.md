@@ -146,8 +146,9 @@ cancellation, usage, and recovery stay under one governance boundary.
 Plugin references are exact environment extension references, not project resources. The host
 supplies `PragmaPluginResolver`, which resolves the installed package, Desktop defaults, Expert
 overrides, and secret bindings without putting secret values in YAML. Plugin package/config/
-credential fingerprints participate in the environment fingerprint, so a changed plugin blocks
-recovery of an execution pinned to the previous environment.
+credential fingerprints participate in the environment fingerprint for validation and audit. A
+changed plugin does not by itself block Desktop Mission recovery; concrete plugin failures are
+reported when the recovered execution uses the plugin.
 
 Flow input and output JSON Schemas remain attached when a Flow is exposed as a Tool. Tool timeout,
 caller cancellation, and target Flow timeout are independent deadlines; the earliest aborts only
@@ -188,8 +189,10 @@ Compilation separately returns an environment fingerprint containing:
 - the project fingerprint;
 - every resolved resource's binding revision and verification fingerprint.
 
-A run pins both the project revision and environment fingerprint. Recovery must fail if the current
-bindings no longer produce the pinned fingerprint.
+A Desktop Mission pins its project revision, executor, and workspace. The environment fingerprint
+records the bindings used for validation and audit, but is not a recovery gate. Core recovery pins
+the persisted Session/Execution identities, existing Runtime Context bindings, and active Flow
+definition graph; unavailable live bindings fail only when they are actually required.
 
 ## Application service
 

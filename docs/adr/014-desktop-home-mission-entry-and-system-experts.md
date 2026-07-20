@@ -51,7 +51,8 @@ managed tools. It does not own application Session persistence or a product chat
   backend APIs.
 - Project Experts keep pinned model configuration, while system Experts resolve the application's
   default Runtime and model when compiled. Mission-level model and thinking-depth overrides take
-  precedence for the root Expert or ExpertTeam coordinator without changing its Runtime, and remain
-  fixed for retries and later turns.
+  precedence for the root Expert or ExpertTeam coordinator without changing its Runtime. They
+  cannot change during an active execution, but may be updated after settlement and apply to the
+  next turn.
 - Existing Mission v3 data remains valid. Obsolete Steward Session files are ignored and are not
   migrated or automatically deleted.

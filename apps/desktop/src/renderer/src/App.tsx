@@ -33,6 +33,11 @@ export function App() {
     setSidebarCollapsed(nextCollapsed);
   };
 
+  const openModelSettings = () => {
+    setSettingsView("models");
+    setActiveView("settings");
+  };
+
   return (
     <main className={sidebarCollapsed ? "desktop-shell is-sidebar-collapsed" : "desktop-shell"}>
       <div className="window-drag-region" aria-hidden="true" />
@@ -46,6 +51,7 @@ export function App() {
       {activeView === "home" ? (
         <HomePage
           initialExecutorRef={missionExecutorRef}
+          onConfigureModels={openModelSettings}
           onCreated={(mission) => {
             setMissionToOpen(mission);
             setMissionExecutorRef(undefined);
@@ -56,6 +62,7 @@ export function App() {
         <MissionsPage
           initialMission={missionToOpen}
           autoRunInitialMission={missionToOpen !== undefined}
+          onConfigureModels={openModelSettings}
           onCreate={() => {
             setMissionToOpen(undefined);
             setMissionExecutorRef(undefined);

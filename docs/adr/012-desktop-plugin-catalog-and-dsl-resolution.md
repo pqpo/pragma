@@ -15,13 +15,17 @@ not identify the exact plugin contents or credentials used by a compilation.
 
 Desktop owns a device-local plugin catalog with two origins:
 
-- built-in plugins are immutable, versioned bundles shipped under the application's `plugins`
-  resource directory;
+- built-in plugins are host-managed bundles shipped under the application's `plugins` resource
+  directory; their stable product ref cannot be modified by users, while a Desktop release may
+  supply new bytes under that ref;
 - user plugins are imported only from ZIP archives after a preview and validation phase, then stored
   outside Agent workspaces under the Pragma application-data directory.
 
-Every installed plugin is addressed by the exact reference `plugin:<id>@<version>`. An `(id,
-version)` pair is immutable: importing different bytes for an existing reference is a conflict.
+Every installed plugin is addressed by the exact reference `plugin:<id>@<version>`. A user-imported
+`(id, version)` pair is immutable: importing different bytes for an existing reference is a
+conflict. Host-managed bundles also provide an exact package fingerprint and use that fingerprint
+in the Agent cache path, so an application upgrade loads a new ESM URL without changing persisted
+Expert or Mission refs.
 Desktop accepts only strict `pragma.plugin/v2` manifests and prebuilt, self-contained ESM entries.
 It never runs package-manager installation or plugin build scripts. ZIP validation enforces archive
 size and file-count limits, rejects escaping paths and dependencies, checks the manifest and package
@@ -58,11 +62,12 @@ credential revision that were resolved.
 ## Consequences
 
 - Built-in and user plugins share one Studio directory and configuration UI while retaining clear
-  origin and deletion semantics.
+  origin, cache, mutability, and deletion semantics.
 - Experts activate plugins explicitly and can override catalog defaults without copying secrets into
   DSL or Expert JSON.
 - A project that references plugins cannot compile in a host that has no plugin resolver or lacks the
   exact installed version.
 - User plugins must be distributed as already bundled ESM ZIPs; dependency installation and arbitrary
   build scripts are intentionally outside the Desktop trust boundary.
-- Plugin upgrades use a new versioned reference and require explicit Expert activation.
+- User plugin upgrades use a new versioned reference and require explicit Expert activation;
+  Desktop releases may refresh a host-managed built-in implementation under its stable product ref.

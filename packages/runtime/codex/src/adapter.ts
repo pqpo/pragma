@@ -129,7 +129,6 @@ export function createCodexRuntime(options: CodexRuntimeAdapterOptions = {}): Ru
           mcpToolRegistry = await createMcpToolRegistry(ctx.agent.mcp);
           expertToolsMcpRegistration = await registerCodexExpertToolsMcpSession({
             agent: ctx.agent,
-            instanceId: ctx.systemSessionId,
             getContext: () => ctx.lifecycle.currentContext,
             humanInteractionHandler: ctx.request.humanInteractionHandler,
             logger: ctx.logger,

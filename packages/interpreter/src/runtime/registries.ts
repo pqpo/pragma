@@ -28,6 +28,7 @@ export interface PragmaPluginResolution {
   readonly ref: `plugin:${string}@${string}`;
   readonly source: string;
   readonly packageFingerprint: string;
+  readonly cachePolicy?: "immutable" | "host-managed" | undefined;
   readonly verificationFingerprint: string;
   readonly userConfig: Readonly<Record<string, unknown>>;
   readonly hostBindings?: Readonly<Record<string, unknown>> | undefined;

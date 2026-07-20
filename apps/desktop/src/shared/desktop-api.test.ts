@@ -15,6 +15,7 @@ import {
   DeleteContextStoreSchema,
   GetMissionChatSchema,
   MissionChatSnapshotSchema,
+  MissionModelOptionsSchema,
   MissionSchema,
   SetDefaultRuntimeSchema,
   DesktopSettingsSnapshotSchema,
@@ -103,6 +104,13 @@ describe("mission model override contracts", () => {
         modelOverride: null,
       }).modelOverride,
     ).toBeNull();
+  });
+
+  it("represents provider reset requirements without rejecting model option loading", () => {
+    expect(MissionModelOptionsSchema.parse({ status: "reset_required", models: [] })).toEqual({
+      status: "reset_required",
+      models: [],
+    });
   });
 });
 
@@ -344,6 +352,37 @@ describe("mission contracts", () => {
         updatedAt: "2026-07-11T00:00:00.000Z",
       }).toolPermissionMode,
     ).toBe("request-approval");
+  });
+
+  it("drops the retired Desktop environment fingerprint from persisted Missions", () => {
+    const parsed = MissionSchema.parse({
+      schemaVersion: "pragma.mission/v3",
+      id: "00000000-0000-4000-8000-000000000000",
+      title: "Continue the mission",
+      goal: "Continue the mission",
+      initialMessageId: "00000000-0000-4000-8000-000000000001",
+      workspace: { path: "/workspace/repo", basename: "repo" },
+      project: { id: "studio", revision: 3 },
+      executor: {
+        kind: "expert",
+        ref: "expert:writer@1.0.0",
+        name: "Writer",
+        version: "1.0.0",
+      },
+      execution: {
+        id: "00000000-0000-4000-8000-000000000002",
+        inputMessageId: "00000000-0000-4000-8000-000000000001",
+        environmentFingerprint: "a".repeat(64),
+        status: "succeeded",
+        startedAt: "2026-07-11T00:00:00.000Z",
+        finishedAt: "2026-07-11T00:01:00.000Z",
+      },
+      lifecycleStatus: "active",
+      createdAt: "2026-07-11T00:00:00.000Z",
+      updatedAt: "2026-07-11T00:01:00.000Z",
+    });
+
+    expect(parsed.execution).not.toHaveProperty("environmentFingerprint");
   });
 
   it("validates rich chat entries and interruptible execution state", () => {

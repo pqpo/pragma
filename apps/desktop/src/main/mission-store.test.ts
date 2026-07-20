@@ -9,7 +9,6 @@ import { missionExecutorSnapshot } from "../shared/desktop-api.ts";
 import { createMissionStore } from "./mission-store.ts";
 
 const temporaryPaths: string[] = [];
-const environmentFingerprint = "a".repeat(64);
 
 afterEach(async () => {
   await Promise.all(
@@ -82,7 +81,7 @@ describe("mission store", () => {
     expect(reopened.completedAt).toBeUndefined();
   });
 
-  it("updates idle Mission options and refreshes the recoverable environment", async () => {
+  it("updates idle Mission options without changing pinned Mission identity", async () => {
     const root = await temporaryRoot();
     const store = createMissionStore({ missionsPath: join(root, "missions") });
     const created = await store.create({
@@ -94,7 +93,6 @@ describe("mission store", () => {
     const execution = {
       id: "00000000-0000-4000-8000-000000000010",
       inputMessageId: created.initialMessageId,
-      environmentFingerprint,
       status: "running" as const,
       startedAt: "2026-07-15T00:00:00.000Z",
     };
@@ -103,7 +101,6 @@ describe("mission store", () => {
     await expect(
       store.updateOptions(created.id, {
         toolPermissionMode: "full-access",
-        environmentFingerprint: "b".repeat(64),
       }),
     ).rejects.toThrow("Wait for the current execution");
 
@@ -111,16 +108,16 @@ describe("mission store", () => {
     const updated = await store.updateOptions(created.id, {
       toolPermissionMode: "auto-approve",
       modelOverride: { providerId: "provider", modelId: "next-model", thinkingLevel: "high" },
-      environmentFingerprint: "b".repeat(64),
     });
 
     expect(updated.toolPermissionMode).toBe("auto-approve");
     expect(updated.modelOverride?.modelId).toBe("next-model");
-    expect(updated.execution?.environmentFingerprint).toBe("b".repeat(64));
+    expect(updated.workspace).toEqual(created.workspace);
+    expect(updated.executor).toEqual(created.executor);
+    expect(updated.project).toEqual(created.project);
 
     const cleared = await store.updateOptions(created.id, {
       toolPermissionMode: "request-approval",
-      environmentFingerprint: "c".repeat(64),
     });
     expect(cleared.modelOverride).toBeUndefined();
   });
@@ -139,7 +136,6 @@ describe("mission store", () => {
     await store.updateExecution(created.id, {
       id: executionId,
       inputMessageId: created.initialMessageId,
-      environmentFingerprint,
       status: "running",
       startedAt,
     });
@@ -148,7 +144,6 @@ describe("mission store", () => {
       {
         id: executionId,
         inputMessageId: created.initialMessageId,
-        environmentFingerprint,
         status: "succeeded",
         startedAt,
         finishedAt: "2026-07-15T00:01:00.000Z",
@@ -161,7 +156,6 @@ describe("mission store", () => {
       {
         id: executionId,
         inputMessageId: created.initialMessageId,
-        environmentFingerprint,
         status: "waiting",
         startedAt,
       },
@@ -201,7 +195,6 @@ describe("mission store", () => {
     await store.updateExecution(active.id, {
       id: "00000000-0000-4000-8000-000000000002",
       inputMessageId: active.initialMessageId,
-      environmentFingerprint,
       status: "running",
       startedAt: "2026-07-16T00:00:00.000Z",
     });

@@ -177,6 +177,18 @@ export class PragmaPaths {
     return join(this.agentPluginRoot(agentId, pluginId), encodePragmaPathSegment(version));
   }
 
+  fingerprintedAgentPluginRoot(
+    agentId: string,
+    pluginId: string,
+    version: string,
+    packageFingerprint: string,
+  ): string {
+    return join(
+      this.versionedAgentPluginRoot(agentId, pluginId, version),
+      encodePragmaPathSegment(packageFingerprint),
+    );
+  }
+
   pluginsRoot(): string {
     return join(this.root, "plugins");
   }

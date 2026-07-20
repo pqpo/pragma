@@ -23,9 +23,10 @@ and execution state behind the shared listener. The Gateway routes
 derived from external or system Session IDs, are not logged, and are revoked when the registration is
 disposed. Unknown and revoked routes return 404.
 
-Runtime Session identity remains separate from endpoint authorization. Codex continues deriving its
-stable MCP configuration key from `systemSessionId`, while a restored Session receives a new endpoint
-token and may receive a new listener port. PI does not use the Gateway.
+Runtime Session identity remains separate from endpoint authorization. Codex and Claude Code use the
+stable, short MCP configuration key `pragma`; a restored Session receives a new endpoint token and
+may receive a new listener port. Exposed tool names are deterministically bounded so the fully
+qualified `mcp__pragma__<tool>` name stays within the Runtime limit. PI does not use the Gateway.
 
 ## Consequences
 

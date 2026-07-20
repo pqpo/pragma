@@ -22,6 +22,7 @@ import {
 } from "../shared/desktop-api.ts";
 import type { PragmaProjectStore } from "./pragma-project-store.ts";
 import type { DesktopSystemExpertRegistry } from "./system-expert-registry.ts";
+import { ModelProviderStoreError } from "./model-provider-store.ts";
 
 export interface MissionExecutorCatalog {
   list(): Promise<readonly MissionExecutorOption[]>;
@@ -98,11 +99,18 @@ export function createMissionExecutorCatalog(options: {
           availability.reason ?? `Runtime is unavailable for mission executor: ${ref}.`,
         );
       }
-      const models =
-        resolved.adapter.listModels === undefined
-          ? []
-          : (await resolved.adapter.listModels()).map(cloneRuntimeModel);
-      return MissionModelOptionsSchema.parse({ models });
+      try {
+        const models =
+          resolved.adapter.listModels === undefined
+            ? []
+            : (await resolved.adapter.listModels()).map(cloneRuntimeModel);
+        return MissionModelOptionsSchema.parse({ status: "ready", models });
+      } catch (error) {
+        if (error instanceof ModelProviderStoreError && error.code === "config_invalid") {
+          return MissionModelOptionsSchema.parse({ status: "reset_required", models: [] });
+        }
+        throw error;
+      }
     },
     async validateModelOverride(ref, override) {
       await bindModel(ref, toModelSelection(override));

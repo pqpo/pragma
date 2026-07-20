@@ -59,7 +59,6 @@ export interface MissionStore {
     input: {
       readonly toolPermissionMode: DesktopToolPermissionMode;
       readonly modelOverride?: MissionModelOverride | undefined;
-      readonly environmentFingerprint: string;
     },
   ): Promise<Mission>;
   updateExecution(
@@ -331,14 +330,6 @@ export function createMissionStore(options: { readonly missionsPath: string }): 
         const next = {
           ...current,
           toolPermissionMode: input.toolPermissionMode,
-          ...(current.execution === undefined
-            ? {}
-            : {
-                execution: {
-                  ...current.execution,
-                  environmentFingerprint: input.environmentFingerprint,
-                },
-              }),
           updatedAt: timestamp,
         };
         if (input.modelOverride === undefined) delete next.modelOverride;

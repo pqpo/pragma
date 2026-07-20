@@ -7498,6 +7498,16 @@ p {
   color: var(--muted);
 }
 
+.mission-model-reset-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mission-model-reset-note .text-button {
+  flex: none;
+}
+
 .mission-page-error {
   position: absolute;
   right: 24px;

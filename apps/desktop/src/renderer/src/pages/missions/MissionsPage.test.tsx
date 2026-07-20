@@ -41,7 +41,6 @@ describe("MissionDetailFragment", () => {
       id: "00000000-0000-4000-8000-000000000010",
       inputMessageId: mission.initialMessageId,
       sessionId: "00000000-0000-4000-8000-000000000011",
-      environmentFingerprint: "a".repeat(64),
       status: "running",
       startedAt: "2026-07-11T00:00:01.000Z",
     };

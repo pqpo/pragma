@@ -1011,6 +1011,7 @@ async function compileExpert(
       source: plugin.source,
       expectedRef: plugin.ref,
       packageFingerprint: plugin.packageFingerprint,
+      ...(plugin.cachePolicy === undefined ? {} : { cachePolicy: plugin.cachePolicy }),
       userConfig: plugin.userConfig,
       ...(plugin.hostBindings === undefined ? {} : { hostBindings: plugin.hostBindings }),
     })),

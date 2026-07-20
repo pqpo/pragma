@@ -16,8 +16,10 @@ canonical Execution event log.
 
 Desktop uses the breaking `pragma.mission/v3` format without a v2 migration path. Each Mission
 directory contains a bounded `mission.yaml` manifest and an append-oriented `messages.jsonl`
-timeline. The manifest owns Mission identity, pinned project and executor, workspace, lifecycle,
-and the current ExpertSession/Execution references. It does not own chat content.
+timeline. The manifest owns Mission identity, pinned project and executor, immutable workspace
+path, lifecycle, mutable next-turn model and permission options, and the current
+ExpertSession/Execution references. It does not own chat content or a second aggregate environment
+recovery fingerprint.
 
 The timeline stores versioned, monotonically sequenced user-message and execution-reference
 records. It never stores assistant, thinking, or tool output. Desktop projects those values from

@@ -64,6 +64,7 @@ export interface ResolvedDesktopPlugin {
   readonly ref: `plugin:${string}@${string}`;
   readonly source: string;
   readonly packageFingerprint: string;
+  readonly cachePolicy: "immutable" | "host-managed";
   readonly userConfig: Readonly<Record<string, unknown>>;
   readonly verificationFingerprint: string;
 }
@@ -427,6 +428,7 @@ export function createPluginStore(options: {
         ref: plugin.ref as `plugin:${string}@${string}`,
         source: plugin.root,
         packageFingerprint: plugin.packageFingerprint,
+        cachePolicy: plugin.origin === "built_in" ? "host-managed" : "immutable",
         userConfig: config,
         verificationFingerprint: createVerificationFingerprint(
           input.ref,

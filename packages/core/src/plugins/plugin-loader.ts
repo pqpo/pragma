@@ -10,7 +10,7 @@ import {
   stat,
   writeFile,
 } from "node:fs/promises";
-import { extname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import type {
@@ -33,6 +33,7 @@ export interface ExpertAgentPluginSourceDescriptor {
   readonly source: string;
   readonly expectedRef?: `plugin:${string}@${string}` | undefined;
   readonly packageFingerprint?: string | undefined;
+  readonly cachePolicy?: "immutable" | "host-managed" | undefined;
   readonly userConfig?: Readonly<Record<string, unknown>> | undefined;
   readonly hostBindings?: Readonly<Record<string, unknown>> | undefined;
 }
@@ -144,6 +145,7 @@ export async function prepareExpertAgentPluginSource(
   options: Pick<LoadExpertAgentPluginsOptions, "agentId" | "pragmaHome" | "env">,
 ): Promise<string> {
   const descriptor = normalizePluginSource(source);
+  assertHostManagedSourceIdentity(descriptor);
   const absoluteSourcePath = isAbsolute(descriptor.source)
     ? descriptor.source
     : resolve(descriptor.source);
@@ -178,6 +180,7 @@ export async function prepareExpertAgentPluginSource(
     manifest,
     sourceDir: absoluteSourcePath,
     packageFingerprint: sourceFingerprint,
+    cachePolicy: descriptor.cachePolicy ?? "immutable",
   });
 }
 
@@ -208,15 +211,25 @@ async function installExpertAgentPluginSource(options: {
   readonly manifest: ExpertAgentPluginManifest;
   readonly sourceDir: string;
   readonly packageFingerprint: string;
+  readonly cachePolicy: "immutable" | "host-managed";
 }): Promise<string> {
   const pluginRoot = options.paths.agentPluginRoot(options.agentId, options.manifest.id);
-  const targetDir = options.paths.versionedAgentPluginRoot(
-    options.agentId,
-    options.manifest.id,
-    options.manifest.version,
-  );
+  const targetDir =
+    options.cachePolicy === "host-managed"
+      ? options.paths.fingerprintedAgentPluginRoot(
+          options.agentId,
+          options.manifest.id,
+          options.manifest.version,
+          options.packageFingerprint,
+        )
+      : options.paths.versionedAgentPluginRoot(
+          options.agentId,
+          options.manifest.id,
+          options.manifest.version,
+        );
   const expectedMetadata = createInstalledMetadata(options.manifest, options.packageFingerprint);
   await mkdir(pluginRoot, { recursive: true });
+  await mkdir(dirname(targetDir), { recursive: true });
 
   const existingState = await inspectInstalledPlugin(targetDir);
   if (existingState === "legacy-or-invalid") {
@@ -358,6 +371,19 @@ function shouldCopyPluginPackageFile(root: string, sourcePath: string): boolean 
 
 function normalizePluginSource(source: ExpertAgentPluginSource): ExpertAgentPluginSourceDescriptor {
   return typeof source === "string" ? { source } : source;
+}
+
+function assertHostManagedSourceIdentity(descriptor: ExpertAgentPluginSourceDescriptor): void {
+  if (descriptor.cachePolicy !== "host-managed") return;
+  if (
+    descriptor.expectedRef === undefined ||
+    descriptor.packageFingerprint === undefined ||
+    !SHA256_PATTERN.test(descriptor.packageFingerprint)
+  ) {
+    throw new InvalidPluginSourceError(
+      "Host-managed plugins require an exact ref and package fingerprint.",
+    );
+  }
 }
 
 function pluginRef(manifest: ExpertAgentPluginManifest): `plugin:${string}@${string}` {

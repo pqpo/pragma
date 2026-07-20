@@ -1066,6 +1066,7 @@ export const MissionModelOptionsRequestSchema = z.object({
 });
 
 export const MissionModelOptionsSchema = z.object({
+  status: z.enum(["ready", "reset_required"]),
   models: z.array(DesktopRuntimeModelSchema),
 });
 
@@ -1140,7 +1141,6 @@ export const MissionSchema = z.object({
       id: z.string().uuid(),
       inputMessageId: z.string().uuid(),
       sessionId: z.string().uuid().optional(),
-      environmentFingerprint: z.string().length(64),
       status: MissionExecutionStatusSchema,
       startedAt: z.string().datetime(),
       finishedAt: z.string().datetime().optional(),

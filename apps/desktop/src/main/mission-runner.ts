@@ -242,7 +242,6 @@ export function createMissionRunner(options: {
     readonly handle: MutableExecution & { readonly result: Promise<unknown> };
     readonly startedAt: string;
     readonly inputMessageId: string;
-    readonly environmentFingerprint: string;
     readonly sessionId?: string | undefined;
     readonly onFinished?: (() => void | Promise<void>) | undefined;
   }): void => {
@@ -254,7 +253,6 @@ export function createMissionRunner(options: {
       input.handle,
       input.startedAt,
       input.inputMessageId,
-      input.environmentFingerprint,
       input.onFinished ?? (() => undefined),
       input.sessionId,
     ).finally(async () => await forgetActive(input.missionId, input.handle.executionId));
@@ -277,11 +275,6 @@ export function createMissionRunner(options: {
         modelSelection,
       });
     }
-    const environmentFingerprint = missionExecutionFingerprint(
-      compiled.environmentFingerprint.value,
-      mission.modelOverride,
-    );
-    assertRecoverableEnvironment(mission, environmentFingerprint);
     const startedAt = new Date().toISOString();
 
     if ("kind" in compiled.value && compiled.value.kind === "flow") {
@@ -332,7 +325,6 @@ export function createMissionRunner(options: {
       const running = await options.missions.updateExecution(mission.id, {
         id: handle.executionId,
         inputMessageId,
-        environmentFingerprint,
         status: "running",
         startedAt: executionStartedAt,
       });
@@ -341,7 +333,6 @@ export function createMissionRunner(options: {
         handle,
         startedAt: executionStartedAt,
         inputMessageId,
-        environmentFingerprint,
       });
       return running;
     }
@@ -388,7 +379,6 @@ export function createMissionRunner(options: {
       id: turn.executionId,
       inputMessageId,
       sessionId: session.sessionId,
-      environmentFingerprint,
       status: "running",
       startedAt,
     });
@@ -397,7 +387,6 @@ export function createMissionRunner(options: {
       handle: turn,
       startedAt,
       inputMessageId,
-      environmentFingerprint,
       sessionId: session.sessionId,
       onFinished: async () => await waitForExpertTurnSettlement(session, turn.requestId),
     });
@@ -428,11 +417,6 @@ export function createMissionRunner(options: {
         modelSelection,
       });
     }
-    const environmentFingerprint = missionExecutionFingerprint(
-      compiled.environmentFingerprint.value,
-      mission.modelOverride,
-    );
-    assertRecoverableEnvironment(mission, environmentFingerprint);
     if ("kind" in compiled.value && compiled.value.kind === "flow") {
       throw new Error("Flow missions cannot receive chat messages.");
     }
@@ -467,7 +451,6 @@ export function createMissionRunner(options: {
       id: turn.executionId,
       inputMessageId: input.requestId,
       sessionId: session.sessionId,
-      environmentFingerprint,
       status: "running",
       startedAt,
     });
@@ -476,7 +459,6 @@ export function createMissionRunner(options: {
       handle: turn,
       startedAt,
       inputMessageId: input.requestId,
-      environmentFingerprint,
       sessionId: session.sessionId,
       onFinished: async () => await waitForExpertTurnSettlement(session, turn.requestId),
     });
@@ -499,17 +481,12 @@ export function createMissionRunner(options: {
     if (input.modelOverride === null) delete prospective.modelOverride;
     else prospective.modelOverride = input.modelOverride;
     const { runtimes } = executionContext(input.toolPermissionMode);
-    const compiled = await compileMissionExecutor(prospective, runtimes);
-    const environmentFingerprint = missionExecutionFingerprint(
-      compiled.environmentFingerprint.value,
-      prospective.modelOverride,
-    );
+    await compileMissionExecutor(prospective, runtimes);
     return await options.missions.updateOptions(mission.id, {
       toolPermissionMode: input.toolPermissionMode,
       ...(prospective.modelOverride === undefined
         ? {}
         : { modelOverride: prospective.modelOverride }),
-      environmentFingerprint,
     });
   };
 
@@ -772,14 +749,6 @@ export function createDesktopAdapterHost(
   };
 }
 
-function assertRecoverableEnvironment(mission: Mission, fingerprint: string): void {
-  if (mission.execution !== undefined && mission.execution.environmentFingerprint !== fingerprint) {
-    throw new Error(
-      "The Desktop environment changed since this execution started. Start a new mission instead of recovering it.",
-    );
-  }
-}
-
 function toRuntimeModelSelection(
   override: MissionModelOverride | undefined,
 ): RuntimeModelSelection | undefined {
@@ -798,16 +767,6 @@ function requireRootRuntimeId(compiled: CompiledResource<InvocableResource>): st
   return compiled.rootRuntimeId;
 }
 
-function missionExecutionFingerprint(
-  compiledFingerprint: string,
-  override: MissionModelOverride | undefined,
-): string {
-  if (override === undefined) return compiledFingerprint;
-  return createHash("sha256")
-    .update(JSON.stringify({ compiledFingerprint, modelOverride: override ?? null }))
-    .digest("hex");
-}
-
 function observeExecution(
   missions: MissionStore,
   missionId: string,
@@ -820,7 +779,6 @@ function observeExecution(
   },
   startedAt: string,
   inputMessageId: string,
-  environmentFingerprint: string,
   onFinished: () => void | Promise<void>,
   sessionId?: string,
 ): Promise<void> {
@@ -840,7 +798,6 @@ function observeExecution(
                 id: execution.executionId,
                 inputMessageId,
                 ...(sessionId === undefined ? {} : { sessionId }),
-                environmentFingerprint,
                 status: "running",
                 startedAt,
               },
@@ -860,7 +817,6 @@ function observeExecution(
             id: execution.executionId,
             inputMessageId,
             ...(sessionId === undefined ? {} : { sessionId }),
-            environmentFingerprint,
             status: "waiting",
             startedAt,
           },
@@ -897,7 +853,6 @@ function observeExecution(
         id: execution.executionId,
         inputMessageId,
         ...(sessionId === undefined ? {} : { sessionId }),
-        environmentFingerprint,
         status,
         startedAt,
         finishedAt: new Date().toISOString(),

@@ -23,8 +23,8 @@ describe.sequential("Expert tools MCP Gateway", () => {
 
   it("shares one listener while isolating Session tools and routes", async () => {
     const [alpha, beta] = await Promise.all([
-      registerTestSession("alpha", "system-session-alpha"),
-      registerTestSession("beta", "system-session-beta"),
+      registerTestSession("alpha"),
+      registerTestSession("beta"),
     ]);
     const alphaUrl = new URL(alpha.url);
     const betaUrl = new URL(beta.url);
@@ -71,8 +71,8 @@ describe.sequential("Expert tools MCP Gateway", () => {
   });
 
   it("revokes one Session without affecting others and stops when idle", async () => {
-    const first = await registerTestSession("first", "system-session-first");
-    const second = await registerTestSession("second", "system-session-second");
+    const first = await registerTestSession("first");
+    const second = await registerTestSession("second");
     const secondClient = await connectClient(second.url, "second-client");
     const origin = new URL(first.url).origin;
 
@@ -92,7 +92,7 @@ describe.sequential("Expert tools MCP Gateway", () => {
 
     await expect(fetch(origin)).rejects.toThrow();
 
-    const restarted = await registerTestSession("restarted", "system-session-restarted");
+    const restarted = await registerTestSession("restarted");
     const restartedClient = await connectClient(restarted.url, "restarted-client");
     await expect(
       restartedClient.callTool({ name: "read_restarted", arguments: {} }),
@@ -103,8 +103,7 @@ describe.sequential("Expert tools MCP Gateway", () => {
     const concurrent = await Promise.all(
       Array.from(
         { length: 8 },
-        async (_value, index) =>
-          await registerTestSession(`concurrent_${index}`, `system-session-${index}`),
+        async (_value, index) => await registerTestSession(`concurrent_${index}`),
       ),
     );
 
@@ -117,22 +116,45 @@ describe.sequential("Expert tools MCP Gateway", () => {
   });
 
   it("keeps the config id stable across restore while rotating the endpoint token", async () => {
-    const first = await registerTestSession("restore", "system-session-1");
+    const first = await registerTestSession("restore");
     const firstId = first.id;
     const firstUrl = first.url;
     await first.dispose();
     registrations.delete(first);
 
-    const restored = await registerTestSession("restore", "system-session-1");
+    const restored = await registerTestSession("restore");
 
-    expect(restored.id).toBe(firstId);
+    expect(firstId).toBe("pragma");
+    expect(restored.id).toBe("pragma");
     expect(restored.url).not.toBe(firstUrl);
+  });
+
+  it("exposes stable bounded names for long or unsafe tools", async () => {
+    const originalName = `read-tool-${"x".repeat(80)}`;
+    const first = await registerTestSession("bounded", originalName);
+    const firstClient = await connectClient(first.url, "bounded-client");
+    const firstName = (await firstClient.listTools()).tools.find((tool) =>
+      tool.name.startsWith("read_tool_"),
+    )?.name;
+    expect(firstName).toBeDefined();
+    expect(`mcp__pragma__${firstName}`).toHaveLength(64);
+    await expect(firstClient.callTool({ name: firstName!, arguments: {} })).resolves.toMatchObject({
+      content: [{ type: "text", text: "bounded" }],
+    });
+
+    await firstClient.close();
+    clients.delete(firstClient);
+    await first.dispose();
+    registrations.delete(first);
+    const restored = await registerTestSession("bounded", originalName);
+    const restoredClient = await connectClient(restored.url, "bounded-restored-client");
+    expect((await restoredClient.listTools()).tools.map((tool) => tool.name)).toContain(firstName);
   });
 });
 
 async function registerTestSession(
   label: string,
-  instanceId: string,
+  toolName = `read_${label}`,
 ): Promise<ExpertToolsMcpSessionRegistration> {
   const expert = await defineExpert({
     id: `runtime-${label}`,
@@ -144,7 +166,7 @@ async function registerTestSession(
     workspace: process.cwd(),
     tools: [
       {
-        name: `read_${label}`,
+        name: toolName,
         description: `Read ${label}`,
         inputSchema: {
           type: "object",
@@ -187,7 +209,6 @@ async function registerTestSession(
   });
   const registration = await registerExpertToolsMcpSession({
     agent: expert,
-    instanceId,
     getContext: () => undefined,
     logger: createExpertAgentLogger(undefined, {
       component: "runtime-adapter",

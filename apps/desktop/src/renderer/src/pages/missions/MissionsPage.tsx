@@ -59,6 +59,7 @@ export function MissionsPage(props: {
   readonly initialMission?: Mission | undefined;
   readonly autoRunInitialMission?: boolean | undefined;
   readonly onCreate: () => void;
+  readonly onConfigureModels?: (() => void) | undefined;
 }) {
   const { t } = useTranslation(["missions", "common"]);
   const [missions, setMissions] = useState<readonly MissionSummary[]>([]);
@@ -206,6 +207,7 @@ export function MissionsPage(props: {
         {selectedMission !== null ? (
           <MissionDetailFragment
             mission={selectedMission}
+            onConfigureModels={props.onConfigureModels}
             error={error}
             onDismissError={() => setError(null)}
             onSend={async (content, requestId) => {
@@ -511,6 +513,7 @@ export function MissionDetailFragment(props: {
     | undefined;
   readonly onHumanResponded?: () => void | Promise<void>;
   readonly onLifecycleChange?: () => void | Promise<void>;
+  readonly onConfigureModels?: (() => void) | undefined;
 }) {
   const { t } = useTranslation(["missions", "common"]);
   const [tab, setTab] = useState<"chat" | "work">("chat");
@@ -523,6 +526,7 @@ export function MissionDetailFragment(props: {
   const [sending, setSending] = useState(false);
   const [models, setModels] = useState<readonly DesktopRuntimeModel[]>([]);
   const [modelsLoading, setModelsLoading] = useState(false);
+  const [modelResetRequired, setModelResetRequired] = useState(false);
   const [optionsSaving, setOptionsSaving] = useState(false);
   const [optionsError, setOptionsError] = useState<string | null>(null);
   const [toolPermissionMode, setToolPermissionMode] = useState<DesktopToolPermissionMode>(
@@ -572,13 +576,16 @@ export function MissionDetailFragment(props: {
     const api = desktopApi();
     setModels([]);
     setOptionsError(null);
+    setModelResetRequired(false);
     if (api === undefined || isFlow) return;
     let cancelled = false;
     setModelsLoading(true);
     void api
       .getMissionModelOptions(props.mission.executor.ref)
       .then((result) => {
-        if (!cancelled) setModels(result.models);
+        if (cancelled) return;
+        setModels(result.models);
+        setModelResetRequired(result.status === "reset_required");
       })
       .catch((loadError: unknown) => {
         if (!cancelled) setOptionsError(errorMessage(loadError));
@@ -1046,6 +1053,14 @@ export function MissionDetailFragment(props: {
               {missionFooterTip(props.mission, chat) ? (
                 <small className="mission-chat-footer-tip">
                   {missionFooterTip(props.mission, chat)}
+                </small>
+              ) : null}
+              {modelResetRequired ? (
+                <small className="mission-chat-footer-tip mission-model-reset-note" role="status">
+                  <span>{t("modelConfigurationResetRequired", { ns: "missions" })}</span>
+                  <button className="text-button" type="button" onClick={props.onConfigureModels}>
+                    {t("configureModels", { ns: "missions" })}
+                  </button>
                 </small>
               ) : null}
               {interactions[0] !== undefined ? (

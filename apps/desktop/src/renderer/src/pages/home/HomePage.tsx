@@ -31,6 +31,7 @@ interface WorkspaceSelection {
 export function HomePage(props: {
   readonly initialExecutorRef?: string | undefined;
   readonly onCreated: (mission: Mission) => void | Promise<void>;
+  readonly onConfigureModels?: (() => void) | undefined;
 }) {
   const { t } = useTranslation("missions");
   const [executors, setExecutors] = useState<readonly MissionExecutorOption[]>([]);
@@ -48,6 +49,7 @@ export function HomePage(props: {
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [modelError, setModelError] = useState<string | null>(null);
+  const [modelResetRequired, setModelResetRequired] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -90,6 +92,7 @@ export function HomePage(props: {
   useEffect(() => {
     setModelOverride(undefined);
     setModelError(null);
+    setModelResetRequired(false);
     if (
       selectedExecutor === undefined ||
       (selectedExecutor.kind !== "expert" && selectedExecutor.kind !== "team")
@@ -104,7 +107,9 @@ export function HomePage(props: {
     void window.pragmaDesktop
       .getMissionModelOptions(selectedExecutor.ref)
       .then((options) => {
-        if (!cancelled) setModels(options.models);
+        if (cancelled) return;
+        setModels(options.models);
+        setModelResetRequired(options.status === "reset_required");
       })
       .catch((loadError: unknown) => {
         if (!cancelled) setModelError(errorMessage(loadError));
@@ -226,6 +231,14 @@ export function HomePage(props: {
           <p className="mission-form-note">{t("createFirst")}</p>
         ) : null}
         {modelError ? <p className="mission-form-note">{t("modelOptionsUnavailable")}</p> : null}
+        {modelResetRequired ? (
+          <p className="mission-form-note mission-model-reset-note" role="status">
+            <span>{t("modelConfigurationResetRequired")}</span>
+            <button className="text-button" type="button" onClick={props.onConfigureModels}>
+              {t("configureModels")}
+            </button>
+          </p>
+        ) : null}
         {error ? (
           <p className="form-error" role="alert">
             {error}

@@ -133,7 +133,6 @@ export function createClaudeCodeRuntime(
           mcpToolRegistry = await createMcpToolRegistry(ctx.agent.mcp);
           expertToolsMcpRegistration = await registerExpertToolsMcpSession({
             agent: ctx.agent,
-            instanceId: ctx.systemSessionId,
             getContext: () => ctx.lifecycle.currentContext,
             humanInteractionHandler: ctx.request.humanInteractionHandler,
             logger: ctx.logger,
