@@ -179,10 +179,12 @@ export function ExpertDetailFragment(props: {
           </div>
         </div>
         <div className="detail-actions">
-          <button className="primary-button" type="button" onClick={props.onEdit}>
-            <PencilSimple size={17} aria-hidden="true" />
-            {t("editExpert")}
-          </button>
+          {!props.expert.readOnly ? (
+            <button className="primary-button" type="button" onClick={props.onEdit}>
+              <PencilSimple size={17} aria-hidden="true" />
+              {t("editExpert")}
+            </button>
+          ) : null}
           <button className="secondary-button" type="button" onClick={props.onTryInSession}>
             <Play size={17} aria-hidden="true" />
             {t("trySession")}
@@ -246,9 +248,11 @@ export function ExpertDetailFragment(props: {
             <h2 id="expert-context-heading">{t("context")}</h2>
             <p>{t("contextDescription")}</p>
           </div>
-          <button className="secondary-button" type="button" onClick={props.onConfigureContext}>
-            <Plus size={16} /> {t("configureContext")}
-          </button>
+          {!props.expert.readOnly ? (
+            <button className="secondary-button" type="button" onClick={props.onConfigureContext}>
+              <Plus size={16} /> {t("configureContext")}
+            </button>
+          ) : null}
         </header>
         {props.expert.contextStoreMounts.length === 0 ? (
           <p className="expert-context-empty">{t("noContext")}</p>

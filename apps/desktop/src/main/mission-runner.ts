@@ -7,14 +7,17 @@ import {
   StoredExecutionView,
   type AgentMessageRecord,
   type ExecutionOutputItem,
+  type ExpertAgentAutomaticHumanInteractionHandler,
   type ExpertAgentHumanRequest,
   type ExpertAgentHumanResponse,
   type ExpertSession,
   type MutableExecution,
   type RuntimeResolver,
+  type RuntimeModelSelection,
 } from "@pragma/core";
 import type {
   InvocableResource,
+  CompiledResource,
   PragmaAdapterHost,
   PragmaBindingRecord,
 } from "@pragma/interpreter";
@@ -31,7 +34,9 @@ import type {
   MissionChatUpdate,
   MissionChatQuery,
   MissionHumanInteraction,
+  MissionModelOverride,
   MissionWorkItem,
+  DesktopToolPermissionMode,
 } from "../shared/desktop-api.ts";
 import type { CapabilityCredentialStore } from "./capability-credential-store.ts";
 import type { CapabilityStore } from "./capability-store.ts";
@@ -94,14 +99,45 @@ export function createMissionRunner(options: {
   readonly contextStores?: ContextStoreStore | undefined;
   readonly plugins?: PluginStore | undefined;
   readonly runtimes: RuntimeResolver;
+  readonly runtimesForToolPermissionMode?:
+    | ((mode: DesktopToolPermissionMode) => RuntimeResolver)
+    | undefined;
+  readonly automaticHumanInteractionHandler?:
+    | ExpertAgentAutomaticHumanInteractionHandler
+    | undefined;
+  readonly automaticHumanInteractionHandlerForToolPermissionMode?:
+    | ((mode: DesktopToolPermissionMode) => ExpertAgentAutomaticHumanInteractionHandler)
+    | undefined;
+  readonly compileSystemExecutor?:
+    | ((input: {
+        readonly mission: Mission;
+        readonly runtimes: RuntimeResolver;
+      }) => Promise<CompiledResource<InvocableResource> | undefined>)
+    | undefined;
 }): MissionRunner {
-  const runtimes = options.runtimes;
   const executionStore = createFileExecutionStore({ pragmaHome: options.pragmaHome });
-  const app = createPragma({
-    pragmaHome: options.pragmaHome,
-    runtimes,
-    executionStore,
-  });
+  const executionContexts = new Map<
+    DesktopToolPermissionMode,
+    { readonly app: ReturnType<typeof createPragma>; readonly runtimes: RuntimeResolver }
+  >();
+  const executionContext = (mode: DesktopToolPermissionMode) => {
+    const existing = executionContexts.get(mode);
+    if (existing !== undefined) return existing;
+    const runtimes = options.runtimesForToolPermissionMode?.(mode) ?? options.runtimes;
+    const context = {
+      runtimes,
+      app: createPragma({
+        pragmaHome: options.pragmaHome,
+        runtimes,
+        executionStore,
+        automaticHumanInteractionHandler:
+          options.automaticHumanInteractionHandlerForToolPermissionMode?.(mode) ??
+          options.automaticHumanInteractionHandler,
+      }),
+    };
+    executionContexts.set(mode, context);
+    return context;
+  };
   const active = new Map<string, ActiveMissionExecution>();
   const sessions = new Map<string, ExpertSession>();
   const pendingOperations = new Map<string, PendingMissionOperation>();
@@ -158,6 +194,49 @@ export function createMissionRunner(options: {
     scheduleChatUpdate(id, true);
   };
 
+  const compileMissionExecutor = async (
+    mission: Mission,
+    runtimes: RuntimeResolver,
+  ): Promise<CompiledResource<InvocableResource>> => {
+    const system = await options.compileSystemExecutor?.({ mission, runtimes });
+    if (system !== undefined) return system;
+    return await options.project.service.compile<InvocableResource>({
+      projectId: mission.project.id,
+      revision: mission.project.revision,
+      ref: mission.executor.ref,
+      workspace: mission.workspace.path,
+      environmentId: "desktop",
+      adapterHost: createDesktopAdapterHost(options, mission.workspace.path),
+      runtimes,
+      ...(mission.modelOverride === undefined
+        ? {}
+        : {
+            rootExecutionOverride: {
+              runtimeId: mission.modelOverride.runtimeId,
+              modelSelection: toRuntimeModelSelection(mission.modelOverride),
+            },
+          }),
+      ...(options.plugins === undefined
+        ? {}
+        : {
+            plugins: {
+              inspect: async ({ binding }) =>
+                await options.plugins!.inspect({
+                  ref: binding.ref,
+                  config: binding.config,
+                  secretBindings: binding.secretBindings,
+                }),
+              resolve: async ({ binding }) =>
+                await options.plugins!.resolve({
+                  ref: binding.ref,
+                  config: binding.config,
+                  secretBindings: binding.secretBindings,
+                }),
+            },
+          }),
+    });
+  };
+
   const trackExecution = (input: {
     readonly missionId: string;
     readonly handle: MutableExecution & { readonly result: Promise<unknown> };
@@ -189,34 +268,17 @@ export function createMissionRunner(options: {
   const runMission = async (id: string): Promise<Mission> => {
     const mission = await options.missions.get(id);
     if (active.has(mission.id)) return mission;
-    const compiled = await options.project.service.compile<InvocableResource>({
-      projectId: mission.project.id,
-      revision: mission.project.revision,
-      ref: mission.executor.ref,
-      workspace: mission.workspace.path,
-      environmentId: "desktop",
-      adapterHost: createDesktopAdapterHost(options, mission.workspace.path),
-      runtimes,
-      ...(options.plugins === undefined
-        ? {}
-        : {
-            plugins: {
-              inspect: async ({ binding }) =>
-                await options.plugins!.inspect({
-                  ref: binding.ref,
-                  config: binding.config,
-                  secretBindings: binding.secretBindings,
-                }),
-              resolve: async ({ binding }) =>
-                await options.plugins!.resolve({
-                  ref: binding.ref,
-                  config: binding.config,
-                  secretBindings: binding.secretBindings,
-                }),
-            },
-          }),
-    });
-    assertRecoverableEnvironment(mission, compiled.environmentFingerprint.value);
+    const { app, runtimes } = executionContext(mission.toolPermissionMode);
+    const compiled = await compileMissionExecutor(mission, runtimes);
+    const modelSelection = toRuntimeModelSelection(mission.modelOverride);
+    if (mission.modelOverride !== undefined) {
+      await runtimes.bind({ runtimeId: mission.modelOverride.runtimeId, modelSelection });
+    }
+    const environmentFingerprint = missionExecutionFingerprint(
+      compiled.environmentFingerprint.value,
+      mission.modelOverride,
+    );
+    assertRecoverableEnvironment(mission, environmentFingerprint);
     const startedAt = new Date().toISOString();
 
     if ("kind" in compiled.value && compiled.value.kind === "flow") {
@@ -267,7 +329,7 @@ export function createMissionRunner(options: {
       const running = await options.missions.updateExecution(mission.id, {
         id: handle.executionId,
         inputMessageId,
-        environmentFingerprint: compiled.environmentFingerprint.value,
+        environmentFingerprint,
         status: "running",
         startedAt: executionStartedAt,
       });
@@ -276,7 +338,7 @@ export function createMissionRunner(options: {
         handle,
         startedAt: executionStartedAt,
         inputMessageId,
-        environmentFingerprint: compiled.environmentFingerprint.value,
+        environmentFingerprint,
       });
       return running;
     }
@@ -292,7 +354,8 @@ export function createMissionRunner(options: {
             sessionId: mission.execution!.sessionId!,
           })
         : await app.experts.createSession(compiled.value, {
-            runtime: compiled.rootRuntimeId,
+            runtime: mission.modelOverride?.runtimeId ?? compiled.rootRuntimeId,
+            ...(modelSelection === undefined ? {} : { modelSelection }),
           }));
     sessions.set(mission.id, session);
     const inputMessageId = recoverable
@@ -307,7 +370,10 @@ export function createMissionRunner(options: {
             `Mission goal: ${mission.goal}`,
           ].join("\n")
         : mission.goal,
-      { requestId: recoverable ? randomUUID() : inputMessageId },
+      {
+        requestId: recoverable ? randomUUID() : inputMessageId,
+        ...(modelSelection === undefined ? {} : { modelSelection }),
+      },
     );
     await options.missions.appendExecutionReference({
       missionId: mission.id,
@@ -319,7 +385,7 @@ export function createMissionRunner(options: {
       id: turn.executionId,
       inputMessageId,
       sessionId: session.sessionId,
-      environmentFingerprint: compiled.environmentFingerprint.value,
+      environmentFingerprint,
       status: "running",
       startedAt,
     });
@@ -328,7 +394,7 @@ export function createMissionRunner(options: {
       handle: turn,
       startedAt,
       inputMessageId,
-      environmentFingerprint: compiled.environmentFingerprint.value,
+      environmentFingerprint,
       sessionId: session.sessionId,
       onFinished: async () => await waitForExpertTurnSettlement(session, turn.requestId),
     });
@@ -341,6 +407,7 @@ export function createMissionRunner(options: {
     readonly requestId: string;
   }): Promise<Mission> => {
     const mission = await options.missions.get(input.id);
+    const { app, runtimes } = executionContext(mission.toolPermissionMode);
     if (mission.executor.kind === "flow") {
       throw new Error("Flow missions accept input through workflow steps, not chat messages.");
     }
@@ -350,34 +417,16 @@ export function createMissionRunner(options: {
     if (active.has(mission.id)) {
       throw new Error("Wait for the current expert turn before sending another message.");
     }
-    const compiled = await options.project.service.compile<InvocableResource>({
-      projectId: mission.project.id,
-      revision: mission.project.revision,
-      ref: mission.executor.ref,
-      workspace: mission.workspace.path,
-      environmentId: "desktop",
-      adapterHost: createDesktopAdapterHost(options, mission.workspace.path),
-      runtimes,
-      ...(options.plugins === undefined
-        ? {}
-        : {
-            plugins: {
-              inspect: async ({ binding }) =>
-                await options.plugins!.inspect({
-                  ref: binding.ref,
-                  config: binding.config,
-                  secretBindings: binding.secretBindings,
-                }),
-              resolve: async ({ binding }) =>
-                await options.plugins!.resolve({
-                  ref: binding.ref,
-                  config: binding.config,
-                  secretBindings: binding.secretBindings,
-                }),
-            },
-          }),
-    });
-    assertRecoverableEnvironment(mission, compiled.environmentFingerprint.value);
+    const compiled = await compileMissionExecutor(mission, runtimes);
+    const modelSelection = toRuntimeModelSelection(mission.modelOverride);
+    if (mission.modelOverride !== undefined) {
+      await runtimes.bind({ runtimeId: mission.modelOverride.runtimeId, modelSelection });
+    }
+    const environmentFingerprint = missionExecutionFingerprint(
+      compiled.environmentFingerprint.value,
+      mission.modelOverride,
+    );
+    assertRecoverableEnvironment(mission, environmentFingerprint);
     if ("kind" in compiled.value && compiled.value.kind === "flow") {
       throw new Error("Flow missions cannot receive chat messages.");
     }
@@ -385,7 +434,8 @@ export function createMissionRunner(options: {
       sessions.get(mission.id) ??
       (mission.execution?.sessionId === undefined
         ? await app.experts.createSession(compiled.value, {
-            runtime: compiled.rootRuntimeId,
+            runtime: mission.modelOverride?.runtimeId ?? compiled.rootRuntimeId,
+            ...(modelSelection === undefined ? {} : { modelSelection }),
           })
         : await app.experts.resumeSession(compiled.value, {
             sessionId: mission.execution.sessionId,
@@ -396,7 +446,10 @@ export function createMissionRunner(options: {
       content: input.content,
       createdAt: new Date().toISOString(),
     });
-    const turn = await session.prompt(input.content, { requestId: input.requestId });
+    const turn = await session.prompt(input.content, {
+      requestId: input.requestId,
+      ...(modelSelection === undefined ? {} : { modelSelection }),
+    });
     const startedAt = new Date().toISOString();
     await options.missions.appendExecutionReference({
       missionId: mission.id,
@@ -408,7 +461,7 @@ export function createMissionRunner(options: {
       id: turn.executionId,
       inputMessageId: input.requestId,
       sessionId: session.sessionId,
-      environmentFingerprint: compiled.environmentFingerprint.value,
+      environmentFingerprint,
       status: "running",
       startedAt,
     });
@@ -417,7 +470,7 @@ export function createMissionRunner(options: {
       handle: turn,
       startedAt,
       inputMessageId: input.requestId,
-      environmentFingerprint: compiled.environmentFingerprint.value,
+      environmentFingerprint,
       sessionId: session.sessionId,
       onFinished: async () => await waitForExpertTurnSettlement(session, turn.requestId),
     });
@@ -681,6 +734,27 @@ function assertRecoverableEnvironment(mission: Mission, fingerprint: string): vo
       "The Desktop environment changed since this execution started. Start a new mission instead of recovering it.",
     );
   }
+}
+
+function toRuntimeModelSelection(
+  override: MissionModelOverride | undefined,
+): RuntimeModelSelection | undefined {
+  return override === undefined
+    ? undefined
+    : {
+        model: { providerId: override.providerId, modelId: override.modelId },
+        ...(override.thinkingLevel === undefined ? {} : { thinkingLevel: override.thinkingLevel }),
+      };
+}
+
+function missionExecutionFingerprint(
+  compiledFingerprint: string,
+  override: MissionModelOverride | undefined,
+): string {
+  if (override === undefined) return compiledFingerprint;
+  return createHash("sha256")
+    .update(JSON.stringify({ compiledFingerprint, modelOverride: override ?? null }))
+    .digest("hex");
 }
 
 function observeExecution(

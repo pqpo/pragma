@@ -223,12 +223,14 @@ export function createFileExpertSessionStore(options: {
         if (
           existing !== undefined &&
           existing.claimId !== claimId &&
-          Date.parse(existing.expiresAt) > Date.now()
+          Date.parse(existing.expiresAt) > Date.now() &&
+          (existing.processId === undefined || isProcessAlive(existing.processId))
         ) {
           return false;
         }
         await writeJson(paths.expertSessionLease(sessionId), {
           claimId,
+          processId: process.pid,
           expiresAt: new Date(Date.now() + leaseMs).toISOString(),
         });
         return true;
@@ -249,8 +251,24 @@ export function createFileExpertSessionStore(options: {
 
 const ExpertSessionLeaseSchema = z.object({
   claimId: z.string().min(1),
+  processId: z.number().int().positive().optional(),
   expiresAt: z.string().datetime(),
 });
+
+function isProcessAlive(processId: number): boolean {
+  if (processId === process.pid) return true;
+  try {
+    process.kill(processId, 0);
+    return true;
+  } catch (error) {
+    return (
+      error instanceof Error &&
+      "code" in error &&
+      typeof error.code === "string" &&
+      error.code === "EPERM"
+    );
+  }
+}
 
 const ExpertSessionTransactionJournalSchema = z
   .object({

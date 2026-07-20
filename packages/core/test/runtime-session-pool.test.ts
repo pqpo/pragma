@@ -68,6 +68,19 @@ describe("RuntimeSessionPool", () => {
     await pool.close();
     expect(reused.close).toHaveBeenCalledTimes(1);
   });
+
+  it("clears cached Sessions without sealing the pool", async () => {
+    const pool = new RuntimeSessionPool();
+    const first = createRuntimeSession();
+    const second = createRuntimeSession();
+    await pool.acquire(identity, async () => first);
+
+    await pool.clear();
+    expect(first.close).toHaveBeenCalledTimes(1);
+    await expect(pool.acquire(identity, async () => second)).resolves.toBe(second);
+    await pool.close();
+    expect(second.close).toHaveBeenCalledTimes(1);
+  });
 });
 
 function createRuntimeSession(): RuntimeAgentSession {

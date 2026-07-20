@@ -32,11 +32,9 @@ import {
   GetWorkflowLayoutSchema,
   ImportSkillCapabilitySchema,
   ImportPluginZipSchema,
-  InitializeStewardSchema,
   InspectPluginZipSchema,
   PreviewCodeServiceRequestSchema,
   PreviewCodeServiceResultSchema,
-  PromptStewardSchema,
   PluginActionSchema,
   PluginZipInspectionSchema,
   CreateModelProviderSchema,
@@ -53,6 +51,8 @@ import {
   MissionActionSchema,
   MissionChatSnapshotSchema,
   MissionChatUpdateSchema,
+  MissionCreationDefaultsSchema,
+  MissionExecutorOptionSchema,
   MissionIdSchema,
   MissionSchema,
   MissionSummarySchema,
@@ -60,12 +60,8 @@ import {
   MissionWorkItemSchema,
   PickWorkspaceResultSchema,
   RespondMissionHumanInteractionSchema,
-  RespondStewardInteractionSchema,
   SendMissionMessageSchema,
   SkillDocumentSchema,
-  StewardChatSnapshotSchema,
-  StewardInteractionSchema,
-  StewardSessionStateSchema,
   SetPluginSecretsSchema,
   DeletePragmaResourceSchema,
   PragmaProjectSnapshotSchema,
@@ -86,33 +82,6 @@ import {
 } from "../shared/desktop-api.ts";
 
 const api: PragmaDesktopAPI = {
-  getStewardState: async () => {
-    const value = await ipcRenderer.invoke("steward:state:get");
-    return value === undefined || value === null ? null : StewardSessionStateSchema.parse(value);
-  },
-  initializeSteward: async (input) =>
-    StewardSessionStateSchema.parse(
-      await ipcRenderer.invoke("steward:initialize", InitializeStewardSchema.parse(input)),
-    ),
-  promptSteward: async (input) =>
-    StewardSessionStateSchema.parse(
-      await ipcRenderer.invoke("steward:prompt", PromptStewardSchema.parse(input)),
-    ),
-  getStewardChat: async () =>
-    StewardChatSnapshotSchema.parse(await ipcRenderer.invoke("steward:chat:get")),
-  listStewardInteractions: async () =>
-    StewardInteractionSchema.array().parse(await ipcRenderer.invoke("steward:interactions:list")),
-  respondStewardInteraction: async (input) => {
-    await ipcRenderer.invoke(
-      "steward:interactions:respond",
-      RespondStewardInteractionSchema.parse(input),
-    );
-  },
-  interruptSteward: async () =>
-    StewardSessionStateSchema.parse(await ipcRenderer.invoke("steward:interrupt")),
-  resetSteward: async () => {
-    await ipcRenderer.invoke("steward:reset");
-  },
   getBridgeSnapshot: async () =>
     DesktopBridgeSnapshotSchema.parse(await ipcRenderer.invoke("bridge:snapshot")),
   getDesktopSettings: async () =>
@@ -281,6 +250,10 @@ const api: PragmaDesktopAPI = {
   },
   listMissions: async () =>
     MissionSummarySchema.array().parse(await ipcRenderer.invoke("missions:list")),
+  listMissionExecutors: async () =>
+    MissionExecutorOptionSchema.array().parse(await ipcRenderer.invoke("missions:executors:list")),
+  getMissionCreationDefaults: async () =>
+    MissionCreationDefaultsSchema.parse(await ipcRenderer.invoke("missions:create-defaults:get")),
   getMission: async (id) =>
     MissionSchema.parse(await ipcRenderer.invoke("missions:get", MissionIdSchema.parse(id))),
   createMission: async (input) =>

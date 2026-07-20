@@ -1,78 +1,68 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  ArrowRight,
-  Brain,
+  Books,
   CaretDown,
   Check,
-  PaperPlaneTilt,
-  Sparkle,
-  StopCircle,
+  Files,
+  Folder,
+  GitBranch,
+  MagnifyingGlass,
+  Stack,
   Toolbox,
-  WarningCircle,
+  User,
+  UsersThree,
 } from "@phosphor-icons/react";
 import { useTranslation } from "react-i18next";
-import type { HumanInteractionResponse } from "@pragma/shared";
 
 import type {
+  DesktopToolPermissionMode,
   DesktopRuntimeAvailability,
-  DesktopRuntimeModel,
-  StewardChatEntry,
-  StewardChatSnapshot,
-  StewardInteraction,
-  StewardSessionState,
+  ExpertModelConfig,
+  Mission,
+  MissionExecutorOption,
 } from "../../../../shared/desktop-api.ts";
+import { ToolPermissionSelect } from "../../components/ToolPermissionSelect.tsx";
 import { errorMessage } from "../../lib/errors.ts";
-import { readStewardTaskWorkspace } from "../../lib/steward-preferences.ts";
-import { StewardInteractionCard } from "./StewardInteractionCard.tsx";
 
 export function HomePage(props: {
-  readonly onOpenStudio: () => void;
-  readonly onOpenMissions: () => void;
-  readonly onOpenModelSettings: () => void;
+  readonly initialExecutorRef?: string | undefined;
+  readonly onCreated: (mission: Mission) => void | Promise<void>;
 }) {
-  const { t } = useTranslation("home");
-  const [snapshot, setSnapshot] = useState<StewardChatSnapshot>({ state: null, entries: [] });
+  const { t } = useTranslation("missions");
+  const [executors, setExecutors] = useState<readonly MissionExecutorOption[]>([]);
   const [runtimes, setRuntimes] = useState<readonly DesktopRuntimeAvailability[]>([]);
-  const [runtimeId, setRuntimeId] = useState("pi");
-  const [modelKey, setModelKey] = useState("");
-  const [thinkingLevel, setThinkingLevel] = useState("");
-  const [workspace] = useState(() =>
-    readStewardTaskWorkspace(typeof window === "undefined" ? undefined : window.localStorage),
-  );
-  const [message, setMessage] = useState("");
-  const [interactions, setInteractions] = useState<readonly StewardInteraction[]>([]);
-  const [busy, setBusy] = useState(false);
+  const [workspace, setWorkspace] = useState<{ path: string; basename: string } | null>(null);
+  const [executorRef, setExecutorRef] = useState(props.initialExecutorRef ?? "");
+  const [defaultExecutorRef, setDefaultExecutorRef] = useState("");
+  const [goal, setGoal] = useState("");
+  const [toolPermissionMode, setToolPermissionMode] =
+    useState<DesktopToolPermissionMode>("request-approval");
+  const [modelOverride, setModelOverride] = useState<ExpertModelConfig>();
+  const [saving, setSaving] = useState(false);
+  const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [configurationNeeded, setConfigurationNeeded] = useState(false);
-  const endRef = useRef<HTMLDivElement | null>(null);
-
-  const refresh = async () => {
-    const api = window.pragmaDesktop;
-    const chat = await api.getStewardChat();
-    const pending = chat.state === null ? [] : await api.listStewardInteractions();
-    setSnapshot(chat);
-    setInteractions(pending);
-  };
 
   useEffect(() => {
     let cancelled = false;
     void Promise.all([
-      window.pragmaDesktop.getStewardState(),
+      window.pragmaDesktop.listMissionExecutors(),
+      window.pragmaDesktop.getMissionCreationDefaults(),
       window.pragmaDesktop.getRuntimeAvailability(),
     ])
-      .then(([state, availability]) => {
+      .then(([availableExecutors, defaults, runtimeAvailability]) => {
         if (cancelled) return;
-        setSnapshot((current) => ({ ...current, state }));
-        setRuntimes(availability);
-        setRuntimeId(
-          state?.runtimeId ??
-            availability.find((runtime) => runtime.isDefault)?.id ??
-            availability.find((runtime) => runtime.status === "available")?.id ??
-            "pi",
+        setExecutors(availableExecutors);
+        setRuntimes(runtimeAvailability);
+        setWorkspace(defaults.workspace);
+        setDefaultExecutorRef(defaults.executorRef);
+        setToolPermissionMode(defaults.toolPermissionMode);
+        const requested = props.initialExecutorRef ?? defaults.executorRef;
+        setExecutorRef(
+          availableExecutors.some((executor) => executor.ref === requested)
+            ? requested
+            : defaults.executorRef,
         );
-        if (state !== null) {
-          void refresh().catch((loadError: unknown) => setError(errorMessage(loadError)));
-        }
+        setLoaded(true);
       })
       .catch((loadError: unknown) => {
         if (!cancelled) setError(errorMessage(loadError));
@@ -80,338 +70,387 @@ export function HomePage(props: {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [props.initialExecutorRef]);
+
+  const selectedExecutor = executors.find((executor) => executor.ref === executorRef);
+  const hasValidExecutor = selectedExecutor !== undefined;
 
   useEffect(() => {
-    if (snapshot.state?.status !== "running" && snapshot.state?.status !== "waiting") return;
-    const timer = setInterval(() => {
-      void refresh().catch((loadError: unknown) => setError(errorMessage(loadError)));
-    }, 600);
-    return () => clearInterval(timer);
-  }, [snapshot.state?.status]);
+    if (hasValidExecutor || executors.length === 0) return;
+    const fallback =
+      executors.find((executor) => executor.ref === defaultExecutorRef) ?? executors[0];
+    setExecutorRef(fallback?.ref ?? "");
+  }, [defaultExecutorRef, executorRef, executors, hasValidExecutor]);
 
-  useEffect(() => {
-    endRef.current?.scrollIntoView({ block: "end" });
-  }, [snapshot.entries.length, interactions.length]);
+  useEffect(() => setModelOverride(undefined), [executorRef]);
 
-  const selectedRuntime = useMemo(
-    () => runtimes.find((runtime) => runtime.id === runtimeId),
-    [runtimeId, runtimes],
-  );
-  const selectedModel = useMemo(
-    () => selectedRuntime?.models?.find((model) => runtimeModelKey(model) === modelKey),
-    [modelKey, selectedRuntime],
-  );
-  const modelSelection = useMemo(
-    () =>
-      selectedModel === undefined
-        ? undefined
-        : {
-            model: { providerId: selectedModel.provider.id, modelId: selectedModel.id },
-            ...(thinkingLevel === "" ? {} : { thinkingLevel }),
-          },
-    [selectedModel, thinkingLevel],
-  );
-
-  useEffect(() => {
-    const models = selectedRuntime?.models ?? [];
-    const remembered = snapshot.state?.modelSelection;
-    const rememberedKey =
-      snapshot.state?.runtimeId === runtimeId && remembered !== undefined
-        ? JSON.stringify([remembered.model.providerId, remembered.model.modelId])
-        : undefined;
-    const model =
-      models.find((candidate) => runtimeModelKey(candidate) === rememberedKey) ??
-      models.find((candidate) => candidate.default) ??
-      models[0];
-    setModelKey(model === undefined ? "" : runtimeModelKey(model));
-    setThinkingLevel(
-      model === undefined
-        ? ""
-        : rememberedKey === runtimeModelKey(model) && remembered?.thinkingLevel !== undefined
-          ? remembered.thinkingLevel
-          : (model.thinking?.defaultLevel ?? ""),
-    );
-  }, [runtimeId, runtimes, snapshot.state?.modelSelection, snapshot.state?.runtimeId]);
-
-  const initialized = snapshot.state !== null;
-  const turnActive = snapshot.state?.status === "running" || snapshot.state?.status === "waiting";
-  const canSend = message.trim() !== "" && !busy && runtimeId !== "" && !turnActive;
-
-  const send = async () => {
-    if (!canSend) return;
-    setBusy(true);
-    setError(null);
-    setConfigurationNeeded(false);
+  const pickWorkspace = async () => {
     try {
-      if ((await window.pragmaDesktop.listModelProviders()).length === 0) {
-        setConfigurationNeeded(true);
-        return;
+      const result = await window.pragmaDesktop.pickWorkspace();
+      if (result.ok && result.path !== undefined && result.basename !== undefined) {
+        setWorkspace({ path: result.path, basename: result.basename });
+        setError(null);
+      } else if (result.reason !== "cancelled") {
+        setError(result.error ?? t("workspaceUnavailable"));
       }
-      if (selectedRuntime?.status !== "available") {
-        throw new Error(selectedRuntime?.reason ?? t("errors.runtimeUnavailable"));
-      }
-      if (modelSelection === undefined) {
-        throw new Error(selectedRuntime.modelDiscoveryError ?? t("errors.noModelAvailable"));
-      }
-      let state: StewardSessionState | null = snapshot.state;
-      if (state === null) state = await window.pragmaDesktop.initializeSteward({ runtimeId });
-      const content = message.trim();
-      setMessage("");
-      const running = await window.pragmaDesktop.promptSteward({
-        content,
-        requestId: crypto.randomUUID(),
-        modelSelection,
-        ...(workspace === "" ? {} : { taskWorkspaceId: workspace }),
+    } catch (pickError) {
+      setError(errorMessage(pickError));
+    }
+  };
+
+  const submit = async () => {
+    if (workspace === null || !hasValidExecutor || goal.trim() === "" || saving) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const mission = await window.pragmaDesktop.createMission({
+        workspace: workspace.path,
+        executor: { ref: executorRef },
+        goal: goal.trim(),
+        toolPermissionMode,
+        ...(modelOverride === undefined ? {} : { modelOverride }),
       });
-      setSnapshot((current) => ({ ...current, state: running }));
-      await refresh();
-    } catch (sendError) {
-      setError(errorMessage(sendError));
-    } finally {
-      setBusy(false);
+      await props.onCreated(mission);
+    } catch (submitError) {
+      setError(errorMessage(submitError));
+      setSaving(false);
     }
   };
 
   return (
-    <section className="steward-home">
-      <header className="steward-home-header">
-        <div>
-          <span className="steward-eyebrow">PRAGMA STEWARD</span>
-          <h1>{t("title")}</h1>
-        </div>
-        {initialized ? (
-          <button
-            className="steward-text-button"
-            type="button"
-            onClick={() => {
-              if (!window.confirm(t("resetConfirm"))) {
-                return;
-              }
-              void window.pragmaDesktop.resetSteward().then(() => {
-                setSnapshot({ state: null, entries: [] });
-                setInteractions([]);
-              });
-            }}
-          >
-            {t("resetSession")}
-          </button>
-        ) : null}
-      </header>
-
-      <div className={snapshot.entries.length === 0 ? "steward-chat is-empty" : "steward-chat"}>
-        {snapshot.entries.length === 0 ? (
-          <div className="steward-welcome">
-            <span className="steward-orb">
-              <Sparkle size={28} weight="fill" />
+    <section className="steward-home home-mission-create">
+      <section className="mission-create" aria-labelledby="new-mission-title">
+        <header>
+          <h1 id="new-mission-title">{t("start")}</h1>
+          <p>{t("createDescription")}</p>
+        </header>
+        <div className="mission-create-selectors">
+          <button className="mission-selector" type="button" onClick={() => void pickWorkspace()}>
+            <span className="mission-selector-icon">
+              <Folder size={23} aria-hidden="true" />
             </span>
-            <h2>{t("welcomeTitle")}</h2>
-            <p>{t("welcomeDescription")}</p>
-          </div>
-        ) : (
-          <div className="steward-messages">
-            {snapshot.entries.map((entry) =>
-              entry.role === "tool" ? (
-                <StewardToolMessage
-                  key={entry.id}
-                  entry={entry}
-                  onOpenStudio={props.onOpenStudio}
-                  onOpenMissions={props.onOpenMissions}
-                />
-              ) : (
-                <article key={entry.id} className={`steward-message is-${entry.role}`}>
-                  <div>{entry.content}</div>
-                </article>
-              ),
-            )}
-          </div>
-        )}
-
-        {interactions.map((interaction) => (
-          <StewardInteractionCard
-            key={interaction.interactionId}
-            interaction={interaction}
-            responding={busy}
-            onRespond={(response) => void respond(interaction, response)}
+            <span className="mission-selector-copy">
+              <small>{t("workspace")}</small>
+              <strong>{workspace?.basename ?? t("chooseFolder")}</strong>
+              <em>{workspace?.path ?? t("oneDirectory")}</em>
+            </span>
+          </button>
+          <MissionExecutorPicker
+            executors={executors}
+            value={hasValidExecutor ? executorRef : ""}
+            onChange={setExecutorRef}
           />
-        ))}
-        <div ref={endRef} />
-      </div>
-
-      <div className="steward-composer-wrap">
-        {error === null ? null : <div className="steward-error">{error}</div>}
-        {configurationNeeded ? (
-          <div className="steward-configuration-notice" role="alert">
-            <div>
-              <strong>{t("configuration.title")}</strong>
-              <span>{t("configuration.description")}</span>
-            </div>
-            <button type="button" onClick={props.onOpenModelSettings}>
-              {t("configuration.action")} <ArrowRight size={14} />
-            </button>
-          </div>
+        </div>
+        {selectedExecutor?.kind === "expert" || selectedExecutor?.kind === "team" ? (
+          <MissionModelOverrideControls
+            runtimes={runtimes}
+            value={modelOverride}
+            onChange={setModelOverride}
+          />
         ) : null}
-        <div className="steward-composer">
+        <div className="mission-goal-composer">
+          <label htmlFor="mission-goal">{t("prompt")}</label>
           <textarea
-            value={message}
-            placeholder={t("composerPlaceholder")}
-            onChange={(event) => setMessage(event.target.value)}
+            id="mission-goal"
+            value={goal}
+            onChange={(event) => setGoal(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === "Enter" && !event.shiftKey) {
                 event.preventDefault();
-                void send();
+                void submit();
               }
             }}
+            placeholder={t("goalPlaceholder")}
+            autoFocus
           />
-          <div className="steward-composer-footer">
-            <div className="steward-context-controls">
-              <select
-                aria-label={t("model")}
-                value={modelKey}
-                disabled={busy || turnActive || selectedRuntime?.status !== "available"}
-                onChange={(event) => {
-                  const nextKey = event.target.value;
-                  const nextModel = selectedRuntime?.models?.find(
-                    (model) => runtimeModelKey(model) === nextKey,
-                  );
-                  setModelKey(nextKey);
-                  setThinkingLevel(nextModel?.thinking?.defaultLevel ?? "");
-                }}
+          <footer>
+            <div className="mission-prompt-tools" aria-label={t("contextTools")}>
+              <button type="button" aria-disabled="true" title={t("inheritedContext")}>
+                <Stack size={18} aria-hidden="true" />
+                {t("context")}
+              </button>
+              <button
+                className={workspace === null ? "" : "is-active"}
+                type="button"
+                onClick={() => void pickWorkspace()}
+                title={workspace?.path ?? t("chooseWorkspaceFiles")}
               >
-                {(selectedRuntime?.models?.length ?? 0) === 0 ? (
-                  <option value="">{t("noModelConfigured")}</option>
-                ) : null}
-                {selectedRuntime?.models?.map((model) => (
-                  <option value={runtimeModelKey(model)} key={runtimeModelKey(model)}>
-                    {model.displayName} · {model.provider.displayName}
-                  </option>
-                ))}
-              </select>
-              <label className="steward-thinking-select">
-                <Brain size={16} aria-hidden="true" />
-                <select
-                  aria-label={t("thinkingDepth")}
-                  value={thinkingLevel}
-                  disabled={busy || turnActive || selectedModel?.thinking === undefined}
-                  onChange={(event) => setThinkingLevel(event.target.value)}
-                >
-                  <option value="">{t("defaultThinking")}</option>
-                  {selectedModel?.thinking?.supportedLevels.map((level) => (
-                    <option value={level.value} key={level.value}>
-                      {level.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
+                <Files size={18} aria-hidden="true" />
+                {t("files")}
+              </button>
+              <button type="button" aria-disabled="true" title={t("managedKnowledge")}>
+                <Books size={18} aria-hidden="true" />
+                {t("knowledge")}
+              </button>
+              <button type="button" aria-disabled="true" title={t("managedTools")}>
+                <Toolbox size={18} aria-hidden="true" />
+                {t("tools")}
+              </button>
+              <ToolPermissionSelect
+                value={toolPermissionMode}
+                onChange={setToolPermissionMode}
+                disabled={saving}
+                title={t("permissionOverride")}
+              />
             </div>
-            {turnActive ? (
-              <button
-                className="steward-send is-stop"
-                type="button"
-                aria-label={t("interrupt")}
-                title={t("interrupt")}
-                onClick={() => void window.pragmaDesktop.interruptSteward().then(refresh)}
-              >
-                <StopCircle size={19} />
-              </button>
-            ) : (
-              <button
-                className="steward-send"
-                type="button"
-                disabled={!canSend}
-                onClick={() => void send()}
-                aria-label={t("send")}
-                title={selectedRuntime?.displayName ?? t("send")}
-              >
-                <PaperPlaneTilt size={19} weight="fill" />
-              </button>
-            )}
-          </div>
+            <button
+              className="primary-button"
+              type="button"
+              disabled={saving || workspace === null || !hasValidExecutor || goal.trim() === ""}
+              onClick={() => void submit()}
+            >
+              {saving ? t("starting") : t("startMission")}
+            </button>
+          </footer>
         </div>
-      </div>
+        {loaded && executors.length === 0 ? (
+          <p className="mission-form-note">{t("createFirst")}</p>
+        ) : null}
+        {error ? (
+          <p className="form-error" role="alert">
+            {error}
+          </p>
+        ) : null}
+      </section>
     </section>
   );
-
-  async function respond(interaction: StewardInteraction, response: HumanInteractionResponse) {
-    setBusy(true);
-    try {
-      await window.pragmaDesktop.respondStewardInteraction({
-        interactionId: interaction.interactionId,
-        requestId: crypto.randomUUID(),
-        response,
-      });
-      await refresh();
-    } catch (respondError) {
-      setError(errorMessage(respondError));
-    } finally {
-      setBusy(false);
-    }
-  }
 }
 
-function StewardToolMessage(props: {
-  readonly entry: StewardChatEntry;
-  readonly onOpenStudio: () => void;
-  readonly onOpenMissions: () => void;
+export function MissionModelOverrideControls(props: {
+  readonly runtimes: readonly DesktopRuntimeAvailability[];
+  readonly value?: ExpertModelConfig | undefined;
+  readonly onChange: (value: ExpertModelConfig | undefined) => void;
 }) {
-  const { t } = useTranslation("home");
-  const status =
-    props.entry.toolStatus ??
-    (props.entry.content === "Running" ? "running" : props.entry.isError ? "failed" : "succeeded");
-  const hasDetails = status !== "running" && props.entry.content.trim() !== "";
-  const label =
-    status === "running"
-      ? t("tool.calling")
-      : status === "failed"
-        ? t("tool.failed")
-        : t("tool.completed");
-  const summary = (
-    <>
-      <Toolbox size={16} aria-hidden="true" />
-      <strong>{props.entry.toolName ?? t("tool.defaultName")}</strong>
-      <span>{label}</span>
-      {status === "failed" ? (
-        <WarningCircle size={15} aria-hidden="true" />
-      ) : status === "succeeded" ? (
-        <Check size={15} aria-hidden="true" />
-      ) : null}
-    </>
+  const { t } = useTranslation("missions");
+  const models = props.runtimes.flatMap((runtime) =>
+    runtime.status !== "available"
+      ? []
+      : (runtime.models ?? []).map((model) => ({ runtime, model })),
   );
+  const valueKey =
+    props.value === undefined
+      ? ""
+      : modelOptionKey(props.value.runtimeId, props.value.providerId, props.value.modelId);
+  const selected = models.find(
+    ({ runtime, model }) => modelOptionKey(runtime.id, model.provider.id, model.id) === valueKey,
+  );
+  const thinkingLevels = selected?.model.thinking?.supportedLevels ?? [];
 
   return (
-    <article className={`steward-message is-tool is-${status}`}>
-      {hasDetails ? (
-        <details className="steward-tool-activity">
-          <summary>
-            {summary}
-            <CaretDown className="steward-tool-caret" size={14} aria-hidden="true" />
-          </summary>
-          <pre>{props.entry.content}</pre>
-        </details>
-      ) : (
-        <div
-          className={
-            status === "running" ? "steward-tool-status is-running" : "steward-tool-status"
-          }
-          role={status === "running" ? "status" : undefined}
+    <div className="mission-model-overrides">
+      <label>
+        <span>{t("modelOverride")}</span>
+        <select
+          value={valueKey}
+          onChange={(event) => {
+            const option = models.find(
+              ({ runtime, model }) =>
+                modelOptionKey(runtime.id, model.provider.id, model.id) === event.target.value,
+            );
+            props.onChange(
+              option === undefined
+                ? undefined
+                : {
+                    runtimeId: option.runtime.id,
+                    providerId: option.model.provider.id,
+                    modelId: option.model.id,
+                  },
+            );
+          }}
         >
-          {summary}
-        </div>
-      )}
-      {status === "succeeded" && /projectRevision|changedRefs/.test(props.entry.content) ? (
-        <button type="button" onClick={props.onOpenStudio}>
-          {t("tool.openStudio")} <ArrowRight size={14} />
-        </button>
-      ) : null}
-      {status === "succeeded" && /workspaceLabel|executorRef/.test(props.entry.content) ? (
-        <button type="button" onClick={props.onOpenMissions}>
-          {t("tool.openMissions")} <ArrowRight size={14} />
-        </button>
-      ) : null}
-    </article>
+          <option value="">{t("useExecutorDefaultModel")}</option>
+          {models.map(({ runtime, model }) => (
+            <option
+              key={modelOptionKey(runtime.id, model.provider.id, model.id)}
+              value={modelOptionKey(runtime.id, model.provider.id, model.id)}
+            >
+              {runtime.displayName} · {model.provider.displayName} · {model.displayName}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label>
+        <span>{t("thinkingDepth")}</span>
+        <select
+          value={props.value?.thinkingLevel ?? ""}
+          disabled={props.value === undefined || thinkingLevels.length === 0}
+          onChange={(event) => {
+            if (props.value === undefined) return;
+            const thinkingLevel = event.target.value;
+            props.onChange({
+              runtimeId: props.value.runtimeId,
+              providerId: props.value.providerId,
+              modelId: props.value.modelId,
+              ...(thinkingLevel === "" ? {} : { thinkingLevel }),
+            });
+          }}
+        >
+          <option value="">{t("useModelDefaultThinking")}</option>
+          {thinkingLevels.map((level) => (
+            <option key={level.value} value={level.value}>
+              {level.label}
+            </option>
+          ))}
+        </select>
+      </label>
+    </div>
   );
 }
 
-function runtimeModelKey(model: DesktopRuntimeModel): string {
-  return JSON.stringify([model.provider.id, model.id]);
+function modelOptionKey(runtimeId: string, providerId: string, modelId: string): string {
+  return JSON.stringify([runtimeId, providerId, modelId]);
+}
+
+function MissionExecutorPicker(props: {
+  readonly executors: readonly MissionExecutorOption[];
+  readonly value: string;
+  readonly onChange: (value: string) => void;
+}) {
+  const { t } = useTranslation("missions");
+  const executorLabel = (executor: Pick<MissionExecutorOption, "kind">): string =>
+    executor.kind === "expert"
+      ? t("expert")
+      : executor.kind === "team"
+        ? t("expertTeam")
+        : t("flow");
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState("");
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const selected = props.executors.find((executor) => executor.ref === props.value);
+  const visibleExecutors = useMemo(() => {
+    const query = search.trim().toLocaleLowerCase();
+    if (query === "") return props.executors;
+    return props.executors.filter((executor) =>
+      [executor.name, executor.description, executor.ref, executor.kind].some((value) =>
+        value.toLocaleLowerCase().includes(query),
+      ),
+    );
+  }, [props.executors, search]);
+  const SelectedIcon = selected === undefined ? UsersThree : executorIcon(selected);
+
+  useEffect(() => {
+    if (!open) return;
+    const close = (event: MouseEvent) => {
+      if (event.target instanceof Node && !rootRef.current?.contains(event.target)) {
+        setOpen(false);
+        setSearch("");
+      }
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setOpen(false);
+        setSearch("");
+      }
+    };
+    document.addEventListener("mousedown", close);
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("mousedown", close);
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [open]);
+
+  return (
+    <div
+      className={
+        open
+          ? "mission-selector mission-executor-picker is-open"
+          : "mission-selector mission-executor-picker"
+      }
+      ref={rootRef}
+    >
+      <span className="mission-selector-icon">
+        <SelectedIcon size={23} aria-hidden="true" />
+      </span>
+      <div className="mission-selector-copy">
+        <small>{t("executor")}</small>
+        <button
+          className="mission-executor-trigger"
+          type="button"
+          aria-expanded={open}
+          aria-haspopup="dialog"
+          onClick={() => {
+            setOpen((current) => !current);
+            setSearch("");
+          }}
+        >
+          <strong>{selected?.name ?? t("chooseResource")}</strong>
+          <CaretDown size={16} aria-hidden="true" />
+        </button>
+        <em>
+          {selected === undefined
+            ? t("executableOnly")
+            : `${executorLabel(selected)} · ${selected.version}`}
+        </em>
+        {open ? (
+          <div
+            className="mission-executor-menu"
+            role="dialog"
+            aria-modal="false"
+            aria-label={t("chooseMissionExecutor")}
+          >
+            <header>
+              <div>
+                <strong>{t("chooseExecutor")}</strong>
+                <small>{t("executorDescription")}</small>
+              </div>
+              <span>{t("availableCount", { count: props.executors.length })}</span>
+            </header>
+            {props.executors.length > 5 ? (
+              <label className="mission-executor-search">
+                <MagnifyingGlass size={17} aria-hidden="true" />
+                <span className="sr-only">{t("searchExecutors")}</span>
+                <input
+                  autoFocus
+                  value={search}
+                  onChange={(event) => setSearch(event.target.value)}
+                  placeholder={t("searchExecutors")}
+                />
+              </label>
+            ) : null}
+            <div
+              className="mission-executor-options"
+              role="list"
+              aria-label={t("missionExecutors")}
+            >
+              {visibleExecutors.map((executor, index) => {
+                const Icon = executorIcon(executor);
+                const isSelected = executor.ref === props.value;
+                return (
+                  <button
+                    type="button"
+                    aria-pressed={isSelected}
+                    autoFocus={props.executors.length <= 5 && index === 0}
+                    className={
+                      isSelected ? "mission-executor-option is-selected" : "mission-executor-option"
+                    }
+                    key={executor.ref}
+                    onClick={() => {
+                      props.onChange(executor.ref);
+                      setOpen(false);
+                      setSearch("");
+                    }}
+                  >
+                    <span className="mission-executor-option-icon">
+                      <Icon size={18} aria-hidden="true" />
+                    </span>
+                    <span>
+                      <strong>{executor.name}</strong>
+                      <small>{executor.description}</small>
+                    </span>
+                    <span className="mission-executor-option-kind">{executorLabel(executor)}</span>
+                    {isSelected ? <Check size={17} aria-hidden="true" /> : null}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function executorIcon(executor: Pick<MissionExecutorOption, "kind">) {
+  return executor.kind === "expert" ? User : executor.kind === "team" ? UsersThree : GitBranch;
 }

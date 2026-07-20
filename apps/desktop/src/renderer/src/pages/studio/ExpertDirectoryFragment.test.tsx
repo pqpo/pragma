@@ -13,6 +13,8 @@ const expert: ExpertRecord = {
   version: "0.1.0",
   scope: "Handles focused test work.",
   instructions: "i".repeat(500),
+  origin: "project",
+  readOnly: false,
   model: { runtimeId: "test", providerId: "test", modelId: "test" },
   capabilities: [],
   skills: 0,
@@ -53,7 +55,7 @@ describe("ExpertDetailFragment", () => {
   it("does not offer deletion for a built-in expert", () => {
     const html = renderToStaticMarkup(
       <ExpertDetailFragment
-        expert={{ ...expert, tags: ["builtin"] }}
+        expert={{ ...expert, origin: "built-in", readOnly: true, model: null }}
         contextStores={[]}
         onBack={() => undefined}
         onEdit={() => undefined}
@@ -64,5 +66,8 @@ describe("ExpertDetailFragment", () => {
     );
 
     expect(html).not.toContain("Delete expert");
+    expect(html).not.toContain("Edit expert");
+    expect(html).not.toContain("Configure context");
+    expect(html).toContain("Try in session");
   });
 });

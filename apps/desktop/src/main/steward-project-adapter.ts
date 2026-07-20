@@ -147,8 +147,7 @@ export function createDesktopStewardProjectPort(options: {
           candidate.resources,
           catalog,
         );
-        const published = await options.project.service.apply({
-          projectId: options.project.projectId,
+        const published = await options.project.apply({
           expectedRevision: candidate.changeSet.projectRevision,
           upserts: candidate.resources,
         });

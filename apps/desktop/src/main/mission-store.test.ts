@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { PragmaExpertResource } from "@pragma/interpreter/ast";
+import { missionExecutorSnapshot } from "../shared/desktop-api.ts";
 import { createMissionStore } from "./mission-store.ts";
 
 const temporaryPaths: string[] = [];
@@ -26,7 +27,14 @@ describe("mission store", () => {
       workspace: { path: join(root, "workspace"), basename: "workspace" },
       goal: "Design the Missions experience\nwith a second line.",
       project: { id: "studio", revision: 3 },
-      executor: expert,
+      executor: missionExecutorSnapshot(expert),
+      toolPermissionMode: "full-access",
+      modelOverride: {
+        runtimeId: "pi",
+        providerId: "provider",
+        modelId: "configured-model",
+        thinkingLevel: "high",
+      },
     });
 
     expect(created.title).toBe("Design the Missions experience");
@@ -35,6 +43,13 @@ describe("mission store", () => {
       ref: "expert:product_designer@0.1.0",
     });
     expect(created.project).toEqual({ id: "studio", revision: 3 });
+    expect(created.toolPermissionMode).toBe("full-access");
+    expect(created.modelOverride).toEqual({
+      runtimeId: "pi",
+      providerId: "provider",
+      modelId: "configured-model",
+      thinkingLevel: "high",
+    });
     await expect(store.get(created.id)).resolves.toEqual(created);
     await expect(store.list()).resolves.toEqual([
       expect.objectContaining({ id: created.id, title: created.title }),
@@ -42,6 +57,8 @@ describe("mission store", () => {
     const manifest = await readFile(join(root, "missions", created.id, "mission.yaml"), "utf8");
     expect(manifest).toContain("schemaVersion: pragma.mission/v3");
     expect(manifest).toContain("revision: 3");
+    expect(manifest).toContain("toolPermissionMode: full-access");
+    expect(manifest).toContain("modelOverride:");
     expect(manifest).not.toContain("messages:");
     expect(await readFile(join(root, "missions", created.id, "messages.jsonl"), "utf8")).toContain(
       '"kind":"user"',
@@ -55,7 +72,7 @@ describe("mission store", () => {
       workspace: { path: join(root, "workspace"), basename: "workspace" },
       goal: "Review the desktop shell",
       project: { id: "studio", revision: 1 },
-      executor: expertFixture(),
+      executor: missionExecutorSnapshot(expertFixture()),
     });
 
     const completed = await store.markComplete(created.id);
@@ -74,7 +91,7 @@ describe("mission store", () => {
       workspace: { path: join(root, "workspace"), basename: "workspace" },
       goal: "Run once",
       project: { id: "studio", revision: 1 },
-      executor: expertFixture(),
+      executor: missionExecutorSnapshot(expertFixture()),
     });
     const executionId = "00000000-0000-4000-8000-000000000001";
     const startedAt = "2026-07-15T00:00:00.000Z";
@@ -129,7 +146,7 @@ describe("mission store", () => {
       workspace: { path: join(root, "workspace"), basename: "workspace" },
       goal: "Remove this conversation",
       project: { id: "studio", revision: 1 },
-      executor: expertFixture(),
+      executor: missionExecutorSnapshot(expertFixture()),
     });
     await store.remove(idle.id);
     await expect(store.get(idle.id)).rejects.toMatchObject({ code: "mission_not_found" });
@@ -138,7 +155,7 @@ describe("mission store", () => {
       workspace: { path: join(root, "workspace"), basename: "workspace" },
       goal: "Keep this execution",
       project: { id: "studio", revision: 1 },
-      executor: expertFixture(),
+      executor: missionExecutorSnapshot(expertFixture()),
     });
     await store.updateExecution(active.id, {
       id: "00000000-0000-4000-8000-000000000002",
@@ -157,7 +174,7 @@ describe("mission store", () => {
       workspace: { path: join(root, "workspace"), basename: "workspace" },
       goal: "Initial request",
       project: { id: "studio", revision: 1 },
-      executor: expertFixture(),
+      executor: missionExecutorSnapshot(expertFixture()),
     });
     const message = {
       id: "00000000-0000-4000-8000-000000000010",
@@ -204,7 +221,7 @@ describe("mission store", () => {
       workspace: { path: join(root, "workspace"), basename: "workspace" },
       goal: "Recover timeline",
       project: { id: "studio", revision: 1 },
-      executor: expertFixture(),
+      executor: missionExecutorSnapshot(expertFixture()),
     });
     const directory = join(root, "missions", created.id);
     await appendFile(join(directory, "messages.jsonl"), '{"torn"', "utf8");
@@ -238,7 +255,7 @@ describe("mission store", () => {
       workspace: { path: join(root, "workspace"), basename: "workspace" },
       goal: "Versioned storage",
       project: { id: "studio", revision: 1 },
-      executor: expertFixture(),
+      executor: missionExecutorSnapshot(expertFixture()),
     });
     const directory = join(root, "missions", created.id);
     await appendFile(join(directory, "messages.jsonl"), "invalid-json\n", "utf8");

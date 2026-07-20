@@ -4,10 +4,6 @@ import {
   type PragmaResource,
 } from "@pragma/interpreter/ast";
 
-export function isBuiltInPragmaResource(resource: PragmaResource): boolean {
-  return resource.metadata.tags.some((tag) => tag === "builtin" || tag === "built-in");
-}
-
 export function referencingPragmaResources(
   resources: readonly PragmaResource[],
   targetRef: string,

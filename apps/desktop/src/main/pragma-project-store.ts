@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 import {
   PragmaProjectRevisionConflictError,
@@ -29,10 +29,7 @@ import {
   type PragmaProjectSnapshot,
   type PragmaYamlValidationResult,
 } from "../shared/desktop-api.ts";
-import {
-  isBuiltInPragmaResource,
-  referencingPragmaResources,
-} from "./pragma-resource-references.ts";
+import { referencingPragmaResources } from "./pragma-resource-references.ts";
 
 const ProjectManifestSchema = z
   .object({
@@ -55,6 +52,11 @@ export interface PragmaProjectStore {
   upsert(input: {
     readonly expectedRevision: number;
     readonly resource: PragmaResource;
+  }): Promise<PragmaProjectSnapshot>;
+  apply(input: {
+    readonly expectedRevision: number;
+    readonly upserts: readonly PragmaResource[];
+    readonly removals?: readonly string[] | undefined;
   }): Promise<PragmaProjectSnapshot>;
   remove(input: {
     readonly expectedRevision: number;
@@ -90,6 +92,7 @@ export class PragmaProjectStoreError extends Error {
 export function createPragmaProjectStore(options: {
   readonly projectsPath: string;
   readonly projectId?: string;
+  readonly reservedResourceRefs?: ReadonlySet<string> | undefined;
 }): PragmaProjectStore {
   const projectId = options.projectId ?? "studio";
   const repository = createDesktopProjectSourceRepository({
@@ -109,6 +112,17 @@ export function createPragmaProjectStore(options: {
     }
     throw error;
   };
+  const assertNotReserved = (resources: readonly PragmaResource[]): void => {
+    const reserved = resources.find((resource) =>
+      options.reservedResourceRefs?.has(canonicalPragmaResourceRef(resource)),
+    );
+    if (reserved !== undefined) {
+      throw new PragmaProjectStoreError(
+        "built_in_readonly",
+        `Built-in resource refs are reserved: ${canonicalPragmaResourceRef(reserved)}.`,
+      );
+    }
+  };
 
   return {
     projectId,
@@ -116,6 +130,7 @@ export function createPragmaProjectStore(options: {
     get,
     async publish(input) {
       try {
+        assertNotReserved(input.resources);
         assertDesktopExpertAuthoring(input.resources);
         const artifacts =
           input.artifacts ??
@@ -136,6 +151,7 @@ export function createPragmaProjectStore(options: {
     },
     async upsert(input) {
       try {
+        assertNotReserved([input.resource]);
         const current = await get();
         assertDesktopExpertAuthoring([
           ...current.resources.filter(
@@ -155,6 +171,27 @@ export function createPragmaProjectStore(options: {
         return normalizeError(error);
       }
     },
+    async apply(input) {
+      try {
+        assertNotReserved(input.upserts);
+        if (input.removals?.some((ref) => options.reservedResourceRefs?.has(ref)) === true) {
+          throw new PragmaProjectStoreError(
+            "built_in_readonly",
+            "Built-in resource refs cannot be removed.",
+          );
+        }
+        return PragmaProjectSnapshotSchema.parse(
+          await service.apply({
+            projectId,
+            expectedRevision: input.expectedRevision,
+            upserts: input.upserts,
+            removals: input.removals ?? [],
+          }),
+        );
+      } catch (error) {
+        return normalizeError(error);
+      }
+    },
     async remove(input) {
       const snapshot = await get();
       const resource = snapshot.resources.find(
@@ -162,12 +199,6 @@ export function createPragmaProjectStore(options: {
       );
       if (resource === undefined) {
         throw new PragmaProjectStoreError("resource_not_found", `Resource not found: ${input.ref}`);
-      }
-      if (isBuiltInPragmaResource(resource)) {
-        throw new PragmaProjectStoreError(
-          "built_in_readonly",
-          "Built-in Studio resources cannot be deleted.",
-        );
       }
       if (referencingPragmaResources(snapshot.resources, input.ref).length > 0) {
         throw new PragmaProjectStoreError(
@@ -459,7 +490,7 @@ async function readTextFiles(root: string, base = root): Promise<ReadonlyMap<str
     if (entry.isDirectory()) {
       for (const [child, contents] of await readTextFiles(path, base)) files.set(child, contents);
     } else if (entry.isFile()) {
-      files.set(path.slice(base.length + 1), await readFile(path, "utf8"));
+      files.set(relative(base, path).split(sep).join("/"), await readFile(path, "utf8"));
     }
   }
   return files;

@@ -73,7 +73,7 @@ describe("built-in Steward DSL", () => {
     });
     expect(compiled.value.tools?.map((tool) => tool.name)).toHaveLength(11);
     expect(compiled.value.tools?.map((tool) => tool.name)).toContain("list_expert_options");
-    expect(compiled.value.skills?.skills[0]?.path).toMatch(/author-pragma-dsl\/SKILL\.md$/);
+    expect(compiled.value.skills?.skills[0]?.path).toMatch(/author-pragma-dsl[\\/]SKILL\.md$/);
   });
 
   it("keeps generated assets byte-identical to the DSL source tree", async () => {
@@ -83,7 +83,7 @@ describe("built-in Steward DSL", () => {
       await Promise.all(
         files.map(async (path) => [
           relative(dslRoot, path).replaceAll("\\", "/"),
-          await readFile(path, "utf8"),
+          normalizeLineEndings(await readFile(path, "utf8")),
         ]),
       ),
     );
@@ -113,4 +113,8 @@ async function filesAt(path: string): Promise<string[]> {
     else files.push(target);
   }
   return files.toSorted();
+}
+
+function normalizeLineEndings(source: string): string {
+  return source.replaceAll("\r\n", "\n");
 }

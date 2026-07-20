@@ -219,4 +219,6 @@ revision. A Mission v3 directory keeps bounded identity and lifecycle metadata i
 and appends user turns plus Execution references to `messages.jsonl`; assistant, thinking, and tool
 history is projected from the canonical Execution event log. The built-in Steward bundle and its
 DSL-authoring Skill live in `packages/steward/dsl`; applications install the package with explicit
-project and task ports rather than maintaining a second hard-coded runtime implementation.
+project and task ports rather than maintaining a second hard-coded runtime implementation. Desktop
+registers that bundle as a read-only System Expert; Home creates a fresh Mission using it by default,
+and all streaming output uses the normal Mission chat projection.

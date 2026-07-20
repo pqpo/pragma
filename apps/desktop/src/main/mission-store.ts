@@ -14,7 +14,6 @@ import { dirname, join } from "node:path";
 
 import { withFileLock } from "@pragma/core";
 import { formatPragmaYaml, parsePragmaYaml } from "@pragma/interpreter";
-import type { PragmaInvocableResource } from "@pragma/interpreter/ast";
 import { z } from "zod";
 
 import {
@@ -22,12 +21,13 @@ import {
   MissionSchema,
   MissionTimelineRecordSchema,
   MissionUserMessageSchema,
-  missionExecutorKind,
-  missionExecutorRef,
   type Mission,
+  type MissionExecutor,
+  type MissionModelOverride,
   type MissionSummary,
   type MissionTimelineRecord,
   type MissionUserMessage,
+  type DesktopToolPermissionMode,
 } from "../shared/desktop-api.ts";
 
 export interface MissionTimelineTurn {
@@ -50,7 +50,9 @@ export interface MissionStore {
     readonly workspace: { readonly path: string; readonly basename: string };
     readonly goal: string;
     readonly project: { readonly id: string; readonly revision: number };
-    readonly executor: PragmaInvocableResource;
+    readonly executor: MissionExecutor;
+    readonly toolPermissionMode?: DesktopToolPermissionMode | undefined;
+    readonly modelOverride?: MissionModelOverride | undefined;
   }): Promise<Mission>;
   updateExecution(
     id: string,
@@ -262,21 +264,17 @@ export function createMissionStore(options: { readonly missionsPath: string }): 
       const initialMessageId = randomUUID();
       const timestamp = new Date().toISOString();
       const goal = input.goal.trim();
-      const kind = missionExecutorKind(input.executor);
       const mission = MissionSchema.parse({
         schemaVersion: "pragma.mission/v3",
         id,
         title: titleFromGoal(goal),
         goal,
         initialMessageId,
+        toolPermissionMode: input.toolPermissionMode ?? "request-approval",
         workspace: input.workspace,
         project: input.project,
-        executor: {
-          kind,
-          ref: missionExecutorRef(input.executor),
-          name: input.executor.metadata.name,
-          version: input.executor.metadata.version,
-        },
+        executor: input.executor,
+        ...(input.modelOverride === undefined ? {} : { modelOverride: input.modelOverride }),
         lifecycleStatus: "active",
         createdAt: timestamp,
         updatedAt: timestamp,

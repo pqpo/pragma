@@ -148,6 +148,15 @@ export type ExpertAgentHumanInteractionHandler = (
   request: ExpertAgentHumanRequest,
 ) => Promise<ExpertAgentHumanResponse>;
 
+/**
+ * Resolves host-approved interactions without putting an execution into a
+ * durable waiting state. Returning `undefined` delegates the request to the
+ * normal human interaction flow.
+ */
+export type ExpertAgentAutomaticHumanInteractionHandler = (
+  request: ExpertAgentHumanRequest,
+) => ExpertAgentHumanResponse | undefined | Promise<ExpertAgentHumanResponse | undefined>;
+
 export type ExpertAgentToolApprovalCondition = (
   request: ExpertAgentToolApprovalRequest,
 ) => boolean | Promise<boolean>;

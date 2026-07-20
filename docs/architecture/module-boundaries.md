@@ -24,7 +24,7 @@ examples    -> runtime-* / plugin-* / core -> shared
 | `server`      | Node-only control plane and infrastructure boundaries                            |
 | `core`        | Expert Agent execution abstractions and Runtime Adapter contracts                |
 | `interpreter` | Pragma DSL AST, parser, validator, compiler, registries, and semantic dump       |
-| `steward`     | Reusable built-in Steward DSL, Skill, host ports, session service, and contracts |
+| `steward`     | Reusable built-in Steward DSL, Skill, descriptor/compiler, host ports, and tools |
 | `runtime-*`   | Concrete Runtime Adapter implementations                                         |
 | `plugins/*`   | Expert extensions built on the core plugin API                                   |
 | `apps`        | Composition and process entry points, including future Desktop App local bridge  |
@@ -92,7 +92,13 @@ PI and Codex runtimes and uses PI by default.
 `@pragma/steward` owns the portable built-in Steward definition and application-neutral host ports.
 It does not depend on Desktop, Electron, Web, Server, database code, or a concrete Runtime Adapter.
 Applications compose the package with their own DSL project persistence and task implementations;
-the package exposes browser-safe IPC/API schemas through `@pragma/steward/contracts`.
+the package exposes runtime-neutral project/task schemas through `@pragma/steward/contracts`.
+
+Desktop Home is a Mission creation entry, not a separate chat runtime. Desktop's System Expert
+Registry projects the versioned Steward DSL as a read-only built-in Expert and resolves it for both
+Studio and Mission execution. Mission storage, Execution events, chat projection, approvals, and
+recovery are shared by every executor. System refs are reserved by the application; resource tags
+never grant immutability.
 
 Future local bridge directories:
 

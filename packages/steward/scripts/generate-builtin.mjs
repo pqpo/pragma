@@ -6,6 +6,10 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const dslRoot = join(root, "dsl");
 const output = join(root, "src", "builtin.generated.ts");
 
+function normalizeLineEndings(source) {
+  return source.replaceAll("\r\n", "\n");
+}
+
 async function filesAt(path) {
   const entries = await readdir(path, { withFileTypes: true });
   const files = [];
@@ -21,7 +25,7 @@ const files = await filesAt(dslRoot);
 const records = await Promise.all(
   files.map(async (path) => [
     relative(dslRoot, path).replaceAll("\\", "/"),
-    await readFile(path, "utf8"),
+    normalizeLineEndings(await readFile(path, "utf8")),
   ]),
 );
 const source = [

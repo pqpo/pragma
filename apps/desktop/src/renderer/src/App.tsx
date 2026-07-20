@@ -6,6 +6,7 @@ import { SettingsPage, type SettingsView } from "./pages/settings/SettingsPage.t
 import { MissionsPage } from "./pages/missions/MissionsPage.tsx";
 import { StudioPage } from "./pages/studio/StudioPage.tsx";
 import { HomePage } from "./pages/home/HomePage.tsx";
+import type { Mission } from "../../shared/desktop-api.ts";
 
 export function App() {
   const [activeView, setActiveView] = useState<AppView>("home");
@@ -13,17 +14,14 @@ export function App() {
     readSidebarCollapsed(typeof window === "undefined" ? undefined : window.localStorage),
   );
   const [missionExecutorRef, setMissionExecutorRef] = useState<string>();
+  const [missionToOpen, setMissionToOpen] = useState<Mission>();
   const [settingsView, setSettingsView] = useState<SettingsView>("general");
 
   const navigate = (view: AppView) => {
-    if (view !== "missions") setMissionExecutorRef(undefined);
+    setMissionExecutorRef(undefined);
+    if (view === "missions") setMissionToOpen(undefined);
     if (view === "settings") setSettingsView("general");
     setActiveView(view);
-  };
-
-  const openSettings = (view: SettingsView) => {
-    setSettingsView(view);
-    setActiveView("settings");
   };
 
   const toggleSidebar = () => {
@@ -47,17 +45,29 @@ export function App() {
 
       {activeView === "home" ? (
         <HomePage
-          onOpenStudio={() => navigate("studio")}
-          onOpenMissions={() => navigate("missions")}
-          onOpenModelSettings={() => openSettings("models")}
+          initialExecutorRef={missionExecutorRef}
+          onCreated={(mission) => {
+            setMissionToOpen(mission);
+            setMissionExecutorRef(undefined);
+            setActiveView("missions");
+          }}
         />
       ) : activeView === "missions" ? (
-        <MissionsPage initialExecutorRef={missionExecutorRef} />
+        <MissionsPage
+          initialMission={missionToOpen}
+          autoRunInitialMission={missionToOpen !== undefined}
+          onCreate={() => {
+            setMissionToOpen(undefined);
+            setMissionExecutorRef(undefined);
+            setActiveView("home");
+          }}
+        />
       ) : activeView === "studio" ? (
         <StudioPage
           onTryExpert={(expert) => {
             setMissionExecutorRef(`expert:${expert.id}@${expert.version}`);
-            setActiveView("missions");
+            setMissionToOpen(undefined);
+            setActiveView("home");
           }}
         />
       ) : (

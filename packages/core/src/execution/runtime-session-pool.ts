@@ -70,6 +70,25 @@ export class RuntimeSessionPool {
     await entry.session.close();
   }
 
+  async clear(): Promise<void> {
+    if (this.sealed) throw new Error("Runtime Session pool is closed.");
+    if (this.pending.size > 0) {
+      throw new Error("Runtime Session pool cannot be cleared while a Session is opening.");
+    }
+    const sessions = [...this.sessions.values()].map((entry) => entry.session);
+    this.sessions.clear();
+    const results = await Promise.allSettled(
+      sessions.map(async (session) => await session.close()),
+    );
+    const errors = results.flatMap((result) =>
+      result.status === "rejected" ? [result.reason as unknown] : [],
+    );
+    if (errors.length === 1) throw errors[0];
+    if (errors.length > 1) {
+      throw new AggregateError(errors, "Runtime Session pool refresh failed.");
+    }
+  }
+
   close(): Promise<void> {
     this.seal();
     this.closePromise ??= this.closeAll();

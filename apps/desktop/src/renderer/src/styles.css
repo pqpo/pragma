@@ -520,6 +520,19 @@ p {
   gap: 4px;
 }
 
+.steward-interaction > header.is-approval > strong {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: baseline;
+  font-size: 14px;
+}
+
+.steward-interaction > header.is-approval > strong > span {
+  font-family: ui-monospace, "SFMono-Regular", monospace;
+  font-weight: 750;
+}
+
 .steward-interaction > header > small,
 .steward-question > small {
   color: var(--green-dark);
@@ -546,6 +559,7 @@ p {
 }
 
 .steward-interaction > textarea,
+.steward-interaction > .steward-approval-note,
 .steward-question > textarea {
   min-height: 64px;
   resize: vertical;
@@ -558,7 +572,13 @@ p {
   font-size: 12px;
 }
 
+.steward-interaction > .steward-approval-note {
+  min-height: 36px;
+  resize: none;
+}
+
 .steward-interaction > textarea:focus,
+.steward-interaction > .steward-approval-note:focus,
 .steward-question > textarea:focus {
   border-color: var(--green);
   box-shadow: 0 0 0 2px var(--focus-ring);
@@ -719,6 +739,52 @@ p {
 
 .steward-thinking-select select {
   padding-left: 3px;
+}
+
+.tool-permission-select {
+  display: inline-flex;
+  min-width: 0;
+  min-height: 32px;
+  align-items: center;
+  gap: 3px;
+  padding-left: 7px;
+  border-radius: 8px;
+  background: var(--surface-soft);
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.tool-permission-select:focus-within {
+  background: var(--green-soft);
+  color: var(--green-dark);
+}
+
+.tool-permission-select select {
+  min-width: 0;
+  max-width: 120px;
+  padding: 6px 7px 6px 2px;
+  overflow: hidden;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.tool-permission-select select:focus-visible {
+  outline: 0;
+  box-shadow: none;
+}
+
+.tool-permission-select:has(select:disabled) {
+  opacity: 0.68;
+}
+
+.tool-permission-select select:disabled {
+  cursor: default;
 }
 
 .steward-send {
@@ -900,6 +966,79 @@ p {
 .language-select-shell {
   width: 220px;
   flex: 0 0 220px;
+}
+
+.tool-permission-setting {
+  min-height: 126px;
+}
+
+.tool-permission-setting > .setting-copy {
+  max-width: 280px;
+}
+
+.tool-permission-options {
+  display: grid;
+  width: 450px;
+  flex: 0 0 450px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.tool-permission-options > label {
+  display: grid;
+  min-width: 0;
+  cursor: pointer;
+}
+
+.tool-permission-options input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.tool-permission-options label > span {
+  display: grid;
+  min-height: 76px;
+  align-content: start;
+  gap: 4px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.tool-permission-options label:hover > span {
+  border-color: var(--border-strong);
+}
+
+.tool-permission-options input:checked + span {
+  border-color: var(--green);
+  background: var(--green-soft);
+  box-shadow: 0 0 0 1px var(--green);
+}
+
+.tool-permission-options input:focus-visible + span {
+  outline: 2px solid var(--green);
+  outline-offset: 2px;
+}
+
+.tool-permission-options strong {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.tool-permission-options small {
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.35;
+}
+
+.tool-permission-options input:disabled + span {
+  cursor: not-allowed;
+  opacity: 0.55;
 }
 
 .general-workspace-controls {
@@ -9432,7 +9571,7 @@ textarea:focus-visible,
 
 .mission-chat-composer {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
   flex: 0 0 auto;
   min-height: 58px;
   align-items: center;
@@ -10107,6 +10246,69 @@ textarea:focus-visible,
 
 .mission-create-selectors {
   margin-top: var(--screen-title-content-gap);
+}
+
+.home-mission-create {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
+  place-items: center;
+  padding: 48px;
+}
+
+.home-mission-create > .mission-create {
+  width: min(900px, 100%);
+  height: auto;
+  max-height: 100%;
+  padding: 0;
+}
+
+.mission-model-overrides {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(180px, 1fr);
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.mission-model-overrides label {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  padding: 10px 14px;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  background: rgb(255 255 255 / 64%);
+}
+
+.mission-model-overrides label:focus-within {
+  border-color: rgb(88 121 104 / 28%);
+  background: #fff;
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+.mission-model-overrides span {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.mission-model-overrides select {
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.mission-model-overrides select:focus-visible {
+  outline: 0;
+  box-shadow: none;
 }
 
 .panel-heading-with-action,

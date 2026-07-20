@@ -12,11 +12,6 @@ import {
   type UpdateDesktopSettings,
 } from "../shared/desktop-api.ts";
 
-const DEFAULT_SETTINGS: DesktopSettings = {
-  schemaVersion: 1,
-  localePreference: "system",
-};
-
 const TRADITIONAL_CHINESE_REGIONS = new Set(["HK", "MO", "TW"]);
 
 export interface DesktopSettingsStore {
@@ -45,17 +40,23 @@ export function resolveDesktopLocale(
 
 export function createDesktopSettingsStore(options: {
   readonly settingsPath: string;
+  readonly defaultStewardWorkspace: string;
   readonly warn?: ((message: string, error: unknown) => void) | undefined;
 }): DesktopSettingsStore {
   const lockPath = `${options.settingsPath}.lock`;
+  const defaultSettings: DesktopSettings = {
+    schemaVersion: 1,
+    localePreference: "system",
+    toolPermissionMode: "request-approval",
+  };
 
   const readSettings = async (): Promise<DesktopSettings> => {
     try {
       return DesktopSettingsSchema.parse(JSON.parse(await readFile(options.settingsPath, "utf8")));
     } catch (error) {
-      if (isNodeError(error, "ENOENT")) return DEFAULT_SETTINGS;
-      options.warn?.("Desktop settings could not be read; following the system language.", error);
-      return DEFAULT_SETTINGS;
+      if (isNodeError(error, "ENOENT")) return defaultSettings;
+      options.warn?.("Desktop settings could not be read; using defaults.", error);
+      return defaultSettings;
     }
   };
 
@@ -63,7 +64,11 @@ export function createDesktopSettingsStore(options: {
     settings: DesktopSettings,
     preferredSystemLanguages: readonly string[],
   ): DesktopSettingsSnapshot => ({
-    ...settings,
+    schemaVersion: settings.schemaVersion,
+    localePreference: settings.localePreference,
+    toolPermissionMode: settings.toolPermissionMode,
+    stewardWorkspace: settings.stewardWorkspace ?? options.defaultStewardWorkspace,
+    usesDefaultStewardWorkspace: settings.stewardWorkspace === undefined,
     resolvedLocale:
       settings.localePreference === "system"
         ? resolveDesktopLocale(preferredSystemLanguages)
@@ -75,11 +80,19 @@ export function createDesktopSettingsStore(options: {
       return toSnapshot(await readSettings(), preferredSystemLanguages);
     },
     async update(input, preferredSystemLanguages) {
-      const settings = DesktopSettingsSchema.parse({
-        schemaVersion: 1,
-        localePreference: input.localePreference,
-      });
+      let settings: DesktopSettings | undefined;
       await withFileLock(lockPath, async () => {
+        const current = await readSettings();
+        const stewardWorkspace =
+          input.stewardWorkspace === null
+            ? undefined
+            : (input.stewardWorkspace ?? current.stewardWorkspace);
+        settings = DesktopSettingsSchema.parse({
+          schemaVersion: 1,
+          localePreference: input.localePreference ?? current.localePreference,
+          toolPermissionMode: input.toolPermissionMode ?? current.toolPermissionMode,
+          ...(stewardWorkspace === undefined ? {} : { stewardWorkspace }),
+        });
         await mkdir(dirname(options.settingsPath), { recursive: true, mode: 0o700 });
         await chmod(dirname(options.settingsPath), 0o700).catch(() => undefined);
         const temporaryPath = `${options.settingsPath}.${randomUUID()}.tmp`;
@@ -87,6 +100,7 @@ export function createDesktopSettingsStore(options: {
         await rename(temporaryPath, options.settingsPath);
         await chmod(options.settingsPath, 0o600).catch(() => undefined);
       });
+      if (settings === undefined) throw new Error("Desktop settings update did not complete.");
       return toSnapshot(settings, preferredSystemLanguages);
     },
   };

@@ -593,6 +593,42 @@ describe("Pragma YAML DSL", () => {
     );
   });
 
+  it("lets a root execution override replace an unavailable Expert RuntimeProfile", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-runtime-override-"));
+    const entry = join(root, "pragma.yaml");
+    await writeFile(
+      entry,
+      formatPragmaYaml({
+        apiVersion: "pragma/v2",
+        kind: "Bundle",
+        imports: [],
+        resources: [runtimeProfile(), expertResource("writer", "Writes")],
+      }),
+    );
+    const project = await loadPragmaProject(entry);
+    const modelSelection = {
+      model: { providerId: "deepseek", modelId: "deepseek-chat" },
+      thinkingLevel: "high",
+    };
+    const compiled = await project.compile<Expert>("expert:writer@1.0.0", {
+      workspace: root,
+      runtimes: createStaticRuntimeResolver({
+        defaultRuntimeId: "pi",
+        runtimes: [
+          {
+            descriptor: { id: "pi", kind: "test", displayName: "Pi" },
+            canUse: () => ({ usable: true }),
+          },
+        ],
+      }),
+      rootExecutionOverride: { runtimeId: "pi", modelSelection },
+    });
+
+    expect(compiled.rootRuntimeId).toBe("pi");
+    expect(compiled.value.defaultRuntimeId).toBe("pi");
+    expect(compiled.value.models?.default).toEqual(modelSelection);
+  });
+
   it("fingerprints the verified Runtime installation identity", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-runtime-fingerprint-"));
     const entry = join(root, "pragma.yaml");

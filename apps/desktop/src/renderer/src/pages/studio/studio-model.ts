@@ -7,7 +7,10 @@ import type {
   UpdateExpertDefinition,
 } from "../../../../shared/desktop-api.ts";
 
-export type ExpertModel = ExpertDefinition["model"];
+export type ExpertModel = Extract<
+  ExpertDefinition["executionProfile"],
+  { readonly mode: "pinned" }
+>["model"];
 export type StudioView =
   | "experts"
   | "teams"
@@ -25,7 +28,9 @@ export type ExpertRecord = {
   readonly version: string;
   readonly scope: string;
   readonly instructions: string;
-  readonly model: ExpertModel;
+  readonly origin: ExpertDefinition["origin"];
+  readonly readOnly: boolean;
+  readonly model: ExpertModel | null;
   readonly capabilities: ExpertDefinition["capabilities"];
   readonly skills: number;
   readonly tools: number;
@@ -52,6 +57,8 @@ export const emptyDraft = (): ExpertDraft => ({
   version: "0.1.0",
   scope: "",
   instructions: "",
+  origin: "project",
+  readOnly: false,
   model: null,
   capabilities: [],
   skills: 0,
@@ -75,13 +82,25 @@ export function toExpertRecord(definition: ExpertDefinition): ExpertRecord {
     version: definition.version,
     scope: definition.scope,
     instructions: definition.instructions ?? "",
-    model: definition.model,
+    origin: definition.origin,
+    readOnly: definition.readOnly,
+    model: definition.executionProfile.mode === "pinned" ? definition.executionProfile.model : null,
     capabilities: definition.capabilities,
-    skills: definition.capabilities.filter((reference) => reference.kind === "skill").length,
-    tools: definition.capabilities
-      .filter((reference) => reference.kind === "tools")
-      .reduce((total, reference) => total + reference.toolNames.length, 0),
-    mcpServers: definition.capabilities.filter((reference) => reference.kind === "tools").length,
+    skills:
+      definition.capabilities.filter((reference) => reference.kind === "skill").length +
+      (definition.opaqueCapabilities ?? []).filter((reference) => reference.kind === "skill")
+        .length,
+    tools:
+      definition.capabilities
+        .filter((reference) => reference.kind === "tools")
+        .reduce((total, reference) => total + reference.toolNames.length, 0) +
+      (definition.opaqueCapabilities ?? [])
+        .filter((reference) => reference.kind === "tools")
+        .reduce((total, reference) => total + (reference.tools?.length ?? 0), 0),
+    mcpServers:
+      definition.capabilities.filter((reference) => reference.kind === "tools").length +
+      (definition.opaqueCapabilities ?? []).filter((reference) => reference.kind === "tools")
+        .length,
     contextStoreMounts: definition.contextStoreMounts,
     resourceTools: definition.resourceTools,
     plugins: definition.plugins,
@@ -91,17 +110,16 @@ export function toExpertRecord(definition: ExpertDefinition): ExpertRecord {
   };
 }
 
-export function isBuiltInExpert(expert: Pick<ExpertRecord, "tags">): boolean {
-  return isBuiltInTags(expert.tags);
-}
-
-export function isBuiltInTags(tags: readonly string[]): boolean {
-  return tags.some((tag) => tag === "builtin" || tag === "built-in");
+export function isBuiltInExpert(expert: Pick<ExpertRecord, "origin" | "readOnly">): boolean {
+  return expert.origin === "built-in" && expert.readOnly;
 }
 
 export function toPersistedInput(
   expert: ExpertRecord,
 ): CreateExpertDefinition | UpdateExpertDefinition {
+  if (expert.readOnly || expert.model === null) {
+    throw new Error("Built-in Experts cannot be persisted by the Desktop editor.");
+  }
   const existing = expert.persisted;
   return {
     ...(existing === undefined ? { id: expert.id } : {}),

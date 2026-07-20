@@ -124,7 +124,7 @@ lib
 - `client` 是浏览器/客户端 SDK，只依赖 `shared`，不直接碰 Server 内部实现或 Agent。
 - `core` 是专家 Agent 的执行抽象和 Runtime Adapter 边界，只依赖 `shared` 和 core 内部模块，不依赖具体 runtime、`client` 或 `server`。
 - `interpreter` 是 Pragma DSL 的语言实现，拥有 AST、解析、链接、校验、编译、扩展 registry 和 dump；可以依赖 `core` 的对象模型与执行抽象，但 `core` 不得反向依赖 `interpreter`。
-- `steward` 是内置管家 Agent 的可复用产品能力包，拥有 DSL、Skill、会话服务、宿主端口和浏览器安全契约；应用只负责提供存储、任务和 Runtime 适配。
+- `steward` 是内置管家 Agent 的可复用产品能力包，拥有 DSL、Skill、descriptor/compiler、宿主端口和 managed tools；应用负责系统专家注册、Mission 存储、任务和 Runtime 适配。
 - `runtime-*` 是具体 Runtime Adapter 实现，依赖 `core`、`shared` 和该 runtime 自己的 SDK；不同 runtime 包相互独立。
 - `server` 是服务端控制面与基础设施层，可以依赖 `shared` 和 `core` 抽象。
 - `apps/server` 和 `apps/worker` 是云端运行入口，未来由它们调度专家 Agent；不是 Agent 反过来依赖 Server。
@@ -533,14 +533,16 @@ Expert API 设计要求：
 
 - 保存内置管家 Agent 的 `pragma/v2` DSL 和 `author-pragma-dsl` Skill。
 - 定义项目 DSL、任务和持久状态的宿主端口，并将其包装成 Core managed tools。
-- 管理管家的长期 ExpertSession、固定 workspace、聊天历史和审批交互。
-- 导出供 Desktop 或未来 Web 适配的运行时中立契约。
+- 导出供 Desktop 或未来 Web 适配的运行时中立项目/任务契约。
+- 不拥有独立 ExpertSession、聊天历史或审批投影；宿主统一复用 Mission/Execution 链路。
 
 边界要求：
 
 - 主入口 `@pragma/steward` 是 Node-only，可以依赖 `@pragma/core` 和 `@pragma/interpreter`。
 - `@pragma/steward/contracts` 必须保持浏览器安全，只依赖运行时中立 schema。
 - 管家只通过 DSL 修改 Expert、ExpertTeam 和 Flow；应用层实现持久化与任务端口。
+- Desktop 将管家注册为只读系统专家；Home 只负责创建全新 Mission，不维护独立 Chat。
+- Home 为 Expert/ExpertTeam Mission 提供可选的模型与思考深度覆盖，并随 Mission 持久化；Flow 不接受该覆盖。
 - 宿主端口使用直接 TypeScript 接口；具体 Runtime 可继续通过现有 Execution MCP Gateway 调用 managed tools。
 
 禁止依赖 Desktop/Electron、React、Server 应用层、Client SDK、数据库实现或具体 Runtime Adapter。
@@ -638,11 +640,10 @@ Server health: ok
 启动 Desktop：
 
 ```bash
-pnpm --filter @pragma/desktop run prepare:electron
 pnpm --filter @pragma/desktop dev
 ```
 
-> **Electron 42 注意事项：** 从 Electron 42 开始，`postinstall` 不再自动下载 Electron 二进制文件，改为首次运行 Electron CLI 时才下载。`prepare:electron` 脚本调用 `install-electron` 手动触发下载，避免新成员或 CI 首次 `dev` 时遇到缺失二进制的错误。
+> **Electron 42 注意事项：** 从 Electron 42 开始，`postinstall` 不再自动下载 Electron 二进制文件，改为首次运行 Electron CLI 时才下载。Desktop 的 `predev` 会通过 `prepare:electron` 调用 `install-electron`，避免新成员首次 `dev` 时遇到缺失二进制的错误。
 
 启动 Worker：
 

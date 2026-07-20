@@ -10,21 +10,22 @@ import {
   type StewardTaskWorkItem,
 } from "@pragma/steward";
 
-import {
-  isMissionExecutorResource,
-  missionExecutorRef,
-  type Mission,
-} from "../shared/desktop-api.ts";
+import { type Mission, type DesktopToolPermissionMode } from "../shared/desktop-api.ts";
 import type { MissionRunner } from "./mission-runner.ts";
 import type { MissionStore } from "./mission-store.ts";
 import type { PragmaProjectStore } from "./pragma-project-store.ts";
+import type { MissionExecutorCatalog } from "./mission-executor-catalog.ts";
 import { validateWorkspace } from "./workspace-scope.ts";
 
 export function createDesktopStewardTaskPort(options: {
   readonly missions: MissionStore;
   readonly runner: MissionRunner;
   readonly project: PragmaProjectStore;
+  readonly executors: MissionExecutorCatalog;
   readonly stateRoot: string;
+  readonly getToolPermissionMode: () =>
+    | DesktopToolPermissionMode
+    | Promise<DesktopToolPermissionMode>;
 }): StewardTaskPort {
   const operationPath = (id: string) =>
     join(options.stateRoot, "operations", `${encodePragmaPathSegment(id)}.task.json`);
@@ -60,9 +61,7 @@ export function createDesktopStewardTaskPort(options: {
         const validation = await validateWorkspace(input.workspaceId);
         if (!validation.ok) throw new Error("The selected task workspace is not writable.");
         const project = await options.project.get();
-        const executor = project.resources
-          .filter(isMissionExecutorResource)
-          .find((resource) => missionExecutorRef(resource) === input.executorRef);
+        const executor = await options.executors.resolve(input.executorRef);
         if (executor === undefined)
           throw new Error(`Task executor not found: ${input.executorRef}`);
         const mission = await options.missions.create({
@@ -70,6 +69,7 @@ export function createDesktopStewardTaskPort(options: {
           goal: input.goal,
           project: { id: project.projectId, revision: project.revision },
           executor,
+          toolPermissionMode: await options.getToolPermissionMode(),
         });
         await writeOperation(path, mission.id);
         return toTask(await options.runner.run(mission.id));

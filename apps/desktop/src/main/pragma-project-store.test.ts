@@ -10,9 +10,11 @@ import type {
   PragmaRuntimeProfileResource,
 } from "@pragma/interpreter/ast";
 import { afterEach, describe, expect, it } from "vitest";
+import { BUILT_IN_STEWARD_REF, builtInStewardResource } from "@pragma/steward";
 
 import { createExpertDefinitionStore } from "./expert-definition-store.ts";
 import { createPragmaProjectStore, PragmaProjectStoreError } from "./pragma-project-store.ts";
+import { createDesktopSystemExpertRegistry } from "./system-expert-registry.ts";
 
 const directories: string[] = [];
 
@@ -27,11 +29,18 @@ afterEach(async () => {
 async function stores() {
   const directory = await mkdtemp(join(tmpdir(), "pragma-project-store-"));
   directories.push(directory);
-  const project = createPragmaProjectStore({ projectsPath: directory });
+  const project = createPragmaProjectStore({
+    projectsPath: directory,
+    reservedResourceRefs: new Set([BUILT_IN_STEWARD_REF]),
+  });
   return {
     directory,
     project,
-    experts: createExpertDefinitionStore({ project, validateModel: async () => undefined }),
+    experts: createExpertDefinitionStore({
+      project,
+      systemExperts: createDesktopSystemExpertRegistry(),
+      validateModel: async () => undefined,
+    }),
   };
 }
 
@@ -145,7 +154,7 @@ describe("PragmaProjectStore", () => {
       toolApprovals: {},
     });
     expect(created.id).toBe("writer");
-    expect(await experts.list()).toHaveLength(1);
+    expect(await experts.list()).toHaveLength(2);
     expect(
       await readFile(
         join(directory, "studio/revisions/1/experts/writer@1.0.0.pragma.yaml"),
@@ -202,6 +211,7 @@ describe("PragmaProjectStore", () => {
     await create("2.0.0");
 
     expect((await experts.list()).map((expert) => expert.ref).toSorted()).toEqual([
+      BUILT_IN_STEWARD_REF,
       "expert:writer@1.0.0",
       "expert:writer@2.0.0",
     ]);
@@ -215,26 +225,27 @@ describe("PragmaProjectStore", () => {
     expect(refs).toContain("RuntimeProfile:writer_runtime@2.0.0");
   });
 
-  it("blocks deletion of referenced Experts and built-in resources", async () => {
+  it("blocks deletion of referenced Experts and every write path for system Experts", async () => {
     const { project, experts } = await stores();
     const flow = exampleFlow();
     flow.spec.graph.steps["finish"] = {
       expert: { ref: "expert:writer@1.0.0" },
       version: "1.0.0",
     };
-    const builtIn = exampleFlow();
-    builtIn.metadata = { ...builtIn.metadata, id: "built_in_flow", tags: ["builtin"] };
     await project.publish({
       expectedRevision: 0,
-      resources: [exampleRuntime(), exampleExpert(), flow, builtIn],
+      resources: [exampleRuntime(), exampleExpert(), flow],
     });
 
     await expect(experts.remove("expert:writer@1.0.0")).rejects.toMatchObject({
       code: "expert_referenced",
     });
     await expect(
-      project.remove({ expectedRevision: 1, ref: "flow:built_in_flow@1.0.0" }),
+      project.upsert({ expectedRevision: 1, resource: builtInStewardResource() }),
     ).rejects.toMatchObject({ code: "built_in_readonly" });
+    await expect(experts.remove(BUILT_IN_STEWARD_REF)).rejects.toMatchObject({
+      code: "built_in_readonly",
+    });
     expect((await project.get()).revision).toBe(1);
   });
 
@@ -319,10 +330,13 @@ describe("PragmaProjectStore", () => {
     });
 
     const view = await experts.get("expert:writer@1.0.0");
-    expect(view.model).toEqual({
-      runtimeId: "remote-runtime",
-      providerId: "remote-provider",
-      modelId: "remote-model",
+    expect(view.executionProfile).toEqual({
+      mode: "pinned",
+      model: {
+        runtimeId: "remote-runtime",
+        providerId: "remote-provider",
+        modelId: "remote-model",
+      },
     });
     expect(view.resourceRuntime).toEqual(expert.spec.runtime);
     expect(view.opaqueCapabilities).toEqual(expert.spec.capabilities);
@@ -333,7 +347,12 @@ describe("PragmaProjectStore", () => {
       version: view.version,
       scope: view.scope,
       instructions: view.instructions,
-      model: view.model,
+      model:
+        view.executionProfile.mode === "pinned"
+          ? view.executionProfile.model
+          : (() => {
+              throw new Error("Project expert must use a pinned model.");
+            })(),
       capabilities: view.capabilities,
       toolApprovals: view.toolApprovals,
       plugins: view.plugins,

@@ -22,7 +22,7 @@ import type { PragmaProjectSnapshot } from "../../../../shared/desktop-api.ts";
 import { errorMessage } from "../../lib/errors.ts";
 import { FlowEditor } from "./flow-editor/FlowEditor.tsx";
 import { StudioScreenFrame } from "./StudioScreenFrame.tsx";
-import { desktopApi, isBuiltInTags } from "./studio-model.ts";
+import { desktopApi } from "./studio-model.ts";
 import { DeleteConfirmationDialog } from "./DeleteConfirmationDialog.tsx";
 
 type ResourceKind = "team" | "flow";
@@ -180,17 +180,13 @@ export function PragmaResourceDirectoryFragment(props: {
               <span>{resource.metadata.description}</span>
             </button>
             <small>{resource.metadata.version}</small>
-            {isBuiltInTags(resource.metadata.tags) ? (
-              <span className="resource-origin-label">{t("builtIn")}</span>
-            ) : (
-              <button
-                type="button"
-                aria-label={t("deleteNamed", { name: resource.metadata.name })}
-                onClick={() => setPendingRemoval(resource)}
-              >
-                <Trash size={17} />
-              </button>
-            )}
+            <button
+              type="button"
+              aria-label={t("deleteNamed", { name: resource.metadata.name })}
+              onClick={() => setPendingRemoval(resource)}
+            >
+              <Trash size={17} />
+            </button>
           </div>
         ))}
         {resources.length === 0 ? (

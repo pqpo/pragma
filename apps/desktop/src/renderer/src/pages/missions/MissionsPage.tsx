@@ -11,11 +11,9 @@ import {
 import {
   ArrowCounterClockwise,
   Brain,
-  Books,
   CaretDown,
   Check,
   CheckCircle,
-  Files,
   Folder,
   GitBranch,
   MagnifyingGlass,
@@ -23,7 +21,6 @@ import {
   PaperPlaneTilt,
   Plus,
   Play,
-  Stack,
   StopCircle,
   Toolbox,
   Trash,
@@ -31,13 +28,9 @@ import {
   UsersThree,
 } from "@phosphor-icons/react";
 import { useTranslation } from "react-i18next";
-import type { PragmaInvocableResource, PragmaResource } from "@pragma/interpreter/ast";
 import type { HumanInteractionResponse } from "@pragma/shared";
 
 import {
-  isMissionExecutorResource,
-  missionExecutorKind,
-  missionExecutorRef,
   type Mission,
   type MissionChatEntry,
   type MissionChatSnapshot,
@@ -49,22 +42,28 @@ import {
 import { errorMessage } from "../../lib/errors.ts";
 import { i18n } from "../../i18n/index.ts";
 import { formatMissionDateTime, formatMissionTime } from "../../lib/mission-time.ts";
+import { ToolPermissionSelect } from "../../components/ToolPermissionSelect.tsx";
 
-type MissionScreen = "create" | "detail";
-
-export function MissionsPage(props: { readonly initialExecutorRef?: string | undefined }) {
+export function MissionsPage(props: {
+  readonly initialMission?: Mission | undefined;
+  readonly autoRunInitialMission?: boolean | undefined;
+  readonly onCreate: () => void;
+}) {
   const { t } = useTranslation(["missions", "common"]);
   const [missions, setMissions] = useState<readonly MissionSummary[]>([]);
-  const [selectedMission, setSelectedMission] = useState<Mission | null>(null);
-  const [executors, setExecutors] = useState<readonly PragmaResource[]>([]);
-  const [screen, setScreen] = useState<MissionScreen>("create");
-  const [selectedMissionId, setSelectedMissionId] = useState<string | null>(null);
+  const [selectedMission, setSelectedMission] = useState<Mission | null>(
+    props.initialMission ?? null,
+  );
+  const [selectedMissionId, setSelectedMissionId] = useState<string | null>(
+    props.initialMission?.id ?? null,
+  );
   const [search, setSearch] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [deleteCandidate, setDeleteCandidate] = useState<MissionSummary | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [now, setNow] = useState(() => Date.now());
-  const selectedMissionIdRef = useRef<string | null>(null);
+  const selectedMissionIdRef = useRef<string | null>(props.initialMission?.id ?? null);
+  const initialRunStartedRef = useRef(false);
 
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 60_000);
@@ -72,14 +71,29 @@ export function MissionsPage(props: { readonly initialExecutorRef?: string | und
   }, []);
 
   useEffect(() => {
+    if (
+      !props.autoRunInitialMission ||
+      props.initialMission === undefined ||
+      initialRunStartedRef.current
+    ) {
+      return;
+    }
+    initialRunStartedRef.current = true;
+    void window.pragmaDesktop
+      .runMission(props.initialMission.id)
+      .then(replaceMission)
+      .catch((runError: unknown) => setError(errorMessage(runError)));
+  }, [props.autoRunInitialMission, props.initialMission?.id]);
+
+  useEffect(() => {
     const api = desktopApi();
     if (api === undefined) return;
     let cancelled = false;
-    void Promise.all([api.listMissions(), api.getPragmaProject()])
-      .then(([storedMissions, project]) => {
+    void api
+      .listMissions()
+      .then((storedMissions) => {
         if (cancelled) return;
         setMissions(storedMissions);
-        setExecutors(project.resources.filter(isMissionExecutorResource));
       })
       .catch((loadError: unknown) => {
         if (!cancelled) setError(errorMessage(loadError));
@@ -128,20 +142,13 @@ export function MissionsPage(props: { readonly initialExecutorRef?: string | und
         missions={visibleMissions}
         search={search}
         now={now}
-        selectedMissionId={screen === "detail" ? selectedMissionId : null}
+        selectedMissionId={selectedMissionId}
         onSearch={setSearch}
-        onCreate={() => {
-          selectedMissionIdRef.current = null;
-          setScreen("create");
-          setSelectedMissionId(null);
-          setSelectedMission(null);
-          setError(null);
-        }}
+        onCreate={props.onCreate}
         onOpen={(summary) => {
           selectedMissionIdRef.current = summary.id;
           setSelectedMissionId(summary.id);
           setSelectedMission(null);
-          setScreen("detail");
           setError(null);
           const api = desktopApi();
           if (api !== undefined) {
@@ -161,27 +168,7 @@ export function MissionsPage(props: { readonly initialExecutorRef?: string | und
       />
 
       <div className="mission-main">
-        {screen === "create" ? (
-          <CreateMissionFragment
-            executors={executors}
-            initialExecutorRef={props.initialExecutorRef}
-            onCreated={async (mission) => {
-              setMissions((current) => [missionToSummary(mission), ...current]);
-              selectedMissionIdRef.current = mission.id;
-              setSelectedMissionId(mission.id);
-              setSelectedMission(mission);
-              setScreen("detail");
-              setError(null);
-              const api = desktopApi();
-              if (api === undefined) return;
-              try {
-                replaceMission(await api.runMission(mission.id));
-              } catch (runError) {
-                setError(errorMessage(runError));
-              }
-            }}
-          />
-        ) : selectedMission !== null ? (
+        {selectedMission !== null ? (
           <MissionDetailFragment
             mission={selectedMission}
             onSend={async (content) => {
@@ -286,7 +273,6 @@ export function MissionsPage(props: { readonly initialExecutorRef?: string | und
                         selectedMissionIdRef.current = null;
                         setSelectedMissionId(null);
                         setSelectedMission(null);
-                        setScreen("create");
                       }
                       setDeleteCandidate(null);
                       setError(null);
@@ -434,329 +420,6 @@ function MissionRailGroup(props: {
       )}
     </section>
   );
-}
-
-export function CreateMissionFragment(props: {
-  readonly executors: readonly PragmaResource[];
-  readonly initialExecutorRef?: string | undefined;
-  readonly onCreated: (mission: Mission) => void | Promise<void>;
-}) {
-  const { t } = useTranslation("missions");
-  const [workspace, setWorkspace] = useState<{ path: string; basename: string } | null>(null);
-  const [executorRef, setExecutorRef] = useState(props.initialExecutorRef ?? "");
-  const [goal, setGoal] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const executors = useMemo(
-    () => props.executors.filter(isMissionExecutorResource),
-    [props.executors],
-  );
-  const selectedExecutor = executors.find(
-    (executor) => missionExecutorRef(executor) === executorRef,
-  );
-  const hasValidExecutor = selectedExecutor !== undefined;
-
-  useEffect(() => {
-    if (hasValidExecutor) return;
-    const requested = executors.find(
-      (executor) => missionExecutorRef(executor) === props.initialExecutorRef,
-    );
-    const fallback = requested ?? (executors.length === 1 ? executors[0] : undefined);
-    const nextRef = fallback === undefined ? "" : missionExecutorRef(fallback);
-    if (nextRef !== executorRef) setExecutorRef(nextRef);
-  }, [executorRef, executors, hasValidExecutor, props.initialExecutorRef]);
-
-  const pickWorkspace = async () => {
-    const api = desktopApi();
-    if (api === undefined) return;
-    try {
-      const result = await api.pickWorkspace();
-      if (result.ok && result.path !== undefined && result.basename !== undefined) {
-        setWorkspace({ path: result.path, basename: result.basename });
-        setError(null);
-      } else if (result.reason !== "cancelled") {
-        setError(result.error ?? t("workspaceUnavailable"));
-      }
-    } catch (pickError) {
-      setError(errorMessage(pickError));
-    }
-  };
-
-  const submit = async () => {
-    const api = desktopApi();
-    if (api === undefined || workspace === null || !hasValidExecutor || goal.trim() === "") return;
-    setSaving(true);
-    setError(null);
-    try {
-      const mission = await api.createMission({
-        workspace: workspace.path,
-        executor: { ref: executorRef },
-        goal: goal.trim(),
-      });
-      await props.onCreated(mission);
-    } catch (submitError) {
-      setError(errorMessage(submitError));
-      setSaving(false);
-    }
-  };
-
-  return (
-    <section className="mission-create" aria-labelledby="new-mission-title">
-      <header>
-        <h1 id="new-mission-title">{t("start")}</h1>
-        <p>{t("createDescription")}</p>
-      </header>
-      <div className="mission-create-selectors">
-        <button className="mission-selector" type="button" onClick={() => void pickWorkspace()}>
-          <span className="mission-selector-icon">
-            <Folder size={23} aria-hidden="true" />
-          </span>
-          <span className="mission-selector-copy">
-            <small>{t("workspace")}</small>
-            <strong>{workspace?.basename ?? t("chooseFolder")}</strong>
-            <em>{workspace?.path ?? t("oneDirectory")}</em>
-          </span>
-        </button>
-        <MissionExecutorPicker
-          executors={executors}
-          value={hasValidExecutor ? executorRef : ""}
-          onChange={setExecutorRef}
-        />
-      </div>
-      <div className="mission-goal-composer">
-        <label htmlFor="mission-goal">{t("prompt")}</label>
-        <textarea
-          id="mission-goal"
-          value={goal}
-          onChange={(event) => setGoal(event.target.value)}
-          placeholder={t("goalPlaceholder")}
-          autoFocus
-        />
-        <footer>
-          <div className="mission-prompt-tools" aria-label={t("contextTools")}>
-            <button
-              type="button"
-              aria-disabled="true"
-              title={!hasValidExecutor ? t("chooseExecutorContext") : t("inheritedContext")}
-            >
-              <Stack size={18} aria-hidden="true" />
-              {t("context")}
-            </button>
-            <button
-              className={workspace === null ? "" : "is-active"}
-              type="button"
-              onClick={() => void pickWorkspace()}
-              title={workspace?.path ?? t("chooseWorkspaceFiles")}
-            >
-              <Files size={18} aria-hidden="true" />
-              {t("files")}
-            </button>
-            <button
-              type="button"
-              aria-disabled="true"
-              title={!hasValidExecutor ? t("chooseExecutorKnowledge") : t("managedKnowledge")}
-            >
-              <Books size={18} aria-hidden="true" />
-              {t("knowledge")}
-            </button>
-            <button
-              type="button"
-              aria-disabled="true"
-              title={!hasValidExecutor ? t("chooseExecutorTools") : t("managedTools")}
-            >
-              <Toolbox size={18} aria-hidden="true" />
-              {t("tools")}
-            </button>
-          </div>
-          <button
-            className="primary-button"
-            type="button"
-            disabled={saving || workspace === null || !hasValidExecutor || goal.trim() === ""}
-            onClick={() => void submit()}
-          >
-            {saving ? t("starting") : t("startMission")}
-          </button>
-        </footer>
-      </div>
-      {executors.length === 0 ? <p className="mission-form-note">{t("createFirst")}</p> : null}
-      {error ? (
-        <p className="form-error" role="alert">
-          {error}
-        </p>
-      ) : null}
-    </section>
-  );
-}
-
-function MissionExecutorPicker(props: {
-  readonly executors: readonly PragmaInvocableResource[];
-  readonly value: string;
-  readonly onChange: (value: string) => void;
-}) {
-  const { t } = useTranslation("missions");
-  const [open, setOpen] = useState(false);
-  const [search, setSearch] = useState("");
-  const rootRef = useRef<HTMLDivElement | null>(null);
-  const selected = props.executors.find((executor) => missionExecutorRef(executor) === props.value);
-  const visibleExecutors = useMemo(() => {
-    const query = search.trim().toLocaleLowerCase();
-    if (query === "") return props.executors;
-    return props.executors.filter((executor) =>
-      [
-        executor.metadata.name,
-        executor.metadata.description,
-        executor.metadata.id,
-        missionExecutorKind(executor),
-      ].some((value) => value.toLocaleLowerCase().includes(query)),
-    );
-  }, [props.executors, search]);
-  const SelectedIcon = selected === undefined ? UsersThree : executorIcon(selected);
-
-  useEffect(() => {
-    if (!open) return;
-    const close = (event: MouseEvent) => {
-      if (event.target instanceof Node && !rootRef.current?.contains(event.target)) {
-        setOpen(false);
-        setSearch("");
-      }
-    };
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setOpen(false);
-        setSearch("");
-      }
-    };
-    document.addEventListener("mousedown", close);
-    window.addEventListener("keydown", closeOnEscape);
-    return () => {
-      document.removeEventListener("mousedown", close);
-      window.removeEventListener("keydown", closeOnEscape);
-    };
-  }, [open]);
-
-  return (
-    <div
-      className={
-        open
-          ? "mission-selector mission-executor-picker is-open"
-          : "mission-selector mission-executor-picker"
-      }
-      ref={rootRef}
-    >
-      <span className="mission-selector-icon">
-        <SelectedIcon size={23} aria-hidden="true" />
-      </span>
-      <div className="mission-selector-copy">
-        <small>{t("executor")}</small>
-        <button
-          className="mission-executor-trigger"
-          type="button"
-          aria-expanded={open}
-          aria-haspopup="dialog"
-          onClick={() => {
-            setOpen((current) => !current);
-            setSearch("");
-          }}
-        >
-          <strong>{selected?.metadata.name ?? t("chooseResource")}</strong>
-          <CaretDown size={16} aria-hidden="true" />
-        </button>
-        <em>
-          {selected === undefined
-            ? t("executableOnly")
-            : `${executorLabel(selected)} · ${selected.metadata.version}`}
-        </em>
-        {open ? (
-          <div
-            className="mission-executor-menu"
-            role="dialog"
-            aria-modal="false"
-            aria-label={t("chooseMissionExecutor")}
-          >
-            <header>
-              <div>
-                <strong>{t("chooseExecutor")}</strong>
-                <small>{t("executorDescription")}</small>
-              </div>
-              <span>{t("availableCount", { count: props.executors.length })}</span>
-            </header>
-            {props.executors.length > 5 ? (
-              <label className="mission-executor-search">
-                <MagnifyingGlass size={17} aria-hidden="true" />
-                <span className="sr-only">{t("searchExecutors")}</span>
-                <input
-                  autoFocus
-                  value={search}
-                  onChange={(event) => setSearch(event.target.value)}
-                  placeholder={t("searchExecutors")}
-                />
-              </label>
-            ) : null}
-            <div
-              className="mission-executor-options"
-              role="list"
-              aria-label={t("missionExecutors")}
-            >
-              {visibleExecutors.map((executor, index) => {
-                const ref = missionExecutorRef(executor);
-                const kind = missionExecutorKind(executor);
-                const Icon = executorIcon(executor);
-                const isSelected = ref === props.value;
-                return (
-                  <button
-                    type="button"
-                    aria-pressed={isSelected}
-                    autoFocus={props.executors.length <= 5 && index === 0}
-                    className={
-                      isSelected ? "mission-executor-option is-selected" : "mission-executor-option"
-                    }
-                    key={ref}
-                    onClick={() => {
-                      props.onChange(ref);
-                      setOpen(false);
-                      setSearch("");
-                    }}
-                  >
-                    <span className="mission-executor-option-icon">
-                      <Icon size={18} aria-hidden="true" />
-                    </span>
-                    <span>
-                      <strong>{executor.metadata.name}</strong>
-                      <small>{executor.metadata.description}</small>
-                    </span>
-                    <span className="mission-executor-option-kind">{kind}</span>
-                    {isSelected ? <Check size={17} aria-hidden="true" /> : null}
-                  </button>
-                );
-              })}
-              {visibleExecutors.length === 0 ? (
-                <div className="mission-executor-empty">
-                  <strong>{t("noExecutors")}</strong>
-                  <span>{t("tryAnother")}</span>
-                </div>
-              ) : null}
-            </div>
-          </div>
-        ) : null}
-      </div>
-    </div>
-  );
-}
-
-function executorIcon(resource: PragmaInvocableResource) {
-  return resource.kind === "Expert"
-    ? User
-    : resource.kind === "ExpertTeam"
-      ? UsersThree
-      : GitBranch;
-}
-
-function executorLabel(resource: PragmaInvocableResource): string {
-  return resource.kind === "Expert"
-    ? i18n.t("expert", { ns: "missions" })
-    : resource.kind === "ExpertTeam"
-      ? i18n.t("expertTeam", { ns: "missions" })
-      : i18n.t("flow", { ns: "missions" });
 }
 
 export function MissionDetailFragment(props: {
@@ -1156,6 +819,11 @@ export function MissionDetailFragment(props: {
                   ) : (
                     <Paperclip size={20} aria-hidden="true" />
                   )}
+                  <ToolPermissionSelect
+                    value={props.mission.toolPermissionMode}
+                    disabled
+                    title={t("permissionTaskLocked", { ns: "missions" })}
+                  />
                   <textarea
                     value={draft}
                     disabled={

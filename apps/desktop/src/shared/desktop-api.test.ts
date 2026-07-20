@@ -26,13 +26,27 @@ describe("desktop settings contracts", () => {
     expect(UpdateDesktopSettingsSchema.parse({ localePreference: "system" })).toEqual({
       localePreference: "system",
     });
+    expect(UpdateDesktopSettingsSchema.parse({ stewardWorkspace: "/workspace/steward" })).toEqual({
+      stewardWorkspace: "/workspace/steward",
+    });
+    expect(UpdateDesktopSettingsSchema.parse({ toolPermissionMode: "full-access" })).toEqual({
+      toolPermissionMode: "full-access",
+    });
+    expect(UpdateDesktopSettingsSchema.safeParse({}).success).toBe(false);
     expect(
       DesktopSettingsSnapshotSchema.parse({
         schemaVersion: 1,
         localePreference: "zh-Hant",
+        toolPermissionMode: "request-approval",
+        stewardWorkspace: "/workspace/steward",
+        usesDefaultStewardWorkspace: false,
         resolvedLocale: "zh-Hant",
       }),
-    ).toMatchObject({ resolvedLocale: "zh-Hant" });
+    ).toMatchObject({
+      stewardWorkspace: "/workspace/steward",
+      usesDefaultStewardWorkspace: false,
+      resolvedLocale: "zh-Hant",
+    });
     expect(UpdateDesktopSettingsSchema.safeParse({ localePreference: "fr" }).success).toBe(false);
   });
 });
@@ -206,6 +220,12 @@ describe("mission contracts", () => {
     };
     expect(CreateMissionSchema.safeParse(input).success).toBe(true);
     expect(
+      CreateMissionSchema.parse({ ...input, toolPermissionMode: "full-access" }).toolPermissionMode,
+    ).toBe("full-access");
+    expect(
+      CreateMissionSchema.safeParse({ ...input, toolPermissionMode: "unrestricted" }).success,
+    ).toBe(false);
+    expect(
       CreateMissionSchema.safeParse({
         ...input,
         executor: { ref: "team:delivery@1.0.0" },
@@ -230,7 +250,7 @@ describe("mission contracts", () => {
 
   it("pins a team executor to a project revision", () => {
     expect(
-      MissionSchema.safeParse({
+      MissionSchema.parse({
         schemaVersion: "pragma.mission/v3",
         id: "00000000-0000-4000-8000-000000000000",
         title: "Deliver the feature",
@@ -247,8 +267,8 @@ describe("mission contracts", () => {
         lifecycleStatus: "active",
         createdAt: "2026-07-11T00:00:00.000Z",
         updatedAt: "2026-07-11T00:00:00.000Z",
-      }).success,
-    ).toBe(true);
+      }).toolPermissionMode,
+    ).toBe("request-approval");
   });
 
   it("validates rich chat entries and interruptible execution state", () => {

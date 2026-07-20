@@ -75,6 +75,8 @@ Pragma 已经形成一个质量较好的**本地 Agent 执行内核**：Expert�
 - Desktop 的 Gateway 和 Device 状态是离线快照，没有设备绑定、心跳、任务下发、事件回传或断线恢复。
 - Mission 已连接 ExpertSession / Flow Execution；v3 manifest 只保存有界元数据，跨轮用户消息和
   Execution 引用追加到 `messages.jsonl`，生成内容仍由 Execution Canonical Event Log 投影。
+- Desktop Home 是 Mission 新建入口，默认使用只读系统专家 `expert:steward@1.0.0`；Studio 与任务
+  执行器目录通过同一个 System Expert Registry 展示和解析管家，不再维护独立 Home Chat。
 - Web 和 Client 仍只有健康检查路径，不代表控制面产品能力。
 
 ## 合理、应继续保持的设计

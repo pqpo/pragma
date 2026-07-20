@@ -23,7 +23,13 @@ import { fingerprintExpertExecutionDefinition } from "../agent/expert-definition
 import type { RuntimeResolver } from "../runtime-resolver.ts";
 import type { RuntimeModelSelection } from "../runtime/runtime-adapter.ts";
 import { mergeUsages } from "../runtime/usage.ts";
-import { ExecutionController, runExpertInvocation } from "./expert-runner.ts";
+import type { ExpertAgentAutomaticHumanInteractionHandler } from "../tools/managed-tool.ts";
+import {
+  ExecutionController,
+  listPendingHumanInteractionIds,
+  persistHumanInteractionResponse,
+  runExpertInvocation,
+} from "./expert-runner.ts";
 import { RuntimeSessionPool } from "./runtime-session-pool.ts";
 import type { ExecutionStore } from "./execution-store.ts";
 import {
@@ -42,6 +48,7 @@ import {
 export interface CreateExpertSessionOptions {
   readonly sessionId?: string | undefined;
   readonly runtime?: string | undefined;
+  readonly modelSelection?: RuntimeModelSelection | undefined;
 }
 
 export interface PromptOptions {
@@ -62,6 +69,7 @@ export interface ExpertSession {
   prompt(content: string, options?: PromptOptions): Promise<ExpertTurn>;
   abort(reason?: string): Promise<void>;
   close(reason?: string): Promise<void>;
+  refreshRuntimeSessions(): Promise<void>;
   getState(): Promise<ExpertSessionRecord>;
   listTurns(): Promise<readonly ExpertTurn[]>;
   getMessageHistory(options?: GetMessageHistoryOptions): Promise<readonly ExpertMessageHistory[]>;
@@ -89,6 +97,9 @@ export interface ExpertSessionManagerDependencies {
   readonly sessions: ExpertSessionStore;
   readonly executions: ExecutionStore;
   readonly runtimes: RuntimeResolver;
+  readonly automaticHumanInteractionHandler?:
+    | ExpertAgentAutomaticHumanInteractionHandler
+    | undefined;
 }
 
 type SteerClaim =
@@ -116,7 +127,7 @@ export class ExpertSessionManager {
     const rootExpert = isExpertTeam(expert) ? expert.coordinator : expert;
     const runtime = await this.dependencies.runtimes.bind({
       runtimeId: options.runtime ?? rootExpert.defaultRuntimeId,
-      modelSelection: rootExpert.models?.default,
+      modelSelection: options.modelSelection ?? rootExpert.models?.default,
     });
     const rootContextId = randomUUID();
     const rootContext = createRuntimeContextRecord({
@@ -179,11 +190,26 @@ export class ExpertSessionManager {
       throw new Error(`ExpertSession is active in another process: ${request.sessionId}`);
     }
     try {
+      let recoveredExecutionId: string | undefined;
+      let recoveredHumanInteractionIds: readonly string[] = [];
       if (record.activeExecutionId !== undefined) {
         const execution = await this.dependencies.executions.get(record.activeExecutionId);
-        if (execution !== undefined && !isFinal(execution.status)) {
+        const pendingHumanInteractionIds =
+          execution === undefined || isFinal(execution.status)
+            ? []
+            : await listPendingHumanInteractionIds(
+                this.dependencies.executions,
+                execution.executionId,
+              );
+        const recoverPendingInteraction =
+          execution !== undefined &&
+          !isFinal(execution.status) &&
+          pendingHumanInteractionIds.length > 0;
+        if (recoverPendingInteraction) {
+          recoveredExecutionId = execution.executionId;
+          recoveredHumanInteractionIds = pendingHumanInteractionIds;
           await this.dependencies.executions.update(execution.executionId, {
-            status: "interrupted",
+            status: "waiting",
           });
           for (const invocation of await this.dependencies.executions.listInvocations(
             execution.executionId,
@@ -191,28 +217,77 @@ export class ExpertSessionManager {
             if (!isFinal(invocation.status)) {
               await this.dependencies.executions.putInvocation(execution.executionId, {
                 ...invocation,
-                status: "interrupted",
+                status: "waiting",
                 updatedAt: new Date().toISOString(),
               });
             }
           }
+          await this.dependencies.sessions.transact(request.sessionId, ({ session, prompts }) => ({
+            result: undefined,
+            session: {
+              ...session,
+              activeExecutionId: undefined,
+              queuedRequestIds: [
+                ...new Set([
+                  ...session.queuedRequestIds,
+                  ...prompts
+                    .filter((prompt) => prompt.executionId === execution.executionId)
+                    .map((prompt) => prompt.requestId),
+                ]),
+              ],
+              updatedAt: new Date().toISOString(),
+            },
+            prompts: prompts.map((prompt) =>
+              prompt.executionId === execution.executionId && prompt.status === "running"
+                ? { ...prompt, status: "queued" as const, updatedAt: new Date().toISOString() }
+                : prompt,
+            ),
+          }));
+        } else {
+          if (execution !== undefined && !isFinal(execution.status)) {
+            await this.dependencies.executions.update(execution.executionId, {
+              status: "interrupted",
+            });
+            for (const invocation of await this.dependencies.executions.listInvocations(
+              execution.executionId,
+            )) {
+              if (!isFinal(invocation.status)) {
+                await this.dependencies.executions.putInvocation(execution.executionId, {
+                  ...invocation,
+                  status: "interrupted",
+                  updatedAt: new Date().toISOString(),
+                });
+              }
+            }
+          }
+          await this.dependencies.sessions.transact(request.sessionId, ({ session, prompts }) => ({
+            result: undefined,
+            session: {
+              ...session,
+              activeExecutionId: undefined,
+              lastStatus: "interrupted",
+              updatedAt: new Date().toISOString(),
+            },
+            prompts: prompts.map((prompt) =>
+              prompt.executionId === record.activeExecutionId && prompt.status === "running"
+                ? {
+                    ...prompt,
+                    status: "interrupted" as const,
+                    updatedAt: new Date().toISOString(),
+                  }
+                : prompt,
+            ),
+          }));
         }
-        await this.dependencies.sessions.transact(request.sessionId, ({ session, prompts }) => ({
-          result: undefined,
-          session: {
-            ...session,
-            activeExecutionId: undefined,
-            lastStatus: "interrupted",
-            updatedAt: new Date().toISOString(),
-          },
-          prompts: prompts.map((prompt) =>
-            prompt.executionId === record.activeExecutionId && prompt.status === "running"
-              ? { ...prompt, status: "interrupted" as const, updatedAt: new Date().toISOString() }
-              : prompt,
-          ),
-        }));
       }
-      const session = this.createActiveSession(expert, request.sessionId, true, claimId);
+      const session = this.createActiveSession(
+        expert,
+        request.sessionId,
+        true,
+        claimId,
+        recoveredExecutionId,
+        recoveredHumanInteractionIds,
+      );
       this.active.set(request.sessionId, session);
       return session;
     } catch (error) {
@@ -226,6 +301,8 @@ export class ExpertSessionManager {
     sessionId: string,
     paused: boolean,
     claimId: string,
+    recoveredExecutionId?: string,
+    recoveredHumanInteractionIds: readonly string[] = [],
   ): ExpertSessionImpl {
     const session = new ExpertSessionImpl(
       expert,
@@ -233,6 +310,8 @@ export class ExpertSessionManager {
       sessionId,
       paused,
       claimId,
+      recoveredExecutionId,
+      recoveredHumanInteractionIds,
       () => {
         if (this.active.get(sessionId) === session) {
           this.active.delete(sessionId);
@@ -258,6 +337,8 @@ class ExpertSessionImpl implements ExpertSession {
     readonly sessionId: string,
     private paused: boolean,
     private readonly claimId: string,
+    private readonly recoveredExecutionId: string | undefined,
+    private readonly recoveredHumanInteractionIds: readonly string[],
     private readonly onClosed: () => void,
   ) {
     this.leaseRenewal = setInterval(() => {
@@ -350,6 +431,17 @@ class ExpertSessionImpl implements ExpertSession {
       ),
     }));
     this.startProcessing();
+  }
+
+  async refreshRuntimeSessions(): Promise<void> {
+    const [state, prompts] = await Promise.all([this.getState(), this.getPromptQueue()]);
+    if (
+      state.activeExecutionId !== undefined ||
+      prompts.some((prompt) => prompt.status === "queued" || prompt.status === "running")
+    ) {
+      throw new Error("Wait for the active Expert turn before changing Runtime permissions.");
+    }
+    await this.runtimeSessions.clear();
   }
 
   close(reason?: string): Promise<void> {
@@ -730,6 +822,12 @@ class ExpertSessionImpl implements ExpertSession {
       prompt.executionId,
       this.dependencies.executions,
       this.runtimeSessions,
+      {
+        ...(this.recoveredExecutionId === prompt.executionId
+          ? { recoverHumanInteractionIds: this.recoveredHumanInteractionIds }
+          : {}),
+        automaticHumanInteractionHandler: this.dependencies.automaticHumanInteractionHandler,
+      },
     );
     this.controller = controller;
     let status: "succeeded" | "failed" | "cancelled" = "succeeded";
@@ -740,12 +838,18 @@ class ExpertSessionImpl implements ExpertSession {
         executionId: prompt.executionId,
         invocationId: prompt.executionId,
         expert: this.expert,
-        prompt: prompt.content,
+        prompt:
+          this.recoveredExecutionId === prompt.executionId
+            ? recoveryPrompt(prompt.content)
+            : prompt.content,
         owner: { type: "expert-session", ownerId: this.sessionId },
         context: rootContext,
         controller,
         store: this.dependencies.executions,
         runtimes: this.dependencies.runtimes,
+        ...(this.recoveredExecutionId === prompt.executionId
+          ? { runtimeRunId: `${prompt.executionId}:recovery:${randomUUID()}` }
+          : {}),
         ...(prompt.modelSelection === undefined ? {} : { modelSelection: prompt.modelSelection }),
         persistContext: async (context) => await this.persistRuntimeContext(context),
         readContextScope: async () => await this.readRuntimeContextScope(),
@@ -848,10 +952,18 @@ class ExpertSessionImpl implements ExpertSession {
   private createTurn(executionId: string, requestId: string): ExpertTurn {
     const view = this.createExecutionView(executionId);
     const completion = waitForTerminalExecution(this.dependencies.executions, executionId);
+    const result = completion.then(readExecutionResult);
+    const usage = completion.then((execution) => execution.usage);
+    // A turn can be used only for its event stream or metadata (for example by listTurns()).
+    // Observe these derived promises eagerly so a historical failed/interrupted turn does not
+    // become a process-level unhandled rejection. The original promises remain rejected for
+    // callers that explicitly await them.
+    void result.catch(() => undefined);
+    void usage.catch(() => undefined);
     return Object.assign(view, {
       requestId,
-      result: completion.then(readExecutionResult),
-      usage: completion.then((execution) => execution.usage),
+      result,
+      usage,
       cancel: async (reason?: string) => {
         const state = await this.getState();
         if (state.activeExecutionId !== executionId || this.controller === undefined) {
@@ -864,8 +976,25 @@ class ExpertSessionImpl implements ExpertSession {
         response: unknown,
         options: { readonly requestId: string },
       ) => {
-        if (this.controller === undefined) throw new Error("ExpertTurn is not active.");
-        await this.controller.respond(interactionId, response, options.requestId);
+        if (this.controller?.executionId === executionId) {
+          await this.controller.respond(interactionId, response, options.requestId);
+          return;
+        }
+        await persistHumanInteractionResponse(
+          this.dependencies.executions,
+          executionId,
+          interactionId,
+          response,
+          options.requestId,
+        );
+        if (
+          this.recoveredExecutionId === executionId &&
+          (await listPendingHumanInteractionIds(this.dependencies.executions, executionId))
+            .length === 0
+        ) {
+          this.paused = false;
+          this.startProcessing();
+        }
       },
     });
   }
@@ -873,6 +1002,19 @@ class ExpertSessionImpl implements ExpertSession {
   private createExecutionView(executionId: string): StoredExecutionView {
     return new StoredExecutionView(executionId, this.dependencies.executions, this.sessionId);
   }
+}
+
+function recoveryPrompt(originalPrompt: string): string {
+  return [
+    "[Pragma interrupted-turn recovery]",
+    "The previous Runtime process stopped while waiting for a human interaction.",
+    "Resume the interrupted work from the restored Runtime session.",
+    "Recreate only the pending human-gated operation so Pragma can supply the durable response.",
+    "Do not repeat work that the restored session already completed.",
+    "Original user request:",
+    originalPrompt,
+    "[/Pragma interrupted-turn recovery]",
+  ].join("\n");
 }
 
 function closeSessionContexts(session: ExpertSessionRecord): ExpertSessionRecord {

@@ -39,9 +39,11 @@ describe("Pragma resource adapters", () => {
   it("rejects an entry outside a Skill artifact even when reached through a symlink", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-skill-entry-"));
     const artifact = join(root, "artifact");
+    const outside = join(root, "outside");
     await mkdir(artifact);
-    await writeFile(join(root, "outside.md"), "outside");
-    await symlink(join(root, "outside.md"), join(artifact, "entry.md"));
+    await mkdir(outside);
+    await writeFile(join(outside, "entry.md"), "outside");
+    await symlink(outside, join(artifact, "linked"), "junction");
     const resource: PragmaCapabilityResource = {
       apiVersion: "pragma/v2",
       kind: "Capability",
@@ -54,7 +56,7 @@ describe("Pragma resource adapters", () => {
       },
       spec: {
         adapter: "pragma.capability.skill@v1",
-        config: { source: { type: "project", path: "artifact" }, entry: "entry.md" },
+        config: { source: { type: "project", path: "artifact" }, entry: "linked/entry.md" },
       },
     };
     const inspection = await createDefaultPragmaResourceAdapterRegistry().inspect(

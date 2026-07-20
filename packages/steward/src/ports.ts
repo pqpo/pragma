@@ -4,7 +4,6 @@ import type {
   StewardExpertOptionCatalog,
   StewardProjectCommit,
   StewardResourceSummary,
-  StewardSessionState,
   StewardTask,
   StewardTaskSummary,
   StewardTaskWorkItem,
@@ -44,10 +43,4 @@ export interface StewardTaskPort {
   }): Promise<StewardTask>;
   listWorkItems(id: string): Promise<readonly StewardTaskWorkItem[]>;
   interrupt(id: string): Promise<StewardTask>;
-}
-
-export interface StewardStateRepository {
-  get(): Promise<StewardSessionState | undefined>;
-  put(state: StewardSessionState): Promise<void>;
-  clear(): Promise<void>;
 }

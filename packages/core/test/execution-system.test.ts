@@ -856,6 +856,26 @@ describe("ExpertSession", () => {
     await session.close();
   });
 
+  it("does not emit an unhandled rejection for an unobserved historical turn result", async () => {
+    const { app, expert } = await trackedFixture({ failQuery: "fail" });
+    const session = await app.experts.createSession(expert);
+    const failed = await session.prompt("fail", { requestId: "unobserved-history" });
+    await expect(failed.result).rejects.toThrow("fake turn failed");
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => unhandled.push(reason);
+    process.on("unhandledRejection", onUnhandled);
+
+    try {
+      const historicalTurns = await session.listTurns();
+      expect(historicalTurns).toHaveLength(1);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+      await session.close();
+    }
+  });
+
   it("cancels only the active submission and reuses its Runtime Session", async () => {
     const { app, expert, stats } = await trackedFixture({ delayMs: 100 });
     const session = await app.experts.createSession(expert);
@@ -1634,7 +1654,7 @@ describe("FlowExecution", () => {
   it("persists a wall-clock timeout and aborts the active Task", async () => {
     const { app } = await fixture();
     let observedAbort = false;
-    const flow = defineFlow({ id: "timeout-flow", version: "1.0.0", timeoutMs: 40 });
+    const flow = defineFlow({ id: "timeout-flow", version: "1.0.0", timeoutMs: 1_000 });
     const task = flow.task({
       id: "wait",
       version: "1.0.0",

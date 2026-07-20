@@ -5,28 +5,47 @@ import { ipcMain, type BrowserWindow } from "electron";
 import {
   CreateMissionSchema,
   GetMissionChatSchema,
-  isMissionExecutorResource,
   MissionActionSchema,
+  MissionCreationDefaultsSchema,
+  MissionExecutorOptionSchema,
   MissionIdSchema,
-  missionExecutorRef,
   RespondMissionHumanInteractionSchema,
   SendMissionMessageSchema,
 } from "../shared/desktop-api.ts";
 import type { MissionRunner } from "./mission-runner.ts";
 import type { MissionStore } from "./mission-store.ts";
+import type { DesktopToolPermissionMode } from "../shared/desktop-api.ts";
 import type { PragmaProjectStore } from "./pragma-project-store.ts";
+import type { MissionExecutorCatalog } from "./mission-executor-catalog.ts";
 import { validateWorkspace } from "./workspace-scope.ts";
 
 export function installMissionHandlers(options: {
   readonly missions: MissionStore;
   readonly project: PragmaProjectStore;
+  readonly executors: MissionExecutorCatalog;
   readonly runner: MissionRunner;
   readonly getWindow: () => BrowserWindow | null;
+  readonly getDefaultToolPermissionMode: () =>
+    | DesktopToolPermissionMode
+    | Promise<DesktopToolPermissionMode>;
+  readonly getDefaultWorkspace: () => string | Promise<string>;
+  readonly defaultExecutorRef: string;
 }): void {
   ipcMain.handle("missions:list", () => options.missions.list());
   ipcMain.handle("missions:get", (_event, id: unknown) =>
     options.missions.get(MissionIdSchema.parse(id)),
   );
+  ipcMain.handle("missions:executors:list", async () =>
+    MissionExecutorOptionSchema.array().parse(await options.executors.list()),
+  );
+  ipcMain.handle("missions:create-defaults:get", async () => {
+    const workspace = await options.getDefaultWorkspace();
+    return MissionCreationDefaultsSchema.parse({
+      workspace: { path: workspace, basename: basename(workspace) },
+      executorRef: options.defaultExecutorRef,
+      toolPermissionMode: await options.getDefaultToolPermissionMode(),
+    });
+  });
   ipcMain.handle("missions:create", async (_event, input: unknown) => {
     const parsed = CreateMissionSchema.parse(input);
     const validation = await validateWorkspace(parsed.workspace);
@@ -34,16 +53,20 @@ export function installMissionHandlers(options: {
       throw new Error("The selected workspace must be an accessible, writable directory.");
     }
     const snapshot = await options.project.get();
-    const executor = snapshot.resources
-      .filter(isMissionExecutorResource)
-      .find((resource) => missionExecutorRef(resource) === parsed.executor.ref);
+    const executor = await options.executors.resolve(parsed.executor.ref);
     if (executor === undefined)
       throw new Error(`Mission executor not found: ${parsed.executor.ref}`);
+    if (executor.kind === "flow" && parsed.modelOverride !== undefined) {
+      throw new Error("Flow missions do not support a model override.");
+    }
     return await options.missions.create({
       workspace: { path: parsed.workspace, basename: basename(parsed.workspace) },
       goal: parsed.goal,
       project: { id: snapshot.projectId, revision: snapshot.revision },
       executor,
+      ...(parsed.modelOverride === undefined ? {} : { modelOverride: parsed.modelOverride }),
+      toolPermissionMode:
+        parsed.toolPermissionMode ?? (await options.getDefaultToolPermissionMode()),
     });
   });
   ipcMain.handle("missions:run", (_event, input: unknown) =>

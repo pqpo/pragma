@@ -5,6 +5,7 @@ import {
   ModelApiSchema as SharedModelApiSchema,
   ModelThinkingLevelMapSchema as SharedModelThinkingLevelMapSchema,
   ProviderModelDefinitionSchema,
+  ToolPermissionModeSchema,
 } from "@pragma/shared";
 import {
   canonicalPragmaResourceRef,
@@ -30,26 +31,7 @@ import {
   type PragmaInvocableResource,
   type PragmaResource,
 } from "@pragma/interpreter/ast";
-import type { PragmaStewardAPI } from "@pragma/steward/contracts";
 import { z } from "zod";
-
-export {
-  InitializeStewardSchema,
-  PromptStewardSchema,
-  RespondStewardInteractionSchema,
-  StewardChatSnapshotSchema,
-  StewardInteractionSchema,
-  StewardSessionStateSchema,
-} from "@pragma/steward/contracts";
-export type {
-  InitializeSteward,
-  PromptSteward,
-  RespondStewardInteraction,
-  StewardChatEntry,
-  StewardChatSnapshot,
-  StewardInteraction,
-  StewardSessionState,
-} from "@pragma/steward/contracts";
 
 export const DesktopAppInfoSchema = z.object({
   name: z.literal("Pragma Desktop"),
@@ -178,18 +160,36 @@ export const DesktopLocalePreferenceSchema = z.enum(["system", "en", "zh-Hans", 
 
 export const DesktopResolvedLocaleSchema = z.enum(["en", "zh-Hans", "zh-Hant"]);
 
+export const DesktopToolPermissionModeSchema = ToolPermissionModeSchema;
+
 export const DesktopSettingsSchema = z.object({
   schemaVersion: z.literal(1),
   localePreference: DesktopLocalePreferenceSchema,
+  toolPermissionMode: DesktopToolPermissionModeSchema.default("request-approval"),
+  stewardWorkspace: z.string().trim().min(1).max(2_000).optional(),
 });
 
-export const DesktopSettingsSnapshotSchema = DesktopSettingsSchema.extend({
+export const DesktopSettingsSnapshotSchema = DesktopSettingsSchema.omit({
+  stewardWorkspace: true,
+}).extend({
+  stewardWorkspace: z.string().trim().min(1).max(2_000),
+  usesDefaultStewardWorkspace: z.boolean(),
   resolvedLocale: DesktopResolvedLocaleSchema,
 });
 
-export const UpdateDesktopSettingsSchema = z.object({
-  localePreference: DesktopLocalePreferenceSchema,
-});
+export const UpdateDesktopSettingsSchema = z
+  .object({
+    localePreference: DesktopLocalePreferenceSchema.optional(),
+    toolPermissionMode: DesktopToolPermissionModeSchema.optional(),
+    stewardWorkspace: z.string().trim().min(1).max(2_000).nullable().optional(),
+  })
+  .refine(
+    (input) =>
+      input.localePreference !== undefined ||
+      input.toolPermissionMode !== undefined ||
+      input.stewardWorkspace !== undefined,
+    "At least one Desktop setting must be provided.",
+  );
 
 export const PickWorkspaceResultSchema = z.object({
   ok: z.boolean(),
@@ -832,6 +832,11 @@ export const ExpertContextStoreMountSchema = z.object({
   priority: z.number().int().nonnegative(),
 });
 
+export const ExpertExecutionProfileSchema = z.discriminatedUnion("mode", [
+  z.object({ mode: z.literal("pinned"), model: ExpertModelConfigSchema }),
+  z.object({ mode: z.literal("system-default") }),
+]);
+
 export const ExpertDefinitionSchema = z.object({
   schemaVersion: z.literal("pragma.desktop-expert-view/v1"),
   ref: PragmaSemanticResourceRefSchema.refine((value) => value.startsWith("expert:")),
@@ -842,7 +847,9 @@ export const ExpertDefinitionSchema = z.object({
   version: z.string().trim().min(1).max(100),
   scope: ExpertScopeSchema,
   instructions: ExpertInstructionsSchema,
-  model: ExpertModelConfigSchema,
+  origin: z.enum(["project", "built-in"]),
+  readOnly: z.boolean(),
+  executionProfile: ExpertExecutionProfileSchema,
   capabilities: z.array(ExpertCapabilityReferenceSchema).max(500),
   toolApprovals: z.record(z.string().max(200), ExpertToolApprovalModeSchema),
   plugins: z.array(ExpertPluginReferenceSchema).max(100),
@@ -864,6 +871,8 @@ export const ExpertSummarySchema = ExpertDefinitionSchema.pick({
   tags: true,
   version: true,
   scope: true,
+  origin: true,
+  readOnly: true,
   revision: true,
   createdAt: true,
   updatedAt: true,
@@ -873,6 +882,9 @@ export const CreateExpertDefinitionSchema = ExpertDefinitionSchema.omit({
   schemaVersion: true,
   ref: true,
   resourceRuntime: true,
+  origin: true,
+  readOnly: true,
+  executionProfile: true,
   revision: true,
   createdAt: true,
   updatedAt: true,
@@ -986,6 +998,26 @@ export const MissionExecutorSchema = z.discriminatedUnion("kind", [
   MissionExecutorBaseSchema.extend({ kind: z.literal("flow") }),
 ]);
 
+const MissionExecutorOptionBaseSchema = MissionExecutorBaseSchema.extend({
+  description: z.string().trim().max(2_000),
+  origin: z.enum(["project", "built-in"]),
+  readOnly: z.boolean(),
+});
+
+export const MissionExecutorOptionSchema = z.discriminatedUnion("kind", [
+  MissionExecutorOptionBaseSchema.extend({ kind: z.literal("expert") }),
+  MissionExecutorOptionBaseSchema.extend({ kind: z.literal("team") }),
+  MissionExecutorOptionBaseSchema.extend({ kind: z.literal("flow") }),
+]);
+
+export const MissionCreationDefaultsSchema = z.object({
+  workspace: MissionWorkspaceSchema,
+  executorRef: ExpertRefSchema,
+  toolPermissionMode: DesktopToolPermissionModeSchema,
+});
+
+export const MissionModelOverrideSchema = ExpertModelConfigSchema;
+
 export const MissionLifecycleStatusSchema = z.enum(["active", "completed"]);
 
 export const MissionUserMessageSchema = z.object({
@@ -1044,12 +1076,14 @@ export const MissionSchema = z.object({
   title: z.string().trim().min(1).max(120),
   goal: z.string().trim().min(1).max(100_000),
   initialMessageId: z.string().uuid(),
+  toolPermissionMode: DesktopToolPermissionModeSchema.default("request-approval"),
   workspace: MissionWorkspaceSchema,
   project: z.object({
     id: z.string().trim().min(1),
     revision: z.number().int().positive(),
   }),
   executor: MissionExecutorSchema,
+  modelOverride: MissionModelOverrideSchema.optional(),
   execution: z
     .object({
       id: z.string().uuid(),
@@ -1087,6 +1121,8 @@ export const CreateMissionSchema = z.object({
     ref: PragmaInvocableResourceRefSchema,
   }),
   goal: z.string().trim().min(1).max(100_000),
+  toolPermissionMode: DesktopToolPermissionModeSchema.optional(),
+  modelOverride: MissionModelOverrideSchema.optional(),
 });
 
 export function isMissionExecutorResource(
@@ -1108,6 +1144,15 @@ export function missionExecutorKind(resource: PragmaInvocableResource): "expert"
 
 export function missionExecutorRef(resource: PragmaInvocableResource): string {
   return canonicalPragmaResourceRef(resource);
+}
+
+export function missionExecutorSnapshot(resource: PragmaInvocableResource): MissionExecutor {
+  return MissionExecutorSchema.parse({
+    kind: missionExecutorKind(resource),
+    ref: missionExecutorRef(resource),
+    name: resource.metadata.name,
+    version: resource.metadata.version,
+  });
 }
 
 export const MissionActionSchema = z.object({ id: MissionIdSchema });
@@ -1209,6 +1254,7 @@ export type DesktopResolvedLocale = z.infer<typeof DesktopResolvedLocaleSchema>;
 export type DesktopSettings = z.infer<typeof DesktopSettingsSchema>;
 export type DesktopSettingsSnapshot = z.infer<typeof DesktopSettingsSnapshotSchema>;
 export type UpdateDesktopSettings = z.infer<typeof UpdateDesktopSettingsSchema>;
+export type DesktopToolPermissionMode = z.infer<typeof DesktopToolPermissionModeSchema>;
 export type PickWorkspaceResult = z.infer<typeof PickWorkspaceResultSchema>;
 export type ValidateWorkspaceResult = z.infer<typeof ValidateWorkspaceResultSchema>;
 export type ModelProviderModel = z.infer<typeof ModelProviderModelSchema>;
@@ -1241,6 +1287,8 @@ export type ImportPluginZip = z.infer<typeof ImportPluginZipSchema>;
 export type UpdatePluginDefaults = z.infer<typeof UpdatePluginDefaultsSchema>;
 export type ExpertPluginReference = z.infer<typeof ExpertPluginReferenceSchema>;
 export type ExpertDefinition = z.infer<typeof ExpertDefinitionSchema>;
+export type ExpertExecutionProfile = z.infer<typeof ExpertExecutionProfileSchema>;
+export type ExpertModelConfig = z.infer<typeof ExpertModelConfigSchema>;
 export type ExpertSummary = z.infer<typeof ExpertSummarySchema>;
 export type CreateExpertDefinition = z.infer<typeof CreateExpertDefinitionSchema>;
 export type UpdateExpertDefinition = z.infer<typeof UpdateExpertDefinitionSchema>;
@@ -1256,6 +1304,9 @@ export type DeleteWorkflowLayout = z.infer<typeof DeleteWorkflowLayoutSchema>;
 export type Mission = z.infer<typeof MissionSchema>;
 export type MissionSummary = z.infer<typeof MissionSummarySchema>;
 export type MissionExecutor = z.infer<typeof MissionExecutorSchema>;
+export type MissionExecutorOption = z.infer<typeof MissionExecutorOptionSchema>;
+export type MissionCreationDefaults = z.infer<typeof MissionCreationDefaultsSchema>;
+export type MissionModelOverride = z.infer<typeof MissionModelOverrideSchema>;
 export type MissionLifecycleStatus = z.infer<typeof MissionLifecycleStatusSchema>;
 export type CreateMission = z.infer<typeof CreateMissionSchema>;
 export type MissionUserMessage = z.infer<typeof MissionUserMessageSchema>;
@@ -1285,7 +1336,7 @@ export type CapabilityTestResult = z.infer<typeof CapabilityTestResultSchema>;
 export type PreviewCodeServiceRequest = z.infer<typeof PreviewCodeServiceRequestSchema>;
 export type PreviewCodeServiceResult = z.infer<typeof PreviewCodeServiceResultSchema>;
 
-export interface PragmaDesktopAPI extends PragmaStewardAPI {
+export interface PragmaDesktopAPI {
   getBridgeSnapshot: () => Promise<DesktopBridgeSnapshot>;
   getDesktopSettings: () => Promise<DesktopSettingsSnapshot>;
   updateDesktopSettings: (input: UpdateDesktopSettings) => Promise<DesktopSettingsSnapshot>;
@@ -1331,6 +1382,8 @@ export interface PragmaDesktopAPI extends PragmaStewardAPI {
   saveWorkflowLayout: (layout: WorkflowLayout) => Promise<WorkflowLayout>;
   deleteWorkflowLayout: (input: DeleteWorkflowLayout) => Promise<void>;
   listMissions: () => Promise<MissionSummary[]>;
+  listMissionExecutors: () => Promise<MissionExecutorOption[]>;
+  getMissionCreationDefaults: () => Promise<MissionCreationDefaults>;
   getMission: (id: string) => Promise<Mission>;
   createMission: (input: CreateMission) => Promise<Mission>;
   runMission: (id: string) => Promise<Mission>;

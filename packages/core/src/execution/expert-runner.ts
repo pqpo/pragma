@@ -5,7 +5,6 @@ import {
   type AgentInstance,
   type AgentMessage,
   type AgentMessageUsage,
-  type ExpertAgentStreamEvent,
   type Invocation,
   type RuntimeContextRecord,
   type RuntimeEnvironmentBinding,
@@ -32,7 +31,16 @@ import type {
 import { mergeUsage } from "../runtime/usage.ts";
 import { openRuntimeSession } from "../runtime/session-factory.ts";
 import type { RuntimeResolver } from "../runtime-resolver.ts";
-import type { ExpertAgentHumanRequest, ExpertAgentHumanResponse } from "../tools/managed-tool.ts";
+import type {
+  ExpertAgentAutomaticHumanInteractionHandler,
+  ExpertAgentHumanRequest,
+  ExpertAgentHumanResponse,
+} from "../tools/managed-tool.ts";
+import {
+  ExpertAgentHumanRequestSchema,
+  ExpertAgentHumanResponseSchema,
+} from "../tools/managed-tool.ts";
+import { sameHumanRequest } from "../human-interaction/durable-human-interaction.ts";
 import {
   ExecutionFinalStatusConflictError,
   ExecutionVersionConflictError,
@@ -63,6 +71,12 @@ interface ActiveSubmission {
   readonly handle: RuntimeSubmitHandle;
 }
 
+interface StoredHumanInteraction {
+  readonly interactionId: string;
+  readonly invocationId: string;
+  readonly request: ExpertAgentHumanRequest;
+}
+
 export class ExecutionController {
   private readonly activeRuntimeSessions = new Map<string, RuntimeAgentSession>();
   private readonly activeRuntimeSubmissions = new Map<string, ActiveSubmission>();
@@ -74,6 +88,7 @@ export class ExecutionController {
     }>
   >();
   private readonly invocationSignals = new Map<string, AbortController>();
+  private readonly linkedInvocationSignals = new Map<string, AbortSignal>();
   private readonly pendingInteractions = new Map<
     string,
     {
@@ -86,13 +101,25 @@ export class ExecutionController {
   private cancelled = false;
   private cancellationReason: Error | undefined;
   private usage: AgentMessageUsage | undefined;
+  private readonly recoverableInteractions: Promise<StoredHumanInteraction[]>;
 
   constructor(
     readonly executionId: string,
     readonly store: ExecutionStore,
     private readonly runtimeSessions: RuntimeSessionPool = new RuntimeSessionPool(),
-    private readonly options: { readonly closeContextsOnCancel?: boolean } = {},
-  ) {}
+    private readonly options: {
+      readonly closeContextsOnCancel?: boolean;
+      readonly recoverHumanInteractionIds?: readonly string[];
+      readonly automaticHumanInteractionHandler?:
+        | ExpertAgentAutomaticHumanInteractionHandler
+        | undefined;
+    } = {},
+  ) {
+    this.recoverableInteractions =
+      options.recoverHumanInteractionIds === undefined
+        ? Promise.resolve([])
+        : readHumanInteractionsById(store, executionId, options.recoverHumanInteractionIds);
+  }
 
   isCancelled(): boolean {
     return this.cancelled;
@@ -110,13 +137,24 @@ export class ExecutionController {
     return this.usage;
   }
 
-  signalForInvocation(invocationId: string): AbortSignal {
+  signalForInvocation(invocationId: string, parentInvocationId?: string): AbortSignal {
+    const linked = this.linkedInvocationSignals.get(invocationId);
+    if (linked !== undefined) return linked;
     const existing = this.invocationSignals.get(invocationId);
-    if (existing !== undefined) return existing.signal;
-    const created = new AbortController();
-    if (this.cancelled) created.abort(new Error(`Execution cancelled: ${this.executionId}`));
-    this.invocationSignals.set(invocationId, created);
-    return created.signal;
+    const controller = existing ?? new AbortController();
+    if (existing === undefined) {
+      if (this.cancelled) controller.abort(new Error(`Execution cancelled: ${this.executionId}`));
+      this.invocationSignals.set(invocationId, controller);
+    }
+    if (parentInvocationId === undefined || parentInvocationId === invocationId) {
+      return controller.signal;
+    }
+    const signal = AbortSignal.any([
+      controller.signal,
+      this.signalForInvocation(parentInvocationId),
+    ]);
+    this.linkedInvocationSignals.set(invocationId, signal);
+    return signal;
   }
 
   async acquireRuntime(
@@ -235,50 +273,103 @@ export class ExecutionController {
   async requestHumanInteraction(
     invocationId: string,
     request: ExpertAgentHumanRequest,
-    interactionId: string = randomUUID(),
+    requestedInteractionId?: string,
   ): Promise<ExpertAgentHumanResponse> {
     if (this.cancelled) throw new Error("Execution was cancelled.");
-    await this.store.appendEvent(
-      this.executionId,
-      invocationId,
-      "human.requested",
-      { interactionId, request },
-      `human-request:${interactionId}`,
+    const signal = this.signalForInvocation(invocationId);
+    if (signal.aborted) throw signal.reason ?? new Error("Invocation was aborted.");
+    const parsedRequest = ExpertAgentHumanRequestSchema.parse(request);
+    const recoverable = (await this.recoverableInteractions).find((interaction) =>
+      sameHumanRequest(interaction.request, parsedRequest),
     );
+    const interactionId = recoverable?.interactionId ?? requestedInteractionId ?? randomUUID();
+    if (recoverable !== undefined) {
+      const interactions = await this.recoverableInteractions;
+      interactions.splice(interactions.indexOf(recoverable), 1);
+      const restoredResponse = await readHumanInteractionResponse(
+        this.store,
+        this.executionId,
+        interactionId,
+      );
+      if (restoredResponse !== undefined) return restoredResponse;
+    } else {
+      await this.store.appendEvent(
+        this.executionId,
+        invocationId,
+        "human.requested",
+        { interactionId, request: parsedRequest },
+        `human-request:${interactionId}`,
+      );
+    }
     if (this.cancelled) throw new Error("Execution was cancelled.");
+    if (signal.aborted) throw signal.reason ?? new Error("Invocation was aborted.");
+    const automaticResponse = await this.options.automaticHumanInteractionHandler?.(request);
+    if (automaticResponse !== undefined) {
+      const requestId = `automatic-human-response:${interactionId}`;
+      await this.store.appendEvent(
+        this.executionId,
+        invocationId,
+        "human.responded",
+        { interactionId, requestId, response: automaticResponse },
+        requestId,
+      );
+      return automaticResponse;
+    }
     return await new Promise((resolve, reject) => {
-      this.pendingInteractions.set(interactionId, { invocationId, resolve, reject });
+      let settled = false;
+      const cleanup = () => {
+        signal.removeEventListener("abort", abort);
+        if (this.pendingInteractions.get(interactionId) === pending) {
+          this.pendingInteractions.delete(interactionId);
+        }
+      };
+      const pending = {
+        invocationId,
+        resolve: (value: ExpertAgentHumanResponse) => {
+          if (settled) return;
+          settled = true;
+          cleanup();
+          resolve(value);
+        },
+        reject: (reason: unknown) => {
+          if (settled) return;
+          settled = true;
+          cleanup();
+          reject(reason);
+        },
+      };
+      const abort = () =>
+        pending.reject(signal.reason ?? new Error(`Invocation aborted: ${invocationId}`));
+      this.pendingInteractions.set(interactionId, pending);
+      signal.addEventListener("abort", abort, { once: true });
+      if (signal.aborted) abort();
+      void readHumanInteractionResponse(this.store, this.executionId, interactionId).then(
+        (persisted) => {
+          if (persisted !== undefined) pending.resolve(persisted);
+        },
+        (error: unknown) => pending.reject(error),
+      );
     });
   }
 
   async respond(interactionId: string, response: unknown, requestId: string): Promise<void> {
     const pending = this.pendingInteractions.get(interactionId);
-    if (pending === undefined) {
-      const responded = (await this.store.readEvents(this.executionId)).find(
-        (event) =>
-          event.type === "human.responded" &&
-          (event.data as { interactionId?: unknown }).interactionId === interactionId,
-      );
-      if (responded !== undefined) {
-        if ((responded.data as { requestId?: unknown }).requestId === requestId) return;
-        throw new Error(`Human interaction idempotency conflict: ${interactionId}`);
-      }
-      throw new Error(`Human interaction is not pending: ${interactionId}`);
-    }
-    if (pending.requestId !== undefined) {
+    if (pending?.requestId !== undefined) {
       if (pending.requestId === requestId) return;
       throw new Error(`Human interaction idempotency conflict: ${interactionId}`);
     }
-    pending.requestId = requestId;
-    await this.store.appendEvent(
+    if (pending !== undefined) pending.requestId = requestId;
+    const parsedResponse = await persistHumanInteractionResponse(
+      this.store,
       this.executionId,
-      (await this.store.get(this.executionId))!.rootInvocationId,
-      "human.responded",
-      { interactionId, requestId, response },
+      interactionId,
+      response,
       requestId,
     );
-    this.pendingInteractions.delete(interactionId);
-    pending.resolve(response as ExpertAgentHumanResponse);
+    if (pending !== undefined) {
+      this.pendingInteractions.delete(interactionId);
+      pending.resolve(parsedResponse);
+    }
   }
 
   async cancel(reason?: string): Promise<void> {
@@ -350,6 +441,7 @@ export class ExecutionController {
     );
     this.activeRuntimeSubmissions.clear();
     this.invocationSignals.clear();
+    this.linkedInvocationSignals.clear();
     getExecutionLiveBus(this.store).complete(this.executionId);
   }
 
@@ -379,6 +471,117 @@ export class ExecutionController {
   }
 }
 
+export async function listPendingHumanInteractionIds(
+  store: ExecutionStore,
+  executionId: string,
+): Promise<readonly string[]> {
+  return (await readPendingHumanInteractions(store, executionId)).map(
+    (interaction) => interaction.interactionId,
+  );
+}
+
+export async function persistHumanInteractionResponse(
+  store: ExecutionStore,
+  executionId: string,
+  interactionId: string,
+  response: unknown,
+  requestId: string,
+): Promise<ExpertAgentHumanResponse> {
+  const execution = await store.get(executionId);
+  if (execution === undefined) throw new Error(`Execution not found: ${executionId}`);
+  if (isTerminalExecutionStatus(execution.status)) {
+    throw new Error(`Human interaction is not pending: ${interactionId}`);
+  }
+  const events = await store.readEvents(executionId);
+  const responded = events.find(
+    (event) =>
+      event.type === "human.responded" &&
+      (event.data as { interactionId?: unknown }).interactionId === interactionId,
+  );
+  if (responded !== undefined) {
+    if ((responded.data as { requestId?: unknown }).requestId === requestId) {
+      return ExpertAgentHumanResponseSchema.parse(
+        (responded.data as { response?: unknown }).response,
+      );
+    }
+    throw new Error(`Human interaction idempotency conflict: ${interactionId}`);
+  }
+  const requested = events.find(
+    (event) =>
+      event.type === "human.requested" &&
+      (event.data as { interactionId?: unknown }).interactionId === interactionId,
+  );
+  if (requested === undefined) {
+    throw new Error(`Human interaction is not pending: ${interactionId}`);
+  }
+  const parsedResponse = ExpertAgentHumanResponseSchema.parse(response);
+  await store.appendEvent(
+    executionId,
+    requested.invocationId,
+    "human.responded",
+    { interactionId, requestId, response: parsedResponse },
+    requestId,
+  );
+  return parsedResponse;
+}
+
+async function readPendingHumanInteractions(
+  store: ExecutionStore,
+  executionId: string,
+): Promise<StoredHumanInteraction[]> {
+  const events = await store.readEvents(executionId);
+  const responded = new Set(
+    events
+      .filter((event) => event.type === "human.responded")
+      .map((event) => String((event.data as { interactionId?: unknown }).interactionId ?? "")),
+  );
+  return events.flatMap((event): StoredHumanInteraction[] => {
+    if (event.type !== "human.requested") return [];
+    const data = event.data as { interactionId?: unknown; request?: unknown };
+    const interactionId = String(data.interactionId ?? "");
+    if (interactionId === "" || responded.has(interactionId)) return [];
+    const request = ExpertAgentHumanRequestSchema.safeParse(data.request);
+    return request.success
+      ? [{ interactionId, invocationId: event.invocationId, request: request.data }]
+      : [];
+  });
+}
+
+async function readHumanInteractionsById(
+  store: ExecutionStore,
+  executionId: string,
+  interactionIds: readonly string[],
+): Promise<StoredHumanInteraction[]> {
+  const expected = new Set(interactionIds);
+  return (await store.readEvents(executionId)).flatMap((event): StoredHumanInteraction[] => {
+    if (event.type !== "human.requested") return [];
+    const data = event.data as { interactionId?: unknown; request?: unknown };
+    const interactionId = String(data.interactionId ?? "");
+    if (!expected.has(interactionId)) return [];
+    const request = ExpertAgentHumanRequestSchema.safeParse(data.request);
+    return request.success
+      ? [{ interactionId, invocationId: event.invocationId, request: request.data }]
+      : [];
+  });
+}
+
+async function readHumanInteractionResponse(
+  store: ExecutionStore,
+  executionId: string,
+  interactionId: string,
+): Promise<ExpertAgentHumanResponse | undefined> {
+  const responded = (await store.readEvents(executionId)).find(
+    (event) =>
+      event.type === "human.responded" &&
+      (event.data as { interactionId?: unknown }).interactionId === interactionId,
+  );
+  return responded === undefined
+    ? undefined
+    : ExpertAgentHumanResponseSchema.parse(
+        (responded.data as { response?: unknown }).response,
+      );
+}
+
 export interface RunExpertInvocationOptions {
   readonly executionId: string;
   readonly invocationId: string;
@@ -395,6 +598,7 @@ export interface RunExpertInvocationOptions {
   readonly store: ExecutionStore;
   readonly runtimes: RuntimeResolver;
   readonly modelSelection?: RuntimeModelSelection | undefined;
+  readonly runtimeRunId?: string | undefined;
   readonly team?: ExpertTeam | undefined;
   readonly depth?: number | undefined;
   readonly persistContext?: ((context: RuntimeContextRecord) => Promise<void>) | undefined;
@@ -466,7 +670,10 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
     options.prompt,
     `invocation-user-message:${options.invocationId}`,
   );
-  const invocationSignal = options.controller.signalForInvocation(options.invocationId);
+  const invocationSignal = options.controller.signalForInvocation(
+    options.invocationId,
+    options.parentInvocationId,
+  );
   throwIfAborted(invocationSignal, options.invocationId);
 
   const modelSelection = options.modelSelection ?? readExpertModelSelection(nativeExpert);
@@ -569,8 +776,8 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
         query,
         runId:
           continuation === 0
-            ? options.invocationId
-            : `${options.invocationId}:continuation:${continuation}`,
+            ? (options.runtimeRunId ?? options.invocationId)
+            : `${options.runtimeRunId ?? options.invocationId}:continuation:${continuation}`,
         executionContext,
         humanInteractionHandler,
         modelSelection,
@@ -1059,15 +1266,13 @@ async function submitRuntimeTurn(options: {
           `invocation-message:${event.eventId}:${message.timestamp}`,
         );
       }
-      if (isDurableRuntimeEvent(event)) {
-        await options.options.store.appendEvent(
-          options.options.executionId,
-          options.options.invocationId,
-          "runtime.event",
-          event,
-          event.eventId,
-        );
-      }
+      await options.options.store.appendEvent(
+        options.options.executionId,
+        options.options.invocationId,
+        "runtime.event",
+        event,
+        event.eventId,
+      );
     }
   })();
   try {
@@ -1257,14 +1462,5 @@ function sameRuntimeBinding(
     left.runtimeId === right.runtimeId &&
     left.revision === right.revision &&
     left.fingerprint === right.fingerprint
-  );
-}
-
-function isDurableRuntimeEvent(event: ExpertAgentStreamEvent): boolean {
-  return (
-    event.type !== "message.delta" &&
-    event.type !== "message.completed" &&
-    event.type !== "thought.delta" &&
-    event.type !== "tool.delta"
   );
 }

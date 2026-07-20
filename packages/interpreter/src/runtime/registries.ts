@@ -17,6 +17,7 @@ import {
   type Flow,
   type FlowTaskContext,
   type RuntimeResolver,
+  type RuntimeModelSelection,
 } from "@pragma/core";
 
 import type { PragmaAdapterHost, PragmaResourceAdapterRegistry } from "./resource-adapters.ts";
@@ -169,6 +170,13 @@ export interface PragmaCompileHost {
   readonly projectRoot?: string | undefined;
   readonly environmentId?: string | undefined;
   readonly runtimes?: RuntimeResolver | undefined;
+  readonly defaultModelSelection?: RuntimeModelSelection | undefined;
+  readonly rootExecutionOverride?:
+    | {
+        readonly runtimeId: string;
+        readonly modelSelection?: RuntimeModelSelection | undefined;
+      }
+    | undefined;
   readonly actions?: FlowActionRegistry | undefined;
   readonly contextPolicies?: ContextPolicyRegistry | undefined;
   readonly toolAdapters?: ToolAdapterRegistry | undefined;

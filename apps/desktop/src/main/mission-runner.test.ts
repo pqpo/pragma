@@ -14,6 +14,7 @@ import type {
 } from "@pragma/interpreter/ast";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { missionExecutorSnapshot } from "../shared/desktop-api.ts";
 import type { CapabilityCredentialStore } from "./capability-credential-store.ts";
 import type { CapabilityStore } from "./capability-store.ts";
 import { createMissionRunner } from "./mission-runner.ts";
@@ -21,6 +22,7 @@ import { createMissionStore, type MissionStore } from "./mission-store.ts";
 import { createPragmaProjectStore } from "./pragma-project-store.ts";
 
 const temporaryPaths: string[] = [];
+const settlementTimeoutMs = 10_000;
 
 afterEach(async () => {
   vi.restoreAllMocks();
@@ -29,7 +31,7 @@ afterEach(async () => {
   );
 });
 
-describe("MissionRunner", () => {
+describe("MissionRunner", { timeout: 15_000 }, () => {
   it("streams rich chat activity and interrupts the active execution", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-mission-interrupt-"));
     temporaryPaths.push(root);
@@ -43,7 +45,10 @@ describe("MissionRunner", () => {
       workspace: { path: root, basename: "workspace" },
       goal: "Inspect before stopping",
       project: { id: snapshot.projectId, revision: snapshot.revision },
-      executor: snapshot.resources.find((resource) => resource.kind === "Expert")!,
+      executor: missionExecutorSnapshot(
+        snapshot.resources.find((resource) => resource.kind === "Expert")!,
+      ),
+      toolPermissionMode: "full-access",
     });
     const cancelTurn = vi.fn();
     const runtime = defineRuntimeDriver<never, { id: string }>({
@@ -79,6 +84,11 @@ describe("MissionRunner", () => {
       cancelTurn,
       closeSession: () => undefined,
     });
+    const runtimeResolver = createStaticRuntimeResolver({
+      runtimes: [runtime],
+      defaultRuntimeId: "fake",
+    });
+    const runtimesForToolPermissionMode = vi.fn(() => runtimeResolver);
     const runner = createMissionRunner({
       missions,
       project,
@@ -86,22 +96,27 @@ describe("MissionRunner", () => {
       capabilityCredentials: {} as CapabilityCredentialStore,
       capabilitiesPath: join(root, "capabilities"),
       pragmaHome: join(root, "state"),
-      runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
+      runtimes: runtimeResolver,
+      runtimesForToolPermissionMode,
     });
     const updates = vi.fn();
     const unsubscribe = runner.subscribeChat(updates);
 
     await runner.run(mission.id);
-    await vi.waitFor(async () => {
-      const chat = await runner.getChat({ id: mission.id, limit: 50 });
-      expect(chat.execution?.interruptible).toBe(true);
-      expect(chat.entries).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({ kind: "thinking", content: "Checking constraints." }),
-          expect.objectContaining({ kind: "tool", toolName: "read_file", status: "running" }),
-        ]),
-      );
-    });
+    expect(runtimesForToolPermissionMode).toHaveBeenCalledWith("full-access");
+    await vi.waitFor(
+      async () => {
+        const chat = await runner.getChat({ id: mission.id, limit: 50 });
+        expect(chat.execution?.interruptible).toBe(true);
+        expect(chat.entries).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ kind: "thinking", content: "Checking constraints." }),
+            expect.objectContaining({ kind: "tool", toolName: "read_file", status: "running" }),
+          ]),
+        );
+      },
+      { timeout: settlementTimeoutMs },
+    );
 
     const interrupted = await runner.interrupt(mission.id);
     expect(interrupted.execution?.status).toBe("cancelled");
@@ -131,7 +146,15 @@ describe("MissionRunner", () => {
       workspace: { path: root, basename: "workspace" },
       goal: "Prepare a concise answer",
       project: { id: snapshot.projectId, revision: snapshot.revision },
-      executor: snapshot.resources.find((resource) => resource.kind === "Expert")!,
+      executor: missionExecutorSnapshot(
+        snapshot.resources.find((resource) => resource.kind === "Expert")!,
+      ),
+      modelOverride: {
+        runtimeId: "fake",
+        providerId: "provider",
+        modelId: "model",
+        thinkingLevel: "high",
+      },
     });
     const startTurn = vi.fn(
       (
@@ -142,12 +165,16 @@ describe("MissionRunner", () => {
         runtimeSessionId: session.id,
       }),
     );
+    const createSession = vi.fn((context: RuntimeDriverSessionContext) => ({
+      context,
+      id: `runtime-${context.systemSessionId}`,
+    }));
     const runtime = defineRuntimeDriver<
       never,
       { context: RuntimeDriverSessionContext; id: string }
     >({
       descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
-      createSession: (context) => ({ context, id: `runtime-${context.systemSessionId}` }),
+      createSession,
       restoreSession: (context) => ({ context, id: context.request.runtimeSession!.id }),
       readSession: (session) => ({ runtimeSessionId: session.id }),
       startTurn,
@@ -175,7 +202,17 @@ describe("MissionRunner", () => {
     expect(firstRun.execution?.sessionId).toMatch(/^[0-9a-f-]{36}$/);
     await vi.waitFor(
       async () => expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
-      { timeout: 3_000 },
+      { timeout: settlementTimeoutMs },
+    );
+    expect(createSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        request: expect.objectContaining({
+          modelSelection: {
+            model: { providerId: "provider", modelId: "model" },
+            thinkingLevel: "high",
+          },
+        }),
+      }),
     );
     await expect(runner.getChat({ id: mission.id, limit: 50 })).resolves.toMatchObject({
       entries: expect.arrayContaining([
@@ -201,7 +238,7 @@ describe("MissionRunner", () => {
     await followup;
     await vi.waitFor(
       async () => expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
-      { timeout: 3_000 },
+      { timeout: settlementTimeoutMs },
     );
     const conversation = await runner.getChat({ id: mission.id, limit: 50 });
     expect(
@@ -237,7 +274,7 @@ describe("MissionRunner", () => {
       workspace: { path: root, basename: "workspace" },
       goal: "Review the release",
       project: { id: snapshot.projectId, revision: snapshot.revision },
-      executor: flow,
+      executor: missionExecutorSnapshot(flow),
     });
     const runtime = defineRuntimeDriver<never, { id: string }>({
       descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
@@ -261,7 +298,7 @@ describe("MissionRunner", () => {
     await runner.run(mission.id);
     await vi.waitFor(
       async () => expect((await missions.get(mission.id)).execution?.status).toBe("waiting"),
-      { timeout: 3_000 },
+      { timeout: settlementTimeoutMs },
     );
     const waitingMission = await missions.get(mission.id);
     const rejectRecoveryReference = vi.fn(async () => {
@@ -304,7 +341,7 @@ describe("MissionRunner", () => {
     });
     await vi.waitFor(
       async () => expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
-      { timeout: 3_000 },
+      { timeout: settlementTimeoutMs },
     );
   });
 
@@ -321,7 +358,9 @@ describe("MissionRunner", () => {
       workspace: { path: root, basename: "workspace" },
       goal: "Persist this reply",
       project: { id: snapshot.projectId, revision: snapshot.revision },
-      executor: snapshot.resources.find((resource) => resource.kind === "Expert")!,
+      executor: missionExecutorSnapshot(
+        snapshot.resources.find((resource) => resource.kind === "Expert")!,
+      ),
     });
     const runtime = defineRuntimeDriver<never, { id: string }>({
       descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
@@ -351,7 +390,7 @@ describe("MissionRunner", () => {
     await vi.waitFor(
       async () =>
         expect((await storedMissions.get(mission.id)).execution?.status).toBe("succeeded"),
-      { timeout: 3_000 },
+      { timeout: settlementTimeoutMs },
     );
     await runner.sendMessage({
       id: mission.id,
@@ -361,7 +400,7 @@ describe("MissionRunner", () => {
     await vi.waitFor(
       async () =>
         expect((await storedMissions.get(mission.id)).execution?.status).toBe("succeeded"),
-      { timeout: 3_000 },
+      { timeout: settlementTimeoutMs },
     );
     const chat = await runner.getChat({ id: mission.id, limit: 50 });
     const reply = chat.entries.filter((entry) => entry.kind === "assistant").at(-1);

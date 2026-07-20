@@ -1,104 +1,14 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import type { PragmaResource } from "@pragma/interpreter/ast";
-
 import type { Mission } from "../../../../shared/desktop-api.ts";
-import { CreateMissionFragment, MissionDetailFragment, MissionsPage } from "./MissionsPage.tsx";
+import { MissionDetailFragment, MissionsPage } from "./MissionsPage.tsx";
 
 describe("MissionsPage", () => {
-  it("presents mission creation as an AI prompt card with scoped capability entries", () => {
-    const html = renderToStaticMarkup(<MissionsPage />);
+  it("keeps creation outside the missions surface", () => {
+    const html = renderToStaticMarkup(<MissionsPage onCreate={() => undefined} />);
 
-    expect(html).toContain("Start a mission");
-    expect(html).toContain('aria-label="Mission context and tools"');
-    expect(html).toContain(">Context<");
-    expect(html).toContain(">Files<");
-    expect(html).toContain(">Knowledge<");
-    expect(html).toContain(">Tools<");
-    expect(html.match(/aria-disabled="true"/g)?.length).toBe(3);
-  });
-
-  it("preselects an expert requested from Studio", () => {
-    const expert: PragmaResource = {
-      apiVersion: "pragma/v2",
-      kind: "Expert",
-      metadata: {
-        id: "test_expert",
-        version: "0.1.0",
-        name: "Test Expert",
-        description: "Handles focused test work.",
-        tags: [],
-      },
-      spec: {
-        scope: "testing",
-        instructions: "Run focused tests.",
-        runtime: { ref: "runtime-profile:test@1.0.0" },
-        capabilities: [],
-        toolApprovals: {},
-        contextStores: [],
-        plugins: [],
-        tools: [],
-      },
-    };
-    const html = renderToStaticMarkup(
-      <CreateMissionFragment
-        executors={[expert]}
-        initialExecutorRef="expert:test_expert@0.1.0"
-        onCreated={() => undefined}
-      />,
-    );
-
-    expect(html).toContain(
-      '<button class="mission-executor-trigger" type="button" aria-expanded="false" aria-haspopup="dialog"><strong>Test Expert</strong>',
-    );
-    expect(html).not.toContain("<select");
-  });
-
-  it("does not present capabilities or runtime profiles as mission executors", () => {
-    const expert: PragmaResource = {
-      apiVersion: "pragma/v2",
-      kind: "Expert",
-      metadata: {
-        id: "real_expert",
-        version: "1.0.0",
-        name: "Real Expert",
-        description: "Runs the mission.",
-        tags: [],
-      },
-      spec: {
-        scope: "testing",
-        instructions: "Run the mission.",
-        runtime: { ref: "runtime-profile:real_expert@1.0.0" },
-        capabilities: [],
-        toolApprovals: {},
-        contextStores: [],
-        plugins: [],
-        tools: [],
-      },
-    };
-    const capability: PragmaResource = {
-      apiVersion: "pragma/v2",
-      kind: "Capability",
-      metadata: {
-        id: "not_an_executor",
-        version: "1.0.0",
-        name: "Capability should stay hidden",
-        description: "This resource cannot run a mission.",
-        tags: [],
-      },
-      spec: { adapter: "pragma.capability.mcp@v1", config: {} },
-    };
-    const html = renderToStaticMarkup(
-      <CreateMissionFragment
-        executors={[expert, capability]}
-        initialExecutorRef="expert:real_expert@1.0.0"
-        onCreated={() => undefined}
-      />,
-    );
-
-    expect(html).toContain("Real Expert");
-    expect(html).not.toContain("Capability should stay hidden");
-    expect(html).not.toContain("· flow");
+    expect(html).toContain("New mission");
+    expect(html).not.toContain("mission-create-selectors");
   });
 });
 
@@ -147,6 +57,7 @@ function missionFixture(kind: "expert" | "team"): Mission {
     title: "Missions page design",
     goal: "Design the Missions page.",
     initialMessageId: "00000000-0000-4000-8000-000000000001",
+    toolPermissionMode: "request-approval",
     workspace: { path: "/workspace/expert-mesh", basename: "expert-mesh" },
     project: { id: "studio", revision: 1 },
     executor: {
