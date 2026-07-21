@@ -359,7 +359,7 @@ describe("Execution canonical event log", () => {
       },
       "spawn-children",
     );
-    const source = (sessionId: string, runId: string) => ({
+    const source = (sessionId: string, runId: string, displayName?: string) => ({
       kind: "agent" as const,
       runId,
       parentRunId: "root-run",
@@ -367,6 +367,7 @@ describe("Execution canonical event log", () => {
       parentSessionId: "root-thread",
       agentId: sessionId,
       agentType: "codex-subagent",
+      ...(displayName === undefined ? {} : { displayName }),
       path: [],
     });
     const childRuns = [
@@ -386,7 +387,7 @@ describe("Execution canonical event log", () => {
           runId,
           parentRunId: "root-run",
           emittedAt,
-          source: source(sessionId, runId),
+          source: source(sessionId, runId, index === 1 ? "Researcher" : undefined),
           type: "run.started",
           payload: { task: `task ${index}` },
         },
@@ -427,6 +428,7 @@ describe("Execution canonical event log", () => {
     const records = await reader.listRecords({ executionIds: ["execution"] });
     const childA = records.find((record) => record.recordId === "runtime-agent:child-a");
     expect(childA?.tasks).toHaveLength(2);
+    expect(childA?.displayName).toBe("Researcher");
     expect(childA?.tasks.every((task) => task.taskId.includes("turn-a-"))).toBe(true);
     expect(records.filter((record) => record.kind === "runtime-agent")).toHaveLength(2);
     await expect(

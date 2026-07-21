@@ -1,12 +1,18 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import type { Mission, MissionChatSnapshot } from "../../../../shared/desktop-api.ts";
+import type {
+  Mission,
+  MissionChatSnapshot,
+  MissionWorkRecord,
+} from "../../../../shared/desktop-api.ts";
+import { i18n } from "../../i18n/index.ts";
 import {
   applyMissionChatPatches,
   groupMissionConversationEntries,
   MissionDetailFragment,
   MissionThinkingEntry,
   MissionsPage,
+  missionWorkRecordTitle,
   resolveMissionSearchCollapsed,
   shouldClearMissionThinkingPlaceholder,
   shouldShowMissionThinkingPlaceholder,
@@ -63,6 +69,17 @@ describe("MissionsPage", () => {
       }),
     ).toBe(false);
   });
+
+  it("ignores scroll corrections caused by the search transition at the list boundary", () => {
+    expect(
+      resolveMissionSearchCollapsed({
+        collapsed: true,
+        previousScrollTop: 640,
+        scrollTop: 578,
+        transitionLocked: true,
+      }),
+    ).toBe(true);
+  });
 });
 
 describe("MissionDetailFragment", () => {
@@ -115,6 +132,32 @@ describe("MissionDetailFragment", () => {
     expect(html.indexOf("mission-page-error")).toBeLessThan(html.indexOf("mission-chat-composer"));
     expect(html).toContain('aria-label="Close"');
     expect(html).toContain("The message could not be submitted.");
+  });
+});
+
+describe("Mission work record titles", () => {
+  it("keeps real names and localizes unnamed runtime-agent ordinals", async () => {
+    const record: MissionWorkRecord = {
+      recordId: "runtime-agent:child",
+      kind: "runtime-agent",
+      sessionId: "child",
+      title: "Subagent 2",
+      fallbackOrdinal: 2,
+      origin: "runtime",
+      status: "running",
+      tasks: [],
+      summary: "Inspect the repository",
+      createdAt: "2026-07-21T00:00:00.000Z",
+      updatedAt: "2026-07-21T00:00:00.000Z",
+    };
+
+    await i18n.changeLanguage("zh-Hans");
+    expect(missionWorkRecordTitle(record)).toBe("子代理 2");
+    expect(
+      missionWorkRecordTitle({ ...record, title: "架构专家", fallbackOrdinal: undefined }),
+    ).toBe("架构专家");
+    await i18n.changeLanguage("en");
+    expect(missionWorkRecordTitle(record)).toBe("Subagent 2");
   });
 });
 

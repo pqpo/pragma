@@ -90,6 +90,7 @@ export const missions = {
   executionWork: "Mission execution work",
   executionMap: "Execution map",
   executionMapDescription: "Workflow steps and delegated experts share the same execution tree.",
+  runtimeAgentFallbackName: "Subagent {{number}}",
   you: "You",
   input: "Input",
   output: "Output",

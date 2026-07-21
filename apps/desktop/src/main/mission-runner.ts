@@ -10,6 +10,7 @@ import {
   isExpertTeam,
   StoredExecutionView,
   type AgentMessageRecord,
+  type ExecutionWorkRecord,
   type ExecutionOutputItem,
   type ExpertAgentAutomaticHumanInteractionHandler,
   type ExpertAgentHumanRequest,
@@ -839,6 +840,7 @@ export function createMissionRunner(options: {
         : { rootSessionId: mission.execution.sessionId }),
     });
     const names = await getExecutorNames(mission);
+    const runtimeAgentOrdinals = createRuntimeAgentOrdinals(records);
     return {
       missionId: mission.id,
       revision: workRevisions.get(mission.id) ?? 0,
@@ -857,11 +859,18 @@ export function createMissionRunner(options: {
           updatedAt: task.updatedAt,
         }));
         const latest = tasks.at(-1);
-        const title =
+        const resolvedName =
           record.displayName ??
           (record.executorId === undefined ? undefined : names.get(record.executorId)) ??
-          (record.kind === "root" ? mission.executor.name : undefined) ??
-          (record.kind === "runtime-agent" ? "Subagent" : record.executorId) ??
+          (record.kind === "root" ? mission.executor.name : undefined);
+        const fallbackOrdinal =
+          record.kind === "runtime-agent" && resolvedName === undefined
+            ? runtimeAgentOrdinals.get(record.recordId)
+            : undefined;
+        const title =
+          resolvedName ??
+          (fallbackOrdinal === undefined ? undefined : `Subagent ${fallbackOrdinal}`) ??
+          record.executorId ??
           record.kind;
         return {
           recordId: record.recordId,
@@ -869,6 +878,7 @@ export function createMissionRunner(options: {
           sessionId: record.sessionId,
           ...(record.parentRecordId === undefined ? {} : { parentRecordId: record.parentRecordId }),
           title,
+          ...(fallbackOrdinal === undefined ? {} : { fallbackOrdinal }),
           ...(record.executorId === undefined ? {} : { executorId: record.executorId }),
           origin: record.origin,
           status: record.status,
@@ -1017,6 +1027,25 @@ export function createMissionRunner(options: {
       invalidateChat(input.missionId);
     },
   };
+}
+
+function createRuntimeAgentOrdinals(
+  records: readonly ExecutionWorkRecord[],
+): ReadonlyMap<string, number> {
+  const nextByParent = new Map<string, number>();
+  const ordinals = new Map<string, number>();
+  const ordered = [...records].toSorted((left, right) => {
+    const created = left.createdAt.localeCompare(right.createdAt);
+    return created === 0 ? left.recordId.localeCompare(right.recordId) : created;
+  });
+  for (const record of ordered) {
+    if (record.kind !== "runtime-agent") continue;
+    const parentKey = record.parentRecordId ?? "";
+    const ordinal = (nextByParent.get(parentKey) ?? 0) + 1;
+    nextByParent.set(parentKey, ordinal);
+    ordinals.set(record.recordId, ordinal);
+  }
+  return ordinals;
 }
 
 export function normalizeGeneratedMissionTitle(result: unknown): string {

@@ -1130,6 +1130,7 @@ export const MissionWorkRecordSchema = z.object({
   sessionId: z.string().min(1),
   parentRecordId: z.string().min(1).optional(),
   title: z.string().min(1),
+  fallbackOrdinal: z.number().int().positive().optional(),
   executorId: z.string().min(1).optional(),
   origin: z.enum(["core", "runtime"]),
   status: MissionWorkTaskSchema.shape.status,

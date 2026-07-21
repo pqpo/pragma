@@ -2724,6 +2724,51 @@ describe("Expert delegation declarations", () => {
     );
   });
 
+  it("bounds Expert waits and applies the 10-minute default", async () => {
+    const { expert } = await fixture();
+    const launcher = createAgentLauncher({ experts: [expert] });
+    const wait = launcher.tools.find((tool) => tool.name === "wait_experts");
+    if (wait === undefined) throw new Error("wait_experts tool is missing.");
+
+    expect(
+      (wait.inputSchema as { properties: Record<string, unknown> }).properties["timeoutMs"],
+    ).toEqual({
+      type: "integer",
+      minimum: 30_000,
+      maximum: 3_600_000,
+      default: 600_000,
+    });
+
+    let receivedTimeoutMs: number | undefined;
+    const context = {
+      execution: {
+        executionId: "wait-timeout-test",
+        invocationId: "wait-timeout-root",
+        depth: 0,
+        waitExperts: async (request: { readonly timeoutMs?: number | undefined }) => {
+          receivedTimeoutMs = request.timeoutMs;
+          return {};
+        },
+      },
+    };
+
+    await wait.call({ invocationIds: ["child"] }, undefined, context);
+    expect(receivedTimeoutMs).toBe(600_000);
+
+    await wait.call({ invocationIds: ["child"], timeoutMs: 30_000 }, undefined, context);
+    expect(receivedTimeoutMs).toBe(30_000);
+
+    await wait.call({ invocationIds: ["child"], timeoutMs: 3_600_000 }, undefined, context);
+    expect(receivedTimeoutMs).toBe(3_600_000);
+
+    await expect(
+      wait.call({ invocationIds: ["child"], timeoutMs: 29_999 }, undefined, context),
+    ).rejects.toThrow("timeoutMs must be an integer between 30000 and 3600000");
+    await expect(
+      wait.call({ invocationIds: ["child"], timeoutMs: 3_600_001 }, undefined, context),
+    ).rejects.toThrow("timeoutMs must be an integer between 30000 and 3600000");
+  });
+
   it("resolves ExpertTeam allowlists through the shared launcher definition", async () => {
     const { home, expert: lead } = await fixture();
     const member = await defineExpert({

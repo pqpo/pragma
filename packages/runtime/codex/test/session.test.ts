@@ -47,6 +47,69 @@ describe("Codex turn completion", () => {
       }),
     ).rejects.toThrow("completed without assistant output");
   });
+
+  it("retains a spawned child nickname and role for runtime event mapping", async () => {
+    const notificationBus = createCodexNotificationBus();
+    const writeNative = vi.fn();
+    const client = {
+      async startTurn() {
+        notificationBus.publish({
+          method: "thread/started",
+          params: {
+            thread: {
+              id: "child-thread",
+              parentThreadId: "thread-1",
+              agentNickname: "Ada",
+              agentRole: "researcher",
+            },
+          },
+        });
+        notificationBus.publish({
+          method: "item/completed",
+          params: {
+            threadId: "thread-1",
+            item: { type: "agentMessage", id: "answer", text: "done" },
+          },
+        });
+        notificationBus.publish({
+          method: "turn/completed",
+          params: { threadId: "thread-1", turn: { status: "completed", error: null } },
+        });
+      },
+    } as unknown as CodexAppServerClient;
+    const session = createCodexNativeSession({
+      client,
+      notificationBus,
+      state: { threadId: "thread-1" },
+    });
+
+    await startCodexTurn(session, {
+      runId: "run-1",
+      attempt: 1,
+      isRetry: false,
+      rawQuery: "hello",
+      prompt: "hello",
+      startupMessages: [],
+      signal: new AbortController().signal,
+      source: {
+        kind: "runtime",
+        runId: "run-1",
+        path: [{ runId: "run-1" }],
+      },
+      stream: { write: () => undefined, writeNative },
+    });
+
+    expect(writeNative).toHaveBeenCalledWith(
+      expect.objectContaining({
+        thread: {
+          threadId: "child-thread",
+          parentThreadId: "thread-1",
+          displayName: "Ada",
+          role: "researcher",
+        },
+      }),
+    );
+  });
 });
 
 describe("Codex tool event mapping", () => {
@@ -163,7 +226,7 @@ describe("Codex tool event mapping", () => {
         thread: {
           threadId: "child-thread",
           parentThreadId: "root-thread",
-          displayName: "researcher",
+          role: "researcher",
         },
         notification: {
           method: "item/agentMessage/delta",

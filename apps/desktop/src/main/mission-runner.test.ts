@@ -557,7 +557,7 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
         action: "spawn",
         phase: "completed",
         senderSessionId: "root-thread",
-        targetSessionIds: ["child-thread"],
+        targetSessionIds: ["child-a", "child-b", "child-thread"],
       },
     });
     await store.appendEvent(executionId, executionId, "runtime.event", {
@@ -600,6 +600,46 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
       kind: "runtime-agent",
       title: "Researcher",
       tasks: [expect.objectContaining({ runId: "child-turn" })],
+    });
+    expect(work.records.find((record) => record.sessionId === "child-a")).toMatchObject({
+      kind: "runtime-agent",
+      title: "Subagent 1",
+      fallbackOrdinal: 1,
+    });
+    expect(work.records.find((record) => record.sessionId === "child-b")).toMatchObject({
+      kind: "runtime-agent",
+      title: "Subagent 2",
+      fallbackOrdinal: 2,
+    });
+    expect(subagent).not.toHaveProperty("fallbackOrdinal");
+
+    await store.appendEvent(executionId, executionId, "runtime.event", {
+      schemaVersion: "pragma.stream/v1",
+      eventId: "child-a-started",
+      sequence: 102,
+      runId: "child-a-turn",
+      parentRunId: "root-run",
+      emittedAt,
+      source: {
+        ...childSource,
+        runId: "child-a-turn",
+        sessionId: "child-a",
+        agentId: "child-a",
+        displayName: "Architect",
+      },
+      type: "run.started",
+      payload: { task: "Design the system" },
+    });
+    const enrichedWork = await runner.getWork(mission.id);
+    expect(enrichedWork.records.find((record) => record.sessionId === "child-a")).toMatchObject({
+      title: "Architect",
+    });
+    expect(
+      enrichedWork.records.find((record) => record.sessionId === "child-a"),
+    ).not.toHaveProperty("fallbackOrdinal");
+    expect(enrichedWork.records.find((record) => record.sessionId === "child-b")).toMatchObject({
+      title: "Subagent 2",
+      fallbackOrdinal: 2,
     });
     await expect(
       runner.getWorkOutput({ id: mission.id, recordId: subagent!.recordId, limit: 100 }),

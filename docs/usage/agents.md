@@ -55,7 +55,8 @@ launcher 向模型公开 `spawn_expert`、`wait_experts`、`list_experts`、`fol
 `{ agentId, invocationId, contextId, disposition }`；多个 agent 可以并行运行。Resolver 返回同一
 Context 时，dispatch 会原子归并到同一 agent 并按 FIFO 串行；默认 resolver 每次创建新 Context。
 `wait_experts` 按精确的
-Invocation ID 收集结果。父 Invocation 即使遗漏 wait，也会在终结屏障等待未 join 的子任务并续跑综合。
+Invocation ID 收集结果；等待超时最小 30 秒、默认 10 分钟、最大 60 分钟。父 Invocation 即使遗漏
+wait，也会在终结屏障等待未 join 的子任务并续跑综合。
 
 ExpertTeam 使用完全相同的配置入口：`delegation.contextId`。Resolver 只能从当前 owner 的兼容
 Context 候选中选择；相同字符串不能跨 ExpertSession/FlowExecution，也不能切换 Expert 或 Runtime。

@@ -415,8 +415,30 @@ function MissionRail(props: {
   const [searchCollapsed, setSearchCollapsed] = useState(false);
   const scrollAnchorRef = useRef(0);
   const searchRef = useRef<HTMLLabelElement>(null);
+  const searchTransitionLockedRef = useRef(false);
+  const searchTransitionTimeoutRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const active = props.missions.filter((mission) => mission.lifecycleStatus === "active");
   const completed = props.missions.filter((mission) => mission.lifecycleStatus === "completed");
+
+  useEffect(
+    () => () => {
+      if (searchTransitionTimeoutRef.current !== undefined) {
+        clearTimeout(searchTransitionTimeoutRef.current);
+      }
+    },
+    [],
+  );
+
+  const lockSearchTransition = useCallback(() => {
+    if (searchTransitionTimeoutRef.current !== undefined) {
+      clearTimeout(searchTransitionTimeoutRef.current);
+    }
+    searchTransitionLockedRef.current = true;
+    searchTransitionTimeoutRef.current = setTimeout(() => {
+      searchTransitionLockedRef.current = false;
+      searchTransitionTimeoutRef.current = undefined;
+    }, MISSION_SEARCH_TRANSITION_LOCK_MS);
+  }, []);
 
   const handleScroll = useCallback(
     (event: React.UIEvent<HTMLElement>) => {
@@ -426,9 +448,11 @@ function MissionRail(props: {
         collapsed: searchCollapsed,
         previousScrollTop,
         scrollTop,
+        transitionLocked: searchTransitionLockedRef.current,
       });
 
       if (
+        searchTransitionLockedRef.current ||
         scrollTop <= MISSION_SEARCH_TOP_REVEAL_OFFSET ||
         Math.abs(scrollTop - previousScrollTop) >= MISSION_SEARCH_SCROLL_THRESHOLD
       ) {
@@ -441,9 +465,12 @@ function MissionRail(props: {
       ) {
         return;
       }
-      setSearchCollapsed(nextSearchCollapsed);
+      if (nextSearchCollapsed !== searchCollapsed) {
+        lockSearchTransition();
+        setSearchCollapsed(nextSearchCollapsed);
+      }
     },
-    [searchCollapsed],
+    [lockSearchTransition, searchCollapsed],
   );
 
   return (
@@ -495,13 +522,16 @@ function MissionRail(props: {
 
 const MISSION_SEARCH_SCROLL_THRESHOLD = 6;
 const MISSION_SEARCH_TOP_REVEAL_OFFSET = 4;
+const MISSION_SEARCH_TRANSITION_LOCK_MS = 220;
 
 export function resolveMissionSearchCollapsed(input: {
   readonly collapsed: boolean;
   readonly previousScrollTop: number;
   readonly scrollTop: number;
+  readonly transitionLocked?: boolean | undefined;
 }): boolean {
   if (input.scrollTop <= MISSION_SEARCH_TOP_REVEAL_OFFSET) return false;
+  if (input.transitionLocked === true) return input.collapsed;
 
   const distance = input.scrollTop - input.previousScrollTop;
   if (Math.abs(distance) < MISSION_SEARCH_SCROLL_THRESHOLD) return input.collapsed;
@@ -1507,7 +1537,7 @@ export function MissionDetailFragment(props: {
                       aria-hidden="true"
                     />
                     <div>
-                      <strong>{record.title}</strong>
+                      <strong>{missionWorkRecordTitle(record)}</strong>
                       <small>
                         {record.kind} · {workStatusLabel(record.status)}
                         {record.tasks.length > 1
@@ -1791,7 +1821,7 @@ function MissionWorkDrawer(props: {
         <header>
           <div>
             <small>{t("agentWork", { ns: "missions" })}</small>
-            <h2 id="mission-work-drawer-title">{props.record.title}</h2>
+            <h2 id="mission-work-drawer-title">{missionWorkRecordTitle(props.record)}</h2>
             <p>
               {workStatusLabel(props.record.status)} ·{" "}
               {t("agentTasks", {
@@ -2319,6 +2349,14 @@ function workRecordDepth(record: MissionWorkRecord, records: readonly MissionWor
     parentKey = byKey.get(parentKey)?.parentRecordId;
   }
   return Math.min(depth, 6);
+}
+
+export function missionWorkRecordTitle(record: MissionWorkRecord): string {
+  if (record.fallbackOrdinal === undefined) return record.title;
+  return i18n.t("runtimeAgentFallbackName", {
+    ns: "missions",
+    number: record.fallbackOrdinal,
+  });
 }
 
 function workStatusLabel(status: MissionWorkRecord["status"]): string {
