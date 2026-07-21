@@ -5,7 +5,11 @@ import type {
   RuntimeResolver,
 } from "@pragma/core";
 import { createClaudeCodeRuntime } from "@pragma/runtime-claude-code";
-import { createCodexRuntime } from "@pragma/runtime-codex";
+import {
+  createCodexRuntime,
+  type CodexRuntimeApprovalPolicy,
+  type CodexRuntimeSandboxMode,
+} from "@pragma/runtime-codex";
 import { createPiRuntime } from "@pragma/runtime-pi";
 
 import type {
@@ -169,10 +173,10 @@ export function createBuiltInRuntimeFactories(
       create: async (environment, context) => {
         assertEmptyRuntimeConfig(environment);
         const permissionMode = context?.toolPermissionMode ?? (await getToolPermissionMode());
+        const permissions = codexRuntimePermissionsForMode(permissionMode);
         return createCodexRuntime({
           descriptor: { id: environment.id, displayName: environment.displayName },
-          sandboxMode: permissionMode === "full-access" ? "danger-full-access" : "workspace-write",
-          approvalPolicy: permissionMode === "request-approval" ? "on-request" : "never",
+          ...permissions,
         });
       },
     },
@@ -205,6 +209,15 @@ export function createBuiltInRuntimeFactories(
       },
     },
   ];
+}
+
+export function codexRuntimePermissionsForMode(mode: DesktopToolPermissionMode): {
+  readonly sandboxMode: CodexRuntimeSandboxMode;
+  readonly approvalPolicy: CodexRuntimeApprovalPolicy;
+} {
+  return mode === "full-access"
+    ? { sandboxMode: "danger-full-access", approvalPolicy: "never" }
+    : { sandboxMode: "workspace-write", approvalPolicy: "on-request" };
 }
 
 function factoryRef(id: string, version: string): string {
