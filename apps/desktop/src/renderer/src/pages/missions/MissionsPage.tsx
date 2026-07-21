@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
@@ -11,7 +12,6 @@ import {
 
 import {
   ArrowCounterClockwise,
-  Brain,
   CaretDown,
   CheckCircle,
   Folder,
@@ -40,7 +40,8 @@ import {
   type MissionChatUpdate,
   type MissionHumanInteraction,
   type MissionSummary,
-  type MissionWorkItem,
+  type MissionWorkOutputSnapshot,
+  type MissionWorkRecord,
   type DesktopRuntimeModel,
   type DesktopToolPermissionMode,
   type MissionModelOverride,
@@ -519,18 +520,6 @@ export type MissionConversationBlock =
       readonly collapsed: boolean;
     };
 
-export interface MissionWorkRecord {
-  readonly key: string;
-  readonly contextId: string;
-  readonly parentKey?: string | undefined;
-  readonly title: string;
-  readonly kind: MissionWorkItem["kind"];
-  readonly status: MissionWorkItem["status"];
-  readonly items: readonly MissionWorkItem[];
-  readonly invocationIds: readonly string[];
-  readonly summary: string;
-}
-
 export function MissionDetailFragment(props: {
   readonly mission: Mission;
   readonly error?: string | null | undefined;
@@ -552,7 +541,9 @@ export function MissionDetailFragment(props: {
   const [tab, setTab] = useState<"chat" | "work">("chat");
   const [workspaceAvailable, setWorkspaceAvailable] = useState<boolean | null>(null);
   const [chat, setChat] = useState<MissionChatSnapshot | null>(null);
-  const [workItems, setWorkItems] = useState<readonly MissionWorkItem[]>([]);
+  const [workRecords, setWorkRecords] = useState<readonly MissionWorkRecord[]>([]);
+  const [workOutput, setWorkOutput] = useState<MissionWorkOutputSnapshot | null>(null);
+  const [workOutputLoading, setWorkOutputLoading] = useState(false);
   const [selectedWorkKey, setSelectedWorkKey] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [optimisticMessages, setOptimisticMessages] = useState<LocalMissionUserMessage[]>([]);
@@ -607,6 +598,8 @@ export function MissionDetailFragment(props: {
     setAwaitingRequestId(null);
     setOptionsError(null);
     setSelectedWorkKey(null);
+    setWorkRecords([]);
+    setWorkOutput(null);
   }, [props.mission.id]);
 
   useEffect(() => {
@@ -764,27 +757,57 @@ export function MissionDetailFragment(props: {
   useEffect(() => {
     const api = desktopApi();
     if (api === undefined || tab !== "work" || props.mission.execution === undefined) {
-      setWorkItems([]);
+      setWorkRecords([]);
+      setWorkOutput(null);
       return;
     }
     let cancelled = false;
-    const refresh = () => {
-      void api
-        .listMissionWorkItems(props.mission.id)
-        .then((items) => {
-          if (!cancelled) setWorkItems(items);
-        })
-        .catch((loadError: unknown) => {
-          if (!cancelled) console.error("Failed to refresh Mission work items.", loadError);
-        });
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const refresh = async () => {
+      try {
+        const snapshot = await api.getMissionWork(props.mission.id);
+        if (cancelled) return;
+        setWorkRecords(snapshot.records);
+        if (selectedWorkKey !== null) {
+          setWorkOutputLoading(true);
+          const output = await api.getMissionWorkOutput({
+            id: props.mission.id,
+            recordId: selectedWorkKey,
+            limit: 100,
+          });
+          if (!cancelled) {
+            setWorkOutput((current) =>
+              current === null || current.recordId !== output.recordId
+                ? output
+                : {
+                    ...output,
+                    entries: uniqueChatEntries([...current.entries, ...output.entries]),
+                    nextBeforeCursor: current.nextBeforeCursor,
+                  },
+            );
+          }
+        }
+      } catch (loadError) {
+        if (!cancelled) console.error("Failed to refresh Mission work history.", loadError);
+      } finally {
+        if (!cancelled) setWorkOutputLoading(false);
+      }
     };
-    refresh();
-    const timer = executionActive ? setInterval(refresh, 1_000) : undefined;
+    const scheduleRefresh = () => {
+      if (timer !== undefined) return;
+      timer = setTimeout(() => {
+        timer = undefined;
+        void refresh();
+      }, 50);
+    };
+    const unsubscribe = api.subscribeMissionWork(props.mission.id, scheduleRefresh);
+    void refresh();
     return () => {
       cancelled = true;
-      if (timer !== undefined) clearInterval(timer);
+      if (timer !== undefined) clearTimeout(timer);
+      unsubscribe();
     };
-  }, [executionActive, props.mission.id, props.mission.execution?.id, tab]);
+  }, [props.mission.id, props.mission.execution?.id, selectedWorkKey, tab]);
 
   const send = async () => {
     const content = draft.trim();
@@ -919,18 +942,10 @@ export function MissionDetailFragment(props: {
     () => groupMissionConversationEntries(conversationEntries),
     [conversationEntries],
   );
-  const workRecords = useMemo(() => groupMissionWorkItems(workItems), [workItems]);
   const selectedWorkRecord = useMemo(
-    () => workRecords.find((record) => record.key === selectedWorkKey),
+    () => workRecords.find((record) => record.recordId === selectedWorkKey),
     [selectedWorkKey, workRecords],
   );
-  const selectedWorkEntries = useMemo(() => {
-    if (selectedWorkRecord === undefined) return [];
-    const invocationIds = new Set(selectedWorkRecord.invocationIds);
-    return displayEntries.filter(
-      (entry) => entry.invocationId !== undefined && invocationIds.has(entry.invocationId),
-    );
-  }, [displayEntries, selectedWorkRecord]);
   const lastEntry = displayEntries.at(-1);
   const lastEntryFingerprint =
     lastEntry === undefined
@@ -985,6 +1000,43 @@ export function MissionDetailFragment(props: {
       setHistoryError(errorMessage(loadError));
     } finally {
       setLoadingEarlier(false);
+    }
+  };
+
+  const loadEarlierWorkOutput = async (): Promise<void> => {
+    const api = desktopApi();
+    if (
+      api === undefined ||
+      selectedWorkRecord === undefined ||
+      workOutput?.nextBeforeCursor === undefined ||
+      workOutputLoading
+    ) {
+      return;
+    }
+    setWorkOutputLoading(true);
+    try {
+      const earlier = await api.getMissionWorkOutput({
+        id: props.mission.id,
+        recordId: selectedWorkRecord.recordId,
+        beforeCursor: workOutput.nextBeforeCursor,
+        limit: 100,
+      });
+      setWorkOutput((current) =>
+        current === null || current.recordId !== earlier.recordId
+          ? earlier
+          : {
+              ...current,
+              revision: Math.max(current.revision, earlier.revision),
+              entries: uniqueChatEntries([...earlier.entries, ...current.entries]),
+              ...(earlier.nextBeforeCursor === undefined
+                ? { nextBeforeCursor: undefined }
+                : { nextBeforeCursor: earlier.nextBeforeCursor }),
+            },
+      );
+    } catch (loadError) {
+      console.error("Failed to load earlier Mission work output.", loadError);
+    } finally {
+      setWorkOutputLoading(false);
     }
   };
 
@@ -1157,11 +1209,7 @@ export function MissionDetailFragment(props: {
                       key={block.item.entry.id}
                     />
                   ) : (
-                    <MissionChatEntryView
-                      entry={block.item.entry}
-                      executorName={props.mission.executor.name}
-                      key={block.item.entry.id}
-                    />
+                    <MissionChatEntryView entry={block.item.entry} key={block.item.entry.id} />
                   );
                 })}
                 {awaitingRequestId !== null ? (
@@ -1356,14 +1404,20 @@ export function MissionDetailFragment(props: {
             <ol>
               {workRecords.map((record) => (
                 <li
-                  key={record.key}
+                  key={record.recordId}
                   style={
                     {
                       "--mission-work-depth": workRecordDepth(record, workRecords),
                     } as CSSProperties
                   }
                 >
-                  <button type="button" onClick={() => setSelectedWorkKey(record.key)}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setWorkOutput(null);
+                      setSelectedWorkKey(record.recordId);
+                    }}
+                  >
                     <span
                       className={`mission-work-status is-${record.status}`}
                       aria-hidden="true"
@@ -1372,8 +1426,8 @@ export function MissionDetailFragment(props: {
                       <strong>{record.title}</strong>
                       <small>
                         {record.kind} · {workStatusLabel(record.status)}
-                        {record.items.length > 1
-                          ? ` · ${t("agentTasks", { ns: "missions", count: record.items.length })}`
+                        {record.tasks.length > 1
+                          ? ` · ${t("agentTasks", { ns: "missions", count: record.tasks.length })}`
                           : ""}
                       </small>
                       <p>{record.summary}</p>
@@ -1389,8 +1443,14 @@ export function MissionDetailFragment(props: {
       {selectedWorkRecord === undefined ? null : (
         <MissionWorkDrawer
           record={selectedWorkRecord}
-          entries={selectedWorkEntries}
-          executorName={props.mission.executor.name}
+          entries={workOutput?.recordId === selectedWorkRecord.recordId ? workOutput.entries : []}
+          loading={workOutputLoading}
+          onLoadEarlier={
+            workOutput?.recordId === selectedWorkRecord.recordId &&
+            workOutput.nextBeforeCursor !== undefined
+              ? () => void loadEarlierWorkOutput()
+              : undefined
+          }
           onClose={() => setSelectedWorkKey(null)}
         />
       )}
@@ -1445,12 +1505,7 @@ function MissionThinkingPlaceholder(props: { readonly executorName: string }) {
   );
 }
 
-function MissionChatEntryView(props: {
-  readonly entry: MissionChatEntry;
-  readonly executorName: string;
-}) {
-  const { t } = useTranslation("missions");
-  const name = props.entry.executorName ?? props.entry.executorId ?? props.executorName;
+function MissionChatEntryView(props: { readonly entry: MissionChatEntry }) {
   if (props.entry.kind === "user") {
     return (
       <div className="mission-user-message">
@@ -1461,25 +1516,74 @@ function MissionChatEntryView(props: {
     );
   }
   if (props.entry.kind === "thinking") {
-    return (
-      <details className="mission-chat-activity mission-thinking-entry">
-        <summary>
-          <Brain size={17} aria-hidden="true" />
-          <span>
-            {props.entry.streaming ? t("thinkingActive", { name }) : t("thinkingDone", { name })}
-          </span>
-          <CaretDown size={15} aria-hidden="true" />
-        </summary>
-        <p>{props.entry.content}</p>
-      </details>
-    );
+    return <MissionThinkingEntry entry={props.entry} />;
   }
   if (props.entry.kind === "tool") {
     return <MissionToolCallEntry entry={props.entry} />;
   }
+  if (props.entry.kind === "agent_activity") {
+    return <MissionAgentActivityEntry entry={props.entry} />;
+  }
   return (
     <div className="mission-assistant-message">
       <MissionMessageContent source={props.entry.content} />
+    </div>
+  );
+}
+
+function MissionAgentActivityEntry(props: {
+  readonly entry: Extract<MissionChatEntry, { kind: "agent_activity" }>;
+}) {
+  const { t } = useTranslation("missions");
+  const status =
+    props.entry.phase === "started"
+      ? t("statusRunning")
+      : props.entry.phase === "completed"
+        ? t("statusCompleted")
+        : t("statusFailed");
+  const target = props.entry.label ?? props.entry.targetSessionIds.at(0);
+  return (
+    <div className={`mission-chat-activity mission-agent-activity is-${props.entry.phase}`}>
+      <UsersThree size={17} aria-hidden="true" />
+      <span>
+        {t(`agentAction.${props.entry.action}`)}
+        {target === undefined ? null : <small>{target}</small>}
+      </span>
+      <small>{status}</small>
+      {props.entry.error === undefined ? null : <p role="alert">{props.entry.error}</p>}
+    </div>
+  );
+}
+
+export function MissionThinkingEntry(props: {
+  readonly entry: Extract<MissionChatEntry, { kind: "thinking" }>;
+}) {
+  const { t } = useTranslation("missions");
+  const [expanded, setExpanded] = useState(false);
+  const contentId = useId();
+  const streaming = props.entry.streaming === true;
+  const showsFullContent = streaming || expanded;
+
+  return (
+    <div
+      className={`mission-thinking-entry${showsFullContent ? " is-expanded" : ""}${
+        streaming ? " is-streaming" : ""
+      }`}
+      aria-live={streaming ? "polite" : undefined}
+    >
+      <p id={contentId}>{props.entry.content}</p>
+      {streaming ? null : (
+        <button
+          type="button"
+          aria-controls={contentId}
+          aria-expanded={expanded}
+          aria-label={expanded ? t("collapseThinking") : t("expandThinking")}
+          title={expanded ? t("collapseThinking") : t("expandThinking")}
+          onClick={() => setExpanded((current) => !current)}
+        >
+          <CaretDown size={14} aria-hidden="true" />
+        </button>
+      )}
     </div>
   );
 }
@@ -1521,24 +1625,15 @@ function MissionToolCallEntry(props: {
   readonly entry: Extract<MissionChatEntry, { kind: "tool" }>;
 }) {
   const { t } = useTranslation("missions");
-  const lifecycleAction = agentLifecycleAction(props.entry.toolName);
-  const className = `mission-chat-activity mission-tool-entry is-${props.entry.status}${
-    lifecycleAction === undefined ? "" : " is-agent-lifecycle"
-  }`;
+  const className = `mission-chat-activity mission-tool-entry is-${props.entry.status}`;
   const hasDetails =
     props.entry.inputPreview !== undefined ||
     props.entry.outputPreview !== undefined ||
     props.entry.error !== undefined;
   const row = (
     <>
-      {lifecycleAction === undefined ? (
-        <Toolbox size={16} aria-hidden="true" />
-      ) : (
-        <UsersThree size={17} aria-hidden="true" />
-      )}
-      <span>
-        {lifecycleAction === undefined ? props.entry.toolName : t(`agentAction.${lifecycleAction}`)}
-      </span>
+      <Toolbox size={16} aria-hidden="true" />
+      <span>{props.entry.toolName}</span>
       <small>{toolStatusLabel(props.entry.status)}</small>
     </>
   );
@@ -1578,7 +1673,8 @@ function MissionToolCallEntry(props: {
 function MissionWorkDrawer(props: {
   readonly record: MissionWorkRecord;
   readonly entries: readonly MissionChatEntry[];
-  readonly executorName: string;
+  readonly loading: boolean;
+  readonly onLoadEarlier?: (() => void) | undefined;
   readonly onClose: () => void;
 }) {
   const { t } = useTranslation(["missions", "common"]);
@@ -1616,7 +1712,7 @@ function MissionWorkDrawer(props: {
               {workStatusLabel(props.record.status)} ·{" "}
               {t("agentTasks", {
                 ns: "missions",
-                count: props.record.items.length,
+                count: props.record.tasks.length,
               })}
             </p>
           </div>
@@ -1632,8 +1728,8 @@ function MissionWorkDrawer(props: {
           <section className="mission-work-tasks" aria-labelledby="mission-work-tasks-title">
             <h3 id="mission-work-tasks-title">{t("taskHistory", { ns: "missions" })}</h3>
             <ol>
-              {props.record.items.map((item, index) => (
-                <li key={item.invocationId}>
+              {props.record.tasks.map((item, index) => (
+                <li key={item.taskId}>
                   <span className={`mission-work-status is-${item.status}`} aria-hidden="true" />
                   <div>
                     <strong>{t("agentTaskNumber", { ns: "missions", number: index + 1 })}</strong>
@@ -1655,18 +1751,26 @@ function MissionWorkDrawer(props: {
               ) : null}
             </header>
             <div className="mission-work-output-stream" ref={outputRef} aria-live="polite">
-              {props.entries.length === 0 ? (
+              {props.onLoadEarlier === undefined ? null : (
+                <button
+                  className="mission-work-load-earlier"
+                  type="button"
+                  onClick={props.onLoadEarlier}
+                >
+                  {t("loadEarlier", { ns: "missions" })}
+                </button>
+              )}
+              {props.loading && props.entries.length === 0 ? (
+                <p className="mission-work-output-empty">
+                  <SpinnerGap size={14} aria-hidden="true" />
+                  {t("streaming", { ns: "missions" })}
+                </p>
+              ) : props.entries.length === 0 ? (
                 <p className="mission-work-output-empty">
                   {t("waitingForAgentOutput", { ns: "missions" })}
                 </p>
               ) : (
-                props.entries.map((entry) => (
-                  <MissionChatEntryView
-                    entry={entry}
-                    executorName={props.record.title || props.executorName}
-                    key={entry.id}
-                  />
-                ))
+                props.entries.map((entry) => <MissionChatEntryView entry={entry} key={entry.id} />)
               )}
             </div>
           </section>
@@ -1916,6 +2020,7 @@ function entryContentLength(entry: MissionChatEntry): number {
   if (entry.kind === "tool") {
     return (entry.inputPreview?.length ?? 0) + (entry.outputPreview?.length ?? 0);
   }
+  if (entry.kind === "agent_activity") return entry.label?.length ?? 0;
   return entry.content.length;
 }
 
@@ -1932,11 +2037,6 @@ export function groupMissionConversationEntries(
 
   for (const item of entries) {
     if (item.type === "durable" && item.entry.kind === "tool") {
-      if (agentLifecycleAction(item.entry.toolName) !== undefined) {
-        flushTools(false);
-        blocks.push({ type: "tools", entries: [item.entry], collapsed: false });
-        continue;
-      }
       pendingTools.push(item.entry);
       continue;
     }
@@ -1948,59 +2048,6 @@ export function groupMissionConversationEntries(
   }
   flushTools(false);
   return blocks;
-}
-
-export type AgentLifecycleAction = "spawn" | "wait" | "list" | "message" | "interrupt";
-
-export function agentLifecycleAction(toolName: string): AgentLifecycleAction | undefined {
-  const normalized = toolName.toLocaleLowerCase().replaceAll("-", "_");
-  if (/(?:^|[_./:])spawn_(?:expert|agent)$/u.test(normalized)) return "spawn";
-  if (/(?:^|[_./:])wait_(?:experts|agents?)$/u.test(normalized)) return "wait";
-  if (/(?:^|[_./:])list_(?:experts|agents)$/u.test(normalized)) return "list";
-  if (/(?:^|[_./:])(?:followup_expert|send_message)$/u.test(normalized)) return "message";
-  if (/(?:^|[_./:])interrupt_(?:expert|agent)$/u.test(normalized)) return "interrupt";
-  return undefined;
-}
-
-export function groupMissionWorkItems(items: readonly MissionWorkItem[]): MissionWorkRecord[] {
-  const itemKey = (item: MissionWorkItem): string =>
-    item.kind === "expert" || item.kind === "expert-team"
-      ? `context:${item.contextId}`
-      : `invocation:${item.invocationId}`;
-  const keyByInvocationId = new Map(items.map((item) => [item.invocationId, itemKey(item)]));
-  const grouped = new Map<string, MissionWorkItem[]>();
-  for (const item of items) {
-    const key = itemKey(item);
-    const current = grouped.get(key) ?? [];
-    current.push(item);
-    grouped.set(key, current);
-  }
-
-  return [...grouped].map(([key, groupedItems]) => {
-    const ordered = groupedItems.toSorted((left, right) => {
-      if (left.taskSequence !== undefined || right.taskSequence !== undefined) {
-        return (left.taskSequence ?? 0) - (right.taskSequence ?? 0);
-      }
-      return left.createdAt.localeCompare(right.createdAt);
-    });
-    const first = ordered[0]!;
-    const latest = ordered.at(-1)!;
-    const parentKey =
-      first.parentInvocationId === undefined
-        ? undefined
-        : keyByInvocationId.get(first.parentInvocationId);
-    return {
-      key,
-      contextId: first.contextId,
-      ...(parentKey === undefined || parentKey === key ? {} : { parentKey }),
-      title: first.executorName ?? first.executorId ?? first.nodeId ?? first.kind,
-      kind: first.kind,
-      status: workRecordStatus(ordered),
-      items: ordered,
-      invocationIds: ordered.map((item) => item.invocationId),
-      summary: latest.outputSummary ?? latest.inputSummary,
-    };
-  });
 }
 
 export function applyMissionChatPatches(
@@ -2169,26 +2216,19 @@ function formatInteractionData(value: unknown): string {
 }
 
 function workRecordDepth(record: MissionWorkRecord, records: readonly MissionWorkRecord[]): number {
-  const byKey = new Map(records.map((candidate) => [candidate.key, candidate]));
+  const byKey = new Map(records.map((candidate) => [candidate.recordId, candidate]));
   let depth = 0;
-  let parentKey = record.parentKey;
+  let parentKey = record.parentRecordId;
   const visited = new Set<string>();
   while (parentKey !== undefined && !visited.has(parentKey)) {
     visited.add(parentKey);
     depth += 1;
-    parentKey = byKey.get(parentKey)?.parentKey;
+    parentKey = byKey.get(parentKey)?.parentRecordId;
   }
   return Math.min(depth, 6);
 }
 
-function workRecordStatus(items: readonly MissionWorkItem[]): MissionWorkItem["status"] {
-  if (items.some((item) => item.status === "running")) return "running";
-  if (items.some((item) => item.status === "waiting")) return "waiting";
-  if (items.some((item) => item.status === "queued")) return "queued";
-  return items.at(-1)?.status ?? "queued";
-}
-
-function workStatusLabel(status: MissionWorkItem["status"]): string {
+function workStatusLabel(status: MissionWorkRecord["status"]): string {
   switch (status) {
     case "queued":
       return i18n.t("statusQueued", { ns: "missions" });

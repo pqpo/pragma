@@ -150,6 +150,8 @@ function output(
     invocationId: `${executorId}-invocation`,
     executorId,
     contextId: `${executorId}-context`,
+    runId: `${executorId}-run`,
+    source: { kind: "agent", runId: `${executorId}-run`, path: [] },
     channel,
     delta,
     occurredAt: new Date().toISOString(),

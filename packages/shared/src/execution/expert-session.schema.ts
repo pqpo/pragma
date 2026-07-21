@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { AgentMessageSchema } from "../agent-message.schema.ts";
+import { ExpertAgentStreamSourceSchema } from "../stream-event.schema.ts";
 import {
   ExecutionStatusSchema,
   RuntimeContextRecordSchema,
@@ -121,6 +122,9 @@ export const AgentMessageRecordSchema = z.object({
   parentInvocationId: z.string().min(1).optional(),
   executorId: z.string().min(1).optional(),
   contextId: z.string().min(1),
+  runId: z.string().min(1).optional(),
+  parentRunId: z.string().min(1).optional(),
+  source: ExpertAgentStreamSourceSchema.optional(),
   message: AgentMessageSchema,
 });
 

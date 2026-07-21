@@ -189,6 +189,11 @@ export class StoredExecutionView implements ExecutionView {
               parentInvocationId: invocation.parentInvocationId,
               executorId: invocation.executorId,
               contextId: invocation.contextId,
+              ...(event.data.runId === undefined ? {} : { runId: event.data.runId }),
+              ...(event.data.parentRunId === undefined
+                ? {}
+                : { parentRunId: event.data.parentRunId }),
+              ...(event.data.source === undefined ? {} : { source: event.data.source }),
               message: event.data.message,
             }),
           );

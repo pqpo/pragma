@@ -405,6 +405,8 @@ function output(
     invocationId,
     executorId,
     contextId: invocationId,
+    runId: `${invocationId}-run`,
+    source: { kind: "agent", runId: `${invocationId}-run`, path: [] },
     channel,
     delta,
     occurredAt: new Date().toISOString(),

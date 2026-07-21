@@ -1102,16 +1102,12 @@ export const MissionTimelineRecordSchema = z.discriminatedUnion("kind", [
   }),
 ]);
 
-export const MissionWorkItemSchema = z.object({
+export const MissionWorkTaskSchema = z.object({
+  taskId: z.string().min(1),
+  executionId: z.string().min(1),
   invocationId: z.string().min(1),
-  parentInvocationId: z.string().min(1).optional(),
-  nodeId: z.string().min(1).optional(),
-  executorId: z.string().min(1).optional(),
-  executorName: z.string().min(1).optional(),
-  agentId: z.string().min(1).optional(),
-  contextId: z.string().min(1),
-  taskSequence: z.number().int().nonnegative().optional(),
-  kind: z.enum(["flow", "task", "human-task", "expert", "expert-team"]),
+  runId: z.string().min(1),
+  sequence: z.number().int().nonnegative().optional(),
   status: z.enum([
     "queued",
     "running",
@@ -1123,8 +1119,30 @@ export const MissionWorkItemSchema = z.object({
   ]),
   inputSummary: z.string().max(500),
   outputSummary: z.string().max(1_000).optional(),
+  error: z.string().max(10_000).optional(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
+});
+
+export const MissionWorkRecordSchema = z.object({
+  recordId: z.string().min(1),
+  kind: z.enum(["root", "agent", "runtime-agent", "flow", "task", "human-task"]),
+  sessionId: z.string().min(1),
+  parentRecordId: z.string().min(1).optional(),
+  title: z.string().min(1),
+  executorId: z.string().min(1).optional(),
+  origin: z.enum(["core", "runtime"]),
+  status: MissionWorkTaskSchema.shape.status,
+  tasks: z.array(MissionWorkTaskSchema),
+  summary: z.string().max(1_000),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+});
+
+export const MissionWorkSnapshotSchema = z.object({
+  missionId: MissionIdSchema,
+  revision: z.number().int().nonnegative(),
+  records: z.array(MissionWorkRecordSchema),
 });
 
 const MissionExecutionStatusSchema = z.enum([
@@ -1232,6 +1250,12 @@ export const GetMissionChatSchema = z.object({
   beforeSequence: z.number().int().positive().optional(),
   limit: z.number().int().min(1).max(100).default(50),
 });
+export const GetMissionWorkOutputSchema = z.object({
+  id: MissionIdSchema,
+  recordId: z.string().min(1),
+  beforeCursor: z.string().min(1).optional(),
+  limit: z.number().int().min(1).max(200).default(100),
+});
 export const SendMissionMessageSchema = z.object({
   id: MissionIdSchema,
   content: z.string().trim().min(1).max(100_000),
@@ -1276,7 +1300,30 @@ export const MissionChatEntrySchema = z.discriminatedUnion("kind", [
     outputPreview: z.string().max(801).optional(),
     error: z.string().max(10_000).optional(),
   }),
+  MissionChatEntryBaseSchema.extend({
+    kind: z.literal("agent_activity"),
+    commandId: z.string().min(1),
+    action: z.enum(["spawn", "wait", "list", "send", "resume", "interrupt", "run"]),
+    phase: z.enum(["started", "completed", "failed"]),
+    senderSessionId: z.string().min(1).optional(),
+    targetSessionIds: z.array(z.string().min(1)).default([]),
+    label: z.string().max(500).optional(),
+    error: z.string().max(10_000).optional(),
+  }),
 ]);
+
+export const MissionWorkOutputSnapshotSchema = z.object({
+  missionId: MissionIdSchema,
+  recordId: z.string().min(1),
+  revision: z.number().int().nonnegative(),
+  entries: z.array(MissionChatEntrySchema),
+  nextBeforeCursor: z.string().min(1).optional(),
+});
+
+export const MissionWorkUpdateSchema = z.object({
+  missionId: MissionIdSchema,
+  revision: z.number().int().positive(),
+});
 
 export const MissionChatExecutionSchema = z.object({
   id: z.string().uuid(),
@@ -1416,7 +1463,12 @@ export type CreateMission = z.infer<typeof CreateMissionSchema>;
 export type UpdateMissionOptions = z.infer<typeof UpdateMissionOptionsSchema>;
 export type MissionUserMessage = z.infer<typeof MissionUserMessageSchema>;
 export type MissionTimelineRecord = z.infer<typeof MissionTimelineRecordSchema>;
-export type MissionWorkItem = z.infer<typeof MissionWorkItemSchema>;
+export type MissionWorkTask = z.infer<typeof MissionWorkTaskSchema>;
+export type MissionWorkRecord = z.infer<typeof MissionWorkRecordSchema>;
+export type MissionWorkSnapshot = z.infer<typeof MissionWorkSnapshotSchema>;
+export type GetMissionWorkOutput = z.infer<typeof GetMissionWorkOutputSchema>;
+export type MissionWorkOutputSnapshot = z.infer<typeof MissionWorkOutputSnapshotSchema>;
+export type MissionWorkUpdate = z.infer<typeof MissionWorkUpdateSchema>;
 export type GetMissionChat = z.input<typeof GetMissionChatSchema>;
 export type MissionChatQuery = z.output<typeof GetMissionChatSchema>;
 export type SendMissionMessage = z.infer<typeof SendMissionMessageSchema>;
@@ -1509,7 +1561,9 @@ export interface PragmaDesktopAPI {
   subscribeMissionChat: (id: string, listener: (update: MissionChatUpdate) => void) => () => void;
   subscribeMissionUpdates: (listener: (mission: Mission) => void) => () => void;
   interruptMission: (id: string) => Promise<Mission>;
-  listMissionWorkItems: (id: string) => Promise<MissionWorkItem[]>;
+  getMissionWork: (id: string) => Promise<MissionWorkSnapshot>;
+  getMissionWorkOutput: (input: GetMissionWorkOutput) => Promise<MissionWorkOutputSnapshot>;
+  subscribeMissionWork: (id: string, listener: (update: MissionWorkUpdate) => void) => () => void;
   deleteMission: (id: string) => Promise<void>;
   listMissionHumanInteractions: (id: string) => Promise<MissionHumanInteraction[]>;
   respondToMissionHumanInteraction: (input: RespondMissionHumanInteraction) => Promise<void>;

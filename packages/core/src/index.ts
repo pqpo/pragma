@@ -40,6 +40,7 @@ export * from "./execution/context-id-resolver.ts";
 export * from "./execution/context-resolution-service.ts";
 export * from "./execution/execution-live-bus.ts";
 export * from "./execution/execution-output.ts";
+export * from "./execution/execution-work-history.ts";
 export * from "./execution/execution-view.ts";
 export * from "./execution/expert-session-store.ts";
 export * from "./execution/expert-session.ts";

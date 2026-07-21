@@ -510,17 +510,107 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
       "auto-approve",
     ]);
     expect(openedSessionModes).toEqual(["request-approval", "auto-approve"]);
-    await expect(runner.listWorkItems(mission.id)).resolves.toEqual([
+    await expect(runner.getWork(mission.id)).resolves.toEqual(
       expect.objectContaining({
-        kind: "expert",
-        status: "succeeded",
-        executorId: "writer",
-        executorName: "Writer",
-        contextId: expect.any(String),
-        createdAt: expect.any(String),
-        updatedAt: expect.any(String),
+        missionId: mission.id,
+        records: [
+          expect.objectContaining({
+            kind: "root",
+            status: "succeeded",
+            executorId: "writer",
+            title: "Writer",
+          }),
+        ],
       }),
-    ]);
+    );
+
+    const latestMission = await missions.get(mission.id);
+    const executionId = latestMission.execution!.id;
+    const store = createFileExecutionStore({ pragmaHome: join(root, "state") });
+    const emittedAt = new Date().toISOString();
+    const childSource = {
+      kind: "agent" as const,
+      runId: "child-turn",
+      parentRunId: "root-run",
+      sessionId: "child-thread",
+      parentSessionId: "root-thread",
+      agentId: "child-thread",
+      agentType: "codex-subagent",
+      displayName: "Researcher",
+      path: [],
+    };
+    await store.appendEvent(executionId, executionId, "runtime.event", {
+      schemaVersion: "pragma.stream/v1",
+      eventId: "spawn-child",
+      sequence: 100,
+      runId: "root-run",
+      emittedAt,
+      source: {
+        kind: "agent",
+        runId: "root-run",
+        sessionId: "root-thread",
+        path: [],
+      },
+      type: "agent.command",
+      payload: {
+        commandId: "spawn-child",
+        action: "spawn",
+        phase: "completed",
+        senderSessionId: "root-thread",
+        targetSessionIds: ["child-thread"],
+      },
+    });
+    await store.appendEvent(executionId, executionId, "runtime.event", {
+      schemaVersion: "pragma.stream/v1",
+      eventId: "child-started",
+      sequence: 101,
+      runId: "child-turn",
+      parentRunId: "root-run",
+      emittedAt,
+      source: childSource,
+      type: "run.started",
+      payload: { task: "Inspect repository" },
+    });
+    await store.appendEvent(executionId, executionId, "invocation.message.appended", {
+      runId: "child-turn",
+      parentRunId: "root-run",
+      source: childSource,
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "Subagent findings" }],
+        api: "codex",
+        provider: "openai",
+        model: "test",
+        usage: {
+          input: 0,
+          output: 0,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens: 0,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+        },
+        stopReason: "stop",
+        timestamp: Date.now(),
+      },
+    });
+
+    const work = await runner.getWork(mission.id);
+    const subagent = work.records.find((record) => record.sessionId === "child-thread");
+    expect(subagent).toMatchObject({
+      kind: "runtime-agent",
+      title: "Researcher",
+      tasks: [expect.objectContaining({ runId: "child-turn" })],
+    });
+    await expect(
+      runner.getWorkOutput({ id: mission.id, recordId: subagent!.recordId, limit: 100 }),
+    ).resolves.toMatchObject({
+      entries: [expect.objectContaining({ kind: "assistant", content: "Subagent findings" })],
+    });
+    await expect(runner.getChat({ id: mission.id, limit: 50 })).resolves.toMatchObject({
+      entries: expect.arrayContaining([
+        expect.objectContaining({ kind: "agent_activity", action: "spawn" }),
+      ]),
+    });
   });
 
   it("keeps an existing Mission on its original Runtime and ignores changed Expert defaults", async () => {
@@ -967,11 +1057,13 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
       executionId: waitingMission.execution?.id,
       createdAt: waitingMission.execution?.startedAt,
     });
-    await expect(runner.listWorkItems(mission.id)).resolves.toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ kind: "flow" }),
-        expect.objectContaining({ kind: "human-task", status: "waiting" }),
-      ]),
+    await expect(runner.getWork(mission.id)).resolves.toEqual(
+      expect.objectContaining({
+        records: expect.arrayContaining([
+          expect.objectContaining({ kind: "flow" }),
+          expect.objectContaining({ kind: "human-task", status: "waiting" }),
+        ]),
+      }),
     );
     const interactions = await runner.listHumanInteractions(mission.id);
     expect(interactions).toHaveLength(1);

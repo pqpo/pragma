@@ -50,6 +50,7 @@ import {
   ResetBuiltInExpertDefinitionSchema,
   CreateMissionSchema,
   GetMissionChatSchema,
+  GetMissionWorkOutputSchema,
   MissionActionSchema,
   MissionChatSnapshotSchema,
   MissionChatUpdateSchema,
@@ -61,7 +62,9 @@ import {
   MissionSchema,
   MissionSummarySchema,
   MissionHumanInteractionSchema,
-  MissionWorkItemSchema,
+  MissionWorkOutputSnapshotSchema,
+  MissionWorkSnapshotSchema,
+  MissionWorkUpdateSchema,
   PickWorkspaceResultSchema,
   RespondMissionHumanInteractionSchema,
   SendMissionMessageSchema,
@@ -331,10 +334,23 @@ const api: PragmaDesktopAPI = {
     MissionSchema.parse(
       await ipcRenderer.invoke("missions:interrupt", MissionActionSchema.parse({ id })),
     ),
-  listMissionWorkItems: async (id) =>
-    MissionWorkItemSchema.array().parse(
-      await ipcRenderer.invoke("missions:work:list", MissionActionSchema.parse({ id })),
+  getMissionWork: async (id) =>
+    MissionWorkSnapshotSchema.parse(
+      await ipcRenderer.invoke("missions:work:get", MissionActionSchema.parse({ id })),
     ),
+  getMissionWorkOutput: async (input) =>
+    MissionWorkOutputSnapshotSchema.parse(
+      await ipcRenderer.invoke("missions:work:output:get", GetMissionWorkOutputSchema.parse(input)),
+    ),
+  subscribeMissionWork: (id, listener) => {
+    const missionId = MissionIdSchema.parse(id);
+    const handler = (_event: IpcRendererEvent, value: unknown) => {
+      const update = MissionWorkUpdateSchema.parse(value);
+      if (update.missionId === missionId) listener(update);
+    };
+    ipcRenderer.on("missions:work:updated", handler);
+    return () => ipcRenderer.removeListener("missions:work:updated", handler);
+  },
   deleteMission: async (id) => {
     await ipcRenderer.invoke("missions:delete", MissionActionSchema.parse({ id }));
   },

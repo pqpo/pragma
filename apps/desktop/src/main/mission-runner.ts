@@ -5,6 +5,7 @@ import {
   createFileExecutionStore,
   createFileExpertSessionStore,
   defineExpert,
+  ExecutionWorkHistoryReader,
   ExpertAgentHumanRequestSchema,
   isExpertTeam,
   StoredExecutionView,
@@ -27,10 +28,11 @@ import type {
 import type {
   HumanInteractionRequest,
   HumanInteractionResponse,
-  InvocationTree,
+  ExpertAgentStreamEvent,
   RuntimeContextRecord,
   RuntimeEnvironmentBinding,
 } from "@pragma/shared";
+import { ExpertAgentStreamEventSchema } from "@pragma/shared";
 
 import type {
   Mission,
@@ -41,7 +43,11 @@ import type {
   MissionChatQuery,
   MissionHumanInteraction,
   MissionModelOverride,
-  MissionWorkItem,
+  MissionWorkOutputSnapshot,
+  MissionWorkRecord,
+  MissionWorkSnapshot,
+  MissionWorkUpdate,
+  GetMissionWorkOutput,
   DesktopToolPermissionMode,
   UpdateMissionOptions,
 } from "../shared/desktop-api.ts";
@@ -73,8 +79,10 @@ export interface MissionRunner {
   getChat(input: MissionChatQuery): Promise<MissionChatSnapshot>;
   getRuntimeBinding(id: string): Promise<RuntimeEnvironmentBinding | undefined>;
   subscribeChat(listener: (update: MissionChatUpdate) => void): () => void;
+  subscribeWork(listener: (update: MissionWorkUpdate) => void): () => void;
   interrupt(id: string): Promise<Mission>;
-  listWorkItems(id: string): Promise<readonly MissionWorkItem[]>;
+  getWork(id: string): Promise<MissionWorkSnapshot>;
+  getWorkOutput(input: GetMissionWorkOutput): Promise<MissionWorkOutputSnapshot>;
   delete(id: string): Promise<void>;
   listHumanInteractions(id: string): Promise<readonly MissionHumanInteraction[]>;
   respondToHumanInteraction(input: {
@@ -143,6 +151,7 @@ export function createMissionRunner(options: {
     executions: executionStore,
     pragmaHome: options.pragmaHome,
   });
+  const workHistory = new ExecutionWorkHistoryReader(executionStore);
   const runtimeResolverForToolPermissionMode = (mode: DesktopToolPermissionMode) =>
     options.runtimesForToolPermissionMode?.(mode) ?? options.runtimes;
   const automaticHumanInteractionHandlerForToolPermissionMode = (mode: DesktopToolPermissionMode) =>
@@ -186,6 +195,9 @@ export function createMissionRunner(options: {
   const chatListeners = new Set<(update: MissionChatUpdate) => void>();
   const chatRevisions = new Map<string, number>();
   const liveChats = new Map<string, LiveMissionChat>();
+  const workListeners = new Set<(update: MissionWorkUpdate) => void>();
+  const workRevisions = new Map<string, number>();
+  const liveWorkOutputs = new Map<string, Map<string, LiveMissionChat>>();
   const executorNameCache = new Map<string, ReadonlyMap<string, string>>();
   const titleExperts = new Map<string, ReturnType<typeof defineExpert>>();
 
@@ -262,6 +274,19 @@ export function createMissionRunner(options: {
 
   const invalidateChat = (id: string): void => emitChatUpdate(id, { kind: "invalidate" });
 
+  const invalidateWork = (id: string): void => {
+    const revision = (workRevisions.get(id) ?? 0) + 1;
+    workRevisions.set(id, revision);
+    const update: MissionWorkUpdate = { missionId: id, revision };
+    for (const listener of workListeners) {
+      try {
+        listener(update);
+      } catch (error) {
+        console.error(`Failed to notify Mission work listeners for ${id}.`, error);
+      }
+    }
+  };
+
   const forgetActive = async (id: string, executionId: string): Promise<void> => {
     if (active.get(id)?.handle.executionId === executionId) active.delete(id);
     const live = liveChats.get(id);
@@ -269,7 +294,9 @@ export function createMissionRunner(options: {
       await live.close();
       liveChats.delete(id);
     }
+    liveWorkOutputs.delete(id);
     invalidateChat(id);
+    invalidateWork(id);
   };
 
   const compileMissionExecutor = async (
@@ -333,6 +360,27 @@ export function createMissionRunner(options: {
       input.handle,
       (patches) => emitChatPatches(input.missionId, patches),
       () => invalidateChat(input.missionId),
+      (item) => {
+        const sessionId = item.source.sessionId;
+        if (item.source.parentSessionId !== undefined && sessionId !== undefined) {
+          const recordId = `runtime-agent:${sessionId}`;
+          const byRecord = liveWorkOutputs.get(input.missionId) ?? new Map();
+          const output =
+            byRecord.get(recordId) ??
+            ({
+              executionId: item.executionId,
+              entries: [],
+              sequence: 0,
+              close: async () => undefined,
+            } satisfies LiveMissionChat);
+          byRecord.set(recordId, output);
+          liveWorkOutputs.set(input.missionId, byRecord);
+          if (item.channel !== "agent" && item.channel !== "progress") {
+            consumeLiveChatOutput(output, item);
+          }
+        }
+        invalidateWork(input.missionId);
+      },
     );
     liveChats.set(input.missionId, live);
     const settlement = observeExecution(
@@ -346,6 +394,7 @@ export function createMissionRunner(options: {
     ).finally(async () => await forgetActive(input.missionId, input.handle.executionId));
     active.set(input.missionId, { handle: input.handle, settlement });
     invalidateChat(input.missionId);
+    invalidateWork(input.missionId);
     void settlement.catch((error: unknown) => {
       console.error(`Failed to observe Mission execution ${input.handle.executionId}.`, error);
     });
@@ -760,6 +809,119 @@ export function createMissionRunner(options: {
     return await options.missions.get(id);
   };
 
+  const readMissionExecutionIds = async (mission: Mission): Promise<readonly string[]> => {
+    if (mission.execution?.sessionId !== undefined) {
+      const session = await expertSessionStore.get(mission.execution.sessionId);
+      if (session !== undefined) return session.executionIds;
+    }
+    const executionIds: string[] = [];
+    let beforeSequence: number | undefined;
+    do {
+      const page = await options.missions.readTimelinePage(mission.id, {
+        ...(beforeSequence === undefined ? {} : { beforeSequence }),
+        limit: 100,
+      });
+      executionIds.push(
+        ...page.turns.flatMap((turn) => (turn.executionId === undefined ? [] : [turn.executionId])),
+      );
+      beforeSequence = page.nextBeforeSequence;
+    } while (beforeSequence !== undefined);
+    return [...new Set(executionIds)].toSorted();
+  };
+
+  const getWorkSnapshot = async (id: string): Promise<MissionWorkSnapshot> => {
+    const mission = await options.missions.get(id);
+    const executionIds = await readMissionExecutionIds(mission);
+    const records = await workHistory.listRecords({
+      executionIds,
+      ...(mission.execution?.sessionId === undefined
+        ? {}
+        : { rootSessionId: mission.execution.sessionId }),
+    });
+    const names = await getExecutorNames(mission);
+    return {
+      missionId: mission.id,
+      revision: workRevisions.get(mission.id) ?? 0,
+      records: records.map((record): MissionWorkRecord => {
+        const tasks = record.tasks.map((task) => ({
+          taskId: task.taskId,
+          executionId: task.executionId,
+          invocationId: task.invocationId,
+          runId: task.runId,
+          ...(task.sequence === undefined ? {} : { sequence: task.sequence }),
+          status: task.status,
+          inputSummary: formatValue(task.input, 500),
+          ...(task.output === undefined ? {} : { outputSummary: formatValue(task.output, 1_000) }),
+          ...(task.error === undefined ? {} : { error: formatValue(task.error, 10_000) }),
+          createdAt: task.createdAt,
+          updatedAt: task.updatedAt,
+        }));
+        const latest = tasks.at(-1);
+        const title =
+          record.displayName ??
+          (record.executorId === undefined ? undefined : names.get(record.executorId)) ??
+          (record.kind === "root" ? mission.executor.name : undefined) ??
+          (record.kind === "runtime-agent" ? "Subagent" : record.executorId) ??
+          record.kind;
+        return {
+          recordId: record.recordId,
+          kind: record.kind,
+          sessionId: record.sessionId,
+          ...(record.parentRecordId === undefined ? {} : { parentRecordId: record.parentRecordId }),
+          title,
+          ...(record.executorId === undefined ? {} : { executorId: record.executorId }),
+          origin: record.origin,
+          status: record.status,
+          tasks,
+          summary: latest?.outputSummary ?? latest?.inputSummary ?? title,
+          createdAt: record.createdAt,
+          updatedAt: record.updatedAt,
+        };
+      }),
+    };
+  };
+
+  const getWorkOutput = async (input: GetMissionWorkOutput): Promise<MissionWorkOutputSnapshot> => {
+    const mission = await options.missions.get(input.id);
+    const executionIds = await readMissionExecutionIds(mission);
+    const records = await workHistory.listRecords({
+      executionIds,
+      ...(mission.execution?.sessionId === undefined
+        ? {}
+        : { rootSessionId: mission.execution.sessionId }),
+    });
+    const record = records.find((candidate) => candidate.recordId === input.recordId);
+    if (record === undefined) throw new Error(`Mission work record not found: ${input.recordId}`);
+    const durableEntries = messageRecordsToChatEntries(
+      await workHistory.readOutput({ executionIds, record }),
+    );
+    const liveEntries = liveWorkOutputs.get(mission.id)?.get(record.recordId)?.entries ?? [];
+    const liveExecutionIds = new Set(liveEntries.flatMap((entry) => entry.executionId ?? []));
+    const byId = new Map<string, MissionChatEntry>();
+    for (const entry of durableEntries) {
+      if (entry.executionId === undefined || !liveExecutionIds.has(entry.executionId)) {
+        byId.set(entry.id, { ...entry });
+      }
+    }
+    for (const entry of liveEntries) byId.set(entry.id, { ...entry });
+    const entries = [...byId.values()].toSorted((left, right) =>
+      left.createdAt.localeCompare(right.createdAt),
+    );
+    const requestedEnd =
+      input.beforeCursor === undefined ? entries.length : Number(input.beforeCursor);
+    const end = Number.isInteger(requestedEnd)
+      ? Math.max(0, Math.min(entries.length, requestedEnd))
+      : entries.length;
+    const start = Math.max(0, end - input.limit);
+    return {
+      missionId: mission.id,
+      recordId: record.recordId,
+      revision: workRevisions.get(mission.id) ?? 0,
+      entries: entries.slice(start, end),
+      ...(start === 0 ? {} : { nextBeforeCursor: String(start) }),
+    };
+  };
+
   return {
     async run(id) {
       const pending = pendingOperations.get(id);
@@ -800,6 +962,10 @@ export function createMissionRunner(options: {
       chatListeners.add(listener);
       return () => chatListeners.delete(listener);
     },
+    subscribeWork(listener) {
+      workListeners.add(listener);
+      return () => workListeners.delete(listener);
+    },
     async interrupt(id) {
       const pending = pendingOperations.get(id);
       if (pending?.kind === "interrupt") return await pending.promise;
@@ -810,16 +976,11 @@ export function createMissionRunner(options: {
       trackOperation(id, { kind: "interrupt", promise: interrupting });
       return await interrupting;
     },
-    async listWorkItems(id) {
-      const mission = await options.missions.get(id);
-      if (mission.execution === undefined) return [];
-      const tree = await executionStore.getTree(mission.execution.id);
-      if (tree === undefined) return [];
-      const names = new Map(await getExecutorNames(mission));
-      if (tree.invocation.executorId !== undefined) {
-        names.set(tree.invocation.executorId, mission.executor.name);
-      }
-      return flattenWorkItems(tree, names);
+    async getWork(id) {
+      return await getWorkSnapshot(id);
+    },
+    async getWorkOutput(input) {
+      return await getWorkOutput(input);
     },
     async delete(id) {
       if (pendingOperations.has(id)) {
@@ -832,6 +993,8 @@ export function createMissionRunner(options: {
       trackOperation(id, { kind: "delete", promise: deleting });
       await deleting;
       chatRevisions.delete(id);
+      workRevisions.delete(id);
+      liveWorkOutputs.delete(id);
     },
     async listHumanInteractions(id) {
       const execution = active.get(id);
@@ -1141,13 +1304,19 @@ async function readMissionChatHistory(
     if (["queued", "running", "waiting"].includes(state.status)) continue;
 
     const histories = await view.getMessageHistory({ scope: { kind: "all" } }).catch(() => []);
+    const activityEntries = await readHistoricalAgentActivityEntries(view, turn.sequence);
     const richEntries = finalizeHistoricalChatEntries(
-      messageRecordsToChatEntries(histories.flatMap((history) => history.messages)).map(
-        (entry) => ({
+      [
+        ...messageRecordsToChatEntries(
+          histories
+            .flatMap((history) => history.messages)
+            .filter((record) => record.source?.parentSessionId === undefined),
+        ).map((entry) => ({
           ...entry,
           timelineSequence: turn.sequence,
-        }),
-      ),
+        })),
+        ...activityEntries,
+      ].toSorted((left, right) => left.createdAt.localeCompare(right.createdAt)),
     );
     entries.push(...richEntries);
     if (!richEntries.some((entry) => entry.kind === "assistant")) {
@@ -1163,6 +1332,69 @@ async function readMissionChatHistory(
     }
   }
   return entries;
+}
+
+async function readHistoricalAgentActivityEntries(
+  view: StoredExecutionView,
+  timelineSequence: number,
+): Promise<MissionChatEntry[]> {
+  const events: ExpertAgentStreamEvent[] = [];
+  let after: { executionId: string; sequence: number } | undefined;
+  do {
+    const page = await view.listEvents({ scope: { kind: "all" }, limit: 1_000, after });
+    for (const event of page.items) {
+      if (event.type !== "runtime.event") continue;
+      const parsed = ExpertAgentStreamEventSchema.safeParse(event.data);
+      if (
+        parsed.success &&
+        (parsed.data.type === "agent.command" || parsed.data.type.startsWith("run."))
+      ) {
+        events.push(parsed.data);
+      }
+    }
+    after = page.nextCursor;
+  } while (after !== undefined);
+  const byId = new Map<string, MissionChatEntry>();
+  for (const event of events) {
+    const isCommand = event.type === "agent.command";
+    if (!isCommand && event.source.parentSessionId === undefined) continue;
+    const action = isCommand ? event.payload.action : "run";
+    const commandId = isCommand
+      ? event.payload.commandId
+      : `${event.source.sessionId ?? event.runId}:${event.runId}:run`;
+    const phase = isCommand
+      ? event.payload.phase
+      : event.type === "run.started"
+        ? "started"
+        : event.type === "run.completed"
+          ? "completed"
+          : "failed";
+    byId.set(`agent:${view.executionId}:${commandId}`, {
+      id: `agent:${view.executionId}:${commandId}`,
+      timelineSequence,
+      executionId: view.executionId,
+      kind: "agent_activity",
+      commandId,
+      action,
+      phase,
+      ...(isCommand && event.payload.senderSessionId !== undefined
+        ? { senderSessionId: event.payload.senderSessionId }
+        : {}),
+      targetSessionIds: isCommand
+        ? event.payload.targetSessionIds
+        : event.source.sessionId === undefined
+          ? []
+          : [event.source.sessionId],
+      ...(event.source.displayName === undefined ? {} : { label: event.source.displayName }),
+      ...(isCommand && event.payload.error !== undefined
+        ? { error: event.payload.error }
+        : event.type === "run.failed"
+          ? { error: event.payload.message }
+          : {}),
+      createdAt: event.emittedAt,
+    });
+  }
+  return [...byId.values()];
 }
 
 function executionFallback(status: string, output: unknown, error: unknown): string {
@@ -1273,6 +1505,7 @@ function observeMissionChat(
   execution: MutableExecution & { readonly result: Promise<unknown> },
   onOutput: (patches: readonly MissionChatPatch[]) => void,
   onInvalidate: () => void,
+  onItem: (item: ExecutionOutputItem) => void,
 ): LiveMissionChat {
   const chat: LiveMissionChat = {
     executionId: execution.executionId,
@@ -1288,6 +1521,7 @@ function observeMissionChat(
       try {
         for await (const item of subscription) {
           if (closed) break;
+          onItem(item);
           const patches = consumeLiveChatOutput(chat, item);
           if (patches.length > 0) onOutput(patches);
         }
@@ -1338,6 +1572,56 @@ function consumeLiveChatOutput(
     ...(item.executorId === undefined ? {} : { executorId: item.executorId }),
     createdAt: item.occurredAt,
   };
+  if (item.channel === "agent") {
+    const payload = asRecord(item.value);
+    const eventType = readString(payload, "type");
+    const action = eventType.startsWith("run.")
+      ? "run"
+      : readAgentActivityAction(readString(payload, "action"));
+    if (action === undefined) return [];
+    const commandId =
+      readString(payload, "commandId") ||
+      `${item.source.sessionId ?? item.runId}:${item.runId}:${action}`;
+    const phase =
+      eventType === "run.failed" || eventType === "run.cancelled"
+        ? "failed"
+        : eventType === "run.completed"
+          ? "completed"
+          : eventType === "run.started"
+            ? "started"
+            : readAgentActivityPhase(readString(payload, "phase"));
+    if (phase === undefined) return [];
+    const id = `agent:${item.executionId}:${commandId}`;
+    const targets = payload["targetSessionIds"];
+    const targetSessionIds = Array.isArray(targets)
+      ? targets.filter((value): value is string => typeof value === "string" && value !== "")
+      : item.source.sessionId === undefined
+        ? []
+        : [item.source.sessionId];
+    const entry: MissionChatEntry = {
+      ...base,
+      id,
+      kind: "agent_activity",
+      commandId,
+      action,
+      phase,
+      ...(readString(payload, "senderSessionId") === ""
+        ? {}
+        : { senderSessionId: readString(payload, "senderSessionId") }),
+      targetSessionIds,
+      ...(item.source.displayName === undefined ? {} : { label: item.source.displayName }),
+      ...(readString(payload, "error") === ""
+        ? eventType !== "run.failed"
+          ? {}
+          : { error: readString(payload, "message") || "Subagent failed." }
+        : { error: readString(payload, "error") }),
+    };
+    const index = chat.entries.findIndex((candidate) => candidate.id === id);
+    if (index === -1) chat.entries.push(entry);
+    else chat.entries[index] = entry;
+    return [{ type: "entry.upsert", entry }];
+  }
+  if (item.source.parentSessionId !== undefined) return [];
   if (item.channel === "thought") {
     const content = item.delta ?? formatValue(item.value, 200_000);
     if (content === "") return [];
@@ -1504,6 +1788,35 @@ function consumeLiveChatOutput(
   return [];
 }
 
+function readAgentActivityAction(
+  value: string,
+): Extract<MissionChatEntry, { kind: "agent_activity" }>["action"] | undefined {
+  switch (value) {
+    case "spawn":
+    case "wait":
+    case "list":
+    case "send":
+    case "resume":
+    case "interrupt":
+      return value;
+    default:
+      return undefined;
+  }
+}
+
+function readAgentActivityPhase(
+  value: string,
+): Extract<MissionChatEntry, { kind: "agent_activity" }>["phase"] | undefined {
+  switch (value) {
+    case "started":
+    case "completed":
+    case "failed":
+      return value;
+    default:
+      return undefined;
+  }
+}
+
 async function listPendingHumanInteractions(
   execution: Pick<MutableExecution, "listEvents">,
 ): Promise<MissionHumanInteraction[]> {
@@ -1577,41 +1890,6 @@ function preview(value: unknown): string | undefined {
 
 function truncate(value: string, maxLength: number): string {
   return value.length <= maxLength ? value : `${value.slice(0, maxLength - 1).trimEnd()}…`;
-}
-
-export function flattenWorkItems(
-  tree: InvocationTree,
-  executorNames: ReadonlyMap<string, string> = new Map(),
-): MissionWorkItem[] {
-  const invocation = tree.invocation;
-  return [
-    {
-      invocationId: invocation.invocationId,
-      ...(invocation.parentInvocationId === undefined
-        ? {}
-        : { parentInvocationId: invocation.parentInvocationId }),
-      ...(invocation.nodeId === undefined ? {} : { nodeId: invocation.nodeId }),
-      ...(invocation.executorId === undefined ? {} : { executorId: invocation.executorId }),
-      ...(invocation.executorId === undefined ||
-      executorNames.get(invocation.executorId) === undefined
-        ? {}
-        : { executorName: executorNames.get(invocation.executorId)! }),
-      ...(invocation.agentId === undefined ? {} : { agentId: invocation.agentId }),
-      contextId: invocation.contextId,
-      ...(invocation.agentTaskSequence === undefined
-        ? {}
-        : { taskSequence: invocation.agentTaskSequence }),
-      kind: invocation.definition.kind,
-      status: invocation.status,
-      inputSummary: formatValue(invocation.input, 500),
-      ...(invocation.output === undefined
-        ? {}
-        : { outputSummary: formatValue(invocation.output, 1_000) }),
-      createdAt: invocation.createdAt,
-      updatedAt: invocation.updatedAt,
-    },
-    ...tree.children.flatMap((child) => flattenWorkItems(child, executorNames)),
-  ];
 }
 
 function formatValue(value: unknown, maxLength: number): string {

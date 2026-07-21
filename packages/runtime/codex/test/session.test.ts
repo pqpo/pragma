@@ -61,23 +61,27 @@ describe("Codex tool event mapping", () => {
 
     const result = mapCodexNotificationToRuntimeEvent(
       {
-        method: "item/completed",
-        params: {
-          item: {
-            type: "dynamicToolCall",
-            id: "call-1",
-            namespace: "mcp__pragma_tools",
-            tool: "read_expert_context",
-            arguments: {},
-            status: "failed",
-            contentItems: [
-              {
-                type: "inputText",
-                text: "unsupported call: mcp__pragma_tools_f27986349ee3",
-              },
-            ],
-            success: false,
-            durationMs: 3,
+        rootThreadId: "thread-1",
+        notification: {
+          method: "item/completed",
+          params: {
+            threadId: "thread-1",
+            item: {
+              type: "dynamicToolCall",
+              id: "call-1",
+              namespace: "mcp__pragma_tools",
+              tool: "read_expert_context",
+              arguments: {},
+              status: "failed",
+              contentItems: [
+                {
+                  type: "inputText",
+                  text: "unsupported call: mcp__pragma_tools_f27986349ee3",
+                },
+              ],
+              success: false,
+              durationMs: 3,
+            },
           },
         },
       },
@@ -89,6 +93,103 @@ describe("Codex tool event mapping", () => {
       toolName: "read_expert_context",
       message: "unsupported call: mcp__pragma_tools_f27986349ee3",
     });
-    expect(result.events).toEqual([failedEvent]);
+    expect(result.events).toEqual([
+      expect.objectContaining({ type: "tool.failed", runId: "run-1" }),
+    ]);
+  });
+
+  it("maps native collaboration calls without guessing tool names in the UI", () => {
+    const context = {
+      runId: "root-run",
+      source: { kind: "runtime", runId: "root-run", path: [] },
+      events: {},
+    } as unknown as RuntimeEventMappingContext;
+
+    const result = mapCodexNotificationToRuntimeEvent(
+      {
+        rootThreadId: "root-thread",
+        notification: {
+          method: "item/completed",
+          params: {
+            threadId: "root-thread",
+            turnId: "root-turn",
+            item: {
+              type: "collabAgentToolCall",
+              id: "collab-1",
+              tool: "spawnAgent",
+              status: "completed",
+              senderThreadId: "root-thread",
+              receiverThreadIds: ["child-thread"],
+              prompt: "Inspect the repository",
+              agentsStates: { "child-thread": { status: "running", message: null } },
+            },
+          },
+        },
+      },
+      context,
+    );
+
+    expect(result.events).toEqual([
+      expect.objectContaining({
+        type: "agent.command",
+        runId: "root-run",
+        source: expect.objectContaining({ sessionId: "root-thread" }),
+        payload: expect.objectContaining({
+          commandId: "collab-1",
+          action: "spawn",
+          phase: "completed",
+          targetSessionIds: ["child-thread"],
+        }),
+      }),
+    ]);
+  });
+
+  it("keeps child thread output in a distinct runtime source", () => {
+    const messageDelta = vi.fn((delta: string) => ({
+      runId: "root-run",
+      source: { kind: "runtime", runId: "root-run", path: [] },
+      type: "message.delta" as const,
+      payload: { role: "assistant" as const, contentType: "text" as const, delta },
+    }));
+    const context = {
+      runId: "root-run",
+      source: { kind: "runtime", runId: "root-run", path: [] },
+      events: { messageDelta },
+    } as unknown as RuntimeEventMappingContext;
+
+    const result = mapCodexNotificationToRuntimeEvent(
+      {
+        rootThreadId: "root-thread",
+        thread: {
+          threadId: "child-thread",
+          parentThreadId: "root-thread",
+          displayName: "researcher",
+        },
+        notification: {
+          method: "item/agentMessage/delta",
+          params: {
+            threadId: "child-thread",
+            turnId: "child-turn",
+            itemId: "message-1",
+            delta: "child output",
+          },
+        },
+      },
+      context,
+    );
+
+    expect(result.outputDelta).toBeUndefined();
+    expect(result.events).toEqual([
+      expect.objectContaining({
+        runId: "child-turn",
+        parentRunId: "root-run",
+        source: expect.objectContaining({
+          sessionId: "child-thread",
+          parentSessionId: "root-thread",
+          displayName: "researcher",
+        }),
+        payload: expect.objectContaining({ delta: "child output" }),
+      }),
+    ]);
   });
 });

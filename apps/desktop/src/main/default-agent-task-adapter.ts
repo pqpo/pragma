@@ -85,13 +85,13 @@ export function createDesktopDefaultAgentTaskPort(options: {
       );
     },
     async listWorkItems(id) {
-      return (await options.runner.listWorkItems(id)).map(
-        (item): DefaultAgentTaskWorkItem => ({
-          id: item.invocationId,
-          kind: item.kind,
-          status: item.status,
-          label: item.executorId ?? item.nodeId ?? item.invocationId,
-          details: item,
+      return (await options.runner.getWork(id)).records.map(
+        (record): DefaultAgentTaskWorkItem => ({
+          id: record.recordId,
+          kind: record.kind,
+          status: record.status,
+          label: record.title,
+          details: record,
         }),
       );
     },

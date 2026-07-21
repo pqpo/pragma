@@ -157,9 +157,11 @@ Execution 的部分协议在 `@pragma/shared`，Runtime/Expert 契约在 Core，
 
 Execution 已采用单一 Canonical Event Log，只持久化完整标准化消息、Invocation 生命周期、委派、人工交互等可恢复语义事件。Runtime 原生事件先归一化为 `ExpertAgentStreamEvent`，其中 token、thinking 和 tool delta 只通过 `subscribeOutput()` 实时发布，不进入事件日志。
 
-实时 Output 使用 `ExecutionOutputItem`，保留来源 event id 和 Invocation/Executor/Context 信息，但不拥有持久化 cursor。完整 `AgentMessage` 通过 `invocation.message.appended` 进入 Canonical Event Log。Execution 状态、Invocation patch 与语义事件可通过幂等 `commit()` 原子提交。
+实时 Output 使用 `ExecutionOutputItem`，保留来源 event id、run/session 父子关系和 Invocation/Executor/Context 信息，但不拥有持久化 cursor。活动 Execution 的进程内 Live Bus 会向晚订阅者补发本次执行已产生的 Output，执行结束后即释放；完整 `AgentMessage` 仍通过 `invocation.message.appended` 进入 Canonical Event Log。Execution 状态、Invocation patch 与语义事件可通过幂等 `commit()` 原子提交。
 
-该设计明确拆分“未来实时输出”和“历史/审计”：`subscribeOutput()` 只跟随未来事件，`getMessageHistory()` 读取完整消息，`listEvents()` 使用 Execution cursor 分页读取编排历史。详见 ADR 007。
+Runtime 原生子 Agent 使用 `sessionId` / `parentSessionId` 表达会话归属，同一会话的多轮任务拥有不同 `runId`；spawn、wait、list、send、resume、interrupt 统一归一化为 `agent.command`。工作投影按 session 聚合记录并按 run 展开任务，子 Agent 输出不会再混入父 Invocation 的 Chat。
+
+该设计明确拆分“活动执行的非持久化实时输出”和“历史/审计”：`subscribeOutput()` 可读取当前活动执行的内存回放并继续跟随新事件，`getMessageHistory()` 读取完整消息，`listEvents()` 使用 Execution cursor 分页读取编排历史。详见 ADR 007。
 
 ### P1：文件存储是很好的本地参考实现，但不是云端后端
 

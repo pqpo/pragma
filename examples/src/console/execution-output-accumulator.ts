@@ -48,6 +48,10 @@ export class ExecutionOutputAccumulator {
         const text = formatConsoleProgress(item.value);
         return text === undefined ? [] : [{ kind: "progress", text, append: false }];
       }
+      case "agent": {
+        const text = formatConsoleValue(item.value);
+        return text === undefined ? [] : [{ kind: "progress", text, append: false }];
+      }
       case "result": {
         if (this.invocationsWithAnswers.has(item.invocationId)) return [];
         const text = formatConsoleValue(item.value);

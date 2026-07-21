@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { AgentMessageSchema, AgentMessageUsageSchema } from "../agent-message.schema.ts";
+import { ExpertAgentStreamSourceSchema } from "../stream-event.schema.ts";
 
 export const ExecutionStatusSchema = z.enum([
   "queued",
@@ -181,6 +182,9 @@ export const InvocationMessageAppendedEventSchema = ExecutionEventSchema.extend(
   type: z.literal("invocation.message.appended"),
   data: z.object({
     message: AgentMessageSchema,
+    runId: z.string().min(1).optional(),
+    parentRunId: z.string().min(1).optional(),
+    source: ExpertAgentStreamSourceSchema.optional(),
   }),
 });
 
@@ -192,7 +196,10 @@ export const ExecutionOutputItemSchema = z.object({
   parentInvocationId: z.string().min(1).optional(),
   executorId: z.string().min(1).optional(),
   contextId: z.string().min(1),
-  channel: z.enum(["message", "thought", "tool", "progress", "result"]),
+  runId: z.string().min(1),
+  parentRunId: z.string().min(1).optional(),
+  source: ExpertAgentStreamSourceSchema,
+  channel: z.enum(["message", "thought", "tool", "progress", "result", "agent"]),
   delta: z.string().optional(),
   value: z.unknown().optional(),
   occurredAt: z.string().datetime(),

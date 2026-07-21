@@ -1,16 +1,11 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import type {
-  Mission,
-  MissionChatSnapshot,
-  MissionWorkItem,
-} from "../../../../shared/desktop-api.ts";
+import type { Mission, MissionChatSnapshot } from "../../../../shared/desktop-api.ts";
 import {
-  agentLifecycleAction,
   applyMissionChatPatches,
   groupMissionConversationEntries,
-  groupMissionWorkItems,
   MissionDetailFragment,
+  MissionThinkingEntry,
   MissionsPage,
   shouldClearMissionThinkingPlaceholder,
 } from "./MissionsPage.tsx";
@@ -201,70 +196,49 @@ describe("Mission tool call grouping", () => {
     });
   });
 
-  it("keeps agent lifecycle interactions visible instead of folding them into tool groups", () => {
+  it("keeps structured agent activity between ordinary tool groups", () => {
     const createdAt = "2026-07-21T00:00:00.000Z";
-    const blocks = groupMissionConversationEntries(
-      ["Read", "mcp__pragma__spawn_expert", "wait_agents", "Write"].map((toolName, index) => ({
-        type: "durable" as const,
+    const blocks = groupMissionConversationEntries([
+      {
+        type: "durable",
         entry: {
-          id: `tool-${index}`,
-          kind: "tool" as const,
-          toolCallId: `call-${index}`,
-          toolName,
-          status: "succeeded" as const,
+          id: "tool-1",
+          kind: "tool",
+          toolCallId: "call-1",
+          toolName: "read_file",
+          status: "succeeded",
           createdAt,
         },
-      })),
-    );
-
-    expect(blocks).toHaveLength(4);
-    expect(blocks[1]).toMatchObject({ type: "tools", entries: [{ toolName: expect.any(String) }] });
-    expect(blocks[2]).toMatchObject({ type: "tools", entries: [{ toolName: "wait_agents" }] });
-    expect(agentLifecycleAction("mcp__pragma__spawn_expert")).toBe("spawn");
-    expect(agentLifecycleAction("list_experts")).toBe("list");
-    expect(agentLifecycleAction("send_message")).toBe("message");
-    expect(agentLifecycleAction("read_file")).toBeUndefined();
-  });
-});
-
-describe("Mission work records", () => {
-  it("groups follow-up invocations in one runtime Context session", () => {
-    const item = (
-      invocationId: string,
-      contextId: string,
-      taskSequence: number,
-      status: MissionWorkItem["status"],
-    ): MissionWorkItem => ({
-      invocationId,
-      parentInvocationId: "root",
-      executorId: "researcher",
-      executorName: "Researcher",
-      agentId: `agent-${contextId}`,
-      contextId,
-      taskSequence,
-      kind: "expert",
-      status,
-      inputSummary: `task ${taskSequence}`,
-      createdAt: `2026-07-21T00:00:0${taskSequence}.000Z`,
-      updatedAt: `2026-07-21T00:00:0${taskSequence}.000Z`,
-    });
-    const records = groupMissionWorkItems([
-      item("child-1", "context-a", 0, "succeeded"),
-      item("child-2", "context-a", 1, "running"),
-      item("child-3", "context-b", 0, "succeeded"),
+      },
+      {
+        type: "durable",
+        entry: {
+          id: "agent-1",
+          kind: "agent_activity",
+          commandId: "spawn-1",
+          action: "spawn",
+          phase: "completed",
+          targetSessionIds: ["child-thread"],
+          createdAt,
+        },
+      },
+      {
+        type: "durable",
+        entry: {
+          id: "tool-2",
+          kind: "tool",
+          toolCallId: "call-2",
+          toolName: "write_file",
+          status: "succeeded",
+          createdAt,
+        },
+      },
     ]);
 
-    expect(records).toHaveLength(2);
-    expect(records[0]).toMatchObject({
-      key: "context:context-a",
-      title: "Researcher",
-      status: "running",
-      invocationIds: ["child-1", "child-2"],
-      items: [{ taskSequence: 0 }, { taskSequence: 1 }],
-    });
-    expect(records[1]).toMatchObject({
-      key: "context:context-b",
-      invocationIds: ["child-3"],
+    expect(blocks.map((block) => block.type)).toEqual(["tools", "entry", "tools"]);
+    expect(blocks[1]).toMatchObject({
+      type: "entry",
+      item: { entry: { kind: "agent_activity", action: "spawn" } },
     });
   });
 });
@@ -321,6 +295,36 @@ describe("Mission thinking placeholder", () => {
     };
 
     expect(shouldClearMissionThinkingPlaceholder(snapshot, requestId)).toBe(true);
+  });
+});
+
+describe("Mission thinking entry", () => {
+  const entry = {
+    id: "thinking-entry",
+    kind: "thinking" as const,
+    content: "Inspecting the workspace before making changes.",
+    createdAt: "2026-07-21T00:00:00.000Z",
+  };
+
+  it("shows streaming thinking in full without a collapse control", () => {
+    const html = renderToStaticMarkup(
+      <MissionThinkingEntry entry={{ ...entry, streaming: true }} />,
+    );
+
+    expect(html).toContain("mission-thinking-entry is-expanded is-streaming");
+    expect(html).toContain('aria-live="polite"');
+    expect(html).not.toContain("<button");
+  });
+
+  it("collapses completed thinking to a row with an expand control", () => {
+    const html = renderToStaticMarkup(
+      <MissionThinkingEntry entry={{ ...entry, streaming: false }} />,
+    );
+
+    expect(html).toContain('class="mission-thinking-entry"');
+    expect(html).toContain('aria-expanded="false"');
+    expect(html).toContain('aria-label="Expand thinking"');
+    expect(html).toContain(entry.content);
   });
 });
 

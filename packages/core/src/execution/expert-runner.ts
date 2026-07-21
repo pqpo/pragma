@@ -1250,7 +1250,15 @@ async function submitRuntimeTurn(options: {
     options.session,
     handle,
   );
-  const messageAccumulator = new RuntimeMessageAccumulator(options.runtimeSource);
+  const messageAccumulators = new Map<string, RuntimeMessageAccumulator>();
+  const accumulatorFor = (runId: string): RuntimeMessageAccumulator => {
+    const existing = messageAccumulators.get(runId);
+    if (existing !== undefined) return existing;
+    const created = new RuntimeMessageAccumulator(options.runtimeSource);
+    messageAccumulators.set(runId, created);
+    return created;
+  };
+  const rootMessageAccumulator = accumulatorFor(options.runId);
   const liveBus = getExecutionLiveBus(options.options.store);
   const drain = (async () => {
     for await (const event of handle.events) {
@@ -1260,12 +1268,17 @@ async function submitRuntimeTurn(options: {
         event,
       });
       if (output !== undefined) liveBus.publish(options.options.executionId, output);
-      for (const message of messageAccumulator.consume(event)) {
+      for (const message of accumulatorFor(event.runId).consume(event)) {
         await options.options.store.appendEvent(
           options.options.executionId,
           options.options.invocationId,
           "invocation.message.appended",
-          { message },
+          {
+            message,
+            runId: event.runId,
+            ...(event.parentRunId === undefined ? {} : { parentRunId: event.parentRunId }),
+            source: event.source,
+          },
           `invocation-message:${event.eventId}:${message.timestamp}`,
         );
       }
@@ -1284,13 +1297,22 @@ async function submitRuntimeTurn(options: {
     const result = await handle.result;
     await drain;
     const output = result.result.output;
-    const finalMessage = messageAccumulator.complete(output, result.result.usage);
+    const finalMessage = rootMessageAccumulator.complete(output, result.result.usage);
     if (finalMessage !== undefined) {
       await options.options.store.appendEvent(
         options.options.executionId,
         options.options.invocationId,
         "invocation.message.appended",
-        { message: finalMessage },
+        {
+          message: finalMessage,
+          runId: options.runId,
+          source: {
+            kind: "agent",
+            runId: options.runId,
+            agentId: options.invocation.executorId,
+            path: [],
+          },
+        },
         `invocation-final-message:${options.runId}`,
       );
     }
