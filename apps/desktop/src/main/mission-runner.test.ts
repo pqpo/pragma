@@ -3,6 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
+  createFileExecutionStore,
+  createFileExpertSessionStore,
   createStaticRuntimeResolver,
   defineExpert,
   defineRuntimeDriver,
@@ -17,7 +19,7 @@ import type {
 } from "@pragma/interpreter/ast";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { missionExecutorSnapshot } from "../shared/desktop-api.ts";
+import { missionExecutorSnapshot, type DesktopToolPermissionMode } from "../shared/desktop-api.ts";
 import type { CapabilityCredentialStore } from "./capability-credential-store.ts";
 import type { CapabilityStore } from "./capability-store.ts";
 import { createMissionRunner } from "./mission-runner.ts";
@@ -286,34 +288,70 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
     });
     const startTurn = vi.fn(
       (
-        session: { context: RuntimeDriverSessionContext; id: string },
+        session: {
+          context: RuntimeDriverSessionContext;
+          id: string;
+          toolPermissionMode: DesktopToolPermissionMode;
+        },
         turn: { rawQuery: string; modelSelection?: RuntimeModelSelection | undefined },
       ) => ({
         outputText: `${session.context.agent.id}:${turn.rawQuery}`,
         runtimeSessionId: session.id,
       }),
     );
-    const createSession = vi.fn((context: RuntimeDriverSessionContext) => ({
-      context,
-      id: `runtime-${context.systemSessionId}`,
-    }));
-    const runtime = defineRuntimeDriver<
-      never,
-      { context: RuntimeDriverSessionContext; id: string }
-    >({
-      descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
-      createSession,
-      restoreSession: (context) => ({ context, id: context.request.runtimeSession!.id }),
-      readSession: (session) => ({ runtimeSessionId: session.id }),
-      startTurn,
-      mapEvent: () => ({ events: [] }),
-      closeSession: () => undefined,
+    const openedSessionModes: DesktopToolPermissionMode[] = [];
+    const createSession = vi.fn((context: RuntimeDriverSessionContext) => {
+      openedSessionModes.push("request-approval");
+      return {
+        context,
+        id: `runtime-${context.systemSessionId}`,
+        toolPermissionMode: "request-approval" as const,
+      };
     });
+    const runtimeForMode = (toolPermissionMode: DesktopToolPermissionMode) =>
+      defineRuntimeDriver<
+        never,
+        {
+          context: RuntimeDriverSessionContext;
+          id: string;
+          toolPermissionMode: DesktopToolPermissionMode;
+        }
+      >({
+        descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
+        createSession:
+          toolPermissionMode === "request-approval"
+            ? createSession
+            : (context) => {
+                openedSessionModes.push(toolPermissionMode);
+                return {
+                  context,
+                  id: `runtime-${context.systemSessionId}`,
+                  toolPermissionMode,
+                };
+              },
+        restoreSession: (context) => {
+          openedSessionModes.push(toolPermissionMode);
+          return { context, id: context.request.runtimeSession!.id, toolPermissionMode };
+        },
+        readSession: (session) => ({ runtimeSessionId: session.id }),
+        startTurn,
+        mapEvent: () => ({ events: [] }),
+        closeSession: () => undefined,
+      });
+    const runtime = runtimeForMode("request-approval");
     const runtimeResolver = createStaticRuntimeResolver({
       runtimes: [runtime],
       defaultRuntimeId: "fake",
     });
-    const runtimesForToolPermissionMode = vi.fn(() => runtimeResolver);
+    const runtimeResolvers = new Map(
+      (["request-approval", "auto-approve", "full-access"] as const).map((mode) => [
+        mode,
+        createStaticRuntimeResolver({ runtimes: [runtimeForMode(mode)], defaultRuntimeId: "fake" }),
+      ]),
+    );
+    const runtimesForToolPermissionMode = vi.fn(
+      (mode: DesktopToolPermissionMode) => runtimeResolvers.get(mode)!,
+    );
     const runner = createMissionRunner({
       missions,
       project,
@@ -409,6 +447,11 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
       model: { providerId: "provider", modelId: "model" },
       thinkingLevel: "low",
     });
+    expect(startTurn.mock.calls.map(([session]) => session.toolPermissionMode)).toEqual([
+      "request-approval",
+      "auto-approve",
+    ]);
+    expect(openedSessionModes).toEqual(["request-approval", "auto-approve"]);
     await expect(runner.listWorkItems(mission.id)).resolves.toEqual([
       expect.objectContaining({ kind: "expert", status: "succeeded", executorId: "writer" }),
     ]);
@@ -569,6 +612,226 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
     expect(piTurns).toHaveBeenCalledTimes(2);
     expect(piSelections).toEqual([undefined, undefined]);
     expect(codexTurns).not.toHaveBeenCalled();
+  });
+
+  it("resumes the original Expert turn when a Mission restarts with pending human input", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-mission-expert-human-recovery-"));
+    temporaryPaths.push(root);
+    const pragmaHome = join(root, "state");
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    const snapshot = await project.publish({
+      expectedRevision: 0,
+      resources: [runtimeFixture(), expertFixture()],
+    });
+    const missions = createMissionStore({ missionsPath: join(root, "missions") });
+    const mission = await missions.create({
+      workspace: { path: root, basename: "workspace" },
+      goal: "Continue after choosing an environment",
+      project: { id: snapshot.projectId, revision: snapshot.revision },
+      executor: missionExecutorSnapshot(
+        snapshot.resources.find((resource) => resource.kind === "Expert")!,
+      ),
+    });
+    const request = {
+      kind: "user_question" as const,
+      toolName: "askUserQuestion" as const,
+      toolCallId: "question-after-restart",
+      questions: [
+        {
+          question: "Which environment?",
+          header: "Environment",
+          kind: "single_choice" as const,
+          options: [
+            { label: "staging", description: "Use staging." },
+            { label: "production", description: "Use production." },
+          ],
+        },
+      ],
+    };
+    let runtimeStarts = 0;
+    const runtime = defineRuntimeDriver<never, { context: RuntimeDriverSessionContext }>({
+      descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
+      createSession: (context) => ({ context }),
+      readSession: () => ({ runtimeSessionId: "recovered-runtime-session" }),
+      async startTurn(session) {
+        runtimeStarts += 1;
+        const handler = session.context.request.humanInteractionHandler;
+        if (handler === undefined) throw new Error("Human interaction handler is missing.");
+        const response = await handler(request);
+        return {
+          outputText: JSON.stringify(response),
+          runtimeSessionId: "recovered-runtime-session",
+        };
+      },
+      mapEvent: () => ({ events: [] }),
+      closeSession: () => undefined,
+    });
+    const runtimes = createStaticRuntimeResolver({
+      runtimes: [runtime],
+      defaultRuntimeId: "fake",
+    });
+    const expert = await defineExpert({
+      id: "writer",
+      name: "Writer",
+      description: "Recovery test Expert",
+      tags: [],
+      version: "1.0.0",
+      scope: "test",
+      workspace: root,
+      pragmaHome,
+      defaultRuntimeId: "fake",
+    });
+    const executions = createFileExecutionStore({ pragmaHome });
+    const expertSessions = createFileExpertSessionStore({ executions, pragmaHome });
+    const runtimeBinding = (await runtimes.bind({ runtimeId: "fake" })).binding;
+    const sessionId = "10000000-0000-4000-8000-000000000001";
+    const executionId = "20000000-0000-4000-8000-000000000001";
+    const contextId = "30000000-0000-4000-8000-000000000001";
+    const interactionId = "pending-question";
+    const startedAt = new Date().toISOString();
+    const definition = { id: expert.id, version: expert.version, kind: "expert" as const };
+    await expertSessions.create({
+      schemaVersion: "pragma.expert-session/v4",
+      sessionId,
+      expertId: expert.id,
+      expertVersion: expert.version,
+      definitionFingerprint: "a".repeat(64),
+      status: "open",
+      activeExecutionId: executionId,
+      queuedRequestIds: [],
+      executionIds: [executionId],
+      rootContextId: contextId,
+      contexts: {
+        [contextId]: {
+          schemaVersion: "pragma.runtime-context/v4",
+          contextId,
+          owner: { type: "expert-session", ownerId: sessionId },
+          origin: { type: "expert-session", sessionId },
+          expert: { id: expert.id, version: expert.version },
+          runtime: runtimeBinding,
+          lifecycle: "open",
+          createdAt: startedAt,
+          updatedAt: startedAt,
+        },
+      },
+      createdAt: startedAt,
+      updatedAt: startedAt,
+    });
+    await executions.create(
+      {
+        schemaVersion: "pragma.execution/v5",
+        executionId,
+        version: 0,
+        kind: "expert-turn",
+        definition,
+        rootInvocationId: executionId,
+        status: "running",
+        input: mission.goal,
+        state: {},
+        lastAppliedSequence: 0,
+        createdAt: startedAt,
+        updatedAt: startedAt,
+      },
+      {
+        invocationId: executionId,
+        rootInvocationId: executionId,
+        definition,
+        executorId: expert.id,
+        contextId,
+        status: "running",
+        input: mission.goal,
+        createdAt: startedAt,
+        updatedAt: startedAt,
+      },
+    );
+    await expertSessions.transact(sessionId, ({ session }) => ({
+      result: undefined,
+      session,
+      prompts: [
+        {
+          requestId: mission.initialMessageId,
+          sessionId,
+          content: mission.goal,
+          mode: "enqueue" as const,
+          executionId,
+          status: "running" as const,
+          createdAt: startedAt,
+          updatedAt: startedAt,
+        },
+      ],
+    }));
+    await executions.appendEvent(
+      executionId,
+      executionId,
+      "human.requested",
+      { interactionId, request },
+      `human-request:${interactionId}`,
+    );
+    await missions.appendExecutionReference({
+      missionId: mission.id,
+      inputMessageId: mission.initialMessageId,
+      executionId,
+      createdAt: startedAt,
+    });
+    await missions.updateExecution(mission.id, {
+      id: executionId,
+      inputMessageId: mission.initialMessageId,
+      sessionId,
+      status: "waiting",
+      startedAt,
+    });
+    const runner = createMissionRunner({
+      missions,
+      project,
+      capabilityStore: {} as CapabilityStore,
+      capabilityCredentials: {} as CapabilityCredentialStore,
+      capabilitiesPath: join(root, "capabilities"),
+      pragmaHome,
+      runtimes,
+      compileSystemExecutor: async () => ({
+        ref: mission.executor.ref,
+        value: expert,
+        fingerprint: "b".repeat(64),
+        projectFingerprint: "c".repeat(64),
+        environmentFingerprint: {
+          environmentId: "desktop",
+          projectFingerprint: "c".repeat(64),
+          value: "d".repeat(64),
+          resources: [],
+          plugins: [],
+        },
+        rootRuntimeId: "fake",
+        dependencies: [],
+      }),
+    });
+
+    const resumed = await runner.run(mission.id);
+    expect(resumed.execution).toMatchObject({ id: executionId, status: "waiting", sessionId });
+    expect(runtimeStarts).toBe(0);
+    const interactions = await runner.listHumanInteractions(mission.id);
+    expect(interactions).toEqual([
+      expect.objectContaining({
+        interactionId,
+        request: expect.objectContaining({ kind: "question" }),
+      }),
+    ]);
+
+    await runner.respondToHumanInteraction({
+      missionId: mission.id,
+      interactionId,
+      requestId: "40000000-0000-4000-8000-000000000001",
+      response: { answers: { "Which environment?": "staging" } },
+    });
+    await vi.waitFor(
+      async () =>
+        expect((await missions.get(mission.id)).execution).toMatchObject({
+          id: executionId,
+          status: "succeeded",
+        }),
+      { timeout: settlementTimeoutMs },
+    );
+    expect(runtimeStarts).toBe(1);
+    expect(await expertSessions.listPrompts(sessionId)).toHaveLength(1);
   });
 
   it("round-trips a Flow human interaction and resolves same-id resources by kind", async () => {

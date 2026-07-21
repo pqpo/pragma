@@ -98,6 +98,12 @@ interface LiveMissionChat {
   sequence: number;
 }
 
+interface MissionExecutionContext {
+  readonly app: ReturnType<typeof createPragma>;
+  readonly runtimes: RuntimeResolver;
+  readonly setToolPermissionMode: (mode: DesktopToolPermissionMode) => void;
+}
+
 export function createMissionRunner(options: {
   readonly missions: MissionStore;
   readonly project: PragmaProjectStore;
@@ -129,14 +135,24 @@ export function createMissionRunner(options: {
     executions: executionStore,
     pragmaHome: options.pragmaHome,
   });
-  const executionContexts = new Map<
-    DesktopToolPermissionMode,
-    { readonly app: ReturnType<typeof createPragma>; readonly runtimes: RuntimeResolver }
-  >();
-  const executionContext = (mode: DesktopToolPermissionMode) => {
-    const existing = executionContexts.get(mode);
+  const runtimeResolverForToolPermissionMode = (mode: DesktopToolPermissionMode) =>
+    options.runtimesForToolPermissionMode?.(mode) ?? options.runtimes;
+  const automaticHumanInteractionHandlerForToolPermissionMode = (mode: DesktopToolPermissionMode) =>
+    options.automaticHumanInteractionHandlerForToolPermissionMode?.(mode) ??
+    options.automaticHumanInteractionHandler;
+  const executionContexts = new Map<string, MissionExecutionContext>();
+  const executionContext = (mission: Pick<Mission, "id" | "toolPermissionMode">) => {
+    const existing = executionContexts.get(mission.id);
     if (existing !== undefined) return existing;
-    const runtimes = options.runtimesForToolPermissionMode?.(mode) ?? options.runtimes;
+    let toolPermissionMode = mission.toolPermissionMode;
+    const runtimes: RuntimeResolver = {
+      getDefaultRuntimeId: async () =>
+        await runtimeResolverForToolPermissionMode(toolPermissionMode).getDefaultRuntimeId(),
+      bind: async (request) =>
+        await runtimeResolverForToolPermissionMode(toolPermissionMode).bind(request),
+      resolve: async (request) =>
+        await runtimeResolverForToolPermissionMode(toolPermissionMode).resolve(request),
+    };
     const context = {
       runtimes,
       app: createPragma({
@@ -144,12 +160,16 @@ export function createMissionRunner(options: {
         runtimes,
         executionStore,
         expertSessionStore,
-        automaticHumanInteractionHandler:
-          options.automaticHumanInteractionHandlerForToolPermissionMode?.(mode) ??
-          options.automaticHumanInteractionHandler,
+        automaticHumanInteractionHandler: async (request) =>
+          await automaticHumanInteractionHandlerForToolPermissionMode(toolPermissionMode)?.(
+            request,
+          ),
       }),
+      setToolPermissionMode: (mode: DesktopToolPermissionMode) => {
+        toolPermissionMode = mode;
+      },
     };
-    executionContexts.set(mode, context);
+    executionContexts.set(mission.id, context);
     return context;
   };
   const active = new Map<string, ActiveMissionExecution>();
@@ -287,7 +307,7 @@ export function createMissionRunner(options: {
   const runMission = async (id: string): Promise<Mission> => {
     const mission = await options.missions.get(id);
     if (active.has(mission.id)) return mission;
-    const { app, runtimes: baseRuntimes } = executionContext(mission.toolPermissionMode);
+    const { app, runtimes: baseRuntimes } = executionContext(mission);
     const runtimes = withMissionRuntimeBinding(baseRuntimes, await readMissionRootContext(mission));
     const compiled = await compileMissionExecutor(mission, runtimes);
     const modelSelection = toRuntimeModelSelection(mission.modelOverride);
@@ -374,39 +394,60 @@ export function createMissionRunner(options: {
             ...(modelSelection === undefined ? {} : { modelSelection }),
           }));
     sessions.set(mission.id, session);
+    const recoveredPrompt = recoverable
+      ? (await session.getPromptQueue()).find(
+          (prompt) =>
+            prompt.executionId === mission.execution!.id &&
+            prompt.mode === "enqueue" &&
+            prompt.status === "queued",
+        )
+      : undefined;
+    const recoveredTurn =
+      recoveredPrompt === undefined
+        ? undefined
+        : (await session.listTurns()).find(
+            (candidate) => candidate.executionId === mission.execution!.id,
+          );
+    if (recoveredPrompt !== undefined && recoveredTurn === undefined) {
+      throw new Error(`Recoverable Expert turn not found: ${mission.execution!.id}`);
+    }
     const inputMessageId = recoverable
       ? mission.execution!.inputMessageId
       : mission.initialMessageId;
-    const turn = await session.prompt(
-      recoverable
-        ? [
-            "[Pragma mission recovery]",
-            "The previous Desktop process ended before this mission finished.",
-            "Continue the pinned mission from the restored ExpertSession context.",
-            `Mission goal: ${mission.goal}`,
-          ].join("\n")
-        : mission.goal,
-      {
-        requestId: recoverable ? randomUUID() : inputMessageId,
-      },
-    );
+    const turn =
+      recoveredTurn ??
+      (await session.prompt(
+        recoverable
+          ? [
+              "[Pragma mission recovery]",
+              "The previous Desktop process ended before this mission finished.",
+              "Continue the pinned mission from the restored ExpertSession context.",
+              `Mission goal: ${mission.goal}`,
+            ].join("\n")
+          : mission.goal,
+        {
+          requestId: recoverable ? randomUUID() : inputMessageId,
+        },
+      ));
+    const executionStartedAt =
+      recoveredTurn === undefined ? startedAt : mission.execution!.startedAt;
     await options.missions.appendExecutionReference({
       missionId: mission.id,
       inputMessageId,
       executionId: turn.executionId,
-      createdAt: startedAt,
+      createdAt: executionStartedAt,
     });
     const running = await options.missions.updateExecution(mission.id, {
       id: turn.executionId,
       inputMessageId,
       sessionId: session.sessionId,
-      status: "running",
-      startedAt,
+      status: recoveredTurn === undefined ? "running" : "waiting",
+      startedAt: executionStartedAt,
     });
     trackExecution({
       missionId: mission.id,
       handle: turn,
-      startedAt,
+      startedAt: executionStartedAt,
       inputMessageId,
       sessionId: session.sessionId,
       onFinished: async () => await waitForExpertTurnSettlement(session, turn.requestId),
@@ -420,7 +461,7 @@ export function createMissionRunner(options: {
     readonly requestId: string;
   }): Promise<Mission> => {
     const mission = await options.missions.get(input.id);
-    const { app, runtimes: baseRuntimes } = executionContext(mission.toolPermissionMode);
+    const { app, runtimes: baseRuntimes } = executionContext(mission);
     const rootContext = await readMissionRootContext(mission);
     const runtimes = withMissionRuntimeBinding(baseRuntimes, rootContext);
     if (mission.executor.kind === "flow") {
@@ -514,15 +555,20 @@ export function createMissionRunner(options: {
     const prospective = { ...mission, toolPermissionMode: input.toolPermissionMode };
     if (input.modelOverride === null) delete prospective.modelOverride;
     else prospective.modelOverride = input.modelOverride;
-    const { runtimes: baseRuntimes } = executionContext(input.toolPermissionMode);
+    const baseRuntimes = runtimeResolverForToolPermissionMode(input.toolPermissionMode);
     const runtimes = withMissionRuntimeBinding(baseRuntimes, await readMissionRootContext(mission));
     await compileMissionExecutor(prospective, runtimes);
-    return await options.missions.updateOptions(mission.id, {
+    if (input.toolPermissionMode !== mission.toolPermissionMode) {
+      await sessions.get(mission.id)?.refreshRuntimeSessions();
+    }
+    const updated = await options.missions.updateOptions(mission.id, {
       toolPermissionMode: input.toolPermissionMode,
       ...(prospective.modelOverride === undefined
         ? {}
         : { modelOverride: prospective.modelOverride }),
     });
+    executionContexts.get(mission.id)?.setToolPermissionMode(input.toolPermissionMode);
+    return updated;
   };
 
   const deleteMission = async (id: string): Promise<void> => {
@@ -535,6 +581,7 @@ export function createMissionRunner(options: {
       sessions.delete(id);
     }
     await options.missions.remove(id);
+    executionContexts.delete(id);
   };
 
   const getChatSnapshot = async (input: MissionChatQuery): Promise<MissionChatSnapshot> => {
