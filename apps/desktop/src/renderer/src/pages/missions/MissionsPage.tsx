@@ -899,14 +899,9 @@ export function MissionDetailFragment(props: {
 
   useEffect(() => {
     if (awaitingRequestId === null || chat === null) return;
-    const userIndex = chat.entries.findIndex((entry) => entry.id === awaitingRequestId);
-    const responseStarted =
-      userIndex >= 0 && chat.entries.slice(userIndex + 1).some((entry) => entry.kind !== "user");
-    const executionFinished =
-      userIndex >= 0 &&
-      chat.execution !== undefined &&
-      !["queued", "running", "waiting"].includes(chat.execution.status);
-    if (responseStarted || executionFinished) setAwaitingRequestId(null);
+    if (shouldClearMissionThinkingPlaceholder(chat, awaitingRequestId)) {
+      setAwaitingRequestId(null);
+    }
   }, [awaitingRequestId, chat]);
 
   const loadEarlier = async (): Promise<void> => {
@@ -1714,6 +1709,23 @@ export function applyMissionChatPatches(
     };
   }
   return { ...snapshot, revision, entries };
+}
+
+export function shouldClearMissionThinkingPlaceholder(
+  chat: MissionChatSnapshot,
+  requestId: string,
+): boolean {
+  const userIndex = chat.entries.findIndex((entry) => entry.id === requestId);
+  if (userIndex < 0) return false;
+  if (chat.entries.slice(userIndex + 1).some((entry) => entry.kind !== "user")) return true;
+
+  const userEntry = chat.entries[userIndex];
+  return (
+    userEntry?.kind === "user" &&
+    userEntry.executionId !== undefined &&
+    userEntry.executionId === chat.execution?.id &&
+    !["queued", "running", "waiting"].includes(chat.execution.status)
+  );
 }
 
 function truncateChatStream(value: string, maxLength: number): string {

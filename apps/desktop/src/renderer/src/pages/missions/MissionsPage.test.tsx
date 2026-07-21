@@ -1,7 +1,12 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { Mission, MissionChatSnapshot } from "../../../../shared/desktop-api.ts";
-import { applyMissionChatPatches, MissionDetailFragment, MissionsPage } from "./MissionsPage.tsx";
+import {
+  applyMissionChatPatches,
+  MissionDetailFragment,
+  MissionsPage,
+  shouldClearMissionThinkingPlaceholder,
+} from "./MissionsPage.tsx";
 
 describe("MissionsPage", () => {
   it("keeps creation outside the missions surface", () => {
@@ -103,6 +108,61 @@ describe("Mission chat patches", () => {
         2,
       ),
     ).toBeNull();
+  });
+});
+
+describe("Mission thinking placeholder", () => {
+  const requestId = "00000000-0000-4000-8000-000000000020";
+  const previousExecutionId = "00000000-0000-4000-8000-000000000021";
+  const currentExecutionId = "00000000-0000-4000-8000-000000000022";
+
+  it("stays visible while a newly persisted message still sees the previous execution", () => {
+    const snapshot: MissionChatSnapshot = {
+      missionId: "00000000-0000-4000-8000-000000000000",
+      revision: 1,
+      entries: [
+        {
+          id: requestId,
+          kind: "user",
+          content: "Continue",
+          createdAt: "2026-07-21T00:00:00.000Z",
+        },
+      ],
+      page: {},
+      pendingInteractions: [],
+      execution: {
+        id: previousExecutionId,
+        status: "succeeded",
+        interruptible: false,
+      },
+    };
+
+    expect(shouldClearMissionThinkingPlaceholder(snapshot, requestId)).toBe(false);
+  });
+
+  it("clears after the matching execution finishes without producing a response entry", () => {
+    const snapshot: MissionChatSnapshot = {
+      missionId: "00000000-0000-4000-8000-000000000000",
+      revision: 2,
+      entries: [
+        {
+          id: requestId,
+          executionId: currentExecutionId,
+          kind: "user",
+          content: "Continue",
+          createdAt: "2026-07-21T00:00:00.000Z",
+        },
+      ],
+      page: {},
+      pendingInteractions: [],
+      execution: {
+        id: currentExecutionId,
+        status: "failed",
+        interruptible: false,
+      },
+    };
+
+    expect(shouldClearMissionThinkingPlaceholder(snapshot, requestId)).toBe(true);
   });
 });
 
