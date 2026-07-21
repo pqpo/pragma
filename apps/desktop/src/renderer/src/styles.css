@@ -6688,12 +6688,21 @@ p {
 .mission-rail {
   min-width: 0;
   overflow-y: auto;
-  padding: 45px 24px 36px;
+  padding: 0 24px 36px;
   border-right: 1px solid var(--border);
+  background: var(--sidebar);
+  overflow-anchor: none;
+}
+
+.mission-rail-sticky {
+  position: sticky;
+  z-index: 2;
+  top: 0;
+  padding-top: 45px;
   background: var(--sidebar);
 }
 
-.mission-rail > h1 {
+.mission-rail-sticky > h1 {
   font-size: 20px;
   font-weight: 700;
   letter-spacing: -0.025em;
@@ -6720,12 +6729,32 @@ p {
   height: 42px;
   align-items: center;
   gap: 9px;
-  margin-top: 22px;
   padding: 0 12px;
   border: 1px solid var(--border-strong);
   border-radius: 7px;
   background: var(--surface);
   color: var(--muted);
+}
+
+.mission-search-slot {
+  max-height: 64px;
+  overflow: hidden;
+  padding-top: 22px;
+  opacity: 1;
+  transform: translateY(0);
+  transition:
+    max-height 180ms ease,
+    padding-top 180ms ease,
+    opacity 140ms ease,
+    transform 180ms ease;
+}
+
+.mission-rail-sticky.is-search-collapsed .mission-search-slot {
+  max-height: 0;
+  padding-top: 0;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-8px);
 }
 
 .mission-search:focus-within {
@@ -8549,12 +8578,17 @@ textarea:focus-visible,
 }
 
 .mission-rail {
-  padding: 42px 20px 34px;
+  padding: 0 20px 34px;
   border-right: 0;
   background: #f4f6f5;
 }
 
-.mission-rail > h1 {
+.mission-rail-sticky {
+  padding-top: 42px;
+  background: #f4f6f5;
+}
+
+.mission-rail-sticky > h1 {
   font-size: 19px;
   letter-spacing: -0.02em;
 }
@@ -10123,20 +10157,27 @@ textarea:focus-visible,
   right: 0;
   bottom: 0;
   display: grid;
-  width: min(720px, 66vw);
-  min-width: 560px;
+  width: 720px;
+  min-width: 0;
+  max-width: calc(100vw - 48px);
   grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
   background: #fff;
   box-shadow: -14px 0 38px rgb(30 41 33 / 15%);
 }
 
 .mission-work-drawer > header {
   display: flex;
+  min-width: 0;
   align-items: flex-start;
   justify-content: space-between;
   gap: 20px;
   padding: 28px 32px 21px;
   border-bottom: 1px solid var(--border);
+}
+
+.mission-work-drawer > header > div {
+  min-width: 0;
 }
 
 .mission-work-drawer > header small {
@@ -10149,6 +10190,7 @@ textarea:focus-visible,
 
 .mission-work-drawer > header h2 {
   margin-top: 4px;
+  overflow-wrap: anywhere;
   font-size: 23px;
   letter-spacing: -0.025em;
 }
@@ -10182,10 +10224,21 @@ textarea:focus-visible,
 
 .mission-work-drawer-body {
   display: grid;
+  width: 100%;
+  min-width: 0;
   min-height: 0;
+  max-width: 100%;
   grid-template-rows: auto minmax(0, 1fr);
   gap: 22px;
+  overflow: hidden;
   padding: 24px 32px 30px;
+}
+
+.mission-work-tasks,
+.mission-work-output {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .mission-work-tasks h3,
@@ -10195,16 +10248,22 @@ textarea:focus-visible,
 
 .mission-work-tasks ol {
   display: flex;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
   gap: 8px;
   margin: 11px 0 0;
   padding: 0 0 4px;
   overflow-x: auto;
+  overscroll-behavior-x: contain;
   list-style: none;
 }
 
 .mission-work-tasks li {
   display: grid;
-  min-width: min(300px, 55vw);
+  width: 280px;
+  min-width: 0;
+  flex: 0 0 280px;
   grid-template-columns: 8px minmax(0, 1fr);
   gap: 10px;
   padding: 11px 12px;
@@ -10273,9 +10332,19 @@ textarea:focus-visible,
 }
 
 .mission-work-output-stream {
+  width: 100%;
+  min-width: 0;
   min-height: 0;
+  max-width: 100%;
+  overflow-x: hidden;
   overflow-y: auto;
   padding: 18px 20px 24px;
+}
+
+.mission-work-output-stream > * {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .mission-work-output-stream > * + * {
@@ -10301,10 +10370,10 @@ textarea:focus-visible,
   box-shadow: 0 0 0 3px var(--focus-ring);
 }
 
-.mission-work-output-stream .mission-assistant-message,
-.mission-work-output-stream .mission-chat-activity,
-.mission-work-output-stream .mission-tool-run {
-  max-width: none;
+.mission-work-output-stream .mission-tool-entry-details,
+.mission-work-output-stream pre {
+  min-width: 0;
+  max-width: 100%;
 }
 
 .mission-work-output-empty {
@@ -10316,10 +10385,10 @@ textarea:focus-visible,
   text-align: center;
 }
 
-@media (max-width: 900px) {
+@media (max-width: 768px) {
   .mission-work-drawer {
-    width: calc(100vw - 54px);
-    min-width: 0;
+    width: 100vw;
+    max-width: 100vw;
   }
 }
 
@@ -10975,6 +11044,7 @@ textarea:focus-visible,
   textarea,
   .studio-asset-row,
   .mission-row,
+  .mission-search-slot,
   .flow-palette-item,
   .flow-step-node,
   .flow-step-add-handle,

@@ -7,7 +7,9 @@ import {
   MissionDetailFragment,
   MissionThinkingEntry,
   MissionsPage,
+  resolveMissionSearchCollapsed,
   shouldClearMissionThinkingPlaceholder,
+  shouldShowMissionThinkingPlaceholder,
 } from "./MissionsPage.tsx";
 
 describe("MissionsPage", () => {
@@ -16,6 +18,50 @@ describe("MissionsPage", () => {
 
     expect(html).toContain("New mission");
     expect(html).not.toContain("mission-create-selectors");
+  });
+
+  it("shows thinking immediately while the first Mission message starts", () => {
+    const mission = missionFixture("expert");
+    const html = renderToStaticMarkup(
+      <MissionsPage initialMission={mission} autoRunInitialMission onCreate={() => undefined} />,
+    );
+
+    expect(html).toContain("mission-thinking-placeholder");
+    expect(html).toContain("Product Designer is thinking");
+  });
+
+  it("collapses search with upward-moving content and restores it in the reverse direction", () => {
+    expect(
+      resolveMissionSearchCollapsed({
+        collapsed: false,
+        previousScrollTop: 0,
+        scrollTop: 24,
+      }),
+    ).toBe(true);
+    expect(
+      resolveMissionSearchCollapsed({
+        collapsed: true,
+        previousScrollTop: 64,
+        scrollTop: 48,
+      }),
+    ).toBe(false);
+  });
+
+  it("keeps the search state stable for scroll jitter and always reveals it at the top", () => {
+    expect(
+      resolveMissionSearchCollapsed({
+        collapsed: true,
+        previousScrollTop: 48,
+        scrollTop: 45,
+      }),
+    ).toBe(true);
+    expect(
+      resolveMissionSearchCollapsed({
+        collapsed: true,
+        previousScrollTop: 12,
+        scrollTop: 2,
+      }),
+    ).toBe(false);
   });
 });
 
@@ -248,6 +294,10 @@ describe("Mission thinking placeholder", () => {
   const previousExecutionId = "00000000-0000-4000-8000-000000000021";
   const currentExecutionId = "00000000-0000-4000-8000-000000000022";
 
+  it("is visible before the first chat snapshot arrives", () => {
+    expect(shouldShowMissionThinkingPlaceholder(null, requestId)).toBe(true);
+  });
+
   it("stays visible while a newly persisted message still sees the previous execution", () => {
     const snapshot: MissionChatSnapshot = {
       missionId: "00000000-0000-4000-8000-000000000000",
@@ -270,6 +320,7 @@ describe("Mission thinking placeholder", () => {
     };
 
     expect(shouldClearMissionThinkingPlaceholder(snapshot, requestId)).toBe(false);
+    expect(shouldShowMissionThinkingPlaceholder(snapshot, requestId)).toBe(true);
   });
 
   it("clears after the matching execution finishes without producing a response entry", () => {
@@ -295,6 +346,7 @@ describe("Mission thinking placeholder", () => {
     };
 
     expect(shouldClearMissionThinkingPlaceholder(snapshot, requestId)).toBe(true);
+    expect(shouldShowMissionThinkingPlaceholder(snapshot, requestId)).toBe(false);
   });
 });
 

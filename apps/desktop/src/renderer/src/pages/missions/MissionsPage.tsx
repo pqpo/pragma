@@ -78,10 +78,27 @@ export function MissionsPage(props: {
   const [deleteCandidate, setDeleteCandidate] = useState<MissionSummary | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [now, setNow] = useState(() => Date.now());
+  const [initialRunRequest, setInitialRunRequest] = useState<{
+    readonly missionId: string;
+    readonly requestId: string;
+  } | null>(() =>
+    props.autoRunInitialMission && props.initialMission !== undefined
+      ? {
+          missionId: props.initialMission.id,
+          requestId: props.initialMission.initialMessageId,
+        }
+      : null,
+  );
   const selectedMissionIdRef = useRef<string | null>(props.initialMission?.id ?? null);
   const initialRunStartedRef = useRef(false);
 
   const replaceMission = useCallback((updated: Mission) => {
+    if (
+      updated.execution !== undefined &&
+      !["queued", "running", "waiting"].includes(updated.execution.status)
+    ) {
+      setInitialRunRequest((current) => (current?.missionId === updated.id ? null : current));
+    }
     setSelectedMission((current) => (current?.id === updated.id ? updated : current));
     setMissions((current) =>
       [
@@ -134,7 +151,10 @@ export function MissionsPage(props: {
     void window.pragmaDesktop
       .runMission(props.initialMission.id)
       .then(replaceMission)
-      .catch((runError: unknown) => setError(errorMessage(runError)));
+      .catch((runError: unknown) => {
+        setInitialRunRequest(null);
+        setError(errorMessage(runError));
+      });
   }, [props.autoRunInitialMission, props.initialMission?.id, replaceMission]);
 
   useEffect(() => {
@@ -217,6 +237,11 @@ export function MissionsPage(props: {
         {selectedMission !== null ? (
           <MissionDetailFragment
             mission={selectedMission}
+            initialThinkingRequestId={
+              initialRunRequest?.missionId === selectedMission.id
+                ? initialRunRequest.requestId
+                : undefined
+            }
             onConfigureModels={props.onConfigureModels}
             error={error}
             onDismissError={() => setError(null)}
@@ -387,24 +412,65 @@ function MissionRail(props: {
   readonly onDelete: (mission: MissionSummary) => void;
 }) {
   const { t } = useTranslation("missions");
+  const [searchCollapsed, setSearchCollapsed] = useState(false);
+  const scrollAnchorRef = useRef(0);
+  const searchRef = useRef<HTMLLabelElement>(null);
   const active = props.missions.filter((mission) => mission.lifecycleStatus === "active");
   const completed = props.missions.filter((mission) => mission.lifecycleStatus === "completed");
+
+  const handleScroll = useCallback(
+    (event: React.UIEvent<HTMLElement>) => {
+      const scrollTop = event.currentTarget.scrollTop;
+      const previousScrollTop = scrollAnchorRef.current;
+      const nextSearchCollapsed = resolveMissionSearchCollapsed({
+        collapsed: searchCollapsed,
+        previousScrollTop,
+        scrollTop,
+      });
+
+      if (
+        scrollTop <= MISSION_SEARCH_TOP_REVEAL_OFFSET ||
+        Math.abs(scrollTop - previousScrollTop) >= MISSION_SEARCH_SCROLL_THRESHOLD
+      ) {
+        scrollAnchorRef.current = scrollTop;
+      }
+
+      if (
+        nextSearchCollapsed &&
+        searchRef.current?.contains(event.currentTarget.ownerDocument.activeElement)
+      ) {
+        return;
+      }
+      setSearchCollapsed(nextSearchCollapsed);
+    },
+    [searchCollapsed],
+  );
+
   return (
-    <aside className="mission-rail">
-      <h1>{t("title")}</h1>
-      <button className="mission-new-button" type="button" onClick={props.onCreate}>
-        <Plus size={18} aria-hidden="true" />
-        {t("newMission")}
-      </button>
-      <label className="mission-search">
-        <MagnifyingGlass size={18} aria-hidden="true" />
-        <span className="sr-only">{t("search")}</span>
-        <input
-          value={props.search}
-          onChange={(event) => props.onSearch(event.target.value)}
-          placeholder={t("search")}
-        />
-      </label>
+    <aside className="mission-rail" onScroll={handleScroll}>
+      <div
+        className={
+          searchCollapsed ? "mission-rail-sticky is-search-collapsed" : "mission-rail-sticky"
+        }
+      >
+        <h1>{t("title")}</h1>
+        <button className="mission-new-button" type="button" onClick={props.onCreate}>
+          <Plus size={18} aria-hidden="true" />
+          {t("newMission")}
+        </button>
+        <div className="mission-search-slot" aria-hidden={searchCollapsed ? "true" : undefined}>
+          <label className="mission-search" ref={searchRef}>
+            <MagnifyingGlass size={18} aria-hidden="true" />
+            <span className="sr-only">{t("search")}</span>
+            <input
+              value={props.search}
+              onChange={(event) => props.onSearch(event.target.value)}
+              placeholder={t("search")}
+              tabIndex={searchCollapsed ? -1 : undefined}
+            />
+          </label>
+        </div>
+      </div>
       <MissionRailGroup
         label={t("active")}
         emptyLabel={t("noActive")}
@@ -425,6 +491,21 @@ function MissionRail(props: {
       />
     </aside>
   );
+}
+
+const MISSION_SEARCH_SCROLL_THRESHOLD = 6;
+const MISSION_SEARCH_TOP_REVEAL_OFFSET = 4;
+
+export function resolveMissionSearchCollapsed(input: {
+  readonly collapsed: boolean;
+  readonly previousScrollTop: number;
+  readonly scrollTop: number;
+}): boolean {
+  if (input.scrollTop <= MISSION_SEARCH_TOP_REVEAL_OFFSET) return false;
+
+  const distance = input.scrollTop - input.previousScrollTop;
+  if (Math.abs(distance) < MISSION_SEARCH_SCROLL_THRESHOLD) return input.collapsed;
+  return distance > 0;
 }
 
 function MissionRailGroup(props: {
@@ -522,6 +603,7 @@ export type MissionConversationBlock =
 
 export function MissionDetailFragment(props: {
   readonly mission: Mission;
+  readonly initialThinkingRequestId?: string | undefined;
   readonly error?: string | null | undefined;
   readonly onDismissError?: (() => void) | undefined;
   readonly onRun?: () => void | Promise<void>;
@@ -951,6 +1033,8 @@ export function MissionDetailFragment(props: {
     lastEntry === undefined
       ? "empty"
       : `${lastEntry.id}:${lastEntry.kind}:${entryContentLength(lastEntry)}`;
+  const thinkingRequestId = awaitingRequestId ?? props.initialThinkingRequestId ?? null;
+  const showThinkingPlaceholder = shouldShowMissionThinkingPlaceholder(chat, thinkingRequestId);
 
   useEffect(() => {
     if (durableEntryIds.size === 0) return;
@@ -1212,7 +1296,7 @@ export function MissionDetailFragment(props: {
                     <MissionChatEntryView entry={block.item.entry} key={block.item.entry.id} />
                   );
                 })}
-                {awaitingRequestId !== null ? (
+                {showThinkingPlaceholder ? (
                   <MissionThinkingPlaceholder executorName={props.mission.executor.name} />
                 ) : null}
               </div>
@@ -2114,6 +2198,15 @@ export function shouldClearMissionThinkingPlaceholder(
     userEntry.executionId !== undefined &&
     userEntry.executionId === chat.execution?.id &&
     !["queued", "running", "waiting"].includes(chat.execution.status)
+  );
+}
+
+export function shouldShowMissionThinkingPlaceholder(
+  chat: MissionChatSnapshot | null,
+  requestId: string | null,
+): boolean {
+  return (
+    requestId !== null && (chat === null || !shouldClearMissionThinkingPlaceholder(chat, requestId))
   );
 }
 
