@@ -215,6 +215,120 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
     unsubscribe();
   });
 
+  it("streams nested agent turns into their work conversation without leaking into root chat", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-mission-child-stream-"));
+    temporaryPaths.push(root);
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    const snapshot = await project.publish({
+      expectedRevision: 0,
+      resources: [runtimeFixture(), expertFixture()],
+    });
+    const missions = createMissionStore({ missionsPath: join(root, "missions") });
+    const mission = await missions.create({
+      workspace: { path: root, basename: "workspace" },
+      goal: "Observe delegated work",
+      project: { id: snapshot.projectId, revision: snapshot.revision },
+      executor: missionExecutorSnapshot(
+        snapshot.resources.find((resource) => resource.kind === "Expert")!,
+      ),
+    });
+    let announceChildDelta = (): void => undefined;
+    const childDeltaWritten = new Promise<void>((resolve) => {
+      announceChildDelta = resolve;
+    });
+    let finishTurn = (): void => undefined;
+    const turnCanFinish = new Promise<void>((resolve) => {
+      finishTurn = resolve;
+    });
+    const runtime = defineRuntimeDriver<never, { id: string }>({
+      descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
+      createSession: () => ({ id: "runtime" }),
+      readSession: (session) => ({ runtimeSessionId: session.id }),
+      async startTurn(_session, turn) {
+        const childSource = {
+          kind: "agent" as const,
+          runId: "child-run",
+          parentRunId: turn.runId,
+          sessionId: "child-session",
+          parentSessionId: "root-session",
+          agentId: "child-session",
+          displayName: "Researcher",
+          path: [],
+        };
+        turn.stream.write({
+          runId: "child-run",
+          parentRunId: turn.runId,
+          source: childSource,
+          type: "run.started",
+          payload: { task: "Inspect the live state" },
+        });
+        turn.stream.write({
+          runId: "child-run",
+          parentRunId: turn.runId,
+          source: childSource,
+          type: "message.delta",
+          payload: { role: "assistant", contentType: "text", delta: "Live child answer" },
+        });
+        announceChildDelta();
+        await turnCanFinish;
+        turn.stream.write({
+          runId: "child-run",
+          parentRunId: turn.runId,
+          source: childSource,
+          type: "message.completed",
+          payload: { role: "assistant", contentType: "text", text: "Live child answer" },
+        });
+        return { outputText: "Root answer", runtimeSessionId: "runtime" };
+      },
+      mapEvent: () => ({ events: [] }),
+      closeSession: () => undefined,
+    });
+    const runner = createMissionRunner({
+      missions,
+      project,
+      capabilityStore: {} as CapabilityStore,
+      capabilityCredentials: {} as CapabilityCredentialStore,
+      capabilitiesPath: join(root, "capabilities"),
+      pragmaHome: join(root, "state"),
+      runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
+    });
+
+    await runner.run(mission.id);
+    await childDeltaWritten;
+    await vi.waitFor(async () => {
+      const work = await runner.getWork(mission.id);
+      const child = work.records.find((record) => record.sessionId === "child-session");
+      expect(child).toBeDefined();
+      await expect(
+        runner.getWorkConversation({
+          id: mission.id,
+          recordId: child!.recordId,
+          limit: 100,
+        }),
+      ).resolves.toMatchObject({
+        entries: [
+          expect.objectContaining({ kind: "user", content: "Inspect the live state" }),
+          expect.objectContaining({
+            kind: "assistant",
+            content: "Live child answer",
+            streaming: true,
+          }),
+        ],
+      });
+    });
+    expect((await runner.getChat({ id: mission.id, limit: 50 })).entries).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: "assistant", content: "Live child answer" }),
+      ]),
+    );
+
+    finishTurn();
+    await vi.waitFor(
+      async () => expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
+      { timeout: settlementTimeoutMs },
+    );
+  });
+
   it("keeps the captured live answer when the execution settles during a chat read", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-mission-chat-settlement-"));
     temporaryPaths.push(root);
@@ -527,7 +641,8 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
     const latestMission = await missions.get(mission.id);
     const executionId = latestMission.execution!.id;
     const store = createFileExecutionStore({ pragmaHome: join(root, "state") });
-    const emittedAt = new Date().toISOString();
+    const childConversationStartedAt = Date.now();
+    const emittedAt = new Date(childConversationStartedAt).toISOString();
     const childSource = {
       kind: "agent" as const,
       runId: "child-turn",
@@ -590,7 +705,44 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
           cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
         },
         stopReason: "stop",
-        timestamp: Date.now(),
+        timestamp: childConversationStartedAt + 1,
+      },
+    });
+    const followupSource = {
+      ...childSource,
+      runId: "child-followup-turn",
+    };
+    await store.appendEvent(executionId, executionId, "runtime.event", {
+      schemaVersion: "pragma.stream/v1",
+      eventId: "child-followup-started",
+      sequence: 102,
+      runId: "child-followup-turn",
+      parentRunId: "root-run",
+      emittedAt: new Date(childConversationStartedAt + 2).toISOString(),
+      source: followupSource,
+      type: "run.started",
+      payload: { task: "Refine the findings" },
+    });
+    await store.appendEvent(executionId, executionId, "invocation.message.appended", {
+      runId: "child-followup-turn",
+      parentRunId: "root-run",
+      source: followupSource,
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "Refined findings" }],
+        api: "codex",
+        provider: "openai",
+        model: "test",
+        usage: {
+          input: 0,
+          output: 0,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens: 0,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+        },
+        stopReason: "stop",
+        timestamp: childConversationStartedAt + 3,
       },
     });
 
@@ -599,8 +751,12 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
     expect(subagent).toMatchObject({
       kind: "runtime-agent",
       title: "Researcher",
-      tasks: [expect.objectContaining({ runId: "child-turn" })],
+      tasks: [
+        expect.objectContaining({ runId: "child-turn" }),
+        expect.objectContaining({ runId: "child-followup-turn" }),
+      ],
     });
+    expect(work.records.filter((record) => record.sessionId === "child-thread")).toHaveLength(1);
     expect(work.records.find((record) => record.sessionId === "child-a")).toMatchObject({
       kind: "runtime-agent",
       title: "Subagent 1",
@@ -616,7 +772,7 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
     await store.appendEvent(executionId, executionId, "runtime.event", {
       schemaVersion: "pragma.stream/v1",
       eventId: "child-a-started",
-      sequence: 102,
+      sequence: 103,
       runId: "child-a-turn",
       parentRunId: "root-run",
       emittedAt,
@@ -630,6 +786,23 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
       type: "run.started",
       payload: { task: "Design the system" },
     });
+    await store.appendEvent(executionId, executionId, "runtime.event", {
+      schemaVersion: "pragma.stream/v1",
+      eventId: "child-b-started",
+      sequence: 104,
+      runId: "child-b-turn",
+      parentRunId: "root-run",
+      emittedAt: new Date(childConversationStartedAt + 4).toISOString(),
+      source: {
+        ...childSource,
+        runId: "child-b-turn",
+        sessionId: "child-b",
+        agentId: "child-b",
+        displayName: "Architect",
+      },
+      type: "run.started",
+      payload: { task: "Review the system" },
+    });
     const enrichedWork = await runner.getWork(mission.id);
     expect(enrichedWork.records.find((record) => record.sessionId === "child-a")).toMatchObject({
       title: "Architect",
@@ -638,13 +811,18 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
       enrichedWork.records.find((record) => record.sessionId === "child-a"),
     ).not.toHaveProperty("fallbackOrdinal");
     expect(enrichedWork.records.find((record) => record.sessionId === "child-b")).toMatchObject({
-      title: "Subagent 2",
-      fallbackOrdinal: 2,
+      title: "Architect",
     });
+    expect(enrichedWork.records.filter((record) => record.title === "Architect")).toHaveLength(2);
     await expect(
-      runner.getWorkOutput({ id: mission.id, recordId: subagent!.recordId, limit: 100 }),
+      runner.getWorkConversation({ id: mission.id, recordId: subagent!.recordId, limit: 100 }),
     ).resolves.toMatchObject({
-      entries: [expect.objectContaining({ kind: "assistant", content: "Subagent findings" })],
+      entries: [
+        expect.objectContaining({ kind: "user", content: "Inspect repository" }),
+        expect.objectContaining({ kind: "assistant", content: "Subagent findings" }),
+        expect.objectContaining({ kind: "user", content: "Refine the findings" }),
+        expect.objectContaining({ kind: "assistant", content: "Refined findings" }),
+      ],
     });
     await expect(runner.getChat({ id: mission.id, limit: 50 })).resolves.toMatchObject({
       entries: expect.arrayContaining([

@@ -50,7 +50,7 @@ import {
   ResetBuiltInExpertDefinitionSchema,
   CreateMissionSchema,
   GetMissionChatSchema,
-  GetMissionWorkOutputSchema,
+  GetMissionWorkConversationSchema,
   MissionActionSchema,
   MissionChatSnapshotSchema,
   MissionChatUpdateSchema,
@@ -62,7 +62,7 @@ import {
   MissionSchema,
   MissionSummarySchema,
   MissionHumanInteractionSchema,
-  MissionWorkOutputSnapshotSchema,
+  MissionWorkConversationSnapshotSchema,
   MissionWorkSnapshotSchema,
   MissionWorkUpdateSchema,
   PickWorkspaceResultSchema,
@@ -338,9 +338,12 @@ const api: PragmaDesktopAPI = {
     MissionWorkSnapshotSchema.parse(
       await ipcRenderer.invoke("missions:work:get", MissionActionSchema.parse({ id })),
     ),
-  getMissionWorkOutput: async (input) =>
-    MissionWorkOutputSnapshotSchema.parse(
-      await ipcRenderer.invoke("missions:work:output:get", GetMissionWorkOutputSchema.parse(input)),
+  getMissionWorkConversation: async (input) =>
+    MissionWorkConversationSnapshotSchema.parse(
+      await ipcRenderer.invoke(
+        "missions:work:conversation:get",
+        GetMissionWorkConversationSchema.parse(input),
+      ),
     ),
   subscribeMissionWork: (id, listener) => {
     const missionId = MissionIdSchema.parse(id);

@@ -11,7 +11,9 @@ import {
   groupMissionConversationEntries,
   MissionDetailFragment,
   MissionThinkingEntry,
+  MissionWorkDrawer,
   MissionsPage,
+  missionWorkInputSenderName,
   missionWorkRecordTitle,
   resolveMissionSearchCollapsed,
   shouldClearMissionThinkingPlaceholder,
@@ -158,6 +160,99 @@ describe("Mission work record titles", () => {
     ).toBe("架构专家");
     await i18n.changeLanguage("en");
     expect(missionWorkRecordTitle(record)).toBe("Subagent 2");
+  });
+
+  it("uses the parent agent name for delegated input and keeps fresh contexts distinct", async () => {
+    const parent: MissionWorkRecord = {
+      recordId: "runtime-agent:coordinator",
+      kind: "runtime-agent",
+      sessionId: "coordinator",
+      title: "Coordinator",
+      origin: "runtime",
+      status: "running",
+      tasks: [],
+      summary: "Coordinate the work",
+      createdAt: "2026-07-21T00:00:00.000Z",
+      updatedAt: "2026-07-21T00:00:00.000Z",
+    };
+    const children: MissionWorkRecord[] = ["child-a", "child-b"].map((sessionId) => ({
+      recordId: `runtime-agent:${sessionId}`,
+      kind: "runtime-agent",
+      sessionId,
+      parentRecordId: parent.recordId,
+      title: "Researcher",
+      origin: "runtime",
+      status: "running",
+      tasks: [],
+      summary: "Research the task",
+      createdAt: "2026-07-21T00:00:01.000Z",
+      updatedAt: "2026-07-21T00:00:01.000Z",
+    }));
+
+    await i18n.changeLanguage("en");
+    expect(missionWorkInputSenderName(children[0]!, [parent, ...children])).toBe("Coordinator");
+    expect(
+      missionWorkInputSenderName(
+        { ...parent, recordId: "root", kind: "root", parentRecordId: undefined },
+        [parent, ...children],
+      ),
+    ).toBe("You");
+    expect(new Set(children.map((record) => record.recordId))).toHaveProperty("size", 2);
+    expect(
+      missionWorkInputSenderName({ ...children[0]!, parentRecordId: "missing" }, children),
+    ).toBe("Main agent");
+  });
+});
+
+describe("Mission work conversation", () => {
+  it("renders a read-only chat with the parent sender and no task/output split", () => {
+    const record: MissionWorkRecord = {
+      recordId: "runtime-agent:researcher",
+      kind: "runtime-agent",
+      sessionId: "researcher",
+      parentRecordId: "runtime-agent:coordinator",
+      title: "Researcher",
+      origin: "runtime",
+      status: "running",
+      tasks: [],
+      summary: "Inspect the repository",
+      createdAt: "2026-07-21T00:00:00.000Z",
+      updatedAt: "2026-07-21T00:00:00.000Z",
+    };
+    const html = renderToStaticMarkup(
+      <MissionWorkDrawer
+        record={record}
+        inputSenderName="Coordinator"
+        entries={[
+          {
+            id: "input-1",
+            kind: "user",
+            content: "Inspect the repository",
+            createdAt: "2026-07-21T00:00:00.000Z",
+          },
+          {
+            id: "answer-1",
+            kind: "assistant",
+            content: "The architecture is sound.",
+            streaming: true,
+            createdAt: "2026-07-21T00:00:01.000Z",
+          },
+        ]}
+        loading={false}
+        onClose={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("Agent conversation");
+    expect(html).toContain("Read-only conversation");
+    expect(html).toContain("mission-message-sender");
+    expect(html).toContain("Coordinator");
+    expect(html).toContain("Inspect the repository");
+    expect(html).toContain("The architecture is sound.");
+    expect(html).not.toContain("Session tasks");
+    expect(html).not.toContain("Live output");
+    expect(html).not.toContain("mission-work-tasks");
+    expect(html).not.toContain("mission-chat-composer");
   });
 });
 

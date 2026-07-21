@@ -44,11 +44,11 @@ import type {
   MissionChatQuery,
   MissionHumanInteraction,
   MissionModelOverride,
-  MissionWorkOutputSnapshot,
+  MissionWorkConversationSnapshot,
   MissionWorkRecord,
   MissionWorkSnapshot,
   MissionWorkUpdate,
-  GetMissionWorkOutput,
+  GetMissionWorkConversation,
   DesktopToolPermissionMode,
   UpdateMissionOptions,
 } from "../shared/desktop-api.ts";
@@ -83,7 +83,7 @@ export interface MissionRunner {
   subscribeWork(listener: (update: MissionWorkUpdate) => void): () => void;
   interrupt(id: string): Promise<Mission>;
   getWork(id: string): Promise<MissionWorkSnapshot>;
-  getWorkOutput(input: GetMissionWorkOutput): Promise<MissionWorkOutputSnapshot>;
+  getWorkConversation(input: GetMissionWorkConversation): Promise<MissionWorkConversationSnapshot>;
   delete(id: string): Promise<void>;
   listHumanInteractions(id: string): Promise<readonly MissionHumanInteraction[]>;
   respondToHumanInteraction(input: {
@@ -377,7 +377,7 @@ export function createMissionRunner(options: {
           byRecord.set(recordId, output);
           liveWorkOutputs.set(input.missionId, byRecord);
           if (item.channel !== "agent" && item.channel !== "progress") {
-            consumeLiveChatOutput(output, item);
+            consumeLiveChatOutput(output, item, { includeNestedSource: true });
           }
         }
         invalidateWork(input.missionId);
@@ -891,7 +891,9 @@ export function createMissionRunner(options: {
     };
   };
 
-  const getWorkOutput = async (input: GetMissionWorkOutput): Promise<MissionWorkOutputSnapshot> => {
+  const getWorkConversation = async (
+    input: GetMissionWorkConversation,
+  ): Promise<MissionWorkConversationSnapshot> => {
     const mission = await options.missions.get(input.id);
     const executionIds = await readMissionExecutionIds(mission);
     const records = await workHistory.listRecords({
@@ -902,12 +904,14 @@ export function createMissionRunner(options: {
     });
     const record = records.find((candidate) => candidate.recordId === input.recordId);
     if (record === undefined) throw new Error(`Mission work record not found: ${input.recordId}`);
+    const taskInputEntries = workTaskInputEntries(record);
     const durableEntries = messageRecordsToChatEntries(
       await workHistory.readOutput({ executionIds, record }),
     );
     const liveEntries = liveWorkOutputs.get(mission.id)?.get(record.recordId)?.entries ?? [];
     const liveExecutionIds = new Set(liveEntries.flatMap((entry) => entry.executionId ?? []));
     const byId = new Map<string, MissionChatEntry>();
+    for (const entry of taskInputEntries) byId.set(entry.id, entry);
     for (const entry of durableEntries) {
       if (entry.executionId === undefined || !liveExecutionIds.has(entry.executionId)) {
         byId.set(entry.id, { ...entry });
@@ -989,8 +993,8 @@ export function createMissionRunner(options: {
     async getWork(id) {
       return await getWorkSnapshot(id);
     },
-    async getWorkOutput(input) {
-      return await getWorkOutput(input);
+    async getWorkConversation(input) {
+      return await getWorkConversation(input);
     },
     async delete(id) {
       if (pendingOperations.has(id)) {
@@ -1456,6 +1460,36 @@ function finalizeHistoricalChatEntries(entries: readonly MissionChatEntry[]): Mi
   );
 }
 
+function workTaskInputEntries(record: ExecutionWorkRecord): MissionChatEntry[] {
+  return record.tasks.flatMap((task) => {
+    const content = workTaskInputContent(task.input);
+    if (content === "") return [];
+    return [
+      {
+        id: `work-input:${task.taskId}`,
+        executionId: task.executionId,
+        invocationId: task.invocationId,
+        kind: "user" as const,
+        content,
+        createdAt: task.createdAt,
+      },
+    ];
+  });
+}
+
+function workTaskInputContent(input: unknown): string {
+  if (typeof input === "string") return truncate(input.trim(), 200_000);
+  if (
+    typeof input === "object" &&
+    input !== null &&
+    "prompt" in input &&
+    typeof input.prompt === "string"
+  ) {
+    return truncate(input.prompt.trim(), 200_000);
+  }
+  return formatValue(input, 200_000).trim();
+}
+
 function messageRecordsToChatEntries(records: readonly AgentMessageRecord[]): MissionChatEntry[] {
   const entries: MissionChatEntry[] = [];
   for (const record of [...records].sort((left, right) => left.sequence - right.sequence)) {
@@ -1594,6 +1628,7 @@ function observeMissionChat(
 function consumeLiveChatOutput(
   chat: LiveMissionChat,
   item: ExecutionOutputItem,
+  options: { readonly includeNestedSource?: boolean } = {},
 ): MissionChatPatch[] {
   const base = {
     executionId: item.executionId,
@@ -1650,7 +1685,7 @@ function consumeLiveChatOutput(
     else chat.entries[index] = entry;
     return [{ type: "entry.upsert", entry }];
   }
-  if (item.source.parentSessionId !== undefined) return [];
+  if (item.source.parentSessionId !== undefined && options.includeNestedSource !== true) return [];
   if (item.channel === "thought") {
     const content = item.delta ?? formatValue(item.value, 200_000);
     if (content === "") return [];

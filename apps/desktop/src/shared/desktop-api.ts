@@ -1251,7 +1251,7 @@ export const GetMissionChatSchema = z.object({
   beforeSequence: z.number().int().positive().optional(),
   limit: z.number().int().min(1).max(100).default(50),
 });
-export const GetMissionWorkOutputSchema = z.object({
+export const GetMissionWorkConversationSchema = z.object({
   id: MissionIdSchema,
   recordId: z.string().min(1),
   beforeCursor: z.string().min(1).optional(),
@@ -1313,7 +1313,7 @@ export const MissionChatEntrySchema = z.discriminatedUnion("kind", [
   }),
 ]);
 
-export const MissionWorkOutputSnapshotSchema = z.object({
+export const MissionWorkConversationSnapshotSchema = z.object({
   missionId: MissionIdSchema,
   recordId: z.string().min(1),
   revision: z.number().int().nonnegative(),
@@ -1467,8 +1467,8 @@ export type MissionTimelineRecord = z.infer<typeof MissionTimelineRecordSchema>;
 export type MissionWorkTask = z.infer<typeof MissionWorkTaskSchema>;
 export type MissionWorkRecord = z.infer<typeof MissionWorkRecordSchema>;
 export type MissionWorkSnapshot = z.infer<typeof MissionWorkSnapshotSchema>;
-export type GetMissionWorkOutput = z.infer<typeof GetMissionWorkOutputSchema>;
-export type MissionWorkOutputSnapshot = z.infer<typeof MissionWorkOutputSnapshotSchema>;
+export type GetMissionWorkConversation = z.infer<typeof GetMissionWorkConversationSchema>;
+export type MissionWorkConversationSnapshot = z.infer<typeof MissionWorkConversationSnapshotSchema>;
 export type MissionWorkUpdate = z.infer<typeof MissionWorkUpdateSchema>;
 export type GetMissionChat = z.input<typeof GetMissionChatSchema>;
 export type MissionChatQuery = z.output<typeof GetMissionChatSchema>;
@@ -1563,7 +1563,9 @@ export interface PragmaDesktopAPI {
   subscribeMissionUpdates: (listener: (mission: Mission) => void) => () => void;
   interruptMission: (id: string) => Promise<Mission>;
   getMissionWork: (id: string) => Promise<MissionWorkSnapshot>;
-  getMissionWorkOutput: (input: GetMissionWorkOutput) => Promise<MissionWorkOutputSnapshot>;
+  getMissionWorkConversation: (
+    input: GetMissionWorkConversation,
+  ) => Promise<MissionWorkConversationSnapshot>;
   subscribeMissionWork: (id: string, listener: (update: MissionWorkUpdate) => void) => () => void;
   deleteMission: (id: string) => Promise<void>;
   listMissionHumanInteractions: (id: string) => Promise<MissionHumanInteraction[]>;

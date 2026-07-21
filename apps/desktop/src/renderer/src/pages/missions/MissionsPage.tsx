@@ -40,7 +40,7 @@ import {
   type MissionChatUpdate,
   type MissionHumanInteraction,
   type MissionSummary,
-  type MissionWorkOutputSnapshot,
+  type MissionWorkConversationSnapshot,
   type MissionWorkRecord,
   type DesktopRuntimeModel,
   type DesktopToolPermissionMode,
@@ -654,8 +654,10 @@ export function MissionDetailFragment(props: {
   const [workspaceAvailable, setWorkspaceAvailable] = useState<boolean | null>(null);
   const [chat, setChat] = useState<MissionChatSnapshot | null>(null);
   const [workRecords, setWorkRecords] = useState<readonly MissionWorkRecord[]>([]);
-  const [workOutput, setWorkOutput] = useState<MissionWorkOutputSnapshot | null>(null);
-  const [workOutputLoading, setWorkOutputLoading] = useState(false);
+  const [workConversation, setWorkConversation] = useState<MissionWorkConversationSnapshot | null>(
+    null,
+  );
+  const [workConversationLoading, setWorkConversationLoading] = useState(false);
   const [selectedWorkKey, setSelectedWorkKey] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [optimisticMessages, setOptimisticMessages] = useState<LocalMissionUserMessage[]>([]);
@@ -711,7 +713,7 @@ export function MissionDetailFragment(props: {
     setOptionsError(null);
     setSelectedWorkKey(null);
     setWorkRecords([]);
-    setWorkOutput(null);
+    setWorkConversation(null);
   }, [props.mission.id]);
 
   useEffect(() => {
@@ -870,7 +872,7 @@ export function MissionDetailFragment(props: {
     const api = desktopApi();
     if (api === undefined || tab !== "work" || props.mission.execution === undefined) {
       setWorkRecords([]);
-      setWorkOutput(null);
+      setWorkConversation(null);
       return;
     }
     let cancelled = false;
@@ -881,19 +883,19 @@ export function MissionDetailFragment(props: {
         if (cancelled) return;
         setWorkRecords(snapshot.records);
         if (selectedWorkKey !== null) {
-          setWorkOutputLoading(true);
-          const output = await api.getMissionWorkOutput({
+          setWorkConversationLoading(true);
+          const conversation = await api.getMissionWorkConversation({
             id: props.mission.id,
             recordId: selectedWorkKey,
             limit: 100,
           });
           if (!cancelled) {
-            setWorkOutput((current) =>
-              current === null || current.recordId !== output.recordId
-                ? output
+            setWorkConversation((current) =>
+              current === null || current.recordId !== conversation.recordId
+                ? conversation
                 : {
-                    ...output,
-                    entries: uniqueChatEntries([...current.entries, ...output.entries]),
+                    ...conversation,
+                    entries: uniqueChatEntries([...current.entries, ...conversation.entries]),
                     nextBeforeCursor: current.nextBeforeCursor,
                   },
             );
@@ -902,7 +904,7 @@ export function MissionDetailFragment(props: {
       } catch (loadError) {
         if (!cancelled) console.error("Failed to refresh Mission work history.", loadError);
       } finally {
-        if (!cancelled) setWorkOutputLoading(false);
+        if (!cancelled) setWorkConversationLoading(false);
       }
     };
     const scheduleRefresh = () => {
@@ -1058,6 +1060,10 @@ export function MissionDetailFragment(props: {
     () => workRecords.find((record) => record.recordId === selectedWorkKey),
     [selectedWorkKey, workRecords],
   );
+  const selectedWorkInputSenderName = useMemo(() => {
+    if (selectedWorkRecord === undefined) return "";
+    return missionWorkInputSenderName(selectedWorkRecord, workRecords);
+  }, [selectedWorkRecord, t, workRecords]);
   const lastEntry = displayEntries.at(-1);
   const lastEntryFingerprint =
     lastEntry === undefined
@@ -1117,25 +1123,25 @@ export function MissionDetailFragment(props: {
     }
   };
 
-  const loadEarlierWorkOutput = async (): Promise<void> => {
+  const loadEarlierWorkConversation = async (): Promise<void> => {
     const api = desktopApi();
     if (
       api === undefined ||
       selectedWorkRecord === undefined ||
-      workOutput?.nextBeforeCursor === undefined ||
-      workOutputLoading
+      workConversation?.nextBeforeCursor === undefined ||
+      workConversationLoading
     ) {
       return;
     }
-    setWorkOutputLoading(true);
+    setWorkConversationLoading(true);
     try {
-      const earlier = await api.getMissionWorkOutput({
+      const earlier = await api.getMissionWorkConversation({
         id: props.mission.id,
         recordId: selectedWorkRecord.recordId,
-        beforeCursor: workOutput.nextBeforeCursor,
+        beforeCursor: workConversation.nextBeforeCursor,
         limit: 100,
       });
-      setWorkOutput((current) =>
+      setWorkConversation((current) =>
         current === null || current.recordId !== earlier.recordId
           ? earlier
           : {
@@ -1148,9 +1154,9 @@ export function MissionDetailFragment(props: {
             },
       );
     } catch (loadError) {
-      console.error("Failed to load earlier Mission work output.", loadError);
+      console.error("Failed to load earlier Mission work conversation.", loadError);
     } finally {
-      setWorkOutputLoading(false);
+      setWorkConversationLoading(false);
     }
   };
 
@@ -1528,7 +1534,7 @@ export function MissionDetailFragment(props: {
                   <button
                     type="button"
                     onClick={() => {
-                      setWorkOutput(null);
+                      setWorkConversation(null);
                       setSelectedWorkKey(record.recordId);
                     }}
                   >
@@ -1541,7 +1547,10 @@ export function MissionDetailFragment(props: {
                       <small>
                         {record.kind} · {workStatusLabel(record.status)}
                         {record.tasks.length > 1
-                          ? ` · ${t("agentTasks", { ns: "missions", count: record.tasks.length })}`
+                          ? ` · ${t("conversationTurns", {
+                              ns: "missions",
+                              count: record.tasks.length,
+                            })}`
                           : ""}
                       </small>
                       <p>{record.summary}</p>
@@ -1557,12 +1566,17 @@ export function MissionDetailFragment(props: {
       {selectedWorkRecord === undefined ? null : (
         <MissionWorkDrawer
           record={selectedWorkRecord}
-          entries={workOutput?.recordId === selectedWorkRecord.recordId ? workOutput.entries : []}
-          loading={workOutputLoading}
+          inputSenderName={selectedWorkInputSenderName}
+          entries={
+            workConversation?.recordId === selectedWorkRecord.recordId
+              ? workConversation.entries
+              : []
+          }
+          loading={workConversationLoading}
           onLoadEarlier={
-            workOutput?.recordId === selectedWorkRecord.recordId &&
-            workOutput.nextBeforeCursor !== undefined
-              ? () => void loadEarlierWorkOutput()
+            workConversation?.recordId === selectedWorkRecord.recordId &&
+            workConversation.nextBeforeCursor !== undefined
+              ? () => loadEarlierWorkConversation()
               : undefined
           }
           onClose={() => setSelectedWorkKey(null)}
@@ -1619,11 +1633,17 @@ function MissionThinkingPlaceholder(props: { readonly executorName: string }) {
   );
 }
 
-function MissionChatEntryView(props: { readonly entry: MissionChatEntry }) {
+function MissionChatEntryView(props: {
+  readonly entry: MissionChatEntry;
+  readonly userLabel?: string | undefined;
+}) {
   if (props.entry.kind === "user") {
     return (
       <div className="mission-user-message">
         <div>
+          {props.userLabel === undefined ? null : (
+            <small className="mission-message-sender">{props.userLabel}</small>
+          )}
           <MissionMessageContent source={props.entry.content} />
         </div>
       </div>
@@ -1784,25 +1804,67 @@ function MissionToolCallEntry(props: {
   );
 }
 
-function MissionWorkDrawer(props: {
+export function MissionWorkDrawer(props: {
   readonly record: MissionWorkRecord;
+  readonly inputSenderName: string;
   readonly entries: readonly MissionChatEntry[];
   readonly loading: boolean;
-  readonly onLoadEarlier?: (() => void) | undefined;
+  readonly onLoadEarlier?: (() => void | Promise<void>) | undefined;
   readonly onClose: () => void;
 }) {
   const { t } = useTranslation(["missions", "common"]);
-  const outputRef = useRef<HTMLDivElement | null>(null);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const followLatestRef = useRef(true);
+  const prependScrollHeightRef = useRef<number | null>(null);
+  const [showJumpToLatest, setShowJumpToLatest] = useState(false);
+  const conversationBlocks = useMemo(
+    () =>
+      groupMissionConversationEntries(
+        props.entries.map((entry) => ({ type: "durable" as const, entry })),
+      ),
+    [props.entries],
+  );
   const lastEntry = props.entries.at(-1);
-  const outputFingerprint =
+  const conversationFingerprint =
     lastEntry === undefined
       ? "empty"
       : `${lastEntry.id}:${lastEntry.kind}:${entryContentLength(lastEntry)}`;
 
   useEffect(() => {
-    const output = outputRef.current;
-    if (output !== null) output.scrollTop = output.scrollHeight;
-  }, [outputFingerprint, props.entries.length]);
+    const scroll = scrollRef.current;
+    if (scroll === null) return;
+    if (prependScrollHeightRef.current !== null) {
+      scroll.scrollTop += scroll.scrollHeight - prependScrollHeightRef.current;
+      prependScrollHeightRef.current = null;
+      setShowJumpToLatest(true);
+      return;
+    }
+    if (followLatestRef.current) {
+      scroll.scrollTop = scroll.scrollHeight;
+      setShowJumpToLatest(false);
+    } else {
+      setShowJumpToLatest(true);
+    }
+  }, [conversationFingerprint, props.entries.length]);
+
+  const loadEarlier = async (): Promise<void> => {
+    const scroll = scrollRef.current;
+    prependScrollHeightRef.current = scroll?.scrollHeight ?? null;
+    followLatestRef.current = false;
+    try {
+      await props.onLoadEarlier?.();
+    } finally {
+      requestAnimationFrame(() => {
+        const current = scrollRef.current;
+        const previousHeight = prependScrollHeightRef.current;
+        if (current !== null && previousHeight !== null) {
+          current.scrollTop += current.scrollHeight - previousHeight;
+        }
+        prependScrollHeightRef.current = null;
+        setShowJumpToLatest(true);
+      });
+    }
+  };
 
   return (
     <div className="mission-work-drawer-layer" role="presentation">
@@ -1820,14 +1882,17 @@ function MissionWorkDrawer(props: {
       >
         <header>
           <div>
-            <small>{t("agentWork", { ns: "missions" })}</small>
+            <small>{t("agentConversation", { ns: "missions" })}</small>
             <h2 id="mission-work-drawer-title">{missionWorkRecordTitle(props.record)}</h2>
             <p>
               {workStatusLabel(props.record.status)} ·{" "}
-              {t("agentTasks", {
-                ns: "missions",
-                count: props.record.tasks.length,
-              })}
+              {t("readOnlyConversation", { ns: "missions" })}
+              {props.record.status === "running" || props.record.status === "waiting" ? (
+                <span className="mission-work-streaming">
+                  <SpinnerGap size={13} aria-hidden="true" />
+                  {t("streaming", { ns: "missions" })}
+                </span>
+              ) : null}
             </p>
           </div>
           <button
@@ -1839,55 +1904,77 @@ function MissionWorkDrawer(props: {
           </button>
         </header>
         <div className="mission-work-drawer-body">
-          <section className="mission-work-tasks" aria-labelledby="mission-work-tasks-title">
-            <h3 id="mission-work-tasks-title">{t("taskHistory", { ns: "missions" })}</h3>
-            <ol>
-              {props.record.tasks.map((item, index) => (
-                <li key={item.taskId}>
-                  <span className={`mission-work-status is-${item.status}`} aria-hidden="true" />
-                  <div>
-                    <strong>{t("agentTaskNumber", { ns: "missions", number: index + 1 })}</strong>
-                    <small>{workStatusLabel(item.status)}</small>
-                    <p>{item.inputSummary}</p>
-                  </div>
-                </li>
-              ))}
-            </ol>
-          </section>
-          <section className="mission-work-output" aria-labelledby="mission-work-output-title">
-            <header>
-              <h3 id="mission-work-output-title">{t("liveOutput", { ns: "missions" })}</h3>
-              {props.record.status === "running" || props.record.status === "waiting" ? (
-                <span>
-                  <SpinnerGap size={14} aria-hidden="true" />
-                  {t("streaming", { ns: "missions" })}
-                </span>
-              ) : null}
-            </header>
-            <div className="mission-work-output-stream" ref={outputRef} aria-live="polite">
+          <div
+            className="mission-chat-scroll mission-work-conversation-scroll"
+            ref={scrollRef}
+            aria-live="polite"
+            onScroll={(event) => {
+              const element = event.currentTarget;
+              const nearBottom =
+                element.scrollHeight - element.scrollTop - element.clientHeight < 72;
+              followLatestRef.current = nearBottom;
+              if (nearBottom) setShowJumpToLatest(false);
+            }}
+          >
+            <div className="mission-chat-list mission-work-conversation-list">
               {props.onLoadEarlier === undefined ? null : (
                 <button
-                  className="mission-work-load-earlier"
+                  className="mission-load-earlier"
                   type="button"
-                  onClick={props.onLoadEarlier}
+                  disabled={props.loading}
+                  onClick={() => void loadEarlier()}
                 >
-                  {t("loadEarlier", { ns: "missions" })}
+                  {props.loading
+                    ? t("loadingEarlier", { ns: "missions" })
+                    : t("loadEarlier", { ns: "missions" })}
                 </button>
               )}
               {props.loading && props.entries.length === 0 ? (
-                <p className="mission-work-output-empty">
+                <p className="mission-work-conversation-empty">
                   <SpinnerGap size={14} aria-hidden="true" />
                   {t("streaming", { ns: "missions" })}
                 </p>
               ) : props.entries.length === 0 ? (
-                <p className="mission-work-output-empty">
-                  {t("waitingForAgentOutput", { ns: "missions" })}
+                <p className="mission-work-conversation-empty">
+                  {t("waitingForAgentConversation", { ns: "missions" })}
                 </p>
               ) : (
-                props.entries.map((entry) => <MissionChatEntryView entry={entry} key={entry.id} />)
+                conversationBlocks.map((block) => {
+                  if (block.type === "tools") {
+                    return (
+                      <MissionToolCallBlock
+                        collapsed={block.collapsed}
+                        entries={block.entries}
+                        key={`tools:${block.entries[0]!.id}`}
+                      />
+                    );
+                  }
+                  return block.item.type === "durable" ? (
+                    <MissionChatEntryView
+                      entry={block.item.entry}
+                      key={block.item.entry.id}
+                      userLabel={props.inputSenderName}
+                    />
+                  ) : null;
+                })
               )}
             </div>
-          </section>
+            {showJumpToLatest ? (
+              <button
+                className="mission-jump-latest"
+                type="button"
+                onClick={() => {
+                  const scroll = scrollRef.current;
+                  if (scroll !== null) scroll.scrollTop = scroll.scrollHeight;
+                  followLatestRef.current = true;
+                  setShowJumpToLatest(false);
+                }}
+              >
+                <CaretDown size={15} aria-hidden="true" />
+                {t("jumpLatest", { ns: "missions" })}
+              </button>
+            ) : null}
+          </div>
         </div>
       </aside>
     </div>
@@ -2357,6 +2444,21 @@ export function missionWorkRecordTitle(record: MissionWorkRecord): string {
     ns: "missions",
     number: record.fallbackOrdinal,
   });
+}
+
+export function missionWorkInputSenderName(
+  record: MissionWorkRecord,
+  records: readonly MissionWorkRecord[],
+): string {
+  if (record.parentRecordId === undefined) {
+    return record.kind === "root"
+      ? i18n.t("you", { ns: "missions" })
+      : i18n.t("mainAgent", { ns: "missions" });
+  }
+  const parent = records.find((candidate) => candidate.recordId === record.parentRecordId);
+  return parent === undefined
+    ? i18n.t("mainAgent", { ns: "missions" })
+    : missionWorkRecordTitle(parent);
 }
 
 function workStatusLabel(status: MissionWorkRecord["status"]): string {

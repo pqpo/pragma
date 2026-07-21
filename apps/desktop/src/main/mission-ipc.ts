@@ -5,7 +5,7 @@ import { ipcMain, type BrowserWindow } from "electron";
 import {
   CreateMissionSchema,
   GetMissionChatSchema,
-  GetMissionWorkOutputSchema,
+  GetMissionWorkConversationSchema,
   MissionActionSchema,
   MissionCreationDefaultsSchema,
   MissionExecutorOptionSchema,
@@ -116,8 +116,8 @@ export function installMissionHandlers(options: {
   ipcMain.handle("missions:work:get", (_event, input: unknown) =>
     options.runner.getWork(MissionActionSchema.parse(input).id),
   );
-  ipcMain.handle("missions:work:output:get", (_event, input: unknown) =>
-    options.runner.getWorkOutput(GetMissionWorkOutputSchema.parse(input)),
+  ipcMain.handle("missions:work:conversation:get", (_event, input: unknown) =>
+    options.runner.getWorkConversation(GetMissionWorkConversationSchema.parse(input)),
   );
   ipcMain.handle("missions:human:list", (_event, input: unknown) =>
     options.runner.listHumanInteractions(MissionActionSchema.parse(input).id),
