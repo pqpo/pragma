@@ -12,6 +12,7 @@ import {
   X,
 } from "@phosphor-icons/react";
 import {
+  PRAGMA_EXPERT_INSTRUCTIONS_MAX_LENGTH,
   PragmaExpertTeamResourceSchema,
   type PragmaExpertResource,
   type PragmaExpertTeamResource,
@@ -29,6 +30,10 @@ type ResourceKind = "team" | "flow";
 type TeamExpertPickerKind = "coordinator" | "members";
 
 const TEAM_EXPERT_RESULT_LIMIT = 8;
+
+function unicodeLength(value: string): number {
+  return [...value].length;
+}
 
 function expertRef(expert: PragmaExpertResource): string {
   return `expert:${expert.metadata.id}@${expert.metadata.version}`;
@@ -232,6 +237,7 @@ export function TeamEditor(props: {
   const [id, setId] = useState(props.initial?.metadata.id ?? "");
   const [name, setName] = useState(props.initial?.metadata.name ?? "");
   const [description, setDescription] = useState(props.initial?.metadata.description ?? "");
+  const [instructions, setInstructions] = useState(props.initial?.spec.instructions ?? "");
   const [version, setVersion] = useState(props.initial?.metadata.version ?? "1.0.0");
   const initialCoordinator = props.initial?.spec.coordinator.ref ?? "";
   const [coordinator, setCoordinator] = useState(initialCoordinator);
@@ -248,16 +254,14 @@ export function TeamEditor(props: {
 
   const submit = () => {
     try {
-      const selected = members.includes(coordinator)
-        ? members
-        : [coordinator, ...members].filter(Boolean);
       const resource = PragmaExpertTeamResourceSchema.parse({
         apiVersion: "pragma/v2",
         kind: "ExpertTeam",
         metadata: { id, name, description, version, tags: props.initial?.metadata.tags ?? [] },
         spec: {
           coordinator: { ref: coordinator },
-          members: selected.map((ref) => ({ ref })),
+          members: members.map((ref) => ({ ref })),
+          ...(instructions.trim() === "" ? {} : { instructions }),
           delegation: {
             maxConcurrency,
             maxDepth,
@@ -302,6 +306,23 @@ export function TeamEditor(props: {
         }}
         onMembersChange={setMembers}
       />
+      <label>
+        {t("teamInstructions")}
+        <textarea
+          className="team-instructions-input"
+          rows={8}
+          value={instructions}
+          onChange={(event) => setInstructions(event.target.value)}
+          maxLength={PRAGMA_EXPERT_INSTRUCTIONS_MAX_LENGTH * 2}
+          placeholder={t("teamInstructionsPlaceholder")}
+        />
+        <span className="team-instructions-hint">
+          <span>{t("teamInstructionsHint")}</span>
+          <span>
+            {unicodeLength(instructions)}/{PRAGMA_EXPERT_INSTRUCTIONS_MAX_LENGTH}
+          </span>
+        </span>
+      </label>
       <div className="pragma-two-columns">
         <label>
           {t("maxConcurrency")}

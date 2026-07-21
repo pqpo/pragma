@@ -650,6 +650,7 @@ class PragmaProjectImpl implements PragmaProject {
           version: indexed.resource.metadata.version,
           name: indexed.resource.metadata.name,
           description: indexed.resource.metadata.description,
+          instructions: indexed.resource.spec.instructions,
           coordinator,
           members: members as Expert[],
           delegation: {

@@ -2144,6 +2144,25 @@ p {
   color: inherit;
 }
 
+.team-instructions-input {
+  min-height: 156px !important;
+  line-height: 1.55;
+}
+
+.team-instructions-hint {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.team-instructions-hint span:last-child {
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+}
+
 .pragma-two-columns,
 .pragma-three-columns {
   display: grid;
@@ -8760,25 +8779,16 @@ textarea:focus-visible,
 
 .mission-executor-menu > header {
   display: flex;
-  align-items: start;
+  align-items: center;
   justify-content: space-between;
   gap: 18px;
-  padding: 16px 17px 13px;
+  min-height: 46px;
+  padding: 11px 17px;
   border-bottom: 1px solid var(--border);
 }
 
-.mission-executor-menu > header > div {
-  display: grid;
-  min-width: 0;
-  gap: 3px;
-}
-
-.mission-executor-menu > header strong {
-  font-size: 13px;
-  font-weight: 700;
-}
-
 .mission-executor-menu > header small {
+  min-width: 0;
   color: var(--muted);
   font-size: 10px;
   font-weight: 450;
@@ -8830,8 +8840,9 @@ textarea:focus-visible,
 
 .mission-executor-options {
   display: grid;
+  grid-auto-rows: minmax(68px, auto);
   gap: 4px;
-  max-height: 330px;
+  max-height: 370px;
   overflow-y: auto;
   padding: 7px;
   overscroll-behavior: contain;
@@ -8839,12 +8850,13 @@ textarea:focus-visible,
 
 .mission-executor-option {
   display: grid;
-  grid-template-columns: 34px minmax(0, 1fr) auto 17px;
+  grid-template-columns: 36px minmax(0, 1fr) auto;
+  width: 100%;
   min-width: 0;
   align-items: center;
   gap: 10px;
-  min-height: 62px;
-  padding: 9px 10px;
+  min-height: 68px;
+  padding: 10px;
   border: 1px solid transparent;
   border-radius: 10px;
   background: transparent;
@@ -8867,13 +8879,19 @@ textarea:focus-visible,
 
 .mission-executor-option-icon {
   display: grid;
-  width: 34px;
-  height: 34px;
+  width: 36px;
+  min-width: 36px;
+  height: 36px;
   place-items: center;
   border-radius: 9px;
   background: #fff;
   color: var(--green-dark);
   box-shadow: 0 1px 3px rgb(20 31 25 / 6%);
+}
+
+.mission-executor-option-icon > svg {
+  width: 20px;
+  height: 20px;
 }
 
 .mission-executor-option > span:nth-child(2) {
@@ -8900,6 +8918,7 @@ textarea:focus-visible,
 }
 
 .mission-executor-option-kind {
+  justify-self: end;
   padding: 4px 7px;
   border: 1px solid var(--border);
   border-radius: 999px;
@@ -8908,10 +8927,24 @@ textarea:focus-visible,
   font-weight: 650;
   letter-spacing: 0.04em;
   text-transform: uppercase;
+  white-space: nowrap;
 }
 
-.mission-executor-option > svg {
+.mission-executor-option-meta {
+  display: grid;
+  grid-template-columns: 17px auto;
+  align-items: center;
+  justify-self: end;
+  gap: 7px;
+}
+
+.mission-executor-option-meta > svg {
   color: var(--green-dark);
+  visibility: hidden;
+}
+
+.mission-executor-option-meta > svg.is-visible {
+  visibility: visible;
 }
 
 .mission-executor-empty {
@@ -8984,7 +9017,7 @@ textarea:focus-visible,
   gap: 2px;
 }
 
-.mission-prompt-tools button {
+.mission-prompt-tools > button {
   display: inline-flex;
   min-height: 34px;
   align-items: center;
@@ -8999,17 +9032,17 @@ textarea:focus-visible,
   white-space: nowrap;
 }
 
-.mission-prompt-tools button:hover {
+.mission-prompt-tools > button:hover {
   background: var(--surface-soft);
   color: var(--text);
 }
 
-.mission-prompt-tools button.is-active {
+.mission-prompt-tools > button.is-active {
   color: var(--green-dark);
   background: var(--green-soft);
 }
 
-.mission-prompt-tools button[aria-disabled="true"] {
+.mission-prompt-tools > button[aria-disabled="true"] {
   cursor: help;
 }
 
@@ -10068,6 +10101,7 @@ textarea:focus-visible,
   width: min(900px, 100%);
   height: auto;
   max-height: 100%;
+  overflow: visible;
   padding: 0;
 }
 

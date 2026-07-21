@@ -38,6 +38,11 @@ export const studio = {
   moreExpertsHidden: "{{count}} more expert(s) hidden. Refine your search to find them.",
   coordinatorIncluded: "The coordinator is included as a team member automatically.",
   selectionAppliedToTeam: "This selection is applied to the team form immediately.",
+  teamInstructions: "Team instructions (optional)",
+  teamInstructionsPlaceholder:
+    "Describe collaboration principles, quality requirements, or shared working agreements.",
+  teamInstructionsHint:
+    "Loaded into every coordinator and member context as an always-on TEAM.md document.",
   maxConcurrency: "Max concurrency",
   maxDelegationDepth: "Max delegation depth",
   canonicalYaml: "Saved as canonical Pragma YAML when published.",

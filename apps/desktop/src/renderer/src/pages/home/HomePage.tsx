@@ -390,10 +390,7 @@ function MissionExecutorPicker(props: {
           aria-label={t("chooseMissionExecutor")}
         >
           <header>
-            <div>
-              <strong>{t("chooseExecutor")}</strong>
-              <small>{t("executorDescription")}</small>
-            </div>
+            <small>{t("executorDescription")}</small>
             <span>{t("availableCount", { count: props.executors.length })}</span>
           </header>
           <label className="mission-executor-search">
@@ -439,10 +436,16 @@ function MissionExecutorPicker(props: {
                     <strong>{copy.name}</strong>
                     <small>{copy.description}</small>
                   </span>
-                  <span className="mission-executor-option-kind">
-                    {isDefault ? t("defaultExecutor") : executorLabel(executor)}
+                  <span className="mission-executor-option-meta">
+                    <Check
+                      className={isSelected ? "is-visible" : undefined}
+                      size={17}
+                      aria-hidden="true"
+                    />
+                    <span className="mission-executor-option-kind">
+                      {isDefault ? t("defaultExecutor") : executorLabel(executor)}
+                    </span>
                   </span>
-                  {isSelected ? <Check size={17} aria-hidden="true" /> : null}
                 </button>
               );
             })}

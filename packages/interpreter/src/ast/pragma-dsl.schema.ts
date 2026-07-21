@@ -271,6 +271,7 @@ export const PragmaExpertTeamResourceSchema = z
         members: z
           .array(z.object({ ref: exactRefSchema(["expert"], "expert:worker@1.0.0") }).strict())
           .min(1),
+        instructions: PragmaExpertInstructionsSchema.optional(),
         delegation: z
           .object({
             allow: z.record(z.string().min(1), z.array(z.string().min(1))).optional(),

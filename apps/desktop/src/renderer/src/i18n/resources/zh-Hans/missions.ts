@@ -41,7 +41,6 @@ export const missions = {
   startMission: "开始任务",
   chooseResource: "选择专家、团队或流程",
   chooseMissionExecutor: "选择任务执行者",
-  chooseExecutor: "选择执行者",
   executorDescription: "默认使用 Pragma，也可以选择专业专家、团队或流程。",
   createFirst: "内置 Pragma Agent 当前不可用，请检查应用配置。",
   availableCount: "{{count}} 个可用",

@@ -157,7 +157,11 @@ the affected Invocation subtree. Tool output uses safe JSON serialization, inclu
 
 ## Teams and bounded Flow loops
 
-Teams refer to exact Expert and RuntimeProfile versions. Flow ordinary edges must form a DAG. A
+Teams refer to exact Expert and RuntimeProfile versions. A Team may define optional
+`spec.instructions`; Core exposes it to the coordinator and every member
+as a critical, always-on `TEAM.md` Context System document for that Team execution only. The
+document does not mutate the reusable Expert definition or leak into other Teams that use the same
+Expert. Flow ordinary edges must form a DAG. A
 back edge is legal only as a named `repeat` transition with a positive `maxIterations`. Loop state
 is persisted with the Execution before the next node is scheduled, making recovery idempotent.
 Ordinary and repeat edges remain distinct multigraph edges, and `onLimit` must leave the loop.

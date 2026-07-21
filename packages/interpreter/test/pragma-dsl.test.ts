@@ -7,6 +7,7 @@ import {
   createExpertAgentPluginPackageFingerprint,
   createStaticRuntimeResolver,
   type Expert,
+  type ExpertTeam,
   type Flow,
 } from "@pragma/core";
 
@@ -159,6 +160,53 @@ describe("Pragma YAML DSL", () => {
     const single = await project.dump(compiled.value, { split: "single" });
     await writeFile(join(root, "single.yaml"), single.files.get("pragma.yaml")!);
     expect((await loadPragmaProject(join(root, "single.yaml"))).listResources()).toHaveLength(1);
+  });
+
+  it("compiles and dumps optional ExpertTeam instructions", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-team-instructions-"));
+    const entry = join(root, "pragma.yaml");
+    const instructions = "Share evidence, surface uncertainty, and verify work before handoff.";
+    await writeFile(
+      entry,
+      formatPragmaYaml({
+        apiVersion: "pragma/v2",
+        kind: "Bundle",
+        imports: [],
+        resources: [
+          runtimeProfile(),
+          expertResource("lead", "Coordinates delivery"),
+          expertResource("reviewer", "Reviews delivery"),
+          {
+            apiVersion: "pragma/v2",
+            kind: "ExpertTeam",
+            metadata: {
+              id: "delivery",
+              version: "1.0.0",
+              name: "Delivery",
+              description: "Coordinates and reviews delivery",
+              tags: [],
+            },
+            spec: {
+              coordinator: { ref: "expert:lead@1.0.0" },
+              members: [{ ref: "expert:reviewer@1.0.0" }],
+              instructions,
+              delegation: {},
+            },
+          },
+        ],
+      }),
+    );
+
+    const project = await loadPragmaProject(entry);
+    expect(await project.validate()).toEqual([]);
+    const compiled = await project.compile<ExpertTeam>("team:delivery@1.0.0", {
+      workspace: root,
+    });
+    expect(compiled.value.instructions).toBe(instructions);
+    const dumped = await project.dump(compiled.value, { split: "by-resource" });
+    expect(dumped.files.get("teams/delivery@1.0.0.pragma.yaml")).toContain(
+      `instructions: ${instructions}`,
+    );
   });
 
   it("enforces an optional content-addressed lock", async () => {

@@ -21,6 +21,8 @@ import {
   type RuntimeByExpert,
 } from "../agent/agent-launcher.ts";
 import { isExpertTeam, type ExpertDefinition, type ExpertTeam } from "../agent/expert-team.ts";
+import { ContextManager } from "../agent/context-manager.ts";
+import { StaticContextStore } from "../context-system/static-context-store.ts";
 import { freshContextIdResolver } from "./context-id-resolver.ts";
 import type { Flow } from "../flow/flow.ts";
 import { runNestedFlowInvocation } from "../flow/flow-execution.ts";
@@ -612,7 +614,7 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
   const depth = options.depth ?? 0;
   const teamTools = team === undefined ? [] : createTeamDelegationTools(team, nativeExpert.id);
   const executableExpert =
-    team === undefined ? nativeExpert : withTeamDelegationTools(nativeExpert, teamTools);
+    team === undefined ? nativeExpert : withTeamDelegationTools(nativeExpert, teamTools, team);
   const delegation =
     teamTools.length === 0
       ? team === undefined
@@ -743,7 +745,7 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
       runtimeSession: options.context.snapshot?.runtimeSession,
       executionContext,
       humanInteractionHandler,
-        modelSelection,
+      modelSelection,
       onSessionInfo: async (info) => {
         if (info.runtimeSession.id === "") return;
         await persistRuntimeSnapshot({
@@ -779,7 +781,7 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
             : `${options.runtimeRunId ?? options.invocationId}:continuation:${continuation}`,
         executionContext,
         humanInteractionHandler,
-      modelSelection,
+        modelSelection,
         runtimeSource: runtime.descriptor,
       });
       options.controller.addUsage(turn.usage);
@@ -1311,6 +1313,7 @@ function isLiveOnlyRuntimeEvent(event: ExpertAgentStreamEvent): boolean {
 function withTeamDelegationTools(
   expert: Expert,
   tools: readonly NonNullable<Expert["tools"]>[number][],
+  team?: ExpertTeam | undefined,
 ): Expert {
   const clone = Object.create(Object.getPrototypeOf(expert)) as Expert;
   Object.defineProperties(clone, Object.getOwnPropertyDescriptors(expert));
@@ -1321,6 +1324,37 @@ function withTeamDelegationTools(
     ],
     enumerable: true,
   });
+  if (team?.instructions !== undefined) {
+    const namespace = `expert-team:${team.id}@${team.version}`;
+    const contextSystem = expert.contextSystem.extend({
+      stores: [
+        [
+          namespace,
+          new StaticContextStore([
+            {
+              id: "TEAM.md",
+              content: team.instructions,
+              metadata: {
+                description: `Shared instructions for ExpertTeam ${team.name}.`,
+                trigger: "always_on",
+                priority: "critical",
+                trustLevel: "user",
+                sensitivity: "internal",
+              },
+            },
+          ]),
+        ],
+      ],
+      roots: [{ namespace }],
+    });
+    Object.defineProperty(clone, "contextSystem", {
+      value: contextSystem,
+      enumerable: true,
+    });
+    Object.defineProperty(clone, "contextManager", {
+      value: new ContextManager({ agent: clone, contextSystem }),
+    });
+  }
   return clone;
 }
 

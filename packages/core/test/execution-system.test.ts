@@ -15,6 +15,7 @@ import {
   createFileExecutionStore,
   createFileExpertSessionStore,
   createStaticRuntimeResolver,
+  ContextSystem,
   defineExpert,
   defineExpertTeam,
   defineContextIdResolver,
@@ -22,6 +23,7 @@ import {
   defineRuntimeDriver,
   fingerprintExpertExecutionDefinition,
   PragmaPaths,
+  StaticContextStore,
   type AgentMessageUsage,
   type ExecutionEvent,
   type ExpertAgentManagedTool,
@@ -44,6 +46,7 @@ interface FakeRuntimeStats {
   executionIds: string[];
   sessionModelSelections: Array<RuntimeModelSelection | undefined>;
   turnModelSelections: Array<RuntimeModelSelection | undefined>;
+  sessionContexts: RuntimeDriverSessionContext[];
 }
 
 function createFakeRuntimeStats(): FakeRuntimeStats {
@@ -55,6 +58,7 @@ function createFakeRuntimeStats(): FakeRuntimeStats {
     executionIds: [],
     sessionModelSelections: [],
     turnModelSelections: [],
+    sessionContexts: [],
   };
 }
 
@@ -82,6 +86,7 @@ function createFakeRuntime(options: FakeRuntimeOptions = {}) {
     createSession: async (context) => {
       if (stats !== undefined) stats.createSessionCalls += 1;
       if (stats !== undefined) stats.sessionModelSelections.push(context.request.modelSelection);
+      if (stats !== undefined) stats.sessionContexts.push(context);
       if (options.createDelayMs !== undefined) {
         await new Promise<void>((resolve) => setTimeout(resolve, options.createDelayMs));
       }
@@ -2787,6 +2792,98 @@ describe("Expert delegation declarations", () => {
     expect(team.delegation.maxConcurrency).toBe(4);
     expect(team.delegation.maxDepth).toBe(3);
     expect(team.delegation.runtimeByExpert).toEqual(new Map());
+  });
+
+  it("loads optional Team instructions into every participant without mutating Experts", async () => {
+    const home = await mkdtemp(join(tmpdir(), "pragma-team-instructions-"));
+    const stats = createFakeRuntimeStats();
+    const runtime = createFakeRuntime({ stats });
+    const app = createPragma({
+      pragmaHome: home,
+      runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
+    });
+    const projectContext = new ContextSystem({
+      stores: {
+        project: new StaticContextStore([
+          {
+            id: "PROJECT.md",
+            content: "Existing project context.",
+            metadata: { trigger: "always_on" },
+          },
+        ]),
+      },
+      roots: [{ namespace: "project" }],
+    });
+    const lead = await defineExpert({
+      id: "lead",
+      name: "Lead",
+      description: "Coordinates work",
+      tags: [],
+      version: "1.0.0",
+      scope: "test",
+      workspace: home,
+      pragmaHome: home,
+      contextSystem: projectContext,
+    });
+    const member = await defineExpert({
+      id: "member",
+      name: "Member",
+      description: "Completes delegated work",
+      tags: [],
+      version: "1.0.0",
+      scope: "test",
+      workspace: home,
+      pragmaHome: home,
+      contextSystem: projectContext,
+    });
+    const instructions = "Surface uncertainty early and verify every deliverable.";
+    const team = defineExpertTeam({
+      id: "quality_team",
+      version: "1.0.0",
+      instructions,
+      coordinator: lead,
+      members: [member],
+      delegation: {},
+    });
+
+    const teamSession = await app.experts.createSession(team);
+    await (
+      await teamSession.prompt("deliver", { requestId: "team-instructions" })
+    ).result;
+    await teamSession.close();
+
+    const teamContexts = stats.sessionContexts.filter((context) =>
+      ["lead", "member"].includes(context.agent.id),
+    );
+    expect(teamContexts).toHaveLength(2);
+    for (const context of teamContexts) {
+      expect(context.agentContext.startupMessages).toEqual([
+        expect.objectContaining({
+          role: "user",
+          content: expect.stringContaining(instructions),
+        }),
+      ]);
+      expect(context.agentContext.startupMessages[0]?.content).toContain("id: TEAM.md");
+      expect(context.agentContext.startupMessages[0]?.content).toContain(
+        "namespace: expert-team:quality_team@1.0.0",
+      );
+      expect(context.agentContext.startupMessages[0]?.content).toContain(
+        "Existing project context.",
+      );
+    }
+
+    stats.sessionContexts.length = 0;
+    const standalone = await app.experts.createSession(lead);
+    await (
+      await standalone.prompt("work alone", { requestId: "standalone" })
+    ).result;
+    await standalone.close();
+    expect(stats.sessionContexts[0]?.agentContext.startupMessages[0]?.content).toContain(
+      "Existing project context.",
+    );
+    expect(stats.sessionContexts[0]?.agentContext.startupMessages[0]?.content).not.toContain(
+      instructions,
+    );
   });
 
   it("validates allowlists and limits", async () => {
