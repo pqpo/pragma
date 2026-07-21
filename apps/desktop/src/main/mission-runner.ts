@@ -4,6 +4,7 @@ import {
   createPragma,
   createFileExecutionStore,
   createFileExpertSessionStore,
+  defineExpert,
   ExpertAgentHumanRequestSchema,
   isExpertTeam,
   StoredExecutionView,
@@ -52,12 +53,17 @@ import {
   parseDesktopCapabilityBindingRef,
   parseDesktopContextBindingRef,
 } from "./desktop-binding-ref.ts";
-import type { MissionStore, MissionTimelineTurn } from "./mission-store.ts";
+import {
+  normalizeMissionTitle,
+  type MissionStore,
+  type MissionTimelineTurn,
+} from "./mission-store.ts";
 import type { PragmaProjectStore } from "./pragma-project-store.ts";
 import type { PluginStore } from "./plugin-store.ts";
 
 export interface MissionRunner {
   run(id: string): Promise<Mission>;
+  summarizeTitle(id: string): Promise<Mission>;
   updateOptions(input: UpdateMissionOptions): Promise<Mission>;
   sendMessage(input: {
     readonly id: string;
@@ -103,6 +109,8 @@ interface MissionExecutionContext {
   readonly runtimes: RuntimeResolver;
   readonly setToolPermissionMode: (mode: DesktopToolPermissionMode) => void;
 }
+
+const MISSION_TITLE_SUMMARY_TIMEOUT_MS = 45_000;
 
 export function createMissionRunner(options: {
   readonly missions: MissionStore;
@@ -179,6 +187,45 @@ export function createMissionRunner(options: {
   const chatRevisions = new Map<string, number>();
   const liveChats = new Map<string, LiveMissionChat>();
   const executorNameCache = new Map<string, ReadonlyMap<string, string>>();
+  const titleExperts = new Map<string, ReturnType<typeof defineExpert>>();
+
+  const getExecutorNames = async (
+    mission: Pick<Mission, "project">,
+  ): Promise<ReadonlyMap<string, string>> => {
+    const projectKey = `${mission.project.id}:${mission.project.revision}`;
+    const existing = executorNameCache.get(projectKey);
+    if (existing !== undefined) return existing;
+    const project = await options.project.openRevision(mission.project.revision);
+    const names = new Map(
+      project.listResources().map((resource) => [resource.metadata.id, resource.metadata.name]),
+    );
+    executorNameCache.set(projectKey, names);
+    return names;
+  };
+
+  const getTitleExpert = (workspace: string) => {
+    const existing = titleExperts.get(workspace);
+    if (existing !== undefined) return existing;
+    const expert = defineExpert({
+      id: "pragma-desktop-mission-title",
+      name: "Mission title summarizer",
+      description: "Creates concise titles for Desktop Missions.",
+      instructions: [
+        "Create a concise UI title that captures the user's main intent.",
+        "Use the same language as the request and preserve important technical identifiers.",
+        "Return only the title as plain text, with no quotes, Markdown, or ending punctuation.",
+        "Keep Chinese titles within 24 characters and other titles within 48 characters.",
+        "Do not use tools or perform the requested work.",
+      ].join("\n"),
+      tags: ["system", "title"],
+      version: "1.0.0",
+      scope: "pragma.desktop",
+      workspace,
+      pragmaHome: options.pragmaHome,
+    });
+    titleExperts.set(workspace, expert);
+    return expert;
+  };
 
   const trackOperation = (id: string, operation: PendingMissionOperation): void => {
     pendingOperations.set(id, operation);
@@ -455,6 +502,52 @@ export function createMissionRunner(options: {
     return running;
   };
 
+  const summarizeMissionTitle = async (id: string): Promise<Mission> => {
+    const mission = await options.missions.get(id);
+    const initialTitle = mission.title;
+    const { app, runtimes: baseRuntimes } = executionContext(mission);
+    const runtimes = withMissionRuntimeBinding(baseRuntimes, await readMissionRootContext(mission));
+    const compiled = await compileMissionExecutor(mission, runtimes);
+    const rootExpert =
+      "kind" in compiled.value && compiled.value.kind === "flow"
+        ? undefined
+        : isExpertTeam(compiled.value)
+          ? compiled.value.coordinator
+          : compiled.value;
+    const modelSelection =
+      toRuntimeModelSelection(mission.modelOverride) ?? rootExpert?.models?.default;
+    const titleExpert = await getTitleExpert(mission.workspace.path);
+    const session = await app.experts.createSession(titleExpert, {
+      runtime: compiled.rootRuntimeId,
+      ...(modelSelection === undefined ? {} : { modelSelection }),
+    });
+    try {
+      const turn = await session.prompt(
+        `Summarize this Mission request as a short title:\n\n${mission.goal}`,
+        { requestId: randomUUID() },
+      );
+      let timeout: ReturnType<typeof setTimeout> | undefined;
+      const result = await Promise.race([
+        turn.result,
+        new Promise<never>((_resolve, reject) => {
+          timeout = setTimeout(() => {
+            void turn.cancel("Mission title summary timed out.");
+            reject(new Error("Mission title summary timed out."));
+          }, MISSION_TITLE_SUMMARY_TIMEOUT_MS);
+          timeout.unref();
+        }),
+      ]).finally(() => {
+        if (timeout !== undefined) clearTimeout(timeout);
+      });
+      const title = normalizeGeneratedMissionTitle(result);
+      return await options.missions.updateTitle(mission.id, title, {
+        expectedTitle: initialTitle,
+      });
+    } finally {
+      await session.close("Mission title summary completed.").catch(() => undefined);
+    }
+  };
+
   const sendMissionMessage = async (input: {
     readonly id: string;
     readonly content: string;
@@ -594,15 +687,7 @@ export function createMissionRunner(options: {
       capturedLive?.executionId,
     );
 
-    const projectKey = `${mission.project.id}:${mission.project.revision}`;
-    let names = executorNameCache.get(projectKey);
-    if (names === undefined) {
-      const project = await options.project.openRevision(mission.project.revision);
-      names = new Map(
-        project.listResources().map((resource) => [resource.metadata.id, resource.metadata.name]),
-      );
-      executorNameCache.set(projectKey, names);
-    }
+    const names = await getExecutorNames(mission);
     const current = active.get(mission.id);
     const pendingInteractions =
       current === undefined ? [] : await listPendingHumanInteractions(current.handle);
@@ -686,6 +771,9 @@ export function createMissionRunner(options: {
       trackOperation(id, { kind: "run", promise: started });
       return await started;
     },
+    async summarizeTitle(id) {
+      return await summarizeMissionTitle(id);
+    },
     async updateOptions(input) {
       if (pendingOperations.has(input.id)) {
         throw new Error("Wait for the current mission operation to finish.");
@@ -726,7 +814,12 @@ export function createMissionRunner(options: {
       const mission = await options.missions.get(id);
       if (mission.execution === undefined) return [];
       const tree = await executionStore.getTree(mission.execution.id);
-      return tree === undefined ? [] : flattenWorkItems(tree);
+      if (tree === undefined) return [];
+      const names = new Map(await getExecutorNames(mission));
+      if (tree.invocation.executorId !== undefined) {
+        names.set(tree.invocation.executorId, mission.executor.name);
+      }
+      return flattenWorkItems(tree, names);
     },
     async delete(id) {
       if (pendingOperations.has(id)) {
@@ -761,6 +854,23 @@ export function createMissionRunner(options: {
       invalidateChat(input.missionId);
     },
   };
+}
+
+export function normalizeGeneratedMissionTitle(result: unknown): string {
+  if (typeof result !== "string") {
+    throw new Error("Mission title summary did not return text.");
+  }
+  const firstLine = result
+    .trim()
+    .split(/\r?\n/u)
+    .find((line) => line.trim() !== "");
+  if (firstLine === undefined) throw new Error("Mission title summary was empty.");
+  const unwrapped = firstLine
+    .trim()
+    .replace(/^#{1,6}\s+/u, "")
+    .replace(/^["'`]+|["'`]+$/gu, "")
+    .replace(/[。.!！?？]+$/u, "");
+  return normalizeMissionTitle(unwrapped);
 }
 
 export function createDesktopAdapterHost(
@@ -1469,7 +1579,10 @@ function truncate(value: string, maxLength: number): string {
   return value.length <= maxLength ? value : `${value.slice(0, maxLength - 1).trimEnd()}…`;
 }
 
-function flattenWorkItems(tree: InvocationTree): MissionWorkItem[] {
+export function flattenWorkItems(
+  tree: InvocationTree,
+  executorNames: ReadonlyMap<string, string> = new Map(),
+): MissionWorkItem[] {
   const invocation = tree.invocation;
   return [
     {
@@ -1479,14 +1592,25 @@ function flattenWorkItems(tree: InvocationTree): MissionWorkItem[] {
         : { parentInvocationId: invocation.parentInvocationId }),
       ...(invocation.nodeId === undefined ? {} : { nodeId: invocation.nodeId }),
       ...(invocation.executorId === undefined ? {} : { executorId: invocation.executorId }),
+      ...(invocation.executorId === undefined ||
+      executorNames.get(invocation.executorId) === undefined
+        ? {}
+        : { executorName: executorNames.get(invocation.executorId)! }),
+      ...(invocation.agentId === undefined ? {} : { agentId: invocation.agentId }),
+      contextId: invocation.contextId,
+      ...(invocation.agentTaskSequence === undefined
+        ? {}
+        : { taskSequence: invocation.agentTaskSequence }),
       kind: invocation.definition.kind,
       status: invocation.status,
       inputSummary: formatValue(invocation.input, 500),
       ...(invocation.output === undefined
         ? {}
         : { outputSummary: formatValue(invocation.output, 1_000) }),
+      createdAt: invocation.createdAt,
+      updatedAt: invocation.updatedAt,
     },
-    ...tree.children.flatMap(flattenWorkItems),
+    ...tree.children.flatMap((child) => flattenWorkItems(child, executorNames)),
   ];
 }
 

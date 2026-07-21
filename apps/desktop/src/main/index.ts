@@ -39,6 +39,7 @@ import { installPragmaProjectHandlers } from "./pragma-project-ipc.ts";
 import { createPragmaProjectStore } from "./pragma-project-store.ts";
 import { getRuntimeAvailability } from "./runtime-availability.ts";
 import { installWorkspaceScopeHandlers, validateWorkspace } from "./workspace-scope.ts";
+import { createWorkspaceHistoryStore } from "./workspace-history-store.ts";
 import { createDesktopDefaultAgentProjectPort } from "./default-agent-project-adapter.ts";
 import { createDesktopDefaultAgentTaskPort } from "./default-agent-task-adapter.ts";
 import { createDesktopSystemExpertRegistry } from "./system-expert-registry.ts";
@@ -141,6 +142,10 @@ void app.whenReady().then(async () => {
   const desktopSettings = createDesktopSettingsStore({
     settingsPath: join(pragmaPaths.stateRoot(), "desktop-settings.json"),
     builtInDefaultWorkspace,
+    warn: (message, error) => console.warn(message, error),
+  });
+  const workspaceHistory = createWorkspaceHistoryStore({
+    historyPath: join(pragmaPaths.stateRoot(), "workspace-history.json"),
     warn: (message, error) => console.warn(message, error),
   });
   const getToolPermissionMode = async () =>
@@ -373,6 +378,14 @@ void app.whenReady().then(async () => {
     getDefaultToolPermissionMode: getToolPermissionMode,
     getDefaultWorkspace: async () =>
       (await desktopSettings.getSnapshot(app.getPreferredSystemLanguages())).defaultWorkspace,
+    getRecentWorkspaces: () => workspaceHistory.list(),
+    recordWorkspaceUsage: async (path) => {
+      try {
+        await workspaceHistory.record(path);
+      } catch (error) {
+        console.warn("Workspace usage could not be recorded.", error);
+      }
+    },
     defaultExecutorRef: BUILT_IN_PRAGMA_REF,
   });
   installDesktopSettingsHandlers({

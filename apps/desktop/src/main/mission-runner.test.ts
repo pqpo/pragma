@@ -22,7 +22,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { missionExecutorSnapshot, type DesktopToolPermissionMode } from "../shared/desktop-api.ts";
 import type { CapabilityCredentialStore } from "./capability-credential-store.ts";
 import type { CapabilityStore } from "./capability-store.ts";
-import { createMissionRunner } from "./mission-runner.ts";
+import { createMissionRunner, normalizeGeneratedMissionTitle } from "./mission-runner.ts";
 import { createMissionStore, type MissionStore } from "./mission-store.ts";
 import { createPragmaProjectStore } from "./pragma-project-store.ts";
 
@@ -37,6 +37,64 @@ afterEach(async () => {
 });
 
 describe("MissionRunner", { timeout: 15_000 }, () => {
+  it("normalizes model-generated titles for the Mission header", () => {
+    expect(normalizeGeneratedMissionTitle('## "批量更新 Git 子模块。"\n额外说明')).toBe(
+      "批量更新 Git 子模块",
+    );
+    expect(normalizeGeneratedMissionTitle("a".repeat(80))).toBe(`${"a".repeat(47)}…`);
+    expect(() => normalizeGeneratedMissionTitle({ title: "invalid" })).toThrow(
+      "did not return text",
+    );
+  });
+
+  it("summarizes a Mission title in a separate background Expert session", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-mission-title-"));
+    temporaryPaths.push(root);
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    const snapshot = await project.publish({
+      expectedRevision: 0,
+      resources: [runtimeFixture(), expertFixture()],
+    });
+    const missions = createMissionStore({ missionsPath: join(root, "missions") });
+    const mission = await missions.create({
+      workspace: { path: root, basename: "workspace" },
+      goal: "Inspect every Git submodule and create the compatibility branch when it is missing",
+      project: { id: snapshot.projectId, revision: snapshot.revision },
+      executor: missionExecutorSnapshot(
+        snapshot.resources.find((resource) => resource.kind === "Expert")!,
+      ),
+    });
+    const titlePrompt = vi.fn();
+    const runtime = defineRuntimeDriver<never, { context: RuntimeDriverSessionContext }>({
+      descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
+      createSession: (context) => ({ context }),
+      async startTurn(session, turn) {
+        expect(session.context.agent.id).toBe("pragma-desktop-mission-title");
+        titlePrompt(turn.rawQuery);
+        return {
+          outputText: '"Create missing submodule branches."',
+          runtimeSessionId: "title-session",
+        };
+      },
+      mapEvent: () => ({ events: [] }),
+      closeSession: () => undefined,
+    });
+    const runner = createMissionRunner({
+      missions,
+      project,
+      capabilityStore: {} as CapabilityStore,
+      capabilityCredentials: {} as CapabilityCredentialStore,
+      capabilitiesPath: join(root, "capabilities"),
+      pragmaHome: join(root, "state"),
+      runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
+    });
+
+    await expect(runner.summarizeTitle(mission.id)).resolves.toMatchObject({
+      title: "Create missing submodule branches",
+    });
+    expect(titlePrompt).toHaveBeenCalledWith(expect.stringContaining(mission.goal));
+  });
+
   it("streams rich chat activity and interrupts the active execution", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-mission-interrupt-"));
     temporaryPaths.push(root);
@@ -453,7 +511,15 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
     ]);
     expect(openedSessionModes).toEqual(["request-approval", "auto-approve"]);
     await expect(runner.listWorkItems(mission.id)).resolves.toEqual([
-      expect.objectContaining({ kind: "expert", status: "succeeded", executorId: "writer" }),
+      expect.objectContaining({
+        kind: "expert",
+        status: "succeeded",
+        executorId: "writer",
+        executorName: "Writer",
+        contextId: expect.any(String),
+        createdAt: expect.any(String),
+        updatedAt: expect.any(String),
+      }),
     ]);
   });
 

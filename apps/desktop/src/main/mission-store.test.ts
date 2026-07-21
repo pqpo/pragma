@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import type { PragmaExpertResource } from "@pragma/interpreter/ast";
 import { missionExecutorSnapshot } from "../shared/desktop-api.ts";
-import { createMissionStore } from "./mission-store.ts";
+import { createMissionStore, MISSION_TITLE_MAX_LENGTH } from "./mission-store.ts";
 
 const temporaryPaths: string[] = [];
 
@@ -79,6 +79,30 @@ describe("mission store", () => {
     const reopened = await store.reopen(created.id);
     expect(reopened.lifecycleStatus).toBe("active");
     expect(reopened.completedAt).toBeUndefined();
+  });
+
+  it("limits fallback titles and guards asynchronous title replacement", async () => {
+    const root = await temporaryRoot();
+    const store = createMissionStore({ missionsPath: join(root, "missions") });
+    const created = await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "为每一个 Git 子模块创建并推送 feature/pnpm-workspace-compat 分支，同时检查远程状态",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+    });
+
+    expect(Array.from(created.title)).toHaveLength(MISSION_TITLE_MAX_LENGTH);
+    expect(created.title.endsWith("…")).toBe(true);
+
+    const summarized = await store.updateTitle(created.id, "批量创建 Git 子模块兼容分支", {
+      expectedTitle: created.title,
+    });
+    expect(summarized.title).toBe("批量创建 Git 子模块兼容分支");
+
+    const stale = await store.updateTitle(created.id, "不应覆盖较新的标题", {
+      expectedTitle: created.title,
+    });
+    expect(stale.title).toBe(summarized.title);
   });
 
   it("updates idle Mission options without changing pinned Mission identity", async () => {

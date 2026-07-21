@@ -3,6 +3,7 @@ import {
   ArrowUp,
   CaretDown,
   Check,
+  ClockCounterClockwise,
   Folder,
   FolderOpen,
   GitBranch,
@@ -37,6 +38,7 @@ export function HomePage(props: {
   const { t } = useTranslation("missions");
   const [executors, setExecutors] = useState<readonly MissionExecutorOption[]>([]);
   const [defaultWorkspace, setDefaultWorkspace] = useState<WorkspaceSelection>();
+  const [recentWorkspaces, setRecentWorkspaces] = useState<readonly WorkspaceSelection[]>([]);
   const [workspaceOverride, setWorkspaceOverride] = useState<WorkspaceSelection>();
   const [executorRef, setExecutorRef] = useState(props.initialExecutorRef ?? "");
   const [defaultExecutorRef, setDefaultExecutorRef] = useState("");
@@ -63,6 +65,7 @@ export function HomePage(props: {
         if (cancelled) return;
         setExecutors(availableExecutors);
         setDefaultWorkspace(defaults.workspace);
+        setRecentWorkspaces(defaults.recentWorkspaces);
         setDefaultExecutorRef(defaults.executorRef);
         setToolPermissionMode(defaults.toolPermissionMode);
         const requested = props.initialExecutorRef ?? defaults.executorRef;
@@ -170,8 +173,10 @@ export function HomePage(props: {
         <div className="mission-goal-composer">
           <WorkspacePicker
             defaultWorkspace={defaultWorkspace}
+            recentWorkspaces={recentWorkspaces}
             override={workspaceOverride}
             onChoose={() => void pickWorkspace()}
+            onSelect={setWorkspaceOverride}
             onUseDefault={() => setWorkspaceOverride(undefined)}
           />
           <div className="mission-goal-field">
@@ -256,8 +261,10 @@ export function HomePage(props: {
 
 function WorkspacePicker(props: {
   readonly defaultWorkspace?: WorkspaceSelection | undefined;
+  readonly recentWorkspaces: readonly WorkspaceSelection[];
   readonly override?: WorkspaceSelection | undefined;
   readonly onChoose: () => void;
+  readonly onSelect: (workspace: WorkspaceSelection) => void;
   readonly onUseDefault: () => void;
 }) {
   const { t } = useTranslation("missions");
@@ -308,6 +315,34 @@ function WorkspacePicker(props: {
             </span>
             {props.override === undefined ? <Check size={16} aria-hidden="true" /> : null}
           </button>
+          {props.recentWorkspaces.length > 0 ? (
+            <span className="mission-workspace-menu-heading" role="presentation">
+              {t("recentWorkspaces")}
+            </span>
+          ) : null}
+          {props.recentWorkspaces.map((recentWorkspace) => {
+            const selected = props.override?.path === recentWorkspace.path;
+            return (
+              <button
+                key={recentWorkspace.path}
+                type="button"
+                role="menuitemradio"
+                aria-checked={selected}
+                title={recentWorkspace.path}
+                onClick={() => {
+                  props.onSelect(recentWorkspace);
+                  setOpen(false);
+                }}
+              >
+                <ClockCounterClockwise size={18} aria-hidden="true" />
+                <span>
+                  <strong>{recentWorkspace.basename}</strong>
+                  <small>{recentWorkspace.path}</small>
+                </span>
+                {selected ? <Check size={16} aria-hidden="true" /> : null}
+              </button>
+            );
+          })}
           <button
             type="button"
             role="menuitem"

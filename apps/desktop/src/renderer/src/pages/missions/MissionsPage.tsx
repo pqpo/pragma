@@ -13,7 +13,6 @@ import {
   ArrowCounterClockwise,
   Brain,
   CaretDown,
-  Check,
   CheckCircle,
   Folder,
   GitBranch,
@@ -166,6 +165,12 @@ export function MissionsPage(props: {
       cancelled = true;
     };
   }, [openMission]);
+
+  useEffect(() => {
+    const api = desktopApi();
+    if (api === undefined) return;
+    return api.subscribeMissionUpdates(replaceMission);
+  }, [replaceMission]);
 
   const visibleMissions = useMemo(() => {
     const query = search.trim().toLocaleLowerCase();
@@ -502,6 +507,30 @@ interface LocalMissionUserMessage {
   readonly status: "pending" | "failed";
 }
 
+type MissionConversationEntry =
+  | { readonly type: "durable"; readonly entry: MissionChatEntry }
+  | { readonly type: "local"; readonly entry: LocalMissionUserMessage };
+
+export type MissionConversationBlock =
+  | { readonly type: "entry"; readonly item: MissionConversationEntry }
+  | {
+      readonly type: "tools";
+      readonly entries: readonly Extract<MissionChatEntry, { kind: "tool" }>[];
+      readonly collapsed: boolean;
+    };
+
+export interface MissionWorkRecord {
+  readonly key: string;
+  readonly contextId: string;
+  readonly parentKey?: string | undefined;
+  readonly title: string;
+  readonly kind: MissionWorkItem["kind"];
+  readonly status: MissionWorkItem["status"];
+  readonly items: readonly MissionWorkItem[];
+  readonly invocationIds: readonly string[];
+  readonly summary: string;
+}
+
 export function MissionDetailFragment(props: {
   readonly mission: Mission;
   readonly error?: string | null | undefined;
@@ -524,6 +553,7 @@ export function MissionDetailFragment(props: {
   const [workspaceAvailable, setWorkspaceAvailable] = useState<boolean | null>(null);
   const [chat, setChat] = useState<MissionChatSnapshot | null>(null);
   const [workItems, setWorkItems] = useState<readonly MissionWorkItem[]>([]);
+  const [selectedWorkKey, setSelectedWorkKey] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [optimisticMessages, setOptimisticMessages] = useState<LocalMissionUserMessage[]>([]);
   const [awaitingRequestId, setAwaitingRequestId] = useState<string | null>(null);
@@ -576,6 +606,7 @@ export function MissionDetailFragment(props: {
     setOptimisticMessages([]);
     setAwaitingRequestId(null);
     setOptionsError(null);
+    setSelectedWorkKey(null);
   }, [props.mission.id]);
 
   useEffect(() => {
@@ -884,6 +915,22 @@ export function MissionDetailFragment(props: {
       ].toSorted((left, right) => left.entry.createdAt.localeCompare(right.entry.createdAt)),
     [displayEntries, durableEntryIds, optimisticMessages],
   );
+  const conversationBlocks = useMemo(
+    () => groupMissionConversationEntries(conversationEntries),
+    [conversationEntries],
+  );
+  const workRecords = useMemo(() => groupMissionWorkItems(workItems), [workItems]);
+  const selectedWorkRecord = useMemo(
+    () => workRecords.find((record) => record.key === selectedWorkKey),
+    [selectedWorkKey, workRecords],
+  );
+  const selectedWorkEntries = useMemo(() => {
+    if (selectedWorkRecord === undefined) return [];
+    const invocationIds = new Set(selectedWorkRecord.invocationIds);
+    return displayEntries.filter(
+      (entry) => entry.invocationId !== undefined && invocationIds.has(entry.invocationId),
+    );
+  }, [displayEntries, selectedWorkRecord]);
   const lastEntry = displayEntries.at(-1);
   const lastEntryFingerprint =
     lastEntry === undefined
@@ -903,6 +950,20 @@ export function MissionDetailFragment(props: {
       setAwaitingRequestId(null);
     }
   }, [awaitingRequestId, chat]);
+
+  useEffect(() => {
+    if (selectedWorkKey === null) return;
+    if (selectedWorkRecord === undefined) setSelectedWorkKey(null);
+  }, [selectedWorkKey, selectedWorkRecord]);
+
+  useEffect(() => {
+    if (selectedWorkRecord === undefined) return;
+    const close = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setSelectedWorkKey(null);
+    };
+    window.addEventListener("keydown", close);
+    return () => window.removeEventListener("keydown", close);
+  }, [selectedWorkRecord]);
 
   const loadEarlier = async (): Promise<void> => {
     const api = desktopApi();
@@ -954,7 +1015,7 @@ export function MissionDetailFragment(props: {
     <section className="mission-detail">
       <header className="mission-detail-header">
         <div>
-          <h1>{props.mission.title}</h1>
+          <h1 title={props.mission.title}>{props.mission.title}</h1>
           <p>
             <span className="mission-ready-dot" aria-hidden="true" />
             {missionStatusLabel(props.mission)}
@@ -1080,17 +1141,29 @@ export function MissionDetailFragment(props: {
                     {historyError}
                   </p>
                 )}
-                {conversationEntries.map((item) =>
-                  item.type === "local" ? (
-                    <LocalMissionUserMessageView message={item.entry} key={item.entry.id} />
+                {conversationBlocks.map((block) => {
+                  if (block.type === "tools") {
+                    return (
+                      <MissionToolCallBlock
+                        collapsed={block.collapsed}
+                        entries={block.entries}
+                        key={`tools:${block.entries[0]!.id}`}
+                      />
+                    );
+                  }
+                  return block.item.type === "local" ? (
+                    <LocalMissionUserMessageView
+                      message={block.item.entry}
+                      key={block.item.entry.id}
+                    />
                   ) : (
                     <MissionChatEntryView
-                      entry={item.entry}
+                      entry={block.item.entry}
                       executorName={props.mission.executor.name}
-                      key={item.entry.id}
+                      key={block.item.entry.id}
                     />
-                  ),
-                )}
+                  );
+                })}
                 {awaitingRequestId !== null ? (
                   <MissionThinkingPlaceholder executorName={props.mission.executor.name} />
                 ) : null}
@@ -1257,7 +1330,7 @@ export function MissionDetailFragment(props: {
               )}
             </div>
           </div>
-        ) : workItems.length === 0 ? (
+        ) : workRecords.length === 0 ? (
           <div className="mission-work-empty">
             <CheckCircle size={31} weight="thin" aria-hidden="true" />
             <h2>
@@ -1281,27 +1354,46 @@ export function MissionDetailFragment(props: {
               <p>{t("executionMapDescription", { ns: "missions" })}</p>
             </header>
             <ol>
-              {workItems.map((item) => (
+              {workRecords.map((record) => (
                 <li
-                  key={item.invocationId}
+                  key={record.key}
                   style={
-                    { "--mission-work-depth": workItemDepth(item, workItems) } as CSSProperties
+                    {
+                      "--mission-work-depth": workRecordDepth(record, workRecords),
+                    } as CSSProperties
                   }
                 >
-                  <span className={`mission-work-status is-${item.status}`} aria-hidden="true" />
-                  <div>
-                    <strong>{item.nodeId ?? item.executorId ?? item.kind}</strong>
-                    <small>
-                      {item.kind} · {item.status}
-                    </small>
-                    <p>{item.outputSummary ?? item.inputSummary}</p>
-                  </div>
+                  <button type="button" onClick={() => setSelectedWorkKey(record.key)}>
+                    <span
+                      className={`mission-work-status is-${record.status}`}
+                      aria-hidden="true"
+                    />
+                    <div>
+                      <strong>{record.title}</strong>
+                      <small>
+                        {record.kind} · {workStatusLabel(record.status)}
+                        {record.items.length > 1
+                          ? ` · ${t("agentTasks", { ns: "missions", count: record.items.length })}`
+                          : ""}
+                      </small>
+                      <p>{record.summary}</p>
+                    </div>
+                    <CaretDown size={16} aria-hidden="true" />
+                  </button>
                 </li>
               ))}
             </ol>
           </div>
         )}
       </div>
+      {selectedWorkRecord === undefined ? null : (
+        <MissionWorkDrawer
+          record={selectedWorkRecord}
+          entries={selectedWorkEntries}
+          executorName={props.mission.executor.name}
+          onClose={() => setSelectedWorkKey(null)}
+        />
+      )}
     </section>
   );
 }
@@ -1383,37 +1475,203 @@ function MissionChatEntryView(props: {
     );
   }
   if (props.entry.kind === "tool") {
-    return (
-      <details className={`mission-chat-activity mission-tool-entry is-${props.entry.status}`}>
-        <summary>
-          <Toolbox size={17} aria-hidden="true" />
-          <span>{props.entry.toolName}</span>
-          <small>{toolStatusLabel(props.entry.status)}</small>
-          {props.entry.status === "succeeded" ? (
-            <Check size={15} aria-hidden="true" />
-          ) : (
-            <CaretDown size={15} aria-hidden="true" />
-          )}
-        </summary>
-        {props.entry.inputPreview !== undefined ? (
-          <div>
-            <strong>{t("input")}</strong>
-            <pre>{props.entry.inputPreview}</pre>
-          </div>
-        ) : null}
-        {props.entry.outputPreview !== undefined ? (
-          <div>
-            <strong>{t("output")}</strong>
-            <pre>{props.entry.outputPreview}</pre>
-          </div>
-        ) : null}
-        {props.entry.error !== undefined ? <p role="alert">{props.entry.error}</p> : null}
-      </details>
-    );
+    return <MissionToolCallEntry entry={props.entry} />;
   }
   return (
     <div className="mission-assistant-message">
       <MissionMessageContent source={props.entry.content} />
+    </div>
+  );
+}
+
+function MissionToolCallBlock(props: {
+  readonly collapsed: boolean;
+  readonly entries: readonly Extract<MissionChatEntry, { kind: "tool" }>[];
+}) {
+  const { t } = useTranslation("missions");
+  if (props.entries.length === 1) return <MissionToolCallEntry entry={props.entries[0]!} />;
+  if (!props.collapsed) {
+    return (
+      <div className="mission-tool-run">
+        {props.entries.map((entry) => (
+          <MissionToolCallEntry entry={entry} key={entry.id} />
+        ))}
+      </div>
+    );
+  }
+  const status = toolGroupStatus(props.entries);
+  return (
+    <details className={`mission-chat-activity mission-tool-entry mission-tool-group is-${status}`}>
+      <summary>
+        <Toolbox size={16} aria-hidden="true" />
+        <span>{t("toolCalls", { count: props.entries.length })}</span>
+        <small>{toolStatusLabel(status)}</small>
+        <CaretDown size={14} aria-hidden="true" />
+      </summary>
+      <div className="mission-tool-group-items">
+        {props.entries.map((entry) => (
+          <MissionToolCallEntry entry={entry} key={entry.id} />
+        ))}
+      </div>
+    </details>
+  );
+}
+
+function MissionToolCallEntry(props: {
+  readonly entry: Extract<MissionChatEntry, { kind: "tool" }>;
+}) {
+  const { t } = useTranslation("missions");
+  const lifecycleAction = agentLifecycleAction(props.entry.toolName);
+  const className = `mission-chat-activity mission-tool-entry is-${props.entry.status}${
+    lifecycleAction === undefined ? "" : " is-agent-lifecycle"
+  }`;
+  const hasDetails =
+    props.entry.inputPreview !== undefined ||
+    props.entry.outputPreview !== undefined ||
+    props.entry.error !== undefined;
+  const row = (
+    <>
+      {lifecycleAction === undefined ? (
+        <Toolbox size={16} aria-hidden="true" />
+      ) : (
+        <UsersThree size={17} aria-hidden="true" />
+      )}
+      <span>
+        {lifecycleAction === undefined ? props.entry.toolName : t(`agentAction.${lifecycleAction}`)}
+      </span>
+      <small>{toolStatusLabel(props.entry.status)}</small>
+    </>
+  );
+  if (!hasDetails) {
+    return (
+      <div className={`${className} mission-tool-static-row`}>
+        {row}
+        <span aria-hidden="true" />
+      </div>
+    );
+  }
+  return (
+    <details className={className}>
+      <summary>
+        {row}
+        <CaretDown size={14} aria-hidden="true" />
+      </summary>
+      <div className="mission-tool-entry-details">
+        {props.entry.inputPreview !== undefined ? (
+          <section>
+            <strong>{t("input")}</strong>
+            <pre>{props.entry.inputPreview}</pre>
+          </section>
+        ) : null}
+        {props.entry.outputPreview !== undefined ? (
+          <section>
+            <strong>{t("output")}</strong>
+            <pre>{props.entry.outputPreview}</pre>
+          </section>
+        ) : null}
+        {props.entry.error !== undefined ? <p role="alert">{props.entry.error}</p> : null}
+      </div>
+    </details>
+  );
+}
+
+function MissionWorkDrawer(props: {
+  readonly record: MissionWorkRecord;
+  readonly entries: readonly MissionChatEntry[];
+  readonly executorName: string;
+  readonly onClose: () => void;
+}) {
+  const { t } = useTranslation(["missions", "common"]);
+  const outputRef = useRef<HTMLDivElement | null>(null);
+  const lastEntry = props.entries.at(-1);
+  const outputFingerprint =
+    lastEntry === undefined
+      ? "empty"
+      : `${lastEntry.id}:${lastEntry.kind}:${entryContentLength(lastEntry)}`;
+
+  useEffect(() => {
+    const output = outputRef.current;
+    if (output !== null) output.scrollTop = output.scrollHeight;
+  }, [outputFingerprint, props.entries.length]);
+
+  return (
+    <div className="mission-work-drawer-layer" role="presentation">
+      <button
+        className="mission-work-drawer-scrim"
+        type="button"
+        aria-label={t("actions.close", { ns: "common" })}
+        onClick={props.onClose}
+      />
+      <aside
+        className="mission-work-drawer"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="mission-work-drawer-title"
+      >
+        <header>
+          <div>
+            <small>{t("agentWork", { ns: "missions" })}</small>
+            <h2 id="mission-work-drawer-title">{props.record.title}</h2>
+            <p>
+              {workStatusLabel(props.record.status)} ·{" "}
+              {t("agentTasks", {
+                ns: "missions",
+                count: props.record.items.length,
+              })}
+            </p>
+          </div>
+          <button
+            type="button"
+            aria-label={t("actions.close", { ns: "common" })}
+            onClick={props.onClose}
+          >
+            <X size={18} aria-hidden="true" />
+          </button>
+        </header>
+        <div className="mission-work-drawer-body">
+          <section className="mission-work-tasks" aria-labelledby="mission-work-tasks-title">
+            <h3 id="mission-work-tasks-title">{t("taskHistory", { ns: "missions" })}</h3>
+            <ol>
+              {props.record.items.map((item, index) => (
+                <li key={item.invocationId}>
+                  <span className={`mission-work-status is-${item.status}`} aria-hidden="true" />
+                  <div>
+                    <strong>{t("agentTaskNumber", { ns: "missions", number: index + 1 })}</strong>
+                    <small>{workStatusLabel(item.status)}</small>
+                    <p>{item.inputSummary}</p>
+                  </div>
+                </li>
+              ))}
+            </ol>
+          </section>
+          <section className="mission-work-output" aria-labelledby="mission-work-output-title">
+            <header>
+              <h3 id="mission-work-output-title">{t("liveOutput", { ns: "missions" })}</h3>
+              {props.record.status === "running" || props.record.status === "waiting" ? (
+                <span>
+                  <SpinnerGap size={14} aria-hidden="true" />
+                  {t("streaming", { ns: "missions" })}
+                </span>
+              ) : null}
+            </header>
+            <div className="mission-work-output-stream" ref={outputRef} aria-live="polite">
+              {props.entries.length === 0 ? (
+                <p className="mission-work-output-empty">
+                  {t("waitingForAgentOutput", { ns: "missions" })}
+                </p>
+              ) : (
+                props.entries.map((entry) => (
+                  <MissionChatEntryView
+                    entry={entry}
+                    executorName={props.record.title || props.executorName}
+                    key={entry.id}
+                  />
+                ))
+              )}
+            </div>
+          </section>
+        </div>
+      </aside>
     </div>
   );
 }
@@ -1661,6 +1919,90 @@ function entryContentLength(entry: MissionChatEntry): number {
   return entry.content.length;
 }
 
+export function groupMissionConversationEntries(
+  entries: readonly MissionConversationEntry[],
+): MissionConversationBlock[] {
+  const blocks: MissionConversationBlock[] = [];
+  let pendingTools: Extract<MissionChatEntry, { kind: "tool" }>[] = [];
+  const flushTools = (collapsed: boolean): void => {
+    if (pendingTools.length === 0) return;
+    blocks.push({ type: "tools", entries: pendingTools, collapsed });
+    pendingTools = [];
+  };
+
+  for (const item of entries) {
+    if (item.type === "durable" && item.entry.kind === "tool") {
+      if (agentLifecycleAction(item.entry.toolName) !== undefined) {
+        flushTools(false);
+        blocks.push({ type: "tools", entries: [item.entry], collapsed: false });
+        continue;
+      }
+      pendingTools.push(item.entry);
+      continue;
+    }
+    flushTools(
+      item.type === "durable" &&
+        (item.entry.kind === "assistant" || item.entry.kind === "thinking"),
+    );
+    blocks.push({ type: "entry", item });
+  }
+  flushTools(false);
+  return blocks;
+}
+
+export type AgentLifecycleAction = "spawn" | "wait" | "list" | "message" | "interrupt";
+
+export function agentLifecycleAction(toolName: string): AgentLifecycleAction | undefined {
+  const normalized = toolName.toLocaleLowerCase().replaceAll("-", "_");
+  if (/(?:^|[_./:])spawn_(?:expert|agent)$/u.test(normalized)) return "spawn";
+  if (/(?:^|[_./:])wait_(?:experts|agents?)$/u.test(normalized)) return "wait";
+  if (/(?:^|[_./:])list_(?:experts|agents)$/u.test(normalized)) return "list";
+  if (/(?:^|[_./:])(?:followup_expert|send_message)$/u.test(normalized)) return "message";
+  if (/(?:^|[_./:])interrupt_(?:expert|agent)$/u.test(normalized)) return "interrupt";
+  return undefined;
+}
+
+export function groupMissionWorkItems(items: readonly MissionWorkItem[]): MissionWorkRecord[] {
+  const itemKey = (item: MissionWorkItem): string =>
+    item.kind === "expert" || item.kind === "expert-team"
+      ? `context:${item.contextId}`
+      : `invocation:${item.invocationId}`;
+  const keyByInvocationId = new Map(items.map((item) => [item.invocationId, itemKey(item)]));
+  const grouped = new Map<string, MissionWorkItem[]>();
+  for (const item of items) {
+    const key = itemKey(item);
+    const current = grouped.get(key) ?? [];
+    current.push(item);
+    grouped.set(key, current);
+  }
+
+  return [...grouped].map(([key, groupedItems]) => {
+    const ordered = groupedItems.toSorted((left, right) => {
+      if (left.taskSequence !== undefined || right.taskSequence !== undefined) {
+        return (left.taskSequence ?? 0) - (right.taskSequence ?? 0);
+      }
+      return left.createdAt.localeCompare(right.createdAt);
+    });
+    const first = ordered[0]!;
+    const latest = ordered.at(-1)!;
+    const parentKey =
+      first.parentInvocationId === undefined
+        ? undefined
+        : keyByInvocationId.get(first.parentInvocationId);
+    return {
+      key,
+      contextId: first.contextId,
+      ...(parentKey === undefined || parentKey === key ? {} : { parentKey }),
+      title: first.executorName ?? first.executorId ?? first.nodeId ?? first.kind,
+      kind: first.kind,
+      status: workRecordStatus(ordered),
+      items: ordered,
+      invocationIds: ordered.map((item) => item.invocationId),
+      summary: latest.outputSummary ?? latest.inputSummary,
+    };
+  });
+}
+
 export function applyMissionChatPatches(
   snapshot: MissionChatSnapshot,
   patches: readonly MissionChatPatch[],
@@ -1808,6 +2150,15 @@ function toolStatusLabel(status: Extract<MissionChatEntry, { kind: "tool" }>["st
   }
 }
 
+function toolGroupStatus(
+  entries: readonly Extract<MissionChatEntry, { kind: "tool" }>[],
+): Extract<MissionChatEntry, { kind: "tool" }>["status"] {
+  if (entries.some((entry) => entry.status === "approval_required")) return "approval_required";
+  if (entries.some((entry) => entry.status === "running")) return "running";
+  if (entries.some((entry) => entry.status === "failed")) return "failed";
+  return "succeeded";
+}
+
 function formatInteractionData(value: unknown): string {
   if (typeof value === "string") return value;
   try {
@@ -1817,17 +2168,42 @@ function formatInteractionData(value: unknown): string {
   }
 }
 
-function workItemDepth(item: MissionWorkItem, items: readonly MissionWorkItem[]): number {
-  const byId = new Map(items.map((candidate) => [candidate.invocationId, candidate]));
+function workRecordDepth(record: MissionWorkRecord, records: readonly MissionWorkRecord[]): number {
+  const byKey = new Map(records.map((candidate) => [candidate.key, candidate]));
   let depth = 0;
-  let parentId = item.parentInvocationId;
+  let parentKey = record.parentKey;
   const visited = new Set<string>();
-  while (parentId !== undefined && !visited.has(parentId)) {
-    visited.add(parentId);
+  while (parentKey !== undefined && !visited.has(parentKey)) {
+    visited.add(parentKey);
     depth += 1;
-    parentId = byId.get(parentId)?.parentInvocationId;
+    parentKey = byKey.get(parentKey)?.parentKey;
   }
   return Math.min(depth, 6);
+}
+
+function workRecordStatus(items: readonly MissionWorkItem[]): MissionWorkItem["status"] {
+  if (items.some((item) => item.status === "running")) return "running";
+  if (items.some((item) => item.status === "waiting")) return "waiting";
+  if (items.some((item) => item.status === "queued")) return "queued";
+  return items.at(-1)?.status ?? "queued";
+}
+
+function workStatusLabel(status: MissionWorkItem["status"]): string {
+  switch (status) {
+    case "queued":
+      return i18n.t("statusQueued", { ns: "missions" });
+    case "running":
+      return i18n.t("statusWorking", { ns: "missions" });
+    case "waiting":
+      return i18n.t("statusNeedsInput", { ns: "missions" });
+    case "succeeded":
+      return i18n.t("statusSucceeded", { ns: "missions" });
+    case "failed":
+      return i18n.t("statusFailed", { ns: "missions" });
+    case "cancelled":
+    case "interrupted":
+      return i18n.t("statusCancelled", { ns: "missions" });
+  }
 }
 
 function missionStatusLabel(mission: Mission | MissionSummary): string {

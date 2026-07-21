@@ -61,6 +61,11 @@ export interface MissionStore {
       readonly modelOverride?: MissionModelOverride | undefined;
     },
   ): Promise<Mission>;
+  updateTitle(
+    id: string,
+    title: string,
+    guard?: { readonly expectedTitle?: string | undefined },
+  ): Promise<Mission>;
   updateExecution(
     id: string,
     execution: NonNullable<Mission["execution"]>,
@@ -337,6 +342,15 @@ export function createMissionStore(options: { readonly missionsPath: string }): 
         return next;
       });
     },
+    async updateTitle(id, title, guard) {
+      const normalizedTitle = normalizeMissionTitle(title);
+      return await updateMission(MissionIdSchema.parse(id), (current, timestamp) => {
+        if (guard?.expectedTitle !== undefined && current.title !== guard.expectedTitle) {
+          return current;
+        }
+        return { ...current, title: normalizedTitle, updatedAt: timestamp };
+      });
+    },
     async updateExecution(id, execution, guard) {
       return await updateMission(MissionIdSchema.parse(id), (current, timestamp) => {
         if (guard?.executionId !== undefined && current.execution?.id !== guard.executionId) {
@@ -596,7 +610,20 @@ function messageConflict(record: MissionTimelineRecord): MissionStoreError {
 
 function titleFromGoal(goal: string): string {
   const firstLine = goal.split(/\r?\n/, 1)[0]?.trim() ?? "";
-  return firstLine.length <= 120 ? firstLine : `${firstLine.slice(0, 117).trimEnd()}…`;
+  return normalizeMissionTitle(firstLine);
+}
+
+export const MISSION_TITLE_MAX_LENGTH = 48;
+
+export function normalizeMissionTitle(value: string): string {
+  const compact = value.replace(/\s+/gu, " ").trim();
+  const characters = Array.from(compact);
+  if (characters.length === 0) throw new Error("Mission title cannot be empty.");
+  if (characters.length <= MISSION_TITLE_MAX_LENGTH) return compact;
+  return `${characters
+    .slice(0, MISSION_TITLE_MAX_LENGTH - 1)
+    .join("")
+    .trimEnd()}…`;
 }
 
 function readSchemaVersion(value: unknown): unknown {

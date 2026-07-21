@@ -1054,6 +1054,7 @@ export const MissionExecutorOptionSchema = z.discriminatedUnion("kind", [
 
 export const MissionCreationDefaultsSchema = z.object({
   workspace: MissionWorkspaceSchema,
+  recentWorkspaces: z.array(MissionWorkspaceSchema).max(5),
   executorRef: ExpertRefSchema,
   toolPermissionMode: DesktopToolPermissionModeSchema,
 });
@@ -1106,6 +1107,10 @@ export const MissionWorkItemSchema = z.object({
   parentInvocationId: z.string().min(1).optional(),
   nodeId: z.string().min(1).optional(),
   executorId: z.string().min(1).optional(),
+  executorName: z.string().min(1).optional(),
+  agentId: z.string().min(1).optional(),
+  contextId: z.string().min(1),
+  taskSequence: z.number().int().nonnegative().optional(),
   kind: z.enum(["flow", "task", "human-task", "expert", "expert-team"]),
   status: z.enum([
     "queued",
@@ -1118,6 +1123,8 @@ export const MissionWorkItemSchema = z.object({
   ]),
   inputSummary: z.string().max(500),
   outputSummary: z.string().max(1_000).optional(),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
 });
 
 const MissionExecutionStatusSchema = z.enum([
@@ -1500,6 +1507,7 @@ export interface PragmaDesktopAPI {
   sendMissionMessage: (input: SendMissionMessage) => Promise<Mission>;
   getMissionChat: (input: GetMissionChat) => Promise<MissionChatSnapshot>;
   subscribeMissionChat: (id: string, listener: (update: MissionChatUpdate) => void) => () => void;
+  subscribeMissionUpdates: (listener: (mission: Mission) => void) => () => void;
   interruptMission: (id: string) => Promise<Mission>;
   listMissionWorkItems: (id: string) => Promise<MissionWorkItem[]>;
   deleteMission: (id: string) => Promise<void>;

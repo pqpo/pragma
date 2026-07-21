@@ -16,6 +16,7 @@ import {
   GetMissionChatSchema,
   MissionChatSnapshotSchema,
   MissionChatUpdateSchema,
+  MissionCreationDefaultsSchema,
   MissionModelOptionsSchema,
   MissionSchema,
   SetDefaultRuntimeSchema,
@@ -134,6 +135,31 @@ describe("mission model override contracts", () => {
         },
       }).defaultSelection,
     ).toEqual({ providerId: "provider", modelId: "model", thinkingLevel: "high" });
+  });
+});
+
+describe("mission creation defaults contracts", () => {
+  it("carries at most five recent workspaces", () => {
+    const recentWorkspaces = Array.from({ length: 5 }, (_, index) => ({
+      path: `/workspace/recent-${index}`,
+      basename: `recent-${index}`,
+    }));
+    expect(
+      MissionCreationDefaultsSchema.parse({
+        workspace: { path: "/workspace/default", basename: "default" },
+        recentWorkspaces,
+        executorRef: "expert:pragma@1.0.0",
+        toolPermissionMode: "request-approval",
+      }).recentWorkspaces,
+    ).toEqual(recentWorkspaces);
+    expect(
+      MissionCreationDefaultsSchema.safeParse({
+        workspace: { path: "/workspace/default", basename: "default" },
+        recentWorkspaces: [...recentWorkspaces, { path: "/workspace/six", basename: "six" }],
+        executorRef: "expert:pragma@1.0.0",
+        toolPermissionMode: "request-approval",
+      }).success,
+    ).toBe(false);
   });
 });
 

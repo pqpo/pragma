@@ -1,8 +1,15 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import type { Mission, MissionChatSnapshot } from "../../../../shared/desktop-api.ts";
+import type {
+  Mission,
+  MissionChatSnapshot,
+  MissionWorkItem,
+} from "../../../../shared/desktop-api.ts";
 import {
+  agentLifecycleAction,
   applyMissionChatPatches,
+  groupMissionConversationEntries,
+  groupMissionWorkItems,
   MissionDetailFragment,
   MissionsPage,
   shouldClearMissionThinkingPlaceholder,
@@ -108,6 +115,157 @@ describe("Mission chat patches", () => {
         2,
       ),
     ).toBeNull();
+  });
+});
+
+describe("Mission tool call grouping", () => {
+  it("collapses only consecutive tool calls between agent entries", () => {
+    const createdAt = "2026-07-21T00:00:00.000Z";
+    const blocks = groupMissionConversationEntries([
+      {
+        type: "durable",
+        entry: {
+          id: "thinking",
+          kind: "thinking",
+          content: "Inspecting the project",
+          streaming: false,
+          createdAt,
+        },
+      },
+      {
+        type: "durable",
+        entry: {
+          id: "tool-1",
+          kind: "tool",
+          toolCallId: "call-1",
+          toolName: "Read",
+          status: "succeeded",
+          createdAt,
+        },
+      },
+      {
+        type: "durable",
+        entry: {
+          id: "tool-2",
+          kind: "tool",
+          toolCallId: "call-2",
+          toolName: "Search",
+          status: "running",
+          createdAt,
+        },
+      },
+      {
+        type: "durable",
+        entry: {
+          id: "answer",
+          kind: "assistant",
+          content: "Found it",
+          streaming: false,
+          createdAt,
+        },
+      },
+      {
+        type: "durable",
+        entry: {
+          id: "tool-3",
+          kind: "tool",
+          toolCallId: "call-3",
+          toolName: "Edit",
+          status: "succeeded",
+          createdAt,
+        },
+      },
+      {
+        type: "durable",
+        entry: {
+          id: "tool-4",
+          kind: "tool",
+          toolCallId: "call-4",
+          toolName: "Write",
+          status: "running",
+          createdAt,
+        },
+      },
+    ]);
+
+    expect(blocks.map((block) => block.type)).toEqual(["entry", "tools", "entry", "tools"]);
+    expect(blocks[1]).toMatchObject({
+      type: "tools",
+      collapsed: true,
+      entries: [{ id: "tool-1" }, { id: "tool-2" }],
+    });
+    expect(blocks[3]).toMatchObject({
+      type: "tools",
+      collapsed: false,
+      entries: [{ id: "tool-3" }, { id: "tool-4" }],
+    });
+  });
+
+  it("keeps agent lifecycle interactions visible instead of folding them into tool groups", () => {
+    const createdAt = "2026-07-21T00:00:00.000Z";
+    const blocks = groupMissionConversationEntries(
+      ["Read", "mcp__pragma__spawn_expert", "wait_agents", "Write"].map((toolName, index) => ({
+        type: "durable" as const,
+        entry: {
+          id: `tool-${index}`,
+          kind: "tool" as const,
+          toolCallId: `call-${index}`,
+          toolName,
+          status: "succeeded" as const,
+          createdAt,
+        },
+      })),
+    );
+
+    expect(blocks).toHaveLength(4);
+    expect(blocks[1]).toMatchObject({ type: "tools", entries: [{ toolName: expect.any(String) }] });
+    expect(blocks[2]).toMatchObject({ type: "tools", entries: [{ toolName: "wait_agents" }] });
+    expect(agentLifecycleAction("mcp__pragma__spawn_expert")).toBe("spawn");
+    expect(agentLifecycleAction("list_experts")).toBe("list");
+    expect(agentLifecycleAction("send_message")).toBe("message");
+    expect(agentLifecycleAction("read_file")).toBeUndefined();
+  });
+});
+
+describe("Mission work records", () => {
+  it("groups follow-up invocations in one runtime Context session", () => {
+    const item = (
+      invocationId: string,
+      contextId: string,
+      taskSequence: number,
+      status: MissionWorkItem["status"],
+    ): MissionWorkItem => ({
+      invocationId,
+      parentInvocationId: "root",
+      executorId: "researcher",
+      executorName: "Researcher",
+      agentId: `agent-${contextId}`,
+      contextId,
+      taskSequence,
+      kind: "expert",
+      status,
+      inputSummary: `task ${taskSequence}`,
+      createdAt: `2026-07-21T00:00:0${taskSequence}.000Z`,
+      updatedAt: `2026-07-21T00:00:0${taskSequence}.000Z`,
+    });
+    const records = groupMissionWorkItems([
+      item("child-1", "context-a", 0, "succeeded"),
+      item("child-2", "context-a", 1, "running"),
+      item("child-3", "context-b", 0, "succeeded"),
+    ]);
+
+    expect(records).toHaveLength(2);
+    expect(records[0]).toMatchObject({
+      key: "context:context-a",
+      title: "Researcher",
+      status: "running",
+      invocationIds: ["child-1", "child-2"],
+      items: [{ taskSequence: 0 }, { taskSequence: 1 }],
+    });
+    expect(records[1]).toMatchObject({
+      key: "context:context-b",
+      invocationIds: ["child-3"],
+    });
   });
 });
 

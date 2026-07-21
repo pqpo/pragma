@@ -19,6 +19,7 @@ import type { MissionStore } from "./mission-store.ts";
 import type { DesktopToolPermissionMode } from "../shared/desktop-api.ts";
 import type { PragmaProjectStore } from "./pragma-project-store.ts";
 import type { MissionExecutorCatalog } from "./mission-executor-catalog.ts";
+import { availableRecentWorkspaces } from "./workspace-history-store.ts";
 import { validateWorkspace } from "./workspace-scope.ts";
 
 export function installMissionHandlers(options: {
@@ -31,6 +32,8 @@ export function installMissionHandlers(options: {
     | DesktopToolPermissionMode
     | Promise<DesktopToolPermissionMode>;
   readonly getDefaultWorkspace: () => string | Promise<string>;
+  readonly getRecentWorkspaces: () => readonly string[] | Promise<readonly string[]>;
+  readonly recordWorkspaceUsage: (path: string) => void | Promise<void>;
   readonly defaultExecutorRef: string;
 }): void {
   ipcMain.handle("missions:list", () => options.missions.list());
@@ -48,8 +51,14 @@ export function installMissionHandlers(options: {
   });
   ipcMain.handle("missions:create-defaults:get", async () => {
     const workspace = await options.getDefaultWorkspace();
+    const recentWorkspaces = await availableRecentWorkspaces(
+      await options.getRecentWorkspaces(),
+      workspace,
+      async (path) => (await validateWorkspace(path)).ok,
+    );
     return MissionCreationDefaultsSchema.parse({
       workspace: { path: workspace, basename: basename(workspace) },
+      recentWorkspaces: recentWorkspaces.map((path) => ({ path, basename: basename(path) })),
       executorRef: options.defaultExecutorRef,
       toolPermissionMode: await options.getDefaultToolPermissionMode(),
     });
@@ -70,7 +79,7 @@ export function installMissionHandlers(options: {
     if (parsed.modelOverride !== undefined) {
       await options.executors.validateModelOverride(executor.ref, parsed.modelOverride);
     }
-    return await options.missions.create({
+    const mission = await options.missions.create({
       workspace: { path: parsed.workspace, basename: basename(parsed.workspace) },
       goal: parsed.goal,
       project: { id: snapshot.projectId, revision: snapshot.revision },
@@ -79,6 +88,14 @@ export function installMissionHandlers(options: {
       toolPermissionMode:
         parsed.toolPermissionMode ?? (await options.getDefaultToolPermissionMode()),
     });
+    await options.recordWorkspaceUsage(parsed.workspace);
+    void options.runner
+      .summarizeTitle(mission.id)
+      .then((updated) => options.getWindow()?.webContents.send("missions:updated", updated))
+      .catch((error: unknown) => {
+        console.warn(`Failed to summarize Mission title ${mission.id}.`, error);
+      });
+    return mission;
   });
   ipcMain.handle("missions:run", (_event, input: unknown) =>
     options.runner.run(MissionActionSchema.parse(input).id),

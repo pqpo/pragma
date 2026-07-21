@@ -7028,6 +7028,21 @@ p {
   min-width: 0;
 }
 
+.mission-detail-header > div:first-child {
+  flex: 1;
+}
+
+.mission-detail-header h1 {
+  overflow: hidden;
+  max-width: 100%;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mission-header-actions {
+  flex: none;
+}
+
 .mission-detail-header p {
   display: flex;
   flex-wrap: wrap;
@@ -9470,6 +9485,13 @@ textarea:focus-visible,
   margin-top: 22px;
 }
 
+.mission-chat-list > .mission-tool-entry,
+.mission-chat-list > .mission-tool-run,
+.mission-chat-list > .mission-tool-run + *,
+.mission-chat-list > .mission-tool-entry + * {
+  margin-top: 12px;
+}
+
 .mission-load-earlier {
   display: block;
   margin-right: auto;
@@ -9523,21 +9545,22 @@ textarea:focus-visible,
 
 .mission-chat-activity {
   max-width: 760px;
-  border: 1px solid var(--border);
-  border-radius: 11px;
-  background: rgb(255 255 255 / 68%);
+}
+
+.mission-chat-activity summary,
+.mission-tool-static-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  min-height: 34px;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 2px;
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .mission-chat-activity summary {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto auto;
-  min-height: 42px;
-  align-items: center;
-  gap: 9px;
-  padding: 8px 12px;
-  color: var(--muted);
   cursor: pointer;
-  font-size: 12px;
   list-style: none;
 }
 
@@ -9545,7 +9568,8 @@ textarea:focus-visible,
   display: none;
 }
 
-.mission-chat-activity summary > span {
+.mission-chat-activity summary > span,
+.mission-tool-static-row > span {
   overflow: hidden;
   color: var(--text);
   font-weight: 650;
@@ -9553,13 +9577,16 @@ textarea:focus-visible,
   white-space: nowrap;
 }
 
-.mission-chat-activity summary > small {
+.mission-chat-activity summary > small,
+.mission-tool-static-row > small {
   color: var(--faint);
   font-size: 11px;
 }
 
-.mission-chat-activity[open] summary {
-  border-bottom: 1px solid var(--border);
+.mission-chat-activity summary:focus-visible {
+  border-radius: 6px;
+  outline: 0;
+  box-shadow: 0 0 0 3px var(--focus-ring);
 }
 
 .mission-chat-activity[open] summary > svg:last-child {
@@ -9567,16 +9594,25 @@ textarea:focus-visible,
 }
 
 .mission-thinking-entry {
-  border-color: #ded9e8;
+  border: 1px solid #ded9e8;
+  border-radius: 11px;
   background: #faf8fc;
+}
+
+.mission-thinking-entry summary {
+  min-height: 42px;
+  padding: 8px 12px;
+}
+
+.mission-thinking-entry[open] summary {
+  border-bottom: 1px solid var(--border);
 }
 
 .mission-thinking-entry summary > svg:first-child {
   color: #78678b;
 }
 
-.mission-thinking-entry > p,
-.mission-tool-entry > p {
+.mission-thinking-entry > p {
   padding: 12px 14px;
   color: var(--muted);
   white-space: pre-wrap;
@@ -9588,30 +9624,77 @@ textarea:focus-visible,
   color: var(--green);
 }
 
-.mission-tool-entry.is-failed {
-  border-color: #efd5d1;
+.mission-tool-entry.is-succeeded summary > small,
+.mission-tool-static-row.is-succeeded > small {
+  display: none;
 }
 
 .mission-tool-entry.is-failed summary > small,
-.mission-tool-entry.is-failed > p {
+.mission-tool-static-row.is-failed > small {
   color: #a5453c;
 }
 
-.mission-tool-entry > div {
+.mission-tool-entry summary > svg:first-child,
+.mission-tool-static-row > svg:first-child {
+  color: var(--faint);
+}
+
+.mission-tool-entry summary:hover > span {
+  color: var(--green-dark);
+}
+
+.mission-tool-entry.is-agent-lifecycle {
+  padding: 1px 9px;
+  border: 1px solid rgb(88 121 104 / 17%);
+  border-radius: 9px;
+  background: var(--green-soft);
+}
+
+.mission-tool-entry.is-agent-lifecycle summary > svg:first-child,
+.mission-tool-entry.is-agent-lifecycle.mission-tool-static-row > svg:first-child {
+  color: var(--green-dark);
+}
+
+.mission-tool-group > summary > span {
+  font-weight: 600;
+}
+
+.mission-tool-group-items {
+  display: grid;
+  gap: 2px;
+  margin: 3px 0 3px 20px;
+}
+
+.mission-tool-run {
+  display: grid;
+  max-width: 760px;
+  gap: 2px;
+}
+
+.mission-tool-entry-details {
+  display: grid;
+  gap: 10px;
+  padding: 7px 0 7px 24px;
+}
+
+.mission-tool-entry-details > section {
   display: grid;
   gap: 6px;
-  padding: 11px 13px;
 }
 
-.mission-tool-entry > div + div {
-  border-top: 1px solid var(--border);
-}
-
-.mission-tool-entry > div > strong {
+.mission-tool-entry-details > section > strong {
   color: var(--muted);
   font-size: 10px;
   letter-spacing: 0.06em;
   text-transform: uppercase;
+}
+
+.mission-tool-entry-details > p {
+  margin: 0;
+  color: #a5453c;
+  white-space: pre-wrap;
+  font-size: 12px;
+  line-height: 1.6;
 }
 
 .mission-tool-entry pre,
@@ -9856,14 +9939,35 @@ textarea:focus-visible,
 }
 
 .mission-work-list li {
-  display: grid;
-  grid-template-columns: 10px minmax(0, 1fr);
-  gap: 12px;
   margin-left: calc(var(--mission-work-depth) * 26px);
+}
+
+.mission-work-list li > button {
+  display: grid;
+  width: 100%;
+  grid-template-columns: 10px minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 12px;
   padding: 14px 16px;
   border: 1px solid var(--border);
   border-radius: 12px;
   background: #fff;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+}
+
+.mission-work-list li > button:hover,
+.mission-work-list li > button:focus-visible {
+  border-color: rgb(88 121 104 / 32%);
+  outline: 0;
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+.mission-work-list li > button > svg {
+  margin-top: 3px;
+  color: var(--faint);
+  transform: rotate(-90deg);
 }
 
 .mission-work-list li strong,
@@ -9900,13 +10004,222 @@ textarea:focus-visible,
   background: #d49a45;
 }
 
+.mission-work-status.is-queued {
+  background: #89938c;
+}
+
 .mission-work-status.is-succeeded {
   background: var(--green);
 }
 
 .mission-work-status.is-failed,
-.mission-work-status.is-cancelled {
+.mission-work-status.is-cancelled,
+.mission-work-status.is-interrupted {
   background: #b65348;
+}
+
+.mission-work-drawer-layer {
+  position: fixed;
+  z-index: 60;
+  inset: 0;
+}
+
+.mission-work-drawer-scrim {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: rgb(26 34 29 / 28%);
+  cursor: default;
+}
+
+.mission-work-drawer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  display: grid;
+  width: min(720px, 66vw);
+  min-width: 560px;
+  grid-template-rows: auto minmax(0, 1fr);
+  background: #fff;
+  box-shadow: -14px 0 38px rgb(30 41 33 / 15%);
+}
+
+.mission-work-drawer > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 28px 32px 21px;
+  border-bottom: 1px solid var(--border);
+}
+
+.mission-work-drawer > header small {
+  color: var(--green-dark);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.mission-work-drawer > header h2 {
+  margin-top: 4px;
+  font-size: 23px;
+  letter-spacing: -0.025em;
+}
+
+.mission-work-drawer > header p {
+  margin-top: 5px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.mission-work-drawer > header > button {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.mission-work-drawer > header > button:hover,
+.mission-work-drawer > header > button:focus-visible {
+  outline: 0;
+  background: var(--surface-muted);
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+.mission-work-drawer-body {
+  display: grid;
+  min-height: 0;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 22px;
+  padding: 24px 32px 30px;
+}
+
+.mission-work-tasks h3,
+.mission-work-output h3 {
+  font-size: 13px;
+}
+
+.mission-work-tasks ol {
+  display: flex;
+  gap: 8px;
+  margin: 11px 0 0;
+  padding: 0 0 4px;
+  overflow-x: auto;
+  list-style: none;
+}
+
+.mission-work-tasks li {
+  display: grid;
+  min-width: min(300px, 55vw);
+  grid-template-columns: 8px minmax(0, 1fr);
+  gap: 10px;
+  padding: 11px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-soft);
+}
+
+.mission-work-tasks li strong,
+.mission-work-tasks li small {
+  display: block;
+}
+
+.mission-work-tasks li strong {
+  font-size: 12px;
+}
+
+.mission-work-tasks li small {
+  margin-top: 1px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.mission-work-tasks li p {
+  display: -webkit-box;
+  margin-top: 6px;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.45;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.mission-work-output {
+  display: grid;
+  min-height: 0;
+  grid-template-rows: auto minmax(0, 1fr);
+  border: 1px solid var(--border);
+  border-radius: 13px;
+  overflow: hidden;
+  background: #fff;
+}
+
+.mission-work-output > header {
+  display: flex;
+  min-height: 43px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 15px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-soft);
+}
+
+.mission-work-output > header span {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--green-dark);
+  font-size: 10px;
+}
+
+.mission-work-output > header span svg {
+  animation: mission-thinking-spin 900ms linear infinite;
+}
+
+.mission-work-output-stream {
+  min-height: 0;
+  overflow-y: auto;
+  padding: 18px 20px 24px;
+}
+
+.mission-work-output-stream > * + * {
+  margin-top: 12px;
+}
+
+.mission-work-output-stream .mission-assistant-message,
+.mission-work-output-stream .mission-chat-activity,
+.mission-work-output-stream .mission-tool-run {
+  max-width: none;
+}
+
+.mission-work-output-empty {
+  display: grid;
+  min-height: 120px;
+  place-items: center;
+  color: var(--faint);
+  font-size: 12px;
+  text-align: center;
+}
+
+@media (max-width: 900px) {
+  .mission-work-drawer {
+    width: calc(100vw - 54px);
+    min-width: 0;
+  }
 }
 
 .mission-dialog-backdrop {
@@ -10261,7 +10574,7 @@ textarea:focus-visible,
   grid-template-columns: auto minmax(0, 1fr) 18px;
   align-items: center;
   gap: 10px;
-  padding: 10px;
+  padding: 8px 10px;
   border: 1px solid transparent;
   border-radius: 10px;
   outline: 0;
@@ -10269,6 +10582,15 @@ textarea:focus-visible,
   color: var(--text);
   cursor: pointer;
   text-align: left;
+}
+
+.mission-workspace-menu-heading {
+  padding: 5px 10px 1px;
+  color: var(--faint);
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
 .mission-workspace-menu > button:hover,
