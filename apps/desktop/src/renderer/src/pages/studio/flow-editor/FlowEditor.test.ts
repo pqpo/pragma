@@ -40,6 +40,7 @@ describe("Flow editor canvas", () => {
     expect(html).not.toContain('<button class="flow-palette-item');
     expect(html).toContain("Drag to canvas");
     expect(html).not.toContain("press Enter");
+    expect(html).not.toContain("flow-palette-item is-action");
   });
 
   it("renders a new draft as draggable Start and End terminals without Fail", () => {

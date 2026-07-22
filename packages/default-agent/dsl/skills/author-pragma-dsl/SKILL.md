@@ -18,17 +18,24 @@ source of truth and use only the Pragma DSL tools to inspect, validate, and save
 4. Read the relevant reference file below before drafting YAML.
 5. Preserve exact references. Keep an existing resource version unless the user asks for a new
    version or the change intentionally introduces a separately addressable contract.
-6. Call `prepare_dsl_changes` with complete YAML documents for all affected resources.
-7. Fix every error diagnostic. Never bypass validation or hand-edit project files.
-8. Explain the normalized diff, then call `commit_dsl_changes` with the returned change-set ID.
-9. After the tool returns, always report success or failure, the committed project revision, and
-   the changed canonical refs.
+6. For every Flow creation or non-trivial Flow edit, call `create_flow_draft`. Build it in small
+   batches with `update_flow_draft`: contracts, steps, start, transitions, then loops. Read the
+   returned diagnostics after every batch and call `validate_flow_draft` before preparing.
+7. Call `prepare_flow_draft` only when the draft has no incomplete or error diagnostics. Include
+   any new Expert or ExpertTeam YAML in `additionalSources` so the final change remains atomic.
+   Use `prepare_dsl_changes` directly only for complete non-Flow resources.
+8. Fix every diagnostic. Never bypass validation or hand-edit project files. If the project
+   revision changed, reread affected resources and explicitly rebase the draft before retrying.
+9. Explain the normalized diff, then call `commit_dsl_changes` with the returned change-set ID.
+10. After the tool returns, always report success or failure, the committed project revision, and
+    the changed canonical refs.
 
 ## References
 
 - Expert resources: read [references/expert.md](references/expert.md).
 - ExpertTeam resources: read [references/expert-team.md](references/expert-team.md).
 - Flow resources: read [references/flow.md](references/flow.md).
+- Tested Flow patterns: read [references/flow-patterns.md](references/flow-patterns.md).
 - Exact refs, shared resources, and versioning: read
   [references/resources-and-references.md](references/resources-and-references.md).
 

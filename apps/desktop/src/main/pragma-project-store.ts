@@ -681,7 +681,15 @@ async function readTextFiles(root: string, base = root): Promise<ReadonlyMap<str
 
 async function createProjectViewLease(directory: string): Promise<string> {
   while (true) {
-    await mkdir(directory, { recursive: true, mode: 0o700 });
+    try {
+      await mkdir(directory, { recursive: true, mode: 0o700 });
+    } catch (error) {
+      // A concurrent checkout may remove the empty lease directory while mkdir is
+      // still resolving it. Retry the same way we do when the lease write loses
+      // that race.
+      if (errorCode(error) === "ENOENT") continue;
+      throw error;
+    }
     const lease = join(directory, `${randomUUID()}.lease`);
     try {
       await writeFile(

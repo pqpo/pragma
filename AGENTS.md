@@ -155,7 +155,7 @@ examples    -> runtime-* / plugin-* / core -> shared
 | `packages/client`        | `@pragma/shared`                                                                                           |
 | `packages/server`        | `@pragma/shared`；需要编排时可依赖 `@pragma/core`                                                          |
 | `packages/core`          | `@pragma/shared`                                                                                           |
-| `packages/interpreter`   | `@pragma/core`；AST 子入口只使用运行时中立依赖                                                             |
+| `packages/interpreter`   | `@pragma/shared`、`@pragma/core`；AST 子入口只使用运行时中立依赖                                           |
 | `packages/default-agent` | `@pragma/shared`、`@pragma/core`、`@pragma/interpreter`；`/contracts` 保持浏览器安全                       |
 | `packages/runtime/*`     | `@pragma/shared`、`@pragma/core`、该 runtime 自己的 SDK                                                    |
 
@@ -526,7 +526,7 @@ Expert API 设计要求：
 
 边界要求：
 
-- 主入口 `@pragma/interpreter` 是 Node-only，可以依赖 `@pragma/core`。
+- 主入口 `@pragma/interpreter` 是 Node-only，可以依赖 `@pragma/shared` 和 `@pragma/core`。
 - `@pragma/interpreter/ast` 必须保持浏览器安全，只导出 Schema 和从 Schema 推导的类型。
 - `core`、`shared`、具体 runtime 和 plugin 不得反向依赖 `interpreter`。
 - 不要新增 `defineExpertFromManifest`、`defineExpertTeamFromManifest` 或 `defineFlowFromManifest`。

@@ -1,4 +1,10 @@
-import type { HumanInteractionRequest, HumanInteractionResponse } from "@pragma/shared";
+import {
+  analyzeControlFlowGraph,
+  type ControlFlowEdge,
+  type ControlFlowGraphIssue,
+  type HumanInteractionRequest,
+  type HumanInteractionResponse,
+} from "@pragma/shared";
 import type { z } from "zod";
 
 import { readAgentDelegationDefinition, type RuntimeByExpert } from "../agent/agent-launcher.ts";
@@ -150,6 +156,13 @@ export interface FlowLoopDefinition {
   readonly onLimit?: FlowStepReference | FlowTerminal | undefined;
 }
 
+export class FlowDefinitionError extends Error {
+  constructor(readonly issues: readonly ControlFlowGraphIssue[]) {
+    super(issues.map((issue) => issue.message).join("\n"));
+    this.name = "FlowDefinitionError";
+  }
+}
+
 export class FlowSpec<TInput = unknown, TOutput = unknown> {
   readonly kind = "flow" as const;
   readonly id: string;
@@ -293,6 +306,19 @@ export class FlowSpec<TInput = unknown, TOutput = unknown> {
 
   compile(): Flow {
     if (this.firstStepId === undefined) throw new Error(`Flow ${this.id} has no start step.`);
+    const analysis = analyzeControlFlowGraph({
+      nodes: new Set(this.stepDefinitions.keys()),
+      start: this.firstStepId,
+      transitionSources: new Set(this.transitionDefinitions.keys()),
+      edges: flowEdges(this.transitionDefinitions),
+      loops: [...this.loopDefinitions.values()].map((loop) => ({
+        id: loop.id,
+        entry: loop.entryStepId,
+        members: loop.stepIds,
+        onLimitTarget: stepTargetId(loop.onLimit),
+      })),
+    });
+    if (analysis.issues.length > 0) throw new FlowDefinitionError(analysis.issues);
     return Object.freeze({
       kind: "flow" as const,
       id: this.id,
@@ -327,6 +353,40 @@ export class FlowSpec<TInput = unknown, TOutput = unknown> {
   private assertStep(id: string): void {
     if (!this.stepDefinitions.has(id)) throw new Error(`Unknown Flow step: ${id}`);
   }
+}
+
+function flowEdges(transitions: ReadonlyMap<string, FlowTransition>): readonly ControlFlowEdge[] {
+  const edges: ControlFlowEdge[] = [];
+  const add = (source: string, destination: FlowDestination): void => {
+    if ("type" in destination && (destination.type === "end" || destination.type === "fail")) {
+      return;
+    }
+    if ("type" in destination && destination.type === "repeat") {
+      edges.push({
+        source,
+        target: destination.target.id,
+        kind: "repeat",
+        loopId: destination.loopId,
+      });
+      return;
+    }
+    if ("id" in destination) {
+      edges.push({ source, target: destination.id, kind: "ordinary" });
+    }
+  };
+  for (const [source, transition] of transitions) {
+    if (transition.type === "next") add(source, transition.target);
+    else if (transition.type === "repeat") add(source, transition);
+    else {
+      for (const destination of transition.cases.values()) add(source, destination);
+      if (transition.fallback !== undefined) add(source, transition.fallback);
+    }
+  }
+  return edges;
+}
+
+function stepTargetId(target: FlowStepReference | FlowTerminal | undefined): string | undefined {
+  return target !== undefined && "id" in target ? target.id : undefined;
 }
 
 class Chain implements FlowChain {

@@ -1,23 +1,32 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import { encodePragmaPathSegment, withFileLock } from "@pragma/core";
 import { formatPragmaYaml, parsePragmaYaml } from "@pragma/interpreter";
 import {
+  analyzePragmaFlowGraph,
   PragmaCapabilityResourceSchema,
+  PragmaFlowResourceSchema,
   PragmaResourceSchema,
   PragmaRuntimeProfileResourceSchema,
   canonicalPragmaResourceRef,
   type PragmaExpertResource,
+  type PragmaFlowResource,
   type PragmaResource,
 } from "@pragma/interpreter/ast";
 import {
   DefaultAgentChangeSetSchema,
   DefaultAgentExpertOptionCatalogSchema,
+  DefaultAgentFlowDraftSchema,
+  DefaultAgentPrepareResultSchema,
   DefaultAgentProjectCommitSchema,
   type DefaultAgentDslProjectPort,
   type DefaultAgentExpertOptionCatalog,
+  type DefaultAgentFlowDraft,
+  type DefaultAgentFlowDraftDiagnostic,
+  type DefaultAgentFlowDraftOperation,
+  type DefaultAgentPrepareResult,
 } from "@pragma/default-agent";
 import { z } from "zod";
 
@@ -46,6 +55,107 @@ export function createDesktopDefaultAgentProjectPort(options: {
     join(options.stateRoot, "change-sets", `${encodePragmaPathSegment(id)}.json`);
   const operationPath = (id: string) =>
     join(options.stateRoot, "operations", `${encodePragmaPathSegment(id)}.json`);
+  const draftPath = (id: string) =>
+    join(options.stateRoot, "dsl-drafts", `${encodePragmaPathSegment(id)}.json`);
+
+  const prepareSources = async (input: {
+    readonly expectedProjectRevision: number;
+    readonly sources: readonly string[];
+  }): Promise<DefaultAgentPrepareResult> => {
+    const snapshot = await options.project.get();
+    if (snapshot.revision !== input.expectedProjectRevision) {
+      return invalidPrepare(
+        "project.revision_conflict",
+        `Project revision changed from ${input.expectedProjectRevision} to ${snapshot.revision}.`,
+      );
+    }
+    const authoredResources: PragmaResource[] = [];
+    const parseDiagnostics = input.sources.flatMap((source, index) => {
+      try {
+        authoredResources.push(parseDefaultAgentResource(source));
+        return [];
+      } catch (error) {
+        return diagnosticsFromError(error, `source:${index}`);
+      }
+    });
+    if (parseDiagnostics.length > 0) {
+      return DefaultAgentPrepareResultSchema.parse({
+        status: "invalid",
+        diagnostics: parseDiagnostics,
+      });
+    }
+    const actionDiagnostics = authoredResources.flatMap((resource) =>
+      resource.kind !== "Flow"
+        ? []
+        : Object.entries(resource.spec.graph.steps).flatMap(([stepId, step]) =>
+            step.action === undefined
+              ? []
+              : [
+                  {
+                    severity: "error" as const,
+                    code: "environment.flow_action_unavailable",
+                    message: "Action steps are not executable in the current Desktop environment.",
+                    path: ["spec", "graph", "steps", stepId, "action"],
+                  },
+                ],
+          ),
+    );
+    if (actionDiagnostics.length > 0) {
+      return DefaultAgentPrepareResultSchema.parse({
+        status: "invalid",
+        diagnostics: actionDiagnostics,
+      });
+    }
+    try {
+      const catalog = await buildExpertCatalog(options);
+      const knownRefs = new Set([
+        ...snapshot.resources.map(canonicalPragmaResourceRef),
+        ...authoredResources.map(canonicalPragmaResourceRef),
+      ]);
+      const dependencies = authoredResources
+        .filter((resource): resource is PragmaExpertResource => resource.kind === "Expert")
+        .flatMap(expertDependencyRefs)
+        .flatMap((ref) => {
+          if (knownRefs.has(ref)) return [];
+          const dependency = catalog.resources.get(ref);
+          if (dependency === undefined) return [];
+          knownRefs.add(ref);
+          return [dependency];
+        });
+      const resources = [...authoredResources, ...dependencies];
+      const refs = resources.map(canonicalPragmaResourceRef);
+      if (new Set(refs).size !== refs.length) {
+        return invalidPrepare("resource.duplicate", "A change-set cannot repeat a ref.");
+      }
+      assertExpertSelectionsAvailable(authoredResources, snapshot.resources, resources, catalog);
+      const diagnostics = await options.project.validateChanges({
+        expectedRevision: snapshot.revision,
+        upserts: resources,
+      });
+      if (diagnostics.some((diagnostic) => diagnostic.severity === "error")) {
+        return DefaultAgentPrepareResultSchema.parse({ status: "invalid", diagnostics });
+      }
+      const existing = new Set(snapshot.resources.map(canonicalPragmaResourceRef));
+      const changeSet = DefaultAgentChangeSetSchema.parse({
+        changeSetId: randomUUID(),
+        projectRevision: snapshot.revision,
+        diagnostics,
+        changes: resources.map((resource) => ({
+          ref: canonicalPragmaResourceRef(resource),
+          kind: existing.has(canonicalPragmaResourceRef(resource)) ? "updated" : "created",
+          source: formatPragmaYaml(resource),
+        })),
+        createdAt: new Date().toISOString(),
+      });
+      await writeJson(candidatePath(changeSet.changeSetId), { changeSet, resources });
+      return DefaultAgentPrepareResultSchema.parse({ status: "prepared", changeSet });
+    } catch (error) {
+      return DefaultAgentPrepareResultSchema.parse({
+        status: "invalid",
+        diagnostics: diagnosticsFromError(error),
+      });
+    }
+  };
 
   return {
     async list() {
@@ -81,50 +191,106 @@ export function createDesktopDefaultAgentProjectPort(options: {
       return (await buildExpertCatalog(options)).options;
     },
     async prepare(input) {
+      return await prepareSources(input);
+    },
+    async createFlowDraft(input) {
       const snapshot = await options.project.get();
       if (snapshot.revision !== input.expectedProjectRevision) {
         throw new Error(
           `Project revision changed from ${input.expectedProjectRevision} to ${snapshot.revision}.`,
         );
       }
-      const authoredResources = input.sources.map(parseDefaultAgentResource);
-      const catalog = await buildExpertCatalog(options);
-      const knownRefs = new Set([
-        ...snapshot.resources.map(canonicalPragmaResourceRef),
-        ...authoredResources.map(canonicalPragmaResourceRef),
-      ]);
-      const dependencies = authoredResources
-        .filter((resource): resource is PragmaExpertResource => resource.kind === "Expert")
-        .flatMap(expertDependencyRefs)
-        .flatMap((ref) => {
-          if (knownRefs.has(ref)) return [];
-          const dependency = catalog.resources.get(ref);
-          if (dependency === undefined) return [];
-          knownRefs.add(ref);
-          return [dependency];
+      const now = new Date().toISOString();
+      const draftId = randomUUID();
+      const draft = withDraftDiagnostics({
+        draftId,
+        baseProjectRevision: snapshot.revision,
+        draftRevision: 0,
+        resource: {
+          apiVersion: "pragma/v2",
+          kind: "Flow",
+          metadata: input.metadata,
+          spec: {
+            ...(input.input === undefined ? {} : { input: input.input }),
+            ...(input.output === undefined ? {} : { output: input.output }),
+            limits: input.limits ?? { maxNodeVisits: 1_000 },
+            graph: { steps: {}, transitions: {}, loops: {} },
+          },
+        },
+        diagnostics: [],
+        createdAt: now,
+        updatedAt: now,
+      });
+      await writeJson(draftPath(draftId), draft);
+      return draft;
+    },
+    async getFlowDraft(draftId) {
+      return withDraftDiagnostics(await readFlowDraft(draftPath(draftId)));
+    },
+    async updateFlowDraft(input) {
+      const path = draftPath(input.draftId);
+      return await withFileLock(`${path}.lock`, async () => {
+        const current = await readFlowDraft(path);
+        if (current.draftRevision !== input.expectedDraftRevision) {
+          throw new Error(
+            `Flow draft revision changed from ${input.expectedDraftRevision} to ${current.draftRevision}.`,
+          );
+        }
+        const resource = structuredClone(current.resource);
+        let baseProjectRevision = current.baseProjectRevision;
+        for (const operation of input.operations) {
+          baseProjectRevision = applyDraftOperation(resource, operation, baseProjectRevision);
+        }
+        if (baseProjectRevision !== current.baseProjectRevision) {
+          const snapshot = await options.project.get();
+          if (snapshot.revision !== baseProjectRevision) {
+            throw new Error(
+              `Cannot rebase Flow draft to unavailable revision ${baseProjectRevision}.`,
+            );
+          }
+        }
+        const updated = withDraftDiagnostics({
+          ...current,
+          baseProjectRevision,
+          draftRevision: current.draftRevision + 1,
+          resource,
+          updatedAt: new Date().toISOString(),
         });
-      const resources = [...authoredResources, ...dependencies];
-      const refs = resources.map(canonicalPragmaResourceRef);
-      if (new Set(refs).size !== refs.length) throw new Error("A change-set cannot repeat a ref.");
-      assertExpertSelectionsAvailable(authoredResources, snapshot.resources, resources, catalog);
-      const diagnostics = await options.project.validateChanges({
-        expectedRevision: snapshot.revision,
-        upserts: resources,
+        await writeJson(path, updated);
+        return updated;
       });
-      const existing = new Set(snapshot.resources.map(canonicalPragmaResourceRef));
-      const changeSet = DefaultAgentChangeSetSchema.parse({
-        changeSetId: randomUUID(),
-        projectRevision: snapshot.revision,
-        diagnostics,
-        changes: resources.map((resource) => ({
-          ref: canonicalPragmaResourceRef(resource),
-          kind: existing.has(canonicalPragmaResourceRef(resource)) ? "updated" : "created",
-          source: formatPragmaYaml(resource),
-        })),
-        createdAt: new Date().toISOString(),
+    },
+    async validateFlowDraft(draftId) {
+      return withDraftDiagnostics(await readFlowDraft(draftPath(draftId)));
+    },
+    async prepareFlowDraft(input) {
+      const draft = withDraftDiagnostics(await readFlowDraft(draftPath(input.draftId)));
+      if (draft.draftRevision !== input.expectedDraftRevision) {
+        return invalidPrepare(
+          "flow.draft.revision_conflict",
+          `Flow draft revision changed from ${input.expectedDraftRevision} to ${draft.draftRevision}.`,
+        );
+      }
+      if (draft.diagnostics.some((diagnostic) => diagnostic.severity !== "warning")) {
+        return DefaultAgentPrepareResultSchema.parse({
+          status: "invalid",
+          diagnostics: draft.diagnostics.map((diagnostic) => ({
+            severity: diagnostic.severity === "warning" ? "warning" : "error",
+            code: diagnostic.code,
+            message: diagnostic.message,
+            path: diagnostic.path,
+          })),
+        });
+      }
+      const flow = PragmaFlowResourceSchema.parse(materializeDraft(draft));
+      return await prepareSources({
+        expectedProjectRevision: draft.baseProjectRevision,
+        sources: [formatPragmaYaml(flow), ...(input.additionalSources ?? [])],
       });
-      await writeJson(candidatePath(changeSet.changeSetId), { changeSet, resources });
-      return changeSet;
+    },
+    async discardFlowDraft(draftId) {
+      const path = draftPath(draftId);
+      await withFileLock(`${path}.lock`, async () => await rm(path, { force: true }));
     },
     async getChangeSet(changeSetId) {
       return (await readCandidate(candidatePath(changeSetId))).changeSet;
@@ -352,6 +518,162 @@ function parseDefaultAgentResource(source: string): PragmaResource {
     );
   }
   return resource;
+}
+
+function invalidPrepare(code: string, message: string): DefaultAgentPrepareResult {
+  return DefaultAgentPrepareResultSchema.parse({
+    status: "invalid",
+    diagnostics: [{ severity: "error", code, message, path: [] }],
+  });
+}
+
+function diagnosticsFromError(error: unknown, source?: string) {
+  if (error instanceof z.ZodError) {
+    return error.issues.map((issue) => ({
+      severity: "error" as const,
+      code: "schema.invalid",
+      message: issue.message,
+      ...(source === undefined ? {} : { source }),
+      path: issue.path.filter((segment): segment is string | number => typeof segment !== "symbol"),
+    }));
+  }
+  return [
+    {
+      severity: "error" as const,
+      code: "source.parse",
+      message: error instanceof Error ? error.message : String(error),
+      ...(source === undefined ? {} : { source }),
+      path: [],
+    },
+  ];
+}
+
+function materializeDraft(draft: DefaultAgentFlowDraft): PragmaFlowResource {
+  return {
+    ...draft.resource,
+    spec: {
+      ...draft.resource.spec,
+      graph: {
+        ...draft.resource.spec.graph,
+        start: draft.resource.spec.graph.start ?? "",
+      },
+    },
+  } as PragmaFlowResource;
+}
+
+function withDraftDiagnostics(draft: DefaultAgentFlowDraft): DefaultAgentFlowDraft {
+  const parsed = DefaultAgentFlowDraftSchema.parse(draft);
+  const resource = materializeDraft(parsed);
+  const diagnostics: DefaultAgentFlowDraftDiagnostic[] = [];
+  const stepCount = Object.keys(resource.spec.graph.steps).length;
+  if (stepCount === 0) {
+    diagnostics.push({
+      severity: "incomplete",
+      code: "flow.draft.steps_missing",
+      message: "Add at least one Flow step.",
+      path: ["spec", "graph", "steps"],
+    });
+  }
+  if (resource.spec.graph.start === "") {
+    diagnostics.push({
+      severity: "incomplete",
+      code: "flow.draft.start_missing",
+      message: "Choose a Flow start step.",
+      path: ["spec", "graph", "start"],
+    });
+  }
+  const schema = PragmaFlowResourceSchema.safeParse(resource);
+  if (!schema.success) {
+    for (const issue of schema.error.issues) {
+      const path = issue.path.filter(
+        (segment): segment is string | number => typeof segment !== "symbol",
+      );
+      if (path.join(".") === "spec.graph.start" && resource.spec.graph.start === "") continue;
+      diagnostics.push({
+        severity: "error",
+        code: "schema.invalid",
+        message: issue.message,
+        path,
+      });
+    }
+  }
+  if (stepCount > 0) {
+    const graph = analyzePragmaFlowGraph(resource);
+    const missingTransition = graph.issues.some((issue) =>
+      issue.code.endsWith("transition.missing"),
+    );
+    for (const issue of graph.issues) {
+      if (issue.code.endsWith("start.unknown") && resource.spec.graph.start === "") continue;
+      const incomplete =
+        issue.code.endsWith("transition.missing") ||
+        (missingTransition &&
+          (issue.code.endsWith("step.unreachable") || issue.code.endsWith("loop.not_cyclic")));
+      diagnostics.push({
+        severity: incomplete ? "incomplete" : "error",
+        code: issue.code,
+        message: issue.message,
+        path: [...issue.path],
+      });
+    }
+  }
+  const unique = diagnostics.filter(
+    (diagnostic, index) =>
+      diagnostics.findIndex(
+        (candidate) =>
+          candidate.code === diagnostic.code &&
+          JSON.stringify(candidate.path) === JSON.stringify(diagnostic.path),
+      ) === index,
+  );
+  return DefaultAgentFlowDraftSchema.parse({ ...parsed, diagnostics: unique });
+}
+
+function applyDraftOperation(
+  resource: DefaultAgentFlowDraft["resource"],
+  operation: DefaultAgentFlowDraftOperation,
+  baseProjectRevision: number,
+): number {
+  const graph = resource.spec.graph;
+  switch (operation.type) {
+    case "set_start":
+      graph.start = operation.stepId;
+      break;
+    case "upsert_step":
+      graph.steps[operation.stepId] = operation.step;
+      break;
+    case "remove_step":
+      delete graph.steps[operation.stepId];
+      delete graph.transitions[operation.stepId];
+      if (graph.start === operation.stepId) delete graph.start;
+      break;
+    case "set_transition":
+      graph.transitions[operation.stepId] = operation.transition;
+      break;
+    case "remove_transition":
+      delete graph.transitions[operation.stepId];
+      break;
+    case "upsert_loop":
+      graph.loops[operation.loopId] = operation.loop;
+      break;
+    case "remove_loop":
+      delete graph.loops[operation.loopId];
+      break;
+    case "set_contracts":
+      if (operation.input === null) delete resource.spec.input;
+      else if (operation.input !== undefined) resource.spec.input = operation.input;
+      if (operation.output === null) delete resource.spec.output;
+      else if (operation.output !== undefined) resource.spec.output = operation.output;
+      if (operation.limits !== undefined) resource.spec.limits = operation.limits;
+      break;
+    case "rebase":
+      return operation.projectRevision;
+  }
+  return baseProjectRevision;
+}
+
+async function readFlowDraft(path: string): Promise<DefaultAgentFlowDraft> {
+  const value = await readJson(path);
+  if (value === undefined) throw new Error("Flow draft not found.");
+  return DefaultAgentFlowDraftSchema.parse(value);
 }
 
 async function readCandidate(path: string): Promise<z.infer<typeof CandidateRecordSchema>> {

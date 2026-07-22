@@ -180,6 +180,85 @@ describe("Pragma YAML DSL", () => {
     expect((await loadPragmaProject(join(root, "single.yaml"))).listResources()).toHaveLength(1);
   });
 
+  it("accepts a direct repeat transition and resolves canonical Flow expressions", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-direct-repeat-"));
+    const entry = join(root, "flow.pragma.yaml");
+    await writeFile(
+      entry,
+      [
+        "apiVersion: pragma/v2",
+        "kind: Flow",
+        "metadata:",
+        "  id: retry",
+        "  version: 1.0.0",
+        "  name: Retry",
+        "  description: Direct bounded repeat",
+        "spec:",
+        "  graph:",
+        "    start: work",
+        "    steps:",
+        "      work:",
+        "        action: { ref: action:work@1.0.0 }",
+        '        input: { goal: "$flow.input.goal", summary: "{{ flow.input.goal }} / {{ state.previous }}" }',
+        "      decide: { action: { ref: action:decide@1.0.0 } }",
+        "    loops:",
+        "      retry: { entry: work, maxIterations: 2 }",
+        "    transitions:",
+        "      work: decide",
+        "      decide: { repeat: { loop: retry, goto: work } }",
+        "",
+      ].join("\n"),
+    );
+    const actions = new FlowActionRegistry()
+      .register({ id: "work", version: "1.0.0", description: "work", execute: () => null })
+      .register({ id: "decide", version: "1.0.0", description: "decide", execute: () => null });
+    const project = await loadPragmaProject(entry);
+    expect(await project.validate()).toEqual([]);
+    const compiled = await project.compile<Flow>("flow:retry@1.0.0", {
+      workspace: root,
+      actions,
+    });
+    expect(compiled.value.transitions.get("decide")).toMatchObject({
+      type: "repeat",
+      loopId: "retry",
+    });
+    const input = compiled.value.steps.get("work")!.options.input;
+    expect(typeof input).toBe("function");
+    expect(
+      (input as (context: { state: Record<string, unknown>; flowInput: unknown }) => unknown)({
+        state: { previous: "done" },
+        flowInput: { goal: "ship" },
+      }),
+    ).toEqual({ goal: "ship", summary: "ship / done" });
+  });
+
+  it("rejects JavaScript-style Flow interpolation", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-invalid-expression-"));
+    const entry = join(root, "flow.pragma.yaml");
+    await writeFile(
+      entry,
+      [
+        "apiVersion: pragma/v2",
+        "kind: Flow",
+        "metadata: { id: invalid_expression, version: 1.0.0, name: Invalid, description: Invalid expression }",
+        "spec:",
+        "  graph:",
+        "    start: work",
+        "    steps:",
+        '      work: { action: { ref: action:work@1.0.0 }, input: "${flow.input.goal}" }',
+        "    loops: {}",
+        "    transitions: { work: { end: true } }",
+        "",
+      ].join("\n"),
+    );
+    const project = await loadPragmaProject(entry);
+    expect(await project.validate()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "flow.expression.invalid", severity: "error" }),
+      ]),
+    );
+  });
+
   it("compiles and dumps optional ExpertTeam instructions", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-team-instructions-"));
     const entry = join(root, "pragma.yaml");
@@ -445,7 +524,7 @@ describe("Pragma YAML DSL", () => {
     const project = await loadPragmaProject(join(root, "flow.pragma.yaml"));
     expect(await project.validate()).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ code: "flow.graph.invalid", severity: "error" }),
+        expect.objectContaining({ code: "flow.graph.cycle.ordinary", severity: "error" }),
       ]),
     );
   });
@@ -552,7 +631,7 @@ describe("Pragma YAML DSL", () => {
     );
     const project = await loadPragmaProject(join(root, "flow.pragma.yaml"));
     expect(await project.validate()).toEqual(
-      expect.arrayContaining([expect.objectContaining({ code: "flow.graph.invalid" })]),
+      expect.arrayContaining([expect.objectContaining({ code: "flow.graph.cycle.ordinary" })]),
     );
   });
 
@@ -587,7 +666,9 @@ describe("Pragma YAML DSL", () => {
     );
     const project = await loadPragmaProject(join(root, "flow.pragma.yaml"));
     expect(await project.validate()).toEqual(
-      expect.arrayContaining([expect.objectContaining({ code: "flow.graph.invalid" })]),
+      expect.arrayContaining([
+        expect.objectContaining({ code: "flow.graph.loop.on_limit_not_exit" }),
+      ]),
     );
   });
 

@@ -383,6 +383,9 @@ importers:
       '@pragma/core':
         specifier: workspace:*
         version: link:../core
+      '@pragma/shared':
+        specifier: workspace:*
+        version: link:../shared
       yaml:
         specifier: ^2.9.0
         version: 2.9.0

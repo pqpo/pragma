@@ -1,4 +1,5 @@
 export * from "./agent-message.schema.ts";
+export * from "./control-flow-graph.ts";
 export * from "./context/context-metadata.schema.ts";
 export * from "./health.schema.ts";
 export * from "./model-provider.schema.ts";

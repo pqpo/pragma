@@ -45,6 +45,22 @@ function projectPort(
     prepare: async () => {
       throw new Error("unused");
     },
+    createFlowDraft: async () => {
+      throw new Error("unused");
+    },
+    getFlowDraft: async () => {
+      throw new Error("unused");
+    },
+    updateFlowDraft: async () => {
+      throw new Error("unused");
+    },
+    validateFlowDraft: async () => {
+      throw new Error("unused");
+    },
+    prepareFlowDraft: async () => {
+      throw new Error("unused");
+    },
+    discardFlowDraft: async () => undefined,
     getChangeSet: async () => {
       throw new Error("unused");
     },

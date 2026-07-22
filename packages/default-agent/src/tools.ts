@@ -6,6 +6,8 @@ import type {
 import { z } from "zod";
 
 import type { DefaultAgentDslProjectPort, DefaultAgentTaskPort } from "./ports.ts";
+import { DefaultAgentFlowDraftOperationSchema, DefaultAgentFlowDraftSchema } from "./contracts.ts";
+import { PragmaMetadataSchema } from "@pragma/interpreter/ast";
 
 const RefInput = z.object({ ref: z.string().min(1) });
 const PrepareInput = z.object({
@@ -13,6 +15,24 @@ const PrepareInput = z.object({
   sources: z.array(z.string().min(1).max(2_000_000)).min(1).max(50),
 });
 const CommitInput = z.object({ changeSetId: z.string().uuid() });
+const DraftIdInput = z.object({ draftId: z.string().uuid() });
+const CreateFlowDraftInput = z.object({
+  expectedProjectRevision: z.number().int().nonnegative(),
+  metadata: PragmaMetadataSchema,
+  input: DefaultAgentFlowDraftSchema.shape.resource.shape.spec.shape.input.optional(),
+  output: DefaultAgentFlowDraftSchema.shape.resource.shape.spec.shape.output.optional(),
+  limits: DefaultAgentFlowDraftSchema.shape.resource.shape.spec.shape.limits.optional(),
+});
+const UpdateFlowDraftInput = z.object({
+  draftId: z.string().uuid(),
+  expectedDraftRevision: z.number().int().nonnegative(),
+  operations: z.array(DefaultAgentFlowDraftOperationSchema).min(1).max(50),
+});
+const PrepareFlowDraftInput = z.object({
+  draftId: z.string().uuid(),
+  expectedDraftRevision: z.number().int().nonnegative(),
+  additionalSources: z.array(z.string().min(1).max(2_000_000)).max(49).optional(),
+});
 const TaskIdInput = z.object({ id: z.string().min(1) });
 const SubmitTaskInput = z.object({
   goal: z.string().trim().min(1).max(100_000),
@@ -65,6 +85,45 @@ export function createDefaultAgentTools(options: {
         ["expectedProjectRevision", "sources"],
       ),
       async (args) => ok(await options.project.prepare(PrepareInput.parse(args))),
+    ),
+    tool(
+      "create_flow_draft",
+      "Create a durable incomplete Flow draft at the current project revision.",
+      z.toJSONSchema(CreateFlowDraftInput),
+      async (args) => ok(await options.project.createFlowDraft(CreateFlowDraftInput.parse(args))),
+    ),
+    tool(
+      "get_flow_draft",
+      "Read one durable Flow draft with its current diagnostics.",
+      z.toJSONSchema(DraftIdInput),
+      async (args) => ok(await options.project.getFlowDraft(DraftIdInput.parse(args).draftId)),
+    ),
+    tool(
+      "update_flow_draft",
+      "Apply typed incremental operations to a Flow draft and validate the new draft revision.",
+      z.toJSONSchema(UpdateFlowDraftInput),
+      async (args) => ok(await options.project.updateFlowDraft(UpdateFlowDraftInput.parse(args))),
+    ),
+    tool(
+      "validate_flow_draft",
+      "Revalidate a Flow draft without changing it.",
+      z.toJSONSchema(DraftIdInput),
+      async (args) => ok(await options.project.validateFlowDraft(DraftIdInput.parse(args).draftId)),
+    ),
+    tool(
+      "prepare_flow_draft",
+      "Materialize a complete Flow draft and atomically validate it with optional Expert or Team YAML sources.",
+      z.toJSONSchema(PrepareFlowDraftInput),
+      async (args) => ok(await options.project.prepareFlowDraft(PrepareFlowDraftInput.parse(args))),
+    ),
+    tool(
+      "discard_flow_draft",
+      "Discard an uncommitted Flow draft.",
+      z.toJSONSchema(DraftIdInput),
+      async (args) => {
+        await options.project.discardFlowDraft(DraftIdInput.parse(args).draftId);
+        return ok({ discarded: true });
+      },
     ),
     {
       ...tool(

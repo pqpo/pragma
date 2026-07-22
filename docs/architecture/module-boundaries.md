@@ -44,7 +44,7 @@ examples    -> runtime-* / plugin-* / core -> shared
 | `packages/client`        | `@pragma/shared`                                                                                                        |
 | `packages/server`        | `@pragma/shared`; orchestration code may depend on `@pragma/core`                                                       |
 | `packages/core`          | `@pragma/shared`                                                                                                        |
-| `packages/interpreter`   | `@pragma/core`; its `/ast` export remains browser-safe                                                                  |
+| `packages/interpreter`   | `@pragma/shared`, `@pragma/core`; its `/ast` export remains browser-safe                                                |
 | `packages/default-agent` | `@pragma/shared`, `@pragma/core`, `@pragma/interpreter`; its `/contracts` export remains browser-safe                   |
 | `packages/runtime/*`     | `@pragma/shared`, `@pragma/core`, and that runtime's own SDKs                                                           |
 

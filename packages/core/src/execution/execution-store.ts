@@ -24,6 +24,8 @@ import { z } from "zod";
 import { withFileLock } from "../storage/file-lock.ts";
 import { PragmaPaths } from "../storage/pragma-paths.ts";
 import { getExecutionLiveBus } from "./execution-live-bus.ts";
+
+export const EXECUTION_RECOVERY_CLAIM_STATE_KEY = "__recoveryClaim";
 import { sameRuntimeContextOrigin } from "./runtime-context-record.ts";
 
 export interface NewExecutionEvent {
@@ -313,14 +315,16 @@ export function createFileExecutionStore(
       return await withFileLock(paths.executionLock(executionId), async () => {
         await recoverTransaction(paths, executionId);
         const current = await requireExecution(paths, executionId);
-        const value = current.state["__recoveryClaim"];
+        const value = current.state[EXECUTION_RECOVERY_CLAIM_STATE_KEY];
         if (typeof value === "object" && value !== null) {
           const existingClaimId = (value as { claimId?: unknown }).claimId;
           const expiresAt = (value as { expiresAt?: unknown }).expiresAt;
+          const processId = (value as { processId?: unknown }).processId;
           if (
             existingClaimId !== claimId &&
             typeof expiresAt === "string" &&
-            Date.parse(expiresAt) > Date.now()
+            Date.parse(expiresAt) > Date.now() &&
+            (typeof processId !== "number" || isProcessAlive(processId))
           ) {
             return false;
           }
@@ -330,8 +334,9 @@ export function createFileExecutionStore(
           version: current.version + 1,
           state: {
             ...current.state,
-            __recoveryClaim: {
+            [EXECUTION_RECOVERY_CLAIM_STATE_KEY]: {
               claimId,
+              processId: process.pid,
               expiresAt: new Date(Date.now() + leaseMs).toISOString(),
             },
           },
@@ -590,12 +595,27 @@ function assertFinalStatusTransitions(
   }
 }
 
+function isProcessAlive(processId: number): boolean {
+  if (processId === process.pid) return true;
+  try {
+    process.kill(processId, 0);
+    return true;
+  } catch (error) {
+    return (
+      error instanceof Error &&
+      "code" in error &&
+      typeof error.code === "string" &&
+      error.code === "EPERM"
+    );
+  }
+}
+
 function hasActiveRecoveryClaim(
   execution: ExecutionRecord,
   recoveryClaimId: string | undefined,
 ): boolean {
   if (recoveryClaimId === undefined) return false;
-  const claim = execution.state["__recoveryClaim"];
+  const claim = execution.state[EXECUTION_RECOVERY_CLAIM_STATE_KEY];
   if (typeof claim !== "object" || claim === null) return false;
   const stored = claim as { readonly claimId?: unknown; readonly expiresAt?: unknown };
   return (

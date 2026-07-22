@@ -2066,11 +2066,7 @@ function toDesktopHumanRequest(request: ExpertAgentHumanRequest): HumanInteracti
     };
   }
   const first = request.questions[0];
-  const approval =
-    request.questions.length === 1 &&
-    first?.kind === "single_choice" &&
-    first.options.some((option) => /^approve$/i.test(option.label)) &&
-    first.options.some((option) => /^reject$/i.test(option.label));
+  const approval = request.semantics?.kind === "approval";
   return {
     kind: approval ? "approval" : "question",
     ...(first === undefined ? {} : { title: first.header, prompt: first.question }),
@@ -2078,6 +2074,7 @@ function toDesktopHumanRequest(request: ExpertAgentHumanRequest): HumanInteracti
       ...question,
       options: question.options.map((option) => ({ ...option })),
     })),
+    ...(request.semantics === undefined ? {} : { approveOption: request.semantics.approveOption }),
   };
 }
 
@@ -2103,14 +2100,14 @@ function toExpertHumanResponse(
       continue;
     }
     if (question.kind === "single_choice") {
+      const approveOption = request.semantics?.approveOption;
       const selected =
         response.approved === undefined
           ? response.decision
-          : (question.options.find((option) =>
-              response.approved
-                ? /^approve(?:d)?$/i.test(option.label)
-                : /^reject(?:ed)?$/i.test(option.label),
-            )?.label ?? response.decision);
+          : response.approved
+            ? approveOption
+            : (response.decision ??
+              question.options.find((option) => option.label !== approveOption)?.label);
       if (selected !== undefined) supplied[question.question] = selected;
     }
   }

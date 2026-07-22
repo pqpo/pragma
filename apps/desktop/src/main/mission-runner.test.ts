@@ -28,7 +28,7 @@ import {
 import type { CapabilityCredentialStore } from "./capability-credential-store.ts";
 import type { CapabilityStore } from "./capability-store.ts";
 import { createMissionRunner } from "./mission-runner.ts";
-import { createMissionStore, type MissionStore } from "./mission-store.ts";
+import { createMissionStore } from "./mission-store.ts";
 import { createPragmaProjectStore } from "./pragma-project-store.ts";
 
 const temporaryPaths: string[] = [];
@@ -1319,15 +1319,20 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
       { timeout: settlementTimeoutMs },
     );
     const waitingMission = await missions.get(mission.id);
-    const rejectRecoveryReference = vi.fn(async () => {
-      throw new Error("timeline preflight failed");
+    const executionStore = createFileExecutionStore({ pragmaHome: join(root, "state") });
+    const execution = (await executionStore.get(waitingMission.execution!.id))!;
+    await executionStore.update(execution.executionId, {
+      state: {
+        ...execution.state,
+        __recoveryClaim: {
+          claimId: "exited-desktop-process",
+          processId: 2_147_483_647,
+          expiresAt: new Date(Date.now() + 30_000).toISOString(),
+        },
+      },
     });
-    const recoveryMissions = {
-      ...missions,
-      appendExecutionReference: rejectRecoveryReference,
-    } satisfies MissionStore;
     const restartingRunner = createMissionRunner({
-      missions: recoveryMissions,
+      missions,
       project,
       capabilityStore: {} as CapabilityStore,
       capabilityCredentials: {} as CapabilityCredentialStore,
@@ -1335,14 +1340,8 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
       pragmaHome: join(root, "state"),
       runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
     });
-    await expect(restartingRunner.run(mission.id)).rejects.toThrow("timeline preflight failed");
-    expect(rejectRecoveryReference).toHaveBeenCalledWith({
-      missionId: mission.id,
-      inputMessageId: waitingMission.execution?.inputMessageId,
-      executionId: waitingMission.execution?.id,
-      createdAt: waitingMission.execution?.startedAt,
-    });
-    await expect(runner.getWork(mission.id)).resolves.toEqual(
+    await restartingRunner.run(mission.id);
+    await expect(restartingRunner.getWork(mission.id)).resolves.toEqual(
       expect.objectContaining({
         records: expect.arrayContaining([
           expect.objectContaining({ kind: "flow" }),
@@ -1350,10 +1349,10 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
         ]),
       }),
     );
-    const interactions = await runner.listHumanInteractions(mission.id);
+    const interactions = await restartingRunner.listHumanInteractions(mission.id);
     expect(interactions).toHaveLength(1);
     expect(interactions[0]?.request.kind).toBe("approval");
-    await runner.respondToHumanInteraction({
+    await restartingRunner.respondToHumanInteraction({
       missionId: mission.id,
       interactionId: interactions[0]!.interactionId,
       requestId: "00000000-0000-4000-8000-000000000001",
@@ -1493,7 +1492,12 @@ function approvalFlowFixture(): PragmaFlowResource {
         start: "approve",
         steps: {
           approve: {
-            human: { kind: "approval", prompt: "Approve the release?" },
+            human: {
+              kind: "approval",
+              prompt: "Approve the release?",
+              options: ["Ship", "Hold"],
+              approveOption: "Ship",
+            },
             version: "1.0.0",
           },
         },

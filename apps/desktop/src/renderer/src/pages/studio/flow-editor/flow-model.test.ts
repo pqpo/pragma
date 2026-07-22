@@ -108,6 +108,23 @@ describe("Flow editor model", () => {
       { path: ["spec", "graph", "steps"], message: "Add at least one node." },
     ]);
   });
+
+  it("blocks Action steps that Desktop cannot execute", () => {
+    const flow = flowFixture();
+    flow.spec.graph.steps.review = {
+      action: { ref: "action:review@1.0.0" },
+      version: "1.0.0",
+    };
+
+    expect(validateFlowDraft(flow)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          stepId: "review",
+          message: "Action steps are not executable in the current Desktop environment.",
+        }),
+      ]),
+    );
+  });
 });
 
 function flowFixture(): PragmaFlowResource {

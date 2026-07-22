@@ -43,6 +43,7 @@ import {
   type PragmaResourceHealth,
   type PragmaSemanticResourceRef,
 } from "../ast/pragma-dsl.schema.ts";
+import { analyzePragmaFlowGraph } from "../ast/flow-graph.ts";
 import {
   canonicalPragmaResourceRef,
   parsePragmaReference,
@@ -1215,6 +1216,8 @@ function compileHumanRequest(
       request.prompt === undefined
         ? undefined
         : String(evaluateValue(request.prompt, state, input)),
+    options: request.options?.map((option) => ({ label: option, description: option })),
+    approveOption: request.approveOption,
     questions: request.questions?.map((question) => ({
       header: question.id,
       question: question.label,
@@ -1232,7 +1235,13 @@ function evaluateValue(
 ): unknown {
   if (typeof value === "string") {
     if (value === "$flow.input") return flowInput;
+    if (value.startsWith("$flow.input.")) {
+      return readPath(flowInput, value.slice("$flow.input.".length));
+    }
     if (value === "$node.output") return nodeOutput;
+    if (value.startsWith("$node.output.")) {
+      return readPath(nodeOutput, value.slice("$node.output.".length));
+    }
     if (value.startsWith("$state.")) return readPath(state, value.slice("$state.".length));
     return value.replace(/\{\{\s*([^}|]+?)\s*(\|\s*json)?\s*\}\}/g, (_match, expression, json) => {
       const resolved = evaluateValue(
@@ -1628,209 +1637,52 @@ function validateExtensionEnvironment(
 }
 
 function validateFlowGraph(indexed: IndexedResource): PragmaDiagnostic[] {
-  try {
-    validateAndReadLoopMembers(indexed.resource as PragmaFlowResource);
-    return [];
-  } catch (error) {
-    return [
-      {
-        severity: "error",
-        code: "flow.graph.invalid",
-        message: error instanceof Error ? error.message : String(error),
-        source: indexed.source,
-        path: ["spec", "graph"],
-      },
-    ];
+  const resource = indexed.resource as PragmaFlowResource;
+  return [
+    ...analyzePragmaFlowGraph(resource).issues.map((issue) => ({
+      severity: "error" as const,
+      code: issue.code,
+      message: issue.message,
+      source: indexed.source,
+      path: [...issue.path],
+    })),
+    ...invalidFlowExpressions(resource.spec).map((path) => ({
+      severity: "error" as const,
+      code: "flow.expression.invalid",
+      message:
+        "Use $flow.input, $node.output, $state paths, or {{ ... }} interpolation; ${...} is not supported.",
+      source: indexed.source,
+      path,
+    })),
+  ];
+}
+
+function invalidFlowExpressions(
+  value: unknown,
+  path: (string | number)[] = ["spec"],
+): (string | number)[][] {
+  if (typeof value === "string") return value.includes("${") ? [path] : [];
+  if (Array.isArray(value)) {
+    return value.flatMap((entry, index) => invalidFlowExpressions(entry, [...path, index]));
   }
+  if (typeof value !== "object" || value === null) return [];
+  return Object.entries(value).flatMap(([key, entry]) =>
+    invalidFlowExpressions(entry, [...path, key]),
+  );
 }
 
 function validateAndReadLoopMembers(
   resource: PragmaFlowResource,
 ): Map<string, ReadonlySet<string>> {
-  const graph = resource.spec.graph;
-  const stepIds = new Set(Object.keys(graph.steps));
-  if (!stepIds.has(graph.start))
-    throw new PragmaDslError(`Unknown Flow start step: ${graph.start}`);
-  for (const stepId of stepIds) {
-    if (graph.transitions[stepId] === undefined) {
-      throw new PragmaDslError(`Flow step has no transition: ${stepId}`);
-    }
-  }
-  const edgeList = transitionEdges(graph.transitions);
-  for (const edge of edgeList) {
-    if (!stepIds.has(edge.source))
-      throw new PragmaDslError(`Transition source is unknown: ${edge.source}`);
-    if (!stepIds.has(edge.target))
-      throw new PragmaDslError(`Transition target is unknown: ${edge.target}`);
-  }
-  for (const edge of edgeList) {
-    if (edge.kind !== "repeat") continue;
-    const loop = graph.loops[edge.loopId];
-    if (loop === undefined) throw new PragmaDslError(`Unknown Flow loop: ${edge.loopId}`);
-    if (edge.target !== loop.entry) {
-      throw new PragmaDslError(`Loop ${edge.loopId} repeat must target ${loop.entry}.`);
-    }
-  }
-  const ordinaryEdges = toAdjacency(
-    stepIds,
-    edgeList.filter((edge) => edge.kind === "ordinary"),
-  );
-  if (hasCycle(stepIds, ordinaryEdges, new Set())) {
-    throw new PragmaDslError(
-      "Flow contains a cycle that is not broken by an explicit repeat edge.",
-    );
-  }
-  const edges = toAdjacency(stepIds, edgeList);
-  const components = stronglyConnectedComponents(stepIds, edges);
-  const cyclic = components.filter(
-    (component) => component.size > 1 || [...component].some((id) => edges.get(id)?.has(id)),
-  );
-  const result = new Map<string, ReadonlySet<string>>();
-  for (const component of cyclic) {
-    const matching = Object.entries(graph.loops).filter(([, loop]) => component.has(loop.entry));
-    if (matching.length !== 1)
-      throw new PragmaDslError("Every cyclic Flow region must have exactly one Loop.");
-    const [loopId, loop] = matching[0]!;
-    for (const [source, targets] of edges) {
-      if (component.has(source)) continue;
-      for (const target of targets) {
-        if (component.has(target) && target !== loop.entry) {
-          throw new PragmaDslError(`Loop ${loopId} has a non-entry incoming edge to ${target}.`);
-        }
-      }
-    }
-    const componentRepeatEdges = edgeList.filter(
-      (edge): edge is Extract<FlowGraphEdge, { readonly kind: "repeat" }> =>
-        edge.kind === "repeat" && component.has(edge.source) && component.has(edge.target),
-    );
-    if (componentRepeatEdges.length === 0) {
-      throw new PragmaDslError(`Loop ${loopId} has no explicit repeat edge.`);
-    }
-    for (const edge of componentRepeatEdges) {
-      if (edge.loopId !== loopId) {
-        throw new PragmaDslError(
-          `Repeat edge ${edge.source} -> ${edge.target} belongs to the wrong Loop ${edge.loopId}.`,
-        );
-      }
-    }
-    const onLimitTarget = readTargetStepId(loop.onLimit);
-    if (onLimitTarget !== undefined && !stepIds.has(onLimitTarget)) {
-      throw new PragmaDslError(`Loop ${loopId} onLimit target is unknown: ${onLimitTarget}.`);
-    }
-    if (onLimitTarget !== undefined && component.has(onLimitTarget)) {
-      throw new PragmaDslError(`Loop ${loopId} onLimit must exit the loop region.`);
-    }
-    result.set(loopId, component);
-  }
-  for (const [loopId, loop] of Object.entries(graph.loops)) {
-    if (!stepIds.has(loop.entry)) throw new PragmaDslError(`Loop entry is unknown: ${loop.entry}`);
-    if (!result.has(loopId))
-      throw new PragmaDslError(`Loop ${loopId} does not describe a control-flow cycle.`);
-  }
-  return result;
-}
-
-type FlowGraphEdge =
-  | { readonly source: string; readonly target: string; readonly kind: "ordinary" }
-  | {
-      readonly source: string;
-      readonly target: string;
-      readonly kind: "repeat";
-      readonly loopId: string;
-    };
-
-function transitionEdges(
-  transitions: PragmaFlowResource["spec"]["graph"]["transitions"],
-): readonly FlowGraphEdge[] {
-  const edges: FlowGraphEdge[] = [];
-  const addTarget = (source: string, target: PragmaFlowDestination): void => {
-    if (typeof target === "string") {
-      edges.push({ source, target, kind: "ordinary" });
-    } else if ("goto" in target) {
-      edges.push({ source, target: target.goto, kind: "ordinary" });
-    } else if ("repeat" in target) {
-      edges.push({
-        source,
-        target: target.repeat.goto,
-        kind: "repeat",
-        loopId: target.repeat.loop,
-      });
-    }
-  };
-  for (const [source, transition] of Object.entries(transitions)) {
-    if (
-      typeof transition === "string" ||
-      "goto" in transition ||
-      "end" in transition ||
-      "fail" in transition
-    ) {
-      addTarget(source, transition);
-    } else if ("repeat" in transition) {
-      addTarget(source, transition.repeat.goto);
-    } else {
-      for (const target of Object.values(transition.cases)) addTarget(source, target);
-      if (transition.fallback !== undefined) addTarget(source, transition.fallback);
-    }
-  }
-  return edges;
-}
-
-function toAdjacency(
-  nodes: ReadonlySet<string>,
-  edges: readonly FlowGraphEdge[],
-): Map<string, Set<string>> {
-  const adjacency = new Map([...nodes].map((node) => [node, new Set<string>()]));
-  for (const edge of edges) adjacency.get(edge.source)?.add(edge.target);
-  return adjacency;
-}
-
-function readTargetStepId(target: PragmaFlowTarget | undefined): string | undefined {
-  if (target === undefined || typeof target !== "object") return target;
-  return "goto" in target ? target.goto : undefined;
-}
-
-function stronglyConnectedComponents(
-  nodes: ReadonlySet<string>,
-  edges: ReadonlyMap<string, ReadonlySet<string>>,
-): ReadonlySet<string>[] {
-  let index = 0;
-  const indexes = new Map<string, number>();
-  const lowLinks = new Map<string, number>();
-  const stack: string[] = [];
-  const onStack = new Set<string>();
-  const result: Set<string>[] = [];
-  const visit = (node: string): void => {
-    indexes.set(node, index);
-    lowLinks.set(node, index);
-    index += 1;
-    stack.push(node);
-    onStack.add(node);
-    for (const target of edges.get(node) ?? []) {
-      if (!indexes.has(target)) {
-        visit(target);
-        lowLinks.set(node, Math.min(lowLinks.get(node)!, lowLinks.get(target)!));
-      } else if (onStack.has(target)) {
-        lowLinks.set(node, Math.min(lowLinks.get(node)!, indexes.get(target)!));
-      }
-    }
-    if (lowLinks.get(node) !== indexes.get(node)) return;
-    const component = new Set<string>();
-    while (stack.length > 0) {
-      const member = stack.pop()!;
-      onStack.delete(member);
-      component.add(member);
-      if (member === node) break;
-    }
-    result.push(component);
-  };
-  for (const node of nodes) if (!indexes.has(node)) visit(node);
-  return result;
+  const analysis = analyzePragmaFlowGraph(resource);
+  const issue = analysis.issues[0];
+  if (issue !== undefined) throw new PragmaDslError(issue.message);
+  return new Map(analysis.loopMembers);
 }
 
 function hasCycle(
   nodes: ReadonlySet<string>,
   edges: ReadonlyMap<string, ReadonlySet<string>>,
-  ignored: ReadonlySet<string>,
 ): boolean {
   const visiting = new Set<string>();
   const visited = new Set<string>();
@@ -1839,7 +1691,7 @@ function hasCycle(
     if (visited.has(node)) return false;
     visiting.add(node);
     for (const target of edges.get(node) ?? []) {
-      if (!ignored.has(`${node}->${target}`) && visit(target)) return true;
+      if (visit(target)) return true;
     }
     visiting.delete(node);
     visited.add(node);
@@ -1872,7 +1724,7 @@ function validateResourceCycles(
       ),
     );
   }
-  if (!hasCycle(new Set(resources.keys()), edges, new Set())) return [];
+  if (!hasCycle(new Set(resources.keys()), edges)) return [];
   return [
     {
       severity: "error",

@@ -28,17 +28,24 @@ spec:
       implement:
         expert:
           ref: expert:implementer@1.0.0
-        input: { goal: "${flow.input.goal}" }
+        input: { goal: "$flow.input.goal" }
         save: state.implementation
       review:
         expert:
           ref: expert:reviewer@1.0.0
-        input: { change: "${state.implementation}" }
+        input: { change: "$state.implementation" }
         save: state.review
+      approve:
+        human:
+          kind: approval
+          prompt: "Approve {{ state.review | json }}?"
+          options: [approve, revise]
+          approveOption: approve
     loops: {}
     transitions:
       implement: review
-      review: { end: true }
+      review: approve
+      approve: { end: true }
 ```
 
 - Every step declares exactly one of `action`, `expert`, `team`, `flow`, or `human`.
@@ -47,3 +54,8 @@ spec:
   positive `maxIterations` plus an exit path.
 - Save only below `state.<name>`; never use reserved or prototype-sensitive segments.
 - Action and human steps cannot declare Runtime or Context routing fields.
+- Exact values use `$flow.input`, `$node.output`, and `$state.name`; property paths append `.field`.
+  String interpolation uses `{{ flow.input.goal }}` and optionally `| json`. `${...}` is invalid.
+- Approval steps with custom choices declare `approveOption`; it must match one choice.
+- Build Flow resources with the draft tools. Missing nodes or edges are allowed only while a draft
+  is incomplete; `prepare_flow_draft` requires a complete, valid graph.

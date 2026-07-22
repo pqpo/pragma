@@ -1910,14 +1910,17 @@ describe("FlowExecution", () => {
         ],
       },
     });
-    flow.compose(({ start, step, end }) => {
-      start(expertStep).next(review).route("decision", {
-        approve: end(),
-        revise: expertStep,
-        reject: end(),
-      });
+    flow.compose(({ start, step, end, repeat }) => {
+      start(expertStep)
+        .next(review)
+        .route("decision", {
+          approve: end(),
+          revise: repeat("revision", expertStep),
+          reject: end(),
+        });
       step(expertStep).next(review);
     });
+    flow.loop({ id: "revision", entry: expertStep, steps: [expertStep, review], maxIterations: 2 });
 
     const execution = await app.flows.start(flow, { input: "initial" });
     const firstRequest = await waitForHumanRequest(execution, 0);
@@ -2231,9 +2234,10 @@ describe("FlowExecution", () => {
         kind: "approval",
         prompt: "Continue?",
         options: [
-          { label: "Allow", description: "Continue the Flow" },
           { label: "Block", description: "Stop the Flow" },
+          { label: "Allow", description: "Continue the Flow" },
         ],
+        approveOption: "Allow",
       },
     });
     flow.compose(({ start, end }) => start(approval).next(end()));
@@ -2418,6 +2422,125 @@ describe("FlowExecution", () => {
     });
     await expect(
       secondApp.flows.recover(changed, { executionId: execution.executionId }),
+    ).rejects.toThrow("definition graph mismatch");
+    const cancelled = expect(execution.result).rejects.toThrow("test complete");
+    await execution.cancel("test complete");
+    await cancelled;
+  });
+
+  it("recovers a waiting HumanTask in a new app without rerunning completed steps", async () => {
+    const { home, app } = await fixture();
+    let prepareCalls = 0;
+    const flow = defineFlow({ id: "human-recovery-flow", version: "1.0.0" });
+    const prepare = flow.task({
+      id: "prepare",
+      version: "1.0.0",
+      handler: () => {
+        prepareCalls += 1;
+        return "prepared";
+      },
+    });
+    const approval = flow.humanTask({
+      id: "approval",
+      version: "1.0.0",
+      request: {
+        kind: "approval",
+        prompt: "Ship?",
+        options: [
+          { label: "Ship", description: "Continue." },
+          { label: "Hold", description: "Stop." },
+        ],
+        approveOption: "Ship",
+      },
+    });
+    const revise = flow.task({
+      id: "revise",
+      version: "1.0.0",
+      handler: () => "revised",
+    });
+    flow.compose(({ start, step, end }) => {
+      start(prepare).next(approval).route("decision", { Ship: end(), Hold: revise });
+      step(revise).repeat("approval-loop", approval);
+    });
+    flow.loop({
+      id: "approval-loop",
+      entry: approval,
+      steps: [approval, revise],
+      maxIterations: 2,
+    });
+    const execution = await app.flows.start(flow, { input: null });
+    await waitUntil(
+      async () =>
+        (await execution.getTree()).children.find((child) => child.invocation.nodeId === "approval")
+          ?.invocation.status === "waiting",
+    );
+
+    const store = createFileExecutionStore({ pragmaHome: home });
+    const stored = (await store.get(execution.executionId))!;
+    await store.update(execution.executionId, {
+      state: {
+        ...stored.state,
+        __recoveryClaim: {
+          claimId: "exited-process",
+          processId: 2_147_483_647,
+          expiresAt: new Date(Date.now() + 30_000).toISOString(),
+        },
+      },
+    });
+    const restarted = createPragma({
+      pragmaHome: home,
+      runtimes: createStaticRuntimeResolver({
+        runtimes: [createFakeRuntime()],
+        defaultRuntimeId: "fake",
+      }),
+    });
+    const recovered = await restarted.flows.recover(flow, { executionId: execution.executionId });
+    const requested = (
+      await recovered.listEvents({ scope: { kind: "all" }, limit: 1_000 })
+    ).items.find((event) => event.type === "human.requested")!;
+    const interactionId = String(
+      (requested.data as { readonly interactionId: unknown }).interactionId,
+    );
+    await recovered.respondToHumanInteraction(
+      interactionId,
+      { kind: "user_question", answered: true, answers: { "Ship?": "Ship" } },
+      { requestId: "answer-after-restart" },
+    );
+    await expect(recovered.result).resolves.toEqual({});
+    expect(prepareCalls).toBe(1);
+    expect(
+      (await recovered.getTree()).children.find((child) => child.invocation.nodeId === "approval")
+        ?.invocation.output,
+    ).toMatchObject({ approved: true, decision: "Ship" });
+  });
+
+  it("rejects recovery when only the Flow start step changes", async () => {
+    const { app } = await fixture();
+    const build = (startAtSecond: boolean) => {
+      const flow = defineFlow({ id: "start-fingerprint", version: "1.0.0" });
+      const one = flow.humanTask({
+        id: "one",
+        version: "1.0.0",
+        request: { kind: "question", prompt: "One?" },
+      });
+      const two = flow.humanTask({
+        id: "two",
+        version: "1.0.0",
+        request: { kind: "question", prompt: "Two?" },
+      });
+      flow.compose(({ start, step }) => {
+        if (startAtSecond) start(two).repeat("cycle", one);
+        else start(one).next(two);
+        if (startAtSecond) step(one).next(two);
+        else step(two).repeat("cycle", one);
+      });
+      flow.loop({ id: "cycle", entry: one, steps: [one, two], maxIterations: 2 });
+      return flow;
+    };
+    const execution = await app.flows.start(build(false), { input: null });
+    await waitUntil(async () => (await execution.getTree()).children.length > 0);
+    await expect(
+      app.flows.recover(build(true), { executionId: execution.executionId }),
     ).rejects.toThrow("definition graph mismatch");
     const cancelled = expect(execution.result).rejects.toThrow("test complete");
     await execution.cancel("test complete");

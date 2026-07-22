@@ -1,4 +1,5 @@
 import {
+  analyzePragmaFlowGraph,
   PragmaFlowResourceSchema,
   type PragmaFlowDestination,
   type PragmaFlowResource,
@@ -158,31 +159,20 @@ export function validateFlowDraft(flow: PragmaFlowResource): readonly FlowValida
         }));
   if (emptyGraph) {
     issues.push({ path: ["spec", "graph", "steps"], message: "Add at least one node." });
-  } else if (!stepIds.has(flow.spec.graph.start)) {
-    issues.push({ path: ["spec", "graph", "start"], message: "Choose a valid start node." });
-  }
-  for (const [source, transition] of Object.entries(flow.spec.graph.transitions)) {
-    if (!stepIds.has(source)) {
+  } else {
+    for (const issue of analyzePragmaFlowGraph(flow).issues) {
       issues.push({
-        path: ["spec", "graph", "transitions", source],
-        message: `Transition source ${source} has no matching step.`,
+        path: issue.path,
+        message: issue.message,
+        stepId: issue.stepId,
       });
     }
-    for (const target of transitionTargets(transition)) {
-      if (!stepIds.has(target)) {
-        issues.push({
-          path: ["spec", "graph", "transitions", source],
-          message: `Target node ${target} does not exist.`,
-          stepId: source,
-        });
-      }
-    }
   }
-  for (const stepId of stepIds) {
-    if (flow.spec.graph.transitions[stepId] === undefined) {
+  for (const [stepId, step] of Object.entries(flow.spec.graph.steps)) {
+    if (step.action !== undefined) {
       issues.push({
-        path: ["spec", "graph", "transitions", stepId],
-        message: "Every step needs an outgoing transition.",
+        path: ["spec", "graph", "steps", stepId, "action"],
+        message: "Action steps are not executable in the current Desktop environment.",
         stepId,
       });
     }
@@ -257,17 +247,6 @@ function replaceDeletedTarget(
     };
   }
   return destinationTarget(transition) === deletedId ? { end: true } : transition;
-}
-
-function transitionTargets(transition: PragmaFlowTransition): readonly string[] {
-  if (typeof transition === "object" && "route" in transition) {
-    return [...Object.values(transition.cases), transition.fallback]
-      .filter((destination): destination is PragmaFlowDestination => destination !== undefined)
-      .map(destinationTarget)
-      .filter((target): target is string => target !== null);
-  }
-  const target = destinationTarget(transition);
-  return target === null ? [] : [target];
 }
 
 function transitionLoopIds(transitions: readonly PragmaFlowTransition[]): ReadonlySet<string> {

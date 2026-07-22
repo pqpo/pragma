@@ -21,10 +21,12 @@ describe("Desktop DefaultAgent DSL project adapter", () => {
       adapterOptions(project, join(root, "state")),
     );
     const runtimeRef = (await adapter.listExpertOptions()).runtimeModels[0]!.runtimeProfileRef;
-    const first = await adapter.prepare({
-      expectedProjectRevision: 0,
-      sources: [expert("First", runtimeRef)],
-    });
+    const first = requirePrepared(
+      await adapter.prepare({
+        expectedProjectRevision: 0,
+        sources: [expert("First", runtimeRef)],
+      }),
+    );
     expect(first.diagnostics).toEqual([]);
     expect(first.changes).toEqual(
       expect.arrayContaining([
@@ -35,10 +37,12 @@ describe("Desktop DefaultAgent DSL project adapter", () => {
       adapter.commit({ changeSetId: first.changeSetId, operationId: "first" }),
     ).resolves.toMatchObject({ projectRevision: 1 });
 
-    const second = await adapter.prepare({
-      expectedProjectRevision: 1,
-      sources: [expert("Second", runtimeRef)],
-    });
+    const second = requirePrepared(
+      await adapter.prepare({
+        expectedProjectRevision: 1,
+        sources: [expert("Second", runtimeRef)],
+      }),
+    );
     expect(second.changes).toMatchObject([{ ref: "expert:writer@1.0.0", kind: "updated" }]);
     const committed = await adapter.commit({
       changeSetId: second.changeSetId,
@@ -55,10 +59,12 @@ describe("Desktop DefaultAgent DSL project adapter", () => {
       adapterOptions(project, join(root, "state")),
     );
     const runtimeRef = (await adapter.listExpertOptions()).runtimeModels[0]!.runtimeProfileRef;
-    const candidate = await adapter.prepare({
-      expectedProjectRevision: 0,
-      sources: [expert("One", runtimeRef)],
-    });
+    const candidate = requirePrepared(
+      await adapter.prepare({
+        expectedProjectRevision: 0,
+        sources: [expert("One", runtimeRef)],
+      }),
+    );
     const first = await adapter.commit({ changeSetId: candidate.changeSetId, operationId: "same" });
     const second = await adapter.commit({
       changeSetId: candidate.changeSetId,
@@ -110,10 +116,12 @@ describe("Desktop DefaultAgent DSL project adapter", () => {
     });
     const runtimeRef = (await adapter.listExpertOptions()).runtimeModels[0]!.runtimeProfileRef;
     const acceptedId = "a".repeat(PRAGMA_EXPERT_ID_MAX_LENGTH);
-    const candidate = await adapter.prepare({
-      expectedProjectRevision: 0,
-      sources: [expert("Boundary", runtimeRef, acceptedId)],
-    });
+    const candidate = requirePrepared(
+      await adapter.prepare({
+        expectedProjectRevision: 0,
+        sources: [expert("Boundary", runtimeRef, acceptedId)],
+      }),
+    );
 
     await adapter.commit({ changeSetId: candidate.changeSetId, operationId: "boundary" });
 
@@ -127,10 +135,101 @@ describe("Desktop DefaultAgent DSL project adapter", () => {
         expectedProjectRevision: 1,
         sources: [expert("Too long", runtimeRef, "a".repeat(PRAGMA_EXPERT_ID_MAX_LENGTH + 1))],
       }),
-    ).rejects.toThrow();
+    ).resolves.toMatchObject({ status: "invalid" });
     expect((await project.get()).revision).toBe(1);
   });
+
+  it("builds and atomically prepares a Flow through durable draft revisions", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-default-agent-flow-draft-"));
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    const adapter = createDesktopDefaultAgentProjectPort(
+      adapterOptions(project, join(root, "state")),
+    );
+    const created = await adapter.createFlowDraft({
+      expectedProjectRevision: 0,
+      metadata: {
+        id: "release_gate",
+        version: "1.0.0",
+        name: "Release Gate",
+        description: "Waits for release approval",
+        tags: [],
+      },
+    });
+    expect(created.diagnostics).toEqual(
+      expect.arrayContaining([expect.objectContaining({ severity: "incomplete" })]),
+    );
+    const withStep = await adapter.updateFlowDraft({
+      draftId: created.draftId,
+      expectedDraftRevision: 0,
+      operations: [
+        {
+          type: "upsert_step",
+          stepId: "approve",
+          step: {
+            human: {
+              kind: "approval",
+              prompt: "Release?",
+              options: ["Ship", "Hold"],
+              approveOption: "Ship",
+            },
+            version: "1.0.0",
+          },
+        },
+      ],
+    });
+    expect(withStep.draftRevision).toBe(1);
+    const complete = await adapter.updateFlowDraft({
+      draftId: created.draftId,
+      expectedDraftRevision: 1,
+      operations: [
+        { type: "set_start", stepId: "approve" },
+        { type: "set_transition", stepId: "approve", transition: { end: true } },
+      ],
+    });
+    expect(complete.diagnostics).toEqual([]);
+    const prepared = requirePrepared(
+      await adapter.prepareFlowDraft({
+        draftId: created.draftId,
+        expectedDraftRevision: 2,
+      }),
+    );
+    expect(prepared.changes).toEqual([
+      expect.objectContaining({ ref: "flow:release_gate@1.0.0", kind: "created" }),
+    ]);
+    await adapter.commit({ changeSetId: prepared.changeSetId, operationId: "commit-flow-draft" });
+    expect((await project.get()).resources).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "Flow",
+          metadata: expect.objectContaining({ id: "release_gate" }),
+        }),
+      ]),
+    );
+  });
+
+  it("returns structured prepare diagnostics for malformed YAML", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-default-agent-invalid-yaml-"));
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    const adapter = createDesktopDefaultAgentProjectPort(
+      adapterOptions(project, join(root, "state")),
+    );
+    await expect(
+      adapter.prepare({ expectedProjectRevision: 0, sources: ["kind: ["] }),
+    ).resolves.toMatchObject({
+      status: "invalid",
+      diagnostics: [expect.objectContaining({ code: "source.parse", source: "source:0" })],
+    });
+  });
 });
+
+function requirePrepared<
+  T extends Awaited<ReturnType<ReturnType<typeof createDesktopDefaultAgentProjectPort>["prepare"]>>,
+>(result: T) {
+  if (result.status !== "prepared") {
+    throw new Error(`Expected prepared change-set: ${JSON.stringify(result.diagnostics)}`);
+  }
+  return result.changeSet;
+}
 
 function expert(description: string, runtimeRef: string, id = "writer"): string {
   return [

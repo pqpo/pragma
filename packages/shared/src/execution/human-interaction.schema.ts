@@ -16,16 +16,42 @@ export const HumanInteractionQuestionSchema = z.object({
     .default([]),
 });
 
-export const HumanInteractionRequestSchema = z.object({
-  kind: HumanInteractionKindSchema,
-  title: z.string().min(1).optional(),
-  prompt: z.string().min(1).optional(),
-  questions: z.array(HumanInteractionQuestionSchema).optional(),
-  options: z
-    .array(z.object({ label: z.string().min(1), description: z.string().default("") }))
-    .optional(),
-  data: z.unknown().optional(),
-});
+export const HumanInteractionRequestSchema = z
+  .object({
+    kind: HumanInteractionKindSchema,
+    title: z.string().min(1).optional(),
+    prompt: z.string().min(1).optional(),
+    questions: z.array(HumanInteractionQuestionSchema).optional(),
+    options: z
+      .array(z.object({ label: z.string().min(1), description: z.string().default("") }))
+      .optional(),
+    approveOption: z.string().min(1).optional(),
+    data: z.unknown().optional(),
+  })
+  .superRefine((value, context) => {
+    if (value.approveOption === undefined) return;
+    if (value.kind !== "approval") {
+      context.addIssue({
+        code: "custom",
+        path: ["approveOption"],
+        message: "approveOption is only valid for approval requests.",
+      });
+      return;
+    }
+    const labels = [
+      ...(value.options ?? []).map((option) => option.label),
+      ...(value.questions ?? []).flatMap((question) =>
+        question.options.map((option) => option.label),
+      ),
+    ];
+    if (labels.length > 0 && !labels.includes(value.approveOption)) {
+      context.addIssue({
+        code: "custom",
+        path: ["approveOption"],
+        message: "approveOption must match an approval choice.",
+      });
+    }
+  });
 
 export const HumanInteractionResponseSchema = z.object({
   decision: z.string().min(1).optional(),
@@ -35,17 +61,26 @@ export const HumanInteractionResponseSchema = z.object({
   data: z.unknown().optional(),
 });
 
-export const HumanInteractionRecordSchema = z.object({
+const HumanInteractionRecordBaseSchema = z.object({
   interactionId: z.string().min(1),
   executionId: z.string().min(1),
   invocationId: z.string().min(1),
-  status: z.enum(["pending", "responded"]),
   request: HumanInteractionRequestSchema,
-  response: HumanInteractionResponseSchema.optional(),
   requestId: z.string().min(1).optional(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
 });
+
+export const HumanInteractionRecordSchema = z.discriminatedUnion("status", [
+  HumanInteractionRecordBaseSchema.extend({
+    status: z.literal("pending"),
+    response: z.never().optional(),
+  }),
+  HumanInteractionRecordBaseSchema.extend({
+    status: z.literal("responded"),
+    response: HumanInteractionResponseSchema,
+  }),
+]);
 
 export type HumanInteractionKind = z.infer<typeof HumanInteractionKindSchema>;
 export type HumanInteractionQuestion = z.infer<typeof HumanInteractionQuestionSchema>;

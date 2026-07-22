@@ -288,9 +288,15 @@ describe("FlowConsoleModel", () => {
     const reject = flow.task({ id: "reject", version: "1.0.0", handler: () => "rejected" });
     flow.compose(({ start, step, end }) => {
       start(review).route("decision", { approve, revise, reject });
-      step(revise).next(review);
+      step(revise).repeat("revision", review);
       step(approve).next(end());
       step(reject).next(end());
+    });
+    flow.loop({
+      id: "revision",
+      entry: review,
+      steps: [review, revise],
+      maxIterations: 3,
     });
     const model = new FlowConsoleModel(flow);
     model.syncTree(

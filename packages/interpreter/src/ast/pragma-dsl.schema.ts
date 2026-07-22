@@ -333,6 +333,8 @@ export const PragmaHumanRequestSchema = z
     kind: z.enum(["approval", "question", "review_gate", "manual_intervention"]),
     title: z.string().min(1).optional(),
     prompt: z.string().optional(),
+    options: z.array(z.string().min(1)).optional(),
+    approveOption: z.string().min(1).optional(),
     questions: z
       .array(
         z
@@ -346,7 +348,29 @@ export const PragmaHumanRequestSchema = z
       )
       .optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((value, context) => {
+    if (value.approveOption === undefined) return;
+    if (value.kind !== "approval") {
+      context.addIssue({
+        code: "custom",
+        path: ["approveOption"],
+        message: "approveOption is only valid for approval HumanTask steps.",
+      });
+      return;
+    }
+    const choices = [
+      ...(value.options ?? []),
+      ...(value.questions ?? []).flatMap((question) => question.options),
+    ];
+    if (choices.length > 0 && !choices.includes(value.approveOption)) {
+      context.addIssue({
+        code: "custom",
+        path: ["approveOption"],
+        message: "approveOption must match an approval choice.",
+      });
+    }
+  });
 
 export const PragmaFlowStepSchema = z
   .object({

@@ -35,6 +35,12 @@ describe("built-in Pragma Agent DSL", () => {
         listExpertOptions: unavailable,
         read: unavailable,
         prepare: unavailable,
+        createFlowDraft: unavailable,
+        getFlowDraft: unavailable,
+        updateFlowDraft: unavailable,
+        validateFlowDraft: unavailable,
+        prepareFlowDraft: unavailable,
+        discardFlowDraft: unavailable,
         getChangeSet: unavailable,
         commit: unavailable,
       },
@@ -71,8 +77,9 @@ describe("built-in Pragma Agent DSL", () => {
         },
       },
     });
-    expect(compiled.value.tools?.map((tool) => tool.name)).toHaveLength(11);
+    expect(compiled.value.tools?.map((tool) => tool.name)).toHaveLength(17);
     expect(compiled.value.tools?.map((tool) => tool.name)).toContain("list_expert_options");
+    expect(compiled.value.tools?.map((tool) => tool.name)).toContain("update_flow_draft");
     expect(compiled.value.skills?.skills[0]?.path).toMatch(/author-pragma-dsl[\\/]SKILL\.md$/);
     expect(compiled.value).toMatchObject({
       id: "pragma",

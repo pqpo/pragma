@@ -30,6 +30,7 @@ import {
   freshContextIdResolver,
 } from "../execution/context-id-resolver.ts";
 import {
+  EXECUTION_RECOVERY_CLAIM_STATE_KEY,
   ExecutionVersionConflictError,
   type ExecutionStore,
 } from "../execution/execution-store.ts";
@@ -604,10 +605,19 @@ async function runHumanTask(
 }
 
 function toExpertHumanRequest(request: HumanInteractionRequest): ExpertAgentHumanRequest {
+  const questions = humanInteractionQuestions(request);
   return {
     kind: "user_question",
     toolName: "askUserQuestion",
-    questions: humanInteractionQuestions(request),
+    questions,
+    ...(request.kind === "approval"
+      ? {
+          semantics: {
+            kind: "approval" as const,
+            approveOption: approvalOption(request, questions),
+          },
+        }
+      : {}),
   };
 }
 
@@ -672,7 +682,7 @@ function fromExpertHumanResponse(
   const notes =
     notesQuestion === undefined ? undefined : readHumanAnswer(answers, notesQuestion.question);
   const approved =
-    request.kind === "approval" ? isApprovedHumanDecision(questions, decision) : undefined;
+    request.kind === "approval" ? isApprovedHumanDecision(request, questions, decision) : undefined;
   return HumanInteractionResponseSchema.parse({
     answers,
     ...(decision === undefined ? {} : { decision }),
@@ -703,14 +713,25 @@ function readHumanAnswer(
 }
 
 function isApprovedHumanDecision(
+  request: HumanInteractionRequest,
   questions: readonly ExpertAgentUserQuestion[],
   decision: string | undefined,
 ): boolean {
-  const positiveLabel = questions.find((question) => question.kind === "single_choice")?.options[0]
-    ?.label;
+  const positiveLabel = approvalOption(request, questions);
   return (
     positiveLabel !== undefined &&
     decision?.toLocaleLowerCase() === positiveLabel.toLocaleLowerCase()
+  );
+}
+
+function approvalOption(
+  request: HumanInteractionRequest,
+  questions: readonly ExpertAgentUserQuestion[],
+): string {
+  return (
+    request.approveOption ??
+    questions.find((question) => question.kind === "single_choice")?.options[0]?.label ??
+    "approve"
   );
 }
 
@@ -1149,7 +1170,9 @@ function readFlowInternalState(state: FlowState): StoredFlowInternalState {
 
 function readUserFlowState(state: FlowState): FlowState {
   return Object.fromEntries(
-    Object.entries(state).filter(([key]) => key !== FLOW_INTERNAL_STATE_KEY),
+    Object.entries(state).filter(
+      ([key]) => key !== FLOW_INTERNAL_STATE_KEY && key !== EXECUTION_RECOVERY_CLAIM_STATE_KEY,
+    ),
   );
 }
 
@@ -1218,6 +1241,7 @@ function visitFlowDefinition(flow: Flow, ancestors: Set<Flow>): unknown {
   const nextAncestors = new Set(ancestors).add(flow);
   return {
     definition: { id: flow.id, version: flow.version, kind: "flow" },
+    startStepId: flow.startStepId,
     maxNodeVisits: flow.maxNodeVisits,
     ...(flow.timeoutMs === undefined ? {} : { timeoutMs: flow.timeoutMs }),
     loops: [...flow.loops.values()]
@@ -1227,7 +1251,7 @@ function visitFlowDefinition(flow: Flow, ancestors: Set<Flow>): unknown {
         entryStepId: loop.entryStepId,
         stepIds: [...loop.stepIds].sort(),
         maxIterations: loop.maxIterations,
-        ...(loop.onLimit === undefined ? {} : { onLimit: loop.onLimit }),
+        ...(loop.onLimit === undefined ? {} : { onLimit: describeTarget(loop.onLimit) }),
       })),
     steps: [...flow.steps.values()]
       .sort((left, right) => left.id.localeCompare(right.id))
@@ -1277,15 +1301,36 @@ function visitFlowDefinition(flow: Flow, ancestors: Set<Flow>): unknown {
   function describeTransition(
     transition: Flow["transitions"] extends ReadonlyMap<string, infer T> ? T : never,
   ): unknown {
-    if (transition.type === "next") return { type: "next", target: transition.target };
+    if (transition.type === "next") {
+      return { type: "next", target: describeTarget(transition.target) };
+    }
     if (transition.type === "repeat") {
-      return { type: "repeat", loopId: transition.loopId, target: transition.target };
+      return {
+        type: "repeat",
+        loopId: transition.loopId,
+        target: describeTarget(transition.target),
+      };
     }
     return {
       type: "route",
       field: transition.field,
-      cases: [...transition.cases.entries()].sort(([left], [right]) => left.localeCompare(right)),
-      ...(transition.fallback === undefined ? {} : { fallback: transition.fallback }),
+      cases: [...transition.cases.entries()]
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, target]) => [key, describeTarget(target)]),
+      ...(transition.fallback === undefined
+        ? {}
+        : { fallback: describeTarget(transition.fallback) }),
+    };
+  }
+
+  function describeTarget(target: FlowDestination): unknown {
+    if ("id" in target) return { id: target.id };
+    if (target.type === "repeat") {
+      return { type: "repeat", loopId: target.loopId, target: { id: target.target.id } };
+    }
+    return {
+      type: target.type,
+      ...(target.reason === undefined ? {} : { reason: target.reason }),
     };
   }
 }

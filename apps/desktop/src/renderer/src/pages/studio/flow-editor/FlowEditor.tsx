@@ -512,7 +512,6 @@ function FlowEditorCanvas(props: {
               <div className="flow-palette-group">
                 <strong>{t("control")}</strong>
                 <PaletteItem kind="human" icon={<UserFocus />} label={t("humanInput")} />
-                <PaletteItem kind="action" icon={<Sparkle />} label={t("action")} />
               </div>
             </div>
           ) : null}
@@ -1043,10 +1042,16 @@ function StepInspector(props: {
               value={step.human?.kind}
               onChange={(event) =>
                 patchStep((current) => {
-                  if (current.human)
-                    current.human.kind = event.target.value as NonNullable<
-                      FlowStep["human"]
-                    >["kind"];
+                  if (!current.human) return;
+                  const kind = event.target.value as NonNullable<FlowStep["human"]>["kind"];
+                  current.human.kind = kind;
+                  if (kind === "approval") {
+                    current.human.options ??= ["approve", "reject"];
+                    current.human.approveOption ??= current.human.options[0];
+                  } else {
+                    delete current.human.options;
+                    delete current.human.approveOption;
+                  }
                 })
               }
             >
@@ -1076,13 +1081,44 @@ function StepInspector(props: {
               }
             />
           </InspectorField>
-          <JsonField
-            label="Questions"
-            value={step.human?.questions}
-            onCommit={(value) =>
+          {step.human?.kind === "approval" ? (
+            <>
+              <StringListField
+                label="Approval choices"
+                values={step.human.options ?? ["approve", "reject"]}
+                onChange={(values) =>
+                  patchStep((current) => {
+                    if (!current.human) return;
+                    current.human.options = values;
+                    if (!values.includes(current.human.approveOption ?? "")) {
+                      current.human.approveOption = values[0];
+                    }
+                  })
+                }
+              />
+              <InspectorField label="Approved choice">
+                <select
+                  value={step.human.approveOption ?? step.human.options?.[0] ?? "approve"}
+                  onChange={(event) =>
+                    patchStep((current) => {
+                      if (current.human) current.human.approveOption = event.target.value;
+                    })
+                  }
+                >
+                  {(step.human.options ?? ["approve", "reject"]).map((option) => (
+                    <option key={option} value={option}>
+                      {option}
+                    </option>
+                  ))}
+                </select>
+              </InspectorField>
+            </>
+          ) : null}
+          <HumanQuestionsEditor
+            questions={step.human?.questions ?? []}
+            onChange={(questions) =>
               patchStep((current) => {
-                if (current.human)
-                  current.human.questions = value as NonNullable<FlowStep["human"]>["questions"];
+                if (current.human) current.human.questions = questions;
               })
             }
           />
@@ -1152,35 +1188,41 @@ function StepInspector(props: {
           placeholder="state.result"
         />
       </InspectorField>
-      <InspectorField label="Context">
-        <input
-          value={step.context ?? ""}
-          onChange={(event) =>
+      {kind === "expert" || kind === "team" ? (
+        <InspectorField label="Context">
+          <input
+            value={step.context ?? ""}
+            onChange={(event) =>
+              patchStep((current) => {
+                current.context = event.target.value || undefined;
+              })
+            }
+          />
+        </InspectorField>
+      ) : null}
+      {kind === "expert" || kind === "team" || kind === "flow" ? (
+        <InspectorField label="Runtime">
+          <input
+            value={step.runtime ?? ""}
+            onChange={(event) =>
+              patchStep((current) => {
+                current.runtime = event.target.value || undefined;
+              })
+            }
+          />
+        </InspectorField>
+      ) : null}
+      {kind === "expert" || kind === "team" ? (
+        <JsonField
+          label="Runtime routes"
+          value={step.runtimes}
+          onCommit={(value) =>
             patchStep((current) => {
-              current.context = event.target.value || undefined;
+              current.runtimes = value as FlowStep["runtimes"];
             })
           }
         />
-      </InspectorField>
-      <InspectorField label="Runtime">
-        <input
-          value={step.runtime ?? ""}
-          onChange={(event) =>
-            patchStep((current) => {
-              current.runtime = event.target.value || undefined;
-            })
-          }
-        />
-      </InspectorField>
-      <JsonField
-        label="Runtime routes"
-        value={step.runtimes}
-        onCommit={(value) =>
-          patchStep((current) => {
-            current.runtimes = value as FlowStep["runtimes"];
-          })
-        }
-      />
+      ) : null}
 
       <div className="flow-inspector-divider" />
       <InspectorField label="Transition">
@@ -1383,6 +1425,123 @@ function InspectorField(props: { readonly label: string; readonly children: Reac
   );
 }
 
+type HumanQuestion = NonNullable<NonNullable<FlowStep["human"]>["questions"]>[number];
+
+function StringListField(props: {
+  readonly label: string;
+  readonly values: readonly string[];
+  readonly onChange: (values: string[]) => void;
+}) {
+  return (
+    <InspectorField label={props.label}>
+      <textarea
+        rows={Math.max(2, props.values.length)}
+        value={props.values.join("\n")}
+        onChange={(event) =>
+          props.onChange(
+            event.target.value
+              .split("\n")
+              .map((value) => value.trim())
+              .filter(Boolean),
+          )
+        }
+      />
+    </InspectorField>
+  );
+}
+
+function HumanQuestionsEditor(props: {
+  readonly questions: readonly HumanQuestion[];
+  readonly onChange: (questions: HumanQuestion[]) => void;
+}) {
+  const patch = (index: number, update: (question: HumanQuestion) => HumanQuestion) => {
+    props.onChange(
+      props.questions.map((question, current) => (current === index ? update(question) : question)),
+    );
+  };
+  return (
+    <div className="flow-inspector-field">
+      <span>Questions</span>
+      {props.questions.map((question, index) => (
+        <div className="flow-inspector-grid" key={`${question.id}-${index}`}>
+          <input
+            aria-label={`Question ${index + 1} id`}
+            value={question.id}
+            placeholder="decision"
+            onChange={(event) =>
+              patch(index, (current) => ({ ...current, id: event.target.value }))
+            }
+          />
+          <select
+            aria-label={`Question ${index + 1} type`}
+            value={question.type}
+            onChange={(event) =>
+              patch(index, (current) => ({
+                ...current,
+                type: event.target.value as HumanQuestion["type"],
+                options: event.target.value === "text" ? [] : current.options,
+              }))
+            }
+          >
+            <option value="single_choice">single choice</option>
+            <option value="multiple_choice">multiple choice</option>
+            <option value="text">text</option>
+          </select>
+          <input
+            aria-label={`Question ${index + 1} label`}
+            value={question.label}
+            placeholder="What should happen?"
+            onChange={(event) =>
+              patch(index, (current) => ({ ...current, label: event.target.value }))
+            }
+          />
+          {question.type === "text" ? null : (
+            <input
+              aria-label={`Question ${index + 1} options`}
+              value={question.options.join(", ")}
+              placeholder="approve, revise, reject"
+              onChange={(event) =>
+                patch(index, (current) => ({
+                  ...current,
+                  options: event.target.value
+                    .split(",")
+                    .map((value) => value.trim())
+                    .filter(Boolean),
+                }))
+              }
+            />
+          )}
+          <button
+            type="button"
+            className="flow-inspector-delete"
+            onClick={() =>
+              props.onChange(props.questions.filter((_, current) => current !== index))
+            }
+          >
+            Remove question
+          </button>
+        </div>
+      ))}
+      <button
+        type="button"
+        onClick={() =>
+          props.onChange([
+            ...props.questions,
+            {
+              id: `question_${props.questions.length + 1}`,
+              type: "text",
+              label: "Question",
+              options: [],
+            },
+          ])
+        }
+      >
+        <Plus size={14} /> Add question
+      </button>
+    </div>
+  );
+}
+
 function JsonField(props: {
   readonly label: string;
   readonly value: unknown;
@@ -1453,7 +1612,15 @@ function resourceTargets(
 function defaultStep(kind: FlowStepKind, targets: readonly ResourceTarget[]): FlowStep {
   const version = "1.0.0";
   if (kind === "human")
-    return { human: { kind: "approval", prompt: "Approve this step" }, version };
+    return {
+      human: {
+        kind: "approval",
+        prompt: "Approve this step",
+        options: ["approve", "reject"],
+        approveOption: "approve",
+      },
+      version,
+    };
   const target = targets.find((item) => item.kind === kind)?.ref ?? `${kind}:select_me@1.0.0`;
   return { [kind]: { ref: target }, version } as FlowStep;
 }
