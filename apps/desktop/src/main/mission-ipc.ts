@@ -14,10 +14,11 @@ import {
   RespondMissionHumanInteractionSchema,
   SendMissionMessageSchema,
   UpdateMissionOptionsSchema,
+  type DesktopToolPermissionMode,
 } from "../shared/desktop-api.ts";
 import type { MissionRunner } from "./mission-runner.ts";
 import type { MissionStore } from "./mission-store.ts";
-import type { DesktopToolPermissionMode } from "../shared/desktop-api.ts";
+import type { PragmaProjectStore } from "./pragma-project-store.ts";
 import type { MissionExecutorCatalog } from "./mission-executor-catalog.ts";
 import type { MissionCreator } from "./mission-creator.ts";
 import { availableRecentWorkspaces } from "./workspace-history-store.ts";
@@ -27,6 +28,7 @@ export function installMissionHandlers(options: {
   readonly missions: MissionStore;
   readonly creator: MissionCreator;
   readonly executors: MissionExecutorCatalog;
+  readonly project: PragmaProjectStore;
   readonly runner: MissionRunner;
   readonly getWindow: () => BrowserWindow | null;
   readonly getDefaultToolPermissionMode: () =>
@@ -46,9 +48,17 @@ export function installMissionHandlers(options: {
   );
   ipcMain.handle("missions:model-options:get", async (_event, input: unknown) => {
     const { executorRef, missionId } = MissionModelOptionsRequestSchema.parse(input);
-    const runtimeBinding =
-      missionId === undefined ? undefined : await options.runner.getRuntimeBinding(missionId);
-    return await options.executors.getModelOptions(executorRef, runtimeBinding);
+    if (missionId === undefined) return await options.executors.getModelOptions(executorRef);
+    const mission = await options.missions.get(missionId);
+    const [runtimeBinding, project] = await Promise.all([
+      options.runner.getRuntimeBinding(missionId),
+      options.project.openRevision(mission.project.revision),
+    ]);
+    return await options.executors.getModelOptions(
+      executorRef,
+      runtimeBinding,
+      project.listResources(),
+    );
   });
   ipcMain.handle("missions:create-defaults:get", async () => {
     const workspace = await options.getDefaultWorkspace();
@@ -76,12 +86,6 @@ export function installMissionHandlers(options: {
         : { toolPermissionMode: parsed.toolPermissionMode }),
     });
     await options.recordWorkspaceUsage(parsed.workspace);
-    void options.runner
-      .summarizeTitle(mission.id)
-      .then((updated) => options.getWindow()?.webContents.send("missions:updated", updated))
-      .catch((error: unknown) => {
-        console.warn(`Failed to summarize Mission title ${mission.id}.`, error);
-      });
     return mission;
   });
   ipcMain.handle("missions:run", (_event, input: unknown) =>

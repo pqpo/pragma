@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { isReadOnlyToolName, resolveAutomaticToolPermission } from "./tool-permission-policy.ts";
+import { resolveAutomaticToolPermission } from "./tool-permission-policy.ts";
 
 const request = (toolName: string) => ({
   kind: "tool_approval" as const,
@@ -10,22 +10,14 @@ const request = (toolName: string) => ({
 
 describe("Desktop tool permission policy", () => {
   it.each([
-    "list_dsl_resources",
-    "read_dsl_resource",
+    "read_and_delete",
+    "get_then_write",
     "mcp__pragma__get_task",
-    "Grep",
     "WebSearch",
-  ])("always recognizes %s as read-only", (toolName) => {
-    expect(isReadOnlyToolName(toolName)).toBe(true);
-    expect(resolveAutomaticToolPermission("request-approval", request(toolName))).toMatchObject({
-      approved: true,
-    });
-  });
-
-  it("defers mutations in request-approval mode", () => {
-    expect(resolveAutomaticToolPermission("request-approval", request("commit_dsl_changes"))).toBe(
-      undefined,
-    );
+    "webfetch",
+    "commit_dsl_changes",
+  ])("defers %s when the Runtime requests approval", (toolName) => {
+    expect(resolveAutomaticToolPermission("request-approval", request(toolName))).toBe(undefined);
   });
 
   it.each(["auto-approve", "full-access"] as const)(

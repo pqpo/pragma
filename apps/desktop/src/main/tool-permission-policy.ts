@@ -6,10 +6,6 @@ import type {
 
 import type { DesktopToolPermissionMode } from "../shared/desktop-api.ts";
 
-const READ_ONLY_TOOL_PREFIX =
-  /^(?:get|list|read|search|find|inspect|view|show|describe|preview|validate|check)(?:_|$)/;
-const READ_ONLY_TOOL_NAMES = new Set(["glob", "grep", "webfetch", "websearch", "ls", "pwd"]);
-
 export function createAutomaticToolPermissionHandler(
   getMode: () => DesktopToolPermissionMode | Promise<DesktopToolPermissionMode>,
 ): ExpertAgentAutomaticHumanInteractionHandler {
@@ -25,7 +21,7 @@ export function resolveAutomaticToolPermission(
   request: ExpertAgentHumanRequest,
 ): ExpertAgentHumanResponse | undefined {
   if (request.kind !== "tool_approval") return undefined;
-  if (isReadOnlyToolName(request.toolName) || mode !== "request-approval") {
+  if (mode !== "request-approval") {
     return {
       kind: "tool_approval",
       approved: true,
@@ -33,15 +29,4 @@ export function resolveAutomaticToolPermission(
     };
   }
   return undefined;
-}
-
-export function isReadOnlyToolName(toolName: string): boolean {
-  const normalized = normalizeToolName(toolName);
-  return READ_ONLY_TOOL_NAMES.has(normalized) || READ_ONLY_TOOL_PREFIX.test(normalized);
-}
-
-function normalizeToolName(toolName: string): string {
-  const normalized = toolName.trim().toLowerCase();
-  const delimiter = normalized.lastIndexOf("__");
-  return (delimiter < 0 ? normalized : normalized.slice(delimiter + 2)).replaceAll("-", "_");
 }

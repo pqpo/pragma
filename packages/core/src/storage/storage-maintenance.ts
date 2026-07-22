@@ -69,8 +69,10 @@ export async function assertStorageWriteAllowed(
   policy: StoragePolicy = DEFAULT_STORAGE_POLICY,
 ): Promise<void> {
   const overview = await inspectStorage(paths, policy);
-  if (overview.totalBytes >= policy.globalHardLimitBytes) {
-    throw new StorageCapacityExceededError(overview);
+  if (overview.totalBytes < policy.globalHardLimitBytes) return;
+  const maintenance = await runStorageMaintenance({ paths, policy, pressure: true });
+  if (maintenance.after.totalBytes >= policy.globalHardLimitBytes) {
+    throw new StorageCapacityExceededError(maintenance.after);
   }
 }
 
@@ -78,6 +80,7 @@ export async function runStorageMaintenance(input: {
   readonly paths: PragmaPaths;
   readonly policy?: StoragePolicy | undefined;
   readonly now?: number | undefined;
+  readonly pressure?: boolean | undefined;
 }): Promise<StorageMaintenanceResult> {
   const policy = input.policy ?? DEFAULT_STORAGE_POLICY;
   const now = input.now ?? Date.now();
@@ -112,6 +115,14 @@ export async function runStorageMaintenance(input: {
       graceMs: policy.contentGcGraceMs,
       now,
     });
+    const afterRebuildableCleanup = await inspectStorage(input.paths, policy);
+    const pressureTrash =
+      input.pressure === true && afterRebuildableCleanup.totalBytes > policy.globalSoftLimitBytes
+        ? await purgeCompletedTrashForPressure(
+            input.paths,
+            afterRebuildableCleanup.totalBytes - policy.globalSoftLimitBytes,
+          )
+        : { deleted: 0 };
     const after = await inspectStorage(input.paths, policy);
     await rebuildStorageCatalog(input.paths, new Date(now));
     return {
@@ -120,11 +131,54 @@ export async function runStorageMaintenance(input: {
       deletedCacheEntries: cache.deleted,
       deletedArchives: archives.deleted,
       deletedTemporaryEntries: temporary.deleted,
-      deletedTrashEntries: trash.deleted,
+      deletedTrashEntries: trash.deleted + pressureTrash.deleted,
       deletedContentObjects: content.deletedObjects,
       reclaimedContentBytes: content.reclaimedBytes,
     };
   });
+}
+
+async function purgeCompletedTrashForPressure(
+  paths: PragmaPaths,
+  reclaimBytes: number,
+): Promise<{ readonly deleted: number }> {
+  const candidates = await directChildren(paths.trashRoot());
+  const completed = (
+    await Promise.all(
+      candidates.map(async (candidate) => {
+        const deletionId = basename(candidate.path);
+        const journalPath = join(paths.deletionJournalRoot(), `${deletionId}.json`);
+        const journal = await readFile(journalPath, "utf8")
+          .then(
+            (value) =>
+              JSON.parse(value) as {
+                readonly status?: unknown;
+                readonly completedAt?: unknown;
+              },
+          )
+          .catch(() => undefined);
+        if (journal?.status !== "trashed" || typeof journal.completedAt !== "string") {
+          return undefined;
+        }
+        const completedAt = Date.parse(journal.completedAt);
+        return Number.isFinite(completedAt)
+          ? { ...candidate, journalPath, completedAt }
+          : undefined;
+      }),
+    )
+  )
+    .filter((candidate) => candidate !== undefined)
+    .toSorted((left, right) => left.completedAt - right.completedAt);
+  let reclaimed = 0;
+  let deleted = 0;
+  for (const candidate of completed) {
+    if (reclaimed >= reclaimBytes) break;
+    await rm(candidate.path, { recursive: true, force: true });
+    await rm(candidate.journalPath, { force: true });
+    reclaimed += candidate.bytes;
+    deleted += 1;
+  }
+  return { deleted };
 }
 
 interface Candidate {

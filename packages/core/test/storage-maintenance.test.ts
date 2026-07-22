@@ -1,11 +1,15 @@
-import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
 import { PragmaPaths } from "../src/storage/pragma-paths.ts";
-import { runStorageMaintenance } from "../src/storage/storage-maintenance.ts";
+import { moveOwnedStorageToTrash } from "../src/storage/deletion-transaction.ts";
+import {
+  assertStorageWriteAllowed,
+  runStorageMaintenance,
+} from "../src/storage/storage-maintenance.ts";
 import { DEFAULT_STORAGE_POLICY } from "../src/storage/storage-policy.ts";
 
 const roots: string[] = [];
@@ -72,5 +76,29 @@ describe("runStorageMaintenance", () => {
     await expect(stat(projectView)).resolves.toBeDefined();
     await expect(stat(leaseDirectory)).resolves.toBeDefined();
     await expect(stat(lease)).resolves.toBeDefined();
+  });
+
+  it("purges completed fresh trash under hard-limit pressure", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-storage-maintenance-pressure-"));
+    roots.push(root);
+    const paths = new PragmaPaths({ pragmaHome: root });
+    const source = join(paths.dataRoot(), "large-owner");
+    await mkdir(source, { recursive: true });
+    await writeFile(join(source, "payload.bin"), Buffer.alloc(8_192));
+    await moveOwnedStorageToTrash({
+      paths,
+      owner: { type: "test", id: "large-owner" },
+      sources: [{ label: "owner", path: source }],
+    });
+
+    await expect(
+      assertStorageWriteAllowed(paths, {
+        ...DEFAULT_STORAGE_POLICY,
+        globalSoftLimitBytes: 1_024,
+        globalHardLimitBytes: 4_096,
+        trashTtlMs: Number.MAX_SAFE_INTEGER,
+      }),
+    ).resolves.toBeUndefined();
+    await expect(readdir(paths.trashRoot())).resolves.toEqual([]);
   });
 });

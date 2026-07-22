@@ -413,6 +413,7 @@ function createDesktopProjectSourceRepository(options: {
   const objects = new ContentAddressedStore(options.objectsPath);
   const projectViewsPath = options.projectViewsPath;
   const projectViewLeasesPath = join(dirname(projectViewsPath), "project-view-leases");
+  const projectViewLocksPath = join(dirname(projectViewsPath), "project-view-locks");
 
   const readManifest = async (projectId: string) => {
     try {
@@ -445,27 +446,38 @@ function createDesktopProjectSourceRepository(options: {
   const ensureView = async (snapshotHash: string): Promise<string> => {
     const target = join(projectViewsPath, snapshotHash);
     const marker = join(target, ".pragma-snapshot");
-    try {
-      if ((await readFile(marker, "utf8")).trim() === snapshotHash) return target;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-    }
-    const temporary = join(projectViewsPath, `.${snapshotHash}.${randomUUID()}.tmp`);
-    await rm(temporary, { recursive: true, force: true });
-    await mkdir(temporary, { recursive: true, mode: 0o700 });
-    try {
-      await objects.materializeTree(snapshotHash, temporary, { touchObjects: true });
-      await writeFile(join(temporary, ".pragma-snapshot"), `${snapshotHash}\n`, { mode: 0o600 });
-      await mkdir(projectViewsPath, { recursive: true, mode: 0o700 });
-      try {
-        await rename(temporary, target);
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      }
-      return target;
-    } finally {
-      await rm(temporary, { recursive: true, force: true });
-    }
+    return await withFileLock(
+      join(projectViewLocksPath, snapshotHash),
+      async () => {
+        if (await hasSnapshotMarker(marker, snapshotHash)) return target;
+        await rm(target, { recursive: true, force: true });
+        const temporary = join(projectViewsPath, `.${snapshotHash}.${randomUUID()}.tmp`);
+        await rm(temporary, { recursive: true, force: true });
+        await mkdir(temporary, { recursive: true, mode: 0o700 });
+        try {
+          await objects.materializeTree(snapshotHash, temporary, { touchObjects: true });
+          await writeFile(join(temporary, ".pragma-snapshot"), `${snapshotHash}\n`, {
+            mode: 0o600,
+          });
+          await mkdir(projectViewsPath, { recursive: true, mode: 0o700 });
+          try {
+            await rename(temporary, target);
+          } catch (error) {
+            const code = errorCode(error);
+            if (
+              (code !== "EEXIST" && code !== "ENOTEMPTY") ||
+              !(await hasSnapshotMarker(marker, snapshotHash))
+            ) {
+              throw error;
+            }
+          }
+          return target;
+        } finally {
+          await rm(temporary, { recursive: true, force: true });
+        }
+      },
+      { timeoutMs: 30_000, staleMs: 300_000 },
+    );
   };
 
   const location = async (
@@ -593,6 +605,15 @@ function createDesktopProjectSourceRepository(options: {
       );
     },
   };
+}
+
+async function hasSnapshotMarker(marker: string, snapshotHash: string): Promise<boolean> {
+  try {
+    return (await readFile(marker, "utf8")).trim() === snapshotHash;
+  } catch (error) {
+    if (errorCode(error) === "ENOENT") return false;
+    throw error;
+  }
 }
 
 function assertProjectRelativePath(path: string): void {

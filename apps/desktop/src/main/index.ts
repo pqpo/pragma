@@ -404,6 +404,7 @@ void app.whenReady().then(async () => {
     missions: missionStore,
     creator: missionCreator,
     executors: missionExecutors,
+    project: pragmaProjectStore,
     getWindow: () => mainWindow,
     runner: missionRunner,
     getDefaultToolPermissionMode: getToolPermissionMode,

@@ -323,13 +323,6 @@ const api: PragmaDesktopAPI = {
     ipcRenderer.on("missions:chat:updated", handler);
     return () => ipcRenderer.removeListener("missions:chat:updated", handler);
   },
-  subscribeMissionUpdates: (listener) => {
-    const handler = (_event: IpcRendererEvent, value: unknown) => {
-      listener(MissionSchema.parse(value));
-    };
-    ipcRenderer.on("missions:updated", handler);
-    return () => ipcRenderer.removeListener("missions:updated", handler);
-  },
   interruptMission: async (id) =>
     MissionSchema.parse(
       await ipcRenderer.invoke("missions:interrupt", MissionActionSchema.parse({ id })),

@@ -65,11 +65,6 @@ export interface MissionStore {
       readonly modelOverride?: MissionModelOverride | undefined;
     },
   ): Promise<Mission>;
-  updateTitle(
-    id: string,
-    title: string,
-    guard?: { readonly expectedTitle?: string | undefined },
-  ): Promise<Mission>;
   updateExecution(
     id: string,
     execution: NonNullable<Mission["execution"]>,
@@ -388,15 +383,6 @@ export function createMissionStore(options: { readonly missionsPath: string }): 
         if (input.modelOverride === undefined) delete next.modelOverride;
         else next.modelOverride = input.modelOverride;
         return next;
-      });
-    },
-    async updateTitle(id, title, guard) {
-      const normalizedTitle = normalizeMissionTitle(title);
-      return await updateMission(MissionIdSchema.parse(id), (current, timestamp) => {
-        if (guard?.expectedTitle !== undefined && current.title !== guard.expectedTitle) {
-          return current;
-        }
-        return { ...current, title: normalizedTitle, updatedAt: timestamp };
       });
     },
     async updateExecution(id, execution, guard) {

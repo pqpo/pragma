@@ -32,6 +32,7 @@ export interface MissionExecutorCatalog {
   getModelOptions(
     ref: string,
     runtimeBinding?: RuntimeEnvironmentBinding | undefined,
+    projectResources?: readonly PragmaResource[] | undefined,
   ): Promise<MissionModelOptions>;
   validateModelOverride(
     ref: string,
@@ -48,7 +49,7 @@ export function createMissionExecutorCatalog(options: {
 }): MissionExecutorCatalog {
   const resolveRuntimeDefaults = async (
     ref: string,
-    project?: PragmaProjectSnapshot,
+    projectResources?: readonly PragmaResource[],
   ): Promise<
     | {
         readonly runtimeId: string;
@@ -75,15 +76,15 @@ export function createMissionExecutorCatalog(options: {
       };
     }
 
-    const snapshot = project ?? (await options.project.get());
-    const resource = snapshot.resources
+    const resources = projectResources ?? (await options.project.get()).resources;
+    const resource = resources
       .filter(isMissionExecutorResource)
       .find((candidate) => missionExecutorRef(candidate) === ref);
     if (resource === undefined || resource.kind === "Flow") return undefined;
     const expert =
       resource.kind === "Expert"
         ? resource
-        : snapshot.resources.find(
+        : resources.find(
             (candidate): candidate is PragmaExpertResource =>
               candidate.kind === "Expert" &&
               canonicalPragmaResourceRef(candidate) === resource.spec.coordinator.ref,
@@ -91,7 +92,7 @@ export function createMissionExecutorCatalog(options: {
     if (expert === undefined) {
       throw new Error(`Mission executor coordinator not found: ${ref}.`);
     }
-    return await projectExpertRuntimeDefaults(expert, snapshot.resources, options.runtimes);
+    return await projectExpertRuntimeDefaults(expert, resources, options.runtimes);
   };
 
   const bindRuntimeDefaults = async (
@@ -136,8 +137,8 @@ export function createMissionExecutorCatalog(options: {
         .find((candidate) => missionExecutorRef(candidate) === ref);
       return resource === undefined ? undefined : projectExecutor(resource);
     },
-    async getModelOptions(ref, runtimeBinding) {
-      const defaults = await resolveRuntimeDefaults(ref);
+    async getModelOptions(ref, runtimeBinding, projectResources) {
+      const defaults = await resolveRuntimeDefaults(ref, projectResources);
       if (defaults === undefined) throw new Error("Flow missions do not support a model override.");
       const resolved = await bindRuntimeDefaults(defaults, undefined, runtimeBinding);
       const availability = await resolved.adapter.canUse();
@@ -174,7 +175,7 @@ export function createMissionExecutorCatalog(options: {
       }
     },
     async validateModelOverride(ref, override, project, runtimeBinding) {
-      const defaults = await resolveRuntimeDefaults(ref, project);
+      const defaults = await resolveRuntimeDefaults(ref, project.resources);
       if (defaults === undefined) throw new Error("Flow missions do not support a model override.");
       await bindRuntimeDefaults(defaults, toModelSelection(override), runtimeBinding);
     },

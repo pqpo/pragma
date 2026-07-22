@@ -86,6 +86,37 @@ describe("PragmaProjectStore", () => {
     expect((await first.get()).revision).toBe(1);
   });
 
+  it("materializes one cold snapshot view across concurrent project stores", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "pragma-project-view-concurrent-"));
+    directories.push(directory);
+    const first = createPragmaProjectStore({ projectsPath: directory });
+    const published = await first.publish({
+      expectedRevision: 0,
+      resources: [exampleRuntime(), exampleExpert()],
+    });
+    const revision = JSON.parse(
+      await readFile(join(directory, "studio/revisions/1.json"), "utf8"),
+    ) as { readonly snapshotHash: string };
+    await rm(join(directory, ".cache/views", revision.snapshotHash), {
+      recursive: true,
+      force: true,
+    });
+    const second = createPragmaProjectStore({ projectsPath: directory });
+
+    const projects = await Promise.all(
+      Array.from(
+        { length: 20 },
+        async (_, index) =>
+          await (index % 2 === 0 ? first : second).openRevision(published.revision),
+      ),
+    );
+
+    expect(projects.every((project) => project.listResources().length === 2)).toBe(true);
+    await expect(
+      readFile(join(directory, ".cache/views", revision.snapshotHash, ".pragma-snapshot"), "utf8"),
+    ).resolves.toBe(`${revision.snapshotHash}\n`);
+  });
+
   it("publishes immutable YAML revisions containing experts, teams, and flows", async () => {
     const { directory, project } = await stores();
     const expert = exampleExpert();

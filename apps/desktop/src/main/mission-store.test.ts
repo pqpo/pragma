@@ -81,7 +81,7 @@ describe("mission store", () => {
     expect(reopened.completedAt).toBeUndefined();
   });
 
-  it("limits fallback titles and guards asynchronous title replacement", async () => {
+  it("limits rule-based titles derived from the Mission goal", async () => {
     const root = await temporaryRoot();
     const store = createMissionStore({ missionsPath: join(root, "missions") });
     const created = await store.create({
@@ -93,16 +93,6 @@ describe("mission store", () => {
 
     expect(Array.from(created.title)).toHaveLength(MISSION_TITLE_MAX_LENGTH);
     expect(created.title.endsWith("…")).toBe(true);
-
-    const summarized = await store.updateTitle(created.id, "批量创建 Git 子模块兼容分支", {
-      expectedTitle: created.title,
-    });
-    expect(summarized.title).toBe("批量创建 Git 子模块兼容分支");
-
-    const stale = await store.updateTitle(created.id, "不应覆盖较新的标题", {
-      expectedTitle: created.title,
-    });
-    expect(stale.title).toBe(summarized.title);
   });
 
   it("updates idle Mission options without changing pinned Mission identity", async () => {

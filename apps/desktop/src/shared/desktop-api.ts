@@ -1546,7 +1546,6 @@ export interface PragmaDesktopAPI {
   sendMissionMessage: (input: SendMissionMessage) => Promise<Mission>;
   getMissionChat: (input: GetMissionChat) => Promise<MissionChatSnapshot>;
   subscribeMissionChat: (id: string, listener: (update: MissionChatUpdate) => void) => () => void;
-  subscribeMissionUpdates: (listener: (mission: Mission) => void) => () => void;
   interruptMission: (id: string) => Promise<Mission>;
   getMissionWork: (id: string) => Promise<MissionWorkSnapshot>;
   getMissionWorkConversation: (

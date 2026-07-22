@@ -187,12 +187,6 @@ export function MissionsPage(props: {
     };
   }, [openMission]);
 
-  useEffect(() => {
-    const api = desktopApi();
-    if (api === undefined) return;
-    return api.subscribeMissionUpdates(replaceMission);
-  }, [replaceMission]);
-
   const visibleMissions = useMemo(() => {
     const query = search.trim().toLocaleLowerCase();
     if (query === "") return missions;

@@ -1,4 +1,5 @@
 import type { RuntimeModel, RuntimeResolver } from "@pragma/core";
+import type { PragmaResource } from "@pragma/interpreter/ast";
 import { describe, expect, it } from "vitest";
 
 import { createMissionExecutorCatalog } from "./mission-executor-catalog.ts";
@@ -149,6 +150,58 @@ describe("Mission executor model options", () => {
       models: [{ id: "pi-model", provider: { id: "pi-provider" } }],
       defaultSelection: { providerId: "pi-provider", modelId: "pi-model" },
     });
+  });
+
+  it("resolves model defaults from the Mission's pinned project resources", async () => {
+    const boundRuntimeIds: string[] = [];
+    const runtime = {
+      descriptor: { id: "pinned-runtime", kind: "test", displayName: "Pinned Runtime" },
+      canUse: async () => ({ usable: true }),
+      listModels: async () => [],
+    };
+    const runtimes: RuntimeResolver = {
+      getDefaultRuntimeId: async () => "current-runtime",
+      bind: async (request) => {
+        const runtimeId = request?.runtimeId;
+        if (runtimeId === undefined) throw new Error("Expected an explicit Runtime ID.");
+        boundRuntimeIds.push(runtimeId);
+        return {
+          binding: { runtimeId, revision: 1, fingerprint: "a".repeat(64) },
+          adapter: runtime,
+        };
+      },
+      resolve: async () => {
+        throw new Error("unused");
+      },
+    };
+    const project = {
+      get: async () => ({ resources: [] }),
+    } as unknown as PragmaProjectStore;
+    const systemExperts = {
+      get: () => undefined,
+      getExecutor: () => undefined,
+      listExecutors: () => [],
+    } as unknown as DesktopSystemExpertRegistry;
+    const catalog = createMissionExecutorCatalog({ project, systemExperts, runtimes });
+    const resources = [
+      {
+        apiVersion: "pragma/v2",
+        kind: "RuntimeProfile",
+        metadata: { id: "pinned", name: "Pinned", version: "1.0.0" },
+        spec: { config: { runtimeId: "pinned-runtime" } },
+      },
+      {
+        apiVersion: "pragma/v2",
+        kind: "Expert",
+        metadata: { id: "worker", name: "Worker", version: "1.0.0" },
+        spec: { runtime: { ref: "runtime-profile:pinned@1.0.0" } },
+      },
+    ] as unknown as readonly PragmaResource[];
+
+    await expect(
+      catalog.getModelOptions("expert:worker@1.0.0", undefined, resources),
+    ).resolves.toMatchObject({ runtime: { id: "pinned-runtime" } });
+    expect(boundRuntimeIds).toEqual(["pinned-runtime"]);
   });
 });
 
