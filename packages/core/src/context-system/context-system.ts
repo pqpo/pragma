@@ -355,6 +355,31 @@ export class ContextSystem {
     this.roots = normalizeContextRoots(options.roots);
   }
 
+  extend(options: ContextSystemOptions): ContextSystem {
+    const extended = new ContextSystem({
+      roots:
+        this.roots.length === 0 ? [] : [...this.roots, ...normalizeContextRoots(options.roots)],
+    });
+
+    for (const [namespace, binding] of this.stores) {
+      extended.registerOrThrow({ namespace, store: binding.store, required: binding.required });
+    }
+
+    if (options.store !== undefined) {
+      extended.registerOrThrow({
+        namespace: HOST_CONTEXT_NAMESPACE,
+        store: options.store,
+        required: true,
+      });
+    }
+
+    for (const [namespace, store] of normalizeStoreEntries(options.stores)) {
+      extended.registerOrThrow({ namespace, store, required: false });
+    }
+
+    return extended;
+  }
+
   register(
     input: ExpertAgentContextStoreRegistrationInput,
   ): ExpertAgentContextResult<ExpertAgentContextStoreRegistration> {

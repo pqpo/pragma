@@ -30,8 +30,8 @@ export async function prepareGitSessionEnvironment(
 ): Promise<GitSessionEnvironment> {
   const env = options.env ?? process.env;
   const gitVersion = await checkGitCli(options);
-  const localHttpExtraHeaderKeys = await readLocalHttpExtraHeaderKeys(options);
-  const prepared = await createGitSessionEnvironment(config.auth, localHttpExtraHeaderKeys);
+  const localProtectedConfigKeys = await readLocalProtectedConfigKeys(options);
+  const prepared = await createGitSessionEnvironment(config.auth, localProtectedConfigKeys);
 
   return {
     gitVersion,
@@ -56,7 +56,7 @@ export async function checkGitCli(options: GitCommandOptions = {}): Promise<stri
 
 async function createGitSessionEnvironment(
   auth: CodeRepositoryAuth,
-  localHttpExtraHeaderKeys: readonly string[],
+  localProtectedConfigKeys: readonly string[],
 ): Promise<{
   readonly env: Readonly<Record<string, string>>;
   readonly cleanup: () => Promise<void>;
@@ -66,11 +66,19 @@ async function createGitSessionEnvironment(
   }
 
   const tempDir = await mkdtemp(resolve(tmpdir(), "pragma-git-session-"));
+  const protectedConfigEntries = createProtectedGitConfigEntries(
+    auth,
+    localProtectedConfigKeys,
+  );
+  const protectedConfigPath = resolve(tempDir, "gitconfig");
+  await writeFile(protectedConfigPath, formatProtectedGitConfig(protectedConfigEntries), {
+    mode: 0o600,
+  });
   const sharedEnv = {
     GIT_CONFIG_NOSYSTEM: "1",
-    GIT_CONFIG_GLOBAL: devNull,
+    GIT_CONFIG_GLOBAL: protectedConfigPath,
     GIT_TERMINAL_PROMPT: "0",
-    ...createProtectedGitConfigEnvironment(auth, localHttpExtraHeaderKeys),
+    ...createProtectedGitConfigEnvironment(protectedConfigEntries),
   };
 
   if (auth.strategy === "none") {
@@ -179,14 +187,14 @@ async function writeAskPassScript(tempDir: string, lines: readonly string[]): Pr
   return askPassPath;
 }
 
-function createProtectedGitConfigEnvironment(
+function createProtectedGitConfigEntries(
   auth: CodeRepositoryAuth,
-  localHttpExtraHeaderKeys: readonly string[],
-): Readonly<Record<string, string>> {
+  localProtectedConfigKeys: readonly string[],
+): readonly (readonly [string, string])[] {
   const entries: [string, string][] = [
     ["credential.helper", ""],
     ["http.extraHeader", ""],
-    ...localHttpExtraHeaderKeys.map((key): [string, string] => [key, ""]),
+    ...localProtectedConfigKeys.map((key): [string, string] => [key, ""]),
   ];
 
   if (auth.strategy === "token") {
@@ -195,7 +203,16 @@ function createProtectedGitConfigEnvironment(
     entries.push(["credential.helper", auth.helper]);
   }
 
+  return entries;
+}
+
+function createProtectedGitConfigEnvironment(
+  entries: readonly (readonly [string, string])[],
+): Readonly<Record<string, string>> {
   return {
+    GIT_CONFIG_PARAMETERS: entries
+      .map(([key, value]) => quoteGitConfigParameter(`${key}=${value}`))
+      .join(" "),
     GIT_CONFIG_COUNT: String(entries.length),
     ...Object.fromEntries(
       entries.flatMap(([key, value], index) => [
@@ -206,7 +223,43 @@ function createProtectedGitConfigEnvironment(
   };
 }
 
-async function readLocalHttpExtraHeaderKeys(
+function quoteGitConfigParameter(value: string): string {
+  if (hasControlCharacter(value)) {
+    throw new Error("Protected Git config parameters cannot contain control characters.");
+  }
+  return `'${value.replaceAll("'", "'\\''")}'`;
+}
+
+function formatProtectedGitConfig(entries: readonly (readonly [string, string])[]): string {
+  return `${entries.map(([key, value]) => formatProtectedGitConfigEntry(key, value)).join("\n")}\n`;
+}
+
+function formatProtectedGitConfigEntry(key: string, value: string): string {
+  if (key === "credential.helper" || key === "credential.username") {
+    return `[credential]\n\t${key.slice("credential.".length)} = ${quoteGitConfigValue(value)}`;
+  }
+  if (key === "http.extraHeader") {
+    return `[http]\n\textraHeader = ${quoteGitConfigValue(value)}`;
+  }
+  if (key.startsWith("credential.") && key.endsWith(".helper")) {
+    const subsection = key.slice("credential.".length, -".helper".length);
+    return `[credential ${quoteGitConfigValue(subsection)}]\n\thelper = ${quoteGitConfigValue(value)}`;
+  }
+  if (key.startsWith("http.") && key.endsWith(".extraheader")) {
+    const subsection = key.slice("http.".length, -".extraheader".length);
+    return `[http ${quoteGitConfigValue(subsection)}]\n\textraHeader = ${quoteGitConfigValue(value)}`;
+  }
+  throw new Error(`Unsupported protected Git config key: ${key}`);
+}
+
+function quoteGitConfigValue(value: string): string {
+  if (hasControlCharacter(value)) {
+    throw new Error("Protected Git config values cannot contain control characters.");
+  }
+  return `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
+}
+
+async function readLocalProtectedConfigKeys(
   options: GitCommandOptions,
 ): Promise<readonly string[]> {
   if (options.workspaceRoot === undefined) return [];
@@ -220,27 +273,27 @@ async function readLocalHttpExtraHeaderKeys(
     return [];
   }
 
+  const keys = await Promise.all([
+    readLocalConfigKeys(options, env, "^credential\\..*\\.helper$"),
+    readLocalConfigKeys(options, env, "^http\\..*\\.extraheader$"),
+  ]);
+  return [...new Set(keys.flat())];
+}
+
+async function readLocalConfigKeys(
+  options: GitCommandOptions,
+  env: Readonly<NodeJS.ProcessEnv>,
+  pattern: string,
+): Promise<readonly string[]> {
   try {
     const result = await execGit(
-      [
-        "-C",
-        options.workspaceRoot,
-        "config",
-        "--local",
-        "--name-only",
-        "--get-regexp",
-        "^http\\..*\\.extraheader$",
-      ],
+      ["-C", options.workspaceRoot!, "config", "--local", "--name-only", "--get-regexp", pattern],
       { ...options, env },
     );
-    return [
-      ...new Set(
-        result.stdout
-          .split("\n")
-          .map((key) => key.trim())
-          .filter(Boolean),
-      ),
-    ];
+    return result.stdout
+      .split("\n")
+      .map((key) => key.trim())
+      .filter(Boolean);
   } catch (error) {
     if (readExitCode(error) === 1) return [];
     throw error;

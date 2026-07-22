@@ -1,0 +1,35 @@
+{
+  "name": "@pragma/default-agent",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./contracts": {
+      "types": "./src/contracts.ts",
+      "default": "./src/contracts.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "lint": "eslint src test scripts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --passWithNoTests",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@pragma/core": "workspace:*",
+    "@pragma/interpreter": "workspace:*",
+    "@pragma/shared": "workspace:*",
+    "zod": "latest"
+  },
+  "devDependencies": {
+    "@pragma/tsconfig": "workspace:*",
+    "@types/node": "latest",
+    "typescript": "latest",
+    "vitest": "latest"
+  }
+}

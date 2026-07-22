@@ -5,6 +5,7 @@ import { dirname, extname, isAbsolute, join, relative, resolve } from "node:path
 import {
   ExpertAgentPluginManifestSchema,
   PragmaPaths,
+  assertStorageWriteAllowed,
   createExpertAgentPluginPackageFingerprint,
   encodePragmaPathSegment,
   resolveExpertAgentPluginConfig,
@@ -64,6 +65,7 @@ export interface ResolvedDesktopPlugin {
   readonly ref: `plugin:${string}@${string}`;
   readonly source: string;
   readonly packageFingerprint: string;
+  readonly cachePolicy: "immutable" | "host-managed";
   readonly userConfig: Readonly<Record<string, unknown>>;
   readonly verificationFingerprint: string;
 }
@@ -199,6 +201,7 @@ export function createPluginStore(options: {
     },
     inspectZip: inspectPluginZip,
     async importZip(input) {
+      await assertStorageWriteAllowed(options.paths);
       const inspection = await inspectPluginZip(input.sourcePath);
       if (inspection.contentHash !== input.expectedHash) {
         throw new PluginStoreError(
@@ -427,6 +430,7 @@ export function createPluginStore(options: {
         ref: plugin.ref as `plugin:${string}@${string}`,
         source: plugin.root,
         packageFingerprint: plugin.packageFingerprint,
+        cachePolicy: plugin.origin === "built_in" ? "host-managed" : "immutable",
         userConfig: config,
         verificationFingerprint: createVerificationFingerprint(
           input.ref,

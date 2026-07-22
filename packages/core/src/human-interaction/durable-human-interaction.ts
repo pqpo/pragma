@@ -235,21 +235,25 @@ function scopeMatches(candidate: HumanInteractionScope, expected: HumanInteracti
   return Object.entries(expected).every(([key, value]) => candidate[key] === value);
 }
 
-function sameHumanRequest(left: ExpertAgentHumanRequest, right: ExpertAgentHumanRequest): boolean {
+export function sameHumanRequest(
+  left: ExpertAgentHumanRequest,
+  right: ExpertAgentHumanRequest,
+): boolean {
   return stableStringify(logicalHumanRequest(left)) === stableStringify(logicalHumanRequest(right));
 }
 
 function logicalHumanRequest(request: ExpertAgentHumanRequest): unknown {
-  if (request.kind !== "tool_approval") {
-    return request;
-  }
-
-  return {
-    kind: request.kind,
-    toolName: request.toolName,
-    reason: request.reason,
-    input: request.input,
-  };
+  return request.kind === "tool_approval"
+      ? {
+        kind: request.kind,
+        toolName: request.toolName,
+        input: request.input,
+      }
+    : {
+        kind: request.kind,
+        toolName: request.toolName,
+        questions: request.questions,
+      };
 }
 
 function stableStringify(value: unknown): string {

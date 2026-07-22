@@ -1,9 +1,9 @@
 import {
-  createBuiltInModelProviderDirectory,
   createBuiltInModelProviderDriverRegistry,
   createUnknownProviderModel,
   discoverModelProviderModels,
 } from "@pragma/core";
+import { createPiModelProviderDirectory } from "@pragma/runtime-pi";
 
 import type {
   ModelDiscoveryResult,
@@ -13,7 +13,7 @@ import type {
 import { findModelProviderPreset } from "../shared/model-provider-presets.ts";
 import { normalizeModelProviderBaseUrl } from "./model-provider-store.ts";
 
-const directory = createBuiltInModelProviderDirectory();
+const directory = createPiModelProviderDirectory();
 const drivers = createBuiltInModelProviderDriverRegistry();
 
 export async function discoverProviderModels(options: {

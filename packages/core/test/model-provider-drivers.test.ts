@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
+import type { ModelProviderDirectory } from "../src/model-provider/model-provider.ts";
+import type { ProviderModelDefinition } from "@pragma/shared";
 
-import { createBuiltInModelProviderDirectory } from "../src/model-provider/model-provider-directory.ts";
 import {
   createBuiltInModelProviderDriverRegistry,
   discoverModelProviderModels,
@@ -25,7 +26,9 @@ describe("model provider drivers", () => {
         supportsDiscovery: true,
       },
       drivers: createBuiltInModelProviderDriverRegistry({ fetch: fetchImpl }),
-      directory: createBuiltInModelProviderDirectory(),
+      directory: testDirectory({
+        openai: [testModel("o4-mini-deep-research", true)],
+      }),
     });
 
     expect(result).toMatchObject({
@@ -48,7 +51,9 @@ describe("model provider drivers", () => {
         supportsDiscovery: false,
       },
       drivers: createBuiltInModelProviderDriverRegistry(),
-      directory: createBuiltInModelProviderDirectory(),
+      directory: testDirectory({
+        anthropic: [testModel("claude-sonnet-5", true)],
+      }),
     });
 
     expect(result).toMatchObject({
@@ -71,7 +76,7 @@ describe("model provider drivers", () => {
         supportsDiscovery: true,
       },
       drivers: createBuiltInModelProviderDriverRegistry({ fetch: fetchImpl }),
-      directory: createBuiltInModelProviderDirectory(),
+      directory: testDirectory({}),
     });
 
     expect(result).toMatchObject({ ok: true, source: "provider" });
@@ -177,3 +182,22 @@ describe("model provider drivers", () => {
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 });
+
+function testDirectory(
+  models: Readonly<Record<string, readonly ProviderModelDefinition[]>>,
+): ModelProviderDirectory {
+  return { listModels: (catalogId) => models[catalogId] ?? [] };
+}
+
+function testModel(id: string, reasoning: boolean): ProviderModelDefinition {
+  return {
+    id,
+    name: id,
+    reasoning,
+    ...(reasoning ? { thinking: { supportedLevels: ["off", "high"] } } : {}),
+    input: ["text"],
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: 128_000,
+    maxTokens: 16_384,
+  };
+}

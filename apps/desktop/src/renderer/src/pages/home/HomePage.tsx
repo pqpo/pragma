@@ -1,78 +1,80 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState, type RefObject } from "react";
 import {
-  ArrowRight,
-  Brain,
+  ArrowUp,
   CaretDown,
   Check,
-  PaperPlaneTilt,
-  Sparkle,
-  StopCircle,
-  Toolbox,
-  WarningCircle,
+  ClockCounterClockwise,
+  Folder,
+  FolderOpen,
+  GitBranch,
+  MagnifyingGlass,
+  User,
+  UsersThree,
 } from "@phosphor-icons/react";
 import { useTranslation } from "react-i18next";
-import type { HumanInteractionResponse } from "@pragma/shared";
 
 import type {
-  DesktopRuntimeAvailability,
   DesktopRuntimeModel,
-  StewardChatEntry,
-  StewardChatSnapshot,
-  StewardInteraction,
-  StewardSessionState,
+  DesktopToolPermissionMode,
+  Mission,
+  MissionExecutorOption,
+  MissionModelOverride,
 } from "../../../../shared/desktop-api.ts";
+import { ToolPermissionSelect } from "../../components/ToolPermissionSelect.tsx";
+import { MissionModelOverrideControls } from "../../components/MissionModelOverrideControls.tsx";
 import { errorMessage } from "../../lib/errors.ts";
-import { readStewardTaskWorkspace } from "../../lib/steward-preferences.ts";
-import { StewardInteractionCard } from "./StewardInteractionCard.tsx";
+import { localizeSystemExpertCopy } from "../../lib/system-expert-copy.ts";
+
+interface WorkspaceSelection {
+  readonly path: string;
+  readonly basename: string;
+}
 
 export function HomePage(props: {
-  readonly onOpenStudio: () => void;
-  readonly onOpenMissions: () => void;
-  readonly onOpenModelSettings: () => void;
+  readonly initialExecutorRef?: string | undefined;
+  readonly onCreated: (mission: Mission) => void | Promise<void>;
+  readonly onConfigureModels?: (() => void) | undefined;
 }) {
-  const { t } = useTranslation("home");
-  const [snapshot, setSnapshot] = useState<StewardChatSnapshot>({ state: null, entries: [] });
-  const [runtimes, setRuntimes] = useState<readonly DesktopRuntimeAvailability[]>([]);
-  const [runtimeId, setRuntimeId] = useState("pi");
-  const [modelKey, setModelKey] = useState("");
-  const [thinkingLevel, setThinkingLevel] = useState("");
-  const [workspace] = useState(() =>
-    readStewardTaskWorkspace(typeof window === "undefined" ? undefined : window.localStorage),
-  );
-  const [message, setMessage] = useState("");
-  const [interactions, setInteractions] = useState<readonly StewardInteraction[]>([]);
-  const [busy, setBusy] = useState(false);
+  const { t } = useTranslation("missions");
+  const [executors, setExecutors] = useState<readonly MissionExecutorOption[]>([]);
+  const [defaultWorkspace, setDefaultWorkspace] = useState<WorkspaceSelection>();
+  const [recentWorkspaces, setRecentWorkspaces] = useState<readonly WorkspaceSelection[]>([]);
+  const [workspaceOverride, setWorkspaceOverride] = useState<WorkspaceSelection>();
+  const [executorRef, setExecutorRef] = useState(props.initialExecutorRef ?? "");
+  const [defaultExecutorRef, setDefaultExecutorRef] = useState("");
+  const [goal, setGoal] = useState("");
+  const [toolPermissionMode, setToolPermissionMode] =
+    useState<DesktopToolPermissionMode>("request-approval");
+  const [models, setModels] = useState<readonly DesktopRuntimeModel[]>([]);
+  const [modelsLoading, setModelsLoading] = useState(false);
+  const [modelOverride, setModelOverride] = useState<MissionModelOverride>();
+  const [defaultModelSelection, setDefaultModelSelection] = useState<MissionModelOverride>();
+  const [saving, setSaving] = useState(false);
+  const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [configurationNeeded, setConfigurationNeeded] = useState(false);
-  const endRef = useRef<HTMLDivElement | null>(null);
-
-  const refresh = async () => {
-    const api = window.pragmaDesktop;
-    const chat = await api.getStewardChat();
-    const pending = chat.state === null ? [] : await api.listStewardInteractions();
-    setSnapshot(chat);
-    setInteractions(pending);
-  };
+  const [modelError, setModelError] = useState<string | null>(null);
+  const [modelResetRequired, setModelResetRequired] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     void Promise.all([
-      window.pragmaDesktop.getStewardState(),
-      window.pragmaDesktop.getRuntimeAvailability(),
+      window.pragmaDesktop.listMissionExecutors(),
+      window.pragmaDesktop.getMissionCreationDefaults(),
     ])
-      .then(([state, availability]) => {
+      .then(([availableExecutors, defaults]) => {
         if (cancelled) return;
-        setSnapshot((current) => ({ ...current, state }));
-        setRuntimes(availability);
-        setRuntimeId(
-          state?.runtimeId ??
-            availability.find((runtime) => runtime.isDefault)?.id ??
-            availability.find((runtime) => runtime.status === "available")?.id ??
-            "pi",
+        setExecutors(availableExecutors);
+        setDefaultWorkspace(defaults.workspace);
+        setRecentWorkspaces(defaults.recentWorkspaces);
+        setDefaultExecutorRef(defaults.executorRef);
+        setToolPermissionMode(defaults.toolPermissionMode);
+        const requested = props.initialExecutorRef ?? defaults.executorRef;
+        setExecutorRef(
+          availableExecutors.some((executor) => executor.ref === requested)
+            ? requested
+            : defaults.executorRef,
         );
-        if (state !== null) {
-          void refresh().catch((loadError: unknown) => setError(errorMessage(loadError)));
-        }
+        setLoaded(true);
       })
       .catch((loadError: unknown) => {
         if (!cancelled) setError(errorMessage(loadError));
@@ -80,338 +82,456 @@ export function HomePage(props: {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [props.initialExecutorRef]);
+
+  const selectedExecutor = executors.find((executor) => executor.ref === executorRef);
+  const hasValidExecutor = selectedExecutor !== undefined;
 
   useEffect(() => {
-    if (snapshot.state?.status !== "running" && snapshot.state?.status !== "waiting") return;
-    const timer = setInterval(() => {
-      void refresh().catch((loadError: unknown) => setError(errorMessage(loadError)));
-    }, 600);
-    return () => clearInterval(timer);
-  }, [snapshot.state?.status]);
+    if (hasValidExecutor || executors.length === 0) return;
+    const fallback =
+      executors.find((executor) => executor.ref === defaultExecutorRef) ?? executors[0];
+    setExecutorRef(fallback?.ref ?? "");
+  }, [defaultExecutorRef, executorRef, executors, hasValidExecutor]);
 
   useEffect(() => {
-    endRef.current?.scrollIntoView({ block: "end" });
-  }, [snapshot.entries.length, interactions.length]);
-
-  const selectedRuntime = useMemo(
-    () => runtimes.find((runtime) => runtime.id === runtimeId),
-    [runtimeId, runtimes],
-  );
-  const selectedModel = useMemo(
-    () => selectedRuntime?.models?.find((model) => runtimeModelKey(model) === modelKey),
-    [modelKey, selectedRuntime],
-  );
-  const modelSelection = useMemo(
-    () =>
-      selectedModel === undefined
-        ? undefined
-        : {
-            model: { providerId: selectedModel.provider.id, modelId: selectedModel.id },
-            ...(thinkingLevel === "" ? {} : { thinkingLevel }),
-          },
-    [selectedModel, thinkingLevel],
-  );
-
-  useEffect(() => {
-    const models = selectedRuntime?.models ?? [];
-    const remembered = snapshot.state?.modelSelection;
-    const rememberedKey =
-      snapshot.state?.runtimeId === runtimeId && remembered !== undefined
-        ? JSON.stringify([remembered.model.providerId, remembered.model.modelId])
-        : undefined;
-    const model =
-      models.find((candidate) => runtimeModelKey(candidate) === rememberedKey) ??
-      models.find((candidate) => candidate.default) ??
-      models[0];
-    setModelKey(model === undefined ? "" : runtimeModelKey(model));
-    setThinkingLevel(
-      model === undefined
-        ? ""
-        : rememberedKey === runtimeModelKey(model) && remembered?.thinkingLevel !== undefined
-          ? remembered.thinkingLevel
-          : (model.thinking?.defaultLevel ?? ""),
-    );
-  }, [runtimeId, runtimes, snapshot.state?.modelSelection, snapshot.state?.runtimeId]);
-
-  const initialized = snapshot.state !== null;
-  const turnActive = snapshot.state?.status === "running" || snapshot.state?.status === "waiting";
-  const canSend = message.trim() !== "" && !busy && runtimeId !== "" && !turnActive;
-
-  const send = async () => {
-    if (!canSend) return;
-    setBusy(true);
-    setError(null);
-    setConfigurationNeeded(false);
-    try {
-      if ((await window.pragmaDesktop.listModelProviders()).length === 0) {
-        setConfigurationNeeded(true);
-        return;
-      }
-      if (selectedRuntime?.status !== "available") {
-        throw new Error(selectedRuntime?.reason ?? t("errors.runtimeUnavailable"));
-      }
-      if (modelSelection === undefined) {
-        throw new Error(selectedRuntime.modelDiscoveryError ?? t("errors.noModelAvailable"));
-      }
-      let state: StewardSessionState | null = snapshot.state;
-      if (state === null) state = await window.pragmaDesktop.initializeSteward({ runtimeId });
-      const content = message.trim();
-      setMessage("");
-      const running = await window.pragmaDesktop.promptSteward({
-        content,
-        requestId: crypto.randomUUID(),
-        modelSelection,
-        ...(workspace === "" ? {} : { taskWorkspaceId: workspace }),
+    setModelOverride(undefined);
+    setDefaultModelSelection(undefined);
+    setModelError(null);
+    setModelResetRequired(false);
+    if (
+      selectedExecutor === undefined ||
+      (selectedExecutor.kind !== "expert" && selectedExecutor.kind !== "team")
+    ) {
+      setModels([]);
+      setModelsLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setModels([]);
+    setModelsLoading(true);
+    void window.pragmaDesktop
+      .getMissionModelOptions(selectedExecutor.ref)
+      .then((options) => {
+        if (cancelled) return;
+        setModels(options.models);
+        setDefaultModelSelection(options.defaultSelection);
+        setModelResetRequired(options.status === "reset_required");
+      })
+      .catch((loadError: unknown) => {
+        if (!cancelled) setModelError(errorMessage(loadError));
+      })
+      .finally(() => {
+        if (!cancelled) setModelsLoading(false);
       });
-      setSnapshot((current) => ({ ...current, state: running }));
-      await refresh();
-    } catch (sendError) {
-      setError(errorMessage(sendError));
-    } finally {
-      setBusy(false);
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedExecutor?.ref, selectedExecutor?.kind]);
+
+  const pickWorkspace = async () => {
+    try {
+      const result = await window.pragmaDesktop.pickWorkspace();
+      if (result.ok && result.path !== undefined && result.basename !== undefined) {
+        setWorkspaceOverride({ path: result.path, basename: result.basename });
+        setError(null);
+      } else if (result.reason !== "cancelled") {
+        setError(result.error ?? t("workspaceUnavailable"));
+      }
+    } catch (pickError) {
+      setError(errorMessage(pickError));
+    }
+  };
+
+  const submit = async () => {
+    const workspace = workspaceOverride ?? defaultWorkspace;
+    if (workspace === undefined || !hasValidExecutor || goal.trim() === "" || saving) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const mission = await window.pragmaDesktop.createMission({
+        workspace: workspace.path,
+        executor: { ref: executorRef },
+        goal: goal.trim(),
+        toolPermissionMode,
+        ...(modelOverride === undefined ? {} : { modelOverride }),
+      });
+      await props.onCreated(mission);
+    } catch (submitError) {
+      setError(errorMessage(submitError));
+      setSaving(false);
     }
   };
 
   return (
-    <section className="steward-home">
-      <header className="steward-home-header">
-        <div>
-          <span className="steward-eyebrow">PRAGMA STEWARD</span>
-          <h1>{t("title")}</h1>
-        </div>
-        {initialized ? (
-          <button
-            className="steward-text-button"
-            type="button"
-            onClick={() => {
-              if (!window.confirm(t("resetConfirm"))) {
-                return;
-              }
-              void window.pragmaDesktop.resetSteward().then(() => {
-                setSnapshot({ state: null, entries: [] });
-                setInteractions([]);
-              });
-            }}
-          >
-            {t("resetSession")}
-          </button>
-        ) : null}
-      </header>
-
-      <div className={snapshot.entries.length === 0 ? "steward-chat is-empty" : "steward-chat"}>
-        {snapshot.entries.length === 0 ? (
-          <div className="steward-welcome">
-            <span className="steward-orb">
-              <Sparkle size={28} weight="fill" />
-            </span>
-            <h2>{t("welcomeTitle")}</h2>
-            <p>{t("welcomeDescription")}</p>
+    <section className="default-agent-home home-mission-create">
+      <section className="mission-create" aria-labelledby="new-mission-title">
+        <header>
+          <h1 id="new-mission-title">{t("start")}</h1>
+          <p>{t("createDescription")}</p>
+        </header>
+        <div className="mission-goal-composer">
+          <WorkspacePicker
+            defaultWorkspace={defaultWorkspace}
+            recentWorkspaces={recentWorkspaces}
+            override={workspaceOverride}
+            onChoose={() => void pickWorkspace()}
+            onSelect={setWorkspaceOverride}
+            onUseDefault={() => setWorkspaceOverride(undefined)}
+          />
+          <div className="mission-goal-field">
+            <textarea
+              id="mission-goal"
+              aria-label={t("goalPlaceholder")}
+              value={goal}
+              onChange={(event) => setGoal(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && !event.shiftKey) {
+                  event.preventDefault();
+                  void submit();
+                }
+              }}
+              placeholder={t("goalPlaceholder")}
+              autoFocus
+            />
           </div>
-        ) : (
-          <div className="steward-messages">
-            {snapshot.entries.map((entry) =>
-              entry.role === "tool" ? (
-                <StewardToolMessage
-                  key={entry.id}
-                  entry={entry}
-                  onOpenStudio={props.onOpenStudio}
-                  onOpenMissions={props.onOpenMissions}
+          <footer>
+            <div className="mission-prompt-tools" aria-label={t("missionOptions")}>
+              <MissionExecutorPicker
+                executors={executors}
+                value={hasValidExecutor ? executorRef : ""}
+                defaultExecutorRef={defaultExecutorRef}
+                onChange={setExecutorRef}
+              />
+              {selectedExecutor?.kind === "expert" || selectedExecutor?.kind === "team" ? (
+                <MissionModelOverrideControls
+                  models={models}
+                  loading={modelsLoading}
+                  value={modelOverride}
+                  defaultValue={defaultModelSelection}
+                  onChange={setModelOverride}
                 />
-              ) : (
-                <article key={entry.id} className={`steward-message is-${entry.role}`}>
-                  <div>{entry.content}</div>
-                </article>
-              ),
-            )}
-          </div>
-        )}
-
-        {interactions.map((interaction) => (
-          <StewardInteractionCard
-            key={interaction.interactionId}
-            interaction={interaction}
-            responding={busy}
-            onRespond={(response) => void respond(interaction, response)}
-          />
-        ))}
-        <div ref={endRef} />
-      </div>
-
-      <div className="steward-composer-wrap">
-        {error === null ? null : <div className="steward-error">{error}</div>}
-        {configurationNeeded ? (
-          <div className="steward-configuration-notice" role="alert">
-            <div>
-              <strong>{t("configuration.title")}</strong>
-              <span>{t("configuration.description")}</span>
+              ) : null}
+              <ToolPermissionSelect
+                value={toolPermissionMode}
+                onChange={setToolPermissionMode}
+                disabled={saving}
+                title={t("permissionOverride")}
+              />
             </div>
-            <button type="button" onClick={props.onOpenModelSettings}>
-              {t("configuration.action")} <ArrowRight size={14} />
-            </button>
-          </div>
-        ) : null}
-        <div className="steward-composer">
-          <textarea
-            value={message}
-            placeholder={t("composerPlaceholder")}
-            onChange={(event) => setMessage(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" && !event.shiftKey) {
-                event.preventDefault();
-                void send();
+            <button
+              className="mission-submit-button"
+              type="button"
+              aria-label={saving ? t("starting") : t("startMission")}
+              title={saving ? t("starting") : t("startMission")}
+              disabled={
+                saving ||
+                !loaded ||
+                defaultWorkspace === undefined ||
+                !hasValidExecutor ||
+                goal.trim() === ""
               }
-            }}
-          />
-          <div className="steward-composer-footer">
-            <div className="steward-context-controls">
-              <select
-                aria-label={t("model")}
-                value={modelKey}
-                disabled={busy || turnActive || selectedRuntime?.status !== "available"}
-                onChange={(event) => {
-                  const nextKey = event.target.value;
-                  const nextModel = selectedRuntime?.models?.find(
-                    (model) => runtimeModelKey(model) === nextKey,
-                  );
-                  setModelKey(nextKey);
-                  setThinkingLevel(nextModel?.thinking?.defaultLevel ?? "");
-                }}
-              >
-                {(selectedRuntime?.models?.length ?? 0) === 0 ? (
-                  <option value="">{t("noModelConfigured")}</option>
-                ) : null}
-                {selectedRuntime?.models?.map((model) => (
-                  <option value={runtimeModelKey(model)} key={runtimeModelKey(model)}>
-                    {model.displayName} · {model.provider.displayName}
-                  </option>
-                ))}
-              </select>
-              <label className="steward-thinking-select">
-                <Brain size={16} aria-hidden="true" />
-                <select
-                  aria-label={t("thinkingDepth")}
-                  value={thinkingLevel}
-                  disabled={busy || turnActive || selectedModel?.thinking === undefined}
-                  onChange={(event) => setThinkingLevel(event.target.value)}
-                >
-                  <option value="">{t("defaultThinking")}</option>
-                  {selectedModel?.thinking?.supportedLevels.map((level) => (
-                    <option value={level.value} key={level.value}>
-                      {level.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
-            {turnActive ? (
-              <button
-                className="steward-send is-stop"
-                type="button"
-                aria-label={t("interrupt")}
-                title={t("interrupt")}
-                onClick={() => void window.pragmaDesktop.interruptSteward().then(refresh)}
-              >
-                <StopCircle size={19} />
-              </button>
-            ) : (
-              <button
-                className="steward-send"
-                type="button"
-                disabled={!canSend}
-                onClick={() => void send()}
-                aria-label={t("send")}
-                title={selectedRuntime?.displayName ?? t("send")}
-              >
-                <PaperPlaneTilt size={19} weight="fill" />
-              </button>
-            )}
-          </div>
+              onClick={() => void submit()}
+            >
+              <ArrowUp size={19} weight="bold" aria-hidden="true" />
+            </button>
+          </footer>
         </div>
-      </div>
+        {loaded && executors.length === 0 ? (
+          <p className="mission-form-note">{t("createFirst")}</p>
+        ) : null}
+        {modelError ? <p className="mission-form-note">{t("modelOptionsUnavailable")}</p> : null}
+        {modelResetRequired ? (
+          <p className="mission-form-note mission-model-reset-note" role="status">
+            <span>{t("modelConfigurationResetRequired")}</span>
+            <button className="text-button" type="button" onClick={props.onConfigureModels}>
+              {t("configureModels")}
+            </button>
+          </p>
+        ) : null}
+        {error ? (
+          <p className="form-error" role="alert">
+            {error}
+          </p>
+        ) : null}
+      </section>
     </section>
   );
-
-  async function respond(interaction: StewardInteraction, response: HumanInteractionResponse) {
-    setBusy(true);
-    try {
-      await window.pragmaDesktop.respondStewardInteraction({
-        interactionId: interaction.interactionId,
-        requestId: crypto.randomUUID(),
-        response,
-      });
-      await refresh();
-    } catch (respondError) {
-      setError(errorMessage(respondError));
-    } finally {
-      setBusy(false);
-    }
-  }
 }
 
-function StewardToolMessage(props: {
-  readonly entry: StewardChatEntry;
-  readonly onOpenStudio: () => void;
-  readonly onOpenMissions: () => void;
+function WorkspacePicker(props: {
+  readonly defaultWorkspace?: WorkspaceSelection | undefined;
+  readonly recentWorkspaces: readonly WorkspaceSelection[];
+  readonly override?: WorkspaceSelection | undefined;
+  readonly onChoose: () => void;
+  readonly onSelect: (workspace: WorkspaceSelection) => void;
+  readonly onUseDefault: () => void;
 }) {
-  const { t } = useTranslation("home");
-  const status =
-    props.entry.toolStatus ??
-    (props.entry.content === "Running" ? "running" : props.entry.isError ? "failed" : "succeeded");
-  const hasDetails = status !== "running" && props.entry.content.trim() !== "";
-  const label =
-    status === "running"
-      ? t("tool.calling")
-      : status === "failed"
-        ? t("tool.failed")
-        : t("tool.completed");
-  const summary = (
-    <>
-      <Toolbox size={16} aria-hidden="true" />
-      <strong>{props.entry.toolName ?? t("tool.defaultName")}</strong>
-      <span>{label}</span>
-      {status === "failed" ? (
-        <WarningCircle size={15} aria-hidden="true" />
-      ) : status === "succeeded" ? (
-        <Check size={15} aria-hidden="true" />
-      ) : null}
-    </>
-  );
+  const { t } = useTranslation("missions");
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const workspace = props.override ?? props.defaultWorkspace;
+
+  useDismissableMenu(open, rootRef, () => setOpen(false));
 
   return (
-    <article className={`steward-message is-tool is-${status}`}>
-      {hasDetails ? (
-        <details className="steward-tool-activity">
-          <summary>
-            {summary}
-            <CaretDown className="steward-tool-caret" size={14} aria-hidden="true" />
-          </summary>
-          <pre>{props.entry.content}</pre>
-        </details>
-      ) : (
-        <div
-          className={
-            status === "running" ? "steward-tool-status is-running" : "steward-tool-status"
-          }
-          role={status === "running" ? "status" : undefined}
-        >
-          {summary}
+    <div
+      className={open ? "mission-workspace-picker is-open" : "mission-workspace-picker"}
+      ref={rootRef}
+    >
+      <button
+        className="mission-workspace-trigger"
+        type="button"
+        aria-expanded={open}
+        aria-haspopup="menu"
+        onClick={() => setOpen((current) => !current)}
+      >
+        <Folder size={20} aria-hidden="true" />
+        <span>
+          <strong>
+            {props.override === undefined
+              ? t("useDefaultWorkspace")
+              : props.override.basename || t("taskWorkspace")}
+          </strong>
+          <small>{workspace?.path ?? t("loadingWorkspace")}</small>
+        </span>
+        <CaretDown size={16} aria-hidden="true" />
+      </button>
+      {open ? (
+        <div className="mission-workspace-menu" role="menu" aria-label={t("chooseWorkspace")}>
+          <button
+            type="button"
+            role="menuitemradio"
+            aria-checked={props.override === undefined}
+            onClick={() => {
+              props.onUseDefault();
+              setOpen(false);
+            }}
+          >
+            <Folder size={18} aria-hidden="true" />
+            <span>
+              <strong>{t("useDefaultWorkspace")}</strong>
+              <small>{props.defaultWorkspace?.path ?? t("loadingWorkspace")}</small>
+            </span>
+            {props.override === undefined ? <Check size={16} aria-hidden="true" /> : null}
+          </button>
+          {props.recentWorkspaces.length > 0 ? (
+            <span className="mission-workspace-menu-heading" role="presentation">
+              {t("recentWorkspaces")}
+            </span>
+          ) : null}
+          {props.recentWorkspaces.map((recentWorkspace) => {
+            const selected = props.override?.path === recentWorkspace.path;
+            return (
+              <button
+                key={recentWorkspace.path}
+                type="button"
+                role="menuitemradio"
+                aria-checked={selected}
+                title={recentWorkspace.path}
+                onClick={() => {
+                  props.onSelect(recentWorkspace);
+                  setOpen(false);
+                }}
+              >
+                <ClockCounterClockwise size={18} aria-hidden="true" />
+                <span>
+                  <strong>{recentWorkspace.basename}</strong>
+                  <small>{recentWorkspace.path}</small>
+                </span>
+                {selected ? <Check size={16} aria-hidden="true" /> : null}
+              </button>
+            );
+          })}
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              setOpen(false);
+              props.onChoose();
+            }}
+          >
+            <FolderOpen size={18} aria-hidden="true" />
+            <span>
+              <strong>{t("chooseDifferentWorkspace")}</strong>
+              <small>{t("workspaceOverrideDescription")}</small>
+            </span>
+          </button>
         </div>
-      )}
-      {status === "succeeded" && /projectRevision|changedRefs/.test(props.entry.content) ? (
-        <button type="button" onClick={props.onOpenStudio}>
-          {t("tool.openStudio")} <ArrowRight size={14} />
-        </button>
       ) : null}
-      {status === "succeeded" && /workspaceLabel|executorRef/.test(props.entry.content) ? (
-        <button type="button" onClick={props.onOpenMissions}>
-          {t("tool.openMissions")} <ArrowRight size={14} />
-        </button>
-      ) : null}
-    </article>
+    </div>
   );
 }
 
-function runtimeModelKey(model: DesktopRuntimeModel): string {
-  return JSON.stringify([model.provider.id, model.id]);
+function MissionExecutorPicker(props: {
+  readonly executors: readonly MissionExecutorOption[];
+  readonly value: string;
+  readonly defaultExecutorRef: string;
+  readonly onChange: (value: string) => void;
+}) {
+  const { t } = useTranslation("missions");
+  const { t: tCommon } = useTranslation("common");
+  const executorLabel = (executor: Pick<MissionExecutorOption, "kind">): string =>
+    executor.kind === "expert"
+      ? t("expert")
+      : executor.kind === "team"
+        ? t("expertTeam")
+        : t("flow");
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState("");
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const selected = props.executors.find((executor) => executor.ref === props.value);
+  const pragmaCopy = {
+    name: tCommon("builtInExperts.pragma.name"),
+    description: tCommon("builtInExperts.pragma.description"),
+    scope: tCommon("builtInExperts.pragma.scope"),
+  };
+  const displayCopy = (executor: MissionExecutorOption) =>
+    localizeSystemExpertCopy(executor, pragmaCopy);
+  const selectedCopy = selected === undefined ? undefined : displayCopy(selected);
+  const query = search.trim().toLocaleLowerCase();
+  const visibleExecutors = filterMissionExecutors(props.executors, query, displayCopy);
+  const SelectedIcon = selected === undefined ? UsersThree : executorIcon(selected);
+
+  useDismissableMenu(open, rootRef, () => {
+    setOpen(false);
+    setSearch("");
+  });
+
+  return (
+    <div
+      className={open ? "mission-executor-picker is-open" : "mission-executor-picker"}
+      ref={rootRef}
+    >
+      <button
+        className="mission-executor-trigger"
+        type="button"
+        aria-expanded={open}
+        aria-haspopup="dialog"
+        onClick={() => {
+          setOpen((current) => !current);
+          setSearch("");
+        }}
+      >
+        <SelectedIcon size={17} aria-hidden="true" />
+        <span>{selectedCopy?.name ?? t("chooseResource")}</span>
+        <CaretDown size={14} aria-hidden="true" />
+      </button>
+      {open ? (
+        <div
+          className="mission-executor-menu"
+          role="dialog"
+          aria-modal="false"
+          aria-label={t("chooseMissionExecutor")}
+        >
+          <header>
+            <small>{t("executorDescription")}</small>
+            <span>{t("availableCount", { count: props.executors.length })}</span>
+          </header>
+          <label className="mission-executor-search">
+            <MagnifyingGlass size={17} aria-hidden="true" />
+            <span className="sr-only">{t("searchExecutors")}</span>
+            <input
+              autoFocus
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder={t("searchExecutors")}
+            />
+          </label>
+          <div className="mission-executor-options" role="list" aria-label={t("missionExecutors")}>
+            {visibleExecutors.length === 0 ? (
+              <p className="mission-executor-empty">
+                {t("noExecutors")}
+                <span>{t("tryAnother")}</span>
+              </p>
+            ) : null}
+            {visibleExecutors.map((executor) => {
+              const Icon = executorIcon(executor);
+              const copy = displayCopy(executor);
+              const isSelected = executor.ref === props.value;
+              const isDefault = executor.ref === props.defaultExecutorRef;
+              return (
+                <button
+                  type="button"
+                  aria-pressed={isSelected}
+                  className={
+                    isSelected ? "mission-executor-option is-selected" : "mission-executor-option"
+                  }
+                  key={executor.ref}
+                  onClick={() => {
+                    props.onChange(executor.ref);
+                    setOpen(false);
+                    setSearch("");
+                  }}
+                >
+                  <span className="mission-executor-option-icon">
+                    <Icon size={18} aria-hidden="true" />
+                  </span>
+                  <span>
+                    <strong>{copy.name}</strong>
+                    <small>{copy.description}</small>
+                  </span>
+                  <span className="mission-executor-option-meta">
+                    <Check
+                      className={isSelected ? "is-visible" : undefined}
+                      size={17}
+                      aria-hidden="true"
+                    />
+                    <span className="mission-executor-option-kind">
+                      {isDefault ? t("defaultExecutor") : executorLabel(executor)}
+                    </span>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+export function filterMissionExecutors(
+  executors: readonly MissionExecutorOption[],
+  query: string,
+  displayCopy: (
+    executor: MissionExecutorOption,
+  ) => Pick<MissionExecutorOption, "name" | "description"> = (executor) => executor,
+): readonly MissionExecutorOption[] {
+  const normalizedQuery = query.trim().toLocaleLowerCase();
+  return executors
+    .filter((executor) => {
+      if (normalizedQuery === "") return true;
+      const copy = displayCopy(executor);
+      return [copy.name, copy.description, executor.ref, executor.kind].some((value) =>
+        value.toLocaleLowerCase().includes(normalizedQuery),
+      );
+    })
+    .slice(0, 5);
+}
+
+function useDismissableMenu(
+  open: boolean,
+  rootRef: RefObject<HTMLElement | null>,
+  close: () => void,
+): void {
+  useEffect(() => {
+    if (!open) return;
+    const closeOutside = (event: MouseEvent) => {
+      if (event.target instanceof Node && !rootRef.current?.contains(event.target)) close();
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") close();
+    };
+    document.addEventListener("mousedown", closeOutside);
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("mousedown", closeOutside);
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [close, open, rootRef]);
+}
+
+function executorIcon(executor: Pick<MissionExecutorOption, "kind">) {
+  return executor.kind === "expert" ? User : executor.kind === "team" ? UsersThree : GitBranch;
 }

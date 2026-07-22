@@ -23,7 +23,7 @@ describe("PI Runtime contract", () => {
           displayName: "Provider",
         },
         thinking: {
-          supportedLevels: [{ value: "high", label: "High" }],
+          supportedLevels: [{ value: "off", label: "Off" }],
         },
       },
     ];
@@ -32,6 +32,7 @@ describe("PI Runtime contract", () => {
         listProviders: async () => [
           {
             id: "provider-id",
+            catalogId: "custom-openai",
             displayName: "Provider",
             api: "openai-completions",
             baseUrl: "https://models.example.com/v1",
@@ -40,15 +41,7 @@ describe("PI Runtime contract", () => {
                 id: "gpt-test",
                 name: "GPT Test",
                 reasoning: true,
-                thinkingLevelMap: {
-                  off: null,
-                  minimal: null,
-                  low: null,
-                  medium: null,
-                  high: "high",
-                  xhigh: null,
-                  max: null,
-                },
+                thinking: { supportedLevels: ["off"] },
                 input: ["text"],
                 cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
                 contextWindow: 128_000,
@@ -59,6 +52,7 @@ describe("PI Runtime contract", () => {
         ],
         resolveProvider: async () => ({
           id: "provider-id",
+          catalogId: "custom-openai",
           displayName: "Provider",
           models: [
             {

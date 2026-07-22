@@ -13,6 +13,7 @@ import { isExpertTeam, type ExpertDefinition, type ExpertTeam } from "../agent/e
 import { describeExpertExecutionDefinition } from "../agent/expert-definition-descriptor.ts";
 import type { RuntimeResolver } from "../runtime-resolver.ts";
 import type {
+  ExpertAgentAutomaticHumanInteractionHandler,
   ExpertAgentHumanRequest,
   ExpertAgentHumanResponse,
   ExpertAgentUserQuestion,
@@ -72,6 +73,9 @@ export class FlowExecutionManager {
   constructor(
     private readonly executions: ExecutionStore,
     private readonly runtimes: RuntimeResolver,
+    private readonly automaticHumanInteractionHandler?:
+      | ExpertAgentAutomaticHumanInteractionHandler
+      | undefined,
   ) {}
 
   async start<TInput>(
@@ -207,6 +211,7 @@ export class FlowExecutionManager {
   ): FlowExecution {
     const controller = new ExecutionController(executionId, this.executions, undefined, {
       closeContextsOnCancel: true,
+      automaticHumanInteractionHandler: this.automaticHumanInteractionHandler,
     });
     const handle = this.createHandle(executionId, controller);
     this.active.set(executionId, { controller, handle });
@@ -469,7 +474,10 @@ async function runStep(
     if ("kind" in step.definition && step.definition.kind === "task") {
       await putStatus(options.store, options.executionId, invocation, "running");
       const parsedInput = step.definition.inputSchema?.parse(input) ?? input;
-      const signal = options.controller.signalForInvocation(invocation.invocationId);
+      const signal = options.controller.signalForInvocation(
+        invocation.invocationId,
+        options.flowInvocationId,
+      );
       const output = await raceWithSignal(
         Promise.resolve(
           step.definition.handler({
@@ -506,6 +514,7 @@ async function runStep(
     }
     if ("kind" in step.definition && step.definition.kind === "flow") {
       await putStatus(options.store, options.executionId, invocation, "running");
+      options.controller.signalForInvocation(invocation.invocationId, options.flowInvocationId);
       const output = await runFlow({
         ...options,
         flow: step.definition,
@@ -567,7 +576,10 @@ async function runHumanTask(
     state,
     executionId: options.executionId,
     invocationId: invocation.invocationId,
-    signal: options.controller.signalForInvocation(invocation.invocationId),
+    signal: options.controller.signalForInvocation(
+      invocation.invocationId,
+      options.flowInvocationId,
+    ),
     emitOutput: async (value) => {
       await options.store.appendEvent(
         options.executionId,
@@ -726,6 +738,7 @@ async function createStepInvocation(
     const expert = step.definition as ExpertDefinition;
     const nativeExpert = isExpertTeam(expert) ? expert.coordinator : expert;
     const record = (await options.store.get(options.executionId))!;
+    const modelSelection = nativeExpert.models?.default;
     const runtime = await options.runtimes.bind({
       runtimeId: resolveFlowStepRuntimeId(
         step,
@@ -733,7 +746,7 @@ async function createStepInvocation(
         options.runtime,
         options.runtimeOverride,
       ),
-      modelSelection: nativeExpert.models?.default,
+      modelSelection,
     });
     contextResolution = await new ContextResolutionService(options.store).resolve({
       executionId: options.executionId,
@@ -750,6 +763,7 @@ async function createStepInvocation(
       owner: options.owner,
       expert: { id: nativeExpert.id, version: nativeExpert.version },
       runtime: runtime.binding,
+      modelSelection,
       resolver:
         ("contextId" in step.options ? step.options.contextId : undefined) ??
         freshContextIdResolver,

@@ -7,13 +7,17 @@ import {
   createExpertAgentPluginPackageFingerprint,
   createStaticRuntimeResolver,
   type Expert,
+  type ExpertTeam,
   type Flow,
 } from "@pragma/core";
 
 import {
   FlowActionRegistry,
+  PRAGMA_EXPERT_ID_MAX_LENGTH,
   PRAGMA_EXPERT_INSTRUCTIONS_MAX_LENGTH,
   PRAGMA_EXPERT_SCOPE_MAX_LENGTH,
+  PragmaExpertIdSchema,
+  PragmaExpertRefSchema,
   PragmaExpertResourceSchema,
   PragmaSemanticResourceIdSchema,
   formatPragmaYaml,
@@ -26,6 +30,21 @@ describe("Pragma YAML DSL", () => {
     expect(PragmaSemanticResourceIdSchema.safeParse("code_reviewer_2").success).toBe(true);
     expect(PragmaSemanticResourceIdSchema.safeParse("code-reviewer").success).toBe(false);
     expect(PragmaSemanticResourceIdSchema.safeParse("code.reviewer").success).toBe(false);
+    const maximumExpertId = "a".repeat(PRAGMA_EXPERT_ID_MAX_LENGTH);
+    const oversizedExpertId = "a".repeat(PRAGMA_EXPERT_ID_MAX_LENGTH + 1);
+    expect(PragmaExpertIdSchema.safeParse(maximumExpertId).success).toBe(true);
+    expect(PragmaExpertIdSchema.safeParse(oversizedExpertId).success).toBe(false);
+    expect(PragmaExpertRefSchema.safeParse(`expert:${maximumExpertId}@1.0.0`).success).toBe(true);
+    expect(PragmaExpertRefSchema.safeParse(`expert:${oversizedExpertId}@1.0.0`).success).toBe(
+      false,
+    );
+    expect(PragmaSemanticResourceIdSchema.safeParse(oversizedExpertId).success).toBe(true);
+    expect(
+      PragmaExpertResourceSchema.safeParse(expertResource(maximumExpertId, "Valid")).success,
+    ).toBe(true);
+    expect(
+      PragmaExpertResourceSchema.safeParse(expertResource(oversizedExpertId, "Invalid")).success,
+    ).toBe(false);
 
     const expert = expertResource("reviewer", "Reviews work");
     expect(
@@ -159,6 +178,53 @@ describe("Pragma YAML DSL", () => {
     const single = await project.dump(compiled.value, { split: "single" });
     await writeFile(join(root, "single.yaml"), single.files.get("pragma.yaml")!);
     expect((await loadPragmaProject(join(root, "single.yaml"))).listResources()).toHaveLength(1);
+  });
+
+  it("compiles and dumps optional ExpertTeam instructions", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-team-instructions-"));
+    const entry = join(root, "pragma.yaml");
+    const instructions = "Share evidence, surface uncertainty, and verify work before handoff.";
+    await writeFile(
+      entry,
+      formatPragmaYaml({
+        apiVersion: "pragma/v2",
+        kind: "Bundle",
+        imports: [],
+        resources: [
+          runtimeProfile(),
+          expertResource("lead", "Coordinates delivery"),
+          expertResource("reviewer", "Reviews delivery"),
+          {
+            apiVersion: "pragma/v2",
+            kind: "ExpertTeam",
+            metadata: {
+              id: "delivery",
+              version: "1.0.0",
+              name: "Delivery",
+              description: "Coordinates and reviews delivery",
+              tags: [],
+            },
+            spec: {
+              coordinator: { ref: "expert:lead@1.0.0" },
+              members: [{ ref: "expert:reviewer@1.0.0" }],
+              instructions,
+              delegation: {},
+            },
+          },
+        ],
+      }),
+    );
+
+    const project = await loadPragmaProject(entry);
+    expect(await project.validate()).toEqual([]);
+    const compiled = await project.compile<ExpertTeam>("team:delivery@1.0.0", {
+      workspace: root,
+    });
+    expect(compiled.value.instructions).toBe(instructions);
+    const dumped = await project.dump(compiled.value, { split: "by-resource" });
+    expect(dumped.files.get("teams/delivery@1.0.0.pragma.yaml")).toContain(
+      `instructions: ${instructions}`,
+    );
   });
 
   it("enforces an optional content-addressed lock", async () => {
@@ -591,6 +657,42 @@ describe("Pragma YAML DSL", () => {
         }),
       ]),
     );
+  });
+
+  it("lets a root execution override replace an unavailable Expert RuntimeProfile", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-runtime-override-"));
+    const entry = join(root, "pragma.yaml");
+    await writeFile(
+      entry,
+      formatPragmaYaml({
+        apiVersion: "pragma/v2",
+        kind: "Bundle",
+        imports: [],
+        resources: [runtimeProfile(), expertResource("writer", "Writes")],
+      }),
+    );
+    const project = await loadPragmaProject(entry);
+    const modelSelection = {
+      model: { providerId: "deepseek", modelId: "deepseek-chat" },
+      thinkingLevel: "high",
+    };
+    const compiled = await project.compile<Expert>("expert:writer@1.0.0", {
+      workspace: root,
+      runtimes: createStaticRuntimeResolver({
+        defaultRuntimeId: "pi",
+        runtimes: [
+          {
+            descriptor: { id: "pi", kind: "test", displayName: "Pi" },
+            canUse: () => ({ usable: true }),
+          },
+        ],
+      }),
+      rootExecutionOverride: { runtimeId: "pi", modelSelection },
+    });
+
+    expect(compiled.rootRuntimeId).toBe("pi");
+    expect(compiled.value.defaultRuntimeId).toBe("pi");
+    expect(compiled.value.models?.default).toEqual(modelSelection);
   });
 
   it("fingerprints the verified Runtime installation identity", async () => {

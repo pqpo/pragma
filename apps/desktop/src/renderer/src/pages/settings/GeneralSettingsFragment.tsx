@@ -6,12 +6,9 @@ import type {
   DesktopLocalePreference,
   DesktopRuntimeAvailability,
   DesktopSettingsSnapshot,
+  DesktopToolPermissionMode,
 } from "../../../../shared/desktop-api.ts";
 import { localeDisplayNames, setDesktopLocale } from "../../i18n/index.ts";
-import {
-  readStewardTaskWorkspace,
-  writeStewardTaskWorkspace,
-} from "../../lib/steward-preferences.ts";
 import { SettingsScreenFrame } from "./SettingsScreenFrame.tsx";
 
 const languageOptions: readonly {
@@ -27,9 +24,6 @@ export function GeneralSettingsFragment() {
   const { t } = useTranslation(["settings", "common"]);
   const [settings, setSettings] = useState<DesktopSettingsSnapshot>();
   const [runtimes, setRuntimes] = useState<readonly DesktopRuntimeAvailability[]>([]);
-  const [workspace, setWorkspace] = useState(() =>
-    readStewardTaskWorkspace(typeof window === "undefined" ? undefined : window.localStorage),
-  );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string>();
 
@@ -72,18 +66,7 @@ export function GeneralSettingsFragment() {
     setSaving(true);
     setError(undefined);
     try {
-      const stewardState = await window.pragmaDesktop.getStewardState();
-      if (
-        stewardState !== null &&
-        stewardState.runtimeId !== runtimeId &&
-        !window.confirm(t("general.runtimeChangeConfirm", { ns: "settings" }))
-      ) {
-        return;
-      }
       const availability = await window.pragmaDesktop.setDefaultRuntime({ runtimeId });
-      if (stewardState !== null && stewardState.runtimeId !== runtimeId) {
-        await window.pragmaDesktop.resetSteward();
-      }
       setRuntimes(availability);
     } catch {
       setError(t("general.saveError", { ns: "settings" }));
@@ -92,14 +75,12 @@ export function GeneralSettingsFragment() {
     }
   };
 
-  const chooseWorkspace = async () => {
+  const updateToolPermissionMode = async (toolPermissionMode: DesktopToolPermissionMode) => {
+    if (settings === undefined || toolPermissionMode === settings.toolPermissionMode) return;
     setSaving(true);
     setError(undefined);
     try {
-      const result = await window.pragmaDesktop.pickWorkspace();
-      if (!result.ok || result.path === undefined) return;
-      writeStewardTaskWorkspace(window.localStorage, result.path);
-      setWorkspace(result.path);
+      setSettings(await window.pragmaDesktop.updateDesktopSettings({ toolPermissionMode }));
     } catch {
       setError(t("general.saveError", { ns: "settings" }));
     } finally {
@@ -107,12 +88,39 @@ export function GeneralSettingsFragment() {
     }
   };
 
-  const clearWorkspace = () => {
-    writeStewardTaskWorkspace(window.localStorage, "");
-    setWorkspace("");
+  const chooseWorkspace = async () => {
+    if (settings === undefined) return;
+    setSaving(true);
+    setError(undefined);
+    try {
+      const result = await window.pragmaDesktop.pickWorkspace();
+      if (!result.ok || result.path === undefined) return;
+      if (result.path === settings.defaultWorkspace) return;
+      setSettings(
+        await window.pragmaDesktop.updateDesktopSettings({ defaultWorkspace: result.path }),
+      );
+    } catch {
+      setError(t("general.saveError", { ns: "settings" }));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const restoreDefaultWorkspace = async () => {
+    if (settings === undefined || settings.usesBuiltInDefaultWorkspace) return;
+    setSaving(true);
+    setError(undefined);
+    try {
+      setSettings(await window.pragmaDesktop.updateDesktopSettings({ defaultWorkspace: null }));
+    } catch {
+      setError(t("general.saveError", { ns: "settings" }));
+    } finally {
+      setSaving(false);
+    }
   };
 
   const defaultRuntimeId = runtimes.find((runtime) => runtime.isDefault)?.id ?? "";
+  const workspace = settings?.defaultWorkspace ?? "";
   const workspaceName = workspace.split(/[\\/]/).at(-1);
 
   return (
@@ -185,17 +193,49 @@ export function GeneralSettingsFragment() {
             <CaretDown size={17} weight="bold" aria-hidden="true" />
           </span>
         </label>
+        <div className="setting-row tool-permission-setting">
+          <span className="setting-copy">
+            <strong>{t("general.toolPermissions", { ns: "settings" })}</strong>
+            <span>{t("general.toolPermissionsDescription", { ns: "settings" })}</span>
+          </span>
+          <span
+            className="tool-permission-options"
+            role="radiogroup"
+            aria-label={t("general.toolPermissions", { ns: "settings" })}
+          >
+            {(["request-approval", "auto-approve", "full-access"] as const).map((mode) => (
+              <label key={mode}>
+                <input
+                  type="radio"
+                  name="tool-permission-mode"
+                  value={mode}
+                  checked={(settings?.toolPermissionMode ?? "request-approval") === mode}
+                  disabled={settings === undefined || saving}
+                  onChange={() => void updateToolPermissionMode(mode)}
+                />
+                <span>
+                  <strong>
+                    {t(`general.toolPermissionModes.${mode}.label`, { ns: "settings" })}
+                  </strong>
+                  <small>
+                    {t(`general.toolPermissionModes.${mode}.description`, { ns: "settings" })}
+                  </small>
+                </span>
+              </label>
+            ))}
+          </span>
+        </div>
         <div className="setting-row general-workspace-setting">
           <span className="setting-copy">
-            <strong>{t("general.taskWorkspace", { ns: "settings" })}</strong>
-            <span>{t("general.taskWorkspaceDescription", { ns: "settings" })}</span>
+            <strong>{t("general.defaultWorkspace", { ns: "settings" })}</strong>
+            <span>{t("general.defaultWorkspaceDescription", { ns: "settings" })}</span>
             {workspace === "" ? null : <small>{workspace}</small>}
           </span>
           <span className="general-workspace-controls">
             <button
               className="general-workspace-picker"
               type="button"
-              disabled={saving}
+              disabled={settings === undefined || saving}
               title={workspace}
               onClick={() => void chooseWorkspace()}
             >
@@ -204,18 +244,18 @@ export function GeneralSettingsFragment() {
                 ? t("general.chooseWorkspace", { ns: "settings" })
                 : (workspaceName ?? workspace)}
             </button>
-            {workspace === "" ? null : (
+            {settings?.usesBuiltInDefaultWorkspace === false ? (
               <button
                 className="general-workspace-clear"
                 type="button"
                 disabled={saving}
-                aria-label={t("general.clearWorkspace", { ns: "settings" })}
-                title={t("general.clearWorkspace", { ns: "settings" })}
-                onClick={clearWorkspace}
+                aria-label={t("general.restoreDefaultWorkspace", { ns: "settings" })}
+                title={t("general.restoreDefaultWorkspace", { ns: "settings" })}
+                onClick={() => void restoreDefaultWorkspace()}
               >
                 <X size={16} aria-hidden="true" />
               </button>
-            )}
+            ) : null}
           </span>
         </div>
         {error ? (

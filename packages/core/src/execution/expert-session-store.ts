@@ -51,6 +51,7 @@ export interface ExpertSessionStore {
   listEvents(sessionId: string): Promise<readonly ExpertSessionEvent[]>;
   claimLease(sessionId: string, claimId: string, leaseMs: number): Promise<boolean>;
   releaseLease(sessionId: string, claimId: string): Promise<void>;
+  delete(sessionId: string): Promise<void>;
 }
 
 export function createFileExpertSessionStore(options: {
@@ -59,6 +60,11 @@ export function createFileExpertSessionStore(options: {
 }): ExpertSessionStore {
   const paths = new PragmaPaths(options);
   return {
+    async delete(sessionId) {
+      await withFileLock(paths.expertSessionLock(sessionId), async () => {
+        await rm(paths.expertSessionRoot(sessionId), { recursive: true, force: true });
+      });
+    },
     async create(record) {
       await withFileLock(paths.expertSessionLock(record.sessionId), async () => {
         await recoverTransaction(paths, options.executions, record.sessionId);
@@ -125,27 +131,45 @@ export function createFileExpertSessionStore(options: {
           }
           return duplicate.executionId;
         }
+        const rootContext = session.contexts[session.rootContextId]!;
+        const prompt =
+          transaction.prompt.modelSelection !== undefined ||
+          rootContext.modelSelection === undefined
+            ? transaction.prompt
+            : { ...transaction.prompt, modelSelection: rootContext.modelSelection };
         const nextSession = ExpertSessionRecordSchema.parse({
           ...session,
-          queuedRequestIds: [...session.queuedRequestIds, transaction.prompt.requestId],
+          ...(prompt.modelSelection === undefined
+            ? {}
+            : {
+                contexts: {
+                  ...session.contexts,
+                  [session.rootContextId]: {
+                    ...rootContext,
+                    modelSelection: prompt.modelSelection,
+                    updatedAt: prompt.createdAt,
+                  },
+                },
+              }),
+          queuedRequestIds: [...session.queuedRequestIds, prompt.requestId],
           executionIds: [...session.executionIds, transaction.execution.executionId],
-          updatedAt: transaction.prompt.createdAt,
+          updatedAt: prompt.createdAt,
         });
-        const nextPrompts = PromptRequestSchema.array().parse([...prompts, transaction.prompt]);
+        const nextPrompts = PromptRequestSchema.array().parse([...prompts, prompt]);
         const journal = ExpertSessionTransactionJournalSchema.parse({
           schemaVersion: "pragma.expert-session-transaction/v4",
           session: nextSession,
           prompts: nextPrompts,
           events: materializeSessionEvents(sessionId, events, [
             {
-              eventId: `prompt-enqueued:${transaction.prompt.requestId}`,
+              eventId: `prompt-enqueued:${prompt.requestId}`,
               type: "prompt.enqueued",
               data: {
-                requestId: transaction.prompt.requestId,
-                executionId: transaction.prompt.executionId,
-                content: transaction.prompt.content,
+                requestId: prompt.requestId,
+                executionId: prompt.executionId,
+                content: prompt.content,
               },
-              occurredAt: transaction.prompt.createdAt,
+              occurredAt: prompt.createdAt,
             },
           ]),
           execution: transaction.execution,
@@ -223,12 +247,14 @@ export function createFileExpertSessionStore(options: {
         if (
           existing !== undefined &&
           existing.claimId !== claimId &&
-          Date.parse(existing.expiresAt) > Date.now()
+          Date.parse(existing.expiresAt) > Date.now() &&
+          (existing.processId === undefined || isProcessAlive(existing.processId))
         ) {
           return false;
         }
         await writeJson(paths.expertSessionLease(sessionId), {
           claimId,
+          processId: process.pid,
           expiresAt: new Date(Date.now() + leaseMs).toISOString(),
         });
         return true;
@@ -249,8 +275,24 @@ export function createFileExpertSessionStore(options: {
 
 const ExpertSessionLeaseSchema = z.object({
   claimId: z.string().min(1),
+  processId: z.number().int().positive().optional(),
   expiresAt: z.string().datetime(),
 });
+
+function isProcessAlive(processId: number): boolean {
+  if (processId === process.pid) return true;
+  try {
+    process.kill(processId, 0);
+    return true;
+  } catch (error) {
+    return (
+      error instanceof Error &&
+      "code" in error &&
+      typeof error.code === "string" &&
+      error.code === "EPERM"
+    );
+  }
+}
 
 const ExpertSessionTransactionJournalSchema = z
   .object({

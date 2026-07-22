@@ -37,6 +37,7 @@ describe("model provider store", () => {
       name: "OpenAI",
       protocol: "openai-responses",
       baseUrl: "https://api.openai.com/v1/",
+      compatibilityProfileId: "pi.openai-responses-modern@v1",
       apiKey: "sk-top-secret",
       requiresApiKey: true,
       models: [model("gpt-4.1", "GPT 4.1", true), model("gpt-4.1-mini")],
@@ -45,6 +46,7 @@ describe("model provider store", () => {
     expect(provider).toMatchObject({
       name: "OpenAI",
       baseUrl: "https://api.openai.com/v1",
+      compatibilityProfileId: "pi.openai-responses-modern@v1",
       models: [
         expect.objectContaining({ id: "gpt-4.1", name: "GPT 4.1" }),
         expect.objectContaining({ id: "gpt-4.1-mini" }),
@@ -57,6 +59,7 @@ describe("model provider store", () => {
       displayName: "OpenAI",
       api: "openai-responses",
       baseUrl: "https://api.openai.com/v1",
+      compatibilityProfileId: "pi.openai-responses-modern@v1",
       apiKey: "sk-top-secret",
       models: [
         expect.objectContaining({ id: "gpt-4.1" }),
@@ -155,7 +158,7 @@ describe("model provider store", () => {
 
   it("archives unsupported configuration instead of attempting an implicit migration", async () => {
     const { configPath, store } = await createStore();
-    await writeFile(configPath, JSON.stringify({ schemaVersion: 2, providers: [] }));
+    await writeFile(configPath, JSON.stringify({ schemaVersion: 3, providers: [] }));
 
     await expect(store.getSnapshot()).resolves.toMatchObject({
       status: "reset_required",
@@ -174,7 +177,7 @@ describe("model provider store", () => {
     await writeFile(
       configPath,
       JSON.stringify({
-        schemaVersion: 3,
+        schemaVersion: 4,
         providers: [
           {
             id: "00000000-0000-4000-8000-000000000001",
@@ -325,14 +328,9 @@ function model(
     reasoning,
     ...(reasoning
       ? {
-          thinkingLevelMap: {
-            off: null,
-            minimal: null,
-            low: null,
-            medium: null,
-            high: "high",
-            xhigh: null,
-            max: null,
+          thinking: {
+            supportedLevels: ["off" as const, "high" as const],
+            defaultLevel: "high" as const,
           },
         }
       : {}),

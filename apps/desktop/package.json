@@ -9,7 +9,7 @@
   "scripts": {
     "prepare:electron": "install-electron",
     "prepare:plugins": "node ./scripts/package-built-in-plugins.mjs",
-    "predev": "pnpm run prepare:plugins",
+    "predev": "pnpm run prepare:electron && pnpm run prepare:plugins",
     "dev": "electron-vite dev",
     "prebuild": "pnpm run prepare:plugins",
     "build": "electron-vite build",
@@ -34,7 +34,7 @@
     "@pragma/runtime-codex": "workspace:*",
     "@pragma/runtime-pi": "workspace:*",
     "@pragma/shared": "workspace:*",
-    "@pragma/steward": "workspace:*",
+    "@pragma/default-agent": "workspace:*",
     "@xyflow/react": "^12.11.2",
     "fflate": "^0.8.2",
     "i18next": "^25.5.2",

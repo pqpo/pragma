@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, rm, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -70,6 +70,46 @@ describe("Expert plugin loading", () => {
     await expect(
       loadExpertAgentPlugins({ agentId: "agent", pragmaHome, sources: [second] }),
     ).rejects.toMatchObject({ issues: [{ code: "identity_conflict" }] });
+  });
+
+  it("isolates host-managed package revisions by fingerprint without changing the ref", async () => {
+    const first = await createPluginPackage({ id: "built-in", version: "0.0.0", marker: "one" });
+    const second = await createPluginPackage({ id: "built-in", version: "0.0.0", marker: "two" });
+    const pragmaHome = await temporaryRoot("pragma-home");
+    const firstFingerprint = await createExpertAgentPluginPackageFingerprint(first);
+    const secondFingerprint = await createExpertAgentPluginPackageFingerprint(second);
+    const firstInstalled = await prepareExpertAgentPluginSource(
+      {
+        source: first,
+        expectedRef: "plugin:built-in@0.0.0",
+        packageFingerprint: firstFingerprint,
+        cachePolicy: "host-managed",
+      },
+      { agentId: "agent", pragmaHome },
+    );
+    const secondInstalled = await prepareExpertAgentPluginSource(
+      {
+        source: second,
+        expectedRef: "plugin:built-in@0.0.0",
+        packageFingerprint: secondFingerprint,
+        cachePolicy: "host-managed",
+      },
+      { agentId: "agent", pragmaHome },
+    );
+
+    expect(secondInstalled).not.toBe(firstInstalled);
+    await expect(readFile(join(firstInstalled, "index.mjs"), "utf8")).resolves.toContain("one");
+    await expect(readFile(join(secondInstalled, "index.mjs"), "utf8")).resolves.toContain("two");
+  });
+
+  it("requires explicit immutable identity for host-managed sources", async () => {
+    const source = await createPluginPackage({ id: "built-in", version: "0.0.0" });
+    await expect(
+      prepareExpertAgentPluginSource(
+        { source, expectedRef: "plugin:built-in@0.0.0", cachePolicy: "host-managed" },
+        { agentId: "agent", pragmaHome: await temporaryRoot("pragma-home") },
+      ),
+    ).rejects.toThrow("exact ref and package fingerprint");
   });
 
   it("allows concurrent installation of identical bytes", async () => {

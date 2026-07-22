@@ -21,6 +21,7 @@ function describeDefinition(definition: ExpertDefinition, ancestors: Set<string>
       kind: "expert-team",
       id: definition.id,
       version: definition.version,
+      instructions: definition.instructions,
       coordinator: {
         id: definition.coordinator.id,
         version: definition.coordinator.version,

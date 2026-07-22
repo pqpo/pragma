@@ -5,10 +5,15 @@ import type {
   RuntimeResolver,
 } from "@pragma/core";
 import { createClaudeCodeRuntime } from "@pragma/runtime-claude-code";
-import { createCodexRuntime } from "@pragma/runtime-codex";
+import {
+  createCodexRuntime,
+  type CodexRuntimeApprovalPolicy,
+  type CodexRuntimeSandboxMode,
+} from "@pragma/runtime-codex";
 import { createPiRuntime } from "@pragma/runtime-pi";
 
 import type {
+  DesktopToolPermissionMode,
   RuntimeEnvironmentDefinition,
   RuntimeEnvironmentRevision,
 } from "../shared/desktop-api.ts";
@@ -23,6 +28,7 @@ export interface RuntimeEnvironmentAdapterFactory {
   readonly version: string;
   readonly create: (
     environment: RuntimeEnvironmentDefinition,
+    context?: { readonly toolPermissionMode?: DesktopToolPermissionMode | undefined },
   ) => RuntimeAdapter | Promise<RuntimeAdapter>;
 }
 
@@ -34,6 +40,7 @@ export interface RuntimeEnvironmentInspection {
 
 export interface RuntimeEnvironmentService extends RuntimeResolver {
   list(): Promise<readonly RuntimeEnvironmentInspection[]>;
+  forToolPermissionMode(mode: DesktopToolPermissionMode): RuntimeResolver;
 }
 
 export function createRuntimeEnvironmentService(options: {
@@ -47,13 +54,19 @@ export function createRuntimeEnvironmentService(options: {
     factories.set(ref, factory);
   }
 
-  const materialize = async (revision: RuntimeEnvironmentRevision): Promise<ResolvedRuntime> => {
+  const materialize = async (
+    revision: RuntimeEnvironmentRevision,
+    toolPermissionMode?: DesktopToolPermissionMode,
+  ): Promise<ResolvedRuntime> => {
     const definition = revision.definition;
     const ref = factoryRef(definition.adapter.id, definition.adapter.version);
     const factory = factories.get(ref);
     if (factory === undefined)
       throw new Error(`Runtime adapter factory is not registered: ${ref}.`);
-    const adapter = await factory.create(definition);
+    const adapter = await factory.create(
+      definition,
+      toolPermissionMode === undefined ? undefined : { toolPermissionMode },
+    );
     if (adapter.descriptor.id !== definition.id) {
       throw new Error(
         `Runtime adapter identity mismatch: expected ${definition.id}, received ${adapter.descriptor.id}.`,
@@ -98,7 +111,7 @@ export function createRuntimeEnvironmentService(options: {
     }
   };
 
-  return {
+  const createResolver = (toolPermissionMode?: DesktopToolPermissionMode): RuntimeResolver => ({
     getDefaultRuntimeId: async () => await options.store.getDefaultRuntimeId(),
     bind: async (request = {}) => {
       const runtimeId = request.runtimeId ?? (await options.store.getDefaultRuntimeId());
@@ -106,7 +119,7 @@ export function createRuntimeEnvironmentService(options: {
       if (revision === undefined || revision.status !== "active") {
         throw new Error(`Runtime Environment is not active: ${runtimeId}.`);
       }
-      const resolved = await materialize(revision);
+      const resolved = await materialize(revision, toolPermissionMode);
       await validateModelSelection(resolved, request.modelSelection);
       return resolved;
     },
@@ -121,10 +134,15 @@ export function createRuntimeEnvironmentService(options: {
           `Runtime Environment binding is unavailable: ${binding.runtimeId}@${binding.revision}.`,
         );
       }
-      const resolved = await materialize(revision);
+      const resolved = await materialize(revision, toolPermissionMode);
       await validateModelSelection(resolved, modelSelection);
       return resolved;
     },
+  });
+
+  return {
+    ...createResolver(),
+    forToolPermissionMode: (mode) => createResolver(mode),
     list: async () =>
       await Promise.all(
         (await options.store.listHeads()).map(
@@ -144,25 +162,38 @@ export function createRuntimeEnvironmentService(options: {
 
 export function createBuiltInRuntimeFactories(
   modelProviders: ModelProviderStore,
+  getToolPermissionMode: () =>
+    | DesktopToolPermissionMode
+    | Promise<DesktopToolPermissionMode> = () => "request-approval",
 ): readonly RuntimeEnvironmentAdapterFactory[] {
   return [
     {
       id: "pragma.runtime.codex",
       version: "v1",
-      create: (environment) => {
+      create: async (environment, context) => {
         assertEmptyRuntimeConfig(environment);
+        const permissionMode = context?.toolPermissionMode ?? (await getToolPermissionMode());
+        const permissions = codexRuntimePermissionsForMode(permissionMode);
         return createCodexRuntime({
           descriptor: { id: environment.id, displayName: environment.displayName },
+          ...permissions,
         });
       },
     },
     {
       id: "pragma.runtime.claude-code",
       version: "v1",
-      create: (environment) => {
+      create: async (environment, context) => {
         assertEmptyRuntimeConfig(environment);
+        const permissionMode = context?.toolPermissionMode ?? (await getToolPermissionMode());
         return createClaudeCodeRuntime({
           descriptor: { id: environment.id, displayName: environment.displayName },
+          permissionMode:
+            permissionMode === "request-approval"
+              ? "default"
+              : permissionMode === "auto-approve"
+                ? "auto"
+                : "bypassPermissions",
         });
       },
     },
@@ -178,6 +209,15 @@ export function createBuiltInRuntimeFactories(
       },
     },
   ];
+}
+
+export function codexRuntimePermissionsForMode(mode: DesktopToolPermissionMode): {
+  readonly sandboxMode: CodexRuntimeSandboxMode;
+  readonly approvalPolicy: CodexRuntimeApprovalPolicy;
+} {
+  return mode === "full-access"
+    ? { sandboxMode: "danger-full-access", approvalPolicy: "never" }
+    : { sandboxMode: "workspace-write", approvalPolicy: "on-request" };
 }
 
 function factoryRef(id: string, version: string): string {

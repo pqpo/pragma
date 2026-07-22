@@ -1,23 +1,17 @@
-import { createBuiltInModelProviderDriverRegistry, probeModelProvider } from "@pragma/core";
+import type { ResolvedModelProvider } from "@pragma/core";
+import { probePiModelProvider } from "@pragma/runtime-pi";
+import type { ModelThinkingLevel } from "@pragma/shared";
 
-import type {
-  ModelConnectionTestResult,
-  ModelProvider,
-  ModelProviderModel,
-} from "../shared/desktop-api.ts";
+import type { ModelConnectionTestResult, ModelProviderModel } from "../shared/desktop-api.ts";
 
 export async function testProviderModel(options: {
-  readonly baseUrl: string;
-  readonly apiKey: string;
-  readonly protocol: ModelProvider["protocol"];
+  readonly provider: ResolvedModelProvider;
   readonly model: ModelProviderModel;
-  readonly fetchImpl?: typeof fetch;
+  readonly thinkingLevel?: ModelThinkingLevel | undefined;
 }): Promise<ModelConnectionTestResult> {
-  return await probeModelProvider({
-    api: options.protocol,
-    baseUrl: options.baseUrl,
-    apiKey: options.apiKey,
-    model: options.model,
-    drivers: createBuiltInModelProviderDriverRegistry({ fetch: options.fetchImpl }),
+  return await probePiModelProvider({
+    provider: options.provider,
+    modelId: options.model.id,
+    ...(options.thinkingLevel === undefined ? {} : { thinkingLevel: options.thinkingLevel }),
   });
 }

@@ -6,12 +6,13 @@ import type { PragmaResource } from "@pragma/interpreter/ast";
 import { errorMessage } from "../../lib/errors.ts";
 import {
   EXPERT_DESCRIPTION_MAX_LENGTH,
-  EXPERT_ID_MAX_LENGTH,
+  PRAGMA_EXPERT_ID_MAX_LENGTH,
   EXPERT_INSTRUCTIONS_MAX_LENGTH,
   EXPERT_NAME_MAX_LENGTH,
   EXPERT_SCOPE_MAX_LENGTH,
   EXPERT_TAG_MAX_LENGTH,
-  CreateExpertIdSchema,
+  PragmaExpertIdSchema,
+  ExpertAdditionalInstructionsSchema,
   ExpertInstructionsSchema,
   ExpertScopeSchema,
   type Capability,
@@ -20,7 +21,12 @@ import {
   type DesktopRuntimeModel,
   type DesktopPlugin,
 } from "../../../../shared/desktop-api.ts";
-import { desktopApi, type ExpertDraft, type ExpertRecord } from "./studio-model.ts";
+import {
+  desktopApi,
+  isBuiltInExpert,
+  type ExpertDraft,
+  type ExpertRecord,
+} from "./studio-model.ts";
 import { ExpertCapabilityPicker } from "./ExpertCapabilityPicker.tsx";
 import { ExpertPluginPicker } from "./ExpertPluginPicker.tsx";
 import { StudioScreenFrame } from "./StudioScreenFrame.tsx";
@@ -45,6 +51,7 @@ export function ExpertEditorFragment(props: {
   const [saving, setSaving] = useState(false);
   const [selectedRuntime, setSelectedRuntime] = useState(props.initialValue.model?.runtimeId ?? "");
   const isEditing = props.initialValue.persisted !== undefined;
+  const isBuiltIn = isBuiltInExpert(props.initialValue);
   const selectedRuntimeInfo = props.runtimes.find((runtime) => runtime.id === selectedRuntime);
   const modelOptions = selectedRuntimeInfo?.models ?? [];
   const selectedModel = modelOptions.find(
@@ -52,14 +59,17 @@ export function ExpertEditorFragment(props: {
   );
   const steps: readonly { readonly id: CreateStep; readonly label: string }[] = [
     { id: "identity", label: t("identity", { ns: "studio" }) },
-    { id: "instructions", label: t("instructions", { ns: "studio" }) },
+    {
+      id: "instructions",
+      label: t(isBuiltIn ? "behaviorPreferences" : "instructions", { ns: "studio" }),
+    },
     { id: "capabilities", label: t("capabilities", { ns: "studio" }) },
     { id: "review", label: t("review", { ns: "studio" }) },
   ];
   const index = steps.findIndex((item) => item.id === step);
   const advance = () => {
     if (step === "identity") {
-      const idResult = CreateExpertIdSchema.safeParse(draft.id);
+      const idResult = PragmaExpertIdSchema.safeParse(draft.id);
       const scopeResult = ExpertScopeSchema.safeParse(draft.scope);
       const idAlreadyExists =
         !isEditing &&
@@ -93,7 +103,9 @@ export function ExpertEditorFragment(props: {
       }
     }
     if (step === "instructions") {
-      const instructionsResult = ExpertInstructionsSchema.safeParse(draft.instructions);
+      const instructionsResult = isBuiltIn
+        ? ExpertAdditionalInstructionsSchema.safeParse(draft.additionalInstructions)
+        : ExpertInstructionsSchema.safeParse(draft.instructions);
       if (!instructionsResult.success) {
         setError(
           instructionsResult.error.issues[0]?.message ??
@@ -104,6 +116,7 @@ export function ExpertEditorFragment(props: {
     }
     if (
       step === "capabilities" &&
+      !isBuiltIn &&
       (draft.model === null ||
         selectedRuntimeInfo?.status !== "available" ||
         selectedModel === undefined)
@@ -134,20 +147,25 @@ export function ExpertEditorFragment(props: {
   const submit = async () => {
     setError(null);
     const name = draft.name.trim();
-    const idResult = CreateExpertIdSchema.safeParse(draft.id);
+    const idResult = PragmaExpertIdSchema.safeParse(draft.id);
     const description = draft.description.trim();
     const scopeResult = ExpertScopeSchema.safeParse(draft.scope);
     const instructionsResult = ExpertInstructionsSchema.safeParse(draft.instructions);
+    const additionalInstructionsResult = ExpertAdditionalInstructionsSchema.safeParse(
+      draft.additionalInstructions,
+    );
     if (
       !name ||
       !description ||
       !draft.version.trim() ||
       !scopeResult.success ||
       !instructionsResult.success ||
+      !additionalInstructionsResult.success ||
       !idResult.success ||
-      draft.model === null ||
-      selectedRuntimeInfo?.status !== "available" ||
-      selectedModel === undefined
+      (!isBuiltIn &&
+        (draft.model === null ||
+          selectedRuntimeInfo?.status !== "available" ||
+          selectedModel === undefined))
     ) {
       setError(
         !idResult.success
@@ -156,9 +174,12 @@ export function ExpertEditorFragment(props: {
             ? (scopeResult.error.issues[0]?.message ?? "The expert scope is invalid.")
             : !instructionsResult.success
               ? (instructionsResult.error.issues[0]?.message ?? "Expert instructions are invalid.")
-              : draft.model === null || selectedModel === undefined
-                ? "Choose an available Runtime and model before creating the expert."
-                : "Name, ID, description, version, scope, and instructions are required.",
+              : !additionalInstructionsResult.success
+                ? (additionalInstructionsResult.error.issues[0]?.message ??
+                  "Additional instructions are invalid.")
+                : !isBuiltIn && (draft.model === null || selectedModel === undefined)
+                  ? "Choose an available Runtime and model before creating the expert."
+                  : "Name, ID, description, version, scope, and instructions are required.",
       );
       return;
     }
@@ -182,6 +203,7 @@ export function ExpertEditorFragment(props: {
         description,
         scope: scopeResult.data,
         instructions: instructionsResult.data,
+        additionalInstructions: additionalInstructionsResult.data,
         model: draft.model,
         icon: User,
       });
@@ -199,12 +221,18 @@ export function ExpertEditorFragment(props: {
         <header className="studio-heading creator-heading">
           <div>
             <h1 id="create-expert-heading">
-              {isEditing ? t("editExpert", { ns: "studio" }) : t("createExpert", { ns: "studio" })}
+              {isBuiltIn
+                ? t("customizeBuiltInExpert", { ns: "studio" })
+                : isEditing
+                  ? t("editExpert", { ns: "studio" })
+                  : t("createExpert", { ns: "studio" })}
             </h1>
             <p>
-              {isEditing
-                ? t("updateExpertDescription", { ns: "studio" })
-                : t("createExpertDescription", { ns: "studio" })}
+              {isBuiltIn
+                ? t("updateBuiltInExpertDescription", { ns: "studio" })
+                : isEditing
+                  ? t("updateExpertDescription", { ns: "studio" })
+                  : t("createExpertDescription", { ns: "studio" })}
             </p>
           </div>
         </header>
@@ -272,17 +300,17 @@ export function ExpertEditorFragment(props: {
                   onChange={(event) =>
                     setDraft({
                       ...draft,
-                      id: event.target.value.slice(0, EXPERT_ID_MAX_LENGTH),
+                      id: event.target.value.slice(0, PRAGMA_EXPERT_ID_MAX_LENGTH),
                     })
                   }
                   placeholder="market_research"
-                  maxLength={EXPERT_ID_MAX_LENGTH}
+                  maxLength={PRAGMA_EXPERT_ID_MAX_LENGTH}
                   disabled={isEditing}
                 />
                 <small className="field-hint">
                   <span>{t("idHint", { ns: "studio" })}</span>
                   <span>
-                    {draft.id.length}/{EXPERT_ID_MAX_LENGTH}
+                    {draft.id.length}/{PRAGMA_EXPERT_ID_MAX_LENGTH}
                   </span>
                 </small>
               </label>
@@ -357,9 +385,10 @@ export function ExpertEditorFragment(props: {
                   }
                   placeholder={t("scopePrompt", { ns: "studio" })}
                   maxLength={EXPERT_SCOPE_MAX_LENGTH * 2}
+                  readOnly={isBuiltIn}
                 />
                 <small className="field-hint">
-                  <span>{t("scopeHint", { ns: "studio" })}</span>
+                  <span>{t(isBuiltIn ? "builtInScopeLocked" : "scopeHint", { ns: "studio" })}</span>
                   <span>
                     {unicodeLength(draft.scope)}/{EXPERT_SCOPE_MAX_LENGTH}
                   </span>
@@ -370,36 +399,65 @@ export function ExpertEditorFragment(props: {
                 <input
                   value={draft.version}
                   onChange={(event) => setDraft({ ...draft, version: event.target.value })}
+                  disabled={isBuiltIn}
                 />
               </label>
             </>
           ) : null}
           {step === "instructions" ? (
-            <label>
-              {t("instructions", { ns: "studio" })}
-              <textarea
-                className="instructions-input"
-                value={draft.instructions}
-                onChange={(event) =>
-                  setDraft({
-                    ...draft,
-                    instructions: truncateUnicode(
-                      event.target.value,
-                      EXPERT_INSTRUCTIONS_MAX_LENGTH,
-                    ),
-                  })
-                }
-                placeholder={t("instructionsPrompt", { ns: "studio" })}
-                maxLength={EXPERT_INSTRUCTIONS_MAX_LENGTH * 2}
-                autoFocus
-              />
-              <small className="field-hint">
-                <span>{t("instructionsHint", { ns: "studio" })}</span>
-                <span>
-                  {unicodeLength(draft.instructions)}/{EXPERT_INSTRUCTIONS_MAX_LENGTH}
-                </span>
-              </small>
-            </label>
+            <div className="instructions-editor">
+              {isBuiltIn ? (
+                <label>
+                  {t("builtInFoundationInstructions", { ns: "studio" })}
+                  <textarea className="instructions-input" value={draft.instructions} readOnly />
+                  <small className="field-hint">
+                    <span>{t("builtInFoundationLocked", { ns: "studio" })}</span>
+                  </small>
+                </label>
+              ) : null}
+              <label>
+                {t(isBuiltIn ? "additionalInstructions" : "instructions", { ns: "studio" })}
+                <textarea
+                  className="instructions-input"
+                  value={isBuiltIn ? draft.additionalInstructions : draft.instructions}
+                  onChange={(event) =>
+                    setDraft({
+                      ...draft,
+                      ...(isBuiltIn
+                        ? {
+                            additionalInstructions: truncateUnicode(
+                              event.target.value,
+                              EXPERT_INSTRUCTIONS_MAX_LENGTH,
+                            ),
+                          }
+                        : {
+                            instructions: truncateUnicode(
+                              event.target.value,
+                              EXPERT_INSTRUCTIONS_MAX_LENGTH,
+                            ),
+                          }),
+                    })
+                  }
+                  placeholder={t(
+                    isBuiltIn ? "additionalInstructionsPrompt" : "instructionsPrompt",
+                    { ns: "studio" },
+                  )}
+                  maxLength={EXPERT_INSTRUCTIONS_MAX_LENGTH * 2}
+                  autoFocus
+                />
+                <small className="field-hint">
+                  <span>
+                    {t(isBuiltIn ? "additionalInstructionsHint" : "instructionsHint", {
+                      ns: "studio",
+                    })}
+                  </span>
+                  <span>
+                    {unicodeLength(isBuiltIn ? draft.additionalInstructions : draft.instructions)}/
+                    {EXPERT_INSTRUCTIONS_MAX_LENGTH}
+                  </span>
+                </small>
+              </label>
+            </div>
           ) : null}
           {step === "capabilities" ? (
             <div className="capability-editor">
@@ -414,7 +472,9 @@ export function ExpertEditorFragment(props: {
                     setDraft({ ...draft, model: null });
                   }}
                 >
-                  <option value="">{t("notConfigured", { ns: "studio" })}</option>
+                  <option value="">
+                    {t(isBuiltIn ? "systemDefault" : "notConfigured", { ns: "studio" })}
+                  </option>
                   {props.runtimes.map((runtime) => (
                     <option
                       key={runtime.id}
@@ -515,11 +575,14 @@ export function ExpertEditorFragment(props: {
                 resourceTools={draft.resourceTools}
                 contextStoreMounts={draft.contextStoreMounts}
                 capabilityReferences={draft.capabilities}
+                toolApprovals={draft.toolApprovals}
+                allowResourceTools={!isBuiltIn}
                 onResourceToolsChange={(resourceTools) => setDraft({ ...draft, resourceTools })}
                 onContextStoreMountsChange={(contextStoreMounts) =>
                   setDraft({ ...draft, contextStoreMounts })
                 }
                 onCapabilityReferencesChange={setCapabilityReferences}
+                onToolApprovalsChange={(toolApprovals) => setDraft({ ...draft, toolApprovals })}
               />
               <ExpertPluginPicker
                 plugins={props.plugins}
@@ -559,11 +622,14 @@ export function ExpertEditorFragment(props: {
                   <dt>{t("capabilities", { ns: "studio" })}</dt>
                   <dd>
                     {draft.model === null
-                      ? "No runtime/model"
+                      ? t(isBuiltIn ? "systemDefault" : "notConfigured", { ns: "studio" })
                       : `${draft.model.runtimeId} / ${draft.model.modelId}`}{" "}
                     · {draft.contextStoreMounts.length} context stores · {draft.skills} skills ·{" "}
                     {draft.tools} tools · {draft.mcpServers} MCP server · {draft.plugins.length}{" "}
                     plugins
+                    {isBuiltIn
+                      ? ` · ${t("requiredSystemCapabilitiesLocked", { ns: "studio" })}`
+                      : ""}
                   </dd>
                 </div>
               </dl>

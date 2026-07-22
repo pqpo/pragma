@@ -122,7 +122,14 @@ describe("resolveExpertCapabilities", () => {
       version: "1.0.0",
       scope: "Review only.",
       instructions: "Review the supplied work.",
-      model: { runtimeId: "test", providerId: "test", modelId: "test" },
+      additionalInstructions: "",
+      origin: "project",
+      readOnly: false,
+      customized: false,
+      executionProfile: {
+        mode: "pinned",
+        model: { runtimeId: "test", providerId: "test", modelId: "test" },
+      },
       resourceRuntime: { ref: "runtime-profile:reviewer_runtime@1.0.0" },
       capabilities: [
         { kind: "skill", capabilityId: skillId, revision: 1 },

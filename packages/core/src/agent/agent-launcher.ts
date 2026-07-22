@@ -40,6 +40,10 @@ export interface AgentDelegationDefinition {
 
 const agentDelegationDefinition = Symbol("pragma.agent-delegation-definition");
 
+const MIN_WAIT_EXPERTS_TIMEOUT_MS = 30_000;
+const DEFAULT_WAIT_EXPERTS_TIMEOUT_MS = 10 * 60_000;
+const MAX_WAIT_EXPERTS_TIMEOUT_MS = 60 * 60_000;
+
 type AgentLifecycleTool = ExpertAgentManagedTool<
   ExpertLifecycleToolName,
   ExpertAgentToolCallResult
@@ -123,12 +127,18 @@ function createLifecycleTools(
     }),
     tool({
       name: "wait_experts",
-      description: "Wait for exact Expert invocations. Defaults to waiting for all targets.",
+      description:
+        "Wait for exact Expert invocations. Defaults to waiting for all targets with a 10-minute timeout.",
       inputSchema: objectSchema(
         {
           invocationIds: { type: "array", items: { type: "string" }, minItems: 1 },
           returnWhen: { type: "string", enum: ["all", "any"] },
-          timeoutMs: { type: "integer", minimum: 1 },
+          timeoutMs: {
+            type: "integer",
+            minimum: MIN_WAIT_EXPERTS_TIMEOUT_MS,
+            maximum: MAX_WAIT_EXPERTS_TIMEOUT_MS,
+            default: DEFAULT_WAIT_EXPERTS_TIMEOUT_MS,
+          },
         },
         ["invocationIds"],
       ),
@@ -217,7 +227,7 @@ function readSpawn(value: unknown): { expertId: string; prompt: string } {
 function readWait(value: unknown): {
   invocationIds: readonly string[];
   returnWhen?: "all" | "any";
-  timeoutMs?: number;
+  timeoutMs: number;
 } {
   const record = readRecord(value);
   const ids = record["invocationIds"];
@@ -230,14 +240,20 @@ function readWait(value: unknown): {
   if (returnWhen !== undefined && returnWhen !== "all" && returnWhen !== "any") {
     throw new Error('returnWhen must be "all" or "any".');
   }
-  const timeoutMs = record["timeoutMs"];
-  if (timeoutMs !== undefined && (!Number.isSafeInteger(timeoutMs) || (timeoutMs as number) < 1)) {
-    throw new Error("timeoutMs must be a positive integer.");
+  const timeoutMs = record["timeoutMs"] ?? DEFAULT_WAIT_EXPERTS_TIMEOUT_MS;
+  if (
+    !Number.isSafeInteger(timeoutMs) ||
+    (timeoutMs as number) < MIN_WAIT_EXPERTS_TIMEOUT_MS ||
+    (timeoutMs as number) > MAX_WAIT_EXPERTS_TIMEOUT_MS
+  ) {
+    throw new Error(
+      `timeoutMs must be an integer between ${MIN_WAIT_EXPERTS_TIMEOUT_MS} and ${MAX_WAIT_EXPERTS_TIMEOUT_MS}.`,
+    );
   }
   return {
     invocationIds,
     ...(returnWhen === undefined ? {} : { returnWhen }),
-    ...(timeoutMs === undefined ? {} : { timeoutMs: timeoutMs as number }),
+    timeoutMs: timeoutMs as number,
   };
 }
 

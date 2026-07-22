@@ -30,7 +30,7 @@ Every semantic reference is exact. Multiple versions of the same kind and ID may
 
 ```text
 pragma.yaml
-experts/steward@1.0.0.pragma.yaml
+experts/pragma@1.0.0.pragma.yaml
 teams/delivery@2.0.0.pragma.yaml
 flows/review@1.2.0.pragma.yaml
 capabilities/repository-tools@3.0.0.pragma.yaml
@@ -146,8 +146,9 @@ cancellation, usage, and recovery stay under one governance boundary.
 Plugin references are exact environment extension references, not project resources. The host
 supplies `PragmaPluginResolver`, which resolves the installed package, Desktop defaults, Expert
 overrides, and secret bindings without putting secret values in YAML. Plugin package/config/
-credential fingerprints participate in the environment fingerprint, so a changed plugin blocks
-recovery of an execution pinned to the previous environment.
+credential fingerprints participate in the environment fingerprint for validation and audit. A
+changed plugin does not by itself block Desktop Mission recovery; concrete plugin failures are
+reported when the recovered execution uses the plugin.
 
 Flow input and output JSON Schemas remain attached when a Flow is exposed as a Tool. Tool timeout,
 caller cancellation, and target Flow timeout are independent deadlines; the earliest aborts only
@@ -156,7 +157,11 @@ the affected Invocation subtree. Tool output uses safe JSON serialization, inclu
 
 ## Teams and bounded Flow loops
 
-Teams refer to exact Expert and RuntimeProfile versions. Flow ordinary edges must form a DAG. A
+Teams refer to exact Expert and RuntimeProfile versions. A Team may define optional
+`spec.instructions`; Core exposes it to the coordinator and every member
+as a critical, always-on `TEAM.md` Context System document for that Team execution only. The
+document does not mutate the reusable Expert definition or leak into other Teams that use the same
+Expert. Flow ordinary edges must form a DAG. A
 back edge is legal only as a named `repeat` transition with a positive `maxIterations`. Loop state
 is persisted with the Execution before the next node is scheduled, making recovery idempotent.
 Ordinary and repeat edges remain distinct multigraph edges, and `onLimit` must leave the loop.
@@ -188,8 +193,10 @@ Compilation separately returns an environment fingerprint containing:
 - the project fingerprint;
 - every resolved resource's binding revision and verification fingerprint.
 
-A run pins both the project revision and environment fingerprint. Recovery must fail if the current
-bindings no longer produce the pinned fingerprint.
+A Desktop Mission pins its project revision, executor, and workspace. The environment fingerprint
+records the bindings used for validation and audit, but is not a recovery gate. Core recovery pins
+the persisted Session/Execution identities, existing Runtime Context bindings, and active Flow
+definition graph; unavailable live bindings fail only when they are actually required.
 
 ## Application service
 
@@ -217,6 +224,8 @@ Desktop stores revisions below `~/.pragma/projects/<projectId>/revisions/<revisi
 implements source persistence and local binding adapters. Missions pin an exact resource and
 revision. A Mission v3 directory keeps bounded identity and lifecycle metadata in `mission.yaml`
 and appends user turns plus Execution references to `messages.jsonl`; assistant, thinking, and tool
-history is projected from the canonical Execution event log. The built-in Steward bundle and its
-DSL-authoring Skill live in `packages/steward/dsl`; applications install the package with explicit
-project and task ports rather than maintaining a second hard-coded runtime implementation.
+history is projected from the canonical Execution event log. The built-in general-purpose Pragma
+Agent bundle and its DSL-authoring Skill live in `packages/default-agent/dsl`; applications install
+the package with explicit project and task ports rather than maintaining a second hard-coded runtime
+implementation. Desktop registers that bundle as a read-only System Expert; Home creates a fresh
+Mission using it by default, and all streaming output uses the normal Mission chat projection.

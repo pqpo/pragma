@@ -539,3 +539,65 @@ No actionable P0, P1, or P2 findings remain in the requested scope.
 None required for this spacing change.
 
 final result: passed
+
+---
+
+# Desktop 首页执行者选择器 Design QA
+
+- Source visual truth: `/tmp/codex-remote-attachments/019f82c2-92c5-7f70-b5e9-db3fccecb519/2281b75b-f10d-48c0-8614-f20efe270c8f/1-Photo-1.jpg`
+- Implementation screenshots: `/tmp/pragma-executor-five-row-final.png`, `/tmp/pragma-executor-final-normal.png`, `/tmp/pragma-executor-final-focus.png`, `/tmp/pragma-executor-five-row-1080x700.png`
+- Combined comparison: `/tmp/pragma-executor-comparison-final.png`
+- Viewports: 1440 × 900 and 1080 × 700 CSS px, light theme, executor menu open
+- State: five-row layout fixture for density/alignment; live app data for normal and keyboard-focus states
+
+## Full-view comparison evidence
+
+The final five-row capture keeps the existing Desktop composition while intentionally applying the requested differences from the source photo: the large “选择执行者” heading is removed, the descriptive hint remains, rows have a stable 68 px height, icons use a stable 36 px container with a 20 px glyph, and all kind/default pills share the same right edge. The menu remains fully visible at the minimum supported 1080 × 700 viewport without document overflow.
+
+## Focused-region comparison evidence
+
+- Five rows measure 68 px each; the options viewport and scroll height are both 370 px, so rows are not compressed.
+- Every icon container measures 36 × 36 px and every glyph measures 20 × 20 px.
+- Every kind/default pill has the same 11 px right inset.
+- Normal search state has one outer border and no shadow. Keyboard focus adds the outer focus ring; the input itself keeps `border: 0`, `outline: 0`, and `box-shadow: none`.
+- The hint header is hit-test visible when the five-row menu extends above the mission composer.
+- No renderer console errors were observed during the live-state verification.
+
+## Required fidelity surfaces
+
+- Fonts and typography: existing Inter/SF Pro system stack, weights, truncation, and line heights are preserved; only the redundant large header is removed.
+- Spacing and layout rhythm: rows, icon slots, right-side metadata, search field, and five-row menu height are now deterministic.
+- Colors and visual tokens: existing surface, border, green selection, muted text, and focus tokens are unchanged.
+- Image quality and asset fidelity: no raster assets were introduced; existing Phosphor icons remain and are normalized through fixed slots.
+- Copy and content: the explanatory hint and available count remain; the unused large-title translations were removed from all three locales.
+
+## Comparison history
+
+1. P1 — footer descendant button styles overrode option buttons with `display: inline-flex`, 34 px minimum height, and compact padding. Fixed by scoping those rules to direct footer buttons, restoring the option grid.
+2. P1 — the expanded five-row menu extended above the scrollable mission section, hiding the retained hint. Fixed by allowing the centered Home mission section to overflow visibly; verified at 1440 × 900 and 1080 × 700.
+3. P2 — icon containers could shrink below their declared width. Fixed with a matching explicit minimum width.
+4. Post-fix evidence — five rows are 68 px high, icons are 36/20 px, tags share an 11 px right inset, the hint is visible, and both input states retain a single visible boundary.
+
+## Findings
+
+No actionable P0, P1, or P2 differences remain for the requested changes.
+
+## Open questions
+
+None.
+
+## Implementation checklist
+
+- [x] Remove the redundant large picker heading.
+- [x] Keep the small explanatory hint and count.
+- [x] Prevent option-row compression.
+- [x] Normalize icon sizing.
+- [x] Right-align executor-kind/default pills.
+- [x] Verify normal and keyboard-focus input states.
+- [x] Verify five-row layout at the minimum supported viewport.
+
+## Follow-up polish
+
+None required.
+
+final result: passed

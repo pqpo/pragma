@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { AgentMessageSchema, AgentMessageUsageSchema } from "../agent-message.schema.ts";
+import { ExpertAgentStreamSourceSchema } from "../stream-event.schema.ts";
 
 export const ExecutionStatusSchema = z.enum([
   "queued",
@@ -20,6 +21,14 @@ export const RuntimeEnvironmentBindingSchema = z.object({
   runtimeId: z.string().min(1),
   revision: z.number().int().positive(),
   fingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+});
+
+export const RuntimeModelSelectionSchema = z.object({
+  model: z.object({
+    providerId: z.string().trim().min(1),
+    modelId: z.string().trim().min(1),
+  }),
+  thinkingLevel: z.string().trim().min(1).optional(),
 });
 
 export const ExecutionKindSchema = z.enum(["expert-turn", "flow"]);
@@ -55,7 +64,7 @@ export const RuntimeContextOriginSchema = z.discriminatedUnion("type", [
 
 export const RuntimeContextRecordSchema = z
   .object({
-    schemaVersion: z.literal("pragma.runtime-context/v3"),
+    schemaVersion: z.literal("pragma.runtime-context/v4"),
     contextId: z.string().min(1),
     owner: RuntimeContextOwnerSchema,
     origin: RuntimeContextOriginSchema,
@@ -64,6 +73,7 @@ export const RuntimeContextRecordSchema = z
       version: z.string().min(1),
     }),
     runtime: RuntimeEnvironmentBindingSchema,
+    modelSelection: RuntimeModelSelectionSchema.optional(),
     snapshot: RuntimeContextSnapshotSchema.optional(),
     lifecycle: z.enum(["open", "closed"]),
     createdAt: z.string().datetime(),
@@ -172,6 +182,9 @@ export const InvocationMessageAppendedEventSchema = ExecutionEventSchema.extend(
   type: z.literal("invocation.message.appended"),
   data: z.object({
     message: AgentMessageSchema,
+    runId: z.string().min(1).optional(),
+    parentRunId: z.string().min(1).optional(),
+    source: ExpertAgentStreamSourceSchema.optional(),
   }),
 });
 
@@ -183,7 +196,10 @@ export const ExecutionOutputItemSchema = z.object({
   parentInvocationId: z.string().min(1).optional(),
   executorId: z.string().min(1).optional(),
   contextId: z.string().min(1),
-  channel: z.enum(["message", "thought", "tool", "progress", "result"]),
+  runId: z.string().min(1),
+  parentRunId: z.string().min(1).optional(),
+  source: ExpertAgentStreamSourceSchema,
+  channel: z.enum(["message", "thought", "tool", "progress", "result", "agent"]),
   delta: z.string().optional(),
   value: z.unknown().optional(),
   occurredAt: z.string().datetime(),

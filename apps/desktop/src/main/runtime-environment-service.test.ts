@@ -6,6 +6,7 @@ import { defineRuntimeDriver } from "@pragma/core";
 import { describe, expect, it } from "vitest";
 
 import {
+  codexRuntimePermissionsForMode,
   createRuntimeEnvironmentService,
   type RuntimeEnvironmentAdapterFactory,
 } from "./runtime-environment-service.ts";
@@ -66,6 +67,16 @@ describe("RuntimeEnvironmentService", () => {
         },
       }),
     ).rejects.toThrow("thinking level is unavailable");
+  });
+});
+
+describe("Codex tool permission mapping", () => {
+  it.each([
+    ["request-approval", "workspace-write", "on-request"],
+    ["auto-approve", "workspace-write", "on-request"],
+    ["full-access", "danger-full-access", "never"],
+  ] as const)("maps %s to sandbox=%s and approval=%s", (mode, sandboxMode, approvalPolicy) => {
+    expect(codexRuntimePermissionsForMode(mode)).toEqual({ sandboxMode, approvalPolicy });
   });
 });
 

@@ -5,10 +5,10 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { PragmaExpertResource } from "@pragma/interpreter/ast";
-import { createMissionStore } from "./mission-store.ts";
+import { missionExecutorSnapshot } from "../shared/desktop-api.ts";
+import { createMissionStore, MISSION_TITLE_MAX_LENGTH } from "./mission-store.ts";
 
 const temporaryPaths: string[] = [];
-const environmentFingerprint = "a".repeat(64);
 
 afterEach(async () => {
   await Promise.all(
@@ -26,7 +26,13 @@ describe("mission store", () => {
       workspace: { path: join(root, "workspace"), basename: "workspace" },
       goal: "Design the Missions experience\nwith a second line.",
       project: { id: "studio", revision: 3 },
-      executor: expert,
+      executor: missionExecutorSnapshot(expert),
+      toolPermissionMode: "full-access",
+      modelOverride: {
+        providerId: "provider",
+        modelId: "configured-model",
+        thinkingLevel: "high",
+      },
     });
 
     expect(created.title).toBe("Design the Missions experience");
@@ -35,6 +41,12 @@ describe("mission store", () => {
       ref: "expert:product_designer@0.1.0",
     });
     expect(created.project).toEqual({ id: "studio", revision: 3 });
+    expect(created.toolPermissionMode).toBe("full-access");
+    expect(created.modelOverride).toEqual({
+      providerId: "provider",
+      modelId: "configured-model",
+      thinkingLevel: "high",
+    });
     await expect(store.get(created.id)).resolves.toEqual(created);
     await expect(store.list()).resolves.toEqual([
       expect.objectContaining({ id: created.id, title: created.title }),
@@ -42,6 +54,8 @@ describe("mission store", () => {
     const manifest = await readFile(join(root, "missions", created.id, "mission.yaml"), "utf8");
     expect(manifest).toContain("schemaVersion: pragma.mission/v3");
     expect(manifest).toContain("revision: 3");
+    expect(manifest).toContain("toolPermissionMode: full-access");
+    expect(manifest).toContain("modelOverride:");
     expect(manifest).not.toContain("messages:");
     expect(await readFile(join(root, "missions", created.id, "messages.jsonl"), "utf8")).toContain(
       '"kind":"user"',
@@ -55,7 +69,7 @@ describe("mission store", () => {
       workspace: { path: join(root, "workspace"), basename: "workspace" },
       goal: "Review the desktop shell",
       project: { id: "studio", revision: 1 },
-      executor: expertFixture(),
+      executor: missionExecutorSnapshot(expertFixture()),
     });
 
     const completed = await store.markComplete(created.id);
@@ -67,6 +81,61 @@ describe("mission store", () => {
     expect(reopened.completedAt).toBeUndefined();
   });
 
+  it("limits rule-based titles derived from the Mission goal", async () => {
+    const root = await temporaryRoot();
+    const store = createMissionStore({ missionsPath: join(root, "missions") });
+    const created = await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "为每一个 Git 子模块创建并推送 feature/pnpm-workspace-compat 分支，同时检查远程状态",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+    });
+
+    expect(Array.from(created.title)).toHaveLength(MISSION_TITLE_MAX_LENGTH);
+    expect(created.title.endsWith("…")).toBe(true);
+  });
+
+  it("updates idle Mission options without changing pinned Mission identity", async () => {
+    const root = await temporaryRoot();
+    const store = createMissionStore({ missionsPath: join(root, "missions") });
+    const created = await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "Continue with a different model",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+    });
+    const execution = {
+      id: "00000000-0000-4000-8000-000000000010",
+      inputMessageId: created.initialMessageId,
+      status: "running" as const,
+      startedAt: "2026-07-15T00:00:00.000Z",
+    };
+    await store.updateExecution(created.id, execution);
+
+    await expect(
+      store.updateOptions(created.id, {
+        toolPermissionMode: "full-access",
+      }),
+    ).rejects.toThrow("Wait for the current execution");
+
+    await store.updateExecution(created.id, { ...execution, status: "succeeded" });
+    const updated = await store.updateOptions(created.id, {
+      toolPermissionMode: "auto-approve",
+      modelOverride: { providerId: "provider", modelId: "next-model", thinkingLevel: "high" },
+    });
+
+    expect(updated.toolPermissionMode).toBe("auto-approve");
+    expect(updated.modelOverride?.modelId).toBe("next-model");
+    expect(updated.workspace).toEqual(created.workspace);
+    expect(updated.executor).toEqual(created.executor);
+    expect(updated.project).toEqual(created.project);
+
+    const cleared = await store.updateOptions(created.id, {
+      toolPermissionMode: "request-approval",
+    });
+    expect(cleared.modelOverride).toBeUndefined();
+  });
+
   it("does not let a stale observer overwrite a terminal execution status", async () => {
     const root = await temporaryRoot();
     const store = createMissionStore({ missionsPath: join(root, "missions") });
@@ -74,14 +143,13 @@ describe("mission store", () => {
       workspace: { path: join(root, "workspace"), basename: "workspace" },
       goal: "Run once",
       project: { id: "studio", revision: 1 },
-      executor: expertFixture(),
+      executor: missionExecutorSnapshot(expertFixture()),
     });
     const executionId = "00000000-0000-4000-8000-000000000001";
     const startedAt = "2026-07-15T00:00:00.000Z";
     await store.updateExecution(created.id, {
       id: executionId,
       inputMessageId: created.initialMessageId,
-      environmentFingerprint,
       status: "running",
       startedAt,
     });
@@ -90,7 +158,6 @@ describe("mission store", () => {
       {
         id: executionId,
         inputMessageId: created.initialMessageId,
-        environmentFingerprint,
         status: "succeeded",
         startedAt,
         finishedAt: "2026-07-15T00:01:00.000Z",
@@ -103,7 +170,6 @@ describe("mission store", () => {
       {
         id: executionId,
         inputMessageId: created.initialMessageId,
-        environmentFingerprint,
         status: "waiting",
         startedAt,
       },
@@ -129,7 +195,7 @@ describe("mission store", () => {
       workspace: { path: join(root, "workspace"), basename: "workspace" },
       goal: "Remove this conversation",
       project: { id: "studio", revision: 1 },
-      executor: expertFixture(),
+      executor: missionExecutorSnapshot(expertFixture()),
     });
     await store.remove(idle.id);
     await expect(store.get(idle.id)).rejects.toMatchObject({ code: "mission_not_found" });
@@ -138,12 +204,11 @@ describe("mission store", () => {
       workspace: { path: join(root, "workspace"), basename: "workspace" },
       goal: "Keep this execution",
       project: { id: "studio", revision: 1 },
-      executor: expertFixture(),
+      executor: missionExecutorSnapshot(expertFixture()),
     });
     await store.updateExecution(active.id, {
       id: "00000000-0000-4000-8000-000000000002",
       inputMessageId: active.initialMessageId,
-      environmentFingerprint,
       status: "running",
       startedAt: "2026-07-16T00:00:00.000Z",
     });
@@ -157,7 +222,7 @@ describe("mission store", () => {
       workspace: { path: join(root, "workspace"), basename: "workspace" },
       goal: "Initial request",
       project: { id: "studio", revision: 1 },
-      executor: expertFixture(),
+      executor: missionExecutorSnapshot(expertFixture()),
     });
     const message = {
       id: "00000000-0000-4000-8000-000000000010",
@@ -204,7 +269,7 @@ describe("mission store", () => {
       workspace: { path: join(root, "workspace"), basename: "workspace" },
       goal: "Recover timeline",
       project: { id: "studio", revision: 1 },
-      executor: expertFixture(),
+      executor: missionExecutorSnapshot(expertFixture()),
     });
     const directory = join(root, "missions", created.id);
     await appendFile(join(directory, "messages.jsonl"), '{"torn"', "utf8");
@@ -238,7 +303,7 @@ describe("mission store", () => {
       workspace: { path: join(root, "workspace"), basename: "workspace" },
       goal: "Versioned storage",
       project: { id: "studio", revision: 1 },
-      executor: expertFixture(),
+      executor: missionExecutorSnapshot(expertFixture()),
     });
     const directory = join(root, "missions", created.id);
     await appendFile(join(directory, "messages.jsonl"), "invalid-json\n", "utf8");

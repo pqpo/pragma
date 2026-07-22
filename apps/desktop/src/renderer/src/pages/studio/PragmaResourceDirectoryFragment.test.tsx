@@ -1,7 +1,11 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import { PragmaExpertResourceSchema, type PragmaExpertResource } from "@pragma/interpreter/ast";
+import {
+  PragmaExpertResourceSchema,
+  PragmaExpertTeamResourceSchema,
+  type PragmaExpertResource,
+} from "@pragma/interpreter/ast";
 import type { PragmaProjectSnapshot } from "../../../../shared/desktop-api.ts";
 
 import { matchingTeamExperts, TeamEditor } from "./PragmaResourceDirectoryFragment.tsx";
@@ -65,5 +69,48 @@ describe("expert team editor", () => {
     expect(
       matchingTeamExperts(experts, "needle", new Set()).map((item) => item.metadata.id),
     ).toEqual(["expert_099"]);
+  });
+
+  it("shows and preserves optional Team instructions", () => {
+    const experts = [expert(1), expert(2)];
+    const instructions = "Verify evidence before declaring work complete.";
+    const initial = PragmaExpertTeamResourceSchema.parse({
+      apiVersion: "pragma/v2",
+      kind: "ExpertTeam",
+      metadata: {
+        id: "quality_team",
+        version: "1.0.0",
+        name: "Quality team",
+        description: "Coordinates quality work",
+        tags: [],
+      },
+      spec: {
+        coordinator: { ref: "expert:expert_001@1.0.0" },
+        members: [{ ref: "expert:expert_002@1.0.0" }],
+        instructions,
+        delegation: {},
+      },
+    });
+    const project = {
+      schemaVersion: "pragma.project-snapshot/v2",
+      projectId: "test-project",
+      revision: 0,
+      resources: [...experts, initial],
+      diagnostics: [],
+    } satisfies PragmaProjectSnapshot;
+
+    const html = renderToStaticMarkup(
+      <TeamEditor
+        project={project}
+        initial={initial}
+        error={null}
+        onCancel={() => undefined}
+        onSave={async () => undefined}
+      />,
+    );
+
+    expect(html).toContain("Team instructions (optional)");
+    expect(html).toContain(instructions);
+    expect(html).toContain("always-on TEAM.md");
   });
 });

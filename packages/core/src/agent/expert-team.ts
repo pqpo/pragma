@@ -20,6 +20,7 @@ export interface DefineExpertTeamOptions {
   readonly version: string;
   readonly name?: string | undefined;
   readonly description?: string | undefined;
+  readonly instructions?: string | undefined;
   readonly coordinator: Expert;
   readonly members: readonly Expert[];
   readonly delegation: ExpertTeamDelegationOptions;
@@ -31,6 +32,7 @@ export interface ExpertTeam {
   readonly version: string;
   readonly name: string;
   readonly description: string;
+  readonly instructions?: string | undefined;
   readonly coordinator: Expert;
   readonly members: readonly Expert[];
   readonly delegation: {
@@ -91,6 +93,9 @@ export function defineExpertTeam(options: DefineExpertTeamOptions): ExpertTeam {
     version: readNonEmpty(options.version, "version"),
     name: options.name ?? options.coordinator.name,
     description: options.description ?? options.coordinator.description,
+    ...(options.instructions === undefined
+      ? {}
+      : { instructions: readNonEmpty(options.instructions, "instructions") }),
     coordinator: options.coordinator,
     members: Object.freeze([...options.members]),
     delegation: Object.freeze({

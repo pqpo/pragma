@@ -109,14 +109,18 @@ export function createCodexRuntime(options: CodexRuntimeAdapterOptions = {}): Ru
             ctx.persistence.restoredRuntimeSessionId ?? ctx.request.runtimeSession?.id ?? "",
         };
         const sessionDir = ctx.persistence.spec?.sessionDir ?? ctx.paths.runtimeSessionDir("codex");
-        const codexHome = await prepareManagedCodexHome({
+        const codex = await prepareManagedCodexHome({
           agent: ctx.agent,
           sessionDir,
+          pragmaPaths: ctx.paths.pragma,
           env: ctx.processEnvironment,
           logger: ctx.logger,
         });
         if (state.threadId !== "") {
-          const exists = await nativeSessionFileExists(join(codexHome, "sessions"), state.threadId);
+          const exists = await nativeSessionFileExists(
+            join(codex.home, "sessions"),
+            state.threadId,
+          );
           if (!exists) {
             throw new Error(`Codex runtime session file was not found: ${state.threadId}.`);
           }
@@ -129,7 +133,6 @@ export function createCodexRuntime(options: CodexRuntimeAdapterOptions = {}): Ru
           mcpToolRegistry = await createMcpToolRegistry(ctx.agent.mcp);
           expertToolsMcpRegistration = await registerCodexExpertToolsMcpSession({
             agent: ctx.agent,
-            instanceId: ctx.systemSessionId,
             getContext: () => ctx.lifecycle.currentContext,
             humanInteractionHandler: ctx.request.humanInteractionHandler,
             logger: ctx.logger,
@@ -146,7 +149,8 @@ export function createCodexRuntime(options: CodexRuntimeAdapterOptions = {}): Ru
             cwd: ctx.workspace,
             env: {
               ...ctx.processEnvironment,
-              CODEX_HOME: codexHome,
+              CODEX_HOME: codex.home,
+              CODEX_SQLITE_HOME: codex.sqliteHome,
             },
             clientInfo: options.clientInfo ?? DEFAULT_CODEX_CLIENT_INFO,
             spawn: options.spawn,
@@ -181,7 +185,7 @@ export function createCodexRuntime(options: CodexRuntimeAdapterOptions = {}): Ru
               state,
               defaultModelName,
               defaultThinkingLevel,
-              codexHome,
+              codexHome: codex.home,
               startupMessages: threadStartResult.startedFreshThread
                 ? ctx.agentContext.startupMessages
                 : [],

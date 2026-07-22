@@ -2,11 +2,12 @@ import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
-import type { ExecutionRecord, Invocation } from "@pragma/shared";
+import type { ExecutionRecord, ExpertAgentStreamEvent, Invocation } from "@pragma/shared";
 import { describe, expect, it } from "vitest";
 
 import {
   createFileExecutionStore,
+  ExecutionWorkHistoryReader,
   ExecutionFinalStatusConflictError,
   getExecutionLiveBus,
   PragmaPaths,
@@ -127,6 +128,29 @@ describe("Execution canonical event log", () => {
         "same-event",
       ),
     ).rejects.toThrow("event idempotency conflict");
+  });
+
+  it("replays active output published before a subscriber attaches", async () => {
+    const { store } = await fixture();
+    const bus = getExecutionLiveBus(store);
+    const occurredAt = new Date().toISOString();
+    bus.publish("execution", {
+      sourceEventId: "early-output",
+      executionId: "execution",
+      invocationId: "root",
+      contextId: "root-context",
+      runId: "root-run",
+      source: { kind: "agent", runId: "root-run", path: [] },
+      channel: "message",
+      delta: "already emitted",
+      occurredAt,
+    });
+
+    const subscription = bus.subscribe("execution");
+    await expect(subscription[Symbol.asyncIterator]().next()).resolves.toMatchObject({
+      value: { sourceEventId: "early-output", delta: "already emitted" },
+    });
+    await subscription.close();
   });
 
   it("commits state, Invocation changes, and events atomically and idempotently", async () => {
@@ -299,6 +323,340 @@ describe("Execution canonical event log", () => {
     await expect(createFileExecutionStore({ pragmaHome: home }).get("legacy")).rejects.toThrow(
       "unsupported-state-version",
     );
+  });
+
+  it("groups runtime subagent turns by native session and isolates their output", async () => {
+    const { store } = await fixture();
+    const emittedAt = new Date().toISOString();
+    await store.appendEvent(
+      "execution",
+      "root",
+      "runtime.event",
+      {
+        schemaVersion: "pragma.stream/v1",
+        eventId: "spawn-children",
+        sequence: 0,
+        runId: "root-run",
+        emittedAt,
+        source: {
+          kind: "agent",
+          runId: "root-run",
+          sessionId: "root-thread",
+          agentId: "root",
+          agentType: "codex",
+          path: [],
+        },
+        type: "agent.command",
+        payload: {
+          commandId: "spawn-children",
+          action: "spawn",
+          phase: "completed",
+          senderSessionId: "root-thread",
+          targetSessionIds: ["child-a", "child-b"],
+          prompt: "Investigate in parallel",
+          states: { "child-a": "pending", "child-b": "pending" },
+        },
+      },
+      "spawn-children",
+    );
+    const source = (sessionId: string, runId: string, displayName?: string) => ({
+      kind: "agent" as const,
+      runId,
+      parentRunId: "root-run",
+      sessionId,
+      parentSessionId: "root-thread",
+      agentId: sessionId,
+      agentType: "codex-subagent",
+      ...(displayName === undefined ? {} : { displayName }),
+      path: [],
+    });
+    const childRuns = [
+      ["child-a", "turn-a-1"],
+      ["child-a", "turn-a-2"],
+      ["child-b", "turn-b-1"],
+    ] as const;
+    for (const [index, [sessionId, runId]] of childRuns.entries()) {
+      await store.appendEvent(
+        "execution",
+        "root",
+        "runtime.event",
+        {
+          schemaVersion: "pragma.stream/v1",
+          eventId: `run-${index}`,
+          sequence: index,
+          runId,
+          parentRunId: "root-run",
+          emittedAt,
+          source: source(sessionId, runId, index === 1 ? "Researcher" : undefined),
+          type: "run.started",
+          payload: { task: `task ${index}` },
+        },
+        `run-${index}`,
+      );
+    }
+    const message = (text: string, timestamp: number) => ({
+      role: "assistant" as const,
+      content: [{ type: "text" as const, text }],
+      api: "codex",
+      provider: "openai",
+      model: "test",
+      usage: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 0,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
+      stopReason: "stop" as const,
+      timestamp,
+    });
+    await store.appendEvent("execution", "root", "invocation.message.appended", {
+      runId: "turn-a-1",
+      parentRunId: "root-run",
+      source: source("child-a", "turn-a-1"),
+      message: message("output-a", 1),
+    });
+    await store.appendEvent("execution", "root", "invocation.message.appended", {
+      runId: "turn-b-1",
+      parentRunId: "root-run",
+      source: source("child-b", "turn-b-1"),
+      message: message("output-b", 2),
+    });
+
+    const reader = new ExecutionWorkHistoryReader(store);
+    const records = await reader.listRecords({ executionIds: ["execution"] });
+    const childA = records.find((record) => record.recordId === "runtime-agent:child-a");
+    expect(childA?.tasks).toHaveLength(2);
+    expect(childA?.displayName).toBe("Researcher");
+    expect(childA?.tasks.every((task) => task.taskId.includes("turn-a-"))).toBe(true);
+    expect(records.filter((record) => record.kind === "runtime-agent")).toHaveLength(2);
+    await expect(
+      reader.readOutput({ executionIds: ["execution"], record: childA! }),
+    ).resolves.toMatchObject([{ message: { content: [{ text: "output-a" }] } }]);
+  });
+
+  it("projects only real subagent runs and carries dispatch prompts across interruption", async () => {
+    const { store } = await fixture();
+    const source = (runId: string) => ({
+      kind: "agent" as const,
+      runId,
+      parentRunId: "root-run",
+      sessionId: "child-thread",
+      parentSessionId: "root-thread",
+      agentId: "child-thread",
+      agentType: "codex-subagent",
+      path: [],
+    });
+    let sequence = 0;
+    const append = async <Event extends ExpertAgentStreamEvent>(
+      event: Omit<Event, "schemaVersion" | "eventId" | "sequence" | "emittedAt">,
+    ) => {
+      sequence += 1;
+      await store.appendEvent("execution", "root", "runtime.event", {
+        schemaVersion: "pragma.stream/v1",
+        eventId: `runtime-${sequence}`,
+        sequence,
+        emittedAt: new Date(Date.UTC(2026, 0, 1, 0, 0, sequence)).toISOString(),
+        ...event,
+      });
+    };
+    const rootSource = {
+      kind: "agent" as const,
+      runId: "root-run",
+      sessionId: "root-thread",
+      agentId: "root-thread",
+      path: [],
+    };
+
+    await append({
+      runId: "root-run",
+      source: rootSource,
+      type: "agent.command",
+      payload: {
+        commandId: "spawn-command",
+        action: "spawn",
+        phase: "started",
+        senderSessionId: "root-thread",
+        targetSessionIds: [],
+        prompt: "Inspect every relevant file and report the complete findings.",
+      },
+    });
+    await append({
+      runId: "child-run-1",
+      parentRunId: "root-run",
+      source: source("child-run-1"),
+      type: "progress",
+      payload: { stage: "thread/started" },
+    });
+    await append({
+      runId: "root-run",
+      source: rootSource,
+      type: "agent.command",
+      payload: {
+        commandId: "spawn-command",
+        action: "spawn",
+        phase: "completed",
+        senderSessionId: "root-thread",
+        targetSessionIds: ["child-thread"],
+        states: { "child-thread": { status: "running" } },
+      },
+    });
+    await append({
+      runId: "child-run-1",
+      parentRunId: "root-run",
+      source: source("child-run-1"),
+      type: "run.started",
+      payload: { task: "Truncated task summary" },
+    });
+    await append({
+      runId: "root-run",
+      source: rootSource,
+      type: "agent.command",
+      payload: {
+        commandId: "wait-command",
+        action: "wait",
+        phase: "completed",
+        targetSessionIds: ["child-thread"],
+        states: { "child-thread": { status: "idle" } },
+      },
+    });
+    await append({
+      runId: "child-run-1",
+      parentRunId: "root-run",
+      source: source("child-run-1"),
+      type: "run.completed",
+      payload: {},
+    });
+    await append({
+      runId: "root-run",
+      source: rootSource,
+      type: "agent.command",
+      payload: {
+        commandId: "list-command",
+        action: "list",
+        phase: "completed",
+        targetSessionIds: ["child-thread"],
+        states: { "child-thread": { status: "running" } },
+      },
+    });
+
+    const reader = new ExecutionWorkHistoryReader(store);
+    let child = (await reader.listRecords({ executionIds: ["execution"] })).find(
+      (record) => record.sessionId === "child-thread",
+    );
+    expect(child).toMatchObject({
+      status: "succeeded",
+      tasks: [
+        {
+          runId: "child-run-1",
+          status: "succeeded",
+          input: "Inspect every relevant file and report the complete findings.",
+        },
+      ],
+    });
+
+    await append({
+      runId: "child-run-2",
+      parentRunId: "root-run",
+      source: source("child-run-2"),
+      type: "run.started",
+      payload: { task: "An active turn that will be interrupted" },
+    });
+    await append({
+      runId: "root-run",
+      source: rootSource,
+      type: "agent.command",
+      payload: {
+        commandId: "interrupt-command",
+        action: "interrupt",
+        phase: "completed",
+        targetSessionIds: ["child-thread"],
+      },
+    });
+    child = (await reader.listRecords({ executionIds: ["execution"] })).find(
+      (record) => record.sessionId === "child-thread",
+    );
+    expect(child).toMatchObject({ status: "interrupted" });
+    expect(child?.tasks).toHaveLength(2);
+
+    await append({
+      runId: "root-run",
+      source: rootSource,
+      type: "agent.command",
+      payload: {
+        commandId: "send-command",
+        action: "send",
+        phase: "completed",
+        targetSessionIds: ["child-thread"],
+        prompt: "Now verify the risky edge cases in full detail.",
+        states: { "child-thread": { status: "notLoaded" } },
+      },
+    });
+    child = (await reader.listRecords({ executionIds: ["execution"] })).find(
+      (record) => record.sessionId === "child-thread",
+    );
+    expect(child).toMatchObject({ status: "interrupted" });
+    expect(child?.tasks).toHaveLength(2);
+
+    await append({
+      runId: "child-run-3",
+      parentRunId: "root-run",
+      source: source("child-run-3"),
+      type: "run.started",
+      payload: { task: "Short follow-up" },
+    });
+    child = (await reader.listRecords({ executionIds: ["execution"] })).find(
+      (record) => record.sessionId === "child-thread",
+    );
+    expect(child).toMatchObject({
+      status: "running",
+      tasks: [
+        expect.objectContaining({ runId: "child-run-1" }),
+        expect.objectContaining({ runId: "child-run-2" }),
+        expect.objectContaining({
+          runId: "child-run-3",
+          input: "Now verify the risky edge cases in full detail.",
+        }),
+      ],
+    });
+    await append({
+      runId: "child-run-3",
+      parentRunId: "root-run",
+      source: source("child-run-3"),
+      type: "run.failed",
+      payload: { message: "Verification failed" },
+    });
+    await append({
+      runId: "child-run-3",
+      parentRunId: "root-run",
+      source: source("child-run-3"),
+      type: "run.started",
+      payload: { task: "A late duplicate start event" },
+    });
+    await append({
+      runId: "child-run-3",
+      parentRunId: "root-run",
+      source: source("child-run-3"),
+      type: "progress",
+      payload: { stage: "thread/status/changed" },
+    });
+    child = (await reader.listRecords({ executionIds: ["execution"] })).find(
+      (record) => record.sessionId === "child-thread",
+    );
+    expect(child).toMatchObject({
+      status: "failed",
+      tasks: [
+        expect.objectContaining({ runId: "child-run-1" }),
+        expect.objectContaining({ runId: "child-run-2" }),
+        expect.objectContaining({
+          runId: "child-run-3",
+          status: "failed",
+          input: "Now verify the risky edge cases in full detail.",
+          error: "Verification failed",
+        }),
+      ],
+    });
   });
 });
 

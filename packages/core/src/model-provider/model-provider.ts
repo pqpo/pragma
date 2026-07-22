@@ -4,9 +4,11 @@ import type { RuntimeModel } from "../runtime/runtime-adapter.ts";
 
 export interface ModelProviderDefinition {
   readonly id: string;
+  readonly catalogId: string;
   readonly displayName: string;
   readonly api: ModelApi;
   readonly baseUrl: string;
+  readonly compatibilityProfileId?: string | undefined;
   readonly models: readonly ProviderModelDefinition[];
 }
 

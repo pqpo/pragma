@@ -268,8 +268,9 @@ async function executeInWorker(options: {
   readonly signal?: AbortSignal | undefined;
   readonly invokeMain: boolean;
 }): Promise<CodeExecutionResult> {
-  const worker = new Worker(codeServiceWorkerUrl(), {
-    execArgv: [],
+  const workerUrl = codeServiceWorkerUrl();
+  const worker = new Worker(workerUrl, {
+    execArgv: workerUrl.pathname.endsWith(".ts") ? ["--experimental-strip-types"] : [],
     resourceLimits: {
       maxOldGenerationSizeMb: 64,
       maxYoungGenerationSizeMb: 16,

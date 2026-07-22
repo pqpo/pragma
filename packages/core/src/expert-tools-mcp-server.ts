@@ -1,4 +1,4 @@
-import { randomBytes, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { Readable } from "node:stream";
@@ -47,8 +47,6 @@ export interface ExpertToolsMcpSessionRegistration {
 
 export interface RegisterExpertToolsMcpSessionOptions {
   readonly agent: Expert;
-  /** Stable native runtime-session identity used to preserve the MCP config key across restores. */
-  readonly instanceId?: string | undefined;
   readonly getContext: () => ExpertAgentRunContext | undefined;
   readonly humanInteractionHandler?: ExpertAgentHumanInteractionHandler | undefined;
   readonly logger: ExpertAgentLogger;
@@ -60,6 +58,10 @@ export interface RegisterExpertToolsMcpSessionOptions {
 type LocalTool = ExpertAgentManagedTool<string, ExpertAgentToolCallResult>;
 const RUNTIME_PERMISSION_APPROVAL_REASON = "Runtime requested tool approval.";
 const SESSION_MCP_PATH_PATTERN = /^\/sessions\/([A-Za-z0-9_-]{43})\/mcp$/;
+const MCP_CONFIG_ID = "pragma";
+const MCP_QUALIFIED_TOOL_NAME_LIMIT = 64;
+const MCP_QUALIFIED_TOOL_PREFIX = `mcp__${MCP_CONFIG_ID}__`;
+const MCP_LOCAL_TOOL_NAME_LIMIT = MCP_QUALIFIED_TOOL_NAME_LIMIT - MCP_QUALIFIED_TOOL_PREFIX.length;
 
 interface ExpertToolsMcpGatewayEntry {
   readonly server: McpServer;
@@ -76,8 +78,7 @@ class ExpertToolsMcpGateway {
   async register(
     options: RegisterExpertToolsMcpSessionOptions,
   ): Promise<ExpertToolsMcpSessionRegistration> {
-    const instanceId = options.instanceId ?? randomUUID();
-    const id = `pragma_tools_${sanitizeMcpConfigId(options.agent.id)}_${sanitizeMcpConfigId(instanceId)}`;
+    const id = MCP_CONFIG_ID;
     const name = `Pragma tools for ${options.agent.name}`;
     const server = createSessionMcpServer(name, options);
     const transport = new WebStandardStreamableHTTPServerTransport();
@@ -238,9 +239,15 @@ function createSessionMcpServer(
     },
   );
   const tools = createExecutionLocalTools(options);
+  const runtimeNames = new Set<string>();
 
   for (const resolvedTool of tools) {
-    registerLocalTool(server, resolvedTool.tool, options);
+    const runtimeName = createRuntimeToolName(resolvedTool.name);
+    if (runtimeNames.has(runtimeName)) {
+      throw new Error(`Execution MCP tool name collision: ${runtimeName}.`);
+    }
+    runtimeNames.add(runtimeName);
+    registerLocalTool(server, runtimeName, resolvedTool.tool, options);
   }
 
   return server;
@@ -264,7 +271,7 @@ function createExecutionLocalTools(
   });
   const permissionTool = createPermissionPromptTool(
     options,
-    new Set(resolved.tools.map((tool) => tool.name)),
+    new Set(resolved.tools.flatMap((tool) => [tool.name, createRuntimeToolName(tool.name)])),
   );
 
   return [createResolvedLocalTool("default", permissionTool), ...resolved.tools];
@@ -481,13 +488,14 @@ function fromDefaultTool(tool: ExpertAgentDefaultTool): LocalTool {
 
 function registerLocalTool(
   server: McpServer,
+  runtimeName: string,
   tool: LocalTool,
   options: RegisterExpertToolsMcpSessionOptions,
 ): void {
   const outputSchema =
     tool.outputSchema === undefined ? undefined : toMcpInputSchema(tool.outputSchema);
   server.registerTool(
-    tool.name,
+    runtimeName,
     {
       description: tool.description,
       inputSchema: toMcpInputSchema(tool.inputSchema),
@@ -865,14 +873,17 @@ function listenOnLoopback(server: ReturnType<typeof createServer>): Promise<void
   });
 }
 
-function sanitizeMcpConfigId(value: string): string {
-  const sanitized = value.replace(/[^a-zA-Z0-9_]/g, "_").replace(/_+/g, "_");
-  return sanitized.length === 0 ? "agent" : sanitized;
-}
-
 function sanitizeToolName(value: string): string {
   const sanitized = value.replace(/[^a-zA-Z0-9_]/g, "_").replace(/_+/g, "_");
   return sanitized.length === 0 ? "tool" : sanitized;
+}
+
+function createRuntimeToolName(value: string): string {
+  const sanitized = sanitizeToolName(value);
+  if (sanitized === value && sanitized.length <= MCP_LOCAL_TOOL_NAME_LIMIT) return sanitized;
+  const digest = createHash("sha256").update(value).digest("hex").slice(0, 10);
+  const prefixLength = MCP_LOCAL_TOOL_NAME_LIMIT - digest.length - 1;
+  return `${sanitized.slice(0, prefixLength)}_${digest}`;
 }
 
 function formatMcpToolResult(result: unknown): string {

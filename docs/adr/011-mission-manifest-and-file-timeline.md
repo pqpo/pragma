@@ -4,6 +4,9 @@
 
 Accepted.
 
+Amended by ADR 016: terminal generated output is materialized into an immutable per-Execution
+Mission projection before the canonical event log moves to bounded diagnostic storage.
+
 ## Context
 
 Desktop originally stored Mission identity, lifecycle, current execution, and every top-level chat
@@ -16,14 +19,16 @@ canonical Execution event log.
 
 Desktop uses the breaking `pragma.mission/v3` format without a v2 migration path. Each Mission
 directory contains a bounded `mission.yaml` manifest and an append-oriented `messages.jsonl`
-timeline. The manifest owns Mission identity, pinned project and executor, workspace, lifecycle,
-and the current ExpertSession/Execution references. It does not own chat content.
+timeline. The manifest owns Mission identity, pinned project and executor, immutable workspace
+path, lifecycle, mutable next-turn model and permission options, and the current
+ExpertSession/Execution references. It does not own chat content or a second aggregate environment
+recovery fingerprint.
 
 The timeline stores versioned, monotonically sequenced user-message and execution-reference
-records. It never stores assistant, thinking, or tool output. Desktop projects those values from
-the Execution canonical event log and uses the Execution record's output, error, or status only
-when no normalized message exists. If referenced Execution state is unavailable, the chat displays
-an explicit unavailable-history entry.
+records. It does not duplicate assistant output inline. Active output is projected from the
+Execution canonical event log; after terminal settlement, a separate immutable Execution projection
+preserves Mission-visible assistant, thinking, tool-summary, and activity entries. If neither the
+Execution nor its projection is available, chat displays an explicit unavailable-history entry.
 
 Timeline appends use a per-Mission cross-process file lock and a recoverable transaction journal.
 Only a torn final JSONL record associated with that journal may be truncated and replayed;
@@ -38,7 +43,8 @@ size of 100.
 ## Consequences
 
 - YAML remains readable and bounded while long conversations grow only in `messages.jsonl`.
-- Execution events remain the single canonical source for generated output.
+- Execution events remain canonical during execution; terminal Mission projections survive bounded
+  diagnostic archive expiry.
 - IPC and renderer memory scale with loaded pages rather than total conversation size.
 - Local timeline reads are still linear until a later index or storage adapter is justified.
 - Existing `pragma.mission/v2` directories report an actionable unsupported-schema error and are

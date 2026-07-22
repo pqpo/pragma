@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   cp,
   mkdir,
@@ -10,7 +10,7 @@ import {
   stat,
   writeFile,
 } from "node:fs/promises";
-import { extname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import type {
@@ -22,6 +22,7 @@ import { readExpertAgentPluginManifest } from "./expert-agent-plugin.ts";
 import type { ExpertAgentLoggerProvider } from "../logging/logger.ts";
 import { createExpertAgentLogger, defaultExpertAgentLoggerProvider } from "../logging/logger.ts";
 import { PragmaPaths } from "../storage/pragma-paths.ts";
+import { withFileLock } from "../storage/file-lock.ts";
 
 const INSTALL_METADATA_FILE = ".pragma-plugin-install.json";
 const HOST_INSTALL_METADATA_FILES = new Set([INSTALL_METADATA_FILE, ".pragma-install.json"]);
@@ -33,6 +34,7 @@ export interface ExpertAgentPluginSourceDescriptor {
   readonly source: string;
   readonly expectedRef?: `plugin:${string}@${string}` | undefined;
   readonly packageFingerprint?: string | undefined;
+  readonly cachePolicy?: "immutable" | "host-managed" | undefined;
   readonly userConfig?: Readonly<Record<string, unknown>> | undefined;
   readonly hostBindings?: Readonly<Record<string, unknown>> | undefined;
 }
@@ -144,6 +146,7 @@ export async function prepareExpertAgentPluginSource(
   options: Pick<LoadExpertAgentPluginsOptions, "agentId" | "pragmaHome" | "env">,
 ): Promise<string> {
   const descriptor = normalizePluginSource(source);
+  assertHostManagedSourceIdentity(descriptor);
   const absoluteSourcePath = isAbsolute(descriptor.source)
     ? descriptor.source
     : resolve(descriptor.source);
@@ -178,6 +181,7 @@ export async function prepareExpertAgentPluginSource(
     manifest,
     sourceDir: absoluteSourcePath,
     packageFingerprint: sourceFingerprint,
+    cachePolicy: descriptor.cachePolicy ?? "immutable",
   });
 }
 
@@ -208,27 +212,26 @@ async function installExpertAgentPluginSource(options: {
   readonly manifest: ExpertAgentPluginManifest;
   readonly sourceDir: string;
   readonly packageFingerprint: string;
+  readonly cachePolicy: "immutable" | "host-managed";
 }): Promise<string> {
-  const pluginRoot = options.paths.agentPluginRoot(options.agentId, options.manifest.id);
-  const targetDir = options.paths.versionedAgentPluginRoot(
-    options.agentId,
-    options.manifest.id,
-    options.manifest.version,
-  );
+  const targetDir = options.paths.pluginPackageCache(options.packageFingerprint);
+  const stagingRoot = join(options.paths.pluginPackagesCacheRoot(), ".staging");
   const expectedMetadata = createInstalledMetadata(options.manifest, options.packageFingerprint);
-  await mkdir(pluginRoot, { recursive: true });
+  await mkdir(stagingRoot, { recursive: true });
+  await mkdir(dirname(targetDir), { recursive: true });
 
   const existingState = await inspectInstalledPlugin(targetDir);
   if (existingState === "legacy-or-invalid") {
     await rm(targetDir, { recursive: true, force: true });
   } else if (existingState !== undefined) {
     assertInstalledPluginMatches(existingState, expectedMetadata);
+    await writeAgentPluginBinding(options, targetDir);
     return targetDir;
   }
 
   let stagingDir: string | undefined;
   try {
-    stagingDir = await mkdtemp(join(pluginRoot, `.${options.manifest.version}.staging-`));
+    stagingDir = await mkdtemp(join(stagingRoot, ".plugin-"));
     await cp(options.sourceDir, stagingDir, {
       recursive: true,
       filter: (sourcePath) => shouldCopyPluginPackageFile(options.sourceDir, sourcePath),
@@ -247,12 +250,14 @@ async function installExpertAgentPluginSource(options: {
     try {
       await rename(stagingDir, targetDir);
       stagingDir = undefined;
+      await writeAgentPluginBinding(options, targetDir);
       return targetDir;
     } catch (error) {
       if (!isRenameCollision(error)) throw error;
       const winner = await inspectInstalledPlugin(targetDir);
       if (winner === undefined || winner === "legacy-or-invalid") throw error;
       assertInstalledPluginMatches(winner, expectedMetadata);
+      await writeAgentPluginBinding(options, targetDir);
       return targetDir;
     }
   } finally {
@@ -260,6 +265,54 @@ async function installExpertAgentPluginSource(options: {
       await rm(stagingDir, { recursive: true, force: true });
     }
   }
+}
+
+async function writeAgentPluginBinding(
+  options: {
+    readonly paths: PragmaPaths;
+    readonly agentId: string;
+    readonly manifest: ExpertAgentPluginManifest;
+    readonly packageFingerprint: string;
+    readonly cachePolicy: "immutable" | "host-managed";
+  },
+  packageRoot: string,
+): Promise<void> {
+  const path = options.paths.agentPluginBinding(options.agentId, pluginRef(options.manifest));
+  await withFileLock(`${path}.lock`, async () => {
+    const existing = await readFile(path, "utf8")
+      .then((value) => JSON.parse(value) as { readonly packageFingerprint?: unknown })
+      .catch((error: unknown) => {
+        if (readErrorCode(error) === "ENOENT") return undefined;
+        throw error;
+      });
+    if (
+      options.cachePolicy === "immutable" &&
+      existing !== undefined &&
+      existing.packageFingerprint !== options.packageFingerprint
+    ) {
+      throw new PluginLoadError(
+        "identity_conflict",
+        `Plugin ${pluginRef(options.manifest)} is immutable and is already bound to different bytes.`,
+      );
+    }
+    await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+    const temporary = `${path}.${randomUUID()}.tmp`;
+    await writeFile(
+      temporary,
+      `${JSON.stringify(
+        {
+          schemaVersion: "pragma.agent-plugin-binding/v1",
+          ref: pluginRef(options.manifest),
+          packageFingerprint: options.packageFingerprint,
+          packageRoot,
+        },
+        undefined,
+        2,
+      )}\n`,
+      { mode: 0o600 },
+    );
+    await rename(temporary, path);
+  });
 }
 
 async function inspectInstalledPlugin(
@@ -360,6 +413,19 @@ function normalizePluginSource(source: ExpertAgentPluginSource): ExpertAgentPlug
   return typeof source === "string" ? { source } : source;
 }
 
+function assertHostManagedSourceIdentity(descriptor: ExpertAgentPluginSourceDescriptor): void {
+  if (descriptor.cachePolicy !== "host-managed") return;
+  if (
+    descriptor.expectedRef === undefined ||
+    descriptor.packageFingerprint === undefined ||
+    !SHA256_PATTERN.test(descriptor.packageFingerprint)
+  ) {
+    throw new InvalidPluginSourceError(
+      "Host-managed plugins require an exact ref and package fingerprint.",
+    );
+  }
+}
+
 function pluginRef(manifest: ExpertAgentPluginManifest): `plugin:${string}@${string}` {
   return `plugin:${manifest.id}@${manifest.version}`;
 }
@@ -458,6 +524,12 @@ function isRenameCollision(error: unknown): boolean {
     "code" in error &&
     ["EEXIST", "ENOTEMPTY", "EPERM"].includes(String(error.code))
   );
+}
+
+function readErrorCode(error: unknown): unknown {
+  return typeof error === "object" && error !== null && "code" in error
+    ? (error as { readonly code?: unknown }).code
+    : undefined;
 }
 
 function sha256(value: string): string {

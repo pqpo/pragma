@@ -9,6 +9,7 @@ import type {
   ModelProviderRegistry,
 } from "@pragma/core";
 import type { Api, Model } from "@earendil-works/pi-ai";
+import type { ModelThinkingCapability } from "@pragma/shared";
 
 export interface PiProviderModelConfig {
   readonly id: string;
@@ -16,6 +17,8 @@ export interface PiProviderModelConfig {
   readonly api?: Api | undefined;
   readonly baseUrl?: string | undefined;
   readonly reasoning: boolean;
+  readonly thinking?: ModelThinkingCapability | undefined;
+  readonly compatibilityProfileId?: string | undefined;
   readonly thinkingLevelMap?: Model<Api>["thinkingLevelMap"] | undefined;
   readonly input: readonly ("text" | "image")[];
   readonly cost: Model<Api>["cost"];
@@ -27,10 +30,12 @@ export interface PiProviderModelConfig {
 
 export interface PiModelProviderConfig {
   readonly id: string;
+  readonly catalogId: string;
   readonly baseUrl: string;
   readonly apiKey: string;
   readonly models: readonly PiProviderModelConfig[];
   readonly api: Api;
+  readonly compatibilityProfileId?: string | undefined;
   readonly headers?: Readonly<Record<string, string>> | undefined;
   readonly authHeader?: boolean | undefined;
 }

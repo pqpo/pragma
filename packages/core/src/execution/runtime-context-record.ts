@@ -5,12 +5,15 @@ import type {
   RuntimeContextRecord,
 } from "@pragma/shared";
 
+import type { RuntimeModelSelection } from "../runtime/runtime-adapter.ts";
+
 export interface CreateRuntimeContextRecordOptions {
   readonly contextId: string;
   readonly owner: RuntimeContextOwner;
   readonly origin: RuntimeContextOrigin;
   readonly expert: { readonly id: string; readonly version: string };
   readonly runtime: RuntimeEnvironmentBinding;
+  readonly modelSelection?: RuntimeModelSelection | undefined;
   readonly now?: string | undefined;
 }
 
@@ -19,12 +22,13 @@ export function createRuntimeContextRecord(
 ): RuntimeContextRecord {
   const now = options.now ?? new Date().toISOString();
   return {
-    schemaVersion: "pragma.runtime-context/v3",
+    schemaVersion: "pragma.runtime-context/v4",
     contextId: options.contextId,
     owner: options.owner,
     origin: options.origin,
     expert: options.expert,
     runtime: options.runtime,
+    ...(options.modelSelection === undefined ? {} : { modelSelection: options.modelSelection }),
     lifecycle: "open",
     createdAt: now,
     updatedAt: now,

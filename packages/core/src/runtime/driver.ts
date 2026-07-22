@@ -453,7 +453,7 @@ async function createManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepar
           sessionRecord = await updateRuntimeSessionRecord(pragmaPaths, sessionRecord, {
             runtimeSessionRef:
               finalRuntimeSession.id === "" ? sessionRecord.runtimeSessionRef : finalRuntimeSession,
-            status: "closed",
+            processState: "stopped",
           });
         } catch (error) {
           logger.error("Failed to close Runtime session record", {
@@ -498,7 +498,7 @@ async function createManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepar
         currentRuntimeSessionId === ""
           ? null
           : { type: descriptor.kind, id: currentRuntimeSessionId },
-      status: "active",
+      processState: "running",
     });
 
     managedSession = new ManagedRuntimeSession({
@@ -521,7 +521,7 @@ async function createManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepar
         currentRuntimeSessionId = runtimeSessionId;
         sessionRecord = await updateRuntimeSessionRecord(pragmaPaths, sessionRecord, {
           runtimeSessionRef: { type: descriptor.kind, id: runtimeSessionId },
-          status: "active",
+          processState: "running",
         });
         await checkpoint(trigger);
         await request.onSessionInfo?.(readSessionInfo());
@@ -550,7 +550,7 @@ async function createManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepar
   } catch (error) {
     try {
       sessionRecord = await updateRuntimeSessionRecord(pragmaPaths, sessionRecord, {
-        status: "failed",
+        processState: "failed",
       });
     } catch (recordError) {
       logger.error("Failed to mark Runtime session record as failed", {

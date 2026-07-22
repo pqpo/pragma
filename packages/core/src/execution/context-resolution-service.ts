@@ -25,6 +25,7 @@ import {
   createRuntimeContextRecord,
   requireInvocationContextOrigin,
 } from "./runtime-context-record.ts";
+import type { RuntimeModelSelection } from "../runtime/runtime-adapter.ts";
 
 export interface ResolveRuntimeContextRequest {
   readonly executionId: string;
@@ -37,6 +38,7 @@ export interface ResolveRuntimeContextRequest {
   readonly ownerContextId?: string | undefined;
   readonly expert: { readonly id: string; readonly version: string };
   readonly runtime: RuntimeEnvironmentBinding;
+  readonly modelSelection?: RuntimeModelSelection | undefined;
   readonly resolver: ContextIdResolver;
   readonly freshContextId?: string | undefined;
 }
@@ -114,6 +116,7 @@ export class ContextResolutionService {
         origin: { type: "invocation", invocationId: request.invocationId },
         expert: request.expert,
         runtime: request.runtime,
+        modelSelection: request.modelSelection,
         now,
       });
     assertCompatibleContext(request, context, agents);

@@ -6,6 +6,7 @@ import {
   DotsThree,
   Globe,
   MagnifyingGlass,
+  PencilSimple,
   Plug,
   Plus,
   Trash,
@@ -27,7 +28,14 @@ import { StudioScreenFrame } from "./StudioScreenFrame.tsx";
 import { desktopApi } from "./studio-model.ts";
 
 type Filter = "all" | "skills" | "tools";
-type CreateMode = "skill" | "mcp" | "http" | "code" | null;
+type CapabilityMode = "skill" | "mcp" | "http" | "code";
+type EditableCapability = Capability & {
+  readonly definition: Exclude<CapabilityDefinition, { readonly kind: "skill" }>;
+};
+
+export function isEditableCapability(capability: Capability): capability is EditableCapability {
+  return capability.definition.kind !== "skill";
+}
 
 const emptyMcp = {
   name: "",
@@ -37,8 +45,13 @@ const emptyMcp = {
   args: "",
   url: "",
   token: "",
+  tokenEnabled: false,
+  tokenCredentialRef: undefined as string | undefined,
   environment: "{}",
   secretEnvironment: "{}",
+  secretEnvironmentRefs: {} as Readonly<Record<string, string>>,
+  timeoutMs: 30_000,
+  tools: [] as Extract<CapabilityDefinition, { kind: "mcp_server" }>["tools"],
 };
 
 type HttpToolDraft = {
@@ -48,6 +61,10 @@ type HttpToolDraft = {
   readonly path: string;
   readonly queryParameters: string;
   readonly bodySchema: string;
+  readonly parameters: Extract<
+    CapabilityDefinition,
+    { kind: "http_service" }
+  >["tools"][number]["parameters"];
 };
 
 const emptyHttp = {
@@ -64,6 +81,10 @@ const emptyHttp = {
   queryParameters: "",
   bodySchema: '{\n  "type": "object",\n  "properties": {},\n  "additionalProperties": false\n}',
   tools: [] as HttpToolDraft[],
+  editingToolIndex: null as number | null,
+  timeoutMs: 30_000,
+  hasSavedCredential: false,
+  credentialRef: undefined as string | undefined,
 };
 
 type CodeFieldType = "string" | "number" | "integer" | "boolean" | "object" | "array";
@@ -95,6 +116,7 @@ const emptyCode = {
   };
 }`,
   testInput: "{}",
+  timeoutMs: 2_000,
 };
 
 export function CapabilityDirectoryFragment(props: {
@@ -106,7 +128,8 @@ export function CapabilityDirectoryFragment(props: {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<Filter>("all");
   const [menuOpen, setMenuOpen] = useState(false);
-  const [mode, setMode] = useState<CreateMode>(null);
+  const [mode, setMode] = useState<CapabilityMode | null>(null);
+  const [editingCapability, setEditingCapability] = useState<EditableCapability | null>(null);
   const [mcp, setMcp] = useState(emptyMcp);
   const [http, setHttp] = useState(emptyHttp);
   const [code, setCode] = useState(emptyCode);
@@ -127,6 +150,51 @@ export function CapabilityDirectoryFragment(props: {
     );
   });
 
+  const closeDrawer = () => {
+    setMode(null);
+    setEditingCapability(null);
+    setError(null);
+    setCodePreview(null);
+  };
+
+  const openCreateDrawer = (nextMode: CapabilityMode) => {
+    setEditingCapability(null);
+    setError(null);
+    setCodePreview(null);
+    if (nextMode === "mcp") setMcp(emptyMcp);
+    if (nextMode === "http") setHttp(emptyHttp);
+    if (nextMode === "code") setCode(emptyCode);
+    setMode(nextMode);
+    setMenuOpen(false);
+  };
+
+  const openEditDrawer = (capability: EditableCapability) => {
+    setEditingCapability(capability);
+    setError(null);
+    setCodePreview(null);
+    if (capability.definition.kind === "mcp_server") {
+      setMcp(mcpDraftFromDefinition(capability.definition));
+      setMode("mcp");
+    } else if (capability.definition.kind === "http_service") {
+      setHttp(httpDraftFromDefinition(capability.definition));
+      setMode("http");
+    } else {
+      setCode(codeDraftFromDefinition(capability.definition));
+      setMode("code");
+    }
+  };
+
+  const persistCapability = async (
+    definition: Exclude<CapabilityDefinition, { readonly kind: "skill" }>,
+    credentials: Readonly<Record<string, string>>,
+  ) => {
+    const api = desktopApi();
+    if (!api) return undefined;
+    return editingCapability === null
+      ? await api.createCapability({ definition, credentials })
+      : await api.updateCapability({ id: editingCapability.manifest.id, definition, credentials });
+  };
+
   const importSkill = async () => {
     const api = desktopApi();
     if (!api) return;
@@ -141,7 +209,7 @@ export function CapabilityDirectoryFragment(props: {
       }
       const capability = await api.importSkillCapability({ sourcePath: selected.path as string });
       props.onChanged(capability);
-      setMode(null);
+      closeDrawer();
     } catch (cause) {
       setError(errorMessage(cause));
     } finally {
@@ -155,24 +223,31 @@ export function CapabilityDirectoryFragment(props: {
     setSaving(true);
     setError(null);
     try {
-      const credentialRef = "token";
+      const credentialRef = mcp.tokenCredentialRef ?? "token";
       const secretCredentials: Record<string, string> = {};
       const connection =
         mcp.transport === "stdio"
           ? (() => {
-              const env = JSON.parse(mcp.environment) as Record<string, string>;
-              const secretValues = JSON.parse(mcp.secretEnvironment) as Record<string, string>;
+              const env = parseStringRecord(mcp.environment);
+              const secretValues = parseStringRecord(mcp.secretEnvironment);
               const secretEnv = Object.fromEntries(
                 Object.entries(secretValues).map(([name, value]) => {
-                  const reference = `env_${name.toLowerCase().replace(/[^a-z0-9]+/g, "_")}`;
-                  secretCredentials[reference] = value;
+                  const reference =
+                    mcp.secretEnvironmentRefs[name] ??
+                    `env_${name.toLowerCase().replace(/[^a-z0-9]+/g, "_")}`;
+                  if (value.length === 0 && mcp.secretEnvironmentRefs[name] === undefined) {
+                    throw new Error(
+                      `Enter a value for the new secret environment variable ${name}.`,
+                    );
+                  }
+                  if (value.length > 0) secretCredentials[reference] = value;
                   return [name, reference];
                 }),
               );
               return {
                 transport: "stdio" as const,
                 command: mcp.command,
-                args: mcp.args.split(/\s+/).filter(Boolean),
+                args: parseCommandArguments(mcp.args),
                 env,
                 secretEnv,
               };
@@ -180,27 +255,30 @@ export function CapabilityDirectoryFragment(props: {
           : {
               transport: mcp.transport,
               url: mcp.url,
-              ...(mcp.token ? { tokenCredentialRef: credentialRef } : {}),
+              ...(mcp.tokenEnabled ? { tokenCredentialRef: credentialRef } : {}),
             };
-      const capability = await api.createCapability({
-        definition: {
+      if (mcp.tokenEnabled && mcp.token.length === 0 && mcp.tokenCredentialRef === undefined) {
+        throw new Error("Enter a bearer token or disable token authentication.");
+      }
+      const capability = await persistCapability(
+        {
           kind: "mcp_server",
           name: mcp.name,
           description: mcp.description,
           connection,
-          timeoutMs: 30_000,
-          tools: [],
+          timeoutMs: mcp.timeoutMs,
+          tools: mcp.tools,
         },
-        credentials:
-          mcp.transport === "stdio"
-            ? secretCredentials
-            : mcp.token
-              ? { [credentialRef]: mcp.token }
-              : {},
-      });
+        mcp.transport === "stdio"
+          ? secretCredentials
+          : mcp.token
+            ? { [credentialRef]: mcp.token }
+            : {},
+      );
+      if (capability === undefined) return;
       props.onChanged(capability);
       setMcp(emptyMcp);
-      setMode(null);
+      closeDrawer();
     } catch (cause) {
       setError(errorMessage(cause));
     } finally {
@@ -214,7 +292,7 @@ export function CapabilityDirectoryFragment(props: {
     setSaving(true);
     setError(null);
     try {
-      const credentialRef = "service-auth";
+      const credentialRef = http.credentialRef ?? "service-auth";
       const auth =
         http.authType === "none"
           ? ({ type: "none" } as const)
@@ -228,8 +306,9 @@ export function CapabilityDirectoryFragment(props: {
         path: http.path,
         queryParameters: http.queryParameters,
         bodySchema: http.bodySchema,
+        parameters: currentHttpToolParameters(http),
       };
-      const toolDrafts = [...http.tools, ...(http.toolName.trim() ? [currentTool] : [])];
+      const toolDrafts = commitCurrentHttpTool(http, currentTool);
       if (toolDrafts.length === 0) throw new Error("Add at least one HTTP tool.");
       const definition: Extract<CapabilityDefinition, { kind: "http_service" }> = {
         kind: "http_service",
@@ -237,16 +316,22 @@ export function CapabilityDirectoryFragment(props: {
         description: http.description,
         baseUrl: http.baseUrl,
         auth,
-        timeoutMs: 30_000,
+        timeoutMs: http.timeoutMs,
         tools: toolDrafts.map(toHttpToolDefinition),
       };
-      const capability = await api.createCapability({
+      if (http.authType !== "none" && http.secret.length === 0 && !http.hasSavedCredential) {
+        throw new Error("Enter a credential for this HTTP service.");
+      }
+      const capability = await persistCapability(
         definition,
-        credentials: http.authType === "none" ? {} : { [credentialRef]: http.secret },
-      });
+        http.authType === "none" || http.secret.length === 0
+          ? {}
+          : { [credentialRef]: http.secret },
+      );
+      if (capability === undefined) return;
       props.onChanged(capability);
       setHttp(emptyHttp);
-      setMode(null);
+      closeDrawer();
     } catch (cause) {
       setError(errorMessage(cause));
     } finally {
@@ -259,7 +344,7 @@ export function CapabilityDirectoryFragment(props: {
     name: code.name,
     description: code.description,
     language: "javascript",
-    timeoutMs: 2_000,
+    timeoutMs: code.timeoutMs,
     tool: {
       name: code.toolName,
       description: code.toolDescription,
@@ -294,14 +379,12 @@ export function CapabilityDirectoryFragment(props: {
     setSaving(true);
     setError(null);
     try {
-      const capability = await api.createCapability({
-        definition: codeDefinition(),
-        credentials: {},
-      });
+      const capability = await persistCapability(codeDefinition(), {});
+      if (capability === undefined) return;
       props.onChanged(capability);
       setCode(emptyCode);
       setCodePreview(null);
-      setMode(null);
+      closeDrawer();
     } catch (cause) {
       setError(errorMessage(cause));
     } finally {
@@ -328,8 +411,7 @@ export function CapabilityDirectoryFragment(props: {
                 <button
                   type="button"
                   onClick={() => {
-                    setMode("skill");
-                    setMenuOpen(false);
+                    openCreateDrawer("skill");
                   }}
                 >
                   <CloudArrowUp size={19} />
@@ -341,8 +423,7 @@ export function CapabilityDirectoryFragment(props: {
                 <button
                   type="button"
                   onClick={() => {
-                    setMode("mcp");
-                    setMenuOpen(false);
+                    openCreateDrawer("mcp");
                   }}
                 >
                   <Plug size={19} />
@@ -354,8 +435,7 @@ export function CapabilityDirectoryFragment(props: {
                 <button
                   type="button"
                   onClick={() => {
-                    setMode("http");
-                    setMenuOpen(false);
+                    openCreateDrawer("http");
                   }}
                 >
                   <Globe size={19} />
@@ -367,8 +447,7 @@ export function CapabilityDirectoryFragment(props: {
                 <button
                   type="button"
                   onClick={() => {
-                    setMode("code");
-                    setMenuOpen(false);
+                    openCreateDrawer("code");
                   }}
                 >
                   <Code size={19} />
@@ -421,6 +500,7 @@ export function CapabilityDirectoryFragment(props: {
             key={capability.manifest.id}
             capability={capability}
             onOpen={() => props.onOpen(capability)}
+            onEdit={isEditableCapability(capability) ? () => openEditDrawer(capability) : undefined}
             onChanged={props.onChanged}
           />
         ))}
@@ -438,23 +518,27 @@ export function CapabilityDirectoryFragment(props: {
             <header>
               <div>
                 <h2 id="capability-form-heading">
-                  {mode === "skill"
-                    ? t("uploadSkill")
-                    : mode === "mcp"
-                      ? t("connectMcp")
-                      : mode === "http"
-                        ? t("addHttp")
-                        : t("addCode")}
+                  {editingCapability !== null
+                    ? t("editCapability")
+                    : mode === "skill"
+                      ? t("uploadSkill")
+                      : mode === "mcp"
+                        ? t("connectMcp")
+                        : mode === "http"
+                          ? t("addHttp")
+                          : t("addCode")}
                 </h2>
                 <p>
-                  {mode === "skill"
-                    ? t("copySkillLibrary")
-                    : mode === "code"
-                      ? t("defineCodeTool")
-                      : t("configureExternalTool")}
+                  {editingCapability !== null
+                    ? t("editCapabilityDescription")
+                    : mode === "skill"
+                      ? t("copySkillLibrary")
+                      : mode === "code"
+                        ? t("defineCodeTool")
+                        : t("configureExternalTool")}
                 </p>
               </div>
-              <button type="button" onClick={() => setMode(null)} aria-label={t("close")}>
+              <button type="button" onClick={closeDrawer} aria-label={t("close")}>
                 <X size={20} />
               </button>
             </header>
@@ -493,7 +577,7 @@ export function CapabilityDirectoryFragment(props: {
             ) : null}
             {mode !== "skill" ? (
               <footer>
-                <button className="secondary-button" type="button" onClick={() => setMode(null)}>
+                <button className="secondary-button" type="button" onClick={closeDrawer}>
                   {t("cancel")}
                 </button>
                 <button
@@ -504,7 +588,11 @@ export function CapabilityDirectoryFragment(props: {
                     void (mode === "mcp" ? saveMcp() : mode === "http" ? saveHttp() : saveCode())
                   }
                 >
-                  {saving ? t("saving") : t("saveCapability")}
+                  {saving
+                    ? t("saving")
+                    : editingCapability === null
+                      ? t("saveCapability")
+                      : t("saveCapabilityChanges")}
                 </button>
               </footer>
             ) : null}
@@ -518,6 +606,7 @@ export function CapabilityDirectoryFragment(props: {
 function CapabilityRow(props: {
   readonly capability: Capability;
   readonly onOpen: () => void;
+  readonly onEdit?: (() => void) | undefined;
   readonly onChanged: (capability?: Capability, removedId?: string) => void;
 }) {
   const { t } = useTranslation("studio");
@@ -637,7 +726,21 @@ function CapabilityRow(props: {
           </button>
           {menuOpen ? (
             <div className="capability-row-menu" role="menu">
+              {props.onEdit ? (
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    setError(null);
+                    props.onEdit?.();
+                  }}
+                >
+                  <PencilSimple size={16} /> {t("editCapability")}
+                </button>
+              ) : null}
               <button
+                className="is-danger"
                 type="button"
                 role="menuitem"
                 onClick={() => {
@@ -698,6 +801,192 @@ export function capabilityDeleteErrorMessage(code?: string): string {
   return code === "capability_referenced"
     ? "This capability is still used by one or more Experts. Remove it from those Experts, then try again."
     : "This capability could not be deleted. Please try again.";
+}
+
+export function mcpDraftFromDefinition(
+  definition: Extract<CapabilityDefinition, { readonly kind: "mcp_server" }>,
+): typeof emptyMcp {
+  if (definition.connection.transport === "stdio") {
+    return {
+      ...emptyMcp,
+      name: definition.name,
+      description: definition.description,
+      command: definition.connection.command,
+      args: formatCommandArguments(definition.connection.args),
+      environment: JSON.stringify(definition.connection.env, null, 2),
+      secretEnvironment: JSON.stringify(
+        Object.fromEntries(Object.keys(definition.connection.secretEnv).map((name) => [name, ""])),
+        null,
+        2,
+      ),
+      secretEnvironmentRefs: definition.connection.secretEnv,
+      timeoutMs: definition.timeoutMs,
+      tools: definition.tools,
+    };
+  }
+  return {
+    ...emptyMcp,
+    name: definition.name,
+    description: definition.description,
+    transport: definition.connection.transport,
+    url: definition.connection.url,
+    tokenEnabled: definition.connection.tokenCredentialRef !== undefined,
+    tokenCredentialRef: definition.connection.tokenCredentialRef,
+    timeoutMs: definition.timeoutMs,
+    tools: definition.tools,
+  };
+}
+
+export function formatCommandArguments(args: readonly string[]): string {
+  return args
+    .map((argument) =>
+      /^[A-Za-z0-9_./:@%+=,-]+$/.test(argument)
+        ? argument
+        : `'${argument.replaceAll("'", "'\\''")}'`,
+    )
+    .join(" ");
+}
+
+export function parseCommandArguments(value: string): string[] {
+  const args: string[] = [];
+  let current = "";
+  let quote: '"' | "'" | null = null;
+  let escaped = false;
+  let started = false;
+  for (const character of value) {
+    if (escaped) {
+      current += character;
+      escaped = false;
+      started = true;
+    } else if (character === "\\" && quote !== "'") {
+      escaped = true;
+      started = true;
+    } else if (quote !== null) {
+      if (character === quote) quote = null;
+      else current += character;
+      started = true;
+    } else if (character === '"' || character === "'") {
+      quote = character;
+      started = true;
+    } else if (/\s/.test(character)) {
+      if (started) {
+        args.push(current);
+        current = "";
+        started = false;
+      }
+    } else {
+      current += character;
+      started = true;
+    }
+  }
+  if (escaped || quote !== null) throw new Error("Command arguments contain an unfinished quote.");
+  if (started) args.push(current);
+  return args;
+}
+
+function parseStringRecord(value: string): Record<string, string> {
+  const parsed = JSON.parse(value) as unknown;
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("Environment JSON must be an object containing string values.");
+  }
+  const entries = Object.entries(parsed);
+  if (entries.some(([, item]) => typeof item !== "string")) {
+    throw new Error("Environment JSON values must be strings.");
+  }
+  return Object.fromEntries(entries) as Record<string, string>;
+}
+
+export function httpDraftFromDefinition(
+  definition: Extract<CapabilityDefinition, { readonly kind: "http_service" }>,
+): typeof emptyHttp {
+  return {
+    ...emptyHttp,
+    name: definition.name,
+    description: definition.description,
+    baseUrl: definition.baseUrl,
+    authType: definition.auth.type,
+    headerName:
+      definition.auth.type === "api_key_header" ? definition.auth.headerName : "X-API-Key",
+    tools: definition.tools.map(httpToolDraftFromDefinition),
+    timeoutMs: definition.timeoutMs,
+    hasSavedCredential: definition.auth.type !== "none",
+    credentialRef: definition.auth.type === "none" ? undefined : definition.auth.credentialRef,
+  };
+}
+
+function httpToolDraftFromDefinition(
+  tool: Extract<CapabilityDefinition, { readonly kind: "http_service" }>["tools"][number],
+): HttpToolDraft {
+  return {
+    toolName: tool.name,
+    toolDescription: tool.description,
+    method: tool.method,
+    path: tool.path,
+    queryParameters: tool.parameters
+      .filter((parameter) => parameter.location === "query")
+      .map((parameter) => parameter.name)
+      .join(", "),
+    bodySchema: JSON.stringify(
+      tool.bodySchema ?? CodeServiceObjectJsonSchemaSchema.parse(JSON.parse(emptyHttp.bodySchema)),
+      null,
+      2,
+    ),
+    parameters: tool.parameters,
+  };
+}
+
+function loadHttpTool(value: typeof emptyHttp, tool: HttpToolDraft, index: number) {
+  return {
+    ...value,
+    toolName: tool.toolName,
+    toolDescription: tool.toolDescription,
+    method: tool.method,
+    path: tool.path,
+    queryParameters: tool.queryParameters,
+    bodySchema: tool.bodySchema,
+    editingToolIndex: index,
+  };
+}
+
+function removeHttpTool(value: typeof emptyHttp, index: number) {
+  const tools = value.tools.filter((_, currentIndex) => currentIndex !== index);
+  if (value.editingToolIndex === index) return resetHttpToolEditor({ ...value, tools });
+  return {
+    ...value,
+    tools,
+    editingToolIndex:
+      value.editingToolIndex !== null && value.editingToolIndex > index
+        ? value.editingToolIndex - 1
+        : value.editingToolIndex,
+  };
+}
+
+function currentHttpToolParameters(value: typeof emptyHttp): HttpToolDraft["parameters"] {
+  return value.editingToolIndex === null
+    ? []
+    : (value.tools[value.editingToolIndex]?.parameters ?? []);
+}
+
+function commitCurrentHttpTool(
+  value: typeof emptyHttp,
+  currentTool: HttpToolDraft,
+): HttpToolDraft[] {
+  if (!currentTool.toolName.trim()) return [...value.tools];
+  if (value.editingToolIndex === null) return [...value.tools, currentTool];
+  return value.tools.map((tool, index) => (index === value.editingToolIndex ? currentTool : tool));
+}
+
+function resetHttpToolEditor(value: typeof emptyHttp): typeof emptyHttp {
+  return {
+    ...value,
+    toolName: "",
+    toolDescription: "",
+    method: "GET",
+    path: "/",
+    queryParameters: "",
+    bodySchema: emptyHttp.bodySchema,
+    editingToolIndex: null,
+  };
 }
 
 function McpForm(props: {
@@ -763,7 +1052,12 @@ function McpForm(props: {
             />
           </label>
           <label>
-            {t("secretEnvironmentJson")} <small>{t("encryptedReferences")}</small>
+            {t("secretEnvironmentJson")}{" "}
+            <small>
+              {Object.keys(value.secretEnvironmentRefs).length === 0
+                ? t("encryptedReferences")
+                : t("leaveSecretValuesBlank")}
+            </small>
             <textarea
               className="code-input"
               value={value.secretEnvironment}
@@ -781,14 +1075,31 @@ function McpForm(props: {
               placeholder="https://example.com/mcp"
             />
           </label>
-          <label>
-            {t("bearerToken")} <small>{t("optionalEncrypted")}</small>
+          <label className="capability-auth-toggle">
             <input
-              type="password"
-              value={value.token}
-              onChange={(e) => props.onChange({ ...value, token: e.target.value })}
+              type="checkbox"
+              checked={value.tokenEnabled}
+              onChange={(event) =>
+                props.onChange({ ...value, tokenEnabled: event.target.checked, token: "" })
+              }
             />
+            {t("useBearerToken")}
           </label>
+          {value.tokenEnabled ? (
+            <label>
+              {t("bearerToken")}{" "}
+              <small>
+                {value.tokenCredentialRef === undefined
+                  ? t("encryptedDevice")
+                  : t("leaveCredentialBlank")}
+              </small>
+              <input
+                type="password"
+                value={value.token}
+                onChange={(e) => props.onChange({ ...value, token: e.target.value })}
+              />
+            </label>
+          ) : null}
         </>
       )}
     </div>
@@ -848,7 +1159,10 @@ function HttpForm(props: {
       </div>
       {value.authType !== "none" ? (
         <label>
-          {t("credential")} <small>{t("encryptedDevice")}</small>
+          {t("credential")}{" "}
+          <small>
+            {value.hasSavedCredential ? t("leaveCredentialBlank") : t("encryptedDevice")}
+          </small>
           <input
             type="password"
             value={value.secret}
@@ -860,12 +1174,30 @@ function HttpForm(props: {
       <h3>{value.tools.length === 0 ? t("firstTool") : t("addAnotherTool")}</h3>
       {value.tools.length > 0 ? (
         <div className="http-tool-drafts">
-          {value.tools.map((tool) => (
-            <span key={tool.toolName}>
-              <strong>{tool.toolName}</strong>
-              <small>
-                {tool.method} {tool.path}
-              </small>
+          {value.tools.map((tool, index) => (
+            <span key={`${tool.toolName}-${index}`}>
+              <span>
+                <strong>{tool.toolName}</strong>
+                <small>
+                  {tool.method} {tool.path}
+                </small>
+              </span>
+              <span className="http-tool-actions">
+                <button
+                  type="button"
+                  aria-label={t("editNamedTool", { name: tool.toolName })}
+                  onClick={() => props.onChange(loadHttpTool(value, tool, index))}
+                >
+                  <PencilSimple size={15} />
+                </button>
+                <button
+                  type="button"
+                  aria-label={t("removeTool", { name: tool.toolName })}
+                  onClick={() => props.onChange(removeHttpTool(value, index))}
+                >
+                  <Trash size={15} />
+                </button>
+              </span>
             </span>
           ))}
         </div>
@@ -927,36 +1259,28 @@ function HttpForm(props: {
         className="secondary-button"
         type="button"
         disabled={!value.toolName.trim() || !value.toolDescription.trim()}
-        onClick={() =>
-          props.onChange({
-            ...value,
-            tools: [
-              ...value.tools,
-              {
-                toolName: value.toolName,
-                toolDescription: value.toolDescription,
-                method: value.method,
-                path: value.path,
-                queryParameters: value.queryParameters,
-                bodySchema: value.bodySchema,
-              },
-            ],
-            toolName: "",
-            toolDescription: "",
-            method: "GET",
-            path: "/",
-            queryParameters: "",
-            bodySchema: emptyHttp.bodySchema,
-          })
-        }
+        onClick={() => {
+          const currentTool: HttpToolDraft = {
+            toolName: value.toolName,
+            toolDescription: value.toolDescription,
+            method: value.method,
+            path: value.path,
+            queryParameters: value.queryParameters,
+            bodySchema: value.bodySchema,
+            parameters: currentHttpToolParameters(value),
+          };
+          props.onChange(
+            resetHttpToolEditor({ ...value, tools: commitCurrentHttpTool(value, currentTool) }),
+          );
+        }}
       >
-        {t("addAnotherTool")}
+        {value.editingToolIndex === null ? t("addAnotherTool") : t("updateTool")}
       </button>
     </div>
   );
 }
 
-function toHttpToolDefinition(draft: HttpToolDraft) {
+export function toHttpToolDefinition(draft: HttpToolDraft) {
   const pathNames = [...draft.path.matchAll(/\{([^}]+)\}/g)].map((match) => match[1] as string);
   const queryNames = draft.queryParameters
     .split(",")
@@ -966,24 +1290,27 @@ function toHttpToolDefinition(draft: HttpToolDraft) {
     draft.method === "POST"
       ? CodeServiceObjectJsonSchemaSchema.parse(JSON.parse(draft.bodySchema))
       : undefined;
+  const parameter = (name: string, location: "path" | "query") => {
+    const existing = draft.parameters.find(
+      (candidate) => candidate.name === name && candidate.location === location,
+    );
+    return (
+      existing ?? {
+        name,
+        location,
+        required: location === "path",
+        type: "string" as const,
+      }
+    );
+  };
   return {
     name: draft.toolName,
     description: draft.toolDescription,
     method: draft.method,
     path: draft.path,
     parameters: [
-      ...pathNames.map((name) => ({
-        name,
-        location: "path" as const,
-        required: true,
-        type: "string" as const,
-      })),
-      ...queryNames.map((name) => ({
-        name,
-        location: "query" as const,
-        required: false,
-        type: "string" as const,
-      })),
+      ...pathNames.map((name) => parameter(name, "path")),
+      ...queryNames.map((name) => parameter(name, "query")),
     ],
     ...(bodySchema === undefined ? {} : { bodySchema }),
   };
@@ -1249,6 +1576,45 @@ function emptyCodeValue(type: CodeFieldType): CodeValueDraft {
     fields: [],
     ...(type === "array" ? { item: { type: "string", fields: [] } } : {}),
   };
+}
+
+export function codeDraftFromDefinition(
+  definition: Extract<CapabilityDefinition, { readonly kind: "code_service" }>,
+): typeof emptyCode {
+  return {
+    ...emptyCode,
+    name: definition.name,
+    description: definition.description,
+    toolName: definition.tool.name,
+    toolDescription: definition.tool.description,
+    inputFields: objectSchemaToFields(definition.tool.inputSchema),
+    outputFields: objectSchemaToFields(definition.tool.outputSchema),
+    source: definition.tool.source,
+    timeoutMs: definition.timeoutMs,
+  };
+}
+
+export function objectSchemaToFields(
+  schema: Extract<CodeServiceJsonSchema, { readonly type: "object" }>,
+): readonly CodeFieldDraft[] {
+  const required = new Set(schema.required ?? []);
+  return Object.entries(schema.properties).map(([name, value]) => ({
+    id: crypto.randomUUID(),
+    name,
+    description: value.description ?? "",
+    required: required.has(name),
+    value: schemaValueToDraft(value),
+  }));
+}
+
+function schemaValueToDraft(schema: CodeServiceJsonSchema): CodeValueDraft {
+  if (schema.type === "object") {
+    return { type: "object", fields: objectSchemaToFields(schema) };
+  }
+  if (schema.type === "array") {
+    return { type: "array", fields: [], item: schemaValueToDraft(schema.items) };
+  }
+  return { type: schema.type, fields: [] };
 }
 
 export function fieldsToObjectSchema(

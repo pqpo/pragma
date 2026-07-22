@@ -26,8 +26,9 @@ they do not independently construct DSL Experts.
 
 Definitions may be published without installed bindings. Compilation and execution require every
 referenced adapter resource to verify successfully. Portable project fingerprints and environment
-fingerprints are separate. Recovery requires the environment fingerprint originally pinned by the
-run.
+fingerprints are separate. Environment fingerprints support validation and audit; execution recovery
+uses the structural identities persisted by Core rather than requiring every live binding to retain
+the same fingerprint.
 
 Project-local artifacts are content-hashed. External artifacts require a SHA-256 integrity pin.
 Adapters explicitly enumerate artifact dependencies, undeclared reads fail, and hashing operates

@@ -14,12 +14,15 @@ import {
   ExpertDefinitionSchema,
   ExpertSummarySchema,
   UpdateExpertDefinitionSchema,
+  UpdateBuiltInExpertDefinitionSchema,
   type CreateExpertDefinition,
   type ExpertDefinition,
   type ExpertSummary,
   type UpdateExpertDefinition,
+  type UpdateBuiltInExpertDefinition,
 } from "../shared/desktop-api.ts";
 import type { PragmaProjectStore } from "./pragma-project-store.ts";
+import type { DesktopSystemExpertRegistry } from "./system-expert-registry.ts";
 import {
   desktopCapabilityBindingRef,
   desktopContextBindingRef,
@@ -28,7 +31,6 @@ import {
   parseDesktopModelProviderBindingRef,
 } from "./desktop-binding-ref.ts";
 import {
-  isBuiltInPragmaResource,
   referencedPragmaResourceRefs,
   referencingPragmaResources,
 } from "./pragma-resource-references.ts";
@@ -38,6 +40,8 @@ export interface ExpertDefinitionStore {
   get(ref: string): Promise<ExpertDefinition>;
   create(input: CreateExpertDefinition): Promise<ExpertDefinition>;
   update(ref: string, input: UpdateExpertDefinition): Promise<ExpertDefinition>;
+  updateBuiltIn(ref: string, input: UpdateBuiltInExpertDefinition): Promise<ExpertDefinition>;
+  resetBuiltIn(ref: string): Promise<ExpertDefinition>;
   remove(ref: string): Promise<void>;
 }
 
@@ -62,6 +66,7 @@ export class ExpertDefinitionStoreError extends Error {
  */
 export function createExpertDefinitionStore(options: {
   readonly project: PragmaProjectStore;
+  readonly systemExperts: DesktopSystemExpertRegistry;
   readonly validateModel: (model: CreateExpertDefinition["model"]) => Promise<void>;
 }): ExpertDefinitionStore {
   const getResource = async (
@@ -90,7 +95,7 @@ export function createExpertDefinitionStore(options: {
     async list() {
       const snapshot = await options.project.get();
       const timestamp = snapshot.updatedAt ?? new Date(0).toISOString();
-      return snapshot.resources
+      const projectExperts = snapshot.resources
         .filter((resource): resource is PragmaExpertResource => resource.kind === "Expert")
         .map((resource) =>
           ExpertSummarySchema.parse(
@@ -101,10 +106,14 @@ export function createExpertDefinitionStore(options: {
               snapshot.resources,
             ),
           ),
-        )
-        .toSorted((left, right) => left.name.localeCompare(right.name));
+        );
+      return [...options.systemExperts.list(), ...projectExperts].toSorted((left, right) =>
+        left.name.localeCompare(right.name),
+      );
     },
     async get(id) {
+      const system = options.systemExperts.get(id);
+      if (system !== undefined) return system;
       const found = await getResource(id);
       return pragmaExpertResourceToDesktopDefinition(
         found.resource,
@@ -115,6 +124,12 @@ export function createExpertDefinitionStore(options: {
     },
     async create(input) {
       const parsed = CreateExpertDefinitionSchema.parse(input);
+      if (options.systemExperts.isReservedId(parsed.id)) {
+        throw new ExpertDefinitionStoreError(
+          "built_in_readonly",
+          `Expert ID ${parsed.id} is reserved by a built-in Expert.`,
+        );
+      }
       await options.validateModel(parsed.model);
       const snapshot = await options.project.get();
       const requestedRef = `expert:${parsed.id}@${parsed.version}`;
@@ -146,6 +161,12 @@ export function createExpertDefinitionStore(options: {
       );
     },
     async update(id, input) {
+      if (options.systemExperts.isReservedRef(id)) {
+        throw new ExpertDefinitionStoreError(
+          "built_in_readonly",
+          "Built-in Experts cannot be modified.",
+        );
+      }
       const parsed = UpdateExpertDefinitionSchema.parse(input);
       await options.validateModel(parsed.model);
       const snapshot = await options.project.get();
@@ -190,7 +211,21 @@ export function createExpertDefinitionStore(options: {
         updated.resources,
       );
     },
+    async updateBuiltIn(id, input) {
+      const parsed = UpdateBuiltInExpertDefinitionSchema.parse(input);
+      if (parsed.model !== undefined) await options.validateModel(parsed.model);
+      return await options.systemExperts.update(id, parsed);
+    },
+    async resetBuiltIn(id) {
+      return await options.systemExperts.reset(id);
+    },
     async remove(id) {
+      if (options.systemExperts.isReservedRef(id)) {
+        throw new ExpertDefinitionStoreError(
+          "built_in_readonly",
+          "Built-in Experts cannot be deleted.",
+        );
+      }
       const snapshot = await options.project.get();
       const resource = snapshot.resources.find(
         (candidate): candidate is PragmaExpertResource =>
@@ -198,12 +233,6 @@ export function createExpertDefinitionStore(options: {
       );
       if (resource === undefined) {
         throw new ExpertDefinitionStoreError("expert_not_found", "The expert no longer exists.");
-      }
-      if (isBuiltInPragmaResource(resource)) {
-        throw new ExpertDefinitionStoreError(
-          "built_in_readonly",
-          "Built-in Experts cannot be deleted.",
-        );
       }
       if (referencingPragmaResources(snapshot.resources, id).length > 0) {
         throw new ExpertDefinitionStoreError(
@@ -317,11 +346,14 @@ function definitionToResources(
         ...(plugin.config === undefined ? {} : { config: plugin.config }),
         ...(plugin.secretBindings === undefined ? {} : { secretBindings: plugin.secretBindings }),
       })),
-      contextStores: (definition.contextStoreMounts ?? []).map((mount) => ({
-        ref: `context-store:${desktopContextResourceId(mount.storeId)}@1.0.0`,
-        namespace: desktopContextResourceId(mount.storeId),
-        required: mount.enabled,
-      })),
+      contextStores: [
+        ...(definition.contextStoreMounts ?? []).map((mount) => ({
+          ref: `context-store:${desktopContextResourceId(mount.storeId)}@1.0.0`,
+          namespace: desktopContextResourceId(mount.storeId),
+          required: mount.enabled,
+        })),
+        ...(definition.opaqueContextStores ?? []),
+      ],
       tools: definition.resourceTools ?? current?.spec.tools ?? [],
     },
   });
@@ -422,6 +454,24 @@ export function pragmaExpertResourceToDesktopDefinition(
       });
     }
   }
+  const contextStoreMounts: ExpertDefinition["contextStoreMounts"] = [];
+  const opaqueContextStores: PragmaExpertResource["spec"]["contextStores"] = [];
+  for (const mount of resource.spec.contextStores) {
+    const declared = resources.find(
+      (candidate) => canonicalPragmaResourceRef(candidate) === mount.ref,
+    );
+    const storeId =
+      declared?.kind === "ContextStore" &&
+      declared.spec.adapter === "pragma.context.host@v1" &&
+      declared.metadata.tags.includes("desktop-managed")
+        ? parseDesktopContextBindingRef(declared.spec.binding ?? "")
+        : undefined;
+    if (storeId === undefined) {
+      opaqueContextStores.push(mount);
+    } else {
+      contextStoreMounts.push({ storeId, enabled: mount.required, priority: 0 });
+    }
+  }
   return ExpertDefinitionSchema.parse({
     schemaVersion: "pragma.desktop-expert-view/v1",
     ref: canonicalPragmaResourceRef(resource),
@@ -432,30 +482,22 @@ export function pragmaExpertResourceToDesktopDefinition(
     version: resource.metadata.version,
     scope: resource.spec.scope,
     instructions: resource.spec.instructions,
-    model: desktopModel(resource, resources),
+    additionalInstructions: "",
+    origin: "project",
+    readOnly: false,
+    customized: false,
+    executionProfile: { mode: "pinned", model: desktopModel(resource, resources) },
     resourceRuntime: resource.spec.runtime,
     capabilities,
     opaqueCapabilities,
+    opaqueContextStores,
     toolApprovals: resource.spec.toolApprovals,
     plugins: resource.spec.plugins.map((plugin) => ({
       ref: plugin.ref,
       ...(plugin.config === undefined ? {} : { config: plugin.config }),
       ...(plugin.secretBindings === undefined ? {} : { secretBindings: plugin.secretBindings }),
     })),
-    contextStoreMounts: resource.spec.contextStores.map((mount) => {
-      const declared = resources.find(
-        (candidate) => canonicalPragmaResourceRef(candidate) === mount.ref,
-      );
-      const storeId =
-        declared?.kind === "ContextStore"
-          ? parseDesktopContextBindingRef(declared.spec.binding ?? "")
-          : undefined;
-      return {
-        storeId: storeId ?? mount.namespace,
-        enabled: mount.required,
-        priority: 0,
-      };
-    }),
+    contextStoreMounts,
     resourceTools: resource.spec.tools,
     revision: Math.max(1, revision),
     createdAt: timestamp,
@@ -474,7 +516,7 @@ function desktopContextResourceId(id: string): string {
 function desktopModel(
   resource: PragmaExpertResource,
   resources: readonly PragmaResource[],
-): ExpertDefinition["model"] {
+): CreateExpertDefinition["model"] {
   if (resource.spec.runtime === undefined) {
     throw new ExpertDefinitionStoreError(
       "config_invalid",

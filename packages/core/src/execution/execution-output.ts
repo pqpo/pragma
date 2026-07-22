@@ -18,6 +18,9 @@ export function projectRuntimeOutput(options: {
     parentInvocationId: invocation.parentInvocationId,
     executorId: invocation.executorId,
     contextId: invocation.contextId,
+    runId: event.runId,
+    ...(event.parentRunId === undefined ? {} : { parentRunId: event.parentRunId }),
+    source: event.source,
     occurredAt: event.emittedAt,
   };
   switch (event.type) {
@@ -55,6 +58,22 @@ export function projectRuntimeOutput(options: {
         ...base,
         channel: "progress",
         value: event.payload,
+      });
+    case "agent.command":
+      return ExecutionOutputItemSchema.parse({
+        ...base,
+        channel: "agent",
+        value: event.payload,
+      });
+    case "run.started":
+    case "run.completed":
+    case "run.failed":
+    case "run.cancelled":
+      if (event.source.parentSessionId === undefined) return undefined;
+      return ExecutionOutputItemSchema.parse({
+        ...base,
+        channel: "agent",
+        value: { type: event.type, ...event.payload },
       });
     default:
       return undefined;

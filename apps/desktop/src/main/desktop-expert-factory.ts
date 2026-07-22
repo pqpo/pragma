@@ -200,6 +200,7 @@ export async function createDesktopExpertAgent(options: {
         source: resolvedPlugin.source,
         expectedRef: resolvedPlugin.ref,
         packageFingerprint: resolvedPlugin.packageFingerprint,
+        cachePolicy: resolvedPlugin.cachePolicy,
         userConfig: resolvedPlugin.userConfig,
       };
     }),

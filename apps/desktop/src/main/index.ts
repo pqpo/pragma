@@ -3,8 +3,12 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { BrowserWindow, app, ipcMain, safeStorage, shell } from "electron";
-import { PragmaPaths } from "@pragma/core";
-import { createFileStewardStateRepository, createStewardService } from "@pragma/steward";
+import { PragmaPaths, runStorageMaintenance } from "@pragma/core";
+import {
+  BUILT_IN_PRAGMA_REF,
+  compileBuiltInDefaultAgent,
+  createDefaultAgentTools,
+} from "@pragma/default-agent";
 
 import { createBridgeSnapshot } from "./bridge-snapshot.ts";
 import { installCapabilityHandlers } from "./capability-ipc.ts";
@@ -28,15 +32,24 @@ import { installPluginHandlers } from "./plugin-ipc.ts";
 import { createPluginCredentialStore } from "./plugin-credential-store.ts";
 import { createPluginStore } from "./plugin-store.ts";
 import { installMissionHandlers } from "./mission-ipc.ts";
-import { createMissionRunner } from "./mission-runner.ts";
+import { createMissionCreator } from "./mission-creator.ts";
+import { createDesktopAdapterHost, createMissionRunner } from "./mission-runner.ts";
 import { createMissionStore } from "./mission-store.ts";
+import { createMissionExecutorCatalog } from "./mission-executor-catalog.ts";
 import { installPragmaProjectHandlers } from "./pragma-project-ipc.ts";
 import { createPragmaProjectStore } from "./pragma-project-store.ts";
 import { getRuntimeAvailability } from "./runtime-availability.ts";
-import { installWorkspaceScopeHandlers } from "./workspace-scope.ts";
-import { installStewardHandlers } from "./steward-ipc.ts";
-import { createDesktopStewardProjectPort } from "./steward-project-adapter.ts";
-import { createDesktopStewardTaskPort } from "./steward-task-adapter.ts";
+import { installWorkspaceScopeHandlers, validateWorkspace } from "./workspace-scope.ts";
+import { createWorkspaceHistoryStore } from "./workspace-history-store.ts";
+import { createDesktopDefaultAgentProjectPort } from "./default-agent-project-adapter.ts";
+import { createDesktopDefaultAgentTaskPort } from "./default-agent-task-adapter.ts";
+import { createDesktopSystemExpertRegistry } from "./system-expert-registry.ts";
+import { initializeDesktopStorage } from "./storage-bootstrap.ts";
+import {
+  resolveSystemExpertRuntimeDefaults,
+  withRuntimeDefaults,
+} from "./system-expert-runtime.ts";
+import { createAutomaticToolPermissionHandler } from "./tool-permission-policy.ts";
 import { installWorkflowLayoutHandlers } from "./workflow-layout-ipc.ts";
 import { createWorkflowLayoutStore } from "./workflow-layout-store.ts";
 import { SetDefaultRuntimeSchema } from "../shared/desktop-api.ts";
@@ -127,29 +140,68 @@ void app.whenReady().then(async () => {
     decrypt: (encrypted: Buffer) => safeStorage.decryptString(encrypted),
   };
   const pragmaPaths = new PragmaPaths();
-  installDesktopSettingsHandlers(
-    createDesktopSettingsStore({
-      settingsPath: join(pragmaPaths.stateRoot(), "desktop-settings.json"),
-      warn: (message, error) => console.warn(message, error),
-    }),
+  const storageBootstrap = await initializeDesktopStorage({
+    paths: pragmaPaths,
+    trashItem: async (path) => await shell.trashItem(path),
+  });
+  if (storageBootstrap.legacyBackup !== undefined) {
+    console.warn(`Previous Pragma storage was backed up to ${storageBootstrap.legacyBackup}.`);
+  }
+  const maintenance = await runStorageMaintenance({ paths: pragmaPaths });
+  if (maintenance.before.totalBytes >= maintenance.before.softLimitBytes) {
+    console.warn(
+      `Pragma storage pressure GC reclaimed ${maintenance.before.totalBytes - maintenance.after.totalBytes} bytes.`,
+    );
+  }
+  const builtInDefaultWorkspace = pragmaPaths.workspaceRoot();
+  const projectsPath = pragmaPaths.projectsRoot();
+  const missionsPath = pragmaPaths.missionsRoot();
+  const modelProvidersPath = join(pragmaPaths.dataRoot(), "model-providers.json");
+  const capabilityCredentialsPath = join(
+    pragmaPaths.credentialsRoot(),
+    "capability-credentials.json",
   );
+  const capabilitiesPath = join(pragmaPaths.dataRoot(), "capabilities");
+  const contextStoresPath = join(pragmaPaths.dataRoot(), "context-stores");
+  const desktopSettings = createDesktopSettingsStore({
+    settingsPath: join(pragmaPaths.stateRoot(), "desktop-settings.json"),
+    builtInDefaultWorkspace,
+    warn: (message, error) => console.warn(message, error),
+  });
+  const workspaceHistory = createWorkspaceHistoryStore({
+    historyPath: join(pragmaPaths.stateRoot(), "workspace-history.json"),
+    warn: (message, error) => console.warn(message, error),
+  });
+  const getToolPermissionMode = async () =>
+    (await desktopSettings.getSnapshot(app.getPreferredSystemLanguages())).toolPermissionMode;
+  const automaticHumanInteractionHandler =
+    createAutomaticToolPermissionHandler(getToolPermissionMode);
+  const systemExperts = createDesktopSystemExpertRegistry({
+    configPath: join(pragmaPaths.stateRoot(), "system-experts.json"),
+    warn: (message, error) => console.warn(message, error),
+  });
+  await systemExperts.initialize();
   const pragmaProjectStore = createPragmaProjectStore({
-    projectsPath: join(app.getPath("home"), ".pragma", "projects"),
+    projectsPath,
+    objectsPath: pragmaPaths.contentObjectsRoot(),
+    projectViewsPath: pragmaPaths.projectViewsCacheRoot(),
+    storagePaths: pragmaPaths,
+    reservedResourceRefs: new Set([BUILT_IN_PRAGMA_REF]),
   });
   installWorkflowLayoutHandlers(
     createWorkflowLayoutStore({
-      projectsPath: join(app.getPath("home"), ".pragma", "projects"),
+      projectsPath,
     }),
   );
   const pluginCredentials = createPluginCredentialStore({
-    configPath: join(pragmaPaths.stateRoot(), "plugin-credentials.json"),
+    configPath: join(pragmaPaths.credentialsRoot(), "plugin-credentials.json"),
     encryption,
   });
   const missionStore = createMissionStore({
-    missionsPath: join(app.getPath("home"), ".pragma", "missions"),
+    missionsPath,
   });
   const modelProviderStore = createModelProviderStore({
-    configPath: join(app.getPath("home"), ".pragma", "model-providers.json"),
+    configPath: modelProvidersPath,
     encryption,
   });
   const runtimeEnvironments = createRuntimeEnvironmentStore({
@@ -158,7 +210,18 @@ void app.whenReady().then(async () => {
   await runtimeEnvironments.initialize();
   const runtimes = createRuntimeEnvironmentService({
     store: runtimeEnvironments,
-    factories: createBuiltInRuntimeFactories(modelProviderStore),
+    factories: createBuiltInRuntimeFactories(modelProviderStore, getToolPermissionMode),
+  });
+  const missionExecutors = createMissionExecutorCatalog({
+    project: pragmaProjectStore,
+    systemExperts,
+    runtimes,
+  });
+  const missionCreator = createMissionCreator({
+    missions: missionStore,
+    project: pragmaProjectStore,
+    executors: missionExecutors,
+    getDefaultToolPermissionMode: getToolPermissionMode,
   });
   ipcMain.handle("runtimes:availability", () => getRuntimeAvailability(runtimes));
   ipcMain.handle("runtimes:set-default", async (_event, input: unknown) => {
@@ -168,6 +231,7 @@ void app.whenReady().then(async () => {
   });
   const expertStore = createExpertDefinitionStore({
     project: pragmaProjectStore,
+    systemExperts,
     validateModel: async (selection) => {
       const availability = await getRuntimeAvailability(runtimes);
       const runtime = availability.find((candidate) => candidate.id === selection.runtimeId);
@@ -209,11 +273,11 @@ void app.whenReady().then(async () => {
   });
   installPluginHandlers(pluginStore, () => mainWindow);
   const capabilityCredentials = createCapabilityCredentialStore({
-    configPath: join(app.getPath("home"), ".pragma", "capability-credentials.json"),
+    configPath: capabilityCredentialsPath,
     encryption,
   });
   const capabilityStore = createCapabilityStore({
-    capabilitiesPath: join(app.getPath("home"), ".pragma", "capabilities"),
+    capabilitiesPath,
     credentials: capabilityCredentials,
     verify: createCapabilityVerifier(capabilityCredentials),
     isReferenced: async (capabilityId) => {
@@ -227,7 +291,7 @@ void app.whenReady().then(async () => {
   });
   installCapabilityHandlers(capabilityStore, () => mainWindow);
   const contextStores = createContextStoreStore({
-    storesPath: join(app.getPath("home"), ".pragma", "context-stores"),
+    storesPath: contextStoresPath,
     isReferenced: async (storeId) => {
       const definitions = await Promise.all(
         (await expertStore.list()).map((summary) => expertStore.get(summary.ref)),
@@ -240,47 +304,131 @@ void app.whenReady().then(async () => {
   installContextStoreHandlers(contextStores, () => mainWindow);
   installExpertDefinitionHandlers(expertStore);
   installPragmaProjectHandlers(pragmaProjectStore);
+  const initialSettings = await desktopSettings.getSnapshot(app.getPreferredSystemLanguages());
+  await mkdir(initialSettings.defaultWorkspace, { recursive: true, mode: 0o700 });
+  const defaultAgentStateRoot = join(pragmaPaths.stateRoot(), "pragma");
+  const defaultAgentProject = createDesktopDefaultAgentProjectPort({
+    project: pragmaProjectStore,
+    stateRoot: defaultAgentStateRoot,
+    capabilities: capabilityStore,
+    runtimes,
+  });
+  const defaultAgentToolsRef: { current?: ReturnType<typeof createDefaultAgentTools> } = {};
   const missionRunner = createMissionRunner({
     missions: missionStore,
     project: pragmaProjectStore,
     capabilityStore,
     capabilityCredentials,
-    capabilitiesPath: join(app.getPath("home"), ".pragma", "capabilities"),
-    pragmaHome: join(app.getPath("home"), ".pragma"),
+    capabilitiesPath,
+    pragmaHome: pragmaPaths.root,
     contextStores,
     plugins: pluginStore,
     runtimes,
+    automaticHumanInteractionHandler,
+    runtimesForToolPermissionMode: (mode) => runtimes.forToolPermissionMode(mode),
+    automaticHumanInteractionHandlerForToolPermissionMode: (mode) =>
+      createAutomaticToolPermissionHandler(() => mode),
+    compileSystemExecutor: async ({ mission, runtimes: scopedRuntimes }) => {
+      if (mission.executor.ref !== BUILT_IN_PRAGMA_REF) return undefined;
+      if (defaultAgentToolsRef.current === undefined) {
+        throw new Error("The built-in Pragma tools have not been initialized.");
+      }
+      const definition = systemExperts.get(BUILT_IN_PRAGMA_REF);
+      if (definition === undefined) throw new Error("The built-in Pragma definition is missing.");
+      const createsSession = mission.execution?.sessionId === undefined;
+      const configuredModel =
+        createsSession && definition.executionProfile.mode === "pinned"
+          ? definition.executionProfile.model
+          : undefined;
+      const defaults = await resolveSystemExpertRuntimeDefaults(
+        scopedRuntimes,
+        configuredModel,
+        createsSession ? mission.modelOverride : undefined,
+      );
+      return await compileBuiltInDefaultAgent({
+        definitionStateRoot: join(defaultAgentStateRoot, "definitions"),
+        workspace: mission.workspace.path,
+        pragmaHome: pragmaPaths.root,
+        runtimes: withRuntimeDefaults(scopedRuntimes, defaults),
+        ...(defaults.modelSelection === undefined
+          ? {}
+          : { defaultModelSelection: defaults.modelSelection }),
+        rootExecutionOverride: {
+          runtimeId: defaults.runtimeId,
+          ...(defaults.modelSelection === undefined
+            ? {}
+            : { modelSelection: defaults.modelSelection }),
+        },
+        tools: defaultAgentToolsRef.current,
+        ...(definition.customized
+          ? { expertResource: systemExperts.getResource(BUILT_IN_PRAGMA_REF) }
+          : {}),
+        additionalResources: systemExperts.getAdditionalResources(BUILT_IN_PRAGMA_REF),
+        adapterHost: createDesktopAdapterHost(
+          {
+            capabilityStore,
+            capabilityCredentials,
+            capabilitiesPath,
+            contextStores,
+          },
+          mission.workspace.path,
+        ),
+        plugins: {
+          inspect: async ({ binding }) =>
+            await pluginStore.inspect({
+              ref: binding.ref,
+              config: binding.config,
+              secretBindings: binding.secretBindings,
+            }),
+          resolve: async ({ binding }) =>
+            await pluginStore.resolve({
+              ref: binding.ref,
+              config: binding.config,
+              secretBindings: binding.secretBindings,
+            }),
+        },
+      });
+    },
+  });
+  const defaultAgentTasks = createDesktopDefaultAgentTaskPort({
+    missions: missionStore,
+    runner: missionRunner,
+    creator: missionCreator,
+    stateRoot: defaultAgentStateRoot,
+  });
+  defaultAgentToolsRef.current = createDefaultAgentTools({
+    project: defaultAgentProject,
+    tasks: defaultAgentTasks,
   });
   installMissionHandlers({
     missions: missionStore,
+    creator: missionCreator,
+    executors: missionExecutors,
     project: pragmaProjectStore,
     getWindow: () => mainWindow,
     runner: missionRunner,
+    getDefaultToolPermissionMode: getToolPermissionMode,
+    getDefaultWorkspace: async () =>
+      (await desktopSettings.getSnapshot(app.getPreferredSystemLanguages())).defaultWorkspace,
+    getRecentWorkspaces: () => workspaceHistory.list(),
+    recordWorkspaceUsage: async (path) => {
+      try {
+        await workspaceHistory.record(path);
+      } catch (error) {
+        console.warn("Workspace usage could not be recorded.", error);
+      }
+    },
+    defaultExecutorRef: BUILT_IN_PRAGMA_REF,
   });
-  const stewardStateRoot = join(pragmaPaths.stateRoot(), "steward");
-  const stewardWorkspace = join(pragmaPaths.root, "workspaces", "steward");
-  await mkdir(stewardWorkspace, { recursive: true, mode: 0o700 });
-  installStewardHandlers(
-    createStewardService({
-      pragmaHome: pragmaPaths.root,
-      workspace: stewardWorkspace,
-      definitionStateRoot: join(stewardStateRoot, "definitions"),
-      runtimes,
-      state: createFileStewardStateRepository(join(stewardStateRoot, "installation.json")),
-      project: createDesktopStewardProjectPort({
-        project: pragmaProjectStore,
-        stateRoot: stewardStateRoot,
-        capabilities: capabilityStore,
-        runtimes,
-      }),
-      tasks: createDesktopStewardTaskPort({
-        missions: missionStore,
-        runner: missionRunner,
-        project: pragmaProjectStore,
-        stateRoot: stewardStateRoot,
-      }),
-    }),
-  );
+  installDesktopSettingsHandlers({
+    store: desktopSettings,
+    validateDefaultWorkspace: async (path) => {
+      const validation = await validateWorkspace(path);
+      if (!validation.ok) {
+        throw new Error("The default workspace must be an accessible, writable directory.");
+      }
+    },
+  });
   installModelProviderHandlers(modelProviderStore, {
     isProviderReferenced: async (providerId) =>
       (await pragmaProjectStore.get()).resources.some(

@@ -14,20 +14,22 @@ import { dirname, join } from "node:path";
 
 import { withFileLock } from "@pragma/core";
 import { formatPragmaYaml, parsePragmaYaml } from "@pragma/interpreter";
-import type { PragmaInvocableResource } from "@pragma/interpreter/ast";
 import { z } from "zod";
 
 import {
   MissionIdSchema,
   MissionSchema,
   MissionTimelineRecordSchema,
+  MissionChatEntrySchema,
   MissionUserMessageSchema,
-  missionExecutorKind,
-  missionExecutorRef,
   type Mission,
+  type MissionExecutor,
+  type MissionModelOverride,
   type MissionSummary,
   type MissionTimelineRecord,
+  type MissionChatEntry,
   type MissionUserMessage,
+  type DesktopToolPermissionMode,
 } from "../shared/desktop-api.ts";
 
 export interface MissionTimelineTurn {
@@ -44,14 +46,25 @@ export interface MissionTimelinePage {
 }
 
 export interface MissionStore {
+  readonly storagePath?: ((id: string) => string) | undefined;
+  readonly forget?: ((id: string) => void) | undefined;
   list(): Promise<MissionSummary[]>;
   get(id: string): Promise<Mission>;
   create(input: {
     readonly workspace: { readonly path: string; readonly basename: string };
     readonly goal: string;
     readonly project: { readonly id: string; readonly revision: number };
-    readonly executor: PragmaInvocableResource;
+    readonly executor: MissionExecutor;
+    readonly toolPermissionMode?: DesktopToolPermissionMode | undefined;
+    readonly modelOverride?: MissionModelOverride | undefined;
   }): Promise<Mission>;
+  updateOptions(
+    id: string,
+    input: {
+      readonly toolPermissionMode: DesktopToolPermissionMode;
+      readonly modelOverride?: MissionModelOverride | undefined;
+    },
+  ): Promise<Mission>;
   updateExecution(
     id: string,
     execution: NonNullable<Mission["execution"]>,
@@ -74,6 +87,15 @@ export interface MissionStore {
   markComplete(id: string): Promise<Mission>;
   reopen(id: string): Promise<Mission>;
   remove(id: string): Promise<void>;
+  readExecutionProjection(
+    id: string,
+    executionId: string,
+  ): Promise<readonly MissionChatEntry[] | undefined>;
+  writeExecutionProjection(
+    id: string,
+    executionId: string,
+    entries: readonly MissionChatEntry[],
+  ): Promise<void>;
 }
 
 export class MissionStoreError extends Error {
@@ -105,6 +127,8 @@ export function createMissionStore(options: { readonly missionsPath: string }): 
   const manifestPath = (id: string) => join(missionPath(id), "mission.yaml");
   const messagesPath = (id: string) => join(missionPath(id), "messages.jsonl");
   const transactionPath = (id: string) => join(missionPath(id), ".messages.transaction.json");
+  const projectionPath = (id: string, executionId: string) =>
+    join(missionPath(id), "execution-projections", `${executionId}.json`);
   const lockPath = (id: string) => join(options.missionsPath, ".locks", `${id}.lock`);
   const timelineCache = new Map<
     string,
@@ -240,6 +264,39 @@ export function createMissionStore(options: { readonly missionsPath: string }): 
   };
 
   return {
+    storagePath: missionPath,
+    forget(id) {
+      timelineCache.delete(id);
+    },
+    async readExecutionProjection(id, executionId) {
+      try {
+        const value = JSON.parse(await readFile(projectionPath(id, executionId), "utf8")) as {
+          readonly schemaVersion?: unknown;
+          readonly entries?: unknown;
+        };
+        if (value.schemaVersion !== "pragma.mission-execution-projection/v1") {
+          throw new MissionStoreError(
+            "unsupported_schema",
+            "Unsupported Mission projection schema.",
+          );
+        }
+        return MissionChatEntrySchema.array().parse(value.entries);
+      } catch (error) {
+        if (isNodeError(error, "ENOENT")) return undefined;
+        throw error;
+      }
+    },
+    async writeExecutionProjection(id, executionId, entries) {
+      await withMissionLock(MissionIdSchema.parse(id), async () => {
+        await readMissionUnlocked(id);
+        await writeJsonAtomically(projectionPath(id, executionId), {
+          schemaVersion: "pragma.mission-execution-projection/v1",
+          executionId,
+          entries: MissionChatEntrySchema.array().parse(entries),
+          createdAt: new Date().toISOString(),
+        });
+      });
+    },
     async list() {
       try {
         const directories = (await readdir(options.missionsPath, { withFileTypes: true })).filter(
@@ -262,21 +319,17 @@ export function createMissionStore(options: { readonly missionsPath: string }): 
       const initialMessageId = randomUUID();
       const timestamp = new Date().toISOString();
       const goal = input.goal.trim();
-      const kind = missionExecutorKind(input.executor);
       const mission = MissionSchema.parse({
         schemaVersion: "pragma.mission/v3",
         id,
         title: titleFromGoal(goal),
         goal,
         initialMessageId,
+        toolPermissionMode: input.toolPermissionMode ?? "request-approval",
         workspace: input.workspace,
         project: input.project,
-        executor: {
-          kind,
-          ref: missionExecutorRef(input.executor),
-          name: input.executor.metadata.name,
-          version: input.executor.metadata.version,
-        },
+        executor: input.executor,
+        ...(input.modelOverride === undefined ? {} : { modelOverride: input.modelOverride }),
         lifecycleStatus: "active",
         createdAt: timestamp,
         updatedAt: timestamp,
@@ -310,6 +363,27 @@ export function createMissionStore(options: { readonly missionsPath: string }): 
         throw error;
       }
       return mission;
+    },
+    async updateOptions(id, input) {
+      return await updateMission(MissionIdSchema.parse(id), (current, timestamp) => {
+        if (
+          current.execution !== undefined &&
+          ["queued", "running", "waiting"].includes(current.execution.status)
+        ) {
+          throw new MissionStoreError(
+            "mission_active",
+            "Wait for the current execution before changing mission options.",
+          );
+        }
+        const next = {
+          ...current,
+          toolPermissionMode: input.toolPermissionMode,
+          updatedAt: timestamp,
+        };
+        if (input.modelOverride === undefined) delete next.modelOverride;
+        else next.modelOverride = input.modelOverride;
+        return next;
+      });
     },
     async updateExecution(id, execution, guard) {
       return await updateMission(MissionIdSchema.parse(id), (current, timestamp) => {
@@ -520,6 +594,7 @@ async function writeJsonAtomically(path: string, value: unknown): Promise<void> 
 }
 
 async function writeTextAtomically(path: string, content: string): Promise<void> {
+  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
   const temporaryPath = `${path}.${randomUUID()}.tmp`;
   await writeFile(temporaryPath, content, { mode: 0o600 });
   await rename(temporaryPath, path);
@@ -570,7 +645,20 @@ function messageConflict(record: MissionTimelineRecord): MissionStoreError {
 
 function titleFromGoal(goal: string): string {
   const firstLine = goal.split(/\r?\n/, 1)[0]?.trim() ?? "";
-  return firstLine.length <= 120 ? firstLine : `${firstLine.slice(0, 117).trimEnd()}…`;
+  return normalizeMissionTitle(firstLine);
+}
+
+export const MISSION_TITLE_MAX_LENGTH = 48;
+
+export function normalizeMissionTitle(value: string): string {
+  const compact = value.replace(/\s+/gu, " ").trim();
+  const characters = Array.from(compact);
+  if (characters.length === 0) throw new Error("Mission title cannot be empty.");
+  if (characters.length <= MISSION_TITLE_MAX_LENGTH) return compact;
+  return `${characters
+    .slice(0, MISSION_TITLE_MAX_LENGTH - 1)
+    .join("")
+    .trimEnd()}…`;
 }
 
 function readSchemaVersion(value: unknown): unknown {

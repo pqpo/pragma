@@ -14,8 +14,11 @@ export const ExpertAgentStreamSourceSchema = z.object({
   kind: z.enum(["agent", "runtime", "tool"]),
   runId: z.string().min(1),
   parentRunId: z.string().min(1).optional(),
+  sessionId: z.string().min(1).optional(),
+  parentSessionId: z.string().min(1).optional(),
   agentId: z.string().min(1).optional(),
   agentType: z.string().min(1).optional(),
+  displayName: z.string().min(1).optional(),
   toolCallId: z.string().min(1).optional(),
   path: z.array(ExpertAgentStreamSourceFrameSchema).default([]),
 });
@@ -161,6 +164,20 @@ export const ExpertAgentArtifactCreatedEventSchema = ExpertAgentStreamEventBaseS
   }),
 });
 
+export const ExpertAgentCommandEventSchema = ExpertAgentStreamEventBaseSchema.extend({
+  type: z.literal("agent.command"),
+  payload: z.object({
+    commandId: z.string().min(1),
+    action: z.enum(["spawn", "wait", "list", "send", "resume", "interrupt"]),
+    phase: z.enum(["started", "completed", "failed"]),
+    senderSessionId: z.string().min(1).optional(),
+    targetSessionIds: z.array(z.string().min(1)).default([]),
+    prompt: z.string().optional(),
+    states: z.record(z.string(), z.unknown()).optional(),
+    error: z.string().min(1).optional(),
+  }),
+});
+
 export const ExpertAgentStreamEventSchema = z.discriminatedUnion("type", [
   ExpertAgentRunStartedEventSchema,
   ExpertAgentRunCompletedEventSchema,
@@ -176,6 +193,7 @@ export const ExpertAgentStreamEventSchema = z.discriminatedUnion("type", [
   ExpertAgentToolCompletedEventSchema,
   ExpertAgentToolFailedEventSchema,
   ExpertAgentArtifactCreatedEventSchema,
+  ExpertAgentCommandEventSchema,
 ]);
 
 export type ExpertAgentStreamSchemaVersion = z.infer<typeof ExpertAgentStreamSchemaVersionSchema>;

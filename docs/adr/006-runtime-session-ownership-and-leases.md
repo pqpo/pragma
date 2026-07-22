@@ -4,6 +4,9 @@
 
 Accepted
 
+ADR 016 extends this decision with owner-scoped deletion and separates Runtime process state from
+storage retention state.
+
 ## Decision
 
 An `ExpertSession` owns reusable Runtime Sessions for its full lifetime. A `FlowExecution` owns its

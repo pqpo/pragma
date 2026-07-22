@@ -90,7 +90,7 @@ tsconfig.base.json
 @pragma/server
 @pragma/core
 @pragma/interpreter
-@pragma/steward
+@pragma/default-agent
 @pragma/runtime-pi
 @pragma/runtime-codex
 @pragma/runtime-claude-code
@@ -112,7 +112,7 @@ helpers
 lib
 ```
 
-新增 package 前，必须先明确它属于 `shared`、`client`、`server`、`core`、`interpreter`、`steward`、`runtime-*`、`plugins/*`、`examples`、`apps/*` 还是配置工具。
+新增 package 前，必须先明确它属于 `shared`、`client`、`server`、`core`、`interpreter`、`default-agent`、`runtime-*`、`plugins/*`、`examples`、`apps/*` 还是配置工具。
 
 ## 模块依赖规范
 
@@ -124,7 +124,7 @@ lib
 - `client` 是浏览器/客户端 SDK，只依赖 `shared`，不直接碰 Server 内部实现或 Agent。
 - `core` 是专家 Agent 的执行抽象和 Runtime Adapter 边界，只依赖 `shared` 和 core 内部模块，不依赖具体 runtime、`client` 或 `server`。
 - `interpreter` 是 Pragma DSL 的语言实现，拥有 AST、解析、链接、校验、编译、扩展 registry 和 dump；可以依赖 `core` 的对象模型与执行抽象，但 `core` 不得反向依赖 `interpreter`。
-- `steward` 是内置管家 Agent 的可复用产品能力包，拥有 DSL、Skill、会话服务、宿主端口和浏览器安全契约；应用只负责提供存储、任务和 Runtime 适配。
+- `default-agent` 是内置通用 Agent `Pragma` 的可复用产品能力包，拥有 DSL、Skill、descriptor/compiler、宿主端口和 managed tools；应用负责系统专家注册、Mission 存储、任务和 Runtime 适配。
 - `runtime-*` 是具体 Runtime Adapter 实现，依赖 `core`、`shared` 和该 runtime 自己的 SDK；不同 runtime 包相互独立。
 - `server` 是服务端控制面与基础设施层，可以依赖 `shared` 和 `core` 抽象。
 - `apps/server` 和 `apps/worker` 是云端运行入口，未来由它们调度专家 Agent；不是 Agent 反过来依赖 Server。
@@ -134,7 +134,7 @@ lib
 apps/web    -> client -> shared
 apps/server -> server -> core -> shared
 apps/worker -> server -> runtime-* -> core -> shared
-apps/desktop    -> steward -> interpreter -> core -> shared
+apps/desktop    -> default-agent -> interpreter -> core -> shared
 apps/desktop    -> interpreter -> core -> shared
 apps/desktop    -> runtime-* -> core -> shared
 plugins/*   -> core -> shared
@@ -143,21 +143,21 @@ examples    -> runtime-* / plugin-* / core -> shared
 
 更具体地说：
 
-| 来源                   | 允许依赖                                                                                             |
-| ---------------------- | ---------------------------------------------------------------------------------------------------- |
-| `apps/web`             | `@pragma/shared`、`@pragma/client`                                                                   |
-| `apps/server`          | `@pragma/shared`、`@pragma/server`、`@pragma/core`                                                   |
-| `apps/worker`          | `@pragma/shared`、`@pragma/server`、`@pragma/core`、具体 `@pragma/runtime-*`                         |
-| `apps/desktop`         | `@pragma/shared`、`@pragma/core`、`@pragma/interpreter`、`@pragma/steward`、具体 `@pragma/runtime-*` |
-| `plugins/*`            | `@pragma/shared`、`@pragma/core`；不依赖 app、server、client 或具体 runtime                          |
-| `examples`             | `@pragma/core`、具体 `@pragma/runtime-*`、具体 `@pragma/plugin-*`                                    |
-| `packages/shared`      | 无内部 package 依赖；只允许运行时中立依赖                                                            |
-| `packages/client`      | `@pragma/shared`                                                                                     |
-| `packages/server`      | `@pragma/shared`；需要编排时可依赖 `@pragma/core`                                                    |
-| `packages/core`        | `@pragma/shared`                                                                                     |
-| `packages/interpreter` | `@pragma/core`；AST 子入口只使用运行时中立依赖                                                       |
-| `packages/steward`     | `@pragma/shared`、`@pragma/core`、`@pragma/interpreter`；`/contracts` 保持浏览器安全                 |
-| `packages/runtime/*`   | `@pragma/shared`、`@pragma/core`、该 runtime 自己的 SDK                                              |
+| 来源                     | 允许依赖                                                                                                   |
+| ------------------------ | ---------------------------------------------------------------------------------------------------------- |
+| `apps/web`               | `@pragma/shared`、`@pragma/client`                                                                         |
+| `apps/server`            | `@pragma/shared`、`@pragma/server`、`@pragma/core`                                                         |
+| `apps/worker`            | `@pragma/shared`、`@pragma/server`、`@pragma/core`、具体 `@pragma/runtime-*`                               |
+| `apps/desktop`           | `@pragma/shared`、`@pragma/core`、`@pragma/interpreter`、`@pragma/default-agent`、具体 `@pragma/runtime-*` |
+| `plugins/*`              | `@pragma/shared`、`@pragma/core`；不依赖 app、server、client 或具体 runtime                                |
+| `examples`               | `@pragma/core`、具体 `@pragma/runtime-*`、具体 `@pragma/plugin-*`                                          |
+| `packages/shared`        | 无内部 package 依赖；只允许运行时中立依赖                                                                  |
+| `packages/client`        | `@pragma/shared`                                                                                           |
+| `packages/server`        | `@pragma/shared`；需要编排时可依赖 `@pragma/core`                                                          |
+| `packages/core`          | `@pragma/shared`                                                                                           |
+| `packages/interpreter`   | `@pragma/core`；AST 子入口只使用运行时中立依赖                                                             |
+| `packages/default-agent` | `@pragma/shared`、`@pragma/core`、`@pragma/interpreter`；`/contracts` 保持浏览器安全                       |
+| `packages/runtime/*`     | `@pragma/shared`、`@pragma/core`、该 runtime 自己的 SDK                                                    |
 
 明确禁止：
 
@@ -186,10 +186,10 @@ core -> web
 plugin-* -> server
 plugin-* -> client
 plugin-* -> runtime-*
-steward -> app
-steward -> server
-steward -> client
-steward -> runtime-*
+default-agent -> app
+default-agent -> server
+default-agent -> client
+default-agent -> runtime-*
 ```
 
 这里的 `core` 指专家 Agent 的执行抽象、Invocation、Runtime Adapter 合约和公共运行协议。DSL AST、Manifest 解析和对象编译属于 `@pragma/interpreter`。具体 runtime 实现放在独立 `@pragma/runtime-*` 包，由 Server/Worker/Desktop 等应用入口按需装配；不要让 `core` 依赖 `interpreter`、具体 runtime、`client`、Web 或 Server 应用层。
@@ -247,9 +247,19 @@ Server 与 Agent 的关系：
 本地存储边界：
 
 - Agent workspace 只保存任务明确需要的 repository、input、artifact 和 Agent 主动创建或修改的文件。
+- Desktop 内置默认 workspace 固定为 `~/.pragma/workspace/`，位于 `.pragma` 根目录，不得放入 `data/`。
 - Runtime Session、Runtime 配置和插件安装副本不得写入 workspace。
+- 权威数据存放在 `~/.pragma/data/`，可恢复运行状态存放在 `state/`，有界诊断归档存放在
+  `archives/`，可重建内容存放在 `cache/`；`tmp/` 与 `trash/` 使用短期保留策略。
 - ExpertSession、Execution 与 Runtime Session 分别存放在 `~/.pragma/state/expert-sessions/`、`~/.pragma/state/executions/` 和 `~/.pragma/state/runtime-sessions/`。
-- Agent 插件副本缓存到 `~/.pragma/cache/agents/<agentId>/plugins/<pluginId>/`。
+- Project Revision 只保存不可变 manifest 和 Merkle `snapshotHash`；文件实体全局去重到
+  `~/.pragma/data/objects/sha256/`，所有 Revision 在 Project 删除前都是强引用根。
+- Agent 插件按 package fingerprint 全局缓存到 `~/.pragma/cache/plugins/sha256/`；
+  `cache/agents/<agentId>/` 只保存绑定元数据，不复制插件包。
+- Codex 使用共享只读 cache base 与 Runtime Context 私有 overlay；sessions、SQLite、日志和配置
+  不得跨 Context 共享，`CODEX_SQLITE_HOME` 必须指向私有目录。
+- Runtime 进程停止不等于持久数据删除。Mission 删除必须按 owner 图级联移动 ExpertSession、
+  Execution、Runtime Session 和 ownership claim 到带 journal 的回收站。
 - 外部 ID 目录段统一通过 `@pragma/core` 的 `PragmaPaths` 编码和解析，具体 Runtime 或插件 loader 不自行拼接管理路径。
 - 每个 Runtime Session 必须由 ExpertSession context 或 FlowExecution Invocation 明确拥有；恢复还必须提供原 `systemSessionId` 和 `RuntimeSessionRef`。
 - Core 必须通过原子 ownership claim 保证 `systemSessionId` 只有一个 owner；不要用“先扫描再写入”的 TOCTOU 检查代替原子声明。
@@ -527,20 +537,24 @@ Expert API 设计要求：
 
 禁止引入具体 Runtime Adapter、Desktop UI、Server 应用层、数据库实现或 Client SDK。
 
-### `packages/steward`
+### `packages/default-agent`
 
 职责：
 
-- 保存内置管家 Agent 的 `pragma/v2` DSL 和 `author-pragma-dsl` Skill。
-- 定义项目 DSL、任务和持久状态的宿主端口，并将其包装成 Core managed tools。
-- 管理管家的长期 ExpertSession、固定 workspace、聊天历史和审批交互。
-- 导出供 Desktop 或未来 Web 适配的运行时中立契约。
+- 保存内置通用 Agent `Pragma` 的 `pragma/v2` DSL 和 `author-pragma-dsl` Skill。
+- 定义项目 DSL 与 Mission 的宿主端口，并将其包装成 Core managed tools；这些只是默认 Agent 的部分能力。
+- 导出供 Desktop 或未来 Web 适配的运行时中立项目/任务契约。
+- 不拥有独立 ExpertSession、聊天历史或审批投影；宿主统一复用 Mission/Execution 链路。
 
 边界要求：
 
-- 主入口 `@pragma/steward` 是 Node-only，可以依赖 `@pragma/core` 和 `@pragma/interpreter`。
-- `@pragma/steward/contracts` 必须保持浏览器安全，只依赖运行时中立 schema。
-- 管家只通过 DSL 修改 Expert、ExpertTeam 和 Flow；应用层实现持久化与任务端口。
+- 主入口 `@pragma/default-agent` 是 Node-only，可以依赖 `@pragma/core` 和 `@pragma/interpreter`。
+- `@pragma/default-agent/contracts` 必须保持浏览器安全，只依赖运行时中立 schema。
+- Pragma 是默认存在的通用 Agent，用户无需先创建 Expert 即可直接完成普通工作；专业 Expert、ExpertTeam 和 Flow 是可选执行器。
+- Pragma 修改 Expert、ExpertTeam 和 Flow 时只通过 DSL 能力；应用层实现持久化与任务端口。
+- Desktop 将 Pragma 注册为只读系统专家；Home 只负责创建全新 Mission，不维护独立 Chat。
+- Home 为 Expert/ExpertTeam Mission 提供可选的模型与思考深度覆盖，并随 Mission 持久化；Home
+  不允许覆盖 Runtime，Flow 不接受模型或思考深度覆盖。
 - 宿主端口使用直接 TypeScript 接口；具体 Runtime 可继续通过现有 Execution MCP Gateway 调用 managed tools。
 
 禁止依赖 Desktop/Electron、React、Server 应用层、Client SDK、数据库实现或具体 Runtime Adapter。
@@ -638,11 +652,10 @@ Server health: ok
 启动 Desktop：
 
 ```bash
-pnpm --filter @pragma/desktop run prepare:electron
 pnpm --filter @pragma/desktop dev
 ```
 
-> **Electron 42 注意事项：** 从 Electron 42 开始，`postinstall` 不再自动下载 Electron 二进制文件，改为首次运行 Electron CLI 时才下载。`prepare:electron` 脚本调用 `install-electron` 手动触发下载，避免新成员或 CI 首次 `dev` 时遇到缺失二进制的错误。
+> **Electron 42 注意事项：** 从 Electron 42 开始，`postinstall` 不再自动下载 Electron 二进制文件，改为首次运行 Electron CLI 时才下载。Desktop 的 `predev` 会通过 `prepare:electron` 调用 `install-electron`，避免新成员首次 `dev` 时遇到缺失二进制的错误。
 
 启动 Worker：
 

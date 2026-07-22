@@ -1,6 +1,6 @@
 # Pragma 当前架构概览与演进判断
 
-> 基线：2026-07-13 当前仓库实现。本文面向架构评审，描述已经存在的系统，而不是早期愿景；不展开类和函数级细节。
+> 基线：2026-07-20 当前仓库实现。本文面向架构评审，描述已经存在的系统，而不是早期愿景；不展开类和函数级细节。
 
 ## 结论先行
 
@@ -75,6 +75,9 @@ Pragma 已经形成一个质量较好的**本地 Agent 执行内核**：Expert�
 - Desktop 的 Gateway 和 Device 状态是离线快照，没有设备绑定、心跳、任务下发、事件回传或断线恢复。
 - Mission 已连接 ExpertSession / Flow Execution；v3 manifest 只保存有界元数据，跨轮用户消息和
   Execution 引用追加到 `messages.jsonl`，生成内容仍由 Execution Canonical Event Log 投影。
+- Desktop Home 是 Mission 新建入口，默认使用只读通用系统 Agent `expert:pragma@1.0.0`；即使没有
+  创建任何项目 Expert，用户也可以直接让 Pragma 在授权工作区中完成任务。Studio 与任务执行器
+  目录通过同一个 System Expert Registry 展示和解析 Pragma，不再维护独立 Home Chat。
 - Web 和 Client 仍只有健康检查路径，不代表控制面产品能力。
 
 ## 合理、应继续保持的设计
@@ -154,9 +157,11 @@ Execution 的部分协议在 `@pragma/shared`，Runtime/Expert 契约在 Core，
 
 Execution 已采用单一 Canonical Event Log，只持久化完整标准化消息、Invocation 生命周期、委派、人工交互等可恢复语义事件。Runtime 原生事件先归一化为 `ExpertAgentStreamEvent`，其中 token、thinking 和 tool delta 只通过 `subscribeOutput()` 实时发布，不进入事件日志。
 
-实时 Output 使用 `ExecutionOutputItem`，保留来源 event id 和 Invocation/Executor/Context 信息，但不拥有持久化 cursor。完整 `AgentMessage` 通过 `invocation.message.appended` 进入 Canonical Event Log。Execution 状态、Invocation patch 与语义事件可通过幂等 `commit()` 原子提交。
+实时 Output 使用 `ExecutionOutputItem`，保留来源 event id、run/session 父子关系和 Invocation/Executor/Context 信息，但不拥有持久化 cursor。活动 Execution 的进程内 Live Bus 会向晚订阅者补发本次执行已产生的 Output，执行结束后即释放；完整 `AgentMessage` 仍通过 `invocation.message.appended` 进入 Canonical Event Log。Execution 状态、Invocation patch 与语义事件可通过幂等 `commit()` 原子提交。
 
-该设计明确拆分“未来实时输出”和“历史/审计”：`subscribeOutput()` 只跟随未来事件，`getMessageHistory()` 读取完整消息，`listEvents()` 使用 Execution cursor 分页读取编排历史。详见 ADR 007。
+Runtime 原生子 Agent 使用 `sessionId` / `parentSessionId` 表达会话归属，同一会话的多轮任务拥有不同 `runId`；spawn、wait、list、send、resume、interrupt 统一归一化为 `agent.command`。工作投影按 session 聚合记录并按 run 展开任务，子 Agent 输出不会再混入父 Invocation 的 Chat。
+
+该设计明确拆分“活动执行的非持久化实时输出”和“历史/审计”：`subscribeOutput()` 可读取当前活动执行的内存回放并继续跟随新事件，`getMessageHistory()` 读取完整消息，`listEvents()` 使用 Execution cursor 分页读取编排历史。详见 ADR 007。
 
 ### P1：文件存储是很好的本地参考实现，但不是云端后端
 
@@ -233,6 +238,12 @@ PI Adapter 的模型目录来自 Desktop 注册的 Model Provider；Codex 和 Cl
 原生模型发现能力。模型身份统一为 `providerId + modelId`，思考深度必须属于所选模型声明的集合。PI
 还会把声明集合与自身真实支持的思考深度取交集。RuntimeProfile 不再承载 Provider credential；凭据只
 由具体 Runtime Factory/Adapter 在运行时解析。
+
+模型能力协议只保存运行时中立的 `reasoning`、规范化思考档位与可选默认档位，不保存 PI 的
+`thinkingLevelMap` 或 `compat`。PI 内置模型目录与版本化 Compatibility Profile 均由
+`@pragma/runtime-pi` 持有：精确命中的内置模型优先，未知兼容服务使用保守 Profile，Desktop 的供应商
+级和模型级高级设置可以显式覆盖。Desktop 的连接验证也通过 PI 发起最小真实请求，从而同时验证消息
+角色、思考参数和 Token 字段转换；Codex 与 Claude Code 不经过这条 Profile 链路。详见 ADR 015。
 
 接入一个直接可访问的云端 Agent Runtime 不需要先建设 Runtime Gateway：实现一个负责远程认证、
 会话与事件流的 `RuntimeAdapter`，提供 factory，并把对应 environment 注册到版本化 Store 即可。

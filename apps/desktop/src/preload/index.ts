@@ -32,11 +32,9 @@ import {
   GetWorkflowLayoutSchema,
   ImportSkillCapabilitySchema,
   ImportPluginZipSchema,
-  InitializeStewardSchema,
   InspectPluginZipSchema,
   PreviewCodeServiceRequestSchema,
   PreviewCodeServiceResultSchema,
-  PromptStewardSchema,
   PluginActionSchema,
   PluginZipInspectionSchema,
   CreateModelProviderSchema,
@@ -45,27 +43,32 @@ import {
   ModelDiscoveryResultSchema,
   ModelConnectionTestRequestSchema,
   ModelConnectionTestResultSchema,
+  ModelCompatibilityProfileDescriptorSchema,
   ModelProviderSchema,
   ModelProviderSettingsSnapshotSchema,
   ResetModelProvidersResultSchema,
+  ResetBuiltInExpertDefinitionSchema,
   CreateMissionSchema,
   GetMissionChatSchema,
+  GetMissionWorkConversationSchema,
   MissionActionSchema,
   MissionChatSnapshotSchema,
   MissionChatUpdateSchema,
+  MissionCreationDefaultsSchema,
+  MissionExecutorOptionSchema,
+  MissionModelOptionsRequestSchema,
+  MissionModelOptionsSchema,
   MissionIdSchema,
   MissionSchema,
   MissionSummarySchema,
   MissionHumanInteractionSchema,
-  MissionWorkItemSchema,
+  MissionWorkConversationSnapshotSchema,
+  MissionWorkSnapshotSchema,
+  MissionWorkUpdateSchema,
   PickWorkspaceResultSchema,
   RespondMissionHumanInteractionSchema,
-  RespondStewardInteractionSchema,
   SendMissionMessageSchema,
   SkillDocumentSchema,
-  StewardChatSnapshotSchema,
-  StewardInteractionSchema,
-  StewardSessionStateSchema,
   SetPluginSecretsSchema,
   DeletePragmaResourceSchema,
   PragmaProjectSnapshotSchema,
@@ -74,7 +77,9 @@ import {
   UpsertPragmaResourceSchema,
   ValidatePragmaYamlSchema,
   UpdateModelProviderSchema,
+  UpdateMissionOptionsSchema,
   UpdateExpertDefinitionSchema,
+  UpdateBuiltInExpertDefinitionSchema,
   UpdatePluginDefaultsSchema,
   UpdateCapabilitySchema,
   UpdateDesktopSettingsSchema,
@@ -86,33 +91,6 @@ import {
 } from "../shared/desktop-api.ts";
 
 const api: PragmaDesktopAPI = {
-  getStewardState: async () => {
-    const value = await ipcRenderer.invoke("steward:state:get");
-    return value === undefined || value === null ? null : StewardSessionStateSchema.parse(value);
-  },
-  initializeSteward: async (input) =>
-    StewardSessionStateSchema.parse(
-      await ipcRenderer.invoke("steward:initialize", InitializeStewardSchema.parse(input)),
-    ),
-  promptSteward: async (input) =>
-    StewardSessionStateSchema.parse(
-      await ipcRenderer.invoke("steward:prompt", PromptStewardSchema.parse(input)),
-    ),
-  getStewardChat: async () =>
-    StewardChatSnapshotSchema.parse(await ipcRenderer.invoke("steward:chat:get")),
-  listStewardInteractions: async () =>
-    StewardInteractionSchema.array().parse(await ipcRenderer.invoke("steward:interactions:list")),
-  respondStewardInteraction: async (input) => {
-    await ipcRenderer.invoke(
-      "steward:interactions:respond",
-      RespondStewardInteractionSchema.parse(input),
-    );
-  },
-  interruptSteward: async () =>
-    StewardSessionStateSchema.parse(await ipcRenderer.invoke("steward:interrupt")),
-  resetSteward: async () => {
-    await ipcRenderer.invoke("steward:reset");
-  },
   getBridgeSnapshot: async () =>
     DesktopBridgeSnapshotSchema.parse(await ipcRenderer.invoke("bridge:snapshot")),
   getDesktopSettings: async () =>
@@ -129,6 +107,10 @@ const api: PragmaDesktopAPI = {
     ),
   getModelProviderSettings: async () =>
     ModelProviderSettingsSnapshotSchema.parse(await ipcRenderer.invoke("model-providers:settings")),
+  listModelCompatibilityProfiles: async () =>
+    ModelCompatibilityProfileDescriptorSchema.array().parse(
+      await ipcRenderer.invoke("model-providers:compatibility-profiles"),
+    ),
   listModelProviders: async () =>
     ModelProviderSchema.array().parse(await ipcRenderer.invoke("model-providers:list")),
   createModelProvider: async (input) =>
@@ -208,6 +190,21 @@ const api: PragmaDesktopAPI = {
         UpdateExpertDefinitionSchema.parse(input),
       ),
     ),
+  updateBuiltInExpert: async (ref, input) =>
+    ExpertDefinitionSchema.parse(
+      await ipcRenderer.invoke(
+        "experts:update-built-in",
+        ExpertRefSchema.parse(ref),
+        UpdateBuiltInExpertDefinitionSchema.parse(input),
+      ),
+    ),
+  resetBuiltInExpert: async (ref) =>
+    ExpertDefinitionSchema.parse(
+      await ipcRenderer.invoke(
+        "experts:reset-built-in",
+        ResetBuiltInExpertDefinitionSchema.parse({ ref }),
+      ),
+    ),
   deleteExpert: async (ref) => {
     await ipcRenderer.invoke("experts:delete", DeleteExpertDefinitionSchema.parse({ ref }));
   },
@@ -281,11 +278,29 @@ const api: PragmaDesktopAPI = {
   },
   listMissions: async () =>
     MissionSummarySchema.array().parse(await ipcRenderer.invoke("missions:list")),
+  listMissionExecutors: async () =>
+    MissionExecutorOptionSchema.array().parse(await ipcRenderer.invoke("missions:executors:list")),
+  getMissionModelOptions: async (executorRef, missionId) =>
+    MissionModelOptionsSchema.parse(
+      await ipcRenderer.invoke(
+        "missions:model-options:get",
+        MissionModelOptionsRequestSchema.parse({
+          executorRef,
+          ...(missionId === undefined ? {} : { missionId }),
+        }),
+      ),
+    ),
+  getMissionCreationDefaults: async () =>
+    MissionCreationDefaultsSchema.parse(await ipcRenderer.invoke("missions:create-defaults:get")),
   getMission: async (id) =>
     MissionSchema.parse(await ipcRenderer.invoke("missions:get", MissionIdSchema.parse(id))),
   createMission: async (input) =>
     MissionSchema.parse(
       await ipcRenderer.invoke("missions:create", CreateMissionSchema.parse(input)),
+    ),
+  updateMissionOptions: async (input) =>
+    MissionSchema.parse(
+      await ipcRenderer.invoke("missions:options:update", UpdateMissionOptionsSchema.parse(input)),
     ),
   runMission: async (id) =>
     MissionSchema.parse(
@@ -312,10 +327,26 @@ const api: PragmaDesktopAPI = {
     MissionSchema.parse(
       await ipcRenderer.invoke("missions:interrupt", MissionActionSchema.parse({ id })),
     ),
-  listMissionWorkItems: async (id) =>
-    MissionWorkItemSchema.array().parse(
-      await ipcRenderer.invoke("missions:work:list", MissionActionSchema.parse({ id })),
+  getMissionWork: async (id) =>
+    MissionWorkSnapshotSchema.parse(
+      await ipcRenderer.invoke("missions:work:get", MissionActionSchema.parse({ id })),
     ),
+  getMissionWorkConversation: async (input) =>
+    MissionWorkConversationSnapshotSchema.parse(
+      await ipcRenderer.invoke(
+        "missions:work:conversation:get",
+        GetMissionWorkConversationSchema.parse(input),
+      ),
+    ),
+  subscribeMissionWork: (id, listener) => {
+    const missionId = MissionIdSchema.parse(id);
+    const handler = (_event: IpcRendererEvent, value: unknown) => {
+      const update = MissionWorkUpdateSchema.parse(value);
+      if (update.missionId === missionId) listener(update);
+    };
+    ipcRenderer.on("missions:work:updated", handler);
+    return () => ipcRenderer.removeListener("missions:work:updated", handler);
+  },
   deleteMission: async (id) => {
     await ipcRenderer.invoke("missions:delete", MissionActionSchema.parse({ id }));
   },

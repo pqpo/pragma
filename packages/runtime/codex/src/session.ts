@@ -35,7 +35,21 @@ export interface CodexNativeSession {
   readonly defaultModelName?: string | undefined;
   readonly defaultThinkingLevel?: string | undefined;
   readonly codexHome?: string | undefined;
+  readonly subagentThreads: Map<string, CodexSubagentThread>;
   pendingStartupMessages: readonly ExpertAgentStartupMessage[];
+}
+
+export interface CodexSubagentThread {
+  readonly threadId: string;
+  readonly parentThreadId: string;
+  readonly displayName?: string | undefined;
+  readonly role?: string | undefined;
+}
+
+export interface CodexRuntimeNotification {
+  readonly rootThreadId: string;
+  readonly notification: CodexAppServerNotification;
+  readonly thread?: CodexSubagentThread | undefined;
 }
 
 const CODEX_TOOL_ITEM_NAMES = {
@@ -81,6 +95,7 @@ export function createCodexNativeSession(options: {
     defaultModelName: options.defaultModelName,
     defaultThinkingLevel: options.defaultThinkingLevel,
     codexHome: options.codexHome,
+    subagentThreads: new Map(),
     pendingStartupMessages: options.startupMessages ?? [],
   };
 }
@@ -111,7 +126,7 @@ export function consumeCodexStartupMessages(
 
 export async function startCodexTurn(
   session: CodexNativeSession,
-  turn: RuntimeTurnContext<CodexAppServerNotification>,
+  turn: RuntimeTurnContext<CodexRuntimeNotification>,
 ): Promise<RuntimeTurnResult> {
   let outputText = "";
   let assistantUsage: AgentMessageUsage | undefined;
@@ -123,8 +138,17 @@ export async function startCodexTurn(
       assistantUsage = usage;
     },
     onNotification(notification) {
-      turn.stream.writeNative(notification);
+      rememberSubagentThread(session, notification);
+      const threadId = readNotificationThreadId(notification);
+      turn.stream.writeNative({
+        rootThreadId: session.state.threadId,
+        notification,
+        ...(threadId === undefined || session.subagentThreads.get(threadId) === undefined
+          ? {}
+          : { thread: session.subagentThreads.get(threadId)! }),
+      });
     },
+    rootThreadId: session.state.threadId,
   });
   const unsubscribe = session.notificationBus.subscribe(observer.handleNotification);
 
@@ -169,58 +193,120 @@ export async function startCodexTurn(
 }
 
 export function mapCodexNotificationToRuntimeEvent(
-  notification: CodexAppServerNotification,
+  input: CodexRuntimeNotification,
   context: RuntimeEventMappingContext,
 ): RuntimeEventMappingResult {
+  const { notification, rootThreadId } = input;
   const events: RuntimeStreamEventInput[] = [];
   let outputDelta: string | undefined;
   let completedText: string | undefined;
   let usage: AgentMessageUsage | undefined;
+  const threadId = readNotificationThreadId(notification) ?? rootThreadId;
+  const turnId = readNotificationTurnId(notification);
+  const nested = threadId !== rootThreadId;
+  const runId = nested ? (turnId ?? threadId) : context.runId;
+  const source = createCodexEventSource(input, context, threadId, runId);
+  const frame = (event: RuntimeStreamEventInput): RuntimeStreamEventInput => ({
+    ...event,
+    runId,
+    ...(nested ? { parentRunId: context.runId } : {}),
+    source,
+  });
   const delta = readAssistantDelta(notification);
 
   if (delta !== undefined) {
-    outputDelta = delta;
-    events.push(context.events.messageDelta(delta));
+    if (!nested) outputDelta = delta;
+    events.push(frame(context.events.messageDelta(delta)));
   }
+
+  const thoughtDelta = readThoughtDelta(notification);
+  if (thoughtDelta !== undefined) events.push(frame(context.events.thoughtDelta(thoughtDelta)));
 
   const completed = readCompletedAssistantText(notification);
   if (completed !== undefined) {
-    completedText = completed;
-    events.push(context.events.messageCompleted(completed));
+    if (!nested) completedText = completed;
+    events.push(frame(context.events.messageCompleted(completed)));
   }
 
-  const toolEvent = readToolEvent(notification);
+  const agentCommand = readAgentCommand(notification, source, runId, context.runId);
+  if (agentCommand !== undefined) events.push(agentCommand);
+
+  const toolEvent = agentCommand === undefined ? readToolEvent(notification) : undefined;
   if (toolEvent !== undefined) {
     events.push(
-      toolEvent.failed
-        ? context.events.toolFailed({
-            toolCallId: toolEvent.id,
-            toolName: toolEvent.name,
-            message: toolEvent.failureMessage,
-          })
-        : toolEvent.completed
-          ? context.events.toolCompleted({
+      frame(
+        toolEvent.failed
+          ? context.events.toolFailed({
               toolCallId: toolEvent.id,
               toolName: toolEvent.name,
-              outputPreview: toolEvent.preview,
+              message: toolEvent.failureMessage,
             })
-          : context.events.toolStarted({
-              toolCallId: toolEvent.id,
-              toolName: toolEvent.name,
-              inputPreview: toolEvent.preview,
-            }),
+          : toolEvent.completed
+            ? context.events.toolCompleted({
+                toolCallId: toolEvent.id,
+                toolName: toolEvent.name,
+                outputPreview: toolEvent.preview,
+              })
+            : context.events.toolStarted({
+                toolCallId: toolEvent.id,
+                toolName: toolEvent.name,
+                inputPreview: toolEvent.preview,
+              }),
+      ),
     );
   }
 
-  if (notification.method === "turn/started" || notification.method === "thread/started") {
-    events.push(context.events.progress(notification.method, notification.params));
+  if (nested && notification.method === "turn/started") {
+    events.push({
+      runId,
+      parentRunId: context.runId,
+      source,
+      type: "run.started",
+      payload: { task: readTurnTask(notification) ?? "Subagent task" },
+    });
+  } else if (nested && notification.method === "turn/completed") {
+    const status = readTurnStatus(notification);
+    events.push(
+      status === "failed"
+        ? {
+            runId,
+            parentRunId: context.runId,
+            source,
+            type: "run.failed",
+            payload: { message: readFailureMessage(notification.params) },
+          }
+        : status === "interrupted"
+          ? {
+              runId,
+              parentRunId: context.runId,
+              source,
+              type: "run.cancelled",
+              payload: { reason: "Subagent turn interrupted." },
+            }
+          : {
+              runId,
+              parentRunId: context.runId,
+              source,
+              type: "run.completed",
+              payload: {},
+            },
+    );
+  } else if (
+    nested &&
+    (notification.method === "thread/started" ||
+      notification.method === "thread/status/changed" ||
+      isSubagentActivity(notification))
+  ) {
+    events.push(frame(context.events.progress(notification.method, notification.params)));
+  } else if (notification.method === "turn/started" || notification.method === "thread/started") {
+    events.push(frame(context.events.progress(notification.method, notification.params)));
   }
 
   if (
     notification.method === "thread/tokenUsage/updated" ||
     notification.method === "turn/completed"
   ) {
-    usage = readUsage(notification.params);
+    if (!nested) usage = readUsage(notification.params);
   }
 
   return {
@@ -229,6 +315,121 @@ export function mapCodexNotificationToRuntimeEvent(
     ...(completedText === undefined ? {} : { completedText }),
     ...(usage === undefined ? {} : { usage }),
   };
+}
+
+function createCodexEventSource(
+  input: CodexRuntimeNotification,
+  context: RuntimeEventMappingContext,
+  threadId: string,
+  runId: string,
+): RuntimeStreamEventInput["source"] {
+  if (threadId === input.rootThreadId) {
+    return {
+      ...context.source,
+      runId: context.runId,
+      sessionId: input.rootThreadId,
+    };
+  }
+  const thread = input.thread;
+  const displayName = thread?.displayName ?? thread?.role;
+  return {
+    kind: "agent",
+    runId,
+    parentRunId: context.runId,
+    sessionId: threadId,
+    parentSessionId: thread?.parentThreadId ?? input.rootThreadId,
+    agentId: threadId,
+    agentType: "codex-subagent",
+    ...(displayName === undefined ? {} : { displayName }),
+    path: [
+      ...context.source.path,
+      {
+        runId,
+        agentId: threadId,
+        agentType: "codex-subagent",
+        ...(displayName === undefined ? {} : { displayName }),
+      },
+    ],
+  };
+}
+
+function readAgentCommand(
+  notification: CodexAppServerNotification,
+  source: RuntimeStreamEventInput["source"],
+  runId: string,
+  parentRunId: string,
+): RuntimeStreamEventInput | undefined {
+  if (notification.method !== "item/started" && notification.method !== "item/completed") {
+    return undefined;
+  }
+  const item = readRecord(notification.params["item"]);
+  const type = readString(item?.["type"]);
+  const nativeTool = type === "collabAgentToolCall" ? readString(item?.["tool"]) : undefined;
+  const genericTool =
+    type === "dynamicToolCall" || type === "mcpToolCall" ? readString(item?.["tool"]) : undefined;
+  const action = readAgentCommandAction(nativeTool ?? genericTool);
+  if (action === undefined) return undefined;
+  const status = readString(item?.["status"]);
+  const failed = status === "failed" || item?.["success"] === false;
+  const phase =
+    notification.method === "item/started" ? "started" : failed ? "failed" : "completed";
+  const senderSessionId = readString(item?.["senderThreadId"]) ?? source.sessionId;
+  const receivers = item?.["receiverThreadIds"];
+  const targetSessionIds = Array.isArray(receivers)
+    ? receivers.filter((value): value is string => typeof value === "string" && value !== "")
+    : [];
+  const states = readRecord(item?.["agentsStates"]);
+  const commandId = readString(item?.["id"]) ?? randomUUID();
+  return {
+    runId,
+    ...(source.parentSessionId === undefined ? {} : { parentRunId }),
+    source,
+    type: "agent.command",
+    payload: {
+      commandId,
+      action,
+      phase,
+      ...(senderSessionId === undefined ? {} : { senderSessionId }),
+      targetSessionIds,
+      ...(typeof item?.["prompt"] === "string" ? { prompt: item["prompt"] } : {}),
+      ...(states === undefined ? {} : { states }),
+      ...(phase !== "failed"
+        ? {}
+        : { error: readToolFailureMessage(item, nativeTool ?? genericTool ?? action) }),
+    },
+  };
+}
+
+function readAgentCommandAction(
+  value: string | undefined,
+): "spawn" | "wait" | "list" | "send" | "resume" | "interrupt" | undefined {
+  if (value === undefined) return undefined;
+  const segment = value.split(/[./:]/u).at(-1);
+  switch (segment) {
+    case "spawnAgent":
+    case "spawn_agent":
+      return "spawn";
+    case "wait":
+    case "wait_agent":
+    case "wait_agents":
+      return "wait";
+    case "list_agents":
+    case "list_experts":
+      return "list";
+    case "sendInput":
+    case "send_message":
+    case "followup_expert":
+      return "send";
+    case "resumeAgent":
+    case "resume_agent":
+      return "resume";
+    case "closeAgent":
+    case "interrupt_agent":
+    case "interrupt_expert":
+      return "interrupt";
+    default:
+      return undefined;
+  }
 }
 
 export async function collectCodexUsage(
@@ -250,10 +451,12 @@ function createTurnObserver({
   onNotification,
   onOutputText,
   onUsage,
+  rootThreadId,
 }: {
   readonly onNotification: (notification: CodexAppServerNotification) => void;
   readonly onOutputText: (text: string) => void;
   readonly onUsage: (usage: AgentMessageUsage | undefined) => void;
+  readonly rootThreadId: string;
 }): {
   readonly completed: Promise<void>;
   readonly handleNotification: CodexNotificationSubscriber;
@@ -275,6 +478,9 @@ function createTurnObserver({
       }
 
       onNotification(notification);
+
+      const notificationThreadId = readNotificationThreadId(notification);
+      if (notificationThreadId !== undefined && notificationThreadId !== rootThreadId) return;
 
       const delta = readAssistantDelta(notification);
       if (delta !== undefined) {
@@ -313,6 +519,78 @@ function createTurnObserver({
       }
     },
   };
+}
+
+function rememberSubagentThread(
+  session: CodexNativeSession,
+  notification: CodexAppServerNotification,
+): void {
+  if (notification.method !== "thread/started") return;
+  const thread = readRecord(notification.params["thread"]);
+  const threadId = readString(thread?.["id"]);
+  const parentThreadId = readString(thread?.["parentThreadId"]);
+  if (threadId === undefined || parentThreadId === undefined) return;
+  const nickname = readString(thread?.["agentNickname"]);
+  const role = readString(thread?.["agentRole"]);
+  session.subagentThreads.set(threadId, {
+    threadId,
+    parentThreadId,
+    ...(nickname === undefined ? {} : { displayName: nickname }),
+    ...(role === undefined ? {} : { role }),
+  });
+}
+
+function readNotificationThreadId(notification: CodexAppServerNotification): string | undefined {
+  const direct = readString(notification.params["threadId"]);
+  if (direct !== undefined) return direct;
+  const thread = readRecord(notification.params["thread"]);
+  return readString(thread?.["id"]);
+}
+
+function readNotificationTurnId(notification: CodexAppServerNotification): string | undefined {
+  const direct = readString(notification.params["turnId"]);
+  if (direct !== undefined) return direct;
+  return readString(readRecord(notification.params["turn"])?.["id"]);
+}
+
+function readThoughtDelta(notification: CodexAppServerNotification): string | undefined {
+  if (
+    notification.method !== "item/reasoning/textDelta" &&
+    notification.method !== "item/reasoning/summaryTextDelta"
+  ) {
+    return undefined;
+  }
+  return readString(notification.params["delta"]);
+}
+
+function readTurnTask(notification: CodexAppServerNotification): string | undefined {
+  const turn = readRecord(notification.params["turn"]);
+  const items = turn?.["items"];
+  if (!Array.isArray(items)) return undefined;
+  for (const item of items) {
+    const record = readRecord(item);
+    if (record?.["type"] === "userMessage") {
+      const text = readString(record["text"]);
+      if (text !== undefined) return text;
+    }
+  }
+  return undefined;
+}
+
+function readTurnStatus(
+  notification: CodexAppServerNotification,
+): "completed" | "failed" | "interrupted" {
+  const status = readString(readRecord(notification.params["turn"])?.["status"]);
+  if (status === "failed") return "failed";
+  if (status === "interrupted" || status === "cancelled") return "interrupted";
+  return "completed";
+}
+
+function isSubagentActivity(notification: CodexAppServerNotification): boolean {
+  if (notification.method !== "item/started" && notification.method !== "item/completed") {
+    return false;
+  }
+  return readRecord(notification.params["item"])?.["type"] === "subAgentActivity";
 }
 
 function readAssistantDelta(notification: CodexAppServerNotification): string | undefined {

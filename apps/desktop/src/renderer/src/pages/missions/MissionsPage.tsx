@@ -1,5 +1,7 @@
 import {
+  useCallback,
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
@@ -10,61 +12,119 @@ import {
 
 import {
   ArrowCounterClockwise,
-  Brain,
-  Books,
   CaretDown,
-  Check,
   CheckCircle,
-  Files,
   Folder,
   GitBranch,
   MagnifyingGlass,
-  Paperclip,
   PaperPlaneTilt,
   Plus,
   Play,
-  Stack,
   StopCircle,
+  SpinnerGap,
+  TerminalWindow,
   Toolbox,
   Trash,
   User,
   UsersThree,
+  X,
 } from "@phosphor-icons/react";
 import { useTranslation } from "react-i18next";
-import type { PragmaInvocableResource, PragmaResource } from "@pragma/interpreter/ast";
 import type { HumanInteractionResponse } from "@pragma/shared";
 
 import {
-  isMissionExecutorResource,
-  missionExecutorKind,
-  missionExecutorRef,
   type Mission,
   type MissionChatEntry,
+  type MissionChatPatch,
   type MissionChatSnapshot,
+  type MissionChatUpdate,
   type MissionHumanInteraction,
   type MissionSummary,
-  type MissionWorkItem,
+  type MissionWorkConversationSnapshot,
+  type MissionWorkRecord,
+  type DesktopRuntimeModel,
+  type DesktopToolPermissionMode,
+  type MissionModelOverride,
   type PragmaDesktopAPI,
 } from "../../../../shared/desktop-api.ts";
 import { errorMessage } from "../../lib/errors.ts";
 import { i18n } from "../../i18n/index.ts";
 import { formatMissionDateTime, formatMissionTime } from "../../lib/mission-time.ts";
+import { ToolPermissionSelect } from "../../components/ToolPermissionSelect.tsx";
+import { MissionModelOverrideControls } from "../../components/MissionModelOverrideControls.tsx";
+import { MarkdownContent } from "../../components/MarkdownContent.tsx";
+import {
+  readLastOpenedMissionId,
+  selectPreferredMissionId,
+  writeLastOpenedMissionId,
+} from "../../lib/mission-preference.ts";
 
-type MissionScreen = "create" | "detail";
-
-export function MissionsPage(props: { readonly initialExecutorRef?: string | undefined }) {
+export function MissionsPage(props: {
+  readonly initialMission?: Mission | undefined;
+  readonly autoRunInitialMission?: boolean | undefined;
+  readonly onCreate: () => void;
+  readonly onConfigureModels?: (() => void) | undefined;
+}) {
   const { t } = useTranslation(["missions", "common"]);
   const [missions, setMissions] = useState<readonly MissionSummary[]>([]);
-  const [selectedMission, setSelectedMission] = useState<Mission | null>(null);
-  const [executors, setExecutors] = useState<readonly PragmaResource[]>([]);
-  const [screen, setScreen] = useState<MissionScreen>("create");
-  const [selectedMissionId, setSelectedMissionId] = useState<string | null>(null);
+  const [selectedMission, setSelectedMission] = useState<Mission | null>(
+    props.initialMission ?? null,
+  );
+  const [selectedMissionId, setSelectedMissionId] = useState<string | null>(
+    props.initialMission?.id ?? null,
+  );
   const [search, setSearch] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [deleteCandidate, setDeleteCandidate] = useState<MissionSummary | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [now, setNow] = useState(() => Date.now());
-  const selectedMissionIdRef = useRef<string | null>(null);
+  const [initialRunRequest, setInitialRunRequest] = useState<{
+    readonly missionId: string;
+    readonly requestId: string;
+  } | null>(() =>
+    props.autoRunInitialMission && props.initialMission !== undefined
+      ? {
+          missionId: props.initialMission.id,
+          requestId: props.initialMission.initialMessageId,
+        }
+      : null,
+  );
+  const selectedMissionIdRef = useRef<string | null>(props.initialMission?.id ?? null);
+  const initialRunStartedRef = useRef(false);
+
+  const replaceMission = useCallback((updated: Mission) => {
+    if (
+      updated.execution !== undefined &&
+      !["queued", "running", "waiting"].includes(updated.execution.status)
+    ) {
+      setInitialRunRequest((current) => (current?.missionId === updated.id ? null : current));
+    }
+    setSelectedMission((current) => (current?.id === updated.id ? updated : current));
+    setMissions((current) =>
+      [
+        ...current.filter((mission) => mission.id !== updated.id),
+        missionToSummary(updated),
+      ].toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
+    );
+  }, []);
+
+  const openMission = useCallback((id: string) => {
+    selectedMissionIdRef.current = id;
+    setSelectedMissionId(id);
+    setSelectedMission(null);
+    setError(null);
+    writeLastOpenedMissionId(typeof window === "undefined" ? undefined : window.localStorage, id);
+    const api = desktopApi();
+    if (api === undefined) return;
+    void api
+      .getMission(id)
+      .then((mission) => {
+        if (selectedMissionIdRef.current === id) setSelectedMission(mission);
+      })
+      .catch((loadError: unknown) => {
+        if (selectedMissionIdRef.current === id) setError(errorMessage(loadError));
+      });
+  }, []);
 
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 60_000);
@@ -72,14 +132,52 @@ export function MissionsPage(props: { readonly initialExecutorRef?: string | und
   }, []);
 
   useEffect(() => {
+    if (props.initialMission === undefined) return;
+    writeLastOpenedMissionId(
+      typeof window === "undefined" ? undefined : window.localStorage,
+      props.initialMission.id,
+    );
+  }, [props.initialMission?.id]);
+
+  useEffect(() => {
+    if (
+      !props.autoRunInitialMission ||
+      props.initialMission === undefined ||
+      initialRunStartedRef.current
+    ) {
+      return;
+    }
+    initialRunStartedRef.current = true;
+    void window.pragmaDesktop
+      .runMission(props.initialMission.id)
+      .then(replaceMission)
+      .catch((runError: unknown) => {
+        setInitialRunRequest(null);
+        setError(errorMessage(runError));
+      });
+  }, [props.autoRunInitialMission, props.initialMission?.id, replaceMission]);
+
+  useEffect(() => {
     const api = desktopApi();
     if (api === undefined) return;
     let cancelled = false;
-    void Promise.all([api.listMissions(), api.getPragmaProject()])
-      .then(([storedMissions, project]) => {
+    void api
+      .listMissions()
+      .then((storedMissions) => {
         if (cancelled) return;
         setMissions(storedMissions);
-        setExecutors(project.resources.filter(isMissionExecutorResource));
+        if (selectedMissionIdRef.current !== null) return;
+        const lastOpenedId = readLastOpenedMissionId(
+          typeof window === "undefined" ? undefined : window.localStorage,
+        );
+        const preferredId = selectPreferredMissionId(storedMissions, lastOpenedId);
+        if (preferredId !== null) openMission(preferredId);
+        else {
+          writeLastOpenedMissionId(
+            typeof window === "undefined" ? undefined : window.localStorage,
+            null,
+          );
+        }
       })
       .catch((loadError: unknown) => {
         if (!cancelled) setError(errorMessage(loadError));
@@ -87,7 +185,7 @@ export function MissionsPage(props: { readonly initialExecutorRef?: string | und
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [openMission]);
 
   const visibleMissions = useMemo(() => {
     const query = search.trim().toLocaleLowerCase();
@@ -102,25 +200,19 @@ export function MissionsPage(props: { readonly initialExecutorRef?: string | und
     const api = desktopApi();
     if (
       api === undefined ||
-      (selectedMission?.execution?.status !== "running" &&
+      (selectedMission?.execution?.status !== "queued" &&
+        selectedMission?.execution?.status !== "running" &&
         selectedMission?.execution?.status !== "waiting")
     )
       return;
     const timer = setInterval(() => {
-      void api.getMission(selectedMission.id).then(replaceMission);
+      void api
+        .getMission(selectedMission.id)
+        .then(replaceMission)
+        .catch(() => undefined);
     }, 1_000);
     return () => clearInterval(timer);
-  }, [selectedMission?.id, selectedMission?.execution?.status]);
-
-  const replaceMission = (updated: Mission) => {
-    setSelectedMission((current) => (current?.id === updated.id ? updated : current));
-    setMissions((current) =>
-      [
-        ...current.filter((mission) => mission.id !== updated.id),
-        missionToSummary(updated),
-      ].toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
-    );
-  };
+  }, [replaceMission, selectedMission?.id, selectedMission?.execution?.status]);
 
   return (
     <section className="missions-page">
@@ -128,63 +220,26 @@ export function MissionsPage(props: { readonly initialExecutorRef?: string | und
         missions={visibleMissions}
         search={search}
         now={now}
-        selectedMissionId={screen === "detail" ? selectedMissionId : null}
+        selectedMissionId={selectedMissionId}
         onSearch={setSearch}
-        onCreate={() => {
-          selectedMissionIdRef.current = null;
-          setScreen("create");
-          setSelectedMissionId(null);
-          setSelectedMission(null);
-          setError(null);
-        }}
-        onOpen={(summary) => {
-          selectedMissionIdRef.current = summary.id;
-          setSelectedMissionId(summary.id);
-          setSelectedMission(null);
-          setScreen("detail");
-          setError(null);
-          const api = desktopApi();
-          if (api !== undefined) {
-            void api
-              .getMission(summary.id)
-              .then((mission) => {
-                if (selectedMissionIdRef.current === summary.id) setSelectedMission(mission);
-              })
-              .catch((loadError: unknown) => {
-                if (selectedMissionIdRef.current === summary.id) {
-                  setError(errorMessage(loadError));
-                }
-              });
-          }
-        }}
+        onCreate={props.onCreate}
+        onOpen={(summary) => openMission(summary.id)}
         onDelete={setDeleteCandidate}
       />
 
       <div className="mission-main">
-        {screen === "create" ? (
-          <CreateMissionFragment
-            executors={executors}
-            initialExecutorRef={props.initialExecutorRef}
-            onCreated={async (mission) => {
-              setMissions((current) => [missionToSummary(mission), ...current]);
-              selectedMissionIdRef.current = mission.id;
-              setSelectedMissionId(mission.id);
-              setSelectedMission(mission);
-              setScreen("detail");
-              setError(null);
-              const api = desktopApi();
-              if (api === undefined) return;
-              try {
-                replaceMission(await api.runMission(mission.id));
-              } catch (runError) {
-                setError(errorMessage(runError));
-              }
-            }}
-          />
-        ) : selectedMission !== null ? (
+        {selectedMission !== null ? (
           <MissionDetailFragment
             mission={selectedMission}
-            onSend={async (content) => {
+            initialThinkingRequestId={
+              initialRunRequest?.missionId === selectedMission.id
+                ? initialRunRequest.requestId
+                : undefined
+            }
+            onConfigureModels={props.onConfigureModels}
+            error={error}
+            onDismissError={() => setError(null)}
+            onSend={async (content, requestId) => {
               const api = desktopApi();
               if (api === undefined) return;
               try {
@@ -192,7 +247,7 @@ export function MissionsPage(props: { readonly initialExecutorRef?: string | und
                   await api.sendMissionMessage({
                     id: selectedMission.id,
                     content,
-                    requestId: crypto.randomUUID(),
+                    requestId,
                   }),
                 );
                 setError(null);
@@ -204,16 +259,43 @@ export function MissionsPage(props: { readonly initialExecutorRef?: string | und
             onRun={async () => {
               const api = desktopApi();
               if (api === undefined) return;
-              replaceMission(await api.runMission(selectedMission.id));
+              try {
+                replaceMission(await api.runMission(selectedMission.id));
+                setError(null);
+              } catch (runError) {
+                setError(errorMessage(runError));
+              }
             }}
             onInterrupt={async () => {
               const api = desktopApi();
               if (api === undefined) return;
-              replaceMission(await api.interruptMission(selectedMission.id));
+              try {
+                replaceMission(await api.interruptMission(selectedMission.id));
+                setError(null);
+              } catch (interruptError) {
+                setError(errorMessage(interruptError));
+              }
             }}
             onHumanResponded={async () => {
               const api = desktopApi();
               if (api !== undefined) replaceMission(await api.getMission(selectedMission.id));
+            }}
+            onOptionsChange={async (options) => {
+              const api = desktopApi();
+              if (api === undefined) return;
+              try {
+                replaceMission(
+                  await api.updateMissionOptions({
+                    id: selectedMission.id,
+                    toolPermissionMode: options.toolPermissionMode,
+                    modelOverride: options.modelOverride ?? null,
+                  }),
+                );
+                setError(null);
+              } catch (optionsError) {
+                setError(errorMessage(optionsError));
+                throw optionsError;
+              }
             }}
             onLifecycleChange={async () => {
               const api = desktopApi();
@@ -236,10 +318,8 @@ export function MissionsPage(props: { readonly initialExecutorRef?: string | und
             <p>{t("selectAnother", { ns: "missions" })}</p>
           </div>
         )}
-        {error ? (
-          <p className="mission-page-error" role="alert">
-            {error}
-          </p>
+        {error && selectedMission === null ? (
+          <MissionErrorBanner error={error} onDismiss={() => setError(null)} />
         ) : null}
       </div>
       {deleteCandidate !== null ? (
@@ -278,15 +358,19 @@ export function MissionsPage(props: { readonly initialExecutorRef?: string | und
                   setDeleting(true);
                   void api
                     .deleteMission(deleteCandidate.id)
-                    .then(() => {
-                      setMissions((current) =>
-                        current.filter((mission) => mission.id !== deleteCandidate.id),
-                      );
+                    .then(async () => {
+                      const storedMissions = await api.listMissions();
+                      setMissions(storedMissions);
                       if (selectedMissionId === deleteCandidate.id) {
                         selectedMissionIdRef.current = null;
                         setSelectedMissionId(null);
                         setSelectedMission(null);
-                        setScreen("create");
+                        const fallback = storedMissions[0];
+                        if (fallback === undefined) {
+                          writeLastOpenedMissionId(window.localStorage, null);
+                        } else {
+                          openMission(fallback.id);
+                        }
                       }
                       setDeleteCandidate(null);
                       setError(null);
@@ -322,24 +406,92 @@ function MissionRail(props: {
   readonly onDelete: (mission: MissionSummary) => void;
 }) {
   const { t } = useTranslation("missions");
+  const [searchCollapsed, setSearchCollapsed] = useState(false);
+  const scrollAnchorRef = useRef(0);
+  const searchRef = useRef<HTMLLabelElement>(null);
+  const searchTransitionLockedRef = useRef(false);
+  const searchTransitionTimeoutRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const active = props.missions.filter((mission) => mission.lifecycleStatus === "active");
   const completed = props.missions.filter((mission) => mission.lifecycleStatus === "completed");
+
+  useEffect(
+    () => () => {
+      if (searchTransitionTimeoutRef.current !== undefined) {
+        clearTimeout(searchTransitionTimeoutRef.current);
+      }
+    },
+    [],
+  );
+
+  const lockSearchTransition = useCallback(() => {
+    if (searchTransitionTimeoutRef.current !== undefined) {
+      clearTimeout(searchTransitionTimeoutRef.current);
+    }
+    searchTransitionLockedRef.current = true;
+    searchTransitionTimeoutRef.current = setTimeout(() => {
+      searchTransitionLockedRef.current = false;
+      searchTransitionTimeoutRef.current = undefined;
+    }, MISSION_SEARCH_TRANSITION_LOCK_MS);
+  }, []);
+
+  const handleScroll = useCallback(
+    (event: React.UIEvent<HTMLElement>) => {
+      const scrollTop = event.currentTarget.scrollTop;
+      const previousScrollTop = scrollAnchorRef.current;
+      const nextSearchCollapsed = resolveMissionSearchCollapsed({
+        collapsed: searchCollapsed,
+        previousScrollTop,
+        scrollTop,
+        transitionLocked: searchTransitionLockedRef.current,
+      });
+
+      if (
+        searchTransitionLockedRef.current ||
+        scrollTop <= MISSION_SEARCH_TOP_REVEAL_OFFSET ||
+        Math.abs(scrollTop - previousScrollTop) >= MISSION_SEARCH_SCROLL_THRESHOLD
+      ) {
+        scrollAnchorRef.current = scrollTop;
+      }
+
+      if (
+        nextSearchCollapsed &&
+        searchRef.current?.contains(event.currentTarget.ownerDocument.activeElement)
+      ) {
+        return;
+      }
+      if (nextSearchCollapsed !== searchCollapsed) {
+        lockSearchTransition();
+        setSearchCollapsed(nextSearchCollapsed);
+      }
+    },
+    [lockSearchTransition, searchCollapsed],
+  );
+
   return (
-    <aside className="mission-rail">
-      <h1>{t("title")}</h1>
-      <button className="mission-new-button" type="button" onClick={props.onCreate}>
-        <Plus size={18} aria-hidden="true" />
-        {t("newMission")}
-      </button>
-      <label className="mission-search">
-        <MagnifyingGlass size={18} aria-hidden="true" />
-        <span className="sr-only">{t("search")}</span>
-        <input
-          value={props.search}
-          onChange={(event) => props.onSearch(event.target.value)}
-          placeholder={t("search")}
-        />
-      </label>
+    <aside className="mission-rail" onScroll={handleScroll}>
+      <div
+        className={
+          searchCollapsed ? "mission-rail-sticky is-search-collapsed" : "mission-rail-sticky"
+        }
+      >
+        <h1>{t("title")}</h1>
+        <button className="mission-new-button" type="button" onClick={props.onCreate}>
+          <Plus size={18} aria-hidden="true" />
+          {t("newMission")}
+        </button>
+        <div className="mission-search-slot" aria-hidden={searchCollapsed ? "true" : undefined}>
+          <label className="mission-search" ref={searchRef}>
+            <MagnifyingGlass size={18} aria-hidden="true" />
+            <span className="sr-only">{t("search")}</span>
+            <input
+              value={props.search}
+              onChange={(event) => props.onSearch(event.target.value)}
+              placeholder={t("search")}
+              tabIndex={searchCollapsed ? -1 : undefined}
+            />
+          </label>
+        </div>
+      </div>
       <MissionRailGroup
         label={t("active")}
         emptyLabel={t("noActive")}
@@ -360,6 +512,24 @@ function MissionRail(props: {
       />
     </aside>
   );
+}
+
+const MISSION_SEARCH_SCROLL_THRESHOLD = 6;
+const MISSION_SEARCH_TOP_REVEAL_OFFSET = 4;
+const MISSION_SEARCH_TRANSITION_LOCK_MS = 220;
+
+export function resolveMissionSearchCollapsed(input: {
+  readonly collapsed: boolean;
+  readonly previousScrollTop: number;
+  readonly scrollTop: number;
+  readonly transitionLocked?: boolean | undefined;
+}): boolean {
+  if (input.scrollTop <= MISSION_SEARCH_TOP_REVEAL_OFFSET) return false;
+  if (input.transitionLocked === true) return input.collapsed;
+
+  const distance = input.scrollTop - input.previousScrollTop;
+  if (Math.abs(distance) < MISSION_SEARCH_SCROLL_THRESHOLD) return input.collapsed;
+  return distance > 0;
 }
 
 function MissionRailGroup(props: {
@@ -436,344 +606,70 @@ function MissionRailGroup(props: {
   );
 }
 
-export function CreateMissionFragment(props: {
-  readonly executors: readonly PragmaResource[];
-  readonly initialExecutorRef?: string | undefined;
-  readonly onCreated: (mission: Mission) => void | Promise<void>;
-}) {
-  const { t } = useTranslation("missions");
-  const [workspace, setWorkspace] = useState<{ path: string; basename: string } | null>(null);
-  const [executorRef, setExecutorRef] = useState(props.initialExecutorRef ?? "");
-  const [goal, setGoal] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const executors = useMemo(
-    () => props.executors.filter(isMissionExecutorResource),
-    [props.executors],
-  );
-  const selectedExecutor = executors.find(
-    (executor) => missionExecutorRef(executor) === executorRef,
-  );
-  const hasValidExecutor = selectedExecutor !== undefined;
-
-  useEffect(() => {
-    if (hasValidExecutor) return;
-    const requested = executors.find(
-      (executor) => missionExecutorRef(executor) === props.initialExecutorRef,
-    );
-    const fallback = requested ?? (executors.length === 1 ? executors[0] : undefined);
-    const nextRef = fallback === undefined ? "" : missionExecutorRef(fallback);
-    if (nextRef !== executorRef) setExecutorRef(nextRef);
-  }, [executorRef, executors, hasValidExecutor, props.initialExecutorRef]);
-
-  const pickWorkspace = async () => {
-    const api = desktopApi();
-    if (api === undefined) return;
-    try {
-      const result = await api.pickWorkspace();
-      if (result.ok && result.path !== undefined && result.basename !== undefined) {
-        setWorkspace({ path: result.path, basename: result.basename });
-        setError(null);
-      } else if (result.reason !== "cancelled") {
-        setError(result.error ?? t("workspaceUnavailable"));
-      }
-    } catch (pickError) {
-      setError(errorMessage(pickError));
-    }
-  };
-
-  const submit = async () => {
-    const api = desktopApi();
-    if (api === undefined || workspace === null || !hasValidExecutor || goal.trim() === "") return;
-    setSaving(true);
-    setError(null);
-    try {
-      const mission = await api.createMission({
-        workspace: workspace.path,
-        executor: { ref: executorRef },
-        goal: goal.trim(),
-      });
-      await props.onCreated(mission);
-    } catch (submitError) {
-      setError(errorMessage(submitError));
-      setSaving(false);
-    }
-  };
-
-  return (
-    <section className="mission-create" aria-labelledby="new-mission-title">
-      <header>
-        <h1 id="new-mission-title">{t("start")}</h1>
-        <p>{t("createDescription")}</p>
-      </header>
-      <div className="mission-create-selectors">
-        <button className="mission-selector" type="button" onClick={() => void pickWorkspace()}>
-          <span className="mission-selector-icon">
-            <Folder size={23} aria-hidden="true" />
-          </span>
-          <span className="mission-selector-copy">
-            <small>{t("workspace")}</small>
-            <strong>{workspace?.basename ?? t("chooseFolder")}</strong>
-            <em>{workspace?.path ?? t("oneDirectory")}</em>
-          </span>
-        </button>
-        <MissionExecutorPicker
-          executors={executors}
-          value={hasValidExecutor ? executorRef : ""}
-          onChange={setExecutorRef}
-        />
-      </div>
-      <div className="mission-goal-composer">
-        <label htmlFor="mission-goal">{t("prompt")}</label>
-        <textarea
-          id="mission-goal"
-          value={goal}
-          onChange={(event) => setGoal(event.target.value)}
-          placeholder={t("goalPlaceholder")}
-          autoFocus
-        />
-        <footer>
-          <div className="mission-prompt-tools" aria-label={t("contextTools")}>
-            <button
-              type="button"
-              aria-disabled="true"
-              title={!hasValidExecutor ? t("chooseExecutorContext") : t("inheritedContext")}
-            >
-              <Stack size={18} aria-hidden="true" />
-              {t("context")}
-            </button>
-            <button
-              className={workspace === null ? "" : "is-active"}
-              type="button"
-              onClick={() => void pickWorkspace()}
-              title={workspace?.path ?? t("chooseWorkspaceFiles")}
-            >
-              <Files size={18} aria-hidden="true" />
-              {t("files")}
-            </button>
-            <button
-              type="button"
-              aria-disabled="true"
-              title={!hasValidExecutor ? t("chooseExecutorKnowledge") : t("managedKnowledge")}
-            >
-              <Books size={18} aria-hidden="true" />
-              {t("knowledge")}
-            </button>
-            <button
-              type="button"
-              aria-disabled="true"
-              title={!hasValidExecutor ? t("chooseExecutorTools") : t("managedTools")}
-            >
-              <Toolbox size={18} aria-hidden="true" />
-              {t("tools")}
-            </button>
-          </div>
-          <button
-            className="primary-button"
-            type="button"
-            disabled={saving || workspace === null || !hasValidExecutor || goal.trim() === ""}
-            onClick={() => void submit()}
-          >
-            {saving ? t("starting") : t("startMission")}
-          </button>
-        </footer>
-      </div>
-      {executors.length === 0 ? <p className="mission-form-note">{t("createFirst")}</p> : null}
-      {error ? (
-        <p className="form-error" role="alert">
-          {error}
-        </p>
-      ) : null}
-    </section>
-  );
+interface LocalMissionUserMessage {
+  readonly id: string;
+  readonly content: string;
+  readonly createdAt: string;
+  readonly status: "pending" | "failed";
 }
 
-function MissionExecutorPicker(props: {
-  readonly executors: readonly PragmaInvocableResource[];
-  readonly value: string;
-  readonly onChange: (value: string) => void;
-}) {
-  const { t } = useTranslation("missions");
-  const [open, setOpen] = useState(false);
-  const [search, setSearch] = useState("");
-  const rootRef = useRef<HTMLDivElement | null>(null);
-  const selected = props.executors.find((executor) => missionExecutorRef(executor) === props.value);
-  const visibleExecutors = useMemo(() => {
-    const query = search.trim().toLocaleLowerCase();
-    if (query === "") return props.executors;
-    return props.executors.filter((executor) =>
-      [
-        executor.metadata.name,
-        executor.metadata.description,
-        executor.metadata.id,
-        missionExecutorKind(executor),
-      ].some((value) => value.toLocaleLowerCase().includes(query)),
-    );
-  }, [props.executors, search]);
-  const SelectedIcon = selected === undefined ? UsersThree : executorIcon(selected);
+type MissionConversationEntry =
+  | { readonly type: "durable"; readonly entry: MissionChatEntry }
+  | { readonly type: "local"; readonly entry: LocalMissionUserMessage };
 
-  useEffect(() => {
-    if (!open) return;
-    const close = (event: MouseEvent) => {
-      if (event.target instanceof Node && !rootRef.current?.contains(event.target)) {
-        setOpen(false);
-        setSearch("");
-      }
+export type MissionConversationBlock =
+  | { readonly type: "entry"; readonly item: MissionConversationEntry }
+  | {
+      readonly type: "tools";
+      readonly entries: readonly Extract<MissionChatEntry, { kind: "tool" }>[];
+      readonly collapsed: boolean;
     };
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setOpen(false);
-        setSearch("");
-      }
-    };
-    document.addEventListener("mousedown", close);
-    window.addEventListener("keydown", closeOnEscape);
-    return () => {
-      document.removeEventListener("mousedown", close);
-      window.removeEventListener("keydown", closeOnEscape);
-    };
-  }, [open]);
-
-  return (
-    <div
-      className={
-        open
-          ? "mission-selector mission-executor-picker is-open"
-          : "mission-selector mission-executor-picker"
-      }
-      ref={rootRef}
-    >
-      <span className="mission-selector-icon">
-        <SelectedIcon size={23} aria-hidden="true" />
-      </span>
-      <div className="mission-selector-copy">
-        <small>{t("executor")}</small>
-        <button
-          className="mission-executor-trigger"
-          type="button"
-          aria-expanded={open}
-          aria-haspopup="dialog"
-          onClick={() => {
-            setOpen((current) => !current);
-            setSearch("");
-          }}
-        >
-          <strong>{selected?.metadata.name ?? t("chooseResource")}</strong>
-          <CaretDown size={16} aria-hidden="true" />
-        </button>
-        <em>
-          {selected === undefined
-            ? t("executableOnly")
-            : `${executorLabel(selected)} · ${selected.metadata.version}`}
-        </em>
-        {open ? (
-          <div
-            className="mission-executor-menu"
-            role="dialog"
-            aria-modal="false"
-            aria-label={t("chooseMissionExecutor")}
-          >
-            <header>
-              <div>
-                <strong>{t("chooseExecutor")}</strong>
-                <small>{t("executorDescription")}</small>
-              </div>
-              <span>{t("availableCount", { count: props.executors.length })}</span>
-            </header>
-            {props.executors.length > 5 ? (
-              <label className="mission-executor-search">
-                <MagnifyingGlass size={17} aria-hidden="true" />
-                <span className="sr-only">{t("searchExecutors")}</span>
-                <input
-                  autoFocus
-                  value={search}
-                  onChange={(event) => setSearch(event.target.value)}
-                  placeholder={t("searchExecutors")}
-                />
-              </label>
-            ) : null}
-            <div
-              className="mission-executor-options"
-              role="list"
-              aria-label={t("missionExecutors")}
-            >
-              {visibleExecutors.map((executor, index) => {
-                const ref = missionExecutorRef(executor);
-                const kind = missionExecutorKind(executor);
-                const Icon = executorIcon(executor);
-                const isSelected = ref === props.value;
-                return (
-                  <button
-                    type="button"
-                    aria-pressed={isSelected}
-                    autoFocus={props.executors.length <= 5 && index === 0}
-                    className={
-                      isSelected ? "mission-executor-option is-selected" : "mission-executor-option"
-                    }
-                    key={ref}
-                    onClick={() => {
-                      props.onChange(ref);
-                      setOpen(false);
-                      setSearch("");
-                    }}
-                  >
-                    <span className="mission-executor-option-icon">
-                      <Icon size={18} aria-hidden="true" />
-                    </span>
-                    <span>
-                      <strong>{executor.metadata.name}</strong>
-                      <small>{executor.metadata.description}</small>
-                    </span>
-                    <span className="mission-executor-option-kind">{kind}</span>
-                    {isSelected ? <Check size={17} aria-hidden="true" /> : null}
-                  </button>
-                );
-              })}
-              {visibleExecutors.length === 0 ? (
-                <div className="mission-executor-empty">
-                  <strong>{t("noExecutors")}</strong>
-                  <span>{t("tryAnother")}</span>
-                </div>
-              ) : null}
-            </div>
-          </div>
-        ) : null}
-      </div>
-    </div>
-  );
-}
-
-function executorIcon(resource: PragmaInvocableResource) {
-  return resource.kind === "Expert"
-    ? User
-    : resource.kind === "ExpertTeam"
-      ? UsersThree
-      : GitBranch;
-}
-
-function executorLabel(resource: PragmaInvocableResource): string {
-  return resource.kind === "Expert"
-    ? i18n.t("expert", { ns: "missions" })
-    : resource.kind === "ExpertTeam"
-      ? i18n.t("expertTeam", { ns: "missions" })
-      : i18n.t("flow", { ns: "missions" });
-}
 
 export function MissionDetailFragment(props: {
   readonly mission: Mission;
+  readonly initialThinkingRequestId?: string | undefined;
+  readonly error?: string | null | undefined;
+  readonly onDismissError?: (() => void) | undefined;
   readonly onRun?: () => void | Promise<void>;
   readonly onInterrupt?: () => void | Promise<void>;
-  readonly onSend?: (content: string) => void | Promise<void>;
+  readonly onSend?: (content: string, requestId: string) => void | Promise<void>;
+  readonly onOptionsChange?:
+    | ((options: {
+        readonly toolPermissionMode: DesktopToolPermissionMode;
+        readonly modelOverride?: MissionModelOverride | undefined;
+      }) => void | Promise<void>)
+    | undefined;
   readonly onHumanResponded?: () => void | Promise<void>;
   readonly onLifecycleChange?: () => void | Promise<void>;
+  readonly onConfigureModels?: (() => void) | undefined;
 }) {
   const { t } = useTranslation(["missions", "common"]);
   const [tab, setTab] = useState<"chat" | "work">("chat");
   const [workspaceAvailable, setWorkspaceAvailable] = useState<boolean | null>(null);
   const [chat, setChat] = useState<MissionChatSnapshot | null>(null);
-  const [workItems, setWorkItems] = useState<readonly MissionWorkItem[]>([]);
+  const [workRecords, setWorkRecords] = useState<readonly MissionWorkRecord[]>([]);
+  const [workConversation, setWorkConversation] = useState<MissionWorkConversationSnapshot | null>(
+    null,
+  );
+  const [workConversationLoading, setWorkConversationLoading] = useState(false);
+  const [selectedWorkKey, setSelectedWorkKey] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
+  const [optimisticMessages, setOptimisticMessages] = useState<LocalMissionUserMessage[]>([]);
+  const [awaitingRequestId, setAwaitingRequestId] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
+  const [models, setModels] = useState<readonly DesktopRuntimeModel[]>([]);
+  const [runtimeName, setRuntimeName] = useState<string>();
+  const [modelsLoading, setModelsLoading] = useState(false);
+  const [defaultModelSelection, setDefaultModelSelection] = useState<MissionModelOverride>();
+  const [modelResetRequired, setModelResetRequired] = useState(false);
+  const [optionsSaving, setOptionsSaving] = useState(false);
+  const [optionsError, setOptionsError] = useState<string | null>(null);
+  const [toolPermissionMode, setToolPermissionMode] = useState<DesktopToolPermissionMode>(
+    props.mission.toolPermissionMode,
+  );
+  const [modelOverride, setModelOverride] = useState<MissionModelOverride | undefined>(
+    props.mission.modelOverride,
+  );
   const [interrupting, setInterrupting] = useState(false);
   const [responding, setResponding] = useState(false);
   const [loadingEarlier, setLoadingEarlier] = useState(false);
@@ -787,13 +683,75 @@ export function MissionDetailFragment(props: {
   const isTeam = props.mission.executor.kind === "team";
   const isFlow = props.mission.executor.kind === "flow";
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const chatRef = useRef<MissionChatSnapshot | null>(null);
   const followLatestRef = useRef(true);
   const prependScrollHeightRef = useRef<number | null>(null);
+  const updateChat = useCallback((update: SetStateAction<MissionChatSnapshot | null>) => {
+    const next = typeof update === "function" ? update(chatRef.current) : update;
+    chatRef.current = next;
+    setChat(next);
+  }, []);
   const executionStatus = chat?.execution?.status ?? props.mission.execution?.status;
   const executionActive =
     executionStatus !== undefined && ["queued", "running", "waiting"].includes(executionStatus);
   const interactions = chat?.pendingInteractions ?? [];
   const interruptible = chat?.execution?.interruptible ?? false;
+  const controlsDisabled = executionActive || optionsSaving;
+  const visibleError = props.error ?? optionsError;
+
+  useEffect(() => {
+    setDraft("");
+    setOptimisticMessages([]);
+    setAwaitingRequestId(null);
+    setOptionsError(null);
+    setSelectedWorkKey(null);
+    setWorkRecords([]);
+    setWorkConversation(null);
+  }, [props.mission.id]);
+
+  useEffect(() => {
+    if (optionsSaving) return;
+    setToolPermissionMode(props.mission.toolPermissionMode);
+    setModelOverride(props.mission.modelOverride);
+  }, [optionsSaving, props.mission.modelOverride, props.mission.toolPermissionMode]);
+
+  useEffect(() => {
+    const api = desktopApi();
+    setModels([]);
+    setRuntimeName(undefined);
+    setDefaultModelSelection(undefined);
+    setOptionsError(null);
+    setModelResetRequired(false);
+    if (api === undefined || isFlow) return;
+    let cancelled = false;
+    setModelsLoading(true);
+    void api
+      .getMissionModelOptions(props.mission.executor.ref, props.mission.id)
+      .then((result) => {
+        if (cancelled) return;
+        setRuntimeName(result.runtime.displayName);
+        setModels(result.models);
+        setDefaultModelSelection(result.defaultSelection);
+        setModelResetRequired(result.status === "reset_required");
+      })
+      .catch((loadError: unknown) => {
+        if (!cancelled) setOptionsError(errorMessage(loadError));
+      })
+      .finally(() => {
+        if (!cancelled) setModelsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isFlow, props.mission.executor.ref, props.mission.id]);
+
+  useEffect(() => {
+    const textarea = textareaRef.current;
+    if (textarea === null) return;
+    textarea.style.height = "auto";
+    textarea.style.height = `${Math.min(textarea.scrollHeight, 130)}px`;
+  }, [draft]);
 
   useEffect(() => {
     const api = desktopApi();
@@ -809,7 +767,7 @@ export function MissionDetailFragment(props: {
 
   useEffect(() => {
     const api = desktopApi();
-    setChat(null);
+    updateChat(null);
     setHistoryError(null);
     setHumanQuestionIndex(0);
     followLatestRef.current = true;
@@ -818,6 +776,54 @@ export function MissionDetailFragment(props: {
     let cancelled = false;
     let refreshing = false;
     let refreshQueued = false;
+    let frame: number | undefined;
+    let hiddenTimer: ReturnType<typeof setTimeout> | undefined;
+    let pending: MissionChatUpdate[] = [];
+
+    const drainPending = (
+      base: MissionChatSnapshot,
+    ): { readonly snapshot: MissionChatSnapshot; readonly needsRefresh: boolean } => {
+      const updates = pending.toSorted((left, right) => left.revision - right.revision);
+      pending = [];
+      let snapshot = base;
+      for (let index = 0; index < updates.length; index += 1) {
+        const update = updates[index]!;
+        if (update.revision <= snapshot.revision) continue;
+        if (update.revision !== snapshot.revision + 1 || update.kind === "invalidate") {
+          pending.push(...updates.slice(index));
+          return { snapshot, needsRefresh: true };
+        }
+        const next = applyMissionChatPatches(snapshot, update.patches, update.revision);
+        if (next === null) {
+          pending.push(...updates.slice(index));
+          return { snapshot, needsRefresh: true };
+        }
+        snapshot = next;
+      }
+      return { snapshot, needsRefresh: false };
+    };
+
+    const flush = (): void => {
+      frame = undefined;
+      if (hiddenTimer !== undefined) {
+        clearTimeout(hiddenTimer);
+        hiddenTimer = undefined;
+      }
+      if (cancelled || chatRef.current === null || pending.length === 0) return;
+      const drained = drainPending(chatRef.current);
+      updateChat(drained.snapshot);
+      if (drained.needsRefresh) void refresh();
+    };
+
+    const scheduleFlush = (): void => {
+      if (frame !== undefined || hiddenTimer !== undefined || cancelled) return;
+      if (document.visibilityState === "hidden") {
+        hiddenTimer = setTimeout(flush, 100);
+      } else {
+        frame = requestAnimationFrame(flush);
+      }
+    };
+
     const refresh = async (): Promise<void> => {
       if (refreshing) {
         refreshQueued = true;
@@ -826,7 +832,13 @@ export function MissionDetailFragment(props: {
       refreshing = true;
       try {
         const snapshot = await api.getMissionChat({ id: props.mission.id, limit: 50 });
-        if (!cancelled) setChat((current) => mergeLatestChatPage(current, snapshot));
+        if (!cancelled) {
+          pending = pending.filter((update) => update.revision > snapshot.revision);
+          const merged = mergeLatestChatPage(chatRef.current, snapshot);
+          const drained = drainPending(merged);
+          updateChat(drained.snapshot);
+          if (drained.needsRefresh) refreshQueued = true;
+        }
       } catch (loadError) {
         if (!cancelled) console.error("Failed to refresh Mission chat.", loadError);
       } finally {
@@ -837,48 +849,134 @@ export function MissionDetailFragment(props: {
         }
       }
     };
-    const unsubscribe = api.subscribeMissionChat(props.mission.id, () => void refresh());
+    const unsubscribe = api.subscribeMissionChat(props.mission.id, (update) => {
+      pending.push(update);
+      scheduleFlush();
+    });
     void refresh();
     return () => {
       cancelled = true;
+      if (frame !== undefined) cancelAnimationFrame(frame);
+      if (hiddenTimer !== undefined) clearTimeout(hiddenTimer);
       unsubscribe();
     };
-  }, [props.mission.id]);
+  }, [props.mission.id, updateChat]);
 
   useEffect(() => {
     const api = desktopApi();
     if (api === undefined || tab !== "work" || props.mission.execution === undefined) {
-      setWorkItems([]);
+      setWorkRecords([]);
+      setWorkConversation(null);
       return;
     }
     let cancelled = false;
-    const refresh = () => {
-      void api
-        .listMissionWorkItems(props.mission.id)
-        .then((items) => {
-          if (!cancelled) setWorkItems(items);
-        })
-        .catch((loadError: unknown) => {
-          if (!cancelled) console.error("Failed to refresh Mission work items.", loadError);
-        });
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const refresh = async () => {
+      try {
+        const snapshot = await api.getMissionWork(props.mission.id);
+        if (cancelled) return;
+        setWorkRecords(snapshot.records);
+        if (selectedWorkKey !== null) {
+          setWorkConversationLoading(true);
+          const conversation = await api.getMissionWorkConversation({
+            id: props.mission.id,
+            recordId: selectedWorkKey,
+            limit: 100,
+          });
+          if (!cancelled) {
+            setWorkConversation((current) =>
+              current === null || current.recordId !== conversation.recordId
+                ? conversation
+                : {
+                    ...conversation,
+                    entries: uniqueChatEntries([...current.entries, ...conversation.entries]),
+                    nextBeforeCursor: current.nextBeforeCursor,
+                  },
+            );
+          }
+        }
+      } catch (loadError) {
+        if (!cancelled) console.error("Failed to refresh Mission work history.", loadError);
+      } finally {
+        if (!cancelled) setWorkConversationLoading(false);
+      }
     };
-    refresh();
-    const timer = executionActive ? setInterval(refresh, 1_000) : undefined;
+    const scheduleRefresh = () => {
+      if (timer !== undefined) return;
+      timer = setTimeout(() => {
+        timer = undefined;
+        void refresh();
+      }, 50);
+    };
+    const unsubscribe = api.subscribeMissionWork(props.mission.id, scheduleRefresh);
+    void refresh();
     return () => {
       cancelled = true;
-      if (timer !== undefined) clearInterval(timer);
+      if (timer !== undefined) clearTimeout(timer);
+      unsubscribe();
     };
-  }, [executionActive, props.mission.id, props.mission.execution?.id, tab]);
+  }, [props.mission.id, props.mission.execution?.id, selectedWorkKey, tab]);
 
   const send = async () => {
     const content = draft.trim();
-    if (content === "" || sending || executionActive || isFlow) return;
+    if (content === "" || sending || optionsSaving || executionActive || isFlow) return;
+    const requestId = crypto.randomUUID();
+    const optimistic: LocalMissionUserMessage = {
+      id: requestId,
+      content,
+      createdAt: new Date().toISOString(),
+      status: "pending",
+    };
+    setDraft("");
+    setOptimisticMessages((current) => [...current, optimistic]);
+    setAwaitingRequestId(requestId);
+    followLatestRef.current = true;
     setSending(true);
     try {
-      await props.onSend?.(content);
-      setDraft("");
+      await props.onSend?.(content, requestId);
+    } catch {
+      const api = desktopApi();
+      const snapshot =
+        api === undefined
+          ? undefined
+          : await api.getMissionChat({ id: props.mission.id, limit: 50 }).catch(() => undefined);
+      if (snapshot !== undefined) updateChat((current) => mergeLatestChatPage(current, snapshot));
+      const persisted = snapshot?.entries.some((entry) => entry.id === requestId) ?? false;
+      setOptimisticMessages((current) =>
+        persisted
+          ? current.filter((message) => message.id !== requestId)
+          : current.map((message) =>
+              message.id === requestId ? { ...message, status: "failed" } : message,
+            ),
+      );
+      setAwaitingRequestId(null);
     } finally {
       setSending(false);
+      requestAnimationFrame(() => textareaRef.current?.focus());
+    }
+  };
+
+  const saveOptions = async (
+    nextToolPermissionMode: DesktopToolPermissionMode,
+    nextModelOverride: MissionModelOverride | undefined,
+  ) => {
+    if (controlsDisabled) return;
+    const previousToolPermissionMode = toolPermissionMode;
+    const previousModelOverride = modelOverride;
+    setToolPermissionMode(nextToolPermissionMode);
+    setModelOverride(nextModelOverride);
+    setOptionsSaving(true);
+    try {
+      await props.onOptionsChange?.({
+        toolPermissionMode: nextToolPermissionMode,
+        ...(nextModelOverride === undefined ? {} : { modelOverride: nextModelOverride }),
+      });
+      setOptionsError(null);
+    } catch {
+      setToolPermissionMode(previousToolPermissionMode);
+      setModelOverride(previousModelOverride);
+    } finally {
+      setOptionsSaving(false);
     }
   };
 
@@ -906,7 +1004,7 @@ export function MissionDetailFragment(props: {
         requestId: crypto.randomUUID(),
         response,
       });
-      setChat((current) =>
+      updateChat((current) =>
         current === null
           ? current
           : {
@@ -934,11 +1032,67 @@ export function MissionDetailFragment(props: {
   };
 
   const displayEntries = chat?.entries ?? [];
+  const durableEntryIds = useMemo(
+    () => new Set(displayEntries.map((entry) => entry.id)),
+    [displayEntries],
+  );
+  const conversationEntries = useMemo(
+    () =>
+      [
+        ...displayEntries.map((entry) => ({ type: "durable" as const, entry })),
+        ...optimisticMessages
+          .filter((message) => !durableEntryIds.has(message.id))
+          .map((message) => ({ type: "local" as const, entry: message })),
+      ].toSorted((left, right) => left.entry.createdAt.localeCompare(right.entry.createdAt)),
+    [displayEntries, durableEntryIds, optimisticMessages],
+  );
+  const conversationBlocks = useMemo(
+    () => groupMissionConversationEntries(conversationEntries),
+    [conversationEntries],
+  );
+  const selectedWorkRecord = useMemo(
+    () => workRecords.find((record) => record.recordId === selectedWorkKey),
+    [selectedWorkKey, workRecords],
+  );
+  const selectedWorkInputSenderName = useMemo(() => {
+    if (selectedWorkRecord === undefined) return "";
+    return missionWorkInputSenderName(selectedWorkRecord, workRecords);
+  }, [selectedWorkRecord, t, workRecords]);
   const lastEntry = displayEntries.at(-1);
   const lastEntryFingerprint =
     lastEntry === undefined
       ? "empty"
       : `${lastEntry.id}:${lastEntry.kind}:${entryContentLength(lastEntry)}`;
+  const thinkingRequestId = awaitingRequestId ?? props.initialThinkingRequestId ?? null;
+  const showThinkingPlaceholder = shouldShowMissionThinkingPlaceholder(chat, thinkingRequestId);
+
+  useEffect(() => {
+    if (durableEntryIds.size === 0) return;
+    setOptimisticMessages((current) =>
+      current.filter((message) => !durableEntryIds.has(message.id)),
+    );
+  }, [durableEntryIds]);
+
+  useEffect(() => {
+    if (awaitingRequestId === null || chat === null) return;
+    if (shouldClearMissionThinkingPlaceholder(chat, awaitingRequestId)) {
+      setAwaitingRequestId(null);
+    }
+  }, [awaitingRequestId, chat]);
+
+  useEffect(() => {
+    if (selectedWorkKey === null) return;
+    if (selectedWorkRecord === undefined) setSelectedWorkKey(null);
+  }, [selectedWorkKey, selectedWorkRecord]);
+
+  useEffect(() => {
+    if (selectedWorkRecord === undefined) return;
+    const close = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setSelectedWorkKey(null);
+    };
+    window.addEventListener("keydown", close);
+    return () => window.removeEventListener("keydown", close);
+  }, [selectedWorkRecord]);
 
   const loadEarlier = async (): Promise<void> => {
     const api = desktopApi();
@@ -955,11 +1109,48 @@ export function MissionDetailFragment(props: {
         beforeSequence,
         limit: 50,
       });
-      setChat((current) => (current === null ? earlier : prependChatPage(current, earlier)));
+      updateChat((current) => (current === null ? earlier : prependChatPage(current, earlier)));
     } catch (loadError) {
       setHistoryError(errorMessage(loadError));
     } finally {
       setLoadingEarlier(false);
+    }
+  };
+
+  const loadEarlierWorkConversation = async (): Promise<void> => {
+    const api = desktopApi();
+    if (
+      api === undefined ||
+      selectedWorkRecord === undefined ||
+      workConversation?.nextBeforeCursor === undefined ||
+      workConversationLoading
+    ) {
+      return;
+    }
+    setWorkConversationLoading(true);
+    try {
+      const earlier = await api.getMissionWorkConversation({
+        id: props.mission.id,
+        recordId: selectedWorkRecord.recordId,
+        beforeCursor: workConversation.nextBeforeCursor,
+        limit: 100,
+      });
+      setWorkConversation((current) =>
+        current === null || current.recordId !== earlier.recordId
+          ? earlier
+          : {
+              ...current,
+              revision: Math.max(current.revision, earlier.revision),
+              entries: uniqueChatEntries([...earlier.entries, ...current.entries]),
+              ...(earlier.nextBeforeCursor === undefined
+                ? { nextBeforeCursor: undefined }
+                : { nextBeforeCursor: earlier.nextBeforeCursor }),
+            },
+      );
+    } catch (loadError) {
+      console.error("Failed to load earlier Mission work conversation.", loadError);
+    } finally {
+      setWorkConversationLoading(false);
     }
   };
 
@@ -978,13 +1169,19 @@ export function MissionDetailFragment(props: {
     } else {
       setShowJumpToLatest(true);
     }
-  }, [displayEntries.length, lastEntryFingerprint, interactions.length]);
+  }, [
+    awaitingRequestId,
+    conversationEntries.length,
+    displayEntries.length,
+    lastEntryFingerprint,
+    interactions.length,
+  ]);
 
   return (
     <section className="mission-detail">
       <header className="mission-detail-header">
         <div>
-          <h1>{props.mission.title}</h1>
+          <h1 title={props.mission.title}>{props.mission.title}</h1>
           <p>
             <span className="mission-ready-dot" aria-hidden="true" />
             {missionStatusLabel(props.mission)}
@@ -1003,6 +1200,13 @@ export function MissionDetailFragment(props: {
               <User size={17} aria-hidden="true" />
             )}
             {props.mission.executor.name}
+            {runtimeName === undefined ? null : (
+              <>
+                <span aria-hidden="true">·</span>
+                <TerminalWindow size={17} aria-hidden="true" />
+                {runtimeName}
+              </>
+            )}
           </p>
         </div>
         <div className="mission-header-actions">
@@ -1063,6 +1267,15 @@ export function MissionDetailFragment(props: {
         </button>
       </div>
       <div className="mission-detail-body">
+        {tab !== "chat" && visibleError !== null && visibleError !== undefined ? (
+          <MissionErrorBanner
+            error={visibleError}
+            onDismiss={() => {
+              setOptionsError(null);
+              props.onDismissError?.();
+            }}
+          />
+        ) : null}
         {tab === "chat" ? (
           <div className="mission-chat-shell">
             <div
@@ -1094,15 +1307,28 @@ export function MissionDetailFragment(props: {
                     {historyError}
                   </p>
                 )}
-                {displayEntries.map((entry) => (
-                  <MissionChatEntryView
-                    entry={entry}
-                    executorName={props.mission.executor.name}
-                    isTeam={isTeam}
-                    isFlow={isFlow}
-                    key={entry.id}
-                  />
-                ))}
+                {conversationBlocks.map((block) => {
+                  if (block.type === "tools") {
+                    return (
+                      <MissionToolCallBlock
+                        collapsed={block.collapsed}
+                        entries={block.entries}
+                        key={`tools:${block.entries[0]!.id}`}
+                      />
+                    );
+                  }
+                  return block.item.type === "local" ? (
+                    <LocalMissionUserMessageView
+                      message={block.item.entry}
+                      key={block.item.entry.id}
+                    />
+                  ) : (
+                    <MissionChatEntryView entry={block.item.entry} key={block.item.entry.id} />
+                  );
+                })}
+                {showThinkingPlaceholder ? (
+                  <MissionThinkingPlaceholder executorName={props.mission.executor.name} />
+                ) : null}
               </div>
               {showJumpToLatest ? (
                 <button
@@ -1121,9 +1347,26 @@ export function MissionDetailFragment(props: {
               ) : null}
             </div>
             <div className="mission-chat-footer">
+              {visibleError !== null && visibleError !== undefined ? (
+                <MissionErrorBanner
+                  error={visibleError}
+                  onDismiss={() => {
+                    setOptionsError(null);
+                    props.onDismissError?.();
+                  }}
+                />
+              ) : null}
               {missionFooterTip(props.mission, chat) ? (
                 <small className="mission-chat-footer-tip">
                   {missionFooterTip(props.mission, chat)}
+                </small>
+              ) : null}
+              {modelResetRequired ? (
+                <small className="mission-chat-footer-tip mission-model-reset-note" role="status">
+                  <span>{t("modelConfigurationResetRequired", { ns: "missions" })}</span>
+                  <button className="text-button" type="button" onClick={props.onConfigureModels}>
+                    {t("configureModels", { ns: "missions" })}
+                  </button>
                 </small>
               ) : null}
               {interactions[0] !== undefined ? (
@@ -1150,13 +1393,10 @@ export function MissionDetailFragment(props: {
                   onInterrupt={() => void interrupt()}
                 />
               ) : (
-                <div className="mission-chat-composer">
-                  {isFlow ? (
-                    <GitBranch size={20} aria-hidden="true" />
-                  ) : (
-                    <Paperclip size={20} aria-hidden="true" />
-                  )}
+                <div className="mission-chat-composer" aria-busy={sending || optionsSaving}>
                   <textarea
+                    ref={textareaRef}
+                    rows={1}
                     value={draft}
                     disabled={
                       isFlow ||
@@ -1193,41 +1433,66 @@ export function MissionDetailFragment(props: {
                       }
                     }}
                   />
-                  {executionActive ? (
-                    <button
-                      className="is-interrupt"
-                      type="button"
-                      aria-label={t("interrupt", { ns: "missions" })}
-                      title={
-                        interruptible
-                          ? t("interrupt", { ns: "missions" })
-                          : t("resumeBeforeInterrupt", { ns: "missions" })
-                      }
-                      disabled={!interruptible || interrupting}
-                      onClick={() => void interrupt()}
-                    >
-                      <StopCircle size={19} weight="fill" aria-hidden="true" />
-                    </button>
-                  ) : (
-                    <button
-                      type="button"
-                      aria-label={t("send", { ns: "missions" })}
-                      disabled={
-                        isFlow ||
-                        draft.trim() === "" ||
-                        sending ||
-                        props.mission.lifecycleStatus === "completed"
-                      }
-                      onClick={() => void send()}
-                    >
-                      <PaperPlaneTilt size={18} aria-hidden="true" />
-                    </button>
-                  )}
+                  <div className="mission-chat-composer-toolbar">
+                    <div className="mission-chat-options" aria-label={t("missionOptions")}>
+                      {!isFlow ? (
+                        <MissionModelOverrideControls
+                          models={models}
+                          loading={modelsLoading}
+                          disabled={controlsDisabled}
+                          value={modelOverride}
+                          defaultValue={defaultModelSelection}
+                          onChange={(value) => void saveOptions(toolPermissionMode, value)}
+                        />
+                      ) : null}
+                      <ToolPermissionSelect
+                        value={toolPermissionMode}
+                        disabled={controlsDisabled}
+                        title={
+                          executionActive
+                            ? t("optionsAvailableNextTurn", { ns: "missions" })
+                            : t("permissionOverride", { ns: "missions" })
+                        }
+                        onChange={(value) => void saveOptions(value, modelOverride)}
+                      />
+                    </div>
+                    {executionActive ? (
+                      <button
+                        className="is-interrupt"
+                        type="button"
+                        aria-label={t("interrupt", { ns: "missions" })}
+                        title={
+                          interruptible
+                            ? t("interrupt", { ns: "missions" })
+                            : t("resumeBeforeInterrupt", { ns: "missions" })
+                        }
+                        disabled={!interruptible || interrupting}
+                        onClick={() => void interrupt()}
+                      >
+                        <StopCircle size={19} weight="fill" aria-hidden="true" />
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        aria-label={t("send", { ns: "missions" })}
+                        disabled={
+                          isFlow ||
+                          draft.trim() === "" ||
+                          sending ||
+                          optionsSaving ||
+                          props.mission.lifecycleStatus === "completed"
+                        }
+                        onClick={() => void send()}
+                      >
+                        <PaperPlaneTilt size={18} aria-hidden="true" />
+                      </button>
+                    )}
+                  </div>
                 </div>
               )}
             </div>
           </div>
-        ) : workItems.length === 0 ? (
+        ) : workRecords.length === 0 ? (
           <div className="mission-work-empty">
             <CheckCircle size={31} weight="thin" aria-hidden="true" />
             <h2>
@@ -1251,108 +1516,469 @@ export function MissionDetailFragment(props: {
               <p>{t("executionMapDescription", { ns: "missions" })}</p>
             </header>
             <ol>
-              {workItems.map((item) => (
+              {workRecords.map((record) => (
                 <li
-                  key={item.invocationId}
+                  key={record.recordId}
                   style={
-                    { "--mission-work-depth": workItemDepth(item, workItems) } as CSSProperties
+                    {
+                      "--mission-work-depth": workRecordDepth(record, workRecords),
+                    } as CSSProperties
                   }
                 >
-                  <span className={`mission-work-status is-${item.status}`} aria-hidden="true" />
-                  <div>
-                    <strong>{item.nodeId ?? item.executorId ?? item.kind}</strong>
-                    <small>
-                      {item.kind} · {item.status}
-                    </small>
-                    <p>{item.outputSummary ?? item.inputSummary}</p>
-                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setWorkConversation(null);
+                      setSelectedWorkKey(record.recordId);
+                    }}
+                  >
+                    <span
+                      className={`mission-work-status is-${record.status}`}
+                      aria-hidden="true"
+                    />
+                    <div>
+                      <strong>{missionWorkRecordTitle(record)}</strong>
+                      <small>
+                        {record.kind} · {workStatusLabel(record.status)}
+                        {record.tasks.length > 1
+                          ? ` · ${t("conversationTurns", {
+                              ns: "missions",
+                              count: record.tasks.length,
+                            })}`
+                          : ""}
+                      </small>
+                      <p>{record.summary}</p>
+                    </div>
+                    <CaretDown size={16} aria-hidden="true" />
+                  </button>
                 </li>
               ))}
             </ol>
           </div>
         )}
       </div>
+      {selectedWorkRecord === undefined ? null : (
+        <MissionWorkDrawer
+          record={selectedWorkRecord}
+          inputSenderName={selectedWorkInputSenderName}
+          entries={
+            workConversation?.recordId === selectedWorkRecord.recordId
+              ? workConversation.entries
+              : []
+          }
+          loading={workConversationLoading}
+          onLoadEarlier={
+            workConversation?.recordId === selectedWorkRecord.recordId &&
+            workConversation.nextBeforeCursor !== undefined
+              ? () => loadEarlierWorkConversation()
+              : undefined
+          }
+          onClose={() => setSelectedWorkKey(null)}
+        />
+      )}
     </section>
+  );
+}
+
+function MissionErrorBanner(props: { readonly error: string; readonly onDismiss: () => void }) {
+  const { t } = useTranslation("common");
+  return (
+    <div className="mission-page-error" role="alert">
+      <span>{props.error}</span>
+      <button
+        type="button"
+        aria-label={t("actions.close")}
+        title={t("actions.close")}
+        onClick={props.onDismiss}
+      >
+        <X size={16} aria-hidden="true" />
+      </button>
+    </div>
+  );
+}
+
+function LocalMissionUserMessageView(props: { readonly message: LocalMissionUserMessage }) {
+  const { t } = useTranslation("missions");
+  return (
+    <div
+      className={
+        props.message.status === "failed"
+          ? "mission-user-message is-local is-failed"
+          : "mission-user-message is-local"
+      }
+    >
+      <div>
+        <MissionMessageContent source={props.message.content} />
+        {props.message.status === "failed" ? <small>{t("messageSendFailed")}</small> : null}
+      </div>
+    </div>
+  );
+}
+
+function MissionThinkingPlaceholder(props: { readonly executorName: string }) {
+  const { t } = useTranslation("missions");
+  return (
+    <div className="mission-assistant-message mission-thinking-placeholder" aria-live="polite">
+      <p>
+        <SpinnerGap size={17} aria-hidden="true" />
+        {t("thinkingActive", { name: props.executorName })}
+      </p>
+    </div>
   );
 }
 
 function MissionChatEntryView(props: {
   readonly entry: MissionChatEntry;
-  readonly executorName: string;
-  readonly isTeam: boolean;
-  readonly isFlow: boolean;
+  readonly userLabel?: string | undefined;
 }) {
-  const { t } = useTranslation("missions");
-  const name = props.entry.executorName ?? props.entry.executorId ?? props.executorName;
   if (props.entry.kind === "user") {
     return (
       <div className="mission-user-message">
-        <span aria-hidden="true">{t("you")}</span>
         <div>
-          <strong>{t("you")}</strong>
-          <p>{props.entry.content}</p>
+          {props.userLabel === undefined ? null : (
+            <small className="mission-message-sender">{props.userLabel}</small>
+          )}
+          <MissionMessageContent source={props.entry.content} />
         </div>
       </div>
     );
   }
   if (props.entry.kind === "thinking") {
-    return (
-      <details className="mission-chat-activity mission-thinking-entry">
-        <summary>
-          <Brain size={17} aria-hidden="true" />
-          <span>
-            {props.entry.streaming ? t("thinkingActive", { name }) : t("thinkingDone", { name })}
-          </span>
-          <CaretDown size={15} aria-hidden="true" />
-        </summary>
-        <p>{props.entry.content}</p>
-      </details>
-    );
+    return <MissionThinkingEntry entry={props.entry} />;
   }
   if (props.entry.kind === "tool") {
-    return (
-      <details className={`mission-chat-activity mission-tool-entry is-${props.entry.status}`}>
-        <summary>
-          <Toolbox size={17} aria-hidden="true" />
-          <span>{props.entry.toolName}</span>
-          <small>{toolStatusLabel(props.entry.status)}</small>
-          {props.entry.status === "succeeded" ? (
-            <Check size={15} aria-hidden="true" />
-          ) : (
-            <CaretDown size={15} aria-hidden="true" />
-          )}
-        </summary>
-        {props.entry.inputPreview !== undefined ? (
-          <div>
-            <strong>{t("input")}</strong>
-            <pre>{props.entry.inputPreview}</pre>
-          </div>
-        ) : null}
-        {props.entry.outputPreview !== undefined ? (
-          <div>
-            <strong>{t("output")}</strong>
-            <pre>{props.entry.outputPreview}</pre>
-          </div>
-        ) : null}
-        {props.entry.error !== undefined ? <p role="alert">{props.entry.error}</p> : null}
-      </details>
-    );
+    return <MissionToolCallEntry entry={props.entry} />;
+  }
+  if (props.entry.kind === "agent_activity") {
+    return <MissionAgentActivityEntry entry={props.entry} />;
   }
   return (
     <div className="mission-assistant-message">
-      <span aria-hidden="true">
-        {props.isTeam ? (
-          <UsersThree size={18} />
-        ) : props.isFlow ? (
-          <GitBranch size={18} />
-        ) : (
-          <User size={18} />
-        )}
+      <MissionMessageContent source={props.entry.content} />
+    </div>
+  );
+}
+
+function MissionAgentActivityEntry(props: {
+  readonly entry: Extract<MissionChatEntry, { kind: "agent_activity" }>;
+}) {
+  const { t } = useTranslation("missions");
+  const status =
+    props.entry.phase === "started"
+      ? t("statusRunning")
+      : props.entry.phase === "completed"
+        ? t("statusCompleted")
+        : t("statusFailed");
+  const target = props.entry.label ?? props.entry.targetSessionIds.at(0);
+  return (
+    <div className={`mission-chat-activity mission-agent-activity is-${props.entry.phase}`}>
+      <UsersThree size={17} aria-hidden="true" />
+      <span>
+        {t(`agentAction.${props.entry.action}`)}
+        {target === undefined ? null : <small>{target}</small>}
       </span>
-      <div>
-        <strong>{name}</strong>
-        <p>{props.entry.content}</p>
+      <small>{status}</small>
+      {props.entry.error === undefined ? null : <p role="alert">{props.entry.error}</p>}
+    </div>
+  );
+}
+
+export function MissionThinkingEntry(props: {
+  readonly entry: Extract<MissionChatEntry, { kind: "thinking" }>;
+}) {
+  const { t } = useTranslation("missions");
+  const [expanded, setExpanded] = useState(false);
+  const contentId = useId();
+  const streaming = props.entry.streaming === true;
+  const showsFullContent = streaming || expanded;
+
+  return (
+    <div
+      className={`mission-thinking-entry${showsFullContent ? " is-expanded" : ""}${
+        streaming ? " is-streaming" : ""
+      }`}
+      aria-live={streaming ? "polite" : undefined}
+    >
+      <p id={contentId}>{props.entry.content}</p>
+      {streaming ? null : (
+        <button
+          type="button"
+          aria-controls={contentId}
+          aria-expanded={expanded}
+          aria-label={expanded ? t("collapseThinking") : t("expandThinking")}
+          title={expanded ? t("collapseThinking") : t("expandThinking")}
+          onClick={() => setExpanded((current) => !current)}
+        >
+          <CaretDown size={14} aria-hidden="true" />
+        </button>
+      )}
+    </div>
+  );
+}
+
+function MissionToolCallBlock(props: {
+  readonly collapsed: boolean;
+  readonly entries: readonly Extract<MissionChatEntry, { kind: "tool" }>[];
+}) {
+  const { t } = useTranslation("missions");
+  if (props.entries.length === 1) return <MissionToolCallEntry entry={props.entries[0]!} />;
+  if (!props.collapsed) {
+    return (
+      <div className="mission-tool-run">
+        {props.entries.map((entry) => (
+          <MissionToolCallEntry entry={entry} key={entry.id} />
+        ))}
       </div>
+    );
+  }
+  const status = toolGroupStatus(props.entries);
+  return (
+    <details className={`mission-chat-activity mission-tool-entry mission-tool-group is-${status}`}>
+      <summary>
+        <Toolbox size={16} aria-hidden="true" />
+        <span>{t("toolCalls", { count: props.entries.length })}</span>
+        <small>{toolStatusLabel(status)}</small>
+        <CaretDown size={14} aria-hidden="true" />
+      </summary>
+      <div className="mission-tool-group-items">
+        {props.entries.map((entry) => (
+          <MissionToolCallEntry entry={entry} key={entry.id} />
+        ))}
+      </div>
+    </details>
+  );
+}
+
+function MissionToolCallEntry(props: {
+  readonly entry: Extract<MissionChatEntry, { kind: "tool" }>;
+}) {
+  const { t } = useTranslation("missions");
+  const className = `mission-chat-activity mission-tool-entry is-${props.entry.status}`;
+  const hasDetails =
+    props.entry.inputPreview !== undefined ||
+    props.entry.outputPreview !== undefined ||
+    props.entry.error !== undefined;
+  const row = (
+    <>
+      <Toolbox size={16} aria-hidden="true" />
+      <span>{props.entry.toolName}</span>
+      <small>{toolStatusLabel(props.entry.status)}</small>
+    </>
+  );
+  if (!hasDetails) {
+    return (
+      <div className={`${className} mission-tool-static-row`}>
+        {row}
+        <span aria-hidden="true" />
+      </div>
+    );
+  }
+  return (
+    <details className={className}>
+      <summary>
+        {row}
+        <CaretDown size={14} aria-hidden="true" />
+      </summary>
+      <div className="mission-tool-entry-details">
+        {props.entry.inputPreview !== undefined ? (
+          <section>
+            <strong>{t("input")}</strong>
+            <pre>{props.entry.inputPreview}</pre>
+          </section>
+        ) : null}
+        {props.entry.outputPreview !== undefined ? (
+          <section>
+            <strong>{t("output")}</strong>
+            <pre>{props.entry.outputPreview}</pre>
+          </section>
+        ) : null}
+        {props.entry.error !== undefined ? <p role="alert">{props.entry.error}</p> : null}
+      </div>
+    </details>
+  );
+}
+
+export function MissionWorkDrawer(props: {
+  readonly record: MissionWorkRecord;
+  readonly inputSenderName: string;
+  readonly entries: readonly MissionChatEntry[];
+  readonly loading: boolean;
+  readonly onLoadEarlier?: (() => void | Promise<void>) | undefined;
+  readonly onClose: () => void;
+}) {
+  const { t } = useTranslation(["missions", "common"]);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const followLatestRef = useRef(true);
+  const prependScrollHeightRef = useRef<number | null>(null);
+  const [showJumpToLatest, setShowJumpToLatest] = useState(false);
+  const conversationBlocks = useMemo(
+    () =>
+      groupMissionConversationEntries(
+        props.entries.map((entry) => ({ type: "durable" as const, entry })),
+      ),
+    [props.entries],
+  );
+  const lastEntry = props.entries.at(-1);
+  const conversationFingerprint =
+    lastEntry === undefined
+      ? "empty"
+      : `${lastEntry.id}:${lastEntry.kind}:${entryContentLength(lastEntry)}`;
+
+  useEffect(() => {
+    const scroll = scrollRef.current;
+    if (scroll === null) return;
+    if (prependScrollHeightRef.current !== null) {
+      scroll.scrollTop += scroll.scrollHeight - prependScrollHeightRef.current;
+      prependScrollHeightRef.current = null;
+      setShowJumpToLatest(true);
+      return;
+    }
+    if (followLatestRef.current) {
+      scroll.scrollTop = scroll.scrollHeight;
+      setShowJumpToLatest(false);
+    } else {
+      setShowJumpToLatest(true);
+    }
+  }, [conversationFingerprint, props.entries.length]);
+
+  const loadEarlier = async (): Promise<void> => {
+    const scroll = scrollRef.current;
+    prependScrollHeightRef.current = scroll?.scrollHeight ?? null;
+    followLatestRef.current = false;
+    try {
+      await props.onLoadEarlier?.();
+    } finally {
+      requestAnimationFrame(() => {
+        const current = scrollRef.current;
+        const previousHeight = prependScrollHeightRef.current;
+        if (current !== null && previousHeight !== null) {
+          current.scrollTop += current.scrollHeight - previousHeight;
+        }
+        prependScrollHeightRef.current = null;
+        setShowJumpToLatest(true);
+      });
+    }
+  };
+
+  return (
+    <div className="mission-work-drawer-layer" role="presentation">
+      <button
+        className="mission-work-drawer-scrim"
+        type="button"
+        aria-label={t("actions.close", { ns: "common" })}
+        onClick={props.onClose}
+      />
+      <aside
+        className="mission-work-drawer"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="mission-work-drawer-title"
+      >
+        <header>
+          <div>
+            <small>{t("agentConversation", { ns: "missions" })}</small>
+            <h2 id="mission-work-drawer-title">{missionWorkRecordTitle(props.record)}</h2>
+            <p>
+              {workStatusLabel(props.record.status)} ·{" "}
+              {t("readOnlyConversation", { ns: "missions" })}
+              {props.record.status === "running" || props.record.status === "waiting" ? (
+                <span className="mission-work-streaming">
+                  <SpinnerGap size={13} aria-hidden="true" />
+                  {t("streaming", { ns: "missions" })}
+                </span>
+              ) : null}
+            </p>
+          </div>
+          <button
+            type="button"
+            aria-label={t("actions.close", { ns: "common" })}
+            onClick={props.onClose}
+          >
+            <X size={18} aria-hidden="true" />
+          </button>
+        </header>
+        <div className="mission-work-drawer-body">
+          <div
+            className="mission-chat-scroll mission-work-conversation-scroll"
+            ref={scrollRef}
+            aria-live="polite"
+            onScroll={(event) => {
+              const element = event.currentTarget;
+              const nearBottom =
+                element.scrollHeight - element.scrollTop - element.clientHeight < 72;
+              followLatestRef.current = nearBottom;
+              if (nearBottom) setShowJumpToLatest(false);
+            }}
+          >
+            <div className="mission-chat-list mission-work-conversation-list">
+              {props.onLoadEarlier === undefined ? null : (
+                <button
+                  className="mission-load-earlier"
+                  type="button"
+                  disabled={props.loading}
+                  onClick={() => void loadEarlier()}
+                >
+                  {props.loading
+                    ? t("loadingEarlier", { ns: "missions" })
+                    : t("loadEarlier", { ns: "missions" })}
+                </button>
+              )}
+              {props.loading && props.entries.length === 0 ? (
+                <p className="mission-work-conversation-empty">
+                  <SpinnerGap size={14} aria-hidden="true" />
+                  {t("streaming", { ns: "missions" })}
+                </p>
+              ) : props.entries.length === 0 ? (
+                <p className="mission-work-conversation-empty">
+                  {t("waitingForAgentConversation", { ns: "missions" })}
+                </p>
+              ) : (
+                conversationBlocks.map((block) => {
+                  if (block.type === "tools") {
+                    return (
+                      <MissionToolCallBlock
+                        collapsed={block.collapsed}
+                        entries={block.entries}
+                        key={`tools:${block.entries[0]!.id}`}
+                      />
+                    );
+                  }
+                  return block.item.type === "durable" ? (
+                    <MissionChatEntryView
+                      entry={block.item.entry}
+                      key={block.item.entry.id}
+                      userLabel={props.inputSenderName}
+                    />
+                  ) : null;
+                })
+              )}
+            </div>
+            {showJumpToLatest ? (
+              <button
+                className="mission-jump-latest"
+                type="button"
+                onClick={() => {
+                  const scroll = scrollRef.current;
+                  if (scroll !== null) scroll.scrollTop = scroll.scrollHeight;
+                  followLatestRef.current = true;
+                  setShowJumpToLatest(false);
+                }}
+              >
+                <CaretDown size={15} aria-hidden="true" />
+                {t("jumpLatest", { ns: "missions" })}
+              </button>
+            ) : null}
+          </div>
+        </div>
+      </aside>
+    </div>
+  );
+}
+
+function MissionMessageContent(props: { readonly source: string }) {
+  return (
+    <div className="mission-markdown">
+      <MarkdownContent source={props.source} codeBlockControls />
     </div>
   );
 }
@@ -1589,7 +2215,114 @@ function entryContentLength(entry: MissionChatEntry): number {
   if (entry.kind === "tool") {
     return (entry.inputPreview?.length ?? 0) + (entry.outputPreview?.length ?? 0);
   }
+  if (entry.kind === "agent_activity") return entry.label?.length ?? 0;
   return entry.content.length;
+}
+
+export function groupMissionConversationEntries(
+  entries: readonly MissionConversationEntry[],
+): MissionConversationBlock[] {
+  const blocks: MissionConversationBlock[] = [];
+  let pendingTools: Extract<MissionChatEntry, { kind: "tool" }>[] = [];
+  const flushTools = (collapsed: boolean): void => {
+    if (pendingTools.length === 0) return;
+    blocks.push({ type: "tools", entries: pendingTools, collapsed });
+    pendingTools = [];
+  };
+
+  for (const item of entries) {
+    if (item.type === "durable" && item.entry.kind === "tool") {
+      pendingTools.push(item.entry);
+      continue;
+    }
+    flushTools(
+      item.type === "durable" &&
+        (item.entry.kind === "assistant" || item.entry.kind === "thinking"),
+    );
+    blocks.push({ type: "entry", item });
+  }
+  flushTools(false);
+  return blocks;
+}
+
+export function applyMissionChatPatches(
+  snapshot: MissionChatSnapshot,
+  patches: readonly MissionChatPatch[],
+  revision: number,
+): MissionChatSnapshot | null {
+  const entries = [...snapshot.entries];
+  for (const patch of patches) {
+    const index =
+      patch.type === "entry.upsert" ? -1 : entries.findIndex((entry) => entry.id === patch.entryId);
+    if (patch.type === "entry.upsert") {
+      const existingIndex = entries.findIndex((entry) => entry.id === patch.entry.id);
+      if (existingIndex === -1) entries.push({ ...patch.entry });
+      else {
+        const existing = entries[existingIndex]!;
+        entries[existingIndex] = {
+          ...patch.entry,
+          ...(patch.entry.timelineSequence === undefined && existing.timelineSequence !== undefined
+            ? { timelineSequence: existing.timelineSequence }
+            : {}),
+          ...(patch.entry.executorName === undefined && existing.executorName !== undefined
+            ? { executorName: existing.executorName }
+            : {}),
+        };
+      }
+      continue;
+    }
+    if (index === -1) return null;
+    const entry = entries[index]!;
+    if (patch.type === "entry.streaming") {
+      if (entry.kind !== "assistant" && entry.kind !== "thinking") return null;
+      entries[index] = { ...entry, streaming: patch.streaming };
+      continue;
+    }
+    if (patch.field === "content") {
+      if (entry.kind !== "assistant" && entry.kind !== "thinking") return null;
+      entries[index] = {
+        ...entry,
+        content: truncateChatStream(`${entry.content}${patch.delta}`, 200_000),
+      };
+      continue;
+    }
+    if (entry.kind !== "tool") return null;
+    entries[index] = {
+      ...entry,
+      outputPreview: truncateChatStream(`${entry.outputPreview ?? ""}${patch.delta}`, 801),
+    };
+  }
+  return { ...snapshot, revision, entries };
+}
+
+export function shouldClearMissionThinkingPlaceholder(
+  chat: MissionChatSnapshot,
+  requestId: string,
+): boolean {
+  const userIndex = chat.entries.findIndex((entry) => entry.id === requestId);
+  if (userIndex < 0) return false;
+  if (chat.entries.slice(userIndex + 1).some((entry) => entry.kind !== "user")) return true;
+
+  const userEntry = chat.entries[userIndex];
+  return (
+    userEntry?.kind === "user" &&
+    userEntry.executionId !== undefined &&
+    userEntry.executionId === chat.execution?.id &&
+    !["queued", "running", "waiting"].includes(chat.execution.status)
+  );
+}
+
+export function shouldShowMissionThinkingPlaceholder(
+  chat: MissionChatSnapshot | null,
+  requestId: string | null,
+): boolean {
+  return (
+    requestId !== null && (chat === null || !shouldClearMissionThinkingPlaceholder(chat, requestId))
+  );
+}
+
+function truncateChatStream(value: string, maxLength: number): string {
+  return value.length <= maxLength ? value : `${value.slice(0, maxLength - 1).trimEnd()}…`;
 }
 
 function mergeLatestChatPage(
@@ -1668,6 +2401,15 @@ function toolStatusLabel(status: Extract<MissionChatEntry, { kind: "tool" }>["st
   }
 }
 
+function toolGroupStatus(
+  entries: readonly Extract<MissionChatEntry, { kind: "tool" }>[],
+): Extract<MissionChatEntry, { kind: "tool" }>["status"] {
+  if (entries.some((entry) => entry.status === "approval_required")) return "approval_required";
+  if (entries.some((entry) => entry.status === "running")) return "running";
+  if (entries.some((entry) => entry.status === "failed")) return "failed";
+  return "succeeded";
+}
+
 function formatInteractionData(value: unknown): string {
   if (typeof value === "string") return value;
   try {
@@ -1677,17 +2419,58 @@ function formatInteractionData(value: unknown): string {
   }
 }
 
-function workItemDepth(item: MissionWorkItem, items: readonly MissionWorkItem[]): number {
-  const byId = new Map(items.map((candidate) => [candidate.invocationId, candidate]));
+function workRecordDepth(record: MissionWorkRecord, records: readonly MissionWorkRecord[]): number {
+  const byKey = new Map(records.map((candidate) => [candidate.recordId, candidate]));
   let depth = 0;
-  let parentId = item.parentInvocationId;
+  let parentKey = record.parentRecordId;
   const visited = new Set<string>();
-  while (parentId !== undefined && !visited.has(parentId)) {
-    visited.add(parentId);
+  while (parentKey !== undefined && !visited.has(parentKey)) {
+    visited.add(parentKey);
     depth += 1;
-    parentId = byId.get(parentId)?.parentInvocationId;
+    parentKey = byKey.get(parentKey)?.parentRecordId;
   }
   return Math.min(depth, 6);
+}
+
+export function missionWorkRecordTitle(record: MissionWorkRecord): string {
+  if (record.fallbackOrdinal === undefined) return record.title;
+  return i18n.t("runtimeAgentFallbackName", {
+    ns: "missions",
+    number: record.fallbackOrdinal,
+  });
+}
+
+export function missionWorkInputSenderName(
+  record: MissionWorkRecord,
+  records: readonly MissionWorkRecord[],
+): string {
+  if (record.parentRecordId === undefined) {
+    return record.kind === "root"
+      ? i18n.t("you", { ns: "missions" })
+      : i18n.t("mainAgent", { ns: "missions" });
+  }
+  const parent = records.find((candidate) => candidate.recordId === record.parentRecordId);
+  return parent === undefined
+    ? i18n.t("mainAgent", { ns: "missions" })
+    : missionWorkRecordTitle(parent);
+}
+
+function workStatusLabel(status: MissionWorkRecord["status"]): string {
+  switch (status) {
+    case "queued":
+      return i18n.t("statusQueued", { ns: "missions" });
+    case "running":
+      return i18n.t("statusWorking", { ns: "missions" });
+    case "waiting":
+      return i18n.t("statusNeedsInput", { ns: "missions" });
+    case "succeeded":
+      return i18n.t("statusSucceeded", { ns: "missions" });
+    case "failed":
+      return i18n.t("statusFailed", { ns: "missions" });
+    case "cancelled":
+    case "interrupted":
+      return i18n.t("statusCancelled", { ns: "missions" });
+  }
 }
 
 function missionStatusLabel(mission: Mission | MissionSummary): string {

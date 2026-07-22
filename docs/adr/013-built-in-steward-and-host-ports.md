@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Superseded by [ADR 014](./014-desktop-home-mission-entry-and-system-experts.md)
 
 ## Context
 

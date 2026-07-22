@@ -7,7 +7,10 @@ import type {
   UpdateExpertDefinition,
 } from "../../../../shared/desktop-api.ts";
 
-export type ExpertModel = ExpertDefinition["model"];
+export type ExpertModel = Extract<
+  ExpertDefinition["executionProfile"],
+  { readonly mode: "pinned" }
+>["model"];
 export type StudioView =
   | "experts"
   | "teams"
@@ -25,8 +28,13 @@ export type ExpertRecord = {
   readonly version: string;
   readonly scope: string;
   readonly instructions: string;
-  readonly model: ExpertModel;
+  readonly additionalInstructions: string;
+  readonly origin: ExpertDefinition["origin"];
+  readonly readOnly: boolean;
+  readonly customized: boolean;
+  readonly model: ExpertModel | null;
   readonly capabilities: ExpertDefinition["capabilities"];
+  readonly toolApprovals: ExpertDefinition["toolApprovals"];
   readonly skills: number;
   readonly tools: number;
   readonly mcpServers: number;
@@ -52,8 +60,13 @@ export const emptyDraft = (): ExpertDraft => ({
   version: "0.1.0",
   scope: "",
   instructions: "",
+  additionalInstructions: "",
+  origin: "project",
+  readOnly: false,
+  customized: false,
   model: null,
   capabilities: [],
+  toolApprovals: {},
   skills: 0,
   tools: 0,
   mcpServers: 0,
@@ -75,13 +88,28 @@ export function toExpertRecord(definition: ExpertDefinition): ExpertRecord {
     version: definition.version,
     scope: definition.scope,
     instructions: definition.instructions ?? "",
-    model: definition.model,
+    additionalInstructions: definition.additionalInstructions,
+    origin: definition.origin,
+    readOnly: definition.readOnly,
+    customized: definition.customized,
+    model: definition.executionProfile.mode === "pinned" ? definition.executionProfile.model : null,
     capabilities: definition.capabilities,
-    skills: definition.capabilities.filter((reference) => reference.kind === "skill").length,
-    tools: definition.capabilities
-      .filter((reference) => reference.kind === "tools")
-      .reduce((total, reference) => total + reference.toolNames.length, 0),
-    mcpServers: definition.capabilities.filter((reference) => reference.kind === "tools").length,
+    toolApprovals: definition.toolApprovals,
+    skills:
+      definition.capabilities.filter((reference) => reference.kind === "skill").length +
+      (definition.opaqueCapabilities ?? []).filter((reference) => reference.kind === "skill")
+        .length,
+    tools:
+      definition.capabilities
+        .filter((reference) => reference.kind === "tools")
+        .reduce((total, reference) => total + reference.toolNames.length, 0) +
+      (definition.opaqueCapabilities ?? [])
+        .filter((reference) => reference.kind === "tools")
+        .reduce((total, reference) => total + (reference.tools?.length ?? 0), 0),
+    mcpServers:
+      definition.capabilities.filter((reference) => reference.kind === "tools").length +
+      (definition.opaqueCapabilities ?? []).filter((reference) => reference.kind === "tools")
+        .length,
     contextStoreMounts: definition.contextStoreMounts,
     resourceTools: definition.resourceTools,
     plugins: definition.plugins,
@@ -91,17 +119,16 @@ export function toExpertRecord(definition: ExpertDefinition): ExpertRecord {
   };
 }
 
-export function isBuiltInExpert(expert: Pick<ExpertRecord, "tags">): boolean {
-  return isBuiltInTags(expert.tags);
-}
-
-export function isBuiltInTags(tags: readonly string[]): boolean {
-  return tags.some((tag) => tag === "builtin" || tag === "built-in");
+export function isBuiltInExpert(expert: Pick<ExpertRecord, "origin" | "readOnly">): boolean {
+  return expert.origin === "built-in";
 }
 
 export function toPersistedInput(
   expert: ExpertRecord,
 ): CreateExpertDefinition | UpdateExpertDefinition {
+  if (expert.readOnly || expert.model === null) {
+    throw new Error("Built-in Experts cannot be persisted by the Desktop editor.");
+  }
   const existing = expert.persisted;
   return {
     ...(existing === undefined ? { id: expert.id } : {}),
@@ -113,11 +140,12 @@ export function toPersistedInput(
     instructions: expert.instructions,
     model: expert.model,
     capabilities: [...expert.capabilities],
-    toolApprovals: existing?.toolApprovals ?? {},
+    toolApprovals: expert.toolApprovals,
     plugins: [...expert.plugins],
     contextStoreMounts: [...expert.contextStoreMounts],
     resourceTools: [...expert.resourceTools],
     opaqueCapabilities: [...(existing?.opaqueCapabilities ?? [])],
+    opaqueContextStores: [...(existing?.opaqueContextStores ?? [])],
   };
 }
 

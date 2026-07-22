@@ -1,4 +1,5 @@
 import { ipcMain } from "electron";
+import { listPiCompatibilityProfiles } from "@pragma/runtime-pi";
 
 import { testProviderModel } from "./model-connectivity.ts";
 import { discoverProviderModels } from "./model-discovery.ts";
@@ -18,6 +19,7 @@ export function installModelProviderHandlers(
   } = {},
 ): void {
   ipcMain.handle("model-providers:settings", () => store.getSnapshot());
+  ipcMain.handle("model-providers:compatibility-profiles", () => listPiCompatibilityProfiles());
   ipcMain.handle("model-providers:list", () => store.list());
   ipcMain.handle("model-providers:create", (_event, input: unknown) =>
     store.create(CreateModelProviderSchema.parse(input)),
@@ -58,10 +60,9 @@ export function installModelProviderHandlers(
         };
       }
       const result = await testProviderModel({
-        baseUrl: provider.baseUrl,
-        apiKey: provider.apiKey,
-        protocol: provider.api,
+        provider,
         model: { ...model, capabilitiesSource: "provider" },
+        ...(request.thinkingLevel === undefined ? {} : { thinkingLevel: request.thinkingLevel }),
       });
       await store.recordVerification(request.providerId, resolved.revision, result);
       return result;

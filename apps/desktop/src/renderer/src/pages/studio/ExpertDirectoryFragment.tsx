@@ -1,8 +1,10 @@
 import {
   ArrowLeft,
+  ArrowCounterClockwise,
   BookOpenText,
   CaretDown,
   CaretRight,
+  Copy,
   Info,
   Folder,
   MagnifyingGlass,
@@ -19,6 +21,7 @@ import { StudioScreenFrame } from "./StudioScreenFrame.tsx";
 import { DeleteConfirmationDialog } from "./DeleteConfirmationDialog.tsx";
 import { isBuiltInExpert, type ExpertRecord } from "./studio-model.ts";
 import { errorMessage } from "../../lib/errors.ts";
+import { localizeSystemExpertCopy } from "../../lib/system-expert-copy.ts";
 
 const DESCRIPTION_PREVIEW_LENGTH = 200;
 const INSTRUCTIONS_PREVIEW_LENGTH = 420;
@@ -36,12 +39,20 @@ export function ExpertDirectoryFragment(props: {
   readonly onOpen: (expert: ExpertRecord) => void;
 }) {
   const { t } = useTranslation("studio");
+  const { t: tCommon } = useTranslation("common");
   const [query, setQuery] = useState("");
-  const matchingExperts = props.experts.filter((expert) =>
-    `${expert.name} ${expert.description} ${expert.tags.join(" ")}`
-      .toLowerCase()
-      .includes(query.trim().toLowerCase()),
-  );
+  const pragmaCopy = {
+    name: tCommon("builtInExperts.pragma.name"),
+    description: tCommon("builtInExperts.pragma.description"),
+    scope: tCommon("builtInExperts.pragma.scope"),
+  };
+  const matchingExperts = props.experts
+    .map((expert) => ({ expert, copy: localizeSystemExpertCopy(expert, pragmaCopy) }))
+    .filter(({ expert, copy }) =>
+      `${copy.name} ${copy.description} ${expert.tags.join(" ")}`
+        .toLowerCase()
+        .includes(query.trim().toLowerCase()),
+    );
 
   return (
     <StudioScreenFrame
@@ -84,7 +95,7 @@ export function ExpertDirectoryFragment(props: {
           <span className="expert-column-scope">{t("scope")}</span>
           <span className="expert-column-action" />
         </div>
-        {matchingExperts.map((expert) => {
+        {matchingExperts.map(({ expert, copy }) => {
           const ExpertIcon = expert.icon;
           return (
             <button
@@ -98,8 +109,8 @@ export function ExpertDirectoryFragment(props: {
                   <ExpertIcon size={24} weight="regular" />
                 </span>
                 <span>
-                  <strong>{expert.name}</strong>
-                  <small>{expert.description}</small>
+                  <strong>{copy.name}</strong>
+                  <small>{copy.description}</small>
                 </span>
               </span>
               <span className="expert-tag-list expert-column-tags">
@@ -107,7 +118,7 @@ export function ExpertDirectoryFragment(props: {
                   <em key={tag}>{tag}</em>
                 ))}
               </span>
-              <span className="expert-list-scope expert-column-scope">{expert.scope}</span>
+              <span className="expert-list-scope expert-column-scope">{copy.scope}</span>
               <CaretRight className="expert-column-action" size={19} aria-hidden="true" />
             </button>
           );
@@ -123,16 +134,26 @@ export function ExpertDetailFragment(props: {
   readonly contextStores: readonly ContextStore[];
   readonly onBack: () => void;
   readonly onEdit: () => void;
+  readonly onUseAsTemplate: () => void;
   readonly onConfigureContext: () => void;
   readonly onTryInSession: () => void;
   readonly onDelete: () => Promise<void>;
+  readonly onReset: () => Promise<void>;
 }) {
   const { t } = useTranslation("studio");
+  const { t: tCommon } = useTranslation("common");
   const ExpertIcon = props.expert.icon;
+  const copy = localizeSystemExpertCopy(props.expert, {
+    name: tCommon("builtInExperts.pragma.name"),
+    description: tCommon("builtInExperts.pragma.description"),
+    scope: tCommon("builtInExperts.pragma.scope"),
+  });
   const [instructionsExpanded, setInstructionsExpanded] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [resetConfirmOpen, setResetConfirmOpen] = useState(false);
+  const [resetting, setResetting] = useState(false);
   const hasLongInstructions = props.expert.instructions.trim().length > INSTRUCTIONS_PREVIEW_LENGTH;
   const displayedInstructions =
     hasLongInstructions && !instructionsExpanded
@@ -148,6 +169,19 @@ export function ExpertDetailFragment(props: {
       setConfirmOpen(false);
     } finally {
       setDeleting(false);
+    }
+  };
+  const reset = async () => {
+    setResetting(true);
+    setDeleteError(null);
+    try {
+      await props.onReset();
+      setResetConfirmOpen(false);
+    } catch (cause) {
+      setDeleteError(errorMessage(cause));
+      setResetConfirmOpen(false);
+    } finally {
+      setResetting(false);
     }
   };
   return (
@@ -167,11 +201,11 @@ export function ExpertDetailFragment(props: {
         </span>
         <div className="expert-detail-title">
           <div>
-            <h1 id="expert-name">{props.expert.name}</h1>
+            <h1 id="expert-name">{copy.name}</h1>
             <span className="version-label">v{props.expert.version}</span>
             <span className="expert-id-label">ID: {props.expert.id}</span>
           </div>
-          <p>{truncateText(props.expert.description, DESCRIPTION_PREVIEW_LENGTH)}</p>
+          <p>{truncateText(copy.description, DESCRIPTION_PREVIEW_LENGTH)}</p>
           <div className="expert-tag-list">
             {props.expert.tags.map((tag) => (
               <em key={tag}>{tag}</em>
@@ -179,10 +213,34 @@ export function ExpertDetailFragment(props: {
           </div>
         </div>
         <div className="detail-actions">
-          <button className="primary-button" type="button" onClick={props.onEdit}>
-            <PencilSimple size={17} aria-hidden="true" />
-            {t("editExpert")}
-          </button>
+          {!props.expert.readOnly || isBuiltInExpert(props.expert) ? (
+            <button className="primary-button" type="button" onClick={props.onEdit}>
+              <PencilSimple size={17} aria-hidden="true" />
+              {t(isBuiltInExpert(props.expert) ? "customizeBuiltInExpert" : "editExpert")}
+            </button>
+          ) : null}
+          {isBuiltInExpert(props.expert) ? (
+            <button
+              className="secondary-button"
+              type="button"
+              title={t("templateExcludesSystemCapabilities")}
+              onClick={props.onUseAsTemplate}
+            >
+              <Copy size={17} aria-hidden="true" />
+              {t("useAsTemplate")}
+            </button>
+          ) : null}
+          {isBuiltInExpert(props.expert) ? (
+            <button
+              className="secondary-button"
+              type="button"
+              disabled={!props.expert.customized}
+              onClick={() => setResetConfirmOpen(true)}
+            >
+              <ArrowCounterClockwise size={17} aria-hidden="true" />
+              {t("resetBuiltInExpert")}
+            </button>
+          ) : null}
           <button className="secondary-button" type="button" onClick={props.onTryInSession}>
             <Play size={17} aria-hidden="true" />
             {t("trySession")}
@@ -209,10 +267,12 @@ export function ExpertDetailFragment(props: {
       ) : null}
       <section className="expert-scope" aria-labelledby="expert-scope-heading">
         <h2 id="expert-scope-heading">{t("scope")}</h2>
-        <p>{props.expert.scope}</p>
+        <p>{copy.scope}</p>
       </section>
       <section className="instructions-preview">
-        <h2>{t("instructions")}</h2>
+        <h2>
+          {isBuiltInExpert(props.expert) ? t("builtInFoundationInstructions") : t("instructions")}
+        </h2>
         <p>{displayedInstructions || t("noInstructions")}</p>
         {hasLongInstructions ? (
           <button
@@ -225,10 +285,19 @@ export function ExpertDetailFragment(props: {
           </button>
         ) : null}
       </section>
+      {isBuiltInExpert(props.expert) ? (
+        <section className="instructions-preview">
+          <h2>{t("additionalInstructions")}</h2>
+          <p>{props.expert.additionalInstructions.trim() || t("noAdditionalInstructions")}</p>
+        </section>
+      ) : null}
       <section className="expert-capabilities" aria-label={t("expertCapabilities")}>
         <div>
           <h2>{t("model")}</h2>
-          <p>{props.expert.model?.modelId ?? t("notConfigured")}</p>
+          <p>
+            {props.expert.model?.modelId ??
+              t(isBuiltInExpert(props.expert) ? "systemDefault" : "notConfigured")}
+          </p>
         </div>
         <div>
           <h2>{t("capabilities")}</h2>
@@ -246,9 +315,11 @@ export function ExpertDetailFragment(props: {
             <h2 id="expert-context-heading">{t("context")}</h2>
             <p>{t("contextDescription")}</p>
           </div>
-          <button className="secondary-button" type="button" onClick={props.onConfigureContext}>
-            <Plus size={16} /> {t("configureContext")}
-          </button>
+          {!props.expert.readOnly || isBuiltInExpert(props.expert) ? (
+            <button className="secondary-button" type="button" onClick={props.onConfigureContext}>
+              <Plus size={16} /> {t("configureContext")}
+            </button>
+          ) : null}
         </header>
         {props.expert.contextStoreMounts.length === 0 ? (
           <p className="expert-context-empty">{t("noContext")}</p>
@@ -293,16 +364,34 @@ export function ExpertDetailFragment(props: {
           <Info size={19} aria-hidden="true" /> {t("approvalNote")}
         </p>
       ) : null}
+      {isBuiltInExpert(props.expert) ? (
+        <p className="approval-note">
+          <Info size={19} aria-hidden="true" /> {t("templateExcludesSystemCapabilities")}
+        </p>
+      ) : null}
       {confirmOpen ? (
         <DeleteConfirmationDialog
           title={t("deleteExpert")}
-          description={t("deleteExpertDescription", { name: props.expert.name })}
+          description={t("deleteExpertDescription", { name: copy.name })}
           cancelLabel={t("cancel")}
           confirmLabel={t("deleteExpertAction")}
           deletingLabel={t("deleting")}
           busy={deleting}
           onCancel={() => setConfirmOpen(false)}
           onConfirm={() => void remove()}
+        />
+      ) : null}
+      {resetConfirmOpen ? (
+        <DeleteConfirmationDialog
+          title={t("resetBuiltInExpertConfirm")}
+          description={t("resetBuiltInExpertDescription", { name: copy.name })}
+          cancelLabel={t("cancel")}
+          confirmLabel={t("resetBuiltInExpert")}
+          deletingLabel={t("resettingBuiltInExpert")}
+          busy={resetting}
+          action="reset"
+          onCancel={() => setResetConfirmOpen(false)}
+          onConfirm={() => void reset()}
         />
       ) : null}
     </StudioScreenFrame>

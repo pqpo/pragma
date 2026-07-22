@@ -1,6 +1,6 @@
 import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { build } from "esbuild";
 
@@ -30,10 +30,11 @@ for (const pluginDirectory of pluginDirectories) {
   }
   const sourceEntry = join(pluginDirectory, "src", "index.ts");
   const targetDirectory = join(outputRoot, manifest.id, manifest.version);
-  await mkdir(targetDirectory, { recursive: true });
+  const targetEntry = join(targetDirectory, "src", "index.mjs");
+  await mkdir(dirname(targetEntry), { recursive: true });
   await build({
     entryPoints: [sourceEntry],
-    outfile: join(targetDirectory, "index.mjs"),
+    outfile: targetEntry,
     bundle: true,
     format: "esm",
     platform: "node",
@@ -47,7 +48,7 @@ for (const pluginDirectory of pluginDirectories) {
   });
   const packagedManifest = {
     ...manifest,
-    runtime: { ...manifest.runtime, entry: "./index.mjs" },
+    runtime: { ...manifest.runtime, entry: "./src/index.mjs" },
   };
   await writeFile(
     join(targetDirectory, "plugin.json"),
@@ -66,4 +67,10 @@ for (const pluginDirectory of pluginDirectories) {
       2,
     )}\n`,
   );
+  const packagedModule = await import(
+    `${pathToFileURL(targetEntry).href}?packageFingerprint=${Date.now()}`
+  );
+  if (JSON.stringify(packagedModule.default?.manifest) !== JSON.stringify(packagedManifest)) {
+    throw new Error(`Built-in plugin export manifest does not match its package: ${manifest.id}`);
+  }
 }

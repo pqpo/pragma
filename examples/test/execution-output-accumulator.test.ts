@@ -123,6 +123,8 @@ function output(channel: ExecutionOutputItem["channel"], delta: string): Executi
     invocationId: "invocation",
     executorId: "expert",
     contextId: "context",
+    runId: "run",
+    source: { kind: "agent", runId: "run", path: [] },
     channel,
     delta,
     occurredAt: new Date().toISOString(),

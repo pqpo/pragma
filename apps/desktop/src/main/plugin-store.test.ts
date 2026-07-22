@@ -50,6 +50,7 @@ describe("PluginStore", () => {
     });
     const resolved = await store.resolve({ ref: installed.ref });
     expect(resolved.userConfig).toEqual({ enabled: false, token: "secret-value" });
+    expect(resolved.cachePolicy).toBe("immutable");
     expect(resolved.packageFingerprint).toMatch(/^[a-f0-9]{64}$/);
     expect(resolved.verificationFingerprint).toMatch(/^[a-f0-9]{64}$/);
     await expect(store.inspect({ ref: installed.ref })).resolves.toMatchObject({
@@ -95,6 +96,33 @@ describe("PluginStore", () => {
     });
     await expect(readFile(join(paths.pluginStateRoot(), "catalog.json"), "utf8")).rejects.toThrow();
     expect(await readFile(join(resolved.source, "index.mjs"), "utf8")).toContain("export default");
+  });
+
+  it("marks only product-shipped plugins as host-managed cache sources", async () => {
+    const root = await temporaryRoot();
+    const builtInRoot = join(root, "built-ins", "example", "1.0.0");
+    await mkdir(builtInRoot, { recursive: true });
+    await Promise.all(
+      Object.entries(pluginFiles()).map(async ([path, contents]) => {
+        await writeFile(join(builtInRoot, path), contents);
+      }),
+    );
+    const credentials = memoryCredentials();
+    await credentials.set("binding:test", "secret-value");
+    const store = createPluginStore({
+      builtInPluginsPath: join(root, "built-ins"),
+      userPluginsPath: join(root, "plugins"),
+      paths: new PragmaPaths({ pragmaHome: root }),
+      credentials,
+      isReferenced: async () => false,
+    });
+
+    await expect(
+      store.resolve({
+        ref: "plugin:example@1.0.0",
+        secretBindings: { token: "binding:test" },
+      }),
+    ).resolves.toMatchObject({ cachePolicy: "host-managed" });
   });
 
   it("stores concurrent plugin defaults in independent config files and ignores legacy catalog", async () => {

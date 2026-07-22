@@ -15,6 +15,7 @@ import {
   createFileExecutionStore,
   createFileExpertSessionStore,
   createStaticRuntimeResolver,
+  ContextSystem,
   defineExpert,
   defineExpertTeam,
   defineContextIdResolver,
@@ -22,6 +23,7 @@ import {
   defineRuntimeDriver,
   fingerprintExpertExecutionDefinition,
   PragmaPaths,
+  StaticContextStore,
   type AgentMessageUsage,
   type ExecutionEvent,
   type ExpertAgentManagedTool,
@@ -44,6 +46,7 @@ interface FakeRuntimeStats {
   executionIds: string[];
   sessionModelSelections: Array<RuntimeModelSelection | undefined>;
   turnModelSelections: Array<RuntimeModelSelection | undefined>;
+  sessionContexts: RuntimeDriverSessionContext[];
 }
 
 function createFakeRuntimeStats(): FakeRuntimeStats {
@@ -55,6 +58,7 @@ function createFakeRuntimeStats(): FakeRuntimeStats {
     executionIds: [],
     sessionModelSelections: [],
     turnModelSelections: [],
+    sessionContexts: [],
   };
 }
 
@@ -82,6 +86,7 @@ function createFakeRuntime(options: FakeRuntimeOptions = {}) {
     createSession: async (context) => {
       if (stats !== undefined) stats.createSessionCalls += 1;
       if (stats !== undefined) stats.sessionModelSelections.push(context.request.modelSelection);
+      if (stats !== undefined) stats.sessionContexts.push(context);
       if (options.createDelayMs !== undefined) {
         await new Promise<void>((resolve) => setTimeout(resolve, options.createDelayMs));
       }
@@ -467,7 +472,64 @@ describe("ExpertSession", () => {
     };
     expect(stats.sessionModelSelections).toEqual([selection]);
     expect(stats.turnModelSelections).toEqual([selection, override]);
+    const state = await session.getState();
+    expect(state.contexts[state.rootContextId]?.modelSelection).toEqual(override);
     await session.close();
+  });
+
+  it("keeps a resumed Runtime Session model when the Expert default changes", async () => {
+    const home = await mkdtemp(join(tmpdir(), "pragma-resumed-model-selection-"));
+    const originalStats = createFakeRuntimeStats();
+    const originalApp = createPragma({
+      pragmaHome: home,
+      runtimes: createStaticRuntimeResolver({
+        runtimes: [
+          createFakeRuntime({ stats: originalStats, closeError: "simulate process exit" }),
+        ],
+        defaultRuntimeId: "fake",
+      }),
+    });
+    const expert = async (providerId: string, modelId: string) =>
+      await defineExpert({
+        id: "resumed-model-selection",
+        name: "Resumed Model Selection",
+        description: "Resumed model selection test",
+        tags: [],
+        version: "1.0.0",
+        scope: "test",
+        workspace: home,
+        models: { default: { model: { providerId, modelId } } },
+      });
+    const original = await expert("openai", "codex-model");
+    const session = await originalApp.experts.createSession(original);
+    await (
+      await session.prompt("first", { requestId: "resumed-model-first" })
+    ).result;
+    const persisted = await session.getState();
+    expect(persisted.contexts[persisted.rootContextId]?.snapshot).toBeDefined();
+    await expect(session.close()).rejects.toThrow("simulate process exit");
+
+    const recoveredStats = createFakeRuntimeStats();
+    const recoveryApp = createPragma({
+      pragmaHome: home,
+      runtimes: createStaticRuntimeResolver({
+        runtimes: [createFakeRuntime({ stats: recoveredStats })],
+        defaultRuntimeId: "fake",
+      }),
+    });
+    const changed = await expert("deepseek", "deepseek-v4-flash");
+    const recovered = await recoveryApp.experts.resumeSession(changed, {
+      sessionId: session.sessionId,
+    });
+    await (
+      await recovered.prompt("second", { requestId: "resumed-model-second" })
+    ).result;
+
+    expect(recoveredStats.restoreSessionCalls).toBe(1);
+    expect(recoveredStats.turnModelSelections).toEqual([
+      { model: { providerId: "openai", modelId: "codex-model" } },
+    ]);
+    await recovered.close();
   });
 
   it("creates one durable root Context before the first prompt", async () => {
@@ -548,6 +610,13 @@ describe("ExpertSession", () => {
       ]),
     );
     expect(sessionEvents.some((event) => event.type === "runtime.stream")).toBe(false);
+    expect(
+      sessionEvents.some(
+        (event) =>
+          event.type === "runtime.event" &&
+          (event.data as { type?: unknown }).type === "message.delta",
+      ),
+    ).toBe(false);
     await Promise.all([eventSubscription.close(), outputSubscription.close()]);
     await session.close();
   });
@@ -775,7 +844,7 @@ describe("ExpertSession", () => {
     await sessions.releaseLease("leased-session", "owner-b");
   });
 
-  it("rejects recovery when a Team resolver descriptor changes", async () => {
+  it("resumes an existing Session when its Team resolver descriptor changes", async () => {
     const home = await mkdtemp(join(tmpdir(), "pragma-session-fingerprint-"));
     const executions = createFileExecutionStore({ pragmaHome: home });
     const sessions = createFileExpertSessionStore({ executions, pragmaHome: home });
@@ -837,9 +906,15 @@ describe("ExpertSession", () => {
       updatedAt: now,
     });
 
-    await expect(
-      app.experts.resumeSession(team("2.0.0"), { sessionId: "fingerprint-session" }),
-    ).rejects.toThrow("fingerprint mismatch");
+    const resumed = await app.experts.resumeSession(team("2.0.0"), {
+      sessionId: "fingerprint-session",
+    });
+
+    expect(resumed.sessionId).toBe("fingerprint-session");
+    expect((await sessions.get("fingerprint-session"))?.definitionFingerprint).toBe(
+      fingerprintExpertExecutionDefinition(original),
+    );
+    await resumed.close();
   });
 
   it("reuses the Runtime Session after a failed prompt", async () => {
@@ -854,6 +929,26 @@ describe("ExpertSession", () => {
     expect(stats.restoreSessionCalls).toBe(0);
     expect(stats.executionIds).toEqual([failed.executionId, recovered.executionId]);
     await session.close();
+  });
+
+  it("does not emit an unhandled rejection for an unobserved historical turn result", async () => {
+    const { app, expert } = await trackedFixture({ failQuery: "fail" });
+    const session = await app.experts.createSession(expert);
+    const failed = await session.prompt("fail", { requestId: "unobserved-history" });
+    await expect(failed.result).rejects.toThrow("fake turn failed");
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => unhandled.push(reason);
+    process.on("unhandledRejection", onUnhandled);
+
+    try {
+      const historicalTurns = await session.listTurns();
+      expect(historicalTurns).toHaveLength(1);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+      await session.close();
+    }
   });
 
   it("cancels only the active submission and reuses its Runtime Session", async () => {
@@ -1634,7 +1729,7 @@ describe("FlowExecution", () => {
   it("persists a wall-clock timeout and aborts the active Task", async () => {
     const { app } = await fixture();
     let observedAbort = false;
-    const flow = defineFlow({ id: "timeout-flow", version: "1.0.0", timeoutMs: 40 });
+    const flow = defineFlow({ id: "timeout-flow", version: "1.0.0", timeoutMs: 1_000 });
     const task = flow.task({
       id: "wait",
       version: "1.0.0",
@@ -2629,6 +2724,51 @@ describe("Expert delegation declarations", () => {
     );
   });
 
+  it("bounds Expert waits and applies the 10-minute default", async () => {
+    const { expert } = await fixture();
+    const launcher = createAgentLauncher({ experts: [expert] });
+    const wait = launcher.tools.find((tool) => tool.name === "wait_experts");
+    if (wait === undefined) throw new Error("wait_experts tool is missing.");
+
+    expect(
+      (wait.inputSchema as { properties: Record<string, unknown> }).properties["timeoutMs"],
+    ).toEqual({
+      type: "integer",
+      minimum: 30_000,
+      maximum: 3_600_000,
+      default: 600_000,
+    });
+
+    let receivedTimeoutMs: number | undefined;
+    const context = {
+      execution: {
+        executionId: "wait-timeout-test",
+        invocationId: "wait-timeout-root",
+        depth: 0,
+        waitExperts: async (request: { readonly timeoutMs?: number | undefined }) => {
+          receivedTimeoutMs = request.timeoutMs;
+          return {};
+        },
+      },
+    };
+
+    await wait.call({ invocationIds: ["child"] }, undefined, context);
+    expect(receivedTimeoutMs).toBe(600_000);
+
+    await wait.call({ invocationIds: ["child"], timeoutMs: 30_000 }, undefined, context);
+    expect(receivedTimeoutMs).toBe(30_000);
+
+    await wait.call({ invocationIds: ["child"], timeoutMs: 3_600_000 }, undefined, context);
+    expect(receivedTimeoutMs).toBe(3_600_000);
+
+    await expect(
+      wait.call({ invocationIds: ["child"], timeoutMs: 29_999 }, undefined, context),
+    ).rejects.toThrow("timeoutMs must be an integer between 30000 and 3600000");
+    await expect(
+      wait.call({ invocationIds: ["child"], timeoutMs: 3_600_001 }, undefined, context),
+    ).rejects.toThrow("timeoutMs must be an integer between 30000 and 3600000");
+  });
+
   it("resolves ExpertTeam allowlists through the shared launcher definition", async () => {
     const { home, expert: lead } = await fixture();
     const member = await defineExpert({
@@ -2699,6 +2839,98 @@ describe("Expert delegation declarations", () => {
     expect(team.delegation.runtimeByExpert).toEqual(new Map());
   });
 
+  it("loads optional Team instructions into every participant without mutating Experts", async () => {
+    const home = await mkdtemp(join(tmpdir(), "pragma-team-instructions-"));
+    const stats = createFakeRuntimeStats();
+    const runtime = createFakeRuntime({ stats });
+    const app = createPragma({
+      pragmaHome: home,
+      runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
+    });
+    const projectContext = new ContextSystem({
+      stores: {
+        project: new StaticContextStore([
+          {
+            id: "PROJECT.md",
+            content: "Existing project context.",
+            metadata: { trigger: "always_on" },
+          },
+        ]),
+      },
+      roots: [{ namespace: "project" }],
+    });
+    const lead = await defineExpert({
+      id: "lead",
+      name: "Lead",
+      description: "Coordinates work",
+      tags: [],
+      version: "1.0.0",
+      scope: "test",
+      workspace: home,
+      pragmaHome: home,
+      contextSystem: projectContext,
+    });
+    const member = await defineExpert({
+      id: "member",
+      name: "Member",
+      description: "Completes delegated work",
+      tags: [],
+      version: "1.0.0",
+      scope: "test",
+      workspace: home,
+      pragmaHome: home,
+      contextSystem: projectContext,
+    });
+    const instructions = "Surface uncertainty early and verify every deliverable.";
+    const team = defineExpertTeam({
+      id: "quality_team",
+      version: "1.0.0",
+      instructions,
+      coordinator: lead,
+      members: [member],
+      delegation: {},
+    });
+
+    const teamSession = await app.experts.createSession(team);
+    await (
+      await teamSession.prompt("deliver", { requestId: "team-instructions" })
+    ).result;
+    await teamSession.close();
+
+    const teamContexts = stats.sessionContexts.filter((context) =>
+      ["lead", "member"].includes(context.agent.id),
+    );
+    expect(teamContexts).toHaveLength(2);
+    for (const context of teamContexts) {
+      expect(context.agentContext.startupMessages).toEqual([
+        expect.objectContaining({
+          role: "user",
+          content: expect.stringContaining(instructions),
+        }),
+      ]);
+      expect(context.agentContext.startupMessages[0]?.content).toContain("id: TEAM.md");
+      expect(context.agentContext.startupMessages[0]?.content).toContain(
+        "namespace: expert-team:quality_team@1.0.0",
+      );
+      expect(context.agentContext.startupMessages[0]?.content).toContain(
+        "Existing project context.",
+      );
+    }
+
+    stats.sessionContexts.length = 0;
+    const standalone = await app.experts.createSession(lead);
+    await (
+      await standalone.prompt("work alone", { requestId: "standalone" })
+    ).result;
+    await standalone.close();
+    expect(stats.sessionContexts[0]?.agentContext.startupMessages[0]?.content).toContain(
+      "Existing project context.",
+    );
+    expect(stats.sessionContexts[0]?.agentContext.startupMessages[0]?.content).not.toContain(
+      instructions,
+    );
+  });
+
   it("validates allowlists and limits", async () => {
     const { expert } = await fixture();
     expect(() =>
@@ -2739,7 +2971,7 @@ function sessionRootContext(
   now: string,
 ) {
   return {
-    schemaVersion: "pragma.runtime-context/v3" as const,
+    schemaVersion: "pragma.runtime-context/v4" as const,
     contextId,
     owner: { type: "expert-session" as const, ownerId: sessionId },
     origin: { type: "expert-session" as const, sessionId },

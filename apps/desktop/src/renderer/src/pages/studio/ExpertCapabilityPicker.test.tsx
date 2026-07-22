@@ -58,9 +58,11 @@ describe("ExpertCapabilityPicker", () => {
         resourceTools={[]}
         contextStoreMounts={[]}
         capabilityReferences={[]}
+        toolApprovals={{}}
         onResourceToolsChange={() => undefined}
         onContextStoreMountsChange={() => undefined}
         onCapabilityReferencesChange={() => undefined}
+        onToolApprovalsChange={() => undefined}
       />,
     );
 

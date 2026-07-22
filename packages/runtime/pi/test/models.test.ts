@@ -4,7 +4,9 @@ import type { ModelProviderDefinition } from "@pragma/core";
 import {
   createPiModelProviderConverter,
   createPiModelRegistry,
+  createPiModelRuntime,
   normalizePiRuntimeModels,
+  registerPiModelProvider,
   resolvePiThinkingLevel,
   resolveRequiredRuntimeModel,
 } from "../src/models.ts";
@@ -13,6 +15,7 @@ describe("PI runtime model resolution", () => {
   it("uses provider and model as the canonical identity", async () => {
     const provider = {
       id: "configured-provider",
+      catalogId: "custom-openai",
       models: [testModel("vendor/model-id")],
       baseUrl: "https://models.example.com/v1",
       apiKey: "configured-api-key",
@@ -33,6 +36,28 @@ describe("PI runtime model resolution", () => {
         "agent default",
       ),
     ).toThrow("Unknown agent default model: other/vendor/model-id");
+  });
+
+  it("rebinds a provider inside one native model runtime", async () => {
+    const original = {
+      id: "configured-provider",
+      catalogId: "custom-openai",
+      models: [testModel("model-a")],
+      baseUrl: "https://models.example.com/v1",
+      apiKey: "key-a",
+      api: "openai-completions" as const,
+    };
+    const { modelRegistry, modelRuntime } = await createPiModelRuntime([original]);
+    registerPiModelProvider(modelRuntime, {
+      ...original,
+      models: [testModel("model-b")],
+      apiKey: "key-b",
+    });
+
+    expect(modelRegistry.getAll().filter((model) => model.provider === original.id)).toEqual([
+      expect.objectContaining({ provider: original.id, id: "model-b" }),
+    ]);
+    expect(await modelRegistry.getApiKeyForProvider(original.id)).toBe("key-b");
   });
 
   it("intersects declared thinking levels with PI capabilities", () => {
@@ -65,22 +90,19 @@ describe("PI runtime model resolution", () => {
     const converter = createPiModelProviderConverter();
     const provider: ModelProviderDefinition = {
       id: "provider",
+      catalogId: "custom-openai",
       displayName: "Provider",
       api: "openai-completions",
       baseUrl: "https://models.example.com/v1",
+      compatibilityProfileId: "pi.openai-modern@v1",
       models: [
         {
           ...testModel("reasoning-model"),
           name: "Reasoning Model",
           reasoning: true,
-          thinkingLevelMap: {
-            off: null,
-            minimal: null,
-            low: null,
-            medium: null,
-            high: "provider-high",
-            xhigh: null,
-            max: null,
+          thinking: {
+            supportedLevels: ["off", "high"],
+            defaultLevel: "high",
           },
         },
       ],
@@ -90,7 +112,13 @@ describe("PI runtime model resolution", () => {
       expect.objectContaining({
         id: "reasoning-model",
         provider: { kind: "registered", id: "provider", displayName: "Provider" },
-        thinking: { supportedLevels: [{ value: "high", label: "High" }] },
+        thinking: {
+          supportedLevels: [
+            { value: "off", label: "Off" },
+            { value: "high", label: "High" },
+          ],
+          defaultLevel: "high",
+        },
       }),
     ]);
     expect(
@@ -106,7 +134,7 @@ describe("PI runtime model resolution", () => {
       models: [
         expect.objectContaining({
           id: "reasoning-model",
-          thinkingLevelMap: expect.objectContaining({ high: "provider-high" }),
+          thinking: { supportedLevels: ["off", "high"], defaultLevel: "high" },
         }),
       ],
     });
@@ -116,6 +144,7 @@ describe("PI runtime model resolution", () => {
     const converter = createPiModelProviderConverter();
     const provider: ModelProviderDefinition = {
       id: "provider",
+      catalogId: "unknown-provider",
       displayName: "Provider",
       api: "future-runtime-api",
       baseUrl: "https://models.example.com",

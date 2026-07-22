@@ -162,7 +162,7 @@ describe("ContextResolutionService", () => {
   it("requires immutable Runtime identity and valid Session provenance", () => {
     const now = new Date().toISOString();
     const base = {
-      schemaVersion: "pragma.runtime-context/v3",
+      schemaVersion: "pragma.runtime-context/v4",
       contextId: "root",
       owner: { type: "expert-session", ownerId: "session" },
       origin: { type: "expert-session", sessionId: "session" },
@@ -279,7 +279,7 @@ function contextRecord(
   closed: boolean,
 ): RuntimeContextRecord {
   return {
-    schemaVersion: "pragma.runtime-context/v3",
+    schemaVersion: "pragma.runtime-context/v4",
     contextId,
     owner,
     origin: { type: "invocation", invocationId },

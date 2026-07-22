@@ -17,12 +17,16 @@ import {
   type StartFlowRequest,
 } from "./flow/flow-execution.ts";
 import type { RuntimeResolver } from "./runtime-resolver.ts";
+import type { ExpertAgentAutomaticHumanInteractionHandler } from "./tools/managed-tool.ts";
 
 export interface CreatePragmaOptions {
   readonly pragmaHome?: string | undefined;
   readonly runtimes: RuntimeResolver;
   readonly executionStore?: ExecutionStore | undefined;
   readonly expertSessionStore?: ExpertSessionStore | undefined;
+  readonly automaticHumanInteractionHandler?:
+    | ExpertAgentAutomaticHumanInteractionHandler
+    | undefined;
 }
 
 export interface PragmaApp {
@@ -63,8 +67,17 @@ export function createPragma(options: CreatePragmaOptions): PragmaApp {
         : { executions, pragmaHome: options.pragmaHome },
     );
   const runtimes = options.runtimes;
-  const experts = new ExpertSessionManager({ sessions, executions, runtimes });
-  const flows = new FlowExecutionManager(executions, runtimes);
+  const experts = new ExpertSessionManager({
+    sessions,
+    executions,
+    runtimes,
+    automaticHumanInteractionHandler: options.automaticHumanInteractionHandler,
+  });
+  const flows = new FlowExecutionManager(
+    executions,
+    runtimes,
+    options.automaticHumanInteractionHandler,
+  );
   return {
     experts: {
       createSession: async (expert, request) => await experts.createSession(expert, request),

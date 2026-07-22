@@ -86,6 +86,8 @@ function outputItem(
     executionId: "execution",
     invocationId: "invocation",
     contextId: "context",
+    runId: "run",
+    source: { kind: "agent", runId: "run", path: [] },
     channel,
     ...(delta === undefined ? {} : { delta }),
     ...(value === undefined ? {} : { value }),

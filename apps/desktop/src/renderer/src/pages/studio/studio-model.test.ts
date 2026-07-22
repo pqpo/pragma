@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { ExpertDefinition } from "../../../../shared/desktop-api.ts";
-import { isBuiltInTags, toExpertRecord, toPersistedInput } from "./studio-model.ts";
+import { isBuiltInExpert, toExpertRecord, toPersistedInput } from "./studio-model.ts";
 
 const persistedExpert: ExpertDefinition = {
   schemaVersion: "pragma.desktop-expert-view/v1",
@@ -13,7 +13,14 @@ const persistedExpert: ExpertDefinition = {
   version: "1.0.0",
   scope: "Reviews code quality. Does not merge changes.",
   instructions: "Review changes carefully.",
-  model: { runtimeId: "test", providerId: "test", modelId: "test" },
+  additionalInstructions: "",
+  origin: "project",
+  readOnly: false,
+  customized: false,
+  executionProfile: {
+    mode: "pinned",
+    model: { runtimeId: "test", providerId: "test", modelId: "test" },
+  },
   resourceRuntime: { ref: "runtime-profile:reviewer_runtime@1.0.0" },
   capabilities: [],
   toolApprovals: {},
@@ -42,10 +49,9 @@ describe("toPersistedInput", () => {
   });
 });
 
-describe("isBuiltInTags", () => {
-  it("recognizes both supported built-in markers", () => {
-    expect(isBuiltInTags(["builtin"])).toBe(true);
-    expect(isBuiltInTags(["built-in"])).toBe(true);
-    expect(isBuiltInTags(["user"])).toBe(false);
+describe("isBuiltInExpert", () => {
+  it("uses explicit origin metadata", () => {
+    expect(isBuiltInExpert({ origin: "built-in", readOnly: true })).toBe(true);
+    expect(isBuiltInExpert({ origin: "project", readOnly: false })).toBe(false);
   });
 });

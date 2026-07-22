@@ -14,12 +14,14 @@ export interface ExecutionEventSubscription extends AsyncIterable<ExecutionEvent
 class ExecutionLiveBus {
   private readonly subscribers = new Map<string, Set<AsyncPushQueue<ExecutionOutputItem>>>();
   private readonly eventSubscribers = new Map<string, Set<AsyncPushQueue<ExecutionEvent>>>();
+  private readonly outputHistory = new Map<string, ExecutionOutputItem[]>();
 
   subscribe(executionId: string): ExecutionOutputSubscription {
     const queue = new AsyncPushQueue<ExecutionOutputItem>();
     const subscribers = this.subscribers.get(executionId) ?? new Set();
     subscribers.add(queue);
     this.subscribers.set(executionId, subscribers);
+    for (const item of this.outputHistory.get(executionId) ?? []) queue.push(item);
     let closed = false;
     return {
       [Symbol.asyncIterator]: () => queue[Symbol.asyncIterator](),
@@ -52,6 +54,9 @@ class ExecutionLiveBus {
   }
 
   publish(executionId: string, output: ExecutionOutputItem): void {
+    const history = this.outputHistory.get(executionId) ?? [];
+    history.push(output);
+    this.outputHistory.set(executionId, history);
     for (const subscriber of this.subscribers.get(executionId) ?? []) {
       subscriber.push(output);
     }
@@ -64,6 +69,7 @@ class ExecutionLiveBus {
   }
 
   complete(executionId: string): void {
+    this.outputHistory.delete(executionId);
     const subscribers = this.subscribers.get(executionId);
     if (subscribers !== undefined) {
       this.subscribers.delete(executionId);

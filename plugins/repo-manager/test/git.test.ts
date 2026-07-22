@@ -43,7 +43,7 @@ describe("Git session environment", () => {
     expect(sessionEnv.GIT_ASKPASS).toBeDefined();
     expect(sessionEnv.GIT_TERMINAL_PROMPT).toBe("0");
     expect(sessionEnv.GIT_CONFIG_NOSYSTEM).toBe("1");
-    expect(sessionEnv.GIT_CONFIG_GLOBAL).toBe(devNull);
+    expect(sessionEnv.GIT_CONFIG_GLOBAL).not.toBe(devNull);
     expect(readInjectedGitConfig(sessionEnv)).toEqual([
       ["credential.helper", ""],
       ["http.extraHeader", ""],
@@ -153,7 +153,7 @@ describe("Git session environment", () => {
     const sessionEnv = applyPatch(base, prepared.processEnvironment);
 
     expect(prepared.authStrategy).toBe("credential_helper");
-    expect(sessionEnv.GIT_CONFIG_GLOBAL).toBe(devNull);
+    expect(sessionEnv.GIT_CONFIG_GLOBAL).not.toBe(devNull);
     expect(readInjectedGitConfig(sessionEnv)).toEqual([
       ["credential.helper", ""],
       ["http.extraHeader", ""],
@@ -194,7 +194,7 @@ describe("Git session environment", () => {
     const sessionEnv = applyPatch(base, prepared.processEnvironment);
 
     expect(prepared.authStrategy).toBe("none");
-    expect(sessionEnv.GIT_CONFIG_GLOBAL).toBe(devNull);
+    expect(sessionEnv.GIT_CONFIG_GLOBAL).not.toBe(devNull);
     expect(readInjectedGitConfig(sessionEnv)).toEqual([
       ["credential.helper", ""],
       ["http.extraHeader", ""],
@@ -232,9 +232,10 @@ describe("Git session environment", () => {
       parseRepoManagerConfig({ auth: { strategy: "none" } }),
       { env: base, workspaceRoot: repository },
     );
+    const noneEnv = applyPatch(base, none.processEnvironment);
     const noneResult = await runGitCredential(
       repository,
-      applyPatch(base, none.processEnvironment),
+      noneEnv,
     );
     expect(`${noneResult.stdout}\n${noneResult.stderr}`).not.toContain("local-secret");
     expect(noneResult.stdout).not.toContain("local-user");
