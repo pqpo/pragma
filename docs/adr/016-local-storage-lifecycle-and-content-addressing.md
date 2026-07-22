@@ -17,7 +17,9 @@ Project, content-addressed object, plugin, and credential data. `state/` contain
 and recoverable state. `archives/` contains bounded compressed diagnostics. `cache/` is rebuildable,
 TTL/LRU managed data. `tmp/` and `trash/` have short retention windows. Filesystem manifests are the
 reference graph's source of truth; `state/storage/catalog.sqlite` is a rebuildable size and owner
-index.
+index. Desktop's built-in default Agent workspace is `~/.pragma/workspace`, directly below the
+Pragma root rather than inside `data/`; it contains only task-scoped repositories, inputs,
+artifacts, and Agent-authored files.
 
 Project revisions are permanent immutable manifests. A revision references one SHA-256 Merkle tree;
 trees reference immutable blob or child-tree objects. Unchanged files are therefore stored once

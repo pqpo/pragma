@@ -247,6 +247,7 @@ Server 与 Agent 的关系：
 本地存储边界：
 
 - Agent workspace 只保存任务明确需要的 repository、input、artifact 和 Agent 主动创建或修改的文件。
+- Desktop 内置默认 workspace 固定为 `~/.pragma/workspace/`，位于 `.pragma` 根目录，不得放入 `data/`。
 - Runtime Session、Runtime 配置和插件安装副本不得写入 workspace。
 - 权威数据存放在 `~/.pragma/data/`，可恢复运行状态存放在 `state/`，有界诊断归档存放在
   `archives/`，可重建内容存放在 `cache/`；`tmp/` 与 `trash/` 使用短期保留策略。

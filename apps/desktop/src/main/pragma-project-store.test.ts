@@ -60,6 +60,30 @@ async function projectRevisionFile(
 }
 
 describe("PragmaProjectStore", () => {
+  it("publishes the initial empty project before it is pinned by a Mission", async () => {
+    const { project } = await stores();
+
+    expect((await project.get()).revision).toBe(0);
+
+    const initial = await project.ensurePublished();
+    const existing = await project.ensurePublished();
+
+    expect(initial).toMatchObject({ revision: 1, resources: [] });
+    expect(existing).toMatchObject({ revision: 1, resources: [] });
+  });
+
+  it("shares the first published revision across concurrent project stores", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "pragma-project-store-concurrent-"));
+    directories.push(directory);
+    const first = createPragmaProjectStore({ projectsPath: directory });
+    const second = createPragmaProjectStore({ projectsPath: directory });
+
+    const revisions = await Promise.all([first.ensurePublished(), second.ensurePublished()]);
+
+    expect(revisions.map((snapshot) => snapshot.revision)).toEqual([1, 1]);
+    expect((await first.get()).revision).toBe(1);
+  });
+
   it("publishes immutable YAML revisions containing experts, teams, and flows", async () => {
     const { directory, project } = await stores();
     const expert = exampleExpert();

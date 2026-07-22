@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { basename, dirname, join } from "node:path";
+import { dirname, join } from "node:path";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 
 import { encodePragmaPathSegment, withFileLock } from "@pragma/core";
@@ -10,22 +10,16 @@ import {
   type DefaultAgentTaskWorkItem,
 } from "@pragma/default-agent";
 
-import { type Mission, type DesktopToolPermissionMode } from "../shared/desktop-api.ts";
+import type { Mission } from "../shared/desktop-api.ts";
+import type { MissionCreator } from "./mission-creator.ts";
 import type { MissionRunner } from "./mission-runner.ts";
 import type { MissionStore } from "./mission-store.ts";
-import type { PragmaProjectStore } from "./pragma-project-store.ts";
-import type { MissionExecutorCatalog } from "./mission-executor-catalog.ts";
-import { validateWorkspace } from "./workspace-scope.ts";
 
 export function createDesktopDefaultAgentTaskPort(options: {
   readonly missions: MissionStore;
   readonly runner: MissionRunner;
-  readonly project: PragmaProjectStore;
-  readonly executors: MissionExecutorCatalog;
+  readonly creator: MissionCreator;
   readonly stateRoot: string;
-  readonly getToolPermissionMode: () =>
-    | DesktopToolPermissionMode
-    | Promise<DesktopToolPermissionMode>;
 }): DefaultAgentTaskPort {
   const operationPath = (id: string) =>
     join(options.stateRoot, "operations", `${encodePragmaPathSegment(id)}.task.json`);
@@ -58,18 +52,10 @@ export function createDesktopDefaultAgentTaskPort(options: {
             stored.execution === undefined ? await options.runner.run(stored.id) : stored,
           );
         }
-        const validation = await validateWorkspace(input.workspaceId);
-        if (!validation.ok) throw new Error("The selected task workspace is not writable.");
-        const project = await options.project.get();
-        const executor = await options.executors.resolve(input.executorRef);
-        if (executor === undefined)
-          throw new Error(`Task executor not found: ${input.executorRef}`);
-        const mission = await options.missions.create({
-          workspace: { path: input.workspaceId, basename: basename(input.workspaceId) },
+        const mission = await options.creator.create({
+          workspace: input.workspaceId,
           goal: input.goal,
-          project: { id: project.projectId, revision: project.revision },
-          executor,
-          toolPermissionMode: await options.getToolPermissionMode(),
+          executorRef: input.executorRef,
         });
         await writeOperation(path, mission.id);
         return toTask(await options.runner.run(mission.id));

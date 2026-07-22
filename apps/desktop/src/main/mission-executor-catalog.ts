@@ -20,6 +20,7 @@ import {
   type MissionExecutorOption,
   type MissionModelOptions,
   type MissionModelOverride,
+  type PragmaProjectSnapshot,
 } from "../shared/desktop-api.ts";
 import type { PragmaProjectStore } from "./pragma-project-store.ts";
 import type { DesktopSystemExpertRegistry } from "./system-expert-registry.ts";
@@ -27,7 +28,7 @@ import { ModelProviderStoreError } from "./model-provider-store.ts";
 
 export interface MissionExecutorCatalog {
   list(): Promise<readonly MissionExecutorOption[]>;
-  resolve(ref: string): Promise<MissionExecutor | undefined>;
+  resolve(ref: string, project: PragmaProjectSnapshot): Promise<MissionExecutor | undefined>;
   getModelOptions(
     ref: string,
     runtimeBinding?: RuntimeEnvironmentBinding | undefined,
@@ -35,6 +36,7 @@ export interface MissionExecutorCatalog {
   validateModelOverride(
     ref: string,
     override: MissionModelOverride,
+    project: PragmaProjectSnapshot,
     runtimeBinding?: RuntimeEnvironmentBinding | undefined,
   ): Promise<void>;
 }
@@ -46,6 +48,7 @@ export function createMissionExecutorCatalog(options: {
 }): MissionExecutorCatalog {
   const resolveRuntimeDefaults = async (
     ref: string,
+    project?: PragmaProjectSnapshot,
   ): Promise<
     | {
         readonly runtimeId: string;
@@ -72,7 +75,7 @@ export function createMissionExecutorCatalog(options: {
       };
     }
 
-    const snapshot = await options.project.get();
+    const snapshot = project ?? (await options.project.get());
     const resource = snapshot.resources
       .filter(isMissionExecutorResource)
       .find((candidate) => missionExecutorRef(candidate) === ref);
@@ -115,16 +118,6 @@ export function createMissionExecutorCatalog(options: {
         });
   };
 
-  const bindModel = async (
-    ref: string,
-    selection?: RuntimeModelSelection,
-    runtimeBinding?: RuntimeEnvironmentBinding,
-  ) => {
-    const defaults = await resolveRuntimeDefaults(ref);
-    if (defaults === undefined) throw new Error("Flow missions do not support a model override.");
-    return await bindRuntimeDefaults(defaults, selection, runtimeBinding);
-  };
-
   return {
     async list() {
       const snapshot = await options.project.get();
@@ -135,11 +128,10 @@ export function createMissionExecutorCatalog(options: {
         left.name.localeCompare(right.name),
       );
     },
-    async resolve(ref) {
+    async resolve(ref, project) {
       const system = options.systemExperts.getExecutor(ref);
       if (system !== undefined) return system;
-      const snapshot = await options.project.get();
-      const resource = snapshot.resources
+      const resource = project.resources
         .filter(isMissionExecutorResource)
         .find((candidate) => missionExecutorRef(candidate) === ref);
       return resource === undefined ? undefined : projectExecutor(resource);
@@ -181,8 +173,10 @@ export function createMissionExecutorCatalog(options: {
         throw error;
       }
     },
-    async validateModelOverride(ref, override, runtimeBinding) {
-      await bindModel(ref, toModelSelection(override), runtimeBinding);
+    async validateModelOverride(ref, override, project, runtimeBinding) {
+      const defaults = await resolveRuntimeDefaults(ref, project);
+      if (defaults === undefined) throw new Error("Flow missions do not support a model override.");
+      await bindRuntimeDefaults(defaults, toModelSelection(override), runtimeBinding);
     },
   };
 }

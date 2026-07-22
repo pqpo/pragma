@@ -34,7 +34,7 @@ Pragma 本地存储 v3 是 breaking change。Desktop 首次启动时只会把原
 
 | 旧路径                                                       | v3 路径                                                           | 处理方式                                                           |
 | ------------------------------------------------------------ | ----------------------------------------------------------------- | ------------------------------------------------------------------ |
-| `workspace/`                                                 | `data/workspace/`                                                 | 原样复制，保留文件模式和符号链接                                   |
+| `workspace/`                                                 | `workspace/`                                                      | 原样复制，保留文件模式和符号链接                                   |
 | `missions/`                                                  | `data/missions/`                                                  | 原样复制；必要时只改写已知的内置 workspace 字段                    |
 | `projects/<id>/manifest.yaml`                                | `data/projects/<id>/project.json`                                 | 转换为 v3 Project Manifest                                         |
 | `projects/<id>/revisions/<n>/`                               | `data/objects/sha256/` 和 `data/projects/<id>/revisions/<n>.json` | 每个完整目录写入 CAS，Revision 只保存引用                          |
@@ -164,7 +164,7 @@ Manifest 的 `updatedAt`，其他 Revision 使用目录 `mtime`，并在迁移�
 terminal executions，便于未来使用正式 compactor 处理。
 
 如果旧 Mission、Runtime Session 或 Desktop 设置的 workspace 字段恰好等于旧内置 workspace，或位于
-其子目录中，应把该已知字段的前缀从 `<legacy>/workspace` 改为 `<target>/data/workspace`。不得对 JSON、
+其子目录中，应把该已知字段的前缀从 `<legacy>/workspace` 改为 `<target>/workspace`。不得对 JSON、
 YAML、JSONL 和用户文件执行全局字符串替换。
 
 ## AI 迁移提示词
@@ -201,7 +201,8 @@ YAML、JSONL 和用户文件执行全局字符串替换。
    停止并让我处理。不要 kill 不属于 Pragma 的进程。
 2. resolve 两个路径并验证它们不同。拒绝空路径、根目录、HOME、本仓库根目录及任何父子路径重叠。
 3. LEGACY_PRAGMA_HOME 全程只读：不得 rename、delete、chmod、写 marker 或创建临时文件。
-4. 若 TARGET_PRAGMA_HOME 的 data/ 已有 Mission、Project、plugin 或 workspace 等新业务数据，停止迁移，
+4. 若 TARGET_PRAGMA_HOME 的 data/ 已有 Mission、Project 或 plugin 等新业务数据，或根目录
+   workspace/ 已有任务数据，停止迁移，
    不做自动 merge。目标只允许是空 v3 bootstrap 目录及其派生 storage state。
 5. 如果 TARGET 中有 state/storage/legacy-backup.json，先把 retain 原子更新为 true，避免备份被到期清理。
 6. 在 TARGET 同级创建唯一 staging；禁止直接覆盖 TARGET。所有写入先进入 staging。
@@ -227,7 +228,7 @@ YAML、JSONL 和用户文件执行全局字符串替换。
    runtimeSessionRef.id 的 native JSONL 是否存在。
 8. 原样保留 legacy execution state/events。没有用当前代码生成完整 Mission projection 前，不得归档或
    删除 events.jsonl。报告 terminal legacy execution 数量和 bytes。
-9. 仅在 schema 明确的 workspace 字段中，把 legacy 内置 workspace 前缀改成 TARGET/data/workspace；
+9. 仅在 schema 明确的 workspace 字段中，把 legacy 内置 workspace 前缀改成 TARGET/workspace；
    禁止全文替换。
 10. 写 staging/storage.json，schemaVersion 必须是 pragma.storage/v3。写
     staging/state/storage/migration-report.json，至少包含：source/target/staging、开始结束时间、工具 git

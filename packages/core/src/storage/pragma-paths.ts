@@ -36,6 +36,10 @@ export class PragmaPaths {
     return join(this.root, "data");
   }
 
+  workspaceRoot(): string {
+    return join(this.root, "workspace");
+  }
+
   cacheRoot(): string {
     return join(this.root, "cache");
   }

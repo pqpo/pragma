@@ -18,14 +18,14 @@ import {
 import type { MissionRunner } from "./mission-runner.ts";
 import type { MissionStore } from "./mission-store.ts";
 import type { DesktopToolPermissionMode } from "../shared/desktop-api.ts";
-import type { PragmaProjectStore } from "./pragma-project-store.ts";
 import type { MissionExecutorCatalog } from "./mission-executor-catalog.ts";
+import type { MissionCreator } from "./mission-creator.ts";
 import { availableRecentWorkspaces } from "./workspace-history-store.ts";
 import { validateWorkspace } from "./workspace-scope.ts";
 
 export function installMissionHandlers(options: {
   readonly missions: MissionStore;
-  readonly project: PragmaProjectStore;
+  readonly creator: MissionCreator;
   readonly executors: MissionExecutorCatalog;
   readonly runner: MissionRunner;
   readonly getWindow: () => BrowserWindow | null;
@@ -66,28 +66,14 @@ export function installMissionHandlers(options: {
   });
   ipcMain.handle("missions:create", async (_event, input: unknown) => {
     const parsed = CreateMissionSchema.parse(input);
-    const validation = await validateWorkspace(parsed.workspace);
-    if (!validation.ok) {
-      throw new Error("The selected workspace must be an accessible, writable directory.");
-    }
-    const snapshot = await options.project.get();
-    const executor = await options.executors.resolve(parsed.executor.ref);
-    if (executor === undefined)
-      throw new Error(`Mission executor not found: ${parsed.executor.ref}`);
-    if (executor.kind === "flow" && parsed.modelOverride !== undefined) {
-      throw new Error("Flow missions do not support a model override.");
-    }
-    if (parsed.modelOverride !== undefined) {
-      await options.executors.validateModelOverride(executor.ref, parsed.modelOverride);
-    }
-    const mission = await options.missions.create({
-      workspace: { path: parsed.workspace, basename: basename(parsed.workspace) },
+    const mission = await options.creator.create({
+      workspace: parsed.workspace,
       goal: parsed.goal,
-      project: { id: snapshot.projectId, revision: snapshot.revision },
-      executor,
+      executorRef: parsed.executor.ref,
       ...(parsed.modelOverride === undefined ? {} : { modelOverride: parsed.modelOverride }),
-      toolPermissionMode:
-        parsed.toolPermissionMode ?? (await options.getDefaultToolPermissionMode()),
+      ...(parsed.toolPermissionMode === undefined
+        ? {}
+        : { toolPermissionMode: parsed.toolPermissionMode }),
     });
     await options.recordWorkspaceUsage(parsed.workspace);
     void options.runner

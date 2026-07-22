@@ -32,6 +32,7 @@ import { installPluginHandlers } from "./plugin-ipc.ts";
 import { createPluginCredentialStore } from "./plugin-credential-store.ts";
 import { createPluginStore } from "./plugin-store.ts";
 import { installMissionHandlers } from "./mission-ipc.ts";
+import { createMissionCreator } from "./mission-creator.ts";
 import { createDesktopAdapterHost, createMissionRunner } from "./mission-runner.ts";
 import { createMissionStore } from "./mission-store.ts";
 import { createMissionExecutorCatalog } from "./mission-executor-catalog.ts";
@@ -152,7 +153,7 @@ void app.whenReady().then(async () => {
       `Pragma storage pressure GC reclaimed ${maintenance.before.totalBytes - maintenance.after.totalBytes} bytes.`,
     );
   }
-  const builtInDefaultWorkspace = join(pragmaPaths.dataRoot(), "workspace");
+  const builtInDefaultWorkspace = pragmaPaths.workspaceRoot();
   const projectsPath = pragmaPaths.projectsRoot();
   const missionsPath = pragmaPaths.missionsRoot();
   const modelProvidersPath = join(pragmaPaths.dataRoot(), "model-providers.json");
@@ -215,6 +216,12 @@ void app.whenReady().then(async () => {
     project: pragmaProjectStore,
     systemExperts,
     runtimes,
+  });
+  const missionCreator = createMissionCreator({
+    missions: missionStore,
+    project: pragmaProjectStore,
+    executors: missionExecutors,
+    getDefaultToolPermissionMode: getToolPermissionMode,
   });
   ipcMain.handle("runtimes:availability", () => getRuntimeAvailability(runtimes));
   ipcMain.handle("runtimes:set-default", async (_event, input: unknown) => {
@@ -386,10 +393,8 @@ void app.whenReady().then(async () => {
   const defaultAgentTasks = createDesktopDefaultAgentTaskPort({
     missions: missionStore,
     runner: missionRunner,
-    project: pragmaProjectStore,
-    executors: missionExecutors,
+    creator: missionCreator,
     stateRoot: defaultAgentStateRoot,
-    getToolPermissionMode,
   });
   defaultAgentToolsRef.current = createDefaultAgentTools({
     project: defaultAgentProject,
@@ -397,7 +402,7 @@ void app.whenReady().then(async () => {
   });
   installMissionHandlers({
     missions: missionStore,
-    project: pragmaProjectStore,
+    creator: missionCreator,
     executors: missionExecutors,
     getWindow: () => mainWindow,
     runner: missionRunner,

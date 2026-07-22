@@ -61,6 +61,7 @@ const ProjectRevisionManifestSchema = z
 
 export interface PragmaProjectStore {
   get(): Promise<PragmaProjectSnapshot>;
+  ensurePublished(): Promise<PragmaProjectSnapshot>;
   publish(input: {
     readonly expectedRevision: number;
     readonly resources: readonly PragmaResource[];
@@ -214,32 +215,53 @@ export function createPragmaProjectStore(options: {
     }
   };
 
+  const publish = async (input: {
+    readonly expectedRevision: number;
+    readonly resources: readonly PragmaResource[];
+    readonly artifacts?: ReadonlyMap<string, string> | undefined;
+  }): Promise<PragmaProjectSnapshot> => {
+    try {
+      if (options.storagePaths !== undefined) await assertStorageWriteAllowed(options.storagePaths);
+      assertNotReserved(input.resources);
+      assertDesktopExpertAuthoring(input.resources);
+      const artifacts =
+        input.artifacts ??
+        (input.expectedRevision === 0
+          ? new Map<string, string>()
+          : await readRevisionArtifacts(
+              repository,
+              projectId,
+              input.expectedRevision,
+              await get(),
+            ));
+      return PragmaProjectSnapshotSchema.parse(
+        await service.publish({ projectId, ...input, artifacts }),
+      );
+    } catch (error) {
+      return normalizeError(error);
+    }
+  };
+
+  const ensurePublished = async (): Promise<PragmaProjectSnapshot> => {
+    const current = await get();
+    if (current.revision > 0) return current;
+
+    try {
+      return await publish({ expectedRevision: current.revision, resources: current.resources });
+    } catch (error) {
+      if (error instanceof PragmaProjectStoreError && error.code === "revision_conflict") {
+        const latest = await get();
+        if (latest.revision > 0) return latest;
+      }
+      throw error;
+    }
+  };
+
   return {
     projectId,
     get,
-    async publish(input) {
-      try {
-        if (options.storagePaths !== undefined)
-          await assertStorageWriteAllowed(options.storagePaths);
-        assertNotReserved(input.resources);
-        assertDesktopExpertAuthoring(input.resources);
-        const artifacts =
-          input.artifacts ??
-          (input.expectedRevision === 0
-            ? new Map<string, string>()
-            : await readRevisionArtifacts(
-                repository,
-                projectId,
-                input.expectedRevision,
-                await get(),
-              ));
-        return PragmaProjectSnapshotSchema.parse(
-          await service.publish({ projectId, ...input, artifacts }),
-        );
-      } catch (error) {
-        return normalizeError(error);
-      }
-    },
+    ensurePublished,
+    publish,
     async upsert(input) {
       return await apply({ expectedRevision: input.expectedRevision, upserts: [input.resource] });
     },
