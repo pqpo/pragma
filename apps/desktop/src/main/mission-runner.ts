@@ -143,6 +143,7 @@ interface MissionExecutionContext {
 }
 
 const MISSION_TITLE_SUMMARY_TIMEOUT_MS = 45_000;
+const MISSION_CHAT_ERROR_MAX_LENGTH = 10_000;
 
 export function createMissionRunner(options: {
   readonly missions: MissionStore;
@@ -1554,9 +1555,9 @@ async function readHistoricalAgentActivityEntries(
           : [event.source.sessionId],
       ...(event.source.displayName === undefined ? {} : { label: event.source.displayName }),
       ...(isCommand && event.payload.error !== undefined
-        ? { error: event.payload.error }
+        ? { error: truncate(event.payload.error, MISSION_CHAT_ERROR_MAX_LENGTH) }
         : event.type === "run.failed"
-          ? { error: event.payload.message }
+          ? { error: truncate(event.payload.message, MISSION_CHAT_ERROR_MAX_LENGTH) }
           : {}),
       createdAt: event.emittedAt,
     });
@@ -1811,8 +1812,15 @@ function consumeLiveChatOutput(
       ...(readString(payload, "error") === ""
         ? eventType !== "run.failed"
           ? {}
-          : { error: readString(payload, "message") || "Subagent failed." }
-        : { error: readString(payload, "error") }),
+          : {
+              error: truncate(
+                readString(payload, "message") || "Subagent failed.",
+                MISSION_CHAT_ERROR_MAX_LENGTH,
+              ),
+            }
+        : {
+            error: truncate(readString(payload, "error"), MISSION_CHAT_ERROR_MAX_LENGTH),
+          }),
     };
     const index = chat.entries.findIndex((candidate) => candidate.id === id);
     if (index === -1) chat.entries.push(entry);
@@ -1926,7 +1934,10 @@ function consumeLiveChatOutput(
     if (existing?.kind === "tool") {
       if (payload["message"] !== undefined) {
         existing.status = "failed";
-        existing.error = readString(payload, "message") || "Tool failed.";
+        existing.error = truncate(
+          readString(payload, "message") || "Tool failed.",
+          MISSION_CHAT_ERROR_MAX_LENGTH,
+        );
       } else if (payload["approvalId"] !== undefined) {
         existing.status = "approval_required";
       } else if (payload["outputPreview"] !== undefined) {
@@ -1958,7 +1969,12 @@ function consumeLiveChatOutput(
         : { outputPreview: preview(payload["outputPreview"]) }),
       ...(payload["message"] === undefined
         ? {}
-        : { error: readString(payload, "message") || "Tool failed." }),
+        : {
+            error: truncate(
+              readString(payload, "message") || "Tool failed.",
+              MISSION_CHAT_ERROR_MAX_LENGTH,
+            ),
+          }),
     };
     chat.entries.push(entry);
     patches.push({ type: "entry.upsert", entry: { ...entry } });

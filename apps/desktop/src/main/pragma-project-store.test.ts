@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -61,15 +61,17 @@ async function projectRevisionFile(
 
 describe("PragmaProjectStore", () => {
   it("publishes the initial empty project before it is pinned by a Mission", async () => {
-    const { project } = await stores();
+    const { directory, project } = await stores();
 
     expect((await project.get()).revision).toBe(0);
 
     const initial = await project.ensurePublished();
     const existing = await project.ensurePublished();
+    await Promise.all(Array.from({ length: 20 }, async () => await project.get()));
 
     expect(initial).toMatchObject({ revision: 1, resources: [] });
     expect(existing).toMatchObject({ revision: 1, resources: [] });
+    await expect(readdir(join(directory, ".cache", "project-view-leases"))).resolves.toEqual([]);
   });
 
   it("shares the first published revision across concurrent project stores", async () => {

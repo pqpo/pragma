@@ -1,5 +1,5 @@
-import { readFile, readdir, rm, stat } from "node:fs/promises";
-import { join } from "node:path";
+import { readFile, readdir, rm, rmdir, stat } from "node:fs/promises";
+import { basename, join } from "node:path";
 
 import { ContentAddressedStore, type ContentObjectRef } from "./content-addressed-store.ts";
 import { purgeExpiredTrash } from "./deletion-transaction.ts";
@@ -146,10 +146,10 @@ async function collectCacheCandidates(paths: PragmaPaths): Promise<Candidate[]> 
 async function unleasedProjectViewCandidates(paths: PragmaPaths): Promise<Candidate[]> {
   const candidates = await directChildren(paths.projectViewsCacheRoot());
   const leasesRoot = join(paths.cacheRoot(), "project-view-leases");
-  const available: Candidate[] = [];
-  for (const candidate of candidates) {
-    const snapshotHash = candidate.path.split(/[/\\]/).at(-1)!;
-    const leases = await directChildren(join(leasesRoot, snapshotHash));
+  const leasedSnapshots = new Set<string>();
+  for (const leaseDirectory of await directChildren(leasesRoot)) {
+    if ((await stat(leaseDirectory.path).catch(() => undefined))?.isDirectory() !== true) continue;
+    const leases = await directChildren(leaseDirectory.path);
     let leased = false;
     for (const lease of leases) {
       let pid: unknown;
@@ -164,9 +164,19 @@ async function unleasedProjectViewCandidates(paths: PragmaPaths): Promise<Candid
       }
       await rm(lease.path, { force: true });
     }
-    if (!leased) available.push(candidate);
+    if (leased) leasedSnapshots.add(basename(leaseDirectory.path));
+    else await removeEmptyDirectory(leaseDirectory.path);
   }
-  return available;
+  return candidates.filter((candidate) => !leasedSnapshots.has(basename(candidate.path)));
+}
+
+async function removeEmptyDirectory(path: string): Promise<void> {
+  try {
+    await rmdir(path);
+  } catch (error) {
+    const code = errorCode(error);
+    if (code !== "ENOENT" && code !== "ENOTEMPTY" && code !== "EEXIST") throw error;
+  }
 }
 
 async function hashDirectoryCandidates(root: string): Promise<Candidate[]> {

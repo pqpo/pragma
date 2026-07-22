@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rename, rm, rmdir, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 import {
@@ -505,19 +505,13 @@ function createDesktopProjectSourceRepository(options: {
     async withCheckout(project, operation) {
       const snapshotHash = project.snapshotHash;
       if (snapshotHash === undefined) return await operation(project);
-      const lease = join(projectViewLeasesPath, snapshotHash, `${randomUUID()}.lease`);
-      await mkdir(dirname(lease), { recursive: true, mode: 0o700 });
-      await writeFile(
-        lease,
-        `${JSON.stringify({ pid: process.pid, createdAt: new Date().toISOString() })}\n`,
-        {
-          mode: 0o600,
-        },
-      );
+      const leaseDirectory = join(projectViewLeasesPath, snapshotHash);
+      const lease = await createProjectViewLease(leaseDirectory);
       try {
         return await operation(project);
       } finally {
         await rm(lease, { force: true });
+        await removeEmptyDirectory(leaseDirectory);
       }
     },
     async getHead(projectId) {
@@ -662,6 +656,38 @@ async function readTextFiles(root: string, base = root): Promise<ReadonlyMap<str
     }
   }
   return files;
+}
+
+async function createProjectViewLease(directory: string): Promise<string> {
+  while (true) {
+    await mkdir(directory, { recursive: true, mode: 0o700 });
+    const lease = join(directory, `${randomUUID()}.lease`);
+    try {
+      await writeFile(
+        lease,
+        `${JSON.stringify({ pid: process.pid, createdAt: new Date().toISOString() })}\n`,
+        { mode: 0o600 },
+      );
+      return lease;
+    } catch (error) {
+      if (errorCode(error) !== "ENOENT") throw error;
+    }
+  }
+}
+
+async function removeEmptyDirectory(path: string): Promise<void> {
+  try {
+    await rmdir(path);
+  } catch (error) {
+    const code = errorCode(error);
+    if (code !== "ENOENT" && code !== "ENOTEMPTY" && code !== "EEXIST") throw error;
+  }
+}
+
+function errorCode(error: unknown): unknown {
+  return typeof error === "object" && error !== null && "code" in error
+    ? (error as NodeJS.ErrnoException).code
+    : undefined;
 }
 
 function issuesToDiagnostics(issues: readonly z.core.$ZodIssue[]): PragmaDiagnostic[] {

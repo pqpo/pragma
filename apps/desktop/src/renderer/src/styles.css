@@ -2563,14 +2563,27 @@ p {
   gap: 8px;
   padding: 8px 9px;
   border-radius: 6px;
-  color: #a14c3b;
+  color: var(--text);
   text-align: left;
 }
 
 .capability-row-actions .capability-row-menu button:hover,
 .capability-row-actions .capability-row-menu button:focus-visible {
+  background: var(--surface-muted);
+}
+
+.capability-row-actions .capability-row-menu button:focus-visible {
+  outline: 2px solid var(--green);
+  outline-offset: -2px;
+}
+
+.capability-row-actions .capability-row-menu button.is-danger {
+  color: #a14c3b;
+}
+
+.capability-row-actions .capability-row-menu button.is-danger:hover,
+.capability-row-actions .capability-row-menu button.is-danger:focus-visible {
   background: #fff2ee;
-  outline: none;
 }
 
 .capability-confirm-backdrop {
@@ -2762,6 +2775,61 @@ p {
   border-radius: 7px;
   background: var(--surface-muted);
   font-size: 12px;
+}
+
+.http-tool-drafts > span > span:first-child {
+  display: grid;
+  gap: 3px;
+}
+
+.http-tool-actions {
+  display: flex;
+  gap: 3px;
+}
+
+.http-tool-actions button {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  place-items: center;
+}
+
+.http-tool-actions button:hover,
+.http-tool-actions button:focus-visible {
+  background: #fff;
+  color: var(--text);
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+.capability-form .capability-auth-toggle {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.capability-form .capability-auth-toggle:focus-within {
+  border-radius: 4px;
+  outline: 2px solid var(--green);
+  outline-offset: 3px;
+}
+
+.capability-form .capability-auth-toggle input,
+.capability-form .capability-auth-toggle input:focus,
+.capability-form .capability-auth-toggle input:focus-visible {
+  width: 16px;
+  min-height: 16px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  outline: none;
+  box-shadow: none;
 }
 
 .http-tool-drafts small {

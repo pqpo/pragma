@@ -19,7 +19,12 @@ import type {
 } from "@pragma/interpreter/ast";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { missionExecutorSnapshot, type DesktopToolPermissionMode } from "../shared/desktop-api.ts";
+import {
+  MissionChatSnapshotSchema,
+  MissionChatUpdateSchema,
+  missionExecutorSnapshot,
+  type DesktopToolPermissionMode,
+} from "../shared/desktop-api.ts";
 import type { CapabilityCredentialStore } from "./capability-credential-store.ts";
 import type { CapabilityStore } from "./capability-store.ts";
 import { createMissionRunner, normalizeGeneratedMissionTitle } from "./mission-runner.ts";
@@ -211,6 +216,122 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
           entry: expect.objectContaining({ kind: "tool" }),
         }),
       ]),
+    );
+    unsubscribe();
+  });
+
+  it("keeps live chat valid after a tool reports an oversized error", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-mission-long-tool-error-"));
+    temporaryPaths.push(root);
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    const snapshot = await project.publish({
+      expectedRevision: 0,
+      resources: [runtimeFixture(), expertFixture()],
+    });
+    const missions = createMissionStore({ missionsPath: join(root, "missions") });
+    const mission = await missions.create({
+      workspace: { path: root, basename: "workspace" },
+      goal: "Continue after a large validation failure",
+      project: { id: snapshot.projectId, revision: snapshot.revision },
+      executor: missionExecutorSnapshot(
+        snapshot.resources.find((resource) => resource.kind === "Expert")!,
+      ),
+    });
+    let outputWritten = (): void => undefined;
+    const outputWasWritten = new Promise<void>((resolve) => {
+      outputWritten = resolve;
+    });
+    let finishTurn = (): void => undefined;
+    const turnCanFinish = new Promise<void>((resolve) => {
+      finishTurn = resolve;
+    });
+    const oversizedError = "validation failed: ".padEnd(12_000, "x");
+    const runtime = defineRuntimeDriver<never, { id: string }>({
+      descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
+      createSession: () => ({ id: "runtime" }),
+      readSession: (session) => ({ runtimeSessionId: session.id }),
+      async startTurn(_session, turn) {
+        turn.stream.write({
+          runId: turn.runId,
+          source: turn.source,
+          type: "tool.started",
+          payload: {
+            toolCallId: "prepare-flow",
+            toolName: "prepare_dsl_changes",
+            kind: "tool",
+          },
+        });
+        turn.stream.write({
+          runId: turn.runId,
+          source: turn.source,
+          type: "tool.failed",
+          payload: {
+            toolCallId: "prepare-flow",
+            toolName: "prepare_dsl_changes",
+            kind: "tool",
+            message: oversizedError,
+          },
+        });
+        turn.stream.write({
+          runId: turn.runId,
+          source: turn.source,
+          type: "message.delta",
+          payload: {
+            role: "assistant",
+            contentType: "text",
+            delta: "Continuing after validation failed.",
+          },
+        });
+        outputWritten();
+        await turnCanFinish;
+        return { outputText: "Completed after validation failed.", runtimeSessionId: "runtime" };
+      },
+      mapEvent: () => ({ events: [] }),
+      closeSession: () => undefined,
+    });
+    const runner = createMissionRunner({
+      missions,
+      project,
+      capabilityStore: {} as CapabilityStore,
+      capabilityCredentials: {} as CapabilityCredentialStore,
+      capabilitiesPath: join(root, "capabilities"),
+      pragmaHome: join(root, "state"),
+      runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
+    });
+    const updates: unknown[] = [];
+    const unsubscribe = runner.subscribeChat((update) => updates.push(update));
+
+    await runner.run(mission.id);
+    await outputWasWritten;
+    await vi.waitFor(async () => {
+      const chat = await runner.getChat({ id: mission.id, limit: 50 });
+      expect(() => MissionChatSnapshotSchema.parse(chat)).not.toThrow();
+      expect(chat.entries).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            kind: "tool",
+            toolName: "prepare_dsl_changes",
+            status: "failed",
+            error: expect.stringMatching(/…$/u),
+          }),
+          expect.objectContaining({
+            kind: "assistant",
+            content: "Continuing after validation failed.",
+          }),
+        ]),
+      );
+      const tool = chat.entries.find((entry) => entry.kind === "tool");
+      expect(tool?.kind === "tool" ? tool.error : undefined).toHaveLength(10_000);
+      expect(updates.length).toBeGreaterThanOrEqual(3);
+      expect(updates.every((update) => MissionChatUpdateSchema.safeParse(update).success)).toBe(
+        true,
+      );
+    });
+
+    finishTurn();
+    await vi.waitFor(
+      async () => expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
+      { timeout: settlementTimeoutMs },
     );
     unsubscribe();
   });
