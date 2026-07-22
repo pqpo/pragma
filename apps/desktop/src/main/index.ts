@@ -139,6 +139,12 @@ void app.whenReady().then(async () => {
   };
   const pragmaPaths = new PragmaPaths();
   const builtInDefaultWorkspace = join(pragmaPaths.root, "workspace");
+  const projectsPath = join(pragmaPaths.root, "projects");
+  const missionsPath = join(pragmaPaths.root, "missions");
+  const modelProvidersPath = join(pragmaPaths.root, "model-providers.json");
+  const capabilityCredentialsPath = join(pragmaPaths.root, "capability-credentials.json");
+  const capabilitiesPath = join(pragmaPaths.root, "capabilities");
+  const contextStoresPath = join(pragmaPaths.root, "context-stores");
   const desktopSettings = createDesktopSettingsStore({
     settingsPath: join(pragmaPaths.stateRoot(), "desktop-settings.json"),
     builtInDefaultWorkspace,
@@ -158,12 +164,12 @@ void app.whenReady().then(async () => {
   });
   await systemExperts.initialize();
   const pragmaProjectStore = createPragmaProjectStore({
-    projectsPath: join(app.getPath("home"), ".pragma", "projects"),
+    projectsPath,
     reservedResourceRefs: new Set([BUILT_IN_PRAGMA_REF]),
   });
   installWorkflowLayoutHandlers(
     createWorkflowLayoutStore({
-      projectsPath: join(app.getPath("home"), ".pragma", "projects"),
+      projectsPath,
     }),
   );
   const pluginCredentials = createPluginCredentialStore({
@@ -171,10 +177,10 @@ void app.whenReady().then(async () => {
     encryption,
   });
   const missionStore = createMissionStore({
-    missionsPath: join(app.getPath("home"), ".pragma", "missions"),
+    missionsPath,
   });
   const modelProviderStore = createModelProviderStore({
-    configPath: join(app.getPath("home"), ".pragma", "model-providers.json"),
+    configPath: modelProvidersPath,
     encryption,
   });
   const runtimeEnvironments = createRuntimeEnvironmentStore({
@@ -240,11 +246,11 @@ void app.whenReady().then(async () => {
   });
   installPluginHandlers(pluginStore, () => mainWindow);
   const capabilityCredentials = createCapabilityCredentialStore({
-    configPath: join(app.getPath("home"), ".pragma", "capability-credentials.json"),
+    configPath: capabilityCredentialsPath,
     encryption,
   });
   const capabilityStore = createCapabilityStore({
-    capabilitiesPath: join(app.getPath("home"), ".pragma", "capabilities"),
+    capabilitiesPath,
     credentials: capabilityCredentials,
     verify: createCapabilityVerifier(capabilityCredentials),
     isReferenced: async (capabilityId) => {
@@ -258,7 +264,7 @@ void app.whenReady().then(async () => {
   });
   installCapabilityHandlers(capabilityStore, () => mainWindow);
   const contextStores = createContextStoreStore({
-    storesPath: join(app.getPath("home"), ".pragma", "context-stores"),
+    storesPath: contextStoresPath,
     isReferenced: async (storeId) => {
       const definitions = await Promise.all(
         (await expertStore.list()).map((summary) => expertStore.get(summary.ref)),
@@ -286,8 +292,8 @@ void app.whenReady().then(async () => {
     project: pragmaProjectStore,
     capabilityStore,
     capabilityCredentials,
-    capabilitiesPath: join(app.getPath("home"), ".pragma", "capabilities"),
-    pragmaHome: join(app.getPath("home"), ".pragma"),
+    capabilitiesPath,
+    pragmaHome: pragmaPaths.root,
     contextStores,
     plugins: pluginStore,
     runtimes,
@@ -335,7 +341,7 @@ void app.whenReady().then(async () => {
           {
             capabilityStore,
             capabilityCredentials,
-            capabilitiesPath: join(app.getPath("home"), ".pragma", "capabilities"),
+            capabilitiesPath,
             contextStores,
           },
           mission.workspace.path,
