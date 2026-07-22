@@ -156,12 +156,13 @@ export async function loadPragmaProject(
   const absoluteEntry = resolve(entryFile);
   const configuredRoot = resolve(options.rootDir ?? dirname(absoluteEntry));
   const rootDir = await realpath(configuredRoot);
+  const canonicalEntry = await realpath(absoluteEntry);
   const adapters = options.resourceAdapters ?? createDefaultPragmaResourceAdapterRegistry();
   const loader = new SourceLoader(rootDir, adapters);
-  await loader.loadEntry(absoluteEntry);
+  await loader.loadEntry(canonicalEntry);
   await loader.collectArtifacts();
   return new PragmaProjectImpl(
-    absoluteEntry,
+    canonicalEntry,
     loader.resources,
     loader.artifacts,
     loader.diagnostics,

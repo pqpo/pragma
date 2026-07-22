@@ -9,6 +9,10 @@ import {
   ExpertAgentHumanRequestSchema,
   isExpertTeam,
   StoredExecutionView,
+  PragmaPaths,
+  moveOwnedStorageToTrash,
+  runtimeSessionDeletionSources,
+  assertStorageWriteAllowed,
   type AgentMessageRecord,
   type ExecutionWorkRecord,
   type ExecutionOutputItem,
@@ -92,6 +96,25 @@ export interface MissionRunner {
     readonly requestId: string;
     readonly response: HumanInteractionResponse;
   }): Promise<void>;
+}
+
+async function collectMissionExecutionIds(
+  missions: MissionStore,
+  missionId: string,
+): Promise<ReadonlySet<string>> {
+  const executionIds = new Set<string>();
+  let beforeSequence: number | undefined;
+  while (true) {
+    const page = await missions.readTimelinePage(missionId, {
+      ...(beforeSequence === undefined ? {} : { beforeSequence }),
+      limit: 500,
+    });
+    for (const turn of page.turns) {
+      if (turn.executionId !== undefined) executionIds.add(turn.executionId);
+    }
+    if (page.nextBeforeSequence === undefined) return executionIds;
+    beforeSequence = page.nextBeforeSequence;
+  }
 }
 
 type PendingMissionOperation =
@@ -392,6 +415,13 @@ export function createMissionRunner(options: {
       input.inputMessageId,
       input.onFinished ?? (() => undefined),
       input.sessionId,
+      async () =>
+        await persistMissionExecutionProjection(
+          options.missions,
+          executionStore,
+          input.missionId,
+          input.handle.executionId,
+        ),
     ).finally(async () => await forgetActive(input.missionId, input.handle.executionId));
     active.set(input.missionId, { handle: input.handle, settlement });
     invalidateChat(input.missionId);
@@ -402,6 +432,7 @@ export function createMissionRunner(options: {
   };
 
   const runMission = async (id: string): Promise<Mission> => {
+    await assertStorageWriteAllowed(new PragmaPaths({ pragmaHome: options.pragmaHome }));
     const mission = await options.missions.get(id);
     if (active.has(mission.id)) return mission;
     const { app, runtimes: baseRuntimes } = executionContext(mission);
@@ -603,6 +634,7 @@ export function createMissionRunner(options: {
     readonly content: string;
     readonly requestId: string;
   }): Promise<Mission> => {
+    await assertStorageWriteAllowed(new PragmaPaths({ pragmaHome: options.pragmaHome }));
     const mission = await options.missions.get(input.id);
     const { app, runtimes: baseRuntimes } = executionContext(mission);
     const rootContext = await readMissionRootContext(mission);
@@ -718,12 +750,51 @@ export function createMissionRunner(options: {
     if (active.has(id)) {
       throw new Error("Stop the active execution before deleting this mission.");
     }
+    const mission = await options.missions.get(id);
+    const executionIds = await collectMissionExecutionIds(options.missions, id);
+    const sessionId = mission.execution?.sessionId;
     const session = sessions.get(id);
     if (session !== undefined) {
       await session.close("Mission deleted.");
       sessions.delete(id);
     }
-    await options.missions.remove(id);
+    const paths = new PragmaPaths({ pragmaHome: options.pragmaHome });
+    const sources = [
+      ...[...executionIds].map((executionId) => ({
+        label: `executions/${executionId}`,
+        path: paths.executionRoot(executionId),
+      })),
+      ...[...executionIds].map((executionId) => ({
+        label: `execution-archives/${executionId}.jsonl.gz`,
+        path: paths.executionArchive(executionId),
+      })),
+      ...(sessionId === undefined
+        ? []
+        : [
+            { label: `expert-sessions/${sessionId}`, path: paths.expertSessionRoot(sessionId) },
+            ...(await runtimeSessionDeletionSources(paths, sessionId)),
+          ]),
+      ...(
+        await Promise.all(
+          [...executionIds].map(
+            async (executionId) => await runtimeSessionDeletionSources(paths, executionId),
+          ),
+        )
+      ).flat(),
+      ...(options.missions.storagePath === undefined
+        ? []
+        : [{ label: "mission", path: options.missions.storagePath(id) }]),
+    ];
+    const uniqueSources = [
+      ...new Map(sources.map((source) => [source.path, source] as const)).values(),
+    ];
+    await moveOwnedStorageToTrash({
+      paths,
+      owner: { type: "mission", id },
+      sources: uniqueSources,
+    });
+    if (options.missions.storagePath === undefined) await options.missions.remove(id);
+    else options.missions.forget?.(id);
     executionContexts.delete(id);
   };
 
@@ -734,6 +805,8 @@ export function createMissionRunner(options: {
     const entries = await readMissionChatHistory(
       timeline.turns,
       executionStore,
+      options.missions,
+      mission.id,
       capturedLive?.executionId,
     );
 
@@ -1216,6 +1289,7 @@ function observeExecution(
   inputMessageId: string,
   onFinished: () => void | Promise<void>,
   sessionId?: string,
+  onTerminal?: (() => void | Promise<void>) | undefined,
 ): Promise<void> {
   let lastObservedStatus: string | undefined;
   const probe = setInterval(() => {
@@ -1282,6 +1356,11 @@ function observeExecution(
     } catch (error) {
       console.error(`Failed to finish Mission execution ${execution.executionId}.`, error);
     }
+    try {
+      await onTerminal?.();
+    } catch (error) {
+      console.error(`Failed to compact Mission execution ${execution.executionId}.`, error);
+    }
     await missions.updateExecution(
       missionId,
       {
@@ -1303,9 +1382,39 @@ function observeExecution(
   })().finally(() => clearInterval(probe));
 }
 
+async function persistMissionExecutionProjection(
+  missions: MissionStore,
+  executionStore: ReturnType<typeof createFileExecutionStore>,
+  missionId: string,
+  executionId: string,
+): Promise<void> {
+  let beforeSequence: number | undefined;
+  let matched: MissionTimelineTurn | undefined;
+  while (matched === undefined) {
+    const page = await missions.readTimelinePage(missionId, {
+      ...(beforeSequence === undefined ? {} : { beforeSequence }),
+      limit: 500,
+    });
+    matched = page.turns.find((turn) => turn.executionId === executionId);
+    if (matched !== undefined || page.nextBeforeSequence === undefined) break;
+    beforeSequence = page.nextBeforeSequence;
+  }
+  if (matched === undefined)
+    throw new Error(`Mission timeline is missing Execution ${executionId}.`);
+  const entries = await readMissionChatHistory([matched], executionStore, missions, missionId);
+  await missions.writeExecutionProjection(
+    missionId,
+    executionId,
+    entries.filter((entry) => entry.kind !== "user"),
+  );
+  await executionStore.archive(executionId);
+}
+
 async function readMissionChatHistory(
   turns: readonly MissionTimelineTurn[],
   executionStore: ReturnType<typeof createFileExecutionStore>,
+  missions: MissionStore,
+  missionId: string,
   activeExecutionId?: string,
 ): Promise<MissionChatEntry[]> {
   const entries: MissionChatEntry[] = [];
@@ -1323,6 +1432,11 @@ async function readMissionChatHistory(
     const view = new StoredExecutionView(turn.executionId, executionStore);
     const state = await view.getState().catch(() => undefined);
     if (state === undefined) {
+      const projection = await missions.readExecutionProjection(missionId, turn.executionId);
+      if (projection !== undefined) {
+        entries.push(...projection);
+        continue;
+      }
       entries.push({
         id: `missing:${turn.executionId}`,
         timelineSequence: turn.sequence,
@@ -1336,8 +1450,28 @@ async function readMissionChatHistory(
     }
     if (["queued", "running", "waiting"].includes(state.status)) continue;
 
-    const histories = await view.getMessageHistory({ scope: { kind: "all" } }).catch(() => []);
-    const activityEntries = await readHistoricalAgentActivityEntries(view, turn.sequence);
+    let histories;
+    let activityEntries;
+    try {
+      histories = await view.getMessageHistory({ scope: { kind: "all" } });
+      activityEntries = await readHistoricalAgentActivityEntries(view, turn.sequence);
+    } catch {
+      const projection = await missions.readExecutionProjection(missionId, turn.executionId);
+      if (projection !== undefined) {
+        entries.push(...projection);
+        continue;
+      }
+      entries.push({
+        id: `missing:${turn.executionId}`,
+        timelineSequence: turn.sequence,
+        executionId: turn.executionId,
+        kind: "assistant",
+        content: "Execution history unavailable.",
+        streaming: false,
+        createdAt: state.updatedAt,
+      });
+      continue;
+    }
     const richEntries = finalizeHistoricalChatEntries(
       [
         ...messageRecordsToChatEntries(

@@ -45,6 +45,20 @@ async function stores() {
   };
 }
 
+async function projectRevisionFile(
+  directory: string,
+  revision: number,
+  relativePath: string,
+): Promise<string> {
+  const manifest = JSON.parse(
+    await readFile(join(directory, "studio", "revisions", `${revision}.json`), "utf8"),
+  ) as { readonly snapshotHash: string };
+  return await readFile(
+    join(directory, ".cache", "views", manifest.snapshotHash, relativePath),
+    "utf8",
+  );
+}
+
 describe("PragmaProjectStore", () => {
   it("publishes immutable YAML revisions containing experts, teams, and flows", async () => {
     const { directory, project } = await stores();
@@ -62,14 +76,12 @@ describe("PragmaProjectStore", () => {
       "RuntimeProfile",
     ]);
     expect(first.lock?.resources).toHaveLength(3);
-    expect(
-      await readFile(
-        join(directory, "studio/revisions/1/experts/writer@1.0.0.pragma.yaml"),
-        "utf8",
-      ),
-    ).toContain("kind: Expert");
-    expect(await readFile(join(directory, "studio/manifest.yaml"), "utf8")).toContain(
-      "revision: 1",
+    const revision = JSON.parse(
+      await readFile(join(directory, "studio/revisions/1.json"), "utf8"),
+    ) as { snapshotHash: string };
+    expect(revision.snapshotHash).toMatch(/^[a-f0-9]{64}$/);
+    expect(await readFile(join(directory, "studio/project.json"), "utf8")).toContain(
+      '"headRevision": 1',
     );
 
     await expect(
@@ -168,12 +180,8 @@ describe("PragmaProjectStore", () => {
     });
     expect(created.id).toBe("writer");
     expect(await experts.list()).toHaveLength(2);
-    expect(
-      await readFile(
-        join(directory, "studio/revisions/1/experts/writer@1.0.0.pragma.yaml"),
-        "utf8",
-      ),
-    ).toContain("scope: Release communication");
+    const opened = await projectRevisionFile(directory, 1, "experts/writer@1.0.0.pragma.yaml");
+    expect(opened).toContain("scope: Release communication");
   });
 
   it("preserves project-local artifacts when the Desktop form publishes a later revision", async () => {
@@ -198,9 +206,9 @@ describe("PragmaProjectStore", () => {
       toolApprovals: {},
     });
 
-    await expect(
-      readFile(join(directory, "studio/revisions/2/assets/guide.md"), "utf8"),
-    ).resolves.toBe("# Project guide\n");
+    await expect(projectRevisionFile(directory, 2, "assets/guide.md")).resolves.toBe(
+      "# Project guide\n",
+    );
   });
 
   it("keeps same-id Expert versions independent and only reclaims unreferenced managed dependencies", async () => {
@@ -297,7 +305,7 @@ describe("PragmaProjectStore", () => {
     expect((await project.get()).revision).toBe(1);
   });
 
-  it("recovers an unpublished revision directory left by an interrupted publish", async () => {
+  it("ignores an unpublished legacy revision directory", async () => {
     const { directory, project } = await stores();
     const orphan = join(directory, "studio/revisions/1");
     await mkdir(orphan, { recursive: true });
@@ -309,9 +317,7 @@ describe("PragmaProjectStore", () => {
     });
 
     expect(published.revision).toBe(1);
-    await expect(readFile(join(orphan, "orphan.txt"), "utf8")).rejects.toMatchObject({
-      code: "ENOENT",
-    });
+    await expect(readFile(join(orphan, "orphan.txt"), "utf8")).resolves.toBe("incomplete");
   });
 
   it("serializes compare-and-swap commits across independent repository instances", async () => {
@@ -330,6 +336,20 @@ describe("PragmaProjectStore", () => {
       code: "revision_conflict",
     });
     expect((await first.get()).revision).toBe(1);
+  });
+
+  it("does not create a revision for an identical snapshot", async () => {
+    const { directory, project } = await stores();
+    const resources = [exampleRuntime(), exampleExpert()];
+    const first = await project.publish({ expectedRevision: 0, resources });
+    const second = await project.publish({ expectedRevision: 1, resources });
+
+    expect(second.revision).toBe(first.revision);
+    await expect(
+      readFile(join(directory, "studio", "revisions", "2.json"), "utf8"),
+    ).rejects.toMatchObject({
+      code: "ENOENT",
+    });
   });
 
   it("reads and preserves portable Expert capabilities and context stores", async () => {

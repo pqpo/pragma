@@ -20,12 +20,14 @@ import {
   MissionIdSchema,
   MissionSchema,
   MissionTimelineRecordSchema,
+  MissionChatEntrySchema,
   MissionUserMessageSchema,
   type Mission,
   type MissionExecutor,
   type MissionModelOverride,
   type MissionSummary,
   type MissionTimelineRecord,
+  type MissionChatEntry,
   type MissionUserMessage,
   type DesktopToolPermissionMode,
 } from "../shared/desktop-api.ts";
@@ -44,6 +46,8 @@ export interface MissionTimelinePage {
 }
 
 export interface MissionStore {
+  readonly storagePath?: ((id: string) => string) | undefined;
+  readonly forget?: ((id: string) => void) | undefined;
   list(): Promise<MissionSummary[]>;
   get(id: string): Promise<Mission>;
   create(input: {
@@ -88,6 +92,15 @@ export interface MissionStore {
   markComplete(id: string): Promise<Mission>;
   reopen(id: string): Promise<Mission>;
   remove(id: string): Promise<void>;
+  readExecutionProjection(
+    id: string,
+    executionId: string,
+  ): Promise<readonly MissionChatEntry[] | undefined>;
+  writeExecutionProjection(
+    id: string,
+    executionId: string,
+    entries: readonly MissionChatEntry[],
+  ): Promise<void>;
 }
 
 export class MissionStoreError extends Error {
@@ -119,6 +132,8 @@ export function createMissionStore(options: { readonly missionsPath: string }): 
   const manifestPath = (id: string) => join(missionPath(id), "mission.yaml");
   const messagesPath = (id: string) => join(missionPath(id), "messages.jsonl");
   const transactionPath = (id: string) => join(missionPath(id), ".messages.transaction.json");
+  const projectionPath = (id: string, executionId: string) =>
+    join(missionPath(id), "execution-projections", `${executionId}.json`);
   const lockPath = (id: string) => join(options.missionsPath, ".locks", `${id}.lock`);
   const timelineCache = new Map<
     string,
@@ -254,6 +269,39 @@ export function createMissionStore(options: { readonly missionsPath: string }): 
   };
 
   return {
+    storagePath: missionPath,
+    forget(id) {
+      timelineCache.delete(id);
+    },
+    async readExecutionProjection(id, executionId) {
+      try {
+        const value = JSON.parse(await readFile(projectionPath(id, executionId), "utf8")) as {
+          readonly schemaVersion?: unknown;
+          readonly entries?: unknown;
+        };
+        if (value.schemaVersion !== "pragma.mission-execution-projection/v1") {
+          throw new MissionStoreError(
+            "unsupported_schema",
+            "Unsupported Mission projection schema.",
+          );
+        }
+        return MissionChatEntrySchema.array().parse(value.entries);
+      } catch (error) {
+        if (isNodeError(error, "ENOENT")) return undefined;
+        throw error;
+      }
+    },
+    async writeExecutionProjection(id, executionId, entries) {
+      await withMissionLock(MissionIdSchema.parse(id), async () => {
+        await readMissionUnlocked(id);
+        await writeJsonAtomically(projectionPath(id, executionId), {
+          schemaVersion: "pragma.mission-execution-projection/v1",
+          executionId,
+          entries: MissionChatEntrySchema.array().parse(entries),
+          createdAt: new Date().toISOString(),
+        });
+      });
+    },
     async list() {
       try {
         const directories = (await readdir(options.missionsPath, { withFileTypes: true })).filter(
@@ -560,6 +608,7 @@ async function writeJsonAtomically(path: string, value: unknown): Promise<void> 
 }
 
 async function writeTextAtomically(path: string, content: string): Promise<void> {
+  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
   const temporaryPath = `${path}.${randomUUID()}.tmp`;
   await writeFile(temporaryPath, content, { mode: 0o600 });
   await rename(temporaryPath, path);

@@ -38,6 +38,9 @@ export interface PragmaProjectRevisionLocation {
   readonly revision: number;
   readonly rootDir: string;
   readonly entryFile: string;
+  readonly snapshotHash?: string | undefined;
+  readonly projectFingerprint?: string | undefined;
+  readonly compilerVersion?: string | undefined;
   readonly updatedAt?: string | undefined;
 }
 
@@ -50,6 +53,10 @@ export interface PragmaProjectSourceRepository {
   readonly readFiles: (
     location: PragmaProjectRevisionLocation,
   ) => Promise<ReadonlyMap<string, string>>;
+  readonly withCheckout?: <T>(
+    location: PragmaProjectRevisionLocation,
+    operation: (location: PragmaProjectRevisionLocation) => Promise<T>,
+  ) => Promise<T>;
   readonly commit: (input: {
     readonly projectId: string;
     readonly expectedRevision: number;
@@ -94,25 +101,27 @@ export class PragmaProjectService {
         diagnostics: [],
       };
     }
-    const project = await this.openLocation(location, true);
-    const diagnostics = await project.validate();
-    let lock: PragmaLock | undefined;
-    try {
-      lock = await project.readLock();
-    } catch {
-      lock = undefined;
-    }
-    const lockValid = !diagnostics.some((diagnostic) => diagnostic.code.startsWith("lock."));
-    return {
-      schemaVersion: "pragma.project-snapshot/v2",
-      projectId,
-      revision: location.revision,
-      resources: project.listResources(),
-      diagnostics,
-      ...(lock === undefined ? {} : { lock }),
-      ...(lock !== undefined && lockValid ? { projectFingerprint: lock.projectFingerprint } : {}),
-      updatedAt: location.updatedAt,
-    };
+    return await this.withCheckout(location, async (checkedOut) => {
+      const project = await this.openLocation(checkedOut, true);
+      const diagnostics = await project.validate();
+      let lock: PragmaLock | undefined;
+      try {
+        lock = await project.readLock();
+      } catch {
+        lock = undefined;
+      }
+      const lockValid = !diagnostics.some((diagnostic) => diagnostic.code.startsWith("lock."));
+      return {
+        schemaVersion: "pragma.project-snapshot/v2",
+        projectId,
+        revision: checkedOut.revision,
+        resources: project.listResources(),
+        diagnostics,
+        ...(lock === undefined ? {} : { lock }),
+        ...(lock !== undefined && lockValid ? { projectFingerprint: lock.projectFingerprint } : {}),
+        updatedAt: checkedOut.updatedAt,
+      };
+    });
   }
 
   async validate(input: {
@@ -297,18 +306,29 @@ export class PragmaProjectService {
     if (location === undefined) {
       throw new Error(`Pragma project revision not found: ${input.projectId}@${input.revision}`);
     }
-    const project = await this.openLocation(location, true);
-    return await project.compile<T>(input.ref, {
-      workspace: input.workspace,
-      projectRoot: dirname(location.entryFile),
-      environmentId: input.environmentId,
-      adapterHost: input.adapterHost,
-      resourceAdapters: this.adapters,
-      runtimes: input.runtimes,
-      rootModelSelectionOverride: input.rootModelSelectionOverride,
-      rootExecutionOverride: input.rootExecutionOverride,
-      plugins: input.plugins,
+    return await this.withCheckout(location, async (checkedOut) => {
+      const project = await this.openLocation(checkedOut, true);
+      return await project.compile<T>(input.ref, {
+        workspace: input.workspace,
+        projectRoot: dirname(checkedOut.entryFile),
+        environmentId: input.environmentId,
+        adapterHost: input.adapterHost,
+        resourceAdapters: this.adapters,
+        runtimes: input.runtimes,
+        rootModelSelectionOverride: input.rootModelSelectionOverride,
+        rootExecutionOverride: input.rootExecutionOverride,
+        plugins: input.plugins,
+      });
     });
+  }
+
+  private async withCheckout<T>(
+    location: PragmaProjectRevisionLocation,
+    operation: (location: PragmaProjectRevisionLocation) => Promise<T>,
+  ): Promise<T> {
+    return this.options.repository.withCheckout === undefined
+      ? await operation(location)
+      : await this.options.repository.withCheckout(location, operation);
   }
 
   private async openLocation(

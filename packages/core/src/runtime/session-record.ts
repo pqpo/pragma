@@ -10,10 +10,11 @@ import type {
 import { RuntimeSessionRefSchema } from "./runtime-adapter.ts";
 import type { PragmaPaths } from "../storage/pragma-paths.ts";
 
-export type RuntimeSessionRecordStatus = "creating" | "active" | "closed" | "failed";
+export type RuntimeSessionProcessState = "starting" | "running" | "stopped" | "failed";
+export type RuntimeSessionRetentionState = "retained" | "tombstoned" | "trashed";
 
 export interface RuntimeSessionRecord {
-  readonly schemaVersion: "pragma.runtime-session/v1";
+  readonly schemaVersion: "pragma.runtime-session/v2";
   readonly owner: RuntimeSessionOwner;
   readonly systemSessionId: string;
   readonly expertId: string;
@@ -21,7 +22,8 @@ export interface RuntimeSessionRecord {
   readonly runtimeSessionRef: RuntimeSessionRef | null;
   readonly currentWorkspace: string;
   readonly workspaceHistory: readonly string[];
-  readonly status: RuntimeSessionRecordStatus;
+  readonly processState: RuntimeSessionProcessState;
+  readonly retentionState: RuntimeSessionRetentionState;
   readonly createdAt: string;
   readonly updatedAt: string;
 }
@@ -41,7 +43,7 @@ export async function createRuntimeSessionRecord(options: {
   );
   const now = new Date().toISOString();
   const record: RuntimeSessionRecord = {
-    schemaVersion: "pragma.runtime-session/v1",
+    schemaVersion: "pragma.runtime-session/v2",
     owner: options.owner,
     systemSessionId: options.systemSessionId,
     expertId: options.agentId,
@@ -49,7 +51,8 @@ export async function createRuntimeSessionRecord(options: {
     runtimeSessionRef: null,
     currentWorkspace: options.workspace,
     workspaceHistory: [options.workspace],
-    status: "creating",
+    processState: "starting",
+    retentionState: "retained",
     createdAt: now,
     updatedAt: now,
   };
@@ -88,7 +91,7 @@ export async function restoreRuntimeSessionRecord(options: {
     workspaceHistory: record.workspaceHistory.includes(options.workspace)
       ? record.workspaceHistory
       : [...record.workspaceHistory, options.workspace],
-    status: "active",
+    processState: "running",
     updatedAt: new Date().toISOString(),
   };
   await writeRuntimeSessionRecord(options.paths, updated);
@@ -98,7 +101,9 @@ export async function restoreRuntimeSessionRecord(options: {
 export async function updateRuntimeSessionRecord(
   paths: PragmaPaths,
   record: RuntimeSessionRecord,
-  patch: Partial<Pick<RuntimeSessionRecord, "runtimeSessionRef" | "status">>,
+  patch: Partial<
+    Pick<RuntimeSessionRecord, "runtimeSessionRef" | "processState" | "retentionState">
+  >,
 ): Promise<RuntimeSessionRecord> {
   const updated = { ...record, ...patch, updatedAt: new Date().toISOString() };
   await writeRuntimeSessionRecord(paths, updated);
@@ -166,7 +171,7 @@ function assertRuntimeSessionRecord(value: unknown, file: string): RuntimeSessio
   if (typeof value !== "object" || value === null) throw unsupported(file);
   const record = value as Partial<RuntimeSessionRecord>;
   if (
-    record.schemaVersion !== "pragma.runtime-session/v1" ||
+    record.schemaVersion !== "pragma.runtime-session/v2" ||
     typeof record.owner !== "object" ||
     record.owner === null ||
     (record.owner.type !== "expert-session" && record.owner.type !== "flow-execution") ||
@@ -181,7 +186,8 @@ function assertRuntimeSessionRecord(value: unknown, file: string): RuntimeSessio
       !RuntimeSessionRefSchema.safeParse(record.runtimeSessionRef).success) ||
     typeof record.currentWorkspace !== "string" ||
     !Array.isArray(record.workspaceHistory) ||
-    !isStatus(record.status) ||
+    !isProcessState(record.processState) ||
+    !isRetentionState(record.retentionState) ||
     typeof record.createdAt !== "string" ||
     typeof record.updatedAt !== "string"
   ) {
@@ -200,8 +206,12 @@ function unsupported(file: string): Error {
   return new Error(`unsupported-state-version: ${file}`);
 }
 
-function isStatus(value: unknown): value is RuntimeSessionRecordStatus {
-  return value === "creating" || value === "active" || value === "closed" || value === "failed";
+function isProcessState(value: unknown): value is RuntimeSessionProcessState {
+  return value === "starting" || value === "running" || value === "stopped" || value === "failed";
+}
+
+function isRetentionState(value: unknown): value is RuntimeSessionRetentionState {
+  return value === "retained" || value === "tombstoned" || value === "trashed";
 }
 
 function isNotFound(error: unknown): boolean {

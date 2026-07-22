@@ -51,6 +51,7 @@ export interface ExpertSessionStore {
   listEvents(sessionId: string): Promise<readonly ExpertSessionEvent[]>;
   claimLease(sessionId: string, claimId: string, leaseMs: number): Promise<boolean>;
   releaseLease(sessionId: string, claimId: string): Promise<void>;
+  delete(sessionId: string): Promise<void>;
 }
 
 export function createFileExpertSessionStore(options: {
@@ -59,6 +60,11 @@ export function createFileExpertSessionStore(options: {
 }): ExpertSessionStore {
   const paths = new PragmaPaths(options);
   return {
+    async delete(sessionId) {
+      await withFileLock(paths.expertSessionLock(sessionId), async () => {
+        await rm(paths.expertSessionRoot(sessionId), { recursive: true, force: true });
+      });
+    },
     async create(record) {
       await withFileLock(paths.expertSessionLock(record.sessionId), async () => {
         await recoverTransaction(paths, options.executions, record.sessionId);
@@ -127,7 +133,8 @@ export function createFileExpertSessionStore(options: {
         }
         const rootContext = session.contexts[session.rootContextId]!;
         const prompt =
-          transaction.prompt.modelSelection !== undefined || rootContext.modelSelection === undefined
+          transaction.prompt.modelSelection !== undefined ||
+          rootContext.modelSelection === undefined
             ? transaction.prompt
             : { ...transaction.prompt, modelSelection: rootContext.modelSelection };
         const nextSession = ExpertSessionRecordSchema.parse({

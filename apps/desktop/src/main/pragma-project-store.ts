@@ -6,7 +6,6 @@ import {
   PragmaProjectRevisionConflictError,
   PragmaProjectService,
   PragmaProjectValidationError,
-  formatPragmaYaml,
   loadPragmaProject,
   parsePragmaYaml,
   type PragmaProject,
@@ -24,7 +23,12 @@ import {
   type PragmaResource,
 } from "@pragma/interpreter/ast";
 import { z } from "zod";
-import { withFileLock } from "@pragma/core";
+import {
+  ContentAddressedStore,
+  type PragmaPaths,
+  assertStorageWriteAllowed,
+  withFileLock,
+} from "@pragma/core";
 
 import {
   PragmaProjectSnapshotSchema,
@@ -35,12 +39,23 @@ import { referencingPragmaResources } from "./pragma-resource-references.ts";
 
 const ProjectManifestSchema = z
   .object({
-    apiVersion: z.literal("pragma/v2"),
-    kind: z.literal("DesktopProject"),
+    schemaVersion: z.literal("pragma.desktop-project/v3"),
+    projectId: z.string().min(1),
+    headRevision: z.number().int().positive(),
+    updatedAt: z.string().datetime(),
+  })
+  .strict();
+
+const ProjectRevisionManifestSchema = z
+  .object({
+    schemaVersion: z.literal("pragma.project-revision/v3"),
     projectId: z.string().min(1),
     revision: z.number().int().positive(),
-    entry: z.string().min(1),
-    updatedAt: z.string().datetime(),
+    parentRevision: z.number().int().positive().optional(),
+    snapshotHash: z.string().regex(/^[a-f0-9]{64}$/),
+    projectFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+    compilerVersion: z.string().min(1),
+    createdAt: z.string().datetime(),
   })
   .strict();
 
@@ -89,6 +104,7 @@ export class PragmaProjectStoreError extends Error {
       | "resource_not_found"
       | "resource_referenced"
       | "built_in_readonly"
+      | "project_io"
       | "unsupported_format",
     message: string,
     readonly diagnostics: readonly PragmaDiagnostic[] = [],
@@ -100,12 +116,17 @@ export class PragmaProjectStoreError extends Error {
 
 export function createPragmaProjectStore(options: {
   readonly projectsPath: string;
+  readonly objectsPath?: string | undefined;
+  readonly projectViewsPath?: string | undefined;
+  readonly storagePaths?: PragmaPaths | undefined;
   readonly projectId?: string;
   readonly reservedResourceRefs?: ReadonlySet<string> | undefined;
 }): PragmaProjectStore {
   const projectId = options.projectId ?? "studio";
   const repository = createDesktopProjectSourceRepository({
     projectsPath: options.projectsPath,
+    objectsPath: options.objectsPath ?? join(options.projectsPath, ".storage", "objects"),
+    projectViewsPath: options.projectViewsPath ?? join(options.projectsPath, ".cache", "views"),
   });
   const service = new PragmaProjectService({ repository });
 
@@ -175,6 +196,7 @@ export function createPragmaProjectStore(options: {
     readonly removals?: readonly string[] | undefined;
   }): Promise<PragmaProjectSnapshot> => {
     try {
+      if (options.storagePaths !== undefined) await assertStorageWriteAllowed(options.storagePaths);
       assertNotReserved(input.upserts);
       if (input.removals?.some((ref) => options.reservedResourceRefs?.has(ref)) === true) {
         throw new PragmaProjectStoreError(
@@ -197,6 +219,8 @@ export function createPragmaProjectStore(options: {
     get,
     async publish(input) {
       try {
+        if (options.storagePaths !== undefined)
+          await assertStorageWriteAllowed(options.storagePaths);
         assertNotReserved(input.resources);
         assertDesktopExpertAuthoring(input.resources);
         const artifacts =
@@ -356,14 +380,21 @@ function desktopExpertAuthoringDiagnostics(
 
 function createDesktopProjectSourceRepository(options: {
   readonly projectsPath: string;
+  readonly objectsPath: string;
+  readonly projectViewsPath: string;
 }): PragmaProjectSourceRepository {
   const projectPath = (projectId: string) => join(options.projectsPath, projectId);
-  const manifestPath = (projectId: string) => join(projectPath(projectId), "manifest.yaml");
+  const manifestPath = (projectId: string) => join(projectPath(projectId), "project.json");
+  const revisionManifestPath = (projectId: string, revision: number) =>
+    join(projectPath(projectId), "revisions", `${revision}.json`);
   const commitLockPath = (projectId: string) => join(projectPath(projectId), ".commit.lock");
+  const objects = new ContentAddressedStore(options.objectsPath);
+  const projectViewsPath = options.projectViewsPath;
+  const projectViewLeasesPath = join(dirname(projectViewsPath), "project-view-leases");
 
   const readManifest = async (projectId: string) => {
     try {
-      const raw = parsePragmaYaml(await readFile(manifestPath(projectId), "utf8"));
+      const raw = JSON.parse(await readFile(manifestPath(projectId), "utf8")) as unknown;
       const parsed = ProjectManifestSchema.safeParse(raw);
       if (!parsed.success) {
         throw new PragmaProjectStoreError(
@@ -378,79 +409,169 @@ function createDesktopProjectSourceRepository(options: {
     }
   };
 
-  const location = (
+  const readRevisionManifest = async (projectId: string, revision: number) => {
+    try {
+      return ProjectRevisionManifestSchema.parse(
+        JSON.parse(await readFile(revisionManifestPath(projectId, revision), "utf8")) as unknown,
+      );
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+      throw error;
+    }
+  };
+
+  const ensureView = async (snapshotHash: string): Promise<string> => {
+    const target = join(projectViewsPath, snapshotHash);
+    const marker = join(target, ".pragma-snapshot");
+    try {
+      if ((await readFile(marker, "utf8")).trim() === snapshotHash) return target;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+    const temporary = join(projectViewsPath, `.${snapshotHash}.${randomUUID()}.tmp`);
+    await rm(temporary, { recursive: true, force: true });
+    await mkdir(temporary, { recursive: true, mode: 0o700 });
+    try {
+      await objects.materializeTree(snapshotHash, temporary, { touchObjects: true });
+      await writeFile(join(temporary, ".pragma-snapshot"), `${snapshotHash}\n`, { mode: 0o600 });
+      await mkdir(projectViewsPath, { recursive: true, mode: 0o700 });
+      try {
+        await rename(temporary, target);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      }
+      return target;
+    } finally {
+      await rm(temporary, { recursive: true, force: true });
+    }
+  };
+
+  const location = async (
     projectId: string,
     revision: number,
-    updatedAt?: string,
-  ): PragmaProjectRevisionLocation => ({
-    projectId,
-    revision,
-    rootDir: join(projectPath(projectId), `revisions/${revision}`),
-    entryFile: join(projectPath(projectId), `revisions/${revision}/pragma.yaml`),
-    updatedAt,
-  });
+  ): Promise<PragmaProjectRevisionLocation | undefined> => {
+    const manifest = await readRevisionManifest(projectId, revision);
+    if (manifest === undefined) return undefined;
+    const rootDir = await ensureView(manifest.snapshotHash);
+    return {
+      projectId,
+      revision,
+      rootDir,
+      entryFile: join(rootDir, "pragma.yaml"),
+      snapshotHash: manifest.snapshotHash,
+      projectFingerprint: manifest.projectFingerprint,
+      compilerVersion: manifest.compilerVersion,
+      updatedAt: manifest.createdAt,
+    };
+  };
+
+  const requireLocation = async (
+    projectId: string,
+    revision: number,
+  ): Promise<PragmaProjectRevisionLocation> => {
+    const committed = await location(projectId, revision);
+    if (committed === undefined) {
+      throw new PragmaProjectStoreError(
+        "project_io",
+        `Project revision ${projectId}@${revision} was committed but could not be read back.`,
+      );
+    }
+    return committed;
+  };
 
   return {
+    async withCheckout(project, operation) {
+      const snapshotHash = project.snapshotHash;
+      if (snapshotHash === undefined) return await operation(project);
+      const lease = join(projectViewLeasesPath, snapshotHash, `${randomUUID()}.lease`);
+      await mkdir(dirname(lease), { recursive: true, mode: 0o700 });
+      await writeFile(
+        lease,
+        `${JSON.stringify({ pid: process.pid, createdAt: new Date().toISOString() })}\n`,
+        {
+          mode: 0o600,
+        },
+      );
+      try {
+        return await operation(project);
+      } finally {
+        await rm(lease, { force: true });
+      }
+    },
     async getHead(projectId) {
       const manifest = await readManifest(projectId);
-      return manifest === undefined
-        ? undefined
-        : location(projectId, manifest.revision, manifest.updatedAt);
+      return manifest === undefined ? undefined : await location(projectId, manifest.headRevision);
     },
     async getRevision(projectId, revision) {
       if (!Number.isInteger(revision) || revision < 1) return undefined;
-      try {
-        await readFile(join(projectPath(projectId), `revisions/${revision}/pragma.yaml`), "utf8");
-        return location(projectId, revision);
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-        throw error;
-      }
+      return await location(projectId, revision);
     },
     async readFiles(project) {
-      return await readTextFiles(project.rootDir);
+      const files = await readTextFiles(project.rootDir);
+      return new Map([...files].filter(([path]) => path !== ".pragma-snapshot"));
     },
     async commit(input) {
       return await withFileLock(
         commitLockPath(input.projectId),
         async () => {
           const current = await readManifest(input.projectId);
-          const actualRevision = current?.revision ?? 0;
+          const actualRevision = current?.headRevision ?? 0;
           if (actualRevision !== input.expectedRevision) {
             throw new PragmaProjectRevisionConflictError(input.expectedRevision, actualRevision);
           }
-          const revision = actualRevision + 1;
-          const projectRoot = projectPath(input.projectId);
-          const temporaryPath = join(projectRoot, `.revision-${revision}-${randomUUID()}.tmp`);
-          const targetPath = join(projectRoot, `revisions/${revision}`);
-          await mkdir(temporaryPath, { recursive: true, mode: 0o700 });
-          try {
-            for (const [relativePath, contents] of input.files) {
-              assertProjectRelativePath(relativePath);
-              const target = join(temporaryPath, relativePath);
-              await mkdir(dirname(target), { recursive: true, mode: 0o700 });
-              await writeFile(target, contents, { mode: 0o600 });
-            }
-            await mkdir(join(projectRoot, "revisions"), { recursive: true, mode: 0o700 });
-            await rm(targetPath, { recursive: true, force: true });
-            await rename(temporaryPath, targetPath);
-            const updatedAt = new Date().toISOString();
-            await writeAtomically(
-              manifestPath(input.projectId),
-              formatPragmaYaml({
-                apiVersion: "pragma/v2",
-                kind: "DesktopProject",
-                projectId: input.projectId,
-                revision,
-                entry: `revisions/${revision}/pragma.yaml`,
-                updatedAt,
-              }),
-            );
-            return location(input.projectId, revision, updatedAt);
-          } catch (error) {
-            await rm(temporaryPath, { recursive: true, force: true });
-            throw error;
+          const snapshotFiles = new Map<string, Uint8Array>();
+          for (const [relativePath, contents] of input.files) {
+            assertProjectRelativePath(relativePath);
+            snapshotFiles.set(relativePath, Buffer.from(contents, "utf8"));
           }
+          const snapshot = await objects.putSnapshot(snapshotFiles);
+          const previous =
+            actualRevision === 0
+              ? undefined
+              : await readRevisionManifest(input.projectId, actualRevision);
+          if (previous?.snapshotHash === snapshot.root.hash) {
+            return await requireLocation(input.projectId, actualRevision);
+          }
+          const lockSource = input.files.get("pragma.lock.yaml");
+          if (lockSource === undefined)
+            throw new Error("Project snapshot is missing pragma.lock.yaml.");
+          const lock = z
+            .object({
+              compilerVersion: z.string().min(1),
+              projectFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+            })
+            .passthrough()
+            .parse(parsePragmaYaml(lockSource));
+          const revision = actualRevision + 1;
+          const createdAt = new Date().toISOString();
+          const revisionManifest = ProjectRevisionManifestSchema.parse({
+            schemaVersion: "pragma.project-revision/v3",
+            projectId: input.projectId,
+            revision,
+            ...(actualRevision === 0 ? {} : { parentRevision: actualRevision }),
+            snapshotHash: snapshot.root.hash,
+            projectFingerprint: lock.projectFingerprint,
+            compilerVersion: lock.compilerVersion,
+            createdAt,
+          });
+          await writeAtomically(
+            revisionManifestPath(input.projectId, revision),
+            `${JSON.stringify(revisionManifest, undefined, 2)}\n`,
+          );
+          await writeAtomically(
+            manifestPath(input.projectId),
+            `${JSON.stringify(
+              ProjectManifestSchema.parse({
+                schemaVersion: "pragma.desktop-project/v3",
+                projectId: input.projectId,
+                headRevision: revision,
+                updatedAt: createdAt,
+              }),
+              undefined,
+              2,
+            )}\n`,
+          );
+          return await requireLocation(input.projectId, revision);
         },
         { timeoutMs: 30_000, staleMs: 300_000 },
       );
@@ -468,6 +589,12 @@ function assertProjectRelativePath(path: string): void {
       `Project file path escapes its root: ${path}`,
     );
   }
+  if (path === ".pragma-snapshot") {
+    throw new PragmaProjectStoreError(
+      "project_invalid",
+      "Project file path is reserved for checkout metadata: .pragma-snapshot",
+    );
+  }
 }
 
 async function readRevisionArtifacts(
@@ -479,6 +606,7 @@ async function readRevisionArtifacts(
   const location = await repository.getRevision(projectId, revision);
   if (location === undefined) return new Map();
   const managed = new Set([
+    ".pragma-snapshot",
     "pragma.yaml",
     "pragma.lock.yaml",
     ...(snapshot.lock?.resources.map((resource) => resource.source) ?? []),

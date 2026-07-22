@@ -248,8 +248,17 @@ Server 与 Agent 的关系：
 
 - Agent workspace 只保存任务明确需要的 repository、input、artifact 和 Agent 主动创建或修改的文件。
 - Runtime Session、Runtime 配置和插件安装副本不得写入 workspace。
+- 权威数据存放在 `~/.pragma/data/`，可恢复运行状态存放在 `state/`，有界诊断归档存放在
+  `archives/`，可重建内容存放在 `cache/`；`tmp/` 与 `trash/` 使用短期保留策略。
 - ExpertSession、Execution 与 Runtime Session 分别存放在 `~/.pragma/state/expert-sessions/`、`~/.pragma/state/executions/` 和 `~/.pragma/state/runtime-sessions/`。
-- Agent 插件副本缓存到 `~/.pragma/cache/agents/<agentId>/plugins/<pluginId>/`。
+- Project Revision 只保存不可变 manifest 和 Merkle `snapshotHash`；文件实体全局去重到
+  `~/.pragma/data/objects/sha256/`，所有 Revision 在 Project 删除前都是强引用根。
+- Agent 插件按 package fingerprint 全局缓存到 `~/.pragma/cache/plugins/sha256/`；
+  `cache/agents/<agentId>/` 只保存绑定元数据，不复制插件包。
+- Codex 使用共享只读 cache base 与 Runtime Context 私有 overlay；sessions、SQLite、日志和配置
+  不得跨 Context 共享，`CODEX_SQLITE_HOME` 必须指向私有目录。
+- Runtime 进程停止不等于持久数据删除。Mission 删除必须按 owner 图级联移动 ExpertSession、
+  Execution、Runtime Session 和 ownership claim 到带 journal 的回收站。
 - 外部 ID 目录段统一通过 `@pragma/core` 的 `PragmaPaths` 编码和解析，具体 Runtime 或插件 loader 不自行拼接管理路径。
 - 每个 Runtime Session 必须由 ExpertSession context 或 FlowExecution Invocation 明确拥有；恢复还必须提供原 `systemSessionId` 和 `RuntimeSessionRef`。
 - Core 必须通过原子 ownership claim 保证 `systemSessionId` 只有一个 owner；不要用“先扫描再写入”的 TOCTOU 检查代替原子声明。

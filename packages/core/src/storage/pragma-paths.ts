@@ -32,6 +32,62 @@ export class PragmaPaths {
     return join(this.root, "state");
   }
 
+  dataRoot(): string {
+    return join(this.root, "data");
+  }
+
+  cacheRoot(): string {
+    return join(this.root, "cache");
+  }
+
+  archivesRoot(): string {
+    return join(this.root, "archives");
+  }
+
+  temporaryRoot(): string {
+    return join(this.root, "tmp");
+  }
+
+  trashRoot(): string {
+    return join(this.root, "trash");
+  }
+
+  storageVersion(): string {
+    return join(this.root, "storage.json");
+  }
+
+  storageStateRoot(): string {
+    return join(this.stateRoot(), "storage");
+  }
+
+  storageCatalog(): string {
+    return join(this.storageStateRoot(), "catalog.sqlite");
+  }
+
+  storageGcLock(): string {
+    return join(this.storageStateRoot(), ".gc.lock");
+  }
+
+  deletionJournalRoot(): string {
+    return join(this.storageStateRoot(), "deletion-journal");
+  }
+
+  contentObjectsRoot(): string {
+    return join(this.dataRoot(), "objects", "sha256");
+  }
+
+  projectsRoot(): string {
+    return join(this.dataRoot(), "projects");
+  }
+
+  missionsRoot(): string {
+    return join(this.dataRoot(), "missions");
+  }
+
+  credentialsRoot(): string {
+    return join(this.dataRoot(), "credentials");
+  }
+
   expertSessionsRoot(): string {
     return join(this.stateRoot(), "expert-sessions");
   }
@@ -90,6 +146,14 @@ export class PragmaPaths {
 
   executionEvents(executionId: string): string {
     return join(this.executionRoot(executionId), "events.jsonl");
+  }
+
+  executionArchivesRoot(): string {
+    return join(this.archivesRoot(), "executions");
+  }
+
+  executionArchive(executionId: string): string {
+    return join(this.executionArchivesRoot(), `${encodePragmaPathSegment(executionId)}.jsonl.gz`);
   }
 
   executionCommits(executionId: string): string {
@@ -158,11 +222,41 @@ export class PragmaPaths {
   }
 
   agentsCacheRoot(): string {
-    return join(this.root, "cache", "agents");
+    return join(this.cacheRoot(), "agents");
+  }
+
+  pluginPackagesCacheRoot(): string {
+    return join(this.cacheRoot(), "plugins", "sha256");
+  }
+
+  pluginPackageCache(packageFingerprint: string): string {
+    if (!/^[a-f0-9]{64}$/.test(packageFingerprint)) {
+      throw new Error(`Invalid plugin package fingerprint: ${packageFingerprint}.`);
+    }
+    return join(this.pluginPackagesCacheRoot(), packageFingerprint.slice(0, 2), packageFingerprint);
+  }
+
+  codexRuntimeCacheRoot(): string {
+    return join(this.cacheRoot(), "runtimes", "codex");
+  }
+
+  projectViewsCacheRoot(): string {
+    return join(this.cacheRoot(), "project-views");
   }
 
   agentCacheRoot(agentId: string): string {
     return join(this.agentsCacheRoot(), encodePragmaPathSegment(agentId));
+  }
+
+  agentPluginBindingsRoot(agentId: string): string {
+    return join(this.agentCacheRoot(agentId), "bindings");
+  }
+
+  agentPluginBinding(agentId: string, pluginRef: string): string {
+    return join(
+      this.agentPluginBindingsRoot(agentId),
+      `${encodePragmaPathSegment(pluginRef)}.json`,
+    );
   }
 
   agentPluginsRoot(agentId: string): string {
@@ -190,11 +284,11 @@ export class PragmaPaths {
   }
 
   pluginsRoot(): string {
-    return join(this.root, "plugins");
+    return join(this.dataRoot(), "plugins");
   }
 
   pluginStateRoot(): string {
-    return join(this.stateRoot(), "plugins");
+    return join(this.dataRoot(), "plugin-state");
   }
 
   pluginState(pluginRef: string): string {

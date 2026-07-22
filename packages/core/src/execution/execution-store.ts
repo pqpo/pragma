@@ -1,6 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { gzip, gunzip } from "node:zlib";
+import { promisify } from "node:util";
 
 import {
   AgentInstanceSchema,
@@ -84,6 +86,13 @@ export class ExecutionFinalStatusConflictError extends Error {
   }
 }
 
+export class ExecutionHistoryUnavailableError extends Error {
+  constructor(readonly executionId: string) {
+    super(`Execution diagnostic history is unavailable: ${executionId}.`);
+    this.name = "ExecutionHistoryUnavailableError";
+  }
+}
+
 export interface ExecutionStore {
   create(record: ExecutionRecord, root: Invocation): Promise<void>;
   get(executionId: string): Promise<ExecutionRecord | undefined>;
@@ -106,6 +115,8 @@ export interface ExecutionStore {
     eventId?: string,
   ): Promise<ExecutionEvent>;
   readEvents(executionId: string, after?: ExecutionCursor): Promise<readonly ExecutionEvent[]>;
+  delete(executionId: string): Promise<void>;
+  archive(executionId: string): Promise<void>;
 }
 
 const ExecutionCommitRecordSchema = z.object({
@@ -136,6 +147,35 @@ export function createFileExecutionStore(
   const paths = new PragmaPaths(options);
 
   const store: ExecutionStore = {
+    async delete(executionId) {
+      await withFileLock(paths.executionLock(executionId), async () => {
+        await rm(paths.executionRoot(executionId), { recursive: true, force: true });
+        await rm(paths.executionArchive(executionId), { force: true });
+      });
+    },
+    async archive(executionId) {
+      await withFileLock(paths.executionLock(executionId), async () => {
+        await recoverTransaction(paths, executionId);
+        const state = await requireExecution(paths, executionId);
+        if (!isTerminalExecutionStatus(state.status)) {
+          throw new Error(`Cannot archive a non-terminal Execution: ${executionId}.`);
+        }
+        const source = paths.executionEvents(executionId);
+        let contents: Buffer;
+        try {
+          contents = await readFile(source);
+        } catch (error) {
+          if (isNotFound(error)) return;
+          throw error;
+        }
+        const target = paths.executionArchive(executionId);
+        const temporary = `${target}.${randomUUID()}.tmp`;
+        await mkdir(dirname(target), { recursive: true, mode: 0o700 });
+        await writeFile(temporary, await promisify(gzip)(contents), { mode: 0o600 });
+        await rename(temporary, target);
+        await rm(source, { force: true });
+      });
+    },
     async create(record, root) {
       void stableStringify({ record, root });
       await withFileLock(paths.executionLock(record.executionId), async () => {
@@ -758,7 +798,48 @@ async function readExecutionEvents(
   paths: PragmaPaths,
   executionId: string,
 ): Promise<ExecutionEvent[]> {
-  return await readJsonLines(paths.executionEvents(executionId), { parse: parseExecutionEvent });
+  const [hasActive, hasArchive] = await Promise.all([
+    stat(paths.executionEvents(executionId)).then(
+      () => true,
+      (error: unknown) => (isNotFound(error) ? false : Promise.reject(error)),
+    ),
+    stat(paths.executionArchive(executionId)).then(
+      () => true,
+      (error: unknown) => (isNotFound(error) ? false : Promise.reject(error)),
+    ),
+  ]);
+  if (!hasActive && !hasArchive) {
+    const execution = await readJsonIfExists(paths.executionState(executionId));
+    const parsed = ExecutionRecordSchema.safeParse(execution);
+    if (parsed.success && isTerminalExecutionStatus(parsed.data.status)) {
+      throw new ExecutionHistoryUnavailableError(executionId);
+    }
+  }
+  const archived = await readArchivedExecutionEvents(paths, executionId);
+  const active = await readJsonLines(paths.executionEvents(executionId), {
+    parse: parseExecutionEvent,
+  });
+  if (archived.length === 0) return active;
+  const byId = new Map(archived.map((event) => [event.eventId, event] as const));
+  for (const event of active) byId.set(event.eventId, event);
+  return [...byId.values()].toSorted((left, right) => left.cursor.sequence - right.cursor.sequence);
+}
+
+async function readArchivedExecutionEvents(
+  paths: PragmaPaths,
+  executionId: string,
+): Promise<ExecutionEvent[]> {
+  try {
+    const contents = await promisify(gunzip)(await readFile(paths.executionArchive(executionId)));
+    return contents
+      .toString("utf8")
+      .split("\n")
+      .filter((line) => line.trim() !== "")
+      .map((line) => parseExecutionEvent(JSON.parse(line) as unknown));
+  } catch (error) {
+    if (isNotFound(error)) return [];
+    throw error;
+  }
 }
 
 async function readCommitRecords(

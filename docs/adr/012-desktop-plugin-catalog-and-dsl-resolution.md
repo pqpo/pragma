@@ -4,6 +4,9 @@
 
 Accepted.
 
+ADR 016 changes expanded plugin storage to one global content-fingerprint cache. Agent cache entries
+are metadata bindings and no longer contain package copies.
+
 ## Context
 
 Expert plugins were loadable by Core, but Desktop Studio had no governed catalog, no distinction

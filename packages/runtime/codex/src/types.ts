@@ -25,9 +25,9 @@ export interface CodexRuntimeAdapterOptions {
   readonly executablePath?: string | undefined;
   readonly appServerArgs?: readonly string[] | undefined;
   /**
-   * Extra environment for Codex. CODEX_HOME is treated as the shared source home
-   * for auth/config/session state; the spawned Codex process receives a managed
-   * per-session CODEX_HOME instead.
+   * Extra environment for Codex. CODEX_HOME is only an import source for auth,
+   * config and rebuildable cache data. The spawned process receives an isolated
+   * Runtime Context overlay plus a separate CODEX_SQLITE_HOME.
    */
   readonly env?: NodeJS.ProcessEnv | undefined;
   readonly clientInfo?: CodexRuntimeClientInfo | undefined;

@@ -4,6 +4,10 @@
 
 Accepted.
 
+ADR 016 retains this canonical log while an Execution is active, then gzip-archives it after a
+Mission projection has been committed. The archive is bounded diagnostic history rather than the
+permanent Mission chat source.
+
 ## Decision
 
 Each Execution owns one canonical, append-only event log. `{ executionId, sequence }` is the only

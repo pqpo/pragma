@@ -3,7 +3,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { BrowserWindow, app, ipcMain, safeStorage, shell } from "electron";
-import { PragmaPaths } from "@pragma/core";
+import { PragmaPaths, runStorageMaintenance } from "@pragma/core";
 import {
   BUILT_IN_PRAGMA_REF,
   compileBuiltInDefaultAgent,
@@ -43,6 +43,7 @@ import { createWorkspaceHistoryStore } from "./workspace-history-store.ts";
 import { createDesktopDefaultAgentProjectPort } from "./default-agent-project-adapter.ts";
 import { createDesktopDefaultAgentTaskPort } from "./default-agent-task-adapter.ts";
 import { createDesktopSystemExpertRegistry } from "./system-expert-registry.ts";
+import { initializeDesktopStorage } from "./storage-bootstrap.ts";
 import {
   resolveSystemExpertRuntimeDefaults,
   withRuntimeDefaults,
@@ -138,13 +139,29 @@ void app.whenReady().then(async () => {
     decrypt: (encrypted: Buffer) => safeStorage.decryptString(encrypted),
   };
   const pragmaPaths = new PragmaPaths();
-  const builtInDefaultWorkspace = join(pragmaPaths.root, "workspace");
-  const projectsPath = join(pragmaPaths.root, "projects");
-  const missionsPath = join(pragmaPaths.root, "missions");
-  const modelProvidersPath = join(pragmaPaths.root, "model-providers.json");
-  const capabilityCredentialsPath = join(pragmaPaths.root, "capability-credentials.json");
-  const capabilitiesPath = join(pragmaPaths.root, "capabilities");
-  const contextStoresPath = join(pragmaPaths.root, "context-stores");
+  const storageBootstrap = await initializeDesktopStorage({
+    paths: pragmaPaths,
+    trashItem: async (path) => await shell.trashItem(path),
+  });
+  if (storageBootstrap.legacyBackup !== undefined) {
+    console.warn(`Previous Pragma storage was backed up to ${storageBootstrap.legacyBackup}.`);
+  }
+  const maintenance = await runStorageMaintenance({ paths: pragmaPaths });
+  if (maintenance.before.totalBytes >= maintenance.before.softLimitBytes) {
+    console.warn(
+      `Pragma storage pressure GC reclaimed ${maintenance.before.totalBytes - maintenance.after.totalBytes} bytes.`,
+    );
+  }
+  const builtInDefaultWorkspace = join(pragmaPaths.dataRoot(), "workspace");
+  const projectsPath = pragmaPaths.projectsRoot();
+  const missionsPath = pragmaPaths.missionsRoot();
+  const modelProvidersPath = join(pragmaPaths.dataRoot(), "model-providers.json");
+  const capabilityCredentialsPath = join(
+    pragmaPaths.credentialsRoot(),
+    "capability-credentials.json",
+  );
+  const capabilitiesPath = join(pragmaPaths.dataRoot(), "capabilities");
+  const contextStoresPath = join(pragmaPaths.dataRoot(), "context-stores");
   const desktopSettings = createDesktopSettingsStore({
     settingsPath: join(pragmaPaths.stateRoot(), "desktop-settings.json"),
     builtInDefaultWorkspace,
@@ -165,6 +182,9 @@ void app.whenReady().then(async () => {
   await systemExperts.initialize();
   const pragmaProjectStore = createPragmaProjectStore({
     projectsPath,
+    objectsPath: pragmaPaths.contentObjectsRoot(),
+    projectViewsPath: pragmaPaths.projectViewsCacheRoot(),
+    storagePaths: pragmaPaths,
     reservedResourceRefs: new Set([BUILT_IN_PRAGMA_REF]),
   });
   installWorkflowLayoutHandlers(
@@ -173,7 +193,7 @@ void app.whenReady().then(async () => {
     }),
   );
   const pluginCredentials = createPluginCredentialStore({
-    configPath: join(pragmaPaths.stateRoot(), "plugin-credentials.json"),
+    configPath: join(pragmaPaths.credentialsRoot(), "plugin-credentials.json"),
     encryption,
   });
   const missionStore = createMissionStore({
