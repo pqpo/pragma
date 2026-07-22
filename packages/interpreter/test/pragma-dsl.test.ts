@@ -13,8 +13,11 @@ import {
 
 import {
   FlowActionRegistry,
+  PRAGMA_EXPERT_ID_MAX_LENGTH,
   PRAGMA_EXPERT_INSTRUCTIONS_MAX_LENGTH,
   PRAGMA_EXPERT_SCOPE_MAX_LENGTH,
+  PragmaExpertIdSchema,
+  PragmaExpertRefSchema,
   PragmaExpertResourceSchema,
   PragmaSemanticResourceIdSchema,
   formatPragmaYaml,
@@ -27,6 +30,21 @@ describe("Pragma YAML DSL", () => {
     expect(PragmaSemanticResourceIdSchema.safeParse("code_reviewer_2").success).toBe(true);
     expect(PragmaSemanticResourceIdSchema.safeParse("code-reviewer").success).toBe(false);
     expect(PragmaSemanticResourceIdSchema.safeParse("code.reviewer").success).toBe(false);
+    const maximumExpertId = "a".repeat(PRAGMA_EXPERT_ID_MAX_LENGTH);
+    const oversizedExpertId = "a".repeat(PRAGMA_EXPERT_ID_MAX_LENGTH + 1);
+    expect(PragmaExpertIdSchema.safeParse(maximumExpertId).success).toBe(true);
+    expect(PragmaExpertIdSchema.safeParse(oversizedExpertId).success).toBe(false);
+    expect(PragmaExpertRefSchema.safeParse(`expert:${maximumExpertId}@1.0.0`).success).toBe(true);
+    expect(PragmaExpertRefSchema.safeParse(`expert:${oversizedExpertId}@1.0.0`).success).toBe(
+      false,
+    );
+    expect(PragmaSemanticResourceIdSchema.safeParse(oversizedExpertId).success).toBe(true);
+    expect(
+      PragmaExpertResourceSchema.safeParse(expertResource(maximumExpertId, "Valid")).success,
+    ).toBe(true);
+    expect(
+      PragmaExpertResourceSchema.safeParse(expertResource(oversizedExpertId, "Invalid")).success,
+    ).toBe(false);
 
     const expert = expertResource("reviewer", "Reviews work");
     expect(

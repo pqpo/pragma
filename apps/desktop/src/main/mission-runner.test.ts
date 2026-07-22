@@ -673,6 +673,7 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
         phase: "completed",
         senderSessionId: "root-thread",
         targetSessionIds: ["child-a", "child-b", "child-thread"],
+        prompt: "Inspect the repository and report complete findings",
       },
     });
     await store.appendEvent(executionId, executionId, "runtime.event", {
@@ -818,7 +819,10 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
       runner.getWorkConversation({ id: mission.id, recordId: subagent!.recordId, limit: 100 }),
     ).resolves.toMatchObject({
       entries: [
-        expect.objectContaining({ kind: "user", content: "Inspect repository" }),
+        expect.objectContaining({
+          kind: "user",
+          content: "Inspect the repository and report complete findings",
+        }),
         expect.objectContaining({ kind: "assistant", content: "Subagent findings" }),
         expect.objectContaining({ kind: "user", content: "Refine the findings" }),
         expect.objectContaining({ kind: "assistant", content: "Refined findings" }),

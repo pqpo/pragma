@@ -4,6 +4,7 @@ import { join } from "node:path";
 
 import type {
   PragmaCapabilityResource,
+  PragmaContextStoreResource,
   PragmaExpertResource,
   PragmaExpertTeamResource,
   PragmaFlowResource,
@@ -103,6 +104,18 @@ describe("PragmaProjectStore", () => {
       code: "project_invalid",
       diagnostics: [expect.objectContaining({ message: "Runtime is required." })],
     });
+
+    const diagnostics = await project.validateChanges({
+      expectedRevision: 0,
+      upserts: [missingRuntime],
+    });
+    expect(diagnostics).toEqual(
+      expect.arrayContaining([expect.objectContaining({ message: "Runtime is required." })]),
+    );
+    await expect(
+      project.apply({ expectedRevision: 0, upserts: [missingRuntime] }),
+    ).rejects.toMatchObject({ code: "project_invalid" });
+    expect((await project.get()).revision).toBe(0);
 
     const runtime = exampleRuntime();
     runtime.spec.config = { runtimeId: "codex" };
@@ -319,14 +332,17 @@ describe("PragmaProjectStore", () => {
     expect((await first.get()).revision).toBe(1);
   });
 
-  it("edits arbitrary runtime profiles while preserving portable capabilities", async () => {
+  it("reads and preserves portable Expert capabilities and context stores", async () => {
     const { project, experts } = await stores();
     const expert = exampleExpert();
     expert.spec.runtime = { ref: "runtime-profile:remote@1.0.0" };
     expert.spec.capabilities = [{ ref: "capability:portable@2", kind: "skill" }];
+    expert.spec.contextStores = [
+      { ref: "context-store:portable_context@1.0.0", namespace: "project_docs", required: true },
+    ];
     await project.publish({
       expectedRevision: 0,
-      resources: [remoteRuntime(), portableCapability(), expert],
+      resources: [remoteRuntime(), portableCapability(), portableContextStore(), expert],
     });
 
     const view = await experts.get("expert:writer@1.0.0");
@@ -340,6 +356,8 @@ describe("PragmaProjectStore", () => {
     });
     expect(view.resourceRuntime).toEqual(expert.spec.runtime);
     expect(view.opaqueCapabilities).toEqual(expert.spec.capabilities);
+    expect(view.contextStoreMounts).toEqual([]);
+    expect(view.opaqueContextStores).toEqual(expert.spec.contextStores);
     await experts.update("expert:writer@1.0.0", {
       name: view.name,
       description: "Updated without losing portable fields",
@@ -359,6 +377,7 @@ describe("PragmaProjectStore", () => {
       contextStoreMounts: view.contextStoreMounts,
       resourceTools: view.resourceTools,
       opaqueCapabilities: view.opaqueCapabilities,
+      opaqueContextStores: view.opaqueContextStores,
     });
 
     const stored = (await project.get()).resources.find(
@@ -369,6 +388,9 @@ describe("PragmaProjectStore", () => {
     });
     expect(stored?.kind === "Expert" ? stored.spec.capabilities : undefined).toEqual(
       expert.spec.capabilities,
+    );
+    expect(stored?.kind === "Expert" ? stored.spec.contextStores : undefined).toEqual(
+      expert.spec.contextStores,
     );
   });
 });
@@ -469,6 +491,24 @@ function portableCapability(): PragmaCapabilityResource {
       adapter: "pragma.capability.host@v1",
       binding: "binding:portable",
       config: { key: "portable" },
+    },
+  };
+}
+
+function portableContextStore(): PragmaContextStoreResource {
+  return {
+    apiVersion: "pragma/v2",
+    kind: "ContextStore",
+    metadata: {
+      id: "portable_context",
+      version: "1.0.0",
+      name: "Portable context",
+      description: "Portable project context.",
+      tags: [],
+    },
+    spec: {
+      adapter: "pragma.context.static@v1",
+      config: { entries: [] },
     },
   };
 }

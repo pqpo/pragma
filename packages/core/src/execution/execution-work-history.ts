@@ -57,8 +57,23 @@ interface MutableWorkRecord {
   contextId?: string | undefined;
   origin: "core" | "runtime";
   tasks: Map<string, ExecutionWorkTask>;
+  runtimeStatus?: ExecutionStatus | undefined;
+  runtimeStatusOrder?: number | undefined;
+  lastRuntimeRunOrder?: number | undefined;
   createdAt: string;
   updatedAt: string;
+}
+
+interface RuntimeEventProjection {
+  readonly invocationId: string;
+  readonly order: number;
+  readonly event: ReturnType<typeof ExpertAgentStreamEventSchema.parse>;
+}
+
+interface RuntimeDispatch {
+  readonly commandId: string;
+  prompt?: string | undefined;
+  readonly targetSessionIds: Set<string>;
 }
 
 export class ExecutionWorkHistoryReader {
@@ -149,14 +164,28 @@ export class ExecutionWorkHistoryReader {
         recordByInvocationId.set(invocation.invocationId, recordId);
       }
 
-      for (const event of events) {
+      const runtimeEvents: RuntimeEventProjection[] = [];
+      for (const [order, event] of events.entries()) {
         if (event.type !== "runtime.event") continue;
         const parsed = ExpertAgentStreamEventSchema.safeParse(event.data);
-        if (!parsed.success) continue;
-        const streamEvent = parsed.data;
+        if (parsed.success) {
+          runtimeEvents.push({ invocationId: event.invocationId, order, event: parsed.data });
+        }
+      }
+      const dispatches = collectRuntimeDispatches(runtimeEvents);
+      const queuedDispatches = new Set<string>();
+      const pendingPrompts = new Map<string, string[]>();
+
+      for (const projected of runtimeEvents) {
+        const streamEvent = projected.event;
         const source = streamEvent.source;
         if (streamEvent.type === "agent.command") {
-          for (const targetSessionId of streamEvent.payload.targetSessionIds) {
+          const dispatch = dispatches.get(streamEvent.payload.commandId);
+          const targetSessionIds =
+            dispatch === undefined
+              ? streamEvent.payload.targetSessionIds
+              : [...dispatch.targetSessionIds];
+          for (const targetSessionId of targetSessionIds) {
             const targetRecordId = `runtime-agent:${targetSessionId}`;
             const target = ensureRecord(records, {
               recordId: targetRecordId,
@@ -164,13 +193,25 @@ export class ExecutionWorkHistoryReader {
               sessionId: targetSessionId,
               parentSessionId:
                 streamEvent.payload.senderSessionId ?? source.sessionId ?? source.parentSessionId,
-              ownerInvocationId: event.invocationId,
+              ownerInvocationId: projected.invocationId,
               origin: "runtime",
               createdAt: streamEvent.emittedAt,
               updatedAt: streamEvent.emittedAt,
             });
             runtimeRecordBySessionId.set(targetSessionId, targetRecordId);
-            applyCommandState(target, executionId, event.invocationId, streamEvent);
+            applyRuntimeCommandStatus(target, streamEvent, targetSessionId, projected.order);
+          }
+          if (
+            dispatch !== undefined &&
+            dispatch.prompt !== undefined &&
+            !queuedDispatches.has(dispatch.commandId)
+          ) {
+            queuedDispatches.add(dispatch.commandId);
+            for (const targetSessionId of dispatch.targetSessionIds) {
+              const prompts = pendingPrompts.get(targetSessionId) ?? [];
+              prompts.push(dispatch.prompt);
+              pendingPrompts.set(targetSessionId, prompts);
+            }
           }
         }
         if (source.sessionId === undefined || source.parentSessionId === undefined) continue;
@@ -180,7 +221,7 @@ export class ExecutionWorkHistoryReader {
           kind: "runtime-agent",
           sessionId: source.sessionId,
           parentSessionId: source.parentSessionId,
-          ownerInvocationId: event.invocationId,
+          ownerInvocationId: projected.invocationId,
           displayName: source.displayName,
           origin: "runtime",
           createdAt: streamEvent.emittedAt,
@@ -188,7 +229,20 @@ export class ExecutionWorkHistoryReader {
         });
         runtimeRecordBySessionId.set(source.sessionId, recordId);
         if (source.displayName !== undefined) record.displayName = source.displayName;
-        putRuntimeTask(record, executionId, event.invocationId, streamEvent);
+        if (isRuntimeRunEvent(streamEvent)) {
+          const prompt =
+            streamEvent.type === "run.started"
+              ? pendingPrompts.get(source.sessionId)?.shift()
+              : undefined;
+          putRuntimeTask(
+            record,
+            executionId,
+            projected.invocationId,
+            streamEvent,
+            projected.order,
+            prompt,
+          );
+        }
       }
     }
 
@@ -305,53 +359,68 @@ function putRuntimeTask(
   record: MutableWorkRecord,
   executionId: string,
   invocationId: string,
-  event: ReturnType<typeof ExpertAgentStreamEventSchema.parse>,
+  event: Extract<
+    ReturnType<typeof ExpertAgentStreamEventSchema.parse>,
+    { type: "run.started" | "run.completed" | "run.failed" | "run.cancelled" }
+  >,
+  order: number,
+  dispatchedPrompt?: string | undefined,
 ): void {
-  record.tasks.delete(`${executionId}:session:${record.sessionId}`);
-  if (event.type.startsWith("run.") && event.runId !== record.sessionId) {
-    record.tasks.delete(`${executionId}:${record.sessionId}`);
-  }
   const taskId = `${executionId}:${event.runId}`;
   const current = record.tasks.get(taskId);
-  const status = runtimeEventStatus(event.type) ?? current?.status ?? "running";
+  const nextStatus = runtimeEventStatus(event.type);
+  const status =
+    current !== undefined && isTerminalStatus(current.status) && !isTerminalStatus(nextStatus)
+      ? current.status
+      : nextStatus;
   putTask(record, {
+    ...current,
     taskId,
     executionId,
     invocationId,
     runId: event.runId,
     status,
-    ...(event.type !== "run.started" ? {} : { input: event.payload.task }),
+    ...(event.type !== "run.started"
+      ? {}
+      : { input: dispatchedPrompt ?? current?.input ?? event.payload.task }),
     ...(event.type !== "run.failed" ? {} : { error: event.payload.message }),
     createdAt: current?.createdAt ?? event.emittedAt,
     updatedAt: event.emittedAt,
   });
+  record.lastRuntimeRunOrder = order;
 }
 
-function applyCommandState(
+function applyRuntimeCommandStatus(
   record: MutableWorkRecord,
-  executionId: string,
-  invocationId: string,
   event: Extract<ReturnType<typeof ExpertAgentStreamEventSchema.parse>, { type: "agent.command" }>,
+  targetSessionId: string,
+  order: number,
 ): void {
-  const state = event.payload.states?.[record.sessionId];
+  const stateStatus = readRuntimeAgentStatus(event.payload.states?.[targetSessionId]);
   const status =
-    readRuntimeAgentStatus(state) ?? (event.payload.phase === "failed" ? "failed" : "queued");
-  const taskId = `${executionId}:session:${record.sessionId}`;
-  const current = record.tasks.get(taskId);
-  putTask(record, {
-    taskId,
-    executionId,
-    invocationId,
-    runId: record.sessionId,
-    status,
-    ...(event.payload.prompt === undefined ? {} : { input: event.payload.prompt }),
-    ...(event.payload.error === undefined ? {} : { error: event.payload.error }),
-    createdAt: current?.createdAt ?? event.emittedAt,
-    updatedAt: event.emittedAt,
-  });
+    stateStatus ??
+    (event.payload.action === "interrupt" && event.payload.phase === "completed"
+      ? "interrupted"
+      : event.payload.phase === "failed"
+        ? "failed"
+        : undefined);
+  if (status === undefined) return;
+  const latestTask = [...record.tasks.values()].at(-1);
+  if (status === "interrupted" && isTerminalStatus(latestTask?.status)) return;
+  if (
+    !isTerminalStatus(status) &&
+    (isTerminalStatus(record.runtimeStatus) || isTerminalStatus(latestTask?.status))
+  ) {
+    return;
+  }
+  record.runtimeStatus = status;
+  record.runtimeStatusOrder = order;
+  if (event.emittedAt > record.updatedAt) record.updatedAt = event.emittedAt;
 }
 
-function runtimeEventStatus(type: string): ExecutionStatus | undefined {
+function runtimeEventStatus(
+  type: "run.started" | "run.completed" | "run.failed" | "run.cancelled",
+): ExecutionStatus {
   switch (type) {
     case "run.started":
       return "running";
@@ -361,9 +430,50 @@ function runtimeEventStatus(type: string): ExecutionStatus | undefined {
       return "failed";
     case "run.cancelled":
       return "cancelled";
-    default:
-      return undefined;
   }
+}
+
+function isRuntimeRunEvent(
+  event: ReturnType<typeof ExpertAgentStreamEventSchema.parse>,
+): event is Extract<
+  ReturnType<typeof ExpertAgentStreamEventSchema.parse>,
+  { type: "run.started" | "run.completed" | "run.failed" | "run.cancelled" }
+> {
+  return (
+    event.type === "run.started" ||
+    event.type === "run.completed" ||
+    event.type === "run.failed" ||
+    event.type === "run.cancelled"
+  );
+}
+
+function collectRuntimeDispatches(
+  events: readonly RuntimeEventProjection[],
+): ReadonlyMap<string, RuntimeDispatch> {
+  const dispatches = new Map<string, RuntimeDispatch>();
+  for (const { event } of events) {
+    if (
+      event.type !== "agent.command" ||
+      (event.payload.action !== "spawn" && event.payload.action !== "send")
+    ) {
+      continue;
+    }
+    const current = dispatches.get(event.payload.commandId) ?? {
+      commandId: event.payload.commandId,
+      targetSessionIds: new Set<string>(),
+    };
+    if (
+      event.payload.prompt !== undefined &&
+      (current.prompt === undefined || event.payload.prompt.length > current.prompt.length)
+    ) {
+      current.prompt = event.payload.prompt;
+    }
+    for (const targetSessionId of event.payload.targetSessionIds) {
+      current.targetSessionIds.add(targetSessionId);
+    }
+    dispatches.set(event.payload.commandId, current);
+  }
+  return dispatches;
 }
 
 function readRuntimeAgentStatus(value: unknown): ExecutionStatus | undefined {
@@ -405,7 +515,15 @@ function finalizeRecord(record: MutableWorkRecord): ExecutionWorkRecord {
     ...(record.executorId === undefined ? {} : { executorId: record.executorId }),
     ...(record.contextId === undefined ? {} : { contextId: record.contextId }),
     origin: record.origin,
-    status: aggregateStatus(tasks),
+    status:
+      record.origin === "runtime" &&
+      record.runtimeStatus !== undefined &&
+      (record.lastRuntimeRunOrder === undefined ||
+        (record.runtimeStatusOrder ?? -1) > record.lastRuntimeRunOrder)
+        ? record.runtimeStatus
+        : record.origin === "runtime"
+          ? aggregateRuntimeStatus(tasks)
+          : aggregateStatus(tasks),
     tasks,
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
@@ -417,4 +535,17 @@ function aggregateStatus(tasks: readonly ExecutionWorkTask[]): ExecutionStatus {
   if (tasks.some((task) => task.status === "waiting")) return "waiting";
   if (tasks.some((task) => task.status === "queued")) return "queued";
   return tasks.at(-1)?.status ?? "queued";
+}
+
+function aggregateRuntimeStatus(tasks: readonly ExecutionWorkTask[]): ExecutionStatus {
+  return tasks.at(-1)?.status ?? "queued";
+}
+
+function isTerminalStatus(status: ExecutionStatus | undefined): boolean {
+  return (
+    status === "succeeded" ||
+    status === "failed" ||
+    status === "cancelled" ||
+    status === "interrupted"
+  );
 }

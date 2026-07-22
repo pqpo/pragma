@@ -10,11 +10,14 @@ import {
   loadPragmaProject,
   parsePragmaYaml,
   type PragmaProject,
+  type CompiledResource,
+  type InvocableResource,
   type PragmaProjectRevisionLocation,
   type PragmaProjectSourceRepository,
 } from "@pragma/interpreter";
 import {
   PragmaDiagnosticSchema,
+  PragmaExpertIdSchema,
   PragmaResourceSchema,
   canonicalPragmaResourceRef,
   type PragmaDiagnostic,
@@ -24,7 +27,6 @@ import { z } from "zod";
 import { withFileLock } from "@pragma/core";
 
 import {
-  CreateExpertIdSchema,
   PragmaProjectSnapshotSchema,
   type PragmaProjectSnapshot,
   type PragmaYamlValidationResult,
@@ -67,8 +69,15 @@ export interface PragmaProjectStore {
     readonly expectedRevision: number;
     readonly resource: PragmaResource;
   }): Promise<PragmaYamlValidationResult>;
+  validateChanges(input: {
+    readonly expectedRevision: number;
+    readonly upserts: readonly PragmaResource[];
+    readonly removals?: readonly string[] | undefined;
+  }): Promise<readonly PragmaDiagnostic[]>;
+  compile<T extends InvocableResource>(
+    input: Parameters<PragmaProjectService["compile"]>[0],
+  ): Promise<CompiledResource<T>>;
   openRevision(revision: number): Promise<PragmaProject>;
-  readonly service: PragmaProjectService;
   readonly projectId: string;
 }
 
@@ -124,9 +133,67 @@ export function createPragmaProjectStore(options: {
     }
   };
 
+  const materializeCandidate = async (input: {
+    readonly expectedRevision: number;
+    readonly upserts?: readonly PragmaResource[] | undefined;
+    readonly removals?: readonly string[] | undefined;
+  }): Promise<readonly PragmaResource[]> => {
+    const current = await get();
+    if (current.revision !== input.expectedRevision) {
+      throw new PragmaProjectStoreError(
+        "revision_conflict",
+        `Pragma project revision conflict: expected ${input.expectedRevision}, got ${current.revision}.`,
+      );
+    }
+    const upserts = (input.upserts ?? []).map((resource) => PragmaResourceSchema.parse(resource));
+    const removals = new Set(input.removals ?? []);
+    const upsertRefs = new Set(upserts.map(canonicalPragmaResourceRef));
+    return [
+      ...current.resources.filter((resource) => {
+        const ref = canonicalPragmaResourceRef(resource);
+        return !removals.has(ref) && !upsertRefs.has(ref);
+      }),
+      ...upserts,
+    ];
+  };
+
+  const validateChanges = async (input: {
+    readonly expectedRevision: number;
+    readonly upserts: readonly PragmaResource[];
+    readonly removals?: readonly string[] | undefined;
+  }): Promise<readonly PragmaDiagnostic[]> => {
+    const resources = await materializeCandidate(input);
+    return [
+      ...desktopExpertAuthoringDiagnostics(resources),
+      ...(await service.validateCandidate({ projectId, ...input })),
+    ];
+  };
+
+  const apply = async (input: {
+    readonly expectedRevision: number;
+    readonly upserts: readonly PragmaResource[];
+    readonly removals?: readonly string[] | undefined;
+  }): Promise<PragmaProjectSnapshot> => {
+    try {
+      assertNotReserved(input.upserts);
+      if (input.removals?.some((ref) => options.reservedResourceRefs?.has(ref)) === true) {
+        throw new PragmaProjectStoreError(
+          "built_in_readonly",
+          "Built-in resource refs cannot be removed.",
+        );
+      }
+      const resources = await materializeCandidate(input);
+      assertDesktopExpertAuthoring(resources);
+      return PragmaProjectSnapshotSchema.parse(
+        await service.apply({ projectId, ...input, removals: input.removals ?? [] }),
+      );
+    } catch (error) {
+      return normalizeError(error);
+    }
+  };
+
   return {
     projectId,
-    service,
     get,
     async publish(input) {
       try {
@@ -150,48 +217,9 @@ export function createPragmaProjectStore(options: {
       }
     },
     async upsert(input) {
-      try {
-        assertNotReserved([input.resource]);
-        const current = await get();
-        assertDesktopExpertAuthoring([
-          ...current.resources.filter(
-            (resource) =>
-              canonicalPragmaResourceRef(resource) !== canonicalPragmaResourceRef(input.resource),
-          ),
-          input.resource,
-        ]);
-        return PragmaProjectSnapshotSchema.parse(
-          await service.apply({
-            projectId,
-            expectedRevision: input.expectedRevision,
-            upserts: [input.resource],
-          }),
-        );
-      } catch (error) {
-        return normalizeError(error);
-      }
+      return await apply({ expectedRevision: input.expectedRevision, upserts: [input.resource] });
     },
-    async apply(input) {
-      try {
-        assertNotReserved(input.upserts);
-        if (input.removals?.some((ref) => options.reservedResourceRefs?.has(ref)) === true) {
-          throw new PragmaProjectStoreError(
-            "built_in_readonly",
-            "Built-in resource refs cannot be removed.",
-          );
-        }
-        return PragmaProjectSnapshotSchema.parse(
-          await service.apply({
-            projectId,
-            expectedRevision: input.expectedRevision,
-            upserts: input.upserts,
-            removals: input.removals ?? [],
-          }),
-        );
-      } catch (error) {
-        return normalizeError(error);
-      }
-    },
+    apply,
     async remove(input) {
       const snapshot = await get();
       const resource = snapshot.resources.find(
@@ -206,17 +234,11 @@ export function createPragmaProjectStore(options: {
           "This resource is used by another Expert, Expert Team, or Flow. Remove those dependencies before deleting it.",
         );
       }
-      try {
-        return PragmaProjectSnapshotSchema.parse(
-          await service.apply({
-            projectId,
-            expectedRevision: input.expectedRevision,
-            removals: [input.ref],
-          }),
-        );
-      } catch (error) {
-        return normalizeError(error);
-      }
+      return await apply({
+        expectedRevision: input.expectedRevision,
+        upserts: [],
+        removals: [input.ref],
+      });
     },
     async validateYaml(source) {
       try {
@@ -242,25 +264,21 @@ export function createPragmaProjectStore(options: {
     },
     async validateCandidate(input) {
       const resource = PragmaResourceSchema.parse(input.resource);
-      const current = await get();
-      const resources = [
-        ...current.resources.filter(
-          (candidate) =>
-            canonicalPragmaResourceRef(candidate) !== canonicalPragmaResourceRef(resource),
-        ),
-        resource,
-      ];
       return {
         resource,
         diagnostics: [
-          ...desktopExpertAuthoringDiagnostics(resources),
-          ...(await service.validateCandidate({
-            projectId,
+          ...(await validateChanges({
             expectedRevision: input.expectedRevision,
             upserts: [resource],
           })),
         ],
       };
+    },
+    validateChanges,
+    async compile<T extends InvocableResource>(
+      input: Parameters<PragmaProjectService["compile"]>[0],
+    ) {
+      return await service.compile<T>(input);
     },
     async openRevision(revision) {
       const location = await repository.getRevision(projectId, revision);
@@ -310,7 +328,7 @@ function desktopExpertAuthoringDiagnostics(
 
   for (const resource of resources) {
     if (resource.kind !== "Expert") continue;
-    const id = CreateExpertIdSchema.safeParse(resource.metadata.id);
+    const id = PragmaExpertIdSchema.safeParse(resource.metadata.id);
     if (!id.success) {
       for (const issue of id.error.issues) {
         add(issue.message, [resource.metadata.id, "metadata", "id"]);

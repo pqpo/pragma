@@ -346,11 +346,14 @@ function definitionToResources(
         ...(plugin.config === undefined ? {} : { config: plugin.config }),
         ...(plugin.secretBindings === undefined ? {} : { secretBindings: plugin.secretBindings }),
       })),
-      contextStores: (definition.contextStoreMounts ?? []).map((mount) => ({
-        ref: `context-store:${desktopContextResourceId(mount.storeId)}@1.0.0`,
-        namespace: desktopContextResourceId(mount.storeId),
-        required: mount.enabled,
-      })),
+      contextStores: [
+        ...(definition.contextStoreMounts ?? []).map((mount) => ({
+          ref: `context-store:${desktopContextResourceId(mount.storeId)}@1.0.0`,
+          namespace: desktopContextResourceId(mount.storeId),
+          required: mount.enabled,
+        })),
+        ...(definition.opaqueContextStores ?? []),
+      ],
       tools: definition.resourceTools ?? current?.spec.tools ?? [],
     },
   });
@@ -451,6 +454,24 @@ export function pragmaExpertResourceToDesktopDefinition(
       });
     }
   }
+  const contextStoreMounts: ExpertDefinition["contextStoreMounts"] = [];
+  const opaqueContextStores: PragmaExpertResource["spec"]["contextStores"] = [];
+  for (const mount of resource.spec.contextStores) {
+    const declared = resources.find(
+      (candidate) => canonicalPragmaResourceRef(candidate) === mount.ref,
+    );
+    const storeId =
+      declared?.kind === "ContextStore" &&
+      declared.spec.adapter === "pragma.context.host@v1" &&
+      declared.metadata.tags.includes("desktop-managed")
+        ? parseDesktopContextBindingRef(declared.spec.binding ?? "")
+        : undefined;
+    if (storeId === undefined) {
+      opaqueContextStores.push(mount);
+    } else {
+      contextStoreMounts.push({ storeId, enabled: mount.required, priority: 0 });
+    }
+  }
   return ExpertDefinitionSchema.parse({
     schemaVersion: "pragma.desktop-expert-view/v1",
     ref: canonicalPragmaResourceRef(resource),
@@ -469,26 +490,14 @@ export function pragmaExpertResourceToDesktopDefinition(
     resourceRuntime: resource.spec.runtime,
     capabilities,
     opaqueCapabilities,
+    opaqueContextStores,
     toolApprovals: resource.spec.toolApprovals,
     plugins: resource.spec.plugins.map((plugin) => ({
       ref: plugin.ref,
       ...(plugin.config === undefined ? {} : { config: plugin.config }),
       ...(plugin.secretBindings === undefined ? {} : { secretBindings: plugin.secretBindings }),
     })),
-    contextStoreMounts: resource.spec.contextStores.map((mount) => {
-      const declared = resources.find(
-        (candidate) => canonicalPragmaResourceRef(candidate) === mount.ref,
-      );
-      const storeId =
-        declared?.kind === "ContextStore"
-          ? parseDesktopContextBindingRef(declared.spec.binding ?? "")
-          : undefined;
-      return {
-        storeId: storeId ?? mount.namespace,
-        enabled: mount.required,
-        priority: 0,
-      };
-    }),
+    contextStoreMounts,
     resourceTools: resource.spec.tools,
     revision: Math.max(1, revision),
     createdAt: timestamp,

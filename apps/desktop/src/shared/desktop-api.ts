@@ -13,10 +13,11 @@ import {
   PragmaBindingRefSchema,
   PragmaDiagnosticSchema,
   PragmaExpertResourceSchema,
+  PragmaExpertIdSchema,
+  PragmaExpertRefSchema,
   PragmaInvocableResourceRefSchema,
   PragmaLockSchema,
   PragmaResourceRefSchema,
-  PragmaSemanticResourceRefSchema,
   PragmaResourceSchema,
   PragmaToolBindingSchema,
   PragmaHttpParameterSchema,
@@ -25,7 +26,6 @@ import {
   PRAGMA_EXPERT_SCOPE_MAX_LENGTH,
   PragmaExpertInstructionsSchema,
   PragmaExpertScopeSchema,
-  PragmaSemanticResourceIdSchema,
   PragmaJsonSchemaSchema,
   PragmaObjectJsonSchemaSchema,
   type PragmaJsonSchema,
@@ -328,25 +328,12 @@ export const ResetModelProvidersResultSchema = ModelProviderSettingsSnapshotSche
 });
 
 export const EXPERT_NAME_MAX_LENGTH = 20;
-export const EXPERT_ID_MAX_LENGTH = 20;
 export const EXPERT_DESCRIPTION_MAX_LENGTH = 200;
 export const EXPERT_TAG_MAX_LENGTH = 20;
 export const EXPERT_SCOPE_MAX_LENGTH = PRAGMA_EXPERT_SCOPE_MAX_LENGTH;
 export const EXPERT_INSTRUCTIONS_MAX_LENGTH = PRAGMA_EXPERT_INSTRUCTIONS_MAX_LENGTH;
 
-export const ExpertIdSchema = z
-  .string()
-  .trim()
-  .min(1)
-  .max(EXPERT_ID_MAX_LENGTH)
-  .pipe(PragmaSemanticResourceIdSchema);
-
-export const CreateExpertIdSchema = z
-  .string()
-  .trim()
-  .min(1)
-  .max(EXPERT_ID_MAX_LENGTH)
-  .pipe(PragmaSemanticResourceIdSchema);
+export { PRAGMA_EXPERT_ID_MAX_LENGTH, PragmaExpertIdSchema } from "@pragma/interpreter/ast";
 
 export const ExpertScopeSchema = PragmaExpertScopeSchema;
 export const ExpertInstructionsSchema = PragmaExpertInstructionsSchema;
@@ -854,12 +841,12 @@ export const ExpertExecutionProfileSchema = z.discriminatedUnion("mode", [
 
 export const ExpertDefinitionSchema = z.object({
   schemaVersion: z.literal("pragma.desktop-expert-view/v1"),
-  ref: PragmaSemanticResourceRefSchema.refine((value) => value.startsWith("expert:")),
-  id: ExpertIdSchema,
-  name: z.string().trim().min(1).max(120),
-  description: z.string().trim().min(1).max(2_000),
-  tags: z.array(z.string().trim().min(1).max(100)).max(30),
-  version: z.string().trim().min(1).max(100),
+  ref: PragmaExpertRefSchema,
+  id: PragmaExpertIdSchema,
+  name: PragmaExpertResourceSchema.shape.metadata.shape.name,
+  description: PragmaExpertResourceSchema.shape.metadata.shape.description,
+  tags: PragmaExpertResourceSchema.shape.metadata.shape.tags,
+  version: PragmaExpertResourceSchema.shape.metadata.shape.version,
   scope: ExpertScopeSchema,
   instructions: ExpertInstructionsSchema,
   additionalInstructions: ExpertAdditionalInstructionsSchema,
@@ -867,13 +854,14 @@ export const ExpertDefinitionSchema = z.object({
   readOnly: z.boolean(),
   customized: z.boolean(),
   executionProfile: ExpertExecutionProfileSchema,
-  capabilities: z.array(ExpertCapabilityReferenceSchema).max(500),
+  capabilities: z.array(ExpertCapabilityReferenceSchema),
   toolApprovals: z.record(z.string().max(200), ExpertToolApprovalModeSchema),
-  plugins: z.array(ExpertPluginReferenceSchema).max(100),
-  contextStoreMounts: z.array(ExpertContextStoreMountSchema).max(200),
-  resourceTools: z.array(PragmaToolBindingSchema).max(200).default([]),
+  plugins: z.array(ExpertPluginReferenceSchema),
+  contextStoreMounts: z.array(ExpertContextStoreMountSchema),
+  resourceTools: z.array(PragmaToolBindingSchema).default([]),
   resourceRuntime: PragmaExpertResourceSchema.shape.spec.shape.runtime.optional(),
   opaqueCapabilities: PragmaExpertResourceSchema.shape.spec.shape.capabilities.optional(),
+  opaqueContextStores: PragmaExpertResourceSchema.shape.spec.shape.contextStores.optional(),
   revision: z.number().int().positive(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
@@ -909,7 +897,7 @@ export const CreateExpertDefinitionSchema = ExpertDefinitionSchema.omit({
   createdAt: true,
   updatedAt: true,
 }).extend({
-  id: CreateExpertIdSchema,
+  id: PragmaExpertIdSchema,
   name: z.string().trim().min(1).max(EXPERT_NAME_MAX_LENGTH),
   description: z.string().trim().min(1).max(EXPERT_DESCRIPTION_MAX_LENGTH),
   tags: z.array(z.string().trim().min(1).max(EXPERT_TAG_MAX_LENGTH)).max(30),
@@ -945,9 +933,7 @@ export const UpdateBuiltInExpertDefinitionSchema = CreateExpertDefinitionSchema.
   })
   .strict();
 
-export const ExpertRefSchema = PragmaSemanticResourceRefSchema.refine((value) =>
-  value.startsWith("expert:"),
-);
+export const ExpertRefSchema = PragmaExpertRefSchema;
 export const DeleteExpertDefinitionSchema = z.object({ ref: ExpertRefSchema });
 export const ResetBuiltInExpertDefinitionSchema = z.object({ ref: ExpertRefSchema });
 

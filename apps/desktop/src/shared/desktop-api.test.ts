@@ -2,12 +2,13 @@ import { describe, expect, it } from "vitest";
 
 import {
   EXPERT_DESCRIPTION_MAX_LENGTH,
-  EXPERT_ID_MAX_LENGTH,
+  PRAGMA_EXPERT_ID_MAX_LENGTH,
   EXPERT_INSTRUCTIONS_MAX_LENGTH,
   EXPERT_NAME_MAX_LENGTH,
   EXPERT_SCOPE_MAX_LENGTH,
   EXPERT_TAG_MAX_LENGTH,
   CreateExpertDefinitionSchema,
+  ExpertDefinitionSchema,
   CodeServiceCapabilityDefinitionSchema,
   CapabilityTestResultSchema,
   CapabilityDeleteResultSchema,
@@ -219,9 +220,51 @@ describe("expert input limits", () => {
     expect(CreateExpertDefinitionSchema.safeParse(validInput).success).toBe(true);
   });
 
+  it("accepts exactly 50 Expert ID characters", () => {
+    expect(
+      CreateExpertDefinitionSchema.safeParse({
+        ...validInput,
+        id: "a".repeat(PRAGMA_EXPERT_ID_MAX_LENGTH),
+      }).success,
+    ).toBe(true);
+  });
+
+  it("reads every metadata value accepted by the Expert DSL", () => {
+    const id = "a".repeat(PRAGMA_EXPERT_ID_MAX_LENGTH);
+    expect(
+      ExpertDefinitionSchema.safeParse({
+        schemaVersion: "pragma.desktop-expert-view/v1",
+        ref: `expert:${id}@1.0.0`,
+        id,
+        name: "n".repeat(200),
+        description: "d".repeat(4_000),
+        tags: Array.from({ length: 100 }, (_, index) => `tag_${index}`),
+        version: "1.0.0",
+        scope: "Scope",
+        instructions: "Instructions",
+        additionalInstructions: "",
+        origin: "project",
+        readOnly: false,
+        customized: false,
+        executionProfile: {
+          mode: "pinned",
+          model: { runtimeId: "test", providerId: "test", modelId: "test" },
+        },
+        capabilities: [],
+        toolApprovals: {},
+        plugins: [],
+        contextStoreMounts: [],
+        resourceTools: [],
+        revision: 1,
+        createdAt: "2026-07-22T00:00:00.000Z",
+        updatedAt: "2026-07-22T00:00:00.000Z",
+      }).success,
+    ).toBe(true);
+  });
+
   it.each([
     ["id", { id: "invalid-id" }],
-    ["id length", { id: "a".repeat(EXPERT_ID_MAX_LENGTH + 1) }],
+    ["id length", { id: "a".repeat(PRAGMA_EXPERT_ID_MAX_LENGTH + 1) }],
     ["name length", { name: "a".repeat(EXPERT_NAME_MAX_LENGTH + 1) }],
     ["description length", { description: "a".repeat(EXPERT_DESCRIPTION_MAX_LENGTH + 1) }],
     ["scope length", { scope: "a".repeat(EXPERT_SCOPE_MAX_LENGTH + 1) }],

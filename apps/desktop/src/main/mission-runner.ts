@@ -306,7 +306,7 @@ export function createMissionRunner(options: {
   ): Promise<CompiledResource<InvocableResource>> => {
     const system = await options.compileSystemExecutor?.({ mission, runtimes });
     if (system !== undefined) return system;
-    return await options.project.service.compile<InvocableResource>({
+    return await options.project.compile<InvocableResource>({
       projectId: mission.project.id,
       revision: mission.project.revision,
       ref: mission.executor.ref,

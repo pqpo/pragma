@@ -107,8 +107,7 @@ export function createDesktopDefaultAgentProjectPort(options: {
       const refs = resources.map(canonicalPragmaResourceRef);
       if (new Set(refs).size !== refs.length) throw new Error("A change-set cannot repeat a ref.");
       assertExpertSelectionsAvailable(authoredResources, snapshot.resources, resources, catalog);
-      const diagnostics = await options.project.service.validateCandidate({
-        projectId: options.project.projectId,
+      const diagnostics = await options.project.validateChanges({
         expectedRevision: snapshot.revision,
         upserts: resources,
       });

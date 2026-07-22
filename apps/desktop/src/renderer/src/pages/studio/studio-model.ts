@@ -145,6 +145,7 @@ export function toPersistedInput(
     contextStoreMounts: [...expert.contextStoreMounts],
     resourceTools: [...expert.resourceTools],
     opaqueCapabilities: [...(existing?.opaqueCapabilities ?? [])],
+    opaqueContextStores: [...(existing?.opaqueContextStores ?? [])],
   };
 }
 

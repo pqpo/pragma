@@ -6,12 +6,12 @@ import type { PragmaResource } from "@pragma/interpreter/ast";
 import { errorMessage } from "../../lib/errors.ts";
 import {
   EXPERT_DESCRIPTION_MAX_LENGTH,
-  EXPERT_ID_MAX_LENGTH,
+  PRAGMA_EXPERT_ID_MAX_LENGTH,
   EXPERT_INSTRUCTIONS_MAX_LENGTH,
   EXPERT_NAME_MAX_LENGTH,
   EXPERT_SCOPE_MAX_LENGTH,
   EXPERT_TAG_MAX_LENGTH,
-  CreateExpertIdSchema,
+  PragmaExpertIdSchema,
   ExpertAdditionalInstructionsSchema,
   ExpertInstructionsSchema,
   ExpertScopeSchema,
@@ -69,7 +69,7 @@ export function ExpertEditorFragment(props: {
   const index = steps.findIndex((item) => item.id === step);
   const advance = () => {
     if (step === "identity") {
-      const idResult = CreateExpertIdSchema.safeParse(draft.id);
+      const idResult = PragmaExpertIdSchema.safeParse(draft.id);
       const scopeResult = ExpertScopeSchema.safeParse(draft.scope);
       const idAlreadyExists =
         !isEditing &&
@@ -147,7 +147,7 @@ export function ExpertEditorFragment(props: {
   const submit = async () => {
     setError(null);
     const name = draft.name.trim();
-    const idResult = CreateExpertIdSchema.safeParse(draft.id);
+    const idResult = PragmaExpertIdSchema.safeParse(draft.id);
     const description = draft.description.trim();
     const scopeResult = ExpertScopeSchema.safeParse(draft.scope);
     const instructionsResult = ExpertInstructionsSchema.safeParse(draft.instructions);
@@ -300,17 +300,17 @@ export function ExpertEditorFragment(props: {
                   onChange={(event) =>
                     setDraft({
                       ...draft,
-                      id: event.target.value.slice(0, EXPERT_ID_MAX_LENGTH),
+                      id: event.target.value.slice(0, PRAGMA_EXPERT_ID_MAX_LENGTH),
                     })
                   }
                   placeholder="market_research"
-                  maxLength={EXPERT_ID_MAX_LENGTH}
+                  maxLength={PRAGMA_EXPERT_ID_MAX_LENGTH}
                   disabled={isEditing}
                 />
                 <small className="field-hint">
                   <span>{t("idHint", { ns: "studio" })}</span>
                   <span>
-                    {draft.id.length}/{EXPERT_ID_MAX_LENGTH}
+                    {draft.id.length}/{PRAGMA_EXPERT_ID_MAX_LENGTH}
                   </span>
                 </small>
               </label>

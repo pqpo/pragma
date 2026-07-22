@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
-import type { ExecutionRecord, Invocation } from "@pragma/shared";
+import type { ExecutionRecord, ExpertAgentStreamEvent, Invocation } from "@pragma/shared";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -434,6 +434,229 @@ describe("Execution canonical event log", () => {
     await expect(
       reader.readOutput({ executionIds: ["execution"], record: childA! }),
     ).resolves.toMatchObject([{ message: { content: [{ text: "output-a" }] } }]);
+  });
+
+  it("projects only real subagent runs and carries dispatch prompts across interruption", async () => {
+    const { store } = await fixture();
+    const source = (runId: string) => ({
+      kind: "agent" as const,
+      runId,
+      parentRunId: "root-run",
+      sessionId: "child-thread",
+      parentSessionId: "root-thread",
+      agentId: "child-thread",
+      agentType: "codex-subagent",
+      path: [],
+    });
+    let sequence = 0;
+    const append = async <Event extends ExpertAgentStreamEvent>(
+      event: Omit<Event, "schemaVersion" | "eventId" | "sequence" | "emittedAt">,
+    ) => {
+      sequence += 1;
+      await store.appendEvent("execution", "root", "runtime.event", {
+        schemaVersion: "pragma.stream/v1",
+        eventId: `runtime-${sequence}`,
+        sequence,
+        emittedAt: new Date(Date.UTC(2026, 0, 1, 0, 0, sequence)).toISOString(),
+        ...event,
+      });
+    };
+    const rootSource = {
+      kind: "agent" as const,
+      runId: "root-run",
+      sessionId: "root-thread",
+      agentId: "root-thread",
+      path: [],
+    };
+
+    await append({
+      runId: "root-run",
+      source: rootSource,
+      type: "agent.command",
+      payload: {
+        commandId: "spawn-command",
+        action: "spawn",
+        phase: "started",
+        senderSessionId: "root-thread",
+        targetSessionIds: [],
+        prompt: "Inspect every relevant file and report the complete findings.",
+      },
+    });
+    await append({
+      runId: "child-run-1",
+      parentRunId: "root-run",
+      source: source("child-run-1"),
+      type: "progress",
+      payload: { stage: "thread/started" },
+    });
+    await append({
+      runId: "root-run",
+      source: rootSource,
+      type: "agent.command",
+      payload: {
+        commandId: "spawn-command",
+        action: "spawn",
+        phase: "completed",
+        senderSessionId: "root-thread",
+        targetSessionIds: ["child-thread"],
+        states: { "child-thread": { status: "running" } },
+      },
+    });
+    await append({
+      runId: "child-run-1",
+      parentRunId: "root-run",
+      source: source("child-run-1"),
+      type: "run.started",
+      payload: { task: "Truncated task summary" },
+    });
+    await append({
+      runId: "root-run",
+      source: rootSource,
+      type: "agent.command",
+      payload: {
+        commandId: "wait-command",
+        action: "wait",
+        phase: "completed",
+        targetSessionIds: ["child-thread"],
+        states: { "child-thread": { status: "idle" } },
+      },
+    });
+    await append({
+      runId: "child-run-1",
+      parentRunId: "root-run",
+      source: source("child-run-1"),
+      type: "run.completed",
+      payload: {},
+    });
+    await append({
+      runId: "root-run",
+      source: rootSource,
+      type: "agent.command",
+      payload: {
+        commandId: "list-command",
+        action: "list",
+        phase: "completed",
+        targetSessionIds: ["child-thread"],
+        states: { "child-thread": { status: "running" } },
+      },
+    });
+
+    const reader = new ExecutionWorkHistoryReader(store);
+    let child = (await reader.listRecords({ executionIds: ["execution"] })).find(
+      (record) => record.sessionId === "child-thread",
+    );
+    expect(child).toMatchObject({
+      status: "succeeded",
+      tasks: [
+        {
+          runId: "child-run-1",
+          status: "succeeded",
+          input: "Inspect every relevant file and report the complete findings.",
+        },
+      ],
+    });
+
+    await append({
+      runId: "child-run-2",
+      parentRunId: "root-run",
+      source: source("child-run-2"),
+      type: "run.started",
+      payload: { task: "An active turn that will be interrupted" },
+    });
+    await append({
+      runId: "root-run",
+      source: rootSource,
+      type: "agent.command",
+      payload: {
+        commandId: "interrupt-command",
+        action: "interrupt",
+        phase: "completed",
+        targetSessionIds: ["child-thread"],
+      },
+    });
+    child = (await reader.listRecords({ executionIds: ["execution"] })).find(
+      (record) => record.sessionId === "child-thread",
+    );
+    expect(child).toMatchObject({ status: "interrupted" });
+    expect(child?.tasks).toHaveLength(2);
+
+    await append({
+      runId: "root-run",
+      source: rootSource,
+      type: "agent.command",
+      payload: {
+        commandId: "send-command",
+        action: "send",
+        phase: "completed",
+        targetSessionIds: ["child-thread"],
+        prompt: "Now verify the risky edge cases in full detail.",
+        states: { "child-thread": { status: "notLoaded" } },
+      },
+    });
+    child = (await reader.listRecords({ executionIds: ["execution"] })).find(
+      (record) => record.sessionId === "child-thread",
+    );
+    expect(child).toMatchObject({ status: "interrupted" });
+    expect(child?.tasks).toHaveLength(2);
+
+    await append({
+      runId: "child-run-3",
+      parentRunId: "root-run",
+      source: source("child-run-3"),
+      type: "run.started",
+      payload: { task: "Short follow-up" },
+    });
+    child = (await reader.listRecords({ executionIds: ["execution"] })).find(
+      (record) => record.sessionId === "child-thread",
+    );
+    expect(child).toMatchObject({
+      status: "running",
+      tasks: [
+        expect.objectContaining({ runId: "child-run-1" }),
+        expect.objectContaining({ runId: "child-run-2" }),
+        expect.objectContaining({
+          runId: "child-run-3",
+          input: "Now verify the risky edge cases in full detail.",
+        }),
+      ],
+    });
+    await append({
+      runId: "child-run-3",
+      parentRunId: "root-run",
+      source: source("child-run-3"),
+      type: "run.failed",
+      payload: { message: "Verification failed" },
+    });
+    await append({
+      runId: "child-run-3",
+      parentRunId: "root-run",
+      source: source("child-run-3"),
+      type: "run.started",
+      payload: { task: "A late duplicate start event" },
+    });
+    await append({
+      runId: "child-run-3",
+      parentRunId: "root-run",
+      source: source("child-run-3"),
+      type: "progress",
+      payload: { stage: "thread/status/changed" },
+    });
+    child = (await reader.listRecords({ executionIds: ["execution"] })).find(
+      (record) => record.sessionId === "child-thread",
+    );
+    expect(child).toMatchObject({
+      status: "failed",
+      tasks: [
+        expect.objectContaining({ runId: "child-run-1" }),
+        expect.objectContaining({ runId: "child-run-2" }),
+        expect.objectContaining({
+          runId: "child-run-3",
+          status: "failed",
+          input: "Now verify the risky edge cases in full detail.",
+          error: "Verification failed",
+        }),
+      ],
+    });
   });
 });
 

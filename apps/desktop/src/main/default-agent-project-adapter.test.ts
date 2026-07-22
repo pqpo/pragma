@@ -3,10 +3,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
+import { PRAGMA_EXPERT_ID_MAX_LENGTH } from "@pragma/interpreter/ast";
 
 import type { Capability } from "../shared/desktop-api.ts";
 import { createPragmaProjectStore } from "./pragma-project-store.ts";
 import { createDesktopDefaultAgentProjectPort } from "./default-agent-project-adapter.ts";
+import { createExpertDefinitionStore } from "./expert-definition-store.ts";
+import { createDesktopSystemExpertRegistry } from "./system-expert-registry.ts";
 import type { CapabilityStore } from "./capability-store.ts";
 import type { RuntimeEnvironmentService } from "./runtime-environment-service.ts";
 
@@ -93,14 +96,48 @@ describe("Desktop DefaultAgent DSL project adapter", () => {
       }),
     ]);
   });
+
+  it("creates a 50-character Expert that Desktop can list and open, and rejects 51", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-default-agent-expert-id-"));
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    const adapter = createDesktopDefaultAgentProjectPort(
+      adapterOptions(project, join(root, "state")),
+    );
+    const experts = createExpertDefinitionStore({
+      project,
+      systemExperts: createDesktopSystemExpertRegistry(),
+      validateModel: async () => undefined,
+    });
+    const runtimeRef = (await adapter.listExpertOptions()).runtimeModels[0]!.runtimeProfileRef;
+    const acceptedId = "a".repeat(PRAGMA_EXPERT_ID_MAX_LENGTH);
+    const candidate = await adapter.prepare({
+      expectedProjectRevision: 0,
+      sources: [expert("Boundary", runtimeRef, acceptedId)],
+    });
+
+    await adapter.commit({ changeSetId: candidate.changeSetId, operationId: "boundary" });
+
+    expect((await experts.list()).map((value) => value.id)).toContain(acceptedId);
+    await expect(experts.get(`expert:${acceptedId}@1.0.0`)).resolves.toMatchObject({
+      id: acceptedId,
+      description: "Boundary",
+    });
+    await expect(
+      adapter.prepare({
+        expectedProjectRevision: 1,
+        sources: [expert("Too long", runtimeRef, "a".repeat(PRAGMA_EXPERT_ID_MAX_LENGTH + 1))],
+      }),
+    ).rejects.toThrow();
+    expect((await project.get()).revision).toBe(1);
+  });
 });
 
-function expert(description: string, runtimeRef: string): string {
+function expert(description: string, runtimeRef: string, id = "writer"): string {
   return [
     "apiVersion: pragma/v2",
     "kind: Expert",
     "metadata:",
-    "  id: writer",
+    `  id: ${id}`,
     "  version: 1.0.0",
     "  name: Writer",
     `  description: ${description}`,
