@@ -19,6 +19,7 @@ import { z } from "zod";
 import {
   MissionIdSchema,
   MissionSchema,
+  MissionV3Schema,
   MissionTimelineRecordSchema,
   MissionChatEntrySchema,
   MissionUserMessageSchema,
@@ -53,6 +54,8 @@ export interface MissionStore {
   create(input: {
     readonly workspace: { readonly path: string; readonly basename: string };
     readonly goal: string;
+    readonly title?: string | undefined;
+    readonly flowInput?: Readonly<Record<string, unknown>> | undefined;
     readonly project: { readonly id: string; readonly revision: number };
     readonly executor: MissionExecutor;
     readonly toolPermissionMode?: DesktopToolPermissionMode | undefined;
@@ -166,7 +169,25 @@ export function createMissionStore(options: { readonly missionsPath: string }): 
   const readMissionUnlocked = async (id: string): Promise<Mission> => {
     try {
       const value = parsePragmaYaml(await readFile(manifestPath(id), "utf8"));
-      if (readSchemaVersion(value) !== "pragma.mission/v3") {
+      const schemaVersion = readSchemaVersion(value);
+      if (schemaVersion === "pragma.mission/v3") {
+        const legacy = MissionV3Schema.parse(value);
+        const migrated = MissionSchema.parse({
+          ...legacy,
+          schemaVersion: "pragma.mission/v4",
+          ...(legacy.executor.kind === "flow"
+            ? {
+                flowInput: {
+                  goal: legacy.goal,
+                  workspace: legacy.workspace.path,
+                },
+              }
+            : {}),
+        });
+        await writeYamlAtomically(manifestPath(id), migrated);
+        return migrated;
+      }
+      if (schemaVersion !== "pragma.mission/v4") {
         throw new MissionStoreError(
           "unsupported_schema",
           `Mission ${id} uses an unsupported schema. Remove the old Mission directory and create a new Mission.`,
@@ -320,15 +341,16 @@ export function createMissionStore(options: { readonly missionsPath: string }): 
       const timestamp = new Date().toISOString();
       const goal = input.goal.trim();
       const mission = MissionSchema.parse({
-        schemaVersion: "pragma.mission/v3",
+        schemaVersion: "pragma.mission/v4",
         id,
-        title: titleFromGoal(goal),
+        title: input.title === undefined ? titleFromGoal(goal) : normalizeMissionTitle(input.title),
         goal,
         initialMessageId,
         toolPermissionMode: input.toolPermissionMode ?? "request-approval",
         workspace: input.workspace,
         project: input.project,
         executor: input.executor,
+        ...(input.flowInput === undefined ? {} : { flowInput: input.flowInput }),
         ...(input.modelOverride === undefined ? {} : { modelOverride: input.modelOverride }),
         lifecycleStatus: "active",
         createdAt: timestamp,

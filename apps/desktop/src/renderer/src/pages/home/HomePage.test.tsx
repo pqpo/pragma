@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import { MissionModelOverrideControls } from "../../components/MissionModelOverrideControls.tsx";
 import { filterMissionExecutors } from "./HomePage.tsx";
+import { SchemaInputForm, createSchemaInputValue, isSchemaInputValid } from "./SchemaInputForm.tsx";
 
 describe("MissionModelOverrideControls", () => {
   it("shows generic defaults before discovery without exposing the Runtime", () => {
@@ -79,5 +80,48 @@ describe("mission executor search", () => {
     const matches = filterMissionExecutors(executors, "Expert 99");
     expect(matches).toHaveLength(1);
     expect(matches[0]?.name).toBe("Expert 99");
+  });
+});
+
+describe("Flow mission input form", () => {
+  const schema = {
+    type: "object" as const,
+    properties: {
+      issueId: { type: "string" as const, description: "CCAS issue identifier" },
+      retries: { type: "integer" as const },
+      options: {
+        type: "object" as const,
+        properties: { verify: { type: "boolean" as const } },
+        required: ["verify"],
+        additionalProperties: false as const,
+      },
+      tags: { type: "array" as const, items: { type: "string" as const } },
+    },
+    required: ["issueId", "options"],
+    additionalProperties: false as const,
+  };
+
+  it("initializes required fields and validates exact structured input", () => {
+    const value = createSchemaInputValue(schema);
+
+    expect(value).toEqual({ issueId: "", options: { verify: false } });
+    expect(isSchemaInputValid(schema, value)).toBe(true);
+    expect(isSchemaInputValid(schema, { ...value, extra: true })).toBe(false);
+  });
+
+  it("renders nested fields while leaving optional fields disabled", () => {
+    const html = renderToStaticMarkup(
+      <SchemaInputForm
+        schema={schema}
+        value={createSchemaInputValue(schema)}
+        onChange={() => {}}
+      />,
+    );
+
+    expect(html).toContain("CCAS issue identifier");
+    expect(html).toContain("issueId");
+    expect(html).toContain("verify");
+    expect(html).toContain("Include");
+    expect(html).not.toContain("Optional JSON");
   });
 });

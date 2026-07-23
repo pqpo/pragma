@@ -53,9 +53,18 @@ export interface DefineFlowOptions<TInput = unknown, TOutput = unknown> {
   readonly version: string;
   readonly input?: z.ZodType<TInput> | undefined;
   readonly output?: z.ZodType<TOutput> | undefined;
-  readonly result?: ((context: { readonly state: FlowState }) => TOutput) | undefined;
+  readonly result?: ((context: FlowResultContext) => TOutput) | undefined;
   readonly maxNodeVisits?: number | undefined;
   readonly timeoutMs?: number | undefined;
+}
+
+export interface FlowResultContext {
+  readonly input: unknown;
+  readonly state: FlowState;
+  readonly terminal: {
+    readonly nodeId: string;
+    readonly output: unknown;
+  };
 }
 
 export interface FlowStepOptions<TInput = unknown, TOutput = unknown> {
@@ -136,7 +145,7 @@ export interface Flow {
   readonly version: string;
   readonly input?: z.ZodType | undefined;
   readonly output?: z.ZodType | undefined;
-  readonly result?: ((context: { readonly state: FlowState }) => unknown) | undefined;
+  readonly result?: ((context: FlowResultContext) => unknown) | undefined;
   readonly maxNodeVisits: number;
   readonly timeoutMs?: number | undefined;
   readonly steps: ReadonlyMap<string, CompiledFlowStep>;
@@ -176,7 +185,7 @@ export class FlowSpec<TInput = unknown, TOutput = unknown> {
   readonly version: string;
   readonly input: z.ZodType<TInput> | undefined;
   readonly output: z.ZodType<TOutput> | undefined;
-  readonly result: ((context: { readonly state: FlowState }) => TOutput) | undefined;
+  readonly result: ((context: FlowResultContext) => TOutput) | undefined;
   readonly maxNodeVisits: number;
   readonly timeoutMs: number | undefined;
   private readonly stepDefinitions = new Map<string, CompiledFlowStep>();

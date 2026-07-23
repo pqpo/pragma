@@ -450,7 +450,7 @@ export function createMissionRunner(options: {
             runtime,
           })
         : await app.flows.start(compiled.value, {
-            input: { goal: mission.goal, workspace: mission.workspace.path },
+            input: mission.flowInput!,
             runtime,
           });
       if (!recoverable) {

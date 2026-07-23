@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 
 import {
   createTeamDelegationTools,
@@ -1783,7 +1784,7 @@ describe("FlowExecution", () => {
     }
   });
 
-  it("stores every successful node result under the canonical node ID path", async () => {
+  it("returns the actual terminal node result by default", async () => {
     const { app } = await fixture();
     const flow = defineFlow({ id: "canonical-results", version: "1.0.0" });
     const prepare = flow.task({
@@ -1800,11 +1801,36 @@ describe("FlowExecution", () => {
     });
     flow.compose(({ start, end }) => start(prepare).next(finish).next(end()));
 
-    await expect((await app.flows.start(flow, { input: null })).result).resolves.toEqual({
-      nodes: {
-        prepare: { result: { score: 7 } },
-        finish: { result: 14 },
-      },
+    await expect((await app.flows.start(flow, { input: null })).result).resolves.toBe(14);
+  });
+
+  it("returns the terminal result from the executed branch and exposes it to result mapping", async () => {
+    const { app } = await fixture();
+    const flow = defineFlow({
+      id: "branch-result",
+      version: "1.0.0",
+      output: z.object({ selected: z.string(), original: z.string() }),
+      result: ({ input, terminal }) => ({
+        selected: String(terminal.output),
+        original: String(input),
+      }),
+    });
+    const decide = flow.task({
+      id: "decide",
+      version: "1.0.0",
+      handler: ({ input }) => ({ branch: input }),
+    });
+    const yes = flow.task({ id: "yes", version: "1.0.0", handler: () => "yes-result" });
+    const no = flow.task({ id: "no", version: "1.0.0", handler: () => "no-result" });
+    flow.compose(({ start, step, end }) => {
+      start(decide).route("branch", { yes, no });
+      step(yes).next(end());
+      step(no).next(end());
+    });
+
+    await expect((await app.flows.start(flow, { input: "no" })).result).resolves.toEqual({
+      selected: "no-result",
+      original: "no",
     });
   });
 
@@ -2642,16 +2668,9 @@ describe("FlowExecution", () => {
       { requestId: "answer-after-restart" },
     );
     await expect(recovered.result).resolves.toEqual({
-      nodes: {
-        prepare: { result: "prepared" },
-        approval: {
-          result: {
-            answers: { "Ship?": "Ship" },
-            approved: true,
-            decision: "Ship",
-          },
-        },
-      },
+      answers: { "Ship?": "Ship" },
+      approved: true,
+      decision: "Ship",
     });
     expect(prepareCalls).toBe(1);
     expect(

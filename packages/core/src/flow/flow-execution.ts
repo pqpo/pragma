@@ -392,6 +392,12 @@ async function runFlow(options: {
         );
   timeout?.unref();
   let stepId: string | undefined = options.flow.startStepId;
+  let terminal:
+    | {
+        readonly nodeId: string;
+        readonly output: unknown;
+      }
+    | undefined;
   const visits = new Map<string, number>();
   try {
     while (stepId !== undefined) {
@@ -445,14 +451,20 @@ async function runFlow(options: {
       if ("type" in target) {
         if (target.type === "fail")
           throw new Error(target.reason ?? `Flow ${options.flow.id} failed.`);
+        terminal = { nodeId: step.id, output };
         stepId = undefined;
       } else {
         stepId = target.id;
       }
     }
+    if (terminal === undefined) {
+      throw new Error(`Flow ${options.flow.id} completed without a terminal node result.`);
+    }
     const record = (await options.store.get(options.executionId))!;
     const userState = readUserFlowState(record.state);
-    const output = options.flow.result?.({ state: userState }) ?? userState;
+    const output =
+      options.flow.result?.({ input: options.input, state: userState, terminal }) ??
+      terminal.output;
     return options.flow.output?.parse(output) ?? output;
   } finally {
     if (timeout !== undefined) clearTimeout(timeout);
@@ -1337,9 +1349,7 @@ function visitFlowDefinition(flow: Flow, ancestors: Set<Flow>): unknown {
       ...(!("modelSelection" in step.options) || step.options.modelSelection === undefined
         ? {}
         : { modelSelection: step.options.modelSelection }),
-      ...(step.options.output === undefined
-        ? {}
-        : { output: z.toJSONSchema(step.options.output) }),
+      ...(step.options.output === undefined ? {} : { output: z.toJSONSchema(step.options.output) }),
       ...(step.options.descriptor === undefined ? {} : { descriptor: step.options.descriptor }),
     };
   }

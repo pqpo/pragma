@@ -36,41 +36,48 @@ export function SchemaFieldsEditor(props: {
       {props.fields.map((field, index) => (
         <div className="code-schema-field" key={field.id}>
           <div className="code-schema-field-row">
-            <input
-              aria-label={t("fieldName")}
-              value={field.name}
-              onChange={(event) => replace(index, { ...field, name: event.target.value })}
-              placeholder="field_name"
-            />
-            <select
-              aria-label={t("fieldType")}
-              value={field.value.type}
-              onChange={(event) =>
-                replace(index, {
-                  ...field,
-                  value: emptySchemaValue(event.target.value as SchemaFieldType),
-                })
-              }
-            >
-              {SCHEMA_FIELD_TYPES.map((type) => (
-                <option
-                  key={type}
-                  value={type}
-                  disabled={depth >= 5 && (type === "object" || type === "array")}
-                >
-                  {type}
-                </option>
-              ))}
-            </select>
+            <label className="code-schema-control is-name">
+              <span>{t("fieldName")}</span>
+              <input
+                aria-label={t("fieldName")}
+                value={field.name}
+                onChange={(event) => replace(index, { ...field, name: event.target.value })}
+                placeholder="field_name"
+              />
+            </label>
+            <label className="code-schema-control is-type">
+              <span>{t("fieldType")}</span>
+              <select
+                aria-label={t("fieldType")}
+                value={field.value.type}
+                onChange={(event) =>
+                  replace(index, {
+                    ...field,
+                    value: emptySchemaValue(event.target.value as SchemaFieldType),
+                  })
+                }
+              >
+                {SCHEMA_FIELD_TYPES.map((type) => (
+                  <option
+                    key={type}
+                    value={type}
+                    disabled={depth >= 5 && (type === "object" || type === "array")}
+                  >
+                    {type}
+                  </option>
+                ))}
+              </select>
+            </label>
             <label className="code-required-field">
               <input
                 type="checkbox"
                 checked={field.required}
                 onChange={(event) => replace(index, { ...field, required: event.target.checked })}
               />
-              {t("required")}
+              <span>{t("required")}</span>
             </label>
             <button
+              className="code-schema-remove-field"
               type="button"
               aria-label={t("removeField", { name: field.name || t("fieldName") })}
               onClick={() =>
@@ -80,12 +87,15 @@ export function SchemaFieldsEditor(props: {
               <X size={15} />
             </button>
           </div>
-          <input
-            aria-label={t("fieldDescription")}
-            value={field.description}
-            onChange={(event) => replace(index, { ...field, description: event.target.value })}
-            placeholder={t("optionalFieldDescription")}
-          />
+          <label className="code-schema-control is-description">
+            <span>{t("fieldDescription")}</span>
+            <input
+              aria-label={t("fieldDescription")}
+              value={field.description}
+              onChange={(event) => replace(index, { ...field, description: event.target.value })}
+              placeholder={t("optionalFieldDescription")}
+            />
+          </label>
           <SchemaValueEditor
             value={field.value}
             depth={depth}
@@ -95,7 +105,7 @@ export function SchemaFieldsEditor(props: {
         </div>
       ))}
       <button
-        className="secondary-button"
+        className="secondary-button code-schema-add-field"
         type="button"
         onClick={() => props.onChange([...props.fields, newSchemaField()])}
       >

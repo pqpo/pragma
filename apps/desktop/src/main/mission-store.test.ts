@@ -4,6 +4,7 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
+import { formatPragmaYaml, parsePragmaYaml } from "@pragma/interpreter";
 import type { PragmaExpertResource } from "@pragma/interpreter/ast";
 import { missionExecutorSnapshot } from "../shared/desktop-api.ts";
 import { createMissionStore, MISSION_TITLE_MAX_LENGTH } from "./mission-store.ts";
@@ -52,7 +53,7 @@ describe("mission store", () => {
       expect.objectContaining({ id: created.id, title: created.title }),
     ]);
     const manifest = await readFile(join(root, "missions", created.id, "mission.yaml"), "utf8");
-    expect(manifest).toContain("schemaVersion: pragma.mission/v3");
+    expect(manifest).toContain("schemaVersion: pragma.mission/v4");
     expect(manifest).toContain("revision: 3");
     expect(manifest).toContain("toolPermissionMode: full-access");
     expect(manifest).toContain("modelOverride:");
@@ -315,9 +316,43 @@ describe("mission store", () => {
     const manifestPath = join(directory, "mission.yaml");
     await writeFile(
       manifestPath,
-      (await readFile(manifestPath, "utf8")).replace("pragma.mission/v3", "pragma.mission/v2"),
+      (await readFile(manifestPath, "utf8")).replace("pragma.mission/v4", "pragma.mission/v2"),
       "utf8",
     );
+    await expect(store.get(created.id)).rejects.toMatchObject({ code: "unsupported_schema" });
+  });
+
+  it("migrates v3 Flow input atomically and rejects future Mission schemas", async () => {
+    const root = await temporaryRoot();
+    const store = createMissionStore({ missionsPath: join(root, "missions") });
+    const workspace = join(root, "workspace");
+    const created = await store.create({
+      workspace: { path: workspace, basename: "workspace" },
+      goal: "Legacy Flow goal",
+      flowInput: { goal: "Legacy Flow goal", workspace },
+      project: { id: "studio", revision: 1 },
+      executor: {
+        kind: "flow",
+        ref: "flow:legacy@1.0.0",
+        name: "Legacy Flow",
+        version: "1.0.0",
+      },
+    });
+    const manifestPath = join(root, "missions", created.id, "mission.yaml");
+    const legacy = parsePragmaYaml(await readFile(manifestPath, "utf8")) as Record<string, unknown>;
+    legacy["schemaVersion"] = "pragma.mission/v3";
+    delete legacy["flowInput"];
+    await writeFile(manifestPath, formatPragmaYaml(legacy), "utf8");
+
+    await expect(store.get(created.id)).resolves.toMatchObject({
+      schemaVersion: "pragma.mission/v4",
+      flowInput: { goal: "Legacy Flow goal", workspace },
+    });
+    expect(await readFile(manifestPath, "utf8")).toContain("schemaVersion: pragma.mission/v4");
+
+    const future = parsePragmaYaml(await readFile(manifestPath, "utf8")) as Record<string, unknown>;
+    future["schemaVersion"] = "pragma.mission/v5";
+    await writeFile(manifestPath, formatPragmaYaml(future), "utf8");
     await expect(store.get(created.id)).rejects.toMatchObject({ code: "unsupported_schema" });
   });
 });

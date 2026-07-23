@@ -100,7 +100,7 @@ describe("mission model override contracts", () => {
   const mission = {
     workspace: "/workspace/default",
     executor: { ref: "expert:pragma@1.0.0" },
-    goal: "Prepare a plan",
+    input: { kind: "prompt", value: "Prepare a plan" },
   };
 
   it("accepts a model-only override", () => {
@@ -448,7 +448,7 @@ describe("mission contracts", () => {
     const input = {
       workspace: "/workspace/repo",
       executor: { ref: "expert:expert_01@1.0.0" },
-      goal: "Review the repository",
+      input: { kind: "prompt", value: "Review the repository" },
     };
     expect(CreateMissionSchema.safeParse(input).success).toBe(true);
     expect(
@@ -483,7 +483,7 @@ describe("mission contracts", () => {
   it("pins a team executor to a project revision", () => {
     expect(
       MissionSchema.parse({
-        schemaVersion: "pragma.mission/v3",
+        schemaVersion: "pragma.mission/v4",
         id: "00000000-0000-4000-8000-000000000000",
         title: "Deliver the feature",
         goal: "Deliver the feature",
@@ -505,7 +505,7 @@ describe("mission contracts", () => {
 
   it("drops the retired Desktop environment fingerprint from persisted Missions", () => {
     const parsed = MissionSchema.parse({
-      schemaVersion: "pragma.mission/v3",
+      schemaVersion: "pragma.mission/v4",
       id: "00000000-0000-4000-8000-000000000000",
       title: "Continue the mission",
       goal: "Continue the mission",

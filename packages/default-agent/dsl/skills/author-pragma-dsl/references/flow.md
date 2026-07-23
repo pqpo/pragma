@@ -67,6 +67,9 @@ spec:
 - Ordinary edges form a DAG. A back edge requires a named `repeat` transition and a loop with a
   positive `maxIterations` plus an exit path.
 - Every successful result is stored automatically at `state.nodes.<nodeId>.result`.
+- Without `spec.output.value`, the Flow returns the output of the node that reaches `end`.
+- `spec.output.schema` validates that final result. Add `spec.output.value` only when the Flow must
+  assemble a result from Flow input or multiple node results.
 - Action and human steps cannot declare Runtime or Context routing fields.
 - Expert and Team prompts use text and typed variable segments. Node variables reference a stable
   `nodeId`; native output exposes only `result`, while structured output exposes declared fields.

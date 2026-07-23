@@ -34,10 +34,7 @@ export const PragmaFlowNodeIdSchema = z
   .trim()
   .min(1)
   .max(100)
-  .regex(
-    /^[A-Za-z0-9][A-Za-z0-9_-]*$/,
-    "Use only letters, numbers, underscores, and hyphens.",
-  )
+  .regex(/^[A-Za-z0-9][A-Za-z0-9_-]*$/, "Use only letters, numbers, underscores, and hyphens.")
   .refine(
     (value) => !value.startsWith("__") && !["constructor", "prototype"].includes(value),
     "Flow node IDs cannot use reserved names.",
@@ -570,9 +567,9 @@ export const PragmaFlowResourceSchema = z
     metadata: PragmaMetadataSchema,
     spec: z
       .object({
-        input: z.object({ schema: z.unknown().optional() }).strict().optional(),
+        input: z.object({ schema: PragmaObjectJsonSchemaSchema }).strict().optional(),
         output: z
-          .object({ schema: z.unknown().optional(), value: z.unknown().optional() })
+          .object({ schema: PragmaObjectJsonSchemaSchema, value: z.unknown().optional() })
           .strict()
           .optional(),
         limits: z

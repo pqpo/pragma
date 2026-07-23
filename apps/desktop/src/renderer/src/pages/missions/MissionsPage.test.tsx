@@ -520,7 +520,7 @@ describe("Mission thinking entry", () => {
 
 function missionFixture(kind: "expert" | "team"): Mission {
   return {
-    schemaVersion: "pragma.mission/v3",
+    schemaVersion: "pragma.mission/v4",
     id: "00000000-0000-4000-8000-000000000000",
     title: "Missions page design",
     goal: "Design the Missions page.",

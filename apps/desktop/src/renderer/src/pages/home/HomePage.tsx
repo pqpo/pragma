@@ -24,6 +24,7 @@ import { ToolPermissionSelect } from "../../components/ToolPermissionSelect.tsx"
 import { MissionModelOverrideControls } from "../../components/MissionModelOverrideControls.tsx";
 import { errorMessage } from "../../lib/errors.ts";
 import { localizeSystemExpertCopy } from "../../lib/system-expert-copy.ts";
+import { SchemaInputForm, createSchemaInputValue, isSchemaInputValid } from "./SchemaInputForm.tsx";
 
 interface WorkspaceSelection {
   readonly path: string;
@@ -43,6 +44,7 @@ export function HomePage(props: {
   const [executorRef, setExecutorRef] = useState(props.initialExecutorRef ?? "");
   const [defaultExecutorRef, setDefaultExecutorRef] = useState("");
   const [goal, setGoal] = useState("");
+  const [flowInput, setFlowInput] = useState<Readonly<Record<string, unknown>>>({});
   const [toolPermissionMode, setToolPermissionMode] =
     useState<DesktopToolPermissionMode>("request-approval");
   const [models, setModels] = useState<readonly DesktopRuntimeModel[]>([]);
@@ -87,6 +89,11 @@ export function HomePage(props: {
 
   const selectedExecutor = executors.find((executor) => executor.ref === executorRef);
   const hasValidExecutor = selectedExecutor !== undefined;
+  const flowInputSchema =
+    selectedExecutor?.kind === "flow" ? selectedExecutor.inputSchema : undefined;
+  const hasStructuredFlowInput = flowInputSchema !== undefined;
+  const structuredFlowInputValid =
+    flowInputSchema === undefined || isSchemaInputValid(flowInputSchema, flowInput);
 
   useEffect(() => {
     if (hasValidExecutor || executors.length === 0) return;
@@ -144,6 +151,15 @@ export function HomePage(props: {
     };
   }, [selectedExecutor?.ref, selectedExecutor?.kind]);
 
+  useEffect(() => {
+    setGoal("");
+    setFlowInput(
+      selectedExecutor?.kind === "flow" && selectedExecutor.inputSchema !== undefined
+        ? createSchemaInputValue(selectedExecutor.inputSchema)
+        : {},
+    );
+  }, [selectedExecutor?.ref]);
+
   const pickWorkspace = async () => {
     try {
       const result = await window.pragmaDesktop.pickWorkspace();
@@ -160,14 +176,29 @@ export function HomePage(props: {
 
   const submit = async () => {
     const workspace = workspaceOverride ?? defaultWorkspace;
-    if (workspace === undefined || !hasValidExecutor || goal.trim() === "" || saving) return;
+    if (
+      workspace === undefined ||
+      !hasValidExecutor ||
+      (!hasStructuredFlowInput && goal.trim() === "") ||
+      !structuredFlowInputValid ||
+      saving
+    )
+      return;
     setSaving(true);
     setError(null);
     try {
       const mission = await window.pragmaDesktop.createMission({
         workspace: workspace.path,
         executor: { ref: executorRef },
-        goal: goal.trim(),
+        input:
+          selectedExecutor.kind === "flow"
+            ? {
+                kind: "flow",
+                value: hasStructuredFlowInput
+                  ? flowInput
+                  : { goal: goal.trim(), workspace: workspace.path },
+              }
+            : { kind: "prompt", value: goal.trim() },
         toolPermissionMode,
         ...(modelOverride === undefined ? {} : { modelOverride }),
       });
@@ -194,22 +225,31 @@ export function HomePage(props: {
             onSelect={setWorkspaceOverride}
             onUseDefault={() => setWorkspaceOverride(undefined)}
           />
-          <div className="mission-goal-field">
-            <textarea
-              id="mission-goal"
-              aria-label={t("goalPlaceholder")}
-              value={goal}
-              onChange={(event) => setGoal(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" && !event.shiftKey) {
-                  event.preventDefault();
-                  void submit();
-                }
-              }}
-              placeholder={t("goalPlaceholder")}
-              autoFocus
+          {flowInputSchema === undefined ? (
+            <div className="mission-goal-field">
+              <textarea
+                id="mission-goal"
+                aria-label={t("goalPlaceholder")}
+                value={goal}
+                onChange={(event) => setGoal(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && !event.shiftKey) {
+                    event.preventDefault();
+                    void submit();
+                  }
+                }}
+                placeholder={t("goalPlaceholder")}
+                autoFocus
+              />
+            </div>
+          ) : (
+            <SchemaInputForm
+              schema={flowInputSchema}
+              value={flowInput}
+              disabled={saving}
+              onChange={setFlowInput}
             />
-          </div>
+          )}
           <footer>
             <div className="mission-prompt-tools" aria-label={t("missionOptions")}>
               <MissionExecutorPicker
@@ -244,7 +284,8 @@ export function HomePage(props: {
                 !loaded ||
                 defaultWorkspace === undefined ||
                 !hasValidExecutor ||
-                goal.trim() === ""
+                (!hasStructuredFlowInput && goal.trim() === "") ||
+                !structuredFlowInputValid
               }
               onClick={() => void submit()}
             >

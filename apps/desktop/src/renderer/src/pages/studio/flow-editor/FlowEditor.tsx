@@ -5,6 +5,7 @@ import {
   CheckCircle,
   CirclesFour,
   Code,
+  DiamondsFour,
   GitBranch,
   Hand,
   Path,
@@ -102,8 +103,12 @@ import "@xyflow/react/dist/style.css";
 export const START_NODE_ID = "__pragma_canvas_start__";
 export const END_NODE_ID = "__pragma_canvas_end__";
 export const FAIL_NODE_ID = "__pragma_canvas_fail__";
+const LOGIC_NODE_PREFIX = "__pragma_canvas_logic__";
+const LOGIC_DRAFT_PREFIX = "__pragma_canvas_logic_draft__";
 const NODE_WIDTH = 238;
 const NODE_HEIGHT = 104;
+const LOGIC_NODE_WIDTH = 210;
+const LOGIC_NODE_HEIGHT = 112;
 const TERMINAL_NODE_WIDTH = 112;
 const TERMINAL_HORIZONTAL_GAP = 180;
 const NODE_HORIZONTAL_GAP = 36;
@@ -122,20 +127,32 @@ interface TerminalNodeData extends Record<string, unknown> {
   readonly tone: "start" | "end" | "fail";
 }
 
+interface LogicNodeData extends Record<string, unknown> {
+  readonly sourceId: string | null;
+  readonly label: string;
+  readonly fieldLabel: string;
+  readonly outputs: readonly { readonly id: string; readonly label: string }[];
+  readonly invalid: boolean;
+}
+
 type StepCanvasNode = Node<StepNodeData, "step">;
+type LogicCanvasNode = Node<LogicNodeData, "logic">;
 type TerminalCanvasNode = Node<TerminalNodeData, "terminal">;
-type WorkflowCanvasNode = StepCanvasNode | TerminalCanvasNode;
+type WorkflowCanvasNode = StepCanvasNode | LogicCanvasNode | TerminalCanvasNode;
 
 interface EditorSnapshot {
   readonly flow: PragmaFlowResource;
   readonly positions: Readonly<Record<string, { readonly x: number; readonly y: number }>>;
+  readonly logicDraftIds: readonly string[];
 }
 
 interface NodeContextMenuState {
-  readonly stepId: string;
+  readonly nodeId: string;
   readonly x: number;
   readonly y: number;
 }
+
+type FlowPaletteKind = FlowStepKind | "logic";
 
 export function FlowEditor(props: {
   readonly project: PragmaProjectSnapshot;
@@ -173,7 +190,9 @@ function FlowEditorCanvas(props: {
   );
   const baselineRef = useRef(JSON.stringify(initialFlow));
   const [flow, setFlow] = useState<PragmaFlowResource>(initialFlow);
-  const [selectedStepId, setSelectedStepId] = useState<string | null>(null);
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
+  const [logicDraftIds, setLogicDraftIds] = useState<readonly string[]>([]);
   const [nodes, setNodes, onNodesChange] = useNodesState<WorkflowCanvasNode>(
     buildCanvasNodes(initialFlow, {}),
   );
@@ -202,8 +221,18 @@ function FlowEditorCanvas(props: {
     [props.project.resources, supportingResources],
   );
   const localIssues = useMemo(
-    () => [...validateFlowDraft(flow), ...validateFlowRuntimeSelections(flow, editorResources)],
-    [editorResources, flow],
+    () => [
+      ...validateFlowDraft(flow),
+      ...validateLogicRoutes(flow),
+      ...validateFlowRuntimeSelections(flow, editorResources),
+      ...logicDraftIds.map(
+        (): FlowValidationIssue => ({
+          path: ["spec", "graph", "transitions"],
+          message: t("connectLogicUpstream"),
+        }),
+      ),
+    ],
+    [editorResources, flow, logicDraftIds, t],
   );
   const invalidStepIds = useMemo(
     () => new Set(localIssues.map((issue) => issue.stepId).filter((id): id is string => !!id)),
@@ -216,39 +245,68 @@ function FlowEditorCanvas(props: {
 
   const positions = useCallback(() => canvasPositions(nodes), [nodes]);
   const snapshot = useCallback(
-    (): EditorSnapshot => ({ flow: structuredClone(flow), positions: positions() }),
-    [flow, positions],
+    (): EditorSnapshot => ({
+      flow: structuredClone(flow),
+      positions: positions(),
+      logicDraftIds: [...logicDraftIds],
+    }),
+    [flow, logicDraftIds, positions],
   );
 
   const commitFlow = useCallback(
     (
       next: PragmaFlowResource,
       nextPositions?: Readonly<Record<string, { x: number; y: number }>>,
-      nextSelectedStepId = selectedStepId,
+      nextSelectedNodeId = selectedNodeId,
+      nextLogicDraftIds = logicDraftIds,
     ) => {
-      if (JSON.stringify(next) === JSON.stringify(flow) && nextPositions === undefined) return;
+      if (
+        JSON.stringify(next) === JSON.stringify(flow) &&
+        nextPositions === undefined &&
+        nextLogicDraftIds === logicDraftIds
+      )
+        return;
       historyRef.current.push(snapshot());
       futureRef.current = [];
       setFlow(next);
+      setLogicDraftIds(nextLogicDraftIds);
       if (nextPositions !== undefined) {
-        setNodes(buildCanvasNodes(next, nextPositions, invalidStepIds, nextSelectedStepId));
+        setNodes(
+          buildCanvasNodes(
+            next,
+            nextPositions,
+            invalidStepIds,
+            nextSelectedNodeId,
+            nextLogicDraftIds,
+          ),
+        );
       }
     },
-    [flow, invalidStepIds, selectedStepId, setNodes, snapshot],
+    [flow, invalidStepIds, logicDraftIds, selectedNodeId, setNodes, snapshot],
   );
 
   const restoreSnapshot = useCallback(
     (next: EditorSnapshot) => {
-      const nextSelectedStepId =
-        selectedStepId !== null && next.flow.spec.graph.steps[selectedStepId] !== undefined
-          ? selectedStepId
+      const nextSelectedNodeId =
+        selectedNodeId !== null && canvasNodeExists(next.flow, selectedNodeId, next.logicDraftIds)
+          ? selectedNodeId
           : null;
       setFlow(structuredClone(next.flow));
-      setNodes(buildCanvasNodes(next.flow, next.positions, new Set(), nextSelectedStepId));
-      setSelectedStepId(nextSelectedStepId);
+      setLogicDraftIds(next.logicDraftIds);
+      setNodes(
+        buildCanvasNodes(
+          next.flow,
+          next.positions,
+          new Set(),
+          nextSelectedNodeId,
+          next.logicDraftIds,
+        ),
+      );
+      setSelectedNodeId(nextSelectedNodeId);
+      setSelectedEdgeId(null);
       setLayoutStatus("unsaved");
     },
-    [selectedStepId, setNodes],
+    [selectedNodeId, setNodes],
   );
 
   const undo = useCallback(() => {
@@ -268,7 +326,12 @@ function FlowEditorCanvas(props: {
   const persistLayout = useCallback(
     async (force = false) => {
       const api = desktopApi();
-      if (api === undefined || flow.metadata.id.trim() === "" || (semanticDirty && !force)) {
+      if (
+        api === undefined ||
+        flow.metadata.id.trim() === "" ||
+        logicDraftIds.length > 0 ||
+        (semanticDirty && !force)
+      ) {
         setLayoutStatus("unsaved");
         return false;
       }
@@ -295,6 +358,7 @@ function FlowEditorCanvas(props: {
       flow.metadata.id,
       flow.metadata.version,
       getViewport,
+      logicDraftIds.length,
       positions,
       props.project.projectId,
       semanticDirty,
@@ -337,10 +401,13 @@ function FlowEditorCanvas(props: {
         flow,
         canvasPositions(current),
         invalidStepIds,
-        selectedStep?.id ?? null,
+        selectedStep?.id ??
+          current.find((node) => node.type === "logic" && node.selected)?.id ??
+          null,
+        logicDraftIds,
       );
     });
-  }, [flow, invalidStepIds, setNodes]);
+  }, [flow, invalidStepIds, logicDraftIds, setNodes]);
 
   useEffect(() => {
     const listener = (event: KeyboardEvent) => {
@@ -365,9 +432,9 @@ function FlowEditorCanvas(props: {
       } else if (modifier && event.key.toLowerCase() === "y") {
         event.preventDefault();
         redo();
-      } else if ((event.key === "Delete" || event.key === "Backspace") && selectedStepId !== null) {
+      } else if ((event.key === "Delete" || event.key === "Backspace") && selectedNodeId !== null) {
         event.preventDefault();
-        removeStep(selectedStepId);
+        removeCanvasNode(selectedNodeId);
       }
     };
     window.addEventListener("keydown", listener);
@@ -401,18 +468,109 @@ function FlowEditorCanvas(props: {
         y: viewportCenter.y - NODE_HEIGHT / 2,
       });
     commitFlow(copy, { ...currentPositions, [id]: nextPosition }, id);
-    setSelectedStepId(id);
+    setSelectedNodeId(id);
+    setSelectedEdgeId(null);
     setInspectorOpen(true);
+    setLayoutStatus("unsaved");
   };
 
   const removeStep = (stepId: string) => {
     commitFlow(deleteFlowStep(flow, stepId));
-    setSelectedStepId(null);
+    setSelectedNodeId(null);
+    setSelectedEdgeId(null);
+    setNodeContextMenu(null);
+  };
+
+  const addLogicDraft = (position?: { x: number; y: number }) => {
+    const id = `${LOGIC_DRAFT_PREFIX}${crypto.randomUUID()}`;
+    const currentPositions = positions();
+    const canvasBounds = canvasRef.current?.getBoundingClientRect();
+    const viewportCenter =
+      canvasBounds === undefined
+        ? { x: 180 + LOGIC_NODE_WIDTH / 2, y: 180 + LOGIC_NODE_HEIGHT / 2 }
+        : screenToFlowPosition({
+            x: canvasBounds.left + canvasBounds.width / 2,
+            y: canvasBounds.top + canvasBounds.height / 2,
+          });
+    const nextPosition =
+      position ??
+      nextAvailableNodePosition(currentPositions, {
+        x: viewportCenter.x - LOGIC_NODE_WIDTH / 2,
+        y: viewportCenter.y - LOGIC_NODE_HEIGHT / 2,
+      });
+    commitFlow(flow, { ...currentPositions, [id]: nextPosition }, id, [...logicDraftIds, id]);
+    setSelectedNodeId(id);
+    setSelectedEdgeId(null);
+    setInspectorOpen(true);
+    setLayoutStatus("unsaved");
+  };
+
+  const removeCanvasNode = (nodeId: string) => {
+    if (flow.spec.graph.steps[nodeId] !== undefined) {
+      removeStep(nodeId);
+      return;
+    }
+    if (logicDraftIds.includes(nodeId)) {
+      const nextPositions = { ...positions() };
+      delete nextPositions[nodeId];
+      commitFlow(
+        flow,
+        nextPositions,
+        null,
+        logicDraftIds.filter((candidate) => candidate !== nodeId),
+      );
+      setSelectedNodeId(null);
+      setNodeContextMenu(null);
+      return;
+    }
+    const sourceId = logicSourceId(nodeId);
+    if (sourceId === null || !isRouteTransition(flow.spec.graph.transitions[sourceId])) return;
+    if (!window.confirm(t("deleteLogicNodeConfirm"))) return;
+    const copy = structuredClone(flow);
+    const route = copy.spec.graph.transitions[sourceId];
+    delete copy.spec.graph.transitions[sourceId];
+    if (route !== undefined) {
+      for (const destination of transitionDestinations(route))
+        removeOrphanedLoop(copy, destination);
+    }
+    commitFlow(copy);
+    setSelectedNodeId(null);
+    setSelectedEdgeId(null);
     setNodeContextMenu(null);
   };
 
   const setConnection = (connection: Connection) => {
     if (connection.target === null || connection.source === null) return;
+    if (logicDraftIds.includes(connection.target)) {
+      const sourceId = connection.source;
+      if (flow.spec.graph.steps[sourceId] === undefined) return;
+      const existing = flow.spec.graph.transitions[sourceId];
+      if (isRouteTransition(existing)) {
+        setSelectedNodeId(logicNodeId(sourceId));
+        setLocalError(t("logicAlreadyExists"));
+        return;
+      }
+      const fields = routeFieldOptions(flow, sourceId);
+      const inferred = fields.length === 1 ? fields[0] : undefined;
+      const route = createRouteTransition(inferred, existing);
+      const copy = structuredClone(flow);
+      copy.spec.graph.transitions[sourceId] = route;
+      const nextLogicId = logicNodeId(sourceId);
+      const nextPositions = { ...positions() };
+      nextPositions[nextLogicId] = nextPositions[connection.target] ?? { x: 0, y: 0 };
+      delete nextPositions[connection.target];
+      commitFlow(
+        copy,
+        nextPositions,
+        nextLogicId,
+        logicDraftIds.filter((id) => id !== connection.target),
+      );
+      setSelectedNodeId(nextLogicId);
+      setSelectedEdgeId(null);
+      setInspectorOpen(true);
+      return;
+    }
+    if (logicSourceId(connection.target) !== null) return;
     const destination = connectionDestination(connection.target);
     if (connection.source === START_NODE_ID) {
       if (destination !== null && typeof destination === "object" && "goto" in destination) {
@@ -422,17 +580,41 @@ function FlowEditorCanvas(props: {
       }
       return;
     }
-    if (flow.spec.graph.steps[connection.source] === undefined || destination === null) return;
-    patchFlow((copy) => applyConnection(copy, connection, destination));
+    if (destination === null) return;
+    const semanticSource = logicSourceId(connection.source) ?? connection.source;
+    if (flow.spec.graph.steps[semanticSource] === undefined) return;
+    if (
+      connection.source === semanticSource &&
+      isRouteTransition(flow.spec.graph.transitions[semanticSource])
+    ) {
+      setSelectedNodeId(logicNodeId(semanticSource));
+      setSelectedEdgeId(null);
+      setInspectorOpen(true);
+      setLocalError(t("connectFromLogic"));
+      return;
+    }
+    patchFlow((copy) =>
+      applyConnection(
+        copy,
+        connection,
+        normalizeConnectionDestination(copy, semanticSource, destination),
+      ),
+    );
   };
 
   const reconnect = (edge: Edge, connection: Connection) => {
     if (connection.target === null || connection.source === null) return;
+    if (edge.id.endsWith(":logic-input") || logicDraftIds.includes(connection.target)) return;
     const destination = connectionDestination(connection.target);
     if (destination === null) return;
     const copy = structuredClone(flow);
     removeEdgeFromFlow(copy, edge);
-    applyConnection(copy, connection, destination);
+    const semanticSource = logicSourceId(connection.source) ?? connection.source;
+    applyConnection(
+      copy,
+      connection,
+      normalizeConnectionDestination(copy, semanticSource, destination),
+    );
     commitFlow(copy);
   };
 
@@ -440,6 +622,7 @@ function FlowEditorCanvas(props: {
     const copy = structuredClone(flow);
     for (const edge of deletedEdges) removeEdgeFromFlow(copy, edge);
     commitFlow(copy);
+    setSelectedEdgeId(null);
   };
 
   const edges = useMemo(() => buildCanvasEdges(flow), [flow]);
@@ -512,7 +695,9 @@ function FlowEditorCanvas(props: {
               const arranged = automaticPositions(flow);
               historyRef.current.push(snapshot());
               futureRef.current = [];
-              setNodes(buildCanvasNodes(flow, arranged, invalidStepIds, selectedStepId));
+              setNodes(
+                buildCanvasNodes(flow, arranged, invalidStepIds, selectedNodeId, logicDraftIds),
+              );
               scheduleLayoutSave();
             }}
           >
@@ -564,6 +749,7 @@ function FlowEditorCanvas(props: {
               <div className="flow-palette-group">
                 <strong>{t("control")}</strong>
                 <PaletteItem kind="human" icon={<UserFocus />} label={t("humanInput")} />
+                <PaletteItem kind="logic" icon={<DiamondsFour />} label={t("logicCondition")} />
               </div>
             </div>
           ) : null}
@@ -576,8 +762,9 @@ function FlowEditorCanvas(props: {
           onDrop={(event) => {
             event.preventDefault();
             const kind = event.dataTransfer.getData("application/pragma-flow-node");
-            if (!isFlowStepKind(kind)) return;
-            addStep(kind, screenToFlowPosition({ x: event.clientX, y: event.clientY }));
+            const position = screenToFlowPosition({ x: event.clientX, y: event.clientY });
+            if (kind === "logic") addLogicDraft(position);
+            else if (isFlowStepKind(kind)) addStep(kind, position);
           }}
         >
           <ReactFlow<WorkflowCanvasNode, Edge>
@@ -590,37 +777,49 @@ function FlowEditorCanvas(props: {
             onReconnect={reconnect}
             onEdgesDelete={disconnect}
             onSelectionChange={({ nodes: selectedNodes, edges: selectedEdges }) => {
-              const selectedNode = selectedEdges.length === 0 ? selectedNodes[0] : undefined;
-              setSelectedStepId(selectedNode?.type === "step" ? selectedNode.id : null);
+              const selectedEdge = selectedEdges[0];
+              const selectedNode = selectedEdge === undefined ? selectedNodes[0] : undefined;
+              setSelectedEdgeId(selectedEdge?.id ?? null);
+              setSelectedNodeId(
+                selectedNode?.type === "step" || selectedNode?.type === "logic"
+                  ? selectedNode.id
+                  : null,
+              );
             }}
             onNodeClick={(_event, node) => {
               setNodeContextMenu(null);
-              if (node.type === "step") {
-                setSelectedStepId(node.id);
+              setSelectedEdgeId(null);
+              if (node.type === "step" || node.type === "logic") {
+                setSelectedNodeId(node.id);
                 setInspectorOpen(true);
-              } else setSelectedStepId(null);
+              } else setSelectedNodeId(null);
             }}
-            onEdgeClick={() => {
-              setSelectedStepId(null);
+            onEdgeClick={(_event, edge) => {
+              if (edge.id.endsWith(":logic-input")) return;
+              setSelectedNodeId(null);
+              setSelectedEdgeId(edge.id);
               setNodeContextMenu(null);
+              setInspectorOpen(true);
             }}
             onNodeContextMenu={(event, node) => {
               event.preventDefault();
-              if (node.type !== "step") {
+              if (node.type !== "step" && node.type !== "logic") {
                 setNodeContextMenu(null);
                 return;
               }
               const bounds = canvasRef.current?.getBoundingClientRect();
               if (bounds === undefined) return;
-              setSelectedStepId(node.id);
+              setSelectedNodeId(node.id);
+              setSelectedEdgeId(null);
               setNodeContextMenu({
-                stepId: node.id,
+                nodeId: node.id,
                 x: Math.max(8, Math.min(event.clientX - bounds.left, bounds.width - 154)),
                 y: Math.max(8, Math.min(event.clientY - bounds.top, bounds.height - 52)),
               });
             }}
             onPaneClick={() => {
-              setSelectedStepId(null);
+              setSelectedNodeId(null);
+              setSelectedEdgeId(null);
               setNodeContextMenu(null);
             }}
             onNodeDragStart={() => {
@@ -661,14 +860,14 @@ function FlowEditorCanvas(props: {
             <div
               className="flow-node-context-menu"
               role="menu"
-              aria-label={`${nodeContextMenu.stepId} actions`}
+              aria-label={`${nodeContextMenu.nodeId} actions`}
               style={{ left: nodeContextMenu.x, top: nodeContextMenu.y }}
               onContextMenu={(event) => event.preventDefault()}
             >
               <button
                 type="button"
                 role="menuitem"
-                onClick={() => removeStep(nodeContextMenu.stepId)}
+                onClick={() => removeCanvasNode(nodeContextMenu.nodeId)}
               >
                 <Trash size={15} /> {t("deleteNode")}
               </button>
@@ -686,12 +885,22 @@ function FlowEditorCanvas(props: {
             <Path size={17} /> <span>{t("inspector")}</span>
           </button>
           {inspectorOpen ? (
-            selectedStepId === null ? (
+            selectedEdgeId !== null ? (
+              <EdgeInspector
+                flow={flow}
+                edge={edges.find((edge) => edge.id === selectedEdgeId)}
+                onPatch={patchFlow}
+                onDelete={() => {
+                  const edge = edges.find((candidate) => candidate.id === selectedEdgeId);
+                  if (edge !== undefined) disconnect([edge]);
+                }}
+              />
+            ) : selectedNodeId === null ? (
               <FlowSettings flow={flow} lockId={props.initial !== undefined} onPatch={patchFlow} />
-            ) : (
+            ) : flow.spec.graph.steps[selectedNodeId] !== undefined ? (
               <StepInspector
                 flow={flow}
-                stepId={selectedStepId}
+                stepId={selectedNodeId}
                 targets={targets}
                 runtimes={props.runtimes}
                 resources={editorResources}
@@ -700,14 +909,27 @@ function FlowEditorCanvas(props: {
                 }
                 onPatch={patchFlow}
                 onRename={(nextId) => {
-                  const next = renameFlowStep(flow, selectedStepId, nextId);
+                  const next = renameFlowStep(flow, selectedNodeId, nextId);
                   if (next === flow) return;
-                  const nextPositions = { ...positions(), [nextId]: positions()[selectedStepId]! };
-                  delete nextPositions[selectedStepId];
+                  const nextPositions = { ...positions(), [nextId]: positions()[selectedNodeId]! };
+                  delete nextPositions[selectedNodeId];
+                  const previousLogicId = logicNodeId(selectedNodeId);
+                  const nextLogicId = logicNodeId(nextId);
+                  if (nextPositions[previousLogicId] !== undefined) {
+                    nextPositions[nextLogicId] = nextPositions[previousLogicId];
+                    delete nextPositions[previousLogicId];
+                  }
                   commitFlow(next, nextPositions);
-                  setSelectedStepId(nextId);
+                  setSelectedNodeId(nextId);
                 }}
-                onDelete={() => removeStep(selectedStepId)}
+                onDelete={() => removeStep(selectedNodeId)}
+              />
+            ) : (
+              <LogicInspector
+                flow={flow}
+                nodeId={selectedNodeId}
+                onPatch={patchFlow}
+                onDelete={() => removeCanvasNode(selectedNodeId)}
               />
             )
           ) : null}
@@ -732,7 +954,7 @@ function FlowEditorCanvas(props: {
                 <li key={`${issue.message}-${index}`}>
                   <button
                     type="button"
-                    onClick={() => issue.stepId && setSelectedStepId(issue.stepId)}
+                    onClick={() => issue.stepId && setSelectedNodeId(issue.stepId)}
                   >
                     {issue.message}
                   </button>
@@ -755,7 +977,7 @@ function FlowEditorCanvas(props: {
 }
 
 function PaletteItem(props: {
-  readonly kind: FlowStepKind;
+  readonly kind: FlowPaletteKind;
   readonly label: string;
   readonly icon: ReactNode;
 }) {
@@ -844,6 +1066,50 @@ function StepNode(props: NodeProps<StepCanvasNode>) {
   );
 }
 
+function LogicNode(props: NodeProps<LogicCanvasNode>) {
+  const { t } = useTranslation("studio");
+  return (
+    <article
+      className={`flow-logic-node${props.selected ? " is-selected" : ""}${props.data.invalid ? " is-invalid" : ""}`}
+    >
+      <Handle type="target" id="target" position={Position.Left} />
+      <span className="flow-step-kind">{t("logic")}</span>
+      <div className="flow-step-main">
+        <span className="flow-step-icon">
+          <DiamondsFour size={18} />
+        </span>
+        <div>
+          <strong>{props.data.label}</strong>
+          <small>{props.data.fieldLabel}</small>
+        </div>
+      </div>
+      {props.data.outputs.length === 0 ? (
+        <small className="flow-logic-connect-hint">{t("connectUpstream")}</small>
+      ) : (
+        <div className="flow-step-outputs">
+          {props.data.outputs.map((output) => (
+            <span key={output.id}>
+              {output.label}
+              <Handle
+                type="source"
+                id={output.id}
+                position={Position.Right}
+                className="flow-step-add-handle"
+                aria-label={t("connectLogicBranch", {
+                  branch: output.label,
+                })}
+                title={t("dragConnectBranch", { branch: output.label })}
+              >
+                <Plus size={13} weight="bold" />
+              </Handle>
+            </span>
+          ))}
+        </div>
+      )}
+    </article>
+  );
+}
+
 function TerminalNode(props: NodeProps<TerminalCanvasNode>) {
   return (
     <div className={`flow-terminal-node is-${props.data.tone}`}>
@@ -871,7 +1137,7 @@ function PlayIcon() {
   return <GitBranch size={18} />;
 }
 
-const nodeTypes = { step: StepNode, terminal: TerminalNode };
+const nodeTypes = { step: StepNode, logic: LogicNode, terminal: TerminalNode };
 
 function WorkflowEdge(props: EdgeProps) {
   const { t } = useTranslation("studio");
@@ -1032,24 +1298,72 @@ function FlowSettings(props: {
           />
         </InspectorField>
       </div>
-      <JsonField
-        label="Input contract"
-        value={props.flow.spec.input}
-        onCommit={(value) =>
+      <StructuredOutputEditor
+        label={t("flowInputContract")}
+        nativeLabel={t("freeformInput")}
+        structuredLabel={t("structuredInput")}
+        nativeHint={t("freeformInputHint")}
+        fieldsTitle={t("inputFields")}
+        value={props.flow.spec.input?.schema}
+        onChange={(schema) =>
           props.onPatch((copy) => {
-            copy.spec.input = value as PragmaFlowResource["spec"]["input"];
+            copy.spec.input = schema === undefined ? undefined : { schema };
           })
         }
       />
-      <JsonField
-        label="Output contract"
-        value={props.flow.spec.output}
-        onCommit={(value) =>
+      <StructuredOutputEditor
+        label={t("flowOutputContract")}
+        nativeLabel={t("uncheckedOutput")}
+        structuredLabel={t("structuredResult")}
+        nativeHint={t("uncheckedOutputHint")}
+        fieldsTitle={t("resultFields")}
+        value={props.flow.spec.output?.schema}
+        onChange={(schema) =>
           props.onPatch((copy) => {
-            copy.spec.output = value as PragmaFlowResource["spec"]["output"];
+            if (schema === undefined) {
+              delete copy.spec.output;
+            } else {
+              copy.spec.output = {
+                schema,
+                ...(copy.spec.output?.value === undefined ? {} : { value: copy.spec.output.value }),
+              };
+            }
           })
         }
       />
+      {props.flow.spec.output === undefined ? null : (
+        <>
+          <InspectorField label={t("flowResultSource")}>
+            <select
+              value={props.flow.spec.output.value === undefined ? "terminal" : "mapping"}
+              onChange={(event) =>
+                props.onPatch((copy) => {
+                  if (copy.spec.output === undefined) return;
+                  if (event.target.value === "terminal") delete copy.spec.output.value;
+                  else copy.spec.output.value = emptyResultMapping(copy.spec.output.schema);
+                })
+              }
+            >
+              <option value="terminal">{t("terminalNodeResult")}</option>
+              <option value="mapping">{t("customResultMapping")}</option>
+            </select>
+          </InspectorField>
+          {props.flow.spec.output.value === undefined ? (
+            <small className="flow-field-hint">{t("terminalNodeResultHint")}</small>
+          ) : (
+            <ResultMappingEditor
+              flow={props.flow}
+              schema={props.flow.spec.output.schema}
+              value={props.flow.spec.output.value}
+              onChange={(value) =>
+                props.onPatch((copy) => {
+                  if (copy.spec.output !== undefined) copy.spec.output.value = value;
+                })
+              }
+            />
+          )}
+        </>
+      )}
     </div>
   );
 }
@@ -1067,11 +1381,9 @@ function StepInspector(props: {
 }) {
   const { t } = useTranslation("studio");
   const step = props.flow.spec.graph.steps[props.stepId];
-  const transition = props.flow.spec.graph.transitions[props.stepId] ?? { end: true };
   if (step === undefined) return null;
   const kind = flowStepKind(step);
   const target = flowStepTarget(step);
-  const mode = transitionMode(transition);
   const patchStep = (mutator: (copy: FlowStep) => void) =>
     props.onPatch((copy) => {
       const current = copy.spec.graph.steps[props.stepId];
@@ -1295,39 +1607,6 @@ function StepInspector(props: {
         </InspectorField>
       </details>
 
-      <div className="flow-inspector-divider" />
-      <InspectorField label="Transition">
-        <select
-          value={mode}
-          onChange={(event) =>
-            props.onPatch((copy) => {
-              const previous = copy.spec.graph.transitions[props.stepId];
-              copy.spec.graph.transitions[props.stepId] = defaultTransition(
-                event.target.value as ReturnType<typeof transitionMode>,
-                props.stepId,
-                copy,
-              );
-              if (previous !== undefined) {
-                for (const destination of transitionDestinations(previous)) {
-                  removeOrphanedLoop(copy, destination);
-                }
-              }
-            })
-          }
-        >
-          {(["goto", "end", "fail", "repeat", "route"] as const).map((value) => (
-            <option key={value} value={value}>
-              {value}
-            </option>
-          ))}
-        </select>
-      </InspectorField>
-      <TransitionFields
-        flow={props.flow}
-        sourceId={props.stepId}
-        transition={transition}
-        onPatch={props.onPatch}
-      />
       <button className="flow-delete-node" type="button" onClick={props.onDelete}>
         <Trash size={16} /> Delete node
       </button>
@@ -1719,7 +1998,230 @@ function setBrowserSelection(range: Range): void {
   selection.addRange(range);
 }
 
+function emptyResultMapping(schema: PragmaJsonSchema, path: readonly string[] = []): unknown {
+  if (schema.type === "object") {
+    return Object.fromEntries(
+      Object.entries(schema.properties).map(([name, child]) => [
+        name,
+        emptyResultMapping(child, [...path, name]),
+      ]),
+    );
+  }
+  return `$node.output${path.length === 0 ? "" : `.${path.join(".")}`}`;
+}
+
+function ResultMappingEditor(props: {
+  readonly flow: PragmaFlowResource;
+  readonly schema: Extract<PragmaJsonSchema, { readonly type: "object" }>;
+  readonly value: unknown;
+  readonly onChange: (value: unknown) => void;
+}) {
+  const { t } = useTranslation("studio");
+  const fields = schemaLeafFields(props.schema);
+  return (
+    <section className="flow-result-mapping">
+      <header>
+        <strong>{t("resultMapping")}</strong>
+        <small>{t("resultMappingHint")}</small>
+      </header>
+      {fields.length === 0 ? (
+        <small className="flow-field-hint">{t("emptyResultMapping")}</small>
+      ) : (
+        fields.map((field) => {
+          const current = readMappingValue(props.value, field.path);
+          const options = resultSourceOptions(props.flow, field.path, {
+            terminalResult: t("terminalResultSource"),
+            flowInput: t("flowInputSource"),
+          });
+          const selected =
+            typeof current === "string" && options.some((option) => option.value === current)
+              ? current
+              : "__constant";
+          return (
+            <div className="flow-result-mapping-row" key={field.path.join(".")}>
+              <label>
+                <span>{field.path.join(".")}</span>
+                <select
+                  value={selected}
+                  onChange={(event) => {
+                    const value =
+                      event.target.value === "__constant"
+                        ? defaultMappingConstant(field.schema)
+                        : event.target.value;
+                    props.onChange(setMappingValue(props.value, field.path, value));
+                  }}
+                >
+                  {options.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                  <option value="__constant">{t("constantValue")}</option>
+                </select>
+              </label>
+              {selected === "__constant" ? (
+                <MappingConstantInput
+                  schema={field.schema}
+                  value={current}
+                  onChange={(value) =>
+                    props.onChange(setMappingValue(props.value, field.path, value))
+                  }
+                />
+              ) : null}
+            </div>
+          );
+        })
+      )}
+    </section>
+  );
+}
+
+function MappingConstantInput(props: {
+  readonly schema: PragmaJsonSchema;
+  readonly value: unknown;
+  readonly onChange: (value: unknown) => void;
+}) {
+  const { t } = useTranslation("studio");
+  if (props.schema.type === "boolean") {
+    return (
+      <select
+        aria-label={t("constantValue")}
+        value={props.value === true ? "true" : "false"}
+        onChange={(event) => props.onChange(event.target.value === "true")}
+      >
+        <option value="false">false</option>
+        <option value="true">true</option>
+      </select>
+    );
+  }
+  if (props.schema.type === "number" || props.schema.type === "integer") {
+    return (
+      <input
+        aria-label={t("constantValue")}
+        type="number"
+        step={props.schema.type === "integer" ? 1 : "any"}
+        value={typeof props.value === "number" ? props.value : 0}
+        onChange={(event) => props.onChange(Number(event.target.value))}
+      />
+    );
+  }
+  if (props.schema.type === "array") {
+    return <small className="flow-field-hint">{t("arrayMappingRequiresSource")}</small>;
+  }
+  return (
+    <input
+      aria-label={t("constantValue")}
+      value={typeof props.value === "string" ? props.value : ""}
+      onChange={(event) => props.onChange(event.target.value)}
+    />
+  );
+}
+
+function schemaLeafFields(
+  schema: PragmaJsonSchema,
+  path: readonly string[] = [],
+): readonly { readonly path: readonly string[]; readonly schema: PragmaJsonSchema }[] {
+  if (schema.type !== "object") return [{ path, schema }];
+  return Object.entries(schema.properties).flatMap(([name, child]) =>
+    schemaLeafFields(child, [...path, name]),
+  );
+}
+
+function resultSourceOptions(
+  flow: PragmaFlowResource,
+  resultPath: readonly string[],
+  labels: {
+    readonly terminalResult: string;
+    readonly flowInput: string;
+  },
+): readonly { readonly value: string; readonly label: string }[] {
+  const suffix = resultPath.length === 0 ? "" : `.${resultPath.join(".")}`;
+  const options: Array<{ value: string; label: string }> = [
+    { value: `$node.output${suffix}`, label: `${labels.terminalResult}${suffix}` },
+  ];
+  if (flow.spec.input !== undefined) {
+    for (const field of schemaLeafFields(flow.spec.input.schema)) {
+      if (field.path.length === 0) continue;
+      options.push({
+        value: `$flow.input.${field.path.join(".")}`,
+        label: `${labels.flowInput}.${field.path.join(".")}`,
+      });
+    }
+  }
+  for (const [nodeId, step] of Object.entries(flow.spec.graph.steps)) {
+    options.push({
+      value: `$state.nodes.${nodeId}.result`,
+      label: `${nodeId}.result`,
+    });
+    if (step.output !== undefined) {
+      for (const field of schemaLeafFields(step.output.schema)) {
+        if (field.path.length === 0) continue;
+        options.push({
+          value: `$state.nodes.${nodeId}.result.${field.path.join(".")}`,
+          label: `${nodeId}.result.${field.path.join(".")}`,
+        });
+      }
+    }
+  }
+  return options;
+}
+
+function readMappingValue(value: unknown, path: readonly string[]): unknown {
+  return path.reduce<unknown>((current, segment) => {
+    if (typeof current !== "object" || current === null || Array.isArray(current)) return undefined;
+    return (current as Record<string, unknown>)[segment];
+  }, value);
+}
+
+function setMappingValue(value: unknown, path: readonly string[], nextValue: unknown): unknown {
+  const root =
+    typeof value === "object" && value !== null && !Array.isArray(value)
+      ? structuredClone(value as Record<string, unknown>)
+      : {};
+  let current = root;
+  path.forEach((segment, index) => {
+    if (index === path.length - 1) {
+      current[segment] = nextValue;
+      return;
+    }
+    const child = current[segment];
+    const next =
+      typeof child === "object" && child !== null && !Array.isArray(child)
+        ? (child as Record<string, unknown>)
+        : {};
+    current[segment] = next;
+    current = next;
+  });
+  return root;
+}
+
+function defaultMappingConstant(schema: PragmaJsonSchema): unknown {
+  switch (schema.type) {
+    case "string":
+      return "";
+    case "number":
+    case "integer":
+      return 0;
+    case "boolean":
+      return false;
+    case "array":
+      return [];
+    case "object":
+      return Object.fromEntries(
+        Object.entries(schema.properties).map(([name, child]) => [
+          name,
+          defaultMappingConstant(child),
+        ]),
+      );
+  }
+}
+
 function StructuredOutputEditor(props: {
+  readonly label?: string | undefined;
+  readonly nativeLabel?: string | undefined;
+  readonly structuredLabel?: string | undefined;
+  readonly nativeHint?: string | undefined;
+  readonly fieldsTitle?: string | undefined;
   readonly value: Extract<PragmaJsonSchema, { readonly type: "object" }> | undefined;
   readonly onChange: (
     value: Extract<PragmaJsonSchema, { readonly type: "object" }> | undefined,
@@ -1744,7 +2246,7 @@ function StructuredOutputEditor(props: {
   };
   return (
     <section className="flow-output-editor">
-      <InspectorField label={t("flowOutput")}>
+      <InspectorField label={props.label ?? t("flowOutput")}>
         <select
           value={props.value === undefined ? "native" : "structured"}
           onChange={(event) => {
@@ -1763,14 +2265,18 @@ function StructuredOutputEditor(props: {
             }
           }}
         >
-          <option value="native">{t("nativeResult")}</option>
-          <option value="structured">{t("structuredResult")}</option>
+          <option value="native">{props.nativeLabel ?? t("nativeResult")}</option>
+          <option value="structured">{props.structuredLabel ?? t("structuredResult")}</option>
         </select>
       </InspectorField>
       {props.value === undefined ? (
-        <small className="flow-field-hint">{t("nativeResultHint")}</small>
+        <small className="flow-field-hint">{props.nativeHint ?? t("nativeResultHint")}</small>
       ) : (
-        <SchemaFieldsEditor title={t("resultFields")} fields={fields} onChange={update} />
+        <SchemaFieldsEditor
+          title={props.fieldsTitle ?? t("resultFields")}
+          fields={fields}
+          onChange={update}
+        />
       )}
     </section>
   );
@@ -2025,6 +2531,38 @@ export function validateFlowRuntimeSelections(
   return issues;
 }
 
+export function validateLogicRoutes(flow: PragmaFlowResource): readonly FlowValidationIssue[] {
+  const issues: FlowValidationIssue[] = [];
+  for (const [sourceId, transition] of Object.entries(flow.spec.graph.transitions)) {
+    if (!isRouteTransition(transition)) continue;
+    const field = routeFieldOptions(flow, sourceId).find(
+      (candidate) => candidate.name === transition.route,
+    );
+    const add = (message: string) =>
+      issues.push({
+        path: ["spec", "graph", "transitions", sourceId],
+        message,
+        stepId: sourceId,
+      });
+    if (Object.keys(transition.cases).some((key) => key.trim() === "")) {
+      add("Logic branch values cannot be empty.");
+    }
+    if (field?.type === "boolean") {
+      if (transition.cases["true"] === undefined || transition.cases["false"] === undefined) {
+        add(`Boolean logic ${sourceId}.result.${field.name} requires true and false branches.`);
+      }
+      continue;
+    }
+    if (field !== undefined && Object.keys(transition.cases).length === 0) {
+      add(`Logic ${sourceId}.result.${field.name} requires at least one case.`);
+    }
+    if (field !== undefined && transition.fallback === undefined) {
+      add(`Logic ${sourceId}.result.${field.name} requires an otherwise branch.`);
+    }
+  }
+  return issues;
+}
+
 function runtimeModelKey(model: DesktopRuntimeModel): string {
   return `${model.provider.id}\u0000${model.id}`;
 }
@@ -2117,156 +2655,325 @@ function objectSchemaPaths(
   });
 }
 
-function TransitionFields(props: {
+function LogicInspector(props: {
   readonly flow: PragmaFlowResource;
-  readonly sourceId: string;
-  readonly transition: PragmaFlowTransition;
+  readonly nodeId: string;
   readonly onPatch: (mutator: (copy: PragmaFlowResource) => void) => void;
+  readonly onDelete: () => void;
 }) {
-  const mode = transitionMode(props.transition);
-  const nodeOptions = Object.keys(props.flow.spec.graph.steps);
-  if (mode === "goto") {
-    const target = destinationTarget(props.transition as PragmaFlowDestination) ?? "";
+  const { t } = useTranslation("studio");
+  const sourceId = logicSourceId(props.nodeId);
+  if (sourceId === null) {
     return (
-      <InspectorField label="Target node">
+      <div className="flow-inspector-content">
+        <header>
+          <span className="flow-inspector-icon is-logic">
+            <DiamondsFour size={19} />
+          </span>
+          <div>
+            <strong>{t("logicCondition")}</strong>
+            <small>{t("logicDraftDescription")}</small>
+          </div>
+        </header>
+        <div className="flow-logic-empty">
+          <DiamondsFour size={20} />
+          <strong>{t("connectLogicUpstream")}</strong>
+          <p>{t("connectLogicUpstreamHint")}</p>
+        </div>
+        <button className="flow-delete-node" type="button" onClick={props.onDelete}>
+          <Trash size={16} /> {t("deleteNode")}
+        </button>
+      </div>
+    );
+  }
+  const transition = props.flow.spec.graph.transitions[sourceId];
+  if (!isRouteTransition(transition)) return null;
+  const fields = routeFieldOptions(props.flow, sourceId);
+  const currentField = fields.find((field) => field.name === transition.route);
+  const booleanField = currentField?.type === "boolean";
+  const visibleCases: readonly [string, PragmaFlowDestination][] = booleanField
+    ? (["true", "false"] as const).map((key) => [
+        key,
+        transition.cases[key] ?? ({ end: true } as PragmaFlowDestination),
+      ])
+    : Object.entries(transition.cases);
+  const fieldLabel = `${sourceId}.result.${transition.route}`;
+  const patchRoute = (mutator: (route: Extract<PragmaFlowTransition, { route: string }>) => void) =>
+    props.onPatch((copy) => {
+      const route = copy.spec.graph.transitions[sourceId];
+      if (isRouteTransition(route)) mutator(route);
+    });
+
+  return (
+    <div className="flow-inspector-content">
+      <header>
+        <span className="flow-inspector-icon is-logic">
+          <DiamondsFour size={19} />
+        </span>
+        <div>
+          <strong>{t("logicCondition")}</strong>
+          <small>{t("logicFromNode", { node: sourceId })}</small>
+        </div>
+      </header>
+      <InspectorField label={t("decisionField")}>
         <select
-          value={target}
-          onChange={(event) =>
+          value={transition.route}
+          onChange={(event) => {
+            const field = fields.find((candidate) => candidate.name === event.target.value);
             props.onPatch((copy) => {
-              copy.spec.graph.transitions[props.sourceId] = { goto: event.target.value };
-            })
-          }
+              const route = copy.spec.graph.transitions[sourceId];
+              if (!isRouteTransition(route)) return;
+              const previousDestinations = transitionDestinations(route);
+              route.route = event.target.value;
+              if (field?.type === "boolean") {
+                route.cases = {
+                  true: route.cases["true"] ?? { end: true },
+                  false: route.cases["false"] ?? route.fallback ?? { end: true },
+                };
+                delete route.fallback;
+              } else if (route.fallback === undefined) {
+                route.fallback = { end: true };
+              }
+              for (const destination of previousDestinations) {
+                removeOrphanedLoop(copy, destination);
+              }
+            });
+          }}
         >
-          {nodeOptions.map((id) => (
-            <option key={id}>{id}</option>
+          {currentField === undefined ? (
+            <option value={transition.route}>
+              {t("customDecisionField", { field: fieldLabel })}
+            </option>
+          ) : null}
+          {fields.map((field) => (
+            <option key={field.name} value={field.name}>
+              {sourceId}.result.{field.name} · {field.type}
+            </option>
           ))}
         </select>
       </InspectorField>
-    );
-  }
-  if (mode === "fail") {
-    const destination = props.transition as { fail: string };
-    return (
-      <InspectorField label="Failure message">
-        <input
-          value={destination.fail}
-          onChange={(event) =>
-            props.onPatch((copy) => {
-              copy.spec.graph.transitions[props.sourceId] = { fail: event.target.value };
-            })
-          }
-        />
-      </InspectorField>
-    );
-  }
-  if (mode === "repeat") {
-    const destination = props.transition as { repeat: { loop: string; goto: string } };
-    const loop = props.flow.spec.graph.loops[destination.repeat.loop];
-    return (
-      <>
-        <InspectorField label="Loop ID">
-          <input
-            value={destination.repeat.loop}
-            onChange={(event) =>
-              props.onPatch((copy) => {
-                const current = copy.spec.graph.transitions[props.sourceId] as typeof destination;
-                const previous = current.repeat.loop;
-                current.repeat.loop = event.target.value;
-                const definition = copy.spec.graph.loops[previous];
-                if (definition) {
-                  delete copy.spec.graph.loops[previous];
-                  copy.spec.graph.loops[event.target.value] = definition;
+      {fields.length === 0 || currentField === undefined ? (
+        <p className="flow-logic-warning">{t("decisionFieldNotInSchema")}</p>
+      ) : (
+        <p className="flow-field-hint">{t("decisionFieldHint", { field: fieldLabel })}</p>
+      )}
+      <section className="flow-logic-branches">
+        <header>
+          <div>
+            <strong>{t("branches")}</strong>
+            <small>{booleanField ? t("booleanBranchesHint") : t("exactMatchBranchesHint")}</small>
+          </div>
+          {booleanField ? null : (
+            <button
+              type="button"
+              onClick={() =>
+                patchRoute((route) => {
+                  const key = nextCaseKey(route.cases);
+                  route.cases = { ...route.cases, [key]: { end: true } };
+                })
+              }
+            >
+              <Plus size={14} /> {t("addCase")}
+            </button>
+          )}
+        </header>
+        {visibleCases.map(([key, destination]) => (
+          <div className="flow-logic-branch-row" key={key}>
+            <span className={`flow-logic-branch-value${booleanField ? " is-boolean" : ""}`}>
+              {booleanField ? (
+                key
+              ) : (
+                <input
+                  aria-label={t("caseValue")}
+                  value={key}
+                  onChange={(event) =>
+                    patchRoute((route) => {
+                      route.cases = renameRouteCase(route.cases, key, event.target.value);
+                    })
+                  }
+                />
+              )}
+            </span>
+            <span className="flow-logic-branch-target">{destinationLabel(destination)}</span>
+            {booleanField ? null : (
+              <button
+                type="button"
+                aria-label={t("removeCase", { value: key })}
+                onClick={() =>
+                  props.onPatch((copy) => {
+                    const route = copy.spec.graph.transitions[sourceId];
+                    if (!isRouteTransition(route)) return;
+                    const removed = route.cases[key];
+                    const next = { ...route.cases };
+                    delete next[key];
+                    route.cases = next;
+                    removeOrphanedLoop(copy, removed);
+                  })
                 }
-              })
-            }
-          />
-        </InspectorField>
-        <InspectorField label="Loop entry">
-          <select
-            value={destination.repeat.goto}
-            onChange={(event) =>
-              props.onPatch((copy) => {
-                (copy.spec.graph.transitions[props.sourceId] as typeof destination).repeat.goto =
-                  event.target.value;
-                copy.spec.graph.loops[destination.repeat.loop]!.entry = event.target.value;
-              })
-            }
+              >
+                <X size={14} />
+              </button>
+            )}
+          </div>
+        ))}
+        {booleanField ? null : transition.fallback === undefined ? (
+          <button
+            className="flow-logic-add-fallback"
+            type="button"
+            onClick={() => patchRoute((route) => (route.fallback = { end: true }))}
           >
-            {nodeOptions.map((id) => (
-              <option key={id}>{id}</option>
-            ))}
-          </select>
+            <Plus size={14} /> {t("addFallback")}
+          </button>
+        ) : (
+          <div className="flow-logic-branch-row is-fallback">
+            <span className="flow-logic-branch-value">{t("otherBranch")}</span>
+            <span className="flow-logic-branch-target">
+              {destinationLabel(transition.fallback)}
+            </span>
+          </div>
+        )}
+      </section>
+      <p className="flow-field-hint">{t("dragBranchHint")}</p>
+      <details className="flow-advanced-settings">
+        <summary>{t("advancedSettings")}</summary>
+        <InspectorField label={t("rawTransitionDsl")}>
+          <pre className="flow-raw-dsl">{stringify(transition, { lineWidth: 72 })}</pre>
         </InspectorField>
-        <InspectorField label="Max iterations">
-          <input
-            type="number"
-            min={1}
-            value={loop?.maxIterations ?? 3}
-            onChange={(event) =>
-              props.onPatch((copy) => {
-                copy.spec.graph.loops[destination.repeat.loop] = {
-                  ...(copy.spec.graph.loops[destination.repeat.loop] ?? {
-                    entry: destination.repeat.goto,
-                  }),
-                  maxIterations: Number(event.target.value),
-                };
-              })
-            }
-          />
-        </InspectorField>
-        <JsonField
-          label="On limit destination"
-          value={loop?.onLimit}
-          onCommit={(value) =>
-            props.onPatch((copy) => {
-              const current = copy.spec.graph.loops[destination.repeat.loop];
-              if (current) current.onLimit = value as typeof current.onLimit;
-            })
-          }
-        />
-      </>
-    );
-  }
-  if (mode === "route") {
-    const route = props.transition as Extract<PragmaFlowTransition, { route: string }>;
+      </details>
+      <button className="flow-delete-node" type="button" onClick={props.onDelete}>
+        <Trash size={16} /> {t("deleteLogicNode")}
+      </button>
+    </div>
+  );
+}
+
+function EdgeInspector(props: {
+  readonly flow: PragmaFlowResource;
+  readonly edge: Edge | undefined;
+  readonly onPatch: (mutator: (copy: PragmaFlowResource) => void) => void;
+  readonly onDelete: () => void;
+}) {
+  const { t } = useTranslation("studio");
+  const destination =
+    props.edge === undefined ? undefined : edgeDestination(props.flow, props.edge);
+  if (props.edge === undefined || destination === undefined) {
     return (
-      <>
-        <InspectorField label="Route output">
-          <input
-            value={route.route}
-            onChange={(event) =>
-              props.onPatch((copy) => {
-                (copy.spec.graph.transitions[props.sourceId] as typeof route).route =
-                  event.target.value;
-              })
-            }
-          />
-        </InspectorField>
-        <JsonField
-          label="Cases"
-          value={route.cases}
-          required
-          onCommit={(value) =>
-            props.onPatch((copy) => {
-              (copy.spec.graph.transitions[props.sourceId] as typeof route).cases =
-                value as typeof route.cases;
-            })
-          }
-        />
-        <JsonField
-          label="Fallback"
-          value={route.fallback}
-          onCommit={(value) =>
-            props.onPatch((copy) => {
-              (copy.spec.graph.transitions[props.sourceId] as typeof route).fallback =
-                value as typeof route.fallback;
-            })
-          }
-        />
-      </>
+      <div className="flow-inspector-content">
+        <p className="flow-field-hint">{t("selectControlEdge")}</p>
+      </div>
     );
   }
-  return null;
+  const mode =
+    typeof destination === "object" && "repeat" in destination
+      ? "repeat"
+      : typeof destination === "object" && "fail" in destination
+        ? "fail"
+        : "next";
+  const patchDestination = (next: PragmaFlowDestination) =>
+    props.onPatch((copy) => {
+      if (props.edge !== undefined) setEdgeDestination(copy, props.edge, next);
+    });
+  const loop =
+    mode === "repeat" && typeof destination === "object" && "repeat" in destination
+      ? props.flow.spec.graph.loops[destination.repeat.loop]
+      : undefined;
+  return (
+    <div className="flow-inspector-content">
+      <header>
+        <span className={`flow-inspector-icon is-${mode}`}>
+          <Path size={19} />
+        </span>
+        <div>
+          <strong>
+            {mode === "repeat" ? t("loopEdge") : mode === "fail" ? t("failEdge") : t("flowEdge")}
+          </strong>
+          <small>{props.edge.label}</small>
+        </div>
+      </header>
+      {mode === "fail" && typeof destination === "object" && "fail" in destination ? (
+        <InspectorField label={t("failureMessage")}>
+          <input
+            value={destination.fail}
+            onChange={(event) => patchDestination({ fail: event.target.value })}
+          />
+        </InspectorField>
+      ) : null}
+      {mode === "repeat" && typeof destination === "object" && "repeat" in destination ? (
+        <>
+          <InspectorField label={t("loopId")}>
+            <input
+              value={destination.repeat.loop}
+              onChange={(event) => {
+                const nextId = event.target.value;
+                props.onPatch((copy) => {
+                  if (props.edge === undefined) return;
+                  const previousId = destination.repeat.loop;
+                  setEdgeDestination(copy, props.edge, {
+                    repeat: { loop: nextId, goto: destination.repeat.goto },
+                  });
+                  const definition = copy.spec.graph.loops[previousId];
+                  if (definition !== undefined) {
+                    delete copy.spec.graph.loops[previousId];
+                    copy.spec.graph.loops[nextId] = definition;
+                  }
+                });
+              }}
+            />
+          </InspectorField>
+          <InspectorField label={t("loopEntry")}>
+            <input value={destination.repeat.goto} readOnly />
+          </InspectorField>
+          <InspectorField label={t("maxIterations")}>
+            <input
+              type="number"
+              min={1}
+              value={loop?.maxIterations ?? 3}
+              onChange={(event) =>
+                props.onPatch((copy) => {
+                  copy.spec.graph.loops[destination.repeat.loop] = {
+                    ...(copy.spec.graph.loops[destination.repeat.loop] ?? {
+                      entry: destination.repeat.goto,
+                    }),
+                    maxIterations: Math.max(1, Number(event.target.value)),
+                  };
+                })
+              }
+            />
+          </InspectorField>
+          <InspectorField label={t("onLimit")}>
+            <select
+              value={flowTargetSelectValue(loop?.onLimit)}
+              onChange={(event) =>
+                props.onPatch((copy) => {
+                  const current = copy.spec.graph.loops[destination.repeat.loop];
+                  if (current !== undefined)
+                    current.onLimit = flowTargetFromSelect(event.target.value);
+                })
+              }
+            >
+              <option value="end">{t("endFlow")}</option>
+              <option value="fail">{t("failFlow")}</option>
+              {Object.keys(props.flow.spec.graph.steps)
+                .filter((id) => id !== destination.repeat.goto)
+                .map((id) => (
+                  <option key={id} value={`goto:${id}`}>
+                    {id}
+                  </option>
+                ))}
+            </select>
+          </InspectorField>
+        </>
+      ) : null}
+      {mode === "next" ? (
+        <p className="flow-field-hint">
+          {t("edgeTarget", { target: destinationLabel(destination) })}
+        </p>
+      ) : null}
+      <button className="flow-delete-node" type="button" onClick={props.onDelete}>
+        <Trash size={16} /> {t("deleteEdge")}
+      </button>
+    </div>
+  );
 }
 
 function InspectorField(props: { readonly label: string; readonly children: ReactNode }) {
@@ -2490,22 +3197,124 @@ function setStepReference(step: FlowStep, kind: Exclude<FlowStepKind, "human">, 
   if (value !== undefined) value.ref = ref;
 }
 
-function defaultTransition(
-  mode: ReturnType<typeof transitionMode>,
-  sourceId: string,
-  flow: PragmaFlowResource,
-): PragmaFlowTransition {
-  const other = Object.keys(flow.spec.graph.steps).find((id) => id !== sourceId) ?? sourceId;
-  if (mode === "goto") return { goto: other };
-  if (mode === "fail") return { fail: "Flow failed" };
-  if (mode === "repeat") {
-    const loopId = `loop_${sourceId}`;
-    flow.spec.graph.loops[loopId] = { entry: other, maxIterations: 3 };
-    return { repeat: { loop: loopId, goto: other } };
+type RouteTransition = Extract<PragmaFlowTransition, { route: string }>;
+type RouteFieldType = "string" | "number" | "integer" | "boolean";
+
+interface RouteFieldOption {
+  readonly name: string;
+  readonly type: RouteFieldType;
+}
+
+function isRouteTransition(
+  transition: PragmaFlowTransition | undefined,
+): transition is RouteTransition {
+  return typeof transition === "object" && transition !== null && "route" in transition;
+}
+
+function logicNodeId(sourceId: string): string {
+  return `${LOGIC_NODE_PREFIX}${encodeURIComponent(sourceId)}`;
+}
+
+function logicSourceId(nodeId: string): string | null {
+  if (!nodeId.startsWith(LOGIC_NODE_PREFIX) || nodeId.startsWith(LOGIC_DRAFT_PREFIX)) return null;
+  try {
+    return decodeURIComponent(nodeId.slice(LOGIC_NODE_PREFIX.length));
+  } catch {
+    return null;
   }
-  if (mode === "route")
-    return { route: "result", cases: { success: { goto: other } }, fallback: { end: true } };
-  return { end: true };
+}
+
+function canvasNodeExists(
+  flow: PragmaFlowResource,
+  nodeId: string,
+  logicDraftIds: readonly string[],
+): boolean {
+  if (flow.spec.graph.steps[nodeId] !== undefined || logicDraftIds.includes(nodeId)) return true;
+  const sourceId = logicSourceId(nodeId);
+  return sourceId !== null && isRouteTransition(flow.spec.graph.transitions[sourceId]);
+}
+
+export function routeFieldOptions(
+  flow: PragmaFlowResource,
+  sourceId: string,
+): readonly RouteFieldOption[] {
+  const schema = flow.spec.graph.steps[sourceId]?.output?.schema;
+  if (schema?.type !== "object") return [];
+  return Object.entries(schema.properties).flatMap(([name, property]) =>
+    ["string", "number", "integer", "boolean"].includes(property.type)
+      ? [{ name, type: property.type as RouteFieldType }]
+      : [],
+  );
+}
+
+export function createRouteTransition(
+  field: RouteFieldOption | undefined,
+  previous: PragmaFlowTransition | undefined,
+): RouteTransition {
+  const inherited =
+    previous === undefined || isRouteTransition(previous)
+      ? ({ end: true } as PragmaFlowDestination)
+      : previous;
+  if (field?.type === "boolean") {
+    return {
+      route: field.name,
+      cases: { true: { end: true }, false: inherited },
+    };
+  }
+  return {
+    route: field?.name ?? "result",
+    cases: {},
+    fallback: inherited,
+  };
+}
+
+function routeOutputs(
+  flow: PragmaFlowResource,
+  sourceId: string,
+  route: RouteTransition,
+): readonly { id: string; label: string }[] {
+  const field = routeFieldOptions(flow, sourceId).find(
+    (candidate) => candidate.name === route.route,
+  );
+  const caseNames = field?.type === "boolean" ? ["true", "false"] : Object.keys(route.cases);
+  return [
+    ...caseNames.map((key) => ({ id: `case:${key}`, label: key })),
+    ...(field?.type === "boolean" ? [] : [{ id: "fallback", label: "otherwise" }]),
+  ];
+}
+
+function nextCaseKey(cases: Readonly<Record<string, PragmaFlowDestination>>): string {
+  let index = 1;
+  let key = `value_${index}`;
+  while (cases[key] !== undefined) {
+    index += 1;
+    key = `value_${index}`;
+  }
+  return key;
+}
+
+function renameRouteCase(
+  cases: Readonly<Record<string, PragmaFlowDestination>>,
+  previousKey: string,
+  nextKey: string,
+): Record<string, PragmaFlowDestination> {
+  if (previousKey === nextKey || nextKey.trim() === "" || cases[nextKey] !== undefined) {
+    return { ...cases };
+  }
+  return Object.fromEntries(
+    Object.entries(cases).map(([key, destination]) => [
+      key === previousKey ? nextKey : key,
+      destination,
+    ]),
+  );
+}
+
+function destinationLabel(destination: PragmaFlowDestination): string {
+  if (typeof destination === "string") return destination;
+  if ("goto" in destination) return destination.goto;
+  if ("end" in destination) return "End";
+  if ("fail" in destination) return "Fail";
+  return `${destination.repeat.goto} · ${destination.repeat.loop}`;
 }
 
 function nextStepId(flow: PragmaFlowResource, kind: FlowStepKind): string {
@@ -2532,41 +3341,78 @@ function connectionDestination(targetId: string): PragmaFlowDestination | null {
   return { goto: targetId };
 }
 
+export function normalizeConnectionDestination(
+  flow: PragmaFlowResource,
+  sourceId: string,
+  destination: PragmaFlowDestination,
+): PragmaFlowDestination {
+  const target = destinationTarget(destination);
+  if (target === null || !wouldCreateCycle(flow, sourceId, target)) return destination;
+  const baseId = `loop_${sourceId}_${target}`.replace(/[^A-Za-z0-9_-]/g, "_");
+  let loopId = baseId;
+  let suffix = 2;
+  while (
+    flow.spec.graph.loops[loopId] !== undefined &&
+    flow.spec.graph.loops[loopId]?.entry !== target
+  ) {
+    loopId = `${baseId}_${suffix}`;
+    suffix += 1;
+  }
+  flow.spec.graph.loops[loopId] ??= {
+    entry: target,
+    maxIterations: 3,
+    onLimit: { fail: `Loop ${loopId} reached its limit.` },
+  };
+  return { repeat: { loop: loopId, goto: target } };
+}
+
+function wouldCreateCycle(flow: PragmaFlowResource, sourceId: string, targetId: string): boolean {
+  if (sourceId === targetId) return true;
+  const seen = new Set<string>();
+  const pending = [targetId];
+  while (pending.length > 0) {
+    const current = pending.pop()!;
+    if (current === sourceId) return true;
+    if (seen.has(current)) continue;
+    seen.add(current);
+    const transition = flow.spec.graph.transitions[current];
+    if (transition === undefined) continue;
+    for (const destination of transitionDestinations(transition)) {
+      const next = destinationTarget(destination);
+      if (next !== null) pending.push(next);
+    }
+  }
+  return false;
+}
+
 function applyConnection(
   flow: PragmaFlowResource,
   connection: Connection,
   destination: PragmaFlowDestination,
 ): void {
-  const source = connection.source;
-  if (source === null) return;
-  if (source === START_NODE_ID) {
+  const canvasSource = connection.source;
+  if (canvasSource === null) return;
+  if (canvasSource === START_NODE_ID) {
     const target = destinationTarget(destination);
     if (target !== null) flow.spec.graph.start = target;
     return;
   }
+  const routeSource = logicSourceId(canvasSource);
+  const source = routeSource ?? canvasSource;
   if (flow.spec.graph.steps[source] === undefined) return;
   const current = flow.spec.graph.transitions[source];
   const handle = connection.sourceHandle ?? "default";
   let previous: PragmaFlowDestination | undefined;
-  if (
-    handle.startsWith("case:") &&
-    current !== undefined &&
-    typeof current === "object" &&
-    "route" in current
-  ) {
+  if (routeSource !== null && handle.startsWith("case:") && isRouteTransition(current)) {
     const caseName = handle.slice(5);
     previous = current.cases[caseName];
     current.cases[caseName] = destination;
-  } else if (
-    handle === "fallback" &&
-    current !== undefined &&
-    typeof current === "object" &&
-    "route" in current
-  ) {
+  } else if (routeSource !== null && handle === "fallback" && isRouteTransition(current)) {
     previous = current.fallback;
     current.fallback = destination;
   } else {
-    if (current !== undefined && !(typeof current === "object" && "route" in current)) {
+    if (routeSource !== null) return;
+    if (current !== undefined && !isRouteTransition(current)) {
       previous = current;
     }
     flow.spec.graph.transitions[source] = destination;
@@ -2575,11 +3421,13 @@ function applyConnection(
 }
 
 export function removeEdgeFromFlow(flow: PragmaFlowResource, edge: Edge): void {
-  if (edge.id === "start-edge") return;
-  const transition = flow.spec.graph.transitions[edge.source];
+  if (edge.id === "start-edge" || edge.id.endsWith(":logic-input")) return;
+  const routeSource = logicSourceId(edge.source);
+  const source = routeSource ?? edge.source;
+  const transition = flow.spec.graph.transitions[source];
   if (transition === undefined) return;
   let removed: PragmaFlowDestination | undefined;
-  if (typeof transition === "object" && "route" in transition) {
+  if (routeSource !== null && isRouteTransition(transition)) {
     if (edge.sourceHandle?.startsWith("case:")) {
       const caseName = edge.sourceHandle.slice(5);
       removed = transition.cases[caseName];
@@ -2589,10 +3437,59 @@ export function removeEdgeFromFlow(flow: PragmaFlowResource, edge: Edge): void {
       delete transition.fallback;
     }
   } else {
+    if (isRouteTransition(transition)) return;
     removed = transition;
-    delete flow.spec.graph.transitions[edge.source];
+    delete flow.spec.graph.transitions[source];
   }
   removeOrphanedLoop(flow, removed);
+}
+
+function edgeDestination(flow: PragmaFlowResource, edge: Edge): PragmaFlowDestination | undefined {
+  const routeSource = logicSourceId(edge.source);
+  const source = routeSource ?? edge.source;
+  const transition = flow.spec.graph.transitions[source];
+  if (transition === undefined) return undefined;
+  if (routeSource !== null && isRouteTransition(transition)) {
+    if (edge.sourceHandle?.startsWith("case:")) {
+      return transition.cases[edge.sourceHandle.slice(5)];
+    }
+    if (edge.sourceHandle === "fallback") return transition.fallback;
+    return undefined;
+  }
+  return isRouteTransition(transition) ? undefined : transition;
+}
+
+function setEdgeDestination(
+  flow: PragmaFlowResource,
+  edge: Edge,
+  destination: PragmaFlowDestination,
+): void {
+  const routeSource = logicSourceId(edge.source);
+  const source = routeSource ?? edge.source;
+  const transition = flow.spec.graph.transitions[source];
+  if (routeSource !== null && isRouteTransition(transition)) {
+    if (edge.sourceHandle?.startsWith("case:")) {
+      transition.cases[edge.sourceHandle.slice(5)] = destination;
+    } else if (edge.sourceHandle === "fallback") {
+      transition.fallback = destination;
+    }
+    return;
+  }
+  if (!isRouteTransition(transition)) flow.spec.graph.transitions[source] = destination;
+}
+
+type FlowLimitTarget = NonNullable<PragmaFlowResource["spec"]["graph"]["loops"][string]["onLimit"]>;
+
+function flowTargetSelectValue(target: FlowLimitTarget | undefined): string {
+  if (target === undefined || (typeof target === "object" && "end" in target)) return "end";
+  if (typeof target === "object" && "fail" in target) return "fail";
+  return `goto:${typeof target === "string" ? target : target.goto}`;
+}
+
+function flowTargetFromSelect(value: string): FlowLimitTarget {
+  if (value === "end") return { end: true };
+  if (value === "fail") return { fail: "Loop reached its limit." };
+  return { goto: value.slice("goto:".length) };
 }
 
 function removeOrphanedLoop(
@@ -2624,12 +3521,25 @@ export function buildCanvasNodes(
   flow: PragmaFlowResource,
   suppliedPositions: Readonly<Record<string, { readonly x: number; readonly y: number }>>,
   invalidStepIds: ReadonlySet<string> = new Set(),
-  selectedStepId: string | null = null,
+  selectedNodeId: string | null = null,
+  logicDraftIds: readonly string[] = [],
 ): WorkflowCanvasNode[] {
   const automatic = automaticPositions(flow);
   const stepIds = Object.keys(flow.spec.graph.steps);
+  const routeSourceIds = Object.entries(flow.spec.graph.transitions)
+    .filter(([, transition]) => isRouteTransition(transition))
+    .map(([sourceId]) => sourceId);
+  const logicIds = routeSourceIds.map(logicNodeId);
+  const canvasIds = [...stepIds, ...logicIds, ...logicDraftIds];
   const positions = Object.fromEntries(
-    stepIds.map((id) => [id, suppliedPositions[id] ?? automatic[id] ?? { x: 0, y: 0 }]),
+    canvasIds.map((id, index) => [
+      id,
+      suppliedPositions[id] ??
+        automatic[id] ?? {
+          x: 280 + (index % 3) * (NODE_WIDTH + NODE_HORIZONTAL_GAP),
+          y: 120 + Math.floor(index / 3) * (NODE_HEIGHT + NODE_VERTICAL_GAP),
+        },
+    ]),
   );
   const semantic = stepIds.map((id): StepCanvasNode => {
     const step = flow.spec.graph.steps[id]!;
@@ -2638,16 +3548,48 @@ export function buildCanvasNodes(
       type: "step",
       position: positions[id]!,
       deletable: false,
-      selected: id === selectedStepId,
+      selected: id === selectedNodeId,
       data: {
         kind: flowStepKind(step),
         label: id,
         subtitle: flowStepTarget(step),
-        outputs: transitionOutputs(flow.spec.graph.transitions[id]),
+        outputs: [{ id: "default", label: "result" }],
         invalid: invalidStepIds.has(id),
       },
     };
   });
+  const logicNodes: LogicCanvasNode[] = routeSourceIds.map((sourceId) => {
+    const transition = flow.spec.graph.transitions[sourceId] as RouteTransition;
+    const id = logicNodeId(sourceId);
+    return {
+      id,
+      type: "logic",
+      position: positions[id]!,
+      deletable: false,
+      selected: id === selectedNodeId,
+      data: {
+        sourceId,
+        label: transition.route,
+        fieldLabel: `${sourceId}.result.${transition.route}`,
+        outputs: routeOutputs(flow, sourceId, transition),
+        invalid: invalidStepIds.has(sourceId),
+      },
+    };
+  });
+  const draftNodes: LogicCanvasNode[] = logicDraftIds.map((id) => ({
+    id,
+    type: "logic",
+    position: positions[id]!,
+    deletable: false,
+    selected: id === selectedNodeId,
+    data: {
+      sourceId: null,
+      label: "Condition",
+      fieldLabel: "Connect an upstream node",
+      outputs: [],
+      invalid: true,
+    },
+  }));
   const startPosition = positions[flow.spec.graph.start] ?? { x: 0, y: 0 };
   const maxX = Math.max(...Object.values(positions).map((position) => position.x), 0);
   const averageY =
@@ -2673,6 +3615,8 @@ export function buildCanvasNodes(
       data: { label: "Start", tone: "start" },
     },
     ...semantic,
+    ...logicNodes,
+    ...draftNodes,
     {
       id: END_NODE_ID,
       type: "terminal",
@@ -2714,11 +3658,23 @@ export function buildCanvasEdges(flow: PragmaFlowResource): Edge[] {
     },
   ];
   for (const [source, transition] of Object.entries(flow.spec.graph.transitions)) {
-    if (typeof transition === "object" && "route" in transition) {
+    if (isRouteTransition(transition)) {
+      const logicId = logicNodeId(source);
+      edges.push({
+        id: `${source}:logic-input`,
+        source,
+        sourceHandle: "default",
+        target: logicId,
+        targetHandle: "target",
+        label: "result",
+        type: "workflow",
+        deletable: false,
+        markerEnd: { type: MarkerType.ArrowClosed },
+      });
       for (const [caseName, destination] of Object.entries(transition.cases))
-        edges.push(destinationEdge(source, `case:${caseName}`, destination, caseName));
+        edges.push(destinationEdge(logicId, `case:${caseName}`, destination, caseName));
       if (transition.fallback !== undefined)
-        edges.push(destinationEdge(source, "fallback", transition.fallback, "fallback"));
+        edges.push(destinationEdge(logicId, "fallback", transition.fallback, "otherwise"));
     } else edges.push(destinationEdge(source, "default", transition, transitionMode(transition)));
   }
   return edges;
@@ -2764,43 +3720,46 @@ function destinationEdge(
   };
 }
 
-function transitionOutputs(
-  transition: PragmaFlowTransition | undefined,
-): readonly { id: string; label: string }[] {
-  if (transition !== undefined && typeof transition === "object" && "route" in transition) {
-    return [
-      ...Object.keys(transition.cases).map((key) => ({ id: `case:${key}`, label: key })),
-      ...(transition.fallback === undefined ? [] : [{ id: "fallback", label: "fallback" }]),
-    ];
-  }
-  return [
-    { id: "default", label: transition === undefined ? "connect" : transitionMode(transition) },
-  ];
-}
-
 function automaticPositions(flow: PragmaFlowResource): Record<string, { x: number; y: number }> {
   const graph = new dagre.graphlib.Graph().setDefaultEdgeLabel(() => ({}));
   graph.setGraph({ rankdir: "LR", ranksep: 110, nodesep: 54, marginx: 20, marginy: 20 });
   for (const id of Object.keys(flow.spec.graph.steps))
     graph.setNode(id, { width: NODE_WIDTH, height: NODE_HEIGHT });
   for (const [source, transition] of Object.entries(flow.spec.graph.transitions)) {
-    const destinations =
-      typeof transition === "object" && "route" in transition
-        ? [...Object.values(transition.cases), transition.fallback].filter(
-            (value): value is PragmaFlowDestination => value !== undefined,
-          )
-        : [transition];
+    const route = isRouteTransition(transition);
+    const graphSource = route ? logicNodeId(source) : source;
+    if (route) {
+      graph.setNode(graphSource, { width: LOGIC_NODE_WIDTH, height: LOGIC_NODE_HEIGHT });
+      graph.setEdge(source, graphSource);
+    }
+    const destinations = route
+      ? [...Object.values(transition.cases), transition.fallback].filter(
+          (value): value is PragmaFlowDestination => value !== undefined,
+        )
+      : [transition];
     for (const destination of destinations) {
       const target = destinationTarget(destination);
       if (target !== null && flow.spec.graph.steps[target] !== undefined)
-        graph.setEdge(source, target);
+        graph.setEdge(graphSource, target);
     }
   }
   dagre.layout(graph);
   return Object.fromEntries(
-    Object.keys(flow.spec.graph.steps).map((id) => {
+    [
+      ...Object.keys(flow.spec.graph.steps),
+      ...Object.keys(flow.spec.graph.transitions)
+        .filter((id) => isRouteTransition(flow.spec.graph.transitions[id]))
+        .map(logicNodeId),
+    ].map((id) => {
       const position = graph.node(id) as { x: number; y: number };
-      return [id, { x: position.x - NODE_WIDTH / 2, y: position.y - NODE_HEIGHT / 2 }];
+      const logic = logicSourceId(id) !== null;
+      return [
+        id,
+        {
+          x: position.x - (logic ? LOGIC_NODE_WIDTH : NODE_WIDTH) / 2,
+          y: position.y - (logic ? LOGIC_NODE_HEIGHT : NODE_HEIGHT) / 2,
+        },
+      ];
     }),
   );
 }

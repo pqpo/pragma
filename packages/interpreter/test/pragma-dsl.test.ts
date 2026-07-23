@@ -637,7 +637,7 @@ describe("Pragma YAML DSL", () => {
     expect(({} as { polluted?: unknown }).polluted).toBeUndefined();
   });
 
-  it("rejects malformed Flow JSON Schemas during project validation", async () => {
+  it("rejects Flow contracts outside the bounded object schema", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-flow-schema-"));
     await writeFile(
       join(root, "flow.pragma.yaml"),
@@ -663,7 +663,7 @@ describe("Pragma YAML DSL", () => {
     );
     const project = await loadPragmaProject(join(root, "flow.pragma.yaml"));
     expect(await project.validate()).toEqual(
-      expect.arrayContaining([expect.objectContaining({ code: "flow.schema.invalid" })]),
+      expect.arrayContaining([expect.objectContaining({ code: "schema.invalid" })]),
     );
   });
 

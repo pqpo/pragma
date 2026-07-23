@@ -44,10 +44,7 @@ import {
   type PragmaResourceHealth,
   type PragmaSemanticResourceRef,
 } from "../ast/pragma-dsl.schema.ts";
-import {
-  analyzePragmaFlowGraph,
-  analyzePragmaFlowNodeAvailability,
-} from "../ast/flow-graph.ts";
+import { analyzePragmaFlowGraph, analyzePragmaFlowNodeAvailability } from "../ast/flow-graph.ts";
 import {
   canonicalPragmaResourceRef,
   parsePragmaReference,
@@ -1057,8 +1054,19 @@ async function compileFlowResource(
     output: outputSchema,
     maxNodeVisits: resource.spec.limits.maxNodeVisits,
     timeoutMs: resource.spec.limits.timeoutMs,
-    result: ({ state }) =>
-      evaluateValue(resource.spec.output?.value ?? state, state, undefined, state),
+    ...(resource.spec.output?.value === undefined
+      ? {}
+      : {
+          result: ({
+            input,
+            state,
+            terminal,
+          }: {
+            readonly input: unknown;
+            readonly state: FlowState;
+            readonly terminal: { readonly output: unknown };
+          }) => evaluateValue(resource.spec.output!.value, state, input, terminal.output),
+        }),
   });
   const references = new Map<string, FlowStepReference>();
   for (const [stepId, step] of Object.entries(resource.spec.graph.steps)) {
@@ -1750,12 +1758,7 @@ function invalidFlowExpressions(
   }
   if (typeof value !== "object" || value === null) return [];
   return Object.entries(value).flatMap(([key, entry]) => {
-    if (
-      key === "prompt" &&
-      typeof entry === "object" &&
-      entry !== null &&
-      "segments" in entry
-    ) {
+    if (key === "prompt" && typeof entry === "object" && entry !== null && "segments" in entry) {
       return [];
     }
     return invalidFlowExpressions(entry, [...path, key]);

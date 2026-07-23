@@ -499,7 +499,7 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
     });
   });
 
-  it("compiles and runs the resource pinned by Mission v3", async () => {
+  it("compiles and runs the resource pinned by a Mission", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-mission-runner-"));
     temporaryPaths.push(root);
     const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
@@ -1291,6 +1291,7 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
     const mission = await missions.create({
       workspace: { path: root, basename: "workspace" },
       goal: "Review the release",
+      flowInput: { goal: "Review the release", workspace: root },
       project: { id: snapshot.projectId, revision: snapshot.revision },
       executor: missionExecutorSnapshot(flow),
     });

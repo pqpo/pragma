@@ -11,18 +11,22 @@ import {
   buildCanvasNodes,
   buildCanvasEdges,
   canvasPositions,
+  createRouteTransition,
   END_NODE_ID,
   FAIL_NODE_ID,
   FlowEditor,
   flowRuntimeProfile,
   flowVariableOptions,
   nextAvailableNodePosition,
+  normalizeConnectionDestination,
   normalizePromptSegments,
   PromptTemplateEditor,
   removeEdgeFromFlow,
+  routeFieldOptions,
   RuntimeBindingEditor,
   START_NODE_ID,
   validateFlowRuntimeSelections,
+  validateLogicRoutes,
 } from "./FlowEditor.tsx";
 
 describe("Flow editor canvas", () => {
@@ -159,6 +163,166 @@ describe("Flow editor canvas", () => {
     expect(buildCanvasNodes(flowFixture(), {}).some((node) => node.id === FAIL_NODE_ID)).toBe(
       false,
     );
+  });
+
+  it("projects route transitions into standalone logic nodes and branch edges", () => {
+    const flow = flowFixture();
+    flow.spec.graph.steps.review!.output = {
+      schema: {
+        type: "object",
+        properties: { has_issue: { type: "boolean" } },
+        required: ["has_issue"],
+        additionalProperties: false,
+      },
+    };
+    flow.spec.graph.transitions.review = {
+      route: "has_issue",
+      cases: { true: { goto: "fix" }, false: { end: true } },
+    };
+    flow.spec.graph.steps.fix = {
+      expert: { ref: "expert:fix@1.0.0" },
+      version: "1.0.0",
+    };
+    flow.spec.graph.transitions.fix = { end: true };
+
+    const nodes = buildCanvasNodes(flow, {});
+    const logic = nodes.find((node) => node.type === "logic");
+    const review = nodes.find((node) => node.id === "review" && node.type === "step");
+    const edges = buildCanvasEdges(flow);
+
+    expect(logic).toMatchObject({
+      type: "logic",
+      data: {
+        sourceId: "review",
+        label: "has_issue",
+        fieldLabel: "review.result.has_issue",
+        outputs: [
+          { id: "case:true", label: "true" },
+          { id: "case:false", label: "false" },
+        ],
+      },
+    });
+    expect(review?.data.outputs).toEqual([{ id: "default", label: "result" }]);
+    expect(edges).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "review:logic-input",
+          source: "review",
+          target: logic?.id,
+          deletable: false,
+        }),
+        expect.objectContaining({
+          source: logic?.id,
+          sourceHandle: "case:true",
+          target: "fix",
+        }),
+        expect.objectContaining({
+          source: logic?.id,
+          sourceHandle: "case:false",
+          target: END_NODE_ID,
+        }),
+      ]),
+    );
+  });
+
+  it("infers scalar route fields and creates boolean true/false branches without result prefix", () => {
+    const flow = flowFixture();
+    flow.spec.graph.steps.review!.output = {
+      schema: {
+        type: "object",
+        properties: {
+          has_issue: { type: "boolean" },
+          score: { type: "number" },
+          details: {
+            type: "object",
+            properties: { note: { type: "string" } },
+            required: ["note"],
+            additionalProperties: false,
+          },
+        },
+        required: ["has_issue"],
+        additionalProperties: false,
+      },
+    };
+
+    const fields = routeFieldOptions(flow, "review");
+    const route = createRouteTransition(
+      fields.find((field) => field.name === "has_issue"),
+      {
+        goto: "review",
+      },
+    );
+
+    expect(fields).toEqual([
+      { name: "has_issue", type: "boolean" },
+      { name: "score", type: "number" },
+    ]);
+    expect(route).toEqual({
+      route: "has_issue",
+      cases: {
+        true: { end: true },
+        false: { goto: "review" },
+      },
+    });
+    expect(route.route).not.toContain("result.");
+  });
+
+  it("requires complete type-aware branches while preserving unresolved legacy route fields", () => {
+    const flow = flowFixture();
+    flow.spec.graph.steps.review!.output = {
+      schema: {
+        type: "object",
+        properties: { has_issue: { type: "boolean" }, outcome: { type: "string" } },
+        required: ["has_issue", "outcome"],
+        additionalProperties: false,
+      },
+    };
+    flow.spec.graph.transitions.review = {
+      route: "has_issue",
+      cases: { true: { end: true } },
+    };
+
+    expect(validateLogicRoutes(flow)).toEqual([
+      expect.objectContaining({
+        stepId: "review",
+        message: expect.stringContaining("true and false"),
+      }),
+    ]);
+
+    flow.spec.graph.transitions.review = {
+      route: "outcome",
+      cases: { success: { end: true } },
+    };
+    expect(validateLogicRoutes(flow)).toEqual([
+      expect.objectContaining({ message: expect.stringContaining("otherwise") }),
+    ]);
+
+    flow.spec.graph.transitions.review = {
+      route: "legacy_field",
+      cases: { success: { end: true } },
+    };
+    expect(validateLogicRoutes(flow)).toEqual([]);
+  });
+
+  it("turns a cycle-producing canvas connection into a bounded repeat edge", () => {
+    const flow = flowFixture();
+    flow.spec.graph.steps.finish = {
+      expert: { ref: "expert:finish@1.0.0" },
+      version: "1.0.0",
+    };
+    flow.spec.graph.transitions.review = { goto: "finish" };
+    flow.spec.graph.transitions.finish = { end: true };
+
+    const destination = normalizeConnectionDestination(flow, "finish", { goto: "review" });
+
+    expect(destination).toEqual({
+      repeat: { loop: "loop_finish_review", goto: "review" },
+    });
+    expect(flow.spec.graph.loops.loop_finish_review).toEqual({
+      entry: "review",
+      maxIterations: 3,
+      onLimit: { fail: "Loop loop_finish_review reached its limit." },
+    });
   });
 
   it("preserves the selected step across semantic canvas rebuilds", () => {

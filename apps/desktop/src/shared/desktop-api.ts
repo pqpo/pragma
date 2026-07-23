@@ -1049,7 +1049,10 @@ const MissionExecutorOptionBaseSchema = MissionExecutorBaseSchema.extend({
 export const MissionExecutorOptionSchema = z.discriminatedUnion("kind", [
   MissionExecutorOptionBaseSchema.extend({ kind: z.literal("expert") }),
   MissionExecutorOptionBaseSchema.extend({ kind: z.literal("team") }),
-  MissionExecutorOptionBaseSchema.extend({ kind: z.literal("flow") }),
+  MissionExecutorOptionBaseSchema.extend({
+    kind: z.literal("flow"),
+    inputSchema: PragmaObjectJsonSchemaSchema.optional(),
+  }),
 ]);
 
 export const MissionCreationDefaultsSchema = z.object({
@@ -1155,8 +1158,7 @@ const MissionExecutionStatusSchema = z.enum([
   "cancelled",
 ]);
 
-export const MissionSchema = z.object({
-  schemaVersion: z.literal("pragma.mission/v3"),
+const MissionBaseSchema = z.object({
   id: MissionIdSchema,
   title: z.string().trim().min(1).max(120),
   goal: z.string().trim().min(1).max(100_000),
@@ -1186,6 +1188,30 @@ export const MissionSchema = z.object({
   completedAt: z.string().datetime().optional(),
 });
 
+export const MissionV3Schema = MissionBaseSchema.extend({
+  schemaVersion: z.literal("pragma.mission/v3"),
+});
+
+export const MissionSchema = MissionBaseSchema.extend({
+  schemaVersion: z.literal("pragma.mission/v4"),
+  flowInput: z.record(z.string(), z.unknown()).optional(),
+}).superRefine((mission, context) => {
+  if (mission.executor.kind === "flow" && mission.flowInput === undefined) {
+    context.addIssue({
+      code: "custom",
+      message: "Flow missions require flowInput.",
+      path: ["flowInput"],
+    });
+  }
+  if (mission.executor.kind !== "flow" && mission.flowInput !== undefined) {
+    context.addIssue({
+      code: "custom",
+      message: "Only Flow missions may store flowInput.",
+      path: ["flowInput"],
+    });
+  }
+});
+
 export const MissionSummarySchema = z.object({
   id: MissionIdSchema,
   title: z.string().trim().min(1).max(120),
@@ -1204,7 +1230,15 @@ export const CreateMissionSchema = z.object({
   executor: z.object({
     ref: PragmaInvocableResourceRefSchema,
   }),
-  goal: z.string().trim().min(1).max(100_000),
+  input: z.discriminatedUnion("kind", [
+    z.object({ kind: z.literal("prompt"), value: z.string().trim().min(1).max(100_000) }).strict(),
+    z
+      .object({
+        kind: z.literal("flow"),
+        value: z.record(z.string(), z.unknown()),
+      })
+      .strict(),
+  ]),
   toolPermissionMode: DesktopToolPermissionModeSchema.optional(),
   modelOverride: MissionModelOverrideSchema.optional(),
 });

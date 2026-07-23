@@ -78,7 +78,7 @@ export function installMissionHandlers(options: {
     const parsed = CreateMissionSchema.parse(input);
     const mission = await options.creator.create({
       workspace: parsed.workspace,
-      goal: parsed.goal,
+      missionInput: parsed.input,
       executorRef: parsed.executor.ref,
       ...(parsed.modelOverride === undefined ? {} : { modelOverride: parsed.modelOverride }),
       ...(parsed.toolPermissionMode === undefined
