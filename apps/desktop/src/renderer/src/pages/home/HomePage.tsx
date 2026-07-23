@@ -54,6 +54,7 @@ export function HomePage(props: {
   const [error, setError] = useState<string | null>(null);
   const [modelError, setModelError] = useState<string | null>(null);
   const [modelResetRequired, setModelResetRequired] = useState(false);
+  const modelRuntimeIdRef = useRef<string | undefined>(undefined);
 
   useEffect(() => {
     let cancelled = false;
@@ -99,6 +100,7 @@ export function HomePage(props: {
     setDefaultModelSelection(undefined);
     setModelError(null);
     setModelResetRequired(false);
+    modelRuntimeIdRef.current = undefined;
     if (
       selectedExecutor === undefined ||
       (selectedExecutor.kind !== "expert" && selectedExecutor.kind !== "team")
@@ -108,24 +110,37 @@ export function HomePage(props: {
       return;
     }
     let cancelled = false;
-    setModels([]);
-    setModelsLoading(true);
-    void window.pragmaDesktop
-      .getMissionModelOptions(selectedExecutor.ref)
-      .then((options) => {
-        if (cancelled) return;
-        setModels(options.models);
-        setDefaultModelSelection(options.defaultSelection);
-        setModelResetRequired(options.status === "reset_required");
-      })
-      .catch((loadError: unknown) => {
-        if (!cancelled) setModelError(errorMessage(loadError));
-      })
-      .finally(() => {
-        if (!cancelled) setModelsLoading(false);
-      });
+    const loadModelOptions = (showLoading: boolean) => {
+      if (showLoading) {
+        setModels([]);
+        setModelsLoading(true);
+      }
+      void window.pragmaDesktop
+        .getMissionModelOptions(selectedExecutor.ref)
+        .then((options) => {
+          if (cancelled) return;
+          modelRuntimeIdRef.current = options.runtime.id;
+          setModels(options.models);
+          setDefaultModelSelection(options.defaultSelection);
+          setModelResetRequired(options.status === "reset_required");
+          setModelError(null);
+        })
+        .catch((loadError: unknown) => {
+          if (!cancelled) setModelError(errorMessage(loadError));
+        })
+        .finally(() => {
+          if (!cancelled && showLoading) setModelsLoading(false);
+        });
+    };
+    const unsubscribe = window.pragmaDesktop.subscribeRuntimeModelCatalog((runtimeId) => {
+      if (modelRuntimeIdRef.current === undefined || modelRuntimeIdRef.current === runtimeId) {
+        loadModelOptions(false);
+      }
+    });
+    loadModelOptions(true);
     return () => {
       cancelled = true;
+      unsubscribe();
     };
   }, [selectedExecutor?.ref, selectedExecutor?.kind]);
 

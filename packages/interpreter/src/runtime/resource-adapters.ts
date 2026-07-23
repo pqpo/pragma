@@ -19,6 +19,7 @@ import { z } from "zod";
 
 import {
   PragmaArtifactSourceSchema,
+  PragmaRuntimeProfileConfigSchema,
   type PragmaArtifactSource,
   type PragmaBindingRef,
   type PragmaCapabilityResource,
@@ -378,31 +379,6 @@ const HostContextBindingSchema = z
   })
   .strict();
 
-const RuntimeProfileConfigSchema = z
-  .object({
-    runtimeId: z.string().trim().min(1),
-    providerId: z.string().trim().min(1).optional(),
-    model: z.string().trim().min(1).optional(),
-    thinkingLevel: z.string().trim().min(1).optional(),
-  })
-  .strict()
-  .superRefine((value, context) => {
-    if ((value.providerId === undefined) !== (value.model === undefined)) {
-      context.addIssue({
-        code: "custom",
-        path: ["providerId"],
-        message: "A Runtime model requires both providerId and model.",
-      });
-    }
-    if (value.thinkingLevel !== undefined && value.model === undefined) {
-      context.addIssue({
-        code: "custom",
-        path: ["thinkingLevel"],
-        message: "A Runtime thinking level requires an explicit model.",
-      });
-    }
-  });
-
 export function createDefaultPragmaResourceAdapterRegistry(): PragmaResourceAdapterRegistry {
   return new PragmaResourceAdapterRegistry()
     .register(skillAdapter())
@@ -670,9 +646,9 @@ function runtimeProfileAdapter(): PragmaResourceAdapter<PragmaRuntimeProfileReso
     id: "pragma.runtime.profile",
     version: "v1",
     kind: "RuntimeProfile",
-    configSchema: RuntimeProfileConfigSchema,
+    configSchema: PragmaRuntimeProfileConfigSchema,
     async verify({ config }) {
-      const parsed = RuntimeProfileConfigSchema.parse(config);
+      const parsed = PragmaRuntimeProfileConfigSchema.parse(config);
       const models =
         parsed.model === undefined || parsed.providerId === undefined
           ? undefined

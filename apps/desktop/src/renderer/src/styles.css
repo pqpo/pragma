@@ -7943,6 +7943,111 @@ p {
   background: var(--border);
 }
 
+.flow-prompt-editor {
+  display: flex;
+  min-height: 112px;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: white;
+}
+
+.flow-prompt-editor:focus-within {
+  border-color: #7e9b88;
+  box-shadow: 0 0 0 2px rgb(78 116 91 / 12%);
+}
+
+.flow-prompt-editor textarea,
+.flow-prompt-editor textarea:focus,
+.flow-prompt-editor textarea:focus-visible {
+  min-width: 100%;
+  min-height: 54px;
+  padding: 2px;
+  border: 0;
+  outline: 0;
+  box-shadow: none;
+  resize: vertical;
+  font-family: inherit;
+}
+
+.flow-variable-chip {
+  display: inline-flex;
+  min-height: 26px;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 7px;
+  border: 1px solid #bfd0c4;
+  border-radius: 999px;
+  background: #eff6f1;
+  color: #315641;
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.flow-variable-chip small {
+  color: #7b6a35;
+  font-size: 9px;
+  font-weight: 600;
+}
+
+.flow-output-editor,
+.flow-runtime-editor,
+.flow-runtime-routes,
+.flow-advanced-settings {
+  display: grid;
+  gap: 10px;
+}
+
+.flow-field-hint,
+.flow-runtime-routes > small {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.flow-advanced-settings {
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface-muted);
+}
+
+.flow-advanced-settings > summary {
+  cursor: pointer;
+  color: #4c5d52;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.flow-runtime-routes > strong {
+  font-size: 11px;
+}
+
+.flow-runtime-routes > label {
+  display: grid;
+  grid-template-columns: minmax(80px, 0.8fr) minmax(120px, 1.2fr);
+  align-items: center;
+  gap: 8px;
+  color: #59655d;
+  font-size: 10px;
+}
+
+.flow-raw-dsl {
+  max-height: 260px;
+  overflow: auto;
+  margin: 0;
+  padding: 9px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: white;
+  color: #405047;
+  font: 10px/1.5 "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  white-space: pre-wrap;
+}
+
 .flow-delete-node {
   display: inline-flex;
   min-height: 36px;

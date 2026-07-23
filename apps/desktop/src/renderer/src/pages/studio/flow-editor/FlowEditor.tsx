@@ -13,12 +13,20 @@ import {
   Trash,
   UserFocus,
   UsersThree,
+  X,
 } from "@phosphor-icons/react";
 import type {
+  PragmaFlowPrompt,
+  PragmaFlowVariable,
   PragmaFlowDestination,
   PragmaFlowResource,
   PragmaFlowTransition,
+  PragmaJsonSchema,
   PragmaResource,
+} from "@pragma/interpreter/ast";
+import {
+  analyzePragmaFlowNodeAvailability,
+  PragmaRuntimeProfileConfigSchema,
 } from "@pragma/interpreter/ast";
 import dagre from "@dagrejs/dagre";
 import {
@@ -46,10 +54,22 @@ import {
 } from "@xyflow/react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
+import { stringify } from "yaml";
 
-import type { PragmaProjectSnapshot, WorkflowLayout } from "../../../../../shared/desktop-api.ts";
+import type {
+  DesktopRuntimeAvailability,
+  DesktopRuntimeModel,
+  PragmaProjectSnapshot,
+  WorkflowLayout,
+} from "../../../../../shared/desktop-api.ts";
 import { errorMessage } from "../../../lib/errors.ts";
 import { desktopApi } from "../studio-model.ts";
+import {
+  SchemaFieldsEditor,
+  fieldsToObjectSchema,
+  objectSchemaToFields,
+  type SchemaFieldDraft,
+} from "../JsonSchemaFieldsEditor.tsx";
 import {
   createEmptyFlow,
   deleteFlowStep,
@@ -105,6 +125,7 @@ interface NodeContextMenuState {
 
 export function FlowEditor(props: {
   readonly project: PragmaProjectSnapshot;
+  readonly runtimes?: readonly DesktopRuntimeAvailability[] | undefined;
   readonly initial?: PragmaFlowResource | undefined;
   readonly error: string | null;
   readonly onCancel: () => void;
@@ -112,13 +133,14 @@ export function FlowEditor(props: {
 }) {
   return (
     <ReactFlowProvider>
-      <FlowEditorCanvas {...props} />
+      <FlowEditorCanvas {...props} runtimes={props.runtimes ?? []} />
     </ReactFlowProvider>
   );
 }
 
 function FlowEditorCanvas(props: {
   readonly project: PragmaProjectSnapshot;
+  readonly runtimes: readonly DesktopRuntimeAvailability[];
   readonly initial?: PragmaFlowResource | undefined;
   readonly error: string | null;
   readonly onCancel: () => void;
@@ -641,6 +663,8 @@ function FlowEditorCanvas(props: {
                 flow={flow}
                 stepId={selectedStepId}
                 targets={targets}
+                runtimes={props.runtimes}
+                resources={props.project.resources}
                 onPatch={patchFlow}
                 onRename={(nextId) => {
                   const next = renameFlowStep(flow, selectedStepId, nextId);
@@ -1001,6 +1025,8 @@ function StepInspector(props: {
   readonly flow: PragmaFlowResource;
   readonly stepId: string;
   readonly targets: readonly ResourceTarget[];
+  readonly resources: readonly PragmaResource[];
+  readonly runtimes: readonly DesktopRuntimeAvailability[];
   readonly onPatch: (mutator: (copy: PragmaFlowResource) => void) => void;
   readonly onRename: (nextId: string) => void;
   readonly onDelete: () => void;
@@ -1158,71 +1184,90 @@ function StepInspector(props: {
           </select>
         </InspectorField>
       )}
-      <InspectorField label="Step version">
-        <input
-          value={step.version}
-          onChange={(event) =>
-            patchStep((current) => {
-              current.version = event.target.value;
-            })
-          }
-        />
-      </InspectorField>
-      <JsonField
-        label="Input mapping"
-        value={step.input}
-        onCommit={(value) =>
-          patchStep((current) => {
-            current.input = value;
-          })
-        }
-      />
-      <InspectorField label="Save result to">
-        <input
-          value={step.save ?? ""}
-          onChange={(event) =>
-            patchStep((current) => {
-              current.save = event.target.value || undefined;
-            })
-          }
-          placeholder="state.result"
-        />
-      </InspectorField>
       {kind === "expert" || kind === "team" ? (
-        <InspectorField label="Context">
-          <input
-            value={step.context ?? ""}
-            onChange={(event) =>
+        <>
+          <PromptTemplateEditor
+            flow={props.flow}
+            stepId={props.stepId}
+            value={step.prompt}
+            onChange={(prompt) =>
               patchStep((current) => {
-                current.context = event.target.value || undefined;
+                current.prompt = prompt;
               })
             }
           />
-        </InspectorField>
-      ) : null}
-      {kind === "expert" || kind === "team" || kind === "flow" ? (
-        <InspectorField label="Runtime">
-          <input
-            value={step.runtime ?? ""}
-            onChange={(event) =>
+          <StructuredOutputEditor
+            value={step.output?.schema}
+            onChange={(schema) =>
               patchStep((current) => {
-                current.runtime = event.target.value || undefined;
+                current.output = schema === undefined ? undefined : { schema };
               })
             }
           />
-        </InspectorField>
-      ) : null}
-      {kind === "expert" || kind === "team" ? (
+        </>
+      ) : kind === "action" || kind === "flow" ? (
         <JsonField
-          label="Runtime routes"
-          value={step.runtimes}
+          label="Input mapping"
+          value={step.input}
           onCommit={(value) =>
             patchStep((current) => {
-              current.runtimes = value as FlowStep["runtimes"];
+              current.input = value;
             })
           }
         />
       ) : null}
+      {kind === "expert" || kind === "team" || kind === "flow" ? (
+        <RuntimeBindingEditor
+          value={step.runtime}
+          allowModel={kind === "expert" || kind === "team"}
+          resources={props.resources}
+          runtimes={props.runtimes}
+          onChange={(runtime) =>
+            patchStep((current) => {
+              current.runtime = runtime;
+            })
+          }
+        />
+      ) : null}
+      <details className="flow-advanced-settings">
+        <summary>{t("advancedSettings")}</summary>
+        <InspectorField label="Step version">
+          <input
+            value={step.version}
+            onChange={(event) =>
+              patchStep((current) => {
+                current.version = event.target.value;
+              })
+            }
+          />
+        </InspectorField>
+        {kind === "expert" || kind === "team" ? (
+          <InspectorField label="Context">
+            <input
+              value={step.context ?? ""}
+              onChange={(event) =>
+                patchStep((current) => {
+                  current.context = event.target.value || undefined;
+                })
+              }
+            />
+          </InspectorField>
+        ) : null}
+        {kind === "expert" || kind === "team" ? (
+          <RuntimeRoutesEditor
+            value={step.runtimes}
+            resources={props.resources}
+            onChange={(runtimes) =>
+              patchStep((current) => {
+                current.runtimes = runtimes;
+              })
+            }
+          />
+        ) : null}
+        <InspectorField label={t("rawNodeDsl")}>
+          <pre className="flow-raw-dsl">{stringify(step, { lineWidth: 72 })}</pre>
+        </InspectorField>
+      </details>
 
       <div className="flow-inspector-divider" />
       <InspectorField label="Transition">
@@ -1262,6 +1307,398 @@ function StepInspector(props: {
       </button>
     </div>
   );
+}
+
+interface FlowVariableOption {
+  readonly key: string;
+  readonly label: string;
+  readonly variable: PragmaFlowVariable;
+  readonly optional: boolean;
+}
+
+function PromptTemplateEditor(props: {
+  readonly flow: PragmaFlowResource;
+  readonly stepId: string;
+  readonly value: PragmaFlowPrompt | undefined;
+  readonly onChange: (value: PragmaFlowPrompt) => void;
+}) {
+  const { t } = useTranslation("studio");
+  const prompt = props.value ?? { segments: [{ text: "" }] };
+  const options = useMemo(
+    () => flowVariableOptions(props.flow, props.stepId),
+    [props.flow, props.stepId],
+  );
+  const replace = (index: number, segment: PragmaFlowPrompt["segments"][number]) =>
+    props.onChange({
+      segments: prompt.segments.map((current, currentIndex) =>
+        currentIndex === index ? segment : current,
+      ),
+    });
+  return (
+    <InspectorField label={t("flowPrompt")}>
+      <div className="flow-prompt-editor">
+        {prompt.segments.map((segment, index) =>
+          "text" in segment ? (
+            <textarea
+              key={`text-${index}`}
+              rows={2}
+              value={segment.text}
+              placeholder="Describe what this expert should do…"
+              onChange={(event) => replace(index, { text: event.target.value })}
+            />
+          ) : (
+            <button
+              className="flow-variable-chip"
+              type="button"
+              key={`variable-${index}`}
+              title="Remove variable"
+              onClick={() =>
+                props.onChange({
+                  segments: prompt.segments.filter((_, currentIndex) => currentIndex !== index),
+                })
+              }
+            >
+              {variableLabel(props.flow, segment.variable)}
+              {variableIsOptional(props.flow, props.stepId, segment.variable) ? (
+                <small>{t("optionalVariable")}</small>
+              ) : null}
+              <X size={12} />
+            </button>
+          ),
+        )}
+      </div>
+      <select
+        aria-label="Insert variable"
+        value=""
+        onChange={(event) => {
+          const selected = options.find((option) => option.key === event.target.value);
+          if (selected === undefined) return;
+          props.onChange({
+            segments: [...prompt.segments, { variable: selected.variable }, { text: "" }],
+          });
+        }}
+      >
+        <option value="">{t("insertVariable")}</option>
+        {options.map((option) => (
+          <option key={option.key} value={option.key}>
+            {option.label}
+            {option.optional ? ` · ${t("optionalVariable")}` : ""}
+          </option>
+        ))}
+      </select>
+    </InspectorField>
+  );
+}
+
+function StructuredOutputEditor(props: {
+  readonly value: Extract<PragmaJsonSchema, { readonly type: "object" }> | undefined;
+  readonly onChange: (
+    value: Extract<PragmaJsonSchema, { readonly type: "object" }> | undefined,
+  ) => void;
+}) {
+  const { t } = useTranslation("studio");
+  const [fields, setFields] = useState<readonly SchemaFieldDraft[]>(
+    props.value === undefined ? [] : objectSchemaToFields(props.value),
+  );
+  useEffect(() => {
+    setFields((current) =>
+      props.value === undefined ? [] : objectSchemaToFields(props.value, current),
+    );
+  }, [props.value]);
+  const update = (next: readonly SchemaFieldDraft[]) => {
+    setFields(next);
+    try {
+      props.onChange(fieldsToObjectSchema(next));
+    } catch {
+      // Keep the in-progress form value; Flow validation remains on the last valid schema.
+    }
+  };
+  return (
+    <section className="flow-output-editor">
+      <InspectorField label={t("flowOutput")}>
+        <select
+          value={props.value === undefined ? "native" : "structured"}
+          onChange={(event) => {
+            if (event.target.value === "native") {
+              setFields([]);
+              props.onChange(undefined);
+            } else {
+              const schema = {
+                type: "object" as const,
+                properties: {},
+                required: [],
+                additionalProperties: false as const,
+              };
+              setFields([]);
+              props.onChange(schema);
+            }
+          }}
+        >
+          <option value="native">{t("nativeResult")}</option>
+          <option value="structured">{t("structuredResult")}</option>
+        </select>
+      </InspectorField>
+      {props.value === undefined ? (
+        <small className="flow-field-hint">{t("nativeResultHint")}</small>
+      ) : (
+        <SchemaFieldsEditor title={t("resultFields")} fields={fields} onChange={update} />
+      )}
+    </section>
+  );
+}
+
+function RuntimeBindingEditor(props: {
+  readonly value: FlowStep["runtime"];
+  readonly allowModel: boolean;
+  readonly resources: readonly PragmaResource[];
+  readonly runtimes: readonly DesktopRuntimeAvailability[];
+  readonly onChange: (value: FlowStep["runtime"]) => void;
+}) {
+  const { t } = useTranslation("studio");
+  const profiles = runtimeProfiles(props.resources);
+  const selectedProfile = profiles.find((profile) => profile.ref === props.value?.ref);
+  const availability = props.runtimes.find(
+    (runtime) => runtime.id === selectedProfile?.config.runtimeId,
+  );
+  const models = availability?.models ?? [];
+  const selectedModel = models.find(
+    (model) =>
+      model.id === props.value?.modelSelection?.model.modelId &&
+      model.provider.id === props.value?.modelSelection?.model.providerId,
+  );
+  return (
+    <section className="flow-runtime-editor">
+      <InspectorField label="Runtime">
+        <select
+          value={props.value?.ref ?? ""}
+          onChange={(event) => {
+            const ref = event.target.value;
+            props.onChange(ref === "" ? undefined : { ref });
+          }}
+        >
+          <option value="">{t("inheritExpertConfiguration")}</option>
+          {props.value !== undefined &&
+          !profiles.some((profile) => profile.ref === props.value?.ref) ? (
+            <option value={props.value.ref}>{props.value.ref} · unavailable</option>
+          ) : null}
+          {profiles.map((profile) => (
+            <option key={profile.ref} value={profile.ref}>
+              {profile.name}
+            </option>
+          ))}
+        </select>
+      </InspectorField>
+      {props.allowModel && props.value !== undefined ? (
+        <InspectorField label={t("model")}>
+          <select
+            value={selectedModel === undefined ? "" : runtimeModelKey(selectedModel)}
+            onChange={(event) => {
+              const model = models.find(
+                (candidate) => runtimeModelKey(candidate) === event.target.value,
+              );
+              props.onChange(
+                model === undefined
+                  ? { ref: props.value!.ref }
+                  : {
+                      ref: props.value!.ref,
+                      modelSelection: {
+                        model: { providerId: model.provider.id, modelId: model.id },
+                      },
+                    },
+              );
+            }}
+          >
+            <option value="">{t("profileRuntimeDefault")}</option>
+            {models.map((model) => (
+              <option key={runtimeModelKey(model)} value={runtimeModelKey(model)}>
+                {model.provider.kind === "registered"
+                  ? `${model.provider.displayName} / ${model.displayName}`
+                  : model.displayName}
+              </option>
+            ))}
+          </select>
+        </InspectorField>
+      ) : null}
+      {props.allowModel && selectedModel?.thinking !== undefined && props.value !== undefined ? (
+        <InspectorField label={t("thinkingLevel")}>
+          <select
+            value={props.value.modelSelection?.thinkingLevel ?? ""}
+            onChange={(event) => {
+              if (props.value?.modelSelection === undefined) return;
+              const thinkingLevel = event.target.value;
+              props.onChange({
+                ...props.value,
+                modelSelection: {
+                  model: props.value.modelSelection.model,
+                  ...(thinkingLevel === "" ? {} : { thinkingLevel }),
+                },
+              });
+            }}
+          >
+            <option value="">{t("runtimeDefault")}</option>
+            {selectedModel.thinking.supportedLevels.map((level) => (
+              <option key={level.value} value={level.value}>
+                {level.label}
+              </option>
+            ))}
+          </select>
+        </InspectorField>
+      ) : null}
+      {availability?.modelDiscoveryError ? (
+        <small className="form-error">{availability.modelDiscoveryError}</small>
+      ) : null}
+    </section>
+  );
+}
+
+function RuntimeRoutesEditor(props: {
+  readonly value: FlowStep["runtimes"];
+  readonly resources: readonly PragmaResource[];
+  readonly onChange: (value: FlowStep["runtimes"]) => void;
+}) {
+  const { t } = useTranslation("studio");
+  const profiles = runtimeProfiles(props.resources);
+  const experts = props.resources.filter((resource) => resource.kind === "Expert");
+  return (
+    <section className="flow-runtime-routes">
+      <strong>{t("runtimeRoutes")}</strong>
+      {experts.length === 0 ? <small>{t("noProjectExperts")}</small> : null}
+      {experts.map((expert) => {
+        const value = props.value?.[expert.metadata.id] ?? "";
+        return (
+          <label key={expert.metadata.id}>
+            <span>{expert.metadata.name}</span>
+            <select
+              value={value}
+              onChange={(event) => {
+                const next = { ...(props.value ?? {}) };
+                if (event.target.value === "") delete next[expert.metadata.id];
+                else next[expert.metadata.id] = event.target.value;
+                props.onChange(Object.keys(next).length === 0 ? undefined : next);
+              }}
+            >
+              <option value="">{t("inherit")}</option>
+              {value !== "" && !profiles.some((profile) => profile.ref === value) ? (
+                <option value={value}>{value} · unavailable</option>
+              ) : null}
+              {profiles.map((profile) => (
+                <option key={profile.ref} value={profile.ref}>
+                  {profile.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        );
+      })}
+    </section>
+  );
+}
+
+function runtimeProfiles(resources: readonly PragmaResource[]) {
+  return resources.flatMap((resource) => {
+    if (resource.kind !== "RuntimeProfile") return [];
+    const config = PragmaRuntimeProfileConfigSchema.safeParse(resource.spec.config);
+    if (!config.success) return [];
+    return [
+      {
+        ref: `runtime-profile:${resource.metadata.id}@${resource.metadata.version}`,
+        name: resource.metadata.name,
+        config: config.data,
+      },
+    ];
+  });
+}
+
+function runtimeModelKey(model: DesktopRuntimeModel): string {
+  return `${model.provider.id}\u0000${model.id}`;
+}
+
+export function flowVariableOptions(
+  flow: PragmaFlowResource,
+  targetStepId: string,
+): readonly FlowVariableOption[] {
+  const availability = analyzePragmaFlowNodeAvailability(flow, targetStepId);
+  const options: FlowVariableOption[] = [
+    variableOption({ source: "flow-input", path: [] }, "Flow input", false),
+  ];
+  for (const path of objectSchemaPaths(flow.spec.input?.schema)) {
+    options.push(
+      variableOption(
+        { source: "flow-input", path: [...path.path] },
+        `Flow input.${path.path.join(".")}`,
+        path.optional,
+      ),
+    );
+  }
+  for (const nodeId of [...availability.upstream].sort()) {
+    const step = flow.spec.graph.steps[nodeId];
+    if (step === undefined) continue;
+    const branchOptional = !availability.required.has(nodeId);
+    options.push(
+      variableOption(
+        { source: "node-output", nodeId, path: [] },
+        `${nodeId}.result`,
+        branchOptional,
+      ),
+    );
+    for (const path of objectSchemaPaths(step.output?.schema)) {
+      options.push(
+        variableOption(
+          { source: "node-output", nodeId, path: [...path.path] },
+          `${nodeId}.result.${path.path.join(".")}`,
+          branchOptional || path.optional,
+        ),
+      );
+    }
+  }
+  return options;
+}
+
+function variableOption(
+  variable: PragmaFlowVariable,
+  label: string,
+  optional: boolean,
+): FlowVariableOption {
+  return { key: JSON.stringify(variable), label, variable, optional };
+}
+
+function variableLabel(flow: PragmaFlowResource, variable: PragmaFlowVariable): string {
+  if (variable.source === "flow-input") {
+    return variable.path.length === 0 ? "Flow input" : `Flow input.${variable.path.join(".")}`;
+  }
+  return `${variable.nodeId}.result${
+    variable.path.length === 0 ? "" : `.${variable.path.join(".")}`
+  }`;
+}
+
+function variableIsOptional(
+  flow: PragmaFlowResource,
+  targetStepId: string,
+  variable: PragmaFlowVariable,
+): boolean {
+  return (
+    flowVariableOptions(flow, targetStepId).find(
+      (option) => option.key === JSON.stringify(variable),
+    )?.optional ?? true
+  );
+}
+
+function objectSchemaPaths(
+  schema: unknown,
+  prefix: readonly string[] = [],
+  parentOptional = false,
+): readonly { readonly path: readonly string[]; readonly optional: boolean }[] {
+  if (typeof schema !== "object" || schema === null || Array.isArray(schema)) return [];
+  const record = schema as Record<string, unknown>;
+  if (record["type"] !== "object") return [];
+  const properties = record["properties"];
+  if (typeof properties !== "object" || properties === null || Array.isArray(properties)) return [];
+  const required = new Set(Array.isArray(record["required"]) ? record["required"] : []);
+  return Object.entries(properties as Record<string, unknown>).flatMap(([name, child]) => {
+    const path = [...prefix, name];
+    const optional = parentOptional || !required.has(name);
+    return [{ path, optional }, ...objectSchemaPaths(child, path, optional)];
+  });
 }
 
 function TransitionFields(props: {
@@ -1592,6 +2029,9 @@ function resourceTargets(
   currentFlowId: string,
 ): readonly ResourceTarget[] {
   return resources.flatMap((resource) => {
+    if (resource.kind !== "Expert" && resource.kind !== "ExpertTeam" && resource.kind !== "Flow") {
+      return [];
+    }
     const kind =
       resource.kind === "Expert"
         ? ("expert" as const)
@@ -1622,7 +2062,11 @@ function defaultStep(kind: FlowStepKind, targets: readonly ResourceTarget[]): Fl
       version,
     };
   const target = targets.find((item) => item.kind === kind)?.ref ?? `${kind}:select_me@1.0.0`;
-  return { [kind]: { ref: target }, version } as FlowStep;
+  return {
+    [kind]: { ref: target },
+    version,
+    ...(kind === "expert" || kind === "team" ? { prompt: { segments: [{ text: "" }] } } : {}),
+  } as FlowStep;
 }
 
 function setStepReference(step: FlowStep, kind: Exclude<FlowStepKind, "human">, ref: string): void {

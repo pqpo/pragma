@@ -1,4 +1,5 @@
 import type { AgentMessageUsage } from "@pragma/shared";
+import { z } from "zod";
 
 import type { IExpertAgentRunResult } from "../agent/expert-agent.ts";
 import type { RuntimeOutputSchema, RuntimeRunResult } from "./runtime-adapter.ts";
@@ -58,8 +59,19 @@ export function createInitialRuntimePrompt(
   query: string,
   output: RuntimeOutputSchema<unknown> | undefined,
 ): string {
-  const prompt = output === undefined ? query : `${query}\n\n${JSON_OUTPUT_INSTRUCTION}`;
+  const prompt =
+    output === undefined
+      ? query
+      : `${query}\n\n${JSON_OUTPUT_INSTRUCTION}${runtimeOutputSchemaInstruction(output)}`;
   return prompt;
+}
+
+function runtimeOutputSchemaInstruction(output: RuntimeOutputSchema<unknown>): string {
+  try {
+    return `\n\nJSON Schema:\n${JSON.stringify(z.toJSONSchema(output), null, 2)}`;
+  } catch {
+    return "";
+  }
 }
 
 export function createRuntimeOutputRetryPrompt(

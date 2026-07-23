@@ -19,6 +19,7 @@ import {
   PragmaExpertIdSchema,
   PragmaExpertRefSchema,
   PragmaExpertResourceSchema,
+  PragmaFlowResourceSchema,
   PragmaSemanticResourceIdSchema,
   formatPragmaYaml,
   loadPragmaProject,
@@ -26,6 +27,74 @@ import {
 } from "../src/index.ts";
 
 describe("Pragma YAML DSL", () => {
+  it("uses prompt variables, automatic result storage, and form-compatible structured output", () => {
+    const base = {
+      apiVersion: "pragma/v2",
+      kind: "Flow",
+      metadata: {
+        id: "review",
+        version: "1.0.0",
+        name: "Review",
+        description: "Review output",
+        tags: [],
+      },
+      spec: {
+        graph: {
+          start: "draft",
+          steps: {
+            draft: {
+              expert: { ref: "expert:writer@1.0.0" },
+              version: "1.0.0",
+              prompt: { segments: [{ text: "Write a draft" }] },
+              output: {
+                schema: {
+                  type: "object",
+                  properties: { score: { type: "number" } },
+                  required: ["score"],
+                  additionalProperties: false,
+                },
+              },
+            },
+            review: {
+              expert: { ref: "expert:reviewer@1.0.0" },
+              version: "1.0.0",
+              prompt: {
+                segments: [
+                  { text: "Review score " },
+                  {
+                    variable: {
+                      source: "node-output",
+                      nodeId: "draft",
+                      path: ["score"],
+                    },
+                  },
+                ],
+              },
+            },
+          },
+          loops: {},
+          transitions: { draft: "review", review: { end: true } },
+        },
+      },
+    } as const;
+    expect(PragmaFlowResourceSchema.safeParse(base).success).toBe(true);
+    expect(
+      PragmaFlowResourceSchema.safeParse({
+        ...base,
+        spec: {
+          ...base.spec,
+          graph: {
+            ...base.spec.graph,
+            steps: {
+              ...base.spec.graph.steps,
+              draft: { ...base.spec.graph.steps.draft, save: "state.draft" },
+            },
+          },
+        },
+      }).success,
+    ).toBe(false);
+  });
+
   it("uses one semantic ID rule and bounded required Expert text", () => {
     expect(PragmaSemanticResourceIdSchema.safeParse("code_reviewer_2").success).toBe(true);
     expect(PragmaSemanticResourceIdSchema.safeParse("code-reviewer").success).toBe(false);

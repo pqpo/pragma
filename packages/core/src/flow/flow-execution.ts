@@ -9,6 +9,7 @@ import {
   type HumanInteractionResponse,
   type Invocation,
 } from "@pragma/shared";
+import { z } from "zod";
 
 import { isExpertTeam, type ExpertDefinition, type ExpertTeam } from "../agent/expert-team.ts";
 import { describeExpertExecutionDefinition } from "../agent/expert-definition-descriptor.ts";
@@ -561,6 +562,10 @@ async function runStep(
       ...(readFlowStepRuntimeByExpert(step) === undefined
         ? {}
         : { runtimeByExpert: readFlowStepRuntimeByExpert(step) }),
+      ...(!("modelSelection" in step.options) || step.options.modelSelection === undefined
+        ? {}
+        : { modelSelection: step.options.modelSelection }),
+      ...(step.options.output === undefined ? {} : { output: step.options.output }),
       context,
       controller: options.controller,
       store: options.store,
@@ -790,7 +795,9 @@ async function createStepInvocation(
     const expert = step.definition as ExpertDefinition;
     const nativeExpert = isExpertTeam(expert) ? expert.coordinator : expert;
     const record = (await options.store.get(options.executionId))!;
-    const modelSelection = nativeExpert.models?.default;
+    const modelSelection =
+      ("modelSelection" in step.options ? step.options.modelSelection : undefined) ??
+      nativeExpert.models?.default;
     const runtime = await options.runtimes.bind({
       runtimeId: resolveFlowStepRuntimeId(
         step,
@@ -884,6 +891,7 @@ async function applyReductionOnce(
     if (internal.reductions[invocationId] === true) return { changed: false, value: undefined };
     const userState = structuredClone(readUserFlowState(record.state));
     step.options.reduce?.({ state: userState, output });
+    writeCanonicalNodeResult(userState, step.id, output);
     internal.reductions[invocationId] = true;
     return {
       changed: true,
@@ -1326,6 +1334,13 @@ function visitFlowDefinition(flow: Flow, ancestors: Set<Flow>): unknown {
             ),
           }),
       ...(resolver === undefined ? {} : { contextId: describeContextIdResolver(resolver) }),
+      ...(!("modelSelection" in step.options) || step.options.modelSelection === undefined
+        ? {}
+        : { modelSelection: step.options.modelSelection }),
+      ...(step.options.output === undefined
+        ? {}
+        : { output: z.toJSONSchema(step.options.output) }),
+      ...(step.options.descriptor === undefined ? {} : { descriptor: step.options.descriptor }),
     };
   }
 
@@ -1370,6 +1385,22 @@ function readFlowStepRuntimeByExpert(
   step: CompiledFlowStep,
 ): Readonly<Record<string, string>> | undefined {
   return "runtimeByExpert" in step.options ? step.options.runtimeByExpert : undefined;
+}
+
+function writeCanonicalNodeResult(state: FlowState, nodeId: string, output: unknown): void {
+  const existingNodes = state["nodes"];
+  const nodes =
+    typeof existingNodes === "object" && existingNodes !== null && !Array.isArray(existingNodes)
+      ? (existingNodes as Record<string, unknown>)
+      : (Object.create(null) as Record<string, unknown>);
+  const existingNode = nodes[nodeId];
+  const node =
+    typeof existingNode === "object" && existingNode !== null && !Array.isArray(existingNode)
+      ? (existingNode as Record<string, unknown>)
+      : (Object.create(null) as Record<string, unknown>);
+  node["result"] = output;
+  nodes[nodeId] = node;
+  state["nodes"] = nodes;
 }
 
 function resolveFlowStepRuntimeId(
@@ -1420,7 +1451,9 @@ async function validateFlowRuntimeConfiguration(
     const nativeExpert = isExpertTeam(expert) ? expert.coordinator : expert;
     await runtimes.bind({
       runtimeId: resolveFlowStepRuntimeId(step, nativeExpert, fallbackRuntimeId, inheritedOverride),
-      modelSelection: nativeExpert.models?.default,
+      modelSelection:
+        ("modelSelection" in step.options ? step.options.modelSelection : undefined) ??
+        nativeExpert.models?.default,
     });
     for (const runtimeId of Object.values(readFlowStepRuntimeByExpert(step) ?? {})) {
       await runtimes.bind({ runtimeId });

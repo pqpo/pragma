@@ -11,9 +11,13 @@ import { readAgentDelegationDefinition, type RuntimeByExpert } from "../agent/ag
 import type { Expert } from "../agent/expert-agent.ts";
 import { isExpertTeam, type ExpertDefinition } from "../agent/expert-team.ts";
 import type { ContextIdResolver } from "../execution/context-id-resolver.ts";
+import type { RuntimeModelSelection } from "../runtime/runtime-adapter.ts";
 
 export type FlowState = Record<string, unknown>;
 export type FlowNodeDefinition = FlowTaskDefinition | HumanTaskDefinition | ExpertDefinition | Flow;
+const FLOW_STEP_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
+const FLOW_STEP_ID_MAX_LENGTH = 100;
+const RESERVED_FLOW_STEP_IDS = new Set(["constructor", "prototype"]);
 
 export interface FlowTaskContext<TInput = unknown> {
   readonly input: TInput;
@@ -63,6 +67,8 @@ export interface FlowStepOptions<TInput = unknown, TOutput = unknown> {
   readonly reduce?:
     | ((context: { readonly state: FlowState; readonly output: TOutput }) => void)
     | undefined;
+  /** Stable declarative representation used by recovery fingerprinting. */
+  readonly descriptor?: unknown;
 }
 
 export interface FlowExpertStepOptions<TInput = unknown, TOutput = unknown> extends FlowStepOptions<
@@ -71,6 +77,7 @@ export interface FlowExpertStepOptions<TInput = unknown, TOutput = unknown> exte
 > {
   readonly runtime?: string | undefined;
   readonly runtimeByExpert?: RuntimeByExpert | undefined;
+  readonly modelSelection?: RuntimeModelSelection | undefined;
   readonly contextId?: ContextIdResolver | undefined;
 }
 
@@ -194,7 +201,7 @@ export class FlowSpec<TInput = unknown, TOutput = unknown> {
     options: Omit<FlowTaskDefinition<TStepInput, TStepOutput>, "kind"> &
       FlowStepOptions<TStepInput, TStepOutput>,
   ): FlowStepReference<TStepOutput> {
-    const { input, output, reduce, ...definition } = options;
+    const { input, output, reduce, descriptor, ...definition } = options;
     return this.addStep(
       options.id,
       { kind: "task", ...definition } as unknown as FlowNodeDefinition,
@@ -202,6 +209,7 @@ export class FlowSpec<TInput = unknown, TOutput = unknown> {
         input,
         output,
         reduce,
+        descriptor,
       } as unknown as FlowStepOptions,
     );
   }
@@ -210,7 +218,7 @@ export class FlowSpec<TInput = unknown, TOutput = unknown> {
     options: Omit<HumanTaskDefinition<TStepInput>, "kind"> &
       FlowStepOptions<TStepInput, HumanInteractionResponse>,
   ): FlowStepReference<HumanInteractionResponse> {
-    const { input, output, reduce, ...definition } = options;
+    const { input, output, reduce, descriptor, ...definition } = options;
     return this.addStep(
       options.id,
       { kind: "human-task", ...definition } as unknown as FlowNodeDefinition,
@@ -218,6 +226,7 @@ export class FlowSpec<TInput = unknown, TOutput = unknown> {
         input,
         output,
         reduce,
+        descriptor,
       } as unknown as FlowStepOptions,
     );
   }
@@ -345,6 +354,14 @@ export class FlowSpec<TInput = unknown, TOutput = unknown> {
     definition: FlowNodeDefinition,
     options: FlowStepOptions,
   ): FlowStepReference<TOutput> {
+    if (
+      id.length > FLOW_STEP_ID_MAX_LENGTH ||
+      !FLOW_STEP_ID_PATTERN.test(id) ||
+      id.startsWith("__") ||
+      RESERVED_FLOW_STEP_IDS.has(id)
+    ) {
+      throw new Error(`Invalid Flow step id: ${id}`);
+    }
     if (this.stepDefinitions.has(id)) throw new Error(`Duplicate Flow step id: ${id}`);
     this.stepDefinitions.set(id, { id, definition, options });
     return { id, output: options.output as z.ZodType<TOutput> | undefined };

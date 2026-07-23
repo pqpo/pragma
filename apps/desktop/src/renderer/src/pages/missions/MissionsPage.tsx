@@ -662,6 +662,7 @@ export function MissionDetailFragment(props: {
   const [modelsLoading, setModelsLoading] = useState(false);
   const [defaultModelSelection, setDefaultModelSelection] = useState<MissionModelOverride>();
   const [modelResetRequired, setModelResetRequired] = useState(false);
+  const modelRuntimeIdRef = useRef<string | undefined>(undefined);
   const [optionsSaving, setOptionsSaving] = useState(false);
   const [optionsError, setOptionsError] = useState<string | null>(null);
   const [toolPermissionMode, setToolPermissionMode] = useState<DesktopToolPermissionMode>(
@@ -723,26 +724,38 @@ export function MissionDetailFragment(props: {
     setDefaultModelSelection(undefined);
     setOptionsError(null);
     setModelResetRequired(false);
+    modelRuntimeIdRef.current = undefined;
     if (api === undefined || isFlow) return;
     let cancelled = false;
-    setModelsLoading(true);
-    void api
-      .getMissionModelOptions(props.mission.executor.ref, props.mission.id)
-      .then((result) => {
-        if (cancelled) return;
-        setRuntimeName(result.runtime.displayName);
-        setModels(result.models);
-        setDefaultModelSelection(result.defaultSelection);
-        setModelResetRequired(result.status === "reset_required");
-      })
-      .catch((loadError: unknown) => {
-        if (!cancelled) setOptionsError(errorMessage(loadError));
-      })
-      .finally(() => {
-        if (!cancelled) setModelsLoading(false);
-      });
+    const loadModelOptions = (showLoading: boolean) => {
+      if (showLoading) setModelsLoading(true);
+      void api
+        .getMissionModelOptions(props.mission.executor.ref, props.mission.id)
+        .then((result) => {
+          if (cancelled) return;
+          modelRuntimeIdRef.current = result.runtime.id;
+          setRuntimeName(result.runtime.displayName);
+          setModels(result.models);
+          setDefaultModelSelection(result.defaultSelection);
+          setModelResetRequired(result.status === "reset_required");
+          setOptionsError(null);
+        })
+        .catch((loadError: unknown) => {
+          if (!cancelled) setOptionsError(errorMessage(loadError));
+        })
+        .finally(() => {
+          if (!cancelled && showLoading) setModelsLoading(false);
+        });
+    };
+    const unsubscribe = api.subscribeRuntimeModelCatalog((runtimeId) => {
+      if (modelRuntimeIdRef.current === undefined || modelRuntimeIdRef.current === runtimeId) {
+        loadModelOptions(false);
+      }
+    });
+    loadModelOptions(true);
     return () => {
       cancelled = true;
+      unsubscribe();
     };
   }, [isFlow, props.mission.executor.ref, props.mission.id]);
 

@@ -5,7 +5,8 @@
 
 ## Prompt Chain
 
-用普通 transition 串联步骤，输出通过 `save: state.*` 保存，后续步骤通过 `$state.*` 显式读取。
+用普通 transition 串联步骤。运行时自动把每个成功节点的最新结果保存到
+`state.nodes.<nodeId>.result`；Expert/ExpertTeam prompt 通过带稳定 Node ID 的变量段引用上游结果。
 所有节点都必须从 start 可达，最后一条边明确 end 或 fail。
 
 ## Routing

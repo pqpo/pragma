@@ -603,6 +603,8 @@ export interface RunExpertInvocationOptions {
   readonly store: ExecutionStore;
   readonly runtimes: RuntimeResolver;
   readonly modelSelection?: RuntimeModelSelection | undefined;
+  readonly output?: import("../runtime/runtime-adapter.ts").RuntimeOutputSchema | undefined;
+  readonly outputRetryLimit?: number | undefined;
   readonly runtimeRunId?: string | undefined;
   readonly team?: ExpertTeam | undefined;
   readonly depth?: number | undefined;
@@ -796,6 +798,8 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
         executionContext,
         humanInteractionHandler,
         modelSelection,
+        output: options.output,
+        outputRetryLimit: options.outputRetryLimit,
         runtimeSource: runtime.descriptor,
       });
       options.controller.addUsage(turn.usage);
@@ -1271,6 +1275,8 @@ async function submitRuntimeTurn(options: {
     request: ExpertAgentHumanRequest,
   ) => Promise<ExpertAgentHumanResponse>;
   readonly modelSelection?: RuntimeModelSelection | undefined;
+  readonly output?: import("../runtime/runtime-adapter.ts").RuntimeOutputSchema | undefined;
+  readonly outputRetryLimit?: number | undefined;
   readonly runtimeSource: { readonly id: string; readonly kind: string };
 }): Promise<{
   readonly runId: string;
@@ -1282,6 +1288,10 @@ async function submitRuntimeTurn(options: {
     runId: options.runId,
     query: options.query,
     ...(options.modelSelection === undefined ? {} : { modelSelection: options.modelSelection }),
+    ...(options.output === undefined ? {} : { output: options.output }),
+    ...(options.outputRetryLimit === undefined
+      ? {}
+      : { outputRetryLimit: options.outputRetryLimit }),
     execution: {
       context: options.executionContext,
       humanInteractionHandler: options.humanInteractionHandler,

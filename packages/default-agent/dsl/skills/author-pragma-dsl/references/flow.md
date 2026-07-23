@@ -28,17 +28,31 @@ spec:
       implement:
         expert:
           ref: expert:implementer@1.0.0
-        input: { goal: "$flow.input.goal" }
-        save: state.implementation
+        prompt:
+          segments:
+            - { text: "Implement this goal: " }
+            - { variable: { source: flow-input, path: [goal] } }
+        output:
+          schema:
+            type: object
+            properties:
+              summary: { type: string, description: "Summary of the implementation." }
+            required: [summary]
+            additionalProperties: false
       review:
         expert:
           ref: expert:reviewer@1.0.0
-        input: { change: "$state.implementation" }
-        save: state.review
+        prompt:
+          segments:
+            - { text: "Review this implementation: " }
+            - variable:
+                source: node-output
+                nodeId: implement
+                path: [summary]
       approve:
         human:
           kind: approval
-          prompt: "Approve {{ state.review | json }}?"
+          prompt: "Approve the review result?"
           options: [approve, revise]
           approveOption: approve
     loops: {}
@@ -52,10 +66,11 @@ spec:
 - Every step must be reachable from `start`, and every path must terminate.
 - Ordinary edges form a DAG. A back edge requires a named `repeat` transition and a loop with a
   positive `maxIterations` plus an exit path.
-- Save only below `state.<name>`; never use reserved or prototype-sensitive segments.
+- Every successful result is stored automatically at `state.nodes.<nodeId>.result`.
 - Action and human steps cannot declare Runtime or Context routing fields.
-- Exact values use `$flow.input`, `$node.output`, and `$state.name`; property paths append `.field`.
-  String interpolation uses `{{ flow.input.goal }}` and optionally `| json`. `${...}` is invalid.
+- Expert and Team prompts use text and typed variable segments. Node variables reference a stable
+  `nodeId`; native output exposes only `result`, while structured output exposes declared fields.
+- Structured output uses the bounded object schema supported by the Desktop field editor.
 - Approval steps with custom choices declare `approveOption`; it must match one choice.
 - Build Flow resources with the draft tools. Missing nodes or edges are allowed only while a draft
   is incomplete; `prepare_flow_draft` requires a complete, valid graph.

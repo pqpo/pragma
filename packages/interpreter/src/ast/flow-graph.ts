@@ -1,7 +1,9 @@
 import {
   analyzeControlFlowGraph,
+  analyzeControlFlowNodeAvailability,
   type ControlFlowEdge,
   type ControlFlowGraphIssue,
+  type ControlFlowNodeAvailability,
 } from "@pragma/shared";
 
 import type {
@@ -73,6 +75,40 @@ export function analyzePragmaFlowGraph(resource: PragmaFlowResource): PragmaFlow
     issues: [...localIssues, ...analysis.issues.map(toPragmaIssue)],
     loopMembers: analysis.loopMembers,
   };
+}
+
+export function analyzePragmaFlowNodeAvailability(
+  resource: PragmaFlowResource,
+  targetStepId: string,
+): ControlFlowNodeAvailability {
+  const graph = resource.spec.graph;
+  const edges: ControlFlowEdge[] = [];
+  const add = (source: string, destination: PragmaFlowDestination): void => {
+    if (typeof destination === "string") {
+      edges.push({ source, target: destination, kind: "ordinary" });
+    } else if ("goto" in destination) {
+      edges.push({ source, target: destination.goto, kind: "ordinary" });
+    } else if ("repeat" in destination) {
+      edges.push({
+        source,
+        target: destination.repeat.goto,
+        kind: "repeat",
+        loopId: destination.repeat.loop,
+      });
+    }
+  };
+  for (const [source, transition] of Object.entries(graph.transitions)) {
+    if (typeof transition === "object" && "route" in transition) {
+      Object.values(transition.cases).forEach((destination) => add(source, destination));
+      if (transition.fallback !== undefined) add(source, transition.fallback);
+    } else {
+      add(source, transition);
+    }
+  }
+  return analyzeControlFlowNodeAvailability(
+    { nodes: new Set(Object.keys(graph.steps)), start: graph.start, edges },
+    targetStepId,
+  );
 }
 
 function toPragmaIssue(issue: ControlFlowGraphIssue): PragmaFlowGraphIssue {

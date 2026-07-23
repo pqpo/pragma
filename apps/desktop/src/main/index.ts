@@ -210,7 +210,19 @@ void app.whenReady().then(async () => {
   await runtimeEnvironments.initialize();
   const runtimes = createRuntimeEnvironmentService({
     store: runtimeEnvironments,
-    factories: createBuiltInRuntimeFactories(modelProviderStore, getToolPermissionMode),
+    factories: createBuiltInRuntimeFactories(
+      modelProviderStore,
+      getToolPermissionMode,
+      (runtimeId) => {
+        if (
+          mainWindow !== null &&
+          !mainWindow.isDestroyed() &&
+          !mainWindow.webContents.isDestroyed()
+        ) {
+          mainWindow.webContents.send("runtimes:model-catalog:updated", runtimeId);
+        }
+      },
+    ),
   });
   const missionExecutors = createMissionExecutorCatalog({
     project: pragmaProjectStore,

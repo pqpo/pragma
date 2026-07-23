@@ -104,6 +104,16 @@ export function renameFlowStep(
     if (loop.onLimit !== undefined)
       loop.onLimit = mapDestinationTarget(loop.onLimit, previousId, nextId) as typeof loop.onLimit;
   }
+  for (const current of Object.values(copy.spec.graph.steps)) {
+    if (current.prompt === undefined) continue;
+    current.prompt.segments = current.prompt.segments.map((segment) =>
+      "variable" in segment &&
+      segment.variable.source === "node-output" &&
+      segment.variable.nodeId === previousId
+        ? { variable: { ...segment.variable, nodeId: nextId } }
+        : segment,
+    );
+  }
   return copy;
 }
 
@@ -125,6 +135,17 @@ export function deleteFlowStep(flow: PragmaFlowResource, stepId: string): Pragma
     if (loop.onLimit !== undefined && destinationTarget(loop.onLimit) === stepId) {
       loop.onLimit = { end: true };
     }
+  }
+  for (const current of Object.values(copy.spec.graph.steps)) {
+    if (current.prompt === undefined) continue;
+    current.prompt.segments = current.prompt.segments.filter(
+      (segment) =>
+        !(
+          "variable" in segment &&
+          segment.variable.source === "node-output" &&
+          segment.variable.nodeId === stepId
+        ),
+    );
   }
   const referencedLoopIds = transitionLoopIds(Object.values(copy.spec.graph.transitions));
   for (const loopId of Object.keys(copy.spec.graph.loops)) {

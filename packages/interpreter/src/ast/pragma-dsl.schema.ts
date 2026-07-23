@@ -1,4 +1,7 @@
+import { RuntimeModelSelectionSchema } from "@pragma/shared";
 import { z } from "zod";
+
+import { PragmaObjectJsonSchemaSchema } from "./tool-capability.schema.ts";
 
 export const PragmaApiVersionSchema = z.literal("pragma/v2");
 
@@ -25,6 +28,20 @@ export const PragmaSemanticResourceIdSchema = z
   .regex(new RegExp(`^${SEMANTIC_RESOURCE_ID}$`), "Use only letters, numbers, and underscores.");
 
 export const PragmaExpertIdSchema = PragmaSemanticResourceIdSchema.max(PRAGMA_EXPERT_ID_MAX_LENGTH);
+
+export const PragmaFlowNodeIdSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(100)
+  .regex(
+    /^[A-Za-z0-9][A-Za-z0-9_-]*$/,
+    "Use only letters, numbers, underscores, and hyphens.",
+  )
+  .refine(
+    (value) => !value.startsWith("__") && !["constructor", "prototype"].includes(value),
+    "Flow node IDs cannot use reserved names.",
+  );
 
 function exactRefSchema(
   kinds: readonly string[],
@@ -165,6 +182,31 @@ export const PragmaAdapterResourceSpecSchema = z
     config: z.unknown().default({}),
   })
   .strict();
+
+export const PragmaRuntimeProfileConfigSchema = z
+  .object({
+    runtimeId: z.string().trim().min(1),
+    providerId: z.string().trim().min(1).optional(),
+    model: z.string().trim().min(1).optional(),
+    thinkingLevel: z.string().trim().min(1).optional(),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    if ((value.providerId === undefined) !== (value.model === undefined)) {
+      context.addIssue({
+        code: "custom",
+        path: ["providerId"],
+        message: "A Runtime model requires both providerId and model.",
+      });
+    }
+    if (value.thinkingLevel !== undefined && value.model === undefined) {
+      context.addIssue({
+        code: "custom",
+        path: ["thinkingLevel"],
+        message: "A Runtime thinking level requires an explicit model.",
+      });
+    }
+  });
 
 export const PragmaToolBindingSchema = z
   .object({
@@ -311,15 +353,15 @@ export const PragmaExpertTeamResourceSchema = z
   .strict();
 
 export const PragmaFlowTargetSchema = z.union([
-  z.string().trim().min(1),
-  z.object({ goto: z.string().trim().min(1) }).strict(),
+  PragmaFlowNodeIdSchema,
+  z.object({ goto: PragmaFlowNodeIdSchema }).strict(),
   z.object({ end: z.literal(true) }).strict(),
   z.object({ fail: z.string().trim().min(1) }).strict(),
 ]);
 
 export const PragmaFlowRepeatTargetSchema = z
   .object({
-    repeat: z.object({ loop: z.string().trim().min(1), goto: z.string().trim().min(1) }).strict(),
+    repeat: z.object({ loop: PragmaFlowNodeIdSchema, goto: PragmaFlowNodeIdSchema }).strict(),
   })
   .strict();
 
@@ -372,6 +414,55 @@ export const PragmaHumanRequestSchema = z
     }
   });
 
+const PragmaFlowVariablePathSchema = z
+  .array(
+    z
+      .string()
+      .trim()
+      .min(1)
+      .max(100)
+      .regex(/^[A-Za-z_][A-Za-z0-9_]*$/, "Use a JSON object field name."),
+  )
+  .max(5)
+  .default([]);
+
+export const PragmaFlowVariableSchema = z.discriminatedUnion("source", [
+  z
+    .object({
+      source: z.literal("flow-input"),
+      path: PragmaFlowVariablePathSchema,
+    })
+    .strict(),
+  z
+    .object({
+      source: z.literal("node-output"),
+      nodeId: PragmaFlowNodeIdSchema,
+      path: PragmaFlowVariablePathSchema,
+    })
+    .strict(),
+]);
+
+export const PragmaFlowPromptSchema = z
+  .object({
+    segments: z
+      .array(
+        z.union([
+          z.object({ text: z.string().max(20_000) }).strict(),
+          z.object({ variable: PragmaFlowVariableSchema }).strict(),
+        ]),
+      )
+      .max(500)
+      .default([]),
+  })
+  .strict();
+
+export const PragmaFlowRuntimeBindingSchema = z
+  .object({
+    ref: PragmaRuntimeProfileRefSchema,
+    modelSelection: RuntimeModelSelectionSchema.optional(),
+  })
+  .strict();
+
 export const PragmaFlowStepSchema = z
   .object({
     action: z
@@ -392,17 +483,14 @@ export const PragmaFlowStepSchema = z
     human: PragmaHumanRequestSchema.optional(),
     version: z.string().trim().min(1).default("1.0.0"),
     input: z.unknown().optional(),
-    save: z
-      .string()
-      .trim()
-      .regex(/^state\.[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*$/)
-      .optional(),
+    prompt: PragmaFlowPromptSchema.optional(),
+    output: z.object({ schema: PragmaObjectJsonSchemaSchema }).strict().optional(),
     context: exactRefSchema(
       ["context-policy"],
       "context-policy:pragma.fresh@v1",
       EXTENSION_RESOURCE_ID,
     ).optional(),
-    runtime: PragmaRuntimeProfileRefSchema.optional(),
+    runtime: PragmaFlowRuntimeBindingSchema.optional(),
     runtimes: z.record(PragmaExpertIdSchema, PragmaRuntimeProfileRefSchema).optional(),
   })
   .strict()
@@ -416,15 +504,18 @@ export const PragmaFlowStepSchema = z
         message: "A Flow step must declare exactly one of action, expert, team, flow, or human.",
       });
     }
-    const statePath = value.save?.slice("state.".length).split(".") ?? [];
-    const forbidden = statePath.find((segment) =>
-      new Set(["__proto__", "prototype", "constructor"]).has(segment),
-    );
-    if (forbidden !== undefined || statePath[0]?.startsWith("__") === true) {
+    const isExpertStep = value.expert !== undefined || value.team !== undefined;
+    if (isExpertStep && value.input !== undefined) {
       context.addIssue({
         code: "custom",
-        path: ["save"],
-        message: "Flow save paths cannot use reserved or prototype-sensitive state segments.",
+        path: ["input"],
+        message: "Expert and Team Flow steps use prompt segments instead of input mappings.",
+      });
+    }
+    if (!isExpertStep && (value.prompt !== undefined || value.output !== undefined)) {
+      context.addIssue({
+        code: "custom",
+        message: "Prompt templates and structured output are only valid for Expert and Team steps.",
       });
     }
     if (
@@ -457,7 +548,7 @@ export const PragmaFlowTransitionSchema = z.union([
 
 export const PragmaFlowLoopSchema = z
   .object({
-    entry: z.string().trim().min(1),
+    entry: PragmaFlowNodeIdSchema,
     maxIterations: z.number().int().positive(),
     onLimit: PragmaFlowTargetSchema.optional(),
   })
@@ -465,10 +556,10 @@ export const PragmaFlowLoopSchema = z
 
 export const PragmaFlowGraphSchema = z
   .object({
-    start: z.string().trim().min(1),
-    steps: z.record(z.string().trim().min(1), PragmaFlowStepSchema),
-    loops: z.record(z.string().trim().min(1), PragmaFlowLoopSchema).default({}),
-    transitions: z.record(z.string().trim().min(1), PragmaFlowTransitionSchema),
+    start: PragmaFlowNodeIdSchema,
+    steps: z.record(PragmaFlowNodeIdSchema, PragmaFlowStepSchema),
+    loops: z.record(PragmaFlowNodeIdSchema, PragmaFlowLoopSchema).default({}),
+    transitions: z.record(PragmaFlowNodeIdSchema, PragmaFlowTransitionSchema),
   })
   .strict();
 
@@ -660,4 +751,7 @@ export type PragmaToolBinding = z.infer<typeof PragmaToolBindingSchema>;
 export type PragmaFlowTarget = z.infer<typeof PragmaFlowTargetSchema>;
 export type PragmaFlowTransition = z.infer<typeof PragmaFlowTransitionSchema>;
 export type PragmaFlowDestination = z.infer<typeof PragmaFlowDestinationSchema>;
+export type PragmaFlowPrompt = z.infer<typeof PragmaFlowPromptSchema>;
+export type PragmaFlowVariable = z.infer<typeof PragmaFlowVariableSchema>;
+export type PragmaRuntimeProfileConfig = z.infer<typeof PragmaRuntimeProfileConfigSchema>;
 export type PragmaHumanRequest = z.infer<typeof PragmaHumanRequestSchema>;

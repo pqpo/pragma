@@ -42,6 +42,7 @@
     "react": "latest",
     "react-dom": "latest",
     "react-i18next": "^16.0.0",
+    "yaml": "^2.9.0",
     "zod": "latest"
   },
   "optionalDependencies": {

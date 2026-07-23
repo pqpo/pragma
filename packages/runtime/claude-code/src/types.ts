@@ -26,6 +26,7 @@ export interface ClaudeCodeRuntimeAdapterOptions {
   readonly defaultModelName?: string | undefined;
   readonly defaultThinkingLevel?: string | undefined;
   readonly listModels?: (() => Promise<readonly RuntimeModel[]>) | undefined;
+  readonly onModelCatalogUpdated?: (() => void) | undefined;
   readonly permissionMode?: ClaudeCodeRuntimePermissionMode | undefined;
   readonly additionalArgs?: readonly string[] | undefined;
   readonly spawn?: ClaudeCodeRuntimeSpawn | undefined;

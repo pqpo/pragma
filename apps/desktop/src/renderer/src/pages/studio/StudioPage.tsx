@@ -524,6 +524,7 @@ export function StudioPage(props: { readonly onTryExpert: (expert: ExpertRecord)
           <PragmaResourceDirectoryFragment
             kind={activeView === "teams" ? "team" : "flow"}
             project={project}
+            runtimes={runtimes}
             onProjectChanged={setProject}
           />
         ) : null}

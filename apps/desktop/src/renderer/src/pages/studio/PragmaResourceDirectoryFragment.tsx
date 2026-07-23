@@ -18,7 +18,10 @@ import {
   type PragmaExpertTeamResource,
   type PragmaResource,
 } from "@pragma/interpreter/ast";
-import type { PragmaProjectSnapshot } from "../../../../shared/desktop-api.ts";
+import type {
+  DesktopRuntimeAvailability,
+  PragmaProjectSnapshot,
+} from "../../../../shared/desktop-api.ts";
 
 import { errorMessage } from "../../lib/errors.ts";
 import { FlowEditor } from "./flow-editor/FlowEditor.tsx";
@@ -78,6 +81,7 @@ export function matchingTeamExperts(
 export function PragmaResourceDirectoryFragment(props: {
   readonly kind: ResourceKind;
   readonly project: PragmaProjectSnapshot;
+  readonly runtimes: readonly DesktopRuntimeAvailability[];
   readonly onProjectChanged: (snapshot: PragmaProjectSnapshot) => void;
 }) {
   const { t } = useTranslation("studio");
@@ -147,6 +151,7 @@ export function PragmaResourceDirectoryFragment(props: {
     ) : (
       <FlowEditor
         project={props.project}
+        runtimes={props.runtimes}
         initial={editing === "new" || editing.kind !== "Flow" ? undefined : editing}
         error={error}
         onCancel={() => setEditing(null)}

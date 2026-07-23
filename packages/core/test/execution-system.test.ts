@@ -1768,6 +1768,44 @@ describe("ExpertSession", () => {
 });
 
 describe("FlowExecution", () => {
+  it("rejects programmatic step IDs that the DSL cannot represent safely", () => {
+    for (const id of ["constructor", "prototype", "__internal", `a${"b".repeat(100)}`]) {
+      const flow = defineFlow({ id: `invalid-${id.slice(0, 12)}`, version: "1.0.0" });
+      expect(() =>
+        flow.task({
+          id,
+          version: "1.0.0",
+          handler: () => undefined,
+        }),
+      ).toThrow(`Invalid Flow step id: ${id}`);
+    }
+  });
+
+  it("stores every successful node result under the canonical node ID path", async () => {
+    const { app } = await fixture();
+    const flow = defineFlow({ id: "canonical-results", version: "1.0.0" });
+    const prepare = flow.task({
+      id: "prepare",
+      version: "1.0.0",
+      handler: () => ({ score: 7 }),
+    });
+    const finish = flow.task({
+      id: "finish",
+      version: "1.0.0",
+      input: ({ state }) =>
+        (state["nodes"] as { prepare: { result: { score: number } } }).prepare.result.score,
+      handler: ({ input }) => input * 2,
+    });
+    flow.compose(({ start, end }) => start(prepare).next(finish).next(end()));
+
+    await expect((await app.flows.start(flow, { input: null })).result).resolves.toEqual({
+      nodes: {
+        prepare: { result: { score: 7 } },
+        finish: { result: 14 },
+      },
+    });
+  });
+
   it("persists a wall-clock timeout and aborts the active Task", async () => {
     const { app } = await fixture();
     let observedAbort = false;
@@ -2601,7 +2639,18 @@ describe("FlowExecution", () => {
       { kind: "user_question", answered: true, answers: { "Ship?": "Ship" } },
       { requestId: "answer-after-restart" },
     );
-    await expect(recovered.result).resolves.toEqual({});
+    await expect(recovered.result).resolves.toEqual({
+      nodes: {
+        prepare: { result: "prepared" },
+        approval: {
+          result: {
+            answers: { "Ship?": "Ship" },
+            approved: true,
+            decision: "Ship",
+          },
+        },
+      },
+    });
     expect(prepareCalls).toBe(1);
     expect(
       (await recovered.getTree()).children.find((child) => child.invocation.nodeId === "approval")

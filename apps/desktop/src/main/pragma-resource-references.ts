@@ -45,7 +45,7 @@ export function referencedPragmaResourceRefs(
       for (const step of Object.values(resource.spec.graph.steps)) {
         const target = step.expert ?? step.team ?? step.flow;
         if (target !== undefined) refs.add(target.ref);
-        if (step.runtime !== undefined) refs.add(step.runtime);
+        if (step.runtime !== undefined) refs.add(step.runtime.ref);
         for (const runtime of Object.values(step.runtimes ?? {})) refs.add(runtime);
       }
     }

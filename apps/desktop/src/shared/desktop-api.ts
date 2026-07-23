@@ -1538,6 +1538,7 @@ export interface PragmaDesktopAPI {
     executorRef: string,
     missionId?: string | undefined,
   ) => Promise<MissionModelOptions>;
+  subscribeRuntimeModelCatalog: (listener: (runtimeId: string) => void) => () => void;
   getMissionCreationDefaults: () => Promise<MissionCreationDefaults>;
   getMission: (id: string) => Promise<Mission>;
   createMission: (input: CreateMission) => Promise<Mission>;

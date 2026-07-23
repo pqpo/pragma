@@ -1,5 +1,6 @@
 import { runRuntimeCommand } from "@pragma/core/runtime/process-probe";
 import type { RuntimeModel, RuntimeThinkingLevel } from "@pragma/core/runtime/runtime-adapter";
+import { BoundedLruCache } from "@pragma/shared";
 
 import { resolveCodexExecutablePath } from "./executable.ts";
 import type { CodexRuntimeAdapterOptions } from "./types.ts";
@@ -24,12 +25,18 @@ interface CodexDebugModel {
 
 interface CatalogCacheEntry {
   readonly expiresAt: number;
+  readonly retryAt?: number | undefined;
   readonly models: readonly RuntimeModel[];
 }
 
 const DISCOVERY_TTL_MS = 10 * 60 * 1_000;
+const DISCOVERY_RETRY_DELAY_MS = 30 * 1_000;
 const DISCOVERY_OUTPUT_LIMIT = 16 * 1024 * 1024;
-const catalogCache = new Map<string, CatalogCacheEntry>();
+const CATALOG_CACHE_CAPACITY = 64;
+const catalogCache = new BoundedLruCache<string, CatalogCacheEntry>(CATALOG_CACHE_CAPACITY);
+const catalogRefreshes = new Map<string, Promise<readonly RuntimeModel[]>>();
+const customSpawnIds = new WeakMap<NonNullable<CodexRuntimeAdapterOptions["spawn"]>, number>();
+let nextCustomSpawnId = 1;
 
 const THINKING_LEVEL_LABELS: Readonly<Record<string, string>> = {
   none: "None",
@@ -50,28 +57,35 @@ export function createCodexModelDiscovery(
       options.executablePath ??
       (options.spawn === undefined ? resolveCodexExecutablePath(options) : "codex");
     const env = { ...process.env, ...(options.env ?? {}) };
-    const versionResult = await runRuntimeCommand({
-      executablePath,
-      args: ["--version"],
-      cwd: process.cwd(),
-      env,
-      timeoutMs: 5_000,
-      outputLimit: 64 * 1024,
-      spawn: options.spawn,
-    });
-
-    if (versionResult.exitCode !== 0) {
-      throw new Error(createDiscoveryError("version probe failed", versionResult.stderr));
-    }
-
-    const version = firstNonEmptyLine(versionResult.stdout) ?? "unknown";
-    const cacheKey = `${executablePath}\u0000${version}`;
+    const cacheKey = discoveryCacheKey(executablePath, options.spawn);
     const cached = catalogCache.get(cacheKey);
 
-    if (cached !== undefined && cached.expiresAt > Date.now()) {
+    if (cached !== undefined) {
+      const now = Date.now();
+      if (cached.expiresAt <= now && (cached.retryAt ?? 0) <= now) {
+        const refresh = refreshCodexModelCatalog(cacheKey, executablePath, env, options.spawn);
+        void refresh.then(
+          () => notifyModelCatalogUpdated(options.onModelCatalogUpdated),
+          () => undefined,
+        );
+      }
       return cached.models;
     }
 
+    return await refreshCodexModelCatalog(cacheKey, executablePath, env, options.spawn);
+  };
+}
+
+function refreshCodexModelCatalog(
+  cacheKey: string,
+  executablePath: string,
+  env: NodeJS.ProcessEnv,
+  spawn: CodexRuntimeAdapterOptions["spawn"],
+): Promise<readonly RuntimeModel[]> {
+  const activeRefresh = catalogRefreshes.get(cacheKey);
+  if (activeRefresh !== undefined) return activeRefresh;
+
+  const refresh = (async () => {
     const result = await runRuntimeCommand({
       executablePath,
       args: ["debug", "models", "--bundled"],
@@ -79,7 +93,7 @@ export function createCodexModelDiscovery(
       env,
       timeoutMs: 15_000,
       outputLimit: DISCOVERY_OUTPUT_LIMIT,
-      spawn: options.spawn,
+      spawn,
     });
 
     if (result.exitCode !== 0) {
@@ -96,7 +110,47 @@ export function createCodexModelDiscovery(
       models,
     });
     return models;
-  };
+  })().catch((error: unknown) => {
+    const cached = catalogCache.get(cacheKey);
+    if (cached !== undefined) {
+      catalogCache.set(cacheKey, {
+        ...cached,
+        retryAt: Date.now() + DISCOVERY_RETRY_DELAY_MS,
+      });
+    }
+    throw error;
+  });
+  catalogRefreshes.set(cacheKey, refresh);
+  void refresh.then(clearRefresh, clearRefresh);
+  return refresh;
+
+  function clearRefresh(): void {
+    if (catalogRefreshes.get(cacheKey) === refresh) {
+      catalogRefreshes.delete(cacheKey);
+    }
+  }
+}
+
+function notifyModelCatalogUpdated(listener: (() => void) | undefined): void {
+  try {
+    listener?.();
+  } catch {
+    // A host notification is best-effort and must not turn a successful refresh into a failure.
+  }
+}
+
+function discoveryCacheKey(
+  executablePath: string,
+  spawn: CodexRuntimeAdapterOptions["spawn"],
+): string {
+  if (spawn === undefined) return executablePath;
+  let spawnId = customSpawnIds.get(spawn);
+  if (spawnId === undefined) {
+    spawnId = nextCustomSpawnId;
+    nextCustomSpawnId += 1;
+    customSpawnIds.set(spawn, spawnId);
+  }
+  return `${executablePath}\u0000spawn:${spawnId}`;
 }
 
 export function parseCodexModels(output: string): readonly RuntimeModel[] {

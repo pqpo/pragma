@@ -27,6 +27,10 @@ Expert step 时会创建新 Invocation 并重新运行 resolver，返回旧 ID �
 统一人工交互，并返回 `HumanInteractionResponse`：首个单选答案写入 `decision`，首个文本答案写入
 `notes`，完整结果保留在 `answers`，approval 另外写入 `approved`。
 
+每个成功 Step 的最新结果由 Core 自动保存到 `state.nodes.<nodeId>.result`。Expert 和 ExpertTeam
+使用由文本段与变量段组成的 prompt；变量引用 Flow 输入或稳定 Node ID，结构化输出字段由输出
+Schema 决定。循环重新访问节点时覆盖该节点的最新结果，历史结果仍保留在 Invocation 记录中。
+
 完整的实时观测示例可运行：
 
 ```bash

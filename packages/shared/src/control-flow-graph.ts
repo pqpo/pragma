@@ -55,6 +55,66 @@ export interface ControlFlowGraphAnalysis {
   readonly loopMembers: ReadonlyMap<string, ReadonlySet<string>>;
 }
 
+export interface ControlFlowNodeAvailability {
+  readonly upstream: ReadonlySet<string>;
+  readonly required: ReadonlySet<string>;
+}
+
+/**
+ * Derive nodes whose latest result may be visible when `target` runs.
+ *
+ * `upstream` includes nodes that can reach the target, including through an explicit repeat edge.
+ * `required` is the subset that dominates the target and therefore runs on every path from start.
+ */
+export function analyzeControlFlowNodeAvailability(
+  graph: Pick<ControlFlowGraph, "nodes" | "start" | "edges">,
+  target: string,
+): ControlFlowNodeAvailability {
+  if (!graph.nodes.has(target)) return { upstream: new Set(), required: new Set() };
+  const incoming = new Map([...graph.nodes].map((node) => [node, new Set<string>()]));
+  for (const edge of graph.edges) {
+    if (graph.nodes.has(edge.source) && graph.nodes.has(edge.target)) {
+      incoming.get(edge.target)?.add(edge.source);
+    }
+  }
+
+  const upstream = new Set<string>();
+  const pending = [...(incoming.get(target) ?? [])];
+  while (pending.length > 0) {
+    const node = pending.pop()!;
+    if (node === target || upstream.has(node)) continue;
+    upstream.add(node);
+    pending.push(...(incoming.get(node) ?? []));
+  }
+
+  const all = new Set(graph.nodes);
+  const dominators = new Map<string, Set<string>>();
+  for (const node of graph.nodes) {
+    dominators.set(node, node === graph.start ? new Set([node]) : new Set(all));
+  }
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const node of graph.nodes) {
+      if (node === graph.start) continue;
+      const predecessors = [...(incoming.get(node) ?? [])];
+      const intersection =
+        predecessors.length === 0
+          ? new Set<string>()
+          : intersectSets(predecessors.map((predecessor) => dominators.get(predecessor)!));
+      intersection.add(node);
+      if (!sameMembers(intersection, dominators.get(node)!)) {
+        dominators.set(node, intersection);
+        changed = true;
+      }
+    }
+  }
+  const required = new Set(
+    [...(dominators.get(target) ?? [])].filter((node) => node !== target && upstream.has(node)),
+  );
+  return { upstream, required };
+}
+
 /** Analyze a bounded control-flow graph without depending on a runtime or DSL representation. */
 export function analyzeControlFlowGraph(graph: ControlFlowGraph): ControlFlowGraphAnalysis {
   const issues: ControlFlowGraphIssue[] = [];
@@ -262,6 +322,12 @@ export function analyzeControlFlowGraph(graph: ControlFlowGraph): ControlFlowGra
 
 function sameMembers(left: ReadonlySet<string>, right: ReadonlySet<string>): boolean {
   return left.size === right.size && [...left].every((member) => right.has(member));
+}
+
+function intersectSets(sets: readonly ReadonlySet<string>[]): Set<string> {
+  const [first, ...rest] = sets;
+  if (first === undefined) return new Set();
+  return new Set([...first].filter((value) => rest.every((set) => set.has(value))));
 }
 
 function toAdjacency(

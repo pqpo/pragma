@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import type { PragmaFlowResource } from "@pragma/interpreter/ast";
 
 import type { PragmaProjectSnapshot } from "../../../../../shared/desktop-api.ts";
+import { newSchemaField, objectSchemaToFields } from "../JsonSchemaFieldsEditor.tsx";
 import { createEmptyFlow } from "./flow-model.ts";
 import {
   buildCanvasNodes,
@@ -13,6 +14,7 @@ import {
   END_NODE_ID,
   FAIL_NODE_ID,
   FlowEditor,
+  flowVariableOptions,
   nextAvailableNodePosition,
   removeEdgeFromFlow,
   START_NODE_ID,
@@ -161,6 +163,90 @@ describe("Flow editor canvas", () => {
     const after = buildCanvasNodes(flow, canvasPositions(before), new Set(), "review");
 
     expect(after.find((node) => node.id === "review")?.selected).toBe(true);
+  });
+
+  it("derives native and structured variables and marks branch-only output optional", () => {
+    const flow = flowFixture();
+    flow.spec.graph.start = "start";
+    flow.spec.graph.steps = {
+      start: {
+        expert: { ref: "expert:start@1.0.0" },
+        version: "1.0.0",
+        prompt: { segments: [{ text: "Start" }] },
+      },
+      scored: {
+        expert: { ref: "expert:scored@1.0.0" },
+        version: "1.0.0",
+        prompt: { segments: [{ text: "Score" }] },
+        output: {
+          schema: {
+            type: "object",
+            properties: { score: { type: "number" }, note: { type: "string" } },
+            required: ["score"],
+            additionalProperties: false,
+          },
+        },
+      },
+      alternate: {
+        expert: { ref: "expert:alternate@1.0.0" },
+        version: "1.0.0",
+        prompt: { segments: [{ text: "Alternate" }] },
+      },
+      join: {
+        expert: { ref: "expert:join@1.0.0" },
+        version: "1.0.0",
+        prompt: { segments: [{ text: "Join" }] },
+      },
+    };
+    flow.spec.graph.transitions = {
+      start: {
+        route: "branch",
+        cases: { scored: "scored", alternate: "alternate" },
+      },
+      scored: "join",
+      alternate: "join",
+      join: { end: true },
+    };
+
+    const options = flowVariableOptions(flow, "join");
+    expect(options).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ label: "start.result", optional: false }),
+        expect.objectContaining({ label: "scored.result", optional: true }),
+        expect.objectContaining({ label: "scored.result.score", optional: true }),
+        expect.objectContaining({ label: "alternate.result", optional: true }),
+      ]),
+    );
+    expect(options.some((option) => option.label === "alternate.result.anything")).toBe(false);
+  });
+
+  it("preserves structured-output field identity when the parent echoes a cloned schema", () => {
+    const field = {
+      ...newSchemaField(),
+      name: "summary",
+      value: {
+        type: "object" as const,
+        fields: [{ ...newSchemaField(), name: "details" }],
+      },
+    };
+    const schema = {
+      type: "object" as const,
+      properties: {
+        summary: {
+          type: "object" as const,
+          properties: { details: { type: "string" as const } },
+          required: ["details"],
+          additionalProperties: false as const,
+        },
+      },
+      required: ["summary"],
+      additionalProperties: false as const,
+    };
+
+    const echoed = objectSchemaToFields(structuredClone(schema), [field]);
+
+    expect(echoed[0]?.id).toBe(field.id);
+    expect(echoed[0]?.value.fields[0]?.id).toBe(field.value.fields[0]?.id);
   });
 });
 

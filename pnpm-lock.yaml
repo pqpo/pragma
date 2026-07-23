@@ -95,6 +95,9 @@ importers:
       react-i18next:
         specifier: ^16.0.0
         version: 16.6.6(i18next@25.10.10(typescript@6.0.3))(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(typescript@6.0.3)
+      yaml:
+        specifier: ^2.9.0
+        version: 2.9.0
       zod:
         specifier: latest
         version: 4.4.3

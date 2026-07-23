@@ -49,6 +49,7 @@ import {
   ResetModelProvidersResultSchema,
   ResetBuiltInExpertDefinitionSchema,
   CreateMissionSchema,
+  DesktopRuntimeIdSchema,
   GetMissionChatSchema,
   GetMissionWorkConversationSchema,
   MissionActionSchema,
@@ -290,6 +291,13 @@ const api: PragmaDesktopAPI = {
         }),
       ),
     ),
+  subscribeRuntimeModelCatalog: (listener) => {
+    const handler = (_event: IpcRendererEvent, value: unknown) => {
+      listener(DesktopRuntimeIdSchema.parse(value));
+    };
+    ipcRenderer.on("runtimes:model-catalog:updated", handler);
+    return () => ipcRenderer.removeListener("runtimes:model-catalog:updated", handler);
+  },
   getMissionCreationDefaults: async () =>
     MissionCreationDefaultsSchema.parse(await ipcRenderer.invoke("missions:create-defaults:get")),
   getMission: async (id) =>
