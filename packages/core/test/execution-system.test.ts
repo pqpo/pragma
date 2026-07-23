@@ -1,4 +1,4 @@
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -66,6 +66,7 @@ interface FakeRuntimeOptions {
   readonly closeError?: string;
   readonly createDelayMs?: number;
   readonly concurrentToolNames?: readonly string[];
+  readonly concurrentToolNamesByAgent?: Readonly<Record<string, readonly string[]>>;
   readonly delayMs?: number;
   readonly delegationTargets?: Readonly<Record<string, string>>;
   readonly failQuery?: string;
@@ -110,11 +111,14 @@ function createFakeRuntime(options: FakeRuntimeOptions = {}) {
       const delegationTarget =
         options.delegationTargets?.[session.context.agent.id] ??
         (session.context.agent.id === "lead" ? "member" : undefined);
+      const concurrentToolNames =
+        options.concurrentToolNamesByAgent?.[session.context.agent.id] ??
+        options.concurrentToolNames;
       let output = `${session.context.agent.id}:${turn.rawQuery}`;
-      if (options.concurrentToolNames !== undefined) {
+      if (concurrentToolNames !== undefined) {
         const execution = session.context.request.executionContext;
         const results = await Promise.all(
-          options.concurrentToolNames.map(async (name) => {
+          concurrentToolNames.map(async (name) => {
             const tool = session.context.agent.tools?.find((candidate) => candidate.name === name);
             if (tool === undefined) throw new Error(`Missing concurrent test tool: ${name}`);
             const result = await tool.call({}, turn.signal, { execution });
@@ -618,6 +622,44 @@ describe("ExpertSession", () => {
       ),
     ).toBe(false);
     await Promise.all([eventSubscription.close(), outputSubscription.close()]);
+    await session.close();
+  });
+
+  it("externalizes a large Expert result and returns a Context handoff", async () => {
+    const { home, app, expert } = await fixture();
+    const session = await app.experts.createSession(expert);
+    const prompt = "x".repeat(40 * 1024);
+    const turn = await session.prompt(prompt, { requestId: "large-handoff" });
+    const result = await turn.result;
+
+    expect(result).toMatchObject({
+      type: "context",
+      contexts: [{ namespace: "pragma.handoff", mediaType: "text/plain" }],
+    });
+    if (
+      typeof result !== "object" ||
+      result === null ||
+      !("type" in result) ||
+      result.type !== "context" ||
+      !("contexts" in result) ||
+      !Array.isArray(result.contexts)
+    ) {
+      throw new Error("Expected a Context handoff.");
+    }
+    const reference = result.contexts[0] as { id: string };
+    const path = join(
+      new PragmaPaths({ pragmaHome: home }).executionHandoffsRoot(turn.executionId),
+      "generated",
+      reference.id,
+    );
+    await expect(readFile(path, "utf8")).resolves.toBe(`solo:${prompt}`);
+    await expect(turn.getState()).resolves.toMatchObject({
+      output: { type: "context", contexts: [{ id: reference.id }] },
+    });
+    const history = await turn.getMessageHistory();
+    const serializedHistory = JSON.stringify(history);
+    expect(serializedHistory).toContain(reference.id);
+    expect(serializedHistory).not.toContain(`solo:${prompt}`);
     await session.close();
   });
 
@@ -1603,7 +1645,7 @@ describe("ExpertSession", () => {
           },
         ],
         execution: {
-          schemaVersion: "pragma.execution/v5",
+          schemaVersion: "pragma.execution/v6",
           executionId,
           version: 0,
           kind: "expert-turn",
@@ -2056,6 +2098,59 @@ describe("FlowExecution", () => {
     const turn = await session.prompt("run", { requestId: "concurrent-nested-flows" });
     await turn.result;
     expect((await turn.getState()).state).toMatchObject({ first: "first", second: "second" });
+    await session.close();
+  });
+
+  it("returns an Expert resource call's small output without the inline handoff envelope", async () => {
+    const home = await mkdtemp(join(tmpdir(), "pragma-expert-resource-handoff-"));
+    const runtime = createFakeRuntime({
+      concurrentToolNamesByAgent: { caller: ["call_callee"] },
+    });
+    const app = createPragma({
+      pragmaHome: home,
+      runtimes: createStaticRuntimeResolver({
+        runtimes: [runtime],
+        defaultRuntimeId: "fake",
+      }),
+    });
+    const callee = await defineExpert({
+      id: "callee",
+      name: "Callee",
+      description: "Returns a small result",
+      tags: [],
+      version: "1.0.0",
+      scope: "test",
+      workspace: home,
+    });
+    const callCallee: ExpertAgentManagedTool<string, ExpertAgentToolCallResult> = {
+      name: "call_callee",
+      description: "Call the callee",
+      inputSchema: {},
+      async call(_input, signal, context) {
+        const invoke = context?.execution?.invokeResource;
+        if (invoke === undefined) return { text: "missing execution", isError: true };
+        const output = await invoke({
+          target: callee,
+          input: { prompt: "hello" },
+          signal,
+        });
+        return { text: JSON.stringify(output), details: output };
+      },
+    };
+    const caller = await defineExpert({
+      id: "caller",
+      name: "Caller",
+      description: "Calls another Expert",
+      tags: [],
+      version: "1.0.0",
+      scope: "test",
+      workspace: home,
+      tools: [callCallee],
+    });
+
+    const session = await app.experts.createSession(caller);
+    const turn = await session.prompt("run", { requestId: "expert-resource-handoff" });
+    await expect(turn.result).resolves.toBe(JSON.stringify(["callee:hello"]));
     await session.close();
   });
 
@@ -2514,6 +2609,85 @@ describe("FlowExecution", () => {
     ).toMatchObject({ approved: true, decision: "Ship" });
   });
 
+  it("unwraps a completed Expert step before replaying its reduction during Flow recovery", async () => {
+    const { home, app, expert } = await fixture();
+    const flow = defineFlow({
+      id: "expert-output-recovery-flow",
+      version: "1.0.0",
+      result: ({ state }) => state["expertOutput"],
+    });
+    const work = flow.use("expert", expert, {
+      input: () => "work",
+      reduce: ({ state, output }) => {
+        state["expertOutput"] = output;
+      },
+    });
+    const approval = flow.humanTask({
+      id: "approval",
+      version: "1.0.0",
+      request: { kind: "approval", prompt: "Continue?" },
+    });
+    flow.compose(({ start, end }) => start(work).next(approval).next(end()));
+    const compiled = flow.compile();
+
+    const execution = await app.flows.start(compiled, { input: null });
+    await waitUntil(
+      async () =>
+        (await execution.getTree()).children.find((child) => child.invocation.nodeId === "approval")
+          ?.invocation.status === "waiting",
+    );
+    const store = createFileExecutionStore({ pragmaHome: home });
+    const tree = await execution.getTree();
+    const expertInvocation = tree.children.find(
+      (child) => child.invocation.nodeId === "expert",
+    )!.invocation;
+    const stored = (await store.get(execution.executionId))!;
+    const internal = structuredClone(stored.state["__pragma"]) as {
+      reductions: Record<string, boolean>;
+      flowControl: { transitions: Record<string, unknown> };
+    };
+    delete internal.reductions[expertInvocation.invocationId];
+    delete internal.flowControl.transitions[expertInvocation.invocationId];
+    const stateWithoutReduction = { ...stored.state };
+    delete stateWithoutReduction["expertOutput"];
+    await store.update(execution.executionId, {
+      state: {
+        ...stateWithoutReduction,
+        __pragma: internal,
+        __recoveryClaim: {
+          claimId: "exited-process",
+          processId: 2_147_483_647,
+          expiresAt: new Date(Date.now() + 30_000).toISOString(),
+        },
+      },
+    });
+
+    const restarted = createPragma({
+      pragmaHome: home,
+      runtimes: createStaticRuntimeResolver({
+        runtimes: [createFakeRuntime()],
+        defaultRuntimeId: "fake",
+      }),
+    });
+    const recovered = await restarted.flows.recover(compiled, {
+      executionId: execution.executionId,
+    });
+    const requested = (
+      await recovered.listEvents({ scope: { kind: "all" }, limit: 1_000 })
+    ).items.find((event) => event.type === "human.requested")!;
+    await recovered.respondToHumanInteraction(
+      String((requested.data as { interactionId: unknown }).interactionId),
+      {
+        kind: "user_question",
+        answered: true,
+        answers: { "Continue?": "approve" },
+      },
+      { requestId: "expert-output-recovery-approval" },
+    );
+
+    await expect(recovered.result).resolves.toBe("solo:work");
+  });
+
   it("rejects recovery when only the Flow start step changes", async () => {
     const { app } = await fixture();
     const build = (startAtSecond: boolean) => {
@@ -2556,7 +2730,7 @@ describe("Execution observation", () => {
     const now = new Date().toISOString();
     await writer.create(
       {
-        schemaVersion: "pragma.execution/v5",
+        schemaVersion: "pragma.execution/v6",
         executionId: "cross-process",
         version: 0,
         kind: "flow",

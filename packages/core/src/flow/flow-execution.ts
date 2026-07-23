@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import {
   HumanInteractionResponseSchema,
+  InvocationHandoffSchema,
   isFinalExecutionStatus as isFinal,
   type ExecutionRecord,
   type HumanInteractionRequest,
@@ -19,6 +20,7 @@ import type {
   ExpertAgentUserQuestion,
 } from "../tools/managed-tool.ts";
 import { ExecutionController, runExpertInvocation } from "../execution/expert-runner.ts";
+import { HandoffService, unwrapInvocationHandoff } from "../execution/handoff/handoff-service.ts";
 import {
   ContextResolutionService,
   closeExecutionContexts,
@@ -77,6 +79,7 @@ export class FlowExecutionManager {
     private readonly automaticHumanInteractionHandler?:
       | ExpertAgentAutomaticHumanInteractionHandler
       | undefined,
+    private readonly pragmaHome?: string | undefined,
   ) {}
 
   async start<TInput>(
@@ -90,7 +93,7 @@ export class FlowExecutionManager {
     await validateFlowRuntimeConfiguration(flow, this.runtimes, runtimeId);
     const now = new Date().toISOString();
     const record: ExecutionRecord = {
-      schemaVersion: "pragma.execution/v5",
+      schemaVersion: "pragma.execution/v6",
       executionId,
       version: 0,
       kind: "flow",
@@ -233,6 +236,12 @@ export class FlowExecutionManager {
     controller: ExecutionController,
     runtime?: string,
   ): Promise<void> {
+    const handoffs = new HandoffService({
+      executionId,
+      executions: this.executions,
+      ...(this.pragmaHome === undefined ? {} : { pragmaHome: this.pragmaHome }),
+    });
+    await handoffs.beginInvocationAttempt(executionId, `flow-execution-attempt:${randomUUID()}`);
     const root = (await this.executions.getInvocation(executionId, executionId))!;
     await this.executions.commit({
       commitId: randomUUID(),
@@ -252,7 +261,9 @@ export class FlowExecutionManager {
         store: this.executions,
         runtimes: this.runtimes,
         runtime,
+        handoffs,
       });
+      const handoff = await handoffs.normalize(executionId, output);
       const usage = controller.getUsage();
       const closure = await prepareExecutionContextClosure(this.executions, executionId);
       await this.executions.commit({
@@ -260,11 +271,11 @@ export class FlowExecutionManager {
         executionId,
         executionPatch: {
           status: "succeeded",
-          output,
+          output: handoff,
           ...(usage === undefined ? {} : { usage }),
         },
         invocationPatches: [
-          { invocationId: root.invocationId, patch: { status: "succeeded", output } },
+          { invocationId: root.invocationId, patch: { status: "succeeded", output: handoff } },
         ],
         contextPatches: closure.contextPatches,
         agentPatches: closure.agentPatches,
@@ -273,9 +284,9 @@ export class FlowExecutionManager {
           {
             invocationId: root.invocationId,
             type: "invocation.succeeded",
-            data: { output },
+            data: { output: handoff },
           },
-          { invocationId: executionId, type: "execution.succeeded", data: { output } },
+          { invocationId: executionId, type: "execution.succeeded", data: { output: handoff } },
         ],
       });
     } catch (error) {
@@ -360,6 +371,7 @@ async function runFlow(options: {
   readonly runtimes: RuntimeResolver;
   readonly runtime?: string | undefined;
   readonly runtimeOverride?: string | undefined;
+  readonly handoffs: HandoffService;
 }): Promise<unknown> {
   const deadline = await ensureFlowDeadline(options);
   const timeoutReason = `Flow ${options.flow.id} timed out.`;
@@ -421,7 +433,7 @@ async function runFlow(options: {
       }
       let output: unknown;
       if (invocation.status === "succeeded") {
-        output = invocation.output;
+        output = readStepInvocationOutput(step, invocation);
       } else {
         output = await runStep(options, step, invocation, input);
       }
@@ -458,6 +470,7 @@ export async function runNestedFlowInvocation(options: {
   readonly store: ExecutionStore;
   readonly runtimes: RuntimeResolver;
   readonly runtime?: string | undefined;
+  readonly handoffs: HandoffService;
 }): Promise<unknown> {
   const runtimeId = (await options.runtimes.bind({ runtimeId: options.runtime })).binding.runtimeId;
   await validateFlowRuntimeConfiguration(options.flow, options.runtimes, runtimeId);
@@ -515,6 +528,10 @@ async function runStep(
     }
     if ("kind" in step.definition && step.definition.kind === "flow") {
       await putStatus(options.store, options.executionId, invocation, "running");
+      await options.handoffs.beginInvocationAttempt(
+        invocation.invocationId,
+        `flow-step-attempt:${randomUUID()}`,
+      );
       options.controller.signalForInvocation(invocation.invocationId, options.flowInvocationId);
       const output = await runFlow({
         ...options,
@@ -525,15 +542,16 @@ async function runStep(
         runtimeOverride:
           ("runtime" in step.options ? step.options.runtime : undefined) ?? options.runtimeOverride,
       });
-      await putStatus(options.store, options.executionId, invocation, "succeeded", output);
-      return output;
+      const handoff = await options.handoffs.normalize(invocation.invocationId, output);
+      await putStatus(options.store, options.executionId, invocation, "succeeded", handoff);
+      return unwrapInvocationHandoff(handoff);
     }
     const expert = step.definition as ExpertDefinition;
     const context = await options.store.getContext(options.executionId, invocation.contextId);
     if (context === undefined) {
       throw new Error(`Runtime Context not found: ${invocation.contextId}.`);
     }
-    return await runExpertInvocation({
+    const handoff = await runExpertInvocation({
       executionId: options.executionId,
       invocationId: invocation.invocationId,
       parentInvocationId: options.flowInvocationId,
@@ -547,7 +565,9 @@ async function runStep(
       controller: options.controller,
       store: options.store,
       runtimes: options.runtimes,
+      handoffs: options.handoffs,
     });
+    return unwrapInvocationHandoff(InvocationHandoffSchema.parse(handoff));
   } catch (error) {
     const latest = await options.store.getInvocation(options.executionId, invocation.invocationId);
     if (latest !== undefined && !isFinal(latest.status)) {
@@ -562,6 +582,17 @@ async function runStep(
     }
     throw error;
   }
+}
+
+function readStepInvocationOutput(step: CompiledFlowStep, invocation: Invocation): unknown {
+  if (
+    "kind" in step.definition &&
+    (step.definition.kind === "task" || step.definition.kind === "human-task")
+  ) {
+    return invocation.output;
+  }
+
+  return unwrapInvocationHandoff(InvocationHandoffSchema.parse(invocation.output));
 }
 
 async function runHumanTask(
@@ -1412,7 +1443,9 @@ async function waitForResult(store: ExecutionStore, executionId: string): Promis
   while (true) {
     const record = await store.get(executionId);
     if (record === undefined) throw new Error(`Execution not found: ${executionId}`);
-    if (record.status === "succeeded") return record.output;
+    if (record.status === "succeeded") {
+      return record.output === undefined ? undefined : unwrapInvocationHandoff(record.output);
+    }
     if (record.status === "failed" || record.status === "cancelled")
       throw new Error(readErrorMessage(record.error) ?? record.status);
     await new Promise<void>((resolve) => setTimeout(resolve, 10));

@@ -148,6 +148,18 @@ export class PragmaPaths {
     return join(this.executionRoot(executionId), "contexts.json");
   }
 
+  executionHandoffsRoot(executionId: string): string {
+    return join(this.executionRoot(executionId), "handoffs");
+  }
+
+  executionHandoffsManifest(executionId: string): string {
+    return join(this.executionHandoffsRoot(executionId), "manifest.json");
+  }
+
+  executionGeneratedHandoffsRoot(executionId: string): string {
+    return join(this.executionHandoffsRoot(executionId), "generated");
+  }
+
   executionEvents(executionId: string): string {
     return join(this.executionRoot(executionId), "events.jsonl");
   }

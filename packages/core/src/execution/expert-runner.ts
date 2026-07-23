@@ -1,12 +1,15 @@
 import { randomUUID } from "node:crypto";
 
 import {
+  AgentMessageSchema,
+  InvocationHandoffSchema,
   isTerminalExecutionStatus,
   type AgentInstance,
   type AgentMessage,
   type AgentMessageUsage,
   type ExpertAgentStreamEvent,
   type Invocation,
+  type InvocationHandoff,
   type RuntimeContextRecord,
   type RuntimeEnvironmentBinding,
   type RuntimeContextSnapshot as SharedRuntimeContextSnapshot,
@@ -64,6 +67,7 @@ import { projectRuntimeOutput } from "./execution-output.ts";
 import { RuntimeMessageAccumulator } from "./runtime-message-accumulator.ts";
 import { requireInvocationContextOrigin } from "./runtime-context-record.ts";
 import { RuntimeSessionPool, type RuntimeSessionIdentity } from "./runtime-session-pool.ts";
+import { HandoffService, unwrapInvocationHandoff } from "./handoff/handoff-service.ts";
 
 export type RuntimeContextSnapshot = SharedRuntimeContextSnapshot;
 
@@ -606,6 +610,7 @@ export interface RunExpertInvocationOptions {
   readonly readContextScope?: ContextResolutionScopeReader | undefined;
   readonly orchestrator?: ExpertOrchestrator | undefined;
   readonly delegationPermit?: DelegationPermit | undefined;
+  readonly handoffs?: HandoffService | undefined;
 }
 
 export async function runExpertInvocation(options: RunExpertInvocationOptions): Promise<unknown> {
@@ -613,8 +618,16 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
   const nativeExpert = isExpertTeam(options.expert) ? options.expert.coordinator : options.expert;
   const depth = options.depth ?? 0;
   const teamTools = team === undefined ? [] : createTeamDelegationTools(team, nativeExpert.id);
-  const executableExpert =
+  const delegatedExpert =
     team === undefined ? nativeExpert : withTeamDelegationTools(nativeExpert, teamTools, team);
+  const handoffs =
+    options.handoffs ??
+    new HandoffService({
+      executionId: options.executionId,
+      executions: options.store,
+      pragmaHome: nativeExpert.pragmaHome,
+    });
+  const executableExpert = handoffs.withCapabilities(delegatedExpert);
   const delegation =
     teamTools.length === 0
       ? team === undefined
@@ -653,6 +666,7 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
     options.controller.addUsage(invocation.usage);
     return invocation.output;
   }
+  await handoffs.beginInvocationAttempt(options.invocationId, `expert-attempt:${randomUUID()}`);
   options.controller.addUsage(invocation.usage);
   await options.store.commit({
     commitId: `invocation-started:${options.invocationId}`,
@@ -792,6 +806,7 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
         orchestrator !== undefined &&
         (await orchestrator.hasOwnedUnjoined(options.invocationId, options.context.contextId))
       ) {
+        await appendInvocationFinalMessage(options, turn.runId, turn.finalMessage, undefined);
         await options.store.commit({
           commitId: randomUUID(),
           executionId: options.executionId,
@@ -842,6 +857,8 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
         continue;
       }
 
+      const handoff = await handoffs.normalize(options.invocationId, turn.output);
+      await appendInvocationFinalMessage(options, turn.runId, turn.finalMessage, handoff);
       await options.store.commit({
         commitId: `invocation-succeeded:${options.invocationId}`,
         executionId: options.executionId,
@@ -850,7 +867,7 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
             invocationId: options.invocationId,
             patch: {
               status: "succeeded",
-              output: turn.output,
+              output: handoff,
               ...(invocationUsage === undefined ? {} : { usage: invocationUsage }),
             },
           },
@@ -860,13 +877,13 @@ export async function runExpertInvocation(options: RunExpertInvocationOptions): 
             invocationId: options.invocationId,
             type: "invocation.succeeded",
             data: {
-              output: turn.output,
+              output: handoff,
               ...(invocationUsage === undefined ? {} : { usage: invocationUsage }),
             },
           },
         ],
       });
-      return turn.output;
+      return handoff;
     }
   } catch (error) {
     let failure = error;
@@ -933,6 +950,7 @@ async function executeAgentJob(
     depth: await readAgentDepth(parent.store, parent.executionId, job.agent),
     orchestrator,
     delegationPermit: job.permit,
+    handoffs: parent.handoffs,
     ...(parent.runtimeByExpert === undefined ? {} : { runtimeByExpert: parent.runtimeByExpert }),
     ...(parent.readContextScope === undefined ? {} : { readContextScope: parent.readContextScope }),
     ...(parent.persistContext === undefined ? {} : { persistContext: parent.persistContext }),
@@ -1055,6 +1073,17 @@ async function invokeResourceFromExpert(
       events: [{ invocationId, type: "invocation.started", data: { resourceCall: true } }],
     });
     try {
+      const handoffService =
+        options.handoffs ??
+        new HandoffService({
+          executionId: options.executionId,
+          executions: options.store,
+          pragmaHome: caller.pragmaHome,
+        });
+      await handoffService.beginInvocationAttempt(
+        invocationId,
+        `flow-resource-attempt:${randomUUID()}`,
+      );
       const output = await runNestedFlowInvocation({
         flow: target,
         executionId: options.executionId,
@@ -1065,14 +1094,16 @@ async function invokeResourceFromExpert(
         store: options.store,
         runtimes: options.runtimes,
         runtime: parentRuntimeId,
+        handoffs: handoffService,
       });
+      const handoff = await handoffService.normalize(invocationId, output);
       await options.store.commit({
         commitId: `resource-call-succeeded:${invocationId}`,
         executionId: options.executionId,
-        invocationPatches: [{ invocationId, patch: { status: "succeeded", output } }],
-        events: [{ invocationId, type: "invocation.succeeded", data: { output } }],
+        invocationPatches: [{ invocationId, patch: { status: "succeeded", output: handoff } }],
+        events: [{ invocationId, type: "invocation.succeeded", data: { output: handoff } }],
       });
-      return output;
+      return unwrapInvocationHandoff(handoff);
     } catch (error) {
       await options.store.commit({
         commitId: `resource-call-failed:${invocationId}`,
@@ -1158,23 +1189,30 @@ async function invokeResourceFromExpert(
     ],
   });
   try {
-    return await runExpertInvocation({
-      executionId: options.executionId,
-      invocationId,
-      parentInvocationId: options.invocationId,
-      expert: target,
-      prompt: readResourcePrompt(request.input),
-      owner: options.owner,
-      context: contextResolution.context,
-      controller: options.controller,
-      store: options.store,
-      runtimes: options.runtimes,
-      depth: depth + 1,
-      ...(options.readContextScope === undefined
-        ? {}
-        : { readContextScope: options.readContextScope }),
-      ...(options.persistContext === undefined ? {} : { persistContext: options.persistContext }),
-    });
+    return unwrapInvocationHandoff(
+      InvocationHandoffSchema.parse(
+        await runExpertInvocation({
+          executionId: options.executionId,
+          invocationId,
+          parentInvocationId: options.invocationId,
+          expert: target,
+          prompt: readResourcePrompt(request.input),
+          owner: options.owner,
+          context: contextResolution.context,
+          controller: options.controller,
+          store: options.store,
+          runtimes: options.runtimes,
+          depth: depth + 1,
+          handoffs: options.handoffs,
+          ...(options.readContextScope === undefined
+            ? {}
+            : { readContextScope: options.readContextScope }),
+          ...(options.persistContext === undefined
+            ? {}
+            : { persistContext: options.persistContext }),
+        }),
+      ),
+    );
   } finally {
     unlinkAbort();
   }
@@ -1234,7 +1272,12 @@ async function submitRuntimeTurn(options: {
   ) => Promise<ExpertAgentHumanResponse>;
   readonly modelSelection?: RuntimeModelSelection | undefined;
   readonly runtimeSource: { readonly id: string; readonly kind: string };
-}): Promise<{ readonly output: unknown; readonly usage?: AgentMessageUsage | undefined }> {
+}): Promise<{
+  readonly runId: string;
+  readonly output: unknown;
+  readonly usage?: AgentMessageUsage | undefined;
+  readonly finalMessage?: AgentMessage | undefined;
+}> {
   const handle = options.session.submit({
     runId: options.runId,
     query: options.query,
@@ -1259,6 +1302,7 @@ async function submitRuntimeTurn(options: {
     return created;
   };
   const rootMessageAccumulator = accumulatorFor(options.runId);
+  let completedRootAssistant: AgentMessage | undefined;
   const liveBus = getExecutionLiveBus(options.options.store);
   const drain = (async () => {
     for await (const event of handle.events) {
@@ -1269,6 +1313,14 @@ async function submitRuntimeTurn(options: {
       });
       if (output !== undefined) liveBus.publish(options.options.executionId, output);
       for (const message of accumulatorFor(event.runId).consume(event)) {
+        if (
+          event.runId === options.runId &&
+          message.role === "assistant" &&
+          message.stopReason !== "toolUse"
+        ) {
+          completedRootAssistant = message;
+          continue;
+        }
         await options.options.store.appendEvent(
           options.options.executionId,
           options.options.invocationId,
@@ -1282,7 +1334,7 @@ async function submitRuntimeTurn(options: {
           `invocation-message:${event.eventId}:${message.timestamp}`,
         );
       }
-      if (!isLiveOnlyRuntimeEvent(event)) {
+      if (!isLiveOnlyRuntimeEvent(event) && event.type !== "message.completed") {
         await options.options.store.appendEvent(
           options.options.executionId,
           options.options.invocationId,
@@ -1297,26 +1349,14 @@ async function submitRuntimeTurn(options: {
     const result = await handle.result;
     await drain;
     const output = result.result.output;
-    const finalMessage = rootMessageAccumulator.complete(output, result.result.usage);
-    if (finalMessage !== undefined) {
-      await options.options.store.appendEvent(
-        options.options.executionId,
-        options.options.invocationId,
-        "invocation.message.appended",
-        {
-          message: finalMessage,
-          runId: options.runId,
-          source: {
-            kind: "agent",
-            runId: options.runId,
-            agentId: options.invocation.executorId,
-            path: [],
-          },
-        },
-        `invocation-final-message:${options.runId}`,
-      );
-    }
-    return { output, usage: result.result.usage };
+    const finalMessage =
+      completedRootAssistant ?? rootMessageAccumulator.complete(output, result.result.usage);
+    return {
+      runId: options.runId,
+      output,
+      usage: result.result.usage,
+      ...(finalMessage === undefined ? {} : { finalMessage }),
+    };
   } finally {
     await drain.catch(() => undefined);
     options.options.controller.unregisterRuntimeSubmission(
@@ -1393,6 +1433,52 @@ function readExpertDelegationDefinition(expert: Expert): AgentDelegationDefiniti
     throw new Error(`Expert ${expert.id} may not spawn itself.`);
   }
   return definition;
+}
+
+async function appendInvocationFinalMessage(
+  options: RunExpertInvocationOptions,
+  runId: string,
+  message: AgentMessage | undefined,
+  handoff: InvocationHandoff | undefined,
+): Promise<void> {
+  if (message === undefined) return;
+  const persisted =
+    handoff?.type === "context" && message.role === "assistant"
+      ? AgentMessageSchema.parse({
+          ...message,
+          content: [
+            ...message.content.filter((item) => item.type !== "text"),
+            {
+              type: "text",
+              text: [
+                handoff.summary,
+                "",
+                "Full output is available through Context System:",
+                ...handoff.contexts.map(
+                  (context) =>
+                    `- ${context.namespace}/${context.id} (${context.sizeBytes} bytes, ${context.mediaType})`,
+                ),
+              ].join("\n"),
+            },
+          ],
+        })
+      : message;
+  await options.store.appendEvent(
+    options.executionId,
+    options.invocationId,
+    "invocation.message.appended",
+    {
+      message: persisted,
+      runId,
+      source: {
+        kind: "agent",
+        runId,
+        agentId: options.expert.id,
+        path: [],
+      },
+    },
+    `invocation-final-message:${runId}`,
+  );
 }
 
 async function appendUserMessage(

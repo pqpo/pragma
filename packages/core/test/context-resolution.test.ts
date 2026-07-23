@@ -215,7 +215,7 @@ async function createFixture(options: { readonly closeFirst?: boolean } = {}) {
   const expert = { id: "expert", version: "1.0.0" };
   await store.create(
     {
-      schemaVersion: "pragma.execution/v5",
+      schemaVersion: "pragma.execution/v6",
       executionId: "execution",
       version: 0,
       kind: "flow",

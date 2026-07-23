@@ -14,7 +14,7 @@ import type {
   PromptRequest,
   RuntimeContextRecord,
 } from "@pragma/shared";
-import { ExpertMessageHistorySchema } from "@pragma/shared";
+import { ExpertMessageHistorySchema, InvocationHandoffSchema } from "@pragma/shared";
 import { isFinalExecutionStatus as isFinal } from "@pragma/shared";
 
 import type { ExpertDefinition } from "../agent/expert-team.ts";
@@ -30,6 +30,7 @@ import {
   persistHumanInteractionResponse,
   runExpertInvocation,
 } from "./expert-runner.ts";
+import { HandoffService, unwrapInvocationHandoff } from "./handoff/handoff-service.ts";
 import { RuntimeSessionPool } from "./runtime-session-pool.ts";
 import type { ExecutionStore } from "./execution-store.ts";
 import {
@@ -97,6 +98,7 @@ export interface ExpertSessionManagerDependencies {
   readonly sessions: ExpertSessionStore;
   readonly executions: ExecutionStore;
   readonly runtimes: RuntimeResolver;
+  readonly pragmaHome?: string | undefined;
   readonly automaticHumanInteractionHandler?:
     | ExpertAgentAutomaticHumanInteractionHandler
     | undefined;
@@ -380,7 +382,7 @@ class ExpertSessionImpl implements ExpertSession {
     const modelSelection = options.modelSelection;
     const definitionKind = isExpertTeam(this.expert) ? "expert-team" : "expert";
     const execution: ExecutionRecord = {
-      schemaVersion: "pragma.execution/v5",
+      schemaVersion: "pragma.execution/v6",
       executionId: id,
       version: 0,
       kind: "expert-turn",
@@ -835,31 +837,41 @@ class ExpertSessionImpl implements ExpertSession {
         automaticHumanInteractionHandler: this.dependencies.automaticHumanInteractionHandler,
       },
     );
+    const handoffs = new HandoffService({
+      executionId: prompt.executionId,
+      executions: this.dependencies.executions,
+      ...(this.dependencies.pragmaHome === undefined
+        ? {}
+        : { pragmaHome: this.dependencies.pragmaHome }),
+    });
     this.controller = controller;
     let status: "succeeded" | "failed" | "cancelled" = "succeeded";
-    let output: unknown;
+    let output: ReturnType<typeof InvocationHandoffSchema.parse> | undefined;
     let error: unknown;
     try {
-      output = await runExpertInvocation({
-        executionId: prompt.executionId,
-        invocationId: prompt.executionId,
-        expert: this.expert,
-        prompt:
-          this.recoveredExecutionId === prompt.executionId
-            ? recoveryPrompt(prompt.content)
-            : prompt.content,
-        owner: { type: "expert-session", ownerId: this.sessionId },
-        context: rootContext,
-        controller,
-        store: this.dependencies.executions,
-        runtimes: this.dependencies.runtimes,
-        ...(this.recoveredExecutionId === prompt.executionId
-          ? { runtimeRunId: `${prompt.executionId}:recovery:${randomUUID()}` }
-          : {}),
-        ...(prompt.modelSelection === undefined ? {} : { modelSelection: prompt.modelSelection }),
-        persistContext: async (context) => await this.persistRuntimeContext(context),
-        readContextScope: async () => await this.readRuntimeContextScope(),
-      });
+      output = InvocationHandoffSchema.parse(
+        await runExpertInvocation({
+          executionId: prompt.executionId,
+          invocationId: prompt.executionId,
+          expert: this.expert,
+          prompt:
+            this.recoveredExecutionId === prompt.executionId
+              ? recoveryPrompt(prompt.content)
+              : prompt.content,
+          owner: { type: "expert-session", ownerId: this.sessionId },
+          context: rootContext,
+          controller,
+          store: this.dependencies.executions,
+          runtimes: this.dependencies.runtimes,
+          handoffs,
+          ...(this.recoveredExecutionId === prompt.executionId
+            ? { runtimeRunId: `${prompt.executionId}:recovery:${randomUUID()}` }
+            : {}),
+          ...(prompt.modelSelection === undefined ? {} : { modelSelection: prompt.modelSelection }),
+          persistContext: async (context) => await this.persistRuntimeContext(context),
+          readContextScope: async () => await this.readRuntimeContextScope(),
+        }),
+      );
     } catch (caught) {
       status = controller.isCancelled() ? "cancelled" : "failed";
       error = status === "cancelled" ? (controller.getCancellationReason() ?? caught) : caught;
@@ -1059,7 +1071,9 @@ async function waitForTerminalExecution(
 }
 
 function readExecutionResult(record: ExecutionRecord): unknown {
-  if (record.status === "succeeded") return record.output;
+  if (record.status === "succeeded") {
+    return record.output === undefined ? undefined : unwrapInvocationHandoff(record.output);
+  }
   throw new Error(
     record.error === undefined
       ? `Execution ${record.status}: ${record.executionId}`

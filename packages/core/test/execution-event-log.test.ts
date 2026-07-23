@@ -159,11 +159,14 @@ describe("Execution canonical event log", () => {
       commitId: "finish-root",
       executionId: "execution",
       expectedVersion: 0,
-      executionPatch: { status: "succeeded" as const, output: 42 },
+      executionPatch: {
+        status: "succeeded" as const,
+        output: { type: "inline" as const, value: 42 },
+      },
       invocationPatches: [
         {
           invocationId: "root",
-          patch: { status: "succeeded" as const, output: 42 },
+          patch: { status: "succeeded" as const, output: { type: "inline", value: 42 } },
         },
       ],
       events: [
@@ -178,8 +181,15 @@ describe("Execution canonical event log", () => {
 
     const committed = await store.commit(request);
     const retried = await store.commit(request);
-    expect(committed.execution).toMatchObject({ status: "succeeded", output: 42, version: 1 });
-    expect(committed.invocations[0]).toMatchObject({ status: "succeeded", output: 42 });
+    expect(committed.execution).toMatchObject({
+      status: "succeeded",
+      output: { type: "inline", value: 42 },
+      version: 1,
+    });
+    expect(committed.invocations[0]).toMatchObject({
+      status: "succeeded",
+      output: { type: "inline", value: 42 },
+    });
     expect(committed.events[0]?.cursor.sequence).toBe(1);
     expect(retried.events[0]?.cursor.sequence).toBe(1);
     expect((await store.get("execution"))?.version).toBe(1);
@@ -195,7 +205,7 @@ describe("Execution canonical event log", () => {
     await store.commit({
       commitId: "finish",
       executionId: "execution",
-      executionPatch: { status: "succeeded", output: 42 },
+      executionPatch: { status: "succeeded", output: { type: "inline", value: 42 } },
       invocationPatches: [{ invocationId: "root", patch: { status: "succeeded", output: 42 } }],
     });
 
@@ -209,7 +219,7 @@ describe("Execution canonical event log", () => {
     ).rejects.toBeInstanceOf(ExecutionFinalStatusConflictError);
     await expect(store.get("execution")).resolves.toMatchObject({
       status: "succeeded",
-      output: 42,
+      output: { type: "inline", value: 42 },
     });
     await expect(store.getInvocation("execution", "root")).resolves.toMatchObject({
       status: "succeeded",
@@ -273,24 +283,31 @@ describe("Execution canonical event log", () => {
       executionId: "execution",
       invocationId: "root",
       type: "invocation.succeeded",
-      data: { output: "recovered" },
+      data: { output: { type: "inline", value: "recovered" } },
       occurredAt,
     };
     await writeFile(
       paths.executionTransaction("execution"),
       `${JSON.stringify({
-        schemaVersion: "pragma.execution-transaction/v6",
+        schemaVersion: "pragma.execution-transaction/v7",
         commitId: "recovered-commit",
         signature: "a".repeat(64),
         execution: {
           ...execution,
           version: 1,
           status: "succeeded",
-          output: "recovered",
+          output: { type: "inline", value: "recovered" },
           lastAppliedSequence: 1,
           updatedAt: occurredAt,
         },
-        invocations: [{ ...root, status: "succeeded", output: "recovered", updatedAt: occurredAt }],
+        invocations: [
+          {
+            ...root,
+            status: "succeeded",
+            output: { type: "inline", value: "recovered" },
+            updatedAt: occurredAt,
+          },
+        ],
         agents: [],
         contexts: [],
         events: [event],
@@ -301,7 +318,7 @@ describe("Execution canonical event log", () => {
 
     await expect(store.get("execution")).resolves.toMatchObject({
       status: "succeeded",
-      output: "recovered",
+      output: { type: "inline", value: "recovered" },
       lastAppliedSequence: 1,
     });
     await expect(store.readEvents("execution")).resolves.toMatchObject([
@@ -666,7 +683,7 @@ async function fixture() {
   const timestamp = new Date().toISOString();
   const definition = { id: "flow", version: "1.0.0", kind: "flow" as const };
   const execution: ExecutionRecord = {
-    schemaVersion: "pragma.execution/v5",
+    schemaVersion: "pragma.execution/v6",
     executionId: "execution",
     version: 0,
     kind: "flow",

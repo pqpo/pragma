@@ -129,7 +129,7 @@ const ExecutionCommitRecordSchema = z.object({
 });
 
 const ExecutionCommitJournalSchema = z.object({
-  schemaVersion: z.literal("pragma.execution-transaction/v6"),
+  schemaVersion: z.literal("pragma.execution-transaction/v7"),
   commitId: z.string().min(1),
   signature: z.string().length(64),
   execution: ExecutionRecordSchema,
@@ -279,14 +279,14 @@ export function createFileExecutionStore(
         const nextExecution = ExecutionRecordSchema.parse({
           ...current,
           ...request.executionPatch,
-          schemaVersion: "pragma.execution/v5",
+          schemaVersion: "pragma.execution/v6",
           executionId: request.executionId,
           version: current.version + 1,
           lastAppliedSequence: lastSequence,
           updatedAt: now,
         });
         const journal = ExecutionCommitJournalSchema.parse({
-          schemaVersion: "pragma.execution-transaction/v6",
+          schemaVersion: "pragma.execution-transaction/v7",
           commitId: request.commitId,
           signature,
           execution: nextExecution,

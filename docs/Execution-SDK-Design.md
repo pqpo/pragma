@@ -32,3 +32,15 @@ Expert 恢复只恢复会话上下文，不重启 interrupted Turn。Flow recove
 Invocation，并跳过已经成功的节点。`interrupted` 对普通提交是不可覆盖终态；只有持有当前
 Execution recovery claim 的恢复提交可以将 Flow 自身及未完成子 Invocation 重新置为 queued/running，
 避免迟到的 Runtime 事件把已中断任务意外复活。
+
+## Execution Handoff
+
+Expert、ExpertTeam 成员和 Flow Expert step 的输出统一经过 Execution Handoff。序列化后不超过
+32 KiB 的结果以内联值交接；更大的 UTF-8 文本或 JSON 写入
+`state/executions/<executionId>/handoffs/`，Invocation、Execution event 和父 Agent continuation
+只保存摘要与 `pragma.handoff` Context 引用。接收 Agent 使用现有 Context list、read 和 search
+工具按需读取。
+
+Agent 已经在 workspace 中生成大型 UTF-8 文件时，使用 `register_handoff_file` 注册受控相对路径，
+不复制文件。Handoff 属于 Execution 可恢复状态，不是已发布 Artifact。Flow Task 和 HumanTask 的
+结构化内部数据不自动外置，Flow 最终结果仍应用同一 Handoff 规则。

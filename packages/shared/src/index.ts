@@ -11,5 +11,6 @@ export {
 export * from "./stream-event.schema.ts";
 export * from "./tool-permission.schema.ts";
 export * from "./execution/execution.schema.ts";
+export * from "./execution/handoff.schema.ts";
 export * from "./execution/expert-session.schema.ts";
 export * from "./execution/human-interaction.schema.ts";

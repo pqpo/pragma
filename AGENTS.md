@@ -252,6 +252,9 @@ Server 与 Agent 的关系：
 - 权威数据存放在 `~/.pragma/data/`，可恢复运行状态存放在 `state/`，有界诊断归档存放在
   `archives/`，可重建内容存放在 `cache/`；`tmp/` 与 `trash/` 使用短期保留策略。
 - ExpertSession、Execution 与 Runtime Session 分别存放在 `~/.pragma/state/expert-sessions/`、`~/.pragma/state/executions/` 和 `~/.pragma/state/runtime-sessions/`。
+- Execution 大输出交接文件和 manifest 存放在
+  `~/.pragma/state/executions/<executionId>/handoffs/`，作为可恢复 Execution 状态随 owner 生命周期清理；
+  workspace 文件交接只保存受控相对路径引用，不复制文件。
 - Project Revision 只保存不可变 manifest 和 Merkle `snapshotHash`；文件实体全局去重到
   `~/.pragma/data/objects/sha256/`，所有 Revision 在 Project 删除前都是强引用根。
 - Agent 插件按 package fingerprint 全局缓存到 `~/.pragma/cache/plugins/sha256/`；

@@ -6,7 +6,7 @@ import type { Expert } from "./expert-agent.ts";
 import { isExpertTeam, type ExpertDefinition } from "./expert-team.ts";
 
 export function describeExpertExecutionDefinition(definition: ExpertDefinition): unknown {
-  return describeDefinition(definition, new Set<string>());
+  return JSON.parse(JSON.stringify(describeDefinition(definition, new Set<string>()))) as unknown;
 }
 
 export function fingerprintExpertExecutionDefinition(definition: ExpertDefinition): string {

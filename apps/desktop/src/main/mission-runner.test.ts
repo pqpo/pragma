@@ -1160,7 +1160,7 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
     });
     await executions.create(
       {
-        schemaVersion: "pragma.execution/v5",
+        schemaVersion: "pragma.execution/v6",
         executionId,
         version: 0,
         kind: "expert-turn",
@@ -1364,7 +1364,7 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
     );
   });
 
-  it("projects and truncates replies without copying assistant text into messages.jsonl", async () => {
+  it("projects oversized replies as Handoff references without copying full text", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-mission-reply-"));
     temporaryPaths.push(root);
     const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
@@ -1425,11 +1425,14 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
     const reply = chat.entries.filter((entry) => entry.kind === "assistant").at(-1);
     expect(reply?.kind).toBe("assistant");
     if (reply?.kind !== "assistant") throw new Error("Expected an assistant reply.");
-    expect(reply.content).toHaveLength(200_000);
-    expect(reply.content.endsWith("…")).toBe(true);
+    expect(reply.content.length).toBeLessThan(10_000);
+    expect(reply.content).toContain("[Handoff summary truncated.]");
+    expect(reply.content).toContain("Full output is available through Context System:");
+    expect(reply.content).toContain("pragma.handoff/");
+    expect(reply.content).not.toContain("x".repeat(5_000));
     const timeline = await readFile(join(root, "missions", mission.id, "messages.jsonl"), "utf8");
     expect(timeline).not.toContain('"kind":"assistant"');
-    expect(timeline).not.toContain("x".repeat(1_000));
+    expect(timeline).not.toContain("x".repeat(5_000));
   });
 });
 

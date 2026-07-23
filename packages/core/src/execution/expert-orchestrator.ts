@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import {
+  InvocationHandoffSchema,
   isTerminalExecutionStatus,
   type AgentInstance,
   type Invocation,
@@ -873,11 +874,18 @@ function collectDescendantInvocationIds(
 }
 
 function summarizeInvocation(invocation: Invocation): unknown {
+  const handoff = InvocationHandoffSchema.safeParse(invocation.output);
   return {
     agentId: invocation.agentId,
     invocationId: invocation.invocationId,
     status: invocation.status,
-    ...(invocation.output === undefined ? {} : { output: invocation.output }),
+    ...(handoff.success
+      ? handoff.data.type === "inline"
+        ? { output: handoff.data.value }
+        : { handoff: handoff.data }
+      : invocation.output === undefined
+        ? {}
+        : { output: invocation.output }),
     ...(invocation.error === undefined ? {} : { error: invocation.error }),
     ...(invocation.usage === undefined ? {} : { usage: invocation.usage }),
   };

@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { AgentMessageSchema, AgentMessageUsageSchema } from "../agent-message.schema.ts";
 import { ExpertAgentStreamSourceSchema } from "../stream-event.schema.ts";
+import { InvocationHandoffSchema } from "./handoff.schema.ts";
 
 export const ExecutionStatusSchema = z.enum([
   "queued",
@@ -206,7 +207,7 @@ export const ExecutionOutputItemSchema = z.object({
 });
 
 export const ExecutionRecordSchema = z.object({
-  schemaVersion: z.literal("pragma.execution/v5"),
+  schemaVersion: z.literal("pragma.execution/v6"),
   executionId: z.string().min(1),
   version: z.number().int().nonnegative(),
   kind: ExecutionKindSchema,
@@ -215,7 +216,7 @@ export const ExecutionRecordSchema = z.object({
   status: ExecutionStatusSchema,
   input: z.unknown(),
   state: z.record(z.string(), z.unknown()).default({}),
-  output: z.unknown().optional(),
+  output: InvocationHandoffSchema.optional(),
   usage: AgentMessageUsageSchema.optional(),
   error: z.unknown().optional(),
   lastAppliedSequence: z.number().int().nonnegative(),

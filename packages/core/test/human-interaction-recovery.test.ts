@@ -24,9 +24,7 @@ afterEach(async () => {
   await Promise.all(
     tempDirs
       .splice(0)
-      .map((dir) =>
-        rm(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }),
-      ),
+      .map((dir) => rm(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 })),
   );
 });
 
@@ -74,9 +72,9 @@ describe("ExpertSession human interaction recovery", () => {
       "utf8",
     );
 
-    await expect(
-      sessions.claimLease("stale-lease-session", "new-owner", 30_000),
-    ).resolves.toBe(true);
+    await expect(sessions.claimLease("stale-lease-session", "new-owner", 30_000)).resolves.toBe(
+      true,
+    );
     await sessions.releaseLease("stale-lease-session", "new-owner");
   });
 
@@ -205,7 +203,7 @@ describe("ExpertSession human interaction recovery", () => {
     });
     await executions.create(
       {
-        schemaVersion: "pragma.execution/v5",
+        schemaVersion: "pragma.execution/v6",
         executionId,
         version: 0,
         kind: "expert-turn",

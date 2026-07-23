@@ -64,6 +64,10 @@ Invocation 创建。Snapshot 只保存 `systemSessionId` 与 `RuntimeSessionRef`
 子 Invocation 都是可收集终态，不会自动使父 Invocation 失败。只有全部直属任务被 join 后父 Invocation
 才能成功，因此不会依赖模型记住调用 wait。
 
+Invocation 输出通过 Core 内部的 Execution Handoff 模块进入 `inline` 或 `context` 交接。大型输出和
+已注册 workspace 文件以 `pragma.handoff` Context item 暴露；`wait_experts` 和自动续跑只传摘要与引用。
+Handoff Context Store 是 Execution-scoped 动态 overlay，不属于 Expert 定义，也不通过 Plugin 可选安装。
+
 ## Dispatcher 与通知边界
 
 当前 Core 是进程内异步执行：Invocation 可靠落盘后由 `ExpertOrchestrator` 调度，不恢复旧
