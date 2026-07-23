@@ -285,6 +285,8 @@ describe("Flow editor canvas", () => {
     expect(html.match(/class="flow-variable-chip"/g)).toHaveLength(2);
     expect(html).not.toContain("<textarea");
     expect(html).toContain('contentEditable="true"');
+    expect(html).toContain('<div class="flow-inspector-field" role="group"');
+    expect(html).not.toContain('<label class="flow-inspector-field"><span>Prompt</span>');
   });
 
   it("merges adjacent prompt text while preserving inline variable order", () => {

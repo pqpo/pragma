@@ -58,6 +58,8 @@ import {
 import {
   useCallback,
   useEffect,
+  useId,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -1347,7 +1349,9 @@ export function PromptTemplateEditor(props: {
   readonly onChange: (value: PragmaFlowPrompt) => void;
 }) {
   const { t } = useTranslation("studio");
+  const promptLabelId = useId();
   const prompt = props.value ?? { segments: [{ text: "" }] };
+  const initialPromptRef = useRef(prompt);
   const editorRef = useRef<HTMLDivElement>(null);
   const selectionRef = useRef<Range | null>(null);
   const [variableMenuOpen, setVariableMenuOpen] = useState(false);
@@ -1359,6 +1363,29 @@ export function PromptTemplateEditor(props: {
   const promptIsEmpty = prompt.segments.every(
     (segment) => "text" in segment && segment.text.length === 0,
   );
+
+  useLayoutEffect(() => {
+    const editor = editorRef.current;
+    if (editor === null || promptSegmentsEqual(promptSegmentsFromEditor(editor), prompt.segments)) {
+      return;
+    }
+    const restoreFocus = document.activeElement === editor;
+    replacePromptEditorContents(editor, prompt.segments, {
+      variableLabel: (variable) => variableLabel(props.flow, variable),
+      variableIsOptional: (variable) => variableIsOptional(props.flow, props.stepId, variable),
+      optionalLabel: t("optionalVariable"),
+      removeLabel: (variable) =>
+        t("removeVariable", {
+          variable: variableLabel(props.flow, variable),
+        }),
+    });
+    selectionRef.current = null;
+    if (restoreFocus) {
+      const range = restoreEditorSelection(editor, null);
+      setBrowserSelection(range);
+      selectionRef.current = range.cloneRange();
+    }
+  }, [prompt.segments, props.flow, props.stepId, t]);
 
   const rememberSelection = () => {
     const editor = editorRef.current;
@@ -1399,10 +1426,12 @@ export function PromptTemplateEditor(props: {
     if (editor === null) return;
     const range = restoreEditorSelection(editor, selectionRef.current);
     range.deleteContents();
-    const token = document.createElement("span");
-    token.contentEditable = "false";
-    token.dataset.flowVariable = encodeFlowVariable(option.variable);
-    token.textContent = option.label;
+    const token = createFlowVariableChip(option.variable, {
+      label: option.label,
+      optional: option.optional,
+      optionalLabel: t("optionalVariable"),
+      removeLabel: t("removeVariable", { variable: option.label }),
+    });
     range.insertNode(token);
     range.setStartAfter(token);
     range.collapse(true);
@@ -1449,7 +1478,8 @@ export function PromptTemplateEditor(props: {
   };
 
   return (
-    <InspectorField label={t("flowPrompt")}>
+    <div className="flow-inspector-field" role="group" aria-labelledby={promptLabelId}>
+      <span id={promptLabelId}>{t("flowPrompt")}</span>
       <div className="flow-prompt-composer">
         <div
           ref={editorRef}
@@ -1457,7 +1487,7 @@ export function PromptTemplateEditor(props: {
           contentEditable
           suppressContentEditableWarning
           role="textbox"
-          aria-label={t("flowPrompt")}
+          aria-labelledby={promptLabelId}
           aria-multiline="true"
           aria-expanded={variableMenuOpen}
           data-empty={promptIsEmpty ? "true" : "false"}
@@ -1466,6 +1496,23 @@ export function PromptTemplateEditor(props: {
           onInput={emitEditorValue}
           onKeyUp={rememberSelection}
           onMouseUp={rememberSelection}
+          onMouseDown={(event) => {
+            if (
+              event.target instanceof Element &&
+              event.target.closest("[data-flow-variable-remove]") !== null
+            ) {
+              event.preventDefault();
+            }
+          }}
+          onClick={(event) => {
+            if (!(event.target instanceof Element)) return;
+            const removeButton = event.target.closest("[data-flow-variable-remove]");
+            const chip = removeButton?.closest<HTMLElement>("[data-flow-variable]");
+            if (chip === undefined || chip === null) return;
+            chip.remove();
+            emitEditorValue();
+            requestAnimationFrame(() => editorRef.current?.focus());
+          }}
           onKeyDown={handleEditorKeyDown}
           onPaste={(event) => {
             event.preventDefault();
@@ -1473,7 +1520,7 @@ export function PromptTemplateEditor(props: {
             insertText(event.clipboardData.getData("text/plain"));
           }}
         >
-          {prompt.segments.map((segment, index) =>
+          {initialPromptRef.current.segments.map((segment, index) =>
             "text" in segment ? (
               <span key={`text-${index}`} data-flow-prompt-text className="flow-prompt-text">
                 {segment.text}
@@ -1491,17 +1538,10 @@ export function PromptTemplateEditor(props: {
                 ) : null}
                 <button
                   type="button"
+                  data-flow-variable-remove
                   aria-label={t("removeVariable", {
                     variable: variableLabel(props.flow, segment.variable),
                   })}
-                  onMouseDown={(event) => event.preventDefault()}
-                  onClick={() =>
-                    props.onChange({
-                      segments: normalizePromptSegments(
-                        prompt.segments.filter((_, currentIndex) => currentIndex !== index),
-                      ),
-                    })
-                  }
                 >
                   <X size={12} />
                 </button>
@@ -1547,7 +1587,7 @@ export function PromptTemplateEditor(props: {
           </div>
         ) : null}
       </div>
-    </InspectorField>
+    </div>
   );
 }
 
@@ -1578,6 +1618,74 @@ export function normalizePromptSegments(
     }
   }
   return normalized.length === 0 ? [{ text: "" }] : normalized;
+}
+
+function promptSegmentsEqual(
+  left: PragmaFlowPrompt["segments"],
+  right: PragmaFlowPrompt["segments"],
+): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function replacePromptEditorContents(
+  editor: HTMLElement,
+  segments: PragmaFlowPrompt["segments"],
+  labels: {
+    readonly variableLabel: (variable: PragmaFlowVariable) => string;
+    readonly variableIsOptional: (variable: PragmaFlowVariable) => boolean;
+    readonly optionalLabel: string;
+    readonly removeLabel: (variable: PragmaFlowVariable) => string;
+  },
+): void {
+  const nodes = segments.map((segment) => {
+    if ("text" in segment) {
+      const text = document.createElement("span");
+      text.dataset.flowPromptText = "";
+      text.className = "flow-prompt-text";
+      text.textContent = segment.text;
+      return text;
+    }
+    return createFlowVariableChip(segment.variable, {
+      label: labels.variableLabel(segment.variable),
+      optional: labels.variableIsOptional(segment.variable),
+      optionalLabel: labels.optionalLabel,
+      removeLabel: labels.removeLabel(segment.variable),
+    });
+  });
+  editor.replaceChildren(...nodes);
+}
+
+function createFlowVariableChip(
+  variable: PragmaFlowVariable,
+  labels: {
+    readonly label: string;
+    readonly optional: boolean;
+    readonly optionalLabel: string;
+    readonly removeLabel: string;
+  },
+): HTMLSpanElement {
+  const chip = document.createElement("span");
+  chip.className = "flow-variable-chip";
+  chip.contentEditable = "false";
+  chip.dataset.flowVariable = encodeFlowVariable(variable);
+
+  const variableLabel = document.createElement("span");
+  variableLabel.textContent = labels.label;
+  chip.append(variableLabel);
+
+  if (labels.optional) {
+    const optionalLabel = document.createElement("small");
+    optionalLabel.textContent = labels.optionalLabel;
+    chip.append(optionalLabel);
+  }
+
+  const removeButton = document.createElement("button");
+  removeButton.type = "button";
+  removeButton.dataset.flowVariableRemove = "";
+  removeButton.setAttribute("aria-label", labels.removeLabel);
+  removeButton.textContent = "×";
+  chip.append(removeButton);
+  return chip;
 }
 
 function encodeFlowVariable(variable: PragmaFlowVariable): string {
