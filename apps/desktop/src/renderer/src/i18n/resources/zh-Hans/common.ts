@@ -51,6 +51,20 @@ export const common = {
   errors: {
     generic: "无法保存此更改。",
   },
+  startupFailure: {
+    eyebrow: "启动异常",
+    bridge: {
+      title: "无法加载 Desktop 桥接服务",
+      description: "Pragma 无法连接界面与本地 Desktop 服务。你的数据没有被更改。",
+    },
+    renderer: {
+      title: "Pragma 未能完成启动",
+      description: "Desktop 界面在启动过程中遇到了意外问题。",
+    },
+    logHint: "请重新加载应用。如果问题仍然存在，请在终端中查看启动错误。",
+    diagnosticCode: "诊断代码：{{code}}",
+    reload: "重新加载 Pragma",
+  },
   counts: {
     model_one: "{{count}} 个模型",
     model_other: "{{count}} 个模型",

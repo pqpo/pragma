@@ -102,6 +102,20 @@ async function createWindow(): Promise<void> {
 
   const window = mainWindow;
 
+  window.webContents.on("preload-error", (_event, preloadPath, error) => {
+    console.error(`Desktop preload failed: ${preloadPath}`, error);
+  });
+
+  window.webContents.on(
+    "did-fail-load",
+    (_event, errorCode, errorDescription, validatedUrl, isMainFrame) => {
+      if (!isMainFrame) return;
+      console.error(
+        `Desktop renderer failed to load ${validatedUrl} (${errorCode}): ${errorDescription}.`,
+      );
+    },
+  );
+
   window.on("ready-to-show", () => {
     window.show();
   });

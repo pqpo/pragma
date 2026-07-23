@@ -412,6 +412,24 @@ Pragma Worker Ready
 
 暂不接队列。
 
+### `apps/desktop`
+
+职责：
+
+- Electron 主进程、本地存储和 Runtime 装配。
+- preload IPC Bridge。
+- renderer 页面与本地权限确认 UI。
+
+边界要求：
+
+- main 可以依赖 Desktop 允许的 Core、Interpreter、Default Agent 和具体 Runtime。
+- preload、renderer 和跨层 shared 代码只允许依赖 `@pragma/shared` 与浏览器安全的
+  `@pragma/interpreter/ast`，不得导入 Interpreter 主入口或其他 Node-only `@pragma/*` package。
+- preload 使用的 workspace TypeScript 必须在构建阶段完成转换；生产产物必须自包含，运行时只允许外部加载
+  Electron 和 Node 内置模块，不得直接加载仓库 `.ts` 文件。
+- Desktop build 必须验证 preload 产物和 `pragmaDesktop` Bridge 注入；Bridge 或 renderer 启动失败时必须记录
+  主进程日志并显示可操作的错误页，不得静默白屏。
+
 ### `packages/shared`
 
 职责：
