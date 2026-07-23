@@ -76,3 +76,4 @@ export * from "./storage/storage-policy.ts";
 export * from "./storage/deletion-transaction.ts";
 export * from "./storage/storage-maintenance.ts";
 export * from "./storage/storage-catalog.ts";
+export * from "./storage/state-migration.ts";

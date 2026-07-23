@@ -72,6 +72,8 @@ import {
   SkillDocumentSchema,
   SetPluginSecretsSchema,
   DeletePragmaResourceSchema,
+  PragmaProjectChangesSchema,
+  PragmaProjectChangesValidationResultSchema,
   PragmaProjectSnapshotSchema,
   PragmaYamlValidationResultSchema,
   PublishPragmaProjectSchema,
@@ -245,6 +247,13 @@ const api: PragmaDesktopAPI = {
     PragmaProjectSnapshotSchema.parse(
       await ipcRenderer.invoke("pragma-project:upsert", UpsertPragmaResourceSchema.parse(input)),
     ),
+  applyPragmaProjectChanges: async (input) =>
+    PragmaProjectSnapshotSchema.parse(
+      await ipcRenderer.invoke(
+        "pragma-project:apply-changes",
+        PragmaProjectChangesSchema.parse(input),
+      ),
+    ),
   deletePragmaResource: async (input) =>
     PragmaProjectSnapshotSchema.parse(
       await ipcRenderer.invoke("pragma-project:delete", DeletePragmaResourceSchema.parse(input)),
@@ -261,6 +270,13 @@ const api: PragmaDesktopAPI = {
       await ipcRenderer.invoke(
         "pragma-project:validate-resource",
         ValidatePragmaResourceSchema.parse(input),
+      ),
+    ),
+  validatePragmaProjectChanges: async (input) =>
+    PragmaProjectChangesValidationResultSchema.parse(
+      await ipcRenderer.invoke(
+        "pragma-project:validate-changes",
+        PragmaProjectChangesSchema.parse(input),
       ),
     ),
   getWorkflowLayout: async (input) => {

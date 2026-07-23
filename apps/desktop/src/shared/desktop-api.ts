@@ -961,6 +961,20 @@ export const UpsertPragmaResourceSchema = z.object({
   resource: PragmaResourceSchema,
 });
 
+export const PragmaProjectChangesSchema = z
+  .object({
+    expectedRevision: z.number().int().nonnegative(),
+    upserts: z.array(PragmaResourceSchema).min(1),
+    removals: z.array(PragmaResourceRefSchema).default([]),
+  })
+  .strict();
+
+export const PragmaProjectChangesValidationResultSchema = z
+  .object({
+    diagnostics: z.array(PragmaDiagnosticSchema),
+  })
+  .strict();
+
 export const DeletePragmaResourceSchema = z.object({
   expectedRevision: z.number().int().nonnegative(),
   ref: PragmaResourceRefSchema,
@@ -1432,6 +1446,10 @@ export type UpdateBuiltInExpertDefinition = z.infer<typeof UpdateBuiltInExpertDe
 export type PragmaProjectSnapshot = z.infer<typeof PragmaProjectSnapshotSchema>;
 export type PublishPragmaProject = z.infer<typeof PublishPragmaProjectSchema>;
 export type UpsertPragmaResource = z.infer<typeof UpsertPragmaResourceSchema>;
+export type PragmaProjectChanges = z.infer<typeof PragmaProjectChangesSchema>;
+export type PragmaProjectChangesValidationResult = z.infer<
+  typeof PragmaProjectChangesValidationResultSchema
+>;
 export type DeletePragmaResource = z.infer<typeof DeletePragmaResourceSchema>;
 export type PragmaYamlValidationResult = z.infer<typeof PragmaYamlValidationResultSchema>;
 export type ValidatePragmaResource = z.infer<typeof ValidatePragmaResourceSchema>;
@@ -1526,9 +1544,13 @@ export interface PragmaDesktopAPI {
   getPragmaProject: () => Promise<PragmaProjectSnapshot>;
   publishPragmaProject: (input: PublishPragmaProject) => Promise<PragmaProjectSnapshot>;
   upsertPragmaResource: (input: UpsertPragmaResource) => Promise<PragmaProjectSnapshot>;
+  applyPragmaProjectChanges: (input: PragmaProjectChanges) => Promise<PragmaProjectSnapshot>;
   deletePragmaResource: (input: DeletePragmaResource) => Promise<PragmaProjectSnapshot>;
   validatePragmaYaml: (source: string) => Promise<PragmaYamlValidationResult>;
   validatePragmaResource: (input: ValidatePragmaResource) => Promise<PragmaYamlValidationResult>;
+  validatePragmaProjectChanges: (
+    input: PragmaProjectChanges,
+  ) => Promise<PragmaProjectChangesValidationResult>;
   getWorkflowLayout: (input: GetWorkflowLayout) => Promise<WorkflowLayout | null>;
   saveWorkflowLayout: (layout: WorkflowLayout) => Promise<WorkflowLayout>;
   deleteWorkflowLayout: (input: DeleteWorkflowLayout) => Promise<void>;

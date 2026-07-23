@@ -27,6 +27,7 @@ import {
   Trash,
   User,
   UsersThree,
+  WarningCircle,
   X,
 } from "@phosphor-icons/react";
 import { useTranslation } from "react-i18next";
@@ -653,6 +654,8 @@ export function MissionDetailFragment(props: {
   );
   const [workConversationLoading, setWorkConversationLoading] = useState(false);
   const [selectedWorkKey, setSelectedWorkKey] = useState<string | null>(null);
+  const [workError, setWorkError] = useState<string | null>(null);
+  const [workRefreshRevision, setWorkRefreshRevision] = useState(0);
   const [draft, setDraft] = useState("");
   const [optimisticMessages, setOptimisticMessages] = useState<LocalMissionUserMessage[]>([]);
   const [awaitingRequestId, setAwaitingRequestId] = useState<string | null>(null);
@@ -709,6 +712,7 @@ export function MissionDetailFragment(props: {
     setSelectedWorkKey(null);
     setWorkRecords([]);
     setWorkConversation(null);
+    setWorkError(null);
   }, [props.mission.id]);
 
   useEffect(() => {
@@ -888,6 +892,7 @@ export function MissionDetailFragment(props: {
       try {
         const snapshot = await api.getMissionWork(props.mission.id);
         if (cancelled) return;
+        setWorkError(null);
         setWorkRecords(snapshot.records);
         if (selectedWorkKey !== null) {
           setWorkConversationLoading(true);
@@ -909,7 +914,10 @@ export function MissionDetailFragment(props: {
           }
         }
       } catch (loadError) {
-        if (!cancelled) console.error("Failed to refresh Mission work history.", loadError);
+        if (!cancelled) {
+          console.error("Failed to refresh Mission work history.", loadError);
+          setWorkError(errorMessage(loadError));
+        }
       } finally {
         if (!cancelled) setWorkConversationLoading(false);
       }
@@ -928,7 +936,7 @@ export function MissionDetailFragment(props: {
       if (timer !== undefined) clearTimeout(timer);
       unsubscribe();
     };
-  }, [props.mission.id, props.mission.execution?.id, selectedWorkKey, tab]);
+  }, [props.mission.id, props.mission.execution?.id, selectedWorkKey, tab, workRefreshRevision]);
 
   const send = async () => {
     const content = draft.trim();
@@ -1504,6 +1512,19 @@ export function MissionDetailFragment(props: {
                 </div>
               )}
             </div>
+          </div>
+        ) : workError !== null && workRecords.length === 0 ? (
+          <div className="mission-work-empty" role="alert">
+            <WarningCircle size={31} weight="thin" aria-hidden="true" />
+            <h2>{t("workHistoryUnavailable", { ns: "missions" })}</h2>
+            <p>{workError}</p>
+            <button
+              className="mission-load-earlier"
+              type="button"
+              onClick={() => setWorkRefreshRevision((current) => current + 1)}
+            >
+              {t("actions.retry", { ns: "common" })}
+            </button>
           </div>
         ) : workRecords.length === 0 ? (
           <div className="mission-work-empty">

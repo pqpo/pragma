@@ -87,6 +87,7 @@ export const missions = {
   executionWork: "任務執行工作",
   executionMap: "執行圖",
   executionMapDescription: "工作流程步驟和委派專家共用同一執行樹。",
+  workHistoryUnavailable: "無法讀取工作記錄",
   runtimeAgentFallbackName: "子代理 {{number}}",
   you: "你",
   input: "輸入",

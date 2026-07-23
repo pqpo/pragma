@@ -2,31 +2,20 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
+import {
+  runtimeSessionRecordMigrationChain,
+  type RuntimeSessionRecord,
+} from "../storage/migrations/runtime-session/index.ts";
+import type { PragmaPaths } from "../storage/pragma-paths.ts";
 import type {
   RuntimeAdapterDescriptor,
   RuntimeSessionOwner,
   RuntimeSessionRef,
 } from "./runtime-adapter.ts";
-import { RuntimeSessionRefSchema } from "./runtime-adapter.ts";
-import type { PragmaPaths } from "../storage/pragma-paths.ts";
 
-export type RuntimeSessionProcessState = "starting" | "running" | "stopped" | "failed";
-export type RuntimeSessionRetentionState = "retained" | "tombstoned" | "trashed";
-
-export interface RuntimeSessionRecord {
-  readonly schemaVersion: "pragma.runtime-session/v2";
-  readonly owner: RuntimeSessionOwner;
-  readonly systemSessionId: string;
-  readonly expertId: string;
-  readonly runtime: Pick<RuntimeAdapterDescriptor, "id" | "kind">;
-  readonly runtimeSessionRef: RuntimeSessionRef | null;
-  readonly currentWorkspace: string;
-  readonly workspaceHistory: readonly string[];
-  readonly processState: RuntimeSessionProcessState;
-  readonly retentionState: RuntimeSessionRetentionState;
-  readonly createdAt: string;
-  readonly updatedAt: string;
-}
+export type { RuntimeSessionRecord };
+export type RuntimeSessionProcessState = RuntimeSessionRecord["processState"];
+export type RuntimeSessionRetentionState = RuntimeSessionRecord["retentionState"];
 
 export async function createRuntimeSessionRecord(options: {
   readonly paths: PragmaPaths;
@@ -125,7 +114,13 @@ export async function readRuntimeSessionRecord(
     }
     throw error;
   }
-  return assertRuntimeSessionRecord(value, file);
+  try {
+    const upgraded = runtimeSessionRecordMigrationChain.upgrade(value);
+    if (upgraded.migrated) await writeRuntimeSessionRecord(paths, upgraded.value);
+    return upgraded.value;
+  } catch (error) {
+    throw unsupported(file, error);
+  }
 }
 
 async function writeRuntimeSessionRecord(
@@ -167,51 +162,14 @@ async function claimSystemSessionOwner(
   }
 }
 
-function assertRuntimeSessionRecord(value: unknown, file: string): RuntimeSessionRecord {
-  if (typeof value !== "object" || value === null) throw unsupported(file);
-  const record = value as Partial<RuntimeSessionRecord>;
-  if (
-    record.schemaVersion !== "pragma.runtime-session/v2" ||
-    typeof record.owner !== "object" ||
-    record.owner === null ||
-    (record.owner.type !== "expert-session" && record.owner.type !== "flow-execution") ||
-    typeof record.owner.ownerId !== "string" ||
-    typeof record.systemSessionId !== "string" ||
-    typeof record.expertId !== "string" ||
-    typeof record.runtime !== "object" ||
-    record.runtime === null ||
-    typeof record.runtime.id !== "string" ||
-    typeof record.runtime.kind !== "string" ||
-    (record.runtimeSessionRef !== null &&
-      !RuntimeSessionRefSchema.safeParse(record.runtimeSessionRef).success) ||
-    typeof record.currentWorkspace !== "string" ||
-    !Array.isArray(record.workspaceHistory) ||
-    !isProcessState(record.processState) ||
-    !isRetentionState(record.retentionState) ||
-    typeof record.createdAt !== "string" ||
-    typeof record.updatedAt !== "string"
-  ) {
-    throw unsupported(file);
-  }
-  return record as RuntimeSessionRecord;
-}
-
 function assertEqual(actual: unknown, expected: unknown, label: string): void {
   if (actual !== expected) {
     throw new Error(`${label} mismatch while restoring Runtime Session.`);
   }
 }
 
-function unsupported(file: string): Error {
-  return new Error(`unsupported-state-version: ${file}`);
-}
-
-function isProcessState(value: unknown): value is RuntimeSessionProcessState {
-  return value === "starting" || value === "running" || value === "stopped" || value === "failed";
-}
-
-function isRetentionState(value: unknown): value is RuntimeSessionRetentionState {
-  return value === "retained" || value === "tombstoned" || value === "trashed";
+function unsupported(file: string, cause?: unknown): Error {
+  return new Error(`unsupported-state-version: ${file}`, { cause });
 }
 
 function isNotFound(error: unknown): boolean {

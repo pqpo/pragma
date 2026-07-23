@@ -22,11 +22,24 @@ import {
 import { z } from "zod";
 
 import { withFileLock } from "../storage/file-lock.ts";
+import {
+  ExecutionCommitJournalSchema,
+  executionCommitJournalMigrationChain,
+  type ExecutionCommitJournal,
+} from "../storage/migrations/execution-transaction/index.ts";
+import {
+  executionRecordMigrationChain,
+  migrateExecutionInvocationsV5ToV6,
+} from "../storage/migrations/execution/index.ts";
 import { PragmaPaths } from "../storage/pragma-paths.ts";
+import {
+  applyAtomicStateMigration,
+  recoverAtomicStateMigration,
+} from "../storage/state-migration.ts";
 import { getExecutionLiveBus } from "./execution-live-bus.ts";
+import { sameRuntimeContextOrigin } from "./runtime-context-record.ts";
 
 export const EXECUTION_RECOVERY_CLAIM_STATE_KEY = "__recoveryClaim";
-import { sameRuntimeContextOrigin } from "./runtime-context-record.ts";
 
 export interface NewExecutionEvent {
   readonly eventId?: string | undefined;
@@ -128,20 +141,7 @@ const ExecutionCommitRecordSchema = z.object({
   committedVersion: z.number().int().nonnegative(),
 });
 
-const ExecutionCommitJournalSchema = z.object({
-  schemaVersion: z.literal("pragma.execution-transaction/v7"),
-  commitId: z.string().min(1),
-  signature: z.string().length(64),
-  execution: ExecutionRecordSchema,
-  invocations: InvocationSchema.array(),
-  agents: AgentInstanceSchema.array(),
-  contexts: RuntimeContextRecordSchema.array(),
-  events: ExecutionEventSchema.array(),
-  eventIds: z.array(z.string().min(1)),
-});
-
 type ExecutionCommitRecord = z.infer<typeof ExecutionCommitRecordSchema>;
-type ExecutionCommitJournal = z.infer<typeof ExecutionCommitJournalSchema>;
 
 export function createFileExecutionStore(
   options: { readonly pragmaHome?: string } = {},
@@ -157,7 +157,7 @@ export function createFileExecutionStore(
     },
     async archive(executionId) {
       await withFileLock(paths.executionLock(executionId), async () => {
-        await recoverTransaction(paths, executionId);
+        await prepareExecution(paths, executionId);
         const state = await requireExecution(paths, executionId);
         if (!isTerminalExecutionStatus(state.status)) {
           throw new Error(`Cannot archive a non-terminal Execution: ${executionId}.`);
@@ -181,7 +181,7 @@ export function createFileExecutionStore(
     async create(record, root) {
       void stableStringify({ record, root });
       await withFileLock(paths.executionLock(record.executionId), async () => {
-        await recoverTransaction(paths, record.executionId);
+        await prepareExecution(paths, record.executionId);
         if ((await readJsonIfExists(paths.executionState(record.executionId))) !== undefined) {
           throw new Error(`Execution already exists: ${record.executionId}`);
         }
@@ -201,7 +201,7 @@ export function createFileExecutionStore(
 
     async get(executionId) {
       return await withFileLock(paths.executionLock(executionId), async () => {
-        await recoverTransaction(paths, executionId);
+        await prepareExecution(paths, executionId);
         const value = await readJsonIfExists(paths.executionState(executionId));
         if (value === undefined) return undefined;
         const parsed = ExecutionRecordSchema.safeParse(value);
@@ -223,7 +223,7 @@ export function createFileExecutionStore(
       if (request.commitId.trim() === "") throw new Error("Execution commitId must not be empty.");
       const signature = commitSignature(request);
       return await withFileLock(paths.executionLock(request.executionId), async () => {
-        await recoverTransaction(paths, request.executionId);
+        await prepareExecution(paths, request.executionId);
         const commits = await readCommitRecords(paths, request.executionId);
         const duplicate = commits.find((commit) => commit.commitId === request.commitId);
         if (duplicate !== undefined) {
@@ -313,7 +313,7 @@ export function createFileExecutionStore(
 
     async claimRecovery(executionId, claimId, leaseMs) {
       return await withFileLock(paths.executionLock(executionId), async () => {
-        await recoverTransaction(paths, executionId);
+        await prepareExecution(paths, executionId);
         const current = await requireExecution(paths, executionId);
         const value = current.state[EXECUTION_RECOVERY_CLAIM_STATE_KEY];
         if (typeof value === "object" && value !== null) {
@@ -349,7 +349,7 @@ export function createFileExecutionStore(
 
     async getInvocation(executionId, invocationId) {
       return await withFileLock(paths.executionLock(executionId), async () => {
-        await recoverTransaction(paths, executionId);
+        await prepareExecution(paths, executionId);
         return (await readInvocations(paths, executionId)).find(
           (invocation) => invocation.invocationId === invocationId,
         );
@@ -358,28 +358,28 @@ export function createFileExecutionStore(
 
     async listInvocations(executionId) {
       return await withFileLock(paths.executionLock(executionId), async () => {
-        await recoverTransaction(paths, executionId);
+        await prepareExecution(paths, executionId);
         return await readInvocations(paths, executionId);
       });
     },
 
     async getAgent(executionId, agentId) {
       return await withFileLock(paths.executionLock(executionId), async () => {
-        await recoverTransaction(paths, executionId);
+        await prepareExecution(paths, executionId);
         return (await readAgents(paths, executionId)).find((agent) => agent.agentId === agentId);
       });
     },
 
     async listAgents(executionId) {
       return await withFileLock(paths.executionLock(executionId), async () => {
-        await recoverTransaction(paths, executionId);
+        await prepareExecution(paths, executionId);
         return await readAgents(paths, executionId);
       });
     },
 
     async getContext(executionId, contextId) {
       return await withFileLock(paths.executionLock(executionId), async () => {
-        await recoverTransaction(paths, executionId);
+        await prepareExecution(paths, executionId);
         return (await readContexts(paths, executionId)).find(
           (context) => context.contextId === contextId,
         );
@@ -388,7 +388,7 @@ export function createFileExecutionStore(
 
     async listContexts(executionId) {
       return await withFileLock(paths.executionLock(executionId), async () => {
-        await recoverTransaction(paths, executionId);
+        await prepareExecution(paths, executionId);
         return await readContexts(paths, executionId);
       });
     },
@@ -403,7 +403,7 @@ export function createFileExecutionStore(
 
     async getTree(executionId) {
       return await withFileLock(paths.executionLock(executionId), async () => {
-        await recoverTransaction(paths, executionId);
+        await prepareExecution(paths, executionId);
         const value = await readJsonIfExists(paths.executionState(executionId));
         if (value === undefined) return undefined;
         const record = ExecutionRecordSchema.parse(value);
@@ -424,7 +424,7 @@ export function createFileExecutionStore(
 
     async readEvents(executionId, after) {
       return await withFileLock(paths.executionLock(executionId), async () => {
-        await recoverTransaction(paths, executionId);
+        await prepareExecution(paths, executionId);
         return filterAfter(await readExecutionEvents(paths, executionId), executionId, after);
       });
     },
@@ -695,9 +695,65 @@ function sameEventInput(event: ExecutionEvent, input: NewExecutionEvent): boolea
 async function recoverTransaction(paths: PragmaPaths, executionId: string): Promise<void> {
   const value = await readJsonIfExists(paths.executionTransaction(executionId));
   if (value === undefined) return;
-  const journal = ExecutionCommitJournalSchema.safeParse(value);
-  if (!journal.success) throw unsupportedState(executionId, journal.error);
-  await applyTransaction(paths, executionId, journal.data);
+  let journal: ReturnType<typeof executionCommitJournalMigrationChain.upgrade>;
+  try {
+    journal = executionCommitJournalMigrationChain.upgrade(value);
+  } catch (error) {
+    throw unsupportedState(executionId, error);
+  }
+  if (journal.migrated) {
+    await writeJsonAtomic(paths.executionTransaction(executionId), journal.value);
+  }
+  await applyTransaction(paths, executionId, journal.value);
+}
+
+async function prepareExecution(paths: PragmaPaths, executionId: string): Promise<void> {
+  try {
+    await recoverAtomicStateMigration({
+      aggregateRoot: paths.executionRoot(executionId),
+      journalFile: paths.executionMigration(executionId),
+      resource: { family: "pragma.execution", id: executionId },
+      validateDocuments: validateExecutionMigrationDocuments,
+    });
+    await recoverTransaction(paths, executionId);
+    await migrateExecutionState(paths, executionId);
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith("unsupported-state-version:")) {
+      throw error;
+    }
+    throw unsupportedState(executionId, error);
+  }
+}
+
+async function migrateExecutionState(paths: PragmaPaths, executionId: string): Promise<void> {
+  const value = await readJsonIfExists(paths.executionState(executionId));
+  if (value === undefined) return;
+  const upgraded = executionRecordMigrationChain.upgrade(value);
+  if (!upgraded.migrated) return;
+  const invocations = migrateExecutionInvocationsV5ToV6(
+    (await readJsonIfExists(paths.executionInvocations(executionId))) ?? [],
+  );
+  await applyAtomicStateMigration({
+    aggregateRoot: paths.executionRoot(executionId),
+    journalFile: paths.executionMigration(executionId),
+    resource: { family: "pragma.execution", id: executionId },
+    fromVersion: upgraded.fromVersion,
+    toVersion: upgraded.toVersion,
+    documents: {
+      "execution.json": upgraded.value,
+      "invocations.json": invocations,
+    },
+    validateDocuments: validateExecutionMigrationDocuments,
+  });
+}
+
+function validateExecutionMigrationDocuments(documents: Readonly<Record<string, unknown>>): void {
+  const keys = Object.keys(documents).toSorted();
+  if (keys.length !== 2 || keys[0] !== "execution.json" || keys[1] !== "invocations.json") {
+    throw new Error("Execution migration journal contains unexpected documents.");
+  }
+  ExecutionRecordSchema.parse(documents["execution.json"]);
+  InvocationSchema.array().parse(documents["invocations.json"]);
 }
 
 async function applyTransaction(

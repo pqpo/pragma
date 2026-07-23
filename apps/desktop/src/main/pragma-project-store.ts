@@ -206,9 +206,35 @@ export function createPragmaProjectStore(options: {
         );
       }
       const resources = await materializeCandidate(input);
-      assertDesktopExpertAuthoring(resources);
+      const orphanedFlowRuntimeProfiles = new Set(
+        resources
+          .filter(
+            (resource) =>
+              resource.kind === "RuntimeProfile" &&
+              resource.metadata.tags.includes("flow-runtime-override") &&
+              referencingPragmaResources(resources, canonicalPragmaResourceRef(resource)).length ===
+                0,
+          )
+          .map(canonicalPragmaResourceRef),
+      );
+      const effectiveUpserts = input.upserts.filter(
+        (resource) => !orphanedFlowRuntimeProfiles.has(canonicalPragmaResourceRef(resource)),
+      );
+      const effectiveRemovals = [
+        ...new Set([...(input.removals ?? []), ...orphanedFlowRuntimeProfiles]),
+      ];
+      assertDesktopExpertAuthoring(
+        resources.filter(
+          (resource) => !orphanedFlowRuntimeProfiles.has(canonicalPragmaResourceRef(resource)),
+        ),
+      );
       return PragmaProjectSnapshotSchema.parse(
-        await service.apply({ projectId, ...input, removals: input.removals ?? [] }),
+        await service.apply({
+          projectId,
+          expectedRevision: input.expectedRevision,
+          upserts: effectiveUpserts,
+          removals: effectiveRemovals,
+        }),
       );
     } catch (error) {
       return normalizeError(error);

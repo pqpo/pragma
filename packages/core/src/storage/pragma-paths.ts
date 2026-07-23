@@ -116,6 +116,10 @@ export class PragmaPaths {
     return join(this.expertSessionRoot(sessionId), "transaction.json");
   }
 
+  expertSessionMigration(sessionId: string): string {
+    return join(this.expertSessionRoot(sessionId), "state-migration.json");
+  }
+
   expertSessionLease(sessionId: string): string {
     return join(this.expertSessionRoot(sessionId), "lease.json");
   }
@@ -178,6 +182,10 @@ export class PragmaPaths {
 
   executionTransaction(executionId: string): string {
     return join(this.executionRoot(executionId), "transaction.json");
+  }
+
+  executionMigration(executionId: string): string {
+    return join(this.executionRoot(executionId), "state-migration.json");
   }
 
   executionLock(executionId: string): string {

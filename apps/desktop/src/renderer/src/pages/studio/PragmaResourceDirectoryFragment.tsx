@@ -110,6 +110,27 @@ export function PragmaResourceDirectoryFragment(props: {
     }
   };
 
+  const saveFlow = async (
+    resource: PragmaResource,
+    supportingResources: readonly PragmaResource[],
+  ): Promise<boolean> => {
+    const api = desktopApi();
+    if (api === undefined) return false;
+    try {
+      const snapshot = await api.applyPragmaProjectChanges({
+        expectedRevision: props.project.revision,
+        upserts: [...supportingResources, resource],
+        removals: [],
+      });
+      props.onProjectChanged(snapshot);
+      setError(null);
+      return true;
+    } catch (saveError) {
+      setError(errorMessage(saveError));
+      return false;
+    }
+  };
+
   const remove = async (resource: PragmaResource) => {
     const api = desktopApi();
     if (api === undefined) return;
@@ -155,7 +176,7 @@ export function PragmaResourceDirectoryFragment(props: {
         initial={editing === "new" || editing.kind !== "Flow" ? undefined : editing}
         error={error}
         onCancel={() => setEditing(null)}
-        onSave={save}
+        onSave={saveFlow}
       />
     );
   }

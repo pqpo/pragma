@@ -266,6 +266,25 @@ Server 与 Agent 的关系：
 - 外部 ID 目录段统一通过 `@pragma/core` 的 `PragmaPaths` 编码和解析，具体 Runtime 或插件 loader 不自行拼接管理路径。
 - 每个 Runtime Session 必须由 ExpertSession context 或 FlowExecution Invocation 明确拥有；恢复还必须提供原 `systemSessionId` 和 `RuntimeSessionRef`。
 - Core 必须通过原子 ownership claim 保证 `systemSessionId` 只有一个 owner；不要用“先扫描再写入”的 TOCTOU 检查代替原子声明。
+- Execution、ExpertSession、Runtime Session 等可恢复持久状态升级时，必须遵循 ADR 019：
+  当前 storage major 内提供相邻版本的前向迁移，在 aggregate file lock 内首次读取时执行；
+  多文件迁移先写稳定 journal，再原子替换目标文件，未完成 journal 必须可重放。业务代码只读取当前
+  Schema，不保留历史字段分支。新版本数据和没有迁移链的旧版本必须 fail closed，不得猜测、静默删除
+  或自动降级。
+- 持久状态 Schema 升级必须同时提交旧版本 fixture、当前版本 no-op、崩溃恢复和未来版本拒绝测试；
+  删除旧迁移链属于 storage-major cutover，必须另写 ADR 和导出/备份方案。DSL 版本兼容与本地运行状态
+  兼容是两个独立边界，不得用同一个版本开关处理。
+- Core 持久状态迁移统一放在 `packages/core/src/storage/migrations/<family>/`；历史 Schema 放入
+  `schemas/vN.ts`，相邻迁移放入 `steps/vN-to-vN+1.ts`，`index.ts` 只做静态、有序注册。不得把多个
+  版本继续堆在 Store 文件中，不得从最新 aggregate Schema 派生历史 Schema，也不得运行时动态扫描
+  或执行迁移模块。
+- 任何可恢复持久状态的 `schemaVersion` 升级，都必须在同一个改动中补齐对应的升级脚本；禁止只修改
+  当前 Schema 或版本号。升级脚本必须是 `steps/vN-to-vN+1.ts` 相邻迁移，并在该 family 的
+  `index.ts` 中静态注册；如果业务 transaction journal 内嵌了被升级对象，还必须同步升级 journal
+  Schema 和迁移链。
+- 持久状态 Schema 升级的 Pull Request 必须同时包含旧版本 Schema 快照、旧数据 fixture、升级后
+  fixture、当前版本 no-op、跨版本链式升级、未完成 journal 重放和未来版本拒绝测试。缺少任一必要
+  迁移脚本或测试时，不得合入。
 
 ## 本地 Agent 桥接规范
 

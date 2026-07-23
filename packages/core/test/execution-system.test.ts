@@ -1645,7 +1645,7 @@ describe("ExpertSession", () => {
           },
         ],
         execution: {
-          schemaVersion: "pragma.execution/v6",
+          schemaVersion: "pragma.execution/v5",
           executionId,
           version: 0,
           kind: "expert-turn",
@@ -1673,7 +1673,9 @@ describe("ExpertSession", () => {
       "utf8",
     );
     expect((await session.getState()).executionIds).toContain(executionId);
-    expect(await executions.get(executionId)).toBeDefined();
+    expect(await executions.get(executionId)).toMatchObject({
+      schemaVersion: "pragma.execution/v6",
+    });
     expect((await session.getPromptQueue())[0]?.requestId).toBe("journal-request");
     expect((await session.listEvents()).items.map((event) => event.type)).toContain(
       "prompt.enqueued",

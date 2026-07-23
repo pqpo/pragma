@@ -148,6 +148,64 @@ describe("PragmaProjectStore", () => {
     } satisfies Partial<PragmaProjectStoreError>);
   });
 
+  it("applies Flow support profiles atomically and prunes them after the last reference is removed", async () => {
+    const { project } = await stores();
+    const flowRuntime: PragmaRuntimeProfileResource = {
+      apiVersion: "pragma/v2",
+      kind: "RuntimeProfile",
+      metadata: {
+        id: "flow_runtime_codex",
+        version: "1.0.0",
+        name: "Codex Flow Runtime",
+        description: "Desktop-managed Flow Runtime.",
+        tags: ["desktop-managed", "flow-runtime-override"],
+      },
+      spec: {
+        adapter: "pragma.runtime.profile@v1",
+        config: { runtimeId: "codex" },
+      },
+    };
+    const flow = exampleFlow();
+    flow.spec.graph.start = "write";
+    flow.spec.graph.steps = {
+      write: {
+        expert: { ref: "expert:writer@1.0.0" },
+        version: "1.0.0",
+        prompt: { segments: [{ text: "Write." }] },
+        runtime: {
+          ref: "runtime-profile:flow_runtime_codex@1.0.0",
+          modelSelection: { model: { providerId: "openai", modelId: "gpt-test" } },
+        },
+      },
+    };
+    flow.spec.graph.transitions = { write: { end: true } };
+
+    const first = await project.apply({
+      expectedRevision: 0,
+      upserts: [exampleRuntime(), exampleExpert(), flowRuntime, flow],
+    });
+    expect(first.resources).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "RuntimeProfile",
+          metadata: expect.objectContaining({ id: "flow_runtime_codex" }),
+        }),
+      ]),
+    );
+
+    delete flow.spec.graph.steps.write!.runtime;
+    const second = await project.apply({
+      expectedRevision: first.revision,
+      upserts: [flow],
+    });
+    expect(
+      second.resources.some(
+        (resource) =>
+          resource.kind === "RuntimeProfile" && resource.metadata.id === "flow_runtime_codex",
+      ),
+    ).toBe(false);
+  });
+
   it("rejects invalid cross-resource references without publishing a revision", async () => {
     const { project } = await stores();
     const flow = exampleFlow();

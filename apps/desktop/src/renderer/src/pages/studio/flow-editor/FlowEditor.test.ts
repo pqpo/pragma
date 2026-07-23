@@ -2,7 +2,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import type { PragmaFlowResource } from "@pragma/interpreter/ast";
+import type { PragmaFlowPrompt, PragmaFlowResource, PragmaResource } from "@pragma/interpreter/ast";
 
 import type { PragmaProjectSnapshot } from "../../../../../shared/desktop-api.ts";
 import { newSchemaField, objectSchemaToFields } from "../JsonSchemaFieldsEditor.tsx";
@@ -14,10 +14,15 @@ import {
   END_NODE_ID,
   FAIL_NODE_ID,
   FlowEditor,
+  flowRuntimeProfile,
   flowVariableOptions,
   nextAvailableNodePosition,
+  normalizePromptSegments,
+  PromptTemplateEditor,
   removeEdgeFromFlow,
+  RuntimeBindingEditor,
   START_NODE_ID,
+  validateFlowRuntimeSelections,
 } from "./FlowEditor.tsx";
 
 describe("Flow editor canvas", () => {
@@ -248,7 +253,160 @@ describe("Flow editor canvas", () => {
     expect(echoed[0]?.id).toBe(field.id);
     expect(echoed[0]?.value.fields[0]?.id).toBe(field.value.fields[0]?.id);
   });
+
+  it("renders prompt variables inline inside one editor instead of creating textareas", () => {
+    const flow = createEmptyFlow("prompt_editor");
+    flow.spec.graph.start = "writer";
+    flow.spec.graph.steps.writer = {
+      expert: { ref: "expert:writer@1.0.0" },
+      version: "1.0.0",
+      prompt: {
+        segments: [
+          { text: "Use " },
+          { variable: { source: "flow-input", path: [] } },
+          { text: " and " },
+          { variable: { source: "flow-input", path: [] } },
+          { text: "." },
+        ],
+      },
+    };
+    flow.spec.graph.transitions.writer = { end: true };
+
+    const html = renderToStaticMarkup(
+      createElement(PromptTemplateEditor, {
+        flow,
+        stepId: "writer",
+        value: flow.spec.graph.steps.writer.prompt,
+        onChange: () => undefined,
+      }),
+    );
+
+    expect(html.match(/class="flow-prompt-editor"/g)).toHaveLength(1);
+    expect(html.match(/class="flow-variable-chip"/g)).toHaveLength(2);
+    expect(html).not.toContain("<textarea");
+    expect(html).toContain('contentEditable="true"');
+  });
+
+  it("merges adjacent prompt text while preserving inline variable order", () => {
+    const variable = { source: "flow-input" as const, path: ["goal"] };
+    const segments: PragmaFlowPrompt["segments"] = [
+      { text: "Review " },
+      { text: "this: " },
+      { variable },
+      { text: "\nCarefully." },
+    ];
+
+    expect(normalizePromptSegments(segments)).toEqual([
+      { text: "Review this: " },
+      { variable },
+      { text: "\nCarefully." },
+    ]);
+  });
+
+  it("shows actual Runtime environments and requires a model for a Runtime override", () => {
+    const resources = runtimeResources();
+    const runtime = {
+      id: "codex-local",
+      isDefault: true,
+      kind: "codex",
+      displayName: "Codex Local",
+      status: "available" as const,
+      models: [
+        {
+          id: "gpt-5.6",
+          displayName: "GPT-5.6",
+          provider: {
+            kind: "runtime-managed" as const,
+            id: "openai",
+            displayName: "OpenAI",
+          },
+        },
+      ],
+    };
+    const html = renderToStaticMarkup(
+      createElement(RuntimeBindingEditor, {
+        value: undefined,
+        allowModel: true,
+        targetKind: "expert",
+        targetRef: "expert:writer@1.0.0",
+        resources,
+        runtimes: [runtime],
+        onSupportingResource: () => undefined,
+        onChange: () => undefined,
+      }),
+    );
+
+    expect(html).toContain("Codex Local");
+    expect(html).not.toContain("Writer Runtime");
+
+    const generated = flowRuntimeProfile(runtime);
+    const flow = createEmptyFlow("runtime_override");
+    flow.spec.graph.start = "writer";
+    flow.spec.graph.steps.writer = {
+      expert: { ref: "expert:writer@1.0.0" },
+      version: "1.0.0",
+      runtime: { ref: `runtime-profile:${generated.metadata.id}@1.0.0` },
+    };
+    flow.spec.graph.transitions.writer = { end: true };
+
+    expect(validateFlowRuntimeSelections(flow, [...resources, generated])).toEqual([
+      expect.objectContaining({
+        stepId: "writer",
+        message: "Choose a model when overriding the node Runtime.",
+      }),
+    ]);
+
+    flow.spec.graph.steps.writer.runtime!.modelSelection = {
+      model: { providerId: "openai", modelId: "gpt-5.6" },
+    };
+    expect(validateFlowRuntimeSelections(flow, [...resources, generated])).toEqual([]);
+  });
 });
+
+function runtimeResources(): PragmaResource[] {
+  return [
+    {
+      apiVersion: "pragma/v2",
+      kind: "RuntimeProfile",
+      metadata: {
+        id: "writer_runtime",
+        version: "1.0.0",
+        name: "Writer Runtime",
+        description: "Writer Runtime",
+        tags: ["desktop-managed"],
+      },
+      spec: {
+        adapter: "pragma.runtime.profile@v1",
+        config: {
+          runtimeId: "codex-local",
+          providerId: "openai",
+          model: "gpt-5.6",
+        },
+      },
+    },
+    {
+      apiVersion: "pragma/v2",
+      kind: "Expert",
+      metadata: {
+        id: "writer",
+        version: "1.0.0",
+        name: "Writer",
+        description: "Writes.",
+        tags: [],
+      },
+      spec: {
+        scope: "Write.",
+        instructions: "Write.",
+        runtime: { ref: "runtime-profile:writer_runtime@1.0.0" },
+        capabilities: [],
+        toolApprovals: {},
+        contextStores: [],
+        plugins: [],
+        tools: [],
+      },
+    },
+  ];
+}
 
 function flowFixture(): PragmaFlowResource {
   return {

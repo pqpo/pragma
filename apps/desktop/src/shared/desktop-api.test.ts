@@ -20,6 +20,7 @@ import {
   MissionCreationDefaultsSchema,
   MissionModelOptionsSchema,
   MissionSchema,
+  PragmaProjectChangesSchema,
   SetDefaultRuntimeSchema,
   DesktopSettingsSnapshotSchema,
   UpdateDesktopSettingsSchema,
@@ -63,6 +64,35 @@ describe("runtime settings contracts", () => {
       runtimeId: "codex",
     });
     expect(SetDefaultRuntimeSchema.safeParse({ runtimeId: "" }).success).toBe(false);
+  });
+});
+
+describe("Pragma project change-set contracts", () => {
+  it("requires at least one upsert and defaults removals", () => {
+    const resource = {
+      apiVersion: "pragma/v2" as const,
+      kind: "RuntimeProfile" as const,
+      metadata: {
+        id: "flow_runtime",
+        version: "1.0.0",
+        name: "Flow Runtime",
+        description: "Flow Runtime",
+        tags: ["flow-runtime-override"],
+      },
+      spec: {
+        adapter: "pragma.runtime.profile@v1",
+        config: { runtimeId: "codex" },
+      },
+    };
+    expect(
+      PragmaProjectChangesSchema.parse({
+        expectedRevision: 3,
+        upserts: [resource],
+      }),
+    ).toMatchObject({ expectedRevision: 3, removals: [] });
+    expect(PragmaProjectChangesSchema.safeParse({ expectedRevision: 3, upserts: [] }).success).toBe(
+      false,
+    );
   });
 });
 
