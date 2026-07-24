@@ -1928,17 +1928,34 @@ export function PromptTemplateEditor(props: {
 }
 
 function promptSegmentsFromEditor(editor: HTMLElement): PragmaFlowPrompt["segments"] {
+  return promptSegmentsFromEditorNodes(editor.childNodes);
+}
+
+export function promptSegmentsFromEditorNodes(
+  nodes: Iterable<globalThis.Node>,
+): PragmaFlowPrompt["segments"] {
   const segments: PragmaFlowPrompt["segments"] = [];
-  for (const node of editor.childNodes) {
-    if (node instanceof HTMLElement && node.dataset.flowVariable !== undefined) {
-      const variable = decodeFlowVariable(node.dataset.flowVariable);
-      if (variable !== undefined) segments.push({ variable });
-      continue;
-    }
-    const text = node.textContent ?? "";
-    if (text !== "") segments.push({ text });
-  }
+  for (const node of nodes) appendPromptEditorNode(segments, node);
   return normalizePromptSegments(segments);
+}
+
+function appendPromptEditorNode(
+  segments: PragmaFlowPrompt["segments"],
+  node: globalThis.Node,
+): void {
+  if (node.nodeType === 1) {
+    const encodedVariable = (node as HTMLElement).dataset.flowVariable;
+    if (encodedVariable !== undefined) {
+      const variable = decodeFlowVariable(encodedVariable);
+      if (variable !== undefined) segments.push({ variable });
+      return;
+    }
+    for (const child of node.childNodes) appendPromptEditorNode(segments, child);
+    return;
+  }
+  if (node.nodeType !== 3) return;
+  const text = node.textContent ?? "";
+  if (text !== "") segments.push({ text });
 }
 
 export function normalizePromptSegments(

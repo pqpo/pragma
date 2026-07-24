@@ -23,6 +23,7 @@ import {
   nextHumanOptionNumber,
   normalizeConnectionDestination,
   normalizePromptSegments,
+  promptSegmentsFromEditorNodes,
   PromptTemplateEditor,
   removeEdgeFromFlow,
   removeHumanOption,
@@ -605,6 +606,44 @@ describe("Flow editor canvas", () => {
       { text: "Review this: " },
       { variable },
       { text: "\nCarefully." },
+    ]);
+  });
+
+  it("preserves a variable inserted inside an existing prompt text node", () => {
+    const variable = { source: "flow-input" as const, path: ["goal"] };
+    const textNode = (text: string) =>
+      ({
+        nodeType: 3,
+        textContent: text,
+        childNodes: [],
+      }) as unknown as Node;
+    const elementNode = (
+      children: readonly Node[],
+      encodedVariable?: PragmaFlowPrompt["segments"][number],
+    ) =>
+      ({
+        nodeType: 1,
+        textContent: null,
+        childNodes: children,
+        dataset:
+          encodedVariable !== undefined && "variable" in encodedVariable
+            ? { flowVariable: encodeURIComponent(JSON.stringify(encodedVariable.variable)) }
+            : {},
+      }) as unknown as Node;
+
+    const nestedVariableChip = elementNode([textNode("Flow input.goal"), textNode("×")], {
+      variable,
+    });
+    const textSpan = elementNode([
+      textNode("Review "),
+      nestedVariableChip,
+      textNode(" carefully."),
+    ]);
+
+    expect(promptSegmentsFromEditorNodes([textSpan])).toEqual([
+      { text: "Review " },
+      { variable },
+      { text: " carefully." },
     ]);
   });
 
