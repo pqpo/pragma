@@ -39,6 +39,7 @@ import {
   type MissionChatPatch,
   type MissionChatSnapshot,
   type MissionChatUpdate,
+  type MissionContextWindowState,
   type MissionHumanInteraction,
   type MissionSummary,
   type MissionWorkConversationSnapshot,
@@ -671,6 +672,8 @@ export function MissionDetailFragment(props: {
   const modelRuntimeIdRef = useRef<string | undefined>(undefined);
   const [optionsSaving, setOptionsSaving] = useState(false);
   const [optionsError, setOptionsError] = useState<string | null>(null);
+  const [contextError, setContextError] = useState<string | null>(null);
+  const [compactingContext, setCompactingContext] = useState(false);
   const [toolPermissionMode, setToolPermissionMode] = useState<DesktopToolPermissionMode>(
     props.mission.toolPermissionMode,
   );
@@ -705,7 +708,7 @@ export function MissionDetailFragment(props: {
   const interactions = chat?.pendingInteractions ?? [];
   const interruptible = chat?.execution?.interruptible ?? false;
   const controlsDisabled = executionActive || optionsSaving;
-  const visibleError = props.error ?? optionsError;
+  const visibleError = props.error ?? contextError ?? optionsError;
   const unavailableTool =
     visibleError === null || visibleError === undefined
       ? undefined
@@ -733,6 +736,8 @@ export function MissionDetailFragment(props: {
     setOptimisticMessages([]);
     setAwaitingRequestId(null);
     setOptionsError(null);
+    setContextError(null);
+    setCompactingContext(false);
     setSelectedWorkKey(null);
     setWorkRecords([]);
     setWorkConversation(null);
@@ -1035,6 +1040,21 @@ export function MissionDetailFragment(props: {
     }
   };
 
+  const compactContext = async () => {
+    const api = desktopApi();
+    if (api === undefined || compactingContext || chat?.contextWindow?.canCompact !== true) return;
+    setCompactingContext(true);
+    setContextError(null);
+    try {
+      const contextWindow = await api.compactMissionContext(props.mission.id);
+      updateChat((current) => (current === null ? current : { ...current, contextWindow }));
+    } catch (compactError) {
+      setContextError(errorMessage(compactError));
+    } finally {
+      setCompactingContext(false);
+    }
+  };
+
   const respond = async (
     interaction: MissionHumanInteraction,
     response: HumanInteractionResponse,
@@ -1319,6 +1339,7 @@ export function MissionDetailFragment(props: {
             onAction={repairUnavailableTool}
             onDismiss={() => {
               setOptionsError(null);
+              setContextError(null);
               props.onDismissError?.();
             }}
           />
@@ -1401,6 +1422,7 @@ export function MissionDetailFragment(props: {
                   onAction={repairUnavailableTool}
                   onDismiss={() => {
                     setOptionsError(null);
+                    setContextError(null);
                     props.onDismissError?.();
                   }}
                 />
@@ -1505,37 +1527,46 @@ export function MissionDetailFragment(props: {
                         onChange={(value) => void saveOptions(value, modelOverride)}
                       />
                     </div>
-                    {executionActive ? (
-                      <button
-                        className="is-interrupt"
-                        type="button"
-                        aria-label={t("interrupt", { ns: "missions" })}
-                        title={
-                          interruptible
-                            ? t("interrupt", { ns: "missions" })
-                            : t("resumeBeforeInterrupt", { ns: "missions" })
-                        }
-                        disabled={!interruptible || interrupting}
-                        onClick={() => void interrupt()}
-                      >
-                        <StopCircle size={19} weight="fill" aria-hidden="true" />
-                      </button>
-                    ) : (
-                      <button
-                        type="button"
-                        aria-label={t("send", { ns: "missions" })}
-                        disabled={
-                          isFlow ||
-                          draft.trim() === "" ||
-                          sending ||
-                          optionsSaving ||
-                          props.mission.lifecycleStatus === "completed"
-                        }
-                        onClick={() => void send()}
-                      >
-                        <PaperPlaneTilt size={18} aria-hidden="true" />
-                      </button>
-                    )}
+                    <div className="mission-chat-actions">
+                      {chat?.contextWindow === undefined ? null : (
+                        <ContextWindowControl
+                          state={chat.contextWindow}
+                          compacting={compactingContext}
+                          onCompact={() => void compactContext()}
+                        />
+                      )}
+                      {executionActive ? (
+                        <button
+                          className="is-interrupt"
+                          type="button"
+                          aria-label={t("interrupt", { ns: "missions" })}
+                          title={
+                            interruptible
+                              ? t("interrupt", { ns: "missions" })
+                              : t("resumeBeforeInterrupt", { ns: "missions" })
+                          }
+                          disabled={!interruptible || interrupting}
+                          onClick={() => void interrupt()}
+                        >
+                          <StopCircle size={19} weight="fill" aria-hidden="true" />
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          aria-label={t("send", { ns: "missions" })}
+                          disabled={
+                            isFlow ||
+                            draft.trim() === "" ||
+                            sending ||
+                            optionsSaving ||
+                            props.mission.lifecycleStatus === "completed"
+                          }
+                          onClick={() => void send()}
+                        >
+                          <PaperPlaneTilt size={18} aria-hidden="true" />
+                        </button>
+                      )}
+                    </div>
                   </div>
                 </div>
               )}
@@ -1639,6 +1670,116 @@ export function MissionDetailFragment(props: {
         />
       )}
     </section>
+  );
+}
+
+export function ContextWindowControl(props: {
+  readonly state: MissionContextWindowState;
+  readonly compacting: boolean;
+  readonly onCompact: () => void;
+}) {
+  const { t } = useTranslation("missions");
+  const [open, setOpen] = useState(false);
+  const popoverId = useId();
+  const popoverLabelId = useId();
+  const usage = props.state.usage;
+  const percent = usage?.percent ?? null;
+  const boundedPercent = Math.max(0, Math.min(100, percent ?? 0));
+  const percentText =
+    percent === null
+      ? t("contextUnknown")
+      : t("contextPercentValue", {
+          value: new Intl.NumberFormat(i18n.language, {
+            maximumFractionDigits: 1,
+          }).format(percent),
+        });
+  const tokenFormatter = new Intl.NumberFormat(i18n.language);
+  const tone = boundedPercent >= 90 ? "is-critical" : boundedPercent >= 70 ? "is-warning" : "";
+
+  return (
+    <div
+      className={`mission-context-window ${tone}`}
+      onMouseEnter={() => setOpen(true)}
+      onMouseLeave={(event) => {
+        if (!event.currentTarget.matches(":focus-within")) setOpen(false);
+      }}
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false);
+      }}
+      onKeyDown={(event) => {
+        if (event.key === "Escape") {
+          event.stopPropagation();
+          setOpen(false);
+        }
+      }}
+    >
+      <button
+        className="mission-context-trigger"
+        type="button"
+        aria-label={t("contextWindowUsage", { value: percentText })}
+        aria-expanded={open}
+        aria-haspopup="dialog"
+        aria-controls={popoverId}
+        onFocus={() => setOpen(true)}
+        onClick={() => setOpen((current) => !current)}
+      >
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <circle className="mission-context-track" cx="12" cy="12" r="8.5" pathLength="100" />
+          <circle
+            className="mission-context-progress"
+            cx="12"
+            cy="12"
+            r="8.5"
+            pathLength="100"
+            strokeDasharray="100"
+            strokeDashoffset={100 - boundedPercent}
+          />
+        </svg>
+      </button>
+      {open ? (
+        <div
+          className="mission-context-popover"
+          id={popoverId}
+          role="dialog"
+          aria-modal="false"
+          aria-labelledby={popoverLabelId}
+        >
+          <div className="mission-context-heading">
+            <strong id={popoverLabelId}>{t("contextWindow")}</strong>
+            <span>{percentText}</span>
+          </div>
+          <dl>
+            <div>
+              <dt>{t("contextCurrent")}</dt>
+              <dd>
+                {usage?.usedTokens === null || usage === undefined
+                  ? t("contextUnknown")
+                  : tokenFormatter.format(usage.usedTokens)}
+              </dd>
+            </div>
+            <div>
+              <dt>{t("contextTotal")}</dt>
+              <dd>
+                {usage === undefined
+                  ? t("contextUnknown")
+                  : tokenFormatter.format(usage.contextWindowTokens)}
+              </dd>
+            </div>
+          </dl>
+          <button
+            className="mission-context-compact"
+            type="button"
+            disabled={!props.state.canCompact || props.compacting}
+            onClick={props.onCompact}
+          >
+            {props.compacting ? (
+              <SpinnerGap className="spin" size={15} aria-hidden="true" />
+            ) : null}
+            {props.compacting ? t("contextCompacting") : t("contextCompact")}
+          </button>
+        </div>
+      ) : null}
+    </div>
   );
 }
 

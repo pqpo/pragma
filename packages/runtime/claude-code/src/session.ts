@@ -12,12 +12,18 @@ import type {
   ExpertAgentStartupMessage,
   RuntimeEventMappingContext,
   RuntimeEventMappingResult,
+  RuntimeContextWindowUsage,
   RuntimeStreamEvent,
   RuntimeStreamEventInput,
   RuntimeTurnContext,
   RuntimeTurnResult,
 } from "@pragma/core";
-import { createUsageFromTokenCounts, hasNonZeroUsage, readFirstTokenCount } from "@pragma/core";
+import {
+  createRuntimeContextWindowUsage,
+  createUsageFromTokenCounts,
+  hasNonZeroUsage,
+  readFirstTokenCount,
+} from "@pragma/core";
 
 import type { ManagedClaudeCodeConfig } from "./claude-config.ts";
 import type {
@@ -92,6 +98,7 @@ export interface ClaudeCodeNativeSession {
     | undefined;
   activeHasExited?: (() => boolean) | undefined;
   activeCancelled: boolean;
+  contextWindowUsage?: RuntimeContextWindowUsage | undefined;
 }
 
 export function createClaudeCodeNativeSession(options: {
@@ -211,6 +218,7 @@ export async function startClaudeCodeTurn(
   if (run.sessionId !== undefined && run.sessionId !== session.state.sessionId) {
     session.state.sessionId = run.sessionId;
   }
+  session.contextWindowUsage = run.contextWindowUsage ?? session.contextWindowUsage;
 
   session.messages.push({
     role: "assistant",
@@ -266,10 +274,96 @@ export async function collectClaudeCodeUsage(
   });
 }
 
+export function readClaudeCodeContextWindow(
+  session: ClaudeCodeNativeSession,
+): RuntimeContextWindowUsage | undefined {
+  return session.contextWindowUsage;
+}
+
+export async function compactClaudeCodeContextWindow(
+  session: ClaudeCodeNativeSession,
+): Promise<RuntimeContextWindowUsage | undefined> {
+  if (session.state.sessionId === "") {
+    throw new Error("Claude Code Runtime session has not started.");
+  }
+  let compactBoundarySeen = false;
+  const runId = `context-compact:${randomUUID()}`;
+  const run = await runClaudeCodeProcess({
+    executablePath: session.executablePath,
+    args: [
+      ...session.launcherArgs,
+      ...(await createClaudeCodeArgs({
+        additionalArgs: session.additionalArgs,
+        defaultModelName: session.defaultModelName,
+        defaultThinkingLevel: session.defaultThinkingLevel,
+        managedConfig: session.managedConfig,
+        mcpServerUrl: session.mcpServerUrl,
+        permissionMode: session.permissionMode,
+        pluginDir: session.pluginDir,
+        sessionDir: session.sessionDir,
+        state: session.state,
+        systemPrompt: session.systemPrompt,
+      })),
+    ],
+    cwd: session.agent.workspace,
+    env: await createClaudeCodeEnv({
+      env: session.env,
+      managedConfig: session.managedConfig,
+      sessionDir: session.sessionDir,
+    }),
+    humanInteractionHandler: session.humanInteractionHandler,
+    logger: session.logger,
+    promptParts: ["/compact"],
+    runId,
+    source: {
+      kind: "agent",
+      runId,
+      agentId: session.agent.id,
+      path: [],
+    },
+    emitRuntimeEvent: () => undefined,
+    spawn: session.spawn,
+    onNativeEvent(event) {
+      if (event["type"] === "system" && event["subtype"] === "compact_boundary") {
+        compactBoundarySeen = true;
+      }
+    },
+    onProcessStarted(process, exitPromise, hasExited) {
+      session.activeCancelled = false;
+      session.activeProcess = process;
+      session.activeExitPromise = exitPromise;
+      session.activeHasExited = hasExited;
+    },
+    onProcessClosed(process) {
+      if (session.activeProcess === process) {
+        session.activeProcess = undefined;
+        session.activeExitPromise = undefined;
+        session.activeHasExited = undefined;
+      }
+    },
+  });
+  if (!compactBoundarySeen) {
+    throw new Error("Claude Code completed /compact without a compact boundary event.");
+  }
+  if (run.sessionId !== undefined) session.state.sessionId = run.sessionId;
+  const after =
+    run.contextWindowUsage ??
+    (session.contextWindowUsage === undefined
+      ? undefined
+      : createRuntimeContextWindowUsage({
+          usedTokens: null,
+          contextWindowTokens: session.contextWindowUsage.contextWindowTokens,
+          measurement: "derived",
+        }));
+  session.contextWindowUsage = after;
+  return after;
+}
+
 interface ClaudeProcessRunResult {
   readonly outputText: string;
   readonly usage?: AgentMessageUsage | undefined;
   readonly sessionId?: string | undefined;
+  readonly contextWindowUsage?: RuntimeContextWindowUsage | undefined;
 }
 
 interface ClaudeStreamMappingResult {
@@ -309,6 +403,7 @@ async function runClaudeCodeProcess({
   source,
   emitRuntimeEvent,
   spawn,
+  onNativeEvent,
   onProcessStarted,
   onProcessClosed,
 }: {
@@ -323,6 +418,9 @@ async function runClaudeCodeProcess({
   readonly source: RuntimeStreamEvent["source"];
   readonly emitRuntimeEvent: (event: RuntimeStreamEventInput) => void;
   readonly spawn?: ClaudeCodeRuntimeSpawn | undefined;
+  readonly onNativeEvent?:
+    | ((event: Readonly<Record<string, unknown>>) => void)
+    | undefined;
   readonly onProcessStarted: (
     process: ChildProcessWithoutNullStreams,
     exitPromise: Promise<{
@@ -350,6 +448,9 @@ async function runClaudeCodeProcess({
   let outputText = "";
   let usage: AgentMessageUsage | undefined;
   let sessionId: string | undefined;
+  let latestAssistantUsage: AgentMessageUsage | undefined;
+  let latestAssistantModel: string | undefined;
+  let contextWindowUsage: RuntimeContextWindowUsage | undefined;
   let stderrTail = "";
   let finalResultSeen = false;
   let hasSeenPartialTextDelta = false;
@@ -384,6 +485,7 @@ async function runClaudeCodeProcess({
         logger.debug("Ignoring non-JSON Claude Code stream line", { line });
         continue;
       }
+      onNativeEvent?.(event);
       if (event["type"] === "system" && event["subtype"] !== "thinking_tokens") {
         logger.debug("Claude Code system event", {
           subtype: event["subtype"],
@@ -402,11 +504,20 @@ async function runClaudeCodeProcess({
         continue;
       }
 
+      const message = readRecord(event["message"]);
+      if (event["type"] === "assistant" && message !== undefined) {
+        latestAssistantUsage = readUsage(message) ?? latestAssistantUsage;
+        latestAssistantModel = readString(message["model"]) ?? latestAssistantModel;
+      }
       if (event["type"] === "result") {
         finalResultSeen = true;
+        contextWindowUsage =
+          readClaudeCodeContextWindowUsage(
+            event,
+            latestAssistantUsage,
+            latestAssistantModel,
+          ) ?? contextWindowUsage;
       }
-
-      const message = readRecord(event["message"]);
       const hadOutputDelta = outputText !== "";
       const mapped: ClaudeStreamMappingResult =
         event["type"] === "assistant" && message !== undefined
@@ -494,6 +605,7 @@ async function runClaudeCodeProcess({
     outputText,
     ...(usage === undefined ? {} : { usage }),
     ...(sessionId === undefined ? {} : { sessionId }),
+    ...(contextWindowUsage === undefined ? {} : { contextWindowUsage }),
   };
 }
 
@@ -1297,6 +1409,41 @@ async function parseClaudeTranscriptUsageFile(
   }
 
   return result;
+}
+
+export function readClaudeCodeContextWindowUsage(
+  result: Record<string, unknown>,
+  assistantUsage: AgentMessageUsage | undefined,
+  assistantModel: string | undefined,
+): RuntimeContextWindowUsage | undefined {
+  const modelUsage =
+    readRecord(result["modelUsage"]) ?? readRecord(result["model_usage"]);
+  if (modelUsage === undefined) return undefined;
+  let selected =
+    assistantModel === undefined ? undefined : readRecord(modelUsage[assistantModel]);
+  if (selected === undefined) {
+    const candidates = Object.values(modelUsage)
+      .map(readRecord)
+      .filter((value): value is Record<string, unknown> => value !== undefined);
+    if (candidates.length === 1) selected = candidates[0];
+    else {
+      selected = candidates.find(
+        (candidate) =>
+          readFirstTokenCount(candidate, ["contextWindow", "context_window"]) !== undefined,
+      );
+    }
+  }
+  if (selected === undefined) return undefined;
+  const contextWindowTokens = readFirstTokenCount(selected, [
+    "contextWindow",
+    "context_window",
+  ]);
+  if (contextWindowTokens === undefined || contextWindowTokens <= 0) return undefined;
+  return createRuntimeContextWindowUsage({
+    usedTokens: assistantUsage?.totalTokens ?? null,
+    contextWindowTokens,
+    measurement: "derived",
+  });
 }
 
 function readUsage(record: Record<string, unknown>): AgentMessageUsage | undefined {

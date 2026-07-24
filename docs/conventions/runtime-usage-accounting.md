@@ -54,3 +54,22 @@ The semantics are:
 Therefore the Codex adapter should prefer `last` / `last_token_usage` for a Pragma run. It should use `total` only when no per-turn usage is available.
 
 Codex reports cached input as a subset of `input_tokens`. The adapter must subtract `cached_input_tokens` when mapping the mutually exclusive Pragma `input` and `cacheRead` categories.
+
+## Context-window occupancy
+
+Context-window occupancy is a separate runtime concern from billing usage. It is always scoped to
+the root Runtime Context displayed by Desktop and must never be derived by summing the Mission,
+ExpertSession, or delegated-agent usage totals.
+
+- PI uses `AgentSession.getContextUsage()` and marks the value as `estimated`. Its model
+  `contextWindow` is the percentage denominator.
+- Codex uses root-thread `thread/tokenUsage/updated.params.tokenUsage.total.totalTokens` with
+  `modelContextWindow` as the denominator and marks the value as `reported`.
+- Claude Code uses the most recent root assistant-message usage with the matching
+  `result.modelUsage[model].contextWindow` denominator and marks the value as `derived`.
+- Immediately after compaction, a runtime may know the denominator while the new numerator is not
+  yet available. In that case `usedTokens` and `percent` are `null`; callers must not substitute
+  cumulative billing usage.
+
+The latest observation is persisted in the owned Runtime Session record so Desktop can display it
+after restart. Manual compaction is allowed only while the owning root Runtime Context is idle.

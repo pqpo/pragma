@@ -295,6 +295,7 @@ export class PragmaProjectService {
     readonly revision: number;
     readonly ref: PragmaResourceRef;
     readonly workspace: string;
+    readonly pragmaHome?: string | undefined;
     readonly environmentId: string;
     readonly adapterHost: PragmaAdapterHost;
     readonly runtimes?: RuntimeResolver | undefined;
@@ -310,6 +311,7 @@ export class PragmaProjectService {
       const project = await this.openLocation(checkedOut, true);
       return await project.compile<T>(input.ref, {
         workspace: input.workspace,
+        pragmaHome: input.pragmaHome,
         projectRoot: dirname(checkedOut.entryFile),
         environmentId: input.environmentId,
         adapterHost: input.adapterHost,

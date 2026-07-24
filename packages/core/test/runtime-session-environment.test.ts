@@ -2,12 +2,15 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   defineExpert,
   definePluginEntry,
   defineRuntimeDriver,
+  createRuntimeContextWindowUsage,
+  PragmaPaths,
+  readRuntimeSessionRecord,
   type ExpertAgentPluginManifest,
   type RuntimeDriverSessionContext,
 } from "../src/index.ts";
@@ -87,6 +90,54 @@ describe("Runtime Session process environment", () => {
     await expect(open(agent, runtime, "conflict-session")).rejects.toThrow(
       /Conflicting process environment variable PRAGMA_TEST_CONFLICT/,
     );
+  });
+});
+
+describe("Runtime Session context window", () => {
+  it("persists inspection and compaction snapshots independently of billing usage", async () => {
+    const root = await temporaryRoot();
+    const inspect = vi.fn(() =>
+      createRuntimeContextWindowUsage({
+        usedTokens: 40_000,
+        contextWindowTokens: 200_000,
+        measurement: "reported",
+      }),
+    );
+    const compact = vi.fn(() =>
+      createRuntimeContextWindowUsage({
+        usedTokens: 12_000,
+        contextWindowTokens: 200_000,
+        measurement: "reported",
+      }),
+    );
+    const runtime = defineRuntimeDriver<never, Record<string, never>>({
+      descriptor: { id: "context-test", kind: "context-test", displayName: "Context Test" },
+      createSession: () => ({}),
+      startTurn: async () => ({ outputText: "done" }),
+      mapEvent: () => ({ events: [] }),
+      readContextWindow: inspect,
+      compactContext: compact,
+    });
+    const agent = await expert(root, "context-expert", "token");
+    const session = await open(agent, runtime, "context-session");
+
+    await expect(session.contextWindow?.inspect()).resolves.toMatchObject({
+      usedTokens: 40_000,
+      percent: 20,
+    });
+    await expect(session.contextWindow?.compact?.()).resolves.toMatchObject({
+      usedTokens: 12_000,
+      percent: 6,
+    });
+    const record = await readRuntimeSessionRecord(
+      new PragmaPaths({ pragmaHome: root }),
+      "context-session",
+      "context-session",
+    );
+    expect(record.contextWindowUsage).toMatchObject({ usedTokens: 12_000, percent: 6 });
+    expect(inspect).toHaveBeenCalledOnce();
+    expect(compact).toHaveBeenCalledOnce();
+    await session.close();
   });
 });
 

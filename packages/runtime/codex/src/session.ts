@@ -8,11 +8,17 @@ import type {
   ExpertAgentStartupMessage,
   RuntimeEventMappingContext,
   RuntimeEventMappingResult,
+  RuntimeContextWindowUsage,
   RuntimeStreamEventInput,
   RuntimeTurnContext,
   RuntimeTurnResult,
 } from "@pragma/core";
-import { createUsageFromTokenCounts, hasNonZeroUsage, readFirstTokenCount } from "@pragma/core";
+import {
+  createRuntimeContextWindowUsage,
+  createUsageFromTokenCounts,
+  hasNonZeroUsage,
+  readFirstTokenCount,
+} from "@pragma/core";
 import type { CodexRuntimeMessage } from "./types.ts";
 import type { CodexUserInput } from "./types.ts";
 
@@ -37,6 +43,8 @@ export interface CodexNativeSession {
   readonly codexHome?: string | undefined;
   readonly subagentThreads: Map<string, CodexSubagentThread>;
   pendingStartupMessages: readonly ExpertAgentStartupMessage[];
+  contextWindowUsage?: RuntimeContextWindowUsage | undefined;
+  contextWindowRevision: number;
 }
 
 export interface CodexSubagentThread {
@@ -59,6 +67,7 @@ const CODEX_TOOL_ITEM_NAMES = {
   mcpToolCall: "mcp_tool_call",
 } as const satisfies Record<string, string>;
 const CODEX_SESSION_USAGE_MTIME_TOLERANCE_MS = 5_000;
+const CODEX_COMPACTION_TIMEOUT_MS = 30_000;
 
 export function createCodexNotificationBus(): CodexNotificationBus {
   const subscribers = new Set<CodexNotificationSubscriber>();
@@ -97,6 +106,7 @@ export function createCodexNativeSession(options: {
     codexHome: options.codexHome,
     subagentThreads: new Map(),
     pendingStartupMessages: options.startupMessages ?? [],
+    contextWindowRevision: 0,
   };
 }
 
@@ -139,6 +149,7 @@ export async function startCodexTurn(
     },
     onNotification(notification) {
       rememberSubagentThread(session, notification);
+      rememberCodexContextWindowUsage(session, notification);
       const threadId = readNotificationThreadId(notification);
       turn.stream.writeNative({
         rootThreadId: session.state.threadId,
@@ -445,6 +456,135 @@ export async function collectCodexUsage(
     codexHome: session.codexHome,
     startTime: startedAt,
   });
+}
+
+export function readCodexContextWindow(
+  session: CodexNativeSession,
+): RuntimeContextWindowUsage | undefined {
+  return session.contextWindowUsage;
+}
+
+export async function compactCodexContextWindow(
+  session: CodexNativeSession,
+): Promise<RuntimeContextWindowUsage | undefined> {
+  const threadId = session.state.threadId;
+  if (threadId === "") throw new Error("Codex Runtime thread has not started.");
+  const usageBefore = session.contextWindowUsage;
+  const revisionBefore = session.contextWindowRevision;
+  let settled = false;
+  let resolveCompleted: () => void = () => undefined;
+  let rejectCompleted: (error: Error) => void = () => undefined;
+  const completed = new Promise<void>((resolve, reject) => {
+    resolveCompleted = resolve;
+    rejectCompleted = reject;
+  });
+  const unsubscribe = session.notificationBus.subscribe((notification) => {
+    const notificationThreadId = readNotificationThreadId(notification);
+    if (notificationThreadId !== undefined && notificationThreadId !== threadId) return;
+    rememberCodexContextWindowUsage(session, notification);
+    if (settled) return;
+    if (notification.method === "turn/failed") {
+      settled = true;
+      rejectCompleted(new Error(readFailureMessage(notification.params)));
+      return;
+    }
+    if (notification.method === "thread/compacted" || notification.method === "turn/completed") {
+      settled = true;
+      resolveCompleted();
+      return;
+    }
+    if (notification.method === "item/completed") {
+      const item = readRecord(notification.params["item"]);
+      if (item?.["type"] === "contextCompaction" && item["status"] === "failed") {
+        settled = true;
+        rejectCompleted(new Error(readToolFailureMessage(item, "Context compaction")));
+      }
+    }
+  });
+
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const timedOut = new Promise<never>((_resolve, reject) => {
+    timeout = setTimeout(() => {
+      reject(new Error("Codex context compaction timed out."));
+    }, CODEX_COMPACTION_TIMEOUT_MS);
+  });
+  try {
+    await Promise.race([
+      (async () => {
+        await session.client.compactThread(threadId);
+        await completed;
+      })(),
+      timedOut,
+    ]);
+  } finally {
+    if (timeout !== undefined) clearTimeout(timeout);
+    unsubscribe();
+  }
+
+  if (session.contextWindowRevision !== revisionBefore) return session.contextWindowUsage;
+  if (usageBefore === undefined) return undefined;
+  const unknownAfterCompaction = createRuntimeContextWindowUsage({
+    usedTokens: null,
+    contextWindowTokens: usageBefore.contextWindowTokens,
+    measurement: "reported",
+  });
+  session.contextWindowUsage = unknownAfterCompaction;
+  session.contextWindowRevision += 1;
+  return unknownAfterCompaction;
+}
+
+export function parseCodexContextWindowUsage(
+  params: Record<string, unknown>,
+): RuntimeContextWindowUsage | undefined {
+  const candidates = [
+    readRecord(params["tokenUsage"]),
+    readRecord(params["token_usage"]),
+    readRecord(readRecord(params["turn"])?.["tokenUsage"]),
+    readRecord(readRecord(params["turn"])?.["token_usage"]),
+    params,
+  ].filter((value): value is Record<string, unknown> => value !== undefined);
+
+  for (const candidate of candidates) {
+    const contextWindowTokens = readFirstTokenCount(candidate, [
+      "modelContextWindow",
+      "model_context_window",
+      "contextWindow",
+      "context_window",
+    ]);
+    if (contextWindowTokens === undefined || contextWindowTokens <= 0) continue;
+    const total =
+      readRecord(candidate["total"]) ??
+      readRecord(candidate["totalTokenUsage"]) ??
+      readRecord(candidate["total_token_usage"]);
+    const usedTokens =
+      total === undefined
+        ? null
+        : (readFirstTokenCount(total, ["totalTokens", "total_tokens", "total"]) ?? null);
+    return createRuntimeContextWindowUsage({
+      usedTokens,
+      contextWindowTokens,
+      measurement: "reported",
+    });
+  }
+  return undefined;
+}
+
+function rememberCodexContextWindowUsage(
+  session: CodexNativeSession,
+  notification: CodexAppServerNotification,
+): void {
+  if (notification.method !== "thread/tokenUsage/updated") return;
+  const notificationThreadId = readNotificationThreadId(notification);
+  if (
+    notificationThreadId !== undefined &&
+    notificationThreadId !== session.state.threadId
+  ) {
+    return;
+  }
+  const usage = parseCodexContextWindowUsage(notification.params);
+  if (usage === undefined) return;
+  session.contextWindowUsage = usage;
+  session.contextWindowRevision += 1;
 }
 
 function createTurnObserver({

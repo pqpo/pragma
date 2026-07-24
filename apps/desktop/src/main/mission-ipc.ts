@@ -100,6 +100,9 @@ export function installMissionHandlers(options: {
   ipcMain.handle("missions:chat:get", (_event, input: unknown) =>
     options.runner.getChat(GetMissionChatSchema.parse(input)),
   );
+  ipcMain.handle("missions:context:compact", (_event, input: unknown) =>
+    options.runner.compactContext(MissionActionSchema.parse(input).id),
+  );
   ipcMain.handle("missions:interrupt", (_event, input: unknown) =>
     options.runner.interrupt(MissionActionSchema.parse(input).id),
   );

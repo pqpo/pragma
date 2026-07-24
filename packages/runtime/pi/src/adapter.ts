@@ -27,10 +27,12 @@ import {
 import { createResourceLoader } from "./resources.ts";
 import { createPiSessionManager } from "./session-manager.ts";
 import {
+  compactPiContextWindow,
   collectPiUsage,
   createPiNativeSession,
   listPiMessages,
   mapPiAgentEvent,
+  readPiContextWindow,
   startPiTurn,
   type PiNativeSession,
 } from "./session.ts";
@@ -84,7 +86,13 @@ export function createPiRuntime(options: CloudPiRuntimeAdapterOptions = {}): Run
           sessionDir: ctx.paths.runtimeSessionDir("pi"),
           watch: true,
           debounceMs: options.sessionSyncDebounceMs,
-          checkpointOn: ["session.created", "turn.completed", "session.destroyed", "files.changed"],
+          checkpointOn: [
+            "session.created",
+            "turn.completed",
+            "context.compacted",
+            "session.destroyed",
+            "files.changed",
+          ],
           metadata: {
             format: "pi-agent-session-dir",
           },
@@ -203,6 +211,8 @@ export function createPiRuntime(options: CloudPiRuntimeAdapterOptions = {}): Run
       collectUsage(session) {
         return collectPiUsage(session);
       },
+      readContextWindow: readPiContextWindow,
+      compactContext: compactPiContextWindow,
       async cancelTurn(session) {
         await session.session.abort();
       },

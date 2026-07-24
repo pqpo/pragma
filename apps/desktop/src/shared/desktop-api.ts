@@ -1461,6 +1461,21 @@ export const MissionChatExecutionSchema = z.object({
   error: z.string().max(10_000).optional(),
 });
 
+export const MissionContextWindowUsageSchema = z.object({
+  usedTokens: z.number().int().nonnegative().nullable(),
+  contextWindowTokens: z.number().int().positive(),
+  percent: z.number().nonnegative().nullable(),
+  measurement: z.enum(["reported", "derived", "estimated"]),
+  observedAt: z.string().datetime(),
+});
+
+export const MissionContextWindowStateSchema = z.object({
+  supportsInspection: z.boolean(),
+  supportsCompaction: z.boolean(),
+  canCompact: z.boolean(),
+  usage: MissionContextWindowUsageSchema.optional(),
+});
+
 export const MissionChatSnapshotSchema = z.object({
   missionId: MissionIdSchema,
   revision: z.number().int().nonnegative(),
@@ -1472,6 +1487,7 @@ export const MissionChatSnapshotSchema = z.object({
   }),
   pendingInteractions: z.array(MissionHumanInteractionSchema),
   execution: MissionChatExecutionSchema.optional(),
+  contextWindow: MissionContextWindowStateSchema.optional(),
 });
 
 export const MissionChatPatchSchema = z.discriminatedUnion("type", [
@@ -1616,6 +1632,7 @@ export type SendMissionMessage = z.infer<typeof SendMissionMessageSchema>;
 export type MissionHumanInteraction = z.infer<typeof MissionHumanInteractionSchema>;
 export type MissionChatEntry = z.infer<typeof MissionChatEntrySchema>;
 export type MissionChatSnapshot = z.infer<typeof MissionChatSnapshotSchema>;
+export type MissionContextWindowState = z.infer<typeof MissionContextWindowStateSchema>;
 export type MissionChatPatch = z.infer<typeof MissionChatPatchSchema>;
 export type MissionChatUpdate = z.infer<typeof MissionChatUpdateSchema>;
 export type RespondMissionHumanInteraction = z.infer<typeof RespondMissionHumanInteractionSchema>;
@@ -1712,6 +1729,7 @@ export interface PragmaDesktopAPI {
   runMission: (id: string) => Promise<Mission>;
   sendMissionMessage: (input: SendMissionMessage) => Promise<Mission>;
   getMissionChat: (input: GetMissionChat) => Promise<MissionChatSnapshot>;
+  compactMissionContext: (id: string) => Promise<MissionContextWindowState>;
   subscribeMissionChat: (id: string, listener: (update: MissionChatUpdate) => void) => () => void;
   interruptMission: (id: string) => Promise<Mission>;
   getMissionWork: (id: string) => Promise<MissionWorkSnapshot>;

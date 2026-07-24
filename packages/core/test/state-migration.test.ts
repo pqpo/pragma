@@ -156,7 +156,7 @@ describe("versioned state migrations", () => {
     const file = paths.ownedSystemSessionManifest("owner", "runtime-session");
     await mkdir(dirname(file), { recursive: true });
     await writeJson(file, {
-      schemaVersion: "pragma.runtime-session/v3",
+      schemaVersion: "pragma.runtime-session/v4",
       owner: { type: "expert-session", ownerId: "owner", contextId: "context" },
       systemSessionId: "runtime-session",
     });
@@ -166,6 +166,70 @@ describe("versioned state migrations", () => {
       "unsupported-state-version",
     );
 
+    expect(await readFile(file, "utf8")).toBe(before);
+  });
+
+  it("upgrades Runtime Session v2 records with an empty context-window snapshot", async () => {
+    const home = await temporaryRoot("pragma-runtime-session-v2-");
+    const paths = new PragmaPaths({ pragmaHome: home });
+    const file = paths.ownedSystemSessionManifest("owner", "runtime-session");
+    await mkdir(dirname(file), { recursive: true });
+    await writeJson(file, {
+      schemaVersion: "pragma.runtime-session/v2",
+      owner: { type: "expert-session", ownerId: "owner", contextId: "context" },
+      systemSessionId: "runtime-session",
+      expertId: "expert",
+      runtime: { id: "runtime", kind: "test" },
+      runtimeSessionRef: { type: "test", id: "native-session" },
+      currentWorkspace: "/workspace",
+      workspaceHistory: ["/workspace"],
+      processState: "stopped",
+      retentionState: "retained",
+      createdAt: "2026-07-24T00:00:00.000Z",
+      updatedAt: "2026-07-24T00:00:00.000Z",
+    });
+
+    const upgraded = await readRuntimeSessionRecord(paths, "owner", "runtime-session");
+    expect(upgraded).toEqual(
+      expect.objectContaining({ schemaVersion: "pragma.runtime-session/v3" }),
+    );
+    expect(upgraded).not.toHaveProperty("contextWindowUsage");
+    await expect(readJson(file)).resolves.toEqual(
+      expect.objectContaining({ schemaVersion: "pragma.runtime-session/v3" }),
+    );
+  });
+
+  it("reads current Runtime Session context-window snapshots without rewriting them", async () => {
+    const home = await temporaryRoot("pragma-runtime-session-v3-");
+    const paths = new PragmaPaths({ pragmaHome: home });
+    const file = paths.ownedSystemSessionManifest("owner", "runtime-session");
+    await mkdir(dirname(file), { recursive: true });
+    await writeJson(file, {
+      schemaVersion: "pragma.runtime-session/v3",
+      owner: { type: "expert-session", ownerId: "owner", contextId: "context" },
+      systemSessionId: "runtime-session",
+      expertId: "expert",
+      runtime: { id: "runtime", kind: "test" },
+      runtimeSessionRef: { type: "test", id: "native-session" },
+      contextWindowUsage: {
+        usedTokens: 32_000,
+        contextWindowTokens: 128_000,
+        percent: 25,
+        measurement: "estimated",
+        observedAt: "2026-07-24T00:00:00.000Z",
+      },
+      currentWorkspace: "/workspace",
+      workspaceHistory: ["/workspace"],
+      processState: "stopped",
+      retentionState: "retained",
+      createdAt: "2026-07-24T00:00:00.000Z",
+      updatedAt: "2026-07-24T00:00:00.000Z",
+    });
+    const before = await readFile(file, "utf8");
+
+    await expect(readRuntimeSessionRecord(paths, "owner", "runtime-session")).resolves.toMatchObject(
+      { contextWindowUsage: { usedTokens: 32_000, percent: 25 } },
+    );
     expect(await readFile(file, "utf8")).toBe(before);
   });
 });

@@ -22,11 +22,13 @@ import { materializeClaudeCodePlugin } from "./skills.ts";
 import {
   cancelClaudeCodeTurn,
   collectClaudeCodeUsage,
+  compactClaudeCodeContextWindow,
   consumeClaudeCodeStartupMessages,
   createClaudeCodeNativeSession,
   filterClaudeRuntimeEnv,
   listClaudeCodeMessages,
   mapClaudeCodeNativeEvent,
+  readClaudeCodeContextWindow,
   startClaudeCodeTurn,
   type ClaudeCodeNativeSession,
 } from "./session.ts";
@@ -90,6 +92,7 @@ export function createClaudeCodeRuntime(
             "session.created",
             "runtimeSessionId.changed",
             "turn.completed",
+            "context.compacted",
             "session.destroyed",
             "files.changed",
           ],
@@ -228,6 +231,8 @@ export function createClaudeCodeRuntime(
       async collectUsage(session, ctx) {
         return await collectClaudeCodeUsage(session, ctx.startedAt, ctx.usage);
       },
+      readContextWindow: readClaudeCodeContextWindow,
+      compactContext: compactClaudeCodeContextWindow,
       cancelTurn(session) {
         cancelClaudeCodeTurn(session);
       },

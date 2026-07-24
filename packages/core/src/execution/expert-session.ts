@@ -21,8 +21,17 @@ import type { ExpertDefinition } from "../agent/expert-team.ts";
 import { isExpertTeam } from "../agent/expert-team.ts";
 import { fingerprintExpertExecutionDefinition } from "../agent/expert-definition-descriptor.ts";
 import type { RuntimeResolver } from "../runtime-resolver.ts";
-import type { RuntimeModelSelection } from "../runtime/runtime-adapter.ts";
+import type {
+  RuntimeContextWindowUsage,
+  RuntimeModelSelection,
+} from "../runtime/runtime-adapter.ts";
+import { openRuntimeSession } from "../runtime/session-factory.ts";
+import {
+  readRuntimeSessionContextWindowUsage,
+  readRuntimeSessionRecord,
+} from "../runtime/session-record.ts";
 import { mergeUsages } from "../runtime/usage.ts";
+import { PragmaPaths } from "../storage/pragma-paths.ts";
 import type { ExpertAgentAutomaticHumanInteractionHandler } from "../tools/managed-tool.ts";
 import {
   ExecutionController,
@@ -76,6 +85,8 @@ export interface ExpertSession {
   getMessageHistory(options?: GetMessageHistoryOptions): Promise<readonly ExpertMessageHistory[]>;
   listEvents(options?: ListSessionEventsOptions): Promise<SessionEventPage>;
   getUsage(): Promise<AgentMessageUsage | undefined>;
+  getRootContextWindowUsage(): Promise<RuntimeContextWindowUsage | undefined>;
+  compactRootContext(): Promise<RuntimeContextWindowUsage | undefined>;
   getPromptQueue(): Promise<readonly PromptRequest[]>;
 }
 
@@ -661,8 +672,101 @@ class ExpertSessionImpl implements ExpertSession {
     return mergeUsages(executions.map((execution) => execution?.usage));
   }
 
+  async getRootContextWindowUsage(): Promise<RuntimeContextWindowUsage | undefined> {
+    const context = await this.getRootContext();
+    const identity = {
+      contextId: context.contextId,
+      expertId: context.expert.id,
+      runtime: context.runtime,
+    };
+    const active = this.runtimeSessions.get(identity);
+    if (active?.contextWindow !== undefined) {
+      return await active.contextWindow.inspect();
+    }
+    if (context.snapshot === undefined) return undefined;
+    const paths = new PragmaPaths(
+      this.dependencies.pragmaHome === undefined
+        ? {}
+        : { pragmaHome: this.dependencies.pragmaHome },
+    );
+    const record = await readRuntimeSessionRecord(
+      paths,
+      this.sessionId,
+      context.snapshot.systemSessionId,
+    );
+    return readRuntimeSessionContextWindowUsage(record);
+  }
+
+  async compactRootContext(): Promise<RuntimeContextWindowUsage | undefined> {
+    if (this.leaseError !== undefined) throw this.leaseError;
+    if (this.closePromise !== undefined) {
+      throw new Error(`ExpertSession is closing or closed: ${this.sessionId}`);
+    }
+    const [state, prompts] = await Promise.all([this.getState(), this.getPromptQueue()]);
+    if (
+      state.activeExecutionId !== undefined ||
+      prompts.some((prompt) => prompt.status === "queued" || prompt.status === "running")
+    ) {
+      throw new Error("Wait for the active Expert turn before compacting its context.");
+    }
+    const context = await this.getRootContext(state);
+    if (context.snapshot === undefined) {
+      throw new Error("The root Runtime context has not started yet.");
+    }
+    const identity = {
+      contextId: context.contextId,
+      expertId: context.expert.id,
+      runtime: context.runtime,
+    };
+    const active = this.runtimeSessions.get(identity);
+    if (active !== undefined) {
+      if (active.contextWindow?.compact === undefined) {
+        throw new Error(`Runtime ${context.runtime.runtimeId} does not support context compaction.`);
+      }
+      return await active.contextWindow.compact();
+    }
+
+    const resolved = await this.dependencies.runtimes.resolve({
+      binding: context.runtime,
+      modelSelection: context.modelSelection,
+    });
+    if (!resolved.adapter.descriptor.capabilities?.supportsManualCompaction) {
+      throw new Error(`Runtime ${context.runtime.runtimeId} does not support context compaction.`);
+    }
+    const rootExpert = isExpertTeam(this.expert) ? this.expert.coordinator : this.expert;
+    const opened = await openRuntimeSession(resolved.adapter, {
+      agent: rootExpert,
+      owner: {
+        type: "expert-session",
+        ownerId: this.sessionId,
+        contextId: context.contextId,
+      },
+      pragmaHome: this.dependencies.pragmaHome,
+      systemSessionId: context.snapshot.systemSessionId,
+      runtimeSession: context.snapshot.runtimeSession,
+      modelSelection: context.modelSelection,
+    });
+    try {
+      if (opened.contextWindow?.compact === undefined) {
+        throw new Error(`Runtime ${context.runtime.runtimeId} does not support context compaction.`);
+      }
+      return await opened.contextWindow.compact();
+    } finally {
+      await opened.close();
+    }
+  }
+
   async getPromptQueue(): Promise<readonly PromptRequest[]> {
     return await this.dependencies.sessions.listPrompts(this.sessionId);
+  }
+
+  private async getRootContext(
+    state?: ExpertSessionRecord,
+  ): Promise<RuntimeContextRecord> {
+    const session = state ?? (await this.getState());
+    const context = session.contexts[session.rootContextId];
+    if (context === undefined) throw new Error("ExpertSession root Context is missing.");
+    return context;
   }
 
   private async steer(content: string, requestId: string): Promise<ExpertTurn> {

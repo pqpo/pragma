@@ -8,6 +8,7 @@ import type {
 import { i18n } from "../../i18n/index.ts";
 import {
   applyMissionChatPatches,
+  ContextWindowControl,
   groupMissionConversationEntries,
   MissionDetailFragment,
   MissionThinkingEntry,
@@ -86,6 +87,32 @@ describe("MissionsPage", () => {
 });
 
 describe("MissionDetailFragment", () => {
+  it("renders the context ring with an accessible percentage label", () => {
+    const html = renderToStaticMarkup(
+      <ContextWindowControl
+        state={{
+          supportsInspection: true,
+          supportsCompaction: true,
+          canCompact: true,
+          usage: {
+            usedTokens: 50_000,
+            contextWindowTokens: 200_000,
+            percent: 25,
+            measurement: "reported",
+            observedAt: "2026-07-24T00:00:00.000Z",
+          },
+        }}
+        compacting={false}
+        onCompact={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("mission-context-trigger");
+    expect(html).toContain('stroke-dashoffset="75"');
+    expect(html).toContain('aria-label="Context window usage: 25%"');
+    expect(html).toContain('aria-haspopup="dialog"');
+  });
+
   it("uses the full detail width for a single expert", () => {
     const html = renderToStaticMarkup(<MissionDetailFragment mission={missionFixture("expert")} />);
 

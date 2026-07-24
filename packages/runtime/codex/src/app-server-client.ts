@@ -160,6 +160,10 @@ export class CodexAppServerClient {
     await this.request("turn/interrupt", { threadId });
   }
 
+  async compactThread(threadId: string): Promise<void> {
+    await this.request("thread/compact/start", { threadId });
+  }
+
   close(): void {
     if (this.closed) {
       return;

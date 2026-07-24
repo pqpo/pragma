@@ -570,6 +570,18 @@ describe("mission contracts", () => {
           status: "running",
           interruptible: true,
         },
+        contextWindow: {
+          supportsInspection: true,
+          supportsCompaction: true,
+          canCompact: false,
+          usage: {
+            usedTokens: 64_000,
+            contextWindowTokens: 128_000,
+            percent: 50,
+            measurement: "estimated",
+            observedAt: "2026-07-11T00:00:03.000Z",
+          },
+        },
       }).success,
     ).toBe(true);
   });

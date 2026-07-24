@@ -9,6 +9,7 @@ import {
 import type { PragmaPaths } from "../storage/pragma-paths.ts";
 import type {
   RuntimeAdapterDescriptor,
+  RuntimeContextWindowUsage,
   RuntimeSessionOwner,
   RuntimeSessionRef,
 } from "./runtime-adapter.ts";
@@ -32,7 +33,7 @@ export async function createRuntimeSessionRecord(options: {
   );
   const now = new Date().toISOString();
   const record: RuntimeSessionRecord = {
-    schemaVersion: "pragma.runtime-session/v2",
+    schemaVersion: "pragma.runtime-session/v3",
     owner: options.owner,
     systemSessionId: options.systemSessionId,
     expertId: options.agentId,
@@ -91,12 +92,21 @@ export async function updateRuntimeSessionRecord(
   paths: PragmaPaths,
   record: RuntimeSessionRecord,
   patch: Partial<
-    Pick<RuntimeSessionRecord, "runtimeSessionRef" | "processState" | "retentionState">
+    Pick<
+      RuntimeSessionRecord,
+      "runtimeSessionRef" | "contextWindowUsage" | "processState" | "retentionState"
+    >
   >,
 ): Promise<RuntimeSessionRecord> {
   const updated = { ...record, ...patch, updatedAt: new Date().toISOString() };
   await writeRuntimeSessionRecord(paths, updated);
   return updated;
+}
+
+export function readRuntimeSessionContextWindowUsage(
+  record: RuntimeSessionRecord,
+): RuntimeContextWindowUsage | undefined {
+  return record.contextWindowUsage ?? undefined;
 }
 
 export async function readRuntimeSessionRecord(

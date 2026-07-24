@@ -8,6 +8,8 @@ import {
   createStaticRuntimeResolver,
   defineExpert,
   defineRuntimeDriver,
+  PragmaPaths,
+  readRuntimeSessionRecord,
   type RuntimeDriverSessionContext,
   type RuntimeModelSelection,
   type RuntimeResolver,
@@ -42,6 +44,124 @@ afterEach(async () => {
 });
 
 describe("MissionRunner", { timeout: 15_000 }, () => {
+  it("projects and compacts the persisted root context window", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-mission-context-window-"));
+    temporaryPaths.push(root);
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    const snapshot = await project.publish({
+      expectedRevision: 0,
+      resources: [runtimeFixture(), expertFixture()],
+    });
+    const missions = createMissionStore({ missionsPath: join(root, "missions") });
+    const mission = await missions.create({
+      workspace: { path: root, basename: "workspace" },
+      goal: "Track the root context",
+      project: { id: snapshot.projectId, revision: snapshot.revision },
+      executor: missionExecutorSnapshot(
+        snapshot.resources.find((resource) => resource.kind === "Expert")!,
+      ),
+    });
+    const compactContext = vi.fn(() => ({
+      usedTokens: 10_000,
+      contextWindowTokens: 200_000,
+      percent: 5,
+      measurement: "reported" as const,
+      observedAt: new Date().toISOString(),
+    }));
+    const runtime = defineRuntimeDriver<never, { id: string }>({
+      descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
+      createSession: () => ({ id: "runtime" }),
+      restoreSession: () => ({ id: "runtime" }),
+      readSession: (session) => ({ runtimeSessionId: session.id }),
+      startTurn: () => ({ outputText: "done", runtimeSessionId: "runtime" }),
+      mapEvent: () => ({ events: [] }),
+      readContextWindow: () => ({
+        usedTokens: 50_000,
+        contextWindowTokens: 200_000,
+        percent: 25,
+        measurement: "reported",
+        observedAt: new Date().toISOString(),
+      }),
+      compactContext,
+    });
+    const runtimes = createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" });
+    const createRunner = () =>
+      createMissionRunner({
+        missions,
+        project,
+        capabilityStore: {} as CapabilityStore,
+        capabilityCredentials: {} as CapabilityCredentialStore,
+        capabilitiesPath: join(root, "capabilities"),
+        pragmaHome: join(root, "state"),
+        runtimes,
+      });
+    const runner = createRunner();
+
+    await runner.run(mission.id);
+    await vi.waitFor(
+      async () => expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
+      { timeout: settlementTimeoutMs },
+    );
+    await expect(runner.getChat({ id: mission.id, limit: 50 })).resolves.toMatchObject({
+      contextWindow: {
+        supportsInspection: true,
+        supportsCompaction: true,
+        canCompact: true,
+        usage: { usedTokens: 50_000, contextWindowTokens: 200_000, percent: 25 },
+      },
+    });
+    await expect(runner.compactContext(mission.id)).resolves.toMatchObject({
+      canCompact: true,
+      usage: { usedTokens: 10_000, percent: 5 },
+    });
+    expect(compactContext).toHaveBeenCalledOnce();
+
+    const storedMission = await missions.get(mission.id);
+    const storedSession = await createFileExpertSessionStore({
+      executions: createFileExecutionStore({ pragmaHome: join(root, "state") }),
+      pragmaHome: join(root, "state"),
+    }).get(storedMission.execution!.sessionId!);
+    const storedRootContext = storedSession?.contexts[storedSession.rootContextId];
+    const storedRuntimeSession = await readRuntimeSessionRecord(
+      new PragmaPaths({ pragmaHome: join(root, "state") }),
+      storedMission.execution!.sessionId!,
+      storedRootContext!.snapshot!.systemSessionId,
+    );
+    expect(storedRuntimeSession.contextWindowUsage).toMatchObject({
+      usedTokens: 10_000,
+      percent: 5,
+    });
+
+    await expect(createRunner().getChat({ id: mission.id, limit: 50 })).resolves.toMatchObject({
+      contextWindow: {
+        canCompact: true,
+        usage: { usedTokens: 10_000, contextWindowTokens: 200_000, percent: 5 },
+      },
+    });
+
+    const unavailableRuntimes: RuntimeResolver = {
+      getDefaultRuntimeId: async () => "fake",
+      bind: async () => {
+        throw new Error("Runtime is unavailable.");
+      },
+      resolve: async () => {
+        throw new Error("Runtime is unavailable.");
+      },
+    };
+    const unavailableRunner = createMissionRunner({
+      missions,
+      project,
+      capabilityStore: {} as CapabilityStore,
+      capabilityCredentials: {} as CapabilityCredentialStore,
+      capabilitiesPath: join(root, "capabilities"),
+      pragmaHome: join(root, "state"),
+      runtimes: unavailableRuntimes,
+    });
+    const chatWithoutRuntime = await unavailableRunner.getChat({ id: mission.id, limit: 50 });
+    expect(chatWithoutRuntime.entries).not.toHaveLength(0);
+    expect(chatWithoutRuntime.contextWindow).toBeUndefined();
+  });
+
   it("streams rich chat activity and interrupts the active execution", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-mission-interrupt-"));
     temporaryPaths.push(root);

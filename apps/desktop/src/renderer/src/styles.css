@@ -10872,7 +10872,15 @@ textarea:focus-visible,
   gap: 2px;
 }
 
-.mission-chat-composer-toolbar > button {
+.mission-chat-actions {
+  position: relative;
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 5px;
+}
+
+.mission-chat-actions > button {
   display: grid;
   width: 39px;
   height: 39px;
@@ -10885,8 +10893,156 @@ textarea:focus-visible,
   cursor: pointer;
 }
 
-.mission-chat-composer-toolbar > button:disabled {
+.mission-chat-actions > button:disabled {
   background: #cad1cc;
+}
+
+.mission-context-window {
+  position: relative;
+  display: grid;
+  place-items: center;
+  color: var(--green);
+}
+
+.mission-context-trigger {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.mission-context-trigger:hover,
+.mission-context-trigger:focus-visible,
+.mission-context-trigger[aria-expanded="true"] {
+  background: #eef5f0;
+}
+
+.mission-context-trigger:focus-visible {
+  outline: 2px solid var(--green);
+  outline-offset: 1px;
+}
+
+.mission-context-trigger svg {
+  width: 24px;
+  height: 24px;
+  overflow: visible;
+  transform: rotate(-90deg);
+}
+
+.mission-context-track,
+.mission-context-progress {
+  fill: none;
+  stroke-width: 2.5;
+}
+
+.mission-context-track {
+  stroke: #dfe6e1;
+}
+
+.mission-context-progress {
+  stroke: currentColor;
+  stroke-linecap: round;
+  transition: stroke-dashoffset 160ms ease;
+}
+
+.mission-context-window.is-warning {
+  color: #b46b17;
+}
+
+.mission-context-window.is-critical {
+  color: #bd3f3f;
+}
+
+.mission-context-popover {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 9px);
+  z-index: 20;
+  width: 244px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: #fff;
+  color: var(--text);
+  box-shadow: 0 14px 36px rgb(29 49 38 / 16%);
+}
+
+.mission-context-heading,
+.mission-context-popover dl > div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.mission-context-heading {
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.mission-context-heading strong {
+  font-size: 13px;
+}
+
+.mission-context-heading span {
+  color: currentColor;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.mission-context-popover dl {
+  display: grid;
+  gap: 8px;
+  margin: 11px 0 13px;
+}
+
+.mission-context-popover dt,
+.mission-context-popover dd {
+  margin: 0;
+  font-size: 12px;
+}
+
+.mission-context-popover dt {
+  color: var(--muted);
+}
+
+.mission-context-popover dd {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.mission-context-compact {
+  display: flex;
+  width: 100%;
+  min-height: 34px;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 7px 11px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--green);
+  color: #fff;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.mission-context-compact:disabled {
+  background: #cad1cc;
+  cursor: not-allowed;
+}
+
+.mission-context-compact:focus-visible {
+  outline: 2px solid var(--green);
+  outline-offset: 2px;
 }
 
 .mission-chat-shell {

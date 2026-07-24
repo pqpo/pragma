@@ -55,6 +55,7 @@ import {
   MissionActionSchema,
   MissionChatSnapshotSchema,
   MissionChatUpdateSchema,
+  MissionContextWindowStateSchema,
   MissionCreationDefaultsSchema,
   MissionExecutorOptionSchema,
   MissionModelOptionsRequestSchema,
@@ -368,6 +369,10 @@ const api: PragmaDesktopAPI = {
   getMissionChat: async (input) =>
     MissionChatSnapshotSchema.parse(
       await ipcRenderer.invoke("missions:chat:get", GetMissionChatSchema.parse(input)),
+    ),
+  compactMissionContext: async (id) =>
+    MissionContextWindowStateSchema.parse(
+      await ipcRenderer.invoke("missions:context:compact", MissionActionSchema.parse({ id })),
     ),
   subscribeMissionChat: (id, listener) => {
     const missionId = MissionIdSchema.parse(id);

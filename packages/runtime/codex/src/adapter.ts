@@ -12,11 +12,13 @@ import { CodexAppServerClient } from "./app-server-client.ts";
 import { prepareManagedCodexHome } from "./codex-home.ts";
 import {
   collectCodexUsage,
+  compactCodexContextWindow,
   consumeCodexStartupMessages,
   createCodexNativeSession,
   createCodexNotificationBus,
   listCodexMessages,
   mapCodexNotificationToRuntimeEvent,
+  readCodexContextWindow,
   startCodexTurn,
   type CodexNativeSession,
   type CodexRuntimeSessionState,
@@ -83,7 +85,12 @@ export function createCodexRuntime(options: CodexRuntimeAdapterOptions = {}): Ru
         return {
           mode: "checkpoint",
           sessionDir: ctx.paths.runtimeSessionDir("codex"),
-          checkpointOn: ["session.created", "turn.completed", "session.destroyed"],
+          checkpointOn: [
+            "session.created",
+            "turn.completed",
+            "context.compacted",
+            "session.destroyed",
+          ],
           metadata: {
             format: "codex-managed-home",
           },
@@ -237,6 +244,8 @@ export function createCodexRuntime(options: CodexRuntimeAdapterOptions = {}): Ru
       async collectUsage(session, ctx) {
         return await collectCodexUsage(session, ctx.startedAt, ctx.usage);
       },
+      readContextWindow: readCodexContextWindow,
+      compactContext: compactCodexContextWindow,
       async cancelTurn(session) {
         if (session.state.threadId !== "") {
           await session.client.interruptTurn(session.state.threadId).catch(() => undefined);

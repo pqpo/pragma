@@ -3,11 +3,90 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { CodexAppServerClient } from "../src/app-server-client.ts";
 import {
+  compactCodexContextWindow,
   createCodexNativeSession,
   createCodexNotificationBus,
   mapCodexNotificationToRuntimeEvent,
+  parseCodexContextWindowUsage,
   startCodexTurn,
 } from "../src/session.ts";
+
+describe("Codex context window", () => {
+  it("reads the app-server thread token usage denominator", () => {
+    expect(
+      parseCodexContextWindowUsage({
+        threadId: "thread-1",
+        tokenUsage: {
+          total: { totalTokens: 48_000 },
+          last: { totalTokens: 2_000 },
+          modelContextWindow: 200_000,
+        },
+      }),
+    ).toMatchObject({
+      usedTokens: 48_000,
+      contextWindowTokens: 200_000,
+      percent: 24,
+      measurement: "reported",
+    });
+  });
+
+  it("waits for compact completion and returns refreshed thread usage", async () => {
+    const notificationBus = createCodexNotificationBus();
+    const client = {
+      async compactThread() {
+        notificationBus.publish({
+          method: "thread/tokenUsage/updated",
+          params: {
+            threadId: "thread-1",
+            tokenUsage: {
+              total: { totalTokens: 12_000 },
+              modelContextWindow: 200_000,
+            },
+          },
+        });
+        notificationBus.publish({
+          method: "turn/completed",
+          params: { threadId: "thread-1", turn: { status: "completed" } },
+        });
+      },
+    } as unknown as CodexAppServerClient;
+    const session = createCodexNativeSession({
+      client,
+      notificationBus,
+      state: { threadId: "thread-1" },
+    });
+
+    await expect(compactCodexContextWindow(session)).resolves.toMatchObject({
+      usedTokens: 12_000,
+      contextWindowTokens: 200_000,
+      percent: 6,
+    });
+  });
+
+  it("times out when the app-server never reports compact completion", async () => {
+    vi.useFakeTimers();
+    try {
+      const notificationBus = createCodexNotificationBus();
+      const client = {
+        async compactThread() {
+          return undefined;
+        },
+      } as unknown as CodexAppServerClient;
+      const session = createCodexNativeSession({
+        client,
+        notificationBus,
+        state: { threadId: "thread-1" },
+      });
+
+      const compacting = compactCodexContextWindow(session);
+      const rejected = expect(compacting).rejects.toThrow("context compaction timed out");
+      await vi.advanceTimersByTimeAsync(30_000);
+      await rejected;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
 
 describe("Codex turn completion", () => {
   it("rejects a completed turn that contains no assistant output", async () => {

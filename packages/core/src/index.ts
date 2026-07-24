@@ -63,6 +63,7 @@ export * from "./runtime/runtime-adapter.ts";
 export * from "./runtime/runtime-event-emitter.ts";
 export * from "./runtime/session-persistence.ts";
 export * from "./runtime/session-record.ts";
+export * from "./runtime/context-window.ts";
 export * from "./runtime/stream-events.ts";
 export * from "./runtime/stream-controller.ts";
 export * from "./runtime/usage.ts";
