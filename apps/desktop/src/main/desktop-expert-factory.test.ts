@@ -209,6 +209,127 @@ describe("resolveExpertCapabilities", () => {
     ).resolves.toBeUndefined();
   });
 
+  it("retries transient MCP availability failures before succeeding", async () => {
+    let attempts = 0;
+    const delays: number[] = [];
+
+    await expect(
+      assertSelectedMcpToolsAvailable(
+        {
+          name: "Starting MCP",
+          transport: "in-process",
+          inProcess: {
+            async listTools() {
+              attempts += 1;
+              if (attempts < 3) {
+                throw new TypeError("fetch failed", {
+                  cause: Object.assign(new Error("connection refused"), {
+                    code: "ECONNREFUSED",
+                  }),
+                });
+              }
+              return [{ name: "search_issues" }];
+            },
+            async callTool() {
+              return {};
+            },
+          },
+        },
+        ["search_issues"],
+        {
+          maxAttempts: 3,
+          baseDelayMs: 100,
+          random: () => 0,
+          sleep: async (delayMs) => {
+            delays.push(delayMs);
+          },
+        },
+      ),
+    ).resolves.toBeUndefined();
+
+    expect(attempts).toBe(3);
+    expect(delays).toEqual([100, 200]);
+  });
+
+  it("does not retry permanent MCP availability failures", async () => {
+    let attempts = 0;
+
+    await expect(
+      assertSelectedMcpToolsAvailable(
+        {
+          name: "Unauthorized MCP",
+          transport: "in-process",
+          inProcess: {
+            async listTools() {
+              attempts += 1;
+              throw new Error("401 Unauthorized");
+            },
+            async callTool() {
+              return {};
+            },
+          },
+        },
+        ["search_issues"],
+        {
+          sleep: async () => {
+            throw new Error("Permanent failures must not be retried.");
+          },
+        },
+      ),
+    ).rejects.toMatchObject({
+      attempts: 1,
+      diagnostic: {
+        code: "authentication",
+        retryable: false,
+      },
+    });
+
+    expect(attempts).toBe(1);
+  });
+
+  it("preserves transient error classification when availability retries are exhausted", async () => {
+    let attempts = 0;
+
+    await expect(
+      assertSelectedMcpToolsAvailable(
+        {
+          name: "Unavailable MCP",
+          transport: "in-process",
+          inProcess: {
+            async listTools() {
+              attempts += 1;
+              throw new TypeError("fetch failed", {
+                cause: Object.assign(new Error("connection refused"), {
+                  code: "ECONNREFUSED",
+                }),
+              });
+            },
+            async callTool() {
+              return {};
+            },
+          },
+        },
+        ["search_issues"],
+        {
+          maxAttempts: 2,
+          sleep: async () => undefined,
+        },
+      ),
+    ).rejects.toMatchObject({
+      message:
+        "MCP availability check failed after 2 attempts (network): fetch failed (ECONNREFUSED)",
+      attempts: 2,
+      transient: true,
+      diagnostic: {
+        code: "network",
+        message: "fetch failed (ECONNREFUSED)",
+        retryable: true,
+      },
+    });
+
+    expect(attempts).toBe(2);
+  });
+
   it("rejects a selected MCP tool that no longer exists", async () => {
     await expect(
       assertSelectedMcpToolsAvailable(
