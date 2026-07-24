@@ -2041,6 +2041,8 @@ function MissionHumanComposer(props: {
   const question = questions[index];
   const answer = question === undefined ? undefined : props.answers[question.question];
   const answerValid = question === undefined ? true : humanAnswerValid(question, answer);
+  const choiceOnly =
+    questions.length > 0 && questions.every((candidate) => candidate.kind !== "text");
 
   return (
     <section className="mission-human-composer" aria-labelledby="mission-human-title">
@@ -2122,22 +2124,28 @@ function MissionHumanComposer(props: {
       ) : (
         <>
           <div className="mission-human-question">
-            <small>
-              {t("questionPosition", {
-                ns: "missions",
-                current: index + 1,
-                total: questions.length,
-                header: question.header,
-              })}
-            </small>
+            {questions.length === 1 ? (
+              <small>{question.header}</small>
+            ) : (
+              <small>
+                {t("questionPosition", {
+                  ns: "missions",
+                  current: index + 1,
+                  total: questions.length,
+                  header: question.header,
+                })}
+              </small>
+            )}
             <strong>{question.question}</strong>
             <HumanQuestionInput question={question} answer={answer} onAnswer={props.onAnswer} />
           </div>
-          <textarea
-            value={props.notes}
-            onChange={(event) => props.onNotes(event.target.value)}
-            placeholder={t("optionalNotes", { ns: "missions" })}
-          />
+          {choiceOnly ? null : (
+            <textarea
+              value={props.notes}
+              onChange={(event) => props.onNotes(event.target.value)}
+              placeholder={t("optionalNotes", { ns: "missions" })}
+            />
+          )}
           <footer>
             <button
               type="button"

@@ -1103,12 +1103,17 @@ async function compileFlowResource(
       continue;
     }
     if (step.human !== undefined) {
+      const selectionSchema =
+        step.human.selectionMode === "single"
+          ? z.object({ selection: z.string().min(1) })
+          : z.object({ selection: z.array(z.string().min(1)).min(1) });
       references.set(
         stepId,
         flow.humanTask({
           id: stepId,
           version: step.version,
           input: mappedInput,
+          output: selectionSchema,
           descriptor,
           request: ({ input: stepInput, state }) =>
             compileHumanRequest(step.human!, state, stepInput),
@@ -1185,6 +1190,22 @@ function compileTransition(
       target: requireStepReference(references, transition.repeat.goto),
     };
   }
+  if ("branches" in transition) {
+    return {
+      type: "array-route" as const,
+      field: transition.route,
+      branches: transition.branches.map((branch) => ({
+        id: branch.id,
+        operator: branch.operator,
+        values: [...branch.values],
+        destination: compileDestination(branch.destination, references),
+      })),
+      fallback:
+        transition.fallback === undefined
+          ? undefined
+          : compileDestination(transition.fallback, references),
+    };
+  }
   return {
     type: "route" as const,
     field: transition.route,
@@ -1229,22 +1250,25 @@ function compileHumanRequest(
   state: FlowState,
   input: unknown,
 ) {
+  const question = renderFlowPrompt(request.prompt, state, input);
   return {
-    kind: request.kind,
-    title:
-      request.title === undefined ? undefined : String(evaluateValue(request.title, state, input)),
-    prompt:
-      request.prompt === undefined
-        ? undefined
-        : String(evaluateValue(request.prompt, state, input)),
-    options: request.options?.map((option) => ({ label: option, description: option })),
-    approveOption: request.approveOption,
-    questions: request.questions?.map((question) => ({
-      header: question.id,
-      question: question.label,
-      kind: question.type,
-      options: question.options.map((option) => ({ label: option, description: option })),
-    })),
+    kind: "question" as const,
+    prompt: question,
+    questions: [
+      {
+        header: "Selection",
+        question,
+        kind:
+          request.selectionMode === "single"
+            ? ("single_choice" as const)
+            : ("multiple_choice" as const),
+        options: request.options.map((option) => ({
+          value: option.value,
+          label: option.label,
+          description: option.description ?? "",
+        })),
+      },
+    ],
   };
 }
 
@@ -1404,6 +1428,40 @@ function validatePortableSemantics(
           field,
           "schema",
         ]);
+      }
+    }
+  }
+  if (resource.kind === "Automation") {
+    const executorRef = resource.spec.route.executor.ref;
+    const parsed = parsePragmaReference(executorRef);
+    const executor = resources.get(`${parsed.kind}:${parsed.id}@${parsed.version}`)?.resource;
+    if (executor?.kind === "Flow" && executor.spec.input?.schema !== undefined) {
+      if (resource.spec.route.input.kind !== "flow") {
+        add(
+          "automation.input.kind_invalid",
+          "Flows with an input schema require structured Automation input.",
+          ["spec", "route", "input"],
+        );
+      } else {
+        const flowInputSchema = createJsonSchemaZod(executor.spec.input.schema);
+        if (flowInputSchema !== undefined) {
+          const validation = flowInputSchema.safeParse(resource.spec.route.input.value);
+          if (!validation.success) {
+            for (const issue of validation.error.issues) {
+              add("automation.input.schema_invalid", issue.message, [
+                "spec",
+                "route",
+                "input",
+                "value",
+                ...issue.path.map((segment) =>
+                  typeof segment === "symbol"
+                    ? (segment.description ?? segment.toString())
+                    : segment,
+                ),
+              ]);
+            }
+          }
+        }
       }
     }
   }

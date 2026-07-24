@@ -1352,12 +1352,14 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
     );
     const interactions = await restartingRunner.listHumanInteractions(mission.id);
     expect(interactions).toHaveLength(1);
-    expect(interactions[0]?.request.kind).toBe("approval");
+    expect(interactions[0]?.request.kind).toBe("question");
     await restartingRunner.respondToHumanInteraction({
       missionId: mission.id,
       interactionId: interactions[0]!.interactionId,
       requestId: "00000000-0000-4000-8000-000000000001",
-      response: { approved: true, decision: "approved" },
+      response: {
+        answers: { "Approve the release?": "Ship" },
+      },
     });
     await vi.waitFor(
       async () => expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
@@ -1497,10 +1499,12 @@ function approvalFlowFixture(): PragmaFlowResource {
         steps: {
           approve: {
             human: {
-              kind: "approval",
-              prompt: "Approve the release?",
-              options: ["Ship", "Hold"],
-              approveOption: "Ship",
+              selectionMode: "single",
+              prompt: { segments: [{ text: "Approve the release?" }] },
+              options: [
+                { value: "ship", label: "Ship" },
+                { value: "hold", label: "Hold" },
+              ],
             },
             version: "1.0.0",
           },

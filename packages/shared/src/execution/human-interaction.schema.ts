@@ -12,7 +12,13 @@ export const HumanInteractionQuestionSchema = z.object({
   question: z.string().min(1),
   kind: z.enum(["single_choice", "multiple_choice", "text"]),
   options: z
-    .array(z.object({ label: z.string().min(1), description: z.string().default("") }))
+    .array(
+      z.object({
+        value: z.string().min(1).optional(),
+        label: z.string().min(1),
+        description: z.string().default(""),
+      }),
+    )
     .default([]),
 });
 
@@ -23,7 +29,13 @@ export const HumanInteractionRequestSchema = z
     prompt: z.string().min(1).optional(),
     questions: z.array(HumanInteractionQuestionSchema).optional(),
     options: z
-      .array(z.object({ label: z.string().min(1), description: z.string().default("") }))
+      .array(
+        z.object({
+          value: z.string().min(1).optional(),
+          label: z.string().min(1),
+          description: z.string().default(""),
+        }),
+      )
       .optional(),
     approveOption: z.string().min(1).optional(),
     data: z.unknown().optional(),
@@ -55,6 +67,7 @@ export const HumanInteractionRequestSchema = z
 
 export const HumanInteractionResponseSchema = z.object({
   decision: z.string().min(1).optional(),
+  selection: z.union([z.string().min(1), z.array(z.string().min(1)).min(1)]).optional(),
   answers: z.unknown().optional(),
   approved: z.boolean().optional(),
   notes: z.string().optional(),

@@ -4,7 +4,7 @@ import { PragmaPaths } from "@pragma/core";
 import { PragmaAutomationResourceSchema } from "@pragma/interpreter/ast";
 
 import type { AutomationBinding, Mission } from "../shared/desktop-api.ts";
-import { createAutomationService } from "./automation-service.ts";
+import { automationMissionInput, createAutomationService } from "./automation-service.ts";
 import type { AutomationState, AutomationStore } from "./automation-store.ts";
 import type { MissionCreator } from "./mission-creator.ts";
 import type { MissionRunner } from "./mission-runner.ts";
@@ -16,6 +16,44 @@ afterEach(() => {
 });
 
 describe("AutomationService", () => {
+  it("maps schema-less Flow prompts through the normal Mission goal input", () => {
+    const resource = PragmaAutomationResourceSchema.parse({
+      apiVersion: "pragma/v2",
+      kind: "Automation",
+      metadata: {
+        id: "flow_review",
+        version: "1.0.0",
+        name: "Flow review",
+        description: "Starts a review Flow",
+        tags: [],
+      },
+      spec: {
+        adapter: "pragma.automation.schedule@v1",
+        binding: "binding:desktop-automation",
+        config: {
+          trigger: {
+            kind: "calendar",
+            frequency: "daily",
+            time: "09:00",
+            timezone: "UTC",
+          },
+        },
+        enabled: true,
+        route: {
+          executor: { ref: "flow:review@1.0.0" },
+          input: { kind: "prompt", value: "Review the release." },
+        },
+        interaction: { mode: "new-mission" },
+        delivery: { adapter: "pragma.automation.delivery.local@v1" },
+      },
+    });
+
+    expect(automationMissionInput(resource)).toEqual({
+      kind: "auto",
+      value: "Review the release.",
+    });
+  });
+
   it("serializes overlapping reusable events into one Mission", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-07-23T00:00:00.000Z"));

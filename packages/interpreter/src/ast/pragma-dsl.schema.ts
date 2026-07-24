@@ -20,12 +20,17 @@ const EXTENSION_RESOURCE_ID = "[A-Za-z0-9][A-Za-z0-9._-]*";
 const VERSION = "[A-Za-z0-9][A-Za-z0-9.+_-]*";
 
 export const PRAGMA_EXPERT_ID_MAX_LENGTH = 50;
+export const PRAGMA_SEMANTIC_RESOURCE_ID_MAX_LENGTH = 120;
+export const PRAGMA_RESOURCE_VERSION_MAX_LENGTH = 100;
+export const PRAGMA_RESOURCE_NAME_MAX_LENGTH = 200;
+export const PRAGMA_RESOURCE_DESCRIPTION_MAX_LENGTH = 4_000;
+export const PRAGMA_AUTOMATION_PROMPT_MAX_LENGTH = 100_000;
 
 export const PragmaSemanticResourceIdSchema = z
   .string()
   .trim()
   .min(1)
-  .max(120)
+  .max(PRAGMA_SEMANTIC_RESOURCE_ID_MAX_LENGTH)
   .regex(new RegExp(`^${SEMANTIC_RESOURCE_ID}$`), "Use only letters, numbers, and underscores.");
 
 export const PragmaExpertIdSchema = PragmaSemanticResourceIdSchema.max(PRAGMA_EXPERT_ID_MAX_LENGTH);
@@ -126,10 +131,10 @@ export const PragmaMetadataSchema = z
       .string()
       .trim()
       .min(1)
-      .max(100)
+      .max(PRAGMA_RESOURCE_VERSION_MAX_LENGTH)
       .regex(new RegExp(`^${VERSION}$`)),
-    name: z.string().trim().min(1).max(200),
-    description: z.string().trim().min(1).max(4_000),
+    name: z.string().trim().min(1).max(PRAGMA_RESOURCE_NAME_MAX_LENGTH),
+    description: z.string().trim().min(1).max(PRAGMA_RESOURCE_DESCRIPTION_MAX_LENGTH),
     tags: z.array(z.string().trim().min(1).max(100)).max(100).default([]),
   })
   .strict();
@@ -372,50 +377,6 @@ export const PragmaFlowDestinationSchema = z.union([
   PragmaFlowRepeatTargetSchema,
 ]);
 
-export const PragmaHumanRequestSchema = z
-  .object({
-    kind: z.enum(["approval", "question", "review_gate", "manual_intervention"]),
-    title: z.string().min(1).optional(),
-    prompt: z.string().optional(),
-    options: z.array(z.string().min(1)).optional(),
-    approveOption: z.string().min(1).optional(),
-    questions: z
-      .array(
-        z
-          .object({
-            id: z.string().trim().min(1),
-            type: z.enum(["single_choice", "multiple_choice", "text"]),
-            label: z.string().min(1),
-            options: z.array(z.string()).default([]),
-          })
-          .strict(),
-      )
-      .optional(),
-  })
-  .strict()
-  .superRefine((value, context) => {
-    if (value.approveOption === undefined) return;
-    if (value.kind !== "approval") {
-      context.addIssue({
-        code: "custom",
-        path: ["approveOption"],
-        message: "approveOption is only valid for approval HumanTask steps.",
-      });
-      return;
-    }
-    const choices = [
-      ...(value.options ?? []),
-      ...(value.questions ?? []).flatMap((question) => question.options),
-    ];
-    if (choices.length > 0 && !choices.includes(value.approveOption)) {
-      context.addIssue({
-        code: "custom",
-        path: ["approveOption"],
-        message: "approveOption must match an approval choice.",
-      });
-    }
-  });
-
 const PragmaFlowVariablePathSchema = z
   .array(
     z
@@ -455,6 +416,56 @@ export const PragmaFlowPromptSchema = z
       )
       .max(500)
       .default([]),
+  })
+  .strict();
+
+export const PragmaHumanRequestSchema = z
+  .object({
+    selectionMode: z.enum(["single", "multiple"]),
+    prompt: PragmaFlowPromptSchema,
+    options: z
+      .array(
+        z
+          .object({
+            value: z.string().trim().min(1).max(200),
+            label: z.string().trim().min(1).max(500),
+            description: z.string().trim().max(2_000).optional(),
+          })
+          .strict(),
+      )
+      .min(2)
+      .max(100),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    const values = new Set<string>();
+    const labels = new Set<string>();
+    value.options.forEach((option, index) => {
+      if (values.has(option.value)) {
+        context.addIssue({
+          code: "custom",
+          path: ["options", index, "value"],
+          message: "Human input option values must be unique.",
+        });
+      }
+      if (labels.has(option.label)) {
+        context.addIssue({
+          code: "custom",
+          path: ["options", index, "label"],
+          message: "Human input option labels must be unique.",
+        });
+      }
+      values.add(option.value);
+      labels.add(option.label);
+    });
+  });
+
+export const PragmaFlowArrayRouteBranchSchema = z
+  .object({
+    id: PragmaFlowNodeIdSchema,
+    operator: z.enum(["contains_any", "contains_all", "contains_none"]),
+    values: z.array(z.string().min(1)).min(1),
+    destination: PragmaFlowDestinationSchema,
   })
   .strict();
 
@@ -546,6 +557,26 @@ export const PragmaFlowTransitionSchema = z.union([
       fallback: PragmaFlowDestinationSchema.optional(),
     })
     .strict(),
+  z
+    .object({
+      route: z.string().trim().min(1),
+      branches: z.array(PragmaFlowArrayRouteBranchSchema).min(1),
+      fallback: PragmaFlowDestinationSchema.optional(),
+    })
+    .strict()
+    .superRefine((value, context) => {
+      const ids = new Set<string>();
+      value.branches.forEach((branch, index) => {
+        if (ids.has(branch.id)) {
+          context.addIssue({
+            code: "custom",
+            path: ["branches", index, "id"],
+            message: "Logic branch ids must be unique.",
+          });
+        }
+        ids.add(branch.id);
+      });
+    }),
 ]);
 
 export const PragmaFlowLoopSchema = z
@@ -697,6 +728,12 @@ export const PragmaScheduleAutomationConfigSchema = z
   })
   .strict();
 
+export const PragmaAutomationPromptSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(PRAGMA_AUTOMATION_PROMPT_MAX_LENGTH);
+
 export const PragmaAutomationResourceSchema = z
   .object({
     apiVersion: PragmaApiVersionSchema,
@@ -715,7 +752,7 @@ export const PragmaAutomationResourceSchema = z
               z
                 .object({
                   kind: z.literal("prompt"),
-                  value: z.string().trim().min(1).max(100_000),
+                  value: PragmaAutomationPromptSchema,
                 })
                 .strict(),
               z
@@ -745,13 +782,6 @@ export const PragmaAutomationResourceSchema = z
   .strict()
   .superRefine((resource, context) => {
     const flow = resource.spec.route.executor.ref.startsWith("flow:");
-    if (flow && resource.spec.route.input.kind !== "flow") {
-      context.addIssue({
-        code: "custom",
-        message: "Flow automations require structured Flow input.",
-        path: ["spec", "route", "input"],
-      });
-    }
     if (!flow && resource.spec.route.input.kind !== "prompt") {
       context.addIssue({
         code: "custom",

@@ -141,7 +141,14 @@ describe("MissionCreator", () => {
           start: "done",
           steps: {
             done: {
-              human: { kind: "approval" as const, prompt: "Done?" },
+              human: {
+                selectionMode: "single" as const,
+                prompt: { segments: [{ text: "Done?" }] },
+                options: [
+                  { value: "yes", label: "Yes" },
+                  { value: "no", label: "No" },
+                ],
+              },
               version: "1.0.0",
             },
           },

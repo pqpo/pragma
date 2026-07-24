@@ -34,6 +34,8 @@ For Automation work, use `list_automations` before editing. Use `save_automation
 generic prepare/commit pair because the host workspace and permission binding must be saved with the
 portable DSL. Use the same tool to enable or disable an Automation. `delete_automation` retains
 existing Missions; `reset_automation_session` only changes which Mission the next event continues.
+Before preparing or saving, enforce the Automation metadata and prompt limits documented in
+`references/automation.md`; never rely on the host to truncate authored values.
 
 ## References
 

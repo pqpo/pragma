@@ -18,6 +18,7 @@ import {
   FlowEditor,
   flowRuntimeProfile,
   flowVariableOptions,
+  inspectorNodeId,
   nextAvailableNodePosition,
   normalizeConnectionDestination,
   normalizePromptSegments,
@@ -100,6 +101,16 @@ describe("Flow editor canvas", () => {
       expect.arrayContaining(["review", START_NODE_ID, END_NODE_ID]),
     );
     expect(Object.keys(canvasPositions(nodes))).not.toContain(FAIL_NODE_ID);
+  });
+
+  it("keeps terminal nodes selectable so End can expose result mapping", () => {
+    const nodes = buildCanvasNodes(createEmptyFlow(), {});
+    const start = nodes.find((node) => node.id === START_NODE_ID);
+    const end = nodes.find((node) => node.id === END_NODE_ID);
+
+    expect(inspectorNodeId(start)).toBe(START_NODE_ID);
+    expect(inspectorNodeId(end)).toBe(END_NODE_ID);
+    expect(inspectorNodeId(undefined)).toBeNull();
   });
 
   it("places repeatedly added nodes into distinct non-overlapping grid cells", () => {
@@ -325,6 +336,57 @@ describe("Flow editor canvas", () => {
     expect(
       buildCanvasEdges(flow).filter((edge) => edge.sourceHandle?.startsWith("case:")),
     ).toHaveLength(0);
+  });
+
+  it("infers Human selection output and creates ordered array branches from stable option values", () => {
+    const flow = flowFixture();
+    flow.spec.graph.steps.review = {
+      human: {
+        selectionMode: "multiple",
+        prompt: { segments: [{ text: "Choose release actions." }] },
+        options: [
+          { value: "ship", label: "Ship" },
+          { value: "notify", label: "Notify users" },
+        ],
+      },
+      version: "1.0.0",
+    };
+    flow.spec.graph.steps.finish = {
+      expert: { ref: "expert:finish@1.0.0" },
+      prompt: { segments: [{ text: "Finish." }] },
+      version: "1.0.0",
+    };
+    flow.spec.graph.transitions.review = { goto: "finish" };
+    flow.spec.graph.transitions.finish = { end: true };
+
+    const fields = routeFieldOptions(flow, "review");
+    expect(fields).toEqual([
+      { name: "selection", type: "string-array", values: ["ship", "notify"] },
+    ]);
+    expect(flowVariableOptions(flow, "finish")).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          label: "review.result.selection",
+          variable: { source: "node-output", nodeId: "review", path: ["selection"] },
+        }),
+      ]),
+    );
+
+    const route = createRouteTransition(fields[0]);
+    expect(route).toMatchObject({
+      route: "selection",
+      branches: [
+        { id: "branch_1", operator: "contains_any", values: ["ship"] },
+        { id: "branch_2", operator: "contains_any", values: ["notify"] },
+      ],
+      fallback: { goto: "" },
+    });
+    flow.spec.graph.transitions.review = route;
+    expect(
+      buildCanvasNodes(flow, {})
+        .find((node) => node.type === "logic")
+        ?.data.outputs.map((output) => output.id),
+    ).toEqual(["branch:branch_1", "branch:branch_2", "fallback"]);
   });
 
   it("requires complete type-aware branches while preserving unresolved legacy route fields", () => {
@@ -651,7 +713,8 @@ function flowFixture(): PragmaFlowResource {
         start: "review",
         steps: {
           review: {
-            human: { kind: "approval", prompt: "Approve?" },
+            expert: { ref: "expert:review@1.0.0" },
+            prompt: { segments: [{ text: "Review this change." }] },
             version: "1.0.0",
           },
         },

@@ -537,6 +537,7 @@ async function runStep(
         invocation,
         input,
         readUserFlowState(record.state),
+        step.options.output,
       );
     }
     if ("kind" in step.definition && step.definition.kind === "flow") {
@@ -618,6 +619,7 @@ async function runHumanTask(
   invocation: Invocation,
   input: unknown,
   state: FlowState,
+  outputSchema: z.ZodType | undefined,
 ): Promise<unknown> {
   await putStatus(options.store, options.executionId, invocation, "waiting");
   const context: FlowTaskContext = {
@@ -647,7 +649,8 @@ async function runHumanTask(
     toExpertHumanRequest(request),
     `human:${invocation.invocationId}`,
   );
-  const output = fromExpertHumanResponse(request, response);
+  const humanResponse = fromExpertHumanResponse(request, response);
+  const output = outputSchema?.parse(humanResponse) ?? humanResponse;
   await putStatus(options.store, options.executionId, invocation, "succeeded", output);
   return output;
 }
@@ -731,12 +734,39 @@ function fromExpertHumanResponse(
     notesQuestion === undefined ? undefined : readHumanAnswer(answers, notesQuestion.question);
   const approved =
     request.kind === "approval" ? isApprovedHumanDecision(request, questions, decision) : undefined;
+  const selection = readHumanSelection(request, answers);
   return HumanInteractionResponseSchema.parse({
     answers,
     ...(decision === undefined ? {} : { decision }),
+    ...(selection === undefined ? {} : { selection }),
     ...(notes === undefined ? {} : { notes }),
     ...(approved === undefined ? {} : { approved }),
   });
+}
+
+function readHumanSelection(
+  request: HumanInteractionRequest,
+  answers: Readonly<Record<string, unknown>>,
+): string | string[] | undefined {
+  const question = request.questions?.find(
+    (candidate) => candidate.kind === "single_choice" || candidate.kind === "multiple_choice",
+  );
+  if (question === undefined || !question.options.some((option) => option.value !== undefined)) {
+    return undefined;
+  }
+  const answer = answers[question.question];
+  const valueForLabel = (label: string) =>
+    question.options.find((option) => option.label === label)?.value ?? label;
+  if (question.kind === "single_choice") {
+    return typeof answer === "string" && answer.trim() !== ""
+      ? valueForLabel(answer.trim())
+      : undefined;
+  }
+  if (!Array.isArray(answer)) return undefined;
+  const values = answer.flatMap((entry) =>
+    typeof entry === "string" && entry.trim() !== "" ? [valueForLabel(entry.trim())] : [],
+  );
+  return values.length === 0 ? undefined : values;
 }
 
 function readHumanAnswers(
@@ -1098,6 +1128,21 @@ async function applyTransitionOnce(
     } else if (transition.type === "route") {
       destination =
         transition.cases.get(String(readField(output, transition.field))) ?? transition.fallback;
+    } else if (transition.type === "array-route") {
+      const value = readField(output, transition.field);
+      const selected = Array.isArray(value)
+        ? new Set(value.filter((entry): entry is string => typeof entry === "string"))
+        : new Set<string>();
+      destination =
+        transition.branches.find((branch) => {
+          if (branch.operator === "contains_any") {
+            return branch.values.some((candidate) => selected.has(candidate));
+          }
+          if (branch.operator === "contains_all") {
+            return branch.values.every((candidate) => selected.has(candidate));
+          }
+          return branch.values.every((candidate) => !selected.has(candidate));
+        })?.destination ?? transition.fallback;
     } else {
       destination = transition;
     }
@@ -1365,6 +1410,21 @@ function visitFlowDefinition(flow: Flow, ancestors: Set<Flow>): unknown {
         type: "repeat",
         loopId: transition.loopId,
         target: describeTarget(transition.target),
+      };
+    }
+    if (transition.type === "array-route") {
+      return {
+        type: "array-route",
+        field: transition.field,
+        branches: transition.branches.map((branch) => ({
+          id: branch.id,
+          operator: branch.operator,
+          values: [...branch.values],
+          destination: describeTarget(branch.destination),
+        })),
+        ...(transition.fallback === undefined
+          ? {}
+          : { fallback: describeTarget(transition.fallback) }),
       };
     }
     return {

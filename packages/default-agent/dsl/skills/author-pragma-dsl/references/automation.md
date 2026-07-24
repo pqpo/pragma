@@ -3,6 +3,16 @@
 Use an Automation to connect an Expert, ExpertTeam, or Flow to an external trigger. Schedule is the
 built-in trigger adapter; webhook and conversation adapters can use the same resource boundary later.
 
+Automation text limits are enforced by both prepare and save:
+
+- `metadata.id`: 1–120 characters; letters, numbers, and underscores only, starting with a letter
+  or number.
+- `metadata.version`: 1–100 characters; start with a letter or number, then use letters, numbers,
+  dots, `+`, `_`, or `-`.
+- `metadata.name`: 1–200 characters.
+- `metadata.description`: 1–4,000 characters.
+- Prompt input: 1–100,000 characters.
+
 ```yaml
 apiVersion: pragma/v2
 kind: Automation
@@ -50,7 +60,11 @@ Mission continuity:
 - Expert and ExpertTeam default to `reuse-session`; events for one Automation are processed FIFO
   in one Mission. A pending human or tool approval blocks later events.
 - `new-mission` creates an independent Mission for every event and permits concurrent execution.
-- Flow always requires `new-mission` and structured `route.input.kind: flow`.
+- Flow always requires `new-mission`.
+- When a Flow declares `spec.input.schema`, use structured `route.input.kind: flow` and provide a
+  value that satisfies that schema.
+- When a Flow has no input schema, use `route.input.kind: prompt`; Desktop converts that prompt into
+  the Flow goal input at execution time.
 - Deleting the Automation does not delete Missions. Reset continuity only when the user explicitly
   wants the next event to start a fresh Mission.
 

@@ -1,17 +1,35 @@
-import { ArrowLeft, Clock, Plus, Robot, Trash } from "@phosphor-icons/react";
-import { PragmaScheduleTriggerSchema } from "@pragma/interpreter/ast";
-import { useEffect, useMemo, useState } from "react";
+import { ArrowLeft, CaretDown, Check, Clock, Plus, Robot, Trash } from "@phosphor-icons/react";
+import {
+  PRAGMA_AUTOMATION_PROMPT_MAX_LENGTH,
+  PRAGMA_RESOURCE_DESCRIPTION_MAX_LENGTH,
+  PRAGMA_RESOURCE_NAME_MAX_LENGTH,
+  PRAGMA_RESOURCE_VERSION_MAX_LENGTH,
+  PRAGMA_SEMANTIC_RESOURCE_ID_MAX_LENGTH,
+  PragmaScheduleTriggerSchema,
+} from "@pragma/interpreter/ast";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import type {
   AutomationSummary,
   DesktopToolPermissionMode,
+  MissionCreationDefaults,
   MissionExecutorOption,
   PragmaProjectSnapshot,
 } from "../../../../shared/desktop-api.ts";
+import { WorkspacePicker, workspaceSelectionFromPath } from "../../components/WorkspacePicker.tsx";
 import { errorMessage } from "../../lib/errors.ts";
+import {
+  SchemaInputForm,
+  createSchemaInputValue,
+  isSchemaInputValid,
+} from "../home/SchemaInputForm.tsx";
 import { StudioScreenFrame } from "./StudioScreenFrame.tsx";
 import { desktopApi } from "./studio-model.ts";
+
+const WEEKDAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"] as const;
+type Weekday = (typeof WEEKDAYS)[number];
+type FlowExecutor = Extract<MissionExecutorOption, { readonly kind: "flow" }>;
 
 type EditorState = {
   readonly originalRef?: string | undefined;
@@ -21,7 +39,8 @@ type EditorState = {
   readonly description: string;
   readonly enabled: boolean;
   readonly executorRef: string;
-  readonly input: string;
+  readonly prompt: string;
+  readonly flowInput: Readonly<Record<string, unknown>>;
   readonly interaction: "reuse-session" | "new-mission";
   readonly workspace: string;
   readonly toolPermissionMode: DesktopToolPermissionMode;
@@ -32,8 +51,7 @@ type EditorState = {
   readonly anchorAt: string;
   readonly frequency: "daily" | "weekdays" | "weekly" | "monthly";
   readonly time: string;
-  readonly timezone: string;
-  readonly weekdays: string;
+  readonly weekdays: readonly Weekday[];
   readonly dayOfMonth: number;
   readonly cron: string;
   readonly startsAt: string;
@@ -46,9 +64,11 @@ export function AutomationDirectoryFragment(props: {
   readonly onChanged: () => Promise<void>;
 }) {
   const { t } = useTranslation("studio");
+  const { t: tMissions } = useTranslation("missions");
   const [tab, setTab] = useState<"automations" | "connections">("automations");
   const [editor, setEditor] = useState<EditorState | null>(null);
   const [executors, setExecutors] = useState<readonly MissionExecutorOption[]>([]);
+  const [missionDefaults, setMissionDefaults] = useState<MissionCreationDefaults>();
   const [saving, setSaving] = useState(false);
   const [preview, setPreview] = useState<readonly string[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -57,10 +77,11 @@ export function AutomationDirectoryFragment(props: {
     const api = desktopApi();
     if (api === undefined) return;
     let cancelled = false;
-    void api
-      .listMissionExecutors()
-      .then((items) => {
-        if (!cancelled) setExecutors(items);
+    void Promise.all([api.listMissionExecutors(), api.getMissionCreationDefaults()])
+      .then(([items, defaults]) => {
+        if (cancelled) return;
+        setExecutors(items);
+        setMissionDefaults(defaults);
       })
       .catch((loadError: unknown) => {
         if (!cancelled) setError(errorMessage(loadError));
@@ -75,10 +96,14 @@ export function AutomationDirectoryFragment(props: {
     [editor?.executorRef, executors],
   );
   const flow = selectedExecutor?.kind === "flow";
+  const flowInputSchema =
+    selectedExecutor?.kind === "flow" ? selectedExecutor.inputSchema : undefined;
+  const structuredFlowInput = flowInputSchema !== undefined;
 
   const openNew = async () => {
     const api = desktopApi();
     const defaults = await api?.getMissionCreationDefaults();
+    if (defaults !== undefined) setMissionDefaults(defaults);
     const executor = executors[0];
     const timestamp = localDateTime(new Date(Date.now() + 60 * 60_000));
     setEditor({
@@ -88,7 +113,11 @@ export function AutomationDirectoryFragment(props: {
       description: "",
       enabled: true,
       executorRef: executor?.ref ?? "",
-      input: executor?.kind === "flow" ? "{}" : "",
+      prompt: "",
+      flowInput:
+        executor?.kind === "flow" && executor.inputSchema !== undefined
+          ? createSchemaInputValue(executor.inputSchema)
+          : {},
       interaction: executor?.kind === "flow" ? "new-mission" : "reuse-session",
       workspace: defaults?.workspace.path ?? "",
       toolPermissionMode: defaults?.toolPermissionMode ?? "request-approval",
@@ -99,8 +128,7 @@ export function AutomationDirectoryFragment(props: {
       anchorAt: timestamp,
       frequency: "daily",
       time: "09:00",
-      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-      weekdays: "mon,tue,wed,thu,fri",
+      weekdays: ["mon", "tue", "wed", "thu", "fri"],
       dayOfMonth: 1,
       cron: "0 9 * * *",
       startsAt: "",
@@ -115,6 +143,11 @@ export function AutomationDirectoryFragment(props: {
       readonly trigger: Record<string, unknown>;
     };
     const value = trigger.trigger;
+    const executor = executors.find(
+      (candidate): candidate is FlowExecutor =>
+        candidate.kind === "flow" && candidate.ref === automation.resource.spec.route.executor.ref,
+    );
+    const routeInput = automation.resource.spec.route.input;
     const window = value["window"] as
       | { readonly startsAt?: string; readonly endsAt?: string }
       | undefined;
@@ -126,10 +159,18 @@ export function AutomationDirectoryFragment(props: {
       description: automation.resource.metadata.description,
       enabled: automation.resource.spec.enabled,
       executorRef: automation.resource.spec.route.executor.ref,
-      input:
-        automation.resource.spec.route.input.kind === "prompt"
-          ? automation.resource.spec.route.input.value
-          : JSON.stringify(automation.resource.spec.route.input.value, undefined, 2),
+      prompt:
+        routeInput.kind === "prompt"
+          ? routeInput.value
+          : typeof routeInput.value["goal"] === "string"
+            ? routeInput.value["goal"]
+            : "",
+      flowInput:
+        routeInput.kind === "flow"
+          ? routeInput.value
+          : executor?.inputSchema === undefined
+            ? {}
+            : createSchemaInputValue(executor.inputSchema),
       interaction: automation.resource.spec.interaction.mode,
       workspace: automation.binding?.workspace.path ?? "",
       toolPermissionMode: automation.binding?.toolPermissionMode ?? "request-approval",
@@ -140,10 +181,11 @@ export function AutomationDirectoryFragment(props: {
       anchorAt: localDateTime(new Date(String(value["anchorAt"] ?? Date.now()))),
       frequency: (value["frequency"] as EditorState["frequency"]) ?? "daily",
       time: String(value["time"] ?? "09:00"),
-      timezone: String(value["timezone"] ?? Intl.DateTimeFormat().resolvedOptions().timeZone),
       weekdays: Array.isArray(value["weekdays"])
-        ? value["weekdays"].join(",")
-        : "mon,tue,wed,thu,fri",
+        ? value["weekdays"].filter((weekday): weekday is Weekday =>
+            WEEKDAYS.includes(weekday as Weekday),
+          )
+        : ["mon", "tue", "wed", "thu", "fri"],
       dayOfMonth: Number(value["dayOfMonth"] ?? 1),
       cron: String(value["expression"] ?? "0 9 * * *"),
       startsAt: window?.startsAt === undefined ? "" : localDateTime(new Date(window.startsAt)),
@@ -155,14 +197,20 @@ export function AutomationDirectoryFragment(props: {
 
   const save = async () => {
     if (editor === null) return;
+    const validation = validateAutomationEditor(editor, selectedExecutor);
+    if (!validation.valid) {
+      setError(t("automationFormInvalid"));
+      return;
+    }
     const api = desktopApi();
     if (api === undefined) return;
     setSaving(true);
     setError(null);
     try {
-      const routeInput = flow
-        ? { kind: "flow" as const, value: JSON.parse(editor.input) as Record<string, unknown> }
-        : { kind: "prompt" as const, value: editor.input };
+      const routeInput =
+        flow && structuredFlowInput
+          ? { kind: "flow" as const, value: editor.flowInput }
+          : { kind: "prompt" as const, value: editor.prompt.trim() };
       await api.saveAutomation({
         expectedProjectRevision: props.project.revision,
         resource: {
@@ -213,7 +261,30 @@ export function AutomationDirectoryFragment(props: {
     }
   };
 
+  const pickWorkspace = async () => {
+    const api = desktopApi();
+    if (api === undefined) return;
+    try {
+      const result = await api.pickWorkspace();
+      if (result.ok && result.path !== undefined && result.basename !== undefined) {
+        const selectedPath = result.path;
+        setEditor((current) => (current === null ? null : { ...current, workspace: selectedPath }));
+        setError(null);
+      } else if (result.reason !== "cancelled") {
+        setError(result.error ?? tMissions("workspaceUnavailable"));
+      }
+    } catch (pickError) {
+      setError(errorMessage(pickError));
+    }
+  };
+
   if (editor !== null) {
+    const knownWorkspaces =
+      missionDefaults === undefined
+        ? []
+        : [missionDefaults.workspace, ...missionDefaults.recentWorkspaces];
+    const selectedWorkspace = workspaceSelectionFromPath(editor.workspace, knownWorkspaces);
+    const validation = validateAutomationEditor(editor, selectedExecutor);
     return (
       <StudioScreenFrame
         className="automation-editor"
@@ -248,33 +319,63 @@ export function AutomationDirectoryFragment(props: {
                 <input
                   required
                   pattern="[A-Za-z0-9][A-Za-z0-9_]*"
+                  maxLength={PRAGMA_SEMANTIC_RESOURCE_ID_MAX_LENGTH}
                   disabled={editor.originalRef !== undefined}
                   value={editor.id}
+                  aria-invalid={validation.id !== undefined}
                   onChange={(event) => setEditor({ ...editor, id: event.target.value })}
+                />
+                <FieldFeedback
+                  value={editor.id}
+                  max={PRAGMA_SEMANTIC_RESOURCE_ID_MAX_LENGTH}
+                  error={validation.id}
                 />
               </label>
               <label>
                 <span>{t("version")}</span>
                 <input
                   required
+                  pattern="[A-Za-z0-9][A-Za-z0-9.+_-]*"
+                  maxLength={PRAGMA_RESOURCE_VERSION_MAX_LENGTH}
                   disabled={editor.originalRef !== undefined}
                   value={editor.version}
+                  aria-invalid={validation.version !== undefined}
                   onChange={(event) => setEditor({ ...editor, version: event.target.value })}
+                />
+                <FieldFeedback
+                  value={editor.version}
+                  max={PRAGMA_RESOURCE_VERSION_MAX_LENGTH}
+                  error={validation.version}
                 />
               </label>
               <label>
                 <span>{t("name")}</span>
                 <input
                   required
+                  maxLength={PRAGMA_RESOURCE_NAME_MAX_LENGTH}
                   value={editor.name}
+                  aria-invalid={validation.name !== undefined}
                   onChange={(event) => setEditor({ ...editor, name: event.target.value })}
+                />
+                <FieldFeedback
+                  value={editor.name}
+                  max={PRAGMA_RESOURCE_NAME_MAX_LENGTH}
+                  error={validation.name}
                 />
               </label>
               <label>
                 <span>{t("description")}</span>
                 <input
+                  required
+                  maxLength={PRAGMA_RESOURCE_DESCRIPTION_MAX_LENGTH}
                   value={editor.description}
+                  aria-invalid={validation.description !== undefined}
                   onChange={(event) => setEditor({ ...editor, description: event.target.value })}
+                />
+                <FieldFeedback
+                  value={editor.description}
+                  max={PRAGMA_RESOURCE_DESCRIPTION_MAX_LENGTH}
+                  error={validation.description}
                 />
               </label>
             </div>
@@ -294,7 +395,11 @@ export function AutomationDirectoryFragment(props: {
                       ...editor,
                       executorRef: event.target.value,
                       interaction: next?.kind === "flow" ? "new-mission" : editor.interaction,
-                      input: next?.kind === "flow" ? "{}" : editor.input,
+                      prompt: "",
+                      flowInput:
+                        next?.kind === "flow" && next.inputSchema !== undefined
+                          ? createSchemaInputValue(next.inputSchema)
+                          : {},
                     });
                   }}
                 >
@@ -306,33 +411,55 @@ export function AutomationDirectoryFragment(props: {
                   ))}
                 </select>
               </label>
-              <label>
-                <span>{t("sessionPolicy")}</span>
-                <select
-                  value={flow ? "new-mission" : editor.interaction}
-                  disabled={flow}
-                  onChange={(event) =>
-                    setEditor({
-                      ...editor,
-                      interaction: event.target.value as EditorState["interaction"],
-                    })
-                  }
-                >
-                  <option value="reuse-session">{t("reuseMission")}</option>
-                  <option value="new-mission">{t("newMissionEveryRun")}</option>
-                </select>
-                {flow ? <small>{t("flowForcesNewMission")}</small> : null}
-              </label>
+              {!flow ? (
+                <label>
+                  <span>{t("sessionPolicy")}</span>
+                  <select
+                    value={editor.interaction}
+                    onChange={(event) =>
+                      setEditor({
+                        ...editor,
+                        interaction: event.target.value as EditorState["interaction"],
+                      })
+                    }
+                  >
+                    <option value="reuse-session">{t("reuseMission")}</option>
+                    <option value="new-mission">{t("newMissionEveryRun")}</option>
+                  </select>
+                </label>
+              ) : null}
             </div>
-            <label>
-              <span>{flow ? t("flowInput") : t("prompt")}</span>
-              <textarea
-                required
-                rows={5}
-                value={editor.input}
-                onChange={(event) => setEditor({ ...editor, input: event.target.value })}
+            {flowInputSchema !== undefined ? (
+              <SchemaInputForm
+                className="automation-flow-input-form"
+                schema={flowInputSchema}
+                value={editor.flowInput}
+                disabled={saving}
+                onChange={(flowInput) => setEditor({ ...editor, flowInput })}
               />
-            </label>
+            ) : (
+              <label>
+                <span>{t("prompt")}</span>
+                <textarea
+                  required
+                  rows={5}
+                  maxLength={PRAGMA_AUTOMATION_PROMPT_MAX_LENGTH}
+                  value={editor.prompt}
+                  aria-invalid={validation.prompt !== undefined}
+                  onChange={(event) => setEditor({ ...editor, prompt: event.target.value })}
+                />
+                <FieldFeedback
+                  value={editor.prompt}
+                  max={PRAGMA_AUTOMATION_PROMPT_MAX_LENGTH}
+                  error={validation.prompt}
+                />
+              </label>
+            )}
+            {validation.flowInput !== undefined ? (
+              <p className="automation-field-error" role="alert">
+                {t("flowInputInvalid")}
+              </p>
+            ) : null}
           </section>
 
           <section className="automation-form-section">
@@ -425,18 +552,15 @@ export function AutomationDirectoryFragment(props: {
                     <input
                       type="time"
                       value={editor.time}
+                      onClick={(event) => openNativePicker(event.currentTarget)}
                       onChange={(event) => setEditor({ ...editor, time: event.target.value })}
                     />
                   </label>
                   {editor.frequency === "weekly" ? (
-                    <label>
-                      <span>{t("weekdays")}</span>
-                      <input
-                        value={editor.weekdays}
-                        onChange={(event) => setEditor({ ...editor, weekdays: event.target.value })}
-                        placeholder="mon,tue,fri"
-                      />
-                    </label>
+                    <WeekdayMultiSelect
+                      value={editor.weekdays}
+                      onChange={(weekdays) => setEditor({ ...editor, weekdays })}
+                    />
                   ) : null}
                   {editor.frequency === "monthly" ? (
                     <label>
@@ -464,15 +588,6 @@ export function AutomationDirectoryFragment(props: {
                   />
                 </label>
               ) : null}
-              {editor.triggerKind === "calendar" || editor.triggerKind === "cron" ? (
-                <label>
-                  <span>{t("timezone")}</span>
-                  <input
-                    value={editor.timezone}
-                    onChange={(event) => setEditor({ ...editor, timezone: event.target.value })}
-                  />
-                </label>
-              ) : null}
               {editor.triggerKind !== "once" ? (
                 <>
                   <DateTimeField
@@ -490,6 +605,11 @@ export function AutomationDirectoryFragment(props: {
                 </>
               ) : null}
             </div>
+            {validation.trigger !== undefined ? (
+              <p className="automation-field-error" role="alert">
+                {t("scheduleInvalid")}
+              </p>
+            ) : null}
             <button className="secondary-button" type="button" onClick={() => void showPreview()}>
               {t("previewNextRuns")}
             </button>
@@ -505,14 +625,26 @@ export function AutomationDirectoryFragment(props: {
           <section className="automation-form-section">
             <h2>{t("executionEnvironment")}</h2>
             <div className="automation-field-grid">
-              <label>
-                <span>{t("workspace")}</span>
-                <input
-                  required
-                  value={editor.workspace}
-                  onChange={(event) => setEditor({ ...editor, workspace: event.target.value })}
+              <div className="automation-workspace-field">
+                <span className="automation-field-label">{t("workspace")}</span>
+                <WorkspacePicker
+                  className="automation-workspace-picker"
+                  defaultWorkspace={missionDefaults?.workspace}
+                  recentWorkspaces={missionDefaults?.recentWorkspaces ?? []}
+                  selection={selectedWorkspace}
+                  defaultSelected={
+                    missionDefaults !== undefined &&
+                    editor.workspace === missionDefaults.workspace.path
+                  }
+                  onChoose={() => void pickWorkspace()}
+                  onSelect={(workspace) => setEditor({ ...editor, workspace: workspace.path })}
+                  onUseDefault={() => {
+                    if (missionDefaults !== undefined) {
+                      setEditor({ ...editor, workspace: missionDefaults.workspace.path });
+                    }
+                  }}
                 />
-              </label>
+              </div>
               <label>
                 <span>{t("toolPermissions")}</span>
                 <select
@@ -572,7 +704,7 @@ export function AutomationDirectoryFragment(props: {
             <button className="secondary-button" type="button" onClick={() => setEditor(null)}>
               {t("cancel")}
             </button>
-            <button className="primary-button" type="submit" disabled={saving}>
+            <button className="primary-button" type="submit" disabled={saving || !validation.valid}>
               {saving ? t("saving") : t("saveAutomation")}
             </button>
           </footer>
@@ -684,6 +816,113 @@ export function AutomationDirectoryFragment(props: {
   );
 }
 
+type FieldValidationError = "required" | "tooLong" | "idFormat" | "versionFormat";
+
+function FieldFeedback(props: {
+  readonly value: string;
+  readonly max: number;
+  readonly error?: FieldValidationError | undefined;
+}) {
+  const { t } = useTranslation("studio");
+  const error =
+    props.error === undefined
+      ? undefined
+      : props.error === "required"
+        ? t("fieldRequired")
+        : props.error === "tooLong"
+          ? t("fieldTooLong", { max: props.max })
+          : props.error === "idFormat"
+            ? t("resourceIdInvalid")
+            : t("versionInvalid");
+  return (
+    <small className={error === undefined ? "automation-field-meta" : "automation-field-error"}>
+      <span>{error}</span>
+      <span>
+        {props.value.length}/{props.max}
+      </span>
+    </small>
+  );
+}
+
+function WeekdayMultiSelect(props: {
+  readonly value: readonly Weekday[];
+  readonly onChange: (value: readonly Weekday[]) => void;
+}) {
+  const { t, i18n } = useTranslation("studio");
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const labels = props.value.map((weekday) => t(`weekday.${weekday}`));
+  const summary = new Intl.ListFormat(i18n.language, {
+    style: "short",
+    type: "conjunction",
+  }).format(labels);
+
+  useEffect(() => {
+    if (!open) return;
+    const closeOutside = (event: MouseEvent) => {
+      if (event.target instanceof Node && !rootRef.current?.contains(event.target)) setOpen(false);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", closeOutside);
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("mousedown", closeOutside);
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [open]);
+
+  return (
+    <div className="automation-weekday-field">
+      <span className="automation-field-label">{t("weekdays")}</span>
+      <div
+        className={open ? "automation-weekday-picker is-open" : "automation-weekday-picker"}
+        ref={rootRef}
+      >
+        <button
+          className="automation-weekday-trigger"
+          type="button"
+          aria-expanded={open}
+          aria-haspopup="menu"
+          onClick={() => setOpen((current) => !current)}
+        >
+          <span>{summary}</span>
+          <CaretDown size={16} aria-hidden="true" />
+        </button>
+        {open ? (
+          <div className="automation-weekday-menu" role="menu" aria-label={t("weekdays")}>
+            {WEEKDAYS.map((weekday) => {
+              const selected = props.value.includes(weekday);
+              return (
+                <button
+                  key={weekday}
+                  type="button"
+                  role="menuitemcheckbox"
+                  aria-checked={selected}
+                  onClick={() => {
+                    if (selected && props.value.length === 1) return;
+                    props.onChange(
+                      selected
+                        ? props.value.filter((value) => value !== weekday)
+                        : WEEKDAYS.filter(
+                            (value) => value === weekday || props.value.includes(value),
+                          ),
+                    );
+                  }}
+                >
+                  <span>{t(`weekday.${weekday}`)}</span>
+                  {selected ? <Check size={16} aria-hidden="true" /> : null}
+                </button>
+              );
+            })}
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 function DateTimeField(props: {
   readonly label: string;
   readonly value: string;
@@ -697,13 +936,14 @@ function DateTimeField(props: {
         type="datetime-local"
         required={!props.optional}
         value={props.value}
+        onClick={(event) => openNativePicker(event.currentTarget)}
         onChange={(event) => props.onChange(event.target.value)}
       />
     </label>
   );
 }
 
-export function scheduleTrigger(editor: EditorState) {
+export function scheduleTrigger(editor: EditorState, timezone = systemTimezone()) {
   const window =
     editor.startsAt === "" && editor.endsAt === ""
       ? undefined
@@ -730,15 +970,8 @@ export function scheduleTrigger(editor: EditorState) {
         kind: "calendar",
         frequency: editor.frequency,
         time: editor.time,
-        timezone: editor.timezone,
-        ...(editor.frequency === "weekly"
-          ? {
-              weekdays: editor.weekdays
-                .split(",")
-                .map((value) => value.trim().toLowerCase())
-                .filter(Boolean),
-            }
-          : {}),
+        timezone,
+        ...(editor.frequency === "weekly" ? { weekdays: editor.weekdays } : {}),
         ...(editor.frequency === "monthly" ? { dayOfMonth: editor.dayOfMonth } : {}),
         ...(window === undefined ? {} : { window }),
       };
@@ -747,7 +980,7 @@ export function scheduleTrigger(editor: EditorState) {
       trigger = {
         kind: "cron",
         expression: editor.cron,
-        timezone: editor.timezone,
+        timezone,
         ...(window === undefined ? {} : { window }),
       };
       break;
@@ -761,6 +994,85 @@ export function scheduleTrigger(editor: EditorState) {
     );
   }
   return result.data;
+}
+
+export function validateAutomationEditor(
+  editor: EditorState,
+  executor: MissionExecutorOption | undefined,
+): {
+  readonly valid: boolean;
+  readonly id?: FieldValidationError | undefined;
+  readonly version?: FieldValidationError | undefined;
+  readonly name?: FieldValidationError | undefined;
+  readonly description?: FieldValidationError | undefined;
+  readonly prompt?: FieldValidationError | undefined;
+  readonly flowInput?: "invalid" | undefined;
+  readonly trigger?: "invalid" | undefined;
+} {
+  const id = validateText(editor.id, PRAGMA_SEMANTIC_RESOURCE_ID_MAX_LENGTH, {
+    pattern: /^[A-Za-z0-9][A-Za-z0-9_]*$/,
+    formatError: "idFormat",
+  });
+  const version = validateText(editor.version, PRAGMA_RESOURCE_VERSION_MAX_LENGTH, {
+    pattern: /^[A-Za-z0-9][A-Za-z0-9.+_-]*$/,
+    formatError: "versionFormat",
+  });
+  const name = validateText(editor.name, PRAGMA_RESOURCE_NAME_MAX_LENGTH);
+  const description = validateText(editor.description, PRAGMA_RESOURCE_DESCRIPTION_MAX_LENGTH);
+  const inputSchema = executor?.kind === "flow" ? executor.inputSchema : undefined;
+  const prompt =
+    inputSchema !== undefined
+      ? undefined
+      : validateText(editor.prompt, PRAGMA_AUTOMATION_PROMPT_MAX_LENGTH);
+  const flowInput =
+    inputSchema !== undefined && !isSchemaInputValid(inputSchema, editor.flowInput)
+      ? ("invalid" as const)
+      : undefined;
+  let trigger: "invalid" | undefined;
+  try {
+    scheduleTrigger(editor);
+  } catch {
+    trigger = "invalid";
+  }
+  const valid =
+    id === undefined &&
+    version === undefined &&
+    name === undefined &&
+    description === undefined &&
+    prompt === undefined &&
+    flowInput === undefined &&
+    trigger === undefined &&
+    executor !== undefined &&
+    editor.workspace !== "";
+  return { valid, id, version, name, description, prompt, flowInput, trigger };
+}
+
+function validateText(
+  value: string,
+  max: number,
+  options: {
+    readonly pattern?: RegExp | undefined;
+    readonly formatError?: FieldValidationError | undefined;
+  } = {},
+): FieldValidationError | undefined {
+  if (value.trim() === "") return "required";
+  if (value.length > max) return "tooLong";
+  if (options.pattern !== undefined && !options.pattern.test(value)) {
+    return options.formatError;
+  }
+  return undefined;
+}
+
+function openNativePicker(input: HTMLInputElement): void {
+  try {
+    input.showPicker?.();
+  } catch {
+    // The browser still provides its default input interaction when showPicker is unavailable.
+  }
+}
+
+function systemTimezone(): string {
+  return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
 }
 
 function toIso(value: string): string {

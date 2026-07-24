@@ -156,11 +156,25 @@ function flowFixture(): PragmaFlowResource {
         start: "review",
         steps: {
           review: {
-            human: { kind: "approval", prompt: "Approve?" },
+            human: {
+              selectionMode: "single",
+              prompt: { segments: [{ text: "Approve?" }] },
+              options: [
+                { value: "approve", label: "Approve" },
+                { value: "reject", label: "Reject" },
+              ],
+            },
             version: "2.0.0",
           },
           finish: {
-            human: { kind: "approval", prompt: "Finish?" },
+            human: {
+              selectionMode: "single",
+              prompt: { segments: [{ text: "Finish?" }] },
+              options: [
+                { value: "finish", label: "Finish" },
+                { value: "wait", label: "Wait" },
+              ],
+            },
             version: "1.0.0",
           },
         },

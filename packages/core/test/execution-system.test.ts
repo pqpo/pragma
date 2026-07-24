@@ -2428,6 +2428,92 @@ describe("FlowExecution", () => {
     });
   });
 
+  it("maps choice labels to stable selection values and applies the HumanTask output schema", async () => {
+    const { app } = await fixture();
+    const flow = defineFlow({ id: "choice-flow", version: "1.0.0" });
+    const choice = flow.humanTask({
+      id: "choice",
+      version: "1.0.0",
+      output: z.object({ selection: z.array(z.string()).min(1) }),
+      request: {
+        kind: "question",
+        questions: [
+          {
+            header: "Release",
+            question: "What should happen?",
+            kind: "multiple_choice",
+            options: [
+              { value: "ship", label: "Ship now", description: "" },
+              { value: "notify", label: "Notify users", description: "" },
+              { value: "hold", label: "Hold", description: "" },
+            ],
+          },
+        ],
+      },
+    });
+    flow.compose(({ start, end }) => start(choice).next(end()));
+
+    const execution = await app.flows.start(flow, { input: null });
+    await waitUntil(
+      async () => (await execution.getTree()).children[0]?.invocation.status === "waiting",
+    );
+    const requested = (
+      await execution.listEvents({ scope: { kind: "all" }, limit: 1_000 })
+    ).items.find((event) => event.type === "human.requested")!;
+    await execution.respondToHumanInteraction(
+      (requested.data as { interactionId: string }).interactionId,
+      {
+        kind: "user_question",
+        answered: true,
+        answers: { "What should happen?": ["Ship now", "Notify users"] },
+      },
+      { requestId: "choice-response" },
+    );
+
+    await expect(execution.result).resolves.toEqual({ selection: ["ship", "notify"] });
+  });
+
+  it("routes string arrays by ordered contains conditions", async () => {
+    const { app } = await fixture();
+    const flow = defineFlow({ id: "array-route-flow", version: "1.0.0" });
+    const source = flow.task({
+      id: "source",
+      version: "1.0.0",
+      handler: () => ({ selection: ["ship", "notify"] }),
+    });
+    const all = flow.task({ id: "all", version: "1.0.0", handler: () => "all" });
+    const any = flow.task({ id: "any", version: "1.0.0", handler: () => "any" });
+    const none = flow.task({ id: "none", version: "1.0.0", handler: () => "none" });
+    flow.compose(({ start, step, end }) => {
+      start(source).routeArray("selection", [
+        {
+          id: "all_selected",
+          operator: "contains_all",
+          values: ["ship", "notify"],
+          destination: all,
+        },
+        {
+          id: "any_selected",
+          operator: "contains_any",
+          values: ["ship"],
+          destination: any,
+        },
+        {
+          id: "none_selected",
+          operator: "contains_none",
+          values: ["hold"],
+          destination: none,
+        },
+      ]);
+      step(all).next(end());
+      step(any).next(end());
+      step(none).next(end());
+    });
+
+    const execution = await app.flows.start(flow, { input: null });
+    await expect(execution.result).resolves.toBe("all");
+  });
+
   it("revisits Flow nodes until a terminal route is selected", async () => {
     const { app } = await fixture();
     const flow = defineFlow({

@@ -51,10 +51,13 @@ spec:
                 path: [summary]
       approve:
         human:
-          kind: approval
-          prompt: "Approve the review result?"
-          options: [approve, revise]
-          approveOption: approve
+          selectionMode: single
+          prompt:
+            segments:
+              - { text: "Approve the review result?" }
+          options:
+            - { value: approve, label: Approve }
+            - { value: revise, label: Revise }
     loops: {}
     transitions:
       implement: review
@@ -74,6 +77,8 @@ spec:
 - Expert and Team prompts use text and typed variable segments. Node variables reference a stable
   `nodeId`; native output exposes only `result`, while structured output exposes declared fields.
 - Structured output uses the bounded object schema supported by the Desktop field editor.
-- Approval steps with custom choices declare `approveOption`; it must match one choice.
+- Human input steps ask one single- or multiple-selection question. They return
+  `{ selection: string }` or `{ selection: string[] }`, using stable option values rather than labels.
+- Human prompts use the same typed variable segments as Expert and Team prompts.
 - Build Flow resources with the draft tools. Missing nodes or edges are allowed only while a draft
   is incomplete; `prepare_flow_draft` requires a complete, valid graph.

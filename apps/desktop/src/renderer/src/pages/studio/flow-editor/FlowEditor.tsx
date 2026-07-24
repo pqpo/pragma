@@ -1,5 +1,7 @@
 import {
   ArrowLeft,
+  ArrowDown,
+  ArrowUp,
   ArrowsOut,
   Brain,
   CheckCircle,
@@ -808,17 +810,14 @@ function FlowEditorCanvas(props: {
               const selectedEdge = selectedEdges[0];
               const selectedNode = selectedEdge === undefined ? selectedNodes[0] : undefined;
               setSelectedEdgeId(selectedEdge?.id ?? null);
-              setSelectedNodeId(
-                selectedNode?.type === "step" || selectedNode?.type === "logic"
-                  ? selectedNode.id
-                  : null,
-              );
+              setSelectedNodeId(inspectorNodeId(selectedNode));
             }}
             onNodeClick={(_event, node) => {
               setNodeContextMenu(null);
               setSelectedEdgeId(null);
-              if (node.type === "step" || node.type === "logic") {
-                setSelectedNodeId(node.id);
+              const nextSelectedNodeId = inspectorNodeId(node);
+              if (nextSelectedNodeId !== null) {
+                setSelectedNodeId(nextSelectedNodeId);
                 setInspectorOpen(true);
               } else setSelectedNodeId(null);
             }}
@@ -923,6 +922,10 @@ function FlowEditorCanvas(props: {
                 }}
               />
             ) : selectedNodeId === null ? (
+              <FlowSettings flow={flow} lockId={props.initial !== undefined} onPatch={patchFlow} />
+            ) : selectedNodeId === END_NODE_ID ? (
+              <EndInspector flow={flow} onPatch={patchFlow} />
+            ) : selectedNodeId === START_NODE_ID || selectedNodeId === FAIL_NODE_ID ? (
               <FlowSettings flow={flow} lockId={props.initial !== undefined} onPatch={patchFlow} />
             ) : flow.spec.graph.steps[selectedNodeId] !== undefined ? (
               <StepInspector
@@ -1372,7 +1375,29 @@ function FlowSettings(props: {
           })
         }
       />
-      {props.flow.spec.output === undefined ? null : (
+    </div>
+  );
+}
+
+function EndInspector(props: {
+  readonly flow: PragmaFlowResource;
+  readonly onPatch: (mutator: (copy: PragmaFlowResource) => void) => void;
+}) {
+  const { t } = useTranslation("studio");
+  return (
+    <div className="flow-inspector-content">
+      <header>
+        <span className="flow-inspector-icon is-end">
+          <CheckCircle size={19} />
+        </span>
+        <div>
+          <strong>{t("endFlow")}</strong>
+          <small>{t("endResultDescription")}</small>
+        </div>
+      </header>
+      {props.flow.spec.output === undefined ? (
+        <p className="flow-field-hint">{t("configureOutputContractFirst")}</p>
+      ) : (
         <>
           <InspectorField label={t("flowResultSource")}>
             <select
@@ -1477,111 +1502,50 @@ function StepInspector(props: {
               <p>{t("humanPurposeDescription")}</p>
             </div>
           </section>
-          <InspectorField label={t("humanRequestType")}>
+          <InspectorField label={t("humanSelectionMode")}>
             <select
-              value={step.human?.kind}
+              value={step.human?.selectionMode}
               onChange={(event) =>
                 patchStep((current) => {
                   if (!current.human) return;
-                  const kind = event.target.value as NonNullable<FlowStep["human"]>["kind"];
-                  current.human.kind = kind;
-                  if (kind === "approval") {
-                    current.human.options ??= ["approve", "reject"];
-                    current.human.approveOption ??= current.human.options[0];
-                  } else {
-                    delete current.human.options;
-                    delete current.human.approveOption;
-                  }
+                  current.human.selectionMode = event.target.value as NonNullable<
+                    FlowStep["human"]
+                  >["selectionMode"];
                 })
               }
             >
-              <option value="approval">{t("humanTypeApproval")}</option>
-              <option value="question">{t("humanTypeQuestion")}</option>
-              <option value="review_gate">{t("humanTypeReviewGate")}</option>
-              <option value="manual_intervention">{t("humanTypeManualIntervention")}</option>
+              <option value="single">{t("humanSingleSelection")}</option>
+              <option value="multiple">{t("humanMultipleSelection")}</option>
             </select>
           </InspectorField>
-          <small className="flow-field-hint">
-            {step.human?.kind === "approval"
-              ? t("humanTypeApprovalHint")
-              : step.human?.kind === "question"
-                ? t("humanTypeQuestionHint")
-                : step.human?.kind === "review_gate"
-                  ? t("humanTypeReviewGateHint")
-                  : t("humanTypeManualInterventionHint")}
-          </small>
-          <InspectorField label={t("humanTitle")}>
-            <input
-              value={step.human?.title ?? ""}
-              placeholder={t("humanTitlePlaceholder")}
-              onChange={(event) =>
-                patchStep((current) => {
-                  if (current.human) current.human.title = event.target.value || undefined;
-                })
-              }
-            />
-          </InspectorField>
-          <InspectorField label={t("humanPrompt")}>
-            <textarea
-              rows={3}
-              value={step.human?.prompt ?? ""}
-              placeholder={t("humanPromptPlaceholder")}
-              onChange={(event) =>
-                patchStep((current) => {
-                  if (current.human) current.human.prompt = event.target.value;
-                })
-              }
-            />
-          </InspectorField>
-          {step.human?.kind === "approval" ? (
-            <>
-              <StringListField
-                label={t("humanApprovalChoices")}
-                values={step.human.options ?? ["approve", "reject"]}
-                onChange={(values) =>
-                  patchStep((current) => {
-                    if (!current.human) return;
-                    current.human.options = values;
-                    if (!values.includes(current.human.approveOption ?? "")) {
-                      current.human.approveOption = values[0];
-                    }
-                  })
-                }
-              />
-              <small className="flow-field-hint">{t("humanApprovalChoicesHint")}</small>
-              <InspectorField label={t("humanApprovedChoice")}>
-                <select
-                  value={step.human.approveOption ?? step.human.options?.[0] ?? "approve"}
-                  onChange={(event) =>
-                    patchStep((current) => {
-                      if (current.human) current.human.approveOption = event.target.value;
-                    })
-                  }
-                >
-                  {(step.human.options ?? ["approve", "reject"]).map((option) => (
-                    <option key={option} value={option}>
-                      {option}
-                    </option>
-                  ))}
-                </select>
-              </InspectorField>
-            </>
-          ) : null}
-          <details className="flow-human-advanced">
-            <summary>{t("humanAdditionalQuestions")}</summary>
-            <p>{t("humanAdditionalQuestionsHint")}</p>
-            <HumanQuestionsEditor
-              questions={step.human?.questions ?? []}
-              onChange={(questions) =>
-                patchStep((current) => {
-                  if (current.human) {
-                    if (questions.length === 0) delete current.human.questions;
-                    else current.human.questions = questions;
-                  }
-                })
-              }
-            />
-          </details>
+          <small className="flow-field-hint">{t("humanSelectionModeHint")}</small>
+          <PromptTemplateEditor
+            flow={props.flow}
+            stepId={props.stepId}
+            value={step.human?.prompt}
+            label={t("humanPrompt")}
+            placeholder={t("humanPromptPlaceholder")}
+            onChange={(prompt) =>
+              patchStep((current) => {
+                if (current.human) current.human.prompt = prompt;
+              })
+            }
+          />
+          <HumanOptionsEditor
+            options={step.human?.options ?? []}
+            onChange={(options) =>
+              patchStep((current) => {
+                if (current.human) current.human.options = options;
+              })
+            }
+          />
+          <section className="flow-human-output">
+            <strong>{t("humanOutputVariable")}</strong>
+            <code>
+              selection: {step.human?.selectionMode === "multiple" ? "string[]" : "string"}
+            </code>
+            <small>{t("humanOutputVariableHint")}</small>
+          </section>
         </>
       ) : kind === "action" ? (
         <InspectorField label="Action reference">
@@ -1640,10 +1604,12 @@ function StepInspector(props: {
           />
         </>
       ) : kind === "action" || kind === "flow" ? (
-        <JsonField
-          label="Input mapping"
+        <InputBindingEditor
+          flow={props.flow}
+          stepId={props.stepId}
+          schema={targetInputSchema(kind, target, props.resources)}
           value={step.input}
-          onCommit={(value) =>
+          onChange={(value) =>
             patchStep((current) => {
               current.input = value;
             })
@@ -1713,6 +1679,8 @@ export function PromptTemplateEditor(props: {
   readonly flow: PragmaFlowResource;
   readonly stepId: string;
   readonly value: PragmaFlowPrompt | undefined;
+  readonly label?: string | undefined;
+  readonly placeholder?: string | undefined;
   readonly onChange: (value: PragmaFlowPrompt) => void;
 }) {
   const { t } = useTranslation("studio");
@@ -1846,7 +1814,7 @@ export function PromptTemplateEditor(props: {
 
   return (
     <div className="flow-inspector-field" role="group" aria-labelledby={promptLabelId}>
-      <span id={promptLabelId}>{t("flowPrompt")}</span>
+      <span id={promptLabelId}>{props.label ?? t("flowPrompt")}</span>
       <div className="flow-prompt-composer">
         <div
           ref={editorRef}
@@ -1858,7 +1826,7 @@ export function PromptTemplateEditor(props: {
           aria-multiline="true"
           aria-expanded={variableMenuOpen}
           data-empty={promptIsEmpty ? "true" : "false"}
-          data-placeholder={t("flowPromptPlaceholder")}
+          data-placeholder={props.placeholder ?? t("flowPromptPlaceholder")}
           onFocus={rememberSelection}
           onInput={emitEditorValue}
           onKeyUp={rememberSelection}
@@ -2241,8 +2209,9 @@ function resultSourceOptions(
       value: `$state.nodes.${nodeId}.result`,
       label: `${nodeId}.result`,
     });
-    if (step.output !== undefined) {
-      for (const field of schemaLeafFields(step.output.schema)) {
+    const schema = stepOutputSchema(step);
+    if (schema !== undefined) {
+      for (const field of schemaLeafFields(schema)) {
         if (field.path.length === 0) continue;
         options.push({
           value: `$state.nodes.${nodeId}.result.${field.path.join(".")}`,
@@ -2632,6 +2601,18 @@ export function validateLogicRoutes(flow: PragmaFlowResource): readonly FlowVali
         message,
         stepId: sourceId,
       });
+    if (isArrayRouteTransition(transition)) {
+      if (field?.type !== "string-array") {
+        add(`Logic ${sourceId}.result.${transition.route} must be a string array.`);
+      }
+      if (transition.branches.length === 0) {
+        add(`Logic ${sourceId}.result.${transition.route} requires at least one branch.`);
+      }
+      if (transition.fallback === undefined) {
+        add(`Logic ${sourceId}.result.${transition.route} requires an otherwise branch.`);
+      }
+      continue;
+    }
     if (Object.keys(transition.cases).some((key) => key.trim() === "")) {
       add("Logic branch values cannot be empty.");
     }
@@ -2683,7 +2664,7 @@ export function flowVariableOptions(
         branchOptional,
       ),
     );
-    for (const path of objectSchemaPaths(step.output?.schema)) {
+    for (const path of objectSchemaPaths(stepOutputSchema(step))) {
       options.push(
         variableOption(
           { source: "node-output", nodeId, path: [...path.path] },
@@ -2779,14 +2760,17 @@ function LogicInspector(props: {
   const fields = routeFieldOptions(props.flow, sourceId);
   const currentField = fields.find((field) => field.name === transition.route);
   const booleanField = currentField?.type === "boolean";
-  const visibleCases: readonly [string, PragmaFlowDestination][] = booleanField
-    ? (["true", "false"] as const).map((key) => [
-        key,
-        transition.cases[key] ?? unconnectedDestination(),
-      ])
-    : Object.entries(transition.cases);
+  const arrayRoute = isArrayRouteTransition(transition);
+  const visibleCases: readonly [string, PragmaFlowDestination][] = arrayRoute
+    ? []
+    : booleanField
+      ? (["true", "false"] as const).map((key) => [
+          key,
+          transition.cases[key] ?? unconnectedDestination(),
+        ])
+      : Object.entries(transition.cases);
   const fieldLabel = `${sourceId}.result.${transition.route}`;
-  const patchRoute = (mutator: (route: Extract<PragmaFlowTransition, { route: string }>) => void) =>
+  const patchRoute = (mutator: (route: RouteTransition) => void) =>
     props.onPatch((copy) => {
       const route = copy.spec.graph.transitions[sourceId];
       if (isRouteTransition(route)) mutator(route);
@@ -2812,16 +2796,7 @@ function LogicInspector(props: {
               const route = copy.spec.graph.transitions[sourceId];
               if (!isRouteTransition(route)) return;
               const previousDestinations = transitionDestinations(route);
-              route.route = event.target.value;
-              if (field?.type === "boolean") {
-                route.cases = {
-                  true: route.cases["true"] ?? unconnectedDestination(),
-                  false: route.cases["false"] ?? route.fallback ?? unconnectedDestination(),
-                };
-                delete route.fallback;
-              } else if (route.fallback === undefined) {
-                route.fallback = unconnectedDestination();
-              }
+              copy.spec.graph.transitions[sourceId] = createRouteTransition(field);
               for (const destination of previousDestinations) {
                 removeOrphanedLoop(copy, destination);
               }
@@ -2849,13 +2824,31 @@ function LogicInspector(props: {
         <header>
           <div>
             <strong>{t("branches")}</strong>
-            <small>{booleanField ? t("booleanBranchesHint") : t("exactMatchBranchesHint")}</small>
+            <small>
+              {arrayRoute
+                ? t("arrayBranchesHint")
+                : booleanField
+                  ? t("booleanBranchesHint")
+                  : t("exactMatchBranchesHint")}
+            </small>
           </div>
           {booleanField ? null : (
             <button
               type="button"
               onClick={() =>
                 patchRoute((route) => {
+                  if (isArrayRouteTransition(route)) {
+                    route.branches = [
+                      ...route.branches,
+                      {
+                        id: nextArrayBranchId(route.branches),
+                        operator: "contains_any",
+                        values: [currentField?.values?.[0] ?? "value_1"],
+                        destination: unconnectedDestination(),
+                      },
+                    ];
+                    return;
+                  }
                   const key = nextCaseKey(route.cases);
                   route.cases = { ...route.cases, [key]: unconnectedDestination() };
                 })
@@ -2865,53 +2858,181 @@ function LogicInspector(props: {
             </button>
           )}
         </header>
-        {visibleCases.map(([key, destination]) => (
-          <div className="flow-logic-branch-row" key={key}>
-            <span className={`flow-logic-branch-value${booleanField ? " is-boolean" : ""}`}>
-              {booleanField ? (
-                key
-              ) : (
-                <input
-                  aria-label={t("caseValue")}
-                  value={key}
-                  onChange={(event) =>
-                    patchRoute((route) => {
-                      route.cases = renameRouteCase(route.cases, key, event.target.value);
-                    })
-                  }
-                />
-              )}
-            </span>
-            <span
-              className={`flow-logic-branch-target${
-                isUnconnectedDestination(destination) ? " is-unconnected" : ""
-              }`}
-            >
-              {isUnconnectedDestination(destination)
-                ? t("branchNotConnected")
-                : destinationLabel(destination)}
-            </span>
-            {booleanField ? null : (
-              <button
-                type="button"
-                aria-label={t("removeCase", { value: key })}
-                onClick={() =>
-                  props.onPatch((copy) => {
-                    const route = copy.spec.graph.transitions[sourceId];
-                    if (!isRouteTransition(route)) return;
-                    const removed = route.cases[key];
-                    const next = { ...route.cases };
-                    delete next[key];
-                    route.cases = next;
-                    removeOrphanedLoop(copy, removed);
-                  })
-                }
-              >
-                <X size={14} />
-              </button>
-            )}
-          </div>
-        ))}
+        {arrayRoute
+          ? transition.branches.map((branch, index) => (
+              <div className="flow-logic-array-branch" key={branch.id}>
+                <div className="flow-logic-array-branch-heading">
+                  <strong>{t("logicBranchNumber", { number: index + 1 })}</strong>
+                  <span>
+                    <button
+                      type="button"
+                      disabled={index === 0}
+                      aria-label={t("moveBranchUp")}
+                      onClick={() =>
+                        patchRoute((route) => {
+                          if (isArrayRouteTransition(route)) {
+                            route.branches = moveArrayBranch(route.branches, index, index - 1);
+                          }
+                        })
+                      }
+                    >
+                      <ArrowUp size={14} />
+                    </button>
+                    <button
+                      type="button"
+                      disabled={index === transition.branches.length - 1}
+                      aria-label={t("moveBranchDown")}
+                      onClick={() =>
+                        patchRoute((route) => {
+                          if (isArrayRouteTransition(route)) {
+                            route.branches = moveArrayBranch(route.branches, index, index + 1);
+                          }
+                        })
+                      }
+                    >
+                      <ArrowDown size={14} />
+                    </button>
+                    <button
+                      type="button"
+                      disabled={transition.branches.length <= 1}
+                      aria-label={t("removeCase", { value: branch.id })}
+                      onClick={() =>
+                        props.onPatch((copy) => {
+                          const route = copy.spec.graph.transitions[sourceId];
+                          if (!isRouteTransition(route) || !isArrayRouteTransition(route)) return;
+                          const removed = route.branches[index]?.destination;
+                          route.branches = route.branches.filter((_, current) => current !== index);
+                          removeOrphanedLoop(copy, removed);
+                        })
+                      }
+                    >
+                      <X size={14} />
+                    </button>
+                  </span>
+                </div>
+                <InspectorField label={t("arrayMatchOperator")}>
+                  <select
+                    value={branch.operator}
+                    onChange={(event) =>
+                      patchRoute((route) => {
+                        if (!isArrayRouteTransition(route)) return;
+                        route.branches[index] = {
+                          ...route.branches[index]!,
+                          operator: event.target
+                            .value as ArrayRouteTransition["branches"][number]["operator"],
+                        };
+                      })
+                    }
+                  >
+                    <option value="contains_any">{t("containsAny")}</option>
+                    <option value="contains_all">{t("containsAll")}</option>
+                    <option value="contains_none">{t("containsNone")}</option>
+                  </select>
+                </InspectorField>
+                {currentField?.values === undefined ? (
+                  <InspectorField label={t("arrayMatchValues")}>
+                    <input
+                      value={branch.values.join(", ")}
+                      onChange={(event) =>
+                        patchRoute((route) => {
+                          if (!isArrayRouteTransition(route)) return;
+                          route.branches[index] = {
+                            ...route.branches[index]!,
+                            values: event.target.value
+                              .split(",")
+                              .map((value) => value.trim())
+                              .filter(Boolean),
+                          };
+                        })
+                      }
+                    />
+                  </InspectorField>
+                ) : (
+                  <div className="flow-logic-array-values">
+                    <span>{t("arrayMatchValues")}</span>
+                    {currentField.values.map((value) => (
+                      <label key={value}>
+                        <input
+                          type="checkbox"
+                          checked={branch.values.includes(value)}
+                          onChange={(event) =>
+                            patchRoute((route) => {
+                              if (!isArrayRouteTransition(route)) return;
+                              const current = route.branches[index]!;
+                              route.branches[index] = {
+                                ...current,
+                                values: event.target.checked
+                                  ? [...current.values, value]
+                                  : current.values.filter((candidate) => candidate !== value),
+                              };
+                            })
+                          }
+                        />
+                        <span>{value}</span>
+                      </label>
+                    ))}
+                  </div>
+                )}
+                <span
+                  className={`flow-logic-branch-target${
+                    isUnconnectedDestination(branch.destination) ? " is-unconnected" : ""
+                  }`}
+                >
+                  {isUnconnectedDestination(branch.destination)
+                    ? t("branchNotConnected")
+                    : destinationLabel(branch.destination)}
+                </span>
+              </div>
+            ))
+          : visibleCases.map(([key, destination]) => (
+              <div className="flow-logic-branch-row" key={key}>
+                <span className={`flow-logic-branch-value${booleanField ? " is-boolean" : ""}`}>
+                  {booleanField ? (
+                    key
+                  ) : (
+                    <input
+                      aria-label={t("caseValue")}
+                      value={key}
+                      onChange={(event) =>
+                        patchRoute((route) => {
+                          if (!isArrayRouteTransition(route)) {
+                            route.cases = renameRouteCase(route.cases, key, event.target.value);
+                          }
+                        })
+                      }
+                    />
+                  )}
+                </span>
+                <span
+                  className={`flow-logic-branch-target${
+                    isUnconnectedDestination(destination) ? " is-unconnected" : ""
+                  }`}
+                >
+                  {isUnconnectedDestination(destination)
+                    ? t("branchNotConnected")
+                    : destinationLabel(destination)}
+                </span>
+                {booleanField ? null : (
+                  <button
+                    type="button"
+                    aria-label={t("removeCase", { value: key })}
+                    onClick={() =>
+                      props.onPatch((copy) => {
+                        const route = copy.spec.graph.transitions[sourceId];
+                        if (!isRouteTransition(route) || isArrayRouteTransition(route)) return;
+                        const removed = route.cases[key];
+                        const next = { ...route.cases };
+                        delete next[key];
+                        route.cases = next;
+                        removeOrphanedLoop(copy, removed);
+                      })
+                    }
+                  >
+                    <X size={14} />
+                  </button>
+                )}
+              </div>
+            ))}
         {booleanField ? null : transition.fallback === undefined ? (
           <button
             className="flow-logic-add-fallback"
@@ -3106,107 +3227,75 @@ function InspectorField(props: { readonly label: string; readonly children: Reac
   );
 }
 
-type HumanQuestion = NonNullable<NonNullable<FlowStep["human"]>["questions"]>[number];
+type HumanOption = NonNullable<FlowStep["human"]>["options"][number];
 
-function StringListField(props: {
-  readonly label: string;
-  readonly values: readonly string[];
-  readonly onChange: (values: string[]) => void;
-}) {
-  return (
-    <InspectorField label={props.label}>
-      <textarea
-        rows={Math.max(2, props.values.length)}
-        value={props.values.join("\n")}
-        onChange={(event) =>
-          props.onChange(
-            event.target.value
-              .split("\n")
-              .map((value) => value.trim())
-              .filter(Boolean),
-          )
-        }
-      />
-    </InspectorField>
-  );
-}
-
-function HumanQuestionsEditor(props: {
-  readonly questions: readonly HumanQuestion[];
-  readonly onChange: (questions: HumanQuestion[]) => void;
+function HumanOptionsEditor(props: {
+  readonly options: readonly HumanOption[];
+  readonly onChange: (options: HumanOption[]) => void;
 }) {
   const { t } = useTranslation("studio");
-  const patch = (index: number, update: (question: HumanQuestion) => HumanQuestion) => {
+  const patch = (index: number, update: (option: HumanOption) => HumanOption) => {
     props.onChange(
-      props.questions.map((question, current) => (current === index ? update(question) : question)),
+      props.options.map((option, current) => (current === index ? update(option) : option)),
     );
   };
   return (
     <div className="flow-human-questions">
-      {props.questions.length === 0 ? (
-        <p className="flow-human-questions-empty">{t("humanNoAdditionalQuestions")}</p>
-      ) : null}
-      {props.questions.map((question, index) => (
-        <section className="flow-human-question-card" key={`${question.id}-${index}`}>
+      <header className="flow-human-options-header">
+        <div>
+          <strong>{t("humanOptions")}</strong>
+          <small>{t("humanOptionsHint")}</small>
+        </div>
+      </header>
+      {props.options.map((option, index) => (
+        <section className="flow-human-question-card" key={`${option.value}-${index}`}>
           <header>
-            <strong>{t("humanQuestionNumber", { number: index + 1 })}</strong>
+            <strong>{t("humanOptionNumber", { number: index + 1 })}</strong>
             <button
               type="button"
               className="flow-inspector-delete"
-              aria-label={t("humanRemoveQuestion", { number: index + 1 })}
+              disabled={props.options.length <= 2}
+              aria-label={t("humanRemoveOption", { number: index + 1 })}
               onClick={() =>
-                props.onChange(props.questions.filter((_, current) => current !== index))
+                props.onChange(props.options.filter((_, current) => current !== index))
               }
             >
               <Trash size={14} /> {t("remove")}
             </button>
           </header>
-          <InspectorField label={t("humanQuestionId")}>
+          <InspectorField label={t("humanOptionLabel")}>
             <input
-              value={question.id}
-              placeholder={t("humanQuestionIdPlaceholder")}
-              onChange={(event) =>
-                patch(index, (current) => ({ ...current, id: event.target.value }))
-              }
-            />
-          </InspectorField>
-          <InspectorField label={t("humanQuestionType")}>
-            <select
-              value={question.type}
-              onChange={(event) =>
-                patch(index, (current) => ({
-                  ...current,
-                  type: event.target.value as HumanQuestion["type"],
-                  options: event.target.value === "text" ? [] : current.options,
-                }))
-              }
-            >
-              <option value="single_choice">{t("humanQuestionSingleChoice")}</option>
-              <option value="multiple_choice">{t("humanQuestionMultipleChoice")}</option>
-              <option value="text">{t("humanQuestionText")}</option>
-            </select>
-          </InspectorField>
-          <InspectorField label={t("humanQuestionLabel")}>
-            <input
-              value={question.label}
-              placeholder={t("humanQuestionLabelPlaceholder")}
+              value={option.label}
+              placeholder={t("humanOptionLabelPlaceholder")}
               onChange={(event) =>
                 patch(index, (current) => ({ ...current, label: event.target.value }))
               }
             />
           </InspectorField>
-          {question.type === "text" ? null : (
-            <StringListField
-              label={t("humanQuestionOptions")}
-              values={question.options}
-              onChange={(options) =>
+          <InspectorField label={t("humanOptionValue")}>
+            <input
+              value={option.value}
+              placeholder={t("humanOptionValuePlaceholder")}
+              onChange={(event) =>
                 patch(index, (current) => ({
                   ...current,
-                  options,
+                  value: event.target.value,
                 }))
               }
             />
-          )}
+          </InspectorField>
+          <InspectorField label={t("humanOptionDescription")}>
+            <input
+              value={option.description ?? ""}
+              placeholder={t("humanOptionDescriptionPlaceholder")}
+              onChange={(event) =>
+                patch(index, (current) => ({
+                  ...current,
+                  description: event.target.value || undefined,
+                }))
+              }
+            />
+          </InspectorField>
         </section>
       ))}
       <button
@@ -3214,19 +3303,257 @@ function HumanQuestionsEditor(props: {
         className="flow-human-add-question"
         onClick={() =>
           props.onChange([
-            ...props.questions,
+            ...props.options,
             {
-              id: `question_${props.questions.length + 1}`,
-              type: "text",
-              label: t("humanDefaultQuestion"),
-              options: [],
+              value: `option_${props.options.length + 1}`,
+              label: t("humanDefaultOption", { number: props.options.length + 1 }),
             },
           ])
         }
       >
-        <Plus size={14} /> {t("humanAddQuestion")}
+        <Plus size={14} /> {t("humanAddOption")}
       </button>
     </div>
+  );
+}
+
+function InputBindingEditor(props: {
+  readonly flow: PragmaFlowResource;
+  readonly stepId: string;
+  readonly schema: Extract<PragmaJsonSchema, { readonly type: "object" }> | undefined;
+  readonly value: unknown;
+  readonly onChange: (value: unknown) => void;
+}) {
+  const { t } = useTranslation("studio");
+  const variables = flowVariableOptions(props.flow, props.stepId).map((option) => ({
+    value: flowVariableExpression(option.variable),
+    label: option.label,
+  }));
+  const variableSelected =
+    typeof props.value === "string" && variables.some((option) => option.value === props.value);
+  const objectSelected =
+    typeof props.value === "object" && props.value !== null && !Array.isArray(props.value);
+  const mode =
+    props.value === undefined
+      ? "flow"
+      : variableSelected
+        ? "variable"
+        : objectSelected
+          ? "fields"
+          : "constant";
+  const fields = props.schema === undefined ? [] : schemaLeafFields(props.schema);
+
+  return (
+    <section className="flow-input-binding">
+      <InspectorField label={t("inputBindingMode")}>
+        <select
+          value={mode}
+          onChange={(event) => {
+            if (event.target.value === "flow") props.onChange(undefined);
+            else if (event.target.value === "variable") {
+              props.onChange(variables[0]?.value ?? "$flow.input");
+            } else if (event.target.value === "fields") {
+              props.onChange(props.schema === undefined ? {} : defaultInputMapping(props.schema));
+            } else {
+              props.onChange({});
+            }
+          }}
+        >
+          <option value="flow">{t("useFlowInput")}</option>
+          <option value="variable">{t("bindWholeInput")}</option>
+          <option value="fields">{t("bindInputFields")}</option>
+          <option value="constant">{t("constantInput")}</option>
+        </select>
+      </InspectorField>
+      {mode === "flow" ? (
+        <small className="flow-field-hint">{t("useFlowInputHint")}</small>
+      ) : mode === "variable" ? (
+        <InspectorField label={t("variableSource")}>
+          <select
+            value={String(props.value)}
+            onChange={(event) => props.onChange(event.target.value)}
+          >
+            {variables.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </InspectorField>
+      ) : mode === "fields" ? (
+        props.schema === undefined ? (
+          <CustomInputBindingFields
+            value={props.value}
+            variables={variables}
+            onChange={props.onChange}
+          />
+        ) : (
+          <div className="flow-input-binding-fields">
+            {fields.map((field) => {
+              const current = readMappingValue(props.value, field.path);
+              const selected =
+                typeof current === "string" && variables.some((option) => option.value === current)
+                  ? current
+                  : "__constant";
+              return (
+                <div className="flow-result-mapping-row" key={field.path.join(".")}>
+                  <label>
+                    <span>{field.path.join(".")}</span>
+                    <select
+                      value={selected}
+                      onChange={(event) =>
+                        props.onChange(
+                          setMappingValue(
+                            props.value,
+                            field.path,
+                            event.target.value === "__constant"
+                              ? defaultMappingConstant(field.schema)
+                              : event.target.value,
+                          ),
+                        )
+                      }
+                    >
+                      {variables.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                      <option value="__constant">{t("constantValue")}</option>
+                    </select>
+                  </label>
+                  {selected === "__constant" ? (
+                    <MappingConstantInput
+                      schema={field.schema}
+                      value={current}
+                      onChange={(value) =>
+                        props.onChange(setMappingValue(props.value, field.path, value))
+                      }
+                    />
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
+        )
+      ) : (
+        <JsonField
+          label={t("constantInput")}
+          value={props.value}
+          onCommit={props.onChange}
+          required
+        />
+      )}
+    </section>
+  );
+}
+
+function CustomInputBindingFields(props: {
+  readonly value: unknown;
+  readonly variables: readonly { readonly value: string; readonly label: string }[];
+  readonly onChange: (value: unknown) => void;
+}) {
+  const { t } = useTranslation("studio");
+  const record =
+    typeof props.value === "object" && props.value !== null && !Array.isArray(props.value)
+      ? (props.value as Record<string, unknown>)
+      : {};
+  const entries = Object.entries(record);
+  const replace = (previous: string, name: string, value: unknown) =>
+    props.onChange(
+      Object.fromEntries(
+        entries.map(([key, current]) => [
+          key === previous ? name : key,
+          key === previous ? value : current,
+        ]),
+      ),
+    );
+  return (
+    <div className="flow-input-binding-fields">
+      {entries.map(([name, current]) => {
+        const selected =
+          typeof current === "string" && props.variables.some((option) => option.value === current)
+            ? current
+            : "__constant";
+        return (
+          <div className="flow-result-mapping-row" key={name}>
+            <label>
+              <span>{t("targetField")}</span>
+              <input
+                value={name}
+                onChange={(event) => replace(name, event.target.value, current)}
+              />
+            </label>
+            <label>
+              <span>{t("variableSource")}</span>
+              <select
+                value={selected}
+                onChange={(event) =>
+                  replace(name, name, event.target.value === "__constant" ? "" : event.target.value)
+                }
+              >
+                {props.variables.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+                <option value="__constant">{t("constantValue")}</option>
+              </select>
+            </label>
+            {selected === "__constant" ? (
+              <input
+                aria-label={t("constantValue")}
+                value={typeof current === "string" ? current : JSON.stringify(current)}
+                onChange={(event) => replace(name, name, event.target.value)}
+              />
+            ) : null}
+            <button
+              type="button"
+              className="flow-inspector-delete"
+              onClick={() =>
+                props.onChange(Object.fromEntries(entries.filter(([key]) => key !== name)))
+              }
+            >
+              <Trash size={14} /> {t("remove")}
+            </button>
+          </div>
+        );
+      })}
+      <button
+        type="button"
+        className="flow-human-add-question"
+        onClick={() => {
+          let index = entries.length + 1;
+          let name = `field_${index}`;
+          while (Object.hasOwn(record, name)) {
+            index += 1;
+            name = `field_${index}`;
+          }
+          props.onChange({ ...record, [name]: props.variables[0]?.value ?? "" });
+        }}
+      >
+        <Plus size={14} /> {t("addInputField")}
+      </button>
+    </div>
+  );
+}
+
+function flowVariableExpression(variable: PragmaFlowVariable): string {
+  if (variable.source === "flow-input") {
+    return `$flow.input${variable.path.length === 0 ? "" : `.${variable.path.join(".")}`}`;
+  }
+  return `$state.nodes.${variable.nodeId}.result${
+    variable.path.length === 0 ? "" : `.${variable.path.join(".")}`
+  }`;
+}
+
+function defaultInputMapping(
+  schema: Extract<PragmaJsonSchema, { readonly type: "object" }>,
+): unknown {
+  return Object.fromEntries(
+    Object.entries(schema.properties).map(([name, child]) => [
+      name,
+      child.type === "object" ? defaultInputMapping(child) : defaultMappingConstant(child),
+    ]),
   );
 }
 
@@ -3275,6 +3602,18 @@ interface ResourceTarget {
   readonly label: string;
 }
 
+function targetInputSchema(
+  kind: FlowStepKind,
+  ref: string,
+  resources: readonly PragmaResource[],
+): Extract<PragmaJsonSchema, { readonly type: "object" }> | undefined {
+  if (kind !== "flow") return undefined;
+  const resource = resources.find(
+    (candidate) => candidate.kind === "Flow" && canonicalPragmaResourceRef(candidate) === ref,
+  );
+  return resource?.kind === "Flow" ? resource.spec.input?.schema : undefined;
+}
+
 function resourceTargets(
   resources: readonly PragmaResource[],
   currentFlowId: string,
@@ -3309,10 +3648,12 @@ function defaultStep(
   if (kind === "human")
     return {
       human: {
-        kind: "approval",
-        prompt: humanCopy.prompt,
-        options: [humanCopy.approve, humanCopy.reject],
-        approveOption: humanCopy.approve,
+        selectionMode: "single",
+        prompt: { segments: [{ text: humanCopy.prompt }] },
+        options: [
+          { value: "approve", label: humanCopy.approve },
+          { value: "reject", label: humanCopy.reject },
+        ],
       },
       version,
     };
@@ -3330,17 +3671,40 @@ function setStepReference(step: FlowStep, kind: Exclude<FlowStepKind, "human">, 
 }
 
 type RouteTransition = Extract<PragmaFlowTransition, { route: string }>;
-type RouteFieldType = "string" | "number" | "integer" | "boolean";
+type ArrayRouteTransition = Extract<RouteTransition, { branches: readonly unknown[] }>;
+type RouteFieldType = "string" | "number" | "integer" | "boolean" | "string-array";
 
 interface RouteFieldOption {
   readonly name: string;
   readonly type: RouteFieldType;
+  readonly values?: readonly string[] | undefined;
 }
 
 function isRouteTransition(
   transition: PragmaFlowTransition | undefined,
 ): transition is RouteTransition {
   return typeof transition === "object" && transition !== null && "route" in transition;
+}
+
+function isArrayRouteTransition(transition: RouteTransition): transition is ArrayRouteTransition {
+  return "branches" in transition;
+}
+
+function stepOutputSchema(step: FlowStep | undefined) {
+  if (step?.human !== undefined) {
+    return {
+      type: "object" as const,
+      properties: {
+        selection:
+          step.human.selectionMode === "multiple"
+            ? ({ type: "array" as const, items: { type: "string" as const } } as const)
+            : ({ type: "string" as const } as const),
+      },
+      required: ["selection"],
+      additionalProperties: false as const,
+    };
+  }
+  return step?.output?.schema;
 }
 
 function logicNodeId(sourceId: string): string {
@@ -3370,16 +3734,48 @@ export function routeFieldOptions(
   flow: PragmaFlowResource,
   sourceId: string,
 ): readonly RouteFieldOption[] {
-  const schema = flow.spec.graph.steps[sourceId]?.output?.schema;
+  const step = flow.spec.graph.steps[sourceId];
+  const schema = stepOutputSchema(step);
   if (schema?.type !== "object") return [];
-  return Object.entries(schema.properties).flatMap(([name, property]) =>
-    ["string", "number", "integer", "boolean"].includes(property.type)
-      ? [{ name, type: property.type as RouteFieldType }]
-      : [],
-  );
+  return Object.entries(schema.properties).flatMap<RouteFieldOption>(([name, property]) => {
+    if (property.type === "array" && property.items.type === "string") {
+      return [
+        {
+          name,
+          type: "string-array" as const,
+          ...(step?.human === undefined
+            ? {}
+            : { values: step.human.options.map((option) => option.value) }),
+        },
+      ];
+    }
+    if (!["string", "number", "integer", "boolean"].includes(property.type)) return [];
+    return [
+      {
+        name,
+        type: property.type as Exclude<RouteFieldType, "string-array">,
+        ...(step?.human === undefined
+          ? {}
+          : { values: step.human.options.map((option) => option.value) }),
+      },
+    ];
+  });
 }
 
 export function createRouteTransition(field: RouteFieldOption | undefined): RouteTransition {
+  if (field?.type === "string-array") {
+    const values = field.values?.length ? [...field.values] : ["value_1"];
+    return {
+      route: field.name,
+      branches: values.map((value, index) => ({
+        id: `branch_${index + 1}`,
+        operator: "contains_any",
+        values: [value],
+        destination: unconnectedDestination(),
+      })),
+      fallback: unconnectedDestination(),
+    };
+  }
   if (field?.type === "boolean") {
     return {
       route: field.name,
@@ -3387,6 +3783,13 @@ export function createRouteTransition(field: RouteFieldOption | undefined): Rout
         true: unconnectedDestination(),
         false: unconnectedDestination(),
       },
+    };
+  }
+  if (field?.values !== undefined && field.values.length > 0) {
+    return {
+      route: field.name,
+      cases: Object.fromEntries(field.values.map((value) => [value, unconnectedDestination()])),
+      fallback: unconnectedDestination(),
     };
   }
   return {
@@ -3404,6 +3807,15 @@ function routeOutputs(
   const field = routeFieldOptions(flow, sourceId).find(
     (candidate) => candidate.name === route.route,
   );
+  if (isArrayRouteTransition(route)) {
+    return [
+      ...route.branches.map((branch) => ({
+        id: `branch:${branch.id}`,
+        label: branch.values.join(", "),
+      })),
+      { id: "fallback", label: "otherwise" },
+    ];
+  }
   const caseNames = field?.type === "boolean" ? ["true", "false"] : Object.keys(route.cases);
   return [
     ...caseNames.map((key) => ({ id: `case:${key}`, label: key })),
@@ -3419,6 +3831,29 @@ function nextCaseKey(cases: Readonly<Record<string, PragmaFlowDestination>>): st
     key = `value_${index}`;
   }
   return key;
+}
+
+function nextArrayBranchId(branches: readonly ArrayRouteTransition["branches"][number][]): string {
+  let index = 1;
+  let id = `branch_${index}`;
+  const existing = new Set(branches.map((branch) => branch.id));
+  while (existing.has(id)) {
+    index += 1;
+    id = `branch_${index}`;
+  }
+  return id;
+}
+
+function moveArrayBranch(
+  branches: readonly ArrayRouteTransition["branches"][number][],
+  from: number,
+  to: number,
+): ArrayRouteTransition["branches"][number][] {
+  if (from === to || to < 0 || to >= branches.length) return [...branches];
+  const next = [...branches];
+  const [branch] = next.splice(from, 1);
+  if (branch !== undefined) next.splice(to, 0, branch);
+  return next;
 }
 
 function renameRouteCase(
@@ -3539,7 +3974,14 @@ function applyConnection(
   const current = flow.spec.graph.transitions[source];
   const handle = connection.sourceHandle ?? "default";
   let previous: PragmaFlowDestination | undefined;
-  if (routeSource !== null && handle.startsWith("case:") && isRouteTransition(current)) {
+  if (routeSource !== null && handle.startsWith("branch:") && isRouteTransition(current)) {
+    if (!isArrayRouteTransition(current)) return;
+    const branch = current.branches.find((candidate) => candidate.id === handle.slice(7));
+    if (branch === undefined) return;
+    previous = branch.destination;
+    branch.destination = destination;
+  } else if (routeSource !== null && handle.startsWith("case:") && isRouteTransition(current)) {
+    if (isArrayRouteTransition(current)) return;
     const caseName = handle.slice(5);
     previous = current.cases[caseName];
     current.cases[caseName] = destination;
@@ -3576,7 +4018,16 @@ export function removeEdgeFromFlow(flow: PragmaFlowResource, edge: Edge): void {
   if (transition === undefined) return;
   let removed: PragmaFlowDestination | undefined;
   if (routeSource !== null && isRouteTransition(transition)) {
-    if (edge.sourceHandle?.startsWith("case:")) {
+    if (edge.sourceHandle?.startsWith("branch:")) {
+      if (!isArrayRouteTransition(transition)) return;
+      const branch = transition.branches.find(
+        (candidate) => candidate.id === edge.sourceHandle?.slice(7),
+      );
+      if (branch === undefined) return;
+      removed = branch.destination;
+      branch.destination = unconnectedDestination();
+    } else if (edge.sourceHandle?.startsWith("case:")) {
+      if (isArrayRouteTransition(transition)) return;
       const caseName = edge.sourceHandle.slice(5);
       removed = transition.cases[caseName];
       transition.cases[caseName] = unconnectedDestination();
@@ -3601,7 +4052,13 @@ function edgeDestination(flow: PragmaFlowResource, edge: Edge): PragmaFlowDestin
   const transition = flow.spec.graph.transitions[source];
   if (transition === undefined) return undefined;
   if (routeSource !== null && isRouteTransition(transition)) {
+    if (edge.sourceHandle?.startsWith("branch:")) {
+      if (!isArrayRouteTransition(transition)) return undefined;
+      return transition.branches.find((branch) => branch.id === edge.sourceHandle?.slice(7))
+        ?.destination;
+    }
     if (edge.sourceHandle?.startsWith("case:")) {
+      if (isArrayRouteTransition(transition)) return undefined;
       return transition.cases[edge.sourceHandle.slice(5)];
     }
     if (edge.sourceHandle === "fallback") return transition.fallback;
@@ -3619,7 +4076,14 @@ function setEdgeDestination(
   const source = routeSource ?? edge.source;
   const transition = flow.spec.graph.transitions[source];
   if (routeSource !== null && isRouteTransition(transition)) {
-    if (edge.sourceHandle?.startsWith("case:")) {
+    if (edge.sourceHandle?.startsWith("branch:")) {
+      if (!isArrayRouteTransition(transition)) return;
+      const branch = transition.branches.find(
+        (candidate) => candidate.id === edge.sourceHandle?.slice(7),
+      );
+      if (branch !== undefined) branch.destination = destination;
+    } else if (edge.sourceHandle?.startsWith("case:")) {
+      if (isArrayRouteTransition(transition)) return;
       transition.cases[edge.sourceHandle.slice(5)] = destination;
     } else if (edge.sourceHandle === "fallback") {
       transition.fallback = destination;
@@ -3663,9 +4127,13 @@ function removeOrphanedLoop(
 function transitionDestinations(
   transition: PragmaFlowTransition,
 ): readonly PragmaFlowDestination[] {
-  return typeof transition === "object" && "route" in transition
-    ? [...Object.values(transition.cases), ...(transition.fallback ? [transition.fallback] : [])]
-    : [transition];
+  if (typeof transition !== "object" || !("route" in transition)) return [transition];
+  return [
+    ...("branches" in transition
+      ? transition.branches.map((branch) => branch.destination)
+      : Object.values(transition.cases)),
+    ...(transition.fallback ? [transition.fallback] : []),
+  ];
 }
 
 export function buildCanvasNodes(
@@ -3790,6 +4258,14 @@ export function buildCanvasNodes(
   return terminalNodes;
 }
 
+export function inspectorNodeId(
+  node: Pick<WorkflowCanvasNode, "id" | "type"> | undefined,
+): string | null {
+  return node?.type === "step" || node?.type === "logic" || node?.type === "terminal"
+    ? node.id
+    : null;
+}
+
 export function buildCanvasEdges(flow: PragmaFlowResource): Edge[] {
   const edges: Edge[] = [];
   if (flow.spec.graph.steps[flow.spec.graph.start] !== undefined) {
@@ -3819,9 +4295,21 @@ export function buildCanvasEdges(flow: PragmaFlowResource): Edge[] {
         deletable: true,
         markerEnd: { type: MarkerType.ArrowClosed },
       });
-      for (const [caseName, destination] of Object.entries(transition.cases)) {
-        const edge = destinationEdge(logicId, `case:${caseName}`, destination, caseName);
-        if (edge !== null) edges.push(edge);
+      if (isArrayRouteTransition(transition)) {
+        for (const branch of transition.branches) {
+          const edge = destinationEdge(
+            logicId,
+            `branch:${branch.id}`,
+            branch.destination,
+            branch.values.join(", "),
+          );
+          if (edge !== null) edges.push(edge);
+        }
+      } else {
+        for (const [caseName, destination] of Object.entries(transition.cases)) {
+          const edge = destinationEdge(logicId, `case:${caseName}`, destination, caseName);
+          if (edge !== null) edges.push(edge);
+        }
       }
       if (transition.fallback !== undefined) {
         const edge = destinationEdge(logicId, "fallback", transition.fallback, "otherwise");
@@ -3890,9 +4378,12 @@ function automaticPositions(flow: PragmaFlowResource): Record<string, { x: numbe
       graph.setEdge(source, graphSource);
     }
     const destinations = route
-      ? [...Object.values(transition.cases), transition.fallback].filter(
-          (value): value is PragmaFlowDestination => value !== undefined,
-        )
+      ? [
+          ...("branches" in transition
+            ? transition.branches.map((branch) => branch.destination)
+            : Object.values(transition.cases)),
+          transition.fallback,
+        ].filter((value): value is PragmaFlowDestination => value !== undefined)
       : [transition];
     for (const destination of destinations) {
       const target = destinationTarget(destination);

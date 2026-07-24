@@ -131,6 +131,11 @@ export interface FlowChain {
     cases: Readonly<Record<string, FlowDestination>>,
     options?: { readonly fallback?: FlowDestination | undefined },
   ): FlowChain;
+  routeArray(
+    field: string,
+    branches: readonly FlowArrayRouteBranch[],
+    options?: { readonly fallback?: FlowDestination | undefined },
+  ): FlowChain;
 }
 
 export interface CompiledFlowStep {
@@ -162,7 +167,20 @@ export type FlowTransition =
       readonly field: string;
       readonly cases: ReadonlyMap<string, FlowDestination>;
       readonly fallback?: FlowDestination | undefined;
+    }
+  | {
+      readonly type: "array-route";
+      readonly field: string;
+      readonly branches: readonly FlowArrayRouteBranch[];
+      readonly fallback?: FlowDestination | undefined;
     };
+
+export interface FlowArrayRouteBranch {
+  readonly id: string;
+  readonly operator: "contains_any" | "contains_all" | "contains_none";
+  readonly values: readonly string[];
+  readonly destination: FlowDestination;
+}
 
 export interface FlowLoopDefinition {
   readonly id: string;
@@ -403,8 +421,11 @@ function flowEdges(transitions: ReadonlyMap<string, FlowTransition>): readonly C
   for (const [source, transition] of transitions) {
     if (transition.type === "next") add(source, transition.target);
     else if (transition.type === "repeat") add(source, transition);
-    else {
+    else if (transition.type === "route") {
       for (const destination of transition.cases.values()) add(source, destination);
+      if (transition.fallback !== undefined) add(source, transition.fallback);
+    } else {
+      for (const branch of transition.branches) add(source, branch.destination);
       if (transition.fallback !== undefined) add(source, transition.fallback);
     }
   }
@@ -440,6 +461,23 @@ class Chain implements FlowChain {
       type: "route",
       field,
       cases: new Map(Object.entries(cases)),
+      fallback: options.fallback,
+    });
+    return this;
+  }
+
+  routeArray(
+    field: string,
+    branches: readonly FlowArrayRouteBranch[],
+    options: { readonly fallback?: FlowDestination | undefined } = {},
+  ): FlowChain {
+    this.flow.setTransition(this.stepId, {
+      type: "array-route",
+      field,
+      branches: branches.map((branch) => ({
+        ...branch,
+        values: [...branch.values],
+      })),
       fallback: options.fallback,
     });
     return this;

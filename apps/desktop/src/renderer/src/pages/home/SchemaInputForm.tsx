@@ -7,6 +7,7 @@ import { z } from "zod";
 type ObjectSchema = Extract<PragmaJsonSchema, { readonly type: "object" }>;
 
 export function SchemaInputForm(props: {
+  readonly className?: string | undefined;
   readonly schema: ObjectSchema;
   readonly value: Readonly<Record<string, unknown>>;
   readonly disabled?: boolean | undefined;
@@ -14,7 +15,10 @@ export function SchemaInputForm(props: {
 }) {
   const { t } = useTranslation("missions");
   return (
-    <section className="mission-schema-form" aria-label={t("flowInput")}>
+    <section
+      className={["mission-schema-form", props.className].filter(Boolean).join(" ")}
+      aria-label={t("flowInput")}
+    >
       <header>
         <strong>{t("flowInput")}</strong>
         <small>{t("flowInputDescription")}</small>

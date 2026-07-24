@@ -34,4 +34,16 @@ describe("HumanInteractionRecordSchema", () => {
       }).success,
     ).toBe(false);
   });
+
+  it("accepts stable single- and multiple-selection outputs", () => {
+    for (const selection of ["approve", ["ship", "notify"]]) {
+      expect(
+        HumanInteractionRecordSchema.safeParse({
+          ...base,
+          status: "responded",
+          response: { selection },
+        }).success,
+      ).toBe(true);
+    }
+  });
 });

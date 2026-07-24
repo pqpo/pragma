@@ -287,7 +287,7 @@ export function createAutomationService(options: {
       id: missionId,
       workspace: binding.workspace.path,
       executorRef: resource.spec.route.executor.ref,
-      missionInput: resource.spec.route.input,
+      missionInput: automationMissionInput(resource),
       toolPermissionMode: binding.toolPermissionMode,
       ...(binding.modelOverride === undefined ? {} : { modelOverride: binding.modelOverride }),
     });
@@ -555,6 +555,13 @@ export function createAutomationService(options: {
       };
     },
   };
+}
+
+export function automationMissionInput(resource: PragmaAutomationResource) {
+  const routeInput = resource.spec.route.input;
+  return resource.spec.route.executor.ref.startsWith("flow:") && routeInput.kind === "prompt"
+    ? { kind: "auto" as const, value: routeInput.value }
+    : routeInput;
 }
 
 function promptFor(resource: PragmaAutomationResource): string {

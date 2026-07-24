@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { analyzePragmaFlowGraph, type PragmaFlowResource } from "../src/ast/index.ts";
+import {
+  analyzePragmaFlowGraph,
+  PragmaFlowResourceSchema,
+  type PragmaFlowResource,
+} from "../src/ast/index.ts";
 
 function flow(graph: PragmaFlowResource["spec"]["graph"]): PragmaFlowResource {
   return {
@@ -19,10 +23,69 @@ function flow(graph: PragmaFlowResource["spec"]["graph"]): PragmaFlowResource {
 
 const humanStep = {
   version: "1.0.0",
-  human: { kind: "question" as const, prompt: "Continue?" },
+  human: {
+    selectionMode: "single" as const,
+    prompt: { segments: [{ text: "Continue?" }] },
+    options: [
+      { value: "yes", label: "Yes" },
+      { value: "no", label: "No" },
+    ],
+  },
 };
 
 describe("analyzePragmaFlowGraph", () => {
+  it("accepts one-question Human input definitions and rejects duplicate stable values", () => {
+    expect(
+      PragmaFlowResourceSchema.safeParse(
+        flow({
+          start: "review",
+          steps: { review: humanStep },
+          transitions: { review: { end: true } },
+          loops: {},
+        }),
+      ).success,
+    ).toBe(true);
+    const duplicate = structuredClone(humanStep);
+    duplicate.human.options[1]!.value = "yes";
+    expect(
+      PragmaFlowResourceSchema.safeParse(
+        flow({
+          start: "review",
+          steps: { review: duplicate },
+          transitions: { review: { end: true } },
+          loops: {},
+        }),
+      ).success,
+    ).toBe(false);
+  });
+
+  it("includes ordered array-route branch destinations in graph analysis", () => {
+    const analysis = analyzePragmaFlowGraph(
+      flow({
+        start: "review",
+        steps: { review: humanStep, yes: humanStep, no: humanStep },
+        transitions: {
+          review: {
+            route: "selection",
+            branches: [
+              {
+                id: "yes_selected",
+                operator: "contains_any",
+                values: ["yes"],
+                destination: { goto: "yes" },
+              },
+            ],
+            fallback: { goto: "no" },
+          },
+          yes: { end: true },
+          no: { end: true },
+        },
+        loops: {},
+      }),
+    );
+    expect(analysis.issues).toEqual([]);
+  });
+
   it("reports an empty route at the DSL transition path", () => {
     const analysis = analyzePragmaFlowGraph(
       flow({

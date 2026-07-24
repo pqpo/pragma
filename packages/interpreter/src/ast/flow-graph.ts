@@ -45,7 +45,10 @@ export function analyzePragmaFlowGraph(resource: PragmaFlowResource): PragmaFlow
   };
   for (const [source, transition] of Object.entries(graph.transitions)) {
     if (typeof transition === "object" && "route" in transition) {
-      const destinations = Object.values(transition.cases);
+      const destinations =
+        "branches" in transition
+          ? transition.branches.map((branch) => branch.destination)
+          : Object.values(transition.cases);
       if (destinations.length === 0 && transition.fallback === undefined) {
         localIssues.push({
           code: "flow.graph.route_empty",
@@ -99,7 +102,11 @@ export function analyzePragmaFlowNodeAvailability(
   };
   for (const [source, transition] of Object.entries(graph.transitions)) {
     if (typeof transition === "object" && "route" in transition) {
-      Object.values(transition.cases).forEach((destination) => add(source, destination));
+      const destinations =
+        "branches" in transition
+          ? transition.branches.map((branch) => branch.destination)
+          : Object.values(transition.cases);
+      destinations.forEach((destination) => add(source, destination));
       if (transition.fallback !== undefined) add(source, transition.fallback);
     } else {
       add(source, transition);

@@ -2,7 +2,12 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import type { AutomationSummary, PragmaProjectSnapshot } from "../../../../shared/desktop-api.ts";
-import { AutomationDirectoryFragment, scheduleTrigger } from "./AutomationDirectoryFragment.tsx";
+import { workspaceSelectionFromPath } from "../../components/WorkspacePicker.tsx";
+import {
+  AutomationDirectoryFragment,
+  scheduleTrigger,
+  validateAutomationEditor,
+} from "./AutomationDirectoryFragment.tsx";
 
 const automation: AutomationSummary = {
   ref: "automation:daily_review@1.0.0",
@@ -64,10 +69,11 @@ describe("AutomationDirectoryFragment", () => {
       id: "weekly_review",
       version: "1.0.0",
       name: "Weekly review",
-      description: "",
+      description: "Runs a weekly review",
       enabled: true,
       executorRef: "expert:reviewer@1.0.0",
-      input: "Review the work.",
+      prompt: "Review the work.",
+      flowInput: {},
       interaction: "reuse-session" as const,
       workspace: "/work/review",
       toolPermissionMode: "request-approval" as const,
@@ -78,19 +84,85 @@ describe("AutomationDirectoryFragment", () => {
       anchorAt: "2026-07-24T09:00",
       frequency: "weekly" as const,
       time: "09:00",
-      timezone: "UTC",
-      weekdays: " MON, fri ",
+      weekdays: ["mon", "fri"] as const,
       dayOfMonth: 1,
       cron: "0 9 * * *",
       startsAt: "",
       endsAt: "",
     };
 
-    expect(scheduleTrigger(editor)).toMatchObject({ weekdays: ["mon", "fri"] });
-    expect(() => scheduleTrigger({ ...editor, weekdays: "monday" })).toThrow(/^weekdays\.0:/);
-    expect(() => scheduleTrigger({ ...editor, time: "" })).toThrow(/^time:/);
-    expect(() => scheduleTrigger({ ...editor, frequency: "monthly", dayOfMonth: 0 })).toThrow(
-      /^dayOfMonth:/,
-    );
+    expect(scheduleTrigger(editor, "Asia/Shanghai")).toMatchObject({
+      weekdays: ["mon", "fri"],
+      timezone: "Asia/Shanghai",
+    });
+    expect(() => scheduleTrigger({ ...editor, weekdays: [] }, "UTC")).toThrow(/^weekdays:/);
+    expect(() => scheduleTrigger({ ...editor, time: "" }, "UTC")).toThrow(/^time:/);
+    expect(() =>
+      scheduleTrigger({ ...editor, frequency: "monthly", dayOfMonth: 0 }, "UTC"),
+    ).toThrow(/^dayOfMonth:/);
+  });
+
+  it("resolves saved Automation paths to the shared workspace picker model", () => {
+    const recent = { path: "/work/review", basename: "review" };
+
+    expect(workspaceSelectionFromPath(recent.path, [recent])).toBe(recent);
+    expect(workspaceSelectionFromPath("C:\\work\\reports")).toEqual({
+      path: "C:\\work\\reports",
+      basename: "reports",
+    });
+    expect(workspaceSelectionFromPath("")).toBeUndefined();
+  });
+
+  it("blocks invalid resource fields and invalid schedules before save", () => {
+    const editor = {
+      originalRef: undefined,
+      id: "daily_review",
+      version: "1.0.0",
+      name: "Daily review",
+      description: "Reviews the current work",
+      enabled: true,
+      executorRef: "expert:reviewer@1.0.0",
+      prompt: "Review the work.",
+      flowInput: {},
+      interaction: "reuse-session" as const,
+      workspace: "/work/review",
+      toolPermissionMode: "request-approval" as const,
+      triggerKind: "calendar" as const,
+      onceAt: "2026-07-24T09:00",
+      intervalEvery: 1,
+      intervalUnit: "hours" as const,
+      anchorAt: "2026-07-24T09:00",
+      frequency: "daily" as const,
+      time: "09:00",
+      weekdays: ["mon"] as const,
+      dayOfMonth: 1,
+      cron: "0 9 * * *",
+      startsAt: "",
+      endsAt: "",
+    };
+    const executor = {
+      kind: "expert" as const,
+      ref: "expert:reviewer@1.0.0",
+      name: "Reviewer",
+      version: "1.0.0",
+      description: "Reviews work",
+      origin: "project" as const,
+      readOnly: false,
+      customized: false,
+    };
+
+    expect(validateAutomationEditor(editor, executor)).toMatchObject({ valid: true });
+    expect(validateAutomationEditor({ ...editor, id: "bad-id" }, executor)).toMatchObject({
+      valid: false,
+      id: "idFormat",
+    });
+    expect(validateAutomationEditor({ ...editor, description: "" }, executor)).toMatchObject({
+      valid: false,
+      description: "required",
+    });
+    expect(validateAutomationEditor({ ...editor, time: "" }, executor)).toMatchObject({
+      valid: false,
+      trigger: "invalid",
+    });
   });
 });

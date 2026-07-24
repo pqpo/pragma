@@ -3,9 +3,6 @@ import {
   ArrowUp,
   CaretDown,
   Check,
-  ClockCounterClockwise,
-  Folder,
-  FolderOpen,
   GitBranch,
   MagnifyingGlass,
   User,
@@ -22,14 +19,10 @@ import type {
 } from "../../../../shared/desktop-api.ts";
 import { ToolPermissionSelect } from "../../components/ToolPermissionSelect.tsx";
 import { MissionModelOverrideControls } from "../../components/MissionModelOverrideControls.tsx";
+import { WorkspacePicker, type WorkspaceSelection } from "../../components/WorkspacePicker.tsx";
 import { errorMessage } from "../../lib/errors.ts";
 import { localizeSystemExpertCopy } from "../../lib/system-expert-copy.ts";
 import { SchemaInputForm, createSchemaInputValue, isSchemaInputValid } from "./SchemaInputForm.tsx";
-
-interface WorkspaceSelection {
-  readonly path: string;
-  readonly basename: string;
-}
 
 export function HomePage(props: {
   readonly initialExecutorRef?: string | undefined;
@@ -220,7 +213,8 @@ export function HomePage(props: {
           <WorkspacePicker
             defaultWorkspace={defaultWorkspace}
             recentWorkspaces={recentWorkspaces}
-            override={workspaceOverride}
+            selection={workspaceOverride}
+            defaultSelected={workspaceOverride === undefined}
             onChoose={() => void pickWorkspace()}
             onSelect={setWorkspaceOverride}
             onUseDefault={() => setWorkspaceOverride(undefined)}
@@ -312,110 +306,6 @@ export function HomePage(props: {
         ) : null}
       </section>
     </section>
-  );
-}
-
-function WorkspacePicker(props: {
-  readonly defaultWorkspace?: WorkspaceSelection | undefined;
-  readonly recentWorkspaces: readonly WorkspaceSelection[];
-  readonly override?: WorkspaceSelection | undefined;
-  readonly onChoose: () => void;
-  readonly onSelect: (workspace: WorkspaceSelection) => void;
-  readonly onUseDefault: () => void;
-}) {
-  const { t } = useTranslation("missions");
-  const [open, setOpen] = useState(false);
-  const rootRef = useRef<HTMLDivElement | null>(null);
-  const workspace = props.override ?? props.defaultWorkspace;
-
-  useDismissableMenu(open, rootRef, () => setOpen(false));
-
-  return (
-    <div
-      className={open ? "mission-workspace-picker is-open" : "mission-workspace-picker"}
-      ref={rootRef}
-    >
-      <button
-        className="mission-workspace-trigger"
-        type="button"
-        aria-expanded={open}
-        aria-haspopup="menu"
-        onClick={() => setOpen((current) => !current)}
-      >
-        <Folder size={20} aria-hidden="true" />
-        <span>
-          <strong>
-            {props.override === undefined
-              ? t("useDefaultWorkspace")
-              : props.override.basename || t("taskWorkspace")}
-          </strong>
-          <small>{workspace?.path ?? t("loadingWorkspace")}</small>
-        </span>
-        <CaretDown size={16} aria-hidden="true" />
-      </button>
-      {open ? (
-        <div className="mission-workspace-menu" role="menu" aria-label={t("chooseWorkspace")}>
-          <button
-            type="button"
-            role="menuitemradio"
-            aria-checked={props.override === undefined}
-            onClick={() => {
-              props.onUseDefault();
-              setOpen(false);
-            }}
-          >
-            <Folder size={18} aria-hidden="true" />
-            <span>
-              <strong>{t("useDefaultWorkspace")}</strong>
-              <small>{props.defaultWorkspace?.path ?? t("loadingWorkspace")}</small>
-            </span>
-            {props.override === undefined ? <Check size={16} aria-hidden="true" /> : null}
-          </button>
-          {props.recentWorkspaces.length > 0 ? (
-            <span className="mission-workspace-menu-heading" role="presentation">
-              {t("recentWorkspaces")}
-            </span>
-          ) : null}
-          {props.recentWorkspaces.map((recentWorkspace) => {
-            const selected = props.override?.path === recentWorkspace.path;
-            return (
-              <button
-                key={recentWorkspace.path}
-                type="button"
-                role="menuitemradio"
-                aria-checked={selected}
-                title={recentWorkspace.path}
-                onClick={() => {
-                  props.onSelect(recentWorkspace);
-                  setOpen(false);
-                }}
-              >
-                <ClockCounterClockwise size={18} aria-hidden="true" />
-                <span>
-                  <strong>{recentWorkspace.basename}</strong>
-                  <small>{recentWorkspace.path}</small>
-                </span>
-                {selected ? <Check size={16} aria-hidden="true" /> : null}
-              </button>
-            );
-          })}
-          <button
-            type="button"
-            role="menuitem"
-            onClick={() => {
-              setOpen(false);
-              props.onChoose();
-            }}
-          >
-            <FolderOpen size={18} aria-hidden="true" />
-            <span>
-              <strong>{t("chooseDifferentWorkspace")}</strong>
-              <small>{t("workspaceOverrideDescription")}</small>
-            </span>
-          </button>
-        </div>
-      ) : null}
-    </div>
   );
 }
 

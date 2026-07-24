@@ -13,9 +13,14 @@ import {
 
 import {
   FlowActionRegistry,
+  PRAGMA_AUTOMATION_PROMPT_MAX_LENGTH,
   PRAGMA_EXPERT_ID_MAX_LENGTH,
   PRAGMA_EXPERT_INSTRUCTIONS_MAX_LENGTH,
   PRAGMA_EXPERT_SCOPE_MAX_LENGTH,
+  PRAGMA_RESOURCE_DESCRIPTION_MAX_LENGTH,
+  PRAGMA_RESOURCE_NAME_MAX_LENGTH,
+  PRAGMA_RESOURCE_VERSION_MAX_LENGTH,
+  PRAGMA_SEMANTIC_RESOURCE_ID_MAX_LENGTH,
   PragmaExpertIdSchema,
   PragmaExpertRefSchema,
   PragmaExpertResourceSchema,
@@ -89,6 +94,205 @@ describe("Pragma YAML DSL", () => {
         },
       }).success,
     ).toBe(true);
+    expect(
+      PragmaAutomationResourceSchema.safeParse({
+        ...resource,
+        spec: {
+          ...resource.spec,
+          route: {
+            executor: { ref: "flow:review@1.0.0" },
+            input: { kind: "prompt", value: "Review" },
+          },
+          interaction: { mode: "new-mission" },
+        },
+      }).success,
+    ).toBe(true);
+  });
+
+  it("enforces Automation authoring limits at the shared DSL boundary", () => {
+    const resource = {
+      apiVersion: "pragma/v2",
+      kind: "Automation",
+      metadata: {
+        id: `a${"_".repeat(PRAGMA_SEMANTIC_RESOURCE_ID_MAX_LENGTH - 1)}`,
+        version: `1${"a".repeat(PRAGMA_RESOURCE_VERSION_MAX_LENGTH - 1)}`,
+        name: "n".repeat(PRAGMA_RESOURCE_NAME_MAX_LENGTH),
+        description: "d".repeat(PRAGMA_RESOURCE_DESCRIPTION_MAX_LENGTH),
+        tags: [],
+      },
+      spec: {
+        adapter: "pragma.automation.schedule@v1",
+        binding: "binding:desktop-automation",
+        config: {
+          trigger: {
+            kind: "calendar",
+            frequency: "daily",
+            time: "09:00",
+            timezone: "UTC",
+          },
+        },
+        enabled: true,
+        route: {
+          executor: { ref: "expert:reviewer@1.0.0" },
+          input: {
+            kind: "prompt",
+            value: "p".repeat(PRAGMA_AUTOMATION_PROMPT_MAX_LENGTH),
+          },
+        },
+        interaction: { mode: "reuse-session" },
+        delivery: { adapter: "pragma.automation.delivery.local@v1" },
+      },
+    } as const;
+
+    expect(PragmaAutomationResourceSchema.safeParse(resource).success).toBe(true);
+    for (const candidate of [
+      {
+        ...resource,
+        metadata: {
+          ...resource.metadata,
+          id: `a${"_".repeat(PRAGMA_SEMANTIC_RESOURCE_ID_MAX_LENGTH)}`,
+        },
+      },
+      {
+        ...resource,
+        metadata: {
+          ...resource.metadata,
+          version: `1${"a".repeat(PRAGMA_RESOURCE_VERSION_MAX_LENGTH)}`,
+        },
+      },
+      {
+        ...resource,
+        metadata: {
+          ...resource.metadata,
+          name: "n".repeat(PRAGMA_RESOURCE_NAME_MAX_LENGTH + 1),
+        },
+      },
+      {
+        ...resource,
+        metadata: {
+          ...resource.metadata,
+          description: "d".repeat(PRAGMA_RESOURCE_DESCRIPTION_MAX_LENGTH + 1),
+        },
+      },
+      {
+        ...resource,
+        spec: {
+          ...resource.spec,
+          route: {
+            ...resource.spec.route,
+            input: {
+              kind: "prompt" as const,
+              value: "p".repeat(PRAGMA_AUTOMATION_PROMPT_MAX_LENGTH + 1),
+            },
+          },
+        },
+      },
+    ]) {
+      expect(PragmaAutomationResourceSchema.safeParse(candidate).success).toBe(false);
+    }
+  });
+
+  it("validates fixed Flow Automation input against the referenced schema", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-automation-flow-input-"));
+    const flow = PragmaFlowResourceSchema.parse({
+      apiVersion: "pragma/v2",
+      kind: "Flow",
+      metadata: {
+        id: "review",
+        version: "1.0.0",
+        name: "Review",
+        description: "Reviews one issue",
+        tags: [],
+      },
+      spec: {
+        input: {
+          schema: {
+            type: "object",
+            properties: { issueId: { type: "string" } },
+            required: ["issueId"],
+            additionalProperties: false,
+          },
+        },
+        graph: {
+          start: "review",
+          steps: {
+            review: {
+              version: "1.0.0",
+              action: { ref: "action:review@1.0.0" },
+            },
+          },
+          transitions: { review: { end: true } },
+        },
+      },
+    });
+    const automation = (
+      id: string,
+      input:
+        | { kind: "prompt"; value: string }
+        | {
+            kind: "flow";
+            value: Record<string, unknown>;
+          },
+    ) =>
+      PragmaAutomationResourceSchema.parse({
+        apiVersion: "pragma/v2",
+        kind: "Automation",
+        metadata: {
+          id,
+          version: "1.0.0",
+          name: id,
+          description: "Runs the review Flow",
+          tags: [],
+        },
+        spec: {
+          adapter: "pragma.automation.schedule@v1",
+          binding: "binding:desktop-automation",
+          config: {
+            trigger: {
+              kind: "calendar",
+              frequency: "daily",
+              time: "09:00",
+              timezone: "UTC",
+            },
+          },
+          enabled: true,
+          route: { executor: { ref: "flow:review@1.0.0" }, input },
+          interaction: { mode: "new-mission" },
+          delivery: { adapter: "pragma.automation.delivery.local@v1" },
+        },
+      });
+    const entry = join(root, "pragma.yaml");
+    await writeFile(
+      entry,
+      formatPragmaYaml({
+        apiVersion: "pragma/v2",
+        kind: "Bundle",
+        imports: [],
+        resources: [
+          flow,
+          automation("prompt_input", { kind: "prompt", value: "Review it" }),
+          automation("invalid_input", { kind: "flow", value: {} }),
+          automation("valid_input", { kind: "flow", value: { issueId: "ISSUE-1" } }),
+        ],
+      }),
+    );
+
+    const diagnostics = await (await loadPragmaProject(entry)).validate();
+    expect(diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "automation.input.kind_invalid",
+          path: ["spec", "route", "input"],
+        }),
+        expect.objectContaining({
+          code: "automation.input.schema_invalid",
+          path: ["spec", "route", "input", "value", "issueId"],
+        }),
+      ]),
+    );
+    expect(
+      diagnostics.filter((diagnostic) => diagnostic.code.startsWith("automation.input.")),
+    ).toHaveLength(2);
   });
 
   it("uses prompt variables, automatic result storage, and form-compatible structured output", () => {
@@ -546,7 +750,14 @@ describe("Pragma YAML DSL", () => {
                 start: "approve",
                 steps: {
                   approve: {
-                    human: { kind: "approval", prompt: "Approve?" },
+                    human: {
+                      selectionMode: "single",
+                      prompt: { segments: [{ text: "Approve?" }] },
+                      options: [
+                        { value: "approve", label: "Approve" },
+                        { value: "reject", label: "Reject" },
+                      ],
+                    },
                     version: "1.0.0",
                   },
                 },

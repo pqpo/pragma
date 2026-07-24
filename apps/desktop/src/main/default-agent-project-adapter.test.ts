@@ -3,7 +3,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
-import { PRAGMA_EXPERT_ID_MAX_LENGTH } from "@pragma/interpreter/ast";
+import {
+  PRAGMA_AUTOMATION_PROMPT_MAX_LENGTH,
+  PRAGMA_EXPERT_ID_MAX_LENGTH,
+} from "@pragma/interpreter/ast";
 
 import type { Capability } from "../shared/desktop-api.ts";
 import { createPragmaProjectStore } from "./pragma-project-store.ts";
@@ -167,10 +170,12 @@ describe("Desktop DefaultAgent DSL project adapter", () => {
           stepId: "approve",
           step: {
             human: {
-              kind: "approval",
-              prompt: "Release?",
-              options: ["Ship", "Hold"],
-              approveOption: "Ship",
+              selectionMode: "single",
+              prompt: { segments: [{ text: "Release?" }] },
+              options: [
+                { value: "ship", label: "Ship" },
+                { value: "hold", label: "Hold" },
+              ],
             },
             version: "1.0.0",
           },
@@ -220,6 +225,30 @@ describe("Desktop DefaultAgent DSL project adapter", () => {
       diagnostics: [expect.objectContaining({ code: "source.parse", source: "source:0" })],
     });
   });
+
+  it("rejects over-limit Automation fields during prepare", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-default-agent-automation-limit-"));
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    const adapter = createDesktopDefaultAgentProjectPort(
+      adapterOptions(project, join(root, "state")),
+    );
+
+    await expect(
+      adapter.prepare({
+        expectedProjectRevision: 0,
+        sources: [automationWithPrompt("p".repeat(PRAGMA_AUTOMATION_PROMPT_MAX_LENGTH + 1))],
+      }),
+    ).resolves.toMatchObject({
+      status: "invalid",
+      diagnostics: [
+        expect.objectContaining({
+          code: "schema.invalid",
+          path: ["spec", "route", "input", "value"],
+        }),
+      ],
+    });
+    expect((await project.get()).revision).toBe(0);
+  });
 });
 
 function requirePrepared<
@@ -251,6 +280,40 @@ function expert(description: string, runtimeRef: string, id = "writer"): string 
     "  contextStores: []",
     "  plugins: []",
     "  tools: []",
+    "",
+  ].join("\n");
+}
+
+function automationWithPrompt(prompt: string): string {
+  return [
+    "apiVersion: pragma/v2",
+    "kind: Automation",
+    "metadata:",
+    "  id: daily_review",
+    "  version: 1.0.0",
+    "  name: Daily review",
+    "  description: Reviews the current workspace",
+    "  tags: []",
+    "spec:",
+    "  adapter: pragma.automation.schedule@v1",
+    "  binding: binding:desktop-automation",
+    "  config:",
+    "    trigger:",
+    "      kind: calendar",
+    "      frequency: daily",
+    "      time: 09:00",
+    "      timezone: UTC",
+    "  enabled: true",
+    "  route:",
+    "    executor:",
+    "      ref: expert:reviewer@1.0.0",
+    "    input:",
+    "      kind: prompt",
+    `      value: ${JSON.stringify(prompt)}`,
+    "  interaction:",
+    "    mode: reuse-session",
+    "  delivery:",
+    "    adapter: pragma.automation.delivery.local@v1",
     "",
   ].join("\n");
 }

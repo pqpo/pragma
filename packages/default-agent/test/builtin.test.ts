@@ -107,6 +107,19 @@ describe("built-in Pragma Agent DSL", () => {
     expect(actual).toEqual(BUILT_IN_PRAGMA_FILES);
   });
 
+  it("teaches the default Agent the Automation field and Flow input limits", () => {
+    const reference =
+      BUILT_IN_PRAGMA_FILES["skills/author-pragma-dsl/references/automation.md"] ?? "";
+
+    expect(reference).toContain("`metadata.id`: 1–120 characters");
+    expect(reference).toContain("`metadata.version`: 1–100 characters");
+    expect(reference).toContain("`metadata.name`: 1–200 characters");
+    expect(reference).toContain("`metadata.description`: 1–4,000 characters");
+    expect(reference).toContain("Prompt input: 1–100,000 characters");
+    expect(reference).toContain("declares `spec.input.schema`");
+    expect(reference).toContain("has no input schema");
+  });
+
   it("materializes an overridden built-in Expert while preserving its bundled dependencies", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-default-agent-override-"));
     const resource = builtInPragmaResource();
