@@ -58,9 +58,9 @@ export function createDesktopDefaultAgentProjectPort(options: {
   const draftPath = (id: string) =>
     join(options.stateRoot, "dsl-drafts", `${encodePragmaPathSegment(id)}.json`);
 
-  const prepareSources = async (input: {
+  const prepareResources = async (input: {
     readonly expectedProjectRevision: number;
-    readonly sources: readonly string[];
+    readonly authoredResources: readonly PragmaResource[];
   }): Promise<DefaultAgentPrepareResult> => {
     const snapshot = await options.project.get();
     if (snapshot.revision !== input.expectedProjectRevision) {
@@ -69,21 +69,7 @@ export function createDesktopDefaultAgentProjectPort(options: {
         `Project revision changed from ${input.expectedProjectRevision} to ${snapshot.revision}.`,
       );
     }
-    const authoredResources: PragmaResource[] = [];
-    const parseDiagnostics = input.sources.flatMap((source, index) => {
-      try {
-        authoredResources.push(parseDefaultAgentResource(source));
-        return [];
-      } catch (error) {
-        return diagnosticsFromError(error, `source:${index}`);
-      }
-    });
-    if (parseDiagnostics.length > 0) {
-      return DefaultAgentPrepareResultSchema.parse({
-        status: "invalid",
-        diagnostics: parseDiagnostics,
-      });
-    }
+    const authoredResources = [...input.authoredResources];
     const actionDiagnostics = authoredResources.flatMap((resource) =>
       resource.kind !== "Flow"
         ? []
@@ -155,6 +141,23 @@ export function createDesktopDefaultAgentProjectPort(options: {
         diagnostics: diagnosticsFromError(error),
       });
     }
+  };
+
+  const prepareSources = async (input: {
+    readonly expectedProjectRevision: number;
+    readonly sources: readonly string[];
+  }): Promise<DefaultAgentPrepareResult> => {
+    const parsed = parseDefaultAgentSources(input.sources);
+    if (parsed.diagnostics.length > 0) {
+      return DefaultAgentPrepareResultSchema.parse({
+        status: "invalid",
+        diagnostics: parsed.diagnostics,
+      });
+    }
+    return await prepareResources({
+      expectedProjectRevision: input.expectedProjectRevision,
+      authoredResources: parsed.resources,
+    });
   };
 
   return {
@@ -282,10 +285,19 @@ export function createDesktopDefaultAgentProjectPort(options: {
           })),
         });
       }
-      const flow = PragmaFlowResourceSchema.parse(materializeDraft(draft));
-      return await prepareSources({
+      const additional = parseDefaultAgentSources(input.additionalSources ?? [], 1);
+      if (additional.diagnostics.length > 0) {
+        return DefaultAgentPrepareResultSchema.parse({
+          status: "invalid",
+          diagnostics: additional.diagnostics,
+        });
+      }
+      return await prepareResources({
         expectedProjectRevision: draft.baseProjectRevision,
-        sources: [formatPragmaYaml(flow), ...(input.additionalSources ?? [])],
+        authoredResources: [
+          PragmaFlowResourceSchema.parse(materializeDraft(draft)),
+          ...additional.resources,
+        ],
       });
     },
     async discardFlowDraft(draftId) {
@@ -523,6 +535,25 @@ function parseDefaultAgentResource(source: string): PragmaResource {
     );
   }
   return resource;
+}
+
+function parseDefaultAgentSources(
+  sources: readonly string[],
+  sourceIndexOffset = 0,
+): {
+  readonly resources: readonly PragmaResource[];
+  readonly diagnostics: ReturnType<typeof diagnosticsFromError>;
+} {
+  const resources: PragmaResource[] = [];
+  const diagnostics: ReturnType<typeof diagnosticsFromError> = [];
+  sources.forEach((source, index) => {
+    try {
+      resources.push(parseDefaultAgentResource(source));
+    } catch (error) {
+      diagnostics.push(...diagnosticsFromError(error, `source:${sourceIndexOffset + index}`));
+    }
+  });
+  return { resources, diagnostics };
 }
 
 function invalidPrepare(code: string, message: string): DefaultAgentPrepareResult {

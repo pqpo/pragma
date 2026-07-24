@@ -148,13 +148,14 @@ describe("Desktop DefaultAgent DSL project adapter", () => {
     const adapter = createDesktopDefaultAgentProjectPort(
       adapterOptions(project, join(root, "state")),
     );
+    const description = "发布审批：验证非空 description";
     const created = await adapter.createFlowDraft({
       expectedProjectRevision: 0,
       metadata: {
         id: "release_gate",
         version: "1.0.0",
         name: "Release Gate",
-        description: "Waits for release approval",
+        description,
         tags: [],
       },
     });
@@ -192,6 +193,10 @@ describe("Desktop DefaultAgent DSL project adapter", () => {
       ],
     });
     expect(complete.diagnostics).toEqual([]);
+    await expect(adapter.validateFlowDraft(created.draftId)).resolves.toMatchObject({
+      resource: { metadata: { description } },
+      diagnostics: [],
+    });
     const prepared = requirePrepared(
       await adapter.prepareFlowDraft({
         draftId: created.draftId,
@@ -199,7 +204,11 @@ describe("Desktop DefaultAgent DSL project adapter", () => {
       }),
     );
     expect(prepared.changes).toEqual([
-      expect.objectContaining({ ref: "flow:release_gate@1.0.0", kind: "created" }),
+      expect.objectContaining({
+        ref: "flow:release_gate@1.0.0",
+        kind: "created",
+        source: expect.stringContaining(description),
+      }),
     ]);
     await adapter.commit({ changeSetId: prepared.changeSetId, operationId: "commit-flow-draft" });
     expect((await project.get()).resources).toEqual(
