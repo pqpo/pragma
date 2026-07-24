@@ -10489,7 +10489,14 @@ textarea:focus-visible,
   overflow-wrap: anywhere;
 }
 
-.mission-page-error > button {
+.mission-error-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+}
+
+.mission-error-actions > button {
   display: grid;
   width: 26px;
   height: 26px;
@@ -10504,8 +10511,20 @@ textarea:focus-visible,
   cursor: pointer;
 }
 
-.mission-page-error > button:hover,
-.mission-page-error > button:focus-visible {
+.mission-error-actions > .mission-error-action {
+  display: inline-flex;
+  width: auto;
+  min-width: max-content;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  padding: 0 10px;
+  border: 1px solid #d8a9a2;
+  font-weight: 650;
+}
+
+.mission-error-actions > button:hover,
+.mission-error-actions > button:focus-visible {
   outline: 0;
   background: #fbe9e6;
   box-shadow: 0 0 0 3px rgb(168 74 64 / 12%);

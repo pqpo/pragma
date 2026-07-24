@@ -16,7 +16,7 @@ import type { CapabilityDefinition, ExpertDefinition } from "../shared/desktop-a
 import type { CapabilityCredentialStore } from "./capability-credential-store.ts";
 import type { PluginStore } from "./plugin-store.ts";
 import type { CapabilityStore } from "./capability-store.ts";
-import { hashSchema, toCoreMcpServer } from "./capability-verifier.ts";
+import { toCoreMcpServer } from "./capability-verifier.ts";
 
 export interface ResolvedExpertCapabilities {
   readonly skills: IExpertAgentSkillsConfig | undefined;
@@ -28,7 +28,6 @@ export class ExpertCapabilityResolutionError extends Error {
     readonly code:
       | "capability_unavailable"
       | "capability_kind_mismatch"
-      | "capability_drift"
       | "tool_unavailable"
       | "credential_unavailable",
     message: string,
@@ -102,7 +101,7 @@ export async function resolveExpertCapabilities(options: {
           error instanceof Error ? error.message : "An MCP credential is unavailable.",
         );
       });
-      await assertMcpContract(server, capability.definition, reference.toolNames);
+      await assertSelectedMcpToolsAvailable(server, reference.toolNames);
       mcpServers[capability.manifest.runtimeKey] = {
         ...server,
         toolApprovals: createApprovals(
@@ -241,26 +240,18 @@ function assertSelectedTools(
   }
 }
 
-async function assertMcpContract(
+export async function assertSelectedMcpToolsAvailable(
   server: IExpertAgentMcpServer,
-  definition: Extract<CapabilityDefinition, { readonly kind: "mcp_server" }>,
   selected: readonly string[],
 ): Promise<void> {
   const registry = await createMcpToolRegistry({ mcpServers: { verify: server } });
   try {
     for (const name of selected) {
       const current = registry.tools.find((tool) => tool.name === name);
-      const pinned = definition.tools.find((tool) => tool.name === name);
-      if (current === undefined || pinned === undefined) {
+      if (current === undefined) {
         throw new ExpertCapabilityResolutionError(
           "tool_unavailable",
           `MCP tool ${name} is not currently available.`,
-        );
-      }
-      if (hashSchema(current.inputSchema) !== pinned.schemaHash) {
-        throw new ExpertCapabilityResolutionError(
-          "capability_drift",
-          `MCP tool ${name} changed since this Expert pinned the capability revision.`,
         );
       }
     }

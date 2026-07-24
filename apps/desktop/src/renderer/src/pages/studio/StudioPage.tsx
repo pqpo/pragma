@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import type {
@@ -42,7 +42,10 @@ import {
   type StudioView,
 } from "./studio-model.ts";
 
-export function StudioPage(props: { readonly onTryExpert: (expert: ExpertRecord) => void }) {
+export function StudioPage(props: {
+  readonly initialExpertRef?: string | undefined;
+  readonly onTryExpert: (expert: ExpertRecord) => void;
+}) {
   const { t } = useTranslation("studio");
   const [activeView, setActiveView] = useState<StudioView>("experts");
   const [screen, setScreen] = useState<
@@ -67,6 +70,7 @@ export function StudioPage(props: { readonly onTryExpert: (expert: ExpertRecord)
   const [expertError, setExpertError] = useState<string | null>(null);
   const [project, setProject] = useState<PragmaProjectSnapshot | null>(null);
   const [automations, setAutomations] = useState<readonly AutomationSummary[]>([]);
+  const openedInitialExpertRef = useRef<string | undefined>(undefined);
 
   useEffect(() => {
     const api = desktopApi();
@@ -150,6 +154,21 @@ export function StudioPage(props: { readonly onTryExpert: (expert: ExpertRecord)
     );
     setScreen("create");
   };
+  useEffect(() => {
+    if (
+      props.initialExpertRef === undefined ||
+      openedInitialExpertRef.current === props.initialExpertRef
+    ) {
+      return;
+    }
+    const expert = experts.find((candidate) => candidate.ref === props.initialExpertRef);
+    if (expert === undefined) return;
+    openedInitialExpertRef.current = props.initialExpertRef;
+    setActiveView("experts");
+    setSelectedExpert(expert);
+    setDraft({ ...expert, tagInput: "", pluginSecretMutations: {} });
+    setScreen("create");
+  }, [experts, props.initialExpertRef]);
   const useBuiltInAsTemplate = (expert: ExpertRecord) => {
     const baseId = `${expert.id}_custom`;
     let id = baseId;

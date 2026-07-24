@@ -65,6 +65,7 @@ export function MissionsPage(props: {
   readonly autoRunInitialMission?: boolean | undefined;
   readonly onCreate: () => void;
   readonly onConfigureModels?: (() => void) | undefined;
+  readonly onEditExpert?: ((expertRef?: string | undefined) => void) | undefined;
 }) {
   const { t } = useTranslation(["missions", "common"]);
   const [missions, setMissions] = useState<readonly MissionSummary[]>([]);
@@ -238,6 +239,7 @@ export function MissionsPage(props: {
                 : undefined
             }
             onConfigureModels={props.onConfigureModels}
+            onEditExpert={props.onEditExpert}
             error={error}
             onDismissError={() => setError(null)}
             onSend={async (content, requestId) => {
@@ -643,6 +645,7 @@ export function MissionDetailFragment(props: {
   readonly onHumanResponded?: () => void | Promise<void>;
   readonly onLifecycleChange?: () => void | Promise<void>;
   readonly onConfigureModels?: (() => void) | undefined;
+  readonly onEditExpert?: ((expertRef?: string | undefined) => void) | undefined;
 }) {
   const { t } = useTranslation(["missions", "common"]);
   const [tab, setTab] = useState<"chat" | "work">("chat");
@@ -703,6 +706,27 @@ export function MissionDetailFragment(props: {
   const interruptible = chat?.execution?.interruptible ?? false;
   const controlsDisabled = executionActive || optionsSaving;
   const visibleError = props.error ?? optionsError;
+  const unavailableTool =
+    visibleError === null || visibleError === undefined
+      ? undefined
+      : unavailableMcpToolName(visibleError);
+  const presentedError =
+    unavailableTool === undefined
+      ? visibleError
+      : t("mcpToolUnavailable", { ns: "missions", tool: unavailableTool });
+  const repairUnavailableTool =
+    unavailableTool === undefined || props.onEditExpert === undefined
+      ? undefined
+      : () =>
+          props.onEditExpert?.(
+            props.mission.executor.kind === "expert" ? props.mission.executor.ref : undefined,
+          );
+  const repairUnavailableToolLabel =
+    repairUnavailableTool === undefined
+      ? undefined
+      : props.mission.executor.kind === "expert"
+        ? t("editAffectedExpert", { ns: "missions" })
+        : t("openStudioToEditExpert", { ns: "missions" });
 
   useEffect(() => {
     setDraft("");
@@ -1288,9 +1312,11 @@ export function MissionDetailFragment(props: {
         </button>
       </div>
       <div className="mission-detail-body">
-        {tab !== "chat" && visibleError !== null && visibleError !== undefined ? (
+        {tab !== "chat" && presentedError !== null && presentedError !== undefined ? (
           <MissionErrorBanner
-            error={visibleError}
+            error={presentedError}
+            actionLabel={repairUnavailableToolLabel}
+            onAction={repairUnavailableTool}
             onDismiss={() => {
               setOptionsError(null);
               props.onDismissError?.();
@@ -1368,9 +1394,11 @@ export function MissionDetailFragment(props: {
               ) : null}
             </div>
             <div className="mission-chat-footer">
-              {visibleError !== null && visibleError !== undefined ? (
+              {presentedError !== null && presentedError !== undefined ? (
                 <MissionErrorBanner
-                  error={visibleError}
+                  error={presentedError}
+                  actionLabel={repairUnavailableToolLabel}
+                  onAction={repairUnavailableTool}
                   onDismiss={() => {
                     setOptionsError(null);
                     props.onDismissError?.();
@@ -1614,21 +1642,38 @@ export function MissionDetailFragment(props: {
   );
 }
 
-function MissionErrorBanner(props: { readonly error: string; readonly onDismiss: () => void }) {
+function MissionErrorBanner(props: {
+  readonly error: string;
+  readonly actionLabel?: string | undefined;
+  readonly onAction?: (() => void) | undefined;
+  readonly onDismiss: () => void;
+}) {
   const { t } = useTranslation("common");
   return (
     <div className="mission-page-error" role="alert">
       <span>{props.error}</span>
-      <button
-        type="button"
-        aria-label={t("actions.close")}
-        title={t("actions.close")}
-        onClick={props.onDismiss}
-      >
-        <X size={16} aria-hidden="true" />
-      </button>
+      <div className="mission-error-actions">
+        {props.actionLabel !== undefined && props.onAction !== undefined ? (
+          <button className="mission-error-action" type="button" onClick={props.onAction}>
+            {props.actionLabel}
+          </button>
+        ) : null}
+        <button
+          className="mission-error-dismiss"
+          type="button"
+          aria-label={t("actions.close")}
+          title={t("actions.close")}
+          onClick={props.onDismiss}
+        >
+          <X size={16} aria-hidden="true" />
+        </button>
+      </div>
     </div>
   );
+}
+
+export function unavailableMcpToolName(error: string): string | undefined {
+  return /MCP tool ([A-Za-z0-9_-]+) is not currently available\./.exec(error)?.[1];
 }
 
 function LocalMissionUserMessageView(props: { readonly message: LocalMissionUserMessage }) {

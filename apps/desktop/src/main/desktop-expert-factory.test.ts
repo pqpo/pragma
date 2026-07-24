@@ -3,7 +3,10 @@ import { describe, expect, it } from "vitest";
 import type { Capability, ExpertDefinition } from "../shared/desktop-api.ts";
 import type { CapabilityCredentialStore } from "./capability-credential-store.ts";
 import type { CapabilityStore } from "./capability-store.ts";
-import { resolveExpertCapabilities } from "./desktop-expert-factory.ts";
+import {
+  assertSelectedMcpToolsAvailable,
+  resolveExpertCapabilities,
+} from "./desktop-expert-factory.ts";
 
 const skillId = "7abfdc9a-a5e2-4be2-a7bb-a11f8e5fbb17";
 const serviceId = "77af9336-0d2f-435d-a53c-d65077db75ba";
@@ -173,5 +176,59 @@ describe("resolveExpertCapabilities", () => {
       structuredContent: { result: 7 },
     });
     expect(codeMcpServer.toolApprovals?.["add"]?.mode).toBe("ask");
+  });
+
+  it("accepts live MCP parameter changes when the selected tool still exists", async () => {
+    await expect(
+      assertSelectedMcpToolsAvailable(
+        {
+          name: "Dynamic MCP",
+          transport: "in-process",
+          inProcess: {
+            async listTools() {
+              return [
+                {
+                  name: "search_issues",
+                  inputSchema: {
+                    type: "object",
+                    properties: {
+                      query: { type: "string" },
+                      newlyAddedOptionalFilter: { type: "string" },
+                    },
+                  },
+                },
+              ];
+            },
+            async callTool() {
+              return {};
+            },
+          },
+        },
+        ["search_issues"],
+      ),
+    ).resolves.toBeUndefined();
+  });
+
+  it("rejects a selected MCP tool that no longer exists", async () => {
+    await expect(
+      assertSelectedMcpToolsAvailable(
+        {
+          name: "Dynamic MCP",
+          transport: "in-process",
+          inProcess: {
+            async listTools() {
+              return [{ name: "list_issues" }];
+            },
+            async callTool() {
+              return {};
+            },
+          },
+        },
+        ["search_issues"],
+      ),
+    ).rejects.toMatchObject({
+      code: "tool_unavailable",
+      message: "MCP tool search_issues is not currently available.",
+    });
   });
 });

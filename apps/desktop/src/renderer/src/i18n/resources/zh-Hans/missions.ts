@@ -133,6 +133,10 @@ export const missions = {
   approveContinue: "批准并继续",
   submitResponse: "提交回复",
   executionFailed: "执行失败。",
+  mcpToolUnavailable:
+    "MCP 服务已不再提供工具“{{tool}}”。请编辑使用它的专家，移除或替换该工具后再运行。",
+  editAffectedExpert: "编辑专家",
+  openStudioToEditExpert: "打开 Studio",
   executionInterrupted: "执行已中断，你可以继续对话。",
   statusRunning: "运行中",
   statusApproval: "需要批准",

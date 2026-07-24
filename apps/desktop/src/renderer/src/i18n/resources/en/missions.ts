@@ -136,6 +136,10 @@ export const missions = {
   approveContinue: "Approve & continue",
   submitResponse: "Submit response",
   executionFailed: "Execution failed.",
+  mcpToolUnavailable:
+    'The MCP service no longer provides "{{tool}}". Edit the Expert that uses it, then remove or replace the tool before running again.',
+  editAffectedExpert: "Edit Expert",
+  openStudioToEditExpert: "Open Studio",
   executionInterrupted: "Execution interrupted. You can continue the conversation.",
   statusRunning: "Running",
   statusApproval: "Approval required",

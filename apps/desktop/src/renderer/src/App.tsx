@@ -15,10 +15,12 @@ export function App() {
   );
   const [missionExecutorRef, setMissionExecutorRef] = useState<string>();
   const [missionToOpen, setMissionToOpen] = useState<Mission>();
+  const [studioExpertRef, setStudioExpertRef] = useState<string>();
   const [settingsView, setSettingsView] = useState<SettingsView>("general");
 
   const navigate = (view: AppView) => {
     setMissionExecutorRef(undefined);
+    setStudioExpertRef(undefined);
     if (view === "missions") setMissionToOpen(undefined);
     if (view === "settings") setSettingsView("general");
     setActiveView(view);
@@ -63,6 +65,10 @@ export function App() {
           initialMission={missionToOpen}
           autoRunInitialMission={missionToOpen !== undefined}
           onConfigureModels={openModelSettings}
+          onEditExpert={(expertRef) => {
+            setStudioExpertRef(expertRef);
+            setActiveView("studio");
+          }}
           onCreate={() => {
             setMissionToOpen(undefined);
             setMissionExecutorRef(undefined);
@@ -71,6 +77,7 @@ export function App() {
         />
       ) : activeView === "studio" ? (
         <StudioPage
+          initialExpertRef={studioExpertRef}
           onTryExpert={(expert) => {
             setMissionExecutorRef(`expert:${expert.id}@${expert.version}`);
             setMissionToOpen(undefined);

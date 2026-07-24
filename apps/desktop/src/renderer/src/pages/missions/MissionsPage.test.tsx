@@ -18,6 +18,7 @@ import {
   resolveMissionSearchCollapsed,
   shouldClearMissionThinkingPlaceholder,
   shouldShowMissionThinkingPlaceholder,
+  unavailableMcpToolName,
 } from "./MissionsPage.tsx";
 
 describe("MissionsPage", () => {
@@ -134,6 +135,48 @@ describe("MissionDetailFragment", () => {
     expect(html.indexOf("mission-page-error")).toBeLessThan(html.indexOf("mission-chat-composer"));
     expect(html).toContain('aria-label="Close"');
     expect(html).toContain("The message could not be submitted.");
+  });
+
+  it("turns a removed MCP tool error into an actionable Expert repair prompt", () => {
+    const html = renderToStaticMarkup(
+      <MissionDetailFragment
+        mission={missionFixture("expert")}
+        error={
+          'Error invoking remote method "missions:run": MCP tool search_issues is not currently available.'
+        }
+        onEditExpert={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("search_issues");
+    expect(html).toContain("Edit Expert");
+    expect(html).not.toContain("Error invoking remote method");
+  });
+
+  it("directs team tool failures to Studio", () => {
+    const html = renderToStaticMarkup(
+      <MissionDetailFragment
+        mission={missionFixture("team")}
+        error="MCP tool search_issues is not currently available."
+        onEditExpert={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("Open Studio");
+  });
+});
+
+describe("unavailableMcpToolName", () => {
+  it("extracts the selected tool from an Electron-wrapped IPC error", () => {
+    expect(
+      unavailableMcpToolName(
+        "Error invoking remote method 'missions:run': Error: MCP tool search_issues is not currently available.",
+      ),
+    ).toBe("search_issues");
+  });
+
+  it("ignores unrelated execution errors", () => {
+    expect(unavailableMcpToolName("Execution failed.")).toBeUndefined();
   });
 });
 
