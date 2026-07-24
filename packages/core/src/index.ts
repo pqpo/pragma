@@ -24,6 +24,7 @@ export {
 export * from "./agent/expert-agent.ts";
 export * from "./agent/expert-definition-descriptor.ts";
 export * from "./agent/expert-team.ts";
+export * from "./automation/automation.ts";
 export * from "./context-system/context-system.ts";
 export * from "./context-system/context-tools.ts";
 export * from "./context-system/file-system-context-store.ts";

@@ -2172,6 +2172,236 @@ p {
   color: var(--muted);
 }
 
+.integration-tabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 18px;
+  padding: 4px;
+  border-radius: 12px;
+  background: var(--surface-soft);
+}
+
+.integration-tabs button {
+  min-height: 36px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-weight: 650;
+}
+
+.integration-tabs button.is-active {
+  background: #fff;
+  color: var(--green-dark);
+  box-shadow: 0 1px 3px rgb(20 31 25 / 7%);
+}
+
+.automation-directory .studio-screen-body {
+  padding-right: 4px;
+}
+
+.automation-status {
+  max-width: 210px;
+  padding: 6px 9px;
+  border-radius: 999px;
+  background: var(--surface-soft);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.automation-status.is-needs_attention {
+  background: #fff3dd;
+  color: #855d17;
+}
+
+.automation-status.is-disabled,
+.automation-status.is-expired {
+  opacity: 0.75;
+}
+
+.automation-empty {
+  display: grid;
+  min-height: 250px;
+  place-items: center;
+  align-content: center;
+  gap: 8px;
+  border: 1px dashed var(--border);
+  border-radius: 15px;
+  background: #fff;
+  color: var(--muted);
+  text-align: center;
+}
+
+.automation-empty h2,
+.connection-catalog h2,
+.automation-form-section h2 {
+  color: var(--text);
+  font-size: 15px;
+}
+
+.automation-empty p {
+  max-width: 480px;
+}
+
+.connection-catalog {
+  display: grid;
+  gap: 10px;
+}
+
+.connection-catalog article {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 16px;
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: #fff;
+}
+
+.connection-catalog article > svg {
+  color: var(--green-dark);
+}
+
+.connection-catalog article p {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.connection-catalog article > strong {
+  color: var(--green-dark);
+  font-size: 12px;
+}
+
+.connection-catalog article.is-coming {
+  opacity: 0.7;
+}
+
+.automation-editor {
+  width: min(960px, 100%);
+  margin: 0 auto;
+}
+
+.automation-editor-heading {
+  display: grid;
+  gap: 16px;
+  padding-bottom: 22px;
+}
+
+.automation-editor-heading h1 {
+  font-size: 30px;
+}
+
+.automation-editor-heading p {
+  margin-top: 5px;
+  color: var(--muted);
+}
+
+.automation-form {
+  display: grid;
+  gap: 12px;
+  padding: 0 3px 32px;
+}
+
+.automation-form-section {
+  display: grid;
+  gap: 14px;
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: #fff;
+}
+
+.automation-field-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.automation-form label {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 630;
+}
+
+.automation-form label small {
+  color: var(--muted);
+  font-weight: 450;
+}
+
+.automation-form input,
+.automation-form select,
+.automation-form textarea {
+  width: 100%;
+  min-height: 40px;
+  padding: 9px 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  outline: 0;
+  background: #fff;
+  color: var(--text);
+  font: inherit;
+  font-weight: 450;
+}
+
+.automation-form textarea {
+  min-height: 112px;
+  resize: vertical;
+}
+
+.automation-form input:focus-visible,
+.automation-form select:focus-visible,
+.automation-form textarea:focus-visible {
+  border-color: var(--green);
+  box-shadow: 0 0 0 3px rgb(36 107 71 / 12%);
+}
+
+.automation-form .automation-switch {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.automation-form .automation-switch input {
+  width: 16px;
+  min-height: 16px;
+  padding: 0;
+  box-shadow: none;
+}
+
+.automation-preview {
+  display: grid;
+  gap: 5px;
+  padding-left: 24px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.automation-form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 9px;
+  padding-top: 5px;
+}
+
+.automation-form-actions .danger-button {
+  margin-right: auto;
+}
+
+@media (max-width: 1180px) {
+  .automation-field-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 .pragma-resource-row > button:last-child {
   border: 0;
   background: transparent;
@@ -11801,6 +12031,10 @@ textarea:focus-visible,
 }
 
 .manual-model-row > input:focus-visible {
+  outline: 0;
+}
+
+.automation-form :is(input, select, textarea):focus-visible {
   outline: 0;
 }
 

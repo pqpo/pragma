@@ -9,6 +9,7 @@ import type {
   PragmaExpertTeamResource,
   PragmaFlowResource,
   PragmaRuntimeProfileResource,
+  PragmaAutomationResource,
 } from "@pragma/interpreter/ast";
 import { afterEach, describe, expect, it } from "vitest";
 import { BUILT_IN_PRAGMA_REF, builtInPragmaResource } from "@pragma/default-agent";
@@ -420,6 +421,19 @@ describe("PragmaProjectStore", () => {
     expect((await project.get()).revision).toBe(1);
   });
 
+  it("blocks deletion of an executor referenced by an Automation", async () => {
+    const { project } = await stores();
+    await project.publish({
+      expectedRevision: 0,
+      resources: [exampleRuntime(), exampleExpert(), exampleAutomation()],
+    });
+
+    await expect(
+      project.remove({ expectedRevision: 1, ref: "expert:writer@1.0.0" }),
+    ).rejects.toMatchObject({ code: "resource_referenced" });
+    expect((await project.get()).revision).toBe(1);
+  });
+
   it("ignores an unpublished legacy revision directory", async () => {
     const { directory, project } = await stores();
     const orphan = join(directory, "studio/revisions/1");
@@ -669,6 +683,39 @@ function exampleFlow(): PragmaFlowResource {
         loops: {},
         transitions: { finish: { end: true } },
       },
+    },
+  };
+}
+
+function exampleAutomation(): PragmaAutomationResource {
+  return {
+    apiVersion: "pragma/v2",
+    kind: "Automation",
+    metadata: {
+      id: "daily_review",
+      version: "1.0.0",
+      name: "Daily review",
+      description: "Runs the writer every day",
+      tags: [],
+    },
+    spec: {
+      adapter: "pragma.automation.schedule@v1",
+      binding: "binding:desktop-automation",
+      config: {
+        trigger: {
+          kind: "calendar",
+          frequency: "daily",
+          time: "09:00",
+          timezone: "UTC",
+        },
+      },
+      enabled: true,
+      route: {
+        executor: { ref: "expert:writer@1.0.0" },
+        input: { kind: "prompt", value: "Review the current work." },
+      },
+      interaction: { mode: "reuse-session" },
+      delivery: { adapter: "pragma.automation.delivery.local@v1" },
     },
   };
 }

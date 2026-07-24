@@ -13,6 +13,8 @@ import {
   PragmaBindingRefSchema,
   PragmaDiagnosticSchema,
   PragmaExpertResourceSchema,
+  PragmaAutomationResourceSchema,
+  PragmaScheduleTriggerSchema,
   PragmaExpertIdSchema,
   PragmaExpertRefSchema,
   PragmaInvocableResourceRefSchema,
@@ -1066,6 +1068,98 @@ export const MissionModelOverrideSchema = ExpertModelConfigSchema.omit({
   runtimeId: true,
 }).strict();
 
+export const AutomationBindingSchema = z
+  .object({
+    schemaVersion: z.literal("pragma.automation-binding/v1"),
+    automationRef: z
+      .string()
+      .regex(/^automation:[A-Za-z0-9][A-Za-z0-9_]*@[A-Za-z0-9][A-Za-z0-9.+_-]*$/),
+    revision: z.number().int().positive(),
+    generation: z.string().uuid(),
+    workspace: MissionWorkspaceSchema,
+    placement: z.literal("desktop"),
+    toolPermissionMode: DesktopToolPermissionModeSchema,
+    modelOverride: MissionModelOverrideSchema.optional(),
+    createdAt: z.string().datetime(),
+    updatedAt: z.string().datetime(),
+  })
+  .strict();
+
+export const AutomationRunRecordSchema = z
+  .object({
+    eventId: z.string().min(1).max(500),
+    scheduledFor: z.string().datetime(),
+    status: z.enum(["queued", "dispatched", "skipped", "failed"]),
+    missionId: MissionIdSchema.optional(),
+    error: z.string().max(10_000).optional(),
+    createdAt: z.string().datetime(),
+    updatedAt: z.string().datetime(),
+  })
+  .strict();
+
+export const AutomationSummarySchema = z
+  .object({
+    ref: z.string().min(1),
+    resource: PragmaAutomationResourceSchema,
+    binding: AutomationBindingSchema.optional(),
+    status: z.enum(["scheduled", "disabled", "expired", "needs_attention"]),
+    nextRunAt: z.string().datetime().optional(),
+    missionId: MissionIdSchema.optional(),
+    queueDepth: z.number().int().nonnegative(),
+    lastRun: AutomationRunRecordSchema.optional(),
+    diagnostic: z.string().max(4_000).optional(),
+  })
+  .strict();
+
+export const SaveAutomationSchema = z
+  .object({
+    expectedProjectRevision: z.number().int().nonnegative(),
+    resource: PragmaAutomationResourceSchema,
+    binding: z
+      .object({
+        workspace: z.string().trim().min(1).max(2_000),
+        toolPermissionMode: DesktopToolPermissionModeSchema,
+        modelOverride: MissionModelOverrideSchema.optional(),
+      })
+      .strict(),
+  })
+  .strict();
+
+export const DeleteAutomationSchema = z
+  .object({
+    expectedProjectRevision: z.number().int().nonnegative(),
+    ref: z.string().regex(/^automation:[A-Za-z0-9][A-Za-z0-9_]*@[A-Za-z0-9][A-Za-z0-9.+_-]*$/),
+  })
+  .strict();
+
+export const AutomationActionSchema = z.object({ ref: DeleteAutomationSchema.shape.ref }).strict();
+
+export const PreviewAutomationScheduleSchema = z
+  .object({
+    trigger: PragmaScheduleTriggerSchema,
+    from: z.string().datetime().optional(),
+    count: z.number().int().min(1).max(10).default(5),
+  })
+  .strict();
+
+export const AutomationSchedulePreviewSchema = z
+  .object({
+    occurrences: z.array(z.string().datetime()).max(10),
+  })
+  .strict();
+
+export const AutomationAdapterOptionSchema = z
+  .object({
+    ref: z.string().min(1),
+    name: z.string().min(1),
+    description: z.string().min(1),
+    sourceMode: z.enum(["signal", "conversation"]),
+    placement: z.enum(["desktop", "server", "either"]),
+    requiresConnection: z.boolean(),
+    supportsSessionReuse: z.boolean(),
+  })
+  .strict();
+
 export const MissionModelOptionsRequestSchema = z.object({
   executorRef: PragmaInvocableResourceRefSchema,
   missionId: MissionIdSchema.optional(),
@@ -1496,6 +1590,14 @@ export type MissionExecutor = z.infer<typeof MissionExecutorSchema>;
 export type MissionExecutorOption = z.infer<typeof MissionExecutorOptionSchema>;
 export type MissionCreationDefaults = z.infer<typeof MissionCreationDefaultsSchema>;
 export type MissionModelOverride = z.infer<typeof MissionModelOverrideSchema>;
+export type AutomationBinding = z.infer<typeof AutomationBindingSchema>;
+export type AutomationRunRecord = z.infer<typeof AutomationRunRecordSchema>;
+export type AutomationSummary = z.infer<typeof AutomationSummarySchema>;
+export type SaveAutomation = z.infer<typeof SaveAutomationSchema>;
+export type DeleteAutomation = z.infer<typeof DeleteAutomationSchema>;
+export type PreviewAutomationSchedule = z.infer<typeof PreviewAutomationScheduleSchema>;
+export type AutomationSchedulePreview = z.infer<typeof AutomationSchedulePreviewSchema>;
+export type AutomationAdapterOption = z.infer<typeof AutomationAdapterOptionSchema>;
 export type MissionModelOptions = z.infer<typeof MissionModelOptionsSchema>;
 export type MissionLifecycleStatus = z.infer<typeof MissionLifecycleStatusSchema>;
 export type CreateMission = z.infer<typeof CreateMissionSchema>;
@@ -1588,6 +1690,14 @@ export interface PragmaDesktopAPI {
   getWorkflowLayout: (input: GetWorkflowLayout) => Promise<WorkflowLayout | null>;
   saveWorkflowLayout: (layout: WorkflowLayout) => Promise<WorkflowLayout>;
   deleteWorkflowLayout: (input: DeleteWorkflowLayout) => Promise<void>;
+  listAutomationAdapters: () => Promise<AutomationAdapterOption[]>;
+  listAutomations: () => Promise<AutomationSummary[]>;
+  saveAutomation: (input: SaveAutomation) => Promise<AutomationSummary>;
+  deleteAutomation: (input: DeleteAutomation) => Promise<void>;
+  resetAutomationSession: (ref: string) => Promise<AutomationSummary>;
+  previewAutomationSchedule: (
+    input: PreviewAutomationSchedule,
+  ) => Promise<AutomationSchedulePreview>;
   listMissions: () => Promise<MissionSummary[]>;
   listMissionExecutors: () => Promise<MissionExecutorOption[]>;
   getMissionModelOptions: (

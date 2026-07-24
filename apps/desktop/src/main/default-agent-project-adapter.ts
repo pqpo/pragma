@@ -512,9 +512,14 @@ function runtimeModelIdentity(runtimeId: string, providerId: string, modelId: st
 
 function parseDefaultAgentResource(source: string): PragmaResource {
   const resource = PragmaResourceSchema.parse(parsePragmaYaml(source));
-  if (resource.kind !== "Expert" && resource.kind !== "ExpertTeam" && resource.kind !== "Flow") {
+  if (
+    resource.kind !== "Expert" &&
+    resource.kind !== "ExpertTeam" &&
+    resource.kind !== "Flow" &&
+    resource.kind !== "Automation"
+  ) {
     throw new Error(
-      "default Agent can only create or update Expert, ExpertTeam, and Flow resources.",
+      "default Agent can only create or update Expert, ExpertTeam, Flow, and Automation resources.",
     );
   }
   return resource;

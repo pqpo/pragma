@@ -12,6 +12,7 @@ import type {
   ExpertContextStoreMount,
   DesktopRuntimeAvailability,
   DesktopPlugin,
+  AutomationSummary,
   PragmaProjectSnapshot,
   UpdateExpertDefinition,
 } from "../../../../shared/desktop-api.ts";
@@ -28,6 +29,7 @@ import { CapabilityDirectoryFragment } from "./CapabilityDirectoryFragment.tsx";
 import { CapabilityDetailFragment } from "./CapabilityDetailFragment.tsx";
 import { PragmaResourceDirectoryFragment } from "./PragmaResourceDirectoryFragment.tsx";
 import { PluginDetailFragment, PluginDirectoryFragment } from "./PluginDirectoryFragment.tsx";
+import { AutomationDirectoryFragment } from "./AutomationDirectoryFragment.tsx";
 import {
   desktopApi,
   emptyDraft,
@@ -64,6 +66,7 @@ export function StudioPage(props: { readonly onTryExpert: (expert: ExpertRecord)
   const [contextDrawerOpen, setContextDrawerOpen] = useState(false);
   const [expertError, setExpertError] = useState<string | null>(null);
   const [project, setProject] = useState<PragmaProjectSnapshot | null>(null);
+  const [automations, setAutomations] = useState<readonly AutomationSummary[]>([]);
 
   useEffect(() => {
     const api = desktopApi();
@@ -89,6 +92,14 @@ export function StudioPage(props: { readonly onTryExpert: (expert: ExpertRecord)
       .getPragmaProject()
       .then((snapshot) => {
         if (!cancelled) setProject(snapshot);
+      })
+      .catch((loadError: unknown) => {
+        if (!cancelled) setExpertError(errorMessage(loadError));
+      });
+    void api
+      .listAutomations()
+      .then((items) => {
+        if (!cancelled) setAutomations(items);
       })
       .catch((loadError: unknown) => {
         if (!cancelled) setExpertError(errorMessage(loadError));
@@ -361,11 +372,13 @@ export function StudioPage(props: { readonly onTryExpert: (expert: ExpertRecord)
                   : section.id === "flows"
                     ? (project?.resources.filter((resource) => resource.kind === "Flow").length ??
                       0)
-                    : section.id === "capabilities"
-                      ? capabilities.length
-                      : section.id === "plugins"
-                        ? plugins.length
-                        : 0;
+                    : section.id === "integrations"
+                      ? automations.length
+                      : section.id === "capabilities"
+                        ? capabilities.length
+                        : section.id === "plugins"
+                          ? plugins.length
+                          : 0;
           return (
             <button
               key={section.id}
@@ -495,6 +508,22 @@ export function StudioPage(props: { readonly onTryExpert: (expert: ExpertRecord)
                   : [plugin, ...current],
               )
             }
+          />
+        ) : null}
+        {screen === "directory" && activeView === "integrations" && project !== null ? (
+          <AutomationDirectoryFragment
+            automations={automations}
+            project={project}
+            onChanged={async () => {
+              const api = desktopApi();
+              if (api === undefined) return;
+              const [nextProject, nextAutomations] = await Promise.all([
+                api.getPragmaProject(),
+                api.listAutomations(),
+              ]);
+              setProject(nextProject);
+              setAutomations(nextAutomations);
+            }}
           />
         ) : null}
         {screen === "plugin-detail" && selectedPlugin !== null ? (

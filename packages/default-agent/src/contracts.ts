@@ -11,7 +11,15 @@ import { z } from "zod";
 
 export const DefaultAgentResourceSummarySchema = z.object({
   ref: PragmaSemanticResourceRefSchema,
-  kind: z.enum(["Expert", "ExpertTeam", "Flow", "Capability", "ContextStore", "RuntimeProfile"]),
+  kind: z.enum([
+    "Expert",
+    "ExpertTeam",
+    "Flow",
+    "Automation",
+    "Capability",
+    "ContextStore",
+    "RuntimeProfile",
+  ]),
   name: z.string().min(1),
   description: z.string(),
   version: z.string().min(1),
@@ -180,6 +188,20 @@ export const DefaultAgentTaskWorkItemSchema = z.object({
   details: z.unknown().optional(),
 });
 
+export const DefaultAgentAutomationSummarySchema = z.object({
+  ref: PragmaSemanticResourceRefSchema.refine((value) => value.startsWith("automation:")),
+  name: z.string().min(1),
+  enabled: z.boolean(),
+  status: z.enum(["scheduled", "disabled", "expired", "needs_attention"]),
+  executorRef: PragmaSemanticResourceRefSchema,
+  interaction: z.enum(["reuse-session", "new-mission"]),
+  workspaceId: z.string().min(1).optional(),
+  nextRunAt: z.string().datetime().optional(),
+  missionId: z.string().uuid().optional(),
+  queueDepth: z.number().int().nonnegative(),
+  diagnostic: z.string().optional(),
+});
+
 export type DefaultAgentResourceSummary = z.infer<typeof DefaultAgentResourceSummarySchema>;
 export type DefaultAgentDslDocument = z.infer<typeof DefaultAgentDslDocumentSchema>;
 export type DefaultAgentRuntimeModelOption = z.infer<typeof DefaultAgentRuntimeModelOptionSchema>;
@@ -195,3 +217,4 @@ export type DefaultAgentProjectCommit = z.infer<typeof DefaultAgentProjectCommit
 export type DefaultAgentTaskSummary = z.infer<typeof DefaultAgentTaskSummarySchema>;
 export type DefaultAgentTask = z.infer<typeof DefaultAgentTaskSchema>;
 export type DefaultAgentTaskWorkItem = z.infer<typeof DefaultAgentTaskWorkItemSchema>;
+export type DefaultAgentAutomationSummary = z.infer<typeof DefaultAgentAutomationSummarySchema>;

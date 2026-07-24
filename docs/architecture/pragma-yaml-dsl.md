@@ -1,7 +1,7 @@
 # Pragma YAML DSL v2
 
 Pragma DSL is the canonical, portable definition language for `Expert`, `ExpertTeam`, `Flow`,
-`Capability`, `ContextStore`, and `RuntimeProfile`. `@pragma/interpreter` owns parsing, linking,
+`Automation`, `Capability`, `ContextStore`, and `RuntimeProfile`. `@pragma/interpreter` owns parsing, linking,
 validation, environment resolution, compilation, locking, and normalized dumping. Core remains the
 execution object model and does not depend on the interpreter.
 
@@ -33,6 +33,7 @@ pragma.yaml
 experts/pragma@1.0.0.pragma.yaml
 teams/delivery@2.0.0.pragma.yaml
 flows/review@1.2.0.pragma.yaml
+automations/daily-review@1.0.0.pragma.yaml
 capabilities/repository-tools@3.0.0.pragma.yaml
 context-stores/project-guide@1.0.0.pragma.yaml
 runtime-profiles/desktop-codex@1.0.0.pragma.yaml
@@ -98,6 +99,12 @@ text or path bytes. Skill `entry` paths must resolve to readable regular files i
 root, including after symlink resolution. Adapters must enumerate artifact dependencies through
 their adapter contract before verification; undeclared artifact reads fail. File hashes use raw
 bytes, and directory hashes include each entry's name, type, and child hash.
+
+`Automation` is a declarative integration resource rather than an invocable resource. It selects a
+versioned trigger adapter, exact executor ref, input, continuity policy, and delivery adapter.
+Desktop currently binds `pragma.automation.schedule@v1`; local workspace, permission mode, model
+override, credentials, and future IM Connection secrets remain host state. Expert and ExpertTeam
+may reuse one Mission FIFO or create a Mission per event. Flow always creates a new Mission.
 
 Host Context bindings expose the six-method Context Store contract. Core supplies
 `JsonContextStore` for durable local notes and `StaticContextStore` for DSL-defined read-only

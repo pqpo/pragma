@@ -88,6 +88,30 @@ export class PragmaPaths {
     return join(this.dataRoot(), "missions");
   }
 
+  automationBindingsRoot(): string {
+    return join(this.dataRoot(), "automation-bindings");
+  }
+
+  automationBinding(automationRef: string): string {
+    return join(this.automationBindingsRoot(), `${encodePragmaPathSegment(automationRef)}.json`);
+  }
+
+  automationsStateRoot(): string {
+    return join(this.stateRoot(), "automations");
+  }
+
+  automationStateRoot(automationRef: string): string {
+    return join(this.automationsStateRoot(), encodePragmaPathSegment(automationRef));
+  }
+
+  automationState(automationRef: string): string {
+    return join(this.automationStateRoot(automationRef), "state.json");
+  }
+
+  automationLock(automationRef: string): string {
+    return join(this.automationStateRoot(automationRef), ".lock");
+  }
+
   credentialsRoot(): string {
     return join(this.dataRoot(), "credentials");
   }

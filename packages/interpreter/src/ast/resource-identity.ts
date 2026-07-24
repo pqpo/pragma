@@ -4,6 +4,7 @@ export type PragmaResourceNamespace =
   | "expert"
   | "team"
   | "flow"
+  | "automation"
   | "capability"
   | "context-store"
   | "runtime-profile";
@@ -12,6 +13,7 @@ const namespaceByKind = {
   Expert: "expert",
   ExpertTeam: "team",
   Flow: "flow",
+  Automation: "automation",
   Capability: "capability",
   ContextStore: "context-store",
   RuntimeProfile: "runtime-profile",
@@ -21,6 +23,7 @@ const directoryByKind = {
   Expert: "experts",
   ExpertTeam: "teams",
   Flow: "flows",
+  Automation: "automations",
   Capability: "capabilities",
   ContextStore: "context-stores",
   RuntimeProfile: "runtime-profiles",

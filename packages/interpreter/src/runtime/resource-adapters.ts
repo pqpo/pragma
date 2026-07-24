@@ -19,8 +19,10 @@ import { z } from "zod";
 
 import {
   PragmaArtifactSourceSchema,
+  PragmaScheduleAutomationConfigSchema,
   PragmaRuntimeProfileConfigSchema,
   type PragmaArtifactSource,
+  type PragmaAutomationResource,
   type PragmaBindingRef,
   type PragmaCapabilityResource,
   type PragmaContextStoreResource,
@@ -73,10 +75,17 @@ export interface PragmaRuntimeProfileContribution {
   readonly models?: IExpertAgentModelsConfig | undefined;
 }
 
+export interface PragmaAutomationContribution {
+  readonly adapter: string;
+  readonly binding: PragmaBindingRef;
+  readonly config: unknown;
+}
+
 export type PragmaResourceContribution =
   | PragmaCapabilityContribution
   | PragmaContextStoreContribution
-  | PragmaRuntimeProfileContribution;
+  | PragmaRuntimeProfileContribution
+  | PragmaAutomationContribution;
 
 export interface PragmaAdapterVerification {
   readonly fingerprint: string;
@@ -379,6 +388,17 @@ const HostContextBindingSchema = z
   })
   .strict();
 
+const ScheduleAutomationBindingSchema = z
+  .object({
+    workspace: z.string().trim().min(1).max(2_000),
+    placement: z.literal("desktop").default("desktop"),
+    toolPermissionMode: z
+      .enum(["request-approval", "auto-approve", "full-access"])
+      .default("request-approval"),
+    modelOverride: z.unknown().optional(),
+  })
+  .strict();
+
 export function createDefaultPragmaResourceAdapterRegistry(): PragmaResourceAdapterRegistry {
   return new PragmaResourceAdapterRegistry()
     .register(skillAdapter())
@@ -390,7 +410,31 @@ export function createDefaultPragmaResourceAdapterRegistry(): PragmaResourceAdap
     .register(staticContextAdapter("pragma.context.note"))
     .register(staticContextAdapter("pragma.context.static"))
     .register(hostContextAdapter())
+    .register(scheduleAutomationAdapter())
     .register(runtimeProfileAdapter());
+}
+
+function scheduleAutomationAdapter(): PragmaResourceAdapter<PragmaAutomationResource> {
+  return {
+    id: "pragma.automation.schedule",
+    version: "v1",
+    kind: "Automation",
+    configSchema: PragmaScheduleAutomationConfigSchema,
+    bindingSchema: ScheduleAutomationBindingSchema,
+    bindingRequired: true,
+    async verify({ resource, config, binding }) {
+      PragmaScheduleAutomationConfigSchema.parse(config);
+      ScheduleAutomationBindingSchema.parse(binding!.value);
+      return {
+        fingerprint: sha256(stableStringify({ config, binding: binding!.revision })),
+        contribution: {
+          adapter: resource.spec.adapter,
+          binding: resource.spec.binding,
+          config,
+        },
+      };
+    },
+  };
 }
 
 function skillAdapter(): PragmaResourceAdapter<PragmaCapabilityResource> {

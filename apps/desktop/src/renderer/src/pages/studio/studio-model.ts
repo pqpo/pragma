@@ -1,5 +1,13 @@
 import type { Icon } from "@phosphor-icons/react";
-import { Database, GitBranch, PuzzlePiece, User, UsersThree, Wrench } from "@phosphor-icons/react";
+import {
+  Database,
+  GitBranch,
+  PlugsConnected,
+  PuzzlePiece,
+  User,
+  UsersThree,
+  Wrench,
+} from "@phosphor-icons/react";
 
 import type {
   CreateExpertDefinition,
@@ -15,6 +23,7 @@ export type StudioView =
   | "experts"
   | "teams"
   | "flows"
+  | "integrations"
   | "capabilities"
   | "plugins"
   | "context-stores";
@@ -157,6 +166,7 @@ export const studioSections = [
   { id: "experts", labelKey: "experts", icon: User },
   { id: "teams", labelKey: "teams", icon: UsersThree },
   { id: "flows", labelKey: "flows", icon: GitBranch },
+  { id: "integrations", labelKey: "integrations", icon: PlugsConnected },
   { id: "capabilities", labelKey: "capabilities", icon: Wrench },
   { id: "plugins", labelKey: "plugins", icon: PuzzlePiece },
   { id: "context-stores", labelKey: "contextStores", icon: Database },

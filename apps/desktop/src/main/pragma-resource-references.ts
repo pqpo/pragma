@@ -48,6 +48,10 @@ export function referencedPragmaResourceRefs(
         if (step.runtime !== undefined) refs.add(step.runtime.ref);
         for (const runtime of Object.values(step.runtimes ?? {})) refs.add(runtime);
       }
+      continue;
+    }
+    if (resource.kind === "Automation") {
+      refs.add(resource.spec.route.executor.ref);
     }
   }
 

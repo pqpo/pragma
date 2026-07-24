@@ -5,7 +5,11 @@ import type {
 } from "@pragma/core";
 import { z } from "zod";
 
-import type { DefaultAgentDslProjectPort, DefaultAgentTaskPort } from "./ports.ts";
+import type {
+  DefaultAgentAutomationPort,
+  DefaultAgentDslProjectPort,
+  DefaultAgentTaskPort,
+} from "./ports.ts";
 import { DefaultAgentFlowDraftOperationSchema, DefaultAgentFlowDraftSchema } from "./contracts.ts";
 import { PragmaMetadataSchema } from "@pragma/interpreter/ast";
 
@@ -43,18 +47,94 @@ const SendTaskMessageInput = z.object({
   id: z.string().min(1),
   content: z.string().trim().min(1).max(100_000),
 });
+const SaveAutomationInput = z.object({
+  expectedProjectRevision: z.number().int().nonnegative(),
+  source: z.string().min(1).max(2_000_000),
+  workspaceId: z.string().min(1),
+  toolPermissionMode: z.enum(["request-approval", "auto-approve", "full-access"]),
+});
+const DeleteAutomationInput = z.object({
+  expectedProjectRevision: z.number().int().nonnegative(),
+  ref: z.string().min(1),
+});
 
 type DefaultAgentTool = ExpertAgentManagedTool<string, ExpertAgentToolCallResult>;
 
 export function createDefaultAgentTools(options: {
   readonly project: DefaultAgentDslProjectPort;
   readonly tasks: DefaultAgentTaskPort;
+  readonly automations?: DefaultAgentAutomationPort | undefined;
 }): readonly DefaultAgentTool[] {
   const operationId = (context: ExpertAgentManagedToolCallContext | undefined): string => {
     const id = context?.toolCallId;
     if (id === undefined) throw new Error("A default Agent write tool requires a toolCallId.");
     return id;
   };
+  const automationTools: readonly DefaultAgentTool[] =
+    options.automations === undefined
+      ? []
+      : [
+          tool(
+            "list_automations",
+            "List Desktop Automations, their schedule status, continuity Mission, and project revision.",
+            {},
+            async () => ok(await options.automations!.list()),
+          ),
+          {
+            ...tool(
+              "save_automation",
+              "Create, edit, enable, or disable one complete Automation YAML resource with its Desktop workspace and permission binding.",
+              z.toJSONSchema(SaveAutomationInput),
+              async (args, context) =>
+                ok(
+                  await options.automations!.save({
+                    ...SaveAutomationInput.parse(args),
+                    operationId: operationId(context),
+                  }),
+                ),
+            ),
+            approval: {
+              mode: "required",
+              reason: "Save this Automation and its Desktop execution binding.",
+            },
+          },
+          {
+            ...tool(
+              "delete_automation",
+              "Delete an Automation while retaining every Mission and conversation it created.",
+              z.toJSONSchema(DeleteAutomationInput),
+              async (args, context) =>
+                ok(
+                  await options.automations!.delete({
+                    ...DeleteAutomationInput.parse(args),
+                    operationId: operationId(context),
+                  }),
+                ),
+            ),
+            approval: {
+              mode: "required",
+              reason: "Delete this Automation while retaining its Missions.",
+            },
+          },
+          {
+            ...tool(
+              "reset_automation_session",
+              "Reset the continuity binding so the next reusable Automation event starts a new Mission.",
+              z.toJSONSchema(RefInput),
+              async (args, context) =>
+                ok(
+                  await options.automations!.resetSession({
+                    ref: RefInput.parse(args).ref,
+                    operationId: operationId(context),
+                  }),
+                ),
+            ),
+            approval: {
+              mode: "required",
+              reason: "Reset this Automation's reusable Mission binding.",
+            },
+          },
+        ];
   return [
     tool(
       "list_dsl_resources",
@@ -203,6 +283,7 @@ export function createDefaultAgentTools(options: {
       objectSchema({ id: { type: "string" } }, ["id"]),
       async (args) => ok(await options.tasks.interrupt(TaskIdInput.parse(args).id)),
     ),
+    ...automationTools,
   ];
 }
 

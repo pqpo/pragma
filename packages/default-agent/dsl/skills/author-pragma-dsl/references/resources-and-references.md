@@ -6,6 +6,7 @@ Canonical semantic refs have the form `<kind>:<id>@<version>`:
 expert:writer@1.0.0
 team:delivery@1.0.0
 flow:review@1.0.0
+automation:daily_review@1.0.0
 capability:repository_tools@2.0.0
 context-store:project_guide@1.0.0
 runtime-profile:default_runtime@1.0.0

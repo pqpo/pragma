@@ -9,6 +9,7 @@ export const PragmaResourceKindSchema = z.enum([
   "expert",
   "team",
   "flow",
+  "automation",
   "capability",
   "context-store",
   "runtime-profile",
@@ -69,6 +70,10 @@ export const PragmaInvocableResourceRefSchema = z.union([
   PragmaExpertRefSchema,
   exactRefSchema(["team", "flow"], "team:delivery@1.0.0"),
 ]);
+export const PragmaAutomationRefSchema = exactRefSchema(
+  ["automation"],
+  "automation:daily_report@1.0.0",
+);
 export const PragmaCapabilityRefSchema = exactRefSchema(
   ["capability"],
   "capability:repository_tools@1.0.0",
@@ -84,7 +89,7 @@ export const PragmaRuntimeProfileRefSchema = exactRefSchema(
 export const PragmaSemanticResourceRefSchema = z.union([
   PragmaExpertRefSchema,
   exactRefSchema(
-    ["team", "flow", "capability", "context-store", "runtime-profile"],
+    ["team", "flow", "automation", "capability", "context-store", "runtime-profile"],
     "team:delivery@1.0.0",
   ),
 ]);
@@ -585,6 +590,195 @@ export const PragmaFlowResourceSchema = z
   })
   .strict();
 
+const PragmaAutomationTimeSchema = z
+  .string()
+  .regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Expected a 24-hour time such as 09:30.");
+
+const PragmaAutomationWindowSchema = z
+  .object({
+    startsAt: z.string().datetime({ offset: true }).optional(),
+    endsAt: z.string().datetime({ offset: true }).optional(),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    if (
+      value.startsAt !== undefined &&
+      value.endsAt !== undefined &&
+      Date.parse(value.endsAt) <= Date.parse(value.startsAt)
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "Automation endsAt must be after startsAt.",
+        path: ["endsAt"],
+      });
+    }
+  });
+
+export const PragmaScheduleTriggerSchema = z.discriminatedUnion("kind", [
+  z
+    .object({
+      kind: z.literal("once"),
+      at: z.string().datetime({ offset: true }),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("interval"),
+      every: z.number().int().positive(),
+      unit: z.enum(["minutes", "hours", "days", "weeks"]),
+      anchorAt: z.string().datetime({ offset: true }),
+      window: PragmaAutomationWindowSchema.optional(),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("calendar"),
+      frequency: z.enum(["daily", "weekdays", "weekly", "monthly"]),
+      time: PragmaAutomationTimeSchema,
+      timezone: z.string().trim().min(1).max(100),
+      weekdays: z
+        .array(z.enum(["mon", "tue", "wed", "thu", "fri", "sat", "sun"]))
+        .min(1)
+        .max(7)
+        .optional(),
+      dayOfMonth: z.number().int().min(1).max(31).optional(),
+      window: PragmaAutomationWindowSchema.optional(),
+    })
+    .strict()
+    .superRefine((value, context) => {
+      if (value.frequency === "weekly" && value.weekdays === undefined) {
+        context.addIssue({
+          code: "custom",
+          message: "Weekly schedules require at least one weekday.",
+          path: ["weekdays"],
+        });
+      }
+      if (value.frequency !== "weekly" && value.weekdays !== undefined) {
+        context.addIssue({
+          code: "custom",
+          message: "Only weekly schedules accept weekdays.",
+          path: ["weekdays"],
+        });
+      }
+      if (value.frequency === "monthly" && value.dayOfMonth === undefined) {
+        context.addIssue({
+          code: "custom",
+          message: "Monthly schedules require dayOfMonth.",
+          path: ["dayOfMonth"],
+        });
+      }
+      if (value.frequency !== "monthly" && value.dayOfMonth !== undefined) {
+        context.addIssue({
+          code: "custom",
+          message: "Only monthly schedules accept dayOfMonth.",
+          path: ["dayOfMonth"],
+        });
+      }
+    }),
+  z
+    .object({
+      kind: z.literal("cron"),
+      expression: z
+        .string()
+        .trim()
+        .refine(
+          (value) => value.split(/\s+/).length === 5,
+          "Automation Cron expressions must use five fields.",
+        ),
+      timezone: z.string().trim().min(1).max(100),
+      window: PragmaAutomationWindowSchema.optional(),
+    })
+    .strict(),
+]);
+
+export const PragmaScheduleAutomationConfigSchema = z
+  .object({
+    trigger: PragmaScheduleTriggerSchema,
+  })
+  .strict();
+
+export const PragmaAutomationResourceSchema = z
+  .object({
+    apiVersion: PragmaApiVersionSchema,
+    kind: z.literal("Automation"),
+    metadata: PragmaMetadataSchema,
+    spec: z
+      .object({
+        adapter: PragmaExtensionRefSchema,
+        binding: PragmaBindingRefSchema,
+        config: z.unknown().default({}),
+        enabled: z.boolean().default(true),
+        route: z
+          .object({
+            executor: z.object({ ref: PragmaInvocableResourceRefSchema }).strict(),
+            input: z.discriminatedUnion("kind", [
+              z
+                .object({
+                  kind: z.literal("prompt"),
+                  value: z.string().trim().min(1).max(100_000),
+                })
+                .strict(),
+              z
+                .object({
+                  kind: z.literal("flow"),
+                  value: z.record(z.string(), z.unknown()),
+                })
+                .strict(),
+            ]),
+          })
+          .strict(),
+        interaction: z
+          .object({
+            mode: z.enum(["reuse-session", "new-mission"]).default("reuse-session"),
+          })
+          .strict()
+          .default({ mode: "reuse-session" }),
+        delivery: z
+          .object({
+            adapter: PragmaExtensionRefSchema.default("pragma.automation.delivery.local@v1"),
+          })
+          .strict()
+          .default({ adapter: "pragma.automation.delivery.local@v1" }),
+      })
+      .strict(),
+  })
+  .strict()
+  .superRefine((resource, context) => {
+    const flow = resource.spec.route.executor.ref.startsWith("flow:");
+    if (flow && resource.spec.route.input.kind !== "flow") {
+      context.addIssue({
+        code: "custom",
+        message: "Flow automations require structured Flow input.",
+        path: ["spec", "route", "input"],
+      });
+    }
+    if (!flow && resource.spec.route.input.kind !== "prompt") {
+      context.addIssue({
+        code: "custom",
+        message: "Expert and Team automations require prompt input.",
+        path: ["spec", "route", "input"],
+      });
+    }
+    if (flow && resource.spec.interaction.mode !== "new-mission") {
+      context.addIssue({
+        code: "custom",
+        message: "Flow automations must create a new Mission for every event.",
+        path: ["spec", "interaction", "mode"],
+      });
+    }
+    if (resource.spec.adapter === "pragma.automation.schedule@v1") {
+      const parsed = PragmaScheduleAutomationConfigSchema.safeParse(resource.spec.config);
+      if (!parsed.success) {
+        for (const issue of parsed.error.issues) {
+          context.addIssue({
+            ...issue,
+            path: ["spec", "config", ...issue.path],
+          });
+        }
+      }
+    }
+  });
+
 export const PragmaCapabilityResourceSchema = z
   .object({
     apiVersion: PragmaApiVersionSchema,
@@ -619,6 +813,7 @@ export const PragmaInvocableResourceSchema = z.discriminatedUnion("kind", [
 ]);
 
 export const PragmaDeclarativeResourceSchema = z.discriminatedUnion("kind", [
+  PragmaAutomationResourceSchema,
   PragmaCapabilityResourceSchema,
   PragmaContextStoreResourceSchema,
   PragmaRuntimeProfileResourceSchema,
@@ -628,6 +823,7 @@ export const PragmaResourceSchema = z.discriminatedUnion("kind", [
   PragmaExpertResourceSchema,
   PragmaExpertTeamResourceSchema,
   PragmaFlowResourceSchema,
+  PragmaAutomationResourceSchema,
   PragmaCapabilityResourceSchema,
   PragmaContextStoreResourceSchema,
   PragmaRuntimeProfileResourceSchema,
@@ -733,6 +929,9 @@ export type PragmaArtifactSource = z.infer<typeof PragmaArtifactSourceSchema>;
 export type PragmaExpertResource = z.infer<typeof PragmaExpertResourceSchema>;
 export type PragmaExpertTeamResource = z.infer<typeof PragmaExpertTeamResourceSchema>;
 export type PragmaFlowResource = z.infer<typeof PragmaFlowResourceSchema>;
+export type PragmaAutomationResource = z.infer<typeof PragmaAutomationResourceSchema>;
+export type PragmaScheduleTrigger = z.infer<typeof PragmaScheduleTriggerSchema>;
+export type PragmaScheduleAutomationConfig = z.infer<typeof PragmaScheduleAutomationConfigSchema>;
 export type PragmaCapabilityResource = z.infer<typeof PragmaCapabilityResourceSchema>;
 export type PragmaContextStoreResource = z.infer<typeof PragmaContextStoreResourceSchema>;
 export type PragmaRuntimeProfileResource = z.infer<typeof PragmaRuntimeProfileResourceSchema>;

@@ -10,6 +10,7 @@ import type {
   DefaultAgentTask,
   DefaultAgentTaskSummary,
   DefaultAgentTaskWorkItem,
+  DefaultAgentAutomationSummary,
 } from "./contracts.ts";
 
 export interface DefaultAgentDslProjectPort {
@@ -66,4 +67,27 @@ export interface DefaultAgentTaskPort {
   }): Promise<DefaultAgentTask>;
   listWorkItems(id: string): Promise<readonly DefaultAgentTaskWorkItem[]>;
   interrupt(id: string): Promise<DefaultAgentTask>;
+}
+
+export interface DefaultAgentAutomationPort {
+  list(): Promise<{
+    readonly projectRevision: number;
+    readonly automations: readonly DefaultAgentAutomationSummary[];
+  }>;
+  save(input: {
+    readonly expectedProjectRevision: number;
+    readonly source: string;
+    readonly workspaceId: string;
+    readonly toolPermissionMode: "request-approval" | "auto-approve" | "full-access";
+    readonly operationId: string;
+  }): Promise<DefaultAgentAutomationSummary>;
+  delete(input: {
+    readonly expectedProjectRevision: number;
+    readonly ref: string;
+    readonly operationId: string;
+  }): Promise<{ readonly deleted: true; readonly ref: string }>;
+  resetSession(input: {
+    readonly ref: string;
+    readonly operationId: string;
+  }): Promise<DefaultAgentAutomationSummary>;
 }

@@ -37,6 +37,7 @@
     "@pragma/shared": "workspace:*",
     "@pragma/default-agent": "workspace:*",
     "@xyflow/react": "^12.11.2",
+    "croner": "^10.0.1",
     "fflate": "^0.8.2",
     "i18next": "^25.5.2",
     "marked": "18.0.5",

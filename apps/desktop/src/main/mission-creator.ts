@@ -15,6 +15,7 @@ import { validateWorkspace } from "./workspace-scope.ts";
 
 export interface MissionCreator {
   create(input: {
+    readonly id?: string | undefined;
     readonly workspace: string;
     readonly missionInput:
       | { readonly kind: "prompt"; readonly value: string }
@@ -78,6 +79,7 @@ export function createMissionCreator(options: {
           ? missionInput.value
           : summarizeFlowInput(executor.name, flowInput!, validatedFlowInput!.structured);
       return await options.missions.create({
+        ...(input.id === undefined ? {} : { id: input.id }),
         workspace: { path: input.workspace, basename: basename(input.workspace) },
         goal,
         ...(validatedFlowInput?.structured === true

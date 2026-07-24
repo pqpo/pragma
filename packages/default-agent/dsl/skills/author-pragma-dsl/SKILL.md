@@ -1,6 +1,6 @@
 ---
 name: author-pragma-dsl
-description: Create and update validated pragma/v2 Expert, ExpertTeam, and Flow resources. Use when a user asks Pragma to create, change, configure, or repair an Expert, team, or Flow in the current Pragma project.
+description: Create and update validated pragma/v2 Expert, ExpertTeam, Flow, and Automation resources. Use when a user asks Pragma to create, change, configure, or repair an Expert, team, Flow, schedule, trigger, or Automation in the current Pragma project.
 ---
 
 # Author Pragma DSL
@@ -30,11 +30,17 @@ source of truth and use only the Pragma DSL tools to inspect, validate, and save
 10. After the tool returns, always report success or failure, the committed project revision, and
     the changed canonical refs.
 
+For Automation work, use `list_automations` before editing. Use `save_automation` instead of the
+generic prepare/commit pair because the host workspace and permission binding must be saved with the
+portable DSL. Use the same tool to enable or disable an Automation. `delete_automation` retains
+existing Missions; `reset_automation_session` only changes which Mission the next event continues.
+
 ## References
 
 - Expert resources: read [references/expert.md](references/expert.md).
 - ExpertTeam resources: read [references/expert-team.md](references/expert-team.md).
 - Flow resources: read [references/flow.md](references/flow.md).
+- Automation resources: read [references/automation.md](references/automation.md).
 - Tested Flow patterns: read [references/flow-patterns.md](references/flow-patterns.md).
 - Exact refs, shared resources, and versioning: read
   [references/resources-and-references.md](references/resources-and-references.md).

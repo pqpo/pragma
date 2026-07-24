@@ -90,6 +90,13 @@ import {
   ValidateWorkspaceResultSchema,
   ValidatePragmaResourceSchema,
   WorkflowLayoutSchema,
+  AutomationActionSchema,
+  AutomationAdapterOptionSchema,
+  AutomationSchedulePreviewSchema,
+  AutomationSummarySchema,
+  DeleteAutomationSchema,
+  PreviewAutomationScheduleSchema,
+  SaveAutomationSchema,
   type PragmaDesktopAPI,
 } from "../shared/desktop-api.ts";
 
@@ -293,6 +300,30 @@ const api: PragmaDesktopAPI = {
   deleteWorkflowLayout: async (input) => {
     await ipcRenderer.invoke("workflow-layout:delete", DeleteWorkflowLayoutSchema.parse(input));
   },
+  listAutomationAdapters: async () =>
+    AutomationAdapterOptionSchema.array().parse(
+      await ipcRenderer.invoke("automations:adapters:list"),
+    ),
+  listAutomations: async () =>
+    AutomationSummarySchema.array().parse(await ipcRenderer.invoke("automations:list")),
+  saveAutomation: async (input) =>
+    AutomationSummarySchema.parse(
+      await ipcRenderer.invoke("automations:save", SaveAutomationSchema.parse(input)),
+    ),
+  deleteAutomation: async (input) => {
+    await ipcRenderer.invoke("automations:delete", DeleteAutomationSchema.parse(input));
+  },
+  resetAutomationSession: async (ref) =>
+    AutomationSummarySchema.parse(
+      await ipcRenderer.invoke("automations:session:reset", AutomationActionSchema.parse({ ref })),
+    ),
+  previewAutomationSchedule: async (input) =>
+    AutomationSchedulePreviewSchema.parse(
+      await ipcRenderer.invoke(
+        "automations:schedule:preview",
+        PreviewAutomationScheduleSchema.parse(input),
+      ),
+    ),
   listMissions: async () =>
     MissionSummarySchema.array().parse(await ipcRenderer.invoke("missions:list")),
   listMissionExecutors: async () =>

@@ -19,6 +19,7 @@ import {
   PragmaExpertIdSchema,
   PragmaExpertRefSchema,
   PragmaExpertResourceSchema,
+  PragmaAutomationResourceSchema,
   PragmaFlowResourceSchema,
   PragmaSemanticResourceIdSchema,
   formatPragmaYaml,
@@ -27,6 +28,69 @@ import {
 } from "../src/index.ts";
 
 describe("Pragma YAML DSL", () => {
+  it("validates schedule Automations and forces Flow events into new Missions", () => {
+    const resource = {
+      apiVersion: "pragma/v2",
+      kind: "Automation",
+      metadata: {
+        id: "weekday_review",
+        version: "1.0.0",
+        name: "Weekday review",
+        description: "Run a review every weekday",
+        tags: [],
+      },
+      spec: {
+        adapter: "pragma.automation.schedule@v1",
+        binding: "binding:desktop-automation",
+        config: {
+          trigger: {
+            kind: "calendar",
+            frequency: "weekdays",
+            time: "09:00",
+            timezone: "Asia/Shanghai",
+          },
+        },
+        enabled: true,
+        route: {
+          executor: { ref: "expert:reviewer@1.0.0" },
+          input: { kind: "prompt", value: "Review the current work." },
+        },
+        interaction: { mode: "reuse-session" },
+        delivery: { adapter: "pragma.automation.delivery.local@v1" },
+      },
+    } as const;
+
+    expect(PragmaAutomationResourceSchema.parse(resource)).toMatchObject({
+      kind: "Automation",
+      spec: { interaction: { mode: "reuse-session" } },
+    });
+    expect(
+      PragmaAutomationResourceSchema.safeParse({
+        ...resource,
+        spec: {
+          ...resource.spec,
+          route: {
+            executor: { ref: "flow:review@1.0.0" },
+            input: { kind: "flow", value: { goal: "Review" } },
+          },
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      PragmaAutomationResourceSchema.safeParse({
+        ...resource,
+        spec: {
+          ...resource.spec,
+          route: {
+            executor: { ref: "flow:review@1.0.0" },
+            input: { kind: "flow", value: { goal: "Review" } },
+          },
+          interaction: { mode: "new-mission" },
+        },
+      }).success,
+    ).toBe(true);
+  });
+
   it("uses prompt variables, automatic result storage, and form-compatible structured output", () => {
     const base = {
       apiVersion: "pragma/v2",

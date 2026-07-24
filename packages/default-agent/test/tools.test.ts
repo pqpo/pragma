@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import type { DefaultAgentDslProjectPort, DefaultAgentTaskPort } from "../src/ports.ts";
+import type {
+  DefaultAgentAutomationPort,
+  DefaultAgentDslProjectPort,
+  DefaultAgentTaskPort,
+} from "../src/ports.ts";
 import { createDefaultAgentTools } from "../src/tools.ts";
 
 describe("DefaultAgent managed tools", () => {
@@ -30,6 +34,32 @@ describe("DefaultAgent managed tools", () => {
       toolCallId: "runtime-call-7",
     });
     expect(operationId).toBe("runtime-call-7");
+  });
+
+  it("exposes approved Automation maintenance tools when the host supplies the port", async () => {
+    let operationId = "";
+    const automations = automationPort({
+      async resetSession(input) {
+        operationId = input.operationId;
+        return automationSummary();
+      },
+    });
+    const tools = createDefaultAgentTools({
+      project: projectPort(),
+      tasks: taskPort(),
+      automations,
+    });
+
+    expect(tools.find((tool) => tool.name === "list_automations")?.approval).toBeUndefined();
+    expect(tools.find((tool) => tool.name === "save_automation")?.approval?.mode).toBe("required");
+    expect(tools.find((tool) => tool.name === "delete_automation")?.approval?.mode).toBe(
+      "required",
+    );
+    const reset = tools.find((tool) => tool.name === "reset_automation_session")!;
+    await reset.call({ ref: "automation:daily_review@1.0.0" }, undefined, {
+      toolCallId: "runtime-call-reset",
+    });
+    expect(operationId).toBe("runtime-call-reset");
   });
 });
 
@@ -85,5 +115,31 @@ function taskPort(): DefaultAgentTaskPort {
     interrupt: async () => {
       throw new Error("unused");
     },
+  };
+}
+
+function automationPort(
+  overrides: Partial<DefaultAgentAutomationPort> = {},
+): DefaultAgentAutomationPort {
+  return {
+    list: async () => ({ projectRevision: 1, automations: [] }),
+    save: async () => automationSummary(),
+    delete: async (input) => ({ deleted: true, ref: input.ref }),
+    resetSession: async () => automationSummary(),
+    ...overrides,
+  };
+}
+
+function automationSummary() {
+  return {
+    ref: "automation:daily_review@1.0.0",
+    name: "Daily review",
+    enabled: true,
+    status: "scheduled" as const,
+    executorRef: "expert:reviewer@1.0.0",
+    interaction: "reuse-session" as const,
+    workspaceId: "/work/review",
+    nextRunAt: "2026-07-24T01:00:00.000Z",
+    queueDepth: 0,
   };
 }

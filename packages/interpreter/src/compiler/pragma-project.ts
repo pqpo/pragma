@@ -1809,6 +1809,7 @@ function validateResourceCycles(
               "expert",
               "team",
               "flow",
+              "automation",
               "capability",
               "context-store",
               "runtime-profile",
@@ -1859,6 +1860,9 @@ function resourceDependencies(resource: PragmaResource): string[] {
         ...Object.values(step.runtimes ?? {}),
       ];
     });
+  }
+  if (resource.kind === "Automation") {
+    return [resource.spec.route.executor.ref];
   }
   return [];
 }
@@ -2143,7 +2147,8 @@ function isDeclarativeResource(resource: PragmaResource): resource is PragmaDecl
   return (
     resource.kind === "Capability" ||
     resource.kind === "ContextStore" ||
-    resource.kind === "RuntimeProfile"
+    resource.kind === "RuntimeProfile" ||
+    resource.kind === "Automation"
   );
 }
 

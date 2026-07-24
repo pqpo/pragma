@@ -52,6 +52,7 @@ export interface MissionStore {
   list(): Promise<MissionSummary[]>;
   get(id: string): Promise<Mission>;
   create(input: {
+    readonly id?: string | undefined;
     readonly workspace: { readonly path: string; readonly basename: string };
     readonly goal: string;
     readonly title?: string | undefined;
@@ -336,7 +337,7 @@ export function createMissionStore(options: { readonly missionsPath: string }): 
       return await readMission(MissionIdSchema.parse(id));
     },
     async create(input) {
-      const id = randomUUID();
+      const id = MissionIdSchema.parse(input.id ?? randomUUID());
       const initialMessageId = randomUUID();
       const timestamp = new Date().toISOString();
       const goal = input.goal.trim();
