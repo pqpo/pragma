@@ -405,7 +405,7 @@ async function buildExpertCatalog(options: {
       key: ref,
       ref,
       name: capability.definition.name,
-      description: capability.definition.description,
+      description: capabilityDescription(capability),
       kind: capability.definition.kind === "skill" ? ("skill" as const) : ("tools" as const),
       toolNames,
     };
@@ -437,7 +437,7 @@ function capabilityResource(capability: Capability): PragmaResource {
       id: `capability_${capability.manifest.id.replaceAll("-", "")}`,
       version: String(capability.manifest.latestRevision),
       name: capability.definition.name,
-      description: capability.definition.description,
+      description: capabilityDescription(capability),
       tags: ["desktop-managed", "default-agent-option"],
     },
     spec: {
@@ -449,6 +449,13 @@ function capabilityResource(capability: Capability): PragmaResource {
       config: { key: capability.manifest.id },
     },
   });
+}
+
+function capabilityDescription(capability: Capability): string {
+  const description = capability.definition.description.trim();
+  return description === ""
+    ? `Host-provided Desktop capability ${capability.definition.name}.`
+    : description;
 }
 
 function capabilityToolNames(capability: Capability): string[] {

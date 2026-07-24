@@ -146,7 +146,7 @@ describe("Desktop DefaultAgent DSL project adapter", () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-default-agent-flow-draft-"));
     const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
     const adapter = createDesktopDefaultAgentProjectPort(
-      adapterOptions(project, join(root, "state")),
+      adapterOptions(project, join(root, "state"), [emptyDescriptionMcpCapability()]),
     );
     const description = "发布审批：验证非空 description";
     const created = await adapter.createFlowDraft({
@@ -207,6 +207,18 @@ describe("Desktop DefaultAgent DSL project adapter", () => {
       expect.objectContaining({
         ref: "flow:release_gate@1.0.0",
         kind: "created",
+        source: expect.stringContaining(description),
+      }),
+    ]);
+    const directlyPrepared = requirePrepared(
+      await adapter.prepare({
+        expectedProjectRevision: 0,
+        sources: [prepared.changes[0]!.source],
+      }),
+    );
+    expect(directlyPrepared.changes).toEqual([
+      expect.objectContaining({
+        ref: "flow:release_gate@1.0.0",
         source: expect.stringContaining(description),
       }),
     ]);
@@ -395,6 +407,37 @@ function capability(id: string, status: "ready" | "needs_attention"): Capability
       ...(status === "needs_attention"
         ? { diagnostic: { code: "unavailable", message: "Unavailable", retryable: true } }
         : {}),
+    },
+  };
+}
+
+function emptyDescriptionMcpCapability(): Capability {
+  return {
+    manifest: {
+      schemaVersion: "pragma.capability/v1",
+      id: "00000000-0000-4000-8000-000000000003",
+      runtimeKey: "empty_description_mcp",
+      name: "Empty description MCP",
+      kind: "mcp_server",
+      latestRevision: 1,
+      createdAt: "2026-07-24T00:00:00.000Z",
+      updatedAt: "2026-07-24T00:00:00.000Z",
+    },
+    definition: {
+      name: "Empty description MCP",
+      description: "",
+      kind: "mcp_server",
+      connection: {
+        transport: "streamable-http",
+        url: "https://example.com/mcp",
+      },
+      timeoutMs: 30_000,
+      tools: [],
+    },
+    health: {
+      revision: 1,
+      status: "ready",
+      checkedAt: "2026-07-24T00:00:00.000Z",
     },
   };
 }
