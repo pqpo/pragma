@@ -477,9 +477,10 @@ function FlowEditorCanvas(props: {
     const id = nextStepId(flow, kind);
     const copy = structuredClone(flow);
     copy.spec.graph.steps[id] = defaultStep(kind, targets, {
-      prompt: t("humanDefaultPrompt"),
-      approve: t("humanDefaultApprove"),
-      reject: t("humanDefaultReject"),
+      optionLabels: [
+        t("humanDefaultOption", { number: 1 }),
+        t("humanDefaultOption", { number: 2 }),
+      ],
     });
     const currentPositions = positions();
     const canvasBounds = canvasRef.current?.getBoundingClientRect();
@@ -3229,6 +3230,16 @@ function InspectorField(props: { readonly label: string; readonly children: Reac
 
 type HumanOption = NonNullable<FlowStep["human"]>["options"][number];
 
+export function removeHumanOption(options: readonly HumanOption[], index: number): HumanOption[] {
+  return options.filter((_, current) => current !== index);
+}
+
+export function nextHumanOptionNumber(options: readonly HumanOption[]): number {
+  let number = 1;
+  while (options.some((option) => option.value === `option_${number}`)) number += 1;
+  return number;
+}
+
 function HumanOptionsEditor(props: {
   readonly options: readonly HumanOption[];
   readonly onChange: (options: HumanOption[]) => void;
@@ -3247,6 +3258,9 @@ function HumanOptionsEditor(props: {
           <small>{t("humanOptionsHint")}</small>
         </div>
       </header>
+      {props.options.length === 0 ? (
+        <p className="flow-human-options-empty">{t("humanOptionsEmpty")}</p>
+      ) : null}
       {props.options.map((option, index) => (
         <section className="flow-human-question-card" key={`${option.value}-${index}`}>
           <header>
@@ -3254,11 +3268,8 @@ function HumanOptionsEditor(props: {
             <button
               type="button"
               className="flow-inspector-delete"
-              disabled={props.options.length <= 2}
               aria-label={t("humanRemoveOption", { number: index + 1 })}
-              onClick={() =>
-                props.onChange(props.options.filter((_, current) => current !== index))
-              }
+              onClick={() => props.onChange(removeHumanOption(props.options, index))}
             >
               <Trash size={14} /> {t("remove")}
             </button>
@@ -3301,15 +3312,16 @@ function HumanOptionsEditor(props: {
       <button
         type="button"
         className="flow-human-add-question"
-        onClick={() =>
+        onClick={() => {
+          const number = nextHumanOptionNumber(props.options);
           props.onChange([
             ...props.options,
             {
-              value: `option_${props.options.length + 1}`,
-              label: t("humanDefaultOption", { number: props.options.length + 1 }),
+              value: `option_${number}`,
+              label: t("humanDefaultOption", { number }),
             },
-          ])
-        }
+          ]);
+        }}
       >
         <Plus size={14} /> {t("humanAddOption")}
       </button>
@@ -3642,17 +3654,17 @@ function resourceTargets(
 function defaultStep(
   kind: FlowStepKind,
   targets: readonly ResourceTarget[],
-  humanCopy: { readonly prompt: string; readonly approve: string; readonly reject: string },
+  humanCopy: { readonly optionLabels: readonly [string, string] },
 ): FlowStep {
   const version = "1.0.0";
   if (kind === "human")
     return {
       human: {
         selectionMode: "single",
-        prompt: { segments: [{ text: humanCopy.prompt }] },
+        prompt: { segments: [{ text: "" }] },
         options: [
-          { value: "approve", label: humanCopy.approve },
-          { value: "reject", label: humanCopy.reject },
+          { value: "option_1", label: humanCopy.optionLabels[0] },
+          { value: "option_2", label: humanCopy.optionLabels[1] },
         ],
       },
       version,

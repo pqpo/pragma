@@ -20,10 +20,12 @@ import {
   flowVariableOptions,
   inspectorNodeId,
   nextAvailableNodePosition,
+  nextHumanOptionNumber,
   normalizeConnectionDestination,
   normalizePromptSegments,
   PromptTemplateEditor,
   removeEdgeFromFlow,
+  removeHumanOption,
   routeFieldOptions,
   RuntimeBindingEditor,
   START_NODE_ID,
@@ -111,6 +113,21 @@ describe("Flow editor canvas", () => {
     expect(inspectorNodeId(start)).toBe(START_NODE_ID);
     expect(inspectorNodeId(end)).toBe(END_NODE_ID);
     expect(inspectorNodeId(undefined)).toBeNull();
+  });
+
+  it("allows every Human option to be removed while keeping new values unique", () => {
+    const initial = [
+      { value: "option_1", label: "Option 1" },
+      { value: "option_2", label: "Option 2" },
+    ];
+
+    const oneOption = removeHumanOption(initial, 0);
+    const noOptions = removeHumanOption(oneOption, 0);
+
+    expect(oneOption).toEqual([{ value: "option_2", label: "Option 2" }]);
+    expect(noOptions).toEqual([]);
+    expect(nextHumanOptionNumber(oneOption)).toBe(1);
+    expect(nextHumanOptionNumber(initial)).toBe(3);
   });
 
   it("places repeatedly added nodes into distinct non-overlapping grid cells", () => {
