@@ -24,6 +24,7 @@ import {
   SetDefaultRuntimeSchema,
   DesktopSettingsSnapshotSchema,
   UpdateDesktopSettingsSchema,
+  UpdateExpertDefinitionSchema,
   UpdateMissionOptionsSchema,
   UpdateBuiltInExpertDefinitionSchema,
 } from "./desktop-api.ts";
@@ -86,11 +87,11 @@ describe("Pragma project change-set contracts", () => {
     };
     expect(
       PragmaProjectChangesSchema.parse({
-        expectedRevision: 3,
+        baseRevision: 3,
         upserts: [resource],
       }),
-    ).toMatchObject({ expectedRevision: 3, removals: [] });
-    expect(PragmaProjectChangesSchema.safeParse({ expectedRevision: 3, upserts: [] }).success).toBe(
+    ).toMatchObject({ baseRevision: 3, removals: [], requiredUnchangedRefs: [] });
+    expect(PragmaProjectChangesSchema.safeParse({ baseRevision: 3, upserts: [] }).success).toBe(
       false,
     );
   });
@@ -231,6 +232,8 @@ describe("context store delete contracts", () => {
 });
 
 const validInput = {
+  baseRevision: 0,
+  requiredUnchangedRefs: [],
   id: "expert_01",
   name: "Expert 01",
   description: "A focused expert.",
@@ -257,6 +260,20 @@ describe("expert input limits", () => {
         id: "a".repeat(PRAGMA_EXPERT_ID_MAX_LENGTH),
       }).success,
     ).toBe(true);
+  });
+
+  it("does not allow an ordinary Expert update to change the resource version", () => {
+    const { id: _id, requiredUnchangedRefs: _requiredUnchangedRefs, ...input } = validInput;
+    void _id;
+    void _requiredUnchangedRefs;
+
+    expect(
+      UpdateExpertDefinitionSchema.safeParse({
+        ...input,
+        baseRevision: 2,
+        version: "2.0.0",
+      }).success,
+    ).toBe(false);
   });
 
   it("reads every metadata value accepted by the Expert DSL", () => {

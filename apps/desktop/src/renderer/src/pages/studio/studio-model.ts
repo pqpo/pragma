@@ -132,15 +132,46 @@ export function isBuiltInExpert(expert: Pick<ExpertRecord, "origin" | "readOnly"
   return expert.origin === "built-in";
 }
 
-export function toPersistedInput(
-  expert: ExpertRecord,
-): CreateExpertDefinition | UpdateExpertDefinition {
+export function toPersistedInput(expert: ExpertRecord): UpdateExpertDefinition {
   if (expert.readOnly || expert.model === null) {
     throw new Error("Built-in Experts cannot be persisted by the Desktop editor.");
   }
   const existing = expert.persisted;
+  if (existing === undefined) {
+    throw new Error("An existing Expert revision is required for an update.");
+  }
   return {
-    ...(existing === undefined ? { id: expert.id } : {}),
+    baseRevision: existing.revision,
+    name: expert.name,
+    description: expert.description,
+    tags: [...expert.tags],
+    scope: expert.scope,
+    instructions: expert.instructions,
+    model: expert.model,
+    capabilities: [...expert.capabilities],
+    toolApprovals: expert.toolApprovals,
+    plugins: [...expert.plugins],
+    contextStoreMounts: [...expert.contextStoreMounts],
+    resourceTools: [...expert.resourceTools],
+    opaqueCapabilities: [...(existing?.opaqueCapabilities ?? [])],
+    opaqueContextStores: [...(existing?.opaqueContextStores ?? [])],
+  };
+}
+
+export function toCreateExpertInput(
+  expert: ExpertRecord,
+  input: {
+    readonly baseRevision: number;
+    readonly requiredUnchangedRefs?: readonly string[] | undefined;
+  },
+): CreateExpertDefinition {
+  if (expert.readOnly || expert.model === null) {
+    throw new Error("Built-in Experts cannot be persisted by the Desktop editor.");
+  }
+  return {
+    baseRevision: input.baseRevision,
+    requiredUnchangedRefs: [...(input.requiredUnchangedRefs ?? [])],
+    id: expert.id,
     name: expert.name,
     description: expert.description,
     tags: [...expert.tags],
@@ -153,8 +184,8 @@ export function toPersistedInput(
     plugins: [...expert.plugins],
     contextStoreMounts: [...expert.contextStoreMounts],
     resourceTools: [...expert.resourceTools],
-    opaqueCapabilities: [...(existing?.opaqueCapabilities ?? [])],
-    opaqueContextStores: [...(existing?.opaqueContextStores ?? [])],
+    opaqueCapabilities: [...(expert.persisted?.opaqueCapabilities ?? [])],
+    opaqueContextStores: [...(expert.persisted?.opaqueContextStores ?? [])],
   };
 }
 

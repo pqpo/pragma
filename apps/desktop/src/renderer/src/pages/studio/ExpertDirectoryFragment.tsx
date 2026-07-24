@@ -101,7 +101,7 @@ export function ExpertDirectoryFragment(props: {
             <button
               className="expert-list-row"
               type="button"
-              key={expert.id}
+              key={expert.ref ?? `expert:${expert.id}@${expert.version}`}
               onClick={() => props.onOpen(expert)}
             >
               <span className="expert-list-name expert-column-name">
@@ -134,6 +134,7 @@ export function ExpertDetailFragment(props: {
   readonly contextStores: readonly ContextStore[];
   readonly onBack: () => void;
   readonly onEdit: () => void;
+  readonly onCreateVersion: () => void;
   readonly onUseAsTemplate: () => void;
   readonly onConfigureContext: () => void;
   readonly onTryInSession: () => void;
@@ -217,6 +218,12 @@ export function ExpertDetailFragment(props: {
             <button className="primary-button" type="button" onClick={props.onEdit}>
               <PencilSimple size={17} aria-hidden="true" />
               {t(isBuiltInExpert(props.expert) ? "customizeBuiltInExpert" : "editExpert")}
+            </button>
+          ) : null}
+          {!isBuiltInExpert(props.expert) ? (
+            <button className="secondary-button" type="button" onClick={props.onCreateVersion}>
+              <Copy size={17} aria-hidden="true" />
+              {t("createNewVersion")}
             </button>
           ) : null}
           {isBuiltInExpert(props.expert) ? (

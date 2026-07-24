@@ -13,6 +13,7 @@ import {
   type InvocableResource,
   type PragmaProjectRevisionLocation,
   type PragmaProjectSourceRepository,
+  type PragmaProjectChangeSetInput,
 } from "@pragma/interpreter";
 import {
   PragmaDiagnosticSchema,
@@ -68,28 +69,22 @@ export interface PragmaProjectStore {
     readonly artifacts?: ReadonlyMap<string, string> | undefined;
   }): Promise<PragmaProjectSnapshot>;
   upsert(input: {
-    readonly expectedRevision: number;
+    readonly baseRevision: number;
     readonly resource: PragmaResource;
+    readonly requiredUnchangedRefs?: readonly string[] | undefined;
   }): Promise<PragmaProjectSnapshot>;
-  apply(input: {
-    readonly expectedRevision: number;
-    readonly upserts: readonly PragmaResource[];
-    readonly removals?: readonly string[] | undefined;
-  }): Promise<PragmaProjectSnapshot>;
+  apply(input: PragmaProjectChangeSetInput): Promise<PragmaProjectSnapshot>;
   remove(input: {
-    readonly expectedRevision: number;
+    readonly baseRevision: number;
     readonly ref: string;
   }): Promise<PragmaProjectSnapshot>;
   validateYaml(source: string): Promise<PragmaYamlValidationResult>;
   validateCandidate(input: {
-    readonly expectedRevision: number;
+    readonly baseRevision: number;
     readonly resource: PragmaResource;
+    readonly requiredUnchangedRefs?: readonly string[] | undefined;
   }): Promise<PragmaYamlValidationResult>;
-  validateChanges(input: {
-    readonly expectedRevision: number;
-    readonly upserts: readonly PragmaResource[];
-    readonly removals?: readonly string[] | undefined;
-  }): Promise<readonly PragmaDiagnostic[]>;
+  validateChanges(input: PragmaProjectChangeSetInput): Promise<readonly PragmaDiagnostic[]>;
   compile<T extends InvocableResource>(
     input: Parameters<PragmaProjectService["compile"]>[0],
   ): Promise<CompiledResource<T>>;
@@ -109,6 +104,14 @@ export class PragmaProjectStoreError extends Error {
       | "unsupported_format",
     message: string,
     readonly diagnostics: readonly PragmaDiagnostic[] = [],
+    readonly conflict:
+      | {
+          readonly baseRevision: number;
+          readonly currentRevision: number;
+          readonly conflictingRefs: readonly string[];
+          readonly retryable: boolean;
+        }
+      | undefined = undefined,
   ) {
     super(message);
     this.name = "PragmaProjectStoreError";
@@ -136,7 +139,12 @@ export function createPragmaProjectStore(options: {
 
   const normalizeError = (error: unknown): never => {
     if (error instanceof PragmaProjectRevisionConflictError) {
-      throw new PragmaProjectStoreError("revision_conflict", error.message);
+      throw new PragmaProjectStoreError("revision_conflict", error.message, [], {
+        baseRevision: error.baseRevision,
+        currentRevision: error.currentRevision,
+        conflictingRefs: error.conflictingRefs,
+        retryable: error.retryable,
+      });
     }
     if (error instanceof PragmaProjectValidationError) {
       throw new PragmaProjectStoreError("project_invalid", error.message, error.diagnostics);
@@ -155,86 +163,57 @@ export function createPragmaProjectStore(options: {
     }
   };
 
-  const materializeCandidate = async (input: {
-    readonly expectedRevision: number;
-    readonly upserts?: readonly PragmaResource[] | undefined;
-    readonly removals?: readonly string[] | undefined;
-  }): Promise<readonly PragmaResource[]> => {
-    const current = await get();
-    if (current.revision !== input.expectedRevision) {
-      throw new PragmaProjectStoreError(
-        "revision_conflict",
-        `Pragma project revision conflict: expected ${input.expectedRevision}, got ${current.revision}.`,
-      );
+  const validateChanges = async (
+    input: PragmaProjectChangeSetInput,
+  ): Promise<readonly PragmaDiagnostic[]> => {
+    try {
+      const candidate = await service.materializeChangeSet(projectId, input);
+      return [
+        ...desktopExpertAuthoringDiagnostics(candidate.resources),
+        ...(await service.validate({
+          resources: candidate.resources,
+          artifacts: candidate.artifacts,
+        })),
+      ];
+    } catch (error) {
+      return normalizeError(error);
     }
-    const upserts = (input.upserts ?? []).map((resource) => PragmaResourceSchema.parse(resource));
-    const removals = new Set(input.removals ?? []);
-    const upsertRefs = new Set(upserts.map(canonicalPragmaResourceRef));
-    return [
-      ...current.resources.filter((resource) => {
-        const ref = canonicalPragmaResourceRef(resource);
-        return !removals.has(ref) && !upsertRefs.has(ref);
-      }),
-      ...upserts,
-    ];
   };
 
-  const validateChanges = async (input: {
-    readonly expectedRevision: number;
-    readonly upserts: readonly PragmaResource[];
-    readonly removals?: readonly string[] | undefined;
-  }): Promise<readonly PragmaDiagnostic[]> => {
-    const resources = await materializeCandidate(input);
-    return [
-      ...desktopExpertAuthoringDiagnostics(resources),
-      ...(await service.validateCandidate({ projectId, ...input })),
-    ];
-  };
-
-  const apply = async (input: {
-    readonly expectedRevision: number;
-    readonly upserts: readonly PragmaResource[];
-    readonly removals?: readonly string[] | undefined;
-  }): Promise<PragmaProjectSnapshot> => {
+  const apply = async (input: PragmaProjectChangeSetInput): Promise<PragmaProjectSnapshot> => {
     try {
       if (options.storagePaths !== undefined) await assertStorageWriteAllowed(options.storagePaths);
-      assertNotReserved(input.upserts);
+      const upserts = (input.upserts ?? []).map((resource) => PragmaResourceSchema.parse(resource));
+      assertNotReserved(upserts);
       if (input.removals?.some((ref) => options.reservedResourceRefs?.has(ref)) === true) {
         throw new PragmaProjectStoreError(
           "built_in_readonly",
           "Built-in resource refs cannot be removed.",
         );
       }
-      const resources = await materializeCandidate(input);
+      const candidate = await service.materializeChangeSet(projectId, { ...input, upserts });
       const orphanedFlowRuntimeProfiles = new Set(
-        resources
+        candidate.resources
           .filter(
             (resource) =>
               resource.kind === "RuntimeProfile" &&
               resource.metadata.tags.includes("flow-runtime-override") &&
-              referencingPragmaResources(resources, canonicalPragmaResourceRef(resource)).length ===
-                0,
+              referencingPragmaResources(candidate.resources, canonicalPragmaResourceRef(resource))
+                .length === 0,
           )
           .map(canonicalPragmaResourceRef),
       );
-      const effectiveUpserts = input.upserts.filter(
-        (resource) => !orphanedFlowRuntimeProfiles.has(canonicalPragmaResourceRef(resource)),
-      );
-      const effectiveRemovals = [
-        ...new Set([...(input.removals ?? []), ...orphanedFlowRuntimeProfiles]),
-      ];
-      assertDesktopExpertAuthoring(
-        resources.filter(
+      const effectiveChangeSet = {
+        ...input,
+        upserts: upserts.filter(
           (resource) => !orphanedFlowRuntimeProfiles.has(canonicalPragmaResourceRef(resource)),
         ),
-      );
+        removals: [...new Set([...(input.removals ?? []), ...orphanedFlowRuntimeProfiles])],
+      } satisfies PragmaProjectChangeSetInput;
+      const effectiveCandidate = await service.materializeChangeSet(projectId, effectiveChangeSet);
+      assertDesktopExpertAuthoring(effectiveCandidate.resources);
       return PragmaProjectSnapshotSchema.parse(
-        await service.apply({
-          projectId,
-          expectedRevision: input.expectedRevision,
-          upserts: effectiveUpserts,
-          removals: effectiveRemovals,
-        }),
+        await service.applyChangeSet({ projectId, changeSet: effectiveChangeSet }),
       );
     } catch (error) {
       return normalizeError(error);
@@ -289,7 +268,12 @@ export function createPragmaProjectStore(options: {
     ensurePublished,
     publish,
     async upsert(input) {
-      return await apply({ expectedRevision: input.expectedRevision, upserts: [input.resource] });
+      return await apply({
+        baseRevision: input.baseRevision,
+        upserts: [input.resource],
+        requiredUnchangedRefs:
+          input.requiredUnchangedRefs === undefined ? undefined : [...input.requiredUnchangedRefs],
+      });
     },
     apply,
     async remove(input) {
@@ -307,7 +291,7 @@ export function createPragmaProjectStore(options: {
         );
       }
       return await apply({
-        expectedRevision: input.expectedRevision,
+        baseRevision: input.baseRevision,
         upserts: [],
         removals: [input.ref],
       });
@@ -340,8 +324,12 @@ export function createPragmaProjectStore(options: {
         resource,
         diagnostics: [
           ...(await validateChanges({
-            expectedRevision: input.expectedRevision,
+            baseRevision: input.baseRevision,
             upserts: [resource],
+            requiredUnchangedRefs:
+              input.requiredUnchangedRefs === undefined
+                ? undefined
+                : [...input.requiredUnchangedRefs],
           })),
         ],
       };

@@ -30,6 +30,7 @@ import {
   PragmaExpertScopeSchema,
   PragmaJsonSchemaSchema,
   PragmaObjectJsonSchemaSchema,
+  PragmaProjectChangeSetSchema,
   type PragmaJsonSchema,
   type PragmaInvocableResource,
   type PragmaResource,
@@ -899,6 +900,8 @@ export const CreateExpertDefinitionSchema = ExpertDefinitionSchema.omit({
   createdAt: true,
   updatedAt: true,
 }).extend({
+  baseRevision: z.number().int().nonnegative(),
+  requiredUnchangedRefs: z.array(PragmaResourceRefSchema).default([]),
   id: PragmaExpertIdSchema,
   name: z.string().trim().min(1).max(EXPERT_NAME_MAX_LENGTH),
   description: z.string().trim().min(1).max(EXPERT_DESCRIPTION_MAX_LENGTH),
@@ -913,7 +916,15 @@ export const CreateExpertDefinitionSchema = ExpertDefinitionSchema.omit({
   opaqueCapabilities: PragmaExpertResourceSchema.shape.spec.shape.capabilities.optional(),
 });
 
-export const UpdateExpertDefinitionSchema = CreateExpertDefinitionSchema.omit({ id: true });
+export const UpdateExpertDefinitionSchema = CreateExpertDefinitionSchema.omit({
+  id: true,
+  version: true,
+  requiredUnchangedRefs: true,
+})
+  .extend({
+    baseRevision: z.number().int().positive(),
+  })
+  .strict();
 
 export const UpdateBuiltInExpertDefinitionSchema = CreateExpertDefinitionSchema.pick({
   name: true,
@@ -953,23 +964,57 @@ export const PragmaProjectSnapshotSchema = z.object({
   updatedAt: z.string().datetime().optional(),
 });
 
+export const DesktopMutationConflictSchema = z
+  .object({
+    baseRevision: z.number().int().nonnegative(),
+    currentRevision: z.number().int().nonnegative(),
+    conflictingRefs: z.array(PragmaResourceRefSchema),
+    retryable: z.boolean(),
+  })
+  .strict();
+
+export const DesktopMutationErrorSchema = z
+  .object({
+    code: z.string().trim().min(1).max(100),
+    message: z.string().min(1).max(10_000),
+    diagnostics: z.array(PragmaDiagnosticSchema).default([]),
+    conflict: DesktopMutationConflictSchema.optional(),
+  })
+  .strict();
+
+export const DesktopMutationResultSchema = z.discriminatedUnion("ok", [
+  z.object({ ok: z.literal(true), value: z.unknown() }).strict(),
+  z.object({ ok: z.literal(false), error: DesktopMutationErrorSchema }).strict(),
+]);
+
+export type DesktopMutationErrorData = z.infer<typeof DesktopMutationErrorSchema>;
+
+export class DesktopMutationError extends Error {
+  readonly code: string;
+  readonly diagnostics: DesktopMutationErrorData["diagnostics"];
+  readonly conflict: DesktopMutationErrorData["conflict"];
+
+  constructor(input: DesktopMutationErrorData) {
+    super(input.message);
+    this.name = "DesktopMutationError";
+    this.code = input.code;
+    this.diagnostics = input.diagnostics;
+    this.conflict = input.conflict;
+  }
+}
+
 export const PublishPragmaProjectSchema = z.object({
   expectedRevision: z.number().int().nonnegative(),
   resources: z.array(PragmaResourceSchema),
 });
 
 export const UpsertPragmaResourceSchema = z.object({
-  expectedRevision: z.number().int().nonnegative(),
+  baseRevision: z.number().int().nonnegative(),
   resource: PragmaResourceSchema,
+  requiredUnchangedRefs: z.array(PragmaResourceRefSchema).default([]),
 });
 
-export const PragmaProjectChangesSchema = z
-  .object({
-    expectedRevision: z.number().int().nonnegative(),
-    upserts: z.array(PragmaResourceSchema).min(1),
-    removals: z.array(PragmaResourceRefSchema).default([]),
-  })
-  .strict();
+export const PragmaProjectChangesSchema = PragmaProjectChangeSetSchema;
 
 export const PragmaProjectChangesValidationResultSchema = z
   .object({
@@ -978,15 +1023,16 @@ export const PragmaProjectChangesValidationResultSchema = z
   .strict();
 
 export const DeletePragmaResourceSchema = z.object({
-  expectedRevision: z.number().int().nonnegative(),
+  baseRevision: z.number().int().nonnegative(),
   ref: PragmaResourceRefSchema,
 });
 
 export const ValidatePragmaYamlSchema = z.object({ source: z.string().max(2_000_000) });
 
 export const ValidatePragmaResourceSchema = z.object({
-  expectedRevision: z.number().int().nonnegative(),
+  baseRevision: z.number().int().nonnegative(),
   resource: PragmaResourceSchema,
+  requiredUnchangedRefs: z.array(PragmaResourceRefSchema).default([]),
 });
 
 export const PragmaYamlValidationResultSchema = z.object({

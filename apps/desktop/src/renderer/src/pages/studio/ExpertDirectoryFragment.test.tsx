@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { i18n } from "../../i18n/index.ts";
 import { ExpertDetailFragment } from "./ExpertDirectoryFragment.tsx";
+import { ExpertEditorFragment } from "./ExpertEditorFragment.tsx";
 import type { ExpertRecord } from "./studio-model.ts";
 
 const expert: ExpertRecord = {
@@ -43,6 +44,7 @@ describe("ExpertDetailFragment", () => {
         contextStores={[]}
         onBack={() => undefined}
         onEdit={() => undefined}
+        onCreateVersion={() => undefined}
         onUseAsTemplate={() => undefined}
         onConfigureContext={() => undefined}
         onTryInSession={() => undefined}
@@ -60,6 +62,7 @@ describe("ExpertDetailFragment", () => {
     expect(html).not.toContain("i".repeat(421));
     expect(html).toMatch(/studio-screen-header.*Back to Experts.*studio-screen-body.*Test Expert/s);
     expect(html).toContain("Delete expert");
+    expect(html).toContain("Create new version");
   });
 
   it("offers edit and reset, but not deletion, for a built-in expert", () => {
@@ -75,6 +78,7 @@ describe("ExpertDetailFragment", () => {
         contextStores={[]}
         onBack={() => undefined}
         onEdit={() => undefined}
+        onCreateVersion={() => undefined}
         onUseAsTemplate={() => undefined}
         onConfigureContext={() => undefined}
         onTryInSession={() => undefined}
@@ -110,6 +114,7 @@ describe("ExpertDetailFragment", () => {
         contextStores={[]}
         onBack={() => undefined}
         onEdit={() => undefined}
+        onCreateVersion={() => undefined}
         onUseAsTemplate={() => undefined}
         onConfigureContext={() => undefined}
         onTryInSession={() => undefined}
@@ -122,5 +127,48 @@ describe("ExpertDetailFragment", () => {
     expect(html).toContain("使用当前 Runtime、授权工作区和可用能力完成你的工作。");
     expect(html).not.toContain("Canonical description");
     expect(html).not.toContain("Canonical scope");
+  });
+});
+
+describe("ExpertEditorFragment", () => {
+  const draft = { ...expert, tagInput: "", pluginSecretMutations: {} };
+
+  it("locks the version during an ordinary edit", () => {
+    const html = renderToStaticMarkup(
+      <ExpertEditorFragment
+        mode="edit"
+        initialValue={draft}
+        runtimes={[]}
+        contextStores={[]}
+        capabilities={[]}
+        plugins={[]}
+        resources={[]}
+        existingExpertRefs={[]}
+        onCancel={() => undefined}
+        onCreated={async () => undefined}
+      />,
+    );
+
+    expect(html).toContain('<label>Version<input disabled="" value="0.1.0"/>');
+  });
+
+  it("locks the ID but allows the version to change when creating a new version", () => {
+    const html = renderToStaticMarkup(
+      <ExpertEditorFragment
+        mode="new-version"
+        initialValue={draft}
+        runtimes={[]}
+        contextStores={[]}
+        capabilities={[]}
+        plugins={[]}
+        resources={[]}
+        existingExpertRefs={[]}
+        onCancel={() => undefined}
+        onCreated={async () => undefined}
+      />,
+    );
+
+    expect(html).toMatch(/disabled="" value="test_expert"/);
+    expect(html).toContain('<label>Version<input value="0.1.0"/>');
   });
 });

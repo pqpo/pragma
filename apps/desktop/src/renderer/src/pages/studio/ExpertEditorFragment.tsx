@@ -32,8 +32,10 @@ import { ExpertPluginPicker } from "./ExpertPluginPicker.tsx";
 import { StudioScreenFrame } from "./StudioScreenFrame.tsx";
 
 type CreateStep = "identity" | "instructions" | "capabilities" | "review";
+export type ExpertEditorMode = "create" | "edit" | "new-version";
 
 export function ExpertEditorFragment(props: {
+  readonly mode: ExpertEditorMode;
   readonly initialValue: ExpertDraft;
   readonly runtimes: readonly DesktopRuntimeAvailability[];
   readonly contextStores: readonly ContextStore[];
@@ -50,7 +52,8 @@ export function ExpertEditorFragment(props: {
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [selectedRuntime, setSelectedRuntime] = useState(props.initialValue.model?.runtimeId ?? "");
-  const isEditing = props.initialValue.persisted !== undefined;
+  const isEditing = props.mode === "edit";
+  const isNewVersion = props.mode === "new-version";
   const isBuiltIn = isBuiltInExpert(props.initialValue);
   const selectedRuntimeInfo = props.runtimes.find((runtime) => runtime.id === selectedRuntime);
   const modelOptions = selectedRuntimeInfo?.models ?? [];
@@ -223,16 +226,20 @@ export function ExpertEditorFragment(props: {
             <h1 id="create-expert-heading">
               {isBuiltIn
                 ? t("customizeBuiltInExpert", { ns: "studio" })
-                : isEditing
-                  ? t("editExpert", { ns: "studio" })
-                  : t("createExpert", { ns: "studio" })}
+                : isNewVersion
+                  ? t("createNewVersion", { ns: "studio" })
+                  : isEditing
+                    ? t("editExpert", { ns: "studio" })
+                    : t("createExpert", { ns: "studio" })}
             </h1>
             <p>
               {isBuiltIn
                 ? t("updateBuiltInExpertDescription", { ns: "studio" })
-                : isEditing
-                  ? t("updateExpertDescription", { ns: "studio" })
-                  : t("createExpertDescription", { ns: "studio" })}
+                : isNewVersion
+                  ? t("createExpertDescription", { ns: "studio" })
+                  : isEditing
+                    ? t("updateExpertDescription", { ns: "studio" })
+                    : t("createExpertDescription", { ns: "studio" })}
             </p>
           </div>
         </header>
@@ -305,7 +312,7 @@ export function ExpertEditorFragment(props: {
                   }
                   placeholder="market_research"
                   maxLength={PRAGMA_EXPERT_ID_MAX_LENGTH}
-                  disabled={isEditing}
+                  disabled={isEditing || isNewVersion}
                 />
                 <small className="field-hint">
                   <span>{t("idHint", { ns: "studio" })}</span>
@@ -399,7 +406,7 @@ export function ExpertEditorFragment(props: {
                 <input
                   value={draft.version}
                   onChange={(event) => setDraft({ ...draft, version: event.target.value })}
-                  disabled={isBuiltIn}
+                  disabled={isBuiltIn || isEditing}
                 />
               </label>
             </>

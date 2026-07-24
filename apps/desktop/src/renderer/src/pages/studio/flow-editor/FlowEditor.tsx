@@ -164,6 +164,9 @@ type FlowPaletteKind = FlowStepKind | "logic";
 
 export function FlowEditor(props: {
   readonly project: PragmaProjectSnapshot;
+  readonly baseRevision?: number | undefined;
+  readonly mode?: "create" | "edit" | "new-version" | undefined;
+  readonly versionSourceRef?: string | undefined;
   readonly runtimes?: readonly DesktopRuntimeAvailability[] | undefined;
   readonly initial?: PragmaFlowResource | undefined;
   readonly error: string | null;
@@ -171,6 +174,8 @@ export function FlowEditor(props: {
   readonly onSave: (
     resource: PragmaFlowResource,
     supportingResources: readonly PragmaResource[],
+    expectedRevision: number,
+    requiredUnchangedRefs: readonly string[],
   ) => Promise<boolean>;
 }) {
   return (
@@ -182,6 +187,9 @@ export function FlowEditor(props: {
 
 function FlowEditorCanvas(props: {
   readonly project: PragmaProjectSnapshot;
+  readonly baseRevision?: number | undefined;
+  readonly mode?: "create" | "edit" | "new-version" | undefined;
+  readonly versionSourceRef?: string | undefined;
   readonly runtimes: readonly DesktopRuntimeAvailability[];
   readonly initial?: PragmaFlowResource | undefined;
   readonly error: string | null;
@@ -189,6 +197,8 @@ function FlowEditorCanvas(props: {
   readonly onSave: (
     resource: PragmaFlowResource,
     supportingResources: readonly PragmaResource[],
+    expectedRevision: number,
+    requiredUnchangedRefs: readonly string[],
   ) => Promise<boolean>;
 }) {
   const { t } = useTranslation("studio");
@@ -197,6 +207,7 @@ function FlowEditorCanvas(props: {
     [props.initial, props.project.resources],
   );
   const baselineRef = useRef(JSON.stringify(initialFlow));
+  const expectedRevisionRef = useRef(props.baseRevision ?? props.project.revision);
   const [flow, setFlow] = useState<PragmaFlowResource>(initialFlow);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
@@ -663,6 +674,13 @@ function FlowEditorCanvas(props: {
     if (api === undefined || saving) return;
     setCandidateIssues([]);
     setVisibleError(null);
+    if (
+      props.mode === "new-version" &&
+      canonicalPragmaResourceRef(flow) === props.versionSourceRef
+    ) {
+      showError(t("newVersionMustDiffer"));
+      return;
+    }
     if (localIssues.length > 0) {
       setValidationOpen(true);
       return;
@@ -670,9 +688,10 @@ function FlowEditorCanvas(props: {
     setSaving(true);
     try {
       const result = await api.validatePragmaProjectChanges({
-        expectedRevision: props.project.revision,
+        baseRevision: expectedRevisionRef.current,
         upserts: [...supportingResources, flow],
         removals: [],
+        requiredUnchangedRefs: props.versionSourceRef === undefined ? [] : [props.versionSourceRef],
       });
       const errors = result.diagnostics.filter((diagnostic) => diagnostic.severity === "error");
       if (errors.length > 0) {
@@ -680,7 +699,15 @@ function FlowEditorCanvas(props: {
         setValidationOpen(true);
         return;
       }
-      if (!(await props.onSave(flow, supportingResources))) return;
+      if (
+        !(await props.onSave(
+          flow,
+          supportingResources,
+          expectedRevisionRef.current,
+          props.versionSourceRef === undefined ? [] : [props.versionSourceRef],
+        ))
+      )
+        return;
       baselineRef.current = JSON.stringify(flow);
       if (await persistLayout(true)) props.onCancel();
     } catch (cause) {
@@ -923,11 +950,21 @@ function FlowEditorCanvas(props: {
                 }}
               />
             ) : selectedNodeId === null ? (
-              <FlowSettings flow={flow} lockId={props.initial !== undefined} onPatch={patchFlow} />
+              <FlowSettings
+                flow={flow}
+                lockId={props.initial !== undefined}
+                lockVersion={props.mode === "edit"}
+                onPatch={patchFlow}
+              />
             ) : selectedNodeId === END_NODE_ID ? (
               <EndInspector flow={flow} onPatch={patchFlow} />
             ) : selectedNodeId === START_NODE_ID || selectedNodeId === FAIL_NODE_ID ? (
-              <FlowSettings flow={flow} lockId={props.initial !== undefined} onPatch={patchFlow} />
+              <FlowSettings
+                flow={flow}
+                lockId={props.initial !== undefined}
+                lockVersion={props.mode === "edit"}
+                onPatch={patchFlow}
+              />
             ) : flow.spec.graph.steps[selectedNodeId] !== undefined ? (
               <StepInspector
                 flow={flow}
@@ -1260,6 +1297,7 @@ const edgeTypes = { workflow: WorkflowEdge };
 function FlowSettings(props: {
   readonly flow: PragmaFlowResource;
   readonly lockId: boolean;
+  readonly lockVersion: boolean;
   readonly onPatch: (mutator: (copy: PragmaFlowResource) => void) => void;
 }) {
   const { t } = useTranslation("studio");
@@ -1309,6 +1347,7 @@ function FlowSettings(props: {
       <InspectorField label="Version">
         <input
           value={props.flow.metadata.version}
+          disabled={props.lockVersion}
           onChange={(event) =>
             props.onPatch((copy) => {
               copy.metadata.version = event.target.value;

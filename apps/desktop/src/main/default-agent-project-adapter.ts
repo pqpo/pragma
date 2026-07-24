@@ -115,7 +115,7 @@ export function createDesktopDefaultAgentProjectPort(options: {
       }
       assertExpertSelectionsAvailable(authoredResources, snapshot.resources, resources, catalog);
       const diagnostics = await options.project.validateChanges({
-        expectedRevision: snapshot.revision,
+        baseRevision: snapshot.revision,
         upserts: resources,
       });
       if (diagnostics.some((diagnostic) => diagnostic.severity === "error")) {
@@ -325,7 +325,7 @@ export function createDesktopDefaultAgentProjectPort(options: {
           catalog,
         );
         const published = await options.project.apply({
-          expectedRevision: candidate.changeSet.projectRevision,
+          baseRevision: candidate.changeSet.projectRevision,
           upserts: candidate.resources,
         });
         const result = DefaultAgentProjectCommitSchema.parse({

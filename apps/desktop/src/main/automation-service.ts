@@ -480,7 +480,7 @@ export function createAutomationService(options: {
               : { modelOverride: input.binding.modelOverride }),
           });
       const snapshot = await options.project.upsert({
-        expectedRevision: input.expectedProjectRevision,
+        baseRevision: input.expectedProjectRevision,
         resource,
       });
       const binding = createAutomationBinding({
@@ -511,7 +511,7 @@ export function createAutomationService(options: {
     async delete(input) {
       clearTimer(input.ref);
       await options.project.remove({
-        expectedRevision: input.expectedProjectRevision,
+        baseRevision: input.expectedProjectRevision,
         ref: input.ref,
       });
       await moveOwnedStorageToTrash({

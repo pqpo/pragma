@@ -103,6 +103,7 @@ describe("expert team editor", () => {
       <TeamEditor
         project={project}
         initial={initial}
+        mode="edit"
         error={null}
         onCancel={() => undefined}
         onSave={async () => undefined}
@@ -112,5 +113,6 @@ describe("expert team editor", () => {
     expect(html).toContain("Team instructions (optional)");
     expect(html).toContain(instructions);
     expect(html).toContain("always-on TEAM.md");
+    expect(html).toContain('<label>Version<input disabled="" value="1.0.0"/>');
   });
 });

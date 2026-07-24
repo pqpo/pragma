@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 
 import type { ExpertDefinition } from "../../../../shared/desktop-api.ts";
-import { isBuiltInExpert, toExpertRecord, toPersistedInput } from "./studio-model.ts";
+import {
+  isBuiltInExpert,
+  toCreateExpertInput,
+  toExpertRecord,
+  toPersistedInput,
+} from "./studio-model.ts";
 
 const persistedExpert: ExpertDefinition = {
   schemaVersion: "pragma.desktop-expert-view/v1",
@@ -46,6 +51,23 @@ describe("toPersistedInput", () => {
     };
 
     expect(toPersistedInput(record).contextStoreMounts).toEqual(record.contextStoreMounts);
+    expect(toPersistedInput(record)).toMatchObject({ baseRevision: persistedExpert.revision });
+  });
+
+  it("creates a new version against its captured project revision and source ref", () => {
+    const record = { ...toExpertRecord(persistedExpert), version: "2.0.0" };
+
+    expect(
+      toCreateExpertInput(record, {
+        baseRevision: 4,
+        requiredUnchangedRefs: [persistedExpert.ref],
+      }),
+    ).toMatchObject({
+      baseRevision: 4,
+      requiredUnchangedRefs: [persistedExpert.ref],
+      id: persistedExpert.id,
+      version: "2.0.0",
+    });
   });
 });
 

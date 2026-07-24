@@ -8,13 +8,11 @@ import type {
   CreateContextStore,
   ContextStoreContent,
   ContextStoreContentSummary,
-  CreateExpertDefinition,
   ExpertContextStoreMount,
   DesktopRuntimeAvailability,
   DesktopPlugin,
   AutomationSummary,
   PragmaProjectSnapshot,
-  UpdateExpertDefinition,
 } from "../../../../shared/desktop-api.ts";
 import { ContextStoreSchema } from "../../../../shared/desktop-api.ts";
 import { errorMessage } from "../../lib/errors.ts";
@@ -24,7 +22,7 @@ import {
   ExpertContextMountDrawer,
 } from "./ContextStoreFragment.tsx";
 import { ExpertDetailFragment, ExpertDirectoryFragment } from "./ExpertDirectoryFragment.tsx";
-import { ExpertEditorFragment } from "./ExpertEditorFragment.tsx";
+import { ExpertEditorFragment, type ExpertEditorMode } from "./ExpertEditorFragment.tsx";
 import { CapabilityDirectoryFragment } from "./CapabilityDirectoryFragment.tsx";
 import { CapabilityDetailFragment } from "./CapabilityDetailFragment.tsx";
 import { PragmaResourceDirectoryFragment } from "./PragmaResourceDirectoryFragment.tsx";
@@ -36,6 +34,7 @@ import {
   isBuiltInExpert,
   studioSections,
   toExpertRecord,
+  toCreateExpertInput,
   toPersistedInput,
   type ExpertDraft,
   type ExpertRecord,
@@ -59,6 +58,11 @@ export function StudioPage(props: {
   const [experts, setExperts] = useState<readonly ExpertRecord[]>([]);
   const [selectedExpert, setSelectedExpert] = useState<ExpertRecord | null>(null);
   const [draft, setDraft] = useState<ExpertDraft>(emptyDraft());
+  const [expertEditor, setExpertEditor] = useState<{
+    readonly mode: ExpertEditorMode;
+    readonly baseRevision: number;
+    readonly sourceRef?: string | undefined;
+  }>({ mode: "create", baseRevision: 0 });
   const [runtimes, setRuntimes] = useState<readonly DesktopRuntimeAvailability[]>([]);
   const [contextStores, setContextStores] = useState<readonly ContextStore[]>([]);
   const [selectedContextStoreId, setSelectedContextStoreId] = useState<string | null>(null);
@@ -148,10 +152,21 @@ export function StudioPage(props: {
     setActiveView("experts");
     setScreen("directory");
   };
-  const openCreate = (expert?: ExpertRecord) => {
+  const openCreate = (
+    expert?: ExpertRecord,
+    mode: ExpertEditorMode = expert === undefined ? "create" : "edit",
+  ) => {
     setDraft(
       expert === undefined ? emptyDraft() : { ...expert, tagInput: "", pluginSecretMutations: {} },
     );
+    setExpertEditor({
+      mode,
+      baseRevision:
+        mode === "edit" && expert?.persisted !== undefined
+          ? expert.persisted.revision
+          : (project?.revision ?? 0),
+      ...(mode === "new-version" && expert?.ref !== undefined ? { sourceRef: expert.ref } : {}),
+    });
     setScreen("create");
   };
   useEffect(() => {
@@ -167,8 +182,12 @@ export function StudioPage(props: {
     setActiveView("experts");
     setSelectedExpert(expert);
     setDraft({ ...expert, tagInput: "", pluginSecretMutations: {} });
+    setExpertEditor({
+      mode: "edit",
+      baseRevision: expert.persisted?.revision ?? project?.revision ?? 0,
+    });
     setScreen("create");
-  }, [experts, props.initialExpertRef]);
+  }, [experts, project?.revision, props.initialExpertRef]);
   const useBuiltInAsTemplate = (expert: ExpertRecord) => {
     const baseId = `${expert.id}_custom`;
     let id = baseId;
@@ -201,7 +220,7 @@ export function StudioPage(props: {
       persisted: undefined,
     });
   };
-  const saveExpert = async (expert: ExpertRecord) => {
+  const saveExpert = async (expert: ExpertRecord, mode: ExpertEditorMode = "edit") => {
     const api = desktopApi();
     let saved = expert;
     if (api !== undefined) {
@@ -217,11 +236,17 @@ export function StudioPage(props: {
             plugins: [...expert.plugins],
             contextStoreMounts: [...expert.contextStoreMounts],
           })
-        : expert.persisted === undefined
-          ? await api.createExpert(toPersistedInput(expert) as CreateExpertDefinition)
+        : mode !== "edit"
+          ? await api.createExpert(
+              toCreateExpertInput(expert, {
+                baseRevision: expertEditor.baseRevision,
+                requiredUnchangedRefs:
+                  expertEditor.sourceRef === undefined ? [] : [expertEditor.sourceRef],
+              }),
+            )
           : await api.updateExpert(
-              expert.persisted.ref,
-              toPersistedInput(expert) as UpdateExpertDefinition,
+              expert.ref ?? `expert:${expert.id}@${expert.version}`,
+              toPersistedInput(expert),
             );
       saved = toExpertRecord(definition);
       if (!isBuiltInExpert(expert)) setProject(await api.getPragmaProject());
@@ -241,6 +266,10 @@ export function StudioPage(props: {
         : [saved, ...current],
     );
     setSelectedExpert(saved);
+    setExpertEditor({
+      mode: "edit",
+      baseRevision: saved.persisted?.revision ?? expertEditor.baseRevision,
+    });
     setExpertError(null);
     setScreen("expert-detail");
   };
@@ -357,7 +386,7 @@ export function StudioPage(props: {
   const saveContextMounts = async (mounts: readonly ExpertContextStoreMount[]) => {
     if (selectedExpert === null) return;
     const updated = { ...selectedExpert, contextStoreMounts: [...mounts] };
-    await saveExpert(updated);
+    await saveExpert(updated, "edit");
     setContextDrawerOpen(false);
   };
   const selectedContextStore =
@@ -425,6 +454,7 @@ export function StudioPage(props: {
             contextStores={contextStores}
             onBack={openExpertDirectory}
             onEdit={() => openCreate(selectedExpert)}
+            onCreateVersion={() => openCreate(selectedExpert, "new-version")}
             onUseAsTemplate={() => useBuiltInAsTemplate(selectedExpert)}
             onConfigureContext={() => setContextDrawerOpen(true)}
             onTryInSession={() => props.onTryExpert(selectedExpert)}
@@ -434,6 +464,7 @@ export function StudioPage(props: {
         ) : null}
         {screen === "create" ? (
           <ExpertEditorFragment
+            mode={expertEditor.mode}
             initialValue={draft}
             runtimes={runtimes}
             contextStores={contextStores}
@@ -444,7 +475,7 @@ export function StudioPage(props: {
               (expert) => expert.ref ?? `expert:${expert.id}@${expert.version}`,
             )}
             onCancel={openExpertDirectory}
-            onCreated={saveExpert}
+            onCreated={async (expert) => await saveExpert(expert, expertEditor.mode)}
           />
         ) : null}
         {screen === "directory" && activeView === "experts" ? (

@@ -2,6 +2,8 @@ import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
 
 import {
   DesktopBridgeSnapshotSchema,
+  DesktopMutationError,
+  DesktopMutationResultSchema,
   DesktopSettingsSnapshotSchema,
   AddContextNoteEntrySchema,
   CapabilityActionSchema,
@@ -101,6 +103,12 @@ import {
   type PragmaDesktopAPI,
 } from "../shared/desktop-api.ts";
 
+async function invokeMutation(channel: string, ...args: readonly unknown[]): Promise<unknown> {
+  const result = DesktopMutationResultSchema.parse(await ipcRenderer.invoke(channel, ...args));
+  if (!result.ok) throw new DesktopMutationError(result.error);
+  return result.value;
+}
+
 const api: PragmaDesktopAPI = {
   getBridgeSnapshot: async () =>
     DesktopBridgeSnapshotSchema.parse(await ipcRenderer.invoke("bridge:snapshot")),
@@ -191,11 +199,11 @@ const api: PragmaDesktopAPI = {
     ),
   createExpert: async (input) =>
     ExpertDefinitionSchema.parse(
-      await ipcRenderer.invoke("experts:create", CreateExpertDefinitionSchema.parse(input)),
+      await invokeMutation("experts:create", CreateExpertDefinitionSchema.parse(input)),
     ),
   updateExpert: async (ref, input) =>
     ExpertDefinitionSchema.parse(
-      await ipcRenderer.invoke(
+      await invokeMutation(
         "experts:update",
         ExpertRefSchema.parse(ref),
         UpdateExpertDefinitionSchema.parse(input),
@@ -203,7 +211,7 @@ const api: PragmaDesktopAPI = {
     ),
   updateBuiltInExpert: async (ref, input) =>
     ExpertDefinitionSchema.parse(
-      await ipcRenderer.invoke(
+      await invokeMutation(
         "experts:update-built-in",
         ExpertRefSchema.parse(ref),
         UpdateBuiltInExpertDefinitionSchema.parse(input),
@@ -211,13 +219,13 @@ const api: PragmaDesktopAPI = {
     ),
   resetBuiltInExpert: async (ref) =>
     ExpertDefinitionSchema.parse(
-      await ipcRenderer.invoke(
+      await invokeMutation(
         "experts:reset-built-in",
         ResetBuiltInExpertDefinitionSchema.parse({ ref }),
       ),
     ),
   deleteExpert: async (ref) => {
-    await ipcRenderer.invoke("experts:delete", DeleteExpertDefinitionSchema.parse({ ref }));
+    await invokeMutation("experts:delete", DeleteExpertDefinitionSchema.parse({ ref }));
   },
   listPlugins: async () =>
     DesktopPluginSchema.array().parse(await ipcRenderer.invoke("plugins:list")),
@@ -249,22 +257,19 @@ const api: PragmaDesktopAPI = {
     PragmaProjectSnapshotSchema.parse(await ipcRenderer.invoke("pragma-project:get")),
   publishPragmaProject: async (input) =>
     PragmaProjectSnapshotSchema.parse(
-      await ipcRenderer.invoke("pragma-project:publish", PublishPragmaProjectSchema.parse(input)),
+      await invokeMutation("pragma-project:publish", PublishPragmaProjectSchema.parse(input)),
     ),
   upsertPragmaResource: async (input) =>
     PragmaProjectSnapshotSchema.parse(
-      await ipcRenderer.invoke("pragma-project:upsert", UpsertPragmaResourceSchema.parse(input)),
+      await invokeMutation("pragma-project:upsert", UpsertPragmaResourceSchema.parse(input)),
     ),
   applyPragmaProjectChanges: async (input) =>
     PragmaProjectSnapshotSchema.parse(
-      await ipcRenderer.invoke(
-        "pragma-project:apply-changes",
-        PragmaProjectChangesSchema.parse(input),
-      ),
+      await invokeMutation("pragma-project:apply-changes", PragmaProjectChangesSchema.parse(input)),
     ),
   deletePragmaResource: async (input) =>
     PragmaProjectSnapshotSchema.parse(
-      await ipcRenderer.invoke("pragma-project:delete", DeletePragmaResourceSchema.parse(input)),
+      await invokeMutation("pragma-project:delete", DeletePragmaResourceSchema.parse(input)),
     ),
   validatePragmaYaml: async (source) =>
     PragmaYamlValidationResultSchema.parse(
@@ -275,14 +280,14 @@ const api: PragmaDesktopAPI = {
     ),
   validatePragmaResource: async (input) =>
     PragmaYamlValidationResultSchema.parse(
-      await ipcRenderer.invoke(
+      await invokeMutation(
         "pragma-project:validate-resource",
         ValidatePragmaResourceSchema.parse(input),
       ),
     ),
   validatePragmaProjectChanges: async (input) =>
     PragmaProjectChangesValidationResultSchema.parse(
-      await ipcRenderer.invoke(
+      await invokeMutation(
         "pragma-project:validate-changes",
         PragmaProjectChangesSchema.parse(input),
       ),
