@@ -32,6 +32,11 @@ import {
   type MissionUserMessage,
   type DesktopToolPermissionMode,
 } from "../shared/desktop-api.ts";
+import {
+  MissionExecutionProjectionError,
+  readMissionExecutionProjection,
+  writeMissionExecutionProjection,
+} from "./mission-execution-projection.ts";
 
 export interface MissionTimelineTurn {
   readonly sequence: number;
@@ -109,6 +114,7 @@ export class MissionStoreError extends Error {
       | "mission_active"
       | "unsupported_schema"
       | "timeline_invalid"
+      | "projection_invalid"
       | "message_conflict"
       | "config_invalid",
     message: string,
@@ -131,8 +137,10 @@ export function createMissionStore(options: { readonly missionsPath: string }): 
   const manifestPath = (id: string) => join(missionPath(id), "mission.yaml");
   const messagesPath = (id: string) => join(missionPath(id), "messages.jsonl");
   const transactionPath = (id: string) => join(missionPath(id), ".messages.transaction.json");
-  const projectionPath = (id: string, executionId: string) =>
+  const legacyProjectionPath = (id: string, executionId: string) =>
     join(missionPath(id), "execution-projections", `${executionId}.json`);
+  const projectionPath = (id: string, executionId: string) =>
+    join(missionPath(id), "execution-projections", `${executionId}.jsonl`);
   const lockPath = (id: string) => join(options.missionsPath, ".locks", `${id}.lock`);
   const timelineCache = new Map<
     string,
@@ -291,32 +299,54 @@ export function createMissionStore(options: { readonly missionsPath: string }): 
       timelineCache.delete(id);
     },
     async readExecutionProjection(id, executionId) {
-      try {
-        const value = JSON.parse(await readFile(projectionPath(id, executionId), "utf8")) as {
-          readonly schemaVersion?: unknown;
-          readonly entries?: unknown;
-        };
-        if (value.schemaVersion !== "pragma.mission-execution-projection/v1") {
+      const parsedId = MissionIdSchema.parse(id);
+      return await withMissionLock(parsedId, async () => {
+        await readMissionUnlocked(parsedId);
+        try {
+          const current = await readMissionExecutionProjection(
+            projectionPath(parsedId, executionId),
+            executionId,
+          );
+          if (current !== undefined) return current;
+          const legacy = await readLegacyExecutionProjection(
+            legacyProjectionPath(parsedId, executionId),
+          );
+          if (legacy === undefined) return undefined;
+          await writeMissionExecutionProjection(
+            projectionPath(parsedId, executionId),
+            executionId,
+            legacy,
+          );
+          await rm(legacyProjectionPath(parsedId, executionId), { force: true });
+          return await readMissionExecutionProjection(
+            projectionPath(parsedId, executionId),
+            executionId,
+          );
+        } catch (error) {
+          if (error instanceof MissionStoreError) throw error;
           throw new MissionStoreError(
-            "unsupported_schema",
-            "Unsupported Mission projection schema.",
+            "projection_invalid",
+            error instanceof Error ? error.message : String(error),
           );
         }
-        return MissionChatEntrySchema.array().parse(value.entries);
-      } catch (error) {
-        if (isNodeError(error, "ENOENT")) return undefined;
-        throw error;
-      }
+      });
     },
     async writeExecutionProjection(id, executionId, entries) {
       await withMissionLock(MissionIdSchema.parse(id), async () => {
         await readMissionUnlocked(id);
-        await writeJsonAtomically(projectionPath(id, executionId), {
-          schemaVersion: "pragma.mission-execution-projection/v1",
-          executionId,
-          entries: MissionChatEntrySchema.array().parse(entries),
-          createdAt: new Date().toISOString(),
-        });
+        try {
+          await writeMissionExecutionProjection(
+            projectionPath(id, executionId),
+            executionId,
+            entries,
+          );
+          await rm(legacyProjectionPath(id, executionId), { force: true });
+        } catch (error) {
+          if (error instanceof MissionExecutionProjectionError) {
+            throw new MissionStoreError("projection_invalid", error.message);
+          }
+          throw error;
+        }
       });
     },
     async list() {
@@ -630,6 +660,23 @@ async function readJsonIfExists(path: string): Promise<unknown | undefined> {
     if (isNodeError(error, "ENOENT")) return undefined;
     throw error;
   }
+}
+
+async function readLegacyExecutionProjection(
+  path: string,
+): Promise<readonly MissionChatEntry[] | undefined> {
+  const value = await readJsonIfExists(path);
+  if (value === undefined) return undefined;
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    !("schemaVersion" in value) ||
+    value.schemaVersion !== "pragma.mission-execution-projection/v1" ||
+    !("entries" in value)
+  ) {
+    throw new MissionStoreError("unsupported_schema", "Unsupported Mission projection schema.");
+  }
+  return MissionChatEntrySchema.array().parse(value.entries);
 }
 
 function findSameIdentity(

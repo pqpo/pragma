@@ -157,7 +157,7 @@ Manifest 的 `updatedAt`，其他 Revision 使用目录 `mtime`，并在迁移�
 
 旧 Execution Record 和事件文件仍可由 v3 读取，迁移时保留在 `state/executions/`。不要只为缩小目录就
 直接 gzip 或删除 `events.jsonl`：v3 要求先生成
-`data/missions/<missionId>/execution-projections/<executionId>.json`，再归档事件。一次性迁移器如果没有
+`data/missions/<missionId>/execution-projections/<executionId>.jsonl`，再归档事件。一次性迁移器如果没有
 复用当前 Mission chat projection 代码，就必须选择保留原始事件，不能生成不完整 projection。
 
 后续新完成的 Execution 会由 v3 自动生成 projection 并归档。迁移报告应单独列出保留的 legacy

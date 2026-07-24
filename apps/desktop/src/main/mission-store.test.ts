@@ -1,4 +1,4 @@
-import { appendFile, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -7,6 +7,11 @@ import { afterEach, describe, expect, it } from "vitest";
 import { formatPragmaYaml, parsePragmaYaml } from "@pragma/interpreter";
 import type { PragmaExpertResource } from "@pragma/interpreter/ast";
 import { missionExecutorSnapshot } from "../shared/desktop-api.ts";
+import {
+  MISSION_EXECUTION_PROJECTION_MAX_BYTES,
+  MISSION_EXECUTION_PROJECTION_MAX_CONTENT_LENGTH,
+  MISSION_EXECUTION_PROJECTION_MAX_ENTRIES,
+} from "./mission-execution-projection.ts";
 import { createMissionStore, MISSION_TITLE_MAX_LENGTH } from "./mission-store.ts";
 
 const temporaryPaths: string[] = [];
@@ -295,6 +300,166 @@ describe("mission store", () => {
     const timeline = await store.readTimelinePage(created.id, { limit: 10 });
     expect(timeline.turns[0]?.executionId).toBe("00000000-0000-4000-8000-000000000012");
     expect(await readFile(join(directory, "messages.jsonl"), "utf8")).not.toContain("torn");
+  });
+
+  it("stores bounded Execution projections as recoverable JSONL", async () => {
+    const root = await temporaryRoot();
+    const store = createMissionStore({ missionsPath: join(root, "missions") });
+    const created = await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "Keep bounded history",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+    });
+    const executionId = "00000000-0000-4000-8000-000000000020";
+    const entries = Array.from(
+      { length: MISSION_EXECUTION_PROJECTION_MAX_ENTRIES + 2 },
+      (_, index) => ({
+        id: `assistant:${index}`,
+        executionId,
+        kind: "assistant" as const,
+        content:
+          index === MISSION_EXECUTION_PROJECTION_MAX_ENTRIES + 1
+            ? "x".repeat(MISSION_EXECUTION_PROJECTION_MAX_CONTENT_LENGTH + 10)
+            : `answer ${index}`,
+        streaming: false,
+        createdAt: "2026-07-17T00:00:01.000Z",
+      }),
+    );
+
+    await store.writeExecutionProjection(created.id, executionId, entries);
+
+    const projectionPath = join(
+      root,
+      "missions",
+      created.id,
+      "execution-projections",
+      `${executionId}.jsonl`,
+    );
+    const content = await readFile(projectionPath, "utf8");
+    const lines = content.trimEnd().split("\n");
+    const header = JSON.parse(lines[0]!) as {
+      omittedEntries: number;
+      truncatedFields: number;
+    };
+    const lastRecord = JSON.parse(lines.at(-1)!) as {
+      truncation?: { truncated: boolean; fields: Array<{ originalLength: number }> };
+    };
+    expect(Buffer.byteLength(content)).toBeLessThanOrEqual(MISSION_EXECUTION_PROJECTION_MAX_BYTES);
+    expect(lines).toHaveLength(MISSION_EXECUTION_PROJECTION_MAX_ENTRIES + 1);
+    expect(header).toMatchObject({ omittedEntries: 2, truncatedFields: 1 });
+    expect(lastRecord.truncation).toMatchObject({
+      truncated: true,
+      fields: [{ originalLength: MISSION_EXECUTION_PROJECTION_MAX_CONTENT_LENGTH + 10 }],
+    });
+
+    const projected = await store.readExecutionProjection(created.id, executionId);
+    expect(projected).toHaveLength(MISSION_EXECUTION_PROJECTION_MAX_ENTRIES);
+    expect(projected?.[0]?.id).toBe("assistant:2");
+    expect(projected?.at(-1)).toMatchObject({
+      id: `assistant:${MISSION_EXECUTION_PROJECTION_MAX_ENTRIES + 1}`,
+      content: "x".repeat(MISSION_EXECUTION_PROJECTION_MAX_CONTENT_LENGTH),
+    });
+
+    await appendFile(projectionPath, '{"torn"', "utf8");
+    await expect(store.readExecutionProjection(created.id, executionId)).resolves.toHaveLength(
+      MISSION_EXECUTION_PROJECTION_MAX_ENTRIES,
+    );
+    await appendFile(projectionPath, "\n", "utf8");
+    await expect(store.readExecutionProjection(created.id, executionId)).rejects.toMatchObject({
+      code: "projection_invalid",
+    });
+
+    await store.writeExecutionProjection(created.id, executionId, entries);
+    await appendFile(
+      projectionPath,
+      JSON.stringify({ ...lastRecord, executionId: "another-execution" }),
+      "utf8",
+    );
+    await expect(store.readExecutionProjection(created.id, executionId)).rejects.toMatchObject({
+      code: "projection_invalid",
+    });
+  });
+
+  it("caps a projection by encoded byte size and retains the newest output", async () => {
+    const root = await temporaryRoot();
+    const store = createMissionStore({ missionsPath: join(root, "missions") });
+    const created = await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "Keep the newest bounded output",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+    });
+    const executionId = "00000000-0000-4000-8000-000000000022";
+    const entryCount = 140;
+    const entries = Array.from({ length: entryCount }, (_, index) => ({
+      id: `large-assistant:${index}`,
+      executionId,
+      kind: "assistant" as const,
+      content: `${index}:`.padEnd(MISSION_EXECUTION_PROJECTION_MAX_CONTENT_LENGTH, "x"),
+      streaming: false,
+      createdAt: "2026-07-17T00:00:01.000Z",
+    }));
+
+    await store.writeExecutionProjection(created.id, executionId, entries);
+
+    const projectionPath = join(
+      root,
+      "missions",
+      created.id,
+      "execution-projections",
+      `${executionId}.jsonl`,
+    );
+    const content = await readFile(projectionPath, "utf8");
+    const header = JSON.parse(content.split("\n", 1)[0]!) as { omittedEntries: number };
+    const projected = await store.readExecutionProjection(created.id, executionId);
+    expect(Buffer.byteLength(content)).toBeLessThanOrEqual(MISSION_EXECUTION_PROJECTION_MAX_BYTES);
+    expect(header.omittedEntries).toBeGreaterThan(0);
+    expect(projected?.length).toBeLessThan(entryCount);
+    expect(projected?.at(-1)?.id).toBe(`large-assistant:${entryCount - 1}`);
+  });
+
+  it("migrates legacy JSON projections on first read and removes them with the Mission", async () => {
+    const root = await temporaryRoot();
+    const store = createMissionStore({ missionsPath: join(root, "missions") });
+    const created = await store.create({
+      workspace: { path: join(root, "workspace"), basename: "workspace" },
+      goal: "Migrate visible history",
+      project: { id: "studio", revision: 1 },
+      executor: missionExecutorSnapshot(expertFixture()),
+    });
+    const executionId = "00000000-0000-4000-8000-000000000021";
+    const directory = join(root, "missions", created.id, "execution-projections");
+    const legacyPath = join(directory, `${executionId}.json`);
+    const currentPath = join(directory, `${executionId}.jsonl`);
+    const entry = {
+      id: "assistant:legacy",
+      executionId,
+      kind: "assistant" as const,
+      content: "Legacy answer",
+      streaming: false,
+      createdAt: "2026-07-17T00:00:01.000Z",
+    };
+    await mkdir(directory, { recursive: true });
+    await writeFile(
+      legacyPath,
+      `${JSON.stringify({
+        schemaVersion: "pragma.mission-execution-projection/v1",
+        executionId,
+        entries: [entry],
+        createdAt: "2026-07-17T00:00:02.000Z",
+      })}\n`,
+      "utf8",
+    );
+
+    await expect(store.readExecutionProjection(created.id, executionId)).resolves.toEqual([entry]);
+    await expect(readFile(legacyPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await readFile(currentPath, "utf8")).toContain(
+      '"schemaVersion":"pragma.mission-execution-projection/v2"',
+    );
+
+    await store.remove(created.id);
+    await expect(readFile(currentPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("rejects v2 explicitly and does not read timelines while listing summaries", async () => {
