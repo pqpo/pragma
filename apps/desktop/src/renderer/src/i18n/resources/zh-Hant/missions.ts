@@ -14,6 +14,7 @@ export const missions = {
   contextCurrent: "目前上下文",
   contextTotal: "總上下文",
   contextUnknown: "未知",
+  contextUsageInvalid: "執行階段回報的上下文用量異常，已保留原始數值供診斷。",
   contextCompact: "壓縮上下文",
   contextCompacting: "正在壓縮…",
   now: "剛剛",

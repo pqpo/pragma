@@ -10905,6 +10905,7 @@ textarea:focus-visible,
 }
 
 .mission-context-trigger {
+  position: relative;
   display: grid;
   width: 32px;
   height: 32px;
@@ -10915,6 +10916,23 @@ textarea:focus-visible,
   background: transparent;
   color: inherit;
   cursor: pointer;
+}
+
+.mission-context-warning-badge {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  display: grid;
+  width: 13px;
+  height: 13px;
+  place-items: center;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  background: #bd3f3f;
+  color: #fff;
+  font-size: 9px;
+  font-weight: 800;
+  line-height: 1;
 }
 
 .mission-context-trigger:hover,
@@ -10994,6 +11012,21 @@ textarea:focus-visible,
   color: currentColor;
   font-size: 12px;
   font-weight: 650;
+}
+
+.mission-context-invalid {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 10px 0 0;
+  color: #9f3030;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.mission-context-invalid svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
 }
 
 .mission-context-popover dl {

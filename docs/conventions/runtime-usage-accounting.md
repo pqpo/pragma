@@ -63,8 +63,10 @@ ExpertSession, or delegated-agent usage totals.
 
 - PI uses `AgentSession.getContextUsage()` and marks the value as `estimated`. Its model
   `contextWindow` is the percentage denominator.
-- Codex uses root-thread `thread/tokenUsage/updated.params.tokenUsage.total.totalTokens` with
-  `modelContextWindow` as the denominator and marks the value as `reported`.
+- Codex uses root-thread `thread/tokenUsage/updated.params.tokenUsage.last`, subtracting
+  `reasoningOutputTokens` from `totalTokens` to match Codex's active-context calculation, with
+  `modelContextWindow` as the denominator. `tokenUsage.total` is cumulative billing usage and must
+  never be used as context-window occupancy. Codex measurements are marked as `reported`.
 - Claude Code uses the most recent root assistant-message usage with the matching
   `result.modelUsage[model].contextWindow` denominator and marks the value as `derived`.
 - Immediately after compaction, a runtime may know the denominator while the new numerator is not

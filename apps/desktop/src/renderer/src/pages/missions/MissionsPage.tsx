@@ -1685,16 +1685,24 @@ export function ContextWindowControl(props: {
   const usage = props.state.usage;
   const percent = usage?.percent ?? null;
   const boundedPercent = Math.max(0, Math.min(100, percent ?? 0));
+  const invalidUsage =
+    usage !== undefined &&
+    ((usage.usedTokens !== null && usage.usedTokens > usage.contextWindowTokens) ||
+      (usage.percent !== null && usage.percent > 100));
   const percentText =
     percent === null
       ? t("contextUnknown")
       : t("contextPercentValue", {
           value: new Intl.NumberFormat(i18n.language, {
             maximumFractionDigits: 1,
-          }).format(percent),
+          }).format(boundedPercent),
         });
   const tokenFormatter = new Intl.NumberFormat(i18n.language);
   const tone = boundedPercent >= 90 ? "is-critical" : boundedPercent >= 70 ? "is-warning" : "";
+  const usageLabel = t("contextWindowUsage", { value: percentText });
+  const accessibleUsageLabel = invalidUsage
+    ? `${usageLabel} ${t("contextUsageInvalid")}`
+    : usageLabel;
 
   return (
     <div
@@ -1716,7 +1724,7 @@ export function ContextWindowControl(props: {
       <button
         className="mission-context-trigger"
         type="button"
-        aria-label={t("contextWindowUsage", { value: percentText })}
+        aria-label={accessibleUsageLabel}
         aria-expanded={open}
         aria-haspopup="dialog"
         aria-controls={popoverId}
@@ -1735,6 +1743,11 @@ export function ContextWindowControl(props: {
             strokeDashoffset={100 - boundedPercent}
           />
         </svg>
+        {invalidUsage ? (
+          <span className="mission-context-warning-badge" aria-hidden="true">
+            !
+          </span>
+        ) : null}
       </button>
       {open ? (
         <div
@@ -1748,6 +1761,12 @@ export function ContextWindowControl(props: {
             <strong id={popoverLabelId}>{t("contextWindow")}</strong>
             <span>{percentText}</span>
           </div>
+          {invalidUsage ? (
+            <p className="mission-context-invalid" role="alert">
+              <WarningCircle size={15} weight="fill" aria-hidden="true" />
+              {t("contextUsageInvalid")}
+            </p>
+          ) : null}
           <dl>
             <div>
               <dt>{t("contextCurrent")}</dt>
@@ -1772,9 +1791,7 @@ export function ContextWindowControl(props: {
             disabled={!props.state.canCompact || props.compacting}
             onClick={props.onCompact}
           >
-            {props.compacting ? (
-              <SpinnerGap className="spin" size={15} aria-hidden="true" />
-            ) : null}
+            {props.compacting ? <SpinnerGap className="spin" size={15} aria-hidden="true" /> : null}
             {props.compacting ? t("contextCompacting") : t("contextCompact")}
           </button>
         </div>

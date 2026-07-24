@@ -14,6 +14,7 @@ export const missions = {
   contextCurrent: "当前上下文",
   contextTotal: "总上下文",
   contextUnknown: "未知",
+  contextUsageInvalid: "运行时上报的上下文用量异常，已保留原始数值用于诊断。",
   contextCompact: "压缩上下文",
   contextCompacting: "正在压缩…",
   now: "刚刚",

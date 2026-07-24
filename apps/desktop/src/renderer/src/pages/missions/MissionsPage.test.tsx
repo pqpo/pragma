@@ -113,6 +113,33 @@ describe("MissionDetailFragment", () => {
     expect(html).toContain('aria-haspopup="dialog"');
   });
 
+  it("bounds impossible context usage and exposes a diagnostic warning", () => {
+    const html = renderToStaticMarkup(
+      <ContextWindowControl
+        state={{
+          supportsInspection: true,
+          supportsCompaction: true,
+          canCompact: true,
+          usage: {
+            usedTokens: 663_493,
+            contextWindowTokens: 258_400,
+            percent: 256.8,
+            measurement: "reported",
+            observedAt: "2026-07-24T00:00:00.000Z",
+          },
+        }}
+        compacting={false}
+        onCompact={() => undefined}
+      />,
+    );
+
+    expect(html).toContain('stroke-dashoffset="0"');
+    expect(html).toContain("mission-context-warning-badge");
+    expect(html).toContain("Context window usage: 100%");
+    expect(html).toContain("Runtime reported invalid context usage");
+    expect(html).not.toContain("256.8%");
+  });
+
   it("uses the full detail width for a single expert", () => {
     const html = renderToStaticMarkup(<MissionDetailFragment mission={missionFixture("expert")} />);
 

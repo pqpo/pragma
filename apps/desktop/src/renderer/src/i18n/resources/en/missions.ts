@@ -14,6 +14,8 @@ export const missions = {
   contextCurrent: "Current context",
   contextTotal: "Total context",
   contextUnknown: "Unknown",
+  contextUsageInvalid:
+    "Runtime reported invalid context usage. Raw values are shown for diagnosis.",
   contextCompact: "Compact context",
   contextCompacting: "Compacting…",
   now: "Now",

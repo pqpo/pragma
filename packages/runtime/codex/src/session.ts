@@ -552,14 +552,11 @@ export function parseCodexContextWindowUsage(
       "context_window",
     ]);
     if (contextWindowTokens === undefined || contextWindowTokens <= 0) continue;
-    const total =
-      readRecord(candidate["total"]) ??
-      readRecord(candidate["totalTokenUsage"]) ??
-      readRecord(candidate["total_token_usage"]);
-    const usedTokens =
-      total === undefined
-        ? null
-        : (readFirstTokenCount(total, ["totalTokens", "total_tokens", "total"]) ?? null);
+    const last =
+      readRecord(candidate["last"]) ??
+      readRecord(candidate["lastTokenUsage"]) ??
+      readRecord(candidate["last_token_usage"]);
+    const usedTokens = last === undefined ? null : readCodexContextTokenCount(last);
     return createRuntimeContextWindowUsage({
       usedTokens,
       contextWindowTokens,
@@ -569,16 +566,21 @@ export function parseCodexContextWindowUsage(
   return undefined;
 }
 
+function readCodexContextTokenCount(record: Record<string, unknown>): number | null {
+  const totalTokens = readFirstTokenCount(record, ["totalTokens", "total_tokens", "total"]);
+  if (totalTokens === undefined) return null;
+  const reasoningOutputTokens =
+    readFirstTokenCount(record, ["reasoningOutputTokens", "reasoning_output_tokens"]) ?? 0;
+  return Math.max(0, totalTokens - reasoningOutputTokens);
+}
+
 function rememberCodexContextWindowUsage(
   session: CodexNativeSession,
   notification: CodexAppServerNotification,
 ): void {
   if (notification.method !== "thread/tokenUsage/updated") return;
   const notificationThreadId = readNotificationThreadId(notification);
-  if (
-    notificationThreadId !== undefined &&
-    notificationThreadId !== session.state.threadId
-  ) {
+  if (notificationThreadId !== undefined && notificationThreadId !== session.state.threadId) {
     return;
   }
   const usage = parseCodexContextWindowUsage(notification.params);

@@ -12,21 +12,54 @@ import {
 } from "../src/session.ts";
 
 describe("Codex context window", () => {
-  it("reads the app-server thread token usage denominator", () => {
+  it("reads active context from the latest turn instead of cumulative thread usage", () => {
     expect(
       parseCodexContextWindowUsage({
         threadId: "thread-1",
         tokenUsage: {
-          total: { totalTokens: 48_000 },
-          last: { totalTokens: 2_000 },
+          total: { totalTokens: 663_493 },
+          last: { totalTokens: 92_000, reasoningOutputTokens: 4_000 },
           modelContextWindow: 200_000,
         },
       }),
     ).toMatchObject({
-      usedTokens: 48_000,
+      usedTokens: 88_000,
       contextWindowTokens: 200_000,
-      percent: 24,
+      percent: 44,
       measurement: "reported",
+    });
+  });
+
+  it("does not substitute cumulative usage when the latest context snapshot is absent", () => {
+    expect(
+      parseCodexContextWindowUsage({
+        token_usage: {
+          total_token_usage: { total_tokens: 663_493 },
+          model_context_window: 258_400,
+        },
+      }),
+    ).toMatchObject({
+      usedTokens: null,
+      contextWindowTokens: 258_400,
+      percent: null,
+    });
+  });
+
+  it("supports snake-case latest usage and excludes transient reasoning tokens", () => {
+    expect(
+      parseCodexContextWindowUsage({
+        token_usage: {
+          last_token_usage: {
+            total_tokens: 70_000,
+            reasoning_output_tokens: 6_000,
+          },
+          model_context_window: 128_000,
+        },
+      }),
+    ).toMatchObject({
+      usedTokens: 64_000,
+      contextWindowTokens: 128_000,
+      percent: 50,
     });
   });
 
@@ -40,6 +73,7 @@ describe("Codex context window", () => {
             threadId: "thread-1",
             tokenUsage: {
               total: { totalTokens: 12_000 },
+              last: { totalTokens: 12_000 },
               modelContextWindow: 200_000,
             },
           },
