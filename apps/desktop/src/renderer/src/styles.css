@@ -10562,6 +10562,70 @@ textarea:focus-visible,
   margin-top: 24px;
 }
 
+.mission-context-operation {
+  display: flex;
+  width: fit-content;
+  max-width: min(100%, 680px);
+  align-items: center;
+  gap: 9px;
+  padding: 9px 11px;
+  border: 1px solid #dce7df;
+  border-radius: 10px;
+  background: #f7faf8;
+  color: var(--green-dark);
+  font-size: 12px;
+}
+
+.mission-context-operation > svg {
+  flex: 0 0 auto;
+}
+
+.mission-context-operation > span {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.mission-context-operation strong {
+  font-weight: 650;
+}
+
+.mission-context-operation small {
+  overflow-wrap: anywhere;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+.mission-context-operation.is-failed {
+  border-color: #efd5d1;
+  background: #fff8f7;
+  color: #9d3f34;
+}
+
+.mission-context-operation > button {
+  flex: 0 0 auto;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: currentcolor;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 650;
+}
+
+.mission-context-operation > button:hover,
+.mission-context-operation > button:focus-visible {
+  outline: 0;
+  background: rgb(157 63 52 / 9%);
+  box-shadow: 0 0 0 3px rgb(157 63 52 / 10%);
+}
+
+.mission-context-operation > button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .mission-assistant-message {
   display: block;
   width: 100%;
@@ -10835,6 +10899,10 @@ textarea:focus-visible,
     var(--shadow-soft);
 }
 
+.mission-chat-composer:has(textarea:disabled) {
+  background: #f7f9f8;
+}
+
 .mission-chat-composer textarea {
   width: 100%;
   min-height: 52px;
@@ -10850,9 +10918,18 @@ textarea:focus-visible,
   overflow-y: auto;
 }
 
+.mission-chat-composer textarea:disabled {
+  cursor: not-allowed;
+  color: var(--muted);
+}
+
 .mission-chat-composer textarea:focus-visible {
   outline: 0;
   box-shadow: none;
+}
+
+.mission-context-operation-tip {
+  color: var(--green-dark);
 }
 
 .mission-chat-composer-toolbar {

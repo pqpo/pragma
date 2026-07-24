@@ -67,6 +67,7 @@ import {
   parseDesktopCapabilityBindingRef,
   parseDesktopContextBindingRef,
 } from "./desktop-binding-ref.ts";
+import { MissionOperationError } from "./mission-operation-error.ts";
 import type { MissionStore, MissionTimelineTurn } from "./mission-store.ts";
 import type { PragmaProjectStore } from "./pragma-project-store.ts";
 import type { PluginStore } from "./plugin-store.ts";
@@ -1045,7 +1046,7 @@ export function createMissionRunner(options: {
       const pending = pendingOperations.get(id);
       if (pending?.kind === "run") return await pending.promise;
       if (pending !== undefined) {
-        throw new Error("Wait for the current mission operation to finish.");
+        throw new MissionOperationError();
       }
       const started = runMission(id);
       trackOperation(id, { kind: "run", promise: started });
@@ -1053,7 +1054,7 @@ export function createMissionRunner(options: {
     },
     async updateOptions(input) {
       if (pendingOperations.has(input.id)) {
-        throw new Error("Wait for the current mission operation to finish.");
+        throw new MissionOperationError();
       }
       const updating = updateMissionOptions(input);
       trackOperation(input.id, { kind: "options", promise: updating });
@@ -1061,7 +1062,7 @@ export function createMissionRunner(options: {
     },
     async sendMessage(input) {
       if (pendingOperations.has(input.id)) {
-        throw new Error("Wait for the current mission operation to finish.");
+        throw new MissionOperationError();
       }
       const sending = sendMissionMessage(input);
       trackOperation(input.id, { kind: "message", promise: sending });
@@ -1074,7 +1075,7 @@ export function createMissionRunner(options: {
       const pending = pendingOperations.get(id);
       if (pending?.kind === "compact") return await pending.promise;
       if (pending !== undefined) {
-        throw new Error("Wait for the current mission operation to finish.");
+        throw new MissionOperationError();
       }
       const compacting = compactMissionContext(id);
       trackOperation(id, { kind: "compact", promise: compacting });
@@ -1095,7 +1096,7 @@ export function createMissionRunner(options: {
       const pending = pendingOperations.get(id);
       if (pending?.kind === "interrupt") return await pending.promise;
       if (pending !== undefined) {
-        throw new Error("Wait for the current mission operation to finish.");
+        throw new MissionOperationError();
       }
       const interrupting = interruptMission(id);
       trackOperation(id, { kind: "interrupt", promise: interrupting });
@@ -1109,7 +1110,7 @@ export function createMissionRunner(options: {
     },
     async delete(id) {
       if (pendingOperations.has(id)) {
-        throw new Error("Wait for the current mission operation to finish.");
+        throw new MissionOperationError();
       }
       const liveChat = liveChats.get(id);
       if (liveChat !== undefined) await liveChat.close();

@@ -361,15 +361,13 @@ const api: PragmaDesktopAPI = {
     ),
   updateMissionOptions: async (input) =>
     MissionSchema.parse(
-      await ipcRenderer.invoke("missions:options:update", UpdateMissionOptionsSchema.parse(input)),
+      await invokeMutation("missions:options:update", UpdateMissionOptionsSchema.parse(input)),
     ),
   runMission: async (id) =>
-    MissionSchema.parse(
-      await ipcRenderer.invoke("missions:run", MissionActionSchema.parse({ id })),
-    ),
+    MissionSchema.parse(await invokeMutation("missions:run", MissionActionSchema.parse({ id }))),
   sendMissionMessage: async (input) =>
     MissionSchema.parse(
-      await ipcRenderer.invoke("missions:message:send", SendMissionMessageSchema.parse(input)),
+      await invokeMutation("missions:message:send", SendMissionMessageSchema.parse(input)),
     ),
   getMissionChat: async (input) =>
     MissionChatSnapshotSchema.parse(
@@ -377,7 +375,7 @@ const api: PragmaDesktopAPI = {
     ),
   compactMissionContext: async (id) =>
     MissionContextWindowStateSchema.parse(
-      await ipcRenderer.invoke("missions:context:compact", MissionActionSchema.parse({ id })),
+      await invokeMutation("missions:context:compact", MissionActionSchema.parse({ id })),
     ),
   subscribeMissionChat: (id, listener) => {
     const missionId = MissionIdSchema.parse(id);
@@ -390,7 +388,7 @@ const api: PragmaDesktopAPI = {
   },
   interruptMission: async (id) =>
     MissionSchema.parse(
-      await ipcRenderer.invoke("missions:interrupt", MissionActionSchema.parse({ id })),
+      await invokeMutation("missions:interrupt", MissionActionSchema.parse({ id })),
     ),
   getMissionWork: async (id) =>
     MissionWorkSnapshotSchema.parse(
@@ -413,14 +411,14 @@ const api: PragmaDesktopAPI = {
     return () => ipcRenderer.removeListener("missions:work:updated", handler);
   },
   deleteMission: async (id) => {
-    await ipcRenderer.invoke("missions:delete", MissionActionSchema.parse({ id }));
+    await invokeMutation("missions:delete", MissionActionSchema.parse({ id }));
   },
   listMissionHumanInteractions: async (id) =>
     MissionHumanInteractionSchema.array().parse(
       await ipcRenderer.invoke("missions:human:list", MissionActionSchema.parse({ id })),
     ),
   respondToMissionHumanInteraction: async (input) => {
-    await ipcRenderer.invoke(
+    await invokeMutation(
       "missions:human:respond",
       RespondMissionHumanInteractionSchema.parse(input),
     );

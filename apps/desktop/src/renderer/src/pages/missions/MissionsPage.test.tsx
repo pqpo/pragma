@@ -8,8 +8,10 @@ import type {
 import { i18n } from "../../i18n/index.ts";
 import {
   applyMissionChatPatches,
+  claimMissionClientOperation,
   ContextWindowControl,
   groupMissionConversationEntries,
+  MissionContextOperationEntry,
   MissionDetailFragment,
   MissionThinkingEntry,
   MissionWorkDrawer,
@@ -17,6 +19,7 @@ import {
   missionWorkInputSenderName,
   missionWorkRecordTitle,
   resolveMissionSearchCollapsed,
+  releaseMissionClientOperation,
   shouldClearMissionThinkingPlaceholder,
   shouldShowMissionThinkingPlaceholder,
   unavailableMcpToolName,
@@ -87,6 +90,55 @@ describe("MissionsPage", () => {
 });
 
 describe("MissionDetailFragment", () => {
+  it("holds a synchronous client-operation lock throughout context compaction", () => {
+    const compacting = claimMissionClientOperation({ kind: "idle" }, "compacting", "compact-token");
+
+    expect(compacting).toEqual({ kind: "compacting", token: "compact-token" });
+    expect(claimMissionClientOperation(compacting!, "sending", "send-token")).toBeNull();
+    expect(releaseMissionClientOperation(compacting!, "stale-token")).toBe(compacting);
+    expect(releaseMissionClientOperation(compacting!, "compact-token")).toEqual({ kind: "idle" });
+  });
+
+  it("renders context compaction progress, completion, and retryable failure states", () => {
+    const started = renderToStaticMarkup(
+      <MissionContextOperationEntry
+        operation={{
+          id: "compact-1",
+          createdAt: "2026-07-24T00:00:00.000Z",
+          status: "running",
+        }}
+        onRetry={() => undefined}
+      />,
+    );
+    const completed = renderToStaticMarkup(
+      <MissionContextOperationEntry
+        operation={{
+          id: "compact-1",
+          createdAt: "2026-07-24T00:00:00.000Z",
+          status: "succeeded",
+        }}
+        onRetry={() => undefined}
+      />,
+    );
+    const failed = renderToStaticMarkup(
+      <MissionContextOperationEntry
+        operation={{
+          id: "compact-1",
+          createdAt: "2026-07-24T00:00:00.000Z",
+          status: "failed",
+          error: "The Runtime could not compact this context.",
+        }}
+        onRetry={() => undefined}
+      />,
+    );
+
+    expect(started).toContain("Compacting context");
+    expect(completed).toContain("Context compaction completed");
+    expect(failed).toContain("Context compaction failed");
+    expect(failed).toContain("The Runtime could not compact this context.");
+    expect(failed).toContain(">Retry<");
+  });
+
   it("renders the context ring with an accessible percentage label", () => {
     const html = renderToStaticMarkup(
       <ContextWindowControl

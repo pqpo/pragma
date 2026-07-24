@@ -21,6 +21,7 @@ import type { MissionStore } from "./mission-store.ts";
 import type { PragmaProjectStore } from "./pragma-project-store.ts";
 import type { MissionExecutorCatalog } from "./mission-executor-catalog.ts";
 import type { MissionCreator } from "./mission-creator.ts";
+import { runDesktopMutation } from "./desktop-mutation-result.ts";
 import { availableRecentWorkspaces } from "./workspace-history-store.ts";
 import { validateWorkspace } from "./workspace-scope.ts";
 
@@ -89,22 +90,22 @@ export function installMissionHandlers(options: {
     return mission;
   });
   ipcMain.handle("missions:run", (_event, input: unknown) =>
-    options.runner.run(MissionActionSchema.parse(input).id),
+    runDesktopMutation(() => options.runner.run(MissionActionSchema.parse(input).id)),
   );
   ipcMain.handle("missions:options:update", (_event, input: unknown) =>
-    options.runner.updateOptions(UpdateMissionOptionsSchema.parse(input)),
+    runDesktopMutation(() => options.runner.updateOptions(UpdateMissionOptionsSchema.parse(input))),
   );
   ipcMain.handle("missions:message:send", (_event, input: unknown) =>
-    options.runner.sendMessage(SendMissionMessageSchema.parse(input)),
+    runDesktopMutation(() => options.runner.sendMessage(SendMissionMessageSchema.parse(input))),
   );
   ipcMain.handle("missions:chat:get", (_event, input: unknown) =>
     options.runner.getChat(GetMissionChatSchema.parse(input)),
   );
   ipcMain.handle("missions:context:compact", (_event, input: unknown) =>
-    options.runner.compactContext(MissionActionSchema.parse(input).id),
+    runDesktopMutation(() => options.runner.compactContext(MissionActionSchema.parse(input).id)),
   );
   ipcMain.handle("missions:interrupt", (_event, input: unknown) =>
-    options.runner.interrupt(MissionActionSchema.parse(input).id),
+    runDesktopMutation(() => options.runner.interrupt(MissionActionSchema.parse(input).id)),
   );
   ipcMain.handle("missions:work:get", (_event, input: unknown) =>
     options.runner.getWork(MissionActionSchema.parse(input).id),
@@ -116,8 +117,8 @@ export function installMissionHandlers(options: {
     options.runner.listHumanInteractions(MissionActionSchema.parse(input).id),
   );
   ipcMain.handle("missions:human:respond", async (_event, input: unknown) => {
-    await options.runner.respondToHumanInteraction(
-      RespondMissionHumanInteractionSchema.parse(input),
+    return await runDesktopMutation(() =>
+      options.runner.respondToHumanInteraction(RespondMissionHumanInteractionSchema.parse(input)),
     );
   });
   ipcMain.handle("missions:complete", (_event, input: unknown) =>
@@ -127,7 +128,7 @@ export function installMissionHandlers(options: {
     options.missions.reopen(MissionActionSchema.parse(input).id),
   );
   ipcMain.handle("missions:delete", (_event, input: unknown) =>
-    options.runner.delete(MissionActionSchema.parse(input).id),
+    runDesktopMutation(() => options.runner.delete(MissionActionSchema.parse(input).id)),
   );
   options.runner.subscribeChat((update) => {
     options.getWindow()?.webContents.send("missions:chat:updated", update);

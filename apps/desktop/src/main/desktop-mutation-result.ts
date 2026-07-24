@@ -6,6 +6,7 @@ import {
   type DesktopMutationErrorData,
 } from "../shared/desktop-api.ts";
 import { ExpertDefinitionStoreError } from "./expert-definition-store.ts";
+import { MissionOperationError } from "./mission-operation-error.ts";
 import { PragmaProjectStoreError } from "./pragma-project-store.ts";
 
 export async function runDesktopMutation<T>(
@@ -31,6 +32,13 @@ function serializeDesktopMutationError(error: unknown): DesktopMutationErrorData
     });
   }
   if (error instanceof ExpertDefinitionStoreError) {
+    return DesktopMutationErrorSchema.parse({
+      code: error.code,
+      message: error.message,
+      diagnostics: [],
+    });
+  }
+  if (error instanceof MissionOperationError) {
     return DesktopMutationErrorSchema.parse({
       code: error.code,
       message: error.message,

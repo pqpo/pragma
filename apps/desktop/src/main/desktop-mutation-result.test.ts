@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { DesktopMutationError } from "../shared/desktop-api.ts";
 import { runDesktopMutation } from "./desktop-mutation-result.ts";
+import { MissionOperationError } from "./mission-operation-error.ts";
 import { PragmaProjectStoreError } from "./pragma-project-store.ts";
 
 describe("runDesktopMutation", () => {
@@ -47,6 +48,21 @@ describe("runDesktopMutation", () => {
       conflict: {
         conflictingRefs: ["expert:writer@1.0.0"],
         retryable: false,
+      },
+    });
+  });
+
+  it("preserves Mission operation conflicts without an Electron IPC error wrapper", async () => {
+    const result = await runDesktopMutation(async () => {
+      throw new MissionOperationError();
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      error: {
+        code: "mission_operation_in_progress",
+        message: "Wait for the current mission operation to finish.",
+        diagnostics: [],
       },
     });
   });

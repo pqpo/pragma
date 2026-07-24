@@ -18,6 +18,11 @@ export const missions = {
     "Runtime reported invalid context usage. Raw values are shown for diagnosis.",
   contextCompact: "Compact context",
   contextCompacting: "Compacting…",
+  contextCompactionStarted: "Compacting context…",
+  contextCompactionCompleted: "Context compaction completed",
+  contextCompactionFailed: "Context compaction failed",
+  contextCompactionInputDisabled:
+    "Context is being compacted. You can send another message when it finishes.",
   now: "Now",
   minutesShort: "{{count}}m",
   hoursShort: "{{count}}h",
