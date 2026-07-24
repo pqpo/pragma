@@ -122,10 +122,11 @@ export function deleteFlowStep(flow: PragmaFlowResource, stepId: string): Pragma
   if (copy.spec.graph.steps[stepId] === undefined) return flow;
   delete copy.spec.graph.steps[stepId];
   delete copy.spec.graph.transitions[stepId];
-  const remaining = Object.keys(copy.spec.graph.steps);
-  if (copy.spec.graph.start === stepId) copy.spec.graph.start = remaining[0] ?? "";
+  if (copy.spec.graph.start === stepId) copy.spec.graph.start = "";
   for (const [source, transition] of Object.entries(copy.spec.graph.transitions)) {
-    copy.spec.graph.transitions[source] = replaceDeletedTarget(transition, stepId);
+    const next = removeDeletedTarget(transition, stepId);
+    if (next === undefined) delete copy.spec.graph.transitions[source];
+    else copy.spec.graph.transitions[source] = next;
   }
   for (const [loopId, loop] of Object.entries(copy.spec.graph.loops)) {
     if (loop.entry === stepId) {
@@ -133,7 +134,7 @@ export function deleteFlowStep(flow: PragmaFlowResource, stepId: string): Pragma
       continue;
     }
     if (loop.onLimit !== undefined && destinationTarget(loop.onLimit) === stepId) {
-      loop.onLimit = { end: true };
+      delete loop.onLimit;
     }
   }
   for (const current of Object.values(copy.spec.graph.steps)) {
@@ -248,26 +249,26 @@ function mapDestinationTarget(
   return destination;
 }
 
-function replaceDeletedTarget(
+function removeDeletedTarget(
   transition: PragmaFlowTransition,
   deletedId: string,
-): PragmaFlowTransition {
+): PragmaFlowTransition | undefined {
   if (typeof transition === "object" && "route" in transition) {
     const cases = Object.fromEntries(
       Object.entries(transition.cases).map(([key, destination]) => [
         key,
-        destinationTarget(destination) === deletedId ? { end: true as const } : destination,
+        destinationTarget(destination) === deletedId ? { goto: "" } : destination,
       ]),
     );
     return {
       ...transition,
       cases,
       ...(transition.fallback !== undefined && destinationTarget(transition.fallback) === deletedId
-        ? { fallback: { end: true as const } }
+        ? { fallback: { goto: "" } }
         : {}),
     };
   }
-  return destinationTarget(transition) === deletedId ? { end: true } : transition;
+  return destinationTarget(transition) === deletedId ? undefined : transition;
 }
 
 function transitionLoopIds(transitions: readonly PragmaFlowTransition[]): ReadonlySet<string> {

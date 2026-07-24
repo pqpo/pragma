@@ -113,6 +113,7 @@ const TERMINAL_NODE_WIDTH = 112;
 const TERMINAL_HORIZONTAL_GAP = 180;
 const NODE_HORIZONTAL_GAP = 36;
 const NODE_VERTICAL_GAP = 28;
+export const FLOW_ERROR_AUTO_DISMISS_MS = 5_000;
 
 interface StepNodeData extends Record<string, unknown> {
   readonly kind: FlowStepKind;
@@ -150,6 +151,11 @@ interface NodeContextMenuState {
   readonly nodeId: string;
   readonly x: number;
   readonly y: number;
+}
+
+interface VisibleFlowError {
+  readonly message: string;
+  readonly sequence: number;
 }
 
 type FlowPaletteKind = FlowStepKind | "logic";
@@ -201,7 +207,10 @@ function FlowEditorCanvas(props: {
   const [validationOpen, setValidationOpen] = useState(false);
   const [nodeContextMenu, setNodeContextMenu] = useState<NodeContextMenuState | null>(null);
   const [candidateIssues, setCandidateIssues] = useState<readonly string[]>([]);
-  const [localError, setLocalError] = useState<string | null>(null);
+  const errorSequenceRef = useRef(0);
+  const [visibleError, setVisibleError] = useState<VisibleFlowError | null>(
+    props.error === null ? null : { message: props.error, sequence: 0 },
+  );
   const [saving, setSaving] = useState(false);
   const [supportingResources, setSupportingResources] = useState<readonly PragmaResource[]>([]);
   const [layoutStatus, setLayoutStatus] = useState<"saved" | "saving" | "unsaved">("saved");
@@ -242,6 +251,20 @@ function FlowEditorCanvas(props: {
     () => resourceTargets(props.project.resources, flow.metadata.id),
     [flow.metadata.id, props.project.resources],
   );
+  const showError = useCallback((message: string) => {
+    errorSequenceRef.current += 1;
+    setVisibleError({ message, sequence: errorSequenceRef.current });
+  }, []);
+
+  useEffect(() => {
+    if (props.error !== null) showError(props.error);
+  }, [props.error, showError]);
+
+  useEffect(() => {
+    if (visibleError === null) return;
+    const timer = setTimeout(() => setVisibleError(null), FLOW_ERROR_AUTO_DISMISS_MS);
+    return () => clearTimeout(timer);
+  }, [visibleError]);
 
   const positions = useCallback(() => canvasPositions(nodes), [nodes]);
   const snapshot = useCallback(
@@ -349,7 +372,7 @@ function FlowEditorCanvas(props: {
         setLayoutStatus("saved");
         return true;
       } catch (cause) {
-        setLocalError(`Flow is published, but the layout was not saved: ${errorMessage(cause)}`);
+        showError(`Flow is published, but the layout was not saved: ${errorMessage(cause)}`);
         setLayoutStatus("unsaved");
         return false;
       }
@@ -362,6 +385,7 @@ function FlowEditorCanvas(props: {
       positions,
       props.project.projectId,
       semanticDirty,
+      showError,
     ],
   );
 
@@ -387,12 +411,12 @@ function FlowEditorCanvas(props: {
           );
       })
       .catch((cause: unknown) => {
-        if (!cancelled) setLocalError(`Layout could not be loaded: ${errorMessage(cause)}`);
+        if (!cancelled) showError(`Layout could not be loaded: ${errorMessage(cause)}`);
       });
     return () => {
       cancelled = true;
     };
-  }, [fitView, initialFlow, props.project.projectId, setNodes, setViewport]);
+  }, [fitView, initialFlow, props.project.projectId, setNodes, setViewport, showError]);
 
   useEffect(() => {
     setNodes((current) => {
@@ -450,8 +474,11 @@ function FlowEditorCanvas(props: {
   const addStep = (kind: FlowStepKind, position?: { x: number; y: number }) => {
     const id = nextStepId(flow, kind);
     const copy = structuredClone(flow);
-    copy.spec.graph.steps[id] = defaultStep(kind, targets);
-    if (Object.keys(copy.spec.graph.steps).length === 1) copy.spec.graph.start = id;
+    copy.spec.graph.steps[id] = defaultStep(kind, targets, {
+      prompt: t("humanDefaultPrompt"),
+      approve: t("humanDefaultApprove"),
+      reject: t("humanDefaultReject"),
+    });
     const currentPositions = positions();
     const canvasBounds = canvasRef.current?.getBoundingClientRect();
     const viewportCenter =
@@ -547,14 +574,15 @@ function FlowEditorCanvas(props: {
       const existing = flow.spec.graph.transitions[sourceId];
       if (isRouteTransition(existing)) {
         setSelectedNodeId(logicNodeId(sourceId));
-        setLocalError(t("logicAlreadyExists"));
+        showError(t("logicAlreadyExists"));
         return;
       }
       const fields = routeFieldOptions(flow, sourceId);
       const inferred = fields.length === 1 ? fields[0] : undefined;
-      const route = createRouteTransition(inferred, existing);
+      const route = createRouteTransition(inferred);
       const copy = structuredClone(flow);
       copy.spec.graph.transitions[sourceId] = route;
+      if (existing !== undefined) removeOrphanedLoop(copy, existing);
       const nextLogicId = logicNodeId(sourceId);
       const nextPositions = { ...positions() };
       nextPositions[nextLogicId] = nextPositions[connection.target] ?? { x: 0, y: 0 };
@@ -590,7 +618,7 @@ function FlowEditorCanvas(props: {
       setSelectedNodeId(logicNodeId(semanticSource));
       setSelectedEdgeId(null);
       setInspectorOpen(true);
-      setLocalError(t("connectFromLogic"));
+      showError(t("connectFromLogic"));
       return;
     }
     patchFlow((copy) =>
@@ -631,7 +659,7 @@ function FlowEditorCanvas(props: {
     const api = desktopApi();
     if (api === undefined || saving) return;
     setCandidateIssues([]);
-    setLocalError(null);
+    setVisibleError(null);
     if (localIssues.length > 0) {
       setValidationOpen(true);
       return;
@@ -653,7 +681,7 @@ function FlowEditorCanvas(props: {
       baselineRef.current = JSON.stringify(flow);
       if (await persistLayout(true)) props.onCancel();
     } catch (cause) {
-      setLocalError(errorMessage(cause));
+      showError(errorMessage(cause));
     } finally {
       setSaving(false);
     }
@@ -795,7 +823,6 @@ function FlowEditorCanvas(props: {
               } else setSelectedNodeId(null);
             }}
             onEdgeClick={(_event, edge) => {
-              if (edge.id.endsWith(":logic-input")) return;
               setSelectedNodeId(null);
               setSelectedEdgeId(edge.id);
               setNodeContextMenu(null);
@@ -967,9 +994,9 @@ function FlowEditorCanvas(props: {
           )}
         </aside>
       ) : null}
-      {(localError ?? props.error) ? (
+      {visibleError !== null ? (
         <p className="flow-editor-error" role="alert">
-          {localError ?? props.error}
+          {visibleError.message}
         </p>
       ) : null}
     </section>
@@ -1013,6 +1040,16 @@ function StepNode(props: NodeProps<StepCanvasNode>) {
           : props.data.kind === "action"
             ? Sparkle
             : UserFocus;
+  const kindLabel =
+    props.data.kind === "expert"
+      ? t("expert")
+      : props.data.kind === "team"
+        ? t("expertTeam")
+        : props.data.kind === "flow"
+          ? t("subFlow")
+          : props.data.kind === "action"
+            ? t("action")
+            : t("humanInput");
   const singleOutput =
     props.data.outputs.length === 1 && props.data.outputs[0]?.id === "default"
       ? props.data.outputs[0]
@@ -1022,7 +1059,7 @@ function StepNode(props: NodeProps<StepCanvasNode>) {
       className={`flow-step-node is-${props.data.kind}${props.selected ? " is-selected" : ""}${props.data.invalid ? " is-invalid" : ""}`}
     >
       <Handle type="target" id="target" position={Position.Left} />
-      <span className="flow-step-kind">{props.data.kind}</span>
+      <span className="flow-step-kind">{kindLabel}</span>
       <div className="flow-step-main">
         <span className="flow-step-icon">
           <Icon size={18} />
@@ -1192,7 +1229,11 @@ function WorkflowEdge(props: EdgeProps) {
           <button
             className={`flow-edge-delete nodrag nopan${deleteVisible ? " is-visible" : ""}`}
             type="button"
-            aria-label={`Delete ${String(props.label ?? "connection")} edge`}
+            aria-label={
+              props.label === undefined
+                ? t("deleteEdge")
+                : t("deleteNamedEdge", { name: String(props.label) })
+            }
             title={t("deleteEdge")}
             style={{ transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY - 20}px)` }}
             onMouseEnter={showDelete}
@@ -1384,6 +1425,26 @@ function StepInspector(props: {
   if (step === undefined) return null;
   const kind = flowStepKind(step);
   const target = flowStepTarget(step);
+  const StepIcon =
+    kind === "expert"
+      ? Robot
+      : kind === "team"
+        ? UsersThree
+        : kind === "flow"
+          ? GitBranch
+          : kind === "action"
+            ? Sparkle
+            : UserFocus;
+  const kindLabel =
+    kind === "expert"
+      ? t("expert")
+      : kind === "team"
+        ? t("expertTeam")
+        : kind === "flow"
+          ? t("subFlow")
+          : kind === "action"
+            ? t("action")
+            : t("humanInput");
   const patchStep = (mutator: (copy: FlowStep) => void) =>
     props.onPatch((copy) => {
       const current = copy.spec.graph.steps[props.stepId];
@@ -1393,14 +1454,14 @@ function StepInspector(props: {
     <div className="flow-inspector-content">
       <header>
         <span className={`flow-inspector-icon is-${kind}`}>
-          <Robot size={19} />
+          <StepIcon size={19} />
         </span>
         <div>
           <strong>{props.stepId}</strong>
-          <small>{kind} step</small>
+          <small>{t("nodeKind", { kind: kindLabel })}</small>
         </div>
       </header>
-      <InspectorField label="Node ID">
+      <InspectorField label={t("nodeId")}>
         <input
           key={props.stepId}
           defaultValue={props.stepId}
@@ -1409,7 +1470,14 @@ function StepInspector(props: {
       </InspectorField>
       {kind === "human" ? (
         <>
-          <InspectorField label="Request type">
+          <section className="flow-human-purpose">
+            <UserFocus size={18} />
+            <div>
+              <strong>{t("humanPurposeTitle")}</strong>
+              <p>{t("humanPurposeDescription")}</p>
+            </div>
+          </section>
+          <InspectorField label={t("humanRequestType")}>
             <select
               value={step.human?.kind}
               onChange={(event) =>
@@ -1427,14 +1495,25 @@ function StepInspector(props: {
                 })
               }
             >
-              {["approval", "question", "review_gate", "manual_intervention"].map((value) => (
-                <option key={value}>{value}</option>
-              ))}
+              <option value="approval">{t("humanTypeApproval")}</option>
+              <option value="question">{t("humanTypeQuestion")}</option>
+              <option value="review_gate">{t("humanTypeReviewGate")}</option>
+              <option value="manual_intervention">{t("humanTypeManualIntervention")}</option>
             </select>
           </InspectorField>
-          <InspectorField label="Title">
+          <small className="flow-field-hint">
+            {step.human?.kind === "approval"
+              ? t("humanTypeApprovalHint")
+              : step.human?.kind === "question"
+                ? t("humanTypeQuestionHint")
+                : step.human?.kind === "review_gate"
+                  ? t("humanTypeReviewGateHint")
+                  : t("humanTypeManualInterventionHint")}
+          </small>
+          <InspectorField label={t("humanTitle")}>
             <input
               value={step.human?.title ?? ""}
+              placeholder={t("humanTitlePlaceholder")}
               onChange={(event) =>
                 patchStep((current) => {
                   if (current.human) current.human.title = event.target.value || undefined;
@@ -1442,10 +1521,11 @@ function StepInspector(props: {
               }
             />
           </InspectorField>
-          <InspectorField label="Prompt">
+          <InspectorField label={t("humanPrompt")}>
             <textarea
               rows={3}
               value={step.human?.prompt ?? ""}
+              placeholder={t("humanPromptPlaceholder")}
               onChange={(event) =>
                 patchStep((current) => {
                   if (current.human) current.human.prompt = event.target.value;
@@ -1456,7 +1536,7 @@ function StepInspector(props: {
           {step.human?.kind === "approval" ? (
             <>
               <StringListField
-                label="Approval choices"
+                label={t("humanApprovalChoices")}
                 values={step.human.options ?? ["approve", "reject"]}
                 onChange={(values) =>
                   patchStep((current) => {
@@ -1468,7 +1548,8 @@ function StepInspector(props: {
                   })
                 }
               />
-              <InspectorField label="Approved choice">
+              <small className="flow-field-hint">{t("humanApprovalChoicesHint")}</small>
+              <InspectorField label={t("humanApprovedChoice")}>
                 <select
                   value={step.human.approveOption ?? step.human.options?.[0] ?? "approve"}
                   onChange={(event) =>
@@ -1486,14 +1567,21 @@ function StepInspector(props: {
               </InspectorField>
             </>
           ) : null}
-          <HumanQuestionsEditor
-            questions={step.human?.questions ?? []}
-            onChange={(questions) =>
-              patchStep((current) => {
-                if (current.human) current.human.questions = questions;
-              })
-            }
-          />
+          <details className="flow-human-advanced">
+            <summary>{t("humanAdditionalQuestions")}</summary>
+            <p>{t("humanAdditionalQuestionsHint")}</p>
+            <HumanQuestionsEditor
+              questions={step.human?.questions ?? []}
+              onChange={(questions) =>
+                patchStep((current) => {
+                  if (current.human) {
+                    if (questions.length === 0) delete current.human.questions;
+                    else current.human.questions = questions;
+                  }
+                })
+              }
+            />
+          </details>
         </>
       ) : kind === "action" ? (
         <InspectorField label="Action reference">
@@ -2694,7 +2782,7 @@ function LogicInspector(props: {
   const visibleCases: readonly [string, PragmaFlowDestination][] = booleanField
     ? (["true", "false"] as const).map((key) => [
         key,
-        transition.cases[key] ?? ({ end: true } as PragmaFlowDestination),
+        transition.cases[key] ?? unconnectedDestination(),
       ])
     : Object.entries(transition.cases);
   const fieldLabel = `${sourceId}.result.${transition.route}`;
@@ -2727,12 +2815,12 @@ function LogicInspector(props: {
               route.route = event.target.value;
               if (field?.type === "boolean") {
                 route.cases = {
-                  true: route.cases["true"] ?? { end: true },
-                  false: route.cases["false"] ?? route.fallback ?? { end: true },
+                  true: route.cases["true"] ?? unconnectedDestination(),
+                  false: route.cases["false"] ?? route.fallback ?? unconnectedDestination(),
                 };
                 delete route.fallback;
               } else if (route.fallback === undefined) {
-                route.fallback = { end: true };
+                route.fallback = unconnectedDestination();
               }
               for (const destination of previousDestinations) {
                 removeOrphanedLoop(copy, destination);
@@ -2769,7 +2857,7 @@ function LogicInspector(props: {
               onClick={() =>
                 patchRoute((route) => {
                   const key = nextCaseKey(route.cases);
-                  route.cases = { ...route.cases, [key]: { end: true } };
+                  route.cases = { ...route.cases, [key]: unconnectedDestination() };
                 })
               }
             >
@@ -2794,7 +2882,15 @@ function LogicInspector(props: {
                 />
               )}
             </span>
-            <span className="flow-logic-branch-target">{destinationLabel(destination)}</span>
+            <span
+              className={`flow-logic-branch-target${
+                isUnconnectedDestination(destination) ? " is-unconnected" : ""
+              }`}
+            >
+              {isUnconnectedDestination(destination)
+                ? t("branchNotConnected")
+                : destinationLabel(destination)}
+            </span>
             {booleanField ? null : (
               <button
                 type="button"
@@ -2820,15 +2916,21 @@ function LogicInspector(props: {
           <button
             className="flow-logic-add-fallback"
             type="button"
-            onClick={() => patchRoute((route) => (route.fallback = { end: true }))}
+            onClick={() => patchRoute((route) => (route.fallback = unconnectedDestination()))}
           >
             <Plus size={14} /> {t("addFallback")}
           </button>
         ) : (
           <div className="flow-logic-branch-row is-fallback">
             <span className="flow-logic-branch-value">{t("otherBranch")}</span>
-            <span className="flow-logic-branch-target">
-              {destinationLabel(transition.fallback)}
+            <span
+              className={`flow-logic-branch-target${
+                isUnconnectedDestination(transition.fallback) ? " is-unconnected" : ""
+              }`}
+            >
+              {isUnconnectedDestination(transition.fallback)
+                ? t("branchNotConnected")
+                : destinationLabel(transition.fallback)}
             </span>
           </div>
         )}
@@ -2856,10 +2958,29 @@ function EdgeInspector(props: {
   const { t } = useTranslation("studio");
   const destination =
     props.edge === undefined ? undefined : edgeDestination(props.flow, props.edge);
-  if (props.edge === undefined || destination === undefined) {
+  if (props.edge === undefined) {
     return (
       <div className="flow-inspector-content">
         <p className="flow-field-hint">{t("selectControlEdge")}</p>
+      </div>
+    );
+  }
+  if (destination === undefined) {
+    return (
+      <div className="flow-inspector-content">
+        <header>
+          <span className="flow-inspector-icon">
+            <Path size={19} />
+          </span>
+          <div>
+            <strong>{t("flowEdge")}</strong>
+            <small>{props.edge.label}</small>
+          </div>
+        </header>
+        <p className="flow-field-hint">{t("logicInputEdgeHint")}</p>
+        <button className="flow-delete-node" type="button" onClick={props.onDelete}>
+          <Trash size={16} /> {t("deleteEdge")}
+        </button>
       </div>
     );
   }
@@ -3014,89 +3135,96 @@ function HumanQuestionsEditor(props: {
   readonly questions: readonly HumanQuestion[];
   readonly onChange: (questions: HumanQuestion[]) => void;
 }) {
+  const { t } = useTranslation("studio");
   const patch = (index: number, update: (question: HumanQuestion) => HumanQuestion) => {
     props.onChange(
       props.questions.map((question, current) => (current === index ? update(question) : question)),
     );
   };
   return (
-    <div className="flow-inspector-field">
-      <span>Questions</span>
+    <div className="flow-human-questions">
+      {props.questions.length === 0 ? (
+        <p className="flow-human-questions-empty">{t("humanNoAdditionalQuestions")}</p>
+      ) : null}
       {props.questions.map((question, index) => (
-        <div className="flow-inspector-grid" key={`${question.id}-${index}`}>
-          <input
-            aria-label={`Question ${index + 1} id`}
-            value={question.id}
-            placeholder="decision"
-            onChange={(event) =>
-              patch(index, (current) => ({ ...current, id: event.target.value }))
-            }
-          />
-          <select
-            aria-label={`Question ${index + 1} type`}
-            value={question.type}
-            onChange={(event) =>
-              patch(index, (current) => ({
-                ...current,
-                type: event.target.value as HumanQuestion["type"],
-                options: event.target.value === "text" ? [] : current.options,
-              }))
-            }
-          >
-            <option value="single_choice">single choice</option>
-            <option value="multiple_choice">multiple choice</option>
-            <option value="text">text</option>
-          </select>
-          <input
-            aria-label={`Question ${index + 1} label`}
-            value={question.label}
-            placeholder="What should happen?"
-            onChange={(event) =>
-              patch(index, (current) => ({ ...current, label: event.target.value }))
-            }
-          />
-          {question.type === "text" ? null : (
+        <section className="flow-human-question-card" key={`${question.id}-${index}`}>
+          <header>
+            <strong>{t("humanQuestionNumber", { number: index + 1 })}</strong>
+            <button
+              type="button"
+              className="flow-inspector-delete"
+              aria-label={t("humanRemoveQuestion", { number: index + 1 })}
+              onClick={() =>
+                props.onChange(props.questions.filter((_, current) => current !== index))
+              }
+            >
+              <Trash size={14} /> {t("remove")}
+            </button>
+          </header>
+          <InspectorField label={t("humanQuestionId")}>
             <input
-              aria-label={`Question ${index + 1} options`}
-              value={question.options.join(", ")}
-              placeholder="approve, revise, reject"
+              value={question.id}
+              placeholder={t("humanQuestionIdPlaceholder")}
+              onChange={(event) =>
+                patch(index, (current) => ({ ...current, id: event.target.value }))
+              }
+            />
+          </InspectorField>
+          <InspectorField label={t("humanQuestionType")}>
+            <select
+              value={question.type}
               onChange={(event) =>
                 patch(index, (current) => ({
                   ...current,
-                  options: event.target.value
-                    .split(",")
-                    .map((value) => value.trim())
-                    .filter(Boolean),
+                  type: event.target.value as HumanQuestion["type"],
+                  options: event.target.value === "text" ? [] : current.options,
+                }))
+              }
+            >
+              <option value="single_choice">{t("humanQuestionSingleChoice")}</option>
+              <option value="multiple_choice">{t("humanQuestionMultipleChoice")}</option>
+              <option value="text">{t("humanQuestionText")}</option>
+            </select>
+          </InspectorField>
+          <InspectorField label={t("humanQuestionLabel")}>
+            <input
+              value={question.label}
+              placeholder={t("humanQuestionLabelPlaceholder")}
+              onChange={(event) =>
+                patch(index, (current) => ({ ...current, label: event.target.value }))
+              }
+            />
+          </InspectorField>
+          {question.type === "text" ? null : (
+            <StringListField
+              label={t("humanQuestionOptions")}
+              values={question.options}
+              onChange={(options) =>
+                patch(index, (current) => ({
+                  ...current,
+                  options,
                 }))
               }
             />
           )}
-          <button
-            type="button"
-            className="flow-inspector-delete"
-            onClick={() =>
-              props.onChange(props.questions.filter((_, current) => current !== index))
-            }
-          >
-            Remove question
-          </button>
-        </div>
+        </section>
       ))}
       <button
         type="button"
+        className="flow-human-add-question"
         onClick={() =>
           props.onChange([
             ...props.questions,
             {
               id: `question_${props.questions.length + 1}`,
               type: "text",
-              label: "Question",
+              label: t("humanDefaultQuestion"),
               options: [],
             },
           ])
         }
       >
-        <Plus size={14} /> Add question
+        <Plus size={14} /> {t("humanAddQuestion")}
       </button>
     </div>
   );
@@ -3172,15 +3300,19 @@ function resourceTargets(
   });
 }
 
-function defaultStep(kind: FlowStepKind, targets: readonly ResourceTarget[]): FlowStep {
+function defaultStep(
+  kind: FlowStepKind,
+  targets: readonly ResourceTarget[],
+  humanCopy: { readonly prompt: string; readonly approve: string; readonly reject: string },
+): FlowStep {
   const version = "1.0.0";
   if (kind === "human")
     return {
       human: {
         kind: "approval",
-        prompt: "Approve this step",
-        options: ["approve", "reject"],
-        approveOption: "approve",
+        prompt: humanCopy.prompt,
+        options: [humanCopy.approve, humanCopy.reject],
+        approveOption: humanCopy.approve,
       },
       version,
     };
@@ -3247,24 +3379,20 @@ export function routeFieldOptions(
   );
 }
 
-export function createRouteTransition(
-  field: RouteFieldOption | undefined,
-  previous: PragmaFlowTransition | undefined,
-): RouteTransition {
-  const inherited =
-    previous === undefined || isRouteTransition(previous)
-      ? ({ end: true } as PragmaFlowDestination)
-      : previous;
+export function createRouteTransition(field: RouteFieldOption | undefined): RouteTransition {
   if (field?.type === "boolean") {
     return {
       route: field.name,
-      cases: { true: { end: true }, false: inherited },
+      cases: {
+        true: unconnectedDestination(),
+        false: unconnectedDestination(),
+      },
     };
   }
   return {
     route: field?.name ?? "result",
-    cases: {},
-    fallback: inherited,
+    cases: { value_1: unconnectedDestination() },
+    fallback: unconnectedDestination(),
   };
 }
 
@@ -3311,10 +3439,18 @@ function renameRouteCase(
 
 function destinationLabel(destination: PragmaFlowDestination): string {
   if (typeof destination === "string") return destination;
-  if ("goto" in destination) return destination.goto;
+  if ("goto" in destination) return destination.goto === "" ? "Not connected" : destination.goto;
   if ("end" in destination) return "End";
   if ("fail" in destination) return "Fail";
   return `${destination.repeat.goto} · ${destination.repeat.loop}`;
+}
+
+function unconnectedDestination(): PragmaFlowDestination {
+  return { goto: "" };
+}
+
+function isUnconnectedDestination(destination: PragmaFlowDestination): boolean {
+  return typeof destination === "object" && "goto" in destination && destination.goto === "";
 }
 
 function nextStepId(flow: PragmaFlowResource, kind: FlowStepKind): string {
@@ -3421,7 +3557,19 @@ function applyConnection(
 }
 
 export function removeEdgeFromFlow(flow: PragmaFlowResource, edge: Edge): void {
-  if (edge.id === "start-edge" || edge.id.endsWith(":logic-input")) return;
+  if (edge.id === "start-edge") {
+    flow.spec.graph.start = "";
+    return;
+  }
+  if (edge.id.endsWith(":logic-input")) {
+    const route = flow.spec.graph.transitions[edge.source];
+    if (!isRouteTransition(route)) return;
+    delete flow.spec.graph.transitions[edge.source];
+    for (const destination of transitionDestinations(route)) {
+      removeOrphanedLoop(flow, destination);
+    }
+    return;
+  }
   const routeSource = logicSourceId(edge.source);
   const source = routeSource ?? edge.source;
   const transition = flow.spec.graph.transitions[source];
@@ -3431,10 +3579,10 @@ export function removeEdgeFromFlow(flow: PragmaFlowResource, edge: Edge): void {
     if (edge.sourceHandle?.startsWith("case:")) {
       const caseName = edge.sourceHandle.slice(5);
       removed = transition.cases[caseName];
-      delete transition.cases[caseName];
+      transition.cases[caseName] = unconnectedDestination();
     } else if (edge.sourceHandle === "fallback") {
       removed = transition.fallback;
-      delete transition.fallback;
+      transition.fallback = unconnectedDestination();
     }
   } else {
     if (isRouteTransition(transition)) return;
@@ -3445,6 +3593,9 @@ export function removeEdgeFromFlow(flow: PragmaFlowResource, edge: Edge): void {
 }
 
 function edgeDestination(flow: PragmaFlowResource, edge: Edge): PragmaFlowDestination | undefined {
+  if (edge.id === "start-edge") {
+    return flow.spec.graph.start === "" ? undefined : { goto: flow.spec.graph.start };
+  }
   const routeSource = logicSourceId(edge.source);
   const source = routeSource ?? edge.source;
   const transition = flow.spec.graph.transitions[source];
@@ -3640,23 +3791,20 @@ export function buildCanvasNodes(
 }
 
 export function buildCanvasEdges(flow: PragmaFlowResource): Edge[] {
-  const startTarget =
-    flow.spec.graph.steps[flow.spec.graph.start] === undefined
-      ? END_NODE_ID
-      : flow.spec.graph.start;
-  const edges: Edge[] = [
-    {
+  const edges: Edge[] = [];
+  if (flow.spec.graph.steps[flow.spec.graph.start] !== undefined) {
+    edges.push({
       id: "start-edge",
       source: START_NODE_ID,
       sourceHandle: "start",
-      target: startTarget,
+      target: flow.spec.graph.start,
       targetHandle: "target",
       type: "workflow",
       animated: true,
-      deletable: false,
+      deletable: true,
       markerEnd: { type: MarkerType.ArrowClosed },
-    },
-  ];
+    });
+  }
   for (const [source, transition] of Object.entries(flow.spec.graph.transitions)) {
     if (isRouteTransition(transition)) {
       const logicId = logicNodeId(source);
@@ -3668,14 +3816,21 @@ export function buildCanvasEdges(flow: PragmaFlowResource): Edge[] {
         targetHandle: "target",
         label: "result",
         type: "workflow",
-        deletable: false,
+        deletable: true,
         markerEnd: { type: MarkerType.ArrowClosed },
       });
-      for (const [caseName, destination] of Object.entries(transition.cases))
-        edges.push(destinationEdge(logicId, `case:${caseName}`, destination, caseName));
-      if (transition.fallback !== undefined)
-        edges.push(destinationEdge(logicId, "fallback", transition.fallback, "otherwise"));
-    } else edges.push(destinationEdge(source, "default", transition, transitionMode(transition)));
+      for (const [caseName, destination] of Object.entries(transition.cases)) {
+        const edge = destinationEdge(logicId, `case:${caseName}`, destination, caseName);
+        if (edge !== null) edges.push(edge);
+      }
+      if (transition.fallback !== undefined) {
+        const edge = destinationEdge(logicId, "fallback", transition.fallback, "otherwise");
+        if (edge !== null) edges.push(edge);
+      }
+    } else {
+      const edge = destinationEdge(source, "default", transition, transitionMode(transition));
+      if (edge !== null) edges.push(edge);
+    }
   }
   return edges;
 }
@@ -3701,7 +3856,8 @@ function destinationEdge(
   sourceHandle: string,
   destination: PragmaFlowDestination,
   label: string,
-): Edge {
+): Edge | null {
+  if (isUnconnectedDestination(destination)) return null;
   const target =
     destinationTarget(destination) ??
     (typeof destination === "object" && "fail" in destination ? FAIL_NODE_ID : END_NODE_ID);
@@ -3714,6 +3870,7 @@ function destinationEdge(
     targetHandle: "target",
     label: repeat ? `${label} · ${destination.repeat.loop}` : label,
     type: "workflow",
+    deletable: true,
     animated: repeat,
     ...(repeat ? { className: "is-repeat-edge" } : {}),
     markerEnd: { type: MarkerType.ArrowClosed },

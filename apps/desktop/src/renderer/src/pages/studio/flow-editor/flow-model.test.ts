@@ -60,8 +60,8 @@ describe("Flow editor model", () => {
     const removed = deleteFlowStep(flow, "finish");
 
     expect(removed.spec.graph.steps["finish"]).toBeUndefined();
-    expect(removed.spec.graph.transitions["review"]).toEqual({ end: true });
-    expect(validateFlowDraft(removed)).toEqual([]);
+    expect(removed.spec.graph.transitions["review"]).toBeUndefined();
+    expect(validateFlowDraft(removed).length).toBeGreaterThan(0);
   });
 
   it("replaces deleted loop-limit destinations while preserving referenced loops", () => {
@@ -78,7 +78,6 @@ describe("Flow editor model", () => {
     expect(removed.spec.graph.loops["review_loop"]).toEqual({
       entry: "review",
       maxIterations: 3,
-      onLimit: { end: true },
     });
     expect(validateFlowDraft(removed)).toEqual([]);
   });
@@ -95,7 +94,12 @@ describe("Flow editor model", () => {
     const removed = deleteFlowStep(flow, "finish");
 
     expect(removed.spec.graph.loops["review_loop"]).toBeUndefined();
-    expect(validateFlowDraft(removed)).toEqual([]);
+    expect(validateFlowDraft(removed)).toEqual([
+      expect.objectContaining({
+        stepId: "review",
+        message: "Flow step has no transition: review",
+      }),
+    ]);
   });
 
   it("returns to the empty draft state after deleting the last step", () => {
@@ -107,6 +111,14 @@ describe("Flow editor model", () => {
     expect(validateFlowDraft(empty)).toEqual([
       { path: ["spec", "graph", "steps"], message: "Add at least one node." },
     ]);
+  });
+
+  it("leaves Start disconnected when its node is deleted", () => {
+    const flow = flowFixture();
+    const removed = deleteFlowStep(flow, "review");
+
+    expect(removed.spec.graph.start).toBe("");
+    expect(removed.spec.graph.steps.finish).toBeDefined();
   });
 
   it("blocks Action steps that Desktop cannot execute", () => {

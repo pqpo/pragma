@@ -8027,6 +8027,26 @@ p {
   color: #65539a;
 }
 
+.flow-step-node.is-human {
+  border-color: #d8ccb1;
+  background: #fffdf8;
+}
+
+.flow-step-node.is-human .flow-step-icon,
+.flow-inspector-icon.is-human,
+.flow-palette-item.is-human > span {
+  background: #f7edd7;
+  color: #8a642b;
+}
+
+.flow-step-node.is-human:hover,
+.flow-step-node.is-human.is-selected {
+  border-color: #b88a45;
+  box-shadow:
+    0 0 0 2px rgb(184 138 69 / 13%),
+    0 8px 19px rgb(69 54 35 / 12%);
+}
+
 .flow-logic-node:hover,
 .flow-logic-node.is-selected {
   border-color: #7b67ae;
@@ -8158,12 +8178,14 @@ p {
 }
 
 .flow-step-node:hover .flow-step-add-handle,
+.flow-logic-node:hover .flow-step-add-handle,
 .flow-step-add-handle.connectingfrom {
   opacity: 1;
   pointer-events: auto;
 }
 
 .flow-step-node:hover .flow-step-add-handle.is-single,
+.flow-logic-node:hover .flow-step-add-handle.is-single,
 .flow-step-add-handle.is-single.connectingfrom {
   width: 22px;
   height: 22px;
@@ -8172,6 +8194,7 @@ p {
 }
 
 .flow-step-node:hover .flow-step-add-handle.is-single > svg,
+.flow-logic-node:hover .flow-step-add-handle.is-single > svg,
 .flow-step-add-handle.is-single.connectingfrom > svg {
   opacity: 1;
   transform: scale(1);
@@ -8484,6 +8507,113 @@ p {
   color: #7d6529;
 }
 
+.flow-human-purpose {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr);
+  gap: 9px;
+  padding: 10px;
+  border: 1px solid #e2d5b8;
+  border-radius: 9px;
+  background: #fffaf0;
+  color: #765726;
+}
+
+.flow-human-purpose > svg {
+  margin: 2px auto 0;
+}
+
+.flow-human-purpose div {
+  display: grid;
+  gap: 3px;
+}
+
+.flow-human-purpose strong {
+  font-size: 11px;
+}
+
+.flow-human-purpose p,
+.flow-human-advanced > p,
+.flow-human-questions-empty {
+  margin: 0;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.flow-human-advanced {
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--surface-soft);
+}
+
+.flow-human-advanced > summary {
+  color: #59655d;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.flow-human-advanced > p {
+  margin-top: 7px;
+}
+
+.flow-human-questions {
+  display: grid;
+  gap: 9px;
+  margin-top: 10px;
+}
+
+.flow-human-question-card {
+  display: grid;
+  gap: 9px;
+  padding: 9px;
+  border: 1px solid #dfd7c8;
+  border-radius: 8px;
+  background: white;
+}
+
+.flow-human-question-card > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.flow-human-question-card > header strong {
+  font-size: 10px;
+}
+
+.flow-human-question-card > header button,
+.flow-human-add-question {
+  display: inline-flex;
+  min-height: 28px;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: white;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 10px;
+}
+
+.flow-human-question-card > header button:hover {
+  border-color: #e0b5af;
+  background: #fff3f1;
+  color: #a34e45;
+}
+
+.flow-human-add-question {
+  width: 100%;
+  border-color: #d8ccb1;
+  border-style: dashed;
+  background: #fffaf0;
+  color: #765726;
+}
+
 .flow-logic-branches {
   display: grid;
   gap: 8px;
@@ -8579,6 +8709,11 @@ p {
   font-size: 10px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.flow-logic-branch-target.is-unconnected {
+  color: #856fa7;
+  font-style: italic;
 }
 
 .flow-logic-branch-row > button {

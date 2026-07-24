@@ -14,6 +14,7 @@ import {
   createRouteTransition,
   END_NODE_ID,
   FAIL_NODE_ID,
+  FLOW_ERROR_AUTO_DISMISS_MS,
   FlowEditor,
   flowRuntimeProfile,
   flowVariableOptions,
@@ -30,6 +31,10 @@ import {
 } from "./FlowEditor.tsx";
 
 describe("Flow editor canvas", () => {
+  it("dismisses transient editor errors after five seconds", () => {
+    expect(FLOW_ERROR_AUTO_DISMISS_MS).toBe(5_000);
+  });
+
   it("exposes palette items as drag-only controls", () => {
     const project: PragmaProjectSnapshot = {
       schemaVersion: "pragma.project-snapshot/v2",
@@ -70,9 +75,7 @@ describe("Flow editor canvas", () => {
       expect(terminal?.position).toEqual(positions[terminalId]);
     }
     expect(nodes.find((node) => node.id === FAIL_NODE_ID)).toBeUndefined();
-    expect(buildCanvasEdges(createEmptyFlow())).toContainEqual(
-      expect.objectContaining({ id: "start-edge", target: END_NODE_ID }),
-    );
+    expect(buildCanvasEdges(createEmptyFlow())).toEqual([]);
 
     const defaultNodes = buildCanvasNodes(createEmptyFlow(), {});
     expect(defaultNodes.find((node) => node.id === START_NODE_ID)?.position.y).toBe(
@@ -124,9 +127,21 @@ describe("Flow editor canvas", () => {
       expert: { ref: "reviewer" },
       version: "1.0.0",
     };
-    flow.spec.graph.start = "expert_1";
 
+    expect(flow.spec.graph.start).toBe("");
+    expect(buildCanvasEdges(flow).some((edge) => edge.id === "start-edge")).toBe(false);
     expect(buildCanvasEdges(flow).some((edge) => edge.source === "expert_1")).toBe(false);
+  });
+
+  it("allows the Start connection to be deleted without selecting another start node", () => {
+    const flow = flowFixture();
+    const edge = buildCanvasEdges(flow).find((candidate) => candidate.id === "start-edge")!;
+
+    expect(edge.deletable).toBe(true);
+    removeEdgeFromFlow(flow, edge);
+
+    expect(flow.spec.graph.start).toBe("");
+    expect(buildCanvasEdges(flow).some((candidate) => candidate.id === "start-edge")).toBe(false);
   });
 
   it("removes a transition instead of replacing it with an End edge", () => {
@@ -209,7 +224,7 @@ describe("Flow editor canvas", () => {
           id: "review:logic-input",
           source: "review",
           target: logic?.id,
-          deletable: false,
+          deletable: true,
         }),
         expect.objectContaining({
           source: logic?.id,
@@ -223,6 +238,52 @@ describe("Flow editor canvas", () => {
         }),
       ]),
     );
+  });
+
+  it("deletes the condition and all branches when its input connection is deleted", () => {
+    const flow = flowFixture();
+    flow.spec.graph.transitions.review = {
+      route: "decision",
+      cases: { approve: { goto: "fix" }, reject: { end: true } },
+      fallback: { fail: "Unknown decision" },
+    };
+    flow.spec.graph.steps.fix = {
+      expert: { ref: "expert:fix@1.0.0" },
+      version: "1.0.0",
+    };
+    const edge = buildCanvasEdges(flow).find((candidate) => candidate.id === "review:logic-input")!;
+
+    removeEdgeFromFlow(flow, edge);
+
+    expect(flow.spec.graph.transitions.review).toBeUndefined();
+    expect(buildCanvasNodes(flow, {}).some((node) => node.type === "logic")).toBe(false);
+    expect(buildCanvasEdges(flow).some((candidate) => candidate.source === "review")).toBe(false);
+  });
+
+  it("deletes a branch connection while keeping its branch port available", () => {
+    const flow = flowFixture();
+    flow.spec.graph.transitions.review = {
+      route: "decision",
+      cases: { approve: { goto: "finish" } },
+      fallback: { end: true },
+    };
+    const edge = buildCanvasEdges(flow).find(
+      (candidate) => candidate.sourceHandle === "case:approve",
+    )!;
+
+    removeEdgeFromFlow(flow, edge);
+
+    expect(flow.spec.graph.transitions.review).toMatchObject({
+      cases: { approve: { goto: "" } },
+    });
+    expect(
+      buildCanvasNodes(flow, {})
+        .find((node) => node.type === "logic")
+        ?.data.outputs.some((output) => output.id === "case:approve"),
+    ).toBe(true);
+    expect(
+      buildCanvasEdges(flow).some((candidate) => candidate.sourceHandle === "case:approve"),
+    ).toBe(false);
   });
 
   it("infers scalar route fields and creates boolean true/false branches without result prefix", () => {
@@ -246,12 +307,7 @@ describe("Flow editor canvas", () => {
     };
 
     const fields = routeFieldOptions(flow, "review");
-    const route = createRouteTransition(
-      fields.find((field) => field.name === "has_issue"),
-      {
-        goto: "review",
-      },
-    );
+    const route = createRouteTransition(fields.find((field) => field.name === "has_issue"));
 
     expect(fields).toEqual([
       { name: "has_issue", type: "boolean" },
@@ -260,11 +316,15 @@ describe("Flow editor canvas", () => {
     expect(route).toEqual({
       route: "has_issue",
       cases: {
-        true: { end: true },
-        false: { goto: "review" },
+        true: { goto: "" },
+        false: { goto: "" },
       },
     });
     expect(route.route).not.toContain("result.");
+    flow.spec.graph.transitions.review = route;
+    expect(
+      buildCanvasEdges(flow).filter((edge) => edge.sourceHandle?.startsWith("case:")),
+    ).toHaveLength(0);
   });
 
   it("requires complete type-aware branches while preserving unresolved legacy route fields", () => {
