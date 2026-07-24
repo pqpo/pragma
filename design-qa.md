@@ -52,8 +52,8 @@ final result: passed
 # Desktop Flow 独立逻辑节点 Design QA
 
 - Source visual truth: `/tmp/codex-remote-attachments/019f8ec1-027e-77a1-8620-204da8d4a872/f43dc8f8-cdaf-4eef-9e94-f3b081ab1252/1-Photo-1.jpg`
-- Implementation screenshots: `design-qa/flow-logic-graph.png`, `design-qa/flow-logic-inspector.png`, `design-qa/flow-logic-focus.png`
-- Combined comparison: `design-qa/flow-logic-comparison.png`
+- Implementation screenshots and the combined comparison were used for local QA only and are
+  intentionally not tracked in Git.
 - Viewport: 1440 × 900 CSS px at DPR 2, light theme, real Electron renderer with preload bridge
 - State: unsaved QA flow containing one Expert step with structured Boolean output `has_issue`, one derived logic node, and generated `true` / `false` branches
 
