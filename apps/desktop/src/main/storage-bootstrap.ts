@@ -4,7 +4,8 @@ import { dirname, join } from "node:path";
 
 import { PragmaPaths, withFileLock } from "@pragma/core";
 
-const STORAGE_SCHEMA = "pragma.storage/v3" as const;
+const STORAGE_SCHEMA = "pragma.storage/v4" as const;
+const PREVIOUS_STORAGE_SCHEMA = "pragma.storage/v3" as const;
 const BOOTSTRAP_SCHEMA = "pragma.storage-bootstrap/v1" as const;
 const LEGACY_BACKUP_TTL_MS = 7 * 24 * 60 * 60 * 1_000;
 
@@ -25,11 +26,23 @@ export async function initializeDesktopStorage(input: {
   readonly trashItem?: ((path: string) => Promise<void>) | undefined;
 }): Promise<DesktopStorageBootstrapResult> {
   const now = input.now ?? new Date();
-  return await withFileLock(`${input.paths.root}.storage-v3.lock`, async () => {
+  return await withFileLock(`${input.paths.root}.storage-v4.lock`, async () => {
     const pending = await readBootstrapJournal(input.paths);
     const marker = await readStorageMarker(input.paths);
     if (marker !== undefined) {
-      if (marker.schemaVersion !== STORAGE_SCHEMA) {
+      if (marker.schemaVersion === PREVIOUS_STORAGE_SCHEMA) {
+        await writeJsonAtomic(`${input.paths.root}.storage-v3-to-v4.json`, {
+          schemaVersion: "pragma.storage-migration/v1",
+          sourceSchema: PREVIOUS_STORAGE_SCHEMA,
+          targetSchema: STORAGE_SCHEMA,
+          startedAt: now.toISOString(),
+        });
+        await writeJsonAtomic(input.paths.storageVersion(), {
+          schemaVersion: STORAGE_SCHEMA,
+          migratedAt: now.toISOString(),
+        });
+        await rm(`${input.paths.root}.storage-v3-to-v4.json`, { force: true });
+      } else if (marker.schemaVersion !== STORAGE_SCHEMA) {
         throw new Error(`Unsupported Pragma storage schema: ${String(marker.schemaVersion)}.`);
       }
       if (pending !== undefined) {
@@ -144,7 +157,7 @@ async function pathExists(path: string): Promise<boolean> {
 }
 
 function bootstrapJournalPath(paths: PragmaPaths): string {
-  return `${paths.root}.storage-v3-bootstrap.json`;
+  return `${paths.root}.storage-v4-bootstrap.json`;
 }
 
 async function trashExpiredLegacyBackup(

@@ -34,10 +34,9 @@ export const PromptRequestSchema = z.object({
 
 export const ExpertSessionRecordSchema = z
   .object({
-    schemaVersion: z.literal("pragma.expert-session/v4"),
+    schemaVersion: z.literal("pragma.expert-session/v5"),
     sessionId: z.string().min(1),
     expertId: z.string().min(1),
-    expertVersion: z.string().min(1),
     definitionFingerprint: z.string().length(64),
     status: z.enum(["open", "closed"]),
     activeExecutionId: z.string().min(1).optional(),

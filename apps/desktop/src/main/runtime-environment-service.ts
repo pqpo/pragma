@@ -165,6 +165,7 @@ export function createBuiltInRuntimeFactories(
   getToolPermissionMode: () =>
     | DesktopToolPermissionMode
     | Promise<DesktopToolPermissionMode> = () => "request-approval",
+  onModelCatalogUpdated?: ((runtimeId: string) => void) | undefined,
 ): readonly RuntimeEnvironmentAdapterFactory[] {
   return [
     {
@@ -176,6 +177,9 @@ export function createBuiltInRuntimeFactories(
         const permissions = codexRuntimePermissionsForMode(permissionMode);
         return createCodexRuntime({
           descriptor: { id: environment.id, displayName: environment.displayName },
+          ...(onModelCatalogUpdated === undefined
+            ? {}
+            : { onModelCatalogUpdated: () => onModelCatalogUpdated(environment.id) }),
           ...permissions,
         });
       },
@@ -188,6 +192,9 @@ export function createBuiltInRuntimeFactories(
         const permissionMode = context?.toolPermissionMode ?? (await getToolPermissionMode());
         return createClaudeCodeRuntime({
           descriptor: { id: environment.id, displayName: environment.displayName },
+          ...(onModelCatalogUpdated === undefined
+            ? {}
+            : { onModelCatalogUpdated: () => onModelCatalogUpdated(environment.id) }),
           permissionMode:
             permissionMode === "request-approval"
               ? "default"

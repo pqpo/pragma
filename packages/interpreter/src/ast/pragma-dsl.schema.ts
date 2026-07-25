@@ -1,50 +1,78 @@
+import { RuntimeModelSelectionSchema } from "@pragma/shared";
 import { z } from "zod";
 
-export const PragmaApiVersionSchema = z.literal("pragma/v2");
+import { PragmaObjectJsonSchemaSchema } from "./tool-capability.schema.ts";
+
+export const PragmaApiVersionSchema = z.literal("pragma/v3");
 
 export const PragmaResourceKindSchema = z.enum([
   "expert",
   "team",
   "flow",
+  "automation",
   "capability",
   "context-store",
   "runtime-profile",
 ]);
 
-const SEMANTIC_RESOURCE_ID = "[A-Za-z0-9][A-Za-z0-9_]*";
+const SEMANTIC_RESOURCE_ID = "[0-9a-hjkmnp-tv-z]{16}";
 const EXTENSION_RESOURCE_ID = "[A-Za-z0-9][A-Za-z0-9._-]*";
 const VERSION = "[A-Za-z0-9][A-Za-z0-9.+_-]*";
 
-export const PRAGMA_EXPERT_ID_MAX_LENGTH = 50;
+export const PRAGMA_RESOURCE_NAME_MAX_LENGTH = 200;
+export const PRAGMA_RESOURCE_DESCRIPTION_MAX_LENGTH = 4_000;
+export const PRAGMA_AUTOMATION_PROMPT_MAX_LENGTH = 100_000;
 
 export const PragmaSemanticResourceIdSchema = z
   .string()
   .trim()
+  .regex(
+    new RegExp(`^${SEMANTIC_RESOURCE_ID}$`),
+    "Expected a 16-character lowercase Crockford Base32 resource ID.",
+  );
+
+export const PragmaExpertIdSchema = PragmaSemanticResourceIdSchema;
+
+export const PragmaFlowNodeIdSchema = z
+  .string()
+  .trim()
   .min(1)
-  .max(120)
-  .regex(new RegExp(`^${SEMANTIC_RESOURCE_ID}$`), "Use only letters, numbers, and underscores.");
+  .max(100)
+  .regex(/^[A-Za-z0-9][A-Za-z0-9_-]*$/, "Use only letters, numbers, underscores, and hyphens.")
+  .refine(
+    (value) => !value.startsWith("__") && !["constructor", "prototype"].includes(value),
+    "Flow node IDs cannot use reserved names.",
+  );
 
-export const PragmaExpertIdSchema = PragmaSemanticResourceIdSchema.max(PRAGMA_EXPERT_ID_MAX_LENGTH);
+function semanticRefSchema(kinds: readonly string[], example: string) {
+  return z
+    .string()
+    .trim()
+    .regex(
+      new RegExp(`^(${kinds.join("|")}):${SEMANTIC_RESOURCE_ID}$`, "i"),
+      `Expected an exact Pragma reference such as ${example}.`,
+    );
+}
 
-function exactRefSchema(
+function versionedExtensionRefSchema(
   kinds: readonly string[],
   example: string,
-  resourceId: string = SEMANTIC_RESOURCE_ID,
+  resourceId: string = EXTENSION_RESOURCE_ID,
 ) {
   return z
     .string()
     .trim()
     .regex(
       new RegExp(`^(${kinds.join("|")}):${resourceId}@${VERSION}$`),
-      `Expected an exact Pragma reference such as ${example}.`,
+      `Expected a versioned extension reference such as ${example}.`,
     );
 }
 
-export const PragmaExpertRefSchema = exactRefSchema(
+export const PragmaExpertRefSchema = semanticRefSchema(
   ["expert"],
-  "expert:researcher@1.0.0",
+  "expert:7k2m9q4v8np6r3dt",
 ).superRefine((value, context) => {
-  const id = value.slice("expert:".length, value.lastIndexOf("@"));
+  const id = value.slice("expert:".length);
   const parsed = PragmaExpertIdSchema.safeParse(id);
   if (parsed.success) return;
   for (const issue of parsed.error.issues) {
@@ -53,31 +81,34 @@ export const PragmaExpertRefSchema = exactRefSchema(
 });
 export const PragmaInvocableResourceRefSchema = z.union([
   PragmaExpertRefSchema,
-  exactRefSchema(["team", "flow"], "team:delivery@1.0.0"),
+  semanticRefSchema(["team", "flow"], "team:7k2m9q4v8np6r3dt"),
 ]);
-export const PragmaCapabilityRefSchema = exactRefSchema(
+export const PragmaAutomationRefSchema = semanticRefSchema(
+  ["automation"],
+  "automation:7k2m9q4v8np6r3dt",
+);
+export const PragmaCapabilityRefSchema = semanticRefSchema(
   ["capability"],
-  "capability:repository_tools@1.0.0",
+  "capability:7k2m9q4v8np6r3dt",
 );
-export const PragmaContextStoreRefSchema = exactRefSchema(
+export const PragmaContextStoreRefSchema = semanticRefSchema(
   ["context-store"],
-  "context-store:project_docs@1.0.0",
+  "context-store:7k2m9q4v8np6r3dt",
 );
-export const PragmaRuntimeProfileRefSchema = exactRefSchema(
+export const PragmaRuntimeProfileRefSchema = semanticRefSchema(
   ["runtime-profile"],
-  "runtime-profile:desktop_codex@1.0.0",
+  "runtime-profile:7k2m9q4v8np6r3dt",
 );
 export const PragmaSemanticResourceRefSchema = z.union([
   PragmaExpertRefSchema,
-  exactRefSchema(
-    ["team", "flow", "capability", "context-store", "runtime-profile"],
-    "team:delivery@1.0.0",
+  semanticRefSchema(
+    ["team", "flow", "automation", "capability", "context-store", "runtime-profile"],
+    "team:7k2m9q4v8np6r3dt",
   ),
 ]);
-export const PragmaExtensionResourceRefSchema = exactRefSchema(
+export const PragmaExtensionResourceRefSchema = versionedExtensionRefSchema(
   ["action", "context-policy", "plugin"],
   "context-policy:pragma.fresh@v1",
-  EXTENSION_RESOURCE_ID,
 );
 export const PragmaResourceRefSchema = z.union([
   PragmaSemanticResourceRefSchema,
@@ -103,14 +134,8 @@ export const PragmaExtensionRefSchema = z
 export const PragmaMetadataSchema = z
   .object({
     id: PragmaSemanticResourceIdSchema,
-    version: z
-      .string()
-      .trim()
-      .min(1)
-      .max(100)
-      .regex(new RegExp(`^${VERSION}$`)),
-    name: z.string().trim().min(1).max(200),
-    description: z.string().trim().min(1).max(4_000),
+    name: z.string().trim().min(1).max(PRAGMA_RESOURCE_NAME_MAX_LENGTH),
+    description: z.string().trim().min(1).max(PRAGMA_RESOURCE_DESCRIPTION_MAX_LENGTH),
     tags: z.array(z.string().trim().min(1).max(100)).max(100).default([]),
   })
   .strict();
@@ -166,6 +191,31 @@ export const PragmaAdapterResourceSpecSchema = z
   })
   .strict();
 
+export const PragmaRuntimeProfileConfigSchema = z
+  .object({
+    runtimeId: z.string().trim().min(1),
+    providerId: z.string().trim().min(1).optional(),
+    model: z.string().trim().min(1).optional(),
+    thinkingLevel: z.string().trim().min(1).optional(),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    if ((value.providerId === undefined) !== (value.model === undefined)) {
+      context.addIssue({
+        code: "custom",
+        path: ["providerId"],
+        message: "A Runtime model requires both providerId and model.",
+      });
+    }
+    if (value.thinkingLevel !== undefined && value.model === undefined) {
+      context.addIssue({
+        code: "custom",
+        path: ["thinkingLevel"],
+        message: "A Runtime thinking level requires an explicit model.",
+      });
+    }
+  });
+
 export const PragmaToolBindingSchema = z
   .object({
     adapter: PragmaExtensionRefSchema,
@@ -187,10 +237,9 @@ export const PragmaToolBindingSchema = z
       .object({
         maxConcurrency: z.number().int().positive().default(4),
         maxDepth: z.number().int().positive().default(3),
-        context: exactRefSchema(
+        context: versionedExtensionRefSchema(
           ["context-policy"],
           "context-policy:pragma.fresh@v1",
-          EXTENSION_RESOURCE_ID,
         ).default("context-policy:pragma.fresh@v1"),
         runtimes: z.record(PragmaExpertIdSchema, PragmaRuntimeProfileRefSchema).default({}),
       })
@@ -251,11 +300,7 @@ export const PragmaExpertResourceSchema = z
           .array(
             z
               .object({
-                ref: exactRefSchema(
-                  ["plugin"],
-                  "plugin:pragma.memory@1.0.0",
-                  EXTENSION_RESOURCE_ID,
-                ),
+                ref: versionedExtensionRefSchema(["plugin"], "plugin:pragma.memory@1.0.0"),
                 config: z.record(z.string(), z.unknown()).optional(),
                 secretBindings: z.record(z.string(), PragmaBindingRefSchema).optional(),
               })
@@ -297,10 +342,9 @@ export const PragmaExpertTeamResourceSchema = z
             allow: z.record(PragmaExpertIdSchema, z.array(PragmaExpertIdSchema)).optional(),
             maxConcurrency: z.number().int().positive().default(4),
             maxDepth: z.number().int().positive().default(3),
-            context: exactRefSchema(
+            context: versionedExtensionRefSchema(
               ["context-policy"],
               "context-policy:pragma.fresh@v1",
-              EXTENSION_RESOURCE_ID,
             ).default("context-policy:pragma.fresh@v1"),
             runtimes: z.record(PragmaExpertIdSchema, PragmaRuntimeProfileRefSchema).default({}),
           })
@@ -311,15 +355,15 @@ export const PragmaExpertTeamResourceSchema = z
   .strict();
 
 export const PragmaFlowTargetSchema = z.union([
-  z.string().trim().min(1),
-  z.object({ goto: z.string().trim().min(1) }).strict(),
+  PragmaFlowNodeIdSchema,
+  z.object({ goto: PragmaFlowNodeIdSchema }).strict(),
   z.object({ end: z.literal(true) }).strict(),
   z.object({ fail: z.string().trim().min(1) }).strict(),
 ]);
 
 export const PragmaFlowRepeatTargetSchema = z
   .object({
-    repeat: z.object({ loop: z.string().trim().min(1), goto: z.string().trim().min(1) }).strict(),
+    repeat: z.object({ loop: PragmaFlowNodeIdSchema, goto: PragmaFlowNodeIdSchema }).strict(),
   })
   .strict();
 
@@ -328,23 +372,102 @@ export const PragmaFlowDestinationSchema = z.union([
   PragmaFlowRepeatTargetSchema,
 ]);
 
+const PragmaFlowVariablePathSchema = z
+  .array(
+    z
+      .string()
+      .trim()
+      .min(1)
+      .max(100)
+      .regex(/^[A-Za-z_][A-Za-z0-9_]*$/, "Use a JSON object field name."),
+  )
+  .max(5)
+  .default([]);
+
+export const PragmaFlowVariableSchema = z.discriminatedUnion("source", [
+  z
+    .object({
+      source: z.literal("flow-input"),
+      path: PragmaFlowVariablePathSchema,
+    })
+    .strict(),
+  z
+    .object({
+      source: z.literal("node-output"),
+      nodeId: PragmaFlowNodeIdSchema,
+      path: PragmaFlowVariablePathSchema,
+    })
+    .strict(),
+]);
+
+export const PragmaFlowPromptSchema = z
+  .object({
+    segments: z
+      .array(
+        z.union([
+          z.object({ text: z.string().max(20_000) }).strict(),
+          z.object({ variable: PragmaFlowVariableSchema }).strict(),
+        ]),
+      )
+      .max(500)
+      .default([]),
+  })
+  .strict();
+
 export const PragmaHumanRequestSchema = z
   .object({
-    kind: z.enum(["approval", "question", "review_gate", "manual_intervention"]),
-    title: z.string().min(1).optional(),
-    prompt: z.string().optional(),
-    questions: z
+    selectionMode: z.enum(["single", "multiple"]),
+    prompt: PragmaFlowPromptSchema,
+    options: z
       .array(
         z
           .object({
-            id: z.string().trim().min(1),
-            type: z.enum(["single_choice", "multiple_choice", "text"]),
-            label: z.string().min(1),
-            options: z.array(z.string()).default([]),
+            value: z.string().trim().min(1).max(200),
+            label: z.string().trim().min(1).max(500),
+            description: z.string().trim().max(2_000).optional(),
           })
           .strict(),
       )
-      .optional(),
+      .min(2)
+      .max(100),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    const values = new Set<string>();
+    const labels = new Set<string>();
+    value.options.forEach((option, index) => {
+      if (values.has(option.value)) {
+        context.addIssue({
+          code: "custom",
+          path: ["options", index, "value"],
+          message: "Human input option values must be unique.",
+        });
+      }
+      if (labels.has(option.label)) {
+        context.addIssue({
+          code: "custom",
+          path: ["options", index, "label"],
+          message: "Human input option labels must be unique.",
+        });
+      }
+      values.add(option.value);
+      labels.add(option.label);
+    });
+  });
+
+export const PragmaFlowArrayRouteBranchSchema = z
+  .object({
+    id: PragmaFlowNodeIdSchema,
+    operator: z.enum(["contains_any", "contains_all", "contains_none"]),
+    values: z.array(z.string().min(1)).min(1),
+    destination: PragmaFlowDestinationSchema,
+  })
+  .strict();
+
+export const PragmaFlowRuntimeBindingSchema = z
+  .object({
+    ref: PragmaRuntimeProfileRefSchema,
+    modelSelection: RuntimeModelSelectionSchema.optional(),
   })
   .strict();
 
@@ -352,33 +475,32 @@ export const PragmaFlowStepSchema = z
   .object({
     action: z
       .object({
-        ref: exactRefSchema(["action"], "action:review@1.0.0", EXTENSION_RESOURCE_ID),
+        ref: versionedExtensionRefSchema(["action"], "action:review@1.0.0"),
       })
       .strict()
       .optional(),
     expert: z.object({ ref: PragmaExpertRefSchema }).strict().optional(),
     team: z
-      .object({ ref: exactRefSchema(["team"], "team:delivery@1.0.0") })
+      .object({
+        ref: semanticRefSchema(["team"], "team:7k2m9q4v8np6r3dt"),
+      })
       .strict()
       .optional(),
     flow: z
-      .object({ ref: exactRefSchema(["flow"], "flow:review@1.0.0") })
+      .object({
+        ref: semanticRefSchema(["flow"], "flow:7k2m9q4v8np6r3dt"),
+      })
       .strict()
       .optional(),
     human: PragmaHumanRequestSchema.optional(),
-    version: z.string().trim().min(1).default("1.0.0"),
     input: z.unknown().optional(),
-    save: z
-      .string()
-      .trim()
-      .regex(/^state\.[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*$/)
-      .optional(),
-    context: exactRefSchema(
+    prompt: PragmaFlowPromptSchema.optional(),
+    output: z.object({ schema: PragmaObjectJsonSchemaSchema }).strict().optional(),
+    context: versionedExtensionRefSchema(
       ["context-policy"],
       "context-policy:pragma.fresh@v1",
-      EXTENSION_RESOURCE_ID,
     ).optional(),
-    runtime: PragmaRuntimeProfileRefSchema.optional(),
+    runtime: PragmaFlowRuntimeBindingSchema.optional(),
     runtimes: z.record(PragmaExpertIdSchema, PragmaRuntimeProfileRefSchema).optional(),
   })
   .strict()
@@ -392,15 +514,18 @@ export const PragmaFlowStepSchema = z
         message: "A Flow step must declare exactly one of action, expert, team, flow, or human.",
       });
     }
-    const statePath = value.save?.slice("state.".length).split(".") ?? [];
-    const forbidden = statePath.find((segment) =>
-      new Set(["__proto__", "prototype", "constructor"]).has(segment),
-    );
-    if (forbidden !== undefined || statePath[0]?.startsWith("__") === true) {
+    const isExpertStep = value.expert !== undefined || value.team !== undefined;
+    if (isExpertStep && value.input !== undefined) {
       context.addIssue({
         code: "custom",
-        path: ["save"],
-        message: "Flow save paths cannot use reserved or prototype-sensitive state segments.",
+        path: ["input"],
+        message: "Expert and Team Flow steps use prompt segments instead of input mappings.",
+      });
+    }
+    if (!isExpertStep && (value.prompt !== undefined || value.output !== undefined)) {
+      context.addIssue({
+        code: "custom",
+        message: "Prompt templates and structured output are only valid for Expert and Team steps.",
       });
     }
     if (
@@ -429,11 +554,31 @@ export const PragmaFlowTransitionSchema = z.union([
       fallback: PragmaFlowDestinationSchema.optional(),
     })
     .strict(),
+  z
+    .object({
+      route: z.string().trim().min(1),
+      branches: z.array(PragmaFlowArrayRouteBranchSchema).min(1),
+      fallback: PragmaFlowDestinationSchema.optional(),
+    })
+    .strict()
+    .superRefine((value, context) => {
+      const ids = new Set<string>();
+      value.branches.forEach((branch, index) => {
+        if (ids.has(branch.id)) {
+          context.addIssue({
+            code: "custom",
+            path: ["branches", index, "id"],
+            message: "Logic branch ids must be unique.",
+          });
+        }
+        ids.add(branch.id);
+      });
+    }),
 ]);
 
 export const PragmaFlowLoopSchema = z
   .object({
-    entry: z.string().trim().min(1),
+    entry: PragmaFlowNodeIdSchema,
     maxIterations: z.number().int().positive(),
     onLimit: PragmaFlowTargetSchema.optional(),
   })
@@ -441,10 +586,10 @@ export const PragmaFlowLoopSchema = z
 
 export const PragmaFlowGraphSchema = z
   .object({
-    start: z.string().trim().min(1),
-    steps: z.record(z.string().trim().min(1), PragmaFlowStepSchema),
-    loops: z.record(z.string().trim().min(1), PragmaFlowLoopSchema).default({}),
-    transitions: z.record(z.string().trim().min(1), PragmaFlowTransitionSchema),
+    start: PragmaFlowNodeIdSchema,
+    steps: z.record(PragmaFlowNodeIdSchema, PragmaFlowStepSchema),
+    loops: z.record(PragmaFlowNodeIdSchema, PragmaFlowLoopSchema).default({}),
+    transitions: z.record(PragmaFlowNodeIdSchema, PragmaFlowTransitionSchema),
   })
   .strict();
 
@@ -455,9 +600,9 @@ export const PragmaFlowResourceSchema = z
     metadata: PragmaMetadataSchema,
     spec: z
       .object({
-        input: z.object({ schema: z.unknown().optional() }).strict().optional(),
+        input: z.object({ schema: PragmaObjectJsonSchemaSchema }).strict().optional(),
         output: z
-          .object({ schema: z.unknown().optional(), value: z.unknown().optional() })
+          .object({ schema: PragmaObjectJsonSchemaSchema, value: z.unknown().optional() })
           .strict()
           .optional(),
         limits: z
@@ -472,6 +617,194 @@ export const PragmaFlowResourceSchema = z
       .strict(),
   })
   .strict();
+
+const PragmaAutomationTimeSchema = z
+  .string()
+  .regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Expected a 24-hour time such as 09:30.");
+
+const PragmaAutomationWindowSchema = z
+  .object({
+    startsAt: z.string().datetime({ offset: true }).optional(),
+    endsAt: z.string().datetime({ offset: true }).optional(),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    if (
+      value.startsAt !== undefined &&
+      value.endsAt !== undefined &&
+      Date.parse(value.endsAt) <= Date.parse(value.startsAt)
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "Automation endsAt must be after startsAt.",
+        path: ["endsAt"],
+      });
+    }
+  });
+
+export const PragmaScheduleTriggerSchema = z.discriminatedUnion("kind", [
+  z
+    .object({
+      kind: z.literal("once"),
+      at: z.string().datetime({ offset: true }),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("interval"),
+      every: z.number().int().positive(),
+      unit: z.enum(["minutes", "hours", "days", "weeks"]),
+      anchorAt: z.string().datetime({ offset: true }),
+      window: PragmaAutomationWindowSchema.optional(),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("calendar"),
+      frequency: z.enum(["daily", "weekdays", "weekly", "monthly"]),
+      time: PragmaAutomationTimeSchema,
+      timezone: z.string().trim().min(1).max(100),
+      weekdays: z
+        .array(z.enum(["mon", "tue", "wed", "thu", "fri", "sat", "sun"]))
+        .min(1)
+        .max(7)
+        .optional(),
+      dayOfMonth: z.number().int().min(1).max(31).optional(),
+      window: PragmaAutomationWindowSchema.optional(),
+    })
+    .strict()
+    .superRefine((value, context) => {
+      if (value.frequency === "weekly" && value.weekdays === undefined) {
+        context.addIssue({
+          code: "custom",
+          message: "Weekly schedules require at least one weekday.",
+          path: ["weekdays"],
+        });
+      }
+      if (value.frequency !== "weekly" && value.weekdays !== undefined) {
+        context.addIssue({
+          code: "custom",
+          message: "Only weekly schedules accept weekdays.",
+          path: ["weekdays"],
+        });
+      }
+      if (value.frequency === "monthly" && value.dayOfMonth === undefined) {
+        context.addIssue({
+          code: "custom",
+          message: "Monthly schedules require dayOfMonth.",
+          path: ["dayOfMonth"],
+        });
+      }
+      if (value.frequency !== "monthly" && value.dayOfMonth !== undefined) {
+        context.addIssue({
+          code: "custom",
+          message: "Only monthly schedules accept dayOfMonth.",
+          path: ["dayOfMonth"],
+        });
+      }
+    }),
+  z
+    .object({
+      kind: z.literal("cron"),
+      expression: z
+        .string()
+        .trim()
+        .refine(
+          (value) => value.split(/\s+/).length === 5,
+          "Automation Cron expressions must use five fields.",
+        ),
+      timezone: z.string().trim().min(1).max(100),
+      window: PragmaAutomationWindowSchema.optional(),
+    })
+    .strict(),
+]);
+
+export const PragmaScheduleAutomationConfigSchema = z
+  .object({
+    trigger: PragmaScheduleTriggerSchema,
+  })
+  .strict();
+
+export const PragmaAutomationPromptSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(PRAGMA_AUTOMATION_PROMPT_MAX_LENGTH);
+
+export const PragmaAutomationResourceSchema = z
+  .object({
+    apiVersion: PragmaApiVersionSchema,
+    kind: z.literal("Automation"),
+    metadata: PragmaMetadataSchema,
+    spec: z
+      .object({
+        adapter: PragmaExtensionRefSchema,
+        binding: PragmaBindingRefSchema,
+        config: z.unknown().default({}),
+        enabled: z.boolean().default(true),
+        route: z
+          .object({
+            executor: z.object({ ref: PragmaInvocableResourceRefSchema }).strict(),
+            input: z.discriminatedUnion("kind", [
+              z
+                .object({
+                  kind: z.literal("prompt"),
+                  value: PragmaAutomationPromptSchema,
+                })
+                .strict(),
+              z
+                .object({
+                  kind: z.literal("flow"),
+                  value: z.record(z.string(), z.unknown()),
+                })
+                .strict(),
+            ]),
+          })
+          .strict(),
+        interaction: z
+          .object({
+            mode: z.enum(["reuse-session", "new-mission"]).default("reuse-session"),
+          })
+          .strict()
+          .default({ mode: "reuse-session" }),
+        delivery: z
+          .object({
+            adapter: PragmaExtensionRefSchema.default("pragma.automation.delivery.local@v1"),
+          })
+          .strict()
+          .default({ adapter: "pragma.automation.delivery.local@v1" }),
+      })
+      .strict(),
+  })
+  .strict()
+  .superRefine((resource, context) => {
+    const flow = resource.spec.route.executor.ref.startsWith("flow:");
+    if (!flow && resource.spec.route.input.kind !== "prompt") {
+      context.addIssue({
+        code: "custom",
+        message: "Expert and Team automations require prompt input.",
+        path: ["spec", "route", "input"],
+      });
+    }
+    if (flow && resource.spec.interaction.mode !== "new-mission") {
+      context.addIssue({
+        code: "custom",
+        message: "Flow automations must create a new Mission for every event.",
+        path: ["spec", "interaction", "mode"],
+      });
+    }
+    if (resource.spec.adapter === "pragma.automation.schedule@v1") {
+      const parsed = PragmaScheduleAutomationConfigSchema.safeParse(resource.spec.config);
+      if (!parsed.success) {
+        for (const issue of parsed.error.issues) {
+          context.addIssue({
+            ...issue,
+            path: ["spec", "config", ...issue.path],
+          });
+        }
+      }
+    }
+  });
 
 export const PragmaCapabilityResourceSchema = z
   .object({
@@ -507,6 +840,7 @@ export const PragmaInvocableResourceSchema = z.discriminatedUnion("kind", [
 ]);
 
 export const PragmaDeclarativeResourceSchema = z.discriminatedUnion("kind", [
+  PragmaAutomationResourceSchema,
   PragmaCapabilityResourceSchema,
   PragmaContextStoreResourceSchema,
   PragmaRuntimeProfileResourceSchema,
@@ -516,6 +850,7 @@ export const PragmaResourceSchema = z.discriminatedUnion("kind", [
   PragmaExpertResourceSchema,
   PragmaExpertTeamResourceSchema,
   PragmaFlowResourceSchema,
+  PragmaAutomationResourceSchema,
   PragmaCapabilityResourceSchema,
   PragmaContextStoreResourceSchema,
   PragmaRuntimeProfileResourceSchema,
@@ -602,8 +937,8 @@ export const PragmaEnvironmentFingerprintSchema = z
       .array(
         z
           .object({
-            expertRef: exactRefSchema(["expert"], "expert:lead@1.0.0"),
-            ref: exactRefSchema(["plugin"], "plugin:pragma.memory@1.0.0", EXTENSION_RESOURCE_ID),
+            expertRef: PragmaExpertRefSchema,
+            ref: versionedExtensionRefSchema(["plugin"], "plugin:pragma.memory@1.0.0"),
             packageFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
             verificationFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
           })
@@ -621,6 +956,9 @@ export type PragmaArtifactSource = z.infer<typeof PragmaArtifactSourceSchema>;
 export type PragmaExpertResource = z.infer<typeof PragmaExpertResourceSchema>;
 export type PragmaExpertTeamResource = z.infer<typeof PragmaExpertTeamResourceSchema>;
 export type PragmaFlowResource = z.infer<typeof PragmaFlowResourceSchema>;
+export type PragmaAutomationResource = z.infer<typeof PragmaAutomationResourceSchema>;
+export type PragmaScheduleTrigger = z.infer<typeof PragmaScheduleTriggerSchema>;
+export type PragmaScheduleAutomationConfig = z.infer<typeof PragmaScheduleAutomationConfigSchema>;
 export type PragmaCapabilityResource = z.infer<typeof PragmaCapabilityResourceSchema>;
 export type PragmaContextStoreResource = z.infer<typeof PragmaContextStoreResourceSchema>;
 export type PragmaRuntimeProfileResource = z.infer<typeof PragmaRuntimeProfileResourceSchema>;
@@ -636,4 +974,7 @@ export type PragmaToolBinding = z.infer<typeof PragmaToolBindingSchema>;
 export type PragmaFlowTarget = z.infer<typeof PragmaFlowTargetSchema>;
 export type PragmaFlowTransition = z.infer<typeof PragmaFlowTransitionSchema>;
 export type PragmaFlowDestination = z.infer<typeof PragmaFlowDestinationSchema>;
+export type PragmaFlowPrompt = z.infer<typeof PragmaFlowPromptSchema>;
+export type PragmaFlowVariable = z.infer<typeof PragmaFlowVariableSchema>;
+export type PragmaRuntimeProfileConfig = z.infer<typeof PragmaRuntimeProfileConfigSchema>;
 export type PragmaHumanRequest = z.infer<typeof PragmaHumanRequestSchema>;

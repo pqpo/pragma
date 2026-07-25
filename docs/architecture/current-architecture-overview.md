@@ -64,7 +64,7 @@ Pragma 已经形成一个质量较好的**本地 Agent 执行内核**：Expert�
 | Plugin             | 插件可贡献 MCP、Skill、Model、Tool、Approval 和生命周期 Hook                         | 扩展面丰富，但 SPI 与具体能力边界还可收敛          |
 | Context            | ContextSystem 支持多 Store、元数据、检索、写入与装配                                 | 能力完整，但实现体量已经过大                       |
 | Desktop            | 已实现 Expert、Capability、Context Store、Model Provider、Mission 的本地管理         | 已是本地控制台，不再只是占位壳                     |
-| Capability Library | 本地能力不可变 revision、凭据独立加密、工具 schema hash 和显式 allowlist             | 是良好的供应链和变更治理基础                       |
+| Capability Library | 本地能力不可变 revision、凭据独立加密、工具快照和显式 allowlist                      | 是良好的供应链和变更治理基础                       |
 | Memory             | Task / Experience / Fact / Skill 和 Evidence / Distillation 已有实现                 | 功能已落地，但 Core 与 Plugin 的所有权不一致       |
 
 ### 尚未落地或仅为骨架
@@ -98,7 +98,9 @@ Runtime Session 由 ExpertSession context 或 FlowExecution Invocation 明确拥
 
 ### 4. Capability 使用不可变 revision
 
-Expert 固定引用 Capability revision 和 tool allowlist，健康状态与凭据独立管理，MCP schema drift 会在运行前失败。这比把 Skill、MCP 和 Secret 直接嵌入 Expert 配置更可治理。
+Expert 固定引用 Capability revision 和 tool allowlist，健康状态与凭据独立管理。MCP 参数 schema
+由服务端动态提供；运行前只要求 allowlist 中的工具仍然存在，工具删除时引导用户修改 Expert。这比把
+Skill、MCP 和 Secret 直接嵌入 Expert 配置更可治理，同时避免非破坏性的参数变化阻塞已有 Expert。
 
 ### 5. 依赖边界有自动化守卫
 
@@ -259,7 +261,7 @@ PI Adapter 的模型目录来自 Desktop 注册的 Model Provider；Codex 和 Cl
 | Local Agent Bridge | Desktop 入口和 runtime availability                            | 版本化协议、设备身份、心跳、断线续传、幂等 command、backpressure                   |
 | Policy             | Tool approval、HumanInteraction                                | tenant/device/workspace/runtime 四级策略、默认拒绝、可审计决策                     |
 | Scheduler          | Execution 与恢复语义                                           | queue、lease、retry、timeout、dead-letter、placement、fairness                     |
-| Capability         | revision、schema hash、credential separation                   | 签名与来源、发布/撤销、组织级目录、兼容性与供应链策略                              |
+| Capability         | revision、tool snapshot、credential separation                 | 签名与来源、发布/撤销、组织级目录、兼容性与供应链策略                              |
 | Plugin             | contribution + hooks                                           | typed config schema、hook failure policy、隔离、版本兼容和权限声明                 |
 | Memory             | 四类记忆、evidence、distillation                               | Core SPI、异步任务、retention、冲突治理、重新蒸馏和组织级隔离                      |
 | Observability      | 统一 Execution event envelope、Output 投影、logger、usage      | trace/span 关联、cost ledger、审计导出和 SLO                                       |

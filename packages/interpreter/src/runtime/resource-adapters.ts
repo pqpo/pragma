@@ -19,7 +19,10 @@ import { z } from "zod";
 
 import {
   PragmaArtifactSourceSchema,
+  PragmaScheduleAutomationConfigSchema,
+  PragmaRuntimeProfileConfigSchema,
   type PragmaArtifactSource,
+  type PragmaAutomationResource,
   type PragmaBindingRef,
   type PragmaCapabilityResource,
   type PragmaContextStoreResource,
@@ -72,10 +75,17 @@ export interface PragmaRuntimeProfileContribution {
   readonly models?: IExpertAgentModelsConfig | undefined;
 }
 
+export interface PragmaAutomationContribution {
+  readonly adapter: string;
+  readonly binding: PragmaBindingRef;
+  readonly config: unknown;
+}
+
 export type PragmaResourceContribution =
   | PragmaCapabilityContribution
   | PragmaContextStoreContribution
-  | PragmaRuntimeProfileContribution;
+  | PragmaRuntimeProfileContribution
+  | PragmaAutomationContribution;
 
 export interface PragmaAdapterVerification {
   readonly fingerprint: string;
@@ -378,30 +388,16 @@ const HostContextBindingSchema = z
   })
   .strict();
 
-const RuntimeProfileConfigSchema = z
+const ScheduleAutomationBindingSchema = z
   .object({
-    runtimeId: z.string().trim().min(1),
-    providerId: z.string().trim().min(1).optional(),
-    model: z.string().trim().min(1).optional(),
-    thinkingLevel: z.string().trim().min(1).optional(),
+    workspace: z.string().trim().min(1).max(2_000),
+    placement: z.literal("desktop").default("desktop"),
+    toolPermissionMode: z
+      .enum(["request-approval", "auto-approve", "full-access"])
+      .default("request-approval"),
+    modelOverride: z.unknown().optional(),
   })
-  .strict()
-  .superRefine((value, context) => {
-    if ((value.providerId === undefined) !== (value.model === undefined)) {
-      context.addIssue({
-        code: "custom",
-        path: ["providerId"],
-        message: "A Runtime model requires both providerId and model.",
-      });
-    }
-    if (value.thinkingLevel !== undefined && value.model === undefined) {
-      context.addIssue({
-        code: "custom",
-        path: ["thinkingLevel"],
-        message: "A Runtime thinking level requires an explicit model.",
-      });
-    }
-  });
+  .strict();
 
 export function createDefaultPragmaResourceAdapterRegistry(): PragmaResourceAdapterRegistry {
   return new PragmaResourceAdapterRegistry()
@@ -414,7 +410,31 @@ export function createDefaultPragmaResourceAdapterRegistry(): PragmaResourceAdap
     .register(staticContextAdapter("pragma.context.note"))
     .register(staticContextAdapter("pragma.context.static"))
     .register(hostContextAdapter())
+    .register(scheduleAutomationAdapter())
     .register(runtimeProfileAdapter());
+}
+
+function scheduleAutomationAdapter(): PragmaResourceAdapter<PragmaAutomationResource> {
+  return {
+    id: "pragma.automation.schedule",
+    version: "v1",
+    kind: "Automation",
+    configSchema: PragmaScheduleAutomationConfigSchema,
+    bindingSchema: ScheduleAutomationBindingSchema,
+    bindingRequired: true,
+    async verify({ resource, config, binding }) {
+      PragmaScheduleAutomationConfigSchema.parse(config);
+      ScheduleAutomationBindingSchema.parse(binding!.value);
+      return {
+        fingerprint: sha256(stableStringify({ config, binding: binding!.revision })),
+        contribution: {
+          adapter: resource.spec.adapter,
+          binding: resource.spec.binding,
+          config,
+        },
+      };
+    },
+  };
 }
 
 function skillAdapter(): PragmaResourceAdapter<PragmaCapabilityResource> {
@@ -449,7 +469,6 @@ function skillAdapter(): PragmaResourceAdapter<PragmaCapabilityResource> {
                 description: resource.metadata.description,
                 path: entry,
                 baseDir: root,
-                version: resource.metadata.version,
               },
             ],
           },
@@ -670,9 +689,9 @@ function runtimeProfileAdapter(): PragmaResourceAdapter<PragmaRuntimeProfileReso
     id: "pragma.runtime.profile",
     version: "v1",
     kind: "RuntimeProfile",
-    configSchema: RuntimeProfileConfigSchema,
+    configSchema: PragmaRuntimeProfileConfigSchema,
     async verify({ config }) {
-      const parsed = RuntimeProfileConfigSchema.parse(config);
+      const parsed = PragmaRuntimeProfileConfigSchema.parse(config);
       const models =
         parsed.model === undefined || parsed.providerId === undefined
           ? undefined

@@ -1,6 +1,6 @@
 ---
 name: author-pragma-dsl
-description: Create and update validated pragma/v2 Expert, ExpertTeam, and Flow resources. Use when a user asks Pragma to create, change, configure, or repair an Expert, team, or Flow in the current Pragma project.
+description: Create and update validated pragma/v3 Expert, ExpertTeam, Flow, and Automation resources. Use when a user asks Pragma to create, change, configure, or repair an Expert, team, Flow, schedule, trigger, or Automation in the current Pragma project.
 ---
 
 # Author Pragma DSL
@@ -16,19 +16,35 @@ source of truth and use only the Pragma DSL tools to inspect, validate, and save
    model, recommend only listed capabilities that match the user's intent, and ask whether to use
    the recommendation, customize it, or enable no capabilities.
 4. Read the relevant reference file below before drafting YAML.
-5. Preserve exact references. Keep an existing resource version unless the user asks for a new
-   version or the change intentionally introduces a separately addressable contract.
-6. Call `prepare_dsl_changes` with complete YAML documents for all affected resources.
-7. Fix every error diagnostic. Never bypass validation or hand-edit project files.
-8. Explain the normalized diff, then call `commit_dsl_changes` with the returned change-set ID.
-9. After the tool returns, always report success or failure, the committed project revision, and
-   the changed canonical refs.
+5. Before authoring any new resource, call `allocate_dsl_resource_ids` once for the complete set and
+   use the returned Host-generated IDs and exact references. Preserve IDs when editing; never invent,
+   copy, or change an ID.
+6. For every Flow creation or non-trivial Flow edit, call `create_flow_draft`. Build it in small
+   batches with `update_flow_draft`: contracts, steps, start, transitions, then loops. Read the
+   returned diagnostics after every batch and call `validate_flow_draft` before preparing.
+7. Call `prepare_flow_draft` only when the draft has no incomplete or error diagnostics. Include
+   any new Expert or ExpertTeam YAML in `additionalSources` so the final change remains atomic.
+   Use `prepare_dsl_changes` directly only for complete non-Flow resources.
+8. Fix every diagnostic. Never bypass validation or hand-edit project files. If the project
+   revision changed, reread affected resources and explicitly rebase the draft before retrying.
+9. Explain the normalized diff, then call `commit_dsl_changes` with the returned change-set ID.
+10. After the tool returns, always report success or failure, the committed project revision, and
+    the changed canonical refs.
+
+For Automation work, use `list_automations` before editing. Use `save_automation` instead of the
+generic prepare/commit pair because the host workspace and permission binding must be saved with the
+portable DSL. Use the same tool to enable or disable an Automation. `delete_automation` retains
+existing Missions; `reset_automation_session` only changes which Mission the next event continues.
+Before preparing or saving, enforce the Automation metadata and prompt limits documented in
+`references/automation.md`; never rely on the host to truncate authored values.
 
 ## References
 
 - Expert resources: read [references/expert.md](references/expert.md).
 - ExpertTeam resources: read [references/expert-team.md](references/expert-team.md).
 - Flow resources: read [references/flow.md](references/flow.md).
+- Automation resources: read [references/automation.md](references/automation.md).
+- Tested Flow patterns: read [references/flow-patterns.md](references/flow-patterns.md).
 - Exact refs, shared resources, and versioning: read
   [references/resources-and-references.md](references/resources-and-references.md).
 

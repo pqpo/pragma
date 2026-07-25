@@ -51,6 +51,21 @@ export const common = {
   errors: {
     generic: "The change could not be saved.",
   },
+  startupFailure: {
+    eyebrow: "Startup problem",
+    bridge: {
+      title: "The Desktop bridge could not be loaded",
+      description:
+        "Pragma could not connect the interface to its local Desktop services. Your data has not been changed.",
+    },
+    renderer: {
+      title: "Pragma could not finish starting",
+      description: "The Desktop interface encountered an unexpected problem while it was starting.",
+    },
+    logHint: "Reload the app. If the problem continues, check the terminal for the startup error.",
+    diagnosticCode: "Diagnostic code: {{code}}",
+    reload: "Reload Pragma",
+  },
   counts: {
     model_one: "{{count}} model",
     model_other: "{{count}} models",

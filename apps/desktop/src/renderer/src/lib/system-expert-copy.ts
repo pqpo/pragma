@@ -16,7 +16,7 @@ interface SystemExpertDisplaySource extends ExpertDisplayCopy {
   readonly customized: boolean;
 }
 
-export const BUILT_IN_PRAGMA_EXPERT_REF = "expert:pragma@1.0.0";
+export const BUILT_IN_PRAGMA_EXPERT_REF = "expert:0000000000pragma";
 
 export function localizeSystemExpertCopy(
   source: SystemExpertDisplaySource,

@@ -23,7 +23,7 @@ describe("DesktopSystemExpertRegistry", () => {
 
     expect(definition).toMatchObject({
       ref: BUILT_IN_PRAGMA_REF,
-      id: "pragma",
+      id: "0000000000pragma",
       name: "Pragma",
       description: expect.stringContaining("general-purpose Agent"),
       origin: "built-in",
@@ -44,7 +44,7 @@ describe("DesktopSystemExpertRegistry", () => {
       }),
     );
     expect(registry.isReservedRef(BUILT_IN_PRAGMA_REF)).toBe(true);
-    expect(registry.isReservedId("pragma")).toBe(true);
+    expect(registry.isReservedId("0000000000pragma")).toBe(true);
     expect(registry.fingerprint(BUILT_IN_PRAGMA_REF)).toMatch(/^[a-f0-9]{64}$/);
   });
 
@@ -99,12 +99,7 @@ describe("DesktopSystemExpertRegistry", () => {
       "User customization:\nPrefer concise plans",
     );
     expect(registry.getResource(BUILT_IN_PRAGMA_REF)?.spec.capabilities).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          ref: expect.stringContaining(capabilityId.replaceAll("-", "")),
-          tools: ["search_docs"],
-        }),
-      ]),
+      expect.arrayContaining([expect.objectContaining({ tools: ["search_docs"] })]),
     );
     expect(registry.getAdditionalResources(BUILT_IN_PRAGMA_REF)).toHaveLength(2);
     expect(registry.fingerprint(BUILT_IN_PRAGMA_REF)).not.toBe(originalFingerprint);

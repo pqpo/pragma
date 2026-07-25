@@ -12,13 +12,15 @@ import {
 } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
-import { withFileLock } from "@pragma/core";
+import { derivePragmaResourceId, withFileLock } from "@pragma/core";
 import { formatPragmaYaml, parsePragmaYaml } from "@pragma/interpreter";
 import { z } from "zod";
 
 import {
   MissionIdSchema,
   MissionSchema,
+  MissionV3Schema,
+  MissionV4Schema,
   MissionTimelineRecordSchema,
   MissionChatEntrySchema,
   MissionUserMessageSchema,
@@ -31,6 +33,11 @@ import {
   type MissionUserMessage,
   type DesktopToolPermissionMode,
 } from "../shared/desktop-api.ts";
+import {
+  MissionExecutionProjectionError,
+  readMissionExecutionProjection,
+  writeMissionExecutionProjection,
+} from "./mission-execution-projection.ts";
 
 export interface MissionTimelineTurn {
   readonly sequence: number;
@@ -51,8 +58,11 @@ export interface MissionStore {
   list(): Promise<MissionSummary[]>;
   get(id: string): Promise<Mission>;
   create(input: {
+    readonly id?: string | undefined;
     readonly workspace: { readonly path: string; readonly basename: string };
     readonly goal: string;
+    readonly title?: string | undefined;
+    readonly flowInput?: Readonly<Record<string, unknown>> | undefined;
     readonly project: { readonly id: string; readonly revision: number };
     readonly executor: MissionExecutor;
     readonly toolPermissionMode?: DesktopToolPermissionMode | undefined;
@@ -105,6 +115,7 @@ export class MissionStoreError extends Error {
       | "mission_active"
       | "unsupported_schema"
       | "timeline_invalid"
+      | "projection_invalid"
       | "message_conflict"
       | "config_invalid",
     message: string,
@@ -127,8 +138,10 @@ export function createMissionStore(options: { readonly missionsPath: string }): 
   const manifestPath = (id: string) => join(missionPath(id), "mission.yaml");
   const messagesPath = (id: string) => join(missionPath(id), "messages.jsonl");
   const transactionPath = (id: string) => join(missionPath(id), ".messages.transaction.json");
-  const projectionPath = (id: string, executionId: string) =>
+  const legacyProjectionPath = (id: string, executionId: string) =>
     join(missionPath(id), "execution-projections", `${executionId}.json`);
+  const projectionPath = (id: string, executionId: string) =>
+    join(missionPath(id), "execution-projections", `${executionId}.jsonl`);
   const lockPath = (id: string) => join(options.missionsPath, ".locks", `${id}.lock`);
   const timelineCache = new Map<
     string,
@@ -166,13 +179,48 @@ export function createMissionStore(options: { readonly missionsPath: string }): 
   const readMissionUnlocked = async (id: string): Promise<Mission> => {
     try {
       const value = parsePragmaYaml(await readFile(manifestPath(id), "utf8"));
-      if (readSchemaVersion(value) !== "pragma.mission/v3") {
+      const schemaVersion = readSchemaVersion(value);
+      let current = value;
+      if (schemaVersion === "pragma.mission/v3") {
+        const legacy = MissionV3Schema.parse(value);
+        current = MissionV4Schema.parse({
+          ...legacy,
+          schemaVersion: "pragma.mission/v4",
+          ...(legacy.executor.kind === "flow"
+            ? {
+                flowInput: {
+                  goal: legacy.goal,
+                  workspace: legacy.workspace.path,
+                },
+              }
+            : {}),
+        });
+        await writeYamlAtomically(manifestPath(id), current);
+      }
+      const currentVersion = readSchemaVersion(current);
+      if (currentVersion === "pragma.mission/v4") {
+        const legacy = MissionV4Schema.parse(current);
+        const { version: _version, ...executor } = legacy.executor;
+        void _version;
+        const migratedExecutor = {
+          ...executor,
+          ref: migrateMissionExecutorRef(executor.ref, legacy.project.id),
+        };
+        const migrated = MissionSchema.parse({
+          ...legacy,
+          schemaVersion: "pragma.mission/v5",
+          executor: migratedExecutor,
+        });
+        await writeYamlAtomically(manifestPath(id), migrated);
+        return migrated;
+      }
+      if (currentVersion !== "pragma.mission/v5") {
         throw new MissionStoreError(
           "unsupported_schema",
           `Mission ${id} uses an unsupported schema. Remove the old Mission directory and create a new Mission.`,
         );
       }
-      return MissionSchema.parse(value);
+      return MissionSchema.parse(current);
     } catch (error) {
       throw normalizeReadError(error, id);
     }
@@ -269,32 +317,54 @@ export function createMissionStore(options: { readonly missionsPath: string }): 
       timelineCache.delete(id);
     },
     async readExecutionProjection(id, executionId) {
-      try {
-        const value = JSON.parse(await readFile(projectionPath(id, executionId), "utf8")) as {
-          readonly schemaVersion?: unknown;
-          readonly entries?: unknown;
-        };
-        if (value.schemaVersion !== "pragma.mission-execution-projection/v1") {
+      const parsedId = MissionIdSchema.parse(id);
+      return await withMissionLock(parsedId, async () => {
+        await readMissionUnlocked(parsedId);
+        try {
+          const current = await readMissionExecutionProjection(
+            projectionPath(parsedId, executionId),
+            executionId,
+          );
+          if (current !== undefined) return current;
+          const legacy = await readLegacyExecutionProjection(
+            legacyProjectionPath(parsedId, executionId),
+          );
+          if (legacy === undefined) return undefined;
+          await writeMissionExecutionProjection(
+            projectionPath(parsedId, executionId),
+            executionId,
+            legacy,
+          );
+          await rm(legacyProjectionPath(parsedId, executionId), { force: true });
+          return await readMissionExecutionProjection(
+            projectionPath(parsedId, executionId),
+            executionId,
+          );
+        } catch (error) {
+          if (error instanceof MissionStoreError) throw error;
           throw new MissionStoreError(
-            "unsupported_schema",
-            "Unsupported Mission projection schema.",
+            "projection_invalid",
+            error instanceof Error ? error.message : String(error),
           );
         }
-        return MissionChatEntrySchema.array().parse(value.entries);
-      } catch (error) {
-        if (isNodeError(error, "ENOENT")) return undefined;
-        throw error;
-      }
+      });
     },
     async writeExecutionProjection(id, executionId, entries) {
       await withMissionLock(MissionIdSchema.parse(id), async () => {
         await readMissionUnlocked(id);
-        await writeJsonAtomically(projectionPath(id, executionId), {
-          schemaVersion: "pragma.mission-execution-projection/v1",
-          executionId,
-          entries: MissionChatEntrySchema.array().parse(entries),
-          createdAt: new Date().toISOString(),
-        });
+        try {
+          await writeMissionExecutionProjection(
+            projectionPath(id, executionId),
+            executionId,
+            entries,
+          );
+          await rm(legacyProjectionPath(id, executionId), { force: true });
+        } catch (error) {
+          if (error instanceof MissionExecutionProjectionError) {
+            throw new MissionStoreError("projection_invalid", error.message);
+          }
+          throw error;
+        }
       });
     },
     async list() {
@@ -315,20 +385,21 @@ export function createMissionStore(options: { readonly missionsPath: string }): 
       return await readMission(MissionIdSchema.parse(id));
     },
     async create(input) {
-      const id = randomUUID();
+      const id = MissionIdSchema.parse(input.id ?? randomUUID());
       const initialMessageId = randomUUID();
       const timestamp = new Date().toISOString();
       const goal = input.goal.trim();
       const mission = MissionSchema.parse({
-        schemaVersion: "pragma.mission/v3",
+        schemaVersion: "pragma.mission/v5",
         id,
-        title: titleFromGoal(goal),
+        title: input.title === undefined ? titleFromGoal(goal) : normalizeMissionTitle(input.title),
         goal,
         initialMessageId,
         toolPermissionMode: input.toolPermissionMode ?? "request-approval",
         workspace: input.workspace,
         project: input.project,
         executor: input.executor,
+        ...(input.flowInput === undefined ? {} : { flowInput: input.flowInput }),
         ...(input.modelOverride === undefined ? {} : { modelOverride: input.modelOverride }),
         lifecycleStatus: "active",
         createdAt: timestamp,
@@ -481,6 +552,14 @@ export function createMissionStore(options: { readonly missionsPath: string }): 
   };
 }
 
+function migrateMissionExecutorRef(ref: string, projectId: string): string {
+  const match = /^(expert|team|flow):([^@]+)@[^@]+$/.exec(ref);
+  if (match === null) return ref;
+  if (match[1] === "expert" && match[2] === "pragma") return "expert:0000000000pragma";
+  const kind = match[1] === "expert" ? "Expert" : match[1] === "team" ? "ExpertTeam" : "Flow";
+  return `${match[1]}:${derivePragmaResourceId(`${projectId}\0${kind}\0${match[2]}`)}`;
+}
+
 function toMissionSummary(mission: Mission): MissionSummary {
   return {
     id: mission.id,
@@ -607,6 +686,23 @@ async function readJsonIfExists(path: string): Promise<unknown | undefined> {
     if (isNodeError(error, "ENOENT")) return undefined;
     throw error;
   }
+}
+
+async function readLegacyExecutionProjection(
+  path: string,
+): Promise<readonly MissionChatEntry[] | undefined> {
+  const value = await readJsonIfExists(path);
+  if (value === undefined) return undefined;
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    !("schemaVersion" in value) ||
+    value.schemaVersion !== "pragma.mission-execution-projection/v1" ||
+    !("entries" in value)
+  ) {
+    throw new MissionStoreError("unsupported_schema", "Unsupported Mission projection schema.");
+  }
+  return MissionChatEntrySchema.array().parse(value.entries);
 }
 
 function findSameIdentity(

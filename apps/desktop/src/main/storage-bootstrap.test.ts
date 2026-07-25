@@ -16,7 +16,7 @@ afterEach(async () => {
 });
 
 describe("Desktop storage bootstrap", () => {
-  it("backs up an old root and creates storage v3 without importing old state", async () => {
+  it("backs up an old root and creates storage v4 without importing old state", async () => {
     const parent = await mkdtemp(join(tmpdir(), "pragma-storage-bootstrap-"));
     roots.push(parent);
     const paths = new PragmaPaths({ pragmaHome: join(parent, ".pragma") });
@@ -29,7 +29,7 @@ describe("Desktop storage bootstrap", () => {
     });
 
     expect(result.created).toBe(true);
-    await expect(readFile(paths.storageVersion(), "utf8")).resolves.toContain("pragma.storage/v3");
+    await expect(readFile(paths.storageVersion(), "utf8")).resolves.toContain("pragma.storage/v4");
     await expect(
       readFile(join(result.legacyBackup!, "state", "runtime-sessions", "old.json"), "utf8"),
     ).resolves.toBe("old");
@@ -62,7 +62,7 @@ describe("Desktop storage bootstrap", () => {
     expect(trashItem).toHaveBeenCalledWith(backup);
   });
 
-  it("resumes bootstrap after the legacy root was renamed before v3 was created", async () => {
+  it("resumes bootstrap after the legacy root was renamed before v4 was created", async () => {
     const parent = await mkdtemp(join(tmpdir(), "pragma-storage-resume-"));
     roots.push(parent);
     const paths = new PragmaPaths({ pragmaHome: join(parent, ".pragma") });
@@ -70,7 +70,7 @@ describe("Desktop storage bootstrap", () => {
     await mkdir(paths.root, { recursive: true });
     await writeFile(join(paths.root, "legacy.json"), "legacy");
     await writeFile(
-      `${paths.root}.storage-v3-bootstrap.json`,
+      `${paths.root}.storage-v4-bootstrap.json`,
       JSON.stringify({
         schemaVersion: "pragma.storage-bootstrap/v1",
         path: backup,
@@ -86,12 +86,12 @@ describe("Desktop storage bootstrap", () => {
     });
 
     expect(result).toEqual({ created: true, legacyBackup: backup });
-    await expect(readFile(paths.storageVersion(), "utf8")).resolves.toContain("pragma.storage/v3");
+    await expect(readFile(paths.storageVersion(), "utf8")).resolves.toContain("pragma.storage/v4");
     await expect(readFile(join(backup, "legacy.json"), "utf8")).resolves.toBe("legacy");
     await expect(
       readFile(join(paths.storageStateRoot(), "legacy-backup.json"), "utf8"),
     ).resolves.toContain(backup);
-    await expect(readFile(`${paths.root}.storage-v3-bootstrap.json`, "utf8")).rejects.toMatchObject(
+    await expect(readFile(`${paths.root}.storage-v4-bootstrap.json`, "utf8")).rejects.toMatchObject(
       { code: "ENOENT" },
     );
   });

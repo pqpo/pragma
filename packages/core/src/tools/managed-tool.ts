@@ -76,6 +76,7 @@ export interface ExpertAgentUserQuestionRequest {
   readonly toolName: "askUserQuestion";
   readonly toolCallId?: string | undefined;
   readonly questions: readonly ExpertAgentUserQuestion[];
+  readonly semantics?: { readonly kind: "approval"; readonly approveOption: string } | undefined;
 }
 
 export interface ExpertAgentUserQuestionResponse {
@@ -118,6 +119,7 @@ export const ExpertAgentUserQuestionRequestSchema = z.object({
   toolName: z.literal("askUserQuestion"),
   toolCallId: z.string().min(1).optional(),
   questions: z.array(ExpertAgentUserQuestionSchema),
+  semantics: z.object({ kind: z.literal("approval"), approveOption: z.string().min(1) }).optional(),
 }) satisfies z.ZodType<ExpertAgentUserQuestionRequest>;
 
 export const ExpertAgentHumanRequestSchema = z.discriminatedUnion("kind", [

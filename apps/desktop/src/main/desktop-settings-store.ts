@@ -6,13 +6,11 @@ import { withFileLock } from "@pragma/core";
 
 import {
   DesktopSettingsSchema,
-  type DesktopResolvedLocale,
   type DesktopSettings,
   type DesktopSettingsSnapshot,
   type UpdateDesktopSettings,
 } from "../shared/desktop-api.ts";
-
-const TRADITIONAL_CHINESE_REGIONS = new Set(["HK", "MO", "TW"]);
+import { resolveDesktopLocale } from "../shared/desktop-locale.ts";
 
 export interface DesktopSettingsStore {
   getSnapshot(preferredSystemLanguages: readonly string[]): Promise<DesktopSettingsSnapshot>;
@@ -20,22 +18,6 @@ export interface DesktopSettingsStore {
     input: UpdateDesktopSettings,
     preferredSystemLanguages: readonly string[],
   ): Promise<DesktopSettingsSnapshot>;
-}
-
-export function resolveDesktopLocale(
-  preferredSystemLanguages: readonly string[],
-): DesktopResolvedLocale {
-  for (const languageTag of preferredSystemLanguages) {
-    const locale = parseLocale(languageTag);
-    if (locale === undefined) continue;
-    if (locale.language === "en") return "en";
-    if (locale.language !== "zh") continue;
-    if (locale.script === "Hant") return "zh-Hant";
-    if (locale.script === "Hans") return "zh-Hans";
-    if (TRADITIONAL_CHINESE_REGIONS.has(locale.region ?? "")) return "zh-Hant";
-    return "zh-Hans";
-  }
-  return "en";
 }
 
 export function createDesktopSettingsStore(options: {
@@ -104,14 +86,6 @@ export function createDesktopSettingsStore(options: {
       return toSnapshot(settings, preferredSystemLanguages);
     },
   };
-}
-
-function parseLocale(languageTag: string): Intl.Locale | undefined {
-  try {
-    return new Intl.Locale(languageTag.replaceAll("_", "-"));
-  } catch {
-    return undefined;
-  }
 }
 
 function isNodeError(error: unknown, code: string): boolean {

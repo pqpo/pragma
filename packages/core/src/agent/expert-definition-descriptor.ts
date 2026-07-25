@@ -6,7 +6,7 @@ import type { Expert } from "./expert-agent.ts";
 import { isExpertTeam, type ExpertDefinition } from "./expert-team.ts";
 
 export function describeExpertExecutionDefinition(definition: ExpertDefinition): unknown {
-  return describeDefinition(definition, new Set<string>());
+  return JSON.parse(JSON.stringify(describeDefinition(definition, new Set<string>()))) as unknown;
 }
 
 export function fingerprintExpertExecutionDefinition(definition: ExpertDefinition): string {
@@ -20,17 +20,14 @@ function describeDefinition(definition: ExpertDefinition, ancestors: Set<string>
     return {
       kind: "expert-team",
       id: definition.id,
-      version: definition.version,
       instructions: definition.instructions,
       coordinator: {
         id: definition.coordinator.id,
-        version: definition.coordinator.version,
         defaultRuntimeId: definition.coordinator.defaultRuntimeId,
       },
       members: definition.members
         .map((member) => ({
           id: member.id,
-          version: member.version,
           defaultRuntimeId: member.defaultRuntimeId,
         }))
         .sort((left, right) => left.id.localeCompare(right.id)),
@@ -51,7 +48,6 @@ function describeDefinition(definition: ExpertDefinition, ancestors: Set<string>
     return {
       kind: "expert",
       id: definition.id,
-      version: definition.version,
       defaultRuntimeId: definition.defaultRuntimeId,
       recursive: true,
     };
@@ -60,7 +56,11 @@ function describeDefinition(definition: ExpertDefinition, ancestors: Set<string>
   return {
     kind: "expert",
     id: definition.id,
-    version: definition.version,
+    name: definition.name,
+    description: definition.description,
+    instructions: definition.instructions,
+    tags: [...definition.tags],
+    scope: definition.scope,
     defaultRuntimeId: definition.defaultRuntimeId,
     delegation: describeLauncher(definition, nextAncestors),
   };

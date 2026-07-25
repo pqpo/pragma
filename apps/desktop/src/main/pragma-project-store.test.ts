@@ -1,6 +1,6 @@
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import type {
   PragmaCapabilityResource,
@@ -9,10 +9,13 @@ import type {
   PragmaExpertTeamResource,
   PragmaFlowResource,
   PragmaRuntimeProfileResource,
+  PragmaAutomationResource,
 } from "@pragma/interpreter/ast";
 import { afterEach, describe, expect, it } from "vitest";
 import { BUILT_IN_PRAGMA_REF, builtInPragmaResource } from "@pragma/default-agent";
+import { ContentAddressedStore, derivePragmaResourceId } from "@pragma/core";
 
+import type { ExpertDefinition, UpdateExpertDefinition } from "../shared/desktop-api.ts";
 import { createExpertDefinitionStore } from "./expert-definition-store.ts";
 import { createPragmaProjectStore, PragmaProjectStoreError } from "./pragma-project-store.ts";
 import { createDesktopSystemExpertRegistry } from "./system-expert-registry.ts";
@@ -86,6 +89,98 @@ describe("PragmaProjectStore", () => {
     expect((await first.get()).revision).toBe(1);
   });
 
+  it("migrates every immutable v3 revision to short IDs without changing revision numbers", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "pragma-project-v3-migration-"));
+    directories.push(directory);
+    await seedLegacyProject(directory, [legacyFlowSource("release", "1.0.0")]);
+    const project = createPragmaProjectStore({ projectsPath: directory });
+
+    const migrated = await project.get();
+    const expectedId = derivePragmaResourceId("studio\0Flow\0release");
+
+    expect(migrated).toMatchObject({
+      revision: 1,
+      resources: [
+        expect.objectContaining({
+          apiVersion: "pragma/v3",
+          kind: "Flow",
+          metadata: expect.objectContaining({ id: expectedId, name: "Release" }),
+        }),
+      ],
+    });
+    expect(await readFile(join(directory, "studio", "project.json"), "utf8")).toContain(
+      "pragma.desktop-project/v4",
+    );
+  });
+
+  it("fails a conflicting v3 migration before replacing the legacy project", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "pragma-project-v3-conflict-"));
+    directories.push(directory);
+    await seedLegacyProject(directory, [
+      legacyFlowSource("release", "1.0.0"),
+      legacyFlowSource("release", "2.0.0"),
+    ]);
+    const project = createPragmaProjectStore({ projectsPath: directory });
+
+    await expect(project.get()).rejects.toMatchObject({ code: "unsupported_format" });
+    expect(await readFile(join(directory, "studio", "project.json"), "utf8")).toContain(
+      "pragma.desktop-project/v3",
+    );
+  });
+
+  it("restores the v3 backup after an interrupted migration and retries safely", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "pragma-project-v3-recovery-"));
+    directories.push(directory);
+    await seedLegacyProject(directory, [legacyFlowSource("release", "1.0.0")]);
+    const projectPath = join(directory, "studio");
+    const backupPath = `${projectPath}.v3-backup-interrupted`;
+    await rename(projectPath, backupPath);
+    await writeFile(
+      join(directory, ".studio.v3-to-v4.json"),
+      `${JSON.stringify({
+        schemaVersion: "pragma.desktop-project-migration/v1",
+        projectId: "studio",
+        sourceSchema: "pragma.desktop-project/v3",
+        targetSchema: "pragma.desktop-project/v4",
+        backupPath,
+      })}\n`,
+    );
+
+    const migrated = await createPragmaProjectStore({ projectsPath: directory }).get();
+
+    expect(migrated.revision).toBe(1);
+    await expect(readFile(join(directory, ".studio.v3-to-v4.json"), "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
+  it("clears the journal after a failed migration rollback so a later retry can succeed", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "pragma-project-v3-retry-"));
+    directories.push(directory);
+    await seedLegacyProject(directory, [legacyFlowSource("release", "1.0.0")]);
+    const invalidLayout = join(directory, "studio", "layouts", "invalid.json");
+    await mkdir(dirname(invalidLayout), { recursive: true });
+    await writeFile(invalidLayout, "not-json");
+
+    await expect(
+      createPragmaProjectStore({ projectsPath: directory }).get(),
+    ).rejects.toBeInstanceOf(SyntaxError);
+    await expect(readFile(join(directory, ".studio.v3-to-v4.json"), "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    expect(await readFile(join(directory, "studio", "project.json"), "utf8")).toContain(
+      "pragma.desktop-project/v3",
+    );
+
+    await rm(invalidLayout);
+    const migrated = await createPragmaProjectStore({ projectsPath: directory }).get();
+
+    expect(migrated.revision).toBe(1);
+    expect(await readFile(join(directory, "studio", "project.json"), "utf8")).toContain(
+      "pragma.desktop-project/v4",
+    );
+  });
+
   it("materializes one cold snapshot view across concurrent project stores", async () => {
     const directory = await mkdtemp(join(tmpdir(), "pragma-project-view-concurrent-"));
     directories.push(directory);
@@ -148,12 +243,67 @@ describe("PragmaProjectStore", () => {
     } satisfies Partial<PragmaProjectStoreError>);
   });
 
+  it("applies Flow support profiles atomically and prunes them after the last reference is removed", async () => {
+    const { project } = await stores();
+    const flowRuntime: PragmaRuntimeProfileResource = {
+      apiVersion: "pragma/v3",
+      kind: "RuntimeProfile",
+      metadata: {
+        id: "w640he159ex8q8rd",
+        name: "Codex Flow Runtime",
+        description: "Desktop-managed Flow Runtime.",
+        tags: ["desktop-managed", "flow-runtime-override"],
+      },
+      spec: {
+        adapter: "pragma.runtime.profile@v1",
+        config: { runtimeId: "codex" },
+      },
+    };
+    const flow = exampleFlow();
+    flow.spec.graph.start = "write";
+    flow.spec.graph.steps = {
+      write: {
+        expert: { ref: "expert:1xddvess309a6gme" },
+        prompt: { segments: [{ text: "Write." }] },
+        runtime: {
+          ref: "runtime-profile:w640he159ex8q8rd",
+          modelSelection: { model: { providerId: "openai", modelId: "gpt-test" } },
+        },
+      },
+    };
+    flow.spec.graph.transitions = { write: { end: true } };
+
+    const first = await project.apply({
+      baseRevision: 0,
+      upserts: [exampleRuntime(), exampleExpert(), flowRuntime, flow],
+    });
+    expect(first.resources).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "RuntimeProfile",
+          metadata: expect.objectContaining({ id: "w640he159ex8q8rd" }),
+        }),
+      ]),
+    );
+
+    delete flow.spec.graph.steps.write!.runtime;
+    const second = await project.apply({
+      baseRevision: first.revision,
+      upserts: [flow],
+    });
+    expect(
+      second.resources.some(
+        (resource) =>
+          resource.kind === "RuntimeProfile" && resource.metadata.id === "w640he159ex8q8rd",
+      ),
+    ).toBe(false);
+  });
+
   it("rejects invalid cross-resource references without publishing a revision", async () => {
     const { project } = await stores();
     const flow = exampleFlow();
     flow.spec.graph.steps["write"] = {
-      expert: { ref: "expert:missing@1.0.0" },
-      version: "1.0.0",
+      expert: { ref: "expert:2c2m5rysve831d7t" },
     };
     await expect(project.publish({ expectedRevision: 0, resources: [flow] })).rejects.toMatchObject(
       {
@@ -175,14 +325,14 @@ describe("PragmaProjectStore", () => {
     });
 
     const diagnostics = await project.validateChanges({
-      expectedRevision: 0,
+      baseRevision: 0,
       upserts: [missingRuntime],
     });
     expect(diagnostics).toEqual(
       expect.arrayContaining([expect.objectContaining({ message: "Runtime is required." })]),
     );
     await expect(
-      project.apply({ expectedRevision: 0, upserts: [missingRuntime] }),
+      project.apply({ baseRevision: 0, upserts: [missingRuntime] }),
     ).rejects.toMatchObject({ code: "project_invalid" });
     expect((await project.get()).revision).toBe(0);
 
@@ -207,12 +357,11 @@ describe("PragmaProjectStore", () => {
     });
     const candidate = exampleFlow();
     candidate.spec.graph.steps["write"] = {
-      expert: { ref: "expert:missing@1.0.0" },
-      version: "1.0.0",
+      expert: { ref: "expert:2c2m5rysve831d7t" },
     };
     candidate.spec.graph.transitions["write"] = { end: true };
 
-    const result = await project.validateCandidate({ expectedRevision: 1, resource: candidate });
+    const result = await project.validateCandidate({ baseRevision: 1, resource: candidate });
 
     expect(result.resource).toEqual(candidate);
     expect(result.diagnostics.some((diagnostic) => diagnostic.severity === "error")).toBe(true);
@@ -222,11 +371,11 @@ describe("PragmaProjectStore", () => {
   it("backs the Desktop expert form with YAML resources and no JSON migration path", async () => {
     const { directory, experts } = await stores();
     const created = await experts.create({
-      id: "writer",
+      baseRevision: 0,
+      requiredUnchangedRefs: [],
       name: "Writer",
       description: "Writes release notes",
       tags: ["writing"],
-      version: "1.0.0",
       scope: "Release communication",
       instructions: "Write verified release notes.",
       model: { runtimeId: "codex", providerId: "openai", modelId: "gpt-test" },
@@ -235,9 +384,9 @@ describe("PragmaProjectStore", () => {
       plugins: [],
       toolApprovals: {},
     });
-    expect(created.id).toBe("writer");
+    expect(created.id).toMatch(/^[0-9a-hjkmnp-tv-z]{16}$/);
     expect(await experts.list()).toHaveLength(2);
-    const opened = await projectRevisionFile(directory, 1, "experts/writer@1.0.0.pragma.yaml");
+    const opened = await projectRevisionFile(directory, 1, `experts/${created.id}.pragma.yaml`);
     expect(opened).toContain("scope: Release communication");
   });
 
@@ -249,11 +398,11 @@ describe("PragmaProjectStore", () => {
       artifacts: new Map([["assets/guide.md", "# Project guide\n"]]),
     });
     await experts.create({
-      id: "writer",
+      baseRevision: 1,
+      requiredUnchangedRefs: [],
       name: "Writer",
       description: "Writes release notes",
       tags: ["writing"],
-      version: "1.0.0",
       scope: "Release communication",
       instructions: "Write verified release notes.",
       model: { runtimeId: "codex", providerId: "openai", modelId: "gpt-test" },
@@ -268,58 +417,22 @@ describe("PragmaProjectStore", () => {
     );
   });
 
-  it("keeps same-id Expert versions independent and only reclaims unreferenced managed dependencies", async () => {
-    const { project, experts } = await stores();
-    const create = async (version: string) =>
-      await experts.create({
-        id: "writer",
-        name: `Writer ${version}`,
-        description: "Writes release notes",
-        tags: [],
-        version,
-        scope: "Release communication",
-        instructions: "Write verified release notes.",
-        model: { runtimeId: "codex", providerId: "openai", modelId: "gpt-test" },
-        capabilities: [],
-        contextStoreMounts: [],
-        plugins: [],
-        toolApprovals: {},
-      });
-    await create("1.0.0");
-    await create("2.0.0");
-
-    expect((await experts.list()).map((expert) => expert.ref).toSorted()).toEqual([
-      BUILT_IN_PRAGMA_REF,
-      "expert:writer@1.0.0",
-      "expert:writer@2.0.0",
-    ]);
-    await experts.remove("expert:writer@1.0.0");
-    const refs = (await project.get()).resources.map(
-      (resource) => `${resource.kind}:${resource.metadata.id}@${resource.metadata.version}`,
-    );
-    expect(refs).not.toContain("Expert:writer@1.0.0");
-    expect(refs).not.toContain("RuntimeProfile:writer_runtime@1.0.0");
-    expect(refs).toContain("Expert:writer@2.0.0");
-    expect(refs).toContain("RuntimeProfile:writer_runtime@2.0.0");
-  });
-
   it("blocks deletion of referenced Experts and every write path for system Experts", async () => {
     const { project, experts } = await stores();
     const flow = exampleFlow();
     flow.spec.graph.steps["finish"] = {
-      expert: { ref: "expert:writer@1.0.0" },
-      version: "1.0.0",
+      expert: { ref: "expert:1xddvess309a6gme" },
     };
     await project.publish({
       expectedRevision: 0,
       resources: [exampleRuntime(), exampleExpert(), flow],
     });
 
-    await expect(experts.remove("expert:writer@1.0.0")).rejects.toMatchObject({
+    await expect(experts.remove("expert:1xddvess309a6gme")).rejects.toMatchObject({
       code: "expert_referenced",
     });
     await expect(
-      project.upsert({ expectedRevision: 1, resource: builtInPragmaResource() }),
+      project.upsert({ baseRevision: 1, resource: builtInPragmaResource() }),
     ).rejects.toMatchObject({ code: "built_in_readonly" });
     await expect(experts.remove(BUILT_IN_PRAGMA_REF)).rejects.toMatchObject({
       code: "built_in_readonly",
@@ -333,20 +446,18 @@ describe("PragmaProjectStore", () => {
     const teamConsumer = exampleFlow();
     teamConsumer.metadata = {
       ...teamConsumer.metadata,
-      id: "team_consumer",
+      id: "n37vf3n8d5g3j195",
       name: "Team consumer",
     };
     teamConsumer.spec.graph.steps["finish"] = {
-      team: { ref: "team:reviewers@1.0.0" },
-      version: "1.0.0",
+      team: { ref: "team:p8cbn3cg2avyksn4" },
     };
     const child = exampleFlow();
-    child.metadata = { ...child.metadata, id: "child", name: "Child flow" };
+    child.metadata = { ...child.metadata, id: "ceq0qxcgdv75wg6b", name: "Child flow" };
     const parent = exampleFlow();
-    parent.metadata = { ...parent.metadata, id: "parent", name: "Parent flow" };
+    parent.metadata = { ...parent.metadata, id: "3th2yww0c5q3m65t", name: "Parent flow" };
     parent.spec.graph.steps["finish"] = {
-      flow: { ref: "flow:child@1.0.0" },
-      version: "1.0.0",
+      flow: { ref: "flow:ceq0qxcgdv75wg6b" },
     };
     await project.publish({
       expectedRevision: 0,
@@ -354,10 +465,23 @@ describe("PragmaProjectStore", () => {
     });
 
     await expect(
-      project.remove({ expectedRevision: 1, ref: "team:reviewers@1.0.0" }),
+      project.remove({ baseRevision: 1, ref: "team:p8cbn3cg2avyksn4" }),
     ).rejects.toMatchObject({ code: "resource_referenced" });
     await expect(
-      project.remove({ expectedRevision: 1, ref: "flow:child@1.0.0" }),
+      project.remove({ baseRevision: 1, ref: "flow:ceq0qxcgdv75wg6b" }),
+    ).rejects.toMatchObject({ code: "resource_referenced" });
+    expect((await project.get()).revision).toBe(1);
+  });
+
+  it("blocks deletion of an executor referenced by an Automation", async () => {
+    const { project } = await stores();
+    await project.publish({
+      expectedRevision: 0,
+      resources: [exampleRuntime(), exampleExpert(), exampleAutomation()],
+    });
+
+    await expect(
+      project.remove({ baseRevision: 1, ref: "expert:1xddvess309a6gme" }),
     ).rejects.toMatchObject({ code: "resource_referenced" });
     expect((await project.get()).revision).toBe(1);
   });
@@ -395,6 +519,211 @@ describe("PragmaProjectStore", () => {
     expect((await first.get()).revision).toBe(1);
   });
 
+  it("rebases stale changes when another project revision changed a different Flow", async () => {
+    const { project } = await stores();
+    const release = exampleFlow();
+    const delivery = exampleFlow("delivery");
+    const initial = await project.publish({
+      expectedRevision: 0,
+      resources: [release, delivery],
+    });
+
+    delivery.metadata.description = "Changed by a background Mission";
+    const background = await project.apply({
+      baseRevision: initial.revision,
+      upserts: [delivery],
+    });
+    release.metadata.description = "Changed in the Flow editor";
+
+    await expect(
+      project.validateChanges({
+        baseRevision: initial.revision,
+        upserts: [release],
+      }),
+    ).resolves.toEqual([]);
+    const saved = await project.apply({
+      baseRevision: initial.revision,
+      upserts: [release],
+    });
+
+    expect(saved.revision).toBe(background.revision + 1);
+    expect(
+      saved.resources
+        .filter((resource) => resource.kind === "Flow")
+        .map((resource) => [resource.metadata.id, resource.metadata.description]),
+    ).toEqual(
+      expect.arrayContaining([
+        ["t1e73vjvctx49gkq", "Changed in the Flow editor"],
+        ["ceq0qxcgdv75wg6b", "Changed by a background Mission"],
+      ]),
+    );
+  });
+
+  it("serializes concurrent changes to different Flows by rebasing the losing writer", async () => {
+    const { directory, project } = await stores();
+    const release = exampleFlow();
+    const delivery = exampleFlow("delivery");
+    const initial = await project.publish({
+      expectedRevision: 0,
+      resources: [release, delivery],
+    });
+    const background = createPragmaProjectStore({ projectsPath: directory });
+    release.metadata.description = "Changed in the Flow editor";
+    delivery.metadata.description = "Changed by a background Mission";
+
+    const [foregroundResult, backgroundResult] = await Promise.all([
+      project.apply({ baseRevision: initial.revision, upserts: [release] }),
+      background.apply({ baseRevision: initial.revision, upserts: [delivery] }),
+    ]);
+
+    expect(new Set([foregroundResult.revision, backgroundResult.revision])).toEqual(
+      new Set([initial.revision + 1, initial.revision + 2]),
+    );
+    const saved = await project.get();
+    expect(saved.revision).toBe(initial.revision + 2);
+    expect(
+      saved.resources
+        .filter((resource) => resource.kind === "Flow")
+        .map((resource) => [resource.metadata.id, resource.metadata.description]),
+    ).toEqual(
+      expect.arrayContaining([
+        ["t1e73vjvctx49gkq", "Changed in the Flow editor"],
+        ["ceq0qxcgdv75wg6b", "Changed by a background Mission"],
+      ]),
+    );
+  });
+
+  it("reports the exact Flow ref when stale changes overlap", async () => {
+    const { project } = await stores();
+    const release = exampleFlow();
+    const initial = await project.publish({ expectedRevision: 0, resources: [release] });
+    const background = structuredClone(release);
+    background.metadata.description = "Changed by a background Mission";
+    await project.apply({
+      baseRevision: initial.revision,
+      upserts: [background],
+    });
+    release.metadata.description = "Changed in the Flow editor";
+
+    const expectedConflict = {
+      code: "revision_conflict",
+      conflict: {
+        baseRevision: initial.revision,
+        currentRevision: initial.revision + 1,
+        conflictingRefs: ["flow:t1e73vjvctx49gkq"],
+        retryable: false,
+      },
+    } satisfies Partial<PragmaProjectStoreError>;
+    await expect(
+      project.validateChanges({
+        baseRevision: initial.revision,
+        upserts: [release],
+      }),
+    ).rejects.toMatchObject(expectedConflict);
+    await expect(
+      project.apply({
+        baseRevision: initial.revision,
+        upserts: [release],
+      }),
+    ).rejects.toMatchObject(expectedConflict);
+  });
+
+  it("rebases stale changes to different Expert Teams and conflicts on the same Team", async () => {
+    const { project } = await stores();
+    const reviewers = exampleTeam();
+    const publishers = exampleTeam("publishers");
+    const initial = await project.publish({
+      expectedRevision: 0,
+      resources: [exampleRuntime(), exampleExpert(), reviewers, publishers],
+    });
+
+    publishers.metadata.description = "Changed by a background Mission";
+    await project.apply({
+      baseRevision: initial.revision,
+      upserts: [publishers],
+    });
+    reviewers.metadata.description = "Changed in the Team editor";
+    const saved = await project.apply({
+      baseRevision: initial.revision,
+      upserts: [reviewers],
+    });
+
+    expect(
+      saved.resources
+        .filter((resource) => resource.kind === "ExpertTeam")
+        .map((resource) => [resource.metadata.id, resource.metadata.description]),
+    ).toEqual(
+      expect.arrayContaining([
+        ["p8cbn3cg2avyksn4", "Changed in the Team editor"],
+        ["r8ggx4n4219hrc2p", "Changed by a background Mission"],
+      ]),
+    );
+
+    const staleReviewers = structuredClone(reviewers);
+    staleReviewers.metadata.description = "Another foreground edit";
+    await expect(
+      project.apply({
+        baseRevision: initial.revision,
+        upserts: [staleReviewers],
+      }),
+    ).rejects.toMatchObject({
+      code: "revision_conflict",
+      conflict: {
+        baseRevision: initial.revision,
+        currentRevision: initial.revision + 2,
+        conflictingRefs: ["team:p8cbn3cg2avyksn4"],
+        retryable: false,
+      },
+    } satisfies Partial<PragmaProjectStoreError>);
+  });
+
+  it("rebases stale edits to different Experts and conflicts on the same Expert", async () => {
+    const { project, experts } = await stores();
+    const initial = await project.publish({
+      expectedRevision: 0,
+      resources: [
+        exampleRuntime(),
+        exampleExpert(),
+        exampleRuntime("reviewer"),
+        exampleExpert("reviewer"),
+      ],
+    });
+    const writer = await experts.get("expert:1xddvess309a6gme");
+    const reviewer = await experts.get("expert:3sfd30h5017wd17d");
+
+    await experts.update(reviewer.ref, expertUpdate(reviewer, "Changed by a background Mission"));
+    const savedWriter = await experts.update(
+      writer.ref,
+      expertUpdate(writer, "Changed in the Expert editor"),
+    );
+
+    expect(savedWriter.description).toBe("Changed in the Expert editor");
+    const saved = await project.get();
+    expect(saved.revision).toBe(initial.revision + 2);
+    expect(
+      saved.resources
+        .filter((resource) => resource.kind === "Expert")
+        .map((resource) => [resource.metadata.id, resource.metadata.description]),
+    ).toEqual(
+      expect.arrayContaining([
+        ["1xddvess309a6gme", "Changed in the Expert editor"],
+        ["3sfd30h5017wd17d", "Changed by a background Mission"],
+      ]),
+    );
+
+    await expect(
+      experts.update(writer.ref, expertUpdate(writer, "Another foreground edit")),
+    ).rejects.toMatchObject({
+      code: "revision_conflict",
+      conflict: {
+        baseRevision: writer.revision,
+        currentRevision: initial.revision + 2,
+        conflictingRefs: ["expert:1xddvess309a6gme"],
+        retryable: false,
+      },
+    } satisfies Partial<PragmaProjectStoreError>);
+  });
+
   it("does not create a revision for an identical snapshot", async () => {
     const { directory, project } = await stores();
     const resources = [exampleRuntime(), exampleExpert()];
@@ -412,17 +741,17 @@ describe("PragmaProjectStore", () => {
   it("reads and preserves portable Expert capabilities and context stores", async () => {
     const { project, experts } = await stores();
     const expert = exampleExpert();
-    expert.spec.runtime = { ref: "runtime-profile:remote@1.0.0" };
-    expert.spec.capabilities = [{ ref: "capability:portable@2", kind: "skill" }];
+    expert.spec.runtime = { ref: "runtime-profile:20k21q9j9wexjv50" };
+    expert.spec.capabilities = [{ ref: "capability:nv27faxmxpqnxwqr", kind: "skill" }];
     expert.spec.contextStores = [
-      { ref: "context-store:portable_context@1.0.0", namespace: "project_docs", required: true },
+      { ref: "context-store:1ymdp8c7rvxs4d3v", namespace: "project_docs", required: true },
     ];
     await project.publish({
       expectedRevision: 0,
       resources: [remoteRuntime(), portableCapability(), portableContextStore(), expert],
     });
 
-    const view = await experts.get("expert:writer@1.0.0");
+    const view = await experts.get("expert:1xddvess309a6gme");
     expect(view.executionProfile).toEqual({
       mode: "pinned",
       model: {
@@ -435,11 +764,11 @@ describe("PragmaProjectStore", () => {
     expect(view.opaqueCapabilities).toEqual(expert.spec.capabilities);
     expect(view.contextStoreMounts).toEqual([]);
     expect(view.opaqueContextStores).toEqual(expert.spec.contextStores);
-    await experts.update("expert:writer@1.0.0", {
+    await experts.update("expert:1xddvess309a6gme", {
+      baseRevision: view.revision,
       name: view.name,
       description: "Updated without losing portable fields",
       tags: view.tags,
-      version: view.version,
       scope: view.scope,
       instructions: view.instructions,
       model:
@@ -458,10 +787,10 @@ describe("PragmaProjectStore", () => {
     });
 
     const stored = (await project.get()).resources.find(
-      (resource) => resource.kind === "Expert" && resource.metadata.id === "writer",
+      (resource) => resource.kind === "Expert" && resource.metadata.id === "1xddvess309a6gme",
     );
     expect(stored?.kind === "Expert" ? stored.spec.runtime : undefined).toEqual({
-      ref: "runtime-profile:writer_runtime@1.0.0",
+      ref: "runtime-profile:zdkgs0fde4xt00vr",
     });
     expect(stored?.kind === "Expert" ? stored.spec.capabilities : undefined).toEqual(
       expert.spec.capabilities,
@@ -472,21 +801,24 @@ describe("PragmaProjectStore", () => {
   });
 });
 
-function exampleExpert(): PragmaExpertResource {
+function exampleExpert(id = "writer"): PragmaExpertResource {
+  const resourceId = id === "writer" ? "1xddvess309a6gme" : "3sfd30h5017wd17d";
   return {
-    apiVersion: "pragma/v2",
+    apiVersion: "pragma/v3",
     kind: "Expert",
     metadata: {
-      id: "writer",
-      version: "1.0.0",
-      name: "Writer",
+      id: resourceId,
+      name: id === "writer" ? "Writer" : "Reviewer",
       description: "Writes release notes",
       tags: [],
     },
     spec: {
       scope: "Release communication",
       instructions: "Write verified release notes.",
-      runtime: { ref: "runtime-profile:writer_runtime@1.0.0" },
+      runtime: {
+        ref:
+          id === "writer" ? "runtime-profile:zdkgs0fde4xt00vr" : "runtime-profile:v3b460tasfhyf22d",
+      },
       capabilities: [],
       toolApprovals: {},
       contextStores: [],
@@ -496,16 +828,15 @@ function exampleExpert(): PragmaExpertResource {
   };
 }
 
-function exampleRuntime(): PragmaRuntimeProfileResource {
+function exampleRuntime(expertId = "writer"): PragmaRuntimeProfileResource {
   return {
-    apiVersion: "pragma/v2",
+    apiVersion: "pragma/v3",
     kind: "RuntimeProfile",
     metadata: {
-      id: "writer_runtime",
-      version: "1.0.0",
-      name: "Writer Runtime",
+      id: expertId === "writer" ? "zdkgs0fde4xt00vr" : "v3b460tasfhyf22d",
+      name: `${expertId === "writer" ? "Writer" : "Reviewer"} Runtime`,
       description: "Writer runtime profile.",
-      tags: [],
+      tags: ["desktop-managed"],
     },
     spec: {
       adapter: "pragma.runtime.profile@v1",
@@ -514,20 +845,19 @@ function exampleRuntime(): PragmaRuntimeProfileResource {
   };
 }
 
-function exampleTeam(): PragmaExpertTeamResource {
+function exampleTeam(id = "reviewers"): PragmaExpertTeamResource {
   return {
-    apiVersion: "pragma/v2",
+    apiVersion: "pragma/v3",
     kind: "ExpertTeam",
     metadata: {
-      id: "reviewers",
-      version: "1.0.0",
-      name: "Reviewers",
+      id: id === "reviewers" ? "p8cbn3cg2avyksn4" : "r8ggx4n4219hrc2p",
+      name: id === "reviewers" ? "Reviewers" : "Publishers",
       description: "Coordinates review work.",
       tags: [],
     },
     spec: {
-      coordinator: { ref: "expert:writer@1.0.0" },
-      members: [{ ref: "expert:writer@1.0.0" }],
+      coordinator: { ref: "expert:1xddvess309a6gme" },
+      members: [{ ref: "expert:1xddvess309a6gme" }],
       delegation: {
         maxConcurrency: 2,
         maxDepth: 2,
@@ -541,7 +871,7 @@ function exampleTeam(): PragmaExpertTeamResource {
 function remoteRuntime(): PragmaRuntimeProfileResource {
   return {
     ...exampleRuntime(),
-    metadata: { ...exampleRuntime().metadata, id: "remote", name: "Remote Runtime" },
+    metadata: { ...exampleRuntime().metadata, id: "20k21q9j9wexjv50", name: "Remote Runtime" },
     spec: {
       adapter: "pragma.runtime.profile@v1",
       config: {
@@ -555,11 +885,10 @@ function remoteRuntime(): PragmaRuntimeProfileResource {
 
 function portableCapability(): PragmaCapabilityResource {
   return {
-    apiVersion: "pragma/v2",
+    apiVersion: "pragma/v3",
     kind: "Capability",
     metadata: {
-      id: "portable",
-      version: "2",
+      id: "nv27faxmxpqnxwqr",
       name: "Portable Capability",
       description: "Portable host capability.",
       tags: [],
@@ -574,11 +903,10 @@ function portableCapability(): PragmaCapabilityResource {
 
 function portableContextStore(): PragmaContextStoreResource {
   return {
-    apiVersion: "pragma/v2",
+    apiVersion: "pragma/v3",
     kind: "ContextStore",
     metadata: {
-      id: "portable_context",
-      version: "1.0.0",
+      id: "1ymdp8c7rvxs4d3v",
       name: "Portable context",
       description: "Portable project context.",
       tags: [],
@@ -590,14 +918,13 @@ function portableContextStore(): PragmaContextStoreResource {
   };
 }
 
-function exampleFlow(): PragmaFlowResource {
+function exampleFlow(id = "release"): PragmaFlowResource {
   return {
-    apiVersion: "pragma/v2",
+    apiVersion: "pragma/v3",
     kind: "Flow",
     metadata: {
-      id: "release",
-      version: "1.0.0",
-      name: "Release",
+      id: id === "release" ? "t1e73vjvctx49gkq" : "ceq0qxcgdv75wg6b",
+      name: id === "release" ? "Release" : "Delivery",
       description: "Build release notes",
       tags: [],
     },
@@ -606,11 +933,118 @@ function exampleFlow(): PragmaFlowResource {
       graph: {
         start: "finish",
         steps: {
-          finish: { action: { ref: "action:finish@v1" }, version: "1.0.0" },
+          finish: { action: { ref: "action:finish@v1" } },
         },
         loops: {},
         transitions: { finish: { end: true } },
       },
     },
   };
+}
+
+function exampleAutomation(): PragmaAutomationResource {
+  return {
+    apiVersion: "pragma/v3",
+    kind: "Automation",
+    metadata: {
+      id: "hrxn3mv2e991j2rj",
+      name: "Daily review",
+      description: "Runs the writer every day",
+      tags: [],
+    },
+    spec: {
+      adapter: "pragma.automation.schedule@v1",
+      binding: "binding:desktop-automation",
+      config: {
+        trigger: {
+          kind: "calendar",
+          frequency: "daily",
+          time: "09:00",
+          timezone: "UTC",
+        },
+      },
+      enabled: true,
+      route: {
+        executor: { ref: "expert:1xddvess309a6gme" },
+        input: { kind: "prompt", value: "Review the current work." },
+      },
+      interaction: { mode: "reuse-session" },
+      delivery: { adapter: "pragma.automation.delivery.local@v1" },
+    },
+  };
+}
+
+function expertUpdate(definition: ExpertDefinition, description: string): UpdateExpertDefinition {
+  if (definition.executionProfile.mode !== "pinned") {
+    throw new Error("Project Expert must use a pinned model.");
+  }
+  return {
+    baseRevision: definition.revision,
+    name: definition.name,
+    description,
+    tags: definition.tags,
+    scope: definition.scope,
+    instructions: definition.instructions,
+    model: definition.executionProfile.model,
+    capabilities: definition.capabilities,
+    toolApprovals: definition.toolApprovals,
+    plugins: definition.plugins,
+    contextStoreMounts: definition.contextStoreMounts,
+    resourceTools: definition.resourceTools,
+    opaqueCapabilities: definition.opaqueCapabilities,
+    opaqueContextStores: definition.opaqueContextStores,
+  };
+}
+
+async function seedLegacyProject(directory: string, sources: readonly string[]): Promise<void> {
+  const objects = new ContentAddressedStore(join(directory, ".storage", "objects"));
+  const files = new Map<string, Uint8Array>(
+    sources.map((source, index) => [
+      `flows/release@${index + 1}.pragma.yaml`,
+      Buffer.from(source, "utf8"),
+    ]),
+  );
+  const snapshot = await objects.putSnapshot(files);
+  await mkdir(join(directory, "studio", "revisions"), { recursive: true });
+  await writeFile(
+    join(directory, "studio", "project.json"),
+    `${JSON.stringify({
+      schemaVersion: "pragma.desktop-project/v3",
+      projectId: "studio",
+      headRevision: 1,
+    })}\n`,
+  );
+  await writeFile(
+    join(directory, "studio", "revisions", "1.json"),
+    `${JSON.stringify({
+      schemaVersion: "pragma.project-revision/v3",
+      snapshotHash: snapshot.root.hash,
+    })}\n`,
+  );
+}
+
+function legacyFlowSource(id: string, version: string): string {
+  return `apiVersion: pragma/v2
+kind: Flow
+metadata:
+  id: ${id}
+  version: ${version}
+  name: Release
+  description: Builds a release
+  tags: []
+spec:
+  limits:
+    maxNodeVisits: 10
+  graph:
+    start: finish
+    steps:
+      finish:
+        action:
+          ref: action:finish@v1
+        version: 1.0.0
+    loops: {}
+    transitions:
+      finish:
+        end: true
+`;
 }

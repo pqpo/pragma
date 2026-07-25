@@ -1,8 +1,7 @@
-apiVersion: pragma/v2
+apiVersion: pragma/v3
 kind: Expert
 metadata:
-  id: pragma
-  version: 1.0.0
+  id: 0000000000pragma
   name: Pragma
   description: The app's built-in general-purpose Agent for everyday work and expert orchestration.
   tags: [builtin, pragma, default-agent]
@@ -19,15 +18,22 @@ spec:
     prepared change-set. Never edit Pragma project storage directly. Ask before consequential or
     ambiguous actions and respect workspace and approval boundaries.
   capabilities:
-    - ref: capability:pragma_dsl_authoring@1.0.0
+    - ref: capability:1h2j3k4m5n6p7q8r
       kind: skill
-    - ref: capability:pragma_host@1.0.0
+    - ref: capability:2h3j4k5m6n7p8q9r
       kind: tools
       tools:
         - list_dsl_resources
         - read_dsl_resource
         - list_expert_options
+        - allocate_dsl_resource_ids
         - prepare_dsl_changes
+        - create_flow_draft
+        - get_flow_draft
+        - update_flow_draft
+        - validate_flow_draft
+        - prepare_flow_draft
+        - discard_flow_draft
         - commit_dsl_changes
         - list_tasks
         - get_task

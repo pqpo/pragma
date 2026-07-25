@@ -172,7 +172,7 @@ function tree(executorId: string, status: string, children: unknown[] = []) {
     invocation: {
       invocationId: `${executorId}-invocation`,
       rootInvocationId: "lead-invocation",
-      definition: { id: executorId, version: "1.0.0", kind: "expert" },
+      definition: { id: executorId, kind: "expert" },
       executorId,
       contextId: `${executorId}-context`,
       status,

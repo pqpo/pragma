@@ -7,13 +7,14 @@ import type {
 import { AgentMessageUsageSchema, type AgentMessage, type AgentMessageUsage } from "@pragma/shared";
 import type {
   Expert,
+  RuntimeContextWindowUsage,
   RuntimeEventMappingContext,
   RuntimeEventMappingResult,
   RuntimeModelRef,
   RuntimeTurnContext,
   RuntimeTurnResult,
 } from "@pragma/core";
-import type { RuntimeStreamEventInput } from "@pragma/core";
+import { createRuntimeContextWindowUsage, type RuntimeStreamEventInput } from "@pragma/core";
 
 import {
   assertAssistantTurnCompleted,
@@ -159,6 +160,33 @@ export function mapPiAgentEvent(
 
 export function collectPiUsage(session: PiNativeSession): AgentMessageUsage | undefined {
   return aggregateAssistantUsage(session.session.messages.slice(session.messageCountBeforeRun));
+}
+
+export function readPiContextWindow(
+  session: PiNativeSession,
+): RuntimeContextWindowUsage | undefined {
+  const usage = session.session.getContextUsage();
+  if (usage === undefined) return undefined;
+  return createRuntimeContextWindowUsage({
+    usedTokens: usage.tokens,
+    contextWindowTokens: usage.contextWindow,
+    measurement: "estimated",
+  });
+}
+
+export async function compactPiContextWindow(
+  session: PiNativeSession,
+): Promise<RuntimeContextWindowUsage | undefined> {
+  const before = session.session.getContextUsage();
+  const result = await session.session.compact();
+  const after = session.session.getContextUsage();
+  const contextWindowTokens = after?.contextWindow ?? before?.contextWindow;
+  if (contextWindowTokens === undefined) return undefined;
+  return createRuntimeContextWindowUsage({
+    usedTokens: result.estimatedTokensAfter ?? after?.tokens ?? null,
+    contextWindowTokens,
+    measurement: "estimated",
+  });
 }
 
 async function applySubmissionModel(

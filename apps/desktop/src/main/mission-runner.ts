@@ -9,6 +9,8 @@ import {
   isExpertTeam,
   StoredExecutionView,
   PragmaPaths,
+  readRuntimeSessionContextWindowUsage,
+  readRuntimeSessionRecord,
   moveOwnedStorageToTrash,
   runtimeSessionDeletionSources,
   assertStorageWriteAllowed,
@@ -21,6 +23,7 @@ import {
   type ExpertSession,
   type MutableExecution,
   type RuntimeResolver,
+  type RuntimeContextWindowUsage,
   type RuntimeModelSelection,
 } from "@pragma/core";
 import type {
@@ -45,6 +48,7 @@ import type {
   MissionChatSnapshot,
   MissionChatUpdate,
   MissionChatQuery,
+  MissionContextWindowState,
   MissionHumanInteraction,
   MissionModelOverride,
   MissionWorkConversationSnapshot,
@@ -63,6 +67,7 @@ import {
   parseDesktopCapabilityBindingRef,
   parseDesktopContextBindingRef,
 } from "./desktop-binding-ref.ts";
+import { MissionOperationError } from "./mission-operation-error.ts";
 import type { MissionStore, MissionTimelineTurn } from "./mission-store.ts";
 import type { PragmaProjectStore } from "./pragma-project-store.ts";
 import type { PluginStore } from "./plugin-store.ts";
@@ -76,6 +81,7 @@ export interface MissionRunner {
     readonly requestId: string;
   }): Promise<Mission>;
   getChat(input: MissionChatQuery): Promise<MissionChatSnapshot>;
+  compactContext(id: string): Promise<MissionContextWindowState>;
   getRuntimeBinding(id: string): Promise<RuntimeEnvironmentBinding | undefined>;
   subscribeChat(listener: (update: MissionChatUpdate) => void): () => void;
   subscribeWork(listener: (update: MissionWorkUpdate) => void): () => void;
@@ -115,6 +121,7 @@ type PendingMissionOperation =
   | { readonly kind: "run"; readonly promise: Promise<Mission> }
   | { readonly kind: "options"; readonly promise: Promise<Mission> }
   | { readonly kind: "message"; readonly promise: Promise<Mission> }
+  | { readonly kind: "compact"; readonly promise: Promise<MissionContextWindowState> }
   | { readonly kind: "interrupt"; readonly promise: Promise<Mission> }
   | { readonly kind: "delete"; readonly promise: Promise<void> };
 
@@ -303,6 +310,7 @@ export function createMissionRunner(options: {
       revision: mission.project.revision,
       ref: mission.executor.ref,
       workspace: mission.workspace.path,
+      pragmaHome: options.pragmaHome,
       environmentId: "desktop",
       adapterHost: createDesktopAdapterHost(options, mission.workspace.path),
       runtimes,
@@ -450,7 +458,7 @@ export function createMissionRunner(options: {
             runtime,
           })
         : await app.flows.start(compiled.value, {
-            input: { goal: mission.goal, workspace: mission.workspace.path },
+            input: mission.flowInput!,
             runtime,
           });
       if (!recoverable) {
@@ -721,6 +729,105 @@ export function createMissionRunner(options: {
     executionContexts.delete(id);
   };
 
+  const getContextWindowState = async (
+    mission: Mission,
+    usageOverride?: RuntimeContextWindowUsage | undefined,
+  ): Promise<MissionContextWindowState | undefined> => {
+    if (mission.executor.kind === "flow") return undefined;
+    const rootContext = await readMissionRootContext(mission);
+    if (rootContext === undefined) return undefined;
+    const { runtimes } = executionContext(mission);
+    const resolved = await runtimes
+      .resolve({
+        binding: rootContext.runtime,
+        modelSelection: rootContext.modelSelection,
+      })
+      .catch(() => undefined);
+    if (resolved === undefined) return undefined;
+    const supportsInspection =
+      resolved.adapter.descriptor.capabilities?.supportsContextWindowInspection === true;
+    const supportsCompaction =
+      resolved.adapter.descriptor.capabilities?.supportsManualCompaction === true;
+    if (!supportsInspection && !supportsCompaction) return undefined;
+    const executionBusy =
+      active.has(mission.id) ||
+      (mission.execution !== undefined &&
+        ["queued", "running", "waiting"].includes(mission.execution.status));
+    let usage = usageOverride;
+    if (usage === undefined && rootContext.snapshot !== undefined) {
+      if (!executionBusy) {
+        usage = await sessions
+          .get(mission.id)
+          ?.getRootContextWindowUsage()
+          .catch(() => undefined);
+      }
+      const sessionId = mission.execution?.sessionId;
+      if (usage === undefined && sessionId !== undefined) {
+        const paths = new PragmaPaths({ pragmaHome: options.pragmaHome });
+        usage = await readRuntimeSessionRecord(
+          paths,
+          sessionId,
+          rootContext.snapshot.systemSessionId,
+        )
+          .then(readRuntimeSessionContextWindowUsage)
+          .catch(() => undefined);
+      }
+    }
+    return {
+      supportsInspection,
+      supportsCompaction,
+      canCompact:
+        supportsCompaction &&
+        rootContext.snapshot !== undefined &&
+        mission.lifecycleStatus === "active" &&
+        !executionBusy,
+      ...(usage === undefined ? {} : { usage }),
+    };
+  };
+
+  const compactMissionContext = async (id: string): Promise<MissionContextWindowState> => {
+    await assertStorageWriteAllowed(new PragmaPaths({ pragmaHome: options.pragmaHome }));
+    const mission = await options.missions.get(id);
+    if (mission.executor.kind === "flow") {
+      throw new Error("Flow missions do not expose a chat context to compact.");
+    }
+    if (mission.lifecycleStatus !== "active") {
+      throw new Error("Reopen this mission before compacting its context.");
+    }
+    if (
+      active.has(id) ||
+      (mission.execution !== undefined &&
+        ["queued", "running", "waiting"].includes(mission.execution.status))
+    ) {
+      throw new Error("Wait for the current expert turn before compacting its context.");
+    }
+    const sessionId = mission.execution?.sessionId;
+    if (sessionId === undefined) throw new Error("The mission Runtime context has not started yet.");
+    const rootContext = await readMissionRootContext(mission);
+    if (rootContext?.snapshot === undefined) {
+      throw new Error("The mission Runtime context has not started yet.");
+    }
+    const { app, runtimes: baseRuntimes } = executionContext(mission);
+    const runtimes = withMissionRuntimeBinding(baseRuntimes, rootContext);
+    const compiled = await compileMissionExecutor(mission, runtimes);
+    if ("kind" in compiled.value && compiled.value.kind === "flow") {
+      throw new Error("Flow missions do not expose a chat context to compact.");
+    }
+    const session =
+      sessions.get(id) ??
+      (await app.experts.resumeSession(compiled.value, {
+        sessionId,
+      }));
+    sessions.set(id, session);
+    const usage = await session.compactRootContext();
+    invalidateChat(id);
+    const state = await getContextWindowState(mission, usage);
+    if (state === undefined || !state.supportsCompaction) {
+      throw new Error(`Runtime ${rootContext.runtime.runtimeId} does not support context compaction.`);
+    }
+    return state;
+  };
+
   const getChatSnapshot = async (input: MissionChatQuery): Promise<MissionChatSnapshot> => {
     const mission = await options.missions.get(input.id);
     const timeline = await options.missions.readTimelinePage(mission.id, input);
@@ -748,6 +855,7 @@ export function createMissionRunner(options: {
     // it again immediately before the revision so a snapshot cannot pair a stale `running` state
     // with the terminal invalidation revision.
     const latestMission = await options.missions.get(mission.id);
+    const contextWindow = await getContextWindowState(latestMission);
     const revision = chatRevisions.get(mission.id) ?? 0;
     const namedEntries = entries.map((entry) => {
       if (entry.executorName !== undefined || entry.executorId === undefined) return entry;
@@ -772,6 +880,7 @@ export function createMissionRunner(options: {
           : { nextBeforeSequence: timeline.nextBeforeSequence }),
       },
       pendingInteractions,
+      ...(contextWindow === undefined ? {} : { contextWindow }),
       ...(latestMission.execution === undefined
         ? {}
         : {
@@ -937,7 +1046,7 @@ export function createMissionRunner(options: {
       const pending = pendingOperations.get(id);
       if (pending?.kind === "run") return await pending.promise;
       if (pending !== undefined) {
-        throw new Error("Wait for the current mission operation to finish.");
+        throw new MissionOperationError();
       }
       const started = runMission(id);
       trackOperation(id, { kind: "run", promise: started });
@@ -945,7 +1054,7 @@ export function createMissionRunner(options: {
     },
     async updateOptions(input) {
       if (pendingOperations.has(input.id)) {
-        throw new Error("Wait for the current mission operation to finish.");
+        throw new MissionOperationError();
       }
       const updating = updateMissionOptions(input);
       trackOperation(input.id, { kind: "options", promise: updating });
@@ -953,7 +1062,7 @@ export function createMissionRunner(options: {
     },
     async sendMessage(input) {
       if (pendingOperations.has(input.id)) {
-        throw new Error("Wait for the current mission operation to finish.");
+        throw new MissionOperationError();
       }
       const sending = sendMissionMessage(input);
       trackOperation(input.id, { kind: "message", promise: sending });
@@ -961,6 +1070,16 @@ export function createMissionRunner(options: {
     },
     async getChat(input) {
       return await getChatSnapshot(input);
+    },
+    async compactContext(id) {
+      const pending = pendingOperations.get(id);
+      if (pending?.kind === "compact") return await pending.promise;
+      if (pending !== undefined) {
+        throw new MissionOperationError();
+      }
+      const compacting = compactMissionContext(id);
+      trackOperation(id, { kind: "compact", promise: compacting });
+      return await compacting;
     },
     async getRuntimeBinding(id) {
       return (await readMissionRootContext(await options.missions.get(id)))?.runtime;
@@ -977,7 +1096,7 @@ export function createMissionRunner(options: {
       const pending = pendingOperations.get(id);
       if (pending?.kind === "interrupt") return await pending.promise;
       if (pending !== undefined) {
-        throw new Error("Wait for the current mission operation to finish.");
+        throw new MissionOperationError();
       }
       const interrupting = interruptMission(id);
       trackOperation(id, { kind: "interrupt", promise: interrupting });
@@ -991,7 +1110,7 @@ export function createMissionRunner(options: {
     },
     async delete(id) {
       if (pendingOperations.has(id)) {
-        throw new Error("Wait for the current mission operation to finish.");
+        throw new MissionOperationError();
       }
       const liveChat = liveChats.get(id);
       if (liveChat !== undefined) await liveChat.close();
@@ -2066,11 +2185,7 @@ function toDesktopHumanRequest(request: ExpertAgentHumanRequest): HumanInteracti
     };
   }
   const first = request.questions[0];
-  const approval =
-    request.questions.length === 1 &&
-    first?.kind === "single_choice" &&
-    first.options.some((option) => /^approve$/i.test(option.label)) &&
-    first.options.some((option) => /^reject$/i.test(option.label));
+  const approval = request.semantics?.kind === "approval";
   return {
     kind: approval ? "approval" : "question",
     ...(first === undefined ? {} : { title: first.header, prompt: first.question }),
@@ -2078,6 +2193,7 @@ function toDesktopHumanRequest(request: ExpertAgentHumanRequest): HumanInteracti
       ...question,
       options: question.options.map((option) => ({ ...option })),
     })),
+    ...(request.semantics === undefined ? {} : { approveOption: request.semantics.approveOption }),
   };
 }
 
@@ -2103,14 +2219,14 @@ function toExpertHumanResponse(
       continue;
     }
     if (question.kind === "single_choice") {
+      const approveOption = request.semantics?.approveOption;
       const selected =
         response.approved === undefined
           ? response.decision
-          : (question.options.find((option) =>
-              response.approved
-                ? /^approve(?:d)?$/i.test(option.label)
-                : /^reject(?:ed)?$/i.test(option.label),
-            )?.label ?? response.decision);
+          : response.approved
+            ? approveOption
+            : (response.decision ??
+              question.options.find((option) => option.label !== approveOption)?.label);
       if (selected !== undefined) supplied[question.question] = selected;
     }
   }

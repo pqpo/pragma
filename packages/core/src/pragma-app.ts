@@ -71,12 +71,14 @@ export function createPragma(options: CreatePragmaOptions): PragmaApp {
     sessions,
     executions,
     runtimes,
+    pragmaHome: options.pragmaHome,
     automaticHumanInteractionHandler: options.automaticHumanInteractionHandler,
   });
   const flows = new FlowExecutionManager(
     executions,
     runtimes,
     options.automaticHumanInteractionHandler,
+    options.pragmaHome,
   );
   return {
     experts: {

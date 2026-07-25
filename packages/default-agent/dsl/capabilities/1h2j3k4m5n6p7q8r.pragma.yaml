@@ -1,10 +1,9 @@
-apiVersion: pragma/v2
+apiVersion: pragma/v3
 kind: Capability
 metadata:
-  id: pragma_dsl_authoring
-  version: 1.0.0
+  id: 1h2j3k4m5n6p7q8r
   name: Author Pragma DSL
-  description: Instructions and references for authoring validated pragma/v2 resources.
+  description: Instructions and references for authoring validated pragma/v3 resources.
   tags: [builtin, pragma, default-agent, skill]
 spec:
   adapter: pragma.capability.skill@v1

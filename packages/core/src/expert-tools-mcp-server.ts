@@ -231,7 +231,7 @@ function createSessionMcpServer(
   const server = new McpServer(
     {
       name,
-      version: options.agent.version,
+      version: "0.0.0",
     },
     {
       instructions:

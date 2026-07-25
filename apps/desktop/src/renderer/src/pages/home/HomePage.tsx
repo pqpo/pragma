@@ -3,9 +3,6 @@ import {
   ArrowUp,
   CaretDown,
   Check,
-  ClockCounterClockwise,
-  Folder,
-  FolderOpen,
   GitBranch,
   MagnifyingGlass,
   User,
@@ -22,13 +19,10 @@ import type {
 } from "../../../../shared/desktop-api.ts";
 import { ToolPermissionSelect } from "../../components/ToolPermissionSelect.tsx";
 import { MissionModelOverrideControls } from "../../components/MissionModelOverrideControls.tsx";
+import { WorkspacePicker, type WorkspaceSelection } from "../../components/WorkspacePicker.tsx";
 import { errorMessage } from "../../lib/errors.ts";
 import { localizeSystemExpertCopy } from "../../lib/system-expert-copy.ts";
-
-interface WorkspaceSelection {
-  readonly path: string;
-  readonly basename: string;
-}
+import { SchemaInputForm, createSchemaInputValue, isSchemaInputValid } from "./SchemaInputForm.tsx";
 
 export function HomePage(props: {
   readonly initialExecutorRef?: string | undefined;
@@ -43,6 +37,7 @@ export function HomePage(props: {
   const [executorRef, setExecutorRef] = useState(props.initialExecutorRef ?? "");
   const [defaultExecutorRef, setDefaultExecutorRef] = useState("");
   const [goal, setGoal] = useState("");
+  const [flowInput, setFlowInput] = useState<Readonly<Record<string, unknown>>>({});
   const [toolPermissionMode, setToolPermissionMode] =
     useState<DesktopToolPermissionMode>("request-approval");
   const [models, setModels] = useState<readonly DesktopRuntimeModel[]>([]);
@@ -54,6 +49,7 @@ export function HomePage(props: {
   const [error, setError] = useState<string | null>(null);
   const [modelError, setModelError] = useState<string | null>(null);
   const [modelResetRequired, setModelResetRequired] = useState(false);
+  const modelRuntimeIdRef = useRef<string | undefined>(undefined);
 
   useEffect(() => {
     let cancelled = false;
@@ -86,6 +82,11 @@ export function HomePage(props: {
 
   const selectedExecutor = executors.find((executor) => executor.ref === executorRef);
   const hasValidExecutor = selectedExecutor !== undefined;
+  const flowInputSchema =
+    selectedExecutor?.kind === "flow" ? selectedExecutor.inputSchema : undefined;
+  const hasStructuredFlowInput = flowInputSchema !== undefined;
+  const structuredFlowInputValid =
+    flowInputSchema === undefined || isSchemaInputValid(flowInputSchema, flowInput);
 
   useEffect(() => {
     if (hasValidExecutor || executors.length === 0) return;
@@ -99,6 +100,7 @@ export function HomePage(props: {
     setDefaultModelSelection(undefined);
     setModelError(null);
     setModelResetRequired(false);
+    modelRuntimeIdRef.current = undefined;
     if (
       selectedExecutor === undefined ||
       (selectedExecutor.kind !== "expert" && selectedExecutor.kind !== "team")
@@ -108,26 +110,48 @@ export function HomePage(props: {
       return;
     }
     let cancelled = false;
-    setModels([]);
-    setModelsLoading(true);
-    void window.pragmaDesktop
-      .getMissionModelOptions(selectedExecutor.ref)
-      .then((options) => {
-        if (cancelled) return;
-        setModels(options.models);
-        setDefaultModelSelection(options.defaultSelection);
-        setModelResetRequired(options.status === "reset_required");
-      })
-      .catch((loadError: unknown) => {
-        if (!cancelled) setModelError(errorMessage(loadError));
-      })
-      .finally(() => {
-        if (!cancelled) setModelsLoading(false);
-      });
+    const loadModelOptions = (showLoading: boolean) => {
+      if (showLoading) {
+        setModels([]);
+        setModelsLoading(true);
+      }
+      void window.pragmaDesktop
+        .getMissionModelOptions(selectedExecutor.ref)
+        .then((options) => {
+          if (cancelled) return;
+          modelRuntimeIdRef.current = options.runtime.id;
+          setModels(options.models);
+          setDefaultModelSelection(options.defaultSelection);
+          setModelResetRequired(options.status === "reset_required");
+          setModelError(null);
+        })
+        .catch((loadError: unknown) => {
+          if (!cancelled) setModelError(errorMessage(loadError));
+        })
+        .finally(() => {
+          if (!cancelled && showLoading) setModelsLoading(false);
+        });
+    };
+    const unsubscribe = window.pragmaDesktop.subscribeRuntimeModelCatalog((runtimeId) => {
+      if (modelRuntimeIdRef.current === undefined || modelRuntimeIdRef.current === runtimeId) {
+        loadModelOptions(false);
+      }
+    });
+    loadModelOptions(true);
     return () => {
       cancelled = true;
+      unsubscribe();
     };
   }, [selectedExecutor?.ref, selectedExecutor?.kind]);
+
+  useEffect(() => {
+    setGoal("");
+    setFlowInput(
+      selectedExecutor?.kind === "flow" && selectedExecutor.inputSchema !== undefined
+        ? createSchemaInputValue(selectedExecutor.inputSchema)
+        : {},
+    );
+  }, [selectedExecutor?.ref]);
 
   const pickWorkspace = async () => {
     try {
@@ -145,14 +169,29 @@ export function HomePage(props: {
 
   const submit = async () => {
     const workspace = workspaceOverride ?? defaultWorkspace;
-    if (workspace === undefined || !hasValidExecutor || goal.trim() === "" || saving) return;
+    if (
+      workspace === undefined ||
+      !hasValidExecutor ||
+      (!hasStructuredFlowInput && goal.trim() === "") ||
+      !structuredFlowInputValid ||
+      saving
+    )
+      return;
     setSaving(true);
     setError(null);
     try {
       const mission = await window.pragmaDesktop.createMission({
         workspace: workspace.path,
         executor: { ref: executorRef },
-        goal: goal.trim(),
+        input:
+          selectedExecutor.kind === "flow"
+            ? {
+                kind: "flow",
+                value: hasStructuredFlowInput
+                  ? flowInput
+                  : { goal: goal.trim(), workspace: workspace.path },
+              }
+            : { kind: "prompt", value: goal.trim() },
         toolPermissionMode,
         ...(modelOverride === undefined ? {} : { modelOverride }),
       });
@@ -174,27 +213,37 @@ export function HomePage(props: {
           <WorkspacePicker
             defaultWorkspace={defaultWorkspace}
             recentWorkspaces={recentWorkspaces}
-            override={workspaceOverride}
+            selection={workspaceOverride}
+            defaultSelected={workspaceOverride === undefined}
             onChoose={() => void pickWorkspace()}
             onSelect={setWorkspaceOverride}
             onUseDefault={() => setWorkspaceOverride(undefined)}
           />
-          <div className="mission-goal-field">
-            <textarea
-              id="mission-goal"
-              aria-label={t("goalPlaceholder")}
-              value={goal}
-              onChange={(event) => setGoal(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" && !event.shiftKey) {
-                  event.preventDefault();
-                  void submit();
-                }
-              }}
-              placeholder={t("goalPlaceholder")}
-              autoFocus
+          {flowInputSchema === undefined ? (
+            <div className="mission-goal-field">
+              <textarea
+                id="mission-goal"
+                aria-label={t("goalPlaceholder")}
+                value={goal}
+                onChange={(event) => setGoal(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && !event.shiftKey) {
+                    event.preventDefault();
+                    void submit();
+                  }
+                }}
+                placeholder={t("goalPlaceholder")}
+                autoFocus
+              />
+            </div>
+          ) : (
+            <SchemaInputForm
+              schema={flowInputSchema}
+              value={flowInput}
+              disabled={saving}
+              onChange={setFlowInput}
             />
-          </div>
+          )}
           <footer>
             <div className="mission-prompt-tools" aria-label={t("missionOptions")}>
               <MissionExecutorPicker
@@ -229,7 +278,8 @@ export function HomePage(props: {
                 !loaded ||
                 defaultWorkspace === undefined ||
                 !hasValidExecutor ||
-                goal.trim() === ""
+                (!hasStructuredFlowInput && goal.trim() === "") ||
+                !structuredFlowInputValid
               }
               onClick={() => void submit()}
             >
@@ -256,110 +306,6 @@ export function HomePage(props: {
         ) : null}
       </section>
     </section>
-  );
-}
-
-function WorkspacePicker(props: {
-  readonly defaultWorkspace?: WorkspaceSelection | undefined;
-  readonly recentWorkspaces: readonly WorkspaceSelection[];
-  readonly override?: WorkspaceSelection | undefined;
-  readonly onChoose: () => void;
-  readonly onSelect: (workspace: WorkspaceSelection) => void;
-  readonly onUseDefault: () => void;
-}) {
-  const { t } = useTranslation("missions");
-  const [open, setOpen] = useState(false);
-  const rootRef = useRef<HTMLDivElement | null>(null);
-  const workspace = props.override ?? props.defaultWorkspace;
-
-  useDismissableMenu(open, rootRef, () => setOpen(false));
-
-  return (
-    <div
-      className={open ? "mission-workspace-picker is-open" : "mission-workspace-picker"}
-      ref={rootRef}
-    >
-      <button
-        className="mission-workspace-trigger"
-        type="button"
-        aria-expanded={open}
-        aria-haspopup="menu"
-        onClick={() => setOpen((current) => !current)}
-      >
-        <Folder size={20} aria-hidden="true" />
-        <span>
-          <strong>
-            {props.override === undefined
-              ? t("useDefaultWorkspace")
-              : props.override.basename || t("taskWorkspace")}
-          </strong>
-          <small>{workspace?.path ?? t("loadingWorkspace")}</small>
-        </span>
-        <CaretDown size={16} aria-hidden="true" />
-      </button>
-      {open ? (
-        <div className="mission-workspace-menu" role="menu" aria-label={t("chooseWorkspace")}>
-          <button
-            type="button"
-            role="menuitemradio"
-            aria-checked={props.override === undefined}
-            onClick={() => {
-              props.onUseDefault();
-              setOpen(false);
-            }}
-          >
-            <Folder size={18} aria-hidden="true" />
-            <span>
-              <strong>{t("useDefaultWorkspace")}</strong>
-              <small>{props.defaultWorkspace?.path ?? t("loadingWorkspace")}</small>
-            </span>
-            {props.override === undefined ? <Check size={16} aria-hidden="true" /> : null}
-          </button>
-          {props.recentWorkspaces.length > 0 ? (
-            <span className="mission-workspace-menu-heading" role="presentation">
-              {t("recentWorkspaces")}
-            </span>
-          ) : null}
-          {props.recentWorkspaces.map((recentWorkspace) => {
-            const selected = props.override?.path === recentWorkspace.path;
-            return (
-              <button
-                key={recentWorkspace.path}
-                type="button"
-                role="menuitemradio"
-                aria-checked={selected}
-                title={recentWorkspace.path}
-                onClick={() => {
-                  props.onSelect(recentWorkspace);
-                  setOpen(false);
-                }}
-              >
-                <ClockCounterClockwise size={18} aria-hidden="true" />
-                <span>
-                  <strong>{recentWorkspace.basename}</strong>
-                  <small>{recentWorkspace.path}</small>
-                </span>
-                {selected ? <Check size={16} aria-hidden="true" /> : null}
-              </button>
-            );
-          })}
-          <button
-            type="button"
-            role="menuitem"
-            onClick={() => {
-              setOpen(false);
-              props.onChoose();
-            }}
-          >
-            <FolderOpen size={18} aria-hidden="true" />
-            <span>
-              <strong>{t("chooseDifferentWorkspace")}</strong>
-              <small>{t("workspaceOverrideDescription")}</small>
-            </span>
-          </button>
-        </div>
-      ) : null}
-    </div>
   );
 }
 

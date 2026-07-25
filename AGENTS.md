@@ -155,7 +155,7 @@ examples    -> runtime-* / plugin-* / core -> shared
 | `packages/client`        | `@pragma/shared`                                                                                           |
 | `packages/server`        | `@pragma/shared`；需要编排时可依赖 `@pragma/core`                                                          |
 | `packages/core`          | `@pragma/shared`                                                                                           |
-| `packages/interpreter`   | `@pragma/core`；AST 子入口只使用运行时中立依赖                                                             |
+| `packages/interpreter`   | `@pragma/shared`、`@pragma/core`；AST 子入口只使用运行时中立依赖                                           |
 | `packages/default-agent` | `@pragma/shared`、`@pragma/core`、`@pragma/interpreter`；`/contracts` 保持浏览器安全                       |
 | `packages/runtime/*`     | `@pragma/shared`、`@pragma/core`、该 runtime 自己的 SDK                                                    |
 
@@ -252,6 +252,9 @@ Server 与 Agent 的关系：
 - 权威数据存放在 `~/.pragma/data/`，可恢复运行状态存放在 `state/`，有界诊断归档存放在
   `archives/`，可重建内容存放在 `cache/`；`tmp/` 与 `trash/` 使用短期保留策略。
 - ExpertSession、Execution 与 Runtime Session 分别存放在 `~/.pragma/state/expert-sessions/`、`~/.pragma/state/executions/` 和 `~/.pragma/state/runtime-sessions/`。
+- Execution 大输出交接文件和 manifest 存放在
+  `~/.pragma/state/executions/<executionId>/handoffs/`，作为可恢复 Execution 状态随 owner 生命周期清理；
+  workspace 文件交接只保存受控相对路径引用，不复制文件。
 - Project Revision 只保存不可变 manifest 和 Merkle `snapshotHash`；文件实体全局去重到
   `~/.pragma/data/objects/sha256/`，所有 Revision 在 Project 删除前都是强引用根。
 - Agent 插件按 package fingerprint 全局缓存到 `~/.pragma/cache/plugins/sha256/`；
@@ -263,6 +266,25 @@ Server 与 Agent 的关系：
 - 外部 ID 目录段统一通过 `@pragma/core` 的 `PragmaPaths` 编码和解析，具体 Runtime 或插件 loader 不自行拼接管理路径。
 - 每个 Runtime Session 必须由 ExpertSession context 或 FlowExecution Invocation 明确拥有；恢复还必须提供原 `systemSessionId` 和 `RuntimeSessionRef`。
 - Core 必须通过原子 ownership claim 保证 `systemSessionId` 只有一个 owner；不要用“先扫描再写入”的 TOCTOU 检查代替原子声明。
+- Execution、ExpertSession、Runtime Session 等可恢复持久状态升级时，必须遵循 ADR 019：
+  当前 storage major 内提供相邻版本的前向迁移，在 aggregate file lock 内首次读取时执行；
+  多文件迁移先写稳定 journal，再原子替换目标文件，未完成 journal 必须可重放。业务代码只读取当前
+  Schema，不保留历史字段分支。新版本数据和没有迁移链的旧版本必须 fail closed，不得猜测、静默删除
+  或自动降级。
+- 持久状态 Schema 升级必须同时提交旧版本 fixture、当前版本 no-op、崩溃恢复和未来版本拒绝测试；
+  删除旧迁移链属于 storage-major cutover，必须另写 ADR 和导出/备份方案。DSL 版本兼容与本地运行状态
+  兼容是两个独立边界，不得用同一个版本开关处理。
+- Core 持久状态迁移统一放在 `packages/core/src/storage/migrations/<family>/`；历史 Schema 放入
+  `schemas/vN.ts`，相邻迁移放入 `steps/vN-to-vN+1.ts`，`index.ts` 只做静态、有序注册。不得把多个
+  版本继续堆在 Store 文件中，不得从最新 aggregate Schema 派生历史 Schema，也不得运行时动态扫描
+  或执行迁移模块。
+- 任何可恢复持久状态的 `schemaVersion` 升级，都必须在同一个改动中补齐对应的升级脚本；禁止只修改
+  当前 Schema 或版本号。升级脚本必须是 `steps/vN-to-vN+1.ts` 相邻迁移，并在该 family 的
+  `index.ts` 中静态注册；如果业务 transaction journal 内嵌了被升级对象，还必须同步升级 journal
+  Schema 和迁移链。
+- 持久状态 Schema 升级的 Pull Request 必须同时包含旧版本 Schema 快照、旧数据 fixture、升级后
+  fixture、当前版本 no-op、跨版本链式升级、未完成 journal 重放和未来版本拒绝测试。缺少任一必要
+  迁移脚本或测试时，不得合入。
 
 ## 本地 Agent 桥接规范
 
@@ -409,6 +431,24 @@ Pragma Worker Ready
 
 暂不接队列。
 
+### `apps/desktop`
+
+职责：
+
+- Electron 主进程、本地存储和 Runtime 装配。
+- preload IPC Bridge。
+- renderer 页面与本地权限确认 UI。
+
+边界要求：
+
+- main 可以依赖 Desktop 允许的 Core、Interpreter、Default Agent 和具体 Runtime。
+- preload、renderer 和跨层 shared 代码只允许依赖 `@pragma/shared` 与浏览器安全的
+  `@pragma/interpreter/ast`，不得导入 Interpreter 主入口或其他 Node-only `@pragma/*` package。
+- preload 使用的 workspace TypeScript 必须在构建阶段完成转换；生产产物必须自包含，运行时只允许外部加载
+  Electron 和 Node 内置模块，不得直接加载仓库 `.ts` 文件。
+- Desktop build 必须验证 preload 产物和 `pragmaDesktop` Bridge 注入；Bridge 或 renderer 启动失败时必须记录
+  主进程日志并显示可操作的错误页，不得静默白屏。
+
 ### `packages/shared`
 
 职责：
@@ -518,7 +558,7 @@ Expert API 设计要求：
 职责：
 
 - 定义 `Expert`、`ExpertTeam`、`Flow`、`Capability`、`ContextStore`、`RuntimeProfile` 的
-  `pragma/v2` YAML DSL AST 与 Zod Schema。
+  `pragma/v3` YAML DSL AST 与 Zod Schema。
 - 负责 YAML 解析、跨文件 import/include、引用链接、静态校验和 lock 校验。
 - 将 DSL 编译为 `@pragma/core` 的 Expert、ExpertTeam、Flow 对象实例。
 - 提供 Tool Adapter、Flow Action、Context Policy、Serializer 等具名版本 registry。
@@ -526,7 +566,7 @@ Expert API 设计要求：
 
 边界要求：
 
-- 主入口 `@pragma/interpreter` 是 Node-only，可以依赖 `@pragma/core`。
+- 主入口 `@pragma/interpreter` 是 Node-only，可以依赖 `@pragma/shared` 和 `@pragma/core`。
 - `@pragma/interpreter/ast` 必须保持浏览器安全，只导出 Schema 和从 Schema 推导的类型。
 - `core`、`shared`、具体 runtime 和 plugin 不得反向依赖 `interpreter`。
 - 不要新增 `defineExpertFromManifest`、`defineExpertTeamFromManifest` 或 `defineFlowFromManifest`。
@@ -541,7 +581,7 @@ Expert API 设计要求：
 
 职责：
 
-- 保存内置通用 Agent `Pragma` 的 `pragma/v2` DSL 和 `author-pragma-dsl` Skill。
+- 保存内置通用 Agent `Pragma` 的 `pragma/v3` DSL 和 `author-pragma-dsl` Skill。
 - 定义项目 DSL 与 Mission 的宿主端口，并将其包装成 Core managed tools；这些只是默认 Agent 的部分能力。
 - 导出供 Desktop 或未来 Web 适配的运行时中立项目/任务契约。
 - 不拥有独立 ExpertSession、聊天历史或审批投影；宿主统一复用 Mission/Execution 链路。

@@ -30,6 +30,20 @@ Execution canonical event log; after terminal settlement, a separate immutable E
 preserves Mission-visible assistant, thinking, tool-summary, and activity entries. If neither the
 Execution nor its projection is available, chat displays an explicit unavailable-history entry.
 
+The projection is a durable, Mission-owned UI read model, not an Execution recovery source or audit
+log. It is stored as one `execution-projections/<executionId>.jsonl` file per terminal Execution,
+which is also its natural rotation boundary. JSONL records are written sequentially to an atomic
+temporary file and flushed before publication; readers process records line by line and ignore only
+an incomplete final line. Each projection is limited to 1,000 newest entries and 4 MiB, assistant
+and thinking content is limited to 32,000 characters per entry, and tool or activity errors are
+limited to 4,000 characters. The header records omitted-entry and truncated-field counts. Existing
+`pragma.mission-execution-projection/v1` JSON files are validated and migrated on first read.
+
+Projections intentionally survive the bounded diagnostic Execution archive because they are the
+Mission's durable visible history. They have no independent time-based retention: deleting the
+owning Mission removes its projections through the existing owner-graph deletion lifecycle. This
+avoids retaining a second unbounded copy while also avoiding silent expiration of Mission chat.
+
 Timeline appends use a per-Mission cross-process file lock and a recoverable transaction journal.
 Only a torn final JSONL record associated with that journal may be truncated and replayed;
 corruption in committed records fails closed. The initial file adapter may scan and cache the full
@@ -45,6 +59,8 @@ size of 100.
 - YAML remains readable and bounded while long conversations grow only in `messages.jsonl`.
 - Execution events remain canonical during execution; terminal Mission projections survive bounded
   diagnostic archive expiry.
+- Long Executions cannot grow a projection beyond the documented per-Execution limits; older detail
+  may be omitted while the newest output remains available.
 - IPC and renderer memory scale with loaded pages rather than total conversation size.
 - Local timeline reads are still linear until a later index or storage adapter is justified.
 - Existing `pragma.mission/v2` directories report an actionable unsupported-schema error and are

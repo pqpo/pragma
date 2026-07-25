@@ -54,7 +54,7 @@ export function createDesktopDefaultAgentTaskPort(options: {
         }
         const mission = await options.creator.create({
           workspace: input.workspaceId,
-          goal: input.goal,
+          missionInput: { kind: "auto", value: input.goal },
           executorRef: input.executorRef,
         });
         await writeOperation(path, mission.id);

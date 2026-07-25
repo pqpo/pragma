@@ -49,5 +49,6 @@ commit may enrich that final state but cannot replace it with a different status
   without retaining token deltas.
 - File storage remains a local reference adapter; production storage should materialize indexed
   Output and Trace projections where necessary.
-- Earlier Execution schemas, persisted `runtime.stream` events, independently persisted Output
-  events, and their compatibility paths are not supported or migrated.
+- Persisted `runtime.stream` events and independently persisted Output events remain unsupported.
+  Recoverable Execution snapshot schemas follow the forward-only migration policy in ADR 019;
+  canonical event formats require explicit read upcasters when their schema changes.

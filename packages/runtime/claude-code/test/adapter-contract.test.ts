@@ -9,6 +9,8 @@ describe("Claude Code Runtime contract", () => {
       supportsCancel: true,
       supportsClose: true,
       supportsSteer: false,
+      supportsContextWindowInspection: true,
+      supportsManualCompaction: true,
     });
   });
 });

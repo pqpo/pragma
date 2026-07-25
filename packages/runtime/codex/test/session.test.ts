@@ -3,11 +3,124 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { CodexAppServerClient } from "../src/app-server-client.ts";
 import {
+  compactCodexContextWindow,
   createCodexNativeSession,
   createCodexNotificationBus,
   mapCodexNotificationToRuntimeEvent,
+  parseCodexContextWindowUsage,
   startCodexTurn,
 } from "../src/session.ts";
+
+describe("Codex context window", () => {
+  it("reads active context from the latest turn instead of cumulative thread usage", () => {
+    expect(
+      parseCodexContextWindowUsage({
+        threadId: "thread-1",
+        tokenUsage: {
+          total: { totalTokens: 663_493 },
+          last: { totalTokens: 92_000, reasoningOutputTokens: 4_000 },
+          modelContextWindow: 200_000,
+        },
+      }),
+    ).toMatchObject({
+      usedTokens: 88_000,
+      contextWindowTokens: 200_000,
+      percent: 44,
+      measurement: "reported",
+    });
+  });
+
+  it("does not substitute cumulative usage when the latest context snapshot is absent", () => {
+    expect(
+      parseCodexContextWindowUsage({
+        token_usage: {
+          total_token_usage: { total_tokens: 663_493 },
+          model_context_window: 258_400,
+        },
+      }),
+    ).toMatchObject({
+      usedTokens: null,
+      contextWindowTokens: 258_400,
+      percent: null,
+    });
+  });
+
+  it("supports snake-case latest usage and excludes transient reasoning tokens", () => {
+    expect(
+      parseCodexContextWindowUsage({
+        token_usage: {
+          last_token_usage: {
+            total_tokens: 70_000,
+            reasoning_output_tokens: 6_000,
+          },
+          model_context_window: 128_000,
+        },
+      }),
+    ).toMatchObject({
+      usedTokens: 64_000,
+      contextWindowTokens: 128_000,
+      percent: 50,
+    });
+  });
+
+  it("waits for compact completion and returns refreshed thread usage", async () => {
+    const notificationBus = createCodexNotificationBus();
+    const client = {
+      async compactThread() {
+        notificationBus.publish({
+          method: "thread/tokenUsage/updated",
+          params: {
+            threadId: "thread-1",
+            tokenUsage: {
+              total: { totalTokens: 12_000 },
+              last: { totalTokens: 12_000 },
+              modelContextWindow: 200_000,
+            },
+          },
+        });
+        notificationBus.publish({
+          method: "turn/completed",
+          params: { threadId: "thread-1", turn: { status: "completed" } },
+        });
+      },
+    } as unknown as CodexAppServerClient;
+    const session = createCodexNativeSession({
+      client,
+      notificationBus,
+      state: { threadId: "thread-1" },
+    });
+
+    await expect(compactCodexContextWindow(session)).resolves.toMatchObject({
+      usedTokens: 12_000,
+      contextWindowTokens: 200_000,
+      percent: 6,
+    });
+  });
+
+  it("times out when the app-server never reports compact completion", async () => {
+    vi.useFakeTimers();
+    try {
+      const notificationBus = createCodexNotificationBus();
+      const client = {
+        async compactThread() {
+          return undefined;
+        },
+      } as unknown as CodexAppServerClient;
+      const session = createCodexNativeSession({
+        client,
+        notificationBus,
+        state: { threadId: "thread-1" },
+      });
+
+      const compacting = compactCodexContextWindow(session);
+      const rejected = expect(compacting).rejects.toThrow("context compaction timed out");
+      await vi.advanceTimersByTimeAsync(30_000);
+      await rejected;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
 
 describe("Codex turn completion", () => {
   it("rejects a completed turn that contains no assistant output", async () => {

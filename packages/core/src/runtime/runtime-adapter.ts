@@ -26,6 +26,8 @@ export interface RuntimeAdapterCapabilities {
   readonly supportsSteer?: boolean | undefined;
   readonly supportsCancel?: boolean | undefined;
   readonly supportsClose?: boolean | undefined;
+  readonly supportsContextWindowInspection?: boolean | undefined;
+  readonly supportsManualCompaction?: boolean | undefined;
 }
 
 export type RuntimeTarget = "expert" | "code" | "flow" | "operator" | (string & {});
@@ -174,9 +176,25 @@ export interface RuntimeSteerRequest {
   readonly targetRunId: string;
 }
 
+export type RuntimeContextWindowMeasurement = "reported" | "derived" | "estimated";
+
+export interface RuntimeContextWindowUsage {
+  readonly usedTokens: number | null;
+  readonly contextWindowTokens: number;
+  readonly percent: number | null;
+  readonly measurement: RuntimeContextWindowMeasurement;
+  readonly observedAt: string;
+}
+
+export interface RuntimeSessionContextWindowController {
+  readonly inspect: () => Promise<RuntimeContextWindowUsage | undefined>;
+  readonly compact: (() => Promise<RuntimeContextWindowUsage | undefined>) | undefined;
+}
+
 export interface RuntimeAgentSession {
   readonly info: () => RuntimeSessionInfo;
   readonly messages: () => readonly AgentMessage[];
+  readonly contextWindow?: RuntimeSessionContextWindowController | undefined;
   readonly submit: <TSubmitOutput = string>(
     submission: RuntimeSubmitRequest<TSubmitOutput>,
   ) => RuntimeSubmitHandle<TSubmitOutput>;

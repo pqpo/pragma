@@ -44,7 +44,7 @@ examples    -> runtime-* / plugin-* / core -> shared
 | `packages/client`        | `@pragma/shared`                                                                                                        |
 | `packages/server`        | `@pragma/shared`; orchestration code may depend on `@pragma/core`                                                       |
 | `packages/core`          | `@pragma/shared`                                                                                                        |
-| `packages/interpreter`   | `@pragma/core`; its `/ast` export remains browser-safe                                                                  |
+| `packages/interpreter`   | `@pragma/shared`, `@pragma/core`; its `/ast` export remains browser-safe                                                |
 | `packages/default-agent` | `@pragma/shared`, `@pragma/core`, `@pragma/interpreter`; its `/contracts` export remains browser-safe                   |
 | `packages/runtime/*`     | `@pragma/shared`, `@pragma/core`, and that runtime's own SDKs                                                           |
 
@@ -93,6 +93,10 @@ PI and Codex runtimes and uses PI by default.
 It does not depend on Desktop, Electron, Web, Server, database code, or a concrete Runtime Adapter.
 Applications compose the package with their own DSL project persistence and task implementations;
 the package exposes runtime-neutral project/task schemas through `@pragma/default-agent/contracts`.
+Automation maintenance follows the same boundary: Core owns trigger/delivery contracts, Interpreter
+owns the portable `Automation` resource, Default Agent owns an application-neutral maintenance
+port, and Desktop owns schedule lifecycle, host bindings, queues, and Mission dispatch. Future
+webhook or IM credentials belong to host Connections and never to DSL or Core.
 
 Desktop Home is a Mission creation entry, not a separate chat runtime. Desktop's System Expert
 Registry projects `expert:pragma@1.0.0` as the read-only default Expert and resolves it for both

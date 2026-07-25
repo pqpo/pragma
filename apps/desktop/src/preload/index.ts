@@ -2,6 +2,8 @@ import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
 
 import {
   DesktopBridgeSnapshotSchema,
+  DesktopMutationError,
+  DesktopMutationResultSchema,
   DesktopSettingsSnapshotSchema,
   AddContextNoteEntrySchema,
   CapabilityActionSchema,
@@ -49,11 +51,13 @@ import {
   ResetModelProvidersResultSchema,
   ResetBuiltInExpertDefinitionSchema,
   CreateMissionSchema,
+  DesktopRuntimeIdSchema,
   GetMissionChatSchema,
   GetMissionWorkConversationSchema,
   MissionActionSchema,
   MissionChatSnapshotSchema,
   MissionChatUpdateSchema,
+  MissionContextWindowStateSchema,
   MissionCreationDefaultsSchema,
   MissionExecutorOptionSchema,
   MissionModelOptionsRequestSchema,
@@ -71,6 +75,9 @@ import {
   SkillDocumentSchema,
   SetPluginSecretsSchema,
   DeletePragmaResourceSchema,
+  AllocatePragmaResourceIdResultSchema,
+  PragmaProjectChangesSchema,
+  PragmaProjectChangesValidationResultSchema,
   PragmaProjectSnapshotSchema,
   PragmaYamlValidationResultSchema,
   PublishPragmaProjectSchema,
@@ -87,8 +94,21 @@ import {
   ValidateWorkspaceResultSchema,
   ValidatePragmaResourceSchema,
   WorkflowLayoutSchema,
+  AutomationActionSchema,
+  AutomationAdapterOptionSchema,
+  AutomationSchedulePreviewSchema,
+  AutomationSummarySchema,
+  DeleteAutomationSchema,
+  PreviewAutomationScheduleSchema,
+  SaveAutomationSchema,
   type PragmaDesktopAPI,
 } from "../shared/desktop-api.ts";
+
+async function invokeMutation(channel: string, ...args: readonly unknown[]): Promise<unknown> {
+  const result = DesktopMutationResultSchema.parse(await ipcRenderer.invoke(channel, ...args));
+  if (!result.ok) throw new DesktopMutationError(result.error);
+  return result.value;
+}
 
 const api: PragmaDesktopAPI = {
   getBridgeSnapshot: async () =>
@@ -180,11 +200,11 @@ const api: PragmaDesktopAPI = {
     ),
   createExpert: async (input) =>
     ExpertDefinitionSchema.parse(
-      await ipcRenderer.invoke("experts:create", CreateExpertDefinitionSchema.parse(input)),
+      await invokeMutation("experts:create", CreateExpertDefinitionSchema.parse(input)),
     ),
   updateExpert: async (ref, input) =>
     ExpertDefinitionSchema.parse(
-      await ipcRenderer.invoke(
+      await invokeMutation(
         "experts:update",
         ExpertRefSchema.parse(ref),
         UpdateExpertDefinitionSchema.parse(input),
@@ -192,7 +212,7 @@ const api: PragmaDesktopAPI = {
     ),
   updateBuiltInExpert: async (ref, input) =>
     ExpertDefinitionSchema.parse(
-      await ipcRenderer.invoke(
+      await invokeMutation(
         "experts:update-built-in",
         ExpertRefSchema.parse(ref),
         UpdateBuiltInExpertDefinitionSchema.parse(input),
@@ -200,13 +220,13 @@ const api: PragmaDesktopAPI = {
     ),
   resetBuiltInExpert: async (ref) =>
     ExpertDefinitionSchema.parse(
-      await ipcRenderer.invoke(
+      await invokeMutation(
         "experts:reset-built-in",
         ResetBuiltInExpertDefinitionSchema.parse({ ref }),
       ),
     ),
   deleteExpert: async (ref) => {
-    await ipcRenderer.invoke("experts:delete", DeleteExpertDefinitionSchema.parse({ ref }));
+    await invokeMutation("experts:delete", DeleteExpertDefinitionSchema.parse({ ref }));
   },
   listPlugins: async () =>
     DesktopPluginSchema.array().parse(await ipcRenderer.invoke("plugins:list")),
@@ -236,17 +256,25 @@ const api: PragmaDesktopAPI = {
   },
   getPragmaProject: async () =>
     PragmaProjectSnapshotSchema.parse(await ipcRenderer.invoke("pragma-project:get")),
+  allocatePragmaResourceId: async () =>
+    AllocatePragmaResourceIdResultSchema.parse(
+      await ipcRenderer.invoke("pragma-project:allocate-id"),
+    ),
   publishPragmaProject: async (input) =>
     PragmaProjectSnapshotSchema.parse(
-      await ipcRenderer.invoke("pragma-project:publish", PublishPragmaProjectSchema.parse(input)),
+      await invokeMutation("pragma-project:publish", PublishPragmaProjectSchema.parse(input)),
     ),
   upsertPragmaResource: async (input) =>
     PragmaProjectSnapshotSchema.parse(
-      await ipcRenderer.invoke("pragma-project:upsert", UpsertPragmaResourceSchema.parse(input)),
+      await invokeMutation("pragma-project:upsert", UpsertPragmaResourceSchema.parse(input)),
+    ),
+  applyPragmaProjectChanges: async (input) =>
+    PragmaProjectSnapshotSchema.parse(
+      await invokeMutation("pragma-project:apply-changes", PragmaProjectChangesSchema.parse(input)),
     ),
   deletePragmaResource: async (input) =>
     PragmaProjectSnapshotSchema.parse(
-      await ipcRenderer.invoke("pragma-project:delete", DeletePragmaResourceSchema.parse(input)),
+      await invokeMutation("pragma-project:delete", DeletePragmaResourceSchema.parse(input)),
     ),
   validatePragmaYaml: async (source) =>
     PragmaYamlValidationResultSchema.parse(
@@ -257,9 +285,16 @@ const api: PragmaDesktopAPI = {
     ),
   validatePragmaResource: async (input) =>
     PragmaYamlValidationResultSchema.parse(
-      await ipcRenderer.invoke(
+      await invokeMutation(
         "pragma-project:validate-resource",
         ValidatePragmaResourceSchema.parse(input),
+      ),
+    ),
+  validatePragmaProjectChanges: async (input) =>
+    PragmaProjectChangesValidationResultSchema.parse(
+      await invokeMutation(
+        "pragma-project:validate-changes",
+        PragmaProjectChangesSchema.parse(input),
       ),
     ),
   getWorkflowLayout: async (input) => {
@@ -276,6 +311,30 @@ const api: PragmaDesktopAPI = {
   deleteWorkflowLayout: async (input) => {
     await ipcRenderer.invoke("workflow-layout:delete", DeleteWorkflowLayoutSchema.parse(input));
   },
+  listAutomationAdapters: async () =>
+    AutomationAdapterOptionSchema.array().parse(
+      await ipcRenderer.invoke("automations:adapters:list"),
+    ),
+  listAutomations: async () =>
+    AutomationSummarySchema.array().parse(await ipcRenderer.invoke("automations:list")),
+  saveAutomation: async (input) =>
+    AutomationSummarySchema.parse(
+      await ipcRenderer.invoke("automations:save", SaveAutomationSchema.parse(input)),
+    ),
+  deleteAutomation: async (input) => {
+    await ipcRenderer.invoke("automations:delete", DeleteAutomationSchema.parse(input));
+  },
+  resetAutomationSession: async (ref) =>
+    AutomationSummarySchema.parse(
+      await ipcRenderer.invoke("automations:session:reset", AutomationActionSchema.parse({ ref })),
+    ),
+  previewAutomationSchedule: async (input) =>
+    AutomationSchedulePreviewSchema.parse(
+      await ipcRenderer.invoke(
+        "automations:schedule:preview",
+        PreviewAutomationScheduleSchema.parse(input),
+      ),
+    ),
   listMissions: async () =>
     MissionSummarySchema.array().parse(await ipcRenderer.invoke("missions:list")),
   listMissionExecutors: async () =>
@@ -290,6 +349,13 @@ const api: PragmaDesktopAPI = {
         }),
       ),
     ),
+  subscribeRuntimeModelCatalog: (listener) => {
+    const handler = (_event: IpcRendererEvent, value: unknown) => {
+      listener(DesktopRuntimeIdSchema.parse(value));
+    };
+    ipcRenderer.on("runtimes:model-catalog:updated", handler);
+    return () => ipcRenderer.removeListener("runtimes:model-catalog:updated", handler);
+  },
   getMissionCreationDefaults: async () =>
     MissionCreationDefaultsSchema.parse(await ipcRenderer.invoke("missions:create-defaults:get")),
   getMission: async (id) =>
@@ -300,19 +366,21 @@ const api: PragmaDesktopAPI = {
     ),
   updateMissionOptions: async (input) =>
     MissionSchema.parse(
-      await ipcRenderer.invoke("missions:options:update", UpdateMissionOptionsSchema.parse(input)),
+      await invokeMutation("missions:options:update", UpdateMissionOptionsSchema.parse(input)),
     ),
   runMission: async (id) =>
-    MissionSchema.parse(
-      await ipcRenderer.invoke("missions:run", MissionActionSchema.parse({ id })),
-    ),
+    MissionSchema.parse(await invokeMutation("missions:run", MissionActionSchema.parse({ id }))),
   sendMissionMessage: async (input) =>
     MissionSchema.parse(
-      await ipcRenderer.invoke("missions:message:send", SendMissionMessageSchema.parse(input)),
+      await invokeMutation("missions:message:send", SendMissionMessageSchema.parse(input)),
     ),
   getMissionChat: async (input) =>
     MissionChatSnapshotSchema.parse(
       await ipcRenderer.invoke("missions:chat:get", GetMissionChatSchema.parse(input)),
+    ),
+  compactMissionContext: async (id) =>
+    MissionContextWindowStateSchema.parse(
+      await invokeMutation("missions:context:compact", MissionActionSchema.parse({ id })),
     ),
   subscribeMissionChat: (id, listener) => {
     const missionId = MissionIdSchema.parse(id);
@@ -325,7 +393,7 @@ const api: PragmaDesktopAPI = {
   },
   interruptMission: async (id) =>
     MissionSchema.parse(
-      await ipcRenderer.invoke("missions:interrupt", MissionActionSchema.parse({ id })),
+      await invokeMutation("missions:interrupt", MissionActionSchema.parse({ id })),
     ),
   getMissionWork: async (id) =>
     MissionWorkSnapshotSchema.parse(
@@ -348,14 +416,14 @@ const api: PragmaDesktopAPI = {
     return () => ipcRenderer.removeListener("missions:work:updated", handler);
   },
   deleteMission: async (id) => {
-    await ipcRenderer.invoke("missions:delete", MissionActionSchema.parse({ id }));
+    await invokeMutation("missions:delete", MissionActionSchema.parse({ id }));
   },
   listMissionHumanInteractions: async (id) =>
     MissionHumanInteractionSchema.array().parse(
       await ipcRenderer.invoke("missions:human:list", MissionActionSchema.parse({ id })),
     ),
   respondToMissionHumanInteraction: async (input) => {
-    await ipcRenderer.invoke(
+    await invokeMutation(
       "missions:human:respond",
       RespondMissionHumanInteractionSchema.parse(input),
     );

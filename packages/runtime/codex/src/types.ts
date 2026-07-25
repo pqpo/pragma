@@ -35,6 +35,7 @@ export interface CodexRuntimeAdapterOptions {
   readonly defaultModelName?: string | undefined;
   readonly defaultThinkingLevel?: string | undefined;
   readonly listModels?: (() => Promise<readonly RuntimeModel[]>) | undefined;
+  readonly onModelCatalogUpdated?: (() => void) | undefined;
   readonly sandboxMode?: CodexRuntimeSandboxMode | undefined;
   readonly approvalPolicy?: CodexRuntimeApprovalPolicy | undefined;
   readonly spawn?: CodexRuntimeSpawn | undefined;

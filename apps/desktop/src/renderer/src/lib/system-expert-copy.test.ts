@@ -49,7 +49,7 @@ describe("localizeSystemExpertCopy", () => {
     expect(
       localizeSystemExpertCopy(
         {
-          ref: "expert:reviewer@1.0.0",
+          ref: "expert:3sfd30h5017wd17d",
           name: "Reviewer",
           description: "Reviews changes",
           origin: "project",

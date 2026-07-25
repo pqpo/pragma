@@ -1,6 +1,7 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 
 import type { RuntimeResolver } from "@pragma/core";
 
@@ -13,7 +14,12 @@ import {
   type PragmaResourceRef,
 } from "../ast/pragma-dsl.schema.ts";
 import {
+  PragmaProjectChangeSetSchema,
+  type PragmaProjectChangeSetInput,
+} from "../ast/project-change-set.schema.ts";
+import {
   canonicalPragmaResourceRef,
+  normalizePragmaResourceName,
   pragmaResourceDirectory,
   pragmaResourceFileName,
 } from "../ast/resource-identity.ts";
@@ -65,7 +71,7 @@ export interface PragmaProjectSourceRepository {
 }
 
 export interface PragmaProjectSnapshot {
-  readonly schemaVersion: "pragma.project-snapshot/v2";
+  readonly schemaVersion: "pragma.project-snapshot/v3";
   readonly projectId: string;
   readonly revision: number;
   readonly resources: readonly PragmaResource[];
@@ -79,6 +85,14 @@ export interface PragmaProjectServiceOptions {
   readonly repository: PragmaProjectSourceRepository;
   readonly resourceAdapters?: PragmaResourceAdapterRegistry | undefined;
 }
+
+export interface PragmaProjectChangeSetCandidate {
+  readonly currentRevision: number;
+  readonly resources: readonly PragmaResource[];
+  readonly artifacts: ReadonlyMap<string, string>;
+}
+
+const PROJECT_CHANGE_SET_COMMIT_ATTEMPTS = 8;
 
 export class PragmaProjectService {
   private readonly adapters: PragmaResourceAdapterRegistry;
@@ -94,7 +108,7 @@ export class PragmaProjectService {
         : await this.options.repository.getRevision(projectId, revision);
     if (location === undefined) {
       return {
-        schemaVersion: "pragma.project-snapshot/v2",
+        schemaVersion: "pragma.project-snapshot/v3",
         projectId,
         revision: 0,
         resources: [],
@@ -112,7 +126,7 @@ export class PragmaProjectService {
       }
       const lockValid = !diagnostics.some((diagnostic) => diagnostic.code.startsWith("lock."));
       return {
-        schemaVersion: "pragma.project-snapshot/v2",
+        schemaVersion: "pragma.project-snapshot/v3",
         projectId,
         revision: checkedOut.revision,
         resources: project.listResources(),
@@ -153,50 +167,15 @@ export class PragmaProjectService {
     );
   }
 
-  async validateCandidate(input: {
+  async validateChangeSet(input: {
     readonly projectId: string;
-    readonly expectedRevision: number;
-    readonly upserts?: readonly PragmaResource[] | undefined;
-    readonly removals?: readonly PragmaResourceRef[] | undefined;
+    readonly changeSet: PragmaProjectChangeSetInput;
     readonly host?: PragmaCompileOptions | undefined;
   }): Promise<readonly PragmaDiagnostic[]> {
-    const current = await this.get(input.projectId);
-    if (current.revision !== input.expectedRevision) {
-      throw new PragmaProjectRevisionConflictError(input.expectedRevision, current.revision);
-    }
-    const currentErrors = current.diagnostics.filter(
-      (diagnostic) => diagnostic.severity === "error" && diagnostic.code.startsWith("lock."),
-    );
-    if (currentErrors.length > 0) throw new PragmaProjectValidationError(currentErrors);
-    const location = await this.options.repository.getRevision(
-      input.projectId,
-      input.expectedRevision,
-    );
-    const files =
-      location === undefined
-        ? new Map<string, string>()
-        : await this.options.repository.readFiles(location);
-    const managed = new Set([
-      "pragma.yaml",
-      "pragma.lock.yaml",
-      ...(current.lock?.resources.map((resource) => resource.source) ?? []),
-      ...current.resources.map(
-        (resource) => `${pragmaResourceDirectory(resource)}/${pragmaResourceFileName(resource)}`,
-      ),
-    ]);
-    const artifacts = new Map([...files].filter(([path]) => !managed.has(path)));
-    const removals = new Set(input.removals ?? []);
-    const upserts = (input.upserts ?? []).map((resource) => PragmaResourceSchema.parse(resource));
-    const refs = new Set(upserts.map(canonicalPragmaResourceRef));
+    const candidate = await this.materializeChangeSet(input.projectId, input.changeSet);
     return await this.validate({
-      resources: [
-        ...current.resources.filter((resource) => {
-          const ref = canonicalPragmaResourceRef(resource);
-          return !removals.has(ref) && !refs.has(ref);
-        }),
-        ...upserts,
-      ],
-      artifacts,
+      resources: candidate.resources,
+      artifacts: candidate.artifacts,
       host: input.host,
     });
   }
@@ -210,7 +189,12 @@ export class PragmaProjectService {
     const head = await this.options.repository.getHead(input.projectId);
     const actualRevision = head?.revision ?? 0;
     if (actualRevision !== input.expectedRevision) {
-      throw new PragmaProjectRevisionConflictError(input.expectedRevision, actualRevision);
+      throw new PragmaProjectRevisionConflictError(
+        input.expectedRevision,
+        actualRevision,
+        [],
+        false,
+      );
     }
     const resources = input.resources.map((resource) => PragmaResourceSchema.parse(resource));
     assertUniqueCanonicalRefs(resources);
@@ -240,54 +224,40 @@ export class PragmaProjectService {
     return await this.get(input.projectId);
   }
 
-  async apply(input: {
+  async applyChangeSet(input: {
     readonly projectId: string;
-    readonly expectedRevision: number;
-    readonly upserts?: readonly PragmaResource[] | undefined;
-    readonly removals?: readonly PragmaResourceRef[] | undefined;
-    readonly artifacts?: ReadonlyMap<string, string> | undefined;
+    readonly changeSet: PragmaProjectChangeSetInput;
   }): Promise<PragmaProjectSnapshot> {
-    const current = await this.get(input.projectId);
-    if (current.revision !== input.expectedRevision) {
-      throw new PragmaProjectRevisionConflictError(input.expectedRevision, current.revision);
+    for (let attempt = 0; attempt < PROJECT_CHANGE_SET_COMMIT_ATTEMPTS; attempt += 1) {
+      const candidate = await this.materializeChangeSet(input.projectId, input.changeSet);
+      try {
+        return await this.publish({
+          projectId: input.projectId,
+          expectedRevision: candidate.currentRevision,
+          resources: candidate.resources,
+          artifacts: candidate.artifacts,
+        });
+      } catch (error) {
+        if (
+          !(error instanceof PragmaProjectRevisionConflictError) ||
+          attempt === PROJECT_CHANGE_SET_COMMIT_ATTEMPTS - 1
+        ) {
+          if (
+            error instanceof PragmaProjectRevisionConflictError &&
+            attempt === PROJECT_CHANGE_SET_COMMIT_ATTEMPTS - 1
+          ) {
+            throw new PragmaProjectRevisionConflictError(
+              input.changeSet.baseRevision,
+              error.currentRevision,
+              [],
+              true,
+            );
+          }
+          throw error;
+        }
+      }
     }
-    const currentErrors = current.diagnostics.filter(
-      (diagnostic) => diagnostic.severity === "error" && diagnostic.code.startsWith("lock."),
-    );
-    if (currentErrors.length > 0) throw new PragmaProjectValidationError(currentErrors);
-    const removals = new Set(input.removals ?? []);
-    const upserts = (input.upserts ?? []).map((resource) => PragmaResourceSchema.parse(resource));
-    const upsertRefs = new Set(upserts.map(canonicalPragmaResourceRef));
-    const location = await this.options.repository.getRevision(
-      input.projectId,
-      input.expectedRevision,
-    );
-    const existingFiles =
-      location === undefined
-        ? new Map<string, string>()
-        : await this.options.repository.readFiles(location);
-    const managedPaths = new Set([
-      "pragma.yaml",
-      "pragma.lock.yaml",
-      ...(current.lock?.resources.map((resource) => resource.source) ?? []),
-      ...current.resources.map(
-        (resource) => `${pragmaResourceDirectory(resource)}/${pragmaResourceFileName(resource)}`,
-      ),
-    ]);
-    const artifacts =
-      input.artifacts ?? new Map([...existingFiles].filter(([path]) => !managedPaths.has(path)));
-    return await this.publish({
-      projectId: input.projectId,
-      expectedRevision: input.expectedRevision,
-      resources: [
-        ...current.resources.filter((resource) => {
-          const ref = canonicalPragmaResourceRef(resource);
-          return !removals.has(ref) && !upsertRefs.has(ref);
-        }),
-        ...upserts,
-      ],
-      artifacts,
-    });
+    throw new Error("Unreachable project change-set retry state.");
   }
 
   async compile<T extends InvocableResource>(input: {
@@ -295,6 +265,7 @@ export class PragmaProjectService {
     readonly revision: number;
     readonly ref: PragmaResourceRef;
     readonly workspace: string;
+    readonly pragmaHome?: string | undefined;
     readonly environmentId: string;
     readonly adapterHost: PragmaAdapterHost;
     readonly runtimes?: RuntimeResolver | undefined;
@@ -310,6 +281,7 @@ export class PragmaProjectService {
       const project = await this.openLocation(checkedOut, true);
       return await project.compile<T>(input.ref, {
         workspace: input.workspace,
+        pragmaHome: input.pragmaHome,
         projectRoot: dirname(checkedOut.entryFile),
         environmentId: input.environmentId,
         adapterHost: input.adapterHost,
@@ -341,6 +313,98 @@ export class PragmaProjectService {
       resourceAdapters: this.adapters,
     });
   }
+
+  async materializeChangeSet(
+    projectId: string,
+    rawInput: PragmaProjectChangeSetInput,
+  ): Promise<PragmaProjectChangeSetCandidate> {
+    const input = PragmaProjectChangeSetSchema.parse(rawInput);
+    const current = await this.get(projectId);
+    if (input.baseRevision > current.revision) {
+      throw new PragmaProjectRevisionConflictError(input.baseRevision, current.revision, [], false);
+    }
+    const currentErrors = current.diagnostics.filter(
+      (diagnostic) => diagnostic.severity === "error" && diagnostic.code.startsWith("lock."),
+    );
+    if (currentErrors.length > 0) throw new PragmaProjectValidationError(currentErrors);
+
+    const upserts = (input.upserts ?? []).map((resource) => PragmaResourceSchema.parse(resource));
+    assertUniqueCanonicalRefs(upserts);
+    const removals = new Set(input.removals ?? []);
+    const requiredUnchangedRefs = new Set(input.requiredUnchangedRefs ?? []);
+    const upsertsByRef = resourcesByRef(upserts);
+    const upsertRefs = new Set(upsertsByRef.keys());
+
+    if (input.baseRevision !== current.revision) {
+      const base =
+        input.baseRevision === 0
+          ? emptyProjectSnapshot(projectId)
+          : await this.get(projectId, input.baseRevision);
+      if (base.revision !== input.baseRevision) {
+        throw new PragmaProjectRevisionConflictError(
+          input.baseRevision,
+          current.revision,
+          [],
+          false,
+        );
+      }
+      const baseByRef = resourcesByRef(base.resources);
+      const currentByRef = resourcesByRef(current.resources);
+      const checkedRefs = new Set([...upsertRefs, ...removals, ...requiredUnchangedRefs]);
+      const conflictingRefs = [...checkedRefs]
+        .filter((ref) => {
+          const baseResource = baseByRef.get(ref);
+          const currentResource = currentByRef.get(ref);
+          if (isDeepStrictEqual(baseResource, currentResource)) return false;
+          if (requiredUnchangedRefs.has(ref)) return true;
+          if (isDeepStrictEqual(upsertsByRef.get(ref), currentResource)) return false;
+          if (removals.has(ref) && currentResource === undefined) return false;
+          return true;
+        })
+        .toSorted();
+      if (conflictingRefs.length > 0) {
+        throw new PragmaProjectRevisionConflictError(
+          input.baseRevision,
+          current.revision,
+          conflictingRefs,
+          false,
+        );
+      }
+    }
+
+    return {
+      currentRevision: current.revision,
+      resources: [
+        ...current.resources.filter((resource) => {
+          const ref = canonicalPragmaResourceRef(resource);
+          return !removals.has(ref) && !upsertRefs.has(ref);
+        }),
+        ...upserts,
+      ],
+      artifacts: await this.readArtifacts(projectId, current),
+    };
+  }
+
+  private async readArtifacts(
+    projectId: string,
+    snapshot: PragmaProjectSnapshot,
+  ): Promise<ReadonlyMap<string, string>> {
+    if (snapshot.revision === 0) return new Map();
+    const location = await this.options.repository.getRevision(projectId, snapshot.revision);
+    if (location === undefined) {
+      throw new Error(`Pragma project revision not found: ${projectId}@${snapshot.revision}`);
+    }
+    const files = await this.options.repository.readFiles(location);
+    const managedPaths = new Set([
+      "pragma.yaml",
+      "pragma.lock.yaml",
+      ...(snapshot.lock?.resources.map((resource) => resource.source) ?? []),
+      ...snapshot.resources.map(
+        (resource) => `${pragmaResourceDirectory(resource)}/${pragmaResourceFileName(resource)}`,
+      ),
+    ]);
+    return new Map([...files].filter(([path]) => !managedPaths.has(path)));
+  }
 }
 
 export interface PragmaInterpreter {
@@ -360,12 +424,34 @@ export class PragmaProjectValidationError extends Error {
 
 export class PragmaProjectRevisionConflictError extends Error {
   constructor(
-    readonly expectedRevision: number,
-    readonly actualRevision: number,
+    readonly baseRevision: number,
+    readonly currentRevision: number,
+    readonly conflictingRefs: readonly PragmaResourceRef[] = [],
+    readonly retryable: boolean = true,
   ) {
-    super(`Project revision changed from ${expectedRevision} to ${actualRevision}.`);
+    super(
+      conflictingRefs.length === 0
+        ? `Project revision changed from ${baseRevision} to ${currentRevision}.`
+        : `Project resources changed since revision ${baseRevision}: ${conflictingRefs.join(", ")}. Current revision is ${currentRevision}.`,
+    );
     this.name = "PragmaProjectRevisionConflictError";
   }
+}
+
+function emptyProjectSnapshot(projectId: string): PragmaProjectSnapshot {
+  return {
+    schemaVersion: "pragma.project-snapshot/v3",
+    projectId,
+    revision: 0,
+    resources: [],
+    diagnostics: [],
+  };
+}
+
+function resourcesByRef(
+  resources: readonly PragmaResource[],
+): ReadonlyMap<PragmaResourceRef, PragmaResource> {
+  return new Map(resources.map((resource) => [canonicalPragmaResourceRef(resource), resource]));
 }
 
 async function withStagedProject<T>(
@@ -392,7 +478,7 @@ async function withStagedProject<T>(
     await writeFile(
       join(root, "pragma.yaml"),
       formatPragmaYaml({
-        apiVersion: "pragma/v2",
+        apiVersion: "pragma/v3",
         kind: "Bundle",
         imports: imports.toSorted(),
         resources: [],
@@ -429,7 +515,7 @@ function canonicalProjectFiles(project: PragmaProject): ReadonlyMap<string, stri
   files.set(
     "pragma.yaml",
     formatPragmaYaml({
-      apiVersion: "pragma/v2",
+      apiVersion: "pragma/v3",
       kind: "Bundle",
       imports: imports.toSorted(),
       resources: [],
@@ -441,10 +527,21 @@ function canonicalProjectFiles(project: PragmaProject): ReadonlyMap<string, stri
 
 function assertUniqueCanonicalRefs(resources: readonly PragmaResource[]): void {
   const refs = new Set<string>();
+  const ids = new Set<string>();
+  const names = new Set<string>();
   for (const resource of resources) {
     const ref = canonicalPragmaResourceRef(resource);
     if (refs.has(ref)) throw new Error(`Duplicate Pragma resource: ${ref}`);
+    if (ids.has(resource.metadata.id)) {
+      throw new Error(`Duplicate Pragma resource ID: ${resource.metadata.id}`);
+    }
+    const nameKey = `${resource.kind}\u0000${normalizePragmaResourceName(resource.metadata.name)}`;
+    if (names.has(nameKey)) {
+      throw new Error(`Duplicate ${resource.kind} name: ${resource.metadata.name}`);
+    }
     refs.add(ref);
+    ids.add(resource.metadata.id);
+    names.add(nameKey);
   }
 }
 

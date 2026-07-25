@@ -6,16 +6,15 @@ import { HumanInteractionQueue } from "../src/console/human-interaction-controll
 
 describe("FlowConsoleModel", () => {
   it("tracks route decisions and marks unselected branches as skipped", () => {
-    const flow = defineFlow({ id: "review", version: "1.0.0" });
-    const prepare = flow.task({ id: "prepare", version: "1.0.0", handler: () => ({}) });
+    const flow = defineFlow({ id: "review" });
+    const prepare = flow.task({ id: "prepare", handler: () => ({}) });
     const review = flow.humanTask({
       id: "review",
-      version: "1.0.0",
       request: { kind: "review_gate", prompt: "Choose" },
     });
-    const approve = flow.task({ id: "approve", version: "1.0.0", handler: () => "approved" });
-    const revise = flow.task({ id: "revise", version: "1.0.0", handler: () => "revised" });
-    const reject = flow.task({ id: "reject", version: "1.0.0", handler: () => "rejected" });
+    const approve = flow.task({ id: "approve", handler: () => "approved" });
+    const revise = flow.task({ id: "revise", handler: () => "revised" });
+    const reject = flow.task({ id: "reject", handler: () => "rejected" });
     flow.compose(({ start, step, end }) => {
       start(prepare).next(review).route("decision", { approve, revise, reject });
       step(approve).next(end());
@@ -67,7 +66,6 @@ describe("FlowConsoleModel", () => {
       name: "Review Lead",
       description: "Lead",
       tags: [],
-      version: "1.0.0",
       scope: "test",
       workspace: process.cwd(),
     });
@@ -76,18 +74,16 @@ describe("FlowConsoleModel", () => {
       name: "Member",
       description: "Member",
       tags: [],
-      version: "1.0.0",
       scope: "test",
       workspace: process.cwd(),
     });
     const team = defineExpertTeam({
       id: "review-team",
-      version: "1.0.0",
       coordinator: lead,
       members: [member],
       delegation: { maxConcurrency: 2, maxDepth: 1 },
     });
-    const flow = defineFlow({ id: "team-flow", version: "1.0.0" });
+    const flow = defineFlow({ id: "team-flow" });
     const teamStep = flow.use("team", team);
     flow.compose(({ start, end }) => start(teamStep).next(end()));
     const model = new FlowConsoleModel(flow);
@@ -143,7 +139,6 @@ describe("FlowConsoleModel", () => {
       name: "Lead",
       description: "Lead",
       tags: [],
-      version: "1.0.0",
       scope: "test",
       workspace: process.cwd(),
     });
@@ -152,7 +147,6 @@ describe("FlowConsoleModel", () => {
       name: "First",
       description: "First",
       tags: [],
-      version: "1.0.0",
       scope: "test",
       workspace: process.cwd(),
     });
@@ -161,18 +155,16 @@ describe("FlowConsoleModel", () => {
       name: "Second",
       description: "Second",
       tags: [],
-      version: "1.0.0",
       scope: "test",
       workspace: process.cwd(),
     });
     const team = defineExpertTeam({
       id: "team",
-      version: "1.0.0",
       coordinator: lead,
       members: [first, second],
       delegation: { maxConcurrency: 2, maxDepth: 1 },
     });
-    const flow = defineFlow({ id: "interleaved", version: "1.0.0" });
+    const flow = defineFlow({ id: "interleaved" });
     const teamStep = flow.use("team", team);
     flow.compose(({ start, end }) => start(teamStep).next(end()));
     const model = new FlowConsoleModel(flow);
@@ -277,20 +269,25 @@ describe("FlowConsoleModel", () => {
   });
 
   it("makes terminal routes eligible again while a revision review is waiting", () => {
-    const flow = defineFlow({ id: "revision-loop", version: "1.0.0" });
+    const flow = defineFlow({ id: "revision-loop" });
     const review = flow.humanTask({
       id: "review",
-      version: "1.0.0",
       request: { kind: "review_gate", prompt: "Choose" },
     });
-    const approve = flow.task({ id: "approve", version: "1.0.0", handler: () => "approved" });
-    const revise = flow.task({ id: "revise", version: "1.0.0", handler: () => "revised" });
-    const reject = flow.task({ id: "reject", version: "1.0.0", handler: () => "rejected" });
+    const approve = flow.task({ id: "approve", handler: () => "approved" });
+    const revise = flow.task({ id: "revise", handler: () => "revised" });
+    const reject = flow.task({ id: "reject", handler: () => "rejected" });
     flow.compose(({ start, step, end }) => {
       start(review).route("decision", { approve, revise, reject });
-      step(revise).next(review);
+      step(revise).repeat("revision", review);
       step(approve).next(end());
       step(reject).next(end());
+    });
+    flow.loop({
+      id: "revision",
+      entry: review,
+      steps: [review, revise],
+      maxIterations: 3,
     });
     const model = new FlowConsoleModel(flow);
     model.syncTree(
@@ -321,8 +318,8 @@ describe("FlowConsoleModel", () => {
   });
 
   it("renders wide and stacked layouts with node details", () => {
-    const flow = defineFlow({ id: "render", version: "1.0.0" });
-    const task = flow.task({ id: "prepare", version: "1.0.0", handler: () => "done" });
+    const flow = defineFlow({ id: "render" });
+    const task = flow.task({ id: "prepare", handler: () => "done" });
     flow.compose(({ start, end }) => start(task).next(end()));
     const model = new FlowConsoleModel(flow);
     const queue = new HumanInteractionQueue();
@@ -381,7 +378,7 @@ function tree(
     invocation: {
       invocationId,
       rootInvocationId: "flow",
-      definition: { id: overrides.nodeId ?? invocationId, version: "1.0.0", kind },
+      definition: { id: overrides.nodeId ?? invocationId, kind },
       contextId: overrides.contextId ?? invocationId,
       status,
       input: overrides.input ?? null,

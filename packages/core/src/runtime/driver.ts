@@ -53,6 +53,7 @@ import type {
   RuntimeAdapter,
   RuntimeAdapterDescriptor,
   RuntimeCanUseResult,
+  RuntimeContextWindowUsage,
   RuntimeDriverSessionRequest,
   RuntimeOutputSchema,
   RuntimeModel,
@@ -212,6 +213,22 @@ export interface RuntimeDriver<TNativeEvent, TNativeSession, TPrepared = Runtime
         context: RuntimeUsageContext,
       ) => Promise<AgentMessageUsage | undefined> | AgentMessageUsage | undefined)
     | undefined;
+  readonly readContextWindow?:
+    | ((
+        session: TNativeSession,
+      ) =>
+        | Promise<RuntimeContextWindowUsage | undefined>
+        | RuntimeContextWindowUsage
+        | undefined)
+    | undefined;
+  readonly compactContext?:
+    | ((
+        session: TNativeSession,
+      ) =>
+        | Promise<RuntimeContextWindowUsage | undefined>
+        | RuntimeContextWindowUsage
+        | undefined)
+    | undefined;
   readonly cancelTurn?:
     | ((session: TNativeSession, context: RuntimeCancelContext) => Promise<void> | void)
     | undefined;
@@ -255,6 +272,8 @@ export function defineRuntimeDriver<
       supportsSteer: driver.steerTurn !== undefined,
       supportsCancel: driver.cancelTurn !== undefined,
       supportsClose: true,
+      supportsContextWindowInspection: driver.readContextWindow !== undefined,
+      supportsManualCompaction: driver.compactContext !== undefined,
     },
   };
   const runtime: RuntimeAdapter = {
@@ -526,6 +545,11 @@ async function createManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepar
         await checkpoint(trigger);
         await request.onSessionInfo?.(readSessionInfo());
       },
+      persistContextWindowUsage: async (usage) => {
+        sessionRecord = await updateRuntimeSessionRecord(pragmaPaths, sessionRecord, {
+          contextWindowUsage: usage,
+        });
+      },
       executionBindings,
     });
     managedSession.setWatcher(
@@ -672,6 +696,9 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepared> {
         runtimeSessionId: string,
         trigger: RuntimeCheckpointTrigger,
       ) => Promise<void>;
+      readonly persistContextWindowUsage: (
+        usage: RuntimeContextWindowUsage | null,
+      ) => Promise<void>;
       readonly executionBindings: RuntimeExecutionBindings;
     },
   ) {}
@@ -687,6 +714,31 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepared> {
         runContext: this.options.runContext,
       }) ?? []
     );
+  }
+
+  get contextWindow():
+    | {
+        readonly inspect: () => Promise<RuntimeContextWindowUsage | undefined>;
+        readonly compact: (() => Promise<RuntimeContextWindowUsage | undefined>) | undefined;
+      }
+    | undefined {
+    if (this.options.driver.readContextWindow === undefined) return undefined;
+    return {
+      inspect: async () => {
+        this.assertIdle("inspect the context window");
+        return await this.refreshContextWindow(true);
+      },
+      compact:
+        this.options.driver.compactContext === undefined
+          ? undefined
+          : async () => {
+              this.assertIdle("compact the context window");
+              const usage = await this.options.driver.compactContext!(this.options.nativeSession);
+              await this.options.persistContextWindowUsage(usage ?? null);
+              await this.options.checkpoint("context.compacted");
+              return usage;
+            },
+    };
   }
 
   submit<TOutput = string>(
@@ -745,6 +797,7 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepared> {
         });
 
         const runResult = await this.executeSubmission(runId, submission, signal, controller);
+        await this.refreshContextWindow(false);
 
         controller.writer.write({
           runId,
@@ -765,6 +818,7 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepared> {
 
         return runResult;
       } catch (error) {
+        await this.refreshContextWindow(false);
         const wasCancelled = signal.aborted || cancelled;
         const message = error instanceof Error ? error.message : "Runtime run failed.";
         const errorMetadata = readRuntimeErrorMetadata(error);
@@ -838,6 +892,34 @@ class ManagedRuntimeSession<TNativeEvent, TNativeSession, TPrepared> {
 
   async close(): Promise<void> {
     await this.options.lifecycle.close();
+  }
+
+  private assertIdle(operation: string): void {
+    if (
+      this.activeRunId !== undefined ||
+      this.options.lifecycle.runState === "queued" ||
+      this.options.lifecycle.runState === "running"
+    ) {
+      throw new Error(`Cannot ${operation} while a Runtime turn is active.`);
+    }
+  }
+
+  private async refreshContextWindow(
+    throwOnError: boolean,
+  ): Promise<RuntimeContextWindowUsage | undefined> {
+    const read = this.options.driver.readContextWindow;
+    if (read === undefined) return undefined;
+    try {
+      const usage = await read(this.options.nativeSession);
+      if (usage !== undefined) {
+        await this.options.persistContextWindowUsage(usage);
+      }
+      return usage;
+    } catch (error) {
+      if (throwOnError) throw error;
+      this.options.logger.warn("Failed to refresh Runtime context window usage.", { error });
+      return undefined;
+    }
   }
 
   setWatcher(watcher: RuntimeSessionWatcher | undefined): void {

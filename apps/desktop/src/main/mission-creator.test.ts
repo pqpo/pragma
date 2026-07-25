@@ -15,9 +15,8 @@ import { createPragmaProjectStore } from "./pragma-project-store.ts";
 const temporaryPaths: string[] = [];
 const executor: MissionExecutor = {
   kind: "expert",
-  ref: "expert:pragma@1.0.0",
+  ref: "expert:2qgbztga4kz2qz51",
   name: "Pragma",
-  version: "1.0.0",
 };
 
 afterEach(async () => {
@@ -59,7 +58,7 @@ describe("MissionCreator", () => {
 
     const mission = await creator.create({
       workspace,
-      goal: "Restore the experts",
+      missionInput: { kind: "prompt", value: "Restore the experts" },
       executorRef: executor.ref,
       modelOverride,
     });
@@ -110,6 +109,79 @@ describe("MissionCreator", () => {
       executor,
     });
     expect((await project.get()).revision).toBe(1);
+  });
+
+  it("validates and persists exact structured Flow input", async () => {
+    const root = await temporaryRoot();
+    const workspace = join(root, "workspace");
+    await mkdir(workspace);
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    const flow = {
+      apiVersion: "pragma/v3" as const,
+      kind: "Flow" as const,
+      metadata: {
+        id: "5gdqkvfwb19p5rj7",
+        name: "Issue fix",
+        description: "Fix one issue",
+        tags: [],
+      },
+      spec: {
+        input: {
+          schema: {
+            type: "object" as const,
+            properties: { issueId: { type: "string" as const } },
+            required: ["issueId"],
+            additionalProperties: false as const,
+          },
+        },
+        limits: { maxNodeVisits: 10 },
+        graph: {
+          start: "done",
+          steps: {
+            done: {
+              human: {
+                selectionMode: "single" as const,
+                prompt: { segments: [{ text: "Done?" }] },
+                options: [
+                  { value: "yes", label: "Yes" },
+                  { value: "no", label: "No" },
+                ],
+              },
+            },
+          },
+          loops: {},
+          transitions: { done: { end: true as const } },
+        },
+      },
+    };
+    await project.publish({ expectedRevision: 0, resources: [flow] });
+    const missions = createMissionStore({ missionsPath: join(root, "missions") });
+    const flowExecutor: MissionExecutor = {
+      kind: "flow",
+      ref: "flow:5gdqkvfwb19p5rj7",
+      name: "Issue fix",
+    };
+    const creator = createMissionCreator({
+      missions,
+      project,
+      executors: catalog({ resolve: async () => flowExecutor }),
+      getDefaultToolPermissionMode: () => "request-approval",
+    });
+
+    const mission = await creator.create({
+      workspace,
+      missionInput: { kind: "flow", value: { issueId: "CCAS-42" } },
+      executorRef: flowExecutor.ref,
+    });
+
+    expect(mission.flowInput).toEqual({ issueId: "CCAS-42" });
+    await expect(
+      creator.create({
+        workspace,
+        missionInput: { kind: "flow", value: { issueId: "CCAS-42", extra: true } },
+        executorRef: flowExecutor.ref,
+      }),
+    ).rejects.toThrow();
   });
 });
 

@@ -1,5 +1,13 @@
 import type { Icon } from "@phosphor-icons/react";
-import { Database, GitBranch, PuzzlePiece, User, UsersThree, Wrench } from "@phosphor-icons/react";
+import {
+  Database,
+  GitBranch,
+  PlugsConnected,
+  PuzzlePiece,
+  User,
+  UsersThree,
+  Wrench,
+} from "@phosphor-icons/react";
 
 import type {
   CreateExpertDefinition,
@@ -15,6 +23,7 @@ export type StudioView =
   | "experts"
   | "teams"
   | "flows"
+  | "integrations"
   | "capabilities"
   | "plugins"
   | "context-stores";
@@ -25,7 +34,6 @@ export type ExpertRecord = {
   readonly name: string;
   readonly description: string;
   readonly tags: readonly string[];
-  readonly version: string;
   readonly scope: string;
   readonly instructions: string;
   readonly additionalInstructions: string;
@@ -57,7 +65,6 @@ export const emptyDraft = (): ExpertDraft => ({
   name: "",
   description: "",
   tags: [],
-  version: "0.1.0",
   scope: "",
   instructions: "",
   additionalInstructions: "",
@@ -85,7 +92,6 @@ export function toExpertRecord(definition: ExpertDefinition): ExpertRecord {
     name: definition.name,
     description: definition.description,
     tags: definition.tags,
-    version: definition.version,
     scope: definition.scope,
     instructions: definition.instructions ?? "",
     additionalInstructions: definition.additionalInstructions,
@@ -123,19 +129,19 @@ export function isBuiltInExpert(expert: Pick<ExpertRecord, "origin" | "readOnly"
   return expert.origin === "built-in";
 }
 
-export function toPersistedInput(
-  expert: ExpertRecord,
-): CreateExpertDefinition | UpdateExpertDefinition {
+export function toPersistedInput(expert: ExpertRecord): UpdateExpertDefinition {
   if (expert.readOnly || expert.model === null) {
     throw new Error("Built-in Experts cannot be persisted by the Desktop editor.");
   }
   const existing = expert.persisted;
+  if (existing === undefined) {
+    throw new Error("An existing Expert revision is required for an update.");
+  }
   return {
-    ...(existing === undefined ? { id: expert.id } : {}),
+    baseRevision: existing.revision,
     name: expert.name,
     description: expert.description,
     tags: [...expert.tags],
-    version: expert.version,
     scope: expert.scope,
     instructions: expert.instructions,
     model: expert.model,
@@ -149,6 +155,35 @@ export function toPersistedInput(
   };
 }
 
+export function toCreateExpertInput(
+  expert: ExpertRecord,
+  input: {
+    readonly baseRevision: number;
+    readonly requiredUnchangedRefs?: readonly string[] | undefined;
+  },
+): CreateExpertDefinition {
+  if (expert.readOnly || expert.model === null) {
+    throw new Error("Built-in Experts cannot be persisted by the Desktop editor.");
+  }
+  return {
+    baseRevision: input.baseRevision,
+    requiredUnchangedRefs: [...(input.requiredUnchangedRefs ?? [])],
+    name: expert.name,
+    description: expert.description,
+    tags: [...expert.tags],
+    scope: expert.scope,
+    instructions: expert.instructions,
+    model: expert.model,
+    capabilities: [...expert.capabilities],
+    toolApprovals: expert.toolApprovals,
+    plugins: [...expert.plugins],
+    contextStoreMounts: [...expert.contextStoreMounts],
+    resourceTools: [...expert.resourceTools],
+    opaqueCapabilities: [...(expert.persisted?.opaqueCapabilities ?? [])],
+    opaqueContextStores: [...(expert.persisted?.opaqueContextStores ?? [])],
+  };
+}
+
 export function desktopApi() {
   return typeof window === "undefined" ? undefined : window.pragmaDesktop;
 }
@@ -157,6 +192,7 @@ export const studioSections = [
   { id: "experts", labelKey: "experts", icon: User },
   { id: "teams", labelKey: "teams", icon: UsersThree },
   { id: "flows", labelKey: "flows", icon: GitBranch },
+  { id: "integrations", labelKey: "integrations", icon: PlugsConnected },
   { id: "capabilities", labelKey: "capabilities", icon: Wrench },
   { id: "plugins", labelKey: "plugins", icon: PuzzlePiece },
   { id: "context-stores", labelKey: "contextStores", icon: Database },

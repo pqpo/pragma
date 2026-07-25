@@ -132,7 +132,7 @@ export class ContextManager {
           ? "context_budget_exceeded"
           : undefined;
     const snapshot: ContextSnapshot = {
-      releaseDigest: `${this.agent.id}@${this.agent.version}`,
+      releaseDigest: this.agent.id,
       contextRevisions: selected.context.map((context) => ({
         ...(context.namespace === undefined ? {} : { namespace: context.namespace }),
         id: context.id,

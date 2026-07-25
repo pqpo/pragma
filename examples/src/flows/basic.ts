@@ -1,10 +1,9 @@
 import { defineFlow } from "@pragma/core";
 import { createExampleApp } from "../support/example-kit.ts";
 
-const flow = defineFlow({ id: "basic", version: "1.0.0", result: ({ state }) => state["answer"] });
+const flow = defineFlow({ id: "basic", result: ({ state }) => state["answer"] });
 const task = flow.task({
   id: "double",
-  version: "1.0.0",
   handler: ({ input }) => Number(input) * 2,
   reduce: ({ state, output }) => {
     state["answer"] = output;

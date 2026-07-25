@@ -3,11 +3,10 @@
 Use a Flow for explicit, inspectable control flow.
 
 ```yaml
-apiVersion: pragma/v2
+apiVersion: pragma/v3
 kind: Flow
 metadata:
-  id: review_change
-  version: 1.0.0
+  id: 8h9j0k1m2n3p4q5r
   name: Review Change
   description: Implements a change and asks a reviewer to inspect it.
   tags: [delivery]
@@ -27,23 +26,58 @@ spec:
     steps:
       implement:
         expert:
-          ref: expert:implementer@1.0.0
-        input: { goal: "${flow.input.goal}" }
-        save: state.implementation
+          ref: expert:6h7j8k9m0n1p2q3r
+        prompt:
+          segments:
+            - { text: "Implement this goal: " }
+            - { variable: { source: flow-input, path: [goal] } }
+        output:
+          schema:
+            type: object
+            properties:
+              summary: { type: string, description: "Summary of the implementation." }
+            required: [summary]
+            additionalProperties: false
       review:
         expert:
-          ref: expert:reviewer@1.0.0
-        input: { change: "${state.implementation}" }
-        save: state.review
+          ref: expert:7h8j9k0m1n2p3q4r
+        prompt:
+          segments:
+            - { text: "Review this implementation: " }
+            - variable:
+                source: node-output
+                nodeId: implement
+                path: [summary]
+      approve:
+        human:
+          selectionMode: single
+          prompt:
+            segments:
+              - { text: "Approve the review result?" }
+          options:
+            - { value: approve, label: Approve }
+            - { value: revise, label: Revise }
     loops: {}
     transitions:
       implement: review
-      review: { end: true }
+      review: approve
+      approve: { end: true }
 ```
 
 - Every step declares exactly one of `action`, `expert`, `team`, `flow`, or `human`.
 - Every step must be reachable from `start`, and every path must terminate.
 - Ordinary edges form a DAG. A back edge requires a named `repeat` transition and a loop with a
   positive `maxIterations` plus an exit path.
-- Save only below `state.<name>`; never use reserved or prototype-sensitive segments.
+- Every successful result is stored automatically at `state.nodes.<nodeId>.result`.
+- Without `spec.output.value`, the Flow returns the output of the node that reaches `end`.
+- `spec.output.schema` validates that final result. Add `spec.output.value` only when the Flow must
+  assemble a result from Flow input or multiple node results.
 - Action and human steps cannot declare Runtime or Context routing fields.
+- Expert and Team prompts use text and typed variable segments. Node variables reference a stable
+  `nodeId`; native output exposes only `result`, while structured output exposes declared fields.
+- Structured output uses the bounded object schema supported by the Desktop field editor.
+- Human input steps ask one single- or multiple-selection question. They return
+  `{ selection: string }` or `{ selection: string[] }`, using stable option values rather than labels.
+- Human prompts use the same typed variable segments as Expert and Team prompts.
+- Build Flow resources with the draft tools. Missing nodes or edges are allowed only while a draft
+  is incomplete; `prepare_flow_draft` requires a complete, valid graph.

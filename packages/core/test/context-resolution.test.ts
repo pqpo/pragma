@@ -124,7 +124,7 @@ describe("ContextResolutionService", () => {
         state: {},
         source: { kind: "flow", flowId: "flow", stepId: "other", visit: 1 },
         owner: fixture.owner,
-        expert: { id: "other-expert", version: "1.0.0" },
+        expert: { id: "other-expert" },
         runtime: runtimeBinding(),
         resolver: fixed("context-2"),
       }),
@@ -162,11 +162,11 @@ describe("ContextResolutionService", () => {
   it("requires immutable Runtime identity and valid Session provenance", () => {
     const now = new Date().toISOString();
     const base = {
-      schemaVersion: "pragma.runtime-context/v4",
+      schemaVersion: "pragma.runtime-context/v5",
       contextId: "root",
       owner: { type: "expert-session", ownerId: "session" },
       origin: { type: "expert-session", sessionId: "session" },
-      expert: { id: "expert", version: "1.0.0" },
+      expert: { id: "expert" },
       runtime: runtimeBinding(),
       lifecycle: "open",
       createdAt: now,
@@ -212,14 +212,14 @@ async function createFixture(options: { readonly closeFirst?: boolean } = {}) {
   const now = new Date().toISOString();
   const later = new Date(Date.now() + 1).toISOString();
   const owner = { type: "flow-execution" as const, ownerId: "execution" };
-  const expert = { id: "expert", version: "1.0.0" };
+  const expert = { id: "expert" };
   await store.create(
     {
-      schemaVersion: "pragma.execution/v5",
+      schemaVersion: "pragma.execution/v7",
       executionId: "execution",
       version: 0,
       kind: "flow",
-      definition: { id: "flow", version: "1.0.0", kind: "flow" },
+      definition: { id: "flow", kind: "flow" },
       rootInvocationId: "root",
       status: "running",
       input: null,
@@ -259,7 +259,6 @@ function invocation(
     ...(nodeId === undefined ? {} : { nodeId }),
     definition: {
       id: nodeId === undefined ? "flow" : "expert",
-      version: "1.0.0",
       kind: nodeId === undefined ? "flow" : "expert",
     },
     contextId,
@@ -275,11 +274,11 @@ function contextRecord(
   invocationId: string,
   createdAt: string,
   owner: { readonly type: "flow-execution"; readonly ownerId: string },
-  expert: { readonly id: string; readonly version: string },
+  expert: { readonly id: string },
   closed: boolean,
 ): RuntimeContextRecord {
   return {
-    schemaVersion: "pragma.runtime-context/v4",
+    schemaVersion: "pragma.runtime-context/v5",
     contextId,
     owner,
     origin: { type: "invocation", invocationId },

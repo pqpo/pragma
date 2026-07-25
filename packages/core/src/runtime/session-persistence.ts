@@ -17,6 +17,7 @@ export type RuntimeCheckpointTrigger =
   | "runtimeSessionId.changed"
   | "turn.completed"
   | "turn.failed"
+  | "context.compacted"
   | "session.destroyed"
   | "files.changed";
 

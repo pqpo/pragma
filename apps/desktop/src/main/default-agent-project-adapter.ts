@@ -1,23 +1,37 @@
-import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
-import { encodePragmaPathSegment, withFileLock } from "@pragma/core";
+import {
+  encodePragmaPathSegment,
+  derivePragmaResourceId,
+  generatePragmaResourceId,
+  withFileLock,
+} from "@pragma/core";
 import { formatPragmaYaml, parsePragmaYaml } from "@pragma/interpreter";
 import {
+  analyzePragmaFlowGraph,
   PragmaCapabilityResourceSchema,
+  PragmaFlowResourceSchema,
   PragmaResourceSchema,
   PragmaRuntimeProfileResourceSchema,
   canonicalPragmaResourceRef,
   type PragmaExpertResource,
+  type PragmaFlowResource,
   type PragmaResource,
 } from "@pragma/interpreter/ast";
 import {
   DefaultAgentChangeSetSchema,
   DefaultAgentExpertOptionCatalogSchema,
+  DefaultAgentFlowDraftSchema,
+  DefaultAgentPrepareResultSchema,
   DefaultAgentProjectCommitSchema,
   type DefaultAgentDslProjectPort,
   type DefaultAgentExpertOptionCatalog,
+  type DefaultAgentFlowDraft,
+  type DefaultAgentFlowDraftDiagnostic,
+  type DefaultAgentFlowDraftOperation,
+  type DefaultAgentPrepareResult,
 } from "@pragma/default-agent";
 import { z } from "zod";
 
@@ -46,48 +60,44 @@ export function createDesktopDefaultAgentProjectPort(options: {
     join(options.stateRoot, "change-sets", `${encodePragmaPathSegment(id)}.json`);
   const operationPath = (id: string) =>
     join(options.stateRoot, "operations", `${encodePragmaPathSegment(id)}.json`);
+  const draftPath = (id: string) =>
+    join(options.stateRoot, "dsl-drafts", `${encodePragmaPathSegment(id)}.json`);
 
-  return {
-    async list() {
-      const snapshot = await options.project.get();
-      return {
-        projectRevision: snapshot.revision,
-        resources: snapshot.resources.map((resource) => ({
-          ref: canonicalPragmaResourceRef(resource),
-          kind: resource.kind,
-          name: resource.metadata.name,
-          description: resource.metadata.description,
-          version: resource.metadata.version,
-        })),
-      };
-    },
-    async read(ref) {
-      const snapshot = await options.project.get();
-      const resource = snapshot.resources.find(
-        (candidate) => canonicalPragmaResourceRef(candidate) === ref,
+  const prepareResources = async (input: {
+    readonly expectedProjectRevision: number;
+    readonly authoredResources: readonly PragmaResource[];
+  }): Promise<DefaultAgentPrepareResult> => {
+    const snapshot = await options.project.get();
+    if (snapshot.revision !== input.expectedProjectRevision) {
+      return invalidPrepare(
+        "project.revision_conflict",
+        `Project revision changed from ${input.expectedProjectRevision} to ${snapshot.revision}.`,
       );
-      if (resource === undefined) throw new Error(`Pragma resource not found: ${ref}`);
-      return {
-        ref: canonicalPragmaResourceRef(resource),
-        kind: resource.kind,
-        name: resource.metadata.name,
-        description: resource.metadata.description,
-        version: resource.metadata.version,
-        projectRevision: snapshot.revision,
-        source: formatPragmaYaml(resource),
-      };
-    },
-    async listExpertOptions() {
-      return (await buildExpertCatalog(options)).options;
-    },
-    async prepare(input) {
-      const snapshot = await options.project.get();
-      if (snapshot.revision !== input.expectedProjectRevision) {
-        throw new Error(
-          `Project revision changed from ${input.expectedProjectRevision} to ${snapshot.revision}.`,
-        );
-      }
-      const authoredResources = input.sources.map(parseDefaultAgentResource);
+    }
+    const authoredResources = [...input.authoredResources];
+    const actionDiagnostics = authoredResources.flatMap((resource) =>
+      resource.kind !== "Flow"
+        ? []
+        : Object.entries(resource.spec.graph.steps).flatMap(([stepId, step]) =>
+            step.action === undefined
+              ? []
+              : [
+                  {
+                    severity: "error" as const,
+                    code: "environment.flow_action_unavailable",
+                    message: "Action steps are not executable in the current Desktop environment.",
+                    path: ["spec", "graph", "steps", stepId, "action"],
+                  },
+                ],
+          ),
+    );
+    if (actionDiagnostics.length > 0) {
+      return DefaultAgentPrepareResultSchema.parse({
+        status: "invalid",
+        diagnostics: actionDiagnostics,
+      });
+    }
+    try {
       const catalog = await buildExpertCatalog(options);
       const knownRefs = new Set([
         ...snapshot.resources.map(canonicalPragmaResourceRef),
@@ -105,12 +115,17 @@ export function createDesktopDefaultAgentProjectPort(options: {
         });
       const resources = [...authoredResources, ...dependencies];
       const refs = resources.map(canonicalPragmaResourceRef);
-      if (new Set(refs).size !== refs.length) throw new Error("A change-set cannot repeat a ref.");
+      if (new Set(refs).size !== refs.length) {
+        return invalidPrepare("resource.duplicate", "A change-set cannot repeat a ref.");
+      }
       assertExpertSelectionsAvailable(authoredResources, snapshot.resources, resources, catalog);
       const diagnostics = await options.project.validateChanges({
-        expectedRevision: snapshot.revision,
+        baseRevision: snapshot.revision,
         upserts: resources,
       });
+      if (diagnostics.some((diagnostic) => diagnostic.severity === "error")) {
+        return DefaultAgentPrepareResultSchema.parse({ status: "invalid", diagnostics });
+      }
       const existing = new Set(snapshot.resources.map(canonicalPragmaResourceRef));
       const changeSet = DefaultAgentChangeSetSchema.parse({
         changeSetId: randomUUID(),
@@ -124,7 +139,184 @@ export function createDesktopDefaultAgentProjectPort(options: {
         createdAt: new Date().toISOString(),
       });
       await writeJson(candidatePath(changeSet.changeSetId), { changeSet, resources });
-      return changeSet;
+      return DefaultAgentPrepareResultSchema.parse({ status: "prepared", changeSet });
+    } catch (error) {
+      return DefaultAgentPrepareResultSchema.parse({
+        status: "invalid",
+        diagnostics: diagnosticsFromError(error),
+      });
+    }
+  };
+
+  const prepareSources = async (input: {
+    readonly expectedProjectRevision: number;
+    readonly sources: readonly string[];
+  }): Promise<DefaultAgentPrepareResult> => {
+    const parsed = parseDefaultAgentSources(input.sources);
+    if (parsed.diagnostics.length > 0) {
+      return DefaultAgentPrepareResultSchema.parse({
+        status: "invalid",
+        diagnostics: parsed.diagnostics,
+      });
+    }
+    return await prepareResources({
+      expectedProjectRevision: input.expectedProjectRevision,
+      authoredResources: parsed.resources,
+    });
+  };
+
+  return {
+    async allocateResourceIds(requests) {
+      const snapshot = await options.project.get();
+      const used = new Set(snapshot.resources.map((resource) => resource.metadata.id));
+      const allocated = new Set<string>();
+      return requests.map((request) => {
+        let id = generatePragmaResourceId();
+        while (used.has(id) || allocated.has(id)) id = generatePragmaResourceId();
+        allocated.add(id);
+        return { key: request.key, id, ref: `${request.kind}:${id}` };
+      });
+    },
+    async list() {
+      const snapshot = await options.project.get();
+      return {
+        projectRevision: snapshot.revision,
+        resources: snapshot.resources.map((resource) => ({
+          ref: canonicalPragmaResourceRef(resource),
+          kind: resource.kind,
+          name: resource.metadata.name,
+          description: resource.metadata.description,
+        })),
+      };
+    },
+    async read(ref) {
+      const snapshot = await options.project.get();
+      const resource = snapshot.resources.find(
+        (candidate) => canonicalPragmaResourceRef(candidate) === ref,
+      );
+      if (resource === undefined) throw new Error(`Pragma resource not found: ${ref}`);
+      return {
+        ref: canonicalPragmaResourceRef(resource),
+        kind: resource.kind,
+        name: resource.metadata.name,
+        description: resource.metadata.description,
+        projectRevision: snapshot.revision,
+        source: formatPragmaYaml(resource),
+      };
+    },
+    async listExpertOptions() {
+      return (await buildExpertCatalog(options)).options;
+    },
+    async prepare(input) {
+      return await prepareSources(input);
+    },
+    async createFlowDraft(input) {
+      const snapshot = await options.project.get();
+      if (snapshot.revision !== input.expectedProjectRevision) {
+        throw new Error(
+          `Project revision changed from ${input.expectedProjectRevision} to ${snapshot.revision}.`,
+        );
+      }
+      const now = new Date().toISOString();
+      const draftId = randomUUID();
+      const draft = withDraftDiagnostics({
+        draftId,
+        baseProjectRevision: snapshot.revision,
+        draftRevision: 0,
+        resource: {
+          apiVersion: "pragma/v3",
+          kind: "Flow",
+          metadata: { ...input.metadata, id: generatePragmaResourceId() },
+          spec: {
+            ...(input.input === undefined ? {} : { input: input.input }),
+            ...(input.output === undefined ? {} : { output: input.output }),
+            limits: input.limits ?? { maxNodeVisits: 1_000 },
+            graph: { steps: {}, transitions: {}, loops: {} },
+          },
+        },
+        diagnostics: [],
+        createdAt: now,
+        updatedAt: now,
+      });
+      await writeJson(draftPath(draftId), draft);
+      return draft;
+    },
+    async getFlowDraft(draftId) {
+      return withDraftDiagnostics(await readFlowDraft(draftPath(draftId)));
+    },
+    async updateFlowDraft(input) {
+      const path = draftPath(input.draftId);
+      return await withFileLock(`${path}.lock`, async () => {
+        const current = await readFlowDraft(path);
+        if (current.draftRevision !== input.expectedDraftRevision) {
+          throw new Error(
+            `Flow draft revision changed from ${input.expectedDraftRevision} to ${current.draftRevision}.`,
+          );
+        }
+        const resource = structuredClone(current.resource);
+        let baseProjectRevision = current.baseProjectRevision;
+        for (const operation of input.operations) {
+          baseProjectRevision = applyDraftOperation(resource, operation, baseProjectRevision);
+        }
+        if (baseProjectRevision !== current.baseProjectRevision) {
+          const snapshot = await options.project.get();
+          if (snapshot.revision !== baseProjectRevision) {
+            throw new Error(
+              `Cannot rebase Flow draft to unavailable revision ${baseProjectRevision}.`,
+            );
+          }
+        }
+        const updated = withDraftDiagnostics({
+          ...current,
+          baseProjectRevision,
+          draftRevision: current.draftRevision + 1,
+          resource,
+          updatedAt: new Date().toISOString(),
+        });
+        await writeJson(path, updated);
+        return updated;
+      });
+    },
+    async validateFlowDraft(draftId) {
+      return withDraftDiagnostics(await readFlowDraft(draftPath(draftId)));
+    },
+    async prepareFlowDraft(input) {
+      const draft = withDraftDiagnostics(await readFlowDraft(draftPath(input.draftId)));
+      if (draft.draftRevision !== input.expectedDraftRevision) {
+        return invalidPrepare(
+          "flow.draft.revision_conflict",
+          `Flow draft revision changed from ${input.expectedDraftRevision} to ${draft.draftRevision}.`,
+        );
+      }
+      if (draft.diagnostics.some((diagnostic) => diagnostic.severity !== "warning")) {
+        return DefaultAgentPrepareResultSchema.parse({
+          status: "invalid",
+          diagnostics: draft.diagnostics.map((diagnostic) => ({
+            severity: diagnostic.severity === "warning" ? "warning" : "error",
+            code: diagnostic.code,
+            message: diagnostic.message,
+            path: diagnostic.path,
+          })),
+        });
+      }
+      const additional = parseDefaultAgentSources(input.additionalSources ?? [], 1);
+      if (additional.diagnostics.length > 0) {
+        return DefaultAgentPrepareResultSchema.parse({
+          status: "invalid",
+          diagnostics: additional.diagnostics,
+        });
+      }
+      return await prepareResources({
+        expectedProjectRevision: draft.baseProjectRevision,
+        authoredResources: [
+          PragmaFlowResourceSchema.parse(materializeDraft(draft)),
+          ...additional.resources,
+        ],
+      });
+    },
+    async discardFlowDraft(draftId) {
+      const path = draftPath(draftId);
+      await withFileLock(`${path}.lock`, async () => await rm(path, { force: true }));
     },
     async getChangeSet(changeSetId) {
       return (await readCandidate(candidatePath(changeSetId))).changeSet;
@@ -147,7 +339,7 @@ export function createDesktopDefaultAgentProjectPort(options: {
           catalog,
         );
         const published = await options.project.apply({
-          expectedRevision: candidate.changeSet.projectRevision,
+          baseRevision: candidate.changeSet.projectRevision,
           upserts: candidate.resources,
         });
         const result = DefaultAgentProjectCommitSchema.parse({
@@ -183,13 +375,12 @@ async function buildExpertCatalog(options: {
     .flatMap((runtime) =>
       (runtime.models ?? []).map((model) => {
         const identity = runtimeModelIdentity(runtime.id, model.provider.id, model.id);
-        const id = `runtime_${createHash("sha256").update(identity).digest("hex")}`;
+        const id = derivePragmaResourceId(`default-agent:runtime:${identity}`);
         const resource = PragmaRuntimeProfileResourceSchema.parse({
-          apiVersion: "pragma/v2",
+          apiVersion: "pragma/v3",
           kind: "RuntimeProfile",
           metadata: {
             id,
-            version: "1.0.0",
             name: `${runtime.displayName} / ${model.displayName}`,
             description: `Host-provided Runtime model ${model.provider.displayName} / ${model.displayName}.`,
             tags: ["desktop-managed", "default-agent-option"],
@@ -227,7 +418,7 @@ async function buildExpertCatalog(options: {
       key: ref,
       ref,
       name: capability.definition.name,
-      description: capability.definition.description,
+      description: capabilityDescription(capability),
       kind: capability.definition.kind === "skill" ? ("skill" as const) : ("tools" as const),
       toolNames,
     };
@@ -253,13 +444,12 @@ async function buildExpertCatalog(options: {
 
 function capabilityResource(capability: Capability): PragmaResource {
   return PragmaCapabilityResourceSchema.parse({
-    apiVersion: "pragma/v2",
+    apiVersion: "pragma/v3",
     kind: "Capability",
     metadata: {
-      id: `capability_${capability.manifest.id.replaceAll("-", "")}`,
-      version: String(capability.manifest.latestRevision),
+      id: derivePragmaResourceId(`default-agent:capability:${capability.manifest.id}`),
       name: capability.definition.name,
-      description: capability.definition.description,
+      description: capabilityDescription(capability),
       tags: ["desktop-managed", "default-agent-option"],
     },
     spec: {
@@ -271,6 +461,13 @@ function capabilityResource(capability: Capability): PragmaResource {
       config: { key: capability.manifest.id },
     },
   });
+}
+
+function capabilityDescription(capability: Capability): string {
+  const description = capability.definition.description.trim();
+  return description === ""
+    ? `Host-provided Desktop capability ${capability.definition.name}.`
+    : description;
 }
 
 function capabilityToolNames(capability: Capability): string[] {
@@ -346,12 +543,192 @@ function runtimeModelIdentity(runtimeId: string, providerId: string, modelId: st
 
 function parseDefaultAgentResource(source: string): PragmaResource {
   const resource = PragmaResourceSchema.parse(parsePragmaYaml(source));
-  if (resource.kind !== "Expert" && resource.kind !== "ExpertTeam" && resource.kind !== "Flow") {
+  if (
+    resource.kind !== "Expert" &&
+    resource.kind !== "ExpertTeam" &&
+    resource.kind !== "Flow" &&
+    resource.kind !== "Automation"
+  ) {
     throw new Error(
-      "default Agent can only create or update Expert, ExpertTeam, and Flow resources.",
+      "default Agent can only create or update Expert, ExpertTeam, Flow, and Automation resources.",
     );
   }
   return resource;
+}
+
+function parseDefaultAgentSources(
+  sources: readonly string[],
+  sourceIndexOffset = 0,
+): {
+  readonly resources: readonly PragmaResource[];
+  readonly diagnostics: ReturnType<typeof diagnosticsFromError>;
+} {
+  const resources: PragmaResource[] = [];
+  const diagnostics: ReturnType<typeof diagnosticsFromError> = [];
+  sources.forEach((source, index) => {
+    try {
+      resources.push(parseDefaultAgentResource(source));
+    } catch (error) {
+      diagnostics.push(...diagnosticsFromError(error, `source:${sourceIndexOffset + index}`));
+    }
+  });
+  return { resources, diagnostics };
+}
+
+function invalidPrepare(code: string, message: string): DefaultAgentPrepareResult {
+  return DefaultAgentPrepareResultSchema.parse({
+    status: "invalid",
+    diagnostics: [{ severity: "error", code, message, path: [] }],
+  });
+}
+
+function diagnosticsFromError(error: unknown, source?: string) {
+  if (error instanceof z.ZodError) {
+    return error.issues.map((issue) => ({
+      severity: "error" as const,
+      code: "schema.invalid",
+      message: issue.message,
+      ...(source === undefined ? {} : { source }),
+      path: issue.path.filter((segment): segment is string | number => typeof segment !== "symbol"),
+    }));
+  }
+  return [
+    {
+      severity: "error" as const,
+      code: "source.parse",
+      message: error instanceof Error ? error.message : String(error),
+      ...(source === undefined ? {} : { source }),
+      path: [],
+    },
+  ];
+}
+
+function materializeDraft(draft: DefaultAgentFlowDraft): PragmaFlowResource {
+  return {
+    ...draft.resource,
+    spec: {
+      ...draft.resource.spec,
+      graph: {
+        ...draft.resource.spec.graph,
+        start: draft.resource.spec.graph.start ?? "",
+      },
+    },
+  } as PragmaFlowResource;
+}
+
+function withDraftDiagnostics(draft: DefaultAgentFlowDraft): DefaultAgentFlowDraft {
+  const parsed = DefaultAgentFlowDraftSchema.parse(draft);
+  const resource = materializeDraft(parsed);
+  const diagnostics: DefaultAgentFlowDraftDiagnostic[] = [];
+  const stepCount = Object.keys(resource.spec.graph.steps).length;
+  if (stepCount === 0) {
+    diagnostics.push({
+      severity: "incomplete",
+      code: "flow.draft.steps_missing",
+      message: "Add at least one Flow step.",
+      path: ["spec", "graph", "steps"],
+    });
+  }
+  if (resource.spec.graph.start === "") {
+    diagnostics.push({
+      severity: "incomplete",
+      code: "flow.draft.start_missing",
+      message: "Choose a Flow start step.",
+      path: ["spec", "graph", "start"],
+    });
+  }
+  const schema = PragmaFlowResourceSchema.safeParse(resource);
+  if (!schema.success) {
+    for (const issue of schema.error.issues) {
+      const path = issue.path.filter(
+        (segment): segment is string | number => typeof segment !== "symbol",
+      );
+      if (path.join(".") === "spec.graph.start" && resource.spec.graph.start === "") continue;
+      diagnostics.push({
+        severity: "error",
+        code: "schema.invalid",
+        message: issue.message,
+        path,
+      });
+    }
+  }
+  if (stepCount > 0) {
+    const graph = analyzePragmaFlowGraph(resource);
+    const missingTransition = graph.issues.some((issue) =>
+      issue.code.endsWith("transition.missing"),
+    );
+    for (const issue of graph.issues) {
+      if (issue.code.endsWith("start.unknown") && resource.spec.graph.start === "") continue;
+      const incomplete =
+        issue.code.endsWith("transition.missing") ||
+        (missingTransition &&
+          (issue.code.endsWith("step.unreachable") || issue.code.endsWith("loop.not_cyclic")));
+      diagnostics.push({
+        severity: incomplete ? "incomplete" : "error",
+        code: issue.code,
+        message: issue.message,
+        path: [...issue.path],
+      });
+    }
+  }
+  const unique = diagnostics.filter(
+    (diagnostic, index) =>
+      diagnostics.findIndex(
+        (candidate) =>
+          candidate.code === diagnostic.code &&
+          JSON.stringify(candidate.path) === JSON.stringify(diagnostic.path),
+      ) === index,
+  );
+  return DefaultAgentFlowDraftSchema.parse({ ...parsed, diagnostics: unique });
+}
+
+function applyDraftOperation(
+  resource: DefaultAgentFlowDraft["resource"],
+  operation: DefaultAgentFlowDraftOperation,
+  baseProjectRevision: number,
+): number {
+  const graph = resource.spec.graph;
+  switch (operation.type) {
+    case "set_start":
+      graph.start = operation.stepId;
+      break;
+    case "upsert_step":
+      graph.steps[operation.stepId] = operation.step;
+      break;
+    case "remove_step":
+      delete graph.steps[operation.stepId];
+      delete graph.transitions[operation.stepId];
+      if (graph.start === operation.stepId) delete graph.start;
+      break;
+    case "set_transition":
+      graph.transitions[operation.stepId] = operation.transition;
+      break;
+    case "remove_transition":
+      delete graph.transitions[operation.stepId];
+      break;
+    case "upsert_loop":
+      graph.loops[operation.loopId] = operation.loop;
+      break;
+    case "remove_loop":
+      delete graph.loops[operation.loopId];
+      break;
+    case "set_contracts":
+      if (operation.input === null) delete resource.spec.input;
+      else if (operation.input !== undefined) resource.spec.input = operation.input;
+      if (operation.output === null) delete resource.spec.output;
+      else if (operation.output !== undefined) resource.spec.output = operation.output;
+      if (operation.limits !== undefined) resource.spec.limits = operation.limits;
+      break;
+    case "rebase":
+      return operation.projectRevision;
+  }
+  return baseProjectRevision;
+}
+
+async function readFlowDraft(path: string): Promise<DefaultAgentFlowDraft> {
+  const value = await readJson(path);
+  if (value === undefined) throw new Error("Flow draft not found.");
+  return DefaultAgentFlowDraftSchema.parse(value);
 }
 
 async function readCandidate(path: string): Promise<z.infer<typeof CandidateRecordSchema>> {

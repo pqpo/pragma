@@ -11,13 +11,12 @@ import type { PragmaProjectSnapshot } from "../../../../shared/desktop-api.ts";
 import { matchingTeamExperts, TeamEditor } from "./PragmaResourceDirectoryFragment.tsx";
 
 function expert(index: number): PragmaExpertResource {
-  const id = `expert_${String(index).padStart(3, "0")}`;
+  const id = String(index).padStart(16, "0");
   return PragmaExpertResourceSchema.parse({
-    apiVersion: "pragma/v2",
+    apiVersion: "pragma/v3",
     kind: "Expert",
     metadata: {
       id,
-      version: "1.0.0",
       name: `Expert ${String(index).padStart(3, "0")}`,
       description: `Specialist description ${index}`,
       tags: index === 99 ? ["needle"] : [],
@@ -29,7 +28,7 @@ function expert(index: number): PragmaExpertResource {
 describe("expert team editor", () => {
   it("keeps large expert collections behind two compact picker triggers", () => {
     const project = {
-      schemaVersion: "pragma.project-snapshot/v2",
+      schemaVersion: "pragma.project-snapshot/v3",
       projectId: "test-project",
       revision: 0,
       resources: Array.from({ length: 100 }, (_, index) => expert(index)),
@@ -54,45 +53,44 @@ describe("expert team editor", () => {
 
   it("limits the default list and searches names, ids, descriptions, and tags", () => {
     const experts = Array.from({ length: 100 }, (_, index) => expert(index));
-    const selectedRef = "expert:expert_099@1.0.0";
+    const selectedRef = "expert:0000000000000099";
 
     expect(matchingTeamExperts(experts, "", new Set())).toHaveLength(8);
     expect(matchingTeamExperts(experts, "", new Set([selectedRef]))[0]?.metadata.id).toBe(
-      "expert_099",
+      "0000000000000099",
     );
     expect(
-      matchingTeamExperts(experts, "expert_042", new Set()).map((item) => item.metadata.id),
-    ).toEqual(["expert_042"]);
+      matchingTeamExperts(experts, "0000000000000042", new Set()).map((item) => item.metadata.id),
+    ).toEqual(["0000000000000042"]);
     expect(
       matchingTeamExperts(experts, "description 42", new Set()).map((item) => item.metadata.id),
-    ).toEqual(["expert_042"]);
+    ).toEqual(["0000000000000042"]);
     expect(
       matchingTeamExperts(experts, "needle", new Set()).map((item) => item.metadata.id),
-    ).toEqual(["expert_099"]);
+    ).toEqual(["0000000000000099"]);
   });
 
   it("shows and preserves optional Team instructions", () => {
     const experts = [expert(1), expert(2)];
     const instructions = "Verify evidence before declaring work complete.";
     const initial = PragmaExpertTeamResourceSchema.parse({
-      apiVersion: "pragma/v2",
+      apiVersion: "pragma/v3",
       kind: "ExpertTeam",
       metadata: {
-        id: "quality_team",
-        version: "1.0.0",
+        id: "cccvf3nab91n2wja",
         name: "Quality team",
         description: "Coordinates quality work",
         tags: [],
       },
       spec: {
-        coordinator: { ref: "expert:expert_001@1.0.0" },
-        members: [{ ref: "expert:expert_002@1.0.0" }],
+        coordinator: { ref: "expert:0000000000000001" },
+        members: [{ ref: "expert:0000000000000002" }],
         instructions,
         delegation: {},
       },
     });
     const project = {
-      schemaVersion: "pragma.project-snapshot/v2",
+      schemaVersion: "pragma.project-snapshot/v3",
       projectId: "test-project",
       revision: 0,
       resources: [...experts, initial],
@@ -103,6 +101,7 @@ describe("expert team editor", () => {
       <TeamEditor
         project={project}
         initial={initial}
+        mode="edit"
         error={null}
         onCancel={() => undefined}
         onSave={async () => undefined}
@@ -112,5 +111,6 @@ describe("expert team editor", () => {
     expect(html).toContain("Team instructions (optional)");
     expect(html).toContain(instructions);
     expect(html).toContain("always-on TEAM.md");
+    expect(html).not.toContain("Version");
   });
 });

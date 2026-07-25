@@ -171,7 +171,6 @@ const reviewTeam = defineExpertTeam({
   id: "product-solution-review-team",
   name: "Product Solution Review Team",
   description: "Cross-functional product, architecture, and delivery review.",
-  version: "1.0.0",
   coordinator: reviewLead,
   members: [userValueReviewer, architectureReviewer, deliveryRiskReviewer],
   delegation: { maxConcurrency: 3, maxDepth: 1 },
@@ -179,7 +178,6 @@ const reviewTeam = defineExpertTeam({
 
 const flow = defineFlow<Requirement, ReviewOutcome>({
   id: "product-requirement-review",
-  version: "1.0.0",
   input: RequirementSchema,
   output: ReviewOutcomeSchema,
   result: ({ state }) => ReviewOutcomeSchema.parse(state["outcome"]),
@@ -187,7 +185,6 @@ const flow = defineFlow<Requirement, ReviewOutcome>({
 
 const normalizeRequirement = flow.task({
   id: "normalize-requirement",
-  version: "1.0.0",
   inputSchema: RequirementSchema,
   outputSchema: NormalizedRequirementSchema,
   async handler({ input, emitOutput }) {
@@ -264,7 +261,6 @@ const teamReview = flow.use("solution-review-team", reviewTeam, {
 
 const humanReview = flow.humanTask({
   id: "human-review-gate",
-  version: "1.0.0",
   input: ({ state }) => ({
     requirement: state["requirement"],
     productAnalysis: state["productAnalysis"],
@@ -335,7 +331,6 @@ function createOutcome(
 
 const finalizeApproved = flow.task({
   id: "finalize-approved-plan",
-  version: "1.0.0",
   input: ({ state }) => state,
   handler: ({ input }) =>
     createOutcome(input, "approved", [
@@ -350,7 +345,6 @@ const finalizeApproved = flow.task({
 
 const prepareRevision = flow.task({
   id: "prepare-revision-backlog",
-  version: "1.0.0",
   outputSchema: RevisionRequestSchema,
   input: ({ state }) => state,
   handler: ({ input }) => {
@@ -369,7 +363,6 @@ const prepareRevision = flow.task({
 
 const archiveRejected = flow.task({
   id: "archive-rejected-proposal",
-  version: "1.0.0",
   input: ({ state }) => state,
   handler: ({ input }) =>
     createOutcome(input, "rejected", [

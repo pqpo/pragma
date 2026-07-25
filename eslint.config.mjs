@@ -12,6 +12,12 @@ const commonRestrictedPatterns = [
   },
 ];
 
+const desktopBrowserSafePragmaRestriction = {
+  regex: "^@pragma/(?!shared$|interpreter/ast$).+",
+  message:
+    "Desktop preload, renderer, and shared code may only import @pragma/shared or @pragma/interpreter/ast.",
+};
+
 const config = tseslint.config(
   {
     ignores: [
@@ -62,10 +68,7 @@ const config = tseslint.config(
     },
   },
   {
-    files: [
-      "apps/desktop/src/main/**/*.{ts,tsx,d.ts}",
-      "apps/desktop/src/preload/**/*.{ts,tsx,d.ts}",
-    ],
+    files: ["apps/desktop/scripts/**/*.{js,mjs,ts}", "apps/desktop/src/main/**/*.{ts,tsx,d.ts}"],
     languageOptions: {
       globals: {
         ...globals.node,
@@ -89,6 +92,31 @@ const config = tseslint.config(
     },
   },
   {
+    files: ["apps/desktop/src/preload/**/*.{ts,tsx,d.ts}"],
+    languageOptions: {
+      globals: {
+        ...globals.node,
+        ...globals.es2023,
+      },
+    },
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: ["@prisma/client"],
+          patterns: [
+            ...commonRestrictedPatterns,
+            desktopBrowserSafePragmaRestriction,
+            {
+              group: ["node:*", "next", "next/*"],
+              message: "Desktop preload must remain a browser-safe IPC bridge.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
     files: ["apps/desktop/src/renderer/**/*.{ts,tsx,d.ts}"],
     languageOptions: {
       globals: {
@@ -100,17 +128,12 @@ const config = tseslint.config(
       "no-restricted-imports": [
         "error",
         {
-          paths: [
-            "@pragma/client",
-            "@pragma/core",
-            "@pragma/interpreter",
-            "@pragma/server",
-            "@prisma/client",
-          ],
+          paths: ["@prisma/client"],
           patterns: [
             ...commonRestrictedPatterns,
+            desktopBrowserSafePragmaRestriction,
             {
-              group: ["@pragma/runtime-*", "@pragma/server-*", "node:*", "next", "next/*"],
+              group: ["node:*", "next", "next/*"],
               message: "Desktop renderer must stay behind the preload bridge.",
             },
           ],
@@ -124,11 +147,12 @@ const config = tseslint.config(
       "no-restricted-imports": [
         "error",
         {
-          paths: ["@pragma/client", "@pragma/interpreter", "@pragma/server", "@prisma/client"],
+          paths: ["@prisma/client"],
           patterns: [
             ...commonRestrictedPatterns,
+            desktopBrowserSafePragmaRestriction,
             {
-              group: ["@pragma/runtime-*", "@pragma/server-*", "node:*", "next", "next/*"],
+              group: ["node:*", "next", "next/*"],
               message:
                 "Desktop shared types must be safe for all layers (main, preload, renderer).",
             },

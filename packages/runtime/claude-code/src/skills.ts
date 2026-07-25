@@ -61,7 +61,7 @@ async function writePluginManifest(pluginDir: string, agent: Expert): Promise<vo
     `${JSON.stringify(
       {
         name: `pragma-${sanitizeSkillName(agent.id)}`,
-        version: agent.version,
+        version: "0.0.0",
         description: `Pragma Expert skills for ${agent.name}.`,
       },
       null,

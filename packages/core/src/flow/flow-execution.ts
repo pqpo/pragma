@@ -2,12 +2,14 @@ import { randomUUID } from "node:crypto";
 
 import {
   HumanInteractionResponseSchema,
+  InvocationHandoffSchema,
   isFinalExecutionStatus as isFinal,
   type ExecutionRecord,
   type HumanInteractionRequest,
   type HumanInteractionResponse,
   type Invocation,
 } from "@pragma/shared";
+import { z } from "zod";
 
 import { isExpertTeam, type ExpertDefinition, type ExpertTeam } from "../agent/expert-team.ts";
 import { describeExpertExecutionDefinition } from "../agent/expert-definition-descriptor.ts";
@@ -19,6 +21,7 @@ import type {
   ExpertAgentUserQuestion,
 } from "../tools/managed-tool.ts";
 import { ExecutionController, runExpertInvocation } from "../execution/expert-runner.ts";
+import { HandoffService, unwrapInvocationHandoff } from "../execution/handoff/handoff-service.ts";
 import {
   ContextResolutionService,
   closeExecutionContexts,
@@ -30,6 +33,7 @@ import {
   freshContextIdResolver,
 } from "../execution/context-id-resolver.ts";
 import {
+  EXECUTION_RECOVERY_CLAIM_STATE_KEY,
   ExecutionVersionConflictError,
   type ExecutionStore,
 } from "../execution/execution-store.ts";
@@ -76,6 +80,7 @@ export class FlowExecutionManager {
     private readonly automaticHumanInteractionHandler?:
       | ExpertAgentAutomaticHumanInteractionHandler
       | undefined,
+    private readonly pragmaHome?: string | undefined,
   ) {}
 
   async start<TInput>(
@@ -89,11 +94,11 @@ export class FlowExecutionManager {
     await validateFlowRuntimeConfiguration(flow, this.runtimes, runtimeId);
     const now = new Date().toISOString();
     const record: ExecutionRecord = {
-      schemaVersion: "pragma.execution/v5",
+      schemaVersion: "pragma.execution/v7",
       executionId,
       version: 0,
       kind: "flow",
-      definition: { id: flow.id, version: flow.version, kind: "flow" },
+      definition: { id: flow.id, kind: "flow" },
       rootInvocationId: executionId,
       status: "queued",
       input,
@@ -142,7 +147,7 @@ export class FlowExecutionManager {
     if (record === undefined || record.kind !== "flow") {
       throw new Error(`FlowExecution not found: ${request.executionId}`);
     }
-    if (record.definition.id !== flow.id || record.definition.version !== flow.version) {
+    if (record.definition.id !== flow.id) {
       throw new Error(`Flow definition mismatch for Execution ${request.executionId}.`);
     }
     const internal = readFlowInternalState(record.state);
@@ -232,6 +237,12 @@ export class FlowExecutionManager {
     controller: ExecutionController,
     runtime?: string,
   ): Promise<void> {
+    const handoffs = new HandoffService({
+      executionId,
+      executions: this.executions,
+      ...(this.pragmaHome === undefined ? {} : { pragmaHome: this.pragmaHome }),
+    });
+    await handoffs.beginInvocationAttempt(executionId, `flow-execution-attempt:${randomUUID()}`);
     const root = (await this.executions.getInvocation(executionId, executionId))!;
     await this.executions.commit({
       commitId: randomUUID(),
@@ -251,7 +262,9 @@ export class FlowExecutionManager {
         store: this.executions,
         runtimes: this.runtimes,
         runtime,
+        handoffs,
       });
+      const handoff = await handoffs.normalize(executionId, output);
       const usage = controller.getUsage();
       const closure = await prepareExecutionContextClosure(this.executions, executionId);
       await this.executions.commit({
@@ -259,11 +272,11 @@ export class FlowExecutionManager {
         executionId,
         executionPatch: {
           status: "succeeded",
-          output,
+          output: handoff,
           ...(usage === undefined ? {} : { usage }),
         },
         invocationPatches: [
-          { invocationId: root.invocationId, patch: { status: "succeeded", output } },
+          { invocationId: root.invocationId, patch: { status: "succeeded", output: handoff } },
         ],
         contextPatches: closure.contextPatches,
         agentPatches: closure.agentPatches,
@@ -272,9 +285,9 @@ export class FlowExecutionManager {
           {
             invocationId: root.invocationId,
             type: "invocation.succeeded",
-            data: { output },
+            data: { output: handoff },
           },
-          { invocationId: executionId, type: "execution.succeeded", data: { output } },
+          { invocationId: executionId, type: "execution.succeeded", data: { output: handoff } },
         ],
       });
     } catch (error) {
@@ -359,6 +372,7 @@ async function runFlow(options: {
   readonly runtimes: RuntimeResolver;
   readonly runtime?: string | undefined;
   readonly runtimeOverride?: string | undefined;
+  readonly handoffs: HandoffService;
 }): Promise<unknown> {
   const deadline = await ensureFlowDeadline(options);
   const timeoutReason = `Flow ${options.flow.id} timed out.`;
@@ -378,6 +392,12 @@ async function runFlow(options: {
         );
   timeout?.unref();
   let stepId: string | undefined = options.flow.startStepId;
+  let terminal:
+    | {
+        readonly nodeId: string;
+        readonly output: unknown;
+      }
+    | undefined;
   const visits = new Map<string, number>();
   try {
     while (stepId !== undefined) {
@@ -420,7 +440,7 @@ async function runFlow(options: {
       }
       let output: unknown;
       if (invocation.status === "succeeded") {
-        output = invocation.output;
+        output = readStepInvocationOutput(step, invocation);
       } else {
         output = await runStep(options, step, invocation, input);
       }
@@ -431,14 +451,20 @@ async function runFlow(options: {
       if ("type" in target) {
         if (target.type === "fail")
           throw new Error(target.reason ?? `Flow ${options.flow.id} failed.`);
+        terminal = { nodeId: step.id, output };
         stepId = undefined;
       } else {
         stepId = target.id;
       }
     }
+    if (terminal === undefined) {
+      throw new Error(`Flow ${options.flow.id} completed without a terminal node result.`);
+    }
     const record = (await options.store.get(options.executionId))!;
     const userState = readUserFlowState(record.state);
-    const output = options.flow.result?.({ state: userState }) ?? userState;
+    const output =
+      options.flow.result?.({ input: options.input, state: userState, terminal }) ??
+      terminal.output;
     return options.flow.output?.parse(output) ?? output;
   } finally {
     if (timeout !== undefined) clearTimeout(timeout);
@@ -457,6 +483,7 @@ export async function runNestedFlowInvocation(options: {
   readonly store: ExecutionStore;
   readonly runtimes: RuntimeResolver;
   readonly runtime?: string | undefined;
+  readonly handoffs: HandoffService;
 }): Promise<unknown> {
   const runtimeId = (await options.runtimes.bind({ runtimeId: options.runtime })).binding.runtimeId;
   await validateFlowRuntimeConfiguration(options.flow, options.runtimes, runtimeId);
@@ -510,10 +537,15 @@ async function runStep(
         invocation,
         input,
         readUserFlowState(record.state),
+        step.options.output,
       );
     }
     if ("kind" in step.definition && step.definition.kind === "flow") {
       await putStatus(options.store, options.executionId, invocation, "running");
+      await options.handoffs.beginInvocationAttempt(
+        invocation.invocationId,
+        `flow-step-attempt:${randomUUID()}`,
+      );
       options.controller.signalForInvocation(invocation.invocationId, options.flowInvocationId);
       const output = await runFlow({
         ...options,
@@ -524,15 +556,16 @@ async function runStep(
         runtimeOverride:
           ("runtime" in step.options ? step.options.runtime : undefined) ?? options.runtimeOverride,
       });
-      await putStatus(options.store, options.executionId, invocation, "succeeded", output);
-      return output;
+      const handoff = await options.handoffs.normalize(invocation.invocationId, output);
+      await putStatus(options.store, options.executionId, invocation, "succeeded", handoff);
+      return unwrapInvocationHandoff(handoff);
     }
     const expert = step.definition as ExpertDefinition;
     const context = await options.store.getContext(options.executionId, invocation.contextId);
     if (context === undefined) {
       throw new Error(`Runtime Context not found: ${invocation.contextId}.`);
     }
-    return await runExpertInvocation({
+    const handoff = await runExpertInvocation({
       executionId: options.executionId,
       invocationId: invocation.invocationId,
       parentInvocationId: options.flowInvocationId,
@@ -542,11 +575,17 @@ async function runStep(
       ...(readFlowStepRuntimeByExpert(step) === undefined
         ? {}
         : { runtimeByExpert: readFlowStepRuntimeByExpert(step) }),
+      ...(!("modelSelection" in step.options) || step.options.modelSelection === undefined
+        ? {}
+        : { modelSelection: step.options.modelSelection }),
+      ...(step.options.output === undefined ? {} : { output: step.options.output }),
       context,
       controller: options.controller,
       store: options.store,
       runtimes: options.runtimes,
+      handoffs: options.handoffs,
     });
+    return unwrapInvocationHandoff(InvocationHandoffSchema.parse(handoff));
   } catch (error) {
     const latest = await options.store.getInvocation(options.executionId, invocation.invocationId);
     if (latest !== undefined && !isFinal(latest.status)) {
@@ -563,12 +602,24 @@ async function runStep(
   }
 }
 
+function readStepInvocationOutput(step: CompiledFlowStep, invocation: Invocation): unknown {
+  if (
+    "kind" in step.definition &&
+    (step.definition.kind === "task" || step.definition.kind === "human-task")
+  ) {
+    return invocation.output;
+  }
+
+  return unwrapInvocationHandoff(InvocationHandoffSchema.parse(invocation.output));
+}
+
 async function runHumanTask(
   options: Parameters<typeof runFlow>[0],
   definition: HumanTaskDefinition,
   invocation: Invocation,
   input: unknown,
   state: FlowState,
+  outputSchema: z.ZodType | undefined,
 ): Promise<unknown> {
   await putStatus(options.store, options.executionId, invocation, "waiting");
   const context: FlowTaskContext = {
@@ -598,16 +649,26 @@ async function runHumanTask(
     toExpertHumanRequest(request),
     `human:${invocation.invocationId}`,
   );
-  const output = fromExpertHumanResponse(request, response);
+  const humanResponse = fromExpertHumanResponse(request, response);
+  const output = outputSchema?.parse(humanResponse) ?? humanResponse;
   await putStatus(options.store, options.executionId, invocation, "succeeded", output);
   return output;
 }
 
 function toExpertHumanRequest(request: HumanInteractionRequest): ExpertAgentHumanRequest {
+  const questions = humanInteractionQuestions(request);
   return {
     kind: "user_question",
     toolName: "askUserQuestion",
-    questions: humanInteractionQuestions(request),
+    questions,
+    ...(request.kind === "approval"
+      ? {
+          semantics: {
+            kind: "approval" as const,
+            approveOption: approvalOption(request, questions),
+          },
+        }
+      : {}),
   };
 }
 
@@ -672,13 +733,40 @@ function fromExpertHumanResponse(
   const notes =
     notesQuestion === undefined ? undefined : readHumanAnswer(answers, notesQuestion.question);
   const approved =
-    request.kind === "approval" ? isApprovedHumanDecision(questions, decision) : undefined;
+    request.kind === "approval" ? isApprovedHumanDecision(request, questions, decision) : undefined;
+  const selection = readHumanSelection(request, answers);
   return HumanInteractionResponseSchema.parse({
     answers,
     ...(decision === undefined ? {} : { decision }),
+    ...(selection === undefined ? {} : { selection }),
     ...(notes === undefined ? {} : { notes }),
     ...(approved === undefined ? {} : { approved }),
   });
+}
+
+function readHumanSelection(
+  request: HumanInteractionRequest,
+  answers: Readonly<Record<string, unknown>>,
+): string | string[] | undefined {
+  const question = request.questions?.find(
+    (candidate) => candidate.kind === "single_choice" || candidate.kind === "multiple_choice",
+  );
+  if (question === undefined || !question.options.some((option) => option.value !== undefined)) {
+    return undefined;
+  }
+  const answer = answers[question.question];
+  const valueForLabel = (label: string) =>
+    question.options.find((option) => option.label === label)?.value ?? label;
+  if (question.kind === "single_choice") {
+    return typeof answer === "string" && answer.trim() !== ""
+      ? valueForLabel(answer.trim())
+      : undefined;
+  }
+  if (!Array.isArray(answer)) return undefined;
+  const values = answer.flatMap((entry) =>
+    typeof entry === "string" && entry.trim() !== "" ? [valueForLabel(entry.trim())] : [],
+  );
+  return values.length === 0 ? undefined : values;
 }
 
 function readHumanAnswers(
@@ -703,14 +791,25 @@ function readHumanAnswer(
 }
 
 function isApprovedHumanDecision(
+  request: HumanInteractionRequest,
   questions: readonly ExpertAgentUserQuestion[],
   decision: string | undefined,
 ): boolean {
-  const positiveLabel = questions.find((question) => question.kind === "single_choice")?.options[0]
-    ?.label;
+  const positiveLabel = approvalOption(request, questions);
   return (
     positiveLabel !== undefined &&
     decision?.toLocaleLowerCase() === positiveLabel.toLocaleLowerCase()
+  );
+}
+
+function approvalOption(
+  request: HumanInteractionRequest,
+  questions: readonly ExpertAgentUserQuestion[],
+): string {
+  return (
+    request.approveOption ??
+    questions.find((question) => question.kind === "single_choice")?.options[0]?.label ??
+    "approve"
   );
 }
 
@@ -738,7 +837,9 @@ async function createStepInvocation(
     const expert = step.definition as ExpertDefinition;
     const nativeExpert = isExpertTeam(expert) ? expert.coordinator : expert;
     const record = (await options.store.get(options.executionId))!;
-    const modelSelection = nativeExpert.models?.default;
+    const modelSelection =
+      ("modelSelection" in step.options ? step.options.modelSelection : undefined) ??
+      nativeExpert.models?.default;
     const runtime = await options.runtimes.bind({
       runtimeId: resolveFlowStepRuntimeId(
         step,
@@ -761,7 +862,7 @@ async function createStepInvocation(
         visit: visit + 1,
       },
       owner: options.owner,
-      expert: { id: nativeExpert.id, version: nativeExpert.version },
+      expert: { id: nativeExpert.id },
       runtime: runtime.binding,
       modelSelection,
       resolver:
@@ -832,6 +933,7 @@ async function applyReductionOnce(
     if (internal.reductions[invocationId] === true) return { changed: false, value: undefined };
     const userState = structuredClone(readUserFlowState(record.state));
     step.options.reduce?.({ state: userState, output });
+    writeCanonicalNodeResult(userState, step.id, output);
     internal.reductions[invocationId] = true;
     return {
       changed: true,
@@ -843,15 +945,14 @@ async function applyReductionOnce(
 
 function definitionRef(definition: CompiledFlowStep["definition"]): Invocation["definition"] {
   if ("kind" in definition && definition.kind === "task")
-    return { id: definition.id, version: definition.version, kind: "task" };
+    return { id: definition.id, kind: "task" };
   if ("kind" in definition && definition.kind === "human-task")
-    return { id: definition.id, version: definition.version, kind: "human-task" };
+    return { id: definition.id, kind: "human-task" };
   if ("kind" in definition && definition.kind === "flow")
-    return { id: definition.id, version: definition.version, kind: "flow" };
+    return { id: definition.id, kind: "flow" };
   const expert = definition as ExpertDefinition;
   return {
     id: expert.id,
-    version: expert.version,
     kind: isExpertTeam(expert) ? "expert-team" : "expert",
   };
 }
@@ -1026,6 +1127,21 @@ async function applyTransitionOnce(
     } else if (transition.type === "route") {
       destination =
         transition.cases.get(String(readField(output, transition.field))) ?? transition.fallback;
+    } else if (transition.type === "array-route") {
+      const value = readField(output, transition.field);
+      const selected = Array.isArray(value)
+        ? new Set(value.filter((entry): entry is string => typeof entry === "string"))
+        : new Set<string>();
+      destination =
+        transition.branches.find((branch) => {
+          if (branch.operator === "contains_any") {
+            return branch.values.some((candidate) => selected.has(candidate));
+          }
+          if (branch.operator === "contains_all") {
+            return branch.values.every((candidate) => selected.has(candidate));
+          }
+          return branch.values.every((candidate) => !selected.has(candidate));
+        })?.destination ?? transition.fallback;
     } else {
       destination = transition;
     }
@@ -1149,7 +1265,9 @@ function readFlowInternalState(state: FlowState): StoredFlowInternalState {
 
 function readUserFlowState(state: FlowState): FlowState {
   return Object.fromEntries(
-    Object.entries(state).filter(([key]) => key !== FLOW_INTERNAL_STATE_KEY),
+    Object.entries(state).filter(
+      ([key]) => key !== FLOW_INTERNAL_STATE_KEY && key !== EXECUTION_RECOVERY_CLAIM_STATE_KEY,
+    ),
   );
 }
 
@@ -1217,7 +1335,8 @@ function visitFlowDefinition(flow: Flow, ancestors: Set<Flow>): unknown {
   if (ancestors.has(flow)) throw new Error(`Cyclic sub Flow definition: ${flow.id}`);
   const nextAncestors = new Set(ancestors).add(flow);
   return {
-    definition: { id: flow.id, version: flow.version, kind: "flow" },
+    definition: { id: flow.id, kind: "flow" },
+    startStepId: flow.startStepId,
     maxNodeVisits: flow.maxNodeVisits,
     ...(flow.timeoutMs === undefined ? {} : { timeoutMs: flow.timeoutMs }),
     loops: [...flow.loops.values()]
@@ -1227,7 +1346,7 @@ function visitFlowDefinition(flow: Flow, ancestors: Set<Flow>): unknown {
         entryStepId: loop.entryStepId,
         stepIds: [...loop.stepIds].sort(),
         maxIterations: loop.maxIterations,
-        ...(loop.onLimit === undefined ? {} : { onLimit: loop.onLimit }),
+        ...(loop.onLimit === undefined ? {} : { onLimit: describeTarget(loop.onLimit) }),
       })),
     steps: [...flow.steps.values()]
       .sort((left, right) => left.id.localeCompare(right.id))
@@ -1271,21 +1390,62 @@ function visitFlowDefinition(flow: Flow, ancestors: Set<Flow>): unknown {
             ),
           }),
       ...(resolver === undefined ? {} : { contextId: describeContextIdResolver(resolver) }),
+      ...(!("modelSelection" in step.options) || step.options.modelSelection === undefined
+        ? {}
+        : { modelSelection: step.options.modelSelection }),
+      ...(step.options.output === undefined ? {} : { output: z.toJSONSchema(step.options.output) }),
+      ...(step.options.descriptor === undefined ? {} : { descriptor: step.options.descriptor }),
     };
   }
 
   function describeTransition(
     transition: Flow["transitions"] extends ReadonlyMap<string, infer T> ? T : never,
   ): unknown {
-    if (transition.type === "next") return { type: "next", target: transition.target };
+    if (transition.type === "next") {
+      return { type: "next", target: describeTarget(transition.target) };
+    }
     if (transition.type === "repeat") {
-      return { type: "repeat", loopId: transition.loopId, target: transition.target };
+      return {
+        type: "repeat",
+        loopId: transition.loopId,
+        target: describeTarget(transition.target),
+      };
+    }
+    if (transition.type === "array-route") {
+      return {
+        type: "array-route",
+        field: transition.field,
+        branches: transition.branches.map((branch) => ({
+          id: branch.id,
+          operator: branch.operator,
+          values: [...branch.values],
+          destination: describeTarget(branch.destination),
+        })),
+        ...(transition.fallback === undefined
+          ? {}
+          : { fallback: describeTarget(transition.fallback) }),
+      };
     }
     return {
       type: "route",
       field: transition.field,
-      cases: [...transition.cases.entries()].sort(([left], [right]) => left.localeCompare(right)),
-      ...(transition.fallback === undefined ? {} : { fallback: transition.fallback }),
+      cases: [...transition.cases.entries()]
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, target]) => [key, describeTarget(target)]),
+      ...(transition.fallback === undefined
+        ? {}
+        : { fallback: describeTarget(transition.fallback) }),
+    };
+  }
+
+  function describeTarget(target: FlowDestination): unknown {
+    if ("id" in target) return { id: target.id };
+    if (target.type === "repeat") {
+      return { type: "repeat", loopId: target.loopId, target: { id: target.target.id } };
+    }
+    return {
+      type: target.type,
+      ...(target.reason === undefined ? {} : { reason: target.reason }),
     };
   }
 }
@@ -1294,6 +1454,22 @@ function readFlowStepRuntimeByExpert(
   step: CompiledFlowStep,
 ): Readonly<Record<string, string>> | undefined {
   return "runtimeByExpert" in step.options ? step.options.runtimeByExpert : undefined;
+}
+
+function writeCanonicalNodeResult(state: FlowState, nodeId: string, output: unknown): void {
+  const existingNodes = state["nodes"];
+  const nodes =
+    typeof existingNodes === "object" && existingNodes !== null && !Array.isArray(existingNodes)
+      ? (existingNodes as Record<string, unknown>)
+      : (Object.create(null) as Record<string, unknown>);
+  const existingNode = nodes[nodeId];
+  const node =
+    typeof existingNode === "object" && existingNode !== null && !Array.isArray(existingNode)
+      ? (existingNode as Record<string, unknown>)
+      : (Object.create(null) as Record<string, unknown>);
+  node["result"] = output;
+  nodes[nodeId] = node;
+  state["nodes"] = nodes;
 }
 
 function resolveFlowStepRuntimeId(
@@ -1344,7 +1520,9 @@ async function validateFlowRuntimeConfiguration(
     const nativeExpert = isExpertTeam(expert) ? expert.coordinator : expert;
     await runtimes.bind({
       runtimeId: resolveFlowStepRuntimeId(step, nativeExpert, fallbackRuntimeId, inheritedOverride),
-      modelSelection: nativeExpert.models?.default,
+      modelSelection:
+        ("modelSelection" in step.options ? step.options.modelSelection : undefined) ??
+        nativeExpert.models?.default,
     });
     for (const runtimeId of Object.values(readFlowStepRuntimeByExpert(step) ?? {})) {
       await runtimes.bind({ runtimeId });
@@ -1367,7 +1545,9 @@ async function waitForResult(store: ExecutionStore, executionId: string): Promis
   while (true) {
     const record = await store.get(executionId);
     if (record === undefined) throw new Error(`Execution not found: ${executionId}`);
-    if (record.status === "succeeded") return record.output;
+    if (record.status === "succeeded") {
+      return record.output === undefined ? undefined : unwrapInvocationHandoff(record.output);
+    }
     if (record.status === "failed" || record.status === "cancelled")
       throw new Error(readErrorMessage(record.error) ?? record.status);
     await new Promise<void>((resolve) => setTimeout(resolve, 10));

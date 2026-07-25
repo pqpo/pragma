@@ -1,13 +1,23 @@
-import type { HumanInteractionRequest, HumanInteractionResponse } from "@pragma/shared";
+import {
+  analyzeControlFlowGraph,
+  type ControlFlowEdge,
+  type ControlFlowGraphIssue,
+  type HumanInteractionRequest,
+  type HumanInteractionResponse,
+} from "@pragma/shared";
 import type { z } from "zod";
 
 import { readAgentDelegationDefinition, type RuntimeByExpert } from "../agent/agent-launcher.ts";
 import type { Expert } from "../agent/expert-agent.ts";
 import { isExpertTeam, type ExpertDefinition } from "../agent/expert-team.ts";
 import type { ContextIdResolver } from "../execution/context-id-resolver.ts";
+import type { RuntimeModelSelection } from "../runtime/runtime-adapter.ts";
 
 export type FlowState = Record<string, unknown>;
 export type FlowNodeDefinition = FlowTaskDefinition | HumanTaskDefinition | ExpertDefinition | Flow;
+const FLOW_STEP_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
+const FLOW_STEP_ID_MAX_LENGTH = 100;
+const RESERVED_FLOW_STEP_IDS = new Set(["constructor", "prototype"]);
 
 export interface FlowTaskContext<TInput = unknown> {
   readonly input: TInput;
@@ -21,7 +31,6 @@ export interface FlowTaskContext<TInput = unknown> {
 export interface FlowTaskDefinition<TInput = unknown, TOutput = unknown> {
   readonly kind: "task";
   readonly id: string;
-  readonly version: string;
   readonly inputSchema?: z.ZodType<TInput> | undefined;
   readonly outputSchema?: z.ZodType<TOutput> | undefined;
   readonly handler: (context: FlowTaskContext<TInput>) => TOutput | Promise<TOutput>;
@@ -30,7 +39,6 @@ export interface FlowTaskDefinition<TInput = unknown, TOutput = unknown> {
 export interface HumanTaskDefinition<TInput = unknown> {
   readonly kind: "human-task";
   readonly id: string;
-  readonly version: string;
   readonly request:
     | HumanInteractionRequest
     | ((
@@ -40,12 +48,20 @@ export interface HumanTaskDefinition<TInput = unknown> {
 
 export interface DefineFlowOptions<TInput = unknown, TOutput = unknown> {
   readonly id: string;
-  readonly version: string;
   readonly input?: z.ZodType<TInput> | undefined;
   readonly output?: z.ZodType<TOutput> | undefined;
-  readonly result?: ((context: { readonly state: FlowState }) => TOutput) | undefined;
+  readonly result?: ((context: FlowResultContext) => TOutput) | undefined;
   readonly maxNodeVisits?: number | undefined;
   readonly timeoutMs?: number | undefined;
+}
+
+export interface FlowResultContext {
+  readonly input: unknown;
+  readonly state: FlowState;
+  readonly terminal: {
+    readonly nodeId: string;
+    readonly output: unknown;
+  };
 }
 
 export interface FlowStepOptions<TInput = unknown, TOutput = unknown> {
@@ -57,6 +73,8 @@ export interface FlowStepOptions<TInput = unknown, TOutput = unknown> {
   readonly reduce?:
     | ((context: { readonly state: FlowState; readonly output: TOutput }) => void)
     | undefined;
+  /** Stable declarative representation used by recovery fingerprinting. */
+  readonly descriptor?: unknown;
 }
 
 export interface FlowExpertStepOptions<TInput = unknown, TOutput = unknown> extends FlowStepOptions<
@@ -65,6 +83,7 @@ export interface FlowExpertStepOptions<TInput = unknown, TOutput = unknown> exte
 > {
   readonly runtime?: string | undefined;
   readonly runtimeByExpert?: RuntimeByExpert | undefined;
+  readonly modelSelection?: RuntimeModelSelection | undefined;
   readonly contextId?: ContextIdResolver | undefined;
 }
 
@@ -109,6 +128,11 @@ export interface FlowChain {
     cases: Readonly<Record<string, FlowDestination>>,
     options?: { readonly fallback?: FlowDestination | undefined },
   ): FlowChain;
+  routeArray(
+    field: string,
+    branches: readonly FlowArrayRouteBranch[],
+    options?: { readonly fallback?: FlowDestination | undefined },
+  ): FlowChain;
 }
 
 export interface CompiledFlowStep {
@@ -120,10 +144,9 @@ export interface CompiledFlowStep {
 export interface Flow {
   readonly kind: "flow";
   readonly id: string;
-  readonly version: string;
   readonly input?: z.ZodType | undefined;
   readonly output?: z.ZodType | undefined;
-  readonly result?: ((context: { readonly state: FlowState }) => unknown) | undefined;
+  readonly result?: ((context: FlowResultContext) => unknown) | undefined;
   readonly maxNodeVisits: number;
   readonly timeoutMs?: number | undefined;
   readonly steps: ReadonlyMap<string, CompiledFlowStep>;
@@ -140,7 +163,20 @@ export type FlowTransition =
       readonly field: string;
       readonly cases: ReadonlyMap<string, FlowDestination>;
       readonly fallback?: FlowDestination | undefined;
+    }
+  | {
+      readonly type: "array-route";
+      readonly field: string;
+      readonly branches: readonly FlowArrayRouteBranch[];
+      readonly fallback?: FlowDestination | undefined;
     };
+
+export interface FlowArrayRouteBranch {
+  readonly id: string;
+  readonly operator: "contains_any" | "contains_all" | "contains_none";
+  readonly values: readonly string[];
+  readonly destination: FlowDestination;
+}
 
 export interface FlowLoopDefinition {
   readonly id: string;
@@ -150,13 +186,19 @@ export interface FlowLoopDefinition {
   readonly onLimit?: FlowStepReference | FlowTerminal | undefined;
 }
 
+export class FlowDefinitionError extends Error {
+  constructor(readonly issues: readonly ControlFlowGraphIssue[]) {
+    super(issues.map((issue) => issue.message).join("\n"));
+    this.name = "FlowDefinitionError";
+  }
+}
+
 export class FlowSpec<TInput = unknown, TOutput = unknown> {
   readonly kind = "flow" as const;
   readonly id: string;
-  readonly version: string;
   readonly input: z.ZodType<TInput> | undefined;
   readonly output: z.ZodType<TOutput> | undefined;
-  readonly result: ((context: { readonly state: FlowState }) => TOutput) | undefined;
+  readonly result: ((context: FlowResultContext) => TOutput) | undefined;
   readonly maxNodeVisits: number;
   readonly timeoutMs: number | undefined;
   private readonly stepDefinitions = new Map<string, CompiledFlowStep>();
@@ -166,7 +208,6 @@ export class FlowSpec<TInput = unknown, TOutput = unknown> {
 
   constructor(options: DefineFlowOptions<TInput, TOutput>) {
     this.id = options.id;
-    this.version = options.version;
     this.input = options.input;
     this.output = options.output;
     this.result = options.result;
@@ -181,7 +222,7 @@ export class FlowSpec<TInput = unknown, TOutput = unknown> {
     options: Omit<FlowTaskDefinition<TStepInput, TStepOutput>, "kind"> &
       FlowStepOptions<TStepInput, TStepOutput>,
   ): FlowStepReference<TStepOutput> {
-    const { input, output, reduce, ...definition } = options;
+    const { input, output, reduce, descriptor, ...definition } = options;
     return this.addStep(
       options.id,
       { kind: "task", ...definition } as unknown as FlowNodeDefinition,
@@ -189,6 +230,7 @@ export class FlowSpec<TInput = unknown, TOutput = unknown> {
         input,
         output,
         reduce,
+        descriptor,
       } as unknown as FlowStepOptions,
     );
   }
@@ -197,7 +239,7 @@ export class FlowSpec<TInput = unknown, TOutput = unknown> {
     options: Omit<HumanTaskDefinition<TStepInput>, "kind"> &
       FlowStepOptions<TStepInput, HumanInteractionResponse>,
   ): FlowStepReference<HumanInteractionResponse> {
-    const { input, output, reduce, ...definition } = options;
+    const { input, output, reduce, descriptor, ...definition } = options;
     return this.addStep(
       options.id,
       { kind: "human-task", ...definition } as unknown as FlowNodeDefinition,
@@ -205,6 +247,7 @@ export class FlowSpec<TInput = unknown, TOutput = unknown> {
         input,
         output,
         reduce,
+        descriptor,
       } as unknown as FlowStepOptions,
     );
   }
@@ -293,10 +336,22 @@ export class FlowSpec<TInput = unknown, TOutput = unknown> {
 
   compile(): Flow {
     if (this.firstStepId === undefined) throw new Error(`Flow ${this.id} has no start step.`);
+    const analysis = analyzeControlFlowGraph({
+      nodes: new Set(this.stepDefinitions.keys()),
+      start: this.firstStepId,
+      transitionSources: new Set(this.transitionDefinitions.keys()),
+      edges: flowEdges(this.transitionDefinitions),
+      loops: [...this.loopDefinitions.values()].map((loop) => ({
+        id: loop.id,
+        entry: loop.entryStepId,
+        members: loop.stepIds,
+        onLimitTarget: stepTargetId(loop.onLimit),
+      })),
+    });
+    if (analysis.issues.length > 0) throw new FlowDefinitionError(analysis.issues);
     return Object.freeze({
       kind: "flow" as const,
       id: this.id,
-      version: this.version,
       input: this.input,
       output: this.output,
       result: this.result,
@@ -319,6 +374,14 @@ export class FlowSpec<TInput = unknown, TOutput = unknown> {
     definition: FlowNodeDefinition,
     options: FlowStepOptions,
   ): FlowStepReference<TOutput> {
+    if (
+      id.length > FLOW_STEP_ID_MAX_LENGTH ||
+      !FLOW_STEP_ID_PATTERN.test(id) ||
+      id.startsWith("__") ||
+      RESERVED_FLOW_STEP_IDS.has(id)
+    ) {
+      throw new Error(`Invalid Flow step id: ${id}`);
+    }
     if (this.stepDefinitions.has(id)) throw new Error(`Duplicate Flow step id: ${id}`);
     this.stepDefinitions.set(id, { id, definition, options });
     return { id, output: options.output as z.ZodType<TOutput> | undefined };
@@ -327,6 +390,43 @@ export class FlowSpec<TInput = unknown, TOutput = unknown> {
   private assertStep(id: string): void {
     if (!this.stepDefinitions.has(id)) throw new Error(`Unknown Flow step: ${id}`);
   }
+}
+
+function flowEdges(transitions: ReadonlyMap<string, FlowTransition>): readonly ControlFlowEdge[] {
+  const edges: ControlFlowEdge[] = [];
+  const add = (source: string, destination: FlowDestination): void => {
+    if ("type" in destination && (destination.type === "end" || destination.type === "fail")) {
+      return;
+    }
+    if ("type" in destination && destination.type === "repeat") {
+      edges.push({
+        source,
+        target: destination.target.id,
+        kind: "repeat",
+        loopId: destination.loopId,
+      });
+      return;
+    }
+    if ("id" in destination) {
+      edges.push({ source, target: destination.id, kind: "ordinary" });
+    }
+  };
+  for (const [source, transition] of transitions) {
+    if (transition.type === "next") add(source, transition.target);
+    else if (transition.type === "repeat") add(source, transition);
+    else if (transition.type === "route") {
+      for (const destination of transition.cases.values()) add(source, destination);
+      if (transition.fallback !== undefined) add(source, transition.fallback);
+    } else {
+      for (const branch of transition.branches) add(source, branch.destination);
+      if (transition.fallback !== undefined) add(source, transition.fallback);
+    }
+  }
+  return edges;
+}
+
+function stepTargetId(target: FlowStepReference | FlowTerminal | undefined): string | undefined {
+  return target !== undefined && "id" in target ? target.id : undefined;
 }
 
 class Chain implements FlowChain {
@@ -354,6 +454,23 @@ class Chain implements FlowChain {
       type: "route",
       field,
       cases: new Map(Object.entries(cases)),
+      fallback: options.fallback,
+    });
+    return this;
+  }
+
+  routeArray(
+    field: string,
+    branches: readonly FlowArrayRouteBranch[],
+    options: { readonly fallback?: FlowDestination | undefined } = {},
+  ): FlowChain {
+    this.flow.setTransition(this.stepId, {
+      type: "array-route",
+      field,
+      branches: branches.map((branch) => ({
+        ...branch,
+        values: [...branch.values],
+      })),
       fallback: options.fallback,
     });
     return this;
@@ -433,7 +550,6 @@ function isExecutableDefinition(value: unknown): value is ExpertDefinition | Flo
     typeof value === "object" &&
     value !== null &&
     "id" in value &&
-    "version" in value &&
     (!("kind" in value) || value.kind === "expert-team" || value.kind === "flow")
   );
 }

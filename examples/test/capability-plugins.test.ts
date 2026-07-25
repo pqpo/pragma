@@ -16,7 +16,6 @@ describe("capability example plugins", () => {
       name: "Learning Plugin Test",
       description: "Learning Plugin Test",
       tags: ["test"],
-      version: "1.0.0",
       scope: "test",
       workspace,
       plugins: [
@@ -51,7 +50,6 @@ describe("capability example plugins", () => {
       name: "Tool Policy Test",
       description: "Tool Policy Test",
       tags: ["test"],
-      version: "1.0.0",
       scope: "test",
       workspace,
       tools: [

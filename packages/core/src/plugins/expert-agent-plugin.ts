@@ -241,7 +241,6 @@ export interface ExpertAgentPluginSetupContext {
     | {
         readonly id: string;
         readonly displayName: string;
-        readonly version: string;
       }
     | undefined;
   readonly host: ExpertAgentPluginContributions;
@@ -337,7 +336,6 @@ export interface ResolveExpertAgentPluginsOptions {
     | {
         readonly id: string;
         readonly displayName: string;
-        readonly version: string;
       }
     | undefined;
   readonly host?: ExpertAgentPluginContributions | undefined;

@@ -8,7 +8,10 @@ import type {
 import { i18n } from "../../i18n/index.ts";
 import {
   applyMissionChatPatches,
+  claimMissionClientOperation,
+  ContextWindowControl,
   groupMissionConversationEntries,
+  MissionContextOperationEntry,
   MissionDetailFragment,
   MissionThinkingEntry,
   MissionWorkDrawer,
@@ -16,8 +19,10 @@ import {
   missionWorkInputSenderName,
   missionWorkRecordTitle,
   resolveMissionSearchCollapsed,
+  releaseMissionClientOperation,
   shouldClearMissionThinkingPlaceholder,
   shouldShowMissionThinkingPlaceholder,
+  unavailableMcpToolName,
 } from "./MissionsPage.tsx";
 
 describe("MissionsPage", () => {
@@ -85,6 +90,108 @@ describe("MissionsPage", () => {
 });
 
 describe("MissionDetailFragment", () => {
+  it("holds a synchronous client-operation lock throughout context compaction", () => {
+    const compacting = claimMissionClientOperation({ kind: "idle" }, "compacting", "compact-token");
+
+    expect(compacting).toEqual({ kind: "compacting", token: "compact-token" });
+    expect(claimMissionClientOperation(compacting!, "sending", "send-token")).toBeNull();
+    expect(releaseMissionClientOperation(compacting!, "stale-token")).toBe(compacting);
+    expect(releaseMissionClientOperation(compacting!, "compact-token")).toEqual({ kind: "idle" });
+  });
+
+  it("renders context compaction progress, completion, and retryable failure states", () => {
+    const started = renderToStaticMarkup(
+      <MissionContextOperationEntry
+        operation={{
+          id: "compact-1",
+          createdAt: "2026-07-24T00:00:00.000Z",
+          status: "running",
+        }}
+        onRetry={() => undefined}
+      />,
+    );
+    const completed = renderToStaticMarkup(
+      <MissionContextOperationEntry
+        operation={{
+          id: "compact-1",
+          createdAt: "2026-07-24T00:00:00.000Z",
+          status: "succeeded",
+        }}
+        onRetry={() => undefined}
+      />,
+    );
+    const failed = renderToStaticMarkup(
+      <MissionContextOperationEntry
+        operation={{
+          id: "compact-1",
+          createdAt: "2026-07-24T00:00:00.000Z",
+          status: "failed",
+          error: "The Runtime could not compact this context.",
+        }}
+        onRetry={() => undefined}
+      />,
+    );
+
+    expect(started).toContain("Compacting context");
+    expect(completed).toContain("Context compaction completed");
+    expect(failed).toContain("Context compaction failed");
+    expect(failed).toContain("The Runtime could not compact this context.");
+    expect(failed).toContain(">Retry<");
+  });
+
+  it("renders the context ring with an accessible percentage label", () => {
+    const html = renderToStaticMarkup(
+      <ContextWindowControl
+        state={{
+          supportsInspection: true,
+          supportsCompaction: true,
+          canCompact: true,
+          usage: {
+            usedTokens: 50_000,
+            contextWindowTokens: 200_000,
+            percent: 25,
+            measurement: "reported",
+            observedAt: "2026-07-24T00:00:00.000Z",
+          },
+        }}
+        compacting={false}
+        onCompact={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("mission-context-trigger");
+    expect(html).toContain('stroke-dashoffset="75"');
+    expect(html).toContain('aria-label="Context window usage: 25%"');
+    expect(html).toContain('aria-haspopup="dialog"');
+  });
+
+  it("bounds impossible context usage and exposes a diagnostic warning", () => {
+    const html = renderToStaticMarkup(
+      <ContextWindowControl
+        state={{
+          supportsInspection: true,
+          supportsCompaction: true,
+          canCompact: true,
+          usage: {
+            usedTokens: 663_493,
+            contextWindowTokens: 258_400,
+            percent: 256.8,
+            measurement: "reported",
+            observedAt: "2026-07-24T00:00:00.000Z",
+          },
+        }}
+        compacting={false}
+        onCompact={() => undefined}
+      />,
+    );
+
+    expect(html).toContain('stroke-dashoffset="0"');
+    expect(html).toContain("mission-context-warning-badge");
+    expect(html).toContain("Context window usage: 100%");
+    expect(html).toContain("Runtime reported invalid context usage");
+    expect(html).not.toContain("256.8%");
+  });
+
   it("uses the full detail width for a single expert", () => {
     const html = renderToStaticMarkup(<MissionDetailFragment mission={missionFixture("expert")} />);
 
@@ -134,6 +241,48 @@ describe("MissionDetailFragment", () => {
     expect(html.indexOf("mission-page-error")).toBeLessThan(html.indexOf("mission-chat-composer"));
     expect(html).toContain('aria-label="Close"');
     expect(html).toContain("The message could not be submitted.");
+  });
+
+  it("turns a removed MCP tool error into an actionable Expert repair prompt", () => {
+    const html = renderToStaticMarkup(
+      <MissionDetailFragment
+        mission={missionFixture("expert")}
+        error={
+          'Error invoking remote method "missions:run": MCP tool search_issues is not currently available.'
+        }
+        onEditExpert={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("search_issues");
+    expect(html).toContain("Edit Expert");
+    expect(html).not.toContain("Error invoking remote method");
+  });
+
+  it("directs team tool failures to Studio", () => {
+    const html = renderToStaticMarkup(
+      <MissionDetailFragment
+        mission={missionFixture("team")}
+        error="MCP tool search_issues is not currently available."
+        onEditExpert={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("Open Studio");
+  });
+});
+
+describe("unavailableMcpToolName", () => {
+  it("extracts the selected tool from an Electron-wrapped IPC error", () => {
+    expect(
+      unavailableMcpToolName(
+        "Error invoking remote method 'missions:run': Error: MCP tool search_issues is not currently available.",
+      ),
+    ).toBe("search_issues");
+  });
+
+  it("ignores unrelated execution errors", () => {
+    expect(unavailableMcpToolName("Execution failed.")).toBeUndefined();
   });
 });
 
@@ -520,7 +669,7 @@ describe("Mission thinking entry", () => {
 
 function missionFixture(kind: "expert" | "team"): Mission {
   return {
-    schemaVersion: "pragma.mission/v3",
+    schemaVersion: "pragma.mission/v5",
     id: "00000000-0000-4000-8000-000000000000",
     title: "Missions page design",
     goal: "Design the Missions page.",
@@ -530,9 +679,8 @@ function missionFixture(kind: "expert" | "team"): Mission {
     project: { id: "studio", revision: 1 },
     executor: {
       kind,
-      ref: kind === "expert" ? "expert:product_designer@0.1.0" : "team:delivery_team@0.1.0",
+      ref: kind === "expert" ? "expert:v2vt1v01vzz6j24q" : "team:gmpsevbrb8danedb",
       name: kind === "expert" ? "Product Designer" : "Delivery Team",
-      version: "0.1.0",
     },
     lifecycleStatus: "active",
     createdAt: "2026-07-11T00:00:00.000Z",

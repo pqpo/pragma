@@ -45,11 +45,10 @@ describe("Pragma resource adapters", () => {
     await writeFile(join(outside, "entry.md"), "outside");
     await symlink(outside, join(artifact, "linked"), "junction");
     const resource: PragmaCapabilityResource = {
-      apiVersion: "pragma/v2",
+      apiVersion: "pragma/v3",
       kind: "Capability",
       metadata: {
-        id: "unsafe_skill",
-        version: "1.0.0",
+        id: "j35188zs37g69g0n",
         name: "Unsafe Skill",
         description: "Tests entry containment.",
         tags: [],
@@ -71,11 +70,10 @@ describe("Pragma resource adapters", () => {
   it("requires a binding resolver to return the requested binding ref", async () => {
     const registry = createDefaultPragmaResourceAdapterRegistry();
     const resource = {
-      apiVersion: "pragma/v2",
+      apiVersion: "pragma/v3",
       kind: "RuntimeProfile",
       metadata: {
-        id: "runtime",
-        version: "1.0.0",
+        id: "qvt4k49db1vzrtfc",
         name: "Runtime",
         description: "Bound runtime.",
         tags: [],
@@ -105,11 +103,10 @@ describe("Pragma resource adapters", () => {
   it("keeps Runtime model identity separate from provider credentials", async () => {
     const registry = createDefaultPragmaResourceAdapterRegistry();
     const resource = {
-      apiVersion: "pragma/v2",
+      apiVersion: "pragma/v3",
       kind: "RuntimeProfile",
       metadata: {
-        id: "runtime",
-        version: "1.0.0",
+        id: "qvt4k49db1vzrtfc",
         name: "Runtime",
         description: "Bound runtime.",
         tags: [],
@@ -140,11 +137,10 @@ describe("Pragma resource adapters", () => {
     await writeFile(
       join(root, "pragma.yaml"),
       formatPragmaYaml({
-        apiVersion: "pragma/v2",
+        apiVersion: "pragma/v3",
         kind: "ContextStore",
         metadata: {
-          id: "binary",
-          version: "1.0.0",
+          id: "w01fppfxrn31gf7v",
           name: "Binary",
           description: "Binary artifact hashing",
           tags: [],
@@ -172,11 +168,10 @@ describe("Pragma resource adapters", () => {
       },
     });
     const resource: PragmaCapabilityResource = {
-      apiVersion: "pragma/v2",
+      apiVersion: "pragma/v3",
       kind: "Capability",
       metadata: {
-        id: "opaque",
-        version: "1.0.0",
+        id: "jqys6d6fybxga4wb",
         name: "Opaque",
         description: "Opaque adapter config",
         tags: [],
@@ -205,11 +200,10 @@ describe("Pragma resource adapters", () => {
       },
     });
     const resource: PragmaCapabilityResource = {
-      apiVersion: "pragma/v2",
+      apiVersion: "pragma/v3",
       kind: "Capability",
       metadata: {
-        id: "undeclared",
-        version: "1.0.0",
+        id: "sccvsbpxdrsxh7px",
         name: "Undeclared",
         description: "Undeclared artifact read",
         tags: [],
@@ -234,11 +228,10 @@ function codeResource(source: {
   readonly integrity: `sha256:${string}`;
 }): PragmaCapabilityResource {
   return {
-    apiVersion: "pragma/v2",
+    apiVersion: "pragma/v3",
     kind: "Capability",
     metadata: {
-      id: "code",
-      version: "1.0.0",
+      id: "ygypdtr7bfev740a",
       name: "Code",
       description: "Code tool.",
       tags: [],

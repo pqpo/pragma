@@ -9,9 +9,42 @@ import {
   mapClaudeCodeNativeEvent,
   normalizeClaudeToolRuntimeEvents,
   readAssistantMessageEvent,
+  readClaudeCodeContextWindowUsage,
   writeClaudeCodeMcpConfig,
   type ClaudeToolStreamState,
 } from "../src/session.ts";
+
+describe("Claude Code context window", () => {
+  it("pairs the latest assistant-step usage with the selected model context window", () => {
+    expect(
+      readClaudeCodeContextWindowUsage(
+        {
+          modelUsage: {
+            "claude-sonnet": {
+              inputTokens: 60_000,
+              outputTokens: 2_000,
+              contextWindow: 200_000,
+            },
+          },
+        },
+        {
+          input: 41_000,
+          output: 1_000,
+          cacheRead: 8_000,
+          cacheWrite: 0,
+          totalTokens: 50_000,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+        },
+        "claude-sonnet",
+      ),
+    ).toMatchObject({
+      usedTokens: 50_000,
+      contextWindowTokens: 200_000,
+      percent: 25,
+      measurement: "derived",
+    });
+  });
+});
 
 describe("Claude Code Execution MCP config", () => {
   it("writes the isolated registration URL", async () => {

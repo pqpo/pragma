@@ -3,7 +3,10 @@ import { describe, expect, it } from "vitest";
 import type { Capability, ExpertDefinition } from "../shared/desktop-api.ts";
 import type { CapabilityCredentialStore } from "./capability-credential-store.ts";
 import type { CapabilityStore } from "./capability-store.ts";
-import { resolveExpertCapabilities } from "./desktop-expert-factory.ts";
+import {
+  assertSelectedMcpToolsAvailable,
+  resolveExpertCapabilities,
+} from "./desktop-expert-factory.ts";
 
 const skillId = "7abfdc9a-a5e2-4be2-a7bb-a11f8e5fbb17";
 const serviceId = "77af9336-0d2f-435d-a53c-d65077db75ba";
@@ -114,12 +117,11 @@ describe("resolveExpertCapabilities", () => {
     } as CapabilityCredentialStore;
     const expert: ExpertDefinition = {
       schemaVersion: "pragma.desktop-expert-view/v1",
-      ref: "expert:reviewer@1.0.0",
+      ref: "expert:3sfd30h5017wd17d",
       id: "reviewer",
       name: "Reviewer",
       description: "Reviews work.",
       tags: [],
-      version: "1.0.0",
       scope: "Review only.",
       instructions: "Review the supplied work.",
       additionalInstructions: "",
@@ -130,7 +132,7 @@ describe("resolveExpertCapabilities", () => {
         mode: "pinned",
         model: { runtimeId: "test", providerId: "test", modelId: "test" },
       },
-      resourceRuntime: { ref: "runtime-profile:reviewer_runtime@1.0.0" },
+      resourceRuntime: { ref: "runtime-profile:t1sp06tbv5846g6t" },
       capabilities: [
         { kind: "skill", capabilityId: skillId, revision: 1 },
         { kind: "tools", capabilityId: serviceId, revision: 1, toolNames: ["get_customer"] },
@@ -173,5 +175,180 @@ describe("resolveExpertCapabilities", () => {
       structuredContent: { result: 7 },
     });
     expect(codeMcpServer.toolApprovals?.["add"]?.mode).toBe("ask");
+  });
+
+  it("accepts live MCP parameter changes when the selected tool still exists", async () => {
+    await expect(
+      assertSelectedMcpToolsAvailable(
+        {
+          name: "Dynamic MCP",
+          transport: "in-process",
+          inProcess: {
+            async listTools() {
+              return [
+                {
+                  name: "search_issues",
+                  inputSchema: {
+                    type: "object",
+                    properties: {
+                      query: { type: "string" },
+                      newlyAddedOptionalFilter: { type: "string" },
+                    },
+                  },
+                },
+              ];
+            },
+            async callTool() {
+              return {};
+            },
+          },
+        },
+        ["search_issues"],
+      ),
+    ).resolves.toBeUndefined();
+  });
+
+  it("retries transient MCP availability failures before succeeding", async () => {
+    let attempts = 0;
+    const delays: number[] = [];
+
+    await expect(
+      assertSelectedMcpToolsAvailable(
+        {
+          name: "Starting MCP",
+          transport: "in-process",
+          inProcess: {
+            async listTools() {
+              attempts += 1;
+              if (attempts < 3) {
+                throw new TypeError("fetch failed", {
+                  cause: Object.assign(new Error("connection refused"), {
+                    code: "ECONNREFUSED",
+                  }),
+                });
+              }
+              return [{ name: "search_issues" }];
+            },
+            async callTool() {
+              return {};
+            },
+          },
+        },
+        ["search_issues"],
+        {
+          maxAttempts: 3,
+          baseDelayMs: 100,
+          random: () => 0,
+          sleep: async (delayMs) => {
+            delays.push(delayMs);
+          },
+        },
+      ),
+    ).resolves.toBeUndefined();
+
+    expect(attempts).toBe(3);
+    expect(delays).toEqual([100, 200]);
+  });
+
+  it("does not retry permanent MCP availability failures", async () => {
+    let attempts = 0;
+
+    await expect(
+      assertSelectedMcpToolsAvailable(
+        {
+          name: "Unauthorized MCP",
+          transport: "in-process",
+          inProcess: {
+            async listTools() {
+              attempts += 1;
+              throw new Error("401 Unauthorized");
+            },
+            async callTool() {
+              return {};
+            },
+          },
+        },
+        ["search_issues"],
+        {
+          sleep: async () => {
+            throw new Error("Permanent failures must not be retried.");
+          },
+        },
+      ),
+    ).rejects.toMatchObject({
+      attempts: 1,
+      diagnostic: {
+        code: "authentication",
+        retryable: false,
+      },
+    });
+
+    expect(attempts).toBe(1);
+  });
+
+  it("preserves transient error classification when availability retries are exhausted", async () => {
+    let attempts = 0;
+
+    await expect(
+      assertSelectedMcpToolsAvailable(
+        {
+          name: "Unavailable MCP",
+          transport: "in-process",
+          inProcess: {
+            async listTools() {
+              attempts += 1;
+              throw new TypeError("fetch failed", {
+                cause: Object.assign(new Error("connection refused"), {
+                  code: "ECONNREFUSED",
+                }),
+              });
+            },
+            async callTool() {
+              return {};
+            },
+          },
+        },
+        ["search_issues"],
+        {
+          maxAttempts: 2,
+          sleep: async () => undefined,
+        },
+      ),
+    ).rejects.toMatchObject({
+      message:
+        "MCP availability check failed after 2 attempts (network): fetch failed (ECONNREFUSED)",
+      attempts: 2,
+      transient: true,
+      diagnostic: {
+        code: "network",
+        message: "fetch failed (ECONNREFUSED)",
+        retryable: true,
+      },
+    });
+
+    expect(attempts).toBe(2);
+  });
+
+  it("rejects a selected MCP tool that no longer exists", async () => {
+    await expect(
+      assertSelectedMcpToolsAvailable(
+        {
+          name: "Dynamic MCP",
+          transport: "in-process",
+          inProcess: {
+            async listTools() {
+              return [{ name: "list_issues" }];
+            },
+            async callTool() {
+              return {};
+            },
+          },
+        },
+        ["search_issues"],
+      ),
+    ).rejects.toMatchObject({
+      code: "tool_unavailable",
+      message: "MCP tool search_issues is not currently available.",
+    });
   });
 });

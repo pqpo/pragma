@@ -9,6 +9,8 @@ describe("PI Runtime contract", () => {
       supportsCancel: true,
       supportsClose: true,
       supportsSteer: true,
+      supportsContextWindowInspection: true,
+      supportsManualCompaction: true,
     });
   });
 

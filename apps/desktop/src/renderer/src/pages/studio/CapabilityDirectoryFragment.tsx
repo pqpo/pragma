@@ -20,11 +20,18 @@ import {
   CodeServiceObjectJsonSchemaSchema,
   type Capability,
   type CapabilityDefinition,
-  type CodeServiceJsonSchema,
   type PreviewCodeServiceResult,
 } from "../../../../shared/desktop-api.ts";
 import { errorMessage } from "../../lib/errors.ts";
 import { StudioScreenFrame } from "./StudioScreenFrame.tsx";
+import {
+  SchemaFieldsEditor,
+  fieldsToObjectSchema,
+  objectSchemaToFields,
+  type SchemaFieldDraft as CodeFieldDraft,
+} from "./JsonSchemaFieldsEditor.tsx";
+
+export { fieldsToObjectSchema, objectSchemaToFields } from "./JsonSchemaFieldsEditor.tsx";
 import { desktopApi } from "./studio-model.ts";
 
 type Filter = "all" | "skills" | "tools";
@@ -85,22 +92,6 @@ const emptyHttp = {
   timeoutMs: 30_000,
   hasSavedCredential: false,
   credentialRef: undefined as string | undefined,
-};
-
-type CodeFieldType = "string" | "number" | "integer" | "boolean" | "object" | "array";
-
-type CodeValueDraft = {
-  readonly type: CodeFieldType;
-  readonly fields: readonly CodeFieldDraft[];
-  readonly item?: CodeValueDraft;
-};
-
-type CodeFieldDraft = {
-  readonly id: string;
-  readonly name: string;
-  readonly description: string;
-  readonly required: boolean;
-  readonly value: CodeValueDraft;
 };
 
 const emptyCode = {
@@ -1416,168 +1407,6 @@ function CodeForm(props: {
   );
 }
 
-function SchemaFieldsEditor(props: {
-  readonly title?: string;
-  readonly fields: readonly CodeFieldDraft[];
-  readonly depth?: number;
-  readonly onChange: (fields: readonly CodeFieldDraft[]) => void;
-}) {
-  const { t } = useTranslation("studio");
-  const depth = props.depth ?? 2;
-  const replace = (index: number, field: CodeFieldDraft) =>
-    props.onChange(
-      props.fields.map((current, currentIndex) => (currentIndex === index ? field : current)),
-    );
-  return (
-    <section className="code-schema-fields">
-      {props.title ? <h3>{props.title}</h3> : null}
-      {props.fields.map((field, index) => (
-        <div className="code-schema-field" key={field.id}>
-          <div className="code-schema-field-row">
-            <input
-              aria-label={t("fieldName")}
-              value={field.name}
-              onChange={(event) => replace(index, { ...field, name: event.target.value })}
-              placeholder="field_name"
-            />
-            <select
-              aria-label={t("fieldType")}
-              value={field.value.type}
-              onChange={(event) =>
-                replace(index, {
-                  ...field,
-                  value: emptyCodeValue(event.target.value as CodeFieldType),
-                })
-              }
-            >
-              {CODE_FIELD_TYPES.map((type) => (
-                <option
-                  key={type}
-                  value={type}
-                  disabled={depth >= 5 && (type === "object" || type === "array")}
-                >
-                  {type}
-                </option>
-              ))}
-            </select>
-            <label className="code-required-field">
-              <input
-                type="checkbox"
-                checked={field.required}
-                onChange={(event) => replace(index, { ...field, required: event.target.checked })}
-              />
-              {t("required")}
-            </label>
-            <button
-              type="button"
-              aria-label={t("removeField", { name: field.name || t("fieldName") })}
-              onClick={() =>
-                props.onChange(props.fields.filter((candidate) => candidate !== field))
-              }
-            >
-              <X size={15} />
-            </button>
-          </div>
-          <input
-            aria-label={t("fieldDescription")}
-            value={field.description}
-            onChange={(event) => replace(index, { ...field, description: event.target.value })}
-            placeholder={t("optionalFieldDescription")}
-          />
-          <CodeValueEditor
-            value={field.value}
-            depth={depth}
-            hideType
-            onChange={(value) => replace(index, { ...field, value })}
-          />
-        </div>
-      ))}
-      <button
-        className="secondary-button"
-        type="button"
-        onClick={() => props.onChange([...props.fields, newCodeField()])}
-      >
-        <Plus size={15} /> {t("addField")}
-      </button>
-    </section>
-  );
-}
-
-function CodeValueEditor(props: {
-  readonly value: CodeValueDraft;
-  readonly depth: number;
-  readonly hideType?: boolean;
-  readonly onChange: (value: CodeValueDraft) => void;
-}) {
-  const value = props.value;
-  return (
-    <div className="code-value-editor">
-      {props.hideType ? null : (
-        <label>
-          Item type
-          <select
-            value={value.type}
-            onChange={(event) =>
-              props.onChange(emptyCodeValue(event.target.value as CodeFieldType))
-            }
-          >
-            {CODE_FIELD_TYPES.map((type) => (
-              <option
-                key={type}
-                value={type}
-                disabled={props.depth >= 5 && (type === "object" || type === "array")}
-              >
-                {type}
-              </option>
-            ))}
-          </select>
-        </label>
-      )}
-      {value.type === "object" ? (
-        <SchemaFieldsEditor
-          fields={value.fields}
-          depth={props.depth + 1}
-          onChange={(fields) => props.onChange({ ...value, fields })}
-        />
-      ) : null}
-      {value.type === "array" ? (
-        <CodeValueEditor
-          value={value.item ?? emptyCodeValue("string")}
-          depth={props.depth + 1}
-          onChange={(item) => props.onChange({ ...value, item })}
-        />
-      ) : null}
-    </div>
-  );
-}
-
-const CODE_FIELD_TYPES: readonly CodeFieldType[] = [
-  "string",
-  "number",
-  "integer",
-  "boolean",
-  "object",
-  "array",
-];
-
-function newCodeField(): CodeFieldDraft {
-  return {
-    id: crypto.randomUUID(),
-    name: "",
-    description: "",
-    required: true,
-    value: emptyCodeValue("string"),
-  };
-}
-
-function emptyCodeValue(type: CodeFieldType): CodeValueDraft {
-  return {
-    type,
-    fields: [],
-    ...(type === "array" ? { item: { type: "string", fields: [] } } : {}),
-  };
-}
-
 export function codeDraftFromDefinition(
   definition: Extract<CapabilityDefinition, { readonly kind: "code_service" }>,
 ): typeof emptyCode {
@@ -1592,57 +1421,4 @@ export function codeDraftFromDefinition(
     source: definition.tool.source,
     timeoutMs: definition.timeoutMs,
   };
-}
-
-export function objectSchemaToFields(
-  schema: Extract<CodeServiceJsonSchema, { readonly type: "object" }>,
-): readonly CodeFieldDraft[] {
-  const required = new Set(schema.required ?? []);
-  return Object.entries(schema.properties).map(([name, value]) => ({
-    id: crypto.randomUUID(),
-    name,
-    description: value.description ?? "",
-    required: required.has(name),
-    value: schemaValueToDraft(value),
-  }));
-}
-
-function schemaValueToDraft(schema: CodeServiceJsonSchema): CodeValueDraft {
-  if (schema.type === "object") {
-    return { type: "object", fields: objectSchemaToFields(schema) };
-  }
-  if (schema.type === "array") {
-    return { type: "array", fields: [], item: schemaValueToDraft(schema.items) };
-  }
-  return { type: schema.type, fields: [] };
-}
-
-export function fieldsToObjectSchema(
-  fields: readonly CodeFieldDraft[],
-): Extract<CodeServiceJsonSchema, { readonly type: "object" }> {
-  const names = fields.map((field) => field.name.trim());
-  if (new Set(names).size !== names.length) {
-    throw new Error("Field names must be unique within each object.");
-  }
-  return {
-    type: "object",
-    properties: Object.fromEntries(
-      fields.map((field) => [field.name.trim(), valueToSchema(field.value, field.description)]),
-    ),
-    required: fields.filter((field) => field.required).map((field) => field.name.trim()),
-    additionalProperties: false,
-  };
-}
-
-function valueToSchema(value: CodeValueDraft, description: string): CodeServiceJsonSchema {
-  const details = description.trim() ? { description: description.trim() } : {};
-  if (value.type === "object") return { ...fieldsToObjectSchema(value.fields), ...details };
-  if (value.type === "array") {
-    return {
-      type: "array",
-      items: valueToSchema(value.item ?? emptyCodeValue("string"), ""),
-      ...details,
-    };
-  }
-  return { type: value.type, ...details };
 }

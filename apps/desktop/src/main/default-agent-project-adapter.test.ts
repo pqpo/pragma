@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
-import { PRAGMA_EXPERT_ID_MAX_LENGTH } from "@pragma/interpreter/ast";
+import { PRAGMA_AUTOMATION_PROMPT_MAX_LENGTH } from "@pragma/interpreter/ast";
 
 import type { Capability } from "../shared/desktop-api.ts";
 import { createPragmaProjectStore } from "./pragma-project-store.ts";
@@ -21,31 +21,35 @@ describe("Desktop DefaultAgent DSL project adapter", () => {
       adapterOptions(project, join(root, "state")),
     );
     const runtimeRef = (await adapter.listExpertOptions()).runtimeModels[0]!.runtimeProfileRef;
-    const first = await adapter.prepare({
-      expectedProjectRevision: 0,
-      sources: [expert("First", runtimeRef)],
-    });
+    const first = requirePrepared(
+      await adapter.prepare({
+        expectedProjectRevision: 0,
+        sources: [expert("First", runtimeRef)],
+      }),
+    );
     expect(first.diagnostics).toEqual([]);
     expect(first.changes).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ ref: "expert:writer@1.0.0", kind: "created" }),
+        expect.objectContaining({ ref: "expert:1xddvess309a6gme", kind: "created" }),
       ]),
     );
     await expect(
       adapter.commit({ changeSetId: first.changeSetId, operationId: "first" }),
     ).resolves.toMatchObject({ projectRevision: 1 });
 
-    const second = await adapter.prepare({
-      expectedProjectRevision: 1,
-      sources: [expert("Second", runtimeRef)],
-    });
-    expect(second.changes).toMatchObject([{ ref: "expert:writer@1.0.0", kind: "updated" }]);
+    const second = requirePrepared(
+      await adapter.prepare({
+        expectedProjectRevision: 1,
+        sources: [expert("Second", runtimeRef)],
+      }),
+    );
+    expect(second.changes).toMatchObject([{ ref: "expert:1xddvess309a6gme", kind: "updated" }]);
     const committed = await adapter.commit({
       changeSetId: second.changeSetId,
       operationId: "second",
     });
     expect(committed.projectRevision).toBe(2);
-    expect((await adapter.read("expert:writer@1.0.0")).source).toContain("Second");
+    expect((await adapter.read("expert:1xddvess309a6gme")).source).toContain("Second");
   });
 
   it("replays a committed operation idempotently", async () => {
@@ -55,10 +59,12 @@ describe("Desktop DefaultAgent DSL project adapter", () => {
       adapterOptions(project, join(root, "state")),
     );
     const runtimeRef = (await adapter.listExpertOptions()).runtimeModels[0]!.runtimeProfileRef;
-    const candidate = await adapter.prepare({
-      expectedProjectRevision: 0,
-      sources: [expert("One", runtimeRef)],
-    });
+    const candidate = requirePrepared(
+      await adapter.prepare({
+        expectedProjectRevision: 0,
+        sources: [expert("One", runtimeRef)],
+      }),
+    );
     const first = await adapter.commit({ changeSetId: candidate.changeSetId, operationId: "same" });
     const second = await adapter.commit({
       changeSetId: candidate.changeSetId,
@@ -97,7 +103,7 @@ describe("Desktop DefaultAgent DSL project adapter", () => {
     ]);
   });
 
-  it("creates a 50-character Expert that Desktop can list and open, and rejects 51", async () => {
+  it("creates a 16-character Expert that Desktop can list and open, and rejects 17", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-default-agent-expert-id-"));
     const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
     const adapter = createDesktopDefaultAgentProjectPort(
@@ -109,36 +115,174 @@ describe("Desktop DefaultAgent DSL project adapter", () => {
       validateModel: async () => undefined,
     });
     const runtimeRef = (await adapter.listExpertOptions()).runtimeModels[0]!.runtimeProfileRef;
-    const acceptedId = "a".repeat(PRAGMA_EXPERT_ID_MAX_LENGTH);
-    const candidate = await adapter.prepare({
-      expectedProjectRevision: 0,
-      sources: [expert("Boundary", runtimeRef, acceptedId)],
-    });
+    const acceptedId = "a".repeat(16);
+    const candidate = requirePrepared(
+      await adapter.prepare({
+        expectedProjectRevision: 0,
+        sources: [expert("Boundary", runtimeRef, acceptedId)],
+      }),
+    );
 
     await adapter.commit({ changeSetId: candidate.changeSetId, operationId: "boundary" });
 
     expect((await experts.list()).map((value) => value.id)).toContain(acceptedId);
-    await expect(experts.get(`expert:${acceptedId}@1.0.0`)).resolves.toMatchObject({
+    await expect(experts.get(`expert:${acceptedId}`)).resolves.toMatchObject({
       id: acceptedId,
       description: "Boundary",
     });
     await expect(
       adapter.prepare({
         expectedProjectRevision: 1,
-        sources: [expert("Too long", runtimeRef, "a".repeat(PRAGMA_EXPERT_ID_MAX_LENGTH + 1))],
+        sources: [expert("Too long", runtimeRef, "a".repeat(17))],
       }),
-    ).rejects.toThrow();
+    ).resolves.toMatchObject({ status: "invalid" });
     expect((await project.get()).revision).toBe(1);
+  });
+
+  it("builds and atomically prepares a Flow through durable draft revisions", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-default-agent-flow-draft-"));
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    const adapter = createDesktopDefaultAgentProjectPort(
+      adapterOptions(project, join(root, "state"), [emptyDescriptionMcpCapability()]),
+    );
+    const description = "发布审批：验证非空 description";
+    const created = await adapter.createFlowDraft({
+      expectedProjectRevision: 0,
+      metadata: {
+        name: "Release Gate",
+        description,
+        tags: [],
+      },
+    });
+    expect(created.diagnostics).toEqual(
+      expect.arrayContaining([expect.objectContaining({ severity: "incomplete" })]),
+    );
+    const withStep = await adapter.updateFlowDraft({
+      draftId: created.draftId,
+      expectedDraftRevision: 0,
+      operations: [
+        {
+          type: "upsert_step",
+          stepId: "approve",
+          step: {
+            human: {
+              selectionMode: "single",
+              prompt: { segments: [{ text: "Release?" }] },
+              options: [
+                { value: "ship", label: "Ship" },
+                { value: "hold", label: "Hold" },
+              ],
+            },
+          },
+        },
+      ],
+    });
+    expect(withStep.draftRevision).toBe(1);
+    const complete = await adapter.updateFlowDraft({
+      draftId: created.draftId,
+      expectedDraftRevision: 1,
+      operations: [
+        { type: "set_start", stepId: "approve" },
+        { type: "set_transition", stepId: "approve", transition: { end: true } },
+      ],
+    });
+    expect(complete.diagnostics).toEqual([]);
+    await expect(adapter.validateFlowDraft(created.draftId)).resolves.toMatchObject({
+      resource: { metadata: { description } },
+      diagnostics: [],
+    });
+    const prepared = requirePrepared(
+      await adapter.prepareFlowDraft({
+        draftId: created.draftId,
+        expectedDraftRevision: 2,
+      }),
+    );
+    expect(prepared.changes).toEqual([
+      expect.objectContaining({
+        ref: expect.stringMatching(/^flow:[0-9a-hjkmnp-tv-z]{16}$/),
+        kind: "created",
+        source: expect.stringContaining(description),
+      }),
+    ]);
+    const directlyPrepared = requirePrepared(
+      await adapter.prepare({
+        expectedProjectRevision: 0,
+        sources: [prepared.changes[0]!.source],
+      }),
+    );
+    expect(directlyPrepared.changes).toEqual([
+      expect.objectContaining({
+        ref: prepared.changes[0]!.ref,
+        source: expect.stringContaining(description),
+      }),
+    ]);
+    await adapter.commit({ changeSetId: prepared.changeSetId, operationId: "commit-flow-draft" });
+    expect((await project.get()).resources).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "Flow",
+          metadata: expect.objectContaining({
+            id: prepared.changes[0]!.ref.slice("flow:".length),
+          }),
+        }),
+      ]),
+    );
+  });
+
+  it("returns structured prepare diagnostics for malformed YAML", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-default-agent-invalid-yaml-"));
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    const adapter = createDesktopDefaultAgentProjectPort(
+      adapterOptions(project, join(root, "state")),
+    );
+    await expect(
+      adapter.prepare({ expectedProjectRevision: 0, sources: ["kind: ["] }),
+    ).resolves.toMatchObject({
+      status: "invalid",
+      diagnostics: [expect.objectContaining({ code: "source.parse", source: "source:0" })],
+    });
+  });
+
+  it("rejects over-limit Automation fields during prepare", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-default-agent-automation-limit-"));
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    const adapter = createDesktopDefaultAgentProjectPort(
+      adapterOptions(project, join(root, "state")),
+    );
+
+    await expect(
+      adapter.prepare({
+        expectedProjectRevision: 0,
+        sources: [automationWithPrompt("p".repeat(PRAGMA_AUTOMATION_PROMPT_MAX_LENGTH + 1))],
+      }),
+    ).resolves.toMatchObject({
+      status: "invalid",
+      diagnostics: [
+        expect.objectContaining({
+          code: "schema.invalid",
+          path: ["spec", "route", "input", "value"],
+        }),
+      ],
+    });
+    expect((await project.get()).revision).toBe(0);
   });
 });
 
-function expert(description: string, runtimeRef: string, id = "writer"): string {
+function requirePrepared<
+  T extends Awaited<ReturnType<ReturnType<typeof createDesktopDefaultAgentProjectPort>["prepare"]>>,
+>(result: T) {
+  if (result.status !== "prepared") {
+    throw new Error(`Expected prepared change-set: ${JSON.stringify(result.diagnostics)}`);
+  }
+  return result.changeSet;
+}
+
+function expert(description: string, runtimeRef: string, id = "1xddvess309a6gme"): string {
   return [
-    "apiVersion: pragma/v2",
+    "apiVersion: pragma/v3",
     "kind: Expert",
     "metadata:",
     `  id: ${id}`,
-    "  version: 1.0.0",
     "  name: Writer",
     `  description: ${description}`,
     "  tags: []",
@@ -152,6 +296,39 @@ function expert(description: string, runtimeRef: string, id = "writer"): string 
     "  contextStores: []",
     "  plugins: []",
     "  tools: []",
+    "",
+  ].join("\n");
+}
+
+function automationWithPrompt(prompt: string): string {
+  return [
+    "apiVersion: pragma/v3",
+    "kind: Automation",
+    "metadata:",
+    "  id: 55af1v8nmn4j0h3z",
+    "  name: Daily review",
+    "  description: Reviews the current workspace",
+    "  tags: []",
+    "spec:",
+    "  adapter: pragma.automation.schedule@v1",
+    "  binding: binding:desktop-automation",
+    "  config:",
+    "    trigger:",
+    "      kind: calendar",
+    "      frequency: daily",
+    "      time: 09:00",
+    "      timezone: UTC",
+    "  enabled: true",
+    "  route:",
+    "    executor:",
+    "      ref: expert:3sfd30h5017wd17d",
+    "    input:",
+    "      kind: prompt",
+    `      value: ${JSON.stringify(prompt)}`,
+    "  interaction:",
+    "    mode: reuse-session",
+    "  delivery:",
+    "    adapter: pragma.automation.delivery.local@v1",
     "",
   ].join("\n");
 }
@@ -224,6 +401,37 @@ function capability(id: string, status: "ready" | "needs_attention"): Capability
       ...(status === "needs_attention"
         ? { diagnostic: { code: "unavailable", message: "Unavailable", retryable: true } }
         : {}),
+    },
+  };
+}
+
+function emptyDescriptionMcpCapability(): Capability {
+  return {
+    manifest: {
+      schemaVersion: "pragma.capability/v1",
+      id: "00000000-0000-4000-8000-000000000003",
+      runtimeKey: "empty_description_mcp",
+      name: "Empty description MCP",
+      kind: "mcp_server",
+      latestRevision: 1,
+      createdAt: "2026-07-24T00:00:00.000Z",
+      updatedAt: "2026-07-24T00:00:00.000Z",
+    },
+    definition: {
+      name: "Empty description MCP",
+      description: "",
+      kind: "mcp_server",
+      connection: {
+        transport: "streamable-http",
+        url: "https://example.com/mcp",
+      },
+      timeoutMs: 30_000,
+      tools: [],
+    },
+    health: {
+      revision: 1,
+      status: "ready",
+      checkedAt: "2026-07-24T00:00:00.000Z",
     },
   };
 }

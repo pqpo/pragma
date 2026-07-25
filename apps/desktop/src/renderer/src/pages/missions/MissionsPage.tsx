@@ -27,6 +27,7 @@ import {
   Trash,
   User,
   UsersThree,
+  WarningCircle,
   X,
 } from "@phosphor-icons/react";
 import { useTranslation } from "react-i18next";
@@ -38,6 +39,7 @@ import {
   type MissionChatPatch,
   type MissionChatSnapshot,
   type MissionChatUpdate,
+  type MissionContextWindowState,
   type MissionHumanInteraction,
   type MissionSummary,
   type MissionWorkConversationSnapshot,
@@ -64,6 +66,7 @@ export function MissionsPage(props: {
   readonly autoRunInitialMission?: boolean | undefined;
   readonly onCreate: () => void;
   readonly onConfigureModels?: (() => void) | undefined;
+  readonly onEditExpert?: ((expertRef?: string | undefined) => void) | undefined;
 }) {
   const { t } = useTranslation(["missions", "common"]);
   const [missions, setMissions] = useState<readonly MissionSummary[]>([]);
@@ -237,6 +240,7 @@ export function MissionsPage(props: {
                 : undefined
             }
             onConfigureModels={props.onConfigureModels}
+            onEditExpert={props.onEditExpert}
             error={error}
             onDismissError={() => setError(null)}
             onSend={async (content, requestId) => {
@@ -613,9 +617,39 @@ interface LocalMissionUserMessage {
   readonly status: "pending" | "failed";
 }
 
+export interface LocalMissionContextOperation {
+  readonly id: string;
+  readonly createdAt: string;
+  readonly status: "running" | "succeeded" | "failed";
+  readonly error?: string | undefined;
+}
+
+export type MissionClientOperationState =
+  | { readonly kind: "idle" }
+  | {
+      readonly kind: "sending" | "saving_options" | "compacting";
+      readonly token: string;
+    };
+
+export function claimMissionClientOperation(
+  current: MissionClientOperationState,
+  kind: Exclude<MissionClientOperationState["kind"], "idle">,
+  token: string,
+): MissionClientOperationState | null {
+  return current.kind === "idle" ? { kind, token } : null;
+}
+
+export function releaseMissionClientOperation(
+  current: MissionClientOperationState,
+  token: string,
+): MissionClientOperationState {
+  return current.kind !== "idle" && current.token === token ? { kind: "idle" } : current;
+}
+
 type MissionConversationEntry =
   | { readonly type: "durable"; readonly entry: MissionChatEntry }
-  | { readonly type: "local"; readonly entry: LocalMissionUserMessage };
+  | { readonly type: "local"; readonly entry: LocalMissionUserMessage }
+  | { readonly type: "context-operation"; readonly entry: LocalMissionContextOperation };
 
 export type MissionConversationBlock =
   | { readonly type: "entry"; readonly item: MissionConversationEntry }
@@ -642,6 +676,7 @@ export function MissionDetailFragment(props: {
   readonly onHumanResponded?: () => void | Promise<void>;
   readonly onLifecycleChange?: () => void | Promise<void>;
   readonly onConfigureModels?: (() => void) | undefined;
+  readonly onEditExpert?: ((expertRef?: string | undefined) => void) | undefined;
 }) {
   const { t } = useTranslation(["missions", "common"]);
   const [tab, setTab] = useState<"chat" | "work">("chat");
@@ -653,16 +688,21 @@ export function MissionDetailFragment(props: {
   );
   const [workConversationLoading, setWorkConversationLoading] = useState(false);
   const [selectedWorkKey, setSelectedWorkKey] = useState<string | null>(null);
+  const [workError, setWorkError] = useState<string | null>(null);
+  const [workRefreshRevision, setWorkRefreshRevision] = useState(0);
   const [draft, setDraft] = useState("");
   const [optimisticMessages, setOptimisticMessages] = useState<LocalMissionUserMessage[]>([]);
+  const [contextOperations, setContextOperations] = useState<LocalMissionContextOperation[]>([]);
   const [awaitingRequestId, setAwaitingRequestId] = useState<string | null>(null);
-  const [sending, setSending] = useState(false);
+  const [clientOperation, setClientOperation] = useState<MissionClientOperationState>({
+    kind: "idle",
+  });
   const [models, setModels] = useState<readonly DesktopRuntimeModel[]>([]);
   const [runtimeName, setRuntimeName] = useState<string>();
   const [modelsLoading, setModelsLoading] = useState(false);
   const [defaultModelSelection, setDefaultModelSelection] = useState<MissionModelOverride>();
   const [modelResetRequired, setModelResetRequired] = useState(false);
-  const [optionsSaving, setOptionsSaving] = useState(false);
+  const modelRuntimeIdRef = useRef<string | undefined>(undefined);
   const [optionsError, setOptionsError] = useState<string | null>(null);
   const [toolPermissionMode, setToolPermissionMode] = useState<DesktopToolPermissionMode>(
     props.mission.toolPermissionMode,
@@ -685,6 +725,7 @@ export function MissionDetailFragment(props: {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const chatRef = useRef<MissionChatSnapshot | null>(null);
+  const clientOperationRef = useRef<MissionClientOperationState>({ kind: "idle" });
   const followLatestRef = useRef(true);
   const prependScrollHeightRef = useRef<number | null>(null);
   const updateChat = useCallback((update: SetStateAction<MissionChatSnapshot | null>) => {
@@ -695,19 +736,47 @@ export function MissionDetailFragment(props: {
   const executionStatus = chat?.execution?.status ?? props.mission.execution?.status;
   const executionActive =
     executionStatus !== undefined && ["queued", "running", "waiting"].includes(executionStatus);
+  const optionsSaving = clientOperation.kind === "saving_options";
+  const compactingContext = clientOperation.kind === "compacting";
+  const clientOperationBusy = clientOperation.kind !== "idle";
   const interactions = chat?.pendingInteractions ?? [];
   const interruptible = chat?.execution?.interruptible ?? false;
-  const controlsDisabled = executionActive || optionsSaving;
+  const controlsDisabled = executionActive || clientOperationBusy;
   const visibleError = props.error ?? optionsError;
+  const unavailableTool =
+    visibleError === null || visibleError === undefined
+      ? undefined
+      : unavailableMcpToolName(visibleError);
+  const presentedError =
+    unavailableTool === undefined
+      ? visibleError
+      : t("mcpToolUnavailable", { ns: "missions", tool: unavailableTool });
+  const repairUnavailableTool =
+    unavailableTool === undefined || props.onEditExpert === undefined
+      ? undefined
+      : () =>
+          props.onEditExpert?.(
+            props.mission.executor.kind === "expert" ? props.mission.executor.ref : undefined,
+          );
+  const repairUnavailableToolLabel =
+    repairUnavailableTool === undefined
+      ? undefined
+      : props.mission.executor.kind === "expert"
+        ? t("editAffectedExpert", { ns: "missions" })
+        : t("openStudioToEditExpert", { ns: "missions" });
 
   useEffect(() => {
     setDraft("");
     setOptimisticMessages([]);
+    setContextOperations([]);
     setAwaitingRequestId(null);
     setOptionsError(null);
+    clientOperationRef.current = { kind: "idle" };
+    setClientOperation(clientOperationRef.current);
     setSelectedWorkKey(null);
     setWorkRecords([]);
     setWorkConversation(null);
+    setWorkError(null);
   }, [props.mission.id]);
 
   useEffect(() => {
@@ -723,26 +792,38 @@ export function MissionDetailFragment(props: {
     setDefaultModelSelection(undefined);
     setOptionsError(null);
     setModelResetRequired(false);
+    modelRuntimeIdRef.current = undefined;
     if (api === undefined || isFlow) return;
     let cancelled = false;
-    setModelsLoading(true);
-    void api
-      .getMissionModelOptions(props.mission.executor.ref, props.mission.id)
-      .then((result) => {
-        if (cancelled) return;
-        setRuntimeName(result.runtime.displayName);
-        setModels(result.models);
-        setDefaultModelSelection(result.defaultSelection);
-        setModelResetRequired(result.status === "reset_required");
-      })
-      .catch((loadError: unknown) => {
-        if (!cancelled) setOptionsError(errorMessage(loadError));
-      })
-      .finally(() => {
-        if (!cancelled) setModelsLoading(false);
-      });
+    const loadModelOptions = (showLoading: boolean) => {
+      if (showLoading) setModelsLoading(true);
+      void api
+        .getMissionModelOptions(props.mission.executor.ref, props.mission.id)
+        .then((result) => {
+          if (cancelled) return;
+          modelRuntimeIdRef.current = result.runtime.id;
+          setRuntimeName(result.runtime.displayName);
+          setModels(result.models);
+          setDefaultModelSelection(result.defaultSelection);
+          setModelResetRequired(result.status === "reset_required");
+          setOptionsError(null);
+        })
+        .catch((loadError: unknown) => {
+          if (!cancelled) setOptionsError(errorMessage(loadError));
+        })
+        .finally(() => {
+          if (!cancelled && showLoading) setModelsLoading(false);
+        });
+    };
+    const unsubscribe = api.subscribeRuntimeModelCatalog((runtimeId) => {
+      if (modelRuntimeIdRef.current === undefined || modelRuntimeIdRef.current === runtimeId) {
+        loadModelOptions(false);
+      }
+    });
+    loadModelOptions(true);
     return () => {
       cancelled = true;
+      unsubscribe();
     };
   }, [isFlow, props.mission.executor.ref, props.mission.id]);
 
@@ -875,6 +956,7 @@ export function MissionDetailFragment(props: {
       try {
         const snapshot = await api.getMissionWork(props.mission.id);
         if (cancelled) return;
+        setWorkError(null);
         setWorkRecords(snapshot.records);
         if (selectedWorkKey !== null) {
           setWorkConversationLoading(true);
@@ -896,7 +978,10 @@ export function MissionDetailFragment(props: {
           }
         }
       } catch (loadError) {
-        if (!cancelled) console.error("Failed to refresh Mission work history.", loadError);
+        if (!cancelled) {
+          console.error("Failed to refresh Mission work history.", loadError);
+          setWorkError(errorMessage(loadError));
+        }
       } finally {
         if (!cancelled) setWorkConversationLoading(false);
       }
@@ -915,11 +1000,31 @@ export function MissionDetailFragment(props: {
       if (timer !== undefined) clearTimeout(timer);
       unsubscribe();
     };
-  }, [props.mission.id, props.mission.execution?.id, selectedWorkKey, tab]);
+  }, [props.mission.id, props.mission.execution?.id, selectedWorkKey, tab, workRefreshRevision]);
+
+  const beginClientOperation = (
+    kind: Exclude<MissionClientOperationState["kind"], "idle">,
+  ): string | undefined => {
+    const token = crypto.randomUUID();
+    const claimed = claimMissionClientOperation(clientOperationRef.current, kind, token);
+    if (claimed === null) return undefined;
+    clientOperationRef.current = claimed;
+    setClientOperation(claimed);
+    return token;
+  };
+
+  const finishClientOperation = (token: string): void => {
+    const released = releaseMissionClientOperation(clientOperationRef.current, token);
+    if (released === clientOperationRef.current) return;
+    clientOperationRef.current = released;
+    setClientOperation(released);
+  };
 
   const send = async () => {
     const content = draft.trim();
-    if (content === "" || sending || optionsSaving || executionActive || isFlow) return;
+    if (content === "" || executionActive || isFlow) return;
+    const operationToken = beginClientOperation("sending");
+    if (operationToken === undefined) return;
     const requestId = crypto.randomUUID();
     const optimistic: LocalMissionUserMessage = {
       id: requestId,
@@ -931,7 +1036,6 @@ export function MissionDetailFragment(props: {
     setOptimisticMessages((current) => [...current, optimistic]);
     setAwaitingRequestId(requestId);
     followLatestRef.current = true;
-    setSending(true);
     try {
       await props.onSend?.(content, requestId);
     } catch {
@@ -951,7 +1055,7 @@ export function MissionDetailFragment(props: {
       );
       setAwaitingRequestId(null);
     } finally {
-      setSending(false);
+      finishClientOperation(operationToken);
       requestAnimationFrame(() => textareaRef.current?.focus());
     }
   };
@@ -961,11 +1065,12 @@ export function MissionDetailFragment(props: {
     nextModelOverride: MissionModelOverride | undefined,
   ) => {
     if (controlsDisabled) return;
+    const operationToken = beginClientOperation("saving_options");
+    if (operationToken === undefined) return;
     const previousToolPermissionMode = toolPermissionMode;
     const previousModelOverride = modelOverride;
     setToolPermissionMode(nextToolPermissionMode);
     setModelOverride(nextModelOverride);
-    setOptionsSaving(true);
     try {
       await props.onOptionsChange?.({
         toolPermissionMode: nextToolPermissionMode,
@@ -976,7 +1081,7 @@ export function MissionDetailFragment(props: {
       setToolPermissionMode(previousToolPermissionMode);
       setModelOverride(previousModelOverride);
     } finally {
-      setOptionsSaving(false);
+      finishClientOperation(operationToken);
     }
   };
 
@@ -987,6 +1092,42 @@ export function MissionDetailFragment(props: {
       await props.onInterrupt?.();
     } finally {
       setInterrupting(false);
+    }
+  };
+
+  const compactContext = async () => {
+    const api = desktopApi();
+    if (api === undefined || chat?.contextWindow?.canCompact !== true) return;
+    const operationToken = beginClientOperation("compacting");
+    if (operationToken === undefined) return;
+    const operationId = crypto.randomUUID();
+    setContextOperations((current) => [
+      ...current,
+      {
+        id: operationId,
+        createdAt: new Date().toISOString(),
+        status: "running",
+      },
+    ]);
+    followLatestRef.current = true;
+    try {
+      const contextWindow = await api.compactMissionContext(props.mission.id);
+      updateChat((current) => (current === null ? current : { ...current, contextWindow }));
+      setContextOperations((current) =>
+        current.map((operation) =>
+          operation.id === operationId ? { ...operation, status: "succeeded" } : operation,
+        ),
+      );
+    } catch (compactError) {
+      setContextOperations((current) =>
+        current.map((operation) =>
+          operation.id === operationId
+            ? { ...operation, status: "failed", error: errorMessage(compactError) }
+            : operation,
+        ),
+      );
+    } finally {
+      finishClientOperation(operationToken);
     }
   };
 
@@ -1043,8 +1184,12 @@ export function MissionDetailFragment(props: {
         ...optimisticMessages
           .filter((message) => !durableEntryIds.has(message.id))
           .map((message) => ({ type: "local" as const, entry: message })),
+        ...contextOperations.map((operation) => ({
+          type: "context-operation" as const,
+          entry: operation,
+        })),
       ].toSorted((left, right) => left.entry.createdAt.localeCompare(right.entry.createdAt)),
-    [displayEntries, durableEntryIds, optimisticMessages],
+    [contextOperations, displayEntries, durableEntryIds, optimisticMessages],
   );
   const conversationBlocks = useMemo(
     () => groupMissionConversationEntries(conversationEntries),
@@ -1063,6 +1208,11 @@ export function MissionDetailFragment(props: {
     lastEntry === undefined
       ? "empty"
       : `${lastEntry.id}:${lastEntry.kind}:${entryContentLength(lastEntry)}`;
+  const lastContextOperation = contextOperations.at(-1);
+  const lastContextOperationFingerprint =
+    lastContextOperation === undefined
+      ? "empty"
+      : `${lastContextOperation.id}:${lastContextOperation.status}`;
   const thinkingRequestId = awaitingRequestId ?? props.initialThinkingRequestId ?? null;
   const showThinkingPlaceholder = shouldShowMissionThinkingPlaceholder(chat, thinkingRequestId);
 
@@ -1174,6 +1324,7 @@ export function MissionDetailFragment(props: {
     conversationEntries.length,
     displayEntries.length,
     lastEntryFingerprint,
+    lastContextOperationFingerprint,
     interactions.length,
   ]);
 
@@ -1214,7 +1365,12 @@ export function MissionDetailFragment(props: {
           (props.mission.execution === undefined ||
             (!executionActive && isFlow) ||
             (executionActive && !interruptible)) ? (
-            <button className="primary-button" type="button" onClick={() => void props.onRun?.()}>
+            <button
+              className="primary-button"
+              type="button"
+              disabled={clientOperationBusy}
+              onClick={() => void props.onRun?.()}
+            >
               <Play size={17} />
               {executionActive
                 ? t("resume", { ns: "missions" })
@@ -1226,6 +1382,7 @@ export function MissionDetailFragment(props: {
           <button
             className="secondary-button"
             type="button"
+            disabled={clientOperationBusy}
             onClick={() => void props.onLifecycleChange?.()}
           >
             {props.mission.lifecycleStatus === "active" ? (
@@ -1267,9 +1424,11 @@ export function MissionDetailFragment(props: {
         </button>
       </div>
       <div className="mission-detail-body">
-        {tab !== "chat" && visibleError !== null && visibleError !== undefined ? (
+        {tab !== "chat" && presentedError !== null && presentedError !== undefined ? (
           <MissionErrorBanner
-            error={visibleError}
+            error={presentedError}
+            actionLabel={repairUnavailableToolLabel}
+            onAction={repairUnavailableTool}
             onDismiss={() => {
               setOptionsError(null);
               props.onDismissError?.();
@@ -1322,6 +1481,13 @@ export function MissionDetailFragment(props: {
                       message={block.item.entry}
                       key={block.item.entry.id}
                     />
+                  ) : block.item.type === "context-operation" ? (
+                    <MissionContextOperationEntry
+                      operation={block.item.entry}
+                      key={block.item.entry.id}
+                      retryDisabled={clientOperationBusy}
+                      onRetry={() => void compactContext()}
+                    />
                   ) : (
                     <MissionChatEntryView entry={block.item.entry} key={block.item.entry.id} />
                   );
@@ -1347,9 +1513,11 @@ export function MissionDetailFragment(props: {
               ) : null}
             </div>
             <div className="mission-chat-footer">
-              {visibleError !== null && visibleError !== undefined ? (
+              {presentedError !== null && presentedError !== undefined ? (
                 <MissionErrorBanner
-                  error={visibleError}
+                  error={presentedError}
+                  actionLabel={repairUnavailableToolLabel}
+                  onAction={repairUnavailableTool}
                   onDismiss={() => {
                     setOptionsError(null);
                     props.onDismissError?.();
@@ -1359,6 +1527,15 @@ export function MissionDetailFragment(props: {
               {missionFooterTip(props.mission, chat) ? (
                 <small className="mission-chat-footer-tip">
                   {missionFooterTip(props.mission, chat)}
+                </small>
+              ) : null}
+              {compactingContext ? (
+                <small
+                  className="mission-chat-footer-tip mission-context-operation-tip"
+                  id="mission-context-compaction-status"
+                  role="status"
+                >
+                  {t("contextCompactionInputDisabled", { ns: "missions" })}
                 </small>
               ) : null}
               {modelResetRequired ? (
@@ -1393,38 +1570,43 @@ export function MissionDetailFragment(props: {
                   onInterrupt={() => void interrupt()}
                 />
               ) : (
-                <div className="mission-chat-composer" aria-busy={sending || optionsSaving}>
+                <div className="mission-chat-composer" aria-busy={clientOperationBusy}>
                   <textarea
                     ref={textareaRef}
                     rows={1}
                     value={draft}
                     disabled={
                       isFlow ||
-                      sending ||
+                      clientOperationBusy ||
                       executionActive ||
                       props.mission.lifecycleStatus === "completed"
                     }
                     placeholder={
-                      executionActive
-                        ? interruptible
-                          ? t("executorWorking", {
-                              ns: "missions",
-                              name: props.mission.executor.name,
-                            })
-                          : t("resumeToManage", { ns: "missions" })
-                        : props.mission.lifecycleStatus === "completed"
-                          ? t("reopenToContinue", { ns: "missions" })
-                          : isFlow
-                            ? t("flowContinues", { ns: "missions" })
-                            : t("messageExecutor", {
+                      compactingContext
+                        ? t("contextCompactionInputDisabled", { ns: "missions" })
+                        : executionActive
+                          ? interruptible
+                            ? t("executorWorking", {
                                 ns: "missions",
                                 name: props.mission.executor.name,
                               })
+                            : t("resumeToManage", { ns: "missions" })
+                          : props.mission.lifecycleStatus === "completed"
+                            ? t("reopenToContinue", { ns: "missions" })
+                            : isFlow
+                              ? t("flowContinues", { ns: "missions" })
+                              : t("messageExecutor", {
+                                  ns: "missions",
+                                  name: props.mission.executor.name,
+                                })
                     }
                     aria-label={t("messageExecutor", {
                       ns: "missions",
                       name: props.mission.executor.name,
                     })}
+                    aria-describedby={
+                      compactingContext ? "mission-context-compaction-status" : undefined
+                    }
                     onChange={(event) => setDraft(event.target.value)}
                     onKeyDown={(event) => {
                       if (event.key === "Enter" && !event.shiftKey) {
@@ -1456,41 +1638,62 @@ export function MissionDetailFragment(props: {
                         onChange={(value) => void saveOptions(value, modelOverride)}
                       />
                     </div>
-                    {executionActive ? (
-                      <button
-                        className="is-interrupt"
-                        type="button"
-                        aria-label={t("interrupt", { ns: "missions" })}
-                        title={
-                          interruptible
-                            ? t("interrupt", { ns: "missions" })
-                            : t("resumeBeforeInterrupt", { ns: "missions" })
-                        }
-                        disabled={!interruptible || interrupting}
-                        onClick={() => void interrupt()}
-                      >
-                        <StopCircle size={19} weight="fill" aria-hidden="true" />
-                      </button>
-                    ) : (
-                      <button
-                        type="button"
-                        aria-label={t("send", { ns: "missions" })}
-                        disabled={
-                          isFlow ||
-                          draft.trim() === "" ||
-                          sending ||
-                          optionsSaving ||
-                          props.mission.lifecycleStatus === "completed"
-                        }
-                        onClick={() => void send()}
-                      >
-                        <PaperPlaneTilt size={18} aria-hidden="true" />
-                      </button>
-                    )}
+                    <div className="mission-chat-actions">
+                      {chat?.contextWindow === undefined ? null : (
+                        <ContextWindowControl
+                          state={chat.contextWindow}
+                          compacting={compactingContext}
+                          onCompact={() => void compactContext()}
+                        />
+                      )}
+                      {executionActive ? (
+                        <button
+                          className="is-interrupt"
+                          type="button"
+                          aria-label={t("interrupt", { ns: "missions" })}
+                          title={
+                            interruptible
+                              ? t("interrupt", { ns: "missions" })
+                              : t("resumeBeforeInterrupt", { ns: "missions" })
+                          }
+                          disabled={!interruptible || interrupting}
+                          onClick={() => void interrupt()}
+                        >
+                          <StopCircle size={19} weight="fill" aria-hidden="true" />
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          aria-label={t("send", { ns: "missions" })}
+                          disabled={
+                            isFlow ||
+                            draft.trim() === "" ||
+                            clientOperationBusy ||
+                            props.mission.lifecycleStatus === "completed"
+                          }
+                          onClick={() => void send()}
+                        >
+                          <PaperPlaneTilt size={18} aria-hidden="true" />
+                        </button>
+                      )}
+                    </div>
                   </div>
                 </div>
               )}
             </div>
+          </div>
+        ) : workError !== null && workRecords.length === 0 ? (
+          <div className="mission-work-empty" role="alert">
+            <WarningCircle size={31} weight="thin" aria-hidden="true" />
+            <h2>{t("workHistoryUnavailable", { ns: "missions" })}</h2>
+            <p>{workError}</p>
+            <button
+              className="mission-load-earlier"
+              type="button"
+              onClick={() => setWorkRefreshRevision((current) => current + 1)}
+            >
+              {t("actions.retry", { ns: "common" })}
+            </button>
           </div>
         ) : workRecords.length === 0 ? (
           <div className="mission-work-empty">
@@ -1580,21 +1783,165 @@ export function MissionDetailFragment(props: {
   );
 }
 
-function MissionErrorBanner(props: { readonly error: string; readonly onDismiss: () => void }) {
+export function ContextWindowControl(props: {
+  readonly state: MissionContextWindowState;
+  readonly compacting: boolean;
+  readonly onCompact: () => void;
+}) {
+  const { t } = useTranslation("missions");
+  const [open, setOpen] = useState(false);
+  const popoverId = useId();
+  const popoverLabelId = useId();
+  const usage = props.state.usage;
+  const percent = usage?.percent ?? null;
+  const boundedPercent = Math.max(0, Math.min(100, percent ?? 0));
+  const invalidUsage =
+    usage !== undefined &&
+    ((usage.usedTokens !== null && usage.usedTokens > usage.contextWindowTokens) ||
+      (usage.percent !== null && usage.percent > 100));
+  const percentText =
+    percent === null
+      ? t("contextUnknown")
+      : t("contextPercentValue", {
+          value: new Intl.NumberFormat(i18n.language, {
+            maximumFractionDigits: 1,
+          }).format(boundedPercent),
+        });
+  const tokenFormatter = new Intl.NumberFormat(i18n.language);
+  const tone = boundedPercent >= 90 ? "is-critical" : boundedPercent >= 70 ? "is-warning" : "";
+  const usageLabel = t("contextWindowUsage", { value: percentText });
+  const accessibleUsageLabel = invalidUsage
+    ? `${usageLabel} ${t("contextUsageInvalid")}`
+    : usageLabel;
+
+  return (
+    <div
+      className={`mission-context-window ${tone}`}
+      onMouseEnter={() => setOpen(true)}
+      onMouseLeave={(event) => {
+        if (!event.currentTarget.matches(":focus-within")) setOpen(false);
+      }}
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false);
+      }}
+      onKeyDown={(event) => {
+        if (event.key === "Escape") {
+          event.stopPropagation();
+          setOpen(false);
+        }
+      }}
+    >
+      <button
+        className="mission-context-trigger"
+        type="button"
+        aria-label={accessibleUsageLabel}
+        aria-expanded={open}
+        aria-haspopup="dialog"
+        aria-controls={popoverId}
+        onFocus={() => setOpen(true)}
+        onClick={() => setOpen((current) => !current)}
+      >
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <circle className="mission-context-track" cx="12" cy="12" r="8.5" pathLength="100" />
+          <circle
+            className="mission-context-progress"
+            cx="12"
+            cy="12"
+            r="8.5"
+            pathLength="100"
+            strokeDasharray="100"
+            strokeDashoffset={100 - boundedPercent}
+          />
+        </svg>
+        {invalidUsage ? (
+          <span className="mission-context-warning-badge" aria-hidden="true">
+            !
+          </span>
+        ) : null}
+      </button>
+      {open ? (
+        <div
+          className="mission-context-popover"
+          id={popoverId}
+          role="dialog"
+          aria-modal="false"
+          aria-labelledby={popoverLabelId}
+        >
+          <div className="mission-context-heading">
+            <strong id={popoverLabelId}>{t("contextWindow")}</strong>
+            <span>{percentText}</span>
+          </div>
+          {invalidUsage ? (
+            <p className="mission-context-invalid" role="alert">
+              <WarningCircle size={15} weight="fill" aria-hidden="true" />
+              {t("contextUsageInvalid")}
+            </p>
+          ) : null}
+          <dl>
+            <div>
+              <dt>{t("contextCurrent")}</dt>
+              <dd>
+                {usage?.usedTokens === null || usage === undefined
+                  ? t("contextUnknown")
+                  : tokenFormatter.format(usage.usedTokens)}
+              </dd>
+            </div>
+            <div>
+              <dt>{t("contextTotal")}</dt>
+              <dd>
+                {usage === undefined
+                  ? t("contextUnknown")
+                  : tokenFormatter.format(usage.contextWindowTokens)}
+              </dd>
+            </div>
+          </dl>
+          <button
+            className="mission-context-compact"
+            type="button"
+            disabled={!props.state.canCompact || props.compacting}
+            onClick={props.onCompact}
+          >
+            {props.compacting ? <SpinnerGap className="spin" size={15} aria-hidden="true" /> : null}
+            {props.compacting ? t("contextCompacting") : t("contextCompact")}
+          </button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function MissionErrorBanner(props: {
+  readonly error: string;
+  readonly actionLabel?: string | undefined;
+  readonly onAction?: (() => void) | undefined;
+  readonly onDismiss: () => void;
+}) {
   const { t } = useTranslation("common");
   return (
     <div className="mission-page-error" role="alert">
       <span>{props.error}</span>
-      <button
-        type="button"
-        aria-label={t("actions.close")}
-        title={t("actions.close")}
-        onClick={props.onDismiss}
-      >
-        <X size={16} aria-hidden="true" />
-      </button>
+      <div className="mission-error-actions">
+        {props.actionLabel !== undefined && props.onAction !== undefined ? (
+          <button className="mission-error-action" type="button" onClick={props.onAction}>
+            {props.actionLabel}
+          </button>
+        ) : null}
+        <button
+          className="mission-error-dismiss"
+          type="button"
+          aria-label={t("actions.close")}
+          title={t("actions.close")}
+          onClick={props.onDismiss}
+        >
+          <X size={16} aria-hidden="true" />
+        </button>
+      </div>
     </div>
   );
+}
+
+export function unavailableMcpToolName(error: string): string | undefined {
+  return /MCP tool ([A-Za-z0-9_-]+) is not currently available\./.exec(error)?.[1];
 }
 
 function LocalMissionUserMessageView(props: { readonly message: LocalMissionUserMessage }) {
@@ -1611,6 +1958,45 @@ function LocalMissionUserMessageView(props: { readonly message: LocalMissionUser
         <MissionMessageContent source={props.message.content} />
         {props.message.status === "failed" ? <small>{t("messageSendFailed")}</small> : null}
       </div>
+    </div>
+  );
+}
+
+export function MissionContextOperationEntry(props: {
+  readonly operation: LocalMissionContextOperation;
+  readonly retryDisabled?: boolean | undefined;
+  readonly onRetry: () => void;
+}) {
+  const { t } = useTranslation(["missions", "common"]);
+  const failed = props.operation.status === "failed";
+  return (
+    <div
+      className={`mission-context-operation is-${props.operation.status}`}
+      role={failed ? "alert" : "status"}
+      aria-live="polite"
+    >
+      {props.operation.status === "running" ? (
+        <SpinnerGap className="spin" size={17} aria-hidden="true" />
+      ) : failed ? (
+        <WarningCircle size={17} weight="fill" aria-hidden="true" />
+      ) : (
+        <CheckCircle size={17} weight="fill" aria-hidden="true" />
+      )}
+      <span>
+        <strong>
+          {props.operation.status === "running"
+            ? t("contextCompactionStarted", { ns: "missions" })
+            : failed
+              ? t("contextCompactionFailed", { ns: "missions" })
+              : t("contextCompactionCompleted", { ns: "missions" })}
+        </strong>
+        {props.operation.error === undefined ? null : <small>{props.operation.error}</small>}
+      </span>
+      {failed ? (
+        <button type="button" disabled={props.retryDisabled} onClick={props.onRetry}>
+          {t("actions.retry", { ns: "common" })}
+        </button>
+      ) : null}
     </div>
   );
 }
@@ -2007,6 +2393,8 @@ function MissionHumanComposer(props: {
   const question = questions[index];
   const answer = question === undefined ? undefined : props.answers[question.question];
   const answerValid = question === undefined ? true : humanAnswerValid(question, answer);
+  const choiceOnly =
+    questions.length > 0 && questions.every((candidate) => candidate.kind !== "text");
 
   return (
     <section className="mission-human-composer" aria-labelledby="mission-human-title">
@@ -2088,22 +2476,28 @@ function MissionHumanComposer(props: {
       ) : (
         <>
           <div className="mission-human-question">
-            <small>
-              {t("questionPosition", {
-                ns: "missions",
-                current: index + 1,
-                total: questions.length,
-                header: question.header,
-              })}
-            </small>
+            {questions.length === 1 ? (
+              <small>{question.header}</small>
+            ) : (
+              <small>
+                {t("questionPosition", {
+                  ns: "missions",
+                  current: index + 1,
+                  total: questions.length,
+                  header: question.header,
+                })}
+              </small>
+            )}
             <strong>{question.question}</strong>
             <HumanQuestionInput question={question} answer={answer} onAnswer={props.onAnswer} />
           </div>
-          <textarea
-            value={props.notes}
-            onChange={(event) => props.onNotes(event.target.value)}
-            placeholder={t("optionalNotes", { ns: "missions" })}
-          />
+          {choiceOnly ? null : (
+            <textarea
+              value={props.notes}
+              onChange={(event) => props.onNotes(event.target.value)}
+              placeholder={t("optionalNotes", { ns: "missions" })}
+            />
+          )}
           <footer>
             <button
               type="button"

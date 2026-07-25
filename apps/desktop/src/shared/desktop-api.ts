@@ -11,8 +11,11 @@ import {
 import {
   canonicalPragmaResourceRef,
   PragmaBindingRefSchema,
+  PragmaAutomationRefSchema,
   PragmaDiagnosticSchema,
   PragmaExpertResourceSchema,
+  PragmaAutomationResourceSchema,
+  PragmaScheduleTriggerSchema,
   PragmaExpertIdSchema,
   PragmaExpertRefSchema,
   PragmaInvocableResourceRefSchema,
@@ -28,6 +31,7 @@ import {
   PragmaExpertScopeSchema,
   PragmaJsonSchemaSchema,
   PragmaObjectJsonSchemaSchema,
+  PragmaProjectChangeSetSchema,
   type PragmaJsonSchema,
   type PragmaInvocableResource,
   type PragmaResource,
@@ -333,7 +337,7 @@ export const EXPERT_TAG_MAX_LENGTH = 20;
 export const EXPERT_SCOPE_MAX_LENGTH = PRAGMA_EXPERT_SCOPE_MAX_LENGTH;
 export const EXPERT_INSTRUCTIONS_MAX_LENGTH = PRAGMA_EXPERT_INSTRUCTIONS_MAX_LENGTH;
 
-export { PRAGMA_EXPERT_ID_MAX_LENGTH, PragmaExpertIdSchema } from "@pragma/interpreter/ast";
+export { PragmaExpertIdSchema } from "@pragma/interpreter/ast";
 
 export const ExpertScopeSchema = PragmaExpertScopeSchema;
 export const ExpertInstructionsSchema = PragmaExpertInstructionsSchema;
@@ -846,7 +850,6 @@ export const ExpertDefinitionSchema = z.object({
   name: PragmaExpertResourceSchema.shape.metadata.shape.name,
   description: PragmaExpertResourceSchema.shape.metadata.shape.description,
   tags: PragmaExpertResourceSchema.shape.metadata.shape.tags,
-  version: PragmaExpertResourceSchema.shape.metadata.shape.version,
   scope: ExpertScopeSchema,
   instructions: ExpertInstructionsSchema,
   additionalInstructions: ExpertAdditionalInstructionsSchema,
@@ -874,7 +877,6 @@ export const ExpertSummarySchema = ExpertDefinitionSchema.pick({
   name: true,
   description: true,
   tags: true,
-  version: true,
   scope: true,
   origin: true,
   readOnly: true,
@@ -887,6 +889,7 @@ export const ExpertSummarySchema = ExpertDefinitionSchema.pick({
 export const CreateExpertDefinitionSchema = ExpertDefinitionSchema.omit({
   schemaVersion: true,
   ref: true,
+  id: true,
   resourceRuntime: true,
   origin: true,
   readOnly: true,
@@ -896,22 +899,31 @@ export const CreateExpertDefinitionSchema = ExpertDefinitionSchema.omit({
   revision: true,
   createdAt: true,
   updatedAt: true,
-}).extend({
-  id: PragmaExpertIdSchema,
-  name: z.string().trim().min(1).max(EXPERT_NAME_MAX_LENGTH),
-  description: z.string().trim().min(1).max(EXPERT_DESCRIPTION_MAX_LENGTH),
-  tags: z.array(z.string().trim().min(1).max(EXPERT_TAG_MAX_LENGTH)).max(30),
-  instructions: ExpertInstructionsSchema,
-  model: ExpertModelConfigSchema,
-  capabilities: z.array(ExpertCapabilityReferenceSchema).max(500).optional(),
-  toolApprovals: z.record(z.string().max(200), ExpertToolApprovalModeSchema).optional(),
-  plugins: z.array(ExpertPluginReferenceSchema).max(100).optional(),
-  contextStoreMounts: z.array(ExpertContextStoreMountSchema).max(200).optional(),
-  resourceTools: z.array(PragmaToolBindingSchema).max(200).optional(),
-  opaqueCapabilities: PragmaExpertResourceSchema.shape.spec.shape.capabilities.optional(),
-});
+})
+  .extend({
+    baseRevision: z.number().int().nonnegative(),
+    requiredUnchangedRefs: z.array(PragmaResourceRefSchema).default([]),
+    name: z.string().trim().min(1).max(EXPERT_NAME_MAX_LENGTH),
+    description: z.string().trim().min(1).max(EXPERT_DESCRIPTION_MAX_LENGTH),
+    tags: z.array(z.string().trim().min(1).max(EXPERT_TAG_MAX_LENGTH)).max(30),
+    instructions: ExpertInstructionsSchema,
+    model: ExpertModelConfigSchema,
+    capabilities: z.array(ExpertCapabilityReferenceSchema).max(500).optional(),
+    toolApprovals: z.record(z.string().max(200), ExpertToolApprovalModeSchema).optional(),
+    plugins: z.array(ExpertPluginReferenceSchema).max(100).optional(),
+    contextStoreMounts: z.array(ExpertContextStoreMountSchema).max(200).optional(),
+    resourceTools: z.array(PragmaToolBindingSchema).max(200).optional(),
+    opaqueCapabilities: PragmaExpertResourceSchema.shape.spec.shape.capabilities.optional(),
+  })
+  .strict();
 
-export const UpdateExpertDefinitionSchema = CreateExpertDefinitionSchema.omit({ id: true });
+export const UpdateExpertDefinitionSchema = CreateExpertDefinitionSchema.omit({
+  requiredUnchangedRefs: true,
+})
+  .extend({
+    baseRevision: z.number().int().positive(),
+  })
+  .strict();
 
 export const UpdateBuiltInExpertDefinitionSchema = CreateExpertDefinitionSchema.pick({
   name: true,
@@ -938,7 +950,7 @@ export const DeleteExpertDefinitionSchema = z.object({ ref: ExpertRefSchema });
 export const ResetBuiltInExpertDefinitionSchema = z.object({ ref: ExpertRefSchema });
 
 export const PragmaProjectSnapshotSchema = z.object({
-  schemaVersion: z.literal("pragma.project-snapshot/v2"),
+  schemaVersion: z.literal("pragma.project-snapshot/v3"),
   projectId: z.string().trim().min(1).max(120),
   revision: z.number().int().nonnegative(),
   resources: z.array(PragmaResourceSchema),
@@ -951,26 +963,79 @@ export const PragmaProjectSnapshotSchema = z.object({
   updatedAt: z.string().datetime().optional(),
 });
 
+export const DesktopMutationConflictSchema = z
+  .object({
+    baseRevision: z.number().int().nonnegative(),
+    currentRevision: z.number().int().nonnegative(),
+    conflictingRefs: z.array(PragmaResourceRefSchema),
+    retryable: z.boolean(),
+  })
+  .strict();
+
+export const DesktopMutationErrorSchema = z
+  .object({
+    code: z.string().trim().min(1).max(100),
+    message: z.string().min(1).max(10_000),
+    diagnostics: z.array(PragmaDiagnosticSchema).default([]),
+    conflict: DesktopMutationConflictSchema.optional(),
+  })
+  .strict();
+
+export const DesktopMutationResultSchema = z.discriminatedUnion("ok", [
+  z.object({ ok: z.literal(true), value: z.unknown() }).strict(),
+  z.object({ ok: z.literal(false), error: DesktopMutationErrorSchema }).strict(),
+]);
+
+export type DesktopMutationErrorData = z.infer<typeof DesktopMutationErrorSchema>;
+
+export class DesktopMutationError extends Error {
+  readonly code: string;
+  readonly diagnostics: DesktopMutationErrorData["diagnostics"];
+  readonly conflict: DesktopMutationErrorData["conflict"];
+
+  constructor(input: DesktopMutationErrorData) {
+    super(input.message);
+    this.name = "DesktopMutationError";
+    this.code = input.code;
+    this.diagnostics = input.diagnostics;
+    this.conflict = input.conflict;
+  }
+}
+
 export const PublishPragmaProjectSchema = z.object({
   expectedRevision: z.number().int().nonnegative(),
   resources: z.array(PragmaResourceSchema),
 });
 
 export const UpsertPragmaResourceSchema = z.object({
-  expectedRevision: z.number().int().nonnegative(),
+  baseRevision: z.number().int().nonnegative(),
   resource: PragmaResourceSchema,
+  requiredUnchangedRefs: z.array(PragmaResourceRefSchema).default([]),
 });
 
+export const AllocatePragmaResourceIdResultSchema = z.object({
+  id: PragmaExpertIdSchema,
+});
+
+export const PragmaProjectChangesSchema = PragmaProjectChangeSetSchema;
+
+export const PragmaProjectChangesValidationResultSchema = z
+  .object({
+    diagnostics: z.array(PragmaDiagnosticSchema),
+  })
+  .strict();
+
 export const DeletePragmaResourceSchema = z.object({
-  expectedRevision: z.number().int().nonnegative(),
+  baseRevision: z.number().int().nonnegative(),
   ref: PragmaResourceRefSchema,
 });
 
 export const ValidatePragmaYamlSchema = z.object({ source: z.string().max(2_000_000) });
 
 export const ValidatePragmaResourceSchema = z.object({
-  expectedRevision: z.number().int().nonnegative(),
+  baseRevision: z.number().int().nonnegative(),
   resource: PragmaResourceSchema,
+  requiredUnchangedRefs: z.array(PragmaResourceRefSchema).default([]),
 });
 
 export const PragmaYamlValidationResultSchema = z.object({
@@ -985,12 +1050,11 @@ const WorkflowLayoutIdentitySchema = z.object({
     .min(1)
     .max(120)
     .regex(/^[A-Za-z0-9_-]+$/),
-  flowId: z.string().trim().min(1).max(120),
+  flowId: PragmaExpertIdSchema,
 });
 
 export const WorkflowLayoutSchema = WorkflowLayoutIdentitySchema.extend({
-  schemaVersion: z.literal("pragma.desktop-flow-layout/v1"),
-  flowVersion: z.string().trim().min(1).max(100),
+  schemaVersion: z.literal("pragma.desktop-flow-layout/v2"),
   nodes: z.record(
     z.string().trim().min(1),
     z.object({ x: z.number().finite(), y: z.number().finite() }),
@@ -1016,7 +1080,6 @@ export const MissionWorkspaceSchema = z.object({
 const MissionExecutorBaseSchema = z.object({
   ref: PragmaInvocableResourceRefSchema,
   name: z.string().trim().min(1).max(120),
-  version: z.string().trim().min(1).max(100),
 });
 
 export const MissionExecutorSchema = z.discriminatedUnion("kind", [
@@ -1035,7 +1098,10 @@ const MissionExecutorOptionBaseSchema = MissionExecutorBaseSchema.extend({
 export const MissionExecutorOptionSchema = z.discriminatedUnion("kind", [
   MissionExecutorOptionBaseSchema.extend({ kind: z.literal("expert") }),
   MissionExecutorOptionBaseSchema.extend({ kind: z.literal("team") }),
-  MissionExecutorOptionBaseSchema.extend({ kind: z.literal("flow") }),
+  MissionExecutorOptionBaseSchema.extend({
+    kind: z.literal("flow"),
+    inputSchema: PragmaObjectJsonSchemaSchema.optional(),
+  }),
 ]);
 
 export const MissionCreationDefaultsSchema = z.object({
@@ -1048,6 +1114,96 @@ export const MissionCreationDefaultsSchema = z.object({
 export const MissionModelOverrideSchema = ExpertModelConfigSchema.omit({
   runtimeId: true,
 }).strict();
+
+export const AutomationBindingSchema = z
+  .object({
+    schemaVersion: z.literal("pragma.automation-binding/v2"),
+    automationRef: PragmaAutomationRefSchema,
+    revision: z.number().int().positive(),
+    generation: z.string().uuid(),
+    workspace: MissionWorkspaceSchema,
+    placement: z.literal("desktop"),
+    toolPermissionMode: DesktopToolPermissionModeSchema,
+    modelOverride: MissionModelOverrideSchema.optional(),
+    createdAt: z.string().datetime(),
+    updatedAt: z.string().datetime(),
+  })
+  .strict();
+
+export const AutomationRunRecordSchema = z
+  .object({
+    eventId: z.string().min(1).max(500),
+    scheduledFor: z.string().datetime(),
+    status: z.enum(["queued", "dispatched", "skipped", "failed"]),
+    missionId: MissionIdSchema.optional(),
+    error: z.string().max(10_000).optional(),
+    createdAt: z.string().datetime(),
+    updatedAt: z.string().datetime(),
+  })
+  .strict();
+
+export const AutomationSummarySchema = z
+  .object({
+    ref: z.string().min(1),
+    resource: PragmaAutomationResourceSchema,
+    binding: AutomationBindingSchema.optional(),
+    status: z.enum(["scheduled", "disabled", "expired", "needs_attention"]),
+    nextRunAt: z.string().datetime().optional(),
+    missionId: MissionIdSchema.optional(),
+    queueDepth: z.number().int().nonnegative(),
+    lastRun: AutomationRunRecordSchema.optional(),
+    diagnostic: z.string().max(4_000).optional(),
+  })
+  .strict();
+
+export const SaveAutomationSchema = z
+  .object({
+    expectedProjectRevision: z.number().int().nonnegative(),
+    resource: PragmaAutomationResourceSchema,
+    binding: z
+      .object({
+        workspace: z.string().trim().min(1).max(2_000),
+        toolPermissionMode: DesktopToolPermissionModeSchema,
+        modelOverride: MissionModelOverrideSchema.optional(),
+      })
+      .strict(),
+  })
+  .strict();
+
+export const DeleteAutomationSchema = z
+  .object({
+    expectedProjectRevision: z.number().int().nonnegative(),
+    ref: PragmaAutomationRefSchema,
+  })
+  .strict();
+
+export const AutomationActionSchema = z.object({ ref: DeleteAutomationSchema.shape.ref }).strict();
+
+export const PreviewAutomationScheduleSchema = z
+  .object({
+    trigger: PragmaScheduleTriggerSchema,
+    from: z.string().datetime().optional(),
+    count: z.number().int().min(1).max(10).default(5),
+  })
+  .strict();
+
+export const AutomationSchedulePreviewSchema = z
+  .object({
+    occurrences: z.array(z.string().datetime()).max(10),
+  })
+  .strict();
+
+export const AutomationAdapterOptionSchema = z
+  .object({
+    ref: z.string().min(1),
+    name: z.string().min(1),
+    description: z.string().min(1),
+    sourceMode: z.enum(["signal", "conversation"]),
+    placement: z.enum(["desktop", "server", "either"]),
+    requiresConnection: z.boolean(),
+    supportsSessionReuse: z.boolean(),
+  })
+  .strict();
 
 export const MissionModelOptionsRequestSchema = z.object({
   executorRef: PragmaInvocableResourceRefSchema,
@@ -1141,8 +1297,7 @@ const MissionExecutionStatusSchema = z.enum([
   "cancelled",
 ]);
 
-export const MissionSchema = z.object({
-  schemaVersion: z.literal("pragma.mission/v3"),
+const MissionBaseSchema = z.object({
   id: MissionIdSchema,
   title: z.string().trim().min(1).max(120),
   goal: z.string().trim().min(1).max(100_000),
@@ -1172,6 +1327,46 @@ export const MissionSchema = z.object({
   completedAt: z.string().datetime().optional(),
 });
 
+const MissionExecutorV4Schema = z.object({
+  kind: z.enum(["expert", "team", "flow"]),
+  ref: z.string().min(1),
+  name: z.string().trim().min(1).max(120),
+  version: z.string().trim().min(1).max(100),
+});
+
+const MissionBaseV4Schema = MissionBaseSchema.extend({
+  executor: MissionExecutorV4Schema,
+});
+
+export const MissionV3Schema = MissionBaseV4Schema.extend({
+  schemaVersion: z.literal("pragma.mission/v3"),
+});
+
+export const MissionV4Schema = MissionBaseV4Schema.extend({
+  schemaVersion: z.literal("pragma.mission/v4"),
+  flowInput: z.record(z.string(), z.unknown()).optional(),
+});
+
+export const MissionSchema = MissionBaseSchema.extend({
+  schemaVersion: z.literal("pragma.mission/v5"),
+  flowInput: z.record(z.string(), z.unknown()).optional(),
+}).superRefine((mission, context) => {
+  if (mission.executor.kind === "flow" && mission.flowInput === undefined) {
+    context.addIssue({
+      code: "custom",
+      message: "Flow missions require flowInput.",
+      path: ["flowInput"],
+    });
+  }
+  if (mission.executor.kind !== "flow" && mission.flowInput !== undefined) {
+    context.addIssue({
+      code: "custom",
+      message: "Only Flow missions may store flowInput.",
+      path: ["flowInput"],
+    });
+  }
+});
+
 export const MissionSummarySchema = z.object({
   id: MissionIdSchema,
   title: z.string().trim().min(1).max(120),
@@ -1190,7 +1385,15 @@ export const CreateMissionSchema = z.object({
   executor: z.object({
     ref: PragmaInvocableResourceRefSchema,
   }),
-  goal: z.string().trim().min(1).max(100_000),
+  input: z.discriminatedUnion("kind", [
+    z.object({ kind: z.literal("prompt"), value: z.string().trim().min(1).max(100_000) }).strict(),
+    z
+      .object({
+        kind: z.literal("flow"),
+        value: z.record(z.string(), z.unknown()),
+      })
+      .strict(),
+  ]),
   toolPermissionMode: DesktopToolPermissionModeSchema.optional(),
   modelOverride: MissionModelOverrideSchema.optional(),
 });
@@ -1227,7 +1430,6 @@ export function missionExecutorSnapshot(resource: PragmaInvocableResource): Miss
     kind: missionExecutorKind(resource),
     ref: missionExecutorRef(resource),
     name: resource.metadata.name,
-    version: resource.metadata.version,
   });
 }
 
@@ -1319,6 +1521,21 @@ export const MissionChatExecutionSchema = z.object({
   error: z.string().max(10_000).optional(),
 });
 
+export const MissionContextWindowUsageSchema = z.object({
+  usedTokens: z.number().int().nonnegative().nullable(),
+  contextWindowTokens: z.number().int().positive(),
+  percent: z.number().nonnegative().nullable(),
+  measurement: z.enum(["reported", "derived", "estimated"]),
+  observedAt: z.string().datetime(),
+});
+
+export const MissionContextWindowStateSchema = z.object({
+  supportsInspection: z.boolean(),
+  supportsCompaction: z.boolean(),
+  canCompact: z.boolean(),
+  usage: MissionContextWindowUsageSchema.optional(),
+});
+
 export const MissionChatSnapshotSchema = z.object({
   missionId: MissionIdSchema,
   revision: z.number().int().nonnegative(),
@@ -1330,6 +1547,7 @@ export const MissionChatSnapshotSchema = z.object({
   }),
   pendingInteractions: z.array(MissionHumanInteractionSchema),
   execution: MissionChatExecutionSchema.optional(),
+  contextWindow: MissionContextWindowStateSchema.optional(),
 });
 
 export const MissionChatPatchSchema = z.discriminatedUnion("type", [
@@ -1432,6 +1650,11 @@ export type UpdateBuiltInExpertDefinition = z.infer<typeof UpdateBuiltInExpertDe
 export type PragmaProjectSnapshot = z.infer<typeof PragmaProjectSnapshotSchema>;
 export type PublishPragmaProject = z.infer<typeof PublishPragmaProjectSchema>;
 export type UpsertPragmaResource = z.infer<typeof UpsertPragmaResourceSchema>;
+export type AllocatePragmaResourceIdResult = z.infer<typeof AllocatePragmaResourceIdResultSchema>;
+export type PragmaProjectChanges = z.infer<typeof PragmaProjectChangesSchema>;
+export type PragmaProjectChangesValidationResult = z.infer<
+  typeof PragmaProjectChangesValidationResultSchema
+>;
 export type DeletePragmaResource = z.infer<typeof DeletePragmaResourceSchema>;
 export type PragmaYamlValidationResult = z.infer<typeof PragmaYamlValidationResultSchema>;
 export type ValidatePragmaResource = z.infer<typeof ValidatePragmaResourceSchema>;
@@ -1444,6 +1667,14 @@ export type MissionExecutor = z.infer<typeof MissionExecutorSchema>;
 export type MissionExecutorOption = z.infer<typeof MissionExecutorOptionSchema>;
 export type MissionCreationDefaults = z.infer<typeof MissionCreationDefaultsSchema>;
 export type MissionModelOverride = z.infer<typeof MissionModelOverrideSchema>;
+export type AutomationBinding = z.infer<typeof AutomationBindingSchema>;
+export type AutomationRunRecord = z.infer<typeof AutomationRunRecordSchema>;
+export type AutomationSummary = z.infer<typeof AutomationSummarySchema>;
+export type SaveAutomation = z.infer<typeof SaveAutomationSchema>;
+export type DeleteAutomation = z.infer<typeof DeleteAutomationSchema>;
+export type PreviewAutomationSchedule = z.infer<typeof PreviewAutomationScheduleSchema>;
+export type AutomationSchedulePreview = z.infer<typeof AutomationSchedulePreviewSchema>;
+export type AutomationAdapterOption = z.infer<typeof AutomationAdapterOptionSchema>;
 export type MissionModelOptions = z.infer<typeof MissionModelOptionsSchema>;
 export type MissionLifecycleStatus = z.infer<typeof MissionLifecycleStatusSchema>;
 export type CreateMission = z.infer<typeof CreateMissionSchema>;
@@ -1462,6 +1693,7 @@ export type SendMissionMessage = z.infer<typeof SendMissionMessageSchema>;
 export type MissionHumanInteraction = z.infer<typeof MissionHumanInteractionSchema>;
 export type MissionChatEntry = z.infer<typeof MissionChatEntrySchema>;
 export type MissionChatSnapshot = z.infer<typeof MissionChatSnapshotSchema>;
+export type MissionContextWindowState = z.infer<typeof MissionContextWindowStateSchema>;
 export type MissionChatPatch = z.infer<typeof MissionChatPatchSchema>;
 export type MissionChatUpdate = z.infer<typeof MissionChatUpdateSchema>;
 export type RespondMissionHumanInteraction = z.infer<typeof RespondMissionHumanInteractionSchema>;
@@ -1524,20 +1756,34 @@ export interface PragmaDesktopAPI {
   setPluginSecrets: (secrets: Readonly<Record<string, string | null>>) => Promise<void>;
   deletePlugin: (ref: string) => Promise<void>;
   getPragmaProject: () => Promise<PragmaProjectSnapshot>;
+  allocatePragmaResourceId: () => Promise<AllocatePragmaResourceIdResult>;
   publishPragmaProject: (input: PublishPragmaProject) => Promise<PragmaProjectSnapshot>;
   upsertPragmaResource: (input: UpsertPragmaResource) => Promise<PragmaProjectSnapshot>;
+  applyPragmaProjectChanges: (input: PragmaProjectChanges) => Promise<PragmaProjectSnapshot>;
   deletePragmaResource: (input: DeletePragmaResource) => Promise<PragmaProjectSnapshot>;
   validatePragmaYaml: (source: string) => Promise<PragmaYamlValidationResult>;
   validatePragmaResource: (input: ValidatePragmaResource) => Promise<PragmaYamlValidationResult>;
+  validatePragmaProjectChanges: (
+    input: PragmaProjectChanges,
+  ) => Promise<PragmaProjectChangesValidationResult>;
   getWorkflowLayout: (input: GetWorkflowLayout) => Promise<WorkflowLayout | null>;
   saveWorkflowLayout: (layout: WorkflowLayout) => Promise<WorkflowLayout>;
   deleteWorkflowLayout: (input: DeleteWorkflowLayout) => Promise<void>;
+  listAutomationAdapters: () => Promise<AutomationAdapterOption[]>;
+  listAutomations: () => Promise<AutomationSummary[]>;
+  saveAutomation: (input: SaveAutomation) => Promise<AutomationSummary>;
+  deleteAutomation: (input: DeleteAutomation) => Promise<void>;
+  resetAutomationSession: (ref: string) => Promise<AutomationSummary>;
+  previewAutomationSchedule: (
+    input: PreviewAutomationSchedule,
+  ) => Promise<AutomationSchedulePreview>;
   listMissions: () => Promise<MissionSummary[]>;
   listMissionExecutors: () => Promise<MissionExecutorOption[]>;
   getMissionModelOptions: (
     executorRef: string,
     missionId?: string | undefined,
   ) => Promise<MissionModelOptions>;
+  subscribeRuntimeModelCatalog: (listener: (runtimeId: string) => void) => () => void;
   getMissionCreationDefaults: () => Promise<MissionCreationDefaults>;
   getMission: (id: string) => Promise<Mission>;
   createMission: (input: CreateMission) => Promise<Mission>;
@@ -1545,6 +1791,7 @@ export interface PragmaDesktopAPI {
   runMission: (id: string) => Promise<Mission>;
   sendMissionMessage: (input: SendMissionMessage) => Promise<Mission>;
   getMissionChat: (input: GetMissionChat) => Promise<MissionChatSnapshot>;
+  compactMissionContext: (id: string) => Promise<MissionContextWindowState>;
   subscribeMissionChat: (id: string, listener: (update: MissionChatUpdate) => void) => () => void;
   interruptMission: (id: string) => Promise<Mission>;
   getMissionWork: (id: string) => Promise<MissionWorkSnapshot>;

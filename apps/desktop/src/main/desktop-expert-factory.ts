@@ -16,7 +16,7 @@ import type { CapabilityDefinition, ExpertDefinition } from "../shared/desktop-a
 import type { CapabilityCredentialStore } from "./capability-credential-store.ts";
 import type { PluginStore } from "./plugin-store.ts";
 import type { CapabilityStore } from "./capability-store.ts";
-import { hashSchema, toCoreMcpServer } from "./capability-verifier.ts";
+import { classifyMcpError, toCoreMcpServer } from "./capability-verifier.ts";
 
 export interface ResolvedExpertCapabilities {
   readonly skills: IExpertAgentSkillsConfig | undefined;
@@ -28,13 +28,37 @@ export class ExpertCapabilityResolutionError extends Error {
     readonly code:
       | "capability_unavailable"
       | "capability_kind_mismatch"
-      | "capability_drift"
       | "tool_unavailable"
       | "credential_unavailable",
     message: string,
+    readonly retryable = false,
+    options?: ErrorOptions,
   ) {
-    super(message);
+    super(message, options);
     this.name = "ExpertCapabilityResolutionError";
+  }
+}
+
+interface McpAvailabilityRetryOptions {
+  readonly maxAttempts?: number | undefined;
+  readonly baseDelayMs?: number | undefined;
+  readonly maxDelayMs?: number | undefined;
+  readonly random?: (() => number) | undefined;
+  readonly sleep?: ((delayMs: number) => Promise<void>) | undefined;
+}
+
+class McpAvailabilityCheckError extends Error {
+  constructor(
+    readonly diagnostic: ReturnType<typeof classifyMcpError>,
+    readonly attempts: number,
+    readonly transient: boolean,
+    options: ErrorOptions,
+  ) {
+    super(
+      `MCP availability check failed after ${attempts} ${attempts === 1 ? "attempt" : "attempts"} (${diagnostic.code}): ${diagnostic.message}`,
+      options,
+    );
+    this.name = "McpAvailabilityCheckError";
   }
 }
 
@@ -102,7 +126,25 @@ export async function resolveExpertCapabilities(options: {
           error instanceof Error ? error.message : "An MCP credential is unavailable.",
         );
       });
-      await assertMcpContract(server, capability.definition, reference.toolNames);
+      try {
+        await assertSelectedMcpToolsAvailable(server, reference.toolNames);
+      } catch (error) {
+        if (error instanceof ExpertCapabilityResolutionError) throw error;
+        if (!(error instanceof McpAvailabilityCheckError)) throw error;
+        const guidance = error.transient
+          ? "Check that the MCP service is running, then retry the Mission."
+          : "Check the capability connection and credentials before retrying the Mission.";
+        throw new ExpertCapabilityResolutionError(
+          "capability_unavailable",
+          `${capability.manifest.name} MCP capability is ${
+            error.transient ? "temporarily unavailable" : "unavailable"
+          } after ${error.attempts} ${
+            error.attempts === 1 ? "availability check" : "availability checks"
+          } (${error.diagnostic.code}: ${error.diagnostic.message}). ${guidance}`,
+          error.diagnostic.retryable,
+          { cause: error },
+        );
+      }
       mcpServers[capability.manifest.runtimeKey] = {
         ...server,
         toolApprovals: createApprovals(
@@ -211,7 +253,6 @@ export async function createDesktopExpertAgent(options: {
     name: options.definition.name,
     description: options.definition.description,
     tags: options.definition.tags,
-    version: options.definition.version,
     scope: options.definition.scope,
     instructions: options.definition.instructions,
     workspace: options.workspace,
@@ -241,32 +282,79 @@ function assertSelectedTools(
   }
 }
 
-async function assertMcpContract(
+export async function assertSelectedMcpToolsAvailable(
   server: IExpertAgentMcpServer,
-  definition: Extract<CapabilityDefinition, { readonly kind: "mcp_server" }>,
   selected: readonly string[],
+  retry: McpAvailabilityRetryOptions = {},
 ): Promise<void> {
-  const registry = await createMcpToolRegistry({ mcpServers: { verify: server } });
-  try {
-    for (const name of selected) {
-      const current = registry.tools.find((tool) => tool.name === name);
-      const pinned = definition.tools.find((tool) => tool.name === name);
-      if (current === undefined || pinned === undefined) {
-        throw new ExpertCapabilityResolutionError(
-          "tool_unavailable",
-          `MCP tool ${name} is not currently available.`,
-        );
-      }
-      if (hashSchema(current.inputSchema) !== pinned.schemaHash) {
-        throw new ExpertCapabilityResolutionError(
-          "capability_drift",
-          `MCP tool ${name} changed since this Expert pinned the capability revision.`,
-        );
-      }
-    }
-  } finally {
-    await registry.dispose();
+  const maxAttempts = retry.maxAttempts ?? 3;
+  if (!Number.isInteger(maxAttempts) || maxAttempts < 1) {
+    throw new Error("MCP availability maxAttempts must be a positive integer.");
   }
+  const baseDelayMs = retry.baseDelayMs ?? 200;
+  const maxDelayMs = retry.maxDelayMs ?? 1_000;
+  const random = retry.random ?? Math.random;
+  const sleep = retry.sleep ?? wait;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      const registry = await createMcpToolRegistry({ mcpServers: { verify: server } });
+      try {
+        for (const name of selected) {
+          const current = registry.tools.find((tool) => tool.name === name);
+          if (current === undefined) {
+            throw new ExpertCapabilityResolutionError(
+              "tool_unavailable",
+              `MCP tool ${name} is not currently available.`,
+            );
+          }
+        }
+      } finally {
+        await registry.dispose();
+      }
+      return;
+    } catch (error) {
+      if (error instanceof ExpertCapabilityResolutionError) throw error;
+      const diagnostic = classifyMcpError(error);
+      const transient = isTransientMcpAvailabilityError(error, diagnostic);
+      if (!transient || attempt === maxAttempts) {
+        throw new McpAvailabilityCheckError(diagnostic, attempt, transient, { cause: error });
+      }
+      await sleep(retryDelayMs(attempt, baseDelayMs, maxDelayMs, random));
+    }
+  }
+}
+
+function isTransientMcpAvailabilityError(
+  error: unknown,
+  diagnostic: ReturnType<typeof classifyMcpError>,
+): boolean {
+  if (diagnostic.code === "network" || diagnostic.code === "timeout") return true;
+  if (diagnostic.code !== "process_exit") return false;
+  let current: unknown = error;
+  for (let depth = 0; depth < 5 && current !== undefined; depth += 1) {
+    if (typeof current !== "object" || current === null) break;
+    const record = current as { readonly code?: unknown; readonly cause?: unknown };
+    if (record.code === "ENOENT") return false;
+    current = record.cause;
+  }
+  return true;
+}
+
+function retryDelayMs(
+  failedAttempt: number,
+  baseDelayMs: number,
+  maxDelayMs: number,
+  random: () => number,
+): number {
+  const exponential = Math.min(maxDelayMs, baseDelayMs * 2 ** (failedAttempt - 1));
+  return Math.round(exponential * (1 + Math.max(0, Math.min(1, random())) * 0.25));
+}
+
+async function wait(delayMs: number): Promise<void> {
+  await new Promise<void>((resolve) => {
+    setTimeout(resolve, delayMs);
+  });
 }
 
 async function resolveHttpAuth(

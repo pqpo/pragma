@@ -8,7 +8,6 @@ const workerAgent = await defineExpert({
   name: "Worker Orchestrator",
   description: "Expert used by the worker entrypoint to initialize runtime context.",
   tags: ["worker", "orchestration"],
-  version: "0.0.0",
   scope: "worker",
   workspace: ".",
   loggerProvider,

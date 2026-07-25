@@ -62,6 +62,13 @@ export class RuntimeSessionPool {
     }
   }
 
+  get(identity: RuntimeSessionIdentity): RuntimeAgentSession | undefined {
+    const existing = this.sessions.get(identity.contextId);
+    if (existing === undefined) return undefined;
+    assertMatchingIdentity(existing.identity, identity);
+    return existing.session;
+  }
+
   async release(identity: RuntimeSessionIdentity): Promise<void> {
     const entry = this.sessions.get(identity.contextId);
     if (entry === undefined) return;

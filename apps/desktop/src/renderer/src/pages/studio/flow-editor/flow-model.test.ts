@@ -11,7 +11,7 @@ import {
 
 describe("Flow editor model", () => {
   it("starts new Flows as empty editor drafts with one actionable issue", () => {
-    const flow = createEmptyFlow("triage_flow");
+    const flow = createEmptyFlow("30rs4t9bdgqgfg2c");
 
     expect(flow.spec.graph).toEqual({ start: "", steps: {}, loops: {}, transitions: {} });
     expect(validateFlowDraft(flow)).toEqual([
@@ -60,8 +60,8 @@ describe("Flow editor model", () => {
     const removed = deleteFlowStep(flow, "finish");
 
     expect(removed.spec.graph.steps["finish"]).toBeUndefined();
-    expect(removed.spec.graph.transitions["review"]).toEqual({ end: true });
-    expect(validateFlowDraft(removed)).toEqual([]);
+    expect(removed.spec.graph.transitions["review"]).toBeUndefined();
+    expect(validateFlowDraft(removed).length).toBeGreaterThan(0);
   });
 
   it("replaces deleted loop-limit destinations while preserving referenced loops", () => {
@@ -78,7 +78,6 @@ describe("Flow editor model", () => {
     expect(removed.spec.graph.loops["review_loop"]).toEqual({
       entry: "review",
       maxIterations: 3,
-      onLimit: { end: true },
     });
     expect(validateFlowDraft(removed)).toEqual([]);
   });
@@ -95,7 +94,12 @@ describe("Flow editor model", () => {
     const removed = deleteFlowStep(flow, "finish");
 
     expect(removed.spec.graph.loops["review_loop"]).toBeUndefined();
-    expect(validateFlowDraft(removed)).toEqual([]);
+    expect(validateFlowDraft(removed)).toEqual([
+      expect.objectContaining({
+        stepId: "review",
+        message: "Flow step has no transition: review",
+      }),
+    ]);
   });
 
   it("returns to the empty draft state after deleting the last step", () => {
@@ -108,15 +112,38 @@ describe("Flow editor model", () => {
       { path: ["spec", "graph", "steps"], message: "Add at least one node." },
     ]);
   });
+
+  it("leaves Start disconnected when its node is deleted", () => {
+    const flow = flowFixture();
+    const removed = deleteFlowStep(flow, "review");
+
+    expect(removed.spec.graph.start).toBe("");
+    expect(removed.spec.graph.steps.finish).toBeDefined();
+  });
+
+  it("blocks Action steps that Desktop cannot execute", () => {
+    const flow = flowFixture();
+    flow.spec.graph.steps.review = {
+      action: { ref: "action:review@1.0.0" },
+    };
+
+    expect(validateFlowDraft(flow)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          stepId: "review",
+          message: "Action steps are not executable in the current Desktop environment.",
+        }),
+      ]),
+    );
+  });
 });
 
 function flowFixture(): PragmaFlowResource {
   return {
-    apiVersion: "pragma/v2",
+    apiVersion: "pragma/v3",
     kind: "Flow",
     metadata: {
-      id: "review",
-      version: "1.0.0",
+      id: "t9ne4d8njvvxv2ea",
       name: "Review",
       description: "Review a change",
       tags: [],
@@ -127,12 +154,24 @@ function flowFixture(): PragmaFlowResource {
         start: "review",
         steps: {
           review: {
-            human: { kind: "approval", prompt: "Approve?" },
-            version: "2.0.0",
+            human: {
+              selectionMode: "single",
+              prompt: { segments: [{ text: "Approve?" }] },
+              options: [
+                { value: "approve", label: "Approve" },
+                { value: "reject", label: "Reject" },
+              ],
+            },
           },
           finish: {
-            human: { kind: "approval", prompt: "Finish?" },
-            version: "1.0.0",
+            human: {
+              selectionMode: "single",
+              prompt: { segments: [{ text: "Finish?" }] },
+              options: [
+                { value: "finish", label: "Finish" },
+                { value: "wait", label: "Wait" },
+              ],
+            },
           },
         },
         loops: {},

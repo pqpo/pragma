@@ -14,15 +14,24 @@ import type {
   PromptRequest,
   RuntimeContextRecord,
 } from "@pragma/shared";
-import { ExpertMessageHistorySchema } from "@pragma/shared";
+import { ExpertMessageHistorySchema, InvocationHandoffSchema } from "@pragma/shared";
 import { isFinalExecutionStatus as isFinal } from "@pragma/shared";
 
 import type { ExpertDefinition } from "../agent/expert-team.ts";
 import { isExpertTeam } from "../agent/expert-team.ts";
 import { fingerprintExpertExecutionDefinition } from "../agent/expert-definition-descriptor.ts";
 import type { RuntimeResolver } from "../runtime-resolver.ts";
-import type { RuntimeModelSelection } from "../runtime/runtime-adapter.ts";
+import type {
+  RuntimeContextWindowUsage,
+  RuntimeModelSelection,
+} from "../runtime/runtime-adapter.ts";
+import { openRuntimeSession } from "../runtime/session-factory.ts";
+import {
+  readRuntimeSessionContextWindowUsage,
+  readRuntimeSessionRecord,
+} from "../runtime/session-record.ts";
 import { mergeUsages } from "../runtime/usage.ts";
+import { PragmaPaths } from "../storage/pragma-paths.ts";
 import type { ExpertAgentAutomaticHumanInteractionHandler } from "../tools/managed-tool.ts";
 import {
   ExecutionController,
@@ -30,6 +39,7 @@ import {
   persistHumanInteractionResponse,
   runExpertInvocation,
 } from "./expert-runner.ts";
+import { HandoffService, unwrapInvocationHandoff } from "./handoff/handoff-service.ts";
 import { RuntimeSessionPool } from "./runtime-session-pool.ts";
 import type { ExecutionStore } from "./execution-store.ts";
 import {
@@ -75,6 +85,8 @@ export interface ExpertSession {
   getMessageHistory(options?: GetMessageHistoryOptions): Promise<readonly ExpertMessageHistory[]>;
   listEvents(options?: ListSessionEventsOptions): Promise<SessionEventPage>;
   getUsage(): Promise<AgentMessageUsage | undefined>;
+  getRootContextWindowUsage(): Promise<RuntimeContextWindowUsage | undefined>;
+  compactRootContext(): Promise<RuntimeContextWindowUsage | undefined>;
   getPromptQueue(): Promise<readonly PromptRequest[]>;
 }
 
@@ -97,6 +109,7 @@ export interface ExpertSessionManagerDependencies {
   readonly sessions: ExpertSessionStore;
   readonly executions: ExecutionStore;
   readonly runtimes: RuntimeResolver;
+  readonly pragmaHome?: string | undefined;
   readonly automaticHumanInteractionHandler?:
     | ExpertAgentAutomaticHumanInteractionHandler
     | undefined;
@@ -136,16 +149,15 @@ export class ExpertSessionManager {
       contextId: rootContextId,
       owner: { type: "expert-session", ownerId: sessionId },
       origin: { type: "expert-session", sessionId },
-      expert: { id: rootExpert.id, version: rootExpert.version },
+      expert: { id: rootExpert.id },
       runtime: runtime.binding,
       modelSelection,
       now,
     });
     await this.dependencies.sessions.create({
-      schemaVersion: "pragma.expert-session/v4",
+      schemaVersion: "pragma.expert-session/v5",
       sessionId,
       expertId: expert.id,
-      expertVersion: expert.version,
       definitionFingerprint: fingerprintExpertExecutionDefinition(expert),
       status: "open",
       queuedRequestIds: [],
@@ -176,14 +188,12 @@ export class ExpertSessionManager {
     if (record === undefined) throw new Error(`ExpertSession not found: ${request.sessionId}`);
     if (record.status === "closed")
       throw new Error(`ExpertSession is closed: ${request.sessionId}`);
-    if (record.expertId !== expert.id || record.expertVersion !== expert.version) {
+    if (
+      record.expertId !== expert.id ||
+      record.definitionFingerprint !== fingerprintExpertExecutionDefinition(expert)
+    ) {
       throw new Error(`Expert definition mismatch for Session ${request.sessionId}.`);
     }
-    // The fingerprint is creation-time provenance, not a recovery gate. Mission/project snapshots
-    // select the Expert definition for future turns, while RuntimeContextRecord remains the sole
-    // owner of the historical Runtime binding and native Runtime Session snapshot. Rejecting a
-    // changed descriptor here would strand otherwise valid long-lived sessions after an Expert,
-    // plugin, or default Runtime configuration update.
     const claimId = randomUUID();
     if (
       !(await this.dependencies.sessions.claimLease(
@@ -380,11 +390,11 @@ class ExpertSessionImpl implements ExpertSession {
     const modelSelection = options.modelSelection;
     const definitionKind = isExpertTeam(this.expert) ? "expert-team" : "expert";
     const execution: ExecutionRecord = {
-      schemaVersion: "pragma.execution/v5",
+      schemaVersion: "pragma.execution/v7",
       executionId: id,
       version: 0,
       kind: "expert-turn",
-      definition: { id: this.expert.id, version: this.expert.version, kind: definitionKind },
+      definition: { id: this.expert.id, kind: definitionKind },
       rootInvocationId: id,
       status: "queued",
       input: content,
@@ -659,8 +669,103 @@ class ExpertSessionImpl implements ExpertSession {
     return mergeUsages(executions.map((execution) => execution?.usage));
   }
 
+  async getRootContextWindowUsage(): Promise<RuntimeContextWindowUsage | undefined> {
+    const context = await this.getRootContext();
+    const identity = {
+      contextId: context.contextId,
+      expertId: context.expert.id,
+      runtime: context.runtime,
+    };
+    const active = this.runtimeSessions.get(identity);
+    if (active?.contextWindow !== undefined) {
+      return await active.contextWindow.inspect();
+    }
+    if (context.snapshot === undefined) return undefined;
+    const paths = new PragmaPaths(
+      this.dependencies.pragmaHome === undefined
+        ? {}
+        : { pragmaHome: this.dependencies.pragmaHome },
+    );
+    const record = await readRuntimeSessionRecord(
+      paths,
+      this.sessionId,
+      context.snapshot.systemSessionId,
+    );
+    return readRuntimeSessionContextWindowUsage(record);
+  }
+
+  async compactRootContext(): Promise<RuntimeContextWindowUsage | undefined> {
+    if (this.leaseError !== undefined) throw this.leaseError;
+    if (this.closePromise !== undefined) {
+      throw new Error(`ExpertSession is closing or closed: ${this.sessionId}`);
+    }
+    const [state, prompts] = await Promise.all([this.getState(), this.getPromptQueue()]);
+    if (
+      state.activeExecutionId !== undefined ||
+      prompts.some((prompt) => prompt.status === "queued" || prompt.status === "running")
+    ) {
+      throw new Error("Wait for the active Expert turn before compacting its context.");
+    }
+    const context = await this.getRootContext(state);
+    if (context.snapshot === undefined) {
+      throw new Error("The root Runtime context has not started yet.");
+    }
+    const identity = {
+      contextId: context.contextId,
+      expertId: context.expert.id,
+      runtime: context.runtime,
+    };
+    const active = this.runtimeSessions.get(identity);
+    if (active !== undefined) {
+      if (active.contextWindow?.compact === undefined) {
+        throw new Error(
+          `Runtime ${context.runtime.runtimeId} does not support context compaction.`,
+        );
+      }
+      return await active.contextWindow.compact();
+    }
+
+    const resolved = await this.dependencies.runtimes.resolve({
+      binding: context.runtime,
+      modelSelection: context.modelSelection,
+    });
+    if (!resolved.adapter.descriptor.capabilities?.supportsManualCompaction) {
+      throw new Error(`Runtime ${context.runtime.runtimeId} does not support context compaction.`);
+    }
+    const rootExpert = isExpertTeam(this.expert) ? this.expert.coordinator : this.expert;
+    const opened = await openRuntimeSession(resolved.adapter, {
+      agent: rootExpert,
+      owner: {
+        type: "expert-session",
+        ownerId: this.sessionId,
+        contextId: context.contextId,
+      },
+      pragmaHome: this.dependencies.pragmaHome,
+      systemSessionId: context.snapshot.systemSessionId,
+      runtimeSession: context.snapshot.runtimeSession,
+      modelSelection: context.modelSelection,
+    });
+    try {
+      if (opened.contextWindow?.compact === undefined) {
+        throw new Error(
+          `Runtime ${context.runtime.runtimeId} does not support context compaction.`,
+        );
+      }
+      return await opened.contextWindow.compact();
+    } finally {
+      await opened.close();
+    }
+  }
+
   async getPromptQueue(): Promise<readonly PromptRequest[]> {
     return await this.dependencies.sessions.listPrompts(this.sessionId);
+  }
+
+  private async getRootContext(state?: ExpertSessionRecord): Promise<RuntimeContextRecord> {
+    const session = state ?? (await this.getState());
+    const context = session.contexts[session.rootContextId];
+    if (context === undefined) throw new Error("ExpertSession root Context is missing.");
+    return context;
   }
 
   private async steer(content: string, requestId: string): Promise<ExpertTurn> {
@@ -835,31 +940,41 @@ class ExpertSessionImpl implements ExpertSession {
         automaticHumanInteractionHandler: this.dependencies.automaticHumanInteractionHandler,
       },
     );
+    const handoffs = new HandoffService({
+      executionId: prompt.executionId,
+      executions: this.dependencies.executions,
+      ...(this.dependencies.pragmaHome === undefined
+        ? {}
+        : { pragmaHome: this.dependencies.pragmaHome }),
+    });
     this.controller = controller;
     let status: "succeeded" | "failed" | "cancelled" = "succeeded";
-    let output: unknown;
+    let output: ReturnType<typeof InvocationHandoffSchema.parse> | undefined;
     let error: unknown;
     try {
-      output = await runExpertInvocation({
-        executionId: prompt.executionId,
-        invocationId: prompt.executionId,
-        expert: this.expert,
-        prompt:
-          this.recoveredExecutionId === prompt.executionId
-            ? recoveryPrompt(prompt.content)
-            : prompt.content,
-        owner: { type: "expert-session", ownerId: this.sessionId },
-        context: rootContext,
-        controller,
-        store: this.dependencies.executions,
-        runtimes: this.dependencies.runtimes,
-        ...(this.recoveredExecutionId === prompt.executionId
-          ? { runtimeRunId: `${prompt.executionId}:recovery:${randomUUID()}` }
-          : {}),
-        ...(prompt.modelSelection === undefined ? {} : { modelSelection: prompt.modelSelection }),
-        persistContext: async (context) => await this.persistRuntimeContext(context),
-        readContextScope: async () => await this.readRuntimeContextScope(),
-      });
+      output = InvocationHandoffSchema.parse(
+        await runExpertInvocation({
+          executionId: prompt.executionId,
+          invocationId: prompt.executionId,
+          expert: this.expert,
+          prompt:
+            this.recoveredExecutionId === prompt.executionId
+              ? recoveryPrompt(prompt.content)
+              : prompt.content,
+          owner: { type: "expert-session", ownerId: this.sessionId },
+          context: rootContext,
+          controller,
+          store: this.dependencies.executions,
+          runtimes: this.dependencies.runtimes,
+          handoffs,
+          ...(this.recoveredExecutionId === prompt.executionId
+            ? { runtimeRunId: `${prompt.executionId}:recovery:${randomUUID()}` }
+            : {}),
+          ...(prompt.modelSelection === undefined ? {} : { modelSelection: prompt.modelSelection }),
+          persistContext: async (context) => await this.persistRuntimeContext(context),
+          readContextScope: async () => await this.readRuntimeContextScope(),
+        }),
+      );
     } catch (caught) {
       status = controller.isCancelled() ? "cancelled" : "failed";
       error = status === "cancelled" ? (controller.getCancellationReason() ?? caught) : caught;
@@ -1059,7 +1174,9 @@ async function waitForTerminalExecution(
 }
 
 function readExecutionResult(record: ExecutionRecord): unknown {
-  if (record.status === "succeeded") return record.output;
+  if (record.status === "succeeded") {
+    return record.output === undefined ? undefined : unwrapInvocationHandoff(record.output);
+  }
   throw new Error(
     record.error === undefined
       ? `Execution ${record.status}: ${record.executionId}`

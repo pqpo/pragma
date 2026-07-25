@@ -24,9 +24,7 @@ afterEach(async () => {
   await Promise.all(
     tempDirs
       .splice(0)
-      .map((dir) =>
-        rm(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }),
-      ),
+      .map((dir) => rm(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 })),
   );
 });
 
@@ -38,10 +36,9 @@ describe("ExpertSession human interaction recovery", () => {
     const sessions = createFileExpertSessionStore({ executions, pragmaHome: home });
     const now = new Date().toISOString();
     await sessions.create({
-      schemaVersion: "pragma.expert-session/v4",
+      schemaVersion: "pragma.expert-session/v5",
       sessionId: "stale-lease-session",
       expertId: "expert",
-      expertVersion: "1.0.0",
       definitionFingerprint: "a".repeat(64),
       status: "open",
       queuedRequestIds: [],
@@ -49,11 +46,11 @@ describe("ExpertSession human interaction recovery", () => {
       rootContextId: "root",
       contexts: {
         root: {
-          schemaVersion: "pragma.runtime-context/v4",
+          schemaVersion: "pragma.runtime-context/v5",
           contextId: "root",
           owner: { type: "expert-session", ownerId: "stale-lease-session" },
           origin: { type: "expert-session", sessionId: "stale-lease-session" },
-          expert: { id: "expert", version: "1.0.0" },
+          expert: { id: "expert" },
           runtime: { runtimeId: "fake", revision: 1, fingerprint: "a".repeat(64) },
           lifecycle: "open",
           createdAt: now,
@@ -74,9 +71,9 @@ describe("ExpertSession human interaction recovery", () => {
       "utf8",
     );
 
-    await expect(
-      sessions.claimLease("stale-lease-session", "new-owner", 30_000),
-    ).resolves.toBe(true);
+    await expect(sessions.claimLease("stale-lease-session", "new-owner", 30_000)).resolves.toBe(
+      true,
+    );
     await sessions.releaseLease("stale-lease-session", "new-owner");
   });
 
@@ -161,7 +158,6 @@ describe("ExpertSession human interaction recovery", () => {
       name: "Human recovery expert",
       description: "Exercises restart recovery.",
       tags: [],
-      version: "1.0.0",
       scope: "test",
       workspace: home,
       pragmaHome: home,
@@ -173,14 +169,12 @@ describe("ExpertSession human interaction recovery", () => {
     const now = new Date().toISOString();
     const definition = {
       id: expert.id,
-      version: expert.version,
       kind: "expert" as const,
     };
     await sessions.create({
-      schemaVersion: "pragma.expert-session/v4",
+      schemaVersion: "pragma.expert-session/v5",
       sessionId,
       expertId: expert.id,
-      expertVersion: expert.version,
       definitionFingerprint: fingerprintExpertExecutionDefinition(expert),
       status: "open",
       activeExecutionId: executionId,
@@ -189,11 +183,11 @@ describe("ExpertSession human interaction recovery", () => {
       rootContextId: contextId,
       contexts: {
         [contextId]: {
-          schemaVersion: "pragma.runtime-context/v4",
+          schemaVersion: "pragma.runtime-context/v5",
           contextId,
           owner: { type: "expert-session", ownerId: sessionId },
           origin: { type: "expert-session", sessionId },
-          expert: { id: expert.id, version: expert.version },
+          expert: { id: expert.id },
           runtime: runtimeBinding,
           lifecycle: "open",
           createdAt: now,
@@ -205,7 +199,7 @@ describe("ExpertSession human interaction recovery", () => {
     });
     await executions.create(
       {
-        schemaVersion: "pragma.execution/v5",
+        schemaVersion: "pragma.execution/v7",
         executionId,
         version: 0,
         kind: "expert-turn",

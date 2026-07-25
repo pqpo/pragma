@@ -8,6 +8,7 @@ import {
   type PragmaResource,
   type PragmaRuntimeProfileResource,
 } from "@pragma/interpreter/ast";
+import { derivePragmaResourceId, generatePragmaResourceId } from "@pragma/core";
 
 import {
   CreateExpertDefinitionSchema,
@@ -60,9 +61,11 @@ export class ExpertDefinitionStoreError extends Error {
   }
 }
 
+type ExpertDefinitionWrite = Omit<CreateExpertDefinition, "baseRevision" | "requiredUnchangedRefs">;
+
 /**
  * Form projection used by the current Desktop expert editor. Persistence is exclusively the
- * versioned Pragma YAML project; this adapter does not read or write a parallel expert format.
+ * Pragma YAML project; this adapter does not read or write a parallel expert format.
  */
 export function createExpertDefinitionStore(options: {
   readonly project: PragmaProjectStore;
@@ -75,6 +78,7 @@ export function createExpertDefinitionStore(options: {
     readonly resource: PragmaExpertResource;
     readonly revision: number;
     readonly updatedAt: string;
+    readonly resources: readonly PragmaResource[];
   }> => {
     const snapshot = await options.project.get();
     const resource = snapshot.resources.find(
@@ -88,6 +92,7 @@ export function createExpertDefinitionStore(options: {
       resource,
       revision: snapshot.revision,
       updatedAt: snapshot.updatedAt ?? new Date(0).toISOString(),
+      resources: snapshot.resources,
     };
   };
 
@@ -119,35 +124,21 @@ export function createExpertDefinitionStore(options: {
         found.resource,
         found.revision,
         found.updatedAt,
-        (await options.project.get()).resources,
+        found.resources,
       );
     },
     async create(input) {
       const parsed = CreateExpertDefinitionSchema.parse(input);
-      if (options.systemExperts.isReservedId(parsed.id)) {
-        throw new ExpertDefinitionStoreError(
-          "built_in_readonly",
-          `Expert ID ${parsed.id} is reserved by a built-in Expert.`,
-        );
-      }
       await options.validateModel(parsed.model);
       const snapshot = await options.project.get();
-      const requestedRef = `expert:${parsed.id}@${parsed.version}`;
-      if (
-        snapshot.resources.some(
-          (resource) =>
-            resource.kind === "Expert" && canonicalPragmaResourceRef(resource) === requestedRef,
-        )
-      ) {
-        throw new ExpertDefinitionStoreError(
-          "expert_exists",
-          `Expert ${parsed.id} already exists.`,
-        );
-      }
-      const definitions = definitionToResources(parsed);
-      const updated = await options.project.publish({
-        expectedRevision: snapshot.revision,
-        resources: mergeResources(snapshot.resources, definitions),
+      const id = allocateExpertId(snapshot.resources, options.systemExperts);
+      const requestedRef = `expert:${id}`;
+      const { baseRevision, requiredUnchangedRefs, ...definition } = parsed;
+      const definitions = definitionToResources(definition, id);
+      const updated = await options.project.apply({
+        baseRevision,
+        upserts: definitions,
+        requiredUnchangedRefs,
       });
       const resource = updated.resources.find(
         (candidate): candidate is PragmaExpertResource =>
@@ -169,6 +160,7 @@ export function createExpertDefinitionStore(options: {
       }
       const parsed = UpdateExpertDefinitionSchema.parse(input);
       await options.validateModel(parsed.model);
+      const { baseRevision, ...definition } = parsed;
       const snapshot = await options.project.get();
       const current = snapshot.resources.find(
         (resource): resource is PragmaExpertResource =>
@@ -177,28 +169,33 @@ export function createExpertDefinitionStore(options: {
       if (current === undefined) {
         throw new ExpertDefinitionStoreError("expert_not_found", "The expert no longer exists.");
       }
-      const definitions = definitionToResources({ ...parsed, id: current.metadata.id }, current);
+      const definitions = definitionToResources(definition, current.metadata.id, current);
       const nextExpert = definitions.find(
         (resource): resource is PragmaExpertResource => resource.kind === "Expert",
       )!;
       const nextRef = canonicalPragmaResourceRef(nextExpert);
-      if (
-        nextRef !== id &&
-        snapshot.resources.some((resource) => canonicalPragmaResourceRef(resource) === nextRef)
-      ) {
-        throw new ExpertDefinitionStoreError("expert_exists", `Expert ${nextRef} already exists.`);
-      }
       const replacedRefs = new Set([canonicalPragmaResourceRef(current)]);
-      const updated = await options.project.publish({
-        expectedRevision: snapshot.revision,
-        resources: pruneUnreferencedDesktopResources(
-          mergeResources(
-            snapshot.resources.filter(
-              (resource) => !replacedRefs.has(canonicalPragmaResourceRef(resource)),
-            ),
-            definitions,
-          ),
+      const previousDependencyRefs = referencedPragmaResourceRefs([current]);
+      const nextResources = mergeResources(
+        snapshot.resources.filter(
+          (resource) => !replacedRefs.has(canonicalPragmaResourceRef(resource)),
         ),
+        definitions,
+      );
+      const nextReferencedRefs = referencedPragmaResourceRefs(nextResources);
+      const updated = await options.project.apply({
+        baseRevision,
+        upserts: definitions,
+        removals: [
+          ...snapshot.resources
+            .filter(
+              (resource) =>
+                isDesktopManagedDependency(resource) &&
+                previousDependencyRefs.has(canonicalPragmaResourceRef(resource)) &&
+                !nextReferencedRefs.has(canonicalPragmaResourceRef(resource)),
+            )
+            .map(canonicalPragmaResourceRef),
+        ],
       });
       const resource = updated.resources.find(
         (candidate): candidate is PragmaExpertResource =>
@@ -240,32 +237,36 @@ export function createExpertDefinitionStore(options: {
           "This Expert is used by an Expert Team, Flow, or resource tool. Remove those dependencies before deleting it.",
         );
       }
-      await options.project.publish({
-        expectedRevision: snapshot.revision,
-        resources: pruneUnreferencedDesktopResources(
-          snapshot.resources.filter(
-            (candidate) =>
-              canonicalPragmaResourceRef(candidate) !== canonicalPragmaResourceRef(resource),
-          ),
+      const retainedResources = pruneUnreferencedDesktopResources(
+        snapshot.resources.filter(
+          (candidate) =>
+            canonicalPragmaResourceRef(candidate) !== canonicalPragmaResourceRef(resource),
         ),
+      );
+      const retainedRefs = new Set(retainedResources.map(canonicalPragmaResourceRef));
+      await options.project.apply({
+        baseRevision: snapshot.revision,
+        removals: snapshot.resources
+          .map(canonicalPragmaResourceRef)
+          .filter((ref) => !retainedRefs.has(ref)),
       });
     },
   };
 }
 
 function definitionToResources(
-  definition: CreateExpertDefinition & { readonly id: string },
+  definition: ExpertDefinitionWrite,
+  expertId: string,
   current?: PragmaExpertResource,
 ): PragmaResource[] {
-  const runtimeId = `${definition.id}_runtime`;
-  const runtimeRef = `runtime-profile:${runtimeId}@${definition.version}`;
+  const runtimeId = derivePragmaResourceId(`desktop-managed:runtime:${expertId}`);
+  const runtimeRef = `runtime-profile:${runtimeId}`;
   const selectedModel = definition.model;
   const runtime = PragmaRuntimeProfileResourceSchema.parse({
-    apiVersion: "pragma/v2",
+    apiVersion: "pragma/v3",
     kind: "RuntimeProfile",
     metadata: {
       id: runtimeId,
-      version: definition.version,
       name: `${definition.name} Runtime`,
       description: `Runtime profile for ${definition.name}.`,
       tags: ["desktop-managed"],
@@ -284,11 +285,10 @@ function definitionToResources(
   });
   const capabilityResources = (definition.capabilities ?? []).map((capability) =>
     PragmaCapabilityResourceSchema.parse({
-      apiVersion: "pragma/v2",
+      apiVersion: "pragma/v3",
       kind: "Capability",
       metadata: {
         id: desktopCapabilityResourceId(capability.capabilityId),
-        version: String(capability.revision),
         name: `Capability ${capability.capabilityId}`,
         description: "Desktop-managed capability binding.",
         tags: ["desktop-managed"],
@@ -302,11 +302,10 @@ function definitionToResources(
   );
   const contextResources = (definition.contextStoreMounts ?? []).map((mount) =>
     PragmaContextStoreResourceSchema.parse({
-      apiVersion: "pragma/v2",
+      apiVersion: "pragma/v3",
       kind: "ContextStore",
       metadata: {
         id: desktopContextResourceId(mount.storeId),
-        version: "1.0.0",
         name: `Context ${mount.storeId}`,
         description: "Desktop-managed context store binding.",
         tags: ["desktop-managed"],
@@ -319,11 +318,10 @@ function definitionToResources(
     }),
   );
   const expert = PragmaExpertResourceSchema.parse({
-    apiVersion: "pragma/v2",
+    apiVersion: "pragma/v3",
     kind: "Expert",
     metadata: {
-      id: definition.id,
-      version: definition.version,
+      id: expertId,
       name: definition.name,
       description: definition.description,
       tags: definition.tags,
@@ -334,7 +332,7 @@ function definitionToResources(
       runtime: { ref: runtimeRef },
       capabilities: [
         ...(definition.capabilities ?? []).map((capability) => ({
-          ref: `capability:${desktopCapabilityResourceId(capability.capabilityId)}@${capability.revision}`,
+          ref: `capability:${desktopCapabilityResourceId(capability.capabilityId)}`,
           kind: capability.kind,
           ...(capability.kind === "tools" ? { tools: capability.toolNames } : {}),
         })),
@@ -348,7 +346,7 @@ function definitionToResources(
       })),
       contextStores: [
         ...(definition.contextStoreMounts ?? []).map((mount) => ({
-          ref: `context-store:${desktopContextResourceId(mount.storeId)}@1.0.0`,
+          ref: `context-store:${desktopContextResourceId(mount.storeId)}`,
           namespace: desktopContextResourceId(mount.storeId),
           required: mount.enabled,
         })),
@@ -437,7 +435,7 @@ export function pragmaExpertResourceToDesktopDefinition(
       declared.metadata.tags.includes("desktop-managed")
         ? parseDesktopCapabilityBindingRef(declared.spec.binding ?? "")
         : undefined;
-    if (desktopBinding === undefined || !capability.ref.endsWith(`@${desktopBinding.revision}`)) {
+    if (desktopBinding === undefined) {
       opaqueCapabilities.push(capability);
     } else if (capability.kind === "tools") {
       capabilities.push({
@@ -479,7 +477,6 @@ export function pragmaExpertResourceToDesktopDefinition(
     name: resource.metadata.name,
     description: resource.metadata.description,
     tags: resource.metadata.tags,
-    version: resource.metadata.version,
     scope: resource.spec.scope,
     instructions: resource.spec.instructions,
     additionalInstructions: "",
@@ -506,11 +503,23 @@ export function pragmaExpertResourceToDesktopDefinition(
 }
 
 function desktopCapabilityResourceId(id: string): string {
-  return `capability_${id.replaceAll("-", "")}`;
+  return derivePragmaResourceId(`desktop-managed:capability:${id}`);
 }
 
 function desktopContextResourceId(id: string): string {
-  return `context_${id.replaceAll("-", "")}`;
+  return derivePragmaResourceId(`desktop-managed:context:${id}`);
+}
+
+function allocateExpertId(
+  resources: readonly PragmaResource[],
+  systemExperts: DesktopSystemExpertRegistry,
+): string {
+  const used = new Set(resources.map((resource) => resource.metadata.id));
+  for (let attempt = 0; attempt < 64; attempt += 1) {
+    const candidate = generatePragmaResourceId();
+    if (!used.has(candidate) && !systemExperts.isReservedId(candidate)) return candidate;
+  }
+  throw new ExpertDefinitionStoreError("expert_exists", "Could not allocate a unique Expert ID.");
 }
 
 function desktopModel(

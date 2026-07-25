@@ -35,7 +35,7 @@ function resourceDetails(resource: InvocableResource): {
   return {
     kind,
     label: resource.kind === "ExpertTeam" ? "Expert team" : resource.kind,
-    ref: `${kind}:${resource.metadata.id}@${resource.metadata.version}`,
+    ref: `${kind}:${resource.metadata.id}`,
   };
 }
 
@@ -492,13 +492,7 @@ function ResourceResults(props: {
   const { t } = useTranslation("studio");
   const visible = props.resources.filter((resource) => {
     const details = resourceDetails(resource);
-    return includesQuery(
-      props.query,
-      resource.metadata.name,
-      resource.metadata.id,
-      resource.metadata.version,
-      details.label,
-    );
+    return includesQuery(props.query, resource.metadata.name, resource.metadata.id, details.label);
   });
   if (visible.length === 0)
     return <EmptyResults hasQuery={Boolean(props.query.trim())} label={t("resources")} />;
@@ -542,7 +536,6 @@ function ResourceResults(props: {
                   : details.kind === "expert"
                     ? t("expert")
                     : t("flow")}{" "}
-                · {resource.metadata.version}
               </small>
             </span>
           </label>

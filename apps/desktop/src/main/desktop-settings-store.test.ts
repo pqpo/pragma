@@ -4,7 +4,8 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { createDesktopSettingsStore, resolveDesktopLocale } from "./desktop-settings-store.ts";
+import { resolveDesktopLocale } from "../shared/desktop-locale.ts";
+import { createDesktopSettingsStore } from "./desktop-settings-store.ts";
 
 const temporaryDirectories: string[] = [];
 

@@ -43,6 +43,7 @@ import { installWorkspaceScopeHandlers, validateWorkspace } from "./workspace-sc
 import { createWorkspaceHistoryStore } from "./workspace-history-store.ts";
 import { createDesktopDefaultAgentProjectPort } from "./default-agent-project-adapter.ts";
 import { createDesktopDefaultAgentTaskPort } from "./default-agent-task-adapter.ts";
+import { createDesktopDefaultAgentAutomationPort } from "./default-agent-automation-adapter.ts";
 import { createDesktopSystemExpertRegistry } from "./system-expert-registry.ts";
 import { initializeDesktopStorage } from "./storage-bootstrap.ts";
 import {
@@ -53,6 +54,9 @@ import { createAutomaticToolPermissionHandler } from "./tool-permission-policy.t
 import { installWorkflowLayoutHandlers } from "./workflow-layout-ipc.ts";
 import { createWorkflowLayoutStore } from "./workflow-layout-store.ts";
 import { SetDefaultRuntimeSchema } from "../shared/desktop-api.ts";
+import { installAutomationHandlers } from "./automation-ipc.ts";
+import { createAutomationService } from "./automation-service.ts";
+import { createAutomationStore } from "./automation-store.ts";
 
 const currentDir = dirname(fileURLToPath(import.meta.url));
 const applicationId = "dev.pragma.desktop";
@@ -101,6 +105,20 @@ async function createWindow(): Promise<void> {
   });
 
   const window = mainWindow;
+
+  window.webContents.on("preload-error", (_event, preloadPath, error) => {
+    console.error(`Desktop preload failed: ${preloadPath}`, error);
+  });
+
+  window.webContents.on(
+    "did-fail-load",
+    (_event, errorCode, errorDescription, validatedUrl, isMainFrame) => {
+      if (!isMainFrame) return;
+      console.error(
+        `Desktop renderer failed to load ${validatedUrl} (${errorCode}): ${errorDescription}.`,
+      );
+    },
+  );
 
   window.on("ready-to-show", () => {
     window.show();
@@ -210,7 +228,19 @@ void app.whenReady().then(async () => {
   await runtimeEnvironments.initialize();
   const runtimes = createRuntimeEnvironmentService({
     store: runtimeEnvironments,
-    factories: createBuiltInRuntimeFactories(modelProviderStore, getToolPermissionMode),
+    factories: createBuiltInRuntimeFactories(
+      modelProviderStore,
+      getToolPermissionMode,
+      (runtimeId) => {
+        if (
+          mainWindow !== null &&
+          !mainWindow.isDestroyed() &&
+          !mainWindow.webContents.isDestroyed()
+        ) {
+          mainWindow.webContents.send("runtimes:model-catalog:updated", runtimeId);
+        }
+      },
+    ),
   });
   const missionExecutors = createMissionExecutorCatalog({
     project: pragmaProjectStore,
@@ -390,6 +420,17 @@ void app.whenReady().then(async () => {
       });
     },
   });
+  const automationService = createAutomationService({
+    paths: pragmaPaths,
+    project: pragmaProjectStore,
+    store: createAutomationStore(pragmaPaths, pragmaProjectStore.projectId),
+    missions: missionStore,
+    creator: missionCreator,
+    runner: missionRunner,
+  });
+  installAutomationHandlers(automationService);
+  await automationService.start();
+  app.once("before-quit", () => automationService.stop());
   const defaultAgentTasks = createDesktopDefaultAgentTaskPort({
     missions: missionStore,
     runner: missionRunner,
@@ -399,6 +440,11 @@ void app.whenReady().then(async () => {
   defaultAgentToolsRef.current = createDefaultAgentTools({
     project: defaultAgentProject,
     tasks: defaultAgentTasks,
+    automations: createDesktopDefaultAgentAutomationPort({
+      service: automationService,
+      project: pragmaProjectStore,
+      stateRoot: defaultAgentStateRoot,
+    }),
   });
   installMissionHandlers({
     missions: missionStore,

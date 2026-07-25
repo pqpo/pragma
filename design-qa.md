@@ -49,6 +49,63 @@ final result: passed
 
 ---
 
+# Desktop Flow 独立逻辑节点 Design QA
+
+- Source visual truth: `/tmp/codex-remote-attachments/019f8ec1-027e-77a1-8620-204da8d4a872/f43dc8f8-cdaf-4eef-9e94-f3b081ab1252/1-Photo-1.jpg`
+- Implementation screenshots and the combined comparison were used for local QA only and are
+  intentionally not tracked in Git.
+- Viewport: 1440 × 900 CSS px at DPR 2, light theme, real Electron renderer with preload bridge
+- State: unsaved QA flow containing one Expert step with structured Boolean output `has_issue`, one derived logic node, and generated `true` / `false` branches
+
+## Full-view comparison evidence
+
+The source placed `Transition`, route output, raw cases JSON, and fallback JSON inside the Expert step inspector. The implementation removes those controls from the execution step and projects the same route transition as a separate purple logic node between the Expert step and downstream destinations. Both Boolean branches remain visible on the canvas and terminate independently.
+
+## Focused-region comparison evidence
+
+- Connecting the Expert result port to an unbound logic node automatically selected the only scalar structured output, `has_issue`.
+- The inspector shows the reader-facing path `expert_1.result.has_issue · boolean`; the generated DSL saves `route: has_issue`, without the invalid `result.` prefix.
+- Boolean output generates fixed `true` and `false` branch rows and matching canvas ports.
+- Raw transition DSL is hidden under Advanced settings and is read-only.
+- The structured-field select has one visible boundary in its normal state. Keyboard focus adds one clear outer ring without a nested input border.
+- No renderer console or page errors were observed during drag, connect, panel toggle, focus, and Advanced-settings interactions.
+
+## Required fidelity surfaces
+
+- Fonts and typography: the existing Desktop system font stack, hierarchy, muted helper copy, and monospace branch values are preserved.
+- Spacing and layout rhythm: the inspector follows the existing section/divider rhythm; the logic node aligns with existing Expert and terminal nodes after Auto arrange and Fit canvas.
+- Colors and visual tokens: existing green workflow tokens remain unchanged; logic-specific identity uses the established purple accent with matching selected and inspector icon states.
+- Image quality and asset fidelity: no raster UI assets were added; the new node uses the existing Phosphor icon set and remains sharp at DPR 2.
+- Copy and content: the inspector explains the displayed result path versus the persisted root field, replaces raw JSON authoring with branch rows, and localizes the new controls in all three supported locales.
+
+## Comparison history
+
+1. The first draft showed the expected inspector but the graph was partially outside the narrowed canvas after Auto arrange. Applying the existing Fit canvas action after panel width changes restored the complete flow inside the visible canvas.
+2. The initial QA graph contained an extra disconnected Expert node, reducing the fitted node scale. Removing that QA-only node produced the final focused graph evidence.
+3. Post-fix evidence confirms the standalone logic node, inferred Boolean field, generated branches, Advanced DSL disclosure, responsive panel toggles, and keyboard-focus state.
+
+## Findings
+
+No actionable P0, P1, or P2 visual, interaction, or accessibility differences remain for the requested logic-node workflow. The QA draft intentionally remained unpublished because the local fixture only exposes an unavailable placeholder Expert; this does not affect the logic-node UI or transition serialization checks.
+
+## Implementation checklist
+
+- [x] Remove route authoring from the execution-step inspector.
+- [x] Add a standalone logic node to the palette and canvas.
+- [x] Infer scalar structured outputs from the upstream step.
+- [x] Generate Boolean branches and visible branch edges.
+- [x] Keep generated transition DSL under Advanced settings.
+- [x] Verify normal and keyboard-focus control states.
+- [x] Verify real Electron rendering and console state.
+
+## Follow-up polish
+
+None required for this change.
+
+final result: passed
+
+---
+
 # Design QA: plugin declarations module
 
 - Source visual truth: `/var/folders/7y/x39kntq56gvcfdymbtjb36280000gn/T/codex-clipboard-eb8eedca-421d-4bb3-bbae-0d36befc0a9e.png`

@@ -1,8 +1,7 @@
 {
   "extends": "@pragma/tsconfig/base.json",
   "compilerOptions": {
-    "rootDir": "src",
     "outDir": "dist"
   },
-  "include": ["src"]
+  "include": ["src", "test", "vitest.config.ts"]
 }

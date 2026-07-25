@@ -8,6 +8,9 @@ import {
   createStaticRuntimeResolver,
   defineExpert,
   defineRuntimeDriver,
+  fingerprintExpertExecutionDefinition,
+  PragmaPaths,
+  readRuntimeSessionRecord,
   type RuntimeDriverSessionContext,
   type RuntimeModelSelection,
   type RuntimeResolver,
@@ -28,7 +31,7 @@ import {
 import type { CapabilityCredentialStore } from "./capability-credential-store.ts";
 import type { CapabilityStore } from "./capability-store.ts";
 import { createMissionRunner } from "./mission-runner.ts";
-import { createMissionStore, type MissionStore } from "./mission-store.ts";
+import { createMissionStore } from "./mission-store.ts";
 import { createPragmaProjectStore } from "./pragma-project-store.ts";
 
 const temporaryPaths: string[] = [];
@@ -42,6 +45,124 @@ afterEach(async () => {
 });
 
 describe("MissionRunner", { timeout: 15_000 }, () => {
+  it("projects and compacts the persisted root context window", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pragma-mission-context-window-"));
+    temporaryPaths.push(root);
+    const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
+    const snapshot = await project.publish({
+      expectedRevision: 0,
+      resources: [runtimeFixture(), expertFixture()],
+    });
+    const missions = createMissionStore({ missionsPath: join(root, "missions") });
+    const mission = await missions.create({
+      workspace: { path: root, basename: "workspace" },
+      goal: "Track the root context",
+      project: { id: snapshot.projectId, revision: snapshot.revision },
+      executor: missionExecutorSnapshot(
+        snapshot.resources.find((resource) => resource.kind === "Expert")!,
+      ),
+    });
+    const compactContext = vi.fn(() => ({
+      usedTokens: 10_000,
+      contextWindowTokens: 200_000,
+      percent: 5,
+      measurement: "reported" as const,
+      observedAt: new Date().toISOString(),
+    }));
+    const runtime = defineRuntimeDriver<never, { id: string }>({
+      descriptor: { id: "fake", kind: "fake", displayName: "Fake" },
+      createSession: () => ({ id: "runtime" }),
+      restoreSession: () => ({ id: "runtime" }),
+      readSession: (session) => ({ runtimeSessionId: session.id }),
+      startTurn: () => ({ outputText: "done", runtimeSessionId: "runtime" }),
+      mapEvent: () => ({ events: [] }),
+      readContextWindow: () => ({
+        usedTokens: 50_000,
+        contextWindowTokens: 200_000,
+        percent: 25,
+        measurement: "reported",
+        observedAt: new Date().toISOString(),
+      }),
+      compactContext,
+    });
+    const runtimes = createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" });
+    const createRunner = () =>
+      createMissionRunner({
+        missions,
+        project,
+        capabilityStore: {} as CapabilityStore,
+        capabilityCredentials: {} as CapabilityCredentialStore,
+        capabilitiesPath: join(root, "capabilities"),
+        pragmaHome: join(root, "state"),
+        runtimes,
+      });
+    const runner = createRunner();
+
+    await runner.run(mission.id);
+    await vi.waitFor(
+      async () => expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
+      { timeout: settlementTimeoutMs },
+    );
+    await expect(runner.getChat({ id: mission.id, limit: 50 })).resolves.toMatchObject({
+      contextWindow: {
+        supportsInspection: true,
+        supportsCompaction: true,
+        canCompact: true,
+        usage: { usedTokens: 50_000, contextWindowTokens: 200_000, percent: 25 },
+      },
+    });
+    await expect(runner.compactContext(mission.id)).resolves.toMatchObject({
+      canCompact: true,
+      usage: { usedTokens: 10_000, percent: 5 },
+    });
+    expect(compactContext).toHaveBeenCalledOnce();
+
+    const storedMission = await missions.get(mission.id);
+    const storedSession = await createFileExpertSessionStore({
+      executions: createFileExecutionStore({ pragmaHome: join(root, "state") }),
+      pragmaHome: join(root, "state"),
+    }).get(storedMission.execution!.sessionId!);
+    const storedRootContext = storedSession?.contexts[storedSession.rootContextId];
+    const storedRuntimeSession = await readRuntimeSessionRecord(
+      new PragmaPaths({ pragmaHome: join(root, "state") }),
+      storedMission.execution!.sessionId!,
+      storedRootContext!.snapshot!.systemSessionId,
+    );
+    expect(storedRuntimeSession.contextWindowUsage).toMatchObject({
+      usedTokens: 10_000,
+      percent: 5,
+    });
+
+    await expect(createRunner().getChat({ id: mission.id, limit: 50 })).resolves.toMatchObject({
+      contextWindow: {
+        canCompact: true,
+        usage: { usedTokens: 10_000, contextWindowTokens: 200_000, percent: 5 },
+      },
+    });
+
+    const unavailableRuntimes: RuntimeResolver = {
+      getDefaultRuntimeId: async () => "fake",
+      bind: async () => {
+        throw new Error("Runtime is unavailable.");
+      },
+      resolve: async () => {
+        throw new Error("Runtime is unavailable.");
+      },
+    };
+    const unavailableRunner = createMissionRunner({
+      missions,
+      project,
+      capabilityStore: {} as CapabilityStore,
+      capabilityCredentials: {} as CapabilityCredentialStore,
+      capabilitiesPath: join(root, "capabilities"),
+      pragmaHome: join(root, "state"),
+      runtimes: unavailableRuntimes,
+    });
+    const chatWithoutRuntime = await unavailableRunner.getChat({ id: mission.id, limit: 50 });
+    expect(chatWithoutRuntime.entries).not.toHaveLength(0);
+    expect(chatWithoutRuntime.contextWindow).toBeUndefined();
+  });
+
   it("streams rich chat activity and interrupts the active execution", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-mission-interrupt-"));
     temporaryPaths.push(root);
@@ -499,7 +620,7 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
     });
   });
 
-  it("compiles and runs the resource pinned by Mission v3", async () => {
+  it("compiles and runs the resource pinned by a Mission", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-mission-runner-"));
     temporaryPaths.push(root);
     const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
@@ -627,7 +748,10 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
     );
     await expect(runner.getChat({ id: mission.id, limit: 50 })).resolves.toMatchObject({
       entries: expect.arrayContaining([
-        expect.objectContaining({ kind: "assistant", content: "writer:Prepare a concise answer" }),
+        expect.objectContaining({
+          kind: "assistant",
+          content: "1xddvess309a6gme:Prepare a concise answer",
+        }),
       ]),
     });
 
@@ -673,9 +797,9 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
         .map((entry) => entry.content),
     ).toEqual([
       "Prepare a concise answer",
-      "writer:Prepare a concise answer",
+      "1xddvess309a6gme:Prepare a concise answer",
       "Make it shorter",
-      "writer:Make it shorter",
+      "1xddvess309a6gme:Make it shorter",
     ]);
     expect(startTurn).toHaveBeenCalledTimes(2);
     expect(startTurn.mock.calls[1]?.[1].modelSelection).toEqual({
@@ -694,7 +818,7 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
           expect.objectContaining({
             kind: "root",
             status: "succeeded",
-            executorId: "writer",
+            executorId: "1xddvess309a6gme",
             title: "Writer",
           }),
         ],
@@ -1002,7 +1126,6 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
           name: "Writer",
           description: "Runtime binding test Expert",
           tags: [],
-          version: "1.0.0",
           scope: "test",
           workspace: current.workspace.path,
           pragmaHome: join(root, "state"),
@@ -1112,15 +1235,16 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
       defaultRuntimeId: "fake",
     });
     const expert = await defineExpert({
-      id: "writer",
+      id: "1xddvess309a6gme",
       name: "Writer",
-      description: "Recovery test Expert",
+      description: "Writes concise answers",
       tags: [],
-      version: "1.0.0",
-      scope: "test",
+      scope: "Writing",
+      instructions: "Write concise answers.",
       workspace: root,
       pragmaHome,
       defaultRuntimeId: "fake",
+      models: { default: { model: { providerId: "test", modelId: "test-model" } } },
     });
     const executions = createFileExecutionStore({ pragmaHome });
     const expertSessions = createFileExpertSessionStore({ executions, pragmaHome });
@@ -1130,13 +1254,12 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
     const contextId = "30000000-0000-4000-8000-000000000001";
     const interactionId = "pending-question";
     const startedAt = new Date().toISOString();
-    const definition = { id: expert.id, version: expert.version, kind: "expert" as const };
+    const definition = { id: expert.id, kind: "expert" as const };
     await expertSessions.create({
-      schemaVersion: "pragma.expert-session/v4",
+      schemaVersion: "pragma.expert-session/v5",
       sessionId,
       expertId: expert.id,
-      expertVersion: expert.version,
-      definitionFingerprint: "a".repeat(64),
+      definitionFingerprint: fingerprintExpertExecutionDefinition(expert),
       status: "open",
       activeExecutionId: executionId,
       queuedRequestIds: [],
@@ -1144,11 +1267,11 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
       rootContextId: contextId,
       contexts: {
         [contextId]: {
-          schemaVersion: "pragma.runtime-context/v4",
+          schemaVersion: "pragma.runtime-context/v5",
           contextId,
           owner: { type: "expert-session", ownerId: sessionId },
           origin: { type: "expert-session", sessionId },
-          expert: { id: expert.id, version: expert.version },
+          expert: { id: expert.id },
           runtime: runtimeBinding,
           lifecycle: "open",
           createdAt: startedAt,
@@ -1160,7 +1283,7 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
     });
     await executions.create(
       {
-        schemaVersion: "pragma.execution/v5",
+        schemaVersion: "pragma.execution/v7",
         executionId,
         version: 0,
         kind: "expert-turn",
@@ -1275,12 +1398,11 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
     expect(await expertSessions.listPrompts(sessionId)).toHaveLength(1);
   });
 
-  it("round-trips a Flow human interaction and resolves same-id resources by kind", async () => {
+  it("round-trips a Flow human interaction with globally unique resource IDs", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-mission-human-"));
     temporaryPaths.push(root);
     const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
     const expert = expertFixture();
-    expert.metadata.id = "review";
     const runtimeProfile = runtimeFixture("unregistered");
     const snapshot = await project.publish({
       expectedRevision: 0,
@@ -1291,6 +1413,7 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
     const mission = await missions.create({
       workspace: { path: root, basename: "workspace" },
       goal: "Review the release",
+      flowInput: { goal: "Review the release", workspace: root },
       project: { id: snapshot.projectId, revision: snapshot.revision },
       executor: missionExecutorSnapshot(flow),
     });
@@ -1319,15 +1442,20 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
       { timeout: settlementTimeoutMs },
     );
     const waitingMission = await missions.get(mission.id);
-    const rejectRecoveryReference = vi.fn(async () => {
-      throw new Error("timeline preflight failed");
+    const executionStore = createFileExecutionStore({ pragmaHome: join(root, "state") });
+    const execution = (await executionStore.get(waitingMission.execution!.id))!;
+    await executionStore.update(execution.executionId, {
+      state: {
+        ...execution.state,
+        __recoveryClaim: {
+          claimId: "exited-desktop-process",
+          processId: 2_147_483_647,
+          expiresAt: new Date(Date.now() + 30_000).toISOString(),
+        },
+      },
     });
-    const recoveryMissions = {
-      ...missions,
-      appendExecutionReference: rejectRecoveryReference,
-    } satisfies MissionStore;
     const restartingRunner = createMissionRunner({
-      missions: recoveryMissions,
+      missions,
       project,
       capabilityStore: {} as CapabilityStore,
       capabilityCredentials: {} as CapabilityCredentialStore,
@@ -1335,14 +1463,8 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
       pragmaHome: join(root, "state"),
       runtimes: createStaticRuntimeResolver({ runtimes: [runtime], defaultRuntimeId: "fake" }),
     });
-    await expect(restartingRunner.run(mission.id)).rejects.toThrow("timeline preflight failed");
-    expect(rejectRecoveryReference).toHaveBeenCalledWith({
-      missionId: mission.id,
-      inputMessageId: waitingMission.execution?.inputMessageId,
-      executionId: waitingMission.execution?.id,
-      createdAt: waitingMission.execution?.startedAt,
-    });
-    await expect(runner.getWork(mission.id)).resolves.toEqual(
+    await restartingRunner.run(mission.id);
+    await expect(restartingRunner.getWork(mission.id)).resolves.toEqual(
       expect.objectContaining({
         records: expect.arrayContaining([
           expect.objectContaining({ kind: "flow" }),
@@ -1350,14 +1472,16 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
         ]),
       }),
     );
-    const interactions = await runner.listHumanInteractions(mission.id);
+    const interactions = await restartingRunner.listHumanInteractions(mission.id);
     expect(interactions).toHaveLength(1);
-    expect(interactions[0]?.request.kind).toBe("approval");
-    await runner.respondToHumanInteraction({
+    expect(interactions[0]?.request.kind).toBe("question");
+    await restartingRunner.respondToHumanInteraction({
       missionId: mission.id,
       interactionId: interactions[0]!.interactionId,
       requestId: "00000000-0000-4000-8000-000000000001",
-      response: { approved: true, decision: "approved" },
+      response: {
+        answers: { "Approve the release?": "Ship" },
+      },
     });
     await vi.waitFor(
       async () => expect((await missions.get(mission.id)).execution?.status).toBe("succeeded"),
@@ -1365,7 +1489,7 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
     );
   });
 
-  it("projects and truncates replies without copying assistant text into messages.jsonl", async () => {
+  it("projects oversized replies as Handoff references without copying full text", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-mission-reply-"));
     temporaryPaths.push(root);
     const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
@@ -1426,21 +1550,23 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
     const reply = chat.entries.filter((entry) => entry.kind === "assistant").at(-1);
     expect(reply?.kind).toBe("assistant");
     if (reply?.kind !== "assistant") throw new Error("Expected an assistant reply.");
-    expect(reply.content).toHaveLength(200_000);
-    expect(reply.content.endsWith("…")).toBe(true);
+    expect(reply.content.length).toBeLessThan(10_000);
+    expect(reply.content).toContain("[Handoff summary truncated.]");
+    expect(reply.content).toContain("Full output is available through Context System:");
+    expect(reply.content).toContain("pragma.handoff/");
+    expect(reply.content).not.toContain("x".repeat(5_000));
     const timeline = await readFile(join(root, "missions", mission.id, "messages.jsonl"), "utf8");
     expect(timeline).not.toContain('"kind":"assistant"');
-    expect(timeline).not.toContain("x".repeat(1_000));
+    expect(timeline).not.toContain("x".repeat(5_000));
   });
 });
 
 function expertFixture(): PragmaExpertResource {
   return {
-    apiVersion: "pragma/v2",
+    apiVersion: "pragma/v3",
     kind: "Expert",
     metadata: {
-      id: "writer",
-      version: "1.0.0",
+      id: "1xddvess309a6gme",
       name: "Writer",
       description: "Writes concise answers",
       tags: [],
@@ -1448,7 +1574,7 @@ function expertFixture(): PragmaExpertResource {
     spec: {
       scope: "Writing",
       instructions: "Write concise answers.",
-      runtime: { ref: "runtime-profile:writer_runtime@1.0.0" },
+      runtime: { ref: "runtime-profile:rdzgnq05qfqcpqcm" },
       capabilities: [],
       toolApprovals: {},
       contextStores: [],
@@ -1460,11 +1586,10 @@ function expertFixture(): PragmaExpertResource {
 
 function runtimeFixture(runtimeId = "fake"): PragmaRuntimeProfileResource {
   return {
-    apiVersion: "pragma/v2",
+    apiVersion: "pragma/v3",
     kind: "RuntimeProfile",
     metadata: {
-      id: "writer_runtime",
-      version: "1.0.0",
+      id: "rdzgnq05qfqcpqcm",
       name: "Writer Runtime",
       description: "Runtime used by the test writer.",
       tags: [],
@@ -1478,11 +1603,10 @@ function runtimeFixture(runtimeId = "fake"): PragmaRuntimeProfileResource {
 
 function approvalFlowFixture(): PragmaFlowResource {
   return {
-    apiVersion: "pragma/v2",
+    apiVersion: "pragma/v3",
     kind: "Flow",
     metadata: {
-      id: "review",
-      version: "1.0.0",
+      id: "t9ne4d8njvvxv2ea",
       name: "Review",
       description: "Requires approval",
       tags: [],
@@ -1493,8 +1617,14 @@ function approvalFlowFixture(): PragmaFlowResource {
         start: "approve",
         steps: {
           approve: {
-            human: { kind: "approval", prompt: "Approve the release?" },
-            version: "1.0.0",
+            human: {
+              selectionMode: "single",
+              prompt: { segments: [{ text: "Approve the release?" }] },
+              options: [
+                { value: "ship", label: "Ship" },
+                { value: "hold", label: "Hold" },
+              ],
+            },
           },
         },
         loops: {},

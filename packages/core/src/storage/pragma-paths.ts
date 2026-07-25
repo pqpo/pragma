@@ -88,6 +88,30 @@ export class PragmaPaths {
     return join(this.dataRoot(), "missions");
   }
 
+  automationBindingsRoot(): string {
+    return join(this.dataRoot(), "automation-bindings");
+  }
+
+  automationBinding(automationRef: string): string {
+    return join(this.automationBindingsRoot(), `${encodePragmaPathSegment(automationRef)}.json`);
+  }
+
+  automationsStateRoot(): string {
+    return join(this.stateRoot(), "automations");
+  }
+
+  automationStateRoot(automationRef: string): string {
+    return join(this.automationsStateRoot(), encodePragmaPathSegment(automationRef));
+  }
+
+  automationState(automationRef: string): string {
+    return join(this.automationStateRoot(automationRef), "state.json");
+  }
+
+  automationLock(automationRef: string): string {
+    return join(this.automationStateRoot(automationRef), ".lock");
+  }
+
   credentialsRoot(): string {
     return join(this.dataRoot(), "credentials");
   }
@@ -114,6 +138,10 @@ export class PragmaPaths {
 
   expertSessionTransaction(sessionId: string): string {
     return join(this.expertSessionRoot(sessionId), "transaction.json");
+  }
+
+  expertSessionMigration(sessionId: string): string {
+    return join(this.expertSessionRoot(sessionId), "state-migration.json");
   }
 
   expertSessionLease(sessionId: string): string {
@@ -148,6 +176,18 @@ export class PragmaPaths {
     return join(this.executionRoot(executionId), "contexts.json");
   }
 
+  executionHandoffsRoot(executionId: string): string {
+    return join(this.executionRoot(executionId), "handoffs");
+  }
+
+  executionHandoffsManifest(executionId: string): string {
+    return join(this.executionHandoffsRoot(executionId), "manifest.json");
+  }
+
+  executionGeneratedHandoffsRoot(executionId: string): string {
+    return join(this.executionHandoffsRoot(executionId), "generated");
+  }
+
   executionEvents(executionId: string): string {
     return join(this.executionRoot(executionId), "events.jsonl");
   }
@@ -166,6 +206,10 @@ export class PragmaPaths {
 
   executionTransaction(executionId: string): string {
     return join(this.executionRoot(executionId), "transaction.json");
+  }
+
+  executionMigration(executionId: string): string {
+    return join(this.executionRoot(executionId), "state-migration.json");
   }
 
   executionLock(executionId: string): string {

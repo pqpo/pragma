@@ -1,12 +1,27 @@
-import { PragmaDiagnosticSchema, PragmaSemanticResourceRefSchema } from "@pragma/interpreter/ast";
+import {
+  PragmaDiagnosticSchema,
+  PragmaFlowLoopSchema,
+  PragmaFlowResourceSchema,
+  PragmaFlowStepSchema,
+  PragmaFlowTransitionSchema,
+  PragmaMetadataSchema,
+  PragmaSemanticResourceRefSchema,
+} from "@pragma/interpreter/ast";
 import { z } from "zod";
 
 export const DefaultAgentResourceSummarySchema = z.object({
   ref: PragmaSemanticResourceRefSchema,
-  kind: z.enum(["Expert", "ExpertTeam", "Flow", "Capability", "ContextStore", "RuntimeProfile"]),
+  kind: z.enum([
+    "Expert",
+    "ExpertTeam",
+    "Flow",
+    "Automation",
+    "Capability",
+    "ContextStore",
+    "RuntimeProfile",
+  ]),
   name: z.string().min(1),
   description: z.string(),
-  version: z.string().min(1),
 });
 
 export const DefaultAgentDslDocumentSchema = DefaultAgentResourceSummarySchema.extend({
@@ -55,6 +70,94 @@ export const DefaultAgentChangeSetSchema = z.object({
   createdAt: z.string().datetime(),
 });
 
+export const DefaultAgentPrepareResultSchema = z.discriminatedUnion("status", [
+  z.object({
+    status: z.literal("invalid"),
+    diagnostics: z.array(PragmaDiagnosticSchema),
+  }),
+  z.object({
+    status: z.literal("prepared"),
+    changeSet: DefaultAgentChangeSetSchema,
+  }),
+]);
+
+export const DefaultAgentFlowDraftDiagnosticSchema = z.object({
+  severity: z.enum(["incomplete", "warning", "error"]),
+  code: z.string().min(1),
+  message: z.string().min(1),
+  path: z.array(z.union([z.string(), z.number()])).default([]),
+});
+
+const CanonicalFlowSpecSchema = PragmaFlowResourceSchema.shape.spec;
+const CanonicalFlowGraphSchema = CanonicalFlowSpecSchema.shape.graph;
+const DefaultAgentFlowDraftResourceSchema = z
+  .object({
+    apiVersion: PragmaFlowResourceSchema.shape.apiVersion,
+    kind: PragmaFlowResourceSchema.shape.kind,
+    metadata: PragmaMetadataSchema,
+    spec: z
+      .object({
+        input: CanonicalFlowSpecSchema.shape.input,
+        output: CanonicalFlowSpecSchema.shape.output,
+        limits: CanonicalFlowSpecSchema.shape.limits,
+        graph: z
+          .object({
+            start: CanonicalFlowGraphSchema.shape.start.optional(),
+            steps: CanonicalFlowGraphSchema.shape.steps,
+            transitions: CanonicalFlowGraphSchema.shape.transitions,
+            loops: CanonicalFlowGraphSchema.shape.loops,
+          })
+          .strict(),
+      })
+      .strict(),
+  })
+  .strict();
+
+export const DefaultAgentFlowDraftSchema = z.object({
+  draftId: z.string().uuid(),
+  baseProjectRevision: z.number().int().nonnegative(),
+  draftRevision: z.number().int().nonnegative(),
+  resource: DefaultAgentFlowDraftResourceSchema,
+  diagnostics: z.array(DefaultAgentFlowDraftDiagnosticSchema),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+});
+
+const DraftGraphIdSchema = z.string().trim().min(1);
+
+export const DefaultAgentFlowDraftOperationSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("set_start"), stepId: DraftGraphIdSchema }),
+  z.object({
+    type: z.literal("upsert_step"),
+    stepId: DraftGraphIdSchema,
+    step: PragmaFlowStepSchema,
+  }),
+  z.object({ type: z.literal("remove_step"), stepId: DraftGraphIdSchema }),
+  z.object({
+    type: z.literal("set_transition"),
+    stepId: DraftGraphIdSchema,
+    transition: PragmaFlowTransitionSchema,
+  }),
+  z.object({ type: z.literal("remove_transition"), stepId: DraftGraphIdSchema }),
+  z.object({
+    type: z.literal("upsert_loop"),
+    loopId: DraftGraphIdSchema,
+    loop: PragmaFlowLoopSchema,
+  }),
+  z.object({ type: z.literal("remove_loop"), loopId: DraftGraphIdSchema }),
+  z.object({
+    type: z.literal("set_contracts"),
+    input: z
+      .union([DefaultAgentFlowDraftResourceSchema.shape.spec.shape.input, z.null()])
+      .optional(),
+    output: z
+      .union([DefaultAgentFlowDraftResourceSchema.shape.spec.shape.output, z.null()])
+      .optional(),
+    limits: DefaultAgentFlowDraftResourceSchema.shape.spec.shape.limits.optional(),
+  }),
+  z.object({ type: z.literal("rebase"), projectRevision: z.number().int().nonnegative() }),
+]);
+
 export const DefaultAgentProjectCommitSchema = z.object({
   projectId: z.string().min(1),
   projectRevision: z.number().int().positive(),
@@ -84,6 +187,20 @@ export const DefaultAgentTaskWorkItemSchema = z.object({
   details: z.unknown().optional(),
 });
 
+export const DefaultAgentAutomationSummarySchema = z.object({
+  ref: PragmaSemanticResourceRefSchema.refine((value) => value.startsWith("automation:")),
+  name: z.string().min(1),
+  enabled: z.boolean(),
+  status: z.enum(["scheduled", "disabled", "expired", "needs_attention"]),
+  executorRef: PragmaSemanticResourceRefSchema,
+  interaction: z.enum(["reuse-session", "new-mission"]),
+  workspaceId: z.string().min(1).optional(),
+  nextRunAt: z.string().datetime().optional(),
+  missionId: z.string().uuid().optional(),
+  queueDepth: z.number().int().nonnegative(),
+  diagnostic: z.string().optional(),
+});
+
 export type DefaultAgentResourceSummary = z.infer<typeof DefaultAgentResourceSummarySchema>;
 export type DefaultAgentDslDocument = z.infer<typeof DefaultAgentDslDocumentSchema>;
 export type DefaultAgentRuntimeModelOption = z.infer<typeof DefaultAgentRuntimeModelOptionSchema>;
@@ -91,7 +208,12 @@ export type DefaultAgentCapabilityOption = z.infer<typeof DefaultAgentCapability
 export type DefaultAgentExpertOptionCatalog = z.infer<typeof DefaultAgentExpertOptionCatalogSchema>;
 export type DefaultAgentDslChange = z.infer<typeof DefaultAgentDslChangeSchema>;
 export type DefaultAgentChangeSet = z.infer<typeof DefaultAgentChangeSetSchema>;
+export type DefaultAgentPrepareResult = z.infer<typeof DefaultAgentPrepareResultSchema>;
+export type DefaultAgentFlowDraft = z.infer<typeof DefaultAgentFlowDraftSchema>;
+export type DefaultAgentFlowDraftDiagnostic = z.infer<typeof DefaultAgentFlowDraftDiagnosticSchema>;
+export type DefaultAgentFlowDraftOperation = z.infer<typeof DefaultAgentFlowDraftOperationSchema>;
 export type DefaultAgentProjectCommit = z.infer<typeof DefaultAgentProjectCommitSchema>;
 export type DefaultAgentTaskSummary = z.infer<typeof DefaultAgentTaskSummarySchema>;
 export type DefaultAgentTask = z.infer<typeof DefaultAgentTaskSchema>;
 export type DefaultAgentTaskWorkItem = z.infer<typeof DefaultAgentTaskWorkItemSchema>;
+export type DefaultAgentAutomationSummary = z.infer<typeof DefaultAgentAutomationSummarySchema>;

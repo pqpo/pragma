@@ -286,5 +286,8 @@ function projectExecutorOption(resource: PragmaInvocableResource): MissionExecut
     origin: "project",
     readOnly: false,
     customized: false,
+    ...(resource.kind === "Flow" && resource.spec.input?.schema !== undefined
+      ? { inputSchema: resource.spec.input.schema }
+      : {}),
   });
 }
