@@ -33,7 +33,9 @@ pinned revision.
 
 ## Migration
 
-`pragma/v2` projects migrate once to `pragma/v3`. IDs are derived deterministically from
+`pragma/v2` projects migrate once to `pragma/v3`. As refined by ADR 024, the Interpreter owns the
+pure DSL transform and returns the semantic identity mapping; each Host owns its transactional
+persistence, backup, and dependent-record updates. IDs are derived deterministically from
 `projectId`, resource kind, and legacy ID using the first 80 bits of SHA-256. Semantic refs,
 Missions, Automation bindings, workflow layouts, revision manifests, and fingerprints are rewritten.
 The migration fails before replacement when multiple legacy versions of one kind and ID coexist or

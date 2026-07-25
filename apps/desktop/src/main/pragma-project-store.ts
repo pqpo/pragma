@@ -13,10 +13,12 @@ import {
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 import {
+  PragmaDslMigrationError,
   PragmaProjectRevisionConflictError,
   PragmaProjectService,
   PragmaProjectValidationError,
   loadPragmaProject,
+  migratePragmaDslProjectToCurrent,
   parsePragmaYaml,
   type PragmaProject,
   type CompiledResource,
@@ -30,14 +32,12 @@ import {
   PragmaExpertIdSchema,
   PragmaResourceSchema,
   canonicalPragmaResourceRef,
-  normalizePragmaResourceName,
   type PragmaDiagnostic,
   type PragmaResource,
 } from "@pragma/interpreter/ast";
 import { z } from "zod";
 import {
   ContentAddressedStore,
-  derivePragmaResourceId,
   type PragmaPaths,
   assertStorageWriteAllowed,
   withFileLock,
@@ -144,14 +144,23 @@ export function createPragmaProjectStore(options: {
     objectsPath: options.objectsPath ?? join(options.projectsPath, ".storage", "objects"),
     projectViewsPath: options.projectViewsPath ?? join(options.projectsPath, ".cache", "views"),
   });
-  const service = new PragmaProjectService({ repository });
+  const service = new PragmaProjectService({
+    repository,
+    externalResourceRefs: options.reservedResourceRefs,
+  });
   const ensureMigrated = async (): Promise<void> =>
-    await migrateDesktopProjectV3({
+    await migrateDesktopProjectStorageV3ToV4({
       projectsPath: options.projectsPath,
       objectsPath: options.objectsPath ?? join(options.projectsPath, ".storage", "objects"),
       projectId,
       publish: async (expectedRevision, resources, artifacts) => {
-        await service.publish({ projectId, expectedRevision, resources, artifacts });
+        await service.publish({
+          projectId,
+          expectedRevision,
+          resources,
+          artifacts,
+          forceRevision: true,
+        });
       },
     });
 
@@ -594,7 +603,7 @@ function createDesktopProjectSourceRepository(options: {
             actualRevision === 0
               ? undefined
               : await readRevisionManifest(input.projectId, actualRevision);
-          if (previous?.snapshotHash === snapshot.root.hash) {
+          if (input.forceRevision !== true && previous?.snapshotHash === snapshot.root.hash) {
             return await requireLocation(input.projectId, actualRevision);
           }
           const lockSource = input.files.get("pragma.lock.yaml");
@@ -718,12 +727,9 @@ const LegacyProjectRevisionManifestSchema = z
   })
   .passthrough();
 
-type LegacyProjectRevision = {
-  readonly resources: readonly PragmaResource[];
-  readonly artifacts: ReadonlyMap<string, string>;
-};
+type LegacyProjectRevision = ReturnType<typeof migratePragmaDslProjectToCurrent>;
 
-async function migrateDesktopProjectV3(input: {
+async function migrateDesktopProjectStorageV3ToV4(input: {
   readonly projectsPath: string;
   readonly objectsPath: string;
   readonly projectId: string;
@@ -777,7 +783,19 @@ async function migrateDesktopProjectV3(input: {
       const temporary = await mkdtemp(join(input.projectsPath, ".project-v3-view-"));
       try {
         await objects.materializeTree(legacyRevision.snapshotHash, temporary);
-        revisions.push(migrateLegacyProjectFiles(await readTextFiles(temporary), input.projectId));
+        try {
+          revisions.push(
+            migratePragmaDslProjectToCurrent({
+              projectId: input.projectId,
+              files: await readTextFiles(temporary),
+            }),
+          );
+        } catch (error) {
+          if (error instanceof PragmaDslMigrationError) {
+            throw new PragmaProjectStoreError("unsupported_format", error.message);
+          }
+          throw error;
+        }
       } finally {
         await rm(temporary, { recursive: true, force: true });
       }
@@ -805,7 +823,11 @@ async function migrateDesktopProjectV3(input: {
         const migrated = revisions[revision]!;
         await input.publish(revision, migrated.resources, migrated.artifacts);
       }
-      await migrateLegacyFlowLayouts(legacyLayouts, projectPath, input.projectId);
+      await migrateLegacyFlowLayouts(
+        legacyLayouts,
+        projectPath,
+        revisions.flatMap((revision) => revision.identityMigrations),
+      );
       await rm(journalPath, { force: true });
     } catch (error) {
       await rm(projectPath, { recursive: true, force: true });
@@ -861,8 +883,17 @@ async function readOptionalDirectoryFiles(path: string): Promise<ReadonlyMap<str
 async function migrateLegacyFlowLayouts(
   files: ReadonlyMap<string, string>,
   projectPath: string,
-  projectId: string,
+  identities: readonly {
+    readonly kind: PragmaResource["kind"];
+    readonly sourceId: string;
+    readonly targetId: string;
+  }[],
 ): Promise<void> {
+  const flowIds = new Map(
+    identities
+      .filter((identity) => identity.kind === "Flow")
+      .map((identity) => [identity.sourceId, identity.targetId]),
+  );
   for (const source of files.values()) {
     const value = JSON.parse(source) as Record<string, unknown>;
     if (
@@ -871,7 +902,13 @@ async function migrateLegacyFlowLayouts(
     ) {
       continue;
     }
-    const flowId = derivePragmaResourceId(`${projectId}\0Flow\0${value["flowId"]}`);
+    const flowId = flowIds.get(value["flowId"]);
+    if (flowId === undefined) {
+      throw new PragmaProjectStoreError(
+        "unsupported_format",
+        `Cannot migrate Flow layout for unresolved Pragma v2 Flow ID: ${value["flowId"]}.`,
+      );
+    }
     delete value["flowVersion"];
     value["schemaVersion"] = "pragma.desktop-flow-layout/v2";
     value["flowId"] = flowId;
@@ -880,148 +917,6 @@ async function migrateLegacyFlowLayouts(
       `${JSON.stringify(value, undefined, 2)}\n`,
     );
   }
-}
-
-function migrateLegacyProjectFiles(
-  files: ReadonlyMap<string, string>,
-  projectId: string,
-): LegacyProjectRevision {
-  const legacyResources: {
-    readonly path: string;
-    readonly value: Record<string, unknown>;
-    readonly kind: PragmaResource["kind"];
-    readonly legacyId: string;
-    readonly name: string;
-  }[] = [];
-  for (const [path, source] of files) {
-    if (path === "pragma.yaml" || path === "pragma.lock.yaml" || !path.endsWith(".pragma.yaml")) {
-      continue;
-    }
-    const value = parsePragmaYaml(source);
-    if (!isLegacySemanticResource(value)) continue;
-    legacyResources.push({
-      path,
-      value,
-      kind: value["kind"] as PragmaResource["kind"],
-      legacyId: (value["metadata"] as Record<string, unknown>)["id"] as string,
-      name: (value["metadata"] as Record<string, unknown>)["name"] as string,
-    });
-  }
-
-  const identities = new Map<string, string>();
-  const usedIds = new Map<string, string>();
-  const names = new Set<string>();
-  for (const resource of legacyResources) {
-    const identity = `${resource.kind}\0${resource.legacyId}`;
-    if (identities.has(identity)) {
-      throw new PragmaProjectStoreError(
-        "unsupported_format",
-        `Cannot migrate ${resource.kind} ${resource.legacyId}: multiple legacy versions coexist in one project revision.`,
-      );
-    }
-    const normalizedName = `${resource.kind}\0${normalizePragmaResourceName(resource.name)}`;
-    if (names.has(normalizedName)) {
-      throw new PragmaProjectStoreError(
-        "unsupported_format",
-        `Cannot migrate ${resource.kind} ${resource.name}: its normalized name is duplicated.`,
-      );
-    }
-    names.add(normalizedName);
-    const id = derivePragmaResourceId(`${projectId}\0${resource.kind}\0${resource.legacyId}`);
-    const prior = usedIds.get(id);
-    if (prior !== undefined) {
-      throw new PragmaProjectStoreError(
-        "unsupported_format",
-        `Cannot migrate project IDs because ${prior} and ${identity} map to the same short ID.`,
-      );
-    }
-    usedIds.set(id, identity);
-    identities.set(identity, id);
-  }
-
-  const resources = legacyResources.map((legacy) =>
-    PragmaResourceSchema.parse(transformLegacyResource(legacy.value, identities)),
-  );
-  const resourcePaths = new Set(legacyResources.map((resource) => resource.path));
-  const artifacts = new Map(
-    [...files].filter(
-      ([path]) => path !== "pragma.yaml" && path !== "pragma.lock.yaml" && !resourcePaths.has(path),
-    ),
-  );
-  return { resources, artifacts };
-}
-
-function isLegacySemanticResource(value: unknown): value is Record<string, unknown> & {
-  readonly kind: string;
-  readonly metadata: { readonly id: string; readonly name: string };
-} {
-  if (typeof value !== "object" || value === null) return false;
-  const candidate = value as Record<string, unknown>;
-  const metadata = candidate["metadata"];
-  return (
-    candidate["apiVersion"] === "pragma/v2" &&
-    typeof candidate["kind"] === "string" &&
-    typeof metadata === "object" &&
-    metadata !== null &&
-    typeof (metadata as Record<string, unknown>)["id"] === "string" &&
-    typeof (metadata as Record<string, unknown>)["name"] === "string"
-  );
-}
-
-function transformLegacyResource(
-  source: Record<string, unknown>,
-  identities: ReadonlyMap<string, string>,
-): unknown {
-  const copy = structuredClone(source);
-  const kind = String(copy["kind"]) as PragmaResource["kind"];
-  const metadata = copy["metadata"] as Record<string, unknown>;
-  metadata["id"] = identities.get(`${kind}\0${String(metadata["id"])}`);
-  delete metadata["version"];
-  copy["apiVersion"] = "pragma/v3";
-  rewriteLegacySemanticRefs(copy, identities);
-  if (kind === "Flow") {
-    const steps = ((copy["spec"] as Record<string, unknown>)["graph"] as Record<string, unknown>)[
-      "steps"
-    ] as Record<string, Record<string, unknown>>;
-    for (const step of Object.values(steps)) delete step["version"];
-  }
-  return copy;
-}
-
-function rewriteLegacySemanticRefs(value: unknown, identities: ReadonlyMap<string, string>): void {
-  if (Array.isArray(value)) {
-    for (const child of value) rewriteLegacySemanticRefs(child, identities);
-    return;
-  }
-  if (typeof value !== "object" || value === null) return;
-  for (const [key, child] of Object.entries(value)) {
-    if (typeof child === "string") {
-      const match =
-        /^(expert|team|flow|automation|capability|context-store|runtime-profile):([^@]+)@[^@]+$/.exec(
-          child,
-        );
-      if (match !== null) {
-        const kind = semanticKindFromPrefix(match[1]!);
-        const id =
-          match[1] === "expert" && match[2] === "pragma"
-            ? "0000000000pragma"
-            : identities.get(`${kind}\0${match[2]!}`);
-        if (id !== undefined) (value as Record<string, unknown>)[key] = `${match[1]}:${id}`;
-      }
-    } else {
-      rewriteLegacySemanticRefs(child, identities);
-    }
-  }
-}
-
-function semanticKindFromPrefix(prefix: string): PragmaResource["kind"] {
-  if (prefix === "expert") return "Expert";
-  if (prefix === "team") return "ExpertTeam";
-  if (prefix === "flow") return "Flow";
-  if (prefix === "automation") return "Automation";
-  if (prefix === "capability") return "Capability";
-  if (prefix === "context-store") return "ContextStore";
-  return "RuntimeProfile";
 }
 
 async function readTextFiles(root: string, base = root): Promise<ReadonlyMap<string, string>> {

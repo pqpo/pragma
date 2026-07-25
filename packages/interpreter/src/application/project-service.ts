@@ -67,6 +67,7 @@ export interface PragmaProjectSourceRepository {
     readonly projectId: string;
     readonly expectedRevision: number;
     readonly files: ReadonlyMap<string, string>;
+    readonly forceRevision?: boolean | undefined;
   }) => Promise<PragmaProjectRevisionLocation>;
 }
 
@@ -84,6 +85,7 @@ export interface PragmaProjectSnapshot {
 export interface PragmaProjectServiceOptions {
   readonly repository: PragmaProjectSourceRepository;
   readonly resourceAdapters?: PragmaResourceAdapterRegistry | undefined;
+  readonly externalResourceRefs?: ReadonlySet<PragmaResourceRef> | undefined;
 }
 
 export interface PragmaProjectChangeSetCandidate {
@@ -147,6 +149,7 @@ export class PragmaProjectService {
       input.resources,
       input.artifacts,
       this.adapters,
+      this.options.externalResourceRefs,
       async (project) =>
         input.host === undefined
           ? await project.validate()
@@ -163,6 +166,7 @@ export class PragmaProjectService {
       input.resources,
       input.artifacts,
       this.adapters,
+      this.options.externalResourceRefs,
       async (project) => await project.inspectEnvironment(input.host),
     );
   }
@@ -185,6 +189,7 @@ export class PragmaProjectService {
     readonly expectedRevision: number;
     readonly resources: readonly PragmaResource[];
     readonly artifacts?: ReadonlyMap<string, string> | undefined;
+    readonly forceRevision?: boolean | undefined;
   }): Promise<PragmaProjectSnapshot> {
     const head = await this.options.repository.getHead(input.projectId);
     const actualRevision = head?.revision ?? 0;
@@ -202,6 +207,7 @@ export class PragmaProjectService {
       resources,
       input.artifacts,
       this.adapters,
+      this.options.externalResourceRefs,
       async (project) => {
         const diagnostics = await project.validate();
         const errors = diagnostics.filter((diagnostic) => diagnostic.severity === "error");
@@ -220,6 +226,7 @@ export class PragmaProjectService {
       projectId: input.projectId,
       expectedRevision: input.expectedRevision,
       files,
+      forceRevision: input.forceRevision,
     });
     return await this.get(input.projectId);
   }
@@ -271,6 +278,7 @@ export class PragmaProjectService {
     readonly runtimes?: RuntimeResolver | undefined;
     readonly rootModelSelectionOverride?: PragmaCompileOptions["rootModelSelectionOverride"];
     readonly rootExecutionOverride?: PragmaCompileOptions["rootExecutionOverride"];
+    readonly resolveExternalInvocable?: PragmaCompileOptions["resolveExternalInvocable"];
     readonly plugins?: PragmaPluginResolver | undefined;
   }): Promise<CompiledResource<T>> {
     const location = await this.options.repository.getRevision(input.projectId, input.revision);
@@ -289,6 +297,7 @@ export class PragmaProjectService {
         runtimes: input.runtimes,
         rootModelSelectionOverride: input.rootModelSelectionOverride,
         rootExecutionOverride: input.rootExecutionOverride,
+        resolveExternalInvocable: input.resolveExternalInvocable,
         plugins: input.plugins,
       });
     });
@@ -311,6 +320,7 @@ export class PragmaProjectService {
       rootDir: location.rootDir,
       requireLock,
       resourceAdapters: this.adapters,
+      externalResourceRefs: this.options.externalResourceRefs,
     });
   }
 
@@ -458,6 +468,7 @@ async function withStagedProject<T>(
   resources: readonly PragmaResource[],
   artifacts: ReadonlyMap<string, string> | undefined,
   adapters: PragmaResourceAdapterRegistry,
+  externalResourceRefs: ReadonlySet<PragmaResourceRef> | undefined,
   operation: (project: PragmaProject) => Promise<T>,
 ): Promise<T> {
   const root = await mkdtemp(join(tmpdir(), "pragma-project-service-"));
@@ -488,6 +499,7 @@ async function withStagedProject<T>(
     const project = await loadPragmaProject(join(root, "pragma.yaml"), {
       rootDir: root,
       resourceAdapters: adapters,
+      externalResourceRefs,
     });
     return await operation(project);
   } finally {

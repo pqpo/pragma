@@ -82,6 +82,7 @@ export interface LoadPragmaProjectOptions {
   readonly requireLock?: boolean | undefined;
   readonly serializers?: DefinitionSerializerRegistry | undefined;
   readonly resourceAdapters?: PragmaResourceAdapterRegistry | undefined;
+  readonly externalResourceRefs?: ReadonlySet<PragmaResourceRef> | undefined;
 }
 
 export type PragmaCompileOptions = PragmaCompileHost;
@@ -588,7 +589,19 @@ class PragmaProjectImpl implements PragmaProject {
     }
 
     const instantiate = async (resourceRef: string): Promise<InvocableResource> => {
-      const indexed = this.resolveResource(resourceRef);
+      const parsedRef = parsePragmaReference(resourceRef);
+      const externalKey = `${parsedRef.kind}:${parsedRef.id}` as PragmaResourceRef;
+      const indexed = this.resources.get(externalKey);
+      if (indexed === undefined) {
+        const existing = cache.get(externalKey);
+        if (existing !== undefined) return existing;
+        const external = await host.resolveExternalInvocable?.(externalKey);
+        if (external === undefined) {
+          throw new PragmaDslError(`Pragma resource not found: ${resourceRef}`);
+        }
+        cache.set(externalKey, external);
+        return external;
+      }
       const key = canonicalRef(indexed.resource);
       const existing = cache.get(key);
       if (existing !== undefined) return existing;
@@ -929,6 +942,7 @@ class PragmaProjectImpl implements PragmaProject {
   private validateReferences(indexed: IndexedResource): PragmaDiagnostic[] {
     const diagnostics: PragmaDiagnostic[] = [];
     for (const ref of resourceDependencies(indexed.resource)) {
+      if (this.options.externalResourceRefs?.has(ref)) continue;
       try {
         this.resolveResource(ref);
       } catch (error) {

@@ -1176,6 +1176,9 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
     expect(piTurns).toHaveBeenCalledTimes(2);
     expect(piSelections).toEqual([undefined, undefined]);
     expect(codexTurns).not.toHaveBeenCalled();
+    await vi.waitFor(async () => await runner.delete(mission.id), {
+      timeout: settlementTimeoutMs,
+    });
   });
 
   it("resumes the original Expert turn when a Mission restarts with pending human input", async () => {

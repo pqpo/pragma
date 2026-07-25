@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -119,6 +119,44 @@ describe("DesktopSystemExpertRegistry", () => {
       additionalInstructions: "",
       customized: false,
       revision: 1,
+    });
+  });
+
+  it("migrates a v3 customization from the versioned built-in Expert ref", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "pragma-system-experts-v3-"));
+    directories.push(directory);
+    const configPath = join(directory, "system-experts.json");
+    const registry = createDesktopSystemExpertRegistry({ configPath });
+    await registry.initialize();
+    await registry.update(BUILT_IN_PRAGMA_REF, {
+      name: "Legacy Pragma",
+      description: "A legacy customized built-in Pragma Agent.",
+      tags: ["builtin", "legacy"],
+      additionalInstructions: "Preserve this customization.",
+      capabilities: [],
+      toolApprovals: {},
+      plugins: [],
+      contextStoreMounts: [],
+    });
+    const legacy = JSON.parse(await readFile(configPath, "utf8")) as {
+      schemaVersion: number;
+      customizations: { ref: string }[];
+    };
+    legacy.schemaVersion = 3;
+    legacy.customizations[0]!.ref = "expert:pragma@1.0.0";
+    await writeFile(configPath, `${JSON.stringify(legacy, null, 2)}\n`);
+
+    const reloaded = createDesktopSystemExpertRegistry({ configPath });
+    await reloaded.initialize();
+
+    expect(reloaded.get(BUILT_IN_PRAGMA_REF)).toMatchObject({
+      name: "Legacy Pragma",
+      additionalInstructions: "Preserve this customization.",
+      customized: true,
+    });
+    expect(JSON.parse(await readFile(configPath, "utf8"))).toMatchObject({
+      schemaVersion: 4,
+      customizations: [{ ref: BUILT_IN_PRAGMA_REF }],
     });
   });
 });

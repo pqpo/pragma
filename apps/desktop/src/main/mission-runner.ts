@@ -314,6 +314,16 @@ export function createMissionRunner(options: {
       environmentId: "desktop",
       adapterHost: createDesktopAdapterHost(options, mission.workspace.path),
       runtimes,
+      resolveExternalInvocable: async (ref) => {
+        const compiled = await options.compileSystemExecutor?.({
+          mission: {
+            ...mission,
+            executor: { kind: "expert", ref, name: ref },
+          },
+          runtimes,
+        });
+        return compiled?.value;
+      },
       ...(mission.modelOverride === undefined
         ? {}
         : {

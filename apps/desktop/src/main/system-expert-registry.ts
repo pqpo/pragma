@@ -32,7 +32,8 @@ import {
 import { desktopCapabilityBindingRef, desktopContextBindingRef } from "./desktop-binding-ref.ts";
 
 const BUILT_IN_TIMESTAMP = "1970-01-01T00:00:00.000Z";
-const CONFIG_SCHEMA_VERSION = 3;
+const CONFIG_SCHEMA_VERSION = 4;
+const LEGACY_BUILT_IN_PRAGMA_REF = "expert:pragma@1.0.0";
 
 const SystemExpertCustomizationSchema = UpdateBuiltInExpertDefinitionSchema.extend({
   ref: z.literal(BUILT_IN_PRAGMA_REF),
@@ -43,6 +44,19 @@ const SystemExpertCustomizationSchema = UpdateBuiltInExpertDefinitionSchema.exte
 const SystemExpertCustomizationConfigSchema = z.object({
   schemaVersion: z.literal(CONFIG_SCHEMA_VERSION),
   customizations: z.array(SystemExpertCustomizationSchema).max(100),
+});
+
+const LegacySystemExpertCustomizationConfigSchema = z.object({
+  schemaVersion: z.literal(3),
+  customizations: z
+    .array(
+      UpdateBuiltInExpertDefinitionSchema.extend({
+        ref: z.literal(LEGACY_BUILT_IN_PRAGMA_REF),
+        revision: z.number().int().min(2),
+        updatedAt: z.string().datetime(),
+      }),
+    )
+    .max(100),
 });
 
 type SystemExpertCustomization = z.infer<typeof SystemExpertCustomizationSchema>;
@@ -151,12 +165,28 @@ export function createDesktopSystemExpertRegistry(options?: {
   const readConfig = async (): Promise<Map<string, SystemExpertCustomization>> => {
     if (options?.configPath === undefined) return new Map(customizations);
     try {
-      const parsed = SystemExpertCustomizationConfigSchema.parse(
-        JSON.parse(await readFile(options.configPath, "utf8")),
+      const raw = JSON.parse(await readFile(options.configPath, "utf8")) as unknown;
+      const current = SystemExpertCustomizationConfigSchema.safeParse(raw);
+      if (current.success) {
+        return new Map(
+          current.data.customizations.map((customization) => [
+            customization.ref,
+            customization,
+          ]),
+        );
+      }
+      const legacy = LegacySystemExpertCustomizationConfigSchema.parse(raw);
+      const migrated = new Map<string, SystemExpertCustomization>(
+        legacy.customizations.map((customization) => {
+          const parsed = SystemExpertCustomizationSchema.parse({
+            ...customization,
+            ref: BUILT_IN_PRAGMA_REF,
+          });
+          return [parsed.ref, parsed];
+        }),
       );
-      return new Map(
-        parsed.customizations.map((customization) => [customization.ref, customization]),
-      );
+      await writeConfig(migrated);
+      return migrated;
     } catch (error) {
       if (isNodeError(error, "ENOENT")) return new Map();
       options.warn?.("System Expert customizations could not be read; using defaults.", error);
@@ -190,7 +220,9 @@ export function createDesktopSystemExpertRegistry(options?: {
 
   return {
     async initialize() {
-      customizations = await readConfig();
+      await mutate(async () => {
+        customizations = await readConfig();
+      });
     },
     list: () => [ExpertSummarySchema.parse(definition())],
     get: (ref) => (ref === BUILT_IN_PRAGMA_REF ? definition() : undefined),

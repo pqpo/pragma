@@ -556,6 +556,9 @@ export function StudioPage(props: {
           <PragmaResourceDirectoryFragment
             kind={activeView === "teams" ? "team" : "flow"}
             project={project}
+            expertOptions={experts.flatMap((expert) =>
+              expert.ref === undefined ? [] : [{ ref: expert.ref, name: expert.name }],
+            )}
             runtimes={runtimes}
             onProjectChanged={setProject}
           />
