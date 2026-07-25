@@ -38,7 +38,6 @@ export const InvocationKindSchema = z.enum(["flow", "task", "human-task", "exper
 
 export const DefinitionReferenceSchema = z.object({
   id: z.string().min(1),
-  version: z.string().min(1),
   kind: InvocationKindSchema,
 });
 
@@ -65,13 +64,12 @@ export const RuntimeContextOriginSchema = z.discriminatedUnion("type", [
 
 export const RuntimeContextRecordSchema = z
   .object({
-    schemaVersion: z.literal("pragma.runtime-context/v4"),
+    schemaVersion: z.literal("pragma.runtime-context/v5"),
     contextId: z.string().min(1),
     owner: RuntimeContextOwnerSchema,
     origin: RuntimeContextOriginSchema,
     expert: z.object({
       id: z.string().min(1),
-      version: z.string().min(1),
     }),
     runtime: RuntimeEnvironmentBindingSchema,
     modelSelection: RuntimeModelSelectionSchema.optional(),
@@ -207,7 +205,7 @@ export const ExecutionOutputItemSchema = z.object({
 });
 
 export const ExecutionRecordSchema = z.object({
-  schemaVersion: z.literal("pragma.execution/v6"),
+  schemaVersion: z.literal("pragma.execution/v7"),
   executionId: z.string().min(1),
   version: z.number().int().nonnegative(),
   kind: ExecutionKindSchema,

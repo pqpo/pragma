@@ -54,7 +54,6 @@ const expert = await defineExpert({
   name: "Context Example",
   description: "通过控制台学习 Context 加载、检索、写入和授权。",
   tags: ["example", "context", "authorization"],
-  version: "1.0.0",
   scope: "example",
   workspace: exampleRoot,
   contextSystem,

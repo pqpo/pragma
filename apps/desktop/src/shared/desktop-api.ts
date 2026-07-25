@@ -11,6 +11,7 @@ import {
 import {
   canonicalPragmaResourceRef,
   PragmaBindingRefSchema,
+  PragmaAutomationRefSchema,
   PragmaDiagnosticSchema,
   PragmaExpertResourceSchema,
   PragmaAutomationResourceSchema,
@@ -336,7 +337,7 @@ export const EXPERT_TAG_MAX_LENGTH = 20;
 export const EXPERT_SCOPE_MAX_LENGTH = PRAGMA_EXPERT_SCOPE_MAX_LENGTH;
 export const EXPERT_INSTRUCTIONS_MAX_LENGTH = PRAGMA_EXPERT_INSTRUCTIONS_MAX_LENGTH;
 
-export { PRAGMA_EXPERT_ID_MAX_LENGTH, PragmaExpertIdSchema } from "@pragma/interpreter/ast";
+export { PragmaExpertIdSchema } from "@pragma/interpreter/ast";
 
 export const ExpertScopeSchema = PragmaExpertScopeSchema;
 export const ExpertInstructionsSchema = PragmaExpertInstructionsSchema;
@@ -849,7 +850,6 @@ export const ExpertDefinitionSchema = z.object({
   name: PragmaExpertResourceSchema.shape.metadata.shape.name,
   description: PragmaExpertResourceSchema.shape.metadata.shape.description,
   tags: PragmaExpertResourceSchema.shape.metadata.shape.tags,
-  version: PragmaExpertResourceSchema.shape.metadata.shape.version,
   scope: ExpertScopeSchema,
   instructions: ExpertInstructionsSchema,
   additionalInstructions: ExpertAdditionalInstructionsSchema,
@@ -877,7 +877,6 @@ export const ExpertSummarySchema = ExpertDefinitionSchema.pick({
   name: true,
   description: true,
   tags: true,
-  version: true,
   scope: true,
   origin: true,
   readOnly: true,
@@ -890,6 +889,7 @@ export const ExpertSummarySchema = ExpertDefinitionSchema.pick({
 export const CreateExpertDefinitionSchema = ExpertDefinitionSchema.omit({
   schemaVersion: true,
   ref: true,
+  id: true,
   resourceRuntime: true,
   origin: true,
   readOnly: true,
@@ -899,26 +899,25 @@ export const CreateExpertDefinitionSchema = ExpertDefinitionSchema.omit({
   revision: true,
   createdAt: true,
   updatedAt: true,
-}).extend({
-  baseRevision: z.number().int().nonnegative(),
-  requiredUnchangedRefs: z.array(PragmaResourceRefSchema).default([]),
-  id: PragmaExpertIdSchema,
-  name: z.string().trim().min(1).max(EXPERT_NAME_MAX_LENGTH),
-  description: z.string().trim().min(1).max(EXPERT_DESCRIPTION_MAX_LENGTH),
-  tags: z.array(z.string().trim().min(1).max(EXPERT_TAG_MAX_LENGTH)).max(30),
-  instructions: ExpertInstructionsSchema,
-  model: ExpertModelConfigSchema,
-  capabilities: z.array(ExpertCapabilityReferenceSchema).max(500).optional(),
-  toolApprovals: z.record(z.string().max(200), ExpertToolApprovalModeSchema).optional(),
-  plugins: z.array(ExpertPluginReferenceSchema).max(100).optional(),
-  contextStoreMounts: z.array(ExpertContextStoreMountSchema).max(200).optional(),
-  resourceTools: z.array(PragmaToolBindingSchema).max(200).optional(),
-  opaqueCapabilities: PragmaExpertResourceSchema.shape.spec.shape.capabilities.optional(),
-});
+})
+  .extend({
+    baseRevision: z.number().int().nonnegative(),
+    requiredUnchangedRefs: z.array(PragmaResourceRefSchema).default([]),
+    name: z.string().trim().min(1).max(EXPERT_NAME_MAX_LENGTH),
+    description: z.string().trim().min(1).max(EXPERT_DESCRIPTION_MAX_LENGTH),
+    tags: z.array(z.string().trim().min(1).max(EXPERT_TAG_MAX_LENGTH)).max(30),
+    instructions: ExpertInstructionsSchema,
+    model: ExpertModelConfigSchema,
+    capabilities: z.array(ExpertCapabilityReferenceSchema).max(500).optional(),
+    toolApprovals: z.record(z.string().max(200), ExpertToolApprovalModeSchema).optional(),
+    plugins: z.array(ExpertPluginReferenceSchema).max(100).optional(),
+    contextStoreMounts: z.array(ExpertContextStoreMountSchema).max(200).optional(),
+    resourceTools: z.array(PragmaToolBindingSchema).max(200).optional(),
+    opaqueCapabilities: PragmaExpertResourceSchema.shape.spec.shape.capabilities.optional(),
+  })
+  .strict();
 
 export const UpdateExpertDefinitionSchema = CreateExpertDefinitionSchema.omit({
-  id: true,
-  version: true,
   requiredUnchangedRefs: true,
 })
   .extend({
@@ -951,7 +950,7 @@ export const DeleteExpertDefinitionSchema = z.object({ ref: ExpertRefSchema });
 export const ResetBuiltInExpertDefinitionSchema = z.object({ ref: ExpertRefSchema });
 
 export const PragmaProjectSnapshotSchema = z.object({
-  schemaVersion: z.literal("pragma.project-snapshot/v2"),
+  schemaVersion: z.literal("pragma.project-snapshot/v3"),
   projectId: z.string().trim().min(1).max(120),
   revision: z.number().int().nonnegative(),
   resources: z.array(PragmaResourceSchema),
@@ -1014,6 +1013,10 @@ export const UpsertPragmaResourceSchema = z.object({
   requiredUnchangedRefs: z.array(PragmaResourceRefSchema).default([]),
 });
 
+export const AllocatePragmaResourceIdResultSchema = z.object({
+  id: PragmaExpertIdSchema,
+});
+
 export const PragmaProjectChangesSchema = PragmaProjectChangeSetSchema;
 
 export const PragmaProjectChangesValidationResultSchema = z
@@ -1047,12 +1050,11 @@ const WorkflowLayoutIdentitySchema = z.object({
     .min(1)
     .max(120)
     .regex(/^[A-Za-z0-9_-]+$/),
-  flowId: z.string().trim().min(1).max(120),
+  flowId: PragmaExpertIdSchema,
 });
 
 export const WorkflowLayoutSchema = WorkflowLayoutIdentitySchema.extend({
-  schemaVersion: z.literal("pragma.desktop-flow-layout/v1"),
-  flowVersion: z.string().trim().min(1).max(100),
+  schemaVersion: z.literal("pragma.desktop-flow-layout/v2"),
   nodes: z.record(
     z.string().trim().min(1),
     z.object({ x: z.number().finite(), y: z.number().finite() }),
@@ -1078,7 +1080,6 @@ export const MissionWorkspaceSchema = z.object({
 const MissionExecutorBaseSchema = z.object({
   ref: PragmaInvocableResourceRefSchema,
   name: z.string().trim().min(1).max(120),
-  version: z.string().trim().min(1).max(100),
 });
 
 export const MissionExecutorSchema = z.discriminatedUnion("kind", [
@@ -1116,10 +1117,8 @@ export const MissionModelOverrideSchema = ExpertModelConfigSchema.omit({
 
 export const AutomationBindingSchema = z
   .object({
-    schemaVersion: z.literal("pragma.automation-binding/v1"),
-    automationRef: z
-      .string()
-      .regex(/^automation:[A-Za-z0-9][A-Za-z0-9_]*@[A-Za-z0-9][A-Za-z0-9.+_-]*$/),
+    schemaVersion: z.literal("pragma.automation-binding/v2"),
+    automationRef: PragmaAutomationRefSchema,
     revision: z.number().int().positive(),
     generation: z.string().uuid(),
     workspace: MissionWorkspaceSchema,
@@ -1174,7 +1173,7 @@ export const SaveAutomationSchema = z
 export const DeleteAutomationSchema = z
   .object({
     expectedProjectRevision: z.number().int().nonnegative(),
-    ref: z.string().regex(/^automation:[A-Za-z0-9][A-Za-z0-9_]*@[A-Za-z0-9][A-Za-z0-9.+_-]*$/),
+    ref: PragmaAutomationRefSchema,
   })
   .strict();
 
@@ -1328,12 +1327,28 @@ const MissionBaseSchema = z.object({
   completedAt: z.string().datetime().optional(),
 });
 
-export const MissionV3Schema = MissionBaseSchema.extend({
+const MissionExecutorV4Schema = z.object({
+  kind: z.enum(["expert", "team", "flow"]),
+  ref: z.string().min(1),
+  name: z.string().trim().min(1).max(120),
+  version: z.string().trim().min(1).max(100),
+});
+
+const MissionBaseV4Schema = MissionBaseSchema.extend({
+  executor: MissionExecutorV4Schema,
+});
+
+export const MissionV3Schema = MissionBaseV4Schema.extend({
   schemaVersion: z.literal("pragma.mission/v3"),
 });
 
-export const MissionSchema = MissionBaseSchema.extend({
+export const MissionV4Schema = MissionBaseV4Schema.extend({
   schemaVersion: z.literal("pragma.mission/v4"),
+  flowInput: z.record(z.string(), z.unknown()).optional(),
+});
+
+export const MissionSchema = MissionBaseSchema.extend({
+  schemaVersion: z.literal("pragma.mission/v5"),
   flowInput: z.record(z.string(), z.unknown()).optional(),
 }).superRefine((mission, context) => {
   if (mission.executor.kind === "flow" && mission.flowInput === undefined) {
@@ -1415,7 +1430,6 @@ export function missionExecutorSnapshot(resource: PragmaInvocableResource): Miss
     kind: missionExecutorKind(resource),
     ref: missionExecutorRef(resource),
     name: resource.metadata.name,
-    version: resource.metadata.version,
   });
 }
 
@@ -1636,6 +1650,7 @@ export type UpdateBuiltInExpertDefinition = z.infer<typeof UpdateBuiltInExpertDe
 export type PragmaProjectSnapshot = z.infer<typeof PragmaProjectSnapshotSchema>;
 export type PublishPragmaProject = z.infer<typeof PublishPragmaProjectSchema>;
 export type UpsertPragmaResource = z.infer<typeof UpsertPragmaResourceSchema>;
+export type AllocatePragmaResourceIdResult = z.infer<typeof AllocatePragmaResourceIdResultSchema>;
 export type PragmaProjectChanges = z.infer<typeof PragmaProjectChangesSchema>;
 export type PragmaProjectChangesValidationResult = z.infer<
   typeof PragmaProjectChangesValidationResultSchema
@@ -1741,6 +1756,7 @@ export interface PragmaDesktopAPI {
   setPluginSecrets: (secrets: Readonly<Record<string, string | null>>) => Promise<void>;
   deletePlugin: (ref: string) => Promise<void>;
   getPragmaProject: () => Promise<PragmaProjectSnapshot>;
+  allocatePragmaResourceId: () => Promise<AllocatePragmaResourceIdResult>;
   publishPragmaProject: (input: PublishPragmaProject) => Promise<PragmaProjectSnapshot>;
   upsertPragmaResource: (input: UpsertPragmaResource) => Promise<PragmaProjectSnapshot>;
   applyPragmaProjectChanges: (input: PragmaProjectChanges) => Promise<PragmaProjectSnapshot>;

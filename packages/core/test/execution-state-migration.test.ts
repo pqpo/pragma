@@ -58,7 +58,7 @@ describe("Execution state migration", () => {
       },
     ]);
     await expect(readJson(paths.executionState("team-run"))).resolves.toMatchObject({
-      schemaVersion: "pragma.execution/v6",
+      schemaVersion: "pragma.execution/v7",
       output: { type: "inline", value: { summary: "cancelled team" } },
     });
     await expect(readJson(paths.executionInvocations("team-run"))).resolves.toMatchObject([
@@ -77,11 +77,11 @@ describe("Execution state migration", () => {
     const store = createFileExecutionStore({ pragmaHome: home });
     await store.create(
       {
-        schemaVersion: "pragma.execution/v6",
+        schemaVersion: "pragma.execution/v7",
         executionId: "current",
         version: 0,
         kind: "expert-turn",
-        definition: { id: "expert", version: "1.0.0", kind: "expert" },
+        definition: { id: "expert", kind: "expert" },
         rootInvocationId: "root",
         status: "running",
         input: "hello",
@@ -93,7 +93,7 @@ describe("Execution state migration", () => {
       {
         invocationId: "root",
         rootInvocationId: "root",
-        definition: { id: "expert", version: "1.0.0", kind: "expert" },
+        definition: { id: "expert", kind: "expert" },
         executorId: "expert",
         contextId: "context",
         status: "running",
@@ -105,17 +105,56 @@ describe("Execution state migration", () => {
     const before = await readFile(paths.executionState("current"), "utf8");
 
     await expect(store.get("current")).resolves.toMatchObject({
-      schemaVersion: "pragma.execution/v6",
+      schemaVersion: "pragma.execution/v7",
     });
 
     expect(await readFile(paths.executionState("current"), "utf8")).toBe(before);
+  });
+
+  it("migrates v6 definitions without wrapping Invocation handoffs a second time", async () => {
+    const home = await temporaryRoot("pragma-execution-v6-");
+    const paths = new PragmaPaths({ pragmaHome: home });
+    await writeLegacyExecution(paths, "v6-run");
+    await writeJson(paths.executionState("v6-run"), {
+      ...legacyExecution("v6-run"),
+      schemaVersion: "pragma.execution/v6",
+      output: { type: "inline", value: { summary: "v6 result" } },
+    });
+    await writeJson(
+      paths.executionInvocations("v6-run"),
+      legacyInvocations().map((invocation) => ({
+        ...invocation,
+        ...((invocation.definition as { readonly kind: string }).kind === "task"
+          ? {}
+          : { output: { type: "inline", value: invocation.output } }),
+      })),
+    );
+
+    const store = createFileExecutionStore({ pragmaHome: home });
+
+    await expect(store.get("v6-run")).resolves.toMatchObject({
+      schemaVersion: "pragma.execution/v7",
+      definition: { id: "team", kind: "expert-team" },
+      output: { type: "inline", value: { summary: "v6 result" } },
+    });
+    await expect(store.listInvocations("v6-run")).resolves.toMatchObject([
+      {
+        definition: { id: "team", kind: "expert-team" },
+        output: { type: "inline", value: "team result" },
+      },
+      {
+        definition: { id: "reviewer", kind: "expert" },
+        output: { type: "inline", value: { finding: "subagent detail" } },
+      },
+      { definition: { id: "inspect", kind: "task" }, output: "task output remains raw" },
+    ]);
   });
 
   it("rejects a future Execution schema without mutating it", async () => {
     const home = await temporaryRoot("pragma-execution-future-");
     const paths = new PragmaPaths({ pragmaHome: home });
     const file = paths.executionState("future");
-    const future = { schemaVersion: "pragma.execution/v7", executionId: "future" };
+    const future = { schemaVersion: "pragma.execution/v8", executionId: "future" };
     await writeJson(file, future);
     const before = await readFile(file, "utf8");
 
@@ -155,7 +194,7 @@ describe("Execution state migration", () => {
 
     const store = createFileExecutionStore({ pragmaHome: home });
     await expect(store.get("journal-run")).resolves.toMatchObject({
-      schemaVersion: "pragma.execution/v6",
+      schemaVersion: "pragma.execution/v7",
       version: 1,
       status: "succeeded",
       output: { type: "inline", value: "journal result" },

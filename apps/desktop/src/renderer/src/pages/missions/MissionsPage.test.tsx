@@ -669,7 +669,7 @@ describe("Mission thinking entry", () => {
 
 function missionFixture(kind: "expert" | "team"): Mission {
   return {
-    schemaVersion: "pragma.mission/v4",
+    schemaVersion: "pragma.mission/v5",
     id: "00000000-0000-4000-8000-000000000000",
     title: "Missions page design",
     goal: "Design the Missions page.",
@@ -679,9 +679,8 @@ function missionFixture(kind: "expert" | "team"): Mission {
     project: { id: "studio", revision: 1 },
     executor: {
       kind,
-      ref: kind === "expert" ? "expert:product_designer@0.1.0" : "team:delivery_team@0.1.0",
+      ref: kind === "expert" ? "expert:v2vt1v01vzz6j24q" : "team:gmpsevbrb8danedb",
       name: kind === "expert" ? "Product Designer" : "Delivery Team",
-      version: "0.1.0",
     },
     lifecycleStatus: "active",
     createdAt: "2026-07-11T00:00:00.000Z",

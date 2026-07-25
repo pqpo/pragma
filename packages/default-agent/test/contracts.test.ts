@@ -12,11 +12,10 @@ describe("Flow draft contracts", () => {
       baseProjectRevision: 0,
       draftRevision: 0,
       resource: {
-        apiVersion: "pragma/v2",
+        apiVersion: "pragma/v3",
         kind: "Flow",
         metadata: {
-          id: "review_flow",
-          version: "1.0.0",
+          id: "t9ne4d8njvvxv2ea",
           name: "Review flow",
           description: "Review a result.",
           tags: [],

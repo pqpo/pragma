@@ -4,6 +4,14 @@ import { z } from "zod";
 import { ExecutionRecordV6Schema } from "../../execution/schemas/v6.ts";
 import { ExpertSessionRecordV4Schema } from "../../expert-session/schemas/v4.ts";
 
+const InvocationV6Schema = InvocationSchema.extend({
+  definition: z.object({
+    id: z.string().min(1),
+    version: z.string().min(1),
+    kind: z.enum(["expert", "expert-team", "flow", "task", "human-task"]),
+  }),
+});
+
 export const ExpertSessionTransactionJournalV5Schema = z
   .object({
     schemaVersion: z.literal("pragma.expert-session-transaction/v5"),
@@ -11,7 +19,7 @@ export const ExpertSessionTransactionJournalV5Schema = z
     prompts: PromptRequestSchema.array(),
     events: ExpertSessionEventSchema.array(),
     execution: ExecutionRecordV6Schema.optional(),
-    rootInvocation: InvocationSchema.optional(),
+    rootInvocation: InvocationV6Schema.optional(),
   })
   .refine(
     (journal) => (journal.execution === undefined) === (journal.rootInvocation === undefined),

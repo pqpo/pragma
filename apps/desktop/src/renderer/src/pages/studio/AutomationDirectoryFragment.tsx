@@ -3,8 +3,6 @@ import {
   PRAGMA_AUTOMATION_PROMPT_MAX_LENGTH,
   PRAGMA_RESOURCE_DESCRIPTION_MAX_LENGTH,
   PRAGMA_RESOURCE_NAME_MAX_LENGTH,
-  PRAGMA_RESOURCE_VERSION_MAX_LENGTH,
-  PRAGMA_SEMANTIC_RESOURCE_ID_MAX_LENGTH,
   PragmaScheduleTriggerSchema,
 } from "@pragma/interpreter/ast";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -34,7 +32,6 @@ type FlowExecutor = Extract<MissionExecutorOption, { readonly kind: "flow" }>;
 type EditorState = {
   readonly originalRef?: string | undefined;
   readonly id: string;
-  readonly version: string;
   readonly name: string;
   readonly description: string;
   readonly enabled: boolean;
@@ -103,12 +100,12 @@ export function AutomationDirectoryFragment(props: {
   const openNew = async () => {
     const api = desktopApi();
     const defaults = await api?.getMissionCreationDefaults();
+    const allocated = await api?.allocatePragmaResourceId();
     if (defaults !== undefined) setMissionDefaults(defaults);
     const executor = executors[0];
     const timestamp = localDateTime(new Date(Date.now() + 60 * 60_000));
     setEditor({
-      id: "",
-      version: "0.1.0",
+      id: allocated?.id ?? "",
       name: "",
       description: "",
       enabled: true,
@@ -154,7 +151,6 @@ export function AutomationDirectoryFragment(props: {
     setEditor({
       originalRef: automation.ref,
       id: automation.resource.metadata.id,
-      version: automation.resource.metadata.version,
       name: automation.resource.metadata.name,
       description: automation.resource.metadata.description,
       enabled: automation.resource.spec.enabled,
@@ -214,11 +210,10 @@ export function AutomationDirectoryFragment(props: {
       await api.saveAutomation({
         expectedProjectRevision: props.project.revision,
         resource: {
-          apiVersion: "pragma/v2",
+          apiVersion: "pragma/v3",
           kind: "Automation",
           metadata: {
             id: editor.id,
-            version: editor.version,
             name: editor.name,
             description: editor.description,
             tags: ["integration"],
@@ -314,40 +309,6 @@ export function AutomationDirectoryFragment(props: {
           <section className="automation-form-section">
             <h2>{t("automationIdentity")}</h2>
             <div className="automation-field-grid">
-              <label>
-                <span>{t("resourceId")}</span>
-                <input
-                  required
-                  pattern="[A-Za-z0-9][A-Za-z0-9_]*"
-                  maxLength={PRAGMA_SEMANTIC_RESOURCE_ID_MAX_LENGTH}
-                  disabled={editor.originalRef !== undefined}
-                  value={editor.id}
-                  aria-invalid={validation.id !== undefined}
-                  onChange={(event) => setEditor({ ...editor, id: event.target.value })}
-                />
-                <FieldFeedback
-                  value={editor.id}
-                  max={PRAGMA_SEMANTIC_RESOURCE_ID_MAX_LENGTH}
-                  error={validation.id}
-                />
-              </label>
-              <label>
-                <span>{t("version")}</span>
-                <input
-                  required
-                  pattern="[A-Za-z0-9][A-Za-z0-9.+_-]*"
-                  maxLength={PRAGMA_RESOURCE_VERSION_MAX_LENGTH}
-                  disabled={editor.originalRef !== undefined}
-                  value={editor.version}
-                  aria-invalid={validation.version !== undefined}
-                  onChange={(event) => setEditor({ ...editor, version: event.target.value })}
-                />
-                <FieldFeedback
-                  value={editor.version}
-                  max={PRAGMA_RESOURCE_VERSION_MAX_LENGTH}
-                  error={validation.version}
-                />
-              </label>
               <label>
                 <span>{t("name")}</span>
                 <input
@@ -816,7 +777,7 @@ export function AutomationDirectoryFragment(props: {
   );
 }
 
-type FieldValidationError = "required" | "tooLong" | "idFormat" | "versionFormat";
+type FieldValidationError = "required" | "tooLong";
 
 function FieldFeedback(props: {
   readonly value: string;
@@ -829,11 +790,7 @@ function FieldFeedback(props: {
       ? undefined
       : props.error === "required"
         ? t("fieldRequired")
-        : props.error === "tooLong"
-          ? t("fieldTooLong", { max: props.max })
-          : props.error === "idFormat"
-            ? t("resourceIdInvalid")
-            : t("versionInvalid");
+        : t("fieldTooLong", { max: props.max });
   return (
     <small className={error === undefined ? "automation-field-meta" : "automation-field-error"}>
       <span>{error}</span>
@@ -1001,22 +958,12 @@ export function validateAutomationEditor(
   executor: MissionExecutorOption | undefined,
 ): {
   readonly valid: boolean;
-  readonly id?: FieldValidationError | undefined;
-  readonly version?: FieldValidationError | undefined;
   readonly name?: FieldValidationError | undefined;
   readonly description?: FieldValidationError | undefined;
   readonly prompt?: FieldValidationError | undefined;
   readonly flowInput?: "invalid" | undefined;
   readonly trigger?: "invalid" | undefined;
 } {
-  const id = validateText(editor.id, PRAGMA_SEMANTIC_RESOURCE_ID_MAX_LENGTH, {
-    pattern: /^[A-Za-z0-9][A-Za-z0-9_]*$/,
-    formatError: "idFormat",
-  });
-  const version = validateText(editor.version, PRAGMA_RESOURCE_VERSION_MAX_LENGTH, {
-    pattern: /^[A-Za-z0-9][A-Za-z0-9.+_-]*$/,
-    formatError: "versionFormat",
-  });
   const name = validateText(editor.name, PRAGMA_RESOURCE_NAME_MAX_LENGTH);
   const description = validateText(editor.description, PRAGMA_RESOURCE_DESCRIPTION_MAX_LENGTH);
   const inputSchema = executor?.kind === "flow" ? executor.inputSchema : undefined;
@@ -1035,8 +982,6 @@ export function validateAutomationEditor(
     trigger = "invalid";
   }
   const valid =
-    id === undefined &&
-    version === undefined &&
     name === undefined &&
     description === undefined &&
     prompt === undefined &&
@@ -1044,22 +989,12 @@ export function validateAutomationEditor(
     trigger === undefined &&
     executor !== undefined &&
     editor.workspace !== "";
-  return { valid, id, version, name, description, prompt, flowInput, trigger };
+  return { valid, name, description, prompt, flowInput, trigger };
 }
 
-function validateText(
-  value: string,
-  max: number,
-  options: {
-    readonly pattern?: RegExp | undefined;
-    readonly formatError?: FieldValidationError | undefined;
-  } = {},
-): FieldValidationError | undefined {
+function validateText(value: string, max: number): FieldValidationError | undefined {
   if (value.trim() === "") return "required";
   if (value.length > max) return "tooLong";
-  if (options.pattern !== undefined && !options.pattern.test(value)) {
-    return options.formatError;
-  }
   return undefined;
 }
 

@@ -64,16 +64,18 @@ describe("MissionModelOverrideControls", () => {
 });
 
 describe("mission executor search", () => {
-  const executors = Array.from({ length: 100 }, (_, index) => ({
-    ref: `expert:expert_${index}@1.0.0`,
-    name: `Expert ${index}`,
-    description: index % 2 === 0 ? "Release work" : "Other work",
-    version: "1.0.0",
-    kind: "expert" as const,
-    origin: "project" as const,
-    readOnly: false,
-    customized: false,
-  }));
+  const executors = Array.from({ length: 100 }, (_, index) => {
+    const id = index.toString(32).padStart(16, "0");
+    return {
+      ref: `expert:${id}` as const,
+      name: `Expert ${index}`,
+      description: index % 2 === 0 ? "Release work" : "Other work",
+      kind: "expert" as const,
+      origin: "project" as const,
+      readOnly: false,
+      customized: false,
+    };
+  });
 
   it("shows at most five executors and searches the full catalog", () => {
     expect(filterMissionExecutors(executors, "")).toHaveLength(5);

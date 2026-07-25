@@ -3,7 +3,6 @@ import { useTranslation } from "react-i18next";
 
 import {
   CaretRight,
-  Copy,
   GitBranch,
   MagnifyingGlass,
   Plus,
@@ -27,13 +26,14 @@ import type {
 
 import { errorMessage } from "../../lib/errors.ts";
 import { FlowEditor } from "./flow-editor/FlowEditor.tsx";
+import { createEmptyFlow } from "./flow-editor/flow-model.ts";
 import { StudioScreenFrame } from "./StudioScreenFrame.tsx";
 import { desktopApi } from "./studio-model.ts";
 import { DeleteConfirmationDialog } from "./DeleteConfirmationDialog.tsx";
 
 type ResourceKind = "team" | "flow";
 type TeamExpertPickerKind = "coordinator" | "members";
-type ResourceEditorMode = "create" | "edit" | "new-version";
+type ResourceEditorMode = "create" | "edit";
 
 const TEAM_EXPERT_RESULT_LIMIT = 8;
 
@@ -42,7 +42,7 @@ function unicodeLength(value: string): number {
 }
 
 function expertRef(expert: PragmaExpertResource): string {
-  return `expert:${expert.metadata.id}@${expert.metadata.version}`;
+  return `expert:${expert.metadata.id}`;
 }
 
 function normalized(value: string): string {
@@ -66,7 +66,6 @@ export function matchingTeamExperts(
         [
           expert.metadata.name,
           expert.metadata.id,
-          expert.metadata.version,
           expert.metadata.description,
           ...expert.metadata.tags,
           ref,
@@ -89,10 +88,7 @@ export function PragmaResourceDirectoryFragment(props: {
 }) {
   const { t } = useTranslation("studio");
   const [editing, setEditing] = useState<PragmaResource | "new" | null>(null);
-  const [versionSource, setVersionSource] = useState<{
-    readonly ref: string;
-    readonly baseRevision: number;
-  } | null>(null);
+  const [newResourceId, setNewResourceId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pendingRemoval, setPendingRemoval] = useState<PragmaResource | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -151,10 +147,9 @@ export function PragmaResourceDirectoryFragment(props: {
     if (api === undefined) return;
     setDeleting(true);
     try {
-      const prefix = resource.kind === "ExpertTeam" ? "team" : "flow";
       const snapshot = await api.deletePragmaResource({
         baseRevision: props.project.revision,
-        ref: `${prefix}:${resource.metadata.id}@${resource.metadata.version}`,
+        ref: canonicalPragmaResourceRef(resource),
       });
       props.onProjectChanged(snapshot);
       if (resource.kind === "Flow") {
@@ -174,18 +169,17 @@ export function PragmaResourceDirectoryFragment(props: {
   };
 
   if (editing !== null) {
-    const editorMode: ResourceEditorMode =
-      editing === "new" ? "create" : versionSource === null ? "edit" : "new-version";
+    const editorMode: ResourceEditorMode = editing === "new" ? "create" : "edit";
     const closeEditor = () => {
       setEditing(null);
-      setVersionSource(null);
+      setNewResourceId(null);
     };
     return props.kind === "team" ? (
       <TeamEditor
         project={props.project}
-        baseRevision={versionSource?.baseRevision ?? props.project.revision}
+        baseRevision={props.project.revision}
         mode={editorMode}
-        versionSourceRef={versionSource?.ref}
+        newResourceId={newResourceId ?? undefined}
         initial={editing === "new" || editing.kind !== "ExpertTeam" ? undefined : editing}
         error={error}
         onCancel={closeEditor}
@@ -196,11 +190,18 @@ export function PragmaResourceDirectoryFragment(props: {
     ) : (
       <FlowEditor
         project={props.project}
-        baseRevision={versionSource?.baseRevision ?? props.project.revision}
+        baseRevision={props.project.revision}
         mode={editorMode}
-        versionSourceRef={versionSource?.ref}
         runtimes={props.runtimes}
-        initial={editing === "new" || editing.kind !== "Flow" ? undefined : editing}
+        initial={
+          editing === "new"
+            ? newResourceId === null
+              ? undefined
+              : createEmptyFlow(newResourceId)
+            : editing.kind === "Flow"
+              ? editing
+              : undefined
+        }
         error={error}
         onCancel={closeEditor}
         onSave={saveFlow}
@@ -224,8 +225,15 @@ export function PragmaResourceDirectoryFragment(props: {
             className="primary-button"
             type="button"
             onClick={() => {
-              setVersionSource(null);
-              setEditing("new");
+              const api = desktopApi();
+              if (api === undefined) return;
+              void api
+                .allocatePragmaResourceId()
+                .then(({ id }) => {
+                  setNewResourceId(id);
+                  setEditing("new");
+                })
+                .catch((cause: unknown) => setError(errorMessage(cause)));
             }}
           >
             <Plus size={17} aria-hidden="true" />{" "}
@@ -246,30 +254,18 @@ export function PragmaResourceDirectoryFragment(props: {
             <button
               type="button"
               onClick={() => {
-                setVersionSource(null);
+                setNewResourceId(null);
                 setEditing(resource);
               }}
             >
               <strong>{resource.metadata.name}</strong>
               <span>{resource.metadata.description}</span>
             </button>
-            <small>{resource.metadata.version}</small>
             <button
-              type="button"
-              aria-label={t("createNewVersionNamed", { name: resource.metadata.name })}
-              onClick={() => {
-                setVersionSource({
-                  ref: canonicalPragmaResourceRef(resource),
-                  baseRevision: props.project.revision,
-                });
-                setEditing(structuredClone(resource));
-              }}
-            >
-              <Copy size={17} />
-            </button>
-            <button
+              className="pragma-resource-action pragma-resource-delete-action"
               type="button"
               aria-label={t("deleteNamed", { name: resource.metadata.name })}
+              title={t("deleteResourceAction")}
               onClick={() => setPendingRemoval(resource)}
             >
               <Trash size={17} />
@@ -309,7 +305,7 @@ export function TeamEditor(props: {
   readonly project: PragmaProjectSnapshot;
   readonly baseRevision?: number | undefined;
   readonly mode?: ResourceEditorMode | undefined;
-  readonly versionSourceRef?: string | undefined;
+  readonly newResourceId?: string | undefined;
   readonly initial?: PragmaExpertTeamResource | undefined;
   readonly error: string | null;
   readonly onCancel: () => void;
@@ -323,11 +319,10 @@ export function TeamEditor(props: {
   const experts = props.project.resources.filter(
     (resource): resource is PragmaExpertResource => resource.kind === "Expert",
   );
-  const [id, setId] = useState(props.initial?.metadata.id ?? "");
+  const id = props.initial?.metadata.id ?? props.newResourceId ?? "";
   const [name, setName] = useState(props.initial?.metadata.name ?? "");
   const [description, setDescription] = useState(props.initial?.metadata.description ?? "");
   const [instructions, setInstructions] = useState(props.initial?.spec.instructions ?? "");
-  const [version, setVersion] = useState(props.initial?.metadata.version ?? "1.0.0");
   const initialCoordinator = props.initial?.spec.coordinator.ref ?? "";
   const [coordinator, setCoordinator] = useState(initialCoordinator);
   const [members, setMembers] = useState<readonly string[]>(
@@ -345,9 +340,9 @@ export function TeamEditor(props: {
   const submit = () => {
     try {
       const resource = PragmaExpertTeamResourceSchema.parse({
-        apiVersion: "pragma/v2",
+        apiVersion: "pragma/v3",
         kind: "ExpertTeam",
-        metadata: { id, name, description, version, tags: props.initial?.metadata.tags ?? [] },
+        metadata: { id, name, description, tags: props.initial?.metadata.tags ?? [] },
         spec: {
           coordinator: { ref: coordinator },
           members: members.map((ref) => ({ ref })),
@@ -361,19 +356,8 @@ export function TeamEditor(props: {
           },
         },
       });
-      if (
-        props.mode === "new-version" &&
-        canonicalPragmaResourceRef(resource) === props.versionSourceRef
-      ) {
-        setValidationError(t("newVersionMustDiffer"));
-        return;
-      }
       setValidationError(null);
-      void props.onSave(
-        resource,
-        expectedRevision,
-        props.versionSourceRef === undefined ? [] : [props.versionSourceRef],
-      );
+      void props.onSave(resource, expectedRevision, []);
     } catch (validationFailure) {
       setValidationError(errorMessage(validationFailure));
     }
@@ -381,28 +365,16 @@ export function TeamEditor(props: {
 
   return (
     <ResourceEditor
-      title={
-        props.mode === "new-version"
-          ? t("createNewVersion")
-          : props.initial === undefined
-            ? t("newExpertTeam")
-            : t("editExpertTeam")
-      }
+      title={props.mode === "create" ? t("newExpertTeam") : t("editExpertTeam")}
       error={validationError ?? props.error}
       onCancel={props.onCancel}
       onSave={submit}
     >
       <MetadataFields
-        id={id}
         name={name}
         description={description}
-        version={version}
-        lockId={props.initial !== undefined}
-        lockVersion={props.mode === "edit"}
-        onId={setId}
         onName={setName}
         onDescription={setDescription}
-        onVersion={setVersion}
       />
       <TeamExpertSelectors
         experts={experts}
@@ -542,7 +514,7 @@ function TeamExpertSelectors(props: {
               <small>
                 {coordinatorExpert === undefined
                   ? t("coordinatorEmptyDescription")
-                  : `expert:${coordinatorExpert.metadata.id}@${coordinatorExpert.metadata.version}`}
+                  : `expert:${coordinatorExpert.metadata.id}`}
               </small>
             </span>
             <span className="team-expert-selector-action">
@@ -693,8 +665,7 @@ function TeamExpertSelectors(props: {
                         <span>
                           <strong>{expert.metadata.name}</strong>
                           <small>
-                            {expert.metadata.description ||
-                              `expert:${expert.metadata.id}@${expert.metadata.version}`}
+                            {expert.metadata.description || `expert:${expert.metadata.id}`}
                           </small>
                         </span>
                       </label>
@@ -776,38 +747,14 @@ function ResourceEditor(props: {
 }
 
 function MetadataFields(props: {
-  readonly id: string;
   readonly name: string;
   readonly description: string;
-  readonly version: string;
-  readonly lockId: boolean;
-  readonly lockVersion: boolean;
-  readonly onId: (value: string) => void;
   readonly onName: (value: string) => void;
   readonly onDescription: (value: string) => void;
-  readonly onVersion: (value: string) => void;
 }) {
   const { t } = useTranslation("studio");
   return (
     <>
-      <div className="pragma-two-columns">
-        <label>
-          {t("resourceId")}
-          <input
-            value={props.id}
-            disabled={props.lockId}
-            onChange={(event) => props.onId(event.target.value)}
-          />
-        </label>
-        <label>
-          {t("version")}
-          <input
-            value={props.version}
-            disabled={props.lockVersion}
-            onChange={(event) => props.onVersion(event.target.value)}
-          />
-        </label>
-      </div>
       <label>
         {t("name")}
         <input value={props.name} onChange={(event) => props.onName(event.target.value)} />

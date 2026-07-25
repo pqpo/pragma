@@ -13,7 +13,7 @@ import { builtInPragmaResource, materializeBuiltInDefaultAgent } from "../src/bu
 import { createDefaultAgentTools } from "../src/tools.ts";
 
 describe("built-in Pragma Agent DSL", () => {
-  it("loads as a portable pragma/v2 project with the authoring Skill", async () => {
+  it("loads as a portable pragma/v3 project with the authoring Skill", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-default-agent-builtin-"));
     const entry = await materializeBuiltInDefaultAgent(root);
     const project = await loadPragmaProject(entry, { rootDir: dirname(entry) });
@@ -33,6 +33,7 @@ describe("built-in Pragma Agent DSL", () => {
       project: {
         list: unavailable,
         listExpertOptions: unavailable,
+        allocateResourceIds: unavailable,
         read: unavailable,
         prepare: unavailable,
         createFlowDraft: unavailable,
@@ -53,7 +54,7 @@ describe("built-in Pragma Agent DSL", () => {
         interrupt: unavailable,
       },
     });
-    const compiled = await project.compile<Expert>("expert:pragma@1.0.0", {
+    const compiled = await project.compile<Expert>("expert:0000000000pragma", {
       workspace: root,
       environmentId: "test",
       adapterHost: {
@@ -77,12 +78,12 @@ describe("built-in Pragma Agent DSL", () => {
         },
       },
     });
-    expect(compiled.value.tools?.map((tool) => tool.name)).toHaveLength(17);
+    expect(compiled.value.tools?.map((tool) => tool.name)).toHaveLength(18);
     expect(compiled.value.tools?.map((tool) => tool.name)).toContain("list_expert_options");
     expect(compiled.value.tools?.map((tool) => tool.name)).toContain("update_flow_draft");
     expect(compiled.value.skills?.skills[0]?.path).toMatch(/author-pragma-dsl[\\/]SKILL\.md$/);
     expect(compiled.value).toMatchObject({
-      id: "pragma",
+      id: "0000000000pragma",
       name: "Pragma",
       scope:
         "Accomplish the user's work with the active Runtime, workspace, and available capabilities.",
@@ -111,8 +112,10 @@ describe("built-in Pragma Agent DSL", () => {
     const reference =
       BUILT_IN_PRAGMA_FILES["skills/author-pragma-dsl/references/automation.md"] ?? "";
 
-    expect(reference).toContain("`metadata.id`: 1–120 characters");
-    expect(reference).toContain("`metadata.version`: 1–100 characters");
+    expect(reference).toContain(
+      "`metadata.id`: host-allocated 16-character lowercase Crockford Base32.",
+    );
+    expect(reference).not.toContain("`metadata.version`");
     expect(reference).toContain("`metadata.name`: 1–200 characters");
     expect(reference).toContain("`metadata.description`: 1–4,000 characters");
     expect(reference).toContain("Prompt input: 1–100,000 characters");
@@ -126,11 +129,10 @@ describe("built-in Pragma Agent DSL", () => {
     resource.metadata.name = "My Pragma";
     resource.spec.instructions = "Use the customized built-in instructions.";
     const optionalCapability = PragmaCapabilityResourceSchema.parse({
-      apiVersion: "pragma/v2",
+      apiVersion: "pragma/v3",
       kind: "Capability",
       metadata: {
-        id: "desktop_optional",
-        version: "1",
+        id: "fdabjmg2tasep93t",
         name: "Desktop optional capability",
         description: "An optional capability embedded by Desktop.",
         tags: ["desktop-managed"],
@@ -145,7 +147,9 @@ describe("built-in Pragma Agent DSL", () => {
     const project = await loadPragmaProject(entry, { rootDir: dirname(entry) });
     const stored = project
       .listResources()
-      .find((candidate) => candidate.kind === "Expert" && candidate.metadata.id === "pragma");
+      .find(
+        (candidate) => candidate.kind === "Expert" && candidate.metadata.id === "0000000000pragma",
+      );
 
     expect(stored?.metadata.name).toBe("My Pragma");
     expect(stored?.kind === "Expert" ? stored.spec.instructions : undefined).toBe(

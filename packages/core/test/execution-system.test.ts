@@ -401,7 +401,6 @@ async function fixture(delayMs?: number) {
     name: "Solo",
     description: "Test Expert",
     tags: [],
-    version: "1.0.0",
     scope: "test",
     workspace: home,
   });
@@ -421,7 +420,6 @@ async function trackedFixture(options: Omit<FakeRuntimeOptions, "stats"> = {}) {
     name: "Tracked",
     description: "Tracked Runtime Expert",
     tags: [],
-    version: "1.0.0",
     scope: "test",
     workspace: home,
   });
@@ -444,7 +442,6 @@ describe("ExpertSession", () => {
       name: "Model Selection",
       description: "Model selection test",
       tags: [],
-      version: "1.0.0",
       scope: "test",
       workspace: home,
       models: {
@@ -500,7 +497,6 @@ describe("ExpertSession", () => {
         name: "Resumed Model Selection",
         description: "Resumed model selection test",
         tags: [],
-        version: "1.0.0",
         scope: "test",
         workspace: home,
         models: { default: { model: { providerId, modelId } } },
@@ -547,7 +543,7 @@ describe("ExpertSession", () => {
     expect(firstRoot).toMatchObject({
       owner: { type: "expert-session", ownerId: first.sessionId },
       origin: { type: "expert-session", sessionId: first.sessionId },
-      expert: { id: expert.id, version: expert.version },
+      expert: { id: expert.id },
       runtime: { runtimeId: "fake", revision: 1 },
       lifecycle: "open",
     });
@@ -734,7 +730,6 @@ describe("ExpertSession", () => {
       name: "Lead",
       description: "Lead",
       tags: [],
-      version: "1.0.0",
       scope: "test",
       workspace: home,
       pragmaHome: home,
@@ -744,14 +739,12 @@ describe("ExpertSession", () => {
       name: "Member",
       description: "Member",
       tags: [],
-      version: "1.0.0",
       scope: "test",
       workspace: home,
       pragmaHome: home,
     });
     const team = defineExpertTeam({
       id: "persistent-team",
-      version: "1.0.0",
       coordinator,
       members: [member],
       delegation: {
@@ -864,17 +857,16 @@ describe("ExpertSession", () => {
     const sessions = createFileExpertSessionStore({ executions, pragmaHome: home });
     const now = new Date().toISOString();
     await sessions.create({
-      schemaVersion: "pragma.expert-session/v4",
+      schemaVersion: "pragma.expert-session/v5",
       sessionId: "leased-session",
       expertId: "expert",
-      expertVersion: "1.0.0",
       definitionFingerprint: "a".repeat(64),
       status: "open",
       queuedRequestIds: [],
       executionIds: [],
       rootContextId: "root",
       contexts: {
-        root: sessionRootContext("leased-session", "root", "expert", "1.0.0", "fake", now),
+        root: sessionRootContext("leased-session", "root", "expert", "fake", now),
       },
       createdAt: now,
       updatedAt: now,
@@ -887,7 +879,7 @@ describe("ExpertSession", () => {
     await sessions.releaseLease("leased-session", "owner-b");
   });
 
-  it("resumes an existing Session when its Team resolver descriptor changes", async () => {
+  it("rejects resume when its Team resolver descriptor changes", async () => {
     const home = await mkdtemp(join(tmpdir(), "pragma-session-fingerprint-"));
     const executions = createFileExecutionStore({ pragmaHome: home });
     const sessions = createFileExpertSessionStore({ executions, pragmaHome: home });
@@ -903,7 +895,6 @@ describe("ExpertSession", () => {
       name: "Lead",
       description: "Lead",
       tags: [],
-      version: "1.0.0",
       scope: "test",
       workspace: home,
     });
@@ -912,14 +903,12 @@ describe("ExpertSession", () => {
       name: "Member",
       description: "Member",
       tags: [],
-      version: "1.0.0",
       scope: "test",
       workspace: home,
     });
     const team = (resolverVersion: string) =>
       defineExpertTeam({
         id: "fingerprint-team",
-        version: "1.0.0",
         coordinator: lead,
         members: [member],
         delegation: {
@@ -933,31 +922,29 @@ describe("ExpertSession", () => {
     const original = team("1.0.0");
     const now = new Date().toISOString();
     await sessions.create({
-      schemaVersion: "pragma.expert-session/v4",
+      schemaVersion: "pragma.expert-session/v5",
       sessionId: "fingerprint-session",
       expertId: original.id,
-      expertVersion: original.version,
       definitionFingerprint: fingerprintExpertExecutionDefinition(original),
       status: "open",
       queuedRequestIds: [],
       executionIds: [],
       rootContextId: "root",
       contexts: {
-        root: sessionRootContext("fingerprint-session", "root", lead.id, lead.version, "fake", now),
+        root: sessionRootContext("fingerprint-session", "root", lead.id, "fake", now),
       },
       createdAt: now,
       updatedAt: now,
     });
 
-    const resumed = await app.experts.resumeSession(team("2.0.0"), {
-      sessionId: "fingerprint-session",
-    });
-
-    expect(resumed.sessionId).toBe("fingerprint-session");
+    await expect(
+      app.experts.resumeSession(team("2.0.0"), {
+        sessionId: "fingerprint-session",
+      }),
+    ).rejects.toThrow("definition mismatch");
     expect((await sessions.get("fingerprint-session"))?.definitionFingerprint).toBe(
       fingerprintExpertExecutionDefinition(original),
     );
-    await resumed.close();
   });
 
   it("reuses the Runtime Session after a failed prompt", async () => {
@@ -1043,7 +1030,6 @@ describe("ExpertSession", () => {
       name: "Member",
       description: "Member",
       tags: [],
-      version: "1.0.0",
       scope: "test",
       workspace: home,
     });
@@ -1057,7 +1043,6 @@ describe("ExpertSession", () => {
       name: "Lead",
       description: "Lead",
       tags: [],
-      version: "1.0.0",
       scope: "test",
       workspace: home,
       tools: launcher.tools,
@@ -1088,7 +1073,6 @@ describe("ExpertSession", () => {
       name: "Leaf",
       description: "Leaf",
       tags: [],
-      version: "1.0.0",
       scope: "test",
       workspace: home,
       pragmaHome: home,
@@ -1099,7 +1083,6 @@ describe("ExpertSession", () => {
       name: "Member",
       description: "Member",
       tags: [],
-      version: "1.0.0",
       scope: "test",
       workspace: home,
       pragmaHome: home,
@@ -1115,7 +1098,6 @@ describe("ExpertSession", () => {
       name: "Lead",
       description: "Lead",
       tags: [],
-      version: "1.0.0",
       scope: "test",
       workspace: home,
       pragmaHome: home,
@@ -1137,7 +1119,6 @@ describe("ExpertSession", () => {
       name: "Member",
       description: "Member",
       tags: [],
-      version: "1.0.0",
       scope: "test",
       workspace: home,
     });
@@ -1146,13 +1127,11 @@ describe("ExpertSession", () => {
       name: "Lead",
       description: "Lead",
       tags: [],
-      version: "1.0.0",
       scope: "test",
       workspace: home,
     });
     const team = defineExpertTeam({
       id: "team",
-      version: "1.0.0",
       coordinator: lead,
       members: [member],
       delegation: { allow: { lead: ["member"], member: [] } },
@@ -1188,7 +1167,6 @@ describe("ExpertSession", () => {
       name: "Member",
       description: "Member",
       tags: [],
-      version: "1.0.0",
       scope: "test",
       workspace: home,
     });
@@ -1197,13 +1175,11 @@ describe("ExpertSession", () => {
       name: "Lead",
       description: "Lead",
       tags: [],
-      version: "1.0.0",
       scope: "test",
       workspace: home,
     });
     const team = defineExpertTeam({
       id: "team-fresh-agents",
-      version: "1.0.0",
       coordinator: lead,
       members: [member],
       delegation: { allow: { lead: ["member"], member: [] } },
@@ -1250,7 +1226,6 @@ describe("ExpertSession", () => {
       name: "Member",
       description: "Member",
       tags: [],
-      version: "1.0.0",
       scope: "test",
       workspace: home,
     });
@@ -1259,13 +1234,11 @@ describe("ExpertSession", () => {
       name: "Lead",
       description: "Lead",
       tags: [],
-      version: "1.0.0",
       scope: "test",
       workspace: home,
     });
     const team = defineExpertTeam({
       id: "runtime-routing-team",
-      version: "1.0.0",
       coordinator: lead,
       members: [member],
       delegation: {
@@ -1300,7 +1273,6 @@ describe("ExpertSession", () => {
       name: "Member",
       description: "Member",
       tags: [],
-      version: "1.0.0",
       scope: "test",
       workspace: home,
     });
@@ -1309,7 +1281,6 @@ describe("ExpertSession", () => {
       name: "Lead",
       description: "Lead",
       tags: [],
-      version: "1.0.0",
       scope: "test",
       workspace: home,
       tools: createAgentLauncher({
@@ -1344,7 +1315,6 @@ describe("ExpertSession", () => {
       name: "Member",
       description: "Member",
       tags: [],
-      version: "1.0.0",
       scope: "test",
       workspace: home,
     });
@@ -1353,7 +1323,6 @@ describe("ExpertSession", () => {
       name: "Lead",
       description: "Lead",
       tags: [],
-      version: "1.0.0",
       scope: "test",
       workspace: home,
       tools: createAgentLauncher({ experts: [member] }).tools,
@@ -1385,7 +1354,6 @@ describe("ExpertSession", () => {
       name: "Member",
       description: "Member",
       tags: [],
-      version: "1.0.0",
       scope: "test",
       workspace: home,
       defaultRuntimeId: "fake-b",
@@ -1395,7 +1363,6 @@ describe("ExpertSession", () => {
       name: "Lead",
       description: "Lead",
       tags: [],
-      version: "1.0.0",
       scope: "test",
       workspace: home,
       tools: createAgentLauncher({ experts: [member] }).tools,
@@ -1428,7 +1395,6 @@ describe("ExpertSession", () => {
       name: "Root",
       description: "Root",
       tags: [],
-      version: "1.0.0",
       scope: "test",
       workspace: home,
       defaultRuntimeId: "fake-b",
@@ -1463,15 +1429,14 @@ describe("ExpertSession", () => {
       name: "Worker",
       description: "Worker",
       tags: [],
-      version: "1.0.0",
       scope: "test",
       workspace: home,
       defaultRuntimeId: "fake-b",
     });
-    const nested = defineFlow({ id: "nested", version: "1.0.0" });
+    const nested = defineFlow({ id: "nested" });
     const work = nested.use("work", worker);
     nested.compose(({ start, end }) => start(work).next(end()));
-    const outer = defineFlow({ id: "outer", version: "1.0.0" });
+    const outer = defineFlow({ id: "outer" });
     const callNested = outer.use("nested", nested, { runtime: "fake-c" });
     outer.compose(({ start, end }) => start(callNested).next(end()));
 
@@ -1502,7 +1467,6 @@ describe("ExpertSession", () => {
       name: "Member",
       description: "Member",
       tags: [],
-      version: "1.0.0",
       scope: "test",
       workspace: home,
     });
@@ -1511,20 +1475,17 @@ describe("ExpertSession", () => {
       name: "Lead",
       description: "Lead",
       tags: [],
-      version: "1.0.0",
       scope: "test",
       workspace: home,
     });
     const team = defineExpertTeam({
       id: "flow-runtime-routing-team",
-      version: "1.0.0",
       coordinator: lead,
       members: [member],
       delegation: { runtimeByExpert: { member: "fake-b" } },
     });
     const flow = defineFlow({
       id: "flow-runtime-routing",
-      version: "1.0.0",
       result: ({ state }) => state["review"],
     });
     const review = flow.use("review", team, {
@@ -1562,7 +1523,6 @@ describe("ExpertSession", () => {
       name: "Steerable",
       description: "Steerable",
       tags: [],
-      version: "1.0.0",
       scope: "test",
       workspace: home,
     });
@@ -1597,7 +1557,6 @@ describe("ExpertSession", () => {
       name: "Durable",
       description: "Durable",
       tags: [],
-      version: "1.0.0",
       scope: "test",
       workspace: home,
     });
@@ -1606,11 +1565,11 @@ describe("ExpertSession", () => {
     const sessionCreated = (await session.listEvents()).items;
     const now = new Date().toISOString();
     const executionId = "journal-execution";
-    const definition = { id: expert.id, version: expert.version, kind: "expert" as const };
+    const definition = { id: expert.id, kind: "expert" as const };
     await writeFile(
       new PragmaPaths({ pragmaHome: home }).expertSessionTransaction(session.sessionId),
       `${JSON.stringify({
-        schemaVersion: "pragma.expert-session-transaction/v4",
+        schemaVersion: "pragma.expert-session-transaction/v6",
         session: {
           ...current,
           queuedRequestIds: ["journal-request"],
@@ -1646,7 +1605,7 @@ describe("ExpertSession", () => {
           },
         ],
         execution: {
-          schemaVersion: "pragma.execution/v5",
+          schemaVersion: "pragma.execution/v7",
           executionId,
           version: 0,
           kind: "expert-turn",
@@ -1675,7 +1634,7 @@ describe("ExpertSession", () => {
     );
     expect((await session.getState()).executionIds).toContain(executionId);
     expect(await executions.get(executionId)).toMatchObject({
-      schemaVersion: "pragma.execution/v6",
+      schemaVersion: "pragma.execution/v7",
     });
     expect((await session.getPromptQueue())[0]?.requestId).toBe("journal-request");
     expect((await session.listEvents()).items.map((event) => event.type)).toContain(
@@ -1693,24 +1652,16 @@ describe("ExpertSession", () => {
     const sessions = createFileExpertSessionStore({ executions, pragmaHome: home });
     const now = new Date().toISOString();
     await sessions.create({
-      schemaVersion: "pragma.expert-session/v4",
+      schemaVersion: "pragma.expert-session/v5",
       sessionId: "atomic-session",
       expertId: "expert",
-      expertVersion: "1.0.0",
       definitionFingerprint: "a".repeat(64),
       status: "open",
       queuedRequestIds: [],
       executionIds: [],
       rootContextId: "root-context",
       contexts: {
-        "root-context": sessionRootContext(
-          "atomic-session",
-          "root-context",
-          "expert",
-          "1.0.0",
-          "fake",
-          now,
-        ),
+        "root-context": sessionRootContext("atomic-session", "root-context", "expert", "fake", now),
       },
       createdAt: now,
       updatedAt: now,
@@ -1727,7 +1678,7 @@ describe("ExpertSession", () => {
     await writeFile(
       new PragmaPaths({ pragmaHome: home }).expertSessionTransaction("atomic-session"),
       `${JSON.stringify({
-        schemaVersion: "pragma.expert-session-transaction/v4",
+        schemaVersion: "pragma.expert-session-transaction/v6",
         session: {
           ...current,
           status: "closed",
@@ -1773,11 +1724,10 @@ describe("ExpertSession", () => {
 describe("FlowExecution", () => {
   it("rejects programmatic step IDs that the DSL cannot represent safely", () => {
     for (const id of ["constructor", "prototype", "__internal", `a${"b".repeat(100)}`]) {
-      const flow = defineFlow({ id: `invalid-${id.slice(0, 12)}`, version: "1.0.0" });
+      const flow = defineFlow({ id: `invalid-${id.slice(0, 12)}` });
       expect(() =>
         flow.task({
           id,
-          version: "1.0.0",
           handler: () => undefined,
         }),
       ).toThrow(`Invalid Flow step id: ${id}`);
@@ -1786,15 +1736,13 @@ describe("FlowExecution", () => {
 
   it("returns the actual terminal node result by default", async () => {
     const { app } = await fixture();
-    const flow = defineFlow({ id: "canonical-results", version: "1.0.0" });
+    const flow = defineFlow({ id: "canonical-results" });
     const prepare = flow.task({
       id: "prepare",
-      version: "1.0.0",
       handler: () => ({ score: 7 }),
     });
     const finish = flow.task({
       id: "finish",
-      version: "1.0.0",
       input: ({ state }) =>
         (state["nodes"] as { prepare: { result: { score: number } } }).prepare.result.score,
       handler: ({ input }) => input * 2,
@@ -1808,7 +1756,6 @@ describe("FlowExecution", () => {
     const { app } = await fixture();
     const flow = defineFlow({
       id: "branch-result",
-      version: "1.0.0",
       output: z.object({ selected: z.string(), original: z.string() }),
       result: ({ input, terminal }) => ({
         selected: String(terminal.output),
@@ -1817,11 +1764,10 @@ describe("FlowExecution", () => {
     });
     const decide = flow.task({
       id: "decide",
-      version: "1.0.0",
       handler: ({ input }) => ({ branch: input }),
     });
-    const yes = flow.task({ id: "yes", version: "1.0.0", handler: () => "yes-result" });
-    const no = flow.task({ id: "no", version: "1.0.0", handler: () => "no-result" });
+    const yes = flow.task({ id: "yes", handler: () => "yes-result" });
+    const no = flow.task({ id: "no", handler: () => "no-result" });
     flow.compose(({ start, step, end }) => {
       start(decide).route("branch", { yes, no });
       step(yes).next(end());
@@ -1837,10 +1783,9 @@ describe("FlowExecution", () => {
   it("persists a wall-clock timeout and aborts the active Task", async () => {
     const { app } = await fixture();
     let observedAbort = false;
-    const flow = defineFlow({ id: "timeout-flow", version: "1.0.0", timeoutMs: 1_000 });
+    const flow = defineFlow({ id: "timeout-flow", timeoutMs: 1_000 });
     const task = flow.task({
       id: "wait",
-      version: "1.0.0",
       handler: async ({ signal }) =>
         await new Promise<never>((_resolve, reject) => {
           signal.addEventListener(
@@ -1864,10 +1809,9 @@ describe("FlowExecution", () => {
 
   it("times out a pending HumanTask as failed instead of cancelled", async () => {
     const { app } = await fixture();
-    const flow = defineFlow({ id: "human-timeout-flow", version: "1.0.0", timeoutMs: 40 });
+    const flow = defineFlow({ id: "human-timeout-flow", timeoutMs: 40 });
     const gate = flow.humanTask({
       id: "approval",
-      version: "1.0.0",
       request: { kind: "approval", prompt: "Wait forever?" },
     });
     flow.compose(({ start, end }) => start(gate).next(end()));
@@ -1884,7 +1828,6 @@ describe("FlowExecution", () => {
       name: "Hidden",
       description: "Only reachable from the standalone launcher",
       tags: [],
-      version: "1.0.0",
       scope: "test",
       workspace: home,
     });
@@ -1893,7 +1836,6 @@ describe("FlowExecution", () => {
       name: "Member",
       description: "Team member",
       tags: [],
-      version: "1.0.0",
       scope: "test",
       workspace: home,
     });
@@ -1902,19 +1844,17 @@ describe("FlowExecution", () => {
       name: "Coordinator",
       description: "Team coordinator",
       tags: [],
-      version: "1.0.0",
       scope: "test",
       workspace: home,
       tools: createAgentLauncher({ experts: [hidden] }).tools,
     });
     const team = defineExpertTeam({
       id: "governed-team",
-      version: "1.0.0",
       coordinator,
       members: [member],
       delegation: { allow: { coordinator: ["member"] } },
     });
-    const flow = defineFlow({ id: "governed-team-flow", version: "1.0.0" });
+    const flow = defineFlow({ id: "governed-team-flow" });
 
     expect(() => flow.use("team", team, { runtimeByExpert: { hidden: "fake" } })).toThrow(
       "runtimeByExpert target is unknown: hidden",
@@ -1923,7 +1863,7 @@ describe("FlowExecution", () => {
 
   it("keeps Runtime ownership scoped to the FlowExecution", async () => {
     const { home, app, expert, stats } = await trackedFixture();
-    const flow = defineFlow({ id: "runtime-flow", version: "1.0.0" });
+    const flow = defineFlow({ id: "runtime-flow" });
     const expertStep = flow.use("expert", expert);
     flow.compose(({ start, end }) => start(expertStep).next(end()));
 
@@ -1956,7 +1896,7 @@ describe("FlowExecution", () => {
 
   it("atomically closes Runtime Contexts when a Flow is cancelled", async () => {
     const { home, app, expert } = await trackedFixture({ delayMs: 200 });
-    const flow = defineFlow({ id: "cancel-context-flow", version: "1.0.0" });
+    const flow = defineFlow({ id: "cancel-context-flow" });
     const expertStep = flow.use("expert", expert);
     flow.compose(({ start, end }) => start(expertStep).next(end()));
 
@@ -1987,7 +1927,7 @@ describe("FlowExecution", () => {
     { label: "reused when configured", expectedSessions: 1, reuses: true },
   ])("keeps repeated Expert Runtime Contexts $label", async (scenario) => {
     const { app, expert, stats } = await trackedFixture();
-    const flow = defineFlow({ id: `context-${scenario.label}`, version: "1.0.0" });
+    const flow = defineFlow({ id: `context-${scenario.label}` });
     const expertStep = flow.use("expert", expert, {
       ...(scenario.reuses
         ? {
@@ -2001,7 +1941,6 @@ describe("FlowExecution", () => {
     });
     const review = flow.humanTask({
       id: "review",
-      version: "1.0.0",
       request: {
         kind: "review_gate",
         questions: [
@@ -2068,12 +2007,10 @@ describe("FlowExecution", () => {
     let calls = 0;
     const flow = defineFlow({
       id: "flow",
-      version: "1.0.0",
       result: ({ state }) => state["answer"],
     });
     const task = flow.task({
       id: "task",
-      version: "1.0.0",
       handler: async ({ input }) => {
         calls += 1;
         await new Promise<void>((resolve) => setTimeout(resolve, 25));
@@ -2110,10 +2047,9 @@ describe("FlowExecution", () => {
     const home = await mkdtemp(join(tmpdir(), "pragma-concurrent-nested-flows-"));
     const barrier = createBarrier(2, 5_000);
     const nested = (id: string, field: string) => {
-      const flow = defineFlow({ id, version: "1.0.0" });
+      const flow = defineFlow({ id });
       const task = flow.task({
         id: "work",
-        version: "1.0.0",
         async handler({ state }) {
           expect(state["__pragma"]).toBeUndefined();
           await barrier.arriveAndWait();
@@ -2155,7 +2091,6 @@ describe("FlowExecution", () => {
       name: "Caller",
       description: "Calls nested flows",
       tags: [],
-      version: "1.0.0",
       scope: "test",
       workspace: home,
       tools: [resourceTool("call_first", firstFlow), resourceTool("call_second", secondFlow)],
@@ -2184,7 +2119,6 @@ describe("FlowExecution", () => {
       name: "Callee",
       description: "Returns a small result",
       tags: [],
-      version: "1.0.0",
       scope: "test",
       workspace: home,
     });
@@ -2208,7 +2142,6 @@ describe("FlowExecution", () => {
       name: "Caller",
       description: "Calls another Expert",
       tags: [],
-      version: "1.0.0",
       scope: "test",
       workspace: home,
       tools: [callCallee],
@@ -2224,19 +2157,16 @@ describe("FlowExecution", () => {
     const { app, expert } = await fixture();
     const team = defineExpertTeam({
       id: "review-team",
-      version: "1.0.0",
       coordinator: expert,
       members: [],
       delegation: { allow: { [expert.id]: [] } },
     });
     const flow = defineFlow({
       id: "mapped-input-flow",
-      version: "1.0.0",
       result: ({ state }) => state["outcome"],
     });
     const prepare = flow.task({
       id: "prepare",
-      version: "1.0.0",
       input: { source: "root", stage: "prepare" },
       handler: ({ input }) => input,
       reduce: ({ state, output }) => {
@@ -2257,7 +2187,6 @@ describe("FlowExecution", () => {
     });
     const gate = flow.humanTask({
       id: "review",
-      version: "1.0.0",
       input: ({ state }) => ({ report: state["team"] }),
       request: ({ input }) => ({
         kind: "review_gate",
@@ -2285,7 +2214,6 @@ describe("FlowExecution", () => {
     });
     const approved = flow.task({
       id: "approved",
-      version: "1.0.0",
       handler: () => "approved",
       reduce: ({ state, output }) => {
         state["outcome"] = output;
@@ -2293,7 +2221,6 @@ describe("FlowExecution", () => {
     });
     const revised = flow.task({
       id: "revised",
-      version: "1.0.0",
       handler: () => "revised",
       reduce: ({ state, output }) => {
         state["outcome"] = output;
@@ -2301,7 +2228,6 @@ describe("FlowExecution", () => {
     });
     const rejected = flow.task({
       id: "rejected",
-      version: "1.0.0",
       handler: () => "rejected",
       reduce: ({ state, output }) => {
         state["outcome"] = output;
@@ -2387,10 +2313,9 @@ describe("FlowExecution", () => {
 
   it("maps approval HumanTasks to approved responses", async () => {
     const { app } = await fixture();
-    const flow = defineFlow({ id: "approval-flow", version: "1.0.0" });
+    const flow = defineFlow({ id: "approval-flow" });
     const approval = flow.humanTask({
       id: "approval",
-      version: "1.0.0",
       request: {
         kind: "approval",
         prompt: "Continue?",
@@ -2430,10 +2355,9 @@ describe("FlowExecution", () => {
 
   it("maps choice labels to stable selection values and applies the HumanTask output schema", async () => {
     const { app } = await fixture();
-    const flow = defineFlow({ id: "choice-flow", version: "1.0.0" });
+    const flow = defineFlow({ id: "choice-flow" });
     const choice = flow.humanTask({
       id: "choice",
-      version: "1.0.0",
       output: z.object({ selection: z.array(z.string()).min(1) }),
       request: {
         kind: "question",
@@ -2475,15 +2399,14 @@ describe("FlowExecution", () => {
 
   it("routes string arrays by ordered contains conditions", async () => {
     const { app } = await fixture();
-    const flow = defineFlow({ id: "array-route-flow", version: "1.0.0" });
+    const flow = defineFlow({ id: "array-route-flow" });
     const source = flow.task({
       id: "source",
-      version: "1.0.0",
       handler: () => ({ selection: ["ship", "notify"] }),
     });
-    const all = flow.task({ id: "all", version: "1.0.0", handler: () => "all" });
-    const any = flow.task({ id: "any", version: "1.0.0", handler: () => "any" });
-    const none = flow.task({ id: "none", version: "1.0.0", handler: () => "none" });
+    const all = flow.task({ id: "all", handler: () => "all" });
+    const any = flow.task({ id: "any", handler: () => "any" });
+    const none = flow.task({ id: "none", handler: () => "none" });
     flow.compose(({ start, step, end }) => {
       start(source).routeArray("selection", [
         {
@@ -2518,12 +2441,10 @@ describe("FlowExecution", () => {
     const { app } = await fixture();
     const flow = defineFlow({
       id: "revision-loop-flow",
-      version: "1.0.0",
       result: ({ state }) => state["outcome"],
     });
     const review = flow.humanTask({
       id: "review",
-      version: "1.0.0",
       request: {
         kind: "review_gate",
         questions: [
@@ -2542,7 +2463,6 @@ describe("FlowExecution", () => {
     });
     const approve = flow.task({
       id: "approve",
-      version: "1.0.0",
       handler: () => "approved",
       reduce: ({ state, output }) => {
         state["outcome"] = output;
@@ -2550,7 +2470,6 @@ describe("FlowExecution", () => {
     });
     const reject = flow.task({
       id: "reject",
-      version: "1.0.0",
       handler: () => "rejected",
       reduce: ({ state, output }) => {
         state["outcome"] = output;
@@ -2604,10 +2523,9 @@ describe("FlowExecution", () => {
 
   it("marks a failing Task Invocation as failed", async () => {
     const { app } = await fixture();
-    const flow = defineFlow({ id: "failing-flow", version: "1.0.0" });
+    const flow = defineFlow({ id: "failing-flow" });
     const task = flow.task({
       id: "fails",
-      version: "1.0.0",
       handler: () => {
         throw new Error("task exploded");
       },
@@ -2620,10 +2538,9 @@ describe("FlowExecution", () => {
 
   it("marks a Step Invocation as failed when its input mapper throws", async () => {
     const { app } = await fixture();
-    const flow = defineFlow({ id: "failing-input-flow", version: "1.0.0" });
+    const flow = defineFlow({ id: "failing-input-flow" });
     const task = flow.task({
       id: "fails-before-handler",
-      version: "1.0.0",
       input: () => {
         throw new Error("input mapping exploded");
       },
@@ -2639,12 +2556,11 @@ describe("FlowExecution", () => {
     });
   });
 
-  it("rejects recover when a nested definition version changes", async () => {
+  it("rejects recover when a nested definition changes", async () => {
     const { home, app } = await fixture();
-    const original = defineFlow({ id: "versioned-flow", version: "1.0.0" });
+    const original = defineFlow({ id: "versioned-flow" });
     const waiting = original.humanTask({
       id: "approval",
-      version: "1.0.0",
       request: { kind: "approval", prompt: "Continue?" },
     });
     original.compose(({ start, end }) => start(waiting).next(end()));
@@ -2653,11 +2569,10 @@ describe("FlowExecution", () => {
       async () => (await execution.getTree()).children[0]?.invocation.status === "waiting",
     );
 
-    const changed = defineFlow({ id: "versioned-flow", version: "1.0.0" });
+    const changed = defineFlow({ id: "versioned-flow" });
     const changedWaiting = changed.humanTask({
-      id: "approval",
-      version: "2.0.0",
-      request: { kind: "approval", prompt: "Continue?" },
+      id: "changed-approval",
+      request: { kind: "approval", prompt: "Continue with the changed definition?" },
     });
     changed.compose(({ start, end }) => start(changedWaiting).next(end()));
     const secondApp = createPragma({
@@ -2678,10 +2593,9 @@ describe("FlowExecution", () => {
   it("recovers a waiting HumanTask in a new app without rerunning completed steps", async () => {
     const { home, app } = await fixture();
     let prepareCalls = 0;
-    const flow = defineFlow({ id: "human-recovery-flow", version: "1.0.0" });
+    const flow = defineFlow({ id: "human-recovery-flow" });
     const prepare = flow.task({
       id: "prepare",
-      version: "1.0.0",
       handler: () => {
         prepareCalls += 1;
         return "prepared";
@@ -2689,7 +2603,6 @@ describe("FlowExecution", () => {
     });
     const approval = flow.humanTask({
       id: "approval",
-      version: "1.0.0",
       request: {
         kind: "approval",
         prompt: "Ship?",
@@ -2702,7 +2615,6 @@ describe("FlowExecution", () => {
     });
     const revise = flow.task({
       id: "revise",
-      version: "1.0.0",
       handler: () => "revised",
     });
     flow.compose(({ start, step, end }) => {
@@ -2769,7 +2681,6 @@ describe("FlowExecution", () => {
     const { home, app, expert } = await fixture();
     const flow = defineFlow({
       id: "expert-output-recovery-flow",
-      version: "1.0.0",
       result: ({ state }) => state["expertOutput"],
     });
     const work = flow.use("expert", expert, {
@@ -2780,7 +2691,6 @@ describe("FlowExecution", () => {
     });
     const approval = flow.humanTask({
       id: "approval",
-      version: "1.0.0",
       request: { kind: "approval", prompt: "Continue?" },
     });
     flow.compose(({ start, end }) => start(work).next(approval).next(end()));
@@ -2847,15 +2757,13 @@ describe("FlowExecution", () => {
   it("rejects recovery when only the Flow start step changes", async () => {
     const { app } = await fixture();
     const build = (startAtSecond: boolean) => {
-      const flow = defineFlow({ id: "start-fingerprint", version: "1.0.0" });
+      const flow = defineFlow({ id: "start-fingerprint" });
       const one = flow.humanTask({
         id: "one",
-        version: "1.0.0",
         request: { kind: "question", prompt: "One?" },
       });
       const two = flow.humanTask({
         id: "two",
-        version: "1.0.0",
         request: { kind: "question", prompt: "Two?" },
       });
       flow.compose(({ start, step }) => {
@@ -2886,11 +2794,11 @@ describe("Execution observation", () => {
     const now = new Date().toISOString();
     await writer.create(
       {
-        schemaVersion: "pragma.execution/v6",
+        schemaVersion: "pragma.execution/v7",
         executionId: "cross-process",
         version: 0,
         kind: "flow",
-        definition: { id: "flow", version: "1.0.0", kind: "flow" },
+        definition: { id: "flow", kind: "flow" },
         rootInvocationId: "root",
         status: "running",
         input: null,
@@ -2903,7 +2811,7 @@ describe("Execution observation", () => {
         invocationId: "root",
         rootInvocationId: "root",
         contextId: "root-context",
-        definition: { id: "flow", version: "1.0.0", kind: "flow" },
+        definition: { id: "flow", kind: "flow" },
         status: "running",
         input: null,
         createdAt: now,
@@ -2940,7 +2848,6 @@ describe("Expert lifecycle orchestration", () => {
             name: id,
             description: id,
             tags: [],
-            version: "1.0.0",
             scope: "test",
             workspace: home,
             pragmaHome: home,
@@ -2967,7 +2874,6 @@ describe("Expert lifecycle orchestration", () => {
       name: "Lead",
       description: "Lead",
       tags: [],
-      version: "1.0.0",
       scope: "test",
       workspace: home,
       pragmaHome: home,
@@ -3034,7 +2940,6 @@ describe("Expert lifecycle orchestration", () => {
       name: "member",
       description: "member",
       tags: [],
-      version: "1.0.0",
       scope: "test",
       workspace: home,
       pragmaHome: home,
@@ -3045,7 +2950,6 @@ describe("Expert lifecycle orchestration", () => {
       name: "lead",
       description: "lead",
       tags: [],
-      version: "1.0.0",
       scope: "test",
       workspace: home,
       pragmaHome: home,
@@ -3114,7 +3018,6 @@ describe("Expert delegation declarations", () => {
       name: "Member",
       description: "Member",
       tags: [],
-      version: "1.0.0",
       scope: "test",
       workspace: home,
     });
@@ -3126,12 +3029,11 @@ describe("Expert delegation declarations", () => {
     const launcher = createAgentLauncher({ experts: [member], contextId: resolver });
     const team = defineExpertTeam({
       id: "shared-resolver-team",
-      version: "1.0.0",
       coordinator: lead,
       members: [member],
       delegation: { contextId: resolver },
     });
-    const flow = defineFlow({ id: "shared-resolver-flow", version: "1.0.0" });
+    const flow = defineFlow({ id: "shared-resolver-flow" });
     const review = flow.use("review", team, { contextId: resolver });
     flow.compose(({ start, end }) => start(review).next(end()));
 
@@ -3229,13 +3131,11 @@ describe("Expert delegation declarations", () => {
       name: "Member",
       description: "Member",
       tags: [],
-      version: "1.0.0",
       scope: "test",
       workspace: home,
     });
     const team = defineExpertTeam({
       id: "bidirectional-team",
-      version: "1.0.0",
       coordinator: lead,
       members: [member],
       delegation: {
@@ -3271,13 +3171,11 @@ describe("Expert delegation declarations", () => {
       name: "Member",
       description: "Member",
       tags: [],
-      version: "1.0.0",
       scope: "test",
       workspace: home,
     });
     const team = defineExpertTeam({
       id: "default-delegation-team",
-      version: "1.0.0",
       coordinator: lead,
       members: [member],
       delegation: {},
@@ -3317,7 +3215,6 @@ describe("Expert delegation declarations", () => {
       name: "Lead",
       description: "Coordinates work",
       tags: [],
-      version: "1.0.0",
       scope: "test",
       workspace: home,
       pragmaHome: home,
@@ -3328,7 +3225,6 @@ describe("Expert delegation declarations", () => {
       name: "Member",
       description: "Completes delegated work",
       tags: [],
-      version: "1.0.0",
       scope: "test",
       workspace: home,
       pragmaHome: home,
@@ -3337,7 +3233,6 @@ describe("Expert delegation declarations", () => {
     const instructions = "Surface uncertainty early and verify every deliverable.";
     const team = defineExpertTeam({
       id: "quality_team",
-      version: "1.0.0",
       instructions,
       coordinator: lead,
       members: [member],
@@ -3363,7 +3258,7 @@ describe("Expert delegation declarations", () => {
       ]);
       expect(context.agentContext.startupMessages[0]?.content).toContain("id: TEAM.md");
       expect(context.agentContext.startupMessages[0]?.content).toContain(
-        "namespace: expert-team:quality_team@1.0.0",
+        "namespace: expert-team:quality_team",
       );
       expect(context.agentContext.startupMessages[0]?.content).toContain(
         "Existing project context.",
@@ -3389,7 +3284,6 @@ describe("Expert delegation declarations", () => {
     expect(() =>
       defineExpertTeam({
         id: "invalid",
-        version: "1.0.0",
         coordinator: expert,
         members: [],
         delegation: { allow: { solo: ["missing"] } },
@@ -3398,7 +3292,6 @@ describe("Expert delegation declarations", () => {
     expect(() =>
       defineExpertTeam({
         id: "invalid-runtime-route",
-        version: "1.0.0",
         coordinator: expert,
         members: [],
         delegation: { runtimeByExpert: { missing: "fake" } },
@@ -3419,16 +3312,15 @@ function sessionRootContext(
   sessionId: string,
   contextId: string,
   expertId: string,
-  expertVersion: string,
   runtimeId: string,
   now: string,
 ) {
   return {
-    schemaVersion: "pragma.runtime-context/v4" as const,
+    schemaVersion: "pragma.runtime-context/v5" as const,
     contextId,
     owner: { type: "expert-session" as const, ownerId: sessionId },
     origin: { type: "expert-session" as const, sessionId },
-    expert: { id: expertId, version: expertVersion },
+    expert: { id: expertId },
     runtime: { runtimeId, revision: 1, fingerprint: "a".repeat(64) },
     lifecycle: "open" as const,
     createdAt: now,

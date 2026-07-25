@@ -1057,7 +1057,7 @@ async function invokeResourceFromExpert(
       rootInvocationId: execution.rootInvocationId,
       parentInvocationId: options.invocationId,
       nodeId: `tool:${target.id}`,
-      definition: { id: target.id, version: target.version, kind: "flow" },
+      definition: { id: target.id, kind: "flow" },
       contextId: invocationId,
       status: "queued",
       input: request.input,
@@ -1154,7 +1154,7 @@ async function invokeResourceFromExpert(
     },
     owner: options.owner,
     ownerContextId: options.context.contextId,
-    expert: { id: nativeTarget.id, version: nativeTarget.version },
+    expert: { id: nativeTarget.id },
     runtime: targetRuntime.binding,
     modelSelection: targetModelSelection,
     resolver: freshContextIdResolver,
@@ -1166,7 +1166,6 @@ async function invokeResourceFromExpert(
     nodeId: `tool:${target.id}`,
     definition: {
       id: target.id,
-      version: target.version,
       kind: isExpertTeam(target) ? "expert-team" : "expert",
     },
     executorId: nativeTarget.id,
@@ -1242,7 +1241,6 @@ function isInvocableResource(value: unknown): value is ExpertDefinition | Flow {
     typeof value === "object" &&
     value !== null &&
     "id" in value &&
-    "version" in value &&
     (!("kind" in value) || value.kind === "expert-team" || value.kind === "flow")
   );
 }
@@ -1397,7 +1395,7 @@ function withTeamDelegationTools(
     enumerable: true,
   });
   if (team?.instructions !== undefined) {
-    const namespace = `expert-team:${team.id}@${team.version}`;
+    const namespace = `expert-team:${team.id}`;
     const contextSystem = expert.contextSystem.extend({
       stores: [
         [

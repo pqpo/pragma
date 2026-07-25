@@ -14,6 +14,19 @@ import type {
 } from "./contracts.ts";
 
 export interface DefaultAgentDslProjectPort {
+  allocateResourceIds(
+    requests: readonly {
+      readonly key: string;
+      readonly kind:
+        | "expert"
+        | "team"
+        | "flow"
+        | "automation"
+        | "capability"
+        | "context-store"
+        | "runtime-profile";
+    }[],
+  ): Promise<readonly { readonly key: string; readonly id: string; readonly ref: string }[]>;
   list(): Promise<{
     readonly projectRevision: number;
     readonly resources: DefaultAgentResourceSummary[];
@@ -26,7 +39,7 @@ export interface DefaultAgentDslProjectPort {
   }): Promise<DefaultAgentPrepareResult>;
   createFlowDraft(input: {
     readonly expectedProjectRevision: number;
-    readonly metadata: DefaultAgentFlowDraft["resource"]["metadata"];
+    readonly metadata: Omit<DefaultAgentFlowDraft["resource"]["metadata"], "id">;
     readonly input?: DefaultAgentFlowDraft["resource"]["spec"]["input"] | undefined;
     readonly output?: DefaultAgentFlowDraft["resource"]["spec"]["output"] | undefined;
     readonly limits?: DefaultAgentFlowDraft["resource"]["spec"]["limits"] | undefined;

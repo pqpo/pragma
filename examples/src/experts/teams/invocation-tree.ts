@@ -5,7 +5,6 @@ const lead = await createExampleExpert("tree-lead", "Delegate once, then combine
 const member = await createExampleExpert("tree-member", "Return one focused finding.");
 const team = defineExpertTeam({
   id: "tree-team",
-  version: "1.0.0",
   coordinator: lead,
   members: [member],
   delegation: { allow: { "tree-lead": ["tree-member"], "tree-member": [] } },

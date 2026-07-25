@@ -469,7 +469,6 @@ function skillAdapter(): PragmaResourceAdapter<PragmaCapabilityResource> {
                 description: resource.metadata.description,
                 path: entry,
                 baseDir: root,
-                version: resource.metadata.version,
               },
             ],
           },

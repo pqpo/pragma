@@ -5,20 +5,16 @@ built-in trigger adapter; webhook and conversation adapters can use the same res
 
 Automation text limits are enforced by both prepare and save:
 
-- `metadata.id`: 1–120 characters; letters, numbers, and underscores only, starting with a letter
-  or number.
-- `metadata.version`: 1–100 characters; start with a letter or number, then use letters, numbers,
-  dots, `+`, `_`, or `-`.
+- `metadata.id`: host-allocated 16-character lowercase Crockford Base32.
 - `metadata.name`: 1–200 characters.
 - `metadata.description`: 1–4,000 characters.
 - Prompt input: 1–100,000 characters.
 
 ```yaml
-apiVersion: pragma/v2
+apiVersion: pragma/v3
 kind: Automation
 metadata:
-  id: daily_release_summary
-  version: 1.0.0
+  id: 9h0j1k2m3n4p5q6r
   name: Daily release summary
   description: Ask the release writer for a summary every weekday morning.
   tags: [integration, schedule]
@@ -34,7 +30,7 @@ spec:
   enabled: true
   route:
     executor:
-      ref: expert:release_writer@1.0.0
+      ref: expert:1h2j3k4m5n6p7q8r
     input:
       kind: prompt
       value: Prepare today's release summary from verified changes.

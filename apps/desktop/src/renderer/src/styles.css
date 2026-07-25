@@ -2558,10 +2558,34 @@ p {
   }
 }
 
-.pragma-resource-row > button:last-child {
+.pragma-resource-action {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  padding: 0;
   border: 0;
+  border-radius: 8px;
   background: transparent;
   color: var(--muted);
+  cursor: pointer;
+}
+
+.pragma-resource-action:hover,
+.pragma-resource-action:focus-visible {
+  outline: 0;
+  background: var(--surface-muted);
+  color: var(--green-dark);
+}
+
+.pragma-resource-action:focus-visible {
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+.pragma-resource-delete-action:hover,
+.pragma-resource-delete-action:focus-visible {
+  background: #fff2ee;
+  color: #a14c3b;
 }
 
 .pragma-resource-editor {
@@ -6173,7 +6197,7 @@ p {
 }
 
 .pragma-resource-directory .pragma-resource-row {
-  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  grid-template-columns: auto minmax(0, 1fr) auto;
 }
 
 @container pragma-resource-directory (max-width: 480px) {
@@ -6189,10 +6213,6 @@ p {
 
   .pragma-resource-directory .pragma-resource-row {
     grid-template-columns: auto minmax(0, 1fr) auto;
-  }
-
-  .pragma-resource-directory .pragma-resource-row > small {
-    display: none;
   }
 }
 

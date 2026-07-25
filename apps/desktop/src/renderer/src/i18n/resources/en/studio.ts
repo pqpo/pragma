@@ -97,9 +97,6 @@ export const studio = {
   teamsDescription: "Governed expert groups with an explicit coordinator and delegation policy.",
   flowsDescription: "Durable graphs with explicit transitions, human gates, and bounded loops.",
   newResource: "New {{kind}}",
-  createNewVersion: "Create new version",
-  createNewVersionNamed: "Create a new version of {{name}}",
-  newVersionMustDiffer: "Enter a version different from the source resource.",
   noResourcesYet: "No {{kind}}s yet.",
   deleteNamed: "Delete {{name}}",
   deleteResource: "Delete this {{kind}}?",
@@ -160,10 +157,6 @@ export const studio = {
   backExperts: "Back to Experts",
   editExpert: "Edit expert",
   customizeBuiltInExpert: "Customize",
-  useAsTemplate: "Use as template",
-  expertTemplateName: "{{name}} template",
-  templateExcludesSystemCapabilities:
-    "Templates copy the built-in behavior and your additions, but not Pragma's privileged system capabilities.",
   resetBuiltInExpert: "Reset to default",
   resetBuiltInExpertConfirm: "Reset this built-in expert?",
   resetBuiltInExpertDescription:

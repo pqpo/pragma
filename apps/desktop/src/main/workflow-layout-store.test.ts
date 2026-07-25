@@ -28,10 +28,9 @@ describe("workflow layout store", () => {
     const projectsPath = await projectsDirectory();
     const store = createWorkflowLayoutStore({ projectsPath });
     const layout = {
-      schemaVersion: "pragma.desktop-flow-layout/v1" as const,
+      schemaVersion: "pragma.desktop-flow-layout/v2" as const,
       projectId: "studio",
-      flowId: "review/flow",
-      flowVersion: "1.0.0",
+      flowId: "t1e73vjvctx49gkq",
       nodes: { review: { x: 120, y: 80 } },
       viewport: { x: 20, y: 10, zoom: 0.9 },
       updatedAt: "2026-07-15T00:00:00.000Z",
@@ -39,7 +38,7 @@ describe("workflow layout store", () => {
 
     await store.save(layout);
 
-    await expect(store.get({ projectId: "studio", flowId: "review/flow" })).resolves.toEqual(
+    await expect(store.get({ projectId: "studio", flowId: "t1e73vjvctx49gkq" })).resolves.toEqual(
       layout,
     );
     const stored = JSON.parse(
@@ -49,7 +48,7 @@ describe("workflow layout store", () => {
           "studio",
           "layouts",
           "flows",
-          `${encodePragmaPathSegment("review/flow")}.json`,
+          `${encodePragmaPathSegment("t1e73vjvctx49gkq")}.json`,
         ),
         "utf8",
       ),
@@ -77,11 +76,10 @@ describe("workflow layout store", () => {
   it("removes a saved layout", async () => {
     const projectsPath = await projectsDirectory();
     const store = createWorkflowLayoutStore({ projectsPath });
-    const identity = { projectId: "studio", flowId: "review" };
+    const identity = { projectId: "studio", flowId: "t1e73vjvctx49gkq" };
     await store.save({
-      schemaVersion: "pragma.desktop-flow-layout/v1",
+      schemaVersion: "pragma.desktop-flow-layout/v2",
       ...identity,
-      flowVersion: "1.0.0",
       nodes: {},
       viewport: { x: 0, y: 0, zoom: 1 },
       updatedAt: "2026-07-15T00:00:00.000Z",

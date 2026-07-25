@@ -558,7 +558,7 @@ Expert API 设计要求：
 职责：
 
 - 定义 `Expert`、`ExpertTeam`、`Flow`、`Capability`、`ContextStore`、`RuntimeProfile` 的
-  `pragma/v2` YAML DSL AST 与 Zod Schema。
+  `pragma/v3` YAML DSL AST 与 Zod Schema。
 - 负责 YAML 解析、跨文件 import/include、引用链接、静态校验和 lock 校验。
 - 将 DSL 编译为 `@pragma/core` 的 Expert、ExpertTeam、Flow 对象实例。
 - 提供 Tool Adapter、Flow Action、Context Policy、Serializer 等具名版本 registry。
@@ -581,7 +581,7 @@ Expert API 设计要求：
 
 职责：
 
-- 保存内置通用 Agent `Pragma` 的 `pragma/v2` DSL 和 `author-pragma-dsl` Skill。
+- 保存内置通用 Agent `Pragma` 的 `pragma/v3` DSL 和 `author-pragma-dsl` Skill。
 - 定义项目 DSL 与 Mission 的宿主端口，并将其包装成 Core managed tools；这些只是默认 Agent 的部分能力。
 - 导出供 Desktop 或未来 Web 适配的运行时中立项目/任务契约。
 - 不拥有独立 ExpertSession、聊天历史或审批投影；宿主统一复用 Mission/Execution 链路。

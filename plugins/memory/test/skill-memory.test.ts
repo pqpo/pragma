@@ -450,7 +450,6 @@ async function createAgent(options: {
     name: "Memory Agent",
     description: "Test agent",
     tags: ["test"],
-    version: "0.0.0",
     scope: "test",
     workspace: options.workspace,
     plugins: [

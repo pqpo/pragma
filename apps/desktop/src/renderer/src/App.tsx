@@ -79,7 +79,7 @@ export function App() {
         <StudioPage
           initialExpertRef={studioExpertRef}
           onTryExpert={(expert) => {
-            setMissionExecutorRef(`expert:${expert.id}@${expert.version}`);
+            setMissionExecutorRef(`expert:${expert.id}`);
             setMissionToOpen(undefined);
             setActiveView("home");
           }}

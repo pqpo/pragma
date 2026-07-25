@@ -38,26 +38,27 @@ export function pragmaResourceDirectory(resource: PragmaResource): string {
 }
 
 export function canonicalPragmaResourceRef(resource: PragmaResource): PragmaSemanticResourceRef {
-  return `${pragmaResourceNamespace(resource)}:${resource.metadata.id}@${resource.metadata.version}` as PragmaSemanticResourceRef;
+  return `${pragmaResourceNamespace(resource)}:${resource.metadata.id}` as PragmaSemanticResourceRef;
 }
 
 export function pragmaResourceFileName(resource: PragmaResource): string {
-  return `${resource.metadata.id}@${resource.metadata.version}.pragma.yaml`;
+  return `${resource.metadata.id}.pragma.yaml`;
+}
+
+export function normalizePragmaResourceName(name: string): string {
+  return name.normalize("NFKC").trim().replace(/\s+/gu, " ").toLowerCase();
 }
 
 export function parsePragmaReference(ref: string): {
   readonly kind: string;
   readonly id: string;
-  readonly version: string;
 } {
   const separator = ref.indexOf(":");
-  const versionSeparator = ref.lastIndexOf("@");
-  if (separator < 1 || versionSeparator <= separator + 1 || versionSeparator === ref.length - 1) {
+  if (separator < 1 || separator === ref.length - 1 || ref.includes("@")) {
     throw new Error(`Invalid exact Pragma reference: ${ref}`);
   }
   return {
     kind: ref.slice(0, separator),
-    id: ref.slice(separator + 1, versionSeparator),
-    version: ref.slice(versionSeparator + 1),
+    id: ref.slice(separator + 1),
   };
 }

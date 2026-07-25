@@ -11,6 +11,7 @@ import {
 } from "@pragma/shared";
 
 import type { Expert } from "../agent/expert-agent.ts";
+import { fingerprintExpertExecutionDefinition } from "../agent/expert-definition-descriptor.ts";
 import type { ExecutionStore } from "./execution-store.ts";
 import { ExecutionVersionConflictError } from "./execution-store.ts";
 import { getExecutionLiveBus } from "./execution-live-bus.ts";
@@ -76,8 +77,12 @@ export class ExpertOrchestrator {
   async registerExperts(experts: readonly Expert[]): Promise<void> {
     for (const expert of experts) {
       const current = this.experts.get(expert.id);
-      if (current !== undefined && current.version !== expert.version) {
-        throw new Error(`Expert recovery version mismatch: ${expert.id}.`);
+      if (
+        current !== undefined &&
+        fingerprintExpertExecutionDefinition(current) !==
+          fingerprintExpertExecutionDefinition(expert)
+      ) {
+        throw new Error(`Expert recovery definition mismatch: ${expert.id}.`);
       }
       this.experts.set(expert.id, expert);
     }
@@ -109,7 +114,6 @@ export class ExpertOrchestrator {
     const invocationId = randomUUID();
     const definition = {
       id: request.expert.id,
-      version: request.expert.version,
       kind: "expert" as const,
     };
     const freshContextId = randomUUID();
@@ -129,7 +133,7 @@ export class ExpertOrchestrator {
         source: request.source,
         owner: request.owner,
         ownerContextId: request.ownerContextId,
-        expert: { id: request.expert.id, version: request.expert.version },
+        expert: { id: request.expert.id },
         runtime: request.runtime,
         resolver: request.resolver,
         freshContextId,
@@ -152,11 +156,7 @@ export class ExpertOrchestrator {
       if (reusable !== undefined && reusable.lifecycle !== "open") {
         throw new Error(`Agent is closed: ${reusable.agentId}`);
       }
-      if (
-        reusable !== undefined &&
-        (reusable.definition.id !== definition.id ||
-          reusable.definition.version !== definition.version)
-      ) {
+      if (reusable !== undefined && reusable.definition.id !== definition.id) {
         throw new Error(
           `Agent identity conflicts with Runtime Context: ${resolution.context.contextId}.`,
         );
@@ -560,7 +560,7 @@ export class ExpertOrchestrator {
         .sort((left, right) => (left.agentTaskSequence ?? 0) - (right.agentTaskSequence ?? 0))[0];
       if (next === undefined) return;
       const expert = this.experts.get(agent.definition.id);
-      if (expert === undefined || expert.version !== agent.definition.version) {
+      if (expert === undefined) {
         await this.failUnrecoverableJob(next, "Agent task Expert definition is unavailable.");
         continue;
       }
@@ -793,10 +793,7 @@ export class ExpertOrchestrator {
 
   private async scheduleRecoverableAgents(): Promise<void> {
     for (const agent of await this.options.store.listAgents(this.options.executionId)) {
-      if (
-        agent.lifecycle === "open" &&
-        this.experts.get(agent.definition.id)?.version === agent.definition.version
-      ) {
+      if (agent.lifecycle === "open" && this.experts.has(agent.definition.id)) {
         this.schedule(agent.agentId);
       }
     }

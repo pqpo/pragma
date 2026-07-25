@@ -19,6 +19,7 @@ import {
 } from "../ast/project-change-set.schema.ts";
 import {
   canonicalPragmaResourceRef,
+  normalizePragmaResourceName,
   pragmaResourceDirectory,
   pragmaResourceFileName,
 } from "../ast/resource-identity.ts";
@@ -70,7 +71,7 @@ export interface PragmaProjectSourceRepository {
 }
 
 export interface PragmaProjectSnapshot {
-  readonly schemaVersion: "pragma.project-snapshot/v2";
+  readonly schemaVersion: "pragma.project-snapshot/v3";
   readonly projectId: string;
   readonly revision: number;
   readonly resources: readonly PragmaResource[];
@@ -107,7 +108,7 @@ export class PragmaProjectService {
         : await this.options.repository.getRevision(projectId, revision);
     if (location === undefined) {
       return {
-        schemaVersion: "pragma.project-snapshot/v2",
+        schemaVersion: "pragma.project-snapshot/v3",
         projectId,
         revision: 0,
         resources: [],
@@ -125,7 +126,7 @@ export class PragmaProjectService {
       }
       const lockValid = !diagnostics.some((diagnostic) => diagnostic.code.startsWith("lock."));
       return {
-        schemaVersion: "pragma.project-snapshot/v2",
+        schemaVersion: "pragma.project-snapshot/v3",
         projectId,
         revision: checkedOut.revision,
         resources: project.listResources(),
@@ -439,7 +440,7 @@ export class PragmaProjectRevisionConflictError extends Error {
 
 function emptyProjectSnapshot(projectId: string): PragmaProjectSnapshot {
   return {
-    schemaVersion: "pragma.project-snapshot/v2",
+    schemaVersion: "pragma.project-snapshot/v3",
     projectId,
     revision: 0,
     resources: [],
@@ -477,7 +478,7 @@ async function withStagedProject<T>(
     await writeFile(
       join(root, "pragma.yaml"),
       formatPragmaYaml({
-        apiVersion: "pragma/v2",
+        apiVersion: "pragma/v3",
         kind: "Bundle",
         imports: imports.toSorted(),
         resources: [],
@@ -514,7 +515,7 @@ function canonicalProjectFiles(project: PragmaProject): ReadonlyMap<string, stri
   files.set(
     "pragma.yaml",
     formatPragmaYaml({
-      apiVersion: "pragma/v2",
+      apiVersion: "pragma/v3",
       kind: "Bundle",
       imports: imports.toSorted(),
       resources: [],
@@ -526,10 +527,21 @@ function canonicalProjectFiles(project: PragmaProject): ReadonlyMap<string, stri
 
 function assertUniqueCanonicalRefs(resources: readonly PragmaResource[]): void {
   const refs = new Set<string>();
+  const ids = new Set<string>();
+  const names = new Set<string>();
   for (const resource of resources) {
     const ref = canonicalPragmaResourceRef(resource);
     if (refs.has(ref)) throw new Error(`Duplicate Pragma resource: ${ref}`);
+    if (ids.has(resource.metadata.id)) {
+      throw new Error(`Duplicate Pragma resource ID: ${resource.metadata.id}`);
+    }
+    const nameKey = `${resource.kind}\u0000${normalizePragmaResourceName(resource.metadata.name)}`;
+    if (names.has(nameKey)) {
+      throw new Error(`Duplicate ${resource.kind} name: ${resource.metadata.name}`);
+    }
     refs.add(ref);
+    ids.add(resource.metadata.id);
+    names.add(nameKey);
   }
 }
 

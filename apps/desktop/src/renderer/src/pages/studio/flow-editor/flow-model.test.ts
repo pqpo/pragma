@@ -11,7 +11,7 @@ import {
 
 describe("Flow editor model", () => {
   it("starts new Flows as empty editor drafts with one actionable issue", () => {
-    const flow = createEmptyFlow("triage_flow");
+    const flow = createEmptyFlow("30rs4t9bdgqgfg2c");
 
     expect(flow.spec.graph).toEqual({ start: "", steps: {}, loops: {}, transitions: {} });
     expect(validateFlowDraft(flow)).toEqual([
@@ -125,7 +125,6 @@ describe("Flow editor model", () => {
     const flow = flowFixture();
     flow.spec.graph.steps.review = {
       action: { ref: "action:review@1.0.0" },
-      version: "1.0.0",
     };
 
     expect(validateFlowDraft(flow)).toEqual(
@@ -141,11 +140,10 @@ describe("Flow editor model", () => {
 
 function flowFixture(): PragmaFlowResource {
   return {
-    apiVersion: "pragma/v2",
+    apiVersion: "pragma/v3",
     kind: "Flow",
     metadata: {
-      id: "review",
-      version: "1.0.0",
+      id: "t9ne4d8njvvxv2ea",
       name: "Review",
       description: "Review a change",
       tags: [],
@@ -164,7 +162,6 @@ function flowFixture(): PragmaFlowResource {
                 { value: "reject", label: "Reject" },
               ],
             },
-            version: "2.0.0",
           },
           finish: {
             human: {
@@ -175,7 +172,6 @@ function flowFixture(): PragmaFlowResource {
                 { value: "wait", label: "Wait" },
               ],
             },
-            version: "1.0.0",
           },
         },
         loops: {},

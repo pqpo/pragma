@@ -44,11 +44,11 @@ export interface PragmaPluginInspection {
 
 export interface PragmaPluginResolver {
   readonly inspect: (input: {
-    readonly expertRef: `expert:${string}@${string}`;
+    readonly expertRef: `expert:${string}`;
     readonly binding: PragmaExpertResource["spec"]["plugins"][number];
   }) => Promise<PragmaPluginInspection>;
   readonly resolve: (input: {
-    readonly expertRef: `expert:${string}@${string}`;
+    readonly expertRef: `expert:${string}`;
     readonly binding: PragmaExpertResource["spec"]["plugins"][number];
   }) => Promise<PragmaPluginResolution>;
 }

@@ -4,7 +4,6 @@ import {
   BookOpenText,
   CaretDown,
   CaretRight,
-  Copy,
   Info,
   Folder,
   MagnifyingGlass,
@@ -101,7 +100,7 @@ export function ExpertDirectoryFragment(props: {
             <button
               className="expert-list-row"
               type="button"
-              key={expert.ref ?? `expert:${expert.id}@${expert.version}`}
+              key={expert.ref ?? `expert:${expert.id}`}
               onClick={() => props.onOpen(expert)}
             >
               <span className="expert-list-name expert-column-name">
@@ -134,8 +133,6 @@ export function ExpertDetailFragment(props: {
   readonly contextStores: readonly ContextStore[];
   readonly onBack: () => void;
   readonly onEdit: () => void;
-  readonly onCreateVersion: () => void;
-  readonly onUseAsTemplate: () => void;
   readonly onConfigureContext: () => void;
   readonly onTryInSession: () => void;
   readonly onDelete: () => Promise<void>;
@@ -203,8 +200,6 @@ export function ExpertDetailFragment(props: {
         <div className="expert-detail-title">
           <div>
             <h1 id="expert-name">{copy.name}</h1>
-            <span className="version-label">v{props.expert.version}</span>
-            <span className="expert-id-label">ID: {props.expert.id}</span>
           </div>
           <p>{truncateText(copy.description, DESCRIPTION_PREVIEW_LENGTH)}</p>
           <div className="expert-tag-list">
@@ -218,23 +213,6 @@ export function ExpertDetailFragment(props: {
             <button className="primary-button" type="button" onClick={props.onEdit}>
               <PencilSimple size={17} aria-hidden="true" />
               {t(isBuiltInExpert(props.expert) ? "customizeBuiltInExpert" : "editExpert")}
-            </button>
-          ) : null}
-          {!isBuiltInExpert(props.expert) ? (
-            <button className="secondary-button" type="button" onClick={props.onCreateVersion}>
-              <Copy size={17} aria-hidden="true" />
-              {t("createNewVersion")}
-            </button>
-          ) : null}
-          {isBuiltInExpert(props.expert) ? (
-            <button
-              className="secondary-button"
-              type="button"
-              title={t("templateExcludesSystemCapabilities")}
-              onClick={props.onUseAsTemplate}
-            >
-              <Copy size={17} aria-hidden="true" />
-              {t("useAsTemplate")}
             </button>
           ) : null}
           {isBuiltInExpert(props.expert) ? (
@@ -369,11 +347,6 @@ export function ExpertDetailFragment(props: {
       {props.expert.usesApproval ? (
         <p className="approval-note">
           <Info size={19} aria-hidden="true" /> {t("approvalNote")}
-        </p>
-      ) : null}
-      {isBuiltInExpert(props.expert) ? (
-        <p className="approval-note">
-          <Info size={19} aria-hidden="true" /> {t("templateExcludesSystemCapabilities")}
         </p>
       ) : null}
       {confirmOpen ? (

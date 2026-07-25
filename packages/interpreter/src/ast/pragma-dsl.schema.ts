@@ -3,7 +3,7 @@ import { z } from "zod";
 
 import { PragmaObjectJsonSchemaSchema } from "./tool-capability.schema.ts";
 
-export const PragmaApiVersionSchema = z.literal("pragma/v2");
+export const PragmaApiVersionSchema = z.literal("pragma/v3");
 
 export const PragmaResourceKindSchema = z.enum([
   "expert",
@@ -15,13 +15,10 @@ export const PragmaResourceKindSchema = z.enum([
   "runtime-profile",
 ]);
 
-const SEMANTIC_RESOURCE_ID = "[A-Za-z0-9][A-Za-z0-9_]*";
+const SEMANTIC_RESOURCE_ID = "[0-9a-hjkmnp-tv-z]{16}";
 const EXTENSION_RESOURCE_ID = "[A-Za-z0-9][A-Za-z0-9._-]*";
 const VERSION = "[A-Za-z0-9][A-Za-z0-9.+_-]*";
 
-export const PRAGMA_EXPERT_ID_MAX_LENGTH = 50;
-export const PRAGMA_SEMANTIC_RESOURCE_ID_MAX_LENGTH = 120;
-export const PRAGMA_RESOURCE_VERSION_MAX_LENGTH = 100;
 export const PRAGMA_RESOURCE_NAME_MAX_LENGTH = 200;
 export const PRAGMA_RESOURCE_DESCRIPTION_MAX_LENGTH = 4_000;
 export const PRAGMA_AUTOMATION_PROMPT_MAX_LENGTH = 100_000;
@@ -29,11 +26,12 @@ export const PRAGMA_AUTOMATION_PROMPT_MAX_LENGTH = 100_000;
 export const PragmaSemanticResourceIdSchema = z
   .string()
   .trim()
-  .min(1)
-  .max(PRAGMA_SEMANTIC_RESOURCE_ID_MAX_LENGTH)
-  .regex(new RegExp(`^${SEMANTIC_RESOURCE_ID}$`), "Use only letters, numbers, and underscores.");
+  .regex(
+    new RegExp(`^${SEMANTIC_RESOURCE_ID}$`),
+    "Expected a 16-character lowercase Crockford Base32 resource ID.",
+  );
 
-export const PragmaExpertIdSchema = PragmaSemanticResourceIdSchema.max(PRAGMA_EXPERT_ID_MAX_LENGTH);
+export const PragmaExpertIdSchema = PragmaSemanticResourceIdSchema;
 
 export const PragmaFlowNodeIdSchema = z
   .string()
@@ -46,25 +44,35 @@ export const PragmaFlowNodeIdSchema = z
     "Flow node IDs cannot use reserved names.",
   );
 
-function exactRefSchema(
+function semanticRefSchema(kinds: readonly string[], example: string) {
+  return z
+    .string()
+    .trim()
+    .regex(
+      new RegExp(`^(${kinds.join("|")}):${SEMANTIC_RESOURCE_ID}$`, "i"),
+      `Expected an exact Pragma reference such as ${example}.`,
+    );
+}
+
+function versionedExtensionRefSchema(
   kinds: readonly string[],
   example: string,
-  resourceId: string = SEMANTIC_RESOURCE_ID,
+  resourceId: string = EXTENSION_RESOURCE_ID,
 ) {
   return z
     .string()
     .trim()
     .regex(
       new RegExp(`^(${kinds.join("|")}):${resourceId}@${VERSION}$`),
-      `Expected an exact Pragma reference such as ${example}.`,
+      `Expected a versioned extension reference such as ${example}.`,
     );
 }
 
-export const PragmaExpertRefSchema = exactRefSchema(
+export const PragmaExpertRefSchema = semanticRefSchema(
   ["expert"],
-  "expert:researcher@1.0.0",
+  "expert:7k2m9q4v8np6r3dt",
 ).superRefine((value, context) => {
-  const id = value.slice("expert:".length, value.lastIndexOf("@"));
+  const id = value.slice("expert:".length);
   const parsed = PragmaExpertIdSchema.safeParse(id);
   if (parsed.success) return;
   for (const issue of parsed.error.issues) {
@@ -73,35 +81,34 @@ export const PragmaExpertRefSchema = exactRefSchema(
 });
 export const PragmaInvocableResourceRefSchema = z.union([
   PragmaExpertRefSchema,
-  exactRefSchema(["team", "flow"], "team:delivery@1.0.0"),
+  semanticRefSchema(["team", "flow"], "team:7k2m9q4v8np6r3dt"),
 ]);
-export const PragmaAutomationRefSchema = exactRefSchema(
+export const PragmaAutomationRefSchema = semanticRefSchema(
   ["automation"],
-  "automation:daily_report@1.0.0",
+  "automation:7k2m9q4v8np6r3dt",
 );
-export const PragmaCapabilityRefSchema = exactRefSchema(
+export const PragmaCapabilityRefSchema = semanticRefSchema(
   ["capability"],
-  "capability:repository_tools@1.0.0",
+  "capability:7k2m9q4v8np6r3dt",
 );
-export const PragmaContextStoreRefSchema = exactRefSchema(
+export const PragmaContextStoreRefSchema = semanticRefSchema(
   ["context-store"],
-  "context-store:project_docs@1.0.0",
+  "context-store:7k2m9q4v8np6r3dt",
 );
-export const PragmaRuntimeProfileRefSchema = exactRefSchema(
+export const PragmaRuntimeProfileRefSchema = semanticRefSchema(
   ["runtime-profile"],
-  "runtime-profile:desktop_codex@1.0.0",
+  "runtime-profile:7k2m9q4v8np6r3dt",
 );
 export const PragmaSemanticResourceRefSchema = z.union([
   PragmaExpertRefSchema,
-  exactRefSchema(
+  semanticRefSchema(
     ["team", "flow", "automation", "capability", "context-store", "runtime-profile"],
-    "team:delivery@1.0.0",
+    "team:7k2m9q4v8np6r3dt",
   ),
 ]);
-export const PragmaExtensionResourceRefSchema = exactRefSchema(
+export const PragmaExtensionResourceRefSchema = versionedExtensionRefSchema(
   ["action", "context-policy", "plugin"],
   "context-policy:pragma.fresh@v1",
-  EXTENSION_RESOURCE_ID,
 );
 export const PragmaResourceRefSchema = z.union([
   PragmaSemanticResourceRefSchema,
@@ -127,12 +134,6 @@ export const PragmaExtensionRefSchema = z
 export const PragmaMetadataSchema = z
   .object({
     id: PragmaSemanticResourceIdSchema,
-    version: z
-      .string()
-      .trim()
-      .min(1)
-      .max(PRAGMA_RESOURCE_VERSION_MAX_LENGTH)
-      .regex(new RegExp(`^${VERSION}$`)),
     name: z.string().trim().min(1).max(PRAGMA_RESOURCE_NAME_MAX_LENGTH),
     description: z.string().trim().min(1).max(PRAGMA_RESOURCE_DESCRIPTION_MAX_LENGTH),
     tags: z.array(z.string().trim().min(1).max(100)).max(100).default([]),
@@ -236,10 +237,9 @@ export const PragmaToolBindingSchema = z
       .object({
         maxConcurrency: z.number().int().positive().default(4),
         maxDepth: z.number().int().positive().default(3),
-        context: exactRefSchema(
+        context: versionedExtensionRefSchema(
           ["context-policy"],
           "context-policy:pragma.fresh@v1",
-          EXTENSION_RESOURCE_ID,
         ).default("context-policy:pragma.fresh@v1"),
         runtimes: z.record(PragmaExpertIdSchema, PragmaRuntimeProfileRefSchema).default({}),
       })
@@ -300,11 +300,7 @@ export const PragmaExpertResourceSchema = z
           .array(
             z
               .object({
-                ref: exactRefSchema(
-                  ["plugin"],
-                  "plugin:pragma.memory@1.0.0",
-                  EXTENSION_RESOURCE_ID,
-                ),
+                ref: versionedExtensionRefSchema(["plugin"], "plugin:pragma.memory@1.0.0"),
                 config: z.record(z.string(), z.unknown()).optional(),
                 secretBindings: z.record(z.string(), PragmaBindingRefSchema).optional(),
               })
@@ -346,10 +342,9 @@ export const PragmaExpertTeamResourceSchema = z
             allow: z.record(PragmaExpertIdSchema, z.array(PragmaExpertIdSchema)).optional(),
             maxConcurrency: z.number().int().positive().default(4),
             maxDepth: z.number().int().positive().default(3),
-            context: exactRefSchema(
+            context: versionedExtensionRefSchema(
               ["context-policy"],
               "context-policy:pragma.fresh@v1",
-              EXTENSION_RESOURCE_ID,
             ).default("context-policy:pragma.fresh@v1"),
             runtimes: z.record(PragmaExpertIdSchema, PragmaRuntimeProfileRefSchema).default({}),
           })
@@ -480,28 +475,30 @@ export const PragmaFlowStepSchema = z
   .object({
     action: z
       .object({
-        ref: exactRefSchema(["action"], "action:review@1.0.0", EXTENSION_RESOURCE_ID),
+        ref: versionedExtensionRefSchema(["action"], "action:review@1.0.0"),
       })
       .strict()
       .optional(),
     expert: z.object({ ref: PragmaExpertRefSchema }).strict().optional(),
     team: z
-      .object({ ref: exactRefSchema(["team"], "team:delivery@1.0.0") })
+      .object({
+        ref: semanticRefSchema(["team"], "team:7k2m9q4v8np6r3dt"),
+      })
       .strict()
       .optional(),
     flow: z
-      .object({ ref: exactRefSchema(["flow"], "flow:review@1.0.0") })
+      .object({
+        ref: semanticRefSchema(["flow"], "flow:7k2m9q4v8np6r3dt"),
+      })
       .strict()
       .optional(),
     human: PragmaHumanRequestSchema.optional(),
-    version: z.string().trim().min(1).default("1.0.0"),
     input: z.unknown().optional(),
     prompt: PragmaFlowPromptSchema.optional(),
     output: z.object({ schema: PragmaObjectJsonSchemaSchema }).strict().optional(),
-    context: exactRefSchema(
+    context: versionedExtensionRefSchema(
       ["context-policy"],
       "context-policy:pragma.fresh@v1",
-      EXTENSION_RESOURCE_ID,
     ).optional(),
     runtime: PragmaFlowRuntimeBindingSchema.optional(),
     runtimes: z.record(PragmaExpertIdSchema, PragmaRuntimeProfileRefSchema).optional(),
@@ -940,8 +937,8 @@ export const PragmaEnvironmentFingerprintSchema = z
       .array(
         z
           .object({
-            expertRef: exactRefSchema(["expert"], "expert:lead@1.0.0"),
-            ref: exactRefSchema(["plugin"], "plugin:pragma.memory@1.0.0", EXTENSION_RESOURCE_ID),
+            expertRef: PragmaExpertRefSchema,
+            ref: versionedExtensionRefSchema(["plugin"], "plugin:pragma.memory@1.0.0"),
             packageFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
             verificationFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
           })

@@ -61,7 +61,6 @@ export function StudioPage(props: {
   const [expertEditor, setExpertEditor] = useState<{
     readonly mode: ExpertEditorMode;
     readonly baseRevision: number;
-    readonly sourceRef?: string | undefined;
   }>({ mode: "create", baseRevision: 0 });
   const [runtimes, setRuntimes] = useState<readonly DesktopRuntimeAvailability[]>([]);
   const [contextStores, setContextStores] = useState<readonly ContextStore[]>([]);
@@ -165,7 +164,6 @@ export function StudioPage(props: {
         mode === "edit" && expert?.persisted !== undefined
           ? expert.persisted.revision
           : (project?.revision ?? 0),
-      ...(mode === "new-version" && expert?.ref !== undefined ? { sourceRef: expert.ref } : {}),
     });
     setScreen("create");
   };
@@ -188,38 +186,6 @@ export function StudioPage(props: {
     });
     setScreen("create");
   }, [experts, project?.revision, props.initialExpertRef]);
-  const useBuiltInAsTemplate = (expert: ExpertRecord) => {
-    const baseId = `${expert.id}_custom`;
-    let id = baseId;
-    let suffix = 2;
-    const existingIds = new Set(experts.map((item) => item.id.toLowerCase()));
-    while (existingIds.has(id.toLowerCase())) {
-      id = `${baseId}_${suffix}`;
-      suffix += 1;
-    }
-    const capabilities = [...expert.capabilities];
-    openCreate({
-      ...expert,
-      ref: undefined,
-      id,
-      name: t("expertTemplateName", { name: expert.name }),
-      version: "0.1.0",
-      instructions: [expert.instructions, expert.additionalInstructions.trim()]
-        .filter(Boolean)
-        .join("\n\n"),
-      additionalInstructions: "",
-      origin: "project",
-      readOnly: false,
-      customized: false,
-      capabilities,
-      skills: capabilities.filter((reference) => reference.kind === "skill").length,
-      tools: capabilities
-        .filter((reference) => reference.kind === "tools")
-        .reduce((total, reference) => total + reference.toolNames.length, 0),
-      mcpServers: capabilities.filter((reference) => reference.kind === "tools").length,
-      persisted: undefined,
-    });
-  };
   const saveExpert = async (expert: ExpertRecord, mode: ExpertEditorMode = "edit") => {
     const api = desktopApi();
     let saved = expert;
@@ -240,26 +206,18 @@ export function StudioPage(props: {
           ? await api.createExpert(
               toCreateExpertInput(expert, {
                 baseRevision: expertEditor.baseRevision,
-                requiredUnchangedRefs:
-                  expertEditor.sourceRef === undefined ? [] : [expertEditor.sourceRef],
               }),
             )
-          : await api.updateExpert(
-              expert.ref ?? `expert:${expert.id}@${expert.version}`,
-              toPersistedInput(expert),
-            );
+          : await api.updateExpert(expert.ref ?? `expert:${expert.id}`, toPersistedInput(expert));
       saved = toExpertRecord(definition);
       if (!isBuiltInExpert(expert)) setProject(await api.getPragmaProject());
     }
     setExperts((current) =>
       current.some(
-        (item) =>
-          (item.ref ?? `${item.id}@${item.version}`) ===
-          (saved.ref ?? `${saved.id}@${saved.version}`),
+        (item) => (item.ref ?? `expert:${item.id}`) === (saved.ref ?? `expert:${saved.id}`),
       )
         ? current.map((item) =>
-            (item.ref ?? `${item.id}@${item.version}`) ===
-            (saved.ref ?? `${saved.id}@${saved.version}`)
+            (item.ref ?? `expert:${item.id}`) === (saved.ref ?? `expert:${saved.id}`)
               ? saved
               : item,
           )
@@ -284,14 +242,14 @@ export function StudioPage(props: {
   };
   const deleteSelectedExpert = async () => {
     if (selectedExpert === null) return;
-    const ref = selectedExpert.ref ?? `expert:${selectedExpert.id}@${selectedExpert.version}`;
+    const ref = selectedExpert.ref ?? `expert:${selectedExpert.id}`;
     const api = desktopApi();
     if (api !== undefined) {
       await api.deleteExpert(ref);
       setProject(await api.getPragmaProject());
     }
     setExperts((current) =>
-      current.filter((expert) => (expert.ref ?? `expert:${expert.id}@${expert.version}`) !== ref),
+      current.filter((expert) => (expert.ref ?? `expert:${expert.id}`) !== ref),
     );
     setSelectedExpert(null);
     setScreen("directory");
@@ -454,8 +412,6 @@ export function StudioPage(props: {
             contextStores={contextStores}
             onBack={openExpertDirectory}
             onEdit={() => openCreate(selectedExpert)}
-            onCreateVersion={() => openCreate(selectedExpert, "new-version")}
-            onUseAsTemplate={() => useBuiltInAsTemplate(selectedExpert)}
             onConfigureContext={() => setContextDrawerOpen(true)}
             onTryInSession={() => props.onTryExpert(selectedExpert)}
             onDelete={deleteSelectedExpert}
@@ -471,9 +427,6 @@ export function StudioPage(props: {
             capabilities={capabilities}
             plugins={plugins}
             resources={project?.resources ?? []}
-            existingExpertRefs={experts.map(
-              (expert) => expert.ref ?? `expert:${expert.id}@${expert.version}`,
-            )}
             onCancel={openExpertDirectory}
             onCreated={async (expert) => await saveExpert(expert, expertEditor.mode)}
           />

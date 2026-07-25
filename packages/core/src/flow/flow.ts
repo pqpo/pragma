@@ -31,7 +31,6 @@ export interface FlowTaskContext<TInput = unknown> {
 export interface FlowTaskDefinition<TInput = unknown, TOutput = unknown> {
   readonly kind: "task";
   readonly id: string;
-  readonly version: string;
   readonly inputSchema?: z.ZodType<TInput> | undefined;
   readonly outputSchema?: z.ZodType<TOutput> | undefined;
   readonly handler: (context: FlowTaskContext<TInput>) => TOutput | Promise<TOutput>;
@@ -40,7 +39,6 @@ export interface FlowTaskDefinition<TInput = unknown, TOutput = unknown> {
 export interface HumanTaskDefinition<TInput = unknown> {
   readonly kind: "human-task";
   readonly id: string;
-  readonly version: string;
   readonly request:
     | HumanInteractionRequest
     | ((
@@ -50,7 +48,6 @@ export interface HumanTaskDefinition<TInput = unknown> {
 
 export interface DefineFlowOptions<TInput = unknown, TOutput = unknown> {
   readonly id: string;
-  readonly version: string;
   readonly input?: z.ZodType<TInput> | undefined;
   readonly output?: z.ZodType<TOutput> | undefined;
   readonly result?: ((context: FlowResultContext) => TOutput) | undefined;
@@ -147,7 +144,6 @@ export interface CompiledFlowStep {
 export interface Flow {
   readonly kind: "flow";
   readonly id: string;
-  readonly version: string;
   readonly input?: z.ZodType | undefined;
   readonly output?: z.ZodType | undefined;
   readonly result?: ((context: FlowResultContext) => unknown) | undefined;
@@ -200,7 +196,6 @@ export class FlowDefinitionError extends Error {
 export class FlowSpec<TInput = unknown, TOutput = unknown> {
   readonly kind = "flow" as const;
   readonly id: string;
-  readonly version: string;
   readonly input: z.ZodType<TInput> | undefined;
   readonly output: z.ZodType<TOutput> | undefined;
   readonly result: ((context: FlowResultContext) => TOutput) | undefined;
@@ -213,7 +208,6 @@ export class FlowSpec<TInput = unknown, TOutput = unknown> {
 
   constructor(options: DefineFlowOptions<TInput, TOutput>) {
     this.id = options.id;
-    this.version = options.version;
     this.input = options.input;
     this.output = options.output;
     this.result = options.result;
@@ -358,7 +352,6 @@ export class FlowSpec<TInput = unknown, TOutput = unknown> {
     return Object.freeze({
       kind: "flow" as const,
       id: this.id,
-      version: this.version,
       input: this.input,
       output: this.output,
       result: this.result,
@@ -557,7 +550,6 @@ function isExecutableDefinition(value: unknown): value is ExpertDefinition | Flo
     typeof value === "object" &&
     value !== null &&
     "id" in value &&
-    "version" in value &&
     (!("kind" in value) || value.kind === "expert-team" || value.kind === "flow")
   );
 }

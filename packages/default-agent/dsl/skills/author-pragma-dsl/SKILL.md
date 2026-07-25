@@ -1,6 +1,6 @@
 ---
 name: author-pragma-dsl
-description: Create and update validated pragma/v2 Expert, ExpertTeam, Flow, and Automation resources. Use when a user asks Pragma to create, change, configure, or repair an Expert, team, Flow, schedule, trigger, or Automation in the current Pragma project.
+description: Create and update validated pragma/v3 Expert, ExpertTeam, Flow, and Automation resources. Use when a user asks Pragma to create, change, configure, or repair an Expert, team, Flow, schedule, trigger, or Automation in the current Pragma project.
 ---
 
 # Author Pragma DSL
@@ -16,8 +16,9 @@ source of truth and use only the Pragma DSL tools to inspect, validate, and save
    model, recommend only listed capabilities that match the user's intent, and ask whether to use
    the recommendation, customize it, or enable no capabilities.
 4. Read the relevant reference file below before drafting YAML.
-5. Preserve exact references. Keep an existing resource version unless the user asks for a new
-   version or the change intentionally introduces a separately addressable contract.
+5. Before authoring any new resource, call `allocate_dsl_resource_ids` once for the complete set and
+   use the returned Host-generated IDs and exact references. Preserve IDs when editing; never invent,
+   copy, or change an ID.
 6. For every Flow creation or non-trivial Flow edit, call `create_flow_draft`. Build it in small
    batches with `update_flow_draft`: contracts, steps, start, transitions, then loops. Read the
    returned diagnostics after every batch and call `validate_flow_draft` before preparing.

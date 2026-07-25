@@ -423,7 +423,7 @@ void app.whenReady().then(async () => {
   const automationService = createAutomationService({
     paths: pragmaPaths,
     project: pragmaProjectStore,
-    store: createAutomationStore(pragmaPaths),
+    store: createAutomationStore(pragmaPaths, pragmaProjectStore.projectId),
     missions: missionStore,
     creator: missionCreator,
     runner: missionRunner,

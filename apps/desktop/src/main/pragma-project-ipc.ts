@@ -1,4 +1,5 @@
 import { ipcMain } from "electron";
+import { generatePragmaResourceId } from "@pragma/core";
 
 import {
   DeletePragmaResourceSchema,
@@ -13,6 +14,14 @@ import { runDesktopMutation } from "./desktop-mutation-result.ts";
 
 export function installPragmaProjectHandlers(store: PragmaProjectStore): void {
   ipcMain.handle("pragma-project:get", () => store.get());
+  ipcMain.handle("pragma-project:allocate-id", async () => {
+    const used = new Set((await store.get()).resources.map((resource) => resource.metadata.id));
+    for (let attempt = 0; attempt < 64; attempt += 1) {
+      const id = generatePragmaResourceId();
+      if (!used.has(id)) return { id };
+    }
+    throw new Error("Could not allocate a unique Pragma resource ID.");
+  });
   ipcMain.handle("pragma-project:publish", (_event, input: unknown) =>
     runDesktopMutation(async () => await store.publish(PublishPragmaProjectSchema.parse(input))),
   );

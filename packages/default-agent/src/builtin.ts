@@ -27,11 +27,11 @@ import {
 
 import { BUILT_IN_PRAGMA_FILES } from "./builtin.generated.ts";
 
-export const BUILT_IN_PRAGMA_REF = "expert:pragma@1.0.0" as const;
+export const BUILT_IN_PRAGMA_REF = "expert:0000000000pragma" as const;
 
 export function builtInPragmaResource(): PragmaExpertResource {
   return PragmaExpertResourceSchema.parse(
-    parsePragmaYaml(BUILT_IN_PRAGMA_FILES["experts/pragma@1.0.0.pragma.yaml"]!),
+    parsePragmaYaml(BUILT_IN_PRAGMA_FILES["experts/0000000000pragma.pragma.yaml"]!),
   );
 }
 
@@ -146,7 +146,7 @@ function customizedBuiltInSource(
   expertResource: PragmaExpertResource | undefined,
   additionalResources: readonly PragmaResource[],
 ): string {
-  if (path === "experts/pragma@1.0.0.pragma.yaml" && expertResource !== undefined) {
+  if (path === "experts/0000000000pragma.pragma.yaml" && expertResource !== undefined) {
     return formatPragmaYaml(PragmaExpertResourceSchema.parse(expertResource));
   }
   if (path === "pragma.yaml" && additionalResources.length > 0) {

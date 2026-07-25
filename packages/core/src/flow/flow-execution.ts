@@ -94,11 +94,11 @@ export class FlowExecutionManager {
     await validateFlowRuntimeConfiguration(flow, this.runtimes, runtimeId);
     const now = new Date().toISOString();
     const record: ExecutionRecord = {
-      schemaVersion: "pragma.execution/v6",
+      schemaVersion: "pragma.execution/v7",
       executionId,
       version: 0,
       kind: "flow",
-      definition: { id: flow.id, version: flow.version, kind: "flow" },
+      definition: { id: flow.id, kind: "flow" },
       rootInvocationId: executionId,
       status: "queued",
       input,
@@ -147,7 +147,7 @@ export class FlowExecutionManager {
     if (record === undefined || record.kind !== "flow") {
       throw new Error(`FlowExecution not found: ${request.executionId}`);
     }
-    if (record.definition.id !== flow.id || record.definition.version !== flow.version) {
+    if (record.definition.id !== flow.id) {
       throw new Error(`Flow definition mismatch for Execution ${request.executionId}.`);
     }
     const internal = readFlowInternalState(record.state);
@@ -862,7 +862,7 @@ async function createStepInvocation(
         visit: visit + 1,
       },
       owner: options.owner,
-      expert: { id: nativeExpert.id, version: nativeExpert.version },
+      expert: { id: nativeExpert.id },
       runtime: runtime.binding,
       modelSelection,
       resolver:
@@ -945,15 +945,14 @@ async function applyReductionOnce(
 
 function definitionRef(definition: CompiledFlowStep["definition"]): Invocation["definition"] {
   if ("kind" in definition && definition.kind === "task")
-    return { id: definition.id, version: definition.version, kind: "task" };
+    return { id: definition.id, kind: "task" };
   if ("kind" in definition && definition.kind === "human-task")
-    return { id: definition.id, version: definition.version, kind: "human-task" };
+    return { id: definition.id, kind: "human-task" };
   if ("kind" in definition && definition.kind === "flow")
-    return { id: definition.id, version: definition.version, kind: "flow" };
+    return { id: definition.id, kind: "flow" };
   const expert = definition as ExpertDefinition;
   return {
     id: expert.id,
-    version: expert.version,
     kind: isExpertTeam(expert) ? "expert-team" : "expert",
   };
 }
@@ -1336,7 +1335,7 @@ function visitFlowDefinition(flow: Flow, ancestors: Set<Flow>): unknown {
   if (ancestors.has(flow)) throw new Error(`Cyclic sub Flow definition: ${flow.id}`);
   const nextAncestors = new Set(ancestors).add(flow);
   return {
-    definition: { id: flow.id, version: flow.version, kind: "flow" },
+    definition: { id: flow.id, kind: "flow" },
     startStepId: flow.startStepId,
     maxNodeVisits: flow.maxNodeVisits,
     ...(flow.timeoutMs === undefined ? {} : { timeoutMs: flow.timeoutMs }),

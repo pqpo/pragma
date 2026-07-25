@@ -75,6 +75,7 @@ import {
   SkillDocumentSchema,
   SetPluginSecretsSchema,
   DeletePragmaResourceSchema,
+  AllocatePragmaResourceIdResultSchema,
   PragmaProjectChangesSchema,
   PragmaProjectChangesValidationResultSchema,
   PragmaProjectSnapshotSchema,
@@ -255,6 +256,10 @@ const api: PragmaDesktopAPI = {
   },
   getPragmaProject: async () =>
     PragmaProjectSnapshotSchema.parse(await ipcRenderer.invoke("pragma-project:get")),
+  allocatePragmaResourceId: async () =>
+    AllocatePragmaResourceIdResultSchema.parse(
+      await ipcRenderer.invoke("pragma-project:allocate-id"),
+    ),
   publishPragmaProject: async (input) =>
     PragmaProjectSnapshotSchema.parse(
       await invokeMutation("pragma-project:publish", PublishPragmaProjectSchema.parse(input)),

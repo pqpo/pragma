@@ -12,7 +12,6 @@ const expert: ExpertRecord = {
   name: "Test Expert",
   description: "d".repeat(240),
   tags: ["test"],
-  version: "0.1.0",
   scope: "Handles focused test work.",
   instructions: "i".repeat(500),
   additionalInstructions: "",
@@ -44,8 +43,6 @@ describe("ExpertDetailFragment", () => {
         contextStores={[]}
         onBack={() => undefined}
         onEdit={() => undefined}
-        onCreateVersion={() => undefined}
-        onUseAsTemplate={() => undefined}
         onConfigureContext={() => undefined}
         onTryInSession={() => undefined}
         onDelete={async () => undefined}
@@ -53,7 +50,7 @@ describe("ExpertDetailFragment", () => {
       />,
     );
 
-    expect(html).toContain("ID: test_expert");
+    expect(html).not.toContain("ID: test_expert");
     expect(html).toContain("Scope");
     expect(html).not.toContain("Availability");
     expect(html).toContain('aria-expanded="false"');
@@ -62,7 +59,7 @@ describe("ExpertDetailFragment", () => {
     expect(html).not.toContain("i".repeat(421));
     expect(html).toMatch(/studio-screen-header.*Back to Experts.*studio-screen-body.*Test Expert/s);
     expect(html).toContain("Delete expert");
-    expect(html).toContain("Create new version");
+    expect(html).not.toContain("Create new version");
   });
 
   it("offers edit and reset, but not deletion, for a built-in expert", () => {
@@ -78,8 +75,6 @@ describe("ExpertDetailFragment", () => {
         contextStores={[]}
         onBack={() => undefined}
         onEdit={() => undefined}
-        onCreateVersion={() => undefined}
-        onUseAsTemplate={() => undefined}
         onConfigureContext={() => undefined}
         onTryInSession={() => undefined}
         onDelete={async () => undefined}
@@ -89,7 +84,7 @@ describe("ExpertDetailFragment", () => {
 
     expect(html).not.toContain("Delete expert");
     expect(html).toContain("Customize");
-    expect(html).toContain("Use as template");
+    expect(html).not.toContain("Use as template");
     expect(html).toContain("Reset to default");
     expect(html).toContain("Configure context");
     expect(html).toContain("Try in session");
@@ -101,8 +96,8 @@ describe("ExpertDetailFragment", () => {
       <ExpertDetailFragment
         expert={{
           ...expert,
-          ref: "expert:pragma@1.0.0",
-          id: "pragma",
+          ref: "expert:0000000000pragma",
+          id: "0000000000pragma",
           name: "Pragma",
           description: "Canonical description",
           scope: "Canonical scope",
@@ -114,8 +109,6 @@ describe("ExpertDetailFragment", () => {
         contextStores={[]}
         onBack={() => undefined}
         onEdit={() => undefined}
-        onCreateVersion={() => undefined}
-        onUseAsTemplate={() => undefined}
         onConfigureContext={() => undefined}
         onTryInSession={() => undefined}
         onDelete={async () => undefined}
@@ -133,7 +126,7 @@ describe("ExpertDetailFragment", () => {
 describe("ExpertEditorFragment", () => {
   const draft = { ...expert, tagInput: "", pluginSecretMutations: {} };
 
-  it("locks the version during an ordinary edit", () => {
+  it("does not expose semantic identity fields during an ordinary edit", () => {
     const html = renderToStaticMarkup(
       <ExpertEditorFragment
         mode="edit"
@@ -143,32 +136,12 @@ describe("ExpertEditorFragment", () => {
         capabilities={[]}
         plugins={[]}
         resources={[]}
-        existingExpertRefs={[]}
         onCancel={() => undefined}
         onCreated={async () => undefined}
       />,
     );
 
-    expect(html).toContain('<label>Version<input disabled="" value="0.1.0"/>');
-  });
-
-  it("locks the ID but allows the version to change when creating a new version", () => {
-    const html = renderToStaticMarkup(
-      <ExpertEditorFragment
-        mode="new-version"
-        initialValue={draft}
-        runtimes={[]}
-        contextStores={[]}
-        capabilities={[]}
-        plugins={[]}
-        resources={[]}
-        existingExpertRefs={[]}
-        onCancel={() => undefined}
-        onCreated={async () => undefined}
-      />,
-    );
-
-    expect(html).toMatch(/disabled="" value="test_expert"/);
-    expect(html).toContain('<label>Version<input value="0.1.0"/>');
+    expect(html).not.toContain("<label>Version");
+    expect(html).not.toContain("test_expert");
   });
 });

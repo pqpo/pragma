@@ -1,8 +1,13 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
-import { encodePragmaPathSegment, withFileLock } from "@pragma/core";
+import {
+  encodePragmaPathSegment,
+  derivePragmaResourceId,
+  generatePragmaResourceId,
+  withFileLock,
+} from "@pragma/core";
 import { formatPragmaYaml, parsePragmaYaml } from "@pragma/interpreter";
 import {
   analyzePragmaFlowGraph,
@@ -161,6 +166,17 @@ export function createDesktopDefaultAgentProjectPort(options: {
   };
 
   return {
+    async allocateResourceIds(requests) {
+      const snapshot = await options.project.get();
+      const used = new Set(snapshot.resources.map((resource) => resource.metadata.id));
+      const allocated = new Set<string>();
+      return requests.map((request) => {
+        let id = generatePragmaResourceId();
+        while (used.has(id) || allocated.has(id)) id = generatePragmaResourceId();
+        allocated.add(id);
+        return { key: request.key, id, ref: `${request.kind}:${id}` };
+      });
+    },
     async list() {
       const snapshot = await options.project.get();
       return {
@@ -170,7 +186,6 @@ export function createDesktopDefaultAgentProjectPort(options: {
           kind: resource.kind,
           name: resource.metadata.name,
           description: resource.metadata.description,
-          version: resource.metadata.version,
         })),
       };
     },
@@ -185,7 +200,6 @@ export function createDesktopDefaultAgentProjectPort(options: {
         kind: resource.kind,
         name: resource.metadata.name,
         description: resource.metadata.description,
-        version: resource.metadata.version,
         projectRevision: snapshot.revision,
         source: formatPragmaYaml(resource),
       };
@@ -210,9 +224,9 @@ export function createDesktopDefaultAgentProjectPort(options: {
         baseProjectRevision: snapshot.revision,
         draftRevision: 0,
         resource: {
-          apiVersion: "pragma/v2",
+          apiVersion: "pragma/v3",
           kind: "Flow",
-          metadata: input.metadata,
+          metadata: { ...input.metadata, id: generatePragmaResourceId() },
           spec: {
             ...(input.input === undefined ? {} : { input: input.input }),
             ...(input.output === undefined ? {} : { output: input.output }),
@@ -361,13 +375,12 @@ async function buildExpertCatalog(options: {
     .flatMap((runtime) =>
       (runtime.models ?? []).map((model) => {
         const identity = runtimeModelIdentity(runtime.id, model.provider.id, model.id);
-        const id = `runtime_${createHash("sha256").update(identity).digest("hex")}`;
+        const id = derivePragmaResourceId(`default-agent:runtime:${identity}`);
         const resource = PragmaRuntimeProfileResourceSchema.parse({
-          apiVersion: "pragma/v2",
+          apiVersion: "pragma/v3",
           kind: "RuntimeProfile",
           metadata: {
             id,
-            version: "1.0.0",
             name: `${runtime.displayName} / ${model.displayName}`,
             description: `Host-provided Runtime model ${model.provider.displayName} / ${model.displayName}.`,
             tags: ["desktop-managed", "default-agent-option"],
@@ -431,11 +444,10 @@ async function buildExpertCatalog(options: {
 
 function capabilityResource(capability: Capability): PragmaResource {
   return PragmaCapabilityResourceSchema.parse({
-    apiVersion: "pragma/v2",
+    apiVersion: "pragma/v3",
     kind: "Capability",
     metadata: {
-      id: `capability_${capability.manifest.id.replaceAll("-", "")}`,
-      version: String(capability.manifest.latestRevision),
+      id: derivePragmaResourceId(`default-agent:capability:${capability.manifest.id}`),
       name: capability.definition.name,
       description: capabilityDescription(capability),
       tags: ["desktop-managed", "default-agent-option"],

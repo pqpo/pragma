@@ -10,13 +10,12 @@ import {
 } from "./AutomationDirectoryFragment.tsx";
 
 const automation: AutomationSummary = {
-  ref: "automation:daily_review@1.0.0",
+  ref: "automation:hrxn3mv2e991j2rj",
   resource: {
-    apiVersion: "pragma/v2",
+    apiVersion: "pragma/v3",
     kind: "Automation",
     metadata: {
-      id: "daily_review",
-      version: "1.0.0",
+      id: "hrxn3mv2e991j2rj",
       name: "Daily review",
       description: "Reviews work every day",
       tags: [],
@@ -34,7 +33,7 @@ const automation: AutomationSummary = {
       },
       enabled: true,
       route: {
-        executor: { ref: "expert:reviewer@1.0.0" },
+        executor: { ref: "expert:3sfd30h5017wd17d" },
         input: { kind: "prompt", value: "Review the work." },
       },
       interaction: { mode: "reuse-session" },
@@ -60,7 +59,7 @@ describe("AutomationDirectoryFragment", () => {
     expect(html).toContain("Automations");
     expect(html).toContain("Connections");
     expect(html).toContain("Daily review");
-    expect(html).toContain("expert:reviewer@1.0.0");
+    expect(html).toContain("expert:3sfd30h5017wd17d");
   });
 
   it("validates and normalizes weekly schedule fields before calling Desktop APIs", () => {
@@ -71,7 +70,7 @@ describe("AutomationDirectoryFragment", () => {
       name: "Weekly review",
       description: "Runs a weekly review",
       enabled: true,
-      executorRef: "expert:reviewer@1.0.0",
+      executorRef: "expert:3sfd30h5017wd17d",
       prompt: "Review the work.",
       flowInput: {},
       interaction: "reuse-session" as const,
@@ -121,7 +120,7 @@ describe("AutomationDirectoryFragment", () => {
       name: "Daily review",
       description: "Reviews the current work",
       enabled: true,
-      executorRef: "expert:reviewer@1.0.0",
+      executorRef: "expert:3sfd30h5017wd17d",
       prompt: "Review the work.",
       flowInput: {},
       interaction: "reuse-session" as const,
@@ -142,7 +141,7 @@ describe("AutomationDirectoryFragment", () => {
     };
     const executor = {
       kind: "expert" as const,
-      ref: "expert:reviewer@1.0.0",
+      ref: "expert:3sfd30h5017wd17d",
       name: "Reviewer",
       version: "1.0.0",
       description: "Reviews work",
@@ -152,10 +151,6 @@ describe("AutomationDirectoryFragment", () => {
     };
 
     expect(validateAutomationEditor(editor, executor)).toMatchObject({ valid: true });
-    expect(validateAutomationEditor({ ...editor, id: "bad-id" }, executor)).toMatchObject({
-      valid: false,
-      id: "idFormat",
-    });
     expect(validateAutomationEditor({ ...editor, description: "" }, executor)).toMatchObject({
       valid: false,
       description: "required",

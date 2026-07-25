@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted.
+Superseded in part by ADR 023. Change-set concurrency remains accepted; resource-version identity
+and “Create new version” do not.
 
 ## Context
 

@@ -3,10 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
-import {
-  PRAGMA_AUTOMATION_PROMPT_MAX_LENGTH,
-  PRAGMA_EXPERT_ID_MAX_LENGTH,
-} from "@pragma/interpreter/ast";
+import { PRAGMA_AUTOMATION_PROMPT_MAX_LENGTH } from "@pragma/interpreter/ast";
 
 import type { Capability } from "../shared/desktop-api.ts";
 import { createPragmaProjectStore } from "./pragma-project-store.ts";
@@ -33,7 +30,7 @@ describe("Desktop DefaultAgent DSL project adapter", () => {
     expect(first.diagnostics).toEqual([]);
     expect(first.changes).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ ref: "expert:writer@1.0.0", kind: "created" }),
+        expect.objectContaining({ ref: "expert:1xddvess309a6gme", kind: "created" }),
       ]),
     );
     await expect(
@@ -46,13 +43,13 @@ describe("Desktop DefaultAgent DSL project adapter", () => {
         sources: [expert("Second", runtimeRef)],
       }),
     );
-    expect(second.changes).toMatchObject([{ ref: "expert:writer@1.0.0", kind: "updated" }]);
+    expect(second.changes).toMatchObject([{ ref: "expert:1xddvess309a6gme", kind: "updated" }]);
     const committed = await adapter.commit({
       changeSetId: second.changeSetId,
       operationId: "second",
     });
     expect(committed.projectRevision).toBe(2);
-    expect((await adapter.read("expert:writer@1.0.0")).source).toContain("Second");
+    expect((await adapter.read("expert:1xddvess309a6gme")).source).toContain("Second");
   });
 
   it("replays a committed operation idempotently", async () => {
@@ -106,7 +103,7 @@ describe("Desktop DefaultAgent DSL project adapter", () => {
     ]);
   });
 
-  it("creates a 50-character Expert that Desktop can list and open, and rejects 51", async () => {
+  it("creates a 16-character Expert that Desktop can list and open, and rejects 17", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-default-agent-expert-id-"));
     const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
     const adapter = createDesktopDefaultAgentProjectPort(
@@ -118,7 +115,7 @@ describe("Desktop DefaultAgent DSL project adapter", () => {
       validateModel: async () => undefined,
     });
     const runtimeRef = (await adapter.listExpertOptions()).runtimeModels[0]!.runtimeProfileRef;
-    const acceptedId = "a".repeat(PRAGMA_EXPERT_ID_MAX_LENGTH);
+    const acceptedId = "a".repeat(16);
     const candidate = requirePrepared(
       await adapter.prepare({
         expectedProjectRevision: 0,
@@ -129,14 +126,14 @@ describe("Desktop DefaultAgent DSL project adapter", () => {
     await adapter.commit({ changeSetId: candidate.changeSetId, operationId: "boundary" });
 
     expect((await experts.list()).map((value) => value.id)).toContain(acceptedId);
-    await expect(experts.get(`expert:${acceptedId}@1.0.0`)).resolves.toMatchObject({
+    await expect(experts.get(`expert:${acceptedId}`)).resolves.toMatchObject({
       id: acceptedId,
       description: "Boundary",
     });
     await expect(
       adapter.prepare({
         expectedProjectRevision: 1,
-        sources: [expert("Too long", runtimeRef, "a".repeat(PRAGMA_EXPERT_ID_MAX_LENGTH + 1))],
+        sources: [expert("Too long", runtimeRef, "a".repeat(17))],
       }),
     ).resolves.toMatchObject({ status: "invalid" });
     expect((await project.get()).revision).toBe(1);
@@ -152,8 +149,6 @@ describe("Desktop DefaultAgent DSL project adapter", () => {
     const created = await adapter.createFlowDraft({
       expectedProjectRevision: 0,
       metadata: {
-        id: "release_gate",
-        version: "1.0.0",
         name: "Release Gate",
         description,
         tags: [],
@@ -178,7 +173,6 @@ describe("Desktop DefaultAgent DSL project adapter", () => {
                 { value: "hold", label: "Hold" },
               ],
             },
-            version: "1.0.0",
           },
         },
       ],
@@ -205,7 +199,7 @@ describe("Desktop DefaultAgent DSL project adapter", () => {
     );
     expect(prepared.changes).toEqual([
       expect.objectContaining({
-        ref: "flow:release_gate@1.0.0",
+        ref: expect.stringMatching(/^flow:[0-9a-hjkmnp-tv-z]{16}$/),
         kind: "created",
         source: expect.stringContaining(description),
       }),
@@ -218,7 +212,7 @@ describe("Desktop DefaultAgent DSL project adapter", () => {
     );
     expect(directlyPrepared.changes).toEqual([
       expect.objectContaining({
-        ref: "flow:release_gate@1.0.0",
+        ref: prepared.changes[0]!.ref,
         source: expect.stringContaining(description),
       }),
     ]);
@@ -227,7 +221,9 @@ describe("Desktop DefaultAgent DSL project adapter", () => {
       expect.arrayContaining([
         expect.objectContaining({
           kind: "Flow",
-          metadata: expect.objectContaining({ id: "release_gate" }),
+          metadata: expect.objectContaining({
+            id: prepared.changes[0]!.ref.slice("flow:".length),
+          }),
         }),
       ]),
     );
@@ -281,13 +277,12 @@ function requirePrepared<
   return result.changeSet;
 }
 
-function expert(description: string, runtimeRef: string, id = "writer"): string {
+function expert(description: string, runtimeRef: string, id = "1xddvess309a6gme"): string {
   return [
-    "apiVersion: pragma/v2",
+    "apiVersion: pragma/v3",
     "kind: Expert",
     "metadata:",
     `  id: ${id}`,
-    "  version: 1.0.0",
     "  name: Writer",
     `  description: ${description}`,
     "  tags: []",
@@ -307,11 +302,10 @@ function expert(description: string, runtimeRef: string, id = "writer"): string 
 
 function automationWithPrompt(prompt: string): string {
   return [
-    "apiVersion: pragma/v2",
+    "apiVersion: pragma/v3",
     "kind: Automation",
     "metadata:",
-    "  id: daily_review",
-    "  version: 1.0.0",
+    "  id: 55af1v8nmn4j0h3z",
     "  name: Daily review",
     "  description: Reviews the current workspace",
     "  tags: []",
@@ -327,7 +321,7 @@ function automationWithPrompt(prompt: string): string {
     "  enabled: true",
     "  route:",
     "    executor:",
-    "      ref: expert:reviewer@1.0.0",
+    "      ref: expert:3sfd30h5017wd17d",
     "    input:",
     "      kind: prompt",
     `      value: ${JSON.stringify(prompt)}`,

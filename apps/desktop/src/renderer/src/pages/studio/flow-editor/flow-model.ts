@@ -21,13 +21,12 @@ export interface FlowValidationIssue {
   readonly stepId?: string | undefined;
 }
 
-export function createEmptyFlow(id = "untitled_flow"): PragmaFlowResource {
+export function createEmptyFlow(id = "0000000000000000"): PragmaFlowResource {
   return {
-    apiVersion: "pragma/v2",
+    apiVersion: "pragma/v3",
     kind: "Flow",
     metadata: {
       id,
-      version: "1.0.0",
       name: "Untitled flow",
       description: "Describe what this flow orchestrates.",
       tags: [],
@@ -391,7 +390,7 @@ function stepIdFromPath(path: readonly PropertyKey[]): string | undefined {
 
 function friendlyIssueMessage(path: readonly PropertyKey[], fallback: string): string {
   if (path.length === 2 && path[0] === "metadata" && path[1] === "id") {
-    return "Resource ID must start with a letter or number and use only dots, underscores, or hyphens.";
+    return "Resource ID must be a 16-character lowercase Crockford Base32 ID.";
   }
   if (path.length === 2 && path[0] === "metadata" && path[1] === "name") {
     return "Flow name is required.";

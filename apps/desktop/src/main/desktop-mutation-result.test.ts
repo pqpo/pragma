@@ -22,7 +22,7 @@ describe("runDesktopMutation", () => {
         {
           baseRevision: 4,
           currentRevision: 6,
-          conflictingRefs: ["expert:writer@1.0.0"],
+          conflictingRefs: ["expert:1xddvess309a6gme"],
           retryable: false,
         },
       );
@@ -37,7 +37,7 @@ describe("runDesktopMutation", () => {
         conflict: {
           baseRevision: 4,
           currentRevision: 6,
-          conflictingRefs: ["expert:writer@1.0.0"],
+          conflictingRefs: ["expert:1xddvess309a6gme"],
           retryable: false,
         },
       },
@@ -46,7 +46,7 @@ describe("runDesktopMutation", () => {
     expect(new DesktopMutationError(result.error)).toMatchObject({
       code: "revision_conflict",
       conflict: {
-        conflictingRefs: ["expert:writer@1.0.0"],
+        conflictingRefs: ["expert:1xddvess309a6gme"],
         retryable: false,
       },
     });

@@ -16,7 +16,7 @@ describe("Mission executor model options", () => {
       );
     });
 
-    await expect(catalog.getModelOptions("expert:pragma@1.0.0")).resolves.toEqual({
+    await expect(catalog.getModelOptions("expert:2qgbztga4kz2qz51")).resolves.toEqual({
       status: "reset_required",
       runtime: { id: "pi", displayName: "PI" },
       models: [],
@@ -41,7 +41,7 @@ describe("Mission executor model options", () => {
       },
     ]);
 
-    await expect(catalog.getModelOptions("expert:pragma@1.0.0")).resolves.toMatchObject({
+    await expect(catalog.getModelOptions("expert:2qgbztga4kz2qz51")).resolves.toMatchObject({
       status: "ready",
       runtime: { id: "pi", displayName: "PI" },
       models: [{ id: "model" }],
@@ -82,7 +82,7 @@ describe("Mission executor model options", () => {
       },
     );
 
-    await expect(catalog.getModelOptions("expert:pragma@1.0.0")).resolves.toMatchObject({
+    await expect(catalog.getModelOptions("expert:2qgbztga4kz2qz51")).resolves.toMatchObject({
       defaultSelection: { providerId: "provider", modelId: "pinned", thinkingLevel: "medium" },
     });
   });
@@ -139,7 +139,7 @@ describe("Mission executor model options", () => {
     const catalog = createMissionExecutorCatalog({ project, systemExperts, runtimes });
 
     await expect(
-      catalog.getModelOptions("expert:pragma@1.0.0", {
+      catalog.getModelOptions("expert:2qgbztga4kz2qz51", {
         runtimeId: "pi",
         revision: 1,
         fingerprint: "a".repeat(64),
@@ -185,21 +185,21 @@ describe("Mission executor model options", () => {
     const catalog = createMissionExecutorCatalog({ project, systemExperts, runtimes });
     const resources = [
       {
-        apiVersion: "pragma/v2",
+        apiVersion: "pragma/v3",
         kind: "RuntimeProfile",
-        metadata: { id: "pinned", name: "Pinned", version: "1.0.0" },
+        metadata: { id: "2v60qnte9072fwk7", name: "Pinned" },
         spec: { config: { runtimeId: "pinned-runtime" } },
       },
       {
-        apiVersion: "pragma/v2",
+        apiVersion: "pragma/v3",
         kind: "Expert",
-        metadata: { id: "worker", name: "Worker", version: "1.0.0" },
-        spec: { runtime: { ref: "runtime-profile:pinned@1.0.0" } },
+        metadata: { id: "kgtpajmnv08n7zah", name: "Worker" },
+        spec: { runtime: { ref: "runtime-profile:2v60qnte9072fwk7" } },
       },
     ] as unknown as readonly PragmaResource[];
 
     await expect(
-      catalog.getModelOptions("expert:worker@1.0.0", undefined, resources),
+      catalog.getModelOptions("expert:kgtpajmnv08n7zah", undefined, resources),
     ).resolves.toMatchObject({ runtime: { id: "pinned-runtime" } });
     expect(boundRuntimeIds).toEqual(["pinned-runtime"]);
   });

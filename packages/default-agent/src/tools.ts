@@ -20,9 +20,28 @@ const PrepareInput = z.object({
 });
 const CommitInput = z.object({ changeSetId: z.string().uuid() });
 const DraftIdInput = z.object({ draftId: z.string().uuid() });
+const AllocateResourceIdsInput = z.object({
+  requests: z
+    .array(
+      z.object({
+        key: z.string().trim().min(1).max(100),
+        kind: z.enum([
+          "expert",
+          "team",
+          "flow",
+          "automation",
+          "capability",
+          "context-store",
+          "runtime-profile",
+        ]),
+      }),
+    )
+    .min(1)
+    .max(50),
+});
 const CreateFlowDraftInput = z.object({
   expectedProjectRevision: z.number().int().nonnegative(),
-  metadata: PragmaMetadataSchema,
+  metadata: PragmaMetadataSchema.omit({ id: true }),
   input: DefaultAgentFlowDraftSchema.shape.resource.shape.spec.shape.input.optional(),
   output: DefaultAgentFlowDraftSchema.shape.resource.shape.spec.shape.output.optional(),
   limits: DefaultAgentFlowDraftSchema.shape.resource.shape.spec.shape.limits.optional(),
@@ -153,6 +172,15 @@ export function createDefaultAgentTools(options: {
       "List host-provided Runtime models and ready capabilities that can be assigned to an Expert.",
       {},
       async () => ok(await options.project.listExpertOptions()),
+    ),
+    tool(
+      "allocate_dsl_resource_ids",
+      "Allocate Host-generated stable IDs for new Pragma resources before authoring YAML.",
+      z.toJSONSchema(AllocateResourceIdsInput),
+      async (args) =>
+        ok(
+          await options.project.allocateResourceIds(AllocateResourceIdsInput.parse(args).requests),
+        ),
     ),
     tool(
       "prepare_dsl_changes",

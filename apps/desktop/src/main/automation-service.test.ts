@@ -18,11 +18,10 @@ afterEach(() => {
 describe("AutomationService", () => {
   it("maps schema-less Flow prompts through the normal Mission goal input", () => {
     const resource = PragmaAutomationResourceSchema.parse({
-      apiVersion: "pragma/v2",
+      apiVersion: "pragma/v3",
       kind: "Automation",
       metadata: {
-        id: "flow_review",
-        version: "1.0.0",
+        id: "m9a8n9nxvvyb4j01",
         name: "Flow review",
         description: "Starts a review Flow",
         tags: [],
@@ -40,7 +39,7 @@ describe("AutomationService", () => {
         },
         enabled: true,
         route: {
-          executor: { ref: "flow:review@1.0.0" },
+          executor: { ref: "flow:t9ne4d8njvvxv2ea" },
           input: { kind: "prompt", value: "Review the release." },
         },
         interaction: { mode: "new-mission" },
@@ -58,11 +57,10 @@ describe("AutomationService", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-07-23T00:00:00.000Z"));
     const resource = PragmaAutomationResourceSchema.parse({
-      apiVersion: "pragma/v2",
+      apiVersion: "pragma/v3",
       kind: "Automation",
       metadata: {
-        id: "frequent_review",
-        version: "1.0.0",
+        id: "e0a62t5kw81ngc03",
         name: "Frequent review",
         description: "Review every minute",
         tags: [],
@@ -80,7 +78,7 @@ describe("AutomationService", () => {
         },
         enabled: true,
         route: {
-          executor: { ref: "expert:reviewer@1.0.0" },
+          executor: { ref: "expert:3sfd30h5017wd17d" },
           input: { kind: "prompt", value: "Review now." },
         },
         interaction: { mode: "reuse-session" },
@@ -88,8 +86,8 @@ describe("AutomationService", () => {
       },
     });
     const binding: AutomationBinding = {
-      schemaVersion: "pragma.automation-binding/v1",
-      automationRef: "automation:frequent_review@1.0.0",
+      schemaVersion: "pragma.automation-binding/v2",
+      automationRef: "automation:e0a62t5kw81ngc03",
       revision: 1,
       generation: "57c6dcff-f3b7-40d3-ae29-9b6a6d2ef40b",
       workspace: { path: "/work/review", basename: "review" },
@@ -198,11 +196,10 @@ describe("AutomationService", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-07-23T00:00:00.000Z"));
     const resource = PragmaAutomationResourceSchema.parse({
-      apiVersion: "pragma/v2",
+      apiVersion: "pragma/v3",
       kind: "Automation",
       metadata: {
-        id: "reusable_review",
-        version: "1.0.0",
+        id: "smnt16qvwbsb3s2b",
         name: "Reusable review",
         description: "Review every minute",
         tags: [],
@@ -220,7 +217,7 @@ describe("AutomationService", () => {
         },
         enabled: true,
         route: {
-          executor: { ref: "expert:reviewer@1.0.0" },
+          executor: { ref: "expert:3sfd30h5017wd17d" },
           input: { kind: "prompt", value: "Review now." },
         },
         interaction: { mode: "reuse-session" },
@@ -228,8 +225,8 @@ describe("AutomationService", () => {
       },
     });
     const binding: AutomationBinding = {
-      schemaVersion: "pragma.automation-binding/v1",
-      automationRef: "automation:reusable_review@1.0.0",
+      schemaVersion: "pragma.automation-binding/v2",
+      automationRef: "automation:smnt16qvwbsb3s2b",
       revision: 1,
       generation: "57c6dcff-f3b7-40d3-ae29-9b6a6d2ef40b",
       workspace: { path: "/work/review", basename: "review" },

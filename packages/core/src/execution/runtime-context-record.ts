@@ -11,7 +11,7 @@ export interface CreateRuntimeContextRecordOptions {
   readonly contextId: string;
   readonly owner: RuntimeContextOwner;
   readonly origin: RuntimeContextOrigin;
-  readonly expert: { readonly id: string; readonly version: string };
+  readonly expert: { readonly id: string };
   readonly runtime: RuntimeEnvironmentBinding;
   readonly modelSelection?: RuntimeModelSelection | undefined;
   readonly now?: string | undefined;
@@ -22,7 +22,7 @@ export function createRuntimeContextRecord(
 ): RuntimeContextRecord {
   const now = options.now ?? new Date().toISOString();
   return {
-    schemaVersion: "pragma.runtime-context/v4",
+    schemaVersion: "pragma.runtime-context/v5",
     contextId: options.contextId,
     owner: options.owner,
     origin: options.origin,
@@ -76,10 +76,7 @@ function assertSameRuntimeContext(
   ) {
     throw new Error(`Runtime Context owner conflict: ${incoming.contextId}.`);
   }
-  if (
-    current.expert.id !== incoming.expert.id ||
-    current.expert.version !== incoming.expert.version
-  ) {
+  if (current.expert.id !== incoming.expert.id) {
     throw new Error(`Runtime Context Expert identity conflict: ${incoming.contextId}.`);
   }
   if (

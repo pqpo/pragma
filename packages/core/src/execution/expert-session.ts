@@ -149,16 +149,15 @@ export class ExpertSessionManager {
       contextId: rootContextId,
       owner: { type: "expert-session", ownerId: sessionId },
       origin: { type: "expert-session", sessionId },
-      expert: { id: rootExpert.id, version: rootExpert.version },
+      expert: { id: rootExpert.id },
       runtime: runtime.binding,
       modelSelection,
       now,
     });
     await this.dependencies.sessions.create({
-      schemaVersion: "pragma.expert-session/v4",
+      schemaVersion: "pragma.expert-session/v5",
       sessionId,
       expertId: expert.id,
-      expertVersion: expert.version,
       definitionFingerprint: fingerprintExpertExecutionDefinition(expert),
       status: "open",
       queuedRequestIds: [],
@@ -189,14 +188,12 @@ export class ExpertSessionManager {
     if (record === undefined) throw new Error(`ExpertSession not found: ${request.sessionId}`);
     if (record.status === "closed")
       throw new Error(`ExpertSession is closed: ${request.sessionId}`);
-    if (record.expertId !== expert.id || record.expertVersion !== expert.version) {
+    if (
+      record.expertId !== expert.id ||
+      record.definitionFingerprint !== fingerprintExpertExecutionDefinition(expert)
+    ) {
       throw new Error(`Expert definition mismatch for Session ${request.sessionId}.`);
     }
-    // The fingerprint is creation-time provenance, not a recovery gate. Mission/project snapshots
-    // select the Expert definition for future turns, while RuntimeContextRecord remains the sole
-    // owner of the historical Runtime binding and native Runtime Session snapshot. Rejecting a
-    // changed descriptor here would strand otherwise valid long-lived sessions after an Expert,
-    // plugin, or default Runtime configuration update.
     const claimId = randomUUID();
     if (
       !(await this.dependencies.sessions.claimLease(
@@ -393,11 +390,11 @@ class ExpertSessionImpl implements ExpertSession {
     const modelSelection = options.modelSelection;
     const definitionKind = isExpertTeam(this.expert) ? "expert-team" : "expert";
     const execution: ExecutionRecord = {
-      schemaVersion: "pragma.execution/v6",
+      schemaVersion: "pragma.execution/v7",
       executionId: id,
       version: 0,
       kind: "expert-turn",
-      definition: { id: this.expert.id, version: this.expert.version, kind: definitionKind },
+      definition: { id: this.expert.id, kind: definitionKind },
       rootInvocationId: id,
       status: "queued",
       input: content,
@@ -721,7 +718,9 @@ class ExpertSessionImpl implements ExpertSession {
     const active = this.runtimeSessions.get(identity);
     if (active !== undefined) {
       if (active.contextWindow?.compact === undefined) {
-        throw new Error(`Runtime ${context.runtime.runtimeId} does not support context compaction.`);
+        throw new Error(
+          `Runtime ${context.runtime.runtimeId} does not support context compaction.`,
+        );
       }
       return await active.contextWindow.compact();
     }
@@ -748,7 +747,9 @@ class ExpertSessionImpl implements ExpertSession {
     });
     try {
       if (opened.contextWindow?.compact === undefined) {
-        throw new Error(`Runtime ${context.runtime.runtimeId} does not support context compaction.`);
+        throw new Error(
+          `Runtime ${context.runtime.runtimeId} does not support context compaction.`,
+        );
       }
       return await opened.contextWindow.compact();
     } finally {
@@ -760,9 +761,7 @@ class ExpertSessionImpl implements ExpertSession {
     return await this.dependencies.sessions.listPrompts(this.sessionId);
   }
 
-  private async getRootContext(
-    state?: ExpertSessionRecord,
-  ): Promise<RuntimeContextRecord> {
+  private async getRootContext(state?: ExpertSessionRecord): Promise<RuntimeContextRecord> {
     const session = state ?? (await this.getState());
     const context = session.contexts[session.rootContextId];
     if (context === undefined) throw new Error("ExpertSession root Context is missing.");

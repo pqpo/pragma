@@ -1,10 +1,9 @@
 import { defineFlow } from "@pragma/core";
 import { createExampleApp } from "../support/example-kit.ts";
 
-const flow = defineFlow({ id: "human", version: "1.0.0" });
+const flow = defineFlow({ id: "human" });
 const approval = flow.humanTask({
   id: "approve",
-  version: "1.0.0",
   request: { kind: "approval", title: "Approve deployment" },
 });
 flow.compose(({ start, end }) => {

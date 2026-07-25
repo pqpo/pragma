@@ -1,9 +1,9 @@
 import { defineFlow } from "@pragma/core";
 import { createExampleApp } from "../support/example-kit.ts";
 
-const flow = defineFlow({ id: "tree", version: "1.0.0" });
-const first = flow.task({ id: "first", version: "1.0.0", handler: () => "one" });
-const second = flow.task({ id: "second", version: "1.0.0", handler: () => "two" });
+const flow = defineFlow({ id: "tree" });
+const first = flow.task({ id: "first", handler: () => "one" });
+const second = flow.task({ id: "second", handler: () => "two" });
 flow.compose(({ start, end }) => {
   start(first).next(second).next(end());
 });

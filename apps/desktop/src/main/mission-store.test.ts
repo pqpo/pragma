@@ -44,7 +44,7 @@ describe("mission store", () => {
     expect(created.title).toBe("Design the Missions experience");
     expect(created.executor).toMatchObject({
       kind: "expert",
-      ref: "expert:product_designer@0.1.0",
+      ref: "expert:v2vt1v01vzz6j24q",
     });
     expect(created.project).toEqual({ id: "studio", revision: 3 });
     expect(created.toolPermissionMode).toBe("full-access");
@@ -58,7 +58,7 @@ describe("mission store", () => {
       expect.objectContaining({ id: created.id, title: created.title }),
     ]);
     const manifest = await readFile(join(root, "missions", created.id, "mission.yaml"), "utf8");
-    expect(manifest).toContain("schemaVersion: pragma.mission/v4");
+    expect(manifest).toContain("schemaVersion: pragma.mission/v5");
     expect(manifest).toContain("revision: 3");
     expect(manifest).toContain("toolPermissionMode: full-access");
     expect(manifest).toContain("modelOverride:");
@@ -481,7 +481,7 @@ describe("mission store", () => {
     const manifestPath = join(directory, "mission.yaml");
     await writeFile(
       manifestPath,
-      (await readFile(manifestPath, "utf8")).replace("pragma.mission/v4", "pragma.mission/v2"),
+      (await readFile(manifestPath, "utf8")).replace("pragma.mission/v5", "pragma.mission/v2"),
       "utf8",
     );
     await expect(store.get(created.id)).rejects.toMatchObject({ code: "unsupported_schema" });
@@ -498,25 +498,25 @@ describe("mission store", () => {
       project: { id: "studio", revision: 1 },
       executor: {
         kind: "flow",
-        ref: "flow:legacy@1.0.0",
+        ref: "flow:x22wv3j4gn3k9j5v",
         name: "Legacy Flow",
-        version: "1.0.0",
       },
     });
     const manifestPath = join(root, "missions", created.id, "mission.yaml");
     const legacy = parsePragmaYaml(await readFile(manifestPath, "utf8")) as Record<string, unknown>;
     legacy["schemaVersion"] = "pragma.mission/v3";
+    legacy["executor"] = { ...(legacy["executor"] as object), version: "1.0.0" };
     delete legacy["flowInput"];
     await writeFile(manifestPath, formatPragmaYaml(legacy), "utf8");
 
     await expect(store.get(created.id)).resolves.toMatchObject({
-      schemaVersion: "pragma.mission/v4",
+      schemaVersion: "pragma.mission/v5",
       flowInput: { goal: "Legacy Flow goal", workspace },
     });
-    expect(await readFile(manifestPath, "utf8")).toContain("schemaVersion: pragma.mission/v4");
+    expect(await readFile(manifestPath, "utf8")).toContain("schemaVersion: pragma.mission/v5");
 
     const future = parsePragmaYaml(await readFile(manifestPath, "utf8")) as Record<string, unknown>;
-    future["schemaVersion"] = "pragma.mission/v5";
+    future["schemaVersion"] = "pragma.mission/v6";
     await writeFile(manifestPath, formatPragmaYaml(future), "utf8");
     await expect(store.get(created.id)).rejects.toMatchObject({ code: "unsupported_schema" });
   });
@@ -530,19 +530,18 @@ async function temporaryRoot(): Promise<string> {
 
 function expertFixture(): PragmaExpertResource {
   return {
-    apiVersion: "pragma/v2",
+    apiVersion: "pragma/v3",
     kind: "Expert",
     metadata: {
-      id: "product_designer",
+      id: "v2vt1v01vzz6j24q",
       name: "Product Designer",
       description: "Designs product experiences.",
       tags: ["design"],
-      version: "0.1.0",
     },
     spec: {
       scope: "Product experience design.",
       instructions: "Design accessible product experiences.",
-      runtime: { ref: "runtime-profile:product_designer_runtime@0.1.0" },
+      runtime: { ref: "runtime-profile:9a20pvstre59317h" },
       capabilities: [],
       toolApprovals: {},
       contextStores: [],

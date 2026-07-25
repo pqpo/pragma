@@ -1,12 +1,12 @@
-# Pragma YAML DSL v2
+# Pragma YAML DSL v3
 
 Pragma DSL is the canonical, portable definition language for `Expert`, `ExpertTeam`, `Flow`,
 `Automation`, `Capability`, `ContextStore`, and `RuntimeProfile`. `@pragma/interpreter` owns parsing, linking,
 validation, environment resolution, compilation, locking, and normalized dumping. Core remains the
 execution object model and does not depend on the interpreter.
 
-`pragma/v2` is a clean break. The interpreter does not read or migrate `pragma/v1`, and applications
-must report old local projects as unsupported rather than silently rewriting or deleting them.
+`pragma/v3` removes semantic resource versions. Desktop performs the bounded one-time `pragma/v2`
+storage migration described by ADR 023; the interpreter itself accepts only current DSL.
 
 ## Definition, installation, and execution
 
@@ -26,26 +26,27 @@ deployment can store the same sources and resolve bindings on its server.
 
 ## Project layout and identity
 
-Every semantic reference is exact. Multiple versions of the same kind and ID may coexist.
+Every semantic reference contains one Host-generated opaque ID. Project revisions, rather than
+resource versions, preserve historical definitions.
 
 ```text
 pragma.yaml
-experts/pragma@1.0.0.pragma.yaml
-teams/delivery@2.0.0.pragma.yaml
-flows/review@1.2.0.pragma.yaml
-automations/daily-review@1.0.0.pragma.yaml
-capabilities/repository-tools@3.0.0.pragma.yaml
-context-stores/project-guide@1.0.0.pragma.yaml
-runtime-profiles/desktop-codex@1.0.0.pragma.yaml
+experts/0000000000pragma.pragma.yaml
+teams/2h3j4k5m6n7p8q9r.pragma.yaml
+flows/3h4j5k6m7n8p9q0r.pragma.yaml
+automations/4h5j6k7m8n9p0q1r.pragma.yaml
+capabilities/5h6j7k8m9n0p1q2r.pragma.yaml
+context-stores/6h7j8k9m0n1p2q3r.pragma.yaml
+runtime-profiles/7h8j9k0m1n2p3q4r.pragma.yaml
 pragma.lock.yaml
 ```
 
 ```yaml
-apiVersion: pragma/v2
+apiVersion: pragma/v3
 kind: Bundle
 imports:
-  - ./runtime-profiles/desktop-codex@1.0.0.pragma.yaml
-  - ./experts/lead@1.0.0.pragma.yaml
+  - ./runtime-profiles/7h8j9k0m1n2p3q4r.pragma.yaml
+  - ./experts/1h2j3k4m5n6p7q8r.pragma.yaml
 resources: []
 ```
 
@@ -58,11 +59,10 @@ Machine-specific endpoints, credentials, live stores, and host tools are referen
 bindings and resolved only by the installation environment.
 
 ```yaml
-apiVersion: pragma/v2
+apiVersion: pragma/v3
 kind: Capability
 metadata:
-  id: repository_tools
-  version: 1.0.0
+  id: 5h6j7k8m9n0p1q2r
   name: Repository tools
   description: Tools supplied by the installed environment
 spec:
@@ -115,23 +115,22 @@ from environment fingerprints; only store identity and connection configuration 
 ## Expert and resource invocation
 
 ```yaml
-apiVersion: pragma/v2
+apiVersion: pragma/v3
 kind: Expert
 metadata:
-  id: lead
-  version: 1.0.0
+  id: 1h2j3k4m5n6p7q8r
   name: Delivery lead
   description: Coordinates delivery
 spec:
   scope: Own the delivery outcome.
-  runtime: { ref: runtime-profile:desktop_codex@1.0.0 }
+  runtime: { ref: runtime-profile:7h8j9k0m1n2p3q4r }
   capabilities:
-    - ref: capability:repository_tools@1.0.0
+    - ref: capability:5h6j7k8m9n0p1q2r
       kind: tools
       tools: [read_file, edit_file]
   toolApprovals: { edit_file: required }
   contextStores:
-    - ref: context-store:project_guide@1.0.0
+    - ref: context-store:6h7j8k9m0n1p2q3r
       namespace: project_guide
       required: true
   plugins:
@@ -139,7 +138,7 @@ spec:
       config: { task: { enabled: true } }
   tools:
     - adapter: pragma.tool.call@v1
-      target: { ref: flow:review@1.0.0 }
+      target: { ref: flow:3h4j5k6m7n8p9q0r }
       tool:
         name: run_review
         description: Run the review Flow.
@@ -164,7 +163,7 @@ the affected Invocation subtree. Tool output uses safe JSON serialization, inclu
 
 ## Teams and bounded Flow loops
 
-Teams refer to exact Expert and RuntimeProfile versions. A Team may define optional
+Teams refer to exact Expert and RuntimeProfile IDs within the pinned project revision. A Team may define optional
 `spec.instructions`; Core exposes it to the coordinator and every member
 as a critical, always-on `TEAM.md` Context System document for that Team execution only. The
 document does not mutate the reusable Expert definition or leak into other Teams that use the same
@@ -219,7 +218,7 @@ const published = await service.publish({
 const compiled = await service.compile({
   projectId: "studio",
   revision: published.revision,
-  ref: "expert:lead@1.0.0",
+  ref: "expert:1xddvess309a6gme",
   workspace,
   environmentId: "desktop",
   adapterHost,

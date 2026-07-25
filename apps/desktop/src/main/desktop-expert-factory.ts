@@ -253,7 +253,6 @@ export async function createDesktopExpertAgent(options: {
     name: options.definition.name,
     description: options.definition.description,
     tags: options.definition.tags,
-    version: options.definition.version,
     scope: options.definition.scope,
     instructions: options.definition.instructions,
     workspace: options.workspace,

@@ -6,12 +6,11 @@ const coordinator = await createExampleExpert("flow-lead", "Coordinate the answe
 const member = await createExampleExpert("flow-member", "Supply a supporting fact.");
 const team = defineExpertTeam({
   id: "flow-team",
-  version: "1.0.0",
   coordinator,
   members: [member],
   delegation: { allow: { "flow-lead": ["flow-member"], "flow-member": [] } },
 });
-const flow = defineFlow({ id: "experts-flow", version: "1.0.0" });
+const flow = defineFlow({ id: "experts-flow" });
 const one = flow.use("single", expert);
 const two = flow.use("team", team, { input: "Review the prior answer." });
 flow.compose(({ start, end }) => {

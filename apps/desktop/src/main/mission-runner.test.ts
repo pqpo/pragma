@@ -8,6 +8,7 @@ import {
   createStaticRuntimeResolver,
   defineExpert,
   defineRuntimeDriver,
+  fingerprintExpertExecutionDefinition,
   PragmaPaths,
   readRuntimeSessionRecord,
   type RuntimeDriverSessionContext,
@@ -747,7 +748,10 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
     );
     await expect(runner.getChat({ id: mission.id, limit: 50 })).resolves.toMatchObject({
       entries: expect.arrayContaining([
-        expect.objectContaining({ kind: "assistant", content: "writer:Prepare a concise answer" }),
+        expect.objectContaining({
+          kind: "assistant",
+          content: "1xddvess309a6gme:Prepare a concise answer",
+        }),
       ]),
     });
 
@@ -793,9 +797,9 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
         .map((entry) => entry.content),
     ).toEqual([
       "Prepare a concise answer",
-      "writer:Prepare a concise answer",
+      "1xddvess309a6gme:Prepare a concise answer",
       "Make it shorter",
-      "writer:Make it shorter",
+      "1xddvess309a6gme:Make it shorter",
     ]);
     expect(startTurn).toHaveBeenCalledTimes(2);
     expect(startTurn.mock.calls[1]?.[1].modelSelection).toEqual({
@@ -814,7 +818,7 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
           expect.objectContaining({
             kind: "root",
             status: "succeeded",
-            executorId: "writer",
+            executorId: "1xddvess309a6gme",
             title: "Writer",
           }),
         ],
@@ -1122,7 +1126,6 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
           name: "Writer",
           description: "Runtime binding test Expert",
           tags: [],
-          version: "1.0.0",
           scope: "test",
           workspace: current.workspace.path,
           pragmaHome: join(root, "state"),
@@ -1232,15 +1235,16 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
       defaultRuntimeId: "fake",
     });
     const expert = await defineExpert({
-      id: "writer",
+      id: "1xddvess309a6gme",
       name: "Writer",
-      description: "Recovery test Expert",
+      description: "Writes concise answers",
       tags: [],
-      version: "1.0.0",
-      scope: "test",
+      scope: "Writing",
+      instructions: "Write concise answers.",
       workspace: root,
       pragmaHome,
       defaultRuntimeId: "fake",
+      models: { default: { model: { providerId: "test", modelId: "test-model" } } },
     });
     const executions = createFileExecutionStore({ pragmaHome });
     const expertSessions = createFileExpertSessionStore({ executions, pragmaHome });
@@ -1250,13 +1254,12 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
     const contextId = "30000000-0000-4000-8000-000000000001";
     const interactionId = "pending-question";
     const startedAt = new Date().toISOString();
-    const definition = { id: expert.id, version: expert.version, kind: "expert" as const };
+    const definition = { id: expert.id, kind: "expert" as const };
     await expertSessions.create({
-      schemaVersion: "pragma.expert-session/v4",
+      schemaVersion: "pragma.expert-session/v5",
       sessionId,
       expertId: expert.id,
-      expertVersion: expert.version,
-      definitionFingerprint: "a".repeat(64),
+      definitionFingerprint: fingerprintExpertExecutionDefinition(expert),
       status: "open",
       activeExecutionId: executionId,
       queuedRequestIds: [],
@@ -1264,11 +1267,11 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
       rootContextId: contextId,
       contexts: {
         [contextId]: {
-          schemaVersion: "pragma.runtime-context/v4",
+          schemaVersion: "pragma.runtime-context/v5",
           contextId,
           owner: { type: "expert-session", ownerId: sessionId },
           origin: { type: "expert-session", sessionId },
-          expert: { id: expert.id, version: expert.version },
+          expert: { id: expert.id },
           runtime: runtimeBinding,
           lifecycle: "open",
           createdAt: startedAt,
@@ -1280,7 +1283,7 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
     });
     await executions.create(
       {
-        schemaVersion: "pragma.execution/v6",
+        schemaVersion: "pragma.execution/v7",
         executionId,
         version: 0,
         kind: "expert-turn",
@@ -1395,12 +1398,11 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
     expect(await expertSessions.listPrompts(sessionId)).toHaveLength(1);
   });
 
-  it("round-trips a Flow human interaction and resolves same-id resources by kind", async () => {
+  it("round-trips a Flow human interaction with globally unique resource IDs", async () => {
     const root = await mkdtemp(join(tmpdir(), "pragma-mission-human-"));
     temporaryPaths.push(root);
     const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
     const expert = expertFixture();
-    expert.metadata.id = "review";
     const runtimeProfile = runtimeFixture("unregistered");
     const snapshot = await project.publish({
       expectedRevision: 0,
@@ -1561,11 +1563,10 @@ describe("MissionRunner", { timeout: 15_000 }, () => {
 
 function expertFixture(): PragmaExpertResource {
   return {
-    apiVersion: "pragma/v2",
+    apiVersion: "pragma/v3",
     kind: "Expert",
     metadata: {
-      id: "writer",
-      version: "1.0.0",
+      id: "1xddvess309a6gme",
       name: "Writer",
       description: "Writes concise answers",
       tags: [],
@@ -1573,7 +1574,7 @@ function expertFixture(): PragmaExpertResource {
     spec: {
       scope: "Writing",
       instructions: "Write concise answers.",
-      runtime: { ref: "runtime-profile:writer_runtime@1.0.0" },
+      runtime: { ref: "runtime-profile:rdzgnq05qfqcpqcm" },
       capabilities: [],
       toolApprovals: {},
       contextStores: [],
@@ -1585,11 +1586,10 @@ function expertFixture(): PragmaExpertResource {
 
 function runtimeFixture(runtimeId = "fake"): PragmaRuntimeProfileResource {
   return {
-    apiVersion: "pragma/v2",
+    apiVersion: "pragma/v3",
     kind: "RuntimeProfile",
     metadata: {
-      id: "writer_runtime",
-      version: "1.0.0",
+      id: "rdzgnq05qfqcpqcm",
       name: "Writer Runtime",
       description: "Runtime used by the test writer.",
       tags: [],
@@ -1603,11 +1603,10 @@ function runtimeFixture(runtimeId = "fake"): PragmaRuntimeProfileResource {
 
 function approvalFlowFixture(): PragmaFlowResource {
   return {
-    apiVersion: "pragma/v2",
+    apiVersion: "pragma/v3",
     kind: "Flow",
     metadata: {
-      id: "review",
-      version: "1.0.0",
+      id: "t9ne4d8njvvxv2ea",
       name: "Review",
       description: "Requires approval",
       tags: [],
@@ -1626,7 +1625,6 @@ function approvalFlowFixture(): PragmaFlowResource {
                 { value: "hold", label: "Hold" },
               ],
             },
-            version: "1.0.0",
           },
         },
         loops: {},

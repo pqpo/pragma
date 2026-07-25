@@ -1,8 +1,8 @@
 import { defineFlow } from "@pragma/core";
 import { createExampleApp } from "../support/example-kit.ts";
 
-const flow = defineFlow({ id: "recoverable", version: "1.0.0" });
-const task = flow.task({ id: "work", version: "1.0.0", handler: () => "done" });
+const flow = defineFlow({ id: "recoverable" });
+const task = flow.task({ id: "work", handler: () => "done" });
 flow.compose(({ start, end }) => {
   start(task).next(end());
 });

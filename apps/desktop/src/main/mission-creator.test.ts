@@ -15,9 +15,8 @@ import { createPragmaProjectStore } from "./pragma-project-store.ts";
 const temporaryPaths: string[] = [];
 const executor: MissionExecutor = {
   kind: "expert",
-  ref: "expert:pragma@1.0.0",
+  ref: "expert:2qgbztga4kz2qz51",
   name: "Pragma",
-  version: "1.0.0",
 };
 
 afterEach(async () => {
@@ -118,11 +117,10 @@ describe("MissionCreator", () => {
     await mkdir(workspace);
     const project = createPragmaProjectStore({ projectsPath: join(root, "projects") });
     const flow = {
-      apiVersion: "pragma/v2" as const,
+      apiVersion: "pragma/v3" as const,
       kind: "Flow" as const,
       metadata: {
-        id: "issue_fix",
-        version: "1.0.0",
+        id: "5gdqkvfwb19p5rj7",
         name: "Issue fix",
         description: "Fix one issue",
         tags: [],
@@ -149,7 +147,6 @@ describe("MissionCreator", () => {
                   { value: "no", label: "No" },
                 ],
               },
-              version: "1.0.0",
             },
           },
           loops: {},
@@ -161,9 +158,8 @@ describe("MissionCreator", () => {
     const missions = createMissionStore({ missionsPath: join(root, "missions") });
     const flowExecutor: MissionExecutor = {
       kind: "flow",
-      ref: "flow:issue_fix@1.0.0",
+      ref: "flow:5gdqkvfwb19p5rj7",
       name: "Issue fix",
-      version: "1.0.0",
     };
     const creator = createMissionCreator({
       missions,

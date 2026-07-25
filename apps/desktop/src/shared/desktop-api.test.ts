@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 
 import {
   EXPERT_DESCRIPTION_MAX_LENGTH,
-  PRAGMA_EXPERT_ID_MAX_LENGTH,
   EXPERT_INSTRUCTIONS_MAX_LENGTH,
   EXPERT_NAME_MAX_LENGTH,
   EXPERT_SCOPE_MAX_LENGTH,
@@ -71,11 +70,10 @@ describe("runtime settings contracts", () => {
 describe("Pragma project change-set contracts", () => {
   it("requires at least one upsert and defaults removals", () => {
     const resource = {
-      apiVersion: "pragma/v2" as const,
+      apiVersion: "pragma/v3" as const,
       kind: "RuntimeProfile" as const,
       metadata: {
-        id: "flow_runtime",
-        version: "1.0.0",
+        id: "hct7g5mmh9vzz5tt",
         name: "Flow Runtime",
         description: "Flow Runtime",
         tags: ["flow-runtime-override"],
@@ -100,7 +98,7 @@ describe("Pragma project change-set contracts", () => {
 describe("mission model override contracts", () => {
   const mission = {
     workspace: "/workspace/default",
-    executor: { ref: "expert:pragma@1.0.0" },
+    executor: { ref: "expert:2qgbztga4kz2qz51" },
     input: { kind: "prompt", value: "Prepare a plan" },
   };
 
@@ -180,7 +178,7 @@ describe("mission creation defaults contracts", () => {
       MissionCreationDefaultsSchema.parse({
         workspace: { path: "/workspace/default", basename: "default" },
         recentWorkspaces,
-        executorRef: "expert:pragma@1.0.0",
+        executorRef: "expert:2qgbztga4kz2qz51",
         toolPermissionMode: "request-approval",
       }).recentWorkspaces,
     ).toEqual(recentWorkspaces);
@@ -188,7 +186,7 @@ describe("mission creation defaults contracts", () => {
       MissionCreationDefaultsSchema.safeParse({
         workspace: { path: "/workspace/default", basename: "default" },
         recentWorkspaces: [...recentWorkspaces, { path: "/workspace/six", basename: "six" }],
-        executorRef: "expert:pragma@1.0.0",
+        executorRef: "expert:2qgbztga4kz2qz51",
         toolPermissionMode: "request-approval",
       }).success,
     ).toBe(false);
@@ -234,11 +232,9 @@ describe("context store delete contracts", () => {
 const validInput = {
   baseRevision: 0,
   requiredUnchangedRefs: [],
-  id: "expert_01",
   name: "Expert 01",
   description: "A focused expert.",
   tags: ["analysis"],
-  version: "0.1.0",
   scope: "Focused analysis.",
   instructions: "Analyze the supplied work.",
   model: { runtimeId: "test", providerId: "test", modelId: "test" },
@@ -249,22 +245,21 @@ const validInput = {
 };
 
 describe("expert input limits", () => {
-  it("accepts an ID made from letters, numbers, and underscores", () => {
+  it("accepts an Expert create input without a caller-provided ID", () => {
     expect(CreateExpertDefinitionSchema.safeParse(validInput).success).toBe(true);
   });
 
-  it("accepts exactly 50 Expert ID characters", () => {
+  it("rejects a caller-provided Expert ID", () => {
     expect(
       CreateExpertDefinitionSchema.safeParse({
         ...validInput,
-        id: "a".repeat(PRAGMA_EXPERT_ID_MAX_LENGTH),
+        id: "a".repeat(16),
       }).success,
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it("does not allow an ordinary Expert update to change the resource version", () => {
-    const { id: _id, requiredUnchangedRefs: _requiredUnchangedRefs, ...input } = validInput;
-    void _id;
+    const { requiredUnchangedRefs: _requiredUnchangedRefs, ...input } = validInput;
     void _requiredUnchangedRefs;
 
     expect(
@@ -277,16 +272,15 @@ describe("expert input limits", () => {
   });
 
   it("reads every metadata value accepted by the Expert DSL", () => {
-    const id = "a".repeat(PRAGMA_EXPERT_ID_MAX_LENGTH);
+    const id = "a".repeat(16);
     expect(
       ExpertDefinitionSchema.safeParse({
         schemaVersion: "pragma.desktop-expert-view/v1",
-        ref: `expert:${id}@1.0.0`,
+        ref: `expert:${id}`,
         id,
         name: "n".repeat(200),
         description: "d".repeat(4_000),
         tags: Array.from({ length: 100 }, (_, index) => `tag_${index}`),
-        version: "1.0.0",
         scope: "Scope",
         instructions: "Instructions",
         additionalInstructions: "",
@@ -311,7 +305,7 @@ describe("expert input limits", () => {
 
   it.each([
     ["id", { id: "invalid-id" }],
-    ["id length", { id: "a".repeat(PRAGMA_EXPERT_ID_MAX_LENGTH + 1) }],
+    ["id length", { id: "a".repeat(16 + 1) }],
     ["name length", { name: "a".repeat(EXPERT_NAME_MAX_LENGTH + 1) }],
     ["description length", { description: "a".repeat(EXPERT_DESCRIPTION_MAX_LENGTH + 1) }],
     ["scope length", { scope: "a".repeat(EXPERT_SCOPE_MAX_LENGTH + 1) }],
@@ -464,7 +458,7 @@ describe("mission contracts", () => {
   it("accepts versioned expert, team, and flow resource references", () => {
     const input = {
       workspace: "/workspace/repo",
-      executor: { ref: "expert:expert_01@1.0.0" },
+      executor: { ref: "expert:kp8tkn2szy1xhpb5" },
       input: { kind: "prompt", value: "Review the repository" },
     };
     expect(CreateMissionSchema.safeParse(input).success).toBe(true);
@@ -477,7 +471,7 @@ describe("mission contracts", () => {
     expect(
       CreateMissionSchema.safeParse({
         ...input,
-        executor: { ref: "team:delivery@1.0.0" },
+        executor: { ref: "team:vyv9pwwzaksth2dd" },
       }).success,
     ).toBe(true);
     expect(
@@ -486,13 +480,13 @@ describe("mission contracts", () => {
     expect(
       CreateMissionSchema.safeParse({
         ...input,
-        executor: { ref: "capability:repository_tools@1.0.0" },
+        executor: { ref: "capability:d5th62nhdaaeqe21" },
       }).success,
     ).toBe(false);
     expect(
       CreateMissionSchema.safeParse({
         ...input,
-        executor: { ref: "runtime-profile:expert_runtime@1.0.0" },
+        executor: { ref: "runtime-profile:mx0xj2gjcvhcccwx" },
       }).success,
     ).toBe(false);
   });
@@ -500,7 +494,7 @@ describe("mission contracts", () => {
   it("pins a team executor to a project revision", () => {
     expect(
       MissionSchema.parse({
-        schemaVersion: "pragma.mission/v4",
+        schemaVersion: "pragma.mission/v5",
         id: "00000000-0000-4000-8000-000000000000",
         title: "Deliver the feature",
         goal: "Deliver the feature",
@@ -509,9 +503,8 @@ describe("mission contracts", () => {
         project: { id: "studio", revision: 3 },
         executor: {
           kind: "team",
-          ref: "team:delivery_team@0.1.0",
+          ref: "team:gmpsevbrb8danedb",
           name: "Delivery Team",
-          version: "0.1.0",
         },
         lifecycleStatus: "active",
         createdAt: "2026-07-11T00:00:00.000Z",
@@ -522,7 +515,7 @@ describe("mission contracts", () => {
 
   it("drops the retired Desktop environment fingerprint from persisted Missions", () => {
     const parsed = MissionSchema.parse({
-      schemaVersion: "pragma.mission/v4",
+      schemaVersion: "pragma.mission/v5",
       id: "00000000-0000-4000-8000-000000000000",
       title: "Continue the mission",
       goal: "Continue the mission",
@@ -531,9 +524,8 @@ describe("mission contracts", () => {
       project: { id: "studio", revision: 3 },
       executor: {
         kind: "expert",
-        ref: "expert:writer@1.0.0",
+        ref: "expert:1xddvess309a6gme",
         name: "Writer",
-        version: "1.0.0",
       },
       execution: {
         id: "00000000-0000-4000-8000-000000000002",

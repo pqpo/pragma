@@ -56,7 +56,7 @@ describe("DefaultAgent managed tools", () => {
       "required",
     );
     const reset = tools.find((tool) => tool.name === "reset_automation_session")!;
-    await reset.call({ ref: "automation:daily_review@1.0.0" }, undefined, {
+    await reset.call({ ref: "automation:55af1v8nmn4j0h3z" }, undefined, {
       toolCallId: "runtime-call-reset",
     });
     expect(operationId).toBe("runtime-call-reset");
@@ -69,6 +69,12 @@ function projectPort(
   return {
     list: async () => ({ projectRevision: 0, resources: [] }),
     listExpertOptions: async () => ({ runtimeModels: [], capabilities: [] }),
+    allocateResourceIds: async (requests) =>
+      requests.map((request) => ({
+        key: request.key,
+        id: "0000000000000000",
+        ref: `${request.kind}:0000000000000000`,
+      })),
     read: async () => {
       throw new Error("unused");
     },
@@ -132,11 +138,11 @@ function automationPort(
 
 function automationSummary() {
   return {
-    ref: "automation:daily_review@1.0.0",
+    ref: "automation:55af1v8nmn4j0h3z",
     name: "Daily review",
     enabled: true,
     status: "scheduled" as const,
-    executorRef: "expert:reviewer@1.0.0",
+    executorRef: "expert:2h3j4k5m6n7p8q9r",
     interaction: "reuse-session" as const,
     workspaceId: "/work/review",
     nextRunAt: "2026-07-24T01:00:00.000Z",

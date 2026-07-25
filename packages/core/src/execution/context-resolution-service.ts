@@ -36,7 +36,7 @@ export interface ResolveRuntimeContextRequest {
   readonly source: ContextIdResolutionSource;
   readonly owner: RuntimeContextOwner;
   readonly ownerContextId?: string | undefined;
-  readonly expert: { readonly id: string; readonly version: string };
+  readonly expert: { readonly id: string };
   readonly runtime: RuntimeEnvironmentBinding;
   readonly modelSelection?: RuntimeModelSelection | undefined;
   readonly resolver: ContextIdResolver;
@@ -91,7 +91,6 @@ export class ContextResolutionService {
       ...(request.ownerContextId === undefined ? {} : { ownerContextId: request.ownerContextId }),
       target: {
         expertId: request.expert.id,
-        expertVersion: request.expert.version,
         runtime: request.runtime,
       },
       invocation: {
@@ -216,11 +215,7 @@ function selectCompatibleCandidates(
   const flowStepId = request.source.kind === "flow" ? request.source.stepId : undefined;
   const compatible = contexts.filter((context) => {
     if (!sameOwner(context.owner, request.owner)) return false;
-    if (
-      context.expert.id !== request.expert.id ||
-      context.expert.version !== request.expert.version
-    )
-      return false;
+    if (context.expert.id !== request.expert.id) return false;
     if (!sameRuntimeBinding(context.runtime, request.runtime)) return false;
     if (flowStepId !== undefined) {
       return invocations.some(
@@ -232,8 +227,7 @@ function selectCompatibleCandidates(
       (agent) =>
         agent.contextId === context.contextId &&
         agent.ownerContextId === request.ownerContextId &&
-        agent.definition.id === request.expert.id &&
-        agent.definition.version === request.expert.version,
+        agent.definition.id === request.expert.id,
     );
   });
   return compatible
@@ -249,7 +243,6 @@ function selectCompatibleCandidates(
           contextId: context.contextId,
           ...(agent === undefined ? {} : { agentId: agent.agentId }),
           expertId: context.expert.id,
-          expertVersion: context.expert.version,
           runtime: context.runtime,
           lifecycle: context.lifecycle,
           lastInvocationId: last.invocationId,
@@ -278,10 +271,7 @@ function assertCompatibleContext(
   if (!sameOwner(context.owner, request.owner)) {
     throw new Error(`Runtime Context owner conflict: ${context.contextId}.`);
   }
-  if (
-    context.expert.id !== request.expert.id ||
-    context.expert.version !== request.expert.version
-  ) {
+  if (context.expert.id !== request.expert.id) {
     throw new Error(`Runtime Context Expert identity conflict: ${context.contextId}.`);
   }
   if (!sameRuntimeBinding(context.runtime, request.runtime)) {

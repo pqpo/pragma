@@ -51,7 +51,7 @@ describe("PragmaProjectService", () => {
     const compiled = await service.compile<Expert>({
       projectId: "studio",
       revision: 2,
-      ref: "expert:writer@1.0.0",
+      ref: "expert:1xddvess309a6gme",
       workspace: repository.root,
       environmentId: "test",
       adapterHost: {
@@ -68,7 +68,7 @@ describe("PragmaProjectService", () => {
         },
       },
     });
-    expect(compiled.value.id).toBe("writer");
+    expect(compiled.value.id).toBe("1xddvess309a6gme");
     expect(compiled.value.skills?.skills).toHaveLength(1);
     expect(compiled.rootRuntimeId).toBe("codex");
     expect(compiled.projectFingerprint).toBe(second.projectFingerprint);
@@ -165,7 +165,7 @@ describe("PragmaProjectService", () => {
     ).rejects.toMatchObject({
       baseRevision: initial.revision,
       currentRevision: initial.revision + 2,
-      conflictingRefs: ["runtime-profile:writer_runtime@1.0.0"],
+      conflictingRefs: ["runtime-profile:rdzgnq05qfqcpqcm"],
       retryable: false,
     } satisfies Partial<PragmaProjectRevisionConflictError>);
   });
@@ -193,7 +193,7 @@ describe("PragmaProjectService", () => {
     });
     const versionTwo = {
       ...skill(),
-      metadata: { ...skill().metadata, version: "2.0.0" },
+      metadata: { ...skill().metadata },
     };
 
     await expect(
@@ -202,11 +202,11 @@ describe("PragmaProjectService", () => {
         changeSet: {
           baseRevision: initial.revision,
           upserts: [versionTwo],
-          requiredUnchangedRefs: ["capability:writing_skill@1.0.0"],
+          requiredUnchangedRefs: ["capability:d5zzezmprnyqzmhk"],
         },
       }),
     ).rejects.toMatchObject({
-      conflictingRefs: ["capability:writing_skill@1.0.0"],
+      conflictingRefs: ["capability:d5zzezmprnyqzmhk"],
       retryable: false,
     } satisfies Partial<PragmaProjectRevisionConflictError>);
   });
@@ -318,11 +318,10 @@ async function createRepository(): Promise<
 
 function skill(): PragmaCapabilityResource {
   return {
-    apiVersion: "pragma/v2",
+    apiVersion: "pragma/v3",
     kind: "Capability",
     metadata: {
-      id: "writing_skill",
-      version: "1.0.0",
+      id: "d5zzezmprnyqzmhk",
       name: "Writing skill",
       description: "Project-local writing guidance.",
       tags: [],
@@ -339,11 +338,10 @@ function skill(): PragmaCapabilityResource {
 
 function runtime(): PragmaRuntimeProfileResource {
   return {
-    apiVersion: "pragma/v2",
+    apiVersion: "pragma/v3",
     kind: "RuntimeProfile",
     metadata: {
-      id: "writer_runtime",
-      version: "1.0.0",
+      id: "rdzgnq05qfqcpqcm",
       name: "Writer runtime",
       description: "Runtime for the writer.",
       tags: [],
@@ -354,11 +352,10 @@ function runtime(): PragmaRuntimeProfileResource {
 
 function expert(): PragmaExpertResource {
   return {
-    apiVersion: "pragma/v2",
+    apiVersion: "pragma/v3",
     kind: "Expert",
     metadata: {
-      id: "writer",
-      version: "1.0.0",
+      id: "1xddvess309a6gme",
       name: "Writer",
       description: "Writes concise text.",
       tags: [],
@@ -366,8 +363,8 @@ function expert(): PragmaExpertResource {
     spec: {
       scope: "writing",
       instructions: "Write concise text.",
-      runtime: { ref: "runtime-profile:writer_runtime@1.0.0" },
-      capabilities: [{ ref: "capability:writing_skill@1.0.0", kind: "skill" }],
+      runtime: { ref: "runtime-profile:rdzgnq05qfqcpqcm" },
+      capabilities: [{ ref: "capability:d5zzezmprnyqzmhk", kind: "skill" }],
       toolApprovals: {},
       contextStores: [],
       plugins: [],

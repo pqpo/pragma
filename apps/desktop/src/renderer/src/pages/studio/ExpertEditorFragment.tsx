@@ -6,12 +6,10 @@ import type { PragmaResource } from "@pragma/interpreter/ast";
 import { errorMessage } from "../../lib/errors.ts";
 import {
   EXPERT_DESCRIPTION_MAX_LENGTH,
-  PRAGMA_EXPERT_ID_MAX_LENGTH,
   EXPERT_INSTRUCTIONS_MAX_LENGTH,
   EXPERT_NAME_MAX_LENGTH,
   EXPERT_SCOPE_MAX_LENGTH,
   EXPERT_TAG_MAX_LENGTH,
-  PragmaExpertIdSchema,
   ExpertAdditionalInstructionsSchema,
   ExpertInstructionsSchema,
   ExpertScopeSchema,
@@ -32,7 +30,7 @@ import { ExpertPluginPicker } from "./ExpertPluginPicker.tsx";
 import { StudioScreenFrame } from "./StudioScreenFrame.tsx";
 
 type CreateStep = "identity" | "instructions" | "capabilities" | "review";
-export type ExpertEditorMode = "create" | "edit" | "new-version";
+export type ExpertEditorMode = "create" | "edit";
 
 export function ExpertEditorFragment(props: {
   readonly mode: ExpertEditorMode;
@@ -42,7 +40,6 @@ export function ExpertEditorFragment(props: {
   readonly capabilities: readonly Capability[];
   readonly plugins: readonly DesktopPlugin[];
   readonly resources: readonly PragmaResource[];
-  readonly existingExpertRefs: readonly string[];
   readonly onCancel: () => void;
   readonly onCreated: (expert: ExpertRecord) => Promise<void>;
 }) {
@@ -53,7 +50,6 @@ export function ExpertEditorFragment(props: {
   const [saving, setSaving] = useState(false);
   const [selectedRuntime, setSelectedRuntime] = useState(props.initialValue.model?.runtimeId ?? "");
   const isEditing = props.mode === "edit";
-  const isNewVersion = props.mode === "new-version";
   const isBuiltIn = isBuiltInExpert(props.initialValue);
   const selectedRuntimeInfo = props.runtimes.find((runtime) => runtime.id === selectedRuntime);
   const modelOptions = selectedRuntimeInfo?.models ?? [];
@@ -72,14 +68,7 @@ export function ExpertEditorFragment(props: {
   const index = steps.findIndex((item) => item.id === step);
   const advance = () => {
     if (step === "identity") {
-      const idResult = PragmaExpertIdSchema.safeParse(draft.id);
       const scopeResult = ExpertScopeSchema.safeParse(draft.scope);
-      const idAlreadyExists =
-        !isEditing &&
-        props.existingExpertRefs.some(
-          (ref) =>
-            ref.toLowerCase() === `expert:${draft.id.trim()}@${draft.version.trim()}`.toLowerCase(),
-        );
       const hasInvalidLength =
         draft.name.trim().length > EXPERT_NAME_MAX_LENGTH ||
         draft.description.trim().length > EXPERT_DESCRIPTION_MAX_LENGTH ||
@@ -87,20 +76,13 @@ export function ExpertEditorFragment(props: {
       if (
         !draft.name.trim() ||
         !draft.description.trim() ||
-        !draft.version.trim() ||
         !scopeResult.success ||
-        !idResult.success ||
-        idAlreadyExists ||
         hasInvalidLength
       ) {
         setError(
-          idAlreadyExists
-            ? "This expert ID and version already exist. Choose a different version."
-            : hasInvalidLength
-              ? "Name, description, or tags exceed their character limits."
-              : idResult.success
-                ? "Name, ID, description, and scope are required to define an expert."
-                : (idResult.error.issues[0]?.message ?? "The expert ID is invalid."),
+          hasInvalidLength
+            ? "Name, description, or tags exceed their character limits."
+            : "Name, description, and scope are required to define an expert.",
         );
         return;
       }
@@ -150,7 +132,6 @@ export function ExpertEditorFragment(props: {
   const submit = async () => {
     setError(null);
     const name = draft.name.trim();
-    const idResult = PragmaExpertIdSchema.safeParse(draft.id);
     const description = draft.description.trim();
     const scopeResult = ExpertScopeSchema.safeParse(draft.scope);
     const instructionsResult = ExpertInstructionsSchema.safeParse(draft.instructions);
@@ -160,29 +141,25 @@ export function ExpertEditorFragment(props: {
     if (
       !name ||
       !description ||
-      !draft.version.trim() ||
       !scopeResult.success ||
       !instructionsResult.success ||
       !additionalInstructionsResult.success ||
-      !idResult.success ||
       (!isBuiltIn &&
         (draft.model === null ||
           selectedRuntimeInfo?.status !== "available" ||
           selectedModel === undefined))
     ) {
       setError(
-        !idResult.success
-          ? (idResult.error.issues[0]?.message ?? "The expert ID is invalid.")
-          : !scopeResult.success
-            ? (scopeResult.error.issues[0]?.message ?? "The expert scope is invalid.")
-            : !instructionsResult.success
-              ? (instructionsResult.error.issues[0]?.message ?? "Expert instructions are invalid.")
-              : !additionalInstructionsResult.success
-                ? (additionalInstructionsResult.error.issues[0]?.message ??
-                  "Additional instructions are invalid.")
-                : !isBuiltIn && (draft.model === null || selectedModel === undefined)
-                  ? "Choose an available Runtime and model before creating the expert."
-                  : "Name, ID, description, version, scope, and instructions are required.",
+        !scopeResult.success
+          ? (scopeResult.error.issues[0]?.message ?? "The expert scope is invalid.")
+          : !instructionsResult.success
+            ? (instructionsResult.error.issues[0]?.message ?? "Expert instructions are invalid.")
+            : !additionalInstructionsResult.success
+              ? (additionalInstructionsResult.error.issues[0]?.message ??
+                "Additional instructions are invalid.")
+              : !isBuiltIn && (draft.model === null || selectedModel === undefined)
+                ? "Choose an available Runtime and model before creating the expert."
+                : "Name, description, scope, and instructions are required.",
       );
       return;
     }
@@ -201,7 +178,6 @@ export function ExpertEditorFragment(props: {
       void _tagInput;
       await props.onCreated({
         ...record,
-        id: idResult.data,
         name,
         description,
         scope: scopeResult.data,
@@ -226,20 +202,16 @@ export function ExpertEditorFragment(props: {
             <h1 id="create-expert-heading">
               {isBuiltIn
                 ? t("customizeBuiltInExpert", { ns: "studio" })
-                : isNewVersion
-                  ? t("createNewVersion", { ns: "studio" })
-                  : isEditing
-                    ? t("editExpert", { ns: "studio" })
-                    : t("createExpert", { ns: "studio" })}
+                : isEditing
+                  ? t("editExpert", { ns: "studio" })
+                  : t("createExpert", { ns: "studio" })}
             </h1>
             <p>
               {isBuiltIn
                 ? t("updateBuiltInExpertDescription", { ns: "studio" })
-                : isNewVersion
-                  ? t("createExpertDescription", { ns: "studio" })
-                  : isEditing
-                    ? t("updateExpertDescription", { ns: "studio" })
-                    : t("createExpertDescription", { ns: "studio" })}
+                : isEditing
+                  ? t("updateExpertDescription", { ns: "studio" })
+                  : t("createExpertDescription", { ns: "studio" })}
             </p>
           </div>
         </header>
@@ -297,27 +269,6 @@ export function ExpertEditorFragment(props: {
                   <span>{t("chooseName", { ns: "studio" })}</span>
                   <span>
                     {draft.name.length}/{EXPERT_NAME_MAX_LENGTH}
-                  </span>
-                </small>
-              </label>
-              <label>
-                {t("id", { ns: "studio" })}
-                <input
-                  value={draft.id}
-                  onChange={(event) =>
-                    setDraft({
-                      ...draft,
-                      id: event.target.value.slice(0, PRAGMA_EXPERT_ID_MAX_LENGTH),
-                    })
-                  }
-                  placeholder="market_research"
-                  maxLength={PRAGMA_EXPERT_ID_MAX_LENGTH}
-                  disabled={isEditing || isNewVersion}
-                />
-                <small className="field-hint">
-                  <span>{t("idHint", { ns: "studio" })}</span>
-                  <span>
-                    {draft.id.length}/{PRAGMA_EXPERT_ID_MAX_LENGTH}
                   </span>
                 </small>
               </label>
@@ -400,14 +351,6 @@ export function ExpertEditorFragment(props: {
                     {unicodeLength(draft.scope)}/{EXPERT_SCOPE_MAX_LENGTH}
                   </span>
                 </small>
-              </label>
-              <label>
-                {t("version", { ns: "studio" })}
-                <input
-                  value={draft.version}
-                  onChange={(event) => setDraft({ ...draft, version: event.target.value })}
-                  disabled={isBuiltIn || isEditing}
-                />
               </label>
             </>
           ) : null}

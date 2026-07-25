@@ -8,11 +8,10 @@ import {
 
 function flow(graph: PragmaFlowResource["spec"]["graph"]): PragmaFlowResource {
   return {
-    apiVersion: "pragma/v2",
+    apiVersion: "pragma/v3",
     kind: "Flow",
     metadata: {
-      id: "review_flow",
-      version: "1.0.0",
+      id: "qj3t30sa520dvfvj",
       name: "Review flow",
       description: "Review a result.",
       tags: [],
@@ -22,7 +21,6 @@ function flow(graph: PragmaFlowResource["spec"]["graph"]): PragmaFlowResource {
 }
 
 const humanStep = {
-  version: "1.0.0",
   human: {
     selectionMode: "single" as const,
     prompt: { segments: [{ text: "Continue?" }] },

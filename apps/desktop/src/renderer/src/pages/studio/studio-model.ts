@@ -34,7 +34,6 @@ export type ExpertRecord = {
   readonly name: string;
   readonly description: string;
   readonly tags: readonly string[];
-  readonly version: string;
   readonly scope: string;
   readonly instructions: string;
   readonly additionalInstructions: string;
@@ -66,7 +65,6 @@ export const emptyDraft = (): ExpertDraft => ({
   name: "",
   description: "",
   tags: [],
-  version: "0.1.0",
   scope: "",
   instructions: "",
   additionalInstructions: "",
@@ -94,7 +92,6 @@ export function toExpertRecord(definition: ExpertDefinition): ExpertRecord {
     name: definition.name,
     description: definition.description,
     tags: definition.tags,
-    version: definition.version,
     scope: definition.scope,
     instructions: definition.instructions ?? "",
     additionalInstructions: definition.additionalInstructions,
@@ -171,11 +168,9 @@ export function toCreateExpertInput(
   return {
     baseRevision: input.baseRevision,
     requiredUnchangedRefs: [...(input.requiredUnchangedRefs ?? [])],
-    id: expert.id,
     name: expert.name,
     description: expert.description,
     tags: [...expert.tags],
-    version: expert.version,
     scope: expert.scope,
     instructions: expert.instructions,
     model: expert.model,

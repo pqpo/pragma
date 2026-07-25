@@ -1,8 +1,5 @@
 import type { StateMigrationStep } from "../../../state-migration.ts";
-import {
-  executionRecordMigrationChain,
-  migrateExecutionInvocationsV5ToV6,
-} from "../../execution/index.ts";
+import { executionV5ToV6Step } from "../../execution/index.ts";
 import { ExecutionCommitJournalV6Schema } from "../schemas/v6.ts";
 
 export const executionTransactionV6ToV7Step = {
@@ -14,8 +11,15 @@ export const executionTransactionV6ToV7Step = {
     return {
       ...journal,
       schemaVersion: "pragma.execution-transaction/v7",
-      execution: executionRecordMigrationChain.upgrade(journal.execution).value,
-      invocations: migrateExecutionInvocationsV5ToV6(journal.invocations),
+      execution: executionV5ToV6Step.migrate(journal.execution),
+      invocations: journal.invocations.map((invocation) => ({
+        ...invocation,
+        ...(invocation.output === undefined ||
+        invocation.definition.kind === "task" ||
+        invocation.definition.kind === "human-task"
+          ? {}
+          : { output: { type: "inline" as const, value: invocation.output } }),
+      })),
     };
   },
 } satisfies StateMigrationStep;

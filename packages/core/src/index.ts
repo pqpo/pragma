@@ -68,6 +68,7 @@ export * from "./runtime/stream-events.ts";
 export * from "./runtime/stream-controller.ts";
 export * from "./runtime/usage.ts";
 export * from "./runtime-resolver.ts";
+export * from "./resource-id.ts";
 export * from "./sdk-mcp-server.ts";
 export * from "./tools/managed-tool.ts";
 export * from "./tools/tool-resolver.ts";

@@ -279,14 +279,14 @@ export function createFileExecutionStore(
         const nextExecution = ExecutionRecordSchema.parse({
           ...current,
           ...request.executionPatch,
-          schemaVersion: "pragma.execution/v6",
+          schemaVersion: "pragma.execution/v7",
           executionId: request.executionId,
           version: current.version + 1,
           lastAppliedSequence: lastSequence,
           updatedAt: now,
         });
         const journal = ExecutionCommitJournalSchema.parse({
-          schemaVersion: "pragma.execution-transaction/v7",
+          schemaVersion: "pragma.execution-transaction/v8",
           commitId: request.commitId,
           signature,
           execution: nextExecution,
@@ -498,10 +498,7 @@ function assertAgentContextBindings(
     if (context === undefined) {
       throw new Error(`Agent Runtime Context not found: ${agent.contextId}`);
     }
-    if (
-      context.expert.id !== agent.definition.id ||
-      context.expert.version !== agent.definition.version
-    ) {
+    if (context.expert.id !== agent.definition.id) {
       throw new Error(`Agent Runtime Context identity conflict: ${agent.contextId}`);
     }
     const key = `${agent.ownerContextId}\u0000${agent.contextId}`;
@@ -520,7 +517,6 @@ function assertContextIdentity(current: RuntimeContextRecord, next: RuntimeConte
     current.owner.ownerId !== next.owner.ownerId ||
     !sameRuntimeContextOrigin(current.origin, next.origin) ||
     current.expert.id !== next.expert.id ||
-    current.expert.version !== next.expert.version ||
     next.runtime.runtimeId !== current.runtime.runtimeId ||
     next.runtime.revision !== current.runtime.revision ||
     next.runtime.fingerprint !== current.runtime.fingerprint
@@ -730,9 +726,11 @@ async function migrateExecutionState(paths: PragmaPaths, executionId: string): P
   if (value === undefined) return;
   const upgraded = executionRecordMigrationChain.upgrade(value);
   if (!upgraded.migrated) return;
-  const invocations = migrateExecutionInvocationsV5ToV6(
-    (await readJsonIfExists(paths.executionInvocations(executionId))) ?? [],
-  );
+  const storedInvocations = (await readJsonIfExists(paths.executionInvocations(executionId))) ?? [];
+  const invocations =
+    upgraded.fromVersion === 5
+      ? migrateExecutionInvocationsV5ToV6(storedInvocations)
+      : InvocationSchema.array().parse(storedInvocations);
   await applyAtomicStateMigration({
     aggregateRoot: paths.executionRoot(executionId),
     journalFile: paths.executionMigration(executionId),

@@ -3,26 +3,25 @@
 Use an ExpertTeam when one coordinator delegates to an allowlisted set of Experts.
 
 ```yaml
-apiVersion: pragma/v2
+apiVersion: pragma/v3
 kind: ExpertTeam
 metadata:
-  id: delivery
-  version: 1.0.0
+  id: 4h5j6k7m8n9p0q1r
   name: Delivery Team
   description: Coordinates implementation and review.
   tags: [delivery]
 spec:
   coordinator:
-    ref: expert:lead@1.0.0
+    ref: expert:5h6j7k8m9n0p1q2r
   members:
-    - ref: expert:implementer@1.0.0
-    - ref: expert:reviewer@1.0.0
+    - ref: expert:6h7j8k9m0n1p2q3r
+    - ref: expert:7h8j9k0m1n2p3q4r
   instructions: >-
     Collaborate openly, surface uncertainty early, and do not report completion until the work
     satisfies the team's quality requirements.
   delegation:
     allow:
-      lead: [implementer, reviewer]
+      5h6j7k8m9n0p1q2r: [6h7j8k9m0n1p2q3r, 7h8j9k0m1n2p3q4r]
     maxConcurrency: 2
     maxDepth: 2
     context: context-policy:pragma.fresh@v1

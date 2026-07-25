@@ -83,7 +83,6 @@ const team = defineExpertTeam({
   name: "Pragma Engineering Review Team",
   description:
     "A repository review team combining implementation research, architecture analysis, and test reliability expertise.",
-  version: "1.0.0",
   coordinator: lead,
   members: [implementationResearcher, architectureReviewer, testAnalyst],
   delegation: {

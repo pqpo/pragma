@@ -41,7 +41,7 @@ describe("Flow editor canvas", () => {
 
   it("exposes palette items as drag-only controls", () => {
     const project: PragmaProjectSnapshot = {
-      schemaVersion: "pragma.project-snapshot/v2",
+      schemaVersion: "pragma.project-snapshot/v3",
       projectId: "test-project",
       revision: 0,
       resources: [],
@@ -154,7 +154,6 @@ describe("Flow editor canvas", () => {
     const flow = createEmptyFlow();
     flow.spec.graph.steps.expert_1 = {
       expert: { ref: "reviewer" },
-      version: "1.0.0",
     };
 
     expect(flow.spec.graph.start).toBe("");
@@ -224,8 +223,7 @@ describe("Flow editor canvas", () => {
       cases: { true: { goto: "fix" }, false: { end: true } },
     };
     flow.spec.graph.steps.fix = {
-      expert: { ref: "expert:fix@1.0.0" },
-      version: "1.0.0",
+      expert: { ref: "expert:1cdxef9n20xk5n1f" },
     };
     flow.spec.graph.transitions.fix = { end: true };
 
@@ -277,8 +275,7 @@ describe("Flow editor canvas", () => {
       fallback: { fail: "Unknown decision" },
     };
     flow.spec.graph.steps.fix = {
-      expert: { ref: "expert:fix@1.0.0" },
-      version: "1.0.0",
+      expert: { ref: "expert:1cdxef9n20xk5n1f" },
     };
     const edge = buildCanvasEdges(flow).find((candidate) => candidate.id === "review:logic-input")!;
 
@@ -367,12 +364,10 @@ describe("Flow editor canvas", () => {
           { value: "notify", label: "Notify users" },
         ],
       },
-      version: "1.0.0",
     };
     flow.spec.graph.steps.finish = {
-      expert: { ref: "expert:finish@1.0.0" },
+      expert: { ref: "expert:ksqvz9mb6gy5y2kn" },
       prompt: { segments: [{ text: "Finish." }] },
-      version: "1.0.0",
     };
     flow.spec.graph.transitions.review = { goto: "finish" };
     flow.spec.graph.transitions.finish = { end: true };
@@ -447,8 +442,7 @@ describe("Flow editor canvas", () => {
   it("turns a cycle-producing canvas connection into a bounded repeat edge", () => {
     const flow = flowFixture();
     flow.spec.graph.steps.finish = {
-      expert: { ref: "expert:finish@1.0.0" },
-      version: "1.0.0",
+      expert: { ref: "expert:ksqvz9mb6gy5y2kn" },
     };
     flow.spec.graph.transitions.review = { goto: "finish" };
     flow.spec.graph.transitions.finish = { end: true };
@@ -468,7 +462,7 @@ describe("Flow editor canvas", () => {
   it("preserves the selected step across semantic canvas rebuilds", () => {
     const flow = flowFixture();
     const before = buildCanvasNodes(flow, {}, new Set(), "review");
-    flow.spec.graph.steps.review!.version = "2.0.0";
+    flow.spec.graph.steps.review!.prompt = { segments: [{ text: "Updated" }] };
     const after = buildCanvasNodes(flow, canvasPositions(before), new Set(), "review");
 
     expect(after.find((node) => node.id === "review")?.selected).toBe(true);
@@ -479,13 +473,11 @@ describe("Flow editor canvas", () => {
     flow.spec.graph.start = "start";
     flow.spec.graph.steps = {
       start: {
-        expert: { ref: "expert:start@1.0.0" },
-        version: "1.0.0",
+        expert: { ref: "expert:caadt9e550f04adk" },
         prompt: { segments: [{ text: "Start" }] },
       },
       scored: {
-        expert: { ref: "expert:scored@1.0.0" },
-        version: "1.0.0",
+        expert: { ref: "expert:p176qzwdwbj85253" },
         prompt: { segments: [{ text: "Score" }] },
         output: {
           schema: {
@@ -497,13 +489,11 @@ describe("Flow editor canvas", () => {
         },
       },
       alternate: {
-        expert: { ref: "expert:alternate@1.0.0" },
-        version: "1.0.0",
+        expert: { ref: "expert:q4k4hz54yzem8ktn" },
         prompt: { segments: [{ text: "Alternate" }] },
       },
       join: {
-        expert: { ref: "expert:join@1.0.0" },
-        version: "1.0.0",
+        expert: { ref: "expert:zz8emaxka43mvhd1" },
         prompt: { segments: [{ text: "Join" }] },
       },
     };
@@ -562,8 +552,7 @@ describe("Flow editor canvas", () => {
     const flow = createEmptyFlow("prompt_editor");
     flow.spec.graph.start = "writer";
     flow.spec.graph.steps.writer = {
-      expert: { ref: "expert:writer@1.0.0" },
-      version: "1.0.0",
+      expert: { ref: "expert:1xddvess309a6gme" },
       prompt: {
         segments: [
           { text: "Use " },
@@ -580,7 +569,7 @@ describe("Flow editor canvas", () => {
       createElement(PromptTemplateEditor, {
         flow,
         stepId: "writer",
-        value: flow.spec.graph.steps.writer.prompt,
+        value: flow.spec.graph.steps.writer!.prompt,
         onChange: () => undefined,
       }),
     );
@@ -672,7 +661,7 @@ describe("Flow editor canvas", () => {
         value: undefined,
         allowModel: true,
         targetKind: "expert",
-        targetRef: "expert:writer@1.0.0",
+        targetRef: "expert:1xddvess309a6gme",
         resources,
         runtimes: [runtime],
         onSupportingResource: () => undefined,
@@ -684,12 +673,11 @@ describe("Flow editor canvas", () => {
     expect(html).not.toContain("Writer Runtime");
 
     const generated = flowRuntimeProfile(runtime);
-    const flow = createEmptyFlow("runtime_override");
+    const flow = createEmptyFlow("7g0mkg5w480wvfgt");
     flow.spec.graph.start = "writer";
     flow.spec.graph.steps.writer = {
-      expert: { ref: "expert:writer@1.0.0" },
-      version: "1.0.0",
-      runtime: { ref: `runtime-profile:${generated.metadata.id}@1.0.0` },
+      expert: { ref: "expert:1xddvess309a6gme" },
+      runtime: { ref: `runtime-profile:${generated.metadata.id}` },
     };
     flow.spec.graph.transitions.writer = { end: true };
 
@@ -700,7 +688,7 @@ describe("Flow editor canvas", () => {
       }),
     ]);
 
-    flow.spec.graph.steps.writer.runtime!.modelSelection = {
+    flow.spec.graph.steps.writer!.runtime!.modelSelection = {
       model: { providerId: "openai", modelId: "gpt-5.6" },
     };
     expect(validateFlowRuntimeSelections(flow, [...resources, generated])).toEqual([]);
@@ -710,11 +698,10 @@ describe("Flow editor canvas", () => {
 function runtimeResources(): PragmaResource[] {
   return [
     {
-      apiVersion: "pragma/v2",
+      apiVersion: "pragma/v3",
       kind: "RuntimeProfile",
       metadata: {
-        id: "writer_runtime",
-        version: "1.0.0",
+        id: "rdzgnq05qfqcpqcm",
         name: "Writer Runtime",
         description: "Writer Runtime",
         tags: ["desktop-managed"],
@@ -729,11 +716,10 @@ function runtimeResources(): PragmaResource[] {
       },
     },
     {
-      apiVersion: "pragma/v2",
+      apiVersion: "pragma/v3",
       kind: "Expert",
       metadata: {
-        id: "writer",
-        version: "1.0.0",
+        id: "1xddvess309a6gme",
         name: "Writer",
         description: "Writes.",
         tags: [],
@@ -741,7 +727,7 @@ function runtimeResources(): PragmaResource[] {
       spec: {
         scope: "Write.",
         instructions: "Write.",
-        runtime: { ref: "runtime-profile:writer_runtime@1.0.0" },
+        runtime: { ref: "runtime-profile:rdzgnq05qfqcpqcm" },
         capabilities: [],
         toolApprovals: {},
         contextStores: [],
@@ -754,11 +740,10 @@ function runtimeResources(): PragmaResource[] {
 
 function flowFixture(): PragmaFlowResource {
   return {
-    apiVersion: "pragma/v2",
+    apiVersion: "pragma/v3",
     kind: "Flow",
     metadata: {
-      id: "review_flow",
-      version: "1.0.0",
+      id: "qj3t30sa520dvfvj",
       name: "Review flow",
       description: "Review a change",
       tags: [],
@@ -769,9 +754,8 @@ function flowFixture(): PragmaFlowResource {
         start: "review",
         steps: {
           review: {
-            expert: { ref: "expert:review@1.0.0" },
+            expert: { ref: "expert:t9ne4d8njvvxv2ea" },
             prompt: { segments: [{ text: "Review this change." }] },
-            version: "1.0.0",
           },
         },
         loops: {},

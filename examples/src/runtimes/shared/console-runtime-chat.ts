@@ -71,7 +71,6 @@ export async function runRuntimeConsoleChat(options: RuntimeConsoleChatOptions):
         "When a useful answer requires a preference or missing detail from the user, call askUserQuestion instead of guessing.",
       ].join("\n"),
       tags: ["example", "runtime", "context"],
-      version: "1.0.0",
       scope: "example",
       workspace: process.cwd(),
       contextSystem,

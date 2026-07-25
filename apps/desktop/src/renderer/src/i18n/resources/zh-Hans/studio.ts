@@ -93,9 +93,6 @@ export const studio = {
   teamsDescription: "通过明确的协调者与委派策略治理专家团队。",
   flowsDescription: "包含明确转换、人工闸门和有界循环的持久流程图。",
   newResource: "新建{{kind}}",
-  createNewVersion: "创建新版本",
-  createNewVersionNamed: "为 {{name}} 创建新版本",
-  newVersionMustDiffer: "请输入与来源资源不同的版本号。",
   noResourcesYet: "尚无{{kind}}。",
   deleteNamed: "删除 {{name}}",
   deleteResource: "删除此{{kind}}？",
@@ -151,10 +148,6 @@ export const studio = {
   backExperts: "返回专家列表",
   editExpert: "编辑专家",
   customizeBuiltInExpert: "自定义",
-  useAsTemplate: "用作模板",
-  expertTemplateName: "{{name}}模板",
-  templateExcludesSystemCapabilities:
-    "模板会复制内置行为和你的附加配置，但不会复制 Pragma 的特权系统能力。",
   resetBuiltInExpert: "重置为默认配置",
   resetBuiltInExpertConfirm: "重置此内置专家？",
   resetBuiltInExpertDescription:

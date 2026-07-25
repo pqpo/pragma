@@ -213,11 +213,11 @@ async function createFixture() {
   const now = new Date().toISOString();
   await executions.create(
     {
-      schemaVersion: "pragma.execution/v6",
+      schemaVersion: "pragma.execution/v7",
       executionId: "execution",
       version: 0,
       kind: "expert-turn",
-      definition: { id: "expert", version: "1", kind: "expert" },
+      definition: { id: "expert", kind: "expert" },
       rootInvocationId: "root",
       status: "running",
       input: "input",
@@ -229,7 +229,7 @@ async function createFixture() {
     {
       invocationId: "root",
       rootInvocationId: "root",
-      definition: { id: "expert", version: "1", kind: "expert" },
+      definition: { id: "expert", kind: "expert" },
       contextId: "root-context",
       status: "running",
       input: "input",

@@ -12,7 +12,7 @@ import {
 } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
-import { withFileLock } from "@pragma/core";
+import { derivePragmaResourceId, withFileLock } from "@pragma/core";
 import { formatPragmaYaml, parsePragmaYaml } from "@pragma/interpreter";
 import { z } from "zod";
 
@@ -20,6 +20,7 @@ import {
   MissionIdSchema,
   MissionSchema,
   MissionV3Schema,
+  MissionV4Schema,
   MissionTimelineRecordSchema,
   MissionChatEntrySchema,
   MissionUserMessageSchema,
@@ -179,9 +180,10 @@ export function createMissionStore(options: { readonly missionsPath: string }): 
     try {
       const value = parsePragmaYaml(await readFile(manifestPath(id), "utf8"));
       const schemaVersion = readSchemaVersion(value);
+      let current = value;
       if (schemaVersion === "pragma.mission/v3") {
         const legacy = MissionV3Schema.parse(value);
-        const migrated = MissionSchema.parse({
+        current = MissionV4Schema.parse({
           ...legacy,
           schemaVersion: "pragma.mission/v4",
           ...(legacy.executor.kind === "flow"
@@ -193,16 +195,32 @@ export function createMissionStore(options: { readonly missionsPath: string }): 
               }
             : {}),
         });
+        await writeYamlAtomically(manifestPath(id), current);
+      }
+      const currentVersion = readSchemaVersion(current);
+      if (currentVersion === "pragma.mission/v4") {
+        const legacy = MissionV4Schema.parse(current);
+        const { version: _version, ...executor } = legacy.executor;
+        void _version;
+        const migratedExecutor = {
+          ...executor,
+          ref: migrateMissionExecutorRef(executor.ref, legacy.project.id),
+        };
+        const migrated = MissionSchema.parse({
+          ...legacy,
+          schemaVersion: "pragma.mission/v5",
+          executor: migratedExecutor,
+        });
         await writeYamlAtomically(manifestPath(id), migrated);
         return migrated;
       }
-      if (schemaVersion !== "pragma.mission/v4") {
+      if (currentVersion !== "pragma.mission/v5") {
         throw new MissionStoreError(
           "unsupported_schema",
           `Mission ${id} uses an unsupported schema. Remove the old Mission directory and create a new Mission.`,
         );
       }
-      return MissionSchema.parse(value);
+      return MissionSchema.parse(current);
     } catch (error) {
       throw normalizeReadError(error, id);
     }
@@ -372,7 +390,7 @@ export function createMissionStore(options: { readonly missionsPath: string }): 
       const timestamp = new Date().toISOString();
       const goal = input.goal.trim();
       const mission = MissionSchema.parse({
-        schemaVersion: "pragma.mission/v4",
+        schemaVersion: "pragma.mission/v5",
         id,
         title: input.title === undefined ? titleFromGoal(goal) : normalizeMissionTitle(input.title),
         goal,
@@ -532,6 +550,14 @@ export function createMissionStore(options: { readonly missionsPath: string }): 
       });
     },
   };
+}
+
+function migrateMissionExecutorRef(ref: string, projectId: string): string {
+  const match = /^(expert|team|flow):([^@]+)@[^@]+$/.exec(ref);
+  if (match === null) return ref;
+  if (match[1] === "expert" && match[2] === "pragma") return "expert:0000000000pragma";
+  const kind = match[1] === "expert" ? "Expert" : match[1] === "team" ? "ExpertTeam" : "Flow";
+  return `${match[1]}:${derivePragmaResourceId(`${projectId}\0${kind}\0${match[2]}`)}`;
 }
 
 function toMissionSummary(mission: Mission): MissionSummary {

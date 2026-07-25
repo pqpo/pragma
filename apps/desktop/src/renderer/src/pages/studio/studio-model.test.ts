@@ -10,12 +10,11 @@ import {
 
 const persistedExpert: ExpertDefinition = {
   schemaVersion: "pragma.desktop-expert-view/v1",
-  ref: "expert:reviewer@1.0.0",
+  ref: "expert:3sfd30h5017wd17d",
   id: "reviewer",
   name: "Reviewer",
   description: "Reviews changes.",
   tags: [],
-  version: "1.0.0",
   scope: "Reviews code quality. Does not merge changes.",
   instructions: "Review changes carefully.",
   additionalInstructions: "",
@@ -26,7 +25,7 @@ const persistedExpert: ExpertDefinition = {
     mode: "pinned",
     model: { runtimeId: "test", providerId: "test", modelId: "test" },
   },
-  resourceRuntime: { ref: "runtime-profile:reviewer_runtime@1.0.0" },
+  resourceRuntime: { ref: "runtime-profile:t1sp06tbv5846g6t" },
   capabilities: [],
   toolApprovals: {},
   plugins: [],
@@ -54,8 +53,8 @@ describe("toPersistedInput", () => {
     expect(toPersistedInput(record)).toMatchObject({ baseRevision: persistedExpert.revision });
   });
 
-  it("creates a new version against its captured project revision and source ref", () => {
-    const record = { ...toExpertRecord(persistedExpert), version: "2.0.0" };
+  it("creates a new object against its captured project revision and source ref", () => {
+    const record = toExpertRecord(persistedExpert);
 
     expect(
       toCreateExpertInput(record, {
@@ -65,8 +64,6 @@ describe("toPersistedInput", () => {
     ).toMatchObject({
       baseRevision: 4,
       requiredUnchangedRefs: [persistedExpert.ref],
-      id: persistedExpert.id,
-      version: "2.0.0",
     });
   });
 });

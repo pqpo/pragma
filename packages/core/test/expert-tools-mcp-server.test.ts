@@ -161,7 +161,6 @@ async function registerTestSession(
     name: `Runtime ${label}`,
     description: "MCP Gateway test",
     tags: [],
-    version: "1.0.0",
     scope: "test",
     workspace: process.cwd(),
     tools: [

@@ -8,7 +8,6 @@ export interface ContextCandidate {
   readonly contextId: string;
   readonly agentId?: string | undefined;
   readonly expertId: string;
-  readonly expertVersion: string;
   readonly runtime: RuntimeEnvironmentBinding;
   readonly lifecycle: "open" | "closed";
   readonly lastInvocationId: string;
@@ -41,7 +40,6 @@ export interface ContextIdResolutionContext {
   readonly ownerContextId?: string | undefined;
   readonly target: {
     readonly expertId: string;
-    readonly expertVersion: string;
     readonly runtime: RuntimeEnvironmentBinding;
   };
   readonly invocation: {

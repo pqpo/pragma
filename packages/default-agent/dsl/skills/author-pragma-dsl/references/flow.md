@@ -3,11 +3,10 @@
 Use a Flow for explicit, inspectable control flow.
 
 ```yaml
-apiVersion: pragma/v2
+apiVersion: pragma/v3
 kind: Flow
 metadata:
-  id: review_change
-  version: 1.0.0
+  id: 8h9j0k1m2n3p4q5r
   name: Review Change
   description: Implements a change and asks a reviewer to inspect it.
   tags: [delivery]
@@ -27,7 +26,7 @@ spec:
     steps:
       implement:
         expert:
-          ref: expert:implementer@1.0.0
+          ref: expert:6h7j8k9m0n1p2q3r
         prompt:
           segments:
             - { text: "Implement this goal: " }
@@ -41,7 +40,7 @@ spec:
             additionalProperties: false
       review:
         expert:
-          ref: expert:reviewer@1.0.0
+          ref: expert:7h8j9k0m1n2p3q4r
         prompt:
           segments:
             - { text: "Review this implementation: " }

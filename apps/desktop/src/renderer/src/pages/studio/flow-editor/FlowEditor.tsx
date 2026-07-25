@@ -165,8 +165,7 @@ type FlowPaletteKind = FlowStepKind | "logic";
 export function FlowEditor(props: {
   readonly project: PragmaProjectSnapshot;
   readonly baseRevision?: number | undefined;
-  readonly mode?: "create" | "edit" | "new-version" | undefined;
-  readonly versionSourceRef?: string | undefined;
+  readonly mode?: "create" | "edit" | undefined;
   readonly runtimes?: readonly DesktopRuntimeAvailability[] | undefined;
   readonly initial?: PragmaFlowResource | undefined;
   readonly error: string | null;
@@ -188,8 +187,7 @@ export function FlowEditor(props: {
 function FlowEditorCanvas(props: {
   readonly project: PragmaProjectSnapshot;
   readonly baseRevision?: number | undefined;
-  readonly mode?: "create" | "edit" | "new-version" | undefined;
-  readonly versionSourceRef?: string | undefined;
+  readonly mode?: "create" | "edit" | undefined;
   readonly runtimes: readonly DesktopRuntimeAvailability[];
   readonly initial?: PragmaFlowResource | undefined;
   readonly error: string | null;
@@ -374,10 +372,9 @@ function FlowEditorCanvas(props: {
       setLayoutStatus("saving");
       try {
         await api.saveWorkflowLayout({
-          schemaVersion: "pragma.desktop-flow-layout/v1",
+          schemaVersion: "pragma.desktop-flow-layout/v2",
           projectId: props.project.projectId,
           flowId: flow.metadata.id,
-          flowVersion: flow.metadata.version,
           nodes: positions(),
           viewport: getViewport(),
           updatedAt: new Date().toISOString(),
@@ -392,7 +389,6 @@ function FlowEditorCanvas(props: {
     },
     [
       flow.metadata.id,
-      flow.metadata.version,
       getViewport,
       logicDraftIds.length,
       positions,
@@ -674,13 +670,6 @@ function FlowEditorCanvas(props: {
     if (api === undefined || saving) return;
     setCandidateIssues([]);
     setVisibleError(null);
-    if (
-      props.mode === "new-version" &&
-      canonicalPragmaResourceRef(flow) === props.versionSourceRef
-    ) {
-      showError(t("newVersionMustDiffer"));
-      return;
-    }
     if (localIssues.length > 0) {
       setValidationOpen(true);
       return;
@@ -691,7 +680,7 @@ function FlowEditorCanvas(props: {
         baseRevision: expectedRevisionRef.current,
         upserts: [...supportingResources, flow],
         removals: [],
-        requiredUnchangedRefs: props.versionSourceRef === undefined ? [] : [props.versionSourceRef],
+        requiredUnchangedRefs: [],
       });
       const errors = result.diagnostics.filter((diagnostic) => diagnostic.severity === "error");
       if (errors.length > 0) {
@@ -699,15 +688,7 @@ function FlowEditorCanvas(props: {
         setValidationOpen(true);
         return;
       }
-      if (
-        !(await props.onSave(
-          flow,
-          supportingResources,
-          expectedRevisionRef.current,
-          props.versionSourceRef === undefined ? [] : [props.versionSourceRef],
-        ))
-      )
-        return;
+      if (!(await props.onSave(flow, supportingResources, expectedRevisionRef.current, []))) return;
       baselineRef.current = JSON.stringify(flow);
       if (await persistLayout(true)) props.onCancel();
     } catch (cause) {
@@ -950,21 +931,11 @@ function FlowEditorCanvas(props: {
                 }}
               />
             ) : selectedNodeId === null ? (
-              <FlowSettings
-                flow={flow}
-                lockId={props.initial !== undefined}
-                lockVersion={props.mode === "edit"}
-                onPatch={patchFlow}
-              />
+              <FlowSettings flow={flow} onPatch={patchFlow} />
             ) : selectedNodeId === END_NODE_ID ? (
               <EndInspector flow={flow} onPatch={patchFlow} />
             ) : selectedNodeId === START_NODE_ID || selectedNodeId === FAIL_NODE_ID ? (
-              <FlowSettings
-                flow={flow}
-                lockId={props.initial !== undefined}
-                lockVersion={props.mode === "edit"}
-                onPatch={patchFlow}
-              />
+              <FlowSettings flow={flow} onPatch={patchFlow} />
             ) : flow.spec.graph.steps[selectedNodeId] !== undefined ? (
               <StepInspector
                 flow={flow}
@@ -1296,8 +1267,6 @@ const edgeTypes = { workflow: WorkflowEdge };
 
 function FlowSettings(props: {
   readonly flow: PragmaFlowResource;
-  readonly lockId: boolean;
-  readonly lockVersion: boolean;
   readonly onPatch: (mutator: (copy: PragmaFlowResource) => void) => void;
 }) {
   const { t } = useTranslation("studio");
@@ -1312,17 +1281,6 @@ function FlowSettings(props: {
           <small>{t("flowSettingsDescription")}</small>
         </div>
       </header>
-      <InspectorField label="Resource ID">
-        <input
-          value={props.flow.metadata.id}
-          disabled={props.lockId}
-          onChange={(event) =>
-            props.onPatch((copy) => {
-              copy.metadata.id = event.target.value;
-            })
-          }
-        />
-      </InspectorField>
       <InspectorField label="Name">
         <input
           value={props.flow.metadata.name}
@@ -1340,17 +1298,6 @@ function FlowSettings(props: {
           onChange={(event) =>
             props.onPatch((copy) => {
               copy.metadata.description = event.target.value;
-            })
-          }
-        />
-      </InspectorField>
-      <InspectorField label="Version">
-        <input
-          value={props.flow.metadata.version}
-          disabled={props.lockVersion}
-          onChange={(event) =>
-            props.onPatch((copy) => {
-              copy.metadata.version = event.target.value;
             })
           }
         />
@@ -1674,16 +1621,6 @@ function StepInspector(props: {
       ) : null}
       <details className="flow-advanced-settings">
         <summary>{t("advancedSettings")}</summary>
-        <InspectorField label="Step version">
-          <input
-            value={step.version}
-            onChange={(event) =>
-              patchStep((current) => {
-                current.version = event.target.value;
-              })
-            }
-          />
-        </InspectorField>
         {kind === "expert" || kind === "team" ? (
           <InspectorField label="Context">
             <input
@@ -2559,7 +2496,7 @@ function runtimeProfiles(resources: readonly PragmaResource[]) {
     if (!config.success) return [];
     return [
       {
-        ref: `runtime-profile:${resource.metadata.id}@${resource.metadata.version}`,
+        ref: `runtime-profile:${resource.metadata.id}`,
         name: resource.metadata.name,
         config: config.data,
       },
@@ -2585,11 +2522,10 @@ export function targetRuntimeProfileRef(
 
 export function flowRuntimeProfile(runtime: DesktopRuntimeAvailability) {
   return PragmaRuntimeProfileResourceSchema.parse({
-    apiVersion: "pragma/v2",
+    apiVersion: "pragma/v3",
     kind: "RuntimeProfile",
     metadata: {
-      id: `flow_runtime_${stableRuntimeKey(runtime.id)}`,
-      version: "1.0.0",
+      id: stableRuntimeKey(runtime.id),
       name: `${runtime.displayName} Flow Runtime`,
       description: `Desktop-managed Runtime profile for Flow node overrides using ${runtime.displayName}.`,
       tags: ["desktop-managed", "flow-runtime-override"],
@@ -3700,7 +3636,7 @@ function resourceTargets(
     return [
       {
         kind,
-        ref: `${kind}:${resource.metadata.id}@${resource.metadata.version}`,
+        ref: `${kind}:${resource.metadata.id}`,
         label: resource.metadata.name,
       },
     ];
@@ -3712,7 +3648,6 @@ function defaultStep(
   targets: readonly ResourceTarget[],
   humanCopy: { readonly optionLabels: readonly [string, string] },
 ): FlowStep {
-  const version = "1.0.0";
   if (kind === "human")
     return {
       human: {
@@ -3723,12 +3658,10 @@ function defaultStep(
           { value: "option_2", label: humanCopy.optionLabels[1] },
         ],
       },
-      version,
     };
-  const target = targets.find((item) => item.kind === kind)?.ref ?? `${kind}:select_me@1.0.0`;
+  const target = targets.find((item) => item.kind === kind)?.ref ?? `${kind}:0000000000000000`;
   return {
     [kind]: { ref: target },
-    version,
     ...(kind === "expert" || kind === "team" ? { prompt: { segments: [{ text: "" }] } } : {}),
   } as FlowStep;
 }
@@ -4534,10 +4467,9 @@ export function workflowLayoutFromCanvas(input: {
   readonly updatedAt?: string | undefined;
 }): WorkflowLayout {
   return {
-    schemaVersion: "pragma.desktop-flow-layout/v1",
+    schemaVersion: "pragma.desktop-flow-layout/v2",
     projectId: input.projectId,
     flowId: input.flow.metadata.id,
-    flowVersion: input.flow.metadata.version,
     nodes: { ...input.positions },
     viewport: input.viewport ?? { x: 0, y: 0, zoom: 1 },
     updatedAt: input.updatedAt ?? new Date().toISOString(),

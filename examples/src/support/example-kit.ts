@@ -27,7 +27,6 @@ export async function createExampleExpert(
     description,
     instructions,
     tags: ["example"],
-    version: "1.0.0",
     scope: "example",
     workspace: process.cwd(),
     contextSystem,

@@ -117,12 +117,11 @@ describe("resolveExpertCapabilities", () => {
     } as CapabilityCredentialStore;
     const expert: ExpertDefinition = {
       schemaVersion: "pragma.desktop-expert-view/v1",
-      ref: "expert:reviewer@1.0.0",
+      ref: "expert:3sfd30h5017wd17d",
       id: "reviewer",
       name: "Reviewer",
       description: "Reviews work.",
       tags: [],
-      version: "1.0.0",
       scope: "Review only.",
       instructions: "Review the supplied work.",
       additionalInstructions: "",
@@ -133,7 +132,7 @@ describe("resolveExpertCapabilities", () => {
         mode: "pinned",
         model: { runtimeId: "test", providerId: "test", modelId: "test" },
       },
-      resourceRuntime: { ref: "runtime-profile:reviewer_runtime@1.0.0" },
+      resourceRuntime: { ref: "runtime-profile:t1sp06tbv5846g6t" },
       capabilities: [
         { kind: "skill", capabilityId: skillId, revision: 1 },
         { kind: "tools", capabilityId: serviceId, revision: 1, toolNames: ["get_customer"] },

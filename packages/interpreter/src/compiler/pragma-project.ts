@@ -47,6 +47,7 @@ import {
 import { analyzePragmaFlowGraph, analyzePragmaFlowNodeAvailability } from "../ast/flow-graph.ts";
 import {
   canonicalPragmaResourceRef,
+  normalizePragmaResourceName,
   parsePragmaReference,
   pragmaResourceDirectory,
   pragmaResourceFileName,
@@ -298,6 +299,31 @@ class SourceLoader {
       this.error("resource.duplicate", `Duplicate Pragma resource: ${key}`, source);
       return;
     }
+    const sameId = [...this.resources.values()].find(
+      (indexed) => indexed.resource.metadata.id === resource.metadata.id,
+    );
+    if (sameId !== undefined) {
+      this.error(
+        "resource.id_duplicate",
+        `Resource ID ${resource.metadata.id} is already used by ${canonicalRef(sameId.resource)}.`,
+        source,
+      );
+      return;
+    }
+    const normalizedName = normalizePragmaResourceName(resource.metadata.name);
+    const sameName = [...this.resources.values()].find(
+      (indexed) =>
+        indexed.resource.kind === resource.kind &&
+        normalizePragmaResourceName(indexed.resource.metadata.name) === normalizedName,
+    );
+    if (sameName !== undefined) {
+      this.error(
+        "resource.name_duplicate",
+        `${resource.kind} name "${resource.metadata.name}" is already used by ${canonicalRef(sameName.resource)}.`,
+        source,
+      );
+      return;
+    }
     const normalized = stableStringify(resource);
     this.resources.set(key, {
       resource,
@@ -414,7 +440,7 @@ class PragmaProjectImpl implements PragmaProject {
         for (const [index, binding] of indexed.resource.spec.plugins.entries()) {
           try {
             const inspection = await host.plugins.inspect({
-              expertRef: canonicalRef(indexed.resource) as `expert:${string}@${string}`,
+              expertRef: canonicalRef(indexed.resource) as `expert:${string}`,
               binding,
             });
             if (inspection.ref !== binding.ref || inspection.status !== "ready") {
@@ -617,7 +643,7 @@ class PragmaProjectImpl implements PragmaProject {
                   `Expert ${indexed.resource.metadata.id} references ${binding.ref}, but the host has no Plugin resolver.`,
                 );
               }
-              const expertRef = canonicalRef(indexed.resource) as `expert:${string}@${string}`;
+              const expertRef = canonicalRef(indexed.resource) as `expert:${string}`;
               const resolution = await host.plugins.resolve({
                 expertRef,
                 binding,
@@ -650,7 +676,6 @@ class PragmaProjectImpl implements PragmaProject {
         );
         value = defineExpertTeam({
           id: indexed.resource.metadata.id,
-          version: indexed.resource.metadata.version,
           name: indexed.resource.metadata.name,
           description: indexed.resource.metadata.description,
           instructions: indexed.resource.spec.instructions,
@@ -784,7 +809,7 @@ class PragmaProjectImpl implements PragmaProject {
     const mode = options.split ?? "preserve";
     if (mode === "single") {
       const bundle = PragmaBundleSchema.parse({
-        apiVersion: "pragma/v2",
+        apiVersion: "pragma/v3",
         kind: "Bundle",
         resources: this.listResources(),
       });
@@ -800,7 +825,7 @@ class PragmaProjectImpl implements PragmaProject {
     files.set(
       "pragma.yaml",
       stringify({
-        apiVersion: "pragma/v2",
+        apiVersion: "pragma/v3",
         kind: "Bundle",
         imports: imports.sort(),
         resources: [],
@@ -824,7 +849,7 @@ class PragmaProjectImpl implements PragmaProject {
       .map(([source, contentHash]) => ({ source, contentHash }))
       .toSorted((left, right) => left.source.localeCompare(right.source));
     return {
-      apiVersion: "pragma/v2",
+      apiVersion: "pragma/v3",
       kind: "Lock",
       compilerVersion: COMPILER_VERSION,
       projectFingerprint: sha256(
@@ -896,7 +921,7 @@ class PragmaProjectImpl implements PragmaProject {
 
   private resolveResource(ref: string): IndexedResource {
     const parsed = parsePragmaReference(ref);
-    const indexed = this.resources.get(`${parsed.kind}:${parsed.id}@${parsed.version}`);
+    const indexed = this.resources.get(`${parsed.kind}:${parsed.id}`);
     if (indexed === undefined) throw new PragmaDslError(`Pragma resource not found: ${ref}`);
     return indexed;
   }
@@ -990,7 +1015,6 @@ async function compileExpert(
     name: resource.metadata.name,
     description: resource.metadata.description,
     tags: resource.metadata.tags,
-    version: resource.metadata.version,
     scope: resource.spec.scope,
     instructions: resource.spec.instructions,
     workspace: host.workspace,
@@ -1049,7 +1073,6 @@ async function compileFlowResource(
   const outputSchema = createJsonSchemaZod(resource.spec.output?.schema);
   const flow = defineFlow({
     id: resource.metadata.id,
-    version: resource.metadata.version,
     input: inputSchema,
     output: outputSchema,
     maxNodeVisits: resource.spec.limits.maxNodeVisits,
@@ -1092,7 +1115,6 @@ async function compileFlowResource(
         stepId,
         flow.task({
           id: stepId,
-          version: step.version,
           input: mappedInput,
           descriptor,
           inputSchema: createJsonSchemaZod(action.inputSchema),
@@ -1111,7 +1133,6 @@ async function compileFlowResource(
         stepId,
         flow.humanTask({
           id: stepId,
-          version: step.version,
           input: mappedInput,
           output: selectionSchema,
           descriptor,
@@ -1401,7 +1422,7 @@ function validatePortableSemantics(
         const refs = binding.target === undefined ? (binding.targets ?? []) : [binding.target];
         for (const target of refs) {
           const parsed = parsePragmaReference(target.ref);
-          const resolved = resources.get(`${parsed.kind}:${parsed.id}@${parsed.version}`)?.resource;
+          const resolved = resources.get(`${parsed.kind}:${parsed.id}`)?.resource;
           if (resolved !== undefined && resolved.kind !== "Expert") {
             add("tool.binding.invalid", "pragma.tool.delegate@v1 only supports Expert targets.", [
               "spec",
@@ -1434,7 +1455,7 @@ function validatePortableSemantics(
   if (resource.kind === "Automation") {
     const executorRef = resource.spec.route.executor.ref;
     const parsed = parsePragmaReference(executorRef);
-    const executor = resources.get(`${parsed.kind}:${parsed.id}@${parsed.version}`)?.resource;
+    const executor = resources.get(`${parsed.kind}:${parsed.id}`)?.resource;
     if (executor?.kind === "Flow" && executor.spec.input?.schema !== undefined) {
       if (resource.spec.route.input.kind !== "flow") {
         add(
@@ -1873,7 +1894,7 @@ function validateResourceCycles(
               "runtime-profile",
             ]).has(parsed.kind),
           )
-          .map((parsed) => `${parsed.kind}:${parsed.id}@${parsed.version}`),
+          .map((parsed) => `${parsed.kind}:${parsed.id}`),
       ),
     );
   }
@@ -1933,7 +1954,7 @@ function collectLockedDependencies(
   const visit = (indexed: IndexedResource): void => {
     for (const ref of resourceDependencies(indexed.resource)) {
       const parsed = parsePragmaReference(ref);
-      const dependency = resources.get(`${parsed.kind}:${parsed.id}@${parsed.version}`);
+      const dependency = resources.get(`${parsed.kind}:${parsed.id}`);
       if (dependency === undefined || result.has(canonicalRef(dependency.resource))) continue;
       result.set(canonicalRef(dependency.resource), {
         ref: canonicalRef(dependency.resource),
