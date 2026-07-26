@@ -1,6 +1,24 @@
 {
   "name": "pragma",
+  "description": "A runtime-neutral platform for composing models, agent harnesses, experts, and flows.",
   "private": true,
+  "license": "SEE LICENSE IN LICENSE",
+  "homepage": "https://github.com/pqpo/pragma#readme",
+  "bugs": {
+    "url": "https://github.com/pqpo/pragma/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pqpo/pragma.git"
+  },
+  "keywords": [
+    "ai-agents",
+    "agent-runtime",
+    "multi-agent",
+    "orchestration",
+    "mcp",
+    "typescript"
+  ],
   "packageManager": "pnpm@10.12.1",
   "engines": {
     "node": ">=22"

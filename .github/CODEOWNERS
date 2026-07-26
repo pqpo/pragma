@@ -1,0 +1,15 @@
+# Default repository ownership.
+* @pqpo
+
+# Architecture and project governance.
+/AGENTS.md @pqpo
+/GOVERNANCE.md @pqpo
+/docs/adr/ @pqpo
+/docs/architecture/ @pqpo
+/docs/strategy/ @pqpo
+
+# Security-sensitive surfaces.
+/SECURITY.md @pqpo
+/apps/desktop/ @pqpo
+/packages/core/ @pqpo
+/packages/runtime/ @pqpo

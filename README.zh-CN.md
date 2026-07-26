@@ -1,7 +1,7 @@
 # Pragma
 
 <p align="center">
-  <strong>面向生产级复杂场景的多专家 AI 协作平台。</strong>
+  <strong>组合模型、Agent Harness、专家与流程，形成可靠的 AI-native 工作方式。</strong>
 </p>
 
 <p align="center">
@@ -14,11 +14,14 @@
   <img alt="pnpm" src="https://img.shields.io/badge/pnpm-10.12.1-F69220?logo=pnpm&logoColor=white" />
   <img alt="ESM" src="https://img.shields.io/badge/modules-ESM-4B5563" />
   <img alt="Tests" src="https://img.shields.io/badge/tests-Vitest-6E9F18?logo=vitest&logoColor=white" />
+  <img alt="License" src="https://img.shields.io/badge/license-Pragma%20Source%20Available%201.0-2563EB" />
 </p>
 
-Pragma 帮助团队构建面向生产级工作的 AI 专家组，用于需求分析、技术方案、代码实现、代码评审、测试分析和领域知识支持等复杂任务。
+Pragma 是一个运行时中立的平台，用于组合模型、Agent Harness、专家、工具和流程。有经验的分享者可以
+创建并分享经过验证的 AI-native 工作方式，普通用户无需理解底层编排即可直接使用。
 
-它不是单个通用聊天机器人。Pragma 更关注可复用的专家定义、共享上下文、受控工具访问、可替换运行时，以及能随复杂工程和业务流程持续演进的治理边界。
+它不是单个通用聊天机器人，也不是单一 Agent Harness。Pragma 更关注可复用的专家定义、跨 Runtime
+执行、共享上下文、受控工具访问、可恢复 Mission，以及能随复杂工程和业务工作持续演进的治理边界。
 
 ## 为什么是 Pragma？
 
@@ -54,7 +57,7 @@ Pragma 当前提供：
 - 用于定义可复用 AI 专家的 `ExpertAgent` 创建 API。
 - 基于内存或文件系统存储的上下文系统。
 - Managed tools、MCP 工具集成、插件加载和审批策略。
-- Runtime adapter 合约，以及 PI / Codex runtime 实现包。
+- Runtime adapter 合约，以及 PI / Codex / Claude Code runtime 实现包。
 - 用于组合专家工作和确定性 TypeScript 任务的 Directive 与工作流基础能力。
 - 基于 Zod 的浏览器安全 shared schema 和 DTO。
 - 基于 pnpm monorepo 的 Web、Server、Worker、Desktop、Client SDK 和基础设施包边界。
@@ -176,8 +179,11 @@ packages/
   client/         浏览器或客户端 HTTP SDK
   server/         服务端基础设施边界
   core/           ExpertAgent、上下文、工具、插件和 runtime 合约
+  interpreter/    Pragma YAML DSL 解析、校验、链接和编译
+  default-agent/  内置通用 Pragma Agent
   runtime/pi/     PI runtime adapter
   runtime/codex/  Codex local runtime adapter
+  runtime/claude-code/ Claude Code local runtime adapter
   eslint-config/  共享 ESLint 配置
   tsconfig/       共享 TypeScript 配置
 
@@ -219,6 +225,8 @@ runtime-*       -> core -> shared
 - [Expert Agent 标准协议](./docs/architecture/expert-agent-standard-protocol.md)
 - [本地 Agent 桥接](./docs/architecture/local-agent-bridge.md)
 - [Monorepo 与依赖规则 ADR](./docs/adr/001-monorepo-and-dependency-rules.md)
+- [产品定位与竞争差异化](./docs/strategy/pragma-positioning-and-competitive-differentiation.md)
+- [源码可用许可证与商标边界](./docs/strategy/source-available-licensing-and-trademarks.md)
 
 ## 文档
 
@@ -227,7 +235,7 @@ runtime-*       -> core -> shared
 - [Context](./docs/usage/context.md)
 - [Memory](./docs/usage/memory.md)
 - [Plugins](./docs/usage/plugins.md)
-- [Human interaction](./docs/usage/human-interaction.md)
+- [Flows 与 HumanTask](./docs/usage/flows.md)
 - [编码约定](./docs/conventions/coding-conventions.md)
 
 ## 质量命令
@@ -256,4 +264,18 @@ Pragma 正在积极开发中。当前仓库重点建设长期工程底座：严�
 
 ## 贡献
 
-修改代码前，请先阅读 [AGENTS.md](./AGENTS.md) 和架构边界文档。改动应放在正确的 package 中；行为变化需要补充或更新测试；提交 PR 前请运行相关质量命令。
+修改代码前，请先阅读 [CONTRIBUTING.md](./CONTRIBUTING.md)、[AGENTS.md](./AGENTS.md) 和架构边界
+文档。改动应放在正确的 package 中；行为变化需要补充或更新测试；提交 PR 前请运行相关质量命令。
+
+社区参与遵守[行为准则](./CODE_OF_CONDUCT.md)。安全漏洞应按照[安全政策](./SECURITY.md) 私下报告；
+项目支持、治理和品牌使用边界分别见 [SUPPORT.md](./SUPPORT.md)、[GOVERNANCE.md](./GOVERNANCE.md)
+与[商标政策](./TRADEMARKS.md)。
+
+## 源码可用状态
+
+Pragma 使用 [Pragma Source Available License 1.0](./LICENSE)。它允许查看、修改、内部使用和自托管，
+同时禁止未经授权的第三方托管或管理服务，以及在第三方产品和服务中的商业嵌入。它是自定义
+source-available（源码可用）许可证，不是标准 Apache-2.0 或 OSI 认可的开源许可证。
+
+许可证要求保留法律声明和官方用户界面中的 Pragma 品牌。Pragma 名称、Logo 和官方身份的其他使用
+方式由[商标政策](./TRADEMARKS.md)管理。

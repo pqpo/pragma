@@ -1,7 +1,7 @@
 # Pragma
 
 <p align="center">
-  <strong>A multi-expert AI collaboration platform built for production-grade complex scenarios.</strong>
+  <strong>Compose models, agent harnesses, experts, and flows into reliable AI-native ways of working.</strong>
 </p>
 
 <p align="center">
@@ -14,11 +14,17 @@
   <img alt="pnpm" src="https://img.shields.io/badge/pnpm-10.12.1-F69220?logo=pnpm&logoColor=white" />
   <img alt="ESM" src="https://img.shields.io/badge/modules-ESM-4B5563" />
   <img alt="Tests" src="https://img.shields.io/badge/tests-Vitest-6E9F18?logo=vitest&logoColor=white" />
+  <img alt="License" src="https://img.shields.io/badge/license-Pragma%20Source%20Available%201.0-2563EB" />
 </p>
 
-Pragma helps teams build AI expert groups for production-grade work: requirements analysis, technical planning, code implementation, code review, testing analysis, and domain knowledge support.
+Pragma is a runtime-neutral platform for composing models, agent harnesses, experts, tools, and
+flows. Experienced creators can build and share validated AI-native ways of working; other users can
+run those methods without needing to understand the underlying orchestration.
 
-It is not designed as a single general-purpose chatbot. Pragma focuses on reusable expert definitions, shared context, controlled tool access, runtime replacement, and governance boundaries that can grow with complex engineering and business executions.
+It is not designed as a single general-purpose chatbot or a single agent harness. Pragma focuses on
+reusable expert definitions, cross-runtime execution, shared context, controlled tool access,
+durable missions, and governance boundaries that can grow with complex engineering and business
+work.
 
 ## Why Pragma?
 
@@ -54,7 +60,7 @@ Pragma currently provides:
 - `Expert` creation APIs for defining reusable AI experts.
 - Context systems backed by in-memory or filesystem stores.
 - Managed tools, MCP tool integration, plugin loading, and approval policies.
-- Runtime adapter contracts and concrete PI / Codex runtime packages.
+- Runtime adapter contracts and concrete PI / Codex / Claude Code runtime packages.
 - Directive and execution primitives for composing expert work with deterministic TypeScript tasks.
 - Browser-safe shared schemas and DTOs built with Zod.
 - Web, server, worker, desktop, client SDK, and infrastructure package boundaries in a pnpm monorepo.
@@ -178,8 +184,11 @@ packages/
   client/         Browser/client HTTP SDK
   server/         Server-side infrastructure boundary
   core/           Expert, context, tools, plugins, and runtime contracts
+  interpreter/    Pragma YAML DSL parsing, validation, linking, and compilation
+  default-agent/  Built-in general-purpose Pragma Agent
   runtime/pi/     PI runtime adapter
   runtime/codex/  Codex local runtime adapter
+  runtime/claude-code/ Claude Code local runtime adapter
   eslint-config/  Shared ESLint config
   tsconfig/       Shared TypeScript config
 
@@ -221,6 +230,8 @@ For deeper context:
 - [Expert agent standard protocol](./docs/architecture/expert-agent-standard-protocol.md)
 - [Local agent bridge](./docs/architecture/local-agent-bridge.md)
 - [Monorepo and dependency rules ADR](./docs/adr/001-monorepo-and-dependency-rules.md)
+- [Product positioning and competitive differentiation](./docs/strategy/pragma-positioning-and-competitive-differentiation.md)
+- [Source-available licensing and trademark boundaries](./docs/strategy/source-available-licensing-and-trademarks.md)
 
 ## Documentation
 
@@ -229,7 +240,7 @@ For deeper context:
 - [Context](./docs/usage/context.md)
 - [Memory](./docs/usage/memory.md)
 - [Plugins](./docs/usage/plugins.md)
-- [Human interaction](./docs/usage/human-interaction.md)
+- [Flows and human tasks](./docs/usage/flows.md)
 - [Coding conventions](./docs/conventions/coding-conventions.md)
 
 ## Quality Commands
@@ -258,4 +269,22 @@ The local agent bridge is designed around outbound Desktop connections, explicit
 
 ## Contributing
 
-Before changing code, read [AGENTS.md](./AGENTS.md) and the architecture boundary documents. Keep changes scoped to the right package, add or update tests where behavior changes, and run the relevant quality commands before opening a pull request.
+Before changing code, read [CONTRIBUTING.md](./CONTRIBUTING.md), [AGENTS.md](./AGENTS.md), and the
+architecture boundary documents. Keep changes scoped to the right package, add or update tests where
+behavior changes, and run the relevant quality commands before opening a pull request.
+
+Community participation is governed by the [Code of Conduct](./CODE_OF_CONDUCT.md). Report
+vulnerabilities privately according to the [Security Policy](./SECURITY.md), and review
+[Support](./SUPPORT.md), [Governance](./GOVERNANCE.md), and the
+[Trademark Policy](./TRADEMARKS.md) for project boundaries.
+
+## Source Availability Status
+
+Pragma is licensed under the [Pragma Source Available License 1.0](./LICENSE). It permits inspection,
+modification, internal use, and self-hosting while prohibiting unauthorized third-party hosted or
+managed services and commercial embedding in third-party offerings. It is a custom source-available
+license, not the standard Apache License 2.0 or an OSI-approved open-source license.
+
+The license requires retention of legal notices and Pragma branding in official user interfaces.
+Other use of the Pragma name, logos, or official identity is governed by the
+[Trademark Policy](./TRADEMARKS.md).

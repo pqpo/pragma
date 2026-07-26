@@ -1,0 +1,78 @@
+name: Bug report
+description: Report a reproducible problem in Pragma
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for reporting a problem. Do not include secrets, personal data, private workspace
+        files, or unredacted logs. Report security vulnerabilities privately through SECURITY.md.
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Preflight
+      options:
+        - label: I searched existing issues for the same problem.
+          required: true
+        - label: This is not a security vulnerability.
+          required: true
+  - type: input
+    id: version
+    attributes:
+      label: Pragma version or commit
+      placeholder: Commit SHA or release
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Affected area
+      options:
+        - Desktop
+        - Web
+        - Server
+        - Worker
+        - Core
+        - Interpreter / DSL
+        - Runtime PI
+        - Runtime Codex
+        - Runtime Claude Code
+        - Plugin
+        - Documentation
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: What happened, and what did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: Provide the smallest deterministic sequence or repository that reproduces the problem.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Include OS, Node.js, pnpm, Runtime Adapter, model provider, and relevant configuration.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Redacted logs
+      description: Remove credentials, personal data, prompts, private paths, and proprietary content.
+      render: text
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional context
